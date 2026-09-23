@@ -92,50 +92,55 @@ EVIDENCE_SUBSTR = ("gradle-build", "gradle-test", "adb-logcat", "adb-shell",
 edits_since_evidence = 0   # LANDED edits of THIS file since the last evidence call
 
 try:
-    # Pass 1 — collect tool_use ids whose result was an error. An edit that was
-    # blocked (by another hook) or that failed ("String to replace not found")
+    # Only LANDED edits count, so tool_use ids whose result was an error are
+    # skipped. An edit that was blocked (by another hook) or that failed ("String to replace not found")
     # changed nothing, so counting it inflates the churn number and makes the
     # warning state a count that never happened. Measured 2026-07-27: this hook
     # reported "2/3" when exactly one edit had landed, because a precode_gate
     # block counted as an edit. A gate that reports a wrong number is the defect
     # class W4 exists to stop.
-    blocks = []
+    #
+    # Walked from the END of the transcript backwards: a tool_result follows its
+    # tool_use, so going backwards every error id is known before the edit it
+    # belongs to, and the walk stops at the most recent evidence call instead of
+    # parsing the whole session on every edit.
     error_ids = set()
     with open(tp) as fh:
-        for rawline in fh:
-            rawline = rawline.strip()
-            if not rawline:
-                continue
-            try:
-                rec = json.loads(rawline)
-            except Exception:
-                continue
-            content = (rec.get("message") or {}).get("content")
-            if not isinstance(content, list):
-                continue
-            for blk in content:
-                if not isinstance(blk, dict):
-                    continue
-                if blk.get("type") == "tool_use":
-                    blocks.append(blk)
-                elif blk.get("type") == "tool_result" and blk.get("is_error"):
-                    tid = blk.get("tool_use_id")
-                    if tid:
-                        error_ids.add(tid)
-
-    # Pass 2 — count only landed edits.
-    for blk in blocks:
-        name = blk.get("name", "")
-        binp = blk.get("input") or {}
-        if name in EVIDENCE_TOOLS or any(s in name for s in EVIDENCE_SUBSTR):
-            edits_since_evidence = 0     # new evidence → run resets
+        lines = fh.readlines()
+    done = False
+    for rawline in reversed(lines):
+        if '"tool_use"' not in rawline and '"tool_result"' not in rawline:
+            continue                     # cheap prefilter: text/thinking records
+        rawline = rawline.strip()
+        try:
+            rec = json.loads(rawline)
+        except Exception:
             continue
-        if name in ("Edit", "Write", "NotebookEdit"):
-            if blk.get("id") in error_ids:
-                continue                 # blocked/failed → nothing landed
-            fp = binp.get("file_path") or binp.get("notebook_path") or ""
-            if isinstance(fp, str) and os.path.basename(fp) == edited_base:
-                edits_since_evidence += 1
+        content = (rec.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for blk in reversed(content):
+            if not isinstance(blk, dict):
+                continue
+            if blk.get("type") == "tool_result":
+                if blk.get("is_error") and blk.get("tool_use_id"):
+                    error_ids.add(blk["tool_use_id"])
+                continue
+            if blk.get("type") != "tool_use":
+                continue
+            name = blk.get("name", "")
+            if name in EVIDENCE_TOOLS or any(s in name for s in EVIDENCE_SUBSTR):
+                done = True              # new evidence → the run starts after it
+                break
+            if name in ("Edit", "Write", "NotebookEdit"):
+                if blk.get("id") in error_ids:
+                    continue             # blocked/failed → nothing landed
+                binp = blk.get("input") or {}
+                fp = binp.get("file_path") or binp.get("notebook_path") or ""
+                if isinstance(fp, str) and os.path.basename(fp) == edited_base:
+                    edits_since_evidence += 1
+        if done:
+            break
 except Exception as e:
     logline(f"[{ts}] transcript scan fail: {e!r} — fail-open")
     sys.exit(0)

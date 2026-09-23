@@ -128,6 +128,22 @@ def add_uncovered(data: dict, files: list, *, task: str | None) -> list:
     return added
 
 
+def prune_uncovered(data: dict, still_uncovered) -> list:
+    """Drop UNCOVERED rows whose file no longer counts as uncovered code.
+
+    `still_uncovered(files)` is the gate's own rule (profile extensions, docs/.agents
+    roots, test paths, watch patterns, existence) and returns the files that still are.
+    Rows from before a rule changed (docs XML counted as code, a file a rule now
+    watches, a deleted file) would otherwise stay "⚠️ chưa có test" forever.
+    """
+    rows = {k: it.get("file") for k, it in data["items"].items() if it.get("kind") == "uncovered"}
+    keep = set(still_uncovered([f for f in rows.values() if f]))
+    removed = [k for k, f in rows.items() if f not in keep]
+    for k in removed:
+        del data["items"][k]
+    return removed
+
+
 def add_bug(data: dict, title: str, *, cause: str | None, task: str | None, test_ids: list) -> str:
     """A fixed bug. Linked to the regression test(s) the gate just ran green for it, if any."""
     bid = f"BUG-{time.strftime('%Y%m%d')}-{_slug(title)}"

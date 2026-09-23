@@ -42,6 +42,23 @@ bash "$KIT" learn "Numbered next" --file "$TMP/v.md" >/dev/null
 grep -q '^### \[INSTINCT-001\] Numbered next' "$TMP/v.md" && ok "named families (V07, BE-01) do not shift numbering" || fail "family ids counted"
 
 out="$(bash "$KIT" learn "" 2>&1)"; [ $? -eq 2 ] && ok "empty title -> usage error" || fail "empty title accepted"
+bash "$KIT" learn 'Speed gate AUTO_WINDOW_MAX_KMH' --cause 'set in `VoiceSettings.kt` <!-- hide' >/dev/null
+grep -q 'AUTO_WINDOW_MAX_KMH$' "$F" && grep -q 'set in `VoiceSettings.kt`' "$F" && ! grep -q '<!-- hide' "$F" \
+  && ok "identifiers and inline code kept verbatim; '<' escaped (no HTML comment)" || fail "escaping: $(grep -A3 AUTO_WINDOW "$F" | head -3)"
+
+# --check is a shell command: rendered as inline code, unescaped (pasteable), one line;
+# a backtick in it gets a longer fence, a newline cannot start a Markdown line.
+CHK='grep -rn "x" src | wc -l && ! test -f *.bak'
+bash "$KIT" learn "Check pasteable" --check "$CHK" >/dev/null
+line="$(grep -A6 '\] Check pasteable$' "$F" | grep '^- \*\*Check:\*\*')"
+[ "$line" = "- **Check:** \`$CHK\`" ] && ok "--check rendered as inline code, unescaped" || fail "--check not pasteable: $line"
+bash "$KIT" learn "Check backtick" --check "$(printf 'echo `date`\n# injected-check')" >/dev/null
+line="$(grep -A6 '\] Check backtick$' "$F" | grep '^- \*\*Check:\*\*')"
+[ "$line" = '- **Check:** ``echo `date` # injected-check``' ] && ! grep -q '^# injected-check' "$F" \
+  && ok "backtick in --check gets a longer fence, newline folded" || fail "--check fence/injection: $line"
+bash "$KIT" learn "Check edge" --check '`x`' >/dev/null
+line="$(grep -A6 '\] Check edge$' "$F" | grep '^- \*\*Check:\*\*')"
+[ "$line" = '- **Check:** `` `x` ``' ] && ok "backtick at the edge of --check padded inside the fence" || fail "--check edge: $line"
 
 # A link into the DevKit must not receive a project's lesson.
 mkdir -p "$TMP/linked/.agents" && ln -s "$DEVKIT_DIR/templates/instincts.template.md" "$TMP/linked/.agents/instincts.md"
@@ -49,6 +66,33 @@ sum="$(cksum < "$DEVKIT_DIR/templates/instincts.template.md")"
 out="$(CLAUDE_PROJECT_DIR="$TMP/linked" bash "$KIT" learn "Should not land" 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && [ "$(cksum < "$DEVKIT_DIR/templates/instincts.template.md")" = "$sum" ] \
   && ok "link into the DevKit refused, template unchanged" || fail "wrote through a DevKit link (rc=$rc)"
+
+# --from-json: bulk import of classified memory — only INSTINCT items of this project,
+# with date and source, re-runnable without duplicates.
+J="$TMP/mem.json"
+cat > "$J" <<JSON
+[{"project": "$TMP/proj", "source": "mem/a.md", "verdict": "INSTINCT", "title": "Imported trap A",
+  "cause": "race on resume", "rule": "single-flight", "found_on": "2026-08-01"},
+ {"project": "$TMP/proj", "source": "mem/b.md", "verdict": "PROJECT_STATE", "title": "Roadmap"},
+ {"project": "$TMP/other", "source": "mem/c.md", "verdict": "INSTINCT", "title": "Other project trap"},
+ {"project": "$TMP/proj", "source": "mem/d.md", "verdict": "INSTINCT", "title": "Imported trap D", "found_on": "yesterday"}]
+JSON
+before="$(wc -c < "$F")"
+out="$(bash "$KIT" learn --from-json "$J" --dry-run 2>&1)"
+[ "$(wc -c < "$F")" = "$before" ] && printf '%s' "$out" | grep -q "added 2 (dry-run)" \
+  && ok "--from-json --dry-run: counts, writes nothing" || fail "--from-json dry-run: $out"
+out="$(bash "$KIT" learn --from-json "$J" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && grep -q '\] Imported trap A$' "$F" && grep -q '\] Imported trap D$' "$F" \
+  && ! grep -q 'Roadmap\|Other project trap' "$F" \
+  && ok "--from-json adds only this project's INSTINCT items" || fail "--from-json import (rc=$rc): $out"
+grep -A6 '\] Imported trap A$' "$F" | grep -q "2026-08-01" && grep -A6 '\] Imported trap A$' "$F" | grep -q "mem/a.md" \
+  && ok "--from-json keeps the memory's date and source" || fail "date/source missing"
+grep -A2 '\] Imported trap D$' "$F" | grep -q "yesterday" && fail "invalid date written" || ok "--from-json ignores a date that is not YYYY-MM-DD"
+before="$(wc -c < "$F")"
+out="$(bash "$KIT" learn --from-json "$J" 2>&1)"
+[ "$(wc -c < "$F")" = "$before" ] && printf '%s' "$out" | grep -q "already there 2" \
+  && ok "--from-json re-run adds nothing (titles already recorded)" || fail "re-run duplicated: $out"
+bash "$KIT" learn "T" --from-json "$J" >/dev/null 2>&1; [ $? = 2 ] && ok "title + --from-json → usage error" || fail "both accepted"
 
 if [ "$FAILS" -ne 0 ]; then
   echo "learn: $FAILS FAILED"; exit 1

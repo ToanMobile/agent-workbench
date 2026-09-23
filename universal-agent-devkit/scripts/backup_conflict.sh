@@ -62,6 +62,52 @@ has_user_content() {
   return 0
 }
 
+# devkit_mv <src> <dest> [<moved dir> <its new place>] — mv, then re-point relative
+# symlinks so they still reach what they reached before: the moved entry itself when it
+# is a link, and links inside a moved folder that point outside it (links within the
+# folder move with it). A link like .claude/commands/fix.md -> ../../.agents/skills/x/SKILL.md
+# moved to .agents/local/commands/ would otherwise dangle. When a whole folder moves
+# entry by entry (devkit_local_absorb_dir), pass it and its destination: a link to a
+# sibling entry then stays pointing at that sibling's new place.
+devkit_mv() {
+  local src="$1" dest="$2" src_real scope="${3:-}" scope_new="${4:-}"
+  src_real="$(cd "$(dirname "$src")" 2>/dev/null && pwd -P)/$(basename "$src")"
+  [ -n "$scope" ] && scope="$(cd "$scope" 2>/dev/null && pwd -P)"
+  mv "$src" "$dest" || return 1
+  [ -L "$dest" ] || [ -d "$dest" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  [ -n "$scope_new" ] && scope_new="$(cd "$scope_new" 2>/dev/null && pwd -P)"
+  python3 - "$src_real" "$dest" "$scope" "$scope_new" <<'PY' || true
+import os, sys
+old = sys.argv[1]
+new = os.path.join(os.path.realpath(os.path.dirname(sys.argv[2])), os.path.basename(sys.argv[2]))
+scope_old = sys.argv[3] or old             # everything under it moved together
+scope_new = sys.argv[4] or new
+
+def fix(link):
+    t = os.readlink(link)
+    if os.path.isabs(t):
+        return
+    rel = os.path.relpath(link, new)
+    was = old if rel == "." else os.path.join(old, rel)
+    target = os.path.normpath(os.path.join(os.path.dirname(was), t))
+    if target == scope_old or target.startswith(scope_old + os.sep):
+        target = os.path.join(scope_new, os.path.relpath(target, scope_old))  # moved along
+    nt = os.path.relpath(target, os.path.dirname(link))
+    if nt != t:
+        os.unlink(link)
+        os.symlink(nt, link)
+
+if os.path.islink(new):
+    fix(new)
+elif os.path.isdir(new):
+    for root, dirs, files in os.walk(new):
+        for n in dirs + files:
+            if os.path.islink(os.path.join(root, n)):
+                fix(os.path.join(root, n))
+PY
+}
+
 backup_conflict() {
   local target="$1"
   local devkit_root="${2:-}"
@@ -133,7 +179,7 @@ backup_conflict() {
 
   # Move conflicting folder/file to backup path — abort loudly if the move fails,
   # otherwise the caller would go on to replace the user's data.
-  if ! mv "$target" "$backup_path"; then
+  if ! devkit_mv "$target" "$backup_path"; then
     echo "ERROR: [X_old Protection] could not move '$target' to '$backup_path' — nothing replaced." >&2
     return 1
   fi
@@ -326,7 +372,7 @@ devkit_local_absorb_dir() {
       base="${dest}_$(date +%Y%m%d_%H%M%S)"; dest="$base"; n=1
       while [ -e "$dest" ] || [ -L "$dest" ]; do n=$((n + 1)); dest="${base}_$n"; done
     fi
-    mv "$e" "$dest" || { echo "ERROR: could not move '$e' to '$dest' — nothing replaced." >&2; return 1; }
+    devkit_mv "$e" "$dest" "$dir" "$dest_dir" || { echo "ERROR: could not move '$e' to '$dest' — nothing replaced." >&2; return 1; }
     echo "$(date '+%Y-%m-%d %H:%M:%S') | $e -> $dest" >> "$ledger"
   done
   rmdir "$dir" || { echo "ERROR: '$dir' is not empty after moving its content — nothing replaced." >&2; return 1; }
@@ -387,29 +433,69 @@ README_EOF
 devkit_local_rule_files() {
   local dir="$1/$DEVKIT_LOCAL_DIR/rules"
   [ -d "$dir" ] || return 0
-  (cd "$1" && find "$DEVKIT_LOCAL_DIR/rules" -type f \( -name '*.md' -o -name '*.mdc' -o -name '*.markdown' -o -name '*.txt' \) \
-     ! -name '.*' 2>/dev/null | grep -vE '_[0-9]{8}_[0-9]{6}' | LC_ALL=C sort)
+  # Files and links to files (a rule may be a link to a shared file); one import per
+  # real file — real files win over links to them; dated backup copies are skipped.
+  (cd "$1" && python3 - "$DEVKIT_LOCAL_DIR/rules" <<'PY'
+import os, re, sys
+root = sys.argv[1]
+found = []
+for d, dirs, files in os.walk(root, followlinks=False):
+    dirs[:] = sorted(x for x in dirs if not x.startswith("."))
+    for f in files:
+        p = os.path.join(d, f)
+        if f.startswith(".") or not re.search(r"\.(md|mdc|markdown|txt)$", f, re.I) \
+                or re.search(r"_\d{8}_\d{6}", p) or not os.path.isfile(p):
+            continue
+        found.append((os.path.islink(p), p))
+seen, out = set(), []
+for _, p in sorted(found):
+    r = os.path.realpath(p)
+    if r not in seen:
+        seen.add(r)
+        out.append(p)
+print("\n".join(sorted(out)))
+PY
+  )
+}
+
+# devkit_master_ref <project root> — the path an agent file uses to reach the DevKit
+# master rules: AGENTS.md while that file is (or is about to be) the DevKit's own.
+# A project that keeps its own AGENTS.md gets the master linked at
+# .agents/devkit/AGENTS.md instead — `@AGENTS.md` there would import only the
+# project's file, and §5–§8 of the master would never reach the agent.
+devkit_master_ref() {
+  local root="$1" a="$1/AGENTS.md"
+  if { [ ! -e "$a" ] && [ ! -L "$a" ]; } || link_is_devkit_owned "$a" "$DEVKIT_ROOT" \
+      || is_recorded_devkit_file "$a" || cmp -s "$a" "$DEVKIT_ROOT/AGENTS.md"; then
+    echo "AGENTS.md"
+    return 0
+  fi
+  devkit_place "$DEVKIT_ROOT/AGENTS.md" "$root/.agents/devkit/AGENTS.md" "${MODE:-symlink}" >/dev/null || return 1
+  echo ".agents/devkit/AGENTS.md"
 }
 
 # devkit_merge_block <template block> <agent file> — inject the DevKit block into an
-# agent instruction file (CLAUDE.md, GEMINI.md, .cursorrules, CODEX.md, a project's own
-# AGENTS.md). When the project tier holds rule files, the block also lists them as
-# @-imports: they moved out of the project's rules/ and no agent would read them
-# otherwise. Re-run on every install, so the list follows .agents/local/rules/.
+# agent file: the master rules (devkit_master_ref), the active profile's rules when a
+# profile is being installed (DEVKIT_PROFILE, set by install.sh; the stable
+# .agents/active-profile/RULES.md follows `agent-kit profile` switches), and the
+# project tier's own rules (.agents/local/rules) as @-imports.
 devkit_merge_block() {
-  local tpl="$1" dst="$2" root rules block rc
+  local tpl="$1" dst="$2" root rules block rc master
   root="$(cd "$(dirname "$dst")" 2>/dev/null && pwd -P)"
   rules="$(devkit_local_rule_files "$root")"
-  if [ -z "$rules" ]; then
-    python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$tpl" "$dst" "universal-agent-devkit"
-    return
-  fi
+  master="$(devkit_master_ref "$root")" || master="AGENTS.md"
   block="$(mktemp "${TMPDIR:-/tmp}/devkit_block.XXXXXX")" || return 1
   {
-    cat "$tpl"
-    printf '\n## Project rules (%s/rules — project tier)\n' "$DEVKIT_LOCAL_DIR"
-    printf 'Read these before editing code: this project'"'"'s own rules on top of the DevKit. Where one contradicts `AGENTS.md` §6 or `rules/core-rules.md`, the DevKit rule wins — tell the user about the conflict.\n'
-    printf '%s\n' "$rules" | sed 's/^/- @/'
+    sed "s|@AGENTS\.md|@$master|" "$tpl" | awk -v prof="${DEVKIT_PROFILE:-}" '
+      { print }
+      /Active Domain Profile:/ && prof != "" && prof != "none" && prof != "ask" {
+        print "- Domain Profile Rules: @.agents/active-profile/RULES.md"
+      }'
+    if [ -n "$rules" ]; then
+      printf '\n## Project rules (%s/rules — project tier)\n' "$DEVKIT_LOCAL_DIR"
+      printf 'Read these before editing code: this project'"'"'s own rules on top of the DevKit. Where one contradicts `%s` §6 or `rules/core-rules.md`, the DevKit rule wins — tell the user about the conflict.\n' "$master"
+      printf '%s\n' "$rules" | sed 's/^/- @/'
+    fi
   } > "$block"
   python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$block" "$dst" "universal-agent-devkit"
   rc=$?
@@ -482,7 +568,7 @@ devkit_copy_keep_edits() {
     [ -n "$rel" ] || continue
     rel="${rel#./}"
     mkdir -p "$dest/$(dirname "$rel")" || return 1
-    mv "$dir/$rel" "$dest/$rel" || { echo "ERROR: could not keep '$dir/$rel' in '$dest' — nothing replaced." >&2; return 1; }
+    devkit_mv "$dir/$rel" "$dest/$rel" || { echo "ERROR: could not keep '$dir/$rel' in '$dest' — nothing replaced." >&2; return 1; }
     mkdir -p "$(dirname "$ledger")"
     echo "$(date '+%Y-%m-%d %H:%M:%S') | $dir/$rel -> $dest/$rel" >> "$ledger"
     echo "  ⚠️ [Project tier] $(L "Giữ phần bạn sửa:" "kept your edit:") ${DEVKIT_LOCAL_DIR}/${dest#*/$DEVKIT_LOCAL_DIR/}/$rel"
@@ -523,6 +609,32 @@ devkit_link_local() {
 # Replaces our own links, unmodified copies, identical files, empty dirs and dirs
 # holding only devkit links; anything else the user owns is moved to *_old first.
 # Never writes *through* an existing symlink (cp into a link would modify the devkit).
+# devkit_link_local_skill_commands <project> — Claude Code reaches a skill through a
+# command linked to its SKILL.md (as it does the DevKit's). A project-tier skill with no
+# command of its own gets .claude/commands/<name>.md -> ../../.agents/local/skills/<name>/SKILL.md,
+# unless a command of that name exists (the DevKit's wins, the project's is its own).
+devkit_link_local_skill_commands() {
+  local project="$1" skill name dst want
+  [ -d "$project/$DEVKIT_LOCAL_DIR/skills" ] || return 0
+  [ "$project" = "${DEVKIT_ROOT:-}" ] && return 0
+  mkdir -p "$project/.claude/commands"
+  for skill in "$project/$DEVKIT_LOCAL_DIR/skills"/*/; do
+    skill="${skill%/}"; name="$(basename "$skill")"
+    [ -f "$skill/SKILL.md" ] || continue
+    case "$name" in *_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]*) continue ;; esac
+    [ -e "$project/$DEVKIT_LOCAL_DIR/commands/$name.md" ] && continue
+    dst="$project/.claude/commands/$name.md"
+    want="../../$DEVKIT_LOCAL_DIR/skills/$name/SKILL.md"
+    if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$want" ]; then
+      continue
+    elif [ -e "$dst" ] || [ -L "$dst" ]; then
+      echo "  - $(L "Tầng dự án" "Project tier"): skill $name — $(L "đã có lệnh /$name khác, không link" "a /$name command already exists, not linked")"
+    else
+      ln -s "$want" "$dst" && echo "  - $(L "Tầng dự án: skill → lệnh" "Project tier: skill → command") /$name"
+    fi
+  done
+}
+
 devkit_place() {
   local src="$1" dst="$2" mode="$3" parent_p root_p target_p
   # Guard: a symlinked project dir (e.g. .claude/commands -> DEVKIT/commands) or a
@@ -726,7 +838,18 @@ list_local_tier() {
       name="$(basename "$item")"
       dst="$root_dir/$rel/$name"
       if [ -z "$rel" ]; then
-        state="$(L "tham khảo (không link)" "reference (not linked)")"
+        # rules/ are not linked anywhere: the DevKit block of the agent files @-imports
+        # them (a link to a rule imported under its real name counts as that one).
+        if cat "$root_dir/CLAUDE.md" "$root_dir/AGENTS.md" "$root_dir/CODEX.md" 2>/dev/null \
+            | grep -o "@$DEVKIT_LOCAL_DIR/rules/[^ ]*" | sed 's/^@//' | while read -r imp; do
+                python3 -c 'import os,sys; a,b=(os.path.realpath(x) for x in sys.argv[1:3]); sys.exit(0 if a==b or a.startswith(b+os.sep) else 1)' \
+                  "$root_dir/$imp" "$item" && echo yes; done | grep -q yes; then
+          state="$(L "đang dùng (@ trong CLAUDE.md/AGENTS.md)" "active (@-imported in CLAUDE.md/AGENTS.md)")"
+        elif printf '%s' "$name" | grep -qE '_[0-9]{8}_[0-9]{6}'; then
+          state="$(L "bản lưu có ngày (không import)" "dated copy (not imported)")"
+        else
+          state="$(L "chưa import (chạy lại agent-kit init)" "not imported yet (re-run agent-kit init)")"
+        fi
       elif [ -L "$dst" ] && [ "$(resolve_link_target "$dst")" = "$(cd "$(dirname "$item")" && pwd -P)/$name" ]; then
         state="$(L "đang dùng" "active")"
       elif [ -e "$dst" ] || [ -L "$dst" ]; then
@@ -796,7 +919,7 @@ restore_old_backups() {
       fi
       # `agent-kit uninstall` removes install dirs left empty (.claude/commands, ...):
       # recreate the parent so the backup can go back.
-      if mkdir -p "$(dirname "$target")" && mv "$backup" "$target"; then
+      if mkdir -p "$(dirname "$target")" && devkit_mv "$backup" "$target"; then
         echo "  restored ${backup#$root_p/} -> ${target#$root_p/}"
         restored=$((restored + 1))
       else

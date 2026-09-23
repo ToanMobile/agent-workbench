@@ -20,25 +20,25 @@ set -u
 
 [ "${PROMPT_CONTEXT:-1}" = "0" ] && exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
-INPUT="$(cat)"
 
 # Locate the DevKit: this script's real path (symlink install), $DEVKIT_ROOT, or the
-# quick-install location (copy-mode installs have no link back).
-SELF="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null)"
+# quick-install location (copy-mode installs have no link back). Links are followed
+# in bash (no readlink -f on bash 3.2 / macOS) so python starts only once, below.
+SELF="$0"
+while [ -L "${SELF}" ]; do
+  LINK="$(readlink "${SELF}")"
+  case "${LINK}" in /*) SELF="${LINK}" ;; *) SELF="$(dirname "${SELF}")/${LINK}" ;; esac
+done
 ENRICH=""
-for cand in "$(dirname "$(dirname "${SELF}")")/scripts/enrich_context.py" \
+for cand in "$(cd -P "$(dirname "${SELF}")/.." 2>/dev/null && pwd)/scripts/enrich_context.py" \
             "${DEVKIT_ROOT:-}/scripts/enrich_context.py" \
             "${HOME}/.universal-agent-devkit/scripts/enrich_context.py"; do
   [ -f "${cand}" ] && { ENRICH="${cand}"; break; }
 done
 [ -n "${ENRICH}" ] || exit 0
 
-PROMPT="$(printf '%s' "${INPUT}" | python3 -c 'import json,sys
-try: print(json.load(sys.stdin).get("prompt") or "")
-except Exception: print("")' 2>/dev/null)"
-case "${PROMPT}" in /*|"") exit 0 ;; esac
-[ "${#PROMPT}" -ge 8 ] || exit 0
-
+# enrich_context.py --hook reads the payload itself and stays silent for slash
+# commands and prompts under 8 characters.
 REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-CLAUDE_PROJECT_DIR="${REPO_ROOT}" python3 "${ENRICH}" --compact "${PROMPT}" 2>/dev/null
+CLAUDE_PROJECT_DIR="${REPO_ROOT}" python3 "${ENRICH}" --hook 2>/dev/null
 exit 0

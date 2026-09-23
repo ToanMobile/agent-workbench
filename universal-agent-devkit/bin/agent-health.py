@@ -47,6 +47,7 @@ class Score:
     def __init__(self):
         self.passed = 0
         self.total = 0
+        self.fatal = []   # checks that fail the run whatever the percentage
 
     def check(self, ok: bool, ok_msg: str, fail_msg: str, warn_only: bool = False):
         self.total += 1
@@ -129,8 +130,73 @@ def run_test_suite(score: Score):
                 f"Test suite (`agent-kit test`): exit 0 — {detail}",
                 f"Test suite (`agent-kit test`): exit {res.returncode} — {detail}")
     if res.returncode != 0:
+        # A red suite is a failure, not "93/100 PASS": one check of many would
+        # otherwise still leave the run above the 90% pass mark.
+        score.fatal.append("test suite")
         tail = "\n".join(out.strip().splitlines()[-15:])
         print(f"{DIM}{tail}{RESET}")
+
+
+MATRIX_TRUST_PY = r"""
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("pfg", sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+matrix, problem = m.load_active_matrix()
+print(json.dumps({"rules": len((matrix or {}).get("rules", [])), "problem": problem or ""}))
+"""
+
+
+def project_wiring(target: Path, score: Score):
+    """What the project actually runs with — the DevKit's own dirs can be fine while the
+    project's hooks are missing, its imports dangle or the gate distrusts its matrix."""
+    settings, _ = load_json(target / ".claude" / "settings.json")
+    missing = []
+    for ev in ((settings or {}).get("hooks") or {}).values():
+        for m in ev:
+            for h in m.get("hooks", []):
+                for rel in re.findall(r"/(\.claude/hooks/[\w.-]+)", h.get("command", "")):
+                    if not (target / rel).exists():
+                        missing.append(rel)
+    score.check(settings is not None and not missing,
+                tr("Mọi hook trong `.claude/settings.json` đều tồn tại", "Every hook in `.claude/settings.json` exists"),
+                tr(f"Hook đăng ký nhưng không có file (chạy lại agent-kit init): {sorted(set(missing))[:5]}",
+                   f"Registered hooks with no file (re-run agent-kit init): {sorted(set(missing))[:5]}"))
+    broken = []
+    for d in (".claude/hooks", ".claude/commands", ".claude/agents", ".agents/skills", ".agents"):
+        if (target / d).is_dir():
+            broken += [f"{d}/{e.name}" for e in (target / d).iterdir() if e.is_symlink() and not e.exists()]
+    score.check(not broken, tr("Không có link hỏng trong .claude/ và .agents/", "No broken links in .claude/ and .agents/"),
+                tr(f"Link hỏng: {broken[:5]}", f"Broken links: {broken[:5]}"))
+    dangling = []
+    for name in ("CLAUDE.md", "AGENTS.md", "CODEX.md"):
+        f = target / name
+        if f.is_file():
+            txt = f.read_text(encoding="utf-8", errors="replace")
+            i, j = txt.find("universal-agent-devkit:start"), txt.find("universal-agent-devkit:end")
+            for imp in re.findall(r"@([^\s`)]+)", txt[i:j] if 0 <= i < j else ""):
+                if not (target / imp).exists():
+                    dangling.append(f"{name}: @{imp}")
+    score.check(not dangling, tr("Mọi @-import trong khối DevKit đều có file", "Every @-import of the DevKit block resolves"),
+                tr(f"@-import không có file: {dangling[:5]}", f"@-imports with no file: {dangling[:5]}"))
+    res = subprocess.run([sys.executable, "-c", MATRIX_TRUST_PY, str(BASE_DIR / "bin" / "post-fix-gate.py")],
+                         capture_output=True, text=True, cwd=str(target), env={**os.environ, "CLAUDE_PROJECT_DIR": str(target)})
+    try:
+        trust = json.loads(res.stdout.strip().splitlines()[-1])
+        if not score.check(trust["rules"] > 0 and not trust["problem"],
+                    tr(f"Gate tin ma trận hồi quy ({trust['rules']} rule) — Stop sẽ chạy test thật",
+                       f"The gate trusts the regression matrix ({trust['rules']} rules) — Stop runs real tests"),
+                    tr(f"Gate KHÔNG chạy test hồi quy: {trust['problem'] or 'không có ma trận'}",
+                       f"The gate runs NO regression tests: {trust['problem'] or 'no matrix'}")):
+            score.fatal.append(tr("không có test hồi quy nào chạy", "no regression test runs"))
+    except (ValueError, IndexError, KeyError):
+        score.check(False, "", tr(f"Không đọc được trạng thái ma trận: {res.stderr[-200:]}", f"Cannot read the matrix state: {res.stderr[-200:]}"))
+    out = subprocess.run(["git", "-C", str(target), "ls-files", "-o", "--exclude-standard", "-z"], capture_output=True, text=True)
+    devkit_real = str(BASE_DIR.resolve())
+    leaked = [f for f in out.stdout.split("\0") if f and (target / f).is_symlink()
+              and str((target / f).resolve()).startswith(devkit_real + os.sep)] if out.returncode == 0 else []
+    score.check(not leaked, tr("Không có link DevKit (đường dẫn máy này) lọt vào `git status`", "No DevKit link (this machine's paths) shows up in `git status`"),
+                tr(f"{len(leaked)} link DevKit chưa bị loại khỏi git (chạy lại agent-kit init): {leaked[:3]}",
+                   f"{len(leaked)} DevKit links not excluded from git (re-run agent-kit init): {leaked[:3]}"), warn_only=True)
 
 
 def main(argv=None):
@@ -278,6 +344,10 @@ def main(argv=None):
                 tr(f"Council trùng name {dupes} / thiếu {missing_councils}", f"Councils with duplicate name {dupes} / missing {missing_councils}"))
 
     # 6. MCP & regression matrix — chỉ đòi MCP của profile đang active
+    if target.resolve() != BASE_DIR.resolve():
+        section(tr("[+] Dây nối trong dự án (hook, import, ma trận, git)", "[+] Project wiring (hooks, imports, matrix, git)"))
+        project_wiring(target, score)
+
     section(tr("[6/6] MCP & Ma trận hồi quy", "[6/6] MCP & regression matrix"))
     mcps, sources = configured_mcps(target)
     if sources:
@@ -309,7 +379,9 @@ def main(argv=None):
     # Score
     pct = int(score.passed * 100 / score.total) if score.total else 0
     print(f"\n{BOLD}{CYAN}──────────────────────────────────────────────────────────────────────{RESET}")
-    if pct == 100:
+    if score.fatal:
+        badge = f"{RED}{BOLD}FAIL{RESET} ({', '.join(score.fatal)})"
+    elif pct == 100:
         badge = f"{GREEN}{BOLD}PASS{RESET}"
     elif pct >= 90:
         badge = f"{GREEN}{BOLD}PASS ({tr('có mục chưa đạt', 'some checks failed')}){RESET}"
@@ -322,7 +394,7 @@ def main(argv=None):
     if not args.run_tests:
         print(f"  {DIM}{tr('tests: not run — điểm này KHÔNG bao gồm test suite.', 'tests: not run — this score does NOT include the test suite.')}{RESET}")
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════{RESET}\n")
-    return 0 if pct >= 90 else 1
+    return 0 if pct >= 90 and not score.fatal else 1
 
 
 if __name__ == "__main__":

@@ -23,15 +23,67 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && [ -f "$TARGET_DIR/CLAUDE.md" ] && [ ! 
   fi
 fi
 
-CLAUDE_INJECT="$DEVKIT_ROOT/templates/claude_injection_block.md"
-devkit_merge_block "$CLAUDE_INJECT" "$TARGET_DIR/CLAUDE.md"
+# AGENTS.md: shared logic (devkit link/copy vs the project's own file) — see backup_conflict.sh.
+# A CLAUDE.md that links to the project's AGENTS.md is one file: it gets one block, and
+# AGENTS.md is handled (backed up as AGENTS_old.md, then injected) before anything is
+# written through the link — writing CLAUDE.md first used to mark the file as already
+# injected, so AGENTS_old.md was never made.
+claude_real="$(resolve_link_target "$TARGET_DIR/CLAUDE.md" 2>/dev/null || true)"
+agents_real="$(cd "$TARGET_DIR" && pwd -P)/AGENTS.md"
+if [ -L "$TARGET_DIR/CLAUDE.md" ] && [ "$claude_real" = "$agents_real" ]; then
+  devkit_install_agents_md "$TARGET_DIR" "$MODE"
+  echo "  - CLAUDE.md links to AGENTS.md — the DevKit block is in AGENTS.md only"
+else
+  CLAUDE_INJECT="$DEVKIT_ROOT/templates/claude_injection_block.md"
+  devkit_merge_block "$CLAUDE_INJECT" "$TARGET_DIR/CLAUDE.md"
+  devkit_install_agents_md "$TARGET_DIR" "$MODE"
+fi
 
-# AGENTS.md: shared logic (devkit link/copy vs the project's own file) — see backup_conflict.sh
-devkit_install_agents_md "$TARGET_DIR" "$MODE"
-
-# 2. Additive Merge for .mcp.json
+# 2. Additive Merge for .mcp.json — only the servers the profile calls for
+#    (DEVKIT_MCPS_ALLOWED from install.sh; empty = all) whose command is on PATH: Claude
+#    Code offers every .mcp.json server for approval (the approvals land in its own
+#    settings.local.json enabledMcpjsonServers), and one that cannot start only fails.
+#    An unmodified DevKit entry the profile no longer wants is removed; the user's own
+#    and edited entries stay.
+MCP_SRC="$(mktemp "${TMPDIR:-/tmp}/devkit-mcp.XXXXXX")"
+if [ "$TARGET_DIR" = "$DEVKIT_ROOT" ]; then
+  cp "$DEVKIT_ROOT/mcp/.mcp.json" "$MCP_SRC"
+else
+  python3 - "$DEVKIT_ROOT/mcp/.mcp.json" "$TARGET_DIR/.mcp.json" "$MCP_SRC" <<'PY'
+import json, os, shutil, sys, tempfile
+src, dst, out = sys.argv[1:4]
+allowed = os.environ.get("DEVKIT_MCPS_ALLOWED", "").split()
+servers = json.load(open(src, encoding="utf-8"))["mcpServers"]
+keep = {}
+for name, conf in servers.items():
+    if allowed and name not in allowed:
+        continue
+    if not shutil.which(conf.get("command", "")):
+        print(f"  - MCP {name}: `{conf.get('command')}` is not on PATH — not added (install it, then re-run `agent-kit init`)")
+        continue
+    keep[name] = conf
+with open(out, "w", encoding="utf-8") as f:
+    json.dump({"mcpServers": keep}, f, indent=2)
+try:
+    data = json.load(open(dst, encoding="utf-8"))
+except (OSError, ValueError):
+    sys.exit(0)                        # no file yet / unparseable: merge_json.py reports it
+mine = data.get("mcpServers") if isinstance(data, dict) else None
+gone = [n for n, c in servers.items() if n not in keep and isinstance(mine, dict) and mine.get(n) == c]
+if gone and not os.path.islink(dst):
+    for n in gone:
+        del mine[n]
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(dst)), prefix=".devkit-mcp.")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    os.chmod(tmp, os.stat(dst).st_mode & 0o7777)
+    os.replace(tmp, dst)
+    print(f"  - Removed DevKit MCP servers the profile does not use from {os.path.basename(dst)}: {', '.join(gone)}")
+PY
+fi
 # merge_json.py backs up the file itself (as .mcp_old.json) only when the merge changes it.
-python3 "$DEVKIT_ROOT/scripts/merge_json.py" "$DEVKIT_ROOT/mcp/.mcp.json" "$TARGET_DIR/.mcp.json"
+python3 "$DEVKIT_ROOT/scripts/merge_json.py" "$MCP_SRC" "$TARGET_DIR/.mcp.json"
+rm -f "$MCP_SRC"
 echo "  - Merged MCP servers into .mcp.json (preserved existing custom MCPs)"
 
 # 3. Additive Merge for .claude/settings.json
@@ -56,9 +108,16 @@ python3 "$DEVKIT_ROOT/scripts/merge_json.py" "$DEFAULT_SETTINGS" "$TARGET_DIR/.c
 echo "  - Merged safety gates into .claude/settings.json (preserved custom settings)"
 
 # 4. Smart Item-by-Item Link for Hooks (Preserving custom user hooks)
-for hook in "$DEVKIT_ROOT/hooks"/*; do
-  [ -e "$hook" ] || continue
+# Only the hook scripts: hooks/tests/ and hooks.json (the plugin registry, already
+# merged into settings.json above) are not hooks, and a `*.tmp*` file is an edit in
+# progress. Links an older install made for them are removed.
+for stale in tests hooks.json; do
+  link_is_devkit_owned "$TARGET_DIR/.claude/hooks/$stale" "$DEVKIT_ROOT" && rm -f "$TARGET_DIR/.claude/hooks/$stale"
+done
+for hook in "$DEVKIT_ROOT/hooks"/*.sh "$DEVKIT_ROOT/hooks"/*.py; do
+  [ -f "$hook" ] || continue
   hook_name="$(basename "$hook")"
+  case "$hook_name" in *.tmp*|.*) continue ;; esac
   target_hook="$TARGET_DIR/.claude/hooks/$hook_name"
   if [ "$SKIP_EXISTING" = "1" ] && [ -e "$target_hook" ] && [ ! -L "$target_hook" ]; then
     echo "  - Preserved custom hook: $hook_name (--skip-existing active)"
@@ -88,6 +147,10 @@ for agent in "$DEVKIT_ROOT/agents"/*; do
   [ -e "$agent" ] || continue
   agent_name="$(basename "$agent")"
   target_agent="$TARGET_DIR/.claude/agents/$agent_name"
+  case " ${DEVKIT_AGENTS_EXCLUDED:-} " in *" ${agent_name%.md} "*)
+    devkit_remove_filtered "$target_agent"  # the profile's exclude_agents
+    continue ;;
+  esac
   if [ "$SKIP_EXISTING" = "1" ] && [ -e "$target_agent" ] && [ ! -L "$target_agent" ]; then
     echo "  - Preserved custom agent: $agent_name (--skip-existing active)"
     continue
@@ -99,6 +162,7 @@ done
 #    linked in when no DevKit item has that name (DevKit is the core and wins).
 if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   devkit_link_local "$TARGET_DIR" commands .claude/commands
+  devkit_link_local_skill_commands "$TARGET_DIR"
   devkit_link_local "$TARGET_DIR" agents .claude/agents
   devkit_link_local "$TARGET_DIR" hooks .claude/hooks
 fi

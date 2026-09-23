@@ -51,6 +51,10 @@
 # Non-Gradle repos (no gradlew/build.gradle*): with no XML, a successful test
 # runner call (npm/jest/vitest/pytest/cargo/go/swift/dotnet/… test) after the last
 # source edit, whose output shows no failure, backs the claim (QA K-10).
+# Unity counts too: unity-batch.sh editmode|playmode, scripts/unity-test.sh, the Editor
+# with -runTests, or mcp__antigravity-pm__pm_run kind=test (`exit=N`). Their NUnit 3
+# XML (Logs/agent-kit/tests_*.xml) is read like TEST-*.xml: `<test-run failed="N">`,
+# red only when N > 0, stale when older than the last .cs edit.
 #
 # Escape hatch: TEST_EVIDENCE_GATE=0 (logged). Fail-open on internal error.
 # Stop hook protocol: stdin JSON; exit 2 blocks (stderr→Claude); exit 0 allows.
@@ -317,7 +321,13 @@ for pat in ("*/build/test-results/*/TEST-*.xml",
             # matched none of the patterns above.
             "*/build/outputs/androidTest-results/connected/TEST-*.xml",
             "*/build/outputs/androidTest-results/connected/*/TEST-*.xml",
-            "*/*/build/outputs/androidTest-results/connected/*/TEST-*.xml"):
+            "*/*/build/outputs/androidTest-results/connected/*/TEST-*.xml",
+            # Unity writes NUnit 3 XML, not JUnit: profiles/game/scripts/unity-batch.sh
+            # puts it at Logs/agent-kit/tests_<EditMode|PlayMode>.xml, a project's own
+            # scripts/unity-test.sh (run by pm_run) at .antigravity-pm/logs/tests_*.xml.
+            # Without these a Unity repo had no result file the gate could see.
+            "Logs/agent-kit/tests_*.xml",
+            ".antigravity-pm/logs/tests_*.xml"):
     xmls.extend(glob.glob(os.path.join(repo, pat)))
 mtimes = {}
 for p in xmls:
@@ -345,6 +355,24 @@ def parse_suites(path):
         mtime = os.path.getmtime(path)
     except Exception:
         return []
+    if root.tag == "test-run":
+        # NUnit 3 (Unity Test Framework): the <test-run> totals are the run's own
+        # verdict. `failed` counts only when non-zero; errors are folded into it.
+        def a(k):
+            try:
+                return int(root.attrib.get(k, "0") or 0)
+            except ValueError:
+                return 0
+        cases = list(root.iter("test-case"))
+        failing = [f"{tc.attrib.get('classname','?')}#{tc.attrib.get('name','?')}"
+                   for tc in cases if tc.attrib.get("result") == "Failed"]
+        return [{
+            "path": path, "mtime": mtime, "name": "",
+            "tests": a("total") if "total" in root.attrib else len(cases),
+            "failures": a("failed") if "failed" in root.attrib else len(failing),
+            "errors": 0, "skipped": a("skipped"),
+            "failing": failing,
+        }]
     if root.tag == "testsuite":
         nodes = [root]
     elif root.tag == "testsuites":
@@ -400,17 +428,42 @@ TEST_RUNNER_RX = re.compile(
     r"\b(npm|yarn|pnpm|bun)\s+(run\s+)?test|\b(npx\s+)?(jest|vitest|mocha)\b|\bpytest\b|"
     r"python\S*\s+-m\s+(pytest|unittest)|\b(cargo|go|swift|dotnet|flutter|deno)\s+test\b|"
     r"\bnode\s+--test\b|\bxcodebuild\b.*\btest\b|\bmvn\s+(test|verify)\b|\bmake\s+(test|check)\b|"
-    r"\bctest\b|\brspec\b|\bphpunit\b|\bgradlew?\b[^\n|;&]*\b\w*[tT]est\w*\b", re.I)
+    r"\bctest\b|\brspec\b|\bphpunit\b|\bgradlew?\b[^\n|;&]*\b\w*[tT]est\w*\b|"
+    # Unity: the DevKit's unity-batch.sh test modes (not `compile`/`execute`), a
+    # project's scripts/unity-test.sh, or the Editor itself with -runTests.
+    r"\bunity-batch\.sh\b[^\n|;&]*\b(edit|play)mode\b|\bunity-test\.sh\b|(?<![\w-])-runTests\b", re.I)
 # Failure markers. Counts only when non-zero ("fail 0", "0 failed" are green), and the
 # bare words only in the capitals runners print (FAIL, FAILED, ERROR) — a passing test
 # named "shows error message" or node's "ℹ fail 0" summary must not read as red.
+# NUnit 3 (Unity) prints its verdict as `<test-run … failed="N">`: red only when N > 0.
 RUNNER_FAIL_RX = re.compile(
     r"(?i:\b[1-9]\d*\s+(failed|failing|failures?|errors?)\b)|(?i:\btests?:\s+[1-9]\d*\s+failed)|"
     r"(?i:^\s*(?:[#ℹ*•-]\s*)?(fail|failures?|errors?)\s*[:=]?\s*[1-9]\d*\b)|"
+    r"<test-run\b[^>\n]*\sfailed=\"[1-9]\d*\"|"
     r"\bFAIL(ED)?\b|test result: FAILED|^not ok\b|\bpanicked\b|\bERRORS?\b|--- FAIL", re.M)
+# mcp__antigravity-pm__pm_run kind=test runs the project's test command and prints
+# `exit=N` per command (a timeout adds "(QUA HAN)"; "CHUA TINH" = exit 0 that its own
+# evidence check did not accept as green). No `exit=` line = the tool refused before
+# running anything, which is neither red nor green.
+PM_RUN_EXIT_RX = re.compile(r"^exit=(-?\d+|null)", re.M)
+
+def runner_state(is_error, txt, pm_run=False):
+    """"red", "green", or None (not a verdict) for one runner tool_result."""
+    if pm_run:
+        codes = PM_RUN_EXIT_RX.findall(txt)
+        if not codes:
+            return None
+        if any(c != "0" for c in codes) or "(QUA HAN)" in txt:
+            return "red"
+        # The acceptance-gate lines after the run output are about the task, not the run.
+        run_txt = txt.split("CONG NGHIEM THU")[0]
+        if is_error or "CHUA TINH" in run_txt or RUNNER_FAIL_RX.search(run_txt):
+            return None
+        return "green"
+    return "red" if (is_error or RUNNER_FAIL_RX.search(txt)) else "green"
 SRC_EXT = (".kt", ".kts", ".java", ".swift", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py",
            ".go", ".rs", ".dart", ".cs", ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm")
-runner_results = []        # (result_idx, use_idx, is_error, text, command)
+runner_results = []        # (result_idx, use_idx, is_error, text, command, "red"|"green")
 # Test files outside the JVM (jest/vitest/pytest/go/swift…): the RED-check reads
 # runner output instead of TEST-*.xml for them.
 SCRIPT_TEST_RX = re.compile(
@@ -508,7 +561,14 @@ if tp and os.path.exists(tp):
                         if (use and use["name"] == "Bash"
                                 and TEST_RUNNER_RX.search(str(use["input"].get("command", "")))):
                             runner_results.append((blk_idx, use["index"], blk.get("is_error") is True, txt,
-                                                   str(use["input"].get("command", ""))))
+                                                   str(use["input"].get("command", "")),
+                                                   runner_state(blk.get("is_error") is True, txt)))
+                        elif (use and use["name"].endswith("__pm_run")
+                                and use["input"].get("kind") == "test"):
+                            st = runner_state(blk.get("is_error") is True, txt, pm_run=True)
+                            if st:
+                                runner_results.append((blk_idx, use["index"], blk.get("is_error") is True, txt,
+                                                       str(use["input"].get("command") or "pm_run kind=test"), st))
                         producer_ok = bool(
                             use
                             and (
@@ -581,6 +641,10 @@ if tp and os.path.exists(tp):
                             script_pending.setdefault(fp, []).append((o_s, n_s))
                             script_idx_before.setdefault(fp, []).append(script_test_idx.get(fp, -1))
                             script_test_idx[fp] = blk_idx
+                    # Unity C#: the NUnit XML is judged against the last .cs edit, as TEST-*.xml
+                    # is against .kt/.java — else a run from before the fix would still back it.
+                    if isinstance(fp, str) and fp.endswith(".cs") and os.path.exists(fp):
+                        last_edit_mtime = max(last_edit_mtime, os.path.getmtime(fp))
                     if not (isinstance(fp, str) and fp.endswith((".kt", ".java")) and os.path.exists(fp)):
                         continue
                     mt = os.path.getmtime(fp)
@@ -720,7 +784,7 @@ if claimed:
     gradle_repo = any(os.path.exists(os.path.join(repo, f)) for f in
                       ("gradlew", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"))
     runner_ok = [r for r in runner_results
-                 if r[1] > last_src_edit_idx and not r[2] and not RUNNER_FAIL_RX.search(r[3])]
+                 if r[1] > last_src_edit_idx and r[5] == "green"]
     if not mtimes and not gradle_repo and runner_ok:
         logline(f"[{ts}] non-Gradle repo: test runner result #{runner_ok[-1][0]} backs the claim")
     elif not mtimes and not gradle_repo:
@@ -801,7 +865,7 @@ if claimed:
 # failing run counts.
 if claimed:
     def failed(r):
-        return r[2] or RUNNER_FAIL_RX.search(r[3])
+        return r[5] == "red"
     for fp, edited_at in sorted(script_test_idx.items()):
         after = [r for r in runner_results if r[1] > edited_at]
         greens = [r for r in after if not failed(r)]
@@ -878,9 +942,9 @@ if outcome_claimed:
             return False
         # Only a test RUNNER's own result counts as red: `cat` of an old TEST-*.xml
         # prints the same failure markup and must not stand in for a real run.
-        red = any(r[1] < last_src_edit_idx and (r[2] or RUNNER_FAIL_RX.search(r[3]))
+        red = any(r[1] < last_src_edit_idx and r[5] == "red"
                   for r in runner_results)
-        green = any(r[1] > last_src_edit_idx and not r[2] and not RUNNER_FAIL_RX.search(r[3])
+        green = any(r[1] > last_src_edit_idx and r[5] == "green"
                     for r in runner_results)
         return red and green
 

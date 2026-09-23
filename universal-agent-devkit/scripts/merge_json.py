@@ -7,6 +7,13 @@ Rules (user data always wins):
   - dicts merge recursively; a key the user already has keeps the user's value
   - lists union; hook groups ({"matcher", "hooks": [...]}) are deduplicated by
     each hook's `command`, so re-running the installer never duplicates a hook
+  - except inside `mcpServers`: a list the user already has there (`args`, a
+    command array) is positional argv, not a set — it is kept exactly as the user
+    wrote it. A union would append the template's items (`["-y", "pkg",
+    "pkg@1.0.1"]`) and npx would run the package with a stray argument. The lists
+    that must union are set-like: settings.json `permissions.allow/deny` (strings)
+    and `hooks` (dicts) — see adapters/setup_claude.sh and setup_gemini.sh, the only
+    callers, which merge exactly these two template shapes
   - an unparseable target (e.g. JSONC with comments) aborts with exit 1 and is
     never overwritten
   - when a merge changes an existing file whose `<stem>_old<ext>` backup is
@@ -60,6 +67,19 @@ def _merge_list(source, target):
                        if isinstance(t, dict) and isinstance(t.get("hooks"), list)
                        and _overlap(_matcher_set(t), src_m)
                        for h in t["hooks"]}
+            # A DevKit hook already wired keeps the user's matcher and placement; its timeout
+            # becomes the larger of the user's and the DevKit's current one — a re-init must
+            # not leave an old, too short one (180 s vs 600 s for the test-source-set
+            # compile), and a timeout the user raised stays.
+            for h in item["hooks"]:
+                if isinstance(h, dict) and "timeout" in h and _hook_key(h) in present:
+                    for t in target:
+                        if isinstance(t, dict) and isinstance(t.get("hooks"), list) and _overlap(_matcher_set(t), src_m):
+                            for th in t["hooks"]:
+                                if isinstance(th, dict) and _hook_key(th) == _hook_key(h):
+                                    cur = th.get("timeout")
+                                    if not isinstance(cur, (int, float)) or cur < h["timeout"]:
+                                        th["timeout"] = h["timeout"]
             new_hooks = [h for h in item["hooks"] if _hook_key(h) not in present]
             if not new_hooks:
                 continue
@@ -77,14 +97,19 @@ def _merge_list(source, target):
             target.append(item)
 
 
-def deep_merge(source, target):
+# Top-level keys whose lists are ordered values (argv), never sets: the user's wins.
+KEEP_USER_LISTS_UNDER = ("mcpServers",)
+
+
+def deep_merge(source, target, _path=()):
     for key, val in source.items():
         if key not in target:
             target[key] = val
         elif isinstance(val, dict) and isinstance(target[key], dict):
-            deep_merge(val, target[key])
+            deep_merge(val, target[key], _path + (key,))
         elif isinstance(val, list) and isinstance(target[key], list):
-            _merge_list(val, target[key])
+            if not (_path and _path[0] in KEEP_USER_LISTS_UNDER):
+                _merge_list(val, target[key])
         # else: the user already set this key — keep their value
     return target
 

@@ -83,6 +83,6 @@ Kỹ năng chuyên sâu kiểm toán vòng lặp vẽ lại (Recomposition Loop)
 
 2. **Đo FPS & Jank với Script DevKit:**
    ```bash
-   ./profiles/android/scripts/qa/adb-fps-measure.sh <package_name> 10
+   "$QA"/adb-fps-measure.sh  # $QA: see the android-real-device-qa skill, section 0 <package_name> 10
    ```
    - Tiêu chuẩn: Tốc độ khung hình trung bình $\ge 115\text{ FPS}$ trên màn hình 120Hz, tỷ lệ jank $\le 2\%$.

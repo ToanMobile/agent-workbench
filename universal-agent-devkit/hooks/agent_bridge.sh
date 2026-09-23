@@ -10,6 +10,8 @@
 #   prompt   UserPromptSubmit / BeforeAgent     → prompt_context.sh
 #   shell    PreToolUse(Bash) / BeforeTool(run_shell_command) / beforeShellExecution
 #                                               → block-dangerous-git.sh, hardware_safety_gate.sh
+#                                               (incl. its destructive rm guard; the session
+#                                               cwd is passed on as the payload cwd)
 #   stop     Stop / AfterAgent / stop           → regression_gate.sh
 #
 # It rewrites the platform's stdin into the Claude hook input, runs <hook.sh> (from
@@ -53,6 +55,8 @@ kind = os.environ["KIND"]
 ti = d.get("tool_input") if isinstance(d.get("tool_input"), dict) else {}
 if kind == "shell":
     out = {"tool_name": "Bash", "tool_input": {"command": ti.get("command") or d.get("command") or ""}}
+    if isinstance(d.get("cwd"), str) and d["cwd"]:
+        out["cwd"] = d["cwd"]  # where the command runs: relative rm targets start here
 elif kind == "prompt":
     out = {"prompt": d.get("prompt") or ""}
 elif kind == "stop":

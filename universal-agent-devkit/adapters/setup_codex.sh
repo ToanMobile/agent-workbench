@@ -23,7 +23,9 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && [ -f "$TARGET_DIR/CODEX.md" ] && [ ! -
 fi
 
 if [ -f "$TARGET_DIR/CODEX.md" ]; then
-  CODEX_INJECT="$DEVKIT_ROOT/templates/claude_injection_block.md"
+  # Codex never reads CODEX.md (AGENTS.md only) and expands no @-imports: the plain
+  # "read these files first" block, for any other agent pointed at this file.
+  CODEX_INJECT="$DEVKIT_ROOT/templates/agents_injection_block.md"
   devkit_merge_block "$CODEX_INJECT" "$TARGET_DIR/CODEX.md"
 fi
 

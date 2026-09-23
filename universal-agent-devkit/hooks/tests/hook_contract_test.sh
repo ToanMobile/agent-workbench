@@ -116,6 +116,26 @@ lines = [json.dumps({"message": {"content": [c]}}) for c in (edit, bash, edit, b
 open(path, "w").write("\n".join(lines) + "\n")
 PY
 
+# reverse-scan order: evidence first, then 3 edits (warns); 3 edits then evidence
+# (quiet); 3 edits where one was blocked (its is_error result follows it — quiet)
+CHURN_AFTER_TR="${SANDBOX}/churn-after-evidence.jsonl"
+CHURN_BEFORE_TR="${SANDBOX}/churn-before-evidence.jsonl"
+CHURN_ERR_TR="${SANDBOX}/churn-errored.jsonl"
+python3 - "$CHURN_AFTER_TR" "$CHURN_BEFORE_TR" "$CHURN_ERR_TR" "$KT_SEEN" <<'PY'
+import json, sys
+after, before, err, kt = sys.argv[1:5]
+def edit(i):
+    return {"type": "tool_use", "id": f"e{i}", "name": "Edit",
+            "input": {"file_path": kt, "old_string": "a", "new_string": "b"}}
+bash = {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "./gradlew test"}}
+failed = {"type": "tool_result", "tool_use_id": "e2", "is_error": True, "content": "blocked"}
+def write(path, blocks):
+    open(path, "w").write("\n".join(json.dumps({"message": {"content": [b]}}) for b in blocks) + "\n")
+write(after, [bash, edit(1), edit(2), edit(3)])
+write(before, [edit(1), edit(2), edit(3), bash])
+write(err, [edit(1), edit(2), failed, edit(3)])
+PY
+
 DEVICE_ONLY_TR="${SANDBOX}/device-only.jsonl"
 python3 - "$DEVICE_ONLY_TR" <<'PY'
 import json, sys
@@ -686,6 +706,116 @@ printf 'IVI01  # the rig\n' > "${SANDBOX}/.adb-allowlist"
 hwcase 2 'adb -s RFCW504KFKJ shell ls'
 hwcase 0 'adb -s IVI01 shell ls'
 rm -f "${SANDBOX}/.adb-allowlist"
+# The same guard through replicant-mcp (profiles android/automotive: essential_mcps).
+# Tool names and input schemas from replicant-mcp 1.6.7 dist/tools/*.js: adb-shell
+# {command} and adb-app {operation, packageName} have no device field — they run on the
+# server's selected device, or the only online one. Its own process-runner blocks
+# `rm -rf /system`, dd, su, format, but not `mount … rw /system` or `pm uninstall
+# <system package>`, and knows nothing of the device policy.
+mcpcase() { # want tool input-json [ENV=VAL ...]
+  want="$1"; tool="$2"; input="$3"; shift 3
+  run_case "hw-gate[${want}]: mcp ${tool} ${input}${1:+ [${1%%,*}…]}" hardware_safety_gate.sh "${want}" \
+    "{\"tool_name\":\"mcp__replicant-mcp__${tool}\",\"tool_input\":${input}}" \
+    XDG_CONFIG_HOME="${SANDBOX}/xdg" ADB_DENY_SERIALS= ADB_ALLOW_SERIALS= ANDROID_SERIAL= "$@"
+}
+mcpcase 2 adb-shell '{"command":"pm uninstall --user 0 com.android.systemui"}'
+mcpcase 2 adb-shell '{"command":"mount -o rw,remount /system"}'
+mcpcase 2 adb-shell '{"command":"rm -rf /system/app/Launcher"}'
+mcpcase 0 adb-shell '{"command":"ls /sdcard"}'
+mcpcase 0 adb-shell '{"command":"rm -rf /sdcard/Download/shots"}'
+mcpcase 2 adb-app '{"operation":"uninstall","packageName":"com.android.systemui"}'
+mcpcase 0 adb-app '{"operation":"uninstall","packageName":"com.shop.app"}'
+mcpcase 2 adb-device '{"operation":"select","deviceId":"RFCW504KFKJ"}' "${DENY}"
+mcpcase 0 adb-device '{"operation":"select","deviceId":"IVI01"}' "${DENY}"
+mcpcase 2 adb-shell '{"command":"ls"}' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
+mcpcase 0 adb-shell '{"command":"ls"}' "${DENY}" "${HWP}" FAKE_SERIAL=IVI01
+mcpcase 2 ui-capture '{"operation":"screenshot"}' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
+mcpcase 2 adb-app '{"operation":"install","apkPath":"app.apk"}' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
+# `adb-device list` auto-selects the only online device: checked like a device call.
+mcpcase 2 adb-device '{"operation":"list"}' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
+mcpcase 0 adb-device '{"operation":"list"}' "${DENY}" "${HWP}"
+mcpcase 0 gradle-build '{"operation":"assembleDebug"}' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
+mcpcase 2 adb-shell '{"command":"ls"}' ADB_ALLOW_SERIALS=IVI01 "${HWP}" FAKE_SERIAL=RFCW504KFKJ
+# a tool this version does not have: its serial-like field is still checked
+mcpcase 2 adb-reboot '{"deviceId":"RFCW504KFKJ"}' "${DENY}"
+# An MCP payload never takes the Bash fast path (its "command" is a DEVICE command).
+run_case "hw-gate: mcp payload skips the fast path (no python3)" hardware_safety_gate.sh 2 \
+  '{"tool_name":"mcp__replicant-mcp__adb-shell","tool_input":{"command":"pm uninstall com.android.systemui"}}' PATH="${NOJQ_BIN}"
+
+# Destructive rm in the project (Claude's `Bash(rm -rf *)` deny misses -fr, -r -f,
+# --recursive --force; Codex/Gemini/Cursor had nothing). CLAUDE_PROJECT_DIR=SANDBOX.
+mkdir -p "${SANDBOX}/Assets/Old" "${SANDBOX}/src" "${SANDBOX}/app/build" "${SANDBOX}/build"
+printf 'x\n' > "${SANDBOX}/notes.txt"
+hwcase 2 'rm -rf Assets'
+hwcase 2 'rm -fr src'
+hwcase 2 'rm -r -f app'
+hwcase 2 'rm --recursive --force Assets'
+hwcase 2 'rm -Rf -- src'
+hwcase 2 'rm -rf .'
+hwcase 2 'rm -rf ..'
+hwcase 2 'rm -rf *'
+hwcase 2 'rm -rf src/*'
+hwcase 2 'rm -rf ~/Documents'
+hwcase 2 'rm -rf /Users/nobody/proj'
+hwcase 2 'rm -rf "$SOME_DIR"'
+hwcase 2 'rm -rf $(pwd)'
+hwcase 2 'rm -rf `pwd`'
+hwcase 2 'echo "$(rm -rf src)"'
+hwcase 2 'sudo rm -rf src'
+hwcase 2 'npm run build && rm -rf Assets'
+hwcase 2 'bash -c "rm -rf src"'
+hwcase 2 'cd / && rm -rf Users/nobody/Documents'
+hwcase 2 '(cd /tmp/w && true); rm -rf src'
+hwcase 2 'cd app || rm -rf src'
+hwcase 0 'rm -rf build'
+hwcase 0 'rm -rf node_modules .gradle'
+hwcase 0 'rm -rf Library Temp obj'
+hwcase 0 'rm -rf app/build'
+hwcase 0 'rm -rf build/*'
+hwcase 0 'rm -rf Assets/Old'
+hwcase 0 'rm -rf /tmp/devkit-x'
+hwcase 0 'rm -rf "$TMPDIR/devkit-x"'
+hwcase 0 'rm -rf notes.txt'
+hwcase 0 'rm -r src'
+hwcase 0 'rm -f notes.txt'
+hwcase 0 'cd /tmp/work && rm -rf src'
+hwcase 0 'D=build; rm -rf $D'
+hwcase 0 'echo rm -rf src'
+hwcase 0 'find . -name __pycache__ -exec rm -rf {} +'
+# the session cwd (Claude sends it in the payload) is where a relative path starts
+run_case "hw-gate[0]: rm -rf src from cwd app/ (app/src)" hardware_safety_gate.sh 0 \
+  "{\"tool_name\":\"Bash\",\"cwd\":\"${SANDBOX}/app\",\"tool_input\":{\"command\":\"rm -rf src\"}}"
+run_case "hw-gate[2]: rm -rf ../src from cwd app/" hardware_safety_gate.sh 2 \
+  "{\"tool_name\":\"Bash\",\"cwd\":\"${SANDBOX}/app\",\"tool_input\":{\"command\":\"rm -rf ../src\"}}"
+# a build-output NAME that git tracks is source (this DevKit's own bin/), not output
+GP="${SANDBOX}/gitproj"; mkdir -p "${GP}/bin"; printf 'x\n' > "${GP}/bin/tool.sh"
+git -C "${GP}" init -q && git -C "${GP}" add bin/tool.sh
+hwcase 2 'rm -rf bin' CLAUDE_PROJECT_DIR="${GP}"
+hwcase 0 'rm -rf build' CLAUDE_PROJECT_DIR="${GP}"
+# harmless commands still take the fast path (no python3)
+run_case "hw-gate: fast path allows npm test without python3" hardware_safety_gate.sh 0 \
+  '{"tool_name":"Bash","tool_input":{"command":"npm test"}}' PATH="${NOJQ_BIN}"
+# Codex / Gemini / Cursor get the rm guard through agent_bridge.sh (shell → this gate).
+bridge_rm() { # platform payload → prints rc and stdout
+  printf '%s' "$2" | (cd "${SANDBOX}" && bash "${HOOKS}/agent_bridge.sh" "$1" shell hardware_safety_gate.sh 2>/dev/null)
+}
+for pf in codex gemini; do
+  bridge_rm "${pf}" "{\"tool_input\":{\"command\":\"rm -fr src\"},\"cwd\":\"${SANDBOX}\"}" >/dev/null
+  rc=$?
+  if [ "${rc}" -eq 2 ]; then PASS=$((PASS + 1)); printf '  ok   %-46s exit=2\n' "bridge ${pf}: rm -fr src blocked"
+  else FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ bridge ${pf}: rm -fr src not blocked (rc=${rc})"; printf '  FAIL %-46s rc=%s\n' "bridge ${pf}: rm -fr src blocked" "${rc}"; fi
+done
+out="$(bridge_rm cursor "{\"command\":\"rm -r -f app\",\"cwd\":\"${SANDBOX}\"}")"
+if printf '%s' "${out}" | grep -q '"permission": "deny"'; then PASS=$((PASS + 1)); printf '  ok   %-46s\n' "bridge cursor: rm -r -f app denied"
+else FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ bridge cursor: rm -r -f app not denied (out=${out})"; printf '  FAIL %-46s\n' "bridge cursor: rm -r -f app denied"; fi
+# the session cwd reaches the gate: from <git root>/app, `rm -rf src` is app/src
+mkdir -p "${GP}/app/src"
+out="$(bridge_rm cursor "{\"command\":\"rm -rf src\",\"cwd\":\"${GP}/app\"}")"
+if [ -z "${out}" ]; then PASS=$((PASS + 1)); printf '  ok   %-46s\n' "bridge cursor: rm -rf src in app/ allowed (cwd)"
+else FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ bridge cursor: rm -rf src from app/ denied (out=${out})"; printf '  FAIL %-46s\n' "bridge cursor: rm -rf src in app/ allowed (cwd)"; fi
 echo
 
 # ── precode_gate.sh — PreToolUse Edit|Write ─────────────────────────────────
@@ -769,6 +899,8 @@ ctx_case "prompt: matching project trap is cited" prompt_context.sh '{"prompt":"
 ctx_case "prompt: XSS / SQL injection → SECURITY" prompt_context.sh '{"prompt":"sửa lỗ hổng XSS ở ô bình luận"}' "SECURITY"
 ctx_case "prompt: slash command adds nothing" prompt_context.sh '{"prompt":"/compact"}' ""
 ctx_case "prompt: chit-chat adds nothing" prompt_context.sh '{"prompt":"cảm ơn bạn nhiều nhé"}' ""
+ctx_case "prompt: under 8 characters adds nothing" prompt_context.sh '{"prompt":"fix bug"}' ""
+ctx_case "prompt: malformed payload adds nothing" prompt_context.sh 'not json sửa lỗi thanh toán' ""
 PROMPT_CONTEXT_SAVE="${PROMPT_CONTEXT:-}"; export PROMPT_CONTEXT=0
 ctx_case "prompt: escape hatch PROMPT_CONTEXT=0" prompt_context.sh '{"prompt":"sửa lỗi nút thanh toán bị bấm 2 lần"}' ""
 unset PROMPT_CONTEXT; [ -n "${PROMPT_CONTEXT_SAVE}" ] && export PROMPT_CONTEXT="${PROMPT_CONTEXT_SAVE}"
@@ -1121,6 +1253,13 @@ run_case "3rd blind edit of one file warns" churn_guard.sh 2 \
   "{\"tool_name\":\"Edit\",\"transcript_path\":\"${CHURN_TR}\",\"tool_input\":{\"file_path\":\"${KT_SEEN}\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
 run_case "evidence between edits stays quiet" churn_guard.sh 0 \
   "{\"tool_name\":\"Edit\",\"transcript_path\":\"${EVID_TR}\",\"tool_input\":{\"file_path\":\"${KT_SEEN}\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
+for c in "edits after the last evidence call warn|2|${CHURN_AFTER_TR}" \
+         "edits before the last evidence call stay quiet|0|${CHURN_BEFORE_TR}" \
+         "a blocked edit (is_error result) is not counted|0|${CHURN_ERR_TR}"; do
+  IFS='|' read -r cname cexp ctr <<< "$c"
+  run_case "$cname" churn_guard.sh "$cexp" \
+    "{\"tool_name\":\"Edit\",\"transcript_path\":\"${ctr}\",\"tool_input\":{\"file_path\":\"${KT_SEEN}\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
+done
 run_case "escape hatch honoured" churn_guard.sh 0 \
   "{\"tool_name\":\"Edit\",\"transcript_path\":\"${CHURN_TR}\",\"tool_input\":{\"file_path\":\"${KT_SEEN}\",\"old_string\":\"a\",\"new_string\":\"b\"}}" \
   CHURN_GUARD=0
@@ -1456,6 +1595,32 @@ run_case "K-7/K-8 spaced module found, missing task ≠ PASS" testsourceset_gate
   "{\"session_id\":\"k78\",\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"xong\"}" \
   CLAUDE_PROJECT_DIR="${TS_PROJ}"
 rm -rf "${TS_PROJ}"
+
+# Monorepo: no ./gradlew at the root, the Android build lives in android/. The
+# changed module is compiled with that wrapper, module path relative to it.
+TS_MONO="$(mktemp -d "${TMPDIR:-/tmp}/hookgradle.XXXXXX")"
+(
+  cd "${TS_MONO}" && git init -q . && mkdir -p android/app/src/main web/src \
+  && touch android/app/build.gradle.kts android/settings.gradle.kts && echo x > web/src/a.ts
+  printf '#!/bin/bash\necho "$PWD $*" > ../gradle_called\n[ -f ../fail ] && { echo "e: A.kt:1:1 Unresolved reference: nope"; exit 1; }\nexit 0\n' > android/gradlew
+  chmod +x android/gradlew
+  git add . && git -c user.email=t@t -c user.name=t commit -qm init \
+  && printf 'class A\n' > android/app/src/main/A.kt && touch fail
+) >/dev/null 2>&1
+run_case "monorepo: android/gradlew compiles :app, break → block" testsourceset_gate.sh 2 \
+  "{\"session_id\":\"mono\",\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"xong\"}" \
+  CLAUDE_PROJECT_DIR="${TS_MONO}"
+if grep -q "/android :app:compileDebugUnitTestKotlin" "${TS_MONO}/gradle_called" 2>/dev/null; then
+  PASS=$((PASS + 1)); printf '  ok   %-46s\n' "monorepo: gradlew run in android/ with :app"
+else
+  FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ monorepo: gradlew run in android/ with :app ($(cat "${TS_MONO}/gradle_called" 2>/dev/null))"; printf '  FAIL %-46s\n' "monorepo: gradlew run in android/ with :app"
+fi
+rm -f "${TS_MONO}/fail"
+run_case "monorepo: android/gradlew green → allow" testsourceset_gate.sh 0 \
+  "{\"session_id\":\"mono2\",\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"xong\"}" \
+  CLAUDE_PROJECT_DIR="${TS_MONO}"
+rm -rf "${TS_MONO}"
 
 # K-13: hook state is gitignored in the project.
 if [ "$(cat "${SANDBOX}/.claude/audit-gate/.gitignore" 2>/dev/null)" = "*" ]; then

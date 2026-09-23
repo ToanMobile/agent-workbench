@@ -11,7 +11,11 @@
 #   F1. The three hook registries agree: hooks/hooks.json (plugin),
 #       templates/claude_settings.json (installer template) and
 #       .claude/settings.json (the DevKit's own dogfood config) wire the same
-#       hooks on the same events.
+#       hooks on the same events UNDER THE SAME MATCHERS (2026-09-23: a hook
+#       wired for `Bash` but not for `mcp__replicant-mcp__.*` in one registry
+#       used to pass), and each routes replicant-mcp's device tools through
+#       hardware_safety_gate.sh (the adb device policy must not be bypassable
+#       through MCP).
 #   F2. Every hooks/*.sh is either wired in hooks/hooks.json or says
 #       "OPT-IN HELPER" in its header — no silent orphans.
 #   F3. Every wired hook file exists, parses (`bash -n`), is executable, and
@@ -58,9 +62,9 @@ REGISTRIES = {
 }
 
 def wiring(path):
-    """{event: set(hook basenames)} and the raw commands."""
+    """{event: set(hook basenames)}, the raw commands and {(event, matcher): set(basenames)}."""
     d = json.load(open(path))
-    ev_map, cmds = {}, []
+    ev_map, cmds, by_matcher = {}, [], {}
     for ev, arr in (d.get("hooks") or {}).items():
         for m in arr:
             for c in m.get("hooks", []):
@@ -68,7 +72,8 @@ def wiring(path):
                 cmds.append(cmd)
                 for b in re.findall(r"([A-Za-z0-9_\-]+\.sh)", cmd):
                     ev_map.setdefault(ev, set()).add(b)
-    return ev_map, cmds
+                    by_matcher.setdefault((ev, m.get("matcher") or ""), set()).add(b)
+    return ev_map, cmds, by_matcher
 
 print("F1. registries agree")
 wired = {}
@@ -80,8 +85,15 @@ for path, label in REGISTRIES.items():
         wired[path] = wiring(path)
     except Exception as e:
         check(False, f"{path} parses", repr(e))
-ref = wired.get("hooks/hooks.json", ({}, []))[0]
-for path, (ev_map, _) in wired.items():
+ref = wired.get("hooks/hooks.json", ({}, [], {}))[0]
+ref_m = wired.get("hooks/hooks.json", ({}, [], {}))[2]
+for path, (ev_map, _, by_m) in wired.items():
+    # replicant-mcp (android/automotive essential_mcps) exposes adb-shell / adb-app /
+    # adb-device: the device guard must see them in every registry.
+    routed = any(ev == "PreToolUse" and "hardware_safety_gate.sh" in hooks
+                 and re.fullmatch(mt, "mcp__replicant-mcp__adb-shell")
+                 for (ev, mt), hooks in by_m.items())
+    check(routed, f"{path} routes mcp__replicant-mcp__* to hardware_safety_gate.sh")
     if path == "hooks/hooks.json":
         continue
     same = {k: sorted(v) for k, v in ev_map.items()} == {k: sorted(v) for k, v in ref.items()}
@@ -92,6 +104,11 @@ for path, (ev_map, _) in wired.items():
             if a != b:
                 diff += f"{ev}: +{sorted(a - b)} -{sorted(b - a)} "
     check(same, f"{path} == hooks/hooks.json", diff.strip())
+    same_m = {k: sorted(v) for k, v in by_m.items()} == {k: sorted(v) for k, v in ref_m.items()}
+    diff = " ".join(f"{ev}[{mt}]: +{sorted(by_m.get((ev, mt), set()) - ref_m.get((ev, mt), set()))} "
+                    f"-{sorted(ref_m.get((ev, mt), set()) - by_m.get((ev, mt), set()))}"
+                    for ev, mt in sorted(set(by_m) | set(ref_m)) if by_m.get((ev, mt)) != ref_m.get((ev, mt)))
+    check(same_m, f"{path} == hooks/hooks.json (per matcher)", diff)
 print()
 
 print("F2. no silent orphans")
@@ -119,7 +136,7 @@ for b in sorted(wired_names):
 print()
 
 print("F4. registry commands go through bash")
-for path, (_, cmds) in wired.items():
+for path, (_, cmds, _) in wired.items():
     bad = [c for c in cmds if not c.lstrip().startswith("bash ")]
     check(not bad, f"{path}", f"not via bash: {bad[:1]}" if bad else "")
 print()

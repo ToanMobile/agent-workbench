@@ -2,7 +2,14 @@
 # agent-kit — Management & Initialization CLI for Universal Agent DevKit
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Called through a link (~/.local/bin/agent-kit, agent-install) the folder holding the
+# link is not the DevKit: follow the links to the real file first (bash 3.2: no readlink -f).
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  LINK="$(readlink "$SELF")"
+  case "$LINK" in /*) SELF="$LINK" ;; *) SELF="$(dirname "$SELF")/$LINK" ;; esac
+done
+SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
 DEVKIT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 CMD="${1:-help}"
@@ -26,8 +33,10 @@ case "$CMD" in
     mkdir -p "$INSTALL_DIR"
     ln -sf "$DEVKIT_ROOT/bin/agent-kit" "$INSTALL_DIR/agent-kit"
     ln -sf "$DEVKIT_ROOT/bin/install.sh" "$INSTALL_DIR/agent-install"
+    ln -sf "$DEVKIT_ROOT/bin/profile" "$INSTALL_DIR/agent-profile"
+    ln -sf "$DEVKIT_ROOT/bin/agent-health.py" "$INSTALL_DIR/agent-health"
     ln -sf "$DEVKIT_ROOT/bin/post-fix-gate.py" "$INSTALL_DIR/postfix-gate"
-    echo "✓ Global CLI installed to $INSTALL_DIR/agent-kit (+ agent-install, postfix-gate)"
+    echo "✓ Global CLI installed to $INSTALL_DIR/agent-kit (+ agent-install, agent-profile, agent-health, postfix-gate)"
     echo "Ensure '$INSTALL_DIR' is in your PATH."
     echo "You can now run 'agent-kit init' inside any project directory!"
     ;;
@@ -108,10 +117,26 @@ case "$CMD" in
     shift || true
     python3 "$DEVKIT_ROOT/scripts/matrix_detect.py" "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" "$@"
     ;;
+  worktree|wt)
+    # worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init] | diff <path> | remove <path> | list
+    shift || true
+    python3 "$DEVKIT_ROOT/scripts/worktree.py" "$@"
+    ;;
+  completion)
+    # completion [bash|zsh] — eval "$(agent-kit completion bash)" in ~/.bashrc (zsh: ~/.zshrc)
+    shift || true
+    case "${1:-bash}" in
+      bash) ;;
+      zsh) echo 'autoload -U +X bashcompinit && bashcompinit' ;;
+      *) echo "agent-kit completion: bash | zsh" >&2; exit 2 ;;
+    esac
+    printf '_AGENT_KIT_ROOT=%q\n' "$DEVKIT_ROOT"
+    cat "$DEVKIT_ROOT/completions/agent-kit.bash"
+    ;;
   index-memory|index)
     shift || true
     # Default: the current project's failure memory (not the DevKit's own).
-    TARGET_F="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.agents/instincts.md}"
+    TARGET_F="${1:-${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/.agents/instincts.md}"
     python3 "$DEVKIT_ROOT/scripts/index_memory.py" "$TARGET_F"
     ;;
   list-old|old|backups)
@@ -159,6 +184,9 @@ Commands:
   learn "<title>" [--cause TEXT] [--rule TEXT] [--check CMD] [--dry-run]
                       Record a lesson in .agents/instincts.md as the next [INSTINCT-NNN]
                       (a title already recorded is refused; --force to add anyway)
+  learn --from-json FILE [--dry-run]
+                      Add every {"verdict":"INSTINCT", title, cause, rule, source, found_on}
+                      item of a JSON list (e.g. classified old memory); re-runnable
   clean [path] [--days=N] [--apply] [--old-installs]
                       Remove hook logs, session state, restore backups and adb evidence
                       in .claude/audit-gate older than N days (default 14); trims logs over
@@ -166,8 +194,20 @@ Commands:
   matrix [--write]    Regression matrix generated from this project's test runner (gradle,
                       swift, npm/pnpm/yarn/bun, pytest, go, cargo, flutter); --write activates it
                       (agent-kit profile does this when the profile only has a sample matrix)
+  worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init]
+                      Git worktree for a parallel agent (branch default feat/<folder>), set up
+                      like the main checkout: ignored local config copied, DevKit installed
+  worktree diff <path>
+                      Its own changes as a patch, DevKit setup left out; bring them back
+                      with: agent-kit worktree diff ../app-x | git apply --3way
+  worktree remove <path>
+                      Remove it once every uncommitted change is in the main checkout
+                      (the branch and its commits are kept)
   index-memory [file] Line-numbered index of a large .agents/instincts.md (default: this project's;
                       the SessionStart hook also refreshes it automatically above 20 KB)
+  completion [bash|zsh]
+                      Tab completion: add  eval "\$(agent-kit completion bash)"  to ~/.bashrc
+                      (zsh: eval "\$(agent-kit completion zsh)" in ~/.zshrc)
   test                Run all regression suites (hook contract, workflow engine, installer & gate)
   sync                Resync skills, slash commands, and aliases
   list                List all curated skills

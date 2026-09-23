@@ -197,6 +197,11 @@ expect_in "no session of this project -> not verified" "không có phiên nào" 
 echo "edited $(cd "$TMP/repo" && pwd -P)/src/Core.kt" > "$BR/mine/walkthrough.md"; echo img > "$BR/mine/p.png"
 out="$(POSTFIX_GATE_BRAIN_DIR="$BR" run_gate --run-tests)"
 expect_in "this project's session images are counted" "1 ảnh" "$out"
+touch -t 202001010000 "$BR/mine/walkthrough.md" "$BR/mine/p.png" "$BR/mine"
+out="$(POSTFIX_GATE_BRAIN_DIR="$BR" run_gate --run-tests)"
+expect_in "a session untouched for over 7 days is not counted" "0 ảnh" "$out"
+out="$(POSTFIX_GATE_BRAIN_DIR="$BR" POSTFIX_GATE_BRAIN_DAYS=100000 run_gate --run-tests)"
+expect_in "POSTFIX_GATE_BRAIN_DAYS widens the window" "1 ảnh" "$out"
 
 # --- G-9: --diff cannot smuggle git options ------------------------------------------
 make_repo "true"
@@ -215,8 +220,8 @@ make_repo "true"
 echo "fun ok() = 2" > src/Core.kt
 run_gate --run-tests --record-lesson "$(printf 'x\n# injected heading\n- item')" >/dev/null 2>&1
 if [ -f .agents/instincts.md ] && ! grep -q '^# injected' .agents/instincts.md && ! grep -q '^- item' .agents/instincts.md \
-   && grep -q 'INSTINCT-001\] x \\# injected heading' .agents/instincts.md; then
-  echo "✔ lesson recorded after PASS with Markdown escaped"
+   && grep -q 'INSTINCT-001\] x # injected heading - item$' .agents/instincts.md; then
+  echo "✔ lesson recorded after PASS, folded to one line (no injected heading/item)"
 else echo "✖ lesson missing or not escaped"; FAILS=$((FAILS + 1)); fi
 
 # --- O6: devkit-installed links are not user changes nor "unreadable" --------------
@@ -298,6 +303,71 @@ out="$(gate_nomatrix)"; check "placeholder password in a URL -> not rejected" 0 
 make_repo "true"
 mkdir -p deploy && echo "key material" > deploy/id_ed25519
 out="$(gate_nomatrix)"; check "private SSH key file id_ed25519 -> REJECT" 1 $? "$out"
+
+# --- bare AI / cloud tokens: caught by prefix even in a variable not named key/token ---
+rep() { python3 -c 'import sys; print(sys.argv[1] * int(sys.argv[2]), end="")' "$1" "$2"; }
+for tok in "hf_$(rep a 34)" "sk-ant-api03-$(rep B 90)" "sk-proj-$(rep c 60)" "sbp_$(rep d 40)" \
+           "sk_live_$(rep e 24)" "glpat-$(rep f 20)"; do
+  make_repo "true"
+  printf 'const client = new Client("%s");\n' "$tok" > client.js
+  out="$(gate_nomatrix)"; check "bare token ${tok:0:8}… -> REJECT" 1 $? "$out"
+done
+make_repo "true"
+printf 'const tag = "sk-tiny"; const h = "hf_short";\n' > client.js
+out="$(gate_nomatrix)"; check "short look-alikes (sk-tiny, hf_short) -> not rejected" 0 $? "$out"
+
+# --- raw console output: production code rejected, command-line tools exempt ---------
+make_repo "true"
+mkdir -p src && printf 'console.log("user", user);\n' > src/app.js
+out="$(gate_nomatrix)"; check "console.log in production code -> REJECT" 1 $? "$out"
+for d in bin cmd/server tools; do
+  make_repo "true"
+  mkdir -p "$d" && printf 'console.log("done");\n' > "$d/cli.js"
+  out="$(gate_nomatrix)"; check "console.log in a CLI under $d/ -> not rejected" 0 $? "$out"
+done
+
+# --- a secret already in HEAD is not this change's: warned with file:line, not blocked -----
+make_repo "true"
+printf 'const anon = "%s";\nconst x = 1;\n' "$(rep() { python3 -c 'import sys; print(sys.argv[1] * int(sys.argv[2]), end="")' "$1" "$2"; }; echo "sk-proj-$(rep k 60)")" > keys.js
+git add -A && git commit -qm "old key"
+printf 'const x = 2;\n' >> keys.js
+out="$(gate_nomatrix)"; check "secret already in HEAD, other line edited -> not rejected" 0 $? "$out"
+expect_in "pre-existing secret is still reported, with its line" "keys.js:1" "$out"
+git add keys.js; out="$(CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --staged 2>&1)"; rc=$?
+[ "$rc" != 1 ] && echo "✔ --staged: a secret already in HEAD does not block the commit (exit $rc)" || { echo "✖ --staged blocked a pre-existing secret"; FAILS=$((FAILS + 1)); }
+printf 'const fresh = "%s";\n' "hf_$(python3 -c 'print("q"*34, end="")')" >> keys.js
+out="$(gate_nomatrix)"; check "a NEW secret in the same file -> REJECT" 1 $? "$out"
+expect_in "the new secret is named with file:line" "keys.js:4" "$out"
+
+# --- untested_exit: a test that cannot run here is UNTESTED (exit 4), never PASS/REJECT --
+untested_repo() { # $1 = command, $2 = untested_exit JSON fragment
+  make_repo "true"
+  cat > matrix.json <<JSON
+{"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
+ "mandatory_regression_tests":[{"id":"REG-U","name":"unity","command":"$1"$2}]}]}
+JSON
+  git add -A && git commit -qm m && echo "fun ok() = 5" > src/Core.kt
+}
+untested_repo "exit 2" ', "untested_exit": 2'
+out="$(run_gate --run-tests)"; check "command exits with its untested_exit -> UNTESTED (exit 4)" 4 $? "$out" "PASS —"
+printf '%s' "$out" | grep -q "UNTESTED" && echo "✔ UNTESTED named in the verdict" || { echo "✖ UNTESTED not named"; FAILS=$((FAILS + 1)); }
+untested_repo "exit 2" ''
+out="$(run_gate --run-tests)"; check "exit 2 without untested_exit is a failing test -> REJECT" 1 $? "$out"
+untested_repo "exit 1" ', "untested_exit": 2'
+out="$(run_gate --run-tests)"; check "a real failure is still REJECT when untested_exit is set" 1 $? "$out"
+
+# --- UNCOVERED follows the profile's source_extensions; docs/ .agents/ .claude/ are not code
+make_repo "true"
+mkdir -p .agents/active-profile && echo '{"source_extensions": [".kt", ".java"]}' > .agents/active-profile/profile.json
+git add -A && git commit -qm profile
+echo "fun ok() = 2" > src/Core.kt; echo "fun other() = 1" > src/Other.kt
+mkdir -p docs/evidence .agents/local/workflows app/src/main/res/layout
+echo "<testsuite/>" > docs/evidence/T_RED_1.xml; echo "export const x = 1;" > .agents/local/workflows/audit.js
+echo "<LinearLayout/>" > app/src/main/res/layout/main.xml
+out="$(run_gate --run-tests --json)"
+unc="$(printf '%s\n' "$out" | tail -n 1 | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["uncovered"]))')"
+[ "$unc" = "src/Other.kt" ] && echo "✔ UNCOVERED: only the profile's source file (not docs/ XML, .agents/ JS, res XML)" \
+  || { echo "✖ UNCOVERED list: '$unc'"; FAILS=$((FAILS + 1)); }
 
 # --- --staged: static checks on the index, never PASS --------------------------------
 gate_staged() { CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --staged "$@" 2>&1; }

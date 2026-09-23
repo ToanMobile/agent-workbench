@@ -167,6 +167,44 @@ grep -q "TEAM EDIT" "$Q/.agents/local/skills/fixbugs/SKILL.md" && ls -d "$Q/.age
 ls "$Q/.agents/skills" | grep -q "fixbugs_" && fail "dated copy linked as a skill" || ok "dated copies are never linked as skills"
 [ "$(count_old "$Q")" = 0 ] && ok "copy mode: no *_old created" || fail "copy mode created *_old"
 
+# ------------------------------------------------------------------ relative links keep their target
+# .claude/commands/fix.md -> ../../.agents/skills/my-fix/SKILL.md moves one level deeper
+# (.agents/local/commands/); its relative target must be rewritten, not left dangling.
+R="$TMP/rlinks"; mkdir -p "$R/.claude/commands" "$R/.agents/skills/my-fix" "$R/rules/nested"
+(cd "$R" && git init -q)
+echo "# my fix skill" > "$R/.agents/skills/my-fix/SKILL.md"
+ln -s ../../.agents/skills/my-fix/SKILL.md "$R/.claude/commands/fix.md"
+echo "team rule" > "$R/rules/nested/team.md"; ln -s nested/team.md "$R/rules/team-link.md"   # link inside a moved dir
+echo "outside" > "$R/NOTES.md"; ln -s ../NOTES.md "$R/rules/notes.md"                      # link out of a moved dir
+install "$R"
+[ "$(cat "$R/.agents/local/commands/fix.md" 2>/dev/null)" = "# my fix skill" ] \
+  && ok "moved relative link (.claude/commands → .agents/local/commands) still resolves" || fail "moved link dangles: $(readlink "$R/.agents/local/commands/fix.md")"
+[ "$(cat "$R/.agents/local/rules/team-link.md" 2>/dev/null)" = "team rule" ] && [ "$(cat "$R/.agents/local/rules/notes.md" 2>/dev/null)" = "outside" ] \
+  && ok "links in a moved folder: inside ones kept, outside ones re-pointed" || fail "links in moved rules/ broken"
+
+out="$(bash "$KIT" list-old "$R" 2>&1)"
+printf '%s' "$out" | grep -q "rules/team-link.md: active (@-imported" && ok "list-old: an imported project rule is shown active, not 'reference'" \
+  || fail "list-old rules label: $(printf '%s' "$out" | grep 'rules/' | head -2)"
+
+# ------------------------------------------------------------------ project-tier skills reach Claude Code
+mkdir -p "$R/.agents/local/skills/story-pipeline" "$R/.agents/local/skills/qc"
+printf -- '---\nname: story-pipeline\ndescription: team skill\n---\n' > "$R/.agents/local/skills/story-pipeline/SKILL.md"
+printf -- '---\nname: qc\ndescription: our qc\n---\n' > "$R/.agents/local/skills/qc/SKILL.md"
+install "$R"
+grep -q "team skill" "$R/.claude/commands/story-pipeline.md" 2>/dev/null \
+  && ok "project-tier skill gets a /story-pipeline command linked to its SKILL.md" || fail "local skill not reachable as a command"
+grep -q "our qc" "$R/.claude/commands/qc.md" 2>/dev/null && fail "a local skill replaced the DevKit /qc command" || ok "a DevKit command of the same name is kept"
+
+# ------------------------------------------------------------------ only hook scripts in .claude/hooks
+[ ! -e "$R/.claude/hooks/tests" ] && [ ! -e "$R/.claude/hooks/hooks.json" ] && [ -L "$R/.claude/hooks/precode_gate.sh" ] \
+  && ok ".claude/hooks gets the hook scripts, not hooks/tests or hooks.json" || fail "non-hook entries linked into .claude/hooks"
+DKP="$(cd "$DK" && pwd -P)"   # the installer links by the DevKit's physical path
+ln -s "$DKP/hooks/tests" "$R/.claude/hooks/tests"; ln -s "$DKP/hooks/hooks.json" "$R/.claude/hooks/hooks.json"
+echo "mine" > "$R/.claude/hooks/my_hook.sh"
+install "$R"
+[ ! -e "$R/.claude/hooks/tests" ] && [ ! -e "$R/.claude/hooks/hooks.json" ] && [ "$(cat "$R/.claude/hooks/my_hook.sh")" = "mine" ] \
+  && ok "re-install removes the old tests/hooks.json links, keeps the project's own hook" || fail "stale hook links kept or own hook touched"
+
 if [ "$FAILS" -ne 0 ]; then
   echo "local tier: $FAILS FAILED"; exit 1
 fi

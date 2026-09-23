@@ -28,6 +28,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -428,6 +429,35 @@ def main(argv):
     for name in ("CLAUDE.md", "AGENTS.md", "GEMINI.md", "Agent.md", "CODEX.md", ".cursorrules"):
         strip_block(plan, os.path.join(project, name))
     strip_block(plan, os.path.join(project, ".gitignore"), style="hash")
+    # The always-applied Cursor rule setup_cursor.sh writes: its block goes; a file left
+    # with only the DevKit's own front matter goes too.
+    mdc = os.path.join(project, ".cursor", "rules", "universal-agent-devkit.mdc")
+    if os.path.isfile(mdc) and not os.path.islink(mdc):
+        text = open(mdc, encoding="utf-8").read()
+        i, j = text.find(f"<!-- {MARKER}:start -->"), text.find(f"<!-- {MARKER}:end -->")
+        rest = (text[:i] + text[j + len(f"<!-- {MARKER}:end -->"):]) if 0 <= i < j else text
+        if re.fullmatch(r"\s*---\ndescription: Universal Agent DevKit[^\n]*\nalwaysApply: true\n---\s*", rest):
+            plan.remove(mdc)
+        else:
+            strip_block(plan, mdc)
+    # Gemini: the DevKit folder added to context.includeDirectories (symlink mode).
+    gset = os.path.join(project, ".gemini", "settings.json")
+    gdata = load_json(gset)
+    dirs = (gdata or {}).get("context", {}).get("includeDirectories") if isinstance(gdata, dict) else None
+    if isinstance(dirs, list) and any(os.path.realpath(str(d)) == os.path.realpath(DEVKIT) for d in dirs):
+        dirs[:] = [d for d in dirs if os.path.realpath(str(d)) != os.path.realpath(DEVKIT)]
+        if not dirs:
+            del gdata["context"]["includeDirectories"]
+            if not gdata["context"]:
+                del gdata["context"]
+        if plan.apply:
+            if gdata:
+                write_atomic(gset, json.dumps(gdata, indent=2, ensure_ascii=False) + "\n")
+            else:
+                os.unlink(gset)
+        plan.say("đã sửa" if plan.apply else "sẽ sửa", "cleaned" if plan.apply else "would clean", gset,
+                 tr(" (bỏ thư mục DevKit khỏi includeDirectories)", " (DevKit folder removed from includeDirectories)"))
+        plan.removed += 1
 
     # A matrix generated from the project's test runner is recognised by regenerating it,
     # which reads the active profile — decide now, before step 3 removes that link.
@@ -462,13 +492,19 @@ def main(argv):
         elif os.path.islink(d) and link_is_devkit_owned(d):
             plan.remove(d)
     devkit_item(plan, os.path.join(project, ".agents", "active-profile"))
+    devkit_item(plan, os.path.join(project, ".agents", "devkit", "AGENTS.md"))  # master, next to an own AGENTS.md
+    side = os.path.join(project, ".agents", "regression_matrix.generated.json")  # comparison copy only
+    if os.path.isfile(side) and not os.path.islink(side):
+        plan.remove(side)
 
     # 4. Files created from DevKit templates / by agent-config, while still unmodified.
-    for rel_path, tmpl in (("DESIGN.md", "templates/DESIGN.md"),
-                           (".agents/instincts.md", "templates/instincts.template.md")):
+    pdir = os.path.join(DEVKIT, "profiles")
+    designs = ["templates/DESIGN.md"] + [os.path.join("profiles", d, "DESIGN.md") for d in sorted(os.listdir(pdir))]
+    for rel_path, tmpls in (("DESIGN.md", designs),   # the template or a profile's copy
+                            (".agents/instincts.md", ["templates/instincts.template.md"])):
         p = os.path.join(project, rel_path)
         if os.path.isfile(p) and not os.path.islink(p):
-            if same_bytes(p, os.path.join(DEVKIT, tmpl)):
+            if any(os.path.isfile(os.path.join(DEVKIT, t)) and same_bytes(p, os.path.join(DEVKIT, t)) for t in tmpls):
                 plan.remove(p)
     known = [os.path.join(DEVKIT, "templates", "regression_matrix.json")]
     pdir = os.path.join(DEVKIT, "profiles")
@@ -521,7 +557,8 @@ def main(argv):
     # 5. Directories the installer created and that are now empty.
     if apply:
         for sub in (".claude/hooks", ".claude/commands", ".claude/agents", ".claude",
-                    ".agents/skills", ".agents/hooks", ".agents", "templates"):
+                    ".agents/skills", ".agents/hooks", ".agents/devkit", ".agents", "templates",
+                    ".cursor/rules", ".cursor", ".gemini"):
             remove_if_empty_dir(plan, os.path.join(project, sub))
 
     verb = tr("đã gỡ/sửa", "removed/cleaned") if apply else tr("sẽ gỡ/sửa", "would remove/clean")

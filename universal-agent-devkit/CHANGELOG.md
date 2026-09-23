@@ -164,6 +164,151 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
   root has no runner of its own (their root-only sample would fail every stop).
 - `post-fix-gate.py`: the `.env` rule is an explicit `ENV_FILE_PATTERN` instead of "the last entry of
   FORBIDDEN_SECRET_FILES", so adding a forbidden-file rule can no longer disable the `.env` value scan.
+- **`agent-kit worktree add|diff|remove|list`** (`scripts/worktree.py`): one step for AGENTS §7.1 —
+  `add <path> [branch]` creates the worktree (branch default `feat/<folder>`), copies the main
+  checkout's git-ignored local config (`.env*`, `local.properties`, `google-services.json` …) and
+  installs the DevKit with the main checkout's profile, agents and mode, then records that set-up
+  (path + content fingerprint) in the worktree's own git dir. `diff <path>` prints the worktree's
+  commits and uncommitted work as one patch with the DevKit set-up left out — the documented
+  `git add -A | git apply --3way` carried the DevKit files, which already exist in the main checkout,
+  and the apply failed. `remove <path>` refuses while an uncommitted change is not in the main
+  checkout byte-for-byte; the branch is kept.
+- **Fixes from migrating three real projects (OfficeReader / android, GeelyEx2 / automotive,
+  Goods-Triple-Shelf-Match-3D / game):**
+  - Injected block (CLAUDE.md / AGENTS.md / CODEX.md / .cursorrules):
+    - The DevKit master rules now reach the agent in a project that keeps its own AGENTS.md: they
+      are linked at `.agents/devkit/AGENTS.md` and imported from there. `@AGENTS.md` imported only
+      the project's file.
+    - The active profile's rules are imported through `.agents/active-profile/RULES.md`, a new
+      stable link in every profile that follows `agent-kit profile` switches. Before, `rules_file`
+      was never imported.
+    - The gate command no longer points at `bin/post-fix-gate.py`, which is not installed in
+      projects.
+    - A CLAUDE.md that links to AGENTS.md gets one block, and AGENTS_old.md is still made.
+  - Installer:
+    - Relative links moved into `.agents/local/` are re-pointed; they used to dangle.
+    - Project-tier rule files that are links are imported too, once per real file.
+    - `list-old` shows imported rules as active.
+    - A project-tier skill gets a `/name` command, so Claude Code can reach it.
+    - `.claude/hooks/` gets only hook scripts; old `tests`/`hooks.json` links are removed.
+    - A new DESIGN.md comes from the chosen profile.
+    - The universal instincts template no longer ships voice-assistant traps. They moved to that
+      profile as VOICE-06..08.
+    - Unity projects and monorepos whose runners sit in first-level folders are auto-detected
+      (domain game / android).
+    - A project `.gitignore` that hides `.agents/` is reported, with the fix.
+    - A curated `.agents/regression_matrix.active.json` stays active on re-init or a profile
+      switch. The fresh one is written to `regression_matrix.generated.json`; before, a re-init
+      renamed the curated matrix to `*_old`.
+  - `scripts/merge_json.py`: under `mcpServers`, a list the user already has (`args`) is kept.
+    Before, it was unioned element by element, so npx got stray arguments on every re-init.
+  - `scripts/matrix_detect.py`:
+    - Detects Unity (EditMode through the profile's `unity-batch.sh`) before .NET.
+    - Detects Android via version-catalog aliases, convention plugins or a module manifest.
+    - Test tasks are named only when the build files prove they exist: `testBuildType` →
+      `:m:test<X>UnitTest`, productFlavors → `:m:test`, KMP → `testAndroidHostTest` / `jvmTest` /
+      `allTests`. Plugins declared `apply false` are ignored.
+    - A module's `includeBuild` composites are watched by its rule.
+    - A Gradle build with no test sources gets no rule of its own (zero tests would pass green).
+  - `post-fix-gate`:
+    - A matrix test may declare `untested_exit` (`unity-batch.sh`: 2 = no Editor). That result is
+      UNTESTED, exit 4: never PASS, never a failing test. `regression_gate.sh` lets the stop through
+      with a "not a PASS" warning, once per change.
+    - UNCOVERED follows the profile's `source_extensions` and skips `docs/`, `.agents/`, `.claude/`.
+    - The project name falls back to the active profile, not "Universal Application".
+    - `regression_gate.sh` says once per session when the gate is off because the matrix is only a
+      sample.
+  - `agent-kit health --run-tests`: a red suite is FAIL (exit 1), whatever the score.
+  - `agent-kit index-memory` defaults to `$CLAUDE_PROJECT_DIR`.
+  - `instincts.py`: the check command is rendered as pasteable inline code.
+  - `workflows/multi-lens-audit.js`: takes a caller-supplied `nowMs`. The Workflow runtime forbids
+    `Date.now()`, and every run failed with INTERNAL_VALIDATION_ERROR.
+  - Skills `qc`, `security-checklist`, `deploy`, `unity-gc-audit`, `qa-visual`: project-specific
+    leftovers (Supabase RLS, XLSX gate, `scripts/qa` paths) generalised, and paths the DevKit does
+    not ship removed.
+  - Prompt context: a lone Vietnamese syllable scores half, and an adjacent-word phrase match
+    scores in full. On the three projects' 292 own traps, recall from 8 words of the symptom went
+    from 288 to 291, with the same amount of noise.
+- **Fixes from auditing the three migrated projects end to end:**
+  - Secrets:
+    - A secret whose exact text is already in HEAD (or the `--diff` base) was not introduced by the
+      change, so it is now a warning with `file:line`. It used to be a REJECT on every stop and
+      commit touching that file, forever (a public Supabase anon key).
+    - A new secret is still REJECT, now with `file:line`.
+    - The Stop block text lists the static findings with their location.
+  - Symlink mode: the machine-local DevKit links are written to `.git/info/exclude`. Before, 80–120
+    of them showed as untracked in `git status` and were one `git add -A` away from being committed.
+  - Guards:
+    - The device guard also checks the `replicant-mcp` MCP tools (adb-shell, device selection …),
+      which bypassed it.
+    - A destructive-`rm` guard blocks recursive+force deletes of the project root, a top-level
+      source folder, or paths outside the project, in any flag spelling. Build outputs, /tmp and
+      single files are allowed. It covers Claude Code and, through the bridge, Codex / Gemini / Cursor.
+  - Other agents:
+    - Codex reads AGENTS.md as plain text. The DevKit block now tells it which rule files to open.
+    - Gemini gets a generated `GEMINI.md`; in symlink mode the DevKit folder is added to
+      `context.includeDirectories`.
+    - Cursor gets the always-applied `.cursor/rules/universal-agent-devkit.mdc`.
+    - `uninstall` removes all three.
+  - Profiles filter MCP servers and agents: a game project no longer gets the Android MCPs or
+    `android-principal-architect`, and a server whose command is not on PATH is not added.
+  - DESIGN.md: a project with its own design system (`*design-system*`, token files) gets a short
+    pointer, not the generic token table.
+  - Regression gate:
+    - An uncommitted matrix that is the only problem lets the stop through, with "commit
+      `.agents/regression_matrix.active.json`" once per change. It used to block with a wrong cure.
+    - Deleting the committed matrix blocks once per session instead of silently turning the gate off.
+    - `"adopted": true` marks a project matrix even when it is identical to a sample.
+    - REG-GAME-01 and REG-GAME-02/03 declare `untested_exit: 2`.
+    - Stale UNCOVERED rows are pruned, and none are recorded when the gate does not trust the matrix.
+  - SessionStart reports the real matrix state: none, sample, untrusted (with the cure) or trusted.
+  - `health` checks the project's own wiring: registered hooks exist, no broken links, every
+    `@`-import of the block resolves, the gate trusts the matrix (else FAIL: no regression test
+    runs), and no DevKit link leaks into `git status`.
+  - Test evidence knows Unity: unity-batch.sh / unity-test.sh / `-runTests` runs, NUnit
+    `<test-run>` XML (`Logs/agent-kit/tests_*.xml`) and antigravity-pm `pm_run` exits.
+  - `testsourceset_gate.sh` compiles `compile<TestBuildType>UnitTestKotlin`.
+  - Re-init raises a DevKit hook's timeout to the DevKit's value (it kept an old 180 s).
+  - Prompt context:
+    - Defect wording ("bị xoá/mất", "không chạy", "sai") is a bug fix, not a migration.
+    - Identifier parts count (DocxEditor → docx), so the XXE trap surfaces for DOCX/XML prompts.
+    - A lone Vietnamese phrase no longer pulls an unrelated entry.
+    - The instincts index fits 20 KB, skips commented-out templates, and its `sed` paths work from
+      the repo root.
+  - `instincts.py`: only `<` is escaped (as `&lt;`), so identifiers and `inline code` stay
+    greppable. `\<!--` would still have hidden the entries after it from the matcher.
+  - Smaller fixes:
+    - `githooks install` next to a project's own hook says to insert the gate line after the
+      shebang: an appended line can sit after `exit 0`.
+    - The QA script paths of the Android skills work in projects of any profile.
+    - `review_gate` does not count symlinks as code to review.
+    - The `/audit-gate` and `/profile` commands have descriptions.
+- **`agent-kit learn --from-json FILE [--dry-run]`:** imports a list of lessons in one run (e.g. old
+  memory an agent classified): only `"verdict": "INSTINCT"` items of this project, each with its
+  `found_on` date and a `Nguồn/Source` line; titles already recorded are reported, not added again,
+  so the import can be re-run.
+- **`agent-kit completion bash|zsh`** (`completions/agent-kit.bash`): tab completion for commands,
+  profiles (read from `profiles/`), sub-actions and flags; `eval "$(agent-kit completion bash)"`.
+- **Fixed: `agent-kit` / `agent-install` through their `~/.local/bin` links** (quick-install,
+  `install-global`) took the link's folder for the DevKit (`~/.local`) — every command that reads
+  DevKit files failed. Both now follow links first; the quick-install test runs `list` and
+  `agent-install --help` through the links (it ran only `help`, which reads no file).
+- post-fix gate: bare AI / cloud tokens are caught by their prefix even in a variable not named
+  key/token — Anthropic `sk-ant-…`, OpenAI `sk-proj-…`, Hugging Face `hf_…`, Stripe `sk_live_`/`rk_live_`,
+  GitLab `glpat-…`, npm `npm_…`, SendGrid, Supabase `sbp_…`, Groq `gsk_…`, Replicate `r8_…`. Raw
+  console output is no longer flagged in command-line code under `bin/`, `cmd/`, `tools/` (was
+  `scripts/` only). Antigravity sessions untouched for `POSTFIX_GATE_BRAIN_DAYS` (default 7) are not
+  read for proof images.
+- `testsourceset_gate.sh`: a monorepo without `./gradlew` at the root (e.g. `android/gradlew`) is no
+  longer skipped — each changed `.kt`/`.java` is compiled with the nearest `gradlew` above it, module
+  path relative to that build.
+- Hook latency on long sessions: `churn_guard.sh` walks the transcript backwards and stops at the last
+  evidence call; `precode_gate.sh` skips lines without the file's name (or a Read) before parsing
+  them; `prompt_context.sh` runs one python process instead of three (`enrich_context.py --hook`
+  reads the payload itself); `read_ledger.sh` re-reads its ledger only past 512 KB. Measured on an
+  8 MB transcript: churn 68 → 42 ms, precode 59 → 46 ms, prompt context 74 → 34 ms.
+- `AGENTS.md` §7.1: `agent-kit worktree` for create / bring back / clean up; `agent-kit init` in a
+  worktree can add the DevKit `.gitignore` block (the text said it changes no tracked file).
 - Docs: `AGENTS.md` §7 lists what each platform actually enforces; §8.2 and `core-rules.md` §16 mark
   hook-enforced steps `[hook]` and drop the "Zero Manual Effort" / "CỔNG BẮT BUỘC" claims no hook backed;
   §2.3 asks for real evidence (screenshot for UI, test output for CLI/backend) instead of a PASS

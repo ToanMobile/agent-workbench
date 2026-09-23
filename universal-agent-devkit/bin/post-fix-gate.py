@@ -20,7 +20,9 @@ no regression run, device probe or report. A clean result is exit 2 (tests not r
 never PASS.
 
 Exit codes: 0 PASS, 1 REJECT, 2 UNVERIFIED (tests not run, matrix untrusted, existing
-test edited, unreadable file, no coverage, bad --diff), 3 nothing to audit.
+test edited, unreadable file, no coverage, bad --diff), 3 nothing to audit,
+4 UNTESTED (everything else passed, but a test exited with its matrix `untested_exit`
+code: it cannot run on this machine — e.g. no Unity Editor).
 
 100% Standard Library — Zero external dependencies.
 """
@@ -99,6 +101,18 @@ SECRET_PATTERNS = [
     (r"\bxox[abprs]-[A-Za-z0-9-]{10,}", "Slack Token", None),
     (r"\bAIza[0-9A-Za-z_\-]{35}\b", "Google API Key", None),
     (r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}", "JSON Web Token", None),
+    # AI / cloud API tokens recognisable by their prefix alone — caught even when the
+    # variable holding them has no "key"/"token" in its name.
+    (r"\bsk-ant-(?:api|admin)\d{2}-[A-Za-z0-9_\-]{40,}", "Anthropic API key", None),
+    (r"\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_\-]{40,}|\bsk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}\b", "OpenAI API key", None),
+    (r"\bhf_[A-Za-z0-9]{34,}\b", "Hugging Face token", None),
+    (r"\b(?:sk|rk)_live_[A-Za-z0-9]{24,}\b", "Stripe live secret key", None),
+    (r"\bglpat-[A-Za-z0-9_\-]{20,}", "GitLab personal access token", None),
+    (r"\bnpm_[A-Za-z0-9]{36}\b", "npm access token", None),
+    (r"\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b", "SendGrid API key", None),
+    (r"\bsbp_[A-Za-z0-9]{40,}\b", "Supabase access token", None),
+    (r"\bgsk_[A-Za-z0-9]{50,}\b", "Groq API key", None),
+    (r"\br8_[A-Za-z0-9]{37}\b", "Replicate API token", None),
     # Property lists (Info.plist, *.plist): <key>API_KEY</key><string>value</string>.
     # A build-setting reference ($(API_KEY)) is a placeholder, not a secret.
     (r"(?i)<key>[^<]*(?:api[_\-]?key|secret|token|password|passwd|private[_\-]?key)[^<]*</key>\s*<string>([^<\s]{8,})</string>",
@@ -156,7 +170,7 @@ PERF_ANTIPATTERN_PATTERNS = [
 ]
 
 RESILIENCE_ANTIPATTERN_PATTERNS = [
-    (r"(?s)catch\s*\([^\)]*\)\s*\{\s*\}", ("Khối catch rỗng nuốt lỗi âm thầm (Empty catch block)", "Empty catch block silently swallows errors")),
+    (r"(?s)catch(?:\s*\([^\)]*\))?\s*\{\s*\}", ("Khối catch rỗng nuốt lỗi âm thầm (Empty catch block)", "Empty catch block silently swallows errors")),
     (r"(?m)^\s*except(\s+[a-zA-Z0-9_]+)?:\s*pass\s*$", ("Khối except: pass nuốt lỗi âm thầm", "except: pass silently swallows errors")),
 ]
 
@@ -433,6 +447,18 @@ def _to_project_rel(repo_rel: str):
 STAGED = False       # --staged: audit the index — what `git commit` will record
 STAGED_MODES = {}    # project-relative path -> index mode ("100644", "120000", "160000", …)
 _CONTENT_CACHE = {}
+BASE_REF = "HEAD"    # what "already there" means for a secret: HEAD, or the --diff base
+_BASE_CACHE = {}
+PREEXISTING_SECRETS = []   # (file:line, label) found in the base version too — warned, not blocked
+
+
+def base_text(rel_file: str):
+    """The file at BASE_REF, or None (new file, not in git, unreadable)."""
+    if rel_file not in _BASE_CACHE:
+        res = subprocess.run(["git", "-C", str(get_repo_root()), "show", f"{BASE_REF}:{get_project_prefix()}{rel_file}"],
+                             capture_output=True)
+        _BASE_CACHE[rel_file] = res.stdout.decode("utf-8", errors="replace") if res.returncode == 0 else None
+    return _BASE_CACHE[rel_file]
 
 
 def read_changed_text(rel_file: str):
@@ -589,7 +615,16 @@ def run_git_hygiene_audit(modified_files: list) -> tuple:
                 for m in re.finditer(pat, content):
                     if group is not None and PLACEHOLDER_VALUE.match(m.group(group)):
                         continue
-                    secrets_found.append((rel_file, _L(label)))
+                    line = content.count("\n", 0, m.start()) + 1
+                    # The very same secret text already in the base version was not
+                    # introduced by this change (e.g. a public Supabase anon key committed
+                    # long ago): blocking on it would block every stop and commit that
+                    # touches the file, forever. It is reported to be rotated/removed.
+                    base = base_text(rel_file)
+                    if base is not None and m.group(0) in base:
+                        PREEXISTING_SECRETS.append((f"{rel_file}:{line}", _L(label)))
+                        continue
+                    secrets_found.append((f"{rel_file}:{line}", _L(label)))
                     _record("secrets", rel_file, label, content, m.start(), snippet=False)
                     break
     return len(secrets_found) == 0, secrets_found
@@ -735,7 +770,8 @@ def run_resilience_audit(modified_files: list) -> tuple:
 def run_logging_audit(modified_files: list) -> tuple:
     findings = []
     for rel_file in modified_files:
-        if is_test_path(rel_file) or has_dir(rel_file, "scripts"):
+        # A command-line tool's output IS its console: scripts/, bin/, Go's cmd/, tools/.
+        if is_test_path(rel_file) or has_dir(rel_file, "scripts", "bin", "cmd", "tools"):
             continue
         content = read_changed_text(rel_file) if any(rel_file.endswith(ext) for ext in CODE_EXTENSIONS) else None
         if content is None:
@@ -777,16 +813,31 @@ def check_instincts_memory() -> tuple:
 
 def brain_sessions_for_project(project_dir: Path) -> list:
     """Antigravity session dirs whose plan/walkthrough mentions this project's path.
-    Sessions of other projects are never counted (their images are not evidence here)."""
+    Sessions of other projects are never counted (their images are not evidence here),
+    nor sessions untouched for POSTFIX_GATE_BRAIN_DAYS days (default 7): an old
+    session's screenshots do not show today's change, and skipping them by mtime
+    also spares reading every old plan on each run."""
     root = Path(os.environ.get("POSTFIX_GATE_BRAIN_DIR") or (Path.home() / ".gemini" / "antigravity" / "brain"))
     if not root.is_dir():
         return []
+    try:
+        max_days = float(os.environ.get("POSTFIX_GATE_BRAIN_DAYS") or 7)
+    except ValueError:
+        max_days = 7
+    cutoff = time.time() - max_days * 86400
     needle = re.compile(re.escape(str(project_dir)) + r"(?=[/\s)\"'`]|$)")
     sessions = []
     for b_dir in root.iterdir():
         if not b_dir.is_dir():
             continue
-        for md in b_dir.glob("*.md"):
+        mds = list(b_dir.glob("*.md"))
+        try:
+            newest = max([b_dir.stat().st_mtime] + [m.stat().st_mtime for m in mds])
+        except OSError:
+            continue
+        if newest < cutoff:
+            continue
+        for md in mds:
             try:
                 if md.stat().st_size <= 1_000_000 and needle.search(md.read_text(encoding="utf-8", errors="replace")):
                     sessions.append(b_dir)
@@ -894,13 +945,42 @@ def rule_watch(rule, covers) -> list:
     return list(rule.get("watch_files", [])) + extra
 
 
+# Top-level folders that hold agent material or evidence, never the product's code:
+# a moved JUnit XML under docs/ or a workflow script under .agents/local/ needs no test.
+NOT_CODE_ROOTS = ("docs", ".agents", ".claude")
+
+
+def profile_source_exts() -> set:
+    """What counts as code needing a regression test: the active profile's
+    source_extensions — the same list the hooks and matrix_detect use — so an .xml
+    layout or a .js tool is not "uncovered code" in an Android project."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
+        sys.dont_write_bytecode = True     # no __pycache__ inside the linked hooks/ folder
+        from devkit_profile import source_exts
+        return set(source_exts(str(get_project_dir())))
+    except Exception:  # noqa: BLE001 — a missing/broken profile falls back to the fixed list
+        return set(CODE_EXTENSIONS)
+
+
+def active_profile_name() -> str:
+    """The active profile's name (.active-profile.json), for a matrix without "project"."""
+    try:
+        d = json.loads((get_project_dir() / ".active-profile.json").read_text(encoding="utf-8"))
+        return d.get("name") or d.get("profile") or tr("(không có profile)", "(no profile)")
+    except (OSError, ValueError, AttributeError):
+        return tr("(không có profile)", "(no profile)")
+
+
 def uncovered_code_files(modified_files, rules, covers=None) -> list:
     """Changed source files that no matrix rule watches — changes nothing will re-test later."""
     covers = checklist_covers() if covers is None else covers
     watch = [pat for rule in rules for pat in rule_watch(rule, covers)]
+    exts = profile_source_exts()
     return [
         f for f in modified_files
-        if f not in DELETED_FILES and Path(f).suffix in CODE_EXTENSIONS
+        if f not in DELETED_FILES and Path(f).suffix in exts
+        and f.replace("\\", "/").split("/")[0] not in NOT_CODE_ROOTS
         and not is_test_path(f) and not any(match_pattern(f, pat) for pat in watch)
     ]
 
@@ -931,7 +1011,11 @@ def update_regression_checklist(args, matrix, rules, modified_files, regression_
     rc.sync_from_matrix(data, matrix)
     if run_tests:
         rc.record_results(data, regression_tests, task=args.task, commit=commit)
-    added = rc.add_uncovered(data, uncovered_code_files(modified_files, rules), task=args.task)
+    rc.prune_uncovered(data, lambda files: [f for f in uncovered_code_files(files, rules) if (project_dir / f).exists()])
+    # No trusted rules (no matrix, or one the gate does not trust): every changed file
+    # would look uncovered — rows that say nothing true. Record UNCOVERED only against
+    # real rules.
+    added = rc.add_uncovered(data, uncovered_code_files(modified_files, rules), task=args.task) if rules else []
     bug_id = None
     if args.record_lesson and exit_code == 0:
         passed = [t["id"] for t in regression_tests if t.get("status") == "PASS" and t.get("id")]
@@ -1040,8 +1124,9 @@ def main():
         return 2
     base_ref = args.diff if args.diff and ".." not in args.diff else "HEAD"
 
-    global STAGED
+    global STAGED, BASE_REF
     STAGED = args.staged
+    BASE_REF = base_ref
     try:
         all_changed = get_staged_files() if STAGED else get_modified_files(args.diff)
     except RuntimeError as e:
@@ -1103,6 +1188,9 @@ def main():
     else:
         for f, lbl in secrets:
             log_err(f"{f}: {lbl}")
+    for f, lbl in PREEXISTING_SECRETS[:10]:
+        log_warn(tr(f"{f}: {lbl} — đã có sẵn trong {BASE_REF}, không do thay đổi này (không chặn); nên xoay khoá và gỡ khỏi repo",
+                    f"{f}: {lbl} — already in {BASE_REF}, not introduced by this change (not blocking); rotate it and remove it from the repo"))
 
     if anti_laziness_ok:
         log_ok(tr("Chống lười biếng (Anti-Laziness): 0 placeholder theo mẫu regex", "Anti-laziness: 0 placeholders matched"))
@@ -1169,13 +1257,14 @@ def main():
                 "id": test.get("id"),
                 "name": test.get("name"),
                 "command": test.get("command"),
+                "untested_exit": test.get("untested_exit"),
                 "status": "NOT_RUN",
                 "duration": "-",
             })
         for guard in rule.get("immutable_guards", []):
             immutable_guards_protected.append((comp_name, guard))
 
-    print(f"  • {tr('Dự án kích hoạt', 'Project')}: {CYAN}{matrix.get('project', 'Universal Application')}{RESET}")
+    print(f"  • {tr('Dự án kích hoạt', 'Project')}: {CYAN}{matrix.get('project') or active_profile_name()}{RESET}")
     if matrix_problem:
         log_warn(matrix_problem)
     if not rules:
@@ -1199,6 +1288,11 @@ def main():
             try:
                 out, _ = proc.communicate(timeout=args.timeout)
                 t["status"] = "PASS" if proc.returncode == 0 else "FAIL"
+                # The command's own "cannot run here" code (unity-batch.sh: 2 = no Editor):
+                # UNTESTED — not a failing test, and never a PASS.
+                if proc.returncode != 0 and isinstance(t.get("untested_exit"), int) \
+                        and proc.returncode == t["untested_exit"]:
+                    t["status"] = "UNTESTED"
                 t["exit_code"] = proc.returncode
                 t["output_tail"] = (out or "")[-2000:]
             except subprocess.TimeoutExpired:
@@ -1225,7 +1319,7 @@ def main():
         print(f"    {status_icon} | {BOLD}{t['id']:<15}{RESET} : {t['name']}")
         extra = f", exit={t['exit_code']}" if "exit_code" in t else ""
         print(f"           {DIM}{tr('Lệnh chạy', 'Command')}: {t['command']} ({t['duration']}{extra}){RESET}")
-        if st in ("FAIL", "TIMEOUT") and t.get("output_tail"):
+        if st in ("FAIL", "TIMEOUT", "UNTESTED") and t.get("output_tail"):
             for line in t["output_tail"].strip().splitlines()[-5:]:
                 print(f"           {DIM}| {line}{RESET}")
         mark = "x" if st == "PASS" else " "
@@ -1282,7 +1376,8 @@ def main():
     # Final Summary Verdict
     static_ok = hygiene_ok and anti_laziness_ok and deps_ok and perf_ok and resilience_ok and logging_ok
     tests_passed = sum(1 for t in regression_tests if t["status"] == "PASS")
-    tests_ok = tests_passed == len(regression_tests)
+    tests_untested = [t for t in regression_tests if t["status"] == "UNTESTED"]
+    tests_ok = tests_passed + len(tests_untested) == len(regression_tests)
     unverified = bool(regression_tests) and not run_tests
     no_coverage = (not rules or not regression_tests) and not args.allow_no_tests
     # Every changed source file must be re-testable later; one no rule watches would
@@ -1293,9 +1388,14 @@ def main():
     if not static_ok or (run_tests and not tests_ok):
         verdict_text, verdict_color, exit_code = tr("REJECT — CẦN KHẮC PHỤC CÁC ĐIỂM CHƯA ĐẠT", "REJECT — FIX THE FAILED CHECKS"), RED, 1
     elif matrix_problem:
-        verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — regression matrix không tin được (xem mục 4)", "UNVERIFIED — regression matrix is not trusted (see section 4)"), YELLOW, 2
+        verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — regression matrix không tin được (xem mục 4): người review rồi commit file ma trận — gate chỉ tin ma trận đã commit, hoặc giống từng byte bản `agent-kit matrix`",
+                                                    "UNVERIFIED — regression matrix is not trusted (see section 4): have a human review and commit the matrix file — the gate trusts only a committed matrix, or one byte-identical to `agent-kit matrix`"), YELLOW, 2
     elif tests_touched:
-        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi, cần người review", f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change; needs human review"), YELLOW, 2
+        # Kept UNVERIFIED (an edited test can weaken the very assertion the run relies on);
+        # the verdict names the one cure: a person reads that diff, or it gets committed.
+        touched_diff = f"git diff {base_ref} -- " + " ".join(tests_touched[:3]) + (" …" if len(tests_touched) > 3 else "")
+        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần người review diff test (`{touched_diff}`), hoặc commit nó, rồi chạy lại gate",
+                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: have a human review the test diff (`{touched_diff}`), or commit it, then re-run the gate"), YELLOW, 2
     elif unverified:
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — test hồi quy chưa chạy (dry-run)", "UNVERIFIED — regression tests not run (dry-run)"), YELLOW, 2
     elif unreadable:
@@ -1304,6 +1404,10 @@ def main():
         verdict_text, verdict_color, exit_code = f"CHƯA XÁC MINH — {len(uncovered)} file code thay đổi chưa có test hồi quy (thêm vào regression_matrix.json, hoặc --allow-no-tests)", YELLOW, 2
     elif no_coverage:
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — không có test hồi quy nào khớp thay đổi (--allow-no-tests để chấp nhận)", "UNVERIFIED — no regression test matches the change (--allow-no-tests to accept)"), YELLOW, 2
+    elif run_tests and tests_untested:
+        names = ", ".join(t["id"] or "?" for t in tests_untested)
+        verdict_text, verdict_color, exit_code = tr(f"UNTESTED — {names} không chạy được trên máy này (thiếu công cụ/thiết bị); KHÔNG phải PASS",
+                                                    f"UNTESTED — {names} cannot run on this machine (missing tool/device); NOT a PASS"), YELLOW, 4
     else:
         verdict_text, verdict_color, exit_code = tr("PASS — ĐỦ ĐIỀU KIỆN NGHIỆM THU & BÀN GIAO", "PASS — READY FOR ACCEPTANCE & HANDOVER"), GREEN, 0
 

@@ -31,8 +31,11 @@ esac
 [ -d "$TARGET" ] || die "$(L "không có thư mục: $TARGET" "no such directory: $TARGET")" 2
 git -C "$TARGET" rev-parse --git-dir >/dev/null 2>&1 \
   || die "$(L "$TARGET không phải git repository" "$TARGET is not a git repository")" 2
-HOOKS_DIR="$(git -C "$TARGET" rev-parse --path-format=absolute --git-path hooks 2>/dev/null)" \
-  || die "$(L "không xác định được thư mục hooks (cần git ≥ 2.31)" "cannot resolve the hooks dir (needs git >= 2.31)")" 2
+HOOKS_DIR="$(git -C "$TARGET" rev-parse --path-format=absolute --git-path hooks 2>/dev/null)" || {
+  GIT_DIR="$(cd "$TARGET" && git rev-parse --git-dir 2>/dev/null)" || die "$(L "không đọc được git dir" "cannot resolve git dir")" 2
+  HOOKS_DIR="$(cd "$TARGET" && cd "$GIT_DIR" && pwd -P)/hooks"
+}
+[ -n "$HOOKS_DIR" ] || die "$(L "không xác định được thư mục hooks" "cannot resolve the hooks dir")" 2
 HOOK="$HOOKS_DIR/pre-commit"
 
 is_ours() { [ -f "$HOOK" ] && grep -qF "$MARKER" "$HOOK"; }
@@ -41,6 +44,8 @@ case "$ACTION" in
   status)
     if is_ours; then
       echo "✔ pre-commit: $(L "đã cài (DevKit)" "installed (DevKit)") — $HOOK"
+    elif [ -e "$HOOK" ] && grep -qF "scripts/git-pre-commit.sh" "$HOOK" 2>/dev/null; then
+      echo "✔ pre-commit: $(L "hook riêng của dự án, có gọi cổng DevKit" "the project's own hook, chaining the DevKit gate") — $HOOK"
     elif [ -e "$HOOK" ]; then
       echo "• pre-commit: $(L "có hook riêng của dự án, không phải DevKit" "a project hook exists, not the DevKit's") — $HOOK"
     else
@@ -50,8 +55,11 @@ case "$ACTION" in
   install)
     if [ -e "$HOOK" ] && ! is_ours; then
       echo "✖ githooks: $(L "$HOOK đã có và không phải của DevKit — giữ nguyên, không ghi đè." "$HOOK exists and is not the DevKit's — left untouched.")" >&2
-      echo "  $(L "Muốn chạy thêm cổng DevKit, thêm dòng này vào hook đó:" "To add the DevKit gate, append this line to that hook:")" >&2
-      printf '    bash %q || exit 1\n' "$BODY" >&2
+      # Right after the shebang, not at the end: a hook that ends with `exit 0` (or
+      # `exec` of another tool) would never reach an appended line.
+      echo "  $(L "Muốn chạy thêm cổng DevKit, chèn dòng này NGAY SAU dòng đầu (#!) của hook đó — không thêm ở cuối (hook có thể 'exit 0' trước):" "To add the DevKit gate, insert this line RIGHT AFTER the first (#!) line of that hook — not at the end (the hook may 'exit 0' first):")" >&2
+      printf '    bash %q "$@" || exit 1\n' "$BODY" >&2
+      echo "  $(L "Ví dụ:" "For example:") sed -i.bak '1a\\'\$'\\n''bash $(printf %q "$BODY") \"\$@\" || exit 1' $HOOK" >&2
       exit 1
     fi
     mkdir -p "$HOOKS_DIR" || die "$(L "không tạo được $HOOKS_DIR" "cannot create $HOOKS_DIR")"

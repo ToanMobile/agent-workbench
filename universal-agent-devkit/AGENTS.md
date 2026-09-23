@@ -114,10 +114,10 @@ Required order: plan → reviewer approves the *plan* → gaps found → revise 
 
 | Platform | Reads the rules | Enforced by hooks |
 |---|---|---|
-| **Claude Code** | `CLAUDE.md` → `@AGENTS.md` import; `.claude/commands`, `.claude/agents` | All DevKit hooks (`.claude/settings.json`): session/prompt context, git & device guards, read-before-edit, regression tests, test/“fixed” evidence, fresh-context review, secrets |
-| **OpenAI Codex** | `AGENTS.md` | `.codex/hooks.json` via `hooks/agent_bridge.sh`: session/prompt context, git & device guards, regression tests on Stop |
-| **Gemini CLI** | `AGENTS.md` / `GEMINI.md`, `.agents/skills` | `.gemini/settings.json` via the bridge: same set as Codex |
-| **Cursor** | `AGENTS.md` | `.cursor/hooks.json` via the bridge: session context, git & device guards, regression tests on stop |
+| **Claude Code** | `CLAUDE.md`: its DevKit block `@`-imports the master rules (`AGENTS.md`, or `.agents/devkit/AGENTS.md` when the project keeps its own), `rules/core-rules.md`, the profile rules (`.agents/active-profile/RULES.md`) and `.agents/local/rules`; `.claude/commands`, `.claude/agents` | All DevKit hooks (`.claude/settings.json`): session/prompt context, git, device (Bash and the `replicant-mcp` MCP tools) and destructive-`rm` guards, read-before-edit, regression tests, test/“fixed” evidence, fresh-context review, secrets |
+| **OpenAI Codex** | `AGENTS.md` as plain text (no `@` expansion): its DevKit block lists the rule files to open | `.codex/hooks.json` via `hooks/agent_bridge.sh`: session/prompt context, git, device & `rm` guards on shell commands, regression tests on Stop |
+| **Gemini CLI** | `GEMINI.md` (generated; Gemini does not read `AGENTS.md` by default), `.agents/skills`; symlink mode adds the DevKit folder to `context.includeDirectories` so its linked rules can be read | `.gemini/settings.json` via the bridge: same set as Codex |
+| **Cursor** | `AGENTS.md` + the always-applied rule `.cursor/rules/universal-agent-devkit.mdc` (`@`-includes the core, profile and project rules) | `.cursor/hooks.json` via the bridge: session context, git, device & `rm` guards, regression tests on stop |
 | **Antigravity** | `AGENTS.md`, `.agents/skills` | none (no hook API) — rules only |
 
 Every platform also gets the git **pre-commit** gate (`agent-kit githooks install`, installed by `agent-kit init` in git projects). Hooks that read Claude's transcript (review, test evidence, claims) exist only on Claude Code.
@@ -127,15 +127,15 @@ Every platform also gets the git **pre-commit** gate (`agent-kit githooks instal
 
 Two agents editing one working tree overwrite each other's files, mix their diffs in `git status` and break each other's builds mid-run. When two or more agents change code at the same time, each gets its own worktree and branch.
 
-- **Create:** Claude Code — start the subagent with `isolation: "worktree"` (Agent tool) or switch the session with `EnterWorktree`; the harness creates the worktree and removes it when nothing changed. Other platforms — from the main checkout, `git worktree add ../<repo>-<task> -b <feat|fix>/<task>`, then open the agent in that directory. Keep worktrees outside the repo, so the repo's build, lint and search never scan them and no `.gitignore` entry is needed.
+- **Create:** `agent-kit worktree add ../<repo>-<task> [<feat|fix>/<task>]` from the main checkout does the whole set-up below in one step (branch default `feat/<folder>`), then open the agent in that directory. Claude Code can instead start the subagent with `isolation: "worktree"` (Agent tool) or switch the session with `EnterWorktree`; the harness creates the worktree and removes it when nothing changed, and the set-up below is then yours to do. Keep worktrees outside the repo, so the repo's build, lint and search never scan them and no `.gitignore` entry is needed.
 - **Set up before the first build** — a new worktree holds tracked files only:
   - Untracked local config (`local.properties`, `.env`, `google-services.json`, `keystore.properties`) is missing: copy it from the main checkout, never commit it (`rules/core-rules.md` §1).
-  - A symlink-mode DevKit install is untracked as well, so `.claude/`, `rules/`, `skills/` are missing: run `agent-kit init` inside the worktree (it changes no tracked file).
+  - A symlink-mode DevKit install is untracked as well, so `.claude/`, `rules/`, `skills/` are missing: run `agent-kit init` inside the worktree. Its files are untracked there (and `.gitignore` gains the DevKit block when the project has not committed it) — keep them out of what you bring back.
   - The git pre-commit gate is shared by every worktree of the repo; nothing to install.
 - **One device, one agent:** a physical device or emulator serves one worktree at a time. Run device work one worktree after another, each with `adb-safe-exec.sh -s <SERIAL>`.
 - **Accept a worktree only on its own gate run:** `cd <worktree> && CLAUDE_PROJECT_DIR="$PWD" postfix-gate --run-tests` → exit `0`. The gate reads `CLAUDE_PROJECT_DIR` before the git root; left pointing at the main checkout, it audits the main checkout instead.
-- **No automatic merge:** the leader reviews each worktree's diff like any other change (§5, §6), then brings it back. Without an explicit request to commit (`rules/core-rules.md` §1), bring it as a patch — in the main checkout: `git -C <worktree> add -A && git -C <worktree> diff --cached --binary | git apply --3way` (new files included). When the user asked for commits, merge the branch instead. Conflicts go through `/conflict` (`merge-conflict-resolver`); commit and push stay behind Gate 2 (§5.1 c).
-- **Clean up:** `git worktree remove <path>` for a worktree with no changes left. One that still holds changes, and its unmerged branch, need `git worktree remove --force` / `git branch -D`, which the git guard blocks: once its changes are safely in the main checkout, ask the user to run them.
+- **No automatic merge:** the leader reviews each worktree's diff like any other change (§5, §6), then brings it back. Without an explicit request to commit (`rules/core-rules.md` §1), bring it as a patch — in the main checkout: `agent-kit worktree diff <worktree> | git apply --3way` (new and deleted files and the branch's commits included, the DevKit set-up left out; `git add -A` would carry the DevKit files, which already exist in the main checkout, and the apply fails). When the user asked for commits, merge the branch instead. Conflicts go through `/conflict` (`merge-conflict-resolver`); commit and push stay behind Gate 2 (§5.1 c).
+- **Clean up:** `agent-kit worktree remove <path>` removes a worktree made by `worktree add` once every uncommitted change in it is also in the main checkout (the branch and its commits stay). Otherwise `git worktree remove <path>` for a worktree with no changes left. One that still holds changes, and its unmerged branch, need `git worktree remove --force` / `git branch -D`, which the git guard blocks: once its changes are safely in the main checkout, ask the user to run them.
 
 ---
 
@@ -167,7 +167,7 @@ Whenever the user asks to fix a bug, refactor code, or change behavior in a comp
 > | Profile | Domain | Skills left out (`exclude_skills`) |
 > |---|---|---|
 > | `android` | Compose, Coroutines, Vitals | — |
-> | `automotive` | AAOS, CAN, Vehicle HAL | — |
+> | `automotive` | AAOS, CAN, Vehicle HAL | `unity-gc-audit` |
 > | `ios` | Swift 6, SwiftUI | Android/Unity skills |
 > | `web` | TypeScript, React/Next.js | Android/Unity skills |
 > | `backend` | API services (Python/Go/Rust/Node) | Android/Unity skills + `qa-visual` |

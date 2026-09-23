@@ -21,10 +21,11 @@ tương đương của nền tảng (ATS/Keychain cho iOS, CSP/CORS/secret handl
   và error classification. Thay file-parsing strategy cần User approval.
 - **WebView:** JavaScript/file/content/universal access off trừ khi requirement đã verify; JavaScript
   interface và navigation origin phải allowlist.
-- **Auth/cloud/storage:** secret/service credential không nằm client/repo/log. Verify Supabase RLS/auth
-  policy và SDK behavior bằng official docs/Context7; auth policy change cần approval.
+- **Auth/cloud/storage:** secret/service credential không nằm client/repo/log. Verify auth/access
+  policy phía backend (ví dụ row-level-security policy, IAM/bucket policy) và SDK behavior bằng
+  official docs/Context7; auth policy change cần approval.
 - **Permissions/network:** least privilege, denial/revocation handled, release cleartext disabled.
-- **Telemetry:** không PII, token, document content, URI/full path; custom key/label cardinality bounded.
+- **Telemetry:** không PII, token, nội dung người dùng (file/tài liệu/tin nhắn), URI/full path; custom key/label cardinality bounded.
 - **Dependencies/R8:** pinned dependencies, no unreviewed snapshot/dynamic version, mapping/keep rules
   không leak artifact hoặc keep quá rộng.
 
@@ -35,13 +36,14 @@ literal. Mỗi finding phải có source evidence, reachable attack path, impact
 thuần chưa phải vulnerability. Không in secret value trong output.
 
 Fix surgical theo pattern đã verify; dependency/library behavior phải dựa official docs. Authority theo
-`AGENTS.md`/`AGENTS.md`.
+`AGENTS.md`.
 
 ## Verification
 
 - Targeted tests cho malicious/denied/malformed/oversized input và từng exposed entry point.
 - Manifest/config merge hoặc release variant phải verify đúng variant; debug config không chứng minh
   release-safe.
-- Trước release chạy `bash scripts/qa/ci/verify_prerelease_gates.sh`; không bypass large XLSX/search
-  gates. Chỉ báo PASS khi command thật exit 0.
-- Thiếu device, backend/RLS access hoặc release credential thì báo residual, không gọi CLEAN.
+- Trước release chạy pre-release/security gate của chính dự án nếu có (DevKit không ship gate này);
+  không bypass hay nới gate nào của dự án. Chỉ báo PASS khi command thật exit 0.
+- Thiếu device, quyền truy cập backend/access policy hoặc release credential thì báo residual,
+  không gọi CLEAN.

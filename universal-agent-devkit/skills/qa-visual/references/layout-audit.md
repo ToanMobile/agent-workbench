@@ -54,7 +54,7 @@ Hệ quả: bắt được cả nhóm chỉ có **2 phần tử** (nhãn + ô nh
 
 ## Baseline trên fixture (2026-09-09)
 
-Đo bằng `node scripts/score-audit.mjs .qa-screenshots/audit-findings.json`, chạy trên `fixtures/defects`, 8 trang × 2 viewport:
+Đo lúc phát triển skill, trên một bộ fixture lỗi cấy sẵn (8 trang × 2 viewport) chấm bằng một script scorer; fixture và scorer **không ship trong DevKit**, bảng dưới chỉ là số tham khảo:
 
 | Loại | Recall |
 |---|---|
@@ -78,7 +78,7 @@ Hiệu năng: trang **1064 element** đo hết **13–30ms** (ngưỡng: 500 ele
 
 1. **Đọc `evidence` trước.** Nó có số đo cụ thể — mở DevTools kiểm lại là biết ngay đúng hay sai.
 2. **Đúng nhưng không muốn sửa** → thêm vào `audit.ignoreSelectors` trong `qa.config.json`, **kèm comment nói rõ vì sao**.
-3. **Sai thật** → tái hiện tối giản vào `fixtures/defects/` với id `#ok-*`, thêm vào `shouldNotFind` của `expected-findings.json`, rồi sửa check. Chạy `score-audit` xác nhận recall không tụt.
+3. **Sai thật** → tái hiện tối giản thành một trang HTML nhỏ (element không được báo đánh id `#ok-*`), sửa check, rồi chạy lại `audit-layout` trên trang đó và trên các trang đã báo đúng trước đó để xác nhận không mất finding đúng.
 
 **Không hạ ngưỡng để finding biến mất.** Hạ ngưỡng giấu cả finding đúng lẫn sai, và không ai biết đã giấu cái gì.
 

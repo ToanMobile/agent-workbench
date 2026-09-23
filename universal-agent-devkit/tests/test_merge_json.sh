@@ -100,5 +100,29 @@ python3 "$MERGE" "$TMP/dk_samename.json" "$TMP/samename.json"
 python3 -c 'import json,sys; c=[h["command"] for g in json.load(open(sys.argv[1]))["hooks"]["Stop"] for h in g["hooks"]]; assert len(c)==2 and any("/home/me/" in x for x in c) and any(".claude/hooks/claim_check.sh" in x for x in c), c' "$TMP/samename.json" \
   && ok "same file name, different path: both hooks kept" || fail "DevKit hook dropped because a user hook shares its file name"
 
+# 12. An MCP server the user already configured keeps ITS argv: args are positional,
+#     a union (["-y","cs-android-mcp","cs-android-mcp@1.0.1"]) makes npx run the package
+#     with a stray argument. Re-init must be a no-op. Set-like lists still union:
+#     permissions.deny/allow (strings) and hook groups (dicts).
+echo '{"mcpServers":{"android-code-search":{"command":"npx","args":["-y","cs-android-mcp"]}}}' > "$TMP/mcp.json"
+python3 "$MERGE" "$DEVKIT_DIR/mcp/.mcp.json" "$TMP/mcp.json"
+cp "$TMP/mcp.json" "$TMP/mcp.after1"
+python3 "$MERGE" "$DEVKIT_DIR/mcp/.mcp.json" "$TMP/mcp.json"
+python3 -c 'import json,sys; s=json.load(open(sys.argv[1]))["mcpServers"]; assert s["android-code-search"]["args"]==["-y","cs-android-mcp"], s["android-code-search"]; assert s["context7"]["args"]==["-y","@upstash/context7-mcp@4.1.1"], s' "$TMP/mcp.json" \
+  && cmp -s "$TMP/mcp.json" "$TMP/mcp.after1" \
+  && ok "existing MCP args kept as the user wrote them (no union), re-init is a no-op" || fail "MCP args unioned: $(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["mcpServers"]["android-code-search"])' "$TMP/mcp.json")"
+echo '{"permissions":{"allow":["Bash(ls:*)"],"deny":["Read(**/secret/**)"]},"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"bash mine.sh"}]}]}}' > "$TMP/set.json"
+echo '{"permissions":{"allow":["Bash(git status:*)"],"deny":["Read(**/build/**)"]},"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"bash .claude/hooks/claim_check.sh"}]}]}}' > "$TMP/settpl.json"
+python3 "$MERGE" "$TMP/settpl.json" "$TMP/set.json"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); p=d["permissions"]; assert p["allow"]==["Bash(ls:*)","Bash(git status:*)"] and p["deny"]==["Read(**/secret/**)","Read(**/build/**)"], p; c=[h["command"] for g in d["hooks"]["Stop"] for h in g["hooks"]]; assert c==["bash mine.sh","bash .claude/hooks/claim_check.sh"], c' "$TMP/set.json" \
+  && ok "permissions.allow/deny and hook lists still union with the user's" || fail "set-like lists no longer merged"
+# A DevKit hook already wired takes the DevKit's current timeout on re-init (180 → 600);
+# the user's own hook and its timeout are untouched.
+echo '{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/testsourceset_gate.sh\"","timeout":180},{"type":"command","command":"bash mine.sh","timeout":5}]}]}}' > "$TMP/to.json"
+echo '{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/testsourceset_gate.sh\"","timeout":600}]}]}}' > "$TMP/totpl.json"
+python3 "$MERGE" "$TMP/totpl.json" "$TMP/to.json"
+python3 -c 'import json,sys; h=json.load(open(sys.argv[1]))["hooks"]["Stop"][0]["hooks"]; assert [x["timeout"] for x in h]==[600,5] and len(h)==2, h' "$TMP/to.json" \
+  && ok "re-init updates a DevKit hook's timeout, keeps the user's hook" || fail "timeouts: $(cat "$TMP/to.json")"
+
 if [ "$FAILS" -ne 0 ]; then echo "merge_json: $FAILS FAILED"; exit 1; fi
 echo "merge_json: all checks passed"

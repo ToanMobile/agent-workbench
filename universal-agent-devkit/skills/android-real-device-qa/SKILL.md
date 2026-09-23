@@ -16,10 +16,19 @@ Kỹ năng này cung cấp bộ công cụ đo lường và thẩm định chấ
 
 ## 🛠️ Bộ Công Cụ Thực Chiến
 
+### 0. Đường dẫn bộ công cụ (chạy một lần trong shell, từ thư mục gốc dự án)
+Công cụ nằm ở `scripts/qa/` của profile android trong DevKit. Trong dự án: `.agents/active-profile/scripts/qa`
+khi profile android đang dùng; các profile khác (automotive…) lấy từ DevKit qua link hook đã cài:
+```bash
+QA=".agents/active-profile/scripts/qa"
+[ -d "$QA" ] || QA="$(cd "$(dirname "$(readlink .claude/hooks/precode_gate.sh)")/../profiles/android/scripts/qa" 2>/dev/null && pwd)"
+ls "$QA"   # adb-fps-measure.sh, adb-safe-exec.sh, anr-logcat-triage.sh, dexscan.py, …
+```
+
 ### 1. Đo Lường Khung Hình & FPS Thực Tế (`adb-fps-measure.sh`)
 Đo độ mượt của giao diện (UI Jank / Frame Drop) trực tiếp qua `SurfaceFlinger` và `dumpsys gfxinfo`:
 ```bash
-./profiles/android/scripts/qa/adb-fps-measure.sh <package_name> [duration_seconds]
+"$QA"/adb-fps-measure.sh <package_name> [duration_seconds]
 ```
 - **Tiêu chuẩn nghiệm thu:** 
   - Khung hình trung bình $\ge 58\text{ FPS}$ (trên màn hình 60Hz) hoặc $\ge 115\text{ FPS}$ (trên màn hình 120Hz).
@@ -28,7 +37,7 @@ Kỹ năng này cung cấp bộ công cụ đo lường và thẩm định chấ
 ### 2. Trích Xuất & Thẩm Định Phân Cấp Giao Diện (`dump-view-hierarchy.sh`)
 Trích xuất cây UI dạng XML để kiểm tra cấu trúc layout và accessibility:
 ```bash
-./profiles/android/scripts/qa/dump-view-hierarchy.sh [output_xml_path]
+"$QA"/dump-view-hierarchy.sh [output_xml_path]
 ```
 - **Tiêu chuẩn nghiệm thu:**
   - Touch Target: Mọi phần tử bấm được (`clickable="true"`) phải có kích thước tối thiểu $\ge 48\times 48\text{dp}$.
@@ -38,7 +47,7 @@ Trích xuất cây UI dạng XML để kiểm tra cấu trúc layout và accessi
 ### 3. Chẩn Đoán & Triage Lỗi ANR / Crash Logcat (`anr-logcat-triage.sh`)
 Phân tích nguyên nhân đơ máy (Application Not Responding) hoặc crash đột ngột từ `/data/anr/traces.txt` và logcat:
 ```bash
-./profiles/android/scripts/qa/anr-logcat-triage.sh <package_name>
+"$QA"/anr-logcat-triage.sh <package_name>
 ```
 - **Tiêu chuẩn nghiệm thu:**
   - Xác định chính xác luồng gây tắc nghẽn (Main Thread Starvation, Binder Lock Contention, hoặc Database Lock).
@@ -48,7 +57,7 @@ Phân tích nguyên nhân đơ máy (Application Not Responding) hoặc crash đ
 ### 3a. Chạy Lệnh adb Có Thẩm Định — Chống Xanh Ảo (`adb-safe-exec.sh`)
 `adb shell am start …` trả exit `0` cả khi activity không tồn tại (`Error type 3`), và crash/ANR vài giây sau khi mở app không bao giờ hiện trong exit code. Mọi lệnh adb dùng làm bằng chứng PASS phải chạy qua wrapper:
 ```bash
-./profiles/android/scripts/qa/adb-safe-exec.sh -p <package_name> --wait 5 -- shell am start -W -n <package_name>/.MainActivity
+"$QA"/adb-safe-exec.sh -p <package_name> --wait 5 -- shell am start -W -n <package_name>/.MainActivity
 ```
 - **Exit:** `0` PASS · `1` FAIL (adb exit ≠ 0, output có `Error:`/`Error type N`/`Failure [`/`INSTRUMENTATION_FAILED`, hoặc logcat có FATAL EXCEPTION / ANR / Fatal signal của package từ lúc chạy lệnh) · `2` sai cú pháp hoặc lệnh bị `hardware_safety_gate` chặn · `3` CHƯA XÁC MINH (không có / nhiều thiết bị mà không `-s`, không đọc được đồng hồ hoặc logcat).
 - ANR cần `--wait` ≥ 5–10 giây mới kịp hiện. Output và lát logcat lưu ở `.claude/audit-gate/adb-safe-exec/`.
@@ -57,7 +66,7 @@ Phân tích nguyên nhân đơ máy (Application Not Responding) hoặc crash đ
 ### 3b. Chẩn Đoán Sự Cố Sập Native C/C++ & Tombstones (`tombstone-triage.sh`)
 Phân tích tệp `/data/tombstones/` và giải mã stack trace native nhị phân (SIGSEGV, SIGABRT) qua `ndk-stack`:
 ```bash
-./profiles/android/scripts/qa/tombstone-triage.sh [package_name] [path_to_symbols_dir]
+"$QA"/tombstone-triage.sh [package_name] [path_to_symbols_dir]
 ```
 - **Tiêu chuẩn nghiệm thu:**
   - Trích xuất chính xác tín hiệu lỗi hệ thống (`signal 6 SIGABRT`, `signal 11 SIGSEGV`).
@@ -66,7 +75,7 @@ Phân tích tệp `/data/tombstones/` và giải mã stack trace native nhị ph
 ### 4. Quét Dung Lượng & Giới Hạn Bytecode DEX (`dexscan.py`)
 Phân tích tệp APK/AAB hoặc thư mục build để kiểm tra method count:
 ```bash
-python3 ./profiles/android/scripts/qa/dexscan.py <path_to_apk_or_dex>
+python3 "$QA"/dexscan.py <path_to_apk_or_dex>
 ```
 - **Tiêu chuẩn nghiệm thu:**
   - Cảnh báo khi số lượng method trong single DEX vượt quá 60,000 (ngưỡng an toàn trước trần 65,536).
@@ -75,7 +84,7 @@ python3 ./profiles/android/scripts/qa/dexscan.py <path_to_apk_or_dex>
 ### 5. Xuất Báo Cáo Nghiệm Thu HTML Kèm Bằng Chứng (`generate_report_html.py`)
 Tạo báo cáo kiểm thử độc lập, nhúng Base64 screenshot thực tế và bảng kết quả đo lường:
 ```bash
-python3 ./profiles/android/scripts/qa/generate_report_html.py --output report.html --package <pkg>
+python3 "$QA"/generate_report_html.py --output report.html --package <pkg>
 ```
 
 ---

@@ -50,7 +50,7 @@ Phân loại lỗi vào đúng 1 trong 5 cơ chế hỏng hóc thực chiến:
 ## 3. Các Bước Thực Hiện Sửa Lỗi Chi Tiết
 
 ### Bước 1: Khám phá & Tái hiện (Discovery & Reproduction)
-1. Xác định phạm vi và điều kiện gây lỗi (crash log, stack trace, corrupt document, lifecycle issue).
+1. Xác định phạm vi và điều kiện gây lỗi (crash log, stack trace, input/file hỏng, lifecycle issue).
 2. Dùng `codebase-memory` (`trace_path`) để rà soát 100% điểm gọi ngược (Inbound Callers Blast Radius) trước khi sửa đổi, đảm bảo tuyệt đối không sinh bug mới sang các module khác.
 3. Rà soát danh mục rào chắn bất biến (`immutable_guards`) trong ma trận hồi quy để bảo vệ 100% các bản sửa lỗi lịch sử.
 

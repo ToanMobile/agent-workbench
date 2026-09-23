@@ -133,8 +133,10 @@ try:
         ["git", "-C", repo_root, "ls-files", "--others", "--exclude-standard",
          "--", *PATHSPECS],
         capture_output=True, text=True, timeout=10)
+    # A symlink's content is a path, not code to review (DevKit hook links such as
+    # .claude/hooks/devkit_profile.py in a symlink install).
     changed = sorted({l for l in (diff.stdout.splitlines() + untracked.stdout.splitlines())
-                      if l.strip()})
+                      if l.strip() and not os.path.islink(os.path.join(repo_root, l))})
 except Exception as e:
     logline(f"[{ts}] git query failed: {e!r} — fail-open")
     sys.exit(0)

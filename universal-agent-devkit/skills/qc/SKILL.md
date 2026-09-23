@@ -52,17 +52,15 @@ Chạy kiểm tra nhanh cho module đang chỉnh sửa trước khi commit:
 ./gradlew :<localization_module>:checkMissingTranslations
 ```
 
-## 3. Unit-Test Identity Contract Baseline (nếu dự án có `scripts/qa/`)
+## 3. Unit-Test Identity Baseline (không âm thầm mất test)
 
-Xác thực tính liên tục của bộ test (không cho phép âm thầm xóa/bỏ qua test):
+Xác thực tính liên tục của bộ test: không được âm thầm xóa, đổi tên hay bỏ qua test.
 
-```bash
-# Xác thực danh sách test của module khớp với baseline hợp đồng
-python3 scripts/qa/ci/validate_unit_test_evidence.py validate \
-  --module :<module> \
-  --baseline scripts/qa/contracts/unit_test_identity_baseline.tsv \
-  --results <module_path>/build/test-results/testDebugUnitTest
-```
+- Nếu dự án có script/baseline riêng cho việc này (khai trong `.agents/local/` hoặc tài liệu của
+  dự án), chạy script đó — DevKit không ship script này.
+- Nếu không có: so danh sách test case (`<testcase classname=… name=…>` trong
+  `<module>/build/test-results/**/TEST-*.xml`) trước và sau thay đổi. Test biến mất hoặc chuyển
+  sang `skipped` phải có lý do được User chấp nhận, không thì là FAIL.
 
 ## 4. Project-wide Quality Checks
 
@@ -79,17 +77,12 @@ Chạy kiểm thử toàn bộ dự án:
 ./gradlew detekt
 ```
 
-## 5. Production Release QA Gate (nếu dự án có `scripts/qa/`)
+## 5. Production Release QA Gate (nếu dự án có)
 
-Chạy production gate chính thức phục vụ release verification:
-
-```bash
-# Chạy orchestrator QA đầy đủ (mở dashboard + gate)
-python3 scripts/qa/orchestrators/qa.py
-
-# Hoặc xác minh các pre-release gates tự động
-bash scripts/qa/ci/verify_prerelease_gates.sh
-```
+Nếu dự án có release/pre-release gate riêng (lệnh khai trong `.agents/local/`, README hoặc CI của
+dự án), chạy đúng lệnh đó phục vụ release verification — DevKit không ship gate này. Không bỏ qua
+hay nới gate nào của dự án; chỉ báo PASS khi command thật exit 0. Dự án không có gate thì nói rõ,
+không claim đã qua release gate.
 
 ## 6. Quy chuẩn kết quả (Evidence Standards)
 

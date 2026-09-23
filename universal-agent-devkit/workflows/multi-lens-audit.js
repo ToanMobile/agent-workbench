@@ -6,9 +6,17 @@
 // codecs below. A launch failure produces no findings at all, which reads like a clean audit if the
 // caller only looks at the finding count — so a zero-finding run is never, by itself, proof of CLEAN.
 //
+// A second launch failure, measured 2026-09-08: the workflow runtime also throws on Date.now(),
+// Math.random() and argless new Date() (a resumed run must replay identically). Three Date.now()
+// calls in validateInputs made every invocation return INTERNAL_VALIDATION_ERROR with zero agents
+// spawned. The wall clock now arrives as the REQUIRED `args.nowMs` (epoch milliseconds).
+//
 // The unit tests run under Node, where those globals exist, so they cannot see a launch failure on
 // their own. `workflow source does not reach for host globals the sandbox lacks` guards `process`,
 // `TextEncoder` and `TextDecoder`; add any new host global the sandbox lacks to that list.
+// `workflow source does not read the clock or RNG the workflow runtime forbids` guards Date.now,
+// Math.random and argless new Date, and `audit still runs when the clock and RNG throw ...` runs a
+// full audit with those stubbed to throw.
 // This engine only runs inside the Claude Code Workflow harness; the installer does not copy it into
 // target projects.
 export const meta = {
@@ -603,7 +611,25 @@ function validateInputs(input) {
   if (!nonEmptyString(input.runNonce)) errors.push('runNonce is required')
   const runStartedAt = Date.parse(input.runStartedAt)
   if (!nonEmptyString(input.runStartedAt) || !Number.isFinite(runStartedAt)) errors.push('runStartedAt must be a valid timestamp')
-  if (Number.isFinite(runStartedAt) && runStartedAt > Date.now() + 60_000) errors.push('runStartedAt cannot be in the future')
+  // Wall clock arrives through args. The workflow runtime forbids Date.now() / new Date() inside a
+  // script because a resumed run must replay identically, and it fails the script closed at
+  // contract-validation time: measured 2026-09-08, three Date.now() calls here (this one, plus the
+  // scopeManifest.generatedAt and verification-receipt checks below) made EVERY invocation return
+  // INTERNAL_VALIDATION_ERROR with zero agents spawned — no argument shape could run this audit.
+  //
+  // `nowMs` is REQUIRED, not optional. Making it optional was tried first and the harness rejected
+  // it: `invalid or future provenance timestamps fail closed` went CLEAR instead of INCOMPLETE,
+  // because a bundle that simply omitted the field skipped all three upper bounds. A contract that
+  // any caller can switch off by leaving a key out is not a contract, so the field is mandatory and
+  // a missing or non-finite value fails closed here.
+  //
+  // Callers assemble these args anyway (sweepIndex and acceptance are already caller-supplied;
+  // fix-evidence-driver's verify-bundle emits neither), so adding one more field costs them nothing.
+  const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : null
+  if (nowMs === null) {
+    errors.push('nowMs must be a finite epoch-millisecond number (caller-supplied wall clock; the workflow runtime forbids reading the clock in scripts)')
+  }
+  if (nowMs !== null && Number.isFinite(runStartedAt) && runStartedAt > nowMs + 60_000) errors.push('runStartedAt cannot be in the future')
 
   const artifacts = Array.isArray(input.artifacts) ? input.artifacts : []
   if (!Array.isArray(input.artifacts) || artifacts.length === 0 || artifacts.length > 64) errors.push('artifacts must contain 1..64 entries')
@@ -685,7 +711,7 @@ function validateInputs(input) {
   if (Number.isFinite(manifestGeneratedAt) && Number.isFinite(runStartedAt) && manifestGeneratedAt < runStartedAt) {
     errors.push('scopeManifest.generatedAt must not predate runStartedAt')
   }
-  if (Number.isFinite(manifestGeneratedAt) && manifestGeneratedAt > Date.now() + 60_000) errors.push('scopeManifest.generatedAt cannot be in the future')
+  if (nowMs !== null && Number.isFinite(manifestGeneratedAt) && manifestGeneratedAt > nowMs + 60_000) errors.push('scopeManifest.generatedAt cannot be in the future')
   if (!Number.isFinite(firstEditStartedAt)) errors.push('scopeManifest.firstEditStartedAt must be a valid timestamp')
   if (!Number.isFinite(lastEditFinishedAt)) errors.push('scopeManifest.lastEditFinishedAt must be a valid timestamp')
   if (Number.isFinite(firstEditStartedAt) && Number.isFinite(runStartedAt) && firstEditStartedAt < runStartedAt) {
@@ -765,7 +791,7 @@ function validateInputs(input) {
     if (Number.isFinite(executedAt) && Number.isFinite(runStartedAt) && executedAt < runStartedAt) {
       errors.push(`verification receipt ${receipt.id || '<missing-id>'} predates runStartedAt`)
     }
-    if (Number.isFinite(executedAt) && executedAt > Date.now() + 60_000) errors.push(`verification receipt ${receipt.id || '<missing-id>'} cannot be in the future`)
+    if (nowMs !== null && Number.isFinite(executedAt) && executedAt > nowMs + 60_000) errors.push(`verification receipt ${receipt.id || '<missing-id>'} cannot be in the future`)
     if (operationalReceipt && Number.isFinite(executedAt) && Number.isFinite(lastEditFinishedAt)) {
       if (contentPhase === 'post' && executedAt < lastEditFinishedAt) errors.push(`verification receipt ${receipt.id || '<missing-id>'} post phase must execute after last edit finishes`)
     }

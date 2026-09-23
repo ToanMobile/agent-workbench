@@ -1,3 +1,7 @@
+---
+description: "Post-fix gate: static diff checks (secrets, placeholders, dependencies, perf, swallowed errors, raw logs) plus the regression tests of the active matrix; only exit 0 is PASS"
+---
+
 # /audit-gate — Post-Fix Audit & TIA Regression Gate
 
 Chạy cổng kiểm toán sau khi sửa lỗi trên các file thay đổi của dự án (working tree, hoặc `--diff <ref>`).

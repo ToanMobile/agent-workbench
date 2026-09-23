@@ -12,8 +12,14 @@
 # not prevent this (Deep Audit Loop already said "targeted module compile"); a
 # command that actually runs does.
 #
-# BLOCK (exit 2) when: a touched module's `compileDebugUnitTestKotlin` fails.
-# Skips entirely when there are no uncommitted .kt/.java changes.
+# BLOCK (exit 2) when: a touched module's `compileDebugUnitTestKotlin` fails — or,
+# for a module with `testBuildType = "<x>"`, `compile<X>UnitTestKotlin`: AGP creates
+# unit-test variants only for the testBuildType, so a `testBuildType = "release"`
+# module has no Debug task and used to be dropped as "lacks the task" (OfficeReader
+# :app, 2026-09-23). Read the way scripts/matrix_detect.py reads it.
+# Skips entirely when there are no uncommitted .kt/.java changes. The build is
+# ./gradlew, or — in a monorepo without one at the root — the nearest gradlew
+# above each changed file (e.g. android/gradlew), run from that folder.
 #
 # Cost: usually seconds — Gradle serves UP-TO-DATE when nothing in that source
 # set moved. Escape hatch: TESTSOURCESET_GATE=0 to skip (logged).
@@ -80,7 +86,11 @@ if [ "${TESTSOURCESET_GATE:-1}" = "0" ]; then
 fi
 
 cd "${REPO_ROOT}" 2>/dev/null || exit 0
-[ -x ./gradlew ] || { log "SKIP — no ./gradlew"; exit 0; }
+# The Gradle wrapper is ./gradlew, or — in a monorepo whose Android/JVM app sits in
+# a subfolder — a gradlew further down. No wrapper anywhere: nothing to compile.
+if [ ! -x ./gradlew ] && [ -z "$(git ls-files -- '*/gradlew' 2>/dev/null | head -1)" ]; then
+  log "SKIP — no ./gradlew"; exit 0
+fi
 
 # Uncommitted .kt/.java, staged + unstaged + untracked.
 CHANGED="$( { git diff --name-only --diff-filter=ACMR 2>/dev/null
@@ -116,66 +126,118 @@ fi
 
 [ -n "${CHANGED}" ] || { log "PASS — no uncommitted Kotlin/Java changes"; exit 0; }
 
-# Map each path to its Gradle module by walking up to the nearest build.gradle*.
-MODULES=""
-for f in ${CHANGED}; do
-  d="$(dirname "${f}")"
+# The Gradle build each file belongs to: ./gradlew covers every file; without it,
+# the nearest folder above the file that holds an executable gradlew.
+gradle_root_of() {
+  if [ -x ./gradlew ]; then echo "."; return; fi
+  local d
+  d="$(dirname "$1")"
   while [ "${d}" != "." ] && [ "${d}" != "/" ]; do
-    if [ -f "${d}/build.gradle.kts" ] || [ -f "${d}/build.gradle" ]; then
-      MODULES="${MODULES}
-:$(printf '%s' "${d}" | tr '/' ':')"
-      break
-    fi
+    [ -x "${d}/gradlew" ] && { echo "${d}"; return; }
     d="$(dirname "${d}")"
   done
+}
+ROOT_FILES=""   # "<gradle root><TAB><file>" per line
+for f in ${CHANGED}; do
+  r="$(gradle_root_of "${f}")"
+  [ -n "${r}" ] && ROOT_FILES="${ROOT_FILES}${NL}${r}	${f}"
 done
-MODULES="$(printf '%s' "${MODULES}" | grep -v '^$' | sort -u)"
+ROOTS="$(printf '%s\n' "${ROOT_FILES}" | grep -v '^$' | cut -f1 | sort -u || true)"
+[ -n "${ROOTS}" ] || { log "PASS — changed files are under no gradlew"; exit 0; }
 
-[ -n "${MODULES}" ] || { log "PASS — changed files map to no Gradle module"; exit 0; }
+# unit_test_task_of DIR — the unit-test compile task of the module in DIR:
+# compile<TestBuildType>UnitTestKotlin, Debug unless its build file sets testBuildType.
+# Same reading as scripts/matrix_detect.py _test_build_type: comment lines ignored,
+# `testBuildType = "x"` (kts) or `testBuildType 'x'` (groovy), first match wins.
+unit_test_task_of() {
+  local tbt
+  tbt="$(cat "$1/build.gradle" "$1/build.gradle.kts" 2>/dev/null \
+        | grep -vE '^[[:space:]]*(//|\*|/\*)' \
+        | sed -nE "s/(^|.*[^A-Za-z0-9_])testBuildType[[:space:]]*=?[[:space:]]*[\"']([A-Za-z0-9_]+)[\"'].*/\2/p" \
+        | head -n 1)"
+  [ -n "${tbt}" ] || tbt="debug"
+  printf 'compile%s%sUnitTestKotlin' "$(printf '%s' "${tbt}" | cut -c1 | tr '[:lower:]' '[:upper:]')" \
+    "$(printf '%s' "${tbt}" | cut -c2-)"
+}
 
-# Only modules that really expose the task (app/library modules do; others don't).
-TASKS=""
-for m in ${MODULES}; do
-  case "${m}" in
-    :build-logic*|:gradle*) continue ;;
-  esac
-  TASKS="${TASKS}${NL}${m}:compileDebugUnitTestKotlin"
-done
-TASKS="$(printf '%s\n' "${TASKS}" | grep -v '^$' || true)"
-[ -n "${TASKS}" ] || { log "PASS — no compilable modules"; exit 0; }
+# compile_root ROOT FILES — compile the test source set of the modules FILES
+# belong to, in the build at ROOT. Sets OUT, RC and TASKS (empty: nothing to run).
+compile_root() {
+  local root="$1" files="$2" f d rel m t mod _round
+  OUT=""; RC=0; TASKS=""
+  # Map each path to its Gradle module by walking up to the nearest build.gradle*,
+  # and that module to its unit-test compile task.
+  local modules=""
+  for f in ${files}; do
+    d="$(dirname "${f}")"
+    while [ "${d}" != "${root}" ] && [ "${d}" != "." ] && [ "${d}" != "/" ]; do
+      if [ -f "${d}/build.gradle.kts" ] || [ -f "${d}/build.gradle" ]; then
+        if [ "${root}" = "." ]; then rel="${d}"; else rel="${d#"${root}"/}"; fi
+        modules="${modules}${NL}:$(printf '%s' "${rel}" | tr '/' ':'):$(unit_test_task_of "${d}")"
+        break
+      fi
+      d="$(dirname "${d}")"
+    done
+  done
+  modules="$(printf '%s\n' "${modules}" | grep -v '^$' | sort -u || true)"
+  [ -n "${modules}" ] || { log "PASS — changed files map to no Gradle module (${root})"; return; }
 
-# A module without the task is not a failure, but it must not hide the others
-# (QA K-8: one "not found in project" used to PASS every module). Drop exactly
-# the modules Gradle names as lacking the task and re-run the rest.
-for _round in 1 2 3; do
-  OUT="$(./gradlew ${TASKS} --quiet 2>&1)"
-  RC=$?
-  [ ${RC} -eq 0 ] && break
-  MISSING="$(printf '%s\n' "${OUT}" | sed -n "s/.*not found in project '\\(:[^']*\\)'.*/\\1/p" | sort -u)"
-  [ -n "${MISSING}" ] || break
-  KEEP=""
-  for t in ${TASKS}; do
-    mod="${t%:compileDebugUnitTestKotlin}"
-    if printf '%s\n' "${MISSING}" | grep -qxF "${mod}"; then
-      log "SKIP ${mod} — lacks compileDebugUnitTestKotlin"
-    else
-      KEEP="${KEEP}${NL}${t}"
+  # Only modules that really expose the task (app/library modules do; others don't).
+  for m in ${modules}; do
+    case "${m}" in
+      :build-logic*|:gradle*) continue ;;
+    esac
+    TASKS="${TASKS}${NL}${m}"
+  done
+  TASKS="$(printf '%s\n' "${TASKS}" | grep -v '^$' || true)"
+  [ -n "${TASKS}" ] || { log "PASS — no compilable modules (${root})"; return; }
+
+  # A module without the task is not a failure, but it must not hide the others
+  # (QA K-8: one "not found in project" used to PASS every module). Drop exactly
+  # the modules Gradle names as lacking the task and re-run the rest.
+  local keep missing
+  for _round in 1 2 3; do
+    OUT="$(cd "${root}" && ./gradlew ${TASKS} --quiet 2>&1)"
+    RC=$?
+    [ ${RC} -eq 0 ] && break
+    missing="$(printf '%s\n' "${OUT}" | sed -n "s/.*not found in project '\\(:[^']*\\)'.*/\\1/p" | sort -u)"
+    [ -n "${missing}" ] || break
+    keep=""
+    for t in ${TASKS}; do
+      mod="${t%:*}"
+      if printf '%s\n' "${missing}" | grep -qxF "${mod}"; then
+        log "SKIP ${mod} — lacks ${t##*:}"
+      else
+        keep="${keep}${NL}${t}"
+      fi
+    done
+    keep="$(printf '%s\n' "${keep}" | grep -v '^$' || true)"
+    if [ "${keep}" = "${TASKS}" ]; then break; fi
+    TASKS="${keep}"
+    if [ -z "${TASKS}" ]; then
+      log "PASS — no touched module has its unit-test compile task (${root})"
+      OUT=""; RC=0
+      return
     fi
   done
-  KEEP="$(printf '%s\n' "${KEEP}" | grep -v '^$' || true)"
-  if [ "${KEEP}" = "${TASKS}" ]; then break; fi
-  TASKS="${KEEP}"
-  if [ -z "${TASKS}" ]; then
-    log "PASS — no touched module has compileDebugUnitTestKotlin"
-    rm -f "${ATTEMPTS_FILE}" 2>/dev/null || true
-    exit 0
+}
+
+GRADLEW_CMD="./gradlew"
+ALL_TASKS=""
+for root in ${ROOTS}; do
+  files="$(printf '%s\n' "${ROOT_FILES}" | awk -F'\t' -v r="${root}" '$1 == r { print $2 }')"
+  compile_root "${root}" "${files}"
+  [ -n "${TASKS}" ] && ALL_TASKS="${ALL_TASKS}$([ "${root}" = "." ] || printf '[%s] ' "${root}")$(printf '%s ' ${TASKS})"
+  if [ ${RC} -ne 0 ]; then
+    [ "${root}" = "." ] || GRADLEW_CMD="cd ${root} && ./gradlew"
+    break
   fi
 done
 IFS="${OLDIFS}"
 TASKS_STR="$(printf '%s ' ${TASKS})"
 
 if [ ${RC} -eq 0 ]; then
-  log "PASS — ${TASKS_STR}"
+  log "PASS — ${ALL_TASKS}"
   rm -f "${ATTEMPTS_FILE}" 2>/dev/null || true
   exit 0
 fi
@@ -192,7 +254,7 @@ fi
 OUT_FILE="${LOG_DIR}/testsourceset_last_failure${SID_RAW:+_${SID_RAW}}.txt"
 printf '%s\n' "${OUT}" >"${OUT_FILE}" 2>/dev/null || true
 
-if printf '%s' "${OUT}" | grep -qE '^e: |error:|Compilation error|compileDebugUnitTestKotlin.*FAILED'; then
+if printf '%s' "${OUT}" | grep -qE '^e: |error:|Compilation error|compile[A-Za-z0-9]*UnitTestKotlin.*FAILED'; then
   : # genuine compile failure — fall through to BLOCK below
 else
   log "INFRA (rc=${RC}, không có dấu hiệu lỗi compile) — fail-open; output: ${OUT_FILE}"
@@ -239,17 +301,17 @@ log "BLOCK (attempt ${ATTEMPTS}) — ${TASKS_STR}"
     echo ""
     printf '%s\n' "${OUT}" | grep -E '^e: |error:' | head -8
     echo ""
-    echo "Giải quyết merge TRƯỚC (hoặc \`git merge --abort\`) rồi chạy lại: ./gradlew ${TASKS_STR}"
+    echo "Giải quyết merge TRƯỚC (hoặc \`git merge --abort\`) rồi chạy lại: ${GRADLEW_CMD} ${TASKS_STR}"
     echo "CẤM sửa call site để né lỗi này — làm vậy là tự chọn một bên của merge mà không có quyền."
   else
-    echo "Module tôi vừa sửa có call site trong src/test đang vỡ. \`assembleDebug\`"
-    echo "và \`compileDebugKotlin\` KHÔNG compile test source set nên chúng vẫn xanh —"
+    echo "Module tôi vừa sửa có call site trong src/test đang vỡ. \`assemble…\`"
+    echo "và \`compile…Kotlin\` KHÔNG compile test source set nên chúng vẫn xanh —"
     echo "chỉ CI/release gate mới đỏ. Đây là P0 thật đã xảy ra 2026-07-16."
     echo ""
     printf '%s\n' "${OUT}" | grep -E '^e: |error:' | head -15
     echo ""
     echo "Sửa call site trong src/test (thường do đổi signature: thêm/bớt/đổi thứ tự param),"
-    echo "rồi chạy lại: ./gradlew ${TASKS_STR}"
+    echo "rồi chạy lại: ${GRADLEW_CMD} ${TASKS_STR}"
   fi
 } >&2
 exit 2

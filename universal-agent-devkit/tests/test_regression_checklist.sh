@@ -82,5 +82,41 @@ gate --run-tests
 grep -q "Không đọc được regression checklist" "$TMP/out" && [ "$(cat .agents/regression_status.json)" = "{broken" ] \
   && ok "corrupt checklist left untouched with a warning" || fail "corrupt checklist overwritten"
 
+# 9. Stale UNCOVERED rows are pruned when the gate records a new run: a file that no
+#    longer counts as uncovered code (docs/ evidence XML, .agents/ JS, a file a rule now
+#    watches) or no longer exists. A still-uncovered source file keeps its row.
+P="$TMP/prune"; mkdir -p "$P/src/test" "$P/docs/ev" "$P/.agents/local" && cd "$P" || exit 1
+git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt && echo "fun k() = 1" > src/Keep.kt && echo "class CoreTest" > src/test/CoreTest.kt
+echo "<x/>" > docs/ev/Core_RED.xml && echo "x()" > .agents/local/w.js
+cat > matrix.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
+ "mandatory_regression_tests":[{"id":"REG-P","name":"core","command":"true"}]}]}
+JSON
+git add -A && git commit -qm init
+python3 - <<'PY'
+import json
+rows = ["docs/ev/Core_RED.xml", ".agents/local/w.js", "src/Gone.kt", "src/Keep.kt", "src/Core.kt"]
+items = {"UNCOVERED:" + f: {"id": "UNCOVERED:" + f, "kind": "uncovered", "title": f, "component": "-", "file": f,
+                            "created_at": "2026-01-01 00:00:00", "task": None, "last": None, "history": []} for f in rows}
+json.dump({"version": 1, "items": items}, open(".agents/regression_status.json", "w"))
+PY
+echo "fun ok() = 2" > src/Core.kt
+CLAUDE_PROJECT_DIR="$P" python3 "$GATE" --matrix "$P/matrix.json" --run-tests >"$TMP/out" 2>&1
+left="$(python3 -c 'import json; d=json.load(open(".agents/regression_status.json")); print(" ".join(sorted(k for k in d["items"] if k.startswith("UNCOVERED:"))))')"
+[ "$left" = "UNCOVERED:src/Keep.kt" ] && ok "stale UNCOVERED rows pruned (docs XML, .agents JS, deleted, now-watched); a real one kept" \
+  || fail "UNCOVERED rows after the run: '$left'"
+! grep -q 'Core_RED.xml' .agents/regression_checklist.md && ok "pruned rows are gone from the Markdown view" || fail "view still lists a pruned row"
+
+# 10. An edited existing test keeps the change UNVERIFIED (it could weaken the assertion
+#     the run relies on), and the verdict says exactly what to do about it.
+echo "class CoreTest { }" > src/test/CoreTest.kt
+CLAUDE_PROJECT_DIR="$P" python3 "$GATE" --matrix "$P/matrix.json" --run-tests --json >"$TMP/out" 2>&1; rc=$?
+v="$(tail -1 "$TMP/out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["verdict"])')"
+[ "$rc" = 2 ] && case "$v" in *"git diff HEAD -- src/test/CoreTest.kt"*commit*) true ;; *) false ;; esac \
+  && ok "edited existing test: UNVERIFIED, verdict names the diff to review or commit" || fail "tests_touched verdict (rc=$rc): $v"
+v="$(CLAUDE_PROJECT_DIR="$P" python3 "$GATE" --matrix "$P/matrix.json" --run-tests --json -l en 2>&1 | tail -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["verdict"])')"
+case "$v" in *"human review"*"git diff HEAD -- src/test/CoreTest.kt"*commit*) ok "EN verdict: human review of the test diff, or commit it" ;; *) fail "EN tests_touched verdict: $v" ;; esac
+
 if [ "$FAILS" -ne 0 ]; then echo "regression checklist: $FAILS FAILED"; exit 1; fi
 echo "regression checklist: all checks passed"

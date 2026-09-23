@@ -1,3 +1,7 @@
+---
+description: "Switch or inspect the project's domain profile (android, automotive, game, ios, web, backend, voice-assistant, universal)"
+---
+
 # /profile — Switch or Inspect Project Domain Profile
 
 Switch between or view active domain profiles (`automotive`, `android`, `game`, `universal`, `voice-assistant`, `ios`).

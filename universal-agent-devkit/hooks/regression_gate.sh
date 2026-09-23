@@ -13,11 +13,23 @@
 #
 # Enforced for a project that has adopted a matrix: .agents/regression_matrix.active.json
 # (what `agent-kit profile` writes) or a legacy templates/ matrix, whose content differs
-# from every DevKit sample (templates/ + profiles/*). Sample matrices name placeholder
+# from every DevKit sample (templates/ + profiles/*) or that says "adopted": true (then
+# even a byte-identical copy of a sample is enforced). Sample matrices name placeholder
 # tests that do not exist in a real project — enforcing them would trap every session.
 # A profile matrix marked "enforce_as_is": true (web, backend: they auto-detect the
 # project's own runner) is enforced as installed. Without an adopted matrix the hook
-# only logs; a DevKit gate it cannot find is reported once per session.
+# does not block: a sample matrix (e.g. no runner detected: Unity) and a DevKit gate it
+# cannot find are each reported once per session (systemMessage) and logged.
+#
+# An adopted matrix the gate does not trust because it is UNCOMMITTED (and shadows no
+# committed matrix), with nothing else wrong: no test ran and only a commit (a human
+# decision, not the agent's) can make it trusted, so the stop is allowed with a
+# systemMessage once per change — the same deal as UNTESTED. An edited COMMITTED
+# matrix still blocks: that is the `exit 1` -> `true` shape.
+#
+# REGRESSION_GATE_PROBE=1: print one JSON line with the matrix state the Stop gate would
+# see ({"state": none|sample|outside|untrusted|trusted|nogate|disabled, …}) and exit 0 —
+# read-only, runs no test. session_context.sh reports it at session start.
 #
 # Cheap when nothing changed: the result is cached per working-tree fingerprint,
 # so a second Stop on the same diff does not re-run the tests.
@@ -33,11 +45,15 @@ set -u
 INPUT="$(cat)"
 REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
-mkdir -p "${LOG_DIR}" 2>/dev/null || exit 0
-[ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+PROBE="${REGRESSION_GATE_PROBE:-0}"
+if [ "${PROBE}" != "1" ]; then  # the probe writes nothing
+  mkdir -p "${LOG_DIR}" 2>/dev/null || exit 0
+  [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+fi
 LOG="${LOG_DIR}/regression_gate.log"
 
 if [ "${REGRESSION_GATE:-1}" = "0" ]; then
+  [ "${PROBE}" = "1" ] && { printf '%s\n' '{"state":"disabled"}'; exit 0; }
   echo "$(date +%Y-%m-%dT%H:%M:%S) skipped: REGRESSION_GATE=0" >> "${LOG}"
   exit 0
 fi
@@ -58,6 +74,7 @@ for cand in "${DEVKIT_ROOT:-}/bin/post-fix-gate.py" "${HOME}/.universal-agent-de
   [ -f "${cand}" ] && GATE="${cand}"
 done
 if [ ! -f "${GATE}" ]; then
+  [ "${PROBE}" = "1" ] && { printf '%s\n' '{"state":"nogate"}'; exit 0; }
   echo "$(date +%Y-%m-%dT%H:%M:%S) skipped: post-fix-gate.py not found" >> "${LOG}"
   SID="$(printf '%s' "${INPUT}" | python3 -c 'import json,re,sys
 try: print(re.sub(r"[^A-Za-z0-9_-]", "_", str(json.load(sys.stdin).get("session_id") or ""))[:40])
@@ -70,13 +87,14 @@ except Exception: print("")' 2>/dev/null)"
   exit 0
 fi
 
-printf '%s' "${INPUT}" | REPO_ROOT="${REPO_ROOT}" GATE="${GATE}" LOG="${LOG}" \
+printf '%s' "${INPUT}" | REPO_ROOT="${REPO_ROOT}" GATE="${GATE}" LOG="${LOG}" PROBE="${PROBE}" \
   MAX_ATTEMPTS="${REGRESSION_GATE_MAX_ATTEMPTS:-2}" python3 -c '
-import hashlib, json, os, re, subprocess, sys, time
+import contextlib, fnmatch, hashlib, io, json, os, re, subprocess, sys, time
 
 repo, gate, log = os.environ["REPO_ROOT"], os.environ["GATE"], os.environ["LOG"]
 max_attempts = int(os.environ.get("MAX_ATTEMPTS", "2"))
 devkit = os.path.dirname(os.path.dirname(gate))
+probe = os.environ.get("PROBE") == "1"
 
 def note(msg):
     with open(log, "a", encoding="utf-8") as f:
@@ -91,11 +109,14 @@ sid = re.sub(r"[^A-Za-z0-9_-]", "_", str(data.get("session_id") or "nosession"))
 def git(*args):
     return subprocess.run(["git", "-C", repo, *args], capture_output=True).stdout
 
+def emit(obj):
+    print(json.dumps(obj, ensure_ascii=False))
+
 status = git("status", "--porcelain=v1", "-z", "-uall")
 # Only our own bookkeeping changed (audit-gate state, the checklist itself) => nothing to gate.
 own = (".claude/audit-gate/", ".agents/regression_status.json", ".agents/regression_checklist.md")
 entries = [e for e in status.decode("utf-8", "replace").split("\0") if len(e) > 3 and not e[3:].startswith(own)]
-if not entries:
+if not entries and not probe:
     sys.exit(0)
 
 # Adopted matrix? (committed in the repo, not a byte-for-byte DevKit sample)
@@ -111,6 +132,14 @@ def enforce_as_is(p):
             return json.load(f).get("enforce_as_is") is True
     except Exception:
         return False
+def adopted(p):
+    # Explicit adoption: enforced even when byte-identical to a sample — a sample that
+    # later gains the project’s only difference (e.g. untested_exit) must not switch it off.
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f).get("adopted") is True
+    except Exception:
+        return False
 samples = set()
 for root, _, files in os.walk(os.path.join(devkit, "profiles")):
     if "regression_matrix.json" in files and not enforce_as_is(os.path.join(root, "regression_matrix.json")):
@@ -121,12 +150,70 @@ candidates = [os.path.join(repo, ".agents", "regression_matrix.active.json"),
               os.path.join(repo, ".agents", "active-profile", "regression_matrix.json"),
               os.path.join(repo, "templates", "regression_matrix.json")]
 matrix = next((c for c in candidates if os.path.exists(c)), None)
+# The committed matrix deleted in the working tree is not "no matrix": removing the
+# test oracle is itself a change the gate must not wave through by switching off.
+committed_rel = ".agents/regression_matrix.active.json"
+if not os.path.exists(os.path.join(repo, committed_rel)) and subprocess.run(
+        ["git", "-C", repo, "cat-file", "-e", "HEAD:./" + committed_rel], capture_output=True).returncode == 0:
+    if probe:
+        emit({"state": "deleted", "problem": committed_rel + " is deleted in the working tree"})
+        sys.exit(0)
+    msg = ("Regression gate: " + committed_rel + " (committed) đã bị XOÁ trong working tree — gate không được tắt kiểu này. "
+           "Khôi phục nó (`git show HEAD:./" + committed_rel + " > " + committed_rel + "`), hoặc để người dùng tự commit việc xoá.")
+    flag = os.path.join(os.path.dirname(log), "regression_gate.deleted." + sid)
+    if os.path.exists(flag):            # said once this session: warn, never trap the session
+        print(json.dumps({"systemMessage": msg}, ensure_ascii=False))
+        sys.exit(0)
+    open(flag, "w").close()
+    print(msg, file=sys.stderr)
+    note("block: committed matrix deleted")
+    sys.exit(2)
 if not matrix:
+    if probe:
+        emit({"state": "none"})
     sys.exit(0)
 real = os.path.realpath(matrix)
 toplevel = os.path.realpath(git("rev-parse", "--show-toplevel").decode().strip() or repo)
-if not real.startswith(toplevel + os.sep) or norm(real) in samples:
+rel = os.path.relpath(matrix, repo)
+is_sample = norm(real) in samples and not adopted(real)
+if probe and (not real.startswith(toplevel + os.sep) or is_sample):
+    emit({"state": "sample" if is_sample else "outside", "matrix": rel})
+    sys.exit(0)
+if probe:
+    # The gate’s own trust rule (committed, or byte-identical to a DevKit profile matrix /
+    # to what `agent-kit matrix` generates), not a copy of it.
+    try:
+        import importlib.util
+        sys.dont_write_bytecode = True
+        spec = importlib.util.spec_from_file_location("post_fix_gate", gate)
+        pfg = importlib.util.module_from_spec(spec)
+        os.environ["CLAUDE_PROJECT_DIR"] = repo
+        with contextlib.redirect_stdout(io.StringIO()):
+            spec.loader.exec_module(pfg)
+            pfg.set_lang(pfg.resolve_lang(None, repo))
+            _, problem = pfg.load_active_matrix(None, "HEAD")
+    except Exception as e:
+        emit({"state": "unknown", "matrix": rel, "problem": str(e)[:200]})
+        sys.exit(0)
+    emit({"state": "untrusted" if problem else "trusted", "matrix": rel, "problem": problem})
+    sys.exit(0)
+if not real.startswith(toplevel + os.sep) or is_sample:
     note(f"skipped: matrix {matrix} is a DevKit sample / outside the repo (not adopted)")
+    # Not silent: a project whose runner the DevKit cannot detect (Unity, …) keeps the
+    # profile sample and so has NO Stop-time regression check. Say it once per session.
+    flag = os.path.join(os.path.dirname(log), "regression_gate.sample." + sid)
+    if not os.path.exists(flag):
+        try:
+            open(flag, "w").close()
+        except OSError:
+            pass
+        why = "là ma trận MẪU của DevKit (test minh họa)" if is_sample else "nằm ngoài repo (link vào DevKit)"
+        print(json.dumps({"systemMessage":
+            "⚠ regression_gate TẮT: không dò được test runner và `" + rel + "` " + why +
+            " — test hồi quy KHÔNG chạy khi dừng. Chạy `agent-kit matrix --write`, hoặc sửa ma trận thành test thật "
+            "của dự án (hay thêm \"adopted\": true) rồi commit. (regression gate off: no test runner detected and the "
+            "matrix is a sample — run `agent-kit matrix --write` or adopt the matrix (\"adopted\": true) and commit it.)"},
+            ensure_ascii=False))
     sys.exit(0)
 
 # Fingerprint of the USER change only — the gate rewrites the checklist on every run,
@@ -146,16 +233,6 @@ res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "
                       "--timeout", os.environ.get("REGRESSION_GATE_TEST_TIMEOUT", "600")],
                      cwd=repo, capture_output=True, text=True, errors="replace",
                      env={**os.environ, "CLAUDE_PROJECT_DIR": repo})
-if res.returncode in (0, 3):
-    state["pass_fp"] = fp
-    state.pop("attempts", None)
-    json.dump(state, open(state_file, "w", encoding="utf-8"))
-    note(f"pass fp={fp} exit={res.returncode}")
-    sys.exit(0)
-if res.returncode not in (1, 2):
-    note("fail-open: gate crashed exit=%s: %r" % (res.returncode, res.stderr[-400:]))
-    sys.exit(0)
-
 summary = {}
 for line in reversed(res.stdout.splitlines()):
     if line.startswith("{"):
@@ -164,13 +241,99 @@ for line in reversed(res.stdout.splitlines()):
             break
         except ValueError:
             pass
+if res.returncode in (0, 3):
+    state["pass_fp"] = fp
+    state.pop("attempts", None)
+    json.dump(state, open(state_file, "w", encoding="utf-8"))
+    note(f"pass fp={fp} exit={res.returncode}")
+    sys.exit(0)
+if res.returncode == 4:
+    # UNTESTED: every test that could run passed, but one cannot run on this machine
+    # (its matrix untested_exit, e.g. unity-batch.sh without a Unity Editor). Blocking
+    # would stop every session on that machine; passing would claim a PASS nobody saw.
+    # Say it once per change and let the stop through.
+    if state.get("untested_fp") != fp:
+        state["untested_fp"] = fp
+        json.dump(state, open(state_file, "w", encoding="utf-8"))
+        names = ["%s (%s)" % (t.get("id"), t.get("command")) for t in summary.get("regression_tests", [])
+                 if t.get("status") == "UNTESTED"]
+        print(json.dumps({"systemMessage": "Regression gate UNTESTED — không chạy được trên máy này, KHÔNG phải PASS: "
+                          + "; ".join(names or ["?"]) + ". Chạy lại trên máy có công cụ đó trước khi báo xong."},
+                         ensure_ascii=False))
+    note(f"untested fp={fp}")
+    sys.exit(0)
+if res.returncode not in (1, 2):
+    note("fail-open: gate crashed exit=%s: %r" % (res.returncode, res.stderr[-400:]))
+    sys.exit(0)
+
 strip = lambda s: re.sub(r"\x1b\[[0-9;]*m", "", s or "")
 verdict = strip(summary.get("verdict")) or ("exit " + str(res.returncode))
+problem = strip(summary.get("matrix_problem"))
+touched = summary.get("tests_touched") or []
+failing = [t for t in summary.get("regression_tests", []) if t.get("status") != "PASS"]
+
+def in_head(path):
+    # candidates may not exist in the tree (deleted): map through the real repo path
+    rel_top = os.path.relpath(os.path.join(os.path.realpath(repo), os.path.relpath(path, repo)), toplevel)
+    return subprocess.run(["git", "-C", toplevel, "cat-file", "-e", "HEAD:" + rel_top.replace(os.sep, "/")],
+                          capture_output=True).returncode == 0
+
+def watch_patterns():
+    pats = []
+    for c in candidates:
+        try:
+            with open(c, encoding="utf-8") as f:
+                pats += [w for r in json.load(f).get("rules", []) for w in r.get("watch_files", [])]
+        except Exception:
+            pass
+    return pats
+
+def watched(f, pats):
+    # = post-fix-gate match_pattern: fnmatch, and "**/x" also matches a root-level x
+    f = f.replace("\\", "/")
+    return any(fnmatch.fnmatch(f, p) or (p.startswith("**/") and fnmatch.fnmatch(f, p[3:])) for p in pats)
+
+# With an untrusted matrix the gate computed UNCOVERED against no rule at all (every
+# changed source file). List only files that no matrix of the project watches.
+pats = watch_patterns()
+uncovered = [f for f in summary.get("uncovered", []) if not watched(f, pats)]
+cure_commit = ("commit " + rel + " (the gate trusts only a committed matrix, or one byte-identical to `agent-kit matrix`)")
+uncommitted = bool(problem) and not in_head(matrix)
+shadowed = [os.path.relpath(c, repo) for c in candidates[candidates.index(matrix) + 1:] if in_head(c)] if uncommitted else []
+
+if res.returncode == 2 and uncommitted and not shadowed and not touched and not failing \
+        and not summary.get("findings") and not summary.get("unreadable"):
+    # The matrix is the only problem and it is uncommitted: no test ran, and only a commit
+    # (a human decision) makes it trusted. Blocking would stop every turn until then; say
+    # it to the user once per change, like UNTESTED, and let the stop through.
+    if state.get("matrix_fp") != fp:
+        state["matrix_fp"] = fp
+        json.dump(state, open(state_file, "w", encoding="utf-8"))
+        msg = ("⚠ Regression gate KHÔNG chạy test hồi quy: `" + rel + "` chưa commit nên gate chưa tin nó. "
+               "Cần làm: " + cure_commit + ".")
+        if uncovered:
+            msg += (" Ngoài ra %d file code đổi mà ma trận này không theo dõi (thêm vào watch_files): %s."
+                    % (len(uncovered), ", ".join(uncovered[:10])))
+        print(json.dumps({"systemMessage": msg}, ensure_ascii=False))
+    note(f"matrix uncommitted fp={fp}")
+    sys.exit(0)
+
 lines = ["Regression gate CHƯA ĐẠT — " + verdict]
-for t in summary.get("regression_tests", []):
-    if t.get("status") != "PASS":
-        lines.append("  - %s %s: %s (lệnh: %s)" % (t.get("id"), t.get("name"), t.get("status"), t.get("command")))
-for f in summary.get("uncovered", [])[:10]:
+if problem and uncommitted:
+    lines.append("  - MATRIX: %s — `%s` che mất ma trận đã commit %s: %s, hoặc xoá nó."
+                 % (problem, rel, ", ".join(shadowed), cure_commit))
+elif problem:
+    lines.append("  - MATRIX: %s — cần người review sửa đổi ở `%s` rồi commit, hoặc hoàn tác nó; KHÔNG sửa ma trận "
+                 "để lách test (have a human review the matrix edit and commit it, or revert it)." % (problem, rel))
+for t in failing:
+    lines.append("  - %s %s: %s (lệnh: %s)" % (t.get("id"), t.get("name"), t.get("status"), t.get("command")))
+for f in summary.get("findings", [])[:10]:
+    # static findings (secrets, placeholders, dependencies …) with the exact place to fix
+    lines.append("  - %s %s:%s: %s" % (f.get("category"), f.get("file"), f.get("line") or "?", f.get("message")))
+for f in touched[:10]:
+    lines.append("  - TEST ĐÃ CÓ BỊ SỬA/XOÁ: %s — cần người review diff test (`git diff HEAD -- %s`) hoặc commit nó; "
+                 "không sửa test cũ để lách" % (f, f))
+for f in uncovered[:10]:
     lines.append("  - UNCOVERED:%s — file code đổi nhưng chưa test hồi quy nào theo dõi" % f)
 lines.append("Checklist: %s · báo cáo: %s" % (summary.get("checklist", ".agents/regression_checklist.md"), summary.get("report", "-")))
 
@@ -182,9 +345,14 @@ if attempts[fp] > max_attempts:
     msg = "\n".join(lines + ["(Đã chặn %d lần cho cùng thay đổi — cho dừng để không kẹt phiên. Người dùng cần xem lại.)" % max_attempts])
     print(json.dumps({"systemMessage": msg}, ensure_ascii=False))
     sys.exit(0)
-lines.append("Sửa code/test cho các mục trên rồi dừng lại. Không sửa test cũ để lách; file chưa có test: thêm test vào regression_matrix.json "
-             "hoặc `python3 bin/regression_checklist.py link UNCOVERED:<file> <TEST-ID>`. "
-             "Nếu thực sự không làm được, dừng và nói rõ cho người dùng.")
+# The cure matches what is actually wrong: a matrix or an edited test needs a person,
+# a failing test / finding needs a code fix, an uncovered file needs a test mapping.
+if failing or summary.get("findings") or summary.get("unreadable") or not (problem or touched or uncovered):
+    lines.append("Sửa code/test cho các mục trên rồi dừng lại. Không sửa test cũ để lách.")
+if uncovered:
+    lines.append("File chưa có test: thêm test vào regression_matrix.json "
+                 "hoặc `python3 bin/regression_checklist.py link UNCOVERED:<file> <TEST-ID>`.")
+lines.append("Nếu thực sự không làm được, dừng và nói rõ cho người dùng.")
 print("\n".join(lines), file=sys.stderr)
 sys.exit(2)
 ' || exit $?

@@ -9,8 +9,11 @@
 #     trap with its line number — not the whole file, so a large memory never floods
 #     the context. Over 20 KB the index (.agents/instincts-index.md, from
 #     scripts/index_memory.py) is regenerated when stale and pointed to instead.
-#   • the regression checklist state (FAIL / UNCOVERED counts) and whether the
-#     regression matrix and the git pre-commit gate are active
+#   • the regression checklist state (FAIL / UNCOVERED counts), the git pre-commit
+#     gate, and the regression matrix state the Stop gate will really see — asked
+#     from regression_gate.sh itself (REGRESSION_GATE_PROBE=1: its adoption rule and
+#     post-fix-gate's load_active_matrix trust rule), so "a matrix file exists" is
+#     never reported as "tests will run" when the gate does not trust it
 #   • the gates that will actually run, so the model does not have to guess
 #
 # Never blocks: always exit 0. Escape hatch: SESSION_CONTEXT=0.
@@ -32,8 +35,9 @@ for cand in "$(dirname "$(dirname "${SELF}")")/scripts/index_memory.py" \
   [ -f "${cand}" ] && { INDEXER="${cand}"; break; }
 done
 HOOK_FILE="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-path hooks/pre-commit 2>/dev/null || true)"
+GATE_HOOK="$(dirname "${SELF}")/regression_gate.sh"
 
-REPO_ROOT="${REPO_ROOT}" INDEXER="${INDEXER}" HOOK_FILE="${HOOK_FILE}" python3 - <<'PY' 2>/dev/null
+REPO_ROOT="${REPO_ROOT}" INDEXER="${INDEXER}" HOOK_FILE="${HOOK_FILE}" GATE_HOOK="${GATE_HOOK}" python3 - <<'PY' 2>/dev/null
 import json, os, re, subprocess, sys
 
 root = os.environ["REPO_ROOT"]
@@ -74,7 +78,36 @@ if os.path.isfile(inst):
 matrix = os.path.join(root, ".agents", "regression_matrix.active.json")
 status = os.path.join(root, ".agents", "regression_status.json")
 parts = []
-parts.append("ma trận hồi quy: " + (".agents/regression_matrix.active.json" if os.path.isfile(matrix) else "chưa có"))
+probe = {}
+gate_hook = os.environ.get("GATE_HOOK") or ""
+if os.path.isfile(gate_hook):
+    try:  # read-only: the Stop gate answers what it would do, runs no test
+        r = subprocess.run(["bash", gate_hook], input="{}", capture_output=True, text=True, timeout=20,
+                           env={**os.environ, "REGRESSION_GATE_PROBE": "1", "CLAUDE_PROJECT_DIR": root})
+        probe = json.loads((r.stdout.strip().splitlines() or ["{}"])[-1])
+    except Exception:
+        probe = {}
+state, m = probe.get("state"), probe.get("matrix") or ""
+off = " — khi dừng KHÔNG chạy test hồi quy"
+if state == "trusted":
+    parts.append(f"ma trận hồi quy: {m} (được gate tin — test hồi quy chạy khi dừng)")
+elif state == "untrusted":
+    parts.append(f"ma trận hồi quy: {m} CHƯA được gate tin ({probe.get('problem')}){off} theo nó; cần người review rồi "
+                 f"commit {m} (gate chỉ tin ma trận đã commit, hoặc giống từng byte bản `agent-kit matrix`)")
+elif state == "sample":
+    parts.append(f"ma trận hồi quy: {m} là ma trận MẪU của DevKit, chưa áp dụng{off} (`agent-kit matrix --write`, "
+                 "hoặc sửa thành test thật của dự án / thêm \"adopted\": true rồi commit)")
+elif state == "outside":
+    parts.append(f"ma trận hồi quy: {m} nằm ngoài repo (link vào DevKit){off}")
+elif state == "none":
+    parts.append("ma trận hồi quy: chưa có" + off)
+elif state == "nogate":
+    parts.append("ma trận hồi quy: không tìm thấy post-fix-gate.py" + off)
+elif state == "disabled":
+    parts.append("ma trận hồi quy: REGRESSION_GATE=0" + off)
+else:  # gate hook unreachable / probe failed: what is on disk, trust unknown
+    parts.append("ma trận hồi quy: " + (".agents/regression_matrix.active.json (chưa rõ gate có tin không)"
+                                        if os.path.isfile(matrix) else "chưa có"))
 try:
     indexer = os.environ.get("INDEXER") or ""
     counts = {}
@@ -97,8 +130,10 @@ except OSError:
 parts.append("git pre-commit: " + ("bật" if pre else "chưa cài (agent-kit githooks install)"))
 out.append("Trạng thái: " + "; ".join(parts) + ".")
 
-out.append("Gate chạy tự động: Bash chặn git nguy hiểm/--no-verify; Edit cần Read trước; khi dừng: test hồi quy "
-           "theo ma trận, 'test pass' phải có kết quả runner và test mới phải từng ĐỎ, 'đã fix' phải có cặp test "
+stop_tests = ("test hồi quy theo ma trận" if state == "trusted"
+              else "test hồi quy CHỈ khi ma trận được áp dụng và gate tin (hiện chưa — xem Trạng thái)")
+out.append("Gate chạy tự động: Bash chặn git nguy hiểm/--no-verify; Edit cần Read trước; khi dừng: " + stop_tests +
+           ", 'test pass' phải có kết quả runner và test mới phải từng ĐỎ, 'đã fix' phải có cặp test "
            "ĐỎ→XANH trong phiên, sửa bug xong được nhắc ghi bài học (agent-kit learn).")
 print("\n".join(out))
 PY

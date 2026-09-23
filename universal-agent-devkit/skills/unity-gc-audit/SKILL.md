@@ -91,12 +91,12 @@ Kỹ năng chuyên sâu kiểm toán mã nguồn C# trong Unity 6, triệt tiêu
 
 1. **Unity Profiler CPU / Memory Allocation Audit:**
    ```bash
-   ./scripts/unity-test.sh EditMode --filter "Category=MemoryProfiler"
+   bash .agents/active-profile/scripts/unity-batch.sh editmode --category MemoryProfiler
    ```
    - Tiêu chuẩn: `GC.Alloc` trong hàm `Update()` ghi nhận bằng **0 B** (Zero Bytes).
 
 2. **Kiểm Tra Rò Rỉ Chuyển Scene (Scene Load/Unload):**
    ```bash
-   ./scripts/unity-test.sh PlayMode --filter "Category=SceneTransition"
+   bash .agents/active-profile/scripts/unity-batch.sh playmode --category SceneTransition
    ```
    - Tiêu chuẩn: Sau khi dỡ bỏ màn chơi (`Resources.UnloadUnusedAssets()`), không còn tham chiếu tĩnh nào trỏ đến đối tượng đã bị phá hủy.

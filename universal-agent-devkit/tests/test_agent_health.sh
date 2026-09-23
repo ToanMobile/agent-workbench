@@ -37,6 +37,18 @@ else
 fi
 AGENT_HEALTH_TEST_CMD='exit 1' python3 "$HEALTH" --run-tests -t "$TMP/proj" 2>&1 | strip | grep -q "exit 1" \
   && ok "H-1: real exit code of the suite is reported" || fail "H-1: suite exit code not reported"
+AGENT_HEALTH_TEST_CMD='exit 1' python3 "$HEALTH" --run-tests -t "$TMP/proj" > "$TMP/h.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && strip < "$TMP/h.out" | grep -q "FAIL (test suite" \
+  && ok "H-1: a red test suite fails the run (exit 1), whatever the score" || fail "H-1: red suite still exit $rc"
+
+# Project wiring: an uncommitted matrix means the Stop gate runs no test — health must say so and FAIL.
+W="$TMP/wired"; mkdir -p "$W" && (cd "$W" && git init -q && git config user.email t@t && git config user.name t && echo x > a && git add a && git commit -qm i)
+bash "$DEVKIT_DIR/bin/install.sh" -t "$W" -a claude -p backend -y --no-githooks >/dev/null 2>&1
+printf '{"rules":[{"component":"c","watch_files":["*.py"],"mandatory_regression_tests":[{"id":"R","name":"r","command":"true"}]}]}\n' > "$W/.agents/regression_matrix.active.json"
+python3 "$HEALTH" -t "$W" > "$TMP/w.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && strip < "$TMP/w.out" | grep -q "runs NO regression tests\|KHÔNG chạy test hồi quy" \
+  && ok "project wiring: an untrusted (uncommitted) matrix is reported and fails health" || fail "project wiring not checked (rc=$rc)"
+strip < "$TMP/w.out" | grep -q "Every @-import of the DevKit block resolves\|Mọi @-import" && ok "project wiring: @-imports checked" || fail "imports not checked"
 
 # L-2: only the active profile's essential_mcps are required (universal: codebase-memory-mcp, context7).
 mkdir -p "$TMP/uni"

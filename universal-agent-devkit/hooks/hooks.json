@@ -41,6 +41,16 @@
         ]
       },
       {
+        "matcher": "mcp__replicant-mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/hardware_safety_gate.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write",
         "hooks": [
           {

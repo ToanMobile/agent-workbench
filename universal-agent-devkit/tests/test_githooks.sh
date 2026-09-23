@@ -67,6 +67,12 @@ printf '#!/bin/sh\necho mine\n' > "$HOOK" && chmod +x "$HOOK"
 out="$(bash "$KIT" githooks install 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && grep -q 'echo mine' "$HOOK" && ok "foreign hook: install refuses and keeps it" || fail "foreign hook overwritten (rc=$rc)"
 printf '%s' "$out" | grep -q 'git-pre-commit.sh' && ok "refusal prints the chaining line" || fail "no chaining line"
+printf '%s' "$out" | grep -qi 'after the first\|NGAY SAU' && ! printf '%s' "$out" | grep -qi 'append this line' \
+  && ok "chaining advice says: insert after the shebang (an appended line can sit after 'exit 0')" || fail "chaining advice still says append"
+cp "$HOOK" "$HOOK.own"; printf '#!/bin/sh\nbash %s "$@" || exit 1\necho mine\nexit 0\n' "$DEVKIT_DIR/scripts/git-pre-commit.sh" > "$HOOK"
+bash "$KIT" githooks status 2>&1 | grep -q "chaining the DevKit gate\|có gọi cổng DevKit" \
+  && ok "status recognises a project hook that chains the DevKit gate" || fail "chained hook not recognised: $(bash "$KIT" githooks status 2>&1)"
+mv "$HOOK.own" "$HOOK"
 bash "$KIT" githooks uninstall >/dev/null; grep -q 'echo mine' "$HOOK" && ok "uninstall keeps a foreign hook" || fail "uninstall removed a foreign hook"
 
 # core.hooksPath (husky, lefthook, …) is honoured.

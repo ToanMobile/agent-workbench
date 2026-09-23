@@ -5,6 +5,9 @@ instincts.py — add a lesson to the project's failure memory (.agents/instincts
 Usage (via `agent-kit learn`):
   instincts.py add "<trap title>" [--cause TEXT] [--rule TEXT] [--symptom TEXT]
                    [--check CMD] [--file PATH] [--force] [--dry-run] [-l en|vi]
+  instincts.py add --from-json FILE [--file PATH] [--dry-run]
+                   bulk: every {"verdict": "INSTINCT", "title", "cause", "rule", "symptom",
+                   "check", "source", "found_on", "project"} item of a JSON list
 
   - the entry gets the next free id `[INSTINCT-NNN]` (highest 3-digit id + 1; the
     named families like INSTINCT-V01 / INSTINCT-BE-01 are left alone)
@@ -23,6 +26,7 @@ Exit codes: 0 added (or --dry-run), 1 duplicate title, 2 usage / file error.
 """
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -45,10 +49,26 @@ HEADING = re.compile(r"^### \[(INSTINCT-[A-Za-z0-9_-]+)\][ \t]*(.*)$", re.MULTIL
 
 
 def md_escape(text) -> str:
-    """One line, Markdown control characters escaped — user text must not add headings,
-    list items or links to instincts.md / the report."""
+    """One line — user text cannot start a heading or list item of its own — with `<`
+    escaped, so it cannot open an HTML comment (`<!--` would hide every entry after it
+    from the prompt matcher) or a tag. Nothing else is escaped: identifiers like
+    AUTO_WINDOW_MAX and `inline code` must stay greppable and readable."""
     text = " ".join(str(text or "").split())
-    return re.sub(r"([\\`*_\[\]#<>|!])", r"\\\1", text)
+    return text.replace("<", "&lt;")   # not "\\<": the matcher's <!--…--> strip would still see it
+
+
+def md_code(text) -> str:
+    """A shell command as one-line inline code, left UNESCAPED so it can be pasted into
+    a shell. Inside a code span Markdown is inert; the only way out is a backtick run
+    as long as the fence, so the fence is one backtick longer than the longest run in
+    the command (padded with a space when the command starts/ends with a backtick —
+    CommonMark strips that space). Newlines are folded, so it cannot start a line."""
+    text = " ".join(str(text or "").split())
+    if not text:
+        return ""
+    fence = "`" * (max((len(r) for r in re.findall(r"`+", text)), default=0) + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
 
 
 def _norm_title(title: str) -> str:
@@ -69,7 +89,7 @@ def find_duplicate(text: str, title: str):
     return None
 
 
-def format_entry(inst_id, title, cause=None, rule=None, symptom=None, check=None, today=None) -> str:
+def format_entry(inst_id, title, cause=None, rule=None, symptom=None, check=None, today=None, source=None) -> str:
     none = tr("Chưa ghi", "Not recorded")
     lines = [
         f"### [{inst_id}] {md_escape(title)}",
@@ -79,12 +99,14 @@ def format_entry(inst_id, title, cause=None, rule=None, symptom=None, check=None
         f"- **{tr('Quy tắc phòng ngừa & Cách fix', 'Prevention & fix')}:** {md_escape(rule) if rule else none}",
     ]
     if check:
-        lines.append(f"- **{tr('Lệnh kiểm tra', 'Check')}:** {md_escape(check)}")
+        lines.append(f"- **{tr('Lệnh kiểm tra', 'Check')}:** {md_code(check)}")
+    if source:
+        lines.append(f"- **{tr('Nguồn', 'Source')}:** {md_escape(source)}")
     return "\n".join(lines) + "\n"
 
 
 def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=None,
-                  force=False, dry_run=False):
+                  force=False, dry_run=False, source=None, found_on=None):
     """Returns (status, inst_id, entry): status is "added", "dry-run" or "duplicate"
     (inst_id is then the existing entry). Raises OSError / ValueError."""
     if not md_escape(title):
@@ -99,7 +121,7 @@ def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=
         if dup and not force:
             return "duplicate", dup, None
         inst_id = next_id(text)
-        entry = format_entry(inst_id, title, cause, rule, symptom, check)
+        entry = format_entry(inst_id, title, cause, rule, symptom, check, today=found_on, source=source)
         if dry_run:
             return "dry-run", inst_id, entry
         lead = "" if not text or text.endswith("\n") else "\n"
@@ -165,12 +187,65 @@ def cmd_add(args) -> int:
     return 0
 
 
+def cmd_import(args) -> int:
+    """--from-json FILE: a list of lessons, e.g. memory an agent classified. Items with a
+    "verdict" other than INSTINCT are skipped, and so are items whose "project" is not
+    this project. A title already recorded is reported, not added again, so the import
+    can be re-run."""
+    project = project_dir()
+    try:
+        target = resolve_target(args.file, project)
+        with open(args.from_json, encoding="utf-8") as f:
+            items = json.load(f)
+        if not isinstance(items, list):
+            raise ValueError(tr("JSON phải là một danh sách", "the JSON must be a list"))
+    except (OSError, ValueError) as e:
+        print(f"✖ {e}", file=sys.stderr)
+        return 2
+    if not target.exists() and not args.dry_run:
+        template = DEVKIT_ROOT / "templates" / "instincts.template.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if template.is_file():
+            shutil.copyfile(template, target)
+    counts = {"added": 0, "dry-run": 0, "duplicate": 0, "skipped": 0}
+    for item in items:
+        if not isinstance(item, dict) or item.get("verdict", "INSTINCT") != "INSTINCT" or not item.get("title"):
+            counts["skipped"] += 1
+            continue
+        proj = item.get("project")
+        if proj and os.path.realpath(proj) != os.path.realpath(project):
+            counts["skipped"] += 1
+            continue
+        found_on = item.get("found_on") or None
+        if found_on and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", found_on):
+            found_on = None
+        try:
+            status, inst_id, entry = append_lesson(
+                target, item["title"], cause=item.get("cause") or None, rule=item.get("rule") or None,
+                symptom=item.get("symptom") or None, check=item.get("check") or None,
+                force=args.force, dry_run=args.dry_run, source=item.get("source") or None, found_on=found_on)
+        except (OSError, ValueError) as e:
+            print(f"✖ {item.get('title')}: {e}", file=sys.stderr)
+            counts["skipped"] += 1
+            continue
+        counts[status] += 1
+        mark = {"added": "✔", "dry-run": "•", "duplicate": "="}[status]
+        print(f"  {mark} [{inst_id}] {item['title']}")
+    print(tr(f"{target}: thêm {counts['added'] + counts['dry-run']}{' (chạy thử)' if args.dry_run else ''}, "
+             f"đã có {counts['duplicate']}, bỏ qua {counts['skipped']}",
+             f"{target}: added {counts['added'] + counts['dry-run']}{' (dry-run)' if args.dry_run else ''}, "
+             f"already there {counts['duplicate']}, skipped {counts['skipped']}"))
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="agent-kit learn",
                                      description="Record a lesson / code trap in .agents/instincts.md")
     sub = parser.add_subparsers(dest="cmd", required=True)
     add = sub.add_parser("add", help="add a lesson")
-    add.add_argument("title", help="trap / lesson title")
+    add.add_argument("title", nargs="?", help="trap / lesson title")
+    add.add_argument("--from-json", help="add every INSTINCT item of a JSON list "
+                     "({title, cause, rule, symptom, check, source, found_on, verdict, project})")
     add.add_argument("--cause", help="root cause")
     add.add_argument("--rule", "--prevention", dest="rule", help="prevention rule / how to fix")
     add.add_argument("--symptom", help="observed symptom (default: the title)")
@@ -181,6 +256,12 @@ def main(argv=None) -> int:
     add.add_argument("-l", "--lang", choices=["en", "vi"], help="output language")
     args = parser.parse_args(argv)
     set_lang(resolve_lang(args.lang, project_dir()))
+    if args.from_json:
+        if args.title:
+            parser.error("give a title or --from-json, not both")
+        return cmd_import(args)
+    if not args.title:
+        parser.error("a title is required (or --from-json FILE)")
     return cmd_add(args)
 
 

@@ -94,11 +94,13 @@ except Exception:
     sys.exit(0)
 
 # Bound the file so a long-lived project cannot grow it without limit. The tail
-# is what matters: entries are only ever consulted for the CURRENT session.
+# is what matters: entries are only ever consulted for the CURRENT session. The
+# size is checked first, so a Read does not re-read the whole ledger every time
+# (512 KB ≈ 4000–6000 entries of a session id and an absolute path).
 try:
-    with open(ledger) as fh:
-        lines = fh.readlines()
-    if len(lines) > 5000:
+    if os.path.getsize(ledger) > 512 * 1024:
+        with open(ledger) as fh:
+            lines = fh.readlines()
         with open(ledger, "w") as fh:
             fh.writelines(lines[-2500:])
 except Exception:

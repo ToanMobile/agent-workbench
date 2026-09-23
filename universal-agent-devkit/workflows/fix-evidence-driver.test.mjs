@@ -195,7 +195,7 @@ test('driver isolates session delta on a pre-dirty file and requires explicit ov
     ledger: { entries: [] },
     verificationReceipts: [...output.verificationReceipts, red, green],
     regressionProofs: [{ id: 'proof-1', acceptanceId: 'acceptance-1', preReceiptId: 'red', postReceiptId: 'green' }],
-    verificationGates: [], classHistory: [], budgetHistory: [], sweepIndex: 0,
+    verificationGates: [], classHistory: [], budgetHistory: [], sweepIndex: 0, nowMs: Date.now(),
   }
   assert.equal(redMeasurement.oracleSourceArtifactId, 'oracle-source-red')
   const redSourceArtifact = args.artifacts.find((artifact) => artifact.id === redMeasurement.oracleSourceArtifactId)
@@ -518,7 +518,7 @@ test('driver oracle artifacts bind operational receipts end to end through the w
     verificationGates: [],
     classHistory: [],
     budgetHistory: [],
-    sweepIndex: 0,
+    sweepIndex: 0, nowMs: Date.now(),
   }
   const result = await executeWorkflow(
     args,
@@ -737,7 +737,7 @@ test('binary evidence requires explicit manual review and remains binary', async
       acceptance: [{ id: 'acceptance-1', defect: 'Fixture has old bytes', statement: 'Fixture has new bytes', scenarioFingerprint: 'reader-value-v1', machineOracle: { metric: 'observedState', op: 'eq', value: 'VALUE_2' }, mandatory: true, blastRadiusAnchors: ['BinaryFixture.bytes'], oracleSourcePaths: ['src/test/ReaderTest.kt'] }],
       ledger: { entries: [] }, verificationReceipts: [...output.verificationReceipts, red, green],
       regressionProofs: [{ id: 'proof-binary', acceptanceId: 'acceptance-1', preReceiptId: 'binary-red', postReceiptId: 'binary-green' }],
-      verificationGates: [], classHistory: [], budgetHistory: [], sweepIndex: 0,
+      verificationGates: [], classHistory: [], budgetHistory: [], sweepIndex: 0, nowMs: Date.now(),
     },
     { env: { CLAUDE_PROJECT_DIR: repo }, cwd: () => repo }, () => {},
     async (tasks) => Promise.all(tasks.map((task) => task())),
@@ -1040,7 +1040,7 @@ test('mode-only edits emit exact mode provenance and round-trip through the work
     acceptance: [{ id: 'acceptance-1', defect: 'Script is not executable', statement: 'Script is executable', scenarioFingerprint: 'mode-v1', machineOracle: red.machineOracle, mandatory: true, blastRadiusAnchors: ['mode.sh'], oracleSourcePaths: ['src/test/ReaderTest.kt'] }],
     ledger: { entries: [] }, verificationReceipts: [...output.verificationReceipts, red, green],
     regressionProofs: [{ id: 'proof-mode', acceptanceId: 'acceptance-1', preReceiptId: 'mode-red', postReceiptId: 'mode-green' }],
-    verificationGates: [], classHistory: [], budgetHistory: [], sweepIndex: 0,
+    verificationGates: [], classHistory: [], budgetHistory: [], sweepIndex: 0, nowMs: Date.now(),
   }, { env: { CLAUDE_PROJECT_DIR: repo }, cwd: () => repo }, () => {},
   async (tasks) => Promise.all(tasks.map((task) => task())),
   async (_prompt, options) => ({

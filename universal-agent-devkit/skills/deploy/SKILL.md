@@ -41,10 +41,9 @@ Sau khi build thành công, kiểm tra các output artifacts:
 
 ## 4. Pre-release Security & Gate Verification
 
-```bash
-# Xác thực toàn bộ pre-release security & compatibility gates
-bash scripts/qa/ci/verify_prerelease_gates.sh
-```
+Chạy pre-release security & compatibility gate của chính dự án nếu có (lệnh khai trong
+`.agents/local/`, README hoặc CI của dự án — DevKit không ship gate này) và checklist của skill
+`security-checklist`. Chỉ báo PASS khi command thật exit 0; dự án không có gate thì nói rõ.
 
 > [!CAUTION]
 > **Quy tắc an toàn bất khả xâm phạm:**

@@ -39,7 +39,12 @@ mkdir -p "$TMP/p3/.agents/active-profile" && echo "my notes" > "$TMP/p3/.agents/
 echo '{"rules":[{"component":"Mine"}]}' > "$TMP/p3/.agents/regression_matrix.active.json"
 python3 "$CFG" -p game -t "$TMP/p3" >/dev/null 2>&1 || fail "P-2: apply exited non-zero"
 [ -f "$TMP/p3/.agents/active-profile_old/NOTES.md" ] && ok "P-2: user dir preserved as active-profile_old" || fail "P-2: user NOTES.md lost"
-grep -q '"Mine"' "$TMP/p3/.agents/regression_matrix.active_old.json" 2>/dev/null && ok "P-2: user matrix preserved as regression_matrix.active_old.json" || fail "P-2: user matrix overwritten without backup"
+grep -q '"Mine"' "$TMP/p3/.agents/regression_matrix.active.json" 2>/dev/null && [ -f "$TMP/p3/.agents/regression_matrix.generated.json" ] \
+  && [ ! -e "$TMP/p3/.agents/regression_matrix.active_old.json" ] \
+  && ok "P-2: the project's own matrix stays active; the new one is written next to it" || fail "P-2: user matrix replaced or moved"
+before="$(cksum < "$TMP/p3/.agents/regression_matrix.active.json")"
+python3 "$CFG" -p game -t "$TMP/p3" >/dev/null 2>&1
+[ "$(cksum < "$TMP/p3/.agents/regression_matrix.active.json")" = "$before" ] && ok "P-2: re-applying the profile (re-init) keeps it byte-identical" || fail "P-2: re-init changed the user matrix"
 # Switching between DevKit profiles again must not create more backups.
 n_before="$(ls "$TMP/p3/.agents" | grep -c _old)"
 python3 "$CFG" -p android -t "$TMP/p3" >/dev/null 2>&1

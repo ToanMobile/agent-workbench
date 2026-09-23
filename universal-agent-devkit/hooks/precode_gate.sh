@@ -150,9 +150,18 @@ tp = d.get("transcript_path")
 if not tp or not os.path.exists(tp):
     logline(f"[{ts}] transcript unreadable — fail-open")
     sys.exit(0)
+# A line can match only if it holds a Read call (whose path may be a symlink
+# alias) or the file's name (every path/rel/target below ends in one of these
+# two basenames), so any other line is skipped before json.loads — the parse
+# was most of this hook's cost on a long session.
+needles = {'"Read"'}
+for b in (base, os.path.basename(target)):
+    needles.update((b, json.dumps(b)[1:-1]))
 try:
     with open(tp) as fh:
         for rawline in fh:
+            if not any(n in rawline for n in needles):
+                continue
             rawline = rawline.strip()
             if not rawline:
                 continue

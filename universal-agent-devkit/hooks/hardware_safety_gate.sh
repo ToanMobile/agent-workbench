@@ -12,6 +12,13 @@
 #   • fastboot [-s SERIAL …] flash|flashall|erase|format|update|oem unlock|flashing unlock
 #   • rm with recursive+force flags in any spelling (-rf, -fr, -r -f, --recursive
 #     --force) on /system, /vendor, /boot, /product, /data or /
+#   • (2026-09-23) the same recursive+force rm on the project root, a top-level folder
+#     of the project, or any path outside it. Allowed: build outputs under the project
+#     (build/ dist/ out/ target/ node_modules/ .gradle/ Library/ Temp/ obj/ bin/ …,
+#     unless git tracks files there — then it is source), paths inside /tmp or $TMPDIR,
+#     deeper project paths (src/main/old), and a single existing file. Relative paths
+#     start at the payload's cwd and follow `cd` (a `cd` that may not run keeps the old
+#     directory in play too); an unresolvable $VAR / $(…) target is refused.
 #   • adb shell pm uninstall|disable(-user)|hide of a system package (android,
 #     com.android.*, com.google.android.*, vendor namespaces)
 #   • iOS signing & simulators: fastlane match nuke, security delete-keychain|
@@ -32,6 +39,19 @@
 #     (-d/-e/-t/ANDROID_SERIAL/the only device) is asked from `adb get-serialno`;
 #     an unresolvable target ($VAR serial, adb timeout) is refused. Host-only
 #     subcommands (devices, version, connect, kill-server …) are never checked.
+#   • the same device checks through replicant-mcp (PreToolUse `mcp__replicant-mcp__.*`;
+#     tool names and schemas from replicant-mcp 1.6.7 dist/tools/*.js). Each call is
+#     turned into the adb command it runs: adb-shell {command} → `adb shell <command>`,
+#     adb-app uninstall|clear-data|stop|launch|install|list → `adb shell pm …` / `adb
+#     install`, adb-device select|wait|properties {deviceId} → `adb -s <deviceId> …`,
+#     adb-logcat / ui-* → a device call. adb-shell and adb-app carry no device field:
+#     they run on the server's selected device or the only online one — the device
+#     `adb get-serialno` names, as for a bare `adb`. `adb-device list` auto-selects the
+#     only online device, so it is checked too. gradle-*, emulator-device, cache, rtfm
+#     never reach a device and are allowed. A replicant tool this map does not know
+#     is checked through its command-like string fields and serial/deviceId field.
+#     replicant's own process-runner blocks `rm -rf /system`, dd, su and format, but
+#     not `mount … rw /system`, `pm uninstall <system package>` or the device policy.
 #
 # FAIL-CLOSED: malformed JSON or missing python3 → exit 2 (the command is not
 # allowed through unexamined). Empty stdin → exit 0 (no tool call to judge).
@@ -49,8 +69,10 @@ INPUT="$(cat)"
 # at once when it has NO backslash / quote / $ / backtick / glob char (anything that
 # could hide a word from this check) and none of the trigger words (case-insensitive).
 # Everything else — and any payload the regex cannot read — goes to the full parser.
+# An MCP payload never takes it: its "command" is a DEVICE shell command (adb-shell).
 fast_allow() { # $1 = trigger ERE
-  local re='"command"[[:space:]]*:[[:space:]]*"([^"\\]*)"' c
+  local re='"command"[[:space:]]*:[[:space:]]*"([^"\\]*)"' c bash_re='"tool_name"[[:space:]]*:[[:space:]]*"Bash"'
+  [[ $INPUT =~ $bash_re ]] || return 1
   [[ $INPUT =~ $re ]] || return 1
   c="${BASH_REMATCH[1]}"
   case "$c" in ""|*[\'\$\`\*\?\[\]]*) return 1 ;; esac
@@ -94,6 +116,53 @@ except Exception:
 if not isinstance(cmd, str):
     sys.stderr.write("🛑 [HARDWARE SAFETY GATE] tool_input.command không phải chuỗi — chặn để an toàn.\n")
     sys.exit(2)
+
+# ── replicant-mcp: the adb command each tool runs (replicant-mcp 1.6.7 dist/tools) ──
+tool = str(data.get("tool_name") or "")
+MCP = tool.startswith("mcp__")
+REPLICANT_HOST_ONLY = {"gradle-build", "gradle-test", "gradle-list", "gradle-get-details",
+                       "emulator-device", "cache", "rtfm"}
+REPLICANT_APP = {"uninstall": "shell pm uninstall", "clear-data": "shell pm clear",
+                 "stop": "shell am force-stop", "launch": "shell monkey -p", "list": "shell pm list packages"}
+
+def mcp_as_adb(tool, inp):
+    """The adb command line a replicant-mcp call amounts to ("" = no device touched)."""
+    if not tool.startswith("mcp__replicant-mcp__") or not isinstance(inp, dict):
+        return ""
+    name = tool[len("mcp__replicant-mcp__"):]
+    serial = next((v for k, v in inp.items() if isinstance(v, str) and v
+                   and re.search(r"serial|device_?id", k, re.I)), "")
+    adb = "adb -s " + shlex.quote(serial) if serial else "adb"
+    op = inp.get("operation") or ""
+    q = lambda v: shlex.quote(v) if isinstance(v, str) and v else ""
+    if name in REPLICANT_HOST_ONLY:
+        return ""
+    if name == "adb-shell":
+        return adb + " shell " + str(inp.get("command") or "")
+    if name == "adb-app":
+        if op == "install":
+            return adb + " install " + q(inp.get("apkPath"))
+        return " ".join((adb, REPLICANT_APP.get(op, "shell pm"), q(inp.get("packageName"))))
+    if name == "adb-device":
+        # list auto-selects the only online device; health-check only asks the adb server
+        return "" if op == "health-check" else f"{adb} get-state"
+    if name in ("adb-logcat", "ui-action", "ui-capture", "ui-query", "ui-find"):
+        return f"{adb} get-state"
+    # A tool this version does not have: its command-like strings run on the device.
+    shells = [v for k, v in inp.items() if isinstance(v, str)
+              and k.lower() in ("command", "cmd", "shellcommand", "shell_command", "args")]
+    return "; ".join(f"{adb} shell {c}" for c in shells) or f"{adb} get-state"
+
+shown = cmd
+if MCP:
+    shown = tool + " " + json.dumps(inp, ensure_ascii=False)
+    cmd = mcp_as_adb(tool, inp)
+    if not cmd:
+        sys.exit(0)
+# Where a relative path in the command starts: the session cwd Claude (and the bridge)
+# send in the payload, else the project root.
+CWD = data.get("cwd") if isinstance(data.get("cwd"), str) and os.path.isdir(data.get("cwd")) \
+    else os.environ.get("REPO_ROOT", ".")
 
 # Options adb/fastboot accept before the subcommand (with or without a value).
 ADB_OPTS = r"(?:\s+(?:-[sHPtL]\s+\S+|-[adeU]|--\S+(?:\s+\S+)?))*"
@@ -186,6 +255,178 @@ if label is None and any(rm_hits(v) for v in variants):
     label = "rm -rf phân vùng hệ thống cốt lõi"
 
 
+# ── Destructive rm in / around the project (Bash only: an MCP adb-shell rm is on the device) ──
+BUILD_OUTPUTS = {"build", "dist", "out", "target", "node_modules", ".gradle", ".cxx", ".externalNativeBuild",
+                 "Library", "Temp", "Logs", "obj", "bin", ".next", ".nuxt", ".turbo", ".parcel-cache",
+                 ".cache", "coverage", ".pytest_cache", "__pycache__", ".dart_tool", "DerivedData", "Pods"}
+RM_WRAPPERS = {"sudo", "doas", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "nice",
+               "ionice", "stdbuf", "caffeinate", "xargs", "then", "do", "else", "!", "{"}
+ROOT = os.path.realpath(os.environ.get("REPO_ROOT", "."))
+TMP_ROOTS = {os.path.realpath(t) for t in ("/tmp", os.environ.get("TMPDIR") or "/tmp")}
+GLOB = re.compile(r"[*?\[]")
+
+def under(p, d):
+    return p != d and p.startswith(d.rstrip(os.sep) + os.sep)
+
+def git_tracks(p):
+    try:
+        r = subprocess.run(["git", "-C", ROOT, "ls-files", "--", os.path.relpath(p, ROOT)],
+                           capture_output=True, text=True, timeout=5)
+        return r.returncode == 0 and bool(r.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+def rm_target_problem(t, cwds, env):
+    """Why removing target t recursively is refused, or None."""
+    orig = t
+    if t.startswith("~"):
+        t = os.path.expanduser(t)
+    t = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), t)
+    if "$" in t or "`" in t:
+        return f"{orig}: không xác định được đường dẫn ($VAR / lệnh con)"
+    glob = bool(GLOB.search(t))
+    if glob:  # judged as its directory: rm -rf src/* empties src
+        parts = t.split("/")
+        k = next(i for i, x in enumerate(parts) if GLOB.search(x))
+        t = "/".join(parts[:k]) or ("/" if t.startswith("/") else ".")
+    for cwd in ([None] if os.path.isabs(t) else cwds):
+        if cwd is None and not os.path.isabs(t):
+            return f"{orig}: không biết thư mục hiện tại (cd tới $VAR / lệnh con / popd)"
+        p = os.path.normpath(os.path.join(cwd or "/", t))
+        # the parent resolved, the last name kept: rm removes a symlink, not its target
+        p = os.path.realpath(p) if p == os.sep else os.path.join(os.path.realpath(os.path.dirname(p)), os.path.basename(p))
+        if not glob and os.path.lexists(p) and (os.path.islink(p) or not os.path.isdir(p)):
+            continue  # a single file
+        if p == ROOT:
+            return f"{orig}: là thư mục gốc project"
+        if under(p, ROOT):
+            rel = os.path.relpath(p, ROOT).split(os.sep)
+            if any(x in BUILD_OUTPUTS for x in rel):
+                if git_tracks(p):
+                    return f"{orig}: là build output nhưng git đang track file trong đó (là source)"
+                continue
+            if len(rel) == 1:
+                return f"{orig}: là thư mục cấp 1 của project"
+            continue
+        if any(under(p, d) for d in TMP_ROOTS):
+            continue
+        return f"{orig}: nằm ngoài project ({p})"
+    return None
+
+def rm_segment_problem(toks, cwds, env, depth):
+    """Problem of one simple command, or None."""
+    i = 0
+    while i < len(toks):
+        tk = toks[i]
+        if re.match(r"^[A-Za-z_]\w*=", tk):
+            k, v = tk.split("=", 1)
+            env[k] = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), v)
+            i += 1
+        elif os.path.basename(tk) in RM_WRAPPERS:
+            i += 1
+            while i < len(toks) and (toks[i].startswith("-") or re.match(r"^\d+\w?$", toks[i])):
+                i += 1
+        else:
+            break
+    if i >= len(toks):
+        return None
+    prog, rest = os.path.basename(toks[i]), toks[i + 1:]
+    if GLOB.search(prog) and fnmatch.fnmatch("rm", prog.lower()):
+        prog = "rm"
+    if prog in ("bash", "sh", "zsh", "dash", "ksh") and "-c" in rest:
+        k = rest.index("-c")
+        return rm_problem(rest[k + 1], cwds, depth + 1) if k + 1 < len(rest) else None
+    if prog == "eval":
+        return rm_problem(" ".join(rest), cwds, depth + 1)
+    if prog == "find":
+        for j, a in enumerate(rest):
+            if a in ("-exec", "-execdir", "-ok", "-okdir"):
+                sub = []
+                for x in rest[j + 1:]:
+                    if x in (";", "+"):
+                        break
+                    sub.append(x)
+                why = rm_segment_problem(sub, cwds, env, depth + 1)
+                if why:
+                    return why
+        return None
+    if prog.lower() != "rm":
+        return None
+    flags, targets, opts_done = "", [], False
+    longs = set()
+    for a in rest:
+        if not opts_done and a == "--":
+            opts_done = True
+        elif not opts_done and a.startswith("--"):
+            longs.add(a)
+        elif not opts_done and a.startswith("-") and len(a) > 1:
+            flags += a[1:]
+        elif a not in ("{}", ""):
+            targets.append(a)
+    if not (("r" in flags or "R" in flags or "--recursive" in longs) and ("f" in flags or "--force" in longs)):
+        return None
+    for t in targets:
+        why = rm_target_problem(t, cwds, env)
+        if why:
+            return why
+    return None
+
+def rm_problem(text, cwds, depth=0):
+    """Walk the command like the shell: `cd` moves the cwd (after `&&` for sure; after
+    ; || | & both the old and the new directory stay possible), ( ) restores it."""
+    if depth > 5:
+        return "lồng lệnh quá sâu để phân tích"
+    env = {"HOME": os.path.expanduser("~"), "TMPDIR": os.environ.get("TMPDIR") or "/tmp"}
+    # `…` is $(…): the lexer splits "$" from "(", so a target built from one stays "$…"
+    # (unresolvable, refused) while the inner command is walked as its own segment.
+    text = re.sub(r"`([^`]*)`?", r"$(\1)", text.replace("\\\n", " ").replace("\n", " ; "))
+    try:
+        lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
+        lex.whitespace = " \t\r"
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        toks = [x.strip("\"\x27") for x in re.split(r"\s+|([;&|()]+)", text) if x and x.strip()]
+    stack, seg, pending = [], [], None
+    for tk in toks + [";"]:
+        if not set(tk) <= set(";&|()"):
+            seg.append(tk)
+            continue
+        if seg:
+            i = 0
+            while i < len(seg) and (re.match(r"^[A-Za-z_]\w*=", seg[i]) or seg[i] in RM_WRAPPERS):
+                i += 1
+            head = os.path.basename(seg[i]) if i < len(seg) else ""
+            if head in ("cd", "pushd", "popd"):
+                arg = next((a for a in seg[i + 1:] if not a.startswith("-")), "~")
+                if head == "popd" or arg == "-" or "$" in arg or GLOB.search(arg):
+                    pending = [None]
+                else:
+                    arg = os.path.expanduser(arg)
+                    pending = [os.path.normpath(os.path.join(c, arg)) if c or os.path.isabs(arg) else None
+                               for c in cwds]
+            else:
+                why = rm_segment_problem(seg, cwds, env, depth)
+                if why:
+                    return why
+            for tok_seg in seg:  # "$(…)" / `…` inside a quoted word runs too
+                if "(" in tok_seg and depth < 5:
+                    why = rm_problem(tok_seg.split("(", 1)[1].rstrip(")"), cwds, depth + 1)
+                    if why:
+                        return why
+        if pending is not None:
+            cwds = list(dict.fromkeys(pending if tk == "&&" else cwds + pending))
+            pending = None
+        if "(" in tk:
+            stack.append(cwds)
+        if ")" in tk and stack:
+            cwds = stack.pop()
+        seg = []
+    return None
+
+rm_why = None if (label or MCP) else rm_problem(cmd, [CWD])
+
+
 # ── Device policy: which serial may adb touch ─────────────────────────────────
 def serial_set(env_name, file_name):
     out = {t for t in re.split(r"[\s,;]+", os.environ.get(env_name, "")) if t}
@@ -236,6 +477,24 @@ def adb_calls(text):
                 opts.append(toks[j]); j += 1
         yield toks[i], opts, (toks[j] if j < len(toks) else ""), env_serial
 
+def sdk_adb():
+    """adb the way replicant-mcp finds it: ANDROID_HOME / ANDROID_SDK_ROOT, also from the
+    replicant-mcp env in <repo>/.mcp.json, then the default SDK folders. MCP calls only."""
+    if not MCP:
+        return None
+    homes = [os.environ.get("ANDROID_HOME"), os.environ.get("ANDROID_SDK_ROOT")]
+    try:
+        with open(os.path.join(os.environ.get("REPO_ROOT", "."), ".mcp.json"), encoding="utf-8") as fh:
+            srv_env = (json.load(fh).get("mcpServers", {}).get("replicant-mcp", {}).get("env") or {})
+        homes += [srv_env.get("ANDROID_HOME"), srv_env.get("ANDROID_SDK_ROOT")]
+    except (OSError, ValueError, AttributeError):
+        pass
+    homes += [os.path.expanduser("~/Library/Android/sdk"), os.path.expanduser("~/Android/Sdk")]
+    for h in homes:
+        if isinstance(h, str) and h and os.access(os.path.join(h, "platform-tools", "adb"), os.X_OK):
+            return os.path.join(h, "platform-tools", "adb")
+    return None
+
 def target_serial(exe, opts, env_serial):
     """(serial, None) · (None, None) when adb itself would find no single target
     (the command then fails on its own) · (None, why) when it cannot be resolved."""
@@ -244,9 +503,10 @@ def target_serial(exe, opts, env_serial):
         return (None, "serial " + s + " không xác định được") if "$" in s else (s, None)
     if "$" in env_serial:
         return None, "ANDROID_SERIAL=" + env_serial + " không xác định được"
-    adb = exe if "/" in exe and os.access(exe, os.X_OK) else shutil.which("adb")
+    adb = exe if "/" in exe and os.access(exe, os.X_OK) else (shutil.which("adb") or sdk_adb())
     if not adb:
-        return None, None
+        # A Bash adb call then fails on its own; replicant-mcp finds its adb elsewhere.
+        return (None, "không tìm thấy adb để biết replicant-mcp dùng thiết bị nào — đặt ANDROID_HOME") if MCP else (None, None)
     env = dict(os.environ)
     if env_serial:
         env["ANDROID_SERIAL"] = env_serial
@@ -267,12 +527,23 @@ def device_violation(text):
             continue
         serial, why = target_serial(exe, opts, env_serial)
         if why:
-            return "không xác định được thiết bị đích (" + why + ") — ghi rõ adb -s <SERIAL>"
+            return "không xác định được thiết bị đích (" + why + ") — " + (
+                "chọn thiết bị bằng adb-device select" if MCP else "ghi rõ adb -s <SERIAL>")
         if serial and serial in deny:
             return "thiết bị " + serial + " nằm trong denylist (máy cá nhân / cấm đụng)"
         if serial and allow and serial not in allow:
             return "thiết bị " + serial + " không có trong allowlist"
     return None
+
+if rm_why:
+    sys.stderr.write("\n🛑 [HARDWARE SAFETY GATE REJECTED]\n")
+    sys.stderr.write("rm đệ quy + force (-rf, -fr, -r -f, --recursive --force) bị chặn — xoá không đảo ngược được:\n")
+    sys.stderr.write(f"  • {rm_why}\n")
+    sys.stderr.write(f"  • Lệnh: {cmd}\n\n")
+    sys.stderr.write("Được phép: build output trong project (build/, dist/, node_modules/, .gradle/, Library/, Temp/, obj/, bin/ …\n"
+                     "không bị git track), đường dẫn trong /tmp hoặc $TMPDIR, thư mục từ cấp 2 trong project, một file đơn.\n"
+                     "Nếu thật sự cần, người dùng tự chạy lệnh qua prefix `!` (hoặc HARDWARE_OVERRIDE=1).\n")
+    sys.exit(2)
 
 if label is None:
     dev = device_violation(cmd)
@@ -280,7 +551,7 @@ if label is None:
         sys.stderr.write("\n🛑 [HARDWARE SAFETY GATE REJECTED]\n")
         sys.stderr.write("Lệnh adb bị chặn vì chạm thiết bị ngoài chính sách thiết bị:\n")
         sys.stderr.write(f"  • {dev}\n")
-        sys.stderr.write(f"  • Lệnh: {cmd}\n\n")
+        sys.stderr.write(f"  • Lệnh: {shown}\n\n")
         sys.stderr.write("Chính sách: ADB_DENY_SERIALS / ADB_ALLOW_SERIALS, ~/.config/universal-agent-devkit/adb-{denylist,allowlist}, <repo>/.adb-{denylist,allowlist}.\n")
         sys.exit(2)
 
@@ -289,7 +560,7 @@ if label:
     sys.stderr.write("Lệnh bị chặn: thao tác không đảo ngược được (thiết bị thật, chứng chỉ ký, hạ tầng, dữ liệu hoặc phát hành).\n"
                      "Nếu thật sự cần, người dùng tự chạy lệnh qua prefix `!`:\n")
     sys.stderr.write(f"  • Mẫu vi phạm: {label}\n")
-    sys.stderr.write(f"  • Lệnh: {cmd}\n\n")
+    sys.stderr.write(f"  • Lệnh: {shown}\n\n")
     sys.stderr.write("Nếu chắc chắn đang ở môi trường giả lập an toàn, đặt HARDWARE_OVERRIDE=1 để bỏ qua.\n")
     sys.exit(2)
 sys.exit(0)

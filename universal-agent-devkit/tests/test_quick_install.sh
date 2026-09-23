@@ -32,7 +32,12 @@ run; rc=$?
 [ "$rc" = 0 ] && [ -d "$REPO/.git" ] && [ -L "$INSTALL" ] && [ -f "$INSTALL/bin/agent-kit" ] \
   && ok "first run: git checkout + stable link to the DevKit" || { fail "first run (rc=$rc)"; cat "$TMP/out"; }
 [ ! -e "$REPO/other-project" ] && ok "sparse checkout: only universal-agent-devkit/ is checked out" || fail "whole monorepo checked out"
-bash "$HOME/.local/bin/agent-kit" help >/dev/null 2>&1 && ok "~/.local/bin/agent-kit runs" || fail "agent-kit link broken"
+# `help` needs no DevKit files; `list` and `agent-install --help` do, so they prove the
+# link resolves to the DevKit and not to ~/.local (the folder holding the link).
+(cd "$TMP/cwd" && "$HOME/.local/bin/agent-kit" list 2>&1) | grep -q "^  - qc$" \
+  && ok "~/.local/bin/agent-kit finds the DevKit through its link" || fail "agent-kit link broken"
+(cd "$TMP/cwd" && "$HOME/.local/bin/agent-install" --help >/dev/null 2>&1) \
+  && ok "~/.local/bin/agent-install finds the DevKit through its link" || fail "agent-install link broken"
 
 # The remote moves on; the second run must pull it — not nest a copy inside the old one.
 echo "# v2 marker" >> "$REMOTE/universal-agent-devkit/README.md"

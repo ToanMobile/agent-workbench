@@ -40,6 +40,25 @@ test('workflow source does not reach for host globals the sandbox lacks', () => 
   }
 })
 
+// The Workflow runtime also forbids reading the clock or the RNG: `Date.now()`, `Math.random()` and
+// argless `new Date()` throw inside a script, because a resumed run must replay identically
+// (workflow-authoring skill: "EXCEPT Date.now()/Math.random()/argless new Date(), which throw ... pass
+// timestamps in via args"). Measured 2026-09-08: three Date.now() calls in validateInputs made every
+// launch return INTERNAL_VALIDATION_ERROR with zero agents spawned. Full-line comments are stripped
+// first so the explanation in the script's own comments does not trip the check.
+const codeWithoutLineComments = rawSource.split('\n').filter((line) => !/^\s*\/\//.test(line)).join('\n')
+test('workflow source does not read the clock or RNG the workflow runtime forbids', () => {
+  for (const [label, pattern] of [
+    ['Date.now()', /(^|[^\w.'"`])Date\.now\s*\(/m],
+    ['Math.random()', /(^|[^\w.'"`])Math\.random\s*\(/m],
+    ['argless new Date()', /\bnew\s+Date\s*\(\s*\)/m],
+  ]) {
+    assert.doesNotMatch(codeWithoutLineComments, pattern,
+      `workflow script must not call ${label}: the workflow runtime throws on it (resume must replay ` +
+        'identically); take the wall clock from args.nowMs instead')
+  }
+})
+
 const scopeFingerprint = 'scope-v3-owned-boundary'
 const runId = 'run-v3-contract'
 const runNonce = 'nonce-v3-contract'
@@ -316,6 +335,9 @@ function input(overrides = {}) {
     runId,
     runNonce,
     runStartedAt,
+    // Caller-supplied wall clock: workflow scripts may not call Date.now() (a resumed run has to
+    // replay identically), so the "cannot be in the future" bounds read this instead.
+    nowMs: Date.now(),
     artifacts: [...patchArtifacts, ...binaryArtifacts, ...measurementArtifacts, ...oracleSourceArtifacts],
     acceptance: [{
       id: 'acceptance-1',
@@ -1102,6 +1124,56 @@ test('invalid or future provenance timestamps fail closed', async () => {
   const futureResult = await run(input({ verificationReceipts: [future] }))
   assert.equal(futureResult.result.verdict, 'INCOMPLETE')
   assert.match(futureResult.result.errors.join('\n'), /cannot be in the future/)
+})
+
+test('nowMs is a required caller-supplied wall clock and fails closed when missing or non-finite', async () => {
+  for (const bad of [undefined, null, 'now', Number.NaN, Number.POSITIVE_INFINITY, String(Date.now())]) {
+    const args = input()
+    if (bad === undefined) delete args.nowMs
+    else args.nowMs = bad
+    const { result } = await run(args)
+    assert.equal(result.verdict, 'INCOMPLETE', `nowMs=${String(bad)} must fail closed`)
+    assert.match(result.errors.join('\n'), /nowMs must be a finite epoch-millisecond number/)
+  }
+})
+
+test('future-timestamp bounds are measured against args.nowMs, not the host clock', async () => {
+  const early = input()
+  early.nowMs = Date.parse(runStartedAt) - 3_600_000
+  const { result } = await run(early)
+  assert.equal(result.verdict, 'INCOMPLETE')
+  const errors = result.errors.join('\n')
+  assert.match(errors, /runStartedAt cannot be in the future/)
+  assert.match(errors, /scopeManifest\.generatedAt cannot be in the future/)
+  assert.match(errors, /verification receipt .* cannot be in the future/)
+})
+
+test('audit still runs when the clock and RNG throw as they do in the workflow runtime', async () => {
+  const args = input()
+  const RealDate = globalThis.Date
+  const realRandom = Math.random
+  const forbidden = (what) => () => { throw new Error(`${what} is not available in the workflow runtime`) }
+  globalThis.Date = new Proxy(RealDate, {
+    construct(target, argList, newTarget) {
+      if (argList.length === 0) forbidden('new Date()')()
+      return Reflect.construct(target, argList, newTarget)
+    },
+    apply: forbidden('Date()'),
+    get(target, prop, receiver) {
+      if (prop === 'now') return forbidden('Date.now()')
+      return Reflect.get(target, prop, receiver)
+    },
+  })
+  Math.random = forbidden('Math.random()')
+  let result
+  try {
+    ({ result } = await run(args))
+  } finally {
+    globalThis.Date = RealDate
+    Math.random = realRandom
+  }
+  assert.notEqual(result.reason, 'INTERNAL_VALIDATION_ERROR', result.errors?.join('\n'))
+  assert.equal(result.verdict, 'CLEAR')
 })
 
 test('null nested changes return INCOMPLETE instead of throwing', async () => {

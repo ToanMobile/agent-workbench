@@ -51,6 +51,7 @@ def check_csharp_file(file_path: Path) -> list:
     current_loop_name = ""
     bracket_depth = 0
     loop_start_line = 0
+    opened_brace = False
 
     for idx, line in enumerate(lines, 1):
         stripped = line.strip()
@@ -64,6 +65,7 @@ def check_csharp_file(file_path: Path) -> list:
             current_loop_name = m_loop.group(2)
             loop_start_line = idx
             bracket_depth = 0
+            opened_brace = False
 
         if in_frame_loop:
             # 1. Check for `new ` heap allocations
@@ -120,10 +122,13 @@ def check_csharp_file(file_path: Path) -> list:
                 )
 
             # Track bracket depth to know when we exit the frame loop method
+            if "{" in line:
+                opened_brace = True
             bracket_depth += line.count("{") - line.count("}")
-            if bracket_depth <= 0 and idx > loop_start_line and "{" in "".join(lines[loop_start_line-1:idx]):
+            if bracket_depth <= 0 and idx >= loop_start_line and opened_brace:
                 in_frame_loop = False
                 current_loop_name = ""
+                opened_brace = False
 
     return findings
 

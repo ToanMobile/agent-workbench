@@ -237,6 +237,48 @@ def get_current_profile(target_dir_str: str = None) -> str:
             return "universal"
     return "universal"
 
+SIDE_MATRIX_NAME = "regression_matrix.generated.json"
+PROFILE_RULES_LINE = "- Domain Profile Rules: @.agents/active-profile/RULES.md"
+
+
+def ensure_profile_rules_import(target_dir: Path):
+    """Add the profile-rules import to the DevKit block of every agent file (CLAUDE.md,
+    AGENTS.md, CODEX.md, .cursorrules, GEMINI.md, the Cursor .mdc rule) when it is missing: right after the "Active Domain Profile"
+    line, inside the universal-agent-devkit markers only. One file reached by two names
+    (CLAUDE.md -> AGENTS.md) is edited once."""
+    seen = set()
+    for name in ("CLAUDE.md", "AGENTS.md", "CODEX.md", ".cursorrules", "GEMINI.md", "Agent.md",
+                 ".cursor/rules/universal-agent-devkit.mdc"):
+        f = target_dir / name
+        if not f.is_file():
+            continue
+        real = f.resolve()
+        if real in seen or is_within(real, get_base_dir()):
+            continue                   # the DevKit's own AGENTS.md is never edited
+        seen.add(real)
+        try:
+            text = real.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        start, end = text.find("<!-- universal-agent-devkit:start -->"), text.find("<!-- universal-agent-devkit:end -->")
+        if start < 0 or end < start or PROFILE_RULES_LINE in text[start:end]:
+            continue
+        block = text[start:end]
+        lines = block.split("\n")
+        for i, line in enumerate(lines):
+            if "Active Domain Profile:" in line:
+                lines.insert(i + 1, PROFILE_RULES_LINE)
+                break
+        else:
+            continue
+        new = text[:start] + "\n".join(lines) + text[end:]
+        tmp = real.with_name(real.name + ".devkit-tmp")
+        tmp.write_text(new, encoding="utf-8")
+        os.replace(tmp, real)
+        log_ok(tr(f"`{name}`: thêm import luật profile (.agents/active-profile/RULES.md)",
+                  f"`{name}`: added the profile rules import (.agents/active-profile/RULES.md)"))
+
+
 def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None):
     devkit_dir = get_base_dir()
     target_dir, err = resolve_target(target_dir_str, for_write=True)
@@ -294,6 +336,11 @@ def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None)
     except Exception as e:
         log_warn(tr(f"Không thể tạo symlink `.agents/active-profile`: {e}", f"Cannot create symlink `.agents/active-profile`: {e}"))
 
+    # 2b. The DevKit block of each agent file imports the profile's rules through the
+    # stable .agents/active-profile/RULES.md (it follows the link above). A block written
+    # without a profile (install -p none, then `agent-kit profile <id>`) lacks the line.
+    ensure_profile_rules_import(target_dir)
+
     # 3. Kích hoạt Ma trận Kiểm thử Hồi quy tương ứng (.agents/regression_matrix.active.json)
     reg_src = profile_dir / "regression_matrix.json"
     reg_dest = target_dir / ACTIVE_MATRIX_REL
@@ -319,24 +366,33 @@ def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None)
             log_warn(tr(f"Không dò được test runner: {e}", f"Test runner detection failed: {e}"))
         if generated is not None:
             new_bytes = generated
+        keep_user_matrix = False
         if reg_dest.is_symlink():
             reg_dest.unlink()
         elif reg_dest.exists():
             cur = reg_dest.read_bytes()
-            # Ours = a DevKit sample, or exactly what we would generate now. A generated
-            # matrix the user edited (or one generated before the project changed) is kept
-            # as *_old rather than overwritten.
+            # Ours = a DevKit sample, or exactly what we would generate now. Anything else is
+            # the project's curated matrix (hand-written, or generated then tuned): it stays
+            # the ACTIVE one — a re-init or a profile switch must never downgrade it — and
+            # the fresh matrix goes next to it for comparison.
             ours = cur in known_matrix_contents(devkit_dir) or (generated is not None and cur == generated)
-            if cur != new_bytes and not ours:
-                x_old_backup(reg_dest)  # ma trận do người dùng tự viết (P-2)
+            keep_user_matrix = cur != new_bytes and not ours
         reg_dest.parent.mkdir(parents=True, exist_ok=True)
-        reg_dest.write_bytes(new_bytes)
-        if generated is not None:
-            cmds = ", ".join(t["command"] for t in json.loads(generated)["rules"][0]["mandatory_regression_tests"])
-            log_ok(tr(f"Đã sinh ma trận kiểm thử từ test runner của dự án ({cmds}): `{ACTIVE_MATRIX_REL}`",
-                      f"Generated the regression matrix from the project's test runner ({cmds}): `{ACTIVE_MATRIX_REL}`"))
+        if keep_user_matrix:
+            side = reg_dest.with_name(SIDE_MATRIX_NAME)
+            side.write_bytes(new_bytes)
+            log_warn(tr(f"Giữ ma trận của dự án `{ACTIVE_MATRIX_REL}` (không phải mẫu/bản sinh của DevKit); "
+                        f"bản mới để so sánh ở `{side.relative_to(target_dir)}`",
+                        f"Kept the project's own matrix `{ACTIVE_MATRIX_REL}` (not a DevKit sample/generation); "
+                        f"the new one is at `{side.relative_to(target_dir)}` for comparison"))
         else:
-            log_ok(tr(f"Đã kích hoạt ma trận kiểm thử: `{ACTIVE_MATRIX_REL}`", f"Activated regression matrix: `{ACTIVE_MATRIX_REL}`"))
+            reg_dest.write_bytes(new_bytes)
+            if generated is not None:
+                cmds = ", ".join(t["command"] for t in json.loads(generated)["rules"][0]["mandatory_regression_tests"])
+                log_ok(tr(f"Đã sinh ma trận kiểm thử từ test runner của dự án ({cmds}): `{ACTIVE_MATRIX_REL}`",
+                          f"Generated the regression matrix from the project's test runner ({cmds}): `{ACTIVE_MATRIX_REL}`"))
+            else:
+                log_ok(tr(f"Đã kích hoạt ma trận kiểm thử: `{ACTIVE_MATRIX_REL}`", f"Activated regression matrix: `{ACTIVE_MATRIX_REL}`"))
 
     # 3b. Liên kết các hook chuyên dụng của profile nếu có (ví dụ: validate-assets.sh cho Game)
     profile_hooks = profile_dir / "hooks"
