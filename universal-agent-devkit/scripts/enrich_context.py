@@ -8,7 +8,7 @@ import json
 import re
 import subprocess
 
-# Mọi dạng ID: INSTINCT-001, INSTINCT-IOS-01, INSTINCT-VOICE-02, INSTINCT-AUTO (do post-fix-gate --record-lesson ghi)
+# Mọi dạng ID: INSTINCT-001, INSTINCT-IOS-01, INSTINCT-VOICE-02, INSTINCT-AUTO (bản cũ của post-fix-gate --record-lesson; nay ghi INSTINCT-NNN)
 INSTINCT_BLOCK_RE = re.compile(r"(^### \[(INSTINCT-[A-Za-z0-9_-]+)\].*?)(?=^### \[INSTINCT-|\Z)", re.DOTALL | re.MULTILINE)
 
 

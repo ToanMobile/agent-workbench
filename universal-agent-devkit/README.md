@@ -3,7 +3,7 @@
 # 🚀 Universal AI Agent DevKit & Quality Protocol
 ### *Shared rules, lifecycle hooks, 25 skills, domain profiles (Android, iOS, web, backend, game, automotive, voice, universal) and a static post-fix diff gate for Claude Code, OpenAI Codex, Google Gemini/Antigravity and Cursor — installed into your project without overwriting what is already there.*
 
-[![GitHub Repository](https://img.shields.io/badge/GitHub-ToanMobile%2Funiversal--agent--devkit-blue.svg?style=for-the-badge&logo=github)](https://github.com/ToanMobile/universal-agent-devkit)
+[![GitHub Repository](https://img.shields.io/badge/GitHub-ToanMobile%2Fagent--workbench-blue.svg?style=for-the-badge&logo=github)](https://github.com/ToanMobile/agent-workbench)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](./LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-agent--kit%20test-success.svg?style=for-the-badge)](#-verification--devkit-cli-agent-kit)
 [![Supported Agents](https://img.shields.io/badge/Agents-4%20Core%20Platforms-orange.svg?style=for-the-badge)](#-universal-multi-agent-matrix)
@@ -37,10 +37,10 @@ AI coding agents are fast but will happily claim "tests pass" without running th
 
 ```bash
 # Interactive Mode (Recommended — prompts for domain profile and agent platforms):
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/ToanMobile/universal-agent-devkit/main/bin/quick-install.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/ToanMobile/agent-workbench/main/universal-agent-devkit/bin/quick-install.sh)"
 
 # Quick non-interactive setup (Configures all core agents automatically):
-curl -fsSL https://raw.githubusercontent.com/ToanMobile/universal-agent-devkit/main/bin/quick-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ToanMobile/agent-workbench/main/universal-agent-devkit/bin/quick-install.sh | bash
 ```
 
 ---
@@ -48,8 +48,8 @@ curl -fsSL https://raw.githubusercontent.com/ToanMobile/universal-agent-devkit/m
 ### Option 2: Clone & Global CLI Setup (Recommended)
 ```bash
 # 1. Clone the repository
-git clone https://github.com/ToanMobile/universal-agent-devkit.git
-cd universal-agent-devkit
+git clone https://github.com/ToanMobile/agent-workbench.git
+cd agent-workbench/universal-agent-devkit
 
 # 2. Install agent-kit globally to ~/.local/bin
 make install
@@ -71,7 +71,7 @@ agent-kit init --lang=vi                # agent replies in Vietnamese
 Invalid options, profiles or modes exit with status 2 before anything is written.
 
 #### What the installer does to an existing project
-- Files it would replace (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, your own hooks/commands with a DevKit name) are kept as `*_old` — nothing is overwritten. List them with `agent-kit list-old`, put them back with `agent-kit restore-old`.
+- DevKit is the core. Your own skills/commands/agents/hooks with a DevKit name move to the **project tier** `.agents/local/<kind>/` (commit it) and the DevKit version is installed; items there with a free name are linked back in on every install. In copy mode, edits to a DevKit copy are kept there too (only the edited files). Top-level files (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`) keep your content with a DevKit block injected, plus a `*_old` snapshot. Nothing is overwritten: see both with `agent-kit list-old`, undo with `agent-kit restore-old`. Re-running `agent-kit init` after updating the DevKit is safe — it never rewrites `.agents/local`.
 - A real `commands/`, `rules/` or `skills/` directory that belongs to your project (for example a CLI's own `commands/build.js`) is **left in place**; that DevKit item is skipped with a warning.
 - Symlink mode in a git repository prints a warning: the links point into this checkout and break on other machines — use `-m copy` for committed setups.
 - In a git project, `*_old*`, `.claude/audit-gate/` and the installer's ledgers are added to `.gitignore`.
@@ -81,9 +81,9 @@ Invalid options, profiles or modes exit with status 2 before anything is written
 
 ### Option 3: Claude Code Plugin
 ```bash
-claude plugin install github.com/ToanMobile/universal-agent-devkit
+claude plugin install github.com/ToanMobile/agent-workbench/universal-agent-devkit
 # or from local path:
-claude plugin install /path/to/universal-agent-devkit
+claude plugin install /path/to/agent-workbench/universal-agent-devkit
 ```
 
 ---
@@ -98,10 +98,10 @@ It delivers a complete, closed-loop software engineering ecosystem:
 1. **Supreme Engineering Protocols:** Zero-Defect Protocol, Paired Executable Oracle (RED→GREEN), and No-Fabrication Engine (C1–C9 Decision Table).
 2. **Single Source of Truth Rulebook (`AGENTS.md`):** Eliminates rule sprawl and conflicting chapters by unifying all engineering standards, architecture rules, pre-code gates, and quality protocols into a single, authoritative master rule file (`AGENTS.md` / `Agent.md`).
 3. **Dynamic Domain Profiles:** Instant project domain switching between **Android** (Compose/Vitals/Tombstones), **iOS** (Swift 6/SwiftUI/Concurrency), **Automotive** (AAOS/CAN), **Game** (Unity 6/Zero-GC), **Voice Assistant** (edge audio AI), **Web** (TypeScript/React/Next.js), **Backend** (API services in Python/Go/Rust/Node) and **Universal** clean architecture via `agent-kit profile`.
-4. **Post-Fix Gate (`/audit-gate`, `agent-kit gate`, `postfix-gate`):** a static diff gate. What can make it fail: 5 regex checks on the changed files (secrets, lazy placeholders, performance anti-patterns, swallowed exceptions, raw logging) plus, with `--run-tests`, the regression tests from the active matrix. DESIGN.md/a11y, RED→GREEN proof, screenshots/devices and OpenCodeReview are printed as reminders — the gate does not verify them.
+4. **Post-Fix Gate (`/audit-gate`, `agent-kit gate`, `postfix-gate`):** a static diff gate. What can make it fail: 6 static checks on the changed files (secrets, lazy placeholders, dependencies — floating versions like `1.+`/`latest`/`*` and `http://` package sources — performance anti-patterns, swallowed exceptions, raw logging) plus, with `--run-tests`, the regression tests from the active matrix. DESIGN.md/a11y, RED→GREEN proof, screenshots/devices and OpenCodeReview are printed as reminders — the gate does not verify them. `agent-kit githooks install` runs the same static checks as a git pre-commit hook on the staged content, so a plain `git commit` from a terminal or IDE is checked too (skip once with `git commit --no-verify`); `agent-kit learn "<trap>" --cause=… --rule=…` records a lesson in `.agents/instincts.md` under the next `[INSTINCT-NNN]` id.
 5. **10 Review Councils:** reviewer prompts in `agents/councils/` (subsystem isolation, architecture/blast radius, TDD, OpenCodeReview, security, game/Unity/Blender, performance/ANR, memory governance, solo-dev process, standards/delivery) that a profile activates. The `scripts/audit_*` scripts are grep-based self-consistency checks of the DevKit's own files, not code reviewers.
 6. **25 Curated Engineering Skills:** Standardized `SKILL.md` packages in 5 groups, including the domain performance skills `compose-recomp-audit` and `unity-gc-audit`, and a wrapper for the **Alibaba OpenCodeReview (`ocr`)** CLI.
-7. **X_old Conflict Isolation Protection:** Non-destructive installation for existing repositories. Colliding user files (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, same-named hooks/commands/agents) are preserved as `*_old` instead of overwritten; project directories `commands/`, `rules/`, `skills/` that hold your own files are left in place and skipped. Inspect with `agent-kit list-old`, restore with `agent-kit restore-old`.
+7. **X_old Conflict Isolation Protection:** Non-destructive installation for existing repositories. Same-named skills/commands/agents/hooks move to the project tier `.agents/local/` (DevKit wins, yours stays committed and is re-linked when its name is free); colliding top-level files (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`) keep a `*_old` snapshot; project directories `commands/`, `rules/`, `skills/` that hold your own files are left in place and skipped. Inspect with `agent-kit list-old`, restore with `agent-kit restore-old`.
 8. **Design System & Proactive Failure Memory:** Strict UI/UX token baselines (`DESIGN.md`, Touch Target $\ge 48\text{dp}$, WCAG AA, Debounced buttons) paired with persistent repository failure lessons (`.agents/instincts.md`).
 9. **Android Native Crash Diagnostics:** Automated C/C++ tombstone triage tool (`profiles/android/scripts/qa/tombstone-triage.sh`) decoding signals (`SIGSEGV`, `SIGABRT`) and stack traces with `ndk-stack`.
 10. **MCP Hub:** `mcp/` ships 6 Model Context Protocol server entries (code knowledge graph, documentation lookup, Android code search, Android skills, ADB automation, Play Store), with npm packages pinned to exact versions. Unity/Blender MCP servers are not shipped; the game profile lists them as external.
@@ -640,6 +640,12 @@ agent-kit health
 # 4. Post-fix static diff gate + regression tests:
 agent-kit gate --run-tests
 
+# 4b. Same static checks on every git commit (pre-commit hook, staged content):
+agent-kit githooks install      # uninstall | status
+
+# 4c. Record a lesson in .agents/instincts.md (next [INSTINCT-NNN] id):
+agent-kit learn "<trap>" --cause="<root cause>" --rule="<prevention>"
+
 # 5. Run every regression suite:
 agent-kit test
 
@@ -730,7 +736,7 @@ universal-agent-devkit/
 
 ## 📄 License & Repository
 
-- **GitHub:** [https://github.com/ToanMobile/universal-agent-devkit](https://github.com/ToanMobile/universal-agent-devkit)
+- **GitHub:** [https://github.com/ToanMobile/agent-workbench](https://github.com/ToanMobile/agent-workbench)
 - **License:** Distributed under the **MIT License** — see [`LICENSE`](./LICENSE). Changes: [`CHANGELOG.md`](./CHANGELOG.md).
 
 <div align="center">

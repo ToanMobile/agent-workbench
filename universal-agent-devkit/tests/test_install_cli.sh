@@ -87,8 +87,8 @@ grep -q "devkit v2" "$P/.claude/commands/fix.md" && grep -q "devkit v2" "$P/.cla
   && ok "I-8 upgrade delivered the new command, hook and AGENTS.md" || fail "I-8 upgrade did not update the copies"
 echo "MY TEAM EDIT" >> "$P/.claude/commands/fix.md"
 bash "$INSTALL" -t "$P" -a claude -p none -m copy >"$TMP/out" 2>&1
-[ ! -e "$P/.claude/commands/fix_old.md" ] && grep -qs "MY TEAM EDIT" "$P/.claude/commands_old/fix.md" \
-  && ok "I-8 edited command preserved in .claude/commands_old/ (no /fix_old slash command)" || { fail "I-8 edited command backup misplaced"; ls "$P/.claude/commands" | grep _old; }
+[ ! -e "$P/.claude/commands/fix_old.md" ] && [ ! -e "$P/.claude/commands_old" ] && grep -qs "MY TEAM EDIT" "$P/.agents/local/commands/fix.md" \
+  && ok "I-8 edited command kept in the project tier .agents/local/commands/ (no /fix_old slash command)" || { fail "I-8 edited command backup misplaced"; ls "$P/.claude/commands" | grep _old; }
 
 # ---------------------------------------------------------------- O4 project's own commands/ dir
 P="$(newproj p_cli)"; mkdir -p "$P/commands"; echo "module.exports = 1" > "$P/commands/build.js"

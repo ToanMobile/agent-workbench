@@ -6,8 +6,8 @@
     "name": "Toan Mobile",
     "url": "https://github.com/ToanMobile"
   },
-  "repository": "https://github.com/ToanMobile/universal-agent-devkit",
-  "homepage": "https://github.com/ToanMobile/universal-agent-devkit#readme",
+  "repository": "https://github.com/ToanMobile/agent-workbench",
+  "homepage": "https://github.com/ToanMobile/agent-workbench/tree/main/universal-agent-devkit#readme",
   "license": "MIT",
   "keywords": [
     "agent-devkit",

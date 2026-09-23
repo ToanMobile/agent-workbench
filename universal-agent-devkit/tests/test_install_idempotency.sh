@@ -34,14 +34,19 @@ install copy
 install symlink
 [ -L "$PROJ/rules" ] && [ ! -e "$PROJ/rules/rules" ] && ok "switch back to symlink leaves no nested rules/rules" || fail "rules not a clean link after switching back"
 
-# A user edit to a copied file must be preserved as *_old, not silently overwritten.
+# A user edit to a copied file is kept in the project tier (only the edited file),
+# never silently overwritten; the DevKit copy is refreshed.
 install copy
 echo "TEAM EDIT" >> "$PROJ/rules/core-rules.md"
 install copy
-if grep -rqs "TEAM EDIT" "$PROJ"/rules_old*; then ok "user-edited copy preserved as rules_old*"; else fail "user edit lost"; fi
+if grep -qs "TEAM EDIT" "$PROJ/.agents/local/rules/core-rules.md"; then ok "user edit kept in .agents/local/rules/"; else fail "user edit lost"; fi
+[ "$(find "$PROJ/.agents/local/rules" -type f ! -name .devkit_backups.log | wc -l | xargs)" = 1 ] \
+  && ok "only the edited file is kept, not a stale copy of rules/" || fail "project tier holds more than the edit"
+! grep -qs "TEAM EDIT" "$PROJ/rules/core-rules.md" && [ -f "$PROJ/rules/.devkit-copy" ] \
+  && ok "rules/ is a fresh DevKit copy again" || fail "rules/ not refreshed"
 
 # An empty real rules/ dir must be replaced, not have the link nested inside it.
-rm -rf "$PROJ/rules" "$PROJ"/rules_old* && mkdir "$PROJ/rules"
+rm -rf "$PROJ/rules" "$PROJ/.agents/local" && mkdir "$PROJ/rules"
 install symlink
 [ -L "$PROJ/rules" ] && ok "empty rules/ dir replaced by link" || fail "empty rules/ dir got a nested link"
 

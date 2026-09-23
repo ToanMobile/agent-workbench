@@ -3,9 +3,10 @@
 Chạy cổng kiểm toán sau khi sửa lỗi trên các file thay đổi của dự án (working tree, hoặc `--diff <ref>`).
 
 **Chặn thật (quyết định verdict):**
-1. 5 kiểm tra tĩnh bằng regex:
+1. 6 kiểm tra tĩnh:
    - bí mật (key/token/password, tên file cấm như `*.jks`, `*.key`, `.env`)
    - placeholder lười biếng (`// ... existing code ...`)
+   - dependency: version thả nổi (`1.+`, `latest.release`, npm `latest`/`*`, Cargo `*`, pubspec `any`, Maven `LATEST`) và nguồn tải qua `http://` / tắt TLS (Gradle `maven { url }`, `.npmrc`, pip `--index-url`, Podfile `source`) — chỉ quét file manifest, trích nguyên dòng vi phạm
    - anti-pattern hiệu năng
    - nuốt lỗi (`catch {}`, `except: pass`)
    - log thô
@@ -44,7 +45,9 @@ Exit code:
   - `--diff` không hợp lệ.
 - `3`: không có thay đổi để kiểm. Các link và state do DevKit cài không tính là thay đổi.
 
-`--record-lesson` chỉ ghi vào `.agents/instincts.md` khi verdict là PASS.
+`--record-lesson` chỉ ghi vào `.agents/instincts.md` khi verdict là PASS, với id `[INSTINCT-NNN]` kế tiếp (cùng bộ ghi với `agent-kit learn`; tiêu đề đã có thì không ghi trùng).
+
+`--staged`: chỉ chạy 6 kiểm tra tĩnh trên nội dung đã `git add` (đúng thứ sẽ được commit) — không chạy test, không probe thiết bị, không ghi báo cáo. Sạch ⇒ exit `2` (test chưa chạy), không bao giờ là PASS. Đây là thứ git pre-commit hook của `agent-kit githooks install` chạy.
 
 ### Regression checklist (tự động, xuyên suốt các task)
 Mỗi lần gate chạy, nó cập nhật `.agents/regression_checklist.md` (bảng để đọc) và `.agents/regression_status.json` (dữ liệu gốc):

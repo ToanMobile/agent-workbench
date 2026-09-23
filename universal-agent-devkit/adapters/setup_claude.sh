@@ -95,6 +95,14 @@ for agent in "$DEVKIT_ROOT/agents"/*; do
   devkit_place "$agent" "$target_agent" "$MODE"
 done
 
+# 7. Project tier: the project's own commands/agents/hooks kept in .agents/local/ are
+#    linked in when no DevKit item has that name (DevKit is the core and wins).
+if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
+  devkit_link_local "$TARGET_DIR" commands .claude/commands
+  devkit_link_local "$TARGET_DIR" agents .claude/agents
+  devkit_link_local "$TARGET_DIR" hooks .claude/hooks
+fi
+
 # Clean broken symlinks if any
 find "$TARGET_DIR/.claude/hooks" "$TARGET_DIR/.claude/commands" "$TARGET_DIR/.claude/agents" -type l ! -exec test -e {} \; -delete 2>/dev/null || true
 

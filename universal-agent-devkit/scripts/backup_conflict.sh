@@ -96,15 +96,17 @@ backup_conflict() {
 
   # Item-by-item install dirs (.claude/commands, .claude/agents, .claude/hooks,
   # .agents/skills) are loaded by the agent as a whole: a `fix_old.md` left there would
-  # become a junk `/fix_old` command. Such backups go to a sibling `<dir>_old/` instead.
-  local backup_dir="$parent_dir"
-  case "$parent_dir" in
-    */.claude/commands|*/.claude/agents|*/.claude/hooks|*/.agents/skills)
-      backup_dir="${parent_dir}_old"
-      mkdir -p "$backup_dir" || return 1
-      backup_name="$base_name"
-      ;;
-  esac
+  # become a junk `/fix_old` command. The project's item that shares a DevKit name goes
+  # to the project tier instead (.agents/local/<kind>/<name>, see devkit_local_slot):
+  # DevKit is the core, the project's version is kept for the team to re-apply.
+  local backup_dir="$parent_dir" slot
+  slot="$(devkit_local_slot "$target")"
+  if [ -n "$slot" ]; then
+    backup_dir="$(dirname "$slot")"
+    devkit_local_init "$(dirname "$backup_dir")" || return 1
+    mkdir -p "$backup_dir" || return 1
+    backup_name="$base_name"
+  fi
 
   local backup_path="$backup_dir/$backup_name"
 
@@ -143,9 +145,13 @@ backup_conflict() {
   local RESET='\033[0m'
 
   echo -e "${YELLOW}  ⚠️ [X_old Protection] $(L "Phát hiện xung đột dự án cũ:" "conflict with an existing project item:")${RESET} ${CYAN}${base_name}${RESET}"
-  local shown="$(basename "$backup_path")"
-  [ "$backup_dir" != "$parent_dir" ] && shown="$(basename "$backup_dir")/$shown"
-  echo -e "     ➔ ${GREEN}$(L "ĐÃ ĐỔI TÊN THÀNH:" "RENAMED TO:")${RESET} ${CYAN}${shown}${RESET} $(L "để bạn tự merge theo ý mình (Không ghi đè làm mất mã nguồn)!" "so you can merge it yourself (nothing was overwritten).")"
+  if [ -n "$slot" ]; then
+    local shown="$DEVKIT_LOCAL_DIR/${backup_path#*/$DEVKIT_LOCAL_DIR/}"
+    echo -e "     ➔ ${GREEN}$(L "ĐÃ CHUYỂN VÀO TẦNG DỰ ÁN:" "MOVED TO THE PROJECT TIER:")${RESET} ${CYAN}${shown}${RESET} $(L "— DevKit là core; bản của bạn giữ nguyên ở đây để tự áp lại (đổi tên để dùng song song)." "— DevKit is the core; yours is kept here to re-apply (rename it to use both).")"
+  else
+    local shown="$(basename "$backup_path")"
+    echo -e "     ➔ ${GREEN}$(L "ĐÃ ĐỔI TÊN THÀNH:" "RENAMED TO:")${RESET} ${CYAN}${shown}${RESET} $(L "để bạn tự merge theo ý mình (Không ghi đè làm mất mã nguồn)!" "so you can merge it yourself (nothing was overwritten).")"
+  fi
 
   # Record to a session backup ledger next to the conflicting item
   local ledger_dir="$backup_dir"
@@ -232,6 +238,139 @@ devkit_ln() {
   ln -sfn "$src" "$dst"
 }
 
+# ---- Project tier (.agents/local) ------------------------------------------------
+# DevKit is the core. When a project item shares a DevKit name, the DevKit version is
+# installed and the project's version moves to .agents/local/<kind>/<name>: outside
+# every directory an agent loads, never written by the installer afterwards, and meant
+# to be committed (unlike *_old). Project items there whose name is free are linked
+# into the agent dirs (devkit_link_local), so the team's own additions keep working.
+DEVKIT_LOCAL_DIR=".agents/local"
+
+# devkit_local_slot <path> — project-tier location for an item of an item-by-item
+# install dir (.claude/{commands,agents,hooks}/<name>, .agents/skills/<name>); "" else.
+devkit_local_slot() {
+  local parent
+  parent="$(dirname "$1")"
+  case "$parent" in
+    */.claude/commands|*/.claude/agents|*/.claude/hooks|*/.agents/skills)
+      printf '%s/%s/%s/%s' "$(dirname "$(dirname "$parent")")" "$DEVKIT_LOCAL_DIR" "$(basename "$parent")" "$(basename "$1")" ;;
+    *) printf '' ;;
+  esac
+}
+
+# devkit_local_init <project>/.agents/local — create it with a README the first time.
+devkit_local_init() {
+  local dir="$1"
+  [ -d "$dir" ] && return 0
+  mkdir -p "$dir" || return 1
+  _devkit_local_readme > "$dir/README.md"
+}
+
+_devkit_local_readme() {
+  cat <<'README_EOF'
+# .agents/local — project tier
+
+Your own skills, commands, agents, hooks and rules. Universal Agent DevKit never
+writes into this folder after moving an item here; commit it with the project.
+
+- An item here whose name the DevKit does NOT use is linked into the agent folders
+  (`skills/` → `.agents/skills/`, `commands/` → `.claude/commands/`, `agents/` →
+  `.claude/agents/`, `hooks/` → `.claude/hooks/`) on every `agent-kit init`.
+- An item with the same name as a DevKit item is kept here but NOT active — the
+  DevKit version wins. Re-apply your changes on top of it, or rename yours to use both.
+- `rules/` and dated copies (`name_YYYYMMDD_HHMMSS…`) are reference only, never linked.
+- `agent-kit list-old` shows what is active and what is shadowed.
+README_EOF
+}
+
+# devkit_local_prune <project> — after restore-old --apply: drop project-tier ledgers
+# whose backups were all put back, the untouched README, then empty folders. Anything
+# the team still keeps in .agents/local stays.
+devkit_local_prune() {
+  local root="$1" dir ledger line backup left d
+  dir="$root/$DEVKIT_LOCAL_DIR"
+  [ -d "$dir" ] || return 0
+  while IFS= read -r ledger; do
+    left=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      backup="${line#* -> }"
+      [ "$backup" != "$line" ] && { [ -e "$backup" ] || [ -L "$backup" ]; } && left=1
+    done < "$ledger"
+    [ "$left" -eq 0 ] && rm -f "$ledger"
+  done < <(find "$dir" -name .devkit_backups.log 2>/dev/null)
+  find "$dir" -depth -mindepth 1 -type d -empty -exec rmdir {} \; 2>/dev/null
+  if [ -z "$(find "$dir" -mindepth 1 ! -name README.md 2>/dev/null | head -n 1)" ] \
+     && { [ ! -e "$dir/README.md" ] || cmp -s "$dir/README.md" <(_devkit_local_readme); }; then
+    rm -f "$dir/README.md"
+    rmdir "$dir" 2>/dev/null
+    rmdir "$root/.agents" 2>/dev/null
+  fi
+  return 0
+}
+
+# devkit_is_local_link <link> — a symlink into this project's .agents/local
+devkit_is_local_link() {
+  local t local_p
+  [ -L "$1" ] && [ -n "${TARGET_DIR:-}" ] || return 1
+  local_p="$(cd "$TARGET_DIR/$DEVKIT_LOCAL_DIR" 2>/dev/null && pwd -P)" || return 1
+  t="$(resolve_link_target "$1")"
+  [[ "$t" == "$local_p"/* ]]
+}
+
+# devkit_copy_keep_edits <edited devkit copy dir> <dest> — move only the files the
+# team changed or added (compared with the .devkit-copy manifest) to <dest>, so the
+# project tier holds the team's edits, not a stale copy of the whole DevKit dir.
+# One ledger line per file (restore-old can put them back after an uninstall).
+devkit_copy_keep_edits() {
+  local dir="$1" dest="$2" rel n=1 ledger base
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    base="${dest}_$(date +%Y%m%d_%H%M%S)"   # an earlier kept edit is never overwritten
+    dest="$base"
+    while [ -e "$dest" ] || [ -L "$dest" ]; do n=$((n + 1)); dest="${base}_$n"; done
+  fi
+  ledger="$(dirname "$dest")/.devkit_backups.log"
+  case "$(basename "$(dirname "$dest")")" in local) ledger="$dest/.devkit_backups.log" ;; esac
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    rel="${rel#./}"
+    mkdir -p "$dest/$(dirname "$rel")" || return 1
+    mv "$dir/$rel" "$dest/$rel" || { echo "ERROR: could not keep '$dir/$rel' in '$dest' — nothing replaced." >&2; return 1; }
+    mkdir -p "$(dirname "$ledger")"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') | $dir/$rel -> $dest/$rel" >> "$ledger"
+    echo "  ⚠️ [Project tier] $(L "Giữ phần bạn sửa:" "kept your edit:") ${DEVKIT_LOCAL_DIR}/${dest#*/$DEVKIT_LOCAL_DIR/}/$rel"
+  done < <(LC_ALL=C comm -13 <(LC_ALL=C sort "$dir/$DEVKIT_MANIFEST") <(_devkit_manifest "$dir" | LC_ALL=C sort) | sed 's/^[^ ]*  //')
+  return 0
+}
+
+# devkit_link_local <project> <kind> <install dir, relative to project> — link the
+# project's own items from .agents/local/<kind>/ into the agent dir when the name is
+# free. A DevKit item of the same name wins and is reported. Relative links: the
+# project tier is committed, so the links must work on every clone. Idempotent.
+devkit_link_local() {
+  local project="$1" kind="$2" rel="$3" item name dst want up="" d
+  [ -d "$project/$DEVKIT_LOCAL_DIR/$kind" ] || return 0
+  [ "$project" = "${DEVKIT_ROOT:-}" ] && return 0
+  d="$rel"
+  while [ -n "$d" ] && [ "$d" != "." ]; do up="../$up"; d="$(dirname "$d")"; done
+  mkdir -p "$project/$rel"
+  for item in "$project/$DEVKIT_LOCAL_DIR/$kind"/*; do
+    [ -e "$item" ] || continue
+    name="$(basename "$item")"
+    case "$name" in *_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]*) continue ;; esac
+    dst="$project/$rel/$name"
+    want="${up}${DEVKIT_LOCAL_DIR}/$kind/$name"
+    if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$want" ]; then
+      continue
+    elif link_is_devkit_owned "$dst" "${DEVKIT_ROOT:-}" || is_unmodified_devkit_copy "$dst" || is_recorded_devkit_file "$dst"; then
+      echo "  - $(L "Tầng dự án" "Project tier"): $kind/$name — $(L "bản DevKit đang dùng; bản của bạn ở" "DevKit version active; yours is at") $DEVKIT_LOCAL_DIR/$kind/$name $(L "(đổi tên để dùng song song)" "(rename it to use both)")"
+    elif [ -e "$dst" ] || [ -L "$dst" ]; then
+      echo "  - $(L "Tầng dự án" "Project tier"): $kind/$name — $(L "$rel/$name đã có file khác, không link" "$rel/$name holds another file, not linked")"
+    else
+      ln -s "$want" "$dst" && echo "  - $(L "Tầng dự án: đã link" "Project tier: linked") $rel/$name → $DEVKIT_LOCAL_DIR/$kind/$name"
+    fi
+  done
+}
+
 # devkit_place <src> <dst> <symlink|copy> — idempotent install of one devkit item.
 # Replaces our own links, unmodified copies, identical files, empty dirs and dirs
 # holding only devkit links; anything else the user owns is moved to *_old first.
@@ -254,9 +393,30 @@ devkit_place() {
     return 0 # dst IS src — nothing to place
   fi
   if [ -L "$dst" ]; then
-    if link_is_devkit_owned "$dst" "${DEVKIT_ROOT:-}"; then rm -f "$dst"; else backup_conflict "$dst" "${DEVKIT_ROOT:-}"; fi
+    if link_is_devkit_owned "$dst" "${DEVKIT_ROOT:-}"; then
+      rm -f "$dst"
+    elif devkit_is_local_link "$dst"; then
+      # A project-tier item linked here earlier; the DevKit now has one of that name.
+      # Its content stays in .agents/local — only the link goes.
+      rm -f "$dst"
+      echo "  - $(L "Tầng dự án: DevKit giờ có" "Project tier: the DevKit now provides") $(basename "$dst") — $(L "bản của bạn vẫn ở .agents/local, không còn active" "yours stays in .agents/local, no longer active")"
+    else
+      backup_conflict "$dst" "${DEVKIT_ROOT:-}"
+    fi
   elif [ -d "$dst" ]; then
+    local keep_to=""
+    if [ -f "$dst/$DEVKIT_MANIFEST" ]; then
+      keep_to="$(devkit_local_slot "$dst")"
+      if [ -z "$keep_to" ] && [ -n "${TARGET_DIR:-}" ] && [ "$parent_p" = "$target_p" ]; then
+        keep_to="$TARGET_DIR/$DEVKIT_LOCAL_DIR/$(basename "$dst")"   # root rules/ skills/ commands/
+      fi
+    fi
     if is_unmodified_devkit_copy "$dst" || ! has_user_content "$dst" "${DEVKIT_ROOT:-}"; then
+      rm -rf "$dst"
+    elif [ -n "$keep_to" ]; then
+      # An edited DevKit copy: keep the team's edits in the project tier, then refresh.
+      devkit_local_init "${keep_to%%/"$DEVKIT_LOCAL_DIR"/*}/$DEVKIT_LOCAL_DIR" || return 1
+      devkit_copy_keep_edits "$dst" "$keep_to" || return 1
       rm -rf "$dst"
     else
       backup_conflict "$dst" "${DEVKIT_ROOT:-}"
@@ -400,6 +560,36 @@ list_old_backups() {
     echo "     $(L "và chủ động copy/merge các kỹ năng, quy tắc riêng vào thư mục mới." "and copy/merge your own skills and rules into the new directories.")"
     echo "================================================================="
   fi
+  list_local_tier "$root_dir"
+}
+
+# list_local_tier <project> — the project tier and whether each item is active.
+list_local_tier() {
+  local root_dir="${1:-$PWD}" kind rel item name dst state
+  [ -d "$root_dir/$DEVKIT_LOCAL_DIR" ] || return 0
+  echo "  📦 $(L "Tầng dự án" "Project tier") ($DEVKIT_LOCAL_DIR — $(L "DevKit là core; commit thư mục này" "DevKit is the core; commit this folder")):"
+  for kind in skills commands agents hooks rules; do
+    case "$kind" in
+      skills) rel=".agents/skills" ;; commands) rel=".claude/commands" ;;
+      agents) rel=".claude/agents" ;; hooks) rel=".claude/hooks" ;; *) rel="" ;;
+    esac
+    for item in "$root_dir/$DEVKIT_LOCAL_DIR/$kind"/*; do
+      [ -e "$item" ] || continue
+      name="$(basename "$item")"
+      dst="$root_dir/$rel/$name"
+      if [ -z "$rel" ]; then
+        state="$(L "tham khảo (không link)" "reference (not linked)")"
+      elif [ -L "$dst" ] && [ "$(resolve_link_target "$dst")" = "$(cd "$(dirname "$item")" && pwd -P)/$name" ]; then
+        state="$(L "đang dùng" "active")"
+      elif [ -e "$dst" ] || [ -L "$dst" ]; then
+        state="$(L "bị che — bản DevKit cùng tên đang dùng" "shadowed — the DevKit item of that name is active")"
+      else
+        state="$(L "chưa link (chạy lại agent-kit init)" "not linked yet (re-run agent-kit init)")"
+      fi
+      echo "     - $kind/$name: $state"
+    done
+  done
+  echo "================================================================="
 }
 
 # restore_old_backups <project_dir> [--apply]
@@ -469,6 +659,7 @@ restore_old_backups() {
     done < "$ledger"
   done < <(find "$root_p" -maxdepth 4 -name .devkit_backups.log -not -path '*/.git/*' 2>/dev/null | LC_ALL=C sort)
   rm -f "$seen_file"
+  [ "$apply" -eq 1 ] && devkit_local_prune "$root_p"
   if [ "$apply" -eq 1 ]; then
     echo "restore-old: ${restored} restored, ${skipped} skipped"
   else

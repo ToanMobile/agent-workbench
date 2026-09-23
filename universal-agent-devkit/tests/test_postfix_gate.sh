@@ -215,7 +215,7 @@ make_repo "true"
 echo "fun ok() = 2" > src/Core.kt
 run_gate --run-tests --record-lesson "$(printf 'x\n# injected heading\n- item')" >/dev/null 2>&1
 if [ -f .agents/instincts.md ] && ! grep -q '^# injected' .agents/instincts.md && ! grep -q '^- item' .agents/instincts.md \
-   && grep -q 'INSTINCT-AUTO\] x \\# injected heading' .agents/instincts.md; then
+   && grep -q 'INSTINCT-001\] x \\# injected heading' .agents/instincts.md; then
   echo "✔ lesson recorded after PASS with Markdown escaped"
 else echo "✖ lesson missing or not escaped"; FAILS=$((FAILS + 1)); fi
 
@@ -228,6 +228,56 @@ ln -s "$DEVKIT_DIR/rules" rules
 out="$(gate_nomatrix)"; check "only devkit links -> nothing to audit" 3 $? "$out"
 echo "fun ok() = 2" > src/Core.kt
 out="$(gate_nomatrix)"; check "devkit links + real change -> PASS" 0 $? "$out" "không đọc được"
+
+# --- Dependency check: floating versions and http:// sources -----------------------
+# http:// is assembled at runtime so this file itself never looks like a manifest.
+H="http"
+make_repo "true"
+printf 'dependencies {\n  implementation "com.squareup.okhttp3:okhttp:4.+"\n}\n' > build.gradle
+out="$(gate_nomatrix)"; check "Gradle dynamic version 4.+ -> REJECT" 1 $? "$out"
+expect_in "finding quotes the declaration" "okhttp:4.+" "$out"
+
+make_repo "true"
+printf 'dependencies { implementation "androidx.core:core-ktx:1.13.1" }\n' > build.gradle
+printf 'publishing { pom { licenses { license { url = "%s://www.apache.org/licenses/LICENSE-2.0.txt" } } } }\n' "$H" >> build.gradle
+printf 'repositories { maven { url "%s://localhost:8081/repo" } }\n' "$H" >> build.gradle
+out="$(gate_nomatrix)"; check "pinned version, license URL, loopback repo -> not rejected" 0 $? "$out"
+
+make_repo "true"
+printf 'repositories {\n  maven { url "%s://repo.example.com/maven2" }\n}\n' "$H" > settings.gradle
+out="$(gate_nomatrix)"; check "Gradle repository over http:// -> REJECT" 1 $? "$out"
+
+make_repo "true"
+printf '{"name":"t","version":"1.0.0","dependencies":{"a":"^1.2.3"},"peerDependencies":{"react":"*"}}\n' > package.json
+out="$(gate_nomatrix)"; check "caret range and peer * -> not rejected" 0 $? "$out"
+printf '{"name":"t","version":"1.0.0","dependencies":{"a":"latest"}}\n' > package.json
+out="$(gate_nomatrix)"; check "npm dependency \"latest\" -> REJECT" 1 $? "$out"
+
+make_repo "true"
+mkdir -p gradle && printf '[versions]\nkotlin = "2.0.0"\ncompose = "1.+"\n' > gradle/libs.versions.toml
+out="$(gate_nomatrix)"; check "version catalog 1.+ -> REJECT" 1 $? "$out"
+
+make_repo "true"
+printf 'requests==2.31.0\n--index-url %s://pypi.internal/simple\n' "$H" > requirements.txt
+out="$(gate_nomatrix)"; check "pip index over http:// -> REJECT" 1 $? "$out"
+
+make_repo "true"
+mkdir -p src/test && printf '{"dependencies":{"a":"latest"}}\n' > src/test/package.json
+out="$(gate_nomatrix)"; check "manifest under a test dir is a fixture, not scanned" 0 $? "$out"
+
+# --- --staged: static checks on the index, never PASS --------------------------------
+gate_staged() { CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --staged "$@" 2>&1; }
+make_repo "true"
+out="$(gate_staged)"; check "--staged with nothing staged -> nothing to audit" 3 $? "$out"
+echo "fun ok() = 2" > src/Core.kt && git add src/Core.kt
+out="$(gate_staged)"; check "--staged clean -> UNVERIFIED (tests not run), never PASS" 2 $? "$out" "PASS —"
+printf '%s = "%s"\n' "api_""key" "ABCDEFGHIJKLMNOP" > src/Leak.kt && git add src/Leak.kt && rm src/Leak.kt
+out="$(gate_staged)"; check "--staged: secret staged then deleted from the working tree -> REJECT" 1 $? "$out"
+git rm -q --cached src/Leak.kt
+printf '// ... existing code ...\n' > src/Core.kt
+out="$(gate_staged)"; check "--staged: unstaged placeholder is not what gets committed" 2 $? "$out"
+out="$(gate_staged --run-tests)"; check "--staged refuses --run-tests" 2 $? "$out"
+out="$(gate_staged --json)"; expect_in "--staged --json reports mode" '"mode": "staged"' "$out"
 
 if [ "$FAILS" -ne 0 ]; then
   echo "post-fix-gate: $FAILS FAILED"; exit 1

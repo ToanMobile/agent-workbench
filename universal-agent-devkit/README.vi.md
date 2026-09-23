@@ -3,7 +3,7 @@
 # 🚀 Universal AI Agent DevKit & Quality Protocol
 ### *Bộ quy tắc chung, lifecycle hooks, 25 skills, các domain profile (Android, iOS, web, backend, game, automotive, voice, universal) và cổng kiểm tra diff tĩnh sau khi sửa lỗi cho Claude Code, OpenAI Codex, Google Gemini/Antigravity và Cursor — cài vào dự án mà không ghi đè những gì đã có.*
 
-[![GitHub Repository](https://img.shields.io/badge/GitHub-ToanMobile%2Funiversal--agent--devkit-blue.svg?style=for-the-badge&logo=github)](https://github.com/ToanMobile/universal-agent-devkit)
+[![GitHub Repository](https://img.shields.io/badge/GitHub-ToanMobile%2Fagent--workbench-blue.svg?style=for-the-badge&logo=github)](https://github.com/ToanMobile/agent-workbench)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](./LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-agent--kit%20test-success.svg?style=for-the-badge)](#-verification--devkit-cli-agent-kit)
 [![Supported Agents](https://img.shields.io/badge/Agents-4%20N%E1%BB%81n%20T%E1%BA%A3ng-orange.svg?style=for-the-badge)](#-universal-multi-agent-matrix)
@@ -37,10 +37,10 @@ AI coding agent làm nhanh nhưng hay tuyên bố "test đã pass" khi chưa ch�
 
 ```bash
 # Chế độ tương tác (Khuyến nghị — Cho phép chọn Domain Profile và Agent muốn cài):
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/ToanMobile/universal-agent-devkit/main/bin/quick-install.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/ToanMobile/agent-workbench/main/universal-agent-devkit/bin/quick-install.sh)"
 
 # Chế độ tự động nhanh (Cài đặt trọn bộ cho tất cả các nền tảng):
-curl -fsSL https://raw.githubusercontent.com/ToanMobile/universal-agent-devkit/main/bin/quick-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ToanMobile/agent-workbench/main/universal-agent-devkit/bin/quick-install.sh | bash
 ```
 
 ---
@@ -48,8 +48,8 @@ curl -fsSL https://raw.githubusercontent.com/ToanMobile/universal-agent-devkit/m
 ### Option 2: Clone về máy và cài đặt CLI toàn cục (Khuyến nghị)
 ```bash
 # 1. Clone repository
-git clone https://github.com/ToanMobile/universal-agent-devkit.git
-cd universal-agent-devkit
+git clone https://github.com/ToanMobile/agent-workbench.git
+cd agent-workbench/universal-agent-devkit
 
 # 2. Cài đặt agent-kit vào ~/.local/bin
 make install
@@ -71,7 +71,7 @@ agent-kit init --lang=vi                # agent trả lời bằng tiếng Việ
 Tham số, profile hoặc mode không hợp lệ sẽ thoát với mã 2 trước khi ghi bất cứ thứ gì.
 
 #### Installer làm gì với dự án đã có
-- File sắp bị thay (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, hook/command riêng trùng tên với DevKit) được giữ lại dạng `*_old` — không ghi đè. Xem bằng `agent-kit list-old`, khôi phục bằng `agent-kit restore-old`.
+- DevKit là core. Skill/command/agent/hook riêng trùng tên DevKit được chuyển vào **tầng dự án** `.agents/local/<loại>/` (hãy commit thư mục này) và bản DevKit được cài; mục nào ở đó có tên không trùng thì được link lại mỗi lần cài. Ở chế độ copy, phần bạn sửa trong bản copy DevKit cũng được giữ ở đó (chỉ file đã sửa). File gốc (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`) giữ nội dung của bạn, chèn thêm khối DevKit, kèm bản chụp `*_old`. Không ghi đè gì: xem bằng `agent-kit list-old`, hoàn tác bằng `agent-kit restore-old`. Update DevKit rồi chạy lại `agent-kit init` là an toàn — nó không bao giờ ghi lại `.agents/local`.
 - Thư mục thật `commands/`, `rules/`, `skills/` thuộc về dự án (ví dụ `commands/build.js` của một CLI) được **giữ nguyên chỗ cũ**; mục DevKit tương ứng bị bỏ qua kèm cảnh báo.
 - Symlink mode trong repo git sẽ in cảnh báo: link trỏ vào bản DevKit trên máy bạn và gãy ở máy khác — dùng `-m copy` nếu định commit.
 - Dự án có git được thêm `*_old*`, `.claude/audit-gate/` và các file ledger của installer vào `.gitignore`.
@@ -81,9 +81,9 @@ Tham số, profile hoặc mode không hợp lệ sẽ thoát với mã 2 trướ
 
 ### Option 3: Cài đặt dạng Claude Code Plugin
 ```bash
-claude plugin install github.com/ToanMobile/universal-agent-devkit
+claude plugin install github.com/ToanMobile/agent-workbench/universal-agent-devkit
 # hoặc từ thư mục local:
-claude plugin install /path/to/universal-agent-devkit
+claude plugin install /path/to/agent-workbench/universal-agent-devkit
 ```
 
 ---
@@ -98,10 +98,10 @@ DevKit cung cấp một hệ sinh thái khép kín:
 1. **Quy chuẩn lập trình tối thượng:** Zero-Defect Protocol, Paired Executable Oracle (Bắt buộc RED→GREEN), và No-Fabrication Engine (Bảng quyết định C1–C9).
 2. **Rulebook trung tâm (`AGENTS.md`):** quy chuẩn kiến trúc, Pre-Code Gate và giao thức chất lượng; bổ sung bởi `rules/core-rules.md` và một file `rules/<profile>-rules.md` cho mỗi profile.
 3. **Hệ thống Dynamic Domain Profiles:** Chuyển đổi giữa **Android** (Compose/Vitals/Tombstones), **iOS** (Swift 6/SwiftUI/Concurrency), **Automotive** (AAOS/CAN Bus), **Game** (Unity 6/Zero-GC), **Voice Assistant** (edge audio AI), **Web** (TypeScript/React/Next.js), **Backend** (API services Python/Go/Rust/Node) và **Universal** qua lệnh `agent-kit profile`.
-4. **Cổng hậu sửa lỗi (`/audit-gate`, `agent-kit gate`, `postfix-gate`):** cổng kiểm tra diff tĩnh. Thứ làm nó fail: 5 kiểm tra regex trên các file thay đổi (secret, placeholder lười biếng, anti-pattern hiệu năng, nuốt lỗi, log thô) cộng với, khi có `--run-tests`, các test hồi quy trong ma trận đang active. DESIGN.md/a11y, bằng chứng RED→GREEN, ảnh/thiết bị và OpenCodeReview chỉ được in ra để nhắc — gate không xác minh chúng.
+4. **Cổng hậu sửa lỗi (`/audit-gate`, `agent-kit gate`, `postfix-gate`):** cổng kiểm tra diff tĩnh. Thứ làm nó fail: 6 kiểm tra tĩnh trên các file thay đổi (secret, placeholder lười biếng, dependency — version thả nổi như `1.+`/`latest`/`*` và nguồn tải `http://` — anti-pattern hiệu năng, nuốt lỗi, log thô) cộng với, khi có `--run-tests`, các test hồi quy trong ma trận đang active. DESIGN.md/a11y, bằng chứng RED→GREEN, ảnh/thiết bị và OpenCodeReview chỉ được in ra để nhắc — gate không xác minh chúng. `agent-kit githooks install` chạy đúng các kiểm tra tĩnh đó làm git pre-commit hook trên nội dung đã stage, nên `git commit` gõ tay ở terminal/IDE cũng bị kiểm (bỏ qua 1 lần: `git commit --no-verify`); `agent-kit learn "<bẫy>" --cause=… --rule=…` ghi bài học vào `.agents/instincts.md` với id `[INSTINCT-NNN]` kế tiếp.
 5. **10 Hội đồng Review:** các prompt reviewer trong `agents/councils/` (cô lập shared flow, kiến trúc/blast radius, TDD, OpenCodeReview, bảo mật, game/Unity/Blender, hiệu năng/ANR, quản trị bộ nhớ, quy trình solo-dev, chuẩn/bàn giao) được profile kích hoạt. Các script `scripts/audit_*` là kiểm tra tự nhất quán dựa trên grep trên chính file của DevKit, không phải reviewer code.
 6. **Kho 25 Kỹ Năng Tinh Gọn (Curated Engineering Skills):** Chuẩn hóa theo định dạng `SKILL.md`, chia 5 nhóm, gồm cả hai skill hiệu năng domain `compose-recomp-audit` và `unity-gc-audit`, cùng wrapper cho CLI **Alibaba OpenCodeReview (`ocr`)**.
-7. **Cơ Chế Bảo Vệ Cách Ly X_old (X_old Conflict Isolation):** Cài đặt không ghi đè vào dự án cũ. File người dùng bị trùng (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, hook/command/agent cùng tên) được giữ dạng `*_old`; thư mục `commands/`, `rules/`, `skills/` chứa file riêng của dự án được để nguyên và bỏ qua. Xem bằng `agent-kit list-old`, khôi phục bằng `agent-kit restore-old`.
+7. **Cơ Chế Bảo Vệ Cách Ly X_old (X_old Conflict Isolation):** Cài đặt không ghi đè vào dự án cũ. Skill/command/agent/hook cùng tên được chuyển vào tầng dự án `.agents/local/` (DevKit thắng, bản của bạn vẫn được commit và được link lại khi tên không trùng); file gốc bị trùng (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`) có bản chụp `*_old`; thư mục `commands/`, `rules/`, `skills/` chứa file riêng của dự án được để nguyên và bỏ qua. Xem bằng `agent-kit list-old`, khôi phục bằng `agent-kit restore-old`.
 8. **Hệ thống Thiết kế & Ký ức Thất bại:** Chuẩn hóa Design Tokens giao diện (`DESIGN.md`, Touch Target $\ge 48\text{dp}$, WCAG AA, Debounce nút bấm) kết hợp cùng kinh nghiệm phòng ngừa bẫy mã nguồn lịch sử (`.agents/instincts.md`).
 9. **Chẩn Đoán Sập Native C/C++ Android (`tombstone-triage.sh`):** Công cụ tự động phân tích crash tombstone (/data/tombstones/) trên thiết bị Android thật, bóc tách tín hiệu (`SIGSEGV`, `SIGABRT`) và dịch ngược stack frame qua `ndk-stack`.
 10. **MCP Hub:** `mcp/` có 6 MCP server (knowledge graph mã nguồn, tra cứu docs, tìm code Android, Android skills, điều khiển ADB, Play Store), các gói npm được pin phiên bản cụ thể. Không kèm MCP Unity/Blender; profile game liệt kê chúng là MCP ngoài.
@@ -640,6 +640,12 @@ agent-kit health
 # 4. Cổng diff tĩnh hậu sửa lỗi + test hồi quy:
 agent-kit gate --run-tests
 
+# 4b. Chạy các kiểm tra tĩnh đó ở mỗi git commit (pre-commit hook, nội dung đã stage):
+agent-kit githooks install      # uninstall | status
+
+# 4c. Ghi bài học vào .agents/instincts.md (id [INSTINCT-NNN] kế tiếp):
+agent-kit learn "<bẫy>" --cause="<nguyên nhân>" --rule="<cách phòng ngừa>"
+
 # 5. Chạy mọi suite hồi quy:
 agent-kit test
 
@@ -730,7 +736,7 @@ universal-agent-devkit/
 
 ## 📄 License & Repository
 
-- **GitHub:** [https://github.com/ToanMobile/universal-agent-devkit](https://github.com/ToanMobile/universal-agent-devkit)
+- **GitHub:** [https://github.com/ToanMobile/agent-workbench](https://github.com/ToanMobile/agent-workbench)
 - **License:** Phát hành theo **MIT License** — xem [`LICENSE`](./LICENSE). Thay đổi: [`CHANGELOG.md`](./CHANGELOG.md).
 
 <div align="center">

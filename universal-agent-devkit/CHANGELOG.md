@@ -2,6 +2,48 @@
 
 All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/plugin.json`.
 
+## Unreleased
+
+### Gates
+- **post-fix gate — dependency check (6th static check):** floating versions (Gradle `1.+` /
+  `latest.release`, version catalogs, npm `latest`/`*` outside `peerDependencies`, Cargo/Poetry `*`,
+  pubspec `any`, Maven `LATEST`/`RELEASE`) and plain-`http://` / TLS-off package sources (Gradle
+  `maven { url }`, `allowInsecureProtocol`, `.npmrc`, pip `--index-url`/`--trusted-host`, Podfile
+  `source`, pom `<repository>`) now REJECT. Rules are anchored to declaration shapes: license URLs,
+  loopback repositories, caret ranges and test fixtures are not flagged.
+- **post-fix gate `--staged`:** the 6 static checks on the staged blobs (not the working tree), for
+  pre-commit use. Clean is exit 2 (tests not run), never PASS.
+- **`agent-kit githooks install|uninstall|status`:** git pre-commit hook running `--staged` on every
+  commit, also outside any agent. Honours `core.hooksPath`; never overwrites a project's own hook
+  (prints the line to chain it); fails closed when the gate gives no verdict. `agent-kit uninstall`
+  removes it.
+
+### Memory
+- **`agent-kit learn "<title>" --cause=… --rule=…`** (`bin/instincts.py`): adds a lesson to
+  `.agents/instincts.md` under the next `[INSTINCT-NNN]` id, refuses a title already recorded
+  (`--force` to add anyway), escapes Markdown, and refuses to write through a link into the DevKit.
+  `post-fix-gate --record-lesson` uses the same writer, so it no longer stamps `[INSTINCT-AUTO]`.
+
+### Install
+- **Project tier `.agents/local/` replaces `commands_old/`, `skills_old/`, `agents_old/`, `hooks_old/`.**
+  DevKit is the core: a project skill/command/agent/hook with a DevKit name moves to
+  `.agents/local/<kind>/<name>` and the DevKit item is installed. The folder is committed (not
+  git-ignored), never written by later installs, and its items with a free name are linked back into
+  the agent folders (relative links); when a DevKit update later claims such a name, the DevKit wins
+  and the project's copy stays in place, inactive. In copy mode an edited DevKit copy keeps only the
+  edited files there (a later edit gets a dated folder, never overwriting the first); root `rules/`
+  edits land in `.agents/local/rules/` instead of `rules_old/`. `list-old` shows active/shadowed items;
+  `restore-old --apply` puts items back and removes consumed ledgers and empty folders. Top-level
+  `*_old` snapshots (`CLAUDE_old.md`, …) are unchanged. Existing `*_old` folders from earlier installs
+  are not migrated.
+
+### Android
+- **`profiles/android/scripts/qa/adb-safe-exec.sh`:** runs an adb command and FAILs on error text adb
+  prints with exit 0 (`Error type 3`, `Failure [`, `INSTRUMENTATION_FAILED`) and on a FATAL
+  EXCEPTION / ANR / fatal signal of the package in logcat since the command started (device clock).
+  No or several devices ⇒ exit 3, never a pass; commands `hardware_safety_gate.sh` blocks are refused.
+- **`anr-logcat-triage.sh`:** no online device is now exit 3 (UNVERIFIED) instead of exit 0.
+
 ## 1.1.0 — 2026-09-23
 
 A PO + QA review of the whole DevKit found 58 verified defects (1 critical, 13 high) and a gap

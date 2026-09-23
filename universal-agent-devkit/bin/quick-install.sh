@@ -5,7 +5,8 @@ set -euo pipefail
 
 INSTALL_DIR="${HOME}/.universal-agent-devkit"
 BIN_DIR="${HOME}/.local/bin"
-REPO_URL="https://github.com/ToanMobile/universal-agent-devkit.git"
+REPO_URL="https://github.com/ToanMobile/agent-workbench.git"
+DEVKIT_SUBDIR="universal-agent-devkit"
 
 echo "================================================================="
 echo "  🚀 Bootstrapping Universal Agent DevKit"
@@ -24,9 +25,18 @@ if [ -d "$INSTALL_DIR/.git" ]; then
 else
   echo "Cloning Universal Agent DevKit into $INSTALL_DIR..."
   if git ls-remote "$REPO_URL" > /dev/null 2>&1; then
-    git clone --depth 1 "$REPO_URL" "$INSTALL_DIR" --quiet
+    TEMP_CLONE="${INSTALL_DIR}.tmp"
+    git clone --depth 1 "$REPO_URL" "$TEMP_CLONE" --quiet
+    if [ -d "$TEMP_CLONE/$DEVKIT_SUBDIR" ]; then
+      mv "$TEMP_CLONE/$DEVKIT_SUBDIR" "$INSTALL_DIR"
+      rm -rf "$TEMP_CLONE"
+    else
+      echo "❌ Error: Could not find $DEVKIT_SUBDIR in cloned repository" >&2
+      rm -rf "$TEMP_CLONE"
+      exit 1
+    fi
   else
-    # Offline fallback: an explicit local checkout (DEVKIT_LOCAL_SOURCE=/path/to/universal-agent-devkit)
+    # Offline fallback: an explicit local checkout (DEVKIT_LOCAL_SOURCE=/path/to/agent-workbench)
     LOCAL_SOURCE="${DEVKIT_LOCAL_SOURCE:-}"
     if [ -n "$LOCAL_SOURCE" ] && [ -d "$LOCAL_SOURCE" ]; then
       cp -RL "$LOCAL_SOURCE" "$INSTALL_DIR"

@@ -36,7 +36,7 @@ Skills live in `skills/` (source of truth); `.agents/skills/` and `commands/` li
 | `/plan-tests`, `/qa-review` | [qa-review](skills/qa-review/SKILL.md) | Audit diff before PR, acceptance criteria, test scenario matrix | Code / PR Review |
 | `/review-code`, `/ocr`, `/open-code-review` | [open-code-review](skills/open-code-review/SKILL.md) | Alibaba OpenCodeReview: Deterministic line resolver, file bundling, code audit | Automated Diff Review |
 | `/visual`, `/qa-visual` | [qa-visual](skills/qa-visual/SKILL.md) | Automated screenshot capture and DOM layout audit | Visual UI QA |
-| `/audit-gate`, `/postfix-gate` | [audit-gate](commands/audit-gate.md) | Post-fix static diff gate (secrets, placeholders, perf, swallowed errors, raw logs) + matrix regression tests | Post-Fix Gate |
+| `/audit-gate`, `/postfix-gate` | [audit-gate](commands/audit-gate.md) | Post-fix static diff gate (secrets, placeholders, dependencies, perf, swallowed errors, raw logs) + matrix regression tests | Post-Fix Gate |
 
 **QA ladder:** `/plan-tests` → `/review-code` → `/check` → `/done` + `/audit-gate`. Deprecated stubs (removed in 1.2.0): `/review` → `/plan-tests`, `/qa` & `/test` → `/check`, `/bugs` & `/crashlytics` → `/fix`.
 

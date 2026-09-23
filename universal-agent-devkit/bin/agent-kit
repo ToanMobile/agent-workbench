@@ -152,7 +152,8 @@ Commands:
   sync                Resync skills, slash commands, and aliases
   list                List all curated skills
   commands            List all available slash commands
-  list-old [path]     List all preserved *_old backup folders and files
+  list-old [path]     List preserved *_old files and the project tier (.agents/local):
+                      which of your items are active and which a DevKit item shadows
   restore-old [path] [--apply]
                       Put *_old backups recorded by the installer back in place
                       (dry-run unless --apply; never overwrites non-DevKit content)

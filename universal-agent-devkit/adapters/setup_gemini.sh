@@ -56,6 +56,10 @@ for skill in "$DEVKIT_ROOT/skills"/*; do
   devkit_place "$skill" "$target_skill_path" "$MODE"
 done
 
+# 4. Project tier: the project's own skills kept in .agents/local/skills are linked in
+#    when no DevKit skill has that name (DevKit is the core and wins).
+[ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && devkit_link_local "$TARGET_DIR" skills .agents/skills
+
 # Clean broken symlinks if any
 find "$TARGET_DIR/.agents/skills" -type l ! -exec test -e {} \; -delete 2>/dev/null || true
 

@@ -43,6 +43,16 @@ Phân tích nguyên nhân đơ máy (Application Not Responding) hoặc crash đ
 - **Tiêu chuẩn nghiệm thu:**
   - Xác định chính xác luồng gây tắc nghẽn (Main Thread Starvation, Binder Lock Contention, hoặc Database Lock).
   - Trích xuất stack trace có cấu trúc, định vị chính xác `File.kt:Line` gây chặn luồng chính.
+  - Không có thiết bị online ⇒ exit `3` (CHƯA XÁC MINH), không phải "sạch".
+
+### 3a. Chạy Lệnh adb Có Thẩm Định — Chống Xanh Ảo (`adb-safe-exec.sh`)
+`adb shell am start …` trả exit `0` cả khi activity không tồn tại (`Error type 3`), và crash/ANR vài giây sau khi mở app không bao giờ hiện trong exit code. Mọi lệnh adb dùng làm bằng chứng PASS phải chạy qua wrapper:
+```bash
+./profiles/android/scripts/qa/adb-safe-exec.sh -p <package_name> --wait 5 -- shell am start -W -n <package_name>/.MainActivity
+```
+- **Exit:** `0` PASS · `1` FAIL (adb exit ≠ 0, output có `Error:`/`Error type N`/`Failure [`/`INSTRUMENTATION_FAILED`, hoặc logcat có FATAL EXCEPTION / ANR / Fatal signal của package từ lúc chạy lệnh) · `2` sai cú pháp hoặc lệnh bị `hardware_safety_gate` chặn · `3` CHƯA XÁC MINH (không có / nhiều thiết bị mà không `-s`, không đọc được đồng hồ hoặc logcat).
+- ANR cần `--wait` ≥ 5–10 giây mới kịp hiện. Output và lát logcat lưu ở `.claude/audit-gate/adb-safe-exec/`.
+- Chỉ exit `0` mới được báo PASS; exit `3` phải báo là chưa kiểm, không được báo là sạch.
 
 ### 3b. Chẩn Đoán Sự Cố Sập Native C/C++ & Tombstones (`tombstone-triage.sh`)
 Phân tích tệp `/data/tombstones/` và giải mã stack trace native nhị phân (SIGSEGV, SIGABRT) qua `ndk-stack`:
