@@ -1,0 +1,1 @@
+../../hooks/security_gate.sh

@@ -1,0 +1,1 @@
+../../hooks/churn_guard.sh

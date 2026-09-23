@@ -1,0 +1,1 @@
+../../agents/test-architect-seti.md

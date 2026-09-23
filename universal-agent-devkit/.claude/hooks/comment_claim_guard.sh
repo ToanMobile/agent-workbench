@@ -1,0 +1,1 @@
+../../hooks/comment_claim_guard.sh

@@ -1,0 +1,19 @@
+{
+  "projectName": "Web app",
+  "defaultModel": "pro",
+  "testCommand": "npm test -- --run",
+  "auditCommands": ["npm run lint", "npx tsc --noEmit", "node .claude/skills/qa-visual/scripts/audit-layout.mjs"],
+  "rulesFiles": ["AGENTS.md", "CONTRIBUTING.md"],
+  "commitPolicy": "forbid",
+  "proof": {
+    "require": 2,
+    "defaultProvider": "trang",
+    "providers": {
+      "trang": {
+        "type": "qa-visual",
+        "url": "http://localhost:5173"
+      },
+      "man": { "type": "macos", "region": "0,0,1440,900" }
+    }
+  }
+}

@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# agent-kit — Management & Initialization CLI for Universal Agent DevKit
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEVKIT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+CMD="${1:-help}"
+
+case "$CMD" in
+  init|setup)
+    shift
+    # `init [path] [install.sh options]`: an optional leading non-flag argument is the
+    # target; everything else goes to install.sh untouched. install.sh reads its menus
+    # from /dev/tty itself when one can actually be opened, so no stdin redirection
+    # here (a merely *existing* /dev/tty fails to open under CI / agent runners).
+    TARGET="$PWD"
+    if [ $# -gt 0 ] && [[ "$1" != -* ]]; then
+      TARGET="$1"
+      shift
+    fi
+    exec bash "$DEVKIT_ROOT/bin/install.sh" --target="$TARGET" --domain=auto --mode=symlink "$@"
+    ;;
+  install-global)
+    INSTALL_DIR="${HOME}/.local/bin"
+    mkdir -p "$INSTALL_DIR"
+    ln -sf "$DEVKIT_ROOT/bin/agent-kit" "$INSTALL_DIR/agent-kit"
+    ln -sf "$DEVKIT_ROOT/bin/install.sh" "$INSTALL_DIR/agent-install"
+    ln -sf "$DEVKIT_ROOT/bin/post-fix-gate.py" "$INSTALL_DIR/postfix-gate"
+    echo "✓ Global CLI installed to $INSTALL_DIR/agent-kit (+ agent-install, postfix-gate)"
+    echo "Ensure '$INSTALL_DIR' is in your PATH."
+    echo "You can now run 'agent-kit init' inside any project directory!"
+    ;;
+  test|check)
+    echo "================================================================="
+    echo "  🧪 Running Hook Contract Tests..."
+    echo "================================================================="
+    bash "$DEVKIT_ROOT/hooks/tests/hook_contract_test.sh" || exit 1
+    echo
+    echo "================================================================="
+    echo "  📋 Running Hook Contract Facts (registries, headers, wiring)..."
+    echo "================================================================="
+    CONTRACT_FACTS_SKIP_HARNESS=1 bash "$DEVKIT_ROOT/hooks/tests/contract_facts_test.sh" || exit 1
+    echo
+    echo "================================================================="
+    echo "  ⚡ Running Workflow Engine Tests..."
+    echo "================================================================="
+    node --test "$DEVKIT_ROOT/workflows"/*.test.mjs || exit 1
+    echo
+    echo "================================================================="
+    echo "  🧰 Running Installer & Gate Regression Tests..."
+    echo "================================================================="
+    for t in "$DEVKIT_ROOT"/tests/test_*.sh; do
+      echo "▶ $(basename "$t")"
+      bash "$t" || exit 1
+    done
+    ;;
+  sync)
+    echo "Synchronizing commands and skills..."
+    bash "$DEVKIT_ROOT/scripts/sync_commands.sh"
+    ;;
+  list|skills)
+    skill_count="$(find "$DEVKIT_ROOT/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | xargs)"
+    echo "Available Skills in Universal Agent DevKit ($skill_count):"
+    for skill_dir in "$DEVKIT_ROOT/skills"/*; do
+      [ -d "$skill_dir" ] || continue
+      skill_name="$(basename "$skill_dir")"
+      echo "  - $skill_name"
+    done
+    ;;
+  commands)
+    echo "Available Slash Commands:"
+    for cmd_file in "$DEVKIT_ROOT/commands"/*; do
+      [ -f "$cmd_file" ] || continue
+      cmd_name="$(basename "$cmd_file" .md)"
+      echo "  - /$cmd_name"
+    done
+    ;;
+  profile)
+    shift || true
+    python3 "$DEVKIT_ROOT/bin/agent-config.py" "$@"
+    ;;
+  health|check-health)
+    shift || true
+    python3 "$DEVKIT_ROOT/bin/agent-health.py" "$@"
+    ;;
+  gate|postfix|postfix-gate|audit-gate)
+    shift || true
+    python3 "$DEVKIT_ROOT/bin/post-fix-gate.py" "$@"
+    ;;
+  githooks|git-hooks)
+    # githooks [install|uninstall|status] [path]
+    shift || true
+    bash "$DEVKIT_ROOT/scripts/githooks.sh" "${1:-status}" "${2:-$PWD}"
+    ;;
+  learn)
+    # learn "<title>" [--cause TEXT] [--rule TEXT] [--check CMD] [--file PATH] [--force] [--dry-run]
+    shift || true
+    python3 "$DEVKIT_ROOT/bin/instincts.py" add "$@"
+    ;;
+  index-memory|index)
+    shift || true
+    TARGET_F="${1:-$DEVKIT_ROOT/.agents/instincts.md}"
+    python3 "$DEVKIT_ROOT/scripts/index_memory.py" "$TARGET_F"
+    ;;
+  list-old|old|backups)
+    shift || true
+    bash "$DEVKIT_ROOT/scripts/backup_conflict.sh" list "${1:-$PWD}"
+    ;;
+  restore-old|restore)
+    # restore-old [path] [--apply] — dry-run unless --apply
+    shift || true
+    R_TARGET="$PWD"; R_APPLY=""
+    for a in "$@"; do
+      case "$a" in
+        --apply) R_APPLY="--apply" ;;
+        -*) echo "agent-kit restore-old: unknown option '$a' (use --apply)" >&2; exit 2 ;;
+        *) R_TARGET="$a" ;;
+      esac
+    done
+    DEVKIT_ROOT="$DEVKIT_ROOT" bash "$DEVKIT_ROOT/scripts/backup_conflict.sh" restore "$R_TARGET" $R_APPLY
+    ;;
+  uninstall|remove)
+    # uninstall [path] [--apply] — dry-run unless --apply; see scripts/devkit_uninstall.py
+    shift || true
+    python3 "$DEVKIT_ROOT/scripts/devkit_uninstall.py" "$@"
+    ;;
+  help|*)
+    cat << HELP_EOF
+Universal Agent DevKit CLI (agent-kit)
+
+Usage:
+  agent-kit <command> [arguments]
+
+Commands:
+  init [path] [opts]  Initialize AI agents in a project (opts are passed to install.sh,
+                      e.g. -y, -p android, -a claude,cursor, -m copy, --lang=vi)
+  install-global      Install 'agent-kit', 'agent-install' and 'postfix-gate' into ~/.local/bin
+  profile [name|opts] Switch or inspect domain profile (see: agent-kit profile --help)
+                      android | ios | web | backend | automotive | game | voice-assistant | universal
+                      (case-insensitive; aliases e.g. xehoi, frontend, api)
+  health              Run the health diagnostic
+  gate                Run the post-fix static diff gate on the current changes
+                      (--staged: static checks on the staged content only)
+  githooks [install|uninstall|status] [path]
+                      Git pre-commit hook running the gate's static checks on every
+                      commit, also outside any agent (skip once: git commit --no-verify)
+  learn "<title>" [--cause TEXT] [--rule TEXT] [--check CMD] [--dry-run]
+                      Record a lesson in .agents/instincts.md as the next [INSTINCT-NNN]
+                      (a title already recorded is refused; --force to add anyway)
+  test                Run all regression suites (hook contract, workflow engine, installer & gate)
+  sync                Resync skills, slash commands, and aliases
+  list                List all curated skills
+  commands            List all available slash commands
+  list-old [path]     List all preserved *_old backup folders and files
+  restore-old [path] [--apply]
+                      Put *_old backups recorded by the installer back in place
+                      (dry-run unless --apply; never overwrites non-DevKit content)
+  uninstall [path] [--apply]
+                      Remove what the installer added (DevKit links, unmodified copies,
+                      DevKit hooks/MCP entries, marker blocks); your own files and edits
+                      stay. Dry-run unless --apply; then run restore-old --apply
+  help                Show this help message
+
+Examples:
+  agent-kit init                   # Interactive setup for current project
+  agent-kit init ../my-app -y      # Non-interactive setup of another project
+  agent-kit list-old               # Inspect preserved *_old folders and files
+  agent-kit restore-old --apply    # Restore recorded *_old backups (see restore-old)
+  agent-kit uninstall --apply && agent-kit restore-old --apply   # Remove the DevKit again
+  agent-kit profile automotive     # Switch domain profile to Automotive (AAOS/CAN)
+  agent-kit profile web            # Web front-end profile (Android/Unity skills left out)
+  DEVKIT_LANG=en agent-kit health  # English output (order: --lang > DEVKIT_LANG > .active-profile.json > vi)
+  agent-kit health                 # Run the health diagnostic
+  agent-kit gate                   # Run post-fix quality gate
+  agent-kit githooks install       # Check every git commit of this repo
+  agent-kit learn "Token refresh race" --cause="two refreshes in flight" --rule="single-flight mutex"
+  agent-kit test                   # Run all regression suites
+HELP_EOF
+    ;;
+esac

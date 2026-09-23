@@ -1,0 +1,81 @@
+{
+  "version": "1.1.0",
+  "project": "iOS Native Application / SwiftUI / Swift Concurrency Platform",
+  "description": "Ma trận hồi quy cho dự án iOS (schema rules/watch_files/mandatory_regression_tests mà post-fix-gate đọc được). Các lệnh giả định test target tương ứng tồn tại; thiếu target thì lệnh FAIL chứ không coi là PASS.",
+  "rules": [
+    {
+      "component": "CoreStabilityAndUnitTests",
+      "watch_files": [
+        "**/*.swift",
+        "**/Domain/**",
+        "**/ViewModel*/**",
+        "**/*ViewModel.swift",
+        "Package.swift"
+      ],
+      "immutable_guards": [
+        "MainActorIsolation",
+        "SendableConformance"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-IOS-01",
+          "name": "XCTest Core Domain Logic & ViewModel State Machine",
+          "command": "xcodebuild test -scheme AppTests -destination 'platform=iOS Simulator,name=iPhone 16' -only-testing:AppTests/CoreDomainTests || swift test --filter CoreDomainTests"
+        },
+        {
+          "id": "REG-IOS-02",
+          "name": "Swift Concurrency Data Race & Actor Isolation Test",
+          "command": "swift test --filter ConcurrencyTests"
+        }
+      ]
+    },
+    {
+      "component": "MemoryLeaksAndRetainCycles",
+      "watch_files": [
+        "**/*.swift",
+        "**/Assets.xcassets/**"
+      ],
+      "immutable_guards": [
+        "WeakSelfInEscapingClosures",
+        "HeavyAssetDeallocation"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-MEM-01",
+          "name": "Retain Cycle Regression Tests (weak/unowned capture)",
+          "command": "swift test --filter RetainCycleTests"
+        },
+        {
+          "id": "REG-MEM-02",
+          "name": "Image & Heavy Asset Deallocation Gate",
+          "command": "swift test --filter MemoryLeakTests"
+        }
+      ]
+    },
+    {
+      "component": "UITouchTargetsAndAntiSpam",
+      "watch_files": [
+        "**/View*/**",
+        "**/*View.swift",
+        "**/*Button*.swift",
+        "**/UI/**"
+      ],
+      "immutable_guards": [
+        "TouchTarget44pt",
+        "ButtonDebounce"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-UI-01",
+          "name": "SwiftUI Touch Target Minimum Boundary (>= 44pt HIG)",
+          "command": "swift test --filter TouchTargetAccessibilityTests"
+        },
+        {
+          "id": "REG-UI-02",
+          "name": "Button Debounce & Loading State Disabling Test",
+          "command": "swift test --filter ButtonDebounceTests"
+        }
+      ]
+    }
+  ]
+}

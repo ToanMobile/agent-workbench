@@ -1,0 +1,1 @@
+../../commands/qc.md

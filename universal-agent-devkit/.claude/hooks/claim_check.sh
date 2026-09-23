@@ -1,0 +1,1 @@
+../../hooks/claim_check.sh

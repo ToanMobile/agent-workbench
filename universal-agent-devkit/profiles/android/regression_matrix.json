@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "project": "Android Mobile Application",
+  "description": "Ma trận kiểm thử hồi quy cho Mobile App & Critical Flows",
+  "rules": [
+    {
+      "component": "CriticalTransactionFlow",
+      "watch_files": [
+        "**/transaction/**",
+        "**/action/**",
+        "**/TransactionViewModel.*"
+      ],
+      "immutable_guards": [
+        "DoubleSubmitDebounce",
+        "SessionState"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-TXN-01",
+          "name": "Anti-Spam Rapid Click & Button Debounce Verification",
+          "command": "./gradlew testDebugUnitTest --tests '*.TransactionDebounceTest'"
+        },
+        {
+          "id": "REG-TXN-02",
+          "name": "Data Isolation & Integrity Verification",
+          "command": "./gradlew testDebugUnitTest --tests '*.DataIsolationTest'"
+        }
+      ]
+    },
+    {
+      "component": "AndroidLifecycleAndPerf",
+      "watch_files": [
+        "**/ui/**",
+        "**/viewmodel/**",
+        "**/repository/**"
+      ],
+      "immutable_guards": [
+        "MainThreadSafety",
+        "PendingIntentFlags"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-LIFECYCLE-01",
+          "name": "Configuration Change & Process Death State Restoration",
+          "command": "./gradlew testDebugUnitTest --tests '*.LifecycleRestorationTest'"
+        },
+        {
+          "id": "REG-PERF-02",
+          "name": "Background Database / Network Coroutine Dispatchers Audit",
+          "command": "./gradlew testDebugUnitTest --tests '*.CoroutineDispatchersTest'"
+        }
+      ]
+    }
+  ]
+}

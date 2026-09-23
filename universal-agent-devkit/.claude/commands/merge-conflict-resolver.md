@@ -1,0 +1,1 @@
+../../commands/merge-conflict-resolver.md

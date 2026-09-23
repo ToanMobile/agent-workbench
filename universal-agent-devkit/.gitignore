@@ -1,0 +1,72 @@
+# OS & System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Secrets & Credentials
+*.env
+*.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.secret
+credentials.json
+google-services.json
+service-account*.json
+*.token
+
+# Node & Package Managers
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+
+# Build & Temporary Files
+build/
+dist/
+out/
+tmp/
+*.tmp
+*.log
+
+# IDE & Editor specific
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local DevKit state (per machine — never commit)
+*_old
+*_old.*
+*_old_*
+!tests/test_x_old_*.sh
+.claude/settings_old.json
+.active-profile.json
+.antigravity-pm.json
+.agents/regression_matrix.active.json
+.agents/regression_status.json
+.agents/regression_checklist.md
+.agents/handoff.md
+templates/regression_matrix.active.json
+templates/last_postfix_audit_report.md
+.claude/audit-gate/
+.devkit_backups.log
