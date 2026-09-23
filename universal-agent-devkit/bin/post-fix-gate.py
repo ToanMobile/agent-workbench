@@ -452,6 +452,30 @@ _BASE_CACHE = {}
 PREEXISTING_SECRETS = []   # (file:line, label) found in the base version too — warned, not blocked
 
 
+def split_new(rel_file: str, pat: str, content: str):
+    """(new, old): the matches of pat in content that this change introduced, and those
+    already in the base version. Counted per matched text, so a second copy of an old
+    anti-pattern added by the change is new. Findings that only exist because the file
+    was touched must not block: fixing unrelated legacy lines to be allowed to commit
+    would break the surgical-change rule, and the agent cannot bypass the gate."""
+    matches = list(re.finditer(pat, content))
+    base = base_text(rel_file)
+    if base is None or not matches:
+        return matches, []
+    base_count = {}
+    for bm in re.finditer(pat, base):
+        base_count[bm.group(0)] = base_count.get(bm.group(0), 0) + 1
+    new, old, seen = [], [], {}
+    for m in matches:
+        seen[m.group(0)] = seen.get(m.group(0), 0) + 1
+        (old if seen[m.group(0)] <= base_count.get(m.group(0), 0) else new).append(m)
+    return new, old
+
+
+def note_preexisting(rel_file: str, content: str, m, label):
+    PREEXISTING_SECRETS.append((f"{rel_file}:{content.count(chr(10), 0, m.start()) + 1}", _L(label)))
+
+
 def base_text(rel_file: str):
     """The file at BASE_REF, or None (new file, not in git, unreadable)."""
     if rel_file not in _BASE_CACHE:
@@ -639,10 +663,12 @@ def run_anti_laziness_audit(modified_files: list) -> tuple:
             if content is None:
                 continue
             for pat, label in LAZY_CODE_PATTERNS:
-                m = re.search(pat, content)
-                if m:
+                new, old = split_new(rel_file, pat, content)
+                if old and not new:
+                    note_preexisting(rel_file, content, old[0], label)
+                if new:
                     lazy_matches.append((rel_file, _L(label)))
-                    _record("lazy", rel_file, label, content, m.start())
+                    _record("lazy", rel_file, label, content, new[0].start())
     return len(lazy_matches) == 0, lazy_matches
 
 
@@ -685,7 +711,10 @@ def run_dependency_audit(modified_files: list) -> tuple:
                     hits.append((INSECURE_DEP, f'publishConfig.registry: "{registry}"', km.start() if km else None))
         else:
             for pat, label in DEPENDENCY_RULES[kind]:
-                for m in re.finditer(pat, content):
+                new, old = split_new(rel_file, pat, content)
+                if old and not new:
+                    note_preexisting(rel_file, content, old[0], label)
+                for m in new:
                     hits.append((label, " ".join(m.group(0).split())[:100], m.start()))
         seen = set()
         for label, quoted, pos in hits:
@@ -721,10 +750,12 @@ def run_performance_audit(modified_files: list) -> tuple:
         if content is None:
             continue
         for pat, label in PERF_ANTIPATTERN_PATTERNS:
-            m = re.search(pat, content)
-            if m:
+            new, old = split_new(rel_file, pat, content)
+            if old and not new:
+                note_preexisting(rel_file, content, old[0], label)
+            if new:
                 perf_findings.append((rel_file, _L(label)))
-                _record("perf", rel_file, label, content, m.start())
+                _record("perf", rel_file, label, content, new[0].start())
 
         linter = None
         if rel_file.endswith(".kt") and check_kotlin_stability:
@@ -761,10 +792,12 @@ def run_resilience_audit(modified_files: list) -> tuple:
         if content is None:
             continue
         for pat, label in RESILIENCE_ANTIPATTERN_PATTERNS:
-            m = re.search(pat, content)
-            if m:
+            new, old = split_new(rel_file, pat, content)
+            if old and not new:
+                note_preexisting(rel_file, content, old[0], label)
+            if new:
                 findings.append((rel_file, _L(label)))
-                _record("resilience", rel_file, label, content, m.start())
+                _record("resilience", rel_file, label, content, new[0].start())
     return len(findings) == 0, findings
 
 def run_logging_audit(modified_files: list) -> tuple:
@@ -777,10 +810,12 @@ def run_logging_audit(modified_files: list) -> tuple:
         if content is None:
             continue
         for pat, label in LOGGING_ANTIPATTERN_PATTERNS:
-            m = re.search(pat, content)
-            if m:
+            new, old = split_new(rel_file, pat, content)
+            if old and not new:
+                note_preexisting(rel_file, content, old[0], label)
+            if new:
                 findings.append((rel_file, _L(label)))
-                _record("logging", rel_file, label, content, m.start())
+                _record("logging", rel_file, label, content, new[0].start())
     return len(findings) == 0, findings
 
 def check_design_and_accessibility(modified_files: list) -> tuple:
@@ -1069,6 +1104,9 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
             log_ok(f"{label}: 0 {tr('phát hiện', 'findings')}")
         for f, lbl in findings:
             log_err(f"{f}: {lbl}")
+    for f, lbl in PREEXISTING_SECRETS[:15]:   # already in HEAD: shown, never blocking the commit
+        log_warn(tr(f"{f}: {lbl} — đã có sẵn trong {BASE_REF}, không do commit này (không chặn); nên sửa riêng",
+                    f"{f}: {lbl} — already in {BASE_REF}, not introduced by this commit (not blocking); fix it separately"))
     unreadable = [f for f in modified_files if f not in DELETED_FILES
                   and STAGED_MODES.get(f, "").startswith("100") and read_changed_text(f) is None]
     static_ok = not any(counts.values())
@@ -1188,10 +1226,6 @@ def main():
     else:
         for f, lbl in secrets:
             log_err(f"{f}: {lbl}")
-    for f, lbl in PREEXISTING_SECRETS[:10]:
-        log_warn(tr(f"{f}: {lbl} — đã có sẵn trong {BASE_REF}, không do thay đổi này (không chặn); nên xoay khoá và gỡ khỏi repo",
-                    f"{f}: {lbl} — already in {BASE_REF}, not introduced by this change (not blocking); rotate it and remove it from the repo"))
-
     if anti_laziness_ok:
         log_ok(tr("Chống lười biếng (Anti-Laziness): 0 placeholder theo mẫu regex", "Anti-laziness: 0 placeholders matched"))
     else:
@@ -1363,6 +1397,11 @@ def main():
     else:
         for f, lbl in logging_findings:
             log_err(f"{f}: {lbl}")
+
+    # Findings already in the base version, from every static layer above: shown, never blocking.
+    for f, lbl in PREEXISTING_SECRETS[:15]:
+        log_warn(tr(f"{f}: {lbl} — đã có sẵn trong {BASE_REF}, không do thay đổi này (không chặn); nên sửa riêng (bí mật: xoay khoá, gỡ khỏi repo)",
+                    f"{f}: {lbl} — already in {BASE_REF}, not introduced by this change (not blocking); fix it separately (a secret: rotate and remove it)"))
 
     # Layer 8: OpenCodeReview (Alibaba OCR) Audit Gate
     print(f"\n{BOLD}[8/8] {tr('(NHẮC) OpenCodeReview:', '(REMINDER) OpenCodeReview:')}{RESET}")

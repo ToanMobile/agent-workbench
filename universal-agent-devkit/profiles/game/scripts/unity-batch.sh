@@ -24,6 +24,8 @@
 #   UNITY_NOGRAPHICS=1  add -nographics to PlayMode runs (off by default: pixel reads,
 #                       screenshots and some rendering tests need a graphics device)
 #   UNITY_EXTRA_ARGS    extra Editor arguments (word-split)
+#   UNITY_KEEP_PREFS=1  keep the PlayerPrefs the run wrote (macOS). By default the Editor's
+#                       defaults domain unity.<company>.<product> is snapshotted and restored
 #
 # Exit: 0 = PASS · 1 = FAIL (compile error, failed test, zero tests executed, timeout)
 #       2 = UNTESTED (no Editor, project already open in an Editor, bad usage)
@@ -114,12 +116,59 @@ OUT="${UNITY_BATCH_OUT:-$ROOT/Logs/agent-kit}"
 mkdir -p "$OUT" || { echo "UNTESTED: cannot create $OUT" >&2; exit 2; }
 LIMIT="${UNITY_TIMEOUT:-900}"
 
+# ---------- keep the Editor's PlayerPrefs (macOS) ----------
+# Tests and -executeMethod runs write real PlayerPrefs. On macOS the Editor keeps them in the
+# defaults domain unity.<companyName>.<productName>, which is the developer's play state, so
+# a Stop-time run would change it. Snapshot the domain now and give it back on exit, whether
+# the run passes, fails, times out or is interrupted. The player build's com.* domain is never
+# touched. `defaults import` only merges keys, so the domain is deleted first.
+# A domain that did not exist before the run is deleted again. If the snapshot fails, nothing
+# is deleted afterwards. UNITY_KEEP_PREFS=1 keeps whatever the run wrote.
+PREFS_DOMAIN="" PREFS_SNAP="" PREFS_ABSENT=0 UNITY_PID=""
+if [ "${UNITY_KEEP_PREFS:-0}" != "1" ] && [ "$(uname -s)" = "Darwin" ] && command -v defaults >/dev/null 2>&1; then
+  company="$(sed -n 's/^  companyName: //p' "$ROOT/ProjectSettings/ProjectSettings.asset" 2>/dev/null | head -n 1 | tr -d '\r')"
+  product="$(sed -n 's/^  productName: //p' "$ROOT/ProjectSettings/ProjectSettings.asset" 2>/dev/null | head -n 1 | tr -d '\r')"
+  if [ -n "$company" ] && [ -n "$product" ]; then
+    PREFS_DOMAIN="unity.$company.$product"
+    if ! defaults read "$PREFS_DOMAIN" >/dev/null 2>&1; then
+      PREFS_ABSENT=1
+    else
+      PREFS_SNAP="$OUT/editor-prefs-$$.plist"
+      if ! { defaults export "$PREFS_DOMAIN" "$PREFS_SNAP" 2>/dev/null && plutil -lint -s "$PREFS_SNAP" >/dev/null 2>&1; }; then
+        echo "WARN: could not snapshot Editor PlayerPrefs ($PREFS_DOMAIN); this run may change them" >&2
+        rm -f "$PREFS_SNAP"; PREFS_DOMAIN="" PREFS_SNAP=""
+      fi
+    fi
+  fi
+fi
+restore_editor_prefs() {
+  if [ -n "$UNITY_PID" ] && kill -0 "$UNITY_PID" 2>/dev/null; then  # interrupted: stop the Editor first
+    kill "$UNITY_PID" 2>/dev/null; sleep 1; kill -9 "$UNITY_PID" 2>/dev/null
+  fi
+  [ -n "$PREFS_DOMAIN" ] || return 0
+  if [ "$PREFS_ABSENT" = "1" ]; then
+    defaults delete "$PREFS_DOMAIN" >/dev/null 2>&1
+    return 0
+  fi
+  [ -s "$PREFS_SNAP" ] || return 0
+  defaults delete "$PREFS_DOMAIN" >/dev/null 2>&1
+  if defaults import "$PREFS_DOMAIN" "$PREFS_SNAP"; then
+    rm -f "$PREFS_SNAP"
+  else
+    echo "WARN: restoring Editor PlayerPrefs failed. Snapshot kept: defaults import $PREFS_DOMAIN $PREFS_SNAP" >&2
+  fi
+}
+trap restore_editor_prefs EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 run_editor() {  # $1 = log file, rest = Editor args. Returns Editor exit code, 124 on timeout.
   local log="$1" pid waited=0; shift
   : > "$log"
   # shellcheck disable=SC2086
   "$UNITY" "$@" ${UNITY_EXTRA_ARGS:-} -logFile "$log" &
   pid=$!
+  UNITY_PID=$pid
   while kill -0 "$pid" 2>/dev/null; do
     if [ "$waited" -ge "$LIMIT" ]; then
       echo "TIMEOUT after ${LIMIT}s — killing Unity (pid $pid); Temp/UnityLockfile may be left behind" >&2

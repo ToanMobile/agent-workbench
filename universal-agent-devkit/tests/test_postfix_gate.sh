@@ -339,6 +339,23 @@ printf 'const fresh = "%s";\n' "hf_$(python3 -c 'print("q"*34, end="")')" >> key
 out="$(gate_nomatrix)"; check "a NEW secret in the same file -> REJECT" 1 $? "$out"
 expect_in "the new secret is named with file:line" "keys.js:4" "$out"
 
+# --- every static layer: a finding already in HEAD warns; only added code can REJECT -----
+make_repo "true"
+mkdir -p app && printf 'class A {\n  fun f() { try { g() } catch (e: Exception) {} }\n  fun h() = 1\n}\n' > app/A.kt
+git add -A && git commit -qm legacy
+sed -i.bak 's/fun h() = 1/fun h() = 2/' app/A.kt && rm -f app/A.kt.bak
+out="$(gate_nomatrix)"; check "empty catch already in HEAD, other line edited -> not rejected" 0 $? "$out"
+expect_in "legacy empty catch still reported with its line" "app/A.kt:2" "$out"
+git add app/A.kt; out="$(CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --staged 2>&1)"; rc=$?
+[ "$rc" != 1 ] && echo "✔ --staged: a legacy empty catch does not block the commit (exit $rc)" || { echo "✖ --staged blocked a legacy catch"; FAILS=$((FAILS + 1)); }
+expect_in "--staged: the legacy empty catch is shown as a warning with file:line" "app/A.kt:2" "$out"
+printf 'fun k() { try { g() } catch (e: Exception) {} }\n' >> app/A.kt
+out="$(gate_nomatrix)"; check "a second, identical empty catch added -> REJECT" 1 $? "$out"
+make_repo "true"
+mkdir -p app && printf 'fun m() {\n  println("x")\n}\n' > app/B.kt && git add -A && git commit -qm legacy
+printf 'fun n() {\n  System.out.println("y")\n}\n' >> app/B.kt
+out="$(gate_nomatrix)"; check "a new raw log line in a touched file -> REJECT" 1 $? "$out"
+
 # --- untested_exit: a test that cannot run here is UNTESTED (exit 4), never PASS/REJECT --
 untested_repo() { # $1 = command, $2 = untested_exit JSON fragment
   make_repo "true"
