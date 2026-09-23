@@ -595,6 +595,20 @@ hwcase 2 'rm -rf ~/Library/MobileDevice/Provisioning\ Profiles'
 hwcase 2 'xcrun simctl erase all'
 hwcase 0 'xcrun simctl delete unavailable'
 hwcase 0 'fastlane beta'
+# irreversible release / infrastructure / data (found by the web/backend simulation)
+hwcase 2 'npm publish'
+hwcase 2 'vercel --prod'
+hwcase 2 'npx prisma migrate reset --force'
+hwcase 2 'psql "$DATABASE_URL" -c "DROP DATABASE orders"'
+hwcase 2 'redis-cli FLUSHALL'
+hwcase 2 'kubectl delete namespace production'
+hwcase 2 'terraform destroy -auto-approve'
+hwcase 2 'docker system prune -af --volumes'
+hwcase 2 'aws s3 rm s3://bucket --recursive'
+hwcase 0 'npm run build'
+hwcase 0 'docker compose up -d'
+hwcase 0 'kubectl delete pod web-1'
+hwcase 0 'terraform plan'
 hwcase 2 'adb -s emulator-5554 remount'
 hwcase 2 'adb shell mount -o rw,remount /system'
 hwcase 2 'fastboot -s ABC flash boot boot.img'
@@ -752,6 +766,7 @@ ctx_case "session start lists the profile" session_context.sh '{}' "profile: web
 ctx_case "session start maps traps with line numbers" session_context.sh '{}' "L1 \[INSTINCT-001\]"
 ctx_case "prompt: bug fix gets paired RED→GREEN rule" prompt_context.sh '{"prompt":"sửa lỗi nút thanh toán bị bấm 2 lần"}' "ĐỎ trước khi sửa"
 ctx_case "prompt: matching project trap is cited" prompt_context.sh '{"prompt":"sửa lỗi nút thanh toán bị bấm 2 lần"}' "INSTINCT-001"
+ctx_case "prompt: XSS / SQL injection → SECURITY" prompt_context.sh '{"prompt":"sửa lỗ hổng XSS ở ô bình luận"}' "SECURITY"
 ctx_case "prompt: slash command adds nothing" prompt_context.sh '{"prompt":"/compact"}' ""
 ctx_case "prompt: chit-chat adds nothing" prompt_context.sh '{"prompt":"cảm ơn bạn nhiều nhé"}' ""
 PROMPT_CONTEXT_SAVE="${PROMPT_CONTEXT:-}"; export PROMPT_CONTEXT=0

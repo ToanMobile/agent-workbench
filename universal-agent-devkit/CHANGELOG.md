@@ -144,6 +144,16 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
   `.claude/audit-gate` older than N days (default 14), trims logs over 5 MB to their last 2000 lines;
   `--old-installs` also removes old `~/.universal-agent-devkit.old-*` copies. Dry-run unless
   `--apply`; never touches code, `.agents/` or `.gitignore`.
+- **Found by a 100-scenario Web/Backend simulation, fixed:** the device gate now also holds
+  irreversible release / infrastructure / data commands for the user (`!` prefix): `npm|pnpm|yarn
+  publish`, `vercel|netlify --prod`, `firebase deploy`, `prisma migrate reset`, `rails db:drop`,
+  `DROP DATABASE|TABLE` / `TRUNCATE` via a database CLI, MongoDB drop, `redis-cli FLUSHALL`, `kubectl
+  delete namespace|pv|pvc|--all`, `terraform|pulumi destroy`, `helm uninstall`, docker volume removal,
+  `aws s3 rm --recursive` (fast-path triggers extended; the block message no longer says "hardware"
+  only). The post-fix gate rejects npm `_authToken` in `.npmrc`, passwords inside connection URLs
+  (`postgres://user:pass@…`; placeholders like `password` / `${DB_PASS}` allowed) and private SSH key
+  files (`id_rsa`, `id_ed25519`, …). Prompt context has a SECURITY intent (XSS, CSRF, SSRF, injection,
+  auth bypass …) that points to `security-checklist`.
 - Docs: `AGENTS.md` §7 lists what each platform actually enforces; §8.2 and `core-rules.md` §16 mark
   hook-enforced steps `[hook]` and drop the "Zero Manual Effort" / "CỔNG BẮT BUỘC" claims no hook backed;
   §2.3 asks for real evidence (screenshot for UI, test output for CLI/backend) instead of a PASS

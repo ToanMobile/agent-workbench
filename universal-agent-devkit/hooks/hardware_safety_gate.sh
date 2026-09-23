@@ -17,6 +17,11 @@
 #   • iOS signing & simulators: fastlane match nuke, security delete-keychain|
 #     identity|certificate, rm of provisioning profiles / keychains,
 #     xcrun simctl erase|delete all
+#   • irreversible release / infra / data (AGENTS.md §5.1 Gate 2 c): npm|pnpm|yarn
+#     publish, vercel|netlify --prod, firebase deploy, prisma migrate reset, rails
+#     db:drop, DROP DATABASE|TABLE / TRUNCATE via a database CLI, MongoDB drop,
+#     redis-cli FLUSHALL, kubectl delete namespace|pv|pvc|--all, terraform|pulumi
+#     destroy, helm uninstall, docker volume removal, aws s3 rm --recursive
 #   • any adb command that reaches a device outside the device policy — a
 #     developer's personal phone plugged in next to the test rig. Denylist /
 #     allowlist, one serial per line (# comments) or comma/space separated in env:
@@ -54,7 +59,7 @@ fast_allow() { # $1 = trigger ERE
   shopt -u nocasematch
   return 0
 }
-fast_allow 'adb|fastboot|dd|mount|rm|fastlane|security|xcrun|simctl|eval|flash' && exit 0
+fast_allow 'adb|fastboot|dd|mount|rm|fastlane|security|xcrun|simctl|eval|flash|publish|vercel|netlify|firebase|prisma|db:|drop|truncate|flush|kubectl|terraform|tofu|pulumi|helm|docker|s3' && exit 0
 
 REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
@@ -118,6 +123,24 @@ PATTERNS = [
     (r"\bsecurity\s+delete-(?:keychain|identity|certificate)\b", "security delete-keychain/identity — xoá chứng chỉ/khoá ký"),
     (r"\brm\b[^;&|\n]*(?:MobileDevice/Provisioning|Library/Keychains)", "xoá provisioning profiles / keychain"),
     (r"\bxcrun\s+simctl\s+(?:erase|delete)\s+all\b", "xcrun simctl erase/delete all — xoá sạch mọi simulator"),
+    # Irreversible release / infrastructure / data operations (AGENTS.md §5.1 Gate 2 c):
+    # the user runs them, via the `!` prefix, never the agent on its own.
+    (r"\b(?:npm|pnpm|yarn|bun)\s+(?:publish|unpublish)\b", "phát hành package lên registry (npm publish)"),
+    (r"\b(?:vercel|netlify)\b[^;&|\n]*\s--prod\b", "deploy production (vercel/netlify --prod)"),
+    (r"\bfirebase\s+deploy\b", "firebase deploy (lên production)"),
+    (r"\bprisma\s+(?:migrate\s+reset|db\s+push\s+[^;&|\n]*--force-reset)\b", "prisma migrate reset — xoá sạch database"),
+    (r"\b(?:rails|rake)\s+db:(?:drop|reset|schema:load)\b", "rails db:drop/reset — xoá database"),
+    (r"\b(?:psql|mysql|mariadb|sqlite3|cockroach|clickhouse-client|cqlsh)\b[^;&|\n]*\b(?:drop\s+(?:database|schema|table)|truncate\s+(?:table\s+)?\w)",
+     "DROP DATABASE/TABLE hoặc TRUNCATE qua CLI database"),
+    (r"\bdropDatabase\s*\(|\bdb\.[\w$]+\.drop\s*\(", "MongoDB dropDatabase()/drop()"),
+    (r"\bredis-cli\b[^;&|\n]*\bflush(?:all|db)\b", "redis-cli FLUSHALL/FLUSHDB — xoá toàn bộ dữ liệu Redis"),
+    (r"\bkubectl\b[^;&|\n]*\bdelete\b[^;&|\n]*(?:\s(?:namespace|namespaces|ns|pv|pvc|persistentvolumes?|persistentvolumeclaims?|crds?|customresourcedefinitions?|nodes?)\b|\s--all\b)",
+     "kubectl delete namespace/volume/--all"),
+    (r"\b(?:terraform|tofu)\s+(?:destroy\b|apply\b[^;&|\n]*\s-destroy\b)|\bpulumi\s+destroy\b", "terraform/pulumi destroy — xoá hạ tầng"),
+    (r"\bhelm\s+(?:uninstall|delete)\b", "helm uninstall — gỡ release khỏi cluster"),
+    (r"\bdocker\b[^;&|\n]*(?:\bsystem\s+prune\b[^;&|\n]*--volumes|\bvolume\s+(?:rm|prune)\b|\bcompose\s+down\b[^;&|\n]*\s(?:-v|--volumes)\b)",
+     "xoá docker volume (mất dữ liệu)"),
+    (r"\baws\s+s3\s+(?:rm\b[^;&|\n]*--recursive|rb\b[^;&|\n]*--force)", "aws s3 rm --recursive / rb --force"),
 ]
 
 def rm_hits(text):
@@ -263,7 +286,8 @@ if label is None:
 
 if label:
     sys.stderr.write("\n🛑 [HARDWARE SAFETY GATE REJECTED]\n")
-    sys.stderr.write("Lệnh bị chặn vì có nguy cơ làm hỏng phần cứng vật lý (device bricking):\n")
+    sys.stderr.write("Lệnh bị chặn: thao tác không đảo ngược được (thiết bị thật, chứng chỉ ký, hạ tầng, dữ liệu hoặc phát hành).\n"
+                     "Nếu thật sự cần, người dùng tự chạy lệnh qua prefix `!`:\n")
     sys.stderr.write(f"  • Mẫu vi phạm: {label}\n")
     sys.stderr.write(f"  • Lệnh: {cmd}\n\n")
     sys.stderr.write("Nếu chắc chắn đang ở môi trường giả lập an toàn, đặt HARDWARE_OVERRIDE=1 để bỏ qua.\n")

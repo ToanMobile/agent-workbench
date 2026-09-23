@@ -123,6 +123,13 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
         dossier["injected_nfrs"].append("Idempotency-Key (UUIDv4) for state-mutating requests (POST/PUT).")
         dossier["injected_nfrs"].append("Exponential backoff with jitter for retries.")
 
+    if any(k in p_lower for k in ["xss", "csrf", "ssrf", "injection", "lỗ hổng", "bảo mật", "security", "rce",
+                                   "auth bypass", "leo quyền", "privilege", "lộ token", "lộ secret", "cors"]):
+        dossier["detected_intents"].append("SECURITY")
+        dossier["recommended_skills"].append("security-checklist")
+        dossier["injected_nfrs"].append("Validate & encode all untrusted input; parameterized queries only (no string-built SQL).")
+        dossier["injected_nfrs"].append("Least privilege for tokens/roles; secrets from env/secret store, never logged.")
+
     if any(k in p_lower for k in ["refactor", "thiết kế", "kiến trúc", "module", "tách", "interface"]):
         dossier["detected_intents"].append("ARCHITECTURE_REFACTOR")
         dossier["recommended_skills"].extend(["grill-plan", "deep-module-design", "documentation-and-adrs", "incremental-implementation"])

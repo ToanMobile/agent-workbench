@@ -103,6 +103,10 @@ SECRET_PATTERNS = [
     # A build-setting reference ($(API_KEY)) is a placeholder, not a secret.
     (r"(?i)<key>[^<]*(?:api[_\-]?key|secret|token|password|passwd|private[_\-]?key)[^<]*</key>\s*<string>([^<\s]{8,})</string>",
      "Hardcoded secret in a property list", 1),
+    # npm registry auth: //registry.npmjs.org/:_authToken=… (${NPM_TOKEN} is a placeholder)
+    (r"(?m)^\s*//\S+:_(?:authToken|auth|password)\s*=\s*([^\s#]{8,})", "npm registry token (.npmrc)", 1),
+    # Credentials inside a connection URL: postgres://user:PASSWORD@host
+    (r"\b[a-z][a-z0-9+.\-]*://[^/\s:@\"'`]+:([^/\s@\"'`]{6,})@[\w.\-]", "Credentials in a connection URL", 1),
 ]
 
 # Unquoted `key = value` only in config-style files, where it is the normal syntax
@@ -112,13 +116,15 @@ CONFIG_SECRET_PATTERN = (r"(?im)^\s*(?:export\s+)?" + _SECRET_KEY + r"\s*[:=]\s*
 CONFIG_EXTENSIONS = (".properties", ".env", ".yml", ".yaml", ".ini", ".cfg", ".conf", ".toml")
 
 PLACEHOLDER_VALUE = re.compile(
-    r"(?i)^(\$.*|<.*>|\{\{.*|%.*|x{4,}|\*{4,}|your[_\-].*|change[_\-]?me|placeholder|redacted|example.*|dummy.*|none|null|true|false)$")
+    r"(?i)^(\$.*|<.*>|\{\{.*|%.*|x{4,}|\*{4,}|your[_\-].*|change[_\-]?me|placeholder|redacted|example.*|dummy.*|none|null|true|false"
+    r"|password|passwd|secret|test|testing)$")
 
 FORBIDDEN_SECRET_FILES = [
     (r"\.(keystore|jks|p12|pfx|mobileprovision)$", ("Chứng chỉ ký số trần (*.keystore, *.jks, *.p12, *.mobileprovision)", "Raw signing certificate (*.keystore, *.jks, *.p12, *.mobileprovision)")),
     (r"google-services\.json$", ("Tệp cấu hình Firebase/Google Services production (google-services.json)", "Production Firebase/Google Services config (google-services.json)")),
     (r"GoogleService-Info\.plist$", ("Tệp cấu hình Firebase iOS nhạy cảm (GoogleService-Info.plist)", "Sensitive Firebase iOS config (GoogleService-Info.plist)")),
     (r"\.(pem|key)$", ("Khóa mật mã riêng tư trần (*.pem, *.key)", "Raw private key (*.pem, *.key)")),
+    (r"(^|/)id_(rsa|dsa|ecdsa|ed25519)$", ("Khoá SSH riêng tư (id_rsa, id_ed25519…)", "Private SSH key (id_rsa, id_ed25519…)")),
     (r"(^|/)(local|keystore)\.properties$", ("Cấu hình cục bộ Android (local.properties / keystore.properties — core-rules §1)",
                                              "Local Android config (local.properties / keystore.properties — core-rules §1)")),
     # keep the .env rule LAST: run_git_hygiene_audit uses FORBIDDEN_SECRET_FILES[-1]

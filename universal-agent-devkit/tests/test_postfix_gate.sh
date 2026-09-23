@@ -282,6 +282,23 @@ make_repo "true"
 printf '<plist><dict>\n<key>API_KEY</key>\n<string>$(API_KEY)</string>\n</dict></plist>\n' > Info.plist
 out="$(gate_nomatrix)"; check "plist build-setting reference \$(API_KEY) -> not rejected" 0 $? "$out"
 
+# --- web/backend findings: npm token, credentials in URLs, SSH keys ------------------
+make_repo "true"
+printf '//registry.npmjs.org/:_authToken=%s\n' "npm_""AbCdEfGhIjKlMnOpQrStUvWx" > .npmrc
+out="$(gate_nomatrix)"; check "npm _authToken in .npmrc -> REJECT" 1 $? "$out"
+make_repo "true"
+printf '//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n' > .npmrc
+out="$(gate_nomatrix)"; check ".npmrc token from \${NPM_TOKEN} -> not rejected" 0 $? "$out"
+make_repo "true"
+printf 'DATABASE_URL = "postgres://admin:%s@db.internal/prod"\n' "S3cret""Pass99" > settings.py
+out="$(gate_nomatrix)"; check "password inside a connection URL -> REJECT" 1 $? "$out"
+make_repo "true"
+printf 'DATABASE_URL = "postgres://app:password@localhost/dev"\n' > settings.py
+out="$(gate_nomatrix)"; check "placeholder password in a URL -> not rejected" 0 $? "$out"
+make_repo "true"
+mkdir -p deploy && echo "key material" > deploy/id_ed25519
+out="$(gate_nomatrix)"; check "private SSH key file id_ed25519 -> REJECT" 1 $? "$out"
+
 # --- --staged: static checks on the index, never PASS --------------------------------
 gate_staged() { CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --staged "$@" 2>&1; }
 make_repo "true"
