@@ -279,6 +279,29 @@ out="$(gate_staged)"; check "--staged: unstaged placeholder is not what gets com
 out="$(gate_staged --run-tests)"; check "--staged refuses --run-tests" 2 $? "$out"
 out="$(gate_staged --json)"; expect_in "--staged --json reports mode" '"mode": "staged"' "$out"
 
+# --- --json "findings": file:line an agent can act on without parsing the log --------
+# jq-free: python reads the last stdout line (the JSON) and prints what the case needs.
+json_findings() { printf '%s\n' "$1" | tail -n 1 | python3 -c 'import json,sys
+for f in json.load(sys.stdin).get("findings", []):
+    print("%s|%s|%s|%s|%s" % (f["category"], f["file"], f["line"], f["rule"], f["snippet"]))'; }
+make_repo "true"
+printf 'dependencies {\n  implementation "com.squareup.okhttp3:okhttp:4.+"\n}\n' > build.gradle
+out="$(gate_nomatrix --json)"; check "floating dep with --json -> REJECT" 1 $? "$out"
+expect_in "--json finding carries category, file and line" 'dependencies|build.gradle|2|' "$(json_findings "$out")"
+expect_in "--json finding quotes the offending line" 'implementation "com.squareup.okhttp3:okhttp:4.+"' "$(json_findings "$out")"
+make_repo "true"
+printf 'plugins { id "java" }\n\ndependencies {\n  implementation "a:b:1.0.0"\n}\n' > build.gradle && git add build.gradle && git commit -qm gradle
+printf 'dependencies { implementation "com.squareup.okhttp3:okhttp:4.+" }\n' >> build.gradle
+out="$(gate_nomatrix --json)"; expect_in "--json line is file-absolute in an edited, committed file" 'dependencies|build.gradle|6|' "$(json_findings "$out")"
+make_repo "true"
+printf '{\n  "name": "t",\n  "dependencies": {\n    "a": "latest"\n  }\n}\n' > package.json
+out="$(gate_nomatrix --json)"; expect_in "--json package.json finding points at the dependency's line" 'dependencies|package.json|4|' "$(json_findings "$out")"
+make_repo "true"
+printf 'val x = 1\n%s = "%s"\n' "api_""key" "ABCDEFGHIJKLMNOP" > src/Leak.kt && git add src/Leak.kt
+out="$(gate_staged --json)"; check "--staged --json with a secret -> REJECT" 1 $? "$out"
+expect_in "--json secret finding has its line" 'secrets|src/Leak.kt|2|' "$(json_findings "$out")"
+expect_not_in "--json never echoes the secret value" "ABCDEFGHIJKLMNOP" "$(printf '%s\n' "$out" | tail -n 1)"
+
 if [ "$FAILS" -ne 0 ]; then
   echo "post-fix-gate: $FAILS FAILED"; exit 1
 fi

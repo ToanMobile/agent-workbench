@@ -84,6 +84,67 @@ bash "$KIT" restore-old "$R" --apply >/dev/null 2>&1
 [ "$(cat "$R/.claude/commands/fix.md")" = "my fix" ] && [ ! -e "$R/.agents" ] \
   && ok "round trip leaves no .agents/ behind" || fail "leftovers: $(find "$R/.agents" 2>/dev/null)"
 
+# A tier created by an older DevKit carries the older README text: still recognised as
+# the DevKit's, so the round trip still leaves nothing behind.
+R1="$TMP/r1"; mkdir -p "$R1/.claude/commands"; (cd "$R1" && git init -q)
+echo "my fix" > "$R1/.claude/commands/fix.md"
+install "$R1"
+(source "$DK/scripts/backup_conflict.sh" && _devkit_local_readme v1) > "$R1/.agents/local/README.md"
+grep -q "are reference only, never linked\.$" "$R1/.agents/local/README.md" || fail "v1 README fixture is not the old text"
+bash "$KIT" uninstall "$R1" --apply >/dev/null 2>&1
+bash "$KIT" restore-old "$R1" --apply >/dev/null 2>&1
+[ ! -e "$R1/.agents" ] && ok "an untouched README from an older DevKit is cleaned too" \
+  || fail "old README left behind: $(find "$R1/.agents" 2>/dev/null)"
+
+# The project's own AGENTS.md (kept, DevKit block injected) lists the project-tier rules too.
+A="$TMP/a"; mkdir -p "$A/rules"; (cd "$A" && git init -q)
+echo "TEAM RULE" > "$A/rules/team.md"
+echo "# Team agents" > "$A/AGENTS.md"
+install "$A"
+grep -qx -- "- @.agents/local/rules/team.md" "$A/AGENTS.md" && grep -q "# Team agents" "$A/AGENTS.md" \
+  && ok "the project's own AGENTS.md gets the same imports in its DevKit block" || { fail "AGENTS.md block has no project rules"; cat "$A/AGENTS.md"; }
+
+# ------------------------------------------------------------------ root rules/ skills/ commands/
+# Agent material moves to the project tier; a source-code dir stays and gets the DevKit
+# items placed inside — either way every DevKit path (rules/core-rules.md, …) resolves.
+S="$TMP/s"; mkdir -p "$S/rules" "$S/skills/billing" "$S/commands"; (cd "$S" && git init -q)
+echo "TEAM RULE" > "$S/rules/team.md"
+echo "my core rules" > "$S/rules/core-rules.md"
+echo "old team rule" > "$S/rules/team_20260101_101010.md"
+printf -- '---\nname: billing\ndescription: b\n---\n' > "$S/skills/billing/SKILL.md"
+echo "module.exports = 1" > "$S/commands/build.js"
+echo "my fix" > "$S/commands/fix.md"
+snap() { (cd "$1" && find rules skills commands -print 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do
+  [ -f "$f" ] && echo "$f $(cksum < "$f")" || echo "$f"; done); }
+orig="$(snap "$S")"
+install "$S"
+[ -L "$S/rules" ] && grep -q "Core Engineering Rules" "$S/rules/core-rules.md" \
+  && ok "root rules/ of agent material: DevKit rules installed (@rules/core-rules.md resolves)" || fail "DevKit rules/ not installed"
+[ "$(cat "$S/.agents/local/rules/team.md")" = "TEAM RULE" ] && [ "$(cat "$S/.agents/local/rules/core-rules.md")" = "my core rules" ] \
+  && ok "the project's rules are kept in .agents/local/rules/" || fail "project rules not kept"
+# The moved rules must still reach the agents: listed as @-imports in the DevKit block.
+grep -qx -- "- @.agents/local/rules/team.md" "$S/CLAUDE.md" && grep -qx -- "- @.agents/local/rules/core-rules.md" "$S/CLAUDE.md" \
+  && ok "CLAUDE.md imports the project-tier rules" || { fail "CLAUDE.md does not import .agents/local/rules"; cat "$S/CLAUDE.md"; }
+! grep -q "team_20260101_101010" "$S/CLAUDE.md" && ok "dated copies are not imported" || fail "a dated copy was imported"
+[ "$(grep -c '@.agents/local/rules/' "$S/CLAUDE.md")" = 2 ] && ok "one import per rule file" || fail "wrong import count: $(grep -c '@.agents/local/rules/' "$S/CLAUDE.md")"
+[ -L "$S/skills" ] && [ "$(readlink "$S/.agents/skills/billing")" = "../../.agents/local/skills/billing" ] \
+  && ok "root skills/: DevKit installed, the project's skill moved and linked back" || fail "skills/ not handled"
+[ -d "$S/commands" ] && [ ! -L "$S/commands" ] && [ "$(cat "$S/commands/build.js")" = "module.exports = 1" ] \
+  && ok "root commands/ with source code stays in place" || fail "source-code commands/ was moved"
+[ -L "$S/commands/fix.md" ] && [ -e "$S/commands/audit-gate.md" ] && [ "$(cat "$S/.agents/local/commands/fix.md")" = "my fix" ] \
+  && ok "DevKit commands placed inside it; the same-named project file moved to the tier" || fail "commands/ not merged"
+before="$(tree_sum "$S/.agents/local")"
+install "$S"
+[ "$(tree_sum "$S/.agents/local")" = "$before" ] && [ "$(count_old "$S")" = 0 ] \
+  && ok "re-install: project tier unchanged, no *_old" || fail "re-install changed the tier or created *_old"
+[ "$(grep -c '@.agents/local/rules/' "$S/CLAUDE.md")" = 2 ] && ok "re-install does not duplicate the imports" \
+  || fail "imports duplicated on re-install: $(grep -c '@.agents/local/rules/' "$S/CLAUDE.md")"
+bash "$KIT" uninstall "$S" --apply >/dev/null 2>&1
+bash "$KIT" restore-old "$S" --apply >/dev/null 2>&1
+[ "$(snap "$S")" = "$orig" ] && ok "uninstall + restore-old give rules/ skills/ commands/ back exactly" \
+  || { fail "round trip differs"; diff <(echo "$orig") <(snap "$S"); }
+[ ! -e "$S/.agents" ] && ok "no .agents/ left behind (dangling tier links removed)" || fail "leftovers: $(find "$S/.agents")"
+
 # ------------------------------------------------------------------ copy mode
 Q="$TMP/q"; mkdir -p "$Q"; (cd "$Q" && git init -q)
 install "$Q" -m copy

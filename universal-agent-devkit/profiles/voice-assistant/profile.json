@@ -21,5 +21,15 @@
   "exclude_skills": [
     "compose-recomp-audit",
     "unity-gc-audit"
+  ],
+  "source_extensions": [
+    ".kt",
+    ".java",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".py"
   ]
 }

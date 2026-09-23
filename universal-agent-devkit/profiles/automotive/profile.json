@@ -21,5 +21,15 @@
   ],
   "regression_matrix": "profiles/automotive/regression_matrix.json",
   "rules_file": "profiles/automotive/rules/automotive-rules.md",
-  "exclude_skills": []
+  "exclude_skills": [],
+  "source_extensions": [
+    ".kt",
+    ".kts",
+    ".java",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".h",
+    ".hpp"
+  ]
 }

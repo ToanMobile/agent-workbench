@@ -24,7 +24,7 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && [ -f "$TARGET_DIR/CLAUDE.md" ] && [ ! 
 fi
 
 CLAUDE_INJECT="$DEVKIT_ROOT/templates/claude_injection_block.md"
-python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$CLAUDE_INJECT" "$TARGET_DIR/CLAUDE.md" "universal-agent-devkit"
+devkit_merge_block "$CLAUDE_INJECT" "$TARGET_DIR/CLAUDE.md"
 
 # AGENTS.md: shared logic (devkit link/copy vs the project's own file) — see backup_conflict.sh
 devkit_install_agents_md "$TARGET_DIR" "$MODE"

@@ -17,6 +17,21 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
   commit, also outside any agent. Honours `core.hooksPath`; never overwrites a project's own hook
   (prints the line to chain it); fails closed when the gate gives no verdict. `agent-kit uninstall`
   removes it.
+- **post-fix gate `--json` `findings`:** every static finding also comes as
+  `{category, rule, message, file, line, snippet}`, so an agent can go straight to `file:line`
+  instead of parsing the colored log. Secrets carry their line but never a snippet.
+- **`hardware_safety_gate.sh` device policy:** an adb command that reaches a serial on the denylist
+  (`ADB_DENY_SERIALS`, `~/.config/universal-agent-devkit/adb-denylist`, `<repo>/.adb-denylist`) or
+  outside a non-empty allowlist (`ADB_ALLOW_SERIALS`, `adb-allowlist`, `.adb-allowlist`) is refused
+  (exit 2). Without `-s`, the serial adb would pick (`-d`/`-e`/`-t`, `ANDROID_SERIAL`, the only
+  device online) comes from `adb get-serialno`; an unresolvable one (`$VAR`, adb timeout) is
+  refused. Host-only subcommands (`devices`, `connect`, `kill-server` …) are never checked. Keep
+  personal serials in the per-user file, not in the repo. No policy set = no change.
+- **`adb-safe-exec.sh`:** checks the device policy against the serial it actually picks (one device
+  plugged in may be a personal phone). On a native crash it keeps the whole tombstone that
+  debuggerd logged since the command started (never an older one) and, with `--symbols DIR` /
+  `ANDROID_SYMBOLS` plus `ndk-stack`, prints it decoded to function and `file:line`; otherwise
+  the raw `#NN pc` frames. Refuses to run when a device policy is set but the gate is missing.
 
 ### Memory
 - **`agent-kit learn "<title>" --cause=… --rule=…`** (`bin/instincts.py`): adds a lesson to
@@ -25,7 +40,13 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
   `post-fix-gate --record-lesson` uses the same writer, so it no longer stamps `[INSTINCT-AUTO]`.
 
 ### Install
-- **Project tier `.agents/local/` replaces `commands_old/`, `skills_old/`, `agents_old/`, `hooks_old/`.**
+- **Project-tier rules are no longer silent:** the rule files moved to `.agents/local/rules/` are
+  listed as `@.agents/local/rules/<file>` imports in the DevKit block of `CLAUDE.md`, `GEMINI.md`,
+  `.cursorrules`, `CODEX.md` and a project's own `AGENTS.md`, refreshed on every install (dated
+  copies left out). `AGENTS.md` §4 says how they rank: they add project rules; where one
+  contradicts §6 or `rules/core-rules.md`, the DevKit rule wins and the conflict is reported.
+- **Project tier `.agents/local/` replaces the 1.1.0 `commands_old/`, `skills_old/`, `agents_old/`,
+  `hooks_old/` backups.**
   DevKit is the core: a project skill/command/agent/hook with a DevKit name moves to
   `.agents/local/<kind>/<name>` and the DevKit item is installed. The folder is committed (not
   git-ignored), never written by later installs, and its items with a free name are linked back into
@@ -36,6 +57,73 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
   `restore-old --apply` puts items back and removes consumed ledgers and empty folders. Top-level
   `*_old` snapshots (`CLAUDE_old.md`, …) are unchanged. Existing `*_old` folders from earlier installs
   are not migrated.
+- **Root `rules/`, `skills/`, `commands/` owned by the project are no longer skipped** (1.1.0 left them
+  in place without the DevKit one, so DevKit paths like `@rules/core-rules.md` broke). Agent material
+  (`*.md`, `SKILL.md` folders) moves to `.agents/local/<dir>/`; a source-code dir (e.g. `commands/build.js`)
+  stays and gets every DevKit item placed inside it (a same-named file moves to the tier). `uninstall`
+  removes those placed items. Fixed on the way: `has_user_content` leaked its loop variable `item`.
+
+- **`bin/quick-install.sh` re-runs update instead of nesting.** The first run moved
+  `universal-agent-devkit/` out of a temp clone and deleted the clone, so `~/.universal-agent-devkit` had
+  no `.git`; a second run cloned again and `mv` put the new copy *inside* the old one — never updated.
+  Now `~/.agent-workbench` is a sparse git checkout of only `universal-agent-devkit/` (re-runs `git pull
+  --ff-only`, local edits skip the update) and `~/.universal-agent-devkit` is a stable link to it, so
+  existing CLI/project links keep working. An old non-git copy is kept as `.old-<time>`;
+  `DEVKIT_LOCAL_SOURCE` links a local checkout in place instead of copying the whole monorepo.
+  `tests/test_quick_install.sh` covers it against a local remote.
+
+### Automation (what runs without the model choosing to)
+- **Regression gate actually runs.** `regression_gate.sh` never looked at
+  `.agents/regression_matrix.active.json` (what `agent-kit profile` writes), so the Stop-time regression
+  run was silently skipped on every real project. It now reads it first; profile matrices marked
+  `"enforce_as_is": true` (web, backend — they auto-detect the project's own runner) are enforced as
+  installed; a copy-mode hook finds the gate via `$DEVKIT_ROOT` / `~/.universal-agent-devkit`, and a
+  missing gate is reported once per session instead of skipped silently.
+- **"Đã fix" is satisfiable.** `test_evidence_gate.sh` check 7 accepted only a multi-lens-audit workflow
+  result the installer never ships, so every true "fixed" claim was blocked. It now also accepts the
+  paired RED→GREEN the rules require, seen in the session's own tool results: a test run that failed
+  before the last source edit and one that passed after it (npm/jest/pytest/cargo/go/gradle…). A green
+  run alone still blocks.
+- **The agent cannot skip the pre-commit gate:** `block-dangerous-git.sh` blocks `commit|push
+  --no-verify`, `commit -n`, `git -c core.hooksPath=…` and `DEVKIT_PRECOMMIT=0 git commit`. `agent-kit
+  init` installs the pre-commit gate in git projects (`--no-githooks` to skip).
+- **`git restore <file>` is allowed after an automatic backup** to `.claude/audit-gate/restore-backup/`,
+  so the agent can undo its own bad edit without costing uncommitted work; `.`, directories, globs and
+  unknown options stay blocked.
+- **New hooks `session_context.sh` (SessionStart) and `prompt_context.sh` (UserPromptSubmit):** a session
+  starts with the profile, the line-numbered map of `.agents/instincts.md` (the index is regenerated
+  above 20 KB instead of loading the file) and the regression-checklist state; every request gets the
+  matching traps with their `sed -n` range, intent-specific requirements and, for a bug fix, the
+  RED→GREEN rule. Questions and chit-chat get nothing. `enrich_context.py` ranks traps (stopwords and
+  syllables common to many entries ignored, intent terms added, template/commented entries skipped)
+  and has `--compact`.
+- **Review and comment checks follow the profile:** `review_gate.sh` and `comment_claim_guard.sh` use the
+  active profile's new `source_extensions` (`hooks/devkit_profile.py`) instead of Kotlin/Java only —
+  `.ts` on web, `.swift` on iOS, `.py/.go/.rs` on backend, every language without a profile.
+  `open-code-review` counts as a review; the block message names the reviewer the DevKit installs.
+- **Codex, Gemini CLI and Cursor get the gates too:** `hooks/agent_bridge.sh` translates their hook
+  protocols; `scripts/agent_hooks.py` registers session/prompt context, the git & device guards and the
+  Stop regression run in `.codex/hooks.json`, `.gemini/settings.json` and `.cursor/hooks.json` (only
+  entries running the bridge are ever touched; JSONC files are left alone). `agent-kit uninstall`
+  removes them. Transcript-based gates (review, test evidence, claims) stay Claude-only.
+- **Regression matrix from the project's own runner** (`scripts/matrix_detect.py`, `agent-kit matrix`):
+  when the profile ships only an illustrative sample (android, ios, universal, …), `agent-kit profile` /
+  `init` writes a matrix that runs what the project really has — `./gradlew testDebugUnitTest` / `test`,
+  `swift test`, the package.json test script via pnpm/yarn/bun/npm, pytest, `go test ./...`, `cargo test`,
+  flutter/dart — watching every source file of the profile. The post-fix gate trusts it uncommitted only
+  while byte-identical to a fresh generation (edit `exit 1` → `true` and it becomes UNVERIFIED); an edited
+  one is kept as `*_old` on regeneration; `uninstall` removes it while unchanged.
+- **RED-check beyond Kotlin/Java:** a test file written this session in JS/TS, Python, Go, Swift, Dart or
+  Ruby that ran green must have been run red after its last edit (runner output naming the file when the
+  runner names files), mutate/restore pairs handled as for the JVM.
+- **Lesson reminder:** after a proven fix ("đã fix" backed by RED→GREEN or workflow proof) with no
+  `agent-kit learn` / `--record-lesson` in the session, the Stop is held once with the command to run;
+  the next stop passes. `LESSON_REMINDER=0` turns it off.
+- `agent-kit index-memory` defaults to the current project's `.agents/instincts.md`, not the DevKit's.
+- Docs: `AGENTS.md` §7 lists what each platform actually enforces; §8.2 and `core-rules.md` §16 mark
+  hook-enforced steps `[hook]` and drop the "Zero Manual Effort" / "CỔNG BẮT BUỘC" claims no hook backed;
+  §2.3 asks for real evidence (screenshot for UI, test output for CLI/backend) instead of a PASS
+  screenshot for every report.
 
 ### Android
 - **`profiles/android/scripts/qa/adb-safe-exec.sh`:** runs an adb command and FAILs on error text adb

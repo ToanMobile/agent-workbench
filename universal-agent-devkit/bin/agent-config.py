@@ -299,15 +299,41 @@ def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None)
     reg_dest = target_dir / ACTIVE_MATRIX_REL
     if reg_src.exists():
         new_bytes = reg_src.read_bytes()
+        # A sample matrix that names illustrative tests (android/ios/universal) is replaced
+        # by one generated from the project's own test runner, so the Stop-time regression
+        # gate has something real to run. "enforce_as_is" samples (web, backend) already
+        # auto-detect the runner and are kept.
+        generated = None
+        try:
+            sample = json.loads(new_bytes.decode("utf-8"))
+        except ValueError:
+            sample = {}
+        if not sample.get("enforce_as_is"):
+            try:
+                import matrix_detect  # noqa: PLC0415 - scripts/ is on sys.path
+                generated = matrix_detect.generate(str(target_dir))
+            except Exception as e:  # detection must never break profile activation
+                log_warn(tr(f"Không dò được test runner: {e}", f"Test runner detection failed: {e}"))
+        if generated is not None:
+            new_bytes = generated
         if reg_dest.is_symlink():
             reg_dest.unlink()
         elif reg_dest.exists():
             cur = reg_dest.read_bytes()
-            if cur != new_bytes and cur not in known_matrix_contents(devkit_dir):
+            # Ours = a DevKit sample, or exactly what we would generate now. A generated
+            # matrix the user edited (or one generated before the project changed) is kept
+            # as *_old rather than overwritten.
+            ours = cur in known_matrix_contents(devkit_dir) or (generated is not None and cur == generated)
+            if cur != new_bytes and not ours:
                 x_old_backup(reg_dest)  # ma trận do người dùng tự viết (P-2)
         reg_dest.parent.mkdir(parents=True, exist_ok=True)
         reg_dest.write_bytes(new_bytes)
-        log_ok(tr(f"Đã kích hoạt ma trận kiểm thử: `{ACTIVE_MATRIX_REL}`", f"Activated regression matrix: `{ACTIVE_MATRIX_REL}`"))
+        if generated is not None:
+            cmds = ", ".join(t["command"] for t in json.loads(generated)["rules"][0]["mandatory_regression_tests"])
+            log_ok(tr(f"Đã sinh ma trận kiểm thử từ test runner của dự án ({cmds}): `{ACTIVE_MATRIX_REL}`",
+                      f"Generated the regression matrix from the project's test runner ({cmds}): `{ACTIVE_MATRIX_REL}`"))
+        else:
+            log_ok(tr(f"Đã kích hoạt ma trận kiểm thử: `{ACTIVE_MATRIX_REL}`", f"Activated regression matrix: `{ACTIVE_MATRIX_REL}`"))
 
     # 3b. Liên kết các hook chuyên dụng của profile nếu có (ví dụ: validate-assets.sh cho Game)
     profile_hooks = profile_dir / "hooks"

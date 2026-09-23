@@ -42,7 +42,7 @@ has_user_content() {
   [ "$count" -eq 0 ] && return 1
 
   if [ -n "$devkit_root" ]; then
-    local non_devkit=0
+    local non_devkit=0 item
     while IFS= read -r item; do
       [ -e "$item" ] || [ -L "$item" ] || continue
       if [ -L "$item" ]; then
@@ -249,13 +249,100 @@ DEVKIT_LOCAL_DIR=".agents/local"
 # devkit_local_slot <path> — project-tier location for an item of an item-by-item
 # install dir (.claude/{commands,agents,hooks}/<name>, .agents/skills/<name>); "" else.
 devkit_local_slot() {
-  local parent
+  local parent parent_p root_p
   parent="$(dirname "$1")"
   case "$parent" in
     */.claude/commands|*/.claude/agents|*/.claude/hooks|*/.agents/skills)
-      printf '%s/%s/%s/%s' "$(dirname "$(dirname "$parent")")" "$DEVKIT_LOCAL_DIR" "$(basename "$parent")" "$(basename "$1")" ;;
-    *) printf '' ;;
+      printf '%s/%s/%s/%s' "$(dirname "$(dirname "$parent")")" "$DEVKIT_LOCAL_DIR" "$(basename "$parent")" "$(basename "$1")"
+      return ;;
   esac
+  # An item inside the project's own root rules/ skills/ commands/ (a source-code dir
+  # the DevKit items were placed into, see devkit_place_into_dir).
+  case "$(basename "$parent")" in rules|skills|commands) ;; *) printf ''; return ;; esac
+  if [ -n "${TARGET_DIR:-}" ]; then
+    parent_p="$(cd "$(dirname "$parent")" 2>/dev/null && pwd -P)"
+    root_p="$(cd "$TARGET_DIR" 2>/dev/null && pwd -P)"
+    if [ -n "$root_p" ] && [ "$parent_p" = "$root_p" ]; then
+      printf '%s/%s/%s/%s' "$TARGET_DIR" "$DEVKIT_LOCAL_DIR" "$(basename "$parent")" "$(basename "$1")"
+      return
+    fi
+  fi
+  printf ''
+}
+
+# _devkit_owned_entry <path> — installed by the DevKit (link, recorded file, copy dir)
+_devkit_owned_entry() {
+  link_is_devkit_owned "$1" "${DEVKIT_ROOT:-}" || is_recorded_devkit_file "$1" || is_unmodified_devkit_copy "$1"
+}
+
+# devkit_is_agent_content_dir <dir> <rules|skills|commands> — the project's root dir holds
+# only agent material (so it can move to the project tier without breaking any build):
+#   rules/    every file is .md / .mdc / .markdown / .txt
+#   commands/ every entry is a .md/.mdc file, or a folder of them (namespaced commands)
+#   skills/   every entry is a skill folder with SKILL.md, or a .md file
+# Anything else (commands/build.js, rules/no-foo.js …) is the project's source code.
+devkit_is_agent_content_dir() {
+  local dir="$1" kind="$2" e name
+  for e in "$dir"/* "$dir"/.[!.]*; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    name="$(basename "$e")"
+    case "$name" in .DS_Store|.gitkeep|"$DEVKIT_MANIFEST"|"$DEVKIT_FILE_LEDGER"|.devkit_backups.log) continue ;; esac
+    _devkit_owned_entry "$e" && continue
+    case "$kind" in
+      rules)
+        [ -z "$(find "$e" -type f ! -name '.*' 2>/dev/null | grep -viE '\.(md|mdc|markdown|txt)$' | head -n 1)" ] || return 1 ;;
+      commands)
+        if [ -d "$e" ]; then
+          [ -z "$(find "$e" -type f ! -name '.*' 2>/dev/null | grep -viE '\.(md|mdc)$' | head -n 1)" ] || return 1
+        else
+          case "$name" in *.md|*.mdc) ;; *) return 1 ;; esac
+        fi ;;
+      skills)
+        if [ -d "$e" ]; then [ -f "$e/SKILL.md" ] || return 1
+        else case "$name" in *.md) ;; *) return 1 ;; esac
+        fi ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+
+# devkit_local_absorb_dir <project root dir> <kind> — move the project's own agent
+# material from <project>/<kind>/ into the project tier .agents/local/<kind>/ entry by
+# entry (DevKit-installed entries are just dropped), leaving <kind>/ free for the DevKit.
+devkit_local_absorb_dir() {
+  local dir="$1" kind="$2" dest_dir e name dest base n ledger
+  dest_dir="$TARGET_DIR/$DEVKIT_LOCAL_DIR/$kind"
+  devkit_local_init "$TARGET_DIR/$DEVKIT_LOCAL_DIR" || return 1
+  mkdir -p "$dest_dir" || return 1
+  ledger="$dest_dir/.devkit_backups.log"
+  for e in "$dir"/* "$dir"/.[!.]*; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    name="$(basename "$e")"
+    case "$name" in "$DEVKIT_MANIFEST"|"$DEVKIT_FILE_LEDGER") rm -f "$e"; continue ;; esac
+    if _devkit_owned_entry "$e"; then rm -rf "$e"; continue; fi
+    dest="$dest_dir/$name"
+    if [ -e "$dest" ] || [ -L "$dest" ]; then
+      base="${dest}_$(date +%Y%m%d_%H%M%S)"; dest="$base"; n=1
+      while [ -e "$dest" ] || [ -L "$dest" ]; do n=$((n + 1)); dest="${base}_$n"; done
+    fi
+    mv "$e" "$dest" || { echo "ERROR: could not move '$e' to '$dest' — nothing replaced." >&2; return 1; }
+    echo "$(date '+%Y-%m-%d %H:%M:%S') | $e -> $dest" >> "$ledger"
+  done
+  rmdir "$dir" || { echo "ERROR: '$dir' is not empty after moving its content — nothing replaced." >&2; return 1; }
+  echo "  ⚠️ [Project tier] $kind/ → $DEVKIT_LOCAL_DIR/$kind/ — $(L "DevKit là core; bản của bạn ở đây để tự áp lại" "DevKit is the core; yours is kept there to re-apply")"
+}
+
+# devkit_place_into_dir <devkit dir> <project dir> <mode> — the project's root dir is its
+# source code and must stay: place every DevKit item inside it one by one, so every
+# DevKit path (rules/core-rules.md, skills/qc/SKILL.md, …) resolves. A project file with
+# a DevKit name moves to the project tier (devkit_local_slot); the rest is untouched.
+devkit_place_into_dir() {
+  local src="$1" dst="$2" mode="$3" item
+  for item in "$src"/*; do
+    [ -e "$item" ] || continue
+    devkit_place "$item" "$dst/$(basename "$item")" "$mode" || return 1
+  done
 }
 
 # devkit_local_init <project>/.agents/local — create it with a README the first time.
@@ -266,6 +353,8 @@ devkit_local_init() {
   _devkit_local_readme > "$dir/README.md"
 }
 
+# _devkit_local_readme [v1] — the README a new project tier gets; "v1" prints the text
+# written before rules/ were imported, so prune still recognises an untouched old copy.
 _devkit_local_readme() {
   cat <<'README_EOF'
 # .agents/local — project tier
@@ -278,9 +367,54 @@ writes into this folder after moving an item here; commit it with the project.
   `.claude/agents/`, `hooks/` → `.claude/hooks/`) on every `agent-kit init`.
 - An item with the same name as a DevKit item is kept here but NOT active — the
   DevKit version wins. Re-apply your changes on top of it, or rename yours to use both.
-- `rules/` and dated copies (`name_YYYYMMDD_HHMMSS…`) are reference only, never linked.
-- `agent-kit list-old` shows what is active and what is shadowed.
 README_EOF
+  if [ "${1:-}" = v1 ]; then
+    printf '%s\n' '- `rules/` and dated copies (`name_YYYYMMDD_HHMMSS…`) are reference only, never linked.'
+  else
+    cat <<'README_EOF'
+- `rules/` files are listed as @-imports in the DevKit block of `CLAUDE.md`, `AGENTS.md`
+  (a project's own one), `GEMINI.md`, `.cursorrules` on every `agent-kit init`: they add
+  to the DevKit rules, and the DevKit rule wins where they contradict it.
+- Dated copies (`name_YYYYMMDD_HHMMSS…`) are reference only, never linked or imported.
+README_EOF
+  fi
+  printf '%s\n' '- `agent-kit list-old` shows what is active and what is shadowed.'
+}
+
+# devkit_local_rule_files <project> — the project's own rule files kept in the project
+# tier (.agents/local/rules/), relative to <project>, sorted. Dated copies
+# (name_YYYYMMDD_HHMMSS…) are older versions kept for reference and are left out.
+devkit_local_rule_files() {
+  local dir="$1/$DEVKIT_LOCAL_DIR/rules"
+  [ -d "$dir" ] || return 0
+  (cd "$1" && find "$DEVKIT_LOCAL_DIR/rules" -type f \( -name '*.md' -o -name '*.mdc' -o -name '*.markdown' -o -name '*.txt' \) \
+     ! -name '.*' 2>/dev/null | grep -vE '_[0-9]{8}_[0-9]{6}' | LC_ALL=C sort)
+}
+
+# devkit_merge_block <template block> <agent file> — inject the DevKit block into an
+# agent instruction file (CLAUDE.md, GEMINI.md, .cursorrules, CODEX.md, a project's own
+# AGENTS.md). When the project tier holds rule files, the block also lists them as
+# @-imports: they moved out of the project's rules/ and no agent would read them
+# otherwise. Re-run on every install, so the list follows .agents/local/rules/.
+devkit_merge_block() {
+  local tpl="$1" dst="$2" root rules block rc
+  root="$(cd "$(dirname "$dst")" 2>/dev/null && pwd -P)"
+  rules="$(devkit_local_rule_files "$root")"
+  if [ -z "$rules" ]; then
+    python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$tpl" "$dst" "universal-agent-devkit"
+    return
+  fi
+  block="$(mktemp "${TMPDIR:-/tmp}/devkit_block.XXXXXX")" || return 1
+  {
+    cat "$tpl"
+    printf '\n## Project rules (%s/rules — project tier)\n' "$DEVKIT_LOCAL_DIR"
+    printf 'Read these before editing code: this project'"'"'s own rules on top of the DevKit. Where one contradicts `AGENTS.md` §6 or `rules/core-rules.md`, the DevKit rule wins — tell the user about the conflict.\n'
+    printf '%s\n' "$rules" | sed 's/^/- @/'
+  } > "$block"
+  python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$block" "$dst" "universal-agent-devkit"
+  rc=$?
+  rm -f "$block"
+  return $rc
 }
 
 # devkit_local_prune <project> — after restore-old --apply: drop project-tier ledgers
@@ -290,6 +424,15 @@ devkit_local_prune() {
   local root="$1" dir ledger line backup left d
   dir="$root/$DEVKIT_LOCAL_DIR"
   [ -d "$dir" ] || return 0
+  # Links devkit_link_local made to project-tier items that were just put back.
+  for d in .agents/skills .claude/commands .claude/agents .claude/hooks; do
+    [ -d "$root/$d" ] || continue
+    for line in "$root/$d"/*; do
+      [ -L "$line" ] && [ ! -e "$line" ] || continue
+      case "$(readlink "$line")" in *"$DEVKIT_LOCAL_DIR"/*) rm -f "$line" ;; esac
+    done
+    rmdir "$root/$d" 2>/dev/null
+  done
   while IFS= read -r ledger; do
     left=0
     while IFS= read -r line || [ -n "$line" ]; do
@@ -300,7 +443,8 @@ devkit_local_prune() {
   done < <(find "$dir" -name .devkit_backups.log 2>/dev/null)
   find "$dir" -depth -mindepth 1 -type d -empty -exec rmdir {} \; 2>/dev/null
   if [ -z "$(find "$dir" -mindepth 1 ! -name README.md 2>/dev/null | head -n 1)" ] \
-     && { [ ! -e "$dir/README.md" ] || cmp -s "$dir/README.md" <(_devkit_local_readme); }; then
+     && { [ ! -e "$dir/README.md" ] || cmp -s "$dir/README.md" <(_devkit_local_readme) \
+          || cmp -s "$dir/README.md" <(_devkit_local_readme v1); }; then
     rm -f "$dir/README.md"
     rmdir "$dir" 2>/dev/null
     rmdir "$root/.agents" 2>/dev/null
@@ -308,7 +452,8 @@ devkit_local_prune() {
   return 0
 }
 
-# devkit_is_local_link <link> — a symlink into this project's .agents/local
+# devkit_is_local_link <link> — a symlink into this project's .agents/local. Needs
+# TARGET_DIR, which install.sh and every adapter (all devkit_place callers) set.
 devkit_is_local_link() {
   local t local_p
   [ -L "$1" ] && [ -n "${TARGET_DIR:-}" ] || return 1
@@ -328,6 +473,9 @@ devkit_copy_keep_edits() {
     dest="$base"
     while [ -e "$dest" ] || [ -L "$dest" ]; do n=$((n + 1)); dest="${base}_$n"; done
   fi
+  # The ledger lives in the kind folder (.agents/local/<kind>/): for an item
+  # (.agents/local/skills/fixbugs) that is its parent, for a root dir
+  # (.agents/local/rules) the kept folder is the kind folder itself.
   ledger="$(dirname "$dest")/.devkit_backups.log"
   case "$(basename "$(dirname "$dest")")" in local) ledger="$dest/.devkit_backups.log" ;; esac
   while IFS= read -r rel; do
@@ -457,7 +605,7 @@ devkit_install_agents_md() {
       cp "$dst" "$target/AGENTS_old.md"
       echo "  - Preserved original AGENTS.md as AGENTS_old.md"
     fi
-    python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$DEVKIT_ROOT/templates/agents_injection_block.md" "$dst" "$marker"
+    devkit_merge_block "$DEVKIT_ROOT/templates/agents_injection_block.md" "$dst"
     echo "  - Injected DevKit standards into existing AGENTS.md (Preserved custom architecture)"
     return 0
   fi
@@ -540,7 +688,7 @@ list_old_backups() {
   echo "  🔍 $(L "Danh Sách Các Mục Đã Được Bảo Vệ (*_old) Trong Dự Án:" "Protected items (*_old) in this project:")"
   echo "  $(L "Thư mục kiểm tra:" "Checked directory:") $root_dir"
   echo "================================================================="
-  local found=0
+  local found=0 item
   while IFS= read -r item; do
     [ -n "$item" ] || continue
     found=1

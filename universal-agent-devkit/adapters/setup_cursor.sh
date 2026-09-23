@@ -24,7 +24,7 @@ fi
 
 if [ -f "$TARGET_DIR/.cursorrules" ]; then
   CURSOR_INJECT="$DEVKIT_ROOT/templates/claude_injection_block.md"
-  python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$CURSOR_INJECT" "$TARGET_DIR/.cursorrules" "universal-agent-devkit"
+  devkit_merge_block "$CURSOR_INJECT" "$TARGET_DIR/.cursorrules"
 fi
 
 # AGENTS.md: shared logic (devkit link/copy vs the project's own file) — see backup_conflict.sh

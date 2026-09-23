@@ -26,5 +26,17 @@
     "deploy",
     "qa-visual",
     "unity-gc-audit"
+  ],
+  "source_extensions": [
+    ".py",
+    ".go",
+    ".rs",
+    ".java",
+    ".kt",
+    ".ts",
+    ".js",
+    ".rb",
+    ".php",
+    ".cs"
   ]
 }

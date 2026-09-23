@@ -64,5 +64,37 @@ stop; rc=$?
 # Escape hatch.
 REGRESSION_GATE=0 bash -c "printf '{}' | CLAUDE_PROJECT_DIR='$REPO' bash '$HOOK'"; [ $? = 0 ] && ok "REGRESSION_GATE=0 skips" || fail "escape hatch ignored"
 
+# The matrix `agent-kit profile` writes (.agents/regression_matrix.active.json) is found.
+REPO="$TMP/repo2"; mkdir -p "$REPO/src" "$REPO/.agents" && cd "$REPO" || exit 1
+git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt && echo 'exit 1' > result.sh
+cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
+ "mandatory_regression_tests":[{"id":"REG-A","name":"core","command":"sh result.sh"}]}]}
+JSON
+git add -A && git commit -qm init
+echo "fun ok() = 2" > src/Core.kt
+stop; rc=$?
+[ "$rc" = 2 ] && grep -q "REG-A" "$TMP/err" && ok ".agents/regression_matrix.active.json is enforced" || fail "active matrix ignored (rc=$rc)"
+
+# A profile matrix marked enforce_as_is (web: auto-detects the project's runner) is
+# enforced exactly as installed — here it fails because there is no package.json.
+REPO="$TMP/repo3"; mkdir -p "$REPO/src" "$REPO/.agents" && cd "$REPO" || exit 1
+git init -q . && git config user.email t@t && git config user.name t
+echo "export const a = 1" > src/app.ts
+cp "$DEVKIT_DIR/profiles/web/regression_matrix.json" .agents/regression_matrix.active.json
+git add -A && git commit -qm init
+echo "export const a = 2" > src/app.ts
+stop; rc=$?
+[ "$rc" = 2 ] && grep -q "REG-WEB-01" "$TMP/err" && ok "web profile matrix (enforce_as_is) is enforced as installed" || fail "web matrix not enforced (rc=$rc)"
+
+# Gate missing (copy-mode hook, no DevKit reachable): allowed, but said once per session.
+mkdir -p "$TMP/copyhooks" && cp "$HOOK" "$TMP/copyhooks/regression_gate.sh"
+nostop() { printf '{"session_id":"s-copy","hook_event_name":"Stop"}' | HOME="$TMP/nohome" DEVKIT_ROOT= PATH="/usr/bin:/bin" \
+  CLAUDE_PROJECT_DIR="$REPO" bash "$TMP/copyhooks/regression_gate.sh" 2>/dev/null; }
+out1="$(nostop)"; rc1=$?; out2="$(nostop)"
+[ "$rc1" = 0 ] && printf '%s' "$out1" | grep -q systemMessage && [ -z "$out2" ] \
+  && ok "gate not found: visible warning once per session, never blocks" || fail "gate-not-found handling (rc=$rc1, out2='$out2')"
+
 if [ "$FAILS" -ne 0 ]; then echo "regression gate hook: $FAILS FAILED"; exit 1; fi
 echo "regression gate hook: all checks passed"

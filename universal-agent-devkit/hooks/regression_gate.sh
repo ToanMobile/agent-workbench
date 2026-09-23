@@ -11,11 +11,13 @@
 # BLOCK (exit 2, reason → Claude) when the gate says REJECT (exit 1) or
 # UNVERIFIED (exit 2): a related test fails, a changed file has no test, …
 #
-# Enforced ONLY for a project that has adopted the matrix: a regression matrix
-# committed in the repo whose content differs from every DevKit sample
-# (templates/ + profiles/*). Sample matrices name placeholder tests that do not
-# exist in a real project — enforcing them would trap every session. Without an
-# adopted matrix the hook is silent.
+# Enforced for a project that has adopted a matrix: .agents/regression_matrix.active.json
+# (what `agent-kit profile` writes) or a legacy templates/ matrix, whose content differs
+# from every DevKit sample (templates/ + profiles/*). Sample matrices name placeholder
+# tests that do not exist in a real project — enforcing them would trap every session.
+# A profile matrix marked "enforce_as_is": true (web, backend: they auto-detect the
+# project's own runner) is enforced as installed. Without an adopted matrix the hook
+# only logs; a DevKit gate it cannot find is reported once per session.
 #
 # Cheap when nothing changed: the result is cached per working-tree fingerprint,
 # so a second Stop on the same diff does not re-run the tests.
@@ -49,7 +51,24 @@ if [ ! -f "${GATE}" ]; then
   PG="$(command -v postfix-gate 2>/dev/null || true)"
   [ -n "${PG}" ] && GATE="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${PG}")"
 fi
-[ -f "${GATE}" ] || { echo "$(date +%Y-%m-%dT%H:%M:%S) skipped: post-fix-gate.py not found" >> "${LOG}"; exit 0; }
+# Copy-mode installs have no link back to the DevKit: try $DEVKIT_ROOT and the
+# quick-install location too.
+for cand in "${DEVKIT_ROOT:-}/bin/post-fix-gate.py" "${HOME}/.universal-agent-devkit/bin/post-fix-gate.py"; do
+  [ -f "${GATE}" ] && break
+  [ -f "${cand}" ] && GATE="${cand}"
+done
+if [ ! -f "${GATE}" ]; then
+  echo "$(date +%Y-%m-%dT%H:%M:%S) skipped: post-fix-gate.py not found" >> "${LOG}"
+  SID="$(printf '%s' "${INPUT}" | python3 -c 'import json,re,sys
+try: print(re.sub(r"[^A-Za-z0-9_-]", "_", str(json.load(sys.stdin).get("session_id") or ""))[:40])
+except Exception: print("")' 2>/dev/null)"
+  FLAG="${LOG_DIR}/regression_gate.notfound.${SID:-nosession}"
+  if [ ! -e "${FLAG}" ]; then
+    : > "${FLAG}" 2>/dev/null
+    printf '%s\n' '{"systemMessage":"⚠ regression_gate: không tìm thấy post-fix-gate.py (cài copy mode?) — test hồi quy KHÔNG được chạy khi dừng. Chạy `agent-kit install-global` hoặc đặt DEVKIT_ROOT=<thư mục DevKit>."}'
+  fi
+  exit 0
+fi
 
 printf '%s' "${INPUT}" | REPO_ROOT="${REPO_ROOT}" GATE="${GATE}" LOG="${LOG}" \
   MAX_ATTEMPTS="${REGRESSION_GATE_MAX_ATTEMPTS:-2}" python3 -c '
@@ -86,12 +105,19 @@ def norm(p):
             return json.dumps(json.load(f), sort_keys=True)
     except Exception:
         return None
+def enforce_as_is(p):
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f).get("enforce_as_is") is True
+    except Exception:
+        return False
 samples = set()
 for root, _, files in os.walk(os.path.join(devkit, "profiles")):
-    if "regression_matrix.json" in files:
+    if "regression_matrix.json" in files and not enforce_as_is(os.path.join(root, "regression_matrix.json")):
         samples.add(norm(os.path.join(root, "regression_matrix.json")))
 samples.add(norm(os.path.join(devkit, "templates", "regression_matrix.json")))
-candidates = [os.path.join(repo, "templates", "regression_matrix.active.json"),
+candidates = [os.path.join(repo, ".agents", "regression_matrix.active.json"),
+              os.path.join(repo, "templates", "regression_matrix.active.json"),
               os.path.join(repo, ".agents", "active-profile", "regression_matrix.json"),
               os.path.join(repo, "templates", "regression_matrix.json")]
 matrix = next((c for c in candidates if os.path.exists(c)), None)

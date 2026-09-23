@@ -98,9 +98,15 @@ case "$CMD" in
     shift || true
     python3 "$DEVKIT_ROOT/bin/instincts.py" add "$@"
     ;;
+  matrix)
+    # matrix [--write] — regression matrix from this project's own test runner
+    shift || true
+    python3 "$DEVKIT_ROOT/scripts/matrix_detect.py" "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" "$@"
+    ;;
   index-memory|index)
     shift || true
-    TARGET_F="${1:-$DEVKIT_ROOT/.agents/instincts.md}"
+    # Default: the current project's failure memory (not the DevKit's own).
+    TARGET_F="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.agents/instincts.md}"
     python3 "$DEVKIT_ROOT/scripts/index_memory.py" "$TARGET_F"
     ;;
   list-old|old|backups)
@@ -148,6 +154,11 @@ Commands:
   learn "<title>" [--cause TEXT] [--rule TEXT] [--check CMD] [--dry-run]
                       Record a lesson in .agents/instincts.md as the next [INSTINCT-NNN]
                       (a title already recorded is refused; --force to add anyway)
+  matrix [--write]    Regression matrix generated from this project's test runner (gradle,
+                      swift, npm/pnpm/yarn/bun, pytest, go, cargo, flutter); --write activates it
+                      (agent-kit profile does this when the profile only has a sample matrix)
+  index-memory [file] Line-numbered index of a large .agents/instincts.md (default: this project's;
+                      the SessionStart hook also refreshes it automatically above 20 KB)
   test                Run all regression suites (hook contract, workflow engine, installer & gate)
   sync                Resync skills, slash commands, and aliases
   list                List all curated skills

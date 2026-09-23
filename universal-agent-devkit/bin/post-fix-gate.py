@@ -49,6 +49,29 @@ def _L(label):
     """Finding labels are (vi, en) pairs; render them in the active language."""
     return tr(*label) if isinstance(label, tuple) else label
 
+# Machine-readable copy of every static finding, emitted under "findings" by --json, so
+# an agent can go straight to file:line instead of parsing the colored log. Each entry:
+# category, rule (stable slug of the English label), message, file, line (1-based, or
+# None when the check has no position), snippet (the offending line; never for secrets).
+FINDINGS = []
+
+def _record(category, rel_file, label, content=None, pos=None, snippet=True):
+    en = label[1] if isinstance(label, tuple) else str(label)
+    line = text = None
+    if content is not None and pos is not None:
+        line = content.count("\n", 0, pos) + 1
+        start = content.rfind("\n", 0, pos) + 1
+        end = content.find("\n", pos)
+        text = content[start:end if end != -1 else len(content)].strip()[:200]
+    FINDINGS.append({
+        "category": category,
+        "rule": re.sub(r"[^a-z0-9]+", "-", en.lower()).strip("-")[:60],
+        "message": _L(label),
+        "file": rel_file,
+        "line": line,
+        "snippet": text if snippet else None,
+    })
+
 # Fix Unicode on Windows consoles if needed
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -297,12 +320,21 @@ def load_active_matrix(matrix_path: str = None, base_ref: str = "HEAD"):
                          capture_output=True)
     if res.returncode != 0:
         # Not committed yet. A byte-identical copy of a DevKit profile matrix (what
-        # `agent-kit profile` writes) carries the DevKit's commands, not the change's.
+        # `agent-kit profile` writes), or exactly what scripts/matrix_detect.py generates
+        # from this project's own test runner right now, carries the DevKit's commands,
+        # not the change's — an edited one (`exit 1` -> `true`) no longer matches.
         try:
             current = path.read_bytes()
         except OSError:
             current = None
-        if current is not None and current in devkit_profile_matrices():
+        generated = None
+        if current is not None and b'"generated_by"' in current:
+            try:
+                import matrix_detect  # noqa: PLC0415 - scripts/ is on sys.path
+                generated = matrix_detect.generate(str(get_project_dir()))
+            except Exception:
+                generated = None
+        if current is not None and (current in devkit_profile_matrices() or current == generated):
             try:
                 return json.loads(current.decode("utf-8", errors="replace")), None
             except ValueError:
@@ -520,6 +552,7 @@ def run_git_hygiene_audit(modified_files: list) -> tuple:
             for file_pat, label in FORBIDDEN_SECRET_FILES:
                 if re.search(file_pat, clean_rel, re.IGNORECASE):
                     secrets_found.append((rel_file, tr("File cấm: ", "Forbidden file: ") + _L(label)))
+                    _record("secrets", rel_file, label if isinstance(label, tuple) else ("File cấm: " + label, "Forbidden file: " + label))
 
         # 2. Kiểm tra nội dung file tìm secret / password / key
         # Bỏ qua quét nội dung binary hoặc ảnh
@@ -535,6 +568,7 @@ def run_git_hygiene_audit(modified_files: list) -> tuple:
                     if group is not None and PLACEHOLDER_VALUE.match(m.group(group)):
                         continue
                     secrets_found.append((rel_file, _L(label)))
+                    _record("secrets", rel_file, label, content, m.start(), snippet=False)
                     break
     return len(secrets_found) == 0, secrets_found
 
@@ -548,8 +582,10 @@ def run_anti_laziness_audit(modified_files: list) -> tuple:
             if content is None:
                 continue
             for pat, label in LAZY_CODE_PATTERNS:
-                if re.search(pat, content):
+                m = re.search(pat, content)
+                if m:
                     lazy_matches.append((rel_file, _L(label)))
+                    _record("lazy", rel_file, label, content, m.start())
     return len(lazy_matches) == 0, lazy_matches
 
 
@@ -579,23 +615,27 @@ def run_dependency_audit(modified_files: list) -> tuple:
                         if not isinstance(ver, str):
                             continue
                         quoted = f'{section}.{dep}: "{ver}"'
+                        km = re.search(r'"' + re.escape(dep) + r'"\s*:', content)
+                        pos = km.start() if km else None
                         if section in NPM_PINNED_SECTIONS and ver.strip() in NPM_FLOATING:
-                            hits.append((FLOATING_DEP, quoted))
+                            hits.append((FLOATING_DEP, quoted, pos))
                         elif re.search(r"(?:^|\+)" + _HTTP, ver.strip()):
-                            hits.append((INSECURE_DEP, quoted))
+                            hits.append((INSECURE_DEP, quoted, pos))
                 publish = pkg.get("publishConfig")
                 registry = publish.get("registry") if isinstance(publish, dict) else None
                 if isinstance(registry, str) and re.match(_HTTP, registry.strip()):
-                    hits.append((INSECURE_DEP, f'publishConfig.registry: "{registry}"'))
+                    km = re.search(r'"registry"\s*:', content)
+                    hits.append((INSECURE_DEP, f'publishConfig.registry: "{registry}"', km.start() if km else None))
         else:
             for pat, label in DEPENDENCY_RULES[kind]:
                 for m in re.finditer(pat, content):
-                    hits.append((label, " ".join(m.group(0).split())[:100]))
+                    hits.append((label, " ".join(m.group(0).split())[:100], m.start()))
         seen = set()
-        for label, quoted in hits:
+        for label, quoted, pos in hits:
             if (label, quoted) not in seen:
                 seen.add((label, quoted))
                 findings.append((rel_file, f"{_L(label)}: `{quoted}`"))
+                _record("dependencies", rel_file, label, content, pos)
     return len(findings) == 0, findings
 
 def run_performance_audit(modified_files: list) -> tuple:
@@ -624,8 +664,10 @@ def run_performance_audit(modified_files: list) -> tuple:
         if content is None:
             continue
         for pat, label in PERF_ANTIPATTERN_PATTERNS:
-            if re.search(pat, content):
+            m = re.search(pat, content)
+            if m:
                 perf_findings.append((rel_file, _L(label)))
+                _record("perf", rel_file, label, content, m.start())
 
         linter = None
         if rel_file.endswith(".kt") and check_kotlin_stability:
@@ -644,6 +686,7 @@ def run_performance_audit(modified_files: list) -> tuple:
                 lint_path = Path(tmp)
             for v in linter(lint_path):
                 perf_findings.append((rel_file, f"{tag}: {v}"))
+                _record("perf", rel_file, f"{tag}: {v}")
         except Exception:
             pass
         finally:
@@ -661,8 +704,10 @@ def run_resilience_audit(modified_files: list) -> tuple:
         if content is None:
             continue
         for pat, label in RESILIENCE_ANTIPATTERN_PATTERNS:
-            if re.search(pat, content):
+            m = re.search(pat, content)
+            if m:
                 findings.append((rel_file, _L(label)))
+                _record("resilience", rel_file, label, content, m.start())
     return len(findings) == 0, findings
 
 def run_logging_audit(modified_files: list) -> tuple:
@@ -674,8 +719,10 @@ def run_logging_audit(modified_files: list) -> tuple:
         if content is None:
             continue
         for pat, label in LOGGING_ANTIPATTERN_PATTERNS:
-            if re.search(pat, content):
+            m = re.search(pat, content)
+            if m:
                 findings.append((rel_file, _L(label)))
+                _record("logging", rel_file, label, content, m.start())
     return len(findings) == 0, findings
 
 def check_design_and_accessibility(modified_files: list) -> tuple:
@@ -929,7 +976,8 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
     print(f"  {BOLD}{tr('KẾT LUẬN', 'VERDICT')}:{RESET} {color}{BOLD}{verdict}{RESET}\n")
     if args.json:
         print(json.dumps({"mode": "staged", "exit_code": exit_code, "static_ok": static_ok,
-                          "files": modified_files, "unreadable": unreadable, "static": counts},
+                          "files": modified_files, "unreadable": unreadable, "static": counts,
+                          "findings": FINDINGS},
                          ensure_ascii=False))
     return exit_code
 
@@ -1314,6 +1362,7 @@ def main():
             "static": {"secrets": len(secrets), "lazy": len(lazy_findings), "dependencies": len(dep_findings),
                        "perf": len(perf_findings),
                        "resilience": len(resilience_findings), "logging": len(logging_findings)},
+            "findings": FINDINGS,
             "report": str(report_file),
             "matrix_path": str(find_matrix_path(args.matrix) or ""),
             "uncovered": [] if args.allow_no_tests else uncovered_code_files(modified_files, rules),

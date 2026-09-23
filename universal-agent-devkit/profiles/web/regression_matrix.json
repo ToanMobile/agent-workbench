@@ -1,5 +1,6 @@
 {
   "version": "1.0.0",
+  "enforce_as_is": true,
   "project": "Web Application (Frontend / Full-Stack JS)",
   "description": "Ma trận hồi quy cho dự án web. Lệnh test tự chọn runner theo lockfile (pnpm/yarn/bun/npm); thiếu package.json thì FAIL chứ không coi là PASS.",
   "rules": [

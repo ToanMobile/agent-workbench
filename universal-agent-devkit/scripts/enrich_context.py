@@ -40,6 +40,27 @@ def instinct_sources(devkit_root, project_root):
     return out
 
 
+# Words too common in requests to say anything about WHICH trap applies.
+STOPWORDS = {
+    "sửa", "lỗi", "giúp", "tạo", "làm", "cho", "vào", "khi", "bị", "của", "và", "các", "những",
+    "này", "đó", "với", "trong", "không", "được", "thì", "là", "có", "một", "để", "lại", "hãy",
+    "tôi", "anh", "em", "mình", "bạn", "nữa", "rồi", "đang", "cần", "muốn", "thêm", "xem", "lần",
+    "the", "and", "for", "with", "this", "that", "fix", "bug", "please", "add", "make", "into",
+    "from", "not", "are", "was", "can", "use", "new", "all",
+    "cách", "động", "hoạt", "giải", "thích", "người", "dùng", "việc", "như", "thế", "nào", "sao",
+    "hiện", "tại", "sau", "trước", "vẫn", "luôn", "hết", "đúng", "sai", "code", "file", "app",
+}
+
+# Technical words the trap entries use for each detected intent — the request says
+# "bấm 2 lần", the entry says "double-click / debounce".
+INTENT_TERMS = {
+    "UI_INTERACTION": {"click", "debounce", "double", "touch", "48dp", "isloading", "issubmitting"},
+    "PERFORMANCE_AND_RESPONSIVENESS": {"main", "thread", "anr", "leak", "blocking", "o"},
+    "NETWORK_AND_RESILIENCE": {"timeout", "idempotency", "retry", "backoff"},
+    "DEPRECATION_MIGRATION": {"migration", "schema"},
+}
+
+
 def enrich_prompt(prompt, devkit_root=".", project_root=None):
     dossier = {
         "dossier_type": "5D_CONTEXT_DOSSIER",
@@ -158,21 +179,49 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
     dossier["injected_nfrs"].append("Structured Logging: Zero raw console.log/println; mask 100% PII (Token/Password/ID).")
     dossier["injected_nfrs"].append("Anti-Swallowing: Zero empty catch/except blocks.")
 
-    # 3. Match Instincts from instincts.md
+    # 3. Match Instincts from instincts.md — ranked by how many of the prompt's
+    #    meaningful words (stopwords like "sửa", "lỗi", "bị" dropped) the entry shares,
+    #    title hits counting double. Template placeholders ([INSTINCT-XXX]) and entries
+    #    inside HTML comments are never matched.
+    keywords = {w for w in re.findall(r"[\w$]+", p_lower) if len(w) >= 3 and w not in STOPWORDS}
+    for intent in dossier["detected_intents"]:
+        keywords |= INTENT_TERMS.get(intent, set())
+    entries, seen_titles = [], set()
     for instincts_file in instinct_sources(devkit_root, project_root):
         try:
             with open(instincts_file, "r", encoding="utf-8") as f:
                 content = f.read()
-            for full_block, inst_id in INSTINCT_BLOCK_RE.findall(content):
-                # check matching keywords
-                block_lower = full_block.lower()
-                for word in p_lower.split():
-                    if len(word) >= 3 and word in block_lower:
-                        header_line = full_block.strip().split("\n")[0].replace("### ", "")
-                        if header_line not in dossier["matched_instincts"]:
-                            dossier["matched_instincts"].append(header_line)
         except (OSError, UnicodeDecodeError) as e:
             print(f"warning: không đọc được {instincts_file}: {e}", file=sys.stderr)
+            continue
+        visible = re.sub(r"<!--.*?-->", lambda m: "\n" * m.group(0).count("\n"), content, flags=re.DOTALL)
+        for m in INSTINCT_BLOCK_RE.finditer(visible):
+            full_block, inst_id = m.group(1), m.group(2)
+            if "XXX" in inst_id:
+                continue
+            header_line = full_block.strip().split("\n")[0].replace("### ", "")
+            if header_line in seen_titles:
+                continue  # the same trap copied into the profile's instincts.md too
+            seen_titles.add(header_line)
+            entries.append((header_line, set(re.findall(r"[\w$]+", header_line.lower())),
+                            set(re.findall(r"[\w$]+", full_block.lower())),
+                            instincts_file, visible.count("\n", 0, m.start()) + 1))
+    # A word found in many entries (Vietnamese syllables like "cách", "động") says
+    # nothing about WHICH trap applies: only words in at most a quarter of the
+    # entries (min 2) score, and an entry needs 2+ points.
+    max_df = max(2, len(entries) // 4)
+    df = {k: sum(1 for e in entries if k in e[2]) for k in keywords}
+    ranked = []
+    for header_line, title_words, body_words, instincts_file, line in entries:
+        score = sum(2 if k in title_words else 1 for k in keywords
+                    if k in body_words and df[k] <= max_df)
+        if score >= 2:
+            ranked.append((score, header_line, instincts_file, line))
+    for score, header_line, path, line in sorted(ranked, key=lambda r: -r[0]):
+        if header_line not in dossier["matched_instincts"]:
+            dossier["matched_instincts"].append(header_line)
+            dossier.setdefault("matched_instinct_refs", []).append(
+                {"title": header_line, "file": path, "line": line, "score": score})
 
     # Không khớp gì thì để trống — không bịa danh sách mặc định.
     if not dossier["matched_instincts"]:
@@ -197,9 +246,45 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
 
     return dossier
 
+GENERIC_NFRS = 3  # the last three injected_nfrs apply to every task (already in the rules)
+
+
+def compact(dossier, project_root, limit=4):
+    """A few lines for the UserPromptSubmit hook — empty when the request matched no
+    intent and no instinct (questions, chit-chat): no context tax on those."""
+    intents = [i for i in dossier["detected_intents"] if i != "GENERAL_TASK"]
+    refs = dossier.get("matched_instinct_refs", [])[:limit]
+    if not intents and not refs:
+        return ""
+    out = [f"[DevKit] Ngữ cảnh tự động cho yêu cầu này (profile: {dossier['active_profile']}):"]
+    if intents:
+        out.append("- Loại việc: " + ", ".join(intents))
+    if dossier.get("paired_oracle_spec", {}).get("required"):
+        out.append("- Bắt buộc: chạy test tái hiện lỗi thấy ĐỎ trước khi sửa, XANH sau khi sửa "
+                   "(Stop hook chỉ chấp nhận 'đã fix' khi thấy cặp RED→GREEN này).")
+    specific = dossier["injected_nfrs"][:-GENERIC_NFRS]
+    if specific:
+        out.append("- Yêu cầu ngầm định: " + " · ".join(specific))
+    for r in refs:
+        rel = r["file"]
+        if project_root and os.path.realpath(rel).startswith(os.path.realpath(project_root) + os.sep):
+            rel = os.path.relpath(os.path.realpath(rel), os.path.realpath(project_root))
+        out.append(f"- Bẫy đã gặp: {r['title']} — xem `sed -n '{r['line']},{r['line'] + 12}p' {rel}`")
+    skills = [s for s in dossier["recommended_skills"] if s != "incremental-implementation" or intents]
+    if skills:
+        out.append("- Skill phù hợp: " + ", ".join(skills[:5]))
+    return "\n".join(out)
+
+
 if __name__ == "__main__":
-    prompt_input = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "sửa nút login bị bấm nhiều lần văng app"
+    args = [a for a in sys.argv[1:] if a != "--compact"]
+    prompt_input = " ".join(args) if args else "sửa nút login bị bấm nhiều lần văng app"
     devkit_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or find_project_root(".")
     res = enrich_prompt(prompt_input, devkit_dir, project_dir)
-    print(json.dumps(res, indent=2, ensure_ascii=False))
+    if "--compact" in sys.argv[1:]:
+        text = compact(res, project_dir)
+        if text:
+            print(text)
+    else:
+        print(json.dumps(res, indent=2, ensure_ascii=False))

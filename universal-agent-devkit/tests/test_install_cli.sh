@@ -95,7 +95,9 @@ P="$(newproj p_cli)"; mkdir -p "$P/commands"; echo "module.exports = 1" > "$P/co
 bash "$INSTALL" -t "$P" -a claude -p none >"$TMP/out" 2>&1; rc=$?
 [ "$rc" = 0 ] && [ -f "$P/commands/build.js" ] && [ ! -L "$P/commands" ] && [ ! -e "$P/commands_old" ] \
   && ok "O4 project commands/build.js left in place, no commands_old" || fail "O4 commands/ was moved (rc=$rc)"
-grep -q "belongs to your project" "$TMP/out" && ok "O4 installer warns it skipped commands/" || fail "O4 no warning printed"
+[ -L "$P/commands/fix.md" ] && [ -e "$P/commands/audit-gate.md" ] \
+  && ok "O4 DevKit commands placed inside the project's commands/ (DevKit paths resolve)" || fail "O4 DevKit commands missing from commands/"
+grep -q "source code" "$TMP/out" && ok "O4 installer says commands/ is kept as source code" || fail "O4 no notice printed"
 
 # ---------------------------------------------------------------- L-6 / K-13 / O5 git projects
 P="$(newproj p_git)"; mkdir "$P/.git"

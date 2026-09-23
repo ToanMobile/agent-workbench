@@ -12,6 +12,7 @@ PROFILE="ask"
 MODE="symlink"
 LANGUAGE=""   # output language; resolved below: --lang > $DEVKIT_LANG > project .active-profile.json > vi
 ASSUME_YES=0
+GITHOOKS=1    # install the git pre-commit gate in git projects (--no-githooks to skip)
 
 PROFILES_AVAILABLE="$(cd "$DEVKIT_ROOT/profiles" && for d in */; do [ -f "$d/profile.json" ] && printf '%s ' "${d%/}"; done)"
 PROFILES_AVAILABLE="${PROFILES_AVAILABLE% }"
@@ -42,6 +43,8 @@ Options:
   -l, --lang <code>       Output language of the installer, profile and gate: en | vi
                           (default: \$DEVKIT_LANG, then the project's saved language, then vi)
   -s, --skip-existing     Keep project hooks/commands/agents/skills that share a DevKit name
+      --no-githooks       Do not install the git pre-commit gate (installed by default in git
+                          projects: every commit, also outside the agent, is statically checked)
   -y, --yes               Non-interactive: all agents, profile from the detected domain
   -h, --help              Show this help message
 
@@ -115,6 +118,8 @@ while [[ $# -gt 0 ]]; do
       SKIP_EXISTING=1; shift ;;
     -y|--yes)
       ASSUME_YES=1; shift ;;
+    --no-githooks)
+      GITHOOKS=0; shift ;;
     -h|--help)
       show_help; exit 0 ;;
     *)
@@ -266,10 +271,19 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   placed=()
   for item in rules skills commands; do
     if is_foreign_project_dir "$TARGET_DIR/$item"; then
-      # The project's own directory (e.g. a CLI's commands/build.js): never rename it.
-      echo "  ⚠️  $item/ belongs to your project — left untouched, DevKit $item/ NOT installed there." >&2
-      echo "      (agents still get DevKit skills/commands via .claude/ and .agents/skills/)" >&2
-      continue
+      if devkit_is_agent_content_dir "$TARGET_DIR/$item" "$item"; then
+        # The project's own agent material: DevKit is the core, theirs goes to the
+        # project tier (.agents/local/<item>/) and is linked back where names are free.
+        devkit_local_absorb_dir "$TARGET_DIR/$item" "$item" || exit 1
+      else
+        # The project's source code (e.g. a CLI's commands/build.js): moving it would
+        # break the build. Keep it and place every DevKit item inside, so every DevKit
+        # path resolves; a same-named project file goes to the project tier.
+        echo "  ⚠️  $item/ $(L "là source code của dự án — giữ nguyên, đặt từng item DevKit vào trong" "is the project's source code — kept; DevKit items placed inside it")" >&2
+        devkit_place_into_dir "$DEVKIT_ROOT/$item" "$TARGET_DIR/$item" "$MODE" || exit 1
+        placed+=("$item/")
+        continue
+      fi
     fi
     devkit_place "$DEVKIT_ROOT/$item" "$TARGET_DIR/$item" "$MODE"
     placed+=("$item/")
@@ -383,6 +397,39 @@ GI_EOF
     python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$GI_BLOCK" "$TARGET_DIR/.gitignore" "universal-agent-devkit" --comment-style=hash >/dev/null
     rm -f "$GI_BLOCK"
     echo "  - .gitignore: DevKit state and *_old backups excluded"
+  fi
+fi
+
+# 5b. Git pre-commit gate: the post-fix gate's static checks on every commit, also
+#     commits made outside the agent. A project's own pre-commit hook is never
+#     replaced (githooks.sh prints the line to chain it instead).
+if [ "$GITHOOKS" = 1 ] && [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && git -C "$TARGET_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+  bash "$DEVKIT_ROOT/scripts/githooks.sh" install "$TARGET_DIR" 2>&1 | sed 's/^/  /' || true
+fi
+
+# 5c. The same gates for the other agents that support hooks (OpenAI Codex, Gemini CLI,
+#     Cursor): hooks/agent_bridge.sh + the bridged hooks go to .agents/hooks/, and
+#     scripts/agent_hooks.py registers them in .codex/hooks.json, .gemini/settings.json
+#     and .cursor/hooks.json (only DevKit-owned entries are ever touched).
+if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
+  bridge_platforms=""
+  for agent_item in "${AGENT_LIST[@]}"; do
+    case "$(echo "$agent_item" | tr '[:upper:]' '[:lower:]' | xargs)" in
+      all) bridge_platforms="codex gemini cursor" ;;
+      codex|chatgpt|openai) bridge_platforms="$bridge_platforms codex" ;;
+      gemini|antigravity) bridge_platforms="$bridge_platforms gemini" ;;
+      cursor) bridge_platforms="$bridge_platforms cursor" ;;
+    esac
+  done
+  if [ -n "$bridge_platforms" ]; then
+    mkdir -p "$TARGET_DIR/.agents/hooks"
+    for h in agent_bridge.sh block-dangerous-git.sh hardware_safety_gate.sh session_context.sh \
+             prompt_context.sh regression_gate.sh; do
+      devkit_place "$DEVKIT_ROOT/hooks/$h" "$TARGET_DIR/.agents/hooks/$h" "$MODE"
+    done
+    for p in $bridge_platforms; do
+      python3 "$DEVKIT_ROOT/scripts/agent_hooks.py" install "$p" "$TARGET_DIR" || true
+    done
   fi
 fi
 

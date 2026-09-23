@@ -57,15 +57,18 @@ echo "▶ [Test 2] Installing DevKit on Existing Old Project..."
 bash "$DEVKIT_ROOT/bin/install.sh" -t "$OLD_DIR" -y -p universal
 
 echo "▶ [Test 2] Verifying X_old Preservation..."
-# 1-3. The project's OWN rules/, skills/, commands/ directories are never renamed
-#      (renaming them would break code that imports from them): left in place, untouched.
+# 1-3. The project's own rules/, skills/, commands/ hold only agent material: DevKit is
+#      the core and is installed there; the project's content moves to the project tier
+#      .agents/local/<dir>/ (never *_old), and its skills/commands are linked back in.
 for d in rules skills commands; do
-  [ -d "$OLD_DIR/$d" ] && [ ! -L "$OLD_DIR/$d" ] || { echo "❌ FAIL: project's own $d/ was replaced"; exit 1; }
+  [ -L "$OLD_DIR/$d" ] || { echo "❌ FAIL: DevKit $d/ not installed over the project's agent material"; exit 1; }
   [ ! -e "$OLD_DIR/${d}_old" ] || { echo "❌ FAIL: project's own $d/ was renamed to ${d}_old"; exit 1; }
 done
-grep -q "PROPRIETARY TEAM RULE 123" "$OLD_DIR/rules/custom_team_rule.md" || { echo "❌ FAIL: User's rules content was corrupted/lost!"; exit 1; }
-grep -q "CUSTOM BILLING LOGIC 456" "$OLD_DIR/skills/custom-billing-skill/SKILL.md" || { echo "❌ FAIL: User's skills content was corrupted/lost!"; exit 1; }
-grep -q "CUSTOM SLASH COMMAND 789" "$OLD_DIR/commands/custom-cmd.md" || { echo "❌ FAIL: User's commands content was corrupted/lost!"; exit 1; }
+grep -q "PROPRIETARY TEAM RULE 123" "$OLD_DIR/.agents/local/rules/custom_team_rule.md" || { echo "❌ FAIL: User's rules content was corrupted/lost!"; exit 1; }
+grep -q "CUSTOM BILLING LOGIC 456" "$OLD_DIR/.agents/local/skills/custom-billing-skill/SKILL.md" || { echo "❌ FAIL: User's skills content was corrupted/lost!"; exit 1; }
+grep -q "CUSTOM SLASH COMMAND 789" "$OLD_DIR/.agents/local/commands/custom-cmd.md" || { echo "❌ FAIL: User's commands content was corrupted/lost!"; exit 1; }
+grep -q "CUSTOM BILLING LOGIC 456" "$OLD_DIR/.agents/skills/custom-billing-skill/SKILL.md" || { echo "❌ FAIL: project skill not linked back into .agents/skills"; exit 1; }
+grep -q "CUSTOM SLASH COMMAND 789" "$OLD_DIR/.claude/commands/custom-cmd.md" || { echo "❌ FAIL: project command not linked back into .claude/commands"; exit 1; }
 grep -q "LEGACY CLAUDE COMMAND" "$OLD_DIR/.claude/commands/legacy.md" || { echo "❌ FAIL: User's .claude command was lost!"; exit 1; }
 
 # 4. CLAUDE_old.md
@@ -84,7 +87,7 @@ grep -q "OLD CURSOR RULES" "$OLD_DIR/.cursorrules_old" || { echo "❌ FAIL: User
 [ -e "$OLD_DIR/.claude/commands/qc.md" ] || { echo "❌ FAIL: DevKit commands missing in .claude/commands"; exit 1; }
 [ -e "$OLD_DIR/.agents/skills/qc" ] || { echo "❌ FAIL: DevKit skills missing in .agents/skills"; exit 1; }
 
-echo "✔ [Test 2 PASS] Old Project: project dirs left in place, user configs preserved in *_old!"
+echo "✔ [Test 2 PASS] Old Project: DevKit installed as core, project content in .agents/local, configs in *_old!"
 
 # --- TEST 3: agent-kit list-old Verification ---
 echo "▶ [Test 3] Testing 'agent-kit list-old' command..."

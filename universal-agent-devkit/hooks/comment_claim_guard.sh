@@ -11,7 +11,7 @@
 # does not exist) plus one wrong line reference.
 #
 # SCOPE: scans ONLY the text just written (Edit.new_string / Write.content), only
-# its comment lines, in .kt/.java/.kts files. Never re-scans the whole file, so
+# its comment lines, in //-comment languages of the active profile (devkit_profile.py). Never re-scans the whole file, so
 # pre-existing comments do not fire on every edit.
 #
 # THREE FAMILIES ONLY (precision > recall, same policy as claim_check):
@@ -50,13 +50,14 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 CC_INPUT="${INPUT}" CC_LOG="${LOG_DIR}/comment_claim_guard.log" \
-CC_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
+CC_TS="$(date +%Y-%m-%dT%H:%M:%S)" CCG_HOOKDIR="$(cd "$(dirname "$0")" && pwd)" CCG_REPO="${REPO_ROOT}" \
 python3 <<'PY'
 import os, sys, json, re
 
 raw = os.environ.get("CC_INPUT", "")
 log = os.environ.get("CC_LOG", "/dev/null")
 ts  = os.environ.get("CC_TS", "?")
+repo = os.environ.get("CCG_REPO", ".")
 
 def logline(s):
     try:
@@ -75,7 +76,14 @@ inp = d.get("tool_input") or {}
 if not isinstance(inp, dict):
     sys.exit(0)
 path = inp.get("file_path") or ""
-if not isinstance(path, str) or not path.endswith((".kt", ".java", ".kts")):
+try:
+    sys.dont_write_bytecode = True  # no __pycache__ inside the project's .claude/hooks
+    sys.path.insert(0, os.environ.get("CCG_HOOKDIR", ""))
+    from devkit_profile import SLASH_COMMENT_EXTS, source_exts
+    exts = tuple(e for e in source_exts(repo) if e in SLASH_COMMENT_EXTS)
+except Exception:
+    exts = (".kt", ".java", ".kts")
+if not isinstance(path, str) or not path.endswith(exts):
     sys.exit(0)
 
 # Only the text written by THIS call.

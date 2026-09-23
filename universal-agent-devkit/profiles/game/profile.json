@@ -28,5 +28,8 @@
     "android-real-device-qa",
     "compose-recomp-audit",
     "deploy"
+  ],
+  "source_extensions": [
+    ".cs"
   ]
 }

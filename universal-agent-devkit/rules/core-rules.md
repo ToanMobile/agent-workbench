@@ -17,12 +17,12 @@ Thứ tự: Làm & Chạy test cục bộ → Self Review (Diff + DEMO/LIVE) →
    - Giữ nguyên 2 chế độ DEMO / LIVE (mọi bảng nghiệp vụ mới phải có cột mode nếu hệ thống hỗ trợ dual mode).
    - Chạy đủ bộ test cục bộ (`npm test`, `gradlew test`). Thử nghiệm trên các chế độ tương ứng.
 3. **Bằng chứng nghiệm thu & Báo cáo Tự nhiên Súc tích (BẮT BUỘC):**
-   - MỌI báo cáo kiểm thử / nghiệm thu BẮT BUỘC phải kèm **ảnh minh chứng trạng thái THÀNH CÔNG (Pass / Success State)** (badge PASS) và xuất trình **Báo Cáo Nghiệm Thu 4 Mục** súc tích bằng ngôn ngữ tự nhiên:
+   - MỌI báo cáo kiểm thử / nghiệm thu BẮT BUỘC có **bằng chứng thật của trạng thái THÀNH CÔNG**: thay đổi có UI/thiết bị → ảnh chụp màn hình PASS; CLI/backend/thư viện → output thật của lệnh test (không bịa ảnh cho thứ không có giao diện). Kèm **Báo Cáo Nghiệm Thu 4 Mục**, mỗi mục 1–2 dòng (vừa giới hạn 12 dòng ở §13):
      1. **Đã fix được gì (What Was Fixed):** Tên lỗi, nguyên nhân gốc, cơ chế lỗi, bằng chứng đối lập (RED ➔ GREEN).
      2. **Đã chặn đứng bug cũ nào (Zero Reopened Bugs):** Danh sách các rào chắn bất biến lịch sử (`immutable_guards`) và test hồi quy được chạy lại đạt `[x] PASS`.
      3. **Nguy cơ bug mới nào đã triệt tiêu (Zero Collateral Damage):** Kết quả rà soát điểm gọi ngược (inbound callers) và module liên đới, xác nhận không có tác dụng phụ.
      4. **Trạng thái an toàn mã nguồn:** Kết quả quét bí mật/token (SẠCH), chống code lười biếng (0 placeholder), và phân tích tĩnh Alibaba OCR (0 leak).
-   - Báo cáo thiếu ảnh hoặc thiếu 4 mục trên bị coi là CHƯA ĐỦ ĐIỀU KIỆN nghiệm thu.
+   - Báo cáo thiếu bằng chứng hoặc thiếu 4 mục trên bị coi là CHƯA ĐỦ ĐIỀU KIỆN nghiệm thu.
 4. **Commit & Bàn giao:**
    - Commit bằng ngôn ngữ rõ ràng, tiền tố conventional: `feat:`, `fix:`, `test:`, `chore:`, `docs:`.
    - Báo cáo kết quả kiểm thử kèm ảnh nghiệm thu thành công đầy đủ cho Tech Lead / Reviewer.
@@ -129,17 +129,18 @@ Mọi dòng mã sinh ra hoặc sửa đổi BẮT BUỘC phải tuân thủ 5 ng
    - Worker chỉ nộp kết quả thực thi kèm bằng chứng ảnh chụp (Visual Proof) và danh sách test đã pass.
    - Leader soi git diff độc lập, chạy lại cổng kiểm toán chất lượng (`postfix-gate`), và chỉ khi 100% tiêu chí đạt chuẩn mới thực hiện bàn giao hoặc commit.
 
-## 16. Cơ Chế Tự Động Kích Hoạt Kỹ Năng (Autonomous Skill Execution — Zero Manual Effort)
+## 16. Cơ Chế Tự Động Kích Hoạt Kỹ Năng (Autonomous Skill Execution)
+> Phân biệt rõ: **[hook]** = harness tự chạy, model không bỏ qua được; phần còn lại là việc model phải tự giác làm (không hook nào ép). Danh sách hook theo nền tảng: `AGENTS.md` §7.
 1. **Quy tắc Tự Giác Kỹ Nghệ (Zero Manual Overhead):**
    - AI Agent BẮT BUỘC phải chủ động phân tích ngữ cảnh, yêu cầu và phạm vi ảnh hưởng của tác vụ để nạp và thực thi các Kỹ năng chuyên biệt (`skills/`) phù hợp.
    - TUYỆT ĐỐI KHÔNG bắt người dùng phải gõ lệnh slash command (như `/fix`, `/qc`, `/ocr`, `/giao`) hay chạy thủ công bằng tay.
 2. **Tự Động Chuỗi Hóa Quy Trình (Autonomous Skill Chaining):**
-   - **Mọi yêu cầu đầu vào (Prompt ngắn đời thường):** Bắt buộc chạy `context-enricher` (`./scripts/enrich_context.py`) để mở rộng 5 chiều (dò AST/Graph, nạp active profile, tra cứu bẫy instincts, tiêm yêu cầu ngầm định debounce/a11y/mainthread) trước khi viết dòng code đầu tiên.
+   - **Mọi yêu cầu đầu vào:** **[hook]** `prompt_context.sh` tự chèn ngữ cảnh `context-enricher` (loại việc, yêu cầu ngầm định, bẫy instincts khớp kèm số dòng, luật RED→GREEN) — đọc và làm theo; tự dò AST/Graph cho vùng code liên quan trước khi viết dòng code đầu tiên.
    - **Khi sửa bug:** Tự động kết hợp `fixbugs` (Paired Executable Oracle RED ➔ GREEN) ➔ `observability-instrumentation` (log audit) ➔ `verification-before-completion`.
    - **Khi thiết kế / refactor:** Tự động kết hợp `grill-plan` (stress-test) ➔ `deep-module-design` (interface seam) / `deprecation-migration` ➔ `documentation-and-adrs` (ghi ADR).
    - **Khi làm việc với Android:** Tự động kích hoạt `android-real-device-qa` (đo FPS SurfaceFlinger, dump view hierarchy, ANR logcat triage, DEX scan).
    - **Khi điều phối Leader PM ↔ Worker:** Tự động kích hoạt `giao` (giao thức 7 giai đoạn có cổng nghiệm thu cứng).
-   - **Trước khi hoàn tất:** Tự động chạy `open-code-review` và xuất báo cáo nghiệm thu 4 mục kèm ảnh chụp PASS.
+   - **Trước khi hoàn tất:** chạy review context sạch (`open-code-review` / `principal-code-reviewer`; **[hook]** `review_gate.sh` chặn dừng khi code đổi mà chưa review) và báo cáo nghiệm thu 4 mục với bằng chứng ở §2.3.
 3. **Điều kiện kích hoạt từng skill:** bảng điều phối theo giai đoạn vòng đời ở `AGENTS.md` §8.2 (nguồn duy nhất).
 
 ## 17. Quy Chuẩn Tối Ưu Hóa Token & Quản Trị Ngân Sách Ngữ Cảnh (Token Economics & Context Budget Management)

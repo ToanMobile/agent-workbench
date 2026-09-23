@@ -493,6 +493,21 @@ run_case "allowed: git branch -d merged" block-dangerous-git.sh 0 \
   '{"tool_name": "Bash", "tool_input": {"command": "git branch -d merged"}}'
 run_case "allowed: git diff -- file" block-dangerous-git.sh 0 \
   '{"tool_name": "Bash", "tool_input": {"command": "git diff -- file"}}'
+# The pre-commit gate (agent-kit githooks) must not be skippable by the agent.
+run_case "git commit --no-verify blocked" block-dangerous-git.sh 2 \
+  '{"tool_name": "Bash", "tool_input": {"command": "git commit --no-verify -m x"}}'
+run_case "git commit -nm (no-verify cluster) blocked" block-dangerous-git.sh 2 \
+  '{"tool_name": "Bash", "tool_input": {"command": "git commit -nm x"}}'
+run_case "git -c core.hooksPath=... commit blocked" block-dangerous-git.sh 2 \
+  '{"tool_name": "Bash", "tool_input": {"command": "git -c core.hooksPath=/dev/null commit -m x"}}'
+run_case "DEVKIT_PRECOMMIT=0 git commit blocked" block-dangerous-git.sh 2 \
+  '{"tool_name": "Bash", "tool_input": {"command": "DEVKIT_PRECOMMIT=0 git commit -m x"}}'
+run_case "git push --no-verify blocked" block-dangerous-git.sh 2 \
+  '{"tool_name": "Bash", "tool_input": {"command": "git push --no-verify"}}'
+run_case "allowed: commit message containing -n" block-dangerous-git.sh 0 \
+  '{"tool_name": "Bash", "tool_input": {"command": "git commit -am \"fix -n flag\""}}'
+run_case "allowed: git commit --amend --no-edit" block-dangerous-git.sh 0 \
+  '{"tool_name": "Bash", "tool_input": {"command": "git commit --amend --no-edit"}}'
 # 2026-09-23 QA K-1/K-2: bypasses via subshells, keywords, wrapper option values,
 # variables in command position, aliases, interpreters — and false positives.
 gitcase() {
@@ -519,6 +534,32 @@ gitcase 2 'git checkout -B main'
 gitcase 2 'git rebase main'
 gitcase 2 'git restore a.kt'
 gitcase 0 'git restore --staged a.kt'
+# restore of an existing file is allowed only after a backup of its current content
+RESTORE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hookrestore.XXXXXX")"
+printf 'uncommitted work\n' > "${RESTORE_DIR}/w.kt"
+( cd "${RESTORE_DIR}" && printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git restore w.kt"}}' \
+    | CLAUDE_PROJECT_DIR="${RESTORE_DIR}" bash "${HOOKS}/block-dangerous-git.sh" >/dev/null 2>&1 )
+rc=$?
+if [ "$rc" -eq 0 ] && grep -rqs "uncommitted work" "${RESTORE_DIR}/.claude/audit-gate/restore-backup/"; then
+  PASS=$((PASS + 1)); printf '  ok   %-46s exit=%s\n' "git restore <file> allowed after backup" "$rc"
+else
+  FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ git restore <file> allowed after backup (rc=$rc)"; printf '  FAIL %-46s\n' "git restore <file> allowed after backup"
+fi
+( cd "${RESTORE_DIR}" && printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git restore ."}}' \
+    | CLAUDE_PROJECT_DIR="${RESTORE_DIR}" bash "${HOOKS}/block-dangerous-git.sh" >/dev/null 2>&1 )
+rc=$?
+if [ "$rc" -eq 2 ]; then PASS=$((PASS + 1)); printf '  ok   %-46s exit=%s\n' "git restore . still blocked" "$rc"
+else FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ git restore . still blocked (rc=$rc)"; printf '  FAIL %-46s\n' "git restore . still blocked"; fi
+( cd "${RESTORE_DIR}" && rm -rf .claude && printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git restore w.kt && git reset --hard"}}' \
+    | CLAUDE_PROJECT_DIR="${RESTORE_DIR}" bash "${HOOKS}/block-dangerous-git.sh" >/dev/null 2>&1 )
+rc=$?
+if [ "$rc" -eq 2 ] && [ ! -d "${RESTORE_DIR}/.claude/audit-gate/restore-backup" ]; then
+  PASS=$((PASS + 1)); printf '  ok   %-46s exit=%s\n' "blocked command leaves no restore backup" "$rc"
+else FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ blocked command leaves no restore backup (rc=$rc)"; printf '  FAIL %-46s\n' "blocked command leaves no restore backup"; fi
+rm -rf "${RESTORE_DIR}"
 gitcase 0 'git rebase --continue'
 gitcase 0 'git rm --cached a.kt'
 gitcase 0 'timeout 5 npm test'
@@ -537,8 +578,11 @@ echo
 echo "hardware_safety_gate.sh"
 hwcase() {
   want="$1"; c="$2"
-  run_case "hw-gate[${want}]: ${c}" hardware_safety_gate.sh "${want}" \
-    "$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "${c}")"
+  shift 2
+  # The developer's own device policy (~/.config, env) must not leak into the cases.
+  run_case "hw-gate[${want}]: ${c}${1:+ [${1%%,*}…]}" hardware_safety_gate.sh "${want}" \
+    "$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "${c}")" \
+    XDG_CONFIG_HOME="${SANDBOX}/xdg" ADB_DENY_SERIALS= ADB_ALLOW_SERIALS= ANDROID_SERIAL= "$@"
 }
 hwcase 2 'adb remount'
 hwcase 2 'adb -s emulator-5554 remount'
@@ -559,6 +603,46 @@ run_case "hw-gate: missing python3 fails closed" hardware_safety_gate.sh 2 \
   '{"tool_name":"Bash","tool_input":{"command":"ls"}}' PATH="${NOJQ_BIN}"
 run_case "hw-gate: override honoured" hardware_safety_gate.sh 0 \
   '{"tool_name":"Bash","tool_input":{"command":"adb remount"}}' HARDWARE_OVERRIDE=1
+# Device policy (the Geely EX2 lesson: two personal phones on the same USB hub as the
+# rig). Fake adb answers `get-serialno` with the serial adb itself would pick.
+HW_BIN="${SANDBOX}/hw-bin"; mkdir -p "${HW_BIN}"
+cat > "${HW_BIN}/adb" <<'FAKE_ADB'
+#!/usr/bin/env bash
+S=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s) S="$2"; shift 2 ;;
+    get-serialno) S="${S:-${ANDROID_SERIAL:-${FAKE_SERIAL:-}}}"
+                  [ -n "$S" ] || { echo "error: no devices/emulators found" >&2; exit 1; }
+                  echo "$S"; exit 0 ;;
+    *) shift ;;
+  esac
+done
+FAKE_ADB
+chmod +x "${HW_BIN}/adb"
+HWP="PATH=${HW_BIN}:${PATH}"
+DENY="ADB_DENY_SERIALS=RFCW504KFKJ,RFCWA1KQT1Y"
+hwcase 2 'adb -s RFCW504KFKJ shell ls' "${DENY}"
+hwcase 0 'adb -s IVI01 shell ls' "${DENY}"
+hwcase 2 'adb shell am start -n x/.Y' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
+hwcase 0 'adb shell am start -n x/.Y' "${DENY}" "${HWP}" FAKE_SERIAL=IVI01
+hwcase 0 'adb shell ls' "${DENY}" "${HWP}"
+hwcase 2 'ANDROID_SERIAL=RFCW504KFKJ adb shell ls' "${DENY}" "${HWP}"
+hwcase 2 'cd app && timeout 30 adb -d install a.apk' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
+hwcase 2 'bash -c "adb -s RFCW504KFKJ reboot"' "${DENY}"
+hwcase 2 'adb -s "$DEV" shell ls' "${DENY}"
+hwcase 0 'adb devices' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
+hwcase 0 'grep adb notes.txt' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
+hwcase 2 'adb -s IVI02 shell ls' ADB_ALLOW_SERIALS=IVI01
+hwcase 0 'adb -s IVI01 shell ls' ADB_ALLOW_SERIALS=IVI01
+mkdir -p "${SANDBOX}/xdg/universal-agent-devkit"
+printf '# my phones\nRFCW504KFKJ\n' > "${SANDBOX}/xdg/universal-agent-devkit/adb-denylist"
+hwcase 2 'adb -s RFCW504KFKJ shell ls'
+rm -rf "${SANDBOX}/xdg"
+printf 'IVI01  # the rig\n' > "${SANDBOX}/.adb-allowlist"
+hwcase 2 'adb -s RFCW504KFKJ shell ls'
+hwcase 0 'adb -s IVI01 shell ls'
+rm -f "${SANDBOX}/.adb-allowlist"
 echo
 
 # ── precode_gate.sh — PreToolUse Edit|Write ─────────────────────────────────
@@ -618,6 +702,34 @@ run_case "loop guard releases on re-Stop #2" claim_check.sh 0 \
   "{\"session_id\":\"cc-loop\",\"transcript_path\":\"${EMPTY_TR}\",\"stop_hook_active\":true,\"last_assistant_message\":\"Lỗi nằm ở Ghost.kt:4211.\"}"
 echo
 
+# ── session_context.sh / prompt_context.sh — SessionStart / UserPromptSubmit ──
+# Context loaders: never block (exit 0); output is what the model gets.
+echo "session_context.sh / prompt_context.sh"
+ctx_case() { # name hook payload expect-substring ("" = expect no output)
+  out="$(printf '%s' "$3" | env CLAUDE_PROJECT_DIR="${CTX_PROJ}" bash "${HOOKS}/$2" 2>/dev/null)"; got=$?
+  if [ "${got}" -eq 0 ] && { { [ -z "$4" ] && [ -z "${out}" ]; } || { [ -n "$4" ] && printf '%s' "${out}" | grep -q -- "$4"; }; }; then
+    PASS=$((PASS + 1)); printf '  ok   %-46s exit=%s\n' "$1" "${got}"
+  else
+    FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ $1 (exit=${got}, output: $(printf '%s' "${out}" | head -2 | tr '\n' ' '))"
+    printf '  FAIL %-46s\n' "$1"
+  fi
+}
+CTX_PROJ="$(mktemp -d "${TMPDIR:-/tmp}/hookctx.XXXXXX")"
+mkdir -p "${CTX_PROJ}/.agents"
+printf '### [INSTINCT-001] Chống bấm đúp nút thanh toán (double-click)\n- **Hiện tượng lỗi:** click nhanh gọi API hai lần, debounce thiếu\n' > "${CTX_PROJ}/.agents/instincts.md"
+printf '{"profile":"web"}' > "${CTX_PROJ}/.active-profile.json"
+ctx_case "session start lists the profile" session_context.sh '{}' "profile: web"
+ctx_case "session start maps traps with line numbers" session_context.sh '{}' "L1 \[INSTINCT-001\]"
+ctx_case "prompt: bug fix gets paired RED→GREEN rule" prompt_context.sh '{"prompt":"sửa lỗi nút thanh toán bị bấm 2 lần"}' "ĐỎ trước khi sửa"
+ctx_case "prompt: matching project trap is cited" prompt_context.sh '{"prompt":"sửa lỗi nút thanh toán bị bấm 2 lần"}' "INSTINCT-001"
+ctx_case "prompt: slash command adds nothing" prompt_context.sh '{"prompt":"/compact"}' ""
+ctx_case "prompt: chit-chat adds nothing" prompt_context.sh '{"prompt":"cảm ơn bạn nhiều nhé"}' ""
+PROMPT_CONTEXT_SAVE="${PROMPT_CONTEXT:-}"; export PROMPT_CONTEXT=0
+ctx_case "prompt: escape hatch PROMPT_CONTEXT=0" prompt_context.sh '{"prompt":"sửa lỗi nút thanh toán bị bấm 2 lần"}' ""
+unset PROMPT_CONTEXT; [ -n "${PROMPT_CONTEXT_SAVE}" ] && export PROMPT_CONTEXT="${PROMPT_CONTEXT_SAVE}"
+rm -rf "${CTX_PROJ}"
+
 # ── test_evidence_gate.sh — Stop ────────────────────────────────────────────
 echo "test_evidence_gate.sh"
 run_case "test-pass claim with zero XML blocked" test_evidence_gate.sh 2 \
@@ -669,7 +781,8 @@ run_case "proof missing postimage provenance cannot authorize outcome" test_evid
 run_case "proof before the final edit is stale" test_evidence_gate.sh 2 \
   "{\"session_id\":\"h5-stale\",\"transcript_path\":\"${STALE_FIX_PROOF_TR}\",\"last_assistant_message\":\"Đã fix reader|logic.wrong_branch|open|empty-input; scope sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.\"}"
 run_case "failed edit after proof does not make proof stale" test_evidence_gate.sh 0 \
-  "{\"session_id\":\"h5-failed-edit\",\"transcript_path\":\"${FAILED_EDIT_AFTER_PROOF_TR}\",\"last_assistant_message\":\"Đã fix reader|logic.wrong_branch|open|empty-input; scope sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, content sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.\"}"
+  "{\"session_id\":\"h5-failed-edit\",\"transcript_path\":\"${FAILED_EDIT_AFTER_PROOF_TR}\",\"last_assistant_message\":\"Đã fix reader|logic.wrong_branch|open|empty-input; scope sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, content sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.\"}" \
+  LESSON_REMINDER=0  # proof acceptance, not the lesson reminder
 run_case "edit with id but no result makes prior proof stale" test_evidence_gate.sh 2 \
   "{\"session_id\":\"h5-unknown-edit\",\"transcript_path\":\"${UNKNOWN_EDIT_AFTER_PROOF_TR}\",\"last_assistant_message\":\"Đã fix reader|logic.wrong_branch|open|empty-input; scope sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, content sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.\"}"
 run_case "successful tool after proof makes prior proof non-final" test_evidence_gate.sh 2 \
@@ -685,15 +798,18 @@ run_case "open write before workflow makes proof non-final" test_evidence_gate.s
 run_case "write result after workflow result makes proof non-final" test_evidence_gate.sh 2 \
   "{\"session_id\":\"h5-late-write\",\"transcript_path\":\"${LATE_WRITE_RESULT_PROOF_TR}\",\"last_assistant_message\":\"Đã fix reader|logic.wrong_branch|open|empty-input; scope sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, content sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.\"}"
 run_case "correlated final workflow proof permits its exact fixed claim" test_evidence_gate.sh 0 \
-  "{\"session_id\":\"h5-proof\",\"transcript_path\":\"${CORRELATED_FIX_PROOF_TR}\",\"last_assistant_message\":\"Đã fix reader|logic.wrong_branch|open|empty-input; scope sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, content sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.\"}"
+  "{\"session_id\":\"h5-proof\",\"transcript_path\":\"${CORRELATED_FIX_PROOF_TR}\",\"last_assistant_message\":\"Đã fix reader|logic.wrong_branch|open|empty-input; scope sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, content sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.\"}" \
+  LESSON_REMINDER=0  # proof acceptance, not the lesson reminder
 run_case "Workflow script shape permits exact fixed claim" test_evidence_gate.sh 0 \
-  "{\"session_id\":\"h5-script-proof\",\"transcript_path\":\"${CORRELATED_SCRIPT_PROOF_TR}\",\"last_assistant_message\":\"Đã fix reader|logic.wrong_branch|open|empty-input; scope sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, content sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.\"}"
+  "{\"session_id\":\"h5-script-proof\",\"transcript_path\":\"${CORRELATED_SCRIPT_PROOF_TR}\",\"last_assistant_message\":\"Đã fix reader|logic.wrong_branch|open|empty-input; scope sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, content sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.\"}" \
+  LESSON_REMINDER=0  # proof acceptance, not the lesson reminder
 run_case "lookalike Workflow script cannot authorize outcome" test_evidence_gate.sh 2 \
   "{\"session_id\":\"h5-forged-script\",\"transcript_path\":\"${FORGED_SCRIPT_PROOF_TR}\",\"last_assistant_message\":\"Đã fix reader|logic.wrong_branch|open|empty-input; scope sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, content sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.\"}"
 run_case "conflicting Workflow name and script cannot authorize" test_evidence_gate.sh 2 \
   "{\"session_id\":\"h5-mixed-locator\",\"transcript_path\":\"${MIXED_LOCATOR_PROOF_TR}\",\"last_assistant_message\":\"Đã fix reader|logic.wrong_branch|open|empty-input; scope sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, content sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.\"}"
 run_case "correlated final Skill proof permits its exact fixed claim" test_evidence_gate.sh 0 \
-  "{\"session_id\":\"h5-skill-proof\",\"transcript_path\":\"${CORRELATED_SKILL_PROOF_TR}\",\"last_assistant_message\":\"Đã fix \`reader|logic.wrong_branch|open|empty-input\`; scope \`sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\`, current \`sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\`, content \`sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\`.\"}"
+  "{\"session_id\":\"h5-skill-proof\",\"transcript_path\":\"${CORRELATED_SKILL_PROOF_TR}\",\"last_assistant_message\":\"Đã fix \`reader|logic.wrong_branch|open|empty-input\`; scope \`sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\`, current \`sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\`, content \`sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\`.\"}" \
+  LESSON_REMINDER=0  # proof acceptance, not the lesson reminder
 run_case "wrong currentId cannot authorize fixed outcome" test_evidence_gate.sh 2 \
   "{\"session_id\":\"h5-current\",\"transcript_path\":\"${CORRELATED_FIX_PROOF_TR}\",\"last_assistant_message\":\"Đã fix reader|logic.wrong_branch|open|empty-input; scope sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd, content sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.\"}"
 run_case "wrong contentHash cannot authorize fixed outcome" test_evidence_gate.sh 2 \
@@ -1050,6 +1166,31 @@ echo
 echo "review_gate.sh"
 run_case "no uncommitted kotlin → nothing to review" review_gate.sh 0 \
   "{\"session_id\":\"rg1\",\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"xong\"}"
+# Profile-aware: on a web project an unreviewed .ts change blocks; a later
+# open-code-review Skill run counts as the review.
+RG_WEB="$(mktemp -d "${TMPDIR:-/tmp}/hookrgweb.XXXXXX")"
+( cd "${RG_WEB}" && git init -q . && git config user.email t@t && git config user.name t \
+  && mkdir -p src .agents/active-profile && echo "export const a = 1" > src/app.ts \
+  && cp "${HOOKS}/../profiles/web/profile.json" .agents/active-profile/profile.json \
+  && git add src && git commit -qm init && echo "export const a = 2" > src/app.ts )
+python3 - "${RG_WEB}" <<'PY'
+import json, os, sys
+d = sys.argv[1]
+edit = {"type": "tool_use", "id": "e1", "name": "Edit",
+        "input": {"file_path": os.path.join(d, "src", "app.ts"), "old_string": "1", "new_string": "2"}}
+review = {"type": "tool_use", "id": "s1", "name": "Skill", "input": {"skill": "open-code-review"}}
+for name, blocks in (("unreviewed.jsonl", [edit]), ("reviewed.jsonl", [edit, review])):
+    with open(os.path.join(d, name), "w") as fh:
+        for b in blocks:
+            fh.write(json.dumps({"message": {"content": [b]}}) + "\n")
+PY
+run_case "web profile: unreviewed .ts change blocks" review_gate.sh 2 \
+  "{\"session_id\":\"rgweb1\",\"cwd\":\"${RG_WEB}\",\"transcript_path\":\"${RG_WEB}/unreviewed.jsonl\",\"last_assistant_message\":\"xong\"}" \
+  CLAUDE_PROJECT_DIR="${RG_WEB}"
+run_case "web profile: open-code-review after the edit passes" review_gate.sh 0 \
+  "{\"session_id\":\"rgweb2\",\"cwd\":\"${RG_WEB}\",\"transcript_path\":\"${RG_WEB}/reviewed.jsonl\",\"last_assistant_message\":\"xong\"}" \
+  CLAUDE_PROJECT_DIR="${RG_WEB}"
+rm -rf "${RG_WEB}"
 echo
 
 # ── 2026-09-23 QA re-audit (K-4 … K-14) ─────────────────────────────────────
@@ -1140,7 +1281,90 @@ def w(name, result_text, is_error=False):
             fh.write(json.dumps({"message": {"content": [b]}}) + "\n")
 w("green.jsonl", "Tests: 12 passed, 12 total")
 w("red.jsonl", "Tests: 2 failed, 10 passed, 12 total", True)
+# check 7 paired RED→GREEN: red run -> source edit -> green run
+def cycle(name, first_red=True, second_green=True):
+    blocks = [
+        {"type": "tool_use", "id": "r0", "name": "Bash", "input": {"command": "npm test"}},
+        {"type": "tool_result", "tool_use_id": "r0", "is_error": first_red,
+         "content": "Tests: 1 failed, 11 passed, 12 total" if first_red else "Tests: 12 passed, 12 total"},
+        {"type": "tool_use", "id": "e1", "name": "Edit", "input": {"file_path": src, "old_string": "a", "new_string": "b"}},
+        {"type": "tool_use", "id": "g1", "name": "Bash", "input": {"command": "npm test"}},
+        {"type": "tool_result", "tool_use_id": "g1", "is_error": not second_green,
+         "content": "Tests: 12 passed, 12 total" if second_green else "Tests: 1 failed, 11 passed, 12 total"},
+    ]
+    with open(os.path.join(d, name), "w") as fh:
+        for b in blocks:
+            fh.write(json.dumps({"message": {"content": [b]}}) + "\n")
+cycle("redgreen.jsonl")
+with open(os.path.join(d, "redgreen.jsonl")) as src_tr, open(os.path.join(d, "redgreen_learned.jsonl"), "w") as fh:
+    fh.write(src_tr.read())
+    fh.write(json.dumps({"message": {"content": [{"type": "tool_use", "id": "l1", "name": "Bash",
+             "input": {"command": "agent-kit learn \"Login token race\" --cause=x --rule=y"}}]}}) + "\n")
+# RED-check outside the JVM: a test file written this session must run red, then green
+def script_case(name, test_path, runs):
+    blocks = [{"type": "tool_use", "id": "w1", "name": "Write",
+               "input": {"file_path": os.path.join(d, test_path), "content": "test"}}]
+    for i, (cmd, out, err) in enumerate(runs):
+        if cmd == "EDIT":
+            blocks.append({"type": "tool_use", "id": f"e{i}", "name": "Edit",
+                           "input": {"file_path": src, "old_string": "a", "new_string": "b"}})
+            continue
+        blocks += [{"type": "tool_use", "id": f"r{i}", "name": "Bash", "input": {"command": cmd}},
+                   {"type": "tool_result", "tool_use_id": f"r{i}", "is_error": err, "content": out}]
+    with open(os.path.join(d, name), "w") as fh:
+        for b in blocks:
+            fh.write(json.dumps({"message": {"content": [b]}}) + "\n")
+JEST_RED = ("npm test", "FAIL src/login.test.ts\nTests: 1 failed, 11 passed, 12 total", True)
+JEST_GREEN = ("npm test", "PASS src/login.test.ts\nTests: 12 passed, 12 total", False)
+script_case("jest_tdd.jsonl", "src/login.test.ts", [JEST_RED, ("EDIT", "", False), JEST_GREEN])
+script_case("jest_greenonly.jsonl", "src/login.test.ts", [("EDIT", "", False), JEST_GREEN])
+script_case("jest_otherred.jsonl", "src/login.test.ts",
+            [("npm test", "FAIL src/cart.test.ts\nTests: 1 failed, 11 passed, 12 total", True), ("EDIT", "", False), JEST_GREEN])
+script_case("go_tdd.jsonl", "pkg/foo_test.go",
+            [("go test ./...", "--- FAIL: TestFoo (0.00s)\nFAIL\tpkg 0.01s", True), ("EDIT", "", False),
+             ("go test ./...", "ok  \tpkg\t0.01s", False)])
+# a `cat` of an old failing XML is not a red run
+with open(os.path.join(d, "catred.jsonl"), "w") as fh:
+    for b in [
+        {"type": "tool_use", "id": "c0", "name": "Bash", "input": {"command": "cat build/test-results/TEST-Old.xml"}},
+        {"type": "tool_result", "tool_use_id": "c0", "content": '<testsuite name="com.x.OldTest" tests="1" failures="1">'},
+        {"type": "tool_use", "id": "e1", "name": "Edit", "input": {"file_path": src, "old_string": "a", "new_string": "b"}},
+        {"type": "tool_use", "id": "g1", "name": "Bash", "input": {"command": "npm test"}},
+        {"type": "tool_result", "tool_use_id": "g1", "content": "Tests: 12 passed, 12 total"},
+    ]:
+        fh.write(json.dumps({"message": {"content": [b]}}) + "\n")
+cycle("greengreen.jsonl", first_red=False)
+cycle("redred.jsonl", second_green=False)
 PY
+run_case "check 7: paired RED→GREEN backs 'đã fix'" test_evidence_gate.sh 0 \
+  "{\"session_id\":\"c7rg\",\"transcript_path\":\"${NODE_PROJ}/redgreen.jsonl\",\"last_assistant_message\":\"Đã fix bug đăng nhập: test đỏ trước khi sửa, 12/12 test pass sau khi sửa.\"}" \
+  CLAUDE_PROJECT_DIR="${NODE_PROJ}" LESSON_REMINDER=0
+# A proven fix with no lesson recorded: the stop is held ONCE with the learn command.
+run_case "lesson: proven fix, nothing recorded → reminded" test_evidence_gate.sh 2 \
+  "{\"session_id\":\"lesson1\",\"transcript_path\":\"${NODE_PROJ}/redgreen.jsonl\",\"last_assistant_message\":\"Đã fix bug đăng nhập: test đỏ trước khi sửa, 12/12 test pass sau khi sửa.\"}" \
+  CLAUDE_PROJECT_DIR="${NODE_PROJ}"
+run_case "lesson: reminded once per session only" test_evidence_gate.sh 0 \
+  "{\"session_id\":\"lesson1\",\"transcript_path\":\"${NODE_PROJ}/redgreen.jsonl\",\"last_assistant_message\":\"Đã fix bug đăng nhập: test đỏ trước khi sửa, 12/12 test pass sau khi sửa.\"}" \
+  CLAUDE_PROJECT_DIR="${NODE_PROJ}"
+run_case "lesson: agent-kit learn in the session → no reminder" test_evidence_gate.sh 0 \
+  "{\"session_id\":\"lesson2\",\"transcript_path\":\"${NODE_PROJ}/redgreen_learned.jsonl\",\"last_assistant_message\":\"Đã fix bug đăng nhập: test đỏ trước khi sửa, 12/12 test pass sau khi sửa.\"}" \
+  CLAUDE_PROJECT_DIR="${NODE_PROJ}"
+for c in "jest_tdd:0:test written, run RED, fixed, run GREEN" "jest_greenonly:2:new test only ever ran GREEN" \
+         "jest_otherred:2:a RED run of another test file does not count" "go_tdd:0:go test RED then GREEN (no file names)"; do
+  f="${c%%:*}"; rest="${c#*:}"; want="${rest%%:*}"; label="${rest#*:}"
+  run_case "RED-check (script tests): ${label}" test_evidence_gate.sh "${want}" \
+    "{\"session_id\":\"rc-${f}\",\"transcript_path\":\"${NODE_PROJ}/${f}.jsonl\",\"last_assistant_message\":\"Đã chạy test, 12/12 test pass.\"}" \
+    CLAUDE_PROJECT_DIR="${NODE_PROJ}"
+done
+run_case "check 7: cat of an old red XML is not a RED run" test_evidence_gate.sh 2 \
+  "{\"session_id\":\"c7cat\",\"transcript_path\":\"${NODE_PROJ}/catred.jsonl\",\"last_assistant_message\":\"Đã fix bug đăng nhập.\"}" \
+  CLAUDE_PROJECT_DIR="${NODE_PROJ}"
+run_case "check 7: green-only run cannot back 'đã fix'" test_evidence_gate.sh 2 \
+  "{\"session_id\":\"c7gg\",\"transcript_path\":\"${NODE_PROJ}/greengreen.jsonl\",\"last_assistant_message\":\"Đã fix bug đăng nhập.\"}" \
+  CLAUDE_PROJECT_DIR="${NODE_PROJ}"
+run_case "check 7: still red after the edit cannot back 'đã fix'" test_evidence_gate.sh 2 \
+  "{\"session_id\":\"c7rr\",\"transcript_path\":\"${NODE_PROJ}/redred.jsonl\",\"last_assistant_message\":\"Đã fix bug đăng nhập.\"}" \
+  CLAUDE_PROJECT_DIR="${NODE_PROJ}"
 run_case "K-10 npm test green backs claim (no gradle)" test_evidence_gate.sh 0 \
   "{\"session_id\":\"k10g\",\"transcript_path\":\"${NODE_PROJ}/green.jsonl\",\"last_assistant_message\":\"Đã chạy test, 12/12 test pass.\"}" \
   CLAUDE_PROJECT_DIR="${NODE_PROJ}"

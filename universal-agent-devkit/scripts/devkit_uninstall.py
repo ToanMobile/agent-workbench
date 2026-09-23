@@ -429,13 +429,32 @@ def main(argv):
         strip_block(plan, os.path.join(project, name))
     strip_block(plan, os.path.join(project, ".gitignore"), style="hash")
 
+    # A matrix generated from the project's test runner is recognised by regenerating it,
+    # which reads the active profile — decide now, before step 3 removes that link.
+    import matrix_detect  # noqa: E402,PLC0415 - sibling module in scripts/
+    generated_matrices = set()
+    for rel_path in (".agents/regression_matrix.active.json", "templates/regression_matrix.active.json"):
+        p = os.path.join(project, rel_path)
+        if os.path.isfile(p) and not os.path.islink(p):
+            with open(p, "rb") as f:
+                if matrix_detect.is_generated_unchanged(project, f.read()):
+                    generated_matrices.add(p)
+
     # 3. Items placed by the installer / adapters / agent-config.
     for name in ("rules", "skills", "commands", "AGENTS.md"):
         devkit_item(plan, os.path.join(project, name))
+    # A root rules/ skills/ commands/ that is the project's source code: the installer
+    # placed DevKit items inside it one by one — remove those, keep the project's files.
+    for name in ("rules", "skills", "commands"):
+        d = os.path.join(project, name)
+        if os.path.isdir(d) and not os.path.islink(d) and not os.path.isfile(os.path.join(d, DIR_MANIFEST)):
+            for n in sorted(devkit_names(name)):
+                devkit_item(plan, os.path.join(d, n))
     for sub, names in ((".claude/hooks", hook_names),
                        (".claude/commands", devkit_names("commands")),
                        (".claude/agents", devkit_names("agents")),
-                       (".agents/skills", devkit_names("skills"))):
+                       (".agents/skills", devkit_names("skills")),
+                       (".agents/hooks", devkit_names("hooks"))):
         d = os.path.join(project, sub)
         if os.path.isdir(d) and not os.path.islink(d):
             for n in sorted(names):
@@ -459,7 +478,7 @@ def main(argv):
         if os.path.islink(p) and link_is_devkit_owned(p):
             plan.remove(p)
         elif os.path.isfile(p):
-            if any(same_bytes(p, k) for k in known if os.path.isfile(k)):
+            if p in generated_matrices or any(same_bytes(p, k) for k in known if os.path.isfile(k)):
                 plan.remove(p)
             else:
                 plan.keep(p, "ma trận đã bị sửa", "matrix was edited")
@@ -467,6 +486,24 @@ def main(argv):
     data = load_json(ap)
     if isinstance(data, dict) and os.path.isdir(os.path.join(pdir, str(data.get("profile", "")))):
         plan.remove(ap)
+
+    # 4a. DevKit gates registered for Codex / Gemini CLI / Cursor (agent_hooks.py):
+    #     only entries running agent_bridge.sh; a config left with nothing else is removed.
+    import agent_hooks  # noqa: E402 - sibling module in scripts/
+    for platform in sorted(agent_hooks.PLATFORMS):
+        try:
+            path, action = agent_hooks.uninstall(platform, project, apply=apply)
+        except (OSError, ValueError) as e:
+            plan.keep(os.path.join(project, agent_hooks.PLATFORMS[platform]["file"]),
+                      f"không đọc được JSON ({e})", f"cannot read as JSON ({e})")
+            continue
+        if action == "remove-file":
+            plan.say("đã gỡ" if apply else "sẽ gỡ", "removed" if apply else "would remove", path)
+            plan.removed += 1
+        elif action == "strip":
+            plan.say("đã sửa" if apply else "sẽ sửa", "cleaned" if apply else "would clean", path,
+                     tr(" (bỏ hook DevKit)", " (DevKit hooks removed)"))
+            plan.removed += 1
 
     # 4b. The git pre-commit stub from `agent-kit githooks install` (marked; a project's
     #     own hook never carries the marker and is left alone).
@@ -484,7 +521,7 @@ def main(argv):
     # 5. Directories the installer created and that are now empty.
     if apply:
         for sub in (".claude/hooks", ".claude/commands", ".claude/agents", ".claude",
-                    ".agents/skills", ".agents", "templates"):
+                    ".agents/skills", ".agents/hooks", ".agents", "templates"):
             remove_if_empty_dir(plan, os.path.join(project, sub))
 
     verb = tr("đã gỡ/sửa", "removed/cleaned") if apply else tr("sẽ gỡ/sửa", "would remove/clean")

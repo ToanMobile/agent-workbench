@@ -24,6 +24,9 @@
 #      `nice -n 5`, `timeout 5`); `$var` in command position is treated as git;
 #      `git -c alias.x=VAL x` checks VAL. Also blocked: `rm -f`, `rebase`,
 #      `switch -C`, `checkout -B`. `restore --staged` (index only) is allowed.
+#      (2026-09-23) `restore <file>…` of explicit files is allowed after the hook copies
+#      them to .claude/audit-gate/restore-backup/; skipping git hooks is blocked:
+#      `commit|push --no-verify`, `commit -n`, `-c core.hooksPath=…`, `DEVKIT_PRECOMMIT=0`.
 #      Not a full shell parser: indirection through files/functions is out of scope.
 #   4. FAIL-CLOSED: if the command can't be tokenized, or contains `$(`/backticks
 #      whose output could become a command, the raw text is scanned with a broad
@@ -36,7 +39,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 printf '%s' "$INPUT" | python3 -c '
-import json, re, shlex, sys
+import json, os, re, shlex, shutil, sys, time
 
 try:
     cmd = json.load(sys.stdin).get("tool_input", {}).get("command") or ""
@@ -116,6 +119,17 @@ def danger_in_git(sub, args):
         return "update-ref -d xoá ref"
     if sub in ("filter-branch", "filter-repo"):
         return f"{sub} viết lại lịch sử"
+    # Skipping the git hooks skips the pre-commit secret/quality gate (githooks.sh).
+    # `commit -n` is --no-verify; the value of -m/-F/-c/-C/-t is message text, not a flag.
+    if sub in ("commit", "push", "merge", "am", "cherry-pick", "revert") and "--no-verify" in long_:
+        return f"{sub} --no-verify bỏ qua git hook (pre-commit kiểm secret/chất lượng)"
+    if sub == "commit":
+        prev = ""
+        for a in args:
+            if (a.startswith("-") and not a.startswith("--") and "n" in a[1:]
+                    and prev not in ("-m", "-F", "-c", "-C", "-t", "--message", "--file", "--author", "--date")):
+                return "commit -n (--no-verify) bỏ qua pre-commit hook"
+            prev = a
     if sub == "worktree" and pos[:1] == ["remove"] and ("f" in short or "--force" in long_):
         return "worktree remove --force mất thay đổi"
     return None
@@ -142,15 +156,77 @@ def git_danger_from_alias(val):
         return "alias git không phân tích được"
     return danger_in_git(parts[0], parts[1:]) if parts else None
 
+HOOK_OFF_ENV = re.compile(r"^DEVKIT_PRECOMMIT=0$")
+
+RESTORE_FLAGS = {"--worktree", "-W", "--staged", "-S", "--quiet", "-q", "--progress", "--no-progress"}
+PENDING_BACKUPS = []   # files to copy once the WHOLE command is allowed
+CHANGES_DIR = []       # a cd/pushd anywhere makes relative paths unknowable here
+
+def backup_then_allow_restore(args):
+    """`git restore <file>...` naming existing regular files is how an agent undoes its
+    own bad edit. It is allowed once the current content is copied to
+    .claude/audit-gate/restore-backup/<time>/ — so it can never cost the owner
+    uncommitted work. Directories, `.`, globs, pathspec magic and unknown options
+    keep being blocked."""
+    paths, i = [], 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            paths += args[i + 1:]
+            break
+        if a.startswith("--source="):
+            i += 1
+        elif a in ("--source", "-s"):
+            i += 2
+        elif a in RESTORE_FLAGS:
+            i += 1
+        elif a.startswith("-"):
+            return False
+        else:
+            paths.append(a)
+            i += 1
+    if not paths or CHANGES_DIR:
+        return False
+    root = os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    for p in paths:
+        if p in (".", "./") or any(c in p for c in "*?[:") or not os.path.isfile(p) or os.path.islink(p):
+            return False
+        if not os.path.realpath(p).startswith(root + os.sep):
+            return False
+    PENDING_BACKUPS.extend(os.path.realpath(p) for p in paths)
+    return True
+
+def do_backups():
+    """Copy the files a restore will overwrite — only after the whole command passed."""
+    if not PENDING_BACKUPS:
+        return True
+    root = os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    audit = os.path.join(root, ".claude", "audit-gate")
+    dest = os.path.join(audit, "restore-backup", time.strftime("%Y%m%d-%H%M%S"))
+    try:
+        for p in PENDING_BACKUPS:
+            rel = os.path.relpath(p, root)
+            os.makedirs(os.path.dirname(os.path.join(dest, rel)), exist_ok=True)
+            shutil.copy2(p, os.path.join(dest, rel))
+        if not os.path.exists(os.path.join(audit, ".gitignore")):
+            with open(os.path.join(audit, ".gitignore"), "w") as fh:
+                fh.write("*\n")
+    except OSError:
+        return False
+    return True
+
 def analyse_simple(tokens, depth):
     i = 0
+    hooks_off = False
     while i < len(tokens) and (tokens[i] in KEYWORDS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[i])):
+        hooks_off = hooks_off or bool(HOOK_OFF_ENV.match(tokens[i]))
         i += 1
     while i < len(tokens):
         prog = tokens[i].rsplit("/", 1)[-1]
         if prog == "env":
             i += 1
             while i < len(tokens) and (tokens[i].startswith("-") or "=" in tokens[i]):
+                hooks_off = hooks_off or bool(HOOK_OFF_ENV.match(tokens[i]))
                 i += 2 if tokens[i] in ("-u", "-C", "-S") else 1
         elif prog in WRAPPERS:
             i = skip_wrapper(tokens, i, prog)
@@ -161,6 +237,8 @@ def analyse_simple(tokens, depth):
     if i >= len(tokens):
         return None
     prog, rest = tokens[i].rsplit("/", 1)[-1], tokens[i + 1:]
+    if prog in ("cd", "pushd", "popd"):
+        CHANGES_DIR.append(prog)
     # `$g reset --hard` / `${GIT} clean -f`: a variable in command position may be git.
     if prog.startswith("$"):
         return danger_in_git(rest[0], rest[1:]) if rest else None
@@ -213,6 +291,9 @@ def analyse_simple(tokens, depth):
         if opt == "-c" and j + 1 < len(rest) and rest[j + 1].startswith("alias.") and "=" in rest[j + 1]:
             k, v = rest[j + 1].split("=", 1)
             aliases[k[len("alias."):]] = v
+        cfg = rest[j + 1] if opt == "-c" and j + 1 < len(rest) else rest[j].split("=", 1)[-1] if opt == "-c" else ""
+        if cfg.lower().startswith("core.hookspath"):
+            return "git -c core.hooksPath=… tắt git hook (pre-commit kiểm secret/chất lượng)"
         j += 2 if (opt in GIT_OPTS_WITH_ARG and "=" not in rest[j]) else 1
     if j >= len(rest):
         return None
@@ -220,6 +301,11 @@ def analyse_simple(tokens, depth):
         reason = git_danger_from_alias(aliases[rest[j]])
         if reason:
             return f"alias {rest[j]} → {reason}"
+    relocated = any(o.split("=", 1)[0] in ("-C", "--git-dir", "--work-tree") for o in rest[:j])
+    if rest[j] == "restore" and not relocated and backup_then_allow_restore(rest[j + 1:]):
+        return None
+    if hooks_off and rest[j] in ("commit", "merge", "am", "cherry-pick", "revert"):
+        return "DEVKIT_PRECOMMIT=0 tắt pre-commit hook (kiểm secret/chất lượng)"
     return danger_in_git(rest[j], rest[j + 1:])
 
 RAW = re.compile(
@@ -232,7 +318,9 @@ RAW = re.compile(
     r"|switch\s+[^;&|\n]*-C\b|checkout\s+[^;&|\n]*-B\b"
     r"|push\s+[^;&|\n]*(\s-[A-Za-z]*[fd]\b|--force|--delete|--mirror|--prune|\s[+:][^\s])"
     r"|stash\s+(drop|clear)|reflog\s+(expire|delete)|gc\s+[^;&|\n]*--prune|update-ref\s+[^;&|\n]*-d\b"
-    r"|filter-branch|filter-repo)")
+    r"|filter-branch|filter-repo"
+    r"|(commit|push|merge)\s+[^;&|\n]*--no-verify|commit\s+(?:[^;&|\n]*\s)?-[A-Za-z]*n\b"
+    r"|-c\s*core\.hooks[pP]ath)")
 
 def analyse(text, depth=0):
     if depth > 5:
@@ -261,7 +349,10 @@ def analyse(text, depth=0):
             segment.append(tok)
     return None
 
+CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd))  # any cd, even after the restore
 reason = analyse(cmd)
+if not reason and not do_backups():
+    reason = "không sao lưu được file trước khi restore"
 if reason:
     print(f"BLOCKED: {cmd!r} — {reason}. User đã chặn thao tác git khó revert này. "
           "Nếu thực sự cần, User sẽ tự chạy qua prefix \"!\".", file=sys.stderr)

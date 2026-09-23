@@ -55,7 +55,7 @@ Skills live in `skills/` (source of truth); `.agents/skills/` and `commands/` li
 
 1. User instruction in the current task.
 2. This `AGENTS.md` (Master Rules & Universal Multi-Agent Architecture).
-3. Project contracts, commands, and memory.
+3. Project contracts, commands, and memory — including the project tier rules in `.agents/local/rules/` (the project's own rules, moved there by the DevKit installer). Read them before editing code. They add project and domain rules on top of this file; where one contradicts §6 or `rules/core-rules.md`, the DevKit rule wins and the conflict is reported to the user.
 4. Existing code patterns and tests.
 
 ---
@@ -110,11 +110,17 @@ Required order: plan → reviewer approves the *plan* → gaps found → revise 
 
 ## 7. Multi-Agent Integration Guide
 
-`AGENTS.md` is the universal, open industry standard for AI coding agents. The 4 supported platforms natively consume this single file:
-- **Claude Code (Anthropic):** Reads `AGENTS.md` at project root, loads `.claude-plugin/plugin.json`, executes slash commands, and enforces safety hooks.
-- **OpenAI Codex / ChatGPT:** Reads `AGENTS.md` as project instructions and coding guidelines.
-- **Antigravity (Google / Gemini):** Reads `AGENTS.md` at project root and discovers skills in `.agents/skills/*/SKILL.md`.
-- **Cursor IDE:** Natively reads `AGENTS.md` from the project root for workspace rules.
+`AGENTS.md` is the shared rule file for every supported agent. What is **enforced by hooks** (runs without the model choosing to) differs per platform:
+
+| Platform | Reads the rules | Enforced by hooks |
+|---|---|---|
+| **Claude Code** | `CLAUDE.md` → `@AGENTS.md` import; `.claude/commands`, `.claude/agents` | All DevKit hooks (`.claude/settings.json`): session/prompt context, git & device guards, read-before-edit, regression tests, test/“fixed” evidence, fresh-context review, secrets |
+| **OpenAI Codex** | `AGENTS.md` | `.codex/hooks.json` via `hooks/agent_bridge.sh`: session/prompt context, git & device guards, regression tests on Stop |
+| **Gemini CLI** | `AGENTS.md` / `GEMINI.md`, `.agents/skills` | `.gemini/settings.json` via the bridge: same set as Codex |
+| **Cursor** | `AGENTS.md` | `.cursor/hooks.json` via the bridge: session context, git & device guards, regression tests on stop |
+| **Antigravity** | `AGENTS.md`, `.agents/skills` | none (no hook API) — rules only |
+
+Every platform also gets the git **pre-commit** gate (`agent-kit githooks install`, installed by `agent-kit init` in git projects). Hooks that read Claude's transcript (review, test evidence, claims) exist only on Claude Code.
 - **Synchronization:** Run `./bin/agent-kit sync` anytime skills, commands, or hooks are updated.
 
 ---
@@ -139,7 +145,7 @@ Whenever the user asks to fix a bug, refactor code, or change behavior in a comp
    - Execute the targeted test for the fix (RED → GREEN).
    - Re-run the existing module test suite to verify all existing tests remain 100% GREEN. Never alter existing assertions to mask regressions.
 6. **Deterministic Review with OpenCodeReview (`ocr`):**
-   - Run `ocr review` or `ocr delegate preview` to audit the diff before declaring completion.
+   - If the `ocr` CLI is installed (the DevKit does not install it), run `ocr review` or `ocr delegate preview` on the diff; otherwise use the `open-code-review` skill or a `principal-code-reviewer` subagent. On Claude Code the Stop hook `review_gate.sh` requires one of these after the last code edit.
 
 > **Modular Domain Profiles:**
 > Domain-specific and project-specific rules (such as Automotive Hardware, FlymeAuto, or CAN Bus specifics) are kept isolated in `profiles/` (e.g. `profiles/automotive/`) to keep the DevKit core 100% universal and domain-agnostic.
@@ -157,12 +163,12 @@ Whenever the user asks to fix a bug, refactor code, or change behavior in a comp
 >
 > Switch with `agent-kit profile <id>`; the active one is linked at `.agents/active-profile`.
 
-### 8.2 Autonomous Skill Routing Matrix (Bảng Điều Phối Tự Động Toàn Bộ 25 Kỹ Năng - Zero Manual Effort)
-The agent MUST trigger these skills from context by itself and NEVER ask the user to type a slash command (rule and skill chains: `rules/core-rules.md` §16):
+### 8.2 Routing Matrix — which skill for which task (the agent picks from context)
+The agent MUST trigger these skills from context by itself and NEVER ask the user to type a slash command (rule and skill chains: `rules/core-rules.md` §16). Choosing a skill is the model's job — no hook forces it. What hooks DO force is listed in §7 and marked **[hook]** below.
 
 | Giai Đoạn Vòng Đời | Kỹ Năng Tự Động Kích Hoạt | Ngữ Cảnh / Tình Huống Kỹ Thuật Tự Động Kích Hoạt | Hành Động Tự Động Của Agent |
 |---|---|---|---|
-| **0. Gateway & Context** | `context-enricher` | **MỌI YÊU CẦU ĐẦU VÀO / PROMPT NGẮN CỦA USER** | **CỔNG BẮT BUỘC:** Tự động mở rộng 5 chiều: dò tìm AST/Graph, nạp active profile, bẫy instincts, tiêm yêu cầu ngầm định (debounce >= 1000ms, a11y >= 48dp, non-blocking main thread, mask PII, paired oracle). |
+| **0. Gateway & Context** | `context-enricher` | **MỌI YÊU CẦU ĐẦU VÀO / PROMPT NGẮN CỦA USER** | **[hook]** `prompt_context.sh` (UserPromptSubmit) tự chèn: loại việc, yêu cầu ngầm định (debounce ≥ 1000ms, a11y ≥ 48dp, main thread, PII), bẫy instincts khớp kèm số dòng, và luật paired RED→GREEN khi sửa bug; `session_context.sh` (SessionStart) nạp mục lục instincts + trạng thái checklist. Agent vẫn tự dò AST/Graph. |
 | **0. Gateway & Context** | `session-handoff` | Phiên làm việc dài, context window > 50%, trước refactor lớn | Tự động tóm tắt tiến độ (checkpoint), dọn sạch ngữ cảnh thừa, chống suy thoái năng lực suy luận. |
 | **1. Discovery & Arch** | `codebase-memory` | Khám phá dự án, tìm symbol, hàm, route, truy vết blast radius, Cypher | **SSOT ĐỒ THỊ:** Tự động resolve symbol, trace inbound/outbound callers, truy vấn Cypher, hoặc fallback Read/Grep an toàn. |
 | **1. Discovery & Arch** | `spec-driven-development` | Tính năng mới phức tạp chạm $\ge 2$ module, $\ge 3$ files hoặc > 200 LOC | Tự động soạn thảo spec kỹ thuật, phân tích assumptions và edge cases trước khi code. |
@@ -185,7 +191,7 @@ The agent MUST trigger these skills from context by itself and NEVER ask the use
 | **5. Acceptance & Delivery** | `merge-conflict-resolver` | Xung đột git khi merge, rebase, cherry-pick | Tự động phân tích AST và ngữ cảnh để giải quyết xung đột mà không làm mất mát logic. |
 | **5. Acceptance & Delivery** | `qc` | Chạy bộ kiểm thử tự động, lint check, unit test | Phát hiện build tool rồi chạy test runner tương ứng; Translation gate và Metalava API check cho Android/Gradle. |
 | **5. Acceptance & Delivery** | `open-code-review` | Soát mã nguồn tự động trước khi bàn giao | Tự động chạy phân tích hunk tất định (Alibaba OCR), quét rò rỉ bộ nhớ và code lười biếng. |
-| **5. Acceptance & Delivery** | `verification-before-completion` | Trước khi tuyên bố Xong / Pass / Hoàn tất | Tự động chạy `postfix-gate --run-tests` (diff tĩnh + test hồi quy) và đối chiếu bằng chứng; UI/thiết bị/RED→GREEN phải kiểm riêng vì gate không xác minh chúng. |
+| **5. Acceptance & Delivery** | `verification-before-completion` | Trước khi tuyên bố Xong / Pass / Hoàn tất | Chạy `postfix-gate --run-tests` (diff tĩnh + test hồi quy) và đối chiếu bằng chứng. **[hook]** Khi có ma trận (`.agents/regression_matrix.active.json`), Stop hook `regression_gate.sh` tự chạy nó; `test_evidence_gate.sh` chặn "đã fix" không có cặp test ĐỎ→XANH trong phiên. UI/thiết bị kiểm riêng (`adb-safe-exec.sh`). |
 | **5. Acceptance & Delivery** | `deploy` | Đóng gói APK/AAB, kiểm tra signing, xuất bản release (chỉ Android/Gradle) | Tự động kiểm tra chứng chỉ ký (signing key), version bump và sẵn sàng phát hành. |
 
 
@@ -204,7 +210,7 @@ The DevKit provides 10 council subagent prompts in `agents/councils/` (5 focus a
 
 ### 8.4 Engineering Excellence & Failure Prevention
 - **`DESIGN.md`, touch targets, instant feedback:** `rules/core-rules.md` §6.
-- **Instincts & Failure Memory (`.agents/instincts.md`):** Traps, anti-patterns, and past regressions are recorded so that the agent never falls into the same mistake twice.
+- **Instincts & Failure Memory (`.agents/instincts.md`):** Traps, anti-patterns and past regressions. **[hook]** Surfaced automatically — the map at session start, the matching entries on each request; recorded with `agent-kit learn` or `postfix-gate --record-lesson`. It lowers repeats; it cannot guarantee none.
 - **Lazy Senior Dev Principle (reuse first, no dependency bloat, celebrate Negative Net Diff):** `rules/core-rules.md` §4.
 - **Anti-Laziness & File Integrity (no `// ... existing code ...` placeholders, backward compatibility):** `rules/core-rules.md` §5.
 - **Compiler AST Self-Healing:** Parse compiler diagnostic logs to extract exact `file:line:col`, error codes, and caller blast radius to fix build issues methodically.

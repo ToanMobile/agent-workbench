@@ -11,7 +11,8 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export CLAUDE_PROJECT_DIR="$TMP/proj"
 mkdir -p "$TMP/bin" "$TMP/proj"
-unset ANDROID_SERIAL HARDWARE_OVERRIDE HARDWARE_SAFETY_GATE
+unset ANDROID_SERIAL HARDWARE_OVERRIDE HARDWARE_SAFETY_GATE ADB_DENY_SERIALS ADB_ALLOW_SERIALS ANDROID_SYMBOLS
+export XDG_CONFIG_HOME="$TMP/xdg"   # the developer's own device policy must not leak in
 
 # Fake adb: FAKE_DEVICES online devices; `shell am …` prints $TMP/out and exits
 # $FAKE_RC; `logcat` prints $TMP/logcat. Every call is appended to $TMP/calls.
@@ -82,6 +83,57 @@ grep -q remount "$TMP/calls" && { echo "✖ adb remount was executed"; FAILS=$((
 
 reset
 bash "$SAFE" --wait 0 >/dev/null 2>&1; check "no adb command -> usage error" 2 $?
+
+# Native crash: the tombstone debuggerd logged since T0 is kept and shown.
+native_log() {
+  cat > "$TMP/logcat" <<'LOG'
+09-23 10:00:01.000  4242  4250 F libc    : Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0 in tid 4250 (RenderThread), pid 4242 (com.example.app)
+09-23 10:00:01.200  4300  4300 F DEBUG   : *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+09-23 10:00:01.200  4300  4300 F DEBUG   : pid: 4242, tid: 4250, name: RenderThread  >>> com.example.app <<<
+09-23 10:00:01.200  4300  4300 F DEBUG   : backtrace:
+09-23 10:00:01.200  4300  4300 F DEBUG   :       #00 pc 000000000004a120  /data/app/com.example.app/lib/arm64/libnative.so (render+16)
+09-23 10:00:01.200  4300  4300 F DEBUG   :       #01 pc 000000000004b000  /data/app/com.example.app/lib/arm64/libnative.so
+09-23 10:00:01.300  1000  1000 I ActivityManager: Process com.example.app (pid 4242) has died
+LOG
+}
+reset; printf 'Status: ok\n' > "$TMP/out"; native_log
+out="$(bash "$SAFE" -p com.example.app --wait 0 -- shell am start -n com.example.app/.Main 2>&1)"; check "native crash -> FAIL" 1 $?
+printf '%s' "$out" | grep -q '#00 pc 000000000004a120' && echo "✔ raw native frames shown" || { echo "✖ raw frames missing"; FAILS=$((FAILS + 1)); }
+ls "$TMP/proj/.claude/audit-gate/adb-safe-exec/"*-tombstone.txt >/dev/null 2>&1 && echo "✔ tombstone saved as evidence" \
+  || { echo "✖ tombstone not saved"; FAILS=$((FAILS + 1)); }
+
+reset; printf 'Status: ok\n' > "$TMP/out"; native_log; mkdir -p "$TMP/sym"
+cat > "$TMP/bin/ndk-stack" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = "-sym" ] && [ -d "$2" ] && [ "$3" = "-dump" ] && grep -q '#00 pc 000000000004a120' "$4" || { echo "bad ndk-stack call: $*"; exit 1; }
+echo "#00 0x000000000004a120 libnative.so render(Frame*) native/render.cpp:42:7"
+EOF
+chmod +x "$TMP/bin/ndk-stack"
+out="$(bash "$SAFE" -p com.example.app --wait 0 --symbols "$TMP/sym" -- shell am start -n com.example.app/.Main 2>&1)"; check "native crash + --symbols -> FAIL" 1 $?
+printf '%s' "$out" | grep -q 'native/render.cpp:42' && echo "✔ ndk-stack decodes the tombstone to file:line" \
+  || { echo "✖ not decoded: $out"; FAILS=$((FAILS + 1)); }
+rm -f "$TMP/bin/ndk-stack"
+
+reset; printf 'Status: ok\n' > "$TMP/out"
+printf '09-23 10:00:01.000  4242  4250 F libc    : Fatal signal 6 (SIGABRT), code -1 in tid 4250 (main), pid 4242 (com.example.app)\n' > "$TMP/logcat"
+out="$(bash "$SAFE" -p com.example.app --wait 0 -- shell am start -n com.example.app/.Main 2>&1)"; check "native crash, tombstone not logged yet -> FAIL" 1 $?
+printf '%s' "$out" | grep -q 'longer --wait' && echo "✔ says the tombstone is not in logcat yet" || { echo "✖ no hint about --wait"; FAILS=$((FAILS + 1)); }
+
+reset
+bash "$SAFE" --symbols "$TMP/nope" --wait 0 -- shell ls >/dev/null 2>&1; check "--symbols on a missing dir -> usage error" 2 $?
+
+# Device policy: the only device online is a personal phone -> refused, nothing runs on it.
+reset
+ADB_DENY_SERIALS=emu-1 bash "$SAFE" --wait 0 -- shell am start -n x/.Y >/dev/null 2>&1; check "only device is on the denylist -> refused" 2 $?
+grep -q ' am start' "$TMP/calls" && { echo "✖ the command ran on a denied device"; FAILS=$((FAILS + 1)); } || echo "✔ nothing ran on the denied device"
+reset
+mkdir -p "$XDG_CONFIG_HOME/universal-agent-devkit"; echo "emu-9  # rig" > "$XDG_CONFIG_HOME/universal-agent-devkit/adb-allowlist"
+bash "$SAFE" --wait 0 -- shell ls >/dev/null 2>&1; check "device outside the per-user allowlist -> refused" 2 $?
+bash "$SAFE" -s emu-9 --wait 0 -- shell ls >/dev/null 2>&1; check "device on the allowlist -> PASS" 0 $?
+rm -rf "$XDG_CONFIG_HOME"
+reset
+FAKE_DEVICES=0; export FAKE_DEVICES
+ADB_DENY_SERIALS=emu-1 bash "$SAFE" -s RIG --wait 0 -- shell ls >/dev/null 2>&1; check "-s names an offline rig -> UNVERIFIED, not a policy refusal" 3 $?
 
 reset
 FAKE_DEVICES=0; export FAKE_DEVICES

@@ -12,6 +12,16 @@
 #   • fastboot [-s SERIAL …] flash|flashall|erase|format|update|oem unlock|flashing unlock
 #   • rm with recursive+force flags in any spelling (-rf, -fr, -r -f, --recursive
 #     --force) on /system, /vendor, /boot, /product, /data or /
+#   • any adb command that reaches a device outside the device policy — a
+#     developer's personal phone plugged in next to the test rig. Denylist /
+#     allowlist, one serial per line (# comments) or comma/space separated in env:
+#       ADB_DENY_SERIALS   · ~/.config/universal-agent-devkit/adb-denylist · <repo>/.adb-denylist
+#       ADB_ALLOW_SERIALS  · ~/.config/universal-agent-devkit/adb-allowlist · <repo>/.adb-allowlist
+#     (non-empty allowlist = every other serial is refused). Personal serials go in
+#     the per-user file, never in the repo. With no -s, the serial adb would pick
+#     (-d/-e/-t/ANDROID_SERIAL/the only device) is asked from `adb get-serialno`;
+#     an unresolvable target ($VAR serial, adb timeout) is refused. Host-only
+#     subcommands (devices, version, connect, kill-server …) are never checked.
 #
 # FAIL-CLOSED: malformed JSON or missing python3 → exit 2 (the command is not
 # allowed through unexamined). Empty stdin → exit 0 (no tool call to judge).
@@ -37,8 +47,8 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 2
 fi
 
-python3 -c '
-import sys, json, re
+REPO_ROOT="${REPO_ROOT}" python3 -c '
+import sys, json, re, os, shlex, shutil, subprocess
 
 raw = sys.stdin.read()
 if not raw.strip():
@@ -98,6 +108,105 @@ for pat, lab in PATTERNS:
         break
 if label is None and rm_hits(cmd):
     label = "rm -rf phân vùng hệ thống cốt lõi"
+
+
+# ── Device policy: which serial may adb touch ─────────────────────────────────
+def serial_set(env_name, file_name):
+    out = {t for t in re.split(r"[\s,;]+", os.environ.get(env_name, "")) if t}
+    cfg = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+                       "universal-agent-devkit", "adb-" + file_name)
+    for path in (cfg, os.path.join(os.environ.get("REPO_ROOT", "."), ".adb-" + file_name)):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    out.update(t for t in re.split(r"[\s,;]+", line.split("#", 1)[0]) if t)
+        except OSError:
+            pass
+    return out
+
+ADB_HOST_ONLY = {"devices", "version", "help", "start-server", "kill-server", "connect",
+                 "disconnect", "pair", "mdns", "keygen", "host-features", "server", "nodaemon"}
+ADB_VALUE_OPTS = {"-s", "-t", "-H", "-P", "-L"}
+ADB_WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "time", "timeout", "xargs"}
+
+def adb_calls(text):
+    """(adb executable token, selection options, subcommand, ANDROID_SERIAL) per adb call."""
+    for seg in re.split(r"[;&|\n]+|\$\(|`", text):
+        try:
+            toks = shlex.split(seg)
+        except ValueError:
+            toks = seg.split()
+        env_serial = os.environ.get("ANDROID_SERIAL", "")
+        # Only the word in command position (after VAR=… and sudo/env/timeout N …):
+        # `grep adb notes.txt` is not an adb call.
+        i = 0
+        while i < len(toks) and (re.match(r"^\w+=", toks[i]) or toks[i] in ADB_WRAPPERS
+                                 or (i > 0 and toks[i - 1] in ADB_WRAPPERS and re.match(r"^(-\S*|\d+\w?)$", toks[i]))):
+            if toks[i].startswith("ANDROID_SERIAL="):
+                env_serial = toks[i].split("=", 1)[1]
+            i += 1
+        if i < len(toks) and os.path.basename(toks[i]) in ("bash", "sh", "zsh") and "-c" in toks[i:]:
+            k = toks.index("-c", i)
+            if k + 1 < len(toks):
+                yield from adb_calls(toks[k + 1])
+            continue
+        if i >= len(toks) or os.path.basename(toks[i]) not in ("adb", "adb.exe"):
+            continue
+        opts, j = [], i + 1
+        while j < len(toks) and toks[j].startswith("-"):
+            if toks[j] in ADB_VALUE_OPTS and j + 1 < len(toks):
+                opts += toks[j:j + 2]; j += 2
+            else:
+                opts.append(toks[j]); j += 1
+        yield toks[i], opts, (toks[j] if j < len(toks) else ""), env_serial
+
+def target_serial(exe, opts, env_serial):
+    """(serial, None) · (None, None) when adb itself would find no single target
+    (the command then fails on its own) · (None, why) when it cannot be resolved."""
+    if "-s" in opts:
+        s = os.path.expandvars(opts[opts.index("-s") + 1])
+        return (None, "serial " + s + " không xác định được") if "$" in s else (s, None)
+    if "$" in env_serial:
+        return None, "ANDROID_SERIAL=" + env_serial + " không xác định được"
+    adb = exe if "/" in exe and os.access(exe, os.X_OK) else shutil.which("adb")
+    if not adb:
+        return None, None
+    env = dict(os.environ)
+    if env_serial:
+        env["ANDROID_SERIAL"] = env_serial
+    try:
+        r = subprocess.run([adb] + opts + ["get-serialno"], capture_output=True, text=True,
+                           timeout=8, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return None, "adb get-serialno không trả lời"
+    s = r.stdout.strip()
+    return (s, None) if r.returncode == 0 and s and s != "unknown" else (None, None)
+
+def device_violation(text):
+    deny, allow = serial_set("ADB_DENY_SERIALS", "denylist"), serial_set("ADB_ALLOW_SERIALS", "allowlist")
+    if not deny and not allow:
+        return None
+    for exe, opts, sub, env_serial in adb_calls(text):
+        if not sub or sub in ADB_HOST_ONLY:
+            continue
+        serial, why = target_serial(exe, opts, env_serial)
+        if why:
+            return "không xác định được thiết bị đích (" + why + ") — ghi rõ adb -s <SERIAL>"
+        if serial and serial in deny:
+            return "thiết bị " + serial + " nằm trong denylist (máy cá nhân / cấm đụng)"
+        if serial and allow and serial not in allow:
+            return "thiết bị " + serial + " không có trong allowlist"
+    return None
+
+if label is None:
+    dev = device_violation(cmd)
+    if dev:
+        sys.stderr.write("\n🛑 [HARDWARE SAFETY GATE REJECTED]\n")
+        sys.stderr.write("Lệnh adb bị chặn vì chạm thiết bị ngoài chính sách thiết bị:\n")
+        sys.stderr.write(f"  • {dev}\n")
+        sys.stderr.write(f"  • Lệnh: {cmd}\n\n")
+        sys.stderr.write("Chính sách: ADB_DENY_SERIALS / ADB_ALLOW_SERIALS, ~/.config/universal-agent-devkit/adb-{denylist,allowlist}, <repo>/.adb-{denylist,allowlist}.\n")
+        sys.exit(2)
 
 if label:
     sys.stderr.write("\n🛑 [HARDWARE SAFETY GATE REJECTED]\n")

@@ -29,7 +29,7 @@ if [ -f "$TARGET_DIR/GEMINI.md" ] || [ -f "$TARGET_DIR/Agent.md" ]; then
   GEMINI_TARGET="${TARGET_DIR}/GEMINI.md"
   [ -f "$TARGET_DIR/Agent.md" ] && GEMINI_TARGET="${TARGET_DIR}/Agent.md"
   GEMINI_INJECT="$DEVKIT_ROOT/templates/claude_injection_block.md"
-  python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$GEMINI_INJECT" "$GEMINI_TARGET" "universal-agent-devkit"
+  devkit_merge_block "$GEMINI_INJECT" "$GEMINI_TARGET"
 fi
 
 # AGENTS.md: shared logic (devkit link/copy vs the project's own file) — see backup_conflict.sh

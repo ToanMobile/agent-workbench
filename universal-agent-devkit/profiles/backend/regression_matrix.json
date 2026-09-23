@@ -1,5 +1,6 @@
 {
   "version": "1.0.0",
+  "enforce_as_is": true,
   "project": "Backend Service (API / Workers)",
   "description": "Ma trận hồi quy cho dịch vụ backend. Runner tự phát hiện theo go.mod / Cargo.toml / pyproject.toml / package.json; không phát hiện được thì FAIL chứ không coi là PASS.",
   "rules": [

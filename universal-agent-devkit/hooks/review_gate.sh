@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # review_gate.sh — Stop hook: enforce a FRESH-CONTEXT review of uncommitted
-# Kotlin changes before Claude can finish (kills "self-audit misses bugs").
+# code changes before Claude can finish (kills "self-audit misses bugs"). "Code" =
+# the active profile's source_extensions (hooks/devkit_profile.py): .ts/.tsx on web,
+# .swift on iOS, .py/.go/.rs on backend, .kt/.java on Android; every language when
+# no profile is active. $DEVKIT_SOURCE_EXTS overrides.
 #
 # Rationale: when Claude audits its own code it is anchored on the mental model
 # it used to write it → blind spots survive all 7 self-lenses. The fix is an
 # independent reviewer with fresh context. This gate makes that non-optional.
 #
 # BLOCK (exit 2) when BOTH hold:
-#   • uncommitted Kotlin/Java changes exist, AND
-#   • no supported review ran AFTER the last Kotlin/Java Edit/Write this session —
+#   • uncommitted code changes exist, AND
+#   • no supported review ran AFTER the last code Edit/Write this session —
 #     i.e. either none ran, or the last one ran before the latest code change
 #     (the "reviewed-then-kept-coding" hole).
 # Review = Agent/Task tool_use with subagent_type ∈ REVIEW_AGENTS, or a Skill
-# invocation of code-review / review-pr.
+# invocation of code-review / review-pr / open-code-review.
 #
 # Loop-guard: per-session attempts file, MAX_ATTEMPTS — release with a logged
 # warning if the environment genuinely can't run reviews (avoid infinite block).
@@ -40,6 +43,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 CLAIM_INPUT="${INPUT}" CLAIM_LOG="${LOG}" CLAIM_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
 CLAIM_REPO="${REPO_ROOT}" CLAIM_LOGDIR="${LOG_DIR}" CLAIM_MAX="${MAX_ATTEMPTS}" \
+CLAIM_HOOKDIR="$(cd "$(dirname "$0")" && pwd)" \
 python3 <<'PY'
 import os, sys, json, re, subprocess
 
@@ -68,7 +72,7 @@ REVIEW_AGENTS = {
     "pr-review-toolkit:type-design-analyzer",
 }
 REVIEW_SKILLS = {"code-review", "review-pr", "pr-review-toolkit:review-pr",
-                 "review-changes",
+                 "review-changes", "open-code-review",
                  # multi-lens-audit is exposed as a SKILL in this harness, not as a
                  # `Workflow` tool. Accepting it only via REVIEW_WORKFLOWS below meant
                  # running the very audit CLAUDE.md prescribes still got you blocked.
@@ -109,16 +113,25 @@ def reset_attempts():
     except Exception:
         pass
 
-# ── 1) uncommitted Kotlin changes? — modified-tracked + staged + UNTRACKED.
+try:
+    sys.dont_write_bytecode = True  # no __pycache__ inside the project's .claude/hooks
+    sys.path.insert(0, os.environ.get("CLAIM_HOOKDIR", ""))
+    from devkit_profile import source_exts
+    CODE_EXTS = source_exts(repo_root)
+except Exception:
+    CODE_EXTS = (".kt", ".java")
+PATHSPECS = ["*" + e for e in CODE_EXTS]
+
+# ── 1) uncommitted code changes? — modified-tracked + staged + UNTRACKED.
 #       Untracked new .kt (created via Write, not yet `git add`) is the most
 #       important to review, yet `git diff HEAD` omits it → union ls-files. ──
 try:
     diff = subprocess.run(
-        ["git", "-C", repo_root, "diff", "--name-only", "HEAD", "--", "*.kt", "*.java"],
+        ["git", "-C", repo_root, "diff", "--name-only", "HEAD", "--", *PATHSPECS],
         capture_output=True, text=True, timeout=10)
     untracked = subprocess.run(
         ["git", "-C", repo_root, "ls-files", "--others", "--exclude-standard",
-         "--", "*.kt", "*.java"],
+         "--", *PATHSPECS],
         capture_output=True, text=True, timeout=10)
     changed = sorted({l for l in (diff.stdout.splitlines() + untracked.stdout.splitlines())
                       if l.strip()})
@@ -128,7 +141,7 @@ except Exception as e:
 
 if not changed:
     reset_attempts()
-    logline(f"[{ts}] no uncommitted Kotlin/Java — pass")
+    logline(f"[{ts}] no uncommitted code ({"|".join(CODE_EXTS)}) — pass")
     sys.exit(0)
 
 def in_diff(fp):
@@ -166,7 +179,7 @@ if tp and os.path.exists(tp):
                 inp = blk.get("input") or {}
                 if name in ("Edit", "Write", "NotebookEdit"):
                     fp = inp.get("file_path") or inp.get("notebook_path") or ""
-                    if isinstance(fp, str) and fp.endswith((".kt", ".java")):
+                    if isinstance(fp, str) and fp.endswith(CODE_EXTS):
                         hit = in_diff(fp)
                         if hit:
                             last_edit_idx = idx
@@ -189,7 +202,7 @@ if tp and os.path.exists(tp):
 # someone else's) → nothing of mine to gate.
 if last_edit_idx == -1:
     reset_attempts()
-    logline(f"[{ts}] uncommitted Kotlin/Java exist but none edited this session "
+    logline(f"[{ts}] uncommitted code exists but none edited this session "
             f"({changed}) — pass")
     sys.exit(0)
 
@@ -225,11 +238,11 @@ if n > maxatt:
     sys.exit(0)
 
 unrev = sorted(session_unreviewed)
-logline(f"[{ts}] BLOCK (attempt {n}/{maxatt}) — unreviewed .kt: {unrev}")
+logline(f"[{ts}] BLOCK (attempt {n}/{maxatt}) — unreviewed code: {unrev}")
 lines = [
-    "⛔ REVIEW-GATE: thay đổi .kt/.java chưa được review bằng CONTEXT SẠCH.",
+    "⛔ REVIEW-GATE: thay đổi code chưa được review bằng CONTEXT SẠCH.",
     "",
-    f"{len(unrev)} file Kotlin/Java tôi sửa session này (chưa commit), chưa có",
+    f"{len(unrev)} file code tôi sửa session này (chưa commit), chưa có",
     "fresh-context review chạy SAU lần edit cuối (self-audit không tính — điểm mù):",
     "",
 ]
@@ -240,9 +253,9 @@ if len(unrev) > 20:
 lines += [
     "",
     "Bắt buộc trước khi xong — chạy review CONTEXT SẠCH (chọn 1):",
-    "  A) Agent exampleapp-code-reviewer trên diff .kt/.java.",
-    "  B) Nếu đổi test/CI: thêm test-architect-seti.",
-    "  C) Nếu đổi kiến trúc/API/module boundary: thêm android-principal-architect.",
+    "  A) Agent principal-code-reviewer (DevKit cài sẵn ở .claude/agents) trên diff.",
+    "  B) Hoặc Skill code-review / open-code-review trên diff.",
+    "  C) Nếu đổi test/CI: thêm test-architect-seti; Android đổi kiến trúc/API: android-principal-architect.",
     "  D) Hoặc Workflow 'multi-lens-audit' nếu môi trường hỗ trợ workflow.",
     "Gom finding → fix theo CLASS (không chỉ instance) → rồi mới stop.",
 ]

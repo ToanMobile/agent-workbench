@@ -29,8 +29,21 @@
 #     BLOCKED by the rule, and only you can honour that.
 #   • Whether the tests that ran are the ones covering your change: it compares
 #     timestamps and counts, not coverage of the diff.
-#   • Host-attest `check 7`. It only recognizes a scoped structured workflow
-#     result; the real executable/runtime receipts remain the main `/fix` duty.
+# ── RED-check outside the JVM: a test file (*.test.ts, test_*.py, *_test.go,
+#   *Tests.swift …) written this session that ran GREEN must have been seen RED by a
+#   runner after its last edit and before that green run (jest/vitest/pytest output
+#   must name the file; go/cargo/swift output names none, so any red run counts).
+#
+# ── lesson reminder: a proven fix ("đã fix" + RED→GREEN or workflow proof) with no
+#   `agent-kit learn` / `--record-lesson` / edit of .agents/instincts.md in the
+#   session holds the stop ONCE per session with the command. LESSON_REMINDER=0 off.
+#
+# ── check 7: an outcome claim ("đã fix") needs one of two proofs from THIS session:
+#   • a paired RED→GREEN test run — a runner result that FAILED before the last
+#     source edit and one that PASSED after it (npm/jest/pytest/cargo/go/gradle…), or
+#   • a scoped multi-lens-audit workflow result bound to the claim.
+#   It cannot tell whether the red test reproduced THIS bug — only that a red→green
+#   cycle around the fix happened.
 #   • Understand every natural-language paraphrase. The vocabulary classifier is
 #     best-effort; a message not blocked here is NOT evidence that its claim is
 #     true. The no-fabrication and paired-oracle rules remain authoritative.
@@ -387,13 +400,23 @@ TEST_RUNNER_RX = re.compile(
     r"\b(npm|yarn|pnpm|bun)\s+(run\s+)?test|\b(npx\s+)?(jest|vitest|mocha)\b|\bpytest\b|"
     r"python\S*\s+-m\s+(pytest|unittest)|\b(cargo|go|swift|dotnet|flutter|deno)\s+test\b|"
     r"\bnode\s+--test\b|\bxcodebuild\b.*\btest\b|\bmvn\s+(test|verify)\b|\bmake\s+(test|check)\b|"
-    r"\bctest\b|\brspec\b|\bphpunit\b", re.I)
+    r"\bctest\b|\brspec\b|\bphpunit\b|\bgradlew?\b[^\n|;&]*\b\w*[tT]est\w*\b", re.I)
 RUNNER_FAIL_RX = re.compile(
     r"\b[1-9]\d*\s+(failed|failing|failures?|errors?)\b|\bFAIL(ED)?\b|Tests?:\s+\d+\s+failed|"
     r"test result: FAILED|^not ok\b|\bpanicked\b|\bERRORS?\b", re.I | re.M)
 SRC_EXT = (".kt", ".kts", ".java", ".swift", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py",
            ".go", ".rs", ".dart", ".cs", ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm")
-runner_results = []        # (result_idx, use_idx, is_error, text)
+runner_results = []        # (result_idx, use_idx, is_error, text, command)
+# Test files outside the JVM (jest/vitest/pytest/go/swift…): the RED-check reads
+# runner output instead of TEST-*.xml for them.
+SCRIPT_TEST_RX = re.compile(
+    r"(\.(test|spec)\.(m|c)?[jt]sx?$|(^|/)test_[^/]*\.py$|_test\.(py|go|dart)$|Tests?\.swift$|_spec\.rb$)")
+SCRIPT_TEST_DIR_RX = re.compile(r"(^|/)(tests?|__tests__|spec)/[^/]+\.(py|[jt]sx?|mjs|cjs|rb|swift|dart|rs)$")
+TEST_FILE_IN_OUTPUT = re.compile(
+    r"[\w./-]+\.(test|spec)\.(m|c)?[jt]sx?\b|\btest_\w+\.py\b|\b\w+_test\.(go|py|dart)\b|\b\w+Tests?\.swift\b")
+script_test_idx = {}      # test file path -> transcript position of its last edit
+script_pending = {}       # test file path -> LIFO of (old, new) edits not yet undone
+script_idx_before = {}    # test file path -> [script_test_idx before each edit]
 last_src_edit_idx = -1
 no_id_tool_indices = []
 test_edit_idx = {}       # simple class name -> transcript position of its last edit
@@ -480,7 +503,8 @@ if tp and os.path.exists(tp):
                             }
                         if (use and use["name"] == "Bash"
                                 and TEST_RUNNER_RX.search(str(use["input"].get("command", "")))):
-                            runner_results.append((blk_idx, use["index"], blk.get("is_error") is True, txt))
+                            runner_results.append((blk_idx, use["index"], blk.get("is_error") is True, txt,
+                                                   str(use["input"].get("command", ""))))
                         producer_ok = bool(
                             use
                             and (
@@ -540,6 +564,19 @@ if tp and os.path.exists(tp):
                     fp = binp.get("file_path") or ""
                     if isinstance(fp, str) and fp.endswith(SRC_EXT):
                         last_src_edit_idx = blk_idx
+                    if isinstance(fp, str) and (SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp)) \
+                            and not fp.endswith((".kt", ".java")):
+                        # Same mutate/restore rule as the JVM branch below: an Edit that is the
+                        # exact inverse of the last un-undone edit rolls the marker back.
+                        o_s, n_s = binp.get("old_string"), binp.get("new_string")
+                        stk = script_pending.get(fp) or []
+                        if stk and isinstance(o_s, str) and isinstance(n_s, str) and stk[-1] == (n_s, o_s):
+                            stk.pop()
+                            script_test_idx[fp] = script_idx_before[fp].pop()
+                        else:
+                            script_pending.setdefault(fp, []).append((o_s, n_s))
+                            script_idx_before.setdefault(fp, []).append(script_test_idx.get(fp, -1))
+                            script_test_idx[fp] = blk_idx
                     if not (isinstance(fp, str) and fp.endswith((".kt", ".java")) and os.path.exists(fp)):
                         continue
                     mt = os.path.getmtime(fp)
@@ -753,8 +790,31 @@ if claimed:
         elif red < edited_at:
             redcheck.append((cls, "lần đỏ gần nhất có TRƯỚC lần sửa test cuối → verdict hết hiệu lực"))
 
+# RED-check for test files outside the JVM (no TEST-*.xml): a test file written this
+# session that later ran GREEN must have been seen RED by a runner after its last edit
+# and before that green run. When the runner output names test files (jest, vitest,
+# pytest), the red run must name this one; when it names none (go, cargo, swift), any
+# failing run counts.
+if claimed:
+    def failed(r):
+        return r[2] or RUNNER_FAIL_RX.search(r[3])
+    for fp, edited_at in sorted(script_test_idx.items()):
+        after = [r for r in runner_results if r[1] > edited_at]
+        greens = [r for r in after if not failed(r)]
+        if not greens:
+            continue                      # never ran green after the edit → check 2 covers it
+        base = os.path.basename(fp)
+        stem = re.sub(r"\.(test|spec)$", "", base.rsplit(".", 1)[0])
+        def names_this(r):
+            return base in r[3] or base in r[4] or (len(stem) >= 4 and stem in r[4])
+        reds = [r for r in after if failed(r)
+                and (names_this(r) or not TEST_FILE_IN_OUTPUT.search(r[3]))]
+        if not any(red[1] < green[1] for red in reds for green in greens):
+            redcheck.append((base, "chưa thấy runner chạy ĐỎ file test này sau lần sửa cuối (trước lần XANH)"))
+
 # ── check 7: an outcome claim needs scoped structured proof ─────────────────
 check7 = None
+fix_proven = False        # an outcome claim this session backed by real proof
 if outcome_claimed:
     def cites_exact_value(text, value):
         # Values are whole fields, not prefixes. A terminal period is allowed
@@ -805,14 +865,66 @@ if outcome_claimed:
                 break
         if not bound_proof:
             unbound_claims.append(claim["clause"].strip())
-    if unbound_claims:
-        check7 = ("claim OUTCOME ('đã fix'/'hết bug') nhưng phiên này không có "
-                  "kết quả multi-lens-audit tương quan, không lỗi, sau edit cuối, "
-                  "và bind đúng fixed key + scope cho TỪNG claim.")
+    # Second accepted proof — the paired executable oracle AGENTS.md makes mandatory,
+    # observed in this session's own tool results: a test run that FAILED before the
+    # last source edit and one that PASSED after it. A green run alone (no red before
+    # the fix) or prose in the message does not count.
+    def paired_red_green():
+        if last_src_edit_idx < 0:
+            return False
+        # Only a test RUNNER's own result counts as red: `cat` of an old TEST-*.xml
+        # prints the same failure markup and must not stand in for a real run.
+        red = any(r[1] < last_src_edit_idx and (r[2] or RUNNER_FAIL_RX.search(r[3]))
+                  for r in runner_results)
+        green = any(r[1] > last_src_edit_idx and not r[2] and not RUNNER_FAIL_RX.search(r[3])
+                    for r in runner_results)
+        return red and green
+
+    if unbound_claims and paired_red_green():
+        logline(f"[{ts}] check 7: outcome claim backed by a paired RED→GREEN test run")
+        fix_proven = True
+    elif not unbound_claims:
+        fix_proven = True
+    elif unbound_claims:
+        check7 = ("claim OUTCOME ('đã fix'/'hết bug') nhưng phiên này không có bằng chứng: "
+                  "cần một lần chạy test ĐỎ trước lần sửa code cuối và XANH sau đó (paired "
+                  "RED→GREEN), hoặc kết quả multi-lens-audit bind đúng fixed key + scope.")
+
+# ── lesson reminder: a PROVEN fix whose trap is not in the failure memory yet ─────
+# Once per session: the stop is held one time with the command to record the lesson,
+# so the next session's hooks can surface it. A second stop always passes — the model
+# may judge the bug not worth a lesson (typo, one-off) and say so.
+def lesson_reminder():
+    if not fix_proven or os.environ.get("LESSON_REMINDER", "1") == "0":
+        return None
+    flag = os.path.join(state_dir, f"lesson_reminded_{sid}")
+    if os.path.exists(flag):
+        return None
+    for use in tool_uses.values():
+        inp = use.get("input") or {}
+        if use["name"] == "Bash" and re.search(r"agent-kit\s+learn|instincts\.py\s+add|--record-lesson",
+                                               str(inp.get("command", ""))):
+            return None
+        if use["name"] in ("Edit", "Write") and str(inp.get("file_path", "")).endswith(".agents/instincts.md"):
+            return None
+    try:
+        open(flag, "w").close()
+    except OSError:
+        return None
+    return ("📝 BÀI HỌC (nhắc 1 lần mỗi phiên): phiên này đã sửa bug có bằng chứng RED→GREEN nhưng chưa ghi\n"
+            "bài học vào .agents/instincts.md. Nếu lỗi có thể tái diễn (bẫy chung, không phải lỗi đánh máy),\n"
+            "ghi lại để các phiên sau hook tự nhắc đúng lúc:\n"
+            "  agent-kit learn \"<tên bẫy>\" --cause=\"<nguyên nhân gốc>\" --rule=\"<cách phòng ngừa>\"\n"
+            "Nếu không đáng ghi, nói rõ một câu vì sao rồi dừng — nhắc này không lặp lại.\n")
 
 if not problems and not repeat_failures and not redcheck and not check7:
     logline(f"[{ts}] claim={claimed} outcome={outcome_claimed} xml={len(mtimes)} "
             f"parsed={len(parsed)} fresh={len(fresh)} — pass")
+    note = lesson_reminder()
+    if note:
+        logline(f"[{ts}] lesson reminder (once per session)")
+        sys.stderr.write(note)
+        sys.exit(2)
     sys.exit(0)
 
 out = []
@@ -859,8 +971,8 @@ if check7:
     out += ["⛔ CHECK 7 (fix có tác dụng thật): " + check7, "",
             "  Test xanh KHÔNG phải bằng chứng bug đã fix — unit test cho pure function tách rời",
             "  vẫn xanh khi signal thật không bao giờ tới được nó.",
-            "  Cần paired executable RED→GREEN trong scoped `/fix` proof; device/runtime dùng",
-            "  structured receipt cùng acceptance/scenario, không phải một lệnh ADB bất kỳ.",
+            "  Cần paired RED→GREEN ngay trong phiên: chạy test tái hiện bug thấy ĐỎ → sửa code →",
+            "  chạy lại thấy XANH (hoặc multi-lens-audit proof). Device/runtime: adb-safe-exec.sh.",
             "  Thiếu proof → nói đúng phạm vi và ghi BLOCKED, không gọi outcome là đã fix."]
 
 logline(f"[{ts}] BLOCK — problems={len(problems)} repeat={[t for t,_ in repeat_failures]} "
