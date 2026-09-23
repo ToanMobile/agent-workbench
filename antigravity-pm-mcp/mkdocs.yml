@@ -1,6 +1,6 @@
 site_name: Antigravity PM MCP
 site_description: MCP server để Claude Code đứng vai Leader/PM giao việc cho Google Antigravity, ép quy trình plan → audit → review → test → ảnh nghiệm thu
-repo_url: https://github.com/ToanMobile/Agent_MCP
+repo_url: https://github.com/ToanMobile/agent-workbench
 edit_uri: edit/main/antigravity-pm-mcp/docs/
 repo_name: ToanMobile/antigravity-pm-mcp
 edit_uri: edit/main/docs/

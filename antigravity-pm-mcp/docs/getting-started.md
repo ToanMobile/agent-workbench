@@ -3,8 +3,8 @@
 ## 1. Cài server
 
 ```bash
-git clone https://github.com/ToanMobile/Agent_MCP.git   # monorepo Agent_MCP, cong cu nay o thu muc antigravity-pm-mcp/
-cd Agent_MCP/antigravity-pm-mcp
+git clone https://github.com/ToanMobile/agent-workbench.git   # monorepo agent-workbench, cong cu nay o thu muc antigravity-pm-mcp/
+cd agent-workbench/antigravity-pm-mcp
 npm install
 npm test        # phải xanh hết (offline)
 ```

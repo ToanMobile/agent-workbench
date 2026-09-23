@@ -36,8 +36,8 @@ Dùng chung cho nhiều project: repo này là **công cụ**, còn trạng thá
 ### Cài đặt
 
 ```bash
-git clone https://github.com/ToanMobile/Agent_MCP.git   # monorepo Agent_MCP, cong cu nay o thu muc antigravity-pm-mcp/
-cd Agent_MCP/antigravity-pm-mcp
+git clone https://github.com/ToanMobile/agent-workbench.git   # monorepo agent-workbench, cong cu nay o thu muc antigravity-pm-mcp/
+cd agent-workbench/antigravity-pm-mcp
 npm install
 
 # tự kiểm tra đường dây

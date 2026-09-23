@@ -1,4 +1,4 @@
-# Agent_MCP
+# agent-workbench
 
 Monorepo gom các công cụ MCP / agent của ToanMobile. Mỗi thư mục là một dự án độc lập, giữ nguyên lịch sử git
 (nhập bằng `git subtree`), có README, test và tài liệu riêng.
@@ -11,15 +11,15 @@ Monorepo gom các công cụ MCP / agent của ToanMobile. Mỗi thư mục là 
 
 ## Lịch sử
 
-- Repo GitHub này trước là `play-store-mcp` (đổi tên thành `Agent_MCP` ngày 14/09/2026); toàn bộ lịch sử cũ nằm dưới `play-store-mcp/`.
+- Repo GitHub này trước là `play-store-mcp` (đổi tên thành `agent-workbench` ngày 14/09/2026); toàn bộ lịch sử cũ nằm dưới `play-store-mcp/`.
 - `antigravity-pm-mcp` và `universal-agent-devkit` được nhập ngày 14/09/2026 bằng `git subtree add`, giữ nguyên commit gốc.
 
 ## Làm việc với từng dự án
 
 ```bash
-cd Agent_MCP/antigravity-pm-mcp && npm install && npm test
-cd Agent_MCP/play-store-mcp && uv sync && uv run pytest
-cd Agent_MCP/universal-agent-devkit && make init
+cd agent-workbench/antigravity-pm-mcp && npm install && npm test
+cd agent-workbench/play-store-mcp && uv sync && uv run pytest
+cd agent-workbench/universal-agent-devkit && make init
 ```
 
 Workflow GitHub Actions của `play-store-mcp` nằm ở `play-store-mcp/.github/workflows/` — GitHub chỉ chạy workflow ở

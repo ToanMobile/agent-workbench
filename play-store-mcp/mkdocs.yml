@@ -1,8 +1,8 @@
 site_name: Play Store MCP Server
 site_url: https://lusky3.github.io/play-store-mcp
 site_description: MCP server for Google Play Developer API — deploy apps, manage releases, reviews, and more
-repo_url: https://github.com/ToanMobile/Agent_MCP
-repo_name: ToanMobile/Agent_MCP
+repo_url: https://github.com/ToanMobile/agent-workbench
+repo_name: ToanMobile/agent-workbench
 edit_uri: edit/main/play-store-mcp/docs/
 
 theme:
