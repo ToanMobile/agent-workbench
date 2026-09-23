@@ -1,0 +1,30 @@
+# IDE
+.idea/
+.DS_Store
+
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Build & dist
+dist/
+build/
+out/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Temporary
+.env.local
+.env.*.local
+temp/
+tmp/
