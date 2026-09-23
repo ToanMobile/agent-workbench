@@ -1,4 +1,4 @@
-# Council 10: Automotive Compliance & Delivery Council (5 Agents)
+# Council A2: Automotive Compliance & Delivery Council (5 Agents)
 
 Hội đồng chuyên trách kiểm soát tiêu chuẩn chất lượng xe hơi quốc tế (ASPICE/ISO 26262), giao thức CAN bus và quy trình bàn giao cho Tech Lead.
 

@@ -24,5 +24,8 @@
     "compose-recomp-audit",
     "deploy",
     "unity-gc-audit"
+  ],
+  "exclude_agents": [
+    "android-principal-architect"
   ]
 }

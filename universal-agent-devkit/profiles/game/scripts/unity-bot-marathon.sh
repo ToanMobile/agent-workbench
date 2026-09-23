@@ -1,34 +1,79 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# unity-bot-marathon.sh — Bot Gameplay Simulation Oracle (Unity Engine Headless)
+# unity-bot-marathon.sh — Bot Gameplay Simulation Oracle (Unity batchmode)
 #
-# Runs an automated AI Bot in batchmode to simulate end-to-end gameplay
-# across 100 levels (Match-3, physics puzzles, level generation algorithms).
-# Generates [BOT-SUMMARY] metrics to verify algorithmic solvability.
+# Plays N levels with the project's own bot (a static Editor method) and checks the
+# result line it prints. Proves generator/solver output is actually winnable end to end,
+# which unit tests of the solver alone do not.
+#
+#   unity-bot-marathon.sh [levels]            # levels: "100", "1-100" or "3,7,12" (default 1-100)
+#
+# 1. If the project has its own scripts/unity-bot-marathon.sh, that one runs (it knows
+#    its bot); this file is only the generic fallback.
+# 2. Otherwise BOT_METHOD must name the project's static Editor method, e.g.
+#    BOT_METHOD=MyGame.Editor.BotRunner.RunMarathon. The levels are passed as
+#    `-botLevels <levels>` and in $BOT_LEVELS.
+#
+# Contract for the bot method: print exactly one line
+#   [BOT-SUMMARY] won=<W>/<T> deadlocks=<D>
+# and exit the Editor (EditorApplication.Exit(0|1)). PASS only when W == T and D == 0.
+#
+# Exit: 0 PASS · 1 FAIL (lost level, deadlock, no summary line, timeout, Unity error)
+#       2 UNTESTED (no Editor / no bot method / project open in an Editor) — never a PASS.
 # ─────────────────────────────────────────────────────────────────────────────
-set -euo pipefail
+set -uo pipefail
 
-LEVELS="${1:-100}"
-LOG_FILE="build/bot_marathon.log"
-mkdir -p build
+LEVELS="${1:-1-100}"
+ROOT="$(cd "${UNITY_PROJECT:-$PWD}" 2>/dev/null && pwd -P)" || { echo "UNTESTED: project dir not found"; exit 2; }
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-echo "🤖 [BOT SIMULATION ORACLE] Kích hoạt Bot Marathon giải ${LEVELS} màn chơi..."
-
-# Detect Unity Editor path if available, or simulate headless bot in standalone runner
-UNITY_BIN="${UNITY_PATH:-/Applications/Unity/Hub/Editor/current/Unity.app/Contents/MacOS/Unity}"
-
-if [ -x "${UNITY_BIN}" ] && [ -d "Assets" ]; then
-  "${UNITY_BIN}" -batchmode -nographics -projectPath . \
-    -executeMethod "GameTestAutomation.BotMarathonRunner.Execute" \
-    -levels "${LEVELS}" \
-    -logFile "${LOG_FILE}" || true
-  echo "✔ [BOT SIMULATION ORACLE] Hoàn tất 100% kiểm chứng thuật toán màn chơi qua Unity Editor!"
-elif [ -f "scripts/bot-level-solver.py" ]; then
-  # Chạy script giải màn chơi độc lập của dự án nếu có
-  python3 scripts/bot-level-solver.py --levels "${LEVELS}"
-  echo "✔ [BOT SIMULATION ORACLE] Hoàn tất kiểm chứng qua script giải màn độc lập!"
-else
-  # Không có Unity Editor và không có solver thực tế -> Báo SKIP rõ ràng, tuyệt đối không fake green
-  echo "⚠️  [BOT SIMULATION ORACLE: SKIPPED] Không tìm thấy Unity Editor tại '${UNITY_BIN}' và dự án không cung cấp 'scripts/bot-level-solver.py'."
-  echo "   ➔ Bỏ qua bot marathon mô phỏng (Triệt tiêu Xanh Ảo Tautology, chỉ claim PASS khi có runner thực tế)."
+if [ -x "$ROOT/scripts/unity-bot-marathon.sh" ] && [ "$(cd "$ROOT/scripts" && pwd -P)" != "$HERE" ]; then
+  exec "$ROOT/scripts/unity-bot-marathon.sh" "$@"
 fi
+
+if [ -z "${BOT_METHOD:-}" ]; then
+  echo "UNTESTED: set BOT_METHOD=<Namespace.Class.StaticMethod> (the project's bot entry point)"
+  echo "          or add scripts/unity-bot-marathon.sh to the project. No bot ran — this is not a PASS."
+  exit 2
+fi
+
+case "$LEVELS" in
+  *-*) COUNT=$(( ${LEVELS#*-} - ${LEVELS%-*} + 1 )) ;;
+  *,*) COUNT=$(printf '%s' "$LEVELS" | tr ',' '\n' | grep -c .) ;;
+  *)   COUNT="$LEVELS" ;;
+esac
+# ~2 minutes per level + Editor start-up, unless the caller sets UNITY_TIMEOUT.
+export UNITY_TIMEOUT="${UNITY_TIMEOUT:-$(( COUNT * 120 + 180 ))}"
+export BOT_LEVELS="$LEVELS"
+
+OUT="${UNITY_BATCH_OUT:-$ROOT/Logs/agent-kit}"
+LOG="$OUT/bot_marathon.log"
+mkdir -p "$OUT"
+
+# Editor lookup, one-Editor-per-project check, watchdog and `error CS` scan come from
+# unity-batch.sh; `execute` runs without -quit (the bot enters Play Mode and calls
+# EditorApplication.Exit itself).
+UNITY_BATCH_OUT="$OUT" UNITY_PROJECT="$ROOT" \
+  bash "$HERE/unity-batch.sh" execute "$BOT_METHOD" -botLevels "$LEVELS" >"$OUT/bot_marathon.stdout" 2>&1
+rc=$?
+cp "$OUT/execute.log" "$LOG" 2>/dev/null || true
+if [ "$rc" -eq 2 ]; then
+  cat "$OUT/bot_marathon.stdout"
+  exit 2
+fi
+
+SUMMARY="$(grep -a "\[BOT-SUMMARY\]" "$LOG" | tail -n 1)"
+grep -aE "\[BOT\]|\[FAIL\]" "$LOG" | tail -n 40
+if [ -z "$SUMMARY" ]; then
+  echo "FAIL: no [BOT-SUMMARY] line in $LOG (Unity exit $rc) — the bot did not finish"
+  exit 1
+fi
+echo "$SUMMARY"
+WON="$(printf '%s' "$SUMMARY" | sed -n 's/.*won=\([0-9]*\)\/\([0-9]*\).*/\1/p')"
+TOTAL="$(printf '%s' "$SUMMARY" | sed -n 's/.*won=\([0-9]*\)\/\([0-9]*\).*/\2/p')"
+DEAD="$(printf '%s' "$SUMMARY" | sed -n 's/.*deadlocks=\([0-9]*\).*/\1/p')"
+if [ -z "$WON" ] || [ -z "$TOTAL" ] || [ "$WON" != "$TOTAL" ] || [ "${DEAD:-0}" != "0" ] || [ "$rc" -ne 0 ]; then
+  echo "FAIL: bot won ${WON:-?}/${TOTAL:-?}, deadlocks=${DEAD:-?}, Unity exit $rc — log: $LOG"
+  exit 1
+fi
+echo "PASS: bot won $WON/$TOTAL levels, 0 deadlocks — log: $LOG"

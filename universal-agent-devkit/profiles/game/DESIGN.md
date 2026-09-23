@@ -71,3 +71,23 @@ Tuân thủ hệ số bội của $4\text{px} / 4\text{dp}$:
   - Thẻ (Card) / Sheet: $16\text{dp}$.
   - Modal / Dialog: $20\text{dp}$.
   - Pill button / Avatar: $999\text{dp}$ (Full rounded).
+
+---
+
+## 6. Game Mobile Casual (Unity uGUI / UI Toolkit, màn hình dọc)
+
+> Áp dụng cho HUD, modal, bản đồ màn và mọi màn hình trong game. Token màu/typography ở trên là mặc định cho menu/cài đặt; bảng màu thế giới game do art bible của dự án quyết định — nhưng các ràng buộc dưới đây luôn giữ.
+
+1. **Bố cục dọc theo dải (tham chiếu 1080×1920):**
+   - HUD 1 hàng ở đỉnh, *bên trong* safe area (tránh notch / Dynamic Island / status bar).
+   - Vùng chơi chính ở giữa-dưới; nút thao tác thường xuyên (booster, hoàn tác, gợi ý) trong **vùng ngón cái** — khoảng 40 % dưới màn hình, cách mép dưới ≥ home indicator.
+   - Nút hiếm/nguy hiểm (thoát, mua, reset) ở xa vùng ngón cái và có xác nhận.
+2. **Safe area & tỉ lệ:** mọi phần tử tương tác nằm trong container áp `Screen.safeArea`; nền/ảnh trang trí được phép tràn full màn hình. Kiểm tối thiểu 16:9, 19.5:9, 20:9 (+ 4:3 nếu chạy iPad), mỗi trạng thái UI chính.
+3. **Vùng chạm & khoảng cách:** ≥ 44 pt / 48 dp (≈ 132 px ở 1080 px chiều ngang tham chiếu); giữa 2 nút ≥ 8 dp; icon trong vùng chơi phân biệt được ở kích thước nhỏ nhất xuất hiện (thử ở 60 px và bản đen trắng).
+4. **Đọc được khi nhìn lướt:** chữ ≥ 12 pt thực tế trên máy; tương phản chữ ≥ 4.5:1 (< 18 pt), ≥ 3:1 (≥ 18 pt); không truyền thông tin chỉ bằng màu (thêm hình dạng/biểu tượng cho người mù màu); ưu tiên icon + số thay cho câu chữ (bớt khối lượng bản địa hóa, người chơi nhỏ tuổi đọc được).
+5. **Phản hồi ("juice") có ngân sách:**
+   - Mỗi chạm có phản hồi trong ≤ 100 ms (scale/âm thanh/rung nhẹ); kết quả thao tác (ghép, thắng) ≤ 0,5 s rồi mới tới hiệu ứng dài.
+   - Hiệu ứng thưởng lớn không bị quảng cáo/modal đè; modal xuất hiện sau khi hiệu ứng xong và nút Next/Retry chỉ bật khi animation kết thúc.
+   - Tween UI chạy theo unscaled time khi game pause/hit-stop; mọi hiệu ứng có thể tắt (rung, nhấp nháy mạnh).
+6. **Hiệu năng UI:** 60 fps (16,7 ms/frame) là mục tiêu, 30 fps là sàn máy yếu; tách Canvas động/tĩnh, `raycastTarget` tắt cho phần trang trí, sprite UI trong atlas, không đổi layout mỗi frame.
+7. **Trạng thái tương tác:** nút có Default / Pressed / Disabled rõ ràng (Disabled mờ + không nhận chạm); nút tốn tài nguyên (xu, quảng cáo, IAP) khóa ngay lần chạm đầu cho tới khi có kết quả; nút Back (Android)/ESC đóng modal trên cùng.

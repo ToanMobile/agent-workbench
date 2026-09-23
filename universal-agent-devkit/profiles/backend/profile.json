@@ -27,6 +27,9 @@
     "qa-visual",
     "unity-gc-audit"
   ],
+  "exclude_agents": [
+    "android-principal-architect"
+  ],
   "source_extensions": [
     ".py",
     ".go",

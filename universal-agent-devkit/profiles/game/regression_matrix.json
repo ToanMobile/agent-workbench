@@ -1,54 +1,88 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "version": "1.0.0",
-  "project": "Unity 6 & Blender 3D Game",
-  "description": "Ma trận kiểm thử hồi quy cho Game 3D: GC Allocations, DrawCalls, Mesh & Scene Transitions",
+  "version": "1.1.0",
+  "project": "Unity 6 Game (C# / URP / Unity Test Framework)",
+  "description": "Ma trận MẪU cho dự án Unity: chạy thật qua batchmode (biên dịch, EditMode, PlayMode) bằng .agents/active-profile/scripts/unity-batch.sh; biên dịch ưu tiên scripts/unity-compile-check.sh của dự án nếu có. Là mẫu nên cổng Stop KHÔNG ép — sửa file .agents/regression_matrix.active.json (đổi watch_files / filter theo dự án) để chấp nhận nó (hoặc thêm \"adopted\": true rồi commit). Không tìm thấy Editor hoặc Editor đang mở chính project => exit 2 (UNTESTED), không bao giờ là PASS.",
   "rules": [
     {
-      "component": "UnityGameLoopAndMemory",
+      "component": "UnityCodeAndAssemblies",
       "watch_files": [
-        "**/Scripts/**",
-        "**/*Controller.cs",
-        "**/*Manager.cs"
+        "Assets/*.cs",
+        "Assets/*.asmdef",
+        "Assets/*.asmref",
+        "Assets/*.shader",
+        "Assets/*.hlsl",
+        "Assets/*.cginc",
+        "Assets/*.compute",
+        "Assets/*.uxml",
+        "Assets/*.uss",
+        "Packages/*.cs",
+        "Packages/*.asmdef",
+        "Packages/manifest.json"
       ],
       "immutable_guards": [
         "ZeroGcInUpdate",
-        "EventUnsubscriptionOnDestroy"
+        "EventUnsubscriptionOnDestroy",
+        "SingletonInstanceClearedOnDestroy",
+        "AsmdefDependencyDirection"
       ],
       "mandatory_regression_tests": [
         {
           "id": "REG-GAME-01",
-          "name": "Zero GC Allocation in Frame Update Loop Audit",
-          "command": "./scripts/unity-test.sh EditMode --filter 'Category=MemoryProfiler'"
+          "name": "C# compile in batchmode (log scanned for 'error CS' — Unity may exit 0 with compile errors)",
+          "command": "if [ -x scripts/unity-compile-check.sh ]; then ./scripts/unity-compile-check.sh; else bash .agents/active-profile/scripts/unity-batch.sh compile; fi",
+          "untested_exit": 2
         },
         {
           "id": "REG-GAME-02",
-          "name": "Scene Load & Unload Memory Leak Regression Test",
-          "command": "./scripts/unity-test.sh PlayMode --filter 'Category=SceneTransition'"
+          "name": "EditMode tests (-runTests -testPlatform EditMode, NUnit XML parsed, 0 test cases = FAIL)",
+          "command": "bash .agents/active-profile/scripts/unity-batch.sh editmode",
+          "untested_exit": 2
         }
       ]
     },
     {
-      "component": "RenderingAndAssetBudget",
+      "component": "UnityRuntimeScenesAndContent",
       "watch_files": [
-        "**/Models/**",
-        "**/Textures/**",
-        "**/Materials/**"
+        "Assets/*.cs",
+        "Assets/*.unity",
+        "Assets/*.prefab",
+        "Assets/*.asset",
+        "Assets/*.controller",
+        "Assets/*.anim",
+        "Assets/*.mat",
+        "Assets/*.shadergraph",
+        "Assets/*.json",
+        "ProjectSettings/*.asset"
       ],
       "immutable_guards": [
-        "DrawCallBudgetLimit",
-        "PowerOfTwoTextures"
+        "SafeAreaAndPortraitLayout",
+        "LevelSolvabilityBaseline",
+        "SaveDataBackwardCompatible"
       ],
       "mandatory_regression_tests": [
         {
-          "id": "REG-RENDER-01",
-          "name": "DrawCall Count Under Frame Budget (<= 100 DC)",
-          "command": "./scripts/unity-compile-check.sh && ./scripts/unity-test.sh PlayMode --filter 'Category=RenderingBenchmark'"
-        },
+          "id": "REG-GAME-03",
+          "name": "PlayMode tests (-runTests -testPlatform PlayMode, no -quit, NUnit XML parsed)",
+          "command": "bash .agents/active-profile/scripts/unity-batch.sh playmode",
+          "untested_exit": 2
+        }
+      ]
+    },
+    {
+      "component": "UnityAssetDatabaseHygiene",
+      "watch_files": [
+        "Assets/*"
+      ],
+      "immutable_guards": [
+        "MetaFilePairing",
+        "NoDocsOrScratchInsideAssets"
+      ],
+      "mandatory_regression_tests": [
         {
-          "id": "REG-ASSET-02",
-          "name": "3D Mesh Non-Manifold & Polycount Verification",
-          "command": "python3 scripts/verify_mesh_assets.py"
+          "id": "REG-GAME-04",
+          "name": "Asset hygiene: no docs/scratch files inside Assets/, every added/deleted asset moves with its .meta",
+          "command": "bash .agents/active-profile/hooks/validate-assets.sh < /dev/null"
         }
       ]
     }

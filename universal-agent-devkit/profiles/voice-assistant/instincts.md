@@ -44,3 +44,30 @@
 - **Hiện tượng lỗi:** Báo cáo độ trễ "< 300ms" nhưng người dùng vẫn thấy chậm.
 - **Nguyên nhân gốc rễ:** Đo từ lúc có transcript cuối thay vì từ End-of-Speech (VAD phát hiện im lặng) tới tín hiệu phản hồi đầu tiên.
 - **Quy tắc bắt buộc:** Mốc đo là End-of-Speech → phản hồi đầu tiên; ghi số đo thật từ thiết bị (REG-VOICE-02), không ước lượng.
+
+---
+
+### [INSTINCT-VOICE-06] Bẫy Lệch Sample Rate & Trôi Buffer Âm Thanh (16kHz vs 48kHz)
+- **Hiện tượng lỗi:** Mô hình nhận diện giọng nói (ASR) hoặc Wake-Word Engine (Porcupine/Snowboy/Sherpa-ONNX) nhận dạng sai lệch, phát sinh tiếng rè rít (Aliasing / Artifacts) hoặc buffer bị tràn sau vài phút ghi âm liên tục.
+- **Nguyên nhân gốc rễ:** Microphone xe hơi AAOS và Audio HAL phần cứng mặc định thu ở tần số 48kHz (hoặc 44.1kHz), trong khi model ASR/Wake-Word được huấn luyện ở 16kHz mono. Sử dụng thuật toán Resampling sơ sài (hoặc bỏ qua resampler) gây biến dạng phổ âm thanh.
+- **Quy tắc bắt buộc:** 
+  1. Sử dụng Polyphase Resampler hoặc thư viện chuẩn (như Oboe / WebRTC Resampler) để chuyển đổi từ 48kHz về 16kHz với anti-aliasing filter.
+  2. Sử dụng Ring Buffer (Circular Buffer) thread-safe có dung lượng cố định (ví dụ: 1000ms audio) để phân tách giữa Audio Record Thread và Processing Thread.
+
+---
+
+### [INSTINCT-VOICE-07] Bẫy Mất Audio Focus Tạm Thời (Audio Focus Transient Loss)
+- **Hiện tượng lỗi:** Trợ lý ảo đang nói câu phản hồi (TTS) thì hệ thống phát thông báo dẫn đường (Navigation Turn-by-Turn) hoặc tiếng còi xe cảnh báo khẩn cấp, dẫn đến 2 luồng âm thanh đè lên nhau gây chói tai và vi phạm tiêu chuẩn HMI xe hơi.
+- **Nguyên nhân gốc rễ:** Không đăng ký `AudioManager.OnAudioFocusChangeListener` hoặc bỏ qua sự kiện `AUDIOFOCUS_LOSS_TRANSIENT` / `AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK`.
+- **Quy tắc bắt buộc:** 
+  1. Khi nhận `AUDIOFOCUS_LOSS_TRANSIENT`: Tạm dừng TTS ngay tức thì, lưu lại vị trí text đang đọc dở để resume khi nhận `AUDIOFOCUS_GAIN`.
+  2. Khi nhận `AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK`: Lập tức giảm âm lượng TTS xuống 20–30% để ưu tiên chỉ dẫn an toàn lái xe.
+
+---
+
+### [INSTINCT-VOICE-08] Bẫy Giữ Khóa Microphone Chạy Ngầm (Microphone Background Leak)
+- **Hiện tượng lỗi:** Ứng dụng thoát ra màn hình Home hoặc màn hình tắt, nhưng đèn báo quyền riêng tư Microphone (chấm cam/xanh trên thanh trạng thái Android 12+) vẫn sáng liên tục; gây hao pin và bị Google Play / OEM từ chối kiểm duyệt bảo mật.
+- **Nguyên nhân gốc rễ:** Quên gọi `audioRecord.stop()` và `audioRecord.release()` trong `onPause()` / `onStop()` hoặc khi voice session kết thúc.
+- **Quy tắc bắt buộc:** 
+  1. Bắt buộc giải phóng `AudioRecord` ngay khi trạng thái Voice State chuyển sang `IDLE` hoặc ứng dụng rơi vào background (trừ khi có Foreground Service được cấp quyền đặc biệt `FOREGROUND_SERVICE_TYPE_MICROPHONE`).
+  2. Bọc `AudioRecord` lifecycle trong Coroutine Scope gắn liền với `LifecycleOwner`.

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "version": "1.0.0",
-  "project": "Automotive Android / Multi-App Platform",
-  "description": "Ma trận ánh xạ tính năng & file dùng chung sang bộ test hồi quy bắt buộc (Test Impact Analysis Matrix)",
+  "version": "1.1.0",
+  "project": "Automotive IVI Monorepo (car app + phone companion + shared protocol + desktop ADB tool)",
+  "description": "Ma trận mẫu cho monorepo IVI: app xe (system app, Gradle có flavor), app điện thoại, module giao thức dùng chung (composite build), tool desktop Go. Tên module/test là minh hoạ — `agent-kit profile automotive` sinh ma trận thật từ test runner của từng module; sửa lại theo tên thật rồi commit.",
   "rules": [
     {
       "component": "MediaKeyProxyService",
@@ -20,51 +20,119 @@
         {
           "id": "REG-MED-01",
           "name": "Background MediaSession Playback & Token Lifecycle",
-          "command": "./gradlew testDebugUnitTest --tests 'com.car.media.GenericMediaSessionPlaybackTest'"
+          "command": "cd car-app && ./gradlew :app:testSystemDebugUnitTest --tests '*MediaSessionPlaybackTest'"
         },
         {
           "id": "REG-MED-02",
-          "name": "Third-Party MediaSession Active Token Handling",
-          "command": "./gradlew testDebugUnitTest --tests 'com.car.media.ThirdPartyMediaTokenTest'"
+          "name": "Steering Wheel Key Dispatch (VHAL callback + KeyEvent) & Debounce",
+          "command": "cd car-app && ./gradlew :app:testSystemDebugUnitTest --tests '*SteeringWheelKeyTest'"
         },
         {
           "id": "REG-MED-03",
-          "name": "Steering Wheel Hardware Key Event Dispatcher",
-          "command": "./gradlew testDebugUnitTest --tests 'com.car.hardware.SteeringWheelKeysTest'"
-        },
-        {
-          "id": "REG-MED-04",
-          "name": "Split Screen Multi-Window Audio Focus & Key Event",
-          "command": "./gradlew testDebugUnitTest --tests 'com.car.media.SplitScreenMediaTest'"
-        },
-        {
-          "id": "REG-MED-05",
-          "name": "Flyme Auto / Android 9 Legacy Guards Verification",
-          "command": "./gradlew testDebugUnitTest --tests 'com.car.compatibility.FlymeAutoGuardsTest'"
+          "name": "Split Screen Audio Focus Arbitration (Navigation vs Media)",
+          "command": "cd car-app && ./gradlew :app:testSystemDebugUnitTest --tests '*AudioFocusArbitrationTest'"
         }
       ]
     },
     {
-      "component": "GoogleMapsNavigator",
+      "component": "VehiclePropertyLayer",
       "watch_files": [
-        "**/GoogleMapsNavigator.kt",
-        "**/NavigationFloatingWidget.kt",
-        "**/SplitScreenLayoutManager.kt"
+        "car-app/**/vhal/**",
+        "car-app/**/*CarProperty*.kt",
+        "car-app/**/*Vhal*.kt",
+        "car-app/**/*Restore*.kt",
+        "car-app/**/*Policy*.kt"
       ],
       "immutable_guards": [
-        "MultiWindowMode",
-        "PictureInPicture"
+        "ReadStateBeforeToggleWrite",
+        "NullReadMeansNoWrite",
+        "EcuBootDefaultIsNotUserIntent",
+        "NoThreadSleepOnVhalThread"
       ],
       "mandatory_regression_tests": [
         {
-          "id": "REG-NAV-01",
-          "name": "Split Screen 50/50 and 70/30 Boundary Test",
-          "command": "./gradlew testDebugUnitTest --tests 'com.car.nav.SplitScreenBoundaryTest'"
+          "id": "REG-VHAL-01",
+          "name": "Toggle property: null/unknown read never writes",
+          "command": "cd car-app && ./gradlew :app:testSystemDebugUnitTest --tests '*VehiclePropertyToggleGuardTest'"
         },
         {
-          "id": "REG-NAV-02",
-          "name": "Floating Widget Touch Target >= 48dp",
-          "command": "./gradlew testDebugUnitTest --tests 'com.car.nav.FloatingWidgetAccessibilityTest'"
+          "id": "REG-VHAL-02",
+          "name": "Boot-time ECU defaults do not overwrite saved user settings",
+          "command": "cd car-app && ./gradlew :app:testSystemDebugUnitTest --tests '*RestorePolicyTest'"
+        }
+      ]
+    },
+    {
+      "component": "CompanionProtocol",
+      "watch_files": [
+        "shared/**/*.kt",
+        "car-app/**/*TcpServer*.kt",
+        "car-app/**/*ServerLink*.kt",
+        "phone-app/**/*Repository*.kt",
+        "phone-app/**/*ProtocolClient*.kt",
+        "docs/**/*protocol*.md"
+      ],
+      "immutable_guards": [
+        "SingleDtoSourceInSharedModule",
+        "CommandNamesAreConstants",
+        "OneJsonObjectPerLine",
+        "AuthBeforeCommand"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-PROTO-01",
+          "name": "Shared DTO serialization round-trip",
+          "command": "cd shared && ./gradlew allTests"
+        },
+        {
+          "id": "REG-PROTO-02",
+          "name": "Car-side server: framing, auth gate, socket cleanup",
+          "command": "cd car-app && ./gradlew :app:testSystemDebugUnitTest --tests '*TcpServer*'"
+        },
+        {
+          "id": "REG-PROTO-03",
+          "name": "Phone-side client parity with the car server",
+          "command": "cd phone-app && ./gradlew :app:testDebugUnitTest"
+        }
+      ]
+    },
+    {
+      "component": "SystemAppManifestAndRelease",
+      "watch_files": [
+        "car-app/**/AndroidManifest.xml",
+        "car-app/**/build.gradle.kts",
+        "car-app/**/proguard-*.pro",
+        "phone-app/**/proguard-*.pro"
+      ],
+      "immutable_guards": [
+        "sharedUserId=android.uid.system",
+        "PlatformKeySigning",
+        "R8MinifyAndOptimize",
+        "StripLogsInPublicBuild"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-REL-01",
+          "name": "System app variant still assembles (manifest + signing config)",
+          "command": "cd car-app && ./gradlew :app:assembleSystemDebug"
+        }
+      ]
+    },
+    {
+      "component": "DesktopAdbTool",
+      "watch_files": [
+        "pc-tool/**/*.go",
+        "pc-tool/go.mod"
+      ],
+      "immutable_guards": [
+        "DangerousShellCommandFilter",
+        "NoSystemPartitionWrites"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-PC-01",
+          "name": "Desktop tool unit tests (incl. dangerous-shell filter)",
+          "command": "cd pc-tool && go test ./..."
         }
       ]
     }

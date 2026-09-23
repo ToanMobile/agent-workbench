@@ -2,8 +2,8 @@
   "id": "automotive",
   "name": "🚗 Xe hơi (Android Automotive OS / IVI / Flyme Auto / CAN Bus)",
   "name_en": "🚗 Automotive (Android Automotive OS / IVI / Flyme Auto / CAN Bus)",
-  "description": "Cấu hình chuyên sâu cho hệ thống xe hơi: cách ly luồng dùng chung (MediaKey, Maps), bảo tồn rào chắn phần cứng (FlymeAuto, API 28), debounce phím vô lăng, phân tích CAN bus và kiểm toán an toàn HMI (NHTSA/ASPICE).",
-  "description_en": "Automotive systems: shared-flow isolation (MediaKey, Maps), hardware guards (FlymeAuto, API 28), steering-wheel key debounce, CAN bus analysis and HMI safety audits (NHTSA/ASPICE).",
+  "description": "Cấu hình chuyên sâu cho hệ thống xe hơi: cách ly luồng dùng chung (MediaKey, Maps), bảo tồn rào chắn phần cứng (FlymeAuto, API 28), system app android.uid.system & cấm remount /system (dm-verity), VHAL đọc-trước-khi-ghi, giao thức companion xe↔điện thoại, giọng nói 'im còn hơn làm sai', bằng chứng trên xe thật > máy ảo, debounce phím vô lăng, phân tích CAN bus và kiểm toán an toàn HMI (NHTSA/ASPICE).",
+  "description_en": "Automotive systems: shared-flow isolation (MediaKey, Maps), hardware guards (FlymeAuto, API 28), android.uid.system apps & no /system remount (dm-verity), VHAL read-before-write, car↔phone companion protocol parity, voice commands 'silent beats wrong', real-vehicle evidence over emulator, steering-wheel key debounce, CAN bus analysis and HMI safety audits (NHTSA/ASPICE).",
   "essential_mcps": [
     "codebase-memory-mcp",
     "android-code-search",
@@ -21,7 +21,9 @@
   ],
   "regression_matrix": "profiles/automotive/regression_matrix.json",
   "rules_file": "profiles/automotive/rules/automotive-rules.md",
-  "exclude_skills": [],
+  "exclude_skills": [
+    "unity-gc-audit"
+  ],
   "source_extensions": [
     ".kt",
     ".kts",
@@ -30,6 +32,14 @@
     ".cc",
     ".cpp",
     ".h",
-    ".hpp"
+    ".hpp",
+    ".aidl",
+    ".go",
+    ".swift",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".py",
+    ".sql"
   ]
 }

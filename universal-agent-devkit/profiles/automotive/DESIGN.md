@@ -71,3 +71,18 @@ Tuân thủ hệ số bội của $4\text{px} / 4\text{dp}$:
   - Thẻ (Card) / Sheet: $16\text{dp}$.
   - Modal / Dialog: $20\text{dp}$.
   - Pill button / Avatar: $999\text{dp}$ (Full rounded).
+
+---
+
+## 6. HMI Đầu Xe (IVI) — Ưu Tiên An Toàn Khi Lái
+
+> Mục này **ghi đè** các mục trên khi màn hình chạy trên đầu xe. Nếu dự án đã có theme riêng (Compose `MaterialTheme`, token trong module UI dùng chung), token của dự án thắng bảng màu mẫu ở §1 — ghi đường dẫn file theme thật vào `DESIGN.md` của dự án.
+
+1. **Màn hình & mật độ:** Đầu xe IVI phổ biến là $1920\times 1080$ landscape, density 160 (mdpi ⇒ $1\text{dp} = 1\text{px}$). Không hardcode chiều cao màn hình: thanh điều khiển/dock của OEM và nav bar chiếm chỗ — dùng layout co giãn (`BoxWithConstraints`, `WindowInsets`). Kiểm cả chế độ chia đôi / cửa sổ nổi (bề rộng có thể chỉ còn ~1/2–1/3).
+2. **Nhìn lướt (Glanceability):** Mỗi thao tác khi đang lái phải xong trong các lần liếc ngắn (hướng dẫn NHTSA: mỗi lần liếc ≤ 2 s, tổng ≤ 12 s). Tối đa **1 chạm, không quá 2 bước** cho chức năng dùng khi lái; không cuộn danh sách dài, không nhập bàn phím khi xe chạy.
+3. **Vùng chạm:** Sàn cứng $\ge 48\times 48\text{dp}$ (core rules); điều khiển dùng khi đang lái nên $\ge 76\times 76\text{dp}$ (khuyến nghị Android for Cars), khoảng cách giữa hai vùng chạm $\ge 16\text{dp}$ để không bấm nhầm khi xe rung.
+4. **Chữ:** Thân chữ đọc khi lái $\ge 24\text{sp}$ (không dùng thang 12–14sp của mobile cho nội dung chính); tối đa ~2 dòng mỗi thông báo; con số trạng thái (tốc độ, nhiệt độ, % pin) là phần tử lớn nhất trên thẻ.
+5. **Ngày / Đêm:** Hỗ trợ cả hai theme và **tự chuyển theo xe** (UI mode night của hệ thống / đèn pha), không chỉ theo giờ. Ban đêm tránh nền trắng lớn gây chói; ban ngày đảm bảo tương phản dưới nắng (chữ chính ≥ 7:1 — WCAG AAA). Lớp overlay tự vẽ (widget nổi, số trên thanh OEM) cũng phải đổi màu theo theme.
+6. **Phản hồi & xao nhãng:** Phản hồi tức thì (≤ 100 ms thị giác) và bằng **giọng nói** cho lệnh thoại; không animation trang trí/nhấp nháy khi xe chạy; trạng thái lỗi ghi rõ việc tài xế cần làm, không mã lỗi kỹ thuật.
+7. **Trạng thái thật, không trạng thái giả:** Chỉ hiện "thành công" sau khi ECU/VHAL xác nhận giá trị mới; đang chờ thì hiện trạng thái chờ. Không có nút/cờ giả lập dữ liệu xe trên UI khách; nút kỹ thuật/dev ẩn hoàn toàn với người dùng thường.
+8. **Hộp thoại xác nhận:** Chỉ cho thao tác có rủi ro khi xe chạy; đặt trên cùng (không chìm dưới thẻ), nút "Huỷ" và "Đồng ý" tách xa nhau, có hành vi an toàn khi hết giờ chờ.

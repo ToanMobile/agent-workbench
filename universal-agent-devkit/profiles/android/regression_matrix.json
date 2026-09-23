@@ -1,54 +1,56 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "version": "1.0.0",
-  "project": "Android Mobile Application",
-  "description": "Ma trận kiểm thử hồi quy cho Mobile App & Critical Flows",
+  "version": "1.1.0",
+  "project": "Android Application (Gradle / Kotlin / Jetpack Compose)",
+  "description": "Mẫu ma trận hồi quy cho dự án Android. Khi dự án có gradlew (ở gốc hoặc thư mục con cấp 1), `agent-kit init/profile` thay mẫu này bằng ma trận sinh từ test runner thật của dự án (scripts/matrix_detect.py); mẫu chỉ dùng khi không dò được runner. Lệnh chỉ dùng task Gradle chuẩn của Android Gradle Plugin — không có test giả định; task không tồn tại thì lệnh FAIL chứ không coi là PASS. Dự án có product flavor thay `Debug`/`Release` bằng tên variant thật.",
   "rules": [
     {
-      "component": "CriticalTransactionFlow",
+      "component": "AndroidUnitTests",
       "watch_files": [
-        "**/transaction/**",
-        "**/action/**",
-        "**/TransactionViewModel.*"
+        "**/*.kt",
+        "**/*.kts",
+        "**/*.java",
+        "**/*.c",
+        "**/*.cc",
+        "**/*.cpp",
+        "**/*.h",
+        "**/*.hpp",
+        "**/AndroidManifest.xml",
+        "gradle/libs.versions.toml",
+        "gradle.properties",
+        "build-logic/**"
       ],
       "immutable_guards": [
-        "DoubleSubmitDebounce",
-        "SessionState"
+        "MainThreadSafety",
+        "PendingIntentFlags",
+        "TestSourceSetCompiles"
       ],
       "mandatory_regression_tests": [
         {
-          "id": "REG-TXN-01",
-          "name": "Anti-Spam Rapid Click & Button Debounce Verification",
-          "command": "./gradlew testDebugUnitTest --tests '*.TransactionDebounceTest'"
-        },
-        {
-          "id": "REG-TXN-02",
-          "name": "Data Isolation & Integrity Verification",
-          "command": "./gradlew testDebugUnitTest --tests '*.DataIsolationTest'"
+          "id": "REG-AND-01",
+          "name": "JVM unit tests of every module (debug variant; compiles main + test source sets)",
+          "command": "./gradlew testDebugUnitTest"
         }
       ]
     },
     {
-      "component": "AndroidLifecycleAndPerf",
+      "component": "ReleaseShrinkingAndKeepRules",
       "watch_files": [
-        "**/ui/**",
-        "**/viewmodel/**",
-        "**/repository/**"
+        "**/proguard-rules.pro",
+        "**/consumer-rules.pro",
+        "**/*.pro",
+        "**/build.gradle.kts",
+        "gradle/libs.versions.toml"
       ],
       "immutable_guards": [
-        "MainThreadSafety",
-        "PendingIntentFlags"
+        "R8KeepRules",
+        "ReflectionAndJniEntryPoints"
       ],
       "mandatory_regression_tests": [
         {
-          "id": "REG-LIFECYCLE-01",
-          "name": "Configuration Change & Process Death State Restoration",
-          "command": "./gradlew testDebugUnitTest --tests '*.LifecycleRestorationTest'"
-        },
-        {
-          "id": "REG-PERF-02",
-          "name": "Background Database / Network Coroutine Dispatchers Audit",
-          "command": "./gradlew testDebugUnitTest --tests '*.CoroutineDispatchersTest'"
+          "id": "REG-AND-02",
+          "name": "Minified release build (R8 keep rules, resource shrinking)",
+          "command": "./gradlew assembleRelease"
         }
       ]
     }

@@ -1,4 +1,4 @@
-# Council 1: Automotive & Hardware Boundary Council (5 Agents)
+# Council A1: Automotive & Hardware Boundary Council (6 Agents)
 
 Hội đồng chuyên trách kiểm soát toàn vẹn luồng dùng chung và rào chắn an toàn trên xe hơi (Android Automotive OS, IVI, Flyme Auto, ECARX).
 
@@ -47,3 +47,14 @@ Hội đồng chuyên trách kiểm soát toàn vẹn luồng dùng chung và r�
   - Kiểm tra hành vi của ứng dụng khi chạy ở chế độ chia đôi màn hình (Multi-Window 50/50 hoặc 70/30) trên màn hình trung tâm IVI.
   - Kiểm tra ranh giới hiển thị (Display Bounds), tránh vỡ layout DOM / Compose / XML khi Activity bị co lại.
   - Đảm bảo quyền nhận phím Media hoặc Touch Target $\ge 48\text{dp}$ không bị che khuất bởi thanh điều khiển điều hòa / status bar xe.
+
+---
+
+## Agent 6: `automotive-system-vhal-auditor`
+- **Role:** Kiểm toán viên quyền hệ thống, phân vùng và tầng VHAL (System App, dm-verity & VHAL Write Auditor).
+- **Core Directive:**
+  - Chặn mọi lệnh/script/tài liệu đề xuất `adb remount`, `disable-verity`, `mount -o rw`, ghi `/system`·`/vendor`·`/product` hoặc push vào `/system/priv-app` (dm-verity → đầu xe không boot).
+  - Kiểm `android:sharedUserId="android.uid.system"` và cấu hình ký platform key không bị xoá/đổi trong diff; đổi `sharedUserId` phải kèm ghi chú gỡ bản cũ.
+  - Mọi ghi property dạng toggle phải đọc trạng thái sau khi `CarPropertyManager` đã kết nối; đọc `null` ⇒ không ghi. Cấm `Thread.sleep`/`runBlocking` trên luồng VHAL/Main.
+  - Giá trị ECU lúc boot không được ghi đè cấu hình người dùng đã lưu.
+- **Fail Triggers:** Ghi toggle không có guard đọc-trước; guard đọc chạy trước khi kết nối; lệnh ghi phân vùng hệ thống; mất `sharedUserId`.

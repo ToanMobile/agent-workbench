@@ -1,8 +1,8 @@
 {
   "id": "game",
   "name": "🎮 Game (Unity 6 / Blender 3D / Mesh & Asset Optimization)",
-  "description": "Cấu hình chuyên sâu cho phát triển Game 3D: kiểm toán rò rỉ bộ nhớ MonoBehaviour/C# delegates, triệt tiêu GC allocations trong Update(), tối ưu DrawCall batching, kiểm soát topology/polygon count trong Blender 4.x và kết nối MCP Unity/Blender.",
-  "description_en": "3D game development: MonoBehaviour/C# delegate leak audits, zero GC allocations in Update(), DrawCall batching, Blender 4.x topology/polygon budgets and Unity/Blender MCP integration.",
+  "description": "Cấu hình cho game Unity 6 (C#, URP, mobile dọc casual/puzzle) và asset Blender: hot path Zero-GC + object pooling, rò rỉ event/singleton, kỷ luật asmdef và .meta, test EditMode/PlayMode tất định (seed, solver, bot marathon), chạy Unity batchmode không xanh ảo, safe area/bố cục dọc, Addressables, an toàn tích hợp ads/IAP/consent, ngân sách DrawCall/texture/polycount.",
+  "description_en": "Unity 6 games (C#, URP, portrait mobile casual/puzzle) and Blender assets: Zero-GC hot paths and object pooling, event/singleton leaks, asmdef and .meta discipline, deterministic EditMode/PlayMode tests (seeds, solver, bot marathon), false-green-proof Unity batchmode runs, safe area/portrait layout, Addressables, ads/IAP/consent integration safety, draw call/texture/polycount budgets.",
   "essential_mcps": [
     "codebase-memory-mcp",
     "context7"
@@ -29,7 +29,18 @@
     "compose-recomp-audit",
     "deploy"
   ],
+  "exclude_agents": [
+    "android-principal-architect"
+  ],
   "source_extensions": [
-    ".cs"
+    ".cs",
+    ".shader",
+    ".hlsl",
+    ".cginc",
+    ".compute",
+    ".asmdef",
+    ".asmref",
+    ".uxml",
+    ".uss"
   ]
 }
