@@ -123,6 +123,20 @@ Required order: plan → reviewer approves the *plan* → gaps found → revise 
 Every platform also gets the git **pre-commit** gate (`agent-kit githooks install`, installed by `agent-kit init` in git projects). Hooks that read Claude's transcript (review, test evidence, claims) exist only on Claude Code.
 - **Synchronization:** Run `./bin/agent-kit sync` anytime skills, commands, or hooks are updated.
 
+### 7.1 Parallel Agents — One Git Worktree per Agent
+
+Two agents editing one working tree overwrite each other's files, mix their diffs in `git status` and break each other's builds mid-run. When two or more agents change code at the same time, each gets its own worktree and branch.
+
+- **Create:** Claude Code — start the subagent with `isolation: "worktree"` (Agent tool) or switch the session with `EnterWorktree`; the harness creates the worktree and removes it when nothing changed. Other platforms — from the main checkout, `git worktree add ../<repo>-<task> -b <feat|fix>/<task>`, then open the agent in that directory. Keep worktrees outside the repo, so the repo's build, lint and search never scan them and no `.gitignore` entry is needed.
+- **Set up before the first build** — a new worktree holds tracked files only:
+  - Untracked local config (`local.properties`, `.env`, `google-services.json`, `keystore.properties`) is missing: copy it from the main checkout, never commit it (`rules/core-rules.md` §1).
+  - A symlink-mode DevKit install is untracked as well, so `.claude/`, `rules/`, `skills/` are missing: run `agent-kit init` inside the worktree (it changes no tracked file).
+  - The git pre-commit gate is shared by every worktree of the repo; nothing to install.
+- **One device, one agent:** a physical device or emulator serves one worktree at a time. Run device work one worktree after another, each with `adb-safe-exec.sh -s <SERIAL>`.
+- **Accept a worktree only on its own gate run:** `cd <worktree> && CLAUDE_PROJECT_DIR="$PWD" postfix-gate --run-tests` → exit `0`. The gate reads `CLAUDE_PROJECT_DIR` before the git root; left pointing at the main checkout, it audits the main checkout instead.
+- **No automatic merge:** the leader reviews each worktree's diff like any other change (§5, §6), then brings it back. Without an explicit request to commit (`rules/core-rules.md` §1), bring it as a patch — in the main checkout: `git -C <worktree> add -A && git -C <worktree> diff --cached --binary | git apply --3way` (new files included). When the user asked for commits, merge the branch instead. Conflicts go through `/conflict` (`merge-conflict-resolver`); commit and push stay behind Gate 2 (§5.1 c).
+- **Clean up:** `git worktree remove <path>` for a worktree with no changes left. One that still holds changes, and its unmerged branch, need `git worktree remove --force` / `git branch -D`, which the git guard blocks: once its changes are safely in the main checkout, ask the user to run them.
+
 ---
 
 ## 8. Universal Zero-Regression & Autonomous Intent Router

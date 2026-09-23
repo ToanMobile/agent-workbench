@@ -401,9 +401,13 @@ TEST_RUNNER_RX = re.compile(
     r"python\S*\s+-m\s+(pytest|unittest)|\b(cargo|go|swift|dotnet|flutter|deno)\s+test\b|"
     r"\bnode\s+--test\b|\bxcodebuild\b.*\btest\b|\bmvn\s+(test|verify)\b|\bmake\s+(test|check)\b|"
     r"\bctest\b|\brspec\b|\bphpunit\b|\bgradlew?\b[^\n|;&]*\b\w*[tT]est\w*\b", re.I)
+# Failure markers. Counts only when non-zero ("fail 0", "0 failed" are green), and the
+# bare words only in the capitals runners print (FAIL, FAILED, ERROR) — a passing test
+# named "shows error message" or node's "ℹ fail 0" summary must not read as red.
 RUNNER_FAIL_RX = re.compile(
-    r"\b[1-9]\d*\s+(failed|failing|failures?|errors?)\b|\bFAIL(ED)?\b|Tests?:\s+\d+\s+failed|"
-    r"test result: FAILED|^not ok\b|\bpanicked\b|\bERRORS?\b", re.I | re.M)
+    r"(?i:\b[1-9]\d*\s+(failed|failing|failures?|errors?)\b)|(?i:\btests?:\s+[1-9]\d*\s+failed)|"
+    r"(?i:^\s*(?:[#ℹ*•-]\s*)?(fail|failures?|errors?)\s*[:=]?\s*[1-9]\d*\b)|"
+    r"\bFAIL(ED)?\b|test result: FAILED|^not ok\b|\bpanicked\b|\bERRORS?\b|--- FAIL", re.M)
 SRC_EXT = (".kt", ".kts", ".java", ".swift", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py",
            ".go", ".rs", ".dart", ".cs", ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm")
 runner_results = []        # (result_idx, use_idx, is_error, text, command)
@@ -902,7 +906,7 @@ def lesson_reminder():
         return None
     for use in tool_uses.values():
         inp = use.get("input") or {}
-        if use["name"] == "Bash" and re.search(r"agent-kit\s+learn|instincts\.py\s+add|--record-lesson",
+        if use["name"] == "Bash" and re.search(r"agent-kit[\"']?\s+learn|instincts\.py[\"']?\s+add|--record-lesson",
                                                str(inp.get("command", ""))):
             return None
         if use["name"] in ("Edit", "Write") and str(inp.get("file_path", "")).endswith(".agents/instincts.md"):

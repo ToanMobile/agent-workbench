@@ -253,7 +253,12 @@ def compact(dossier, project_root, limit=4):
     """A few lines for the UserPromptSubmit hook — empty when the request matched no
     intent and no instinct (questions, chit-chat): no context tax on those."""
     intents = [i for i in dossier["detected_intents"] if i != "GENERAL_TASK"]
-    refs = dossier.get("matched_instinct_refs", [])[:limit]
+    refs = dossier.get("matched_instinct_refs", [])
+    if not intents:
+        # No kind of work detected (chit-chat, a general question): two stray word hits
+        # are noise — only a strong match (3+ points, e.g. a title hit) is worth context.
+        refs = [r for r in refs if r["score"] >= 3]
+    refs = refs[:limit]
     if not intents and not refs:
         return ""
     out = [f"[DevKit] Ngữ cảnh tự động cho yêu cầu này (profile: {dossier['active_profile']}):"]

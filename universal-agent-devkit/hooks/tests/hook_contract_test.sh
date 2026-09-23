@@ -1281,6 +1281,8 @@ def w(name, result_text, is_error=False):
             fh.write(json.dumps({"message": {"content": [b]}}) + "\n")
 w("green.jsonl", "Tests: 12 passed, 12 total")
 w("red.jsonl", "Tests: 2 failed, 10 passed, 12 total", True)
+# node --test prints "ℹ fail 0" on success; a test NAMED "... error ..." is not a failure
+w("node_green.jsonl", "✔ shows error message (0.3ms)\nℹ tests 3\nℹ pass 3\nℹ fail 0\nℹ cancelled 0")
 # check 7 paired RED→GREEN: red run -> source edit -> green run
 def cycle(name, first_red=True, second_green=True):
     blocks = [
@@ -1300,6 +1302,10 @@ with open(os.path.join(d, "redgreen.jsonl")) as src_tr, open(os.path.join(d, "re
     fh.write(src_tr.read())
     fh.write(json.dumps({"message": {"content": [{"type": "tool_use", "id": "l1", "name": "Bash",
              "input": {"command": "agent-kit learn \"Login token race\" --cause=x --rule=y"}}]}}) + "\n")
+with open(os.path.join(d, "redgreen.jsonl")) as src_tr, open(os.path.join(d, "redgreen_learned_path.jsonl"), "w") as fh:
+    fh.write(src_tr.read())
+    fh.write(json.dumps({"message": {"content": [{"type": "tool_use", "id": "l2", "name": "Bash",
+             "input": {"command": "bash \"/opt/devkit/bin/agent-kit\" learn \"Login token race\" --cause=x"}}]}}) + "\n")
 # RED-check outside the JVM: a test file written this session must run red, then green
 def script_case(name, test_path, runs):
     blocks = [{"type": "tool_use", "id": "w1", "name": "Write",
@@ -1346,6 +1352,9 @@ run_case "lesson: proven fix, nothing recorded → reminded" test_evidence_gate.
 run_case "lesson: reminded once per session only" test_evidence_gate.sh 0 \
   "{\"session_id\":\"lesson1\",\"transcript_path\":\"${NODE_PROJ}/redgreen.jsonl\",\"last_assistant_message\":\"Đã fix bug đăng nhập: test đỏ trước khi sửa, 12/12 test pass sau khi sửa.\"}" \
   CLAUDE_PROJECT_DIR="${NODE_PROJ}"
+run_case "lesson: agent-kit called by quoted path → no reminder" test_evidence_gate.sh 0 \
+  "{\"session_id\":\"lesson3\",\"transcript_path\":\"${NODE_PROJ}/redgreen_learned_path.jsonl\",\"last_assistant_message\":\"Đã fix bug đăng nhập: test đỏ trước khi sửa, 12/12 test pass sau khi sửa.\"}" \
+  CLAUDE_PROJECT_DIR="${NODE_PROJ}"
 run_case "lesson: agent-kit learn in the session → no reminder" test_evidence_gate.sh 0 \
   "{\"session_id\":\"lesson2\",\"transcript_path\":\"${NODE_PROJ}/redgreen_learned.jsonl\",\"last_assistant_message\":\"Đã fix bug đăng nhập: test đỏ trước khi sửa, 12/12 test pass sau khi sửa.\"}" \
   CLAUDE_PROJECT_DIR="${NODE_PROJ}"
@@ -1367,6 +1376,9 @@ run_case "check 7: still red after the edit cannot back 'đã fix'" test_evidenc
   CLAUDE_PROJECT_DIR="${NODE_PROJ}"
 run_case "K-10 npm test green backs claim (no gradle)" test_evidence_gate.sh 0 \
   "{\"session_id\":\"k10g\",\"transcript_path\":\"${NODE_PROJ}/green.jsonl\",\"last_assistant_message\":\"Đã chạy test, 12/12 test pass.\"}" \
+  CLAUDE_PROJECT_DIR="${NODE_PROJ}"
+run_case "node --test green ('ℹ fail 0', test named error) backs claim" test_evidence_gate.sh 0 \
+  "{\"session_id\":\"k10n\",\"transcript_path\":\"${NODE_PROJ}/node_green.jsonl\",\"last_assistant_message\":\"Đã chạy test, 3/3 test pass.\"}" \
   CLAUDE_PROJECT_DIR="${NODE_PROJ}"
 run_case "K-10 npm test red does not back claim" test_evidence_gate.sh 2 \
   "{\"session_id\":\"k10r\",\"transcript_path\":\"${NODE_PROJ}/red.jsonl\",\"last_assistant_message\":\"Đã chạy test, 12/12 test pass.\"}" \

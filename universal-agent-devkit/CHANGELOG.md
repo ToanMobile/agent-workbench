@@ -120,6 +120,11 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
   `agent-kit learn` / `--record-lesson` in the session, the Stop is held once with the command to run;
   the next stop passes. `LESSON_REMINDER=0` turns it off.
 - `agent-kit index-memory` defaults to the current project's `.agents/instincts.md`, not the DevKit's.
+- **Found by a 100-scenario end-to-end simulation, fixed:** a passing `node --test` run ("ℹ fail 0")
+  and a test named "shows error message" read as RED (the failure regex was case-insensitive), so a
+  correct TDD flow on a Node project was held forever; `agent-kit learn` called through a quoted path
+  did not count as a recorded lesson; chit-chat ("cảm ơn…", "thời tiết…") pulled in unrelated traps —
+  with no intent detected, a trap now needs a strong match (3+ points).
 - Docs: `AGENTS.md` §7 lists what each platform actually enforces; §8.2 and `core-rules.md` §16 mark
   hook-enforced steps `[hook]` and drop the "Zero Manual Effort" / "CỔNG BẮT BUỘC" claims no hook backed;
   §2.3 asks for real evidence (screenshot for UI, test output for CLI/backend) instead of a PASS
@@ -131,6 +136,14 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
   EXCEPTION / ANR / fatal signal of the package in logcat since the command started (device clock).
   No or several devices ⇒ exit 3, never a pass; commands `hardware_safety_gate.sh` blocks are refused.
 - **`anr-logcat-triage.sh`:** no online device is now exit 3 (UNVERIFIED) instead of exit 0.
+
+### Docs
+- **`AGENTS.md` §7.1 — parallel agents, one git worktree each:** how to create one (Claude Code
+  `isolation: "worktree"` / `EnterWorktree`, else `git worktree add ../<repo>-<task>`), what a new
+  worktree lacks (untracked local config, a symlink-mode DevKit install → `agent-kit init` inside
+  it), one device per agent at a time, acceptance only on a gate run inside the worktree with
+  `CLAUDE_PROJECT_DIR` pointing at it, bringing the result back as a patch unless commits were
+  asked for, and which clean-up steps are the user's (the git guard blocks `--force` removal).
 
 ## 1.1.0 — 2026-09-23
 
