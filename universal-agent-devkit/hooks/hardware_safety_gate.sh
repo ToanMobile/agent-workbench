@@ -36,6 +36,26 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 
+INPUT="$(cat)"
+
+# ── Fast path (2026-09-23): most Bash calls (ls, cat, npm test, ./gradlew …) contain
+# nothing this gate reacts to, and starting python3 for them cost ~70–90 ms each.
+# Bash-only: take the command value from the JSON with a builtin regex and allow it
+# at once when it has NO backslash / quote / $ / backtick / glob char (anything that
+# could hide a word from this check) and none of the trigger words (case-insensitive).
+# Everything else — and any payload the regex cannot read — goes to the full parser.
+fast_allow() { # $1 = trigger ERE
+  local re='"command"[[:space:]]*:[[:space:]]*"([^"\\]*)"' c
+  [[ $INPUT =~ $re ]] || return 1
+  c="${BASH_REMATCH[1]}"
+  case "$c" in ""|*[\'\$\`\*\?\[\]]*) return 1 ;; esac
+  shopt -s nocasematch
+  if [[ $c =~ $1 ]]; then shopt -u nocasematch; return 1; fi
+  shopt -u nocasematch
+  return 0
+}
+fast_allow 'adb|fastboot|dd|mount|rm|fastlane|security|xcrun|simctl|eval|flash' && exit 0
+
 REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
 if [ "${HARDWARE_SAFETY_GATE:-1}" = "0" ] || [ "${HARDWARE_OVERRIDE:-0}" = "1" ]; then
@@ -52,8 +72,8 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 2
 fi
 
-REPO_ROOT="${REPO_ROOT}" python3 -c '
-import sys, json, re, os, shlex, shutil, subprocess
+printf '%s' "$INPUT" | REPO_ROOT="${REPO_ROOT}" python3 -c '
+import sys, json, re, os, fnmatch, shlex, shutil, subprocess
 
 raw = sys.stdin.read()
 if not raw.strip():
@@ -105,7 +125,7 @@ def rm_hits(text):
     for seg in re.split(r"[;&|\n]+", text):
         toks = seg.split()
         for i, t in enumerate(toks):
-            if t.rsplit("/", 1)[-1] != "rm":
+            if t.rsplit("/", 1)[-1].lower() != "rm":
                 continue
             args = toks[i + 1:]
             flags = "".join(a[1:] for a in args if a.startswith("-") and not a.startswith("--"))
@@ -117,12 +137,29 @@ def rm_hits(text):
                 return True
     return False
 
+# The same command as the shell will run it: quotes removed (a""db → adb) and a globbed
+# program name resolved (a?b, /opt/*/fastboot → adb, fastboot). Matched case-insensitively
+# too: macOS resolves ADB / Fastboot to the real tools.
+TOOLS = ("adb", "fastboot", "dd", "rm", "mount", "fastlane", "security", "xcrun")
+def unglob(tok):
+    base = tok.rsplit("/", 1)[-1]
+    if re.search(r"[*?\[]", base):
+        for t in TOOLS:
+            if fnmatch.fnmatch(t, base.lower()):
+                return t
+    return tok
+try:
+    norm = " ".join(unglob(t) for t in shlex.split(cmd, comments=False, posix=True))
+except ValueError:
+    norm = cmd
+variants = [cmd, norm]
+
 label = None
 for pat, lab in PATTERNS:
-    if re.search(pat, cmd):
+    if any(re.search(pat, v, re.I) for v in variants):
         label = lab
         break
-if label is None and rm_hits(cmd):
+if label is None and any(rm_hits(v) for v in variants):
     label = "rm -rf phân vùng hệ thống cốt lõi"
 
 

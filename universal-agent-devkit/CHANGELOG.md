@@ -132,6 +132,18 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
   `keystore.properties` (core-rules §1), SwiftPM dependencies on a `branch:` and secrets in property
   lists (`<key>API_KEY</key><string>…</string>`, `$(BUILD_SETTING)` references allowed); prompt context
   recognises "giật", jank, recomposition, memory leak / retain cycle, TestFlight / App Store.
+- **Fast path in the Bash gates:** `block-dangerous-git.sh` and `hardware_safety_gate.sh` read the
+  command with a bash builtin regex and allow it at once when it has no trigger word
+  (case-insensitive) and no backslash, quote, `$`, backtick or glob character — ~73 ms and ~91 ms per
+  Bash call down to ~5 ms for `ls`, `npm test`, `./gradlew …`. Anything else still goes to the full
+  parser. Found while testing it and fixed in the parsers: `GIT reset --hard`, `/usr/bin/g?t …`
+  (git guard) and `ADB remount`, `a?b remount`, `a""db remount`, `Fastboot flash`, `RM -rf /system`
+  (device gate) got through — macOS resolves upper-case names and the shell expands globs/quotes.
+- **`agent-kit clean [path] [--days=N] [--apply] [--old-installs]`** (`scripts/devkit_clean.py`):
+  removes hook logs, per-session state, `restore-backup/` copies and `adb-safe-exec/` evidence in
+  `.claude/audit-gate` older than N days (default 14), trims logs over 5 MB to their last 2000 lines;
+  `--old-installs` also removes old `~/.universal-agent-devkit.old-*` copies. Dry-run unless
+  `--apply`; never touches code, `.agents/` or `.gitignore`.
 - Docs: `AGENTS.md` §7 lists what each platform actually enforces; §8.2 and `core-rules.md` §16 mark
   hook-enforced steps `[hook]` and drop the "Zero Manual Effort" / "CỔNG BẮT BUỘC" claims no hook backed;
   §2.3 asks for real evidence (screenshot for UI, test output for CLI/backend) instead of a PASS

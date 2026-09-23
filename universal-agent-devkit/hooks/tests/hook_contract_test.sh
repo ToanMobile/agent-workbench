@@ -610,7 +610,26 @@ hwcase 0 'rm -rf build'
 hwcase 0 'dd if=/dev/zero of=out.img bs=1m count=1'
 run_case "hw-gate: malformed JSON fails closed" hardware_safety_gate.sh 2 '{bad'
 run_case "hw-gate: missing python3 fails closed" hardware_safety_gate.sh 2 \
-  '{"tool_name":"Bash","tool_input":{"command":"ls"}}' PATH="${NOJQ_BIN}"
+  '{"tool_name":"Bash","tool_input":{"command":"adb devices"}}' PATH="${NOJQ_BIN}"
+# Fast path: a command with no trigger word and no quote/escape/$/glob needs no parser.
+run_case "hw-gate: fast path allows ls even without python3" hardware_safety_gate.sh 0 \
+  '{"tool_name":"Bash","tool_input":{"command":"ls -la"}}' PATH="${NOJQ_BIN}"
+run_case "git-guard: fast path allows npm test without python3" block-dangerous-git.sh 0 \
+  '{"tool_name":"Bash","tool_input":{"command":"npm test"}}' PATH="${NOJQ_BIN}"
+# ... and never lets a disguised command through: case, quotes and globs go to the parser.
+hwcase 2 'ADB remount'
+hwcase 2 'a?b remount'
+hwcase 2 'a""db remount'
+hwcase 2 'Fastboot flash boot x.img'
+hwcase 2 'RM -rf /system'
+run_case "git-guard: GIT reset --hard (macOS is case-insensitive)" block-dangerous-git.sh 2 \
+  '{"tool_name":"Bash","tool_input":{"command":"GIT reset --hard"}}'
+run_case "git-guard: /usr/bin/g?t reset --hard (glob)" block-dangerous-git.sh 2 \
+  '{"tool_name":"Bash","tool_input":{"command":"/usr/bin/g?t reset --hard"}}'
+run_case "git-guard: g''it reset --hard (quotes)" block-dangerous-git.sh 2 \
+  '{"tool_name":"Bash","tool_input":{"command":"g'"''"'it reset --hard"}}'
+run_case "git-guard: \$G reset --hard (variable)" block-dangerous-git.sh 2 \
+  '{"tool_name":"Bash","tool_input":{"command":"G=git; $G reset --hard"}}'
 run_case "hw-gate: override honoured" hardware_safety_gate.sh 0 \
   '{"tool_name":"Bash","tool_input":{"command":"adb remount"}}' HARDWARE_OVERRIDE=1
 # Device policy (the Geely EX2 lesson: two personal phones on the same USB hub as the

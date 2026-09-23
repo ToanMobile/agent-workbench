@@ -33,13 +33,32 @@
 #      regex instead. Missing python3 blocks.
 
 INPUT=$(cat)
+
+# ── Fast path (2026-09-23): most Bash calls (ls, cat, npm test, ./gradlew …) contain
+# nothing this gate reacts to, and starting python3 for them cost ~70–90 ms each.
+# Bash-only: take the command value from the JSON with a builtin regex and allow it
+# at once when it has NO backslash / quote / $ / backtick / glob char (anything that
+# could hide a word from this check) and none of the trigger words (case-insensitive).
+# Everything else — and any payload the regex cannot read — goes to the full parser.
+fast_allow() { # $1 = trigger ERE
+  local re='"command"[[:space:]]*:[[:space:]]*"([^"\\]*)"' c
+  [[ $INPUT =~ $re ]] || return 1
+  c="${BASH_REMATCH[1]}"
+  case "$c" in ""|*[\'\$\`\*\?\[\]]*) return 1 ;; esac
+  shopt -s nocasematch
+  if [[ $c =~ $1 ]]; then shopt -u nocasematch; return 1; fi
+  shopt -u nocasematch
+  return 0
+}
+fast_allow 'git|eval|devkit_precommit|hookspath' && exit 0
+
 if ! command -v python3 >/dev/null 2>&1; then
   echo "BLOCKED: block-dangerous-git.sh cần 'python3' để phân tích lệnh. Chặn để an toàn." >&2
   exit 2
 fi
 
 printf '%s' "$INPUT" | python3 -c '
-import json, os, re, shlex, shutil, sys, time
+import fnmatch, json, os, re, shlex, shutil, sys, time
 
 try:
     cmd = json.load(sys.stdin).get("tool_input", {}).get("command") or ""
@@ -237,6 +256,9 @@ def analyse_simple(tokens, depth):
     if i >= len(tokens):
         return None
     prog, rest = tokens[i].rsplit("/", 1)[-1], tokens[i + 1:]
+    # macOS resolves GIT / Git to git, and a glob like g?t or gi[t] can expand to it.
+    if prog.lower() == "git" or (re.search(r"[*?\[]", prog) and fnmatch.fnmatch("git", prog)):
+        prog = "git"
     if prog in ("cd", "pushd", "popd"):
         CHANGES_DIR.append(prog)
     # `$g reset --hard` / `${GIT} clean -f`: a variable in command position may be git.

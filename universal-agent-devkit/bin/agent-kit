@@ -98,6 +98,11 @@ case "$CMD" in
     shift || true
     python3 "$DEVKIT_ROOT/bin/instincts.py" add "$@"
     ;;
+  clean)
+    # clean [path] [--days=N] [--apply] [--old-installs] — dry-run unless --apply
+    shift || true
+    python3 "$DEVKIT_ROOT/scripts/devkit_clean.py" "$@"
+    ;;
   matrix)
     # matrix [--write] — regression matrix from this project's own test runner
     shift || true
@@ -154,6 +159,10 @@ Commands:
   learn "<title>" [--cause TEXT] [--rule TEXT] [--check CMD] [--dry-run]
                       Record a lesson in .agents/instincts.md as the next [INSTINCT-NNN]
                       (a title already recorded is refused; --force to add anyway)
+  clean [path] [--days=N] [--apply] [--old-installs]
+                      Remove hook logs, session state, restore backups and adb evidence
+                      in .claude/audit-gate older than N days (default 14); trims logs over
+                      5 MB. Never touches code or .agents/. Dry-run unless --apply
   matrix [--write]    Regression matrix generated from this project's test runner (gradle,
                       swift, npm/pnpm/yarn/bun, pytest, go, cargo, flutter); --write activates it
                       (agent-kit profile does this when the profile only has a sample matrix)
