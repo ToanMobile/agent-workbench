@@ -99,6 +99,10 @@ SECRET_PATTERNS = [
     (r"\bxox[abprs]-[A-Za-z0-9-]{10,}", "Slack Token", None),
     (r"\bAIza[0-9A-Za-z_\-]{35}\b", "Google API Key", None),
     (r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}", "JSON Web Token", None),
+    # Property lists (Info.plist, *.plist): <key>API_KEY</key><string>value</string>.
+    # A build-setting reference ($(API_KEY)) is a placeholder, not a secret.
+    (r"(?i)<key>[^<]*(?:api[_\-]?key|secret|token|password|passwd|private[_\-]?key)[^<]*</key>\s*<string>([^<\s]{8,})</string>",
+     "Hardcoded secret in a property list", 1),
 ]
 
 # Unquoted `key = value` only in config-style files, where it is the normal syntax
@@ -115,6 +119,9 @@ FORBIDDEN_SECRET_FILES = [
     (r"google-services\.json$", ("Tệp cấu hình Firebase/Google Services production (google-services.json)", "Production Firebase/Google Services config (google-services.json)")),
     (r"GoogleService-Info\.plist$", ("Tệp cấu hình Firebase iOS nhạy cảm (GoogleService-Info.plist)", "Sensitive Firebase iOS config (GoogleService-Info.plist)")),
     (r"\.(pem|key)$", ("Khóa mật mã riêng tư trần (*.pem, *.key)", "Raw private key (*.pem, *.key)")),
+    (r"(^|/)(local|keystore)\.properties$", ("Cấu hình cục bộ Android (local.properties / keystore.properties — core-rules §1)",
+                                             "Local Android config (local.properties / keystore.properties — core-rules §1)")),
+    # keep the .env rule LAST: run_git_hygiene_audit uses FORBIDDEN_SECRET_FILES[-1]
     (r"(^|/)(\.env(\.[a-zA-Z0-9_-]+)?|[\w.-]+\.env)$", ("Tệp cấu hình biến môi trường (.env, *.env)", "Environment variable file (.env, *.env)")),
 ]
 
@@ -194,6 +201,11 @@ DEPENDENCY_RULES = {
         (r"(?m)^\s+[\w\-]+\s*:\s*any\s*$", FLOATING_DEP),
         (r"(?m)^\s+url\s*:\s*[\"']?" + _HTTP, INSECURE_DEP),
     ],
+    "swiftpm": [
+        # `branch:` follows a moving branch head; `from:`/ranges are pinned by Package.resolved.
+        (r"\.package\s*\([^)]*\bbranch\s*:\s*\"[^\"]*\"", FLOATING_DEP),
+        (r"\.package\s*\([^)]*\burl\s*:\s*\"" + _HTTP, INSECURE_DEP),
+    ],
     "maven-pom": [
         (r"<version>\s*(?:LATEST|RELEASE)\s*</version>", FLOATING_DEP),
         (r"<(repository|pluginRepository|snapshotRepository)>(?:(?!</\1>)[\s\S])*?<url>\s*" + _HTTP, INSECURE_DEP),
@@ -225,6 +237,8 @@ def dependency_kind(rel_file: str):
         return "pubspec"
     if name == "pom.xml":
         return "maven-pom"
+    if name == "Package.swift":
+        return "swiftpm"
     return None
 
 TEST_DIR_NAMES = {"test", "tests", "__tests__", "androidtest", "unittest", "integrationtest",

@@ -585,6 +585,16 @@ hwcase() {
     XDG_CONFIG_HOME="${SANDBOX}/xdg" ADB_DENY_SERIALS= ADB_ALLOW_SERIALS= ANDROID_SERIAL= "$@"
 }
 hwcase 2 'adb remount'
+# system packages and iOS signing / simulators (found by the mobile simulation)
+hwcase 2 'adb -s EMU01 shell pm uninstall --user 0 com.android.systemui'
+hwcase 2 'adb shell pm disable-user com.google.android.gms'
+hwcase 0 'adb shell pm uninstall com.shop.app'
+hwcase 2 'fastlane match nuke development'
+hwcase 2 'security delete-keychain login.keychain-db'
+hwcase 2 'rm -rf ~/Library/MobileDevice/Provisioning\ Profiles'
+hwcase 2 'xcrun simctl erase all'
+hwcase 0 'xcrun simctl delete unavailable'
+hwcase 0 'fastlane beta'
 hwcase 2 'adb -s emulator-5554 remount'
 hwcase 2 'adb shell mount -o rw,remount /system'
 hwcase 2 'fastboot -s ABC flash boot boot.img'

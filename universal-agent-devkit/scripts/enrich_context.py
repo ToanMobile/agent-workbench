@@ -106,7 +106,9 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
         if dossier["active_profile"] == "android":
             dossier["recommended_skills"].append("android-real-device-qa")
 
-    if any(k in p_lower for k in ["lag", "chậm", "đơ", "anr", "tối ưu", "hiệu năng", "fps", "treo", "freeze", "xoay"]):
+    if any(k in p_lower for k in ["lag", "chậm", "đơ", "anr", "tối ưu", "hiệu năng", "fps", "treo", "freeze", "xoay",
+                                   "giật", "jank", "stutter", "recompos", "leak", "rò rỉ", "retain cycle",
+                                   "memory", "bộ nhớ", "oom"]):
         dossier["detected_intents"].append("PERFORMANCE_AND_RESPONSIVENESS")
         dossier["injected_nfrs"].append("Non-blocking Main Thread: Move heavy work/IO to background dispatchers.")
         dossier["injected_nfrs"].append("Algorithm complexity: O(1) lookup via Map/Set; avoid O(N^2) dynamic loops.")
@@ -141,7 +143,8 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
         dossier["detected_intents"].append("MERGE_CONFLICT")
         dossier["recommended_skills"].append("merge-conflict-resolver")
 
-    if any(k in p_lower for k in ["release", "deploy", "đóng gói", "apk", "aab", "publish", "phát hành"]):
+    if any(k in p_lower for k in ["release", "deploy", "đóng gói", "apk", "aab", "publish", "phát hành",
+                                   "testflight", "app store", "play store", "archive", "ipa", "submit"]):
         dossier["detected_intents"].append("RELEASE_DEPLOY")
         dossier["recommended_skills"].extend(["deploy", "qc", "verification-before-completion"])
 

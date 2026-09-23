@@ -265,6 +265,23 @@ make_repo "true"
 mkdir -p src/test && printf '{"dependencies":{"a":"latest"}}\n' > src/test/package.json
 out="$(gate_nomatrix)"; check "manifest under a test dir is a fixture, not scanned" 0 $? "$out"
 
+# --- mobile findings: local.properties, SwiftPM branch pins, plist secrets -----------
+make_repo "true"
+printf 'sdk.dir=/Users/dev/Library/Android/sdk\n' > local.properties
+out="$(gate_nomatrix)"; check "local.properties (core-rules §1) -> REJECT" 1 $? "$out"
+make_repo "true"
+printf 'let package = Package(name: "A", dependencies: [.package(url: "https://github.com/x/y", branch: "main")])\n' > Package.swift
+out="$(gate_nomatrix)"; check "SwiftPM dependency on a branch -> REJECT" 1 $? "$out"
+make_repo "true"
+printf 'let package = Package(name: "A", dependencies: [.package(url: "https://github.com/x/y", from: "5.8.0")])\n' > Package.swift
+out="$(gate_nomatrix)"; check "SwiftPM from: version range -> not rejected" 0 $? "$out"
+make_repo "true"
+printf '<plist><dict>\n<key>API_KEY</key>\n<string>%s</string>\n</dict></plist>\n' "live""VALUE1234567890" > Info.plist
+out="$(gate_nomatrix)"; check "API key in Info.plist -> REJECT" 1 $? "$out"
+make_repo "true"
+printf '<plist><dict>\n<key>API_KEY</key>\n<string>$(API_KEY)</string>\n</dict></plist>\n' > Info.plist
+out="$(gate_nomatrix)"; check "plist build-setting reference \$(API_KEY) -> not rejected" 0 $? "$out"
+
 # --- --staged: static checks on the index, never PASS --------------------------------
 gate_staged() { CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --staged "$@" 2>&1; }
 make_repo "true"

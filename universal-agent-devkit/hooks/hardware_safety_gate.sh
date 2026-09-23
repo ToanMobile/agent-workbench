@@ -12,6 +12,11 @@
 #   • fastboot [-s SERIAL …] flash|flashall|erase|format|update|oem unlock|flashing unlock
 #   • rm with recursive+force flags in any spelling (-rf, -fr, -r -f, --recursive
 #     --force) on /system, /vendor, /boot, /product, /data or /
+#   • adb shell pm uninstall|disable(-user)|hide of a system package (android,
+#     com.android.*, com.google.android.*, vendor namespaces)
+#   • iOS signing & simulators: fastlane match nuke, security delete-keychain|
+#     identity|certificate, rm of provisioning profiles / keychains,
+#     xcrun simctl erase|delete all
 #   • any adb command that reaches a device outside the device policy — a
 #     developer's personal phone plugged in next to the test rig. Denylist /
 #     allowlist, one serial per line (# comments) or comma/space separated in env:
@@ -82,6 +87,17 @@ PATTERNS = [
      "fastboot flash/erase/format (can thiệp bootloader thiết bị thật)"),
     (r"\bfastboot" + FB_OPTS + r"\s+(?:oem|flashing)\s+(?:unlock|lock)\b",
      "fastboot oem/flashing unlock (xoá sạch thiết bị)"),
+    # Removing or disabling a system package (SystemUI, the launcher, GMS …) for the
+    # user can leave the device unable to boot to a usable screen.
+    (r"\badb" + ADB_OPTS + r"\s+shell\s+(?:[^;&|\n]*\s)?pm\s+(?:uninstall|disable-user|disable|hide)\b[^;&|\n]*"
+     r"\s(?:android|com\.android\.[\w.]+|com\.google\.android\.[\w.]+|com\.sec\.[\w.]+|com\.samsung\.[\w.]+"
+     r"|com\.qualcomm\.[\w.]+|com\.mediatek\.[\w.]+)(?=\s|$|[;&|])",
+     "gỡ/tắt app hệ thống Android (pm uninstall/disable) — thiết bị có thể không vào được màn hình"),
+    # iOS signing identity and device fleet: not recoverable from the repo.
+    (r"\bfastlane\b[^;&|\n]*\bmatch\s+nuke\b", "fastlane match nuke — thu hồi TOÀN BỘ chứng chỉ ký của team"),
+    (r"\bsecurity\s+delete-(?:keychain|identity|certificate)\b", "security delete-keychain/identity — xoá chứng chỉ/khoá ký"),
+    (r"\brm\b[^;&|\n]*(?:MobileDevice/Provisioning|Library/Keychains)", "xoá provisioning profiles / keychain"),
+    (r"\bxcrun\s+simctl\s+(?:erase|delete)\s+all\b", "xcrun simctl erase/delete all — xoá sạch mọi simulator"),
 ]
 
 def rm_hits(text):

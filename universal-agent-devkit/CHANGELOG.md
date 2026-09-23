@@ -125,6 +125,13 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
   correct TDD flow on a Node project was held forever; `agent-kit learn` called through a quoted path
   did not count as a recorded lesson; chit-chat ("cảm ơn…", "thời tiết…") pulled in unrelated traps —
   with no intent detected, a trap now needs a strong match (3+ points).
+- **Found by a 100-scenario Android/iOS simulation, fixed:** the device gate now blocks `adb shell pm
+  uninstall|disable-user|hide` of system packages (SystemUI, GMS, vendor), `fastlane match nuke`,
+  `security delete-keychain|identity|certificate`, removing provisioning profiles / keychains and
+  `xcrun simctl erase|delete all`; the post-fix gate rejects committed `local.properties` /
+  `keystore.properties` (core-rules §1), SwiftPM dependencies on a `branch:` and secrets in property
+  lists (`<key>API_KEY</key><string>…</string>`, `$(BUILD_SETTING)` references allowed); prompt context
+  recognises "giật", jank, recomposition, memory leak / retain cycle, TestFlight / App Store.
 - Docs: `AGENTS.md` §7 lists what each platform actually enforces; §8.2 and `core-rules.md` §16 mark
   hook-enforced steps `[hook]` and drop the "Zero Manual Effort" / "CỔNG BẮT BUỘC" claims no hook backed;
   §2.3 asks for real evidence (screenshot for UI, test output for CLI/backend) instead of a PASS
