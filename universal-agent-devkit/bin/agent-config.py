@@ -308,12 +308,15 @@ def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None)
             sample = json.loads(new_bytes.decode("utf-8"))
         except ValueError:
             sample = {}
-        if not sample.get("enforce_as_is"):
-            try:
-                import matrix_detect  # noqa: PLC0415 - scripts/ is on sys.path
+        # A monorepo root has no runner of its own, so an "enforce_as_is" sample (it runs
+        # from the root) would fail every stop — its modules' runners are used instead.
+        try:
+            import matrix_detect  # noqa: PLC0415 - scripts/ is on sys.path
+            monorepo = not matrix_detect.detect(str(target_dir)) and bool(matrix_detect.detect_modules(str(target_dir)))
+            if not sample.get("enforce_as_is") or monorepo:
                 generated = matrix_detect.generate(str(target_dir))
-            except Exception as e:  # detection must never break profile activation
-                log_warn(tr(f"Không dò được test runner: {e}", f"Test runner detection failed: {e}"))
+        except Exception as e:  # detection must never break profile activation
+            log_warn(tr(f"Không dò được test runner: {e}", f"Test runner detection failed: {e}"))
         if generated is not None:
             new_bytes = generated
         if reg_dest.is_symlink():

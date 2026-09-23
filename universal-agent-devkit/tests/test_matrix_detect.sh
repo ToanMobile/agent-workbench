@@ -75,6 +75,47 @@ rm -f "$P/fail"
 python3 "$DEVKIT_DIR/scripts/devkit_uninstall.py" "$P" --apply >/dev/null 2>&1
 [ ! -e "$M" ] && ok "uninstall removes the unchanged generated matrix" || fail "generated matrix left behind"
 
+# --- monorepo: first-level modules with their own runner -------------------------------
+rules() { python3 "$MD" "$1" 2>/dev/null | python3 -c 'import json,sys
+try: print(" | ".join(r["component"] + "=" + ";".join(t["command"] for t in r["mandatory_regression_tests"]) for r in json.load(sys.stdin)["rules"]))
+except Exception: print("none")'; }
+P="$(proj mono)"; mkdir -p "$P/CarConnect/app" "$P/PhoneConnect" "$P/PCConnect" "$P/node_modules/x"
+touch "$P/CarConnect/gradlew" "$P/PhoneConnect/gradlew" "$P/node_modules/x/go.mod"
+echo 'plugins { id("com.android.application") }' > "$P/CarConnect/app/build.gradle.kts"; echo 'module pc' > "$P/PCConnect/go.mod"
+[ "$(rules "$P")" = "CarConnect=cd CarConnect && ./gradlew testDebugUnitTest | PCConnect=cd PCConnect && go test ./... | PhoneConnect=cd PhoneConnect && ./gradlew test" ] \
+  && ok "monorepo root: one rule per module (cd <module> && runner), node_modules skipped" || fail "monorepo: $(rules "$P")"
+P="$(proj pnpmws)"; echo '{"scripts":{"test":"vitest run"}}' > "$P/package.json"; touch "$P/pnpm-lock.yaml"
+printf 'packages:\n  - "packages/*"\n' > "$P/pnpm-workspace.yaml"; mkdir -p "$P/web"; echo '{"scripts":{"test":"vitest run"}}' > "$P/web/package.json"
+[ "$(rules "$P")" = "ProjectTestSuite=pnpm test" ] && ok "pnpm workspace: the root runner covers its packages (no duplicate)" || fail "pnpm ws: $(rules "$P")"
+P="$(proj cargows)"; printf '[workspace]\nmembers = ["core"]\n' > "$P/Cargo.toml"; mkdir -p "$P/core"; printf '[package]\nname="core"\n' > "$P/core/Cargo.toml"
+[ "$(rules "$P")" = "ProjectTestSuite=cargo test" ] && ok "Cargo workspace: the root runner covers its members" || fail "cargo ws: $(rules "$P")"
+
+# The regression gate runs only the suite of the module that changed.
+P="$(proj monogate)"; (cd "$P" && git init -q . && git config user.email t@t && git config user.name t)
+mkdir -p "$P/CarConnect/app/src/main" "$P/PCConnect"
+printf '#!/bin/sh\necho "CarConnect Gradle ran"; exit 1\n' > "$P/CarConnect/gradlew"; chmod +x "$P/CarConnect/gradlew"
+echo 'plugins { id("com.android.application") }' > "$P/CarConnect/app/build.gradle.kts"
+echo "class Main" > "$P/CarConnect/app/src/main/Main.kt"
+printf 'module pc\n\ngo 1.21\n' > "$P/PCConnect/go.mod"
+printf 'package pc\n\nfunc Add(a, b int) int { return a + b }\n' > "$P/PCConnect/calc.go"
+printf 'package pc\n\nimport "testing"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal("bad") } }\n' > "$P/PCConnect/calc_test.go"
+python3 "$DEVKIT_DIR/bin/agent-config.py" --profile android --target "$P" >/dev/null 2>&1
+(cd "$P" && git add -A && git commit -qm init)
+gate() { printf '{"session_id":"%s","hook_event_name":"Stop"}' "$1" | CLAUDE_PROJECT_DIR="$P" bash "$DEVKIT_DIR/hooks/regression_gate.sh" 2>&1; }
+printf 'package pc\n\n// Add sums.\nfunc Add(a, b int) int { return a + b }\n' > "$P/PCConnect/calc.go"
+out="$(gate mono1)"; rc=$?
+[ "$rc" = 0 ] && ! printf '%s' "$out" | grep -q CarConnect && ok "change in PCConnect/: only its go test runs (CarConnect's failing Gradle is not run)" \
+  || fail "PCConnect change ran other modules (rc=$rc): $out"
+(cd "$P" && git checkout -q -- .)
+echo "class Main { val x = 1 }" > "$P/CarConnect/app/src/main/Main.kt"
+out="$(gate mono2)"; rc=$?
+[ "$rc" = 2 ] && printf '%s' "$out" | grep -q "REG-AUTO-CARCONNECT-01" && ok "change in CarConnect/: its Gradle suite runs and its failure blocks" \
+  || fail "CarConnect change not enforced (rc=$rc)"
+P2="$(proj webmono)"; mkdir -p "$P2/site" "$P2/api"; echo '{"scripts":{"test":"jest"}}' > "$P2/site/package.json"; echo 'module api' > "$P2/api/go.mod"
+python3 "$DEVKIT_DIR/bin/agent-config.py" --profile web --target "$P2" >/dev/null 2>&1
+grep -q '"cd site && npm test"' "$P2/.agents/regression_matrix.active.json" 2>/dev/null \
+  && ok "profile web on a monorepo root (no root package.json): per-module matrix, not the root-only sample" || fail "web monorepo got the sample"
+
 if [ "$FAILS" -ne 0 ]; then
   echo "matrix detect: $FAILS FAILED"; exit 1
 fi

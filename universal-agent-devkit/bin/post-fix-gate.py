@@ -119,6 +119,9 @@ PLACEHOLDER_VALUE = re.compile(
     r"(?i)^(\$.*|<.*>|\{\{.*|%.*|x{4,}|\*{4,}|your[_\-].*|change[_\-]?me|placeholder|redacted|example.*|dummy.*|none|null|true|false"
     r"|password|passwd|secret|test|testing)$")
 
+# .env files: forbidden to commit, and scanned with the unquoted `KEY=value` rule too.
+ENV_FILE_PATTERN = r"(^|/)(\.env(\.[a-zA-Z0-9_-]+)?|[\w.-]+\.env)$"
+
 FORBIDDEN_SECRET_FILES = [
     (r"\.(keystore|jks|p12|pfx|mobileprovision)$", ("Chứng chỉ ký số trần (*.keystore, *.jks, *.p12, *.mobileprovision)", "Raw signing certificate (*.keystore, *.jks, *.p12, *.mobileprovision)")),
     (r"google-services\.json$", ("Tệp cấu hình Firebase/Google Services production (google-services.json)", "Production Firebase/Google Services config (google-services.json)")),
@@ -127,8 +130,7 @@ FORBIDDEN_SECRET_FILES = [
     (r"(^|/)id_(rsa|dsa|ecdsa|ed25519)$", ("Khoá SSH riêng tư (id_rsa, id_ed25519…)", "Private SSH key (id_rsa, id_ed25519…)")),
     (r"(^|/)(local|keystore)\.properties$", ("Cấu hình cục bộ Android (local.properties / keystore.properties — core-rules §1)",
                                              "Local Android config (local.properties / keystore.properties — core-rules §1)")),
-    # keep the .env rule LAST: run_git_hygiene_audit uses FORBIDDEN_SECRET_FILES[-1]
-    (r"(^|/)(\.env(\.[a-zA-Z0-9_-]+)?|[\w.-]+\.env)$", ("Tệp cấu hình biến môi trường (.env, *.env)", "Environment variable file (.env, *.env)")),
+    (ENV_FILE_PATTERN, ("Tệp cấu hình biến môi trường (.env, *.env)", "Environment variable file (.env, *.env)")),
 ]
 
 # Only an exact template suffix exempts a file (`.env.example`); a directory named
@@ -581,7 +583,7 @@ def run_git_hygiene_audit(modified_files: list) -> tuple:
         content = read_changed_text(rel_file)
         if content is not None:
             patterns = list(SECRET_PATTERNS)
-            if name.endswith(CONFIG_EXTENSIONS) or re.search(FORBIDDEN_SECRET_FILES[-1][0], clean_rel):
+            if name.endswith(CONFIG_EXTENSIONS) or re.search(ENV_FILE_PATTERN, clean_rel):
                 patterns.append(CONFIG_SECRET_PATTERN)
             for pat, label, group in patterns:
                 for m in re.finditer(pat, content):

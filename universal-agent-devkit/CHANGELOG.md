@@ -154,6 +154,16 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
   (`postgres://user:pass@…`; placeholders like `password` / `${DB_PASS}` allowed) and private SSH key
   files (`id_rsa`, `id_ed25519`, …). Prompt context has a SECURITY intent (XSS, CSRF, SSRF, injection,
   auth bypass …) that points to `security-checklist`.
+- **Monorepo test runners** (`scripts/matrix_detect.py`): first-level folders with their own runner
+  (`CarConnect/gradlew`, `PhoneConnect/gradlew`, `PCConnect/go.mod` …) each get a rule that watches only
+  that folder (every common source extension — modules may differ in language) and runs `cd <folder> &&
+  <runner>`, so a change runs only the suites it can affect; before, the root reported "no test runner"
+  and the regression gate stayed off for the whole monorepo. Folders the root runner covers (pnpm/yarn/
+  npm workspaces, Cargo workspace, Gradle settings include) stay with the root; `node_modules`, build
+  output and hidden folders are skipped. Profiles web/backend use this per-module matrix too when the
+  root has no runner of its own (their root-only sample would fail every stop).
+- `post-fix-gate.py`: the `.env` rule is an explicit `ENV_FILE_PATTERN` instead of "the last entry of
+  FORBIDDEN_SECRET_FILES", so adding a forbidden-file rule can no longer disable the `.env` value scan.
 - Docs: `AGENTS.md` §7 lists what each platform actually enforces; §8.2 and `core-rules.md` §16 mark
   hook-enforced steps `[hook]` and drop the "Zero Manual Effort" / "CỔNG BẮT BUỘC" claims no hook backed;
   §2.3 asks for real evidence (screenshot for UI, test output for CLI/backend) instead of a PASS
