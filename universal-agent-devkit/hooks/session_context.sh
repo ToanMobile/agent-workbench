@@ -116,7 +116,7 @@ try:
         sys.dont_write_bytecode = True
         import regression_checklist as rc  # the same status rules the checklist view uses
         counts = rc.summary(rc.load(root))
-    bad = {k: v for k, v in counts.items() if k in ("FAIL", "TIMEOUT", "UNCOVERED", "NEEDS_TEST")}
+    bad = {k: v for k, v in counts.items() if k in ("FAIL", "TIMEOUT", "UNCOVERED", "NEEDS_TEST", "NOT_IN_MATRIX", "OPEN")}
     if bad:
         parts.append("checklist còn " + ", ".join(f"{v} {k}" for k, v in sorted(bad.items()))
                      + " (.agents/regression_checklist.md)")

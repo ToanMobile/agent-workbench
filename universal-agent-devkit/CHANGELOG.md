@@ -229,6 +229,22 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
   - Prompt context: a lone Vietnamese syllable scores half, and an adjacent-word phrase match
     scores in full. On the three projects' 292 own traps, recall from 8 words of the symptom went
     from 288 to 291, with the same amount of noise.
+- **`agent-kit bugs import <table> [--dry-run]`** (`bin/regression_checklist.py import`): past bugs
+  enter the regression checklist from a tab- or `|`-separated table
+  (`bug_id | title | severity | fixed? | module | test_id_or_NONE | evidence`).
+  - A bug is never PASS on import. It is one of:
+    - NEEDS_TEST: no test.
+    - NOT_IN_MATRIX: a test the gate never runs.
+    - NOT_RUN: linked to a matrix test that has not run since the import or link.
+    - OPEN: not fixed.
+  - Only a real gate run of its matrix test after that sets PASS/FAIL.
+  - `regression_checklist.md` and SessionStart show how many bugs no regression test guards.
+  - Re-importing updates the rows and keeps their results.
+- **Static gate, every layer** (empty catch, raw log, placeholder, performance, dependency, secrets):
+  a finding whose text is already in HEAD (or the `--diff` base), counted per occurrence, is a
+  warning with `file:line`. It no longer blocks a commit that merely touches the file.
+- `profiles/game/scripts/unity-batch.sh` restores the Editor's PlayerPrefs domain after every run
+  (macOS; `UNITY_KEEP_PREFS=1` to keep the run's writes).
 - **Fixes from auditing the three migrated projects end to end:**
   - Secrets:
     - A secret whose exact text is already in HEAD (or the `--diff` base) was not introduced by the

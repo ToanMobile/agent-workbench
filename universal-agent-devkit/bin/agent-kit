@@ -102,6 +102,15 @@ case "$CMD" in
     shift || true
     bash "$DEVKIT_ROOT/scripts/githooks.sh" "${1:-status}" "${2:-$PWD}"
     ;;
+  bugs)
+    # bugs import <table> [--dry-run] | bugs [show] — past bugs in the regression checklist
+    shift || true
+    case "${1:-show}" in
+      import) shift; python3 "$DEVKIT_ROOT/bin/regression_checklist.py" --project "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" import "$@" ;;
+      show) python3 "$DEVKIT_ROOT/bin/regression_checklist.py" --project "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" show ;;
+      *) echo "agent-kit bugs: import <table> [--dry-run] | show" >&2; exit 2 ;;
+    esac
+    ;;
   learn)
     # learn "<title>" [--cause TEXT] [--rule TEXT] [--check CMD] [--file PATH] [--force] [--dry-run]
     shift || true
@@ -181,6 +190,10 @@ Commands:
   githooks [install|uninstall|status] [path]
                       Git pre-commit hook running the gate's static checks on every
                       commit, also outside any agent (skip once: git commit --no-verify)
+  bugs import <table> [--dry-run]
+                      Past bugs into the regression checklist (.agents/regression_checklist.md):
+                      bug_id | title | severity | fixed? | module | test_id_or_NONE | evidence
+                      (tab or | separated). Never PASS on import — shows which bugs no test guards
   learn "<title>" [--cause TEXT] [--rule TEXT] [--check CMD] [--dry-run]
                       Record a lesson in .agents/instincts.md as the next [INSTINCT-NNN]
                       (a title already recorded is refused; --force to add anyway)

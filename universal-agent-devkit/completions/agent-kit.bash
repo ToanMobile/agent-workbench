@@ -22,7 +22,7 @@ _agent_kit() {
   COMPREPLY=()
 
   if [ "${COMP_CWORD}" -eq 1 ]; then
-    words="init install-global profile health gate githooks learn clean matrix worktree
+    words="init install-global profile health gate githooks bugs learn clean matrix worktree
            index-memory test sync list commands list-old restore-old uninstall completion help"
     COMPREPLY=( $(compgen -W "${words}" -- "${cur}") )
     return 0
@@ -64,6 +64,9 @@ _agent_kit() {
         || COMPREPLY=( $(compgen -d -- "${cur}") ) ;;
     completion)
       COMPREPLY=( $(compgen -W "bash zsh" -- "${cur}") ) ;;
+    bugs)
+      [ "${COMP_CWORD}" -eq 2 ] && COMPREPLY=( $(compgen -W "import show" -- "${cur}") ) \
+        || COMPREPLY=( $(compgen -f -- "${cur}") ) ;;
     *)
       COMPREPLY=( $(compgen -f -- "${cur}") ) ;;
   esac
