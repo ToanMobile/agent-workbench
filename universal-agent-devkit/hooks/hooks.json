@@ -136,6 +136,11 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/security_gate.sh\"",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/proof_gate.sh\"",
+            "timeout": 15
           }
         ]
       }

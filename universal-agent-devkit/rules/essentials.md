@@ -43,7 +43,8 @@ architecture, commit/push/release, rule/hook files) need the user's go-ahead.
 - **Done means verified**: run the post-fix gate
   (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full`, exit 0 only) and
   attach a real proof PNG from this turn before the reply may open with XONG.
-  The Stop hooks enforce the gate on hosts that have them. They do not take the screenshot.
+  The Stop hooks enforce the gate on hosts that have them. They do not take the screenshot;
+  on Claude Code `proof_gate.sh` refuses a reply opening with XONG that names no fresh proof PNG.
 
 ## Every prompt (standing law)
 Applies to Claude Code, Gemini CLI, Antigravity, Codex, Cursor and Grok. Do this in the
