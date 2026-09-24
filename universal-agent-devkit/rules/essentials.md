@@ -40,6 +40,7 @@ architecture, commit/push/release, rule/hook files) need the user's go-ahead.
   (`// ... existing code ...`); keep public signatures backward compatible.
 - **Git**: commit, push or open a PR only when the user asks. Never commit secrets
   (`.env`, keystores, `local.properties`, `google-services.json`, tokens); mask them in proof.
+<<<<<<< HEAD
 - **Done means verified**: run the post-fix gate
   (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full`, exit 0 only) and
   attach a real proof PNG from this turn before the reply may open with XONG.
@@ -74,6 +75,11 @@ Do not write XONG, PASS, đã fix, or đã xong without both items in step 5.
 5. The reply may open with XONG only when this turn has exit 0 from step 3 and the PNG
    from step 4. Line 1: XONG or CHƯA XONG. Line 2: what the user gets. Line 3: gate exit
    code, image path, serial.
+=======
+- **Done means verified**: run the post-fix gate (`postfix-gate --run-tests --full`, exit 0 only;
+  `--run-tests` alone checks only the impacted tests) and a fresh-context review before calling
+  work finished; the Stop hooks enforce this.
+>>>>>>> eda06e8c15410069033dd2c274ef19bcc0f5035a
 
 ## Engineering musts (details: `.agents/devkit/rules/core-rules.md`)
 - No O(N²) on dynamic data where a map/set does; no allocations in hot loops.
