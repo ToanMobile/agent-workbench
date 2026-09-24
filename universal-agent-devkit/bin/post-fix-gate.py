@@ -310,6 +310,34 @@ def test_change_is_append_only(base_ref: str, repo_path: str) -> bool:
     return bool(added) and not any(TEST_SKIP_RE.search(a) for a in added)
 
 
+def write_full_pass_receipt(project_dir, exit_code):
+    """After a full regression run: drop the previous receipt, and on exit 0 record
+    {time, fingerprint} of the audited code in .git/postfix-gate/full_pass.json (outside the
+    tree). hooks/proof_gate.sh accepts an XONG only with a receipt from this turn whose
+    fingerprint still matches the code (bin/tree_fp.py)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import tree_fp  # noqa: PLC0415 - sibling module in bin/
+    except ImportError:
+        return
+    path = tree_fp.receipt_path(project_dir)
+    if not path:
+        return
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    if exit_code != 0:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"time": time.time(), "exit": 0, "project": str(Path(project_dir).resolve()),
+                       "fingerprint": tree_fp.tree_fingerprint(project_dir)}, f)
+    except OSError as e:
+        log_err(f"full-pass receipt not written: {e}")
+
+
 def has_dir(rel_file: str, *names) -> bool:
     parts = rel_file.replace("\\", "/").split("/")[:-1]
     return any(p in names for p in parts)
@@ -2519,6 +2547,9 @@ def main():
         print(f"  • {YELLOW}{tr('Test đã có bị sửa/xoá:', 'Existing test edited/deleted:')}{RESET} {f}")
     print(f"  • {tr('Gate không xác minh: DESIGN.md/a11y, RED/GREEN, Immutable Guards, OpenCodeReview. Ảnh nghiệm thu không nằm trong exit code; agent vẫn phải gắn PNG của lượt này trước khi nói XONG.', 'The gate does not verify: DESIGN.md/a11y, RED/GREEN, immutable guards, OpenCodeReview. The proof image is outside the exit code; the agent still attaches a PNG from this turn before saying XONG.')}")
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
+
+    if run_tests and not impacted_run:
+        write_full_pass_receipt(project_dir, exit_code)
 
     if not args.no_checklist:
         update_regression_checklist(

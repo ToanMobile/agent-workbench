@@ -5,7 +5,11 @@
 #
 # Only the status line decides: first non-empty line of the reply, markdown
 # stripped. "XONG" → checked; "CHƯA XONG", "CHỜ DUYỆT", anything else → allowed.
-# Checked = the reply names at least one reports/proof-<yyyyMMdd-HHmmss>.png that
+# Checked = both halves of step 5, from this turn:
+#   - .git/postfix-gate/full_pass.json, written by `post-fix-gate --run-tests --full` on
+#     exit 0, newer than the turn's user message, whose fingerprint (bin/tree_fp.py) still
+#     matches the code — an edit after the gate run voids it;
+#   - the reply names at least one reports/proof-<yyyyMMdd-HHmmss>.png that
 #   - exists under the project,
 #   - starts with the PNG signature,
 #   - is larger than 8 KB (PROOF_MIN_BYTES),
@@ -36,7 +40,12 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 
-PROOF_INPUT="${INPUT}" PROOF_REPO="${REPO_ROOT}" PROOF_LOG_DIR="${LOG_DIR}" python3 <<'PY'
+SELF="$0"
+while [ -L "${SELF}" ]; do
+  L="$(readlink "${SELF}")"; case "${L}" in /*) SELF="${L}" ;; *) SELF="$(dirname "${SELF}")/${L}" ;; esac
+done
+PROOF_INPUT="${INPUT}" PROOF_REPO="${REPO_ROOT}" PROOF_LOG_DIR="${LOG_DIR}" \
+PROOF_BIN="$(cd "$(dirname "${SELF}")/../bin" 2>/dev/null && pwd)" python3 <<'PY'
 import datetime, json, os, re, sys
 
 repo = os.environ["PROOF_REPO"]
@@ -120,7 +129,30 @@ for rel in cited:
         problems.append("%s: ảnh cũ, sửa lúc trước lượt này bắt đầu" % rel); continue
     good.append(rel)
 
-if good:
+def full_gate_problem():
+    """None when this turn has a full-gate exit 0 on the current code, else the reason."""
+    sys.path.insert(0, os.environ.get("PROOF_BIN") or "")
+    try:
+        import tree_fp
+    except ImportError:
+        return "không tìm thấy bin/tree_fp.py của DevKit để kiểm lần chạy cổng --full"
+    rp = tree_fp.receipt_path(repo)
+    try:
+        rec = json.load(open(rp, encoding="utf-8")) if rp else None
+    except (OSError, ValueError):
+        rec = None
+    if not rec or rec.get("exit") != 0:
+        return "không có lần chạy `post-fix-gate.py --run-tests --full` nào ra exit 0 trên code hiện tại"
+    if start is None:
+        return "không xác định được lúc bắt đầu lượt để so với lần chạy cổng --full"
+    if rec.get("time", 0) < start:
+        return "lần chạy cổng --full exit 0 là từ trước lượt này — chạy lại trong lượt"
+    if rec.get("fingerprint") != tree_fp.tree_fingerprint(repo):
+        return "code đã đổi sau lần chạy cổng --full exit 0 — chạy lại cổng trên code hiện tại"
+    return None
+
+gate_problem = full_gate_problem()
+if good and not gate_problem:
     log("pass session=%s proof=%s" % (session, ",".join(good)))
     sys.exit(0)
 
@@ -136,17 +168,20 @@ try:
 except OSError:
     pass
 
-lines = ["⛔ PROOF-GATE: câu trả lời mở bằng XONG nhưng không có ảnh nghiệm thu hợp lệ của lượt này."]
-if cited:
-    lines += ["  - " + p for p in problems]
-else:
-    lines.append("  - Câu trả lời không nêu đường dẫn reports/proof-<yyyyMMdd-HHmmss>.png nào.")
+lines = ["⛔ PROOF-GATE: câu trả lời mở bằng XONG nhưng lượt này chưa đủ điều kiện (cổng --full exit 0 + ảnh nghiệm thu)."]
+if gate_problem:
+    lines.append("  - CỔNG: " + gate_problem + ". Chạy từ gốc repo: python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full")
+if not good:
+    if cited:
+        lines += ["  - ẢNH: " + p for p in problems]
+    else:
+        lines.append("  - ẢNH: câu trả lời không nêu đường dẫn reports/proof-<yyyyMMdd-HHmmss>.png nào.")
 lines.append("Chụp trên đúng thiết bị: adb -s <SERIAL> exec-out screencap -p > reports/proof-<yyyyMMdd-HHmmss>.png "
              "(PNG thật, > 8 KB, chụp trong lượt này), rồi nêu đường dẫn và serial ở dòng 3. "
              "Không có thiết bị online thì mở câu trả lời bằng CHƯA XONG. Không vẽ ảnh, không dùng lại ảnh cũ.")
-log("block session=%s attempt=%d cited=%s" % (session, n, ",".join(cited) or "-"))
+log("block session=%s attempt=%d cited=%s gate=%s" % (session, n, ",".join(cited) or "-", gate_problem or "ok"))
 if n > max_blocks:
-    msg = "\n".join(lines + ["(Đã chặn %d lần — cho dừng để không kẹt phiên. XONG này KHÔNG có ảnh nghiệm thu; người dùng cần xem lại.)" % max_blocks])
+    msg = "\n".join(lines + ["(Đã chặn %d lần — cho dừng để không kẹt phiên. XONG này THIẾU điều kiện ở trên; người dùng cần xem lại.)" % max_blocks])
     print(json.dumps({"systemMessage": msg}, ensure_ascii=False))
     sys.exit(0)
 print("\n".join(lines), file=sys.stderr)
