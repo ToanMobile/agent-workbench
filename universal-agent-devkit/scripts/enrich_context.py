@@ -131,9 +131,10 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
     }
 
     # 1. Read Active Profile
-    active_profile_file = os.path.join(project_root or devkit_root, ".active-profile.json")
-    if not os.path.exists(active_profile_file):
-        active_profile_file = os.path.join(devkit_root, ".active-profile.json")
+    active_profile_file = next((p for p in (os.path.join(project_root or devkit_root, ".agents", "active-profile.json"),
+                                            os.path.join(project_root or devkit_root, ".active-profile.json"),
+                                            os.path.join(devkit_root, ".active-profile.json"))
+                                if os.path.exists(p)), "")
     if os.path.exists(active_profile_file):
         try:
             with open(active_profile_file, "r") as f:
@@ -317,6 +318,18 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
     if not dossier["matched_instincts"]:
         dossier["matched_instincts_note"] = "Không có instinct nào khớp từ khoá của prompt."
 
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import hardware_boundaries as _hb
+        hits = _hb.match_text(_hb.load(project_root or ""), prompt)
+    except Exception:
+        hits = []
+    for row in hits[:3]:
+        dossier["injected_nfrs"].insert(-GENERIC_NFRS if len(dossier["injected_nfrs"]) >= GENERIC_NFRS else 0,
+                                         _hb.warning(row))
+    if hits:
+        dossier["hardware_boundaries"] = [r.get("id") for r in hits[:3]]
+
     # 4. Generate Codebase Graph Search Queries
     tokens = [w for w in re.findall(r"[A-Za-z0-9_]{3,}", prompt) if w.lower() not in ["sửa", "lỗi", "giúp", "tạo", "làm", "cho", "vào", "khi", "bị"]]
     if tokens:
@@ -339,16 +352,53 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
 GENERIC_NFRS = 3  # the last three injected_nfrs apply to every task (already in the rules)
 
 
-def compact(dossier, project_root, limit=4):
-    """A few lines for the UserPromptSubmit hook — empty when the request matched no
-    intent and no instinct (questions, chit-chat): no context tax on those."""
+def shown_refs(dossier, limit=4):
+    """The trap entries the hook actually prints for this dossier (compact() and the
+    recall log / scripts/memory_stats.py share this one rule)."""
     intents = [i for i in dossier["detected_intents"] if i != "GENERAL_TASK"]
     refs = dossier.get("matched_instinct_refs", [])
     if not intents:
         # No kind of work detected (chit-chat, a general question): two stray word hits
         # are noise — only a strong match (3+ points, e.g. a title hit) is worth context.
         refs = [r for r in refs if r["score"] >= 3]
-    refs = refs[:limit]
+    return refs[:limit]
+
+
+INSTINCT_ID_RE = re.compile(r"\[(INSTINCT-[A-Za-z0-9_-]+)\]")
+
+
+def log_surfaced(project_root, session, prompt, refs):
+    """One line per handled prompt in .claude/audit-gate/surfaced.jsonl — the traps shown
+    (none is a data point too: it is the denominator of the recall rate). The prompt's
+    sha1, never its text. SURFACED_LOG=0 off."""
+    if os.environ.get("SURFACED_LOG", "1") == "0" or not os.path.isdir(os.path.join(project_root, ".agents")):
+        return
+    import hashlib
+    import time
+    rows = []
+    for r in refs:
+        m = INSTINCT_ID_RE.search(r["title"])
+        path = r["file"]
+        if os.path.realpath(path).startswith(os.path.realpath(project_root) + os.sep):
+            path = os.path.relpath(os.path.realpath(path), os.path.realpath(project_root))
+        rows.append({"id": m.group(1) if m else r["title"][:60], "file": path, "line": r["line"]})
+    rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "session": session,
+           "prompt_sha1": hashlib.sha1(prompt.encode("utf-8")).hexdigest(),
+           "instinct_ids": [r["id"] for r in rows], "instinct_refs": rows}
+    try:
+        d = os.path.join(project_root, ".claude", "audit-gate")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "surfaced.jsonl"), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def compact(dossier, project_root, limit=4):
+    """A few lines for the UserPromptSubmit hook — empty when the request matched no
+    intent and no instinct (questions, chit-chat): no context tax on those."""
+    intents = [i for i in dossier["detected_intents"] if i != "GENERAL_TASK"]
+    refs = shown_refs(dossier, limit)
     if not intents and not refs:
         return ""
     out = [f"[DevKit] Ngữ cảnh tự động cho yêu cầu này (profile: {dossier['active_profile']}):"]
@@ -372,21 +422,175 @@ def compact(dossier, project_root, limit=4):
 
 
 def hook_prompt(raw):
-    """The prompt of a UserPromptSubmit payload, or "" when nothing should be added:
-    slash commands, empty or very short prompts, unreadable input."""
+    """(prompt, session_id) of a UserPromptSubmit payload; prompt is "" when nothing
+    should be added: slash commands, empty or very short prompts, unreadable input."""
     try:
-        prompt = json.loads(raw).get("prompt") or ""
+        payload = json.loads(raw)
+        prompt, session = payload.get("prompt") or "", str(payload.get("session_id") or "")
     except Exception:
-        return ""
+        return "", ""
     if not isinstance(prompt, str) or prompt.startswith("/") or len(prompt) < 8:
+        return "", session
+    return prompt, session
+
+
+# A bug report names a defect. "sửa" alone is also "edit" ("sửa README cho rõ"): BUG_FIX
+# still injects the RED→GREEN rule for it, but no checklist row is written.
+DEFECT_WORDS = ["lỗi", "bug", "crash", "văng", "hỏng", "fail", "chết", "die", "exception", "anr"]
+TITLE_MAX = 120
+
+
+def capture_bug(prompt, dossier, project_root, session):
+    """A bug prompt → a REPORTED row in .agents/regression_status.json (deduplicated
+    against rows still open), so a reported bug is on the checklist before anyone fixes
+    it. Only in a project that already keeps a checklist or matrix; never raises.
+    Returns the context line to add, or ""."""
+    if "BUG_FIX" not in dossier["detected_intents"] or os.environ.get("BUG_CAPTURE", "1") == "0":
         return ""
-    return prompt
+    agents = os.path.join(project_root, ".agents")
+    if not (os.path.isfile(os.path.join(agents, "regression_status.json"))
+            or os.path.isfile(os.path.join(agents, "regression_matrix.active.json"))):
+        return ""
+    first = next((l.strip() for l in prompt.splitlines() if l.strip()), "")
+    # A wrapped message (<cross-session-message …>, <task-notification>) is not the user's report.
+    if not first or first.startswith("<"):
+        return ""
+    p_lower = normalize(prompt)
+    if not (mentions(p_lower, DEFECT_WORDS) or DEFECT_RE.search(p_lower)):
+        return ""
+    title = " ".join(first.split())
+    if len(title) > TITLE_MAX:
+        title = title[:TITLE_MAX - 1].rstrip() + "…"
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin"))
+        sys.dont_write_bytecode = True     # no __pycache__ inside a linked DevKit
+        import regression_checklist as rc
+        with rc.locked(project_root):
+            data = rc.load(project_root)
+            before = json.dumps(data["items"].get(rc.find_bug(data, title, open_only=True) or ""), sort_keys=True)
+            bid, created = rc.register_bug(data, title, state="reported", session=session or None, open_only=True)
+            if created or json.dumps(data["items"][bid], sort_keys=True) != before:
+                rc.save(project_root, data, stale=False)
+            status = rc.effective_status(data, data["items"][bid])
+    except Exception:  # noqa: BLE001 — a corrupt checklist must never break the prompt
+        return ""
+    return (f"- Bug đã ghi vào checklist: {bid} ({status}) — link test ĐỎ→XANH khi sửa xong: "
+            f"`agent-kit bugs link {bid} <test>`; không phải bug: `agent-kit bugs drop {bid}`")
+
+
+def _checklist_on(project_root):
+    agents = os.path.join(project_root, ".agents")
+    return (os.path.isfile(os.path.join(agents, "regression_status.json"))
+            or os.path.isfile(os.path.join(agents, "regression_matrix.active.json")))
+
+
+def watch_inbox(project_root):
+    """New `- [ ]` lines of the user's .agents/INBOX.md → the context, once each. The file
+    is only read — never written; what was seen is kept in regression_status.json."""
+    if os.environ.get("INBOX_WATCH", "1") == "0" or not _checklist_on(project_root) \
+            or not os.path.isfile(os.path.join(project_root, ".agents", "INBOX.md")):
+        return ""
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin"))
+        sys.dont_write_bytecode = True
+        import regression_checklist as rc
+        with rc.locked(project_root):
+            data = rc.load(project_root)
+            new = rc.inbox_new(data, project_root)
+            if new:
+                rc.save(project_root, data, stale=False)
+    except Exception:  # noqa: BLE001 — the inbox must never break the prompt
+        return ""
+    if not new:
+        return ""
+    out = [f"- 📥 Hộp thư có {len(new)} mục mới (.agents/INBOX.md — chỉ đọc, KHÔNG sửa file này):"]
+    for key, text, now in new[:10]:
+        out.append(f"    • {text}  [key {key}]" + ("  → @làm: làm luôn (tiêu chí → test ĐỎ → code → XANH)" if now else ""))
+    out.append("  Ghi thành REQ (tiêu chí trước khi code): "
+               "`agent-kit req add \"<tiêu đề>\" --inbox <key> --criterion \"…\" --source \"<nguyên văn mục>\"`")
+    return "\n".join(out)
+
+
+SEVERITY_RANK = [("critical", 0), ("blocker", 0), ("p0", 0), ("high", 1), ("p1", 1), ("medium", 2), ("p2", 2),
+                 ("low", 3), ("p3", 3)]
+BACKLOG_LIMIT = 10
+
+
+def _severity(sev):
+    s = str(sev or "").lower()
+    return next((r for k, r in SEVERITY_RANK if k in s), 4)
+
+
+def command_words(prompt, project_root):
+    """"làm backlog" / "làm inbox": the work list itself goes into the context, so one
+    short prompt starts a whole batch."""
+    p = normalize(prompt)
+    want_backlog = re.search(r"(?<!\w)làm\s+backlog(?!\w)", p)
+    want_inbox = re.search(r"(?<!\w)làm\s+(?:inbox|hộp thư)(?!\w)", p)
+    if not (want_backlog or want_inbox) or not _checklist_on(project_root):
+        return ""
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin"))
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        sys.dont_write_bytecode = True
+        import regression_checklist as rc
+        data = rc.load(project_root)
+    except Exception:  # noqa: BLE001
+        return ""
+    out = []
+    if want_backlog:
+        rows = [(bid, it) for bid, it in data["items"].items() if it.get("kind") == "bug"
+                and rc.effective_status(data, it) in ("NEEDS_TEST", "NOT_IN_MATRIX", "VACUOUS")]
+        rows.sort(key=lambda r: (_severity(r[1].get("severity")), r[0]))
+        proof = os.path.join(os.path.dirname(os.path.abspath(__file__)), "red_proof.py")
+        try:
+            from red_proof import fix_commit_of
+        except Exception:  # noqa: BLE001
+            fix_commit_of = lambda *_: (None, None)  # noqa: E731
+        out.append(f"- 🧹 Làm backlog: {len(rows)} bug chưa có test hồi quy thật (xếp critical/P0 → P1 → P2 → chưa phân loại"
+                   f", {min(len(rows), BACKLOG_LIMIT)} đầu). Mỗi bug: viết test tái hiện → `agent-kit bugs link <BUG> <test>` →"
+                   " chạy gate → RED-proof (test phải ĐỎ trên code chưa sửa):")
+        for bid, it in rows[:BACKLOG_LIMIT]:
+            sha, why = fix_commit_of(__import__("pathlib").Path(project_root), it)
+            how = (f"`python3 {proof} . --bug {bid} --fix-commit {sha} --wait`" if sha
+                   else f"{why} — chọn đúng commit rồi --fix-commit" if why
+                   else "không có commit fix trong evidence → sẽ là ⏳ CHƯA CHỨNG MINH ĐỎ tới khi thấy đỏ trên code cũ")
+            out.append(f"    • {bid} [{it.get('severity') or '-'}] {str(it.get('title', ''))[:80]} — {how}")
+    if want_inbox:
+        box = data.get("inbox") or {}
+        todo = []
+        for key, text, now in rc.read_inbox(project_root):
+            req = (box.get(key) or {}).get("req")
+            if req and req in data["items"] and rc.effective_status(data, data["items"][req]) == "PASS":
+                continue
+            todo.append((key, text, req))
+        out.append(f"- 📥 Làm inbox: {len(todo)} mục chưa xong (.agents/INBOX.md — chỉ đọc). Mỗi mục: "
+                   "`agent-kit req add \"<tiêu đề>\" --inbox <key> --criterion …` → test ĐỎ → code → XANH → `req link`:")
+        for key, text, req in todo[:BACKLOG_LIMIT]:
+            out.append(f"    • {text}  [key {key}]" + (f" → {req}" if req else ""))
+    return "\n".join(out)
+
+
+# "thêm tính năng …", "tạo màn hình …", "implement the … endpoint": new behaviour to specify.
+FEATURE_RE = re.compile(
+    r"(?<!\w)(?:thêm|tạo|làm|xây|viết|phát triển|bổ sung)\s+(?:mới\s+)?(?:tính năng|chức năng|màn hình|trang|nút|"
+    r"api|endpoint|feature|luồng|báo cáo)|tính năng mới"
+    r"|\b(?:add|implement|build|create)\s+(?:a |an |the |new )?(?:feature|screen|page|endpoint|button|flow|report)")
+
+
+def req_hint(prompt, dossier, project_root):
+    if "BUG_FIX" in dossier["detected_intents"] or not _checklist_on(project_root) \
+            or not FEATURE_RE.search(normalize(prompt)):
+        return ""
+    return ("- Yêu cầu mới: ghi REQ + tiêu chí nghiệm thu kiểm được TRƯỚC khi code (khoá hash, sửa phải có --reason): "
+            "`agent-kit req add \"<tiêu đề>\" --criterion \"…\" --source \"<nguyên văn prompt>\"`; "
+            "review độc lập so tiêu chí với nguyên văn prompt; link test từng tiêu chí: `agent-kit req link <REQ> <n|all> <test>`")
 
 
 if __name__ == "__main__":
     if "--hook" in sys.argv[1:]:
         # hooks/prompt_context.sh: the hook payload on stdin, one process for all of it.
-        prompt_input = hook_prompt(sys.stdin.read())
+        prompt_input, session_id = hook_prompt(sys.stdin.read())
         if not prompt_input:
             sys.exit(0)
         sys.argv.append("--compact")
@@ -399,6 +603,14 @@ if __name__ == "__main__":
     res = enrich_prompt(prompt_input, devkit_dir, project_dir)
     if "--compact" in sys.argv[1:]:
         text = compact(res, project_dir)
+        if "--hook" in sys.argv[1:]:
+            log_surfaced(project_dir, session_id, prompt_input, shown_refs(res))
+            extra = [l for l in (capture_bug(prompt_input, res, project_dir, session_id),
+                                 req_hint(prompt_input, res, project_dir), watch_inbox(project_dir),
+                                 command_words(prompt_input, project_dir)) if l]
+            if extra:
+                text = "\n".join(([text] if text else [f"[DevKit] Ngữ cảnh tự động (profile: {res['active_profile']}):"])
+                                  + extra)
         if text:
             print(text)
     else:

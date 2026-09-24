@@ -99,7 +99,7 @@
 ### [INSTINCT-G07] Hai Tiến Trình Unity Cùng Mở Một Project
 - **Hiện tượng lỗi:** Batchmode chết khó hiểu, báo "project đang mở", hoặc phá trạng thái của phiên Editor/agent khác (xóa pipeline, ghi đè scene) khi chạy compile/test lúc người khác đang mở Editor.
 - **Nguyên nhân gốc rễ:** Unity chỉ cho một Editor/project (`Temp/UnityLockfile`); nhiều agent/phiên song song không biết nhau. Lần chạy bị kill (timeout) để lại lockfile cũ.
-- **Quy tắc bắt buộc:** Trước MỌI lệnh Unity: `pgrep -fl Unity` + kiểm `Temp/UnityLockfile`. Có tiến trình trên cùng project → dừng, báo người dùng. Lockfile mà không có tiến trình → lockfile cũ, xác nhận rồi mới xóa. Không bao giờ kill Editor của người khác.
+- **Quy tắc bắt buộc:** Trước MỌI lệnh Unity: `pgrep -fl Unity` + kiểm `Temp/UnityLockfile`. Có tiến trình trên cùng project, hoặc PID trong lockfile còn sống → dừng, báo người dùng. PID đã chết và không còn tiến trình → `unity-batch.sh` tự xóa lock rồi chạy tiếp. Không bao giờ kill Editor của người khác.
 - **Kiểm tra tự động:** `[ ! -f Temp/UnityLockfile ] && ! pgrep -f "Unity.*$(pwd)"`
 
 ---

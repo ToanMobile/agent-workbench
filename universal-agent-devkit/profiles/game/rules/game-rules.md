@@ -74,7 +74,7 @@ Nếu dự án đã có script riêng (`scripts/unity-compile-check.sh`, `script
 - Chạy 0 test cũng thoát 0 (sai filter/category, assembly test không biên dịch) → kết quả không có `<test-case>` = FAIL.
 - File kết quả là **NUnit 3 XML**, không phải JUnit: đọc bằng parser XML (`test-case/@result`), không đưa cho công cụ đọc JUnit.
 - Mỗi project chỉ một Editor: có `Temp/UnityLockfile` + tiến trình Unity trên cùng đường dẫn → không chạy batchmode (đóng Editor, hoặc chờ phiên khác xong). Kiểm `pgrep -fl Unity` trước MỌI lệnh Unity, kể cả khi mình không mở Editor — một phiên/agent khác có thể đang dùng.
-- Luôn có watchdog timeout và kill cả tiến trình; Editor có lúc treo lúc thoát sau "Test run completed" → bị kill → để lại `Temp/UnityLockfile` cũ: xác nhận không còn tiến trình rồi mới xóa.
+- Luôn có watchdog timeout và kill cả tiến trình; Editor có lúc treo lúc thoát sau "Test run completed" → bị kill → để lại `Temp/UnityLockfile` cũ. `unity-batch.sh` tự xóa lock khi PID trong file đã chết và không còn tiến trình Unity trên đúng project; PID còn sống thì dừng, không đụng Editor của người khác.
 - `-nographics` nhanh hơn nhưng không có GPU: đọc pixel, chụp GameView, test phụ thuộc render sẽ sai/đen — không dùng cho PlayMode cần hình.
 - Lệnh chạy lâu (build Android/IL2CPP 15–30 phút) chạy nền có timeout riêng; không để chung timeout với test.
 - Android build qua batchmode: Unity 6000.6 không đọc được output `sdkmanager` của Android cmdline-tools ≥ 23 → trỏ Unity vào SDK có cmdline-tools 16.0 (shim) hoặc bản Unity đi kèm; Player Settings "Active Input Handling = Both" gây cảnh báo build Android — chọn một hệ input và ghi ADR.

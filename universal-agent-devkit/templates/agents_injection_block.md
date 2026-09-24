@@ -1,6 +1,8 @@
-# Universal Agent DevKit Standards
-Before any other work, read every file listed below in full — they are this project's rules. Paths are relative to the repository root. Claude Code imports the `@` lines by itself; Codex, Cursor, Gemini and any other agent: open each path after the @ with your file-read tool (an `@` line that is not expanded, or shows "Import failed", has NOT been loaded).
-- Central Engineering Rules & SSOT: @AGENTS.md
-- Active Domain Profile: @.active-profile.json
-- High-Performance & Security Standards: @rules/core-rules.md
-- Post-Fix Verification Gate: `postfix-gate --run-tests` (installed on PATH by `make install` in the DevKit; without it: `python3 <DevKit dir>/bin/post-fix-gate.py --run-tests`). Only exit `0` counts as PASS.
+# Universal Agent DevKit
+Loaded at every session start. Claude Code and Gemini CLI expand the `@` lines. Grok, Codex and Cursor read this same file: open each path after the @ before any work. Grok has no separate directory.
+- DevKit essentials (always apply): @.agents/context/essentials.md
+- Domain profile rules: @.agents/context/profile-rules.md
+- Project rules index (`.agents/local/rules/`): @.agents/context/rules-index.md
+
+On demand — everything agent-related lives in `.agents/`: master rules `.agents/devkit/AGENTS.md` · engineering standards `.agents/devkit/rules/core-rules.md` · skills `.agents/skills/` · traps from past bugs `.agents/instincts.md` · profile `.agents/active-profile.json`.
+Post-fix gate: `postfix-gate --run-tests` (or `python3 .agents/devkit/bin/post-fix-gate.py --run-tests`) — only exit `0` counts as PASS.

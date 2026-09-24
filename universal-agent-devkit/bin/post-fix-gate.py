@@ -8,6 +8,13 @@ Audits the working-tree changes after a bug fix:
     http:// sources), perf, swallowed errors, raw logging
   - TIA: maps changed files to regression tests from regression_matrix.json and,
     with --run-tests, executes them and records the real exit code and duration
+  - Impacted selection: a matrix test with "impacted_command" runs only the tests the
+    change can reach ({gradle_tests}, {gradle_module_tests:<task>}, {unity_filter},
+    {pytest_nodes}, {jest_paths}); anything the map cannot vouch for runs the full
+    command. `--run-tests` alone (the Stop hook) uses selection and reports
+    "PASS (impacted: N tests)"; `--full`, POSTFIX_GATE_FULL=1, CI=true and
+    --record-lesson run every command in full — the run required before handover.
+    `--staged` (pre-commit) runs no test at all.
   - Reports only what was actually checked. RED/GREEN oracle receipts, immutable
     guards and OpenCodeReview are listed as "not verified here".
 
@@ -33,6 +40,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -589,7 +597,9 @@ def is_devkit_artifact(rel_file: str) -> bool:
     if clean.startswith(".claude/audit-gate/"):
         return True
     # The regression checklist is written by this gate itself — never audit our own output.
-    if clean in (".agents/regression_status.json", ".agents/regression_checklist.md"):
+    if clean in (".agents/regression_status.json", ".agents/regression_checklist.md",
+                 ".agents/CHECKLIST.md", ".agents/INBOX.md") \
+            or clean.startswith((".agents/evidence/", ".agents/archive/", ".agents/context/")):
         return True
     full = resolve_path(rel_file)
     if not full.is_symlink():
@@ -999,9 +1009,12 @@ def profile_source_exts() -> set:
 
 
 def active_profile_name() -> str:
-    """The active profile's name (.active-profile.json), for a matrix without "project"."""
+    """The active profile's name (.agents/active-profile.json), for a matrix without "project"."""
     try:
-        d = json.loads((get_project_dir() / ".active-profile.json").read_text(encoding="utf-8"))
+        f = get_project_dir() / ".agents" / "active-profile.json"
+        if not f.is_file():
+            f = get_project_dir() / ".active-profile.json"      # before DevKit 1.3
+        d = json.loads(f.read_text(encoding="utf-8"))
         return d.get("name") or d.get("profile") or tr("(không có profile)", "(no profile)")
     except (OSError, ValueError, AttributeError):
         return tr("(không có profile)", "(no profile)")
@@ -1020,7 +1033,790 @@ def uncovered_code_files(modified_files, rules, covers=None) -> list:
     ]
 
 
-def update_regression_checklist(args, matrix, rules, modified_files, regression_tests, run_tests, exit_code):
+# ── Impacted-test selection ────────────────────────────────────────────────────────
+# A matrix test may declare "impacted_command": the same runner limited to the tests the
+# change can affect, through one placeholder:
+#   {gradle_tests}               --tests 'pkg.FooTest' --tests …   (one Gradle module)
+#   {gradle_module_tests:<task>} :mod:<task> --tests 'pkg.FooTest' … per module
+#   {unity_filter}               --filter 'Ns.FooTests;Ns.BarTests' (unity-batch.sh; the
+#                                platform is read from the template: editmode / playmode)
+#   {pytest_nodes}               /abs/tests/test_foo.py …
+#   {jest_paths}                 /abs/src/foo.test.ts …
+# Changed files of the rule are mapped to tests by (a) a test named <Class>Test(s),
+# (b) tests that name one of the changed file's declarations, (c) changed tests
+# themselves. Anything the map cannot vouch for runs the full command: a file that is
+# not source code (build files, resources, manifests), a deleted file, a changed class
+# no test names, shared code named by more than POSTFIX_GATE_IMPACTED_REF_CAP tests,
+# more than POSTFIX_GATE_IMPACTED_CAP selected tests, an identifier unsafe to put in a
+# shell command. `--full`, POSTFIX_GATE_FULL=1, CI=true and --record-lesson always run
+# the full command. Name matching cannot see a test that reaches the class only
+# through another class: an impacted PASS is a fast check, never the handover run.
+
+IMPACTED_CAP_DEFAULT = 40
+IMPACTED_REF_CAP_DEFAULT = 15
+_SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+_SAFE_PATH = re.compile(r"^[A-Za-z0-9_./@+\-]+$")
+_SAFE_GRADLE_PATH = re.compile(r"^(:[A-Za-z0-9_.\-]+)*$")
+_GRADLE_MODULE_TESTS = re.compile(r"\{gradle_module_tests:([A-Za-z0-9_]+)\}")
+_SKIP_WALK = {"build", ".gradle", ".git", "node_modules", ".idea", ".cxx", ".kotlin", "out",
+              "Library", "Temp", "Logs", "obj", ".venv", "venv", "__pycache__", "site-packages",
+              "dist", "coverage", ".next"}
+_JVM_TEST_MARK = re.compile(r"@(?:Test|ParameterizedTest|TestFactory|RepeatedTest|Theory)\b"
+                            r"|\b(?:FunSpec|StringSpec|DescribeSpec|BehaviorSpec|ShouldSpec|WordSpec"
+                            r"|FreeSpec|FeatureSpec|ExpectSpec|AnnotationSpec)\b|\bextends\s+TestCase\b")
+_CS_TEST_MARK = re.compile(r"\[\s*(?:Test|UnityTest|TestCase|TestCaseSource|TestFixture)\b")
+# Top-level declarations (column 0; `private` ones are invisible to tests). A generic or
+# receiver we cannot parse yields a common word, which the reference cap turns into a full run.
+_KT_DECL = re.compile(r"^(?!private\b)(?:@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|internal|protected|open|final|abstract"
+                      r"|sealed|data|enum|annotation|inline|value|inner|suspend|operator|infix|tailrec|external"
+                      r"|const|lateinit|expect|actual|static|strictfp|synchronized)\s+)*"
+                      r"(?:fun\s+interface|class|interface|object|typealias|fun|val|var|record|@interface)\s+"
+                      r"(?:<[^>\n]*>\s*)?([A-Za-z_][\w.]*)", re.M)
+_JVM_TEST_CLASS = re.compile(r"^(?:(?:public|internal|open|final|data)\s+)*class\s+([A-Za-z_]\w*)", re.M)
+_CS_DECL = re.compile(r"\b(?:class|struct|interface|enum|record)\s+([A-Za-z_]\w*)")
+_CS_TEST_CLASS = re.compile(r"^\s*(?:\[[^\]\n]*\]\s*)*(?:(?:public|internal|sealed|static|partial)\s+)*class\s+([A-Za-z_]\w*)", re.M)
+_PY_DECL = re.compile(r"^(?:async\s+)?(?:def|class)\s+([A-Za-z]\w*)", re.M)
+_JS_DECL = re.compile(r"\bexport\s+(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|var|interface|type|enum)\s+([A-Za-z_$][\w$]*)")
+
+_GLOBAL_TEST_FILES = re.compile(r"^(?:conftest\.py|__init__\.py|setup\.py|(?:jest|vitest)\.(?:config|setup)\.[cm]?[jt]s"
+                                r"|setupTests\.[cm]?[jt]sx?|test[-_]?setup\.[cm]?[jt]sx?)$")
+
+_IMPACTED_KINDS = {
+    "gradle": {".kt", ".java"},
+    "unity": {".cs"},
+    "pytest": {".py"},
+    "jest": {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
+}
+
+
+def _int_env(name, default):
+    try:
+        return max(1, int(os.environ.get(name) or default))
+    except ValueError:
+        return default
+
+
+def force_full_reason(args):
+    """Why this run must use the full commands, or None (selection allowed)."""
+    if getattr(args, "full", False):
+        return "--full"
+    if os.environ.get("POSTFIX_GATE_FULL") == "1":
+        return "POSTFIX_GATE_FULL=1"
+    if (os.environ.get("CI") or "").lower() in ("1", "true", "yes"):
+        return "CI"
+    if getattr(args, "record_lesson", None):
+        return tr("--record-lesson (nghiệm thu)", "--record-lesson (acceptance)")
+    return None
+
+
+def _impacted_kind(template):
+    kinds = []
+    if "{gradle_tests}" in template or _GRADLE_MODULE_TESTS.search(template):
+        kinds.append("gradle")
+    for kind, ph in (("unity", "{unity_filter}"), ("pytest", "{pytest_nodes}"), ("jest", "{jest_paths}")):
+        if ph in template:
+            kinds.append(kind)
+    return kinds[0] if len(kinds) == 1 else None
+
+
+def _read_small(path):
+    try:
+        if path.stat().st_size > 2_000_000:
+            return None
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _walk_files(root, exts):
+    """Project-relative-to-root file paths under root with one of exts, build output skipped."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_WALK and not d.startswith(".")]
+        for name in filenames:
+            if os.path.splitext(name)[1] in exts:
+                yield Path(dirpath) / name
+
+
+def _gradle_source_set(rel):
+    """(module_root, source_set_kind) for a Gradle source path, kind in main / test /
+    helper / instrumented; None when the path is not under <module>/src/<set>/."""
+    parts = rel.split("/")
+    if "src" not in parts[:-2]:
+        return None
+    i = parts.index("src")
+    sset = parts[i + 1]
+    low = sset.lower()
+    if "androidtest" in low or "instrumented" in low:
+        kind = "instrumented"
+    elif low == "testfixtures":
+        kind = "helper"
+    elif low.startswith("test") or low.endswith("test"):
+        kind = "test"
+    else:
+        kind = "main"
+    return "/".join(parts[:i]), kind
+
+
+def _gradle_root(project_dir, module_root):
+    """Nearest ancestor of the module holding settings.gradle(.kts), inside the project."""
+    cur = (project_dir / module_root) if module_root else project_dir
+    while True:
+        if (cur / "settings.gradle.kts").exists() or (cur / "settings.gradle").exists():
+            return cur
+        if cur == project_dir or project_dir not in cur.parents:
+            return project_dir
+        cur = cur.parent
+
+
+class _TestIndex:
+    """Test-side files of one scope: {path: text}, split into runnable tests and helpers."""
+
+    def __init__(self, tests, helpers):
+        self.tests, self.helpers = tests, helpers
+
+
+def _gradle_index(project_dir, groot, cache):
+    key = ("gradle", str(groot))
+    if key not in cache:
+        tests, helpers = {}, {}
+        for p in _walk_files(groot, _IMPACTED_KINDS["gradle"]):
+            rel = p.relative_to(project_dir).as_posix()
+            info = _gradle_source_set(rel)
+            if not info or info[1] not in ("test", "helper"):
+                continue
+            text = _read_small(p)
+            if text is None:
+                continue
+            is_test = info[1] == "test" and _JVM_TEST_MARK.search(text) and _JVM_TEST_CLASS.search(text)
+            (tests if is_test else helpers)[rel] = text
+        cache[key] = _TestIndex(tests, helpers)
+    return cache[key]
+
+
+def _unity_index(project_dir, cache):
+    key = ("unity",)
+    if key not in cache:
+        tests, helpers = {}, {}
+        for top in ("Assets", "Packages"):
+            if not (project_dir / top).is_dir():
+                continue
+            for p in _walk_files(project_dir / top, {".cs"}):
+                text = _read_small(p)
+                if text is None:
+                    continue
+                rel = p.relative_to(project_dir).as_posix()
+                if _CS_TEST_MARK.search(text):
+                    tests[rel] = text
+                elif is_test_path(rel):
+                    helpers[rel] = text
+        cache[key] = _TestIndex(tests, helpers)
+    return cache[key]
+
+
+def _script_index(project_dir, kind, cache):
+    key = (kind,)
+    if key not in cache:
+        tests, helpers = {}, {}
+        for p in _walk_files(project_dir, _IMPACTED_KINDS[kind]):
+            rel = p.relative_to(project_dir).as_posix()
+            if not is_test_path(rel):
+                continue
+            text = _read_small(p)
+            if text is None:
+                continue
+            name = p.name
+            runnable = (re.match(r"^test_.*\.py$|^.*_test\.py$", name) if kind == "pytest"
+                        else re.search(r"\.(test|spec)\.[cm]?[jt]sx?$", name) or "__tests__" in rel.split("/"))
+            (tests if runnable else helpers)[rel] = text
+        cache[key] = _TestIndex(tests, helpers)
+    return cache[key]
+
+
+def _declared_symbols(kind, rel, text):
+    stem = Path(rel).stem
+    if kind == "gradle":
+        names = [m.group(1).rsplit(".", 1)[-1] for m in _KT_DECL.finditer(text)]
+    elif kind == "unity":
+        names = _CS_DECL.findall(text)
+    elif kind == "pytest":
+        names = [n for n in _PY_DECL.findall(text) if not n.startswith("_")]
+    else:
+        names = _JS_DECL.findall(text)
+        stem = stem.split(".")[0]
+    return sorted({n for n in names + [stem] if n and n != "Companion"})
+
+
+def _unity_platform(project_dir, rel):
+    """EditMode when the nearest .asmdef targets only the Editor (or, without one, the
+    file sits in an Editor/ folder); PlayMode otherwise."""
+    cur = (project_dir / rel).parent
+    while cur != project_dir and project_dir in cur.parents:
+        for asm in cur.glob("*.asmdef"):
+            try:
+                plats = json.loads(asm.read_text(encoding="utf-8", errors="replace")).get("includePlatforms") or []
+            except (OSError, ValueError, AttributeError):
+                plats = []
+            return "EditMode" if plats == ["Editor"] else "PlayMode"
+        cur = cur.parent
+    return "EditMode" if "Editor" in rel.split("/")[:-1] else "PlayMode"
+
+
+def _test_names(kind, rel, text):
+    """What the runner filter needs for one test file (FQCNs, or the file itself)."""
+    if kind in ("gradle", "unity"):
+        if kind == "gradle":
+            pkg = re.search(r"^\s*package\s+([\w.]+)", text, re.M)
+            classes = _JVM_TEST_CLASS.findall(text)
+        else:
+            pkg = re.search(r"^\s*namespace\s+([\w.]+)", text, re.M)
+            classes = [c for c in _CS_TEST_CLASS.findall(text)]
+        prefix = (pkg.group(1).rstrip(".") + ".") if pkg else ""
+        return [prefix + c for c in dict.fromkeys(classes)]
+    return [rel]
+
+
+def select_impacted_tests(project_dir, template, files, cap=None, ref_cap=None, cache=None, deleted=()):
+    """Map the rule's changed files to the tests that can see them.
+
+    Returns {"ok": bool, "reason": str, "tests": {test_file: [names]}, "why": {test_file:
+    "name"|"reference"|"changed"}, "kind": str}. ok=False means: run the full command.
+    """
+    project_dir = Path(project_dir)
+    cap = cap or _int_env("POSTFIX_GATE_IMPACTED_CAP", IMPACTED_CAP_DEFAULT)
+    ref_cap = ref_cap or _int_env("POSTFIX_GATE_IMPACTED_REF_CAP", IMPACTED_REF_CAP_DEFAULT)
+    cache = {} if cache is None else cache
+    kind = _impacted_kind(template)
+    out = {"ok": False, "reason": "", "tests": {}, "why": {}, "kind": kind}
+
+    def full(reason):
+        out.update(ok=False, reason=reason, tests={}, why={})
+        return out
+
+    if kind is None:
+        return full(tr("impacted_command không có (hoặc có nhiều hơn một) placeholder đã biết",
+                       "impacted_command has no (or more than one) known placeholder"))
+    if not files:
+        return full(tr("không có file nào của luật để chọn test", "no file of the rule to select tests from"))
+    exts = _IMPACTED_KINDS[kind]
+    for f in files:
+        rel = f.replace("\\", "/")
+        if f in deleted:
+            return full(tr(f"{rel} bị xoá/đổi tên", f"{rel} was deleted/renamed"))
+        if Path(rel).suffix not in exts:
+            return full(tr(f"{rel} không phải mã nguồn bản đồ test hiểu được (build/resource/config)",
+                           f"{rel} is not source code the test map understands (build/resource/config file)"))
+        # Code every test sees without naming it: build logic, pytest's conftest (autouse
+        # fixtures), package __init__, test-runner setup files.
+        if (set(rel.split("/")[:-1]) & {"buildSrc", "build-logic"}
+                or _GLOBAL_TEST_FILES.match(Path(rel).name)):
+            return full(tr(f"{rel} tác động mọi test mà không cần gọi tên (build logic / conftest / setup)",
+                           f"{rel} affects every test without being named (build logic / conftest / setup)"))
+        text = _read_small(project_dir / rel)
+        if text is None:
+            return full(tr(f"{rel} không đọc được", f"{rel} cannot be read"))
+        if kind == "gradle":
+            info = _gradle_source_set(rel)
+            if not info or info[1] == "instrumented":
+                return full(tr(f"{rel} không nằm trong source set main/test của một module Gradle",
+                               f"{rel} is not in a main/test source set of a Gradle module"))
+            index = _gradle_index(project_dir, _gradle_root(project_dir, info[0]), cache)
+        elif kind == "unity":
+            index = _unity_index(project_dir, cache)
+        else:
+            index = _script_index(project_dir, kind, cache)
+
+        if rel in index.tests:                                   # (c) a changed test
+            out["tests"][rel] = _test_names(kind, rel, text)
+            out["why"].setdefault(rel, "changed")
+            continue
+        # (a) + (b): a changed class (or a test helper) → the tests that name it; a helper
+        # that names it passes the question on to the tests that name the helper.
+        found, frontier, seen = {}, [(rel, text)], {rel}
+        for _depth in range(3):
+            nxt = []
+            for src_rel, src_text in frontier:
+                symbols = _declared_symbols(kind, src_rel, src_text)
+                if not symbols:
+                    return full(tr(f"{src_rel}: không tìm thấy khai báo nào để dò test",
+                                   f"{src_rel}: no declaration found to look tests up by"))
+                stem = Path(src_rel).stem.split(".")[0]
+                word = re.compile(r"\b(?:" + "|".join(map(re.escape, symbols)) + r")\b")
+                named = {t for t in index.tests
+                         if re.match(re.escape(stem) + r"(Test|Tests|Spec|_test|\.test|\.spec)?$",
+                                     Path(t).stem.split(".")[0] if kind == "jest" else Path(t).stem)
+                         or Path(t).stem in ("test_" + stem, stem + "_test", stem + "Test", stem + "Tests")}
+                refs = {t for t, body in index.tests.items() if t not in seen and word.search(body)}
+                for t in named:
+                    found.setdefault(t, "name")
+                for t in refs:
+                    found.setdefault(t, "reference")
+                if len(found) > ref_cap:
+                    return full(tr(f"{rel}: code dùng chung — hơn {ref_cap} test gọi tới ({len(found)})",
+                                   f"{rel}: shared code — more than {ref_cap} tests reference it ({len(found)})"))
+                for h, body in index.helpers.items():
+                    if h not in seen and word.search(body):
+                        seen.add(h)
+                        nxt.append((h, body))
+                seen.update(found)
+            frontier = nxt
+            if not frontier:
+                break
+        else:
+            return full(tr(f"{rel}: chuỗi helper test quá sâu", f"{rel}: test-helper chain too deep"))
+        if not found:
+            return full(tr(f"{rel}: không test nào gọi tên các khai báo của nó",
+                           f"{rel}: no test names any of its declarations"))
+        for t, why in found.items():
+            out["tests"].setdefault(t, _test_names(kind, t, index.tests[t]))
+            out["why"].setdefault(t, why)
+
+    if not out["tests"]:
+        return full(tr("không chọn được test nào", "no test selected"))
+    for t, names in out["tests"].items():
+        if not names:
+            return full(tr(f"{t}: không đọc được tên lớp test", f"{t}: cannot read its test class name"))
+    count = sum(len(n) for n in out["tests"].values())
+    if count > cap:
+        return full(tr(f"chọn được {count} test > giới hạn {cap}", f"{count} tests selected > cap {cap}"))
+    out.update(ok=True, reason="")
+    return out
+
+
+def expand_impacted_command(project_dir, template, full_command, selection):
+    """(command, n_tests) with the placeholder filled, or (None, reason) when it cannot be
+    filled safely — the caller then runs the full command."""
+    project_dir = Path(project_dir)
+    kind, tests = selection["kind"], selection["tests"]
+    names = [n for t in sorted(tests) for n in tests[t]]
+    if kind in ("gradle", "unity"):
+        bad = [n for n in names if not _SAFE_IDENT.match(n)]
+    else:
+        names = [str((project_dir / n).resolve()) for n in names]
+        bad = [n for n in names if not _SAFE_PATH.match(n)]
+    if bad:
+        return None, tr(f"tên không an toàn để đưa vào lệnh shell: {bad[0]!r}",
+                        f"identifier unsafe for a shell command: {bad[0]!r}")
+    names = list(dict.fromkeys(names))
+    if kind == "gradle":
+        by_module = {}
+        for t in sorted(tests):
+            info = _gradle_source_set(t)
+            groot = _gradle_root(project_dir, info[0])
+            mod_dir = project_dir / info[0] if info[0] else project_dir
+            rel_mod = mod_dir.relative_to(groot).as_posix() if mod_dir != groot else ""
+            gpath = "" if not rel_mod else ":" + rel_mod.replace("/", ":")
+            by_module.setdefault(gpath, []).extend(tests[t])
+        if not all(_SAFE_GRADLE_PATH.match(m) for m in by_module):
+            return None, tr("đường dẫn module Gradle không an toàn", "unsafe Gradle module path")
+        m = _GRADLE_MODULE_TESTS.search(template)
+        if m:
+            task = m.group(1)
+            parts, kept = [], 0
+            for gpath in sorted(by_module):
+                task_path = f"{gpath}:{task}"
+                # Only modules the full command runs: a test outside its scope is not this rule's.
+                if task_path not in full_command and not re.search(r"(?<![:\w])" + re.escape(task) + r"(?!\w)", full_command):
+                    continue
+                cls = list(dict.fromkeys(by_module[gpath]))
+                kept += len(cls)
+                parts.append(task_path + " " + " ".join(f"--tests {shlex.quote(c)}" for c in cls))
+            if not parts:
+                return None, tr("không test nào được chọn nằm trong module mà lệnh đầy đủ chạy",
+                                "no selected test is in a module the full command runs")
+            return _GRADLE_MODULE_TESTS.sub(lambda _m: " ".join(parts), template, count=1), kept
+        if len(by_module) > 1:
+            return None, tr(f"test được chọn nằm ở {len(by_module)} module Gradle — {{gradle_tests}} chỉ nhắm một task (dùng {{gradle_module_tests:<task>}})",
+                            f"selected tests span {len(by_module)} Gradle modules — {{gradle_tests}} targets one task (use {{gradle_module_tests:<task>}})")
+        return template.replace("{gradle_tests}", " ".join(f"--tests {shlex.quote(c)}" for c in names)), len(names)
+    if kind == "unity":
+        low = template.lower()
+        platform = "EditMode" if "editmode" in low else "PlayMode" if "playmode" in low else None
+        if platform is None:
+            return None, tr("không biết nền tảng test (editmode/playmode) từ impacted_command",
+                            "cannot tell the test platform (editmode/playmode) from impacted_command")
+        picked = list(dict.fromkeys(n for t in sorted(tests) if _unity_platform(project_dir, t) == platform
+                                    for n in tests[t]))
+        if not picked:
+            return None, tr(f"không test {platform} nào được chọn", f"no {platform} test selected")
+        return template.replace("{unity_filter}", "--filter " + shlex.quote(";".join(picked))), len(picked)
+    placeholder = "{pytest_nodes}" if kind == "pytest" else "{jest_paths}"
+    return template.replace(placeholder, " ".join(shlex.quote(n) for n in names)), len(names)
+
+
+_RES_DIR = re.compile(
+    r"/res/(?:values|layout|drawable|mipmap|menu|navigation|anim|animator|color|font|xml|raw)"
+    r"(?:-[A-Za-z0-9_+-]+)?/"
+)
+_SRC_PKG = re.compile(r"/src/[^/]+/(?:java|kotlin)/(.+)/[^/]+\.(?:kt|java)$")
+
+
+def _is_res_xml(rel: str) -> bool:
+    """Layout/values/drawable XML. Manifest and proguard stay on the full suite."""
+    rel = "/" + rel.replace("\\", "/")
+    if not rel.endswith(".xml") or rel.endswith("/AndroidManifest.xml"):
+        return False
+    return _RES_DIR.search(rel) is not None
+
+
+def _code_package(rel: str):
+    m = _SRC_PKG.search("/" + rel.replace("\\", "/"))
+    if not m:
+        return None
+    pkg = m.group(1).replace("/", ".")
+    return pkg if _SAFE_IDENT.match(pkg) else None
+
+
+def narrow_fallback(project_dir, test):
+    """A smaller Gradle command when class selection cannot vouch.
+
+    Resource XML alone does not run the JVM suite. Kotlin/Java falls back to
+    `--tests <package>.*` on the modules the full command already runs, or to
+    that module's task when one package would still be the whole suite's width.
+    Returns (command, mode, reason) or None (keep the full command).
+    """
+    template = test.get("impacted_command") or ""
+    found = _GRADLE_MODULE_TESTS.search(template)
+    if not found:
+        return None
+    task = found.group(1)
+    files = [f.replace("\\", "/") for f in (test.get("files") or []) if f not in DELETED_FILES]
+    if not files:
+        return None
+    res, code, other = [], [], []
+    for f in files:
+        if _is_res_xml(f):
+            res.append(f)
+        elif Path(f).suffix in (".kt", ".java"):
+            code.append(f)
+        else:
+            other.append(f)
+    if other:
+        return None
+    if not code:
+        return ("", "resource", tr(
+            "chỉ XML tài nguyên (layout/values/drawable) — không chạy suite JVM",
+            "resource XML only (layout/values/drawable) — JVM suite not run"))
+    by = {}
+    for f in code:
+        info = _gradle_source_set(f)
+        if not info or info[1] == "instrumented":
+            return None
+        pkg = _code_package(f)
+        if not pkg:
+            return None
+        groot = _gradle_root(project_dir, info[0])
+        mod_dir = project_dir / info[0] if info[0] else project_dir
+        try:
+            rel_mod = mod_dir.relative_to(groot).as_posix()
+        except ValueError:
+            return None
+        gpath = "" if rel_mod in ("", ".") else ":" + rel_mod.replace("/", ":")
+        task_path = f"{gpath}:{task}"
+        full = test["command"]
+        if task_path not in full and not re.search(r"(?<![:\w])" + re.escape(task) + r"(?!\w)", full):
+            return None
+        by.setdefault(task_path, set()).add(pkg + ".*")
+    if len(by) > 4:
+        return None
+    parts = []
+    for task_path, pats in sorted(by.items()):
+        if len(pats) > 4:
+            parts.append(task_path)
+        else:
+            parts.append(task_path + " " + " ".join("--tests " + shlex.quote(p) for p in sorted(pats)))
+    replacement = " ".join(parts)
+    cmd = _GRADLE_MODULE_TESTS.sub(replacement, template, count=1)
+    if cmd.strip() == test["command"].strip():
+        return None
+    return (cmd, "package", tr(
+        f"không chọn được từng lớp — chạy package/module ({replacement})",
+        f"class selection failed — running package/module ({replacement})"))
+
+
+def plan_test_run(project_dir, test, force_reason, cache):
+    """Decide full vs impacted for one matrix test → (command, mode, reason, selection)."""
+    template = test.get("impacted_command")
+    if not template:
+        return test["command"], "full", tr("matrix không khai báo impacted_command", "the matrix declares no impacted_command"), None
+    if force_reason:
+        return test["command"], "full", tr(f"bắt buộc chạy đủ ({force_reason})", f"full run forced ({force_reason})"), None
+    sel = select_impacted_tests(project_dir, template, test.get("files") or [], cache=cache, deleted=DELETED_FILES)
+    if not sel["ok"]:
+        narrow = narrow_fallback(project_dir, test)
+        if narrow:
+            return narrow[0], narrow[1], narrow[2], sel
+        return test["command"], "full", sel["reason"], sel
+    cmd, n = expand_impacted_command(project_dir, template, test["command"], sel)
+    if cmd is None:
+        narrow = narrow_fallback(project_dir, test)
+        if narrow:
+            return narrow[0], narrow[1], narrow[2], sel
+        return test["command"], "full", n, sel
+    sel["count"] = n
+    return cmd, "impacted", "", sel
+
+
+_VACUITY_RED = re.compile(
+    r"\bFAILED\b|failures=\"[1-9]|errors=\"[1-9]|AssertionError|"
+    r"Assert\.(?:AreEqual|AreNotEqual|IsTrue|IsFalse|That)|"
+    r"There (?:were|was) \d+ failure",
+    re.IGNORECASE,
+)
+_PROOF_HINTS = ("proof", "audit-gate", "reports/", "screenshot", "evidence")
+_VACUITY_EXT = {".kt", ".kts", ".java", ".cs", ".py", ".swift"}
+
+
+def _scripts_on_path():
+    scripts = str(get_devkit_dir() / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+
+
+def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
+    """Re-run an impacted PASS with the production diff put back.
+
+    'ok' — the test went RED (it can see the bug). 'vacuous' — it stayed green.
+    'weak' — the rerun failed without an assertion failure. 'skip' — nothing to prove.
+    The working tree is restored before this returns.
+
+    OFF by default (user decision 2026-09-24): it rewrites production files in the
+    working tree for the re-run — a killed Stop hook can lose the fix — and it fails any
+    behaviour-preserving change. The vacuity proof is scripts/red_proof.py (sandbox copy,
+    GREEN control run, heavy suites off the Stop path), recorded on the checklist row.
+    VACUITY_REVERT=1 turns this one on for a manual run.
+    """
+    if os.environ.get("VACUITY_REVERT", "0") != "1":
+        return "skip"
+    if test.get("mode") != "impacted" or test.get("status") != "PASS":
+        return "skip"
+    files = [f for f in (test.get("files") or [])
+             if f not in DELETED_FILES and not is_test_path(f) and Path(f).suffix.lower() in _VACUITY_EXT]
+    if not files:
+        return "skip"
+    prefix = get_project_prefix()
+    saved = []
+    try:
+        for rel in files:
+            path = project_dir / rel
+            saved.append((rel, path.read_bytes() if path.is_file() else None))
+            res = subprocess.run(
+                ["git", "-C", str(get_repo_root()), "show", f"{BASE_REF}:{prefix}{rel}"],
+                capture_output=True)
+            if res.returncode != 0:
+                if path.is_file():
+                    path.unlink()
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(res.stdout)
+        proc = subprocess.Popen(test["command"], shell=True, cwd=str(project_dir),
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, errors="replace", start_new_session=True)
+        try:
+            out, _ = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.communicate()
+            return "weak"
+        if proc.returncode == 0:
+            return "vacuous"
+        if _VACUITY_RED.search(out or ""):
+            return "ok"
+        return "weak"
+    finally:
+        for rel, blob in saved:
+            path = project_dir / rel
+            try:
+                if blob is None:
+                    if path.is_file():
+                        path.unlink()
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(blob)
+            except OSError as e:
+                log_err(tr(f"Không khôi phục được {rel} sau revert vacuity: {e}",
+                           f"Could not restore {rel} after the vacuity revert: {e}"))
+
+
+def run_hardware_source_audit(modified_files: list) -> tuple:
+    _scripts_on_path()
+    try:
+        import hardware_source_lint as hw  # noqa: PLC0415
+    except ImportError:
+        return True, []
+    findings = []
+    exts = {".kt", ".kts", ".java", ".py", ".cs"}
+    for rel in modified_files:
+        if is_test_path(rel) or Path(rel).suffix.lower() not in exts:
+            continue
+        content = read_changed_text(rel)
+        if content is None:
+            continue
+        for pat, label in hw.PATTERNS:
+            new, old = split_new(rel, pat.pattern, content)
+            if old and not new:
+                note_preexisting(rel, content, old[0], label)
+            if new:
+                findings.append((rel, _L(label)))
+                _record("hardware", rel, label, content, new[0].start())
+    return len(findings) == 0, findings
+
+
+def run_assertion_audit(modified_files: list) -> tuple:
+    _scripts_on_path()
+    try:
+        import assertion_lint as al  # noqa: PLC0415
+    except ImportError:
+        return True, []
+    findings = []
+    for rel in modified_files:
+        if not is_test_path(rel):
+            continue
+        content = read_changed_text(rel)
+        if not content:
+            continue
+        for line, name in al.findings(content):
+            label = (f"Test rỗng ở dòng {line} ({name}): không có assertion phân biệt dữ liệu",
+                     f"Vacuous test at line {line} ({name}): no assertion that distinguishes data")
+            findings.append((rel, _L(label)))
+            _record("vacuity", rel, label)
+    return len(findings) == 0, findings
+
+
+def run_proof_block(modified_files: list) -> tuple:
+    """Hard-fail proof images added in this change that repeat each other or an older proof."""
+    changed = []
+    for rel in modified_files:
+        low = rel.replace("\\", "/").lower()
+        if low.endswith((".png", ".jpg", ".jpeg")) and any(h in low for h in _PROOF_HINTS):
+            changed.append(rel)
+    if not changed:
+        return True, []
+    _scripts_on_path()
+    try:
+        import proof_phash as ph  # noqa: PLC0415
+    except ImportError:
+        return True, []
+    sha_of = {}
+    bits_of = {}
+    findings = []
+
+    def take(rel, data):
+        if not data:
+            findings.append(tr(f"{rel}: ảnh proof 0 byte", f"{rel}: zero-byte proof image"))
+            return
+        digest = hashlib.sha256(data).hexdigest()
+        if digest in sha_of and sha_of[digest] != rel:
+            findings.append(tr(f"{rel}: trùng byte với {sha_of[digest]}",
+                               f"{rel}: identical bytes to {sha_of[digest]}"))
+        else:
+            sha_of[digest] = rel
+        bits = ph.dhash(data)
+        if bits is None:
+            return
+        for other, prev in bits_of.items():
+            if other != rel and ph.too_similar(bits, prev):
+                findings.append(tr(
+                    f"{rel}: giống {other} ≥ 98% (cùng một màn, không phải trạng thái mới)",
+                    f"{rel}: ≥98% similar to {other} (same screen, not a new state)"))
+                break
+        bits_of[rel] = bits
+
+    for rel in changed:
+        path = resolve_path(rel)
+        try:
+            take(rel, path.read_bytes() if path.is_file() else b"")
+        except OSError:
+            pass
+    base = get_project_dir()
+    changed_resolved = set()
+    for rel in changed:
+        try:
+            changed_resolved.add(resolve_path(rel).resolve())
+        except OSError:
+            pass
+    for folder in (base / ".claude" / "audit-gate", base / "reports", base / ".agents" / "evidence"):
+        if not folder.is_dir():
+            continue
+        for img in list(folder.glob("*.png")) + list(folder.glob("*.jpg")) + list(folder.glob("*.jpeg")):
+            try:
+                if img.resolve() in changed_resolved:
+                    continue
+                take(str(img), img.read_bytes())
+            except OSError:
+                continue
+    # Historical copies compared against each other must not fail a change that
+    # did not add them. Drop findings that name only pre-existing files.
+    changed_set = set(changed)
+    own = [f for f in findings if any(c in f for c in changed_set)]
+    return len(own) == 0, own
+
+
+def hardware_boundary_notes(modified_files: list) -> list:
+    _scripts_on_path()
+    try:
+        import hardware_boundaries as hb  # noqa: PLC0415
+    except ImportError:
+        return []
+    rows = hb.load(get_project_dir())
+    return [hb.warning(r) for r in hb.match_paths(rows, modified_files)]
+
+
+def flaky_retry(cmd, project_dir, timeout, elapsed):
+    """Re-run a failed suite once: (exit code, output) or None. Green on the second run is a
+    flaky test — the run stays FAIL. Off with FLAKY_RETRY=0; only for a suite that ran under
+    FLAKY_RETRY_MAX_S seconds (default 120), so a real failure of a long suite is not paid twice."""
+    if os.environ.get("FLAKY_RETRY", "1") == "0":
+        return None
+    try:
+        cap = float(os.environ.get("FLAKY_RETRY_MAX_S", "120"))
+    except ValueError:
+        cap = 120.0
+    if elapsed > cap:
+        return None
+    proc = subprocess.Popen(cmd, shell=True, cwd=str(project_dir), stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, errors="replace", start_new_session=True)
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
+        return None
+    return proc.returncode, f"\n# --- chạy lại 1 lần (FLAKY_RETRY) — exit {proc.returncode} ---\n{out or ''}"
+
+
+def keep_evidence(project_dir, t, cmd, out):
+    """The run's full output as acceptance evidence (.agents/evidence/<test-id>/, the
+    checklist row links it). A failure to write is a warning, never a gate result."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
+        return rc.write_evidence(project_dir, t.get("id") or "test", out or "", {
+            "command": cmd, "mode": t.get("mode"), "status": t.get("status"), "exit": t.get("exit_code"),
+            "duration": t.get("duration")})
+    except (ImportError, OSError) as e:
+        log_warn(tr(f"Không lưu được log bằng chứng: {e}", f"Cannot keep the evidence log: {e}"))
+        return None
+
+
+def update_regression_checklist(*args):
+    """Under the checklist lock: the prompt hook and `agent-kit bugs` write the same file."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
+        lock = rc.locked(get_project_dir())
+    except (ImportError, AttributeError):
+        return _update_regression_checklist(*args)
+    with lock:
+        return _update_regression_checklist(*args)
+
+
+def _update_regression_checklist(args, matrix, rules, modified_files, regression_tests, run_tests, exit_code):
     """Living checklist (.agents/regression_status.json + regression_checklist.md).
 
     Results are recorded only for tests this run actually executed; changed source
@@ -1044,8 +1840,20 @@ def update_regression_checklist(args, matrix, rules, modified_files, regression_
                           capture_output=True, text=True).stdout.strip() or None
     commit = f"{head}+dirty" if head and modified_files else head
     rc.sync_from_matrix(data, matrix)
+    try:
+        tagged = rc.autolink_tags(project_dir, data)
+    except (OSError, ValueError) as e:
+        tagged = []
+        log_warn(tr(f"Không gắn được tag bug trong test: {e}", f"Could not link bug tags in tests: {e}"))
+    if tagged:
+        log_ok(tr(f"Đã gắn {len(tagged)} tag [BUG]/[FIX]/[INSTINCT] trong test vào checklist (chưa đổi trạng thái đã sửa)",
+                  f"Linked {len(tagged)} [BUG]/[FIX]/[INSTINCT] tags from tests into the checklist (fix state unchanged)"))
     if run_tests:
-        rc.record_results(data, regression_tests, task=args.task, commit=commit)
+        # An impacted PASS ran a subset: it flags the row as impacted but never records
+        # PASS (that needs the full command). An impacted FAIL is a real failure.
+        recorded = [dict(t, status="PASS_IMPACTED") if t.get("mode") == "impacted" and t.get("status") == "PASS"
+                    else t for t in regression_tests]
+        rc.record_results(data, recorded, task=args.task, commit=commit)
     rc.prune_uncovered(data, lambda files: [f for f in uncovered_code_files(files, rules) if (project_dir / f).exists()])
     # No trusted rules (no matrix, or one the gate does not trust): every changed file
     # would look uncovered — rows that say nothing true. Record UNCOVERED only against
@@ -1133,6 +1941,10 @@ def main():
                         help="Pre-commit mode: static checks only, on the staged content (clean = exit 2, never PASS)")
     parser.add_argument("--matrix", help="Path to regression_matrix.json")
     parser.add_argument("--run-tests", action="store_true", help="Run the matrix regression commands for real (required for PASS)")
+    parser.add_argument("--full", action="store_true",
+                        help="Run every matrix command in full, ignoring impacted_command (implies --run-tests). "
+                             "Without it, --run-tests runs only the impacted tests where the matrix declares an "
+                             "impacted_command. Use --full before handover; POSTFIX_GATE_FULL=1 and CI=true do the same")
     parser.add_argument("--dry-run", action="store_true", help="Only list impacted tests, do not run them (default without --run-tests; never PASS)")
     parser.add_argument("--timeout", type=int, default=900, help="Timeout (seconds) per regression command")
     parser.add_argument("--json", action="store_true", help="Also print the result as JSON (last stdout line)")
@@ -1156,9 +1968,9 @@ def main():
         log_err(tr(f"--diff không hợp lệ: {args.diff!r} (phải là một git ref, không được bắt đầu bằng '-')",
                    f"invalid --diff: {args.diff!r} (must be a git ref and must not start with '-')"))
         return 2
-    if args.staged and (args.diff or args.run_tests or args.record_lesson):
+    if args.staged and (args.diff or args.run_tests or args.record_lesson or args.full):
         log_err(tr("--staged chỉ kiểm tĩnh nội dung đã stage — không dùng chung với --diff / --run-tests / --record-lesson",
-                   "--staged only statically checks the staged content — it cannot be combined with --diff / --run-tests / --record-lesson"))
+                   "--staged only statically checks the staged content — it cannot be combined with --diff / --run-tests / --full / --record-lesson"))
         return 2
     base_ref = args.diff if args.diff and ".." not in args.diff else "HEAD"
 
@@ -1181,7 +1993,7 @@ def main():
     tests_touched = [f for f in modified_files if is_test_path(f) and subprocess.run(
         ["git", "-C", str(get_repo_root()), "cat-file", "-e", f"{base_ref}:{prefix}{f}"],
         capture_output=True).returncode == 0]
-    run_tests = args.run_tests and not args.dry_run
+    run_tests = (args.run_tests or args.full) and not args.dry_run
 
     print(f"\n{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}")
     print(f"{BOLD}{CYAN}      🛡️  POST-FIX AUDIT & TIA REGRESSION VERIFICATION GATE                          {RESET}")
@@ -1281,8 +2093,8 @@ def main():
     for rule in rules:
         comp_name = rule.get("component", "UnknownComponent")
         watch_files = rule_watch(rule, covers)
-        matched = any(match_pattern(f, pat) for f in modified_files for pat in watch_files)
-        if not matched:
+        rule_files = [f for f in modified_files if any(match_pattern(f, pat) for pat in watch_files)]
+        if not rule_files:
             continue
         impacted_components.append(comp_name)
         for test in rule.get("mandatory_regression_tests", []):
@@ -1291,6 +2103,8 @@ def main():
                 "id": test.get("id"),
                 "name": test.get("name"),
                 "command": test.get("command"),
+                "impacted_command": test.get("impacted_command"),
+                "files": rule_files,
                 "untested_exit": test.get("untested_exit"),
                 "status": "NOT_RUN",
                 "duration": "-",
@@ -1310,13 +2124,46 @@ def main():
         print(f"  • {tr('Component liên đới', 'Impacted components')}: {DIM}{tr('không có (không file nào khớp watch_files)', 'none (no file matches watch_files)')}{RESET}\n")
 
     project_dir = get_project_dir()
+    force_reason = force_full_reason(args)
+    selection_cache = {}
     for t in regression_tests:
         if run_tests and t["command"]:
+            # Impacted selection (see select_impacted_tests): the full command unless the
+            # base-ref matrix declares an impacted_command AND the map can vouch for every
+            # changed file of the rule. The chosen mode and its reason are always printed.
+            cmd, mode, reason, sel = plan_test_run(project_dir, t, force_reason, selection_cache)
+            t["mode"] = mode
+            t["full_command"] = t["command"]
+            t["command"] = cmd
+            if mode == "impacted":
+                t["impacted_count"] = sel["count"]
+                t["selected"] = [n for f in sorted(sel["tests"]) for n in sel["tests"][f]][:100]
+                why = {}
+                for f, w in sel["why"].items():
+                    why[w] = why.get(w, 0) + 1
+                t["mode_reason"] = ", ".join(f"{k}: {v}" for k, v in sorted(why.items()))
+                print(f"    {CYAN}▶ {t['id']}: {tr('chế độ IMPACTED', 'mode IMPACTED')}{RESET} — "
+                      + tr(f"{sel['count']} test chọn theo ({t['mode_reason']}); lệnh đầy đủ vẫn bắt buộc trước bàn giao (--full)",
+                           f"{sel['count']} tests selected by ({t['mode_reason']}); the full run is still required before handover (--full)"))
+            elif mode == "resource":
+                t["status"] = "PASS"
+                t["label"] = "RESOURCE"
+                t["duration"] = "0s"
+                t["mode_reason"] = reason
+                print(f"    {CYAN}▶ {t['id']}: {tr('chế độ RESOURCE', 'mode RESOURCE')} — {reason}{RESET}")
+                continue
+            elif mode in ("package", "module"):
+                t["mode_reason"] = reason
+                print(f"    {CYAN}▶ {t['id']}: {tr('chế độ PACKAGE', 'mode PACKAGE')} — {reason}{RESET}")
+            else:
+                t["mode_reason"] = reason
+                if t.get("impacted_command") or force_reason:
+                    print(f"    {DIM}▶ {t['id']}: {tr('chế độ FULL', 'mode FULL')} — {reason}{RESET}")
             started = time.perf_counter()
             # Own session/process group so a timeout kills the whole tree (gradle daemons,
             # test workers), not just the shell. Commands come from the matrix at the base
             # ref (load_active_matrix), so the audited change cannot rewrite them.
-            proc = subprocess.Popen(t["command"], shell=True, cwd=str(project_dir),
+            proc = subprocess.Popen(cmd, shell=True, cwd=str(project_dir),
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, errors="replace", start_new_session=True)
             try:
@@ -1328,15 +2175,40 @@ def main():
                         and proc.returncode == t["untested_exit"]:
                     t["status"] = "UNTESTED"
                 t["exit_code"] = proc.returncode
+                if t["status"] == "FAIL":
+                    retry = flaky_retry(cmd, project_dir, args.timeout, time.perf_counter() - started)
+                    if retry:
+                        out = (out or "") + retry[1]
+                        t["flaky"] = retry[0] == 0      # red then green on the same code: still FAIL
                 t["output_tail"] = (out or "")[-2000:]
             except subprocess.TimeoutExpired:
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-                proc.communicate()
+                out = proc.communicate()[0]
                 t["status"] = "TIMEOUT"
             t["duration"] = f"{time.perf_counter() - started:.2f}s"
+            t["log"] = keep_evidence(project_dir, t, cmd, out)
+            if t["status"] == "PASS" and mode == "impacted":
+                t["label"] = f"PASS (impacted: {t['impacted_count']} tests)"
+            elif t["status"] == "PASS" and mode in ("package", "module"):
+                t["label"] = f"PASS ({mode})"
+            else:
+                t["label"] = t["status"]
+            proved = vacuity_revert(project_dir, t, args.timeout)
+            if proved == "vacuous":
+                t["status"] = "FAIL"
+                t["label"] = "VACUOUS"
+                t["output_tail"] = tr(
+                    "Test rỗng: revert mã nguồn sản xuất mà test vẫn XANH — không có năng lực phát hiện lỗi",
+                    "Vacuous test: production diff reverted and the test stayed GREEN — it cannot detect the bug")
+            elif proved == "ok":
+                t["vacuity"] = "red"
+            elif proved == "weak":
+                log_warn(tr(
+                    f"{t.get('id')}: revert không ra assertion failure (có thể chỉ lỗi biên dịch) — chưa chứng minh test bắt được lỗi",
+                    f"{t.get('id')}: revert did not show an assertion failure (possibly a compile error) — the test has not proved it catches the bug"))
         elif run_tests:
             t["status"] = "FAIL"
             t["output_tail"] = tr("Matrix không khai báo command cho test này", "The matrix declares no command for this test")
@@ -1344,8 +2216,9 @@ def main():
     checklist_markdown = []
     for t in regression_tests:
         st = t["status"]
+        label = t.get("label") or st
         if st == "PASS":
-            status_icon = f"{GREEN}[x] PASS{RESET}"
+            status_icon = f"{GREEN}[x] {label}{RESET}"
         elif st == "NOT_RUN":
             status_icon = f"{YELLOW}[ ] NOT RUN{RESET}"
         else:
@@ -1357,7 +2230,13 @@ def main():
             for line in t["output_tail"].strip().splitlines()[-5:]:
                 print(f"           {DIM}| {line}{RESET}")
         mark = "x" if st == "PASS" else " "
-        checklist_markdown.append(f"- [{mark}] **{t['id']}** ({t['component']}): {t['name']} -> `{st}` ({t['duration']})")
+        mode_note = ""
+        if t.get("mode") == "impacted":
+            mode_note = tr(f" — chỉ test bị ảnh hưởng: `{t['command']}`; lệnh đầy đủ `{t['full_command']}` chưa chạy",
+                           f" — impacted tests only: `{t['command']}`; the full command `{t['full_command']}` was not run")
+        elif t.get("mode") == "full" and t.get("impacted_command"):
+            mode_note = tr(f" — chạy đủ: {t.get('mode_reason')}", f" — full run: {t.get('mode_reason')}")
+        checklist_markdown.append(f"- [{mark}] **{t['id']}** ({t['component']}): {t['name']} -> `{label}` ({t['duration']}){mode_note}")
     if regression_tests and not run_tests:
         log_warn(tr("Chưa chạy test hồi quy (dry-run). Thêm --run-tests để chạy thật — dry-run KHÔNG bao giờ là PASS.",
                     "Regression tests not run (dry-run). Add --run-tests to run them — a dry-run is NEVER a PASS."))
@@ -1398,6 +2277,30 @@ def main():
         for f, lbl in logging_findings:
             log_err(f"{f}: {lbl}")
 
+    hw_ok, hw_findings = run_hardware_source_audit(modified_files)
+    if hw_ok:
+        log_ok(tr("Hardware source: 0 lệnh exec/su/reboot/cổng 5555 mới",
+                  "Hardware source: 0 new exec/su/reboot/port-5555 calls"))
+    else:
+        for f, lbl in hw_findings:
+            log_err(f"{f}: {lbl}")
+    assert_ok, assert_findings = run_assertion_audit(modified_files)
+    if assert_ok:
+        log_ok(tr("Test đổi trong lượt này: 0 hàm test không có assertion phân biệt",
+                  "Tests changed in this run: 0 test functions without a distinguishing assertion"))
+    else:
+        for f, lbl in assert_findings:
+            log_err(f"{f}: {lbl}")
+    proof_ok, proof_findings = run_proof_block(modified_files)
+    if proof_ok:
+        log_ok(tr("Ảnh proof của thay đổi này: 0 ảnh trùng byte hoặc ≥ 98% cùng một màn",
+                  "Proof images in this change: 0 byte-identical or ≥98% same-screen duplicates"))
+    else:
+        for msg in proof_findings:
+            log_err(msg)
+    for note in hardware_boundary_notes(modified_files):
+        log_warn(note)
+
     # Findings already in the base version, from every static layer above: shown, never blocking.
     for f, lbl in PREEXISTING_SECRETS[:15]:
         log_warn(tr(f"{f}: {lbl} — đã có sẵn trong {BASE_REF}, không do thay đổi này (không chặn); nên sửa riêng (bí mật: xoay khoá, gỡ khỏi repo)",
@@ -1413,11 +2316,16 @@ def main():
         log_warn(tr("OpenCodeReview CLI (`ocr`) chưa cài — lớp này bỏ qua", "OpenCodeReview CLI (`ocr`) not installed — skipped"))
 
     # Final Summary Verdict
-    static_ok = hygiene_ok and anti_laziness_ok and deps_ok and perf_ok and resilience_ok and logging_ok
+    static_ok = (hygiene_ok and anti_laziness_ok and deps_ok and perf_ok and resilience_ok
+                 and logging_ok and hw_ok and assert_ok and proof_ok)
     tests_passed = sum(1 for t in regression_tests if t["status"] == "PASS")
     tests_untested = [t for t in regression_tests if t["status"] == "UNTESTED"]
     tests_ok = tests_passed + len(tests_untested) == len(regression_tests)
     unverified = bool(regression_tests) and not run_tests
+    impacted_run = [t for t in regression_tests if t.get("mode") == "impacted"]
+    impacted_n = sum(t.get("impacted_count", 0) for t in impacted_run)
+    test_mode = ("none" if not run_tests or not regression_tests
+                 else "impacted" if impacted_run else "full")
     no_coverage = (not rules or not regression_tests) and not args.allow_no_tests
     # Every changed source file must be re-testable later; one no rule watches would
     # silently fall out of the regression checklist.
@@ -1447,11 +2355,19 @@ def main():
         names = ", ".join(t["id"] or "?" for t in tests_untested)
         verdict_text, verdict_color, exit_code = tr(f"UNTESTED — {names} không chạy được trên máy này (thiếu công cụ/thiết bị); KHÔNG phải PASS",
                                                     f"UNTESTED — {names} cannot run on this machine (missing tool/device); NOT a PASS"), YELLOW, 4
+    elif impacted_run:
+        # Exit 0 like any PASS (the Stop hook lets the turn end), but never worded as the
+        # handover verdict: tests outside the selection did not run.
+        verdict_text, verdict_color, exit_code = tr(
+            f"PASS (impacted: {impacted_n} tests) — kiểm nhanh các test bị ảnh hưởng; chạy `postfix-gate --run-tests --full` trước khi bàn giao",
+            f"PASS (impacted: {impacted_n} tests) — fast check of the impacted tests; run `postfix-gate --run-tests --full` before handover"), GREEN, 0
     else:
         verdict_text, verdict_color, exit_code = tr("PASS — ĐỦ ĐIỀU KIỆN NGHIỆM THU & BÀN GIAO", "PASS — READY FOR ACCEPTANCE & HANDOVER"), GREEN, 0
 
     print(f"  {BOLD}{tr('KẾT LUẬN CỔNG POST-FIX AUDIT:', 'POST-FIX AUDIT GATE VERDICT:')}{RESET} {verdict_color}{BOLD}{verdict_text}{RESET}")
-    print(f"  • {tr('Test hồi quy đạt', 'Regression tests passed')}: {tests_passed}/{len(regression_tests)}" + (tr(" (chưa chạy)", " (not run)") if unverified else ""))
+    print(f"  • {tr('Test hồi quy đạt', 'Regression tests passed')}: {tests_passed}/{len(regression_tests)}" + (tr(" (chưa chạy)", " (not run)") if unverified else "")
+          + (tr(f" — {len(impacted_run)} lệnh chỉ chạy test bị ảnh hưởng ({impacted_n} test), lệnh đầy đủ CHƯA chạy",
+                f" — {len(impacted_run)} commands ran impacted tests only ({impacted_n} tests), the full commands were NOT run") if impacted_run else ""))
     print(f"  • {tr('Lớp tĩnh (bí mật, lười biếng, dependency, hiệu năng, nuốt lỗi, log)', 'Static checks (secrets, laziness, dependencies, performance, swallowed errors, logging)')}: "
           f"{tr('đạt', 'passed') if static_ok else tr('CÓ PHÁT HIỆN', 'FINDINGS')}")
     for f in unreadable[:5]:
@@ -1523,6 +2439,7 @@ def main():
             "verdict": verdict_text, "exit_code": exit_code, "files": modified_files,
             "unreadable": unreadable, "regression_tests": regression_tests,
             "matrix_problem": matrix_problem, "tests_touched": tests_touched,
+            "test_mode": test_mode, "full_run_required": bool(impacted_run),
             "devkit_artifacts_skipped": len(devkit_artifacts), "device": device_state,
             "static": {"secrets": len(secrets), "lazy": len(lazy_findings), "dependencies": len(dep_findings),
                        "perf": len(perf_findings),

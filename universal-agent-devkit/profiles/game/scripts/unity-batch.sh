@@ -37,7 +37,8 @@
 #   • The results file is NUnit 3 XML, not JUnit — parsed here with the NUnit schema.
 #   • Only one Editor may open a project: Temp/UnityLockfile + a live Unity process on
 #     the same path = UNTESTED (never kill someone else's Editor session).
-#   • A killed run can leave a stale Temp/UnityLockfile; it is reported, not deleted.
+#   • A killed run can leave a stale Temp/UnityLockfile. If the PID in the file is dead
+#     and no Editor has this project path, the file is removed and the run continues.
 # bash 3.2 compatible (macOS default shell).
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
@@ -102,14 +103,21 @@ if [ -z "$UNITY" ] || [ ! -x "$UNITY" ]; then
 fi
 
 # ---------- one Editor per project ----------
+# Unity writes the Editor PID into Temp/UnityLockfile. A killed batch run leaves the
+# file behind. A live PID, or any Unity whose command line has this project path, is
+# someone else's session: stop. A dead PID (or no PID and no such process) is stale.
 if [ -f "$ROOT/Temp/UnityLockfile" ]; then
   if pgrep -fi -- "projectpath[= ]*$ROOT" >/dev/null 2>&1; then
     echo "UNTESTED: an Editor already has $ROOT open (Temp/UnityLockfile + live process). Close it, then re-run." >&2
     exit 2
   fi
-  echo "UNTESTED: stale Temp/UnityLockfile (no Unity process on this project — probably a killed run)." >&2
-  echo "          Check with: pgrep -fl Unity ; remove $ROOT/Temp/UnityLockfile yourself if nothing uses it." >&2
-  exit 2
+  lock_pid="$(head -n 1 "$ROOT/Temp/UnityLockfile" | tr -cd '0-9' | cut -c1-12)"
+  if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+    echo "UNTESTED: Temp/UnityLockfile belongs to live pid $lock_pid. Close that Editor, then re-run." >&2
+    exit 2
+  fi
+  echo "Stale Temp/UnityLockfile (pid ${lock_pid:-none} is not running). Removing it and continuing." >&2
+  rm -f "$ROOT/Temp/UnityLockfile"
 fi
 
 OUT="${UNITY_BATCH_OUT:-$ROOT/Logs/agent-kit}"

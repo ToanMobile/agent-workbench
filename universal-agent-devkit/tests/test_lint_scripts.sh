@@ -54,10 +54,23 @@ public class Player : MonoBehaviour {
     }
 }
 CS
+cat > "$TMP/u/Assets/Scripts/latest/Drag.cs" <<'CS'
+public class Drag : MonoBehaviour {
+    void OnDrag()
+    {
+        label = string.Format("{0}", n);
+        title = "Lv " + n;
+    }
+    void Update() { int n = a + 1; }
+}
+CS
 cp "$TMP/u/Assets/Scripts/latest/Player.cs" "$TMP/u/Assets/Tests/PlayerCopy.cs"
 out="$(python3 "$S/lint_unity_gc.py" "$TMP/u" 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && echo "$out" | grep -q "latest/Player.cs" && ok "M-23: unity lint scans 'latest' path, exit 1" || fail "M-23: unity lint rc=$rc"
 echo "$out" | grep -q "Tests/PlayerCopy.cs" && fail "M-23: unity Tests/ dir not excluded" || ok "M-23: unity Tests/ dir excluded"
+echo "$out" | grep -q "OnDrag" && echo "$out" | grep -q "string.Format" && echo "$out" | grep -q "concatenation" \
+  && ok "M-23: OnDrag string.Format and concatenation" || fail "M-23: drag/string missed"
+echo "$out" | grep -q "a + 1" && fail "M-23: numeric + flagged" || ok "M-23: numeric + not flagged"
 python3 "$S/lint_unity_gc.py" "$TMP/nope" >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 2 ] && ok "M-23: unity missing path exits 2" || fail "M-23: unity missing path exit $rc"
 head -5 "$S/lint_unity_gc.py" | grep -q "REGEX-BASED" && ok "M-23: unity header says regex-based" || fail "M-23: unity header not honest"

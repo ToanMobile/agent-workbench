@@ -37,6 +37,13 @@
 # ── lesson reminder: a proven fix ("đã fix" + RED→GREEN or workflow proof) with no
 #   `agent-kit learn` / `--record-lesson` / edit of .agents/instincts.md in the
 #   session holds the stop ONCE per session with the command. LESSON_REMINDER=0 off.
+# ── bug-link reminder: the same proven fix while a bug row this session registered (a
+#   bug prompt → REPORTED) or touched (agent-kit bugs add/link) has no test linked holds
+#   the stop ONCE with `agent-kit bugs link <BUG-ID> <test>`; merged with the lesson
+#   reminder into one block. BUG_LINK_REMINDER=0 off.
+# ── RED-proof: the same proven fix starts scripts/red_proof.py in the background for this
+#   session's linked bugs (sandbox: RED without the fix, GREEN with it); a bug of this
+#   session whose test came out VACUOUS holds the stop once. RED_PROOF=0 off.
 #
 # ── check 7: an outcome claim ("đã fix") needs one of two proofs from THIS session:
 #   • a paired RED→GREEN test run — a runner result that FAILED before the last
@@ -80,7 +87,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 TE_INPUT="${INPUT}" TE_LOG="${LOG_DIR}/test_evidence_gate.log" TE_DIR="${LOG_DIR}" \
-TE_TS="$(date +%Y-%m-%dT%H:%M:%S)" TE_REPO="${REPO_ROOT}" \
+TE_TS="$(date +%Y-%m-%dT%H:%M:%S)" TE_REPO="${REPO_ROOT}" TE_SELF="$0" \
 python3 <<'PY'
 import os, sys, json, re, glob, time
 import xml.etree.ElementTree as ET
@@ -464,6 +471,12 @@ def runner_state(is_error, txt, pm_run=False):
 SRC_EXT = (".kt", ".kts", ".java", ".swift", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py",
            ".go", ".rs", ".dart", ".cs", ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm")
 runner_results = []        # (result_idx, use_idx, is_error, text, command, "red"|"green")
+# Bug rows this session registered or changed from the shell (agent-kit bugs add/link,
+# regression_checklist.py add/bug-link): the ids their output printed.
+BUGS_CMD_RX = re.compile(r"agent-kit[\"']?\s+(?:bugs|req)\s+(?:add|link)\b"
+                         r"|regression_checklist\.py[\"']?\s+(?:.*\s)?(?:add|bug-link|req-add|req-link)\b")
+BUG_ID_RX = re.compile(r"\b(?:BUG-[A-Za-z0-9_.-]*[A-Za-z0-9]|REQ-\d+)")
+bugs_touched = set()
 # Test files outside the JVM (jest/vitest/pytest/go/swift…): the RED-check reads
 # runner output instead of TEST-*.xml for them.
 SCRIPT_TEST_RX = re.compile(
@@ -475,6 +488,7 @@ script_test_idx = {}      # test file path -> transcript position of its last ed
 script_pending = {}       # test file path -> LIFO of (old, new) edits not yet undone
 script_idx_before = {}    # test file path -> [script_test_idx before each edit]
 last_src_edit_idx = -1
+edit_log = []             # (transcript position, file path) of every Edit/Write/NotebookEdit
 no_id_tool_indices = []
 test_edit_idx = {}       # simple class name -> transcript position of its last edit
 red_idx = {}             # suite name -> transcript position where it was seen RED
@@ -559,6 +573,9 @@ if tp and os.path.exists(tp):
                                 "isError": blk.get("is_error") is True,
                             }
                         if (use and use["name"] == "Bash"
+                                and BUGS_CMD_RX.search(str(use["input"].get("command", "")))):
+                            bugs_touched.update(BUG_ID_RX.findall(txt))
+                        if (use and use["name"] == "Bash"
                                 and TEST_RUNNER_RX.search(str(use["input"].get("command", "")))):
                             runner_results.append((blk_idx, use["index"], blk.get("is_error") is True, txt,
                                                    str(use["input"].get("command", "")),
@@ -626,6 +643,8 @@ if tp and os.path.exists(tp):
                     if nm not in ("Edit", "Write", "NotebookEdit"):
                         continue
                     fp = binp.get("file_path") or ""
+                    if isinstance(fp, str) and fp:
+                        edit_log.append((blk_idx, fp))
                     if isinstance(fp, str) and fp.endswith(SRC_EXT):
                         last_src_edit_idx = blk_idx
                     if isinstance(fp, str) and (SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp)) \
@@ -737,30 +756,115 @@ undisclosed_red = [s for s in outside_red
                    if s["name"].rsplit(".", 1)[-1] not in msg]
 
 # ── 6.4 — same testcase red across two runs with edits in between ───────────
+# Whose test run produced this XML? build/ is shared: another agent's red suite lands in the
+# same tree and used to be counted as one of OUR failed fixes (OfficeReader, 2026-09-10: four
+# accusations over suites this session never ran). A run sits inside the Bash window of the
+# session that ran it (.claude/audit-gate/bash_write_ledger.tsv, written by
+# hooks/bash_write_ledger.sh: session \t start|end \t <ts> \t <tool_use_id>); the narrowest
+# containing window wins. Fail-closed: no ledger, no containing window, or a tie between
+# sessions → ours. A background command (start, no end) stays open until now. Audit G5.
+def _load_windows():
+    path = os.path.join(repo, ".claude", "audit-gate", "bash_write_ledger.tsv")
+    wins, opens = [], {}
+    try:
+        if not os.path.isfile(path):
+            return []
+        with open(path) as fh:
+            for line in fh:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) != 4:
+                    continue
+                sid_, kind, stamp, tuid = parts
+                try:
+                    stamp = float(stamp)
+                except ValueError:
+                    continue
+                if kind == "start":
+                    opens[(sid_, tuid)] = stamp
+                elif kind == "end":
+                    st = opens.pop((sid_, tuid), None)
+                    if st is not None:
+                        wins.append((st, stamp, sid_))
+        now_ = time.time()
+        for (sid_, _tuid), st in opens.items():
+            wins.append((st, now_, sid_))
+    except Exception:
+        return []
+    return wins
+
+_WINDOWS = _load_windows()
+_MY_SID = str(d.get("session_id") or "")
+
+def ran_here(mtime):
+    if not _WINDOWS or not _MY_SID:
+        return True
+    best_w, best_sid = None, None
+    for st, en, sid_ in _WINDOWS:
+        if st <= mtime <= en:
+            w = en - st
+            if best_w is None or w < best_w:
+                best_w, best_sid = w, sid_
+            elif w == best_w and sid_ != best_sid:
+                best_sid = None
+    return True if best_sid is None else best_sid == _MY_SID
+
+# `red-check` is deliberately NOT a marker: agents write it constantly and this hook prints
+# it itself, so quoting the warning back would silence the gate by accident.
+MUTATION_DISCLOSED = re.compile(r"\b(?:mutation|mutant)\b|đột biến|deliberate[-_\s]*red", re.I)
+# Split only at a sentence end followed by whitespace, and at line breaks: a bare [.;] split
+# cuts `com.example.PaymentSuite` and `12.5` and strands the marker in another segment.
+SENTENCE_SPLIT = re.compile(r"(?<=[.;!?])\s+|\n+")
+ANCHOR = "\x00SUITE\x00"
+
+def deliberate_red(testcase, other_failing_simples):
+    """Did the reply explain THIS suite's red as a deliberate mutation? The suite name is
+    replaced by a marker-free anchor BEFORE splitting (a dotted name would otherwise never be
+    whole inside one segment); the test name's own words are stripped, so a test called
+    `mutationGuard` cannot disclose itself; a sentence that also names another failing suite
+    cannot pin the marker to this one."""
+    cls, _, tname = testcase.partition("#")
+    simple = cls.rsplit(".", 1)[-1]
+    if not simple:
+        return False
+    text = (msg or "").replace(cls, ANCHOR).replace(simple, ANCHOR)
+    for word in re.findall(r"\w+", tname):
+        if MUTATION_DISCLOSED.search(word):
+            text = re.sub(r"\b%s\b" % re.escape(word), " ", text, flags=re.I)
+    for seg in SENTENCE_SPLIT.split(text):
+        if ANCHOR not in seg or any(o in seg for o in other_failing_simples):
+            continue
+        if MUTATION_DISCLOSED.search(seg):
+            return True
+    return False
+
 repeat_failures = []
 if new_run:
     now_failing = set()
     for p, s in parsed.items():
-        if s["mtime"] > state.get("last_run", 0.0):
+        if s["mtime"] > state.get("last_run", 0.0) and ran_here(s["mtime"]):
             now_failing.update(s["failing"])
     streak = dict(state.get("streak", {}))
     for t in list(streak):
         if t not in now_failing:
             streak.pop(t, None)          # went green (or not re-run) → reset
-    # ── deliberate_red check: mutation testing should not trigger Anti-Loop ──
-    deliberate_red = bool(re.search(
-        r"deliberate[-_\s]*red|mutation[-_\s]*test|red[-_\s]*check|kiểm[-_\s]*chứng[-_\s]*đỏ|chứng[-_\s]*minh[-_\s]*đỏ|cố[-_\s]*tình[-_\s]*làm[-_\s]*đỏ|thử[-_\s]*nghiệm[-_\s]*đỏ",
-        msg or "",
-        re.I
-    )) or bool(pending_edits)
-
+    # A DELIBERATE mutation red is not a failed fix (check 2's RED-check produces one:
+    # fix → green → mutate → red → restore, often inside one turn, so the green never
+    # reaches a Stop sample). What a machine can check is DISCLOSURE, per testcase: the
+    # reply names THIS suite and says "mutation"/"mutant"/"đột biến" in the same sentence.
+    # Ported from OfficeReader's hook (audit G4, 2026-09-24) — the earlier global switch
+    # silenced ANTI-LOOP for every failing test whenever the reply quoted this hook's own
+    # "RED-check" warning, disclosed a DIFFERENT suite, or the session edited any test file.
+    # A disclosed red is skipped (no increment) but the streak is not reset: a genuine failed
+    # fix afterwards still trips the gate.
+    failing_simples = {tc.partition("#")[0].rsplit(".", 1)[-1] for tc in now_failing}
     for t in now_failing:
+        own = t.partition("#")[0].rsplit(".", 1)[-1]
+        if deliberate_red(t, failing_simples - {own}):
+            logline(f"[{ts}] Anti-Loop: disclosed mutation red skipped: {t} (streak={streak.get(t, 0)})")
+            continue
         streak[t] = streak.get(t, 0) + 1
         if streak[t] >= 2:
-            if deliberate_red:
-                logline(f"[{ts}] Anti-Loop bypassed for deliberate red testcase: {t} (streak={streak[t]})")
-            else:
-                repeat_failures.append((t, streak[t]))
+            repeat_failures.append((t, streak[t]))
 
     # Per-suite red/green history. XML files are OVERWRITTEN by the next run, so
     # a green run erases the red that came before it — the only way to know a
@@ -985,13 +1089,136 @@ def lesson_reminder():
             "  agent-kit learn \"<tên bẫy>\" --cause=\"<nguyên nhân gốc>\" --rule=\"<cách phòng ngừa>\"\n"
             "Nếu không đáng ghi, nói rõ một câu vì sao rồi dừng — nhắc này không lặp lại.\n")
 
+# ── bug-link reminder: a PROVEN fix while a bug row this session registered (bug prompt,
+#   REPORTED) or touched (`agent-kit bugs add/link`) has no test linked. Once per session,
+#   with the exact commands; merged with the lesson reminder into one block, because the
+#   re-Stop loop guard allows a single extra block.
+def bug_link_reminder():
+    if not fix_proven or os.environ.get("BUG_LINK_REMINDER", "1") == "0":
+        return None
+    flag = os.path.join(state_dir, f"buglink_reminded_{sid}")
+    if os.path.exists(flag):
+        return None
+    try:
+        items = json.load(open(os.path.join(repo, ".agents", "regression_status.json"), encoding="utf-8"))["items"]
+    except Exception:
+        return None
+    raw_sid = str(d.get("session_id") or "")
+    def missing_test(it):
+        if it.get("kind") == "req":   # a REQ needs a test for EVERY criterion
+            return any(not c.get("tests") and not c.get("test_refs") for c in it.get("criteria") or [{}])
+        return it.get("kind") == "bug" and not it.get("tests") and not it.get("test_refs")
+    unlinked = [(bid, it) for bid, it in sorted(items.items())
+                if isinstance(it, dict) and missing_test(it) and it.get("state") != "auto_closed"
+                and (bid in bugs_touched or (raw_sid and raw_sid in (it.get("sessions") or [])))]
+    if not unlinked:
+        return None
+    try:
+        open(flag, "w").close()
+    except OSError:
+        return None
+    out = ["🔗 BUG CHƯA LINK TEST (nhắc 1 lần mỗi phiên): phiên này đã sửa có bằng chứng RED→GREEN, nhưng bug",
+           "trong checklist chưa gắn test nào — nó sẽ không được chặn tái phát. Link đúng test ĐỎ→XANH vừa chạy",
+           "(id matrix, file hoặc class test; PASS chỉ có sau lần gate chạy thật):"]
+    for bid, it in unlinked[:5]:
+        out.append(f"  • {bid} — {str(it.get('title', ''))[:90]}")
+        if it.get("kind") == "req":
+            todo = [str(n) for n, c in enumerate(it.get("criteria") or [], 1) if not c.get("tests") and not c.get("test_refs")]
+            out.append(f"      agent-kit req link {bid} <{'|'.join(todo) or 'all'}> <test>   (tiêu chí chưa có test: {', '.join(todo)})")
+        else:
+            out.append(f"      agent-kit bugs link {bid} <test>")
+    out += ["  hoặc ghi bài học + bug cùng lúc sau gate xanh: postfix-gate --run-tests --record-lesson \"<tiêu đề>\"",
+            f"  Không phải bug / đã trùng: agent-kit bugs drop {unlinked[0][0]}",
+            "  Bug chưa sửa trong phiên này thì nói rõ một câu rồi dừng — nhắc này không lặp lại."]
+    return "\n".join(out) + "\n"
+
+# ── auto-link: a proven fix whose evidence is one-to-one links the bug to its test by
+#   itself (linked_by=auto, 🤖 in the view): exactly one unlinked bug row of this session,
+#   exactly one test file written/edited this session, a runner RED naming that test after
+#   it was written and BEFORE the first source edit, a GREEN run after the last source edit.
+#   Anything ambiguous → no link (the reminder below asks instead). AUTO_LINK=0 off.
+def is_test_path(fp):
+    return bool(SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp)
+                or "/src/test/" in fp or "/src/androidTest/" in fp or re.search(r"/Tests?/.*\.cs$|Tests?\.cs$", fp))
+
+def auto_link():
+    if not fix_proven or os.environ.get("AUTO_LINK", "1") == "0":
+        return
+    rows = session_bug_rows()
+    unlinked = [bid for bid, it in rows.items() if not it.get("tests") and not it.get("test_refs")
+                and it.get("state") != "auto_closed"]
+    tests = {fp for _, fp in edit_log if is_test_path(fp)}
+    src_idx = [i for i, fp in edit_log if fp.endswith(SRC_EXT) and not is_test_path(fp)]
+    if len(unlinked) != 1 or len(tests) != 1 or not src_idx:
+        return
+    test = next(iter(tests))
+    stem = os.path.basename(test).rsplit(".", 1)[0]
+    written = min(i for i, fp in edit_log if fp == test)
+    red = any(written < r[1] < min(src_idx) and r[5] == "red" and (stem in r[3] or stem in r[4])
+              for r in runner_results)
+    green = any(r[1] > max(src_idx) and r[5] == "green" for r in runner_results)
+    if not (red and green):
+        return
+    rel = os.path.relpath(os.path.realpath(test), os.path.realpath(repo)) if os.path.isabs(test) else test
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(os.environ.get("TE_SELF", "")))), "bin"))
+        sys.dont_write_bytecode = True
+        import regression_checklist as rc
+        from pathlib import Path as _P
+        with rc.locked(repo):
+            data = rc.load(_P(repo))
+            mf = _P(repo) / ".agents" / "regression_matrix.active.json"
+            if mf.is_file():
+                rc.sync_from_matrix(data, json.loads(mf.read_text(encoding="utf-8")))
+            in_matrix, _ = rc.link_bug(data, unlinked[0], rel, project=_P(repo))
+            data["items"][unlinked[0]]["linked_by"] = "auto"
+            rc.save(_P(repo), data)
+        logline(f"[{ts}] auto-link {unlinked[0]} → {rel} ({in_matrix})")
+    except Exception as e:  # noqa: BLE001 — never fail the Stop over the convenience link
+        logline(f"[{ts}] auto-link failed: {e!r}")
+
+# ── RED-proof of this session's bugs: a proven fix starts scripts/red_proof.py in the
+#   background (sandbox: the test must fail without the fix and pass with it); a bug of
+#   this session whose test was found VACUOUS (green without the fix) holds the stop once.
+def session_bug_rows():
+    try:
+        items = json.load(open(os.path.join(repo, ".agents", "regression_status.json"), encoding="utf-8"))["items"]
+    except Exception:
+        return {}
+    raw_sid = str(d.get("session_id") or "")
+    return {bid: it for bid, it in items.items() if isinstance(it, dict) and it.get("kind") in ("bug", "req")
+            and (bid in bugs_touched or (raw_sid and raw_sid in (it.get("sessions") or [])))}
+
+def red_proof_actions():
+    rows = session_bug_rows()
+    if fix_proven and os.environ.get("RED_PROOF", "1") != "0":
+        todo = [bid for bid, it in rows.items() if it.get("tests") and it.get("fixed") is not False
+                and (it.get("red_proof") or {}).get("status") in (None, "PENDING", "OUTDATED")]
+        script = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(os.environ.get("TE_SELF", "")))),
+                              "scripts", "red_proof.py")
+        if todo and os.path.isfile(script):
+            import subprocess
+            subprocess.Popen([sys.executable, script, repo, "--bug", ",".join(sorted(todo)), "--wait"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            logline(f"[{ts}] red-proof started in background: {sorted(todo)}")
+    vacuous = [(bid, it) for bid, it in sorted(rows.items()) if (it.get("red_proof") or {}).get("status") == "VACUOUS"]
+    if not vacuous:
+        return None
+    out = ["🚫 TEST VÔ HIỆU: test của bug dưới đây vẫn XANH khi bỏ bản sửa trong sandbox —",
+           "nó không bảo vệ bug khỏi tái phát. Sửa test cho nó ĐỎ trên code lỗi (assert đúng hành vi bị hỏng), rồi:"]
+    for bid, it in vacuous[:5]:
+        out.append(f"  • {bid} — {str(it.get('title', ''))[:90]}  (log: {(it.get('red_proof') or {}).get('log', '-')})")
+    out.append(f"  python3 <devkit>/scripts/red_proof.py . --bug {vacuous[0][0]} --wait   # chứng minh lại")
+    return "\n".join(out) + "\n"
+
 if not problems and not repeat_failures and not redcheck and not check7:
     logline(f"[{ts}] claim={claimed} outcome={outcome_claimed} xml={len(mtimes)} "
             f"parsed={len(parsed)} fresh={len(fresh)} — pass")
-    note = lesson_reminder()
-    if note:
-        logline(f"[{ts}] lesson reminder (once per session)")
-        sys.stderr.write(note)
+    auto_link()
+    notes = [n for n in (lesson_reminder(), bug_link_reminder(), red_proof_actions()) if n]
+    if notes:
+        logline(f"[{ts}] reminder (once per session): {len(notes)}")
+        sys.stderr.write("\n".join(notes))
         sys.exit(2)
     sys.exit(0)
 

@@ -8,11 +8,13 @@ Bỏ qua theo THƯ MỤC (Test/, Tests/, Editor/, Packages/, Plugins/) hoặc H�
 không lọc theo chuỗi con "test" trong đường dẫn.
 
 Phát hiện trên file C# (.cs):
-1. Heap allocations (`new `) inside `Update()`, `FixedUpdate()`, `LateUpdate()`, `OnGUI()`.
+1. Heap allocations (`new `) inside `Update()`, `FixedUpdate()`, `LateUpdate()`, `OnGUI()`,
+   `OnDrag()`, `OnBeginDrag()`, `OnEndDrag()`.
    (Exempts value type structs like Vector2/3/4, Quaternion, Color, Rect, etc.)
 2. Expensive hierarchy searches and GetComponent calls inside frame loops.
 3. Allocating physics methods (RaycastAll, OverlapSphere) instead of NonAlloc variants.
 4. LINQ invocations (.Where, .Select, .ToList) inside frame loops generating per-frame GC.
+5. String allocation in those methods: `string.Format`, interpolated `$"..."`, or `"..." +`.
 """
 
 import sys
@@ -27,7 +29,10 @@ SAFE_STRUCT_TYPES = {
     "CancellationToken", "NativeArray"
 }
 
-FRAME_LOOP_METHODS = {"Update", "FixedUpdate", "LateUpdate", "OnGUI"}
+FRAME_LOOP_METHODS = {
+    "Update", "FixedUpdate", "LateUpdate", "OnGUI",
+    "OnDrag", "OnBeginDrag", "OnEndDrag",
+}
 SKIP_DIRS = {"test", "tests", "editor", "packages", "plugins"}
 TEST_SUFFIXES = ("test.cs", "tests.cs")
 
@@ -59,7 +64,9 @@ def check_csharp_file(file_path: Path) -> list:
             continue
 
         # Detect start of frame loop methods: void Update(), private void FixedUpdate(), etc.
-        m_loop = re.search(r"\b(void|IEnumerator)\s+(Update|FixedUpdate|LateUpdate|OnGUI)\s*\(", line)
+        m_loop = re.search(
+            r"\b(void|IEnumerator)\s+(Update|FixedUpdate|LateUpdate|OnGUI|OnDrag|OnBeginDrag|OnEndDrag)\s*\(",
+            line)
         if m_loop:
             in_frame_loop = True
             current_loop_name = m_loop.group(2)
@@ -109,7 +116,16 @@ def check_csharp_file(file_path: Path) -> list:
                     )
                     break
 
-            # 4. Check for allocating Physics queries
+            # 4. String work allocates on the hot path. Numeric `a + 1` does not match.
+            if re.search(r"\bstring\.Format\s*\(", stripped) or re.search(r'\$"', stripped) \
+                    or re.search(r'"[^"\n]*"\s*\+', stripped) or re.search(r'\+\s*"[^"\n]*"', stripped):
+                findings.append(
+                    f"Line {idx} in `{current_loop_name}()`: string allocation (`string.Format`, "
+                    f"interpolation, or concatenation) inside the hot loop. "
+                    f"Use a cached string or TextMeshPro.SetText with a pre-sized buffer."
+                )
+
+            # 5. Check for allocating Physics queries
             if re.search(r"\bPhysics(2D)?\.RaycastAll\s*\(", stripped):
                 findings.append(
                     f"Line {idx} in `{current_loop_name}()`: `Physics.RaycastAll` allocates new array every call. "

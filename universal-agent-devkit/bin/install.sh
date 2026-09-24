@@ -17,7 +17,7 @@ DOMAIN="auto"
 AGENTS="ask"
 PROFILE="ask"
 MODE="symlink"
-LANGUAGE=""   # output language; resolved below: --lang > $DEVKIT_LANG > project .active-profile.json > vi
+LANGUAGE=""   # output language; resolved below: --lang > $DEVKIT_LANG > project .agents/active-profile.json > vi
 ASSUME_YES=0
 GITHOOKS=1    # install the git pre-commit gate in git projects (--no-githooks to skip)
 
@@ -28,7 +28,10 @@ show_help() {
   cat << HELP_EOF
 Universal Multi-Agent & Multi-Model DevKit Installer
 
-Supports 4 core coding agents & LLMs:
+Supports Claude Code, OpenAI Codex, Gemini CLI, Cursor and Grok from one toolkit.
+Grok reads the same AGENTS.md. It does not get its own files or directory.
+
+Tool configs the installer can write (only where that tool itself requires a path):
   - Claude Code (Anthropic)
   - OpenAI Codex / ChatGPT Canvas
   - Google Antigravity & Gemini CLI
@@ -44,6 +47,7 @@ Options:
                           (default: ask; with -y: detected from the domain)
   -a, --agents <list>     Comma-separated agents or 'all'
                           Supported: claude, codex, gemini, cursor, all
+                          (`grok` writes nothing of its own — same AGENTS.md)
   -m, --mode <mode>       Install mode: symlink | copy (default: symlink)
                           symlink = absolute links into this DevKit checkout (single machine);
                           copy    = real files (use this if the project is committed for a team/CI)
@@ -144,6 +148,21 @@ if [ "$PROFILE" != "ask" ]; then
   PROFILE="$norm"
 fi
 if [ "$ASSUME_YES" = 1 ]; then
+  # A re-init of a project that already has the DevKit keeps the agents it was set up
+  # for (a platform the user removed must not come back with `init -y`); a first
+  # install gets them all.
+  if [ "$AGENTS" = "ask" ]; then
+    kept=""
+    grep -q ".claude/hooks/" "$TARGET_DIR/.claude/settings.json" 2>/dev/null && kept="$kept,claude"
+    { grep -q "agent_bridge" "$TARGET_DIR/.gemini/settings.json" 2>/dev/null || grep -q "universal-agent-devkit" "$TARGET_DIR/GEMINI.md" 2>/dev/null; } && kept="$kept,gemini"
+    grep -q "agent_bridge" "$TARGET_DIR/.codex/hooks.json" 2>/dev/null && kept="$kept,codex"
+    { grep -q "agent_bridge" "$TARGET_DIR/.cursor/hooks.json" 2>/dev/null || [ -f "$TARGET_DIR/.cursor/rules/universal-agent-devkit.mdc" ]; } && kept="$kept,cursor"
+    # AGENTS.md alone (no per-tool directory) must not grow into every tool on re-init.
+    if [ -z "$kept" ] && grep -q "universal-agent-devkit" "$TARGET_DIR/AGENTS.md" 2>/dev/null; then
+      kept="grok"
+    fi
+    [ -n "$kept" ] && AGENTS="${kept#,}" && echo "  - Re-init: keeping the agents already set up: $AGENTS (-a to change)"
+  fi
   [ "$AGENTS" = "ask" ] && AGENTS="all"
   [ "$PROFILE" = "ask" ] && PROFILE="auto"
 fi
@@ -166,7 +185,8 @@ if [ "$AGENTS" = "ask" ]; then
   echo "  [2] 🧠 OpenAI Codex         (AGENTS.md SSOT)"
   echo "  [3] ✨ Google Gemini / AGY  (AGENTS.md, .agents/skills, mcp_config.json)"
   echo "  [4] ⚡ Cursor IDE           (AGENTS.md SSOT)"
-  echo "  [A] 🌟 All Agents           ($(L "Cấu hình toàn bộ 4 nền tảng" "configure all 4 tools"))"
+  echo "  [A] 🌟 All Agents           ($(L "Cấu hình toàn bộ, kể cả Grok" "configure every tool, Grok included"))"
+  echo "      Grok dùng chung AGENTS.md — không có thư mục riêng, và nằm trong mục A."
   echo "-----------------------------------------------------------------"
   user_choice="A"
   if [ -t 0 ]; then
@@ -189,6 +209,7 @@ if [ "$AGENTS" = "ask" ]; then
         2|codex|chatgpt|openai) selected_agents+=("codex") ;;
         3|gemini|antigravity) selected_agents+=("gemini") ;;
         4|cursor) selected_agents+=("cursor") ;;
+        grok|xai) selected_agents+=("grok") ;;
       esac
     done
     if [ ${#selected_agents[@]} -eq 0 ]; then
@@ -289,32 +310,18 @@ echo
 # 2. Source X_old Conflict Protection Helper
 source "$DEVKIT_ROOT/scripts/backup_conflict.sh"
 
-# 3. Setup Project Rules, Skills & Commands with X_old Protection
+# 3. The DevKit inside the project: everything agent-related lives in .agents/, the
+#    DevKit itself at .agents/devkit (devkit_place_devkit_dir). A root rules/ skills/
+#    commands/ an older install linked is removed; one holding the project's own agent
+#    material moves to the project tier (.agents/local/<item>/); project source code of
+#    that name (a CLI's commands/build.js) is never touched.
 if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
-  echo "  🛡️  [X_old Protection] $(L "Kiểm tra xung đột tài nguyên dự án..." "checking for conflicts with project files...")"
-  placed=()
   for item in rules skills commands; do
-    if is_foreign_project_dir "$TARGET_DIR/$item"; then
-      if devkit_is_agent_content_dir "$TARGET_DIR/$item" "$item"; then
-        # The project's own agent material: DevKit is the core, theirs goes to the
-        # project tier (.agents/local/<item>/) and is linked back where names are free.
-        devkit_local_absorb_dir "$TARGET_DIR/$item" "$item" || exit 1
-      else
-        # The project's source code (e.g. a CLI's commands/build.js): moving it would
-        # break the build. Keep it and place every DevKit item inside, so every DevKit
-        # path resolves; a same-named project file goes to the project tier.
-        echo "  ⚠️  $item/ $(L "là source code của dự án — giữ nguyên, đặt từng item DevKit vào trong" "is the project's source code — kept; DevKit items placed inside it")" >&2
-        devkit_place_into_dir "$DEVKIT_ROOT/$item" "$TARGET_DIR/$item" "$MODE" || exit 1
-        placed+=("$item/")
-        continue
-      fi
+    if is_foreign_project_dir "$TARGET_DIR/$item" && devkit_is_agent_content_dir "$TARGET_DIR/$item" "$item"; then
+      devkit_local_absorb_dir "$TARGET_DIR/$item" "$item" || exit 1
     fi
-    devkit_place "$DEVKIT_ROOT/$item" "$TARGET_DIR/$item" "$MODE"
-    placed+=("$item/")
   done
-  if [ ${#placed[@]} -gt 0 ]; then
-    echo "  - Initialized ${placed[*]}"
-  fi
+  devkit_place_devkit_dir "$TARGET_DIR" "$MODE" || exit 1
   if [ "$MODE" = "symlink" ] && [ -e "$TARGET_DIR/.git" ]; then
     echo "  ⚠️  Symlink mode writes ABSOLUTE links into $DEVKIT_ROOT." >&2
     echo "      Teammates and CI will get broken links if you commit them —" >&2
@@ -401,11 +408,19 @@ configure_agent() {
       echo "  ⚡ [Cursor IDE]"
       bash "$DEVKIT_ROOT/adapters/setup_cursor.sh" "$TARGET_DIR" "$MODE" "$LANGUAGE" "$DOMAIN"
       ;;
+    grok|xai)
+      # Same instruction file as every other agent. No .grok/ directory.
+      echo "  🪐 [Grok] $(L "dùng chung AGENTS.md — không ghi file hay thư mục riêng" "shares AGENTS.md — no files or directory of its own")"
+      if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
+        devkit_install_agents_md "$TARGET_DIR" "$MODE" CLAUDE.md GEMINI.md Agent.md
+      fi
+      ;;
     all)
       configure_agent "claude"
       configure_agent "codex"
       configure_agent "gemini"
       configure_agent "cursor"
+      configure_agent "grok"
       ;;
     *)
       echo "  ⚠️ Unknown agent: $ag (skipping)"
@@ -481,6 +496,7 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
     cat > "$GI_BLOCK" <<'GI_EOF'
 # Local DevKit install state & *_old conflict backups (review/merge them, don't commit)
 .claude/audit-gate/
+.agents/context/
 .agents/regression_matrix.generated.json
 .devkit_backups.log
 .devkit-files
@@ -516,6 +532,7 @@ fi
 #     Cursor): hooks/agent_bridge.sh + the bridged hooks go to .agents/hooks/, and
 #     scripts/agent_hooks.py registers them in .codex/hooks.json, .gemini/settings.json
 #     and .cursor/hooks.json (only DevKit-owned entries are ever touched).
+#     Grok is not here: it reads AGENTS.md and has no directory of its own.
 if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   bridge_platforms=""
   for agent_item in "${AGENT_LIST[@]}"; do
@@ -546,6 +563,12 @@ if [ -n "$PROFILE" ] && [ "$PROFILE" != "none" ]; then
   fi
 fi
 
+# 6a. The files AGENTS.md loads at startup (.agents/context/): real files in the project,
+#     since neither Claude Code nor Gemini CLI loads an import through a link out of it.
+if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
+  python3 "$DEVKIT_ROOT/scripts/context_sync.py" "$TARGET_DIR" || exit 1
+fi
+
 # 6b. Symlink mode: the links into this DevKit are absolute paths of THIS machine — never
 # committable, yet untracked and unignored they flood `git status` and get committed by
 # `git add -A`. List them in the repo's own .git/info/exclude (not shared, not committed;
@@ -565,7 +588,8 @@ def visit(path, depth):
         full = os.path.join(path, name)
         rel = os.path.relpath(full, target)
         if os.path.islink(full):
-            if os.path.realpath(full).startswith(devkit + os.sep) and rel not in tracked:
+            real = os.path.realpath(full)
+            if (real == devkit or real.startswith(devkit + os.sep)) and rel not in tracked:
                 out.append("/" + rel)
         elif os.path.isdir(full) and depth > 0 and name not in (".git", "node_modules", "build", "Library"):
             visit(full, depth - 1)
