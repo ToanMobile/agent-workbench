@@ -96,15 +96,20 @@ def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mo
     before = watched_mtimes(project, pats)
     started = time.perf_counter()
     status, code, out = _execute(project, cmd, timeout)
-    flaky = False
+    flaky = infra = False
     if retry and status == "FAIL" and os.environ.get("FLAKY_RETRY", "1") != "0":
         st2, code2, out2 = _execute(project, cmd, timeout)
+        first = out
         out += f"\n# --- chạy lại 1 lần (FLAKY_RETRY) — exit {code2} ---\n{out2}"
-        flaky = st2 == "PASS"
+        if st2 == "PASS" and not rc.test_failure_reported(first):
+            status, code, infra = "PASS", 0, True   # build broke, the re-run ran green: a real PASS
+        else:
+            flaky = st2 == "PASS"
     duration = f"{time.perf_counter() - started:.2f}s"
     if watched_mtimes(project, pats) != before:
         return f"{tid}: bỏ kết quả — file được canh đổi trong lúc chạy"
-    t = {"id": tid, "status": status, "exit_code": code, "duration": duration, "mode": mode, "flaky": flaky}
+    t = {"id": tid, "status": status, "exit_code": code, "duration": duration, "mode": mode, "flaky": flaky,
+         "infra_retry": infra}
     t["log"] = rc.write_evidence(project, tid, out, {"command": cmd, "mode": mode, "status": status,
                                                      "exit": code, "duration": duration})
     head = (rc._git_lines(project, "rev-parse", "--short", "HEAD") or [""])[0] or None

@@ -1834,6 +1834,16 @@ def hardware_boundary_notes(modified_files: list) -> list:
     return [hb.warning(r) for r in hb.match_paths(rows, modified_files)]
 
 
+def test_failure_reported(output):
+    """Did the runner report a failing TEST (not just a broken build)? — regression_checklist's rule."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
+        return rc.test_failure_reported(output)
+    except (ImportError, AttributeError):
+        return True     # cannot tell: keep the conservative reading (flaky, not a pass)
+
+
 def flaky_retry(cmd, project_dir, timeout, elapsed):
     """Re-run a failed suite once: (exit code, output) or None. Green on the second run is a
     flaky test — the run stays FAIL. Off with FLAKY_RETRY=0; only for a suite that ran under
@@ -2068,7 +2078,7 @@ def main():
     print(f"\n{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}")
     print(f"{BOLD}{CYAN}      🛡️  POST-FIX AUDIT & TIA REGRESSION VERIFICATION GATE                          {RESET}")
     print(f"  {DIM}{tr('Chặn thật: 6 kiểm tra tĩnh (bí mật, placeholder, dependency, hiệu năng, nuốt lỗi, log) + test hồi quy với --run-tests.', 'Blocking: 6 static checks (secrets, placeholders, dependencies, performance, swallowed errors, logging) + regression tests with --run-tests.')}{RESET}")
-    print(f"  {DIM}{tr('Chỉ nhắc (không chặn): DESIGN.md, RED/GREEN, ảnh minh chứng, thiết bị, Immutable Guards, OpenCodeReview.', 'Reminders only (not blocking): DESIGN.md, RED/GREEN, proof images, devices, immutable guards, OpenCodeReview.')}{RESET}\n")
+    print(f"  {DIM}{tr('Gate không chụp ảnh. Trước khi trả lời XONG, agent phải có PNG của lượt này theo rules/essentials.md (Every prompt). Exit 0 không thay ảnh.', 'This gate does not capture a screenshot. Before answering XONG, the agent needs a PNG from this turn per rules/essentials.md (Every prompt). Exit 0 does not replace the image.')}{RESET}\n")
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
     # Không có thay đổi thì không có gì để nghiệm thu — tuyệt đối không bịa file mẫu để ra PASS.
@@ -2134,7 +2144,7 @@ def main():
         log_warn(ui_msg)
 
     # Layer 3: Paired Executable Oracle & Anti-False-Green Engine
-    print(f"\n{BOLD}[3/8] {tr('(NHẮC) RED/GREEN, ảnh minh chứng & thiết bị:', '(REMINDER) RED/GREEN, proof images & devices:')}{RESET}")
+    print(f"\n{BOLD}[3/8] {tr('(NHẮC) RED/GREEN. Ảnh nghiệm thu là luật agent, gate không chụp và không tính vào exit:', '(REMINDER) RED/GREEN. The proof image is an agent law; this gate does not capture it and does not score it in the exit code:')}{RESET}")
     log_warn(tr("Bằng chứng RED/GREEN: gate này KHÔNG xác minh — dùng workflow engine (workflows/) để kiểm receipt RED -> GREEN",
                 "RED/GREEN evidence: NOT verified by this gate — use the workflow engine (workflows/) to check RED -> GREEN receipts"))
 
@@ -2259,8 +2269,14 @@ def main():
                 if t["status"] == "FAIL":
                     retry = flaky_retry(cmd, project_dir, args.timeout, time.perf_counter() - started)
                     if retry:
-                        out = (out or "") + retry[1]
-                        t["flaky"] = retry[0] == 0      # red then green on the same code: still FAIL
+                        first = out or ""
+                        out = first + retry[1]
+                        if retry[0] == 0 and not test_failure_reported(first):
+                            # the first run broke in the build (no test failed); the re-run of the
+                            # same code ran green: a real PASS, flagged — not a flaky test
+                            t.update({"status": "PASS", "exit_code": 0, "infra_retry": True})
+                        else:
+                            t["flaky"] = retry[0] == 0  # a test failed, then passed on the same code: still FAIL
                 t["output_tail"] = (out or "")[-2000:]
             except subprocess.TimeoutExpired:
                 try:
@@ -2455,7 +2471,7 @@ def main():
         print(f"  • {YELLOW}{tr('Không đọc được để quét:', 'Could not read for scanning:')}{RESET} {f}")
     for f in tests_touched[:5]:
         print(f"  • {YELLOW}{tr('Test đã có bị sửa/xoá:', 'Existing test edited/deleted:')}{RESET} {f}")
-    print(f"  • {tr('Chỉ nhắc, gate không xác minh: DESIGN.md/a11y, RED/GREEN oracle, ảnh minh chứng, thiết bị, Immutable Guards, OpenCodeReview.', 'Reminders the gate does not verify: DESIGN.md/a11y, RED/GREEN oracle, proof images, devices, immutable guards, OpenCodeReview.')}")
+    print(f"  • {tr('Gate không xác minh: DESIGN.md/a11y, RED/GREEN, Immutable Guards, OpenCodeReview. Ảnh nghiệm thu không nằm trong exit code; agent vẫn phải gắn PNG của lượt này trước khi nói XONG.', 'The gate does not verify: DESIGN.md/a11y, RED/GREEN, immutable guards, OpenCodeReview. The proof image is outside the exit code; the agent still attaches a PNG from this turn before saying XONG.')}")
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
     if not args.no_checklist:

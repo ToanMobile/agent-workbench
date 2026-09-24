@@ -37,7 +37,7 @@ d=r.load(pathlib.Path('$1')); print(r.effective_status(d, d['items']['$2']))"; }
 
 GOOD="$TMP/good"; mk "$GOOD" "true" "true || ./gradlew test"
 BAD="$TMP/bad"; mk "$BAD" "true" 'grep -q 2 src/b.txt'
-FLK="$TMP/flaky"; mk "$FLK" 'if [ -f .ran ]; then true; else touch .ran; exit 1; fi' "true"
+FLK="$TMP/flaky"; mk "$FLK" 'if [ -f .ran ]; then true; else touch .ran; echo "1 failed"; exit 1; fi' "true"
 rm -f "$FLK/.ran"
 [ "$(st "$GOOD" REG-A)" = PASS ] && [ "$(st "$BAD" REG-B)" = PASS ] && ok "setup: suites PASS" || fail "setup"
 

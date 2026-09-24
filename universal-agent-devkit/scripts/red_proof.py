@@ -279,11 +279,15 @@ def _gradle_path(project: Path, test: str) -> str | None:
     return ":" + rel.replace("/", ":") if rel else ""
 
 
-def narrowed(project: Path, template: str | None, tests: list) -> str | None:
-    """The suite's impacted_command filled with ONLY the bug's tests, or None (run it all)."""
+def narrowed(project: Path, template: str | None, tests: list, scope: str | None = None) -> str | None:
+    """The suite's impacted_command filled with ONLY the bug's tests, or None (run it all).
+    scope = the suite's full command: a bug linked to several suites puts in each only the tests
+    of the modules that suite runs (`:app` may have only testReleaseUnitTest, `:core:ui` only
+    testDebugUnitTest — the other task does not exist there and the build fails)."""
     if not template:
         return None
-    jvm = [t for t in tests if t.endswith((".kt", ".java"))]
+    # androidTest classes need a device: in a JVM unit-test task their filter matches nothing
+    jvm = [t for t in tests if t.endswith((".kt", ".java")) and "/src/androidTest/" not in t]
     cs = [t for t in tests if t.endswith(".cs")]
     out = template
     if "{gradle_tests}" in out:
@@ -292,15 +296,19 @@ def narrowed(project: Path, template: str | None, tests: list) -> str | None:
         out = out.replace("{gradle_tests}", " ".join(f"--tests '{_jvm_fqn(project, t)}'" for t in jvm))
     m = re.search(r"\{gradle_module_tests:([A-Za-z0-9_]+)\}", out)
     if m:
-        parts = []
+        # One task per module, all its --tests after it: Gradle runs a task named twice once, and
+        # each occurrence's --tests REPLACES the filter, so only the last test would run.
+        by_mod: dict = {}
         for t in jvm:
             mod = _gradle_path(project, t)
             if mod is None:
                 return None
-            parts.append(f"{mod}:{m.group(1)} --tests '{_jvm_fqn(project, t)}'")
-        if not parts:
+            by_mod.setdefault(mod, []).append(f"--tests '{_jvm_fqn(project, t)}'")
+        if scope and any(f"{mod}:" in scope for mod in by_mod):
+            by_mod = {mod: f for mod, f in by_mod.items() if f"{mod}:" in scope}
+        if not by_mod:
             return None
-        out = out.replace(m.group(0), " ".join(parts))
+        out = out.replace(m.group(0), " ".join(f"{mod}:{m.group(1)} " + " ".join(f) for mod, f in by_mod.items()))
     if "{unity_filter}" in out:
         if not cs:
             return None
@@ -338,7 +346,7 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
     cmds = []
     for s in suites:
         if s.get("command"):
-            c = narrowed(project, s.get("impacted_command"), tests) or s["command"]
+            c = narrowed(project, s.get("impacted_command"), tests, scope=s["command"]) or s["command"]
             if c not in cmds:
                 cmds.append(c)
     if not heavy and any(HEAVY.search(c) for c in cmds):

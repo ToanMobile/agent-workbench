@@ -17,7 +17,7 @@ Thứ tự: Làm & Chạy test cục bộ → Self Review (Diff + DEMO/LIVE) →
    - Giữ nguyên 2 chế độ DEMO / LIVE (mọi bảng nghiệp vụ mới phải có cột mode nếu hệ thống hỗ trợ dual mode).
    - Chạy đủ bộ test cục bộ (`npm test`, `gradlew test`). Thử nghiệm trên các chế độ tương ứng.
 3. **Bằng chứng nghiệm thu & Báo cáo Tự nhiên Súc tích (BẮT BUỘC):**
-   - MỌI báo cáo kiểm thử / nghiệm thu BẮT BUỘC có **bằng chứng thật của trạng thái THÀNH CÔNG (Pass / Success State)**: thay đổi có UI/thiết bị → ảnh chụp màn hình (toast/modal thành công, badge PASS trên giao diện/báo cáo); CLI/backend/thư viện → output thật của lệnh test (không bịa ảnh cho thứ không có giao diện). Kèm **Báo Cáo Nghiệm Thu 4 Mục**, mỗi mục 1–2 dòng (vừa giới hạn 12 dòng ở §13):
+   - MỌI báo cáo kiểm thử / nghiệm thu BẮT BUỘC có **bằng chứng thật của trạng thái THÀNH CÔNG (Pass / Success State)**. Luật đứng nằm ở `rules/essentials.md` mục "Every prompt": cùng lượt phải có `post-fix-gate.py --run-tests --full` exit 0 và một PNG chụp trong lượt (`reports/proof-<yyyyMMdd-HHmmss>.png`), gắn vào câu trả lời. Serial trong `.adb-denylist` hoặc bị luật dự án cấm thì không chụp; serial đã khai mà offline thì CHƯA XONG. Cấm vẽ ảnh hoặc lấy XML test thay ảnh. Kèm **Báo Cáo Nghiệm Thu 4 Mục**, mỗi mục 1–2 dòng (vừa giới hạn 12 dòng ở §13):
      1. **Đã fix được gì (What Was Fixed):** Tên lỗi, nguyên nhân gốc, cơ chế lỗi, bằng chứng đối lập (RED ➔ GREEN).
      2. **Đã chặn đứng bug cũ nào (Zero Reopened Bugs):** Danh sách các rào chắn bất biến lịch sử (`immutable_guards`) và test hồi quy được chạy lại đạt `[x] PASS`.
      3. **Nguy cơ bug mới nào đã triệt tiêu (Zero Collateral Damage):** Kết quả rà soát điểm gọi ngược (inbound callers) và module liên đới, xác nhận không có tác dụng phụ.

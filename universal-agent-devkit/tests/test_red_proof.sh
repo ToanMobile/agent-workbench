@@ -260,6 +260,24 @@ LOG9="$M/${P9#* }"
 [ "${P9%% *}" = PROVEN ] && grep -q "gradle args: :app:testDebugUnitTest --tests" "$LOG9" && ! grep -q ":CarConnect:app" "$LOG9" \
   && ok "monorepo: module path relative to the Gradle root (:app:…, not :CarConnect:app:…)" || fail "monorepo: $P9 $(grep 'gradle args' "$LOG9" 2>/dev/null | head -1)"
 
+# ── an instrumented (androidTest) ref never lands in a JVM unit-test task: `testDebugUnitTest --tests
+#    <androidTest class>` matches nothing → "no tests ran" → INCONCLUSIVE forever ─
+( cd "$M" && mkdir -p CarConnect/app/src/androidTest/kotlin/pkg
+  printf 'package pkg\nclass CalcDeviceTest\n' > CarConnect/app/src/androidTest/kotlin/pkg/CalcDeviceTest.kt
+  git add CarConnect/app/src/androidTest && git commit -qm "device test" )
+B9b="$(bid "$(CLAUDE_PROJECT_DIR="$M" bash "$KIT" bugs add "cộng sai lần hai" --fixed --test CarConnect/app/src/test/kotlin/pkg/CalcTest.kt 2>&1)")"
+python3 - "$M/.agents/regression_status.json" "$B9b" <<'PY'
+import json, sys
+p, b = sys.argv[1:]; d = json.load(open(p))
+d["items"][b].setdefault("test_refs", []).append("CarConnect/app/src/androidTest/kotlin/pkg/CalcDeviceTest.kt")
+json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
+PY
+python3 "$PROOF" "$M" --bug "$B9b" --heavy --wait >/dev/null 2>&1
+P9b="$(python3 -c "import json;r=json.load(open('$M/.agents/regression_status.json'))['items']['$B9b']['red_proof'];print(r['status'], r.get('log',''))")"
+LOG9b="$M/${P9b#* }"
+[ "${P9b%% *}" = PROVEN ] && grep -q "gradle args: :app:testDebugUnitTest --tests pkg.CalcTest" "$LOG9b" && ! grep "gradle args" "$LOG9b" | grep -q CalcDeviceTest \
+  && ok "androidTest ref left out of the unit-test task" || fail "androidTest: $P9b $(grep 'gradle args' "$LOG9b" 2>/dev/null | head -1)"
+
 # ── unknown id → exit 2 with a suggestion; an id without the BUG- prefix is found ─
 python3 "$PROOF" "$P" --bug "BUG-nope-xyz" --wait > "$TMP/unk" 2>&1; rc=$?
 [ $rc = 2 ] && grep -q "không có" "$TMP/unk" && ok "unknown id → exit 2, said so" || fail "unknown id: rc=$rc $(cat "$TMP/unk")"

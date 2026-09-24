@@ -126,7 +126,7 @@ Phân loại lỗi vào đúng 1 trong 5 cơ chế hỏng hóc thực chiến:
 ### Bước 6: Cổng Kiểm Toán Post-Fix Bắt Buộc (Post-Fix Audit & TIA Gate)
 1. Kích hoạt cổng kiểm toán và checklist đánh dấu tự động:
    ```bash
-   postfix-gate --run-tests
+   python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full
    # hoặc:
    python3 universal-agent-devkit/bin/post-fix-gate.py --run-tests
    ```

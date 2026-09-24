@@ -289,6 +289,19 @@ def mark_stale(data: dict, project_dir: Path) -> list:
     return newly
 
 
+# A red run counts as a FAILED TEST (so red-then-green is FLAKY) only when the runner reported a
+# test failure. A build / infra failure — Gradle losing its own output file when two builds share
+# a tree, a daemon crash, a lock — then green on the re-run is a real PASS of the same code.
+TEST_FAILED_RE = re.compile(
+    r"There were failing tests|\d+ tests? completed, \d+ failed|^\S.* > .+ FAILED\s*$|FAIL: (?:Edit|Play)Mode|"
+    r"\b[1-9]\d* (?:failed|failures?|failing)\b|FAILED \((?:failures|errors)=|^--- FAIL:|^not ok\b|"
+    r"AssertionError|AssertionFailedError|Expected: .*\n\s+But was|\[Failed\]", re.M)
+
+
+def test_failure_reported(output: str) -> bool:
+    return bool(TEST_FAILED_RE.search(output or ""))
+
+
 def record_results(data: dict, tests: list, *, task: str | None, commit: str | None) -> None:
     """Store results of tests the gate ACTUALLY ran. NOT_RUN only flags the row as impacted."""
     for t in tests:
@@ -303,6 +316,8 @@ def record_results(data: dict, tests: list, *, task: str | None, commit: str | N
                   "duration": t.get("duration"), "exit_code": t.get("exit_code"), "log": t.get("log")}
         if t.get("flaky"):
             result["flaky"] = True   # red, then green on a re-run of the same code: not a PASS
+        if t.get("infra_retry"):
+            result["infra_retry"] = True   # first run broke in the build, the re-run ran green
         item["last"] = result
         item["history"] = ([result] + item.get("history", []))[:HISTORY_LIMIT]
         for k in ("impacted_at", "stale_since", "stale_files"):

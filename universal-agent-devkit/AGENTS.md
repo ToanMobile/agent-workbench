@@ -131,7 +131,7 @@ Every platform also gets the git **pre-commit** gate (`agent-kit githooks instal
   | `BUG_LINK_REMINDER` | hold Stop once when this session's bug/REQ has no test | Stop (`test_evidence_gate.sh`) |
   | `AUTO_LINK` | link bug ↔ test on one-to-one RED→GREEN evidence (🤖) | Stop |
   | `RED_PROOF` | sandbox RED-proof of this session's bugs/REQs (background) | Stop, `scripts/red_proof.py` |
-  | `FLAKY_RETRY` | re-run a failing suite once; green → 🔁 FLAKY (still FAIL) | `post-fix-gate`, nightly |
+  | `FLAKY_RETRY` | re-run a failing suite once: a test failed then passed → 🔁 FLAKY (still FAIL); the build broke with no test failing then passed → PASS flagged `infra_retry` | `post-fix-gate`, nightly, stale re-run |
   | `STALE_RERUN` | re-run light STALE suites in the background | SessionStart, `scripts/stale_rerun.py` |
   | `EVIDENCE_KEEP` | logs kept per test (default 10) | `post-fix-gate` |
   | `NIGHTLY_NOTIFY` | notification when a row turns red | `scripts/nightly.py` |
@@ -147,7 +147,7 @@ Two agents editing one working tree overwrite each other's files, mix their diff
   - A symlink-mode DevKit install is untracked as well, so `.claude/`, `rules/`, `skills/` are missing: run `agent-kit init` inside the worktree. Its files are untracked there (and `.gitignore` gains the DevKit block when the project has not committed it) — keep them out of what you bring back.
   - The git pre-commit gate is shared by every worktree of the repo; nothing to install.
 - **One device, one agent:** a physical device or emulator serves one worktree at a time. Run device work one worktree after another, each with `adb-safe-exec.sh -s <SERIAL>`.
-- **Accept a worktree only on its own gate run:** `cd <worktree> && CLAUDE_PROJECT_DIR="$PWD" postfix-gate --run-tests` → exit `0`. The gate reads `CLAUDE_PROJECT_DIR` before the git root; left pointing at the main checkout, it audits the main checkout instead.
+- **Accept a worktree only on its own gate run:** `cd <worktree> && CLAUDE_PROJECT_DIR="$PWD" python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full` → exit `0`, plus the proof PNG required by `rules/essentials.md` ("Every prompt"). The gate reads `CLAUDE_PROJECT_DIR` before the git root; left pointing at the main checkout, it audits the main checkout instead.
 - **No automatic merge:** the leader reviews each worktree's diff like any other change (§5, §6), then brings it back. Without an explicit request to commit (`rules/core-rules.md` §1), bring it as a patch — in the main checkout: `agent-kit worktree diff <worktree> | git apply --3way` (new and deleted files and the branch's commits included, the DevKit set-up left out; `git add -A` would carry the DevKit files, which already exist in the main checkout, and the apply fails). When the user asked for commits, merge the branch instead. Conflicts go through `/conflict` (`merge-conflict-resolver`); commit and push stay behind Gate 2 (§5.1 c).
 - **Clean up:** `agent-kit worktree remove <path>` removes a worktree made by `worktree add` once every uncommitted change in it is also in the main checkout (the branch and its commits stay). Otherwise `git worktree remove <path>` for a worktree with no changes left. One that still holds changes, and its unmerged branch, need `git worktree remove --force` / `git branch -D`, which the git guard blocks: once its changes are safely in the main checkout, ask the user to run them.
 
@@ -219,7 +219,7 @@ The agent MUST trigger these skills from context by itself and NEVER ask the use
 | **5. Acceptance & Delivery** | `merge-conflict-resolver` | Xung đột git khi merge, rebase, cherry-pick | Tự động phân tích AST và ngữ cảnh để giải quyết xung đột mà không làm mất mát logic. |
 | **5. Acceptance & Delivery** | `qc` | Chạy bộ kiểm thử tự động, lint check, unit test | Phát hiện build tool rồi chạy test runner tương ứng; Translation gate và Metalava API check cho Android/Gradle. |
 | **5. Acceptance & Delivery** | `open-code-review` | Soát mã nguồn tự động trước khi bàn giao | Tự động chạy phân tích hunk tất định (Alibaba OCR), quét rò rỉ bộ nhớ và code lười biếng. |
-| **5. Acceptance & Delivery** | `verification-before-completion` | Trước khi tuyên bố Xong / Pass / Hoàn tất | Chạy `postfix-gate --run-tests` (diff tĩnh + test hồi quy) và đối chiếu bằng chứng. **[hook]** Khi có ma trận (`.agents/regression_matrix.active.json`), Stop hook `regression_gate.sh` tự chạy nó; `test_evidence_gate.sh` chặn "đã fix" không có cặp test ĐỎ→XANH trong phiên. UI/thiết bị kiểm riêng (`adb-safe-exec.sh`). |
+| **5. Acceptance & Delivery** | `verification-before-completion` | Trước khi tuyên bố Xong / Pass / Hoàn tất | Chạy `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full` (exit 0) và gắn PNG nghiệm thu của chính lượt đó. Luật đứng: `rules/essentials.md` mục "Every prompt". **[hook]** Khi có ma trận (`.agents/regression_matrix.active.json`), Stop hook `regression_gate.sh` tự chạy cổng; `test_evidence_gate.sh` chặn "đã fix" không có cặp test ĐỎ→XANH trong phiên. Hook không chụp ảnh. |
 | **5. Acceptance & Delivery** | `deploy` | Đóng gói APK/AAB, kiểm tra signing, xuất bản release (chỉ Android/Gradle) | Tự động kiểm tra chứng chỉ ký (signing key), version bump và sẵn sàng phát hành. |
 
 

@@ -31,7 +31,7 @@
 - Hàm `suspend` phải main-safe: tự `withContext(...)` bên trong, caller không phải nhớ.
 
 ## 4. Nghiệm thu & Chụp ảnh Minh chứng (Acceptance Gate)
-- Mọi tính năng hoàn thành bắt buộc phải có ảnh chụp màn hình xác minh trạng thái **THÀNH CÔNG (PASS / Success State)**.
+- Mọi prompt, trước khi mở đầu bằng XONG, bắt buộc có ảnh chụp màn hình xác minh trạng thái **THÀNH CÔNG (PASS / Success State)** theo `rules/essentials.md` mục "Every prompt": `adb -s <SERIAL> exec-out screencap -p > reports/proof-<yyyyMMdd-HHmmss>.png`, PNG > 8 KB, mtime trong lượt này. Serial lấy từ `.antigravity-pm.json`. Serial cấm hoặc offline: CHƯA XONG, không đổi máy.
 - Soát git diff trước khi báo cáo Tech Lead / Reviewer.
 - Bằng chứng test là số đếm trong `<module>/build/test-results/**/TEST-*.xml` (unit) hoặc `<module>/build/outputs/androidTest-results/**/TEST-*.xml` (instrumented): `tests > 0`, `failures = 0`, `errors = 0`, nêu rõ `skipped`; XML phải mới hơn lần sửa cuối. `UP-TO-DATE`, `NO-SOURCE`, `No tests found` = **chưa chạy**, không phải PASS.
 - JVM unit test xanh KHÔNG chứng minh hành vi phụ thuộc nền tảng (XML parser, Charset, `File.renameTo` qua FUSE/SAF, font/line-break, R8, Room trên SQLite thật): cần instrumented test hoặc chạy trên máy.

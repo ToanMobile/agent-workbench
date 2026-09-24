@@ -157,7 +157,7 @@ DevKit cung cấp một hệ sinh thái khép kín:
 ### 4. ⚡ Cổng Hậu Sửa Lỗi (diff tĩnh + test hồi quy)
 - **Chặn thật:** secret & placeholder lười biếng, anti-pattern hiệu năng, nuốt lỗi, log thô (đều bằng regex, chỉ trên file thay đổi), và — khi có `--run-tests` — các test hồi quy mà ma trận đang active ánh xạ tới file thay đổi.
 - **Chống sửa test để qua cổng:** lệnh test được đọc từ ma trận ở `HEAD`; nếu ma trận hoặc test có sẵn bị sửa trong cùng thay đổi thì kết quả là UNVERIFIED, không bao giờ là PASS.
-- **Chỉ nhắc:** DESIGN.md/a11y, bằng chứng RED→GREEN, ảnh/thiết bị, OpenCodeReview.
+- **Gate không chụp ảnh.** Exit code không gồm PNG. Agent vẫn phải gắn ảnh của lượt này theo `rules/essentials.md` ("Every prompt") trước khi nói XONG. Chỉ nhắc thêm: DESIGN.md/a11y, RED→GREEN, Immutable Guards, OpenCodeReview.
 
 ### 5. 📱 Hệ Thống Dynamic Domain Profiles
 - **Không làm ô nhiễm Rulebook:** Giữ cho `AGENTS.md` tại thư mục gốc luôn tinh gọn và phổ quát, đồng thời liên kết động các quy tắc đặc thù ngành (AAOS CAN Bus, Compose Vitals, Game ECS) qua các symlink trong `rules/`.
@@ -405,13 +405,13 @@ Cả hai thoát 2 khi đường dẫn không tồn tại và chỉ bỏ qua thư
 
 ```bash
 # Qua agent-kit CLI:
-agent-kit gate --run-tests
+agent-kit gate --run-tests --full
 
 # Qua lệnh toàn cục (cài bằng `make install` / `agent-kit install-global`):
-postfix-gate --run-tests
+postfix-gate --run-tests --full
 
 # Khi chưa có lệnh toàn cục:
-python3 /path/to/universal-agent-devkit/bin/post-fix-gate.py --run-tests
+python3 /path/to/universal-agent-devkit/bin/post-fix-gate.py --run-tests --full
 
 # Slash Command trong cửa sổ chat:
 /audit-gate
@@ -612,7 +612,7 @@ Chạy theo thứ tự — **plan-tests → review-code → check → done**:
 | 1. Lập kế hoạch test (trước khi viết test / mở PR) | `/plan-tests` | `qa-review` | Chất vấn diff, viết acceptance criteria và ma trận test scenario | Không săn bug, không chạy test |
 | 2. Soát code (tìm lỗi trên diff) | `/review-code` | `open-code-review` | Chạy CLI OpenCodeReview trên diff | Cần cài `ocr` |
 | 3. Kiểm tra (check của chính dự án) | `/check` | `qc` | Phát hiện build tool, chạy test/lint | Không đánh giá diff |
-| 4. Xong (trước khi nói "xong") | `/done`, rồi `/audit-gate` | `verification-before-completion` + post-fix gate | Checklist bằng chứng, rồi kiểm tra diff tĩnh + test hồi quy theo ma trận (`postfix-gate --run-tests`, PASS/REJECT/UNVERIFIED) | Không xác minh UI, thiết bị hay RED→GREEN |
+| 4. Xong (trước khi nói "xong") | `/done`, rồi `/audit-gate` | `verification-before-completion` + post-fix gate | `post-fix-gate.py --run-tests --full` (exit 0) và PNG nghiệm thu của lượt này (`rules/essentials.md`) | Gate không tự chụp ảnh và không chứng minh RED→GREEN |
 
 > **Đổi tên từ 1.1.0:** `/review` → `/plan-tests` (trùng lệnh `/review` có sẵn của agent); `/qa`, `/test` → `/check`; `/bugs`, `/crashlytics` → `/fix`. Tên cũ còn giữ dưới dạng stub deprecated tự chuyển hướng trong một phiên bản và bị xoá ở 1.2.0.
 

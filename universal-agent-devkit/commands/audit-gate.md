@@ -19,21 +19,16 @@ Chạy cổng kiểm toán sau khi sửa lỗi trên các file thay đổi của
    - Lệnh được đọc từ bản đã commit (`HEAD`, hoặc ref của `--diff`), không đọc từ working copy.
    - Nếu matrix hoặc file test đã có bị sửa/xoá trong chính thay đổi, verdict là CHƯA XÁC MINH.
 
-**Chỉ nhắc (gate không xác minh, không ảnh hưởng verdict):**
+**Agent phải làm thêm, gate không tự làm và không tính vào exit code:**
+- Ảnh nghiệm thu của chính lượt: `rules/essentials.md` mục "Every prompt". Exit 0 không thay PNG. Câu trả lời không được mở bằng XONG khi thiếu ảnh.
+- Bằng chứng RED → GREEN khi sửa lỗi.
 - DESIGN.md / a11y: gate chỉ kiểm file tồn tại.
-- Bằng chứng RED → GREEN.
-- Ảnh minh chứng: chỉ tính ảnh trong phiên của chính dự án này.
-- Thiết bị qua `adb`.
 - Immutable Guards.
 - OpenCodeReview (`ocr`).
 
 ## Sử dụng
 ```bash
-# Lệnh có sẵn trên PATH sau khi chạy `make install` trong thư mục DevKit
-postfix-gate --run-tests
-
-# Nếu chưa có trên PATH: gọi thẳng script trong thư mục DevKit
-python3 <DevKit dir>/bin/post-fix-gate.py --run-tests
+python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full
 ```
 
 Exit code:
