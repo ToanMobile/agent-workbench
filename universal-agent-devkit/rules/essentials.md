@@ -40,8 +40,9 @@ architecture, commit/push/release, rule/hook files) need the user's go-ahead.
   (`// ... existing code ...`); keep public signatures backward compatible.
 - **Git**: commit, push or open a PR only when the user asks. Never commit secrets
   (`.env`, keystores, `local.properties`, `google-services.json`, tokens); mask them in proof.
-- **Done means verified**: run the post-fix gate (`postfix-gate --run-tests`, exit 0 only) and
-  a fresh-context review before calling work finished; the Stop hooks enforce this.
+- **Done means verified**: run the post-fix gate (`postfix-gate --run-tests --full`, exit 0 only;
+  `--run-tests` alone checks only the impacted tests) and a fresh-context review before calling
+  work finished; the Stop hooks enforce this.
 
 ## Engineering musts (details: `.agents/devkit/rules/core-rules.md`)
 - No O(N²) on dynamic data where a map/set does; no allocations in hot loops.
