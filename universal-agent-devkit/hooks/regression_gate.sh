@@ -320,6 +320,21 @@ if res.returncode == 2 and uncommitted and not shadowed and not touched and not 
     note(f"matrix uncommitted fp={fp}")
     sys.exit(0)
 
+if res.returncode == 1 and failing and all(t.get("env_blocked") for t in failing) and not touched \
+        and not problem and not uncovered and not summary.get("findings") and not summary.get("unreadable"):
+    # Every failing test failed because this machine cannot provision its tools (toolchain,
+    # SDK, network): no test ran and no code change fixes it. Blocking again only loops the
+    # session; say it once per change, like UNTESTED, and let the stop through (still REJECT).
+    if state.get("env_fp") != fp:
+        state["env_fp"] = fp
+        json.dump(state, open(state_file, "w", encoding="utf-8"))
+        names = ["%s (%s)" % (t.get("id"), t.get("command")) for t in failing]
+        print(json.dumps({"systemMessage": "Regression gate REJECT vì môi trường — máy này thiếu công cụ/SDK/mạng nên "
+                          "test không chạy, KHÔNG phải PASS: " + "; ".join(names)
+                          + ". Chạy lại trên máy có đủ công cụ trước khi báo xong."}, ensure_ascii=False))
+    note(f"env-blocked fp={fp}")
+    sys.exit(0)
+
 lines = ["Regression gate CHƯA ĐẠT — " + verdict]
 if problem and uncommitted:
     lines.append("  - MATRIX: %s — `%s` che mất ma trận đã commit %s: %s, hoặc xoá nó."
