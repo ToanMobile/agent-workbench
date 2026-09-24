@@ -65,7 +65,7 @@ _agent_kit() {
     completion)
       COMPREPLY=( $(compgen -W "bash zsh" -- "${cur}") ) ;;
     bugs)
-      [ "${COMP_CWORD}" -eq 2 ] && COMPREPLY=( $(compgen -W "add link drop import show" -- "${cur}") ) \
+      [ "${COMP_CWORD}" -eq 2 ] && COMPREPLY=( $(compgen -W "add link unlink drop import show" -- "${cur}") ) \
         || COMPREPLY=( $(compgen -f -- "${cur}") ) ;;
     nightly)
       [ "${COMP_CWORD}" -eq 2 ] && COMPREPLY=( $(compgen -W "add remove install uninstall status run" -- "${cur}") ) \

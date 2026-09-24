@@ -582,6 +582,38 @@ def autolink_tags(project: Path, data: dict) -> list:
     return linked
 
 
+def unlink_bug(data: dict, bug_id: str, ref: str, *, project: Path | None = None) -> list:
+    """Undo a link that is context, not a guard. `ref` is a matrix test id linked directly, or a
+    test file / class on the row; a suite goes only when no remaining test of the row maps to it.
+    The RED-proof becomes OUTDATED (what it proved changed). Returns what was removed."""
+    item = data["items"].get(bug_id)
+    if item is None or item.get("kind") not in ("bug", "req"):
+        raise KeyError(f"Không có bug {bug_id!r} trong checklist")
+    removed = []
+    for key in ("runs_in_suite", "test_refs"):
+        if ref in item.get(key, []):
+            item[key].remove(ref)
+            removed.append(ref)
+    if (data["items"].get(ref) or {}).get("kind") == "test" and ref in item.get("tests", []):
+        item["tests"].remove(ref)
+        removed.append(ref)
+    elif removed and project is not None:
+        still = set()
+        for r in item.get("runs_in_suite", []):
+            still.update(resolve_test_ref(project, r, data))
+        for tid in resolve_test_ref(project, ref, data):
+            if tid in item.get("tests", []) and tid not in still:
+                item["tests"].remove(tid)
+                removed.append(tid)
+    if not removed:
+        raise ValueError(f"{ref!r} không được link vào {bug_id}")
+    proof = item.get("red_proof")
+    if proof and proof.get("status") in ("PROVEN", "VACUOUS", "INCONCLUSIVE", "PENDING"):
+        proof.update({"status": "OUTDATED", "reason": f"đã gỡ link {ref} — chứng minh lại"})
+    item.setdefault("unlinked", []).append({"at": _now(), "ref": ref, "removed": removed})
+    return removed
+
+
 def drop(data: dict, bug_id: str) -> dict:
     """Remove a bug row (a REPORTED prompt that was no bug, a duplicate). Tests and
     UNCOVERED rows are not bugs and cannot be dropped here."""
@@ -1157,6 +1189,12 @@ def _bug_command(args, project: Path) -> int:
     with locked(project):
         data = load(project)
         _sync_matrix(data, project)
+        if args.cmd == "bug-unlink":
+            removed = unlink_bug(data, args.bug_id, args.test_ref, project=project)
+            save(project, data)
+            print(f"{args.bug_id} {effective_status(data, data['items'][args.bug_id])} — đã gỡ link: {', '.join(removed)}"
+                  " (RED-proof cũ → OUTDATED, chứng minh lại)")
+            return 0
         if args.cmd == "req-add":
             rid, created = register_req(data, args.title, args.criterion, component=args.module, source=args.source,
                                         inbox=args.inbox, reason=args.reason, req_id=args.req_id)
@@ -1233,6 +1271,9 @@ def main(argv=None) -> int:
     p_bl.add_argument("test_ref")
     p_drop = sub.add_parser("drop", help="remove a bug or REQ row (not a bug / duplicate)")
     p_drop.add_argument("bug_id")
+    p_ul = sub.add_parser("bug-unlink", help="undo a link that is context, not a guard")
+    p_ul.add_argument("bug_id")
+    p_ul.add_argument("test_ref")
     p_ra = sub.add_parser("req-add", help="a requirement with acceptance criteria (locked by hash)")
     p_ra.add_argument("title")
     p_ra.add_argument("--criterion", action="append", default=[])
@@ -1248,7 +1289,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     project = Path(args.project)
     try:
-        if args.cmd in ("add", "bug-link", "drop", "req-add", "req-link"):
+        if args.cmd in ("add", "bug-link", "bug-unlink", "drop", "req-add", "req-link"):
             return _bug_command(args, project)
         data = load(project)
         if args.cmd == "import":

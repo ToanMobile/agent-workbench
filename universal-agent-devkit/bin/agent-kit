@@ -112,11 +112,12 @@ case "$CMD" in
     case "${1:-show}" in
       add) shift; "${RC[@]}" add "$@" ;;
       link) shift; "${RC[@]}" bug-link "$@" ;;
+      unlink) shift; "${RC[@]}" bug-unlink "$@" ;;
       drop) shift; "${RC[@]}" drop "$@" ;;
       import) shift; "${RC[@]}" import "$@" ;;
       show) "${RC[@]}" show ;;
       *) echo "agent-kit bugs: add \"<title>\" [--severity S] [--module M] [--evidence E] [--test REF] [--fixed] [--id BUG-ID]" >&2
-         echo "                | link <BUG-ID> <test> | drop <BUG-ID> | import <table> [--dry-run] | show" >&2; exit 2 ;;
+         echo "                | link <BUG-ID> <test> | unlink <BUG-ID> <test> | drop <BUG-ID> | import <table> [--dry-run] | show" >&2; exit 2 ;;
     esac
     ;;
   req|reqs)
@@ -234,6 +235,9 @@ Commands:
   bugs link <BUG-ID> <test>
                       Link the RED→GREEN test (matrix id, test file or class → the matrix suite
                       that runs it). NOT_RUN until the next real gate run
+  bugs unlink <BUG-ID> <test>
+                      Undo a link that is context, not a guard (a broad suite linked next to the real
+                      test); the RED-proof becomes OUTDATED — every linked test must go red to be PROVEN
   bugs drop <BUG-ID>  Remove a bug row (a REPORTED prompt that was no bug, a duplicate)
   req add "<title>" --criterion "…" [--criterion …] [--module M] [--source TEXT] [--inbox KEY] [--reason R]
                       A requirement with acceptance criteria, written BEFORE the code and locked

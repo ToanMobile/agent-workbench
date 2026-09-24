@@ -208,6 +208,19 @@ python3 "$PROOF" "$P" --bug "$B14" --fix-commit "$FIXS" --wait >/dev/null 2>&1
   || fail "source-only revert: $(proof "$B14") $(python3 -c "import json;print(json.load(open('$P/.agents/regression_status.json'))['items']['$B14'].get('red_proof',{}).get('reason'))")"
 cd "$TMP"
 
+# ── a bug linked to SEVERAL test files is PROVEN only when every one of them goes red; one red and
+#    one still green (it guards a part the fix/patch did not touch) → INCONCLUSIVE, naming it ─
+new_project "$UT"; cd "$P"
+printf 'def add(a, b):\n    return a + b\n' > src/calc.py; printf '%s' "$TEST_ADD" > tests/test_calc.py
+printf 'import unittest\nclass TestUnrelated(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\n' > tests/test_unrelated.py
+B19="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "add sai (2 file test)" --fixed --test tests/test_calc.py 2>&1)")"
+CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs link "$B19" tests/test_unrelated.py >/dev/null 2>&1
+python3 "$PROOF" "$P" --bug "$B19" --wait >/dev/null 2>&1
+python3 -c "import json;r=json.load(open('$P/.agents/regression_status.json'))['items']['$B19']['red_proof'];assert r['status']=='INCONCLUSIVE' and 'test_unrelated' in r['reason'], r" 2>/dev/null \
+  && ok "two linked test files, only one red without the fix → INCONCLUSIVE naming the green one" \
+  || fail "multi-test: $(proof "$B19") $(python3 -c "import json;print(json.load(open('$P/.agents/regression_status.json'))['items']['$B19'].get('red_proof',{}).get('reason'))")"
+cd "$TMP"
+
 # ── only the bug's tests run when the suite has an impacted_command ────────
 new_project "$UT"; cd "$P"
 python3 - <<'PY'
@@ -315,6 +328,21 @@ PY
 NT="$(cd "$DEVKIT_DIR/scripts" && python3 -c 'import red_proof as rp
 print(bool(rp.NO_TESTS.search("20 tests completed, 2 failed")), bool(rp.NO_TESTS.search("0 tests completed")))')"
 [ "$NT" = "False True" ] && ok "NO_TESTS: 20 tests completed is a real run, 0 tests completed is not" || fail "NO_TESTS: $NT"
+
+# ── a Kotlin test file holding SEVERAL test classes: every class is run (--tests per class) and
+#    a failure in any of them counts as that file going red ─
+K="$TMP/kmulti"; mkdir -p "$K/app/src/test/kotlin/pkg" && touch "$K/settings.gradle.kts" "$K/app/build.gradle.kts"
+printf 'package pkg\n\nimport org.junit.Test\n\nclass LoopbackTest {\n    @Test fun a() {}\n}\n\ninternal class AccessControlJvmTest {\n    @Test fun b() {}\n}\n' > "$K/app/src/test/kotlin/pkg/LoopbackTest.kt"
+python3 -c "import sys; sys.path.insert(0,'$DEVKIT_DIR/scripts'); import red_proof as r
+from pathlib import Path
+c = r.narrowed(Path('$K'), './gradlew :app:testDebugUnitTest {gradle_tests}', ['app/src/test/kotlin/pkg/LoopbackTest.kt'])
+assert \"pkg.LoopbackTest\" in c and \"pkg.AccessControlJvmTest\" in c, c
+names = r.test_names(Path('$K'), 'app/src/test/kotlin/pkg/LoopbackTest.kt')
+assert names == {'LoopbackTest', 'AccessControlJvmTest'}, names
+red = r.failed_stems('pkg.AccessControlJvmTest > b FAILED', {'LoopbackTest'}, {'LoopbackTest': names})
+assert red == {'LoopbackTest'}, red
+assert not r.failed_stems('pkg.OtherTest > c FAILED', {'LoopbackTest'}, {'LoopbackTest': names})" 2>"$TMP/km.err" \
+  && ok "every test class of a multi-class file is run, and a failure in any of them reds that file" || fail "multi-class: $(tail -2 "$TMP/km.err")"
 
 # ── unknown id → exit 2 with a suggestion; an id without the BUG- prefix is found ─
 python3 "$PROOF" "$P" --bug "BUG-nope-xyz" --wait > "$TMP/unk" 2>&1; rc=$?

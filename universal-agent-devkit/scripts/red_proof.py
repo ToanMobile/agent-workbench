@@ -86,6 +86,23 @@ SOURCE_EXT = (".kt", ".kts", ".java", ".cs", ".py", ".ts", ".tsx", ".js", ".jsx"
 COMPILE_RED = re.compile(r"Compilation error|compile\w*(?:Kotlin|Java)\w* FAILED|error CS\d{4}|error: cannot find symbol|"
                          r"Unresolved reference|ImportError|ModuleNotFoundError|SyntaxError|Cannot find module|"
                          r"error TS\d{4}|error\[E\d{4}\]|\bundefined: \w+|Scripts have compiler errors")
+# A line that reports a failing test (Gradle "Cls > m FAILED", unittest "FAIL: t (mod.Cls)", pytest
+# "FAILED path::t", Unity "[Failed] Ns.Cls.M", jest "FAIL path"): a linked test file counts as red
+# only when its name sits on such a line — not merely somewhere in the output.
+FAIL_LINE = re.compile(r"\bFAIL(?:ED)?\b|\[Failed\]|\bFailed\b|\bERROR\b|\bError:|✗|✖|^not ok|AssertionError")
+
+
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def failed_stems(output: str, stems: set, names: dict | None = None) -> set:
+    """Test files (by stem) with a failing line naming them. `names` maps a stem to every test class the
+    file holds: a failure of AccessControlJvmTest reds CarTcpServerJvmLoopbackTest.kt, which declares it."""
+    text = ANSI.sub("", output or "")      # runners colour their output even when piped (Python 3.14)
+    bad = [line for line in text.splitlines() if FAIL_LINE.search(line)]
+    return {s for s in stems if any(n in line for n in (names or {}).get(s, {s}) for line in bad)}
+
+
 NO_TESTS = re.compile(r"No tests found for given includes|Ran 0 tests|no tests ran|collected 0 items|"
                       r"No tests found|(?<!\d)0 tests completed", re.I)
 PATCH_DIR = Path(".agents") / "local" / "red-patches"
@@ -264,6 +281,15 @@ def _jvm_filters(project: Path, path: str) -> list:
     return list(dict.fromkeys(names))
 
 
+def test_names(project: Path, path: str) -> set:
+    """Short names a runner prints for a test file's failures: the file stem, plus every top-level
+    class of a Kotlin/Java file (the same classes `_jvm_filters` runs)."""
+    names = {Path(path).stem}
+    if path.endswith((".kt", ".java")):
+        names |= {n.rsplit(".", 1)[-1] for n in _jvm_filters(project, path) if n}
+    return names
+
+
 def _cs_name(project: Path, path: str) -> str:
     try:
         m = re.search(r"^\s*namespace\s+([\w.]+)", (project / path).read_text(encoding="utf-8", errors="replace"), re.M)
@@ -397,7 +423,8 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
     except ValueError:
         timeout = 1800.0
     stems = {Path(t).stem for t in tests}
-    log, red_ok, red_all_green, green_ok, ran_nothing, red_compile = [], False, True, True, False, False
+    log, red_all_green, green_ok, ran_nothing, red_compile = [], True, True, False, False
+    red_stems = set()
     try:
         with worktree(project) as red_box, worktree(project) as green_box:
             if mode == "patch":
@@ -446,19 +473,28 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
                     red_all_green = False
                     if COMPILE_RED.search(out):
                         red_compile = True
-                    elif code is not None and any(s in out for s in stems):
-                        red_ok = True
+                    elif code is not None:
+                        red_stems |= failed_stems(out, stems, {Path(t).stem: test_names(project, t) for t in tests})
                 code, out = run(cmd, green_box, timeout)
                 log.append(f"## GREEN run (có bản sửa) — {cmd} — exit {code}\n{out}")
                 ran_nothing = ran_nothing or bool(NO_TESTS.search(out))
                 green_ok = green_ok and code == 0
     except RuntimeError as e:
         return {**base, "status": "INCONCLUSIVE", "mode": mode, "reason": str(e)}
+    red_ok = bool(red_stems)
+    # Only the linked tests these commands actually run must go red (an androidTest ref is never
+    # run by a JVM unit-test task; the same rule the checklist uses to map tests to suites).
+    runnable = {Path(t).stem for t in tests if any(rc._runs_source_set(t, c, project) for c in cmds)} or stems
+    still_green = sorted(runnable - red_stems)
     if ran_nothing:
         status, reason = "INCONCLUSIVE", "lệnh không chạy test nào (bộ lọc không khớp?) — xem log"
     elif red_compile and not red_ok:
         status, reason = "INCONCLUSIVE", ("đỏ vì lỗi biên dịch/import khi bỏ bản sửa (test gọi thứ chỉ bản sửa mới có) — "
                                           "test không chạy trên code cũ, chưa phải bằng chứng")
+    elif red_ok and green_ok and still_green:
+        status, reason = "INCONCLUSIVE", (f"chỉ {len(red_stems & runnable)}/{len(runnable)} file test đỏ khi bỏ bản sửa — còn xanh: "
+                                          f"{', '.join(still_green[:4])} (phần bug đó chưa được chứng minh: tách bug, sửa test, "
+                                          "hoặc bỏ link)")
     elif red_ok and green_ok:
         status, reason = "PROVEN", "đỏ khi bỏ bản sửa, xanh khi có"
     elif red_all_green and green_ok:
