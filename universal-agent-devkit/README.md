@@ -67,7 +67,7 @@ agent-kit init -p android -a claude     # one profile, one agent
 agent-kit init -m copy                  # real files instead of symlinks (see Team / CI)
 agent-kit init --lang=vi                # agent replies in Vietnamese
 ```
-`--lang` (`vi` | `en`) also sets the language of installer, profile, health and gate output. Order: `--lang` > `$DEVKIT_LANG` > `lang` saved in `.active-profile.json` > `vi`.
+`--lang` (`vi` | `en`) also sets the language of installer, profile, health and gate output. Order: `--lang` > `$DEVKIT_LANG` > `lang` saved in `.agents/active-profile.json` > `vi`.
 Invalid options, profiles or modes exit with status 2 before anything is written.
 
 #### What the installer does to an existing project
@@ -92,7 +92,7 @@ claude plugin install /path/to/agent-workbench/universal-agent-devkit
 
 ## 📖 Executive Summary
 
-**Universal Agent DevKit** is an enterprise-grade engineering framework designed for the 4 core AI Coding Agents (**Claude Code**, **OpenAI Codex**, **Google Antigravity & Gemini CLI**, and **Cursor IDE**) and whichever model you run inside them (current Claude, GPT, Gemini or open-weight models — nothing here is tied to a specific model version).
+**Universal Agent DevKit** is an enterprise-grade engineering framework designed for the 5 core AI Coding Agents (**Claude Code**, **OpenAI Codex**, **Google Antigravity & Gemini CLI**, **Cursor IDE**, and **Grok**) and whichever model you run inside them (current Claude, GPT, Gemini, Grok or open-weight models — nothing here is tied to a specific model version).
 
 It delivers a complete, closed-loop software engineering ecosystem:
 1. **Supreme Engineering Protocols:** Zero-Defect Protocol, Paired Executable Oracle (RED→GREEN), and No-Fabrication Engine (C1–C9 Decision Table).
@@ -100,7 +100,7 @@ It delivers a complete, closed-loop software engineering ecosystem:
 3. **Dynamic Domain Profiles:** Instant project domain switching between **Android** (Compose/Vitals/Tombstones), **iOS** (Swift 6/SwiftUI/Concurrency), **Automotive** (AAOS/CAN), **Game** (Unity 6/Zero-GC), **Voice Assistant** (edge audio AI), **Web** (TypeScript/React/Next.js), **Backend** (API services in Python/Go/Rust/Node) and **Universal** clean architecture via `agent-kit profile`.
 4. **Post-Fix Gate (`/audit-gate`, `agent-kit gate`, `postfix-gate`):** a static diff gate. What can make it fail: 6 static checks on the changed files (secrets, lazy placeholders, dependencies — floating versions like `1.+`/`latest`/`*` and `http://` package sources — performance anti-patterns, swallowed exceptions, raw logging) plus, with `--run-tests`, the regression tests from the active matrix. DESIGN.md/a11y, RED→GREEN proof, screenshots/devices and OpenCodeReview are printed as reminders — the gate does not verify them. The same static checks run as a git pre-commit hook on the staged content (installed by `agent-kit init` in git projects, or `agent-kit githooks install`), so a plain `git commit` from a terminal or IDE is checked too (you can skip once with `git commit --no-verify`; the agent cannot — the git guard blocks it); `agent-kit learn "<trap>" --cause=… --rule=…` records a lesson in `.agents/instincts.md` under the next `[INSTINCT-NNN]` id. With `--json`, the last stdout line also lists every static finding as `{category, rule, message, file, line, snippet}` (secrets: line only, never the value), so an agent can jump to `file:line`.
 
-   **What runs by itself (hooks):** a new session loads the trap map of `.agents/instincts.md` and the regression checklist state; every request gets the traps that match it and, for a bug fix, the RED→GREEN rule; Bash blocks destructive git, `--no-verify` and device-bricking commands; stopping runs the active regression matrix (generated from the project's own test runner when the profile only ships a sample — `agent-kit matrix`), refuses “tests pass” when a newly written test never ran red, “fixed” without a red→green test pair in the session and changed code without a fresh-context review, and after a proven fix asks once to record the lesson (`agent-kit learn`). Claude Code gets all of these; OpenAI Codex, Gemini CLI and Cursor get the context, the guards and the regression run through `hooks/agent_bridge.sh` (Codex keeps the hooks you approved in `~/.codex/config.toml`: after an `agent-kit init` that changes `.codex/hooks.json`, approve the new entries with `/hooks`); Antigravity has rules only (`AGENTS.md` §7). Harmless Bash calls pass the guards in ~5 ms (bash fast path); `agent-kit clean` removes the hooks' old logs and backups.
+   **What runs by itself (hooks):** a new session loads the trap map of `.agents/instincts.md` and the regression checklist state; every request gets the traps that match it and, for a bug fix, the RED→GREEN rule; Bash blocks destructive git, `--no-verify` and device-bricking commands; stopping runs the active regression matrix (generated from the project's own test runner when the profile only ships a sample — `agent-kit matrix`), refuses “tests pass” when a newly written test never ran red, “fixed” without a red→green test pair in the session and changed code without a fresh-context review, and after a proven fix asks once to record the lesson (`agent-kit learn`). Claude Code gets all of these; OpenAI Codex, Gemini CLI and Cursor get the context, the guards and the regression run through `hooks/agent_bridge.sh` (Grok reads the same `AGENTS.md`; the installer writes no Grok files) (Codex keeps the hooks you approved in `~/.codex/config.toml`: after an `agent-kit init` that changes `.codex/hooks.json`, approve the new entries with `/hooks`); Antigravity has rules only (`AGENTS.md` §7). Harmless Bash calls pass the guards in ~5 ms (bash fast path); `agent-kit clean` removes the hooks' old logs and backups.
 5. **10 Review Councils:** reviewer prompts in `agents/councils/` (subsystem isolation, architecture/blast radius, TDD, OpenCodeReview, security, game/Unity/Blender, performance/ANR, memory governance, solo-dev process, standards/delivery) that a profile activates. The `scripts/audit_*` scripts are grep-based self-consistency checks of the DevKit's own files, not code reviewers.
 6. **25 Curated Engineering Skills:** Standardized `SKILL.md` packages in 5 groups, including the domain performance skills `compose-recomp-audit` and `unity-gc-audit`, and a wrapper for the **Alibaba OpenCodeReview (`ocr`)** CLI.
 7. **X_old Conflict Isolation Protection:** Non-destructive installation for existing repositories. Same-named skills/commands/agents/hooks move to the project tier `.agents/local/` (DevKit wins, yours stays committed and is re-linked when its name is free); colliding top-level files (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`) keep a `*_old` snapshot; root `commands/`, `rules/`, `skills/` holding your agent material move to `.agents/local/` (source-code dirs stay, with the DevKit items placed inside). Rule files kept in `.agents/local/rules/` stay active: every install lists them in the DevKit block of each agent's rule file — `CLAUDE.md` (Claude Code expands the `@` imports), `.cursor/rules/universal-agent-devkit.mdc` (Cursor includes them), `GEMINI.md` (Gemini imports files inside the repo; in symlink mode the DevKit folder is added to `context.includeDirectories` so the linked ones can be read) and `AGENTS.md` / `CODEX.md` (Codex reads them as plain text: the block tells it which files to open). They add to the DevKit rules, and where one contradicts the master rules' §6 or `rules/core-rules.md` the DevKit rule wins. Inspect with `agent-kit list-old`, restore with `agent-kit restore-old`.
@@ -418,7 +418,17 @@ python3 /path/to/universal-agent-devkit/bin/post-fix-gate.py --run-tests
 ```
 
 #### Living regression checklist
-Every gate run updates `.agents/regression_checklist.md` (human view) and `.agents/regression_status.json` (source of truth): one row per matrix test with ✅/❌/⏳, when, which task (`--task`), which commit, and the last 10 runs. **Results are written only when the gate actually ran the test (`--run-tests`)** — there is no way to mark a row passed by hand. Changed source files that no matrix rule covers show up as `⚠️ UNCOVERED:<file>` until linked to a real test (`python3 bin/regression_checklist.py link UNCOVERED:<file> <TEST-ID>`); a `--record-lesson` on a passing gate adds a `BUG-…` row tied to the tests that just passed. Disable with `--no-checklist`.
+Every gate run updates `.agents/CHECKLIST.md` (the dashboard; `.agents/regression_checklist.md` is a link to it) and `.agents/regression_status.json` (source of truth): one row per matrix test with ✅/❌/⏳, when, which task (`--task`), which commit, and the last 10 runs. **Results are written only when the gate actually ran the test (`--run-tests`)** — there is no way to mark a row passed by hand. Changed source files that no matrix rule covers show up as `⚠️ UNCOVERED:<file>` until linked to a real test (`python3 bin/regression_checklist.py link UNCOVERED:<file> <TEST-ID>`); a `--record-lesson` on a passing gate adds a `BUG-…` row tied to the tests that just passed. Disable with `--no-checklist`.
+
+**Living checklist — what runs by itself** (details: `docs/plans/regression-checklist-v3.md`):
+- **Bugs and requirements are rows.** A bug-worded prompt becomes a `🟡 REPORTED` row (not counted until confirmed; `agent-kit bugs drop` clears a false positive); `agent-kit bugs add|link|drop` and `agent-kit req add|link|drop` (acceptance criteria locked by hash before the code) do the rest. A feature prompt gets the "write the REQ first" line.
+- **A PASS has to be earned.** A bug or REQ is PASS only when its suite ran green for real **and** its test was seen RED on the unfixed code in a sandbox (`scripts/red_proof.py`; past bugs: the fix commit named in their evidence is reverted). Otherwise `⏳ chưa chứng minh ĐỎ`; a test green without the fix is `🚫 TEST VÔ HIỆU`. Red-then-green on the same code is `🔁 FLAKY` (the gate re-runs a failure once), never PASS.
+- **Stale is visible.** A PASS whose watched files changed since the run is `🟡 CẦN CHẠY LẠI`; light suites are re-run in the background at session start, heavy ones (Gradle/Unity) by the nightly job.
+- **Evidence is kept.** Every real run's full output is in `.agents/evidence/<test>/` (last 10, git-ignored) and linked from the row.
+- **Stop does the linking.** A proven fix with one-to-one evidence links the bug to its test by itself (🤖); otherwise the stop is held once with the exact `bugs link` / `req link` command.
+- **The user's inbox.** Lines `- [ ] …` in `.agents/INBOX.md` (never written by the agent) reach the context once each; `@làm` or the prompt "làm inbox" gets them done; "làm backlog" lists the bugs no test guards, most severe first.
+- **Nightly, locally.** `agent-kit nightly add` + `agent-kit nightly install` (macOS LaunchAgent, 02:17): every suite for real, pending RED-proofs, a notification only when a row turns red, a one-line weekly report.
+- **Switches:** `BUG_CAPTURE`, `BUG_LINK_REMINDER`, `AUTO_LINK`, `RED_PROOF`, `FLAKY_RETRY`, `STALE_RERUN`, `INBOX_WATCH`, `EVIDENCE_KEEP`, `NIGHTLY_NOTIFY` (`=0` turns one off).
 
 **Enforced automatically by the `regression_gate.sh` Stop hook:** whenever the agent tries to finish with uncommitted changes, the hook runs the gate with `--run-tests`; a failing related test or an UNCOVERED source file blocks the stop and the reason is fed back to the agent. It only enforces a matrix the project has adopted (committed in the repo and different from the DevKit samples), caches the result per diff, releases after 2 blocks on the same change with a visible warning, and can be skipped with `REGRESSION_GATE=0`.
 
@@ -472,13 +482,29 @@ Prevents agents from repeating known past repository failures:
 
 All engineering rules, multi-agent architecture contracts, and quality protocols are consolidated into a single authoritative source of truth: [`AGENTS.md`](./AGENTS.md).
 
-`AGENTS.md` is complemented by `rules/core-rules.md` (engineering, security, performance and reporting standards) and one `rules/<profile>-rules.md` per domain profile; `CLAUDE.md` imports the first two. Key protocols in `AGENTS.md`:
+`AGENTS.md` is complemented by `rules/core-rules.md` (engineering, security, performance and reporting standards), `rules/essentials.md` (the always-on part) and one `RULES.md` per domain profile.
+
+**What an installed project looks like** — `AGENTS.md` is the only instruction file (no `CLAUDE.md`, no `GEMINI.md`: Claude Code reads `AGENTS.md` when there is no `CLAUDE.md`, Gemini CLI through `context.fileName`), and everything agent-related lives in `.agents/`:
+
+```
+AGENTS.md                  project text + DevKit block (imports the three .agents/context/ files)
+.agents/
+  devkit -> <DevKit>        master rules, core-rules, skills, post-fix gate (copy mode: a copy)
+  context/                  generated, git-ignored: essentials.md, profile-rules.md, rules-index.md
+  active-profile.json       the profile state; active-profile -> the profile folder
+  local/                    the project tier (commit it): rules/ memory/ knowledge/ skills/ commands/ agents/ hooks/
+  skills/  hooks/           per-skill links (Gemini/Antigravity), bridged hooks (Gemini)
+  instincts.md  regression_*   traps from past bugs, regression matrix and checklist
+.claude/  .gemini/          only what the tools require: settings, hooks, commands, agents
+```
+
+The imported files are real copies, not links: an `@` import whose real path is outside the project is not loaded (Claude Code without approved external imports; Gemini: path traversal). They stay under ~60 KB with the project text, and the prompt hook names the project-rule section and the trap that match a request. Claude Code's auto-memory is pointed at `.agents/local/memory/claude-auto/` (`autoMemoryDirectory` in `.claude/settings.local.json`). Key protocols in `AGENTS.md`:
 - **Architecture & Modularization:** Clean Architecture boundaries, Layer isolation (Presentation → Domain → Data), and clean DI.
 - **Pre-Code Gate (Section 5):** 5-box mandatory check (Target + authority, real source read, consumer list, failure mechanism, residual) before modifying production code.
 - **Zero-Defect Protocol & Paired Executable Oracle:** Mandatory RED → GREEN verification on physical failure boundary with zero waivers.
 - **No-Fabrication Engine (C1–C9 Decision Table):** Strict prohibition against hallucinated metrics, file paths, or test results.
 - **Solo Dev & Git Conventions:** Conventional Commits (`feat`, `fix`, `chore`), zero secret commits, surgical diffs, and clean PR workflows (Rule 0: No commits or pushes without explicit user instruction).
-- **Multi-Agent Cross-Compatibility:** The same `AGENTS.md` is read by all 4 supported agent platforms.
+- **Multi-Agent Cross-Compatibility:** The same `AGENTS.md` is read by all 5 supported agent platforms.
 
 ---
 
@@ -594,7 +620,7 @@ Run them in this order — **plan-tests → review-code → check → done**:
 
 ## 🌐 Universal Multi-Agent Matrix
 
-The DevKit natively synchronizes with the 4 core AI coding ecosystems using `AGENTS.md` as the universal single source of truth:
+The DevKit natively synchronizes with the 5 core AI coding ecosystems using `AGENTS.md` as the universal single source of truth:
 
 | Platform / IDE | Configuration & Integration | Activated Capabilities | Status |
 |---|---|---|:---:|
@@ -602,6 +628,7 @@ The DevKit natively synchronizes with the 4 core AI coding ecosystems using `AGE
 | **OpenAI Codex** | `AGENTS.md` (SSOT) | Universal Master Rules, Pre-Code Gate & Zero-Defect protocol for OpenAI GPT models & Canvas | `READY` 🟢 |
 | **Antigravity / Gemini** | `AGENTS.md`, `.agents/skills/`, `mcp_config.json` | Auto-discovery skills, Zero-Defect QA protocols, MCP integration | `READY` 🟢 |
 | **Cursor IDE** | `AGENTS.md`, DevKit block merged into an existing `.cursorrules` | Repository rules (MCP servers are not configured by the installer — add them in Cursor's MCP settings) | `READY` 🟢 |
+| **Grok** | The same `AGENTS.md` (no adapter, no `.grok/` directory) | Reads the shared toolkit. No files are written for Grok alone | `READY` 🟢 |
 
 ---
 
@@ -707,7 +734,7 @@ Counts are printed by each suite; the docs deliberately do not hard-code them.
 1. `agent-kit uninstall [path]` (dry-run) lists what would go; `agent-kit uninstall [path] --apply` removes it. Only DevKit content is removed:
    - symlinks into the DevKit, and copy-mode files/directories still identical to what the installer recorded (`.devkit-files`, `.devkit-copy`) — edited ones are kept and reported;
    - DevKit hook entries in `.claude/settings.json` (your own hooks and settings stay) and DevKit MCP servers in `.mcp.json` / `mcp_config.json` whose value is unchanged — each JSON file is backed up as `*_old.uninstall-<time>.json` before it changes;
-   - the `universal-agent-devkit` marker blocks in `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `CODEX.md`, `.cursorrules`, `.gitignore`, plus an unmodified `DESIGN.md`, `.agents/instincts.md`, `.active-profile.json` and regression matrix.
+   - the `universal-agent-devkit` marker blocks in `AGENTS.md` (removed when only the installer's heading is left), `CODEX.md`, `.cursorrules`, `.gitignore`, `.agents/devkit`, `.agents/context/`, Gemini's `context.fileName`, plus an unmodified `DESIGN.md`, `.agents/instincts.md`, `.agents/active-profile.json` and regression matrix. A folded `CLAUDE.md`/`GEMINI.md` comes back with `restore-old` (`CLAUDE_old.md`).
 2. `agent-kit restore-old` (dry-run) then `agent-kit restore-old --apply` — puts every recorded `*_old` back when its original location holds only DevKit content; anything else is reported for a manual merge.
 3. `agent-kit list-old` — what is left over (backups you can review and delete).
 
@@ -748,7 +775,7 @@ universal-agent-devkit/
 ├── mcp/                         # MCP Hub (.mcp.json, mcp_config.json, schemas)
 ├── setup.sh                     # Root setup entrypoint
 ├── Makefile                     # Build & Global install automation
-└── adapters/                    # Setup scripts for 4 Core Agent & IDE platforms
+└── adapters/                    # Tool entry points only where that tool requires its own path
 ```
 
 ---

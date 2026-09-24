@@ -53,6 +53,16 @@ Phân loại lỗi vào đúng 1 trong 5 cơ chế hỏng hóc thực chiến:
 1. Xác định phạm vi và điều kiện gây lỗi (crash log, stack trace, input/file hỏng, lifecycle issue).
 2. Dùng `codebase-memory` (`trace_path`) để rà soát 100% điểm gọi ngược (Inbound Callers Blast Radius) trước khi sửa đổi, đảm bảo tuyệt đối không sinh bug mới sang các module khác.
 3. Rà soát danh mục rào chắn bất biến (`immutable_guards`) trong ma trận hồi quy để bảo vệ 100% các bản sửa lỗi lịch sử.
+4. **Ghi bug vào regression checklist ngay khi triage (trước khi sửa):** mỗi bug mới phát hiện là MỘT dòng:
+   ```bash
+   agent-kit bugs add "<tiêu đề bug>" --severity P1 --module <module> --evidence "<log / stack / issue>"
+   # → in ra BUG-id (OPEN). Cùng tiêu đề + module → trả về dòng cũ, không thêm trùng.
+   ```
+   - Prompt của người dùng tả bug đã được hook tự ghi thành dòng **REPORTED** (ngữ cảnh có dòng
+     `Bug đã ghi vào checklist: BUG-…`). Xác nhận dòng đó thay vì thêm dòng mới:
+     `agent-kit bugs add "<tiêu đề chuẩn>" --id <BUG-id> --module <module>`.
+     Không phải bug (hook phân loại nhầm): `agent-kit bugs drop <BUG-id>`.
+   - `/fixbugs <mô tả>` gõ bằng slash command KHÔNG qua hook ghi bug — bước này là nơi duy nhất ghi nó.
 
 ### Bước 2: Thiết lập Oracle Thất bại (RED Phase)
 1. Viết một Unit Test hoặc regression test thể hiện đúng kịch bản lỗi.
@@ -121,7 +131,17 @@ Phân loại lỗi vào đúng 1 trong 5 cơ chế hỏng hóc thực chiến:
    python3 universal-agent-devkit/bin/post-fix-gate.py --run-tests
    ```
    > `--run-tests` bắt buộc để có PASS: gate chạy thật các lệnh test trong `regression_matrix.json`. Exit code: `0` PASS · `1` REJECT · `2` CHƯA XÁC MINH (dry-run, file không đọc được, hoặc không test hồi quy nào khớp — thêm `--allow-no-tests` nếu chấp nhận) · `3` không có thay đổi để kiểm. Chỉ exit `0` mới được coi là đạt.
-   > Truyền `--task <mã task>` để regression checklist (`.agents/regression_checklist.md`) ghi lại test nào pass/fail trong task này; bug sửa xong ghi bằng `--record-lesson` sẽ thành một dòng BUG link tới test vừa pass. File thay đổi chưa có test sẽ hiện `⚠️ UNCOVERED` — gắn test thật cho nó (`bin/regression_checklist.py link`), không bịa.
+   > Truyền `--task <mã task>` để regression checklist (`.agents/CHECKLIST.md`) ghi lại test nào pass/fail trong task này; bug sửa xong ghi bằng `--record-lesson` sẽ thành một dòng BUG link tới test vừa pass (cùng tiêu đề với dòng đã `bugs add` → dùng lại dòng đó). File thay đổi chưa có test sẽ hiện `⚠️ UNCOVERED` — gắn test thật cho nó (`bin/regression_checklist.py link`), không bịa.
+   > **Bắt buộc — link test ĐỎ→XANH vào bug đã ghi ở Bước 1.4:**
+   > ```bash
+   > agent-kit bugs link <BUG-id> <test>   # id matrix, file hoặc class test → suite matrix chạy nó
+   > ```
+   > Bug chuyển sang đã sửa, hiện `⏳ chưa chạy` tới lần gate chạy thật, rồi `⏳ chưa chứng minh ĐỎ` tới khi
+   > `scripts/red_proof.py` thấy test ĐỎ trên code chưa sửa trong sandbox (Stop tự chạy nền sau fix có ĐỎ→XANH;
+   > bug cũ: `--fix-commit <sha>`; commit fix không rõ, quá to hay không còn revert được → viết một patch nhỏ ĐƯA BUG
+   > TRỞ LẠI trên HEAD (chỉ code sản xuất) rồi `red_proof.py . --bug <ID> --patch <file> --heavy --wait` — patch được giữ ở
+   > `.agents/local/red-patches/<ID>.patch`, `--pending` dùng lại). Test xanh cả khi bỏ bản sửa → `🚫 TEST VÔ HIỆU`: viết lại test. Chỉ viết/sửa
+   > đúng MỘT file test cho bug và chạy nó ĐỎ trước khi sửa code → Stop tự link (🤖), không cần lệnh. Test nằm ngoài matrix → `NOT_IN_MATRIX`: gate không chạy nó, bug chưa được chặn tái phát. Stop hook nhắc 1 lần nếu phiên đã fix (RED→GREEN) mà bug của phiên còn chưa link test.
 
 2. Đảm bảo đạt đủ 8 tiêu chí kiểm toán:
    - [x] Quét secret & API key: SẠCH (0 rò rỉ)

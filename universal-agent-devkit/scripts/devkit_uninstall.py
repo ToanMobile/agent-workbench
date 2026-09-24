@@ -5,7 +5,8 @@ Usage: devkit_uninstall.py <project_dir> [--apply]      (dry-run unless --apply)
        (normally called as `agent-kit uninstall [path] [--apply]`)
 
 Only DevKit content is removed; anything that is (or has become) the user's stays:
-  * symlinks that point into the DevKit (rules/ skills/ commands/ AGENTS.md,
+  * symlinks that point into the DevKit (.agents/devkit, and the 1.2 root rules/ skills/
+    commands/ AGENTS.md,
     .claude/{hooks,commands,agents}/*, .agents/skills/*, .agents/active-profile)
   * copy-mode files still identical to what the installer recorded in `.devkit-files`,
     and copy-mode directories still matching their `.devkit-copy` manifest
@@ -16,7 +17,7 @@ Only DevKit content is removed; anything that is (or has become) the user's stay
   * the DevKit marker blocks in CLAUDE.md, AGENTS.md, GEMINI.md, Agent.md, CODEX.md,
     .cursorrules and .gitignore (a file left empty was created by the installer)
   * DESIGN.md / .agents/instincts.md still identical to the DevKit templates,
-    .active-profile.json and an unmodified .agents/regression_matrix.active.json
+    .agents/active-profile.json, the generated .agents/context/ and an unmodified .agents/regression_matrix.active.json
   * the git pre-commit hook written by `agent-kit githooks install` (marker-checked)
 
 A JSON file is backed up as `<stem>_old.uninstall-<timestamp><ext>` before it is
@@ -366,8 +367,9 @@ def strip_block(plan, path, style="html"):
         new = (pre + "\n\n" + post) if pre else post
     elif pre:
         new = pre + "\n"
-    if not new.strip():
-        plan.remove(path)
+    if not new.strip() or (os.path.basename(path) == "AGENTS.md"
+                           and new.strip() == f"# {os.path.basename(os.path.dirname(os.path.abspath(path)))}"):
+        plan.remove(path)               # empty, or the heading-only AGENTS.md the installer wrote
         return
     if plan.apply:
         write_atomic(path, new)
@@ -375,6 +377,41 @@ def strip_block(plan, path, style="html"):
     else:
         plan.say("sẽ sửa", "would clean", path, " (" + tr("gỡ khối DevKit", "DevKit block") + ")")
     plan.removed += 1
+
+
+FOLD_RE = re.compile(r"<!-- moved from (CLAUDE\.md|GEMINI\.md|Agent\.md) on [0-9-]+ \(AGENTS\.md is the only instruction file\) -->\n"
+                     r"(.*?)\n\n(?=<!-- moved from |<!-- " + re.escape(MARKER) + r":start -->|\Z)", re.S)
+
+
+def unfold_agent_files(plan, project):
+    """Put CLAUDE.md / GEMINI.md / Agent.md back from what the installer folded into AGENTS.md:
+    the <name>_old.md backup when there is one (the exact original), else the folded text.
+    A name that exists again is left alone (the user re-created it)."""
+    agents = os.path.join(project, "AGENTS.md")
+    if not os.path.isfile(agents) or os.path.islink(agents):
+        return
+    text = open(agents, encoding="utf-8").read()
+    pieces = list(FOLD_RE.finditer(text))
+    if not pieces:
+        return
+    new = text
+    for m in pieces:
+        name, own = m.group(1), m.group(2)
+        dst = os.path.join(project, name)
+        if os.path.exists(dst) or os.path.islink(dst):
+            plan.keep(dst, "đã có lại — không khôi phục từ AGENTS.md", "exists again — not restored from AGENTS.md")
+            continue
+        backup = os.path.join(project, name[:-3] + "_old.md")
+        body = open(backup, encoding="utf-8").read() if os.path.isfile(backup) else own + "\n"
+        body = re.sub(r"<!-- " + re.escape(MARKER) + r":start -->.*?<!-- " + re.escape(MARKER) + r":end -->\n?", "", body, flags=re.S)
+        if plan.apply:
+            write_atomic(dst, body)
+        plan.say("đã khôi phục" if plan.apply else "sẽ khôi phục", "restored" if plan.apply else "would restore", dst,
+                 tr(" (từ phần đã gộp vào AGENTS.md)", " (from its part folded into AGENTS.md)"))
+        plan.removed += 1
+        new = new.replace(m.group(0), "", 1)
+    if plan.apply and new != text:
+        write_atomic(agents, new)
 
 
 def same_bytes(a, b):
@@ -425,7 +462,9 @@ def main(argv):
         if isinstance(tmpl, dict):
             json_config(plan, os.path.join(project, target_rel), tmpl)
 
-    # 2. Marker blocks.
+    # 2. Marker blocks. First the agent files the installer folded into AGENTS.md
+    #    (fold_agent_file.py): each goes back to its own file, its piece leaves AGENTS.md.
+    unfold_agent_files(plan, project)
     for name in ("CLAUDE.md", "AGENTS.md", "GEMINI.md", "Agent.md", "CODEX.md", ".cursorrules"):
         strip_block(plan, os.path.join(project, name))
     strip_block(plan, os.path.join(project, ".gitignore"), style="hash")
@@ -440,9 +479,23 @@ def main(argv):
             plan.remove(mdc)
         else:
             strip_block(plan, mdc)
-    # Gemini: the DevKit folder added to context.includeDirectories (symlink mode).
+    # Gemini: the DevKit folder added to context.includeDirectories (symlink mode) and
+    # AGENTS.md as its context file (context.fileName).
     gset = os.path.join(project, ".gemini", "settings.json")
     gdata = load_json(gset)
+    names = (gdata or {}).get("context", {}).get("fileName") if isinstance(gdata, dict) else None
+    if names == ["AGENTS.md"] or names == "AGENTS.md":
+        del gdata["context"]["fileName"]
+        if not gdata["context"]:
+            del gdata["context"]
+        if plan.apply:
+            if gdata:
+                write_atomic(gset, json.dumps(gdata, indent=2, ensure_ascii=False) + "\n")
+            else:
+                os.unlink(gset)
+        plan.say("đã sửa" if plan.apply else "sẽ sửa", "cleaned" if plan.apply else "would clean", gset,
+                 tr(" (bỏ context.fileName = AGENTS.md)", " (context.fileName = AGENTS.md removed)"))
+        plan.removed += 1
     dirs = (gdata or {}).get("context", {}).get("includeDirectories") if isinstance(gdata, dict) else None
     if isinstance(dirs, list) and any(os.path.realpath(str(d)) == os.path.realpath(DEVKIT) for d in dirs):
         dirs[:] = [d for d in dirs if os.path.realpath(str(d)) != os.path.realpath(DEVKIT)]
@@ -457,6 +510,23 @@ def main(argv):
                 os.unlink(gset)
         plan.say("đã sửa" if plan.apply else "sẽ sửa", "cleaned" if plan.apply else "would clean", gset,
                  tr(" (bỏ thư mục DevKit khỏi includeDirectories)", " (DevKit folder removed from includeDirectories)"))
+        plan.removed += 1
+
+    # Claude Code auto-memory pointed into the project by claude_memory.py: the setting
+    # goes (a settings.local.json left empty goes too); the notes stay — they are data.
+    slocal = os.path.join(project, ".claude", "settings.local.json")
+    sdata = load_json(slocal)
+    ours = os.path.join(os.path.realpath(project), ".agents", "local", "memory", "claude-auto")
+    if isinstance(sdata, dict) and isinstance(sdata.get("autoMemoryDirectory"), str) \
+            and os.path.realpath(sdata["autoMemoryDirectory"]) == os.path.realpath(ours):
+        del sdata["autoMemoryDirectory"]
+        if plan.apply:
+            if sdata:
+                write_atomic(slocal, json.dumps(sdata, indent=2, ensure_ascii=False) + "\n")
+            else:
+                os.unlink(slocal)
+        plan.say("đã sửa" if plan.apply else "sẽ sửa", "cleaned" if plan.apply else "would clean", slocal,
+                 tr(" (bỏ autoMemoryDirectory)", " (autoMemoryDirectory removed)"))
         plan.removed += 1
 
     # A matrix generated from the project's test runner is recognised by regenerating it,
@@ -492,7 +562,12 @@ def main(argv):
         elif os.path.islink(d) and link_is_devkit_owned(d):
             plan.remove(d)
     devkit_item(plan, os.path.join(project, ".agents", "active-profile"))
-    devkit_item(plan, os.path.join(project, ".agents", "devkit", "AGENTS.md"))  # master, next to an own AGENTS.md
+    devkit_item(plan, os.path.join(project, ".agents", "devkit"))               # the DevKit link (symlink mode)
+    for n in ("AGENTS.md", "rules", "bin"):                                      # copy mode; 1.2: AGENTS.md link
+        devkit_item(plan, os.path.join(project, ".agents", "devkit", n))
+    ctx = os.path.join(project, ".agents", "context")                           # generated by context_sync.py
+    if os.path.isdir(ctx) and not os.path.islink(ctx):
+        plan.remove(ctx)
     side = os.path.join(project, ".agents", "regression_matrix.generated.json")  # comparison copy only
     if os.path.isfile(side) and not os.path.islink(side):
         plan.remove(side)
@@ -518,10 +593,11 @@ def main(argv):
                 plan.remove(p)
             else:
                 plan.keep(p, "ma trận đã bị sửa", "matrix was edited")
-    ap = os.path.join(project, ".active-profile.json")
-    data = load_json(ap)
-    if isinstance(data, dict) and os.path.isdir(os.path.join(pdir, str(data.get("profile", "")))):
-        plan.remove(ap)
+    for ap in (os.path.join(project, ".agents", "active-profile.json"),
+               os.path.join(project, ".active-profile.json")):          # before DevKit 1.3
+        data = load_json(ap)
+        if isinstance(data, dict) and os.path.isdir(os.path.join(pdir, str(data.get("profile", "")))):
+            plan.remove(ap)
 
     # 4a. DevKit gates registered for Codex / Gemini CLI / Cursor (agent_hooks.py):
     #     only entries running agent_bridge.sh; a config left with nothing else is removed.

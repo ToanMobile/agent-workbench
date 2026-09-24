@@ -553,8 +553,8 @@ def command_words(prompt, project_root):
         for bid, it in rows[:BACKLOG_LIMIT]:
             sha, why = fix_commit_of(__import__("pathlib").Path(project_root), it)
             how = (f"`python3 {proof} . --bug {bid} --fix-commit {sha} --wait`" if sha
-                   else f"{why} — chọn đúng commit rồi --fix-commit" if why
-                   else "không có commit fix trong evidence → sẽ là ⏳ CHƯA CHỨNG MINH ĐỎ tới khi thấy đỏ trên code cũ")
+                   else f"{why} — chọn đúng commit rồi --fix-commit, hoặc --patch <file đưa bug trở lại>" if why
+                   else f"không có commit fix → viết patch đưa bug trở lại rồi `python3 {proof} . --bug {bid} --patch <file> --wait`")
             out.append(f"    • {bid} [{it.get('severity') or '-'}] {str(it.get('title', ''))[:80]} — {how}")
     if want_inbox:
         box = data.get("inbox") or {}

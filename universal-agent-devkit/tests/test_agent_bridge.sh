@@ -104,6 +104,16 @@ bash "$DEVKIT_DIR/bin/install.sh" -t "$R" -a codex,gemini,cursor -p none -y >"$T
 bash "$DEVKIT_DIR/bin/agent-kit" uninstall "$R" --apply >/dev/null 2>&1
 [ ! -e "$R/.codex/hooks.json" ] && [ ! -e "$R/.cursor/hooks.json" ] && [ ! -e "$R/.agents/hooks" ] \
   && ok "uninstall removes the registrations and .agents/hooks" || fail "uninstall leftovers: $(ls -a "$R" "$R/.agents" 2>/dev/null | tr '\n' ' ')"
+# Grok adds no directory and folds any other instruction file into AGENTS.md.
+G="$TMP/grok"; mkdir -p "$G"; (cd "$G" && git init -q)
+printf '# project notes\n' > "$G/CLAUDE.md"
+bash "$DEVKIT_DIR/bin/install.sh" -t "$G" -a grok -p none -y >"$TMP/gout" 2>&1 || { fail "grok install failed"; cat "$TMP/gout"; }
+[ -f "$G/AGENTS.md" ] && grep -q "universal-agent-devkit" "$G/AGENTS.md" && grep -q "project notes" "$G/AGENTS.md" \
+  && [ ! -e "$G/CLAUDE.md" ] && [ ! -e "$G/.grok" ] && [ ! -e "$G/.claude" ] && [ ! -e "$G/.gemini" ] && [ ! -e "$G/.codex" ] && [ ! -e "$G/.cursor" ] \
+  && ok "install -a grok: AGENTS.md only, CLAUDE.md folded, no .grok/" || fail "grok install created extra files: $(ls -a "$G" | tr '\n' ' ')"
+bash "$DEVKIT_DIR/bin/install.sh" -t "$G" -p none -y >"$TMP/gout2" 2>&1
+grep -q "keeping the agents already set up: grok" "$TMP/gout2" && [ ! -e "$G/.claude" ] && [ ! -e "$G/.grok" ] \
+  && ok "re-init -y of a Grok-only project does not add other agents" || fail "re-init grew a Grok-only project: $(ls -a "$G" | tr '\n' ' ')"
 
 if [ "$FAILS" -ne 0 ]; then
   echo "agent bridge: $FAILS FAILED"; exit 1

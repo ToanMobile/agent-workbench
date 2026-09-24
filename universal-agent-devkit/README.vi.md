@@ -92,7 +92,7 @@ claude plugin install /path/to/agent-workbench/universal-agent-devkit
 
 ## 📖 Tổng quan (Executive Summary)
 
-**Universal Agent DevKit** là framework chuẩn hóa toàn diện dành cho 4 AI Coding Agent cốt lõi (**Claude Code**, **OpenAI Codex**, **Google Antigravity & Gemini CLI**, **Cursor IDE**) và bất kỳ mô hình nào chạy bên trong chúng (Claude, GPT, Gemini hay mô hình open-weight hiện hành — không phụ thuộc phiên bản mô hình cụ thể).
+**Universal Agent DevKit** là framework chuẩn hóa toàn diện dành cho 5 AI Coding Agent cốt lõi (**Claude Code**, **OpenAI Codex**, **Google Antigravity & Gemini CLI**, **Cursor IDE**, **Grok**) và bất kỳ mô hình nào chạy bên trong chúng (Claude, GPT, Gemini, Grok hay mô hình open-weight hiện hành — không phụ thuộc phiên bản mô hình cụ thể).
 
 DevKit cung cấp một hệ sinh thái khép kín:
 1. **Quy chuẩn lập trình tối thượng:** Zero-Defect Protocol, Paired Executable Oracle (Bắt buộc RED→GREEN), và No-Fabrication Engine (Bảng quyết định C1–C9).
@@ -100,7 +100,7 @@ DevKit cung cấp một hệ sinh thái khép kín:
 3. **Hệ thống Dynamic Domain Profiles:** Chuyển đổi giữa **Android** (Compose/Vitals/Tombstones), **iOS** (Swift 6/SwiftUI/Concurrency), **Automotive** (AAOS/CAN Bus), **Game** (Unity 6/Zero-GC), **Voice Assistant** (edge audio AI), **Web** (TypeScript/React/Next.js), **Backend** (API services Python/Go/Rust/Node) và **Universal** qua lệnh `agent-kit profile`.
 4. **Cổng hậu sửa lỗi (`/audit-gate`, `agent-kit gate`, `postfix-gate`):** cổng kiểm tra diff tĩnh. Thứ làm nó fail: 6 kiểm tra tĩnh trên các file thay đổi (secret, placeholder lười biếng, dependency — version thả nổi như `1.+`/`latest`/`*` và nguồn tải `http://` — anti-pattern hiệu năng, nuốt lỗi, log thô) cộng với, khi có `--run-tests`, các test hồi quy trong ma trận đang active. DESIGN.md/a11y, bằng chứng RED→GREEN, ảnh/thiết bị và OpenCodeReview chỉ được in ra để nhắc — gate không xác minh chúng. Các kiểm tra tĩnh đó cũng chạy làm git pre-commit hook trên nội dung đã stage (`agent-kit init` tự cài trong dự án git, hoặc `agent-kit githooks install`), nên `git commit` gõ tay ở terminal/IDE cũng bị kiểm (bạn bỏ qua 1 lần được bằng `git commit --no-verify`; agent thì không — git guard chặn); `agent-kit learn "<bẫy>" --cause=… --rule=…` ghi bài học vào `.agents/instincts.md` với id `[INSTINCT-NNN]` kế tiếp. Với `--json`, dòng stdout cuối liệt kê mọi phát hiện tĩnh dạng `{category, rule, message, file, line, snippet}` (secret: chỉ có số dòng, không bao giờ in giá trị), để agent nhảy thẳng tới `file:line`.
 
-   **Những gì tự chạy (hook):** mở phiên mới là nạp mục lục bẫy trong `.agents/instincts.md` và trạng thái checklist hồi quy; mỗi yêu cầu được chèn các bẫy khớp và, nếu là sửa bug, luật RED→GREEN; Bash chặn git nguy hiểm, `--no-verify` và lệnh làm hỏng thiết bị; khi dừng thì chạy ma trận hồi quy (tự sinh từ test runner của dự án khi profile chỉ có ma trận mẫu — `agent-kit matrix`), không cho nói "test pass" khi test mới viết chưa từng đỏ, không cho nói "đã fix" nếu phiên chưa có cặp test đỏ→xanh, không cho dừng khi code đổi mà chưa review context sạch, và sau khi sửa bug xong thì nhắc một lần ghi bài học (`agent-kit learn`). Claude Code có đủ; OpenAI Codex, Gemini CLI và Cursor có phần ngữ cảnh, guard và test hồi quy qua `hooks/agent_bridge.sh`; Antigravity chỉ có luật (`AGENTS.md` §7). Lệnh Bash vô hại đi qua guard trong ~5 ms (fast path bằng bash); `agent-kit clean` dọn log và bản sao lưu cũ của hook.
+   **Những gì tự chạy (hook):** mở phiên mới là nạp mục lục bẫy trong `.agents/instincts.md` và trạng thái checklist hồi quy; mỗi yêu cầu được chèn các bẫy khớp và, nếu là sửa bug, luật RED→GREEN; Bash chặn git nguy hiểm, `--no-verify` và lệnh làm hỏng thiết bị; khi dừng thì chạy ma trận hồi quy (tự sinh từ test runner của dự án khi profile chỉ có ma trận mẫu — `agent-kit matrix`), không cho nói "test pass" khi test mới viết chưa từng đỏ, không cho nói "đã fix" nếu phiên chưa có cặp test đỏ→xanh, không cho dừng khi code đổi mà chưa review context sạch, và sau khi sửa bug xong thì nhắc một lần ghi bài học (`agent-kit learn`). Claude Code có đủ; OpenAI Codex, Gemini CLI và Cursor có phần ngữ cảnh, guard và test hồi quy qua `hooks/agent_bridge.sh` (Grok đọc cùng `AGENTS.md`; installer không ghi file riêng cho Grok); Antigravity chỉ có luật (`AGENTS.md` §7). Lệnh Bash vô hại đi qua guard trong ~5 ms (fast path bằng bash); `agent-kit clean` dọn log và bản sao lưu cũ của hook.
 5. **10 Hội đồng Review:** các prompt reviewer trong `agents/councils/` (cô lập shared flow, kiến trúc/blast radius, TDD, OpenCodeReview, bảo mật, game/Unity/Blender, hiệu năng/ANR, quản trị bộ nhớ, quy trình solo-dev, chuẩn/bàn giao) được profile kích hoạt. Các script `scripts/audit_*` là kiểm tra tự nhất quán dựa trên grep trên chính file của DevKit, không phải reviewer code.
 6. **Kho 25 Kỹ Năng Tinh Gọn (Curated Engineering Skills):** Chuẩn hóa theo định dạng `SKILL.md`, chia 5 nhóm, gồm cả hai skill hiệu năng domain `compose-recomp-audit` và `unity-gc-audit`, cùng wrapper cho CLI **Alibaba OpenCodeReview (`ocr`)**.
 7. **Cơ Chế Bảo Vệ Cách Ly X_old (X_old Conflict Isolation):** Cài đặt không ghi đè vào dự án cũ. Skill/command/agent/hook cùng tên được chuyển vào tầng dự án `.agents/local/` (DevKit thắng, bản của bạn vẫn được commit và được link lại khi tên không trùng); file gốc bị trùng (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`) có bản chụp `*_old`; thư mục gốc `commands/`, `rules/`, `skills/` chứa nội dung agent được chuyển vào `.agents/local/` (thư mục source code giữ nguyên, item DevKit được đặt vào trong). File rule trong `.agents/local/rules/` vẫn có hiệu lực: mỗi lần cài, chúng được liệt kê dạng import `@.agents/local/rules/<file>` trong khối DevKit của `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `CODEX.md` và `AGENTS.md` riêng của bạn; chúng bổ sung cho rule DevKit, chỗ nào mâu thuẫn với `AGENTS.md` §6 hoặc `rules/core-rules.md` thì rule DevKit thắng. Xem bằng `agent-kit list-old`, khôi phục bằng `agent-kit restore-old`.
@@ -418,7 +418,17 @@ python3 /path/to/universal-agent-devkit/bin/post-fix-gate.py --run-tests
 ```
 
 #### Regression checklist tự động
-Mỗi lần gate chạy sẽ cập nhật `.agents/regression_checklist.md` (bảng để đọc) và `.agents/regression_status.json` (dữ liệu gốc): mỗi test trong matrix là một dòng ✅/❌/⏳ kèm thời điểm, task (`--task`), commit và 10 lần chạy gần nhất. **Kết quả chỉ được ghi khi gate thực sự chạy test (`--run-tests`)** — không có cách tự đánh dấu PASS bằng tay. File code thay đổi mà chưa rule nào bao phủ sẽ hiện `⚠️ UNCOVERED:<file>` cho tới khi được gắn vào test thật (`python3 bin/regression_checklist.py link UNCOVERED:<file> <TEST-ID>`); `--record-lesson` trên một lần gate PASS thêm dòng `BUG-…` gắn với các test vừa pass. Tắt bằng `--no-checklist`.
+Mỗi lần gate chạy sẽ cập nhật `.agents/CHECKLIST.md` (dashboard; `.agents/regression_checklist.md` là link tới nó) và `.agents/regression_status.json` (dữ liệu gốc): mỗi test trong matrix là một dòng ✅/❌/⏳ kèm thời điểm, task (`--task`), commit và 10 lần chạy gần nhất. **Kết quả chỉ được ghi khi gate thực sự chạy test (`--run-tests`)** — không có cách tự đánh dấu PASS bằng tay. File code thay đổi mà chưa rule nào bao phủ sẽ hiện `⚠️ UNCOVERED:<file>` cho tới khi được gắn vào test thật (`python3 bin/regression_checklist.py link UNCOVERED:<file> <TEST-ID>`); `--record-lesson` trên một lần gate PASS thêm dòng `BUG-…` gắn với các test vừa pass. Tắt bằng `--no-checklist`.
+
+**Checklist sống — những gì tự chạy** (chi tiết: `docs/plans/regression-checklist-v3.md`):
+- **Bug và yêu cầu là dòng trong checklist.** Prompt tả bug thành dòng `🟡 REPORTED` (chưa tính cho tới khi xác nhận; `agent-kit bugs drop` xoá báo nhầm); `agent-kit bugs add|link|drop` và `agent-kit req add|link|drop` (tiêu chí nghiệm thu khoá bằng hash trước khi code) lo phần còn lại. Prompt tính năng được nhắc "ghi REQ trước".
+- **PASS phải có bằng chứng.** Bug/REQ chỉ PASS khi suite chạy xanh thật **và** test của nó từng ĐỎ trên code chưa sửa trong sandbox (`scripts/red_proof.py`; bug cũ: revert commit fix ghi trong evidence). Chưa có → `⏳ chưa chứng minh ĐỎ`; test xanh cả khi bỏ bản sửa → `🚫 TEST VÔ HIỆU`. Đỏ rồi xanh cùng code → `🔁 FLAKY` (gate chạy lại lỗi 1 lần), không bao giờ là PASS.
+- **Code đổi là thấy.** PASS mà file được canh đổi sau lần chạy → `🟡 CẦN CHẠY LẠI`; suite nhẹ tự chạy lại nền đầu phiên, suite nặng (Gradle/Unity) để job đêm.
+- **Giữ bằng chứng.** Output đầy đủ của mỗi lần chạy thật ở `.agents/evidence/<test>/` (10 log gần nhất, git-ignored), link từ dòng checklist.
+- **Stop tự link.** Fix đã chứng minh với bằng chứng một-một → tự link bug với test (🤖); còn lại giữ Stop 1 lần kèm đúng lệnh `bugs link` / `req link`.
+- **Hộp thư của người dùng.** Dòng `- [ ] …` trong `.agents/INBOX.md` (agent không bao giờ ghi) vào ngữ cảnh mỗi dòng 1 lần; `@làm` hoặc prompt "làm inbox" để làm; "làm backlog" liệt kê bug chưa có test, nặng trước.
+- **Job đêm, chạy local.** `agent-kit nightly add` + `agent-kit nightly install` (LaunchAgent macOS, 02:17): chạy thật mọi suite, RED-proof còn chờ, chỉ thông báo khi có dòng chuyển đỏ, báo cáo tuần 1 dòng.
+- **Công tắc:** `BUG_CAPTURE`, `BUG_LINK_REMINDER`, `AUTO_LINK`, `RED_PROOF`, `FLAKY_RETRY`, `STALE_RERUN`, `INBOX_WATCH`, `EVIDENCE_KEEP`, `NIGHTLY_NOTIFY` (`=0` để tắt).
 
 **Tự động cưỡng chế bằng Stop hook `regression_gate.sh`:** mỗi khi agent định kết thúc mà còn thay đổi chưa commit, hook chạy gate với `--run-tests`; test liên quan fail hoặc file code chưa có test (UNCOVERED) ⇒ chặn dừng và trả lý do cho agent. Chỉ cưỡng chế khi project đã có matrix riêng (commit trong repo, khác các matrix mẫu của DevKit), nhớ kết quả theo từng diff (không chạy lại), chặn tối đa 2 lần cho cùng thay đổi rồi cho dừng kèm cảnh báo, tắt bằng `REGRESSION_GATE=0`.
 
@@ -472,13 +482,29 @@ Ngăn chặn AI Agent lặp lại những sai lầm trong quá khứ của dự 
 
 Mọi quy chuẩn kỹ thuật, hợp đồng kiến trúc đa agent và quy trình chất lượng đều được tập trung vào duy nhất một Single Source of Truth: [`AGENTS.md`](./AGENTS.md).
 
-`AGENTS.md` được bổ sung bởi `rules/core-rules.md` (chuẩn kỹ thuật, bảo mật, hiệu năng, báo cáo) và một file `rules/<profile>-rules.md` cho mỗi profile; `CLAUDE.md` import hai file đầu. Nội dung cốt lõi trong `AGENTS.md`:
+`AGENTS.md` được bổ sung bởi `rules/core-rules.md` (chuẩn kỹ thuật, bảo mật, hiệu năng, báo cáo), `rules/essentials.md` (phần luôn nạp) và một `RULES.md` cho mỗi profile domain.
+
+**Một dự án đã cài trông như thế nào** — `AGENTS.md` là file hướng dẫn duy nhất (không `CLAUDE.md`, không `GEMINI.md`: Claude Code đọc `AGENTS.md` khi dự án không có `CLAUDE.md`, Gemini CLI đọc qua `context.fileName`), và mọi thứ liên quan tới agent nằm trong `.agents/`:
+
+```
+AGENTS.md                  nội dung của dự án + khối DevKit (import 3 file trong .agents/context/)
+.agents/
+  devkit -> <DevKit>        master rules, core-rules, skills, post-fix gate (chế độ copy: một bản sao)
+  context/                  tự sinh, git-ignore: essentials.md, profile-rules.md, rules-index.md
+  active-profile.json       trạng thái profile; active-profile -> thư mục profile
+  local/                    tầng riêng của dự án (commit nó): rules/ memory/ knowledge/ skills/ commands/ agents/ hooks/
+  skills/  hooks/           link từng skill (Gemini/Antigravity), hook qua bridge (Gemini)
+  instincts.md  regression_*   bẫy từ bug cũ, ma trận hồi quy và checklist
+.claude/  .gemini/          chỉ những gì công cụ bắt buộc: settings, hooks, commands, agents
+```
+
+Các file được import là bản sao thật, không phải link: một `@` import có đường dẫn thật nằm ngoài dự án sẽ không được nạp (Claude Code khi chưa duyệt import ngoài; Gemini: chặn path traversal). Tổng cộng với nội dung dự án chúng giữ dưới ~60 KB, và hook prompt chỉ ra đúng mục quy tắc của dự án và đúng bẫy khớp với yêu cầu. Auto-memory của Claude Code được trỏ vào `.agents/local/memory/claude-auto/` (`autoMemoryDirectory` trong `.claude/settings.local.json`). Các giao thức chính trong `AGENTS.md`:
 - **Kiến trúc & Modularization:** Phân tầng Clean Architecture, phân lập ranh giới module (Presentation → Domain → Data) và DI độc lập.
 - **Pre-Code Gate (Mục 5):** 5 tiêu chí bắt buộc (Target + authority, đọc file thật, danh sách consumer, failure mechanism, residual) trước khi chạm vào mã nguồn.
 - **Zero-Defect Protocol & Paired Executable Oracle:** Bắt buộc có kiểm thử RED → GREEN thật trên failure boundary, không có ngoại lệ (zero waivers).
 - **No-Fabrication Engine (Bảng C1–C9):** Triệt tiêu ảo giác, cấm bịa đặt metric, dòng code hoặc kết quả kiểm thử.
 - **Solo Dev & Quy Ước Git:** Chuẩn Conventional Commits (`feat`, `fix`, `chore`), cấm commit secrets, sửa mã nguồn phẫu thuật (surgical diffs). Tuân thủ nghiêm ngặt Solo Dev Rule 0 (không tự ý commit hoặc push khi chưa có yêu cầu tường minh từ người dùng).
-- **Tương thích Đa Nền Tảng:** Cùng một `AGENTS.md` được cả 4 nền tảng agent hỗ trợ đọc.
+- **Tương thích Đa Nền Tảng:** Cùng một `AGENTS.md` được cả 5 nền tảng agent hỗ trợ đọc.
 
 ---
 
@@ -594,7 +620,7 @@ Chạy theo thứ tự — **plan-tests → review-code → check → done**:
 
 ## 🌐 Universal Multi-Agent Matrix
 
-DevKit tự động đồng bộ cấu hình tương thích cho 4 hệ sinh thái agent cốt lõi với `AGENTS.md` làm Single Source of Truth:
+DevKit tự động đồng bộ cấu hình tương thích cho 5 hệ sinh thái agent cốt lõi với `AGENTS.md` làm Single Source of Truth:
 
 | Nền tảng / IDE | Cấu Hình & Tích Hợp | Tính Năng Được Kích Hoạt | Trạng Thái |
 |---|---|---|:---:|
@@ -602,6 +628,7 @@ DevKit tự động đồng bộ cấu hình tương thích cho 4 hệ sinh thá
 | **OpenAI Codex** | `AGENTS.md` (SSOT) | Universal Master Rules, Pre-Code Gate & Zero-Defect protocol cho GPT models & Canvas | `READY` 🟢 |
 | **Antigravity / Gemini** | `AGENTS.md`, `.agents/skills/`, `mcp_config.json` | Auto-discovery Skills, QA Protocols, Tích hợp MCP Hub | `READY` 🟢 |
 | **Cursor IDE** | `AGENTS.md`, khối DevKit merge vào `.cursorrules` có sẵn | Quy chuẩn repo (installer không cấu hình MCP — tự thêm trong phần MCP settings của Cursor) | `READY` 🟢 |
+| **Grok** | Cùng `AGENTS.md` (không adapter, không thư mục `.grok/`) | Đọc bộ công cụ dùng chung. Không ghi file riêng cho Grok | `READY` 🟢 |
 
 ---
 
@@ -740,7 +767,7 @@ universal-agent-devkit/
 ├── mcp/                         # MCP Hub (.mcp.json, mcp_config.json, schemas)
 ├── setup.sh                     # Root setup entrypoint
 ├── Makefile                     # Build & Global install automation
-└── adapters/                    # Setup scripts cho 4 nền tảng Agent & IDE cốt lõi
+└── adapters/                    # Chỉ chỗ nào công cụ đó bắt buộc một đường dẫn riêng
 ```
 
 ---

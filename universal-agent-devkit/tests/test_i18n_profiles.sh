@@ -34,7 +34,7 @@ P="$(newproj node package.json '{"name":"x","scripts":{"test":"echo ok"}}')"
 install_q -t "$P" -y --lang=en; rc=$?
 [ "$rc" = 0 ] && ok "install --lang=en exits 0" || { fail "install --lang=en: rc=$rc"; tail -5 "$TMP/out"; }
 no_vi "install --lang=en: no Vietnamese in installer/adapter/profile output" "$TMP/out"
-grep -q '"lang": "en"' "$P/.active-profile.json" && ok "--lang=en saved in .active-profile.json" || fail "lang not saved"
+grep -q '"lang": "en"' "$P/.agents/active-profile.json" && ok "--lang=en saved in .agents/active-profile.json" || fail "lang not saved"
 
 python3 "$CFG" --status -t "$P" >"$TMP/out" 2>&1
 no_vi "agent-config reuses the saved language (no --lang, no DEVKIT_LANG)" "$TMP/out"

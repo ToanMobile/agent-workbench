@@ -418,89 +418,21 @@ README_EOF
     printf '%s\n' '- `rules/` and dated copies (`name_YYYYMMDD_HHMMSS…`) are reference only, never linked.'
   else
     cat <<'README_EOF'
-- `rules/` files are listed as @-imports in the DevKit block of `CLAUDE.md`, `AGENTS.md`
-  (a project's own one), `GEMINI.md`, `.cursorrules` on every `agent-kit init`: they add
-  to the DevKit rules, and the DevKit rule wins where they contradict it.
-- Dated copies (`name_YYYYMMDD_HHMMSS…`) are reference only, never linked or imported.
+- `rules/` files are indexed (one line per section) into `.agents/context/rules-index.md`,
+  which AGENTS.md loads at every session start; the prompt hook names the matching
+  section. They add to the DevKit rules; the DevKit rule wins where they contradict it.
+- Dated copies (`name_YYYYMMDD_HHMMSS…`) are reference only, never linked or indexed.
 README_EOF
   fi
   printf '%s\n' '- `agent-kit list-old` shows what is active and what is shadowed.'
 }
 
-# devkit_local_rule_files <project> — the project's own rule files kept in the project
-# tier (.agents/local/rules/), relative to <project>, sorted. Dated copies
-# (name_YYYYMMDD_HHMMSS…) are older versions kept for reference and are left out.
-devkit_local_rule_files() {
-  local dir="$1/$DEVKIT_LOCAL_DIR/rules"
-  [ -d "$dir" ] || return 0
-  # Files and links to files (a rule may be a link to a shared file); one import per
-  # real file — real files win over links to them; dated backup copies are skipped.
-  (cd "$1" && python3 - "$DEVKIT_LOCAL_DIR/rules" <<'PY'
-import os, re, sys
-root = sys.argv[1]
-found = []
-for d, dirs, files in os.walk(root, followlinks=False):
-    dirs[:] = sorted(x for x in dirs if not x.startswith("."))
-    for f in files:
-        p = os.path.join(d, f)
-        if f.startswith(".") or not re.search(r"\.(md|mdc|markdown|txt)$", f, re.I) \
-                or re.search(r"_\d{8}_\d{6}", p) or not os.path.isfile(p):
-            continue
-        found.append((os.path.islink(p), p))
-seen, out = set(), []
-for _, p in sorted(found):
-    r = os.path.realpath(p)
-    if r not in seen:
-        seen.add(r)
-        out.append(p)
-print("\n".join(sorted(out)))
-PY
-  )
-}
-
-# devkit_master_ref <project root> — the path an agent file uses to reach the DevKit
-# master rules: AGENTS.md while that file is (or is about to be) the DevKit's own.
-# A project that keeps its own AGENTS.md gets the master linked at
-# .agents/devkit/AGENTS.md instead — `@AGENTS.md` there would import only the
-# project's file, and §5–§8 of the master would never reach the agent.
-devkit_master_ref() {
-  local root="$1" a="$1/AGENTS.md"
-  if { [ ! -e "$a" ] && [ ! -L "$a" ]; } || link_is_devkit_owned "$a" "$DEVKIT_ROOT" \
-      || is_recorded_devkit_file "$a" || cmp -s "$a" "$DEVKIT_ROOT/AGENTS.md"; then
-    echo "AGENTS.md"
-    return 0
-  fi
-  devkit_place "$DEVKIT_ROOT/AGENTS.md" "$root/.agents/devkit/AGENTS.md" "${MODE:-symlink}" >/dev/null || return 1
-  echo ".agents/devkit/AGENTS.md"
-}
-
-# devkit_merge_block <template block> <agent file> — inject the DevKit block into an
-# agent file: the master rules (devkit_master_ref), the active profile's rules when a
-# profile is being installed (DEVKIT_PROFILE, set by install.sh; the stable
-# .agents/active-profile/RULES.md follows `agent-kit profile` switches), and the
-# project tier's own rules (.agents/local/rules) as @-imports.
+# devkit_merge_block <template block> <agent file> — put the DevKit block (between the
+# universal-agent-devkit markers) into an agent file; the rest of the file is kept.
+# The block is static: it imports the generated .agents/context/ files (context_sync.py),
+# so a profile switch or a new project rule never has to rewrite it.
 devkit_merge_block() {
-  local tpl="$1" dst="$2" root rules block rc master
-  root="$(cd "$(dirname "$dst")" 2>/dev/null && pwd -P)"
-  rules="$(devkit_local_rule_files "$root")"
-  master="$(devkit_master_ref "$root")" || master="AGENTS.md"
-  block="$(mktemp "${TMPDIR:-/tmp}/devkit_block.XXXXXX")" || return 1
-  {
-    sed "s|@AGENTS\.md|@$master|" "$tpl" | awk -v prof="${DEVKIT_PROFILE:-}" '
-      { print }
-      /Active Domain Profile:/ && prof != "" && prof != "none" && prof != "ask" {
-        print "- Domain Profile Rules: @.agents/active-profile/RULES.md"
-      }'
-    if [ -n "$rules" ]; then
-      printf '\n## Project rules (%s/rules — project tier)\n' "$DEVKIT_LOCAL_DIR"
-      printf 'Read these before editing code: this project'"'"'s own rules on top of the DevKit. Where one contradicts `%s` §6 or `rules/core-rules.md`, the DevKit rule wins — tell the user about the conflict.\n' "$master"
-      printf '%s\n' "$rules" | sed 's/^/- @/'
-    fi
-  } > "$block"
-  python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$block" "$dst" "universal-agent-devkit"
-  rc=$?
-  rm -f "$block"
-  return $rc
+  python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$1" "$2" "universal-agent-devkit"
 }
 
 # devkit_local_prune <project> — after restore-old --apply: drop project-tier ledgers
@@ -667,8 +599,8 @@ devkit_place() {
     local keep_to=""
     if [ -f "$dst/$DEVKIT_MANIFEST" ]; then
       keep_to="$(devkit_local_slot "$dst")"
-      if [ -z "$keep_to" ] && [ -n "${TARGET_DIR:-}" ] && [ "$parent_p" = "$target_p" ]; then
-        keep_to="$TARGET_DIR/$DEVKIT_LOCAL_DIR/$(basename "$dst")"   # root rules/ skills/ commands/
+      if [ -z "$keep_to" ] && [ -n "${TARGET_DIR:-}" ] && { [ "$parent_p" = "$target_p" ] || [ "$parent_p" = "$target_p/.agents/devkit" ]; }; then
+        keep_to="$TARGET_DIR/$DEVKIT_LOCAL_DIR/$(basename "$dst")"   # .agents/devkit/rules (1.2: root rules/ skills/ commands/)
       fi
     fi
     if is_unmodified_devkit_copy "$dst" || ! has_user_content "$dst" "${DEVKIT_ROOT:-}"; then
@@ -698,35 +630,118 @@ devkit_place() {
   fi
 }
 
-# devkit_install_agents_md <target_dir> <symlink|copy> — shared by every adapter.
-#   absent / devkit link / unmodified devkit copy -> (re)placed per mode
-#   the project's OWN AGENTS.md                    -> kept, backed up once as AGENTS_old.md,
-#                                                     DevKit block injected between markers
-#   a foreign symlink (dotfile manager)            -> left alone
+# devkit_install_agents_md <target_dir> <symlink|copy> [agent file …] — AGENTS.md is the
+# project's one instruction file (shared by every adapter):
+#   absent / DevKit link / unmodified DevKit copy -> a project AGENTS.md holding the block
+#   the project's own AGENTS.md                   -> kept (backed up once as AGENTS_old.md),
+#                                                    block injected between markers
+#   a foreign symlink (dotfile manager)           -> left alone
+# Each [agent file] named (CLAUDE.md, GEMINI.md, Agent.md) is folded into it: its own
+# text moves above the block (fold_agent_file.py), the original is kept as <name>_old.md
+# and removed — Claude Code reads AGENTS.md only while there is no CLAUDE.md. A link to
+# AGENTS.md or into the DevKit is just removed.
 devkit_install_agents_md() {
-  local target="$1" mode="$2" dst src marker="universal-agent-devkit"
+  local target="$1" mode="$2" dst name base moved
+  shift 2
   dst="$target/AGENTS.md"
-  src="$DEVKIT_ROOT/AGENTS.md"
   [ "$target" = "$DEVKIT_ROOT" ] && return 0
   if [ -L "$dst" ] && ! link_is_devkit_owned "$dst" "$DEVKIT_ROOT"; then
     echo "  - AGENTS.md is a symlink you manage — left untouched"
     return 0
   fi
-  if [ -f "$dst" ] && [ ! -L "$dst" ] && ! cmp -s "$src" "$dst" && ! is_recorded_devkit_file "$dst"; then
-    if [ ! -e "$target/AGENTS_old.md" ] && ! grep -q "$marker" "$dst" 2>/dev/null; then
-      cp "$dst" "$target/AGENTS_old.md"
-      echo "  - Preserved original AGENTS.md as AGENTS_old.md"
+  if [ -L "$dst" ] || { [ -f "$dst" ] && { cmp -s "$DEVKIT_ROOT/AGENTS.md" "$dst" || is_recorded_devkit_file "$dst"; }; }; then
+    rm -f "$dst"                        # the DevKit master itself: it now lives at .agents/devkit/AGENTS.md
+    forget_devkit_file "$dst"
+    echo "  - AGENTS.md: $(L "thay link/bản copy master DevKit bằng AGENTS.md của dự án" "the DevKit master link/copy replaced by the project's own AGENTS.md")"
+  fi
+  if [ -f "$dst" ] && [ ! -e "$target/AGENTS_old.md" ] && ! grep -q "universal-agent-devkit" "$dst" 2>/dev/null; then
+    cp "$dst" "$target/AGENTS_old.md"
+    echo "  - Preserved original AGENTS.md as AGENTS_old.md"
+  fi
+  for name in "$@"; do
+    [ -e "$target/$name" ] || [ -L "$target/$name" ] || continue
+    if [ -L "$target/$name" ]; then
+      if [ "$(resolve_link_target "$target/$name" 2>/dev/null)" = "$(cd "$target" && pwd -P)/AGENTS.md" ] \
+          || link_is_devkit_owned "$target/$name" "$DEVKIT_ROOT"; then
+        rm -f "$target/$name"
+        echo "  - $name: $(L "đã bỏ (link tới AGENTS.md) — AGENTS.md là file hướng dẫn duy nhất" "removed (a link to AGENTS.md) — AGENTS.md is the only instruction file")"
+      else
+        echo "  ⚠️  $name $(L "là symlink bạn tự quản — giữ nguyên; agent sẽ đọc nó thay vì AGENTS.md" "is a symlink you manage — kept; the agent reads it instead of AGENTS.md")" >&2
+      fi
+      continue
     fi
-    devkit_merge_block "$DEVKIT_ROOT/templates/agents_injection_block.md" "$dst"
-    echo "  - Injected DevKit standards into existing AGENTS.md (Preserved custom architecture)"
+    base="${name%.md}"
+    [ -e "$target/${base}_old.md" ] || cp "$target/$name" "$target/${base}_old.md" || return 1
+    moved="$(python3 "$DEVKIT_ROOT/scripts/fold_agent_file.py" "$target/$name" "$dst")" || return 1
+    rm -f "$target/$name"
+    case "$moved" in
+      moved*) echo "  - $name: $(L "nội dung riêng ($moved) đã chuyển vào AGENTS.md (bản gốc: ${base}_old.md)" "its own content ($moved) moved into AGENTS.md (original kept as ${base}_old.md)")" ;;
+      *)      echo "  - $name: $(L "chỉ có block DevKit — đã bỏ (bản gốc: ${base}_old.md)" "held only the DevKit block — removed (original kept as ${base}_old.md)")" ;;
+    esac
+  done
+  [ -e "$dst" ] || printf '# %s\n\n' "$(basename "$target")" > "$dst"   # nothing folded: a new file
+  devkit_merge_block "$DEVKIT_ROOT/templates/agents_injection_block.md" "$dst"
+  echo "  - AGENTS.md: $(L "đã gắn block DevKit (file hướng dẫn duy nhất)" "DevKit block in place (the only instruction file)")"
+}
+
+# devkit_place_devkit_dir <target_dir> <symlink|copy> — the DevKit inside the project, at
+# .agents/devkit: one link to the DevKit folder (symlink mode) or a copy of what the
+# agent reads on demand (copy mode: AGENTS.md, rules/, bin/). Links an older install
+# made at the project root (rules/ skills/ commands/) and at .agents/devkit/AGENTS.md
+# are removed — everything agent-related lives in .agents/.
+devkit_place_devkit_dir() {
+  local target="$1" mode="$2" dst="$1/.agents/devkit" item
+  [ "$target" = "$DEVKIT_ROOT" ] && return 0
+  mkdir -p "$target/.agents"
+  for item in rules skills commands; do
+    devkit_remove_root_item "$target/$item" || return 1
+  done
+  if [ "$mode" = "symlink" ]; then
+    if [ -d "$dst" ] && [ ! -L "$dst" ]; then
+      # 1.2 (a folder holding the master link .agents/devkit/AGENTS.md) or a copy-mode
+      # install switching to symlink: DevKit links and untouched copies go; anything
+      # else in it is the user's and is backed up as .agents/devkit_old.
+      for item in "$dst"/* "$dst"/.devkit-files; do
+        [ -e "$item" ] || [ -L "$item" ] || continue
+        if [ -L "$item" ]; then
+          link_is_devkit_owned "$item" "$DEVKIT_ROOT" && rm -f "$item"
+        elif [ -d "$item" ]; then
+          is_unmodified_devkit_copy "$item" && rm -rf "$item"
+        elif [ "$(basename "$item")" = .devkit-files ] || is_recorded_devkit_file "$item"; then
+          rm -f "$item"
+        fi
+      done
+      rmdir "$dst" 2>/dev/null || { backup_conflict "$dst" "$DEVKIT_ROOT" || return 1; }
+    fi
+    devkit_place "$DEVKIT_ROOT" "$dst" symlink || return 1
+  else
+    [ -L "$dst" ] && link_is_devkit_owned "$dst" "$DEVKIT_ROOT" && rm -f "$dst"
+    mkdir -p "$dst"
+    for item in AGENTS.md rules bin; do
+      devkit_place "$DEVKIT_ROOT/$item" "$dst/$item" copy || return 1
+    done
+  fi
+  echo "  - .agents/devkit → DevKit ($mode)"
+}
+
+# devkit_remove_root_item <path> — a root rules/ skills/ commands/ an older install made:
+# a DevKit link or unmodified copy is removed; DevKit links placed inside a folder of the
+# project's own are removed from it; anything else stays.
+devkit_remove_root_item() {
+  local p="$1" l
+  if [ -L "$p" ]; then
+    link_is_devkit_owned "$p" "$DEVKIT_ROOT" && rm -f "$p" && echo "  - $(L "đã gỡ link gốc cũ" "removed the old root link") $(basename "$p")/ ($(L "nay ở" "now in") .agents/)"
     return 0
   fi
-  devkit_place "$src" "$dst" "$mode" || return 1
-  if [ "$mode" = "symlink" ]; then
-    echo "  - AGENTS.md linked to DevKit SSOT"
-  else
-    echo "  - AGENTS.md copied from DevKit SSOT"
+  [ -d "$p" ] || return 0
+  if [ -f "$p/$DEVKIT_MANIFEST" ] && is_unmodified_devkit_copy "$p"; then
+    rm -rf "$p" && echo "  - $(L "đã gỡ bản copy gốc cũ" "removed the old root copy") $(basename "$p")/"
+    return 0
   fi
+  for l in "$p"/*; do
+    [ -L "$l" ] && link_is_devkit_owned "$l" "$DEVKIT_ROOT" && rm -f "$l"
+  done
+  return 0
 }
 
 # ---- Profile skill filter (P1-5) -------------------------------------------------
@@ -838,17 +853,14 @@ list_local_tier() {
       name="$(basename "$item")"
       dst="$root_dir/$rel/$name"
       if [ -z "$rel" ]; then
-        # rules/ are not linked anywhere: the DevKit block of the agent files @-imports
-        # them (a link to a rule imported under its real name counts as that one).
-        if cat "$root_dir/CLAUDE.md" "$root_dir/AGENTS.md" "$root_dir/CODEX.md" 2>/dev/null \
-            | grep -o "@$DEVKIT_LOCAL_DIR/rules/[^ ]*" | sed 's/^@//' | while read -r imp; do
-                python3 -c 'import os,sys; a,b=(os.path.realpath(x) for x in sys.argv[1:3]); sys.exit(0 if a==b or a.startswith(b+os.sep) else 1)' \
-                  "$root_dir/$imp" "$item" && echo yes; done | grep -q yes; then
-          state="$(L "đang dùng (@ trong CLAUDE.md/AGENTS.md)" "active (@-imported in CLAUDE.md/AGENTS.md)")"
-        elif printf '%s' "$name" | grep -qE '_[0-9]{8}_[0-9]{6}'; then
-          state="$(L "bản lưu có ngày (không import)" "dated copy (not imported)")"
+        # rules/ are not linked anywhere: AGENTS.md loads their index (one line per
+        # section, .agents/context/rules-index.md — written by context_sync.py).
+        if printf '%s' "$name" | grep -qE '_[0-9]{8}_[0-9]{6}'; then
+          state="$(L "bản lưu có ngày (không đưa vào chỉ mục)" "dated copy (not indexed)")"
+        elif grep -q "rules/$name" "$root_dir/.agents/context/rules-index.md" 2>/dev/null; then
+          state="$(L "đang dùng (trong chỉ mục .agents/context/rules-index.md)" "active (indexed in .agents/context/rules-index.md)")"
         else
-          state="$(L "chưa import (chạy lại agent-kit init)" "not imported yet (re-run agent-kit init)")"
+          state="$(L "chưa vào chỉ mục (chạy lại agent-kit init)" "not indexed yet (re-run agent-kit init)")"
         fi
       elif [ -L "$dst" ] && [ "$(resolve_link_target "$dst")" = "$(cd "$(dirname "$item")" && pwd -P)/$name" ]; then
         state="$(L "đang dùng" "active")"

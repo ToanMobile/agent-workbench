@@ -3,9 +3,11 @@
 #   - Codex / Cursor never expand `@path` (Codex: raw AGENTS.md, codex-rs agents_md.rs;
 #     Cursor: AGENTS.md is plain markdown, `@file` works in .cursor/rules/*.mdc only), so
 #     every non-Claude block carries a plain "read these files first" instruction.
-#   - Gemini CLI loads GEMINI.md only (not AGENTS.md) and refuses imports whose real path
-#     is outside the project — every DevKit link — so GEMINI.md is generated and the
-#     DevKit folder is added to its workspace (.gemini/settings.json includeDirectories).
+#   - AGENTS.md is the only instruction file: Gemini CLI reads it through context.fileName
+#     (a GEMINI.md of the project's own is folded into it), and refuses imports whose real
+#     path is outside the project — every DevKit link — so the DevKit folder is added to its
+#     workspace (.gemini/settings.json includeDirectories) and the block imports only real
+#     files (.agents/context/).
 #   - Cursor gets an always-applied .cursor/rules/universal-agent-devkit.mdc.
 #   - Profiles filter MCP servers (essential_mcps + the universal ones) and subagents
 #     (exclude_agents); a server whose binary is not on PATH is never added.
@@ -36,36 +38,42 @@ X="$(newproj codex)"; printf '# Our rules\n- keep\n' > "$X/AGENTS.md"
 install "$X" -a codex -p android
 block "$X/AGENTS.md" | grep -q "$READ_HINT" \
   && ok "codex: AGENTS.md block tells a non-Claude agent to open the listed files" || fail "codex: no read instruction: $(block "$X/AGENTS.md" | sed -n 2,3p)"
-block "$X/AGENTS.md" | grep -q '@.agents/devkit/AGENTS.md' && block "$X/AGENTS.md" | grep -q '@.agents/active-profile/RULES.md' \
-  && ok "codex: master and profile rules are listed by path" || fail "codex: master/profile rules not listed"
+block "$X/AGENTS.md" | grep -q '@.agents/context/essentials.md' && block "$X/AGENTS.md" | grep -q '@.agents/context/profile-rules.md' \
+  && block "$X/AGENTS.md" | grep -q '.agents/devkit/AGENTS.md' && grep -q '^# Our rules' "$X/AGENTS.md" \
+  && ok "codex: essentials and profile rules listed by path, master on demand, own text kept" || fail "codex: master/profile rules not listed"
 [ -z "$(unresolved "$X" AGENTS.md)" ] && ok "codex: every listed path exists" || fail "codex unresolved: $(unresolved "$X" AGENTS.md | tr '\n' ' ')"
 
-# --- Gemini: GEMINI.md generated, DevKit folder in the workspace ---------------------------
+# --- Gemini: reads AGENTS.md (context.fileName), DevKit folder in the workspace ----------
 G="$(newproj gemini)"
 install "$G" -a gemini -p android
-[ -f "$G/GEMINI.md" ] && [ ! -L "$G/GEMINI.md" ] && ok "gemini: GEMINI.md is generated (Gemini CLI does not read AGENTS.md)" || fail "gemini: no GEMINI.md"
-block "$G/GEMINI.md" | grep -q '@AGENTS.md' && block "$G/GEMINI.md" | grep -q '@rules/core-rules.md' \
-  && block "$G/GEMINI.md" | grep -q '@.agents/active-profile/RULES.md' && block "$G/GEMINI.md" | grep -q "$READ_HINT" \
-  && ok "gemini: GEMINI.md imports master, core and profile rules, with the read-by-path fallback" || fail "gemini: block: $(block "$G/GEMINI.md" | tr '\n' '|' | cut -c1-300)"
-[ -z "$(unresolved "$G" GEMINI.md)" ] && ok "gemini: every import path exists" || fail "gemini unresolved: $(unresolved "$G" GEMINI.md | tr '\n' ' ')"
-python3 - "$G/.gemini/settings.json" "$DEVKIT_DIR" <<'PY' && ok "gemini: symlink mode adds the DevKit folder to context.includeDirectories" || fail "gemini: DevKit folder not in includeDirectories"
+[ ! -e "$G/GEMINI.md" ] && [ -f "$G/AGENTS.md" ] && [ ! -L "$G/AGENTS.md" ] && ok "gemini: no GEMINI.md, a project AGENTS.md instead" || fail "gemini: GEMINI.md generated or no AGENTS.md"
+gemini_names() { python3 -c 'import json,sys; n=json.load(open(sys.argv[1])).get("context",{}).get("fileName"); print(" ".join(n if isinstance(n,list) else [n or ""]))' "$1" 2>/dev/null; }
+[ "$(gemini_names "$G/.gemini/settings.json" | cut -d' ' -f1)" = "AGENTS.md" ] && ok "gemini: context.fileName reads AGENTS.md" || fail "gemini: context.fileName is '$(gemini_names "$G/.gemini/settings.json")'"
+block "$G/AGENTS.md" | grep -q '@.agents/context/essentials.md' && block "$G/AGENTS.md" | grep -q '@.agents/context/profile-rules.md' \
+  && block "$G/AGENTS.md" | grep -q "$READ_HINT" \
+  && ok "gemini: AGENTS.md imports essentials and profile rules, with the read-by-path fallback" || fail "gemini: block: $(block "$G/AGENTS.md" | tr '\n' '|' | cut -c1-300)"
+[ -z "$(unresolved "$G" AGENTS.md)" ] && ok "gemini: every import path exists" || fail "gemini unresolved: $(unresolved "$G" AGENTS.md | tr '\n' ' ')"
+python3 - "$G/.gemini/settings.json" "$DEVKIT_DIR" <<'PY_EOF' && ok "gemini: symlink mode adds the DevKit folder to context.includeDirectories" || fail "gemini: DevKit folder not in includeDirectories"
 import json, sys
 d = json.load(open(sys.argv[1]))
 sys.exit(0 if sys.argv[2] in d.get("context", {}).get("includeDirectories", []) else 1)
-PY
+PY_EOF
 install "$G" -a gemini -p android
-[ "$(grep -c 'universal-agent-devkit:start' "$G/GEMINI.md")" = 1 ] && [ ! -e "$G/GEMINI_old.md" ] \
-  && ok "gemini: re-install keeps one block and makes no backup of the generated file" || fail "gemini: re-install duplicated or backed up"
-python3 -c 'import json,sys; l=json.load(open(sys.argv[1]))["context"]["includeDirectories"]; sys.exit(0 if len(l)==len(set(l)) else 1)' "$G/.gemini/settings.json" \
-  && ok "gemini: includeDirectories not duplicated on re-install" || fail "gemini: includeDirectories duplicated"
+[ "$(grep -c 'universal-agent-devkit:start' "$G/AGENTS.md")" = 1 ] && [ ! -e "$G/GEMINI_old.md" ] && [ ! -e "$G/.gemini/settings_old.json" ] \
+  && ok "gemini: re-install keeps one block and makes no backup" || fail "gemini: re-install duplicated or backed up"
+python3 -c 'import json,sys; c=json.load(open(sys.argv[1]))["context"]; l=c["includeDirectories"]; f=c["fileName"]; sys.exit(0 if len(l)==len(set(l)) and len(f)==len(set(f)) else 1)' "$G/.gemini/settings.json" \
+  && ok "gemini: includeDirectories / fileName not duplicated on re-install" || fail "gemini: includeDirectories or fileName duplicated"
 GC="$(newproj gemini-copy)"
 install "$GC" -a gemini -p android -m copy
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(1 if d.get("context",{}).get("includeDirectories") else 0)' "$GC/.gemini/settings.json" 2>/dev/null \
-  && ok "gemini: copy mode writes no machine path into .gemini/settings.json" || fail "gemini: copy mode wrote includeDirectories"
+  && [ "$(gemini_names "$GC/.gemini/settings.json")" = "AGENTS.md" ] \
+  && ok "gemini: copy mode writes no machine path into .gemini/settings.json, still reads AGENTS.md" || fail "gemini: copy mode settings wrong"
 GO="$(newproj gemini-own)"; printf '# Our Gemini notes\n' > "$GO/GEMINI.md"
 install "$GO" -a gemini -p none
-grep -q '^# Our Gemini notes' "$GO/GEMINI.md" && [ -f "$GO/GEMINI_old.md" ] && block "$GO/GEMINI.md" | grep -q "$READ_HINT" \
-  && ok "gemini: an existing GEMINI.md keeps its content, is backed up once, gets the block" || fail "gemini: own GEMINI.md mishandled"
+[ ! -e "$GO/GEMINI.md" ] && grep -q '^# Our Gemini notes' "$GO/AGENTS.md" && [ -f "$GO/GEMINI_old.md" ] && block "$GO/AGENTS.md" | grep -q "$READ_HINT" \
+  && ok "gemini: an existing GEMINI.md is folded into AGENTS.md, backed up once" || fail "gemini: own GEMINI.md mishandled"
+install "$GO" -a gemini -p none
+[ "$(grep -c '^# Our Gemini notes' "$GO/AGENTS.md")" = 1 ] && ok "gemini: re-install does not fold twice" || fail "gemini: folded twice"
 
 # --- Cursor: always-applied project rule ------------------------------------------------
 C="$(newproj cursor)"; printf 'legacy rule\n' > "$C/.cursorrules"
@@ -73,8 +81,8 @@ install "$C" -a cursor -p web
 M="$C/.cursor/rules/universal-agent-devkit.mdc"
 [ "$(head -1 "$M" 2>/dev/null)" = "---" ] && sed -n '2,/^---$/p' "$M" | grep -qx 'alwaysApply: true' \
   && ok "cursor: .cursor/rules/universal-agent-devkit.mdc is always applied" || fail "cursor: no always-applied .mdc rule"
-block "$M" | grep -q '@rules/core-rules.md' && block "$M" | grep -q '@.agents/active-profile/RULES.md' && [ -z "$(unresolved "$C" .cursor/rules/universal-agent-devkit.mdc)" ] \
-  && ok "cursor: the rule includes core and profile rules, every path exists" || fail "cursor: .mdc block: $(block "$M" | tr '\n' '|' | cut -c1-200)"
+block "$M" | grep -q '@.agents/context/essentials.md' && block "$M" | grep -q '@.agents/context/profile-rules.md' && [ -z "$(unresolved "$C" .cursor/rules/universal-agent-devkit.mdc)" ] \
+  && ok "cursor: the rule includes essentials and profile rules, every path exists" || fail "cursor: .mdc block: $(block "$M" | tr '\n' '|' | cut -c1-200)"
 block "$C/.cursorrules" | grep -q "$READ_HINT" && ok "cursor: .cursorrules block carries the read instruction" || fail "cursor: .cursorrules block has @-imports only"
 install "$C" -a cursor -p web
 [ "$(grep -c '^alwaysApply' "$M")" = 1 ] && [ "$(grep -c 'universal-agent-devkit:start' "$M")" = 1 ] \

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test_uninstall.sh — `agent-kit uninstall` removes only what the installer added.
-# Install onto a project that already has its own CLAUDE.md, MCP server, settings hook
+# Install onto a project that already has its own CLAUDE.md (folded into AGENTS.md, put
+# back by uninstall), MCP server, settings hook
 # and a command clashing with a DevKit one; `uninstall --apply` + `restore-old --apply`
 # must give back exactly the original project (ignoring *_old backups and ledgers),
 # keep the user's hook, and leave no settings entry pointing at a removed hook.
@@ -91,8 +92,9 @@ for MODE in symlink copy; do
   orig="$(snapshot "$P")"
   bash "$DEVKIT/bin/install.sh" -t "$P" -y -p universal -a all -m "$MODE" >/dev/null 2>&1 \
     && ok "[$MODE] install" || bad "[$MODE] install failed"
-  [ "$(snapshot "$P")" != "$orig" ] && grep -q "universal-agent-devkit" "$P/CLAUDE.md" \
-    && ok "[$MODE] install changed the project" || bad "[$MODE] install changed nothing?"
+  [ "$(snapshot "$P")" != "$orig" ] && grep -q "universal-agent-devkit" "$P/AGENTS.md" && [ ! -e "$P/CLAUDE.md" ] \
+    && grep -q "Our own agent notes." "$P/AGENTS.md" \
+    && ok "[$MODE] install changed the project (CLAUDE.md folded into AGENTS.md)" || bad "[$MODE] install changed nothing?"
 
   before_dry="$(cd "$P" && find . -path ./.git -prune -o -print | LC_ALL=C sort | shasum)"
   out="$(bash "$DEVKIT/bin/agent-kit" uninstall "$P" 2>&1)"; rc=$?

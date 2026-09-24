@@ -137,20 +137,31 @@ def copy_local_config(main, wt):
     return copied
 
 
+def profile_file(root):
+    """<root>/.agents/active-profile.json, or the pre-1.3 <root>/.active-profile.json; None if neither."""
+    for p in (os.path.join(root, ".agents", "active-profile.json"), os.path.join(root, ".active-profile.json")):
+        if os.path.exists(p):
+            return p
+    return None
+
+
 def install_args(main, wt, profile):
     """The installer run that reproduces the main checkout's DevKit setup, or None."""
-    if not os.path.exists(os.path.join(main, ".active-profile.json")):
+    if not profile_file(main):
         return None                                   # the main checkout has no DevKit
-    if os.path.exists(os.path.join(wt, ".active-profile.json")):
-        return None                                   # committed with the project already
+    if os.path.isfile(os.path.join(wt, ".agents", "devkit", "rules", "essentials.md")):
+        return None                                   # copy mode, committed with the project already
+    # (.agents/active-profile.json is committed in every mode: it says which profile, not
+    #  that the DevKit is in place — a symlink install's links are never in git.)
     if not profile:
         try:
-            with open(os.path.join(main, ".active-profile.json")) as f:
+            with open(profile_file(main)) as f:
                 profile = json.load(f).get("profile") or "auto"
         except (OSError, ValueError):
             profile = "auto"
     agents = [a for a, marker in AGENT_MARKERS if os.path.exists(os.path.join(main, marker))] or ["claude"]
-    mode = "symlink" if os.path.islink(os.path.join(main, "AGENTS.md")) else "copy"
+    mode = "symlink" if (os.path.islink(os.path.join(main, ".agents", "devkit"))
+                         or os.path.islink(os.path.join(main, "AGENTS.md"))) else "copy"   # 1.2: AGENTS.md was the link
     return ["bash", os.path.join(DEVKIT, "bin", "install.sh"), f"--target={wt}", "--domain=auto",
             f"--mode={mode}", "-y", "--no-githooks", "-p", profile, "-a", ",".join(agents)]
 

@@ -1,6 +1,6 @@
 # AGENTS.md — Master Rules & Universal Multi-Agent Architecture
 
-Shared baseline and **Single Source of Truth (SSOT)** for 4 core AI coding platforms: **Claude Code (Anthropic)**, **OpenAI Codex / ChatGPT Canvas**, **Antigravity (Google / Gemini)**, and **Cursor IDE**.
+Shared baseline and **Single Source of Truth (SSOT)** for 5 core AI coding platforms: **Claude Code (Anthropic)**, **OpenAI Codex / ChatGPT Canvas**, **Antigravity (Google / Gemini)**, **Cursor IDE**, and **Grok (xAI)**.
 
 ---
 
@@ -110,17 +110,31 @@ Required order: plan → reviewer approves the *plan* → gaps found → revise 
 
 ## 7. Multi-Agent Integration Guide
 
-`AGENTS.md` is the shared rule file for every supported agent. What is **enforced by hooks** (runs without the model choosing to) differs per platform:
+In an installed project, `AGENTS.md` is the project's **only** instruction file (no `CLAUDE.md`, no `GEMINI.md`): the project's own text plus the DevKit block, which loads three generated real files from `.agents/context/` — `essentials.md` (`rules/essentials.md`), `profile-rules.md` (the profile's `RULES.md`) and `rules-index.md` (one line per section of `.agents/local/rules/`). They are copies, not links: an `@` import whose real path is outside the project is not loaded. Everything agent-related lives in `.agents/`; this DevKit is `.agents/devkit/`, so a path in this file such as `rules/core-rules.md` or `skills/qc/SKILL.md` is `.agents/devkit/rules/core-rules.md` there (skills are also at `.agents/skills/<name>/`). What is **enforced by hooks** (runs without the model choosing to) differs per platform:
 
 | Platform | Reads the rules | Enforced by hooks |
 |---|---|---|
-| **Claude Code** | `CLAUDE.md`: its DevKit block `@`-imports the master rules (`AGENTS.md`, or `.agents/devkit/AGENTS.md` when the project keeps its own), `rules/core-rules.md`, the profile rules (`.agents/active-profile/RULES.md`) and `.agents/local/rules`; `.claude/commands`, `.claude/agents` | All DevKit hooks (`.claude/settings.json`): session/prompt context, git, device (Bash and the `replicant-mcp` MCP tools) and destructive-`rm` guards, read-before-edit, regression tests, test/“fixed” evidence, fresh-context review, secrets |
+| **Claude Code** | `AGENTS.md` (read because the project has no `CLAUDE.md`; its `@` lines expand), `.claude/commands`, `.claude/agents` | All DevKit hooks (`.claude/settings.json`): session/prompt context, git, device (Bash and the `replicant-mcp` MCP tools) and destructive-`rm` guards, read-before-edit, regression tests, test/“fixed” evidence, fresh-context review, secrets |
 | **OpenAI Codex** | `AGENTS.md` as plain text (no `@` expansion): its DevKit block lists the rule files to open | `.codex/hooks.json` via `hooks/agent_bridge.sh`: session/prompt context, git, device & `rm` guards on shell commands, regression tests on Stop |
-| **Gemini CLI** | `GEMINI.md` (generated; Gemini does not read `AGENTS.md` by default), `.agents/skills`; symlink mode adds the DevKit folder to `context.includeDirectories` so its linked rules can be read | `.gemini/settings.json` via the bridge: same set as Codex |
+| **Gemini CLI** | `AGENTS.md` through `context.fileName` in `.gemini/settings.json` (its `@` lines expand), `.agents/skills`; symlink mode adds the DevKit folder to `context.includeDirectories` so `.agents/devkit/` can be read on demand | `.gemini/settings.json` via the bridge: same set as Codex |
 | **Cursor** | `AGENTS.md` + the always-applied rule `.cursor/rules/universal-agent-devkit.mdc` (`@`-includes the core, profile and project rules) | `.cursor/hooks.json` via the bridge: session context, git, device & `rm` guards, regression tests on stop |
+| **Grok** | The same `AGENTS.md` as every other agent. No Grok adapter and no `.grok/` directory | No DevKit files of its own. It sees skills, commands and hooks that are already installed for the other agents |
 | **Antigravity** | `AGENTS.md`, `.agents/skills` | none (no hook API) — rules only |
 
 Every platform also gets the git **pre-commit** gate (`agent-kit githooks install`, installed by `agent-kit init` in git projects). Hooks that read Claude's transcript (review, test evidence, claims) exist only on Claude Code.
+- **Living regression checklist — automatic parts and their off switches** (`=0` turns one off; `.agents/CHECKLIST.md`, `docs/plans/regression-checklist-v3.md`):
+
+  | Switch | What it does | Hook / tool |
+  |---|---|---|
+  | `BUG_CAPTURE` | bug prompt → `REPORTED` row | UserPromptSubmit |
+  | `INBOX_WATCH` | new `.agents/INBOX.md` lines → context, once each | UserPromptSubmit |
+  | `BUG_LINK_REMINDER` | hold Stop once when this session's bug/REQ has no test | Stop (`test_evidence_gate.sh`) |
+  | `AUTO_LINK` | link bug ↔ test on one-to-one RED→GREEN evidence (🤖) | Stop |
+  | `RED_PROOF` | sandbox RED-proof of this session's bugs/REQs (background) | Stop, `scripts/red_proof.py` |
+  | `FLAKY_RETRY` | re-run a failing suite once; green → 🔁 FLAKY (still FAIL) | `post-fix-gate`, nightly |
+  | `STALE_RERUN` | re-run light STALE suites in the background | SessionStart, `scripts/stale_rerun.py` |
+  | `EVIDENCE_KEEP` | logs kept per test (default 10) | `post-fix-gate` |
+  | `NIGHTLY_NOTIFY` | notification when a row turns red | `scripts/nightly.py` |
 - **Synchronization:** Run `./bin/agent-kit sync` anytime skills, commands, or hooks are updated.
 
 ### 7.1 Parallel Agents — One Git Worktree per Agent
@@ -182,7 +196,7 @@ The agent MUST trigger these skills from context by itself and NEVER ask the use
 
 | Giai Đoạn Vòng Đời | Kỹ Năng Tự Động Kích Hoạt | Ngữ Cảnh / Tình Huống Kỹ Thuật Tự Động Kích Hoạt | Hành Động Tự Động Của Agent |
 |---|---|---|---|
-| **0. Gateway & Context** | `context-enricher` | **MỌI YÊU CẦU ĐẦU VÀO / PROMPT NGẮN CỦA USER** | **[hook]** `prompt_context.sh` (UserPromptSubmit) tự chèn: loại việc, yêu cầu ngầm định (debounce ≥ 1000ms, a11y ≥ 48dp, main thread, PII), bẫy instincts khớp kèm số dòng, và luật paired RED→GREEN khi sửa bug; `session_context.sh` (SessionStart) nạp mục lục instincts + trạng thái checklist. Agent vẫn tự dò AST/Graph. |
+| **0. Gateway & Context** | `context-enricher` | **MỌI YÊU CẦU ĐẦU VÀO / PROMPT NGẮN CỦA USER** | **[hook]** `prompt_context.sh` (UserPromptSubmit) tự chèn: loại việc, yêu cầu ngầm định (debounce ≥ 1000ms, a11y ≥ 48dp, main thread, PII), bẫy instincts khớp kèm số dòng, và luật paired RED→GREEN khi sửa bug; prompt tả bug được tự ghi thành dòng REPORTED trong regression checklist (`agent-kit bugs add/link/drop`); `session_context.sh` (SessionStart) nạp mục lục instincts + trạng thái checklist. Agent vẫn tự dò AST/Graph. |
 | **0. Gateway & Context** | `session-handoff` | Phiên làm việc dài, context window > 50%, trước refactor lớn | Tự động tóm tắt tiến độ (checkpoint), dọn sạch ngữ cảnh thừa, chống suy thoái năng lực suy luận. |
 | **1. Discovery & Arch** | `codebase-memory` | Khám phá dự án, tìm symbol, hàm, route, truy vết blast radius, Cypher | **SSOT ĐỒ THỊ:** Tự động resolve symbol, trace inbound/outbound callers, truy vấn Cypher, hoặc fallback Read/Grep an toàn. |
 | **1. Discovery & Arch** | `spec-driven-development` | Tính năng mới phức tạp chạm $\ge 2$ module, $\ge 3$ files hoặc > 200 LOC | Tự động soạn thảo spec kỹ thuật, phân tích assumptions và edge cases trước khi code. |

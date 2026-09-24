@@ -891,7 +891,9 @@ ctx_case() { # name hook payload expect-substring ("" = expect no output)
 CTX_PROJ="$(mktemp -d "${TMPDIR:-/tmp}/hookctx.XXXXXX")"
 mkdir -p "${CTX_PROJ}/.agents"
 printf '### [INSTINCT-001] Chống bấm đúp nút thanh toán (double-click)\n- **Hiện tượng lỗi:** click nhanh gọi API hai lần, debounce thiếu\n' > "${CTX_PROJ}/.agents/instincts.md"
-printf '{"profile":"web"}' > "${CTX_PROJ}/.active-profile.json"
+printf '{"profile":"legacy"}' > "${CTX_PROJ}/.active-profile.json"
+ctx_case "session start reads a pre-1.3 root profile file" session_context.sh '{}' "profile: legacy"
+printf '{"profile":"web"}' > "${CTX_PROJ}/.agents/active-profile.json"
 ctx_case "session start lists the profile" session_context.sh '{}' "profile: web"
 ctx_case "session start maps traps with line numbers" session_context.sh '{}' "L1 \[INSTINCT-001\]"
 ctx_case "prompt: bug fix gets paired RED→GREEN rule" prompt_context.sh '{"prompt":"sửa lỗi nút thanh toán bị bấm 2 lần"}' "ĐỎ trước khi sửa"
@@ -1629,14 +1631,16 @@ else
   FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
   ✗ K-13 audit-gate/.gitignore missing"; printf '  FAIL %-46s\n' "K-13 audit-gate/.gitignore written"
 fi
-# K-14: the (opt-in) bash ledger never stores a raw secret.
+# K-14: the Bash write ledger records the window (session, start/end, time, tool id) and
+# never the command text — so a secret on the command line never reaches the ledger.
 run_case "K-14 bash_write_ledger records" bash_write_ledger.sh 0 \
-  '{"session_id":"k14","tool_input":{"command":"curl -H \"Authorization: Bearer abcdefghijklmnop\" -u me:hunter2 https://me:hunter2@x.io; export GH_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123"}}'
-if grep -qE 'abcdefghijklmnop|hunter2|ghp_' "${SANDBOX}/.claude/audit-gate/bash_ledger.jsonl" 2>/dev/null; then
-  FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
-  ✗ K-14 secret leaked into bash_ledger.jsonl"; printf '  FAIL %-46s\n' "K-14 secrets masked in ledger"
+  '{"session_id":"k14","tool_name":"Bash","hook_event_name":"PreToolUse","tool_use_id":"toolu_k14","tool_input":{"command":"curl -H \"Authorization: Bearer abcdefghijklmnop\" -u me:hunter2 https://me:hunter2@x.io; export GH_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123"}}'
+K14="${SANDBOX}/.claude/audit-gate/bash_write_ledger.tsv"
+if grep -q "^k14	start	[0-9]*\.[0-9]\{3\}	toolu_k14$" "${K14}" 2>/dev/null && ! grep -qE 'abcdefghijklmnop|hunter2|ghp_|curl' "${K14}"; then
+  PASS=$((PASS + 1)); printf '  ok   %-46s\n' "K-14 ledger row, no command text"
 else
-  PASS=$((PASS + 1)); printf '  ok   %-46s\n' "K-14 secrets masked in ledger"
+  FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ K-14 ledger row missing or command text leaked"; printf '  FAIL %-46s\n' "K-14 ledger row, no command text"
 fi
 # K-15: escape hatches that say "(logged)" leave a log line.
 run_case "K-15 PRECODE_GATE=0 honoured" precode_gate.sh 0 \

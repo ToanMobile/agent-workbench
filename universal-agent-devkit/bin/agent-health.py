@@ -146,6 +146,67 @@ print(json.dumps({"rules": len((matrix or {}).get("rules", [])), "problem": prob
 """
 
 
+def instruction_files(target: Path, score: Score):
+    """AGENTS.md is the one instruction file and everything agent-related lives in .agents/."""
+    if target.resolve() == BASE_DIR.resolve():
+        return
+    agents = target / "AGENTS.md"
+    txt = agents.read_text(encoding="utf-8", errors="replace") if agents.is_file() else ""
+    i, j = txt.find("universal-agent-devkit:start"), txt.find("universal-agent-devkit:end")
+    block = txt[i:j] if 0 <= i < j else ""
+    score.check(bool(block) and not agents.is_symlink(),
+                tr("AGENTS.md của dự án có khối DevKit", "The project's AGENTS.md carries the DevKit block"),
+                tr("AGENTS.md thiếu khối DevKit (hoặc vẫn là link master) — chạy `agent-kit init`",
+                   "AGENTS.md has no DevKit block (or is still the master link) — run `agent-kit init`"))
+    # Claude Code expands an import only when its REAL path is inside the project (unless
+    # the user approved external imports); Gemini CLI refuses it as path traversal.
+    root = str(target.resolve()) + os.sep
+    bad = []
+    for imp in re.findall(r"@([^\s`)]+)", block):
+        f = target / imp
+        if not f.is_file():
+            bad.append(f"@{imp} ({tr('không có file', 'no file')})")
+        elif not str(f.resolve()).startswith(root):
+            bad.append(f"@{imp} ({tr('trỏ ra ngoài dự án — agent không nạp', 'points outside the project — not loaded')})")
+    if not score.check(bool(block) and not bad,
+                       tr("Mọi @-import của AGENTS.md là file thật trong dự án (được nạp lúc khởi động)",
+                          "Every AGENTS.md @-import is a real file in the project (loaded at startup)"),
+                       tr(f"@-import không nạp được: {bad[:4]}", f"@-imports that do not load: {bad[:4]}")):
+        score.fatal.append(tr("luật DevKit không được nạp lúc khởi động", "DevKit rules are not loaded at startup"))
+    if (target / ".claude" / "settings.json").is_file():
+        shadow = target / "CLAUDE.md"
+        if not score.check(not (shadow.exists() or shadow.is_symlink()),
+                           tr("Không có CLAUDE.md — Claude Code đọc AGENTS.md", "No CLAUDE.md — Claude Code reads AGENTS.md"),
+                           tr("Có CLAUDE.md: Claude Code đọc nó và BỎ QUA AGENTS.md — chạy `agent-kit init` để gộp",
+                              "CLAUDE.md exists: Claude Code reads it and SKIPS AGENTS.md — run `agent-kit init` to fold it")):
+            score.fatal.append(tr("CLAUDE.md che AGENTS.md", "CLAUDE.md shadows AGENTS.md"))
+    gset, _ = load_json(target / ".gemini" / "settings.json")
+    if isinstance(gset, dict):
+        names = (gset.get("context") or {}).get("fileName")
+        names = [names] if isinstance(names, str) else (names or [])
+        score.check("AGENTS.md" in names and not (target / "GEMINI.md").exists(),
+                    tr("Gemini đọc AGENTS.md (context.fileName)", "Gemini reads AGENTS.md (context.fileName)"),
+                    tr("Gemini chưa đọc AGENTS.md (thiếu context.fileName hoặc còn GEMINI.md) — chạy `agent-kit init`",
+                       "Gemini does not read AGENTS.md (no context.fileName, or a GEMINI.md left) — run `agent-kit init`"))
+    if not score.check((target / ".agents" / "devkit" / "rules" / "essentials.md").is_file(),
+                       tr("`.agents/devkit` trỏ tới DevKit", "`.agents/devkit` reaches the DevKit"),
+                       tr("`.agents/devkit` thiếu/hỏng — master rules và post-fix gate không tới được",
+                          "`.agents/devkit` missing/broken — master rules and the post-fix gate are unreachable")):
+        score.fatal.append(tr("thiếu .agents/devkit", ".agents/devkit missing"))
+    res = subprocess.run([sys.executable, str(BASE_DIR / "scripts" / "context_sync.py"), str(target), "--check"],
+                         capture_output=True, text=True)
+    score.check(res.returncode == 0, tr("`.agents/context/` khớp DevKit, profile và luật dự án",
+                                        "`.agents/context/` matches the DevKit, profile and project rules"),
+                tr(f"`.agents/context/` cũ ({res.stdout.strip()}) — chạy `agent-kit init`",
+                   f"`.agents/context/` is stale ({res.stdout.strip()}) — run `agent-kit init`"))
+    legacy = [n for n in ("rules", "skills", "commands", ".active-profile.json", "GEMINI.md")
+              if (target / n).is_symlink() and str((target / n).resolve()).startswith(str(BASE_DIR.resolve()))
+              or (n in (".active-profile.json",) and (target / n).is_file())]
+    score.check(not legacy, tr("Gốc dự án sạch: mọi thứ của agent nằm trong .agents/", "Project root is clean: agent material lives in .agents/"),
+                tr(f"Còn đồ DevKit cũ ở gốc: {legacy} — chạy `agent-kit init`", f"Old DevKit items at the root: {legacy} — run `agent-kit init`"),
+                warn_only=True)
+
+
 def project_wiring(target: Path, score: Score):
     """What the project actually runs with — the DevKit's own dirs can be fine while the
     project's hooks are missing, its imports dangle or the gate distrusts its matrix."""
@@ -154,30 +215,41 @@ def project_wiring(target: Path, score: Score):
     for ev in ((settings or {}).get("hooks") or {}).values():
         for m in ev:
             for h in m.get("hooks", []):
-                for rel in re.findall(r"/(\.claude/hooks/[\w.-]+)", h.get("command", "")):
+                for rel in re.findall(r"(?:^|[\s\"'/])(\.claude/hooks/[\w.-]+)", h.get("command", "")):
                     if not (target / rel).exists():
                         missing.append(rel)
+    if missing:
+        # A registered hook with no file exits 127 on every call — non-blocking, so every
+        # guard and gate is silently off. Never a PASS.
+        score.fatal.append(tr("hook đăng ký nhưng thiếu file", "registered hooks missing"))
     score.check(settings is not None and not missing,
                 tr("Mọi hook trong `.claude/settings.json` đều tồn tại", "Every hook in `.claude/settings.json` exists"),
                 tr(f"Hook đăng ký nhưng không có file (chạy lại agent-kit init): {sorted(set(missing))[:5]}",
                    f"Registered hooks with no file (re-run agent-kit init): {sorted(set(missing))[:5]}"))
+    # Every DevKit command and skill the profile allows is linked in (an untracked link
+    # removed by a merge or checkout leaves /qc, /fixbugs … dead without any error).
+    prof, _ = load_json(target / ".agents" / "active-profile" / "profile.json")
+    excluded = set((prof or {}).get("exclude_skills", []))
+    gone = []
+    for c in sorted((BASE_DIR / "commands").glob("*.md")):
+        skill = os.path.basename(os.path.dirname(os.path.realpath(c))) if c.is_symlink() else None
+        if skill not in excluded and not os.path.lexists(target / ".claude" / "commands" / c.name):
+            gone.append(f".claude/commands/{c.name}")
+    for sk in sorted(p for p in (BASE_DIR / "skills").iterdir() if (p / "SKILL.md").is_file()):
+        if sk.name not in excluded and not os.path.lexists(target / ".agents" / "skills" / sk.name):
+            gone.append(f".agents/skills/{sk.name}")
+    if gone:
+        score.fatal.append(tr("lệnh/skill DevKit bị mất", "DevKit commands/skills missing"))
+    score.check(not gone, tr("Mọi lệnh và skill DevKit của profile đều có mặt", "Every DevKit command and skill of the profile is in place"),
+                tr(f"{len(gone)} lệnh/skill DevKit bị mất (chạy lại agent-kit init): {gone[:5]}",
+                   f"{len(gone)} DevKit commands/skills missing (re-run agent-kit init): {gone[:5]}"))
     broken = []
     for d in (".claude/hooks", ".claude/commands", ".claude/agents", ".agents/skills", ".agents"):
         if (target / d).is_dir():
             broken += [f"{d}/{e.name}" for e in (target / d).iterdir() if e.is_symlink() and not e.exists()]
     score.check(not broken, tr("Không có link hỏng trong .claude/ và .agents/", "No broken links in .claude/ and .agents/"),
                 tr(f"Link hỏng: {broken[:5]}", f"Broken links: {broken[:5]}"))
-    dangling = []
-    for name in ("CLAUDE.md", "AGENTS.md", "CODEX.md"):
-        f = target / name
-        if f.is_file():
-            txt = f.read_text(encoding="utf-8", errors="replace")
-            i, j = txt.find("universal-agent-devkit:start"), txt.find("universal-agent-devkit:end")
-            for imp in re.findall(r"@([^\s`)]+)", txt[i:j] if 0 <= i < j else ""):
-                if not (target / imp).exists():
-                    dangling.append(f"{name}: @{imp}")
-    score.check(not dangling, tr("Mọi @-import trong khối DevKit đều có file", "Every @-import of the DevKit block resolves"),
-                tr(f"@-import không có file: {dangling[:5]}", f"@-imports with no file: {dangling[:5]}"))
+    instruction_files(target, score)
     res = subprocess.run([sys.executable, "-c", MATRIX_TRUST_PY, str(BASE_DIR / "bin" / "post-fix-gate.py")],
                          capture_output=True, text=True, cwd=str(target), env={**os.environ, "CLAUDE_PROJECT_DIR": str(target)})
     try:
@@ -193,7 +265,7 @@ def project_wiring(target: Path, score: Score):
     out = subprocess.run(["git", "-C", str(target), "ls-files", "-o", "--exclude-standard", "-z"], capture_output=True, text=True)
     devkit_real = str(BASE_DIR.resolve())
     leaked = [f for f in out.stdout.split("\0") if f and (target / f).is_symlink()
-              and str((target / f).resolve()).startswith(devkit_real + os.sep)] if out.returncode == 0 else []
+              and (str((target / f).resolve()) + os.sep).startswith(devkit_real + os.sep)] if out.returncode == 0 else []
     score.check(not leaked, tr("Không có link DevKit (đường dẫn máy này) lọt vào `git status`", "No DevKit link (this machine's paths) shows up in `git status`"),
                 tr(f"{len(leaked)} link DevKit chưa bị loại khỏi git (chạy lại agent-kit init): {leaked[:3]}",
                    f"{len(leaked)} DevKit links not excluded from git (re-run agent-kit init): {leaked[:3]}"), warn_only=True)
@@ -253,7 +325,9 @@ def main(argv=None):
     profiles = sorted(p.name for p in (BASE_DIR / "profiles").iterdir()
                       if (p / "profile.json").is_file()) if (BASE_DIR / "profiles").is_dir() else []
     info(tr(f"Có {len(profiles)} profile trong DevKit: {', '.join(profiles)}", f"{len(profiles)} profiles in the DevKit: {', '.join(profiles)}"))
-    active_file = target / ".active-profile.json"
+    active_file = target / ".agents" / "active-profile.json"
+    if not active_file.is_file():
+        active_file = target / ".active-profile.json"          # before DevKit 1.3
     active_id, profile_meta = None, {}
     if active_file.is_file():
         data, err = load_json(active_file)

@@ -22,7 +22,7 @@ _agent_kit() {
   COMPREPLY=()
 
   if [ "${COMP_CWORD}" -eq 1 ]; then
-    words="init install-global profile health gate githooks bugs learn clean matrix worktree
+    words="init install-global profile health gate githooks bugs req nightly memory-stats learn clean matrix worktree
            index-memory test sync list commands list-old restore-old uninstall completion help"
     COMPREPLY=( $(compgen -W "${words}" -- "${cur}") )
     return 0
@@ -65,7 +65,13 @@ _agent_kit() {
     completion)
       COMPREPLY=( $(compgen -W "bash zsh" -- "${cur}") ) ;;
     bugs)
-      [ "${COMP_CWORD}" -eq 2 ] && COMPREPLY=( $(compgen -W "import show" -- "${cur}") ) \
+      [ "${COMP_CWORD}" -eq 2 ] && COMPREPLY=( $(compgen -W "add link drop import show" -- "${cur}") ) \
+        || COMPREPLY=( $(compgen -f -- "${cur}") ) ;;
+    nightly)
+      [ "${COMP_CWORD}" -eq 2 ] && COMPREPLY=( $(compgen -W "add remove install uninstall status run" -- "${cur}") ) \
+        || COMPREPLY=( $(compgen -d -- "${cur}") ) ;;
+    req|reqs)
+      [ "${COMP_CWORD}" -eq 2 ] && COMPREPLY=( $(compgen -W "add link drop" -- "${cur}") ) \
         || COMPREPLY=( $(compgen -f -- "${cur}") ) ;;
     *)
       COMPREPLY=( $(compgen -f -- "${cur}") ) ;;

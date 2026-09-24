@@ -5,7 +5,7 @@
 #
 # Runs `post-fix-gate.py --run-tests --task <session>` when there are uncommitted
 # changes. The gate re-runs every regression test whose watch_files match the
-# change, records real PASS/FAIL into .agents/regression_checklist.md, and refuses
+# change, records real PASS/FAIL into .agents/CHECKLIST.md (via the checklist JSON), and refuses
 # PASS for changed source files no test watches (UNCOVERED).
 #
 # BLOCK (exit 2, reason → Claude) when the gate says REJECT (exit 1) or
@@ -114,7 +114,8 @@ def emit(obj):
 
 status = git("status", "--porcelain=v1", "-z", "-uall")
 # Only our own bookkeeping changed (audit-gate state, the checklist itself) => nothing to gate.
-own = (".claude/audit-gate/", ".agents/regression_status.json", ".agents/regression_checklist.md")
+own = (".claude/audit-gate/", ".agents/regression_status.json", ".agents/regression_checklist.md",
+       ".agents/CHECKLIST.md", ".agents/INBOX.md", ".agents/evidence/", ".agents/archive/")
 entries = [e for e in status.decode("utf-8", "replace").split("\0") if len(e) > 3 and not e[3:].startswith(own)]
 if not entries and not probe:
     sys.exit(0)
@@ -219,7 +220,8 @@ if not real.startswith(toplevel + os.sep) or is_sample:
 # Fingerprint of the USER change only — the gate rewrites the checklist on every run,
 # which must not make the same change look new (that would defeat the loop guard).
 excl = [":(exclude).claude/audit-gate", ":(exclude).agents/regression_status.json",
-        ":(exclude).agents/regression_checklist.md"]
+        ":(exclude).agents/regression_checklist.md", ":(exclude).agents/CHECKLIST.md",
+        ":(exclude).agents/INBOX.md", ":(exclude).agents/evidence", ":(exclude).agents/archive"]
 fp = hashlib.sha256("\0".join(entries).encode() + git("diff", "HEAD", "--binary", "--", ".", *excl)).hexdigest()[:20]
 state_file = os.path.join(os.path.dirname(log), "regression_gate.state.json")
 try:
@@ -335,7 +337,7 @@ for f in touched[:10]:
                  "không sửa test cũ để lách" % (f, f))
 for f in uncovered[:10]:
     lines.append("  - UNCOVERED:%s — file code đổi nhưng chưa test hồi quy nào theo dõi" % f)
-lines.append("Checklist: %s · báo cáo: %s" % (summary.get("checklist", ".agents/regression_checklist.md"), summary.get("report", "-")))
+lines.append("Checklist: %s · báo cáo: %s" % (summary.get("checklist", ".agents/CHECKLIST.md"), summary.get("report", "-")))
 
 attempts = state.setdefault("attempts", {})
 attempts[fp] = attempts.get(fp, 0) + 1

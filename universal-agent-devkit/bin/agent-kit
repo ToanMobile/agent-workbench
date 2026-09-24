@@ -45,6 +45,7 @@ case "$CMD" in
     echo "  🧪 Running Hook Contract Tests..."
     echo "================================================================="
     bash "$DEVKIT_ROOT/hooks/tests/hook_contract_test.sh" || exit 1
+    bash "$DEVKIT_ROOT/hooks/tests/or_ported_contract_test.sh" || exit 1
     echo
     echo "================================================================="
     echo "  📋 Running Hook Contract Facts (registries, headers, wiring)..."
@@ -103,12 +104,47 @@ case "$CMD" in
     bash "$DEVKIT_ROOT/scripts/githooks.sh" "${1:-status}" "${2:-$PWD}"
     ;;
   bugs)
-    # bugs import <table> [--dry-run] | bugs [show] — past bugs in the regression checklist
+    # bugs add "<title>" [opts] | link <BUG-ID> <test> | drop <BUG-ID> | import <table> [--dry-run] | [show]
+    # — bugs in the regression checklist
     shift || true
+    RC_PROJECT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+    RC=(python3 "$DEVKIT_ROOT/bin/regression_checklist.py" --project "$RC_PROJECT")
     case "${1:-show}" in
-      import) shift; python3 "$DEVKIT_ROOT/bin/regression_checklist.py" --project "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" import "$@" ;;
-      show) python3 "$DEVKIT_ROOT/bin/regression_checklist.py" --project "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" show ;;
-      *) echo "agent-kit bugs: import <table> [--dry-run] | show" >&2; exit 2 ;;
+      add) shift; "${RC[@]}" add "$@" ;;
+      link) shift; "${RC[@]}" bug-link "$@" ;;
+      drop) shift; "${RC[@]}" drop "$@" ;;
+      import) shift; "${RC[@]}" import "$@" ;;
+      show) "${RC[@]}" show ;;
+      *) echo "agent-kit bugs: add \"<title>\" [--severity S] [--module M] [--evidence E] [--test REF] [--fixed] [--id BUG-ID]" >&2
+         echo "                | link <BUG-ID> <test> | drop <BUG-ID> | import <table> [--dry-run] | show" >&2; exit 2 ;;
+    esac
+    ;;
+  req|reqs)
+    # req add "<title>" --criterion … [--module M] [--source TEXT] [--inbox KEY] [--reason R] |
+    #     link <REQ-ID> <n|all> <test> | drop <REQ-ID> — requirements in the regression checklist
+    shift || true
+    RC_PROJECT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+    RC=(python3 "$DEVKIT_ROOT/bin/regression_checklist.py" --project "$RC_PROJECT")
+    case "${1:-}" in
+      add) shift; "${RC[@]}" req-add "$@" ;;
+      link) shift; "${RC[@]}" req-link "$@" ;;
+      drop) shift; "${RC[@]}" drop "$@" ;;
+      *) echo "agent-kit req: add \"<title>\" --criterion \"…\" [--criterion …] [--module M] [--source TEXT] [--inbox KEY] [--reason R]" >&2
+         echo "               | link <REQ-ID> <n|all> <test> | drop <REQ-ID>" >&2; exit 2 ;;
+    esac
+    ;;
+  memory-stats|recall)
+    # memory-stats [project…] [--json] [--top N] — traps/rules the prompt hook surfaces on the
+    # user's real prompts (replayed from Claude transcripts, read-only) and how often they are read
+    shift || true
+    python3 "$DEVKIT_ROOT/scripts/memory_stats.py" "$@"
+    ;;
+  nightly)
+    # nightly run | add [path] | remove [path] | install [--hour H] [--minute M] | uninstall | status
+    shift || true
+    case "${1:-status}" in
+      add|remove) python3 "$DEVKIT_ROOT/scripts/nightly.py" "$1" "${2:-${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}}" ;;
+      *) python3 "$DEVKIT_ROOT/scripts/nightly.py" "$@" ;;
     esac
     ;;
   learn)
@@ -190,8 +226,34 @@ Commands:
   githooks [install|uninstall|status] [path]
                       Git pre-commit hook running the gate's static checks on every
                       commit, also outside any agent (skip once: git commit --no-verify)
+  bugs add "<title>" [--severity S] [--module M] [--evidence E] [--test REF] [--fixed] [--id BUG-ID]
+                      One new bug in the regression checklist; prints its BUG id. OPEN until
+                      fixed, NEEDS_TEST until a test is linked, never PASS. Same title + module
+                      → the existing row. --id confirms a REPORTED row (bug prompts land there
+                      automatically, from the UserPromptSubmit hook)
+  bugs link <BUG-ID> <test>
+                      Link the RED→GREEN test (matrix id, test file or class → the matrix suite
+                      that runs it). NOT_RUN until the next real gate run
+  bugs drop <BUG-ID>  Remove a bug row (a REPORTED prompt that was no bug, a duplicate)
+  req add "<title>" --criterion "…" [--criterion …] [--module M] [--source TEXT] [--inbox KEY] [--reason R]
+                      A requirement with acceptance criteria, written BEFORE the code and locked
+                      by hash (changing them needs --reason). NEEDS_TEST until every criterion has
+                      a test; PASS only after a real run and a RED-proof. --inbox takes over an
+                      .agents/INBOX.md item (the prompt hook shows new ones with their key)
+  req link <REQ-ID> <n|all> <test>
+                      Link criterion n (or all) to a test: matrix id, test file or class
+  req drop <REQ-ID>   Remove a REQ row
+  memory-stats [path…] [--json] [--top N]
+                      Failure-memory recall on REAL prompts: replays the user's typed prompts from
+                      the project's Claude transcripts through the current prompt hook (read-only):
+                      % that get a trap / a project rule, traps never shown, and how often a trap
+                      the hook printed was then opened (live log: .claude/audit-gate/surfaced.jsonl)
+  nightly add [path] | remove [path] | install [--hour H] [--minute M] | uninstall | status | run
+                      Local nightly job (macOS LaunchAgent, default 02:17): every suite of each
+                      added project for real (Gradle/Unity too), FAIL re-run once (FLAKY), pending
+                      RED-proofs; a notification only when a row turns red; weekly one-line report
   bugs import <table> [--dry-run]
-                      Past bugs into the regression checklist (.agents/regression_checklist.md):
+                      Past bugs into the regression checklist (.agents/CHECKLIST.md):
                       bug_id | title | severity | fixed? | module | test_id_or_NONE | evidence
                       (tab or | separated). Never PASS on import — shows which bugs no test guards
   learn "<title>" [--cause TEXT] [--rule TEXT] [--check CMD] [--dry-run]

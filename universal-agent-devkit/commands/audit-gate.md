@@ -54,7 +54,7 @@ Exit code:
 `--staged`: chỉ chạy 6 kiểm tra tĩnh trên nội dung đã `git add` (đúng thứ sẽ được commit) — không chạy test, không probe thiết bị, không ghi báo cáo. Sạch ⇒ exit `2` (test chưa chạy), không bao giờ là PASS. Đây là thứ git pre-commit hook của `agent-kit githooks install` chạy.
 
 ### Regression checklist (tự động, xuyên suốt các task)
-Mỗi lần gate chạy, nó cập nhật `.agents/regression_checklist.md` (bảng để đọc) và `.agents/regression_status.json` (dữ liệu gốc):
+Mỗi lần gate chạy, nó cập nhật `.agents/CHECKLIST.md` (dashboard; `.agents/regression_checklist.md` là link tới nó) và `.agents/regression_status.json` (dữ liệu gốc):
 - Mỗi test trong `regression_matrix.json` là một dòng: ✅ PASS / ❌ FAIL / ⏳ chưa chạy, kèm thời điểm, task (`--task T0001-...`), commit và 10 lần chạy gần nhất.
 - **PASS/FAIL chỉ ghi khi gate chạy test thật (`--run-tests`)** — dry-run không đổi kết quả; không có lệnh nào để tự đánh dấu PASS.
 - File code thay đổi mà không rule nào của matrix bao phủ ⇒ dòng `⚠️ UNCOVERED:<file>`. Gắn vào test thật: `python3 bin/regression_checklist.py link UNCOVERED:<file> <TEST-ID>`.

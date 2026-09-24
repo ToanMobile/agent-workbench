@@ -73,7 +73,8 @@ done
 P="$(newproj p_all)"
 for i in 1 2 3; do bash "$INSTALL" -t "$P" -a all -p none -m copy >"$TMP/out" 2>&1 || fail "I-7 run $i exited non-zero"; done
 [ "$(count_old "$P")" = 0 ] && ok "I-7 -a all -m copy x3 on a fresh project: zero *_old" || { fail "I-7 created *_old:"; find "$P" -maxdepth 4 -name "*_old*"; }
-grep -q "universal-agent-devkit:start" "$P/AGENTS.md" && fail "I-7 DevKit AGENTS.md copy got a block injected into itself" || ok "I-7 copied AGENTS.md not self-injected"
+grep -q "universal-agent-devkit:start" "$P/.agents/devkit/AGENTS.md" && fail "I-7 DevKit AGENTS.md copy got a block injected into itself" || ok "I-7 copied master (.agents/devkit/AGENTS.md) not self-injected"
+[ "$(grep -c "universal-agent-devkit:start" "$P/AGENTS.md")" = 1 ] && ok "I-7 the project's AGENTS.md carries the block exactly once" || fail "I-7 project AGENTS.md block count wrong"
 
 # ---------------------------------------------------------------- I-8 copy-mode upgrade
 P="$(newproj p_upg)"
@@ -83,7 +84,7 @@ echo "# devkit v2" >> "$DK/hooks/claim_check.sh"
 echo "<!-- devkit v2 -->" >> "$DK/AGENTS.md"
 bash "$INSTALL" -t "$P" -a all -p none -m copy >"$TMP/out" 2>&1
 [ "$(count_old "$P")" = 0 ] && ok "I-8 upgrade of untouched copies creates no *_old" || { fail "I-8 upgrade created *_old:"; find "$P" -maxdepth 4 -name "*_old*"; }
-grep -q "devkit v2" "$P/.claude/commands/fix.md" && grep -q "devkit v2" "$P/.claude/hooks/claim_check.sh" && grep -q "devkit v2" "$P/AGENTS.md" \
+grep -q "devkit v2" "$P/.claude/commands/fix.md" && grep -q "devkit v2" "$P/.claude/hooks/claim_check.sh" && grep -q "devkit v2" "$P/.agents/devkit/AGENTS.md" \
   && ok "I-8 upgrade delivered the new command, hook and AGENTS.md" || fail "I-8 upgrade did not update the copies"
 echo "MY TEAM EDIT" >> "$P/.claude/commands/fix.md"
 bash "$INSTALL" -t "$P" -a claude -p none -m copy >"$TMP/out" 2>&1
@@ -95,9 +96,9 @@ P="$(newproj p_cli)"; mkdir -p "$P/commands"; echo "module.exports = 1" > "$P/co
 bash "$INSTALL" -t "$P" -a claude -p none >"$TMP/out" 2>&1; rc=$?
 [ "$rc" = 0 ] && [ -f "$P/commands/build.js" ] && [ ! -L "$P/commands" ] && [ ! -e "$P/commands_old" ] \
   && ok "O4 project commands/build.js left in place, no commands_old" || fail "O4 commands/ was moved (rc=$rc)"
-[ -L "$P/commands/fix.md" ] && [ -e "$P/commands/audit-gate.md" ] \
-  && ok "O4 DevKit commands placed inside the project's commands/ (DevKit paths resolve)" || fail "O4 DevKit commands missing from commands/"
-grep -q "source code" "$TMP/out" && ok "O4 installer says commands/ is kept as source code" || fail "O4 no notice printed"
+[ "$(ls -A "$P/commands")" = "build.js" ] \
+  && ok "O4 nothing DevKit is written into the project's commands/ (the DevKit lives in .agents/devkit)" || fail "O4 DevKit items leaked into commands/: $(ls -A "$P/commands" | tr '\n' ' ')"
+[ -e "$P/.agents/devkit/rules/essentials.md" ] && ok "O4 .agents/devkit reaches the DevKit" || fail "O4 .agents/devkit missing"
 
 # ---------------------------------------------------------------- L-6 / K-13 / O5 git projects
 P="$(newproj p_git)"; mkdir "$P/.git"

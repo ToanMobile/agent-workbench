@@ -18,7 +18,7 @@ BEFORE="$(devkit_state)"
 # P-1: default target = git root of $PWD, not the DevKit.
 mkdir -p "$TMP/proj/sub" && git -C "$TMP/proj" init -q
 (cd "$TMP/proj/sub" && python3 "$CFG" -p android >/dev/null 2>&1) || fail "P-1: apply in project exited non-zero"
-[ -f "$TMP/proj/.active-profile.json" ] && ok "P-1: .active-profile.json written to git root of \$PWD" || fail "P-1: profile not written to project"
+[ -f "$TMP/proj/.agents/active-profile.json" ] && ok "P-1: .agents/active-profile.json written to git root of \$PWD" || fail "P-1: profile not written to project"
 [ -f "$TMP/proj/.agents/regression_matrix.active.json" ] && ok "matrix written to .agents/regression_matrix.active.json" || fail "matrix not in .agents/"
 [ ! -e "$TMP/proj/templates" ] && ok "no templates/ created in project root" || fail "templates/ created in project root"
 [ "$(devkit_state)" = "$BEFORE" ] && ok "P-1: DevKit untouched" || fail "P-1: DevKit state changed"
@@ -32,7 +32,7 @@ mkdir -p "$TMP/proj/sub" && git -C "$TMP/proj" init -q
 link="$(readlink "$TMP/proj/.agents/active-profile")"
 case "$link" in /*) fail "P-4: active-profile link is absolute ($link)";; *) ok "P-4: active-profile link is relative ($link)";; esac
 [ -f "$TMP/proj/.agents/active-profile/profile.json" ] && ok "P-4: relative link resolves" || fail "P-4: relative link broken"
-grep -q '"updated_at": "2026-09-23T10:00:00Z"' "$TMP/proj/.active-profile.json" && fail "P-4: updated_at is hardcoded" || ok "P-4: updated_at is not the hardcoded constant"
+grep -q '"updated_at": "2026-09-23T10:00:00Z"' "$TMP/proj/.agents/active-profile.json" && fail "P-4: updated_at is hardcoded" || ok "P-4: updated_at is not the hardcoded constant"
 
 # P-2: real user dir / user-written matrix are backed up as X_old, not destroyed.
 mkdir -p "$TMP/p3/.agents/active-profile" && echo "my notes" > "$TMP/p3/.agents/active-profile/NOTES.md"
@@ -45,6 +45,9 @@ grep -q '"Mine"' "$TMP/p3/.agents/regression_matrix.active.json" 2>/dev/null && 
 before="$(cksum < "$TMP/p3/.agents/regression_matrix.active.json")"
 python3 "$CFG" -p game -t "$TMP/p3" >/dev/null 2>&1
 [ "$(cksum < "$TMP/p3/.agents/regression_matrix.active.json")" = "$before" ] && ok "P-2: re-applying the profile (re-init) keeps it byte-identical" || fail "P-2: re-init changed the user matrix"
+ap_before="$(cksum < "$TMP/p3/.agents/active-profile.json")"; sleep 1
+python3 "$CFG" -p game -t "$TMP/p3" >/dev/null 2>&1
+[ "$(cksum < "$TMP/p3/.agents/active-profile.json")" = "$ap_before" ] && ok "re-applying the same profile keeps .agents/active-profile.json byte-identical (no updated_at churn)" || fail ".active-profile.json rewritten on re-init"
 # Switching between DevKit profiles again must not create more backups.
 n_before="$(ls "$TMP/p3/.agents" | grep -c _old)"
 python3 "$CFG" -p android -t "$TMP/p3" >/dev/null 2>&1
@@ -52,13 +55,13 @@ n_after="$(ls "$TMP/p3/.agents" | grep -c _old)"
 [ "$n_before" = "$n_after" ] && ok "P-2: switching DevKit profiles creates no extra *_old" || fail "P-2: spurious *_old on profile switch ($n_before -> $n_after)"
 
 # P-3: positional, case-insensitive, aliases; invalid -> non-zero.
-python3 "$CFG" Android -t "$TMP/p4" >/dev/null 2>&1 && grep -q '"profile": "android"' "$TMP/p4/.active-profile.json" \
+python3 "$CFG" Android -t "$TMP/p4" >/dev/null 2>&1 && grep -q '"profile": "android"' "$TMP/p4/.agents/active-profile.json" \
   && ok "P-3: positional + case-insensitive (Android)" || fail "P-3: positional/case-insensitive rejected"
 for alias in xehoi blender all swift; do
   python3 "$CFG" -p "$alias" -t "$TMP/p5" >/dev/null 2>&1 && ok "P-3: alias '$alias' accepted" || fail "P-3: alias '$alias' rejected"
 done
 python3 "$CFG" -p nosuch -t "$TMP/p6" >/dev/null 2>&1; rc=$?
-[ "$rc" -ne 0 ] && [ ! -e "$TMP/p6/.active-profile.json" ] && ok "P-3: invalid profile exits $rc and writes nothing" || fail "P-3: invalid profile accepted"
+[ "$rc" -ne 0 ] && [ ! -e "$TMP/p6/.agents/active-profile.json" ] && ok "P-3: invalid profile exits $rc and writes nothing" || fail "P-3: invalid profile accepted"
 
 # P-4: MCP check reads the project's .mcp.json.
 mkdir -p "$TMP/p7" && echo '{"mcpServers":{"codebase-memory-mcp":{},"context7":{}}}' > "$TMP/p7/.mcp.json"

@@ -3,7 +3,7 @@
 Language resolution (first match wins) — shared with scripts/i18n.sh:
   1. --lang on the command line
   2. $DEVKIT_LANG
-  3. "lang" saved in <project>/.active-profile.json
+  3. "lang" saved in <project>/.agents/active-profile.json
   4. "vi" (default)
 
 Messages live next to the code as `tr(vi, en)` pairs so a message and its
@@ -37,7 +37,10 @@ def lang_from_project(target):
     if not target:
         return None
     try:
-        with open(Path(target) / ".active-profile.json", "r", encoding="utf-8") as f:
+        pf = Path(target) / ".agents" / "active-profile.json"
+        if not pf.is_file():
+            pf = Path(target) / ".active-profile.json"          # before DevKit 1.3
+        with open(pf, "r", encoding="utf-8") as f:
             return normalize(json.load(f).get("lang"))
     except (OSError, ValueError, AttributeError):
         return None

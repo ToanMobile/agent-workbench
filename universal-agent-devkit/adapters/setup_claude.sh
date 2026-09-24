@@ -15,29 +15,10 @@ echo "Configuring Claude Code for: $TARGET_DIR (mode: $MODE, lang: $LANGUAGE, sk
 
 mkdir -p "$TARGET_DIR/.claude/hooks" "$TARGET_DIR/.claude/commands" "$TARGET_DIR/.claude/agents"
 
-# 1. Non-Destructive Smart Merge for CLAUDE.md and AGENTS.md
-if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && [ -f "$TARGET_DIR/CLAUDE.md" ] && [ ! -L "$TARGET_DIR/CLAUDE.md" ]; then
-  if ! grep -q "universal-agent-devkit" "$TARGET_DIR/CLAUDE.md" 2>/dev/null && [ ! -f "$TARGET_DIR/CLAUDE_old.md" ]; then
-    cp "$TARGET_DIR/CLAUDE.md" "$TARGET_DIR/CLAUDE_old.md"
-    echo "  - Preserved original CLAUDE.md as CLAUDE_old.md"
-  fi
-fi
-
-# AGENTS.md: shared logic (devkit link/copy vs the project's own file) — see backup_conflict.sh.
-# A CLAUDE.md that links to the project's AGENTS.md is one file: it gets one block, and
-# AGENTS.md is handled (backed up as AGENTS_old.md, then injected) before anything is
-# written through the link — writing CLAUDE.md first used to mark the file as already
-# injected, so AGENTS_old.md was never made.
-claude_real="$(resolve_link_target "$TARGET_DIR/CLAUDE.md" 2>/dev/null || true)"
-agents_real="$(cd "$TARGET_DIR" && pwd -P)/AGENTS.md"
-if [ -L "$TARGET_DIR/CLAUDE.md" ] && [ "$claude_real" = "$agents_real" ]; then
-  devkit_install_agents_md "$TARGET_DIR" "$MODE"
-  echo "  - CLAUDE.md links to AGENTS.md — the DevKit block is in AGENTS.md only"
-else
-  CLAUDE_INJECT="$DEVKIT_ROOT/templates/claude_injection_block.md"
-  devkit_merge_block "$CLAUDE_INJECT" "$TARGET_DIR/CLAUDE.md"
-  devkit_install_agents_md "$TARGET_DIR" "$MODE"
-fi
+# 1. AGENTS.md is the only instruction file: Claude Code (2.1.277+) reads it, and expands
+#    its @-imports, when the project has no CLAUDE.md. A CLAUDE.md of the project's own is
+#    folded into AGENTS.md (kept as CLAUDE_old.md) — see devkit_install_agents_md.
+devkit_install_agents_md "$TARGET_DIR" "$MODE" CLAUDE.md
 
 # 2. Additive Merge for .mcp.json — only the servers the profile calls for
 #    (DEVKIT_MCPS_ALLOWED from install.sh; empty = all) whose command is on PATH: Claude
@@ -165,6 +146,12 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   devkit_link_local_skill_commands "$TARGET_DIR"
   devkit_link_local "$TARGET_DIR" agents .claude/agents
   devkit_link_local "$TARGET_DIR" hooks .claude/hooks
+fi
+
+# 8. Claude Code's auto-memory: kept in the project (.agents/local/memory/claude-auto/)
+#    instead of ~/.claude/projects/<slug>/memory — see scripts/claude_memory.py.
+if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
+  python3 "$DEVKIT_ROOT/scripts/claude_memory.py" "$TARGET_DIR" || true
 fi
 
 # Clean broken symlinks if any

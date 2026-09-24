@@ -4,6 +4,75 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
 
 ## Unreleased
 
+### Grok
+- **Grok uses the same toolkit.** It reads `AGENTS.md` and does not get an adapter, a `.grok/` directory, or its own hook, command or MCP files. `-a grok` only installs that shared `AGENTS.md` (and folds `CLAUDE.md` / `GEMINI.md` / `Agent.md` into it).
+
+### Layout — one instruction file, one agent folder
+- **AGENTS.md is the only instruction file.** The installer folds the project's own `CLAUDE.md`,
+  `GEMINI.md` and `Agent.md` into `AGENTS.md` (text kept verbatim above the DevKit block, original
+  kept as `<name>_old.md`) and removes them; a `CLAUDE.md` link to `AGENTS.md` is just removed.
+  Claude Code (2.1.277+) reads `AGENTS.md` when there is no `CLAUDE.md`; Gemini gets
+  `context.fileName: ["AGENTS.md"]`. Health fails while a `CLAUDE.md` shadows `AGENTS.md`.
+- **Everything agent-related in `.agents/`.** The DevKit is one link `.agents/devkit` (copy mode:
+  `AGENTS.md rules/ bin/`); the root `rules/ skills/ commands/` links are removed on re-init;
+  `.active-profile.json` moves to `.agents/active-profile.json` (readers take the new path, then the
+  old one).
+- **Startup context ≤ 60 KB, and actually loaded.** Measured 2026-09-24: every `@` import through a
+  DevKit symlink (master AGENTS.md, core-rules, profile RULES.md) was silently skipped — Claude Code
+  does not expand an import whose real path is outside the project unless external imports were
+  approved. The block now imports three generated real files, `.agents/context/essentials.md`
+  (new `rules/essentials.md`), `profile-rules.md` and `rules-index.md` (one line per section of
+  `.agents/local/rules/`, with the `sed -n` range to open it) — `scripts/context_sync.py`, run by
+  init, `agent-kit profile`, SessionStart and the relink hooks; git-ignored. Verified with real
+  `claude -p` sessions. Three migrated projects: 55 / 49 / 50 KB (were 116–220 KB estimated, and
+  the DevKit rules in them were never loaded).
+- **Claude auto-memory in the repo:** `autoMemoryDirectory` → `.agents/local/memory/claude-auto/`
+  (`scripts/claude_memory.py`); notes of the old per-user folder are moved in and indexed in `MEMORY.md`.
+- **Relink hooks are repair-only:** `relink_check.py` re-creates missing untracked links and never
+  runs the installer, never changes the profile or a tracked file; skipped in linked worktrees, on
+  file checkouts and in trees without a 1.3 install (a worktree checkout had re-installed with the
+  wrong profile).
+- Fixes found on the way: `.agents/devkit` (a link to the DevKit root itself) was not written to
+  `.git/info/exclude`; a first Gemini install left `.gemini/settings_old.json`.
+- **Prompt hook names the matching project rule:** `scripts/rule_context.py` matches the request
+  against `.agents/context/rules-index.md` (accents folded, prefix match for 4+ letters) and prints
+  up to 3 sections with their `sed -n` range; runs in parallel with `enrich_context.py`, so the
+  hook stays one python start (~75–100 ms).
+- **Hook protections recovered from OfficeReader's originals** (its 249-point contract suite: 217 →
+  232 on the DevKit hooks; the rest are deliberate differences or OR-only): `bash_write_ledger.sh`
+  restored and registered on Pre/PostToolUse Bash (session time windows in
+  `.claude/audit-gate/bash_write_ledger.tsv`, no command text); `review_gate` re-arms after its
+  3-attempt release when new unreviewed code appears; `security_gate` no longer flags camelCase
+  `clearText`; `testsourceset_gate` keeps Kotlin written from Bash in scope and no longer blocks a
+  session that wrote no Kotlin for another session's broken module; `test_evidence_gate` anti-loop
+  honours per-suite disclosures and ignores other sessions' red runs. New
+  `hooks/tests/or_ported_contract_test.sh` (72 points), part of `agent-kit test`.
+- **post-fix gate `vacuity_revert` is off by default** (`VACUITY_REVERT=1` turns it on for a
+  manual run): it rewrote production files in the working tree to re-run an impacted PASS, so a
+  killed Stop hook could lose the fix, and it failed every behaviour-preserving change. The vacuity
+  proof is `scripts/red_proof.py` (sandbox copy, GREEN control, off the Stop path).
+- **Skills:** generic rules from OfficeReader's old skill copies merged into deep-module-design,
+  deprecation-migration, documentation-and-adrs, grill-plan, incremental-implementation,
+  observability-instrumentation and writing-skills.
+
+
+### Living regression checklist
+- **Bugs and requirements reach the checklist by themselves.** A bug prompt → `REPORTED` row (UserPromptSubmit);
+  `agent-kit bugs add|link|drop`, `agent-kit req add|link|drop` (criteria locked by hash); Stop links a bug to its test
+  when the evidence is one-to-one (🤖), else holds once with the command; a REPORTED row untouched 14 days → 💤.
+- **No PASS without a RED-proof:** `scripts/red_proof.py` runs the bug's test in a sandbox without the fix (must fail and
+  name the test) and with it (must pass) — `UNPROVEN` / `VACUOUS` otherwise; past bugs by reverting the fix commit named
+  in their evidence. `FLAKY` (post-fix-gate re-runs a failure once), `STALE` (watched files changed since the PASS;
+  light suites re-run in the background at session start).
+- **Evidence:** every real run's output in `.agents/evidence/<test>/` (last 10, git-ignored), linked from the row.
+- **Dashboard `.agents/CHECKLIST.md`** (old name is a link): one HUD line with the safe %, alert zone first, modules
+  folded at 100% PASS, bug ledger, `.agents/archive/BUG_ARCHIVE.md` for bugs stable ≥ 30 days and ≥ 30 commits.
+- **`.agents/INBOX.md`**, the user's to-do lines (never written by the agent), and the prompts "làm inbox" / "làm backlog".
+- **`agent-kit nightly`**: local LaunchAgent — every suite, pending RED-proofs, a notification only when a row turns red,
+  a weekly one-line report.
+- **test_evidence_gate:** ANTI-LOOP "deliberate red" disclosure is per testcase again (a quoted "RED-check", an edited
+  test file or another suite's disclosure no longer silences it), and only this session's runs count (bash_write_ledger windows).
+
 ### Gates
 - **post-fix gate — dependency check (6th static check):** floating versions (Gradle `1.+` /
   `latest.release`, version catalogs, npm `latest`/`*` outside `peerDependencies`, Cargo/Poetry `*`,

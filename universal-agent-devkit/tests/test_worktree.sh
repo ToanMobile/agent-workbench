@@ -35,7 +35,7 @@ W="$TMP/wt-a"
   && ok "add: worktree on feat/<folder>" || { fail "add (rc=$rc)"; echo "$out"; }
 [ "$(cat "$W/.env" 2>/dev/null)" = "API_KEY=local" ] && [ -f "$W/app/google-services.json" ] \
   && ok "add: git-ignored local config copied (.env, app/google-services.json)" || fail "local config not copied"
-grep -q '"profile": *"web"' "$W/.active-profile.json" 2>/dev/null && [ -f "$W/.claude/settings.json" ] \
+grep -q '"profile": *"web"' "$W/.agents/active-profile.json" 2>/dev/null && [ -f "$W/.claude/settings.json" ] && [ -L "$W/.agents/devkit" ] \
   && ok "add: DevKit installed with the main checkout's profile" || fail "DevKit not installed like main"
 [ -f "$(git -C "$W" rev-parse --absolute-git-dir)/devkit-worktree.json" ] \
   && ok "add: setup recorded in the worktree's own git dir" || fail "no state file"
@@ -62,7 +62,7 @@ patch="$(bash "$KIT" worktree diff ../wt-b 2>&1)"
 for f in src/a.js src/b.js src/gone.js .agents/agent-note.md; do
   printf '%s' "$patch" | grep -q "^diff --git a/$f " || fail "diff misses $f"
 done
-printf '%s' "$patch" | grep -qE '^diff --git a/(AGENTS\.md|CLAUDE\.md|\.claude/|\.gitignore|\.active-profile)' \
+printf '%s' "$patch" | grep -qE '^diff --git a/(AGENTS\.md|CLAUDE\.md|\.claude/|\.gitignore|\.active-profile|\.agents/(context|devkit|active-profile))' \
   && fail "diff carries DevKit setup files" || ok "diff: agent's edits, new, deleted files — no DevKit setup"
 [ -z "$(git -C "$W" diff --cached --name-only)" ] && ok "diff: the worktree's index is not touched" || fail "diff staged files"
 

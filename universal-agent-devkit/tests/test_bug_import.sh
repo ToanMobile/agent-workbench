@@ -38,7 +38,9 @@ grep -q "Bug không có test hồi quy nào chặn tái phát: 2" .agents/regres
 
 echo "fun ok() = 2" > src/Core.kt
 python3 "$GATE" --run-tests >/dev/null 2>&1
-[ "$(st BUG-B1)" = PASS ] && ok "after a real gate run of its test: PASS" || fail "B1 after run: $(st BUG-B1)"
+[ "$(st BUG-B1)" = UNPROVEN ] && ok "after a real gate run of its test: UNPROVEN until the test is seen RED (red_proof)" || fail "B1 after run: $(st BUG-B1)"
+python3 -c "import json;p='.agents/regression_status.json';d=json.load(open(p));d['items']['BUG-B1']['red_proof']={'status':'PROVEN'};json.dump(d,open(p,'w'))"
+[ "$(st BUG-B1)" = PASS ] && ok "suite PASS + RED-proof PROVEN: PASS" || fail "B1 proven: $(st BUG-B1)"
 bash "$KIT" bugs import "$TMP/bugs.tsv" >/dev/null 2>&1
 [ "$(st BUG-B1)" = PASS ] && [ "$(python3 -c "import json;print(len([k for k in json.load(open('.agents/regression_status.json'))['items'] if k.startswith('BUG-')]))")" = 4 ] \
   && ok "re-import: no duplicate rows, the real result is kept" || fail "re-import changed B1 or duplicated"
@@ -76,6 +78,25 @@ CLAUDE_PROJECT_DIR="$Q" bash "$KIT" bugs import "$TMP/refs.tsv" >/dev/null 2>&1
 [ "$(qst BUG-C1)" = "NOT_RUN REG-CORE" ] && ok "a suite that watches core/ but runs only :app: tasks is not linked (C1 → REG-CORE only)" \
   || fail "C1 linked to :app suite: $(qst BUG-C1)"
 grep -q "BookmarkDaoTest.kt (trong suite)" "$Q/.agents/regression_checklist.md" && ok "view shows the class/file next to the suite it runs in" || fail "test ref not shown"
+
+# Columns are read by header NAME, in any order (the two real shapes seen), with aliases.
+{ printf 'bug_id\tseverity\ttitle\tfixed_in_code?\ttest_id_or_NONE\tevidence\n'
+  printf 'G1\tP1\tgoods order\tyes\tcore/src/test/java/a/BookmarkDaoTest.kt\t-\n'
+  printf 'G2\tP2\tgoods open\tno\tNONE\t-\n'; } > "$TMP/goods.tsv"
+{ printf 'bug_id\ttitle\tfixed?\tmodule\ttest_id_or_NONE\tevidence\n'
+  printf 'O1\tor order\tyes\tcore\t:core|core/src/test/java/a/BookmarkDaoTest.kt#BookmarkDaoTest.insert [UNIT]\t-\n'
+  printf 'O2\tunity method ref\tyes\tgame\tEditMode.WalletMergeTests.MergeKeepsTotal\t-\n'; } > "$TMP/or.tsv"
+CLAUDE_PROJECT_DIR="$Q" bash "$KIT" bugs import "$TMP/goods.tsv" >/dev/null 2>&1
+CLAUDE_PROJECT_DIR="$Q" bash "$KIT" bugs import "$TMP/or.tsv" >/dev/null 2>&1
+[ "$(qst BUG-G1)" = "NOT_RUN REG-CORE" ] && [ "$(qst BUG-G2)" = "OPEN " ] \
+  && ok "header 'bug_id severity title fixed_in_code? test_id…' read by name (no module column)" || fail "goods header: $(qst BUG-G1) / $(qst BUG-G2)"
+python3 -c "import json;d=json.load(open('$Q/.agents/regression_status.json'))['items']; assert d['BUG-G1']['title']=='goods order' and d['BUG-G1']['severity']=='P1', d['BUG-G1']" \
+  && ok "title and severity land in the right fields when the order differs" || fail "fields swapped"
+[ "$(qst BUG-O1)" = "NOT_RUN REG-CORE" ] && ok "test ref ':module|path#Class.method [TAGS]' → the path's suite" || fail "O1: $(qst BUG-O1)"
+[ "$(qst BUG-O2)" = "NOT_RUN REG-EDIT" ] && ok "test ref 'EditMode.Class.method' → the class's suite" || fail "O2: $(qst BUG-O2)"
+printf 'bug_id\tseverity\tevidence\nX1\tP1\t-\n' > "$TMP/bad.tsv"
+out="$(CLAUDE_PROJECT_DIR="$Q" bash "$KIT" bugs import "$TMP/bad.tsv" 2>&1)"; rc=$?
+[ "$rc" != 0 ] && printf '%s' "$out" | grep -q "title" && ok "a header missing a required column (title, test_id) is refused" || fail "bad header accepted (rc=$rc): $out"
 
 if [ "$FAILS" -ne 0 ]; then echo "bug import: $FAILS FAILED"; exit 1; fi
 echo "bug import: all checks passed"

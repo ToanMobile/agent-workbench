@@ -96,17 +96,18 @@ bash "$KIT" restore-old "$R1" --apply >/dev/null 2>&1
 [ ! -e "$R1/.agents" ] && ok "an untouched README from an older DevKit is cleaned too" \
   || fail "old README left behind: $(find "$R1/.agents" 2>/dev/null)"
 
-# The project's own AGENTS.md (kept, DevKit block injected) lists the project-tier rules too.
+# The project's own AGENTS.md (kept, DevKit block injected) loads the index of the project-tier rules.
 A="$TMP/a"; mkdir -p "$A/rules"; (cd "$A" && git init -q)
 echo "TEAM RULE" > "$A/rules/team.md"
 echo "# Team agents" > "$A/AGENTS.md"
 install "$A"
-grep -qx -- "- @.agents/local/rules/team.md" "$A/AGENTS.md" && grep -q "# Team agents" "$A/AGENTS.md" \
-  && ok "the project's own AGENTS.md gets the same imports in its DevKit block" || { fail "AGENTS.md block has no project rules"; cat "$A/AGENTS.md"; }
+grep -q "@.agents/context/rules-index.md" "$A/AGENTS.md" && grep -q "# Team agents" "$A/AGENTS.md" \
+  && grep -q ".agents/local/rules/team.md" "$A/.agents/context/rules-index.md" \
+  && ok "the project's own AGENTS.md loads the rules index, which lists the project-tier rules" || { fail "AGENTS.md block / rules index has no project rules"; cat "$A/AGENTS.md"; }
 
 # ------------------------------------------------------------------ root rules/ skills/ commands/
-# Agent material moves to the project tier; a source-code dir stays and gets the DevKit
-# items placed inside — either way every DevKit path (rules/core-rules.md, …) resolves.
+# Agent material moves to the project tier; a source-code dir stays untouched (the DevKit
+# lives in .agents/devkit, so nothing needs to be placed inside it).
 S="$TMP/s"; mkdir -p "$S/rules" "$S/skills/billing" "$S/commands"; (cd "$S" && git init -q)
 echo "TEAM RULE" > "$S/rules/team.md"
 echo "my core rules" > "$S/rules/core-rules.md"
@@ -118,27 +119,27 @@ snap() { (cd "$1" && find rules skills commands -print 2>/dev/null | LC_ALL=C so
   [ -f "$f" ] && echo "$f $(cksum < "$f")" || echo "$f"; done); }
 orig="$(snap "$S")"
 install "$S"
-[ -L "$S/rules" ] && grep -q "Core Engineering Rules" "$S/rules/core-rules.md" \
-  && ok "root rules/ of agent material: DevKit rules installed (@rules/core-rules.md resolves)" || fail "DevKit rules/ not installed"
+IDX="$S/.agents/context/rules-index.md"
+[ ! -e "$S/rules" ] && grep -q "Core Engineering Rules" "$S/.agents/devkit/rules/core-rules.md" \
+  && ok "root rules/ of agent material: moved away; DevKit rules reachable at .agents/devkit/rules" || fail "DevKit rules/ not installed"
 [ "$(cat "$S/.agents/local/rules/team.md")" = "TEAM RULE" ] && [ "$(cat "$S/.agents/local/rules/core-rules.md")" = "my core rules" ] \
   && ok "the project's rules are kept in .agents/local/rules/" || fail "project rules not kept"
-# The moved rules must still reach the agents: listed as @-imports in the DevKit block.
-grep -qx -- "- @.agents/local/rules/team.md" "$S/CLAUDE.md" && grep -qx -- "- @.agents/local/rules/core-rules.md" "$S/CLAUDE.md" \
-  && ok "CLAUDE.md imports the project-tier rules" || { fail "CLAUDE.md does not import .agents/local/rules"; cat "$S/CLAUDE.md"; }
-! grep -q "team_20260101_101010" "$S/CLAUDE.md" && ok "dated copies are not imported" || fail "a dated copy was imported"
-[ "$(grep -c '@.agents/local/rules/' "$S/CLAUDE.md")" = 2 ] && ok "one import per rule file" || fail "wrong import count: $(grep -c '@.agents/local/rules/' "$S/CLAUDE.md")"
-[ -L "$S/skills" ] && [ "$(readlink "$S/.agents/skills/billing")" = "../../.agents/local/skills/billing" ] \
-  && ok "root skills/: DevKit installed, the project's skill moved and linked back" || fail "skills/ not handled"
+# The moved rules must still reach the agents: listed in the index AGENTS.md loads.
+grep -q -- ".agents/local/rules/team.md" "$IDX" && grep -q -- ".agents/local/rules/core-rules.md" "$IDX" \
+  && ok "the rules index lists the project-tier rules" || { fail "rules index does not list .agents/local/rules"; cat "$IDX"; }
+! grep -q "team_20260101_101010" "$IDX" && ok "dated copies are not indexed" || fail "a dated copy was indexed"
+[ "$(grep -c '^## ' "$IDX")" = 2 ] && ok "one index entry per rule file" || fail "wrong index count: $(grep -c '^## ' "$IDX")"
+[ ! -e "$S/skills" ] && [ "$(readlink "$S/.agents/skills/billing")" = "../../.agents/local/skills/billing" ] \
+  && ok "root skills/: the project's skill moved to the tier and linked back" || fail "skills/ not handled"
 [ -d "$S/commands" ] && [ ! -L "$S/commands" ] && [ "$(cat "$S/commands/build.js")" = "module.exports = 1" ] \
-  && ok "root commands/ with source code stays in place" || fail "source-code commands/ was moved"
-[ -L "$S/commands/fix.md" ] && [ -e "$S/commands/audit-gate.md" ] && [ "$(cat "$S/.agents/local/commands/fix.md")" = "my fix" ] \
-  && ok "DevKit commands placed inside it; the same-named project file moved to the tier" || fail "commands/ not merged"
+  && [ "$(cat "$S/commands/fix.md")" = "my fix" ] && [ "$(ls -A "$S/commands" | wc -l | xargs)" = 2 ] \
+  && ok "root commands/ with source code stays exactly as it was" || fail "source-code commands/ was changed: $(ls -A "$S/commands" | tr '\n' ' ')"
 before="$(tree_sum "$S/.agents/local")"
 install "$S"
 [ "$(tree_sum "$S/.agents/local")" = "$before" ] && [ "$(count_old "$S")" = 0 ] \
   && ok "re-install: project tier unchanged, no *_old" || fail "re-install changed the tier or created *_old"
-[ "$(grep -c '@.agents/local/rules/' "$S/CLAUDE.md")" = 2 ] && ok "re-install does not duplicate the imports" \
-  || fail "imports duplicated on re-install: $(grep -c '@.agents/local/rules/' "$S/CLAUDE.md")"
+[ "$(grep -c '@.agents/context/rules-index.md' "$S/AGENTS.md")" = 1 ] && ok "re-install does not duplicate the import" \
+  || fail "import duplicated on re-install: $(grep -c '@.agents/context/rules-index.md' "$S/AGENTS.md")"
 bash "$KIT" uninstall "$S" --apply >/dev/null 2>&1
 bash "$KIT" restore-old "$S" --apply >/dev/null 2>&1
 [ "$(snap "$S")" = "$orig" ] && ok "uninstall + restore-old give rules/ skills/ commands/ back exactly" \
@@ -183,7 +184,7 @@ install "$R"
   && ok "links in a moved folder: inside ones kept, outside ones re-pointed" || fail "links in moved rules/ broken"
 
 out="$(bash "$KIT" list-old "$R" 2>&1)"
-printf '%s' "$out" | grep -q "rules/team-link.md: active (@-imported" && ok "list-old: an imported project rule is shown active, not 'reference'" \
+printf '%s' "$out" | grep -q "rules/team-link.md: active (indexed" && ok "list-old: an indexed project rule is shown active, not 'reference'" \
   || fail "list-old rules label: $(printf '%s' "$out" | grep 'rules/' | head -2)"
 
 # ------------------------------------------------------------------ project-tier skills reach Claude Code

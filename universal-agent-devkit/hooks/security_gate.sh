@@ -158,7 +158,13 @@ TEXT_TRIGGERS = [
     (re.compile(r"android:exported\s*=|<intent-filter", re.I),          "exported component / intent-filter"),
     (re.compile(r"javaScriptEnabled|addJavascriptInterface|"
                 r"setAllowFileAccess|allowFileAccess|loadDataWithBaseURL", re.I), "WebView surface"),
-    (re.compile(r"usesCleartextTraffic|CLEARTEXT|trustAllCerts|"
+    # CLEARTEXT is matched case-SENSITIVELY and as a whole word (OfficeReader,
+    # 2026-09-10): under re.I the bare word matched camelCase `clearText…`
+    # (`clearTextHighlights`, `textView.clearText()`, four real files) and sent a diff
+    # with no network surface to a TLS review. `ConnectionSpec.CLEARTEXT`,
+    # `usesCleartextTraffic` and `cleartextTrafficPermitted` all still match.
+    (re.compile(r"usesCleartextTraffic|cleartextTrafficPermitted|"
+                r"(?-i:(?<![A-Za-z])CLEARTEXT(?![A-Za-z]))|trustAllCerts|"
                 r"HostnameVerifier", re.I),                             "cleartext / TLS trust"),
     (re.compile(r"storePassword|keyPassword|keyAlias|signingConfig", re.I), "signing / keystore"),
     (re.compile(r"apiKey|api_key|Bearer\s|accessToken|client_secret", re.I), "credential / token"),

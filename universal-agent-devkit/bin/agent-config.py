@@ -11,7 +11,7 @@ Provides 8 specialized configuration options:
   [6] 🍏 iOS        (Swift / SwiftUI / Swift Concurrency / XCTest)
   [7] 🕸️ Web        (Frontend / Full-Stack JS / TypeScript)
   [8] 🗄️ Backend    (API / Services / Python · Go · Rust · Node)
-Output language: --lang > $DEVKIT_LANG > "lang" in .active-profile.json > vi.
+Output language: --lang > $DEVKIT_LANG > "lang" in .agents/active-profile.json > vi.
 100% Standard Library — Zero external dependencies.
 """
 
@@ -227,7 +227,9 @@ def configured_mcps(target_dir: Path) -> set:
 
 def get_current_profile(target_dir_str: str = None) -> str:
     target_dir, _ = resolve_target(target_dir_str, for_write=False)
-    active_file = target_dir / ".active-profile.json"
+    active_file = profile_state_file(target_dir)
+    if not active_file.exists():
+        active_file = target_dir / LEGACY_PROFILE_FILE
     if active_file.exists():
         try:
             with open(active_file, "r", encoding="utf-8") as f:
@@ -238,45 +240,20 @@ def get_current_profile(target_dir_str: str = None) -> str:
     return "universal"
 
 SIDE_MATRIX_NAME = "regression_matrix.generated.json"
-PROFILE_RULES_LINE = "- Domain Profile Rules: @.agents/active-profile/RULES.md"
+LEGACY_PROFILE_FILE = ".active-profile.json"          # at the project root before DevKit 1.3
 
 
-def ensure_profile_rules_import(target_dir: Path):
-    """Add the profile-rules import to the DevKit block of every agent file (CLAUDE.md,
-    AGENTS.md, CODEX.md, .cursorrules, GEMINI.md, the Cursor .mdc rule) when it is missing: right after the "Active Domain Profile"
-    line, inside the universal-agent-devkit markers only. One file reached by two names
-    (CLAUDE.md -> AGENTS.md) is edited once."""
-    seen = set()
-    for name in ("CLAUDE.md", "AGENTS.md", "CODEX.md", ".cursorrules", "GEMINI.md", "Agent.md",
-                 ".cursor/rules/universal-agent-devkit.mdc"):
-        f = target_dir / name
-        if not f.is_file():
-            continue
-        real = f.resolve()
-        if real in seen or is_within(real, get_base_dir()):
-            continue                   # the DevKit's own AGENTS.md is never edited
-        seen.add(real)
-        try:
-            text = real.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        start, end = text.find("<!-- universal-agent-devkit:start -->"), text.find("<!-- universal-agent-devkit:end -->")
-        if start < 0 or end < start or PROFILE_RULES_LINE in text[start:end]:
-            continue
-        block = text[start:end]
-        lines = block.split("\n")
-        for i, line in enumerate(lines):
-            if "Active Domain Profile:" in line:
-                lines.insert(i + 1, PROFILE_RULES_LINE)
-                break
-        else:
-            continue
-        new = text[:start] + "\n".join(lines) + text[end:]
-        tmp = real.with_name(real.name + ".devkit-tmp")
-        tmp.write_text(new, encoding="utf-8")
-        os.replace(tmp, real)
-        log_ok(tr(f"`{name}`: thêm import luật profile (.agents/active-profile/RULES.md)",
-                  f"`{name}`: added the profile rules import (.agents/active-profile/RULES.md)"))
+def profile_state_file(target_dir: Path) -> Path:
+    """The project's profile state: .agents/active-profile.json (everything agent-related
+    lives in .agents/). The DevKit's own checkout keeps its root .active-profile.json."""
+    if target_dir.resolve() == get_base_dir().resolve():
+        return target_dir / LEGACY_PROFILE_FILE
+    return target_dir / ".agents" / "active-profile.json"
+
+
+def sync_context(target_dir: Path):
+    """Re-write .agents/context/ (profile-rules.md follows the new profile) — context_sync.py."""
+    subprocess.run([sys.executable, str(get_base_dir() / "scripts" / "context_sync.py"), str(target_dir)], check=False)
 
 
 def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None):
@@ -300,7 +277,8 @@ def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None)
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════{RESET}\n")
 
     # 1. Ghi tệp trạng thái active
-    active_file = target_dir / ".active-profile.json"
+    active_file = profile_state_file(target_dir)
+    legacy = target_dir / LEGACY_PROFILE_FILE
     status_data = {
         "profile": profile_id,
         "name": meta.get("name", profile_id.upper()),
@@ -313,8 +291,21 @@ def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None)
         "regression_matrix": meta.get("regression_matrix", "")
     }
     target_dir.mkdir(parents=True, exist_ok=True)
+    # Re-applying the same profile (a re-init) keeps the old timestamp: a tracked
+    # .active-profile.json must not turn dirty on every `agent-kit init`.
+    try:
+        old = json.loads((active_file if active_file.exists() else legacy).read_text(encoding="utf-8"))
+        if {k: v for k, v in old.items() if k != "updated_at"} == {k: v for k, v in status_data.items() if k != "updated_at"}:
+            status_data["updated_at"] = old.get("updated_at", status_data["updated_at"])
+    except (OSError, ValueError, AttributeError):
+        pass
+    active_file.parent.mkdir(parents=True, exist_ok=True)
     with open(active_file, "w", encoding="utf-8") as f:
         json.dump(status_data, f, indent=2, ensure_ascii=False)
+    if legacy != active_file and legacy.is_file():
+        legacy.unlink()                 # moved into .agents/ (DevKit 1.3)
+        log_ok(tr("Đã chuyển `.active-profile.json` vào `.agents/active-profile.json`",
+                  "Moved `.active-profile.json` to `.agents/active-profile.json`"))
     log_ok(tr(f"Đã lưu trạng thái cấu hình vào `{active_file.name}`", f"Saved profile state to `{active_file.name}`"))
 
     # 2. Tạo liên kết .agents/active-profile (link tương đối — P-4)
@@ -336,10 +327,10 @@ def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None)
     except Exception as e:
         log_warn(tr(f"Không thể tạo symlink `.agents/active-profile`: {e}", f"Cannot create symlink `.agents/active-profile`: {e}"))
 
-    # 2b. The DevKit block of each agent file imports the profile's rules through the
-    # stable .agents/active-profile/RULES.md (it follows the link above). A block written
-    # without a profile (install -p none, then `agent-kit profile <id>`) lacks the line.
-    ensure_profile_rules_import(target_dir)
+    # 2b. AGENTS.md loads the profile's rules from .agents/context/profile-rules.md, a real
+    # copy of .agents/active-profile/RULES.md: re-write it for the profile just linked.
+    if target_dir.resolve() != devkit_dir.resolve():
+        sync_context(target_dir)
 
     # 3. Kích hoạt Ma trận Kiểm thử Hồi quy tương ứng (.agents/regression_matrix.active.json)
     reg_src = profile_dir / "regression_matrix.json"

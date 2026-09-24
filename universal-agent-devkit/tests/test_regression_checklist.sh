@@ -65,7 +65,8 @@ rm -f src/Other.kt
 gate --run-tests --allow-no-tests --record-lesson "Login crash on empty token" --cause "null token"
 bug="$(jq_py '[k for k in d["items"] if k.startswith("BUG-")][0]')"
 [ "$(jq_py "d['items']['$bug']['tests']")" = "['REG-1']" ] && ok "bug linked to the test that just passed" || fail "bug not linked"
-grep -q "✅ PASS | $bug" .agents/regression_checklist.md && ok "bug row mirrors its test's real result" || fail "bug row status wrong"
+# Its test ran green, but was never seen RED without the fix: not a PASS yet (scripts/red_proof.py).
+grep -q "⏳ chưa chứng minh ĐỎ | $bug" .agents/regression_checklist.md && ok "bug row: test green, RED not proven yet → UNPROVEN" || fail "bug row status wrong"
 
 # 6. No way to fake: linking to a non-test id is refused.
 python3 "$RC" --project "$TMP/repo" link "$bug" NOT-A-TEST 2>/dev/null && fail "linked to a non-existent test" || ok "link to unknown test refused"

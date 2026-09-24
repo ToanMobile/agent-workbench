@@ -37,6 +37,11 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/hardware_safety_gate.sh\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/bash_write_ledger.sh\"",
+            "timeout": 5
           }
         ]
       },
@@ -62,6 +67,16 @@
       }
     ],
     "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/bash_write_ledger.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
       {
         "matcher": "Read",
         "hooks": [

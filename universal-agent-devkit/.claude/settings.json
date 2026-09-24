@@ -48,6 +48,11 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/hardware_safety_gate.sh\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/bash_write_ledger.sh\"",
+            "timeout": 5
           }
         ]
       },
@@ -73,6 +78,16 @@
       }
     ],
     "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/bash_write_ledger.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
       {
         "matcher": "Read",
         "hooks": [

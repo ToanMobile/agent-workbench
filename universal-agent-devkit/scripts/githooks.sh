@@ -37,11 +37,35 @@ HOOKS_DIR="$(git -C "$TARGET" rev-parse --path-format=absolute --git-path hooks 
 }
 [ -n "$HOOKS_DIR" ] || die "$(L "không xác định được thư mục hooks" "cannot resolve the hooks dir")" 2
 HOOK="$HOOKS_DIR/pre-commit"
+# Git operations that can remove untracked DevKit links from the working tree; each gets a
+# stub running scripts/relink_check.py (instant when nothing is missing).
+RELINK_HOOKS="post-merge post-checkout post-rewrite"
+RELINK="$DEVKIT_ROOT/scripts/relink_check.py"
+relink_is_ours() { [ -f "$HOOKS_DIR/$1" ] && grep -qF "$MARKER" "$HOOKS_DIR/$1"; }
+install_relink_hooks() {
+  local h f
+  for h in $RELINK_HOOKS; do
+    f="$HOOKS_DIR/$h"
+    if [ -e "$f" ] && ! relink_is_ours "$h"; then
+      echo "• $h: $(L "hook riêng của dự án — giữ nguyên; muốn tự sửa link DevKit, chèn sau dòng #!:" "the project's own hook — kept; to repair DevKit links, add after its #! line:") python3 $(printf %q "$RELINK") \"\$(git rev-parse --show-toplevel)\" --hook=$h \"\$@\" --quiet"
+      continue
+    fi
+    {
+      echo "#!/usr/bin/env bash"
+      echo "# $MARKER — restores DevKit links a git operation removed (agent-kit githooks uninstall removes it)."
+      printf 'RELINK=%q\n' "$RELINK"
+      # shellcheck disable=SC2016
+      echo "[ -f \"\$RELINK\" ] && python3 \"\$RELINK\" \"\$(git rev-parse --show-toplevel)\" --hook=$h \"\$@\" || true"
+    } > "$f.devkit-tmp" && chmod +x "$f.devkit-tmp" && mv "$f.devkit-tmp" "$f"
+  done
+}
 
 is_ours() { [ -f "$HOOK" ] && grep -qF "$MARKER" "$HOOK"; }
 
 case "$ACTION" in
   status)
+    n=0; for h in $RELINK_HOOKS; do relink_is_ours "$h" && n=$((n + 1)); done
+    echo "• $(L "tự sửa link sau merge/checkout/rebase" "link repair after merge/checkout/rebase"): $n/3 hook"
     if is_ours; then
       echo "✔ pre-commit: $(L "đã cài (DevKit)" "installed (DevKit)") — $HOOK"
     elif [ -e "$HOOK" ] && grep -qF "scripts/git-pre-commit.sh" "$HOOK" 2>/dev/null; then
@@ -53,6 +77,8 @@ case "$ACTION" in
     fi
     ;;
   install)
+    mkdir -p "$HOOKS_DIR" 2>/dev/null
+    install_relink_hooks
     if [ -e "$HOOK" ] && ! is_ours; then
       echo "✖ githooks: $(L "$HOOK đã có và không phải của DevKit — giữ nguyên, không ghi đè." "$HOOK exists and is not the DevKit's — left untouched.")" >&2
       # Right after the shebang, not at the end: a hook that ends with `exit 0` (or
@@ -77,6 +103,7 @@ case "$ACTION" in
     echo "  $(L "Mỗi git commit (kể cả ngoài agent) sẽ kiểm tĩnh nội dung đã stage. Bỏ qua 1 lần: git commit --no-verify" "Every git commit (also outside any agent) now statically checks the staged content. Skip once: git commit --no-verify")"
     ;;
   uninstall)
+    for h in $RELINK_HOOKS; do relink_is_ours "$h" && rm -f "$HOOKS_DIR/$h"; done
     if is_ours; then
       rm -f "$HOOK" && echo "✔ $(L "Đã gỡ" "Removed") $HOOK"
     elif [ -e "$HOOK" ]; then

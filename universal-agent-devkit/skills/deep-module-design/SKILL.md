@@ -33,3 +33,5 @@ Nếu abstraction chỉ pass-through, dùng một lần hoặc tạo seam giả 
 - Pure/in-memory dependency: test trực tiếp, thường không cần adapter.
 - Local/remote/external dependency: đặt seam ở boundary thật; giữ contract nhỏ và có production/test adapter khi mang lại leverage.
 - Trước khi đổi public API, DI graph hoặc module boundary: trace 100% caller qua MCP Graph (`trace_path`).
+
+Khi có nhiều thiết kế hợp lý, tự phác ít nhất hai phương án, so sánh depth/locality/compatibility và chọn phương án evidence-supported. Chỉ dùng sub-agent khi harness/project policy cho phép và task đủ lớn.

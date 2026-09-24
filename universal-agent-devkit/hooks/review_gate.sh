@@ -20,6 +20,9 @@
 #
 # Loop-guard: per-session attempts file, MAX_ATTEMPTS — release with a logged
 # warning if the environment genuinely can't run reviews (avoid infinite block).
+# The release covers ONE stuck episode: writing more unreviewed code afterwards
+# (a later edit, a file the release did not cover, or a file touched after the
+# release time) re-arms the gate and it blocks again.
 # Fail-open on any internal error (never block Claude because of a gate bug).
 #
 # Stop hook protocol: stdin JSON; exit 2 blocks (stderr→Claude); exit 0 allows.
@@ -45,7 +48,7 @@ CLAIM_INPUT="${INPUT}" CLAIM_LOG="${LOG}" CLAIM_TS="$(date +%Y-%m-%dT%H:%M:%S)" 
 CLAIM_REPO="${REPO_ROOT}" CLAIM_LOGDIR="${LOG_DIR}" CLAIM_MAX="${MAX_ATTEMPTS}" \
 CLAIM_HOOKDIR="$(cd "$(dirname "$0")" && pwd)" \
 python3 <<'PY'
-import os, sys, json, re, subprocess
+import os, sys, json, re, subprocess, time
 
 raw     = os.environ.get("CLAIM_INPUT", "")
 log     = os.environ.get("CLAIM_LOG", "/dev/null")
@@ -217,27 +220,92 @@ if reviewed_after_edits:
     sys.exit(0)
 
 # ── 3) would block — apply loop-guard (attempt_file hoisted above) ──
+# The release covers ONE stuck episode, not the rest of the session. While an
+# episode is live the file holds the bare attempt count; on release it holds JSON
+# {"n", "released_at", "released_time", "files"} — the transcript index, wall-clock
+# time and file set that release covered. The older shapes ("3", "4:97") are still
+# read, so a file written by a previous version never crashes the gate.
+#
+# Measured on OfficeReader (2026-09-08), with a bare counter that only a PASS reset:
+# three real blocks followed by 34 consecutive "BLOCK suppressed" lines to the end
+# of the session — every code file written after the release went unreviewed with
+# nothing left to notice. Writing MORE unreviewed code now starts a new episode.
+# Three re-arm signals, because each one alone has a hole:
+#   • a later edit index      — misses a transcript COMPACTED shorter mid-session;
+#   • an unreviewed file the release did not cover — misses the same file again;
+#   • a file mtime after the release time — survives compaction of the same file.
 n = 0
+released_at = None
+released_files = set()
+released_time = None
 try:
     if os.path.exists(attempt_file):
-        n = int(open(attempt_file).read().strip() or "0")
+        raw_att = open(attempt_file).read().strip()
+        if raw_att.startswith("{"):
+            rec_att = json.loads(raw_att)
+            n = int(rec_att.get("n", 0))
+            released_at = rec_att.get("released_at")
+            released_files = set(rec_att.get("files") or [])
+            released_time = rec_att.get("released_time")
+        elif ":" in raw_att:
+            n_str, rel_str = raw_att.split(":", 1)
+            n = int(n_str or "0")
+            released_at = int(rel_str)
+        else:
+            n = int(raw_att or "0")
 except Exception:
-    n = 0
+    n, released_at, released_files, released_time = 0, None, set(), None
+
+def _wrote_since_release():
+    if not isinstance(released_time, (int, float)):
+        return False
+    for rel in session_unreviewed:
+        try:
+            if os.path.getmtime(os.path.join(repo_root, rel)) > released_time:
+                return True
+        except Exception:
+            continue
+    return False
+
+if released_at is not None:
+    try:
+        newer_edit = last_edit_idx > int(released_at)
+    except Exception:
+        newer_edit = True
+    if newer_edit or (session_unreviewed - released_files) or _wrote_since_release():
+        n, released_at = 0, None      # new unreviewed code → new episode, re-arm
+    else:
+        logline(f"[{ts}] BLOCK suppressed — same stuck episode "
+                f"(edit#{last_edit_idx} <= released#{released_at}), "
+                f"manual review still required for {changed}")
+        sys.stderr.write(
+            f"⚠️ REVIEW-GATE: vẫn là episode đã thả — {len(changed)} file code CHƯA "
+            f"được review context-sạch, tự chịu trách nhiệm review thủ công.\n")
+        sys.exit(0)
+
 n += 1
+if n > maxatt:
+    try:
+        with open(attempt_file, "w") as fh:
+            json.dump({"n": n, "released_at": last_edit_idx,
+                       "released_time": time.time(),
+                       "files": sorted(session_unreviewed)}, fh)
+    except Exception:
+        pass
+    logline(f"[{ts}] BLOCK suppressed after {maxatt} attempts (anti-loop) — "
+            f"manual review still required for {changed}")
+    sys.stderr.write(
+        f"⚠️ REVIEW-GATE: đã nhắc {maxatt} lần, thả Stop để tránh kẹt loop.\n"
+        f"   Nhưng {len(changed)} file code vẫn CHƯA được review context-sạch — "
+        f"tự chịu trách nhiệm review thủ công.\n"
+        f"   Viết THÊM code chưa review sẽ kích hoạt lại gate.\n")
+    sys.exit(0)
+
 try:
     with open(attempt_file, "w") as fh:
         fh.write(str(n))
 except Exception:
     pass
-
-if n > maxatt:
-    logline(f"[{ts}] BLOCK suppressed after {maxatt} attempts (anti-loop) — "
-            f"manual review still required for {changed}")
-    sys.stderr.write(
-        f"⚠️ REVIEW-GATE: đã nhắc {maxatt} lần, thả Stop để tránh kẹt loop.\n"
-        f"   Nhưng {len(changed)} file .kt vẫn CHƯA được review context-sạch — "
-        f"tự chịu trách nhiệm review thủ công.\n")
-    sys.exit(0)
 
 unrev = sorted(session_unreviewed)
 logline(f"[{ts}] BLOCK (attempt {n}/{maxatt}) — unreviewed code: {unrev}")

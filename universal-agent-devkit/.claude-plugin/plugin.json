@@ -1,7 +1,7 @@
 {
   "name": "universal-agent-devkit",
   "version": "1.1.0",
-  "description": "Rules, lifecycle hooks, 25 curated skills, domain profiles and a static post-fix diff gate for Claude Code, OpenAI Codex, Google Gemini/Antigravity and Cursor.",
+  "description": "Rules, lifecycle hooks, 25 curated skills, domain profiles and a static post-fix diff gate for Claude Code, OpenAI Codex, Google Gemini/Antigravity, Cursor and Grok.",
   "author": {
     "name": "Toan Mobile",
     "url": "https://github.com/ToanMobile"
@@ -17,6 +17,7 @@
     "claude-code",
     "antigravity",
     "cursor",
+    "grok",
     "mcp"
   ],
   "commands": "./commands",

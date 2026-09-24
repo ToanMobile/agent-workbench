@@ -17,10 +17,16 @@ description: Dùng khi implement feature/thay đổi nhiều file hoặc task kh
 | **Contract-First** | Nhiều module làm việc song song | Chốt chặt Interface/Contract và mock tests trước, sau đó mới implement chi tiết |
 | **Risk-First** | Có phần bất định hoặc rủi ro kỹ thuật cao | Giải quyết và chứng minh phần rủi ro/thuật toán khó nhất trước khi làm UI |
 
-## 5 Quy Tắc Kỷ Luật
+## 6 Quy Tắc Kỷ Luật
 
 1. **Simplicity-First:** Tránh tạo abstraction quá sớm khi mới chỉ có 1 call-site.
-2. **Scope-Discipline:** Thấy chỗ khác có vấn đề -> Ghi nhận `"NOTICED BUT NOT TOUCHING: <x>"`, tuyệt đối không drive-by refactoring sửa lan.
+2. **Scope-Discipline:** Thấy chỗ khác có vấn đề -> Ghi nhận `"NOTICED BUT NOT TOUCHING: <x>"`, tuyệt đối không drive-by refactoring sửa lan. Ghi vào backlog/evidence; không hỏi User trừ khi nó block acceptance hiện tại hoặc cần authority mới.
 3. **One-Thing-Per-Checkpoint:** 1 lát cắt = 1 thay đổi logic độc lập. Tách biệt hoàn toàn thao tác xóa (delete) và thao tác thêm (add).
-4. **Luôn Biên Dịch Được:** Sau mỗi lát cắt, toàn bộ test suite và build phải giữ trạng thái GREEN.
+4. **Luôn Biên Dịch Được:** Sau mỗi lát cắt, toàn bộ test suite và build phải giữ trạng thái GREEN. Feature chưa xong → sau feature-flag.
 5. **Rollback-Friendly:** Thiết kế code theo hướng có thể hoàn tác ngay lập tức nếu phát sinh sự cố.
+6. **Safe-Defaults:** Code mới off/an toàn mặc định.
+
+## Red Flag
+
+- Một slice đã chứa nhiều behavior/failure mechanism mà chưa có checkpoint evidence → dừng, cắt nhỏ hơn.
+- Nhưng ĐỪNG chạy lại build/test không đổi "cho chắc" — lãng phí (xem [[verification-before-completion]] để biết khi nào verify là cần thật).

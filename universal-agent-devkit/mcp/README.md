@@ -1,6 +1,6 @@
 # 🔌 MCP (Model Context Protocol) Integration Hub
 
-Universal configuration and schemas for Model Context Protocol (MCP) servers used across **Claude Code**, **OpenAI Codex**, **Antigravity / Gemini**, and **Cursor**.
+Universal configuration and schemas for Model Context Protocol (MCP) servers used across **Claude Code**, **OpenAI Codex**, **Antigravity / Gemini**, **Cursor**, and **Grok**.
 
 ---
 
@@ -37,6 +37,9 @@ File cấu hình: `mcp_config.json` tại root dự án hoặc `~/.gemini/config
 
 ### 3. Cursor & OpenAI Codex
 Thêm cấu hình vào Settings -> MCP Servers hoặc copy từ `mcp/.mcp.json`.
+
+### 4. Grok
+Không có file MCP riêng. Grok dùng chung bộ đã cài cho các agent khác.
 
 ---
 

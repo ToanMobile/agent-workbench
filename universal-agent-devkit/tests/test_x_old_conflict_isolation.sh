@@ -17,12 +17,14 @@ echo "▶ [Test 1] Installing DevKit on Fresh Project: $FRESH_DIR"
 bash "$DEVKIT_ROOT/bin/install.sh" -t "$FRESH_DIR" -y -p universal > /dev/null 2>&1
 
 # Verify DevKit installed
-[ -e "$FRESH_DIR/rules" ] || { echo "❌ FAIL: rules/ missing in fresh project"; exit 1; }
-[ -e "$FRESH_DIR/skills" ] || { echo "❌ FAIL: skills/ missing in fresh project"; exit 1; }
-[ -e "$FRESH_DIR/commands" ] || { echo "❌ FAIL: commands/ missing in fresh project"; exit 1; }
+# Everything agent-related lives in .agents/: no root rules/ skills/ commands/, no CLAUDE.md.
+[ -e "$FRESH_DIR/.agents/devkit/rules/core-rules.md" ] || { echo "❌ FAIL: .agents/devkit missing in fresh project"; exit 1; }
+[ -e "$FRESH_DIR/.agents/skills/qc" ] || { echo "❌ FAIL: .agents/skills missing in fresh project"; exit 1; }
+for d in rules skills commands CLAUDE.md GEMINI.md; do
+  [ ! -e "$FRESH_DIR/$d" ] || { echo "❌ FAIL: $d created at the project root"; exit 1; }
+done
 [ -e "$FRESH_DIR/.claude" ] || { echo "❌ FAIL: .claude/ missing in fresh project"; exit 1; }
-[ -f "$FRESH_DIR/CLAUDE.md" ] || { echo "❌ FAIL: CLAUDE.md missing in fresh project"; exit 1; }
-[ -e "$FRESH_DIR/AGENTS.md" ] || { echo "❌ FAIL: AGENTS.md missing in fresh project"; exit 1; }
+[ -f "$FRESH_DIR/AGENTS.md" ] && grep -q "universal-agent-devkit:start" "$FRESH_DIR/AGENTS.md" || { echo "❌ FAIL: AGENTS.md with the DevKit block missing in fresh project"; exit 1; }
 
 # Verify NO *_old created in fresh project
 old_count="$(find "$FRESH_DIR" -maxdepth 3 \( -name "*_old" -o -name "*_old.*" \) | wc -l | xargs)"
@@ -57,11 +59,11 @@ echo "▶ [Test 2] Installing DevKit on Existing Old Project..."
 bash "$DEVKIT_ROOT/bin/install.sh" -t "$OLD_DIR" -y -p universal
 
 echo "▶ [Test 2] Verifying X_old Preservation..."
-# 1-3. The project's own rules/, skills/, commands/ hold only agent material: DevKit is
-#      the core and is installed there; the project's content moves to the project tier
-#      .agents/local/<dir>/ (never *_old), and its skills/commands are linked back in.
+# 1-3. The project's own rules/, skills/, commands/ hold only agent material: it moves to
+#      the project tier .agents/local/<dir>/ (never *_old), and its skills/commands are
+#      linked back in; the DevKit itself is at .agents/devkit.
 for d in rules skills commands; do
-  [ -L "$OLD_DIR/$d" ] || { echo "❌ FAIL: DevKit $d/ not installed over the project's agent material"; exit 1; }
+  [ ! -e "$OLD_DIR/$d" ] || { echo "❌ FAIL: root $d/ still there after install"; exit 1; }
   [ ! -e "$OLD_DIR/${d}_old" ] || { echo "❌ FAIL: project's own $d/ was renamed to ${d}_old"; exit 1; }
 done
 grep -q "PROPRIETARY TEAM RULE 123" "$OLD_DIR/.agents/local/rules/custom_team_rule.md" || { echo "❌ FAIL: User's rules content was corrupted/lost!"; exit 1; }
@@ -71,9 +73,11 @@ grep -q "CUSTOM BILLING LOGIC 456" "$OLD_DIR/.agents/skills/custom-billing-skill
 grep -q "CUSTOM SLASH COMMAND 789" "$OLD_DIR/.claude/commands/custom-cmd.md" || { echo "❌ FAIL: project command not linked back into .claude/commands"; exit 1; }
 grep -q "LEGACY CLAUDE COMMAND" "$OLD_DIR/.claude/commands/legacy.md" || { echo "❌ FAIL: User's .claude command was lost!"; exit 1; }
 
-# 4. CLAUDE_old.md
+# 4. CLAUDE.md folded into AGENTS.md, original kept as CLAUDE_old.md
 [ -f "$OLD_DIR/CLAUDE_old.md" ] || { echo "❌ FAIL: CLAUDE_old.md was not created!"; exit 1; }
 grep -q "OLD CLAUDE INSTRUCTIONS 2024" "$OLD_DIR/CLAUDE_old.md" || { echo "❌ FAIL: User's old CLAUDE.md content was lost!"; exit 1; }
+[ ! -e "$OLD_DIR/CLAUDE.md" ] && grep -q "OLD CLAUDE INSTRUCTIONS 2024" "$OLD_DIR/AGENTS.md" && grep -q "OLD AGENTS ARCHITECTURE" "$OLD_DIR/AGENTS.md" \
+  || { echo "❌ FAIL: CLAUDE.md not folded into AGENTS.md (AGENTS.md is the only instruction file)"; exit 1; }
 
 # 5. AGENTS_old.md
 [ -f "$OLD_DIR/AGENTS_old.md" ] || { echo "❌ FAIL: AGENTS_old.md was not created!"; exit 1; }

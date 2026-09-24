@@ -15,41 +15,42 @@ echo "Configuring Antigravity / Google Gemini for: $TARGET_DIR (mode: $MODE, lan
 
 mkdir -p "$TARGET_DIR/.agents/skills"
 
-# 1. Non-Destructive Smart Merge for AGENTS.md, GEMINI.md, and Agent.md
+# 1. AGENTS.md is the only instruction file. Gemini CLI reads it through
+#    context.fileName (below); a GEMINI.md / Agent.md of the project's own is folded into
+#    it (kept as GEMINI_old.md / Agent_old.md) — see devkit_install_agents_md.
+devkit_install_agents_md "$TARGET_DIR" "$MODE" GEMINI.md Agent.md
+# 1b. .gemini/settings.json, DevKit keys only (the rest of the file is kept):
+#     context.fileName = AGENTS.md first — Gemini reads the same file as Claude Code.
+#     context.includeDirectories += the DevKit folder (symlink mode): Gemini CLI imports
+#     a file, and lets its read tool open one, only when the file's REAL path is inside
+#     the workspace, so every .agents/devkit/… path would be refused as "path traversal".
+#     Copy mode is committed for a team and gets no machine path.
 if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
-  if [ -f "$TARGET_DIR/GEMINI.md" ] && [ ! -f "$TARGET_DIR/GEMINI_old.md" ] && ! grep -q "universal-agent-devkit" "$TARGET_DIR/GEMINI.md" 2>/dev/null; then
-    cp "$TARGET_DIR/GEMINI.md" "$TARGET_DIR/GEMINI_old.md"
-  fi
-  if [ -f "$TARGET_DIR/Agent.md" ] && [ ! -f "$TARGET_DIR/Agent_old.md" ] && ! grep -q "universal-agent-devkit" "$TARGET_DIR/Agent.md" 2>/dev/null; then
-    cp "$TARGET_DIR/Agent.md" "$TARGET_DIR/Agent_old.md"
-  fi
-fi
-
-# Gemini CLI loads GEMINI.md (not AGENTS.md) and expands its `@path` imports, so a
-# project without one gets a GEMINI.md holding the DevKit block alone.
-GEMINI_TARGET="${TARGET_DIR}/GEMINI.md"
-[ -f "$TARGET_DIR/Agent.md" ] && GEMINI_TARGET="${TARGET_DIR}/Agent.md"
-if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] || [ -f "$GEMINI_TARGET" ]; then
-  GEMINI_INJECT="$DEVKIT_ROOT/templates/agents_injection_block.md"
-  devkit_merge_block "$GEMINI_INJECT" "$GEMINI_TARGET"
-fi
-
-# AGENTS.md: shared logic (devkit link/copy vs the project's own file) — see backup_conflict.sh
-devkit_install_agents_md "$TARGET_DIR" "$MODE"
-
-# 1b. Gemini CLI imports a file, and lets its read tool open one, only when the file's
-#     REAL path is inside the workspace: every DevKit link (symlink mode; and
-#     .agents/active-profile in both modes) is refused as "path traversal". Symlink mode
-#     already ties the project to this DevKit folder, so it joins the workspace
-#     (context.includeDirectories) and the block's "open each path" works; copy mode is
-#     committed for a team and gets no machine path.
-if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && [ "$MODE" = "symlink" ]; then
-  GEMINI_CTX="$(mktemp "${TMPDIR:-/tmp}/devkit-gemini.XXXXXX")"
-  python3 -c 'import json,sys; print(json.dumps({"context": {"includeDirectories": [sys.argv[1]]}}))' "$DEVKIT_ROOT" > "$GEMINI_CTX"
   mkdir -p "$TARGET_DIR/.gemini"
-  python3 "$DEVKIT_ROOT/scripts/merge_json.py" "$GEMINI_CTX" "$TARGET_DIR/.gemini/settings.json" >/dev/null
-  rm -f "$GEMINI_CTX"
-  echo "  - .gemini/settings.json: DevKit folder added to context.includeDirectories (its links are readable)"
+  python3 - "$TARGET_DIR/.gemini/settings.json" "$([ "$MODE" = symlink ] && echo "$DEVKIT_ROOT")" <<'PY_EOF'
+import json, os, sys
+path, devkit = sys.argv[1], sys.argv[2]
+try:
+    data = json.load(open(path, encoding="utf-8"))
+except (OSError, ValueError):
+    data = {}
+ctx = data.setdefault("context", {})
+before = json.dumps(ctx, sort_keys=True)
+names = ctx.get("fileName")
+names = [names] if isinstance(names, str) else list(names or [])
+ctx["fileName"] = ["AGENTS.md"] + [n for n in names if n not in ("AGENTS.md", "GEMINI.md", "Agent.md")]
+if devkit:
+    dirs = [d for d in ctx.get("includeDirectories") or [] if os.path.realpath(str(d)) != os.path.realpath(devkit)]
+    ctx["includeDirectories"] = dirs + [devkit]
+if json.dumps(ctx, sort_keys=True) != before or not os.path.exists(path):
+    tmp = path + ".devkit-tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    if os.path.exists(path):
+        os.chmod(tmp, os.stat(path).st_mode & 0o7777)
+    os.replace(tmp, path)
+PY_EOF
+  echo "  - .gemini/settings.json: context.fileName = AGENTS.md$([ "$MODE" = symlink ] && echo ", DevKit folder in context.includeDirectories")"
 fi
 
 # 2. Additive Merge for mcp_config.json — the same filter as .mcp.json in setup_claude.sh:

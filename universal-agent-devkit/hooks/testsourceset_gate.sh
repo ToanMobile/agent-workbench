@@ -17,7 +17,10 @@
 # unit-test variants only for the testBuildType, so a `testBuildType = "release"`
 # module has no Debug task and used to be dropped as "lacks the task" (OfficeReader
 # :app, 2026-09-23). Read the way scripts/matrix_detect.py reads it.
-# Skips entirely when there are no uncommitted .kt/.java changes. The build is
+# Skips entirely when there are no uncommitted .kt/.java changes, and when THIS
+# session wrote none of them (Edit/Write, a sub-agent's edit, a write-shaped Bash
+# command, or an mtime inside one of its bash_write_ledger.tsv windows — see the
+# "scope" block below); falls back to every dirty module when it cannot tell. The build is
 # ./gradlew, or — in a monorepo without one at the root — the nearest gradlew
 # above each changed file (e.g. android/gradlew), run from that folder.
 #
@@ -39,34 +42,23 @@ mkdir -p "${LOG_DIR}"
 LOG="${LOG_DIR}/testsourceset_gate.log"
 TS="$(date +%Y-%m-%dT%H:%M:%S)"
 
-# Read stdin to isolate session attempt tracking and file scope.
-# No `eval` (QA note): python prints the sanitized session id on line 1 and one
-# touched source path per following line; bash reads them as plain data.
+# Read stdin: the session id keys the attempts file, and the transcript (read by the
+# scoping step below) tells which files THIS session wrote. No `eval` (QA note):
+# python prints the sanitized session id and bash reads it as plain data.
 INPUT="$(cat)"
 SID_RAW=""
-SESSION_FILES=""
-if [ -n "${INPUT}" ] && command -v python3 >/dev/null 2>&1; then
-  PARSED="$(printf '%s' "${INPUT}" | python3 -c '
-import sys, json, os, re
+HAVE_PY=1
+command -v python3 >/dev/null 2>&1 || HAVE_PY=0
+if [ -n "${INPUT}" ] && [ "${HAVE_PY}" = 1 ]; then
+  SID_RAW="$(printf '%s' "${INPUT}" | python3 -c '
+import sys, json, re
 try:
     d = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
 sid = d.get("session_id") or d.get("sessionId") or ""
 print(re.sub(r"[^a-zA-Z0-9_-]", "_", str(sid)))
-tp = d.get("transcript_path")
-files = set()
-if tp and os.path.exists(tp):
-    with open(tp, "r", encoding="utf-8", errors="ignore") as f:
-        for m in re.finditer(r"[^\s\"\x27]+\.(?:kt|java)\b", f.read()):
-            fpath = m.group(0)
-            if "/src/" in fpath and "/build/" not in fpath:
-                files.add(fpath)
-for fp in sorted(files):
-    print(fp)
 ' 2>/dev/null || true)"
-  SID_RAW="$(printf '%s\n' "${PARSED}" | sed -n 1p)"
-  SESSION_FILES="$(printf '%s\n' "${PARSED}" | sed -n '2,$p')"
 elif [ -n "${INPUT}" ]; then
   echo "⚠ testsourceset_gate: python3 không có — không scope được theo phiên." >&2
 fi
@@ -98,6 +90,202 @@ CHANGED="$( { git diff --name-only --diff-filter=ACMR 2>/dev/null
               git ls-files --others --exclude-standard 2>/dev/null
             } | grep -E '\.(kt|java)$' | grep -v '/build/' | sort -u )"
 
+[ -n "${CHANGED}" ] || { log "PASS — no uncommitted Kotlin/Java changes"; exit 0; }
+
+# ── scope to the files THIS session wrote ────────────────────────────────────
+# On a shared worktree, compiling every dirty module means one session's in-flight
+# breakage blocks every other session (OfficeReader, 2026-09-09: a pdftools session
+# blocked by modules a concurrent session had mid-edit). "Wrote" is built from:
+#   1. Edit/Write/NotebookEdit file_path in the transcript — and in this session's
+#      sub-agent transcripts (<transcript>/subagents/*.jsonl), whose edits the
+#      parent transcript never shows;
+#   2. a dirty file whose mtime falls inside one of THIS session's Bash windows in
+#      .claude/audit-gate/bash_write_ledger.tsv (hooks/bash_write_ledger.sh). This is
+#      what catches Kotlin written by `find | xargs sed -i`, a script or codegen,
+#      whose path never appears in the transcript. Windows are long (p50 1.8s,
+#      max 390s), so when an mtime sits in windows of several sessions the NARROWEST
+#      wins and an exact tie goes to nobody;
+#   3. a .kt/.java path named by a WRITE-shaped Bash command (sed -i, perl -i, a
+#      `>`/`>>` target, tee, cp, mv, patch, git apply/checkout/restore) — the
+#      heredoc case, and a fallback where the ledger is not wired. A path a command
+#      merely READS (cat, grep) does not count.
+# Outcomes: files found and dirty → compile only their modules. Session wrote no
+# Kotlin/Java at all → PASS (exit 3 below): the dirty files belong to another session.
+# Fail-closed (repo-wide, the old scope) on: no transcript, unreadable or unparsable
+# input, a transcript with no tool call at all (nothing to judge by), or a session
+# whose Kotlin writes are none of them dirty.
+SCOPED=""
+SCOPE_RC=1
+if [ "${HAVE_PY}" = 1 ] && [ -n "${INPUT}" ]; then
+  SCOPED="$(TS_INPUT="${INPUT}" TS_CHANGED="${CHANGED}" TS_ROOT="${REPO_ROOT}" python3 -c '
+import os, sys, json, time, re, glob
+raw = os.environ.get("TS_INPUT", "")
+changed = [l for l in os.environ.get("TS_CHANGED", "").splitlines() if l.strip()]
+# realpath BOTH sides: on macOS /var is a symlink to /private/var.
+root = os.path.realpath(os.environ.get("TS_ROOT", "."))
+SRC = (".kt", ".java")
+try:
+    d = json.loads(raw)
+except Exception:
+    sys.exit(1)
+if not isinstance(d, dict):
+    sys.exit(1)
+tp = d.get("transcript_path")
+if not isinstance(tp, str) or not tp or not os.path.isfile(tp):
+    sys.exit(1)
+cwd = d.get("cwd")
+cwd = os.path.realpath(cwd if isinstance(cwd, str) and cwd else root)
+
+def rel(fp):
+    ab = os.path.realpath(fp if os.path.isabs(fp) else os.path.join(cwd, fp))
+    return os.path.relpath(ab, root).replace(os.sep, "/")
+
+WRITE_VERB = re.compile(r"\bsed\s+(-[A-Za-z]*i|--in-place)|\bperl\s+-[A-Za-z]*i|\btee\b|"
+                        r"\b(cp|mv|install|patch|dd)\b|\bgit\s+(apply|am|checkout|restore)\b")
+REDIRECT_TARGET = re.compile(r">>?\s*[\"\x27]?([^\s\"\x27<>|;&()]+\.(?:kt|java))\b")
+PATH_TOKEN = re.compile(r"[^\s\"\x27<>|;&()=]+\.(?:kt|java)\b")
+
+edited = set()        # repo-relative paths this session wrote
+shell_named = set()   # path tokens named by a write-shaped Bash command
+tool_uses = 0
+subs = sorted(glob.glob(os.path.join(os.path.splitext(tp)[0], "subagents", "*.jsonl")))
+for i, t in enumerate([tp] + subs):
+    try:
+        fh = open(t, encoding="utf-8", errors="ignore")
+    except Exception:
+        if i == 0:
+            sys.exit(1)
+        continue
+    try:
+        with fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                content = (rec.get("message") or {}).get("content") if isinstance(rec, dict) else None
+                if not isinstance(content, list):
+                    continue
+                for blk in content:
+                    if not isinstance(blk, dict) or blk.get("type") != "tool_use":
+                        continue
+                    tool_uses += 1
+                    name = blk.get("name")
+                    inp = blk.get("input") or {}
+                    if not isinstance(inp, dict):
+                        continue
+                    if name in ("Edit", "Write", "NotebookEdit"):
+                        fp = inp.get("file_path") or inp.get("notebook_path") or ""
+                        if isinstance(fp, str) and fp.endswith(SRC):
+                            edited.add(rel(fp))
+                    elif name == "Bash":
+                        cmd = inp.get("command")
+                        if not isinstance(cmd, str):
+                            continue
+                        toks = set(REDIRECT_TARGET.findall(cmd))
+                        if WRITE_VERB.search(cmd):
+                            toks |= set(PATH_TOKEN.findall(cmd))
+                        shell_named |= {x for x in toks if not re.search(r"[*?\[]", x)}
+    except Exception:
+        if i == 0:
+            sys.exit(1)
+# A transcript with no tool call at all gives nothing to judge by: stay repo-wide.
+if tool_uses == 0:
+    sys.exit(1)
+
+# Source 2: Bash windows from bash_write_ledger.tsv (<sid>\t<start|end>\t<ts>\t<id>).
+windows = []                      # (start, end, sid)
+ledger_path = os.path.join(root, ".claude", "audit-gate", "bash_write_ledger.tsv")
+try:
+    if os.path.isfile(ledger_path):
+        opens = {}
+        with open(ledger_path) as fh:
+            for line in fh:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) != 4:
+                    continue
+                sid_, kind, stamp, tuid = parts
+                try:
+                    stamp = float(stamp)
+                except Exception:
+                    continue
+                if kind == "start":
+                    opens[(sid_, tuid)] = stamp
+                elif kind == "end":
+                    st = opens.pop((sid_, tuid), None)
+                    if st is not None:
+                        windows.append((st, stamp, sid_))
+        # A start with no end is a backgrounded command still writing: open to now.
+        now = time.time()
+        for (sid_, _tuid), st in opens.items():
+            windows.append((st, now, sid_))
+except Exception:
+    windows = []
+
+my_sid = d.get("session_id") or ""
+if not isinstance(my_sid, str):
+    my_sid = ""
+for c in changed:
+    if c in edited:
+        continue
+    try:
+        mt = os.path.getmtime(os.path.join(root, c))
+    except Exception:
+        continue
+    best_width = None
+    best_sid = None
+    for st, en, sid_ in windows:
+        if st <= mt <= en:
+            width = en - st
+            if best_width is None or width < best_width:
+                best_width, best_sid = width, sid_
+            elif width == best_width and sid_ != best_sid:
+                best_sid = None          # tie across sessions → nobody owns it
+    if my_sid and best_sid == my_sid:
+        edited.add(c)
+
+# Source 3: paths named by a write-shaped Bash command.
+for tok in shell_named:
+    t = tok[2:] if tok.startswith("./") else tok
+    try:
+        tr = rel(tok)
+    except Exception:
+        tr = t
+    for c in changed:
+        if c == tr or c == t or c.endswith("/" + t):
+            edited.add(c)
+
+if not edited and not shell_named:
+    sys.exit(3)          # session wrote no Kotlin/Java at all → nothing of mine
+hit = [c for c in changed if c in edited]
+if not hit:
+    sys.exit(1)          # wrote Kotlin, none of it dirty → stay repo-wide
+print("\n".join(hit))
+' 2>/dev/null)"
+  SCOPE_RC=$?
+fi
+[ "${SCOPE_RC}" -eq 0 ] || SCOPED=""
+
+# Exit 3 = transcript parsed and this session wrote no Kotlin/Java. review_gate treats
+# the same state as "none edited this session — pass"; compiling other sessions'
+# in-flight Kotlin here is the cross-session block this scoping exists to remove.
+if [ "${SCOPE_RC}" -eq 3 ]; then
+  log "PASS — this session wrote no Kotlin/Java (dirty files belong to another session)"
+  rm -f "${ATTEMPTS_FILE}" 2>/dev/null || true
+  exit 0
+fi
+if [ -n "${SCOPED}" ]; then
+  if [ "${SCOPED}" != "${CHANGED}" ]; then
+    log "SCOPE — $(printf '%s\n' "${CHANGED}" | grep -c .) dirty file(s) → $(printf '%s\n' "${SCOPED}" | grep -c .) written by this session: $(printf '%s' "${SCOPED}" | tr '\n' ' ')"
+  fi
+  CHANGED="${SCOPED}"
+else
+  log "SCOPE — repo-wide (no usable transcript, or this session's Kotlin/Java writes are not dirty)"
+fi
+
 # Paths are newline-separated and may contain spaces (QA K-7): iterate on
 # newlines only, with globbing off.
 set -f
@@ -105,26 +293,6 @@ NL='
 '
 OLDIFS="${IFS}"
 IFS="${NL}"
-
-# If transcript specifies files touched in this session, scope to those files
-if [ -n "${SESSION_FILES:-}" ] && [ -n "${CHANGED}" ]; then
-  MATCHED=""
-  for f in ${CHANGED}; do
-    for sf in ${SESSION_FILES}; do
-      if [[ "$sf" == *"$f"* ]] || [[ "$f" == *"$sf"* ]]; then
-        MATCHED="${MATCHED}${NL}${f}"
-        break
-      fi
-    done
-  done
-  MATCHED="$(printf '%s\n' "${MATCHED}" | grep -v '^$' | sort -u || true)"
-  if [ -n "${MATCHED}" ]; then
-    CHANGED="${MATCHED}"
-    log "Scoped compilation checks to active session (${SID_RAW:-default}): ${CHANGED}"
-  fi
-fi
-
-[ -n "${CHANGED}" ] || { log "PASS — no uncommitted Kotlin/Java changes"; exit 0; }
 
 # The Gradle build each file belongs to: ./gradlew covers every file; without it,
 # the nearest folder above the file that holds an executable gradlew.

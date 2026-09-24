@@ -49,6 +49,29 @@ python3 "$HEALTH" -t "$W" > "$TMP/w.out" 2>&1; rc=$?
 [ "$rc" = 1 ] && strip < "$TMP/w.out" | grep -q "runs NO regression tests\|KHÔNG chạy test hồi quy" \
   && ok "project wiring: an untrusted (uncommitted) matrix is reported and fails health" || fail "project wiring not checked (rc=$rc)"
 strip < "$TMP/w.out" | grep -q "Every @-import of the DevKit block resolves\|Mọi @-import" && ok "project wiring: @-imports checked" || fail "imports not checked"
+rm -f "$W/.claude/hooks/precode_gate.sh"
+python3 "$HEALTH" -t "$W" > "$TMP/w2.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && strip < "$TMP/w2.out" | grep -q "registered hooks missing\|hook đăng ký nhưng thiếu file" \
+  && ok "project wiring: a registered hook with no file FAILs health (guards silently off)" || fail "missing hook not fatal (rc=$rc)"
+bash "$DEVKIT_DIR/bin/install.sh" -t "$W" -a claude -p backend -y --no-githooks >/dev/null 2>&1   # restore
+python3 - "$W/.claude/settings.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["hooks"].setdefault("PostToolUse", []).append({"matcher": "Write", "hooks": [{"type": "command", "command": "bash .claude/hooks/relative_only.sh"}]})
+json.dump(d, open(sys.argv[1], "w"))
+PY
+python3 "$HEALTH" -t "$W" > "$TMP/w3.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && strip < "$TMP/w3.out" | grep -q "relative_only.sh" && ok "project wiring: a relative 'bash .claude/hooks/x.sh' with no file is caught" || fail "relative hook path missed (rc=$rc)"
+bash "$DEVKIT_DIR/bin/install.sh" -t "$W" -a claude -p backend -y --no-githooks >/dev/null 2>&1
+python3 - "$W/.claude/settings.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["hooks"]["PostToolUse"] = [g for g in d["hooks"]["PostToolUse"] if "relative_only" not in json.dumps(g)]
+json.dump(d, open(sys.argv[1], "w"))
+PY
+rm -f "$W/.claude/commands/qc.md"
+python3 "$HEALTH" -t "$W" > "$TMP/w4.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && strip < "$TMP/w4.out" | grep -q ".claude/commands/qc.md" && ok "project wiring: a DevKit command link that vanished (/qc) FAILs health" || fail "missing /qc not caught (rc=$rc)"
 
 # L-2: only the active profile's essential_mcps are required (universal: codebase-memory-mcp, context7).
 mkdir -p "$TMP/uni"

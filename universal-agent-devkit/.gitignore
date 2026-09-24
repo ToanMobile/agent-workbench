@@ -65,6 +65,10 @@ tmp/
 .agents/regression_matrix.active.json
 .agents/regression_status.json
 .agents/regression_checklist.md
+.agents/CHECKLIST.md
+.agents/INBOX.md
+.agents/evidence/
+.agents/archive/
 .agents/handoff.md
 templates/regression_matrix.active.json
 templates/last_postfix_audit_report.md
