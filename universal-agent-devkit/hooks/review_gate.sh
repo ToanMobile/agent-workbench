@@ -146,7 +146,7 @@ except Exception as e:
 
 if not changed:
     reset_attempts()
-    logline(f"[{ts}] no uncommitted code ({"|".join(CODE_EXTS)}) — pass")
+    logline(f"[{ts}] no uncommitted code ({'|'.join(CODE_EXTS)}) — pass")
     sys.exit(0)
 
 def in_diff(fp):
