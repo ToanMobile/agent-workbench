@@ -66,7 +66,10 @@ inp = d.get("tool_input")
 if not isinstance(inp, dict):
     sys.exit(0)
 
-path = inp.get("file_path") or inp.get("notebook_path") or ""
+# file_path is Claude Code's Read/Edit key. target_file is Grok's read_file key.
+# Same read event; without this fallback a read never reaches the ledger and
+# precode_gate blocks the edit of a file that was just opened.
+path = inp.get("file_path") or inp.get("notebook_path") or inp.get("target_file") or ""
 if not isinstance(path, str) or not path:
     sys.exit(0)
 

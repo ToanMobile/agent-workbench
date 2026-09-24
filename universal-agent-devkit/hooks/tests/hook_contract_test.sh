@@ -860,6 +860,12 @@ run_case "recorded Read unblocks the next edit" precode_gate.sh 0 \
 # still unseen for SESS-C even though a Read of it was issued.
 run_case "escape-hatched Read records nothing" precode_gate.sh 2 \
   "{\"tool_name\":\"Edit\",\"session_id\":\"SESS-C\",\"transcript_path\":\"${EMPTY_TR}\",\"tool_input\":{\"file_path\":\"${KT_SEEN}\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
+# Grok's read_file sends target_file, not file_path. A different session so the
+# SESS-C escape-hatch case above still proves Seen.kt was not recorded for SESS-C.
+run_case "records a Grok read_file target_file" read_ledger.sh 0 \
+  "{\"tool_name\":\"read_file\",\"session_id\":\"SESS-GROK\",\"tool_input\":{\"target_file\":\"${KT_SEEN}\"}}"
+run_case "Grok target_file Read unblocks the next edit" precode_gate.sh 0 \
+  "{\"tool_name\":\"Edit\",\"session_id\":\"SESS-GROK\",\"transcript_path\":\"${EMPTY_TR}\",\"tool_input\":{\"file_path\":\"${KT_SEEN}\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
 echo
 
 # ── claim_check.sh — Stop ───────────────────────────────────────────────────

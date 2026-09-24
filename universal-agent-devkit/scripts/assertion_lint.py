@@ -24,6 +24,7 @@ _ASSERT = re.compile(
     r"|\bAssert\.(?:AreEqual|AreNotEqual|IsTrue|IsFalse|IsNull|IsNotNull|That|Throws|Greater|Less|AreSame)\s*\("
     r"|\bassertThat\s*\("
     r"|\bexpect\s*\("
+    r"|\b(?:co)?[Vv]erify(?:All|Order|Sequence)?\s*(?:\(|\{)"
     r"|\bshould(?:Be|Not|Have|Throw)\b"
     r"|\bXCTAssert\w*\s*\("
     r"|\brequire(?:NotNull|\s*\()"

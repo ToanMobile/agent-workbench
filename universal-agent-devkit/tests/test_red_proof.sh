@@ -391,6 +391,25 @@ python3 "$PROOF" "$P" --bug "$B12" --heavy --wait >/dev/null 2>&1
 [ "$(proof "$B12")" = PROVEN ] && ok "a linked file the command never runs does not block PROVEN" || fail "unrun ref: $(proof "$B12") $(python3 -c "import json;print((json.load(open('$P/.agents/regression_status.json'))['items']['$B12'].get('red_proof') or {}).get('reason',''))")"
 P="$P_KEEP"; cd "$P"
 
+# ── proof slots: "jobs" in .agents/local/red_proof.json lets N proofs run at once (default 1) ─
+SL="$TMP/slots"; mkdir -p "$SL/.agents/local"
+SLOT="$(cd "$DEVKIT_DIR/scripts" && python3 - "$SL" <<'PY'
+import json, os, sys; from pathlib import Path
+import red_proof as rp
+P = Path(sys.argv[1]); st = P / ".claude" / "audit-gate"; st.mkdir(parents=True, exist_ok=True)
+out = [rp.jobs_of(P)]
+a = rp.proof_slot(st, 1, wait=False); out.append(rp.proof_slot(st, 1, wait=False) is None); a.close()
+(P / ".agents/local/red_proof.json").write_text(json.dumps({"copy": [], "jobs": 2}))
+out.append(rp.jobs_of(P))
+a = rp.proof_slot(st, 2, wait=False); b = rp.proof_slot(st, 2, wait=False)
+out.append(a is not None and b is not None and rp.proof_slot(st, 2, wait=False) is None)
+os.environ["RED_PROOF_JOBS"] = "3"; out.append(rp.jobs_of(P))
+print(out)
+PY
+)"
+[ "$SLOT" = "[1, True, 2, True, 3]" ] && ok "proof slots: 1 by default, red_proof.json jobs=2 → two at once, a third waits; RED_PROOF_JOBS wins" \
+  || fail "proof slots: $SLOT"
+
 # ── unknown id → exit 2 with a suggestion; an id without the BUG- prefix is found ─
 python3 "$PROOF" "$P" --bug "BUG-nope-xyz" --wait > "$TMP/unk" 2>&1; rc=$?
 [ $rc = 2 ] && grep -q "không có" "$TMP/unk" && ok "unknown id → exit 2, said so" || fail "unknown id: rc=$rc $(cat "$TMP/unk")"

@@ -35,13 +35,14 @@ class T {
   @Test fun empty() { val x = 1 }
   @Test fun vacuous() { assertTrue(true) }
   @Test fun real() { assertEquals(door, "left") }
+  @Test fun mockk() { verify(exactly = 1) { door.open() } }
   @Ignore @Test fun skipped() { }
 }
 '''
 found = al.findings(kt)
 lines = [n for n, _ in found]
 assert 3 in lines and 4 in lines, found
-assert 5 not in lines and 6 not in lines, found
+assert 5 not in lines and 6 not in lines and 7 not in lines, found
 
 def png_rows(rows):
     h, w = len(rows), len(rows[0])

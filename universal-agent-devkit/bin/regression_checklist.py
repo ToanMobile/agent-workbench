@@ -1008,7 +1008,7 @@ ALERT_TODO = {
     "FAIL": "sửa code/test rồi chạy lại — xem log",
     "TIMEOUT": "suite quá giờ — tìm test treo, chạy lại",
     "FLAKY": "test chập chờn — tìm nguồn (thời gian, thứ tự, mạng), không tắt test",
-    "VACUOUS": "viết lại test cho ĐỎ trên code lỗi rồi chứng minh lại (scripts/red_proof.py)",
+    "VACUOUS": "viết lại test cho ĐỎ trên code lỗi rồi chứng minh lại (.agents/devkit/scripts/red_proof.py)",
     "STALE": "code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`)",
     "NEEDS_TEST": "viết test tái hiện → `agent-kit bugs link` / `req link`",
     "NOT_IN_MATRIX": "test có nhưng gate không chạy — đưa vào ma trận hoặc link suite của ma trận",

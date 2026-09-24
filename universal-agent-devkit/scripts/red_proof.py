@@ -174,6 +174,37 @@ def fix_commit_of(project: Path, item: dict) -> tuple:
     return None, None
 
 
+def jobs_of(project: Path) -> int:
+    """How many proofs may run at once for this project: RED_PROOF_JOBS, else "jobs" in
+    .agents/local/red_proof.json, else 1 (each proof is two full builds)."""
+    try:
+        return max(1, int(os.environ["RED_PROOF_JOBS"]))
+    except (KeyError, ValueError):
+        pass
+    try:
+        cfg = json.loads((project / ".agents" / "local" / "red_proof.json").read_text(encoding="utf-8"))
+        return max(1, int(cfg.get("jobs", 1)))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 1
+
+
+def proof_slot(state: Path, jobs: int, wait: bool = True):
+    """Hold one of `jobs` proof slots (flock on red_proof.lock, red_proof.2.lock, …), or None when
+    all are busy and wait is False. Slot 1 is the file other tools already queue on."""
+    import fcntl
+    while True:
+        for i in range(max(1, jobs)):
+            f = open(state / ("red_proof.lock" if i == 0 else f"red_proof.{i + 1}.lock"), "w")
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return f
+            except OSError:
+                f.close()
+        if not wait:
+            return None
+        time.sleep(2)
+
+
 @contextlib.contextmanager
 def worktree(project: Path):
     """A detached worktree at HEAD, removed afterwards whatever happens."""
@@ -644,11 +675,10 @@ def main(argv=None) -> int:
         subprocess.Popen([sys.executable, __file__, *args, "--wait"], cwd=str(project),
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         return 0
-    import fcntl
     state = project / ".claude" / "audit-gate"
     state.mkdir(parents=True, exist_ok=True)
-    with open(state / "red_proof.lock", "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)          # one proof at a time per project (sandboxes are heavy)
+    # jobs_of() proofs at a time per project (default 1: each is two full builds)
+    with proof_slot(state, jobs_of(project)):
         data = rc.load(project)
         mf = project / ".agents" / "regression_matrix.active.json"
         if mf.is_file():
