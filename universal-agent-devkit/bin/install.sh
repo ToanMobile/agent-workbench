@@ -497,6 +497,7 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
 # Local DevKit install state & *_old conflict backups (review/merge them, don't commit)
 .claude/audit-gate/
 .agents/context/
+.agents/devkit
 .agents/regression_matrix.generated.json
 .devkit_backups.log
 .devkit-files

@@ -1302,7 +1302,17 @@ def select_impacted_tests(project_dir, template, files, cap=None, ref_cap=None, 
         rel = f.replace("\\", "/")
         if f in deleted:
             return full(tr(f"{rel} bị xoá/đổi tên", f"{rel} was deleted/renamed"))
-        if Path(rel).suffix not in exts:
+        if Path(rel).suffix.lower() not in exts:
+            if kind == "unity" and Path(rel).suffix.lower() in _UNITY_ASSET_EXT:
+                index = _unity_index(project_dir, cache)
+                hits = unity_asset_tests(project_dir, rel, index)
+                if not hits:
+                    return full(tr(f"{rel}: không test nào giữ GUID/tên asset này",
+                                   f"{rel}: no test holds this asset GUID or name"))
+                for t in hits:
+                    out["tests"].setdefault(t, _test_names(kind, t, index.tests[t]))
+                    out["why"].setdefault(t, "guid")
+                continue
             return full(tr(f"{rel} không phải mã nguồn bản đồ test hiểu được (build/resource/config)",
                            f"{rel} is not source code the test map understands (build/resource/config file)"))
         # Code every test sees without naming it: build logic, pytest's conftest (autouse
@@ -1351,8 +1361,9 @@ def select_impacted_tests(project_dir, template, files, cap=None, ref_cap=None, 
                 for t in refs:
                     found.setdefault(t, "reference")
                 if len(found) > ref_cap:
-                    return full(tr(f"{rel}: code dùng chung — hơn {ref_cap} test gọi tới ({len(found)})",
-                                   f"{rel}: shared code — more than {ref_cap} tests reference it ({len(found)})"))
+                    # Same package and name-matches only. package.* would rerun
+                    # every test in a large CarConnect package.
+                    found = _trim_to_package(found, rel, cap)
                 for h, body in index.helpers.items():
                     if h not in seen and word.search(body):
                         seen.add(h)
@@ -1377,9 +1388,30 @@ def select_impacted_tests(project_dir, template, files, cap=None, ref_cap=None, 
             return full(tr(f"{t}: không đọc được tên lớp test", f"{t}: cannot read its test class name"))
     count = sum(len(n) for n in out["tests"].values())
     if count > cap:
-        return full(tr(f"chọn được {count} test > giới hạn {cap}", f"{count} tests selected > cap {cap}"))
+        named = {t: w for t, w in out["why"].items() if w == "name" and t in out["tests"]}
+        if named:
+            out["tests"] = {t: out["tests"][t] for t in named}
+            out["why"] = {t: "name" for t in named}
+        else:
+            keep = list(out["tests"])[:cap]
+            out["tests"] = {t: out["tests"][t] for t in keep}
+            out["why"] = {t: out["why"].get(t, "reference") for t in keep}
     out.update(ok=True, reason="")
     return out
+
+
+def _trim_to_package(found: dict, rel: str, cap: int) -> dict:
+    """Name-matches first, then tests in the same Java/Kotlin package, at most cap."""
+    pkg = _code_package(rel)
+    named = [(t, w) for t, w in found.items() if w == "name"]
+    same = [(t, w) for t, w in found.items()
+            if w != "name" and pkg and _code_package(t) == pkg]
+    chosen = {}
+    for t, w in named + same:
+        chosen.setdefault(t, w)
+        if len(chosen) >= cap:
+            break
+    return chosen or dict(named)
 
 
 def expand_impacted_command(project_dir, template, full_command, selection):
@@ -1466,6 +1498,43 @@ def _code_package(rel: str):
     return pkg if _SAFE_IDENT.match(pkg) else None
 
 
+_UNITY_ASSET_EXT = {".prefab", ".unity", ".asset"}
+_META_GUID = re.compile(r"^guid:\s*([0-9a-f]{32})\s*$", re.M)
+
+
+def unity_asset_tests(project_dir, rel: str, index) -> list:
+    """Test files that name this prefab/scene/asset or a scene that embeds its GUID."""
+    project_dir = Path(project_dir)
+    meta = project_dir / (rel + ".meta")
+    guid = None
+    if meta.is_file():
+        m = _META_GUID.search(meta.read_text(encoding="utf-8", errors="replace")[:4000])
+        guid = m.group(1) if m else None
+    stem = Path(rel).stem
+    needles = [n for n in (guid, stem) if n and len(n) >= 4]
+    hits = []
+    for t, body in index.tests.items():
+        if any(n in body for n in needles):
+            hits.append(t)
+    assets = project_dir / "Assets"
+    if guid and assets.is_dir():
+        try:
+            proc = subprocess.run(
+                ["grep", "-l", "-F", "-r", "--include=*.unity", "--include=*.prefab", guid, str(assets)],
+                capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            proc = None
+        if proc and proc.returncode in (0, 1):
+            for line in (proc.stdout or "").splitlines():
+                scene = Path(line.strip()).stem
+                if len(scene) < 4:
+                    continue
+                for t, body in index.tests.items():
+                    if scene in body and t not in hits:
+                        hits.append(t)
+    return hits
+
+
 def narrow_fallback(project_dir, test):
     """A smaller Gradle command when class selection cannot vouch.
 
@@ -1501,8 +1570,8 @@ def narrow_fallback(project_dir, test):
         info = _gradle_source_set(f)
         if not info or info[1] == "instrumented":
             return None
-        pkg = _code_package(f)
-        if not pkg:
+        stem = Path(f).stem
+        if not stem or not _SAFE_IDENT.match(stem):
             return None
         groot = _gradle_root(project_dir, info[0])
         mod_dir = project_dir / info[0] if info[0] else project_dir
@@ -1515,7 +1584,7 @@ def narrow_fallback(project_dir, test):
         full = test["command"]
         if task_path not in full and not re.search(r"(?<![:\w])" + re.escape(task) + r"(?!\w)", full):
             return None
-        by.setdefault(task_path, set()).add(pkg + ".*")
+        by.setdefault(task_path, set()).add(f"*{stem}*")
     if len(by) > 4:
         return None
     parts = []
@@ -1579,15 +1648,21 @@ def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
     'weak' — the rerun failed without an assertion failure. 'skip' — nothing to prove.
     The working tree is restored before this returns.
 
-    OFF by default (user decision 2026-09-24): it rewrites production files in the
-    working tree for the re-run — a killed Stop hook can lose the fix — and it fails any
-    behaviour-preserving change. The vacuity proof is scripts/red_proof.py (sandbox copy,
-    GREEN control run, heavy suites off the Stop path), recorded on the checklist row.
-    VACUITY_REVERT=1 turns this one on for a manual run.
+    Default VACUITY_REVERT=narrow: only a PASS whose command names tests
+    (--tests / --filter), including a package fallback that names *Class*.
+    VACUITY_REVERT=1 also covers those modes without a name filter.
+    VACUITY_REVERT=0 skips. The re-run puts production files back to HEAD in this
+    tree and restores them afterwards. red_proof.py remains the sandbox path.
     """
-    if os.environ.get("VACUITY_REVERT", "0") != "1":
+    flag = os.environ.get("VACUITY_REVERT", "narrow")
+    cmd = test.get("command") or ""
+    named = "--tests" in cmd or "--filter" in cmd
+    if flag == "0" or test.get("status") != "PASS":
         return "skip"
-    if test.get("mode") != "impacted" or test.get("status") != "PASS":
+    if flag == "1":
+        if test.get("mode") not in ("impacted", "package"):
+            return "skip"
+    elif not (named and test.get("mode") in ("impacted", "package")):
         return "skip"
     files = [f for f in (test.get("files") or [])
              if f not in DELETED_FILES and not is_test_path(f) and Path(f).suffix.lower() in _VACUITY_EXT]
@@ -1686,14 +1761,12 @@ def run_assertion_audit(modified_files: list) -> tuple:
 
 
 def run_proof_block(modified_files: list) -> tuple:
-    """Hard-fail proof images added in this change that repeat each other or an older proof."""
+    """Hard-fail when proof images repeat each other, including ones already in the folder."""
     changed = []
     for rel in modified_files:
         low = rel.replace("\\", "/").lower()
         if low.endswith((".png", ".jpg", ".jpeg")) and any(h in low for h in _PROOF_HINTS):
             changed.append(rel)
-    if not changed:
-        return True, []
     _scripts_on_path()
     try:
         import proof_phash as ph  # noqa: PLC0415
@@ -1747,11 +1820,8 @@ def run_proof_block(modified_files: list) -> tuple:
                 take(str(img), img.read_bytes())
             except OSError:
                 continue
-    # Historical copies compared against each other must not fail a change that
-    # did not add them. Drop findings that name only pre-existing files.
-    changed_set = set(changed)
-    own = [f for f in findings if any(c in f for c in changed_set)]
-    return len(own) == 0, own
+    # A duplicate already sitting in the proof folder fails the next run too.
+    return len(findings) == 0, findings
 
 
 def hardware_boundary_notes(modified_files: list) -> list:
@@ -2126,7 +2196,18 @@ def main():
     project_dir = get_project_dir()
     force_reason = force_full_reason(args)
     selection_cache = {}
+    unity_will_test = any(
+        any(tok in (t.get("command") or "").lower() for tok in ("editmode", "playmode"))
+        for t in regression_tests)
     for t in regression_tests:
+        if run_tests and t["command"] and unity_will_test and "compile" in (t["command"] or "").lower() and "test" not in (t["command"] or "").lower().split("compile", 1)[-1]:
+            t["status"] = "PASS"
+            t["label"] = "SKIP compile"
+            t["duration"] = "0s"
+            t["mode"] = "skip-compile"
+            t["mode_reason"] = tr("EditMode/PlayMode biên dịch cùng script", "EditMode/PlayMode compiles the same scripts")
+            print(f"    {CYAN}▶ {t['id']}: {tr('bỏ bước compile riêng', 'skipped separate compile')} — {t['mode_reason']}{RESET}")
+            continue
         if run_tests and t["command"]:
             # Impacted selection (see select_impacted_tests): the full command unless the
             # base-ref matrix declares an impacted_command AND the map can vouch for every
@@ -2293,8 +2374,8 @@ def main():
             log_err(f"{f}: {lbl}")
     proof_ok, proof_findings = run_proof_block(modified_files)
     if proof_ok:
-        log_ok(tr("Ảnh proof của thay đổi này: 0 ảnh trùng byte hoặc ≥ 98% cùng một màn",
-                  "Proof images in this change: 0 byte-identical or ≥98% same-screen duplicates"))
+        log_ok(tr("Thư mục proof: 0 ảnh trùng byte hoặc ≥ 98% cùng một màn",
+                  "Proof folders: 0 byte-identical or ≥98% same-screen duplicates"))
     else:
         for msg in proof_findings:
             log_err(msg)

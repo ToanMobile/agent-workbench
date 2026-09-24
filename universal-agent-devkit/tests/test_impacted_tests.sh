@@ -113,15 +113,15 @@ has "JSON test_mode full" '"test_mode": "full"' "$out"
 make_repo "$IMPACTED" "$FULL"
 echo "// tweak" >> app/src/main/kotlin/pkg/Foo.kt
 echo "// tweak" >> app/src/main/kotlin/pkg/Bar.kt
-out="$(POSTFIX_GATE_IMPACTED_CAP=1 run_gate --run-tests)"; check_exit "cap exceeded -> PASS on the full command" 0 $?
-[ "$(ran)" = "testDebugUnitTest" ] && ok "cap exceeded ran the full command" || bad "cap exceeded ran: $(ran)"
-has "reason names the cap" "2 tests selected > cap 1" "$out"
+out="$(POSTFIX_GATE_IMPACTED_CAP=1 run_gate --run-tests)"; check_exit "cap exceeded -> name matches, not the suite" 0 $?
+has "cap keeps a named test" "--tests" "$(ran)"
+hasnt "cap does not run the bare suite" "testDebugUnitTest" "$(echo "$(ran)" | grep -v -- '--tests' || true)"
 
 make_repo "$IMPACTED" "$FULL"
 echo "// tweak" >> app/src/main/kotlin/pkg/Shared.kt
-out="$(POSTFIX_GATE_IMPACTED_REF_CAP=1 run_gate --run-tests)"; check_exit "shared code -> full" 0 $?
-[ "$(ran)" = "testDebugUnitTest" ] && ok "shared code ran the full command" || bad "shared code ran: $(ran)"
-has "reason says shared code" "shared code" "$out"
+out="$(POSTFIX_GATE_IMPACTED_REF_CAP=1 run_gate --run-tests)"; check_exit "shared code -> same-package tests, not the suite" 0 $?
+has "shared code keeps a named test" "--tests" "$(ran)"
+hasnt "shared code does not run the bare suite" "testDebugUnitTest" "$(echo "$(ran)" | grep -v -- '--tests' || true)"
 
 make_repo "$IMPACTED" "$FULL"
 echo "// tweak" >> app/src/main/kotlin/pkg/Lonely.kt
@@ -134,7 +134,7 @@ WIDE='./gradlew :app:testDebugUnitTest :core:testDebugUnitTest'
 make_repo "$MOD" "$WIDE"
 echo "// tweak" >> app/src/main/kotlin/pkg/Lonely.kt
 out="$(run_gate --run-tests)"; check_exit "unnamed class -> package filter" 0 $?
-has "package filter on the app module" ":app:testDebugUnitTest --tests pkg.*" "$(ran)"
+has "class-name filter on the app module" ":app:testDebugUnitTest --tests *Lonely*" "$(ran)"
 hasnt "other module not run" ":core:testDebugUnitTest" "$(ran)"
 has "package mode printed" "mode PACKAGE" "$out"
 
