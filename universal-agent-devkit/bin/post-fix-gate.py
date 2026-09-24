@@ -286,6 +286,30 @@ def is_test_path(rel_file: str) -> bool:
     return bool(TEST_FILE_RE.search(parts[-1]))
 
 
+# Added lines that switch a test off (JUnit/Kotest, NUnit, Go, pytest/unittest, Jest/Mocha, XCTest).
+TEST_SKIP_RE = re.compile(r"@Ignore\b|@Disabled\b|\[Ignore\b|\bt\.Skip|\bpytest\.(?:mark\.)?skip|"
+                          r"\bunittest\.skip|\b(?:it|test|describe)\.skip\b|\bx(?:it|describe|test)\s*\(|XCTSkip")
+
+
+def test_change_is_append_only(base_ref: str, repo_path: str) -> bool:
+    """True when the working tree only ADDS lines to this existing test file (a new test
+    appended to it) and none of them is a skip marker. Any removed or changed line — or a
+    diff git cannot produce — keeps the file counted as an edited test."""
+    res = subprocess.run(["git", "-C", str(get_repo_root()), "diff", "-U0", "--no-color", "--no-ext-diff",
+                          base_ref, "--", repo_path], capture_output=True, text=True, errors="replace")
+    if res.returncode != 0 or not res.stdout:
+        return False
+    added = []
+    for line in res.stdout.splitlines():
+        if line.startswith(("---", "+++")):
+            continue
+        if line.startswith("-") or line.startswith("Binary files"):
+            return False
+        if line.startswith("+"):
+            added.append(line[1:])
+    return bool(added) and not any(TEST_SKIP_RE.search(a) for a in added)
+
+
 def has_dir(rel_file: str, *names) -> bool:
     parts = rel_file.replace("\\", "/").split("/")[:-1]
     return any(p in names for p in parts)
@@ -1844,6 +1868,25 @@ def test_failure_reported(output):
         return True     # cannot tell: keep the conservative reading (flaky, not a pass)
 
 
+# The machine could not provision the tools the command needs — no test ran, and no change
+# to the audited code can fix it. Only signatures of a missing toolchain/SDK/network, never
+# a compile or test error of the change.
+ENV_BLOCKED_RE = re.compile(
+    r"Unable to download toolchain|No matching toolchains found|Cannot find a Java installation|"
+    r"SDK location not found|ANDROID_HOME|ANDROID_SDK_ROOT|"
+    r"Received status code (?:40[1378]|429|5\d\d) from server|"
+    r"Could not GET 'https?://|Could not HEAD 'https?://|CONNECT tunnel failed|"
+    r"Could not resolve (?:host|plugin artifact)|Plugin \[id: '[^']+'.*\] was not found")
+
+
+def environment_blocked(exit_code, output):
+    """True when a FAILED command never reached a test because this machine lacks what it
+    needs (exit 127: the tool is not installed, or a toolchain/SDK/network signature)."""
+    if exit_code == 127:
+        return True
+    return bool(ENV_BLOCKED_RE.search(output or "")) and not test_failure_reported(output)
+
+
 def flaky_retry(cmd, project_dir, timeout, elapsed):
     """Re-run a failed suite once: (exit code, output) or None. Green on the second run is a
     flaky test — the run stays FAIL. Off with FLAKY_RETRY=0; only for a suite that ran under
@@ -2068,11 +2111,12 @@ def main():
         return run_staged_audit(args, modified_files, devkit_artifacts)
     matrix, matrix_problem = load_active_matrix(args.matrix, base_ref)
     # Editing an existing test in the same change can weaken the very assertion the
-    # regression run relies on. New test files are fine (that is the RED test).
+    # regression run relies on. New test files are fine (that is the RED test), and so is a
+    # test appended to an existing file: no old line changed and no skip marker added.
     prefix = get_project_prefix()
     tests_touched = [f for f in modified_files if is_test_path(f) and subprocess.run(
         ["git", "-C", str(get_repo_root()), "cat-file", "-e", f"{base_ref}:{prefix}{f}"],
-        capture_output=True).returncode == 0]
+        capture_output=True).returncode == 0 and not test_change_is_append_only(base_ref, prefix + f)]
     run_tests = (args.run_tests or args.full) and not args.dry_run
 
     print(f"\n{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}")
@@ -2277,6 +2321,8 @@ def main():
                             t.update({"status": "PASS", "exit_code": 0, "infra_retry": True})
                         else:
                             t["flaky"] = retry[0] == 0  # a test failed, then passed on the same code: still FAIL
+                if t["status"] == "FAIL" and environment_blocked(proc.returncode, out):
+                    t["env_blocked"] = True     # still FAIL: the verdict never turns into a PASS
                 t["output_tail"] = (out or "")[-2000:]
             except subprocess.TimeoutExpired:
                 try:

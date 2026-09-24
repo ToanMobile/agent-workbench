@@ -155,6 +155,30 @@ ustop; rc=$?
 ustop; rc=$?
 [ "$rc" = 0 ] && [ ! -s "$TMP/out" ] && ok "UNTESTED warning once per change" || fail "UNTESTED warning repeated"
 
+# A test that FAILs because the machine cannot provision its tools (Gradle cannot download
+# the JDK toolchain, no Android SDK) — no test ran and no code change can fix it: like
+# UNTESTED, a warning once per change instead of blocking the stop. A compile error in the
+# change itself still blocks.
+E="$TMP/envblocked"; mkdir -p "$E/src" "$E/templates"
+( cd "$E" && git init -q . && git config user.email t@t && git config user.name t
+  echo "fun ok() = 1" > src/Core.kt
+  printf 'echo "* What went wrong:"\necho "Unable to download toolchain matching the requirements"\nexit 1\n' > env.sh
+  printf 'echo "e: src/Core.kt:1:12 Unresolved reference: nope"\nexit 1\n' > compile.sh
+  cat > templates/regression_matrix.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
+ "mandatory_regression_tests":[{"id":"REG-E","name":"gradle","command":"sh env.sh"}]}]}
+JSON
+  git add -A && git commit -qm init && echo "fun ok() = 2" > src/Core.kt )
+estop() { printf '{"session_id":"s-e","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$E" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+estop; rc=$?
+[ "$rc" = 0 ] && grep -q "REG-E" "$TMP/out" && grep -q "KHÔNG phải PASS" "$TMP/out" \
+  && ok "environment-blocked test: stop allowed with a 'not a PASS' warning naming it" || fail "env-blocked handling (rc=$rc out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")')"
+estop; rc=$?
+[ "$rc" = 0 ] && [ ! -s "$TMP/out" ] && ok "environment-blocked warning once per change" || fail "env-blocked warning repeated (rc=$rc)"
+( cd "$E" && sed -i 's/sh env.sh/sh compile.sh/' templates/regression_matrix.json && git commit -qam compile && echo "fun ok() = 3" > src/Core.kt )
+estop; rc=$?
+[ "$rc" = 2 ] && grep -q "REG-E" "$TMP/err" && ok "compile error in the change: still blocks" || fail "compile error not blocked (rc=$rc)"
+
 # Matrix not trusted because it is UNCOMMITTED (the only problem): the cure is to commit
 # it — not "fix code/test" — and the files it watches are not UNCOVERED. Zero tests ran
 # and the agent cannot make the matrix trusted itself, so the stop goes through with a

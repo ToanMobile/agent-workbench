@@ -119,5 +119,15 @@ v="$(tail -1 "$TMP/out" | python3 -c 'import json,sys; print(json.load(sys.stdin
 v="$(CLAUDE_PROJECT_DIR="$P" python3 "$GATE" --matrix "$P/matrix.json" --run-tests --json -l en 2>&1 | tail -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["verdict"])')"
 case "$v" in *"human review"*"git diff HEAD -- src/test/CoreTest.kt"*commit*) ok "EN verdict: human review of the test diff, or commit it" ;; *) fail "EN tests_touched verdict: $v" ;; esac
 
+# 11. A new test appended to an existing test file (the usual RED test) changes no line of the
+#     old tests, so it is not an edited test; an appended skip marker still is.
+touched() { CLAUDE_PROJECT_DIR="$P" python3 "$GATE" --matrix "$P/matrix.json" --run-tests --json 2>&1 | tail -1 \
+  | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["tests_touched"]))'; }
+git checkout -q -- src/test/CoreTest.kt && printf 'class CoreTestNew { fun t() = check(ok() == 2) }\n' >> src/test/CoreTest.kt
+[ -z "$(touched)" ] && ok "test appended to an existing test file: not an edited test" || fail "appended test counted as edited: $(touched)"
+git checkout -q -- src/test/CoreTest.kt && printf '@Ignore\nclass CoreTestSkip\n' >> src/test/CoreTest.kt
+[ "$(touched)" = "src/test/CoreTest.kt" ] && ok "appended @Ignore: still an edited test" || fail "appended skip marker not flagged: '$(touched)'"
+git checkout -q -- src/test/CoreTest.kt
+
 if [ "$FAILS" -ne 0 ]; then echo "regression checklist: $FAILS FAILED"; exit 1; fi
 echo "regression checklist: all checks passed"

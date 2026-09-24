@@ -158,6 +158,7 @@ It delivers a complete, closed-loop software engineering ecosystem:
 - **Blocking:** secrets & lazy placeholders, performance anti-patterns, swallowed exceptions, raw logging (all regex-based, on changed files only), and — with `--run-tests` — the regression tests the active matrix maps to the changed files.
 - **Tamper-resistant tests:** test commands are read from the matrix at `HEAD`; a matrix or an existing test edited in the same change makes the verdict UNVERIFIED, never PASS.
 - **Reminders only:** DESIGN.md/a11y, RED→GREEN proof, screenshots/devices, OpenCodeReview.
+- **Proof image on Claude Code:** the gate takes no screenshot, but the Stop hook `proof_gate.sh` blocks a reply that opens with XONG unless it names a real `reports/proof-<yyyyMMdd-HHmmss>.png` (PNG bytes, > 8 KB, made in this turn). Off with `PROOF_GATE=0`.
 
 ### 5. 📱 Dynamic Domain Profiles
 - **Zero Pollution:** Keeps root `AGENTS.md` clean and universal while loading domain-specific rules (AAOS CAN Bus, Compose Vitals, Game ECS) dynamically into `rules/` symlinks.
