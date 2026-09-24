@@ -87,7 +87,7 @@ COMPILE_RED = re.compile(r"Compilation error|compile\w*(?:Kotlin|Java)\w* FAILED
                          r"Unresolved reference|ImportError|ModuleNotFoundError|SyntaxError|Cannot find module|"
                          r"error TS\d{4}|error\[E\d{4}\]|\bundefined: \w+|Scripts have compiler errors")
 NO_TESTS = re.compile(r"No tests found for given includes|Ran 0 tests|no tests ran|collected 0 items|"
-                      r"No tests found|0 tests completed", re.I)
+                      r"No tests found|(?<!\d)0 tests completed", re.I)
 PATCH_DIR = Path(".agents") / "local" / "red-patches"
 
 
@@ -247,6 +247,23 @@ def _jvm_fqn(project: Path, path: str) -> str | None:
     return f"{m.group(1)}.{Path(path).stem}" if m else Path(path).stem
 
 
+# A top-level class at column 0 that can hold tests (not abstract/data/enum/sealed/annotation).
+_JVM_CLASS = re.compile(r"^(?:(?:public|internal|private|open|final)\s+)*class\s+([A-Za-z_]\w*)", re.M)
+
+
+def _jvm_filters(project: Path, path: str) -> list:
+    """`--tests` names for one test file: the file's class plus every other top-level test class in
+    it (a Kotlin file may hold two — the filter on the file name alone never runs the second)."""
+    first = _jvm_fqn(project, path)
+    try:
+        src = (project / path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [first]
+    pkg = first.rsplit(".", 1)[0] + "." if first and "." in first else ""
+    names = [first] + [pkg + c for c in _JVM_CLASS.findall(src) if c != Path(path).stem]
+    return list(dict.fromkeys(names))
+
+
 def _cs_name(project: Path, path: str) -> str:
     try:
         m = re.search(r"^\s*namespace\s+([\w.]+)", (project / path).read_text(encoding="utf-8", errors="replace"), re.M)
@@ -293,7 +310,7 @@ def narrowed(project: Path, template: str | None, tests: list, scope: str | None
     if "{gradle_tests}" in out:
         if not jvm:
             return None
-        out = out.replace("{gradle_tests}", " ".join(f"--tests '{_jvm_fqn(project, t)}'" for t in jvm))
+        out = out.replace("{gradle_tests}", " ".join(f"--tests '{n}'" for t in jvm for n in _jvm_filters(project, t)))
     m = re.search(r"\{gradle_module_tests:([A-Za-z0-9_]+)\}", out)
     if m:
         # One task per module, all its --tests after it: Gradle runs a task named twice once, and
@@ -303,7 +320,7 @@ def narrowed(project: Path, template: str | None, tests: list, scope: str | None
             mod = _gradle_path(project, t)
             if mod is None:
                 return None
-            by_mod.setdefault(mod, []).append(f"--tests '{_jvm_fqn(project, t)}'")
+            by_mod.setdefault(mod, []).extend(f"--tests '{n}'" for n in _jvm_filters(project, t))
         if scope and any(f"{mod}:" in scope for mod in by_mod):
             by_mod = {mod: f for mod, f in by_mod.items() if f"{mod}:" in scope}
         if not by_mod:

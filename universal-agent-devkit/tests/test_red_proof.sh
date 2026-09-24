@@ -278,6 +278,44 @@ LOG9b="$M/${P9b#* }"
 [ "${P9b%% *}" = PROVEN ] && grep -q "gradle args: :app:testDebugUnitTest --tests pkg.CalcTest" "$LOG9b" && ! grep "gradle args" "$LOG9b" | grep -q CalcDeviceTest \
   && ok "androidTest ref left out of the unit-test task" || fail "androidTest: $P9b $(grep 'gradle args' "$LOG9b" 2>/dev/null | head -1)"
 
+# ── narrowed(): two tests in one module share ONE task (a repeated task's second --tests replaces
+#    the first → only the last test ran); a suite gets only the modules its own command runs ─
+mkdir -p "$M/CarConnect/lib/src/test/kotlin/pkg"; printf 'plugins { id("x") }\n' > "$M/CarConnect/lib/build.gradle.kts"
+for f in app/src/test/kotlin/pkg/ATest app/src/test/kotlin/pkg/BTest lib/src/test/kotlin/pkg/LTest; do
+  printf 'package pkg\nclass %s\n' "${f##*/}" > "$M/CarConnect/$f.kt"; done
+NR="$(cd "$DEVKIT_DIR/scripts" && python3 - "$M" <<'PY'
+import sys; from pathlib import Path
+import red_proof as rp
+M = Path(sys.argv[1]); a = "CarConnect/app/src/test/kotlin/pkg/"; l = "CarConnect/lib/src/test/kotlin/pkg/"
+t = "cd CarConnect && ./gradlew {gradle_module_tests:testDebugUnitTest}"
+print(rp.narrowed(M, t, [a + "ATest.kt", a + "BTest.kt"]))
+print(rp.narrowed(M, t, [a + "ATest.kt", l + "LTest.kt"], scope="cd CarConnect && ./gradlew :lib:testDebugUnitTest"))
+PY
+)"
+[ "$(printf '%s\n' "$NR" | sed -n 1p)" = "cd CarConnect && ./gradlew :app:testDebugUnitTest --tests 'pkg.ATest' --tests 'pkg.BTest'" ] \
+  && ok "two tests in one module → one task, both --tests" || fail "one task: $(printf '%s\n' "$NR" | sed -n 1p)"
+[ "$(printf '%s\n' "$NR" | sed -n 2p)" = "cd CarConnect && ./gradlew :lib:testDebugUnitTest --tests 'pkg.LTest'" ] \
+  && ok "multi-suite bug: each suite gets only the modules it runs" || fail "scope: $(printf '%s\n' "$NR" | sed -n 2p)"
+
+# ── a second top-level test class in the same file runs too (the filter used the file name only,
+#    so AccessControlJvmTest inside CarTcpServerJvmLoopbackTest.kt never ran → VACUOUS) ─
+printf 'package pkg\nclass TwoTest {\n}\n\ninternal class AlsoTest {\n    class Nested\n}\nabstract class BaseTest\ndata class Fixture(val a: Int)\n' \
+  > "$M/CarConnect/app/src/test/kotlin/pkg/TwoTest.kt"
+NR2="$(cd "$DEVKIT_DIR/scripts" && python3 - "$M" <<'PY'
+import sys; from pathlib import Path
+import red_proof as rp
+print(rp.narrowed(Path(sys.argv[1]), "cd CarConnect && ./gradlew {gradle_module_tests:testDebugUnitTest}",
+                  ["CarConnect/app/src/test/kotlin/pkg/TwoTest.kt"]))
+PY
+)"
+[ "$NR2" = "cd CarConnect && ./gradlew :app:testDebugUnitTest --tests 'pkg.TwoTest' --tests 'pkg.AlsoTest'" ] \
+  && ok "every top-level test class of a file is in the filter" || fail "classes: $NR2"
+
+# ── "no tests ran" must not match a real total that ends in 0 ("20 tests completed, 2 failed") ─
+NT="$(cd "$DEVKIT_DIR/scripts" && python3 -c 'import red_proof as rp
+print(bool(rp.NO_TESTS.search("20 tests completed, 2 failed")), bool(rp.NO_TESTS.search("0 tests completed")))')"
+[ "$NT" = "False True" ] && ok "NO_TESTS: 20 tests completed is a real run, 0 tests completed is not" || fail "NO_TESTS: $NT"
+
 # ── unknown id → exit 2 with a suggestion; an id without the BUG- prefix is found ─
 python3 "$PROOF" "$P" --bug "BUG-nope-xyz" --wait > "$TMP/unk" 2>&1; rc=$?
 [ $rc = 2 ] && grep -q "không có" "$TMP/unk" && ok "unknown id → exit 2, said so" || fail "unknown id: rc=$rc $(cat "$TMP/unk")"
