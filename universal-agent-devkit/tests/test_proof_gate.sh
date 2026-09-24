@@ -98,7 +98,7 @@ stop "XONG
 [ "$rc" = 2 ] && grep -q "8 KB" "$TMP/err" && ok "PNG under 8 KB: blocked" || fail "small PNG not blocked (rc=$rc)"
 
 reset
-O="reports/proof-20260101-000000.png"; png "$REPO/$O" 20000; touch -d '2026-01-01 00:00' "$REPO/$O"; turn_start; gate_full
+O="reports/proof-20260101-000000.png"; png "$REPO/$O" 20000; touch -t 202601010000 "$REPO/$O"; turn_start; gate_full
 stop "XONG
 ảnh $O"; rc=$?
 [ "$rc" = 2 ] && grep -q "ảnh cũ" "$TMP/err" && ok "PNG older than the turn: blocked" || fail "old PNG not blocked (rc=$rc err=$(head -2 "$TMP/err"))"

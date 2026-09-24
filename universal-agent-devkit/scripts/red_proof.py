@@ -52,6 +52,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import signal
 import subprocess
 import sys
@@ -290,6 +291,54 @@ def test_names(project: Path, path: str) -> set:
     return names
 
 
+_RUNNER_EXT = (("pytest", (".py",)), ("unittest", (".py",)), ("jest", (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")),
+               ("vitest", (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")), ("go test", (".go",)))
+
+
+def selects(project: Path, path: str, cmd: str) -> bool:
+    """Does this (narrowed) suite command really run the linked test file at path? Only those
+    must go red for PROVEN: a linked script no suite runs, or a class outside `--tests`, can
+    never turn red, so requiring it would block every proof of that bug."""
+    c = cmd or ""
+    if "gradlew" in c or re.search(r"(^|\s)gradle\s", c):
+        if not path.endswith((".kt", ".java")) or not rc._runs_source_set(path, c, project):
+            return False
+        filters = [f.split("#")[0] for f in re.findall(r"--tests\s+['\"]?([^'\"\s]+)", c)]
+        if not filters:
+            return True
+        names = test_names(project, path)
+        return any("*" in f or f.rsplit(".", 1)[-1] in names for f in filters)
+    m = re.search(r"--filter\s+['\"]?([^'\"]+)", c)
+    if m and path.endswith(".cs"):
+        return Path(path).stem in {f.rsplit(".", 1)[-1] for f in m.group(1).split(";")}
+    if path.endswith(".cs"):
+        return rc._runs_source_set(path, c, project)
+    exts = tuple(e for runner, es in _RUNNER_EXT if runner in c for e in es)
+    pmod = path[:-3].replace("/", ".") if path.endswith(".py") else None
+    named, cwd = False, ""
+    for part in re.split(r"&&|\|\||;", c):
+        try:
+            words = shlex.split(part)
+        except ValueError:
+            words = part.split()
+        if words[:1] == ["cd"] and len(words) > 1:
+            cwd = os.path.normpath(os.path.join(cwd, words[1]))
+            continue
+        for w in words[1:]:
+            if w.startswith("-"):
+                continue
+            t = os.path.normpath(os.path.join(cwd, w)).lstrip("./") if not os.path.isabs(w) else w
+            dotted = "unittest" in c and "." in w and re.fullmatch(r"[\w.]+", w) is not None
+            if not ("/" in w or w.endswith(SOURCE_EXT) or dotted or (project / t).is_dir()):
+                continue
+            named = True
+            if path == t or (dotted and pmod and (pmod == w or pmod.startswith(w + "."))):
+                return True
+            if path.startswith(t.rstrip("/") + "/") and exts and path.endswith(exts):
+                return True
+    return False if named else rc._runs_source_set(path, c, project)
+
+
 def _cs_name(project: Path, path: str) -> str:
     try:
         m = re.search(r"^\s*namespace\s+([\w.]+)", (project / path).read_text(encoding="utf-8", errors="replace"), re.M)
@@ -482,9 +531,9 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
     except RuntimeError as e:
         return {**base, "status": "INCONCLUSIVE", "mode": mode, "reason": str(e)}
     red_ok = bool(red_stems)
-    # Only the linked tests these commands actually run must go red (an androidTest ref is never
-    # run by a JVM unit-test task; the same rule the checklist uses to map tests to suites).
-    runnable = {Path(t).stem for t in tests if any(rc._runs_source_set(t, c, project) for c in cmds)} or stems
+    # Only the linked tests these commands actually run must go red (selects(): an androidTest
+    # ref under a JVM unit task, a script no suite runs, a class outside `--tests` never can).
+    runnable = {Path(t).stem for t in tests if any(selects(project, t, c) for c in cmds)} or stems
     still_green = sorted(runnable - red_stems)
     if ran_nothing:
         status, reason = "INCONCLUSIVE", "lệnh không chạy test nào (bộ lọc không khớp?) — xem log"

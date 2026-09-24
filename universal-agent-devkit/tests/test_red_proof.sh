@@ -344,6 +344,53 @@ assert red == {'LoopbackTest'}, red
 assert not r.failed_stems('pkg.OtherTest > c FAILED', {'LoopbackTest'}, {'LoopbackTest': names})" 2>"$TMP/km.err" \
   && ok "every test class of a multi-class file is run, and a failure in any of them reds that file" || fail "multi-class: $(tail -2 "$TMP/km.err")"
 
+# ── the strict rule only requires red from linked files the (narrowed) command REALLY runs:
+#    a linked .sh no suite runs, or a class outside `--tests`, is not "still green" ─
+mkdir -p "$M/scripts/qa/tests"
+SEL="$(cd "$DEVKIT_DIR/scripts" && python3 - "$M" <<'PY'
+import sys; from pathlib import Path
+import red_proof as rp
+M = Path(sys.argv[1]); a = "CarConnect/app/src/test/kotlin/pkg/"
+nar = "cd CarConnect && ./gradlew :app:testDebugUnitTest --tests 'pkg.ATest' --tests 'pkg.TwoTest' --tests 'pkg.AlsoTest'"
+full = "cd CarConnect && ./gradlew testDebugUnitTest"
+cases = [
+  (a + "ATest.kt", nar, True), (a + "TwoTest.kt", nar, True), (a + "BTest.kt", nar, False),
+  ("scripts/qa/tests/test_gate.sh", nar, False),
+  (a + "BTest.kt", full, True), ("scripts/qa/tests/test_gate.sh", full, False), ("scripts/qa/tests/test_x.py", full, False),
+  ("scripts/qa/tests/test_gate.sh", "bash scripts/qa/tests/test_gate.sh", True),
+  ("scripts/qa/tests/test_artifact_promotion_gate.sh", "bash scripts/qa/ci/verify_prerelease_gates.sh", False),
+  ("scripts/qa/tests/test_x.py", "python3 -m pytest scripts/qa/tests/test_x.py", True),
+  ("scripts/qa/tests/test_y.py", "python3 -m pytest scripts/qa/tests/test_x.py", False),
+  ("scripts/qa/tests/test_y.py", "cd scripts/qa && python3 -m pytest tests", True),
+  ("scripts/qa/tests/test_gate.sh", "cd scripts/qa && python3 -m pytest tests", False),
+  ("tests/test_calc.py", "python3 -m unittest tests.test_calc", True),
+  ("tests/check_extra.sh", "python3 -m unittest tests.test_calc", False),
+  ("Assets/T/EditMode/FooTests.cs", "unity-batch.sh -testPlatform EditMode --filter 'Ns.FooTests'", True),
+  ("Assets/T/EditMode/BarTests.cs", "unity-batch.sh -testPlatform EditMode --filter 'Ns.FooTests'", False),
+  ("tests/test_calc.py", "make test", True),
+]
+bad = [f"{t} | {c} -> {rp.selects(M, t, c)}" for t, c, want in cases if rp.selects(M, t, c) != want]
+print("\n".join(bad) or "ok")
+PY
+)"
+[ "$SEL" = ok ] && ok "selects(): only files the narrowed command really runs" || fail "selects(): $SEL"
+
+P_KEEP="$P"
+new_project "python3 -m unittest tests.test_calc"; cd "$P"
+printf 'def add(a, b):\n    return a + b\n' > src/calc.py
+printf '%s' "$TEST_ADD" > tests/test_calc.py
+printf '#!/bin/sh\nexit 0\n' > tests/check_extra.sh
+B12="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "cộng sai, thêm ref không chạy" --fixed --test tests/test_calc.py 2>&1)")"
+python3 - "$P/.agents/regression_status.json" "$B12" <<'PY'
+import json, sys
+p, b = sys.argv[1:]; d = json.load(open(p))
+d["items"][b].setdefault("test_refs", []).append("tests/check_extra.sh")
+json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
+PY
+python3 "$PROOF" "$P" --bug "$B12" --heavy --wait >/dev/null 2>&1
+[ "$(proof "$B12")" = PROVEN ] && ok "a linked file the command never runs does not block PROVEN" || fail "unrun ref: $(proof "$B12") $(python3 -c "import json;print((json.load(open('$P/.agents/regression_status.json'))['items']['$B12'].get('red_proof') or {}).get('reason',''))")"
+P="$P_KEEP"; cd "$P"
+
 # ── unknown id → exit 2 with a suggestion; an id without the BUG- prefix is found ─
 python3 "$PROOF" "$P" --bug "BUG-nope-xyz" --wait > "$TMP/unk" 2>&1; rc=$?
 [ $rc = 2 ] && grep -q "không có" "$TMP/unk" && ok "unknown id → exit 2, said so" || fail "unknown id: rc=$rc $(cat "$TMP/unk")"

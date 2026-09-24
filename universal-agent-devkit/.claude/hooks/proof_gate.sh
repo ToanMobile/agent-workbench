@@ -1,0 +1,1 @@
+../../hooks/proof_gate.sh

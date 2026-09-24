@@ -175,7 +175,7 @@ estop; rc=$?
   && ok "environment-blocked test: stop allowed with a 'not a PASS' warning naming it" || fail "env-blocked handling (rc=$rc out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")')"
 estop; rc=$?
 [ "$rc" = 0 ] && [ ! -s "$TMP/out" ] && ok "environment-blocked warning once per change" || fail "env-blocked warning repeated (rc=$rc)"
-( cd "$E" && sed -i 's/sh env.sh/sh compile.sh/' templates/regression_matrix.json && git commit -qam compile && echo "fun ok() = 3" > src/Core.kt )
+( cd "$E" && sed -i.bak 's/sh env.sh/sh compile.sh/' templates/regression_matrix.json && rm -f templates/regression_matrix.json.bak && git commit -qam compile && echo "fun ok() = 3" > src/Core.kt )
 estop; rc=$?
 [ "$rc" = 2 ] && grep -q "REG-E" "$TMP/err" && ok "compile error in the change: still blocks" || fail "compile error not blocked (rc=$rc)"
 

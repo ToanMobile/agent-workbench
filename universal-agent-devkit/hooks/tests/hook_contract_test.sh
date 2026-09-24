@@ -1298,6 +1298,38 @@ run_case "escape hatch honoured" testsourceset_gate.sh 0 \
   TESTSOURCESET_GATE=0
 echo
 
+# ── proof_gate.sh — Stop (rules/essentials.md "Every prompt": XONG carries this turn's PNG) ──
+echo "proof_gate.sh"
+# XONG needs this turn's `post-fix-gate --run-tests --full` exit 0 AND a fresh proof PNG: a
+# tiny git project with a passing matrix, the gate run after the turn's user message.
+PG="${SANDBOX}/proof_repo"; PG_TR="${SANDBOX}/proof_turn.jsonl"
+mkdir -p "${PG}/src" "${PG}/templates" "${PG}/reports"
+( cd "${PG}" && git init -q . && git config user.email t@t && git config user.name t
+  echo "fun ok() = 1" > src/Core.kt && echo 'exit 0' > result.sh
+  printf '%s' '{"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],"mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"sh result.sh"}]}]}' \
+    > templates/regression_matrix.json
+  git add -A && git commit -qm init && echo "fun ok() = 2" > src/Core.kt )
+python3 -c 'import datetime,json
+t=(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+print(json.dumps({"type":"user","timestamp":t,"message":{"role":"user","content":"sửa lỗi X"}}))' > "${PG_TR}"
+sleep 1
+CLAUDE_PROJECT_DIR="${PG}" python3 "${HOOKS}/../bin/post-fix-gate.py" --run-tests --full --no-checklist >/dev/null 2>&1
+python3 - "${PG}/reports/proof-20260924-101500.png" <<'PY'
+import os, struct, sys, zlib
+def chunk(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+open(sys.argv[1], "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+                              + chunk(b"IDAT", os.urandom(20000)) + chunk(b"IEND", b""))
+PY
+run_case "CHƯA XONG is not checked" proof_gate.sh 0 \
+  "{\"session_id\":\"pg-1\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"CHƯA XONG\\nKhông có thiết bị.\"}" CLAUDE_PROJECT_DIR="${PG}"
+run_case "XONG without this turn's proof PNG blocked" proof_gate.sh 2 \
+  "{\"session_id\":\"pg-2\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"XONG\\nĐã sửa lỗi X.\"}" CLAUDE_PROJECT_DIR="${PG}"
+run_case "XONG naming a fresh real PNG allowed" proof_gate.sh 0 \
+  "{\"session_id\":\"pg-3\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"XONG\\nảnh reports/proof-20260924-101500.png\"}" CLAUDE_PROJECT_DIR="${PG}"
+run_case "PROOF_GATE=0 escape hatch allows" proof_gate.sh 0 \
+  "{\"session_id\":\"pg-4\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"XONG\\nĐã sửa lỗi X.\"}" CLAUDE_PROJECT_DIR="${PG}" PROOF_GATE=0
+echo
+
 # ── security_gate.sh — Stop (CLAUDE.md check 4c) ────────────────────────────
 echo "security_gate.sh"
 # must-NOT-fire cases come from files touched in THIS repo that are full of the
