@@ -370,6 +370,22 @@ def selects(project: Path, path: str, cmd: str) -> bool:
     return False if named else rc._runs_source_set(path, c, project)
 
 
+def named_in(path: str, cmd: str) -> bool:
+    """Is path itself an argument of cmd (after any `cd`)? `python3 tests/x.py`, `bash t.sh`."""
+    cwd = ""
+    for part in re.split(r"&&|\|\||;", cmd or ""):
+        try:
+            words = shlex.split(part)
+        except ValueError:
+            words = part.split()
+        if words[:1] == ["cd"] and len(words) > 1:
+            cwd = os.path.normpath(os.path.join(cwd, words[1]))
+            continue
+        if any(os.path.normpath(os.path.join(cwd, w)).lstrip("./") == path for w in words[1:] if not w.startswith("-")):
+            return True
+    return False
+
+
 def _cs_name(project: Path, path: str) -> str:
     try:
         m = re.search(r"^\s*namespace\s+([\w.]+)", (project / path).read_text(encoding="utf-8", errors="replace"), re.M)
@@ -416,7 +432,8 @@ def narrowed(project: Path, template: str | None, tests: list, scope: str | None
     if "{gradle_tests}" in out:
         if not jvm:
             return None
-        out = out.replace("{gradle_tests}", " ".join(f"--tests '{n}'" for t in jvm for n in _jvm_filters(project, t)))
+        out = out.replace("{gradle_tests}", " ".join(f"--tests '{n}'" for t in jvm for n in _jvm_filters(project, t))
+                          + " --rerun")
     m = re.search(r"\{gradle_module_tests:([A-Za-z0-9_]+)\}", out)
     if m:
         # One task per module, all its --tests after it: Gradle runs a task named twice once, and
@@ -431,7 +448,10 @@ def narrowed(project: Path, template: str | None, tests: list, scope: str | None
             by_mod = {mod: f for mod, f in by_mod.items() if f"{mod}:" in scope}
         if not by_mod:
             return None
-        out = out.replace(m.group(0), " ".join(f"{mod}:{m.group(1)} " + " ".join(f) for mod, f in by_mod.items()))
+        # --rerun: a test that reads a file by path (not a task input) would come FROM-CACHE with
+        # HEAD's result — the RED run would pass and the proof read VACUOUS.
+        out = out.replace(m.group(0), " ".join(f"{mod}:{m.group(1)} " + " ".join(f) + " --rerun"
+                                               for mod, f in by_mod.items()))
     if "{unity_filter}" in out:
         if not cs:
             return None
@@ -543,8 +563,13 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
                                       (", ".join(conflicts[:6]) or r.stderr.strip()[:160])}
             for box in (red_box, green_box):
                 furnish(project, box)
-            copy_in(project, red_box, tests)
-            copy_in(project, green_box, tests + fix)
+            # Session mode proves the tree's uncommitted test. Patch / revert prove an old bug against
+            # HEAD: a tracked test someone is half-way through editing (asserting a change HEAD does
+            # not have) would fail GREEN too — only tests HEAD does not have yet come in from the tree.
+            bring = tests if mode == "session" else [
+                t for t in tests if git(project, "cat-file", "-e", f"HEAD:{t}").returncode != 0]
+            copy_in(project, red_box, bring)
+            copy_in(project, green_box, bring + fix)
             for cmd in cmds:
                 code, out = run(cmd, red_box, timeout)
                 log.append(f"## RED run (không có bản sửa) — {cmd} — exit {code}\n{out}")
@@ -555,6 +580,11 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
                         red_compile = True
                     elif code is not None:
                         red_stems |= failed_stems(out, stems, {Path(t).stem: test_names(project, t) for t in tests})
+                        # A script run by name prints its own FAIL lines, not its file name: when the
+                        # command names exactly one linked file, its non-zero exit is that file's red.
+                        direct = [t for t in tests if named_in(t, cmd)]
+                        if len(direct) == 1 and not NO_TESTS.search(out):
+                            red_stems.add(Path(direct[0]).stem)
                 code, out = run(cmd, green_box, timeout)
                 log.append(f"## GREEN run (có bản sửa) — {cmd} — exit {code}\n{out}")
                 ran_nothing = ran_nothing or bool(NO_TESTS.search(out))

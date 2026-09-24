@@ -305,9 +305,9 @@ print(rp.narrowed(M, t, [a + "ATest.kt", a + "BTest.kt"]))
 print(rp.narrowed(M, t, [a + "ATest.kt", l + "LTest.kt"], scope="cd CarConnect && ./gradlew :lib:testDebugUnitTest"))
 PY
 )"
-[ "$(printf '%s\n' "$NR" | sed -n 1p)" = "cd CarConnect && ./gradlew :app:testDebugUnitTest --tests 'pkg.ATest' --tests 'pkg.BTest'" ] \
+[ "$(printf '%s\n' "$NR" | sed -n 1p)" = "cd CarConnect && ./gradlew :app:testDebugUnitTest --tests 'pkg.ATest' --tests 'pkg.BTest' --rerun" ] \
   && ok "two tests in one module → one task, both --tests" || fail "one task: $(printf '%s\n' "$NR" | sed -n 1p)"
-[ "$(printf '%s\n' "$NR" | sed -n 2p)" = "cd CarConnect && ./gradlew :lib:testDebugUnitTest --tests 'pkg.LTest'" ] \
+[ "$(printf '%s\n' "$NR" | sed -n 2p)" = "cd CarConnect && ./gradlew :lib:testDebugUnitTest --tests 'pkg.LTest' --rerun" ] \
   && ok "multi-suite bug: each suite gets only the modules it runs" || fail "scope: $(printf '%s\n' "$NR" | sed -n 2p)"
 
 # ── a second top-level test class in the same file runs too (the filter used the file name only,
@@ -321,7 +321,7 @@ print(rp.narrowed(Path(sys.argv[1]), "cd CarConnect && ./gradlew {gradle_module_
                   ["CarConnect/app/src/test/kotlin/pkg/TwoTest.kt"]))
 PY
 )"
-[ "$NR2" = "cd CarConnect && ./gradlew :app:testDebugUnitTest --tests 'pkg.TwoTest' --tests 'pkg.AlsoTest'" ] \
+[ "$NR2" = "cd CarConnect && ./gradlew :app:testDebugUnitTest --tests 'pkg.TwoTest' --tests 'pkg.AlsoTest' --rerun" ] \
   && ok "every top-level test class of a file is in the filter" || fail "classes: $NR2"
 
 # ── "no tests ran" must not match a real total that ends in 0 ("20 tests completed, 2 failed") ─
@@ -410,6 +410,23 @@ PY
 [ "$SLOT" = "[1, True, 2, True, 3]" ] && ok "proof slots: 1 by default, red_proof.json jobs=2 → two at once, a third waits; RED_PROOF_JOBS wins" \
   || fail "proof slots: $SLOT"
 
+# ── a narrowed Gradle test task always re-runs: a test that reads a file by path (not a task
+#    input) would otherwise come FROM-CACHE with the HEAD result and the proof reads VACUOUS ─
+( cd "$M" && grep -q -- "--rerun" "$(ls -t .agents/evidence/redproof-"$B9b"/*.log | head -1)" ) \
+  && ok "narrowed Gradle test task carries --rerun" || fail "no --rerun in the narrowed Gradle command"
+
+# ── a command that runs exactly one linked script: its non-zero exit is that script's red,
+#    even when its FAIL lines do not print the file name ─
+P_KEEP2="$P"
+new_project "python3 tests/check_calc.py"; cd "$P"
+printf 'def add(a, b):\n    return a + b\n' > src/calc.py
+printf 'import os, sys\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))\nimport calc\nok = calc.add(2, 2) == 4\nprint(("PASS" if ok else "FAIL") + " cong hai so")\nsys.exit(0 if ok else 1)\n' > tests/check_calc.py
+B13="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "cộng sai, test script" --fixed --test tests/check_calc.py 2>&1)")"
+python3 "$PROOF" "$P" --bug "$B13" --heavy --wait >/dev/null 2>&1
+[ "$(proof "$B13")" = PROVEN ] && ok "one named script: its exit 1 is its red (no file name in FAIL lines)" \
+  || fail "script red: $(proof "$B13") $(python3 -c "import json;print((json.load(open('$P/.agents/regression_status.json'))['items']['$B13'].get('red_proof') or {}).get('reason',''))")"
+P="$P_KEEP2"; cd "$P"
+
 # ── unknown id → exit 2 with a suggestion; an id without the BUG- prefix is found ─
 python3 "$PROOF" "$P" --bug "BUG-nope-xyz" --wait > "$TMP/unk" 2>&1; rc=$?
 [ $rc = 2 ] && grep -q "không có" "$TMP/unk" && ok "unknown id → exit 2, said so" || fail "unknown id: rc=$rc $(cat "$TMP/unk")"
@@ -456,6 +473,19 @@ python3 -c "import json;r=json.load(open('$P/.agents/regression_status.json'))['
 B16="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "patch vô hại" --fixed --test tests/test_calc.py 2>&1)")"
 python3 "$PROOF" "$P" --bug "$B16" --patch "$TMP/harmless.patch" --wait >/dev/null 2>&1
 [ "$(proof "$B16")" = VACUOUS ] && ok "--patch that does not break the behaviour → VACUOUS (test or patch is wrong)" || fail "harmless patch: $(proof "$B16")"
+# A tracked test someone is editing in the tree (asserts a change not in HEAD yet) must not leak
+# into the sandboxes: --patch proves against HEAD's test. A test HEAD does not have yet still comes in.
+printf '%s\n    def test_next(self):\n        self.assertEqual(calc.add(2, 3), 99)\n' "$TEST_ADD" > tests/test_calc.py
+B16b="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "add sai, test đang sửa dở" --fixed --test tests/test_calc.py 2>&1)")"
+python3 "$PROOF" "$P" --bug "$B16b" --patch "$TMP/bug-back.patch" --wait >/dev/null 2>&1
+[ "$(proof "$B16b")" = PROVEN ] && ok "--patch uses HEAD's version of a tracked test, not the tree's half-edited one" \
+  || fail "dirty tracked test: $(proof "$B16b") $(reason "$B16b")"
+git checkout -q tests/test_calc.py
+printf '%s' "$TEST_ADD" > tests/test_calc_new.py
+B16c="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "add sai, test mới chưa commit" --fixed --test tests/test_calc_new.py 2>&1)")"
+python3 "$PROOF" "$P" --bug "$B16c" --patch "$TMP/bug-back.patch" --wait >/dev/null 2>&1
+[ "$(proof "$B16c")" = PROVEN ] && ok "--patch still brings in a linked test HEAD does not have yet" || fail "new test: $(proof "$B16c") $(reason "$B16c")"
+rm -f tests/test_calc_new.py
 B17="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "patch tự tìm" --fixed --test tests/test_calc.py 2>&1)")"
 mkdir -p .agents/local/red-patches; cp "$TMP/bug-back.patch" ".agents/local/red-patches/$B17.patch"
 python3 "$PROOF" "$P" --pending --wait >/dev/null 2>&1
