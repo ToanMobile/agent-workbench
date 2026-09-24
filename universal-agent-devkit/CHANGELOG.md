@@ -10,6 +10,9 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
 - **`principal-code-reviewer`** có lens simplicity với 5 tag `delete/stdlib/native/yagni/shrink` và dòng `net: -N`.
 - Không thêm hook SubagentStart như ponytail: đo 2026-09-24 bằng `claude -p`, subagent general-purpose đã nhận `AGENTS.md`/`CLAUDE.md` (Explore thì không, nhưng Explore không viết code).
 
+### Proof
+- **Không có device thì mở máy ảo rồi mới chụp.** `bin/proof-capture.py` chỉ screencap serial đang `device` và không nằm trong denylist. Serial khai báo offline, hoặc không có máy được phép, thì lệnh mở AVD (`proof.providers.<tên>.avd`; không khai thì máy ảo điện thoại với profile android, `CarConnect` với profile automotive) và ghi `reports/proof-<stamp>.png`. Không chụp địa chỉ chết, không lấy điện thoại đang cắm thay thế.
+
 ### Grok
 - **Grok uses the same toolkit.** It reads `AGENTS.md` and does not get an adapter, a `.grok/` directory, or its own hook, command or MCP files. `-a grok` only installs that shared `AGENTS.md` (and folds `CLAUDE.md` / `GEMINI.md` / `Agent.md` into it).
 

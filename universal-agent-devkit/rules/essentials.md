@@ -71,19 +71,21 @@ Do not write XONG, PASS, đã fix, or đã xong without both items in step 5.
    `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full`
    Exit 0 is required. Any other exit: paste the last 30 log lines, fix, and repeat this
    step. A dry-run, `--help`, or a single Gradle test does not replace this command.
-4. A proof image is blocking, same rank as exit 0.
-   - Serial: `.antigravity-pm.json` → `proof.providers.device.serial`.
-   - Never capture a serial listed in `.adb-denylist` or forbidden by a project rule
-     marked cấm / bất biến. An immutable project rule wins over this section.
-   - Declared serial offline: CHƯA XONG. Do not switch to another device.
-   - No declared serial and no denylist: use the one device in state `device` from
-     `adb devices -l`, and name that serial.
-   - No allowed device online: CHƯA XONG. Do not draw, reuse an old image, or substitute
-     a test XML.
-   - Install the build this turn produced, perform the task until the screen shows success.
-   - `adb -s <SERIAL> exec-out screencap -p > reports/proof-<yyyyMMdd-HHmmss>.png`
-   - Real PNG, larger than 8 KB, mtime newer than the start of the turn. Put the image
-     in the reply with its path and serial.
+4. A proof image is blocking, same rank as exit 0. From the repo root:
+   `python3 .agents/devkit/bin/proof-capture.py`
+   The command checks `adb devices` first. A declared serial is used only when its
+   state is `device` and it is not on the denylist. If that serial is offline, or no
+   allowed device is online, it starts the AVD in `.antigravity-pm.json`
+   (`proof.providers.<name>.avd`). With no avd name it starts the phone AVD on an
+   android profile, or the existing CarConnect AVD on an automotive profile, waits for
+   `sys.boot_completed=1`, and writes `reports/proof-<yyyyMMdd-HHmmss>.png`.
+   It does not screencap a dead address and does not substitute another plugged-in phone.
+   - Install the build this turn produced on that serial and reach the success screen,
+     then run the command again so the PNG shows that screen.
+   - Put the PNG in the reply with the path and serial the command printed. Real PNG,
+     larger than 8 KB, mtime in this turn.
+   - The command exits non-zero when it cannot open a device. Open with CHƯA XONG and
+     paste that error. Do not draw, reuse an old image, or substitute a test XML.
 5. The reply may open with XONG only when this turn has exit 0 from step 3 and the PNG
    from step 4. Line 1: XONG or CHƯA XONG. Line 2: what the user gets. Line 3: gate exit
    code, image path, serial.

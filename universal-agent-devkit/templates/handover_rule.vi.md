@@ -24,14 +24,11 @@ LUẬT ĐỨNG — NGHIỆM THU THEO LOẠI LƯỢT. Áp dụng cho Claude Code,
    Loại A không chạy cổng.
 
 4. Chỉ loại C — ảnh nghiệm thu là luật chặn, cùng cấp với exit 0.
-   - Serial: provider có "type": "adb" trong proof.providers của .antigravity-pm.json. Tên provider tuỳ dự án (xe, mayao, dienthoai…), không cố định là device. Nhiều provider thì chọn đúng thiết bị prompt nhắc tới. Không rõ thì lấy provider đầu tiên và ghi tên nó.
-   - Serial đó không ở trạng thái device trong `adb devices -l`: chỉ được đổi sang serial khác nếu serial mới nằm trong allowlist (ADB_ALLOW_SERIALS, ~/.config/universal-agent-devkit/adb-allowlist hoặc <repo>/.adb-allowlist) và đang ở trạng thái device. Không có allowlist thì không tự đổi: CHƯA XONG, nêu serial khai báo và danh sách thiết bị đang online.
-   - Không có thiết bị online, hoặc agent chạy nơi không có adb (cloud): CHƯA XONG. Cấm vẽ, cấm dùng lại ảnh cũ, cấm lấy XML test thay ảnh.
-   - Build và cài bản vừa sửa lên đúng serial đó, thao tác đúng việc prompt yêu cầu đến trạng thái thành công trên màn hình.
-   - Chụp trong lượt này:
-     mkdir -p reports
-     adb -s <SERIAL> exec-out screencap -p > reports/proof-<yyyyMMdd-HHmmss>.png
-   - File phải là PNG thật (`file` báo PNG image data), lớn hơn 8 KB, thời gian sửa mới hơn lúc bắt đầu lượt. Gắn ảnh vào câu trả lời, kèm đường dẫn và serial.
+   - Chụp bằng `python3 .agents/devkit/bin/proof-capture.py` từ gốc repo. Lệnh đọc provider `type: adb` trong `.antigravity-pm.json` (tên tuỳ dự án: device, xe, mayao…). Serial khai báo chỉ được chụp khi `adb devices` báo `device` và không nằm trong denylist.
+   - Serial đó offline, hoặc không có máy nào được phép: lệnh mở AVD (`proof.providers.<tên>.avd`, không khai thì máy ảo điện thoại duy nhất — bỏ qua AVD tên car/auto), đợi `sys.boot_completed=1`, rồi chụp `emulator-<cổng>`. Không screencap địa chỉ chết. Không đổi sang điện thoại đang cắm.
+   - Lệnh thoát khác 0 (không có adb, không có AVD): CHƯA XONG, dán stderr. Cấm vẽ, cấm dùng lại ảnh cũ, cấm lấy XML test thay ảnh.
+   - Cài bản vừa sửa lên serial lệnh in ra, thao tác đến trạng thái thành công, chạy lại lệnh để PNG là màn đó.
+   - File lệnh ghi là `reports/proof-<yyyyMMdd-HHmmss>.png`. Phải là PNG thật (`file` báo PNG image data), lớn hơn 8 KB, thời gian sửa mới hơn lúc bắt đầu lượt. Gắn ảnh vào câu trả lời, kèm đường dẫn và serial lệnh in ra.
    - reports/ phải có trong .gitignore. Che token, số điện thoại, dữ liệu cá nhân trên màn hình trước khi gửi.
 
 5. Ba dòng đầu câu trả lời:

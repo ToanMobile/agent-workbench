@@ -176,9 +176,10 @@ if not good:
         lines += ["  - ẢNH: " + p for p in problems]
     else:
         lines.append("  - ẢNH: câu trả lời không nêu đường dẫn reports/proof-<yyyyMMdd-HHmmss>.png nào.")
-lines.append("Chụp trên đúng thiết bị: adb -s <SERIAL> exec-out screencap -p > reports/proof-<yyyyMMdd-HHmmss>.png "
-             "(PNG thật, > 8 KB, chụp trong lượt này), rồi nêu đường dẫn và serial ở dòng 3. "
-             "Không có thiết bị online thì mở câu trả lời bằng CHƯA XONG. Không vẽ ảnh, không dùng lại ảnh cũ.")
+lines.append("Chụp bằng: python3 .agents/devkit/bin/proof-capture.py "
+             "(nó kiểm adb devices; không có máy thì mở AVD rồi ghi reports/proof-<yyyyMMdd-HHmmss>.png). "
+             "PNG thật, > 8 KB, chụp trong lượt này. Nêu đường dẫn và serial ở dòng 3. "
+             "Lệnh thoát khác 0 thì mở câu trả lời bằng CHƯA XONG và dán lỗi. Không vẽ ảnh, không dùng lại ảnh cũ.")
 log("block session=%s attempt=%d cited=%s gate=%s" % (session, n, ",".join(cited) or "-", gate_problem or "ok"))
 if n > max_blocks:
     msg = "\n".join(lines + ["(Đã chặn %d lần — cho dừng để không kẹt phiên. XONG này THIẾU điều kiện ở trên; người dùng cần xem lại.)" % max_blocks])

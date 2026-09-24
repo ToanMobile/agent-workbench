@@ -1007,8 +1007,9 @@ def check_anti_false_green(is_hardware_project: bool = False) -> tuple:
             devices = [l for l in lines[1:] if " device" in l and "offline" not in l]
             device_state = "online" if res.returncode == 0 and devices else "none"
             if device_state == "none":
-                findings.append(tr("Thiết bị ngoại vi: Không phát hiện máy thật online qua 'adb devices -l' -> Ghi cờ UNTESTED",
-                                   "Devices: no online device found via 'adb devices -l' -> flagged UNTESTED"))
+                findings.append(tr(
+                    "Thiết bị ngoại vi: không có máy online. Chạy python3 .agents/devkit/bin/proof-capture.py — lệnh mở AVD rồi chụp. Không screencap serial chết, không lấy máy denylist.",
+                    "Devices: none online. Run python3 .agents/devkit/bin/proof-capture.py — it boots the AVD and captures. Do not screencap a dead serial or a denylisted phone."))
         except (OSError, subprocess.SubprocessError) as e:
             device_state = "unverified"
             findings.append(tr(f"Thiết bị ngoại vi: KHÔNG xác minh được — không chạy được 'adb devices -l' ({type(e).__name__})",
