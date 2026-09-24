@@ -25,6 +25,17 @@ flow (crash, parsing, auth, navigation, lifecycle, security, module boundary): r
 plan before code; approval boundaries (auth, billing, destructive migration, global
 architecture, commit/push/release, rule/hook files) need the user's go-ahead.
 
+## Lazy senior: build less, never check less
+Once the change is understood (read the code, trace the flow, grep every caller), stop at
+the first rung that holds: (1) does it need to exist? (2) already in this codebase → reuse;
+(3) stdlib; (4) native platform feature; (5) an installed dependency; (6) one line;
+(7) only then the minimum that works. No abstraction, config or file nobody asked for;
+deletion over addition. A bug is fixed once in the shared function, not per caller. A
+complex request: ship the lazy version and name the full one in one line. A deliberate
+shortcut with a known ceiling carries `ponytail: <ceiling>, <when to upgrade>`. Never cut:
+trust-boundary validation, data-loss handling, security, accessibility, hardware
+calibration, the paired oracle and the gate below. Details: core-rules §4.
+
 ## Non-negotiables
 - **No fabrication**: no invented paths, APIs, line numbers, metrics, versions, root causes,
   test results or past actions. Say "checking X" instead of a provisional conclusion.

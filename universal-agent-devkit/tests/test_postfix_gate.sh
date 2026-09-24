@@ -270,6 +270,22 @@ make_repo "true"
 mkdir -p src/test && printf '{"dependencies":{"a":"latest"}}\n' > src/test/package.json
 out="$(gate_nomatrix)"; check "manifest under a test dir is a fixture, not scanned" 0 $? "$out"
 
+# --- Lazy-senior advisories (core-rules §4): warn, never block ---------------------
+make_repo "true"
+printf 'dependencies { implementation "androidx.core:core-ktx:1.13.1" }\n' > build.gradle
+printf '{"name":"t","dependencies":{"a":"1.0.0"}}\n' > package.json
+git add -A && git commit -qm deps
+printf 'dependencies {\n  implementation "androidx.core:core-ktx:1.15.0"\n  implementation "com.jakewharton.timber:timber:5.0.1"\n}\n' > build.gradle
+printf '{"name":"t","dependencies":{"a":"1.0.1","left-pad":"1.3.0"}}\n' > package.json
+out="$(gate_nomatrix)"; check "new dependency -> warning only, still PASS" 0 $? "$out"
+expect_in "gradle: newly added coordinate named" "new dependency com.jakewharton.timber:timber" "$(DEVKIT_LANG=en gate_nomatrix)"
+expect_in "npm: newly added package named" "package.json: new dependency left-pad" "$(DEVKIT_LANG=en gate_nomatrix)"
+expect_not_in "version bump is not a new dependency" "new dependency androidx.core" "$(DEVKIT_LANG=en gate_nomatrix)"
+printf 'fun ok() = 1 // ponytail: global lock\nfun two() = 2 // ponytail: O(n^2) scan, index it past 1k rows\n' > src/Core.kt
+out="$(DEVKIT_LANG=en gate_nomatrix)"; check "debt marker without trigger -> warning only" 0 $? "$out"
+expect_in "marker without an upgrade trigger is flagged with its line" "src/Core.kt:1: \`ponytail:\` marker names no upgrade trigger" "$out"
+expect_not_in "marker with a trigger passes" "src/Core.kt:2:" "$out"
+
 # --- mobile findings: local.properties, SwiftPM branch pins, plist secrets -----------
 make_repo "true"
 printf 'sdk.dir=/Users/dev/Library/Android/sdk\n' > local.properties

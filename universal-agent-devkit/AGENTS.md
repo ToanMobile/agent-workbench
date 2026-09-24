@@ -239,7 +239,7 @@ The DevKit provides 10 council subagent prompts in `agents/councils/` (5 focus a
 ### 8.4 Engineering Excellence & Failure Prevention
 - **`DESIGN.md`, touch targets, instant feedback:** `rules/core-rules.md` §6.
 - **Instincts & Failure Memory (`.agents/instincts.md`):** Traps, anti-patterns and past regressions. **[hook]** Surfaced automatically — the map at session start, the matching entries on each request; recorded with `agent-kit learn` or `postfix-gate --record-lesson`. It lowers repeats; it cannot guarantee none.
-- **Lazy Senior Dev Principle (reuse first, no dependency bloat, celebrate Negative Net Diff):** `rules/core-rules.md` §4.
+- **Lazy Senior Dev Principle (7-rung ladder: YAGNI → reuse → stdlib → native → installed dep → one line → minimum; `ponytail:` debt markers; never cut validation, security, a11y or the oracle):** always-on summary in `rules/essentials.md`, details `rules/core-rules.md` §4. **[gate]** post-fix gate warns (never blocks) on a newly added dependency and on a `ponytail:` marker with no upgrade trigger.
 - **Anti-Laziness & File Integrity (no `// ... existing code ...` placeholders, backward compatibility):** `rules/core-rules.md` §5.
 - **Compiler AST Self-Healing:** Parse compiler diagnostic logs to extract exact `file:line:col`, error codes, and caller blast radius to fix build issues methodically.
 

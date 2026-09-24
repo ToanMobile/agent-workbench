@@ -4,6 +4,12 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
 
 ## Unreleased
 
+### Lazy senior (from [ponytail](https://github.com/DietrichGebert/ponytail), MIT)
+- **Thang 7 bậc nằm trong luật luôn nạp.** `rules/essentials.md` có mục "Lazy senior: build less, never check less": hiểu xong mới leo YAGNI → tái sử dụng → stdlib → native → dependency đã cài → một dòng → tối thiểu; bug sửa một lần ở hàm dùng chung; không bao giờ cắt validate, bảo mật, a11y, hiệu chỉnh phần cứng, oracle hay gate. `core-rules.md` §4 có bản đầy đủ. Không lấy luật "one-liner không cần test" của ponytail.
+- **Post-fix gate cảnh báo, không chặn:** dependency mới được thêm (Gradle, version catalog, `package.json`; nâng version không tính) và marker `ponytail:` mới thiếu "khi nào nâng cấp". Chạy cả ở `--staged`.
+- **`principal-code-reviewer`** có lens simplicity với 5 tag `delete/stdlib/native/yagni/shrink` và dòng `net: -N`.
+- Không thêm hook SubagentStart như ponytail: đo 2026-09-24 bằng `claude -p`, subagent general-purpose đã nhận `AGENTS.md`/`CLAUDE.md` (Explore thì không, nhưng Explore không viết code).
+
 ### Grok
 - **Grok uses the same toolkit.** It reads `AGENTS.md` and does not get an adapter, a `.grok/` directory, or its own hook, command or MCP files. `-a grok` only installs that shared `AGENTS.md` (and folds `CLAUDE.md` / `GEMINI.md` / `Agent.md` into it).
 

@@ -786,6 +786,47 @@ def run_dependency_audit(modified_files: list) -> tuple:
                 _record("dependencies", rel_file, label, content, pos)
     return len(findings) == 0, findings
 
+# Lazy-senior advisories (core-rules §4): warnings, never blocking. A new dependency can be
+# the right call; only the answer can say why stdlib / native / an installed one fell short.
+# ponytail: Gradle, version catalog and package.json only, add pip/pubspec/Cargo when a profile needs it
+_DEP_COORD = r"[\"']([\w.\-]+:[\w.\-]+)(?::[^\"'\s]*)?[\"']"
+_DEBT_MARKER = r"(?:#|//|/\*|--|<!--)[ \t]*ponytail:([^\n]*)"
+
+
+def dependency_names(kind, text: str) -> set:
+    if kind == "package.json":
+        try:
+            pkg = json.loads(text)
+        except ValueError:
+            return set()
+        if not isinstance(pkg, dict):
+            return set()
+        return {n for s in NPM_PINNED_SECTIONS if isinstance(pkg.get(s), dict) for n in pkg[s]}
+    if kind in ("gradle", "version-catalog"):
+        return set(re.findall(_DEP_COORD, text))
+    return set()
+
+
+def run_lazy_senior_advisories(modified_files: list) -> list:
+    notes = []
+    for rel_file in modified_files:
+        content = read_changed_text(rel_file)
+        if content is None or rel_file.endswith(".md"):
+            continue
+        kind = dependency_kind(rel_file)
+        if kind and not is_test_path(rel_file):
+            added = sorted(dependency_names(kind, content) - dependency_names(kind, base_text(rel_file) or ""))
+            if added:
+                shown = ", ".join(added[:5]) + (f" +{len(added) - 5}" if len(added) > 5 else "")
+                notes.append(tr(f"{rel_file}: dependency mới {shown} — nói trong câu trả lời vì sao stdlib / native / dependency đã cài không đủ (core-rules §4, không chặn)",
+                                f"{rel_file}: new dependency {shown} — say in the answer why stdlib / native / an installed dependency falls short (core-rules §4, not blocking)"))
+        for m in split_new(rel_file, _DEBT_MARKER, content)[0]:
+            if not re.search(r"[,;]|->|→", m.group(1)):
+                line = content.count("\n", 0, m.start()) + 1
+                notes.append(tr(f"{rel_file}:{line}: marker `ponytail:` thiếu 'khi nào nâng cấp' — viết `ponytail: <trần>, <khi nào nâng cấp>` (không chặn)",
+                                f"{rel_file}:{line}: `ponytail:` marker names no upgrade trigger — write `ponytail: <ceiling>, <when to upgrade>` (not blocking)"))
+    return notes
+
 def run_performance_audit(modified_files: list) -> tuple:
     perf_findings = []
     base_dir = get_base_dir()
@@ -2066,6 +2107,8 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
     for f, lbl in PREEXISTING_SECRETS[:15]:   # already in HEAD: shown, never blocking the commit
         log_warn(tr(f"{f}: {lbl} — đã có sẵn trong {BASE_REF}, không do commit này (không chặn); nên sửa riêng",
                     f"{f}: {lbl} — already in {BASE_REF}, not introduced by this commit (not blocking); fix it separately"))
+    for note in run_lazy_senior_advisories(modified_files):
+        log_warn(note)
     unreadable = [f for f in modified_files if f not in DELETED_FILES
                   and STAGED_MODES.get(f, "").startswith("100") and read_changed_text(f) is None]
     static_ok = not any(counts.values())
@@ -2470,6 +2513,8 @@ def main():
         for msg in proof_findings:
             log_err(msg)
     for note in hardware_boundary_notes(modified_files):
+        log_warn(note)
+    for note in run_lazy_senior_advisories(modified_files):
         log_warn(note)
 
     # Findings already in the base version, from every static layer above: shown, never blocking.

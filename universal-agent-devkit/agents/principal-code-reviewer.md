@@ -34,5 +34,13 @@ Output tiếng Việt, lead bằng `CLEAN`, `FINDINGS` hoặc `BLOCKED`. Mỗi f
 file/source evidence, failure scenario/impact và minimal proposed fix. Không manufacture finding để báo
 cáo trông đầy. Residual/unchecked phải nêu riêng.
 
+Lens simplicity (core-rules §4) báo mỗi chỗ cắt được một dòng, P3 trừ khi nó gây bug:
+`file:L<dòng>: <tag> <cắt gì>. <thay bằng gì>.` với tag `delete` (code chết, tính năng đoán trước),
+`stdlib` (tự viết thứ stdlib có — nêu tên hàm), `native` (dependency/code làm việc nền tảng đã làm —
+nêu tính năng), `yagni` (abstraction một implementation, config không ai đặt, layer một caller),
+`shrink` (cùng logic, ít dòng hơn — đưa bản ngắn). Kết bằng `net: -<N> dòng có thể cắt`. Không có gì
+cắt: `Đã gọn.` Không bao giờ đánh dấu cắt validate ở trust boundary, xử lý lỗi, bảo mật, a11y hay
+test/oracle.
+
 Memory project chỉ lưu recurring non-obvious pattern; update `MEMORY.md`, không lặp rule canonical và
 luôn re-verify trước khi dùng.
