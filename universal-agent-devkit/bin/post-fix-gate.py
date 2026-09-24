@@ -786,6 +786,7 @@ def run_dependency_audit(modified_files: list) -> tuple:
                 _record("dependencies", rel_file, label, content, pos)
     return len(findings) == 0, findings
 
+
 # Lazy-senior advisories (core-rules §4): warnings, never blocking. A new dependency can be
 # the right call; only the answer can say why stdlib / native / an installed one fell short.
 # ponytail: Gradle, version catalog, package.json and Unity Packages/manifest.json only, add pip/pubspec/Cargo/SwiftPM when a profile needs it
@@ -1842,7 +1843,9 @@ def run_assertion_audit(modified_files: list) -> tuple:
         return True, []
     findings = []
     for rel in modified_files:
-        if not is_test_path(rel):
+        # Only the languages assertion_lint knows (JVM @Test, C# [Test], pytest def test_): a
+        # script under tests/ that printf's a Kotlin fixture is not a test source.
+        if not is_test_path(rel) or not rel.endswith((".kt", ".kts", ".java", ".groovy", ".scala", ".cs", ".py")):
             continue
         content = read_changed_text(rel)
         if not content:

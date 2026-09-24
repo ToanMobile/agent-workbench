@@ -291,6 +291,16 @@ out="$(DEVKIT_LANG=en gate_nomatrix)"; check "debt marker without trigger -> war
 expect_in "marker without an upgrade trigger is flagged with its line" "src/Core.kt:1: \`ponytail:\` marker names no upgrade trigger" "$out"
 expect_not_in "marker with a trigger passes" "src/Core.kt:2:" "$out"
 
+# --- Vacuous-test audit judges test SOURCE, not a script that writes one as a fixture -----
+make_repo "true"
+mkdir -p src/test/kotlin tests
+printf 'import org.junit.Test\nclass FooTest {\n    @Test fun a() {}\n}\n' > src/test/kotlin/FooTest.kt
+out="$(DEVKIT_LANG=en gate_nomatrix)"; check "Kotlin @Test with no assertion -> REJECT" 1 $? "$out"
+expect_in "vacuous Kotlin test named" "Vacuous test at line 3" "$out"
+rm src/test/kotlin/FooTest.kt
+printf '#!/bin/sh\nprintf %s "class T {\\n    @Test fun a() {}\\n}" > "$TMP/T.kt"\n' "'" > tests/test_fixture.sh
+out="$(DEVKIT_LANG=en gate_nomatrix)"; check "@Test inside a shell fixture -> not a vacuous test" 0 $? "$out" "Vacuous test"
+
 # --- mobile findings: local.properties, SwiftPM branch pins, plist secrets -----------
 make_repo "true"
 printf 'sdk.dir=/Users/dev/Library/Android/sdk\n' > local.properties
