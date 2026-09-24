@@ -9,6 +9,10 @@ phiên bản theo [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Prompt phản biện kế hoạch và prompt audit luôn liệt kê `.agents/context/essentials.md`, `profile-rules.md`, `rules-index.md` của DevKit (khi file tồn tại), kể cả khi project tự khai `rulesFiles`. `AGENTS.md` chỉ `@`-import các file này; Antigravity đọc `AGENTS.md` như văn bản thường nên có thể bỏ qua import.
+
 ### Security
 
 - **`task.json` ra khỏi repo** (23/09/2026): lưu ở `~/.antigravity-pm/projects/<tên>-<hash gốc>/tasks/<id>/task.json`

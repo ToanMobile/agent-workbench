@@ -788,7 +788,7 @@ def run_dependency_audit(modified_files: list) -> tuple:
 
 # Lazy-senior advisories (core-rules §4): warnings, never blocking. A new dependency can be
 # the right call; only the answer can say why stdlib / native / an installed one fell short.
-# ponytail: Gradle, version catalog and package.json only, add pip/pubspec/Cargo when a profile needs it
+# ponytail: Gradle, version catalog, package.json and Unity Packages/manifest.json only, add pip/pubspec/Cargo/SwiftPM when a profile needs it
 _DEP_COORD = r"[\"']([\w.\-]+:[\w.\-]+)(?::[^\"'\s]*)?[\"']"
 _DEBT_MARKER = r"(?:#|//|/\*|--|<!--)[ \t]*ponytail:([^\n]*)"
 
@@ -814,6 +814,8 @@ def run_lazy_senior_advisories(modified_files: list) -> list:
         if content is None or rel_file.endswith(".md"):
             continue
         kind = dependency_kind(rel_file)
+        if rel_file.replace("\\", "/").endswith("Packages/manifest.json"):
+            kind = "package.json"  # Unity UPM: same {"dependencies": {name: version}} shape
         if kind and not is_test_path(rel_file):
             added = sorted(dependency_names(kind, content) - dependency_names(kind, base_text(rel_file) or ""))
             if added:

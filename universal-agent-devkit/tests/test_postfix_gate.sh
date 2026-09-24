@@ -281,6 +281,11 @@ out="$(gate_nomatrix)"; check "new dependency -> warning only, still PASS" 0 $? 
 expect_in "gradle: newly added coordinate named" "new dependency com.jakewharton.timber:timber" "$(DEVKIT_LANG=en gate_nomatrix)"
 expect_in "npm: newly added package named" "package.json: new dependency left-pad" "$(DEVKIT_LANG=en gate_nomatrix)"
 expect_not_in "version bump is not a new dependency" "new dependency androidx.core" "$(DEVKIT_LANG=en gate_nomatrix)"
+mkdir -p Packages && printf '{"dependencies":{"com.unity.ugui":"2.0.0"}}\n' > Packages/manifest.json
+git add -A && git commit -qm unity
+printf '{"dependencies":{"com.unity.ugui":"2.0.1","com.unity.addressables":"2.2.2"}}\n' > Packages/manifest.json
+expect_in "unity: newly added package named" "Packages/manifest.json: new dependency com.unity.addressables" "$(DEVKIT_LANG=en gate_nomatrix)"
+expect_not_in "unity: version bump is not a new dependency" "new dependency com.unity.ugui" "$(DEVKIT_LANG=en gate_nomatrix)"
 printf 'fun ok() = 1 // ponytail: global lock\nfun two() = 2 // ponytail: O(n^2) scan, index it past 1k rows\n' > src/Core.kt
 out="$(DEVKIT_LANG=en gate_nomatrix)"; check "debt marker without trigger -> warning only" 0 $? "$out"
 expect_in "marker without an upgrade trigger is flagged with its line" "src/Core.kt:1: \`ponytail:\` marker names no upgrade trigger" "$out"

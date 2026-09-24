@@ -43,7 +43,7 @@ Thứ tự: Làm & Chạy test cục bộ → Self Review (Diff + DEMO/LIVE) →
 - **Yêu cầu phức tạp:** giao bản lười trong cùng lượt và nêu bản đầy đủ trong một dòng ("Làm X; Y đã đủ. Cần X đầy đủ thì nói"). Người dùng vẫn muốn bản đầy đủ → làm, không tranh luận lại. Vùng cần duyệt (auth, billing, migration phá huỷ…) vẫn theo `essentials.md`.
 - **Đánh dấu nợ có chủ ý:** đường tắt có trần đã biết (khoá toàn cục, quét O(n²) trên dữ liệu nhỏ đã đo, heuristic đơn giản) mang comment `ponytail: <trần>, <khi nào nâng cấp>`, ví dụ `// ponytail: khoá toàn cục, tách khoá theo tài khoản khi throughput cần`. Post-fix gate cảnh báo marker mới thiếu phần "khi nào nâng cấp"; `git grep -n 'ponytail:'` là sổ nợ.
 - **Không bao giờ cắt:** validate ở trust boundary, xử lý lỗi chống mất dữ liệu, bảo mật, accessibility, knob hiệu chỉnh phần cứng (đồng hồ trôi, cảm biến lệch: `hardware_safety_gate.sh`), điều người dùng yêu cầu rõ, oracle RED→GREEN của bug fix.
-- **Thêm dependency mới** (Gradle/version catalog/`package.json`): post-fix gate in cảnh báo không chặn, câu trả lời phải nói vì sao bậc 3–5 không đủ.
+- **Thêm dependency mới** (Gradle/version catalog/`package.json`/Unity `Packages/manifest.json`): post-fix gate in cảnh báo không chặn, câu trả lời phải nói vì sao bậc 3–5 không đủ.
 - Nguồn: thang và marker lấy từ [ponytail](https://github.com/DietrichGebert/ponytail) (MIT). Không lấy phần "one-liner không cần test" của ponytail: bug fix ở đây luôn cần oracle cặp.
 
 ## 5. Quy chuẩn Chống Lười Biếng (Anti-Laziness & Integrity)
