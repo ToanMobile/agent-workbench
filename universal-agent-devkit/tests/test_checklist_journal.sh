@@ -130,4 +130,68 @@ n="$(wc -l < "$J/journal.jsonl" | tr -d ' ')"; s="$(ls "$J/snapshots" | wc -l | 
 git check-ignore -q .agents/regression_journal/journal.jsonl && [ -z "$(git status --porcelain -- .agents/regression_journal)" ] \
   && ok "the journal is not tracked by git" || fail "journal visible to git: $(git status --porcelain)"
 
+# Git moved the file and nothing was lost: a branch switch, a reset or a stash puts the committed
+# version of another commit in place while the last journaled content is safe in git (committed at
+# the recorded HEAD, at a commit HEAD visited since, or in the stash) → a new baseline, no rollback.
+Q="$TMP/q"; mkdir -p "$Q/src" "$Q/tests" "$Q/.agents"
+cd "$Q" && git init -q . && git symbolic-ref HEAD refs/heads/main && git config user.email t@t && git config user.name t
+echo "x = 1" > src/a.py; printf 'def test_a(): pass\n' > tests/test_a.py
+cp "$P/.agents/regression_matrix.active.json" .agents/
+git add -A && git commit -qm init
+export CLAUDE_PROJECT_DIR="$Q"; P="$Q"; S="$Q/.agents/regression_status.json"; J="$Q/.agents/regression_journal"
+C1="$(bash "$KIT" bugs add "Sai A tren main" --fixed --test REG-A 2>&1 | bugid)"
+git add -A && git commit -qm "checklist on main"
+git checkout -q -b feat
+CF="$(bash "$KIT" bugs add "Sai B tren feat" --fixed --test REG-A 2>&1 | bugid)"
+git add -A && git commit -qm "bug on feat"
+git checkout -q main
+out="$(bash "$KIT" checklist check 2>&1)"; rc=$?
+[ $rc = 0 ] && ! warned "$out" && [ ! -f "$J/rollback.json" ] && ok "a branch switch back to main is no rollback" \
+  || fail "branch switch flagged: rc=$rc $out"
+tail -1 "$J/journal.jsonl" | python3 -c "import json,sys;r=json.loads(sys.stdin.read());assert len(r.get('head') or '')>=40" 2>/dev/null \
+  && ok "a journal record carries the HEAD sha" || fail "no head in: $(tail -1 "$J/journal.jsonl")"
+bash "$KIT" checklist restore >/dev/null 2>&1
+[ -n "$CF" ] && [ "$(field "$CF" "it.get('title')")" = None ] && ok "restore on main does not bring the feat-only row" \
+  || fail "feat row merged into main: $(field "$CF" "it.get('title')")"
+git reset -q --hard; bash "$KIT" checklist check >/dev/null 2>&1
+git checkout -q feat
+out="$(bash "$KIT" checklist check 2>&1)"; rc=$?
+[ $rc = 0 ] && ! warned "$out" && ok "a branch switch to feat is no rollback" || fail "switch to feat flagged: rc=$rc $out"
+git reset -q --hard HEAD~1                                      # committed content only: nothing lost
+out="$(bash "$KIT" checklist check 2>&1)"; rc=$?
+[ $rc = 0 ] && ok "git reset --hard over committed content is no rollback" || fail "reset flagged: rc=$rc $out"
+git checkout -q main
+proof "$C1" PROVEN 1000                                         # uncommitted work …
+git stash -q                                                    # … kept in the stash
+out="$(bash "$KIT" checklist check 2>&1)"; rc=$?
+[ $rc = 0 ] && ok "git stash of the checklist is no rollback" || fail "stash flagged: rc=$rc $out"
+git stash pop -q
+out="$(bash "$KIT" checklist check 2>&1)"; rc=$?
+[ $rc = 0 ] && [ "$(field "$C1" "(it.get('red_proof') or {}).get('status')")" = PROVEN ] && ok "stash pop: no warning, the proof is back" \
+  || fail "stash pop: rc=$rc $out"
+# Still caught: HEAD moved (a code-only commit), then the committed copy overwrote uncommitted work
+# that is in no commit.
+proof "$C1" PROVEN 2000
+echo "x = 2" > src/a.py; git add src/a.py; git commit -qm "code only"
+git show HEAD:.agents/regression_status.json > .agents/regression_status.json
+out="$(bash "$KIT" checklist check 2>&1)"; rc=$?
+[ $rc = 1 ] && warned "$out" && ok "a code commit, then HEAD's copy over uncommitted work → rollback" \
+  || fail "copy after a code-only commit not caught: rc=$rc $out"
+
+# Two processes appending at the journal cap lose no line (read-then-replace trim under a lock).
+python3 - "$DEVKIT_DIR/bin" "$Q" <<'PY'
+import multiprocessing, os, sys; sys.path.insert(0, sys.argv[1]); import regression_checklist as rc
+p = sys.argv[2]; os.environ["CHECKLIST_JOURNAL_MAX"] = "400"
+path = rc._jdir(p, create=True) / rc.JOURNAL_NAME
+path.write_text("".join('{"event": "fill"}\n' for _ in range(400)), encoding="utf-8")
+def w(tag):
+    for i in range(150):
+        rc._append(p, {"event": "race", "tag": f"{tag}{i}"})
+ctx = multiprocessing.get_context("fork")
+ps = [ctx.Process(target=w, args=(t,)) for t in "ab"]
+[x.start() for x in ps]; [x.join() for x in ps]
+PY
+n="$(grep -c '"event": "race"' "$J/journal.jsonl")"
+[ "$n" = 300 ] && ok "two writers at the journal cap lose no line" || fail "concurrent appends lost lines: $n/300 kept"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_checklist_journal: all passed" || { echo "❌ test_checklist_journal: $FAILS failed"; exit 1; }
