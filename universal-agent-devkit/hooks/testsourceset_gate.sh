@@ -18,9 +18,10 @@
 # module has no Debug task and used to be dropped as "lacks the task" (OfficeReader
 # :app, 2026-09-23). Read the way scripts/matrix_detect.py reads it.
 # Skips entirely when there are no uncommitted .kt/.java changes, and when THIS
-# session wrote none of them (Edit/Write, a sub-agent's edit, a write-shaped Bash
-# command, or an mtime inside one of its bash_write_ledger.tsv windows — see the
-# "scope" block below); falls back to every dirty module when it cannot tell. The build is
+# session wrote none of them (bin/session_authorship.py, post-fix-gate's rule: Edit/Write/
+# MultiEdit, a sub-agent's edit, a write-shaped Bash command, or an mtime inside one of its
+# bash_write_ledger.tsv windows — see the "scope" block below); falls back to every dirty
+# module when it cannot tell (a write tool it cannot see through, no shared module). The build is
 # ./gradlew, or — in a monorepo without one at the root — the nearest gradlew
 # above each changed file (e.g. android/gradlew), run from that folder.
 #
