@@ -1,0 +1,1 @@
+../../hooks/worktree_guard.sh

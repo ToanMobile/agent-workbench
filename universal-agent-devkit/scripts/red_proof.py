@@ -46,7 +46,6 @@ from __future__ import annotations
 
 import contextlib
 import difflib
-import fnmatch
 import hashlib
 import json
 import os
@@ -64,6 +63,8 @@ DEVKIT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DEVKIT / "bin"))
 sys.dont_write_bytecode = True
 import regression_checklist as rc  # noqa: E402
+sys.path.insert(0, str(DEVKIT / "scripts"))
+from build_inputs import DEFAULT_INPUTS, SKIP_WALK, build_inputs  # noqa: E402,F401
 
 HEAVY = re.compile(r"gradlew|\bgradle\b|unity|-runTests|xcodebuild", re.I)
 TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec)/|/src/(test|androidTest)/|/Tests?/|(^|/)test_[^/]*\.py$"
@@ -72,12 +73,8 @@ TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec)/|/src/(test|androidTest)/|
 # a build cache a runner writes into (Unity Library/, .gradle/): through a link the sandbox run
 # would rewrite the real project's cache.
 DEP_DIRS = ("node_modules", ".venv", "venv", "vendor")
-# Build inputs git does not hold (ignored on purpose) that a build cannot do without.
-DEFAULT_INPUTS = ("local.properties", "**/local.properties", "google-services.json", "**/google-services.json",
-                  "**/GoogleService-Info.plist", "key.properties", "**/key.properties", "**/keystore.properties",
-                  "**/*.jks", "**/*.keystore", "**/libs/*.aar", "**/libs/*.jar", ".env", ".env.*", "**/.env")
-SKIP_WALK = {".git", "build", ".gradle", "node_modules", "Library", "Temp", "Logs", "obj", ".venv", "venv",
-             "__pycache__", ".idea", ".agents", ".claude", "dist", "out", ".cxx", ".kotlin"}
+# Build inputs git does not hold (DEFAULT_INPUTS, SKIP_WALK, build_inputs): scripts/build_inputs.py,
+# shared with `agent-kit worktree add` so both copy the same set.
 SHA = re.compile(r"\b[0-9a-f]{7,40}\b")
 NOT_CODE = (".agents/", ".claude/", ".gemini/", "docs/", ".github/")
 SOURCE_EXT = (".kt", ".kts", ".java", ".cs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".swift", ".m", ".mm",
@@ -219,23 +216,6 @@ def worktree(project: Path):
         git(project, "worktree", "remove", "--force", str(box))
         shutil.rmtree(box, ignore_errors=True)
         git(project, "worktree", "prune")
-
-
-def build_inputs(project: Path) -> list:
-    """Ignored / untracked files a build needs: DEFAULT_INPUTS + .agents/local/red_proof.json."""
-    pats = list(DEFAULT_INPUTS)
-    try:
-        pats += list(json.loads((project / ".agents" / "local" / "red_proof.json").read_text(encoding="utf-8")).get("copy", []))
-    except (OSError, ValueError, AttributeError):
-        pass
-    out = []
-    for root, dirs, files in os.walk(project):
-        dirs[:] = [d for d in dirs if d not in SKIP_WALK]
-        for f in files:
-            rel = os.path.relpath(os.path.join(root, f), project)
-            if any(fnmatch.fnmatch(rel, p) for p in pats):
-                out.append(rel)
-    return out
 
 
 def devkit_links(project: Path) -> list:

@@ -9,7 +9,9 @@ Usage (normally `agent-kit worktree …`, run inside the repo):
 
 add: `git worktree add` on <branch> (default feat/<folder name>; created from --base or
 HEAD when it does not exist), copies the main checkout's git-ignored local config
-(.env*, local.properties, keystore.properties, google-services.json, …), runs the
+(.env*, local.properties, keystore.properties, google-services.json, …) and git-ignored
+build inputs (the red_proof.py set: libs/*.aar|jar, *.jks, … plus .agents/local/red_proof.json
+{"copy": [...]} — scripts/build_inputs.py), runs the
 DevKit installer with the main checkout's profile, agents and mode, then records what
 that setup left in `git status` — file by file, with a content fingerprint — in the
 worktree's own git dir. Hook state (.claude/audit-gate) and the gate report
@@ -28,6 +30,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,6 +38,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEVKIT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+from build_inputs import build_inputs  # noqa: E402
 from devkit_i18n import resolve_lang, set_lang, tr  # noqa: E402
 
 STATE = "devkit-worktree.json"
@@ -120,21 +124,37 @@ def changes_since(wt, state):
     return sorted(p for p, fp in snapshot(wt).items() if base.get(p) != fp)
 
 
+def _copy(main, wt, rel):
+    src, dst = os.path.join(main, rel), os.path.join(wt, rel)
+    if not os.path.isfile(src) or os.path.lexists(dst):
+        return False
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy2(src, dst)
+    return True
+
+
 def copy_local_config(main, wt):
     out = git(main, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory").stdout
     copied = []
     for rel in out.split("\0"):
         if not rel or rel.endswith("/"):
             continue
-        if any(fnmatch.fnmatch(os.path.basename(rel), pat) for pat in LOCAL_CONFIG):
-            src, dst = os.path.join(main, rel), os.path.join(wt, rel)
-            if os.path.isfile(src) and not os.path.exists(dst):
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
-                with open(src, "rb") as a, open(dst, "wb") as b:
-                    b.write(a.read())
-                os.chmod(dst, os.stat(src).st_mode & 0o777)
-                copied.append(rel)
+        if any(fnmatch.fnmatch(os.path.basename(rel), pat) for pat in LOCAL_CONFIG) and _copy(main, wt, rel):
+            copied.append(rel)
     return copied
+
+
+def copy_build_inputs(main, wt):
+    """The build inputs red_proof.py furnishes its sandbox with (scripts/build_inputs.py: its
+    defaults + .agents/local/red_proof.json "copy"), copied from the main checkout. Only files
+    git IGNORES there: an ignored file stays ignored in the worktree, so it can never be committed
+    from it; a matching file git does not ignore is left alone (tracked ones are already there)."""
+    cands = build_inputs(main)
+    if not cands:
+        return []
+    r = git(main, "check-ignore", "-z", "--stdin", check=False, inp="\0".join(cands) + "\0")
+    ignored = {p for p in r.stdout.split("\0") if p} if r.returncode in (0, 1) else set()
+    return [rel for rel in cands if rel in ignored and _copy(main, wt, rel)]
 
 
 def profile_file(root):
@@ -194,6 +214,7 @@ def cmd_add(cwd, args):
     start = git(wt, "rev-parse", "HEAD").stdout.strip()
 
     copied = copy_local_config(main, wt)
+    inputs = copy_build_inputs(main, wt)
     ran = install_args(main, wt, profile) if not no_init else None
     if ran:
         r = subprocess.run(ran, capture_output=True, text=True)
@@ -208,6 +229,10 @@ def cmd_add(cwd, args):
     print(f"✔ worktree {wt}  ({tr('nhánh', 'branch')} {branch} @ {start[:10]})")
     if copied:
         print("  " + tr("đã chép cấu hình cục bộ (bị ignore): ", "copied local config (git-ignored): ") + ", ".join(copied))
+    if inputs:
+        shown = ", ".join(inputs[:12]) + (f" (+{len(inputs) - 12})" if len(inputs) > 12 else "")
+        print("  " + tr("đã chép input build (bị ignore, như red_proof): ",
+                        "copied build inputs (git-ignored, as red_proof): ") + shown)
     print("  " + (tr("đã cài DevKit như main checkout", "DevKit installed like the main checkout") if ran else
                   tr("không cài DevKit (main checkout không có, hoặc worktree đã có sẵn)",
                      "DevKit not installed (none in the main checkout, or the worktree has it already)")))

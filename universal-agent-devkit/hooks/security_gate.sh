@@ -33,7 +33,8 @@
 # Loop guard: MAX_ATTEMPTS reminders per session, then it releases with a logged
 # warning — the duty falls back on you, exactly as with review_gate.
 # Sources of "edited": Edit/Write/NotebookEdit calls, Bash commands that write
-# (sed -i, >, tee, cp, mv, …) to an attack-surface path or text, and — as a
+# (sed -i, >, tee, cp, mv, …) to an attack-surface path or text — a read (ls, stat,
+# [ -e ], cat, grep, git check-ignore/ls-files, `2>/dev/null`) is not one — and — as a
 # second source — `git diff`/untracked files on an attack-surface path changed
 # since the session began (QA K-5, 2026-09-23).
 # Review = Skill/Agent/SlashCommand review call only. A Bash command that merely
@@ -193,20 +194,147 @@ REVIEW_SLASH_RX = re.compile(r"^\s*/(scan|security-review|security-checklist)\b"
 SHELL_WRITE_RX = re.compile(r"\bsed\s+(-[A-Za-z]*i|--in-place)|\bperl\s+-[A-Za-z]*i|>>?|\btee\b|"
                             r"\b(cp|mv|install|patch|dd)\b|\bgit\s+(apply|am|checkout|restore)\b", re.I)
 
-def shell_hits(cmd):
-    """Attack-surface files/text a shell command may have written."""
+def _coarse_hits(cmd):
+    """The pre-2026-09-25 whole-command rule: any write marker anywhere → every path/text
+    trigger anywhere. Kept as the fallback when the command cannot be tokenised."""
     if not SHELL_WRITE_RX.search(cmd):
         return []
+    return _hits_in([cmd], [cmd])
+
+def _hits_in(path_texts, text_texts):
     hits = []
-    for tok in re.findall(r"[^\s'\"<>|;&]+", cmd):
-        if not excluded(tok):
-            for rx, label in PATH_TRIGGERS:
-                if rx.search(tok):
-                    hits.append(label)
-    for rx, label in TEXT_TRIGGERS:
-        if rx.search(cmd):
-            hits.append(label)
-    return sorted(set(hits))
+    for t in path_texts:
+        for tok in re.findall(r"[^\s'\"<>|;&]+", t):
+            if not excluded(tok):
+                for rx, label in PATH_TRIGGERS:
+                    if rx.search(tok):
+                        hits.append(label)
+    for t in text_texts:
+        for rx, label in TEXT_TRIGGERS:
+            if rx.search(t):
+                hits.append(label)
+    return hits
+
+# A READ is not an edit (GeelyEx2, 2026-09-25): `for f in app/google-services.json …; do [ -e "$f" ]
+# && git check-ignore -q "$f"; done 2>/dev/null` was flagged as touching the Firebase config and
+# keystore, because `2>/dev/null` matched the `>` write marker and every trigger anywhere in the
+# command then counted. Now the command is split into simple commands and only the ones that
+# WRITE count: a redirection to a file (not /dev/null, not `>&2`), or a writing verb (cp, mv,
+# install, patch, dd, tee, rsync, ln, rm, truncate, sed -i, perl -i, git apply/am/checkout/
+# restore/mv/rm). Their paths, their text and their heredoc bodies are checked. A writing command
+# that takes a shell variable (`cp "$f" …` in a loop) cannot be resolved, so then every path of the
+# whole command counts — a copy of google-services.json in a for-loop still triggers.
+# Interpreters and wrappers (python, node, bash -c, eval, xargs, …) are judged by the old coarse
+# rule on their own segment and heredoc script (plus `open(…, 'w')` / write_text in the script).
+# An untokenisable command (unbalanced quotes) falls back to the old rule on the whole command.
+HEREDOC_RX = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+WRITE_VERBS = {"cp", "mv", "install", "patch", "dd", "tee", "rsync", "ln", "rm", "truncate"}
+OPAQUE_VERBS = {"python", "python3", "node", "ruby", "perl", "bash", "sh", "zsh", "eval", "xargs", "env",
+                "sudo", "find", "awk", "gawk", "osascript", "php", "deno", "bun"}
+PREFIX_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "time", "command",
+                "builtin", "exec", "nohup", "done", "fi"}
+
+def _split_heredocs(cmd):
+    """(command without its heredoc bodies, [body, …] in the order of their `<<` operators)."""
+    out, bodies, pos = [], [], 0
+    while True:
+        m = HEREDOC_RX.search(cmd, pos)
+        nl = cmd.find("\n", m.end()) if m else -1
+        if not m or nl < 0:
+            out.append(cmd[pos:])
+            break
+        e = re.compile(r"^[ \t]*" + re.escape(m.group(2)) + r"[ \t]*$", re.M).search(cmd, nl + 1)
+        out.append(cmd[pos:nl + 1])
+        bodies.append(cmd[nl + 1:e.start() if e else len(cmd)])
+        pos = e.end() if e else len(cmd)
+    return "".join(out), bodies
+
+def _segments(stripped):
+    import shlex
+    lex = shlex.shlex(stripped, posix=True, punctuation_chars=";&|<>()\n")
+    lex.whitespace = " \t\r"
+    lex.whitespace_split = True
+    lex.commenters = ""
+    segs, cur = [], []
+    for tok in lex:
+        if tok and set(tok) <= set(";&|()\n"):
+            if cur:
+                segs.append(cur)
+            cur = []
+        else:
+            cur.append(tok)
+    if cur:
+        segs.append(cur)
+    return segs
+
+def _segment_writes(seg, body=""):
+    """Does this simple command write? `body` is the heredoc it is fed, if any."""
+    targets, words, i = [], [], 0
+    while i < len(seg):
+        tok = seg[i]
+        if tok and set(tok) <= set("<>&|"):
+            nxt = seg[i + 1] if i + 1 < len(seg) else ""
+            if ">" in tok and not tok.endswith("&") and nxt and nxt != "/dev/null" \
+                    and not re.fullmatch(r"-|\d+", nxt):
+                targets.append(nxt)
+            i += 2
+            continue
+        words.append(tok)
+        i += 1
+    while words and (words[0] in PREFIX_WORDS or re.fullmatch(r"[A-Za-z_]\w*=.*", words[0])):
+        words = words[1:]
+    if words and words[0] == "for":
+        return False                                   # `for VAR in LIST` only names things
+    verb = os.path.basename(words[0]) if words else ""
+    args = words[1:]
+    writes = bool(targets)
+    if verb in WRITE_VERBS:
+        writes = True
+    elif verb == "sed" and any(re.fullmatch(r"-[A-Za-z]*i.*|--in-place.*", a) for a in args):
+        writes = True
+    elif verb == "perl" and any(re.fullmatch(r"-[A-Za-z]*i.*", a) for a in args):
+        writes = True
+    elif verb == "git":
+        sub, skip = "", False
+        for a in args:                                 # `git -C <dir> apply`: skip option values
+            if skip:
+                skip = False
+            elif a in ("-C", "-c", "--git-dir", "--work-tree"):
+                skip = True
+            elif not a.startswith("-"):
+                sub = a
+                break
+        writes = writes or sub in ("apply", "am", "checkout", "restore", "mv", "rm")
+    elif verb in OPAQUE_VERBS or re.fullmatch(r"python[\d.]*", verb):
+        writes = writes or bool(SHELL_WRITE_RX.search(" ".join(seg) + "\n" + body)
+                                or re.search(r"open\([^)]*['\"][wa]b?\+?['\"]|write_text|write_bytes", body))
+    return writes
+
+def shell_hits(cmd):
+    """Attack-surface files/text a shell command may have written."""
+    if not _hits_in([cmd], [cmd]):
+        return []                                      # no trigger anywhere: nothing to judge
+    try:
+        stripped, bodies = _split_heredocs(cmd)
+        segs = _segments(stripped)
+    except ValueError:
+        return sorted(set(_coarse_hits(cmd)))
+    path_texts, text_texts, blind = [], [], False
+    body_iter = iter(bodies)
+    for seg in segs:
+        body = next(body_iter, "") if any(t.startswith("<<") and t != "<<<" for t in seg) else ""
+        if not _segment_writes(seg, body):
+            continue
+        joined = " ".join(seg)
+        path_texts.append(joined)
+        text_texts.append(joined + "\n" + body)
+        if body:
+            path_texts.append(body)
+        if "$" in joined:
+            blind = True
+    if blind:
+        path_texts.append(cmd)
+    return sorted(set(_hits_in(path_texts, text_texts)))
 
 # ── one transcript pass ─────────────────────────────────────────────────────
 tp = d.get("transcript_path")

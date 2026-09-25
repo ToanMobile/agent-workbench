@@ -1416,6 +1416,71 @@ run_case "PROOF_GATE=0 escape hatch allows" proof_gate.sh 0 \
   "{\"session_id\":\"pg-4\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"XONG\\nĐã sửa lỗi X.\"}" CLAUDE_PROJECT_DIR="${PG}" PROOF_GATE=0
 echo
 
+# ── test_evidence_gate.sh — quoted / negated claims, foreign-project XML (2026-09-25) ──
+# A reply that only QUOTES evidence another hook/session wrote, or says the tests were NOT run,
+# makes no pass claim. A pass claim backed by TEST-*.xml this session produced in ANOTHER
+# project (and read with its own Bash) is backed. Every case runs in its own empty project.
+echo "test_evidence_gate.sh — attribution, negation, foreign XML"
+TE_P="$(mktemp -d "${TMPDIR:-/tmp}/hookte.XXXXXX")"
+te_case() { # name want session message [transcript]
+  run_case "$1" test_evidence_gate.sh "$2" \
+    "$(python3 -c 'import json,sys; print(json.dumps({"session_id": sys.argv[1], "transcript_path": sys.argv[3], "last_assistant_message": sys.argv[2]}))' \
+       "$3" "$4" "${5:-${EMPTY_TR}}")" CLAUDE_PROJECT_DIR="${TE_P}"
+}
+te_case "claim attributed to another hook is not a claim"        0 te-a1 "The evidence logs written by another hook at 08:41 say the tests passed."
+te_case "claim attributed to another session (vi) is not a claim" 0 te-a2 "Phiên khác ghi log lúc 08:41 là 12/12 test pass, phiên này chưa chạy lại."
+te_case "negated run: chưa chạy test is not a claim"             0 te-a3 "Chưa chạy test, nên chưa biết test có pass hay không."
+te_case "negated result: tests did not pass is not a claim"      0 te-a4 "The 3 tests did not pass on CI."
+te_case "fix attributed to another agent is not an outcome"      0 te-a5 "Agent khác báo đã fix bug A; phiên này chưa kiểm."
+te_case "guard: other-hook fail then contrast still a claim"     2 te-g1 "Hook khác báo fail, nhưng giờ 13/13 test pass."
+te_case "guard: another session broke it; tests pass claimed"    2 te-g2 "Another session broke it; now 12/12 tests pass."
+te_case "guard: negated smoke run cannot hide test pass"         2 te-g3 "Didn't run smoke so I only know 12/12 tests passed."
+te_case "guard: plain unbacked pass claim still blocked"         2 te-g4 "JUnit XML shows 13/13 tests passed, 0 failures."
+te_case "guard: plain unbacked fixed claim still blocked"        2 te-g5 "Đã fix bug A."
+# Foreign project: a Gradle root outside CLAUDE_PROJECT_DIR whose XML this session read.
+TE_F="$(mktemp -d "${TMPDIR:-/tmp}/hooktef.XXXXXX")"; TE_OLD="$(mktemp -d "${TMPDIR:-/tmp}/hookteo.XXXXXX")"
+TE_RED="$(mktemp -d "${TMPDIR:-/tmp}/hooketr.XXXXXX")"
+: > "${TE_P}/gradlew"                                          # the current project is Gradle, with no XML
+for r in "${TE_F}" "${TE_OLD}" "${TE_RED}"; do
+  : > "${r}/gradlew"; mkdir -p "${r}/app/build/test-results/testDebugUnitTest" "${r}/app/src/main/java"
+  printf 'class A\n' > "${r}/app/src/main/java/A.kt"
+done
+touch -t 202001010000 "${TE_F}/app/src/main/java/A.kt"
+mk_xml "${TE_F}/app/build/test-results/testDebugUnitTest"   GreenSuite 13 0 0 0
+mk_xml "${TE_OLD}/app/build/test-results/testDebugUnitTest" GreenSuite 13 0 0 0
+mk_xml "${TE_RED}/app/build/test-results/testDebugUnitTest" RedSuite   13 1 0 0
+touch -t 202001010000 "${TE_OLD}/app/build/test-results/testDebugUnitTest/TEST-GreenSuite.xml"
+python3 - "${SANDBOX}" "${TE_F}" "${TE_OLD}" "${TE_RED}" <<'PY'
+import json, os, sys, time
+sb, green, old, red = sys.argv[1:5]
+start = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 600))
+def w(name, blocks):
+    with open(os.path.join(sb, name), "w") as fh:
+        for i, b in enumerate(blocks):
+            fh.write(json.dumps({"timestamp": start, "message": {"content": [b]}}) + "\n")
+def bash(i, cmd):
+    return [{"type": "tool_use", "id": f"b{i}", "name": "Bash", "input": {"command": cmd}},
+            {"type": "tool_result", "tool_use_id": f"b{i}", "content": "ok"}]
+xml = "app/build/test-results/testDebugUnitTest/TEST-%s.xml"
+w("te_f_cat.jsonl", bash(1, "cat " + os.path.join(green, xml % "GreenSuite")))
+w("te_f_cd.jsonl", bash(1, f"cd {green} && ./gradlew :app:testDebugUnitTest --console=plain | tail -5"))
+w("te_f_edit.jsonl", [{"type": "tool_use", "id": "e1", "name": "Edit", "input": {
+    "file_path": os.path.join(green, "app/src/main/java/A.kt"), "old_string": "A", "new_string": "A"}},
+    {"type": "tool_result", "tool_use_id": "e1", "content": "ok"}] + bash(2, f"ls {green}/app/build/test-results"))
+w("te_f_none.jsonl", bash(1, "ls /tmp >/dev/null"))
+w("te_f_old.jsonl", bash(1, "cat " + os.path.join(old, xml % "GreenSuite")))
+w("te_f_red.jsonl", bash(1, "cat " + os.path.join(red, xml % "RedSuite")))
+PY
+MSG_F="JUnit XML in the other project shows 13/13 tests passed, 0 failures."
+te_case "foreign XML read by this session backs the claim"      0 te-f1 "${MSG_F}" "${SANDBOX}/te_f_cat.jsonl"
+te_case "foreign Gradle root run via cd backs the claim"        0 te-f2 "${MSG_F}" "${SANDBOX}/te_f_cd.jsonl"
+te_case "foreign module edited then its XML read backs claim"   0 te-f3 "${MSG_F}" "${SANDBOX}/te_f_edit.jsonl"
+te_case "guard: foreign XML no Bash of this session named"      2 te-f4 "${MSG_F}" "${SANDBOX}/te_f_none.jsonl"
+te_case "guard: foreign XML older than the session"             2 te-f5 "${MSG_F}" "${SANDBOX}/te_f_old.jsonl"
+te_case "guard: foreign XML with a failure"                     2 te-f6 "${MSG_F}" "${SANDBOX}/te_f_red.jsonl"
+rm -rf "${TE_P}" "${TE_F}" "${TE_OLD}" "${TE_RED}"
+echo
+
 # ── security_gate.sh — Stop (CLAUDE.md check 4c) ────────────────────────────
 echo "security_gate.sh"
 # must-NOT-fire cases come from files touched in THIS repo that are full of the
@@ -1544,6 +1609,40 @@ run_case "K-5 sed -i on AndroidManifest is an edit" security_gate.sh 2 \
   "{\"session_id\":\"k5b\",\"transcript_path\":\"${SANDBOX}/k5_sed.jsonl\",\"last_assistant_message\":\"xong\"}"
 run_case "K-5 shell edit + real review → pass" security_gate.sh 0 \
   "{\"session_id\":\"k5c\",\"transcript_path\":\"${SANDBOX}/k5_sed_reviewed.jsonl\",\"last_assistant_message\":\"xong\"}"
+# 2026-09-25 (GeelyEx2): a read-only existence / ignore-status check was flagged as touching the
+# Firebase config and keystore — `2>/dev/null` looked like a write. Reads, stats, `git
+# check-ignore` / `ls-files` are not edits; anything that writes, copies or edits still is.
+python3 - "${SANDBOX}" <<'PY'
+import json, os, sys
+sb = sys.argv[1]
+def w(name, cmd):
+    with open(os.path.join(sb, name), "w") as fh:
+        fh.write(json.dumps({"message": {"content": [
+            {"type": "tool_use", "name": "Bash", "input": {"command": cmd}}]}}) + "\n")
+w("sg_ro_loop.jsonl", 'for f in app/google-services.json app/release.keystore keys/app.jks; do '
+  '[ -e "$f" ] && git check-ignore -q "$f" && echo "$f ignored" || echo "$f NOT ignored"; done 2>/dev/null')
+w("sg_ro_lsfiles.jsonl", "git ls-files --error-unmatch app/google-services.json 2>&1; "
+  "ls -la app/src/main/AndroidManifest.xml >/dev/null && stat app/release.jks")
+w("sg_ro_grep.jsonl", "grep -n 'apiKey\\|<uses-permission' app/src/main/AndroidManifest.xml 2>/dev/null | head -5")
+w("sg_wr_cp.jsonl", "cp ../main/app/google-services.json app/google-services.json 2>/dev/null")
+w("sg_wr_loopcp.jsonl", 'for f in app/google-services.json keys/app.jks; do cp "$f" "/tmp/wt/$f"; done')
+w("sg_wr_redir.jsonl", "echo '{\"k\":1}' > app/google-services.json")
+w("sg_wr_heredoc.jsonl", "cat >> app/src/main/AndroidManifest.xml <<'EOF'\n"
+  "<uses-permission android:name=\"android.permission.CAMERA\"/>\nEOF")
+w("sg_wr_tee.jsonl", "tee app/src/main/AndroidManifest.xml < /tmp/new.xml >/dev/null")
+w("sg_wr_text.jsonl", "printf 'storePassword=hunter2\\n' >> gradle.properties 2>/dev/null")
+PY
+for c in "sg_ro_loop:read-only [ -e ] + git check-ignore loop quiet" "sg_ro_lsfiles:git ls-files / ls / stat quiet" \
+         "sg_ro_grep:grep for trigger text is a read, quiet"; do
+  run_case "${c#*:}" security_gate.sh 0 \
+    "{\"session_id\":\"${c%%:*}\",\"transcript_path\":\"${SANDBOX}/${c%%:*}.jsonl\",\"last_assistant_message\":\"xong\"}"
+done
+for c in "sg_wr_cp:cp onto google-services.json still blocked" "sg_wr_loopcp:cp \"\$f\" in a for-loop still blocked" \
+         "sg_wr_redir:> google-services.json still blocked" "sg_wr_heredoc:heredoc >> AndroidManifest still blocked" \
+         "sg_wr_tee:tee AndroidManifest still blocked" "sg_wr_text:>> signing secret text still blocked"; do
+  run_case "${c#*:}" security_gate.sh 2 \
+    "{\"session_id\":\"${c%%:*}\",\"transcript_path\":\"${SANDBOX}/${c%%:*}.jsonl\",\"last_assistant_message\":\"xong\"}"
+done
 # K-6: a non-numeric attempts knob falls back to the default instead of crashing open.
 run_case "K-6 SECURITY_GATE_MAX_ATTEMPTS=abc still blocks" security_gate.sh 2 \
   "{\"session_id\":\"k6\",\"transcript_path\":\"${SANDBOX}/sg_manifest.jsonl\",\"last_assistant_message\":\"xong\"}" \
@@ -1770,6 +1869,71 @@ else
   FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
   ✗ K-15 PRECODE_GATE=0 not logged"; printf '  FAIL %-46s\n' "K-15 PRECODE_GATE=0 is logged"
 fi
+echo
+
+# ── worktree_guard.sh — PreToolUse (Bash, Edit|Write) ───────────────────────
+# 2026-09-25: a subagent told to work in a worktree ran commands without `cd`, its shell was in
+# the main checkout, and it overwrote files there. When the session/agent declared a worktree
+# (hook `cwd` inside a linked worktree, the subagent's harness meta `worktreePath` or its
+# transcript cwd, or DEVKIT_WORKTREE), a write aimed at the MAIN checkout of the same repo is
+# blocked. A single-tree session is never touched.
+echo "worktree_guard.sh"
+WG="$(mktemp -d "${TMPDIR:-/tmp}/hookwg.XXXXXX")"; WG="$(cd "${WG}" && pwd -P)"
+WG_M="${WG}/main"; WG_W="${WG}/wt"; WG_O="${WG_M}/.claude/worktrees/other"
+( mkdir -p "${WG_M}/src" && cd "${WG_M}" && git init -q . && git config user.email t@t && git config user.name t \
+  && printf 'a\n' > src/a.kt && printf '.claude/\nlocal.properties\n' > .gitignore && git add -A && git commit -qm init \
+  && git worktree add -q "${WG_W}" -b wt && git worktree add -q "${WG_O}" -b other \
+  && printf 'sdk.dir=/x\n' > local.properties ) >/dev/null 2>&1
+printf '{"branch":"wt","main":"%s"}\n' "${WG_M}" > "$(git -C "${WG_W}" rev-parse --absolute-git-dir)/devkit-worktree.json"
+WG_PROJ="${WG}/proj"; mkdir -p "${WG_PROJ}/S1/subagents"
+: > "${WG_PROJ}/S1.jsonl"
+printf '{"agentType":"general-purpose","worktreePath":"%s","spawnedWithWorktree":true}\n' "${WG_W}" \
+  > "${WG_PROJ}/S1/subagents/agent-iso1.meta.json"
+python3 - "${WG_PROJ}/S1/subagents/agent-told1.jsonl" "${WG_W}" "${WG_M}" <<'PY'
+import json, sys
+out, w, m = sys.argv[1:4]
+open(out, "w").write(json.dumps({"cwd": m, "isSidechain": True, "type": "user", "message": {"role": "user",
+    "content": f"Fix the bug. Work in the worktree {w} only; commit there."}}) + "\n")
+PY
+wg_payload() { # tool cwd agent_id input-json
+  python3 -c 'import json,sys; t,c,a,i,tp=sys.argv[1:6]; d={"session_id":"S1","transcript_path":tp,"cwd":c,"hook_event_name":"PreToolUse","tool_name":t,"tool_input":json.loads(i)}
+if a: d["agent_id"]=a
+print(json.dumps(d))' "$1" "$2" "$3" "$4" "${WG_PROJ}/S1.jsonl"
+}
+wg_edit() { python3 -c 'import json,sys; print(json.dumps({"file_path":sys.argv[1],"old_string":"a","new_string":"b"}))' "$1"; }
+wg_bash() { python3 -c 'import json,sys; print(json.dumps({"command":sys.argv[1]}))' "$1"; }
+run_case "single tree: Edit in the main checkout allowed"       worktree_guard.sh 0 "$(wg_payload Edit "${WG_M}" "" "$(wg_edit "${WG_M}/src/a.kt")")"
+run_case "single tree: relative Bash write allowed"              worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" "" "$(wg_bash "sed -i '' s/a/b/ src/a.kt")")"
+run_case "cwd in worktree: Edit of MAIN checkout blocked"        worktree_guard.sh 2 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")")"
+run_case "cwd in worktree: Edit inside the worktree allowed"     worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_W}/src/a.kt")")"
+run_case "cwd in worktree: Edit of a nested other worktree ok"   worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_O}/src/a.kt")")"
+run_case "cwd in worktree: Edit outside the repo allowed"        worktree_guard.sh 0 "$(wg_payload Write "${WG_W}" "" "$(wg_edit "${WG}/scratch.txt")")"
+run_case "cwd in worktree: cd W && sed -i allowed"               worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cd ${WG_W} && sed -i '' s/a/b/ src/a.kt")")"
+run_case "cwd in worktree: heredoc into MAIN blocked"            worktree_guard.sh 2 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cat > ${WG_M}/src/a.kt <<'EOF'
+x
+EOF")")"
+run_case "cwd in worktree: cp FROM main into worktree allowed"   worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cp ${WG_M}/local.properties ${WG_W}/local.properties")")"
+run_case "cwd in worktree: rm in MAIN blocked"                   worktree_guard.sh 2 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "rm -f ${WG_M}/src/a.kt")")"
+run_case "cwd in worktree: cat of MAIN (read) allowed"           worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cat ${WG_M}/src/a.kt 2>/dev/null | head")")"
+run_case "isolated agent, shell in main: relative sed blocked"   worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "sed -i '' s/a/b/ src/a.kt")")"
+run_case "isolated agent, shell in main: git commit blocked"     worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git commit -qam wip")")"
+run_case "isolated agent, shell in main: git status allowed"     worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git status --short")")"
+run_case "isolated agent: cd W && write allowed"                 worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "cd ${WG_W} && echo x > src/b.kt")")"
+run_case "isolated agent: Edit of MAIN blocked"                  worktree_guard.sh 2 "$(wg_payload Edit "${WG_M}" iso1 "$(wg_edit "${WG_M}/src/a.kt")")"
+run_case "isolated agent: WORKTREE_GUARD=0 escape hatch"         worktree_guard.sh 0 "$(wg_payload Edit "${WG_M}" iso1 "$(wg_edit "${WG_M}/src/a.kt")")" WORKTREE_GUARD=0
+run_case "DEVKIT_WORKTREE declared: Edit of MAIN blocked"        worktree_guard.sh 2 "$(wg_payload Edit "${WG_M}" "" "$(wg_edit "${WG_M}/src/a.kt")")" DEVKIT_WORKTREE="${WG_W}"
+run_case "agent with no worktree of its own: main write allowed" worktree_guard.sh 0 "$(wg_payload Edit "${WG_M}" plain1 "$(wg_edit "${WG_M}/src/a.kt")")"
+# Only the PROMPT names the worktree (no harness isolation): a hint, not a declaration → warn, never block.
+out="$(printf '%s' "$(wg_payload Bash "${WG_M}" told1 "$(wg_bash "echo x > src/a.kt")")" \
+      | env CLAUDE_PROJECT_DIR="${SANDBOX}" bash "${HOOKS}/worktree_guard.sh" 2>/dev/null)"; rc=$?
+if [ "${rc}" -eq 0 ] && printf '%s' "${out}" | grep -q '"additionalContext"' && printf '%s' "${out}" | grep -q "${WG_W}"; then
+  PASS=$((PASS + 1)); printf '  ok   %-46s exit=0 + warning\n' "prompt-named worktree: main write warns only"
+else
+  FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ prompt-named worktree: main write warns only (rc=${rc}, out=$(printf '%s' "${out}" | head -c 160))"
+  printf '  FAIL %-46s rc=%s\n' "prompt-named worktree: main write warns only" "${rc}"
+fi
+rm -rf "${WG}"
 echo
 
 # ── report ──────────────────────────────────────────────────────────────────
