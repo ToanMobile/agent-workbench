@@ -461,18 +461,9 @@ HEADING = re.compile(r"^\s{0,3}#{1,4}\s+\S", re.M)
 
 
 def harness_prompt(prompt, payload=None, env=None):
-    """Why this prompt is an agent or harness prompt rather than a user's report, or ""."""
-    env = os.environ if env is None else env
-    payload = payload if isinstance(payload, dict) else {}
-    try:
-        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks"))
-        sys.dont_write_bytecode = True
-        from devkit_harness import non_claude
-        other = non_claude(payload, env)
-    except Exception:  # noqa: BLE001 — without the helper, the env markers alone
-        other = bool(env.get("GROK_HOOK_EVENT") or env.get("DEVKIT_AGENT"))
-    if other:
-        return "non-Claude harness"
+    """Why this prompt is an agent or harness prompt rather than a user's report, or "".
+    Decided by the prompt's content only: the agent that runs the hook (Grok, Codex, Gemini,
+    Cursor) says nothing — a user's bug report is recorded under every agent (2026-09-25)."""
     first = next((l.strip() for l in prompt.splitlines() if l.strip()), "")
     if ROLE_OPENING.match(first):
         return "role-play opening"
