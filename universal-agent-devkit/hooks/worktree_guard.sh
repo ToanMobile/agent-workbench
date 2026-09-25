@@ -17,7 +17,16 @@
 #      every `cd` inside the project (measured on real transcripts), and M/.claude/worktrees/*
 #      is inside the project, so a leader that `cd`s into a worktree to look at it would be
 #      taken as working there and blocked on the merge-back into M.
-#   These three BLOCK (exit 2). A fourth signal only WARNS: a subagent whose first
+#   4. The session ENTERED a worktree mid-session with the Claude Code tool EnterWorktree and
+#      has not left it with ExitWorktree: in the main transcript, the last Enter/Exit call whose
+#      tool_result is not an error (`is_error`) is an Enter → its worktree is declared (taken from
+#      input.path, an absolute path in the result that is a linked worktree, or
+#      M/.claude/worktrees/<input.name>). A failed call changes nothing. Checked before 3, so it
+#      overrides where the session started. Names from the tool list; no real call was on disk
+#      to copy (2026-09-25), so the block shape is that of other tools:
+#      {"type":"tool_use","id":…,"name":…,"input":…} / {"type":"tool_result","tool_use_id":…,"is_error":…}.
+#      The fast path greps `"name":"EnterWorktree","input"` (a call, not the tool's schema text).
+#   These four BLOCK (exit 2). A fifth signal only WARNS: a subagent whose first
 #   prompt names exactly one worktree made by `agent-kit worktree add` (it carries
 #   <git dir>/devkit-worktree.json). A prompt can mention a worktree without the agent
 #   being meant to stay in it, so that is a hint, not a declaration: the model gets an
@@ -27,26 +36,31 @@
 # (W ≠ M): an Edit/Write whose file lies in M, and a Bash command that writes into M —
 # a redirection, cp/mv/install/rsync/ln destination, rm/touch/truncate/tee/sed -i/perl -i
 # operand, `dd of=`, a git write (add, commit, checkout, reset, stash push/pop/…), a build
-# tool (gradle, make, npm, cargo, …) run with M as its working directory, an interpreter
+# tool (gradle, make, npm, cargo, …) run with M as its working directory — also through an
+# interpreter (`sh ./gradlew …`, `python3 -m pytest|mypy|black|pip …`) —, an interpreter
 # (python, node, …) given an existing file of M as an operand after its script, and the
 # same checks inside `bash|sh|zsh -c '…'`. The working directory of a Bash command is the
 # hook `cwd` (where the shell is), moved by any `cd`/`pushd` in the command. "In M" means
 # the nearest enclosing git tree is M itself, so M/.claude/worktrees/<other> is NOT M.
 # Reads of M (cat, grep, ls, git status/diff/log/stash list, cp FROM M, scp to host:…)
-# are never blocked, and neither are M/.claude/agent-memory, M/.claude/audit-gate and
-# M/.agents/local/memory: agent memory and hook logs exist only in the main checkout.
+# are never blocked, and neither is state that exists only in the main checkout:
+# M/.claude/agent-memory and M/.claude/audit-gate unless git TRACKS the file, and
+# M/.agents/local/memory where M's git ignores it, plus its claude-auto/ (Claude Code
+# auto-memory) always. A tracked or not-ignored file there (bugs/*.md) is in W too: blocked.
 #
 # NOT AFFECTED: a session with no declared worktree — the common single-tree case exits
 # in bash before python starts (no agent_id, no DEVKIT_WORKTREE, the session did not start
-# in a linked worktree). The leader that started in M has no declared worktree, also after
-# `cd W` to look: it may edit M, `git merge` or `git apply` the worktree's work there.
+# in a linked worktree and its transcript has no EnterWorktree call). The leader that started
+# in M and never called EnterWorktree has no declared worktree, also after `cd W` to look: it
+# may edit M, `git merge` or `git apply` the worktree's work there.
 #
 # WHAT IT CANNOT SEE: a script that decides its own output path (`python3 gen.py` or
 # `python3 -c "open('src/a.kt','w')…"` run in M — ponytail: interpreters are judged by their
 # operands only, since blocking every one run in M stopped `python3 -c 'print(1)'`; upgrade
 # to an allowlist of read-only scripts if a script write into M is ever seen), variables it
-# cannot expand (`> "$OUT"`), and the real shell cwd when the harness reports a different
-# `cwd` than the shell uses.
+# cannot expand (`> "$OUT"`), the real shell cwd when the harness reports a different
+# `cwd` than the shell uses, and `claude --resume` of a session from another directory (the
+# transcript does not mark the resume, and a later `cwd` is indistinguishable from a `cd`).
 #
 # Escape hatch: WORKTREE_GUARD=0 (logged). Fail-open on internal error or no python3.
 # PreToolUse protocol: stdin JSON; exit 2 blocks (stderr → Claude); exit 0 allows.
@@ -78,11 +92,13 @@ if [ -z "${DEVKIT_WORKTREE:-}" ]; then
     [[ ${INPUT} =~ ${RX_TP} ]] || exit 0
     tp="${BASH_REMATCH[1]}"
     [ -f "${tp}" ] || exit 0
+    # An EnterWorktree CALL (tool_use block, not the tool's schema text) → let python decide.
+    linked=0
+    grep -qE '"name":[[:space:]]*"EnterWorktree"[[:space:]]*,[[:space:]]*"input"' "${tp}" 2>/dev/null && linked=1
     first="$(grep -m1 -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"\\]*"' "${tp}" 2>/dev/null)"
     RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
-    [[ ${first} =~ ${RX_CWD} ]] || exit 0
-    d="${BASH_REMATCH[1]}"
-    linked=0
+    d=""
+    [ "${linked}" = "0" ] && [[ ${first} =~ ${RX_CWD} ]] && d="${BASH_REMATCH[1]}"
     while [ -n "${d}" ] && [ "${d}" != "/" ]; do
       if [ -d "${d}/.git" ]; then break; fi
       if [ -f "${d}/.git" ]; then
@@ -214,6 +230,56 @@ def first_cwd(path):
         pass
     return None
 
+def entered_worktree(path):
+    """Worktree of the last successful EnterWorktree/ExitWorktree call in `path` if it was an Enter."""
+    calls, results = [], {}
+    try:
+        with open(path) as fh:
+            for line in fh:                       # parse only lines that name the tool or one of its calls
+                if "Worktree" not in line and not any(c["id"] in line for c in calls):
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                content = (rec.get("message") or {}).get("content")
+                for b in content if isinstance(content, list) else []:
+                    if not isinstance(b, dict):
+                        continue
+                    if b.get("type") == "tool_use" and b.get("name") in ("EnterWorktree", "ExitWorktree") \
+                            and isinstance(b.get("id"), str) and b["id"]:
+                        calls.append(b)
+                    elif b.get("type") == "tool_result" and b.get("tool_use_id"):
+                        results[b["tool_use_id"]] = (b, rec.get("toolUseResult"))
+    except OSError:
+        return None
+    for call in reversed(calls):
+        res = results.get(call.get("id"))
+        if not res or res[0].get("is_error"):
+            continue                              # no result yet, or it failed: changed nothing
+        if call["name"] == "ExitWorktree":
+            return None
+        inp = call.get("input") if isinstance(call.get("input"), dict) else {}
+        # The result names the worktree; its exact wording is not a contract, so every absolute
+        # path in it is tried and only a linked worktree counts.
+        text = json.dumps([res[0].get("content"), res[1]], ensure_ascii=False)
+        cands = [inp.get("path")] + re.findall(r"/[^\s\"'`<>,;()\\]+", text)   # a backslash (JSON \n) ends a path
+        here = tree_of(cwd)
+        if isinstance(inp.get("name"), str) and here and here[2]:
+            cands.append(os.path.join(here[2], ".claude", "worktrees", inp["name"]))
+        for c in cands:
+            if isinstance(c, str) and c:
+                c = c.rstrip(".:")
+                t = tree_of(c) if os.path.exists(c) else None
+                if t and t[1]:
+                    return t[0]
+        return None
+    return None
+
+if not declared and tp:
+    wp = entered_worktree(tp)
+    if wp:
+        declared, source = wp, "EnterWorktree"
 if not declared and tp:
     # Not the hook `cwd`: it follows every `cd` inside the project, worktrees included.
     start = first_cwd(tp)
@@ -264,8 +330,28 @@ W, M = wt[0], os.path.realpath(wt[2])
 if os.path.realpath(W) == M:
     sys.exit(0)
 
-# Main-checkout-only state every agent of the repo shares (gitignored, absent in W).
-MAIN_ONLY = (".claude/agent-memory", ".claude/audit-gate", ".agents/local/memory")
+# Main-checkout-only state every agent of the repo shares, which W has no copy of. Some projects
+# TRACK files under these dirs (.agents/local/memory/bugs/*.md): those are in W too, so they are
+# ordinary files of M. Agent memory and hook logs: main-only unless tracked (GeelyEx2 leaves
+# .claude/agent-memory untracked AND not ignored). .agents/local/memory: main-only only where M's
+# git ignores it, except claude-auto/ — Claude Code's auto-memory dir, pointed at M by absolute path.
+MAIN_ONLY_UNTRACKED = (".claude/agent-memory", ".claude/audit-gate")
+MAIN_ONLY_IGNORED = (".agents/local/memory",)
+MAIN_ONLY_ALWAYS = (".agents/local/memory/claude-auto",)
+
+def git_ok(*args):
+    """True/False from `git -C M <args>` (exit 0 / 1); None when git cannot answer."""
+    try:
+        import subprocess
+        r = subprocess.run(["git", "-C", M] + list(args), stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+    except Exception as e:
+        logline(f"git {args[0]} failed: {e!r}")
+        return None
+    return {0: True, 1: False}.get(r.returncode)
+
+def under(rel, dirs):
+    return any(rel == d or rel.startswith(d + os.sep) for d in dirs)
 
 def in_main(path, base):
     p = os.path.expanduser(path)
@@ -274,7 +360,13 @@ def in_main(path, base):
     if not t or os.path.realpath(t[0]) != M:
         return False
     rel = os.path.relpath(os.path.realpath(p), M)
-    return not any(rel == d or rel.startswith(d + os.sep) for d in MAIN_ONLY)
+    if under(rel, MAIN_ONLY_ALWAYS):
+        return False
+    if under(rel, MAIN_ONLY_UNTRACKED):           # git answers None → fail open (main-only)
+        return git_ok("ls-files", "--error-unmatch", "--", rel) is True
+    if under(rel, MAIN_ONLY_IGNORED):
+        return git_ok("check-ignore", "-q", "--", rel) is False
+    return True
 
 # ── targets ─────────────────────────────────────────────────────────────────
 hits = []
@@ -292,8 +384,12 @@ elif tool == "Bash":
     # Build tools write build dirs / caches into the directory they run in, by construction.
     BUILDERS = re.compile(r"^(?:npm|npx|yarn|pnpm|bun|make|gradle|\./gradlew|gradlew|mvn|cargo|go|pytest|jest|"
                           r"vitest|dotnet|swift|flutter)$")
-    # Interpreters write only what their script says: judged by the operands after the script.
+    # Interpreters write only what their script says: judged by the operands after the script —
+    # unless the script is a build tool (`sh ./gradlew …`) or the module a builder / test runner
+    # / formatter (`python3 -m pytest`), which writes caches and build dirs where it runs.
     INTERP = re.compile(r"^(?:python[\d.]*|node|deno|ruby|perl|php|bash|sh|zsh)$")
+    MODULE_BUILDERS = {"pytest", "unittest", "black", "ruff", "mypy", "pip", "build", "isort", "coverage",
+                       "tox", "nox", "setuptools", "pylint"}
     PREFIX = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "time", "command",
               "builtin", "exec", "nohup", "sudo", "env", "done", "fi"}
 
@@ -389,9 +485,13 @@ elif tool == "Bash":
             elif INTERP.match(base):
                 code = next((words[k + 1] for k in range(1, len(words) - 1)
                              if base in ("bash", "sh", "zsh") and re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", words[k])), None)
+                module = next((words[k + 1] for k in range(1, len(words) - 1) if words[k] == "-m"), None)
                 if code is not None:
                     if depth < 3:
                         found += scan(code, here, depth + 1) or []
+                elif (module and module.split(".")[0] in MODULE_BUILDERS) or \
+                        (not module and args and BUILDERS.match(os.path.basename(args[0]))):
+                    targets.append(here)
                 else:
                     targets += [a for a in args[1:] if exists(a, here)]
             for t in targets:

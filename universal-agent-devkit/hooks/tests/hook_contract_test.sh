@@ -1948,7 +1948,11 @@ echo "worktree_guard.sh"
 WG="$(mktemp -d "${TMPDIR:-/tmp}/hookwg.XXXXXX")"; WG="$(cd "${WG}" && pwd -P)"
 WG_M="${WG}/main"; WG_W="${WG}/wt"; WG_O="${WG_M}/.claude/worktrees/other"
 ( mkdir -p "${WG_M}/src" && cd "${WG_M}" && git init -q . && git config user.email t@t && git config user.name t \
-  && printf 'a\n' > src/a.kt && printf '.claude/\nlocal.properties\n' > .gitignore && git add -A && git commit -qm init \
+  && printf 'a\n' > src/a.kt && printf '.claude/worktrees/\n.claude/audit-gate/\nlocal.properties\n.agents/local/memory/claude-auto/\n' > .gitignore \
+  && mkdir -p .agents/local/memory/bugs .agents/local/memory/claude-auto .claude/agent-memory \
+  && printf 'b\n' > .agents/local/memory/bugs/b1.md && printf 'm\n' > .agents/local/memory/claude-auto/MEMORY.md \
+  && printf 't\n' > .claude/agent-memory/tracked.md && git add -A && git add -f .agents/local/memory/claude-auto/MEMORY.md \
+  && git commit -qm init \
   && git worktree add -q "${WG_W}" -b wt && git worktree add -q "${WG_O}" -b other \
   && printf 'sdk.dir=/x\n' > local.properties ) >/dev/null 2>&1
 printf '{"branch":"wt","main":"%s"}\n' "${WG_M}" > "$(git -C "${WG_W}" rev-parse --absolute-git-dir)/devkit-worktree.json"
@@ -1966,6 +1970,29 @@ import json, sys
 out, w, m = sys.argv[1:4]
 open(out, "w").write(json.dumps({"cwd": m, "isSidechain": True, "type": "user", "message": {"role": "user",
     "content": f"Fix the bug. Work in the worktree {w} only; commit there."}}) + "\n")
+PY
+# Sessions that started in main and ENTERED a worktree mid-session (Claude Code tools EnterWorktree /
+# ExitWorktree; block shapes and compact JSON as in real transcripts). S3 entered W; S4 entered W, then
+# left; S5's EnterWorktree failed (its error text names W); S6 entered W, then a second Enter failed;
+# S7 only carries the tool's schema text (no call).
+python3 - "${WG_PROJ}" "${WG_W}" "${WG_M}" <<'PY'
+import json, os, sys
+proj, w, m = sys.argv[1:4]
+def use(i, name, inp): return {"type": "assistant", "cwd": m, "message": {"role": "assistant", "content": [
+    {"type": "tool_use", "id": i, "name": name, "input": inp}]}}
+def res(i, text, err=False): return {"type": "user", "cwd": m, "toolUseResult": text, "message": {"role": "user",
+    "content": [{"type": "tool_result", "content": text, "is_error": err, "tool_use_id": i}]}}
+start = [{"type": "mode"}, {"type": "user", "cwd": m}]
+ok = [use("toolu_E1", "EnterWorktree", {"name": "wt"}),
+      res("toolu_E1", f"Created worktree at {w}\nSwitched the session into it (branch wt).")]
+bad = [use("toolu_E2", "EnterWorktree", {"name": "wt"}),
+       res("toolu_E2", f"<tool_use_error>Worktree {w} already exists</tool_use_error>", True)]
+out = [use("toolu_X1", "ExitWorktree", {"action": "keep"}), res("toolu_X1", f"Exited worktree {w}; back in {m}.")]
+schema = [{"type": "attachment", "cwd": m, "tools": [{"name": "EnterWorktree", "description": "creates a worktree"}]}]
+for name, recs in (("S3", start + ok), ("S4", start + ok + out), ("S5", start + bad), ("S6", start + ok + bad),
+                   ("S7", start + schema)):
+    open(os.path.join(proj, name + ".jsonl"), "w").write(
+        "".join(json.dumps(r, separators=(",", ":")) + "\n" for r in recs))
 PY
 wg_payload() { # tool cwd agent_id input-json [session: S1 started in main (default) | S2 started in the worktree]
   python3 -c 'import json,sys; t,c,a,i,tp=sys.argv[1:6]; d={"session_id":"S1","transcript_path":tp,"cwd":c,"hook_event_name":"PreToolUse","tool_name":t,"tool_input":json.loads(i)}
@@ -2000,6 +2027,15 @@ run_case "agent with no worktree of its own: main write allowed" worktree_guard.
 run_case "leader started in main, cd'd into W: Edit of MAIN ok"  worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")")"
 run_case "leader started in main, in W: cd M && git merge ok"    worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cd ${WG_M} && git merge wt")")"
 run_case "started in W, shell now in main: Edit of MAIN blocked" worktree_guard.sh 2 "$(wg_payload Edit "${WG_M}" "" "$(wg_edit "${WG_M}/src/a.kt")" S2)"
+# A session that ENTERS a worktree mid-session (EnterWorktree) is declared until it calls ExitWorktree;
+# a failed EnterWorktree declares nothing (and does not undo an earlier successful one).
+run_case "EnterWorktree mid-session: Edit of MAIN blocked"      worktree_guard.sh 2 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")" S3)"
+run_case "EnterWorktree mid-session: rm in MAIN blocked"        worktree_guard.sh 2 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "rm -f ${WG_M}/src/a.kt")" S3)"
+run_case "EnterWorktree mid-session: Edit inside W allowed"     worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_W}/src/a.kt")" S3)"
+run_case "EnterWorktree then ExitWorktree: Edit of MAIN ok"     worktree_guard.sh 0 "$(wg_payload Edit "${WG_M}" "" "$(wg_edit "${WG_M}/src/a.kt")" S4)"
+run_case "EnterWorktree that errored: Edit of MAIN ok"          worktree_guard.sh 0 "$(wg_payload Edit "${WG_M}" "" "$(wg_edit "${WG_M}/src/a.kt")" S5)"
+run_case "Enter ok, then a failed Enter: Edit of MAIN blocked"  worktree_guard.sh 2 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")" S6)"
+run_case "EnterWorktree only in tool schema: Edit of MAIN ok"   worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")" S7)"
 # … and a subagent isolated in W with its shell in M was blocked on harmless commands.
 run_case "isolated agent in main: git stash list allowed"        worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git stash list")")"
 run_case "isolated agent in main: git stash show allowed"        worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git stash show -p stash@{0}")")"
@@ -2012,13 +2048,29 @@ run_case "isolated agent in main: formatter on a main file"      worktree_guard.
 run_case "isolated agent in main: bash -c write blocked"         worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "bash -c 'echo x > src/a.kt'")")"
 run_case "isolated agent in main: bash -c echo allowed"          worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "bash -c 'echo hi'")")"
 run_case "isolated agent in main: ./gradlew build blocked"       worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "./gradlew assembleDebug")")"
+# Review 2026-09-25 (P2): a build or test runner started THROUGH an interpreter is still a build in M.
+run_case "isolated agent in main: sh ./gradlew build blocked"    worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "sh ./gradlew assembleDebug")")"
+run_case "isolated agent in main: bash gradlew test blocked"     worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "bash gradlew test")")"
+run_case "isolated agent in main: python3 -m pytest blocked"     worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "python3 -m pytest -q")")"
+run_case "isolated agent in main: python3 -m mypy . blocked"     worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "python3 -m mypy --strict")")"
+run_case "isolated agent: cd W && python3 -m pytest allowed"     worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "cd ${WG_W} && python3 -m pytest -q")")"
+run_case "isolated agent in main: python3 -m json.tool allowed"  worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "python3 -m json.tool /tmp/x.json")")"
 run_case "isolated agent in main: scp W file to host: allowed"   worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "scp ${WG_W}/src/a.kt host:/tmp/a.kt")")"
 run_case "isolated agent in main: scp to a main path blocked"    worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "scp host:/tmp/a.kt src/a.kt")")"
 run_case "isolated agent in main: dd if=main of=/tmp allowed"    worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "dd if=src/a.kt of=/tmp/copy bs=4k")")"
 run_case "isolated agent in main: dd of=main file blocked"       worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "dd if=/tmp/copy of=src/a.kt")")"
 # Agent memory and the hooks' own logs live only in the main checkout (gitignored, absent in W).
 run_case "isolated agent: Edit M/.claude/agent-memory allowed"   worktree_guard.sh 0 "$(wg_payload Write "${WG_M}" iso1 "$(wg_edit "${WG_M}/.claude/agent-memory/note.md")")"
-run_case "isolated agent: Edit M/.agents/local/memory allowed"   worktree_guard.sh 0 "$(wg_payload Write "${WG_M}" iso1 "$(wg_edit "${WG_M}/.agents/local/memory/note.md")")"
+run_case "isolated agent: Edit M/.agents/local/memory allowed"   worktree_guard.sh 0 "$(wg_payload Write "${WG_M}" iso1 "$(wg_edit "${WG_M}/.agents/local/memory/claude-auto/new.md")")"
+# Review 2026-09-25 (P3): some projects TRACK files under .agents/local/memory (bugs/*.md), so W has them
+# too. Main-only: agent memory / hook logs unless tracked (the fixture leaves .claude/agent-memory
+# untracked and not ignored, as GeelyEx2 does), .agents/local/memory only where M ignores it, and
+# claude-auto/ (Claude Code auto-memory, tracked in GeelyEx2) always.
+run_case "isolated agent: TRACKED agent-memory file blocked"     worktree_guard.sh 2 "$(wg_payload Edit "${WG_M}" iso1 "$(wg_edit "${WG_M}/.claude/agent-memory/tracked.md")")"
+run_case "isolated agent: tracked auto-memory MEMORY.md allowed" worktree_guard.sh 0 "$(wg_payload Edit "${WG_M}" iso1 "$(wg_edit "${WG_M}/.agents/local/memory/claude-auto/MEMORY.md")")"
+run_case "isolated agent: TRACKED file in M memory dir blocked"  worktree_guard.sh 2 "$(wg_payload Edit "${WG_M}" iso1 "$(wg_edit "${WG_M}/.agents/local/memory/bugs/b1.md")")"
+run_case "isolated agent: not-ignored new file in M memory dir"  worktree_guard.sh 2 "$(wg_payload Write "${WG_M}" iso1 "$(wg_edit "${WG_M}/.agents/local/memory/note.md")")"
+run_case "isolated agent: rm of tracked M memory file blocked"   worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "rm .agents/local/memory/bugs/b1.md")")"
 run_case "isolated agent: log into M/.claude/audit-gate allowed" worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "echo x >> .claude/audit-gate/mine.log")")"
 run_case "isolated agent: agent-memory/../../ escape blocked"    worktree_guard.sh 2 "$(wg_payload Edit "${WG_M}" iso1 "$(wg_edit "${WG_M}/.claude/agent-memory/../../src/a.kt")")"
 # P3: MultiEdit and NotebookEdit write files too — the hook and every registry that wires it cover them.
