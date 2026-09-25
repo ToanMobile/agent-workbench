@@ -1304,6 +1304,85 @@ run_case "escape hatch honoured" testsourceset_gate.sh 0 \
   TESTSOURCESET_GATE=0
 echo
 
+# ── Non-Claude harness (Grok) — hooks/devkit_harness.py + the two heavy Stop gates ──
+# Grok runs these Claude hooks with a camelCase envelope, GROK_* env and its own
+# transcript (updates.jsonl). Contract: detection says so; its session-end Stop
+# (reason ≠ end_turn) runs no build or suite; a real turn end is still gated.
+echo "devkit_harness.py / Grok Stop"
+GROK_TR="${SANDBOX}/grok_updates.jsonl"
+printf '%s\n' '{"timestamp":1790240706,"method":"_x.ai/session/update","params":{"sessionId":"g"}}' > "${GROK_TR}"
+CLAUDE_TR="${SANDBOX}/claude_tr.jsonl"
+printf '%s\n' '{"type":"user","message":{"role":"user","content":"hi"},"sessionId":"c"}' > "${CLAUDE_TR}"
+harness_case() { # name payload expect(agent:degraded) [ENV=VAL …]
+  hname="$1"; hpayload="$2"; hwant="$3"; shift 3
+  hgot="$(printf '%s' "${hpayload}" | env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u DEVKIT_AGENT "$@" \
+          python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null \
+          | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%s:%s" % (d["agent"], int(d["degraded"])))' 2>/dev/null)"
+  if [ "${hgot}" = "${hwant}" ]; then
+    PASS=$((PASS + 1)); printf '  ok   %-46s %s\n' "${hname}" "${hgot}"
+  else
+    FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ ${hname} (want ${hwant}, got '${hgot}')"; printf '  FAIL %-46s want=%s got=%s\n' "${hname}" "${hwant}" "${hgot}"
+  fi
+}
+harness_case "Claude transcript → claude, not degraded" \
+  "{\"session_id\":\"c\",\"transcript_path\":\"${CLAUDE_TR}\"}" "claude:0"
+harness_case "empty Claude transcript → claude, not degraded" \
+  "{\"session_id\":\"c\",\"transcript_path\":\"${EMPTY_TR}\"}" "claude:0"
+harness_case "Grok envelope + updates.jsonl → grok, degraded" \
+  "{\"hookEventName\":\"stop\",\"sessionId\":\"g\",\"session_id\":\"g\",\"transcript_path\":\"${GROK_TR}\"}" "grok:1"
+harness_case "GROK_HOOK_EVENT env alone → grok" \
+  "{\"session_id\":\"g\",\"transcript_path\":\"${CLAUDE_TR}\"}" "grok:1" GROK_HOOK_EVENT=stop
+harness_case "foreign transcript, no marker → unknown, degraded" \
+  "{\"session_id\":\"u\",\"transcript_path\":\"${GROK_TR}\"}" "unknown:1"
+harness_case "no transcript at all → unknown, degraded" \
+  '{"session_id":"u"}' "unknown:1"
+harness_case "bridged agent (DEVKIT_AGENT=codex) → codex" \
+  '{"session_id":"b"}' "codex:1" DEVKIT_AGENT=codex
+NOSID_A="$(printf '{"cwd":"/x"}' | HOOK_PPID=42 python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
+NOSID_B="$(printf '{"cwd":"/x"}' | HOOK_PPID=42 python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
+NOSID_C="$(printf '{"cwd":"/x"}' | HOOK_PPID=43 python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
+if [ -n "${NOSID_A}" ] && [ "${NOSID_A}" = "${NOSID_B}" ] && [ "${NOSID_A}" != "${NOSID_C}" ]; then
+  PASS=$((PASS + 1)); printf '  ok   %-46s\n' "no session id: key = harness pid + cwd, stable"
+else
+  FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ no-session key (${NOSID_A} / ${NOSID_B} / ${NOSID_C})"; printf '  FAIL %-46s\n' "no session id: key = harness pid + cwd, stable"
+fi
+
+# The two heavy Stop gates on a project whose build and suite FAIL: Grok's session-end
+# Stop is allowed without running them; its real turn end is still blocked.
+GK_PROJ="$(mktemp -d "${TMPDIR:-/tmp}/hookgrok.XXXXXX")"
+(
+  cd "${GK_PROJ}" && git init -q . && mkdir -p lib/src/main .agents && touch lib/build.gradle.kts \
+  && printf '#!/bin/bash\necho run >> "%s/gk_gradle_runs"\necho "e: A.kt:1:1 Unresolved reference: nope"\nexit 1\n' "${SANDBOX}" > gradlew \
+  && chmod +x gradlew \
+  && printf '{"project":"t","rules":[{"component":"c","watch_files":["lib/**"],"mandatory_regression_tests":[{"id":"REG-GK","name":"c","command":"echo run >> %s/gk_suite_runs; exit 1"}]}]}\n' "${SANDBOX}" > .agents/regression_matrix.active.json \
+  && git add . && git -c user.email=t@t -c user.name=t commit -qm init \
+  && printf 'class A\n' > lib/src/main/A.kt
+) >/dev/null 2>&1
+GK_END="{\"hookEventName\":\"stop\",\"hook_event_name\":\"Stop\",\"sessionId\":\"gk\",\"session_id\":\"gk\",\"transcript_path\":\"${GROK_TR}\",\"reason\":\"channel_closed\"}"
+GK_TURN="{\"hookEventName\":\"stop\",\"hook_event_name\":\"Stop\",\"sessionId\":\"gk2\",\"session_id\":\"gk2\",\"transcript_path\":\"${GROK_TR}\",\"reason\":\"end_turn\"}"
+run_case "testsourceset: Grok session-end Stop → allow" testsourceset_gate.sh 0 "${GK_END}" \
+  CLAUDE_PROJECT_DIR="${GK_PROJ}" GROK_HOOK_EVENT=stop
+run_case "regression_gate: Grok session-end Stop → allow" regression_gate.sh 0 "${GK_END}" \
+  CLAUDE_PROJECT_DIR="${GK_PROJ}" GROK_HOOK_EVENT=stop
+if [ ! -e "${SANDBOX}/gk_gradle_runs" ] && [ ! -e "${SANDBOX}/gk_suite_runs" ]; then
+  PASS=$((PASS + 1)); printf '  ok   %-46s\n' "session-end Stop ran no gradle and no suite"
+else
+  FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ session-end Stop ran gradle or the suite"; printf '  FAIL %-46s\n' "session-end Stop ran no gradle and no suite"
+fi
+run_case "testsourceset: Grok turn end, broken src/test → block" testsourceset_gate.sh 2 "${GK_TURN}" \
+  CLAUDE_PROJECT_DIR="${GK_PROJ}" GROK_HOOK_EVENT=stop
+run_case "regression_gate: Grok turn end, failing suite → block" regression_gate.sh 2 "${GK_TURN}" \
+  CLAUDE_PROJECT_DIR="${GK_PROJ}" GROK_HOOK_EVENT=stop
+# `reason` switches nothing off outside Grok (Claude sends none; a future one must not).
+run_case "non-Grok Stop with a reason is still gated" regression_gate.sh 2 \
+  "{\"session_id\":\"gk3\",\"transcript_path\":\"${CLAUDE_TR}\",\"reason\":\"shutdown\"}" \
+  CLAUDE_PROJECT_DIR="${GK_PROJ}"
+rm -rf "${GK_PROJ}"
+echo
+
 # ── proof_gate.sh — Stop (rules/essentials.md "Every prompt": XONG carries this turn's PNG) ──
 echo "proof_gate.sh"
 # XONG needs this turn's `post-fix-gate --run-tests --full` exit 0 AND a fresh proof PNG: a

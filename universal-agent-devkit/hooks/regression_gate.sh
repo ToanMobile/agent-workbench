@@ -35,6 +35,17 @@
 # so a second Stop on the same diff does not re-run the tests.
 # Loop-guard: MAX_ATTEMPTS blocks per fingerprint, then the stop is allowed with a
 # visible warning (systemMessage) — a broken test can never trap the session.
+# Non-Claude agent or no usable Claude transcript ("degraded", hooks/devkit_harness.py:
+# Grok, a bridged agent, a caller that sends no transcript): the diff of such an agent
+# changes every turn, so the per-fingerprint guard alone never released it (Grok,
+# 2026-09-25: 11 blocks in one morning). There the guard is also keyed per SESSION
+# (session_id / sessionId / GROK_SESSION_ID; else harness pid + transcript path or cwd):
+# at most REGRESSION_GATE_MAX_SESSION_BLOCKS (default 3) blocks per session — a pass
+# resets it — then every stop is allowed with a systemMessage that says the gate is still
+# not green; and the suite runs once per unchanged tree per session (its last result is
+# re-used). Grok's observe-only session-end Stop (reason ≠ end_turn) runs nothing. A
+# Claude session with its transcript keeps the per-fingerprint guard only. State is
+# written atomically (sessions share regression_gate.state.json).
 # Escape hatch: REGRESSION_GATE=0 (logged). Fail-open on internal error.
 #
 # Stop hook protocol: stdin JSON; exit 2 blocks (stderr→Claude); exit 0 allows.
@@ -88,8 +99,9 @@ except Exception: print("")' 2>/dev/null)"
 fi
 
 printf '%s' "${INPUT}" | REPO_ROOT="${REPO_ROOT}" GATE="${GATE}" LOG="${LOG}" PROBE="${PROBE}" \
-  MAX_ATTEMPTS="${REGRESSION_GATE_MAX_ATTEMPTS:-2}" python3 -c '
-import contextlib, fnmatch, hashlib, io, json, os, re, subprocess, sys, time
+  MAX_ATTEMPTS="${REGRESSION_GATE_MAX_ATTEMPTS:-2}" MAX_SESSION_BLOCKS="${REGRESSION_GATE_MAX_SESSION_BLOCKS:-3}" \
+  HOOK_PPID="${PPID}" HOOK_DIRS="$(dirname "${SELF}"):$(dirname "$0")" python3 -c '
+import contextlib, fnmatch, hashlib, io, json, os, re, subprocess, sys, tempfile, time
 
 repo, gate, log = os.environ["REPO_ROOT"], os.environ["GATE"], os.environ["LOG"]
 max_attempts = int(os.environ.get("MAX_ATTEMPTS", "2"))
@@ -104,7 +116,31 @@ try:
     data = json.load(sys.stdin)
 except Exception:
     data = {}
-sid = re.sub(r"[^A-Za-z0-9_-]", "_", str(data.get("session_id") or "nosession"))[:40]
+if not isinstance(data, dict):
+    data = {}
+# Which agent runs this Stop (hooks/devkit_harness.py). Degraded = not Claude Code, or no
+# Claude transcript: Grok, a bridged agent, an unknown caller. Without the helper (a hook
+# copied alone) the gate keeps its per-fingerprint guard only.
+info = None
+for d in os.environ.get("HOOK_DIRS", "").split(":") + [os.path.join(devkit, "hooks")]:
+    if d and os.path.isfile(os.path.join(d, "devkit_harness.py")):
+        try:
+            sys.path.insert(0, d)
+            sys.dont_write_bytecode = True
+            import devkit_harness
+            info = devkit_harness.detect(data, ppid=os.environ.get("HOOK_PPID"))
+        except Exception as e:
+            note("devkit_harness failed: %r" % e)
+            info = None
+        break
+degraded = bool(info and info["degraded"])
+sid = re.sub(r"[^A-Za-z0-9_-]", "_", str((info or {}).get("session") or data.get("session_id") or "nosession"))[:40]
+max_session_blocks = int(os.environ.get("MAX_SESSION_BLOCKS", "3"))
+if info and info["terminal_stop"] and not probe:
+    # Grok fires an observe-only Stop when the session closes (reason channel_closed /
+    # shutdown): no turn is left to continue, so running the suite there is pure cost.
+    note("skip: session-end Stop (agent=%s reason=%s)" % (info["agent"], data.get("reason")))
+    sys.exit(0)
 
 def git(*args):
     return subprocess.run(["git", "-C", repo, *args], capture_output=True).stdout
@@ -228,8 +264,67 @@ try:
     state = json.load(open(state_file, encoding="utf-8"))
 except Exception:
     state = {}
+if not isinstance(state, dict):
+    state = {}
+
+def save_state():
+    # Atomic: sessions running side by side share this file, and a torn write read back
+    # as {} reset every loop-guard counter (OfficeReader 2026-09-25: two sessions racing).
+    for key, keep in (("attempts", 200), ("sessions", 50)):
+        if isinstance(state.get(key), dict) and len(state[key]) > keep:
+            state[key] = dict(list(state[key].items())[-keep:])
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".regression_gate.", dir=os.path.dirname(state_file))
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(state, fh, ensure_ascii=False)
+        os.replace(tmp, state_file)
+    except OSError as e:
+        note("state not saved: %r" % e)
+
+# Degraded mode: the last result of this session, reused while the tree is unchanged, and its
+# total block count (reset by a pass).
+sess = state.setdefault("sessions", {}).setdefault(sid, {}) if degraded else {}
+# Its tree key also hashes untracked contents (a fix in a new test file is a new tree);
+# the per-fingerprint key above names untracked files only.
+tree_fp = devkit_harness.tree_fingerprint(repo) if degraded else fp
+
+def block(lines, cure, rc, reused=False):
+    attempts = state.setdefault("attempts", {})
+    attempts[fp] = attempts.get(fp, 0) + 1
+    if degraded:
+        sess.update({"fp": tree_fp, "result": "block", "lines": lines, "cure": cure, "rc": rc})
+    save_state()
+    note("block fp=%s attempt=%d exit=%s%s%s" % (fp, attempts[fp], rc, " (reused result)" if reused else "",
+                                                (" sid=%s agent=%s" % (sid, info["agent"])) if degraded else ""))
+    if attempts[fp] > max_attempts:
+        msg = "\n".join(lines + ["(Đã chặn %d lần cho cùng thay đổi — cho dừng để không kẹt phiên. Người dùng cần xem lại.)" % max_attempts])
+        print(json.dumps({"systemMessage": msg}, ensure_ascii=False))
+        sys.exit(0)
+    if degraded:
+        n = int(sess.get("blocks") or 0)
+        if n >= max_session_blocks:
+            note("release: session cap sid=%s blocks=%d agent=%s" % (sid, n, info["agent"]))
+            head = ("⚠ Regression gate đã chặn %d lần trong phiên %s (agent: %s, transcript: %s) — CHO DỪNG để agent "
+                    "không bị kẹt; gate vẫn CHƯA ĐẠT, KHÔNG phải PASS. Người dùng cần xem lại. (regression gate released "
+                    "the stop after %d blocks this session — REGRESSION_GATE_MAX_SESSION_BLOCKS; not a PASS)"
+                    % (n, sid, info["agent"], info["transcript"], n))
+            print(json.dumps({"systemMessage": "\n".join([head] + lines)}, ensure_ascii=False))
+            sys.exit(0)
+        sess["blocks"] = n + 1
+        save_state()
+    print("\n".join(lines + cure), file=sys.stderr)
+    sys.exit(2)
+
 if state.get("pass_fp") == fp:
     sys.exit(0)
+if degraded and sess.get("fp") == tree_fp:
+    # Same tree as the last run of this session: the result cannot have changed. Re-use it
+    # instead of re-running the whole suite on every stop.
+    if sess.get("result") == "block" and isinstance(sess.get("lines"), list):
+        block(sess["lines"], sess.get("cure") or [], sess.get("rc", 1), reused=True)
+    if sess.get("result") in ("untested", "matrix", "env"):
+        note("%s fp=%s (reused result) sid=%s" % (sess["result"], fp, sid))
+        sys.exit(0)
 
 res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "session-" + sid[:12],
                       "--timeout", os.environ.get("REGRESSION_GATE_TEST_TIMEOUT", "600")],
@@ -246,7 +341,9 @@ for line in reversed(res.stdout.splitlines()):
 if res.returncode in (0, 3):
     state["pass_fp"] = fp
     state.pop("attempts", None)
-    json.dump(state, open(state_file, "w", encoding="utf-8"))
+    if degraded:
+        sess.update({"fp": tree_fp, "result": "pass", "blocks": 0, "lines": None, "cure": None})
+    save_state()
     note(f"pass fp={fp} exit={res.returncode}")
     sys.exit(0)
 if res.returncode == 4:
@@ -254,9 +351,12 @@ if res.returncode == 4:
     # (its matrix untested_exit, e.g. unity-batch.sh without a Unity Editor). Blocking
     # would stop every session on that machine; passing would claim a PASS nobody saw.
     # Say it once per change and let the stop through.
+    if degraded:
+        sess.update({"fp": tree_fp, "result": "untested"})
+        save_state()
     if state.get("untested_fp") != fp:
         state["untested_fp"] = fp
-        json.dump(state, open(state_file, "w", encoding="utf-8"))
+        save_state()
         names = ["%s (%s)" % (t.get("id"), t.get("command")) for t in summary.get("regression_tests", [])
                  if t.get("status") == "UNTESTED"]
         print(json.dumps({"systemMessage": "Regression gate UNTESTED — không chạy được trên máy này, KHÔNG phải PASS: "
@@ -308,9 +408,12 @@ if res.returncode == 2 and uncommitted and not shadowed and not touched and not 
     # The matrix is the only problem and it is uncommitted: no test ran, and only a commit
     # (a human decision) makes it trusted. Blocking would stop every turn until then; say
     # it to the user once per change, like UNTESTED, and let the stop through.
+    if degraded:
+        sess.update({"fp": tree_fp, "result": "matrix"})
+        save_state()
     if state.get("matrix_fp") != fp:
         state["matrix_fp"] = fp
-        json.dump(state, open(state_file, "w", encoding="utf-8"))
+        save_state()
         msg = ("⚠ Regression gate KHÔNG chạy test hồi quy: `" + rel + "` chưa commit nên gate chưa tin nó. "
                "Cần làm: " + cure_commit + ".")
         if uncovered:
@@ -325,9 +428,12 @@ if res.returncode == 1 and failing and all(t.get("env_blocked") for t in failing
     # Every failing test failed because this machine cannot provision its tools (toolchain,
     # SDK, network): no test ran and no code change fixes it. Blocking again only loops the
     # session; say it once per change, like UNTESTED, and let the stop through (still REJECT).
+    if degraded:
+        sess.update({"fp": tree_fp, "result": "env"})
+        save_state()
     if state.get("env_fp") != fp:
         state["env_fp"] = fp
-        json.dump(state, open(state_file, "w", encoding="utf-8"))
+        save_state()
         names = ["%s (%s)" % (t.get("id"), t.get("command")) for t in failing]
         print(json.dumps({"systemMessage": "Regression gate REJECT vì môi trường — máy này thiếu công cụ/SDK/mạng nên "
                           "test không chạy, KHÔNG phải PASS: " + "; ".join(names)
@@ -354,22 +460,14 @@ for f in uncovered[:10]:
     lines.append("  - UNCOVERED:%s — file code đổi nhưng chưa test hồi quy nào theo dõi" % f)
 lines.append("Checklist: %s · báo cáo: %s" % (summary.get("checklist", ".agents/CHECKLIST.md"), summary.get("report", "-")))
 
-attempts = state.setdefault("attempts", {})
-attempts[fp] = attempts.get(fp, 0) + 1
-json.dump(state, open(state_file, "w", encoding="utf-8"))
-note(f"block fp={fp} attempt={attempts[fp]} exit={res.returncode}")
-if attempts[fp] > max_attempts:
-    msg = "\n".join(lines + ["(Đã chặn %d lần cho cùng thay đổi — cho dừng để không kẹt phiên. Người dùng cần xem lại.)" % max_attempts])
-    print(json.dumps({"systemMessage": msg}, ensure_ascii=False))
-    sys.exit(0)
 # The cure matches what is actually wrong: a matrix or an edited test needs a person,
 # a failing test / finding needs a code fix, an uncovered file needs a test mapping.
+cure = []
 if failing or summary.get("findings") or summary.get("unreadable") or not (problem or touched or uncovered):
-    lines.append("Sửa code/test cho các mục trên rồi dừng lại. Không sửa test cũ để lách.")
+    cure.append("Sửa code/test cho các mục trên rồi dừng lại. Không sửa test cũ để lách.")
 if uncovered:
-    lines.append("File chưa có test: thêm test vào regression_matrix.json "
-                 "hoặc `python3 bin/regression_checklist.py link UNCOVERED:<file> <TEST-ID>`.")
-lines.append("Nếu thực sự không làm được, dừng và nói rõ cho người dùng.")
-print("\n".join(lines), file=sys.stderr)
-sys.exit(2)
+    cure.append("File chưa có test: thêm test vào regression_matrix.json "
+                "hoặc `python3 bin/regression_checklist.py link UNCOVERED:<file> <TEST-ID>`.")
+cure.append("Nếu thực sự không làm được, dừng và nói rõ cho người dùng.")
+block(lines, cure, res.returncode)
 ' || exit $?

@@ -260,5 +260,69 @@ printf '{"session_id":"s-ad2","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$
 [ "$rc" = 0 ] && grep -q 'adopted' "$TMP/out" && ok "sample copy without the key: gate off, the message names \"adopted\"" \
   || fail "sample without adopted (rc=$rc out='$(cat "$TMP/out")')"
 
+# ── Non-Claude agent / no usable transcript: the gate can never trap the agent ──────
+# Grok (2026-09-25, OfficeReader) runs the Claude Stop hooks: its diff changed every turn,
+# so the per-fingerprint guard never released and the gate blocked it 11 times in a
+# morning. Degraded mode (not Claude, or no Claude transcript): a total block cap per
+# session (REGRESSION_GATE_MAX_SESSION_BLOCKS, default 3; a pass resets it), the last
+# result reused for an unchanged tree, and Grok's session-end Stop is not a turn end.
+G="$TMP/grok"; mkdir -p "$G/src" "$G/.agents" && cd "$G" || exit 1
+git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt
+printf 'echo x >> "%s"\nexit "$(cat "%s")"\n' "$TMP/g_runs" "$TMP/g_exit" > result.sh
+echo 1 > "$TMP/g_exit"; : > "$TMP/g_runs"
+cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
+ "mandatory_regression_tests":[{"id":"REG-G","name":"core","command":"sh result.sh"}]}]}
+JSON
+git add -A && git commit -qm init
+printf '%s\n' '{"timestamp":1790240706,"method":"_x.ai/session/update","params":{"sessionId":"g","update":{"sessionUpdate":"hook_execution"}}}' > "$TMP/updates.jsonl"
+printf '%s\n' '{"type":"user","message":{"role":"user","content":"fix it"},"uuid":"u1","sessionId":"c-1"}' > "$TMP/claude.jsonl"
+runs() { grep -c x "$TMP/g_runs" | tr -d ' '; }
+# gstop <session> [reason] — a Grok-shaped Stop (camelCase envelope, GROK_* env, its own transcript)
+gstop() { printf '{"hookEventName":"stop","hook_event_name":"Stop","sessionId":"%s","session_id":"%s","workspaceRoot":"%s","transcript_path":"%s","reason":"%s","stopHookActive":false}' \
+    "$1" "$1" "$G" "$TMP/updates.jsonl" "${2:-end_turn}" \
+  | GROK_HOOK_EVENT=stop GROK_SESSION_ID="$1" CLAUDE_PROJECT_DIR="$G" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+cstop() { printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "$1" "$TMP/claude.jsonl" \
+  | CLAUDE_PROJECT_DIR="$G" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+
+echo "fun ok() = 2" > src/Core.kt
+gstop g-0 channel_closed; rc=$?
+[ "$rc" = 0 ] && [ "$(runs)" = 0 ] && ok "Grok session-end Stop (reason channel_closed): allowed, no test run" \
+  || fail "session-end Stop ran the gate (rc=$rc runs=$(runs))"
+
+gstop g-1; rc1=$?; n1="$(runs)"; gstop g-1; rc2=$?; n2="$(runs)"
+[ "$rc1" = 2 ] && [ "$rc2" = 2 ] && [ "$n1" -gt 0 ] && [ "$n2" = "$n1" ] && grep -q "REG-G" "$TMP/err" \
+  && ok "degraded: same tree twice in a session → tests run once, the cached REJECT is re-used" \
+  || fail "result not reused (rc1=$rc1 rc2=$rc2 runs ${n1} then ${n2})"
+echo "x" > src/NewTest.kt; gstop g-1; n3="$(runs)"; echo "y" > src/NewTest.kt; gstop g-1; n4="$(runs)"; rm -f src/NewTest.kt
+[ "$n3" -gt "$n2" ] && [ "$n4" -gt "$n3" ] && ok "degraded: a new or edited untracked file is a new tree (suite re-runs)" \
+  || fail "untracked content ignored by the reuse key (runs ${n2} then ${n3} then ${n4})"
+
+CAP_RCS=""; for v in 1 2 3 4; do echo "fun ok() = 1$v" > src/Core.kt; gstop g-2; CAP_RCS="$CAP_RCS$?"; done
+[ "$CAP_RCS" = 2220 ] && grep -q systemMessage "$TMP/out" && grep -q "g-2" "$TMP/out" && grep -q "KHÔNG phải PASS" "$TMP/out" \
+  && ok "degraded: new tree every stop → 3 blocks, then released with a systemMessage naming the session" \
+  || fail "session cap (rcs=$CAP_RCS out='$(cat "$TMP/out")')"
+echo "fun ok() = 99" > src/Core.kt; gstop g-2; rc=$?
+[ "$rc" = 0 ] && grep -q systemMessage "$TMP/out" && ok "degraded: stays released for the rest of the session (still said)" \
+  || fail "released session blocked again (rc=$rc)"
+
+echo 0 > "$TMP/g_exit"; echo "fun ok() = 100" > src/Core.kt; gstop g-2; rc=$?
+echo 1 > "$TMP/g_exit"; echo "fun ok() = 101" > src/Core.kt; gstop g-2; rc2=$?
+[ "$rc" = 0 ] && [ "$rc2" = 2 ] && ok "degraded: a pass resets the session count — the next failure blocks again" \
+  || fail "pass did not reset the session cap (pass rc=$rc, next rc=$rc2)"
+
+CAP_RCS=""; for v in 1 2 3 4; do echo "fun ok() = 20$v" > src/Core.kt; cstop c-1; CAP_RCS="$CAP_RCS$?"; done
+[ "$CAP_RCS" = 2222 ] && ok "Claude session (readable transcript): no session cap — every new failing tree blocks" \
+  || fail "Claude session capped (rcs=$CAP_RCS)"
+
+CAP_RCS=""; for v in 1 2 3 4; do echo "fun ok() = 30$v" > src/Core.kt
+  printf '{"session_id":"n-1","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$G" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; CAP_RCS="$CAP_RCS$?"; done
+[ "$CAP_RCS" = 2220 ] && grep -q systemMessage "$TMP/out" && ok "no transcript at all (bridge / unknown agent): session cap applies too" \
+  || fail "no-transcript session not capped (rcs=$CAP_RCS)"
+CAP_RCS=""; for v in 1 2; do echo "fun ok() = 40$v" > src/Core.kt
+  printf '{"session_id":"n-2","hook_event_name":"Stop"}' | REGRESSION_GATE_MAX_SESSION_BLOCKS=1 CLAUDE_PROJECT_DIR="$G" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; CAP_RCS="$CAP_RCS$?"; done
+[ "$CAP_RCS" = 20 ] && ok "REGRESSION_GATE_MAX_SESSION_BLOCKS sets the cap" || fail "cap knob ignored (rcs=$CAP_RCS)"
+
 if [ "$FAILS" -ne 0 ]; then echo "regression gate hook: $FAILS FAILED"; exit 1; fi
 echo "regression gate hook: all checks passed"
