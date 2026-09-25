@@ -15,7 +15,8 @@
 #
 # A bug prompt also becomes a REPORTED checklist row (BUG_CAPTURE, scripts/enrich_context.py)
 # — never for agent / harness prompts ("You are …" openings, tool/JSON schemas, long
-# instruction blocks) nor under a non-Claude harness (Grok, a bridged agent: hooks/devkit_harness.py).
+# instruction blocks). The agent running the hook does not matter: under Grok, Codex, Gemini or
+# Cursor a user's bug prompt is recorded too (the user, 2026-09-25).
 #
 # Never blocks: always exit 0. Escape hatch: PROMPT_CONTEXT=0.
 # Protocol: stdin JSON {"prompt": …}; stdout is added to the context.

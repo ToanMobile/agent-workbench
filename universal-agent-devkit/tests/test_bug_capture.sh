@@ -15,8 +15,9 @@
 #  - Agent and harness prompts are not bug reports (Grok, 2026-09-25, OfficeReader: its
 #    reviewer and plan-writer sub-agent prompts became REPORTED rows): a role-play /
 #    system-style opening ("You are a …", "Bạn là …"), a long instruction block, a
-#    prompt carrying a tool / JSON schema, and any prompt from a non-Claude harness
-#    (GROK_HOOK_EVENT / camelCase Grok payload / DEVKIT_AGENT) register nothing. A long
+#    prompt carrying a tool / JSON schema register nothing — under any agent; a real bug
+#    prompt is recorded whichever agent (Grok, Codex, Gemini, Cursor) ran the hook
+#    (GROK_HOOK_EVENT / camelCase Grok payload / DEVKIT_AGENT). A long
 #    pasted crash log (Vietnamese) and an English report quoting a JSON body still do.
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -131,12 +132,19 @@ out="$(hook "$BLOCK
 ## Output format
 Respond only with a JSON list of findings." h1)"
 nothing "long instruction block (rules, MUST/NEVER, output format) → no row" "$out"
+out="$(raw_hook "$(payload "You are a hostile code reviewer. Do NOT edit any file. List every crash in the diff." h2)" GROK_HOOK_EVENT=user_prompt_submit GROK_SESSION_ID=01a0d2a9-3bf8-7711-b7d8-abda89a93260)"
+nothing "Grok sub-agent prompt ('You are …') under Grok → no row" "$out"
+# A user's real bug report is recorded under EVERY agent (the user, 2026-09-25: "bug thì phải tự
+# động ghi nhận"). Only the prompt's content — role-play, schema, instruction block — drops it.
+landed() { # <name> <output> — a new REPORTED row
+  id="$(bug_id "$2")"; if [ -n "$id" ] && [ "$(row "$id")" = "REPORTED " ]; then ok "$1"; else fail "$1: not recorded: $2"; fi; }
 out="$(raw_hook "$(payload "App crash khi mở file PDF có mật khẩu" h2)" GROK_HOOK_EVENT=user_prompt_submit GROK_SESSION_ID=01a0d2a9-3bf8-7711-b7d8-abda89a93260)"
-nothing "a real-looking bug prompt under Grok (GROK_HOOK_EVENT) → no row (non-Claude harness)" "$out"
-out="$(raw_hook '{"hookEventName":"user_prompt_submit","hook_event_name":"UserPromptSubmit","sessionId":"01a0d2a9-3bf8","session_id":"01a0d2a9-3bf8","workspaceRoot":"/x","prompt":"App crash khi mở file PDF có mật khẩu"}')"
-nothing "Grok-shaped payload (camelCase hookEventName / workspaceRoot) → no row" "$out"
-out="$(raw_hook "$(payload "App crash khi mở file PDF có mật khẩu" h2)" DEVKIT_AGENT=gemini)"
-nothing "a prompt bridged from another agent (DEVKIT_AGENT) → no row" "$out"
+landed "a real bug prompt under Grok (GROK_HOOK_EVENT) → REPORTED row" "$out"
+out="$(raw_hook '{"hookEventName":"user_prompt_submit","hook_event_name":"UserPromptSubmit","sessionId":"01a0d2a9-3bf8","session_id":"01a0d2a9-3bf8","workspaceRoot":"/x","prompt":"App văng khi xoay màn hình ở trang cài đặt"}')"
+landed "a real bug prompt in a Grok-shaped payload → REPORTED row" "$out"
+out="$(raw_hook "$(payload "Lỗi: nút Lưu không phản hồi sau khi đổi ngôn ngữ" h2)" DEVKIT_AGENT=gemini)"
+landed "a real bug prompt bridged from Gemini/Antigravity (DEVKIT_AGENT) → REPORTED row" "$out"
+n0="$(nbugs)"
 
 # …and real reports still land, however long or however they quote JSON.
 TRACE="App văng khi mở file DOCX có bảng lồng nhau
