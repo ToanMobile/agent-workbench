@@ -384,5 +384,92 @@ y2stop; rc=$?
 echo "fun ok() = 4" > src/Core.kt; y2stop; rc=$?
 [ "$rc" = 2 ] && ok "a new change with the test edit still pending: blocked once again" || fail "new change not blocked (rc=$rc)"
 
+# The same edit made by this session with a write-capable MCP tool (no Edit/Write, no Bash
+# window): the gate cannot see the write, so it cannot call it "other" — blocked (fail closed).
+python3 - "$X" "$TMP/y3.jsonl" <<'PY'
+import json, os, sys, time
+repo, tp = sys.argv[1], sys.argv[2]
+now = time.time()
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
+os.utime(os.path.join(repo, "src/test/CoreTest.kt"), (now - 120, now - 120))
+with open(os.path.join(repo, ".claude/audit-gate/bash_write_ledger.tsv"), "a") as f:
+    f.write("s-y3\tstart\t%.3f\tm1\ns-y3\tend\t%.3f\tm1\n" % (now - 590, now - 589))
+open(tp, "w").write("".join(json.dumps(r) + "\n" for r in [
+    {"type": "user", "timestamp": iso(now - 600), "message": {"role": "user", "content": "fix it"}},
+    {"type": "assistant", "timestamp": iso(now - 590), "message": {"content": [
+        {"type": "tool_use", "id": "m1", "name": "Bash", "input": {"command": "git status"}}]}},
+    {"type": "assistant", "timestamp": iso(now - 120), "message": {"content": [
+        {"type": "tool_use", "id": "j1", "name": "mcp__jetbrains__replace_text_in_file",
+         "input": {"pathInProject": "src/test/CoreTest.kt", "oldText": "a", "newText": "b"}}]}}]))
+PY
+echo "fun ok() = 5" > src/Core.kt
+printf '{"session_id":"s-y3","hook_event_name":"Stop","transcript_path":"%s"}' "$TMP/y3.jsonl" \
+  | CLAUDE_PROJECT_DIR="$X" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; rc=$?
+[ "$rc" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/err" && ok "existing test edited by this session via an MCP write tool: blocked" \
+  || fail "MCP-tool test edit let through (rc=$rc out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")')"
+
+# ── Another run holds the project's test-run lock (BUSY) ──────────────────────────────
+# The Stop hook hands the gate a short lock wait (TEST_RUN_LOCK_WAIT_S=120 unless set: 900
+# plus the suites could pass the hook's own 1800 s timeout), says the real cause — not
+# "missing tool" — and caches nothing: the next stop runs the suite.
+B="$TMP/busy"; mkdir -p "$B/src" "$B/.agents" && cd "$B" || exit 1
+git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt
+printf 'printf %%s "${TEST_RUN_LOCK_WAIT_S:-unset}" > "%s"\n' "$TMP/b_wait" > wait.sh
+cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/Core.kt"],
+ "mandatory_regression_tests":[{"id":"REG-B","name":"core","command":"sh wait.sh"}]}]}
+JSON
+git add -A && git commit -qm init
+printf '%s\n' '{"type":"user","message":{"role":"user","content":"fix it"},"uuid":"u1","sessionId":"b-1"}' > "$TMP/b.jsonl"
+hold_lock() { rm -f "$TMP/b_held"
+  python3 - "$B" "$TMP/b_held" <<'PY' &
+import fcntl, os, sys, time
+os.makedirs(sys.argv[1] + "/.claude/audit-gate", exist_ok=True)
+with open(sys.argv[1] + "/.claude/audit-gate/test_run.lock", "w") as f:
+    fcntl.flock(f, fcntl.LOCK_EX)
+    open(sys.argv[2], "w").close()
+    time.sleep(60)
+PY
+  b_holder=$!
+  for _ in $(seq 1 50); do [ -f "$TMP/b_held" ] && break; sleep 0.1; done; }
+bstop() { printf '{"session_id":"b-1","hook_event_name":"Stop","transcript_path":"%s"}' "$TMP/b.jsonl" \
+  | CLAUDE_PROJECT_DIR="$B" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+no_untested_fp() { python3 -c 'import json,os,sys
+d = json.load(open(sys.argv[1])) if os.path.exists(sys.argv[1]) else {}
+sys.exit(1 if d.get("untested_fp") or any(s.get("result") == "untested" for s in d.get("sessions", {}).values()) else 0)' \
+  "$B/.claude/audit-gate/regression_gate.state.json"; }
+BUSY_MSG="một lượt chạy test khác đang giữ khoá dự án — chạy lại sau"
+echo "fun ok() = 2" > src/Core.kt; rm -f "$TMP/b_wait"
+hold_lock
+TEST_RUN_LOCK_WAIT_S=1 bstop; rc=$?
+[ "$rc" = 0 ] && grep -q "$BUSY_MSG" "$TMP/out" && ! grep -q "thiếu công cụ" "$TMP/out" && [ ! -f "$TMP/b_wait" ] \
+  && ok "lock held by another run: stop allowed, says the lock is held (not a missing tool)" \
+  || fail "BUSY message (rc=$rc out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")')"
+no_untested_fp && ok "BUSY is not cached as UNTESTED for the tree" || fail "BUSY cached: $(cat "$B/.claude/audit-gate/regression_gate.state.json")"
+TEST_RUN_LOCK_WAIT_S=1 bstop; rc=$?
+[ "$rc" = 0 ] && grep -q "$BUSY_MSG" "$TMP/out" && ok "BUSY again on the same tree: said again (not once-per-change)" \
+  || fail "second BUSY stop silent (rc=$rc out='$(cat "$TMP/out")')"
+kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
+bstop; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$TMP/b_wait" 2>/dev/null)" = 120 ] \
+  && ok "lock free: the same tree's suite runs on the next stop, with TEST_RUN_LOCK_WAIT_S=120 from the hook" \
+  || fail "suite not re-run after BUSY, or wrong wait (rc=$rc wait='$(cat "$TMP/b_wait" 2>/dev/null)')"
+# Degraded mode (Grok-shaped Stop) reuses the last result per tree: BUSY must not be that result.
+kstop() { printf '{"hookEventName":"stop","hook_event_name":"Stop","sessionId":"k-1","session_id":"k-1","workspaceRoot":"%s","transcript_path":"%s","reason":"end_turn","stopHookActive":false}' \
+    "$B" "$TMP/updates.jsonl" \
+  | GROK_HOOK_EVENT=stop GROK_SESSION_ID=k-1 CLAUDE_PROJECT_DIR="$B" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+echo "fun ok() = 3" > src/Core.kt; rm -f "$TMP/b_wait"
+hold_lock
+TEST_RUN_LOCK_WAIT_S=1 kstop; rc=$?
+[ "$rc" = 0 ] && grep -q "$BUSY_MSG" "$TMP/out" && no_untested_fp \
+  && ok "degraded: BUSY said, not stored as the session's result for the tree" \
+  || fail "degraded BUSY (rc=$rc out='$(cat "$TMP/out")' state=$(cat "$B/.claude/audit-gate/regression_gate.state.json"))"
+kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
+kstop; rc=$?
+[ "$rc" = 0 ] && [ -f "$TMP/b_wait" ] && ok "degraded: the same tree runs its suite once the lock is free" \
+  || fail "degraded: BUSY result reused, suite not run (rc=$rc)"
+cd "$TMP" || exit 1
+
 if [ "$FAILS" -ne 0 ]; then echo "regression gate hook: $FAILS FAILED"; exit 1; fi
 echo "regression gate hook: all checks passed"

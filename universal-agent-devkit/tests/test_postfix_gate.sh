@@ -542,8 +542,9 @@ expect_not_in "--json never echoes the secret value" "ABCDEFGHIJKLMNOP" "$(print
 # session that made the edit (--session/--transcript: its Edit/Write calls, its write-shaped
 # Bash commands, its bash_write_ledger windows). Someone else's edit: a warning, not a block.
 # No session info, or no way to tell: today's block (the "existing test edited" check above).
-# fake_session <sid> <transcript> [edit-path] — a transcript that started 10 min ago, with one
-# harmless Bash call and optionally an Edit of <edit-path>.
+# fake_session <sid> <transcript> [edit-path [tool]] — a transcript that started 10 min ago, with one
+# harmless Bash call and optionally a <tool> call (default Edit) on <edit-path>; for tool=Bash,
+# <edit-path> is the command.
 fake_session() {
   python3 - "$@" <<'PY'
 import json, sys, time
@@ -554,8 +555,11 @@ recs = [{"type": "user", "sessionId": sid, "timestamp": iso(now - 600), "message
         {"type": "assistant", "sessionId": sid, "timestamp": iso(now - 590), "message": {"content": [
             {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "git status"}}]}}]
 if len(sys.argv) > 3:
+    tool = sys.argv[4] if len(sys.argv) > 4 else "Edit"
+    inp = ({"command": sys.argv[3]} if tool == "Bash"
+           else {"file_path": sys.argv[3], "old_string": "a", "new_string": "b"})
     recs.append({"type": "assistant", "sessionId": sid, "timestamp": iso(now - 580), "message": {"content": [
-        {"type": "tool_use", "id": "t2", "name": "Edit", "input": {"file_path": sys.argv[3], "old_string": "a", "new_string": "b"}}]}})
+        {"type": "tool_use", "id": "t2", "name": tool, "input": inp}]}})
 open(tp, "w").write("".join(json.dumps(r) + "\n" for r in recs))
 PY
 }
@@ -582,11 +586,37 @@ json="$(run_gate --run-tests --json --session s-me --transcript "$TMP/me.jsonl" 
 python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["tests_touched"] == [] and d["tests_touched_other"] == ["src/test/CoreTest.kt"], d' "$json" 2>/dev/null \
   && echo "✔ --json: tests_touched empty, tests_touched_other names it" || { echo "✖ json: $(printf '%s' "$json" | cut -c1-300)"; FAILS=$((FAILS + 1)); }
 
-existing_test_repo   # a person (no session window at all) edited it while this session only ran git status
+existing_test_repo   # changed during this session, outside every Bash window, and no other session's
+# window holds it: a person — or this session through a path the gate cannot see (a detached
+# process, a write tool it does not know). Not evidence of "other": blocked (fail closed).
 set_mtime src/test/CoreTest.kt -120; ledger_window s-me m1 -590 -589
 fake_session s-me "$TMP/me.jsonl"
 out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
-check "existing test edited outside every session window -> warning, not a block" 0 $? "$out"
+check "existing test changed during the session outside every window, no other session -> UNVERIFIED" 2 $? "$out" "PASS —"
+
+existing_test_repo   # this session edited it with a write-capable MCP tool (no Edit/Write, no Bash window)
+set_mtime src/test/CoreTest.kt -120; ledger_window s-me m1 -590 -589
+fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" mcp__jetbrains__replace_text_in_file
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "existing test edited by this session via an MCP write tool -> UNVERIFIED" 2 $? "$out" "PASS —"
+
+existing_test_repo   # …even when another session's window holds the mtime: an unknown tool = cannot tell
+set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" mcp__jetbrains__replace_text_in_file
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "unknown (MCP write) tool in the session -> attribution off, UNVERIFIED" 2 $? "$out" "PASS —"
+
+existing_test_repo   # a read-only MCP tool does not switch attribution off
+set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" mcp__codebase-memory-mcp__search_code
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "read-only MCP tool + another session's window -> still a warning (PASS)" 0 $? "$out"
+
+existing_test_repo   # this session wrote it, then backdated it with touch -t (mtime before the session)
+set_mtime src/test/CoreTest.kt -3600; ledger_window s-me m1 -590 -589
+fake_session s-me "$TMP/me.jsonl" "touch -t 202001010000 src/test/CoreTest.kt" Bash
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "touch -t by this session after writing the test -> UNVERIFIED" 2 $? "$out" "PASS —"
 
 existing_test_repo   # the same edit made by THIS session (Edit tool) -> block
 fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt"
@@ -618,6 +648,30 @@ existing_test_repo   # a missing transcript: today's behaviour
 out="$(run_gate --run-tests --session s-me --transcript "$TMP/nope.jsonl")"
 check "unreadable transcript -> today's UNVERIFIED" 2 $? "$out" "PASS —"
 expect_in "…the verdict names the edited test" "src/test/CoreTest.kt" "$out"
+
+# --- Another run holds the project's test-run lock: BUSY, said as such -----------------
+# A BUSY run is UNTESTED (exit 4) but not "missing tool/device" — the Stop hook must tell it
+# apart (summary "busy") to say the right cause and not cache it for the tree.
+make_repo "true"
+echo "fun ok() = 2" > src/Core.kt
+python3 - "$TMP/repo" "$TMP" <<'PY2' &
+import fcntl, os, sys, time
+p, tmp = sys.argv[1], sys.argv[2]
+os.makedirs(p + "/.claude/audit-gate", exist_ok=True)
+with open(p + "/.claude/audit-gate/test_run.lock", "w") as f:
+    fcntl.flock(f, fcntl.LOCK_EX)
+    open(tmp + "/busy_held", "w").close()
+    time.sleep(60)
+PY2
+busy_holder=$!
+for _ in $(seq 1 50); do [ -f "$TMP/busy_held" ] && break; sleep 0.1; done
+json="$(TEST_RUN_LOCK_WAIT_S=1 run_gate --run-tests --json | tail -1)"; rc=$?
+kill "$busy_holder" 2>/dev/null; wait "$busy_holder" 2>/dev/null
+python3 -c 'import json,sys; d=json.loads(sys.argv[1]); v=d["verdict"]
+assert d["exit_code"] == 4 and d.get("busy") is True, d
+assert "thiếu công cụ" not in v and "missing tool" not in v, v' "$json" 2>/dev/null \
+  && echo "✔ lock held by another run -> exit 4, summary busy=true, verdict does not blame a missing tool" \
+  || { echo "✖ busy summary: $(printf '%s' "$json" | cut -c1-300)"; FAILS=$((FAILS + 1)); }
 
 if [ "$FAILS" -ne 0 ]; then
   echo "post-fix-gate: $FAILS FAILED"; exit 1
