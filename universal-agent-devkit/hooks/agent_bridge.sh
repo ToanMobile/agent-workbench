@@ -67,7 +67,9 @@ print(json.dumps(out))' 2>/dev/null)"
 
 OUT_F="$(mktemp "${TMPDIR:-/tmp}/devkit-bridge-out.XXXXXX")"; ERR_F="$(mktemp "${TMPDIR:-/tmp}/devkit-bridge-err.XXXXXX")"
 trap 'rm -f "${OUT_F}" "${ERR_F}"' EXIT
-printf '%s' "${IN}" | CLAUDE_PROJECT_DIR="${ROOT}" bash "${HERE}/${HOOK}" >"${OUT_F}" 2>"${ERR_F}"
+# DEVKIT_AGENT names the platform to the hook (hooks/devkit_harness.py): the prompt hook
+# records no REPORTED bug row for it, and Stop gates use their per-session loop guard.
+printf '%s' "${IN}" | DEVKIT_AGENT="${PLATFORM}" CLAUDE_PROJECT_DIR="${ROOT}" bash "${HERE}/${HOOK}" >"${OUT_F}" 2>"${ERR_F}"
 RC=$?
 
 PLATFORM="${PLATFORM}" KIND="${KIND}" RC="${RC}" OUT_F="${OUT_F}" ERR_F="${ERR_F}" python3 - <<'PY'

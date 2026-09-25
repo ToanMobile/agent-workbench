@@ -422,16 +422,17 @@ def compact(dossier, project_root, limit=4):
 
 
 def hook_prompt(raw):
-    """(prompt, session_id) of a UserPromptSubmit payload; prompt is "" when nothing
-    should be added: slash commands, empty or very short prompts, unreadable input."""
+    """(prompt, session_id, payload) of a UserPromptSubmit payload; prompt is "" when
+    nothing should be added: slash commands, empty or very short prompts, unreadable input."""
     try:
         payload = json.loads(raw)
-        prompt, session = payload.get("prompt") or "", str(payload.get("session_id") or "")
+        prompt = payload.get("prompt") or ""
+        session = str(payload.get("session_id") or payload.get("sessionId") or "")
     except Exception:
-        return "", ""
+        return "", "", {}
     if not isinstance(prompt, str) or prompt.startswith("/") or len(prompt) < 8:
-        return "", session
-    return prompt, session
+        return "", session, payload
+    return prompt, session, payload
 
 
 # A bug report names a defect. "sửa" alone is also "edit" ("sửa README cho rõ"): BUG_FIX
@@ -439,13 +440,59 @@ def hook_prompt(raw):
 DEFECT_WORDS = ["lỗi", "bug", "crash", "văng", "hỏng", "fail", "chết", "die", "exception", "anr"]
 TITLE_MAX = 120
 
+# Agent and harness prompts are not the user's bug reports. Grok (2026-09-25, OfficeReader)
+# runs the prompt hook for its own sub-agents too, and "You are a hostile code reviewer. Do
+# NOT edit any file…" / "You are the Goal Plan Writer for the xAI Grok Build harness" became
+# REPORTED rows. Signals, each one enough on its own:
+#   - a role-play / system-style opening: "You are …", "Act as …", "Bạn là …", "Đóng vai …";
+#   - a tool or JSON schema in the prompt (two distinct schema markers);
+#   - a long instruction block: > 1500 characters with ≥ 6 directives (must / never / do
+#     not / respond with / output format / markdown headings …). A pasted crash log is long
+#     too, but it carries no directives, so length alone never drops a report.
+ROLE_OPENING = re.compile(r"^\W*(you are|you're|act as|your (role|task|job) is|as an? (ai|assistant|agent|expert)\b|"
+                          r"bạn là|mày là|đóng vai|hãy đóng vai)\b", re.I)
+SCHEMA_MARKERS = [re.compile(p, re.I) for p in (
+    r'"input_schema"\s*:', r'"\$schema"\s*:', r'"properties"\s*:\s*\{', r'"type"\s*:\s*"object"',
+    r'"parameters"\s*:\s*\{', r'"required"\s*:\s*\[', r"<tool_call\b", r"<function_calls>", r"</invoke>",
+    r"<functions>", r'"tool_choice"\s*:')]
+DIRECTIVE = re.compile(r"\b(you must|you will|you should|must not|do not|don't|never|always|your (task|job|role|goal|output)|"
+                       r"respond (only )?with|output format|return only|only output|không được|bắt buộc|cấm)\b", re.I)
+HEADING = re.compile(r"^\s{0,3}#{1,4}\s+\S", re.M)
 
-def capture_bug(prompt, dossier, project_root, session):
+
+def harness_prompt(prompt, payload=None, env=None):
+    """Why this prompt is an agent or harness prompt rather than a user's report, or ""."""
+    env = os.environ if env is None else env
+    payload = payload if isinstance(payload, dict) else {}
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks"))
+        sys.dont_write_bytecode = True
+        from devkit_harness import non_claude
+        other = non_claude(payload, env)
+    except Exception:  # noqa: BLE001 — without the helper, the env markers alone
+        other = bool(env.get("GROK_HOOK_EVENT") or env.get("DEVKIT_AGENT"))
+    if other:
+        return "non-Claude harness"
+    first = next((l.strip() for l in prompt.splitlines() if l.strip()), "")
+    if ROLE_OPENING.match(first):
+        return "role-play opening"
+    if sum(1 for m in SCHEMA_MARKERS if m.search(prompt)) >= 2:
+        return "tool/JSON schema"
+    if len(prompt) > 1500 and len(DIRECTIVE.findall(prompt)) + len(HEADING.findall(prompt)) >= 6:
+        return "instruction block"
+    return ""
+
+
+def capture_bug(prompt, dossier, project_root, session, payload=None):
     """A bug prompt → a REPORTED row in .agents/regression_status.json (deduplicated
     against rows still open), so a reported bug is on the checklist before anyone fixes
     it. Only in a project that already keeps a checklist or matrix; never raises.
+    Not for agent / harness prompts (harness_prompt), nor for prompts under a non-Claude
+    harness: Grok discards this hook's output, so the row would be written silently.
     Returns the context line to add, or ""."""
     if "BUG_FIX" not in dossier["detected_intents"] or os.environ.get("BUG_CAPTURE", "1") == "0":
+        return ""
+    if harness_prompt(prompt, payload):
         return ""
     agents = os.path.join(project_root, ".agents")
     if not (os.path.isfile(os.path.join(agents, "regression_status.json"))
@@ -590,7 +637,7 @@ def req_hint(prompt, dossier, project_root):
 if __name__ == "__main__":
     if "--hook" in sys.argv[1:]:
         # hooks/prompt_context.sh: the hook payload on stdin, one process for all of it.
-        prompt_input, session_id = hook_prompt(sys.stdin.read())
+        prompt_input, session_id, hook_payload = hook_prompt(sys.stdin.read())
         if not prompt_input:
             sys.exit(0)
         sys.argv.append("--compact")
@@ -605,7 +652,7 @@ if __name__ == "__main__":
         text = compact(res, project_dir)
         if "--hook" in sys.argv[1:]:
             log_surfaced(project_dir, session_id, prompt_input, shown_refs(res))
-            extra = [l for l in (capture_bug(prompt_input, res, project_dir, session_id),
+            extra = [l for l in (capture_bug(prompt_input, res, project_dir, session_id, hook_payload),
                                  req_hint(prompt_input, res, project_dir), watch_inbox(project_dir),
                                  command_words(prompt_input, project_dir)) if l]
             if extra:

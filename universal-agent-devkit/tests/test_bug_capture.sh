@@ -12,6 +12,12 @@
 #    no test linked holds the stop ONCE with the `bugs link` command, merged with the
 #    lesson reminder into a single block.
 #  - SessionStart counts REPORTED / OPEN / NEEDS_TEST.
+#  - Agent and harness prompts are not bug reports (Grok, 2026-09-25, OfficeReader: its
+#    reviewer and plan-writer sub-agent prompts became REPORTED rows): a role-play /
+#    system-style opening ("You are a …", "Bạn là …"), a long instruction block, a
+#    prompt carrying a tool / JSON schema, and any prompt from a non-Claude harness
+#    (GROK_HOOK_EVENT / camelCase Grok payload / DEVKIT_AGENT) register nothing. A long
+#    pasted crash log (Vietnamese) and an English report quoting a JSON body still do.
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 KIT="$DEVKIT_DIR/bin/agent-kit"
@@ -20,7 +26,7 @@ STOP_GATE="$DEVKIT_DIR/hooks/test_evidence_gate.sh"
 SESSION_HOOK="$DEVKIT_DIR/hooks/session_context.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
-unset PROMPT_CONTEXT BUG_CAPTURE
+unset PROMPT_CONTEXT BUG_CAPTURE GROK_HOOK_EVENT GROK_HOOK_NAME GROK_SESSION_ID GROK_WORKSPACE_ROOT DEVKIT_AGENT
 
 P="$TMP/p"; mkdir -p "$P/src" "$P/tests" "$P/.agents"
 cd "$P" && git init -q . && git config user.email t@t && git config user.name t
@@ -97,6 +103,59 @@ grep -q "REPORTED" .agents/regression_checklist.md && grep -q "$R1" .agents/regr
   && ok "view shows REPORTED rows in their own section" || fail "REPORTED not in view"
 out="$(bash "$KIT" bugs add "PlayerPrefs bị xoá bởi test EditMode" --id "$R1" --module game 2>&1)"
 [ "$(bug_id "$out")" = "$R1" ] && [ "$(row "$R1")" = "OPEN " ] && ok "bugs add --id <REPORTED> confirms that row (→ OPEN), no new row" || fail "confirm: $out $(row "$R1")"
+
+# ── prompt hook: agent / harness prompts are not bug reports ─────────────────
+# raw_hook <payload-json> [ENV=VAL …] — the prompt hook with a hand-made payload.
+raw_hook() { p="$1"; shift; printf '%s' "$p" | env CLAUDE_PROJECT_DIR="$P" "$@" bash "$PROMPT_HOOK" 2>&1; }
+payload() { python3 -c 'import json,sys; print(json.dumps({"prompt": sys.argv[1], "session_id": sys.argv[2]}))' "$1" "$2"; }
+nothing() { # <name> <output> — no new bug row, no "Bug đã ghi" line
+  if [ "$(nbugs)" = "$n0" ] && ! printf '%s' "$2" | grep -q "Bug đã ghi"; then ok "$1"; else fail "$1: registered ($(nbugs) vs $n0): $(printf '%s' "$2" | grep 'Bug đã ghi')"; fi; }
+n0="$(nbugs)"
+out="$(hook "You are a hostile code reviewer. Do NOT edit any file. Read the diff and list every bug, crash and failing test you can find." h1)"
+nothing "role-play 'You are a hostile code reviewer…' (Grok reviewer sub-agent) → no row" "$out"
+out="$(hook "You are the Goal Plan Writer for the xAI Grok Build harness.
+Write a plan that fixes the crash in the reader and makes the failing tests pass." h1)"
+nothing "'You are the Goal Plan Writer for the xAI Grok Build harness' → no row" "$out"
+out="$(hook "Bạn là reviewer khó tính. Không sửa file nào, chỉ liệt kê lỗi và crash trong diff." h1)"
+nothing "Vietnamese role-play 'Bạn là reviewer…' → no row" "$out"
+out="$(hook 'Fix the crash in the login screen.
+Tools you can call:
+{"name": "read_file", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}' h1)"
+nothing "prompt carrying a tool / JSON schema → no row" "$out"
+BLOCK="# Task: audit the reader module for crashes"
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  BLOCK="$BLOCK
+- Rule $i: you must not edit files outside the reader module; do not run gradle; never skip a failing test; always report a bug with its file and line."
+done
+out="$(hook "$BLOCK
+## Output format
+Respond only with a JSON list of findings." h1)"
+nothing "long instruction block (rules, MUST/NEVER, output format) → no row" "$out"
+out="$(raw_hook "$(payload "App crash khi mở file PDF có mật khẩu" h2)" GROK_HOOK_EVENT=user_prompt_submit GROK_SESSION_ID=01a0d2a9-3bf8-7711-b7d8-abda89a93260)"
+nothing "a real-looking bug prompt under Grok (GROK_HOOK_EVENT) → no row (non-Claude harness)" "$out"
+out="$(raw_hook '{"hookEventName":"user_prompt_submit","hook_event_name":"UserPromptSubmit","sessionId":"01a0d2a9-3bf8","session_id":"01a0d2a9-3bf8","workspaceRoot":"/x","prompt":"App crash khi mở file PDF có mật khẩu"}')"
+nothing "Grok-shaped payload (camelCase hookEventName / workspaceRoot) → no row" "$out"
+out="$(raw_hook "$(payload "App crash khi mở file PDF có mật khẩu" h2)" DEVKIT_AGENT=gemini)"
+nothing "a prompt bridged from another agent (DEVKIT_AGENT) → no row" "$out"
+
+# …and real reports still land, however long or however they quote JSON.
+TRACE="App văng khi mở file DOCX có bảng lồng nhau
+Các bước: mở app → chọn file bang-long-nhau.docx → văng ngay.
+FATAL EXCEPTION: main
+java.lang.IndexOutOfBoundsException: Index 3 out of bounds for length 3"
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+  TRACE="$TRACE
+	at com.techlead.lib.office.wp.view.TableLayout.measureCell$i(TableLayout.kt:$((100 + i)))"
+done
+out="$(hook "$TRACE" h3)"; RV="$(bug_id "$out")"
+[ -n "$RV" ] && [ "$(row "$RV")" = "REPORTED " ] && printf '%s' "$out" | grep -q "Bug đã ghi vào checklist: $RV" \
+  && ok "long Vietnamese crash report with a pasted stack trace → REPORTED row" || fail "long VI report dropped: $out"
+out="$(hook 'Bug: checkout crashes when the coupon is empty
+Request body: {"coupon": "", "items": [1, 2]}
+Response: {"error": "NullPointerException at CouponService.apply"}' h3)"; RE="$(bug_id "$out")"
+[ -n "$RE" ] && [ "$(row "$RE")" = "REPORTED " ] && ok "English bug report quoting a JSON body → REPORTED row" || fail "EN report with JSON dropped: $out"
+out="$(hook "Crash: the 'You are offline' banner never hides after reconnecting" h3)"; RO="$(bug_id "$out")"
+[ -n "$RO" ] && ok "'You are …' quoted inside a real report (not the opening) → REPORTED row" || fail "quoted 'You are' dropped: $out"
 
 # ── SessionStart counts ──────────────────────────────────────────────────────
 R2="$(bug_id "$(hook "Nút lưu không hoạt động trên tablet" s3)")"
