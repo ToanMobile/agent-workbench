@@ -1464,6 +1464,40 @@ run_case "K-5 sed -i on AndroidManifest is an edit" security_gate.sh 2 \
   "{\"session_id\":\"k5b\",\"transcript_path\":\"${SANDBOX}/k5_sed.jsonl\",\"last_assistant_message\":\"xong\"}"
 run_case "K-5 shell edit + real review → pass" security_gate.sh 0 \
   "{\"session_id\":\"k5c\",\"transcript_path\":\"${SANDBOX}/k5_sed_reviewed.jsonl\",\"last_assistant_message\":\"xong\"}"
+# 2026-09-25 (GeelyEx2): a read-only existence / ignore-status check was flagged as touching the
+# Firebase config and keystore — `2>/dev/null` looked like a write. Reads, stats, `git
+# check-ignore` / `ls-files` are not edits; anything that writes, copies or edits still is.
+python3 - "${SANDBOX}" <<'PY'
+import json, os, sys
+sb = sys.argv[1]
+def w(name, cmd):
+    with open(os.path.join(sb, name), "w") as fh:
+        fh.write(json.dumps({"message": {"content": [
+            {"type": "tool_use", "name": "Bash", "input": {"command": cmd}}]}}) + "\n")
+w("sg_ro_loop.jsonl", 'for f in app/google-services.json app/release.keystore keys/app.jks; do '
+  '[ -e "$f" ] && git check-ignore -q "$f" && echo "$f ignored" || echo "$f NOT ignored"; done 2>/dev/null')
+w("sg_ro_lsfiles.jsonl", "git ls-files --error-unmatch app/google-services.json 2>&1; "
+  "ls -la app/src/main/AndroidManifest.xml >/dev/null && stat app/release.jks")
+w("sg_ro_grep.jsonl", "grep -n 'apiKey\\|<uses-permission' app/src/main/AndroidManifest.xml 2>/dev/null | head -5")
+w("sg_wr_cp.jsonl", "cp ../main/app/google-services.json app/google-services.json 2>/dev/null")
+w("sg_wr_loopcp.jsonl", 'for f in app/google-services.json keys/app.jks; do cp "$f" "/tmp/wt/$f"; done')
+w("sg_wr_redir.jsonl", "echo '{\"k\":1}' > app/google-services.json")
+w("sg_wr_heredoc.jsonl", "cat >> app/src/main/AndroidManifest.xml <<'EOF'\n"
+  "<uses-permission android:name=\"android.permission.CAMERA\"/>\nEOF")
+w("sg_wr_tee.jsonl", "tee app/src/main/AndroidManifest.xml < /tmp/new.xml >/dev/null")
+w("sg_wr_text.jsonl", "printf 'storePassword=hunter2\\n' >> gradle.properties 2>/dev/null")
+PY
+for c in "sg_ro_loop:read-only [ -e ] + git check-ignore loop quiet" "sg_ro_lsfiles:git ls-files / ls / stat quiet" \
+         "sg_ro_grep:grep for trigger text is a read, quiet"; do
+  run_case "${c#*:}" security_gate.sh 0 \
+    "{\"session_id\":\"${c%%:*}\",\"transcript_path\":\"${SANDBOX}/${c%%:*}.jsonl\",\"last_assistant_message\":\"xong\"}"
+done
+for c in "sg_wr_cp:cp onto google-services.json still blocked" "sg_wr_loopcp:cp \"\$f\" in a for-loop still blocked" \
+         "sg_wr_redir:> google-services.json still blocked" "sg_wr_heredoc:heredoc >> AndroidManifest still blocked" \
+         "sg_wr_tee:tee AndroidManifest still blocked" "sg_wr_text:>> signing secret text still blocked"; do
+  run_case "${c#*:}" security_gate.sh 2 \
+    "{\"session_id\":\"${c%%:*}\",\"transcript_path\":\"${SANDBOX}/${c%%:*}.jsonl\",\"last_assistant_message\":\"xong\"}"
+done
 # K-6: a non-numeric attempts knob falls back to the default instead of crashing open.
 run_case "K-6 SECURITY_GATE_MAX_ATTEMPTS=abc still blocks" security_gate.sh 2 \
   "{\"session_id\":\"k6\",\"transcript_path\":\"${SANDBOX}/sg_manifest.jsonl\",\"last_assistant_message\":\"xong\"}" \
