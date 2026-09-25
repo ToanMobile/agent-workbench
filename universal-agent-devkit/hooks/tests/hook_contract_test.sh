@@ -1336,6 +1336,71 @@ run_case "PROOF_GATE=0 escape hatch allows" proof_gate.sh 0 \
   "{\"session_id\":\"pg-4\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"XONG\\nĐã sửa lỗi X.\"}" CLAUDE_PROJECT_DIR="${PG}" PROOF_GATE=0
 echo
 
+# ── test_evidence_gate.sh — quoted / negated claims, foreign-project XML (2026-09-25) ──
+# A reply that only QUOTES evidence another hook/session wrote, or says the tests were NOT run,
+# makes no pass claim. A pass claim backed by TEST-*.xml this session produced in ANOTHER
+# project (and read with its own Bash) is backed. Every case runs in its own empty project.
+echo "test_evidence_gate.sh — attribution, negation, foreign XML"
+TE_P="$(mktemp -d "${TMPDIR:-/tmp}/hookte.XXXXXX")"
+te_case() { # name want session message [transcript]
+  run_case "$1" test_evidence_gate.sh "$2" \
+    "$(python3 -c 'import json,sys; print(json.dumps({"session_id": sys.argv[1], "transcript_path": sys.argv[3], "last_assistant_message": sys.argv[2]}))' \
+       "$3" "$4" "${5:-${EMPTY_TR}}")" CLAUDE_PROJECT_DIR="${TE_P}"
+}
+te_case "claim attributed to another hook is not a claim"        0 te-a1 "The evidence logs written by another hook at 08:41 say the tests passed."
+te_case "claim attributed to another session (vi) is not a claim" 0 te-a2 "Phiên khác ghi log lúc 08:41 là 12/12 test pass, phiên này chưa chạy lại."
+te_case "negated run: chưa chạy test is not a claim"             0 te-a3 "Chưa chạy test, nên chưa biết test có pass hay không."
+te_case "negated result: tests did not pass is not a claim"      0 te-a4 "The 3 tests did not pass on CI."
+te_case "fix attributed to another agent is not an outcome"      0 te-a5 "Agent khác báo đã fix bug A; phiên này chưa kiểm."
+te_case "guard: other-hook fail then contrast still a claim"     2 te-g1 "Hook khác báo fail, nhưng giờ 13/13 test pass."
+te_case "guard: another session broke it; tests pass claimed"    2 te-g2 "Another session broke it; now 12/12 tests pass."
+te_case "guard: negated smoke run cannot hide test pass"         2 te-g3 "Didn't run smoke so I only know 12/12 tests passed."
+te_case "guard: plain unbacked pass claim still blocked"         2 te-g4 "JUnit XML shows 13/13 tests passed, 0 failures."
+te_case "guard: plain unbacked fixed claim still blocked"        2 te-g5 "Đã fix bug A."
+# Foreign project: a Gradle root outside CLAUDE_PROJECT_DIR whose XML this session read.
+TE_F="$(mktemp -d "${TMPDIR:-/tmp}/hooktef.XXXXXX")"; TE_OLD="$(mktemp -d "${TMPDIR:-/tmp}/hookteo.XXXXXX")"
+TE_RED="$(mktemp -d "${TMPDIR:-/tmp}/hooketr.XXXXXX")"
+: > "${TE_P}/gradlew"                                          # the current project is Gradle, with no XML
+for r in "${TE_F}" "${TE_OLD}" "${TE_RED}"; do
+  : > "${r}/gradlew"; mkdir -p "${r}/app/build/test-results/testDebugUnitTest" "${r}/app/src/main/java"
+  printf 'class A\n' > "${r}/app/src/main/java/A.kt"
+done
+touch -t 202001010000 "${TE_F}/app/src/main/java/A.kt"
+mk_xml "${TE_F}/app/build/test-results/testDebugUnitTest"   GreenSuite 13 0 0 0
+mk_xml "${TE_OLD}/app/build/test-results/testDebugUnitTest" GreenSuite 13 0 0 0
+mk_xml "${TE_RED}/app/build/test-results/testDebugUnitTest" RedSuite   13 1 0 0
+touch -t 202001010000 "${TE_OLD}/app/build/test-results/testDebugUnitTest/TEST-GreenSuite.xml"
+python3 - "${SANDBOX}" "${TE_F}" "${TE_OLD}" "${TE_RED}" <<'PY'
+import json, os, sys, time
+sb, green, old, red = sys.argv[1:5]
+start = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 600))
+def w(name, blocks):
+    with open(os.path.join(sb, name), "w") as fh:
+        for i, b in enumerate(blocks):
+            fh.write(json.dumps({"timestamp": start, "message": {"content": [b]}}) + "\n")
+def bash(i, cmd):
+    return [{"type": "tool_use", "id": f"b{i}", "name": "Bash", "input": {"command": cmd}},
+            {"type": "tool_result", "tool_use_id": f"b{i}", "content": "ok"}]
+xml = "app/build/test-results/testDebugUnitTest/TEST-%s.xml"
+w("te_f_cat.jsonl", bash(1, "cat " + os.path.join(green, xml % "GreenSuite")))
+w("te_f_cd.jsonl", bash(1, f"cd {green} && ./gradlew :app:testDebugUnitTest --console=plain | tail -5"))
+w("te_f_edit.jsonl", [{"type": "tool_use", "id": "e1", "name": "Edit", "input": {
+    "file_path": os.path.join(green, "app/src/main/java/A.kt"), "old_string": "A", "new_string": "A"}},
+    {"type": "tool_result", "tool_use_id": "e1", "content": "ok"}] + bash(2, f"ls {green}/app/build/test-results"))
+w("te_f_none.jsonl", bash(1, "ls /tmp >/dev/null"))
+w("te_f_old.jsonl", bash(1, "cat " + os.path.join(old, xml % "GreenSuite")))
+w("te_f_red.jsonl", bash(1, "cat " + os.path.join(red, xml % "RedSuite")))
+PY
+MSG_F="JUnit XML in the other project shows 13/13 tests passed, 0 failures."
+te_case "foreign XML read by this session backs the claim"      0 te-f1 "${MSG_F}" "${SANDBOX}/te_f_cat.jsonl"
+te_case "foreign Gradle root run via cd backs the claim"        0 te-f2 "${MSG_F}" "${SANDBOX}/te_f_cd.jsonl"
+te_case "foreign module edited then its XML read backs claim"   0 te-f3 "${MSG_F}" "${SANDBOX}/te_f_edit.jsonl"
+te_case "guard: foreign XML no Bash of this session named"      2 te-f4 "${MSG_F}" "${SANDBOX}/te_f_none.jsonl"
+te_case "guard: foreign XML older than the session"             2 te-f5 "${MSG_F}" "${SANDBOX}/te_f_old.jsonl"
+te_case "guard: foreign XML with a failure"                     2 te-f6 "${MSG_F}" "${SANDBOX}/te_f_red.jsonl"
+rm -rf "${TE_P}" "${TE_F}" "${TE_OLD}" "${TE_RED}"
+echo
+
 # ── security_gate.sh — Stop (CLAUDE.md check 4c) ────────────────────────────
 echo "security_gate.sh"
 # must-NOT-fire cases come from files touched in THIS repo that are full of the

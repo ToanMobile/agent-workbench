@@ -16,6 +16,10 @@
 #   • tests == 0                             → nothing executed
 #   • failures > 0 or errors > 0             → not a pass
 #   • skipped > 0 not mentioned in the message → a skip is not a pass
+# XML of ANOTHER project counts too when this session's own Bash commands named it (its
+# build/test-results path, the XML, or the project dir it ran the tests in) and it was
+# written during this session. A sentence that only attributes the result to another
+# hook/session/agent, or says the tests were not run / did not pass, is not a claim.
 #
 # ── 6.4: two failed fixes on the same root cause ──
 # Proxy, since "root cause" has no machine definition: the SAME testcase id
@@ -204,6 +208,53 @@ META_QUOTE_PREFIX = re.compile(
     r"\b(?:cụm(?:\s+từ)?|chuỗi|từ\s+khóa|ví\s+dụ)\s*$",
     re.I,
 )
+# A reply that QUOTES evidence someone else produced, or says the tests were NOT run / did NOT
+# pass, makes no pass claim (2026-09-25: "the evidence logs written by another hook at 08:41 say
+# status PASS" and "chưa chạy test" were blocked as unbacked claims). Both exemptions are
+# positional and local, so they cannot reach across a contrast to an independent claim:
+#   • ATTRIBUTED — a different actor/time names the source in the same stretch of text before the
+#     match: another/other/previous hook|session|agent|run…, hook|phiên|agent… khác|trước,
+#     written/produced/reported by another…, the user said. A contrast or sequence word (nhưng,
+#     but, and, và, còn, mà, giờ, now, …) or `;`/dash between them ends it ("Hook khác báo fail,
+#     nhưng giờ 13/13 test pass" is still a claim). Plain "the XML shows 13/13" is NOT attribution:
+#     that claim is checked against the XML on disk.
+#   • NEGATED — the negator sits right before the result word ("tests did not pass", "test chưa
+#     xanh", "not fixed"), or the same clause says the tests were not run / the result is not
+#     known ("chưa chạy test", "chưa biết test có pass"). A clause break (comma, nhưng, so, nên, …)
+#     ends it, so "Không chạy smoke, nhưng unit tests passed" stays a claim.
+_CONTRAST = (r"\b(?:nhưng|but|and|và|còn|mà|however|tuy\s+nhiên|song|so|nên|vì\s+vậy|therefore|while"
+             r"|whereas|rồi|then|giờ|bây\s+giờ|now)\b")
+ATTR_BREAK = re.compile(r"[;—–]|\s-\s|\n|" + _CONTRAST, re.I)
+CLAUSE_BREAK = re.compile(r"[,;:—–()]|\s-\s|\n|" + _CONTRAST, re.I)
+ATTRIBUTION = re.compile(
+    r"\b(?:another|other|a\s+different|the\s+other|previous|earlier|prior|separate)\s+(?:[\w-]+\s+)?"
+    r"(?:hooks?|sessions?|agents?|subagents?|runs?|process(?:es)?|workers?|conversations?|chats?|teams?|machines?|jobs?)\b"
+    r"|\b(?:hook|phiên|agent|lần\s+chạy|tiến\s+trình|người|team|máy)\s+(?:khác|trước|cũ|kia)\b"
+    r"|\b(?:written|produced|reported|recorded|logged|generated|claimed|posted)\s+by\s+"
+    r"(?:another|a\s+different|the\s+other|other|someone|a\s+previous|the\s+previous)\b"
+    r"|\b(?:the\s+)?user\s+(?:said|says|reported|reports|claims?)\b|\b(?:người\s+dùng|user)\s+(?:nói|báo|kể)\b",
+    re.I)
+_NEG = r"(?:\b(?:chưa|không|chẳng|never|not|no|none\s+of\s+the|zero|did\s+not|does\s+not|do\s+not|failed\s+to)|n't)"
+NEG_BEFORE_RESULT = re.compile(_NEG + r"\s+(?:(?:có|được|hề|all|yet|been|tất\s+cả|the)\s+)*$", re.I)
+NEG_IN_MATCH = re.compile(_NEG + r"\s+(?:(?:có|được|hề|yet|been)\s+)*(?:pass|xanh|green|thành\s+công|đạt)", re.I)
+NEG_RUN = re.compile(
+    r"(?:\b(?:chưa|không|chẳng|never|not|did\s+not|have\s+not|has\s+not|cannot|không\s+thể|chưa\s+thể)|n't)"
+    r"\s+(?:(?:được|hề|yet|been|thể)\s+)?"
+    r"(?:chạy|run|ran|running|execute[sd]?|biết|know|khẳng\s+định|claim|say|nói|xác\s+nhận|confirm|chắc)\b", re.I)
+
+def _tail(prefix, breaker):
+    cut = 0
+    for m in breaker.finditer(prefix):
+        cut = m.end()
+    return prefix[cut:]
+
+def attributed_or_negated(prefix, matched_text):
+    if ATTRIBUTION.search(_tail(prefix, ATTR_BREAK)):
+        return True
+    if NEG_BEFORE_RESULT.search(prefix) or NEG_IN_MATCH.search(matched_text):
+        return True
+    return bool(NEG_RUN.search(_tail(prefix, CLAUSE_BREAK)))
+
 def is_nonassertive(sentence, match, kind):
     """Only explicit grammar may exempt a matched result/outcome phrase.
 
@@ -213,6 +264,8 @@ def is_nonassertive(sentence, match, kind):
     prefix = re.sub(r"[`\"“”]", "", sentence[:match.start()])
     matched_text = match.group(0)
     if GOVERNING_PREFIX.search(prefix):
+        return True
+    if attributed_or_negated(prefix, matched_text):
         return True
     plan_prefix = PLAN_PREFIX.search(sentence)
     plan_boundary = None
@@ -315,8 +368,7 @@ outcome_claimed = bool(outcome_claims)
 # modules in this project sit at depth 1 (`app/`) or 2 (`core/analytics/`), so
 # two fixed-depth patterns cover them and cost milliseconds. Add a depth-3
 # pattern here if a module is ever nested deeper.
-xmls = []
-for pat in ("*/build/test-results/*/TEST-*.xml",
+XML_PATTERNS = ("*/build/test-results/*/TEST-*.xml",
             "*/*/build/test-results/*/TEST-*.xml",
             "*/*/*/build/test-results/*/TEST-*.xml",
             # connectedAndroidTest writes to build/outputs/androidTest-results/,
@@ -334,7 +386,9 @@ for pat in ("*/build/test-results/*/TEST-*.xml",
             # scripts/unity-test.sh (run by pm_run) at .antigravity-pm/logs/tests_*.xml.
             # Without these a Unity repo had no result file the gate could see.
             "Logs/agent-kit/tests_*.xml",
-            ".antigravity-pm/logs/tests_*.xml"):
+            ".antigravity-pm/logs/tests_*.xml")
+xmls = []
+for pat in XML_PATTERNS:
     xmls.extend(glob.glob(os.path.join(repo, pat)))
 mtimes = {}
 for p in xmls:
@@ -428,6 +482,8 @@ structured_fix_proofs = []
 blk_idx = 0
 tool_uses = {}
 tool_results = {}
+first_ts = None            # the session's first transcript timestamp (foreign XML freshness floor)
+bash_cmds = []             # every Bash command of this session (foreign XML roots)
 # Non-Gradle projects (QA K-10, 2026-09-23): npm/jest/pytest/cargo/go/swift runs
 # write no TEST-*.xml, so the gate also accepts a runner's own tool_result as
 # evidence — only in repos with no Gradle build and no XML at all.
@@ -542,6 +598,8 @@ if tp and os.path.exists(tp):
                     rec = json.loads(rawline)
                 except Exception:
                     continue
+                if first_ts is None and isinstance(rec.get("timestamp"), str):
+                    first_ts = rec["timestamp"]
                 content = (rec.get("message") or {}).get("content")
                 if not isinstance(content, list):
                     continue
@@ -549,6 +607,9 @@ if tp and os.path.exists(tp):
                     if not isinstance(blk, dict):
                         continue
                     blk_idx += 1
+                    if blk.get("type") == "tool_use" and blk.get("name") == "Bash" \
+                            and isinstance(blk.get("input"), dict):
+                        bash_cmds.append(str(blk["input"].get("command", "")))
                     if blk.get("type") == "tool_result":
                         c = blk.get("content")
                         if isinstance(c, str):
@@ -709,53 +770,6 @@ if tp and os.path.exists(tp):
     except Exception as e:
         logline(f"[{ts}] transcript scan fail: {e!r}")
 
-# Anchor for "fresh". With no .kt/.java edited this session last_edit_mtime is 0,
-# and then EVERY xml in the tree counts as fresh — including results from months
-# ago. Measured 2026-07-27: the repo held 2 red suites from an earlier run, so any
-# turn saying "test pass" without a Kotlin edit was blocked, and the message called
-# a January file "tươi" — a gate blocking valid work AND naming the wrong cause.
-# With no edit to anchor on, judge the LATEST run only, not the whole history.
-RUN_WINDOW = 300.0
-anchor = last_edit_mtime if last_edit_mtime else (newest - RUN_WINDOW if newest else 0.0)
-
-# Parse only the suites a live question actually depends on.
-need = set()
-if claimed:
-    need |= {p for p, mt in mtimes.items() if mt >= anchor}
-if new_run:
-    need |= {p for p, mt in mtimes.items() if mt > state.get("last_run", 0.0)}
-# Keyed by (path, index): one file can hold several suites under a <testsuites>
-# root. Only the VALUES are read below, so the key shape is free to change.
-parsed = {(p, i): s for p in need for i, s in enumerate(parse_suites(p))}
-
-fresh_all = [s for p, s in parsed.items() if s["mtime"] >= anchor] if claimed else []
-
-# Scope the arithmetic to the modules edited this session. A repo can hold suites that are
-# red for reasons this turn did not cause and cannot fix (measured 2026-07-28: :app's
-# Roborazzi suites fail on any machine without the gitignored baselines, while the three
-# modules under change were green), and summing across all of them made every truthful,
-# per-suite report unstatable — a gate that no honest sentence can satisfy teaches people to
-# switch it off. Red OUTSIDE the touched modules is not silently forgiven: it still blocks
-# unless the response names the failing suite, so "green" can never be claimed over a hidden
-# red. With no .kt/.java edited there is nothing to scope by, so judge everything, exactly as
-# before.
-def module_of(path):
-    rel = os.path.relpath(path, repo)
-    return rel.split("/build/")[0] if "/build/" in rel else ""
-
-if claimed and touched_modules:
-    fresh = [s for s in fresh_all if module_of(s["path"]) in touched_modules]
-    outside_red = [s for s in fresh_all
-                   if module_of(s["path"]) not in touched_modules and (s["failures"] or s["errors"])]
-else:
-    fresh = fresh_all
-    outside_red = []
-
-# Naming the suite IS the disclosure — a claim that stays silent about it still blocks.
-undisclosed_red = [s for s in outside_red
-                   if s["name"].rsplit(".", 1)[-1] not in msg]
-
-# ── 6.4 — same testcase red across two runs with edits in between ───────────
 # Whose test run produced this XML? build/ is shared: another agent's red suite lands in the
 # same tree and used to be counted as one of OUR failed fixes (OfficeReader, 2026-09-10: four
 # accusations over suites this session never ran). A run sits inside the Bash window of the
@@ -808,6 +822,136 @@ def ran_here(mtime):
                 best_sid = None
     return True if best_sid is None else best_sid == _MY_SID
 
+# ── XML this session produced in ANOTHER project ─────────────────────────────
+# (2026-09-25) A session working on two projects ran/read the tests of the other one
+# ("JUnit XML in /…/GeelyEx2/… shows 13/13, 0 failures") and was blocked: only this repo was
+# globbed. A foreign root counts when one of THIS session's Bash commands names it — a path under
+# <module>/build/test-results|outputs/androidTest-results/, a result XML itself, or a directory
+# (or one of its 3 parents) holding a Gradle/Unity project, e.g. `cd /other && ./gradlew test`.
+# The XML file on DISK is read, never XML printed in a tool result (an `echo` could forge that).
+# It must have been written during this session: mtime ≥ the session's first transcript
+# timestamp (else the transcript's birth time) and inside no narrower Bash window of another
+# session (ran_here). Only the check-2 evidence uses it; the 6.4 anti-loop state stays repo-only.
+FOREIGN_SKIP = ("/dev/", "/usr/", "/bin/", "/sbin/", "/etc/", "/System/", "/Library/", "/opt/homebrew/", "/proc/")
+ABS_PATH_RX = re.compile(r"(?<![\w.~$-])/[^\s'\"`;|&<>()$*?\[\]{}]+")
+MODULE_XML = ("build/test-results/*/TEST-*.xml", "build/outputs/androidTest-results/connected/TEST-*.xml",
+              "build/outputs/androidTest-results/connected/*/TEST-*.xml")
+PROJECT_MARKERS = ("gradlew", "settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts",
+                   "ProjectSettings/ProjectVersion.txt")
+
+def _session_start():
+    if first_ts:
+        try:
+            from datetime import datetime
+            return datetime.fromisoformat(first_ts.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            pass
+    if tp and os.path.exists(tp):
+        return getattr(os.stat(tp), "st_birthtime", None)
+    return None
+
+def foreign_xmls():
+    start = _session_start()
+    if start is None or not bash_cmds:
+        return {}
+    roots, files = [], set()
+    for cmd in bash_cmds:
+        for tok in ABS_PATH_RX.findall(cmd):
+            tok = tok.rstrip("/.,:")
+            if not tok or tok.startswith(FOREIGN_SKIP):
+                continue
+            for marker in ("/build/test-results", "/build/outputs/androidTest-results"):
+                if marker in tok:
+                    roots.append(("module", tok.split(marker)[0]))
+            if re.search(r"(?:^|/)(?:TEST-[^/]*|tests_[^/]*)\.xml$", tok) and os.path.isfile(tok):
+                files.add(tok)
+            cur = tok if os.path.isdir(tok) else os.path.dirname(tok)
+            for _ in range(4):
+                if any(os.path.exists(os.path.join(cur, m)) for m in PROJECT_MARKERS):
+                    roots.append(("project", cur))
+                    break
+                up = os.path.dirname(cur)
+                if up == cur:
+                    break
+                cur = up
+    seen_roots = []
+    for kind, root in roots:
+        if (kind, root) not in seen_roots:
+            seen_roots.append((kind, root))
+    cands = set(files)
+    for kind, root in seen_roots[:12]:
+        for pat in (MODULE_XML if kind == "module" else XML_PATTERNS):
+            cands.update(glob.glob(os.path.join(root, pat)))
+    # Keyed by the path as the session wrote it (not realpath: /var vs /private/var on macOS), so
+    # module_of() lines up with the module roots of this session's edits; deduped on realpath.
+    seen = {os.path.realpath(p) for p in mtimes}
+    out = {}
+    for pth in sorted(cands):
+        rp = os.path.realpath(pth)
+        if rp in seen:
+            continue
+        seen.add(rp)
+        try:
+            mt = os.path.getmtime(pth)
+        except OSError:
+            continue
+        if mt >= start and ran_here(mt):
+            out[pth] = mt
+    return out
+
+foreign = foreign_xmls() if claimed else {}
+if foreign:
+    logline(f"[{ts}] foreign XML from this session's Bash: {len(foreign)} file(s)")
+    mtimes.update(foreign)
+newest_claim = max(mtimes.values(), default=0.0)
+
+# Anchor for "fresh". With no .kt/.java edited this session last_edit_mtime is 0,
+# and then EVERY xml in the tree counts as fresh — including results from months
+# ago. Measured 2026-07-27: the repo held 2 red suites from an earlier run, so any
+# turn saying "test pass" without a Kotlin edit was blocked, and the message called
+# a January file "tươi" — a gate blocking valid work AND naming the wrong cause.
+# With no edit to anchor on, judge the LATEST run only, not the whole history.
+RUN_WINDOW = 300.0
+anchor = last_edit_mtime if last_edit_mtime else (newest_claim - RUN_WINDOW if newest_claim else 0.0)
+
+# Parse only the suites a live question actually depends on.
+need = set()
+if claimed:
+    need |= {p for p, mt in mtimes.items() if mt >= anchor}
+if new_run:
+    need |= {p for p, mt in mtimes.items() if mt > state.get("last_run", 0.0) and p not in foreign}
+# Keyed by (path, index): one file can hold several suites under a <testsuites>
+# root. Only the VALUES are read below, so the key shape is free to change.
+parsed = {(p, i): s for p in need for i, s in enumerate(parse_suites(p))}
+
+fresh_all = [s for p, s in parsed.items() if s["mtime"] >= anchor] if claimed else []
+
+# Scope the arithmetic to the modules edited this session. A repo can hold suites that are
+# red for reasons this turn did not cause and cannot fix (measured 2026-07-28: :app's
+# Roborazzi suites fail on any machine without the gitignored baselines, while the three
+# modules under change were green), and summing across all of them made every truthful,
+# per-suite report unstatable — a gate that no honest sentence can satisfy teaches people to
+# switch it off. Red OUTSIDE the touched modules is not silently forgiven: it still blocks
+# unless the response names the failing suite, so "green" can never be claimed over a hidden
+# red. With no .kt/.java edited there is nothing to scope by, so judge everything, exactly as
+# before.
+def module_of(path):
+    rel = os.path.relpath(path, repo)
+    return rel.split("/build/")[0] if "/build/" in rel else ""
+
+if claimed and touched_modules:
+    fresh = [s for s in fresh_all if module_of(s["path"]) in touched_modules]
+    outside_red = [s for s in fresh_all
+                   if module_of(s["path"]) not in touched_modules and (s["failures"] or s["errors"])]
+else:
+    fresh = fresh_all
+    outside_red = []
+
+# Naming the suite IS the disclosure — a claim that stays silent about it still blocks.
+undisclosed_red = [s for s in outside_red
+                   if s["name"].rsplit(".", 1)[-1] not in msg]
+
+# ── 6.4 — same testcase red across two runs with edits in between ───────────
 # `red-check` is deliberately NOT a marker: agents write it constantly and this hook prints
 # it itself, so quoting the warning back would silence the gate by accident.
 MUTATION_DISCLOSED = re.compile(r"\b(?:mutation|mutant)\b|đột biến|deliberate[-_\s]*red", re.I)
@@ -841,7 +985,7 @@ repeat_failures = []
 if new_run:
     now_failing = set()
     for p, s in parsed.items():
-        if s["mtime"] > state.get("last_run", 0.0) and ran_here(s["mtime"]):
+        if s["mtime"] > state.get("last_run", 0.0) and s["path"] not in foreign and ran_here(s["mtime"]):
             now_failing.update(s["failing"])
     streak = dict(state.get("streak", {}))
     for t in list(streak):
@@ -871,7 +1015,7 @@ if new_run:
     # test was ever red is to remember it here, Stop by Stop.
     cls_hist = dict(state.get("cls", {}))
     for p, s in parsed.items():
-        if s["mtime"] <= state.get("last_run", 0.0) or not s["name"]:
+        if s["mtime"] <= state.get("last_run", 0.0) or not s["name"] or s["path"] in foreign:
             continue
         h = dict(cls_hist.get(s["name"], {}))
         h["red" if (s["failures"] or s["errors"]) else "green"] = s["mtime"]
