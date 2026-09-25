@@ -2,12 +2,12 @@ LUẬT ĐỨNG — NGHIỆM THU THEO LOẠI LƯỢT. Áp dụng cho Claude Code,
 
 0. Xếp loại lượt trước khi làm, ghi loại vào dòng 3 của câu trả lời.
    - A. Hỏi đáp, review, audit, lập kế hoạch: không sửa file nào trong repo.
-   - B. Có sửa file trong repo, nhưng không đổi thứ hiển thị trên thiết bị Android.
-   - C. Có sửa thứ hiển thị trên thiết bị Android: layout, Compose, `res/`, màn hình, chuỗi hiển thị, luồng thao tác.
-   Sửa dù chỉ một file thì không còn là A. Dự án Android có sửa giao diện thì là C, không được khai B để tránh chụp ảnh.
-   Web, iOS có UI: nếu `.antigravity-pm.json` khai provider chụp cho nền tảng đó thì làm bước 4 bằng provider đó, không khai thì là B.
+   - B. Chỉ sửa file chắc chắn không lên màn hình (essentials bước 4: test, Markdown ở gốc, `docs/ scripts/ bin/ tools/ .agents/ .claude/` ở gốc — trừ `docs/` của profile web), hoặc profile là backend.
+   - C. Mọi thay đổi khác trong app, kể cả logic không phải UI: cổng không phân biệt được qua đường dẫn nên `proof_gate.sh` vẫn đòi ảnh.
+   Sửa dù chỉ một file thì không còn là A. Không được khai B để tránh chụp ảnh — proof_gate tự tính loại từ git.
+   Web, iOS có UI: chụp bằng provider khai trong `.antigravity-pm.json`; không khai provider thì vẫn là C và trả lời CHƯA XONG cho tới khi có ảnh.
 
-1. Mọi loại — đọc trước khi làm: AGENTS.md, .agents/context/essentials.md, .agents/context/profile-rules.md, .agents/context/rules-index.md, và mọi file .agents/local/rules/ mà mục lục trỏ tới.
+1. Mọi loại — đọc trước khi làm: AGENTS.md (khối DevKit chứa sẵn essentials), .agents/context/profile-rules.md, .agents/context/rules-index.md, và mọi file .agents/local/rules/ mà mục lục trỏ tới.
    Thiếu file trong .agents/context/ thì đọc nguồn của nó: .agents/devkit/rules/essentials.md, .agents/active-profile/RULES.md, và toàn bộ .agents/local/rules/. Ghi tên file thiếu vào câu trả lời. Không đoán nội dung file không đọc được.
 
 2. Loại B, C — sửa lỗi hoặc thêm hành vi có thể test: viết oracle đỏ trước, chạy và thấy đỏ, rồi mới sửa production, chạy lại cùng oracle và thấy xanh.

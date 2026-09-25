@@ -1,0 +1,151 @@
+{
+  "version": "1.0.0",
+  "generated_by": "agent-kit (scripts/matrix_detect.py)",
+  "project": "agent-workbench",
+  "description": "Ma trận thật của agent-workbench (2026-09-25). DevKit: luật hẹp cho gate/hook/health (đo: test_postfix_gate 31 s, test_proof_gate 24 s, hook_contract_test 25 s); code DevKit còn lại chạy tests/run_impacted.sh (các test nhắc tên file đổi, đo 614 s khi đổi post-fix-gate.py) vì cả bộ agent-kit test > 60 phút; Markdown DevKit chạy repo consistency (2 s). MCP: npm test (3 s), pytest qua uv (65 s). Commit file này để post-fix-gate tin nó.",
+  "rules": [
+    {
+      "component": "antigravity-pm-mcp",
+      "watch_files": [
+        "antigravity-pm-mcp/*.c",
+        "antigravity-pm-mcp/*.cc",
+        "antigravity-pm-mcp/*.cjs",
+        "antigravity-pm-mcp/*.cpp",
+        "antigravity-pm-mcp/*.cs",
+        "antigravity-pm-mcp/*.dart",
+        "antigravity-pm-mcp/*.go",
+        "antigravity-pm-mcp/*.h",
+        "antigravity-pm-mcp/*.hpp",
+        "antigravity-pm-mcp/*.java",
+        "antigravity-pm-mcp/*.js",
+        "antigravity-pm-mcp/*.jsx",
+        "antigravity-pm-mcp/*.kt",
+        "antigravity-pm-mcp/*.kts",
+        "antigravity-pm-mcp/*.m",
+        "antigravity-pm-mcp/*.mjs",
+        "antigravity-pm-mcp/*.mm",
+        "antigravity-pm-mcp/*.php",
+        "antigravity-pm-mcp/*.py",
+        "antigravity-pm-mcp/*.rb",
+        "antigravity-pm-mcp/*.rs",
+        "antigravity-pm-mcp/*.scala",
+        "antigravity-pm-mcp/*.svelte",
+        "antigravity-pm-mcp/*.swift",
+        "antigravity-pm-mcp/*.ts",
+        "antigravity-pm-mcp/*.tsx",
+        "antigravity-pm-mcp/*.vue"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-AUTO-ANTIGRAVITY-PM-MCP-01",
+          "name": "antigravity-pm-mcp: package.json test script",
+          "command": "cd antigravity-pm-mcp && npm test"
+        }
+      ]
+    },
+    {
+      "component": "play-store-mcp",
+      "watch_files": [
+        "play-store-mcp/*.c",
+        "play-store-mcp/*.cc",
+        "play-store-mcp/*.cjs",
+        "play-store-mcp/*.cpp",
+        "play-store-mcp/*.cs",
+        "play-store-mcp/*.dart",
+        "play-store-mcp/*.go",
+        "play-store-mcp/*.h",
+        "play-store-mcp/*.hpp",
+        "play-store-mcp/*.java",
+        "play-store-mcp/*.js",
+        "play-store-mcp/*.jsx",
+        "play-store-mcp/*.kt",
+        "play-store-mcp/*.kts",
+        "play-store-mcp/*.m",
+        "play-store-mcp/*.mjs",
+        "play-store-mcp/*.mm",
+        "play-store-mcp/*.php",
+        "play-store-mcp/*.py",
+        "play-store-mcp/*.rb",
+        "play-store-mcp/*.rs",
+        "play-store-mcp/*.scala",
+        "play-store-mcp/*.svelte",
+        "play-store-mcp/*.swift",
+        "play-store-mcp/*.ts",
+        "play-store-mcp/*.tsx",
+        "play-store-mcp/*.vue"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-AUTO-PLAY-STORE-MCP-01",
+          "name": "play-store-mcp: pytest",
+          "command": "cd play-store-mcp && uv run --frozen --extra dev pytest -q"
+        }
+      ]
+    },
+    {
+      "component": "devkit-gate",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/tree_fp.py",
+        "universal-agent-devkit/scripts/assertion_lint.py",
+        "universal-agent-devkit/bin/postfix-gate"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-01",
+          "name": "post-fix gate",
+          "command": "bash universal-agent-devkit/tests/test_postfix_gate.sh"
+        },
+        {
+          "id": "REG-DK-GATE-02",
+          "name": "proof gate (tree_fp)",
+          "command": "bash universal-agent-devkit/tests/test_proof_gate.sh"
+        }
+      ]
+    },
+    {
+      "component": "devkit-hooks",
+      "watch_files": [
+        "universal-agent-devkit/hooks/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-HOOK-01",
+          "name": "hook contract",
+          "command": "bash universal-agent-devkit/hooks/tests/hook_contract_test.sh"
+        },
+        {
+          "id": "REG-DK-HOOK-02",
+          "name": "proof gate",
+          "command": "bash universal-agent-devkit/tests/test_proof_gate.sh"
+        }
+      ]
+    },
+    {
+      "component": "devkit-health",
+      "watch_files": [
+        "universal-agent-devkit/bin/agent-health.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-HEALTH-01",
+          "name": "health",
+          "command": "bash universal-agent-devkit/tests/test_agent_health.sh"
+        }
+      ]
+    },
+    {
+      "component": "devkit-all",
+      "watch_files": [
+        "universal-agent-devkit/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ALL-01",
+          "name": "DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit",
+          "command": "bash universal-agent-devkit/tests/run_impacted.sh"
+        }
+      ]
+    }
+  ]
+}

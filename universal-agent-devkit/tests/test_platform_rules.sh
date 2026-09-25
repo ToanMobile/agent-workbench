@@ -38,9 +38,9 @@ X="$(newproj codex)"; printf '# Our rules\n- keep\n' > "$X/AGENTS.md"
 install "$X" -a codex -p android
 block "$X/AGENTS.md" | grep -q "$READ_HINT" \
   && ok "codex: AGENTS.md block tells a non-Claude agent to open the listed files" || fail "codex: no read instruction: $(block "$X/AGENTS.md" | sed -n 2,3p)"
-block "$X/AGENTS.md" | grep -q '@.agents/context/essentials.md' && block "$X/AGENTS.md" | grep -q '@.agents/context/profile-rules.md' \
+block "$X/AGENTS.md" | grep -q '^## Lazy senior' && block "$X/AGENTS.md" | grep -q '@.agents/context/profile-rules.md' \
   && block "$X/AGENTS.md" | grep -q '.agents/devkit/AGENTS.md' && grep -q '^# Our rules' "$X/AGENTS.md" \
-  && ok "codex: essentials and profile rules listed by path, master on demand, own text kept" || fail "codex: master/profile rules not listed"
+  && ok "codex: essentials written in AGENTS.md, profile rules listed by path, master on demand, own text kept" || fail "codex: master/profile rules not listed"
 [ -z "$(unresolved "$X" AGENTS.md)" ] && ok "codex: every listed path exists" || fail "codex unresolved: $(unresolved "$X" AGENTS.md | tr '\n' ' ')"
 
 # --- Gemini: reads AGENTS.md (context.fileName), DevKit folder in the workspace ----------
@@ -49,9 +49,9 @@ install "$G" -a gemini -p android
 [ ! -e "$G/GEMINI.md" ] && [ -f "$G/AGENTS.md" ] && [ ! -L "$G/AGENTS.md" ] && ok "gemini: no GEMINI.md, a project AGENTS.md instead" || fail "gemini: GEMINI.md generated or no AGENTS.md"
 gemini_names() { python3 -c 'import json,sys; n=json.load(open(sys.argv[1])).get("context",{}).get("fileName"); print(" ".join(n if isinstance(n,list) else [n or ""]))' "$1" 2>/dev/null; }
 [ "$(gemini_names "$G/.gemini/settings.json" | cut -d' ' -f1)" = "AGENTS.md" ] && ok "gemini: context.fileName reads AGENTS.md" || fail "gemini: context.fileName is '$(gemini_names "$G/.gemini/settings.json")'"
-block "$G/AGENTS.md" | grep -q '@.agents/context/essentials.md' && block "$G/AGENTS.md" | grep -q '@.agents/context/profile-rules.md' \
+block "$G/AGENTS.md" | grep -q '^## Lazy senior' && block "$G/AGENTS.md" | grep -q '@.agents/context/profile-rules.md' \
   && block "$G/AGENTS.md" | grep -q "$READ_HINT" \
-  && ok "gemini: AGENTS.md imports essentials and profile rules, with the read-by-path fallback" || fail "gemini: block: $(block "$G/AGENTS.md" | tr '\n' '|' | cut -c1-300)"
+  && ok "gemini: AGENTS.md carries the essentials in full and imports profile rules, with the read-by-path fallback" || fail "gemini: block: $(block "$G/AGENTS.md" | tr '\n' '|' | cut -c1-300)"
 [ -z "$(unresolved "$G" AGENTS.md)" ] && ok "gemini: every import path exists" || fail "gemini unresolved: $(unresolved "$G" AGENTS.md | tr '\n' ' ')"
 python3 - "$G/.gemini/settings.json" "$DEVKIT_DIR" <<'PY_EOF' && ok "gemini: symlink mode adds the DevKit folder to context.includeDirectories" || fail "gemini: DevKit folder not in includeDirectories"
 import json, sys
@@ -81,8 +81,8 @@ install "$C" -a cursor -p web
 M="$C/.cursor/rules/universal-agent-devkit.mdc"
 [ "$(head -1 "$M" 2>/dev/null)" = "---" ] && sed -n '2,/^---$/p' "$M" | grep -qx 'alwaysApply: true' \
   && ok "cursor: .cursor/rules/universal-agent-devkit.mdc is always applied" || fail "cursor: no always-applied .mdc rule"
-block "$M" | grep -q '@.agents/context/essentials.md' && block "$M" | grep -q '@.agents/context/profile-rules.md' && [ -z "$(unresolved "$C" .cursor/rules/universal-agent-devkit.mdc)" ] \
-  && ok "cursor: the rule includes essentials and profile rules, every path exists" || fail "cursor: .mdc block: $(block "$M" | tr '\n' '|' | cut -c1-200)"
+block "$C/AGENTS.md" | grep -q '^## Lazy senior' && block "$M" | grep -q '@.agents/context/profile-rules.md' && ! grep -q 'devkit-essentials:' "$M" && [ -z "$(unresolved "$C" .cursor/rules/universal-agent-devkit.mdc)" ] \
+  && ok "cursor: essentials in AGENTS.md (Cursor loads it), the rule includes profile rules, every path exists" || fail "cursor: .mdc block: $(block "$M" | tr '\n' '|' | cut -c1-200)"
 block "$C/.cursorrules" | grep -q "$READ_HINT" && ok "cursor: .cursorrules block carries the read instruction" || fail "cursor: .cursorrules block has @-imports only"
 install "$C" -a cursor -p web
 [ "$(grep -c '^alwaysApply' "$M")" = 1 ] && [ "$(grep -c 'universal-agent-devkit:start' "$M")" = 1 ] \

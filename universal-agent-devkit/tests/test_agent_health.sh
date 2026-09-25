@@ -90,6 +90,11 @@ python3 "$HEALTH" -t "$TMP/game" 2>&1 | strip | grep -q "Thiếu MCP của profi
 n_prof="$(ls -d "$DEVKIT_DIR"/profiles/*/ | wc -l | tr -d ' ')"
 python3 "$HEALTH" -t "$TMP/proj" 2>&1 | strip | grep -q "Có $n_prof profile" && ok "profile count measured from disk ($n_prof)" || fail "profile count not measured"
 
+# `health <dir>` takes the project like `init <dir>` does (same as -t <dir>).
+a="$(python3 "$HEALTH" "$TMP/proj" 2>&1 | strip | score_of)"; ra=$?
+b="$(python3 "$HEALTH" -t "$TMP/proj" 2>&1 | strip | score_of)"
+[ -n "$a" ] && [ "$a" = "$b" ] && ok "positional project dir works like -t ($a)" || fail "positional dir: '$a' vs -t '$b'"
+
 echo
 [ "$FAILS" -eq 0 ] && echo "agent-health: all checks passed" || echo "agent-health: $FAILS check(s) failed"
 exit "$FAILS"

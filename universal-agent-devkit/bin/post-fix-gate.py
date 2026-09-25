@@ -329,11 +329,15 @@ def write_full_pass_receipt(project_dir, exit_code):
         pass
     if exit_code != 0:
         return
+    fingerprint = tree_fp.tree_fingerprint(project_dir)
+    if not fingerprint:   # proof_gate never matches an empty one: say why XONG will be refused
+        log_warn(tr(f"Không tính được dấu vân tay code — XONG sẽ bị proof_gate chặn: {getattr(tree_fp.tree_fingerprint, 'error', '') or 'git add thất bại'}",
+                    f"Code fingerprint unavailable — proof_gate will refuse XONG: {getattr(tree_fp.tree_fingerprint, 'error', '') or 'git add failed'}"))
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"time": time.time(), "exit": 0, "project": str(Path(project_dir).resolve()),
-                       "fingerprint": tree_fp.tree_fingerprint(project_dir)}, f)
+                       "fingerprint": fingerprint}, f)
     except OSError as e:
         log_err(f"full-pass receipt not written: {e}")
 
@@ -789,9 +793,65 @@ def run_dependency_audit(modified_files: list) -> tuple:
 
 # Lazy-senior advisories (core-rules §4): warnings, never blocking. A new dependency can be
 # the right call; only the answer can say why stdlib / native / an installed one fell short.
-# ponytail: Gradle, version catalog, package.json and Unity Packages/manifest.json only, add pip/pubspec/Cargo/SwiftPM when a profile needs it
+# ponytail: TOML manifests need Python 3.11+ (tomllib), none warn below it, add a regex fallback if an older host shows up
 _DEP_COORD = r"[\"']([\w.\-]+:[\w.\-]+)(?::[^\"'\s]*)?[\"']"
 _DEBT_MARKER = r"(?:#|//|/\*|--|<!--)[ \t]*ponytail:([^\n]*)"
+_PEP508_NAME = re.compile(r"\s*([A-Za-z0-9][A-Za-z0-9._\-]*)")
+
+
+def _req_name(req: str) -> str:
+    """PEP 503-normalised package name of one requirement line, or "" (URL with no #egg=)."""
+    req = req.strip()
+    if req.startswith(("-e ", "--editable ")):
+        req = req.split(None, 1)[1]
+    egg = re.search(r"#egg=([A-Za-z0-9._\-]+)", req)
+    if egg:
+        name = egg.group(1)
+    elif req.startswith("-") or re.match(r"[\w+.\-]+://", req):
+        return ""
+    else:
+        m = _PEP508_NAME.match(req)
+        name = m.group(1) if m else ""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _toml_names(text: str) -> set:
+    try:
+        import tomllib  # noqa: PLC0415
+        data = tomllib.loads(text)
+    except (ImportError, ValueError):
+        return set()
+    names = set()
+    def tables(d):
+        for k, v in d.items():
+            if not isinstance(v, dict):
+                continue
+            if not k.endswith("dependencies"):
+                tables(v)
+                continue
+            for name, spec in v.items():  # Cargo/Poetry: {pkg: spec}; PEP 621 / PDM groups: {group: [reqs]}
+                if isinstance(spec, list):
+                    names.update(_req_name(r) for r in spec if isinstance(r, str) and _req_name(r))
+                else:
+                    names.add(name)
+    tables(data)
+    reqs = (data.get("project") or {}).get("dependencies") or []
+    names.update(_req_name(r) for r in reqs if isinstance(r, str) and _req_name(r))
+    names.discard("python")  # Poetry's interpreter pin, not a package
+    return names
+
+
+def _pubspec_names(text: str) -> set:
+    names, section = set(), None
+    for line in text.splitlines():
+        top = re.match(r"^(\w+):", line)
+        if top:
+            section = top.group(1)
+            continue
+        m = re.match(r"^  (\w+):", line)
+        if m and section in ("dependencies", "dev_dependencies", "dependency_overrides"):
+            names.add(m.group(1))
+    return names
 
 
 def dependency_names(kind, text: str) -> set:
@@ -805,6 +865,25 @@ def dependency_names(kind, text: str) -> set:
         return {n for s in NPM_PINNED_SECTIONS if isinstance(pkg.get(s), dict) for n in pkg[s]}
     if kind in ("gradle", "version-catalog"):
         return set(re.findall(_DEP_COORD, text))
+    if kind == "pip":
+        return {n for line in text.splitlines() if not line.lstrip().startswith("#") and (n := _req_name(line))}
+    if kind == "podfile":
+        return set(re.findall(r"(?m)^\s*pod\s+['\"]([^'\"]+)['\"]", text))
+    if kind == "swiftpm":
+        return {u.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+                for u in re.findall(r"\.package\s*\([^)]*?\burl\s*:\s*\"([^\"]+)\"", text)}
+    if kind == "pubspec":
+        return _pubspec_names(text)
+    if kind == "cargo":
+        return _toml_names(text)
+    if kind == "maven-pom":
+        out = set()
+        for block in re.findall(r"<dependency>(.*?)</dependency>", re.sub(r"<!--.*?-->", "", text, flags=re.S), re.S):
+            g = re.search(r"<groupId>\s*([^<\s]+)\s*</groupId>", block)
+            a = re.search(r"<artifactId>\s*([^<\s]+)\s*</artifactId>", block)
+            if g and a:
+                out.add(f"{g.group(1)}:{a.group(1)}")
+        return out
     return set()
 
 
@@ -1117,6 +1196,11 @@ def active_profile_name() -> str:
         return tr("(không có profile)", "(no profile)")
 
 
+# Not .txt or images: requirements.txt, app assets and drawables are read by the program.
+DOC_EXT = (".md", ".rst", ".adoc")
+DOC_NAMES = {"LICENSE", "NOTICE", "AUTHORS", "CODEOWNERS"}
+
+
 def uncovered_code_files(modified_files, rules, covers=None) -> list:
     """Changed source files that no matrix rule watches — changes nothing will re-test later."""
     covers = checklist_covers() if covers is None else covers
@@ -1263,6 +1347,32 @@ def _gradle_root(project_dir, module_root):
         if cur == project_dir or project_dir not in cur.parents:
             return project_dir
         cur = cur.parent
+
+
+_CD_PREFIX = re.compile(r"""^\s*\(?\s*cd\s+(["']?)([^"'&;|()]+?)\1\s*(?:&&|;)""")
+_GRADLE_P = re.compile(r"""gradlew\b[^;&|]*?\s(?:-p|--project-dir)(?:\s+|=)(["']?)([^\s"';&|()]+)\1""")
+_GRADLE_BARE = re.compile(r"""^\s*(?:\./)?gradlew\b|^\s*gradle\b""")
+
+
+def _command_gradle_dir(project_dir, command):
+    """Directory a matrix command runs Gradle in — `cd <dir> &&|;` (also in a subshell),
+    `gradlew -p|--project-dir <dir>`, or a bare `./gradlew …` (the project) — or None when the
+    command has another shape, and callers then skip the composite-build check."""
+    command = command or ""
+    m = _CD_PREFIX.match(command) or _GRADLE_P.search(command)
+    if m:
+        d = project_dir / m.group(2).strip()
+    elif _GRADLE_BARE.match(command):
+        d = project_dir
+    else:
+        return None
+    # The command's own dir, not the build root above it: from `cd app && ../gradlew` a bare task
+    # runs only :app, so narrowing to a sibling module would skip the tests the matrix asked for
+    # (review 3). Such commands run in full — slower, never a false PASS.
+    try:
+        return d.resolve()
+    except OSError:
+        return d
 
 
 class _TestIndex:
@@ -1528,13 +1638,19 @@ def expand_impacted_command(project_dir, template, full_command, selection):
     names = list(dict.fromkeys(names))
     if kind == "gradle":
         by_module = {}
+        run_dir = _command_gradle_dir(project_dir, template)
         for t in sorted(tests):
             info = _gradle_source_set(t)
             groot = _gradle_root(project_dir, info[0])
+            if run_dir is not None and groot.resolve() != run_dir:
+                continue  # another (composite) build: its tasks are not addressable from run_dir
             mod_dir = project_dir / info[0] if info[0] else project_dir
             rel_mod = mod_dir.relative_to(groot).as_posix() if mod_dir != groot else ""
             gpath = "" if not rel_mod else ":" + rel_mod.replace("/", ":")
             by_module.setdefault(gpath, []).extend(tests[t])
+        if not by_module:
+            return None, tr("test được chọn thuộc một build Gradle khác thư mục lệnh chạy",
+                            "selected tests belong to a Gradle build other than the one the command runs")
         if not all(_SAFE_GRADLE_PATH.match(m) for m in by_module):
             return None, tr("đường dẫn module Gradle không an toàn", "unsafe Gradle module path")
         m = _GRADLE_MODULE_TESTS.search(template)
@@ -1663,6 +1779,7 @@ def narrow_fallback(project_dir, test):
             "chỉ XML tài nguyên (layout/values/drawable) — không chạy suite JVM",
             "resource XML only (layout/values/drawable) — JVM suite not run"))
     by = {}
+    run_dir = _command_gradle_dir(project_dir, template)
     for f in code:
         info = _gradle_source_set(f)
         if not info or info[1] == "instrumented":
@@ -1671,6 +1788,8 @@ def narrow_fallback(project_dir, test):
         if not stem or not _SAFE_IDENT.match(stem):
             return None
         groot = _gradle_root(project_dir, info[0])
+        if run_dir is not None and groot.resolve() != run_dir:
+            return None  # a file of another (composite) build: only the full command covers it
         mod_dir = project_dir / info[0] if info[0] else project_dir
         try:
             rel_mod = mod_dir.relative_to(groot).as_posix()
@@ -1860,66 +1979,75 @@ def run_assertion_audit(modified_files: list) -> tuple:
 
 
 def run_proof_block(modified_files: list) -> tuple:
-    """Hard-fail when proof images repeat each other, including ones already in the folder."""
-    changed = []
-    for rel in modified_files:
-        low = rel.replace("\\", "/").lower()
-        if low.endswith((".png", ".jpg", ".jpeg")) and any(h in low for h in _PROOF_HINTS):
-            changed.append(rel)
+    """Hard-fail when a proof image made in this turn is empty or repeats another proof.
+    Only fresh images are judged: on disk (changed, or in a proof folder even when ignored or
+    committed) and modified since POSTFIX_PROOF_SINCE (epoch seconds; default the last 6 h).
+    Older images are references only, so yesterday's duplicates never block a later turn, and a deleted image
+    is not "0 byte". proof_gate.sh separately requires the cited PNG to be from this turn."""
     _scripts_on_path()
     try:
         import proof_phash as ph  # noqa: PLC0415
     except ImportError:
         return True, []
-    sha_of = {}
-    bits_of = {}
-    findings = []
+    try:
+        since = float(os.environ.get("POSTFIX_PROOF_SINCE") or time.time() - 6 * 3600)
+    except ValueError:
+        since = time.time() - 6 * 3600
+    base = get_project_dir()
+    images = {}   # resolved path -> (label, fresh)
+    for rel in modified_files:
+        low = rel.replace("\\", "/").lower()
+        if rel in DELETED_FILES or not low.endswith((".png", ".jpg", ".jpeg")) or not any(h in low for h in _PROOF_HINTS):
+            continue
+        path = resolve_path(rel)
+        try:
+            if path.is_file():
+                images[path.resolve()] = (rel, path.stat().st_mtime >= since)
+        except OSError:
+            continue
+    for folder in (base / ".claude" / "audit-gate", base / "reports", base / ".agents" / "evidence"):
+        if folder.is_dir():
+            for img in list(folder.glob("*.png")) + list(folder.glob("*.jpg")) + list(folder.glob("*.jpeg")):
+                try:   # an ignored or committed proof made in this turn is judged too
+                    rel = img.relative_to(base).as_posix() if base in img.parents else str(img)
+                    images.setdefault(img.resolve(), (rel, img.stat().st_mtime >= since))
+                except OSError:
+                    continue
 
-    def take(rel, data):
+    sha_of, bits_of, findings = {}, {}, []
+    fresh = []
+    for path, (label, is_fresh) in images.items():
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        if is_fresh:
+            fresh.append((path.stat().st_mtime, label, data))
+        elif data:   # a reference: remembered, never judged
+            sha_of.setdefault(hashlib.sha256(data).hexdigest(), label)
+            bits = ph.dhash(data)
+            if bits is not None:
+                bits_of[label] = bits
+    for _mtime, rel, data in sorted(fresh):
         if not data:
             findings.append(tr(f"{rel}: ảnh proof 0 byte", f"{rel}: zero-byte proof image"))
-            return
+            continue
         digest = hashlib.sha256(data).hexdigest()
-        if digest in sha_of and sha_of[digest] != rel:
+        if digest in sha_of:
             findings.append(tr(f"{rel}: trùng byte với {sha_of[digest]}",
                                f"{rel}: identical bytes to {sha_of[digest]}"))
-        else:
-            sha_of[digest] = rel
+            continue
+        sha_of[digest] = rel
         bits = ph.dhash(data)
         if bits is None:
-            return
+            continue
         for other, prev in bits_of.items():
-            if other != rel and ph.too_similar(bits, prev):
+            if ph.too_similar(bits, prev):
                 findings.append(tr(
                     f"{rel}: giống {other} ≥ 98% (cùng một màn, không phải trạng thái mới)",
                     f"{rel}: ≥98% similar to {other} (same screen, not a new state)"))
                 break
         bits_of[rel] = bits
-
-    for rel in changed:
-        path = resolve_path(rel)
-        try:
-            take(rel, path.read_bytes() if path.is_file() else b"")
-        except OSError:
-            pass
-    base = get_project_dir()
-    changed_resolved = set()
-    for rel in changed:
-        try:
-            changed_resolved.add(resolve_path(rel).resolve())
-        except OSError:
-            pass
-    for folder in (base / ".claude" / "audit-gate", base / "reports", base / ".agents" / "evidence"):
-        if not folder.is_dir():
-            continue
-        for img in list(folder.glob("*.png")) + list(folder.glob("*.jpg")) + list(folder.glob("*.jpeg")):
-            try:
-                if img.resolve() in changed_resolved:
-                    continue
-                take(str(img), img.read_bytes())
-            except OSError:
-                continue
-    # A duplicate already sitting in the proof folder fails the next run too.
     return len(findings) == 0, findings
 
 
@@ -2113,7 +2241,8 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
     for f, lbl in PREEXISTING_SECRETS[:15]:   # already in HEAD: shown, never blocking the commit
         log_warn(tr(f"{f}: {lbl} — đã có sẵn trong {BASE_REF}, không do commit này (không chặn); nên sửa riêng",
                     f"{f}: {lbl} — already in {BASE_REF}, not introduced by this commit (not blocking); fix it separately"))
-    for note in run_lazy_senior_advisories(modified_files):
+    advisories = run_lazy_senior_advisories(modified_files)
+    for note in advisories:
         log_warn(note)
     unreadable = [f for f in modified_files if f not in DELETED_FILES
                   and STAGED_MODES.get(f, "").startswith("100") and read_changed_text(f) is None]
@@ -2129,7 +2258,7 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
     if args.json:
         print(json.dumps({"mode": "staged", "exit_code": exit_code, "static_ok": static_ok,
                           "files": modified_files, "unreadable": unreadable, "static": counts,
-                          "findings": FINDINGS},
+                          "findings": FINDINGS, "advisories": advisories},
                          ensure_ascii=False))
     return exit_code
 
@@ -2520,7 +2649,8 @@ def main():
             log_err(msg)
     for note in hardware_boundary_notes(modified_files):
         log_warn(note)
-    for note in run_lazy_senior_advisories(modified_files):
+    advisories = run_lazy_senior_advisories(modified_files)
+    for note in advisories:
         log_warn(note)
 
     # Findings already in the base version, from every static layer above: shown, never blocking.
@@ -2548,7 +2678,10 @@ def main():
     impacted_n = sum(t.get("impacted_count", 0) for t in impacted_run)
     test_mode = ("none" if not run_tests or not regression_tests
                  else "impacted" if impacted_run else "full")
-    no_coverage = (not rules or not regression_tests) and not args.allow_no_tests
+    # Documentation alone cannot break a test, so it needs none (code without a test still does).
+    docs_only = bool(modified_files) and all(
+        f.lower().endswith(DOC_EXT) or Path(f).name in DOC_NAMES for f in modified_files)
+    no_coverage = (not rules or not regression_tests) and not args.allow_no_tests and not docs_only
     # Every changed source file must be re-testable later; one no rule watches would
     # silently fall out of the regression checklist.
     uncovered = [] if args.allow_no_tests else uncovered_code_files(modified_files, rules)
@@ -2596,7 +2729,7 @@ def main():
         print(f"  • {YELLOW}{tr('Không đọc được để quét:', 'Could not read for scanning:')}{RESET} {f}")
     for f in tests_touched[:5]:
         print(f"  • {YELLOW}{tr('Test đã có bị sửa/xoá:', 'Existing test edited/deleted:')}{RESET} {f}")
-    print(f"  • {tr('Gate không xác minh: DESIGN.md/a11y, RED/GREEN, Immutable Guards, OpenCodeReview. Ảnh nghiệm thu không nằm trong exit code; agent vẫn phải gắn PNG của lượt này trước khi nói XONG.', 'The gate does not verify: DESIGN.md/a11y, RED/GREEN, immutable guards, OpenCodeReview. The proof image is outside the exit code; the agent still attaches a PNG from this turn before saying XONG.')}")
+    print(f"  • {tr('Gate không xác minh: DESIGN.md/a11y, RED/GREEN, Immutable Guards, OpenCodeReview. Ảnh nghiệm thu không nằm trong exit code; agent vẫn phải gắn PNG của lượt này trước khi nói XONG, trừ khi thay đổi chắc chắn không lên màn hình (essentials bước 4).', 'The gate does not verify: DESIGN.md/a11y, RED/GREEN, immutable guards, OpenCodeReview. The proof image is outside the exit code; the agent still attaches a PNG from this turn before saying XONG unless the change surely cannot show on a screen (essentials step 4).')}")
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
     if run_tests and not impacted_run:
@@ -2670,6 +2803,7 @@ def main():
                        "perf": len(perf_findings),
                        "resilience": len(resilience_findings), "logging": len(logging_findings)},
             "findings": FINDINGS,
+            "advisories": advisories,  # lazy-senior warnings, never blocking
             "report": str(report_file),
             "matrix_path": str(find_matrix_path(args.matrix) or ""),
             "uncovered": [] if args.allow_no_tests else uncovered_code_files(modified_files, rules),

@@ -239,4 +239,45 @@ make_repo "$IMPACTED" "$FULL"
 echo "// tweak" >> app/src/main/kotlin/pkg/Foo.kt
 out="$(VACUITY_REVERT=1 run_gate --run-tests)"; check_exit "vacuity: test green without the change too -> FAIL" 1 $?
 has "vacuity: labelled VACUOUS" '"label": "VACUOUS"' "$out"
+# --- Composite build: a file of ANOTHER Gradle build must not narrow the command (GeelyEx2, 2026-09-25).
+# a/ and shared/ each have settings.gradle; the command runs Gradle in a/. Narrowing by shared/'s
+# root gave ":testDebugUnitTest", a task a/'s root project does not have -> FAIL with no test run.
+C="$TMP/composite"; mkdir -p "$C/a/app/src/main/kotlin/pkg" "$C/shared/src/main/kotlin/pkg" "$C/shared/src/test/kotlin/pkg"
+touch "$C/a/settings.gradle" "$C/shared/settings.gradle"
+python3 - "$GATE" "$C" <<'PYT' 2>"$TMP/comp.err" && ok "composite build: other build's file -> full command; own module still narrowed" || bad "composite build: $(tail -2 "$TMP/comp.err")"
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("gate", sys.argv[1]); g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+root = Path(sys.argv[2])
+t = {"impacted_command": "cd a && ./gradlew {gradle_module_tests:testDebugUnitTest}",
+     "command": "cd a && ./gradlew testDebugUnitTest", "files": ["shared/src/main/kotlin/pkg/Theme.kt"]}
+assert g.narrow_fallback(root, t) is None, g.narrow_fallback(root, t)
+sel = {"kind": "gradle", "tests": {"shared/src/test/kotlin/pkg/ThemeTest.kt": ["pkg.ThemeTest"]}}
+cmd, why = g.expand_impacted_command(root, t["impacted_command"], t["command"], sel)
+assert cmd is None, cmd
+own = dict(t, files=["a/app/src/main/kotlin/pkg/Foo.kt"])
+got = g.narrow_fallback(root, own)
+assert got and ":app:testDebugUnitTest --tests '*Foo*'" in got[0], got
+sel2 = {"kind": "gradle", "tests": {"a/app/src/test/kotlin/pkg/FooTest.kt": ["pkg.FooTest"]}}
+cmd2, n2 = g.expand_impacted_command(root, t["impacted_command"], t["command"], sel2)
+assert cmd2 and ":app:testDebugUnitTest --tests pkg.FooTest" in cmd2, cmd2
+# Other ways a command names the Gradle dir: a subshell `(cd a && …)`, `cd a; …`, `gradlew -p a`.
+for tpl in ("(cd a && ./gradlew {gradle_module_tests:testDebugUnitTest})",
+            "cd a; ./gradlew {gradle_module_tests:testDebugUnitTest}",
+            "./gradlew -p a {gradle_module_tests:testDebugUnitTest}",
+            "a/gradlew --project-dir a {gradle_module_tests:testDebugUnitTest}"):
+    full = tpl.replace("{gradle_module_tests:testDebugUnitTest}", "testDebugUnitTest")
+    assert g.narrow_fallback(root, {"impacted_command": tpl, "command": full, "files": ["shared/src/main/kotlin/pkg/Theme.kt"]}) is None, tpl
+    got = g.narrow_fallback(root, {"impacted_command": tpl, "command": full, "files": ["a/app/src/main/kotlin/pkg/Foo.kt"]})
+    assert got and ":app:testDebugUnitTest" in got[0], (tpl, got)
+# A single build run from a module dir (`cd app && ../gradlew`, `-p app`): a bare task there runs
+# only :app, so a sibling module's file must not narrow the command to :lib (review 3: false PASS).
+S = root / "single"; (S / "app/src/main/kotlin/pkg").mkdir(parents=True); (S / "lib/src/main/kotlin/pkg").mkdir(parents=True)
+(S / "settings.gradle").touch()
+for tpl in ("cd app && ../gradlew {gradle_module_tests:testDebugUnitTest}", "./gradlew -p app {gradle_module_tests:testDebugUnitTest}"):
+    full = tpl.replace("{gradle_module_tests:testDebugUnitTest}", "testDebugUnitTest")
+    got = g.narrow_fallback(S, {"impacted_command": tpl, "command": full, "files": ["lib/src/main/kotlin/pkg/Util.kt"]})
+    assert got is None or ":lib:" not in got[0], (tpl, got)
+PYT
+
 if [ "$FAILS" -eq 0 ]; then echo "ALL IMPACTED-SELECTION TESTS PASSED"; else echo "$FAILS FAILED"; exit 1; fi

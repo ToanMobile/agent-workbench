@@ -14,6 +14,10 @@
 #   - starts with the PNG signature,
 #   - is larger than 8 KB (PROOF_MIN_BYTES),
 #   - was modified after the turn's user message (transcript timestamp).
+# The image is waived only when bin/tree_fp.py image_required() says the change cannot show
+# on a screen: the backend profile, or every changed file (working tree, untracked, commits
+# of the turn) is surely off-screen (tests, docs, Markdown, top-level tooling dirs). A cited
+# PNG is checked even then. The full gate is never waived.
 # The hook never takes the screenshot; it only refuses an XONG without one.
 #
 # Loop guard: PROOF_GATE_MAX_BLOCKS (default 2) blocks per session, then the stop
@@ -46,7 +50,7 @@ while [ -L "${SELF}" ]; do
 done
 PROOF_INPUT="${INPUT}" PROOF_REPO="${REPO_ROOT}" PROOF_LOG_DIR="${LOG_DIR}" \
 PROOF_BIN="$(cd "$(dirname "${SELF}")/../bin" 2>/dev/null && pwd)" python3 <<'PY'
-import datetime, json, os, re, sys
+import datetime, glob, hashlib, json, os, re, sys
 
 repo = os.environ["PROOF_REPO"]
 log_dir = os.environ["PROOF_LOG_DIR"]
@@ -127,6 +131,22 @@ for rel in cited:
         problems.append("%s: không xác định được lúc bắt đầu lượt để so thời gian" % rel); continue
     if st.st_mtime < start:
         problems.append("%s: ảnh cũ, sửa lúc trước lượt này bắt đầu" % rel); continue
+    stamp = re.search(r"proof-(\d{8}-\d{6})\.png$", rel)
+    try:
+        taken = datetime.datetime.strptime(stamp.group(1), "%Y%m%d-%H%M%S").timestamp() if stamp else None
+    except ValueError:
+        taken = None
+    if taken is None or taken < start - 60:
+        problems.append("%s: giờ chụp trong tên file có trước lượt này (touch/đổi tên ảnh cũ không phải ảnh mới)" % rel); continue
+    if taken > datetime.datetime.now().timestamp() + 60:
+        problems.append("%s: giờ chụp trong tên file ở tương lai — không phải ảnh chụp trong lượt này" % rel); continue
+    with open(path, "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()
+    twin = next((o for o in sorted(glob.glob(os.path.join(repo, "reports", "*.png")))
+                 if os.path.realpath(o) != os.path.realpath(path)
+                 and hashlib.sha256(open(o, "rb").read()).hexdigest() == digest), None)
+    if twin:
+        problems.append("%s: trùng byte với %s (ảnh cũ chép sang tên mới)" % (rel, os.path.relpath(twin, repo))); continue
     good.append(rel)
 
 def full_gate_problem():
@@ -147,13 +167,24 @@ def full_gate_problem():
         return "không xác định được lúc bắt đầu lượt để so với lần chạy cổng --full"
     if rec.get("time", 0) < start:
         return "lần chạy cổng --full exit 0 là từ trước lượt này — chạy lại trong lượt"
-    if rec.get("fingerprint") != tree_fp.tree_fingerprint(repo):
+    now_fp = tree_fp.tree_fingerprint(repo)
+    if not now_fp or not rec.get("fingerprint"):
+        why = getattr(tree_fp.tree_fingerprint, "error", "") or "?"
+        return "không tính được dấu vân tay code hiện tại (%s) — không đối chiếu được với lần chạy cổng --full" % why
+    if rec.get("fingerprint") != now_fp:
         return "code đã đổi sau lần chạy cổng --full exit 0 — chạy lại cổng trên code hiện tại"
     return None
 
 gate_problem = full_gate_problem()
-if good and not gate_problem:
-    log("pass session=%s proof=%s" % (session, ",".join(good)))
+need_image, scope = True, "unknown"
+try:
+    import tree_fp
+    need_image, scope = tree_fp.image_required(repo, start)
+except Exception as e:  # an unreadable scope must never waive the image
+    scope = "scope check failed: %s" % e
+# A cited PNG is always checked: a waived image never excuses a bogus one.
+if not gate_problem and (good or not need_image) and not problems:
+    log("pass session=%s proof=%s scope=%s" % (session, ",".join(good) or "-", scope))
     sys.exit(0)
 
 state = {}
@@ -171,12 +202,15 @@ except OSError:
 lines = ["⛔ PROOF-GATE: câu trả lời mở bằng XONG nhưng lượt này chưa đủ điều kiện (cổng --full exit 0 + ảnh nghiệm thu)."]
 if gate_problem:
     lines.append("  - CỔNG: " + gate_problem + ". Chạy từ gốc repo: python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full")
-if not good:
+if problems or (not good and need_image):
+    if need_image:
+        lines.append("  - ẢNH cần vì: " + scope)
     if cited:
         lines += ["  - ẢNH: " + p for p in problems]
     else:
         lines.append("  - ẢNH: câu trả lời không nêu đường dẫn reports/proof-<yyyyMMdd-HHmmss>.png nào.")
-lines.append("Chụp bằng: python3 .agents/devkit/bin/proof-capture.py "
+if need_image:
+    lines.append("Chụp bằng: python3 .agents/devkit/bin/proof-capture.py "
              "(nó kiểm adb devices; không có máy thì mở AVD rồi ghi reports/proof-<yyyyMMdd-HHmmss>.png). "
              "PNG thật, > 8 KB, chụp trong lượt này. Nêu đường dẫn và serial ở dòng 3. "
              "Lệnh thoát khác 0 thì mở câu trả lời bằng CHƯA XONG và dán lỗi. Không vẽ ảnh, không dùng lại ảnh cũ.")

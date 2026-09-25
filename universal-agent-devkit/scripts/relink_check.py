@@ -114,8 +114,10 @@ def main(argv):
         return 0
     gone = missing(project)
     if not gone:
-        subprocess.run([sys.executable, os.path.join(DEVKIT, "scripts", "context_sync.py"), project, "--quiet"],
-                       capture_output=True)
+        # --context-only: rewriting the tracked AGENTS.md right after a checkout would leave the
+        # tree dirty (and could block the next checkout); SessionStart refreshes it instead.
+        subprocess.run([sys.executable, os.path.join(DEVKIT, "scripts", "context_sync.py"), project, "--quiet",
+                        "--context-only"], capture_output=True)
         return 0
     left = relink(project, gone)
     log = os.path.join(project, ".claude", "audit-gate", "relink.log")

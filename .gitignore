@@ -28,3 +28,21 @@ Thumbs.db
 .env.*.local
 temp/
 tmp/
+
+# universal-agent-devkit:start
+# Local DevKit install state & *_old conflict backups (review/merge them, don't commit)
+.claude/audit-gate/
+.agents/context/
+.agents/devkit
+.agents/regression_matrix.generated.json
+.devkit_backups.log
+.devkit-files
+*_old
+*_old.*
+*_old_*
+# universal-agent-devkit:end
+
+# agent-workbench is public: personal agent memory and machine-local agent config stay local
+.agents/local/memory/
+.gemini/settings.json
+.claude/agent-memory/

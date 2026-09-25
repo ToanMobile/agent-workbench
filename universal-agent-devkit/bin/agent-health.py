@@ -276,9 +276,11 @@ def main(argv=None):
     parser.add_argument("--run-tests", action="store_true",
                         help="Run the real test suite (`agent-kit test`) and include it in the score")
     parser.add_argument("-t", "--target", help="Project to check (default: git root of the current directory)")
+    parser.add_argument("project", nargs="?", help="Same as -t, so `health .` works like `init .`")
     parser.add_argument("-l", "--lang", choices=["en", "vi"],
                         help="Output language (default: $DEVKIT_LANG, then the project's saved language, then vi)")
     args = parser.parse_args(argv)
+    args.target = args.target or args.project
 
     if args.target:
         target = Path(args.target).expanduser().resolve()

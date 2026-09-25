@@ -20,6 +20,8 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 REPO="$TMP/repo"; mkdir -p "$REPO/src" "$REPO/templates" "$REPO/reports"
 ( cd "$REPO" && git init -q . && git config user.email t@t && git config user.name t
   echo "fun ok() = 1" > src/Core.kt && echo 'exit 0' > result.sh
+  mkdir -p .agents && echo '{"profile":"android"}' > .agents/active-profile.json
+  printf '.claude/audit-gate/\n' > .gitignore   # as agent-kit init writes it: an excluded path that is ignored
   cat > templates/regression_matrix.json <<'JSON'
 {"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
  "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"sh result.sh"}]}]}
@@ -59,7 +61,7 @@ Gate exit 0"; rc=$?
 
 # Full gate exit 0 on this code, then the screenshot: the complete handover.
 reset; turn_start; gate_full; g=$?
-P="reports/proof-20260924-101500.png"; png "$REPO/$P" 20000
+P="reports/proof-$(date +%Y%m%d-%H%M%S).png"; png "$REPO/$P" 20000   # stamp = capture time (proof-capture.py)
 stop "**XONG**
 Đã sửa lỗi X.
 Gate exit 0 · ảnh $P · serial emulator-5554"; rc=$?
@@ -113,6 +115,169 @@ reset; turn_start; gate_full
 stop "XONG
 ảnh reports/proof-20260924-101599.png"; rc=$?
 [ "$rc" = 2 ] && ok "cited PNG missing on disk: blocked" || fail "missing PNG not blocked (rc=$rc)"
+
+# The image is required only when the change touches app source on a profile with a screen.
+prof() { echo "{\"profile\":\"$1\"}" > "$REPO/.agents/active-profile.json"; (cd "$REPO" && git add -A && git commit -qm "profile $1"); }
+reset; prof android; sleep 2   # the profile commit (it carries src/Core.kt) lands before the turn
+mkdir -p "$REPO/docs"; echo "note" > "$REPO/docs/NOTE.md"
+turn_start; gate_full; g=$?
+stop "XONG
+Đã cập nhật tài liệu.
+Gate exit 0 · ảnh: không cần (không đổi source app)"; rc=$?
+[ "$g" = 0 ] && [ "$rc" = 0 ] && ok "android, only docs changed: full gate exit 0 is enough, no image" \
+  || fail "tooling-only change still asked for an image (gate=$g rc=$rc err=$(head -3 "$TMP/err"))"
+(cd "$REPO" && git add -A && git commit -qm docs)
+
+reset; prof backend; sleep 2; echo "fun ok() = 6" > "$REPO/src/Core.kt"
+turn_start; gate_full; g=$?
+stop "XONG
+Đã sửa API.
+Gate exit 0 · ảnh: không cần (profile backend)"; rc=$?
+[ "$g" = 0 ] && [ "$rc" = 0 ] && ok "backend profile: full gate exit 0 is enough, no image" \
+  || fail "backend asked for an image (gate=$g rc=$rc err=$(head -3 "$TMP/err"))"
+(cd "$REPO" && git add -A && git commit -qm api)
+
+reset; prof android; echo "fun ok() = 7" > "$REPO/src/Core.kt"
+turn_start; gate_full
+stop "XONG
+Gate exit 0"; rc=$?
+[ "$rc" = 2 ] && grep -q "ẢNH" "$TMP/err" && ok "android, app source changed, no image: blocked" || fail "app change without image accepted (rc=$rc)"
+
+reset; turn_start; (cd "$REPO" && git add -A && git commit -qm "fix in the turn"); gate_full
+stop "XONG
+Gate exit 0"; rc=$?
+[ "$rc" = 2 ] && grep -q "ẢNH" "$TMP/err" && ok "app source committed during the turn still needs the image" || fail "commit-then-XONG skipped the image (rc=$rc)"
+
+# Review 2026-09-25: the waiver is decided by what is SURELY off-screen, never by an app-extension list.
+for f in "app/src/main/res/drawable/logo.png" "Assets/Scenes/Main.unity" "app/src/main/java/acme/ui/tools/Toolbar.kt"; do
+  reset; prof android; sleep 2; mkdir -p "$REPO/$(dirname "$f")"; echo "x$RANDOM" > "$REPO/$f"
+  turn_start; gate_full; stop "XONG
+Gate exit 0"; rc=$?
+  [ "$rc" = 2 ] && grep -q "ẢNH" "$TMP/err" && ok "android, $f changed, no image: blocked" || fail "$f waived the image (rc=$rc)"
+  (cd "$REPO" && git add -A && git commit -qm "$f")
+done
+reset; prof voice-assistant; sleep 2; echo "fun ok() = 8" > "$REPO/src/Core.kt"
+turn_start; gate_full; stop "XONG
+Gate exit 0"; rc=$?
+[ "$rc" = 2 ] && grep -q "ẢNH" "$TMP/err" && ok "voice-assistant has a screen: image required" || fail "voice-assistant waived (rc=$rc)"
+(cd "$REPO" && git add -A && git commit -qm va)
+reset; prof backend; sleep 2; echo "fun ok() = 9" > "$REPO/src/Core.kt"
+turn_start; gate_full; stop "XONG
+Gate exit 0 · ảnh reports/proof-20260925-000001.png"; rc=$?
+[ "$rc" = 2 ] && grep -q "không có file này" "$TMP/err" && ok "waived image, but a cited PNG that does not exist: blocked" || fail "bogus cited PNG passed (rc=$rc)"
+reset; turn_start; stop "XONG
+Gate exit 0"; rc=$?
+[ "$rc" = 2 ] && ! grep -q "proof-capture" "$TMP/err" && ok "backend blocked on the gate only: no screenshot instruction" || fail "backend told to capture (rc=$rc)"
+(cd "$REPO" && git add -A && git commit -qm be)
+
+# Committing the gated code in the same turn keeps the receipt: the fingerprint is the content, not HEAD.
+reset; prof backend; sleep 2; echo "fun ok() = 10" > "$REPO/src/Core.kt"
+turn_start; gate_full; g=$?; (cd "$REPO" && git add -A && git commit -qm "gated change")
+stop "XONG
+Đã commit.
+Gate exit 0 · ảnh: không cần (profile backend)"; rc=$?
+[ "$g" = 0 ] && [ "$rc" = 0 ] && ok "full gate, then commit of the same code: XONG allowed" || fail "commit voided the receipt (gate=$g rc=$rc err=$(head -2 "$TMP/err"))"
+reset; echo "fun ok() = 11" > "$REPO/src/Core.kt"; (cd "$REPO" && git commit -qam "edit after gate")
+stop "XONG
+Gate exit 0"; rc=$?
+[ "$rc" = 2 ] && grep -q "code đã đổi" "$TMP/err" && ok "a different commit after the gate still voids it" || fail "edited commit accepted (rc=$rc)"
+
+# Review 2 (2026-09-25): "changed in the turn" = everything since HEAD at the turn start, whatever
+# moved HEAD (commit, merge, pull, reset); the profile read at the turn start; Markdown / test dirs
+# waived only where they cannot be app content.
+python3 - "$DEVKIT_DIR/bin" "$TMP/ir" <<'PYT' 2>"$TMP/ir.err" && ok "image_required: merges, profile switch, deep Markdown/test dirs, renames" || fail "image_required: $(tail -3 "$TMP/ir.err")"
+import os, subprocess, sys, time
+sys.path.insert(0, sys.argv[1]); import tree_fp
+base = sys.argv[2]
+def repo(name, profile="android"):
+    d = os.path.join(base, name); os.makedirs(os.path.join(d, ".agents"))
+    g = lambda *a: subprocess.run(["git", "-C", d, *a], check=True, capture_output=True)
+    g("init", "-q"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
+    open(os.path.join(d, ".agents/active-profile.json"), "w").write('{"profile":"%s"}' % profile)
+    os.makedirs(os.path.join(d, "app/src")); open(os.path.join(d, "app/src/Screen.kt"), "w").write("a\n")
+    g("add", "-A"); g("commit", "-qm", "init"); time.sleep(1.1)
+    return d, g
+def write(d, rel, text="x\n"):
+    os.makedirs(os.path.dirname(os.path.join(d, rel)) or d, exist_ok=True); open(os.path.join(d, rel), "w").write(text)
+cases = []
+for how in ("--no-ff", "--ff-only"):
+    d, g = repo("merge" + how)
+    g("checkout", "-qb", "feat"); write(d, "app/src/Screen.kt", "b\n"); g("commit", "-qam", "ui"); g("checkout", "-q", "-")
+    time.sleep(1.1); start = time.time(); time.sleep(1.1)
+    g("merge", "-q", how, "feat", "-m", "m")
+    cases.append(("merge " + how + " of a UI change", tree_fp.image_required(d, start)[0], True))
+d, g = repo("prof"); start = time.time(); time.sleep(1.1)
+write(d, ".agents/active-profile.json", '{"profile":"backend"}'); write(d, "app/src/Screen.kt", "c\n")
+cases.append(("profile switched to backend in the turn", tree_fp.image_required(d, start)[0], True))
+for rel in ("src/content/blog/post.md", "src/pages/tests/index.tsx"):
+    d, g = repo("deep" + str(len(cases))); start = time.time(); time.sleep(1.1); write(d, rel)
+    cases.append((rel, tree_fp.image_required(d, start)[0], True))
+d, g = repo("mv"); start = time.time(); time.sleep(1.1); os.makedirs(os.path.join(d, "tests")); g("mv", "app/src/Screen.kt", "tests/Screen.kt")
+cases.append(("git mv of a screen into tests/", tree_fp.image_required(d, start)[0], True))
+for rel in ("README.md", "docs/guide.md", "app/src/test/kotlin/FooTest.kt", "tests/test_x.py", "scripts/a.sh", "shared/src/commonTest/kotlin/X.kt"):
+    d, g = repo("ok" + str(len(cases))); start = time.time(); time.sleep(1.1); write(d, rel)
+    cases.append((rel + " (off-screen)", tree_fp.image_required(d, start)[0], False))
+d, g = repo("be", "backend"); start = time.time(); time.sleep(1.1); write(d, "app/src/Screen.kt", "d\n")
+cases.append(("backend profile set before the turn", tree_fp.image_required(d, start)[0], False))
+bad = [f"{n}: required={got}, want {want}" for n, got, want in cases if got != want]
+assert not bad, "; ".join(bad)
+PYT
+
+# Review 2: a proof re-dated with `touch` or copied to a new stamp is not this turn's screenshot.
+reset; prof backend; sleep 2; echo "fun ok() = 12" > "$REPO/src/Core.kt"; (cd "$REPO" && git commit -qam pre)
+reset; prof android; sleep 2
+OLD="reports/proof-20260101-000000.png"; png "$REPO/$OLD" 20000
+echo "fun ok() = 13" > "$REPO/src/Core.kt"; turn_start; gate_full
+touch "$REPO/$OLD"
+stop "XONG
+ảnh $OLD"; rc=$?
+[ "$rc" = 2 ] && grep -q "tên" "$TMP/err" && ok "old stamp re-dated by touch: blocked" || fail "touched old proof accepted (rc=$rc err=$(head -3 "$TMP/err"))"
+NEWN="reports/proof-$(date +%Y%m%d-%H%M%S).png"; cp "$REPO/$OLD" "$REPO/$NEWN"
+stop "XONG
+ảnh $NEWN"; rc=$?
+[ "$rc" = 2 ] && grep -q "trùng" "$TMP/err" && ok "old proof copied to a new stamp: blocked as a duplicate" || fail "copied proof accepted (rc=$rc err=$(head -3 "$TMP/err"))"
+rm -f "$REPO/$OLD" "$REPO/$NEWN"; (cd "$REPO" && git add -A && git commit -qm c13)
+
+# Review 3: a stamp from the future is not this turn either; an uncommitted backend profile that
+# predates the turn still waives; on a web profile docs/ can be the site itself.
+reset; prof android; sleep 2; echo "fun ok() = 14" > "$REPO/src/Core.kt"; turn_start; gate_full
+FUT="reports/proof-20991231-235959.png"; png "$REPO/$FUT" 20000
+stop "XONG
+ảnh $FUT"; rc=$?
+[ "$rc" = 2 ] && grep -q "tương lai" "$TMP/err" && ok "stamp in the future: blocked, named as such" || fail "future stamp accepted (rc=$rc)"
+rm -f "$REPO/$FUT"; (cd "$REPO" && git add -A && git commit -qm c14)
+python3 - "$DEVKIT_DIR/bin" "$TMP/ir3" <<'PYT' 2>"$TMP/ir3.err" && ok "image_required: uncommitted backend profile, web docs/" || fail "image_required r3: $(tail -3 "$TMP/ir3.err")"
+import os, subprocess, sys, time
+sys.path.insert(0, sys.argv[1]); import tree_fp
+def repo(name):
+    d = os.path.join(sys.argv[2], name); os.makedirs(d)
+    g = lambda *a: subprocess.run(["git", "-C", d, *a], check=True, capture_output=True)
+    g("init", "-q"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
+    os.makedirs(os.path.join(d, "server")); open(os.path.join(d, "server/app.py"), "w").write("a\n")
+    g("add", "-A"); g("commit", "-qm", "init"); return d
+def prof(d, p):
+    os.makedirs(os.path.join(d, ".agents"), exist_ok=True); open(os.path.join(d, ".agents/active-profile.json"), "w").write('{"profile":"%s"}' % p)
+d = repo("be-untracked"); prof(d, "backend"); time.sleep(1.1); start = time.time(); time.sleep(1.1)
+open(os.path.join(d, "server/app.py"), "w").write("b\n")
+r1 = tree_fp.image_required(d, start)
+d = repo("be-in-turn"); start = time.time(); time.sleep(1.1); prof(d, "backend")
+open(os.path.join(d, "server/app.py"), "w").write("c\n")
+r2 = tree_fp.image_required(d, start)
+d = repo("web-docs"); prof(d, "web"); subprocess.run(["git", "-C", d, "add", "-A"], check=True); subprocess.run(["git", "-C", d, "commit", "-qm", "p"], check=True)
+time.sleep(1.1); start = time.time(); time.sleep(1.1); os.makedirs(os.path.join(d, "docs")); open(os.path.join(d, "docs/index.md"), "w").write("# site\n")
+r3 = tree_fp.image_required(d, start)
+assert r1[0] is False, ("untracked backend profile from before the turn", r1)
+assert r2[0] is True, ("backend profile created in the turn", r2)
+assert r3[0] is True, ("web profile, docs/ changed", r3)
+PYT
+
+# Review 2: the content fingerprint must not leave objects in the real object store.
+head -c 300000 /dev/urandom > "$REPO/blob.bin"
+before="$(cd "$REPO" && git count-objects -v | awk '/^(count|size):/{s+=$2} END{print s}')"
+python3 "$DEVKIT_DIR/bin/tree_fp.py" "$REPO" >/dev/null
+after="$(cd "$REPO" && git count-objects -v | awk '/^(count|size):/{s+=$2} END{print s}')"
+[ "$before" = "$after" ] && ok "fingerprint writes no object into .git/objects" || fail "object store grew: $before -> $after"
+rm -f "$REPO/blob.bin"
 
 # Loop guard: 2 blocks for the same session, then the stop goes through with a warning.
 reset; turn_start
