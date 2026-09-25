@@ -119,6 +119,10 @@ python3 -c "import sys; e, line = sys.argv[1].split('|', 1); sys.exit(0 if float
   && [ ! -f "$TMP/busy_ran" ] && [ "$before_busy" = "$after_busy" ] \
   && ok "run_one: lock held past its timeout → BUSY within the budget, nothing run or recorded" \
   || fail "run_one lock wait unbounded (res='$res' ran=$([ -f "$TMP/busy_ran" ] && echo y || echo n) recorded=$([ "$before_busy" = "$after_busy" ] && echo n || echo y))"
+# The wait comes off the suite's budget, but a suite that then runs out of time did not fail:
+# its result is discarded, never recorded as a red TIMEOUT (review 2026-09-25: a green suite
+# turned TIMEOUT because another run held the lock, and nightly reported it as turned red).
+before_wait="$(status_of)"
 hold_lock 2
 res="$(python3 - "$P" "$TMP" "$DEVKIT_DIR" <<'PY'
 import sys; from pathlib import Path
@@ -128,7 +132,8 @@ print(stale_rerun.run_one(Path(p), "REG-A", "sleep 3", [], 4))
 PY
 )"
 wait "$holder" 2>/dev/null
-printf '%s' "$res" | grep -q TIMEOUT && ok "run_one: time spent waiting for the lock comes off the suite's timeout" \
-  || fail "suite got the full timeout after waiting for the lock: '$res'"
+[ "$(status_of)" = "$before_wait" ] && printf '%s' "$res" | grep -q "chờ khoá" \
+  && ok "run_one: out of time after waiting for the lock → result discarded, nothing recorded" \
+  || fail "lock wait turned into a recorded TIMEOUT: '$res' (status $before_wait → $(status_of))"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_stale_rerun: all passed" || { echo "❌ test_stale_rerun: $FAILS failed"; exit 1; }

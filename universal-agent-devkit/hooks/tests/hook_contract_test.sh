@@ -1456,6 +1456,10 @@ te_case "guard: lần chạy trước is still a claim"                2 te-p3 "
 te_case "guard: previous session fixed is still an outcome"     2 te-p4 "Previous session fixed bug A."
 te_case "guard: other agent's relayed pass is still a claim"    2 te-p5 "The other agent ran the suite: 13/13 tests pass."
 te_case "guard: agent khác relayed fix is still an outcome"     2 te-p6 "Agent khác báo đã fix bug A; phiên này chưa kiểm."
+# The user's report is attributed, the agent's own claim after the comma is not (review 2026-09-25).
+te_case "guard: user reported X, fixed it (own claim after comma)" 2 te-p7 "User reported the login crash, fixed it in LoginViewModel."
+te_case "guard: user reported X, N tests pass now"                2 te-p8 "The user reported a crash on submit, 13/13 tests pass now."
+te_case "guard: người dùng báo X, đã fix xong"                    2 te-p9 "Người dùng báo crash khi mở PDF, đã fix xong."
 # Foreign project: a Gradle root outside CLAUDE_PROJECT_DIR whose XML this session read.
 TE_F="$(mktemp -d "${TMPDIR:-/tmp}/hooktef.XXXXXX")"; TE_OLD="$(mktemp -d "${TMPDIR:-/tmp}/hookteo.XXXXXX")"
 TE_RED="$(mktemp -d "${TMPDIR:-/tmp}/hooketr.XXXXXX")"
