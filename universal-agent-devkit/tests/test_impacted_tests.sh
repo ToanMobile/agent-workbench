@@ -270,6 +270,14 @@ for tpl in ("(cd a && ./gradlew {gradle_module_tests:testDebugUnitTest})",
     assert g.narrow_fallback(root, {"impacted_command": tpl, "command": full, "files": ["shared/src/main/kotlin/pkg/Theme.kt"]}) is None, tpl
     got = g.narrow_fallback(root, {"impacted_command": tpl, "command": full, "files": ["a/app/src/main/kotlin/pkg/Foo.kt"]})
     assert got and ":app:testDebugUnitTest" in got[0], (tpl, got)
+# A single build run from a module dir (`cd app && ../gradlew`, `-p app`): a bare task there runs
+# only :app, so a sibling module's file must not narrow the command to :lib (review 3: false PASS).
+S = root / "single"; (S / "app/src/main/kotlin/pkg").mkdir(parents=True); (S / "lib/src/main/kotlin/pkg").mkdir(parents=True)
+(S / "settings.gradle").touch()
+for tpl in ("cd app && ../gradlew {gradle_module_tests:testDebugUnitTest}", "./gradlew -p app {gradle_module_tests:testDebugUnitTest}"):
+    full = tpl.replace("{gradle_module_tests:testDebugUnitTest}", "testDebugUnitTest")
+    got = g.narrow_fallback(S, {"impacted_command": tpl, "command": full, "files": ["lib/src/main/kotlin/pkg/Util.kt"]})
+    assert got is None or ":lib:" not in got[0], (tpl, got)
 PYT
 
 if [ "$FAILS" -eq 0 ]; then echo "ALL IMPACTED-SELECTION TESTS PASSED"; else echo "$FAILS FAILED"; exit 1; fi

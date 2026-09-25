@@ -74,13 +74,16 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    Exit 0 is required. Any other exit: paste the last 30 log lines, fix, and repeat this
    step. A dry-run, `--help`, or a single Gradle test does not replace this command.
 4. A proof image is blocking, same rank as exit 0, unless the change surely cannot show on a
-   screen: the profile was backend when the turn started, or every file changed since HEAD at
+   screen: the profile was backend when the turn started (committed, or an uncommitted profile
+   file written before the turn), or every file changed since HEAD at
    the turn start (commits, merges, pulls included; new files too) is under a top-level
    `.agents/ .claude/ .gemini/ .github/ .githooks/ .codebase-memory/ docs/ reports/ scripts/
    bin/ tools/`, a top-level test folder (`tests/`, `*Tests/`), a `src/<test source set>/`, or
-   is Markdown / LICENSE-type at the root. Then write "ảnh: không cần — <reason>" in line 3
-   and skip this step. A cited PNG is always checked: stamp in its name from this turn, not a
-   byte copy of another proof. `hooks/proof_gate.sh` applies the same rule (`bin/tree_fp.py`). From the
+   is Markdown / LICENSE-type at the root (on a web profile `docs/` counts as the site). Then
+   write "ảnh: không cần — <reason>" in line 3 and skip this step. Cite only this turn's
+   proofs: every cited PNG is checked (stamp in its name from this turn, not a byte copy of
+   another proof). A UI change committed in an earlier turn is that turn's proof to attach —
+   a later turn that only touches tests is not asked again. `hooks/proof_gate.sh` applies the same rule (`bin/tree_fp.py`). From the
    repo root: `python3 .agents/devkit/bin/proof-capture.py`
    The command checks `adb devices` first. A declared serial is used only when its
    state is `device` and it is not on the denylist. If that serial is offline, or no

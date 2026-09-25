@@ -1366,6 +1366,9 @@ def _command_gradle_dir(project_dir, command):
         d = project_dir
     else:
         return None
+    # The command's own dir, not the build root above it: from `cd app && ../gradlew` a bare task
+    # runs only :app, so narrowing to a sibling module would skip the tests the matrix asked for
+    # (review 3). Such commands run in full — slower, never a false PASS.
     try:
         return d.resolve()
     except OSError:
@@ -2726,7 +2729,7 @@ def main():
         print(f"  • {YELLOW}{tr('Không đọc được để quét:', 'Could not read for scanning:')}{RESET} {f}")
     for f in tests_touched[:5]:
         print(f"  • {YELLOW}{tr('Test đã có bị sửa/xoá:', 'Existing test edited/deleted:')}{RESET} {f}")
-    print(f"  • {tr('Gate không xác minh: DESIGN.md/a11y, RED/GREEN, Immutable Guards, OpenCodeReview. Ảnh nghiệm thu không nằm trong exit code; agent vẫn phải gắn PNG của lượt này trước khi nói XONG khi thay đổi chạm source app của profile có màn hình.', 'The gate does not verify: DESIGN.md/a11y, RED/GREEN, immutable guards, OpenCodeReview. The proof image is outside the exit code; the agent still attaches a PNG from this turn before saying XONG when the change touches app source on a profile with a screen.')}")
+    print(f"  • {tr('Gate không xác minh: DESIGN.md/a11y, RED/GREEN, Immutable Guards, OpenCodeReview. Ảnh nghiệm thu không nằm trong exit code; agent vẫn phải gắn PNG của lượt này trước khi nói XONG, trừ khi thay đổi chắc chắn không lên màn hình (essentials bước 4).', 'The gate does not verify: DESIGN.md/a11y, RED/GREEN, immutable guards, OpenCodeReview. The proof image is outside the exit code; the agent still attaches a PNG from this turn before saying XONG unless the change surely cannot show on a screen (essentials step 4).')}")
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
     if run_tests and not impacted_run:

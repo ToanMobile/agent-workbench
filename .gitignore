@@ -45,3 +45,4 @@ tmp/
 # agent-workbench is public: personal agent memory and machine-local agent config stay local
 .agents/local/memory/
 .gemini/settings.json
+.claude/agent-memory/

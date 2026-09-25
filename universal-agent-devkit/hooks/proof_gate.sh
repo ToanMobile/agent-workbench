@@ -138,6 +138,8 @@ for rel in cited:
         taken = None
     if taken is None or taken < start - 60:
         problems.append("%s: giờ chụp trong tên file có trước lượt này (touch/đổi tên ảnh cũ không phải ảnh mới)" % rel); continue
+    if taken > datetime.datetime.now().timestamp() + 60:
+        problems.append("%s: giờ chụp trong tên file ở tương lai — không phải ảnh chụp trong lượt này" % rel); continue
     with open(path, "rb") as f:
         digest = hashlib.sha256(f.read()).hexdigest()
     twin = next((o for o in sorted(glob.glob(os.path.join(repo, "reports", "*.png")))

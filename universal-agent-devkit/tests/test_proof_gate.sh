@@ -238,6 +238,39 @@ stop "XONG
 [ "$rc" = 2 ] && grep -q "trùng" "$TMP/err" && ok "old proof copied to a new stamp: blocked as a duplicate" || fail "copied proof accepted (rc=$rc err=$(head -3 "$TMP/err"))"
 rm -f "$REPO/$OLD" "$REPO/$NEWN"; (cd "$REPO" && git add -A && git commit -qm c13)
 
+# Review 3: a stamp from the future is not this turn either; an uncommitted backend profile that
+# predates the turn still waives; on a web profile docs/ can be the site itself.
+reset; prof android; sleep 2; echo "fun ok() = 14" > "$REPO/src/Core.kt"; turn_start; gate_full
+FUT="reports/proof-20991231-235959.png"; png "$REPO/$FUT" 20000
+stop "XONG
+ảnh $FUT"; rc=$?
+[ "$rc" = 2 ] && grep -q "tương lai" "$TMP/err" && ok "stamp in the future: blocked, named as such" || fail "future stamp accepted (rc=$rc)"
+rm -f "$REPO/$FUT"; (cd "$REPO" && git add -A && git commit -qm c14)
+python3 - "$DEVKIT_DIR/bin" "$TMP/ir3" <<'PYT' 2>"$TMP/ir3.err" && ok "image_required: uncommitted backend profile, web docs/" || fail "image_required r3: $(tail -3 "$TMP/ir3.err")"
+import os, subprocess, sys, time
+sys.path.insert(0, sys.argv[1]); import tree_fp
+def repo(name):
+    d = os.path.join(sys.argv[2], name); os.makedirs(d)
+    g = lambda *a: subprocess.run(["git", "-C", d, *a], check=True, capture_output=True)
+    g("init", "-q"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
+    os.makedirs(os.path.join(d, "server")); open(os.path.join(d, "server/app.py"), "w").write("a\n")
+    g("add", "-A"); g("commit", "-qm", "init"); return d
+def prof(d, p):
+    os.makedirs(os.path.join(d, ".agents"), exist_ok=True); open(os.path.join(d, ".agents/active-profile.json"), "w").write('{"profile":"%s"}' % p)
+d = repo("be-untracked"); prof(d, "backend"); time.sleep(1.1); start = time.time(); time.sleep(1.1)
+open(os.path.join(d, "server/app.py"), "w").write("b\n")
+r1 = tree_fp.image_required(d, start)
+d = repo("be-in-turn"); start = time.time(); time.sleep(1.1); prof(d, "backend")
+open(os.path.join(d, "server/app.py"), "w").write("c\n")
+r2 = tree_fp.image_required(d, start)
+d = repo("web-docs"); prof(d, "web"); subprocess.run(["git", "-C", d, "add", "-A"], check=True); subprocess.run(["git", "-C", d, "commit", "-qm", "p"], check=True)
+time.sleep(1.1); start = time.time(); time.sleep(1.1); os.makedirs(os.path.join(d, "docs")); open(os.path.join(d, "docs/index.md"), "w").write("# site\n")
+r3 = tree_fp.image_required(d, start)
+assert r1[0] is False, ("untracked backend profile from before the turn", r1)
+assert r2[0] is True, ("backend profile created in the turn", r2)
+assert r3[0] is True, ("web profile, docs/ changed", r3)
+PYT
+
 # Review 2: the content fingerprint must not leave objects in the real object store.
 head -c 300000 /dev/urandom > "$REPO/blob.bin"
 before="$(cd "$REPO" && git count-objects -v | awk '/^(count|size):/{s+=$2} END{print s}')"

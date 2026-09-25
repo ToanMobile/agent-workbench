@@ -83,9 +83,11 @@ TEST_SOURCE_SETS = {"test", "androidTest", "androidUnitTest", "androidInstrument
 OFF_SCREEN_NAMES = {"LICENSE", "NOTICE", "AUTHORS", "CODEOWNERS", ".gitignore", ".editorconfig"}
 
 
-def _off_screen(rel):
+def _off_screen(rel, profile=""):
     parts = rel.split("/")
     top = parts[0] if len(parts) > 1 else ""
+    if top == "docs" and profile == "web":
+        return False   # a web project's docs/ can be the site itself (Docusaurus, MkDocs)
     if top in OFF_SCREEN_TOP or top in TEST_TOP or top.endswith("Tests"):
         return True
     if any(parts[i] == "src" and parts[i + 1] in TEST_SOURCE_SETS for i in range(len(parts) - 2)):
@@ -103,16 +105,23 @@ def _turn_base(project_dir, since):
     return res.stdout.decode().strip() or None if res.returncode == 0 else None
 
 
-def _profile_at(project_dir, base):
+def _profile_at(project_dir, base, since):
+    """(profile at the turn start, changed in the turn?). The committed file at `base`, else an
+    uncommitted one (after `agent-kit init`, or an ignored .agents/) written before the turn."""
     import json
+    parse = lambda raw: (json.loads(raw).get("profile") or "") if raw else ""
     for rel in PROFILE_FILES:
         res = _git(project_dir, "show", f"{base}:./{rel}")
-        if res.returncode == 0:
-            try:
-                return json.loads(res.stdout.decode()).get("profile") or ""
-            except (ValueError, AttributeError):
-                return ""
-    return ""
+        path = os.path.join(str(project_dir), rel)
+        try:
+            if res.returncode == 0:   # bytes: a CRLF file must not look changed
+                now = open(path, "rb").read() if os.path.isfile(path) else b""
+                return parse(res.stdout.decode()), now != res.stdout
+            if os.path.isfile(path):
+                return parse(open(path, encoding="utf-8").read()), not since or os.path.getmtime(path) >= since
+        except (OSError, ValueError, AttributeError):
+            return "", True
+    return "", False
 
 
 def image_required(project_dir, since=None):
@@ -128,11 +137,11 @@ def image_required(project_dir, since=None):
     names = _git(project_dir, "diff", base, "--name-only", "--relative", "--no-renames", "-z").stdout
     names += _git(project_dir, "ls-files", "-o", "--exclude-standard", "-z").stdout
     changed = {p.strip("\n") for p in names.decode(errors="replace").split("\0") if p.strip("\n")}
-    prof = _profile_at(project_dir, base)
-    if prof in NO_SCREEN_PROFILES and not changed.intersection(PROFILE_FILES):
+    prof, prof_changed = _profile_at(project_dir, base, since)
+    if prof in NO_SCREEN_PROFILES and not prof_changed:
         return False, f"profile {prof} has no screen"
     for rel in sorted(changed):
-        if not _off_screen(rel):
+        if not _off_screen(rel, prof):
             return True, f"may show on screen: {rel}"
     return False, "only tests, docs, scripts or agent files changed"
 
