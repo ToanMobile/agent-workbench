@@ -102,9 +102,19 @@ def load(project_dir: Path) -> dict:
     path = Path(project_dir) / STATUS_FILE
     raw = path.read_bytes() if path.exists() else None
     try:   # overwritten outside the DevKit with older content (a rollback) → a kept warning
-        _check_journal(project_dir, raw)
+        # A writer (holding the checklist lock) waits for the journal; a read-only caller (health,
+        # check, SessionStart) that finds it busy skips the check — never blocks, never fails.
+        with _journal_lock(project_dir, None if _holds_checklist(project_dir) else JOURNAL_LOCK_WAIT) as held:
+            if held:
+                raw = path.read_bytes() if path.exists() else None   # the file as the journal knows it
+                _check_journal(project_dir, raw)
     except (OSError, ValueError):
         pass
+    msg = rollback_warning(project_dir)
+    key = str(Path(project_dir).resolve())
+    if msg and key not in _WARNED:
+        _WARNED.add(key)
+        print(msg, file=sys.stderr)
     if raw is None:
         return {"version": 1, "items": {}}
     data = json.loads(raw.decode("utf-8"))  # a corrupt file is an error, never silently reset to empty
@@ -127,21 +137,35 @@ def save(project_dir: Path, data: dict, *, stale: bool = True) -> Path:
     path = Path(project_dir) / STATUS_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     raw = (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-    try:   # before the replace: a reader in between must already know the removal is legitimate
-        _note_removals(project_dir, path, data)
-    except (OSError, ValueError):
-        pass
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".regression_status.")
-    with os.fdopen(fd, "wb") as f:
-        f.write(raw)
-    os.chmod(tmp, 0o644)
-    os.replace(tmp, path)
-    try:   # after the replace: a reader never sees a journal newer than the file
-        _journal_save(project_dir, raw, data)
-    except (OSError, ValueError):
-        pass   # the journal is a safety net; it never blocks a save
+    with _journal_lock(project_dir):   # a reader under the journal lock sees the file and its journal line together
+        try:   # before the replace: a reader in between must already know the removal is legitimate
+            _note_removals(project_dir, path, data)
+        except (OSError, ValueError):
+            pass
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".regression_status.")
+        with os.fdopen(fd, "wb") as f:
+            f.write(raw)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+        try:   # after the replace: a reader never sees a journal newer than the file
+            _journal_save(project_dir, raw, data)
+        except (OSError, ValueError):
+            pass   # the journal is a safety net; it never blocks a save
     render(project_dir, data)
     return path
+
+
+_HELD: dict = {}   # lock file → depth held by this process (flock is per open file: a 2nd open would self-deadlock)
+JOURNAL_LOCK_WAIT = 2.0   # seconds a read-only load() waits for the journal lock before it skips the check
+
+
+def _lock_path(project_dir: Path, kind: str) -> str:
+    key = hashlib.sha1(str(Path(project_dir).resolve()).encode()).hexdigest()[:16]
+    return os.path.join(tempfile.gettempdir(), f"{kind}.{key}.lock")
+
+
+def _holds_checklist(project_dir: Path) -> bool:
+    return bool(_HELD.get(_lock_path(project_dir, "regression_status")))
 
 
 @contextlib.contextmanager
@@ -149,12 +173,62 @@ def locked(project_dir: Path):
     """Serialize load → change → save of one checklist between the prompt hook and the
     CLI (two sessions, one project). The lock file lives in the temp dir, not .agents/."""
     import fcntl
-    key = hashlib.sha1(str(Path(project_dir).resolve()).encode()).hexdigest()[:16]
-    with open(os.path.join(tempfile.gettempdir(), f"regression_status.{key}.lock"), "w") as fh:
+    path = _lock_path(project_dir, "regression_status")
+    with open(path, "w") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
+        _HELD[path] = _HELD.get(path, 0) + 1
         try:
             yield
         finally:
+            _HELD[path] -= 1
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def _flock(fh, wait) -> bool:
+    import fcntl
+    if wait is None:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        return True
+    end = time.monotonic() + wait
+    while True:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if time.monotonic() >= end:
+                return False
+            time.sleep(0.02)
+
+
+@contextlib.contextmanager
+def _journal_lock(project_dir: Path, wait=None):
+    """The journal's own lock (journal append + trim, snapshot write + rotation, rollback.json, the
+    file replace of a save): short holds, taken after the checklist lock, never before it, and
+    re-entrant within a process. wait=None blocks; a number gives up after that many seconds and
+    yields False (the caller skips its journal work). No lock file (read-only temp dir) → True."""
+    import fcntl
+    path = _lock_path(project_dir, "regression_journal")
+    if _HELD.get(path):
+        _HELD[path] += 1
+        try:
+            yield True
+        finally:
+            _HELD[path] -= 1
+        return
+    try:
+        fh = open(path, "a")
+    except OSError:
+        yield True   # the journal is a safety net: it never blocks a save
+        return
+    with fh:
+        if not _flock(fh, wait):
+            yield False
+            return
+        _HELD[path] = 1
+        try:
+            yield True
+        finally:
+            _HELD[path] = 0
             fcntl.flock(fh, fcntl.LOCK_UN)
 
 
@@ -165,6 +239,8 @@ def locked(project_dir: Path):
 # journaled one. A file that lost content (a red_proof, an unlink, a link, a row, a result) is a
 # rollback: rollback.json keeps the warning and pins the last good snapshot until
 # `agent-kit checklist restore` merges it back. Git-ignored by its own .gitignore, like evidence/.
+# Git moving the file (branch switch, pull, reset, stash) while the journaled content is still a git
+# object is a new baseline, not a rollback (_git_moved). Journal writes hold their own lock.
 JOURNAL_DIR = Path(".agents") / "regression_journal"
 JOURNAL_NAME = "journal.jsonl"
 ROLLBACK_NAME = "rollback.json"
@@ -225,14 +301,17 @@ def _last_known(project_dir: Path):
 
 def _append(project_dir: Path, rec: dict) -> None:
     """One JSON line; the file keeps its last CHECKLIST_JOURNAL_MAX lines (default 500)."""
-    path = _jdir(project_dir, create=True) / JOURNAL_NAME
-    rec = {"at": _now(), "ts": round(time.time(), 3), "writer": _writer(), "pid": os.getpid(), **rec}
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    cap = _env_int("CHECKLIST_JOURNAL_MAX", 500)
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    if len(lines) > cap:
-        _write_bytes(path, "".join(lines[-cap:]).encode("utf-8"))
+    head = _head(project_dir)
+    rec = {"at": _now(), "ts": round(time.time(), 3), "writer": _writer(), "pid": os.getpid(),
+           **({"head": head} if head else {}), **rec}
+    with _journal_lock(project_dir):   # the trim below is read-then-replace: two writers must not interleave
+        path = _jdir(project_dir, create=True) / JOURNAL_NAME
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        cap = _env_int("CHECKLIST_JOURNAL_MAX", 500)
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        if len(lines) > cap:
+            _write_bytes(path, "".join(lines[-cap:]).encode("utf-8"))
 
 
 def _write_bytes(path: Path, raw: bytes) -> None:
@@ -264,18 +343,20 @@ def _snap_rel(name: str) -> str:
 def _snapshot(project_dir: Path, raw: bytes, digest: str) -> str:
     """Keep this content as a snapshot (once per hash); the newest CHECKLIST_SNAPSHOTS (default
     10) are kept, plus the ones an open rollback pins. Returns the snapshot's name."""
-    folder = _jdir(project_dir, create=True) / SNAP_SUBDIR
-    for old in folder.glob(f"*-{digest[:12]}.json"):
-        os.utime(old)   # the newest again: rotation must not drop the current baseline
-        return old.name
-    name = f"{time.strftime('%Y%m%d-%H%M%S')}-{digest[:12]}.json"
-    _write_bytes(folder / name, raw)
-    pinned = set((_rollback(project_dir) or {}).get("good", []))
-    snaps = sorted((p for p in folder.glob("*.json") if p.name not in pinned),
-                   key=lambda p: (p.stat().st_mtime_ns, p.name))
-    for p in snaps[:-_env_int("CHECKLIST_SNAPSHOTS", 10)]:
-        p.unlink()
-    return name
+    with _journal_lock(project_dir):   # a reader of a snapshot holds it too: rotation never deletes under it
+        folder = _jdir(project_dir, create=True) / SNAP_SUBDIR
+        for old in folder.glob(f"*-{digest[:12]}.json"):
+            os.utime(old)   # the newest again: rotation must not drop the current baseline
+            return old.name
+        name = f"{time.strftime('%Y%m%d-%H%M%S')}-{digest[:12]}.json"
+        _write_bytes(folder / name, raw)
+        pinned = set((_rollback(project_dir) or {}).get("good", []))
+        pinned.add((_last_known(project_dir) or {}).get("snapshot"))   # the baseline load() compares with
+        snaps = sorted((p for p in folder.glob("*.json") if p.name not in pinned),
+                       key=lambda p: (p.stat().st_mtime_ns, p.name))
+        for p in snaps[:-_env_int("CHECKLIST_SNAPSHOTS", 10)]:
+            p.unlink()
+        return name
 
 
 def _read_snap(project_dir: Path, name) -> dict | None:
@@ -352,16 +433,15 @@ def _check_journal(project_dir: Path, raw) -> None:
         return
     digest = _sha(raw)
     if digest != last.get("hash"):
-        time.sleep(0.2)   # a save between its os.replace and its journal line (reader outside the lock)
-        last = _last_known(project_dir) or last
-    if digest != last.get("hash"):
         good_name = last.get("snapshot")
         good = _read_snap(project_dir, good_name)
         cur = json.loads(raw.decode("utf-8")) if raw is not None else {"items": {}}
         lost = losses(good, cur, _removed(project_dir)) if good is not None and isinstance(cur, dict) else []
+        via_git = bool(lost) and _git_moved(project_dir, good_name, raw is None)
         snap = _snapshot(project_dir, raw, digest) if raw is not None else None
-        if not lost:
-            _append(project_dir, {"event": "external", "hash": digest, "snapshot": snap})
+        if not lost or via_git:
+            _append(project_dir, {"event": "external", "hash": digest, "snapshot": snap,
+                                  **({"via": "git"} if via_git else {})})
         else:
             older = any(r.get("hash") == digest for r in _records(project_dir))
             rb = _rollback(project_dir) or {"detected_at": _now(), "good": [], "losses": [], "count": 0}
@@ -375,11 +455,46 @@ def _check_journal(project_dir: Path, raw) -> None:
                          json.dumps(rb, ensure_ascii=False, indent=2).encode("utf-8"))
             _append(project_dir, {"event": "rollback", "hash": digest, "snapshot": snap, "good": good_name,
                                   "lost": len(lost)})
-    msg = rollback_warning(project_dir)
-    key = str(Path(project_dir).resolve())
-    if msg and key not in _WARNED:
-        _WARNED.add(key)
-        print(msg, file=sys.stderr)
+
+
+def _head(project_dir: Path):
+    """HEAD's commit sha, None outside git / unborn / no git binary (journal records carry it)."""
+    try:
+        out = _git_lines(Path(project_dir), "rev-parse", "-q", "--verify", "HEAD")
+    except OSError:
+        return None
+    return out[0] if out else None
+
+
+def _git_moved(project_dir: Path, good_name, missing: bool) -> bool:
+    """Git put the file there and nothing is lost: the file is HEAD's committed version (or HEAD
+    has no such file and it is gone), and the last journaled content is still a git object —
+    committed on another branch or at the old HEAD, or kept by `git stash`. A branch switch,
+    pull, reset or stash is then a new baseline. The 2026-09-24 incident (`git show HEAD:… > …`
+    over work never added to git) fails the second test and stays a rollback. Any git error →
+    False: fail toward the warning.
+    ponytail: `cat-file -e` also accepts a dangling blob (a popped stash, a `git add` never
+    committed) — recoverable with fsck, so no unrecoverable loss goes silent; upgrade to
+    `git log --all --find-object=<oid> -1` if a real case shows up."""
+    project = Path(project_dir)
+    rel = STATUS_FILE.as_posix()
+    snap = _jdir(project) / SNAP_SUBDIR / str(good_name or "")
+    try:
+        if not good_name or not snap.is_file() or _head(project) is None:
+            return False
+        at_head = _git_lines(project, "rev-parse", "-q", "--verify", f"HEAD:./{rel}")
+        oids = _git_lines(project, "hash-object", f"--path={rel}", str(snap),
+                          *([] if missing else [str(project / rel)]))
+        if not oids:
+            return False
+        if missing:
+            if at_head:   # HEAD has the file, yet it is gone: not git's doing
+                return False
+        elif not at_head or len(oids) < 2 or oids[1] != at_head[0]:
+            return False
+        return _git_lines(project, "cat-file", "-e", oids[0]) is not None
+    except OSError:
+        return False
 
 
 def _note_removals(project_dir: Path, path: Path, data: dict) -> None:
@@ -510,18 +625,19 @@ def merge_snapshot(snap: dict, cur: dict, gone=()) -> dict:
 
 def list_snapshots(project_dir: Path) -> list:
     """[(name, rows, proven, flags)] newest first."""
-    folder = _jdir(project_dir) / SNAP_SUBDIR
-    rb = _rollback(project_dir) or {}
-    path = Path(project_dir) / STATUS_FILE
-    cur = _sha(path.read_bytes()) if path.exists() else ""
-    out = []
-    for p in sorted(folder.glob("*.json"), key=lambda p: (p.stat().st_mtime_ns, p.name), reverse=True):
-        items = (_read_snap(project_dir, p.name) or {"items": {}})["items"]
-        flags = (["bản tốt trước rollback"] if p.name in rb.get("good", []) else []) + \
-                (["= file hiện tại"] if cur and p.name.endswith(f"-{cur[:12]}.json") else [])
-        proven = sum(1 for it in items.values() if ((it or {}).get("red_proof") or {}).get("status") == "PROVEN")
-        out.append((p.name, len(items), proven, flags))
-    return out
+    with _journal_lock(project_dir):   # a rotation in between would delete a listed file
+        folder = _jdir(project_dir) / SNAP_SUBDIR
+        rb = _rollback(project_dir) or {}
+        path = Path(project_dir) / STATUS_FILE
+        cur = _sha(path.read_bytes()) if path.exists() else ""
+        out = []
+        for p in sorted(folder.glob("*.json"), key=lambda p: (p.stat().st_mtime_ns, p.name), reverse=True):
+            items = (_read_snap(project_dir, p.name) or {"items": {}})["items"]
+            flags = (["bản tốt trước rollback"] if p.name in rb.get("good", []) else []) + \
+                    (["= file hiện tại"] if cur and p.name.endswith(f"-{cur[:12]}.json") else [])
+            proven = sum(1 for it in items.values() if ((it or {}).get("red_proof") or {}).get("status") == "PROVEN")
+            out.append((p.name, len(items), proven, flags))
+        return out
 
 
 def restore(project_dir: Path, snapshot: str | None = None) -> tuple:
@@ -531,24 +647,25 @@ def restore(project_dir: Path, snapshot: str | None = None) -> tuple:
     with locked(project_dir):
         _WARNED.add(str(Path(project_dir).resolve()))   # restore prints its own result
         data = load(project_dir)
-        if snapshot:
-            name = Path(snapshot).name
-            if not (folder / name).is_file() and (folder / f"{name}.json").is_file():
-                name += ".json"
-            names = [name]
-        else:
-            names = list((_rollback(project_dir) or {}).get("good") or [])
+        with _journal_lock(project_dir):   # no rotation while the snapshots are read
+            if snapshot:
+                name = Path(snapshot).name
+                if not (folder / name).is_file() and (folder / f"{name}.json").is_file():
+                    name += ".json"
+                names = [name]
+            else:
+                names = list((_rollback(project_dir) or {}).get("good") or [])
+                if not names:
+                    names = [s[0] for s in list_snapshots(project_dir)[:1]]
             if not names:
-                names = [s[0] for s in list_snapshots(project_dir)[:1]]
-        if not names:
-            raise ValueError(f"không có snapshot nào trong {JOURNAL_DIR.as_posix()}/{SNAP_SUBDIR}")
-        total = {"rows": 0, "red_proof": 0, "unlinks": 0, "links": 0, "results": 0}
-        for name in names:
-            snap = _read_snap(project_dir, name)
-            if snap is None:
-                raise ValueError(f"không đọc được snapshot {_snap_rel(name)}")
-            for k, v in merge_snapshot(snap, data, _removed(project_dir)).items():
-                total[k] += v
+                raise ValueError(f"không có snapshot nào trong {JOURNAL_DIR.as_posix()}/{SNAP_SUBDIR}")
+            total = {"rows": 0, "red_proof": 0, "unlinks": 0, "links": 0, "results": 0}
+            for name in names:
+                snap = _read_snap(project_dir, name)
+                if snap is None:
+                    raise ValueError(f"không đọc được snapshot {_snap_rel(name)}")
+                for k, v in merge_snapshot(snap, data, _removed(project_dir)).items():
+                    total[k] += v
         os.environ.setdefault("DEVKIT_TOOL", "checklist-restore")
         save(project_dir, data)
         rb = _rollback(project_dir)
@@ -558,11 +675,12 @@ def restore(project_dir: Path, snapshot: str | None = None) -> tuple:
 
 def dismiss_rollback(project_dir: Path) -> bool:
     """Accept the current file as it is (a deliberate reset): close the warning, keep snapshots."""
-    path = _jdir(project_dir) / ROLLBACK_NAME
-    if not path.exists():
-        return False
-    path.unlink()
-    _append(project_dir, {"event": "dismiss"})
+    with _journal_lock(project_dir):
+        path = _jdir(project_dir) / ROLLBACK_NAME
+        if not path.exists():
+            return False
+        path.unlink()
+        _append(project_dir, {"event": "dismiss"})
     return True
 
 
