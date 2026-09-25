@@ -472,7 +472,10 @@ def _git_moved(project_dir: Path, good_name, missing: bool) -> bool:
     committed on another branch or at the old HEAD, or kept by `git stash`. A branch switch,
     pull, reset or stash is then a new baseline. The 2026-09-24 incident (`git show HEAD:… > …`
     over work never added to git) fails the second test and stays a rollback. Any git error →
-    False: fail toward the warning."""
+    False: fail toward the warning.
+    ponytail: `cat-file -e` also accepts a dangling blob (a popped stash, a `git add` never
+    committed) — recoverable with fsck, so no unrecoverable loss goes silent; upgrade to
+    `git log --all --find-object=<oid> -1` if a real case shows up."""
     project = Path(project_dir)
     rel = STATUS_FILE.as_posix()
     snap = _jdir(project) / SNAP_SUBDIR / str(good_name or "")
