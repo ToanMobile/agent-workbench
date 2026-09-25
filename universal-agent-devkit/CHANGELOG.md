@@ -4,6 +4,10 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
 
 ## Unreleased
 
+### Báo cáo nghiệm thu 4 mục được ép, không chỉ ghi trong luật
+- **Nguyên nhân sót (2026-09-25):** báo cáo 4 mục chỉ nằm ở `core-rules.md` §1.3 (đọc khi cần); `essentials.md` (luôn nạp) không nhắc, chỉ có "mở đầu 3 dòng, ngắn gọn"; không hook nào kiểm. Một lượt push bàn giao đã thiếu nó mà không gì chặn.
+- `essentials.md` bước 5 có khuôn 4 mục. `proof_gate.sh` chặn câu trả lời mở bằng XONG, hoặc của lượt đã chạy `git push` (dù không ghi XONG), khi thiếu một trong 4 mục (nhãn tiếng Việt hoặc Anh); lượt push chỉ bị kiểm phần báo cáo. Test: `tests/test_proof_gate.sh` (XONG thiếu báo cáo, lượt push thiếu/đủ báo cáo, trả lời thường không bị kiểm).
+
 ### Audit 2026-09-25 — workflow fixes
 - **Ảnh proof chỉ miễn khi thay đổi chắc chắn không lên màn hình.** `proof_gate.sh` hỏi `bin/tree_fp.py image_required`: mặc định CẦN ảnh; chỉ miễn khi profile là `backend` lúc đầu lượt (file profile đã commit, hoặc chưa commit nhưng có từ trước lượt; đổi profile trong lượt không miễn gì), hoặc MỌI file đổi so với HEAD lúc đầu lượt (qua reflog: commit, merge, pull, reset đều tính; file mới; đổi tên thấy cả hai đường dẫn) nằm dưới `.agents/ .claude/ .gemini/ .github/ .githooks/ .codebase-memory/ docs/ reports/ scripts/ bin/ tools/` ở gốc, thư mục test ở gốc hoặc `src/<test source set>/`, hoặc là Markdown/LICENSE ở gốc (Markdown sâu hơn, và `docs/` của profile web, có thể là nội dung site). PNG được trích luôn bị kiểm: giờ trong tên phải thuộc lượt này (không trước lượt, không ở tương lai) và không trùng byte với ảnh proof khác (chặn `touch` và `cp` ảnh cũ; `mv` ảnh cũ sang tên mới rồi `touch` thì không bắt được — giới hạn còn lại). XONG luôn cần gate `--full` exit 0. Trước đây mọi lượt sửa tooling/backend chỉ có hai lối: CHƯA XONG mãi hoặc XONG sai luật.
 - **Lượt không sửa file** (hỏi, review, lập kế hoạch) trả lời thẳng: không gate, không ảnh, không dòng trạng thái (`essentials.md` "Every prompt").

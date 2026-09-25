@@ -101,6 +101,11 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
 5. The reply may open with XONG only when this turn has exit 0 from step 3 and, when step 4
    applies, its PNG. Line 1: XONG or CHƯA XONG. Line 2: what the user gets. Line 3: gate
    exit code, then image path and serial, or "ảnh: không cần — <reason>".
+   Every handover — an XONG, or any turn that runs `git push` — then carries the acceptance
+   report (core-rules §1.3), 1–2 lines each: 1. Đã fix gì (lỗi, nguyên nhân gốc, RED→GREEN)
+   · 2. Chặn bug cũ (test hồi quy / immutable_guards chạy lại PASS) · 3. Nguy cơ bug mới
+   (caller, module liên đới đã rà) · 4. An toàn mã nguồn (secret, placeholder, OCR).
+   `proof_gate.sh` refuses the reply without all four.
    A change of Markdown (`.md/.rst/.adoc`) or LICENSE-type files only needs no regression
    test: the gate passes it.
 
@@ -123,7 +128,7 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
 - Answer in the user's language (Vietnamese when they write Vietnamese); identifiers,
   commands, paths and commit subjects stay English.
 - Reports open with three lines: status (XONG / CHƯA XONG / CHỜ DUYỆT), what the user gets,
-  next step; stay short. XONG also requires the full-gate exit 0 and, when it applies, the
+  next step; stay short — a handover adds the 4-item report of "Every prompt" step 5. XONG also requires the full-gate exit 0 and, when it applies, the
   proof PNG in "Every prompt".
 - Long session or a big refactor ahead: checkpoint and compact instead of filling the window.
 - Traps from past bugs arrive with each request (`.agents/instincts.md`); read the named entry.

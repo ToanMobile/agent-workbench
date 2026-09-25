@@ -94,3 +94,19 @@ Mẫu ghi nhận:
 - **Quy tắc phòng ngừa:** <Cách làm đúng từ nay về sau>
 - **Lệnh kiểm tra:** <Câu lệnh kiểm tra tự động nếu có>
 -->
+
+---
+
+### [INSTINCT-011] Luật bắt buộc chỉ nằm trong file đọc khi cần thì agent bỏ qua
+- **Ngày phát hiện:** 2026-09-25
+- **Hiện tượng lỗi:** Luật bắt buộc chỉ nằm trong file đọc khi cần thì agent bỏ qua
+- **Nguyên nhân:** Báo cáo nghiệm thu 4 mục chỉ ở core-rules §1.3 (on-demand), essentials luôn nạp không nhắc và không hook nào kiểm — một lượt push bàn giao thiếu nó mà không gì chặn (2026-09-25); thang lười cũng từng như vậy
+- **Quy tắc phòng ngừa & Cách fix:** Luật áp cho mọi lượt phải có bản tóm tắt trong rules/essentials.md VÀ một hook/gate ép khi có thể; khi thêm luật BẮT BUỘC vào core-rules, grep essentials xem đã có chưa
+
+---
+
+### [INSTINCT-012] Sửa hook DevKit tại chỗ làm hỏng mọi phiên đang chạy
+- **Ngày phát hiện:** 2026-09-25
+- **Hiện tượng lỗi:** Sửa hook DevKit tại chỗ làm hỏng mọi phiên đang chạy
+- **Nguyên nhân:** Hook trong .claude/hooks là symlink vào checkout DevKit, được đọc trực tiếp ở mỗi Stop của mọi phiên và mọi project; ghi đè bằng open('w') cắt rỗng file trước khi ghi, một Stop chạy đúng lúc đó đọc file dở và lỗi cú pháp (2026-09-25)
+- **Quy tắc phòng ngừa & Cách fix:** Sửa file hook/gate của DevKit bằng ghi file tạm rồi os.replace (nguyên tử), giữ quyền thực thi; sau khi sửa chạy bash -n và chạy hook thật với một input mẫu

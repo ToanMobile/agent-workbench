@@ -18,6 +18,9 @@
 # on a screen: the backend profile, or every changed file (working tree, untracked, commits
 # of the turn) is surely off-screen (tests, docs, Markdown, top-level tooling dirs). A cited
 # PNG is checked even then. The full gate is never waived.
+# Handover report (core-rules §1.3): an XONG, and any turn that ran `git push` (transcript Bash
+# call after the last user prompt), must carry the 4 items — Đã fix · bug cũ · bug mới · An
+# toàn mã nguồn (English labels accepted). A push turn is checked for the report only.
 # The hook never takes the screenshot; it only refuses an XONG without one.
 #
 # Loop guard: PROOF_GATE_MAX_BLOCKS (default 2) blocks per session, then the stop
@@ -81,8 +84,14 @@ for line in reply.splitlines():
     if s:
         status = s
         break
-if not re.match(r"XONG\b", status):
-    sys.exit(0)
+xong = bool(re.match(r"XONG\b", status))
+# The 4-item acceptance report (core-rules §1.3) every handover carries: an XONG, or a turn
+# that ran `git push` whatever its status line says (2026-09-25: a push turn left it out).
+REPORT_ITEMS = (("1. Đã fix gì (tên lỗi, nguyên nhân gốc, RED→GREEN)", r"đã\s+(fix|sửa)\s*(gì|:)|what\s+was\s+fixed"),
+                ("2. Chặn bug cũ (test hồi quy / immutable_guards chạy lại PASS)", r"bug\s+cũ|reopened"),
+                ("3. Nguy cơ bug mới (caller, module liên đới đã rà)", r"bug\s+mới|collateral"),
+                ("4. An toàn mã nguồn (secret, placeholder, OCR)", r"an\s+toàn\s+mã|code\s+safety"))
+missing_report = [name for name, rx in REPORT_ITEMS if not re.search(rx, reply, re.I)]
 
 def turn_start(tp):
     """Timestamp of the last real user prompt (not a tool result) in the transcript."""
@@ -111,7 +120,36 @@ def turn_start(tp):
         return None
 
 start = turn_start(d.get("transcript_path") or "")
-cited = sorted(set(re.findall(r"(?:[\w./-]*/)?reports/proof-\d{8}-\d{6}\.png", reply)))
+
+# `git push` as the subcommand of a command that starts a line or follows && ; | ( — not the
+# words inside a heredoc, a string, `git stash push`, `git commit -m '…push…'` or a --dry-run.
+PUSH_RX = re.compile(r"(?:^|[;&|(]|\n)\s*(?:\w+=\S*\s+)*git(?:\s+-[Cc]\s+\S+|\s+--?[\w.-]+(?:=\S+)?)*\s+push\b(?![^\n;&|]*--dry-run)")
+
+def pushed_in_turn(tp):
+    """True when a Bash call of this turn (after the last user prompt) ran `git push`."""
+    try:
+        with open(tp, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                if "push" not in raw:
+                    continue          # most lines: no JSON parse on every Stop
+                try:
+                    e = json.loads(raw)
+                    t = datetime.datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")).timestamp()
+                except (ValueError, AttributeError):
+                    continue
+                if e.get("type") != "assistant" or start is None or t < start:
+                    continue
+                for c in (e.get("message") or {}).get("content") or []:
+                    cmd = (c.get("input") or {}).get("command", "") if isinstance(c, dict) and c.get("type") == "tool_use" else ""
+                    if isinstance(cmd, str) and PUSH_RX.search(cmd):
+                        return True
+    except OSError:
+        pass
+    return False
+
+if not xong and not (missing_report and pushed_in_turn(d.get("transcript_path") or "")):
+    sys.exit(0)
+cited = sorted(set(re.findall(r"(?:[\w./-]*/)?reports/proof-\d{8}-\d{6}\.png", reply))) if xong else []
 problems, good = [], []
 for rel in cited:
     path = rel if os.path.isabs(rel) else os.path.join(repo, rel)
@@ -175,15 +213,16 @@ def full_gate_problem():
         return "code đã đổi sau lần chạy cổng --full exit 0 — chạy lại cổng trên code hiện tại"
     return None
 
-gate_problem = full_gate_problem()
-need_image, scope = True, "unknown"
-try:
-    import tree_fp
-    need_image, scope = tree_fp.image_required(repo, start)
-except Exception as e:  # an unreadable scope must never waive the image
-    scope = "scope check failed: %s" % e
+gate_problem = full_gate_problem() if xong else None
+need_image, scope = xong, "unknown" if xong else "push turn: report only"
+if xong:
+    try:
+        import tree_fp
+        need_image, scope = tree_fp.image_required(repo, start)
+    except Exception as e:  # an unreadable scope must never waive the image
+        scope = "scope check failed: %s" % e
 # A cited PNG is always checked: a waived image never excuses a bogus one.
-if not gate_problem and (good or not need_image) and not problems:
+if not gate_problem and (good or not need_image) and not problems and not missing_report:
     log("pass session=%s proof=%s scope=%s" % (session, ",".join(good) or "-", scope))
     sys.exit(0)
 
@@ -192,14 +231,18 @@ try:
     state = json.load(open(state_path, encoding="utf-8"))
 except (OSError, ValueError):
     pass
-n = state.get(session, 0) + 1
-state[session] = n
+key = "%s@%s" % (session, int(start or 0))   # per turn: a release never switches the gate off for later turns
+n = state.get(key, 0) + 1
+state[key] = n
 try:
     json.dump(state, open(state_path, "w", encoding="utf-8"))
 except OSError:
     pass
 
-lines = ["⛔ PROOF-GATE: câu trả lời mở bằng XONG nhưng lượt này chưa đủ điều kiện (cổng --full exit 0 + ảnh nghiệm thu)."]
+lines = ["⛔ PROOF-GATE: câu trả lời mở bằng XONG nhưng lượt này chưa đủ điều kiện (cổng --full exit 0 + ảnh nghiệm thu + báo cáo 4 mục)."
+         if xong else "⛔ PROOF-GATE: lượt này đã git push (bàn giao) nhưng câu trả lời thiếu báo cáo nghiệm thu 4 mục."]
+if missing_report:
+    lines.append("  - BÁO CÁO 4 mục (core-rules §1.3, mỗi mục 1–2 dòng) còn thiếu: " + " · ".join(missing_report))
 if gate_problem:
     lines.append("  - CỔNG: " + gate_problem + ". Chạy từ gốc repo: python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full")
 if problems or (not good and need_image):
@@ -216,7 +259,7 @@ if need_image:
              "Lệnh thoát khác 0 thì mở câu trả lời bằng CHƯA XONG và dán lỗi. Không vẽ ảnh, không dùng lại ảnh cũ.")
 log("block session=%s attempt=%d cited=%s gate=%s" % (session, n, ",".join(cited) or "-", gate_problem or "ok"))
 if n > max_blocks:
-    msg = "\n".join(lines + ["(Đã chặn %d lần — cho dừng để không kẹt phiên. XONG này THIẾU điều kiện ở trên; người dùng cần xem lại.)" % max_blocks])
+    msg = "\n".join(lines + ["(Đã chặn %d lần — cho dừng để không kẹt phiên. Câu trả lời này THIẾU điều kiện ở trên; người dùng cần xem lại.)" % max_blocks])
     print(json.dumps({"systemMessage": msg}, ensure_ascii=False))
     sys.exit(0)
 print("\n".join(lines), file=sys.stderr)

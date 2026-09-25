@@ -43,9 +43,16 @@ data = sig + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)) + chun
 open(path, "wb").write(data)
 PY
 }
+# The 4-item acceptance report (core-rules §1.3) every handover carries; NOREPORT=1 leaves it out.
+REPORT="1. Đã fix: lỗi X, RED→GREEN.
+2. Chặn bug cũ: REG-1 [x] PASS.
+3. Nguy cơ bug mới: đã rà caller, không tác dụng phụ.
+4. An toàn mã nguồn: secret 0, placeholder 0."
 stop() { # <reply text> [stop_hook_active]
+  local reply="$1"; [ "${NOREPORT:-0}" = 1 ] || reply="$1
+$REPORT"
   python3 -c 'import json,sys; print(json.dumps({"session_id":"s-p","hook_event_name":"Stop","transcript_path":sys.argv[1],
-    "last_assistant_message":sys.argv[2],"stop_hook_active":sys.argv[3]=="1"}))' "$TR" "$1" "${2:-0}" \
+    "last_assistant_message":sys.argv[2],"stop_hook_active":sys.argv[3]=="1"}))' "$TR" "$reply" "${2:-0}" \
   | CLAUDE_PROJECT_DIR="$REPO" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
 reset() { rm -f "$REPO/.claude/audit-gate/proof_gate.state"; }
 
@@ -278,6 +285,53 @@ python3 "$DEVKIT_DIR/bin/tree_fp.py" "$REPO" >/dev/null
 after="$(cd "$REPO" && git count-objects -v | awk '/^(count|size):/{s+=$2} END{print s}')"
 [ "$before" = "$after" ] && ok "fingerprint writes no object into .git/objects" || fail "object store grew: $before -> $after"
 rm -f "$REPO/blob.bin"
+
+# Handover report (core-rules §1.3): XONG, or a turn that ran `git push`, carries the 4 items.
+reset; prof backend; sleep 2; echo "fun ok() = 15" > "$REPO/src/Core.kt"; turn_start; gate_full
+NOREPORT=1 stop "XONG
+Đã sửa.
+Gate exit 0 · ảnh: không cần (profile backend)"; rc=$?
+[ "$rc" = 2 ] && grep -q "4 mục" "$TMP/err" && ok "XONG without the 4-item report: blocked, names it" || fail "XONG without report accepted (rc=$rc)"
+stop "XONG
+Đã sửa.
+Gate exit 0 · ảnh: không cần (profile backend)"; rc=$?
+[ "$rc" = 0 ] && ok "XONG with gate, waived image and the report: allowed" || fail "full handover blocked (rc=$rc err=$(head -3 "$TMP/err"))"
+(cd "$REPO" && git add -A && git commit -qm c15)
+reset; turn_start
+python3 -c 'import datetime,json
+t=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+print(json.dumps({"type":"assistant","timestamp":t,"message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"git push origin main"}}]}}))' >> "$TR"
+NOREPORT=1 stop "Đã push lên origin/main."; rc=$?
+[ "$rc" = 2 ] && grep -q "4 mục" "$TMP/err" && ok "a turn that pushed, no report: blocked even without XONG" || fail "push turn without report accepted (rc=$rc)"
+stop "Đã push lên origin/main."; rc=$?
+[ "$rc" = 0 ] && ok "a turn that pushed, with the report: allowed" || fail "push turn with report blocked (rc=$rc err=$(head -2 "$TMP/err"))"
+reset; turn_start; NOREPORT=1 stop "Trả lời câu hỏi, không push."; [ $? = 0 ] && ok "no XONG, no push: not checked" || fail "plain answer blocked"
+# Only a real `git push` invocation counts, not the words inside a heredoc or a string (2026-09-25:
+# a turn that wrote this very test was blocked as a push turn).
+bash_call() { python3 -c 'import datetime,json,sys
+t=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+print(json.dumps({"type":"assistant","timestamp":t,"message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":sys.argv[1]}}]}}))' "$1" >> "$TR"; }
+reset; turn_start
+bash_call "python3 - <<'PY'
+print(json.dumps({\"command\":\"git push origin main\"}))
+PY"
+bash_call "grep -n 'git push' README.md; echo 'run git push later'"
+NOREPORT=1 stop "Đã sửa test."; [ $? = 0 ] && ok "'git push' only inside text/heredoc: not a push turn" || fail "text mention counted as a push"
+for cmd in "git stash push -m wip" "git commit -m 'fix push notifications'" "git push --dry-run origin main" "git config push.default current" "git log --grep=push"; do
+  reset; turn_start; bash_call "$cmd"
+  NOREPORT=1 stop "Xong việc nhỏ."; rc=$?
+  [ "$rc" = 0 ] && ok "not a push: $cmd" || fail "false push: $cmd (rc=$rc)"
+done
+# The block budget is per turn: two blocks in one turn must not switch the gate off for the next.
+reset; turn_start; bash_call "git push origin main"
+NOREPORT=1 stop "Đã push."; NOREPORT=1 stop "Đã push." 1; NOREPORT=1 stop "Đã push." 1
+turn_start; bash_call "git push origin main"; NOREPORT=1 stop "Đã push lần nữa."; rc=$?
+[ "$rc" = 2 ] && ok "a new turn gets a fresh block budget" || fail "gate stayed off after an earlier turn's releases (rc=$rc)"
+for cmd in "cd repo && git push origin main" "git -C /x/repo push -q origin HEAD" "git fetch -q; git push"; do
+  reset; turn_start; bash_call "$cmd"
+  NOREPORT=1 stop "Đã push."; rc=$?
+  [ "$rc" = 2 ] && ok "real push counted: $cmd" || fail "real push missed: $cmd (rc=$rc)"
+done
 
 # Loop guard: 2 blocks for the same session, then the stop goes through with a warning.
 reset; turn_start

@@ -1330,9 +1330,9 @@ PY
 run_case "CHƯA XONG is not checked" proof_gate.sh 0 \
   "{\"session_id\":\"pg-1\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"CHƯA XONG\\nKhông có thiết bị.\"}" CLAUDE_PROJECT_DIR="${PG}"
 run_case "XONG without this turn's proof PNG blocked" proof_gate.sh 2 \
-  "{\"session_id\":\"pg-2\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"XONG\\nĐã sửa lỗi X.\"}" CLAUDE_PROJECT_DIR="${PG}"
+  "{\"session_id\":\"pg-2\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"XONG\\nĐã sửa lỗi X.\\n1. Đã fix: X\\n2. Chặn bug cũ: REG PASS\\n3. Nguy cơ bug mới: không\\n4. An toàn mã nguồn: sạch\"}" CLAUDE_PROJECT_DIR="${PG}"
 run_case "XONG naming a fresh real PNG allowed" proof_gate.sh 0 \
-  "{\"session_id\":\"pg-3\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"XONG\\nảnh ${PG_PNG}\"}" CLAUDE_PROJECT_DIR="${PG}"
+  "{\"session_id\":\"pg-3\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"XONG\\nảnh ${PG_PNG}\\n1. Đã fix: X\\n2. Chặn bug cũ: REG PASS\\n3. Nguy cơ bug mới: không\\n4. An toàn mã nguồn: sạch\"}" CLAUDE_PROJECT_DIR="${PG}"
 run_case "PROOF_GATE=0 escape hatch allows" proof_gate.sh 0 \
   "{\"session_id\":\"pg-4\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"XONG\\nĐã sửa lỗi X.\"}" CLAUDE_PROJECT_DIR="${PG}" PROOF_GATE=0
 echo
