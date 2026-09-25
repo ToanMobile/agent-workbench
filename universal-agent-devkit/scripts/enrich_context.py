@@ -439,6 +439,27 @@ def hook_prompt(raw):
 # still injects the RED→GREEN rule for it, but no checklist row is written.
 DEFECT_WORDS = ["lỗi", "bug", "crash", "văng", "hỏng", "fail", "chết", "die", "exception", "anr"]
 TITLE_MAX = 120
+# A task about bugs already KNOWN reports none (2026-09-25: "viết test cho các bug còn lại", "link
+# bug luôn đi", "tổng số bugs", "docs/plan/…-5-bug.md", "/geely-fixbugs" became REPORTED rows).
+# Before looking for a defect word, drop paths / slash commands / file names, and "bug(s)" as a
+# counted set or the object of a task. A symptom in the same prompt still reports ("fix bug crash
+# khi mở PDF": crash; "…vẫn chưa được, audit thêm bug": "thêm bug" is not a known set).
+# A screenshot / video dropped in a bug(s)/ folder IS the evidence of a report ("…bugs/img.png",
+# "(bugs/img.png)", a macOS "bugs/Screenshot … 10.23.45.png") — a signal of its own, checked
+# before paths go. A path is a token that looks like one: starts with ~ . /, is a URL, has two
+# slashes, or one slash with a digit/-/_ or a known extension, or name.<known extension>;
+# "crash/văng", "fail/timeout" and "crash.Fix" (a missing space) are words (review 2026-09-26).
+# Every branch is anchored at a token start: no quadratic scan of a long pasted token.
+_EXT = (r"(?:md|txt|log|json|ya?ml|toml|xml|kts?|java|py|sh|tsx?|jsx?|gradle|pdf|docx?|xlsx?|pptx?|csv"
+        r"|html?|css|swift|go|rs|patch|diff|zip|apk|aab|png|jpe?g|gif|webp|heic|mp4|mov|webm|mkv)")
+PATHLIKE_RE = re.compile(
+    r"(?<!\S)(?:[~./]\S*|\S*://\S*|[^\s/]*/[^\s/]*/\S*|[^\s/]*/[^\s/]*[-_\d][^\s/]*"
+    r"|[^\s/]*/[^\s/]*\." + _EXT + r"|[^\s/]+\." + _EXT + r")(?![\w/])")
+BUG_EVIDENCE_RE = re.compile(r"(?<![\w-])bugs?/[^\n]{0,200}?\.(?:png|jpe?g|gif|webp|heic|mp4|mov|webm|mkv)(?!\w)")
+# Only the word bug(s) goes, the counting in front of it stays: "fix 2 crash bugs" keeps "crash".
+KNOWN_BUGS_RE = re.compile(
+    r"((?<!\w)(?:các|những|mấy|mọi|tất cả|all|\d+|tổng số|số lượng|số|link|gắn|viết test cho|test cho"
+    r"|list|danh sách|checklist)\s+(?:\w+\s+)?)bugs?(?!\w)")
 
 # Agent and harness prompts are not the user's bug reports. Grok (2026-09-25, OfficeReader)
 # runs the prompt hook for its own sub-agents too, and "You are a hostile code reviewer. Do
@@ -499,8 +520,9 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
     # A wrapped message (<cross-session-message …>, <task-notification>) is not the user's report.
     if not first or first.startswith("<"):
         return ""
-    p_lower = normalize(prompt)
-    if not (mentions(p_lower, DEFECT_WORDS) or DEFECT_RE.search(p_lower)):
+    p_norm = normalize(prompt)
+    p_lower = KNOWN_BUGS_RE.sub(r"\1 ", PATHLIKE_RE.sub(" ", p_norm))
+    if not (BUG_EVIDENCE_RE.search(p_norm) or mentions(p_lower, DEFECT_WORDS) or DEFECT_RE.search(p_lower)):
         return ""
     title = " ".join(first.split())
     if len(title) > TITLE_MAX:

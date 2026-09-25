@@ -126,7 +126,7 @@ Every platform also gets the git **pre-commit** gate (`agent-kit githooks instal
 
   | Switch | What it does | Hook / tool |
   |---|---|---|
-  | `BUG_CAPTURE` | bug prompt → `REPORTED` row (under every agent; not agent/harness prompts by their content: "You are …" openings, tool/JSON schemas, long instruction blocks) | UserPromptSubmit |
+  | `BUG_CAPTURE` | bug prompt → `REPORTED` row (under every agent; not agent/harness prompts by their content: "You are …" openings, tool/JSON schemas, long instruction blocks; not a task about known bugs: "bug(s)" counted or as a task object — "viết test cho các bug", "link bug", "40 bug" — or only inside a path / slash command; a screenshot or video under `bug(s)/` still counts) | UserPromptSubmit |
   | `INBOX_WATCH` | new `.agents/INBOX.md` lines → context, once each | UserPromptSubmit |
   | `BUG_LINK_REMINDER` | hold Stop once when this session's bug/REQ has no test | Stop (`test_evidence_gate.sh`) |
   | `AUTO_LINK` | link bug ↔ test on one-to-one RED→GREEN evidence (🤖) | Stop |

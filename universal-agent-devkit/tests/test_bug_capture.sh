@@ -161,6 +161,33 @@ nothing "'You are a senior … reviewer' (role assignment) still → no row" "$o
 out="$(hook "Bạn là một reviewer khó tính. Không sửa file, chỉ liệt kê lỗi crash." h4)"
 nothing "'Bạn là một reviewer …' (role assignment) still → no row" "$out"
 n0="$(nbugs)"
+# A task about KNOWN bugs is not a report (2026-09-25, GeelyEx2/OfficeReader/workbench: each of these
+# became a REPORTED row): "bug" as a counted set or the object of a task, or inside a path / command.
+i=0
+for p in "có viết test cho 4 bug critical đi" "duyệt, commit merge push và link bug luôn đi" \
+         "viết test cho các bug còn lại luôn đi" \
+         "gửi check list báo cáo tổng số bugs và số lượng đã fix xong, chưa xong và đang đợi test" \
+         "chạy /geely-fixbugs để audit, review check lấy all bug fix luôn đi" \
+         "Audit, review docs/plan/telemetry-bat-5-bug.md, docs/plan/ra-xe-test-5-bug-21-09.md" \
+         "gom lại hết chưa? sao còn docs/plan/telemetry-bat-5-bug.md"; do
+  i=$((i + 1)); out="$(hook "$p" "m$i")"
+  nothing "task about known bugs '${p:0:40}…' → no row" "$out"
+done
+# …while a report that also says "bug" still lands.
+i=0
+for p in "fix bug crash khi mở file PDF có mật khẩu" "bug: nút Lưu không phản hồi sau khi đổi ngôn ngữ" \
+         "hiện bấm next, prev trên vô lăng vẫn chưa được, audit thêm bug" \
+         "check event open file fail fix cho tôi" \
+         "audit nguyên nhân hiển thị pin không đúng? bugs/img.png" \
+         "đây có 1 lớp đằng sau đè bên dưới bugs/Screenshot_1789454146.png" \
+         "audit bugs/bug.mp4 tính năng hé cửa nhưng khi mở cửa thì không thấy hé, hé quá chậm" \
+         "app crash/văng khi mở PDF" "App crash.Fix giúp em" "login fail/timeout liên tục" \
+         "fix 2 crash bugs in checkout" "layout lệch, xem 2 ảnh bugs/a.png" "layout lệch (bugs/img.png)" \
+         "màn cài đặt lệch bugs/Screenshot 2026-09-25 at 10.23.45.png"; do
+  i=$((i + 1)); out="$(raw_hook "$(payload "$p" "r$i")")"
+  landed "report '${p:0:40}…' → REPORTED row" "$out"
+done
+n0="$(nbugs)"
 
 # …and real reports still land, however long or however they quote JSON.
 TRACE="App văng khi mở file DOCX có bảng lồng nhau
