@@ -22,9 +22,18 @@ git init -q -b main . && git config user.email t@t && git config user.name t
 printf '{"name":"x","scripts":{"test":"node -e 0"}}\n' > package.json
 printf 'export const a = 1;\n' > src/a.js
 printf 'export const gone = 1;\n' > src/gone.js
-printf 'node_modules\n.env\napp/google-services.json\n' > .gitignore
+printf 'node_modules\n.env\napp/google-services.json\nCarConnect/app/libs/\nCarConnect/keys/\nCarConnect/app/src/main/assets/overlay/\n.agents/local/\n' > .gitignore
 git add -A && git commit -qm init
 echo "API_KEY=local" > .env && echo '{"k":1}' > app/google-services.json
+# Ignored build inputs red_proof.py already knows (DEFAULT_INPUTS: **/libs/*.aar, **/*.jks) and
+# the project's own list (.agents/local/red_proof.json "copy") — GeelyEx2, 2026-09-24.
+mkdir -p CarConnect/app/libs CarConnect/keys/release CarConnect/app/src/main/assets/overlay/fonts .agents/local stray/libs
+printf 'AAR' > CarConnect/app/libs/vendor-sdk.aar
+printf 'JKS' > CarConnect/keys/release/app.jks
+printf 'alias=x\n' > CarConnect/keys/signing.txt
+printf 'FNT' > CarConnect/app/src/main/assets/overlay/fonts/a.ttf
+printf '{"copy": ["CarConnect/keys/**", "CarConnect/app/src/main/assets/overlay/**"]}\n' > .agents/local/red_proof.json
+printf 'NOT-IGNORED' > stray/libs/loose.aar     # matches a pattern but is NOT ignored: never copied
 bash "$KIT" init "$M" -y -a claude -p web --no-githooks >/dev/null 2>&1 || { echo "cannot install into the main checkout"; exit 1; }
 main_status="$(git status --porcelain)"
 
@@ -35,6 +44,18 @@ W="$TMP/wt-a"
   && ok "add: worktree on feat/<folder>" || { fail "add (rc=$rc)"; echo "$out"; }
 [ "$(cat "$W/.env" 2>/dev/null)" = "API_KEY=local" ] && [ -f "$W/app/google-services.json" ] \
   && ok "add: git-ignored local config copied (.env, app/google-services.json)" || fail "local config not copied"
+missing=""
+for f in CarConnect/app/libs/vendor-sdk.aar CarConnect/keys/release/app.jks CarConnect/keys/signing.txt \
+         CarConnect/app/src/main/assets/overlay/fonts/a.ttf; do
+  cmp -s "$M/$f" "$W/$f" || missing="$missing $f"
+done
+[ -z "$missing" ] && ok "add: ignored build inputs copied (red_proof defaults + .agents/local/red_proof.json)" \
+  || fail "build inputs not copied:$missing"
+[ ! -e "$W/stray/libs/loose.aar" ] && ok "add: a matching file git does NOT ignore is not copied" || fail "non-ignored file copied"
+printf '%s' "$out" | grep -q "CarConnect/app/libs/vendor-sdk.aar" && ok "add: copied build inputs are listed" \
+  || fail "copied build inputs not reported"
+[ -z "$(git -C "$W" status --porcelain --ignored=no -- CarConnect)" ] && ok "add: copied build inputs stay ignored (never committed)" \
+  || fail "copied build inputs show up in git status"
 grep -q '"profile": *"web"' "$W/.agents/active-profile.json" 2>/dev/null && [ -f "$W/.claude/settings.json" ] && [ -L "$W/.agents/devkit" ] \
   && ok "add: DevKit installed with the main checkout's profile" || fail "DevKit not installed like main"
 [ -f "$(git -C "$W" rev-parse --absolute-git-dir)/devkit-worktree.json" ] \
