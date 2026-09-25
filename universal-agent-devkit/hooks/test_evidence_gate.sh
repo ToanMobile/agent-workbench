@@ -225,7 +225,9 @@ META_QUOTE_PREFIX = re.compile(
 #     ends it, so "Không chạy smoke, nhưng unit tests passed" stays a claim.
 _CONTRAST = (r"\b(?:nhưng|but|and|và|còn|mà|however|tuy\s+nhiên|song|so|nên|vì\s+vậy|therefore|while"
              r"|whereas|rồi|then|giờ|bây\s+giờ|now)\b")
-ATTR_BREAK = re.compile(r"[;—–]|\s-\s|\n|" + _CONTRAST, re.I)
+# A comma or ": " also ends the attributed part: "User reported X, fixed it" — the report is
+# theirs, the claim after the comma is the agent's own ("08:41" has no space, it stays).
+ATTR_BREAK = re.compile(r"[,;—–]|:\s|\s-\s|\n|" + _CONTRAST, re.I)
 CLAUSE_BREAK = re.compile(r"[,;:—–()]|\s-\s|\n|" + _CONTRAST, re.I)
 # Only a DIFFERENT actor counts: another hook/session/person/user. The agent's own earlier run,
 # job or session ("Previous run: 13/13 tests pass", "Lần chạy trước …", "Previous session fixed

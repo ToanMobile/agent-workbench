@@ -100,10 +100,10 @@ TEST_RUN_LOCK = "test_run.lock"
 
 
 @contextlib.contextmanager
-def test_run_lock(project: Path, deadline: float = None):
+def test_run_lock(project: Path, deadline: float):
     """The per-project test-run flock (.claude/audit-gate/test_run.lock), waited for until
-    `deadline` (time.monotonic(); None = no bound). Yields held: False = another run kept it
-    past the deadline (BUSY — do not run)."""
+    `deadline` (time.monotonic()). Yields held: False = another run kept it past the deadline
+    (BUSY — do not run)."""
     import fcntl
     state = project / ".claude" / "audit-gate"
     try:
@@ -115,10 +115,6 @@ def test_run_lock(project: Path, deadline: float = None):
         yield True  # cannot make the lock file: never worse than no lock
         return
     with fh:
-        if deadline is None:
-            fcntl.flock(fh, fcntl.LOCK_EX)
-            yield True
-            return
         while True:
             try:
                 fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -142,14 +138,19 @@ def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mo
     with test_run_lock(project, deadline) as held:
         if not held:
             return f"{tid}: BUSY — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau"
+        waited = timeout - (deadline - time.monotonic()) > 1.0   # the lock wait took part of the budget
         before = watched_mtimes(project, pats)
         started = time.perf_counter()
         status, code, out = _execute(project, cmd, deadline - time.monotonic())
+        if status == "TIMEOUT" and waited:
+            # Out of time only because another run held the lock: that measured the wait, not
+            # the code. Never record it as a red TIMEOUT (nightly would report "turned red").
+            return f"{tid}: bỏ kết quả — hết thời gian vì phải chờ khoá chạy test"
         flaky = infra = False
         broke = status == "FAIL" and bool(INFRA_FAILURE_RE.search(out))
         if status == "FAIL" and ((broke and os.environ.get("INFRA_RETRY", "1") != "0")
                                  or (retry and not broke and os.environ.get("FLAKY_RETRY", "1") != "0")):
-            st2, code2, out2 = _execute(project, cmd, timeout)
+            st2, code2, out2 = _execute(project, cmd, max(1.0, deadline - time.monotonic()))
             first = out
             out += f"\n# --- chạy lại 1 lần ({'INFRA_RETRY' if broke else 'FLAKY_RETRY'}) — exit {code2} ---\n{out2}"
             if st2 == "PASS" and (broke or not rc.test_failure_reported(first)):
