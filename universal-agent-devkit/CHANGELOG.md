@@ -4,6 +4,8 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
 
 ## Unreleased
 
+- **`test_evidence_gate` nhận ra các bộ test bash của chính DevKit** (`tests/test_*.sh`, `*contract_test.sh`, `run_impacted.sh`, `agent-kit test`): phán đỏ/xanh theo dòng tổng kết (`N failed`, `N deviating`, `❌`, `✖` → đỏ; `all passed`, `0 deviating` → xanh), vì tên ca đã qua có thể chứa FAIL/REJECT/ERROR viết hoa. Trước đó một cặp ĐỎ→XANH thật của `test_bug_capture.sh` bị coi là "không có lần chạy test nào" (2026-09-25).
+
 - **Regression gate không còn chặn mọi lượt khi chỉ chờ người duyệt diff test.** Khi lý do duy nhất là test đã có bị chính phiên này sửa (chỉ người review hoặc commit mới gỡ được), `regression_gate.sh` chặn MỘT lần cho mỗi thay đổi để agent báo người dùng; các lần dừng sau của cùng thay đổi được cho qua kèm lời nhắc (không phải PASS). Thay đổi mới → chặn lại một lần. Trước đó một phiên bị chặn 6 lần liền (2026-09-25).
 
 ### Báo cáo nghiệm thu 4 mục được ép, không chỉ ghi trong luật

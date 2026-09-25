@@ -494,7 +494,16 @@ TEST_RUNNER_RX = re.compile(
     r"\bctest\b|\brspec\b|\bphpunit\b|\bgradlew?\b[^\n|;&]*\b\w*[tT]est\w*\b|"
     # Unity: the DevKit's unity-batch.sh test modes (not `compile`/`execute`), a
     # project's scripts/unity-test.sh, or the Editor itself with -runTests.
-    r"\bunity-batch\.sh\b[^\n|;&]*\b(edit|play)mode\b|\bunity-test\.sh\b|(?<![\w-])-runTests\b", re.I)
+    r"\bunity-batch\.sh\b[^\n|;&]*\b(edit|play)mode\b|\bunity-test\.sh\b|(?<![\w-])-runTests\b|"
+    # The DevKit's own bash suites (tests/test_*.sh, the hook contract suites, run_impacted,
+    # `agent-kit test`): judged by their summary line (DEVKIT_SUITE_* below).
+    r"\btests/test_[\w.-]+\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b", re.I)
+DEVKIT_SUITE_RX = re.compile(r"\btests/test_[\w.-]+\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b")
+# Their check names may carry FAIL / REJECT / ERROR in capitals ("✔ REJECT on secrets"), so
+# the verdict is the summary: red on "N failed/FAILED", "N deviating" (N > 0), "❌" or a "✖"
+# line; green only on an explicit pass summary; anything else is not a verdict.
+DEVKIT_SUITE_RED = re.compile(r"\b[1-9]\d*\s+(failed|FAILED|deviating)\b|❌|^\s*✖ ", re.M)
+DEVKIT_SUITE_GREEN = re.compile(r"all (checks )?passed|ALL [\w ,-]*PASSED|\b0 deviating\b|: all passed", re.I)
 # Failure markers. Counts only when non-zero ("fail 0", "0 failed" are green), and the
 # bare words only in the capitals runners print (FAIL, FAILED, ERROR) — a passing test
 # named "shows error message" or node's "ℹ fail 0" summary must not read as red.
@@ -510,8 +519,12 @@ RUNNER_FAIL_RX = re.compile(
 # running anything, which is neither red nor green.
 PM_RUN_EXIT_RX = re.compile(r"^exit=(-?\d+|null)", re.M)
 
-def runner_state(is_error, txt, pm_run=False):
+def runner_state(is_error, txt, pm_run=False, command=""):
     """"red", "green", or None (not a verdict) for one runner tool_result."""
+    if command and DEVKIT_SUITE_RX.search(command):
+        if is_error or DEVKIT_SUITE_RED.search(txt):
+            return "red"
+        return "green" if DEVKIT_SUITE_GREEN.search(txt) else None
     if pm_run:
         codes = PM_RUN_EXIT_RX.findall(txt)
         if not codes:
@@ -638,9 +651,10 @@ if tp and os.path.exists(tp):
                             bugs_touched.update(BUG_ID_RX.findall(txt))
                         if (use and use["name"] == "Bash"
                                 and TEST_RUNNER_RX.search(str(use["input"].get("command", "")))):
-                            runner_results.append((blk_idx, use["index"], blk.get("is_error") is True, txt,
-                                                   str(use["input"].get("command", "")),
-                                                   runner_state(blk.get("is_error") is True, txt)))
+                            cmd = str(use["input"].get("command", ""))
+                            st = runner_state(blk.get("is_error") is True, txt, command=cmd)
+                            if st:
+                                runner_results.append((blk_idx, use["index"], blk.get("is_error") is True, txt, cmd, st))
                         elif (use and use["name"].endswith("__pm_run")
                                 and use["input"].get("kind") == "test"):
                             st = runner_state(blk.get("is_error") is True, txt, pm_run=True)

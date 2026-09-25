@@ -1700,6 +1700,30 @@ def cycle(name, first_red=True, second_green=True):
         for b in blocks:
             fh.write(json.dumps({"message": {"content": [b]}}) + "\n")
 cycle("redgreen.jsonl")
+# The DevKit's own bash suites (2026-09-25: a real RED→GREEN of tests/test_bug_capture.sh was
+# not seen as a runner at all). Their verdict is the summary line: passing check names may
+# carry FAIL / REJECT / ERROR in capitals.
+def suite(name, runs):
+    blocks = []
+    for i, (cmd, out, err) in enumerate(runs):
+        if cmd == "EDIT":
+            blocks.append({"type": "tool_use", "id": f"se{i}", "name": "Edit",
+                           "input": {"file_path": src, "old_string": "a", "new_string": "b"}})
+            continue
+        blocks += [{"type": "tool_use", "id": f"s{i}", "name": "Bash", "input": {"command": cmd}},
+                   {"type": "tool_result", "tool_use_id": f"s{i}", "is_error": err, "content": out}]
+    with open(os.path.join(d, name), "w") as fh:
+        for b in blocks:
+            fh.write(json.dumps({"message": {"content": [b]}}) + "\n")
+BC = "cd ../devkit-wt/universal-agent-devkit && bash tests/test_bug_capture.sh 2>&1 | tail -4"
+suite("devkit_redgreen.jsonl", [
+    (BC, "✖ a real bug prompt under Grok → REPORTED row: not recorded\n❌ test_bug_capture: 3 failed", False),
+    ("EDIT", "", False),
+    (BC, "✔ failing regression command -> REJECT\n✔ ERROR banner stays hidden\n✅ test_bug_capture: all passed", False)])
+suite("devkit_green_names.jsonl", [("EDIT", "", False),
+    ("bash tests/test_postfix_gate.sh", "✔ full gate not exit 0 -> FAILED run blocked\n✔ REJECT on secrets\npost-fix-gate: all checks passed", False)])
+suite("devkit_deviating.jsonl", [("EDIT", "", False),
+    ("bash hooks/tests/hook_contract_test.sh", "  DEVIATES  proof gate case\ncontract points: 480 ok, 3 deviating", False)])
 with open(os.path.join(d, "redgreen.jsonl")) as src_tr, open(os.path.join(d, "redgreen_learned.jsonl"), "w") as fh:
     fh.write(src_tr.read())
     fh.write(json.dumps({"message": {"content": [{"type": "tool_use", "id": "l1", "name": "Bash",
@@ -1775,6 +1799,15 @@ run_case "check 7: green-only run cannot back 'đã fix'" test_evidence_gate.sh 
   CLAUDE_PROJECT_DIR="${NODE_PROJ}"
 run_case "check 7: still red after the edit cannot back 'đã fix'" test_evidence_gate.sh 2 \
   "{\"session_id\":\"c7rr\",\"transcript_path\":\"${NODE_PROJ}/redred.jsonl\",\"last_assistant_message\":\"Đã fix bug đăng nhập.\"}" \
+  CLAUDE_PROJECT_DIR="${NODE_PROJ}"
+run_case "DevKit bash suite RED then GREEN backs 'đã fix'" test_evidence_gate.sh 0 \
+  "{\"session_id\":\"dk-rg\",\"transcript_path\":\"${NODE_PROJ}/devkit_redgreen.jsonl\",\"last_assistant_message\":\"Đã fix bug ghi nhận: test đỏ trước khi sửa, 12/12 test pass sau khi sửa.\"}" \
+  CLAUDE_PROJECT_DIR="${NODE_PROJ}" LESSON_REMINDER=0
+run_case "DevKit suite green with FAIL/REJECT/ERROR in passing names backs a pass claim" test_evidence_gate.sh 0 \
+  "{\"session_id\":\"dk-gn\",\"transcript_path\":\"${NODE_PROJ}/devkit_green_names.jsonl\",\"last_assistant_message\":\"Đã chạy test, 12/12 test pass.\"}" \
+  CLAUDE_PROJECT_DIR="${NODE_PROJ}"
+run_case "DevKit contract suite with N deviating does not back a pass claim" test_evidence_gate.sh 2 \
+  "{\"session_id\":\"dk-dv\",\"transcript_path\":\"${NODE_PROJ}/devkit_deviating.jsonl\",\"last_assistant_message\":\"Đã chạy test, 12/12 test pass.\"}" \
   CLAUDE_PROJECT_DIR="${NODE_PROJ}"
 run_case "K-10 npm test green backs claim (no gradle)" test_evidence_gate.sh 0 \
   "{\"session_id\":\"k10g\",\"transcript_path\":\"${NODE_PROJ}/green.jsonl\",\"last_assistant_message\":\"Đã chạy test, 12/12 test pass.\"}" \
