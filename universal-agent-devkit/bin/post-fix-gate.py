@@ -313,21 +313,44 @@ def test_change_is_append_only(base_ref: str, repo_path: str) -> bool:
 # Who edited an existing test? Same sources as hooks/testsourceset_gate.sh (which scopes its
 # compile the same way): the session's Edit/Write calls (its sub-agents' too), its write-shaped
 # Bash commands, and its Bash windows in .claude/audit-gate/bash_write_ledger.tsv. rm / git rm
-# count as writes here: a deleted test has no mtime, naming it is the only trace.
+# count as writes here: a deleted test has no mtime, naming it is the only trace. touch / ln
+# too: `touch -t 2020… <test>` after a write moves the mtime out of every window.
 _WRITE_VERB_RE = re.compile(r"\bsed\s+(-[A-Za-z]*i|--in-place)|\bperl\s+-[A-Za-z]*i|\btee\b|"
-                            r"\b(cp|mv|rm|install|patch|dd|truncate)\b|\bgit\s+(apply|am|checkout|restore|rm|mv)\b")
+                            r"\b(cp|mv|rm|install|patch|dd|truncate|touch|ln)\b|\bgit\s+(apply|am|checkout|restore|rm|mv)\b")
+# Tools that cannot write a project file (taken from the tool names in real Claude Code
+# transcripts, 2026-09-25). Any other tool — a write-capable MCP tool, an external agent
+# dispatch, Monitor/Workflow running commands outside the Bash ledger — can write where the
+# gate cannot see it: its session's test edits are then all its own (fail closed).
+# Sub-agents (Task/Agent/SendMessage) are read through their own transcripts.
+_READ_ONLY_TOOLS = frozenset((
+    "Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "TodoWrite", "TodoRead", "Task", "Agent",
+    "SendMessage", "ListAgents", "TaskOutput", "BashOutput", "TaskStop", "KillShell", "TaskCreate",
+    "TaskUpdate", "TaskList", "TaskGet", "ToolSearch", "Skill", "AskUserQuestion", "ExitPlanMode",
+    "EnterPlanMode", "ScheduleWakeup", "ReadNotifications", "SendUserFile", "SendFeedback", "LSP",
+    "advisor", "SubagentHandback"))
+# An MCP tool (mcp__<server>__<tool>) counts as read-only only when its own name clearly reads.
+_MCP_READ_RE = re.compile(r"^(get|read|list|search|query)[_-]", re.I)
+
+
+def _read_only_tool(name) -> bool:
+    if not isinstance(name, str):
+        return False
+    if name.startswith("mcp__"):
+        return bool(_MCP_READ_RE.match(name.rsplit("__", 1)[-1]))
+    return name in _READ_ONLY_TOOLS
 _REDIRECT_TARGET_RE = re.compile(r">>?\s*[\"']?([^\s\"'<>|;&()]+)")
 _PATH_TOKEN_RE = re.compile(r"[^\s\"'<>|;&()=]+")
 
 
 def _session_trace(transcript: str):
-    """(files written by Edit/Write tools, Bash commands, first timestamp, Bash call count) of a
-    session, from its transcript and its sub-agents' — or None when there is nothing to judge by
-    (no transcript, unreadable, not one tool call)."""
+    """(files written by Edit/Write tools, Bash commands, first timestamp, Bash call count,
+    opaque) of a session, from its transcript and its sub-agents' — or None when there is nothing
+    to judge by (no transcript, unreadable, not one tool call). opaque: it called a tool that may
+    write where neither the transcript nor the Bash ledger shows it (not _read_only_tool)."""
     from datetime import datetime  # noqa: PLC0415
     if not transcript or not os.path.isfile(transcript):
         return None
-    edited, bash, started, tool_uses = set(), [], None, 0
+    edited, bash, started, tool_uses, opaque = set(), [], None, 0, False
     subs = sorted(Path(os.path.splitext(transcript)[0], "subagents").glob("*.jsonl"))
     for i, path in enumerate([Path(transcript)] + subs):
         try:
@@ -358,9 +381,12 @@ def _session_trace(transcript: str):
                     fp = inp.get("file_path") or inp.get("notebook_path")
                     if isinstance(fp, str) and fp:
                         edited.add(os.path.realpath(fp))
-                elif blk.get("name") == "Bash" and isinstance(inp.get("command"), str):
-                    bash.append(inp["command"])
-    return (edited, bash, started, len(bash)) if tool_uses else None
+                elif blk.get("name") == "Bash":
+                    if isinstance(inp.get("command"), str):
+                        bash.append(inp["command"])
+                elif not _read_only_tool(blk.get("name")):
+                    opaque = True
+    return (edited, bash, started, len(bash), opaque) if tool_uses else None
 
 
 def _bash_windows(project: Path) -> list:
@@ -391,20 +417,23 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
     """(blocking, other): the edited existing tests this session made — or cannot be told
     apart — and those another session or a person made (a warning, never a block).
 
-    "Other" needs evidence: the file changed before this session's first prompt, or inside
-    another session's narrowest Bash window, or at a moment none of this session's Bash
-    commands was running while its Bash is on the ledger (or it ran none). Without a session
-    or a usable transcript every path stays blocking — the behaviour before attribution."""
+    "Other" needs positive evidence: the file changed inside another session's narrowest Bash
+    window, or before this session's first prompt with no write command of this session naming
+    it (a deleted file: this session ran no Bash at all). A change during the session outside
+    every window is NOT evidence (a detached process, a person: cannot tell) and blocks. Without
+    a session, a usable transcript, or with a tool the gate cannot see through (_read_only_tool)
+    every path stays blocking — fail closed."""
     if not paths or not session or not transcript:
         return list(paths), []
     trace = _session_trace(transcript)
     if trace is None:
         return list(paths), []
-    edited, bash, started, bash_calls = trace
+    edited, bash, started, bash_calls, opaque = trace
+    if opaque:
+        return list(paths), []
     project = get_project_dir()
     root = Path(os.path.realpath(project))
     windows = _bash_windows(project)
-    bash_accountable = bash_calls == 0 or any(sid == session for _, _, sid in windows)
     named = set()
     for cmd in bash:
         toks = set(_REDIRECT_TARGET_RE.findall(cmd))
@@ -421,8 +450,8 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
             try:
                 mt = os.path.getmtime(full)
             except OSError:
-                mt = None     # deleted: only a Bash command naming it could be ours
-                if bash_accountable and not any(os.path.basename(f) in c for c in bash):
+                mt = None     # deleted: with no Bash and no opaque tool, it cannot be ours
+                if bash_calls == 0:
                     owner = "other"
             if mt is not None:
                 best = None   # (width, session) of the narrowest window holding the mtime
@@ -435,8 +464,8 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
                     owner = "me"
                 elif best and best[1]:
                     owner = "other"
-                elif best is None and ((started and mt < started - 1) or bash_accountable):
-                    owner = "other"
+                elif best is None and started and mt < started - 1:
+                    owner = "other"   # before the first prompt; a write verb naming it is by_me above
         (other if owner == "other" else mine).append(f)
     return mine, other
 
@@ -2243,8 +2272,10 @@ TEST_RUN_LOCK = "test_run.lock"
 
 def acquire_test_run_lock(project_dir):
     """(file handle, held) — the per-project test-run flock under .claude/audit-gate/. Waits at
-    most TEST_RUN_LOCK_WAIT_S (default 900; the Stop hook's own timeout is 1800) for another
-    run; (None, True) when the lock file cannot be made (never worse than no lock)."""
+    most TEST_RUN_LOCK_WAIT_S (default 900 from the CLI; hooks/regression_gate.sh passes 120 so
+    the wait plus the suites stay inside the Stop hook's own 1800 s timeout) for another run;
+    not held → the tests are BUSY (summary "busy"). (None, True) when the lock file cannot be
+    made (never worse than no lock)."""
     import fcntl  # noqa: PLC0415
     state = Path(project_dir) / ".claude" / "audit-gate"
     try:
@@ -2917,6 +2948,9 @@ def main():
         verdict_text, verdict_color, exit_code = f"CHƯA XÁC MINH — {len(uncovered)} file code thay đổi chưa có test hồi quy (thêm vào regression_matrix.json, hoặc --allow-no-tests)", YELLOW, 2
     elif no_coverage:
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — không có test hồi quy nào khớp thay đổi (--allow-no-tests để chấp nhận)", "UNVERIFIED — no regression test matches the change (--allow-no-tests to accept)"), YELLOW, 2
+    elif run_tests and tests_untested and all(t.get("label") == "BUSY" for t in tests_untested):
+        verdict_text, verdict_color, exit_code = tr("UNTESTED — một lượt chạy test khác đang giữ khoá dự án (TEST_RUN_LOCK_WAIT_S) — chạy lại sau; KHÔNG phải PASS",
+                                                    "UNTESTED — another test run holds the project lock (TEST_RUN_LOCK_WAIT_S) — run again later; NOT a PASS"), YELLOW, 4
     elif run_tests and tests_untested:
         names = ", ".join(t["id"] or "?" for t in tests_untested)
         verdict_text, verdict_color, exit_code = tr(f"UNTESTED — {names} không chạy được trên máy này (thiếu công cụ/thiết bị); KHÔNG phải PASS",
@@ -3013,6 +3047,7 @@ def main():
             "unreadable": unreadable, "regression_tests": regression_tests,
             "matrix_problem": matrix_problem, "tests_touched": tests_touched,
             "tests_touched_other": tests_touched_other,
+            "busy": run_tests and not lock_held,   # another run held test_run.lock: tests not run
             "test_mode": test_mode, "full_run_required": bool(impacted_run),
             "devkit_artifacts_skipped": len(devkit_artifacts), "device": device_state,
             "static": {"secrets": len(secrets), "lazy": len(lazy_findings), "dependencies": len(dep_findings),

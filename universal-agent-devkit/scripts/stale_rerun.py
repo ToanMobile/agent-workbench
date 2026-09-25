@@ -100,8 +100,10 @@ TEST_RUN_LOCK = "test_run.lock"
 
 
 @contextlib.contextmanager
-def test_run_lock(project: Path):
-    """The per-project test-run flock (.claude/audit-gate/test_run.lock), waited for."""
+def test_run_lock(project: Path, deadline: float = None):
+    """The per-project test-run flock (.claude/audit-gate/test_run.lock), waited for until
+    `deadline` (time.monotonic(); None = no bound). Yields held: False = another run kept it
+    past the deadline (BUSY — do not run)."""
     import fcntl
     state = project / ".claude" / "audit-gate"
     try:
@@ -110,22 +112,39 @@ def test_run_lock(project: Path):
             (state / ".gitignore").write_text("*\n", encoding="utf-8")
         fh = open(state / TEST_RUN_LOCK, "w")
     except OSError:
-        yield       # cannot make the lock file: never worse than no lock
+        yield True  # cannot make the lock file: never worse than no lock
         return
     with fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        yield
+        if deadline is None:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            yield True
+            return
+        while True:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    yield False
+                    return
+                time.sleep(0.2)
+        yield True
 
 
 def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mode: str = "stale-rerun",
             retry: bool = False) -> str:
     """Run one suite for real and record it (result + evidence), unless a watched file
     changed while it ran. retry: a FAIL is re-run once; green then = flaky (stays FAIL).
-    A run that lost its results store (INFRA_FAILURE_RE) is re-run whatever `retry` says."""
-    with test_run_lock(project):
+    A run that lost its results store (INFRA_FAILURE_RE) is re-run whatever `retry` says.
+    The wait for the project's test-run lock comes out of `timeout`: held past it → BUSY,
+    nothing run or recorded."""
+    deadline = time.monotonic() + timeout
+    with test_run_lock(project, deadline) as held:
+        if not held:
+            return f"{tid}: BUSY — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau"
         before = watched_mtimes(project, pats)
         started = time.perf_counter()
-        status, code, out = _execute(project, cmd, timeout)
+        status, code, out = _execute(project, cmd, deadline - time.monotonic())
         flaky = infra = False
         broke = status == "FAIL" and bool(INFRA_FAILURE_RE.search(out))
         if status == "FAIL" and ((broke and os.environ.get("INFRA_RETRY", "1") != "0")

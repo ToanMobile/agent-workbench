@@ -84,4 +84,51 @@ wait $holder
 python3 -c "import sys; sys.exit(0 if float(open('$TMP/ran_at').read()) >= float(open('$TMP/released_at').read()) else 1)" 2>/dev/null \
   && ok "run_one waits for the project's test-run lock" || fail "run_one ran while another run held the lock"
 
+# The wait is bounded by the run's own timeout (it waited forever, with a timeout computed
+# before the wait): a lock held past it → BUSY, nothing run, nothing recorded; a lock
+# released in time → the suite gets only what is left of the budget.
+hold_lock() { # <seconds> — hold the project's test-run lock in the background
+  rm -f "$TMP/held"
+  python3 - "$P" "$TMP" "$1" <<'PY' &
+import fcntl, os, sys, time
+p, tmp, secs = sys.argv[1], sys.argv[2], float(sys.argv[3])
+os.makedirs(p + "/.claude/audit-gate", exist_ok=True)
+with open(p + "/.claude/audit-gate/test_run.lock", "w") as f:
+    fcntl.flock(f, fcntl.LOCK_EX)
+    open(tmp + "/held", "w").close()
+    time.sleep(secs)
+PY
+  holder=$!
+  for _ in $(seq 1 50); do [ -f "$TMP/held" ] && break; sleep 0.1; done
+}
+status_of() { python3 -c "import json,sys; print(json.load(open(sys.argv[1] + '/.agents/regression_status.json'))['items']['REG-A'])" "$P"; }
+before_busy="$(status_of)"
+rm -f "$TMP/busy_ran"; hold_lock 6
+res="$(python3 - "$P" "$TMP" "$DEVKIT_DIR" <<'PY'
+import sys, time; from pathlib import Path
+p, tmp, kit = sys.argv[1:]
+sys.path.insert(0, kit + "/scripts"); import stale_rerun
+t0 = time.monotonic()
+line = stale_rerun.run_one(Path(p), "REG-A", "touch %s/busy_ran" % tmp, [], 2)
+print("%.1f|%s" % (time.monotonic() - t0, line))
+PY
+)"
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+after_busy="$(status_of)"
+python3 -c "import sys; e, line = sys.argv[1].split('|', 1); sys.exit(0 if float(e) < 4 and 'BUSY' in line else 1)" "$res" \
+  && [ ! -f "$TMP/busy_ran" ] && [ "$before_busy" = "$after_busy" ] \
+  && ok "run_one: lock held past its timeout → BUSY within the budget, nothing run or recorded" \
+  || fail "run_one lock wait unbounded (res='$res' ran=$([ -f "$TMP/busy_ran" ] && echo y || echo n) recorded=$([ "$before_busy" = "$after_busy" ] && echo n || echo y))"
+hold_lock 2
+res="$(python3 - "$P" "$TMP" "$DEVKIT_DIR" <<'PY'
+import sys; from pathlib import Path
+p, tmp, kit = sys.argv[1:]
+sys.path.insert(0, kit + "/scripts"); import stale_rerun
+print(stale_rerun.run_one(Path(p), "REG-A", "sleep 3", [], 4))
+PY
+)"
+wait "$holder" 2>/dev/null
+printf '%s' "$res" | grep -q TIMEOUT && ok "run_one: time spent waiting for the lock comes off the suite's timeout" \
+  || fail "suite got the full timeout after waiting for the lock: '$res'"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_stale_rerun: all passed" || { echo "❌ test_stale_rerun: $FAILS failed"; exit 1; }
