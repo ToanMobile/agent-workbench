@@ -17,9 +17,10 @@
 #   • failures > 0 or errors > 0             → not a pass
 #   • skipped > 0 not mentioned in the message → a skip is not a pass
 # XML of ANOTHER project counts too when this session's own Bash commands named it (its
-# build/test-results path, the XML, or the project dir it ran the tests in) and it was
-# written during this session. A sentence that only attributes the result to another
-# hook/session/agent, or says the tests were not run / did not pass, is not a claim.
+# build/test-results path, the XML, or the project dir it ran the tests in) and one of this
+# session's own Bash windows (bash_write_ledger.tsv) wrote it. A sentence that only attributes
+# the result to another hook/session/person/user, or says the tests were not run / did not pass,
+# is not a claim.
 #
 # ── 6.4: two failed fixes on the same root cause ──
 # Proxy, since "root cause" has no machine definition: the SAME testcase id
@@ -212,11 +213,11 @@ META_QUOTE_PREFIX = re.compile(
 # pass, makes no pass claim (2026-09-25: "the evidence logs written by another hook at 08:41 say
 # status PASS" and "chưa chạy test" were blocked as unbacked claims). Both exemptions are
 # positional and local, so they cannot reach across a contrast to an independent claim:
-#   • ATTRIBUTED — a different actor/time names the source in the same stretch of text before the
-#     match: another/other/previous hook|session|agent|run…, hook|phiên|agent… khác|trước,
-#     written/produced/reported by another…, the user said. A contrast or sequence word (nhưng,
-#     but, and, và, còn, mà, giờ, now, …) or `;`/dash between them ends it ("Hook khác báo fail,
-#     nhưng giờ 13/13 test pass" is still a claim). Plain "the XML shows 13/13" is NOT attribution:
+#   • ATTRIBUTED — a different actor names the source in the same stretch of text before the
+#     match: another/other/a different hook|session|person|user, hook|phiên|người khác,
+#     written/produced/reported by someone, the user said. Not an agent, not an earlier run.
+#     A contrast or sequence word (nhưng, but, and, và, còn, mà, giờ, now, …) or `;`/dash
+#     between them ends it ("Hook khác báo fail, nhưng giờ 13/13 test pass" is still a claim). Plain "the XML shows 13/13" is NOT attribution:
 #     that claim is checked against the XML on disk.
 #   • NEGATED — the negator sits right before the result word ("tests did not pass", "test chưa
 #     xanh", "not fixed"), or the same clause says the tests were not run / the result is not
@@ -226,12 +227,15 @@ _CONTRAST = (r"\b(?:nhưng|but|and|và|còn|mà|however|tuy\s+nhiên|song|so|nê
              r"|whereas|rồi|then|giờ|bây\s+giờ|now)\b")
 ATTR_BREAK = re.compile(r"[;—–]|\s-\s|\n|" + _CONTRAST, re.I)
 CLAUSE_BREAK = re.compile(r"[,;:—–()]|\s-\s|\n|" + _CONTRAST, re.I)
+# Only a DIFFERENT actor counts: another hook/session/person/user. The agent's own earlier run,
+# job or session ("Previous run: 13/13 tests pass", "Lần chạy trước …", "Previous session fixed
+# bug A") is its own claim, and an agent's word is not evidence either: a leader relaying a
+# subagent's unverified "13/13 tests pass" ("The other agent ran the suite: …", "Agent khác báo
+# đã fix") is checked like any claim (2026-09-25 review P1).
 ATTRIBUTION = re.compile(
-    r"\b(?:another|other|a\s+different|the\s+other|previous|earlier|prior|separate)\s+(?:[\w-]+\s+)?"
-    r"(?:hooks?|sessions?|agents?|subagents?|runs?|process(?:es)?|workers?|conversations?|chats?|teams?|machines?|jobs?)\b"
-    r"|\b(?:hook|phiên|agent|lần\s+chạy|tiến\s+trình|người|team|máy)\s+(?:khác|trước|cũ|kia)\b"
-    r"|\b(?:written|produced|reported|recorded|logged|generated|claimed|posted)\s+by\s+"
-    r"(?:another|a\s+different|the\s+other|other|someone|a\s+previous|the\s+previous)\b"
+    r"\b(?:another|other|a\s+different)\s+(?:[\w-]+\s+)?(?:hooks?|sessions?|person|people|users?)\b"
+    r"|\b(?:hook|phiên|người)\s+khác\b"
+    r"|\b(?:written|produced|reported|recorded|logged|generated|claimed|posted)\s+by\s+someone\b"
     r"|\b(?:the\s+)?user\s+(?:said|says|reported|reports|claims?)\b|\b(?:người\s+dùng|user)\s+(?:nói|báo|kể)\b",
     re.I)
 _NEG = r"(?:\b(?:chưa|không|chẳng|never|not|no|none\s+of\s+the|zero|did\s+not|does\s+not|do\s+not|failed\s+to)|n't)"
@@ -823,9 +827,8 @@ def _load_windows():
 _WINDOWS = _load_windows()
 _MY_SID = str(d.get("session_id") or "")
 
-def ran_here(mtime):
-    if not _WINDOWS or not _MY_SID:
-        return True
+def _window_owner(mtime):
+    """Session of the narrowest ledger window containing mtime; None when none or a tie."""
     best_w, best_sid = None, None
     for st, en, sid_ in _WINDOWS:
         if st <= mtime <= en:
@@ -834,7 +837,19 @@ def ran_here(mtime):
                 best_w, best_sid = w, sid_
             elif w == best_w and sid_ != best_sid:
                 best_sid = None
-    return True if best_sid is None else best_sid == _MY_SID
+    return best_sid
+
+def ran_here(mtime):
+    if not _WINDOWS or not _MY_SID:
+        return True
+    owner = _window_owner(mtime)
+    return True if owner is None else owner == _MY_SID
+
+def ran_in_my_window(mtime):
+    """Foreign XML only, fail-CLOSED: the narrowest window holding the write is THIS session's.
+    No ledger, no containing window, or a tie → not ours. A green XML another agent left in a
+    project this session only `cat`ed is not our run (2026-09-25 review P3)."""
+    return bool(_WINDOWS and _MY_SID) and _window_owner(mtime) == _MY_SID
 
 # ── XML this session produced in ANOTHER project ─────────────────────────────
 # (2026-09-25) A session working on two projects ran/read the tests of the other one
@@ -844,8 +859,9 @@ def ran_here(mtime):
 # (or one of its 3 parents) holding a Gradle/Unity project, e.g. `cd /other && ./gradlew test`.
 # The XML file on DISK is read, never XML printed in a tool result (an `echo` could forge that).
 # It must have been written during this session: mtime ≥ the session's first transcript
-# timestamp (else the transcript's birth time) and inside no narrower Bash window of another
-# session (ran_here). Only the check-2 evidence uses it; the 6.4 anti-loop state stays repo-only.
+# timestamp (else the transcript's birth time), and by this session's own Bash: the narrowest
+# ledger window containing it is one of THIS session's (ran_in_my_window; no ledger → not ours).
+# Only the check-2 evidence uses it; the 6.4 anti-loop state stays repo-only.
 FOREIGN_SKIP = ("/dev/", "/usr/", "/bin/", "/sbin/", "/etc/", "/System/", "/Library/", "/opt/homebrew/", "/proc/")
 ABS_PATH_RX = re.compile(r"(?<![\w.~$-])/[^\s'\"`;|&<>()$*?\[\]{}]+")
 MODULE_XML = ("build/test-results/*/TEST-*.xml", "build/outputs/androidTest-results/connected/TEST-*.xml",
@@ -909,7 +925,7 @@ def foreign_xmls():
             mt = os.path.getmtime(pth)
         except OSError:
             continue
-        if mt >= start and ran_here(mt):
+        if mt >= start and ran_in_my_window(mt):
             out[pth] = mt
     return out
 
