@@ -103,6 +103,21 @@ out="$(bash "$KIT" checklist restore 2>&1)"; rc=$?
 out="$(bash "$KIT" bugs show 2>&1)"
 warned "$out" && fail "warning still shown after restore: $out" || ok "after restore: no warning"
 
+# A reader outside the lock loads between a drop's file replace and its journal line: no rollback.
+B6="$(bash "$KIT" bugs add "Sai G" --fixed 2>&1 | bugid)"
+python3 - "$DEVKIT_DIR/bin" "$P" "$B6" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1]); import regression_checklist as rc
+p, bid = sys.argv[2], sys.argv[3]
+real = rc._journal_save
+def reader_first(*a, **k):
+    rc.load(p)          # an unlocked reader sees the new file before its journal line
+    return real(*a, **k)
+rc._journal_save = reader_first
+with rc.locked(p):
+    d = rc.load(p); rc.drop(d, bid); rc.save(p, d)
+PY
+[ ! -f "$J/rollback.json" ] && ok "a drop seen mid-save by a reader is no rollback" || fail "false rollback: $(cat "$J/rollback.json")"
+
 # Missing file with a journal → warning too.
 mv "$S" "$TMP/s.json"
 out="$(bash "$KIT" bugs show 2>&1)"; warned "$out" && ok "a deleted checklist → warning" || fail "delete not detected: $out"

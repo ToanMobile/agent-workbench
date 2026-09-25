@@ -127,6 +127,10 @@ def save(project_dir: Path, data: dict, *, stale: bool = True) -> Path:
     path = Path(project_dir) / STATUS_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     raw = (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    try:   # before the replace: a reader in between must already know the removal is legitimate
+        _note_removals(project_dir, path, data)
+    except (OSError, ValueError):
+        pass
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".regression_status.")
     with os.fdopen(fd, "wb") as f:
         f.write(raw)
@@ -378,30 +382,45 @@ def _check_journal(project_dir: Path, raw) -> None:
         print(msg, file=sys.stderr)
 
 
+def _note_removals(project_dir: Path, path: Path, data: dict) -> None:
+    """Rows on disk that this DevKit save removes (drop, UNCOVERED linked or pruned) go to
+    removed.json: their absence is no rollback and a restore does not bring them back. A row
+    that is back is taken off the list."""
+    if not (_jdir(project_dir) / JOURNAL_NAME).is_file() and not path.exists():
+        return
+    items = data.get("items") or {}
+    try:
+        before = json.loads(path.read_text(encoding="utf-8")).get("items") or {}
+    except (OSError, ValueError, AttributeError):
+        before = {}
+    gone = _removed(project_dir)
+    new_gone = {**{k: v for k, v in gone.items() if k not in items},
+                **{k: _now() for k in before if k not in items and k not in gone}}
+    if new_gone != gone:
+        _write_bytes(_jdir(project_dir, create=True) / REMOVED_NAME,
+                     json.dumps(dict(list(new_gone.items())[-500:]), ensure_ascii=False).encode("utf-8"))
+
+
 def _journal_save(project_dir: Path, raw: bytes, data: dict) -> None:
     digest = _sha(raw)
     last = _last_known(project_dir)
-    if last is not None and last.get("hash") == digest:
-        return   # the same content again: no line, no snapshot slot burnt
-    items = data.get("items") or {}
-    prev = _read_snap(project_dir, (last or {}).get("snapshot"))
-    gone = _removed(project_dir)
-    new_gone = {**{k: v for k, v in gone.items() if k not in items},
-                **{k: _now() for k in (prev or {}).get("items", {}) if k not in items and k not in gone}}
-    if new_gone != gone:   # rows this DevKit save removed: a restore must not bring them back
-        _write_bytes(_jdir(project_dir, create=True) / REMOVED_NAME,
-                     json.dumps(dict(list(new_gone.items())[-500:]), ensure_ascii=False).encode("utf-8"))
-    snap = _snapshot(project_dir, raw, digest)
-    rec = {"event": "save", "hash": digest, "snapshot": snap, "rows": len(items),
-           "proven": sum(1 for it in items.values() if ((it or {}).get("red_proof") or {}).get("status") == "PROVEN")}
+    rec = None
+    if last is None or last.get("hash") != digest:   # the same content again: no line, no snapshot slot
+        items = data.get("items") or {}
+        rec = {"event": "save", "hash": digest, "snapshot": _snapshot(project_dir, raw, digest), "rows": len(items),
+               "proven": sum(1 for it in items.values()
+                             if ((it or {}).get("red_proof") or {}).get("status") == "PROVEN")}
     rb = _rollback(project_dir)
-    if rb:
+    if rb:   # also when a reader journaled this content first: a stale warning must still resolve
         if _still_lost(project_dir, rb, data):
-            rec["lineage"] = "broken"   # a save on top of a rollback: the warning stays
+            if rec:
+                rec["lineage"] = "broken"   # a save on top of a rollback: the warning stays
         else:
             (_jdir(project_dir) / ROLLBACK_NAME).unlink()
+            rec = rec or {"event": "resolved", "hash": digest}
             rec["resolved"] = True
-    _append(project_dir, rec)
+    if rec:
+        _append(project_dir, rec)
 
 
 def _still_lost(project_dir: Path, rb: dict, data: dict) -> list:
