@@ -284,12 +284,15 @@ def save_state():
 # Degraded mode: the last result of this session, reused while the tree is unchanged, and its
 # total block count (reset by a pass).
 sess = state.setdefault("sessions", {}).setdefault(sid, {}) if degraded else {}
+# Its tree key also hashes untracked contents (a fix in a new test file is a new tree);
+# the per-fingerprint key above names untracked files only.
+tree_fp = devkit_harness.tree_fingerprint(repo) if degraded else fp
 
 def block(lines, cure, rc, reused=False):
     attempts = state.setdefault("attempts", {})
     attempts[fp] = attempts.get(fp, 0) + 1
     if degraded:
-        sess.update({"fp": fp, "result": "block", "lines": lines, "cure": cure, "rc": rc})
+        sess.update({"fp": tree_fp, "result": "block", "lines": lines, "cure": cure, "rc": rc})
     save_state()
     note("block fp=%s attempt=%d exit=%s%s%s" % (fp, attempts[fp], rc, " (reused result)" if reused else "",
                                                 (" sid=%s agent=%s" % (sid, info["agent"])) if degraded else ""))
@@ -314,7 +317,7 @@ def block(lines, cure, rc, reused=False):
 
 if state.get("pass_fp") == fp:
     sys.exit(0)
-if degraded and sess.get("fp") == fp:
+if degraded and sess.get("fp") == tree_fp:
     # Same tree as the last run of this session: the result cannot have changed. Re-use it
     # instead of re-running the whole suite on every stop.
     if sess.get("result") == "block" and isinstance(sess.get("lines"), list):
@@ -339,7 +342,7 @@ if res.returncode in (0, 3):
     state["pass_fp"] = fp
     state.pop("attempts", None)
     if degraded:
-        sess.update({"fp": fp, "result": "pass", "blocks": 0, "lines": None, "cure": None})
+        sess.update({"fp": tree_fp, "result": "pass", "blocks": 0, "lines": None, "cure": None})
     save_state()
     note(f"pass fp={fp} exit={res.returncode}")
     sys.exit(0)
@@ -349,7 +352,7 @@ if res.returncode == 4:
     # would stop every session on that machine; passing would claim a PASS nobody saw.
     # Say it once per change and let the stop through.
     if degraded:
-        sess.update({"fp": fp, "result": "untested"})
+        sess.update({"fp": tree_fp, "result": "untested"})
         save_state()
     if state.get("untested_fp") != fp:
         state["untested_fp"] = fp
@@ -406,7 +409,7 @@ if res.returncode == 2 and uncommitted and not shadowed and not touched and not 
     # (a human decision) makes it trusted. Blocking would stop every turn until then; say
     # it to the user once per change, like UNTESTED, and let the stop through.
     if degraded:
-        sess.update({"fp": fp, "result": "matrix"})
+        sess.update({"fp": tree_fp, "result": "matrix"})
         save_state()
     if state.get("matrix_fp") != fp:
         state["matrix_fp"] = fp
@@ -426,7 +429,7 @@ if res.returncode == 1 and failing and all(t.get("env_blocked") for t in failing
     # SDK, network): no test ran and no code change fixes it. Blocking again only loops the
     # session; say it once per change, like UNTESTED, and let the stop through (still REJECT).
     if degraded:
-        sess.update({"fp": fp, "result": "env"})
+        sess.update({"fp": tree_fp, "result": "env"})
         save_state()
     if state.get("env_fp") != fp:
         state["env_fp"] = fp

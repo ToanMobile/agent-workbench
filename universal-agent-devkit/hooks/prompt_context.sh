@@ -13,6 +13,10 @@
 # Silent (adds nothing) for slash commands, very short prompts, and requests that
 # match no intent and no trap — questions and chit-chat pay no context cost.
 #
+# A bug prompt also becomes a REPORTED checklist row (BUG_CAPTURE, scripts/enrich_context.py)
+# — never for agent / harness prompts ("You are …" openings, tool/JSON schemas, long
+# instruction blocks) nor under a non-Claude harness (Grok, a bridged agent: hooks/devkit_harness.py).
+#
 # Never blocks: always exit 0. Escape hatch: PROMPT_CONTEXT=0.
 # Protocol: stdin JSON {"prompt": …}; stdout is added to the context.
 # bash 3.2 compatible.

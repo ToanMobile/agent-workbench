@@ -295,6 +295,9 @@ gstop g-1; rc1=$?; n1="$(runs)"; gstop g-1; rc2=$?; n2="$(runs)"
 [ "$rc1" = 2 ] && [ "$rc2" = 2 ] && [ "$n1" -gt 0 ] && [ "$n2" = "$n1" ] && grep -q "REG-G" "$TMP/err" \
   && ok "degraded: same tree twice in a session → tests run once, the cached REJECT is re-used" \
   || fail "result not reused (rc1=$rc1 rc2=$rc2 runs ${n1} then ${n2})"
+echo "x" > src/NewTest.kt; gstop g-1; n3="$(runs)"; echo "y" > src/NewTest.kt; gstop g-1; n4="$(runs)"; rm -f src/NewTest.kt
+[ "$n3" -gt "$n2" ] && [ "$n4" -gt "$n3" ] && ok "degraded: a new or edited untracked file is a new tree (suite re-runs)" \
+  || fail "untracked content ignored by the reuse key (runs ${n2} then ${n3} then ${n4})"
 
 CAP_RCS=""; for v in 1 2 3 4; do echo "fun ok() = 1$v" > src/Core.kt; gstop g-2; CAP_RCS="$CAP_RCS$?"; done
 [ "$CAP_RCS" = 2220 ] && grep -q systemMessage "$TMP/out" && grep -q "g-2" "$TMP/out" && grep -q "KHÔNG phải PASS" "$TMP/out" \

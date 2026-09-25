@@ -79,7 +79,10 @@ def transcript_kind(path, probe_lines=40):
                     foreign += 1
                 elif "method" in rec or "jsonrpc" in rec:
                     foreign += 1
-                elif isinstance(rec.get("message"), dict) or rec.get("type") in CLAUDE_TYPES:
+                elif (isinstance(rec.get("message"), dict) or rec.get("type") in CLAUDE_TYPES
+                      or "uuid" in rec or "parentUuid" in rec or "sessionId" in rec):
+                    # Claude record metadata (ai-title, last-prompt, …) carries uuid/sessionId
+                    # at the top level; Grok nests sessionId under params.
                     claude += 1
                 else:
                     foreign += 1
