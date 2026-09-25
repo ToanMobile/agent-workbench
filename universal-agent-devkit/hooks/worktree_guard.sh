@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# worktree_guard.sh — PreToolUse hook on Bash and Edit|Write: a session or agent
+# worktree_guard.sh — PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent
 # that works in a git WORKTREE must not write into the MAIN checkout of that repo.
 #
 # WHY (2026-09-25). A subagent told to work in a worktree issued commands without
@@ -12,7 +12,11 @@
 #   2. A subagent (`agent_id` in the hook input) that the harness started in a
 #      worktree: its meta file <transcript dir>/<session>/subagents/agent-<id>.meta.json
 #      has "worktreePath", or its own transcript's first `cwd` is a linked worktree.
-#   3. The hook input `cwd` lies inside a linked worktree (the session runs there).
+#   3. The SESSION STARTED inside a linked worktree: the first record that carries a `cwd`
+#      in the main transcript (`transcript_path`). Not the hook input `cwd`: that one follows
+#      every `cd` inside the project (measured on real transcripts), and M/.claude/worktrees/*
+#      is inside the project, so a leader that `cd`s into a worktree to look at it would be
+#      taken as working there and blocked on the merge-back into M.
 #   These three BLOCK (exit 2). A fourth signal only WARNS: a subagent whose first
 #   prompt names exactly one worktree made by `agent-kit worktree add` (it carries
 #   <git dir>/devkit-worktree.json). A prompt can mention a worktree without the agent
@@ -22,19 +26,27 @@
 # WHAT IS BLOCKED, with W = the declared worktree and M = the main checkout of its repo
 # (W ≠ M): an Edit/Write whose file lies in M, and a Bash command that writes into M —
 # a redirection, cp/mv/install/rsync/ln destination, rm/touch/truncate/tee/sed -i/perl -i
-# operand, a git write (add, commit, checkout, reset, …) or an interpreter/build tool run
-# with M as its working directory. The working directory of a Bash command is the hook
-# `cwd` (where the shell is), moved by any `cd`/`pushd` in the command. "In M" means the
-# nearest enclosing git tree is M itself, so M/.claude/worktrees/<other> is NOT M.
-# Reads of M (cat, grep, ls, git status/diff/log, cp FROM M) are never blocked.
+# operand, `dd of=`, a git write (add, commit, checkout, reset, stash push/pop/…), a build
+# tool (gradle, make, npm, cargo, …) run with M as its working directory, an interpreter
+# (python, node, …) given an existing file of M as an operand after its script, and the
+# same checks inside `bash|sh|zsh -c '…'`. The working directory of a Bash command is the
+# hook `cwd` (where the shell is), moved by any `cd`/`pushd` in the command. "In M" means
+# the nearest enclosing git tree is M itself, so M/.claude/worktrees/<other> is NOT M.
+# Reads of M (cat, grep, ls, git status/diff/log/stash list, cp FROM M, scp to host:…)
+# are never blocked, and neither are M/.claude/agent-memory, M/.claude/audit-gate and
+# M/.agents/local/memory: agent memory and hook logs exist only in the main checkout.
 #
 # NOT AFFECTED: a session with no declared worktree — the common single-tree case exits
-# in bash before python starts (no agent_id, no DEVKIT_WORKTREE, cwd not in a linked
-# worktree). The leader applying a worktree's patch in M has no declared worktree.
+# in bash before python starts (no agent_id, no DEVKIT_WORKTREE, the session did not start
+# in a linked worktree). The leader that started in M has no declared worktree, also after
+# `cd W` to look: it may edit M, `git merge` or `git apply` the worktree's work there.
 #
-# WHAT IT CANNOT SEE: a script that decides its own output path (`python3 gen.py` run
-# from W that writes into M), variables it cannot expand (`> "$OUT"`), and the real shell
-# cwd when the harness reports a different `cwd` than the shell uses.
+# WHAT IT CANNOT SEE: a script that decides its own output path (`python3 gen.py` or
+# `python3 -c "open('src/a.kt','w')…"` run in M — ponytail: interpreters are judged by their
+# operands only, since blocking every one run in M stopped `python3 -c 'print(1)'`; upgrade
+# to an allowlist of read-only scripts if a script write into M is ever seen), variables it
+# cannot expand (`> "$OUT"`), and the real shell cwd when the harness reports a different
+# `cwd` than the shell uses.
 #
 # Escape hatch: WORKTREE_GUARD=0 (logged). Fail-open on internal error or no python3.
 # PreToolUse protocol: stdin JSON; exit 2 blocks (stderr → Claude); exit 0 allows.
@@ -55,14 +67,20 @@ fi
 
 RX_TOOL='"tool_name"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
 [[ ${INPUT} =~ ${RX_TOOL} ]] || exit 0
-case "${BASH_REMATCH[1]}" in Bash|Edit|Write|NotebookEdit) ;; *) exit 0 ;; esac
+case "${BASH_REMATCH[1]}" in Bash|Edit|Write|MultiEdit|NotebookEdit) ;; *) exit 0 ;; esac
 
 # ── fast path: nothing declares a worktree → exit before python ──────────────
 if [ -z "${DEVKIT_WORKTREE:-}" ]; then
   RX_AGENT='"agent_id"[[:space:]]*:[[:space:]]*"[^"]'
   if ! [[ ${INPUT} =~ ${RX_AGENT} ]]; then
+    # Where the SESSION STARTED: the first transcript record that carries a cwd.
+    RX_TP='"transcript_path"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+    [[ ${INPUT} =~ ${RX_TP} ]] || exit 0
+    tp="${BASH_REMATCH[1]}"
+    [ -f "${tp}" ] || exit 0
+    first="$(grep -m1 -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"\\]*"' "${tp}" 2>/dev/null)"
     RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
-    [[ ${INPUT} =~ ${RX_CWD} ]] || exit 0
+    [[ ${first} =~ ${RX_CWD} ]] || exit 0
     d="${BASH_REMATCH[1]}"
     linked=0
     while [ -n "${d}" ] && [ "${d}" != "/" ]; do
@@ -181,10 +199,27 @@ if not declared and agent:
                         break
         except Exception:
             pass
-if not declared:
-    t = tree_of(cwd)
+def first_cwd(path):
+    """cwd of the first record that has one: where that session started."""
+    try:
+        with open(path) as fh:
+            for line in fh:
+                try:
+                    rc = json.loads(line).get("cwd")
+                except Exception:
+                    continue
+                if isinstance(rc, str) and rc:
+                    return rc
+    except OSError:
+        pass
+    return None
+
+if not declared and tp:
+    # Not the hook `cwd`: it follows every `cd` inside the project, worktrees included.
+    start = first_cwd(tp)
+    t = tree_of(start) if start else None
     if t and t[1]:
-        declared, source = t[0], "cwd"
+        declared, source = t[0], "session start cwd"
 if not declared and agent_transcript:
     # Warn-only hint: the agent's first prompt names exactly one `agent-kit worktree add` worktree.
     t = tree_of(cwd)
@@ -229,111 +264,147 @@ W, M = wt[0], os.path.realpath(wt[2])
 if os.path.realpath(W) == M:
     sys.exit(0)
 
+# Main-checkout-only state every agent of the repo shares (gitignored, absent in W).
+MAIN_ONLY = (".claude/agent-memory", ".claude/audit-gate", ".agents/local/memory")
+
 def in_main(path, base):
     p = os.path.expanduser(path)
     p = p if os.path.isabs(p) else os.path.join(base, p)
     t = tree_of(p)
-    return bool(t) and os.path.realpath(t[0]) == M
+    if not t or os.path.realpath(t[0]) != M:
+        return False
+    rel = os.path.relpath(os.path.realpath(p), M)
+    return not any(rel == d or rel.startswith(d + os.sep) for d in MAIN_ONLY)
 
 # ── targets ─────────────────────────────────────────────────────────────────
 hits = []
-if tool in ("Edit", "Write", "NotebookEdit"):
+if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
     fp = inp.get("file_path") or inp.get("notebook_path") or ""
     if isinstance(fp, str) and fp and in_main(fp, cwd):
         hits.append(fp)
 elif tool == "Bash":
-    cmd = str(inp.get("command", ""))
     HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
-    out, pos = [], 0
-    while True:                                   # heredoc bodies are data, not commands
-        m = HEREDOC.search(cmd, pos)
-        nl = cmd.find("\n", m.end()) if m else -1
-        if not m or nl < 0:
-            out.append(cmd[pos:])
-            break
-        e = re.compile(r"^[ \t]*" + re.escape(m.group(2)) + r"[ \t]*$", re.M).search(cmd, nl + 1)
-        out.append(cmd[pos:nl + 1])
-        pos = e.end() if e else len(cmd)
-    try:
-        lex = shlex.shlex("".join(out), posix=True, punctuation_chars=";&|<>()\n")
-        lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""
-        toks = list(lex)
-    except ValueError:
-        sys.exit(0)                               # untokenisable: fail open
-    segs, cur = [], []
-    for tok in toks:
-        if tok and set(tok) <= set(";&|()\n"):
-            if cur:
-                segs.append(cur)
-            cur = []
-        else:
-            cur.append(tok)
-    if cur:
-        segs.append(cur)
     DEST_LAST = {"cp", "install", "rsync", "ln", "scp"}
-    ALL_ARGS = {"mv", "rm", "touch", "truncate", "tee", "mkdir", "rmdir", "chmod", "unlink", "dd"}
+    ALL_ARGS = {"mv", "rm", "touch", "truncate", "tee", "mkdir", "rmdir", "chmod", "unlink"}
     GIT_WRITE = {"add", "am", "apply", "checkout", "cherry-pick", "clean", "commit", "merge", "mv", "pull",
                  "rebase", "reset", "restore", "revert", "rm", "stash", "switch"}
-    RUNNERS = re.compile(r"^(?:python[\d.]*|node|npm|npx|yarn|pnpm|bun|deno|ruby|perl|php|make|gradle|"
-                         r"\./gradlew|gradlew|mvn|cargo|go|pytest|jest|vitest|bash|sh|zsh|dotnet|swift|flutter)$")
+    STASH_READ = {"list", "show", "create"}          # `git stash <these>` leaves the tree and refs alone
+    # Build tools write build dirs / caches into the directory they run in, by construction.
+    BUILDERS = re.compile(r"^(?:npm|npx|yarn|pnpm|bun|make|gradle|\./gradlew|gradlew|mvn|cargo|go|pytest|jest|"
+                          r"vitest|dotnet|swift|flutter)$")
+    # Interpreters write only what their script says: judged by the operands after the script.
+    INTERP = re.compile(r"^(?:python[\d.]*|node|deno|ruby|perl|php|bash|sh|zsh)$")
     PREFIX = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "time", "command",
               "builtin", "exec", "nohup", "sudo", "env", "done", "fi"}
-    here = cwd
-    for seg in segs:
-        words, redirs, i = [], [], 0
-        while i < len(seg):
-            tok = seg[i]
-            if tok and set(tok) <= set("<>&|"):
-                nxt = seg[i + 1] if i + 1 < len(seg) else ""
-                if ">" in tok and not tok.endswith("&") and nxt and nxt != "/dev/null" \
-                        and not re.fullmatch(r"-|\d+", nxt):
-                    redirs.append(nxt)
-                i += 2
+
+    def exists(a, here):
+        p = os.path.expanduser(a)
+        return os.path.exists(p if os.path.isabs(p) else os.path.join(here, p))
+
+    def scan(cmd, here, depth=0):
+        """Write targets in M of a shell command run in `here`; None when it cannot be tokenised."""
+        out, pos = [], 0
+        while True:                               # heredoc bodies are data, not commands
+            m = HEREDOC.search(cmd, pos)
+            nl = cmd.find("\n", m.end()) if m else -1
+            if not m or nl < 0:
+                out.append(cmd[pos:])
+                break
+            e = re.compile(r"^[ \t]*" + re.escape(m.group(2)) + r"[ \t]*$", re.M).search(cmd, nl + 1)
+            out.append(cmd[pos:nl + 1])
+            pos = e.end() if e else len(cmd)
+        try:
+            lex = shlex.shlex("".join(out), posix=True, punctuation_chars=";&|<>()\n")
+            lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""
+            toks = list(lex)
+        except ValueError:
+            return None
+        segs, cur = [], []
+        for tok in toks:
+            if tok and set(tok) <= set(";&|()\n"):
+                if cur:
+                    segs.append(cur)
+                cur = []
+            else:
+                cur.append(tok)
+        if cur:
+            segs.append(cur)
+        found = []
+        for seg in segs:
+            words, redirs, i = [], [], 0
+            while i < len(seg):
+                tok = seg[i]
+                if tok and set(tok) <= set("<>&|"):
+                    nxt = seg[i + 1] if i + 1 < len(seg) else ""
+                    if ">" in tok and not tok.endswith("&") and nxt and nxt != "/dev/null" \
+                            and not re.fullmatch(r"-|\d+", nxt):
+                        redirs.append(nxt)
+                    i += 2
+                    continue
+                words.append(tok)
+                i += 1
+            while words and (words[0] in PREFIX or re.fullmatch(r"[A-Za-z_]\w*=.*", words[0])):
+                words = words[1:]
+            verb = words[0] if words else ""
+            args = [a for a in words[1:] if not a.startswith("-")]
+            targets = list(redirs)
+            if verb in ("cd", "pushd"):
+                if args and "$" not in args[0]:
+                    nd = os.path.expanduser(args[0])
+                    here = nd if os.path.isabs(nd) else os.path.join(here, nd)
+                elif not args:
+                    here = os.path.expanduser("~")
                 continue
-            words.append(tok)
-            i += 1
-        while words and (words[0] in PREFIX or re.fullmatch(r"[A-Za-z_]\w*=.*", words[0])):
-            words = words[1:]
-        verb = words[0] if words else ""
-        args = [a for a in words[1:] if not a.startswith("-")]
-        targets = list(redirs)
-        if verb in ("cd", "pushd"):
-            if args and "$" not in args[0]:
-                nd = os.path.expanduser(args[0])
-                here = nd if os.path.isabs(nd) else os.path.join(here, nd)
-            elif not args:
-                here = os.path.expanduser("~")
-            continue
-        base = os.path.basename(verb)
-        if base in DEST_LAST and args:
-            targets.append(args[-1])
-        elif base in ALL_ARGS:
-            targets += args
-        elif base == "sed" and any(re.fullmatch(r"-[A-Za-z]*i.*|--in-place.*", a) for a in words[1:]):
-            targets += [a for a in args if os.path.exists(a if os.path.isabs(a) else os.path.join(here, a))]
-        elif base == "perl" and any(re.fullmatch(r"-[A-Za-z]*i.*", a) for a in words[1:]):
-            targets += [a for a in args if os.path.exists(a if os.path.isabs(a) else os.path.join(here, a))]
-        elif base == "git":
-            gdir, sub, skip = here, "", None
-            for a in words[1:]:
-                if skip:
-                    if skip == "-C":
-                        gdir = a if os.path.isabs(a) else os.path.join(gdir, a)
-                    skip = None
-                elif a in ("-C", "-c", "--git-dir", "--work-tree"):
-                    skip = a
-                elif not a.startswith("-"):
-                    sub = a
-                    break
-            if sub in GIT_WRITE:
-                targets.append(gdir)
-        elif RUNNERS.match(verb) or RUNNERS.match(base):
-            targets.append(here)
-        for t in targets:
-            if "$" in t or "`" in t:
-                continue
-            if in_main(t, here):
-                hits.append(t if os.path.isabs(t) else f"{t} (in {here})")
+            base = os.path.basename(verb)
+            if base in DEST_LAST and args:
+                dest = args[-1]
+                if not (base in ("scp", "rsync") and re.match(r"[^/]*:", dest)):   # host:path is remote
+                    targets.append(dest)
+            elif base in ALL_ARGS:
+                targets += args
+            elif base == "dd":
+                targets += [a[3:] for a in args if a.startswith("of=")]
+            elif base == "sed" and any(re.fullmatch(r"-[A-Za-z]*i.*|--in-place.*", a) for a in words[1:]):
+                targets += [a for a in args if exists(a, here)]
+            elif base == "perl" and any(re.fullmatch(r"-[A-Za-z]*i.*", a) for a in words[1:]):
+                targets += [a for a in args if exists(a, here)]
+            elif base == "git":
+                gdir, sub, skip, rest = here, "", None, []
+                for k, a in enumerate(words[1:], 1):
+                    if skip:
+                        if skip == "-C":
+                            gdir = a if os.path.isabs(a) else os.path.join(gdir, a)
+                        skip = None
+                    elif a in ("-C", "-c", "--git-dir", "--work-tree"):
+                        skip = a
+                    elif not a.startswith("-"):
+                        sub, rest = a, words[k + 1:]
+                        break
+                if sub == "stash" and rest and rest[0] in STASH_READ:
+                    sub = ""
+                if sub in GIT_WRITE:
+                    targets.append(gdir)
+            elif BUILDERS.match(verb) or BUILDERS.match(base):
+                targets.append(here)
+            elif INTERP.match(base):
+                code = next((words[k + 1] for k in range(1, len(words) - 1)
+                             if base in ("bash", "sh", "zsh") and re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", words[k])), None)
+                if code is not None:
+                    if depth < 3:
+                        found += scan(code, here, depth + 1) or []
+                else:
+                    targets += [a for a in args[1:] if exists(a, here)]
+            for t in targets:
+                if "$" in t or "`" in t:
+                    continue
+                if in_main(t, here):
+                    found.append(t if os.path.isabs(t) else f"{t} (in {here})")
+        return found
+
+    res = scan(str(inp.get("command", "")), cwd)
+    if res is None:
+        sys.exit(0)                               # untokenisable: fail open
+    hits += res
 
 if not hits:
     sys.exit(0)

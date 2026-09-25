@@ -78,7 +78,12 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/precode_gate.sh\"",
             "timeout": 15
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/worktree_guard.sh\"",
