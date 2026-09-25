@@ -137,32 +137,13 @@
     {
       "component": "devkit-all",
       "watch_files": [
-        "universal-agent-devkit/*.py",
-        "universal-agent-devkit/*.sh",
-        "universal-agent-devkit/*.js",
-        "universal-agent-devkit/*.mjs",
-        "universal-agent-devkit/bin/agent-kit",
-        "universal-agent-devkit/bin/postfix-gate",
-        "universal-agent-devkit/bin/profile"
+        "universal-agent-devkit/*"
       ],
       "mandatory_regression_tests": [
         {
           "id": "REG-DK-ALL-01",
-          "name": "DevKit tests that name a changed file + repo consistency (the full suite exceeds the 900 s gate limit)",
+          "name": "DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit",
           "command": "bash universal-agent-devkit/tests/run_impacted.sh"
-        }
-      ]
-    },
-    {
-      "component": "devkit-docs",
-      "watch_files": [
-        "universal-agent-devkit/*.md"
-      ],
-      "mandatory_regression_tests": [
-        {
-          "id": "REG-DK-DOCS-01",
-          "name": "repo consistency (documented counts, commands, links)",
-          "command": "bash universal-agent-devkit/tests/test_repo_consistency.sh"
         }
       ]
     }
