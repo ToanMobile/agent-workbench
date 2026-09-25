@@ -80,6 +80,22 @@ def _merge_list(source, target):
                                     cur = th.get("timeout")
                                     if not isinstance(cur, (int, float)) or cur < h["timeout"]:
                                         th["timeout"] = h["timeout"]
+            # A DevKit hook wired under a NARROWER overlapping matcher (Edit|Write, template now
+            # Edit|Write|MultiEdit|NotebookEdit) never saw the new tools: add it for the missing
+            # tools only, in their own group — the user's group stays as it is.
+            for h in item["hooks"]:
+                key = _hook_key(h)
+                if key not in present or src_m is None:
+                    continue
+                cover = set()
+                for t in target:
+                    if isinstance(t, dict) and isinstance(t.get("hooks"), list) \
+                            and any(_hook_key(th) == key for th in t["hooks"]):
+                        m = _matcher_set(t)
+                        cover = None if m is None or cover is None else cover | m
+                missing = set() if cover is None else src_m - cover
+                if missing:
+                    _merge_list([{**item, "matcher": "|".join(sorted(missing)), "hooks": [h]}], target)
             new_hooks = [h for h in item["hooks"] if _hook_key(h) not in present]
             if not new_hooks:
                 continue

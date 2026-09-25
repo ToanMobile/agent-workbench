@@ -89,8 +89,22 @@ python3 "$MERGE" "$TMP/src2.json" "$TMP/bin.json" 2>"$TMP/err" ; rc=$?
 echo '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"\"${CLAUDE_PROJECT_DIR:-$PWD}\"/.claude/hooks/block-dangerous-git.sh"}]}],"PostToolUse":[{"matcher":"Edit|Write","hooks":[{"type":"command","command":"bash .claude/hooks/churn_guard.sh"}]}]}}' > "$TMP/oldinst.json"
 echo '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/block-dangerous-git.sh\""}]}],"PostToolUse":[{"matcher":"Edit|Write|NotebookEdit","hooks":[{"type":"command","command":"bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/churn_guard.sh\""}]}]}}' > "$TMP/newtpl.json"
 python3 "$MERGE" "$TMP/newtpl.json" "$TMP/oldinst.json"
-python3 -c 'import json,sys; h=json.load(open(sys.argv[1]))["hooks"]; n=lambda e: sum(len(g["hooks"]) for g in h[e]); assert n("PreToolUse")==1 and n("PostToolUse")==1, h' "$TMP/oldinst.json" \
-  && ok "old spelling / overlapping matcher not duplicated" || fail "hooks duplicated on re-install"
+# Invariant: every tool of the DevKit matcher is covered by the hook exactly once — no tool
+# twice (a duplicate), none missing (2026-09-25: worktree_guard kept an old Edit|Write
+# matcher and never saw MultiEdit / NotebookEdit).
+cover_once() { python3 - "$1" "$2" "$3" "$4" <<'PY'
+import json, sys
+path, event, script, want = sys.argv[1:]
+seen = []
+for g in json.load(open(path))["hooks"][event]:
+    if any(script in h.get("command", "") for h in g["hooks"]):
+        seen += (g.get("matcher") or "").split("|")
+assert sorted(seen) == sorted(want.split("|")), seen
+PY
+}
+cover_once "$TMP/oldinst.json" PreToolUse block-dangerous-git.sh Bash \
+  && cover_once "$TMP/oldinst.json" PostToolUse churn_guard.sh "Edit|Write|NotebookEdit" \
+  && ok "old spelling / narrower matcher: no tool covered twice, the missing tool added" || fail "re-install coverage: $(cat "$TMP/oldinst.json")"
 
 # 11. (M-21) A user hook that only shares the FILE NAME with a DevKit hook (different
 #     path) is a different hook: the DevKit one must still be installed.
