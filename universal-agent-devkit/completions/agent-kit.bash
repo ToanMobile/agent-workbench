@@ -22,7 +22,7 @@ _agent_kit() {
   COMPREPLY=()
 
   if [ "${COMP_CWORD}" -eq 1 ]; then
-    words="init install-global profile health gate githooks bugs req nightly memory-stats learn clean matrix worktree
+    words="init install-global profile health gate githooks bugs checklist req nightly memory-stats learn clean matrix worktree
            index-memory test sync list commands list-old restore-old uninstall completion help"
     COMPREPLY=( $(compgen -W "${words}" -- "${cur}") )
     return 0
@@ -67,6 +67,12 @@ _agent_kit() {
     bugs)
       [ "${COMP_CWORD}" -eq 2 ] && COMPREPLY=( $(compgen -W "add link unlink drop import show" -- "${cur}") ) \
         || COMPREPLY=( $(compgen -f -- "${cur}") ) ;;
+    checklist)
+      if [ "${COMP_CWORD}" -eq 2 ]; then
+        COMPREPLY=( $(compgen -W "restore check show" -- "${cur}") )
+      elif [ "${COMP_WORDS[2]}" = "restore" ]; then
+        COMPREPLY=( $(compgen -W "--list --dismiss $(ls .agents/regression_journal/snapshots 2>/dev/null)" -- "${cur}") )
+      fi ;;
     nightly)
       [ "${COMP_CWORD}" -eq 2 ] && COMPREPLY=( $(compgen -W "add remove install uninstall status run" -- "${cur}") ) \
         || COMPREPLY=( $(compgen -d -- "${cur}") ) ;;
