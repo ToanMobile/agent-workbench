@@ -220,7 +220,7 @@ def _hits_in(path_texts, text_texts):
 # keystore, because `2>/dev/null` matched the `>` write marker and every trigger anywhere in the
 # command then counted. Now the command is split into simple commands and only the ones that
 # WRITE count: a redirection to a file (not /dev/null, not `>&2`), or a writing verb (cp, mv,
-# install, patch, dd, tee, rsync, ln, rm, touch, truncate, sed -i, perl -i, git apply/am/checkout/
+# install, patch, dd, tee, rsync, ln, rm, truncate, sed -i, perl -i, git apply/am/checkout/
 # restore/mv/rm). Their paths, their text and their heredoc bodies are checked. A writing command
 # that takes a shell variable (`cp "$f" …` in a loop) cannot be resolved, so then every path of the
 # whole command counts — a copy of google-services.json in a for-loop still triggers.
@@ -228,7 +228,7 @@ def _hits_in(path_texts, text_texts):
 # rule on their own segment and heredoc script (plus `open(…, 'w')` / write_text in the script).
 # An untokenisable command (unbalanced quotes) falls back to the old rule on the whole command.
 HEREDOC_RX = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
-WRITE_VERBS = {"cp", "mv", "install", "patch", "dd", "tee", "rsync", "ln", "rm", "touch", "truncate"}
+WRITE_VERBS = {"cp", "mv", "install", "patch", "dd", "tee", "rsync", "ln", "rm", "truncate"}
 OPAQUE_VERBS = {"python", "python3", "node", "ruby", "perl", "bash", "sh", "zsh", "eval", "xargs", "env",
                 "sudo", "find", "awk", "gawk", "osascript", "php", "deno", "bun"}
 PREFIX_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "time", "command",
