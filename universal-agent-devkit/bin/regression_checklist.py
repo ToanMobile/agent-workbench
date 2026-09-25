@@ -38,6 +38,13 @@ CLI:
   regression_checklist.py bug-link <BUG-ID> <TEST-REF>                  (agent-kit bugs link)
       a matrix id, test file or class, resolved like `import` does; the bug counts as fixed
   regression_checklist.py drop <BUG-ID>                                 (agent-kit bugs drop)
+  regression_checklist.py restore [--list | --dismiss | <snapshot>]     (agent-kit checklist restore)
+      every save is journaled (.agents/regression_journal/: time, writer, pid, content hash +
+      the last snapshots; git-ignored). A file overwritten outside the DevKit with content lost
+      (red_proof, unlink, link, row, result) is a rollback: every load warns until a restore
+      MERGES the last good snapshot back — newer red_proof/result per row by ts, union of links
+      minus recorded unlinks, rows added since kept. Never a blind copy.
+  regression_checklist.py check                                         (agent-kit checklist check)
 
 REPORTED rows come from the UserPromptSubmit hook (scripts/enrich_context.py): a prompt
 classified as a bug fix, not yet confirmed. The classifier has false positives, so they
@@ -93,10 +100,14 @@ def _now() -> str:
 
 def load(project_dir: Path) -> dict:
     path = Path(project_dir) / STATUS_FILE
-    if not path.exists():
+    raw = path.read_bytes() if path.exists() else None
+    try:   # overwritten outside the DevKit with older content (a rollback) → a kept warning
+        _check_journal(project_dir, raw)
+    except (OSError, ValueError):
+        pass
+    if raw is None:
         return {"version": 1, "items": {}}
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)  # a corrupt file is an error, never silently reset to empty
+    data = json.loads(raw.decode("utf-8"))  # a corrupt file is an error, never silently reset to empty
     if not isinstance(data, dict) or not isinstance(data.get("items"), dict):
         raise ValueError(f"{path} không đúng định dạng checklist")
     return data
@@ -115,12 +126,20 @@ def save(project_dir: Path, data: dict, *, stale: bool = True) -> Path:
             inbox.write_text(INBOX_TEMPLATE, encoding="utf-8")   # created once; never rewritten
     path = Path(project_dir) / STATUS_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
+    raw = (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    try:   # before the replace: a reader in between must already know the removal is legitimate
+        _note_removals(project_dir, path, data)
+    except (OSError, ValueError):
+        pass
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".regression_status.")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    with os.fdopen(fd, "wb") as f:
+        f.write(raw)
     os.chmod(tmp, 0o644)
     os.replace(tmp, path)
+    try:   # after the replace: a reader never sees a journal newer than the file
+        _journal_save(project_dir, raw, data)
+    except (OSError, ValueError):
+        pass   # the journal is a safety net; it never blocks a save
     render(project_dir, data)
     return path
 
@@ -137,6 +156,414 @@ def locked(project_dir: Path):
             yield
         finally:
             fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+# ── Write journal, rollback detection, snapshots, restore ────────────────────────────────
+# Incident 2026-09-24: `git show HEAD:.agents/regression_status.json > …` outside the lock wiped a
+# day of red_proof results and link/unlink edits, and nothing noticed. Every save() journals
+# {time, writer, pid, content hash} and keeps a snapshot; load() compares the file with the last
+# journaled one. A file that lost content (a red_proof, an unlink, a link, a row, a result) is a
+# rollback: rollback.json keeps the warning and pins the last good snapshot until
+# `agent-kit checklist restore` merges it back. Git-ignored by its own .gitignore, like evidence/.
+JOURNAL_DIR = Path(".agents") / "regression_journal"
+JOURNAL_NAME = "journal.jsonl"
+ROLLBACK_NAME = "rollback.json"
+REMOVED_NAME = "removed.json"   # rows removed by a DevKit save (drop, UNCOVERED linked/pruned), last 500
+SNAP_SUBDIR = "snapshots"
+LINK_KEYS = ("tests", "runs_in_suite", "test_refs")
+PROOF_LIVE = ("PROVEN", "VACUOUS", "INCONCLUSIVE", "PENDING")
+_WARNED: set = set()
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, default)))
+    except ValueError:
+        return default
+
+
+def _jdir(project_dir: Path, create: bool = False) -> Path:
+    d = Path(project_dir) / JOURNAL_DIR
+    if create:
+        (d / SNAP_SUBDIR).mkdir(parents=True, exist_ok=True)
+        if not (d / ".gitignore").exists():
+            (d / ".gitignore").write_text("*\n", encoding="utf-8")   # never committed
+    return d
+
+
+def _sha(raw) -> str:
+    return "" if raw is None else hashlib.sha256(raw).hexdigest()
+
+
+def _writer() -> str:
+    return os.environ.get("DEVKIT_TOOL") or os.path.basename(sys.argv[0] or "") or "python"
+
+
+def _records(project_dir: Path) -> list:
+    try:
+        lines = (_jdir(project_dir) / JOURNAL_NAME).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict):
+            out.append(rec)
+    return out
+
+
+def _last_known(project_dir: Path):
+    """The last record that says which content the file should hold."""
+    for rec in reversed(_records(project_dir)):
+        if "hash" in rec:
+            return rec
+    return None
+
+
+def _append(project_dir: Path, rec: dict) -> None:
+    """One JSON line; the file keeps its last CHECKLIST_JOURNAL_MAX lines (default 500)."""
+    path = _jdir(project_dir, create=True) / JOURNAL_NAME
+    rec = {"at": _now(), "ts": round(time.time(), 3), "writer": _writer(), "pid": os.getpid(), **rec}
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    cap = _env_int("CHECKLIST_JOURNAL_MAX", 500)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    if len(lines) > cap:
+        _write_bytes(path, "".join(lines[-cap:]).encode("utf-8"))
+
+
+def _write_bytes(path: Path, raw: bytes) -> None:
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp.")
+    with os.fdopen(fd, "wb") as f:
+        f.write(raw)
+    os.replace(tmp, path)
+
+
+def _removed(project_dir: Path) -> dict:
+    try:
+        gone = json.loads((_jdir(project_dir) / REMOVED_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return gone if isinstance(gone, dict) else {}
+
+
+def _rollback(project_dir: Path):
+    try:
+        return json.loads((_jdir(project_dir) / ROLLBACK_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _snap_rel(name: str) -> str:
+    return (JOURNAL_DIR / SNAP_SUBDIR / name).as_posix()
+
+
+def _snapshot(project_dir: Path, raw: bytes, digest: str) -> str:
+    """Keep this content as a snapshot (once per hash); the newest CHECKLIST_SNAPSHOTS (default
+    10) are kept, plus the ones an open rollback pins. Returns the snapshot's name."""
+    folder = _jdir(project_dir, create=True) / SNAP_SUBDIR
+    for old in folder.glob(f"*-{digest[:12]}.json"):
+        os.utime(old)   # the newest again: rotation must not drop the current baseline
+        return old.name
+    name = f"{time.strftime('%Y%m%d-%H%M%S')}-{digest[:12]}.json"
+    _write_bytes(folder / name, raw)
+    pinned = set((_rollback(project_dir) or {}).get("good", []))
+    snaps = sorted((p for p in folder.glob("*.json") if p.name not in pinned),
+                   key=lambda p: (p.stat().st_mtime_ns, p.name))
+    for p in snaps[:-_env_int("CHECKLIST_SNAPSHOTS", 10)]:
+        p.unlink()
+    return name
+
+
+def _read_snap(project_dir: Path, name) -> dict | None:
+    if not name:
+        return None
+    try:
+        data = json.loads((_jdir(project_dir) / SNAP_SUBDIR / name).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and isinstance(data.get("items"), dict) else None
+
+
+def _ts(rec) -> float:
+    """When a result / proof / unlink was written: its ts, else its `at`, else 0."""
+    if not isinstance(rec, dict):
+        return 0.0
+    if isinstance(rec.get("ts"), (int, float)):
+        return float(rec["ts"])
+    try:
+        return time.mktime(time.strptime(str(rec.get("at")), "%Y-%m-%d %H:%M:%S"))
+    except (ValueError, OverflowError):
+        return 0.0
+
+
+def _ukey(u) -> tuple:
+    return (u.get("at"), u.get("ref")) if isinstance(u, dict) else (None, str(u))
+
+
+def _unlinked_refs(item: dict) -> set:
+    refs = set()
+    for u in item.get("unlinked") or []:
+        if isinstance(u, dict):
+            refs.add(u.get("ref"))
+            refs.update(u.get("removed") or [])
+    return refs
+
+
+def losses(good: dict, cur: dict, gone=()) -> list:
+    """What `good` holds that `cur` lost: rows, red_proof results, unlinks, links, test results.
+    Empty = `cur` descends from `good` (an out-of-band write that only added is no rollback).
+    `gone`: rows a DevKit save removed (drop, UNCOVERED linked or pruned) — no loss."""
+    out = []
+    citems = cur.get("items") or {}
+    for iid, g in (good.get("items") or {}).items():
+        c = citems.get(iid)
+        if not isinstance(g, dict):
+            continue
+        if not isinstance(c, dict):
+            if iid not in gone:
+                out.append(f"{iid}: dòng bị mất")
+            continue
+        gp, cp = g.get("red_proof"), c.get("red_proof")
+        if isinstance(gp, dict) and (not isinstance(cp, dict) or _ts(cp) < _ts(gp)):
+            out.append(f"{iid}: red_proof {gp.get('status')} bị mất")
+        lost_u = {_ukey(u) for u in g.get("unlinked") or []} - {_ukey(u) for u in c.get("unlinked") or []}
+        if lost_u:
+            out.append(f"{iid}: {len(lost_u)} unlink bị mất")
+        undone = _unlinked_refs(c)
+        for key in LINK_KEYS:
+            lost_l = [v for v in g.get(key) or [] if v not in (c.get(key) or []) and v not in undone]
+            if lost_l:
+                out.append(f"{iid}: link {', '.join(map(str, lost_l))} bị mất")
+        gl, cl = g.get("last"), c.get("last")
+        if isinstance(gl, dict) and (not isinstance(cl, dict) or _ts(cl) < _ts(gl)):
+            out.append(f"{iid}: kết quả {gl.get('status')} bị mất")
+    return out
+
+
+def _check_journal(project_dir: Path, raw) -> None:
+    """Called by load(): the file is not the last journaled content and lost content → open (or
+    extend) rollback.json. An unknown file that lost nothing is adopted as the new baseline."""
+    last = _last_known(project_dir)
+    if last is None:
+        return
+    digest = _sha(raw)
+    if digest != last.get("hash"):
+        time.sleep(0.2)   # a save between its os.replace and its journal line (reader outside the lock)
+        last = _last_known(project_dir) or last
+    if digest != last.get("hash"):
+        good_name = last.get("snapshot")
+        good = _read_snap(project_dir, good_name)
+        cur = json.loads(raw.decode("utf-8")) if raw is not None else {"items": {}}
+        lost = losses(good, cur, _removed(project_dir)) if good is not None and isinstance(cur, dict) else []
+        snap = _snapshot(project_dir, raw, digest) if raw is not None else None
+        if not lost:
+            _append(project_dir, {"event": "external", "hash": digest, "snapshot": snap})
+        else:
+            older = any(r.get("hash") == digest for r in _records(project_dir))
+            rb = _rollback(project_dir) or {"detected_at": _now(), "good": [], "losses": [], "count": 0}
+            if good_name not in rb["good"]:
+                rb["good"] = (rb["good"] + [good_name])[-5:]
+            rb["losses"] = list(dict.fromkeys(rb["losses"] + lost))[:50]
+            rb["count"] = len(rb["losses"])
+            rb.update({"hash": digest, "last_seen": _now(), "older_copy": older or rb.get("older_copy", False),
+                       "missing": raw is None})
+            _write_bytes(_jdir(project_dir, create=True) / ROLLBACK_NAME,
+                         json.dumps(rb, ensure_ascii=False, indent=2).encode("utf-8"))
+            _append(project_dir, {"event": "rollback", "hash": digest, "snapshot": snap, "good": good_name,
+                                  "lost": len(lost)})
+    msg = rollback_warning(project_dir)
+    key = str(Path(project_dir).resolve())
+    if msg and key not in _WARNED:
+        _WARNED.add(key)
+        print(msg, file=sys.stderr)
+
+
+def _note_removals(project_dir: Path, path: Path, data: dict) -> None:
+    """Rows on disk that this DevKit save removes (drop, UNCOVERED linked or pruned) go to
+    removed.json: their absence is no rollback and a restore does not bring them back. A row
+    that is back is taken off the list."""
+    if not (_jdir(project_dir) / JOURNAL_NAME).is_file() and not path.exists():
+        return
+    items = data.get("items") or {}
+    try:
+        before = json.loads(path.read_text(encoding="utf-8")).get("items") or {}
+    except (OSError, ValueError, AttributeError):
+        before = {}
+    gone = _removed(project_dir)
+    new_gone = {**{k: v for k, v in gone.items() if k not in items},
+                **{k: _now() for k in before if k not in items and k not in gone}}
+    if new_gone != gone:
+        _write_bytes(_jdir(project_dir, create=True) / REMOVED_NAME,
+                     json.dumps(dict(list(new_gone.items())[-500:]), ensure_ascii=False).encode("utf-8"))
+
+
+def _journal_save(project_dir: Path, raw: bytes, data: dict) -> None:
+    digest = _sha(raw)
+    last = _last_known(project_dir)
+    rec = None
+    if last is None or last.get("hash") != digest:   # the same content again: no line, no snapshot slot
+        items = data.get("items") or {}
+        rec = {"event": "save", "hash": digest, "snapshot": _snapshot(project_dir, raw, digest), "rows": len(items),
+               "proven": sum(1 for it in items.values()
+                             if ((it or {}).get("red_proof") or {}).get("status") == "PROVEN")}
+    rb = _rollback(project_dir)
+    if rb:   # also when a reader journaled this content first: a stale warning must still resolve
+        if _still_lost(project_dir, rb, data):
+            if rec:
+                rec["lineage"] = "broken"   # a save on top of a rollback: the warning stays
+        else:
+            (_jdir(project_dir) / ROLLBACK_NAME).unlink()
+            rec = rec or {"event": "resolved", "hash": digest}
+            rec["resolved"] = True
+    if rec:
+        _append(project_dir, rec)
+
+
+def _still_lost(project_dir: Path, rb: dict, data: dict) -> list:
+    gone = _removed(project_dir)
+    return [x for n in rb.get("good", []) for x in losses(_read_snap(project_dir, n) or {"items": {}}, data, gone)]
+
+
+def rollback_warning(project_dir: Path) -> str | None:
+    """One line for the open rollback, or None. Read-only (the SessionStart hook shows it)."""
+    rb = _rollback(project_dir)
+    if not rb:
+        return None
+    good = rb.get("good") or []
+    how = "xoá" if rb.get("missing") else ("chép đè bằng bản cũ hơn" if rb.get("older_copy") else "ghi đè ngoài DevKit")
+    n = rb.get("count", 0)
+    ex = "; ".join(rb.get("losses", [])[:3]) + ("; …" if n > 3 else "")
+    return (f"⚠️ ROLLBACK checklist: {STATUS_FILE.as_posix()} bị {how} (phát hiện {rb.get('detected_at')}) — mất {n} "
+            f"thay đổi ({ex}). Bản tốt cuối: {_snap_rel(good[-1]) if good else '?'} — gộp lại (merge, không chép "
+            "đè): agent-kit checklist restore")
+
+
+def _merge_item(s: dict, c: dict, stats: dict) -> None:
+    """Merge snapshot row `s` into current row `c` (in place)."""
+    sp, cp = s.get("red_proof"), c.get("red_proof")
+    if isinstance(sp, dict) and (not isinstance(cp, dict) or _ts(sp) > _ts(cp)):
+        c["red_proof"] = dict(sp)
+        stats["red_proof"] += 1
+    sl, cl = s.get("last"), c.get("last")
+    if isinstance(sl, dict) and (not isinstance(cl, dict) or _ts(sl) > _ts(cl)):
+        c["last"] = dict(sl)
+        stats["results"] += 1
+    if s.get("history") or c.get("history"):
+        hist = {(_ts(h), h.get("status")): h for h in (c.get("history") or []) + (s.get("history") or [])
+                if isinstance(h, dict)}
+        c["history"] = [hist[k] for k in sorted(hist, key=lambda k: -k[0])][:HISTORY_LIMIT]
+    seen = {_ukey(u) for u in c.get("unlinked") or []}
+    back = [u for u in s.get("unlinked") or [] if _ukey(u) not in seen]
+    if back:
+        c["unlinked"] = sorted((c.get("unlinked") or []) + back, key=_ts)
+        stats["unlinks"] += len(back)
+    undone = _unlinked_refs(c)
+    for key in LINK_KEYS + ("covers",):
+        sv, cv = s.get(key) or [], c.get(key) or []
+        both = [v for v in cv if v in sv]   # both sides agree: a re-link after an unlink stays
+        merged = [v for v in dict.fromkeys(list(cv) + list(sv)) if v in both or v not in undone]
+        if merged != cv:
+            stats["links"] += 1
+            c[key] = merged
+    last_unlink = max((_ts(u) for u in c.get("unlinked") or []), default=0.0)
+    proof = c.get("red_proof")
+    if isinstance(proof, dict) and proof.get("status") in PROOF_LIVE and last_unlink > _ts(proof):
+        proof.update({"status": "OUTDATED", "reason": "đã gỡ link sau lần chứng minh này — chứng minh lại"})
+    if s.get("fixed") and not c.get("fixed"):
+        c["fixed"] = True
+    if s.get("state") == "confirmed" and c.get("state") in (None, "reported", "auto_closed"):
+        c["state"] = "confirmed"
+    if (s.get("linked_ts") or 0) > (c.get("linked_ts") or 0):
+        c["linked_at"], c["linked_ts"] = s.get("linked_at"), s["linked_ts"]
+    for k, v in s.items():   # anything else only the snapshot has
+        if k not in c:
+            c[k] = json.loads(json.dumps(v))
+
+
+def merge_snapshot(snap: dict, cur: dict, gone=()) -> dict:
+    """Bring back into `cur` what `snap` holds and `cur` lost: the newer red_proof and result
+    per row (by ts), the union of unlinks, the union of links minus the unlinked refs, rows only
+    the snapshot has (not ones removed through the DevKit since). Rows and edits made after the
+    snapshot are kept. Returns counts."""
+    stats = {"rows": 0, "red_proof": 0, "unlinks": 0, "links": 0, "results": 0}
+    items = cur.setdefault("items", {})
+    for iid, s in (snap.get("items") or {}).items():
+        if not isinstance(s, dict):
+            continue
+        if iid not in items:
+            if iid not in gone:
+                items[iid] = json.loads(json.dumps(s))
+                stats["rows"] += 1
+            continue
+        _merge_item(s, items[iid], stats)
+    for k, v in (snap.get("stats") or {}).items():
+        if isinstance(v, int):
+            cur.setdefault("stats", {})[k] = max(v, int((cur.get("stats") or {}).get(k, 0)))
+    for k, v in snap.items():
+        cur.setdefault(k, v)
+    return stats
+
+
+def list_snapshots(project_dir: Path) -> list:
+    """[(name, rows, proven, flags)] newest first."""
+    folder = _jdir(project_dir) / SNAP_SUBDIR
+    rb = _rollback(project_dir) or {}
+    path = Path(project_dir) / STATUS_FILE
+    cur = _sha(path.read_bytes()) if path.exists() else ""
+    out = []
+    for p in sorted(folder.glob("*.json"), key=lambda p: (p.stat().st_mtime_ns, p.name), reverse=True):
+        items = (_read_snap(project_dir, p.name) or {"items": {}})["items"]
+        flags = (["bản tốt trước rollback"] if p.name in rb.get("good", []) else []) + \
+                (["= file hiện tại"] if cur and p.name.endswith(f"-{cur[:12]}.json") else [])
+        proven = sum(1 for it in items.values() if ((it or {}).get("red_proof") or {}).get("status") == "PROVEN")
+        out.append((p.name, len(items), proven, flags))
+    return out
+
+
+def restore(project_dir: Path, snapshot: str | None = None) -> tuple:
+    """Merge a snapshot (default: the good ones an open rollback pinned, else the newest) into the
+    current checklist, under the lock, through save(). (snapshot names, counts, still lost)."""
+    folder = _jdir(project_dir) / SNAP_SUBDIR
+    with locked(project_dir):
+        _WARNED.add(str(Path(project_dir).resolve()))   # restore prints its own result
+        data = load(project_dir)
+        if snapshot:
+            name = Path(snapshot).name
+            if not (folder / name).is_file() and (folder / f"{name}.json").is_file():
+                name += ".json"
+            names = [name]
+        else:
+            names = list((_rollback(project_dir) or {}).get("good") or [])
+            if not names:
+                names = [s[0] for s in list_snapshots(project_dir)[:1]]
+        if not names:
+            raise ValueError(f"không có snapshot nào trong {JOURNAL_DIR.as_posix()}/{SNAP_SUBDIR}")
+        total = {"rows": 0, "red_proof": 0, "unlinks": 0, "links": 0, "results": 0}
+        for name in names:
+            snap = _read_snap(project_dir, name)
+            if snap is None:
+                raise ValueError(f"không đọc được snapshot {_snap_rel(name)}")
+            for k, v in merge_snapshot(snap, data, _removed(project_dir)).items():
+                total[k] += v
+        os.environ.setdefault("DEVKIT_TOOL", "checklist-restore")
+        save(project_dir, data)
+        rb = _rollback(project_dir)
+        left = _still_lost(project_dir, rb, data) if rb else []
+    return names, total, left
+
+
+def dismiss_rollback(project_dir: Path) -> bool:
+    """Accept the current file as it is (a deliberate reset): close the warning, keep snapshots."""
+    path = _jdir(project_dir) / ROLLBACK_NAME
+    if not path.exists():
+        return False
+    path.unlink()
+    _append(project_dir, {"event": "dismiss"})
+    return True
 
 
 def _slug(text: str, max_len: int = 40) -> str:
@@ -610,7 +1037,7 @@ def unlink_bug(data: dict, bug_id: str, ref: str, *, project: Path | None = None
     proof = item.get("red_proof")
     if proof and proof.get("status") in ("PROVEN", "VACUOUS", "INCONCLUSIVE", "PENDING"):
         proof.update({"status": "OUTDATED", "reason": f"đã gỡ link {ref} — chứng minh lại"})
-    item.setdefault("unlinked", []).append({"at": _now(), "ref": ref, "removed": removed})
+    item.setdefault("unlinked", []).append({"at": _now(), "ts": time.time(), "ref": ref, "removed": removed})
     return removed
 
 
@@ -1245,6 +1672,32 @@ def _bug_command(args, project: Path) -> int:
         return 0
 
 
+def _restore_command(args, project: Path) -> int:
+    if args.dismiss:
+        print("✔ đã đóng cảnh báo rollback (giữ nguyên file hiện tại, snapshot vẫn còn)" if dismiss_rollback(project)
+              else "không có cảnh báo rollback nào đang mở")
+        return 0
+    if args.list:
+        snaps = list_snapshots(project)
+        if not snaps:
+            print(f"chưa có snapshot nào ({JOURNAL_DIR.as_posix()}/{SNAP_SUBDIR}: mỗi lần DevKit ghi checklist)")
+        for name, rows, proven, flags in snaps:
+            print(f"{_snap_rel(name)}  {rows} dòng · {proven} PROVEN" + (f"  ← {', '.join(flags)}" if flags else ""))
+        msg = rollback_warning(project)
+        if msg:
+            print(msg)
+        return 0
+    names, total, left = restore(project, args.snapshot)
+    print(f"✔ merged {', '.join(_snap_rel(n) for n in names)} → {STATUS_FILE.as_posix()}: "
+          f"+{total['rows']} dòng, {total['red_proof']} red_proof, {total['unlinks']} unlink, "
+          f"{total['links']} dòng đổi link, {total['results']} kết quả (bản mới hơn theo ts được giữ)")
+    if left:
+        print(f"⚠️ vẫn còn {len(left)} thay đổi chưa về ({'; '.join(left[:3])}) — restore <snapshot> khác, "
+              "hoặc --dismiss nếu cố ý")
+        return 1
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Living regression checklist")
     parser.add_argument("--project", default=os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
@@ -1286,9 +1739,25 @@ def main(argv=None) -> int:
     p_rl.add_argument("req_id")
     p_rl.add_argument("which")
     p_rl.add_argument("test_ref")
+    p_rs = sub.add_parser("restore", help="merge a journal snapshot back after the checklist was rolled back "
+                          "(newer red_proof per row, links minus unlinks, later rows kept)")
+    p_rs.add_argument("snapshot", nargs="?", help="snapshot name or path (default: the last good one)")
+    p_rs.add_argument("--list", action="store_true", help="list the snapshots")
+    p_rs.add_argument("--dismiss", action="store_true", help="accept the current file, close the warning")
+    sub.add_parser("check", help="exit 1 + a warning when the checklist was rolled back outside the DevKit")
     args = parser.parse_args(argv)
     project = Path(args.project)
     try:
+        if args.cmd == "check":
+            _WARNED.add(str(project.resolve()))
+            if (project / STATUS_FILE).exists() or (project / JOURNAL_DIR).is_dir():
+                load(project)
+            msg = rollback_warning(project)
+            if msg:
+                print(msg)
+            return 1 if msg else 0
+        if args.cmd == "restore":
+            return _restore_command(args, project)
         if args.cmd in ("add", "bug-link", "bug-unlink", "drop", "req-add", "req-link"):
             return _bug_command(args, project)
         data = load(project)

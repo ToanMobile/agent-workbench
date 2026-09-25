@@ -92,7 +92,18 @@ case "$CMD" in
     ;;
   health|check-health)
     shift || true
-    python3 "$DEVKIT_ROOT/bin/agent-health.py" "$@"
+    H_RC=0; python3 "$DEVKIT_ROOT/bin/agent-health.py" "$@" || H_RC=$?
+    # The regression checklist rolled back outside the DevKit (overwritten with an older copy)?
+    # One warning on stderr; the health score itself is unchanged.
+    H_T=""; H_PREV=""
+    for a in "$@"; do
+      case "$H_PREV" in -t|--target) H_T="$a" ;; esac
+      case "$a" in --target=*) H_T="${a#--target=}" ;; esac
+      H_PREV="$a"
+    done
+    [ -n "$H_T" ] || H_T="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+    python3 "$DEVKIT_ROOT/bin/regression_checklist.py" --project "$H_T" check >&2 || true
+    exit "$H_RC"
     ;;
   gate|postfix|postfix-gate|audit-gate)
     shift || true
@@ -118,6 +129,18 @@ case "$CMD" in
       show) "${RC[@]}" show ;;
       *) echo "agent-kit bugs: add \"<title>\" [--severity S] [--module M] [--evidence E] [--test REF] [--fixed] [--id BUG-ID]" >&2
          echo "                | link <BUG-ID> <test> | unlink <BUG-ID> <test> | drop <BUG-ID> | import <table> [--dry-run] | show" >&2; exit 2 ;;
+    esac
+    ;;
+  checklist)
+    # checklist restore [--list | --dismiss | <snapshot>] | check — the checklist's write journal
+    shift || true
+    RC_PROJECT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+    RC=(python3 "$DEVKIT_ROOT/bin/regression_checklist.py" --project "$RC_PROJECT")
+    case "${1:-}" in
+      restore) shift; "${RC[@]}" restore "$@" ;;
+      check) "${RC[@]}" check ;;
+      show) "${RC[@]}" show ;;
+      *) echo "agent-kit checklist: restore [--list | --dismiss | <snapshot>] | check | show" >&2; exit 2 ;;
     esac
     ;;
   req|reqs)
@@ -239,6 +262,15 @@ Commands:
                       Undo a link that is context, not a guard (a broad suite linked next to the real
                       test); the RED-proof becomes OUTDATED — every linked test must go red to be PROVEN
   bugs drop <BUG-ID>  Remove a bug row (a REPORTED prompt that was no bug, a duplicate)
+  checklist restore [--list | --dismiss | <snapshot>]
+                      Every write of .agents/regression_status.json is journaled with a snapshot
+                      (.agents/regression_journal/, git-ignored, bounded). When the file is
+                      overwritten outside the DevKit and loses content (an older copy from git:
+                      red_proof results, unlinks, links, rows), every load, SessionStart and health
+                      warn. restore MERGES the last good snapshot back: the newer red_proof/result
+                      per row by time, links = union minus recorded unlinks, rows added since kept
+                      (never a blind copy). --list: snapshots; --dismiss: keep the file as it is
+  checklist check     Exit 1 with the warning when a rollback is open
   req add "<title>" --criterion "…" [--criterion …] [--module M] [--source TEXT] [--inbox KEY] [--reason R]
                       A requirement with acceptance criteria, written BEFORE the code and locked
                       by hash (changing them needs --reason). NEEDS_TEST until every criterion has

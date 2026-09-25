@@ -143,6 +143,7 @@ try:
             if json.dumps(data, sort_keys=True) != before:
                 rc.save(root, data, stale=False)
         counts = rc.summary(data)
+        out.extend(filter(None, [rc.rollback_warning(root)]))  # checklist rolled back outside the DevKit
         try:
             rerun = os.path.join(os.path.dirname(indexer), "stale_rerun.py")
             sys.path.insert(0, os.path.dirname(rerun))
