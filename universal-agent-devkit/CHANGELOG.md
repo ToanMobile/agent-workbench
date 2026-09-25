@@ -4,6 +4,8 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
 
 ## Unreleased
 
+- **Regression gate không còn chặn mọi lượt khi chỉ chờ người duyệt diff test.** Khi lý do duy nhất là test đã có bị chính phiên này sửa (chỉ người review hoặc commit mới gỡ được), `regression_gate.sh` chặn MỘT lần cho mỗi thay đổi để agent báo người dùng; các lần dừng sau của cùng thay đổi được cho qua kèm lời nhắc (không phải PASS). Thay đổi mới → chặn lại một lần. Trước đó một phiên bị chặn 6 lần liền (2026-09-25).
+
 ### Báo cáo nghiệm thu 4 mục được ép, không chỉ ghi trong luật
 - **Nguyên nhân sót (2026-09-25):** báo cáo 4 mục chỉ nằm ở `core-rules.md` §1.3 (đọc khi cần); `essentials.md` (luôn nạp) không nhắc, chỉ có "mở đầu 3 dòng, ngắn gọn"; không hook nào kiểm. Một lượt push bàn giao đã thiếu nó mà không gì chặn.
 - `essentials.md` bước 5 có khuôn 4 mục. `proof_gate.sh` chặn câu trả lời mở bằng XONG, hoặc của lượt đã chạy `git push` (dù không ghi XONG), khi thiếu một trong 4 mục (nhãn tiếng Việt hoặc Anh); lượt push chỉ bị kiểm phần báo cáo. Test: `tests/test_proof_gate.sh` (XONG thiếu báo cáo, lượt push thiếu/đủ báo cáo, trả lời thường không bị kiểm).
