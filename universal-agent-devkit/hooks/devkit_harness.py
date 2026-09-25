@@ -232,20 +232,45 @@ class SessionGuard:
         write_json(self.path, self.state)
 
 
-def cap_message(gate, info, blocks, cap, detail=""):
-    """The user-visible systemMessage when the session cap releases the stop."""
-    return ("⚠ %s: đã chặn %d lần trong phiên này (%s, session %s; transcript: %s) — CHO DỪNG để "
-            "agent không bị kẹt; kết quả gate KHÔNG phải PASS, người dùng cần xem lại.%s "
-            "(%s released the stop after %d blocks in this session — not a PASS; cap: %s)"
-            % (gate, blocks, info.get("agent"), str(info.get("session"))[:16], info.get("transcript"),
-               (" " + detail) if detail else "", gate, blocks, cap))
+def _cli(argv, stdin):
+    """Shell entry points (bash hooks). Prints the answer; never raises."""
+    cmd = argv[0] if argv else ""
+    if cmd in ("detect", "fields"):
+        try:
+            data = json.loads(stdin.read() or "{}")
+        except ValueError:
+            data = {}
+        info = detect(data)
+        if cmd == "detect":
+            return json.dumps(info)
+        return "\t".join([info["session"], info["agent"], info["transcript"], "1" if info["degraded"] else "0",
+                          "1" if info["terminal_stop"] else "0", str(data.get("reason") or "")
+                          if isinstance(data, dict) else ""])
+    if cmd == "fingerprint" and len(argv) > 1:
+        return tree_fingerprint(argv[1])
+    if cmd == "sysmsg" and len(argv) > 1:
+        return json.dumps({"systemMessage": argv[1]}, ensure_ascii=False)
+    if cmd == "guard" and len(argv) > 2:
+        g = SessionGuard(argv[1], "")
+        op = argv[2]
+        if op == "get" and len(argv) > 3:
+            hit = g.cached(argv[3])
+            return hit["result"] if hit else ""
+        if op == "store" and len(argv) > 4:
+            g.store(argv[3], argv[4])
+            return ""
+        if op == "blocks":
+            return str(g.blocks)
+        if op == "add-block":
+            return str(g.add_block())
+    return ""
 
 
 if __name__ == "__main__":
     import sys
-    if sys.argv[1:2] == ["detect"]:
-        try:
-            data = json.loads(sys.stdin.read() or "{}")
-        except ValueError:
-            data = {}
-        print(json.dumps(detect(data)))
+    try:
+        out = _cli(sys.argv[1:], sys.stdin)
+    except Exception:  # noqa: BLE001 — a broken helper must never break the hook
+        out = ""
+    if out:
+        print(out)

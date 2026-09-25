@@ -27,8 +27,20 @@
 # Cost: usually seconds — Gradle serves UP-TO-DATE when nothing in that source
 # set moved. Escape hatch: TESTSOURCESET_GATE=0 to skip (logged).
 #
-# Loop-guard: MAX_ATTEMPTS then release with a warning, so a broken gate can
-# never trap the session. Fail-open on internal error.
+# Loop-guard: MAX_ATTEMPTS then release with a warning (systemMessage), so a broken
+# gate can never trap the session. Fail-open on internal error.
+#
+# Non-Claude agent or no usable Claude transcript (hooks/devkit_harness.py: Grok, whose
+# transcript is its own updates.jsonl; a bridged agent; a caller with no transcript):
+# the scope falls back to repo-wide, which under Grok meant compiling every test source
+# set on every stop (OfficeReader, 2026-09-25). So:
+#   - the repo-wide result is re-used while the tree is unchanged (fingerprint of HEAD +
+#     diff + untracked contents, per session): one compile per unchanged tree per session;
+#   - "degraded" sessions hold at most TESTSOURCESET_GATE_MAX_SESSION_BLOCKS (default 3)
+#     blocks in total — the attempts guard alone restarts after each release — then the
+#     stop is allowed with a systemMessage (still not a PASS); a PASS resets the count;
+#   - Grok's observe-only session-end Stop (payload reason ≠ end_turn) compiles nothing.
+# The SCOPE log line names the agent and the transcript kind.
 #
 # Stop hook protocol: stdin JSON; exit 2 blocks (stderr→Claude); exit 0 allows.
 # bash 3.2 compatible.
@@ -49,8 +61,26 @@ INPUT="$(cat)"
 SID_RAW=""
 HAVE_PY=1
 command -v python3 >/dev/null 2>&1 || HAVE_PY=0
+# Which agent runs this Stop (hooks/devkit_harness.py, next to this script or its link
+# target): AGENT, TKIND (transcript kind), DEGRADED=1 when not Claude or no usable Claude
+# transcript, TERMINAL=1 for Grok's session-end Stop. Without the helper: old behaviour.
+HARNESS=""
+for cand in "$(dirname "$0")/devkit_harness.py" \
+            "$(python3 -c 'import os,sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0" 2>/dev/null)/devkit_harness.py"; do
+  [ -f "${cand}" ] && { HARNESS="${cand}"; break; }
+done
+AGENT="unknown"; TKIND="?"; DEGRADED=0; TERMINAL=0; REASON=""
 if [ -n "${INPUT}" ] && [ "${HAVE_PY}" = 1 ]; then
-  SID_RAW="$(printf '%s' "${INPUT}" | python3 -c '
+  if [ -n "${HARNESS}" ]; then
+    FIELDS="$(printf '%s' "${INPUT}" | HOOK_PPID="${PPID}" python3 "${HARNESS}" fields 2>/dev/null || true)"
+    TAB="$(printf '\t')"
+    OLDIFS="${IFS}"; IFS="${TAB}"
+    # shellcheck disable=SC2086
+    set -- ${FIELDS}
+    IFS="${OLDIFS}"
+    [ $# -ge 5 ] && { SID_RAW="$1"; AGENT="$2"; TKIND="$3"; DEGRADED="$4"; TERMINAL="$5"; REASON="${6:-}"; }
+  fi
+  [ -n "${SID_RAW}" ] || SID_RAW="$(printf '%s' "${INPUT}" | python3 -c '
 import sys, json, re
 try:
     d = json.load(sys.stdin)
@@ -69,11 +99,21 @@ else
   ATTEMPTS_FILE="${LOG_DIR}/.testsourceset_attempts"
 fi
 MAX_ATTEMPTS="${TESTSOURCESET_GATE_MAX_ATTEMPTS:-2}"
+MAX_SESSION_BLOCKS="${TESTSOURCESET_GATE_MAX_SESSION_BLOCKS:-3}"
+GUARD_FILE="${LOG_DIR}/.testsourceset_guard_${SID_RAW:-default}.json"
+BLOCK_MSG_FILE="${LOG_DIR}/.testsourceset_block_${SID_RAW:-default}.txt"
+guard() { [ -n "${HARNESS}" ] && python3 "${HARNESS}" guard "${GUARD_FILE}" "$@" 2>/dev/null; }
+sysmsg() { if [ -n "${HARNESS}" ]; then python3 "${HARNESS}" sysmsg "$1"; else echo "$1" >&2; fi; }
 
 log() { printf '%s [SID=%s] %s\n' "${TS}" "${SID_RAW:-default}" "$*" >>"${LOG}" 2>/dev/null || true; }
 
 if [ "${TESTSOURCESET_GATE:-1}" = "0" ]; then
   log "SKIP — disabled via TESTSOURCESET_GATE=0"
+  exit 0
+fi
+if [ "${TERMINAL}" = 1 ]; then
+  # Grok's observe-only Stop when the session closes: no turn left to continue.
+  log "SKIP — session-end Stop (agent=${AGENT} reason=${REASON})"
   exit 0
 fi
 
@@ -283,7 +323,22 @@ if [ -n "${SCOPED}" ]; then
   fi
   CHANGED="${SCOPED}"
 else
-  log "SCOPE — repo-wide (no usable transcript, or this session's Kotlin/Java writes are not dirty)"
+  log "SCOPE — repo-wide (no usable transcript, or this session's Kotlin/Java writes are not dirty; agent=${AGENT} transcript=${TKIND})"
+fi
+
+# Repo-wide compile at most once per unchanged tree per session: the result for the same
+# tree fingerprint (HEAD + diff + untracked contents) is re-used. Scoped runs (a Claude
+# transcript named the files) are cheap and keep compiling.
+TREE_FP=""; CACHED=""
+if [ -z "${SCOPED}" ] && [ -n "${HARNESS}" ]; then
+  TREE_FP="$(python3 "${HARNESS}" fingerprint "${REPO_ROOT}" 2>/dev/null || true)"
+  [ -n "${TREE_FP}" ] && CACHED="$(guard get "${TREE_FP}")"
+  [ "${CACHED}" = block ] && [ ! -s "${BLOCK_MSG_FILE}" ] && CACHED=""
+fi
+if [ "${CACHED}" = pass ]; then
+  log "PASS (reused result, tree unchanged fp=${TREE_FP})"
+  rm -f "${ATTEMPTS_FILE}" 2>/dev/null || true
+  exit 0
 fi
 
 # Paths are newline-separated and may contain spaces (QA K-7): iterate on
@@ -392,6 +447,8 @@ compile_root() {
 
 GRADLEW_CMD="./gradlew"
 ALL_TASKS=""
+TASKS=""; RC=0; OUT=""
+[ "${CACHED}" = block ] && { RC=1; ROOTS=""; }
 for root in ${ROOTS}; do
   files="$(printf '%s\n' "${ROOT_FILES}" | awk -F'\t' -v r="${root}" '$1 == r { print $2 }')"
   compile_root "${root}" "${files}"
@@ -407,6 +464,7 @@ TASKS_STR="$(printf '%s ' ${TASKS})"
 if [ ${RC} -eq 0 ]; then
   log "PASS — ${ALL_TASKS}"
   rm -f "${ATTEMPTS_FILE}" 2>/dev/null || true
+  [ -n "${TREE_FP}" ] && guard store "${TREE_FP}" pass
   exit 0
 fi
 
@@ -420,9 +478,11 @@ fi
 # when re-run by hand.
 # Classify before blaming, and always persist the raw output.
 OUT_FILE="${LOG_DIR}/testsourceset_last_failure${SID_RAW:+_${SID_RAW}}.txt"
-printf '%s\n' "${OUT}" >"${OUT_FILE}" 2>/dev/null || true
+[ "${CACHED}" = block ] || printf '%s\n' "${OUT}" >"${OUT_FILE}" 2>/dev/null || true
 
-if printf '%s' "${OUT}" | grep -qE '^e: |error:|Compilation error|compile[A-Za-z0-9]*UnitTestKotlin.*FAILED'; then
+if [ "${CACHED}" = block ]; then
+  log "BLOCK re-used (tree unchanged fp=${TREE_FP}) — no compile"
+elif printf '%s' "${OUT}" | grep -qE '^e: |error:|Compilation error|compile[A-Za-z0-9]*UnitTestKotlin.*FAILED'; then
   : # genuine compile failure — fall through to BLOCK below
 else
   log "INFRA (rc=${RC}, không có dấu hiệu lỗi compile) — fail-open; output: ${OUT_FILE}"
@@ -436,15 +496,35 @@ else
   exit 0
 fi
 
+# Non-Claude agent / no usable transcript: a total block cap per session (a PASS resets
+# it). The attempts guard below alone restarts after each release, so an agent whose tree
+# changes every turn was blocked again and again.
+if [ "${DEGRADED}" = 1 ] && [ -n "${HARNESS}" ]; then
+  SBLOCKS="$(guard blocks)"
+  if [ "${SBLOCKS:-0}" -ge "${MAX_SESSION_BLOCKS}" ]; then
+    log "RELEASE — session cap (${SBLOCKS} blocks, agent=${AGENT}, transcript=${TKIND})"
+    sysmsg "⚠ TEST-SOURCESET GATE đã chặn ${SBLOCKS} lần trong phiên ${SID_RAW:-?} (agent: ${AGENT}, transcript: ${TKIND}) — CHO DỪNG để agent không bị kẹt; test source set VẪN CHƯA compile, KHÔNG phải PASS. Người dùng cần xem lại: ${OUT_FILE} (released after ${SBLOCKS} blocks this session — TESTSOURCESET_GATE_MAX_SESSION_BLOCKS; not a PASS)"
+    exit 0
+  fi
+fi
+
 ATTEMPTS=0
 [ -f "${ATTEMPTS_FILE}" ] && ATTEMPTS="$(cat "${ATTEMPTS_FILE}" 2>/dev/null || echo 0)"
 ATTEMPTS=$((ATTEMPTS + 1))
 printf '%s' "${ATTEMPTS}" >"${ATTEMPTS_FILE}" 2>/dev/null || true
 
 if [ "${ATTEMPTS}" -gt "${MAX_ATTEMPTS}" ]; then
-  log "RELEASE after ${ATTEMPTS} attempts — gate may be broken; letting Claude finish"
+  log "RELEASE after ${ATTEMPTS} attempts — gate may be broken; letting the agent finish"
   rm -f "${ATTEMPTS_FILE}" 2>/dev/null || true
+  sysmsg "⚠ TEST-SOURCESET GATE: đã chặn ${MAX_ATTEMPTS} lần liên tiếp — CHO DỪNG để không kẹt phiên; test source set VẪN CHƯA compile, KHÔNG phải PASS. Output: ${OUT_FILE} (released after ${MAX_ATTEMPTS} attempts; not a PASS)"
   exit 0
+fi
+[ "${DEGRADED}" = 1 ] && guard add-block >/dev/null
+
+if [ "${CACHED}" = block ]; then
+  log "BLOCK (attempt ${ATTEMPTS}, re-used) — $(head -1 "${BLOCK_MSG_FILE}" 2>/dev/null)"
+  cat "${BLOCK_MSG_FILE}" >&2
+  exit 2
 fi
 
 # Name the real cause before blaming signature drift.
@@ -481,5 +561,7 @@ log "BLOCK (attempt ${ATTEMPTS}) — ${TASKS_STR}"
     echo "Sửa call site trong src/test (thường do đổi signature: thêm/bớt/đổi thứ tự param),"
     echo "rồi chạy lại: ${GRADLEW_CMD} ${TASKS_STR}"
   fi
-} >&2
+} >"${BLOCK_MSG_FILE}" 2>/dev/null
+[ -n "${TREE_FP}" ] && guard store "${TREE_FP}" block
+cat "${BLOCK_MSG_FILE}" >&2
 exit 2

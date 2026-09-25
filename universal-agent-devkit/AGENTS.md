@@ -118,7 +118,7 @@ In an installed project, `AGENTS.md` is the project's **only** instruction file 
 | **OpenAI Codex** | `AGENTS.md` as plain text (no `@` expansion): its DevKit block lists the rule files to open | `.codex/hooks.json` via `hooks/agent_bridge.sh`: session/prompt context, git, device & `rm` guards on shell commands, regression tests on Stop |
 | **Gemini CLI** | `AGENTS.md` through `context.fileName` in `.gemini/settings.json` (its `@` lines expand), `.agents/skills`; symlink mode adds the DevKit folder to `context.includeDirectories` so `.agents/devkit/` can be read on demand | `.gemini/settings.json` via the bridge: same set as Codex |
 | **Cursor** | `AGENTS.md` + the always-applied rule `.cursor/rules/universal-agent-devkit.mdc` (`@`-includes the core, profile and project rules) | `.cursor/hooks.json` via the bridge: session context, git, device & `rm` guards, regression tests on stop |
-| **Grok** | The same `AGENTS.md` as every other agent. No Grok adapter and no `.grok/` directory | No DevKit files of its own. It sees skills, commands and hooks that are already installed for the other agents |
+| **Grok** | The same `AGENTS.md` as every other agent. No Grok adapter and no `.grok/` directory | No DevKit files of its own. It runs the Claude hooks from `.claude/settings.json` (and sees the skills and commands installed for the other agents), but it discards UserPromptSubmit output and its transcript is not Claude's. The hooks detect it (`hooks/devkit_harness.py`: camelCase payload, `GROK_HOOK_EVENT`, its `updates.jsonl` transcript) and never trap it: the prompt hook records no `REPORTED` bug row; `testsourceset_gate.sh` and `regression_gate.sh` compile/test once per unchanged tree per session, block at most 3 times per session (`TESTSOURCESET_GATE_MAX_SESSION_BLOCKS`, `REGRESSION_GATE_MAX_SESSION_BLOCKS`; a pass resets it) and then let it stop with a `systemMessage` that says the gate is still not green; its session-end Stop runs nothing. The same session cap applies to any Stop without a usable Claude transcript (bridged agents too) |
 | **Antigravity** | `AGENTS.md`, `.agents/skills` | none (no hook API) — rules only |
 
 Every platform also gets the git **pre-commit** gate (`agent-kit githooks install`, installed by `agent-kit init` in git projects). Hooks that read Claude's transcript (review, test evidence, claims) exist only on Claude Code.
@@ -126,7 +126,7 @@ Every platform also gets the git **pre-commit** gate (`agent-kit githooks instal
 
   | Switch | What it does | Hook / tool |
   |---|---|---|
-  | `BUG_CAPTURE` | bug prompt → `REPORTED` row | UserPromptSubmit |
+  | `BUG_CAPTURE` | bug prompt → `REPORTED` row (not agent/harness prompts: "You are …" openings, tool/JSON schemas, long instruction blocks, non-Claude harnesses) | UserPromptSubmit |
   | `INBOX_WATCH` | new `.agents/INBOX.md` lines → context, once each | UserPromptSubmit |
   | `BUG_LINK_REMINDER` | hold Stop once when this session's bug/REQ has no test | Stop (`test_evidence_gate.sh`) |
   | `AUTO_LINK` | link bug ↔ test on one-to-one RED→GREEN evidence (🤖) | Stop |

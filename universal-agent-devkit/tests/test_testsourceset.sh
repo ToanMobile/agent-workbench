@@ -47,6 +47,8 @@ exit 0
 SH
   chmod +x "$R/gradlew"
   : > "$R/.tasks"; : > "$R/.broken"
+  # the fake's bookkeeping is ignored, like a real build's outputs (not part of the tree)
+  printf '.calls\n.tasks\n.broken\n' >> "$R/.git/info/exclude"
 }
 
 # module <dir> <build.gradle.kts body> — a module with one uncommitted Kotlin file.
@@ -143,6 +145,76 @@ if [ "$RC" = 0 ] && [ "$(wc -l < "$R/.calls" | tr -d ' ')" = 2 ] && tail -1 "$R/
 else
   fail "missing-task retry: got exit $RC, calls: $(tr '\n' '|' < "$R/.calls" 2>/dev/null)"
 fi
+
+# ── Non-Claude agent (Grok) / no usable transcript ────────────────────────────
+# Grok (2026-09-25, OfficeReader) runs the Claude Stop hooks with its own transcript
+# (updates.jsonl, {"method","params"} lines): scoping fell back to repo-wide and every
+# stop compiled every test source set. The repo-wide result is re-used for an unchanged
+# tree in a session, Grok's session-end Stop compiles nothing, and in degraded mode a
+# session holds at most TESTSOURCESET_GATE_MAX_SESSION_BLOCKS (default 3) blocks.
+printf '%s\n' '{"timestamp":1790240706,"method":"_x.ai/session/update","params":{"sessionId":"g","update":{"sessionUpdate":"hook_execution"}}}' > "$TMP/updates.jsonl"
+gstop() { # <session> [reason] — a Grok-shaped Stop
+  OUT="$(printf '{"hookEventName":"stop","hook_event_name":"Stop","sessionId":"%s","session_id":"%s","transcript_path":"%s","reason":"%s"}' \
+      "$1" "$1" "$TMP/updates.jsonl" "${2:-end_turn}" \
+    | GROK_HOOK_EVENT=stop CLAUDE_PROJECT_DIR="$R" bash "$GATE" 2>"$TMP/ts_err")"
+  RC=$?; ERR="$(cat "$TMP/ts_err")"
+}
+calls() { grep -c . "$R/.calls" 2>/dev/null | tr -d ' ' || echo 0; }
+
+# ── 7. Grok's session-end Stop compiles nothing ──
+new_repo
+module lib 'plugins { id("com.android.library") }'
+echo ":lib:compileDebugUnitTestKotlin" > "$R/.tasks"
+gstop g7 channel_closed
+[ "$RC" = 0 ] && [ ! -s "$R/.calls" ] && ok "Grok session-end Stop (reason channel_closed): no compile" \
+  || fail "session-end Stop compiled (exit $RC, calls: $(tr '\n' ' ' < "$R/.calls" 2>/dev/null))"
+
+# ── 8. same tree, same Grok session: one compile, the PASS is re-used ──
+gstop g8; rc1=$RC; gstop g8; rc2=$RC
+[ "$rc1" = 0 ] && [ "$rc2" = 0 ] && [ "$(calls)" = 1 ] && grep -q "reused" "$R/.claude/audit-gate/testsourceset_gate.log" \
+  && ok "Grok, unchanged tree: repo-wide compile runs once per session, then re-used" \
+  || fail "no reuse (exits $rc1/$rc2, calls=$(calls))"
+grep -q "agent=grok" "$R/.claude/audit-gate/testsourceset_gate.log" \
+  && ok "the SCOPE log line names the agent and why the scope is repo-wide" || fail "agent not logged: $(grep SCOPE "$R/.claude/audit-gate/testsourceset_gate.log" | tail -1)"
+echo 'class Foo2' > "$R/lib/src/main/kotlin/Foo.kt"
+gstop g8
+[ "$RC" = 0 ] && [ "$(calls)" = 2 ] && ok "Grok, changed tree: compiled again" || fail "changed tree not recompiled (calls=$(calls))"
+
+# ── 9. broken src/test, same tree: blocked without recompiling, released with a message ──
+new_repo
+module lib 'plugins { id("com.android.library") }'
+echo ":lib:compileDebugUnitTestKotlin" > "$R/.tasks"; echo ":lib:compileDebugUnitTestKotlin" > "$R/.broken"
+gstop g9; r1=$RC; e1="$ERR"; gstop g9; r2=$RC; e2="$ERR"; gstop g9; r3=$RC
+[ "$r1" = 2 ] && [ "$r2" = 2 ] && [ "$(calls)" = 1 ] && printf '%s' "$e2" | grep -q "compileDebugUnitTestKotlin" \
+  && ok "Grok, broken src/test, unchanged tree: blocked again from the cached result (one compile)" \
+  || fail "cached block (exits $r1/$r2, calls=$(calls), err2: $(printf '%s' "$e2" | head -2 | tr '\n' ' '))"
+[ "$r3" = 0 ] && printf '%s' "$OUT" | grep -q systemMessage \
+  && ok "…and the release after MAX_ATTEMPTS says so to the user (systemMessage)" || fail "silent release (exit $r3, out: $OUT)"
+
+# ── 10. a new tree every stop (Grok edits every turn): total cap per session ──
+new_repo
+module lib 'plugins { id("com.android.library") }'
+echo ":lib:compileDebugUnitTestKotlin" > "$R/.tasks"; echo ":lib:compileDebugUnitTestKotlin" > "$R/.broken"
+RCS=""
+for v in 1 2 3 4 5 6; do echo "class Foo$v" > "$R/lib/src/main/kotlin/Foo.kt"; gstop g10; RCS="$RCS$RC"; done
+[ "$RCS" = 220200 ] && printf '%s' "$OUT" | grep -q systemMessage && printf '%s' "$OUT" | grep -q "g10" \
+  && ok "Grok, new tree each stop: 3 blocks in the session, then released with a systemMessage naming it" \
+  || fail "session cap (exits $RCS, out: $OUT)"
+
+# ── 11. a Claude session with a real transcript is not capped per session ──
+new_repo
+module lib 'plugins { id("com.android.library") }'
+echo ":lib:compileDebugUnitTestKotlin" > "$R/.tasks"; echo ":lib:compileDebugUnitTestKotlin" > "$R/.broken"
+python3 - "$TMP/claude.jsonl" "$R/lib/src/main/kotlin/Foo.kt" <<'PY'
+import json, sys
+use = {"type": "tool_use", "id": "t1", "name": "Write", "input": {"file_path": sys.argv[2], "content": "class Foo"}}
+open(sys.argv[1], "w").write(json.dumps({"type": "assistant", "message": {"content": [use]}}) + "\n")
+PY
+RCS=""
+for v in 1 2 3 4 5 6; do echo "class Foo$v" > "$R/lib/src/main/kotlin/Foo.kt"
+  printf '{"session_id":"c11","transcript_path":"%s"}' "$TMP/claude.jsonl" | CLAUDE_PROJECT_DIR="$R" bash "$GATE" >/dev/null 2>&1; RCS="$RCS$?"; done
+[ "$RCS" = 220220 ] && ok "Claude session (scoped by its transcript): per-session attempts guard only, no total cap" \
+  || fail "Claude session capped (exits $RCS)"
 
 if [ "$FAILS" -ne 0 ]; then echo "test_testsourceset: $FAILS FAILED"; exit 1; fi
 echo "test_testsourceset: all checks passed"
