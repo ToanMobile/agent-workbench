@@ -1427,16 +1427,35 @@ te_case() { # name want session message [transcript]
     "$(python3 -c 'import json,sys; print(json.dumps({"session_id": sys.argv[1], "transcript_path": sys.argv[3], "last_assistant_message": sys.argv[2]}))' \
        "$3" "$4" "${5:-${EMPTY_TR}}")" CLAUDE_PROJECT_DIR="${TE_P}"
 }
+te_ledger() { # project [session start_offset_s end_offset_s]... — rewrite its Bash-window ledger
+  _tl="$1/.claude/audit-gate/bash_write_ledger.tsv"; shift; mkdir -p "$(dirname "${_tl}")"
+  python3 - "${_tl}" "$@" <<'PY'
+import sys, time
+now, a = time.time(), sys.argv[2:]
+with open(sys.argv[1], "w") as fh:
+    for i in range(0, len(a), 3):
+        fh.write(f"{a[i]}\tstart\t{now + float(a[i + 1])}\tt{i}\n{a[i]}\tend\t{now + float(a[i + 2])}\tt{i}\n")
+PY
+}
 te_case "claim attributed to another hook is not a claim"        0 te-a1 "The evidence logs written by another hook at 08:41 say the tests passed."
 te_case "claim attributed to another session (vi) is not a claim" 0 te-a2 "Phiên khác ghi log lúc 08:41 là 12/12 test pass, phiên này chưa chạy lại."
 te_case "negated run: chưa chạy test is not a claim"             0 te-a3 "Chưa chạy test, nên chưa biết test có pass hay không."
 te_case "negated result: tests did not pass is not a claim"      0 te-a4 "The 3 tests did not pass on CI."
-te_case "fix attributed to another agent is not an outcome"      0 te-a5 "Agent khác báo đã fix bug A; phiên này chưa kiểm."
+te_case "fix attributed to another session is not an outcome"    0 te-a5 "Phiên khác báo đã fix bug A; phiên này chưa kiểm."
+te_case "claim the user made is not a claim"                   0 te-a6 "The user said \"13/13 tests pass\" on their machine."
 te_case "guard: other-hook fail then contrast still a claim"     2 te-g1 "Hook khác báo fail, nhưng giờ 13/13 test pass."
 te_case "guard: another session broke it; tests pass claimed"    2 te-g2 "Another session broke it; now 12/12 tests pass."
 te_case "guard: negated smoke run cannot hide test pass"         2 te-g3 "Didn't run smoke so I only know 12/12 tests passed."
 te_case "guard: plain unbacked pass claim still blocked"         2 te-g4 "JUnit XML shows 13/13 tests passed, 0 failures."
 te_case "guard: plain unbacked fixed claim still blocked"        2 te-g5 "Đã fix bug A."
+# The agent's OWN earlier run / session is not someone else's words, and neither is an agent's
+# (a leader relaying a subagent's unverified claim): these are checked against evidence.
+te_case "guard: previous run of mine is still a claim"          2 te-p1 "Previous run: 13/13 tests pass."
+te_case "guard: earlier run of mine is still a claim"           2 te-p2 "The earlier run shows all 42 tests passed, 0 failures."
+te_case "guard: lần chạy trước is still a claim"                2 te-p3 "Lần chạy trước 13/13 test pass."
+te_case "guard: previous session fixed is still an outcome"     2 te-p4 "Previous session fixed bug A."
+te_case "guard: other agent's relayed pass is still a claim"    2 te-p5 "The other agent ran the suite: 13/13 tests pass."
+te_case "guard: agent khác relayed fix is still an outcome"     2 te-p6 "Agent khác báo đã fix bug A; phiên này chưa kiểm."
 # Foreign project: a Gradle root outside CLAUDE_PROJECT_DIR whose XML this session read.
 TE_F="$(mktemp -d "${TMPDIR:-/tmp}/hooktef.XXXXXX")"; TE_OLD="$(mktemp -d "${TMPDIR:-/tmp}/hookteo.XXXXXX")"
 TE_RED="$(mktemp -d "${TMPDIR:-/tmp}/hooketr.XXXXXX")"
@@ -1472,9 +1491,19 @@ w("te_f_old.jsonl", bash(1, "cat " + os.path.join(old, xml % "GreenSuite")))
 w("te_f_red.jsonl", bash(1, "cat " + os.path.join(red, xml % "RedSuite")))
 PY
 MSG_F="JUnit XML in the other project shows 13/13 tests passed, 0 failures."
+# Foreign XML counts only when a Bash window of THIS session (the ledger) produced it.
+te_ledger "${TE_P}" te-f1 -600 600
 te_case "foreign XML read by this session backs the claim"      0 te-f1 "${MSG_F}" "${SANDBOX}/te_f_cat.jsonl"
+te_ledger "${TE_P}" te-f2 -600 600
 te_case "foreign Gradle root run via cd backs the claim"        0 te-f2 "${MSG_F}" "${SANDBOX}/te_f_cd.jsonl"
+te_ledger "${TE_P}" te-f3 -600 600
 te_case "foreign module edited then its XML read backs claim"   0 te-f3 "${MSG_F}" "${SANDBOX}/te_f_edit.jsonl"
+te_ledger "${TE_P}" te-f7 -7200 -3600
+te_case "guard: foreign XML only read, no window of mine"       2 te-f7 "${MSG_F}" "${SANDBOX}/te_f_cat.jsonl"
+te_ledger "${TE_P}" te-other -600 600
+te_case "guard: foreign XML another session's window produced"  2 te-f8 "${MSG_F}" "${SANDBOX}/te_f_cat.jsonl"
+rm -f "${TE_P}/.claude/audit-gate/bash_write_ledger.tsv"
+te_case "guard: foreign XML only read, no ledger at all"        2 te-f9 "${MSG_F}" "${SANDBOX}/te_f_cat.jsonl"
 te_case "guard: foreign XML no Bash of this session named"      2 te-f4 "${MSG_F}" "${SANDBOX}/te_f_none.jsonl"
 te_case "guard: foreign XML older than the session"             2 te-f5 "${MSG_F}" "${SANDBOX}/te_f_old.jsonl"
 te_case "guard: foreign XML with a failure"                     2 te-f6 "${MSG_F}" "${SANDBOX}/te_f_red.jsonl"
