@@ -49,7 +49,9 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   trap 'rm -f "$BLOCK_TMP" "$BLOCK_TMP.body"' EXIT
   rm -f "$BLOCK_TMP"   # merge_markdown.py creates it
   devkit_merge_block "$CURSOR_INJECT" "$BLOCK_TMP" >/dev/null
-  sed -e '/universal-agent-devkit:start/d' -e '/universal-agent-devkit:end/d' -e '/SSOT: @AGENTS\.md$/d' "$BLOCK_TMP" > "$BLOCK_TMP.body"
+  # The essentials section is filled in AGENTS.md only (context_sync.py); Cursor loads that file itself.
+  sed -e '/universal-agent-devkit:start/d' -e '/universal-agent-devkit:end/d' -e '/SSOT: @AGENTS\.md$/d' \
+      -e '/devkit-essentials:/d' "$BLOCK_TMP" > "$BLOCK_TMP.body"
   python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$BLOCK_TMP.body" "$MDC" "universal-agent-devkit" >/dev/null
   rm -f "$BLOCK_TMP" "$BLOCK_TMP.body"
   echo "  - .cursor/rules/universal-agent-devkit.mdc: DevKit rules, always applied"

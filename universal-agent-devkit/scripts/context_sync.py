@@ -14,6 +14,11 @@ silently skipped in all three migrated projects), and Gemini CLI refuses such pa
 path traversal. Generated, never committed (.gitignore: .agents/context/); re-written
 by `agent-kit init`, `agent-kit profile`, the relink git hooks and SessionStart.
 
+It also writes rules/essentials.md IN FULL between the devkit-essentials markers of the
+project's AGENTS.md: Antigravity reads AGENTS.md as plain text and expands no `@` import at
+all (measured 2026-09-25), so the essentials must be in the file itself. No markers, or an
+AGENTS.md that is a symlink: left alone.
+
 --check: exit 1 and name the stale files; nothing is written.
 """
 import os
@@ -46,6 +51,30 @@ def wanted(project):
     return out
 
 
+MARK_START = "<!-- devkit-essentials:start"
+MARK_END = "<!-- devkit-essentials:end -->"
+
+
+def agents_md_wanted(project):
+    """(path, current, wanted) for AGENTS.md with its essentials section refreshed, or None."""
+    path = os.path.join(project, "AGENTS.md")
+    if os.path.islink(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return None
+    i = text.find(MARK_START)
+    j = text.find(MARK_END, i) if i >= 0 else -1
+    if i < 0 or j < 0:
+        return None
+    keep = text.index("\n", i) + 1          # the start marker line itself
+    with open(os.path.join(DEVKIT, "rules", "essentials.md"), encoding="utf-8") as f:
+        essentials = f.read().rstrip("\n") + "\n"
+    return path, text, text[:keep] + essentials + text[j:]
+
+
 def stale(project):
     """Names of the context files that are missing or differ from what they should hold."""
     base = os.path.join(project, CONTEXT_DIR)
@@ -58,6 +87,9 @@ def stale(project):
         except OSError:
             pass
         bad.append(name)
+    agents = agents_md_wanted(project)
+    if agents and agents[1] != agents[2]:
+        bad.append("AGENTS.md")
     return bad
 
 
@@ -79,6 +111,13 @@ def sync(project):
             f.write(text)
         os.replace(tmp, path)
         changed.append(name)
+    agents = agents_md_wanted(project)
+    if agents and agents[1] != agents[2]:
+        tmp = agents[0] + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(agents[2])
+        os.replace(tmp, agents[0])
+        changed.append("AGENTS.md")
     old_index = os.path.join(project, ".agents", "local", "rules", rules_index.INDEX_NAME)
     if os.path.isfile(old_index) and rules_index.GENERATED_MARK in open(old_index, encoding="utf-8").read(200):
         os.unlink(old_index)            # where an early 1.3 build wrote the index
@@ -93,11 +132,12 @@ def main(argv):
     if "--check" in argv:
         bad = stale(project)
         if bad and "--quiet" not in argv:
-            print("stale: " + ", ".join(f"{CONTEXT_DIR}/{n}" for n in bad))
+            print("stale: " + ", ".join(n if n == "AGENTS.md" else f"{CONTEXT_DIR}/{n}" for n in bad))
         return 1 if bad else 0
     changed = sync(project)
     if changed and "--quiet" not in argv:
-        sizes = ", ".join(f"{n} {os.path.getsize(os.path.join(project, CONTEXT_DIR, n)) // 1024} KB" for n in changed)
+        sizes = ", ".join(f"{n} {os.path.getsize(os.path.join(project, n if n == 'AGENTS.md' else os.path.join(CONTEXT_DIR, n))) // 1024} KB"
+                          for n in changed)
         print(f"  - {CONTEXT_DIR}/: {sizes}")
     return 0
 
