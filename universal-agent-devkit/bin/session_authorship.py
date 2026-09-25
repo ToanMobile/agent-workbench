@@ -17,14 +17,60 @@ from pathlib import Path
 
 EDIT_TOOLS = ("Edit", "MultiEdit", "Write", "NotebookEdit")
 
+REDIRECT_TARGET_RE = re.compile(r">[>|]?\s*[\"']?([^\s\"'<>|;&()]+)")
+PATH_TOKEN_RE = re.compile(r"[^\s\"'<>|;&()=]+")
+# A verb writes only where it is the COMMAND of a segment, and only the paths of that segment
+# count: `cd <repo> && rm -f /tmp/x.log`, `grep -rn "install" .` and a heredoc of python naming
+# rm name nothing (review 2026-09-25: the old whole-command rule named every file in 86% of
+# GeelyEx2 sessions). Segments also split at `$(`, backticks and `)`; the lead skipped before
+# the command word takes env assignments, shell keywords (`then`, `do`, `{`, `!`), wrappers
+# (`sudo -u x`, `xargs -n 1`, `timeout 30`, `nice -n 5`) and `sh -c '` / `eval "`; a heredoc
+# fed to a shell is read as shell. A write verb still left unplaced falls back to the old rule:
+# every token of the command (second review).
+# The body is group 4: `cat <<EOF > file` keeps its redirect on the opening line (group 3).
+HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1([^\n]*)\n(.*?)\n[ \t]*\2[ \t]*(?=\n|$)", re.S)
+SHELLS = frozenset(("bash", "sh", "zsh", "dash", "ksh"))
+SEGMENT_SPLIT_RE = re.compile(r"&&|\|\||;|\||\n|\$\(|`|\)")
+LEAD_RE = re.compile(
+    r"^\s*(?:[({!\\]\s*|(?:then|do|else|elif|if|while|until|time)\s+|\w+=\S*\s+"
+    r"|(?:sudo|xargs|nohup|command|exec|env|stdbuf|ionice)(?:\s+-[ugnPLsI]\s*[^-\s]\S*|\s+-\S+)*\s+"
+    r"|timeout\s+(?:-\S+\s+)*\S+\s+|nice(?:\s+-n\s*\S+|\s+-\d+)?\s+"
+    r"|(?:ba|z|da|k)?sh\s+(?:-\w+\s+)*-\w*c\s+['\"]?|eval\s+['\"]?)*")
+QUOTED_RE = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
+# The old whole-command rule, now only a counter: a bare verb (not inside a path or an option).
+_V = r"(?<![-./\w])({})(?![-./\w])"
+WRITE_VERB_RE = re.compile(r"\bsed\s+(?:-[A-Za-z]*i|--in-place)|\bperl\s+-[A-Za-z]*i|"
+                           + _V.format(r"tee|cp|mv|rm|install|patch|dd|truncate|touch|ln|tar|rsync|unzip|cpio|7z")
+                           + r"|\bgit\s+(?:apply|am|archive|checkout|restore|rm|mv)\b")
 # rm / git rm count as writes: a deleted file has no mtime, naming it is the only trace.
 # touch / ln too: `touch -t 2020… <file>` after a write moves the mtime out of every window.
-# Archive/sync tools (tar, rsync, unzip, cpio, 7z, git archive) restore files with old mtimes.
-WRITE_VERB_RE = re.compile(r"\bsed\s+(-[A-Za-z]*i|--in-place)|\bperl\s+-[A-Za-z]*i|\btee\b|"
-                           r"\b(cp|mv|rm|install|patch|dd|truncate|touch|ln|tar|rsync|unzip|cpio|7z)\b|"
-                           r"\bgit\s+(apply|am|archive|checkout|restore|rm|mv)\b")
-REDIRECT_TARGET_RE = re.compile(r">>?\s*[\"']?([^\s\"'<>|;&()]+)")
-PATH_TOKEN_RE = re.compile(r"[^\s\"'<>|;&()=]+")
+# Archive/sync tools (tar, rsync, unzip, cpio, 7z, git archive) put back files with old mtimes.
+WRITE_CMDS = frozenset(("cp", "mv", "rm", "install", "patch", "dd", "truncate", "touch", "ln", "tar", "rsync",
+                        "unzip", "cpio", "7z", "tee"))
+GIT_WRITE_SUBS = frozenset(("apply", "am", "archive", "checkout", "restore", "rm", "mv"))
+
+
+def _segment_writes(seg: str) -> bool:
+    words = seg[LEAD_RE.match(seg).end():].split()
+    if not words:
+        return False
+    cmd = os.path.basename(words[0])
+    if cmd in WRITE_CMDS:
+        return True
+    if cmd == "sed":
+        return any(w.startswith("--in-place") or re.match(r"-[A-Za-z]*i", w) for w in words[1:])
+    if cmd == "perl":
+        return any(re.match(r"-[A-Za-z]*i", w) for w in words[1:])
+    if cmd == "git":
+        rest = words[1:]
+        while rest and rest[0].startswith("-"):   # git -C dir / -c key=val
+            rest = rest[2:] if rest[0] in ("-C", "-c") else rest[1:]
+        return bool(rest) and rest[0] in GIT_WRITE_SUBS
+    if cmd == "find":
+        return "-delete" in words or any(w in ("-exec", "-execdir") and i + 1 < len(words)
+                                         and os.path.basename(words[i + 1]) in WRITE_CMDS | {"sed", "perl"}
+                                         for i, w in enumerate(words))
+    return False
 
 # Tools that cannot write a project file (taken from the tool names in real Claude Code
 # transcripts, 2026-09-25). Any other tool — a write-capable MCP tool, an external agent
@@ -133,23 +179,59 @@ def session_trace(transcript: str):
 
 
 def shell_named(commands) -> set:
-    """Path tokens a Bash command may write: `>`/`>>` targets always, every token of a
-    write-shaped command (WRITE_VERB_RE); a leading ./ is dropped."""
+    """Path tokens a Bash command may write: `>`/`>>`/`>|` targets always, every token of a
+    segment whose command writes (_segment_writes), plus the segment feeding `… | xargs
+    <writer>` and the loop header feeding `for/while … do <writer> $f`. Heredoc bodies count
+    only when fed to a shell. A write verb the segments cannot place (more bare verbs than
+    writing segments) names every token of the command, as the old rule did. A leading ./ is
+    dropped."""
     named = set()
     for cmd in commands:
-        toks = set(REDIRECT_TARGET_RE.findall(cmd))
-        if WRITE_VERB_RE.search(cmd):
-            toks |= set(PATH_TOKEN_RE.findall(cmd))
+        flat = _flatten(cmd)
+        toks = set(REDIRECT_TARGET_RE.findall(flat))
+        segs = SEGMENT_SPLIT_RE.split(flat)
+        writes = [_segment_writes(s) for s in segs]
+        if len(WRITE_VERB_RE.findall(QUOTED_RE.sub(" ", flat))) > sum(writes):
+            toks |= set(PATH_TOKEN_RE.findall(flat))
+        for i, seg in enumerate(segs):
+            if not writes[i]:
+                continue
+            toks |= set(PATH_TOKEN_RE.findall(seg))
+            lead = seg[:LEAD_RE.match(seg).end()]
+            if i and re.search(r"\bxargs\b", lead):
+                toks |= set(PATH_TOKEN_RE.findall(segs[i - 1]))
+            if re.search(r"\bdo\b", lead):   # back to the loop header, and what pipes into a while
+                j = i - 1
+                while j > 0 and not re.match(r"\s*(for|while|until)\b", segs[j]):
+                    j -= 1
+                if j > 0 and re.match(r"\s*(while|until)\b", segs[j]):
+                    j -= 1
+                for s in segs[max(j, 0):i]:
+                    toks |= set(PATH_TOKEN_RE.findall(s))
         named |= {t[2:] if t.startswith("./") else t for t in toks}
     return named
 
 
+def _flatten(cmd: str) -> str:
+    """cmd with each heredoc body dropped, or kept as shell text when the heredoc feeds a shell."""
+    def body(m):
+        line = cmd[cmd.rfind("\n", 0, m.start()) + 1:m.start()]
+        seg = SEGMENT_SPLIT_RE.split(line)[-1]
+        words = seg[LEAD_RE.match(seg).end():].split()
+        shell = bool(words) and os.path.basename(words[0]) in SHELLS
+        return m.group(3) + ("\n" + m.group(4) if shell else "")
+    return HEREDOC_RE.sub(body, cmd)
+
+
 def names_path(named, root, rel) -> bool:
     """True when a token of shell_named() may name repo-relative path rel: the path itself, a
-    suffix of it, a glob matching it (src/test/*.kt), or a directory holding it (src/, ., an
-    absolute one)."""
+    suffix of it, a glob matching it (src/test/*.kt; `*` crosses `/`, as a cd before it may
+    have moved the base), or a directory holding it (src/, ., an absolute one). A lone `/` is
+    a sed delimiter or a quoted `>/` far more often than a target: it names nothing."""
     full = os.path.realpath(os.path.join(root, rel))
     for t in named:
+        if not t.strip("/"):
+            continue
         if t == rel or rel.endswith("/" + t) or fnmatch.fnmatchcase(rel, t) or fnmatch.fnmatchcase(full, t):
             return True
         target = os.path.realpath(os.path.join(root, t or "."))
@@ -189,16 +271,66 @@ SCAN_DEADLINE_S = 2.0
 NO_RESULT_SLACK_S = 5.0      # a tool_use with no tool_result (yet): its write lands within seconds
 
 
-def other_session_edits(transcript, session, targets, since) -> dict:
+# An agent CLI run as a command — after a separator, a quote (`bash -c '…'`), a shell keyword
+# or a wrapper, directly or through npx — but not its management subcommands (`claude mcp
+# list`, `codex --version`): those start no session.
+SPAWN_RE = re.compile(
+    r"(?:^|[;&|(\n'\"`{]|\b(?:do|then|else|exec|nohup|time|command|env|sudo)\s|\btimeout\s+\S+\s"
+    r"|\bnice\s+(?:-n\s*\S+\s+)?)\s*(?:\w+=\S*\s+)*(?:\S*/)?"
+    r"(?:(?:npx|bunx|pnpx)\s+(?:-\S+\s+)*\S*claude-code|claude|gemini|codex|agy|cursor-agent|aider|grok)"
+    r"(?=[\s'\"`;&|)]|$)(?!\s+(?:mcp|plugins?|config|update|doctor|install|auth|login|logout"
+    r"|--version|-v|--help|-h)\b)", re.M)
+
+
+def _spawns_agent(commands) -> bool:
+    """A Bash command of this session that starts an agent CLI (`nohup claude -p … &`): every
+    session started after it may be its child, i.e. this session's own work."""
+    return any(SPAWN_RE.search(cmd) for cmd in commands)
+
+
+def _names_transcripts(t, folder) -> bool:
+    """A written token that may be a transcript of `folder`: any *.jsonl (a relative one after a
+    `cd` too), the folder or anything under it — except Claude Code's own auto-memory there."""
+    if t.endswith(".jsonl"):
+        return True
+    if "/memory/" in t or t.endswith(("/memory", ".md")):
+        return False
+    return ".claude/projects" in t or (
+        t.startswith("/") and (os.path.realpath(t) + os.sep).startswith(folder + os.sep))
+
+
+def _first_ts(path):
+    """Timestamp of the first timestamped record of a transcript (its first 64 KB), or None."""
+    with open(path, "rb") as fh:
+        head = fh.read(64 << 10)
+    for line in head.decode("utf-8", "replace").splitlines():
+        if '"timestamp"' in line:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            ts = _ts(rec.get("timestamp")) if isinstance(rec, dict) else None
+            if ts is not None:
+                return ts
+    return None
+
+
+def other_session_edits(transcript, session, targets, since, edited=(), bash=()) -> dict:
     """{realpath: [(start, end, session), …]} — the Edit/Write/MultiEdit/NotebookEdit calls of
     OTHER Claude Code sessions (and their sub-agents) on the realpaths in targets, read from the
     transcripts next to this one (~/.claude/projects/<slug>/<id>.jsonl, <id>/subagents/*.jsonl).
     A window runs from its tool_use to its tool_result (±1 s); a failed call (is_error) has none.
     Only transcripts modified at or after `since`, only their last SCAN_TAIL_BYTES. Records of
     this session (a fork's copy) are skipped. Any error or the deadline gives {}: no evidence, so
-    the caller keeps blocking."""
+    the caller keeps blocking.
+    Only a transcript this session cannot have made counts (review 2026-09-25): none when this
+    session wrote a transcript there (_names_transcripts; edited: its Edit/Write paths, bash:
+    its commands); no session started after this one started an agent CLI (SPAWN_RE: a
+    `claude -p` child is this session's work). ponytail: a detached process of this session can still write a sibling
+    transcript (or the Bash ledger) unseen — file times prove nothing, macOS utime moves even
+    st_birthtime back; sign the ledger/transcripts if an agent is ever found forging them."""
     try:
-        return _other_session_edits(transcript, session, set(targets), since)
+        return _other_session_edits(transcript, session, set(targets), since, edited, bash)
     except Exception:  # noqa: BLE001 - fail closed: evidence of "other" must be certain
         return {}
 
@@ -214,13 +346,17 @@ def _tail_lines(path):
     return data.decode("utf-8", "replace").splitlines()
 
 
-def _other_session_edits(transcript, session, targets, since):
+def _other_session_edits(transcript, session, targets, since, edited=(), bash=()):
     if not targets or not transcript or since is None:
         return {}
     deadline = time.monotonic() + SCAN_DEADLINE_S
     here = os.path.realpath(transcript)
     own_subs = os.path.splitext(here)[0] + os.sep
     folder = os.path.dirname(here)
+    if any(p.endswith(".jsonl") and os.path.realpath(p).startswith(folder + os.sep) for p in edited) or \
+            any(_names_transcripts(t, folder) for t in shell_named(bash)):
+        return {}   # this session wrote where the evidence lives
+    spawned = _spawns_agent(bash)
     cands = []
     for t in glob.glob(os.path.join(folder, "*.jsonl")) + glob.glob(os.path.join(folder, "*", "subagents", "*.jsonl")):
         rt = os.path.realpath(t)
@@ -238,6 +374,10 @@ def _other_session_edits(transcript, session, targets, since):
     for _, t in cands[:SCAN_MAX_FILES]:
         if time.monotonic() > deadline:
             return {}
+        if spawned:
+            first = _first_ts(t)
+            if first is None or first >= since:
+                continue   # may be a child of this session
         lines = _tail_lines(t)
         uses = {}   # tool_use id -> (start, realpath, session)
         for line in lines:

@@ -227,7 +227,14 @@ _CONTRAST = (r"\b(?:nhưng|but|and|và|còn|mà|however|tuy\s+nhiên|song|so|nê
              r"|whereas|rồi|then|giờ|bây\s+giờ|now)\b")
 # A comma or ": " also ends the attributed part: "User reported X, fixed it" — the report is
 # theirs, the claim after the comma is the agent's own ("08:41" has no space, it stays).
+# Not a ":" right after the reporting verb, which opens the quote ("The user said: …", "Phiên
+# khác báo: …"), unless the agent speaks after it ("reports: I fixed it"); nor ", at 08:41, that"
+# (review 2026-09-25). A bare comma after the verb still ends it: "User reported, fixed it".
 ATTR_BREAK = re.compile(r"[,;—–]|:\s|\s-\s|\n|" + _CONTRAST, re.I)
+REPORT_PUNCT = re.compile(
+    r"\b(said|says|say|reported|reports|wrote|writes|báo|nói|kể|ghi)"
+    r"(?:\s*:(?!\s*(?:I|I'?ve|I'?m|I'?ll|tôi|mình|em|we)\b)\s*|\s*,\s*(?:at|lúc)\s+[\d:.hH]+\s*,\s*(?=(?:that|rằng)\b))",
+    re.I)
 CLAUSE_BREAK = re.compile(r"[,;:—–()]|\s-\s|\n|" + _CONTRAST, re.I)
 # Only a DIFFERENT actor counts: another hook/session/person/user. The agent's own earlier run,
 # job or session ("Previous run: 13/13 tests pass", "Lần chạy trước …", "Previous session fixed
@@ -255,7 +262,7 @@ def _tail(prefix, breaker):
     return prefix[cut:]
 
 def attributed_or_negated(prefix, matched_text):
-    if ATTRIBUTION.search(_tail(prefix, ATTR_BREAK)):
+    if ATTRIBUTION.search(_tail(REPORT_PUNCT.sub(r"\1 ", prefix), ATTR_BREAK)):
         return True
     if NEG_BEFORE_RESULT.search(prefix) or NEG_IN_MATCH.search(matched_text):
         return True

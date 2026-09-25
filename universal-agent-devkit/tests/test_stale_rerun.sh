@@ -86,7 +86,7 @@ python3 -c "import sys; sys.exit(0 if float(open('$TMP/ran_at').read()) >= float
 
 # The wait is bounded by the run's own timeout (it waited forever, with a timeout computed
 # before the wait): a lock held past it → BUSY, nothing run, nothing recorded; a lock
-# released in time → the suite gets only what is left of the budget.
+# released in time → the suite then gets its whole timeout.
 hold_lock() { # <seconds> — hold the project's test-run lock in the background
   rm -f "$TMP/held"
   python3 - "$P" "$TMP" "$1" <<'PY' &
@@ -119,10 +119,10 @@ python3 -c "import sys; e, line = sys.argv[1].split('|', 1); sys.exit(0 if float
   && [ ! -f "$TMP/busy_ran" ] && [ "$before_busy" = "$after_busy" ] \
   && ok "run_one: lock held past its timeout → BUSY within the budget, nothing run or recorded" \
   || fail "run_one lock wait unbounded (res='$res' ran=$([ -f "$TMP/busy_ran" ] && echo y || echo n) recorded=$([ "$before_busy" = "$after_busy" ] && echo n || echo y))"
-# The wait comes off the suite's budget, but a suite that then runs out of time did not fail:
-# its result is discarded, never recorded as a red TIMEOUT (review 2026-09-25: a green suite
-# turned TIMEOUT because another run held the lock, and nightly reported it as turned red).
-before_wait="$(status_of)"
+# Once the lock is held the suite gets its whole timeout: the wait never turns a green suite
+# into a TIMEOUT (review 2026-09-25: nightly reported such a suite as turned red; second review:
+# any threshold on the wait still left a band of false TIMEOUTs, and a band of hidden hangs).
+last_status() { status_of | python3 -c "import ast,sys; print(ast.literal_eval(sys.stdin.read())['last']['status'])"; }
 hold_lock 2
 res="$(python3 - "$P" "$TMP" "$DEVKIT_DIR" <<'PY'
 import sys; from pathlib import Path
@@ -132,8 +132,22 @@ print(stale_rerun.run_one(Path(p), "REG-A", "sleep 3", [], 4))
 PY
 )"
 wait "$holder" 2>/dev/null
-[ "$(status_of)" = "$before_wait" ] && printf '%s' "$res" | grep -q "chờ khoá" \
-  && ok "run_one: out of time after waiting for the lock → result discarded, nothing recorded" \
-  || fail "lock wait turned into a recorded TIMEOUT: '$res' (status $before_wait → $(status_of))"
+printf '%s' "$res" | grep -q "^REG-A: PASS" && [ "$(last_status)" = "PASS" ] \
+  && ok "run_one: a 3 s suite after a 2 s lock wait on a 4 s timeout → PASS recorded" \
+  || fail "lock wait cut the suite's own timeout: '$res' (status $(last_status))"
+# A short wait does not excuse a real hang: waiting 1.5 s of an 8 s budget, a suite that hangs
+# is still recorded as TIMEOUT (review 2026-09-25: any wait over 1 s discarded every TIMEOUT).
+hold_lock 1.5
+res="$(python3 - "$P" "$DEVKIT_DIR" <<'PY'
+import sys; from pathlib import Path
+p, kit = sys.argv[1:]
+sys.path.insert(0, kit + "/scripts"); import stale_rerun
+print(stale_rerun.run_one(Path(p), "REG-A", "sleep 30", [], 8))
+PY
+)"
+wait "$holder" 2>/dev/null
+[ "$(last_status)" = "TIMEOUT" ] \
+  && ok "run_one: a hang after a short lock wait is still recorded as TIMEOUT" \
+  || fail "short lock wait hid a real hang: '$res' (status $(status_of))"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_stale_rerun: all passed" || { echo "❌ test_stale_rerun: $FAILS failed"; exit 1; }

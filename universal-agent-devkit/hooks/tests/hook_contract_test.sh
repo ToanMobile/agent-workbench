@@ -1460,6 +1460,21 @@ te_case "guard: agent khác relayed fix is still an outcome"     2 te-p6 "Agent 
 te_case "guard: user reported X, fixed it (own claim after comma)" 2 te-p7 "User reported the login crash, fixed it in LoginViewModel."
 te_case "guard: user reported X, N tests pass now"                2 te-p8 "The user reported a crash on submit, 13/13 tests pass now."
 te_case "guard: người dùng báo X, đã fix xong"                    2 te-p9 "Người dùng báo crash khi mở PDF, đã fix xong."
+# Punctuation right after the reporting verb still quotes them (review 2026-09-25 P2).
+te_case "user said: quote is not a claim"                        0 te-q1 "The user said: \"13/13 tests pass\" on their machine."
+te_case "phiên khác báo: is not a claim"                         0 te-q2 "Phiên khác báo: 12/12 test pass, phiên này chưa chạy lại."
+te_case "another session reported, at T, that … is not a claim"  0 te-q3 "Another session reported, at 08:41, that 12/12 tests pass; this one has not re-run them."
+te_case "another hook's logs say: is not a claim"                0 te-q4 "The evidence logs written by another hook say: the tests passed."
+te_case "người dùng báo: đã fix is not an outcome"               0 te-q5 "Người dùng báo: đã fix xong trên máy họ."
+te_case "guard: user said: X, then own pass claim"              2 te-q6 "The user said: it crashed, and now 13/13 tests pass."
+# … but a bare comma after the verb, ", that's …" or a first-person claim after ":" is the agent's own (review 2).
+te_case "guard: user reported X, that's fixed"                   2 te-q7 "The user reported the login crash, that's fixed in LoginViewModel."
+te_case "guard: người dùng báo X, là lỗi … đã fix xong"           2 te-q8 "Người dùng báo crash khi mở PDF, là lỗi null nay đã fix xong."
+te_case "guard: user reported, fixed it"                         2 te-q9 "The user reported, fixed it in LoginViewModel."
+te_case "guard: người dùng báo, đã fix xong"                     2 te-q10 "Người dùng báo, đã fix xong."
+te_case "guard: user said, N tests pass after my change"         2 te-q11 "User said, 13/13 tests pass after my change."
+te_case "guard: user reports: I fixed it"                        2 te-q12 "The user reports: I fixed it in LoginViewModel."
+te_case "guard: user reported X, that N tests pass is confirmed" 2 te-q13 "User reported a crash on submit, that 13/13 tests pass now is confirmed."
 # Foreign project: a Gradle root outside CLAUDE_PROJECT_DIR whose XML this session read.
 TE_F="$(mktemp -d "${TMPDIR:-/tmp}/hooktef.XXXXXX")"; TE_OLD="$(mktemp -d "${TMPDIR:-/tmp}/hookteo.XXXXXX")"
 TE_RED="$(mktemp -d "${TMPDIR:-/tmp}/hooketr.XXXXXX")"
@@ -2036,6 +2051,20 @@ run_case "EnterWorktree then ExitWorktree: Edit of MAIN ok"     worktree_guard.s
 run_case "EnterWorktree that errored: Edit of MAIN ok"          worktree_guard.sh 0 "$(wg_payload Edit "${WG_M}" "" "$(wg_edit "${WG_M}/src/a.kt")" S5)"
 run_case "Enter ok, then a failed Enter: Edit of MAIN blocked"  worktree_guard.sh 2 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")" S6)"
 run_case "EnterWorktree only in tool schema: Edit of MAIN ok"   worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")" S7)"
+# The EnterWorktree scan is incremental (a cache of bytes scanned): an Enter appended after a scan
+# is still seen, and a transcript rewritten shorter is scanned again (review 2026-09-25 perf).
+cp "${WG_PROJ}/S7.jsonl" "${WG_PROJ}/S8.jsonl"
+run_case "incremental scan: before the Enter, Edit of MAIN ok"   worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")" S8)"
+tail -n 2 "${WG_PROJ}/S3.jsonl" >> "${WG_PROJ}/S8.jsonl"
+run_case "incremental scan: Enter appended later, MAIN blocked"  worktree_guard.sh 2 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")" S8)"
+{ cat "${WG_PROJ}/S7.jsonl"; python3 -c 'print(("{\"type\":\"mode\"}\n") * 2000, end="")'; } > "${WG_PROJ}/S9.jsonl"
+run_case "incremental scan: long, no Enter, Edit of MAIN ok"     worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")" S9)"
+cp "${WG_PROJ}/S3.jsonl" "${WG_PROJ}/S9.jsonl"
+run_case "incremental scan: rewritten shorter with an Enter: blocked" worktree_guard.sh 2 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")" S9)"
+# The scan cache is the guard's own state: a worktree session may not rewrite it (review 2: writing
+# "<size> 0" there made the next Edit of MAIN pass); other main-only audit-gate state stays writable.
+run_case "worktree session: write to MAIN's wg_scan cache blocked" worktree_guard.sh 2 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "printf '1 0\n' > ${WG_M}/.claude/audit-gate/wg_scan/x")" S3)"
+run_case "worktree session: MAIN audit-gate log append allowed"  worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "echo x >> ${WG_M}/.claude/audit-gate/notes.log")" S3)"
 # … and a subagent isolated in W with its shell in M was blocked on harmless commands.
 run_case "isolated agent in main: git stash list allowed"        worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git stash list")")"
 run_case "isolated agent in main: git stash show allowed"        worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git stash show -p stash@{0}")")"

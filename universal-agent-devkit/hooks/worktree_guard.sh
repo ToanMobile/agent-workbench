@@ -44,7 +44,8 @@
 # the nearest enclosing git tree is M itself, so M/.claude/worktrees/<other> is NOT M.
 # Reads of M (cat, grep, ls, git status/diff/log/stash list, cp FROM M, scp to host:…)
 # are never blocked, and neither is state that exists only in the main checkout:
-# M/.claude/agent-memory and M/.claude/audit-gate unless git TRACKS the file, and
+# M/.claude/agent-memory and M/.claude/audit-gate (not its wg_scan/, this guard's own scan
+# cache) unless git TRACKS the file, and
 # M/.agents/local/memory where M's git ignores it, plus its claude-auto/ (Claude Code
 # auto-memory) always. A tracked or not-ignored file there (bugs/*.md) is in W too: blocked.
 #
@@ -93,8 +94,30 @@ if [ -z "${DEVKIT_WORKTREE:-}" ]; then
     tp="${BASH_REMATCH[1]}"
     [ -f "${tp}" ] || exit 0
     # An EnterWorktree CALL (tool_use block, not the tool's schema text) → let python decide.
+    # Scanned incrementally: .claude/audit-gate/wg_scan/<path> keeps "<bytes scanned> <found>", so
+    # a call greps only what the transcript gained, plus 4 KB for a record cut mid-write (review
+    # 2026-09-25: a full grep of a 50 MB transcript cost ~0.25 s on every tool call). A shorter
+    # file than recorded (rewritten) is scanned again from the start.
     linked=0
-    grep -qE '"name":[[:space:]]*"EnterWorktree"[[:space:]]*,[[:space:]]*"input"' "${tp}" 2>/dev/null && linked=1
+    size="$(wc -c < "${tp}" 2>/dev/null | tr -d ' ')"
+    cache="${LOG_DIR}/wg_scan/${tp//\//_}"
+    off=0; seen=0
+    [ -f "${cache}" ] && read -r off seen < "${cache}" 2>/dev/null
+    case "${size}" in ''|*[!0-9]*) size=0 ;; esac
+    case "${off}" in ''|*[!0-9]*) off=0 ;; esac
+    [ "${size}" -ge "${off}" ] || { off=0; seen=0; }
+    if [ "${seen}" = "1" ]; then
+      linked=1
+    else
+      from=$(( off > 4096 ? off - 4096 : 0 ))
+      tail -c +$((from + 1)) "${tp}" 2>/dev/null \
+        | grep -qE '"name":[[:space:]]*"EnterWorktree"[[:space:]]*,[[:space:]]*"input"' && linked=1
+      if [ "${size}" -gt 0 ]; then
+        [ -d "${LOG_DIR}/wg_scan" ] || mkdir -p "${LOG_DIR}/wg_scan" 2>/dev/null
+        [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null
+        printf '%s %s\n' "${size}" "${linked}" > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}" 2>/dev/null
+      fi
+    fi
     first="$(grep -m1 -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"\\]*"' "${tp}" 2>/dev/null)"
     RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
     d=""
@@ -360,6 +383,8 @@ def in_main(path, base):
     if not t or os.path.realpath(t[0]) != M:
         return False
     rel = os.path.relpath(os.path.realpath(p), M)
+    if under(rel, (".claude/audit-gate/wg_scan",)):   # this guard's own scan cache: never W's to write
+        return True
     if under(rel, MAIN_ONLY_ALWAYS):
         return False
     if under(rel, MAIN_ONLY_UNTRACKED):           # git answers None → fail open (main-only)

@@ -363,7 +363,8 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
     if undecided:
         # Another Claude Code session's Edit/Write leaves no Bash window: its own transcript,
         # next to this one, holds the call. Its span must hold the mtime (narrowest wins, as above).
-        edits = session_authorship.other_session_edits(transcript, session, undecided, started - 60)
+        edits = session_authorship.other_session_edits(transcript, session, undecided, started - 60,
+                                                       edited, bash)
         for rp, (f, mt) in undecided.items():
             sid = session_authorship.window_owner(mt, windows + edits.get(rp, []))
             owners[f] = "other" if sid and sid != session else None

@@ -132,20 +132,16 @@ def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mo
     """Run one suite for real and record it (result + evidence), unless a watched file
     changed while it ran. retry: a FAIL is re-run once; green then = flaky (stays FAIL).
     A run that lost its results store (INFRA_FAILURE_RE) is re-run whatever `retry` says.
-    The wait for the project's test-run lock comes out of `timeout`: held past it → BUSY,
-    nothing run or recorded."""
-    deadline = time.monotonic() + timeout
-    with test_run_lock(project, deadline) as held:
+    The wait for the project's test-run lock is bounded by `timeout` (held past it → BUSY,
+    nothing run or recorded); once held, the suite gets its whole `timeout`, so a TIMEOUT is
+    always the suite's own (a job may take up to twice `timeout`)."""
+    with test_run_lock(project, time.monotonic() + timeout) as held:
         if not held:
             return f"{tid}: BUSY — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau"
-        waited = timeout - (deadline - time.monotonic()) > 1.0   # the lock wait took part of the budget
+        deadline = time.monotonic() + timeout
         before = watched_mtimes(project, pats)
         started = time.perf_counter()
         status, code, out = _execute(project, cmd, deadline - time.monotonic())
-        if status == "TIMEOUT" and waited:
-            # Out of time only because another run held the lock: that measured the wait, not
-            # the code. Never record it as a red TIMEOUT (nightly would report "turned red").
-            return f"{tid}: bỏ kết quả — hết thời gian vì phải chờ khoá chạy test"
         flaky = infra = False
         broke = status == "FAIL" and bool(INFRA_FAILURE_RE.search(out))
         if status == "FAIL" and ((broke and os.environ.get("INFRA_RETRY", "1") != "0")
