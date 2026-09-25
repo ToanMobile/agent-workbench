@@ -1904,12 +1904,13 @@ else
 fi
 echo
 
-# ── worktree_guard.sh — PreToolUse (Bash, Edit|Write) ───────────────────────
+# ── worktree_guard.sh — PreToolUse (Bash, Edit|Write|MultiEdit|NotebookEdit) ─
 # 2026-09-25: a subagent told to work in a worktree ran commands without `cd`, its shell was in
 # the main checkout, and it overwrote files there. When the session/agent declared a worktree
-# (hook `cwd` inside a linked worktree, the subagent's harness meta `worktreePath` or its
-# transcript cwd, or DEVKIT_WORKTREE), a write aimed at the MAIN checkout of the same repo is
-# blocked. A single-tree session is never touched.
+# (the session STARTED in a linked worktree — first `cwd` of the main transcript —, the
+# subagent's harness meta `worktreePath` or its own transcript cwd, or DEVKIT_WORKTREE), a write
+# aimed at the MAIN checkout of the same repo is blocked. A single-tree session is never touched,
+# and a leader that started in the main checkout and merely `cd`s into a worktree is not declared.
 echo "worktree_guard.sh"
 WG="$(mktemp -d "${TMPDIR:-/tmp}/hookwg.XXXXXX")"; WG="$(cd "${WG}" && pwd -P)"
 WG_M="${WG}/main"; WG_W="${WG}/wt"; WG_O="${WG_M}/.claude/worktrees/other"
@@ -1919,7 +1920,12 @@ WG_M="${WG}/main"; WG_W="${WG}/wt"; WG_O="${WG_M}/.claude/worktrees/other"
   && printf 'sdk.dir=/x\n' > local.properties ) >/dev/null 2>&1
 printf '{"branch":"wt","main":"%s"}\n' "${WG_M}" > "$(git -C "${WG_W}" rev-parse --absolute-git-dir)/devkit-worktree.json"
 WG_PROJ="${WG}/proj"; mkdir -p "${WG_PROJ}/S1/subagents"
-: > "${WG_PROJ}/S1.jsonl"
+# S1 = a session that started in the main checkout, S2 = one that started in the worktree. The first
+# records of a real transcript carry no cwd (ai-title, mode, …): the first one that has it counts.
+printf '{"type":"mode"}\n{"type":"user","cwd":"%s"}\n{"type":"user","cwd":"%s"}\n' "${WG_M}" "${WG_W}" > "${WG_PROJ}/S1.jsonl"
+printf '{"type":"mode"}\n{"type":"user","cwd":"%s"}\n{"type":"user","cwd":"%s"}\n' "${WG_W}" "${WG_M}" > "${WG_PROJ}/S2.jsonl"
+mkdir -p "${WG_M}/.claude/agent-memory" "${WG_M}/.agents/local/memory"
+printf 'print(1)\n' > "${WG_M}/gen.py"
 printf '{"agentType":"general-purpose","worktreePath":"%s","spawnedWithWorktree":true}\n' "${WG_W}" \
   > "${WG_PROJ}/S1/subagents/agent-iso1.meta.json"
 python3 - "${WG_PROJ}/S1/subagents/agent-told1.jsonl" "${WG_W}" "${WG_M}" <<'PY'
@@ -1928,26 +1934,26 @@ out, w, m = sys.argv[1:4]
 open(out, "w").write(json.dumps({"cwd": m, "isSidechain": True, "type": "user", "message": {"role": "user",
     "content": f"Fix the bug. Work in the worktree {w} only; commit there."}}) + "\n")
 PY
-wg_payload() { # tool cwd agent_id input-json
+wg_payload() { # tool cwd agent_id input-json [session: S1 started in main (default) | S2 started in the worktree]
   python3 -c 'import json,sys; t,c,a,i,tp=sys.argv[1:6]; d={"session_id":"S1","transcript_path":tp,"cwd":c,"hook_event_name":"PreToolUse","tool_name":t,"tool_input":json.loads(i)}
 if a: d["agent_id"]=a
-print(json.dumps(d))' "$1" "$2" "$3" "$4" "${WG_PROJ}/S1.jsonl"
+print(json.dumps(d))' "$1" "$2" "$3" "$4" "${WG_PROJ}/${5:-S1}.jsonl"
 }
 wg_edit() { python3 -c 'import json,sys; print(json.dumps({"file_path":sys.argv[1],"old_string":"a","new_string":"b"}))' "$1"; }
 wg_bash() { python3 -c 'import json,sys; print(json.dumps({"command":sys.argv[1]}))' "$1"; }
 run_case "single tree: Edit in the main checkout allowed"       worktree_guard.sh 0 "$(wg_payload Edit "${WG_M}" "" "$(wg_edit "${WG_M}/src/a.kt")")"
 run_case "single tree: relative Bash write allowed"              worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" "" "$(wg_bash "sed -i '' s/a/b/ src/a.kt")")"
-run_case "cwd in worktree: Edit of MAIN checkout blocked"        worktree_guard.sh 2 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")")"
-run_case "cwd in worktree: Edit inside the worktree allowed"     worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_W}/src/a.kt")")"
-run_case "cwd in worktree: Edit of a nested other worktree ok"   worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_O}/src/a.kt")")"
-run_case "cwd in worktree: Edit outside the repo allowed"        worktree_guard.sh 0 "$(wg_payload Write "${WG_W}" "" "$(wg_edit "${WG}/scratch.txt")")"
-run_case "cwd in worktree: cd W && sed -i allowed"               worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cd ${WG_W} && sed -i '' s/a/b/ src/a.kt")")"
-run_case "cwd in worktree: heredoc into MAIN blocked"            worktree_guard.sh 2 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cat > ${WG_M}/src/a.kt <<'EOF'
+run_case "started in worktree: Edit of MAIN checkout blocked"        worktree_guard.sh 2 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")" S2)"
+run_case "started in worktree: Edit inside the worktree allowed"     worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_W}/src/a.kt")" S2)"
+run_case "started in worktree: Edit of a nested other worktree ok"   worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_O}/src/a.kt")" S2)"
+run_case "started in worktree: Edit outside the repo allowed"        worktree_guard.sh 0 "$(wg_payload Write "${WG_W}" "" "$(wg_edit "${WG}/scratch.txt")" S2)"
+run_case "started in worktree: cd W && sed -i allowed"               worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cd ${WG_W} && sed -i '' s/a/b/ src/a.kt")" S2)"
+run_case "started in worktree: heredoc into MAIN blocked"            worktree_guard.sh 2 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cat > ${WG_M}/src/a.kt <<'EOF'
 x
-EOF")")"
-run_case "cwd in worktree: cp FROM main into worktree allowed"   worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cp ${WG_M}/local.properties ${WG_W}/local.properties")")"
-run_case "cwd in worktree: rm in MAIN blocked"                   worktree_guard.sh 2 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "rm -f ${WG_M}/src/a.kt")")"
-run_case "cwd in worktree: cat of MAIN (read) allowed"           worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cat ${WG_M}/src/a.kt 2>/dev/null | head")")"
+EOF")" S2)"
+run_case "started in worktree: cp FROM main into worktree allowed"   worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cp ${WG_M}/local.properties ${WG_W}/local.properties")" S2)"
+run_case "started in worktree: rm in MAIN blocked"                   worktree_guard.sh 2 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "rm -f ${WG_M}/src/a.kt")" S2)"
+run_case "started in worktree: cat of MAIN (read) allowed"           worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cat ${WG_M}/src/a.kt 2>/dev/null | head")" S2)"
 run_case "isolated agent, shell in main: relative sed blocked"   worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "sed -i '' s/a/b/ src/a.kt")")"
 run_case "isolated agent, shell in main: git commit blocked"     worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git commit -qam wip")")"
 run_case "isolated agent, shell in main: git status allowed"     worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git status --short")")"
@@ -1956,6 +1962,61 @@ run_case "isolated agent: Edit of MAIN blocked"                  worktree_guard.
 run_case "isolated agent: WORKTREE_GUARD=0 escape hatch"         worktree_guard.sh 0 "$(wg_payload Edit "${WG_M}" iso1 "$(wg_edit "${WG_M}/src/a.kt")")" WORKTREE_GUARD=0
 run_case "DEVKIT_WORKTREE declared: Edit of MAIN blocked"        worktree_guard.sh 2 "$(wg_payload Edit "${WG_M}" "" "$(wg_edit "${WG_M}/src/a.kt")")" DEVKIT_WORKTREE="${WG_W}"
 run_case "agent with no worktree of its own: main write allowed" worktree_guard.sh 0 "$(wg_payload Edit "${WG_M}" plain1 "$(wg_edit "${WG_M}/src/a.kt")")"
+# Review 2026-09-25 (P2): the hook `cwd` follows `cd` inside the project, so a LEADER that started in the
+# main checkout and looked into a worktree was taken as "working in the worktree" and blocked on merge-back.
+run_case "leader started in main, cd'd into W: Edit of MAIN ok"  worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")")"
+run_case "leader started in main, in W: cd M && git merge ok"    worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cd ${WG_M} && git merge wt")")"
+run_case "started in W, shell now in main: Edit of MAIN blocked" worktree_guard.sh 2 "$(wg_payload Edit "${WG_M}" "" "$(wg_edit "${WG_M}/src/a.kt")" S2)"
+# … and a subagent isolated in W with its shell in M was blocked on harmless commands.
+run_case "isolated agent in main: git stash list allowed"        worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git stash list")")"
+run_case "isolated agent in main: git stash show allowed"        worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git stash show -p stash@{0}")")"
+run_case "isolated agent in main: bare git stash blocked"        worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git stash")")"
+run_case "isolated agent in main: git stash -u blocked"          worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git stash -u")")"
+run_case "isolated agent in main: git stash pop blocked"         worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git stash pop")")"
+run_case "isolated agent in main: python3 -c print allowed"      worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "python3 -c 'print(1)'")")"
+run_case "isolated agent in main: python3 script.py allowed"     worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "python3 gen.py")")"
+run_case "isolated agent in main: formatter on a main file"      worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "python3 -m black src/a.kt")")"
+run_case "isolated agent in main: bash -c write blocked"         worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "bash -c 'echo x > src/a.kt'")")"
+run_case "isolated agent in main: bash -c echo allowed"          worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "bash -c 'echo hi'")")"
+run_case "isolated agent in main: ./gradlew build blocked"       worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "./gradlew assembleDebug")")"
+run_case "isolated agent in main: scp W file to host: allowed"   worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "scp ${WG_W}/src/a.kt host:/tmp/a.kt")")"
+run_case "isolated agent in main: scp to a main path blocked"    worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "scp host:/tmp/a.kt src/a.kt")")"
+run_case "isolated agent in main: dd if=main of=/tmp allowed"    worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "dd if=src/a.kt of=/tmp/copy bs=4k")")"
+run_case "isolated agent in main: dd of=main file blocked"       worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "dd if=/tmp/copy of=src/a.kt")")"
+# Agent memory and the hooks' own logs live only in the main checkout (gitignored, absent in W).
+run_case "isolated agent: Edit M/.claude/agent-memory allowed"   worktree_guard.sh 0 "$(wg_payload Write "${WG_M}" iso1 "$(wg_edit "${WG_M}/.claude/agent-memory/note.md")")"
+run_case "isolated agent: Edit M/.agents/local/memory allowed"   worktree_guard.sh 0 "$(wg_payload Write "${WG_M}" iso1 "$(wg_edit "${WG_M}/.agents/local/memory/note.md")")"
+run_case "isolated agent: log into M/.claude/audit-gate allowed" worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "echo x >> .claude/audit-gate/mine.log")")"
+run_case "isolated agent: agent-memory/../../ escape blocked"    worktree_guard.sh 2 "$(wg_payload Edit "${WG_M}" iso1 "$(wg_edit "${WG_M}/.claude/agent-memory/../../src/a.kt")")"
+# P3: MultiEdit and NotebookEdit write files too — the hook and every registry that wires it cover them.
+run_case "isolated agent: MultiEdit of MAIN blocked"             worktree_guard.sh 2 "$(wg_payload MultiEdit "${WG_M}" iso1 "$(wg_edit "${WG_M}/src/a.kt")")"
+wg_reg="$(python3 - "${HOOKS}/.." <<'PY'
+import json, os, sys
+root = sys.argv[1]
+bad = []
+for rel in ("hooks/hooks.json", "templates/claude_settings.json", ".claude/settings.json"):
+    try:
+        groups = json.load(open(os.path.join(root, rel)))["hooks"]["PreToolUse"]
+    except Exception as e:
+        bad.append(f"{rel}: {e}")
+        continue
+    tools = set()
+    for g in groups:
+        if any("worktree_guard.sh" in h.get("command", "") for h in g.get("hooks", [])):
+            tools |= set((g.get("matcher") or "").split("|"))
+    miss = {"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"} - tools
+    if miss:
+        bad.append(f"{rel}: missing {sorted(miss)}")
+print("; ".join(bad))
+PY
+)"
+if [ -z "${wg_reg}" ]; then
+  PASS=$((PASS + 1)); printf '  ok   %-46s\n' "registries wire it for Bash+all file-edit tools"
+else
+  FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ registries wire worktree_guard for Bash+all file-edit tools: ${wg_reg}"
+  printf '  FAIL %-46s\n' "registries wire it for Bash+all file-edit tools"
+fi
 # Only the PROMPT names the worktree (no harness isolation): a hint, not a declaration → warn, never block.
 out="$(printf '%s' "$(wg_payload Bash "${WG_M}" told1 "$(wg_bash "echo x > src/a.kt")")" \
       | env CLAUDE_PROJECT_DIR="${SANDBOX}" bash "${HOOKS}/worktree_guard.sh" 2>/dev/null)"; rc=$?
