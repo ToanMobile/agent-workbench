@@ -132,6 +132,8 @@ Every platform also gets the git **pre-commit** gate (`agent-kit githooks instal
   | `AUTO_LINK` | link bug ↔ test on one-to-one RED→GREEN evidence (🤖) | Stop |
   | `RED_PROOF` | sandbox RED-proof of this session's bugs/REQs (background) | Stop, `scripts/red_proof.py` |
   | `FLAKY_RETRY` | re-run a failing suite once: a test failed then passed → 🔁 FLAKY (still FAIL); the build broke with no test failing then passed → PASS flagged `infra_retry` | `post-fix-gate`, nightly, stale re-run |
+  | `INFRA_RETRY` | a run that lost its results store (Gradle `EOFException` / `results.bin`) is infrastructure: re-run once whatever its length, never marked 🔁 FLAKY | `post-fix-gate` |
+  | `TEST_RUN_LOCK_WAIT_S` (seconds, default 900) | how long a test run waits for `.claude/audit-gate/test_run.lock`, the per-project lock the gate, stale re-run and nightly hold so two runs never share one build dir; past it the run reports the lock, never runs side by side | `post-fix-gate`, `scripts/stale_rerun.py`, nightly |
   | `STALE_RERUN` | re-run light STALE suites in the background | SessionStart, `scripts/stale_rerun.py` |
   | `EVIDENCE_KEEP` | logs kept per test (default 10) | `post-fix-gate` |
   | `NIGHTLY_NOTIFY` | notification when a row turns red | `scripts/nightly.py` |
