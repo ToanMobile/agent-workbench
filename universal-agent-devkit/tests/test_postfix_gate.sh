@@ -536,6 +536,89 @@ out="$(gate_staged --json)"; check "--staged --json with a secret -> REJECT" 1 $
 expect_in "--json secret finding has its line" 'secrets|src/Leak.kt|2|' "$(json_findings "$out")"
 expect_not_in "--json never echoes the secret value" "ABCDEFGHIJKLMNOP" "$(printf '%s\n' "$out" | tail -n 1)"
 
+# --- An existing test edited by ANOTHER session (or a person) must not block this one ----
+# 2026-09-25: session X edited two existing tests; session Y, which never touched them, got
+# "UNVERIFIED — existing test edited" on every Stop until X committed. The block binds to the
+# session that made the edit (--session/--transcript: its Edit/Write calls, its write-shaped
+# Bash commands, its bash_write_ledger windows). Someone else's edit: a warning, not a block.
+# No session info, or no way to tell: today's block (the "existing test edited" check above).
+# fake_session <sid> <transcript> [edit-path] — a transcript that started 10 min ago, with one
+# harmless Bash call and optionally an Edit of <edit-path>.
+fake_session() {
+  python3 - "$@" <<'PY'
+import json, sys, time
+sid, tp = sys.argv[1], sys.argv[2]
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
+now = time.time()
+recs = [{"type": "user", "sessionId": sid, "timestamp": iso(now - 600), "message": {"role": "user", "content": "fix it"}},
+        {"type": "assistant", "sessionId": sid, "timestamp": iso(now - 590), "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "git status"}}]}}]
+if len(sys.argv) > 3:
+    recs.append({"type": "assistant", "sessionId": sid, "timestamp": iso(now - 580), "message": {"content": [
+        {"type": "tool_use", "id": "t2", "name": "Edit", "input": {"file_path": sys.argv[3], "old_string": "a", "new_string": "b"}}]}})
+open(tp, "w").write("".join(json.dumps(r) + "\n" for r in recs))
+PY
+}
+# ledger_window <sid> <tool-use-id> <start> <end> — offsets in seconds from now (negative = past)
+ledger_window() {
+  mkdir -p .claude/audit-gate
+  python3 -c 'import sys,time; n=time.time(); s,t,a,b=sys.argv[1:]
+print("%s\tstart\t%.3f\t%s\n%s\tend\t%.3f\t%s" % (s, n+float(a), t, s, n+float(b), t))' "$@" >> .claude/audit-gate/bash_write_ledger.tsv
+}
+set_mtime() { python3 -c 'import os,sys,time; t=time.time()+float(sys.argv[2]); os.utime(sys.argv[1], (t, t))' "$1" "$2"; }
+existing_test_repo() {
+  make_repo "true"
+  mkdir -p src/test && echo "assert(true)" > src/test/CoreTest.kt && git add -A && git commit -qm t
+  echo "fun ok() = 2" > src/Core.kt && echo "// weakened" > src/test/CoreTest.kt
+}
+
+existing_test_repo   # the edit happened inside ANOTHER session's Bash window; this one has its own windows
+set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+fake_session s-me "$TMP/me.jsonl"
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "existing test edited by another session -> not blocked (PASS)" 0 $? "$out"
+expect_in "…but warned, naming the file" "src/test/CoreTest.kt" "$out"
+json="$(run_gate --run-tests --json --session s-me --transcript "$TMP/me.jsonl" | tail -1)"
+python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["tests_touched"] == [] and d["tests_touched_other"] == ["src/test/CoreTest.kt"], d' "$json" 2>/dev/null \
+  && echo "✔ --json: tests_touched empty, tests_touched_other names it" || { echo "✖ json: $(printf '%s' "$json" | cut -c1-300)"; FAILS=$((FAILS + 1)); }
+
+existing_test_repo   # a person (no session window at all) edited it while this session only ran git status
+set_mtime src/test/CoreTest.kt -120; ledger_window s-me m1 -590 -589
+fake_session s-me "$TMP/me.jsonl"
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "existing test edited outside every session window -> warning, not a block" 0 $? "$out"
+
+existing_test_repo   # the same edit made by THIS session (Edit tool) -> block
+fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt"
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "existing test edited by this session (Edit) -> UNVERIFIED" 2 $? "$out" "PASS —"
+expect_in "…the verdict names the edited test" "src/test/CoreTest.kt" "$out"
+
+existing_test_repo   # this session wrote it from a Bash window (sed -i, a script) -> block
+set_mtime src/test/CoreTest.kt -200; ledger_window s-other b1 -400 -100; ledger_window s-me m1 -205 -195
+fake_session s-me "$TMP/me.jsonl"
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "existing test written inside this session's (narrowest) Bash window -> UNVERIFIED" 2 $? "$out" "PASS —"
+expect_in "…the verdict names the edited test" "src/test/CoreTest.kt" "$out"
+
+existing_test_repo   # this session's Bash calls are in no ledger (hook not wired): cannot tell -> block
+set_mtime src/test/CoreTest.kt -120
+fake_session s-me "$TMP/me.jsonl"
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "attribution impossible (Bash calls, no ledger) -> today's UNVERIFIED" 2 $? "$out" "PASS —"
+expect_in "…the verdict names the edited test" "src/test/CoreTest.kt" "$out"
+
+existing_test_repo   # edited before this session's first prompt: never this session's edit
+set_mtime src/test/CoreTest.kt -3600
+fake_session s-me "$TMP/me.jsonl"
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "existing test edited before this session started -> warning, not a block" 0 $? "$out"
+
+existing_test_repo   # a missing transcript: today's behaviour
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/nope.jsonl")"
+check "unreadable transcript -> today's UNVERIFIED" 2 $? "$out" "PASS —"
+expect_in "…the verdict names the edited test" "src/test/CoreTest.kt" "$out"
+
 if [ "$FAILS" -ne 0 ]; then
   echo "post-fix-gate: $FAILS FAILED"; exit 1
 fi

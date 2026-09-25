@@ -326,8 +326,11 @@ if degraded and sess.get("fp") == tree_fp:
         note("%s fp=%s (reused result) sid=%s" % (sess["result"], fp, sid))
         sys.exit(0)
 
+# --session/--transcript: an existing test edited by ANOTHER session (or a person) is a warning,
+# only the test edits of THIS session block (post-fix-gate split_tests_by_author).
 res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "session-" + sid[:12],
-                      "--timeout", os.environ.get("REGRESSION_GATE_TEST_TIMEOUT", "600")],
+                      "--timeout", os.environ.get("REGRESSION_GATE_TEST_TIMEOUT", "600"),
+                      "--session", str(data.get("session_id") or ""), "--transcript", str(data.get("transcript_path") or "")],
                      cwd=repo, capture_output=True, text=True, errors="replace",
                      env={**os.environ, "CLAUDE_PROJECT_DIR": repo})
 summary = {}
@@ -345,6 +348,10 @@ if res.returncode in (0, 3):
         sess.update({"fp": tree_fp, "result": "pass", "blocks": 0, "lines": None, "cure": None})
     save_state()
     note(f"pass fp={fp} exit={res.returncode}")
+    other = summary.get("tests_touched_other") or []
+    if other:   # once per change (pass_fp): not an edit of this session, still someone must review it
+        emit({"systemMessage": "⚠ Test đã có bị phiên khác / người khác sửa (không chặn phiên này): " + ", ".join(other[:10])
+              + " — cần người review diff test (`git diff HEAD -- " + " ".join(other[:3]) + "`) trước khi commit."})
     sys.exit(0)
 if res.returncode == 4:
     # UNTESTED: every test that could run passed, but one cannot run on this machine
