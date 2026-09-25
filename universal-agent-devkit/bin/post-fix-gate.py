@@ -415,7 +415,7 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
     for f in paths:
         full = root / f
         by_me = (os.path.realpath(full) in edited
-                 or any(t == f or f.endswith("/" + t) or os.path.realpath(t) == os.path.realpath(full) for t in named))
+                 or any(t == f or f.endswith("/" + t) or os.path.realpath(root / t) == os.path.realpath(full) for t in named))
         owner = "me" if by_me else None
         if owner is None:
             try:
