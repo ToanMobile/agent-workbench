@@ -1376,6 +1376,10 @@ run_case "testsourceset: Grok turn end, broken src/test → block" testsourceset
   CLAUDE_PROJECT_DIR="${GK_PROJ}" GROK_HOOK_EVENT=stop
 run_case "regression_gate: Grok turn end, failing suite → block" regression_gate.sh 2 "${GK_TURN}" \
   CLAUDE_PROJECT_DIR="${GK_PROJ}" GROK_HOOK_EVENT=stop
+# `reason` switches nothing off outside Grok (Claude sends none; a future one must not).
+run_case "non-Grok Stop with a reason is still gated" regression_gate.sh 2 \
+  "{\"session_id\":\"gk3\",\"transcript_path\":\"${CLAUDE_TR}\",\"reason\":\"shutdown\"}" \
+  CLAUDE_PROJECT_DIR="${GK_PROJ}"
 rm -rf "${GK_PROJ}"
 echo
 

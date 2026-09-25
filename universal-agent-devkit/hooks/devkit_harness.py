@@ -127,7 +127,8 @@ def detect(payload, env=None, ppid=None):
         "transcript": kind,
         "degraded": agent != "claude" or kind not in ("claude", "empty"),
         "session": session_key(payload, env, ppid),
-        "terminal_stop": isinstance(reason, str) and reason not in ("", "end_turn"),
+        # Grok only: Claude sends no Stop `reason`, and a future one must not switch gates off.
+        "terminal_stop": agent == "grok" and isinstance(reason, str) and reason not in ("", "end_turn"),
         "subagent": bool(payload.get("subagentType") or payload.get("subagent_type")),
     }
 
@@ -244,8 +245,8 @@ def _cli(argv, stdin):
         if cmd == "detect":
             return json.dumps(info)
         return "\t".join([info["session"], info["agent"], info["transcript"], "1" if info["degraded"] else "0",
-                          "1" if info["terminal_stop"] else "0", str(data.get("reason") or "")
-                          if isinstance(data, dict) else ""])
+                          "1" if info["terminal_stop"] else "0",
+                          _clean(data.get("reason") or "", 32) if isinstance(data, dict) else ""])
     if cmd == "fingerprint" and len(argv) > 1:
         return tree_fingerprint(argv[1])
     if cmd == "sysmsg" and len(argv) > 1:
