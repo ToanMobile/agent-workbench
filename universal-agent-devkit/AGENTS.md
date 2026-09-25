@@ -44,7 +44,7 @@ Skills live in `skills/` (source of truth); `.agents/skills/` and `commands/` li
 
 ## 3. Role & Language
 
-- **Default Communication Language:** User-facing replies are in **English** by default, concise, and evidence-backed.
+- **Default Communication Language:** User-facing replies are in the **user's language** (Vietnamese when they write Vietnamese, English otherwise), concise, and evidence-backed — the same rule as `rules/essentials.md` "Working style".
 - **Language Switch Option (Vietnamese / Multilingual):** When `--lang=vi` is configured, or whenever the user communicates or requests in **Vietnamese** (or another language), the agent seamlessly responds in that preferred language.
 - Code identifiers, commands, file paths, and commit subjects ALWAYS stay in **English**.
 - **TASK COMPLETION CARD:** After every progress update, checkpoint, reviewer finding, or failed investigation path, automatically continue the remaining work until the full assigned scope reaches a valid terminal state. Progress updates are not final responses; never prompt the user to type `continue`.
@@ -114,12 +114,12 @@ In an installed project, `AGENTS.md` is the project's **only** instruction file 
 
 | Platform | Reads the rules | Enforced by hooks |
 |---|---|---|
-| **Claude Code** | `AGENTS.md` (read because the project has no `CLAUDE.md`; its `@` lines expand), `.claude/commands`, `.claude/agents` | All DevKit hooks (`.claude/settings.json`): session/prompt context, git, device (Bash and the `replicant-mcp` MCP tools) and destructive-`rm` guards, read-before-edit, regression tests, test/“fixed” evidence, fresh-context review, secrets, XONG needs this turn's full-gate exit 0 and proof image |
+| **Claude Code** | `AGENTS.md` (read because the project has no `CLAUDE.md`; its `@` lines expand), `.claude/commands`, `.claude/agents` | All DevKit hooks (`.claude/settings.json`): session/prompt context, git, device (Bash and the `replicant-mcp` MCP tools) and destructive-`rm` guards, read-before-edit, regression tests, test/“fixed” evidence, fresh-context review, secrets, XONG needs this turn's full-gate exit 0 and, for app source on a profile with a screen, a proof image |
 | **OpenAI Codex** | `AGENTS.md` as plain text (no `@` expansion): its DevKit block lists the rule files to open | `.codex/hooks.json` via `hooks/agent_bridge.sh`: session/prompt context, git, device & `rm` guards on shell commands, regression tests on Stop |
 | **Gemini CLI** | `AGENTS.md` through `context.fileName` in `.gemini/settings.json` (its `@` lines expand), `.agents/skills`; symlink mode adds the DevKit folder to `context.includeDirectories` so `.agents/devkit/` can be read on demand | `.gemini/settings.json` via the bridge: same set as Codex |
 | **Cursor** | `AGENTS.md` + the always-applied rule `.cursor/rules/universal-agent-devkit.mdc` (`@`-includes the core, profile and project rules) | `.cursor/hooks.json` via the bridge: session context, git, device & `rm` guards, regression tests on stop |
 | **Grok** | The same `AGENTS.md` as every other agent. No Grok adapter and no `.grok/` directory | No DevKit files of its own. It sees skills, commands and hooks that are already installed for the other agents |
-| **Antigravity** | `AGENTS.md`, `.agents/skills` | none (no hook API) — rules only |
+| **Antigravity** | `AGENTS.md` and `GEMINI.md` as plain text — no `@` import is expanded (measured 2026-09-25), so the DevKit block carries the essentials in full; `.agents/skills` | none (no hook API) — rules only |
 
 Every platform also gets the git **pre-commit** gate (`agent-kit githooks install`, installed by `agent-kit init` in git projects). Hooks that read Claude's transcript (review, test evidence, claims) exist only on Claude Code.
 - **Living regression checklist — automatic parts and their off switches** (`=0` turns one off; `.agents/CHECKLIST.md`, `docs/plans/regression-checklist-v3.md`):
@@ -147,7 +147,7 @@ Two agents editing one working tree overwrite each other's files, mix their diff
   - A symlink-mode DevKit install is untracked as well, so `.claude/`, `rules/`, `skills/` are missing: run `agent-kit init` inside the worktree. Its files are untracked there (and `.gitignore` gains the DevKit block when the project has not committed it) — keep them out of what you bring back.
   - The git pre-commit gate is shared by every worktree of the repo; nothing to install.
 - **One device, one agent:** a physical device or emulator serves one worktree at a time. Run device work one worktree after another, each with `adb-safe-exec.sh -s <SERIAL>`.
-- **Accept a worktree only on its own gate run:** `cd <worktree> && CLAUDE_PROJECT_DIR="$PWD" python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full` → exit `0`, plus the proof PNG required by `rules/essentials.md` ("Every prompt"). The gate reads `CLAUDE_PROJECT_DIR` before the git root; left pointing at the main checkout, it audits the main checkout instead.
+- **Accept a worktree only on its own gate run:** `cd <worktree> && CLAUDE_PROJECT_DIR="$PWD" python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full` → exit `0`, plus the proof PNG when `rules/essentials.md` ("Every prompt", step 4) requires one. The gate reads `CLAUDE_PROJECT_DIR` before the git root; left pointing at the main checkout, it audits the main checkout instead.
 - **No automatic merge:** the leader reviews each worktree's diff like any other change (§5, §6), then brings it back. Without an explicit request to commit (`rules/core-rules.md` §1), bring it as a patch — in the main checkout: `agent-kit worktree diff <worktree> | git apply --3way` (new and deleted files and the branch's commits included, the DevKit set-up left out; `git add -A` would carry the DevKit files, which already exist in the main checkout, and the apply fails). When the user asked for commits, merge the branch instead. Conflicts go through `/conflict` (`merge-conflict-resolver`); commit and push stay behind Gate 2 (§5.1 c).
 - **Clean up:** `agent-kit worktree remove <path>` removes a worktree made by `worktree add` once every uncommitted change in it is also in the main checkout (the branch and its commits stay). Otherwise `git worktree remove <path>` for a worktree with no changes left. One that still holds changes, and its unmerged branch, need `git worktree remove --force` / `git branch -D`, which the git guard blocks: once its changes are safely in the main checkout, ask the user to run them.
 
@@ -167,6 +167,7 @@ Whenever the user asks to fix a bug, refactor code, or change behavior in a comp
 3. **Surgical Scope (Zero Collateral Damage):**
    - If an issue occurs on a specific target client, tenant, platform, or app, isolate the fix strictly inside that condition (e.g., Strategy pattern, adapter, or `if (isTargetScope(...))`).
    - Leave default shared logic for other consumers 100% untouched.
+   - This is for behaviour that must differ per target. A defect every caller hits is fixed once, at the shared root (`rules/essentials.md` "Lazy senior"); do not copy a guard into each target branch.
 4. **Preserve Immutable Platform & Legacy Guards:**
    - Never delete or relax legacy `if (...)` conditions established for OS versions, platform quirks, or historical edge-case fixes.
 5. **Two-Way Regression Verification:**
@@ -219,7 +220,7 @@ The agent MUST trigger these skills from context by itself and NEVER ask the use
 | **5. Acceptance & Delivery** | `merge-conflict-resolver` | Xung đột git khi merge, rebase, cherry-pick | Tự động phân tích AST và ngữ cảnh để giải quyết xung đột mà không làm mất mát logic. |
 | **5. Acceptance & Delivery** | `qc` | Chạy bộ kiểm thử tự động, lint check, unit test | Phát hiện build tool rồi chạy test runner tương ứng; Translation gate và Metalava API check cho Android/Gradle. |
 | **5. Acceptance & Delivery** | `open-code-review` | Soát mã nguồn tự động trước khi bàn giao | Tự động chạy phân tích hunk tất định (Alibaba OCR), quét rò rỉ bộ nhớ và code lười biếng. |
-| **5. Acceptance & Delivery** | `verification-before-completion` | Trước khi tuyên bố Xong / Pass / Hoàn tất | Chạy `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full` (exit 0) và gắn PNG nghiệm thu của chính lượt đó. Luật đứng: `rules/essentials.md` mục "Every prompt". **[hook]** Khi có ma trận (`.agents/regression_matrix.active.json`), Stop hook `regression_gate.sh` tự chạy cổng; `test_evidence_gate.sh` chặn "đã fix" không có cặp test ĐỎ→XANH trong phiên. Hook không chụp ảnh; **[hook]** `proof_gate.sh` (chỉ Claude Code) chặn câu trả lời mở bằng XONG khi lượt đó thiếu cổng `--full` exit 0 trên code hiện tại hoặc thiếu `reports/proof-*.png` thật chụp trong lượt. |
+| **5. Acceptance & Delivery** | `verification-before-completion` | Trước khi tuyên bố Xong / Pass / Hoàn tất | Chạy `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full` (exit 0) và gắn PNG nghiệm thu của chính lượt đó trừ khi thay đổi chắc chắn không lên màn hình (profile backend lúc đầu lượt, hoặc mọi thứ đổi từ HEAD đầu lượt chỉ là test / Markdown ở gốc / `docs/ scripts/ bin/ tools/ .agents/ .claude/` ở gốc: chỉ cần cổng). Luật đứng: `rules/essentials.md` mục "Every prompt". **[hook]** Khi có ma trận (`.agents/regression_matrix.active.json`), Stop hook `regression_gate.sh` tự chạy cổng; `test_evidence_gate.sh` chặn "đã fix" không có cặp test ĐỎ→XANH trong phiên. Hook không chụp ảnh; **[hook]** `proof_gate.sh` (chỉ Claude Code) chặn câu trả lời mở bằng XONG khi lượt đó thiếu cổng `--full` exit 0 trên code hiện tại hoặc thiếu `reports/proof-*.png` thật chụp trong lượt. |
 | **5. Acceptance & Delivery** | `deploy` | Đóng gói APK/AAB, kiểm tra signing, xuất bản release (chỉ Android/Gradle) | Tự động kiểm tra chứng chỉ ký (signing key), version bump và sẵn sàng phát hành. |
 
 

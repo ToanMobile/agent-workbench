@@ -291,6 +291,88 @@ out="$(DEVKIT_LANG=en gate_nomatrix)"; check "debt marker without trigger -> war
 expect_in "marker without an upgrade trigger is flagged with its line" "src/Core.kt:1: \`ponytail:\` marker names no upgrade trigger" "$out"
 expect_not_in "marker with a trigger passes" "src/Core.kt:2:" "$out"
 
+# --- New-dependency advisory for every manifest kind, and in --json ---------------------
+make_repo "true"
+mkdir -p ios app
+printf 'requests==2.31.0\n' > requirements.txt
+printf "platform :ios, '15.0'\npod 'Alamofire', '5.8.0'\n" > ios/Podfile
+printf '// swift-tools-version:5.9\nlet package = Package(name: "A", dependencies: [\n  .package(url: "https://github.com/apple/swift-algorithms.git", from: "1.0.0"),\n])\n' > Package.swift
+printf 'name: app\ndependencies:\n  http: ^1.1.0\ndev_dependencies:\n  lints: ^3.0.0\nflutter:\n  uses-material-design: true\n' > app/pubspec.yaml
+printf '[package]\nname = "a"\n\n[dependencies]\nserde = "1.0"\n' > Cargo.toml
+printf '[project]\nname = "p"\ndependencies = ["click>=8"]\n' > pyproject.toml
+printf '<project><dependencies><dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><version>2.0.9</version></dependency></dependencies></project>\n' > pom.xml
+git add -A && git commit -qm manifests
+printf 'requests==2.32.0\nhttpx[http2]==0.27.0\n# comment\n-r base.txt\n' > requirements.txt
+printf "platform :ios, '15.0'\npod 'Alamofire', '5.9.0'\npod 'SnapKit', '5.7.1'\n" > ios/Podfile
+printf '// swift-tools-version:5.9\nlet package = Package(name: "A", dependencies: [\n  .package(url: "https://github.com/apple/swift-algorithms.git", from: "1.2.0"),\n  .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),\n])\n' > Package.swift
+printf 'name: app\ndependencies:\n  http: ^1.2.0\n  provider: ^6.1.0\ndev_dependencies:\n  lints: ^3.0.0\nflutter:\n  uses-material-design: true\n' > app/pubspec.yaml
+printf '[package]\nname = "a"\n\n[dependencies]\nserde = "1.0"\ntokio = { version = "1.38" }\n' > Cargo.toml
+printf '[project]\nname = "p"\ndependencies = ["click>=8", "rich[jupyter]>=13"]\n' > pyproject.toml
+printf '<project><dependencies><dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><version>2.0.13</version></dependency><dependency><groupId>com.google.guava</groupId><artifactId>guava</artifactId><version>33.2.1-jre</version></dependency></dependencies></project>\n' > pom.xml
+out="$(DEVKIT_LANG=en gate_nomatrix)"; check "new deps in every manifest -> warning only, PASS" 0 $? "$out"
+for want in "requirements.txt: new dependency httpx" "ios/Podfile: new dependency SnapKit" \
+            "Package.swift: new dependency swift-collections" "app/pubspec.yaml: new dependency provider" \
+            "Cargo.toml: new dependency tokio" "pyproject.toml: new dependency rich" \
+            "pom.xml: new dependency com.google.guava:guava"; do
+  expect_in "advisory: $want" "$want" "$out"
+done
+for bumped in "new dependency requests" "new dependency Alamofire" "new dependency swift-algorithms" \
+              "new dependency http," "new dependency serde" "new dependency click" "new dependency org.slf4j"; do
+  expect_not_in "version bump is not new: $bumped" "$bumped" "$out"
+done
+adv="$(DEVKIT_LANG=en gate_nomatrix --json | tail -n 1 | python3 -c 'import json,sys; print(len([a for a in json.load(sys.stdin).get("advisories", []) if "new dependency" in a]))')"
+[ "$adv" = 7 ] && echo "✔ --json carries the 7 advisories" || { echo "✖ --json advisories: '$adv'"; FAILS=$((FAILS + 1)); }
+
+# --- Proof block judges only this turn's images; older ones are references, never findings ---
+mkpng() { python3 -c 'import os,sys,zlib,struct
+def c(t,d): return struct.pack(">I",len(d))+t+d+struct.pack(">I",zlib.crc32(t+d)&0xffffffff)
+open(sys.argv[1],"wb").write(b"\x89PNG\r\n\x1a\n"+c(b"IHDR",struct.pack(">IIBBBBB",1,1,8,2,0,0,0))+c(b"IDAT",os.urandom(20000))+c(b"IEND",b""))' "$1"; }
+make_repo "true"; mkdir -p reports
+mkpng reports/proof-old-a.png; git add reports && git commit -qm proofs && git rm -q reports/proof-old-a.png
+out="$(DEVKIT_LANG=en gate_nomatrix)"; check "deleted tracked proof image -> not judged" 0 $? "$out" "zero-byte proof image"
+make_repo "true"; mkdir -p reports
+mkpng reports/proof-old-1.png; cp reports/proof-old-1.png reports/proof-old-2.png
+touch -t 202609200000 reports/proof-old-1.png reports/proof-old-2.png
+mkpng reports/proof-new.png; echo "fun ok() = 2" > src/Core.kt
+out="$(DEVKIT_LANG=en gate_nomatrix)"; check "two OLD duplicate proofs do not block a later turn" 0 $? "$out" "identical bytes"
+cp reports/proof-old-1.png reports/proof-new2.png
+out="$(DEVKIT_LANG=en gate_nomatrix)"; check "a NEW proof identical to an old one -> REJECT" 1 $? "$out"
+expect_in "the new duplicate is named" "reports/proof-new2.png: identical bytes" "$out"
+make_repo "true"; mkdir -p reports; printf 'reports/\n' > .gitignore; git add .gitignore && git commit -qm ign
+mkpng reports/proof-a.png; cp reports/proof-a.png reports/proof-b.png; echo "fun ok() = 2" > src/Core.kt
+out="$(DEVKIT_LANG=en gate_nomatrix)"; check "fresh duplicate proofs in a git-ignored reports/ -> REJECT" 1 $? "$out"
+make_repo "true"; mkdir -p reports; printf 'reports/\n' > .gitignore
+rm reports/proof-new2.png; : > reports/proof-empty.png
+out="$(DEVKIT_LANG=en gate_nomatrix)"; check "a NEW zero-byte proof -> REJECT" 1 $? "$out"
+
+# --- Documentation-only change: nothing a regression test could catch, so no test is required ---
+make_repo "true"
+mkdir -p docs && echo "# notes" > docs/NOTES.md && echo "readme" > README.md
+out="$(run_gate --run-tests --full)"; check "docs-only change, no matching test -> PASS" 0 $? "$out"
+echo "fun other() = 1" > src/Other.kt
+out="$(run_gate --run-tests --full)"; check "docs + unmatched code -> still UNVERIFIED" 2 $? "$out"
+make_repo "true"
+mkdir -p docs && echo "x = 1" > docs/conf.py
+out="$(run_gate --run-tests --full)"; check "code under docs/ is not documentation -> UNVERIFIED" 2 $? "$out"
+
+# Review 2026-09-25: manifest parsers name packages, never groups / URL schemes / tag order.
+make_repo "true"
+printf '[project]\nname = "p"\ndependencies = ["requests>=2"]\n' > pyproject.toml
+printf 'Foo_Bar==1.0\n' > requirements.txt
+printf '<project><dependencies></dependencies></project>\n' > pom.xml
+git add -A && git commit -qm m2
+printf '[project]\nname = "p"\ndependencies = ["requests>=2"]\n[project.optional-dependencies]\ndocs = ["sphinx>=7"]\n' > pyproject.toml
+printf 'foo-bar==1.0\ngit+https://github.com/org/lib.git#egg=vcslib\n-e git+https://github.com/org/ed.git#egg=edlib\n' > requirements.txt
+printf '<project><dependencies><dependency><!-- n --><artifactId>guava</artifactId><groupId>com.google.guava</groupId></dependency></dependencies></project>\n' > pom.xml
+out="$(DEVKIT_LANG=en gate_nomatrix)"
+expect_in "pyproject: optional group member named" "pyproject.toml: new dependency sphinx" "$out"
+expect_not_in "pyproject: group name is not a package" "new dependency docs" "$out"
+expect_in "pip: VCS egg named" "vcslib" "$out"
+expect_in "pip: editable egg named" "edlib" "$out"
+expect_not_in "pip: URL scheme is not a package" "new dependency edlib, git" "$out"
+expect_not_in "pip: Foo_Bar -> foo-bar is a rename, not new" "foo-bar" "$out"
+expect_in "pom: any child order" "pom.xml: new dependency com.google.guava:guava" "$out"
+
 # --- Vacuous-test audit judges test SOURCE, not a script that writes one as a fixture -----
 make_repo "true"
 mkdir -p src/test/kotlin tests

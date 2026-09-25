@@ -55,24 +55,32 @@ MARK_START = "<!-- devkit-essentials:start"
 MARK_END = "<!-- devkit-essentials:end -->"
 
 
+BLOCK_START = "universal-agent-devkit:start"
+
+
 def agents_md_wanted(project):
-    """(path, current, wanted) for AGENTS.md with its essentials section refreshed, or None."""
+    """(path, current, wanted) for AGENTS.md with its essentials section refreshed, or None
+    (no AGENTS.md, a symlink, not UTF-8). An older DevKit block without the markers gives
+    wanted=None: only `agent-kit init` can add them, and --check says so."""
     path = os.path.join(project, "AGENTS.md")
     if os.path.islink(path):
         return None
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8", newline="") as f:
             text = f.read()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     i = text.find(MARK_START)
     j = text.find(MARK_END, i) if i >= 0 else -1
     if i < 0 or j < 0:
-        return None
-    keep = text.index("\n", i) + 1          # the start marker line itself
+        return (path, text, None) if BLOCK_START in text else None
+    nl = "\r\n" if "\r\n" in text else "\n"
+    eol = text.find("\n", i)
+    keep = j if eol < 0 or eol > j else eol + 1     # markers on one line: insert before the end one
+    head = text[:keep] if keep > i and text[keep - 1] == "\n" else text[:keep] + nl
     with open(os.path.join(DEVKIT, "rules", "essentials.md"), encoding="utf-8") as f:
         essentials = f.read().rstrip("\n") + "\n"
-    return path, text, text[:keep] + essentials + text[j:]
+    return path, text, head + essentials.replace("\n", nl) + text[j:]
 
 
 def stale(project):
@@ -88,13 +96,16 @@ def stale(project):
             pass
         bad.append(name)
     agents = agents_md_wanted(project)
-    if agents and agents[1] != agents[2]:
+    if agents and agents[2] is None:
+        bad.append("AGENTS.md (DevKit block without the essentials section: re-run agent-kit init)")
+    elif agents and agents[1] != agents[2]:
         bad.append("AGENTS.md")
     return bad
 
 
-def sync(project):
-    """Write the stale files; return their names."""
+def sync(project, agents_md=True):
+    """Write the stale files; return their names. agents_md=False (--context-only, the relink
+    git hooks) leaves the tracked AGENTS.md alone right after a checkout."""
     base = os.path.join(project, CONTEXT_DIR)
     os.makedirs(base, exist_ok=True)
     changed = []
@@ -111,10 +122,10 @@ def sync(project):
             f.write(text)
         os.replace(tmp, path)
         changed.append(name)
-    agents = agents_md_wanted(project)
-    if agents and agents[1] != agents[2]:
+    agents = agents_md_wanted(project) if agents_md else None
+    if agents and agents[2] is not None and agents[1] != agents[2]:
         tmp = agents[0] + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
             f.write(agents[2])
         os.replace(tmp, agents[0])
         changed.append("AGENTS.md")
@@ -132,13 +143,16 @@ def main(argv):
     if "--check" in argv:
         bad = stale(project)
         if bad and "--quiet" not in argv:
-            print("stale: " + ", ".join(n if n == "AGENTS.md" else f"{CONTEXT_DIR}/{n}" for n in bad))
+            print("stale: " + ", ".join(n if n.startswith("AGENTS.md") else f"{CONTEXT_DIR}/{n}" for n in bad))
         return 1 if bad else 0
-    changed = sync(project)
+    changed = sync(project, agents_md="--context-only" not in argv)
     if changed and "--quiet" not in argv:
-        sizes = ", ".join(f"{n} {os.path.getsize(os.path.join(project, n if n == 'AGENTS.md' else os.path.join(CONTEXT_DIR, n))) // 1024} KB"
-                          for n in changed)
-        print(f"  - {CONTEXT_DIR}/: {sizes}")
+        ctx = [n for n in changed if n != "AGENTS.md"]
+        if ctx:
+            sizes = ", ".join(f"{n} {os.path.getsize(os.path.join(project, CONTEXT_DIR, n)) // 1024} KB" for n in ctx)
+            print(f"  - {CONTEXT_DIR}/: {sizes}")
+        if "AGENTS.md" in changed:
+            print("  - AGENTS.md: DevKit essentials section refreshed")
     return 0
 
 

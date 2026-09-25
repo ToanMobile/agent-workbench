@@ -53,17 +53,19 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   (`.env`, keystores, `local.properties`, `google-services.json`, tokens); mask them in proof.
 - **Done means verified**: run the post-fix gate
   (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full`, exit 0 only) and
-  attach a real proof PNG from this turn before the reply may open with XONG.
-  The Stop hooks enforce the gate on hosts that have them. They do not take the screenshot;
-  on Claude Code `proof_gate.sh` refuses a reply opening with XONG unless this turn has a
-  `--full` exit 0 on the current code and names a fresh proof PNG.
+  attach a real proof PNG from this turn (when step 4 of "Every prompt" applies) before the
+  reply may open with XONG. The Stop hooks enforce the gate on hosts that have them. They do
+  not take the screenshot; on Claude Code `proof_gate.sh` refuses a reply opening with XONG
+  unless this turn has a `--full` exit 0 on the current code and, for app source on a
+  profile with a screen, names a fresh proof PNG.
 
 ## Every prompt (standing law)
-Applies to Claude Code, Gemini CLI, Antigravity, Codex, Cursor and Grok. Do this in the
-same turn, before answering. A missing step opens the reply with CHƯA XONG and stops.
-Do not write XONG, PASS, đã fix, or đã xong without both items in step 5.
+Applies to Claude Code, Gemini CLI, Antigravity, Codex, Cursor and Grok, to every turn that
+changes a file. A turn that changes nothing (a question, a review, a plan) is answered
+directly: no gate, no image, no status line. In a changing turn a missing step opens the
+reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong without step 5.
 
-1. Read `AGENTS.md`, `.agents/context/essentials.md`, `.agents/context/profile-rules.md`,
+1. Read `AGENTS.md` (its DevKit block carries these essentials), `.agents/context/profile-rules.md`,
    `.agents/context/rules-index.md`, and every `.agents/local/rules/` file the index names.
 2. A code or bug prompt: run the failing oracle and see RED before editing production,
    then the same oracle GREEN after. Keep the command log and the exit code.
@@ -71,8 +73,15 @@ Do not write XONG, PASS, đã fix, or đã xong without both items in step 5.
    `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full`
    Exit 0 is required. Any other exit: paste the last 30 log lines, fix, and repeat this
    step. A dry-run, `--help`, or a single Gradle test does not replace this command.
-4. A proof image is blocking, same rank as exit 0. From the repo root:
-   `python3 .agents/devkit/bin/proof-capture.py`
+4. A proof image is blocking, same rank as exit 0, unless the change surely cannot show on a
+   screen: the profile was backend when the turn started, or every file changed since HEAD at
+   the turn start (commits, merges, pulls included; new files too) is under a top-level
+   `.agents/ .claude/ .gemini/ .github/ .githooks/ .codebase-memory/ docs/ reports/ scripts/
+   bin/ tools/`, a top-level test folder (`tests/`, `*Tests/`), a `src/<test source set>/`, or
+   is Markdown / LICENSE-type at the root. Then write "ảnh: không cần — <reason>" in line 3
+   and skip this step. A cited PNG is always checked: stamp in its name from this turn, not a
+   byte copy of another proof. `hooks/proof_gate.sh` applies the same rule (`bin/tree_fp.py`). From the
+   repo root: `python3 .agents/devkit/bin/proof-capture.py`
    The command checks `adb devices` first. A declared serial is used only when its
    state is `device` and it is not on the denylist. If that serial is offline, or no
    allowed device is online, it starts the AVD in `.antigravity-pm.json`
@@ -86,9 +95,11 @@ Do not write XONG, PASS, đã fix, or đã xong without both items in step 5.
      larger than 8 KB, mtime in this turn.
    - The command exits non-zero when it cannot open a device. Open with CHƯA XONG and
      paste that error. Do not draw, reuse an old image, or substitute a test XML.
-5. The reply may open with XONG only when this turn has exit 0 from step 3 and the PNG
-   from step 4. Line 1: XONG or CHƯA XONG. Line 2: what the user gets. Line 3: gate exit
-   code, image path, serial.
+5. The reply may open with XONG only when this turn has exit 0 from step 3 and, when step 4
+   applies, its PNG. Line 1: XONG or CHƯA XONG. Line 2: what the user gets. Line 3: gate
+   exit code, then image path and serial, or "ảnh: không cần — <reason>".
+   A change of Markdown (`.md/.rst/.adoc`) or LICENSE-type files only needs no regression
+   test: the gate passes it.
 
 ## Engineering musts (details: `.agents/devkit/rules/core-rules.md`)
 - No O(N²) on dynamic data where a map/set does; no allocations in hot loops.
@@ -109,7 +120,7 @@ Do not write XONG, PASS, đã fix, or đã xong without both items in step 5.
 - Answer in the user's language (Vietnamese when they write Vietnamese); identifiers,
   commands, paths and commit subjects stay English.
 - Reports open with three lines: status (XONG / CHƯA XONG / CHỜ DUYỆT), what the user gets,
-  next step; stay short. XONG also requires the full-gate exit 0 and the proof PNG in
-  "Every prompt".
+  next step; stay short. XONG also requires the full-gate exit 0 and, when it applies, the
+  proof PNG in "Every prompt".
 - Long session or a big refactor ahead: checkpoint and compact instead of filling the window.
 - Traps from past bugs arrive with each request (`.agents/instincts.md`); read the named entry.

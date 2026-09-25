@@ -1320,7 +1320,8 @@ t=(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(seconds=2)).s
 print(json.dumps({"type":"user","timestamp":t,"message":{"role":"user","content":"sửa lỗi X"}}))' > "${PG_TR}"
 sleep 1
 CLAUDE_PROJECT_DIR="${PG}" python3 "${HOOKS}/../bin/post-fix-gate.py" --run-tests --full --no-checklist >/dev/null 2>&1
-python3 - "${PG}/reports/proof-20260924-101500.png" <<'PY'
+PG_PNG="reports/proof-$(date +%Y%m%d-%H%M%S).png"   # named for this turn: the gate reads the time in the name
+python3 - "${PG}/${PG_PNG}" <<'PY'
 import os, struct, sys, zlib
 def chunk(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
 open(sys.argv[1], "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
@@ -1331,7 +1332,7 @@ run_case "CHƯA XONG is not checked" proof_gate.sh 0 \
 run_case "XONG without this turn's proof PNG blocked" proof_gate.sh 2 \
   "{\"session_id\":\"pg-2\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"XONG\\nĐã sửa lỗi X.\"}" CLAUDE_PROJECT_DIR="${PG}"
 run_case "XONG naming a fresh real PNG allowed" proof_gate.sh 0 \
-  "{\"session_id\":\"pg-3\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"XONG\\nảnh reports/proof-20260924-101500.png\"}" CLAUDE_PROJECT_DIR="${PG}"
+  "{\"session_id\":\"pg-3\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"XONG\\nảnh ${PG_PNG}\"}" CLAUDE_PROJECT_DIR="${PG}"
 run_case "PROOF_GATE=0 escape hatch allows" proof_gate.sh 0 \
   "{\"session_id\":\"pg-4\",\"transcript_path\":\"${PG_TR}\",\"last_assistant_message\":\"XONG\\nĐã sửa lỗi X.\"}" CLAUDE_PROJECT_DIR="${PG}" PROOF_GATE=0
 echo
