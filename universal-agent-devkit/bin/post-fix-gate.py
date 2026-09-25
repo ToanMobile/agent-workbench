@@ -53,6 +53,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from devkit_i18n import resolve_lang, set_lang, tr  # noqa: E402
 from instincts import append_lesson, md_escape  # noqa: E402
+# Who edited an existing test: the rule hooks/testsourceset_gate.sh scopes its compile with.
+import session_authorship  # noqa: E402
 
 
 def _L(label):
@@ -310,109 +312,6 @@ def test_change_is_append_only(base_ref: str, repo_path: str) -> bool:
     return bool(added) and not any(TEST_SKIP_RE.search(a) for a in added)
 
 
-# Who edited an existing test? Same sources as hooks/testsourceset_gate.sh (which scopes its
-# compile the same way): the session's Edit/Write calls (its sub-agents' too), its write-shaped
-# Bash commands, and its Bash windows in .claude/audit-gate/bash_write_ledger.tsv. rm / git rm
-# count as writes here: a deleted test has no mtime, naming it is the only trace. touch / ln
-# too: `touch -t 2020… <test>` after a write moves the mtime out of every window.
-_WRITE_VERB_RE = re.compile(r"\bsed\s+(-[A-Za-z]*i|--in-place)|\bperl\s+-[A-Za-z]*i|\btee\b|"
-                            r"\b(cp|mv|rm|install|patch|dd|truncate|touch|ln)\b|\bgit\s+(apply|am|checkout|restore|rm|mv)\b")
-# Tools that cannot write a project file (taken from the tool names in real Claude Code
-# transcripts, 2026-09-25). Any other tool — a write-capable MCP tool, an external agent
-# dispatch, Monitor/Workflow running commands outside the Bash ledger — can write where the
-# gate cannot see it: its session's test edits are then all its own (fail closed).
-# Sub-agents (Task/Agent/SendMessage) are read through their own transcripts.
-_READ_ONLY_TOOLS = frozenset((
-    "Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "TodoWrite", "TodoRead", "Task", "Agent",
-    "SendMessage", "ListAgents", "TaskOutput", "BashOutput", "TaskStop", "KillShell", "TaskCreate",
-    "TaskUpdate", "TaskList", "TaskGet", "ToolSearch", "Skill", "AskUserQuestion", "ExitPlanMode",
-    "EnterPlanMode", "ScheduleWakeup", "ReadNotifications", "SendUserFile", "SendFeedback", "LSP",
-    "advisor", "SubagentHandback"))
-# An MCP tool (mcp__<server>__<tool>) counts as read-only only when its own name clearly reads.
-_MCP_READ_RE = re.compile(r"^(get|read|list|search|query)[_-]", re.I)
-
-
-def _read_only_tool(name) -> bool:
-    if not isinstance(name, str):
-        return False
-    if name.startswith("mcp__"):
-        return bool(_MCP_READ_RE.match(name.rsplit("__", 1)[-1]))
-    return name in _READ_ONLY_TOOLS
-_REDIRECT_TARGET_RE = re.compile(r">>?\s*[\"']?([^\s\"'<>|;&()]+)")
-_PATH_TOKEN_RE = re.compile(r"[^\s\"'<>|;&()=]+")
-
-
-def _session_trace(transcript: str):
-    """(files written by Edit/Write tools, Bash commands, first timestamp, Bash call count,
-    opaque) of a session, from its transcript and its sub-agents' — or None when there is nothing
-    to judge by (no transcript, unreadable, not one tool call). opaque: it called a tool that may
-    write where neither the transcript nor the Bash ledger shows it (not _read_only_tool)."""
-    from datetime import datetime  # noqa: PLC0415
-    if not transcript or not os.path.isfile(transcript):
-        return None
-    edited, bash, started, tool_uses, opaque = set(), [], None, 0, False
-    subs = sorted(Path(os.path.splitext(transcript)[0], "subagents").glob("*.jsonl"))
-    for i, path in enumerate([Path(transcript)] + subs):
-        try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            if i == 0:
-                return None
-            continue
-        for line in lines:
-            try:
-                rec = json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(rec, dict):
-                continue
-            if i == 0 and started is None and isinstance(rec.get("timestamp"), str):
-                try:
-                    started = datetime.fromisoformat(rec["timestamp"].replace("Z", "+00:00")).timestamp()
-                except ValueError:
-                    pass
-            content = (rec.get("message") or {}).get("content") if isinstance(rec.get("message"), dict) else None
-            for blk in content if isinstance(content, list) else []:
-                if not isinstance(blk, dict) or blk.get("type") != "tool_use":
-                    continue
-                tool_uses += 1
-                inp = blk.get("input") if isinstance(blk.get("input"), dict) else {}
-                if blk.get("name") in ("Edit", "MultiEdit", "Write", "NotebookEdit"):
-                    fp = inp.get("file_path") or inp.get("notebook_path")
-                    if isinstance(fp, str) and fp:
-                        edited.add(os.path.realpath(fp))
-                elif blk.get("name") == "Bash":
-                    if isinstance(inp.get("command"), str):
-                        bash.append(inp["command"])
-                elif not _read_only_tool(blk.get("name")):
-                    opaque = True
-    return (edited, bash, started, len(bash), opaque) if tool_uses else None
-
-
-def _bash_windows(project: Path) -> list:
-    """(start, end, session) of every Bash command in bash_write_ledger.tsv; a start with no
-    end (a backgrounded command) stays open until now."""
-    windows, opens = [], {}
-    try:
-        with open(project / ".claude" / "audit-gate" / "bash_write_ledger.tsv", encoding="utf-8") as fh:
-            for line in fh:
-                parts = line.rstrip("\n").split("\t")
-                if len(parts) != 4:
-                    continue
-                sid, kind, stamp, tuid = parts
-                try:
-                    stamp = float(stamp)
-                except ValueError:
-                    continue
-                if kind == "start":
-                    opens[(sid, tuid)] = stamp
-                elif kind == "end" and (sid, tuid) in opens:
-                    windows.append((opens.pop((sid, tuid)), stamp, sid))
-    except OSError:
-        return []
-    return windows + [(st, time.time(), sid) for (sid, _), st in opens.items()]
-
-
 def split_tests_by_author(paths: list, session, transcript) -> tuple:
     """(blocking, other): the edited existing tests this session made — or cannot be told
     apart — and those another session or a person made (a warning, never a block).
@@ -421,11 +320,11 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
     window, or before this session's first prompt with no write command of this session naming
     it (a deleted file: this session ran no Bash at all). A change during the session outside
     every window is NOT evidence (a detached process, a person: cannot tell) and blocks. Without
-    a session, a usable transcript, or with a tool the gate cannot see through (_read_only_tool)
+    a session, a usable transcript, or with a tool the gate cannot see through (read_only_tool)
     every path stays blocking — fail closed."""
     if not paths or not session or not transcript:
         return list(paths), []
-    trace = _session_trace(transcript)
+    trace = session_authorship.session_trace(transcript)
     if trace is None:
         return list(paths), []
     edited, bash, started, bash_calls, opaque = trace
@@ -433,41 +332,42 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
         return list(paths), []
     project = get_project_dir()
     root = Path(os.path.realpath(project))
-    windows = _bash_windows(project)
-    named = set()
-    for cmd in bash:
-        toks = set(_REDIRECT_TARGET_RE.findall(cmd))
-        if _WRITE_VERB_RE.search(cmd):
-            toks |= set(_PATH_TOKEN_RE.findall(cmd))
-        named |= {t[2:] if t.startswith("./") else t for t in toks}
-    mine, other = [], []
+    windows = session_authorship.bash_windows(project)
+    named = session_authorship.shell_named(bash)
+    owners, undecided = {}, {}   # undecided: realpath -> (path, mtime) changed during the session
     for f in paths:
         full = root / f
-        by_me = (os.path.realpath(full) in edited
-                 or any(t == f or f.endswith("/" + t) or os.path.realpath(root / t) == os.path.realpath(full) for t in named))
+        by_me = os.path.realpath(full) in edited or session_authorship.names_path(named, root, f)
         owner = "me" if by_me else None
         if owner is None:
             try:
-                mt = os.path.getmtime(full)
+                st = os.stat(full)
+                mt = st.st_mtime
             except OSError:
                 mt = None     # deleted: with no Bash and no opaque tool, it cannot be ours
                 if bash_calls == 0:
                     owner = "other"
             if mt is not None:
-                best = None   # (width, session) of the narrowest window holding the mtime
-                for st, en, sid in windows:
-                    if st <= mt <= en and (best is None or en - st < best[0]):
-                        best = (en - st, sid)
-                    elif st <= mt <= en and en - st == best[0] and sid != best[1]:
-                        best = (best[0], "")     # exact tie across sessions: nobody
-                if best and best[1] == session:
+                sid = session_authorship.window_owner(mt, windows)
+                if sid == session:
                     owner = "me"
-                elif best and best[1]:
+                elif sid:
                     owner = "other"
-                elif best is None and started and mt < started - 1:
-                    owner = "other"   # before the first prompt; a write verb naming it is by_me above
-        (other if owner == "other" else mine).append(f)
-    return mine, other
+                elif sid is None and started and max(mt, st.st_ctime) < started - 1:
+                    # Before the first prompt. By ctime too: touch -t / tar / rsync / cp -p set the
+                    # mtime back, nothing sets the ctime back. A write verb naming it is by_me above.
+                    owner = "other"
+                elif started:
+                    undecided[os.path.realpath(full)] = (f, mt)
+        owners[f] = owner
+    if undecided:
+        # Another Claude Code session's Edit/Write leaves no Bash window: its own transcript,
+        # next to this one, holds the call. Its span must hold the mtime (narrowest wins, as above).
+        edits = session_authorship.other_session_edits(transcript, session, undecided, started - 60)
+        for rp, (f, mt) in undecided.items():
+            sid = session_authorship.window_owner(mt, windows + edits.get(rp, []))
+            owners[f] = "other" if sid and sid != session else None
+    return ([f for f in paths if owners[f] != "other"], [f for f in paths if owners[f] == "other"])
 
 
 def write_full_pass_receipt(project_dir, exit_code):

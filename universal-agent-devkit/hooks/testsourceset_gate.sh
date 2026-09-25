@@ -18,9 +18,10 @@
 # module has no Debug task and used to be dropped as "lacks the task" (OfficeReader
 # :app, 2026-09-23). Read the way scripts/matrix_detect.py reads it.
 # Skips entirely when there are no uncommitted .kt/.java changes, and when THIS
-# session wrote none of them (Edit/Write, a sub-agent's edit, a write-shaped Bash
-# command, or an mtime inside one of its bash_write_ledger.tsv windows — see the
-# "scope" block below); falls back to every dirty module when it cannot tell. The build is
+# session wrote none of them (bin/session_authorship.py, post-fix-gate's rule: Edit/Write/
+# MultiEdit, a sub-agent's edit, a write-shaped Bash command, or an mtime inside one of its
+# bash_write_ledger.tsv windows — see the "scope" block below); falls back to every dirty
+# module when it cannot tell (a write tool it cannot see through, no shared module). The build is
 # ./gradlew, or — in a monorepo without one at the root — the nearest gradlew
 # above each changed file (e.g. android/gradlew), run from that folder.
 #
@@ -135,36 +136,48 @@ CHANGED="$( { git diff --name-only --diff-filter=ACMR 2>/dev/null
 # ── scope to the files THIS session wrote ────────────────────────────────────
 # On a shared worktree, compiling every dirty module means one session's in-flight
 # breakage blocks every other session (OfficeReader, 2026-09-09: a pdftools session
-# blocked by modules a concurrent session had mid-edit). "Wrote" is built from:
-#   1. Edit/Write/NotebookEdit file_path in the transcript — and in this session's
-#      sub-agent transcripts (<transcript>/subagents/*.jsonl), whose edits the
-#      parent transcript never shows;
+# blocked by modules a concurrent session had mid-edit). "Wrote" follows the rule of
+# bin/session_authorship.py — the one post-fix-gate.py uses to tell whose test edit it is:
+#   1. Edit/Write/MultiEdit/NotebookEdit file_path in the transcript — and in this
+#      session's sub-agent transcripts (<transcript>/subagents/*.jsonl), whose edits
+#      the parent transcript never shows;
 #   2. a dirty file whose mtime falls inside one of THIS session's Bash windows in
 #      .claude/audit-gate/bash_write_ledger.tsv (hooks/bash_write_ledger.sh). This is
 #      what catches Kotlin written by `find | xargs sed -i`, a script or codegen,
 #      whose path never appears in the transcript. Windows are long (p50 1.8s,
 #      max 390s), so when an mtime sits in windows of several sessions the NARROWEST
 #      wins and an exact tie goes to nobody;
-#   3. a .kt/.java path named by a WRITE-shaped Bash command (sed -i, perl -i, a
-#      `>`/`>>` target, tee, cp, mv, patch, git apply/checkout/restore) — the
-#      heredoc case, and a fallback where the ledger is not wired. A path a command
-#      merely READS (cat, grep) does not count.
+#   3. a dirty file named by a WRITE-shaped Bash command (sed -i, perl -i, a `>`/`>>`
+#      target, tee, cp, mv, rm, touch, ln, tar, rsync, unzip, patch, git apply/checkout…)
+#      by its path, a glob or a directory holding it — the heredoc case, and a fallback
+#      where the ledger is not wired. A path a command merely READS (cat, grep) does not
+#      count.
 # Outcomes: files found and dirty → compile only their modules. Session wrote no
 # Kotlin/Java at all → PASS (exit 3 below): the dirty files belong to another session.
 # Fail-closed (repo-wide, the old scope) on: no transcript, unreadable or unparsable
-# input, a transcript with no tool call at all (nothing to judge by), or a session
-# whose Kotlin writes are none of them dirty.
+# input, a transcript with no tool call at all (nothing to judge by), a tool the rule
+# cannot see through (a write-capable MCP tool, an external agent: its writes are
+# unknown), no bin/session_authorship.py next to the hook, or a session whose Kotlin
+# writes are none of them dirty.
 SCOPED=""
 SCOPE_RC=1
-if [ "${HAVE_PY}" = 1 ] && [ -n "${INPUT}" ]; then
-  SCOPED="$(TS_INPUT="${INPUT}" TS_CHANGED="${CHANGED}" TS_ROOT="${REPO_ROOT}" python3 -c '
-import os, sys, json, time, re, glob
+SELF_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null)"
+AUTHORSHIP_BIN=""
+for cand in "$(dirname "$(dirname "${SELF_REAL:-$0}")")/bin" "${REPO_ROOT}/.agents/devkit/bin" \
+            "${DEVKIT_ROOT:-/nonexistent}/bin" "${HOME}/.universal-agent-devkit/bin"; do
+  [ -f "${cand}/session_authorship.py" ] && { AUTHORSHIP_BIN="${cand}"; break; }
+done
+if [ "${HAVE_PY}" = 1 ] && [ -n "${INPUT}" ] && [ -n "${AUTHORSHIP_BIN}" ]; then
+  SCOPED="$(TS_INPUT="${INPUT}" TS_CHANGED="${CHANGED}" TS_ROOT="${REPO_ROOT}" TS_BIN="${AUTHORSHIP_BIN}" python3 -c '
+import os, sys, json
 raw = os.environ.get("TS_INPUT", "")
 changed = [l for l in os.environ.get("TS_CHANGED", "").splitlines() if l.strip()]
 # realpath BOTH sides: on macOS /var is a symlink to /private/var.
 root = os.path.realpath(os.environ.get("TS_ROOT", "."))
 SRC = (".kt", ".java")
+sys.path.insert(0, os.environ["TS_BIN"])
 try:
+    import session_authorship as sa
     d = json.loads(raw)
 except Exception:
     sys.exit(1)
@@ -175,132 +188,34 @@ if not isinstance(tp, str) or not tp or not os.path.isfile(tp):
     sys.exit(1)
 cwd = d.get("cwd")
 cwd = os.path.realpath(cwd if isinstance(cwd, str) and cwd else root)
+trace = sa.session_trace(tp)
+if trace is None:
+    sys.exit(1)          # unreadable, or no tool call at all: nothing to judge by
+edited_abs, bash, _started, _calls, opaque = trace
+if opaque:
+    sys.exit(4)          # a tool that may write where the rule cannot see: repo-wide
+edited = {os.path.relpath(fp, root).replace(os.sep, "/") for fp in edited_abs if fp.endswith(SRC)}
+named = sa.shell_named(bash)
 
-def rel(fp):
-    ab = os.path.realpath(fp if os.path.isabs(fp) else os.path.join(cwd, fp))
-    return os.path.relpath(ab, root).replace(os.sep, "/")
+def named_here(c):
+    # Bash tokens are relative to the shell cwd; the payload cwd is the best known one.
+    return sa.names_path(named, root, c) or (
+        cwd != root and sa.names_path(named, cwd, os.path.relpath(os.path.join(root, c), cwd)))
 
-WRITE_VERB = re.compile(r"\bsed\s+(-[A-Za-z]*i|--in-place)|\bperl\s+-[A-Za-z]*i|\btee\b|"
-                        r"\b(cp|mv|install|patch|dd)\b|\bgit\s+(apply|am|checkout|restore)\b")
-REDIRECT_TARGET = re.compile(r">>?\s*[\"\x27]?([^\s\"\x27<>|;&()]+\.(?:kt|java))\b")
-PATH_TOKEN = re.compile(r"[^\s\"\x27<>|;&()=]+\.(?:kt|java)\b")
-
-edited = set()        # repo-relative paths this session wrote
-shell_named = set()   # path tokens named by a write-shaped Bash command
-tool_uses = 0
-subs = sorted(glob.glob(os.path.join(os.path.splitext(tp)[0], "subagents", "*.jsonl")))
-for i, t in enumerate([tp] + subs):
-    try:
-        fh = open(t, encoding="utf-8", errors="ignore")
-    except Exception:
-        if i == 0:
-            sys.exit(1)
-        continue
-    try:
-        with fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except Exception:
-                    continue
-                content = (rec.get("message") or {}).get("content") if isinstance(rec, dict) else None
-                if not isinstance(content, list):
-                    continue
-                for blk in content:
-                    if not isinstance(blk, dict) or blk.get("type") != "tool_use":
-                        continue
-                    tool_uses += 1
-                    name = blk.get("name")
-                    inp = blk.get("input") or {}
-                    if not isinstance(inp, dict):
-                        continue
-                    if name in ("Edit", "Write", "NotebookEdit"):
-                        fp = inp.get("file_path") or inp.get("notebook_path") or ""
-                        if isinstance(fp, str) and fp.endswith(SRC):
-                            edited.add(rel(fp))
-                    elif name == "Bash":
-                        cmd = inp.get("command")
-                        if not isinstance(cmd, str):
-                            continue
-                        toks = set(REDIRECT_TARGET.findall(cmd))
-                        if WRITE_VERB.search(cmd):
-                            toks |= set(PATH_TOKEN.findall(cmd))
-                        shell_named |= {x for x in toks if not re.search(r"[*?\[]", x)}
-    except Exception:
-        if i == 0:
-            sys.exit(1)
-# A transcript with no tool call at all gives nothing to judge by: stay repo-wide.
-if tool_uses == 0:
-    sys.exit(1)
-
-# Source 2: Bash windows from bash_write_ledger.tsv (<sid>\t<start|end>\t<ts>\t<id>).
-windows = []                      # (start, end, sid)
-ledger_path = os.path.join(root, ".claude", "audit-gate", "bash_write_ledger.tsv")
-try:
-    if os.path.isfile(ledger_path):
-        opens = {}
-        with open(ledger_path) as fh:
-            for line in fh:
-                parts = line.rstrip("\n").split("\t")
-                if len(parts) != 4:
-                    continue
-                sid_, kind, stamp, tuid = parts
-                try:
-                    stamp = float(stamp)
-                except Exception:
-                    continue
-                if kind == "start":
-                    opens[(sid_, tuid)] = stamp
-                elif kind == "end":
-                    st = opens.pop((sid_, tuid), None)
-                    if st is not None:
-                        windows.append((st, stamp, sid_))
-        # A start with no end is a backgrounded command still writing: open to now.
-        now = time.time()
-        for (sid_, _tuid), st in opens.items():
-            windows.append((st, now, sid_))
-except Exception:
-    windows = []
-
-my_sid = d.get("session_id") or ""
-if not isinstance(my_sid, str):
-    my_sid = ""
+windows = sa.bash_windows(root)
+my_sid = d.get("session_id") if isinstance(d.get("session_id"), str) else ""
+hit = []
 for c in changed:
-    if c in edited:
-        continue
-    try:
-        mt = os.path.getmtime(os.path.join(root, c))
-    except Exception:
-        continue
-    best_width = None
-    best_sid = None
-    for st, en, sid_ in windows:
-        if st <= mt <= en:
-            width = en - st
-            if best_width is None or width < best_width:
-                best_width, best_sid = width, sid_
-            elif width == best_width and sid_ != best_sid:
-                best_sid = None          # tie across sessions → nobody owns it
-    if my_sid and best_sid == my_sid:
-        edited.add(c)
-
-# Source 3: paths named by a write-shaped Bash command.
-for tok in shell_named:
-    t = tok[2:] if tok.startswith("./") else tok
-    try:
-        tr = rel(tok)
-    except Exception:
-        tr = t
-    for c in changed:
-        if c == tr or c == t or c.endswith("/" + t):
-            edited.add(c)
-
-if not edited and not shell_named:
+    mine = c in edited or named_here(c)
+    if not mine and my_sid:
+        try:
+            mine = sa.window_owner(os.path.getmtime(os.path.join(root, c)), windows) == my_sid
+        except OSError:
+            mine = False
+    if mine:
+        hit.append(c)
+if not edited and not hit and not any(t.endswith(SRC) for t in named):
     sys.exit(3)          # session wrote no Kotlin/Java at all → nothing of mine
-hit = [c for c in changed if c in edited]
 if not hit:
     sys.exit(1)          # wrote Kotlin, none of it dirty → stay repo-wide
 print("\n".join(hit))
@@ -323,7 +238,7 @@ if [ -n "${SCOPED}" ]; then
   fi
   CHANGED="${SCOPED}"
 else
-  log "SCOPE — repo-wide (no usable transcript, or this session's Kotlin/Java writes are not dirty; agent=${AGENT} transcript=${TKIND})"
+  log "SCOPE — repo-wide (rc=${SCOPE_RC}: no usable transcript or bin/session_authorship.py, a write tool the scope cannot see through (rc=4), or this session's Kotlin/Java writes are not dirty; agent=${AGENT} transcript=${TKIND})"
 fi
 
 # Repo-wide compile at most once per unchanged tree per session: the result for the same

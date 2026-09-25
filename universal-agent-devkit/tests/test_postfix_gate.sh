@@ -544,13 +544,14 @@ expect_not_in "--json never echoes the secret value" "ABCDEFGHIJKLMNOP" "$(print
 # No session info, or no way to tell: today's block (the "existing test edited" check above).
 # fake_session <sid> <transcript> [edit-path [tool]] — a transcript that started 10 min ago, with one
 # harmless Bash call and optionally a <tool> call (default Edit) on <edit-path>; for tool=Bash,
-# <edit-path> is the command.
+# <edit-path> is the command. SESSION_SHIFT=<s> moves every timestamp by s seconds; FAKE_INPUT=<json>
+# replaces the tool's input.
 fake_session() {
   python3 - "$@" <<'PY'
-import json, sys, time
+import json, os, sys, time
 sid, tp = sys.argv[1], sys.argv[2]
 iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
-now = time.time()
+now = time.time() + float(os.environ.get("SESSION_SHIFT") or 0)
 recs = [{"type": "user", "sessionId": sid, "timestamp": iso(now - 600), "message": {"role": "user", "content": "fix it"}},
         {"type": "assistant", "sessionId": sid, "timestamp": iso(now - 590), "message": {"content": [
             {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "git status"}}]}}]
@@ -558,6 +559,8 @@ if len(sys.argv) > 3:
     tool = sys.argv[4] if len(sys.argv) > 4 else "Edit"
     inp = ({"command": sys.argv[3]} if tool == "Bash"
            else {"file_path": sys.argv[3], "old_string": "a", "new_string": "b"})
+    if os.environ.get("FAKE_INPUT"):
+        inp = json.loads(os.environ["FAKE_INPUT"])
     recs.append({"type": "assistant", "sessionId": sid, "timestamp": iso(now - 580), "message": {"content": [
         {"type": "tool_use", "id": "t2", "name": tool, "input": inp}]}})
 open(tp, "w").write("".join(json.dumps(r) + "\n" for r in recs))
@@ -612,11 +615,78 @@ fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" mcp__codebase
 out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
 check "read-only MCP tool + another session's window -> still a warning (PASS)" 0 $? "$out"
 
+# camelCase read tools (Atlassian Rovo) and the antigravity-pm read tools are read-only too:
+# they used to make the session "opaque" and switch attribution off. Write tools stay opaque.
+for tool in mcp__claude_ai_Atlassian_Rovo__getJiraIssue mcp__claude_ai_Atlassian_Rovo__getConfluencePage \
+            mcp__claude_ai_Atlassian_Rovo__searchJiraIssuesUsingJql mcp__antigravity-pm__pm_status \
+            mcp__antigravity-pm__pm_diff mcp__antigravity-pm__pm_report mcp__antigravity-pm__pm_doctor \
+            mcp__antigravity-pm__pm_ack mcp__replicant-mcp__ui-query; do
+  existing_test_repo
+  set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+  fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" "$tool"
+  out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+  check "read tool ${tool##*__} + another session's window -> warning (PASS)" 0 $? "$out"
+done
+for tool in mcp__claude_ai_Atlassian_Rovo__createJiraIssue mcp__claude_ai_Atlassian_Rovo__editJiraIssue \
+            mcp__claude_ai_Atlassian_Rovo__updateConfluencePage mcp__antigravity-pm__pm_task_create \
+            mcp__antigravity-pm__pm_accept mcp__x__getOrCreateFile mcp__x__searchAndReplace mcp__x__listen; do
+  existing_test_repo
+  set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+  fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" "$tool"
+  out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+  check "write-capable tool ${tool##*__} -> attribution off, UNVERIFIED" 2 $? "$out" "PASS —"
+done
+# replicant ui-capture reads the screen; with localPath it writes that one file, which then
+# counts as this session's write (like Write), not as an unknown one.
+existing_test_repo
+set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+FAKE_INPUT='{"operation":"screenshot","localPath":"'"$TMP"'/repo/reports/proof-1.png"}' \
+  fake_session s-me "$TMP/me.jsonl" x mcp__replicant-mcp__ui-capture
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "ui-capture to reports/*.png + another session's window -> warning (PASS)" 0 $? "$out"
+existing_test_repo
+set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+FAKE_INPUT='{"operation":"screenshot","localPath":"'"$TMP"'/repo/src/test/CoreTest.kt"}' \
+  fake_session s-me "$TMP/me.jsonl" x mcp__replicant-mcp__ui-capture
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "ui-capture whose localPath is the test -> this session's write, UNVERIFIED" 2 $? "$out" "PASS —"
+existing_test_repo
+set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" mcp__replicant-mcp__ui-action
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "ui-action (drives the device) stays opaque -> UNVERIFIED" 2 $? "$out" "PASS —"
+
 existing_test_repo   # this session wrote it, then backdated it with touch -t (mtime before the session)
 set_mtime src/test/CoreTest.kt -3600; ledger_window s-me m1 -590 -589
 fake_session s-me "$TMP/me.jsonl" "touch -t 202001010000 src/test/CoreTest.kt" Bash
 out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
 check "touch -t by this session after writing the test -> UNVERIFIED" 2 $? "$out" "PASS —"
+
+# This session restored/rewrote the test with a command that sets an old mtime (git archive | tar,
+# rsync -a, cp -p, touch -t) and names it by a directory or a glob, not by its exact path. Each is
+# this session's write: blocked — whether the old mtime lands before the session (1) or inside
+# another session's Bash window (2).
+for cmd in "git archive HEAD~1 src/test | tar -x" "rsync -a /tmp/backup/src/ src/" \
+           "cp -p /tmp/backup/CoreTest.kt src/test/" \
+           "sed -i '' s/assertEquals/println/ src/test/*.kt && touch -t 202001010000 src/test/*.kt"; do
+  existing_test_repo
+  set_mtime src/test/CoreTest.kt -3600; ledger_window s-me m1 -590 -589
+  fake_session s-me "$TMP/me.jsonl" "$cmd" Bash
+  out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+  check "this session's \`$cmd\` (old mtime) -> UNVERIFIED" 2 $? "$out" "PASS —"
+  existing_test_repo
+  set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+  fake_session s-me "$TMP/me.jsonl" "$cmd" Bash
+  out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+  check "this session's \`$cmd\` (mtime in another session's window) -> UNVERIFIED" 2 $? "$out" "PASS —"
+done
+
+existing_test_repo   # mtime set back by something the gate cannot name (a script): the inode's
+# ctime (which nothing can set back) says the change happened during the session -> not "before"
+set_mtime src/test/CoreTest.kt -3600; ledger_window s-me m1 -590 -589
+fake_session s-me "$TMP/me.jsonl" "python3 restore_tests.py" Bash
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "mtime set back during the session (ctime is now) -> UNVERIFIED" 2 $? "$out" "PASS —"
 
 existing_test_repo   # the same edit made by THIS session (Edit tool) -> block
 fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt"
@@ -639,8 +709,9 @@ check "attribution impossible (Bash calls, no ledger) -> today's UNVERIFIED" 2 $
 expect_in "…the verdict names the edited test" "src/test/CoreTest.kt" "$out"
 
 existing_test_repo   # edited before this session's first prompt: never this session's edit
-set_mtime src/test/CoreTest.kt -3600
-fake_session s-me "$TMP/me.jsonl"
+# (the session starts 10 s from now: an inode's ctime cannot be set back, so "before the
+# session" is simulated by starting the session after the edit)
+SESSION_SHIFT=610 fake_session s-me "$TMP/me.jsonl"
 out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
 check "existing test edited before this session started -> warning, not a block" 0 $? "$out"
 
@@ -648,6 +719,82 @@ existing_test_repo   # a missing transcript: today's behaviour
 out="$(run_gate --run-tests --session s-me --transcript "$TMP/nope.jsonl")"
 check "unreadable transcript -> today's UNVERIFIED" 2 $? "$out" "PASS —"
 expect_in "…the verdict names the edited test" "src/test/CoreTest.kt" "$out"
+
+# --- Another Claude Code session edited the test with the Edit tool (no Bash window) --------
+# Its transcript sits next to this one (~/.claude/projects/<slug>/<session>.jsonl, sub-agents
+# under <session>/subagents/). An Edit/Write of the same absolute path whose tool_use→tool_result
+# span holds the file's mtime is positive evidence of "other". Bounded: only transcripts touched
+# since this session started, only their last 8 MB; any doubt stays blocking.
+# other_edit <transcript> <sid> <path> <use-offset> [result-offset|none] [error] — offsets from now
+other_edit() {
+  mkdir -p "$(dirname "$1")"
+  python3 - "$@" <<'PY'
+import json, sys, time
+tp, sid, path, use = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
+res = sys.argv[5] if len(sys.argv) > 5 else "none"
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + ".%03dZ" % int((t % 1) * 1000)
+now = time.time()
+recs = [{"type": "user", "sessionId": sid, "timestamp": iso(now + use - 30), "message": {"role": "user", "content": "go"}},
+        {"type": "assistant", "sessionId": sid, "timestamp": iso(now + use), "message": {"content": [
+            {"type": "tool_use", "id": "o1", "name": "Edit", "input": {"file_path": path, "old_string": "a", "new_string": "b"}}]}}]
+if res != "none":
+    blk = {"type": "tool_result", "tool_use_id": "o1", "content": "ok"}
+    if len(sys.argv) > 6 and sys.argv[6] == "error":
+        blk["is_error"] = True
+    recs.append({"type": "user", "sessionId": sid, "timestamp": iso(now + float(res)), "message": {"role": "user", "content": [blk]}})
+with open(tp, "a") as fh:
+    fh.write("".join(json.dumps(r) + "\n" for r in recs))
+PY
+}
+P="$TMP/proj"
+other_case() { # <name> <expected> — this session: no write of the test, windows elsewhere
+  out="$(run_gate --run-tests --session s-me --transcript "$P/s-me.jsonl")"; local rc=$?
+  if [ "$2" = 0 ]; then check "$1" 0 "$rc" "$out"; else check "$1" 2 "$rc" "$out" "PASS —"; fi
+}
+fresh_other() { existing_test_repo; rm -rf "$P"; mkdir -p "$P"; set_mtime src/test/CoreTest.kt -120
+  ledger_window s-me m1 -590 -589; fake_session s-me "$P/s-me.jsonl"; }
+
+fresh_other; other_edit "$P/s-other.jsonl" s-other "$TMP/repo/src/test/CoreTest.kt" -121 -119.5
+other_case "another session's Edit of the test (its transcript, no Bash window) -> warning (PASS)" 0
+json="$(run_gate --run-tests --json --session s-me --transcript "$P/s-me.jsonl" | tail -1)"
+python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["tests_touched"] == [] and d["tests_touched_other"] == ["src/test/CoreTest.kt"], d' "$json" 2>/dev/null \
+  && echo "✔ --json: the other session's Edit lands in tests_touched_other" || { echo "✖ json: $(printf '%s' "$json" | cut -c1-300)"; FAILS=$((FAILS + 1)); }
+
+fresh_other; other_edit "$P/s-other/subagents/agent-a1.jsonl" s-other "$TMP/repo/src/test/CoreTest.kt" -121 -119.5
+other_case "another session's sub-agent Edit of the test -> warning (PASS)" 0
+
+fresh_other; other_edit "$P/s-other.jsonl" s-other "$TMP/repo/src/test/CoreTest.kt" -122.5 none
+other_case "another session's Edit with no tool_result yet, seconds before the mtime -> warning (PASS)" 0
+
+fresh_other; other_edit "$P/s-other.jsonl" s-other "$TMP/repo/src/test/CoreTest.kt" -60 -59
+other_case "another session's Edit, but a minute after the mtime -> UNVERIFIED" 2
+
+fresh_other; other_edit "$P/s-other.jsonl" s-other "$TMP/repo/src/test/CoreTest.kt" -121 -119.5 error
+other_case "another session's Edit that failed (is_error) -> UNVERIFIED" 2
+
+fresh_other; other_edit "$P/s-other.jsonl" s-other "$TMP/repo/src/test/Other.kt" -121 -119.5
+other_case "another session's Edit of a different file -> UNVERIFIED" 2
+
+fresh_other; other_edit "$P/s-other.jsonl" s-me "$TMP/repo/src/test/CoreTest.kt" -121 -119.5
+other_case "a copy of THIS session's records in another file (fork) -> UNVERIFIED" 2
+
+fresh_other; fake_session s-me "$P/s-me.jsonl" "$TMP/repo/src/test/CoreTest.kt"
+other_edit "$P/s-other.jsonl" s-other "$TMP/repo/src/test/CoreTest.kt" -121 -119.5
+other_case "both sessions edited the test (this one too) -> UNVERIFIED" 2
+
+fresh_other; other_edit "$P/s-other.jsonl" s-other "$TMP/repo/src/test/CoreTest.kt" -121 -119.5
+set_mtime "$P/s-other.jsonl" -700
+other_case "bound: a transcript untouched since before this session is not read -> UNVERIFIED" 2
+
+fresh_other; other_edit "$P/s-other.jsonl" s-other "$TMP/repo/src/test/CoreTest.kt" -121 -119.5
+python3 -c 'import json,sys
+line = json.dumps({"type": "assistant", "sessionId": "s-other", "message": {"content": [{"type": "text", "text": "x" * 4000}]}}) + "\n"
+open(sys.argv[1], "a").write(line * (9 * 1024 * 1024 // len(line) + 1))' "$P/s-other.jsonl"
+other_case "bound: the Edit is more than 8 MB before the transcript's end -> UNVERIFIED" 2
+
+fresh_other; other_edit "$P/s-other.jsonl" s-other "$TMP/repo/src/test/CoreTest.kt" -121 -119.5
+fake_session s-me "$P/s-me.jsonl" "$TMP/repo/src/test/CoreTest.kt" mcp__jetbrains__replace_text_in_file
+other_case "another session's Edit, but this session called a write-capable tool -> UNVERIFIED" 2
 
 # --- Another run holds the project's test-run lock: BUSY, said as such -----------------
 # A BUSY run is UNTESTED (exit 4) but not "missing tool/device" — the Stop hook must tell it

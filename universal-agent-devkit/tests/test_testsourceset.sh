@@ -216,5 +216,51 @@ for v in 1 2 3 4 5 6; do echo "class Foo$v" > "$R/lib/src/main/kotlin/Foo.kt"
 [ "$RCS" = 220220 ] && ok "Claude session (scoped by its transcript): per-session attempts guard only, no total cap" \
   || fail "Claude session capped (exits $RCS)"
 
+# ── 12. what THIS session wrote: the rule of bin/session_authorship.py (post-fix-gate's) ──
+# The scope used to see only Edit/Write/NotebookEdit and a short list of Bash verbs: Kotlin
+# written by a write-capable MCP tool, MultiEdit, `touch`, `rsync` into a directory… left the
+# session "wrote no Kotlin" → PASS without compiling. Now: a tool it cannot see through means
+# repo-wide (fail closed); MultiEdit, touch/rsync/tar… and directory/glob names are this
+# session's writes.
+# claude_stop <tool> <input-json> [hook] — a Claude transcript with that one tool call
+claude_stop() {
+  python3 - "$TMP/c12.jsonl" "$1" "$2" <<'PY'
+import json, sys
+use = {"type": "tool_use", "id": "t1", "name": sys.argv[2], "input": json.loads(sys.argv[3])}
+open(sys.argv[1], "w").write(json.dumps({"type": "assistant", "message": {"content": [use]}}) + "\n")
+PY
+  printf '{"session_id":"c12-%s","transcript_path":"%s","cwd":"%s"}' "$N" "$TMP/c12.jsonl" "$R" \
+    | CLAUDE_PROJECT_DIR="$R" HOME="$TMP/home" DEVKIT_ROOT= bash "${3:-$GATE}" >/dev/null 2>"$TMP/c12_err"
+  RC=$?
+}
+broken_lib() {
+  new_repo
+  module lib 'plugins { id("com.android.library") }'
+  echo ":lib:compileDebugUnitTestKotlin" > "$R/.tasks"; echo ":lib:compileDebugUnitTestKotlin" > "$R/.broken"
+}
+ncalls() { if [ -f "$R/.calls" ]; then wc -l < "$R/.calls" | tr -d ' '; else echo 0; fi; }
+FOO_ABS() { printf '%s/lib/src/main/kotlin/Foo.kt' "$R"; }
+
+broken_lib; claude_stop mcp__jetbrains__replace_text_in_file '{"pathInProject":"lib/src/main/kotlin/Foo.kt","oldText":"a","newText":"b"}'
+[ "$RC" = 2 ] && [ "$(ncalls)" = 1 ] && ok "Kotlin written by an MCP write tool → compiled (repo-wide), broken src/test blocks" \
+  || fail "MCP write tool: want exit 2 + 1 compile; got exit $RC, calls=$(ncalls)"
+broken_lib; claude_stop MultiEdit "{\"file_path\":\"$(FOO_ABS)\",\"edits\":[]}"
+[ "$RC" = 2 ] && grep -qF ":lib:compileDebugUnitTestKotlin" "$R/.calls" && ok "MultiEdit of Kotlin → scoped compile, blocks" \
+  || fail "MultiEdit: want exit 2; got exit $RC, calls=$(ncalls)"
+broken_lib; claude_stop Bash '{"command":"touch -t 202001010000 lib/src/main/kotlin/Foo.kt"}'
+[ "$RC" = 2 ] && grep -qF ":lib:compileDebugUnitTestKotlin" "$R/.calls" && ok "touch -t on Kotlin → this session's write, blocks" \
+  || fail "touch: want exit 2; got exit $RC, calls=$(ncalls)"
+broken_lib; claude_stop Bash '{"command":"rsync -a /tmp/backup/lib/ lib/"}'
+[ "$RC" = 2 ] && grep -qF ":lib:compileDebugUnitTestKotlin" "$R/.calls" && ok "rsync into lib/ (a directory name) → this session's write, blocks" \
+  || fail "rsync dir: want exit 2; got exit $RC, calls=$(ncalls)"
+broken_lib; claude_stop mcp__claude_ai_Atlassian_Rovo__getJiraIssue '{"issueIdOrKey":"A-1"}'
+[ "$RC" = 0 ] && [ "$(ncalls)" = 0 ] && ok "only a read tool (getJiraIssue): the dirty Kotlin is another session's → no compile" \
+  || fail "read-only session compiled or blocked (exit $RC, calls=$(ncalls))"
+# The hook cannot find bin/session_authorship.py (copied alone, no DevKit around): repo-wide.
+mkdir -p "$TMP/lonely"; cp "$GATE" "$TMP/lonely/testsourceset_gate.sh"
+broken_lib; claude_stop mcp__claude_ai_Atlassian_Rovo__getJiraIssue '{"issueIdOrKey":"A-1"}' "$TMP/lonely/testsourceset_gate.sh"
+[ "$RC" = 2 ] && [ "$(ncalls)" = 1 ] && ok "no bin/session_authorship.py next to the hook → repo-wide compile (fail closed)" \
+  || fail "missing shared rule: want exit 2 + compile; got exit $RC, calls=$(ncalls)"
+
 if [ "$FAILS" -ne 0 ]; then echo "test_testsourceset: $FAILS FAILED"; exit 1; fi
 echo "test_testsourceset: all checks passed"
