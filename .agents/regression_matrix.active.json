@@ -146,6 +146,22 @@
           "command": "bash universal-agent-devkit/tests/run_impacted.sh"
         }
       ]
+    },
+    {
+      "component": "workbench-agent-config",
+      "watch_files": [
+        ".claude/settings.json",
+        ".mcp.json",
+        "mcp_config.json",
+        "AGENTS.md"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-WB-CONFIG-01",
+          "name": "agent-kit health: every registered hook exists, imports resolve, context in sync",
+          "command": "bash universal-agent-devkit/bin/agent-kit health -t ."
+        }
+      ]
     }
   ]
 }
