@@ -373,6 +373,16 @@ printf '{"session_id":"s-y2","hook_event_name":"Stop","transcript_path":"%s"}' "
   | CLAUDE_PROJECT_DIR="$X" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; rc=$?
 [ "$rc" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/err" && ok "the same edit made by this session (Edit): still blocked" \
   || fail "own test edit not blocked (rc=$rc err='$(head -3 "$TMP/err")')"
+# Only a person can clear "an existing test was edited" (review the diff, or commit it): the
+# agent is told once per change; later stops of the same change go through with a reminder
+# instead of blocking every turn (2026-09-25: one session was blocked on 6 consecutive stops).
+y2stop() { printf '{"session_id":"s-y2","hook_event_name":"Stop","transcript_path":"%s"}' "$TMP/y2.jsonl" \
+  | CLAUDE_PROJECT_DIR="$X" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+y2stop; rc=$?
+[ "$rc" = 0 ] && grep -q "src/test/CoreTest.kt" "$TMP/out" && ok "own test edit awaiting human review: second stop allowed with a reminder" \
+  || fail "human-review-only block repeated (rc=$rc err='$(head -2 "$TMP/err")')"
+echo "fun ok() = 4" > src/Core.kt; y2stop; rc=$?
+[ "$rc" = 2 ] && ok "a new change with the test edit still pending: blocked once again" || fail "new change not blocked (rc=$rc)"
 
 if [ "$FAILS" -ne 0 ]; then echo "regression gate hook: $FAILS FAILED"; exit 1; fi
 echo "regression gate hook: all checks passed"

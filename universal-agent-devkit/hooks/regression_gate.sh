@@ -476,5 +476,18 @@ if uncovered:
     cure.append("File chưa có test: thêm test vào regression_matrix.json "
                 "hoặc `python3 bin/regression_checklist.py link UNCOVERED:<file> <TEST-ID>`.")
 cure.append("Nếu thực sự không làm được, dừng và nói rõ cho người dùng.")
+
+if res.returncode == 2 and touched and not failing and not problem and not uncovered \
+        and not summary.get("findings") and not summary.get("unreadable"):
+    # Only a person clears an edited existing test (review the diff, or commit it). Block ONCE per
+    # change so the agent tells the user; later stops of the same change go through with a
+    # reminder instead of blocking every turn (2026-09-25: 6 consecutive stops blocked).
+    if state.get("touched_fp") == fp:
+        note(f"tests-touched reminder fp={fp}")
+        print(json.dumps({"systemMessage": "\n".join(["⚠ Vẫn chờ người duyệt diff test (không chặn lại, KHÔNG phải PASS):"]
+                                                     + lines[1:])}, ensure_ascii=False))
+        sys.exit(0)
+    state["touched_fp"] = fp
+    save_state()
 block(lines, cure, res.returncode)
 ' || exit $?
