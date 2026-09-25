@@ -144,6 +144,22 @@ out="$(raw_hook '{"hookEventName":"user_prompt_submit","hook_event_name":"UserPr
 landed "a real bug prompt in a Grok-shaped payload → REPORTED row" "$out"
 out="$(raw_hook "$(payload "Lỗi: nút Lưu không phản hồi sau khi đổi ngôn ngữ" h2)" DEVKIT_AGENT=gemini)"
 landed "a real bug prompt bridged from Gemini/Antigravity (DEVKIT_AGENT) → REPORTED row" "$out"
+# A user's report that merely starts with "You are …" / "Bạn là …" is still a report: only a
+# role ASSIGNMENT ("You are a/an/the <role>", "Bạn là một <vai>") is a harness prompt (review 2026-09-25).
+i=0
+for p in "You are right, but the app still crashes when opening a PDF" \
+         "You're wrong, the login bug is still there: crash on submit" \
+         "Bạn là dev Android thì xem giúp: app bị crash khi mở file PDF có mật khẩu" \
+         "As an expert, fix the crash in login" \
+         "Your task is to fix the crash on the login screen"; do
+  i=$((i + 1)); out="$(raw_hook "$(payload "$p (case $i)" h4)")"
+  landed "user report opening '${p%% *} …' → REPORTED row" "$out"
+done
+n0="$(nbugs)"
+out="$(hook "You are a senior Android reviewer. Do not edit files; list every crash in the diff." h4)"
+nothing "'You are a senior … reviewer' (role assignment) still → no row" "$out"
+out="$(hook "Bạn là một reviewer khó tính. Không sửa file, chỉ liệt kê lỗi crash." h4)"
+nothing "'Bạn là một reviewer …' (role assignment) still → no row" "$out"
 n0="$(nbugs)"
 
 # …and real reports still land, however long or however they quote JSON.
