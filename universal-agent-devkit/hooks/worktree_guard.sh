@@ -1,0 +1,360 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# worktree_guard.sh — PreToolUse hook on Bash and Edit|Write: a session or agent
+# that works in a git WORKTREE must not write into the MAIN checkout of that repo.
+#
+# WHY (2026-09-25). A subagent told to work in a worktree issued commands without
+# `cd`; its shell was in the main checkout and it overwrote files there. Nothing
+# stopped it: every other gate asks WHAT is written, none asks WHERE.
+#
+# WHO HAS A WORKTREE ("declared"), strongest signal first:
+#   1. DEVKIT_WORKTREE=<path> in the hook environment (explicit, any agent).
+#   2. A subagent (`agent_id` in the hook input) that the harness started in a
+#      worktree: its meta file <transcript dir>/<session>/subagents/agent-<id>.meta.json
+#      has "worktreePath", or its own transcript's first `cwd` is a linked worktree.
+#   3. The hook input `cwd` lies inside a linked worktree (the session runs there).
+#   These three BLOCK (exit 2). A fourth signal only WARNS: a subagent whose first
+#   prompt names exactly one worktree made by `agent-kit worktree add` (it carries
+#   <git dir>/devkit-worktree.json). A prompt can mention a worktree without the agent
+#   being meant to stay in it, so that is a hint, not a declaration: the model gets an
+#   additionalContext reminder and the call goes through.
+#
+# WHAT IS BLOCKED, with W = the declared worktree and M = the main checkout of its repo
+# (W ≠ M): an Edit/Write whose file lies in M, and a Bash command that writes into M —
+# a redirection, cp/mv/install/rsync/ln destination, rm/touch/truncate/tee/sed -i/perl -i
+# operand, a git write (add, commit, checkout, reset, …) or an interpreter/build tool run
+# with M as its working directory. The working directory of a Bash command is the hook
+# `cwd` (where the shell is), moved by any `cd`/`pushd` in the command. "In M" means the
+# nearest enclosing git tree is M itself, so M/.claude/worktrees/<other> is NOT M.
+# Reads of M (cat, grep, ls, git status/diff/log, cp FROM M) are never blocked.
+#
+# NOT AFFECTED: a session with no declared worktree — the common single-tree case exits
+# in bash before python starts (no agent_id, no DEVKIT_WORKTREE, cwd not in a linked
+# worktree). The leader applying a worktree's patch in M has no declared worktree.
+#
+# WHAT IT CANNOT SEE: a script that decides its own output path (`python3 gen.py` run
+# from W that writes into M), variables it cannot expand (`> "$OUT"`), and the real shell
+# cwd when the harness reports a different `cwd` than the shell uses.
+#
+# Escape hatch: WORKTREE_GUARD=0 (logged). Fail-open on internal error or no python3.
+# PreToolUse protocol: stdin JSON; exit 2 blocks (stderr → Claude); exit 0 allows.
+# bash 3.2 compatible.
+# ─────────────────────────────────────────────────────────────────────────────
+set -u
+
+INPUT="$(cat 2>/dev/null)" || INPUT=""
+
+REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
+
+if [ "${WORKTREE_GUARD:-1}" = "0" ]; then
+  mkdir -p "${LOG_DIR}" 2>/dev/null && \
+    echo "[$(date +%Y-%m-%dT%H:%M:%S)] WORKTREE_GUARD=0 — guard bypassed" >> "${LOG_DIR}/worktree_guard.log" 2>/dev/null
+  exit 0
+fi
+
+RX_TOOL='"tool_name"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+[[ ${INPUT} =~ ${RX_TOOL} ]] || exit 0
+case "${BASH_REMATCH[1]}" in Bash|Edit|Write|NotebookEdit) ;; *) exit 0 ;; esac
+
+# ── fast path: nothing declares a worktree → exit before python ──────────────
+if [ -z "${DEVKIT_WORKTREE:-}" ]; then
+  RX_AGENT='"agent_id"[[:space:]]*:[[:space:]]*"[^"]'
+  if ! [[ ${INPUT} =~ ${RX_AGENT} ]]; then
+    RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+    [[ ${INPUT} =~ ${RX_CWD} ]] || exit 0
+    d="${BASH_REMATCH[1]}"
+    linked=0
+    while [ -n "${d}" ] && [ "${d}" != "/" ]; do
+      if [ -d "${d}/.git" ]; then break; fi
+      if [ -f "${d}/.git" ]; then
+        case "$(head -1 "${d}/.git" 2>/dev/null)" in *"/worktrees/"*) linked=1 ;; esac
+        break
+      fi
+      d="$(dirname "${d}")"
+    done
+    [ "${linked}" = "1" ] || exit 0
+  fi
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "⚠ worktree_guard: python3 không có — guard này KHÔNG chạy (ghi vào main checkout không bị chặn)." >&2
+  exit 0
+fi
+mkdir -p "${LOG_DIR}" 2>/dev/null
+[ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+
+WG_INPUT="${INPUT}" WG_LOG="${LOG_DIR}/worktree_guard.log" WG_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
+python3 <<'PY'
+import json, os, re, shlex, sys
+
+log = os.environ.get("WG_LOG", "/dev/null")
+ts = os.environ.get("WG_TS", "?")
+
+def logline(s):
+    try:
+        with open(log, "a") as fh:
+            fh.write(f"[{ts}] {s}\n")
+    except Exception:
+        pass
+
+try:
+    d = json.loads(os.environ.get("WG_INPUT", ""))
+except Exception:
+    sys.exit(0)
+tool = d.get("tool_name", "")
+inp = d.get("tool_input") or {}
+cwd = d.get("cwd") or os.getcwd()
+agent = str(d.get("agent_id") or "")
+tp = str(d.get("transcript_path") or "")
+sid = str(d.get("session_id") or "")
+
+# ── git trees without a subprocess ──────────────────────────────────────────
+def tree_of(path):
+    """(top dir, is_linked_worktree, main checkout) of the git tree holding `path`, or None."""
+    cur = os.path.realpath(path)
+    while not os.path.exists(cur):
+        up = os.path.dirname(cur)
+        if up == cur:
+            return None
+        cur = up
+    if os.path.isfile(cur):
+        cur = os.path.dirname(cur)
+    while True:
+        dotgit = os.path.join(cur, ".git")
+        if os.path.isdir(dotgit):
+            return cur, False, cur
+        if os.path.isfile(dotgit):
+            try:
+                line = open(dotgit).readline().strip()
+            except OSError:
+                return None
+            if not line.startswith("gitdir:"):
+                return None
+            gdir = line[len("gitdir:"):].strip()
+            gdir = os.path.realpath(gdir if os.path.isabs(gdir) else os.path.join(cur, gdir))
+            if "/worktrees/" not in gdir:
+                return cur, False, cur                      # a submodule: its own tree
+            try:
+                common = open(os.path.join(gdir, "commondir")).read().strip()
+                common = os.path.realpath(common if os.path.isabs(common) else os.path.join(gdir, common))
+            except OSError:
+                common = gdir.split("/worktrees/")[0]
+            main = os.path.dirname(common) if os.path.basename(common) == ".git" else None
+            return cur, True, main
+        up = os.path.dirname(cur)
+        if up == cur:
+            return None
+        cur = up
+
+# ── which worktree did this session / agent declare? ─────────────────────────
+declared, source, strength = None, "", "block"
+if os.environ.get("DEVKIT_WORKTREE"):
+    declared, source = os.environ["DEVKIT_WORKTREE"], "DEVKIT_WORKTREE"
+
+def agent_files(suffix):
+    if not (agent and tp):
+        return []
+    base, name = os.path.splitext(tp)[0], f"agent-{agent}{suffix}"
+    return [os.path.join(base, "subagents", name), os.path.join(os.path.dirname(tp), name),
+            os.path.join(os.path.dirname(tp), sid, "subagents", name)]
+
+agent_transcript = next((p for p in agent_files(".jsonl") if os.path.isfile(p)), None)
+if not declared and agent:
+    for meta in agent_files(".meta.json"):
+        try:
+            wp = json.load(open(meta)).get("worktreePath")
+        except Exception:
+            continue
+        if isinstance(wp, str) and wp:
+            declared, source = wp, "worktreePath (harness)"
+            break
+    if not declared and agent_transcript:
+        try:
+            with open(agent_transcript) as fh:
+                for line in fh:
+                    rc = json.loads(line).get("cwd")
+                    if isinstance(rc, str) and rc:
+                        t = tree_of(rc)
+                        if t and t[1]:
+                            declared, source = t[0], "agent transcript cwd"
+                        break
+        except Exception:
+            pass
+if not declared:
+    t = tree_of(cwd)
+    if t and t[1]:
+        declared, source = t[0], "cwd"
+if not declared and agent_transcript:
+    # Warn-only hint: the agent's first prompt names exactly one `agent-kit worktree add` worktree.
+    t = tree_of(cwd)
+    if t and t[2]:
+        prompt = ""
+        try:
+            with open(agent_transcript) as fh:
+                for line in fh:
+                    rec = json.loads(line)
+                    msg = rec.get("message") or {}
+                    if rec.get("type") == "user" or msg.get("role") == "user":
+                        c = msg.get("content")
+                        prompt = c if isinstance(c, str) else " ".join(
+                            b.get("text", "") for b in (c or []) if isinstance(b, dict))
+                        break
+        except Exception:
+            prompt = ""
+        wt_root = os.path.join(t[2], ".git", "worktrees")
+        named = []
+        try:
+            for name in os.listdir(wt_root):
+                g = os.path.join(wt_root, name)
+                if not os.path.isfile(os.path.join(g, "devkit-worktree.json")):
+                    continue
+                try:
+                    wpath = os.path.dirname(open(os.path.join(g, "gitdir")).read().strip())
+                except OSError:
+                    continue
+                if wpath and re.search(re.escape(wpath) + r"(?![\w.-])", prompt):
+                    named.append(wpath)
+        except OSError:
+            pass
+        if len(named) == 1:
+            declared, source, strength = named[0], "agent prompt", "warn"
+if not declared:
+    sys.exit(0)
+
+wt = tree_of(declared)
+if not wt or not wt[1] or not wt[2]:
+    sys.exit(0)                                   # not a linked worktree: nothing to guard
+W, M = wt[0], os.path.realpath(wt[2])
+if os.path.realpath(W) == M:
+    sys.exit(0)
+
+def in_main(path, base):
+    p = os.path.expanduser(path)
+    p = p if os.path.isabs(p) else os.path.join(base, p)
+    t = tree_of(p)
+    return bool(t) and os.path.realpath(t[0]) == M
+
+# ── targets ─────────────────────────────────────────────────────────────────
+hits = []
+if tool in ("Edit", "Write", "NotebookEdit"):
+    fp = inp.get("file_path") or inp.get("notebook_path") or ""
+    if isinstance(fp, str) and fp and in_main(fp, cwd):
+        hits.append(fp)
+elif tool == "Bash":
+    cmd = str(inp.get("command", ""))
+    HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+    out, pos = [], 0
+    while True:                                   # heredoc bodies are data, not commands
+        m = HEREDOC.search(cmd, pos)
+        nl = cmd.find("\n", m.end()) if m else -1
+        if not m or nl < 0:
+            out.append(cmd[pos:])
+            break
+        e = re.compile(r"^[ \t]*" + re.escape(m.group(2)) + r"[ \t]*$", re.M).search(cmd, nl + 1)
+        out.append(cmd[pos:nl + 1])
+        pos = e.end() if e else len(cmd)
+    try:
+        lex = shlex.shlex("".join(out), posix=True, punctuation_chars=";&|<>()\n")
+        lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""
+        toks = list(lex)
+    except ValueError:
+        sys.exit(0)                               # untokenisable: fail open
+    segs, cur = [], []
+    for tok in toks:
+        if tok and set(tok) <= set(";&|()\n"):
+            if cur:
+                segs.append(cur)
+            cur = []
+        else:
+            cur.append(tok)
+    if cur:
+        segs.append(cur)
+    DEST_LAST = {"cp", "install", "rsync", "ln", "scp"}
+    ALL_ARGS = {"mv", "rm", "touch", "truncate", "tee", "mkdir", "rmdir", "chmod", "unlink", "dd"}
+    GIT_WRITE = {"add", "am", "apply", "checkout", "cherry-pick", "clean", "commit", "merge", "mv", "pull",
+                 "rebase", "reset", "restore", "revert", "rm", "stash", "switch"}
+    RUNNERS = re.compile(r"^(?:python[\d.]*|node|npm|npx|yarn|pnpm|bun|deno|ruby|perl|php|make|gradle|"
+                         r"\./gradlew|gradlew|mvn|cargo|go|pytest|jest|vitest|bash|sh|zsh|dotnet|swift|flutter)$")
+    PREFIX = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "time", "command",
+              "builtin", "exec", "nohup", "sudo", "env", "done", "fi"}
+    here = cwd
+    for seg in segs:
+        words, redirs, i = [], [], 0
+        while i < len(seg):
+            tok = seg[i]
+            if tok and set(tok) <= set("<>&|"):
+                nxt = seg[i + 1] if i + 1 < len(seg) else ""
+                if ">" in tok and not tok.endswith("&") and nxt and nxt != "/dev/null" \
+                        and not re.fullmatch(r"-|\d+", nxt):
+                    redirs.append(nxt)
+                i += 2
+                continue
+            words.append(tok)
+            i += 1
+        while words and (words[0] in PREFIX or re.fullmatch(r"[A-Za-z_]\w*=.*", words[0])):
+            words = words[1:]
+        verb = words[0] if words else ""
+        args = [a for a in words[1:] if not a.startswith("-")]
+        targets = list(redirs)
+        if verb in ("cd", "pushd"):
+            if args and "$" not in args[0]:
+                nd = os.path.expanduser(args[0])
+                here = nd if os.path.isabs(nd) else os.path.join(here, nd)
+            elif not args:
+                here = os.path.expanduser("~")
+            continue
+        base = os.path.basename(verb)
+        if base in DEST_LAST and args:
+            targets.append(args[-1])
+        elif base in ALL_ARGS:
+            targets += args
+        elif base == "sed" and any(re.fullmatch(r"-[A-Za-z]*i.*|--in-place.*", a) for a in words[1:]):
+            targets += [a for a in args if os.path.exists(a if os.path.isabs(a) else os.path.join(here, a))]
+        elif base == "perl" and any(re.fullmatch(r"-[A-Za-z]*i.*", a) for a in words[1:]):
+            targets += [a for a in args if os.path.exists(a if os.path.isabs(a) else os.path.join(here, a))]
+        elif base == "git":
+            gdir, sub, skip = here, "", None
+            for a in words[1:]:
+                if skip:
+                    if skip == "-C":
+                        gdir = a if os.path.isabs(a) else os.path.join(gdir, a)
+                    skip = None
+                elif a in ("-C", "-c", "--git-dir", "--work-tree"):
+                    skip = a
+                elif not a.startswith("-"):
+                    sub = a
+                    break
+            if sub in GIT_WRITE:
+                targets.append(gdir)
+        elif RUNNERS.match(verb) or RUNNERS.match(base):
+            targets.append(here)
+        for t in targets:
+            if "$" in t or "`" in t:
+                continue
+            if in_main(t, here):
+                hits.append(t if os.path.isabs(t) else f"{t} (in {here})")
+
+if not hits:
+    sys.exit(0)
+where = ", ".join(sorted(set(hits))[:4])
+if strength == "warn":
+    msg = (f"WORKTREE GUARD (warning): your first prompt names the worktree {W}, but this {tool} call "
+           f"writes into the MAIN checkout {M}: {where}. If you were told to work in that worktree, "
+           f"stop and redo it there: `cd {W} && …`, or an absolute path under {W}.")
+    logline(f"WARN agent={agent} source={source} W={W} hits={sorted(set(hits))[:4]}")
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": msg}}))
+    sys.exit(0)
+logline(f"BLOCK agent={agent or '-'} source={source} W={W} tool={tool} hits={sorted(set(hits))[:4]}")
+sys.stderr.write(
+    f"⛔ WORKTREE GUARD: this {'agent' if agent else 'session'} works in the worktree\n"
+    f"    {W}\n  (declared by {source}), but this {tool} call writes into the MAIN checkout\n"
+    f"    {M}\n  target: {where}\n"
+    f"  The shell may have started in the main checkout. Redo it inside the worktree: `cd {W} && …`,\n"
+    f"  or use the absolute path under {W}. Bringing work back into the main checkout is the leader's\n"
+    f"  step (agent-kit worktree diff … | git apply --3way), not this agent's. Off: WORKTREE_GUARD=0.\n")
+sys.exit(2)
+PY
+rc=$?
+[ "${rc}" -eq 2 ] && exit 2
+exit 0

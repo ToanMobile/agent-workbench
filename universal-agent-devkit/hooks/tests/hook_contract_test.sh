@@ -1791,6 +1791,71 @@ else
 fi
 echo
 
+# ── worktree_guard.sh — PreToolUse (Bash, Edit|Write) ───────────────────────
+# 2026-09-25: a subagent told to work in a worktree ran commands without `cd`, its shell was in
+# the main checkout, and it overwrote files there. When the session/agent declared a worktree
+# (hook `cwd` inside a linked worktree, the subagent's harness meta `worktreePath` or its
+# transcript cwd, or DEVKIT_WORKTREE), a write aimed at the MAIN checkout of the same repo is
+# blocked. A single-tree session is never touched.
+echo "worktree_guard.sh"
+WG="$(mktemp -d "${TMPDIR:-/tmp}/hookwg.XXXXXX")"; WG="$(cd "${WG}" && pwd -P)"
+WG_M="${WG}/main"; WG_W="${WG}/wt"; WG_O="${WG_M}/.claude/worktrees/other"
+( mkdir -p "${WG_M}/src" && cd "${WG_M}" && git init -q . && git config user.email t@t && git config user.name t \
+  && printf 'a\n' > src/a.kt && printf '.claude/\nlocal.properties\n' > .gitignore && git add -A && git commit -qm init \
+  && git worktree add -q "${WG_W}" -b wt && git worktree add -q "${WG_O}" -b other \
+  && printf 'sdk.dir=/x\n' > local.properties ) >/dev/null 2>&1
+printf '{"branch":"wt","main":"%s"}\n' "${WG_M}" > "$(git -C "${WG_W}" rev-parse --absolute-git-dir)/devkit-worktree.json"
+WG_PROJ="${WG}/proj"; mkdir -p "${WG_PROJ}/S1/subagents"
+: > "${WG_PROJ}/S1.jsonl"
+printf '{"agentType":"general-purpose","worktreePath":"%s","spawnedWithWorktree":true}\n' "${WG_W}" \
+  > "${WG_PROJ}/S1/subagents/agent-iso1.meta.json"
+python3 - "${WG_PROJ}/S1/subagents/agent-told1.jsonl" "${WG_W}" "${WG_M}" <<'PY'
+import json, sys
+out, w, m = sys.argv[1:4]
+open(out, "w").write(json.dumps({"cwd": m, "isSidechain": True, "type": "user", "message": {"role": "user",
+    "content": f"Fix the bug. Work in the worktree {w} only; commit there."}}) + "\n")
+PY
+wg_payload() { # tool cwd agent_id input-json
+  python3 -c 'import json,sys; t,c,a,i,tp=sys.argv[1:6]; d={"session_id":"S1","transcript_path":tp,"cwd":c,"hook_event_name":"PreToolUse","tool_name":t,"tool_input":json.loads(i)}
+if a: d["agent_id"]=a
+print(json.dumps(d))' "$1" "$2" "$3" "$4" "${WG_PROJ}/S1.jsonl"
+}
+wg_edit() { python3 -c 'import json,sys; print(json.dumps({"file_path":sys.argv[1],"old_string":"a","new_string":"b"}))' "$1"; }
+wg_bash() { python3 -c 'import json,sys; print(json.dumps({"command":sys.argv[1]}))' "$1"; }
+run_case "single tree: Edit in the main checkout allowed"       worktree_guard.sh 0 "$(wg_payload Edit "${WG_M}" "" "$(wg_edit "${WG_M}/src/a.kt")")"
+run_case "single tree: relative Bash write allowed"              worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" "" "$(wg_bash "sed -i '' s/a/b/ src/a.kt")")"
+run_case "cwd in worktree: Edit of MAIN checkout blocked"        worktree_guard.sh 2 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_M}/src/a.kt")")"
+run_case "cwd in worktree: Edit inside the worktree allowed"     worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_W}/src/a.kt")")"
+run_case "cwd in worktree: Edit of a nested other worktree ok"   worktree_guard.sh 0 "$(wg_payload Edit "${WG_W}" "" "$(wg_edit "${WG_O}/src/a.kt")")"
+run_case "cwd in worktree: Edit outside the repo allowed"        worktree_guard.sh 0 "$(wg_payload Write "${WG_W}" "" "$(wg_edit "${WG}/scratch.txt")")"
+run_case "cwd in worktree: cd W && sed -i allowed"               worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cd ${WG_W} && sed -i '' s/a/b/ src/a.kt")")"
+run_case "cwd in worktree: heredoc into MAIN blocked"            worktree_guard.sh 2 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cat > ${WG_M}/src/a.kt <<'EOF'
+x
+EOF")")"
+run_case "cwd in worktree: cp FROM main into worktree allowed"   worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cp ${WG_M}/local.properties ${WG_W}/local.properties")")"
+run_case "cwd in worktree: rm in MAIN blocked"                   worktree_guard.sh 2 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "rm -f ${WG_M}/src/a.kt")")"
+run_case "cwd in worktree: cat of MAIN (read) allowed"           worktree_guard.sh 0 "$(wg_payload Bash "${WG_W}" "" "$(wg_bash "cat ${WG_M}/src/a.kt 2>/dev/null | head")")"
+run_case "isolated agent, shell in main: relative sed blocked"   worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "sed -i '' s/a/b/ src/a.kt")")"
+run_case "isolated agent, shell in main: git commit blocked"     worktree_guard.sh 2 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git commit -qam wip")")"
+run_case "isolated agent, shell in main: git status allowed"     worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "git status --short")")"
+run_case "isolated agent: cd W && write allowed"                 worktree_guard.sh 0 "$(wg_payload Bash "${WG_M}" iso1 "$(wg_bash "cd ${WG_W} && echo x > src/b.kt")")"
+run_case "isolated agent: Edit of MAIN blocked"                  worktree_guard.sh 2 "$(wg_payload Edit "${WG_M}" iso1 "$(wg_edit "${WG_M}/src/a.kt")")"
+run_case "isolated agent: WORKTREE_GUARD=0 escape hatch"         worktree_guard.sh 0 "$(wg_payload Edit "${WG_M}" iso1 "$(wg_edit "${WG_M}/src/a.kt")")" WORKTREE_GUARD=0
+run_case "DEVKIT_WORKTREE declared: Edit of MAIN blocked"        worktree_guard.sh 2 "$(wg_payload Edit "${WG_M}" "" "$(wg_edit "${WG_M}/src/a.kt")")" DEVKIT_WORKTREE="${WG_W}"
+run_case "agent with no worktree of its own: main write allowed" worktree_guard.sh 0 "$(wg_payload Edit "${WG_M}" plain1 "$(wg_edit "${WG_M}/src/a.kt")")"
+# Only the PROMPT names the worktree (no harness isolation): a hint, not a declaration → warn, never block.
+out="$(printf '%s' "$(wg_payload Bash "${WG_M}" told1 "$(wg_bash "echo x > src/a.kt")")" \
+      | env CLAUDE_PROJECT_DIR="${SANDBOX}" bash "${HOOKS}/worktree_guard.sh" 2>/dev/null)"; rc=$?
+if [ "${rc}" -eq 0 ] && printf '%s' "${out}" | grep -q '"additionalContext"' && printf '%s' "${out}" | grep -q "${WG_W}"; then
+  PASS=$((PASS + 1)); printf '  ok   %-46s exit=0 + warning\n' "prompt-named worktree: main write warns only"
+else
+  FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ prompt-named worktree: main write warns only (rc=${rc}, out=$(printf '%s' "${out}" | head -c 160))"
+  printf '  FAIL %-46s rc=%s\n' "prompt-named worktree: main write warns only" "${rc}"
+fi
+rm -rf "${WG}"
+echo
+
 # ── report ──────────────────────────────────────────────────────────────────
 echo "─────────────────────────────────────────────"
 echo "contract points: ${PASS} ok, ${FAIL} deviating"
