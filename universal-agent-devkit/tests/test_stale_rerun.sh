@@ -60,4 +60,28 @@ printf '%s' "$out" | grep -q "chạy lại nền" && ok "SessionStart starts the
 for _ in $(seq 1 30); do [ "$(st REG-A)" = PASS ] && break; sleep 0.3; done
 [ "$(st REG-A)" = PASS ] && ok "background re-run finished → PASS" || fail "background: $(st REG-A)"
 
+# A suite run in the project tree waits for the per-project test-run lock that the gate holds
+# (.claude/audit-gate/test_run.lock): stale re-run and nightly go through run_one.
+python3 - "$P" "$TMP" <<'PY' &
+import fcntl, os, sys, time
+p, tmp = sys.argv[1], sys.argv[2]
+os.makedirs(p + "/.claude/audit-gate", exist_ok=True)
+with open(p + "/.claude/audit-gate/test_run.lock", "w") as f:
+    fcntl.flock(f, fcntl.LOCK_EX)
+    open(tmp + "/held", "w").close()
+    time.sleep(2)
+    open(tmp + "/released_at", "w").write(repr(time.time()))
+PY
+holder=$!
+for _ in $(seq 1 50); do [ -f "$TMP/held" ] && break; sleep 0.1; done
+python3 - "$P" "$TMP" "$DEVKIT_DIR" <<'PY'
+import sys; from pathlib import Path
+p, tmp, kit = sys.argv[1:]
+sys.path.insert(0, kit + "/scripts"); import stale_rerun
+stale_rerun.run_one(Path(p), "REG-A", "python3 -c 'import time; print(time.time())' > %s/ran_at" % tmp, [], 30)
+PY
+wait $holder
+python3 -c "import sys; sys.exit(0 if float(open('$TMP/ran_at').read()) >= float(open('$TMP/released_at').read()) else 1)" 2>/dev/null \
+  && ok "run_one waits for the project's test-run lock" || fail "run_one ran while another run held the lock"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_stale_rerun: all passed" || { echo "❌ test_stale_rerun: $FAILS failed"; exit 1; }

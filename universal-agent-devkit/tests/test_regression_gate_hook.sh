@@ -260,5 +260,56 @@ printf '{"session_id":"s-ad2","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$
 [ "$rc" = 0 ] && grep -q 'adopted' "$TMP/out" && ok "sample copy without the key: gate off, the message names \"adopted\"" \
   || fail "sample without adopted (rc=$rc out='$(cat "$TMP/out")')"
 
+# An existing test edited by ANOTHER session must not block this one (2026-09-25: session Y was
+# blocked on every Stop by two tests session X had edited). The hook hands the gate its session
+# id and transcript; another session's edit → the stop goes through with a warning (once per
+# change); the same edit made by this session → still blocked.
+X="$TMP/xsession"; mkdir -p "$X/src/test" "$X/.agents" && cd "$X" || exit 1
+git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt && echo "assert(true)" > src/test/CoreTest.kt
+cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/*.kt","src/test/*.kt"],
+ "mandatory_regression_tests":[{"id":"REG-X","name":"core","command":"true"}]}]}
+JSON
+git add -A && git commit -qm init
+echo "fun ok() = 2" > src/Core.kt && echo "// weakened" > src/test/CoreTest.kt
+python3 - "$X" "$TMP/y.jsonl" <<'PY'
+import json, os, sys, time
+repo, tp = sys.argv[1], sys.argv[2]
+now = time.time()
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
+os.utime(os.path.join(repo, "src/test/CoreTest.kt"), (now - 300, now - 300))   # written by session X…
+os.makedirs(os.path.join(repo, ".claude/audit-gate"), exist_ok=True)
+with open(os.path.join(repo, ".claude/audit-gate/bash_write_ledger.tsv"), "w") as f:
+    f.write("s-x\tstart\t%.3f\tb1\ns-x\tend\t%.3f\tb1\n" % (now - 305, now - 295))    # …inside X's Bash window
+    f.write("s-y\tstart\t%.3f\tm1\ns-y\tend\t%.3f\tm1\n" % (now - 590, now - 589))    # Y's own Bash window
+open(tp, "w").write("".join(json.dumps(r) + "\n" for r in [
+    {"type": "user", "timestamp": iso(now - 600), "message": {"role": "user", "content": "fix it"}},
+    {"type": "assistant", "timestamp": iso(now - 590), "message": {"content": [
+        {"type": "tool_use", "id": "m1", "name": "Bash", "input": {"command": "git status"}}]}}]))
+PY
+ystop() { printf '{"session_id":"s-y","hook_event_name":"Stop","transcript_path":"%s"}' "$1" \
+  | CLAUDE_PROJECT_DIR="$X" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+ystop "$TMP/y.jsonl"; rc=$?
+[ "$rc" = 0 ] && grep -q systemMessage "$TMP/out" && grep -q "src/test/CoreTest.kt" "$TMP/out" \
+  && ok "existing test edited by another session: stop allowed, warning names the file" \
+  || fail "another session's test edit blocked this one (rc=$rc out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")')"
+ystop "$TMP/y.jsonl"; rc=$?
+[ "$rc" = 0 ] && [ ! -s "$TMP/out" ] && ok "another session's test edit: warned once per change" || fail "warning repeated (rc=$rc)"
+python3 - "$X" "$TMP/y2.jsonl" <<'PY'
+import json, sys, time
+repo, tp = sys.argv[1], sys.argv[2]
+open(tp, "w").write("".join(json.dumps(r) + "\n" for r in [
+    {"type": "user", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 600)),
+     "message": {"role": "user", "content": "fix it"}},
+    {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "e1", "name": "Edit",
+        "input": {"file_path": repo + "/src/test/CoreTest.kt", "old_string": "a", "new_string": "b"}}]}}]))
+PY
+echo "fun ok() = 3" > src/Core.kt
+printf '{"session_id":"s-y2","hook_event_name":"Stop","transcript_path":"%s"}' "$TMP/y2.jsonl" \
+  | CLAUDE_PROJECT_DIR="$X" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; rc=$?
+[ "$rc" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/err" && ok "the same edit made by this session (Edit): still blocked" \
+  || fail "own test edit not blocked (rc=$rc err='$(head -3 "$TMP/err")')"
+
 if [ "$FAILS" -ne 0 ]; then echo "regression gate hook: $FAILS FAILED"; exit 1; fi
 echo "regression gate hook: all checks passed"

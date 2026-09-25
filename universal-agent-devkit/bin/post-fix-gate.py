@@ -310,6 +310,137 @@ def test_change_is_append_only(base_ref: str, repo_path: str) -> bool:
     return bool(added) and not any(TEST_SKIP_RE.search(a) for a in added)
 
 
+# Who edited an existing test? Same sources as hooks/testsourceset_gate.sh (which scopes its
+# compile the same way): the session's Edit/Write calls (its sub-agents' too), its write-shaped
+# Bash commands, and its Bash windows in .claude/audit-gate/bash_write_ledger.tsv. rm / git rm
+# count as writes here: a deleted test has no mtime, naming it is the only trace.
+_WRITE_VERB_RE = re.compile(r"\bsed\s+(-[A-Za-z]*i|--in-place)|\bperl\s+-[A-Za-z]*i|\btee\b|"
+                            r"\b(cp|mv|rm|install|patch|dd|truncate)\b|\bgit\s+(apply|am|checkout|restore|rm|mv)\b")
+_REDIRECT_TARGET_RE = re.compile(r">>?\s*[\"']?([^\s\"'<>|;&()]+)")
+_PATH_TOKEN_RE = re.compile(r"[^\s\"'<>|;&()=]+")
+
+
+def _session_trace(transcript: str):
+    """(files written by Edit/Write tools, Bash commands, first timestamp, Bash call count) of a
+    session, from its transcript and its sub-agents' — or None when there is nothing to judge by
+    (no transcript, unreadable, not one tool call)."""
+    from datetime import datetime  # noqa: PLC0415
+    if not transcript or not os.path.isfile(transcript):
+        return None
+    edited, bash, started, tool_uses = set(), [], None, 0
+    subs = sorted(Path(os.path.splitext(transcript)[0], "subagents").glob("*.jsonl"))
+    for i, path in enumerate([Path(transcript)] + subs):
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            if i == 0:
+                return None
+            continue
+        for line in lines:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if i == 0 and started is None and isinstance(rec.get("timestamp"), str):
+                try:
+                    started = datetime.fromisoformat(rec["timestamp"].replace("Z", "+00:00")).timestamp()
+                except ValueError:
+                    pass
+            content = (rec.get("message") or {}).get("content") if isinstance(rec.get("message"), dict) else None
+            for blk in content if isinstance(content, list) else []:
+                if not isinstance(blk, dict) or blk.get("type") != "tool_use":
+                    continue
+                tool_uses += 1
+                inp = blk.get("input") if isinstance(blk.get("input"), dict) else {}
+                if blk.get("name") in ("Edit", "MultiEdit", "Write", "NotebookEdit"):
+                    fp = inp.get("file_path") or inp.get("notebook_path")
+                    if isinstance(fp, str) and fp:
+                        edited.add(os.path.realpath(fp))
+                elif blk.get("name") == "Bash" and isinstance(inp.get("command"), str):
+                    bash.append(inp["command"])
+    return (edited, bash, started, len(bash)) if tool_uses else None
+
+
+def _bash_windows(project: Path) -> list:
+    """(start, end, session) of every Bash command in bash_write_ledger.tsv; a start with no
+    end (a backgrounded command) stays open until now."""
+    windows, opens = [], {}
+    try:
+        with open(project / ".claude" / "audit-gate" / "bash_write_ledger.tsv", encoding="utf-8") as fh:
+            for line in fh:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) != 4:
+                    continue
+                sid, kind, stamp, tuid = parts
+                try:
+                    stamp = float(stamp)
+                except ValueError:
+                    continue
+                if kind == "start":
+                    opens[(sid, tuid)] = stamp
+                elif kind == "end" and (sid, tuid) in opens:
+                    windows.append((opens.pop((sid, tuid)), stamp, sid))
+    except OSError:
+        return []
+    return windows + [(st, time.time(), sid) for (sid, _), st in opens.items()]
+
+
+def split_tests_by_author(paths: list, session, transcript) -> tuple:
+    """(blocking, other): the edited existing tests this session made — or cannot be told
+    apart — and those another session or a person made (a warning, never a block).
+
+    "Other" needs evidence: the file changed before this session's first prompt, or inside
+    another session's narrowest Bash window, or at a moment none of this session's Bash
+    commands was running while its Bash is on the ledger (or it ran none). Without a session
+    or a usable transcript every path stays blocking — the behaviour before attribution."""
+    if not paths or not session or not transcript:
+        return list(paths), []
+    trace = _session_trace(transcript)
+    if trace is None:
+        return list(paths), []
+    edited, bash, started, bash_calls = trace
+    project = get_project_dir()
+    root = Path(os.path.realpath(project))
+    windows = _bash_windows(project)
+    bash_accountable = bash_calls == 0 or any(sid == session for _, _, sid in windows)
+    named = set()
+    for cmd in bash:
+        toks = set(_REDIRECT_TARGET_RE.findall(cmd))
+        if _WRITE_VERB_RE.search(cmd):
+            toks |= set(_PATH_TOKEN_RE.findall(cmd))
+        named |= {t[2:] if t.startswith("./") else t for t in toks}
+    mine, other = [], []
+    for f in paths:
+        full = root / f
+        by_me = (os.path.realpath(full) in edited
+                 or any(t == f or f.endswith("/" + t) or os.path.realpath(t) == os.path.realpath(full) for t in named))
+        owner = "me" if by_me else None
+        if owner is None:
+            try:
+                mt = os.path.getmtime(full)
+            except OSError:
+                mt = None     # deleted: only a Bash command naming it could be ours
+                if bash_accountable and not any(os.path.basename(f) in c for c in bash):
+                    owner = "other"
+            if mt is not None:
+                best = None   # (width, session) of the narrowest window holding the mtime
+                for st, en, sid in windows:
+                    if st <= mt <= en and (best is None or en - st < best[0]):
+                        best = (en - st, sid)
+                    elif st <= mt <= en and en - st == best[0] and sid != best[1]:
+                        best = (best[0], "")     # exact tie across sessions: nobody
+                if best and best[1] == session:
+                    owner = "me"
+                elif best and best[1]:
+                    owner = "other"
+                elif best is None and ((started and mt < started - 1) or bash_accountable):
+                    owner = "other"
+        (other if owner == "other" else mine).append(f)
+    return mine, other
+
+
 def write_full_pass_receipt(project_dir, exit_code):
     """After a full regression run: drop the previous receipt, and on exit 0 record
     {time, fingerprint} of the audited code in .git/postfix-gate/full_pass.json (outside the
@@ -1962,17 +2093,74 @@ def environment_blocked(exit_code, output):
     return bool(ENV_BLOCKED_RE.search(output or "")) and not test_failure_reported(output)
 
 
-def flaky_retry(cmd, project_dir, timeout, elapsed):
+# The test runner lost its own results store — Gradle's build/test-results/**/binary/*.bin
+# truncated or deleted under it, what two Gradle runs in one project tree do to each other
+# (OfficeReader, 2026-09-25: "> java.io.EOFException" next to the test failures the corrupted
+# run printed, then green on the re-run → a false FLAKY bug row). Nothing that run printed can
+# be trusted: an infrastructure failure, re-run, never FLAKY. Twin: scripts/stale_rerun.py.
+INFRA_FAILURE_RE = re.compile(
+    r"^\s*> java\.io\.EOFException\b|test-results[/\\]\S*binary[/\\]|\bresults(?:-generic)?\.bin\b|"
+    r"in-progress-results[\w-]*\.bin|Could not write [^\n]*test-results", re.M)
+
+
+def infra_failure(output) -> bool:
+    return bool(INFRA_FAILURE_RE.search(output or ""))
+
+
+# One suite run at a time per project tree, across every DevKit runner (this gate from the Stop
+# hook or the CLI, scripts/stale_rerun.py, scripts/nightly.py through it). red_proof.py runs in
+# its own temp worktrees and keeps its job slots (red_proof.lock). Twin: scripts/stale_rerun.py.
+TEST_RUN_LOCK = "test_run.lock"
+
+
+def acquire_test_run_lock(project_dir):
+    """(file handle, held) — the per-project test-run flock under .claude/audit-gate/. Waits at
+    most TEST_RUN_LOCK_WAIT_S (default 900; the Stop hook's own timeout is 1800) for another
+    run; (None, True) when the lock file cannot be made (never worse than no lock)."""
+    import fcntl  # noqa: PLC0415
+    state = Path(project_dir) / ".claude" / "audit-gate"
+    try:
+        state.mkdir(parents=True, exist_ok=True)
+        if not (state / ".gitignore").exists():
+            (state / ".gitignore").write_text("*\n", encoding="utf-8")
+        fh = open(state / TEST_RUN_LOCK, "w")
+    except OSError as e:
+        log_warn(tr(f"Không tạo được khoá chạy test ({e}) — chạy không khoá", f"Cannot create the test-run lock ({e}) — running unlocked"))
+        return None, True
+    try:
+        wait = float(os.environ.get("TEST_RUN_LOCK_WAIT_S", "900"))
+    except ValueError:
+        wait = 900.0
+    deadline, said = time.monotonic() + wait, False
+    while True:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fh, True
+        except OSError:
+            if time.monotonic() >= deadline:
+                fh.close()
+                return None, False
+            if not said:
+                print(f"    {DIM}⏳ {tr('Một lượt chạy test khác đang dùng dự án này — chờ nó xong (tránh 2 Gradle ghi đè build/test-results)', 'Another test run is using this project — waiting for it (two Gradle runs corrupt build/test-results)')}{RESET}", flush=True)
+                said = True
+            time.sleep(0.5)
+
+
+def flaky_retry(cmd, project_dir, timeout, elapsed, infra=False):
     """Re-run a failed suite once: (exit code, output) or None. Green on the second run is a
     flaky test — the run stays FAIL. Off with FLAKY_RETRY=0; only for a suite that ran under
-    FLAKY_RETRY_MAX_S seconds (default 120), so a real failure of a long suite is not paid twice."""
-    if os.environ.get("FLAKY_RETRY", "1") == "0":
+    FLAKY_RETRY_MAX_S seconds (default 120), so a real failure of a long suite is not paid twice.
+    infra (the run lost its results store): always re-run, whatever its length; off with INFRA_RETRY=0."""
+    if infra:
+        if os.environ.get("INFRA_RETRY", "1") == "0":
+            return None
+    elif os.environ.get("FLAKY_RETRY", "1") == "0":
         return None
     try:
         cap = float(os.environ.get("FLAKY_RETRY_MAX_S", "120"))
     except ValueError:
         cap = 120.0
-    if elapsed > cap:
+    if elapsed > cap and not infra:
         return None
     proc = subprocess.Popen(cmd, shell=True, cwd=str(project_dir), stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, errors="replace", start_new_session=True)
@@ -1985,7 +2173,8 @@ def flaky_retry(cmd, project_dir, timeout, elapsed):
             pass
         proc.communicate()
         return None
-    return proc.returncode, f"\n# --- chạy lại 1 lần (FLAKY_RETRY) — exit {proc.returncode} ---\n{out or ''}"
+    label = "INFRA_RETRY" if infra else "FLAKY_RETRY"
+    return proc.returncode, f"\n# --- chạy lại 1 lần ({label}) — exit {proc.returncode} ---\n{out or ''}"
 
 
 def keep_evidence(project_dir, t, cmd, out):
@@ -2156,6 +2345,9 @@ def main():
     parser.add_argument("--task", help="Task id / name being accepted (recorded in the regression checklist)")
     parser.add_argument("--no-checklist", action="store_true",
                         help="Do not update .agents/regression_checklist.md / regression_status.json")
+    parser.add_argument("--session", help="Agent session id (the Stop hook passes it): an existing test "
+                        "edited by another session or a person is warned about, not blocked")
+    parser.add_argument("--transcript", help="That session's transcript (.jsonl) — its Edit/Write/Bash calls")
     parser.add_argument("-l", "--lang", choices=["en", "vi"],
                         help="Output language (default: $DEVKIT_LANG, then the project's saved language, then vi)")
     args = parser.parse_args()
@@ -2194,6 +2386,10 @@ def main():
     tests_touched = [f for f in modified_files if is_test_path(f) and subprocess.run(
         ["git", "-C", str(get_repo_root()), "cat-file", "-e", f"{base_ref}:{prefix}{f}"],
         capture_output=True).returncode == 0 and not test_change_is_append_only(base_ref, prefix + f)]
+    # Only THIS session's edits block. On a shared tree another session's in-flight test edit
+    # used to block every Stop of every session until it was committed (2026-09-25).
+    # Unattributable edits stay blocking.
+    tests_touched, tests_touched_other = split_tests_by_author(tests_touched, args.session, args.transcript)
     run_tests = (args.run_tests or args.full) and not args.dry_run
 
     print(f"\n{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}")
@@ -2330,7 +2526,16 @@ def main():
     unity_will_test = any(
         any(tok in (t.get("command") or "").lower() for tok in ("editmode", "playmode"))
         for t in regression_tests)
+    # Held for every suite run, re-run and vacuity revert (which rewrites production files in
+    # the tree) of this gate; released when the process ends at the latest.
+    lock_fh, lock_held = (acquire_test_run_lock(project_dir)
+                          if run_tests and any(t.get("command") for t in regression_tests) else (None, True))
     for t in regression_tests:
+        if run_tests and t["command"] and not lock_held:
+            t.update({"status": "UNTESTED", "label": "BUSY", "duration": "0s", "output_tail": tr(
+                "Một lượt chạy test khác giữ khoá dự án quá TEST_RUN_LOCK_WAIT_S — không chạy song song (Gradle ghi đè build/test-results)",
+                "Another test run held the project lock past TEST_RUN_LOCK_WAIT_S — not run side by side (Gradle corrupts build/test-results)")})
+            continue
         if run_tests and t["command"] and unity_will_test and "compile" in (t["command"] or "").lower() and "test" not in (t["command"] or "").lower().split("compile", 1)[-1]:
             t["status"] = "PASS"
             t["label"] = "SKIP compile"
@@ -2388,16 +2593,20 @@ def main():
                     t["status"] = "UNTESTED"
                 t["exit_code"] = proc.returncode
                 if t["status"] == "FAIL":
-                    retry = flaky_retry(cmd, project_dir, args.timeout, time.perf_counter() - started)
+                    first = out or ""
+                    infra = infra_failure(first)
+                    retry = flaky_retry(cmd, project_dir, args.timeout, time.perf_counter() - started, infra=infra)
                     if retry:
-                        first = out or ""
                         out = first + retry[1]
-                        if retry[0] == 0 and not test_failure_reported(first):
-                            # the first run broke in the build (no test failed); the re-run of the
-                            # same code ran green: a real PASS, flagged — not a flaky test
+                        if retry[0] == 0 and (infra or not test_failure_reported(first)):
+                            # the first run broke in the build (no test failed) or lost its results
+                            # store; the re-run of the same code ran green: a real PASS, flagged —
+                            # not a flaky test
                             t.update({"status": "PASS", "exit_code": 0, "infra_retry": True})
-                        else:
+                        elif not infra:
                             t["flaky"] = retry[0] == 0  # a test failed, then passed on the same code: still FAIL
+                    if t["status"] == "FAIL" and infra:
+                        t["infra"] = True   # still FAIL, never FLAKY: that run's output is not a test result
                 if t["status"] == "FAIL" and environment_blocked(proc.returncode, out):
                     t["env_blocked"] = True     # still FAIL: the verdict never turns into a PASS
                 t["output_tail"] = (out or "")[-2000:]
@@ -2432,6 +2641,8 @@ def main():
         elif run_tests:
             t["status"] = "FAIL"
             t["output_tail"] = tr("Matrix không khai báo command cho test này", "The matrix declares no command for this test")
+    if lock_fh:
+        lock_fh.close()
 
     checklist_markdown = []
     for t in regression_tests:
@@ -2596,6 +2807,8 @@ def main():
         print(f"  • {YELLOW}{tr('Không đọc được để quét:', 'Could not read for scanning:')}{RESET} {f}")
     for f in tests_touched[:5]:
         print(f"  • {YELLOW}{tr('Test đã có bị sửa/xoá:', 'Existing test edited/deleted:')}{RESET} {f}")
+    for f in tests_touched_other[:5]:
+        print(f"  • {YELLOW}{tr('Test đã có bị phiên khác / người khác sửa (không chặn phiên này, cần người review trước khi commit):', 'Existing test edited by another session or a person (not blocking this session; needs a human review before commit):')}{RESET} {f}")
     print(f"  • {tr('Gate không xác minh: DESIGN.md/a11y, RED/GREEN, Immutable Guards, OpenCodeReview. Ảnh nghiệm thu không nằm trong exit code; agent vẫn phải gắn PNG của lượt này trước khi nói XONG.', 'The gate does not verify: DESIGN.md/a11y, RED/GREEN, immutable guards, OpenCodeReview. The proof image is outside the exit code; the agent still attaches a PNG from this turn before saying XONG.')}")
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
@@ -2651,6 +2864,8 @@ def main():
                 f.write(f"- [ ] Regression matrix: {md_escape(matrix_problem)}\n")
             for tf in tests_touched:
                 f.write(f"- [ ] {tr('Test đã có bị sửa/xoá', 'Existing test edited/deleted')}: `{tf}`\n")
+            for tf in tests_touched_other:
+                f.write(f"- [ ] {tr('Test đã có bị phiên khác / người khác sửa (không chặn)', 'Existing test edited by another session / a person (not blocking)')}: `{tf}`\n")
             f.write(tr("- [ ] Bằng chứng RED -> GREEN (Paired Oracle)\n", "- [ ] RED -> GREEN evidence (paired oracle)\n"))
             f.write(tr("- [ ] Immutable Guards còn nguyên\n", "- [ ] Immutable guards intact\n"))
             f.write("- [ ] OpenCodeReview (`ocr`)\n")
@@ -2664,6 +2879,7 @@ def main():
             "verdict": verdict_text, "exit_code": exit_code, "files": modified_files,
             "unreadable": unreadable, "regression_tests": regression_tests,
             "matrix_problem": matrix_problem, "tests_touched": tests_touched,
+            "tests_touched_other": tests_touched_other,
             "test_mode": test_mode, "full_run_required": bool(impacted_run),
             "devkit_artifacts_skipped": len(devkit_artifacts), "device": device_state,
             "static": {"secrets": len(secrets), "lazy": len(lazy_findings), "dependencies": len(dep_findings),

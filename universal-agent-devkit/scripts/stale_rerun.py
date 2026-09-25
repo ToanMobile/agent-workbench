@@ -19,6 +19,7 @@ Without --wait the pass detaches and returns at once. 100% standard library.
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import json
 import os
@@ -89,24 +90,56 @@ def _execute(project: Path, cmd: str, timeout: float) -> tuple:
         return "TIMEOUT", None, proc.communicate()[0] or ""
 
 
+# Twins of bin/post-fix-gate.py INFRA_FAILURE_RE / TEST_RUN_LOCK (keep them in step): a run
+# that lost Gradle's results store (two Gradle runs in one tree) is infrastructure, never FLAKY;
+# and one suite run at a time per project tree, whichever DevKit runner starts it.
+INFRA_FAILURE_RE = re.compile(
+    r"^\s*> java\.io\.EOFException\b|test-results[/\\]\S*binary[/\\]|\bresults(?:-generic)?\.bin\b|"
+    r"in-progress-results[\w-]*\.bin|Could not write [^\n]*test-results", re.M)
+TEST_RUN_LOCK = "test_run.lock"
+
+
+@contextlib.contextmanager
+def test_run_lock(project: Path):
+    """The per-project test-run flock (.claude/audit-gate/test_run.lock), waited for."""
+    import fcntl
+    state = project / ".claude" / "audit-gate"
+    try:
+        state.mkdir(parents=True, exist_ok=True)
+        if not (state / ".gitignore").exists():
+            (state / ".gitignore").write_text("*\n", encoding="utf-8")
+        fh = open(state / TEST_RUN_LOCK, "w")
+    except OSError:
+        yield       # cannot make the lock file: never worse than no lock
+        return
+    with fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        yield
+
+
 def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mode: str = "stale-rerun",
             retry: bool = False) -> str:
     """Run one suite for real and record it (result + evidence), unless a watched file
-    changed while it ran. retry: a FAIL is re-run once; green then = flaky (stays FAIL)."""
-    before = watched_mtimes(project, pats)
-    started = time.perf_counter()
-    status, code, out = _execute(project, cmd, timeout)
-    flaky = infra = False
-    if retry and status == "FAIL" and os.environ.get("FLAKY_RETRY", "1") != "0":
-        st2, code2, out2 = _execute(project, cmd, timeout)
-        first = out
-        out += f"\n# --- chạy lại 1 lần (FLAKY_RETRY) — exit {code2} ---\n{out2}"
-        if st2 == "PASS" and not rc.test_failure_reported(first):
-            status, code, infra = "PASS", 0, True   # build broke, the re-run ran green: a real PASS
-        else:
-            flaky = st2 == "PASS"
+    changed while it ran. retry: a FAIL is re-run once; green then = flaky (stays FAIL).
+    A run that lost its results store (INFRA_FAILURE_RE) is re-run whatever `retry` says."""
+    with test_run_lock(project):
+        before = watched_mtimes(project, pats)
+        started = time.perf_counter()
+        status, code, out = _execute(project, cmd, timeout)
+        flaky = infra = False
+        broke = status == "FAIL" and bool(INFRA_FAILURE_RE.search(out))
+        if status == "FAIL" and ((broke and os.environ.get("INFRA_RETRY", "1") != "0")
+                                 or (retry and not broke and os.environ.get("FLAKY_RETRY", "1") != "0")):
+            st2, code2, out2 = _execute(project, cmd, timeout)
+            first = out
+            out += f"\n# --- chạy lại 1 lần ({'INFRA_RETRY' if broke else 'FLAKY_RETRY'}) — exit {code2} ---\n{out2}"
+            if st2 == "PASS" and (broke or not rc.test_failure_reported(first)):
+                status, code, infra = "PASS", 0, True   # build broke, the re-run ran green: a real PASS
+            elif not broke:
+                flaky = st2 == "PASS"
+        after = watched_mtimes(project, pats)
     duration = f"{time.perf_counter() - started:.2f}s"
-    if watched_mtimes(project, pats) != before:
+    if after != before:
         return f"{tid}: bỏ kết quả — file được canh đổi trong lúc chạy"
     t = {"id": tid, "status": status, "exit_code": code, "duration": duration, "mode": mode, "flaky": flaky,
          "infra_retry": infra}
