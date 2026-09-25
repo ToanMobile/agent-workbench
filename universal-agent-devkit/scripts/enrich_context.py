@@ -444,13 +444,19 @@ TITLE_MAX = 120
 # runs the prompt hook for its own sub-agents too, and "You are a hostile code reviewer. Do
 # NOT edit any file…" / "You are the Goal Plan Writer for the xAI Grok Build harness" became
 # REPORTED rows. Signals, each one enough on its own:
-#   - a role-play / system-style opening: "You are …", "Act as …", "Bạn là …", "Đóng vai …";
+#   - a role assignment opening: "You are a/the <role>", "Act as a …", "Bạn là (một) <vai>", "Đóng vai …";
 #   - a tool or JSON schema in the prompt (two distinct schema markers);
 #   - a long instruction block: > 1500 characters with ≥ 6 directives (must / never / do
 #     not / respond with / output format / markdown headings …). A pasted crash log is long
 #     too, but it carries no directives, so length alone never drops a report.
-ROLE_OPENING = re.compile(r"^\W*(you are|you're|act as|your (role|task|job) is|as an? (ai|assistant|agent|expert)\b|"
-                          r"bạn là|mày là|đóng vai|hãy đóng vai)\b", re.I)
+# Only a role ASSIGNMENT counts: "You are a/an/the <role>", "Act as a …", "Your role is …",
+# "As an AI/assistant …", "Bạn là (một) <vai>", "(Hãy) đóng vai …". A user's report that just
+# starts with those words ("You are right, but it still crashes", "Bạn là dev Android thì xem
+# giúp: app crash …", "Your task is to fix the crash") is still recorded (review 2026-09-25).
+ROLE_OPENING = re.compile(
+    r"^\W*((you are|you're|act as)\s+(a|an|the)\s+\w|your role is\b|as an? (ai|assistant|language model)\b|"
+    r"(bạn là|mày là)\s+(một\s+)?(reviewer|agent|trợ lý|chuyên gia|kỹ sư|kiểm thử viên|planner|writer|auditor|"
+    r"người (viết|đánh giá|kiểm|review))\b|(hãy\s+)?đóng vai\b)", re.I)
 SCHEMA_MARKERS = [re.compile(p, re.I) for p in (
     r'"input_schema"\s*:', r'"\$schema"\s*:', r'"properties"\s*:\s*\{', r'"type"\s*:\s*"object"',
     r'"parameters"\s*:\s*\{', r'"required"\s*:\s*\[', r"<tool_call\b", r"<function_calls>", r"</invoke>",
