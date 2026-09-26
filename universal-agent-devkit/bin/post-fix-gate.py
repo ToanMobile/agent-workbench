@@ -1221,6 +1221,22 @@ def checklist_covers() -> dict:
             if isinstance(it, dict) and it.get("kind") == "test" and it.get("covers")}
 
 
+def stale_suite_ids() -> set:
+    """Checklist test suites whose PASS went STALE (code changed since the run): `--full` re-runs
+    them, so a full PASS never stands next to rows that still need a re-run (GeelyEx2 2026-09-26)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
+        data = rc.load(get_project_dir())
+        rc.mark_stale(data, get_project_dir())
+    except (ImportError, OSError, ValueError, AttributeError) as e:
+        log_warn(tr(f"Không đọc được checklist để tìm suite STALE ({e}) — --full chỉ chạy suite bị ảnh hưởng",
+                    f"Cannot read the checklist for STALE suites ({e}) — --full runs the impacted suites only"))
+        return set()
+    return {tid for tid, it in data.get("items", {}).items()
+            if isinstance(it, dict) and it.get("kind") == "test" and rc.effective_status(data, it) == "STALE"}
+
+
 def rule_watch(rule, covers) -> list:
     """A rule's watch patterns + files linked to any of its tests in the checklist."""
     extra = [f for t in rule.get("mandatory_regression_tests", []) for f in covers.get(t.get("id"), [])]
@@ -2308,7 +2324,8 @@ def _update_regression_checklist(args, matrix, rules, modified_files, regression
     added = rc.add_uncovered(data, uncovered_code_files(modified_files, rules), task=args.task) if rules else []
     bug_id = None
     if args.record_lesson and exit_code == 0:
-        passed = [t["id"] for t in regression_tests if t.get("status") == "PASS" and t.get("id")]
+        passed = [t["id"] for t in regression_tests
+                  if t.get("status") == "PASS" and t.get("id") and not t.get("stale_rerun")]
         bug_id = rc.add_bug(data, args.record_lesson, cause=args.cause, task=args.task, test_ids=passed)
     try:
         rc.save(project_dir, data)
@@ -2569,6 +2586,23 @@ def main():
             })
         for guard in rule.get("immutable_guards", []):
             immutable_guards_protected.append((comp_name, guard))
+    impacted_tests = list(regression_tests)   # what the change itself needs (coverage verdicts)
+    if run_tests and force_full_reason(args):
+        stale = stale_suite_ids() - {t["id"] for t in regression_tests}
+        for rule in rules:
+            for test in rule.get("mandatory_regression_tests", []):
+                if test.get("id") in stale:
+                    stale.discard(test.get("id"))
+                    regression_tests.append({
+                        "component": rule.get("component", "UnknownComponent"), "id": test.get("id"),
+                        "name": test.get("name"), "command": test.get("command"),
+                        "impacted_command": test.get("impacted_command"), "files": [],
+                        "untested_exit": test.get("untested_exit"), "status": "NOT_RUN", "duration": "-",
+                        "stale_rerun": True})
+        reran = [t["id"] for t in regression_tests if t.get("stale_rerun")]
+        if reran:
+            print(f"  • {tr('Chạy lại suite STALE của checklist (--full)', 'Re-running the checklist STALE suites (--full)')}: "
+                  f"{', '.join(reran[:10])}{' …' if len(reran) > 10 else ''}")
 
     print(f"  • {tr('Dự án kích hoạt', 'Project')}: {CYAN}{matrix.get('project') or active_profile_name()}{RESET}")
     if matrix_problem:
@@ -2814,8 +2848,15 @@ def main():
     static_ok = (hygiene_ok and anti_laziness_ok and deps_ok and perf_ok and resilience_ok
                  and logging_ok and hw_ok and assert_ok and proof_ok)
     tests_passed = sum(1 for t in regression_tests if t["status"] == "PASS")
-    tests_untested = [t for t in regression_tests if t["status"] == "UNTESTED"]
-    tests_ok = tests_passed + len(tests_untested) == len(regression_tests)
+    # A STALE suite of another component that cannot run on this machine stays STALE and is
+    # named; it is not the verdict of this change (only a failure of it is).
+    stale_skipped = [t for t in regression_tests if t["status"] == "UNTESTED" and t.get("stale_rerun")]
+    tests_untested = [t for t in regression_tests if t["status"] == "UNTESTED" and not t.get("stale_rerun")]
+    if stale_skipped:
+        log_warn(tr("Suite STALE không chạy được trên máy này (vẫn STALE, không tính vào kết luận): ",
+                    "STALE suites that cannot run on this machine (still STALE, not part of the verdict): ")
+                 + ", ".join(t["id"] or "?" for t in stale_skipped))
+    tests_ok = tests_passed + len(tests_untested) + len(stale_skipped) == len(regression_tests)
     unverified = bool(regression_tests) and not run_tests
     impacted_run = [t for t in regression_tests if t.get("mode") == "impacted"]
     impacted_n = sum(t.get("impacted_count", 0) for t in impacted_run)
@@ -2824,7 +2865,7 @@ def main():
     # Documentation alone cannot break a test, so it needs none (code without a test still does).
     docs_only = bool(modified_files) and all(
         f.lower().endswith(DOC_EXT) or Path(f).name in DOC_NAMES for f in modified_files)
-    no_coverage = (not rules or not regression_tests) and not args.allow_no_tests and not docs_only
+    no_coverage = (not rules or not impacted_tests) and not args.allow_no_tests and not docs_only
     # Every changed source file must be re-testable later; one no rule watches would
     # silently fall out of the regression checklist.
     uncovered = [] if args.allow_no_tests else uncovered_code_files(modified_files, rules)

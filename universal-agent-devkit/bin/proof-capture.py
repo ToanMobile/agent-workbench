@@ -20,12 +20,19 @@ import re
 import subprocess
 import sys
 import time
+import zlib
 from pathlib import Path
 
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
 MIN_BYTES = 8192
 CAR_AVD = re.compile(r"car|auto", re.I)
 PHONE_AVD = re.compile(r"phone|pixel", re.I)
+# A proof shows a screen: under this share of distinct rows the image is one colour (screen
+# off, black or blank), which is what the car gave while asleep (GeelyEx2 2026-09-26).
+# ponytail: counts FILTERED rows ("Up" makes a smooth gradient one row), so the bar is low
+# (real proofs measured ≥ 10.6 %, black ones 0.1-0.2 %); unfilter the rows if a real screen is refused.
+MIN_DISTINCT_ROWS = 0.01
+CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
 
 
 def parse_devices(text: str) -> list:
@@ -235,6 +242,40 @@ def wait_boot(adb: str, serial: str, timeout_s: float) -> bool:
     return False
 
 
+def wakefulness(adb: str, serial: str) -> str | None:
+    """mWakefulness from `dumpsys power` (Awake, Asleep, Dozing, Dreaming); None when unknown."""
+    try:
+        res = subprocess.run([adb, "-s", serial, "shell", "dumpsys", "power"], capture_output=True, timeout=10)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r"mWakefulness=(\w+)", (res.stdout or b"").decode("utf-8", "replace"))
+    return m.group(1) if m else None
+
+
+def distinct_row_share(data: bytes) -> float | None:
+    """Share of distinct (filtered) pixel rows in a PNG; None when it cannot be read.
+    A one-colour screen repeats one row; a real screen has many different rows."""
+    try:
+        pos, idat, width, height, bpp = 8, [], 0, 0, 0
+        while pos + 8 <= len(data):
+            length = int.from_bytes(data[pos:pos + 4], "big")
+            kind, body = data[pos + 4:pos + 8], data[pos + 8:pos + 8 + length]
+            if kind == b"IHDR":
+                width, height = int.from_bytes(body[0:4], "big"), int.from_bytes(body[4:8], "big")
+                bpp = body[8] * CHANNELS[body[9]]
+            elif kind == b"IDAT":
+                idat.append(body)
+            elif kind == b"IEND":
+                break
+            pos += 12 + length
+        stride = (width * bpp + 7) // 8 + 1
+        raw = zlib.decompress(b"".join(idat))
+        rows = {raw[i:i + stride] for i in range(0, stride * height, stride)}
+        return len(rows) / height if height else None
+    except (KeyError, IndexError, zlib.error):
+        return None
+
+
 def screencap(adb: str, serial: str, dest: Path, timeout_s: float) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     res = subprocess.run(
@@ -248,6 +289,11 @@ def screencap(adb: str, serial: str, dest: Path, timeout_s: float) -> None:
         raise SystemExit("Chup anh that bai (exit %s) serial %s: %s" % (res.returncode, serial, tail))
     if dest.stat().st_size <= MIN_BYTES:
         raise SystemExit("Anh %s chi %d byte — man hinh trong hoac chua kip ve." % (dest, dest.stat().st_size))
+    share = distinct_row_share(data)
+    if share is not None and share < MIN_DISTINCT_ROWS:
+        dest.unlink()
+        raise SystemExit("Anh serial %s gan nhu mot mau (%.1f%% dong khac nhau) — man hinh tat, den hoac trong; "
+                         "da xoa anh. Mo dung man hinh can chung minh roi chup lai." % (serial, share * 100))
 
 
 def resolve(project: Path, adb: str, emulator: str | None, connect_timeout: float) -> dict:
@@ -321,6 +367,11 @@ def main(argv=None) -> int:
             print("Khong tim thay binary emulator de mo AVD %s." % plan["avd"], file=sys.stderr)
             return 1
         serial = boot_avd(args.adb, emulator, plan["avd"], plan["devices"], next_port(plan["devices"], args.port), args.boot_timeout)
+    wake = wakefulness(args.adb, serial)
+    if wake and wake != "Awake":
+        print("Man hinh serial %s dang %s (dumpsys power: mWakefulness) — khong chup. "
+              "Bat man hinh, mo man can chung minh roi chay lai." % (serial, wake), file=sys.stderr)
+        return 1
     stamp = time.strftime("%Y%m%d-%H%M%S")
     dest = project / "reports" / ("proof-%s.png" % stamp)
     screencap(args.adb, serial, dest, 60)
