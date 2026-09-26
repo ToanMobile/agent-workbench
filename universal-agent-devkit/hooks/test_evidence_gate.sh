@@ -593,7 +593,9 @@ edit_idx_before = {}     # file path -> [test_edit_idx value in force before tha
 # and the gate accused the first of never having been red.
 RED_XML = re.compile(r'<testsuite[^>\n]*name="([^"\n]+)"[^>\n]*(?:failures|errors)="([1-9]\d*)"')
 RED_XML2 = re.compile(r'<testsuite[^>\n]*(?:failures|errors)="([1-9]\d*)"[^>\n]*name="([^"\n]+)"')
-RED_GRADLE = re.compile(r'([\w.]*\b\w*Test)\b[^\n]{0,80}\bFAILED\b')
+# Gradle prints "<Class> > <test name> FAILED"; a test name may be long (Vietnamese, backticks),
+# so after " > " the gap runs to the end of the line (GeelyEx2 2026-09-26: a 90-char name was missed).
+RED_GRADLE = re.compile(r'([\w.]*\b\w*Test)\b(?: > [^\n]*?|[^\n]{0,80}?)\bFAILED\b')
 
 def canonical_workflow_script(value):
     if not isinstance(value, str) or not value:

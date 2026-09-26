@@ -1018,11 +1018,32 @@ def run_performance_audit(modified_files: list) -> tuple:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(content)
                 lint_path = Path(tmp)
+            # Like split_new for the regex layers: a finding already in the base version of
+            # the file is legacy — warned, not blocked (GeelyEx2 2026-09-26). Compared per
+            # message without its "Line N", so lines moving up or down stay legacy.
+            base_left = {}
+            base = base_text(rel_file)
+            if base is not None:
+                fd, base_tmp = tempfile.mkstemp(suffix=Path(rel_file).suffix)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(base)
+                    for v in linter(Path(base_tmp)):
+                        k = re.sub(r"^Line \d+ ", "", v)
+                        base_left[k] = base_left.get(k, 0) + 1
+                finally:
+                    os.unlink(base_tmp)
             for v in linter(lint_path):
+                k = re.sub(r"^Line \d+ ", "", v)
+                if base_left.get(k, 0) > 0:
+                    base_left[k] -= 1
+                    line = re.match(r"^Line (\d+)", v)
+                    PREEXISTING_SECRETS.append((f"{rel_file}:{line.group(1) if line else '?'}", f"{tag}: {k}"))
+                    continue
                 perf_findings.append((rel_file, f"{tag}: {v}"))
                 _record("perf", rel_file, f"{tag}: {v}")
-        except Exception:
-            pass
+        except Exception as e:
+            log_err(f"{tag} linter failed on {rel_file}: {e}")
         finally:
             if tmp:
                 os.unlink(tmp)
