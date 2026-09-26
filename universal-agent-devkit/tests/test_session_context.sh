@@ -51,6 +51,47 @@ out="$(ctx "$TMP/sample")"
 printf '%s' "$out" | grep -q "ma trận MẪU" && printf '%s' "$out" | grep -q "KHÔNG chạy test hồi quy" \
   && ok "sample matrix: reported as a sample, gate off" || fail "sample matrix: $out"
 
+# One developer, one branch (2026-09-26, GeelyEx2: local main 2 commits behind origin, stray branches
+# and worktrees left behind): session start fetches, then names a branch behind/ahead of its upstream,
+# leftover worktrees and extra local branches, each with the command that fixes it.
+git init -q --bare -b main "$TMP/origin.git"
+repo drift && git add -A && git commit -qm init && git branch -M main && git remote add origin "$TMP/origin.git" \
+  && git push -q -u origin main 2>/dev/null
+git clone -q -b main "$TMP/origin.git" "$TMP/other" 2>/dev/null && git -C "$TMP/other" -c user.email=t@t -c user.name=t commit -q --allow-empty -m remote1 \
+  && git -C "$TMP/other" push -q origin HEAD:main 2>/dev/null
+cd "$TMP/drift" && git branch feat/done && git branch release/1.0 && git worktree add -q "$TMP/drift-wt" -b feat/wt 2>/dev/null
+out="$(ctx "$TMP/drift")"
+printf '%s' "$out" | grep -q "main sau origin/main 1 commit" && printf '%s' "$out" | grep -q "git pull --ff-only" \
+  && ok "drift: behind upstream after a fetch, cure = pull --ff-only" || fail "drift behind: $out"
+printf '%s' "$out" | grep -q "git branch -d feat/done" && ! printf '%s' "$out" | grep -q "release/1.0" \
+  && ok "drift: merged extra branch named with branch -d, release/* left alone" || fail "drift branches: $out"
+printf '%s' "$out" | grep -q "drift-wt" && ok "drift: leftover worktree named" || fail "drift worktree: $out"
+git commit -q --allow-empty -m local1
+out="$(ctx "$TMP/drift")"
+printf '%s' "$out" | grep -q "trước 1, sau 1" && printf '%s' "$out" | grep -q "git pull --no-rebase" \
+  && ok "drift: diverged, cure = pull --no-rebase then push" || fail "drift diverged: $out"
+out="$(ctx "$TMP/trusted")"
+! printf '%s' "$out" | grep -q "1 dev, 1 nhánh" && ok "one clean branch: no branch line" || fail "clean repo: $out"
+
+# An unreachable ssh remote (review 2026-09-26): the fetch never prompts, is bounded, and leaves no
+# orphan ssh behind when its timeout fires.
+repo unreach && git add -A && git commit -qm init && git branch -M main \
+  && git remote add origin ssh://git@10.255.255.1/unreach.git && git update-ref refs/remotes/origin/main HEAD \
+  && git branch -q -u origin/main
+start=$(date +%s); ctx "$TMP/unreach" >/dev/null; secs=$(( $(date +%s) - start ))
+if pgrep -f "10.255.255.1" >/dev/null; then orphan=yes; pkill -f "10.255.255.1"; else orphan=no; fi
+[ "$orphan" = no ] && [ "$secs" -le 8 ] && ok "unreachable remote: bounded fetch, no orphan ssh (${secs}s)" \
+  || fail "unreachable remote: orphan=$orphan secs=$secs"
+
+# The fetch keeps the user's own ssh command (core.sshCommand: a custom key) and adds BatchMode to it.
+printf '#!/bin/sh\necho "$@" >> "%s/ssh-args"\nexit 255\n' "$TMP" > "$TMP/fake-ssh" && chmod +x "$TMP/fake-ssh"
+repo ownssh && git add -A && git commit -qm init && git branch -M main \
+  && git remote add origin ssh://git@example.invalid/own.git && git update-ref refs/remotes/origin/main HEAD \
+  && git branch -q -u origin/main && git config core.sshCommand "$TMP/fake-ssh"
+ctx "$TMP/ownssh" >/dev/null
+grep -q "BatchMode=yes" "$TMP/ssh-args" 2>/dev/null && ok "fetch: user's core.sshCommand kept, BatchMode added" \
+  || fail "fetch ssh: $(cat "$TMP/ssh-args" 2>/dev/null || echo 'core.sshCommand not used')"
+
 # Escape hatch, never blocks.
 SESSION_CONTEXT=0 bash "$HOOK" </dev/null; [ $? = 0 ] && ok "SESSION_CONTEXT=0 exits 0" || fail "escape hatch"
 

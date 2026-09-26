@@ -58,10 +58,11 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 printf '%s' "$INPUT" | python3 -c '
-import fnmatch, json, os, re, shlex, shutil, sys, time
+import fnmatch, json, os, re, shlex, shutil, subprocess, sys, time
 
 try:
-    cmd = json.load(sys.stdin).get("tool_input", {}).get("command") or ""
+    PAYLOAD = json.load(sys.stdin)
+    cmd = PAYLOAD.get("tool_input", {}).get("command") or ""
 except Exception:
     print("BLOCKED: block-dangerous-git.sh không đọc được JSON đầu vào. Chặn để an toàn.", file=sys.stderr)
     sys.exit(2)
@@ -173,9 +174,102 @@ def git_danger_from_alias(val):
         parts = shlex.split(val)
     except ValueError:
         return "alias git không phân tích được"
-    return danger_in_git(parts[0], parts[1:]) if parts else None
+    if not parts:
+        return None
+    return danger_in_git(parts[0], parts[1:]) or solo_branch_rule(parts[0], parts[1:], CUR_DIR[0], ALLOW_BRANCH[0])
 
 HOOK_OFF_ENV = re.compile(r"^DEVKIT_PRECOMMIT=0$")
+
+# One developer, one branch. A new branch or worktree, and a push of <src>:<dst> that the
+# local <dst> does not hold, split the code between local and remote (GeelyEx2, 2026-09-26:
+# `git push origin <sha>:main` left local main 2 commits behind origin). Allowed only when
+# the user asked for a branch: DEVKIT_ALLOW_BRANCH=1 on the command or in the environment.
+ALLOW_BRANCH_ENV = "DEVKIT_ALLOW_BRANCH=1"
+ALLOW_BRANCH = [os.environ.get("DEVKIT_ALLOW_BRANCH") == "1"]
+_cwd = PAYLOAD.get("cwd") if isinstance(PAYLOAD.get("cwd"), str) else ""
+CUR_DIR = [_cwd or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()]  # None once a cd is unknowable
+SOLO_HIT = []
+BRANCH_LIST_SHORT = set("dDmMlaruv")
+BRANCH_LIST_LONG = {"--delete", "--move", "--list", "--all", "--remotes", "--contains", "--no-contains",
+                    "--merged", "--no-merged", "--points-at", "--show-current", "--set-upstream-to",
+                    "--unset-upstream", "--edit-description", "--format", "--sort", "--column", "--verbose"}
+PUSH_OPTS_WITH_ARG = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
+
+def solo_git(gdir, *args):
+    """Exit code of a read-only git query run in gdir; None when it cannot run."""
+    if not gdir or not os.path.isdir(gdir):
+        return None
+    try:
+        return subprocess.run(["git", "-C", gdir, *args], stdin=subprocess.DEVNULL,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5).returncode
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+REDIRECT = re.compile(r"^\d*(>>?|<|&>)")
+
+def drop_redirects(args):
+    """`2>/dev/null`, `> out.txt`: shell redirections are not git arguments."""
+    out, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif REDIRECT.match(a):
+            skip = bool(re.fullmatch(r"\d*(>>?|<|&>)", a))
+        else:
+            out.append(a)
+    return out
+
+def solo_branch_rule(sub, args, gdir, allow=False):
+    """allow (the user asked for a branch) lifts the new-branch checks, never the push of
+    <src>:<dst> that the local <dst> does not hold."""
+    args = drop_redirects(args)
+    long_ = set(a.split("=", 1)[0] for a in args if a.startswith("--"))
+    short = short_flags(args)
+    pos = [a for a in args if not a.startswith("-")]
+    reason = None
+    if allow and sub != "push":
+        pass
+    elif sub == "checkout" and (short & {"b", "t"} or long_ & {"--track", "--orphan"}):
+        reason = "checkout -b tạo nhánh mới"
+    elif sub == "switch" and (short & {"c", "t"} or long_ & {"--create", "--orphan", "--track"}):
+        reason = "switch -c tạo nhánh mới"
+    elif sub == "branch" and pos and not (short & BRANCH_LIST_SHORT or long_ & BRANCH_LIST_LONG):
+        reason = f"branch {pos[0]} tạo nhánh mới"
+    elif sub == "worktree" and pos[:1] == ["add"]:
+        reason = "worktree add tạo worktree + nhánh mới"
+    elif sub == "push" and not long_ & {"--all", "--branches", "--tags", "--mirror"}:
+        vals, k = [], 0
+        while k < len(args):
+            if args[k] in PUSH_OPTS_WITH_ARG:
+                k += 2
+                continue
+            if not args[k].startswith("-"):
+                vals.append(args[k])
+            k += 1
+        for spec in vals[1:]:
+            if ":" not in spec or spec.startswith(("+", ":")):
+                continue
+            src, dst = spec.split(":", 1)
+            if dst.startswith("refs/") and not dst.startswith("refs/heads/"):
+                continue
+            if not dst.startswith("refs/heads/") and solo_git(gdir, "rev-parse", "--verify", "-q", "refs/tags/" + dst) == 0:
+                continue
+            dst = dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst
+            has = solo_git(gdir, "rev-parse", "--verify", "-q", "refs/heads/" + dst)
+            anc = solo_git(gdir, "merge-base", "--is-ancestor", src, "refs/heads/" + dst) if has == 0 else None
+            if has == 1:
+                if not allow:
+                    reason = f"push {spec} tạo nhánh mới \"{dst}\" trên remote (local không có nhánh này)"
+            elif anc == 1:
+                reason = f"push {spec}: nhánh local \"{dst}\" chưa chứa {src}, remote sẽ lệch khỏi local"
+            elif anc != 0:
+                reason = (f"push {spec}: không kiểm được nhánh local \"{dst}\" có chứa {src} không "
+                          "(repo/thư mục hoặc nguồn không xác định)")
+            if reason:
+                break
+    if reason:
+        SOLO_HIT.append(reason)
+    return reason
 
 RESTORE_FLAGS = {"--worktree", "-W", "--staged", "-S", "--quiet", "-q", "--progress", "--no-progress"}
 PENDING_BACKUPS = []   # files to copy once the WHOLE command is allowed
@@ -237,8 +331,10 @@ def do_backups():
 def analyse_simple(tokens, depth):
     i = 0
     hooks_off = False
+    allow_branch = ALLOW_BRANCH[0]
     while i < len(tokens) and (tokens[i] in KEYWORDS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[i])):
         hooks_off = hooks_off or bool(HOOK_OFF_ENV.match(tokens[i]))
+        allow_branch = allow_branch or tokens[i] == ALLOW_BRANCH_ENV
         i += 1
     while i < len(tokens):
         prog = tokens[i].rsplit("/", 1)[-1]
@@ -246,6 +342,7 @@ def analyse_simple(tokens, depth):
             i += 1
             while i < len(tokens) and (tokens[i].startswith("-") or "=" in tokens[i]):
                 hooks_off = hooks_off or bool(HOOK_OFF_ENV.match(tokens[i]))
+                allow_branch = allow_branch or tokens[i] == ALLOW_BRANCH_ENV
                 i += 2 if tokens[i] in ("-u", "-C", "-S") else 1
         elif prog in WRAPPERS:
             i = skip_wrapper(tokens, i, prog)
@@ -261,6 +358,11 @@ def analyse_simple(tokens, depth):
         prog = "git"
     if prog in ("cd", "pushd", "popd"):
         CHANGES_DIR.append(prog)
+        tgt = next((a for a in rest if not a.startswith("-")), "~")
+        unknown = prog == "popd" or rest[:1] == ["-"] or not CUR_DIR[0]
+        CUR_DIR[0] = None if unknown else os.path.join(CUR_DIR[0], os.path.expanduser(tgt))
+    if prog == "export" and ALLOW_BRANCH_ENV in rest:
+        ALLOW_BRANCH[0] = True
     # `$g reset --hard` / `${GIT} clean -f`: a variable in command position may be git.
     if prog.startswith("$"):
         return danger_in_git(rest[0], rest[1:]) if rest else None
@@ -308,8 +410,12 @@ def analyse_simple(tokens, depth):
         return None
     j = 0
     aliases = {}
+    gdir = CUR_DIR[0]
     while j < len(rest) and rest[j].startswith("-"):
         opt = rest[j].split("=", 1)[0]
+        if rest[j] == "-C" and j + 1 < len(rest):
+            p = os.path.expanduser(rest[j + 1])
+            gdir = p if os.path.isabs(p) else (os.path.join(gdir, p) if gdir else None)
         if opt == "-c" and j + 1 < len(rest) and rest[j + 1].startswith("alias.") and "=" in rest[j + 1]:
             k, v = rest[j + 1].split("=", 1)
             aliases[k[len("alias."):]] = v
@@ -328,7 +434,7 @@ def analyse_simple(tokens, depth):
         return None
     if hooks_off and rest[j] in ("commit", "merge", "am", "cherry-pick", "revert"):
         return "DEVKIT_PRECOMMIT=0 tắt pre-commit hook (kiểm secret/chất lượng)"
-    return danger_in_git(rest[j], rest[j + 1:])
+    return danger_in_git(rest[j], rest[j + 1:]) or solo_branch_rule(rest[j], rest[j + 1:], gdir, allow_branch)
 
 RAW = re.compile(
     r"\bgit\b[^;&|\n]*?\s(reset\s+[^;&|\n]*--(hard|merge|keep)"
@@ -344,13 +450,102 @@ RAW = re.compile(
     r"|(commit|push|merge)\s+[^;&|\n]*--no-verify|commit\s+(?:[^;&|\n]*\s)?-[A-Za-z]*n\b"
     r"|-c\s*core\.hooks[pP]ath)")
 
-def analyse(text, depth=0):
+SUBST = "__DEVKIT_SUBST__"
+
+HEREDOC = re.compile(r"<<-?[ \t]*([\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+def skip_heredoc(text, j):
+    """At `<<DELIM` in text[j:]: index just past the closing DELIM line of the body; None if there is none."""
+    m = HEREDOC.match(text.replace("\x27", "\x22"), j)
+    nl = text.find("\n", m.end()) if m else -1
+    if nl < 0:
+        return None
+    end = re.compile(r"^[ \t]*" + re.escape(m.group(2)) + r"[ \t]*$", re.M).search(text, nl + 1)
+    return end.end() if end else None
+
+def subst_end(text, i):
+    """text[i:i+2] opens $( / <( / >(: index just past its closing paren; None when unbalanced.
+    Quotes and heredoc bodies inside it do not count their parentheses."""
+    depth, j, n = 1, i + 2, len(text)
+    while j < n and depth:
+        c = text[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c in "\x27\x22":
+            k = j + 1
+            while k < n and text[k] != c:
+                k += 2 if (c == "\x22" and text[k] == "\\") else 1
+            if k >= n:
+                return None
+            j = k + 1
+            continue
+        if text.startswith("<<", j) and not text.startswith("<<<", j):
+            k = skip_heredoc(text, j)
+            if k is not None:
+                j = k
+                continue
+        depth += {"(": 1, ")": -1}.get(c, 0)
+        j += 1
+    return None if depth else j
+
+def strip_subst(text):
+    """Each $(...), <(...), >(...) and backtick span becomes one SUBST word; single-quoted text and
+    comments stay literal. None when a span is not closed."""
+    out, i, n, dq = [], 0, len(text), False
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            out.append(text[i:i + 2])
+            i += 2
+        elif c == "\x27" and not dq:
+            k = text.find("\x27", i + 1)
+            if k < 0:
+                return None
+            out.append(text[i:k + 1])
+            i = k + 1
+        elif c == "\x22":
+            dq = not dq
+            out.append(c)
+            i += 1
+        elif c == "#" and not dq and (i == 0 or text[i - 1] in " \t\n;&|("):
+            k = text.find("\n", i)
+            i = n if k < 0 else k
+        elif c in "$<>" and text.startswith("(", i + 1):
+            j = subst_end(text, i)
+            if j is None:
+                return None
+            out.append(SUBST)
+            i = j
+        elif c == "`":
+            j = text.find("`", i + 1)
+            if j < 0:
+                return None
+            out.append(SUBST)
+            i = j + 1
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+SOLO_WORDS = re.compile(r"\bgit\b[^\n]*?\b(push|checkout|switch|branch|worktree)\b")
+
+def analyse(text, depth=0, stripped=False):
     if depth > 5:
         return "lồng lệnh quá sâu để phân tích"
+    if not stripped and ("`" in text or "$(" in text or "<(" in text):
+        flat = text.replace("\\\n", " ").replace("\n", " ; ")
+        m = RAW.search(flat)
+        if m:
+            return f"{m.group(1).split()[0]} (trong lệnh có $(...)/backtick)"
+        plain = strip_subst(text)
+        if plain is not None:
+            return analyse(plain, depth + 1, True)
+        if SOLO_WORDS.search(text):  # an unclosed $( / backtick hides the rest: fail closed
+            SOLO_HIT.append("lệnh có $( hoặc backtick không đóng, không kiểm được push/nhánh trong đó; tách lệnh git ra riêng")
+            return SOLO_HIT[-1]
+        return None
     text = text.replace("\\\n", " ").replace("\n", " ; ")
-    if "`" in text or "$(" in text or "<(" in text:
-        m = RAW.search(text)
-        return f"{m.group(1).split()[0]} (trong lệnh có $(...)/backtick)" if m else None
     try:
         lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
         lex.whitespace = " \t\r"
@@ -360,6 +555,7 @@ def analyse(text, depth=0):
         m = RAW.search(text)
         return f"{m.group(1).split()[0]} (lệnh không phân tích được)" if m else None
     segment = []
+    dirs = []
     for tok in tokens + [";"]:
         if tok in SEPARATORS or set(tok) <= set(";&|\n()"):
             if segment:
@@ -367,6 +563,11 @@ def analyse(text, depth=0):
                 if reason:
                     return reason
             segment = []
+            for ch in tok:
+                if ch == "(":
+                    dirs.append(CUR_DIR[0])
+                elif ch == ")" and dirs:
+                    CUR_DIR[0] = dirs.pop()
         else:
             segment.append(tok)
     return None
@@ -375,6 +576,12 @@ CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd))  #
 reason = analyse(cmd)
 if not reason and not do_backups():
     reason = "không sao lưu được file trước khi restore"
+if reason and reason in SOLO_HIT:
+    print(f"BLOCKED: {cmd!r} — {reason}. Luật \"1 dev, 1 nhánh\" (DevKit): làm thẳng trên nhánh hiện tại. "
+          "Đưa code lên remote: merge/ff vào nhánh local bằng một lệnh riêng (kiểm exit code), rồi "
+          "`git push origin <nhánh>`; không push `<sha>:<nhánh>` mà local chưa chứa. Nhánh/worktree mới chỉ khi "
+          "User yêu cầu: chạy lại với DEVKIT_ALLOW_BRANCH=1 trước lệnh git.", file=sys.stderr)
+    sys.exit(2)
 if reason:
     print(f"BLOCKED: {cmd!r} — {reason}. User đã chặn thao tác git khó revert này. "
           "Nếu thực sự cần, User sẽ tự chạy qua prefix \"!\".", file=sys.stderr)

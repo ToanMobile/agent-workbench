@@ -463,6 +463,69 @@ run_case "quoted flag reset \"--hard\" blocked"   block-dangerous-git.sh 2 \
   '{"tool_name":"Bash","tool_input":{"command":"git reset \"--hard\" HEAD~3"}}'
 run_case "quoted subcommand \"reset\" blocked"    block-dangerous-git.sh 2 \
   '{"tool_name":"Bash","tool_input":{"command":"git \"reset\" --hard"}}'
+# One developer, one branch (2026-09-26, GeelyEx2: `git push origin <sha>:main` of a commit the local
+# main did not hold left local main 2 commits behind origin; worktree branches piled up). New branches
+# only when the user asks (DEVKIT_ALLOW_BRANCH=1); a push of <src>:<dst> only when local <dst> holds <src>.
+GR="$(mktemp -d "${TMPDIR:-/tmp}/hookgr.XXXXXX")"
+git -C "${GR}" init -q -b main && git -C "${GR}" -c user.email=t@t -c user.name=t commit -q --allow-empty -m a
+GR_OUT="$(git -C "${GR}" commit-tree 'HEAD^{tree}' -p HEAD -m side)"      # a commit local main does not hold
+gpay() { python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","cwd":sys.argv[2],"tool_input":{"command":sys.argv[1]}}))' "$1" "${2:-${SANDBOX}}"; }
+run_case "solo: push <sha>:main not in local main blocked" block-dangerous-git.sh 2 "$(gpay "git -C ${GR} push origin ${GR_OUT}:main")"
+run_case "solo: cd repo && push <sha>:main blocked"      block-dangerous-git.sh 2 "$(gpay "cd ${GR} && git push origin ${GR_OUT}:main")"
+run_case "solo: push HEAD:main from main allowed"         block-dangerous-git.sh 0 "$(gpay "git push origin HEAD:main" "${GR}")"
+run_case "solo: plain push of the branch allowed"         block-dangerous-git.sh 0 "$(gpay "git push origin main" "${GR}")"
+run_case "solo: push to a new remote branch blocked"      block-dangerous-git.sh 2 "$(gpay "git push origin HEAD:refs/heads/feat-x" "${GR}")"
+run_case "solo: checkout -b blocked"                      block-dangerous-git.sh 2 "$(gpay "git checkout -b feat/x")"
+run_case "solo: switch -c blocked"                        block-dangerous-git.sh 2 "$(gpay "git switch -c feat/x")"
+run_case "solo: branch <new> blocked"                     block-dangerous-git.sh 2 "$(gpay "git branch feat/x")"
+run_case "solo: worktree add blocked"                     block-dangerous-git.sh 2 "$(gpay "git worktree add ../x")"
+run_case "solo: user-asked branch (DEVKIT_ALLOW_BRANCH=1)" block-dangerous-git.sh 0 "$(gpay "DEVKIT_ALLOW_BRANCH=1 git checkout -b release/1.3")"
+run_case "solo: branch -d (merged) allowed"               block-dangerous-git.sh 0 "$(gpay "git branch -d feat/x")"
+run_case "solo: branch listing allowed"                   block-dangerous-git.sh 0 "$(gpay "git branch -a --show-current")"
+run_case "solo: checkout / switch existing allowed"       block-dangerous-git.sh 0 "$(gpay "git checkout main && git switch trunk")"
+run_case "solo: branch -m rename allowed"                 block-dangerous-git.sh 0 "$(gpay "git branch -m old new")"
+run_case "solo: branch -u / --contains / --points-at allowed" block-dangerous-git.sh 0 "$(gpay "git branch -u origin/main; git branch --contains HEAD; git branch --points-at HEAD")"
+run_case "solo: branch --copy blocked (makes a branch)"   block-dangerous-git.sh 2 "$(gpay "git branch -c main feat/y")"
+run_case "solo: push HEAD:refs/tags/v1.3 allowed"         block-dangerous-git.sh 0 "$(gpay "git push origin HEAD:refs/tags/v1.3" "${GR}")"
+run_case "solo: push \$(sha):main blocked (fail closed)"  block-dangerous-git.sh 2 "$(gpay "git push origin \$(git rev-parse HEAD):main" "${GR}")"
+run_case "solo: checkout -b in \$(...) blocked"           block-dangerous-git.sh 2 "$(gpay "echo \$(date) && git checkout -b feat/x")"
+run_case "solo: export DEVKIT_ALLOW_BRANCH=1 allowed"     block-dangerous-git.sh 0 "$(gpay "export DEVKIT_ALLOW_BRANCH=1; git switch -c release/1.3")"
+run_case "solo: env DEVKIT_ALLOW_BRANCH=1 allowed"        block-dangerous-git.sh 0 "$(gpay "env DEVKIT_ALLOW_BRANCH=1 git worktree add ../x")"
+if printf '%s' "$(gpay "git checkout -b feat/x")" | env CLAUDE_PROJECT_DIR="${SANDBOX}" bash "${HOOKS}/block-dangerous-git.sh" 2>&1 >/dev/null | grep -q 'DEVKIT_ALLOW_BRANCH=1'; then
+  PASS=$((PASS + 1)); printf '  ok   %-46s\n' "solo: block message names the user-asked escape"
+else
+  FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
+  ✗ solo: block message names the user-asked escape"
+  printf '  FAIL %-46s\n' "solo: block message names the user-asked escape"
+fi
+# Review 2026-09-26 (fresh-context reviewer): false positives and gaps of the first cut.
+git -C "${GR}" -c user.email=t@t -c user.name=t tag v1.0
+run_case "solo: commit message in \$(cat <<EOF) allowed" block-dangerous-git.sh 0 "$(gpay "git commit -m \"\$(cat <<'EOF'
+fix: block git worktree add and git checkout -b; never git push origin sha:main
+EOF
+)\"" "${GR}")"
+run_case "solo: commit -m \$(printf 'git branch naming') allowed" block-dangerous-git.sh 0 "$(gpay "git commit -m \"\$(printf 'docs: explain git branch naming')\"" "${GR}")"
+run_case "solo: branch 2>/dev/null allowed"               block-dangerous-git.sh 0 "$(gpay "git branch 2>/dev/null; git branch > b.txt; git branch 2>&1 | head")"
+run_case "solo: (cd /tmp) && push <sha>:main blocked"     block-dangerous-git.sh 2 "$(gpay "(cd /tmp) && git push origin ${GR_OUT}:main" "${GR}")"
+run_case "solo: cd \"\$R\" && push <sha>:main blocked (unverifiable)" block-dangerous-git.sh 2 "$(gpay "cd \"\$R\" && git push origin ${GR_OUT}:main")"
+run_case "solo: DEVKIT_ALLOW_BRANCH=1 does not cover <sha>:main" block-dangerous-git.sh 2 "$(gpay "DEVKIT_ALLOW_BRANCH=1 git push origin ${GR_OUT}:main" "${GR}")"
+run_case "solo: alias to checkout -b blocked"             block-dangerous-git.sh 2 "$(gpay "git -c alias.nb='checkout -b' nb x")"
+run_case "solo: push tag v1.0:v1.0 allowed"               block-dangerous-git.sh 0 "$(gpay "git push origin v1.0:v1.0" "${GR}")"
+run_case "solo: push with a NUL in the ref never crashes open" block-dangerous-git.sh 2 "{\"tool_name\":\"Bash\",\"cwd\":\"${GR}\",\"tool_input\":{\"command\":\"git push origin x:ma\\u0000in\"}}"
+# Review round 2 (2026-09-26): an unbalanced $( / backtick must not switch the rule off.
+run_case "solo: push <sha>:main # \$( still blocked"      block-dangerous-git.sh 2 "$(gpay "git push origin ${GR_OUT}:main # \$(" "${GR}")"
+run_case "solo: echo '\$(' && push <sha>:main blocked"    block-dangerous-git.sh 2 "$(gpay "echo '\$(' && git push origin ${GR_OUT}:main" "${GR}")"
+run_case "solo: PR body with '(' in heredoc && push blocked" block-dangerous-git.sh 2 "$(gpay "gh pr create --body \"\$(cat <<'EOF'
+Run git branch foo (see #1
+EOF
+)\" && git push origin ${GR_OUT}:main" "${GR}")"
+run_case "solo: printf 'x (y' then checkout -b blocked"   block-dangerous-git.sh 2 "$(gpay "git commit -m \"\$(printf 'x (y')\" && git checkout -b feat")"
+run_case "solo: unclosed backtick && push <sha>:main blocked" block-dangerous-git.sh 2 "$(gpay "echo \`echo x && git push origin ${GR_OUT}:main" "${GR}")"
+run_case "solo: PR body with '(' and a plain push allowed" block-dangerous-git.sh 0 "$(gpay "gh pr create --body \"\$(cat <<'EOF'
+Run git branch foo (see #1
+EOF
+)\" && git push origin main" "${GR}")"
+rm -rf "${GR}"
 run_case "+refspec force push blocked"            block-dangerous-git.sh 2 \
   '{"tool_name":"Bash","tool_input":{"command":"git push origin +main"}}'
 run_case "checkout -f blocked"                    block-dangerous-git.sh 2 \
@@ -470,7 +533,7 @@ run_case "checkout -f blocked"                    block-dangerous-git.sh 2 \
 run_case "switch --discard-changes blocked"       block-dangerous-git.sh 2 \
   '{"tool_name":"Bash","tool_input":{"command":"git switch --discard-changes main"}}'
 run_case "checkout -b feature-foo allowed"        block-dangerous-git.sh 0 \
-  '{"tool_name":"Bash","tool_input":{"command":"git checkout -b feature-foo"}}'
+  '{"tool_name":"Bash","tool_input":{"command":"DEVKIT_ALLOW_BRANCH=1 git checkout -b feature-foo"}}'
 run_case "single-word commit message allowed"     block-dangerous-git.sh 0 \
   '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"wip\""}}'
 # 2026-09-23 re-audit: global options, continuations, nested quotes, split flags,
@@ -508,7 +571,7 @@ run_case "allowed: git checkout main; ls -f" block-dangerous-git.sh 0 \
 run_case "allowed: git push origin main && echo +1" block-dangerous-git.sh 0 \
   '{"tool_name": "Bash", "tool_input": {"command": "git push origin main && echo +1"}}'
 run_case "allowed: git switch -c fix" block-dangerous-git.sh 0 \
-  '{"tool_name": "Bash", "tool_input": {"command": "git switch -c fix"}}'
+  '{"tool_name": "Bash", "tool_input": {"command": "DEVKIT_ALLOW_BRANCH=1 git switch -c fix"}}'
 run_case "allowed: git branch -d merged" block-dangerous-git.sh 0 \
   '{"tool_name": "Bash", "tool_input": {"command": "git branch -d merged"}}'
 run_case "allowed: git diff -- file" block-dangerous-git.sh 0 \

@@ -51,6 +51,12 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   (`// ... existing code ...`); keep public signatures backward compatible.
 - **Git**: commit, push or open a PR only when the user asks. Never commit secrets
   (`.env`, keystores, `local.properties`, `google-services.json`, tokens); mask them in proof.
+- **One developer, one branch**: work on the current branch. No new branch, worktree or
+  remote branch unless the user asks for it (then prefix the git command with
+  `DEVKIT_ALLOW_BRANCH=1`). Before a push, bring origin into the local branch with its own
+  command (`git pull --ff-only`, or `--no-rebase` when both moved; check its exit code),
+  then `git push origin <branch>` — never `<sha>:<branch>` that the local branch does not
+  hold. The git guard blocks the rest; session start names drift and leftovers (AGENTS.md §7.1).
 - **Done means verified**: run the post-fix gate
   (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full`, exit 0 only) and
   attach a real proof PNG from this turn (when step 4 of "Every prompt" applies) before the

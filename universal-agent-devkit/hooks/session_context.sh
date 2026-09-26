@@ -43,7 +43,7 @@ CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/context_sync.py"
 [ -f "${CTX_SYNC}" ] && [ -d "${REPO_ROOT}/.agents" ] && (python3 "${CTX_SYNC}" "${REPO_ROOT}" --quiet >/dev/null 2>&1 &)
 
 REPO_ROOT="${REPO_ROOT}" INDEXER="${INDEXER}" HOOK_FILE="${HOOK_FILE}" GATE_HOOK="${GATE_HOOK}" python3 - <<'PY' 2>/dev/null
-import json, os, re, subprocess, sys
+import json, os, re, signal, subprocess, sys
 
 root = os.environ["REPO_ROOT"]
 out = []
@@ -175,6 +175,74 @@ except OSError:
     pre = False
 parts.append("git pre-commit: " + ("bật" if pre else "chưa cài (agent-kit githooks install)"))
 out.append("Trạng thái: " + "; ".join(parts) + ".")
+
+# One developer, one branch: a branch behind/ahead of its upstream, leftover worktrees and extra
+# local branches split the code (GeelyEx2, 2026-09-26: local main 2 commits behind origin).
+# Fetch first (bounded; SESSION_FETCH=0 skips it) so "behind" covers pushes from elsewhere.
+def git_out(*args, timeout=5):
+    try:
+        r = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True, timeout=timeout,
+                           stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+try:
+    drift = []
+    main_like = re.compile(r"^(main|master|trunk|develop|release/.+|hotfix/.+)$")
+    cur = git_out("symbolic-ref", "-q", "--short", "HEAD")
+    up = git_out("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}") if cur else None
+    if up and os.environ.get("SESSION_FETCH", "1") != "0":
+        # Never prompt (BatchMode), and on timeout kill the whole group so no ssh outlives it.
+        ssh = os.environ.get("GIT_SSH_COMMAND") or git_out("config", "core.sshCommand") or "ssh"
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0",
+               "GIT_SSH_COMMAND": ssh + " -o BatchMode=yes -o ConnectTimeout=4"}
+        try:
+            p = subprocess.Popen(["git", "-C", root, "fetch", "--quiet", "--no-tags", up.split("/", 1)[0]],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 env=env, start_new_session=True)
+            try:
+                p.wait(timeout=6)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.wait()
+        except OSError:
+            pass  # git cannot be spawned: the report below uses the refs from the last fetch
+    counts_lr = git_out("rev-list", "--left-right", "--count", f"HEAD...{up}") if up else None
+    ahead, behind = (int(x) for x in counts_lr.split()) if counts_lr else (0, 0)
+    if ahead and behind:
+        drift.append(f"{cur} trước {ahead}, sau {behind} commit so với {up} — `git pull --no-rebase` "
+                     "(lệnh riêng, kiểm exit code) rồi mới `git push`")
+    elif behind:
+        drift.append(f"{cur} sau {up} {behind} commit — `git pull --ff-only` trước khi sửa/push")
+    elif ahead:
+        drift.append(f"{cur} có {ahead} commit chưa push lên {up}")
+    if git_out("rev-parse", "--git-dir") is not None and not cur:
+        drift.append("HEAD tách rời (detached) — về nhánh chính trước khi sửa")
+    elif cur and not main_like.match(cur):
+        drift.append(f"đang ở nhánh phụ {cur} — xong thì merge về nhánh chính và xoá nhánh")
+    here = os.path.realpath(git_out("rev-parse", "--show-toplevel") or root)
+    porcelain = (git_out("worktree", "list", "--porcelain") or "").splitlines()
+    wts = [l[len("worktree "):] for l in porcelain if l.startswith("worktree ")]
+    wt_branches = {l[len("branch refs/heads/"):] for l in porcelain if l.startswith("branch refs/heads/")}
+    extra_wt = [w for w in wts[1:] if os.path.realpath(w) != here]
+    if extra_wt:
+        drift.append(f"{len(extra_wt)} worktree còn lại: {', '.join(extra_wt[:3])} — gộp xong thì "
+                     "`agent-kit worktree remove <path>`")
+    heads = (git_out("for-each-ref", "--format=%(refname:short)", "refs/heads/") or "").splitlines()
+    extra = [b for b in heads if b and b != cur and b not in wt_branches and not main_like.match(b)]
+    merged = set((git_out("branch", "--format=%(refname:short)", "--merged", "HEAD") or "").splitlines())
+    done = [b for b in extra if b in merged]
+    unmerged = [b for b in extra if b not in merged]
+    if done:
+        drift.append(f"{len(done)} nhánh thừa đã merge — `git branch -d {' '.join(done[:5])}`")
+    if unmerged:
+        drift.append(f"{len(unmerged)} nhánh chưa merge vào {cur or 'HEAD'}: {', '.join(unmerged[:5])} — "
+                     "merge về hoặc hỏi User")
+    if drift:
+        out.append("Nhánh (luật 1 dev, 1 nhánh): " + "; ".join(drift) + ".")
+except Exception:
+    pass  # branch hygiene is advice; it must never break session start
 
 stop_tests = ("test hồi quy theo ma trận" if state == "trusted"
               else "test hồi quy CHỈ khi ma trận được áp dụng và gate tin (hiện chưa — xem Trạng thái)")
