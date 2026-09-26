@@ -134,4 +134,48 @@ bash "$KIT" githooks uninstall >/dev/null 2>&1
   && ok "  … uninstall removes the line from the target" || fail "uninstall on a symlinked hook"
 rm -f "$HOOKS/commit-msg"
 
+# ── pre-commit runs the light regression suites the staged files touch ──────────
+# A commit with a proper subject could still carry code that turns the checklist red (Goods
+# 2026-09-25): tests only ran in agent sessions. Light suites (no Gradle/Unity/xcodebuild)
+# run at commit; heavy ones only with DEVKIT_PRECOMMIT_TESTS=all; =0 turns it off.
+new_repo
+mkdir -p .agents && cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/main/*"],
+ "mandatory_regression_tests":[{"id":"REG-LIGHT","name":"light","command":"! grep -q BROKEN src/main/A.kt"},
+                               {"id":"REG-HEAVY","name":"heavy","command":"./gradlew test || exit 9"}]}]}
+JSON
+git add -A && DEVKIT_PRECOMMIT=0 git commit -qm "chore: add the regression matrix"
+echo "fun ok() = 1 // BROKEN" > src/main/A.kt && git add -A
+try_commit -m "feat: change the core function" && fail "code that fails a light suite was committed" \
+  || { grep -q "REG-LIGHT" "$TMP/out" && ok "a failing light suite blocks the commit, named" || fail "no suite named: $(cat "$TMP/out")"; }
+grep -q "REG-HEAVY" "$TMP/out" && ok "  … a heavy suite (gradle) is named as not run here" || fail "heavy suite not mentioned"
+DEVKIT_PRECOMMIT_TESTS=0 try_commit -m "feat: change the core function" && ok "DEVKIT_PRECOMMIT_TESTS=0 skips the tests" \
+  || fail "=0 still blocked: $(cat "$TMP/out")"
+echo "fun ok() = 2" > src/main/A.kt && git add -A
+try_commit -m "feat: fix the core function again" && ok "code that passes the light suite commits" || fail "green code blocked: $(cat "$TMP/out")"
+echo "# readme" > README.md && git add -A
+try_commit -m "docs: explain the core function" && ! grep -q "REG-LIGHT" "$TMP/out" && ok "no suite runs when no watched file is staged" \
+  || fail "docs commit ran suites / blocked: $(cat "$TMP/out")"
+
+# A suite whose last recorded run took longer than DEVKIT_PRECOMMIT_MAX_S (30 s) is skipped and
+# named — the DevKit's own run_impacted.sh takes 165–740 s; a hang is a warning, never a block.
+python3 - <<'PY'
+import json
+m = json.load(open(".agents/regression_matrix.active.json"))
+m["rules"][0]["mandatory_regression_tests"] += [
+    {"id": "REG-SLOW", "name": "slow", "command": "exit 1"},
+    {"id": "REG-HANG", "name": "hang", "command": "sleep 20"}]
+json.dump(m, open(".agents/regression_matrix.active.json", "w"))
+json.dump({"version": 1, "items": {"REG-SLOW": {"id": "REG-SLOW", "kind": "test", "command": "exit 1",
+           "last": {"status": "PASS", "duration": "400.00s", "ts": 1}}}}, open(".agents/regression_status.json", "w"))
+PY
+git add -A && DEVKIT_PRECOMMIT=0 git commit -qm "chore: add slow and hanging suites"
+echo "fun ok() = 3" > src/main/A.kt && git add -A
+t0=$(date +%s); DEVKIT_PRECOMMIT_TEST_TIMEOUT=2 try_commit -m "feat: change the core function once more"; rc=$?; t1=$(date +%s)
+[ "$rc" = 0 ] && ok "a suite recorded at 400 s is skipped and a hanging one times out: the commit goes through" \
+  || fail "slow/hanging suite blocked the commit: $(cat "$TMP/out")"
+grep -q "REG-SLOW" "$TMP/out" && ok "  … the slow suite is named" || fail "slow suite not named: $(cat "$TMP/out")"
+grep -q "REG-HANG" "$TMP/out" && ok "  … the timed-out suite is named" || fail "hang not named: $(cat "$TMP/out")"
+[ $((t1 - t0)) -lt 15 ] && ok "  … within the timeout ($((t1 - t0)) s)" || fail "commit took $((t1 - t0)) s"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_commit_hygiene: all passed" || { echo "❌ test_commit_hygiene: $FAILS failed"; exit 1; }

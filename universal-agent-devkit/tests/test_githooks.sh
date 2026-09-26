@@ -29,32 +29,33 @@ HOOK="$(git rev-parse --path-format=absolute --git-path hooks)/pre-commit"
 bash "$KIT" githooks status | grep -q 'installed (DevKit)' && ok "status reports it" || fail "status does not report it"
 
 echo "fun ok() = 2" > a.kt && git add a.kt
-git commit -qm clean >/dev/null 2>&1 && ok "clean commit goes through" || fail "clean commit was blocked"
+# Descriptive subjects: the commit-msg rule (vague subjects on code) must not be what blocks here.
+git commit -qm "feat: add the ok function" >/dev/null 2>&1 && ok "clean commit goes through" || fail "clean commit was blocked"
 
 n="$(commits)"
 printf '%s = "%s"\n' "api_""key" "ABCDEFGHIJKLMNOP" > leak.py && git add leak.py
-out="$(git commit -qm leak 2>&1)"
+out="$(git commit -qm "feat: add the api client" 2>&1)"
 [ "$(commits)" = "$n" ] && ok "commit with a secret is blocked" || fail "commit with a secret went through"
 printf '%s' "$out" | grep -q -- '--no-verify' && ok "block message names the escape hatch" || fail "no --no-verify hint"
 git rm -q --cached leak.py && rm leak.py
 
 printf 'KEY=1\n' > .env && git add -f .env
-git commit -qm env >/dev/null 2>&1; [ "$(commits)" = "$n" ] && ok ".env is blocked" || fail ".env was committed"
+git commit -qm "chore: add the local env file" >/dev/null 2>&1; [ "$(commits)" = "$n" ] && ok ".env is blocked" || fail ".env was committed"
 git rm -q --cached .env && rm .env
 
 printf 'dependencies { implementation "a:b:1.+" }\n' > build.gradle && git add build.gradle
-git commit -qm dep >/dev/null 2>&1; [ "$(commits)" = "$n" ] && ok "floating dependency is blocked" || fail "floating dependency committed"
+git commit -qm "build: add the http dependency" >/dev/null 2>&1; [ "$(commits)" = "$n" ] && ok "floating dependency is blocked" || fail "floating dependency committed"
 git rm -q --cached build.gradle && rm build.gradle
 
 printf '%s = "%s"\n' "api_""key" "ABCDEFGHIJKLMNOP" > leak.py && git add leak.py
-DEVKIT_PRECOMMIT=0 git commit -qm skip >/dev/null 2>&1 && ok "DEVKIT_PRECOMMIT=0 disables the hook" || fail "DEVKIT_PRECOMMIT=0 ignored"
+DEVKIT_PRECOMMIT=0 git commit -qm "chore: skip the hook once" >/dev/null 2>&1 && ok "DEVKIT_PRECOMMIT=0 disables the hook" || fail "DEVKIT_PRECOMMIT=0 ignored"
 git reset -q --soft HEAD~1 && git rm -q --cached leak.py && rm leak.py
 
 # Fail closed: a gate that gives no verdict must not let the commit through.
 n="$(commits)"
 echo "fun ok() = 3" > a.kt && git add a.kt
 mkdir -p "$TMP/nopy" && printf '#!/bin/sh\nexit 1\n' > "$TMP/nopy/python3" && chmod +x "$TMP/nopy/python3"
-PATH="$TMP/nopy:$PATH" git commit -qm broken >/dev/null 2>&1
+PATH="$TMP/nopy:$PATH" git commit -qm "feat: commit with python missing" >/dev/null 2>&1
 [ "$(commits)" = "$n" ] && ok "broken python3 -> commit blocked (fail closed)" || fail "commit went through without a verdict"
 git reset -q
 

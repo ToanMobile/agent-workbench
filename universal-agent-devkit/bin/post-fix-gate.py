@@ -2502,6 +2502,97 @@ def run_commit_msg_check(msg_path, modified_files) -> int:
     return 0
 
 
+# Heavy suites (a build tool, an engine) are left to the Stop gate and the nightly run; the
+# same split as scripts/stale_rerun.py and scripts/red_proof.py.
+PRECOMMIT_HEAVY = re.compile(r"gradlew|\bgradle\b|unity|-runTests|xcodebuild", re.I)
+
+
+def _env_float(name, default):
+    try:
+        return float(os.environ.get(name) or default)
+    except ValueError:
+        return float(default)
+
+
+def _recorded_seconds() -> dict:
+    """Suite id → seconds of its last recorded run (.agents/regression_status.json)."""
+    try:
+        items = json.loads((get_project_dir() / ".agents" / "regression_status.json").read_text(encoding="utf-8")).get("items", {})
+    except (OSError, ValueError, AttributeError):
+        return {}
+    out = {}
+    for sid, it in items.items():
+        m = re.match(r"^([\d.]+)s$", str(((it or {}).get("last") or {}).get("duration") or ""))
+        if m:
+            out[sid] = float(m.group(1))
+    return out
+
+
+def run_precommit_tests(modified_files) -> tuple:
+    """(ran, failed, skipped, untested): the matrix suites whose watch_files match the staged
+    files, run at commit. A commit with a clear subject could still carry code that turns the
+    checklist red (Goods 2026-09-25); tests only ran in agent sessions. Light suites only
+    unless DEVKIT_PRECOMMIT_TESTS=all; =0 turns it off. Commands come from the matrix at HEAD.
+    A commit must stay quick: a suite whose last recorded run took over DEVKIT_PRECOMMIT_MAX_S
+    (30 s) is skipped, the run stops starting suites past DEVKIT_PRECOMMIT_BUDGET_S (120 s), and
+    a suite past DEVKIT_PRECOMMIT_TEST_TIMEOUT (60 s) is a warning, not a block — the DevKit's own
+    run_impacted.sh takes 165–740 s. skipped = [(id, why)].
+    ponytail: runs on the working tree (unstaged edits included), not the staged blobs alone;
+    run from a `git stash --keep-index` copy if unstaged edits ever mask a failure."""
+    mode = os.environ.get("DEVKIT_PRECOMMIT_TESTS", "light")
+    if mode == "0" or not modified_files:
+        return [], [], [], []
+    matrix, _ = load_active_matrix(None, "HEAD")
+    covers = checklist_covers()
+    suites = {}
+    for rule in matrix.get("rules", []):
+        watch = rule_watch(rule, covers)
+        if not any(match_pattern(f, pat) for f in modified_files for pat in watch):
+            continue
+        for t in rule.get("mandatory_regression_tests", []):
+            if t.get("id") and t.get("command"):
+                suites.setdefault(t["id"], t)
+    timeout = _env_float("DEVKIT_PRECOMMIT_TEST_TIMEOUT", 60)
+    max_s, budget = _env_float("DEVKIT_PRECOMMIT_MAX_S", 30), _env_float("DEVKIT_PRECOMMIT_BUDGET_S", 120)
+    recorded = _recorded_seconds()
+    ran, failed, skipped, untested = [], [], [], []
+    spent = 0.0
+    for sid, t in sorted(suites.items(), key=lambda kv: recorded.get(kv[0], 0.0)):
+        cmd = t["command"]
+        if mode != "all" and PRECOMMIT_HEAVY.search(cmd):
+            skipped.append((sid, "Gradle/Unity/xcodebuild"))
+            continue
+        if mode != "all" and recorded.get(sid, 0.0) > max_s:
+            skipped.append((sid, f"{recorded[sid]:.0f}s > {max_s:.0f}s"))
+            continue
+        if spent >= budget:
+            skipped.append((sid, tr(f"hết ngân sách {budget:.0f}s", f"budget {budget:.0f}s used")))
+            continue
+        started = time.perf_counter()
+        print(f"  {DIM}▶ {sid}: {cmd}{RESET}")
+        proc = subprocess.Popen(cmd, shell=True, cwd=str(get_project_dir()), stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, errors="replace", start_new_session=True)
+        try:
+            out, _ = proc.communicate(timeout=timeout)
+            rc = proc.returncode
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            out, rc = (proc.communicate()[0] or "") + "\n(TIMEOUT)", "TIMEOUT"
+        spent += time.perf_counter() - started
+        if rc == "TIMEOUT":
+            skipped.append((sid, tr(f"quá {timeout:.0f}s, đã dừng", f"over {timeout:.0f}s, stopped")))
+            continue
+        ran.append(sid)
+        if rc != 0 and isinstance(t.get("untested_exit"), int) and rc == t["untested_exit"]:
+            untested.append(sid)   # the command's own "cannot run here" code: not a failure, no pass
+        elif rc != 0:
+            failed.append((sid, rc, (out or "")[-1500:]))
+    return ran, failed, skipped, untested
+
+
 def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
     """--staged (git pre-commit): the 6 blocking static checks on the staged blobs only.
     No regression run, adb probe, proof-image scan or report — a hook has to be fast
@@ -2541,8 +2632,25 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
     unreadable = [f for f in modified_files if f not in DELETED_FILES
                   and STAGED_MODES.get(f, "").startswith("100") and read_changed_text(f) is None]
     static_ok = not any(counts.values())
+    ran, failed, skipped, untested = run_precommit_tests(modified_files) if static_ok and not unreadable else ([], [], [], [])
+    for sid, rc, tail in failed:
+        log_err(tr(f"suite {sid} ĐỎ (exit {rc}) với code đang stage:", f"suite {sid} RED (exit {rc}) with the staged code:"))
+        print("\n".join("      " + l for l in tail.splitlines()[-15:]))
+    if ran and not failed:
+        log_ok(tr(f"Suite nhẹ của file đã stage: {len(ran)} XANH ({', '.join(ran)})",
+                  f"Light suites of the staged files: {len(ran)} green ({', '.join(ran)})"))
+    if untested:
+        log_warn(tr(f"Suite không chạy được ở máy này (untested_exit): {', '.join(untested)}",
+                    f"Suites that cannot run on this machine (untested_exit): {', '.join(untested)}"))
+    if skipped:
+        shown = ", ".join(f"{sid} ({why})" for sid, why in skipped)
+        log_warn(tr(f"Suite không chạy ở pre-commit (cổng Stop hoặc nightly chạy; DEVKIT_PRECOMMIT_TESTS=all để chạy): {shown}",
+                    f"Suites not run at pre-commit (the Stop gate or nightly runs them; DEVKIT_PRECOMMIT_TESTS=all to run them): {shown}"))
     if not static_ok:
         verdict, color, exit_code = tr("REJECT — sửa các điểm trên rồi commit lại", "REJECT — fix the findings above, then commit again"), RED, 1
+    elif failed:
+        verdict, color, exit_code = tr(f"REJECT — {len(failed)} suite hồi quy ĐỎ với code đang stage",
+                                       f"REJECT — {len(failed)} regression suites RED with the staged code"), RED, 1
     elif unreadable:
         verdict, color, exit_code = tr(f"CHƯA XÁC MINH — {len(unreadable)} file đã stage không đọc được", f"UNVERIFIED — {len(unreadable)} staged files could not be read"), YELLOW, 2
     else:
@@ -2551,6 +2659,8 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
     print(f"  {BOLD}{tr('KẾT LUẬN', 'VERDICT')}:{RESET} {color}{BOLD}{verdict}{RESET}\n")
     if args.json:
         print(json.dumps({"mode": "staged", "exit_code": exit_code, "static_ok": static_ok,
+                          "tests_ok": not failed, "tests_ran": ran, "tests_failed": [f[0] for f in failed],
+                          "tests_skipped": [sid for sid, _ in skipped],
                           "files": modified_files, "unreadable": unreadable, "static": counts,
                           "findings": FINDINGS, "advisories": advisories},
                          ensure_ascii=False))

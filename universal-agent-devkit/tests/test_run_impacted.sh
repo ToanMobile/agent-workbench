@@ -42,6 +42,18 @@ echo 'block' > "$K/templates/block.md"
 echo 'helper() { true; }' > "$K/tests/lib_helper.sh"
 list | grep -qx "tests/test_foo.sh" && ok "changed helper under tests/ selects the tests that source it" || fail "helper: $(list | tr '\n' ' ')"
 
+# A test that reaches a script through a command names only its stem ("agent-kit githooks
+# install" for scripts/githooks.sh): 2026-09-26 test_githooks went red on a githooks.sh change
+# and the gate did not run it.
+echo 'echo tool' > "$K/scripts/tool.sh"; echo 'bash bin/kit tool install' > "$K/tests/test_tool_cmd.sh"
+echo 'echo toolbox' > "$K/tests/test_toolbox.sh"
+(cd "$K" && git add -A && git commit -qm "tool" && git push -q origin HEAD 2>/dev/null)
+echo 'echo tool v2' > "$K/scripts/tool.sh"
+list | grep -qx "tests/test_tool_cmd.sh" && ok "a test naming only the script's stem (kit tool install) is selected" \
+  || fail "stem: $(list | tr '\n' ' ')"
+! list | grep -qx "tests/test_toolbox.sh" && ok "  … as a whole word only (toolbox is not tool)" || fail "stem matched inside a word"
+(cd "$K" && git checkout -q -- scripts/tool.sh)
+
 # The run is parallel (DEVKIT_TEST_JOBS, default 4): the DevKit suite took 740 s of the 900 s
 # gate limit on 2026-09-26. Output stays in list order; one failing test still fails the run;
 # test_budgets (timings) runs alone after the others.

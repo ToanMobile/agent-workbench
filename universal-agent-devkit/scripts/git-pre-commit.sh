@@ -7,8 +7,10 @@
 # Runs `post-fix-gate.py --staged`: the gate's static checks (secrets and
 # forbidden files, lazy placeholders, floating / http:// dependencies, perf,
 # swallowed errors, raw logging) on the STAGED content — also for commits made
-# outside any agent (terminal, IDE). The regression suite is not run here; that
-# stays `postfix-gate --run-tests`.
+# outside any agent (terminal, IDE). Then the matrix suites the staged files touch,
+# when quick: not Gradle/Unity/xcodebuild, last recorded run ≤ 30 s, 120 s in all, a
+# hang (> 60 s) warns instead of blocking (DEVKIT_PRECOMMIT_TESTS=all | 0,
+# DEVKIT_PRECOMMIT_MAX_S, _BUDGET_S, _TEST_TIMEOUT). The rest stays `postfix-gate --run-tests`.
 #
 # Blocks (exit 1) on a REJECT, and fails closed when the gate cannot give a
 # verdict (no python3, crash, git error): an unchecked commit is not a clean one.
@@ -41,14 +43,16 @@ STATE="$(printf '%s' "$LAST" | python3 -c 'import json,sys
 try: d = json.load(sys.stdin)
 except ValueError: sys.exit(0)
 if d.get("mode") != "staged": sys.exit(0)
-print("reject" if d.get("static_ok") is not True else "unreadable" if d.get("unreadable") else "clean")' 2>/dev/null)"
+print("reject" if d.get("static_ok") is not True or d.get("tests_ok") is False
+      else "unreadable" if d.get("unreadable") else "clean")' 2>/dev/null)"
 
 REPORT="$(printf '%s\n' "$OUT" | sed '$d')"
 case "$RC:$STATE" in
   3:clean)
     exit 0 ;;  # nothing of the user's staged (only DevKit links)
   2:clean)
-    echo "✔ DevKit pre-commit: $(L "kiểm tĩnh sạch (test hồi quy không chạy ở đây)" "static checks clean (regression tests are not run here)")"
+    printf '%s\n' "$REPORT" | grep -E "Suite (nhẹ|không)|Light suites|Suites (not|that)" || true
+    echo "✔ DevKit pre-commit: $(L "kiểm tĩnh sạch + suite nhẹ của file đã stage XANH (suite nặng: cổng Stop / nightly)" "static checks clean + light suites of the staged files green (heavy suites: Stop gate / nightly)")"
     exit 0 ;;
   2:unreadable)
     printf '%s\n' "$REPORT" >&2
