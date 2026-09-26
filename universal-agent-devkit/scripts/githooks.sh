@@ -37,6 +37,23 @@ HOOKS_DIR="$(git -C "$TARGET" rev-parse --path-format=absolute --git-path hooks 
 }
 [ -n "$HOOKS_DIR" ] || die "$(L "không xác định được thư mục hooks" "cannot resolve the hooks dir")" 2
 HOOK="$HOOKS_DIR/pre-commit"
+MSG_HOOK="$HOOKS_DIR/commit-msg"
+MSG_BODY="$DEVKIT_ROOT/scripts/git-commit-msg.sh"
+msg_is_ours() { [ -f "$MSG_HOOK" ] && grep -qF "$MARKER" "$MSG_HOOK"; }
+install_msg_hook() {
+  if [ -e "$MSG_HOOK" ] && ! msg_is_ours; then
+    echo "• commit-msg: $(L "hook riêng của dự án — giữ nguyên; muốn thêm luật Bug:/No-Guard: của DevKit, chèn sau dòng #!:" "the project's own hook — kept; to add the DevKit Bug:/No-Guard: rule, insert after its #! line:") bash $(printf %q "$MSG_BODY") \"\$1\" || exit 1"
+    return 0
+  fi
+  {
+    echo "#!/usr/bin/env bash"
+    echo "# $MARKER — fix commits name their bug (Bug: <id>) or say why not (No-Guard: <reason>)."
+    printf 'DEVKIT_HOOK=%q\n' "$MSG_BODY"
+    # shellcheck disable=SC2016
+    echo '[ -f "$DEVKIT_HOOK" ] || { echo "✖ DevKit commit-msg: $DEVKIT_HOOK not found — re-run agent-kit githooks install, or git commit --no-verify" >&2; exit 1; }'
+    echo 'exec bash "$DEVKIT_HOOK" "$@"'
+  } > "$MSG_HOOK.devkit-tmp" && chmod +x "$MSG_HOOK.devkit-tmp" && mv "$MSG_HOOK.devkit-tmp" "$MSG_HOOK"
+}
 # Git operations that can remove untracked DevKit links from the working tree; each gets a
 # stub running scripts/relink_check.py (instant when nothing is missing).
 RELINK_HOOKS="post-merge post-checkout post-rewrite"
@@ -79,6 +96,7 @@ case "$ACTION" in
   install)
     mkdir -p "$HOOKS_DIR" 2>/dev/null
     install_relink_hooks
+    install_msg_hook
     if [ -e "$HOOK" ] && ! is_ours; then
       echo "✖ githooks: $(L "$HOOK đã có và không phải của DevKit — giữ nguyên, không ghi đè." "$HOOK exists and is not the DevKit's — left untouched.")" >&2
       # Right after the shebang, not at the end: a hook that ends with `exit 0` (or
@@ -104,6 +122,7 @@ case "$ACTION" in
     ;;
   uninstall)
     for h in $RELINK_HOOKS; do relink_is_ours "$h" && rm -f "$HOOKS_DIR/$h"; done
+    msg_is_ours && rm -f "$MSG_HOOK"
     if is_ours; then
       rm -f "$HOOK" && echo "✔ $(L "Đã gỡ" "Removed") $HOOK"
     elif [ -e "$HOOK" ]; then

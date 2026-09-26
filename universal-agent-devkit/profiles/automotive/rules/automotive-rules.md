@@ -61,9 +61,11 @@
 ## 8. Bằng chứng trên Xe thật > Máy ảo
 - Máy ảo xanh **không phải** bằng chứng cho hành vi phụ thuộc ROM, VHAL, âm thanh, mic, đa cửa sổ, độ trễ CPU. Sửa stub/mock của máy ảo để test xanh là giấu lỗi.
 - Báo cáo ghi rõ đo ở đâu (máy bàn / máy ảo / xe thật); chưa đo trên xe ⇒ ghi **CHƯA ĐO TRÊN XE**, không suy ra.
+- Bug đo trên xe: một lượt đạt không phải bằng chứng. Chỉ PASS khi có lần **chạy lặp sau bản sửa** — ≥3 lượt đạt, 0 lượt hỏng (lượt "không đo được" vì adb rớt không tính). Đánh dấu `agent-kit bugs add … --on-car`, nộp kết quả `agent-kit bugs repeat <ID> <ket-qua.json>`; thiếu thì checklist ghi `NEEDS_CAR`.
 - Máy ảo dùng nguồn dữ liệu mô phỏng; xe thật chỉ dùng VHAL thật — cấm nút/cờ giả lập dữ liệu xe lộ ra UI người dùng.
 - Luôn ghim `adb -s <serial>`; thiết bị cá nhân khai trong `.adb-denylist` (dự án) hoặc `~/.config/universal-agent-devkit/adb-denylist` (máy). `adb` trần có thể nhắm nhầm máy.
 - Đừng đoán nguyên nhân crash: `adb logcat -d -b crash`, `dumpsys dropbox`, tombstone — log thắng suy luận. `pm list packages <x>` lọc chuỗi con, so khớp đúng `package:<x>`.
+- Log đo trên xe ghi **ngay trên xe**, không stream về máy tính: ADB Wi-Fi rớt là `adb logcat` (không `-d/-c/-g/-t`) chết theo, mất log đúng lúc cần. Chụp một lần: `adb shell "logcat -d > /data/local/tmp/x.txt"` rồi `adb pull`; ghi suốt phép đo: `adb shell "nohup logcat -f /data/local/tmp/x.txt &"` rồi `adb pull`. `hardware_safety_gate` chặn dạng stream trên profile này.
 
 ## 9. Bản Phát hành & Hardening
 - Bản public: R8 bật (minify + optimize), strip log, không `-dontobfuscate`, không keep toàn bộ `class **`; ký khoá thật (system app = platform key; app điện thoại = keystore riêng); giữ `mapping.txt` riêng, không đẩy public.

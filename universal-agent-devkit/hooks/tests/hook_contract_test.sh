@@ -769,6 +769,46 @@ printf 'IVI01  # the rig\n' > "${SANDBOX}/.adb-allowlist"
 hwcase 2 'adb -s RFCW504KFKJ shell ls'
 hwcase 0 'adb -s IVI01 shell ls'
 rm -f "${SANDBOX}/.adb-allowlist"
+# Automotive only (GeelyEx2 INSTINCT-099): a logcat that streams to this computer dies
+# with the ADB Wi-Fi link, and the log of the measurement dies with it. A dump (-d -c -g
+# -t) or a logcat detached on the car (nohup/… &, writing to /data, /sdcard) is allowed.
+mkdir -p "${SANDBOX}/auto/.agents"
+printf '{"profile":"automotive"}\n' > "${SANDBOX}/auto/.agents/active-profile.json"
+AUTO="CLAUDE_PROJECT_DIR=${SANDBOX}/auto"
+hwcase 0 'adb logcat'
+hwcase 2 'adb logcat' "${AUTO}"
+hwcase 2 'adb logcat | grep Media' "${AUTO}"
+hwcase 2 'adb logcat &' "${AUTO}"
+hwcase 2 'adb shell logcat' "${AUTO}"
+hwcase 2 'adb -s IVI01 logcat -v time' "${AUTO}"
+hwcase 2 'adb logcat > /tmp/x.log' "${AUTO}"
+hwcase 2 'adb shell logcat > host.txt' "${AUTO}"
+hwcase 2 'adb logcat -T 10' "${AUTO}"
+hwcase 2 'timeout 60 adb logcat -s MediaKey' "${AUTO}"
+hwcase 2 'adb shell "logcat -f /data/local/tmp/x.txt"' "${AUTO}"
+hwcase 0 'adb logcat -d' "${AUTO}"
+hwcase 0 'adb logcat -c' "${AUTO}"
+hwcase 0 'adb logcat -g' "${AUTO}"
+hwcase 0 'adb logcat -t 200' "${AUTO}"
+hwcase 0 'adb -s IVI01 logcat -d -v time > /tmp/x.log' "${AUTO}"
+hwcase 0 'adb shell "logcat -d > /data/local/tmp/x.txt"' "${AUTO}"
+hwcase 0 'adb shell "nohup logcat -f /data/local/tmp/x.txt &"' "${AUTO}"
+hwcase 0 'adb shell "logcat > /data/local/tmp/x.log &"' "${AUTO}"
+hwcase 0 'adb shell dumpsys car_service' "${AUTO}"
+hwcase 0 'grep logcat notes.txt' "${AUTO}"
+# review 2026-09-26: a value glued to its option is no dump flag; logcat as an argument
+# (pkill logcat) is no logcat call; "detached" belongs to the logcat's own command.
+hwcase 2 'adb logcat -vtime' "${AUTO}"
+hwcase 2 'adb logcat -bcrash' "${AUTO}"
+hwcase 2 'adb logcat -sTag:I' "${AUTO}"
+hwcase 0 'adb logcat -b crash -d' "${AUTO}"
+hwcase 0 'adb logcat -t200' "${AUTO}"
+hwcase 0 'adb logcat -G 16M' "${AUTO}"
+hwcase 0 'adb logcat -S' "${AUTO}"
+hwcase 0 'adb shell pkill logcat' "${AUTO}"
+hwcase 0 'adb shell "pkill -f logcat"' "${AUTO}"
+hwcase 0 'adb shell pidof logcat' "${AUTO}"
+hwcase 2 'adb shell logcat -f /data/local/tmp/l.txt & sleep 5; echo "x &"' "${AUTO}"
 # The same guard through replicant-mcp (profiles android/automotive: essential_mcps).
 # Tool names and input schemas from replicant-mcp 1.6.7 dist/tools/*.js: adb-shell
 # {command} and adb-app {operation, packageName} have no device field — they run on the

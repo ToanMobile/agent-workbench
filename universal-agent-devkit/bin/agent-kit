@@ -125,10 +125,12 @@ case "$CMD" in
       link) shift; "${RC[@]}" bug-link "$@" ;;
       unlink) shift; "${RC[@]}" bug-unlink "$@" ;;
       drop) shift; "${RC[@]}" drop "$@" ;;
+      repeat) shift; "${RC[@]}" repeat "$@" ;;
       import) shift; "${RC[@]}" import "$@" ;;
       show) "${RC[@]}" show ;;
-      *) echo "agent-kit bugs: add \"<title>\" [--severity S] [--module M] [--evidence E] [--test REF] [--fixed] [--id BUG-ID]" >&2
-         echo "                | link <BUG-ID> <test> | unlink <BUG-ID> <test> | drop <BUG-ID> | import <table> [--dry-run] | show" >&2; exit 2 ;;
+      *) echo "agent-kit bugs: add \"<title>\" [--severity S] [--module M] [--evidence E] [--test REF] [--fixed] [--id BUG-ID] [--on-car]" >&2
+         echo "                | link <BUG-ID> <test> | unlink <BUG-ID> <test> | drop <BUG-ID> | import <table> [--dry-run] | show" >&2
+         echo "                | repeat <BUG-ID> <ket-qua.json> [--scenario S]" >&2; exit 2 ;;
     esac
     ;;
   checklist)
@@ -261,6 +263,10 @@ Commands:
   bugs unlink <BUG-ID> <test>
                       Undo a link that is context, not a guard (a broad suite linked next to the real
                       test); the RED-proof becomes OUTDATED — every linked test must go red to be PROVEN
+  bugs repeat <BUG-ID> <ket-qua.json> [--scenario S]
+                      Automotive: a bug measured on the car (add --on-car) is PASS only with a
+                      repeat run after its fix proof — >=3 runs passed, none failed
+                      (scripts/tools/xe-chay-lap.py ket-qua.json); until then NEEDS_CAR
   bugs drop <BUG-ID>  Remove a bug row (a REPORTED prompt that was no bug, a duplicate)
   checklist restore [--list | --dismiss | <snapshot>]
                       Every write of .agents/regression_status.json is journaled with a snapshot

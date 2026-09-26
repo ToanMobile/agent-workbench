@@ -53,6 +53,7 @@ Phân tích nguyên nhân đơ máy (Application Not Responding) hoặc crash đ
   - Xác định chính xác luồng gây tắc nghẽn (Main Thread Starvation, Binder Lock Contention, hoặc Database Lock).
   - Trích xuất stack trace có cấu trúc, định vị chính xác `File.kt:Line` gây chặn luồng chính.
   - Không có thiết bị online ⇒ exit `3` (CHƯA XÁC MINH), không phải "sạch".
+- **Thiết bị nối ADB Wi-Fi (xe, head-unit):** không stream `adb logcat` về máy tính — kết nối rớt là log chết theo. Ghi trên thiết bị rồi kéo về: `adb shell "logcat -d > /data/local/tmp/x.txt"` (một lần) hoặc `adb shell "nohup logcat -f /data/local/tmp/x.txt &"` (suốt phép đo), sau đó `adb pull`. Profile automotive: `hardware_safety_gate` chặn `adb logcat` không có `-d/-c/-g/-t`.
 
 ### 3a. Chạy Lệnh adb Có Thẩm Định — Chống Xanh Ảo (`adb-safe-exec.sh`)
 `adb shell am start …` trả exit `0` cả khi activity không tồn tại (`Error type 3`), và crash/ANR vài giây sau khi mở app không bao giờ hiện trong exit code. Mọi lệnh adb dùng làm bằng chứng PASS phải chạy qua wrapper:

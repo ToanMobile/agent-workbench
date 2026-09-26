@@ -63,6 +63,7 @@ Phân loại lỗi vào đúng 1 trong 5 cơ chế hỏng hóc thực chiến:
      `agent-kit bugs add "<tiêu đề chuẩn>" --id <BUG-id> --module <module>`.
      Không phải bug (hook phân loại nhầm): `agent-kit bugs drop <BUG-id>`.
    - `/fixbugs <mô tả>` gõ bằng slash command KHÔNG qua hook ghi bug — bước này là nơi duy nhất ghi nó.
+5. **Bug ở luồng tự động** (tự chạm, điều khiển app khác, job nền, lệnh giọng nói): kiểm luồng đã có telemetry cho cả thành công lẫn từng đường thất bại, mỗi đường một vân tay grep được (skill `observability-instrumentation`, Telemetry Contract mục 5). Thiếu thì thêm trước khi sửa — ĐỎ/XANH trên thiết bị đọc từ đúng các vân tay đó, không từ "không thấy lỗi".
 
 ### Bước 2: Thiết lập Oracle Thất bại (RED Phase)
 1. Viết một Unit Test hoặc regression test thể hiện đúng kịch bản lỗi.

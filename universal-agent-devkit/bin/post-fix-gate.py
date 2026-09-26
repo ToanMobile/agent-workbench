@@ -2347,6 +2347,111 @@ def _update_regression_checklist(args, matrix, rules, modified_files, regression
               + ("" if data["items"][bug_id]["tests"] else tr(" (chưa link test)", " (no test linked yet)")))
 
 
+# Large or media files are not source: a 14 MB bugs/bug.mp4 of another session rode into a
+# commit (GeelyEx2 c4769097, 2026-09-26). Blocked in pre-commit; DEVKIT_ALLOW_LARGE=1 when asked.
+def _max_staged_mb() -> float:
+    raw = os.environ.get("DEVKIT_MAX_STAGED_MB") or "5"
+    try:
+        return float(raw)
+    except ValueError:   # "5MB": warn and keep the default instead of crashing every gate run
+        sys.stderr.write(f"⚠ DEVKIT_MAX_STAGED_MB={raw!r} is not a number — using 5\n")
+        return 5.0
+
+
+MAX_STAGED_MB = _max_staged_mb()
+BINARY_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".3gp", ".zip", ".7z", ".rar", ".tar",
+               ".gz", ".tgz", ".apk", ".aab", ".ipa", ".hprof", ".heapdump", ".mp3", ".wav"}
+
+
+def run_large_file_audit(modified_files: list) -> tuple:
+    if os.environ.get("DEVKIT_ALLOW_LARGE") == "1":
+        return True, []
+    root = str(get_repo_root())
+    prefix = get_project_prefix()
+    findings = []
+    for f in modified_files:
+        if f in DELETED_FILES or not STAGED_MODES.get(f, "100").startswith("100"):
+            continue
+        lfs = subprocess.run(["git", "-C", root, "check-attr", "filter", "--", prefix + f],
+                             capture_output=True, text=True).stdout.strip().endswith(": lfs")
+        if lfs:
+            continue
+        size = subprocess.run(["git", "-C", root, "cat-file", "-s", ":" + prefix + f],
+                              capture_output=True, text=True).stdout.strip()
+        mb = int(size) / 1e6 if size.isdigit() else 0
+        if mb > MAX_STAGED_MB:
+            findings.append((f, tr(f"file {mb:.1f} MB > {MAX_STAGED_MB:g} MB — không commit file lớn (DEVKIT_ALLOW_LARGE=1 nếu User yêu cầu)",
+                                   f"file {mb:.1f} MB > {MAX_STAGED_MB:g} MB — large files are not committed (DEVKIT_ALLOW_LARGE=1 when the user asks)")))
+        elif Path(f).suffix.lower() in BINARY_EXTS:
+            findings.append((f, tr("video/âm thanh/gói nhị phân — không commit (DEVKIT_ALLOW_LARGE=1 nếu User yêu cầu)",
+                                   "video/audio/binary package — not committed (DEVKIT_ALLOW_LARGE=1 when the user asks)")))
+    return not findings, findings
+
+
+# A fix commit that changes source code names the bug it fixes, or says why none applies
+# (GeelyEx2 25-26/09: ~12 car bugs fixed, 0 guards added; the project rule lived only in AGENTS.md).
+FIX_SUBJECT = re.compile(r"^(fix|hotfix|bugfix)(\([^)]*\))?!?:", re.I)
+TRAILER = re.compile(r"^(Bug|No-Guard)[ \t]*:[ \t]*(\S.*)$", re.I | re.M)
+
+
+def known_bug_ids():
+    """Guard ids (.agents/local/guards.json) and checklist bug ids; None when the project has neither."""
+    ids, seen = set(), False
+    proj = get_project_dir()
+    try:
+        g = json.loads((proj / ".agents" / "local" / "guards.json").read_text(encoding="utf-8"))
+        seen = True
+        for it in (g.get("guards", []) if isinstance(g, dict) else g):
+            if isinstance(it, dict) and it.get("id"):
+                ids.add(str(it["id"]))
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        items = json.loads((proj / ".agents" / "regression_status.json").read_text(encoding="utf-8")).get("items", {})
+        seen = True
+        ids.update(k for k, v in items.items() if isinstance(v, dict) and v.get("kind") == "bug")
+    except (OSError, ValueError, AttributeError):
+        pass
+    return ids if seen else None
+
+
+def run_commit_msg_check(msg_path, modified_files) -> int:
+    try:
+        text = Path(msg_path).read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        log_err(tr(f"commit-msg: không đọc được message ({e})", f"commit-msg: cannot read the message ({e})"))
+        return 1
+    text = "\n".join(line for line in text.splitlines() if not line.startswith("#"))
+    subject = next((line for line in text.splitlines() if line.strip()), "")
+    if not FIX_SUBJECT.match(subject.strip()):
+        return 0
+    exts = profile_source_exts()
+    code = [f for f in modified_files if f not in DELETED_FILES and Path(f).suffix in exts
+            and f.replace("\\", "/").split("/")[0] not in NOT_CODE_ROOTS and not is_test_path(f)]
+    if not code:
+        return 0
+    trailers = TRAILER.findall(text)
+    if any(k.lower() == "no-guard" for k, _ in trailers):
+        return 0
+    bugs = [b for k, v in trailers if k.lower() == "bug" for b in re.split(r"[,\s]+", v.strip()) if b]
+    shown = ", ".join(code[:3]) + (" …" if len(code) > 3 else "")
+    if not bugs:
+        log_err(tr(f"commit-msg: commit fix sửa code ({shown}) phải có dòng `Bug: <id>` (bug/guard nó sửa) "
+                   "hoặc `No-Guard: <lý do>`. Thêm guard/test cho bug đã đo rồi ghi id vào đây.",
+                   f"commit-msg: a fix commit that changes code ({shown}) needs a `Bug: <id>` line (the bug/guard it fixes) "
+                   "or `No-Guard: <reason>`. Add the guard/test for the measured bug, then name its id here."))
+        return 1
+    known = known_bug_ids()
+    unknown = [b for b in bugs if known is not None and b not in known]
+    if unknown:
+        log_err(tr(f"commit-msg: `Bug: {', '.join(unknown)}` không phải guard (.agents/local/guards.json) hay bug của checklist. "
+                   "Thêm guard/bug đó trước, hoặc dùng `No-Guard: <lý do>`.",
+                   f"commit-msg: `Bug: {', '.join(unknown)}` is no guard (.agents/local/guards.json) or checklist bug. "
+                   "Add that guard/bug first, or use `No-Guard: <reason>`."))
+        return 1
+    return 0
+
+
 def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
     """--staged (git pre-commit): the 6 blocking static checks on the staged blobs only.
     No regression run, adb probe, proof-image scan or report — a hook has to be fast
@@ -2362,6 +2467,7 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
     print(f"  • {tr('File đã stage', 'Staged files')}: {BOLD}{len(modified_files)}{RESET}")
     checks = [
         ("secrets", tr("Bí mật / file cấm", "Secrets / forbidden files"), run_git_hygiene_audit),
+        ("large", tr("File lớn / video / gói nhị phân", "Large files / video / binary packages"), run_large_file_audit),
         ("lazy", tr("Placeholder lười biếng", "Lazy placeholders"), run_anti_laziness_audit),
         ("dependencies", tr("Dependency (version thả nổi / http://)", "Dependencies (floating versions / http://)"), run_dependency_audit),
         ("perf", tr("Anti-pattern hiệu năng", "Performance anti-patterns"), run_performance_audit),
@@ -2406,6 +2512,8 @@ def main():
     parser.add_argument("--diff", help="Git diff reference (e.g. HEAD~1, origin/main)")
     parser.add_argument("--staged", action="store_true",
                         help="Pre-commit mode: static checks only, on the staged content (clean = exit 2, never PASS)")
+    parser.add_argument("--commit-msg", metavar="FILE",
+                        help="git commit-msg mode: a fix commit that changes source code needs `Bug: <id>` or `No-Guard: <reason>`")
     parser.add_argument("--matrix", help="Path to regression_matrix.json")
     parser.add_argument("--run-tests", action="store_true", help="Run the matrix regression commands for real (required for PASS)")
     parser.add_argument("--full", action="store_true",
@@ -2445,7 +2553,7 @@ def main():
     base_ref = args.diff if args.diff and ".." not in args.diff else "HEAD"
 
     global STAGED, BASE_REF
-    STAGED = args.staged
+    STAGED = args.staged or bool(args.commit_msg)
     BASE_REF = base_ref
     try:
         all_changed = get_staged_files() if STAGED else get_modified_files(args.diff)
@@ -2454,6 +2562,8 @@ def main():
         return 2
     devkit_artifacts = [f for f in all_changed if is_devkit_artifact(f)]
     modified_files = [f for f in all_changed if f not in devkit_artifacts]
+    if args.commit_msg:
+        return run_commit_msg_check(args.commit_msg, modified_files)
     if STAGED:
         return run_staged_audit(args, modified_files, devkit_artifacts)
     matrix, matrix_problem = load_active_matrix(args.matrix, base_ref)

@@ -39,6 +39,12 @@
 #     (-d/-e/-t/ANDROID_SERIAL/the only device) is asked from `adb get-serialno`;
 #     an unresolvable target ($VAR serial, adb timeout) is refused. Host-only
 #     subcommands (devices, version, connect, kill-server …) are never checked.
+#   • (2026-09-26, automotive profile only — <repo>/.agents/active-profile.json) an adb
+#     logcat that streams to this computer: `adb logcat`, `adb shell logcat`, piped or
+#     redirected to a host file. The ADB Wi-Fi link to the car drops and the log of the
+#     measurement dies with it (GeelyEx2 INSTINCT-099). Allowed: a dump that exits
+#     (-d -c -g -t -L -G -S), or a logcat detached on the car that writes there
+#     (`adb shell "nohup logcat -f /data/local/tmp/x.txt &"`, `… > /sdcard/x.log &"`).
 #   • the same device checks through replicant-mcp (PreToolUse `mcp__replicant-mcp__.*`;
 #     tool names and schemas from replicant-mcp 1.6.7 dist/tools/*.js). Each call is
 #     turned into the adb command it runs: adb-shell {command} → `adb shell <command>`,
@@ -447,7 +453,8 @@ ADB_VALUE_OPTS = {"-s", "-t", "-H", "-P", "-L"}
 ADB_WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "time", "timeout", "xargs"}
 
 def adb_calls(text):
-    """(adb executable token, selection options, subcommand, ANDROID_SERIAL) per adb call."""
+    """(adb executable token, selection options, subcommand, ANDROID_SERIAL, words after
+    the subcommand) per adb call."""
     for seg in re.split(r"[;&|\n]+|\$\(|`", text):
         try:
             toks = shlex.split(seg)
@@ -475,7 +482,7 @@ def adb_calls(text):
                 opts += toks[j:j + 2]; j += 2
             else:
                 opts.append(toks[j]); j += 1
-        yield toks[i], opts, (toks[j] if j < len(toks) else ""), env_serial
+        yield toks[i], opts, (toks[j] if j < len(toks) else ""), env_serial, toks[j + 1:]
 
 def sdk_adb():
     """adb the way replicant-mcp finds it: ANDROID_HOME / ANDROID_SDK_ROOT, also from the
@@ -522,7 +529,7 @@ def device_violation(text):
     deny, allow = serial_set("ADB_DENY_SERIALS", "denylist"), serial_set("ADB_ALLOW_SERIALS", "allowlist")
     if not deny and not allow:
         return None
-    for exe, opts, sub, env_serial in adb_calls(text):
+    for exe, opts, sub, env_serial, _rest in adb_calls(text):
         if not sub or sub in ADB_HOST_ONLY:
             continue
         serial, why = target_serial(exe, opts, env_serial)
@@ -533,6 +540,53 @@ def device_violation(text):
             return "thiết bị " + serial + " nằm trong denylist (máy cá nhân / cấm đụng)"
         if serial and allow and serial not in allow:
             return "thiết bị " + serial + " không có trong allowlist"
+    return None
+
+def active_profile():
+    try:
+        with open(os.path.join(os.environ.get("REPO_ROOT", "."), ".agents", "active-profile.json"),
+                  encoding="utf-8") as fh:
+            return str(json.load(fh).get("profile") or "")
+    except (OSError, ValueError, AttributeError):
+        return ""  # no profile: not automotive — this rule protects a log, not the device
+
+# Flags that make logcat end on its own: dump / clear / ring-buffer size / statistics / prune.
+# A value glued to another option (-vtime, -bcrash) is not one of them.
+LOGCAT_ENDS = re.compile(r"^-([dcgGLSpP]+|t\d*)$")
+LOGCAT_ENDS_LONG = {"--clear", "--last", "--buffer-size", "--dump", "--statistics", "--prune"}
+# Words that may stand before logcat in its own device command (nohup logcat …).
+LOGCAT_LEAD = {"nohup", "setsid", "exec", "busybox", "toybox", "timeout", "su", "0", "root"}
+CAR_PATH = re.compile(r"^/(data|sdcard|storage)/")
+
+def logcat_violation(text):
+    """An adb logcat that streams to this computer; None for a dump or a logcat detached
+    on the car. adb_calls splits at & | ; before shlex, so a quoted device command may
+    come back as loose words (\x22logcat): quotes are stripped, and a detached one is
+    told by its "… &\x22" closing the quoted command."""
+    # "… logcat … &\x22": the logcat of that quoted device command runs in the background.
+    detached = re.search(r"\blogcat\b[^;&|\x22\x27\n]*&\s*[\x22\x27]\s*($|[;&|)\n])", text) is not None
+    for _exe, _opts, sub, _serial, rest in adb_calls(text):
+        words = [w.strip("\x22\x27") for w in " ".join(rest).split()]
+        if sub in ("shell", "exec-out") and "logcat" in words:
+            k = words.index("logcat")
+            pre, args = words[:k], words[k + 1:]
+            if not all(w in LOGCAT_LEAD or w.isdigit() for w in pre):
+                continue   # logcat is an argument (pkill logcat, pidof logcat), not the command
+        elif sub == "logcat":
+            pre, args = None, words
+        else:
+            continue
+        if any(LOGCAT_ENDS.match(a) or a.split("=", 1)[0] in LOGCAT_ENDS_LONG for a in args):
+            continue
+        on_car = False
+        for n, a in enumerate(args):
+            t = (args[n + 1] if a in (">", ">>", "-f", "--file") and n + 1 < len(args)
+                 else a.lstrip(">") if a.startswith(">")
+                 else a.split("=", 1)[1] if a.startswith("--file=") else "")
+            on_car = on_car or bool(CAR_PATH.match(t))
+        if pre is not None and on_car and (detached or {"nohup", "setsid"} & set(pre)):
+            continue
+        return " ".join(["adb", sub] + rest)
     return None
 
 if rm_why:
@@ -563,5 +617,18 @@ if label:
     sys.stderr.write(f"  • Lệnh: {shown}\n\n")
     sys.stderr.write("Nếu chắc chắn đang ở môi trường giả lập an toàn, đặt HARDWARE_OVERRIDE=1 để bỏ qua.\n")
     sys.exit(2)
+
+if not MCP and active_profile() == "automotive":
+    lc = logcat_violation(cmd)
+    if lc:
+        sys.stderr.write("\n🛑 [HARDWARE SAFETY GATE REJECTED]\n")
+        sys.stderr.write("Profile automotive: logcat chạy stream về máy tính bị chặn — ADB Wi-Fi tới xe rớt là log chết theo:\n")
+        sys.stderr.write(f"  • {lc}\n")
+        sys.stderr.write(f"  • Lệnh: {shown}\n\n")
+        sys.stderr.write("Ghi log ngay trên xe rồi kéo về:\n"
+                         "  • chụp một lần: adb shell \"logcat -d > /data/local/tmp/x.txt\" rồi adb pull /data/local/tmp/x.txt\n"
+                         "  • ghi suốt phép đo: adb shell \"nohup logcat -f /data/local/tmp/x.txt &\" … rồi adb pull\n"
+                         "  • hoặc adb logcat -d / -t <N> (đọc xong là thoát). Xem GeelyEx2 INSTINCT-099.\n")
+        sys.exit(2)
 sys.exit(0)
 '

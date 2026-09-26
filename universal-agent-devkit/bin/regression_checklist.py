@@ -88,6 +88,7 @@ ICON = {
     "UNPROVEN": "⏳ chưa chứng minh ĐỎ",
     "AUTO_CLOSED": "💤 tự đóng (REPORTED 14 ngày không ai đụng)",
     "VACUOUS": "🚫 TEST VÔ HIỆU (xanh cả khi bỏ bản sửa)",
+    "NEEDS_CAR": "🚗 chờ chạy lặp trên xe",
 }
 SESSIONS_LIMIT = 20
 # Bug states that mean "nothing guards this bug from coming back".
@@ -1524,7 +1525,38 @@ def _linked_status(data: dict, item: dict) -> str:
             return bad
     # A green suite is a PASS for the bug only once its test was seen RED on the
     # unfixed code (scripts/red_proof.py): otherwise it may not test the bug at all.
-    return "PASS" if proof == "PROVEN" else "UNPROVEN"
+    if proof != "PROVEN":
+        return "UNPROVEN"
+    # Measured on the car (automotive): one green run is no proof — the owner reproduced
+    # a "fixed" bug 5–6 times in a row. PASS needs a repeat run after the fix proof.
+    if item.get("on_car"):
+        rp = item.get("repeat_proof") or {}
+        if not (rp.get("failed") == 0 and (rp.get("passed") or 0) >= REPEAT_MIN
+                and (rp.get("ts") or 0) > ((item.get("red_proof") or {}).get("ts") or 0)):
+            return "NEEDS_CAR"
+    return "PASS"
+
+
+REPEAT_MIN = 3
+
+
+def repeat_proof(path: Path, scenario: str | None = None) -> dict:
+    """The repeat-run proof of a car measurement (scripts/tools/xe-chay-lap.py ket-qua.json:
+    [{kich_ban, lan, dat, khong_do_duoc, …}]). An unmeasured run (adb dropped) counts
+    neither way; one failed run fails the whole proof."""
+    runs = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(runs, list) or not all(isinstance(r, dict) for r in runs):
+        raise ValueError(f"{path}: không phải danh sách lượt chạy (ket-qua.json của xe-chay-lap.py)")
+    if scenario:
+        runs = [r for r in runs if r.get("kich_ban") == scenario]
+        if not runs:
+            raise ValueError(f"{path}: không có lượt nào của kịch bản {scenario}")
+    measured = [r for r in runs if not r.get("khong_do_duoc")]
+    return {"file": str(path), "scenario": scenario, "at": _now(), "ts": path.stat().st_mtime,
+            "passed": sum(1 for r in measured if r.get("dat") is True),
+            "failed": sum(1 for r in measured if r.get("dat") is not True),
+            "unmeasured": len(runs) - len(measured),
+            "scenarios": sorted({str(r.get("kich_ban")) for r in runs})}
 
 
 def _test_status(item: dict) -> str:
@@ -1559,6 +1591,7 @@ ALERT_TODO = {
     "NOT_IN_MATRIX": "test có nhưng gate không chạy — đưa vào ma trận hoặc link suite của ma trận",
     "OPEN": "sửa theo ĐỎ→XANH rồi `agent-kit bugs link`",
     "UNCOVERED": "file code chưa có test — gắn test (`regression_checklist.py link`)",
+    "NEEDS_CAR": f"chạy lặp trên xe sau bản sửa (≥{REPEAT_MIN} lượt đạt, 0 hỏng) → `agent-kit bugs repeat <ID> <ket-qua.json>`",
 }
 ARCHIVE_FILE = Path(".agents") / "archive" / "BUG_ARCHIVE.md"
 ARCHIVE_DAYS = ARCHIVE_COMMITS = 30
@@ -1624,6 +1657,7 @@ def render(project_dir: Path, data: dict) -> Path:
         f" · 🔁 {c.get('FLAKY', 0)} · 🚫 {c.get('VACUOUS', 0)} · 🟡 {c.get('STALE', 0)} cần chạy lại"
         f" · ⚠️ {c.get('UNCOVERED', 0) + c.get('NEEDS_TEST', 0) + c.get('NOT_IN_MATRIX', 0)} cần test"
         f" · 🐞 {c.get('OPEN', 0)} chưa sửa · ⏳ {c.get('NOT_RUN', 0) + c.get('UNPROVEN', 0)} chờ"
+        f" · 🚗 {c.get('NEEDS_CAR', 0)} chờ chạy lặp trên xe"
         f" · 🟡 REPORTED {c.get('REPORTED', 0)}"
         f" · ma trận chờ duyệt: {'có' if pending else 'không' if pending is not None else '?'}",
         "",
@@ -1756,6 +1790,22 @@ def _bug_command(args, project: Path) -> int:
             print(f"{args.req_id} {st} — tiêu chí {args.which} → " + (", ".join(in_matrix) if in_matrix else
                   f"{args.test_ref} (ngoài matrix: gate không chạy)"))
             return 0
+        if args.cmd == "repeat":
+            item = data["items"].get(args.bug_id)
+            if not item or item.get("kind") != "bug":
+                raise ValueError(f"{args.bug_id}: không có bug này")
+            rp = repeat_proof(Path(args.result).resolve(), args.scenario)
+            try:
+                rp["file"] = str(Path(rp["file"]).relative_to(project.resolve()))
+            except ValueError:
+                pass
+            item["on_car"], item["repeat_proof"] = True, rp
+            save(project, data)
+            ok_ = rp["failed"] == 0 and rp["passed"] >= REPEAT_MIN
+            print(f"{args.bug_id} {effective_status(data, item)} — chạy lặp trên xe: {rp['passed']} đạt, "
+                  f"{rp['failed']} hỏng, {rp['unmeasured']} không đo được ({', '.join(rp['scenarios'])})"
+                  + ("" if ok_ else f" — chưa đủ: cần ≥{REPEAT_MIN} lượt đạt và 0 hỏng"))
+            return 0 if ok_ else 1
         if args.cmd == "drop":
             item = drop(data, args.bug_id)
             save(project, data)
@@ -1777,6 +1827,8 @@ def _bug_command(args, project: Path) -> int:
                                     severity=args.severity, evidence=args.evidence, test_ids=in_matrix,
                                     bug_id=args.bug_id)
         item = data["items"][bid]
+        if args.on_car:
+            item["on_car"] = True
         for key, vals in (("runs_in_suite", in_suite), ("test_refs", outside)):
             for v in vals:
                 if v not in item.setdefault(key, []):
@@ -1837,6 +1889,12 @@ def main(argv=None) -> int:
     p_add.add_argument("--test", action="append", default=[], help="matrix id, test file or class (repeatable)")
     p_add.add_argument("--fixed", action="store_true", help="already fixed in code")
     p_add.add_argument("--id", dest="bug_id", help="confirm this REPORTED row / name the new row")
+    p_add.add_argument("--on-car", action="store_true",
+                       help="measured on the car: PASS also needs a repeat-run proof (bugs repeat)")
+    p_rp = sub.add_parser("repeat", help="a repeat-run proof on the car for a bug (xe-chay-lap.py ket-qua.json)")
+    p_rp.add_argument("bug_id")
+    p_rp.add_argument("result")
+    p_rp.add_argument("--scenario", help="only this kich_ban of the file")
     p_bl = sub.add_parser("bug-link", help="link a bug to the test that proves its fix")
     p_bl.add_argument("bug_id")
     p_bl.add_argument("test_ref")
@@ -1876,7 +1934,7 @@ def main(argv=None) -> int:
             return 1 if msg else 0
         if args.cmd == "restore":
             return _restore_command(args, project)
-        if args.cmd in ("add", "bug-link", "bug-unlink", "drop", "req-add", "req-link"):
+        if args.cmd in ("add", "bug-link", "bug-unlink", "drop", "req-add", "req-link", "repeat"):
             return _bug_command(args, project)
         data = load(project)
         if args.cmd == "import":

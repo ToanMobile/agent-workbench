@@ -26,6 +26,7 @@ Không bịa threshold, percentile hoặc alert budget. Dùng gate/measurement/o
    - `WARN`: Cho các rủi ro đã lường trước hoặc trạng thái suy giảm hiệu năng (degraded).
    - `INFO`: Ghi nhận các mốc chuyển trạng thái nghiệp vụ lớn.
    - `DEBUG`: Chỉ phục vụ môi trường phát triển cục bộ.
+5. **Luồng tự động — mỗi đường kết thúc một vân tay:** luồng chạy không người nhìn (tự chạm/điều khiển app khác, job nền, lệnh giọng nói, retry) ghi signal cho CẢ đường thành công lẫn MỌI đường thất bại/bỏ cuộc. Mỗi đường một chuỗi cố định, duy nhất, grep được (vd `XÁC NHẬN THÀNH CÔNG`, `DỪNG — <bước>: <lý do>`) kèm bước đang ở. Chỉ log lỗi thì một lượt im lặng không phân biệt được "đạt" với "treo / chết giữa chừng", và công cụ chạy lặp không chấm đạt/hỏng từ log được.
 
 ## Crashlytics
 

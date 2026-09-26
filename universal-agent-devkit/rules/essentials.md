@@ -51,6 +51,8 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   (`// ... existing code ...`); keep public signatures backward compatible.
 - **Git**: commit, push or open a PR only when the user asks. Never commit secrets
   (`.env`, keystores, `local.properties`, `google-services.json`, tokens); mask them in proof.
+  A checkout another session shares: commit only your own paths (`git commit -m … -- <paths>`),
+  never `git add -A`/`commit -a`, which sweep in the other session's work.
 - **One developer, one branch**: work on the current branch. No new branch, worktree or
   remote branch unless the user asks for it (then prefix the git command with
   `DEVKIT_ALLOW_BRANCH=1`). Before a push, bring origin into the local branch with its own
