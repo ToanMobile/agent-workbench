@@ -423,6 +423,12 @@ def losses(good: dict, cur: dict, gone=()) -> list:
         gl, cl = g.get("last"), c.get("last")
         if isinstance(gl, dict) and (not isinstance(cl, dict) or _ts(cl) < _ts(gl)):
             out.append(f"{iid}: kết quả {gl.get('status')} bị mất")
+        # A car bug that lost its flag turns PASS without the repeat run it needs.
+        if g.get("on_car") and not c.get("on_car"):
+            out.append(f"{iid}: cờ on_car (đo trên xe) bị mất")
+        gr, cr = g.get("repeat_proof"), c.get("repeat_proof")
+        if isinstance(gr, dict) and (not isinstance(cr, dict) or _ts(cr) < _ts(gr)):
+            out.append(f"{iid}: repeat_proof (chạy lặp trên xe) bị mất")
     return out
 
 
@@ -568,6 +574,12 @@ def _merge_item(s: dict, c: dict, stats: dict) -> None:
     if isinstance(sl, dict) and (not isinstance(cl, dict) or _ts(sl) > _ts(cl)):
         c["last"] = dict(sl)
         stats["results"] += 1
+    sr, cr = s.get("repeat_proof"), c.get("repeat_proof")
+    if isinstance(sr, dict) and (not isinstance(cr, dict) or _ts(sr) > _ts(cr)):
+        c["repeat_proof"] = dict(sr)
+        stats["results"] += 1
+    if s.get("on_car") and not c.get("on_car"):
+        c["on_car"] = True
     if s.get("history") or c.get("history"):
         hist = {(_ts(h), h.get("status")): h for h in (c.get("history") or []) + (s.get("history") or [])
                 if isinstance(h, dict)}

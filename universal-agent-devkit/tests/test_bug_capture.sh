@@ -169,7 +169,10 @@ for p in "có viết test cho 4 bug critical đi" "duyệt, commit merge push v�
          "gửi check list báo cáo tổng số bugs và số lượng đã fix xong, chưa xong và đang đợi test" \
          "chạy /geely-fixbugs để audit, review check lấy all bug fix luôn đi" \
          "Audit, review docs/plan/telemetry-bat-5-bug.md, docs/plan/ra-xe-test-5-bug-21-09.md" \
-         "gom lại hết chưa? sao còn docs/plan/telemetry-bat-5-bug.md"; do
+         "gom lại hết chưa? sao còn docs/plan/telemetry-bat-5-bug.md" \
+         "tôi đang hỏi chất lượng dev kit ko hỏi vấn đề của project đó bị gì 3 repo đó là tham khảo để cải thiện chất lượng dev kit thôi" \
+         "đồng ý xoá 20 dòng không phải bug" \
+         "đảm bảo các bugs tôi đã test trên xe ko bị lại đúng ko?"; do
   i=$((i + 1)); out="$(hook "$p" "m$i")"
   nothing "task about known bugs '${p:0:40}…' → no row" "$out"
 done
@@ -183,7 +186,10 @@ for p in "fix bug crash khi mở file PDF có mật khẩu" "bug: nút Lưu khô
          "audit bugs/bug.mp4 tính năng hé cửa nhưng khi mở cửa thì không thấy hé, hé quá chậm" \
          "app crash/văng khi mở PDF" "App crash.Fix giúp em" "login fail/timeout liên tục" \
          "fix 2 crash bugs in checkout" "layout lệch, xem 2 ảnh bugs/a.png" "layout lệch (bugs/img.png)" \
-         "màn cài đặt lệch bugs/Screenshot 2026-09-25 at 10.23.45.png"; do
+         "màn cài đặt lệch bugs/Screenshot 2026-09-25 at 10.23.45.png" \
+         "log báo xe bị gì?" "app ko mở được, bị treo ở màn chờ" \
+         "app bị crash khi mở PDF, không phải lỗi mạng" "Không phải lỗi mạng đâu, app bị treo ở màn chờ" \
+         "màn hình đen khi vào CarPlay, ko phải bug cũ"; do
   i=$((i + 1)); out="$(raw_hook "$(payload "$p" "r$i")")"
   landed "report '${p:0:40}…' → REPORTED row" "$out"
 done

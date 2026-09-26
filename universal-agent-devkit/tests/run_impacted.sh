@@ -33,15 +33,34 @@ if [ "${1:-}" = "--list" ]; then
   exit 0
 fi
 
-rc=0
-log="$(mktemp)"
+# Parallel, DEVKIT_TEST_JOBS at a time (default 4): run one after another the suite took 740 s of
+# the gate's 900 s (2026-09-26). Every test works in its own mktemp dir. Timing tests
+# (test_budgets, test_session_context's bounded fetch) run alone afterwards, so the others cannot slow them. Output keeps list order.
+JOBS="${DEVKIT_TEST_JOBS:-4}"
+case "$JOBS" in ''|*[!0-9]*|0) JOBS=4 ;; esac
+out="$(mktemp -d)"
+trap 'rm -rf "$out"' EXIT
+run_one() { # <test> <out dir>
+  local o
+  o="$2/$(printf '%s' "$1" | tr '/' '_')"
+  if bash "$1" >"$o.log" 2>&1; then echo 0 >"$o.rc"; else echo 1 >"$o.rc"; fi
+}
+export -f run_one
+parallel="" alone=""
 for t in $selected; do
   [ -f "$t" ] || continue
-  if bash "$t" >"$log" 2>&1; then
+  case "$t" in */test_budgets.sh|*/test_session_context.sh) alone="$alone $t" ;; *) parallel="$parallel $t" ;; esac
+done
+[ -n "$parallel" ] && printf '%s\n' $parallel | xargs -P "$JOBS" -I{} bash -c 'run_one "$1" "$2"' _ {} "$out"
+for t in $alone; do run_one "$t" "$out"; done
+rc=0
+for t in $selected; do
+  [ -f "$t" ] || continue
+  o="$out/$(printf '%s' "$t" | tr '/' '_')"
+  if [ "$(cat "$o.rc" 2>/dev/null)" = 0 ]; then
     echo "✔ $t"
   else
-    echo "✖ $t"; tail -n 20 "$log" | sed 's/^/    /'; rc=1
+    echo "✖ $t"; tail -n 20 "$o.log" 2>/dev/null | sed 's/^/    /'; rc=1
   fi
 done
-rm -f "$log"
 exit "$rc"

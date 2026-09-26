@@ -2413,6 +2413,16 @@ def run_large_file_audit(modified_files: list) -> tuple:
 # (GeelyEx2 25-26/09: ~12 car bugs fixed, 0 guards added; the project rule lived only in AGENTS.md).
 FIX_SUBJECT = re.compile(r"^(fix|hotfix|bugfix)(\([^)]*\))?!?:", re.I)
 TRAILER = re.compile(r"^(Bug|No-Guard)[ \t]*:[ \t]*(\S.*)$", re.I | re.M)
+# A code change says what it changed. Goods 2026-09-25: "fix." and "no message" committed
+# half-done work that turned 33 checklist rows red. Blocked: a vague subject — "<type>: <1 word>",
+# fewer than 3 words otherwise, or a filler ("update", "wip"). Any type passes (GeelyEx2 uses
+# data(voice):, tools(vhal):; its release script commits "Release artifacts (dev): …").
+CONVENTIONAL = re.compile(r"^([a-z]+)(\([^)]*\))?!?:\s*(.*)$", re.I)
+GIT_MADE_SUBJECT = re.compile(r"^(Merge |Revert |fixup! |squash! |amend! |Initial commit$|Squashed commit of the following:)")
+VAGUE_SUBJECTS = {"wip", "update", "updates", "fix", "fixes", "fixed", "change", "changes", "misc", "tmp", "test",
+                  "tests", "no message", "done", "ok", "sửa", "sửa lỗi", "cập nhật"}
+FIX_WORD = re.compile(r"^(fix|fixes|fixed|hotfix|bugfix|sửa)\b", re.I)
+BUG_ID = re.compile(r"^(#\d+|[A-Za-z][\w.]*-[\w.-]+)$")
 
 
 def known_bug_ids():
@@ -2443,13 +2453,25 @@ def run_commit_msg_check(msg_path, modified_files) -> int:
         log_err(tr(f"commit-msg: không đọc được message ({e})", f"commit-msg: cannot read the message ({e})"))
         return 1
     text = "\n".join(line for line in text.splitlines() if not line.startswith("#"))
-    subject = next((line for line in text.splitlines() if line.strip()), "")
-    if not FIX_SUBJECT.match(subject.strip()):
+    subject = next((line for line in text.splitlines() if line.strip("\ufeff \t")), "").strip("\ufeff \t\r")
+    if GIT_MADE_SUBJECT.match(subject):
         return 0
     exts = profile_source_exts()
     code = [f for f in modified_files if f not in DELETED_FILES and Path(f).suffix in exts
             and f.replace("\\", "/").split("/")[0] not in NOT_CODE_ROOTS and not is_test_path(f)]
     if not code:
+        return 0
+    conv = CONVENTIONAL.match(subject)
+    desc = conv.group(3) if conv else subject
+    if (len(re.findall(r"\w+", desc)) < (2 if conv else 3)
+            or desc.lower().strip(" .!:") in VAGUE_SUBJECTS):
+        shown = ", ".join(code[:3]) + (" …" if len(code) > 3 else "")
+        log_err(tr(f"commit-msg: commit sửa code ({shown}) có subject mơ hồ `{subject}` — nói rõ đổi gì: "
+                   "`<type>(scope): mô tả` (vd `fix(player): dừng phát lặp khi mở lại`) hoặc một câu ≥ 3 từ.",
+                   f"commit-msg: a commit that changes code ({shown}) has a vague subject `{subject}` — say what changed: "
+                   "`<type>(scope): description` (e.g. `fix(player): stop the double play on reopen`) or a sentence of 3+ words."))
+        return 1
+    if not (FIX_SUBJECT.match(subject) or (not conv and FIX_WORD.match(subject))):
         return 0
     trailers = TRAILER.findall(text)
     if any(k.lower() == "no-guard" for k, _ in trailers):
@@ -2461,6 +2483,13 @@ def run_commit_msg_check(msg_path, modified_files) -> int:
                    "hoặc `No-Guard: <lý do>`. Thêm guard/test cho bug đã đo rồi ghi id vào đây.",
                    f"commit-msg: a fix commit that changes code ({shown}) needs a `Bug: <id>` line (the bug/guard it fixes) "
                    "or `No-Guard: <reason>`. Add the guard/test for the measured bug, then name its id here."))
+        return 1
+    not_ids = [b for b in bugs if not BUG_ID.match(b)]
+    if not_ids:
+        log_err(tr(f"commit-msg: `Bug:` cần id (BUG-…, ABC-12, #123), không phải mô tả: {' '.join(not_ids[:6])}. "
+                   "Mô tả lý do thì dùng `No-Guard: <lý do>`.",
+                   f"commit-msg: `Bug:` needs an id (BUG-…, ABC-12, #123), not prose: {' '.join(not_ids[:6])}. "
+                   "For a reason, use `No-Guard: <reason>`."))
         return 1
     known = known_bug_ids()
     unknown = [b for b in bugs if known is not None and b not in known]

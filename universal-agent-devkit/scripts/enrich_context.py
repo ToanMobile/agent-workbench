@@ -83,11 +83,11 @@ def mentions(text, keywords):
 # happened to the user — except in compounds (thiết bị, chuẩn bị, bị động) and when it
 # is what the change should prevent ("không bị", "tránh bị").
 DEFECT_RE = re.compile(
-    r"(?<!thiết )(?<!chuẩn )(?<!trang )(?<!dự )(?<!phòng )(?<!không )(?<!tránh )(?<!khỏi )"
+    r"(?<!thiết )(?<!chuẩn )(?<!trang )(?<!dự )(?<!phòng )(?<!không )(?<!ko )(?<!tránh )(?<!khỏi )"
     r"(?<!\w)bị(?!\w)(?! động)"
     r"|(?<!\w)(?:không|chẳng) (?:chạy|hoạt động|hiện|hiển thị|lên|mở|lưu|nhận|vào|load|tải|phản hồi|"
     r"kết nối|phát|nghe|đóng|tắt|bật)(?!\w)"
-    r"|(?<!\w)(?:sai|kẹt|mất dữ liệu|mất sạch|hồi quy|broken|wrong|regression)(?!\w)"
+    r"|(?<!\w)(?:sai|kẹt|treo|màn hình đen|đen màn hình|mất dữ liệu|mất sạch|hồi quy|broken|wrong|regression)(?!\w)"
     r"|not working|doesn'?t work|does not work")
 # Deprecation is a deliberate act — "xoá API cũ", "deprecate", "migrate sang" — not any
 # sentence with "xóa" in it ("PlayerPrefs bị xóa" is a defect report).
@@ -456,6 +456,11 @@ PATHLIKE_RE = re.compile(
     r"(?<!\S)(?:[~./]\S*|\S*://\S*|[^\s/]*/[^\s/]*/\S*|[^\s/]*/[^\s/]*[-_\d][^\s/]*"
     r"|[^\s/]*/[^\s/]*\." + _EXT + r"|[^\s/]+\." + _EXT + r")(?![\w/])")
 BUG_EVIDENCE_RE = re.compile(r"(?<![\w-])bugs?/[^\n]{0,200}?\.(?:png|jpe?g|gif|webp|heic|mp4|mov|webm|mkv)(?!\w)")
+# The user says outright it is no report: "ko hỏi vấn đề của project đó bị gì", "20 dòng không
+# phải bug" (2026-09-26; measured on 6158 real prompts: the only 2 user prompts it matches).
+# Only that clause goes (to the next , . ; ! ? or line end): "app bị crash khi mở PDF, không phải
+# lỗi mạng" still reports its crash (review 2026-09-26).
+NOT_A_REPORT_RE = re.compile(r"(?<!\w)(?:không|ko|chẳng|chả)\s+(?:hỏi|phải|nói)\s+(?:về\s+)?(?:vấn đề|lỗi|bug|bị gì)[^,.;!?\n]*")
 # Only the word bug(s) goes, the counting in front of it stays: "fix 2 crash bugs" keeps "crash".
 KNOWN_BUGS_RE = re.compile(
     r"((?<!\w)(?:các|những|mấy|mọi|tất cả|all|\d+|tổng số|số lượng|số|link|gắn|viết test cho|test cho"
@@ -521,6 +526,7 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
     if not first or first.startswith("<"):
         return ""
     p_norm = normalize(prompt)
+    p_norm = NOT_A_REPORT_RE.sub(" ", p_norm)
     p_lower = KNOWN_BUGS_RE.sub(r"\1 ", PATHLIKE_RE.sub(" ", p_norm))
     if not (BUG_EVIDENCE_RE.search(p_norm) or mentions(p_lower, DEFECT_WORDS) or DEFECT_RE.search(p_lower)):
         return ""

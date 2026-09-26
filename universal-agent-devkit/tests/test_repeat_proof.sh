@@ -27,7 +27,7 @@ run "$TMP/proj/reports/xe-lap/d" ok ok ok
 touch -t 202001010000 "$TMP/proj/reports/xe-lap/d/ket-qua.json"   # older than the fix proof
 
 DEVKIT_DIR="$DEVKIT_DIR" P="$TMP/proj" python3 - <<'PY'
-import contextlib, io, os, sys, time
+import contextlib, io, json, os, sys, time
 sys.path.insert(0, os.path.join(os.environ["DEVKIT_DIR"], "bin"))
 import regression_checklist as rc
 from pathlib import Path
@@ -82,5 +82,19 @@ check("unknown scenario → error", 1, cli("repeat", "BUG-1", str(P / "reports/x
 d = rc.load(P); rc.render(P, d)
 check("dashboard lists NEEDS_CAR with the command", True,
       "agent-kit bugs repeat" in (P / ".agents/CHECKLIST.md").read_text(encoding="utf-8"))
+# The checklist journal (restore after an out-of-band rollback) must see a lost car flag or
+# repeat proof: without on_car the row silently turns PASS (review 2026-09-26).
+good = rc.load(P)
+cur = json.loads(json.dumps(good))
+cur["items"]["BUG-1"].pop("on_car")
+check("losses() names a lost on_car", True, any("on_car" in x for x in rc.losses(good, cur, ())))
+cur = json.loads(json.dumps(good))
+cur["items"]["BUG-1"]["repeat_proof"] = dict(cur["items"]["BUG-1"]["repeat_proof"], ts=1.0)
+check("losses() names an older repeat_proof", True, any("repeat_proof" in x for x in rc.losses(good, cur, ())))
+cur["items"]["BUG-1"]["on_car"] = False
+rc.merge_snapshot(good, cur, ())
+check("restore brings back the newer repeat_proof", good["items"]["BUG-1"]["repeat_proof"]["ts"],
+      cur["items"]["BUG-1"]["repeat_proof"]["ts"])
+check("restore brings back on_car", True, cur["items"]["BUG-1"].get("on_car"))
 sys.exit(1 if fails else 0)
 PY

@@ -40,9 +40,26 @@ HOOK="$HOOKS_DIR/pre-commit"
 MSG_HOOK="$HOOKS_DIR/commit-msg"
 MSG_BODY="$DEVKIT_ROOT/scripts/git-commit-msg.sh"
 msg_is_ours() { [ -f "$MSG_HOOK" ] && grep -qF "$MARKER" "$MSG_HOOK"; }
+# The project's own commit-msg (GeelyEx2 tracks .githooks/commit-msg) gets ONE line after its #!,
+# marked with CHAIN_MARK (not MARKER: msg_is_ours must stay false, uninstall must not delete the
+# project's hook). It calls <repo>/.agents/devkit, so the tracked hook works on every clone and
+# does nothing where the DevKit is not installed.
+CHAIN_MARK="universal-agent-devkit-chain:commit-msg"
+# shellcheck disable=SC2016
+CHAIN_LINE='D="$(git rev-parse --show-toplevel)/.agents/devkit/scripts/git-commit-msg.sh"; [ -f "$D" ] && { bash "$D" "$1" || exit 1; }  # '"$CHAIN_MARK"
+msg_is_chained() { [ -f "$MSG_HOOK" ] && grep -qF "$CHAIN_MARK" "$MSG_HOOK"; }
+msg_target() { python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$MSG_HOOK" 2>/dev/null || echo "$MSG_HOOK"; }
 install_msg_hook() {
   if [ -e "$MSG_HOOK" ] && ! msg_is_ours; then
-    echo "• commit-msg: $(L "hook riêng của dự án — giữ nguyên; muốn thêm luật Bug:/No-Guard: của DevKit, chèn sau dòng #!:" "the project's own hook — kept; to add the DevKit Bug:/No-Guard: rule, insert after its #! line:") bash $(printf %q "$MSG_BODY") \"\$1\" || exit 1"
+    msg_is_chained && { echo "✔ commit-msg: $(L "hook riêng của dự án, đã nối luật DevKit" "the project's own hook, DevKit rule chained")"; return 0; }
+    if ! head -1 "$MSG_HOOK" | grep -qE '^#!.*(/|env[[:space:]]+)(ba|z|da)?sh([[:space:]]|$)'; then
+      echo "• commit-msg: $(L "hook riêng của dự án không phải shell — giữ nguyên; muốn thêm luật DevKit, gọi:" "the project's own hook is not a shell script — kept; to add the DevKit rule, call:") $CHAIN_LINE"
+      return 0
+    fi
+    local f; f="$(msg_target)"   # a symlinked hook: edit its (tracked) target, keep the link and the mode
+    cp -p "$f" "$f.devkit-tmp" && { head -1 "$f"; printf '%s\n' "$CHAIN_LINE"; tail -n +2 "$f"; } > "$f.devkit-tmp" \
+      && mv "$f.devkit-tmp" "$f" \
+      && echo "✔ commit-msg: $(L "đã nối luật DevKit vào hook riêng của dự án (1 dòng sau #!) — file có thể được git track, commit nó cùng dự án" "DevKit rule chained into the project's own hook (1 line after #!) — the file may be tracked; commit it with the project")"
     return 0
   fi
   {
@@ -92,6 +109,15 @@ case "$ACTION" in
     else
       echo "• pre-commit: $(L "chưa cài" "not installed") — $HOOK"
     fi
+    if msg_is_ours; then
+      echo "✔ commit-msg: $(L "đã cài (DevKit)" "installed (DevKit)") — $MSG_HOOK"
+    elif msg_is_chained; then
+      echo "✔ commit-msg: $(L "hook riêng của dự án, đã nối luật DevKit" "the project's own hook, DevKit rule chained") — $MSG_HOOK"
+    elif [ -e "$MSG_HOOK" ]; then
+      echo "• commit-msg: $(L "hook riêng của dự án, CHƯA nối luật DevKit (agent-kit githooks install)" "the project's own hook, DevKit rule NOT chained (agent-kit githooks install)") — $MSG_HOOK"
+    else
+      echo "• commit-msg: $(L "chưa cài" "not installed") — $MSG_HOOK"
+    fi
     ;;
   install)
     mkdir -p "$HOOKS_DIR" 2>/dev/null
@@ -123,6 +149,10 @@ case "$ACTION" in
   uninstall)
     for h in $RELINK_HOOKS; do relink_is_ours "$h" && rm -f "$HOOKS_DIR/$h"; done
     msg_is_ours && rm -f "$MSG_HOOK"
+    if msg_is_chained; then
+      f="$(msg_target)"
+      cp -p "$f" "$f.devkit-tmp" && grep -vF "$CHAIN_MARK" "$f" > "$f.devkit-tmp" && mv "$f.devkit-tmp" "$f"
+    fi
     if is_ours; then
       rm -f "$HOOK" && echo "✔ $(L "Đã gỡ" "Removed") $HOOK"
     elif [ -e "$HOOK" ]; then

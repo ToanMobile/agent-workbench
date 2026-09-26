@@ -42,5 +42,23 @@ echo 'block' > "$K/templates/block.md"
 echo 'helper() { true; }' > "$K/tests/lib_helper.sh"
 list | grep -qx "tests/test_foo.sh" && ok "changed helper under tests/ selects the tests that source it" || fail "helper: $(list | tr '\n' ' ')"
 
+# The run is parallel (DEVKIT_TEST_JOBS, default 4): the DevKit suite took 740 s of the 900 s
+# gate limit on 2026-09-26. Output stays in list order; one failing test still fails the run;
+# test_budgets (timings) runs alone after the others.
+R="$TMP/par"; mkdir -p "$R/tests"; cp "$DEVKIT_DIR/tests/run_impacted.sh" "$R/tests/"
+echo 'echo ok' > "$R/tests/test_repo_consistency.sh"
+for n in a b c; do printf 'sleep 2; echo %s-done\n' "$n" > "$R/tests/test_slow_$n.sh"; done
+printf 'echo broken; exit 3\n' > "$R/tests/test_broken.sh"
+printf 'for f in tests/test_slow_*.sh; do [ -e "$f" ]; done; [ -z "$(pgrep -f "tests/test_slow_" | head -1)" ] && echo alone || { echo "not alone"; exit 1; }\n' > "$R/tests/test_budgets.sh"
+( cd "$R" && git init -q . && git config user.email t@t && git config user.name t && git add -A && git commit -qm init )
+( cd "$R" && echo "# x" >> tests/test_slow_a.sh && echo "# x" >> tests/test_slow_b.sh && echo "# x" >> tests/test_slow_c.sh \
+  && echo "# x" >> tests/test_broken.sh && echo "# x" >> tests/test_budgets.sh )
+t0=$(date +%s); out="$(cd "$R" && DEVKIT_TEST_JOBS=4 bash tests/run_impacted.sh 2>&1)"; rc=$?; t1=$(date +%s)
+[ $((t1 - t0)) -lt 5 ] && ok "3 × 2 s tests run in parallel ($((t1 - t0)) s < 5 s)" || fail "not parallel: $((t1 - t0)) s"
+[ "$rc" = 1 ] && printf '%s' "$out" | grep -q "✖ tests/test_broken.sh" && ok "a failing test still fails the run, named" || fail "rc=$rc: $out"
+printf '%s' "$out" | grep -q "✔ tests/test_budgets.sh" && ok "test_budgets runs alone, after the others" || fail "budgets not alone: $out"
+[ "$(printf '%s\n' "$out" | grep -E '^[✔✖] ' | sed 's/^. //' | tr '\n' ' ')" = "$(printf '%s\n' "$out" | grep -E '^[✔✖] ' | sed 's/^. //' | sort | tr '\n' ' ')" ] \
+  && ok "results are printed in list order" || fail "order: $out"
+
 if [ "$FAILS" -ne 0 ]; then echo "run_impacted: $FAILS FAILED"; exit 1; fi
 echo "run_impacted: all checks passed"
