@@ -111,3 +111,11 @@ Mẫu ghi nhận:
 - **Nguyên nhân:** Hook trong .claude/hooks là symlink vào checkout DevKit, được đọc trực tiếp ở mỗi Stop của mọi phiên và mọi project; ghi đè bằng open('w') cắt rỗng file trước khi ghi, một Stop chạy đúng lúc đó đọc file dở và lỗi cú pháp (2026-09-25)
 - **Quy tắc phòng ngừa & Cách fix:** Sửa file hook/gate của DevKit bằng ghi file tạm rồi os.replace (nguyên tử), giữ quyền thực thi; chạy bash -n và hook với một input mẫu trên FILE TẠM, chỉ os.replace khi cả hai đạt — không phải sau khi đã thay
 - **Tái phát 2026-09-26:** ghi nguyên tử nhưng kiểm SAU khi thay: một dấu nháy đơn ("body's") trong python của `python3 -c '…'` làm block-dangerous-git.sh lỗi cú pháp, exit 2 chặn MỌI lệnh Bash ở mọi project 1–2 phút (phiên GeelyEx2 báo). Trong khối `-c '…'` không viết `'`, dùng `\x27`
+
+---
+
+### [INSTINCT-013] Nhận cờ CLI bằng regex 'có chữ X trong từ' cho lọt giá trị dính cờ
+- **Ngày phát hiện:** 2026-09-26
+- **Hiện tượng lỗi:** Nhận cờ CLI bằng regex 'có chữ X trong từ' cho lọt giá trị dính cờ
+- **Nguyên nhân:** hardware_safety_gate xét '^-[A-Za-z]*[dcgtL]' là cờ dump nên -vtime, -bcrash (vẫn stream) được cho qua; từ 'logcat' ở bất kỳ vị trí nào bị coi là lệnh nên 'pkill logcat' bị chặn nhầm (review 2026-09-26)
+- **Quy tắc phòng ngừa & Cách fix:** Cờ cho qua phải khớp NGUYÊN từ (^-[dcg]+$, ^-t\d*$); lệnh xét theo vị trí lệnh (chỉ nohup/setsid/timeout N đứng trước); mỗi luật mới có ca âm với giá trị dính cờ và ca tên lệnh làm đối số
