@@ -231,6 +231,15 @@ HEREDOC_RX = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 WRITE_VERBS = {"cp", "mv", "install", "patch", "dd", "tee", "rsync", "ln", "rm", "truncate"}
 OPAQUE_VERBS = {"python", "python3", "node", "ruby", "perl", "bash", "sh", "zsh", "eval", "xargs", "env",
                 "sudo", "find", "awk", "gawk", "osascript", "php", "deno", "bun"}
+# A script in a language that is not the shell (GeelyEx2, 2026-09-27): `a > b` and `->` in it are
+# code, and `2>&1` on its command line is a redirection, not a write — so it writes only through
+# the language's own file API, or through a shell tool it names.
+INTERPRETERS = {"python", "python3", "node", "ruby", "php", "deno", "bun", "osascript"}
+INTERP_WRITE_RX = re.compile(
+    r"open\([^)]*['\"][wax]b?\+?['\"]|write_text|write_bytes|writeFile|appendFile|createWriteStream|"
+    r"shutil\.(copy|move)|os\.(rename|replace)|\bsed\s+(-[A-Za-z]*i|--in-place)|\bperl\s+-[A-Za-z]*i|"
+    r"\btee\b|\bgit\s+(apply|am|checkout|restore)\b|\b(cp|mv)\b|copyFile|['\"](?:r\+b?|rb\+)['\"]|"
+    r"\b(?:system|popen|run|call|check_call|check_output|exec\w*|spawn\w*)\s*\([^)]*>", re.I)
 PREFIX_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "time", "command",
                 "builtin", "exec", "nohup", "done", "fi"}
 
@@ -267,8 +276,31 @@ def _segments(stripped):
         segs.append(cur)
     return segs
 
-def _segment_writes(seg, body=""):
-    """Does this simple command write? `body` is the heredoc it is fed, if any."""
+def _under(path, root):
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+TEMP_ROOTS = sorted({os.path.realpath(p) for p in ("/tmp", "/var/folders", os.environ.get("TMPDIR") or "/tmp")})
+
+def _scratch(path):
+    """A file in a temp dir outside the repo (the agent's scratchpad): not part of the repo's diff.
+    Another project's file is still judged — only temp dirs are out of scope."""
+    repo = os.path.realpath(os.environ.get("SG_REPO", "") or ".")
+    real = os.path.realpath(os.path.join(repo, os.path.expanduser(path)))
+    return not _under(real, repo) and any(_under(real, t) for t in TEMP_ROOTS)
+
+def _outside_repo(target, env):
+    """True when a redirection target surely lands in a temp dir outside the repo, after the
+    literal `NAME=/path` assignments of the same command. A relative path or an unknown
+    variable may be in the repo."""
+    t = re.sub(r"\$\{?([A-Za-z_]\w*)\}?", lambda m: env.get(m.group(1), m.group(0)), target)
+    t = os.path.expanduser(t)
+    if "$" in t or "`" in t or not t.startswith("/"):
+        return False
+    return _scratch(t)
+
+def _segment_writes(seg, body="", env=None):
+    """Does this simple command write INTO THE REPO? `body` is the heredoc it is fed, if any;
+    `env` the literal `NAME=value` assignments of the whole command."""
     targets, words, i = [], [], 0
     while i < len(seg):
         tok = seg[i]
@@ -287,7 +319,7 @@ def _segment_writes(seg, body=""):
         return False                                   # `for VAR in LIST` only names things
     verb = os.path.basename(words[0]) if words else ""
     args = words[1:]
-    writes = bool(targets)
+    writes = False
     if verb in WRITE_VERBS:
         writes = True
     elif verb == "sed" and any(re.fullmatch(r"-[A-Za-z]*i.*|--in-place.*", a) for a in args):
@@ -305,10 +337,13 @@ def _segment_writes(seg, body=""):
                 sub = a
                 break
         writes = writes or sub in ("apply", "am", "checkout", "restore", "mv", "rm")
-    elif verb in OPAQUE_VERBS or re.fullmatch(r"python[\d.]*", verb):
+    elif verb in INTERPRETERS or re.fullmatch(r"python[\d.]*", verb):
+        writes = bool(INTERP_WRITE_RX.search(" ".join(words) + "\n" + body))
+    elif verb in OPAQUE_VERBS:
         writes = writes or bool(SHELL_WRITE_RX.search(" ".join(seg) + "\n" + body)
                                 or re.search(r"open\([^)]*['\"][wa]b?\+?['\"]|write_text|write_bytes", body))
-    return writes
+    # A redirection writes the repo unless every target surely lands outside it.
+    return writes or any(not _outside_repo(t, env or {}) for t in targets)
 
 def shell_hits(cmd):
     """Attack-surface files/text a shell command may have written."""
@@ -320,10 +355,23 @@ def shell_hits(cmd):
     except ValueError:
         return sorted(set(_coarse_hits(cmd)))
     path_texts, text_texts, blind = [], [], False
+    env = {}
+    for seg in segs:                                   # `S=/private/tmp/…; cat > $S/x`
+        for tok in seg:
+            m = re.fullmatch(r"([A-Za-z_]\w*)=([^$`]*)", tok)
+            if not m:
+                break
+            env[m.group(1)] = m.group(2)
+    # Only a name set once, to a literal: a second assignment, a for/read loop or a declare can
+    # point it back into the repo.
+    env = {n: v for n, v in env.items()
+           if len(re.findall(r"(?<![\w$.-])" + re.escape(n) + r"=", cmd)) == 1
+           and not re.search(r"\b(?:for|read|select|getopts|mapfile|readarray)\b[^;&|\n]*\b"
+                             + re.escape(n) + r"\b", cmd)}
     body_iter = iter(bodies)
     for seg in segs:
         body = next(body_iter, "") if any(t.startswith("<<") and t != "<<<" for t in seg) else ""
-        if not _segment_writes(seg, body):
+        if not _segment_writes(seg, body, env):
             continue
         joined = " ".join(seg)
         path_texts.append(joined)
@@ -369,7 +417,7 @@ if tp and os.path.exists(tp):
                         continue
                     if name in ("Edit", "Write", "NotebookEdit"):
                         fp = inp.get("file_path") or inp.get("notebook_path") or ""
-                        if not isinstance(fp, str) or not fp or excluded(fp):
+                        if not isinstance(fp, str) or not fp or excluded(fp) or _scratch(fp):
                             continue
                         text = inp.get("new_string") or inp.get("content") or ""
                         if not isinstance(text, str):

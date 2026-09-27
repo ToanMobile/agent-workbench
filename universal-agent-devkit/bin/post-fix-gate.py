@@ -1297,6 +1297,18 @@ def active_profile_name() -> str:
 # Not .txt or images: requirements.txt, app assets and drawables are read by the program.
 DOC_EXT = (".md", ".rst", ".adoc")
 DOC_NAMES = {"LICENSE", "NOTICE", "AUTHORS", "CODEOWNERS"}
+# What the agent's own tooling writes: proof screenshots, the Antigravity PM config, the device
+# denylist, agent memory. No program reads them, so they need no regression test either
+# (OfficeReader 2026-09-27: a roadmap edit next to them stayed UNVERIFIED for 12 Stops).
+AGENT_STATE_FILES = {".antigravity-pm.json", ".adb-denylist"}
+
+
+def needs_no_test(rel_file: str) -> bool:
+    """Documentation or agent state: nothing a regression test could catch."""
+    clean = rel_file.replace("\\", "/")
+    return (clean.lower().endswith(DOC_EXT) or Path(clean).name in DOC_NAMES
+            or clean in AGENT_STATE_FILES or clean.startswith(".agents/local/memory/")
+            or re.fullmatch(r"reports/proof-[^/]+\.png", clean) is not None)
 
 
 def uncovered_code_files(modified_files, rules, covers=None) -> list:
@@ -3148,9 +3160,8 @@ def main():
     impacted_n = sum(t.get("impacted_count", 0) for t in impacted_run)
     test_mode = ("none" if not run_tests or not regression_tests
                  else "impacted" if impacted_run else "full")
-    # Documentation alone cannot break a test, so it needs none (code without a test still does).
-    docs_only = bool(modified_files) and all(
-        f.lower().endswith(DOC_EXT) or Path(f).name in DOC_NAMES for f in modified_files)
+    # Documentation and agent state cannot break a test, so they need none (code without a test still does).
+    docs_only = bool(modified_files) and all(needs_no_test(f) for f in modified_files)
     no_coverage = (not rules or not impacted_tests) and not args.allow_no_tests and not docs_only
     # Every changed source file must be re-testable later; one no rule watches would
     # silently fall out of the regression checklist.

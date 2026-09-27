@@ -268,6 +268,23 @@ def attributed_or_negated(prefix, matched_text):
         return True
     return bool(NEG_RUN.search(_tail(prefix, CLAUSE_BREAK)))
 
+# "test RED→GREEN" in a plan names the TDD cycle the rules demand, it reports no run (2026-09-27:
+# an audit reply that only planned one was blocked twice). Exempt only when the sentence says it
+# is a plan / not done yet, says nothing is done, and no result word or N/N count follows the
+# compound: "Test RED→GREEN ✅", "Đã chạy test RED→GREEN", "Test RED→GREEN, 12/12 pass" are claims.
+RED_GREEN_NAME = re.compile(r"\bred\s*(?:→|->|=>)\s*(?:green|xanh)\b", re.I)
+CYCLE_PLAN = re.compile(r"\b(?:sẽ|kế\s+hoạch|cần|nên|phải|chưa|will|plan(?:ned)?|need|must|should"
+                        r"|not\s+yet|before)\b|trước\s+khi", re.I)
+CYCLE_DONE = re.compile(r"\b(?:đã|rồi|xong|done|ran|passed)\b|✅|✔|✓", re.I)
+
+def cycle_name_only(sentence, match):
+    if not RED_GREEN_NAME.search(match.group(0)):
+        return False
+    if not CYCLE_PLAN.search(sentence) or CYCLE_DONE.search(sentence):
+        return False
+    rest = RED_GREEN_NAME.sub(" ", sentence[match.start():])
+    return not re.search(r"pass|xanh|green|thành\s+công|đạt|\d+\s*/\s*\d+", rest, re.I)
+
 def is_nonassertive(sentence, match, kind):
     """Only explicit grammar may exempt a matched result/outcome phrase.
 
@@ -319,6 +336,7 @@ def is_nonassertive(sentence, match, kind):
             # the claim this gate must catch). Do not widen the join character
             # class or the gap without re-running that adversarial set.
             or bool(re.search(r"\bred[/-]\s*$", prefix, re.I))
+            or cycle_name_only(sentence, match)
         )
     return bool(OUTCOME_GUIDANCE_PREFIX.search(prefix))
 

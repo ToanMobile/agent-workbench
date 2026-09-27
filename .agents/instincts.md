@@ -119,3 +119,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Nhận cờ CLI bằng regex 'có chữ X trong từ' cho lọt giá trị dính cờ
 - **Nguyên nhân:** hardware_safety_gate xét '^-[A-Za-z]*[dcgtL]' là cờ dump nên -vtime, -bcrash (vẫn stream) được cho qua; từ 'logcat' ở bất kỳ vị trí nào bị coi là lệnh nên 'pkill logcat' bị chặn nhầm (review 2026-09-26)
 - **Quy tắc phòng ngừa & Cách fix:** Cờ cho qua phải khớp NGUYÊN từ (^-[dcg]+$, ^-t\d*$); lệnh xét theo vị trí lệnh (chỉ nohup/setsid/timeout N đứng trước); mỗi luật mới có ca âm với giá trị dính cờ và ca tên lệnh làm đối số
+
+---
+
+### [INSTINCT-014] Gate nhận lệnh shell chỉ ở đầu đoạn và coi mọi file lạ là code
+- **Ngày phát hiện:** 2026-09-27
+- **Hiện tượng lỗi:** Gate nhận lệnh shell chỉ ở đầu đoạn và coi mọi file lạ là code
+- **Nguyên nhân:** hardware_safety_gate chỉ nhận adb đứng đầu đoạn lệnh nên 'then adb -s &lt;máy denylist> reboot' lọt; security_gate coi redirect ra scratchpad và '>' trong code Python là ghi vào repo; post-fix-gate coi ảnh proof và config agent là code cần test — 22+ lần chặn nhầm trong 1 ngày (2026-09-27)
+- **Quy tắc phòng ngừa & Cách fix:** Gate phân tích lệnh shell phải bỏ qua từ khoá ghép (if/then/do/else/{/() trước khi xét vị trí lệnh; chỉ tính ghi khi đích nằm trong repo; file do agent tự sinh (reports/proof-*.png, .antigravity-pm.json, .adb-denylist, memory) không cần test; mỗi luật nới có ca âm đối kháng (biến gán lại, for/read, repo khác) viết trước

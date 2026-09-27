@@ -757,6 +757,20 @@ hwcase 2 'ANDROID_SERIAL=RFCW504KFKJ adb shell ls' "${DENY}" "${HWP}"
 hwcase 2 'cd app && timeout 30 adb -d install a.apk' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
 hwcase 2 'bash -c "adb -s RFCW504KFKJ reboot"' "${DENY}"
 hwcase 2 'adb -s "$DEV" shell ls' "${DENY}"
+# GeelyEx2 2026-09-27: a serial assigned a literal in the same command is known (2 retries).
+hwcase 0 'E=emulator-5554; adb -s $E shell ls' "${DENY}"
+hwcase 0 'S=IVI01 && adb -s "${S}" push a /sdcard/a' "${DENY}"
+hwcase 2 'E=RFCW504KFKJ; adb -s $E shell ls' "${DENY}"
+hwcase 2 'E=IVI01; E=RFCW504KFKJ; adb -s $E shell ls' "${DENY}"
+hwcase 2 'E=IVI01; E=$(pick); adb -s $E shell ls' "${DENY}"
+hwcase 2 'E=IVI01 adb -s $E shell ls' "${DENY}"
+hwcase 2 'E=IVI01; for E in RFCW504KFKJ; do adb -s $E shell ls; done' "${DENY}"
+hwcase 2 'E=IVI01; declare E=RFCW504KFKJ; adb -s $E shell ls' "${DENY}"
+hwcase 2 'E=IVI01; read E < f; adb -s $E shell ls' "${DENY}"
+hwcase 2 'if true; then adb -s RFCW504KFKJ reboot; fi' "${DENY}"
+hwcase 2 'for i in 1; do adb -s RFCW504KFKJ shell ls; done' "${DENY}"
+hwcase 2 '{ adb -s RFCW504KFKJ shell ls; }' "${DENY}"
+hwcase 0 'for i in 1; do adb -s IVI01 shell ls; done' "${DENY}"
 hwcase 0 'adb devices' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
 hwcase 0 'grep adb notes.txt' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
 hwcase 2 'adb -s IVI02 shell ls' ADB_ALLOW_SERIALS=IVI01
@@ -1634,6 +1648,16 @@ te_case "guard: user reported X, N tests pass now"                2 te-p8 "The u
 te_case "guard: người dùng báo X, đã fix xong"                    2 te-p9 "Người dùng báo crash khi mở PDF, đã fix xong."
 # Punctuation right after the reporting verb still quotes them (review 2026-09-25 P2).
 te_case "user said: quote is not a claim"                        0 te-q1 "The user said: \"13/13 tests pass\" on their machine."
+# "test RED→GREEN" names the TDD cycle the rules demand (2026-09-27: an audit reply that only
+# planned it was blocked twice); a result word after the compound is still a claim.
+te_case "test RED→GREEN as the cycle name is not a claim"         0 te-r1 "Cặp test RED→GREEN chỉ là kế hoạch cho lượt sửa, chưa làm."
+te_case "test RED -> GREEN planned is not a claim"                 0 te-r2 "Each item will get a test RED -> GREEN in tests/test_gate_x.sh."
+te_case "guard: test RED→GREEN then N/N pass is a claim"          2 te-r3 "Test RED→GREEN, 12/12 pass."
+te_case "guard: test RED→GREEN then test pass is a claim"         2 te-r4 "Test RED→GREEN rồi, giờ toàn bộ test đều pass."
+te_case "guard: test xanh without the cycle name is a claim"      2 te-r5 "Chạy lại thì test xanh hết."
+te_case "guard: test RED→GREEN with a check mark is a claim"      2 te-r6 "Test RED→GREEN ✅"
+te_case "guard: đã chạy test RED→GREEN is a claim"                2 te-r7 "Đã chạy test RED→GREEN."
+te_case "guard: bare test RED→GREEN in a report is a claim"       2 te-r8 "Bug A: test RED→GREEN trong LoginTest."
 te_case "phiên khác báo: is not a claim"                         0 te-q2 "Phiên khác báo: 12/12 test pass, phiên này chưa chạy lại."
 te_case "another session reported, at T, that … is not a claim"  0 te-q3 "Another session reported, at 08:41, that 12/12 tests pass; this one has not re-run them."
 te_case "another hook's logs say: is not a claim"                0 te-q4 "The evidence logs written by another hook say: the tests passed."
@@ -1863,6 +1887,66 @@ for c in "sg_wr_cp:cp onto google-services.json still blocked" "sg_wr_loopcp:cp 
   run_case "${c#*:}" security_gate.sh 2 \
     "{\"session_id\":\"${c%%:*}\",\"transcript_path\":\"${SANDBOX}/${c%%:*}.jsonl\",\"last_assistant_message\":\"xong\"}"
 done
+# 2026-09-27 (GeelyEx2): 10 blocks, each a full /scan, for scratch files outside the repo and
+# for python heredocs that only READ Supabase with a Bearer header (`2>&1` and `a > b` in the
+# script looked like writes). Only a write that can land in the repo counts.
+python3 - "${SANDBOX}" <<'PY'
+import json, os, sys
+sb = sys.argv[1]
+def w(name, cmd):
+    with open(os.path.join(sb, name), "w") as fh:
+        fh.write(json.dumps({"message": {"content": [
+            {"type": "tool_use", "name": "Bash", "input": {"command": cmd}}]}}) + "\n")
+w("sg_out_var.jsonl", "S=/private/tmp/claude-501/x/scratchpad; cat > $S/xuly.py <<'EOF'\n"
+  "H={\"Authorization\": \"Bearer \" + KEY}\nEOF")
+w("sg_out_abs.jsonl", "cat > /private/tmp/claude-501/x/apkinfo.py <<'EOF'\n"
+  "if 'AndroidManifest.xml' in names: print(1)\nEOF")
+w("sg_py_read.jsonl", "python3 - <<'EOF' 2>&1 | grep -v Deprecation\nimport os, urllib.request\n"
+  "KEY = os.environ['K']\nh = {'Authorization': 'Bearer ' + KEY}\nif len(h) > 0: print(h)\nEOF")
+w("sg_py_write.jsonl", "python3 - <<'EOF'\n"
+  "open('app/src/main/java/Api.kt', 'w').write('val apiKey = \"x\"')\nEOF")
+w("sg_var_in_repo.jsonl", "D=app/src/main; cat > $D/AndroidManifest.xml <<'EOF'\n"
+  "<uses-permission android:name=\"android.permission.CAMERA\"/>\nEOF")
+w("sg_py_redir_repo.jsonl", "python3 gen.py > app/src/main/AndroidManifest.xml")
+w("sg_var_reassigned.jsonl", "S=app/src/main; cat > $S/AndroidManifest.xml <<'EOF'\n"
+  "<uses-permission android:name=\"p\"/>\nEOF\nS=/private/tmp/x")
+w("sg_var_for.jsonl", "S=/private/tmp/x; for S in app/src/main; do cat > $S/AndroidManifest.xml <<'EOF'\n"
+  "<uses-permission android:name=\"p\"/>\nEOF\ndone")
+w("sg_other_repo.jsonl", "cat > /Users/someone/OtherApp/app/src/main/AndroidManifest.xml <<'EOF'\n"
+  "<uses-permission android:name=\"p\"/>\nEOF")
+w("sg_py_subprocess_cp.jsonl", "python3 - <<'EOF'\nimport subprocess\n"
+  "subprocess.run([\"cp\", \"/tmp/m.xml\", \"app/src/main/AndroidManifest.xml\"])\nEOF")
+w("sg_py_system_redirect.jsonl", "python3 - <<'EOF'\nimport os\n"
+  "os.system('echo apiKey=1 > app/src/main/res/values/keys.xml')\nEOF")
+w("sg_py_rplus.jsonl", "python3 - <<'EOF'\n"
+  "f = open('app/src/main/java/Api.kt', 'r+'); f.write('val apiKey = 1')\nEOF")
+w("sg_out_then_cd.jsonl", "cd app && S=/private/tmp/x; cat > $S/n.txt <<'EOF'\napiKey=1\nEOF\n"
+  "cat > src/main/AndroidManifest.xml <<'EOF'\n<uses-permission android:name=\"p\"/>\nEOF")
+PY
+for c in "sg_out_var:heredoc to \$S scratch outside the repo quiet" "sg_out_abs:heredoc to an absolute path outside the repo quiet" \
+         "sg_py_read:python heredoc that only reads with a Bearer header quiet"; do
+  run_case "${c#*:}" security_gate.sh 0 \
+    "{\"session_id\":\"${c%%:*}\",\"transcript_path\":\"${SANDBOX}/${c%%:*}.jsonl\",\"last_assistant_message\":\"xong\"}"
+done
+for c in "sg_py_write:python open(w) of an apiKey into the repo still blocked" \
+         "sg_var_in_repo:\$D relative to the repo still blocked" "sg_py_redir_repo:python > AndroidManifest still blocked" \
+         "sg_out_then_cd:scratch write next to a repo write still blocked" \
+         "sg_var_reassigned:\$S reassigned outside after the write still blocked" \
+         "sg_var_for:\$S set by a for-loop still blocked" "sg_other_repo:absolute path of another repo still blocked" \
+         "sg_py_subprocess_cp:python subprocess cp into the repo still blocked" \
+         "sg_py_system_redirect:python os.system redirect of an apiKey still blocked" \
+         "sg_py_rplus:python open(r+) of an apiKey still blocked"; do
+  run_case "${c#*:}" security_gate.sh 2 \
+    "{\"session_id\":\"${c%%:*}\",\"transcript_path\":\"${SANDBOX}/${c%%:*}.jsonl\",\"last_assistant_message\":\"xong\"}"
+done
+mk_tr "${SANDBOX}/sg_scratch_write.jsonl" Write "/private/tmp/claude-501/x/scratchpad/stage/hooks/tests/t.sh" \
+  'mk "<uses-permission android:name=p/>" "Bearer abc"'
+run_case "Write of a scratch copy in a temp dir quiet" security_gate.sh 0 \
+  "{\"session_id\":\"sg-scratch-w\",\"transcript_path\":\"${SANDBOX}/sg_scratch_write.jsonl\",\"last_assistant_message\":\"xong\"}"
+mk_tr "${SANDBOX}/sg_other_write.jsonl" Write "/Users/someone/OtherApp/app/src/main/AndroidManifest.xml" \
+  '<uses-permission android:name="p"/>'
+run_case "Write of another repo's manifest still blocked" security_gate.sh 2 \
+  "{\"session_id\":\"sg-other-w\",\"transcript_path\":\"${SANDBOX}/sg_other_write.jsonl\",\"last_assistant_message\":\"xong\"}"
 # K-6: a non-numeric attempts knob falls back to the default instead of crashing open.
 run_case "K-6 SECURITY_GATE_MAX_ATTEMPTS=abc still blocks" security_gate.sh 2 \
   "{\"session_id\":\"k6\",\"transcript_path\":\"${SANDBOX}/sg_manifest.jsonl\",\"last_assistant_message\":\"xong\"}" \

@@ -354,6 +354,15 @@ out="$(run_gate --run-tests --full)"; check "docs + unmatched code -> still UNVE
 make_repo "true"
 mkdir -p docs && echo "x = 1" > docs/conf.py
 out="$(run_gate --run-tests --full)"; check "code under docs/ is not documentation -> UNVERIFIED" 2 $? "$out"
+# OfficeReader 2026-09-27: a roadmap edit sat next to the agent's own state (proof PNGs,
+# .antigravity-pm.json, .adb-denylist, memory) and stayed UNVERIFIED — 12 Stop blocks.
+make_repo "true"
+mkdir -p reports .agents/local/memory/claude-auto && echo "# plan" > PLAN.md
+mkpng reports/proof-20260927-080116.png; echo '{"proof":{}}' > .antigravity-pm.json
+echo "R58M123" > .adb-denylist; echo '{"n":1}' > .agents/local/memory/claude-auto/state.json
+out="$(run_gate --run-tests --full)"; check "docs + agent state (proof PNG, pm config, denylist, memory) -> PASS" 0 $? "$out"
+mkdir -p app/src/main/res/drawable && mkpng app/src/main/res/drawable/icon.png
+out="$(run_gate --run-tests --full)"; check "an image outside reports/ still needs a test -> UNVERIFIED" 2 $? "$out"
 
 # Review 2026-09-25: manifest parsers name packages, never groups / URL schemes / tag order.
 make_repo "true"

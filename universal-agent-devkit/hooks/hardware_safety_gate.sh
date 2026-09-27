@@ -451,6 +451,9 @@ ADB_HOST_ONLY = {"devices", "version", "help", "start-server", "kill-server", "c
                  "disconnect", "pair", "mdns", "keygen", "host-features", "server", "nodaemon"}
 ADB_VALUE_OPTS = {"-s", "-t", "-H", "-P", "-L"}
 ADB_WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "time", "timeout", "xargs"}
+# Shell words that open a command inside a compound one: "if …; then adb -s X reboot; fi" and
+# "for …; do adb …; done" reached the device unseen (review 2026-09-27).
+SHELL_LEAD = {"if", "then", "else", "elif", "while", "until", "do", "!", "{", "("}
 
 def adb_calls(text):
     """(adb executable token, selection options, subcommand, ANDROID_SERIAL, words after
@@ -464,7 +467,7 @@ def adb_calls(text):
         # Only the word in command position (after VAR=… and sudo/env/timeout N …):
         # `grep adb notes.txt` is not an adb call.
         i = 0
-        while i < len(toks) and (re.match(r"^\w+=", toks[i]) or toks[i] in ADB_WRAPPERS
+        while i < len(toks) and (re.match(r"^\w+=", toks[i]) or toks[i] in ADB_WRAPPERS or toks[i] in SHELL_LEAD
                                  or (i > 0 and toks[i - 1] in ADB_WRAPPERS and re.match(r"^(-\S*|\d+\w?)$", toks[i]))):
             if toks[i].startswith("ANDROID_SERIAL="):
                 env_serial = toks[i].split("=", 1)[1]
@@ -474,6 +477,8 @@ def adb_calls(text):
             if k + 1 < len(toks):
                 yield from adb_calls(toks[k + 1])
             continue
+        if i < len(toks):
+            toks[i] = toks[i].lstrip("(")                # "(adb -s X shell ls)"
         if i >= len(toks) or os.path.basename(toks[i]) not in ("adb", "adb.exe"):
             continue
         opts, j = [], i + 1
@@ -502,11 +507,33 @@ def sdk_adb():
             return os.path.join(h, "platform-tools", "adb")
     return None
 
-def target_serial(exe, opts, env_serial):
+# A serial set to a literal earlier in the same command is known (GeelyEx2 2026-09-27:
+# "E=emulator-5554; adb -s $E" was refused twice). Only NAME=literal followed by ; && || or a
+# newline counts (a prefix "E=x adb -s $E" does not set $E for that adb); a name assigned
+# anything else as well (declare, a second value, a for/read loop) stays unknown.
+ASSIGN_ANY = re.compile(r"(?<![\w$.-])([A-Za-z_]\w*)=")
+ASSIGN_LIT = re.compile(r"(?:^|[;&|(\n]|\bexport)\s*([A-Za-z_]\w*)=([\w.:-]+)(?=[ \t]*(?:$|;|&&|\|\||\n))", re.M)
+
+def literal_vars(text):
+    lits, counts = {}, {}
+    for name in ASSIGN_ANY.findall(text):
+        counts[name] = counts.get(name, 0) + 1
+    for name, val in ASSIGN_LIT.findall(text):
+        lits.setdefault(name, []).append(val)
+    return {n: v[0] for n, v in lits.items() if len(v) == counts.get(n) and len(set(v)) == 1
+            and not re.search(r"\b(?:for|read|select|getopts|mapfile|readarray)\b[^;&|\n]*\b"
+                              + re.escape(n) + r"\b", text)}
+
+def expand_literals(word, lits):
+    return re.sub(r"\$\{?([A-Za-z_]\w*)\}?", lambda m: lits.get(m.group(1), m.group(0)), word)
+
+def target_serial(exe, opts, env_serial, lits=None):
     """(serial, None) · (None, None) when adb itself would find no single target
     (the command then fails on its own) · (None, why) when it cannot be resolved."""
+    lits = lits or {}
+    env_serial = expand_literals(env_serial, lits)
     if "-s" in opts:
-        s = os.path.expandvars(opts[opts.index("-s") + 1])
+        s = os.path.expandvars(expand_literals(opts[opts.index("-s") + 1], lits))
         return (None, "serial " + s + " không xác định được") if "$" in s else (s, None)
     if "$" in env_serial:
         return None, "ANDROID_SERIAL=" + env_serial + " không xác định được"
@@ -529,10 +556,11 @@ def device_violation(text):
     deny, allow = serial_set("ADB_DENY_SERIALS", "denylist"), serial_set("ADB_ALLOW_SERIALS", "allowlist")
     if not deny and not allow:
         return None
+    lits = literal_vars(text)
     for exe, opts, sub, env_serial, _rest in adb_calls(text):
         if not sub or sub in ADB_HOST_ONLY:
             continue
-        serial, why = target_serial(exe, opts, env_serial)
+        serial, why = target_serial(exe, opts, env_serial, lits)
         if why:
             return "không xác định được thiết bị đích (" + why + ") — " + (
                 "chọn thiết bị bằng adb-device select" if MCP else "ghi rõ adb -s <SERIAL>")
