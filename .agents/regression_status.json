@@ -1,270 +1,6 @@
 {
   "version": 1,
   "items": {
-    "UNCOVERED:universal-agent-devkit/bin/agent-config.py": {
-      "id": "UNCOVERED:universal-agent-devkit/bin/agent-config.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/bin/agent-config.py",
-      "component": "-",
-      "file": "universal-agent-devkit/bin/agent-config.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/bin/agent-health.py": {
-      "id": "UNCOVERED:universal-agent-devkit/bin/agent-health.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/bin/agent-health.py",
-      "component": "-",
-      "file": "universal-agent-devkit/bin/agent-health.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-25 07:27:58"
-    },
-    "UNCOVERED:universal-agent-devkit/bin/post-fix-gate.py": {
-      "id": "UNCOVERED:universal-agent-devkit/bin/post-fix-gate.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/bin/post-fix-gate.py",
-      "component": "-",
-      "file": "universal-agent-devkit/bin/post-fix-gate.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-25 07:27:58"
-    },
-    "UNCOVERED:universal-agent-devkit/bin/regression_checklist.py": {
-      "id": "UNCOVERED:universal-agent-devkit/bin/regression_checklist.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/bin/regression_checklist.py",
-      "component": "-",
-      "file": "universal-agent-devkit/bin/regression_checklist.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/profiles/android/scripts/qa/dexscan.py": {
-      "id": "UNCOVERED:universal-agent-devkit/profiles/android/scripts/qa/dexscan.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/profiles/android/scripts/qa/dexscan.py",
-      "component": "-",
-      "file": "universal-agent-devkit/profiles/android/scripts/qa/dexscan.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/profiles/android/scripts/qa/generate_report_html.py": {
-      "id": "UNCOVERED:universal-agent-devkit/profiles/android/scripts/qa/generate_report_html.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/profiles/android/scripts/qa/generate_report_html.py",
-      "component": "-",
-      "file": "universal-agent-devkit/profiles/android/scripts/qa/generate_report_html.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/adversarial_chaos_test_10_agents.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/adversarial_chaos_test_10_agents.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/adversarial_chaos_test_10_agents.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/adversarial_chaos_test_10_agents.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/audit_agent_perfection_50_agents.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/audit_agent_perfection_50_agents.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/audit_agent_perfection_50_agents.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/audit_agent_perfection_50_agents.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/audit_production_lifecycle_50_agents.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/audit_production_lifecycle_50_agents.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/audit_production_lifecycle_50_agents.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/audit_production_lifecycle_50_agents.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/audit_test_suite_50_agents.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/audit_test_suite_50_agents.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/audit_test_suite_50_agents.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/audit_test_suite_50_agents.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/audit_workflows_rules_skills_50_agents.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/audit_workflows_rules_skills_50_agents.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/audit_workflows_rules_skills_50_agents.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/audit_workflows_rules_skills_50_agents.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/audit_zero_regression_10_agents.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/audit_zero_regression_10_agents.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/audit_zero_regression_10_agents.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/audit_zero_regression_10_agents.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/devkit_i18n.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/devkit_i18n.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/devkit_i18n.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/devkit_i18n.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/devkit_uninstall.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/devkit_uninstall.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/devkit_uninstall.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/devkit_uninstall.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/enrich_context.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/enrich_context.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/enrich_context.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/enrich_context.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/index_memory.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/index_memory.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/index_memory.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/index_memory.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/lint_compose_stability.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/lint_compose_stability.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/lint_compose_stability.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/lint_compose_stability.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/lint_unity_gc.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/lint_unity_gc.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/lint_unity_gc.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/lint_unity_gc.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/merge_json.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/merge_json.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/merge_json.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/merge_json.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/merge_markdown.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/merge_markdown.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/merge_markdown.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/merge_markdown.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/scripts/profile_skills.py": {
-      "id": "UNCOVERED:universal-agent-devkit/scripts/profile_skills.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/scripts/profile_skills.py",
-      "component": "-",
-      "file": "universal-agent-devkit/scripts/profile_skills.py",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
-    "UNCOVERED:universal-agent-devkit/workflows/multi-lens-audit.js": {
-      "id": "UNCOVERED:universal-agent-devkit/workflows/multi-lens-audit.js",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/workflows/multi-lens-audit.js",
-      "component": "-",
-      "file": "universal-agent-devkit/workflows/multi-lens-audit.js",
-      "created_at": "2026-09-23 15:04:41",
-      "task": null,
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-23 15:05:23"
-    },
     "REG-AUTO-ANTIGRAVITY-PM-MCP-01": {
       "id": "REG-AUTO-ANTIGRAVITY-PM-MCP-01",
       "kind": "test",
@@ -310,7 +46,7 @@
       "history": [],
       "title": "play-store-mcp: pytest",
       "component": "play-store-mcp",
-      "command": "cd play-store-mcp && python3 -m pytest -q",
+      "command": "cd play-store-mcp && uv run --frozen --extra dev pytest -q",
       "watch_files": [
         "play-store-mcp/*.c",
         "play-store-mcp/*.cc",
@@ -341,18 +77,6 @@
         "play-store-mcp/*.vue"
       ]
     },
-    "UNCOVERED:universal-agent-devkit/bin/tree_fp.py": {
-      "id": "UNCOVERED:universal-agent-devkit/bin/tree_fp.py",
-      "kind": "uncovered",
-      "title": "universal-agent-devkit/bin/tree_fp.py",
-      "component": "-",
-      "file": "universal-agent-devkit/bin/tree_fp.py",
-      "created_at": "2026-09-25 07:27:18",
-      "task": "session-45260809-3db",
-      "last": null,
-      "history": [],
-      "seen_at": "2026-09-25 07:27:58"
-    },
     "BUG-20260925-reader-office-dang-bi-ket-boi-1-agent-gr": {
       "id": "BUG-20260925-reader-office-dang-bi-ket-boi-1-agent-gr",
       "kind": "bug",
@@ -370,12 +94,1067 @@
       "sessions": [
         "1c3bc20e-7a51-4d7c-8fb2-0d8c215bb1ac"
       ]
+    },
+    "REG-DK-GATE-01": {
+      "id": "REG-DK-GATE-01",
+      "kind": "test",
+      "last": {
+        "status": "PASS",
+        "at": "2026-09-27 10:02:00",
+        "ts": 1790478120.292245,
+        "task": "session-91d7608d-726",
+        "commit": "a94c071+dirty",
+        "duration": "54.77s",
+        "exit_code": 0,
+        "log": ".agents/evidence/REG-DK-GATE-01/20260927-095236.log"
+      },
+      "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-27 10:02:00",
+          "ts": 1790478120.292245,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "54.77s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20260927-095236.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:51:41",
+          "ts": 1790477501.70274,
+          "task": null,
+          "commit": "a94c071+dirty",
+          "duration": "48.35s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20260927-094235.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:41:34",
+          "ts": 1790476894.906113,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "48.03s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20260927-093215.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:31:27",
+          "ts": 1790476287.177803,
+          "task": null,
+          "commit": "a94c071+dirty",
+          "duration": "52.23s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20260927-092214.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:21:05",
+          "ts": 1790475665.7018828,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "66.06s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20260927-091141.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:10:28",
+          "ts": 1790475028.44687,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "44.70s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20260927-090022.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 08:45:24",
+          "ts": 1790473524.021943,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "48.06s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20260927-083517.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 00:06:58",
+          "ts": 1790442418.4676852,
+          "task": null,
+          "commit": "86f7ddc+dirty",
+          "duration": "80.69s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20260927-000220.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 00:00:44",
+          "ts": 1790442044.174166,
+          "task": "session-91d7608d-726",
+          "commit": "86f7ddc+dirty",
+          "duration": "52.40s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20260926-235559.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-26 23:54:51",
+          "ts": 1790441691.521918,
+          "task": "session-91d7608d-726",
+          "commit": "86f7ddc+dirty",
+          "duration": "56.73s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20260926-235020.log"
+        }
+      ],
+      "title": "post-fix gate",
+      "component": "devkit-gate",
+      "command": "bash universal-agent-devkit/tests/test_postfix_gate.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/tree_fp.py",
+        "universal-agent-devkit/scripts/assertion_lint.py",
+        "universal-agent-devkit/bin/postfix-gate"
+      ]
+    },
+    "REG-DK-GATE-02": {
+      "id": "REG-DK-GATE-02",
+      "kind": "test",
+      "last": {
+        "status": "PASS",
+        "at": "2026-09-27 10:02:00",
+        "ts": 1790478120.2922502,
+        "task": "session-91d7608d-726",
+        "commit": "a94c071+dirty",
+        "duration": "124.15s",
+        "exit_code": 0,
+        "log": ".agents/evidence/REG-DK-GATE-02/20260927-095440.log"
+      },
+      "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-27 10:02:00",
+          "ts": 1790478120.2922502,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "124.15s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20260927-095440.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:51:41",
+          "ts": 1790477501.702754,
+          "task": null,
+          "commit": "a94c071+dirty",
+          "duration": "125.11s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20260927-094440.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:41:34",
+          "ts": 1790476894.9061198,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "123.87s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20260927-093419.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:31:27",
+          "ts": 1790476287.177817,
+          "task": null,
+          "commit": "a94c071+dirty",
+          "duration": "123.59s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20260927-092417.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:21:05",
+          "ts": 1790475665.70189,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "132.15s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20260927-091353.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:10:28",
+          "ts": 1790475028.446877,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "123.20s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20260927-090225.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 08:45:24",
+          "ts": 1790473524.0219488,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "124.31s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20260927-083721.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 00:06:58",
+          "ts": 1790442418.4676962,
+          "task": null,
+          "commit": "86f7ddc+dirty",
+          "duration": "113.93s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20260927-000414.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 00:00:44",
+          "ts": 1790442044.1741729,
+          "task": "session-91d7608d-726",
+          "commit": "86f7ddc+dirty",
+          "duration": "112.03s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20260926-235751.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-26 23:54:51",
+          "ts": 1790441691.5219252,
+          "task": "session-91d7608d-726",
+          "commit": "86f7ddc+dirty",
+          "duration": "112.47s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20260926-235213.log"
+        }
+      ],
+      "title": "proof gate (tree_fp)",
+      "component": "devkit-gate",
+      "command": "bash universal-agent-devkit/tests/test_proof_gate.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/tree_fp.py",
+        "universal-agent-devkit/scripts/assertion_lint.py",
+        "universal-agent-devkit/bin/postfix-gate"
+      ]
+    },
+    "REG-DK-HOOK-01": {
+      "id": "REG-DK-HOOK-01",
+      "kind": "test",
+      "last": {
+        "status": "PASS",
+        "at": "2026-09-27 10:02:00",
+        "ts": 1790478120.292255,
+        "task": "session-91d7608d-726",
+        "commit": "a94c071+dirty",
+        "duration": "38.67s",
+        "exit_code": 0,
+        "log": ".agents/evidence/REG-DK-HOOK-01/20260927-095519.log"
+      },
+      "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-27 10:02:00",
+          "ts": 1790478120.292255,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "38.67s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20260927-095519.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:51:41",
+          "ts": 1790477501.7027578,
+          "task": null,
+          "commit": "a94c071+dirty",
+          "duration": "38.04s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20260927-094518.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:41:34",
+          "ts": 1790476894.906126,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "36.11s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20260927-093455.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:31:27",
+          "ts": 1790476287.177823,
+          "task": null,
+          "commit": "a94c071+dirty",
+          "duration": "37.71s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20260927-092455.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:21:05",
+          "ts": 1790475665.701895,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "39.69s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20260927-091433.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:10:28",
+          "ts": 1790475028.446882,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "42.52s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20260927-090308.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 08:45:24",
+          "ts": 1790473524.021954,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "43.20s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20260927-083804.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-26 22:13:14",
+          "ts": 1790435594.41838,
+          "task": null,
+          "commit": "b1ab4ea+dirty",
+          "duration": "47.57s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20260926-220424.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-26 22:00:23",
+          "ts": 1790434823.39112,
+          "task": null,
+          "commit": "b1ab4ea+dirty",
+          "duration": "38.93s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20260926-215059.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-26 21:47:32",
+          "ts": 1790434052.1933372,
+          "task": "session-91d7608d-726",
+          "commit": "b1ab4ea+dirty",
+          "duration": "34.69s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20260926-213751.log"
+        }
+      ],
+      "title": "hook contract",
+      "component": "devkit-hooks",
+      "command": "bash universal-agent-devkit/hooks/tests/hook_contract_test.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/*"
+      ]
+    },
+    "REG-DK-HOOK-02": {
+      "id": "REG-DK-HOOK-02",
+      "kind": "test",
+      "last": {
+        "status": "PASS",
+        "at": "2026-09-27 10:02:00",
+        "ts": 1790478120.292257,
+        "task": "session-91d7608d-726",
+        "commit": "a94c071+dirty",
+        "duration": "124.30s",
+        "exit_code": 0,
+        "log": ".agents/evidence/REG-DK-HOOK-02/20260927-095723.log"
+      },
+      "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-27 10:02:00",
+          "ts": 1790478120.292257,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "124.30s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20260927-095723.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:51:41",
+          "ts": 1790477501.702762,
+          "task": null,
+          "commit": "a94c071+dirty",
+          "duration": "123.47s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20260927-094721.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:41:34",
+          "ts": 1790476894.906129,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "122.88s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20260927-093658.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:31:27",
+          "ts": 1790476287.1778262,
+          "task": null,
+          "commit": "a94c071+dirty",
+          "duration": "123.54s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20260927-092659.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:21:05",
+          "ts": 1790475665.701897,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "124.19s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20260927-091637.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:10:28",
+          "ts": 1790475028.4468842,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "122.79s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20260927-090510.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 08:45:24",
+          "ts": 1790473524.0219572,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "125.49s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20260927-084010.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-26 22:13:14",
+          "ts": 1790435594.4183848,
+          "task": null,
+          "commit": "b1ab4ea+dirty",
+          "duration": "113.41s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20260926-220617.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-26 22:00:23",
+          "ts": 1790434823.3911219,
+          "task": null,
+          "commit": "b1ab4ea+dirty",
+          "duration": "113.61s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20260926-215253.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-26 21:47:32",
+          "ts": 1790434052.1933398,
+          "task": "session-91d7608d-726",
+          "commit": "b1ab4ea+dirty",
+          "duration": "112.15s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20260926-213943.log"
+        }
+      ],
+      "title": "proof gate",
+      "component": "devkit-hooks",
+      "command": "bash universal-agent-devkit/tests/test_proof_gate.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/*"
+      ]
+    },
+    "REG-DK-HEALTH-01": {
+      "id": "REG-DK-HEALTH-01",
+      "kind": "test",
+      "last": {
+        "status": "PASS",
+        "at": "2026-09-25 11:42:03",
+        "ts": 1790311323.583634,
+        "task": null,
+        "commit": "05ce90e+dirty",
+        "duration": "19.12s",
+        "exit_code": 0,
+        "log": ".agents/evidence/REG-DK-HEALTH-01/20260925-112905.log"
+      },
+      "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-25 11:42:03",
+          "ts": 1790311323.583634,
+          "task": null,
+          "commit": "05ce90e+dirty",
+          "duration": "19.12s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HEALTH-01/20260925-112905.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 11:24:01",
+          "ts": 1790310241.731385,
+          "task": null,
+          "commit": "05ce90e+dirty",
+          "duration": "16.56s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HEALTH-01/20260925-111331.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 10:47:58",
+          "ts": 1790308078.911,
+          "task": "session-1c3bc20e-7a5",
+          "commit": "9912814+dirty",
+          "duration": "14.06s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HEALTH-01/20260925-103825.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 10:43:54",
+          "ts": 1790307834.1195421,
+          "task": "session-45260809-3db",
+          "commit": "6319cc3+dirty",
+          "duration": "13.86s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HEALTH-01/20260925-103419.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 10:34:28",
+          "ts": 1790307268.134063,
+          "task": "session-1c3bc20e-7a5",
+          "commit": "6319cc3+dirty",
+          "duration": "12.99s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HEALTH-01/20260925-102532.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 10:30:23",
+          "ts": 1790307023.210009,
+          "task": "session-45260809-3db",
+          "commit": "6319cc3+dirty",
+          "duration": "13.05s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HEALTH-01/20260925-102147.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 10:21:33",
+          "ts": 1790306493.457014,
+          "task": "session-1c3bc20e-7a5",
+          "commit": "6319cc3+dirty",
+          "duration": "13.82s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HEALTH-01/20260925-101213.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 10:16:49",
+          "ts": 1790306209.309566,
+          "task": "session-45260809-3db",
+          "commit": "6319cc3+dirty",
+          "duration": "13.91s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HEALTH-01/20260925-100718.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 10:16:49",
+          "ts": 1790306209.248539,
+          "task": null,
+          "commit": "6319cc3+dirty",
+          "duration": "14.11s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HEALTH-01/20260925-100717.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 10:06:29",
+          "ts": 1790305589.398347,
+          "task": "session-1c3bc20e-7a5",
+          "commit": "6319cc3+dirty",
+          "duration": "15.31s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HEALTH-01/20260925-095647.log"
+        }
+      ],
+      "title": "health",
+      "component": "devkit-health",
+      "command": "bash universal-agent-devkit/tests/test_agent_health.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/agent-health.py"
+      ]
+    },
+    "REG-DK-ALL-01": {
+      "id": "REG-DK-ALL-01",
+      "kind": "test",
+      "last": {
+        "status": "PASS",
+        "at": "2026-09-27 10:02:00",
+        "ts": 1790478120.292259,
+        "task": "session-91d7608d-726",
+        "commit": "a94c071+dirty",
+        "duration": "276.04s",
+        "exit_code": 0,
+        "log": ".agents/evidence/REG-DK-ALL-01/20260927-100159.log"
+      },
+      "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-27 10:02:00",
+          "ts": 1790478120.292259,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "276.04s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20260927-100159.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:51:41",
+          "ts": 1790477501.702764,
+          "task": null,
+          "commit": "a94c071+dirty",
+          "duration": "259.04s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20260927-095141.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:41:34",
+          "ts": 1790476894.906131,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "276.16s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20260927-094134.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:31:27",
+          "ts": 1790476287.177829,
+          "task": null,
+          "commit": "a94c071+dirty",
+          "duration": "267.44s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20260927-093126.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:21:05",
+          "ts": 1790475665.701899,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "267.83s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20260927-092105.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:10:28",
+          "ts": 1790475028.446887,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "316.72s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20260927-091027.log"
+        },
+        {
+          "status": "FAIL",
+          "at": "2026-09-27 08:45:24",
+          "ts": 1790473524.0219588,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "313.30s",
+          "exit_code": 1,
+          "log": ".agents/evidence/REG-DK-ALL-01/20260927-084523.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 00:06:58",
+          "ts": 1790442418.467701,
+          "task": null,
+          "commit": "86f7ddc+dirty",
+          "duration": "163.36s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20260927-000657.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 00:00:44",
+          "ts": 1790442044.1741781,
+          "task": "session-91d7608d-726",
+          "commit": "86f7ddc+dirty",
+          "duration": "171.77s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20260927-000043.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-26 23:54:51",
+          "ts": 1790441691.52193,
+          "task": "session-91d7608d-726",
+          "commit": "86f7ddc+dirty",
+          "duration": "157.53s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20260926-235451.log"
+        }
+      ],
+      "title": "DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit",
+      "component": "devkit-all",
+      "command": "bash universal-agent-devkit/tests/run_impacted.sh",
+      "watch_files": [
+        "universal-agent-devkit/*"
+      ]
+    },
+    "REG-DK-DOCS-01": {
+      "id": "REG-DK-DOCS-01",
+      "kind": "test",
+      "last": {
+        "status": "PASS",
+        "at": "2026-09-26 12:04:31",
+        "ts": 1790399071.599287,
+        "task": "stale-rerun",
+        "commit": "f15393b+dirty",
+        "duration": "1.86s",
+        "exit_code": 0,
+        "log": ".agents/evidence/REG-DK-DOCS-01/20260926-120431.log"
+      },
+      "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-26 12:04:31",
+          "ts": 1790399071.599287,
+          "task": "stale-rerun",
+          "commit": "f15393b+dirty",
+          "duration": "1.86s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-DOCS-01/20260926-120431.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 23:30:47",
+          "ts": 1790353847.931041,
+          "task": "stale-rerun",
+          "commit": "23c6a81+dirty",
+          "duration": "5.26s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-DOCS-01/20260925-233047.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 20:49:34",
+          "ts": 1790344174.8616378,
+          "task": "stale-rerun",
+          "commit": "223975c+dirty",
+          "duration": "2.06s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-DOCS-01/20260925-204934.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 11:24:01",
+          "ts": 1790310241.7313879,
+          "task": null,
+          "commit": "05ce90e+dirty",
+          "duration": "2.20s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-DOCS-01/20260925-112401.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 11:23:30",
+          "ts": 1790310210.461996,
+          "task": "stale-rerun",
+          "commit": "05ce90e+dirty",
+          "duration": "3.71s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-DOCS-01/20260925-112330.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 10:06:29",
+          "ts": 1790305589.39835,
+          "task": "session-1c3bc20e-7a5",
+          "commit": "6319cc3+dirty",
+          "duration": "1.96s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-DOCS-01/20260925-100629.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 09:50:52",
+          "ts": 1790304652.1081789,
+          "task": "session-1c3bc20e-7a5",
+          "commit": "0e00776+dirty",
+          "duration": "2.12s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-DOCS-01/20260925-095051.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 09:41:56",
+          "ts": 1790304116.097425,
+          "task": "session-45260809-3db",
+          "commit": "246ea02+dirty",
+          "duration": "3.62s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-DOCS-01/20260925-094155.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 09:40:08",
+          "ts": 1790304008.987339,
+          "task": "session-1c3bc20e-7a5",
+          "commit": "246ea02+dirty",
+          "duration": "3.74s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-DOCS-01/20260925-094008.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-25 09:30:34",
+          "ts": 1790303434.3246589,
+          "task": "session-45260809-3db",
+          "commit": "246ea02+dirty",
+          "duration": "2.00s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-DOCS-01/20260925-093034.log"
+        }
+      ],
+      "title": "repo consistency (documented counts, commands, links)",
+      "component": "devkit-docs",
+      "command": "bash universal-agent-devkit/tests/test_repo_consistency.sh",
+      "watch_files": [
+        "universal-agent-devkit/*.md"
+      ],
+      "stale_since": "2026-09-26 12:25:25",
+      "stale_files": [
+        "universal-agent-devkit/AGENTS.md",
+        "universal-agent-devkit/CHANGELOG.md",
+        "universal-agent-devkit/profiles/automotive/rules/automotive-rules.md",
+        "universal-agent-devkit/rules/core-rules.md",
+        "universal-agent-devkit/rules/essentials.md"
+      ]
+    },
+    "BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du": {
+      "id": "BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du",
+      "kind": "bug",
+      "title": "prompt báo bug thật cũng sẽ không còn được ghi nhận nữa -> là sao bug đúng ko fix đi phải tự động ghi nhận chứ",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-09-25 13:11:27",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "state": "confirmed",
+      "fixed": true,
+      "touched_at": "2026-09-25 13:11:27",
+      "sessions": [
+        "2df0a0e0-0d6c-4a6d-89be-b7e8384245f9"
+      ],
+      "linked_at": "2026-09-25 19:05:07",
+      "linked_ts": 1790337907.491837,
+      "red_proof": {
+        "at": "2026-09-25 19:27:56",
+        "ts": 1790339276.0027342,
+        "status": "INCONCLUSIVE",
+        "reason": "không biết file test nào (link bằng file/class test)"
+      }
+    },
+    "REG-WB-CONFIG-01": {
+      "id": "REG-WB-CONFIG-01",
+      "kind": "test",
+      "last": {
+        "status": "PASS",
+        "at": "2026-09-27 10:52:31",
+        "ts": 1790481151.2081568,
+        "task": null,
+        "commit": "9d29ca8+dirty",
+        "duration": "0.43s",
+        "exit_code": 0,
+        "log": ".agents/evidence/REG-WB-CONFIG-01/20260927-105231.log"
+      },
+      "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-27 10:52:31",
+          "ts": 1790481151.2081568,
+          "task": null,
+          "commit": "9d29ca8+dirty",
+          "duration": "0.43s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20260927-105231.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 10:02:32",
+          "ts": 1790478152.355175,
+          "task": null,
+          "commit": "aed2dd3+dirty",
+          "duration": "0.28s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20260927-100232.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 10:02:00",
+          "ts": 1790478120.2922602,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "0.41s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20260927-100200.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:51:41",
+          "ts": 1790477501.7027662,
+          "task": null,
+          "commit": "a94c071+dirty",
+          "duration": "0.45s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20260927-095141.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:41:34",
+          "ts": 1790476894.9061341,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "0.48s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20260927-094134.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:31:27",
+          "ts": 1790476287.1778328,
+          "task": null,
+          "commit": "a94c071+dirty",
+          "duration": "0.45s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20260927-093126.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:21:05",
+          "ts": 1790475665.701901,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "0.42s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20260927-092105.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 09:10:28",
+          "ts": 1790475028.4468899,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "0.51s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20260927-091028.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 08:45:24",
+          "ts": 1790473524.022094,
+          "task": "session-91d7608d-726",
+          "commit": "a94c071+dirty",
+          "duration": "0.42s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20260927-084523.log"
+        },
+        {
+          "status": "PASS",
+          "at": "2026-09-27 00:07:27",
+          "ts": 1790442447.02813,
+          "task": null,
+          "commit": "a94c071+dirty",
+          "duration": "0.43s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20260927-000726.log"
+        }
+      ],
+      "title": "agent-kit health: every registered hook exists, imports resolve, context in sync",
+      "component": "workbench-agent-config",
+      "command": "bash universal-agent-devkit/bin/agent-kit health -t .",
+      "watch_files": [
+        ".claude/settings.json",
+        ".mcp.json",
+        "mcp_config.json",
+        "AGENTS.md"
+      ]
+    },
+    "BUG-20260926-dev-kit-lam-tao-branch-push-lung-tung-kh": {
+      "id": "BUG-20260926-dev-kit-lam-tao-branch-push-lung-tung-kh",
+      "kind": "bug",
+      "title": "dev kit làm tạo branch, push lung tung không đồng bộ dẫn tới lệch code, vd geely ex2 hiện có 2 pull chưa pull về dẫn tớ…",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-09-26 11:54:30",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-HOOK-01",
+        "REG-DK-HOOK-02"
+      ],
+      "last": null,
+      "history": [],
+      "state": "confirmed",
+      "fixed": true,
+      "touched_at": "2026-09-26 11:54:30",
+      "sessions": [
+        "2df0a0e0-0d6c-4a6d-89be-b7e8384245f9"
+      ],
+      "linked_at": "2026-09-26 13:55:19",
+      "linked_ts": 1790405719.1543648,
+      "runs_in_suite": [
+        "universal-agent-devkit/hooks/tests/hook_contract_test.sh"
+      ],
+      "red_proof": {
+        "at": "2026-09-26 14:55:51",
+        "ts": 1790409351.532335,
+        "status": "INCONCLUSIVE",
+        "reason": "không có bản sửa chưa commit — fix đã commit: chạy với --fix-commit <sha>"
+      }
     }
   },
   "meta": {
-    "matrix_pending": true
+    "matrix_pending": false
   },
   "stats": {
-    "reported_total": 1
+    "reported_total": 9,
+    "reported_dropped": 6
   }
 }
