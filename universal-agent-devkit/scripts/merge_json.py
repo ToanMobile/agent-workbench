@@ -53,7 +53,34 @@ def _hook_key(hook):
     path = path.lstrip("/")
     while path.startswith("./"):
         path = path[2:]
-    return path
+    # .claude/hooks/X links to .agents/devkit/hooks/X: one DevKit hook, however it is wired
+    # (all 3 real projects had proof_gate both ways on 2026-09-27 — every block showed twice).
+    return re.sub(r"^(?:\.agents/devkit/hooks|\.claude/hooks)/", DEVKIT_HOOK, path)
+
+
+DEVKIT_HOOK = "devkit-hook:"
+
+
+def _drop_twins(groups, devkit_keys):
+    """A DevKit hook — one the source (DevKit template) wires — wired twice under overlapping
+    matchers keeps its first wiring (the project's placement); a group only this emptied goes.
+    The user's own hooks are never touched, even a script of theirs under .claude/hooks/ wired
+    twice (review 2026-09-27)."""
+    seen = []
+    for g in groups:
+        if not (isinstance(g, dict) and isinstance(g.get("hooks"), list)):
+            continue
+        m, keep = _matcher_set(g), []
+        for h in g["hooks"]:
+            k = _hook_key(h)
+            if k in devkit_keys and any(k == sk and _overlap(m, sm) for sk, sm in seen):
+                continue
+            seen.append((k, m))
+            keep.append(h)
+        if len(keep) != len(g["hooks"]):
+            g["hooks"] = keep
+            g["_emptied"] = not keep
+    groups[:] = [g for g in groups if not (isinstance(g, dict) and g.pop("_emptied", False))]
 
 
 def _merge_list(source, target):
@@ -111,6 +138,11 @@ def _merge_list(source, target):
                 target.append(item)
         elif item not in target:
             target.append(item)
+    devkit_keys = {_hook_key(h) for i in source if isinstance(i, dict) and isinstance(i.get("hooks"), list)
+                   for h in i["hooks"]}
+    devkit_keys = {k for k in devkit_keys if k.startswith(DEVKIT_HOOK)}
+    if devkit_keys and any(isinstance(t, dict) and isinstance(t.get("hooks"), list) for t in target):
+        _drop_twins(target, devkit_keys)
 
 
 # Top-level keys whose lists are ordered values (argv), never sets: the user's wins.

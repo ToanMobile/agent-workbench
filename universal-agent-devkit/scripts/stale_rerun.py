@@ -165,7 +165,8 @@ def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mo
     dirty = bool(rc._git_lines(project, "status", "--porcelain"))
     with rc.locked(project):
         data = rc.load(project)
-        rc.record_results(data, [t], task=mode, commit=f"{head}+dirty" if head and dirty else head)
+        rc.record_results(data, [t], task=mode, commit=f"{head}+dirty" if head and dirty else head,
+                          project=project)
         rc.save(project, data)
     return f"{tid}: {status} ({duration})"
 

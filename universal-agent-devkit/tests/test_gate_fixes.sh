@@ -43,6 +43,21 @@ found = al.findings(kt)
 lines = [n for n, _ in found]
 assert 3 in lines and 4 in lines, found
 assert 5 not in lines and 6 not in lines and 7 not in lines, found
+# Compose UI tests and kotlin.test assert through methods (OfficeReader 2026-09-26: an
+# `.onNode(…).assertExists()` test was called vacuous and the agent rewrote it to get past the gate).
+kt2 = '''
+class U {
+  @Test fun compose() { rule.onNode(hasText("Bold")).assertExists() }
+  @Test fun shown() { rule.onNodeWithTag("bar").assertIsDisplayed() }
+  @Test fun text() { rule.onNodeWithTag("t").assertTextEquals("A") }
+  @Test fun isType() { assertIs<Loaded>(state) }
+  @Test fun fails() { assertFailsWith<IOException> { read() } }
+  @Test fun contains() { assertContains(list, "x") }
+  @Test fun nothing() { rule.onNode(hasText("Bold")) }
+}
+'''
+found2 = [n for n, _ in al.findings(kt2)]
+assert found2 == [9], found2
 
 def png_rows(rows):
     h, w = len(rows), len(rows[0])

@@ -68,7 +68,7 @@ PG_INPUT="${INPUT}" PG_LOG="${LOG_DIR}/precode_gate.log" \
 PG_LEDGER="${LOG_DIR}/read_ledger.tsv" PG_REPO="${REPO_ROOT}" \
 PG_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
 python3 <<'PY'
-import os, sys, json
+import os, subprocess, sys, json
 
 raw = os.environ.get("PG_INPUT", "")
 log = os.environ.get("PG_LOG", "/dev/null")
@@ -203,6 +203,45 @@ except Exception as e:
 
 if looked:
     logline(f"[{ts}] {base}: đã xem trong phiên — pass")
+    sys.exit(0)
+
+# Born inside one of THIS session's Bash windows (bash_write_ledger.tsv; the narrowest window
+# holding the birth wins, as hooks/bash_write_ledger.sh prescribes): the session created the file
+# with a shell command whose path no ledger resolves — `cat > "$FR/X.kt" <<EOF` (OfficeReader
+# 2026-09-26). A file born in another session's window, or in none, is still blind.
+def born_in_my_window():
+    sid = str(d.get("session_id") or "")
+    try:
+        st = os.stat(path)
+        t = getattr(st, "st_birthtime", None) or st.st_mtime
+        rows = open(os.path.join(os.environ.get("PG_REPO", "."), ".claude", "audit-gate", "bash_write_ledger.tsv"),
+                    encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        return False
+    win = {}
+    for r in rows:
+        f = r.split("\t")
+        if len(f) == 4 and f[1] in ("start", "end"):
+            try:
+                win.setdefault((f[0], f[3]), {})[f[1]] = float(f[2])
+            except ValueError:
+                pass
+    best = None
+    for (s_id, _tid), w in win.items():
+        a, b = w.get("start"), w.get("end")
+        if a is None or b is None:
+            continue   # a window still open (a backgrounded command) proves nothing about who wrote
+        if a - 0.005 <= t <= b + 0.005 and (best is None or b - a < best[0]):   # ledger: 3 decimals
+            best = (b - a, s_id)
+    if not (sid and best is not None and best[1] == sid):
+        return False
+    # A tracked file was (re)written by git (pull, checkout, stash pop), not typed by the session.
+    tracked = subprocess.run(["git", "-C", os.path.dirname(path) or ".", "ls-files", "--error-unmatch", "--", path],
+                             capture_output=True)
+    return tracked.returncode != 0
+
+if born_in_my_window():
+    logline(f"[{ts}] {base}: phiên này tạo file bằng lệnh shell — pass")
     sys.exit(0)
 
 logline(f"[{ts}] BLOCK — {base}: sửa file chưa từng xem trong phiên")

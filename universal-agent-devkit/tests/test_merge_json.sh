@@ -138,5 +138,42 @@ python3 "$MERGE" "$TMP/totpl.json" "$TMP/to.json"
 python3 -c 'import json,sys; h=json.load(open(sys.argv[1]))["hooks"]["Stop"][0]["hooks"]; assert [x["timeout"] for x in h]==[600,5] and len(h)==2, h' "$TMP/to.json" \
   && ok "re-init updates a DevKit hook's timeout, keeps the user's hook" || fail "timeouts: $(cat "$TMP/to.json")"
 
+# .agents/devkit/hooks/X and .claude/hooks/X are one DevKit hook (the second links to the first).
+# Seen in all 3 real projects (2026-09-27): proof_gate wired both ways, so every block showed
+# twice and its 2-block cap ran out inside one Stop.
+cat > "$TMP/pg_src.json" <<'JSON'
+{"hooks": {"Stop": [{"matcher": "", "hooks": [
+   {"type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/proof_gate.sh\"", "timeout": 30}]}]}}
+JSON
+cat > "$TMP/pg_user.json" <<'JSON'
+{"hooks": {"Stop": [{"matcher": "", "hooks": [
+   {"type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.agents/devkit/hooks/proof_gate.sh\"", "timeout": 30}]}]}}
+JSON
+python3 "$MERGE" "$TMP/pg_src.json" "$TMP/pg_user.json" >/dev/null 2>&1
+[ "$(grep -c proof_gate "$TMP/pg_user.json")" = 1 ] && ok "the .claude/hooks copy of a hook wired via .agents/devkit is not added again" \
+  || fail "proof_gate wired twice: $(cat "$TMP/pg_user.json")"
+cat > "$TMP/pg_both.json" <<'JSON'
+{"hooks": {"Stop": [{"matcher": "", "hooks": [
+   {"type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.agents/devkit/hooks/proof_gate.sh\"", "timeout": 30},
+   {"type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/proof_gate.sh\"", "timeout": 30},
+   {"type": "command", "command": "bash scripts/my_own_gate.sh"}]}]}}
+JSON
+python3 "$MERGE" "$TMP/pg_src.json" "$TMP/pg_both.json" >/dev/null 2>&1
+[ "$(grep -c proof_gate "$TMP/pg_both.json")" = 1 ] && grep -q '.agents/devkit/hooks/proof_gate.sh' "$TMP/pg_both.json" \
+  && grep -q my_own_gate "$TMP/pg_both.json" \
+  && ok "an existing double wiring collapses to the first one; the user's own hook stays" \
+  || fail "double wiring kept or wrong one dropped: $(cat "$TMP/pg_both.json")"
+
+# The user's own script under .claude/hooks/, wired twice with different arguments, is not a
+# DevKit twin (review 2026-09-27: the second group was dropped).
+cat > "$TMP/uh_user.json" <<'JSON'
+{"hooks": {"PreToolUse": [
+  {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash .claude/hooks/audit.sh pre-bash"}]},
+  {"matcher": "Bash|Edit", "hooks": [{"type": "command", "command": "bash .claude/hooks/audit.sh pre-edit"}]}]}}
+JSON
+python3 "$MERGE" "$DEVKIT_DIR/templates/claude_settings.json" "$TMP/uh_user.json" >/dev/null 2>&1
+[ "$(grep -c 'audit.sh' "$TMP/uh_user.json")" = 2 ] && ok "the user's own .claude/hooks script wired twice keeps both wirings" \
+  || fail "user hook dropped: $(cat "$TMP/uh_user.json")"
+
 if [ "$FAILS" -ne 0 ]; then echo "merge_json: $FAILS FAILED"; exit 1; fi
 echo "merge_json: all checks passed"

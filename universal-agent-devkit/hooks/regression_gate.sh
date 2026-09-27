@@ -381,15 +381,24 @@ if res.returncode == 4:
                          ensure_ascii=False))
     note(f"untested fp={fp}")
     sys.exit(0)
-if res.returncode not in (1, 2):
+if res.returncode not in (1, 2) or not summary:
+    # A crash (a Python traceback also exits 1) prints no JSON: there is nothing to fix in the
+    # change, so do not block with a reasonless "exit 1" (OfficeReader 2026-09-26) — say it.
     note("fail-open: gate crashed exit=%s: %r" % (res.returncode, res.stderr[-400:]))
+    tail = "\n".join((res.stderr or res.stdout or "").strip().splitlines()[-6:])
+    emit({"systemMessage": "Regression gate LỖI (exit %s, không có kết quả) — KHÔNG phải PASS, test hồi quy chưa được xác nhận:\n%s"
+          % (res.returncode, tail)})
     sys.exit(0)
 
 strip = lambda s: re.sub(r"\x1b\[[0-9;]*m", "", s or "")
 verdict = strip(summary.get("verdict")) or ("exit " + str(res.returncode))
 problem = strip(summary.get("matrix_problem"))
 touched = summary.get("tests_touched") or []
-failing = [t for t in summary.get("regression_tests", []) if t.get("status") != "PASS"]
+# Not run: BUSY (another run held the test lock; the gate writes status UNTESTED, label BUSY) or
+# UNTESTED (cannot run on this machine). Nothing to fix in the change (2026-09-27: 6 BUSY suites
+# were listed as failures, with "fix code/test").
+busy = [t for t in summary.get("regression_tests", []) if t.get("status") in ("UNTESTED", "BUSY")]
+failing = [t for t in summary.get("regression_tests", []) if t.get("status") != "PASS" and t not in busy]
 
 def in_head(path):
     # candidates may not exist in the tree (deleted): map through the real repo path
@@ -466,7 +475,20 @@ elif problem:
     lines.append("  - MATRIX: %s — cần người review sửa đổi ở `%s` rồi commit, hoặc hoàn tác nó; KHÔNG sửa ma trận "
                  "để lách test (have a human review the matrix edit and commit it, or revert it)." % (problem, rel))
 for t in failing:
-    lines.append("  - %s %s: %s (lệnh: %s)" % (t.get("id"), t.get("name"), t.get("status"), t.get("command")))
+    # The label says what failed (VACUOUS: the command exits 0, the test caught nothing when the
+    # production diff was reverted — OfficeReader 2026-09-26); the reason and the log follow.
+    what = t.get("label") if t.get("label") not in (None, "", t.get("status")) else t.get("status")
+    extra = "" if t.get("exit_code") in (None, "") else ", exit %s" % t.get("exit_code")
+    lines.append("  - %s %s: %s (lệnh: %s%s)" % (t.get("id"), t.get("name"), what, t.get("command"), extra))
+    why = [l.strip() for l in strip(t.get("output_tail") or "").splitlines() if l.strip()]
+    if what != "FAIL" and why:
+        lines.append("      lý do: " + why[0][:300])
+    if t.get("log"):
+        lines.append("      log: " + str(t.get("log")))
+for t in busy:
+    lines.append("  - %s %s: %s — chưa chạy (%s); KHÔNG phải PASS" % (
+        t.get("id"), t.get("name"), t.get("label") or t.get("status"),
+        "một lượt khác giữ khoá test, chạy lại sau" if t.get("label") == "BUSY" else "không chạy được trên máy này"))
 for f in summary.get("findings", [])[:10]:
     # static findings (secrets, placeholders, dependencies …) with the exact place to fix
     lines.append("  - %s %s:%s: %s" % (f.get("category"), f.get("file"), f.get("line") or "?", f.get("message")))

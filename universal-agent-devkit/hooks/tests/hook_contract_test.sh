@@ -941,6 +941,54 @@ run_case "ledger hit allows edit despite empty transcript" precode_gate.sh 0 \
   "{\"tool_name\":\"Edit\",\"session_id\":\"SESS-A\",\"transcript_path\":\"${EMPTY_TR}\",\"tool_input\":{\"file_path\":\"${KT_SEEN}\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
 run_case "ledger entry from another session does not count" precode_gate.sh 2 \
   "{\"tool_name\":\"Edit\",\"session_id\":\"SESS-B\",\"transcript_path\":\"${EMPTY_TR}\",\"tool_input\":{\"file_path\":\"${KT_SEEN}\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
+# A file this session created itself — `cat > "$FR/InCellEditor.kt" <<EOF`, a path no ledger can
+# resolve (OfficeReader 2026-09-26) — was born inside one of THIS session's Bash windows
+# (bash_write_ledger.tsv, narrowest window wins): the session wrote it, so editing it is not blind.
+# Born in another session's window, or outside any: still blind.
+BWL="${SANDBOX}/.claude/audit-gate/bash_write_ledger.tsv"
+python3 - "$BWL" "${SANDBOX}" <<'PY'
+import os, sys, time
+led, sb = sys.argv[1], sys.argv[2]
+t0 = time.time()
+rows = [("SESS-SH", "start", t0, "tu1")]
+open(os.path.join(sb, "ByShell.kt"), "w").write("class ByShell\n")
+time.sleep(0.05)
+open(os.path.join(sb, "ByOther.kt"), "w").write("class ByOther\n")
+t1 = time.time()
+rows += [("SESS-SH", "end", t1 + 0.05, "tu1"),
+         ("SESS-OTHER", "start", t1 - 0.03, "tu9"), ("SESS-OTHER", "end", t1 + 0.01, "tu9")]
+with open(led, "a") as f:
+    for r in rows:
+        f.write("%s\t%s\t%.3f\t%s\n" % r)
+PY
+run_case "a file born in this session's own Bash window is not blind" precode_gate.sh 0 \
+  "{\"tool_name\":\"Write\",\"session_id\":\"SESS-SH\",\"transcript_path\":\"${EMPTY_TR}\",\"tool_input\":{\"file_path\":\"${SANDBOX}/ByShell.kt\",\"content\":\"class ByShell2\"}}"
+run_case "a file born in another session's narrower window is still blind" precode_gate.sh 2 \
+  "{\"tool_name\":\"Write\",\"session_id\":\"SESS-SH\",\"transcript_path\":\"${EMPTY_TR}\",\"tool_input\":{\"file_path\":\"${SANDBOX}/ByOther.kt\",\"content\":\"x\"}}"
+# …but not a file git rewrote in that window (pull / checkout / stash pop give it a new birth time),
+# nor one born in a window still open (a backgrounded command writes no `end` row) — review 2026-09-27.
+TRK="${SANDBOX}/trk"; mkdir -p "$TRK" && git -C "$TRK" init -q && git -C "$TRK" config user.email t@t && git -C "$TRK" config user.name t
+printf 'class Tracked\n' > "$TRK/Tracked.kt" && git -C "$TRK" add -A && git -C "$TRK" commit -qm init
+python3 - "$BWL" "$TRK" <<'PY'
+import os, sys, time
+led, trk = sys.argv[1], sys.argv[2]
+t0 = time.time()
+os.remove(os.path.join(trk, "Tracked.kt"))
+open(os.path.join(trk, "Tracked.kt"), "w").write("class Tracked\n")      # what git checkout does
+t1 = time.time()
+time.sleep(0.05)
+t2 = time.time()
+open(os.path.join(trk, "Open.kt"), "w").write("class Open\n")
+with open(led, "a") as f:
+    f.write("SESS-GT\tstart\t%.3f\ttu5\nSESS-GT\tend\t%.3f\ttu5\n" % (t0 - 0.01, t1 - 0.0005))
+    f.write("SESS-GT\tstart\t%.3f\ttu6\n" % (t2 - 0.02))                    # backgrounded: no end
+PY
+run_case "a tracked file git rewrote inside the session's window is still blind" precode_gate.sh 2 \
+  "{\"tool_name\":\"Edit\",\"session_id\":\"SESS-GT\",\"transcript_path\":\"${EMPTY_TR}\",\"tool_input\":{\"file_path\":\"${TRK}/Tracked.kt\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
+run_case "a file born in a still-open (backgrounded) window is still blind" precode_gate.sh 2 \
+  "{\"tool_name\":\"Edit\",\"session_id\":\"SESS-GT\",\"transcript_path\":\"${EMPTY_TR}\",\"tool_input\":{\"file_path\":\"${TRK}/Open.kt\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
+run_case "a file born outside any window of the session is still blind" precode_gate.sh 2 \
+  "{\"tool_name\":\"Edit\",\"session_id\":\"SESS-SH\",\"transcript_path\":\"${EMPTY_TR}\",\"tool_input\":{\"file_path\":\"${KT_UNSEEN}\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
 run_case "ledger does not cover a file never read" precode_gate.sh 2 \
   "{\"tool_name\":\"Edit\",\"session_id\":\"SESS-A\",\"transcript_path\":\"${EMPTY_TR}\",\"tool_input\":{\"file_path\":\"${KT_UNSEEN}\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
 echo
@@ -1358,10 +1406,31 @@ run_case "red <testsuites>-wrapped XML blocks a pass claim" test_evidence_gate.s
 rm -f "${INSTR_DIR}"/TEST-*.xml
 echo
 
+# ── foreign_repo_gate.sh — Stop (tests/test_foreign_repo_gate.sh has the full cases) ──
+echo "foreign_repo_gate.sh"
+run_case "foreign-repo gate: no transcript fails open" foreign_repo_gate.sh 0 \
+  '{"session_id":"s-fr","hook_event_name":"Stop","transcript_path":"/nonexistent.jsonl"}'
+run_case "foreign-repo gate: only project edits pass" foreign_repo_gate.sh 0 \
+  "{\"session_id\":\"s-fr\",\"hook_event_name\":\"Stop\",\"transcript_path\":\"${SEEN_TR}\"}"
+
 # ── churn_guard.sh — PostToolUse ────────────────────────────────────────────
 echo "churn_guard.sh"
 run_case "3rd blind edit of one file warns" churn_guard.sh 2 \
   "{\"tool_name\":\"Edit\",\"transcript_path\":\"${CHURN_TR}\",\"tool_input\":{\"file_path\":\"${KT_SEEN}\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
+# Edits sent together in ONE assistant message (one plan, several hunks) are one attempt:
+# Claude Code writes each tool_use as its own JSONL line sharing message.id (OfficeReader
+# 2026-09-26: 8 churn warnings for batched edits).
+BATCH_TR="${SANDBOX}/batch.jsonl"
+python3 - "$BATCH_TR" "$KT_SEEN" <<'PY'
+import json, sys
+path, kt = sys.argv[1], sys.argv[2]
+lines = [json.dumps({"type": "assistant", "message": {"id": "msg_batch_1", "content": [
+    {"type": "tool_use", "id": "tu%d" % i, "name": "Edit",
+     "input": {"file_path": kt, "old_string": "a%d" % i, "new_string": "b"}}]}}) for i in range(3)]
+open(path, "w").write("\n".join(lines) + "\n")
+PY
+run_case "3 edits in one assistant message are one attempt (quiet)" churn_guard.sh 0 \
+  "{\"tool_name\":\"Edit\",\"transcript_path\":\"${BATCH_TR}\",\"tool_input\":{\"file_path\":\"${KT_SEEN}\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
 run_case "evidence between edits stays quiet" churn_guard.sh 0 \
   "{\"tool_name\":\"Edit\",\"transcript_path\":\"${EVID_TR}\",\"tool_input\":{\"file_path\":\"${KT_SEEN}\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
 for c in "edits after the last evidence call warn|2|${CHURN_AFTER_TR}" \

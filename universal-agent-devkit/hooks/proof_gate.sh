@@ -125,27 +125,49 @@ start = turn_start(d.get("transcript_path") or "")
 # words inside a heredoc, a string, `git stash push`, `git commit -m '…push…'` or a --dry-run.
 PUSH_RX = re.compile(r"(?:^|[;&|(]|\n)\s*(?:\w+=\S*\s+)*git(?:\s+-[Cc]\s+\S+|\s+--?[\w.-]+(?:=\S+)?)*\s+push\b(?![^\n;&|]*--dry-run)")
 
+# A push that did not go through is no handover: its result is an error (a denied permission),
+# shows git refusing it, or says the command went to the background (GeelyEx2 2026-09-26, and a
+# denied push in the DevKit workbench). A push with no result found still counts.
+PUSH_FAILED = re.compile(r"\[(?:remote )?rejected\]|error: failed to push|^fatal:|hook declined", re.I | re.M)
+# A ref that went out ("   a1b2..c3d4  main -> main", "* [new branch] x -> x") on a line that is not a rejection.
+PUSH_WENT = re.compile(r"^(?!.*\[(?:remote )?rejected\]).*\S\s+->\s+\S", re.M)
+
 def pushed_in_turn(tp):
-    """True when a Bash call of this turn (after the last user prompt) ran `git push`."""
+    """True when a Bash call of this turn (after the last user prompt) ran `git push` that did not
+    visibly fail."""
+    pushes = {}   # tool_use id -> True (went through or unknown) / False (failed)
     try:
         with open(tp, encoding="utf-8", errors="replace") as f:
             for raw in f:
-                if "push" not in raw:
+                if "push" not in raw and not any(i in raw for i in pushes):
                     continue          # most lines: no JSON parse on every Stop
                 try:
                     e = json.loads(raw)
                     t = datetime.datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")).timestamp()
                 except (ValueError, AttributeError):
                     continue
-                if e.get("type") != "assistant" or start is None or t < start:
+                if start is None or t < start:
                     continue
                 for c in (e.get("message") or {}).get("content") or []:
-                    cmd = (c.get("input") or {}).get("command", "") if isinstance(c, dict) and c.get("type") == "tool_use" else ""
-                    if isinstance(cmd, str) and PUSH_RX.search(cmd):
-                        return True
+                    if not isinstance(c, dict):
+                        continue
+                    if e.get("type") == "assistant" and c.get("type") == "tool_use":
+                        cmd = (c.get("input") or {}).get("command", "")
+                        if isinstance(cmd, str) and PUSH_RX.search(cmd):
+                            pushes[c.get("id") or "no-id-%d" % len(pushes)] = True
+                    elif c.get("type") == "tool_result" and c.get("tool_use_id") in pushes:
+                        body = c.get("content")
+                        if isinstance(body, list):
+                            body = " ".join(x.get("text", "") for x in body if isinstance(x, dict))
+                        body = str(body or "")
+                        # went out = a ref line, even if a later ref or command failed; a background
+                        # push usually completes. Only a failure with nothing sent is no handover.
+                        failed = (bool(c.get("is_error")) or bool(PUSH_FAILED.search(body))) \
+                            and not PUSH_WENT.search(body) and "running in background" not in body
+                        pushes[c["tool_use_id"]] = not failed
     except OSError:
         pass
-    return False
+    return any(pushes.values())
 
 if not xong and not (missing_report and pushed_in_turn(d.get("transcript_path") or "")):
     sys.exit(0)

@@ -21,6 +21,10 @@ _MARKER = re.compile(
 _SKIP = re.compile(r"@(?:Ignore|Disabled)\b|\[Ignore\b|\[Explicit\b")
 _ASSERT = re.compile(
     r"\bassert(?:True|False|Equals|NotEquals|Null|NotNull|That|Throws|Same|NotSame|ArrayEquals)\s*\("
+    # any assertXxx( / assertXxx<T>(: kotlin.test assertIs<T>, assertFailsWith<T>, assertContains, and
+    # method assertions — Compose .assertExists(), .assertIsDisplayed(), .assertTextEquals() (OfficeReader
+    # 2026-09-26: a real Compose test was called vacuous and rewritten to pass the gate)
+    r"|\bassert[A-Z]\w*\s*[<(]"
     r"|\bAssert\.(?:AreEqual|AreNotEqual|IsTrue|IsFalse|IsNull|IsNotNull|That|Throws|Greater|Less|AreSame)\s*\("
     r"|\bassertThat\s*\("
     r"|\bexpect\s*\("

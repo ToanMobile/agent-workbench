@@ -1752,6 +1752,13 @@ def expand_impacted_command(project_dir, template, full_command, selection):
         if not all(_SAFE_GRADLE_PATH.match(m) for m in by_module):
             return None, tr("đường dẫn module Gradle không an toàn", "unsafe Gradle module path")
         m = _GRADLE_MODULE_TESTS.search(template)
+        if m and "" in by_module:
+            selection["root_project"] = True   # plan_test_run: no narrowed fallback either
+            # A test of the root project: ":<task>" is a task the root rarely has, and a bare
+            # "<task> --tests X" fails every module without X — run the full command (GeelyEx2
+            # 2026-09-24: ./gradlew :testDebugUnitTest failed with any code).
+            return None, tr("test được chọn thuộc project gốc, không thuộc module nào — chạy lệnh đầy đủ",
+                            "a selected test belongs to the root project, not a module — running the full command")
         if m:
             task = m.group(1)
             parts, kept = [], 0
@@ -1930,6 +1937,9 @@ def plan_test_run(project_dir, test, force_reason, cache):
             return narrow[0], narrow[1], narrow[2], sel
         return test["command"], "full", sel["reason"], sel
     cmd, n = expand_impacted_command(project_dir, template, test["command"], sel)
+    if cmd is None and sel.get("root_project"):
+        # a narrowed package/module run (":app:… --tests '*Foo*'") would skip the root project's test
+        return test["command"], "full", n, sel
     if cmd is None:
         narrow = narrow_fallback(project_dir, test)
         if narrow:
@@ -2126,14 +2136,17 @@ def run_proof_block(modified_files: list) -> tuple:
             bits = ph.dhash(data)
             if bits is not None:
                 bits_of[label] = bits
+    def found(rel, label):   # recorded too: the Stop hook shows the summary's findings (GeelyEx2 2026-09-26)
+        findings.append(_L(label))
+        _record("proof", rel, label)
+
     for _mtime, rel, data in sorted(fresh):
         if not data:
-            findings.append(tr(f"{rel}: ảnh proof 0 byte", f"{rel}: zero-byte proof image"))
+            found(rel, (f"{rel}: ảnh proof 0 byte", f"{rel}: zero-byte proof image"))
             continue
         digest = hashlib.sha256(data).hexdigest()
         if digest in sha_of:
-            findings.append(tr(f"{rel}: trùng byte với {sha_of[digest]}",
-                               f"{rel}: identical bytes to {sha_of[digest]}"))
+            found(rel, (f"{rel}: trùng byte với {sha_of[digest]}", f"{rel}: identical bytes to {sha_of[digest]}"))
             continue
         sha_of[digest] = rel
         bits = ph.dhash(data)
@@ -2141,9 +2154,12 @@ def run_proof_block(modified_files: list) -> tuple:
             continue
         for other, prev in bits_of.items():
             if ph.too_similar(bits, prev):
-                findings.append(tr(
-                    f"{rel}: giống {other} ≥ 98% (cùng một màn, không phải trạng thái mới)",
-                    f"{rel}: ≥98% similar to {other} (same screen, not a new state)"))
+                # A warning, not a block: a retake of the same success screen is legitimate, and
+                # blocking it made agents delete older proofs to pass (OfficeReader 2026-09-26,
+                # 8 times). A reused image is still caught: byte-identical above, and
+                # proof_gate.sh wants a PNG made in this turn.
+                log_warn(tr(f"{rel}: giống {other} ≥ 98% (cùng một màn) — nếu là trạng thái mới, chụp màn khác; không xoá ảnh cũ",
+                            f"{rel}: ≥98% similar to {other} (same screen) — for a new state capture another screen; do not delete older proofs"))
                 break
         bits_of[rel] = bits
     return len(findings) == 0, findings
@@ -2337,7 +2353,7 @@ def _update_regression_checklist(args, matrix, rules, modified_files, regression
         # PASS (that needs the full command). An impacted FAIL is a real failure.
         recorded = [dict(t, status="PASS_IMPACTED") if t.get("mode") == "impacted" and t.get("status") == "PASS"
                     else t for t in regression_tests]
-        rc.record_results(data, recorded, task=args.task, commit=commit)
+        rc.record_results(data, recorded, task=args.task, commit=commit, project=get_project_dir())
     rc.prune_uncovered(data, lambda files: [f for f in uncovered_code_files(files, rules) if (project_dir / f).exists()])
     # No trusted rules (no matrix, or one the gate does not trust): every changed file
     # would look uncovered — rows that say nothing true. Record UNCOVERED only against
@@ -3090,7 +3106,7 @@ def main():
     proof_ok, proof_findings = run_proof_block(modified_files)
     if proof_ok:
         log_ok(tr("Thư mục proof: 0 ảnh trùng byte hoặc ≥ 98% cùng một màn",
-                  "Proof folders: 0 byte-identical or ≥98% same-screen duplicates"))
+                  "Proof folders: 0 byte-identical or ≥98% same-screen duplicates"))  # similar ones only warn
     else:
         for msg in proof_findings:
             log_err(msg)

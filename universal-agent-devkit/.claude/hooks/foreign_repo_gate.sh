@@ -1,0 +1,1 @@
+../../hooks/foreign_repo_gate.sh

@@ -170,7 +170,10 @@ except Exception:
     pass  # a corrupt checklist must not break session start
 hook = os.environ.get("HOOK_FILE") or ""
 try:
-    pre = "universal-agent-devkit:githook" in open(hook, encoding="utf-8", errors="replace").read()
+    text = open(hook, encoding="utf-8", errors="replace").read()
+    # the DevKit's hook, or the project's own one chaining the DevKit gate (githooks.sh status)
+    pre = "universal-agent-devkit:githook" in text or any(
+        "scripts/git-pre-commit.sh" in l and not l.lstrip().startswith("#") for l in text.splitlines())
 except OSError:
     pre = False
 parts.append("git pre-commit: " + ("bật" if pre else "chưa cài (agent-kit githooks install)"))

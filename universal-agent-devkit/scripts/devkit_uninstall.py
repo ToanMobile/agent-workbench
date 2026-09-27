@@ -265,7 +265,7 @@ def strip_devkit_hooks(cur, hook_names):
     hooks = cur.get("hooks")
     if not isinstance(hooks, dict):
         return
-    wanted = {f".claude/hooks/{n}" for n in hook_names}
+    wanted = {_hook_key({"command": f".claude/hooks/{n}"}) for n in hook_names}   # the same key merge_json uses
     for event in list(hooks):
         groups = hooks[event]
         if not isinstance(groups, list):

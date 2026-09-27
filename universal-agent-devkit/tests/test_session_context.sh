@@ -21,6 +21,19 @@ own_matrix() { cat > .agents/regression_matrix.active.json <<'JSON'
 JSON
 }
 
+# A project's own pre-commit that chains the DevKit gate is "on" (OfficeReader 2026-09-27: every
+# session start said "chưa cài" while the chained hook ran on each commit).
+repo chained && own_matrix && git add -A && git commit -qm init
+printf '#!/bin/bash\nbash /x/universal-agent-devkit/scripts/git-pre-commit.sh || exit 1  # chained\n# project checks\nexit 0\n' \
+  > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+out="$(ctx "$TMP/chained")"
+printf '%s' "$out" | grep -q "git pre-commit: bật" && ok "a project pre-commit chaining the DevKit gate reads as on" \
+  || fail "chained pre-commit reported as missing: $(printf '%s' "$out" | grep -o 'git pre-commit[^;]*')"
+printf '#!/bin/bash\n# project checks only (see scripts/git-pre-commit.sh some day)\nexit 0\n' > .git/hooks/pre-commit
+printf '%s' "$(ctx "$TMP/chained")" | grep -q "git pre-commit: chưa cài" && ok "  … one that only mentions it in a comment still reads as missing" \
+  || fail "unchained project hook reported as on"
+cd "$TMP" || exit 1
+
 # No matrix at all.
 repo none && git add -A && git commit -qm init
 out="$(ctx "$TMP/none")"; rc=$?

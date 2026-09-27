@@ -86,8 +86,9 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    file written before the turn), or every file changed since HEAD at
    the turn start (commits, merges, pulls included; new files too) is under a top-level
    `.agents/ .claude/ .gemini/ .github/ .githooks/ .codebase-memory/ docs/ reports/ scripts/
-   bin/ tools/`, a top-level test folder (`tests/`, `*Tests/`), a `src/<test source set>/`, or
-   is Markdown / LICENSE-type at the root (on a web profile `docs/` counts as the site). Then
+   bin/ tools/`, a top-level test folder (`tests/`, `*Tests/`), a `src/<test source set>/`, a
+   `*.log` file anywhere, or is Markdown / LICENSE-type at the root (on a web profile `docs/`
+   counts as the site). Then
    write "ảnh: không cần — <reason>" in line 3 and skip this step. Cite only this turn's
    proofs: every cited PNG is checked (stamp in its name from this turn, not a byte copy of
    another proof). A UI change committed in an earlier turn is that turn's proof to attach —

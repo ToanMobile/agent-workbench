@@ -90,6 +90,8 @@ def _off_screen(rel, profile=""):
         return False   # a web project's docs/ can be the site itself (Docusaurus, MkDocs)
     if top in OFF_SCREEN_TOP or top in TEST_TOP or top.endswith("Tests"):
         return True
+    if rel.endswith(".log"):
+        return True   # a log never reaches a screen, at any depth (GeelyEx2 artifacts/red-proof/*.log)
     if any(parts[i] == "src" and parts[i + 1] in TEST_SOURCE_SETS for i in range(len(parts) - 2)):
         return True
     if len(parts) == 1 and (rel.endswith((".md", ".rst", ".adoc")) or rel in OFF_SCREEN_NAMES):

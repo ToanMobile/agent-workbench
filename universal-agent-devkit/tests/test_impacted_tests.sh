@@ -174,6 +174,18 @@ has "core module task with its test" ":core:testDebugUnitTest --tests pkg.CoreTh
 has "feature module task with the referencing test" ":feature:testDebugUnitTest --tests pkg.FeatureUsesCoreTest" "$(ran)"
 hasnt "a module the full command does not run is left out" "AppUsesCoreTest" "$(ran)"
 
+# --- a test in the root project (no module build file): no ":task" guess, the full command runs.
+# GeelyEx2 2026-09-24/25: `./gradlew :testDebugUnitTest` (a task the root project does not have)
+# failed with any code, about 70 blocks and releases.
+make_repo './gradlew {gradle_module_tests:testDebugUnitTest}' './gradlew testDebugUnitTest :app:test'
+mkdir -p src/test/kotlin/pkg && kt_test src/test/kotlin/pkg/RootUsesFooTest.kt pkg RootUsesFooTest "Foo.value()"
+sed -i.bak 's#"app/\*"#"app/*","src/*"#' matrix.json && rm -f matrix.json.bak
+git add -A && git commit -qm roottest
+echo "// tweak" >> app/src/main/kotlin/pkg/Foo.kt
+out="$(run_gate --run-tests)"
+hasnt "a root-project test is never run as ':testDebugUnitTest'" " :testDebugUnitTest" " $(ran)"
+[ "$(ran)" = "testDebugUnitTest :app:test" ] && ok "  … the full command ran instead" || bad "root-project fallback ran: '$(ran)'"
+
 # --- {gradle_tests} cannot span modules -> full ---------------------------------------
 make_repo "$IMPACTED" "$FULL"
 mkdir -p lib/src/test/kotlin/pkg && kt_test lib/src/test/kotlin/pkg/LibUsesFooTest.kt pkg LibUsesFooTest "Foo.value()"

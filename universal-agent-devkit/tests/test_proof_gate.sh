@@ -216,12 +216,13 @@ for how in ("--no-ff", "--ff-only"):
 d, g = repo("prof"); start = time.time(); time.sleep(1.1)
 write(d, ".agents/active-profile.json", '{"profile":"backend"}'); write(d, "app/src/Screen.kt", "c\n")
 cases.append(("profile switched to backend in the turn", tree_fp.image_required(d, start)[0], True))
-for rel in ("src/content/blog/post.md", "src/pages/tests/index.tsx"):
+for rel in ("src/content/blog/post.md", "src/pages/tests/index.tsx", "app/src/main/assets/help.txt"):
     d, g = repo("deep" + str(len(cases))); start = time.time(); time.sleep(1.1); write(d, rel)
     cases.append((rel, tree_fp.image_required(d, start)[0], True))
 d, g = repo("mv"); start = time.time(); time.sleep(1.1); os.makedirs(os.path.join(d, "tests")); g("mv", "app/src/Screen.kt", "tests/Screen.kt")
 cases.append(("git mv of a screen into tests/", tree_fp.image_required(d, start)[0], True))
-for rel in ("README.md", "docs/guide.md", "app/src/test/kotlin/FooTest.kt", "tests/test_x.py", "scripts/a.sh", "shared/src/commonTest/kotlin/X.kt"):
+for rel in ("README.md", "docs/guide.md", "app/src/test/kotlin/FooTest.kt", "tests/test_x.py", "scripts/a.sh", "shared/src/commonTest/kotlin/X.kt",
+            "artifacts/red-proof/20260925-185724.log"):  # a log never reaches a screen (GeelyEx2 2026-09-26)
     d, g = repo("ok" + str(len(cases))); start = time.time(); time.sleep(1.1); write(d, rel)
     cases.append((rel + " (off-screen)", tree_fp.image_required(d, start)[0], False))
 d, g = repo("be", "backend"); start = time.time(); time.sleep(1.1); write(d, "app/src/Screen.kt", "d\n")
@@ -331,6 +332,39 @@ for cmd in "cd repo && git push origin main" "git -C /x/repo push -q origin HEAD
   reset; turn_start; bash_call "$cmd"
   NOREPORT=1 stop "Đã push."; rc=$?
   [ "$rc" = 2 ] && ok "real push counted: $cmd" || fail "real push missed: $cmd (rc=$rc)"
+done
+
+# A push that did not happen is no handover (GeelyEx2 2026-09-26: the push was still running / had
+# been rejected by pre-push; this workbench session: the push was denied by the permission check).
+push_with_result() { # <is_error 0|1> <result text>
+  python3 -c 'import datetime,json,sys
+t=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+print(json.dumps({"type":"assistant","timestamp":t,"message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-push","name":"Bash","input":{"command":"git push origin main"}}]}}))
+print(json.dumps({"type":"user","timestamp":t,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu-push","is_error":sys.argv[1]=="1","content":sys.argv[2]}]}}))' "$1" "$2" >> "$TR"; }
+i=0
+for res in "0|! [rejected]        main -> main (fetch first)
+error: failed to push some refs to 'github.com:x/y.git'" \
+           "1|Permission for this action was denied by the Claude Code auto mode classifier." \
+           "0|error: failed to push some refs; pre-push hook declined"; do
+  i=$((i + 1)); reset; turn_start; push_with_result "${res%%|*}" "${res#*|}"
+  NOREPORT=1 stop "Push chưa xong."; rc=$?
+  [ "$rc" = 0 ] && ok "a push that did not go through is no handover ($i)" || fail "failed push ($i) demanded the report (rc=$rc)"
+done
+reset; turn_start; push_with_result 0 "To github.com:x/y.git
+   86f7ddc..a94c071  main -> main"
+NOREPORT=1 stop "Đã push."; rc=$?
+[ "$rc" = 2 ] && ok "a push that went through still needs the report" || fail "successful push not counted (rc=$rc)"
+# A branch that went out is a handover even when a later part failed (review 2026-09-27): a rejected
+# tag after it, a failing command chained after it (is_error), or a push sent to the background.
+for res in "0|   86f7ddc..a94c071  main -> main
+ ! [rejected]        v1 -> v1 (already exists)
+error: failed to push some refs" \
+           "1|   86f7ddc..a94c071  main -> main
+Exit code 1" \
+           "0|Command running in background with ID: b1. Output is being written to: /tmp/x"; do
+  reset; turn_start; push_with_result "${res%%|*}" "${res#*|}"
+  NOREPORT=1 stop "Đã push."; rc=$?
+  [ "$rc" = 2 ] && ok "a push that went out (partly, or in the background) still needs the report" || fail "went-out push not counted (rc=$rc): ${res:0:40}"
 done
 
 # Loop guard: 2 blocks for the same session, then the stop goes through with a warning.

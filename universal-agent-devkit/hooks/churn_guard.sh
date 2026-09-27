@@ -108,7 +108,8 @@ try:
     with open(tp) as fh:
         lines = fh.readlines()
     done = False
-    for rawline in reversed(lines):
+    attempts = set()   # one per assistant message: edits sent together are one attempt
+    for n, rawline in enumerate(reversed(lines)):
         if '"tool_use"' not in rawline and '"tool_result"' not in rawline:
             continue                     # cheap prefilter: text/thinking records
         rawline = rawline.strip()
@@ -138,7 +139,10 @@ try:
                 binp = blk.get("input") or {}
                 fp = binp.get("file_path") or binp.get("notebook_path") or ""
                 if isinstance(fp, str) and os.path.basename(fp) == edited_base:
-                    edits_since_evidence += 1
+                    # Claude Code writes each tool_use of one message as its own line sharing
+                    # message.id (OfficeReader 2026-09-26: batched edits warned 8 times)
+                    attempts.add((rec.get("message") or {}).get("id") or "line-%d" % n)
+        edits_since_evidence = len(attempts)
         if done:
             break
 except Exception as e:

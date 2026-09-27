@@ -860,8 +860,53 @@ def test_failure_reported(output: str) -> bool:
     return bool(TEST_FAILED_RE.search(output or ""))
 
 
-def record_results(data: dict, tests: list, *, task: str | None, commit: str | None) -> None:
-    """Store results of tests the gate ACTUALLY ran. NOT_RUN only flags the row as impacted."""
+# The tests a red run names: Unity "[Failed] Ns.Class.Method", Gradle "pkg.ClassTest > m() FAILED",
+# pytest "FAILED path/test_x.py::test_y". A run that names none (compile error) records none.
+FAILED_TEST_RE = re.compile(r"\[Failed\]\s+([\w.$]+)|^\s*([\w.$]+)\s+>\s+.*?\bFAILED\b|^FAILED\s+(\S+?)(?:::|\s)", re.M)
+
+
+# The runner's own count of failed tests: Gradle "N tests completed, M failed", Unity (unity-batch)
+# "N passed, M failed", pytest "=== M failed, … ===". One count per line.
+FAILED_COUNT_RE = re.compile(r"\d+ tests? completed, (\d+) failed|\d+ passed, (\d+) failed|^=+ .*?\b(\d+) failed\b", re.M)
+# A run that did not finish, or broke outside the named tests: a collection ERROR, pytest -x/--maxfail,
+# a compile error, a crash. Its list of failed tests says nothing about the tests that never ran.
+RUN_INCOMPLETE_RE = re.compile(r"^ERROR\b|\b\d+ errors?\b|stopping after|^e: |\berror CS\d+|Compilation failed|"
+                               r"^Interrupted|\bKilled\b|Segmentation fault|\bFATAL\b", re.M)
+
+
+def failed_tests(output: str) -> list:
+    """The failing tests of a run that FINISHED and named every one of them — else []. A bug row is
+    cleared from its suite's FAIL only by such a list (review 2026-09-27: an ERROR on the bug's own
+    file, pytest -x, a compile error or a crash mid-run must never read as "its tests passed")."""
+    output = output or ""
+    names = list(dict.fromkeys(next(g for g in m.groups() if g) for m in FAILED_TEST_RE.finditer(output)))
+    if not names or len(names) >= 200 or RUN_INCOMPLETE_RE.search(output):
+        return []
+    counts = {}
+    for m in FAILED_COUNT_RE.finditer(output):
+        counts[m.group(0)] = int(next(g for g in m.groups() if g))   # a summary printed twice counts once
+    return names if counts and sum(counts.values()) == len(names) else []
+
+
+def _names_own_test(failed: list, refs: list) -> bool:
+    """Does one of the failed test ids name one of the bug's own test files? Leans to "yes" (a FAIL):
+    a segment equal to the file stem, starting with it (FooTests$Inner), or a prefix of it of 6+
+    characters (class ParserTest in ParserTests.kt)."""
+    for ref in refs:
+        stem = Path(str(ref)).stem
+        if not stem:
+            continue
+        for f in failed:
+            for seg in re.split(r"[./\\:$\s>()\[\]-]+", f):
+                if seg and (seg.startswith(stem) or (len(seg) >= 6 and stem.startswith(seg))):
+                    return True
+    return False
+
+
+def record_results(data: dict, tests: list, *, task: str | None, commit: str | None, project=None) -> None:
+    """Store results of tests the gate ACTUALLY ran. NOT_RUN only flags the row as impacted.
+    A red result keeps the failing test names (read from its evidence log under `project`,
+    else from its output tail): a bug row then takes the result of its own tests."""
     for t in tests:
         tid = t.get("id")
         if not tid or tid not in data["items"]:
@@ -872,6 +917,16 @@ def record_results(data: dict, tests: list, *, task: str | None, commit: str | N
             continue
         result = {"status": t["status"], "at": _now(), "ts": time.time(), "task": task, "commit": commit,
                   "duration": t.get("duration"), "exit_code": t.get("exit_code"), "log": t.get("log")}
+        if t["status"] == "FAIL":
+            out = t.get("output_tail") or ""
+            if project and t.get("log"):
+                try:
+                    out = (Path(project) / t["log"]).read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    pass
+            names = failed_tests(out)
+            if names:
+                result["failed_tests"] = names
         if t.get("flaky"):
             result["flaky"] = True   # red, then green on a re-run of the same code: not a PASS
         if t.get("infra_retry"):
@@ -1531,7 +1586,14 @@ def _linked_status(data: dict, item: dict) -> str:
     linked = item.get("linked_ts")
     if linked and not any(((t.get("last") or {}).get("ts") or 0) > linked for t in tests):
         return "NOT_RUN"     # linked to a matrix test that has not run since
-    states = [effective_status(data, t) for t in tests]
+    # A red suite whose run names its failing tests fails only the bugs whose own test files are
+    # among them (Goods 2026-09-27: 12 tests with one root cause turned 33 bug rows red).
+    own = item.get("runs_in_suite") or []
+    states = []
+    for t in tests:
+        st = effective_status(data, t)
+        named = ((t.get("last") or {}).get("failed_tests") or []) if st == "FAIL" else []
+        states.append("PASS" if own and named and not _names_own_test(named, own) else st)
     for bad in ("FAIL", "TIMEOUT", "FLAKY", "STALE", "NOT_RUN"):
         if bad in states:
             return bad
