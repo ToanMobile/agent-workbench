@@ -191,6 +191,10 @@ git commit -qm "rename"
 echo "print('in range')" > tests/test-range.py && git add tests/test-range.py && git commit -qm "an orphan in a commit"
 gate --run-tests --full --diff HEAD~1..HEAD; rc=$?
 [ "$rc" = 2 ] && grep -q 'file test MỚI mà không suite.*tests/test-range.py' "$TMP/out" && ok "B16 --diff A..B checks the tests the range adds (base = A)" || fail "B16 exit $rc: $(tail -4 "$TMP/out")"
+cp tests/test-range.py tests/test-copy.py && echo "print('changed')" >> tests/test-range.py && git add tests/test-copy.py tests/test-range.py
+gate --run-tests --full; rc=$?
+[ "$rc" = 2 ] && grep -q 'file test MỚI mà không suite.*tests/test-copy.py' "$TMP/out" && ok "B17 a copied test is a new test (only a rename keeps its history)" || fail "B17 exit $rc: $(grep -m2 -E 'KẾT LUẬN|mồ côi' "$TMP/out")"
+git commit -qm "copy"
 
 # ── C. suites that run tests through a runner (not by naming the file) ─────────
 covered() {  # <repo> <test path> → True when some suite of its matrix runs it
@@ -223,10 +227,66 @@ C="$TMP/c7"; mkcase "$C" "mvn verify" "src/main/*"; mkdir -p "$C/src/test/java";
 [ "$(covered "$C" src/test/java/YTest.java)" = True ] && ok "C7 mvn verify runs the unit tests" || fail "C7 mvn verify"
 C="$TMP/c8"; mkcase "$C" "pytest -q" "src/*.py"; echo "x=1" > "$C/tests/test_p.py"
 [ "$(covered "$C" tests/test_p.py)" = True ] && ok "C8 pytest at the root runs tests/ although only src/*.py is watched" || fail "C8 pytest watch"
-C="$TMP/c9"; mkcase "$C" "sh ci.sh" "tests/*"; printf 'true\n' > "$C/ci.sh"; echo "x=1" > "$C/tests/test_o.py"
+C="$TMP/c9"; mkcase "$C" "sh ci.sh" "tests/*"; { echo true; python3 -c "print(('#' * 99 + chr(10)) * 21000, end='')"; } > "$C/ci.sh"; echo "x=1" > "$C/tests/test_o.py"
 (cd "$C" && git add -A && git commit -qm init && echo "x=2" > tests/test_new.py)
 CLAUDE_PROJECT_DIR="$C" python3 "$GATE" --run-tests --full >"$TMP/c.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && grep -q 'tests/test_new.py' "$TMP/c.out" && ok "C9 a wrapper whose runner cannot be read only warns about a new orphan" \
   || fail "C9 exit $rc: $(grep -m3 -E 'CHƯA|mồ côi|orphan' "$TMP/c.out")"
+
+# ── D. what a wrapper runs is read narrowly: no runner from another target, a help text or a path
+#       the runner is not given (a false "covered" hides a real orphan) ──────────────────────────
+runs() {  # <repo> <path> → the suites that run it
+  python3 -c "import json,sys; sys.path.insert(0,'$DEVKIT_DIR/bin'); import regression_checklist as rc; from pathlib import Path
+p=Path('$1'); m=json.load(open(p/'.agents/regression_matrix.active.json')); print(rc.running_suites(p, '$2', rc.suite_index(p, m)))"
+}
+C="$TMP/d1"; mkcase "$C" "make lint" "src/*.py"; printf 'lint:\n\tflake8 src\ntest:\n\tpytest\n' > "$C/Makefile"
+mkdir -p "$C/tests/other"; echo "x=1" > "$C/tests/other/test_unrelated.py"
+[ "$(covered "$C" tests/other/test_unrelated.py)" = False ] && ok "D1 make lint reads only the lint recipe (not the test target's pytest)" || fail "D1 make lint covers a test"
+C="$TMP/d2"; mkcase "$C" "npm run lint" "src/*.js"; printf '{"scripts":{"lint":"eslint .","test":"vitest run"}}\n' > "$C/package.json"; echo 1 > "$C/bar.test.js"
+[ "$(covered "$C" bar.test.js)" = False ] && ok "D2 npm run lint reads only scripts.lint (not scripts.test)" || fail "D2 npm run lint covers bar.test.js"
+C="$TMP/d3"; mkcase "$C" "tox -e lint" "src/*.py"; printf '[testenv:lint]\ndeps = pytest\ncommands = flake8 src\n[testenv:unit]\ncommands = pytest\n' > "$C/tox.ini"; echo "x=1" > "$C/tests/test_t.py"
+[ "$(covered "$C" tests/test_t.py)" = False ] && ok "D3 tox -e lint reads only the commands of [testenv:lint]" || fail "D3 tox -e lint covers a test"
+C="$TMP/d4"; mkcase "$C" "sh run.sh" "src/*.py"
+printf 'echo "usage: run pytest yourself"\nprintf "%%s\\n" "or pytest -q"\n# pytest used to run here\ncat <<EOF\n  pytest tests/\nEOF\nflake8 src\n' > "$C/run.sh"; echo "x=1" > "$C/tests/test_x.py"
+[ "$(covered "$C" tests/test_x.py)" = False ] && ok "D4 echo / printf / comment / heredoc lines of a script are not its runner" || fail "D4 help text counted as a runner"
+C="$TMP/d5"; mkcase "$C" "bash ctl.sh health" "src/*.js"; mkdir -p "$C/test"
+printf 'case "$1" in\n  test) node --test test/ ;;\n  health) echo ok ;;\nesac\n' > "$C/ctl.sh"; echo 1 > "$C/test/a.test.mjs"
+[ "$(covered "$C" test/a.test.mjs)" = False ] && ok "D5 a runner under another subcommand (case \"\$1\") of the script does not count" || fail "D5 subcommand runner counted"
+C="$TMP/d6"; mkdir -p "$C/.agents" "$C/tests" "$C/scripts" && (cd "$C" && git init -q . && git config user.email t@t && git config user.name t)
+printf '{"project":"d","rules":[{"component":"T","watch_files":["tests/*"],"mandatory_regression_tests":[{"id":"REG-T","name":"t","command":"python3 tests/test_a.py"}]},{"component":"F","watch_files":["scripts/*.sh"],"mandatory_regression_tests":[{"id":"REG-FMT","name":"fmt","command":"sh scripts/fmt.sh"},{"id":"REG-GOFMT","name":"gofmt","command":"sh scripts/gofmt.sh"}]}]}\n' > "$C/.agents/regression_matrix.active.json"
+echo "echo fmt-ok" > "$C/scripts/fmt.sh"; echo "gofmt -l . || true" > "$C/scripts/gofmt.sh"; echo "print(1)" > "$C/tests/test_a.py"
+(cd "$C" && git add -A && git commit -qm init && echo "print(2)" > tests/test_new.py)
+CLAUDE_PROJECT_DIR="$C" python3 "$GATE" --run-tests --full >"$TMP/d.out" 2>&1; rc=$?
+[ "$rc" = 2 ] && ! grep -q 'REG-FMT\|REG-GOFMT' "$TMP/d.out" && ok "D6 a readable wrapper that runs no test (echo, gofmt) never turns a new orphan into a warning" \
+  || fail "D6 exit $rc: $(grep -m3 -E 'KẾT LUẬN|mồ côi|REG-FMT' "$TMP/d.out")"
+C="$TMP/d7"; mkcase "$C" "python3 -m pytest tests/unit" "src/*.py"; mkdir -p "$C/tests/unit" "$C/tests/other"
+echo "x=1" > "$C/tests/unit/test_one.py"; echo "x=1" > "$C/tests/other/test_unrelated.py"
+[ "$(covered "$C" tests/unit/test_one.py)" = True ] && [ "$(covered "$C" tests/other/test_unrelated.py)" = False ] \
+  && ok "D7 pytest tests/unit runs tests/unit only (its path argument is its scope)" || fail "D7 pytest path scope: $(covered "$C" tests/unit/test_one.py)/$(covered "$C" tests/other/test_unrelated.py)"
+C="$TMP/d8"; mkcase "$C" "node --test tests/a.test.mjs" "src/*.js"; echo 1 > "$C/tests/a.test.mjs"; echo 1 > "$C/tests/unrelated.test.mjs"
+[ "$(covered "$C" tests/a.test.mjs)" = True ] && [ "$(covered "$C" tests/unrelated.test.mjs)" = False ] \
+  && ok "D8 node --test <file> runs that file only" || fail "D8 node file scope"
+C="$TMP/d9"; mkcase "$C" "sh loop.sh" "src/*.py"; mkdir -p "$C/tests/unit" "$C/tests/other"
+printf 'for f in tests/unit/test_one.py; do python3 -m pytest "$f"; done\n' > "$C/loop.sh"
+echo "x=1" > "$C/tests/unit/test_one.py"; echo "x=1" > "$C/tests/other/test_two.py"
+[ "$(covered "$C" tests/unit/test_one.py)" = True ] && [ "$(covered "$C" tests/other/test_two.py)" = False ] \
+  && ok "D9 a runner given \$VAR runs an unknown set: not the whole module" || fail "D9 \$VAR runner counted as whole"
+C="$TMP/d10"; mkcase "$C" "./gradlew :app:build" "app/*"; mkdir -p "$C/app/src/test" "$C/core/src/test"
+touch "$C/app/build.gradle" "$C/core/build.gradle"; echo "class ATest" > "$C/app/src/test/ATest.kt"; echo "class CTest" > "$C/core/src/test/CTest.kt"
+[ "$(covered "$C" app/src/test/ATest.kt)" = True ] && [ "$(covered "$C" core/src/test/CTest.kt)" = False ] \
+  && ok "D10 ./gradlew :app:build runs the :app tests only" || fail "D10 :app:build scope: $(covered "$C" app/src/test/ATest.kt)/$(covered "$C" core/src/test/CTest.kt)"
+C="$TMP/d11"; mkcase "$C" "mvn package -DskipTests" "src/main/*"; mkdir -p "$C/src/test/java"; echo "class ZTest {}" > "$C/src/test/java/ZTest.java"
+[ "$(covered "$C" src/test/java/ZTest.java)" = False ] && ok "D11 mvn package -DskipTests runs no test" || fail "D11 -DskipTests counted"
+C="$TMP/d12"; mkcase "$C" "./gradlew build -x test" "src/main/*"; mkdir -p "$C/src/test"; echo "class WTest" > "$C/src/test/WTest.kt"
+[ "$(covered "$C" src/test/WTest.kt)" = False ] && ok "D12 ./gradlew build -x test runs no test" || fail "D12 -x test counted"
+C="$TMP/d13"; mkcase "$C" "cd rs && cargo test --test smoke" "rs/*"
+[ "$(runs "$C" rs/tests/other_test.rs)" = "[]" ] && ok "D13 cargo test --test smoke runs that test target only" || fail "D13 cargo --test: $(runs "$C" rs/tests/other_test.rs)"
+# The agent-workbench shape: agent-kit (a subcommand script whose help text says pytest and whose
+# `test` subcommand runs node --test) must not cover a new test in a folder no suite runs.
+C="$TMP/d14"; mkcase "$C" "bash universal-agent-devkit/bin/agent-kit health -t ." ".claude/settings.json"
+mkdir -p "$C/universal-agent-devkit/bin" "$C/zz_demo"; cp "$DEVKIT_DIR/bin/agent-kit" "$C/universal-agent-devkit/bin/agent-kit"
+echo "x=1" > "$C/zz_demo/test_orphan_demo.py"; echo 1 > "$C/zz_demo/orphan_demo.test.mjs"
+[ "$(covered "$C" zz_demo/test_orphan_demo.py)" = False ] && [ "$(covered "$C" zz_demo/orphan_demo.test.mjs)" = False ] \
+  && ok "D14 agent-kit health (agent-workbench) does not cover new tests in zz_demo/" || fail "D14 zz_demo covered: $(covered "$C" zz_demo/test_orphan_demo.py)/$(covered "$C" zz_demo/orphan_demo.test.mjs)"
 
 [ "$FAILS" = 0 ] && echo "ALL PASS" || { echo "$FAILS FAILED"; exit 1; }

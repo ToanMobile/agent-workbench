@@ -1464,30 +1464,30 @@ def needs_no_test(rel_file: str) -> bool:
 
 
 def new_orphan_tests(modified_files, matrix, base_ref) -> tuple:
-    """(test files this change ADDS — absent at base_ref, not a rename/copy of a test that was
-    there — that no suite of the matrix executes, ids of suites whose runner cannot be read). A test
-    only ever run by hand: GeelyEx2 tests/scripts/test-retrace-treo.py, 28/09/2026. The rule is
+    """(test files this change ADDS — absent at base_ref, not a rename of a test that was there (a
+    copy is a new test) — that no suite of the matrix executes, {orphan: suites that call a file we
+    cannot read and whose rule watches it: they may run it}). A test only ever run by hand: GeelyEx2 tests/scripts/test-retrace-treo.py, 28/09/2026. The rule is
     regression_checklist.orphan_tests; orphans already committed are checklist rows only."""
     if not (matrix or {}).get("rules"):
-        return [], []
+        return [], {}
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
     except ImportError:
-        return [], []
+        return [], {}
     prefix = get_project_prefix()
     new = [f for f in modified_files if f not in DELETED_FILES and rc.is_test_candidate(f)
            and subprocess.run(["git", "-C", str(get_repo_root()), "cat-file", "-e", f"{base_ref}:{prefix}{f}"],
                               capture_output=True).returncode != 0]
     if not new:
-        return [], []
-    # A renamed / copied test keeps its history: only a test that did not exist before is new.
-    raw = subprocess.run(["git", "-C", str(get_project_dir()), "diff", "-M", "-C", "--name-status", "-z", "--relative",
+        return [], {}
+    # A renamed test keeps its history; a copy is one more test nothing may run.
+    raw = subprocess.run(["git", "-C", str(get_project_dir()), "diff", "-M", "--name-status", "-z", "--relative",
                           base_ref, "--", "."], capture_output=True).stdout.decode("utf-8", "surrogateescape").split("\0")
     moved, j = set(), 0
     while j < len(raw):
         if raw[j][:1] in ("R", "C") and j + 2 < len(raw):
-            if rc.is_test_candidate(raw[j + 1]):
+            if raw[j][0] == "R" and rc.is_test_candidate(raw[j + 1]):
                 moved.add(raw[j + 2])
             j += 3
         else:
@@ -1495,8 +1495,8 @@ def new_orphan_tests(modified_files, matrix, base_ref) -> tuple:
     new = [f for f in new if f not in moved]
     project = get_project_dir()
     index = rc.suite_index(project, matrix)
-    return (rc.orphan_tests(project, matrix, candidates=new, index=index) if new else [],
-            rc.opaque_suites(project, matrix, index=index))
+    orphans = rc.orphan_tests(project, matrix, candidates=new, index=index) if new else []
+    return orphans, {f: ids for f in orphans for ids in [rc.opaque_suites(project, matrix, index=index, path=f)] if ids}
 
 
 def uncovered_code_files(modified_files, rules, covers=None) -> list:
@@ -3455,19 +3455,21 @@ def main():
     uncovered = [] if args.allow_no_tests else uncovered_code_files(modified_files, rules)
     # A NEW test file no suite executes runs only by hand: --full (the handover run) refuses it; the
     # Stop hook's impacted run warns. Orphans already committed are checklist rows, never a block.
-    orphans_new, opaque = new_orphan_tests(modified_files, matrix, base_ref)
+    orphans_new, hidden = new_orphan_tests(modified_files, matrix, base_ref)
     # a suite whose wrapper we cannot read may run it: say so, never block on a guess
-    orphan_block = bool(orphans_new) and bool(force_reason) and not opaque and not args.allow_orphan_tests
+    # an orphan a suite watching it may run through a file we cannot read only warns
+    orphans_block = [f for f in orphans_new if f not in hidden]
+    orphan_block = bool(orphans_block) and bool(force_reason) and not args.allow_orphan_tests
     orphan_fix = tr("gọi nó trong lệnh của một suite ma trận (hoặc trong script lệnh đó chạy), hoặc đặt nó dưới watch_files của suite chạy cả module",
                     "call it from a matrix suite's command (or a script that command runs), or put it under the watch_files of a suite that runs the whole module")
-    if orphans_new and not orphan_block:
-        why = (tr(f" — suite {', '.join(opaque[:3])} gọi script/task không đọc được runner, có thể nó chạy: chỉ cảnh báo",
-                  f" — suite {', '.join(opaque[:3])} calls a script/task whose runner cannot be read and may run it: warning only")
-               if opaque else tr(" (--allow-orphan-tests)", " (--allow-orphan-tests)") if args.allow_orphan_tests
-               else tr(" (--full sẽ chặn)", " (--full will block)"))
-        log_warn(tr(f"{len(orphans_new)} file test MỚI không suite nào của ma trận chạy: ",
-                    f"{len(orphans_new)} NEW test files no matrix suite runs: ")
-                 + ", ".join(orphans_new[:5]) + f"{why} — {orphan_fix}")
+    for f in [f for f in orphans_new if f in hidden][:5]:
+        log_warn(tr(f"File test MỚI {f}: không suite nào chạy được xác nhận — suite {', '.join(hidden[f][:3])} gọi file không đọc được, có thể chạy nó: chỉ cảnh báo — {orphan_fix}",
+                    f"NEW test file {f}: no suite is seen to run it — suite {', '.join(hidden[f][:3])} calls a file that cannot be read and may run it: warning only — {orphan_fix}"))
+    if orphans_block and not orphan_block:
+        why = tr(" (--allow-orphan-tests)", " (--allow-orphan-tests)") if args.allow_orphan_tests else tr(" (--full sẽ chặn)", " (--full will block)")
+        log_warn(tr(f"{len(orphans_block)} file test MỚI không suite nào của ma trận chạy: ",
+                    f"{len(orphans_block)} NEW test files no matrix suite runs: ")
+                 + ", ".join(orphans_block[:5]) + f"{why} — {orphan_fix}")
 
     print(f"\n{BOLD}{CYAN}──────────────────────────────────────────────────────────────────────────────────────{RESET}")
     if not static_ok or (run_tests and not tests_ok):
@@ -3486,9 +3488,9 @@ def main():
     elif unreadable:
         verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(unreadable)} file không đọc được để quét", f"UNVERIFIED — {len(unreadable)} files could not be read for scanning"), YELLOW, 2
     elif orphan_block:
-        shown = ", ".join(orphans_new[:5]) + (" …" if len(orphans_new) > 5 else "")
-        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(orphans_new)} file test MỚI mà không suite nào của ma trận chạy ({shown}): gate sẽ không bao giờ chạy lại nó — {orphan_fix} (cố ý: --allow-orphan-tests)",
-                                                    f"UNVERIFIED — {len(orphans_new)} NEW test files that no matrix suite runs ({shown}): the gate would never run them again — {orphan_fix} (on purpose: --allow-orphan-tests)"), YELLOW, 2
+        shown = ", ".join(orphans_block[:5]) + (" …" if len(orphans_block) > 5 else "")
+        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(orphans_block)} file test MỚI mà không suite nào của ma trận chạy ({shown}): gate sẽ không bao giờ chạy lại nó — {orphan_fix} (cố ý: --allow-orphan-tests)",
+                                                    f"UNVERIFIED — {len(orphans_block)} NEW test files that no matrix suite runs ({shown}): the gate would never run them again — {orphan_fix} (on purpose: --allow-orphan-tests)"), YELLOW, 2
     elif uncovered and not no_coverage:
         verdict_text, verdict_color, exit_code = f"CHƯA XÁC MINH — {len(uncovered)} file code thay đổi chưa có test hồi quy (thêm vào regression_matrix.json, hoặc --allow-no-tests)", YELLOW, 2
     elif no_coverage:

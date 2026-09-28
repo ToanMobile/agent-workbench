@@ -759,16 +759,23 @@ _RUNNERS = (   # (whole-module runner, file extensions it executes)
     (re.compile(r"-runTests\b|unity|\bdotnet\s+test\b", re.I), (".cs",)),
     (re.compile(r"\bgo\s+test\b"), (".go",)),
     (re.compile(r"\bcargo\s+test\b"), (".rs",)),
-    (re.compile(r"\b(?:npm|yarn|pnpm|bun)\s+(?:run\s+)?test\b|\b(?:jest|vitest|mocha)\b"),
-     (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")),
+    (re.compile(r"\b(?:jest|vitest|mocha)\b"), (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")),
     (re.compile(r"\bnode\s+--test\b"), (".js", ".mjs", ".cjs", ".ts")),
-    # `python -m unittest` alone discovers; tox runs the env's commands (pytest as a rule)
-    (re.compile(r"\bpytest\b|\bunittest\s+discover\b|-m\s+unittest\s*$|^tox\b"), (".py",)),
+    (re.compile(r"\bpytest\b|\bunittest\s+discover\b|-m\s+unittest\s*$"), (".py",)),   # `-m unittest` alone discovers
     (re.compile(r"\b(?:flutter|dart)\s+test\b"), (".dart",)),
 )
+_BUILD_TOOL = re.compile(r"(?:^|[\s/])(?:gradlew|gradle|mvnw|mvn)(?:\s|$)")   # tasks, not paths
+_SKIP_TESTS = re.compile(r"-DskipTests\b|-Dmaven\.test\.skip\b|(?:^|\s)(?:-x|--exclude-task)\s+\S*test\w*\b", re.I)
+_NARROW = re.compile(r"(?:^|\s)(?:--tests|--filter|-only-testing\S*|-k)(?:[\s=]|$)|::")
+_CARGO_NARROW = re.compile(r"\bcargo\s+test\b.*\s--(?:test|lib|bin|bins|example|bench|doc)(?:[\s=]|$)")
+# flags whose next word is a value, not a test path (pytest -m/-c/-n/-p, unittest -t/-p, node reporters)
+_VALUE_FLAGS = {"-t", "--top-level-directory", "-p", "--pattern", "-m", "-c", "-n", "-o", "-r", "--rootdir",
+                "--maxfail", "--junitxml", "--reporter", "--timeout", "--config", "--test-reporter",
+                "--test-reporter-destination", "--run", "--project", "--root"}
 _SHELL_EXT = (".sh", ".bash", "")
 _BUILD_WRAPPERS = ("gradlew", "mvnw")   # their own text says nothing about which tests run
-_NARROW = re.compile(r"(?:^|\s)(?:--tests|--filter|-only-testing\S*|-k)(?:[\s=]|$)|\S+\.py\b|::")
+_SUBCOMMANDS = re.compile(r"\bcase\s+\"?\$\{?1\b")    # `case "$1"`: a runner belongs to one subcommand
+_NOT_A_COMMAND = re.compile(r"(?:echo|printf|cat|read|say|log|info|warn|die|usage|help|print)\b")
 _GLOB_TOKEN = re.compile(r"[A-Za-z0-9_.*?/-]*[*?][A-Za-z0-9_.*?/-]*")
 
 
@@ -804,6 +811,59 @@ def _segments(command: str, cwd: str = "") -> list:
     return out
 
 
+def _runner(project: Path, cwd: str, seg: str):
+    """(extensions, scope) of a test run in seg, or None. scope None = every test under cwd (the
+    rule's watch decides outside it); else the project-relative dirs / files its path arguments
+    name. A run given `$VAR`, narrowed to named tests (--tests, -k, ::, cargo --test) or with its
+    tests skipped (-DskipTests, -x test) runs an unknown or empty set: None."""
+    found = [(m, ex) for rx, ex in _RUNNERS for m in [rx.search(seg)] if m]
+    if not found or _SKIP_TESTS.search(seg) or _NARROW.search(seg) or _CARGO_NARROW.search(seg):
+        return None
+    exts = tuple(dict.fromkeys(e for _, ex in found for e in ex))
+    if _BUILD_TOOL.search(seg):
+        return exts, None    # Gradle/Maven name tasks; _runs_source_set reads module-qualified ones
+    words = seg[min(m.end() for m, _ in found):].split()
+    scope, i, unittest = [], 0, "unittest" in seg
+    while i < len(words):
+        w = words[i]
+        i += 1
+        if "$" in w or "`" in w:
+            return None
+        if w.startswith("-"):
+            flag = w.split("=", 1)[0]
+            if unittest and flag in ("-s", "--start-directory") and "=" not in w and i < len(words):
+                w, i = words[i], i + 1            # unittest discover -s <dir>: the start dir is the scope
+            else:
+                if flag in _VALUE_FLAGS and "=" not in w:
+                    i += 1
+                continue
+        w = re.sub(r"/?\.\.\.$", "", w.strip("'\"")) or "."
+        if "/" in w or w == "." or (project / cwd / w).exists():
+            p = os.path.normpath(os.path.join(cwd, w)).replace("\\", "/")
+            scope.append("" if p == "." else p)
+    return exts, (scope or None)
+
+
+def _command_lines(text: str) -> list:
+    """The command lines of a wrapper script or task: no comment, no heredoc body, no echo /
+    printf / help line; a quoted string is kept only as a path-like word ("$X…" → $Q, prose → Q)."""
+    out, end = [], None
+    for line in text.splitlines():
+        if end is not None:
+            if line.strip() == end:
+                end = None
+            continue
+        m = re.search(r"<<-?\s*['\"]?(\w+)['\"]?", line)
+        if m:
+            end = m.group(1)
+        code = re.sub(r"(?:^|\s)#.*$", "", line).strip()
+        code = re.sub(r"(['\"])(.*?)\1", lambda q: "$Q" if "$" in q.group(2) else
+                      ("Q" if re.search(r"\s", q.group(2)) else q.group(2)), code)
+        if code and not _NOT_A_COMMAND.match(code):
+            out.append(code)
+    return out
+
+
 def _read_text(path: Path):
     try:
         if not path.is_file() or path.stat().st_size > 2_000_000:
@@ -815,43 +875,109 @@ def _read_text(path: Path):
 
 
 def _script_text(project: Path, cwd: str, tok: str):
-    """(text, dir relative to the project, path) of the script a command token names, or None."""
+    """(text or None when it cannot be read, dir relative to the project, path) of the script a
+    command token names, or None when the token names no script file."""
     for cand in dict.fromkeys([project / cwd / tok, project / tok]):
-        if cand.suffix not in _SCRIPT_EXT or cand.name in _BUILD_WRAPPERS:
+        if cand.suffix not in _SCRIPT_EXT or cand.name in _BUILD_WRAPPERS or not cand.is_file():
             continue
-        text = _read_text(cand)
         try:
             rel = cand.resolve().relative_to(project.resolve()).as_posix()
         except (OSError, ValueError):
             continue
-        if text is not None:
-            base = rel.rsplit("/", 1)[0] if "/" in rel else ""
-            return text, base, rel
+        return _read_text(cand), (rel.rsplit("/", 1)[0] if "/" in rel else ""), rel
     return None
 
 
+def _make_recipes(text: str, targets: list) -> str:
+    """The recipe lines of the make targets asked for (the first target when none is)."""
+    recipes, first, cur = {}, None, None
+    for line in text.splitlines():
+        if line.startswith("\t"):
+            if cur:
+                for t in cur:
+                    recipes.setdefault(t, []).append(line[1:])
+            continue
+        m = re.match(r"^([^\s#:=.][^:=]*?|\.[A-Za-z][^:=]*?)\s*::?(?!=)(.*)$", line)
+        if m:
+            cur = m.group(1).split()
+            first = first or next((t for t in cur if not t.startswith(".")), None)
+            if ";" in m.group(2):
+                for t in cur:
+                    recipes.setdefault(t, []).append(m.group(2).split(";", 1)[1])
+        elif line.strip():
+            cur = None
+    return "\n".join(r for t in (targets or [first]) for r in recipes.get(t, []))
+
+
+def _tox_commands(text: str, envs: list) -> str:
+    """`commands` of [testenv:<env>] for each env asked for (else of [testenv]); no env: every env."""
+    sections, cur, key = {}, None, None
+    for line in text.splitlines():
+        m = re.match(r"^\[(.+)\]\s*$", line)
+        if m:
+            cur, key = m.group(1).strip(), None
+            continue
+        if cur is None:
+            continue
+        m = re.match(r"^([\w.-]+)\s*=\s*(.*)$", line)
+        if m:
+            key = m.group(1)
+            if key == "commands":
+                sections.setdefault(cur, []).append(m.group(2))
+        elif key == "commands" and line[:1].isspace() and line.strip():
+            sections[cur].append(line.strip())
+    base = sections.get("testenv", [])
+    envs = envs or [s.split(":", 1)[1] for s in sections if s.startswith("testenv:")] or [""]
+    return "\n".join(c for e in envs for c in sections.get(f"testenv:{e}", base))
+
+
 def _task_runner_text(project: Path, cwd: str, seg: str):
-    """(is a task runner, the text of its task file or None): `make …` → Makefile, `tox …` →
-    tox.ini, `npm|yarn|pnpm|bun run X` / `npm test` → the scripts of package.json."""
+    """(is a task runner, the commands of the task asked for, or None when its file cannot be
+    read): `make X` → the recipe of X, `tox -e E` → the commands of that env, `npm run X` /
+    `npm test` / `yarn X` → scripts[X] of package.json."""
     words = [w for w in seg.split() if "=" not in w or w.startswith("-")]
     first = words[0] if words else ""
     root = project / cwd
     if first in ("make", "gmake"):
-        return True, next((t for t in (_read_text(root / n) for n in ("GNUmakefile", "makefile", "Makefile")) if t), None)
+        if "-C" in words and words.index("-C") + 1 < len(words):
+            root = root / words[words.index("-C") + 1]
+        text = next((t for t in (_read_text(root / n) for n in ("GNUmakefile", "makefile", "Makefile")) if t), None)
+        targets, skip = [], False
+        for w in words[1:]:
+            if skip:
+                skip = False
+            elif w in ("-C", "-f", "-j", "-I"):
+                skip = True
+            elif not w.startswith("-"):
+                targets.append(w)
+        return True, None if text is None else _make_recipes(text, targets)
     if first == "tox":
-        return True, _read_text(root / "tox.ini")
-    if first in ("npm", "yarn", "pnpm", "bun") and len(words) > 1 and words[1] not in ("install", "ci", "i", "add"):
+        text = _read_text(root / "tox.ini")
+        envs = [e for i, w in enumerate(words) if w == "-e" and i + 1 < len(words) for e in words[i + 1].split(",")]
+        envs += [e for w in words if w.startswith("-e") and len(w) > 2 for e in w[2:].lstrip("=").split(",")]
+        return True, None if text is None else _tox_commands(text, envs)
+    if first in ("npm", "yarn", "pnpm", "bun") and len(words) > 1:
+        sub = words[1]
+        if sub in ("run", "run-script"):
+            name = words[2] if len(words) > 2 else None
+        elif sub in ("test", "t", "tst"):
+            name = "test"
+        elif first != "npm" and not sub.startswith("-") and sub not in ("install", "add", "remove", "exec", "dlx", "x"):
+            name = sub
+        else:
+            return False, None
         try:
-            scripts = json.loads(_read_text(root / "package.json") or "").get("scripts") or {}
+            scripts = json.loads(_read_text(root / "package.json") or "").get("scripts")
         except (ValueError, AttributeError):
             return True, None
-        return True, "\n".join(str(v) for v in scripts.values()) if isinstance(scripts, dict) and scripts else None
+        return True, str(scripts.get(name) or "") if isinstance(scripts, dict) else ""
     return False, None
 
 
 def suite_index(project: Path, matrix: dict) -> list:
-    """Per matrix suite, what it executes: whole-module segments, the words of its command and of
-    the scripts it invokes, the globs of those scripts. Built once per sync."""
+    """Per matrix suite, what it executes: whole-module / scoped runs (its command, and one level
+    down the wrapper script or task it calls), the words of its command and scripts, the globs of
+    those scripts. Built once per sync."""
     import fnmatch
     project = Path(project)
     out = []
@@ -863,24 +989,14 @@ def suite_index(project: Path, matrix: dict) -> list:
             cmd = test.get("command") or ""
             if not test.get("id") or not cmd:
                 continue
-            whole, texts, globs = [], [cmd], []
-            wrapper, unread, wrapper_texts = False, False, []
-
-            def runner(cwd, seg):
-                exts = tuple(e for rx, ex in _RUNNERS if rx.search(seg) for e in ex)
-                if exts and not _NARROW.search(seg):
-                    whole.append((cwd, seg, exts))
-
-            for cwd, seg in _segments(cmd):
-                runner(cwd, seg)
-                shell = []   # wrapper texts whose lines are commands: scanned for a runner too
+            texts, globs, wrappers, unread = [cmd], [], [], False   # wrappers: (cwd, text)
+            segs = _segments(cmd)
+            for cwd, seg in segs:
                 is_task, task_text = _task_runner_text(project, cwd, seg)
                 if is_task:
-                    wrapper = True
-                    if task_text is None:
-                        unread = True
-                    else:
-                        texts.append(task_text); shell.append(task_text); wrapper_texts.append(task_text)
+                    unread = unread or task_text is None
+                    if task_text:
+                        texts.append(task_text); wrappers.append((cwd, task_text))
                 for tok in seg.split():
                     tok = tok.strip("'\"")
                     if not tok or tok.startswith("-") or "=" in tok:
@@ -889,29 +1005,31 @@ def suite_index(project: Path, matrix: dict) -> list:
                     if not found:
                         continue
                     text, base, rel = found
+                    if text is None:     # a script we cannot read (binary, over 2 MB)
+                        unread = True
+                        continue
                     texts.append(text)
                     if Path(rel).suffix in _SHELL_EXT and not is_test_candidate(rel):
-                        wrapper = True
-                        shell.append(text); wrapper_texts.append(text)
+                        wrappers.append((cwd, text))
                     # quotes and $VARs out: "$ROOT/workflows"/*.test.mjs is the glob workflows/*.test.mjs
                     for g in _GLOB_TOKEN.findall(re.sub(r"\$\{?\w+\}?|[\"']", "", text)):
                         g = g[2:] if g.startswith("./") else g.lstrip("/")
                         if ("/" in g or re.search(r"\.\w+$", g)) and re.search(r"[A-Za-z]", g):
                             globs.append(g if "/" in g else f"{base}/{g}".lstrip("/"))
-                for text in shell:   # one level: the runner a wrapper script / task calls
-                    for line in text.splitlines():
-                        for c2, s2 in _segments(line.split("#", 1)[0], cwd):
-                            runner(c2, s2)
+            runs = [(c, s, r) for c, s in segs for r in [_runner(project, c, s)] if r]
+            for cwd, text in wrappers:   # one level down; a subcommand script's runner is not this call's
+                if not _SUBCOMMANDS.search(text):
+                    runs += [(c, s, r) for line in _command_lines(text) for c, s in _segments(line, cwd)
+                             for r in [_runner(project, c, s)] if r]
             words = set()
             for text in texts:
                 words.update(re.findall(r"[\w.-]+", text))
                 words.update(re.findall(r"[\w-]+", text))
-            # A wrapper whose runner we cannot read and that names no test: we cannot tell what it
-            # runs, so a new orphan it might run only warns (post-fix-gate).
             refs = bool(globs) or any(TEST_CANDIDATE_RE.search(w.rsplit("/", 1)[-1])
-                                      for t in wrapper_texts for w in re.findall(r"[\w./-]+", t))
-            opaque = (wrapper or unread) and not whole and not refs
-            out.append({"id": test["id"], "watch": watch, "whole": whole, "words": words, "opaque": opaque,
+                                      for _, t in wrappers for w in re.findall(r"[\w./-]+", t))
+            out.append({"id": test["id"], "watch": watch, "runs": runs, "words": words,
+                        # a file it calls that we cannot read, and nothing it runs or names: unknown
+                        "opaque": unread and not runs and not refs,
                         "globs": [re.compile(fnmatch.translate(g) + "|" + fnmatch.translate("*/" + g))
                                   if "/" in g else re.compile(fnmatch.translate(g)) for g in dict.fromkeys(globs)]})
     return out
@@ -927,18 +1045,22 @@ def running_suites(project: Path, path: str, index: list) -> list:
     for s in index:
         hit = name in s["words"] or (len(stem) >= 6 and stem in s["words"]) or any(g.match(path) for g in s["globs"])
         watched = s["watch"] is not None and s["watch"].match(path)
-        if not hit:
-            for cwd, seg, exts in s["whole"]:
-                # a module runner runs every test under the dir it runs in (pytest at the root collects
-                # tests/ even when the rule only watches src/*.py); outside it, the rule's watch decides
-                if ext not in exts or not (watched or not cwd or path.startswith(cwd + "/")):
+        for cwd, seg, (exts, scope) in s["runs"] if not hit else ():
+            if ext not in exts:
+                continue
+            if scope is not None:     # path arguments: exactly those dirs / files
+                if not any(p == "" or path == p or path.startswith(p + "/") for p in scope):
                     continue
-                if cwd and path.startswith(cwd + "/"):   # a Gradle task path is relative to the cd dir
-                    hit = _runs_source_set(path[len(cwd) + 1:], seg, Path(project) / cwd)
-                else:
-                    hit = _runs_source_set(path, seg, Path(project))
-                if hit:
-                    break
+            elif not (watched or not cwd or path.startswith(cwd + "/")):
+                continue              # no path argument: every test under cwd, or what the rule watches
+            if not (_BUILD_TOOL.search(seg) or re.search(r"-runTests\b|unity", seg, re.I)):
+                hit = True            # source sets / Unity modes matter to Gradle and Unity only
+            elif cwd and path.startswith(cwd + "/"):   # a Gradle task path is relative to the cd dir
+                hit = _runs_source_set(path[len(cwd) + 1:], seg, Path(project) / cwd)
+            else:
+                hit = _runs_source_set(path, seg, Path(project))
+            if hit:
+                break
         if hit:
             ids.append(s["id"])
     return ids
@@ -957,11 +1079,13 @@ def orphan_tests(project: Path, matrix: dict, candidates=None, index=None) -> li
             if is_test_candidate(f) and (project / f).is_file() and not running_suites(project, f, index)]
 
 
-def opaque_suites(project: Path, matrix: dict, index=None) -> list:
-    """Suites that call a wrapper (script, make, tox, npm run) whose runner we cannot read and that
-    names no test: any test may run through them, so a new orphan only warns."""
+def opaque_suites(project: Path, matrix: dict, index=None, path: str | None = None) -> list:
+    """Suites that call a file we cannot read (binary or huge script, missing Makefile / tox.ini /
+    package.json) and run or name nothing we can see: they may run any test. With path: only those
+    whose rule watches it (or watches nothing) — only they can hide that orphan."""
     index = suite_index(project, matrix) if index is None else index
-    return [s["id"] for s in index if s.get("opaque")]
+    return [s["id"] for s in index if s.get("opaque")
+            and (path is None or s["watch"] is None or s["watch"].match(path.replace("\\", "/")))]
 
 
 def sync_orphans(data: dict, project: Path, matrix: dict, index=None) -> tuple:
@@ -1860,7 +1984,9 @@ def _runs_source_set(path: str, command: str, project: Path = None) -> bool:
     if project is not None and "gradlew" in c:
         tasks = [t for t in (command or "").split() if not t.startswith("-")][1:]
         qualified = [t.rsplit(":", 1)[0] for t in tasks if t.startswith(":") and t.count(":") >= 2]
-        if qualified and len(qualified) == len([t for t in tasks if "test" in t.lower() or "check" in t.lower()]):
+        # build / verify / install / package run the tests of their module too (:app:build → :app only)
+        runs = [t for t in tasks if re.search(r"test|check|build|verify|install|package", t, re.I)]
+        if qualified and len(qualified) == len(runs):
             return _gradle_module(project, path) in qualified
     return True
 
