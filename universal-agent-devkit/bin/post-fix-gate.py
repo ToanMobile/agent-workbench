@@ -317,6 +317,29 @@ def test_change_is_append_only(base_ref: str, repo_path: str) -> bool:
     return bool(added) and not any(TEST_SKIP_RE.search(a) for a in added)
 
 
+def since_test_weakened(since: str, repo_path: str, upstream: str = "") -> bool:
+    """True when this test existed at `since`, a LOCAL-ONLY commit of `since..HEAD` (one not
+    reachable from `upstream`; no upstream → every range commit) touches it, and its change to
+    the working tree is not append-only — counted from the latest range commit touching it whose
+    message holds a `Test-approved-by:` line (that commit's content was audited), else from
+    `since`. A commit already on the remote (a teammate's, pulled in) passed its own push gate."""
+    root = str(get_repo_root())
+    if subprocess.run(["git", "-C", root, "cat-file", "-e", f"{since}:{repo_path}"],
+                      capture_output=True).returncode != 0:
+        return False
+    local = subprocess.run(["git", "-C", root, "rev-list", "-1", f"{since}..HEAD"]
+                           + (["--not", upstream] if upstream else []) + ["--", repo_path],
+                           capture_output=True, text=True)
+    if local.returncode == 0 and not local.stdout.strip():
+        return False                                  # only upstream commits touch it
+    res = subprocess.run(["git", "-C", root, "log", "-1", "--format=%H", "-E",
+                          "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{since}..HEAD",
+                          "--", repo_path], capture_output=True, text=True)
+    if res.returncode != 0:
+        return True                                   # cannot read the range: fail closed
+    return not test_change_is_append_only(res.stdout.strip() or since, repo_path)
+
+
 def split_tests_by_author(paths: list, session, transcript) -> tuple:
     """(blocking, other): the edited existing tests this session made — or cannot be told
     apart — and those another session or a person made (a warning, never a block).
@@ -3026,15 +3049,17 @@ def main():
     except RuntimeError as e:
         log_err(str(e))
         return 2
+    since_paths = []
     if args.since and not STAGED:
         # Commits since the last verified HEAD (regression_gate, T0003): their files join the
-        # change for test selection; the matrix and the edited-test check still read HEAD.
+        # change for test selection; the matrix reads HEAD, the edited-test check HEAD and <since>.
         r = subprocess.run(["git", "-C", str(get_project_dir()), "diff", "--name-only", "--relative",
                             args.since, "HEAD"], capture_output=True, text=True)
         if r.returncode != 0:
             log_err(tr(f"--since {args.since}: git diff thất bại", f"--since {args.since}: git diff failed"))
             return 2
-        extra = [f for f in r.stdout.splitlines() if f and os.path.exists(os.path.join(str(get_project_dir()), f))]
+        since_paths = [f for f in r.stdout.splitlines() if f]
+        extra = [f for f in since_paths if os.path.exists(os.path.join(str(get_project_dir()), f))]
         all_changed = sorted(set(all_changed) | set(extra))
     devkit_artifacts = [f for f in all_changed if is_devkit_artifact(f)]
     modified_files = [f for f in all_changed if f not in devkit_artifacts]
@@ -3050,6 +3075,18 @@ def main():
     tests_touched = [f for f in modified_files if is_test_path(f) and subprocess.run(
         ["git", "-C", str(get_repo_root()), "cat-file", "-e", f"{base_ref}:{prefix}{f}"],
         capture_output=True).returncode == 0 and not test_change_is_append_only(base_ref, prefix + f)]
+    # --since: a test weakened (or deleted) and COMMITTED in <since>..HEAD equals HEAD, so the
+    # check above never sees it (2026-09-28). Such a path is judged against <since> too — on top
+    # of the HEAD check, never instead of it. A range commit touching it with `Test-approved-by:`
+    # (an Antigravity audit, rules/essentials.md Git) covers the file as of the LATEST such commit.
+    upstream = ""
+    if since_paths:
+        up = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--verify", "-q", "@{u}"],
+                            capture_output=True, text=True)
+        upstream = up.stdout.strip() if up.returncode == 0 else ""
+    since_touched = [f for f in since_paths if f not in tests_touched and is_test_path(f)
+                     and not is_devkit_artifact(f) and since_test_weakened(args.since, prefix + f, upstream)]
+    tests_touched += since_touched
     # Only THIS session's edits block. On a shared tree another session's in-flight test edit
     # used to block every Stop of every session until it was committed (2026-09-25).
     # Unattributable edits stay blocking.
@@ -3532,9 +3569,13 @@ def main():
     elif tests_touched:
         # Kept UNVERIFIED (an edited test can weaken the very assertion the run relies on);
         # the verdict names the one cure: a person reads that diff, or it gets committed.
-        touched_diff = f"git diff {base_ref} -- " + " ".join(tests_touched[:3]) + (" …" if len(tests_touched) > 3 else "")
-        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần người review diff test (`{touched_diff}`): hỏi NGAY trong lượt bằng AskUserQuestion, câu hỏi nêu đường dẫn file, phương án 'Duyệt' (gate nhận câu trả lời đó) — hoặc commit nó — rồi chạy lại gate",
-                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: have a human review the test diff (`{touched_diff}`): ask in this turn with AskUserQuestion naming the file, option 'Approve' (the gate accepts that answer) — or commit it — then re-run the gate"), YELLOW, 2
+        in_range = bool(set(tests_touched) & set(since_touched))
+        touched_diff = f"git diff {args.since if in_range else base_ref} -- " + " ".join(tests_touched[:3]) + (" …" if len(tests_touched) > 3 else "")
+        # A range-flagged test is already committed: committing again cures nothing.
+        cure_vi, cure_en = (("hoặc một commit có dòng `Test-approved-by:` (audit Antigravity)", "or a commit carrying a `Test-approved-by:` line (an Antigravity audit)")
+                            if in_range else ("hoặc commit nó", "or commit it"))
+        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần người review diff test (`{touched_diff}`): hỏi NGAY trong lượt bằng AskUserQuestion, câu hỏi nêu đường dẫn file, phương án 'Duyệt' (gate nhận câu trả lời đó) — {cure_vi} — rồi chạy lại gate",
+                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: have a human review the test diff (`{touched_diff}`): ask in this turn with AskUserQuestion naming the file, option 'Approve' (the gate accepts that answer) — {cure_en} — then re-run the gate"), YELLOW, 2
     elif unverified:
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — test hồi quy chưa chạy (dry-run)", "UNVERIFIED — regression tests not run (dry-run)"), YELLOW, 2
     elif unreadable:

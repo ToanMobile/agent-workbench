@@ -244,8 +244,6 @@ class SessionGuard:
 # a commit — keeps them (fail closed). DEVKIT_GATE_EVERY_STOP=1 restores a gate on every stop.
 OUTCOME = re.compile(r"(?<![\wÀ-ỹ])XONG(?![\wÀ-ỹ])|\b(?:đã|vừa)\s+(?:fix|sửa\s+xong|sửa\s+được|xong|hoàn\s+tất|hoàn\s+thành)"
                      r"|hết\s+bug|\bfixed\b|\bdone\b|\ball\s+(?:tests?\s+)?pass|✅|\bPASS\b")
-GIT_WRITE = re.compile(r"(?:^|[;&|(]|\n)\s*(?:\w+=\S*\s+)*git(?:\s+-[Cc]\s+\S+|\s+--?[\w.-]+(?:=\S+)?)*\s+(commit|push)\b"
-                       r"(?![^\n;&|]*--dry-run)")
 
 
 def status_line(reply):
@@ -317,6 +315,119 @@ def turn_start(tp):
         return None
 
 
+# ── git commit / push as a real command (one classifier for every Stop hook) ─────────────────
+# 2026-09-28: proof_gate read `git push` in a quoted heredoc body that WROTE a test file as a push
+# and asked for the handover report; proof_gate and work_in_progress had a regex each. git_writes()
+# reads a Bash command line the way the shell runs it: quoted strings, comments and heredoc bodies
+# are data (a body fed to bash/sh is code); `$(…)` and backticks are code; `git` must be the
+# command word of a simple command (start, after ; && || | ( or a newline, VAR=… / if / time …).
+# ponytail: no full shell parser — `bash -c '…git push…'`, `eval`, aliases are not seen; upgrade
+# when a real push through one of them skips the handover report.
+_HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_][\w.-]*)\2")
+_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+_CMD_LEAD = {"if", "then", "else", "elif", "do", "while", "until", "!", "time", "nohup", "command",
+             "exec", "sudo", "env", "{", "}"}
+_CMD_SPLIT = re.compile(r"&&|\|\||[;&|()\n]")
+
+
+def _command_words(text):
+    """Words of the simple command `text` ends with, leading VAR=… and keywords dropped."""
+    words = _CMD_SPLIT.split(text)[-1].split()
+    while words and (words[0] in _CMD_LEAD or re.match(r"\w+=", words[0])):
+        words.pop(0)
+    return words
+
+
+def _shell_code(s, i=0, inner=False):
+    """(code, end): `s` from `i` with each quoted string turned into the word Q, comments and
+    heredoc bodies dropped; command substitutions (and heredoc bodies fed to a shell) appended as
+    lines of their own. inner=True: stop after the `)` that closes a `$(`."""
+    out, extra, pending, depth, n = [], [], [], 0, len(s)
+    while i < n:
+        ch = s[i]
+        if ch == "\\":
+            out.append(" " if s[i + 1:i + 2] == "\n" else "_")
+            i += 2
+        elif ch == "'":
+            j = s.find("'", i + 1)
+            i = n if j < 0 else j + 1
+            out.append("Q")
+        elif ch == '"':
+            i += 1
+            while i < n and s[i] != '"':
+                if s[i] == "\\":
+                    i += 2
+                elif s.startswith("$(", i):
+                    code, i = _shell_code(s, i + 2, inner=True)
+                    extra.append(code)
+                else:
+                    i += 1
+            i += 1
+            out.append("Q")
+        elif ch == "`":
+            j = s.find("`", i + 1)
+            j = n if j < 0 else j
+            extra.append(_shell_code(s[i + 1:j])[0])
+            i = j + 1
+            out.append("Q")
+        elif s.startswith("$(", i):
+            code, i = _shell_code(s, i + 2, inner=True)
+            extra.append(code)
+            out.append("Q")
+        elif ch == "#" and (not out or out[-1][-1:] in " \t\n;&|()"):
+            j = s.find("\n", i)
+            i = n if j < 0 else j
+        elif s.startswith("<<", i) and not s.startswith("<<<", i) and _HEREDOC.match(s, i):
+            m = _HEREDOC.match(s, i)
+            words = _command_words("".join(out))
+            pending.append((m.group(3), bool(words) and os.path.basename(words[0]) in _SHELLS))
+            out.append(" ")
+            i = m.end()
+        elif ch == "\n" and pending:
+            out.append("\n")
+            i += 1
+            for delim, run in pending:
+                body = []
+                while i < n:
+                    j = s.find("\n", i)
+                    j = n if j < 0 else j
+                    line, i = s[i:j], j + 1
+                    if line.strip() == delim:
+                        break
+                    body.append(line)
+                if run:
+                    extra.append(_shell_code("\n".join(body))[0])
+            pending = []
+        elif inner and ch == ")" and depth == 0:
+            i += 1
+            break
+        else:
+            if inner and ch in "()":
+                depth += 1 if ch == "(" else -1
+            out.append(ch)
+            i += 1
+    return "\n".join(["".join(out)] + extra), i
+
+
+def git_writes(cmd):
+    """{"commit", "push"} a Bash command line runs as git commands (a --dry-run excluded). Words in
+    a string, a comment or a heredoc body not fed to a shell do not count, nor do `git stash push`,
+    `git config push.default`, `git log --grep=push`."""
+    found = set()
+    if not isinstance(cmd, str) or ("commit" not in cmd and "push" not in cmd):
+        return found
+    for seg in _CMD_SPLIT.split(_shell_code(cmd)[0]):
+        w = _command_words(seg)
+        if not w or os.path.basename(w[0]) != "git":
+            continue
+        k = 1
+        while k < len(w) and w[k].startswith("-"):
+            k += 2 if w[k] in ("-C", "-c") else 1
+        if k < len(w) and w[k] in ("commit", "push") and "--dry-run" not in w[k + 1:]:
+            found.add(w[k])
+    return found
+
+
 def git_writes_in_turn(tp, start):
     """{"commit", "push"} run by Bash tool calls after `start` (epoch)."""
     import datetime
@@ -335,8 +446,7 @@ def git_writes_in_turn(tp, start):
                     continue
                 for c in (e.get("message") or {}).get("content") or []:
                     cmd = (c.get("input") or {}).get("command", "") if isinstance(c, dict) and c.get("type") == "tool_use" else ""
-                    if isinstance(cmd, str):
-                        found.update(m.group(1) for m in GIT_WRITE.finditer(cmd))
+                    found.update(git_writes(cmd))
     except OSError:
         return found     # unreadable transcript: what was seen so far (callers treat it as no push)
     return found

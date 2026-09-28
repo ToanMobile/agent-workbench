@@ -82,7 +82,7 @@ session = d.get("session_id") or "?"
 # The status line is read by devkit_harness.reply_status, shared with the other Stop hooks:
 # `✅ XONG`, `Xong.`, `Status: XONG`, `Trạng thái: XONG` are XONG too. Without the helper (a hook
 # copied alone) the plain uppercase XONG check still runs.
-xong = None
+xong = harness = None
 for _hd in (os.environ.get("PROOF_HOOKDIR", ""), os.path.join(repo, ".agents", "devkit", "hooks")):
     if _hd and os.path.isfile(os.path.join(_hd, "devkit_harness.py")):
         try:
@@ -90,6 +90,7 @@ for _hd in (os.environ.get("PROOF_HOOKDIR", ""), os.path.join(repo, ".agents", "
             sys.dont_write_bytecode = True
             import devkit_harness
             xong = devkit_harness.reply_status(reply) == "DONE"
+            harness = devkit_harness
         except Exception as e:
             log("devkit_harness failed: %r" % e)
         break
@@ -132,10 +133,6 @@ def turn_start(tp):
 
 start = turn_start(d.get("transcript_path") or "")
 
-# `git push` as the subcommand of a command that starts a line or follows && ; | ( — not the
-# words inside a heredoc, a string, `git stash push`, `git commit -m '…push…'` or a --dry-run.
-PUSH_RX = re.compile(r"(?:^|[;&|(]|\n)\s*(?:\w+=\S*\s+)*git(?:\s+-[Cc]\s+\S+|\s+--?[\w.-]+(?:=\S+)?)*\s+push\b(?![^\n;&|]*--dry-run)")
-
 # A push that did not go through is no handover: its result is an error (a denied permission),
 # shows git refusing it, or says the command went to the background (GeelyEx2 2026-09-26, and a
 # denied push in the DevKit workbench). A push with no result found still counts.
@@ -145,7 +142,13 @@ PUSH_WENT = re.compile(r"^(?!.*\[(?:remote )?rejected\]).*\S\s+->\s+\S", re.M)
 
 def pushed_in_turn(tp):
     """True when a Bash call of this turn (after the last user prompt) ran `git push` that did not
-    visibly fail."""
+    visibly fail. A push is what devkit_harness.git_writes reads as one — the classifier
+    work_in_progress (regression_gate, review_gate) uses too: a real `git push` command, not the
+    words in a heredoc body, a string, `git stash push` or a --dry-run. Without the helper (a hook
+    copied alone) no push is detected."""
+    if harness is None:
+        log("push check skipped: devkit_harness not loaded")
+        return False
     pushes = {}   # tool_use id -> True (went through or unknown) / False (failed)
     try:
         with open(tp, encoding="utf-8", errors="replace") as f:
@@ -164,7 +167,7 @@ def pushed_in_turn(tp):
                         continue
                     if e.get("type") == "assistant" and c.get("type") == "tool_use":
                         cmd = (c.get("input") or {}).get("command", "")
-                        if isinstance(cmd, str) and PUSH_RX.search(cmd):
+                        if "push" in harness.git_writes(cmd):
                             pushes[c.get("id") or "no-id-%d" % len(pushes)] = True
                     elif c.get("type") == "tool_result" and c.get("tool_use_id") in pushes:
                         body = c.get("content")

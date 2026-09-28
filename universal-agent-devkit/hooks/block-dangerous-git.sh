@@ -32,6 +32,11 @@
 #      config that skips hooks or forces a push is blocked in `-c`, `--config-env` and `git config`
 #      (core.hooksPath, alias.*, remote.*.push +ref, remote.*.mirror); `branch -f/-M/-C <name>`
 #      and `update-ref refs/heads/…` (or --stdin) overwrite a branch.
+#   3d. (2026-09-28) the command inside `$(…)`/backticks goes through the same parser as a
+#      top-level one; git words in the string literals of `python -c`/`node -e` are checked like
+#      git args; git config from the environment (GIT_CONFIG_PARAMETERS, GIT_CONFIG_KEY_n/VALUE_n,
+#      GIT_CONFIG_GLOBAL/SYSTEM other than /dev/null; prefix, env or export) and include.path /
+#      includeIf.* (an external config file) are blocked.
 #   4. FAIL-CLOSED: if the command can't be tokenized, or contains `$(`/backticks
 #      whose output could become a command, the raw text is scanned with a broad
 #      regex instead. Missing python3 blocks.
@@ -146,6 +151,8 @@ def config_danger(key, val):
     parts = key.lower().split(".")
     if parts == ["core", "hookspath"]:
         return "core.hooksPath tắt git hook (pre-commit kiểm secret/chất lượng)"
+    if parts[0] in ("include", "includeif"):
+        return "include.path/includeIf nạp file config ngoài, không kiểm được"
     if parts[0] == "alias" and len(parts) > 1:
         return "alias lấy từ biến môi trường, không kiểm được" if val is None else git_danger_from_alias(val)
     if parts[0] == "remote" and len(parts) > 2:
@@ -267,6 +274,37 @@ def git_danger_from_alias(val):
     return danger_in_git(parts[0], parts[1:]) or solo_branch_rule(parts[0], parts[1:], CUR_DIR[0], ALLOW_BRANCH[0])
 
 HOOK_OFF_ENV = re.compile(r"^DEVKIT_PRECOMMIT=0$")
+
+# Git reads config from the environment too (2026-09-28: each of these returned exit 0).
+GIT_CONFIG_FILE_ENV = {"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG"}
+
+def env_config_danger(assigns):
+    """NAME=VAL assignments (command prefix, env, export) that configure git: GIT_CONFIG_PARAMETERS
+    and GIT_CONFIG_KEY_n/VALUE_n pairs go through config_danger; a config FILE named by
+    GIT_CONFIG_GLOBAL/SYSTEM cannot be read safely here, so only /dev/null passes."""
+    for name in GIT_CONFIG_FILE_ENV & set(assigns):
+        if assigns[name] != "/dev/null":
+            return f"{name} nạp file config ngoài, không kiểm được"
+    if "GIT_CONFIG_PARAMETERS" in assigns:
+        try:
+            items = shlex.split(assigns["GIT_CONFIG_PARAMETERS"])
+        except ValueError:
+            return "GIT_CONFIG_PARAMETERS không phân tích được"
+        for item in items:
+            key, eq, val = item.partition("=")
+            reason = config_danger(key, val if eq else "true")
+            if reason:
+                return f"GIT_CONFIG_PARAMETERS {reason}"
+    for name, key in assigns.items():
+        m = re.fullmatch(r"GIT_CONFIG_KEY_(\d+)", name)
+        if not m:
+            continue
+        if "$" in key or "`" in key:
+            return f"{name} lấy từ biến, không kiểm được"
+        reason = config_danger(key, assigns.get("GIT_CONFIG_VALUE_" + m.group(1)))
+        if reason:
+            return f"{name} {reason}"
+    return None
 
 # One developer, one branch. A new branch or worktree, and a push of <src>:<dst> that the
 # local <dst> does not hold, split the code between local and remote (GeelyEx2, 2026-09-26:
@@ -441,13 +479,38 @@ def do_backups():
         return False
     return True
 
+STR_LITERAL = re.compile(r"\x22((?:[^\x22\\]|\\.)*)\x22|\x27((?:[^\x27\\]|\\.)*)\x27|`((?:[^`\\]|\\.)*)`")
+
+def git_in_literals(code):
+    """python -c / node -e source: its string literals, split into words, as git would get them
+    ([\x27git\x27,\x27push\x27,\x27--force\x27] or \x27git reset --har HEAD\x27). The word after `git` and its
+    global options is the subcommand; the words after it go through danger_in_git (abbreviations
+    included). Only danger_in_git: a literal that merely names a new branch is not blocked."""
+    words = []
+    for m in STR_LITERAL.finditer(code):
+        words += next((g for g in m.groups() if g is not None), "").split()
+    for k, w in enumerate(words):
+        if w.rsplit("/", 1)[-1].lower() != "git":
+            continue
+        j = k + 1
+        while j < len(words) and words[j].startswith("-"):
+            j += 2 if (words[j] in GIT_OPTS_WITH_ARG and "=" not in words[j]) else 1
+        if j < len(words):
+            reason = danger_in_git(words[j], words[j + 1:])
+            if reason:
+                return reason
+    return None
+
 def analyse_simple(tokens, depth):
     i = 0
     hooks_off = False
     allow_branch = ALLOW_BRANCH[0]
+    assigns = {}   # NAME=VAL set for this command (prefix, env) or exported
     while i < len(tokens) and (tokens[i] in KEYWORDS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[i])):
         hooks_off = hooks_off or bool(HOOK_OFF_ENV.match(tokens[i]))
         allow_branch = allow_branch or tokens[i] == ALLOW_BRANCH_ENV
+        if "=" in tokens[i]:
+            assigns.update([tokens[i].split("=", 1)])
         i += 1
     while i < len(tokens):
         prog = tokens[i].rsplit("/", 1)[-1]
@@ -456,6 +519,8 @@ def analyse_simple(tokens, depth):
             while i < len(tokens) and (tokens[i].startswith("-") or "=" in tokens[i]):
                 hooks_off = hooks_off or bool(HOOK_OFF_ENV.match(tokens[i]))
                 allow_branch = allow_branch or tokens[i] == ALLOW_BRANCH_ENV
+                if "=" in tokens[i] and not tokens[i].startswith("-"):
+                    assigns.update([tokens[i].split("=", 1)])
                 i += 2 if tokens[i] in ("-u", "-C", "-S") else 1
         elif prog in WRAPPERS:
             i = skip_wrapper(tokens, i, prog)
@@ -463,6 +528,11 @@ def analyse_simple(tokens, depth):
             i += 1
         else:
             break
+    if i < len(tokens) and tokens[i] in ("export", "declare", "typeset"):
+        assigns.update(a.split("=", 1) for a in tokens[i + 1:] if "=" in a and not a.startswith("-"))
+    reason = env_config_danger(assigns) if assigns else None
+    if reason:
+        return reason
     if i >= len(tokens):
         return None
     prog, rest = tokens[i].rsplit("/", 1)[-1], tokens[i + 1:]
@@ -483,7 +553,10 @@ def analyse_simple(tokens, depth):
         for j, a in enumerate(rest):
             if a in ("-c", "-e", "--eval", "-E", "-r") and j + 1 < len(rest):
                 m = RAW.search(rest[j + 1])
-                return f"{m.group(1).split()[0]} (gọi qua {prog} {a})" if m else None
+                if m:
+                    return f"{m.group(1).split()[0]} (gọi qua {prog} {a})"
+                reason = git_in_literals(rest[j + 1])
+                return f"{reason} (gọi qua {prog} {a})" if reason else None
         return None
     if prog == "watch":
         j = 0
@@ -606,9 +679,10 @@ def subst_end(text, i):
         j += 1
     return None if depth else j
 
-def strip_subst(text):
+def strip_subst(text, inners=None):
     """Each $(...), <(...), >(...) and backtick span becomes one SUBST word; single-quoted text and
-    comments stay literal. None when a span is not closed."""
+    comments stay literal. None when a span is not closed. The text inside each span (a command
+    the shell runs) is appended to inners."""
     out, i, n, dq = [], 0, len(text), False
     while i < n:
         c = text[i]
@@ -632,12 +706,16 @@ def strip_subst(text):
             j = subst_end(text, i)
             if j is None:
                 return None
+            if inners is not None:
+                inners.append(text[i + 2:j - 1])
             out.append(SUBST)
             i = j
         elif c == "`":
             j = text.find("`", i + 1)
             if j < 0:
                 return None
+            if inners is not None:
+                inners.append(text[i + 1:j])
             out.append(SUBST)
             i = j + 1
         else:
@@ -710,8 +788,17 @@ def analyse(text, depth=0, stripped=False):
         m = RAW.search(flat)
         if m:
             return f"{m.group(1).split()[0]} (trong lệnh có $(...)/backtick)"
-        plain = strip_subst(text)
+        # 2026-09-28: the command inside $(...)/backticks gets the same parser as a top-level one
+        # (the raw regex above knows no abbreviation: `echo $(git reset --har HEAD~1)` passed).
+        inners = []
+        plain = strip_subst(text, inners)
         if plain is not None:
+            for inner in inners:
+                here = CUR_DIR[0]   # a cd inside $(...) runs in a subshell
+                reason = analyse(inner, depth + 1)
+                CUR_DIR[0] = here
+                if reason:
+                    return reason
             return analyse(plain, depth + 1, True)
         if SOLO_WORDS.search(text):  # an unclosed $( / backtick hides the rest: fail closed
             SOLO_HIT.append("lệnh có $( hoặc backtick không đóng, không kiểm được push/nhánh trong đó; tách lệnh git ra riêng")
