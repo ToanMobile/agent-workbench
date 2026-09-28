@@ -112,9 +112,31 @@ printf 'def add(a, b):\n    return a + b\n' > src/calc.py; printf '%s' "$TEST_AD
 git add -A && git commit -qm "fix add"; FIX="$(git rev-parse --short HEAD)"
 B3="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "add sai (cũ)" --fixed --test tests/test_calc.py 2>&1)")"
 python3 "$PROOF" "$P" --bug "$B3" --wait >/dev/null 2>&1
-[ "$(proof "$B3")" = INCONCLUSIVE ] && ok "fix already committed, commit unknown → INCONCLUSIVE (never a guess)" || fail "committed: $(proof "$B3")"
+[ "$(proof "$B3")" = PROVEN ] && ok "fix committed with its test → that commit is reverted → PROVEN (a wrong guess is INCONCLUSIVE, below)" || fail "committed: $(proof "$B3")"
 python3 "$PROOF" "$P" --bug "$B3" --fix-commit "$FIX" --wait >/dev/null 2>&1
 [ "$(proof "$B3")" = PROVEN ] && ok "--fix-commit: revert the fix in the sandbox → RED, HEAD → GREEN → PROVEN" || fail "revert: $(proof "$B3")"
+
+# ── fix + test committed together, another session's file uncommitted (agent-workbench
+#    2026-09-28): session mode took that file as "the fix", ran RED on HEAD (which has the fix)
+#    and called a real guard VACUOUS. The test's own commit is the fix: revert it → PROVEN. ─
+new_project "$UT"; cd "$P"
+printf 'def add(a, b):\n    return a + b\n' > src/calc.py; printf '%s' "$TEST_ADD" > tests/test_calc.py
+git add -A && git commit -qm "fix add with its test"
+printf 'x = 1\n' > src/other_session.py
+B15="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "add sai, fix đã commit" --fixed --test tests/test_calc.py 2>&1)")"
+python3 "$PROOF" "$P" --bug "$B15" --wait >/dev/null 2>&1
+[ "$(proof "$B15")" = PROVEN ] && ok "test committed with its fix + an unrelated uncommitted file → the test's commit is reverted → PROVEN" \
+  || fail "committed fix + foreign change: $(proof "$B15")"
+# …and when the commit that added the test did not carry the fix, the guess never convicts the test.
+new_project "$UT"; cd "$P"
+printf 'def add(a, b):\n    return a + b\n' > src/calc.py; git commit -qam "fix add"
+printf '%s' "$TEST_ADD" > tests/test_calc.py; printf 'y = 2\n' > src/unrelated.py
+git add -A && git commit -qm "test + unrelated code"
+printf 'x = 1\n' > src/other_session.py
+B16="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "add sai, test commit sau" --fixed --test tests/test_calc.py 2>&1)")"
+python3 "$PROOF" "$P" --bug "$B16" --wait >/dev/null 2>&1
+[ "$(proof "$B16")" = INCONCLUSIVE ] && ok "the test's commit is not the fix → INCONCLUSIVE, never VACUOUS" \
+  || fail "guessed commit convicted the test: $(proof "$B16")"
 
 # ── broken sandbox (needs an ignored local file nobody declared) → INCONCLUSIVE, never PROVEN ─
 new_project "test -f secret.local && $UT"; cd "$P"; printf 'secret.local\n' >> .gitignore; git commit -qam ign; touch secret.local
