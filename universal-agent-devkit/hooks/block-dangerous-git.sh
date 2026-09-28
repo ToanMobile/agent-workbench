@@ -530,10 +530,65 @@ def strip_subst(text):
 
 SOLO_WORDS = re.compile(r"\bgit\b[^\n]*?\b(push|checkout|switch|branch|worktree)\b")
 
+HEREDOC_Q = re.compile(r"<<-?[ \t]*(?:\x27(\w+)\x27|\x22(\w+)\x22|\\(\w+))")
+RUNS_INPUT = re.compile(r"(?:^|[\s|;&(/])(?:ba|z|da|k|fi)?sh\b|\b(?:python\d?(?:\.\d+)?|node|ruby|perl|php|ssh|eval|xargs|source)\b|(?:^|\s)\.\s")
+
+def drop_literal_heredocs(text):
+    """Remove the body of a QUOTED heredoc (<<\x27X\x27, <<"X", <<\\X) that nothing executes: it is
+    literal text — a commit message quoting `git restore` was blocked (2026-09-28). Kept when the
+    line feeds it to a shell or interpreter (bash <<\x27X\x27, cat <<\x27X\x27 | sh, python3 - <<…) and for
+    an unquoted <<X, whose $(…) the shell runs. No terminator: kept whole (fail closed)."""
+    lines = text.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        m = HEREDOC_Q.search(line)
+        if not m:
+            continue
+        # The command that reads the heredoc: its own segment of the line (pipes included).
+        a = max(line.rfind(x, 0, m.start()) for x in (";", "&&", "||"))
+        ends = [k for k in (line.find(x, m.end()) for x in (";", "&&", "||")) if k >= 0]
+        if RUNS_INPUT.search(line[a + 1 if a >= 0 else 0:min(ends) if ends else len(line)]):
+            continue
+        word = next(g for g in m.groups() if g)
+        end = next((k for k in range(i, len(lines)) if lines[k].strip("\t") == word), None)
+        if end is None:
+            out.extend(lines[i:])
+            break
+        out.append(lines[end])
+        i = end + 1
+    return "\n".join(out)
+
+def outside_single_quotes(text):
+    """The text with single-quoted spans removed: a backtick or $( there is literal, never run
+    (a grep pattern was blocked, 2026-09-28). An executed quoted string (bash -c, eval) is
+    analysed again on its own. An unclosed quote keeps everything (fail closed)."""
+    out, i, n, dq = [], 0, len(text), False
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            out.append(text[i:i + 2])
+            i += 2
+        elif c == "\x27" and not dq:
+            k = text.find("\x27", i + 1)
+            if k < 0:
+                return text
+            i = k + 1
+        else:
+            dq = (not dq) if c == "\x22" else dq
+            out.append(c)
+            i += 1
+    return "".join(out)
+
 def analyse(text, depth=0, stripped=False):
     if depth > 5:
         return "lồng lệnh quá sâu để phân tích"
-    if not stripped and ("`" in text or "$(" in text or "<(" in text):
+    if depth == 0:
+        text = drop_literal_heredocs(text)
+    live = outside_single_quotes(text)
+    if not stripped and ("`" in live or "$(" in live or "<(" in live):
         flat = text.replace("\\\n", " ").replace("\n", " ; ")
         m = RAW.search(flat)
         if m:

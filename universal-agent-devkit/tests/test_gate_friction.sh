@@ -89,6 +89,37 @@ rc="$(restore_rc 'git diff --stat -- w.kt && git restore -- w.kt && cd sub && ls
 rc="$(restore_rc 'cd sub && git restore -- w.kt')"
 [ "$rc" = 2 ] && ok "cd then restore: still blocked" || fail "cd then restore not blocked (rc=$rc)"
 
+# A backtick or $( inside SINGLE quotes is literal text, not a command: grep for a CHANGELOG
+# line was blocked as "restore (trong lệnh có $(...)/backtick)" (agent-workbench 2026-09-28).
+guard_rc() {
+  ( cd "$RD" && python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$1" \
+    | CLAUDE_PROJECT_DIR="$RD" bash "$DEVKIT_DIR/hooks/block-dangerous-git.sh" >/dev/null 2>&1 )
+  echo $?
+}
+BT='`'
+rc="$(guard_rc "grep -n 'block-dangerous-git${BT}: ${BT}git restore' CHANGELOG.md | head -1")"
+[ "$rc" = 0 ] && ok "grep whose single-quoted pattern holds a backtick + 'git restore': allowed" || fail "quoted grep pattern blocked (rc=$rc)"
+rc="$(guard_rc "grep -c 'git reset --hard \$(pwd)' notes.md")"
+[ "$rc" = 0 ] && ok "grep for a quoted 'git reset --hard \$(…)' text: allowed" || fail "quoted \$( pattern blocked (rc=$rc)"
+rc="$(guard_rc "bash -c 'echo \$(git reset --hard)'")"
+[ "$rc" = 2 ] && ok "bash -c '…\$(git reset --hard)…' (executed): still blocked" || fail "bash -c subst allowed (rc=$rc)"
+rc="$(guard_rc "echo \"\$(git reset --hard)\"")"
+[ "$rc" = 2 ] && ok "\"\$(git reset --hard)\" in double quotes (executed): still blocked" || fail "double-quoted subst allowed (rc=$rc)"
+NL='
+'
+rc="$(guard_rc "git commit -q -F - -- a.kt <<'MSG'${NL}fix: ${BT}grep 'x${BT}git restore'${BT} was blocked; ${BT}bash -c${BT} stays checked${NL}MSG")"
+[ "$rc" = 0 ] && ok "commit message in a quoted heredoc (<<'MSG') mentioning backticks + git restore: allowed" || fail "quoted heredoc body blocked (rc=$rc)"
+rc="$(guard_rc "git commit -m \"\$(cat <<'EOF'${NL}fix: ${BT}git restore${BT} no longer blocked${NL}EOF${NL})\"")"
+[ "$rc" = 0 ] && ok "git commit -m \"\$(cat <<'EOF' …)\" mentioning git restore: allowed" || fail "commit -m heredoc blocked (rc=$rc)"
+rc="$(guard_rc "bash <<'EOF'${NL}git reset --hard${NL}EOF")"
+[ "$rc" = 2 ] && ok "bash <<'EOF' body is run by a shell: still blocked" || fail "bash heredoc allowed (rc=$rc)"
+rc="$(guard_rc "cat <<'EOF' | sh${NL}git reset --hard${NL}EOF")"
+[ "$rc" = 2 ] && ok "cat <<'EOF' | sh: body piped into a shell: still blocked" || fail "piped heredoc allowed (rc=$rc)"
+rc="$(guard_rc "cat <<EOF${NL}\$(git reset --hard)${NL}EOF")"
+[ "$rc" = 2 ] && ok "unquoted heredoc (<<EOF) runs \$(git reset --hard): still blocked" || fail "unquoted heredoc subst allowed (rc=$rc)"
+rc="$(guard_rc "x=${BT}git clean -fd${BT}")"
+[ "$rc" = 2 ] && ok "real backtick git clean -fd: still blocked" || fail "backtick clean allowed (rc=$rc)"
+
 # ── 3. a plain script test is a test runner ──────────────────────────────────
 # GeelyEx2 2026-09-27: a real RED→GREEN of `python3 tests/scripts/test-admin-….py` (a
 # regression-matrix command) was not seen as a runner; CHECK 7 held the stop 7 times.
