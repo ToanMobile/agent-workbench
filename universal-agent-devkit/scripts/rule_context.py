@@ -49,15 +49,25 @@ def main():
     want = words(prompt)
     if not want:
         return 0
-    scored = []
+    scored, current = [], None
     for line in lines:
-        m = re.match(r"\s*- (.+?) — (`sed -n '\d+,\d+p' [^`]+`)\s*$", line)
-        if not m:
+        h = re.match(r"## .+? — `([^`]+)`\s*$", line)
+        if h:
+            current = h.group(1)
             continue
+        # `- title — L a–b` under the file's ## heading (O5), or the older `- title — \`sed -n …\``.
+        m = re.match(r"\s*- (.+?) — L(\d+)[–-](\d+)\s*$", line)
+        if m and current:
+            cmd = f"`sed -n '{m.group(2)},{m.group(3)}p' {current}`"
+        else:
+            m = re.match(r"\s*- (.+?) — (`sed -n '\d+,\d+p' [^`]+`)\s*$", line)
+            if not m:
+                continue
+            cmd = m.group(2)
         title = words(m.group(1))
         hits = {t for t in want if t in title or (len(t) >= 4 and any(u.startswith(t) for u in title))}
         if len(hits) >= MIN_HITS or any(len(t) >= 8 for t in hits):   # one long term is specific enough
-            scored.append((len(hits), -len(m.group(1)), m.group(1), m.group(2)))
+            scored.append((len(hits), -len(m.group(1)), m.group(1), cmd))
     if not scored:
         return 0
     scored.sort(reverse=True)

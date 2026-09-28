@@ -32,6 +32,15 @@ for f in $changed; do
     && tests="$tests $(grep -l -w -F -- "$stem" tests/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')"
 done
 selected="$(printf '%s\n' $tests | sort -u)"
+# post-fix-gate lists the test scripts it already ran in this gate (O2): not run twice.
+if [ -n "${DEVKIT_GATE_DONE:-}" ]; then
+  DKP="$(pwd -P)"; keep=""
+  for t in $selected; do
+    printf '%s\n' "$DEVKIT_GATE_DONE" | grep -qxF "$DKP/$t" && continue
+    keep="$keep $t"
+  done
+  selected="$keep"
+fi
 
 if [ "${1:-}" = "--list" ]; then
   for t in $selected; do [ -f "$t" ] && echo "$t"; done

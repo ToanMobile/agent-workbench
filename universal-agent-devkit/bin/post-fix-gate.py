@@ -450,7 +450,72 @@ def demote_other_session(category, findings: list, session, transcript) -> tuple
     return [x for x in findings if x[0] not in other], [x for x in findings if x[0] in other]
 
 
-def write_full_pass_receipt(project_dir, exit_code):
+def _sha_file(path):
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else ""
+    except OSError:
+        return ""
+
+
+# A suite that talks to a device, an emulator or an engine is never reused: its outcome depends
+# on state no fingerprint holds (Antigravity review of O1, 2026-09-28).
+DEVICE_SUITE = re.compile(r"\badb\b|connected\w*(?:Test|Check)|\bemulator\b|\bsimctl\b|unity-batch|-runTests\b|"
+                          r"\bxcodebuild\b[^\n]*\btest\b|replicant", re.I)
+
+
+def local_state_sha(project_dir):
+    """sha of the git-ignored files a build or test reads that tree_fp leaves out: the local
+    config worktree.py copies (.env*, local.properties, google-services.json, …) and the build
+    inputs red_proof furnishes (build_inputs.py). "?" when they cannot be listed."""
+    _scripts_on_path()
+    try:
+        from worktree import LOCAL_CONFIG  # noqa: PLC0415
+        from build_inputs import build_inputs  # noqa: PLC0415
+        out = subprocess.run(["git", "-C", str(project_dir), "ls-files", "-z", "--others", "--ignored",
+                              "--exclude-standard", "--directory"], capture_output=True, text=True).stdout
+        files = {r for r in out.split("\0") if r and not r.endswith("/")
+                 and any(fnmatch.fnmatch(os.path.basename(r), p) for p in LOCAL_CONFIG)}
+        files |= set(build_inputs(project_dir))
+    except Exception:   # any failure only disables the reuse
+        return "?"
+    h = hashlib.sha256()
+    for rel in sorted(files):
+        h.update(rel.encode() + b"\0" + _sha_file(Path(project_dir) / rel).encode() + b"\0")
+    return h.hexdigest()
+
+
+_SCRIPT = r"((?:[\w.-]+/)*(?:tests|hooks/tests)/[\w.-]+\.sh)\b"
+RAN_SCRIPT = re.compile(r"(?:^|[;&|(]\s*|\s)(?:ba|z)?sh\s+(?:-\w+\s+)*" + _SCRIPT
+                        + r"|(?:^|[;&|(]\s*)\./" + _SCRIPT.replace("(", "(?:", 1).replace("(?:(?:", "((?:", 1))
+
+
+def cached_full_pass(project_dir, matrix_arg):
+    """The last full PASS when it still holds for this exact code (O1, 2026-09-28: GeelyEx2 ran
+    16 full gates in one session, many on content that had already passed): same tree
+    fingerprint, same gate script, same matrix, tested within DEVKIT_GATE_CACHE_MAX_S (default
+    6 h — ignored files, devices and the network can drift). None otherwise."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import tree_fp  # noqa: PLC0415 - sibling module in bin/
+        path = tree_fp.receipt_path(project_dir)
+        with open(path, encoding="utf-8") as f:
+            r = json.load(f)
+        max_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
+    except (ImportError, OSError, ValueError, TypeError):
+        return None
+    if not isinstance(r, dict) or r.get("exit") != 0 or not r.get("tests"):
+        return None
+    if time.time() - float(r.get("tested_at") or 0) > max_s:
+        return None
+    if r.get("gate_sha") != _sha_file(__file__) or r.get("matrix_sha") != _sha_file(find_matrix_path(matrix_arg)):
+        return None
+    if r.get("local_sha") in (None, "?") or r.get("local_sha") != local_state_sha(project_dir):
+        return None
+    fp = tree_fp.tree_fingerprint(project_dir)
+    return r if fp and r.get("fingerprint") == fp else None
+
+
+def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None):
     """After a full regression run: drop the previous receipt, and on exit 0 record
     {time, fingerprint} of the audited code in .git/postfix-gate/full_pass.json (outside the
     tree). hooks/proof_gate.sh accepts an XONG only with a receipt from this turn whose
@@ -477,7 +542,12 @@ def write_full_pass_receipt(project_dir, exit_code):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"time": time.time(), "exit": 0, "project": str(Path(project_dir).resolve()),
-                       "fingerprint": fingerprint}, f)
+                       "fingerprint": fingerprint, "tested_at": tested_at or time.time(),
+                       "gate_sha": _sha_file(__file__), "matrix_sha": _sha_file(find_matrix_path(matrix_arg)),
+                       "local_sha": local_state_sha(project_dir),
+                       "tests": [{"id": t.get("id"), "status": t.get("status"), "log": t.get("log"),
+                                  "duration": t.get("duration")}
+                                 for t in (tests or []) if t.get("command")]}, f)
     except OSError as e:
         log_err(f"full-pass receipt not written: {e}")
 
@@ -2103,7 +2173,7 @@ def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
                 path.write_bytes(res.stdout)
         proc = subprocess.Popen(test["command"], shell=True, cwd=str(project_dir),
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, errors="replace", start_new_session=True)
+                                text=True, errors="replace", start_new_session=True, env=suite_env())
         try:
             out, _ = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -2370,7 +2440,7 @@ def flaky_retry(cmd, project_dir, timeout, elapsed, infra=False):
     if elapsed > cap and not infra:
         return None
     proc = subprocess.Popen(cmd, shell=True, cwd=str(project_dir), stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, errors="replace", start_new_session=True)
+                            stderr=subprocess.STDOUT, text=True, errors="replace", start_new_session=True, env=suite_env())
     try:
         out, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -2638,6 +2708,15 @@ def _recorded_seconds() -> dict:
     return out
 
 
+def suite_env():
+    """The environment a test suite runs in, without the variables git sets for a hook
+    (GIT_INDEX_FILE, GIT_DIR, …): a suite that builds scratch repos otherwise writes into the
+    commit's own index — "invalid object … Error building trees" (agent-workbench 2026-09-28)."""
+    drop = {"GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_PREFIX", "GIT_COMMON_DIR",
+            "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE"}
+    return {k: v for k, v in os.environ.items() if k not in drop}
+
+
 def run_precommit_tests(modified_files) -> tuple:
     """(ran, failed, skipped, untested): the matrix suites whose watch_files match the staged
     files, run at commit. A commit with a clear subject could still carry code that turns the
@@ -2681,7 +2760,7 @@ def run_precommit_tests(modified_files) -> tuple:
         started = time.perf_counter()
         print(f"  {DIM}▶ {sid}: {cmd}{RESET}")
         proc = subprocess.Popen(cmd, shell=True, cwd=str(get_project_dir()), stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, errors="replace", start_new_session=True)
+                                stderr=subprocess.STDOUT, text=True, errors="replace", start_new_session=True, env=suite_env())
         try:
             out, _ = proc.communicate(timeout=timeout)
             rc = proc.returncode
@@ -2791,6 +2870,11 @@ def main():
                              "Without it, --run-tests runs only the impacted tests where the matrix declares an "
                              "impacted_command. Use --full before handover; POSTFIX_GATE_FULL=1 and CI=true do the same")
     parser.add_argument("--dry-run", action="store_true", help="Only list impacted tests, do not run them (default without --run-tests; never PASS)")
+    parser.add_argument("--brief", action="store_true",
+                        help="Print only the verdict block, errors (✖) and failing suites with their output tail; "
+                             "the full output goes to <git dir>/postfix-gate/last_output.log (O3: fewer tokens for agents)")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="Run the tests even when the last full PASS holds for this exact content (DEVKIT_GATE_CACHE=0 does the same)")
     parser.add_argument("--timeout", type=int, default=900, help="Timeout (seconds) per regression command")
     parser.add_argument("--json", action="store_true", help="Also print the result as JSON (last stdout line)")
     parser.add_argument("--allow-no-tests", action="store_true",
@@ -3004,9 +3088,30 @@ def main():
         for t in regression_tests)
     # Held for every suite run, re-run and vacuity revert (which rewrites production files in
     # the tree) of this gate; released when the process ends at the latest.
+    cache = None
+    if run_tests and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0" \
+            and any(t.get("command") for t in regression_tests):
+        cache = cached_full_pass(project_dir, args.matrix)
+        prev = {x.get("id"): x for x in (cache or {}).get("tests") or []}
+        reusable = [t for t in regression_tests if t.get("command") and not DEVICE_SUITE.search(t["command"])]
+        if cache and reusable and all(prev.get(t["id"], {}).get("status") == "PASS" for t in reusable):
+            at = time.strftime("%H:%M", time.localtime(float(cache.get("tested_at") or 0)))
+            for t in reusable:
+                if t.get("command"):
+                    # the real duration: pre-commit picks light suites by the recorded one
+                    t.update({"status": "PASS", "duration": prev[t["id"]].get("duration") or "0s", "mode": "cached",
+                              "log": prev[t["id"]].get("log"),
+                              "label": tr(f"PASS (dùng lại kết quả lúc {at}, cùng nội dung)", f"PASS (reused from {at}, same content)")})
+            print(f"    {CYAN}▶ {tr(f'dùng lại PASS đầy đủ lúc {at}: cùng nội dung, cùng gate, cùng ma trận (--no-cache để chạy lại)', f'reusing the full PASS of {at}: same content, gate and matrix (--no-cache to re-run)')}{RESET}")
+        else:
+            cache = None
+    to_run = [t for t in regression_tests if t.get("mode") != "cached"]
     lock_fh, lock_held = (acquire_test_run_lock(project_dir)
-                          if run_tests and any(t.get("command") for t in regression_tests) else (None, True))
-    for t in regression_tests:
+                          if run_tests and any(t.get("command") for t in to_run) else (None, True))
+    # One run per distinct command (O2, 2026-09-28): two rules naming one command share its result,
+    # and the test scripts run so far go to DEVKIT_GATE_DONE so run_impacted.sh skips them.
+    ran_cmds, done_scripts = {}, []
+    for t in to_run:
         if run_tests and t["command"] and not lock_held:
             t.update({"status": "UNTESTED", "label": "BUSY", "duration": "0s", "output_tail": tr(
                 "Một lượt chạy test khác giữ khoá dự án quá TEST_RUN_LOCK_WAIT_S — không chạy song song (Gradle ghi đè build/test-results)",
@@ -3052,13 +3157,25 @@ def main():
                 t["mode_reason"] = reason
                 if t.get("impacted_command") or force_reason:
                     print(f"    {DIM}▶ {t['id']}: {tr('chế độ FULL', 'mode FULL')} — {reason}{RESET}")
+            key = " ".join(cmd.split())
+            prev = ran_cmds.get(key)
+            if prev is not None:
+                for k in ("status", "exit_code", "output_tail", "log", "flaky", "infra", "infra_retry",
+                          "env_blocked", "vacuity"):
+                    if k in prev:
+                        t[k] = prev[k]
+                t["duration"] = prev.get("duration") or "0s"   # its real cost, for pre-commit's light-suite pick
+                t["label"] = f"{prev.get('label') or prev['status']} ({tr('cùng lệnh với', 'same command as')} {prev['id']})"
+                continue
+            if done_scripts:
+                os.environ["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
             started = time.perf_counter()
             # Own session/process group so a timeout kills the whole tree (gradle daemons,
             # test workers), not just the shell. Commands come from the matrix at the base
             # ref (load_active_matrix), so the audited change cannot rewrite them.
             proc = subprocess.Popen(cmd, shell=True, cwd=str(project_dir),
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, errors="replace", start_new_session=True)
+                                    text=True, errors="replace", start_new_session=True, env=suite_env())
             try:
                 out, _ = proc.communicate(timeout=args.timeout)
                 t["status"] = "PASS" if proc.returncode == 0 else "FAIL"
@@ -3114,6 +3231,11 @@ def main():
                 log_warn(tr(
                     f"{t.get('id')}: revert không ra assertion failure (có thể chỉ lỗi biên dịch) — chưa chứng minh test bắt được lỗi",
                     f"{t.get('id')}: revert did not show an assertion failure (possibly a compile error) — the test has not proved it catches the bug"))
+            ran_cmds[key] = t
+            # Only a script the command RUNS (`bash|sh|zsh <path>`, `./<path>` opening a segment):
+            # `cat tests/x.sh` read it, it did not run it (Antigravity review).
+            for m in RAN_SCRIPT.finditer(cmd):
+                done_scripts.append(os.path.realpath(os.path.join(str(project_dir), m.group(1) or m.group(2))))
         elif run_tests:
             t["status"] = "FAIL"
             t["output_tail"] = tr("Matrix không khai báo command cho test này", "The matrix declares no command for this test")
@@ -3313,7 +3435,8 @@ def main():
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
     if run_tests and not impacted_run:
-        write_full_pass_receipt(project_dir, exit_code)
+        write_full_pass_receipt(project_dir, exit_code, args.matrix, regression_tests,
+                                tested_at=float(cache.get("tested_at") or 0) if cache else None)
 
     if not args.no_checklist:
         update_regression_checklist(
@@ -3404,5 +3527,46 @@ def main():
     return exit_code
 
 
+def run_brief():
+    """--brief (O3, 2026-09-28): an agent reads the verdict and what failed, not ~70 lines of ✔ —
+    each run's output stays in its context and is re-read on every later call. The gate runs
+    exactly as without it; the full output is saved to <git dir>/postfix-gate/last_output.log."""
+    import contextlib, io  # noqa: E401, PLC0415
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        try:
+            code = main()
+        except SystemExit as e:
+            code = e.code if isinstance(e.code, int) else 1
+    text = buf.getvalue()
+    gd = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--absolute-git-dir"],
+                        capture_output=True, text=True).stdout.strip()
+    out = (Path(gd) if gd else Path(tempfile.gettempdir())) / "postfix-gate" / "last_output.log"
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
+    except OSError as e:
+        out = Path(f"(không ghi được: {e})")
+    keep, tail, summary = [], 0, False
+    for line in text.splitlines():
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", line)
+        if "KẾT LUẬN" in plain or "VERDICT" in plain:
+            summary = True
+        if summary or (tail and plain.strip().startswith(("|", "Lệnh chạy", "Command"))):
+            keep.append(line)
+            tail = max(tail - 1, 0)
+            continue
+        tail = 0
+        if "✖" in plain or re.search(r"\[ \] (?!PASS)", plain):
+            keep.append(line)
+            tail = 7
+    json_line = text.rstrip().splitlines()[-1] if "--json" in sys.argv and text.strip() else ""
+    keep.append(tr(f"  (đầy đủ: {out} — last_output.log)", f"  (full output: {out} — last_output.log)"))
+    if json_line.startswith("{") and (not keep or keep[-1] != json_line):
+        keep.append(json_line)
+    print("\n".join(keep))
+    return code
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_brief() if "--brief" in sys.argv[1:] else main())

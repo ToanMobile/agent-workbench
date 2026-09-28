@@ -543,4 +543,17 @@ python3 "$PROOF" "$P" --bug "$B5" --heavy --wait >/dev/null 2>&1
 [ "$(proof "$B5")" = PROVEN ] && ok "--heavy (nightly) runs it" || fail "heavy run: $(proof "$B5")"
 RED_PROOF=0 python3 "$PROOF" "$P" --pending --wait >/dev/null 2>&1; [ $? = 0 ] && ok "RED_PROOF=0 is a no-op" || fail "RED_PROOF=0"
 
+# ── two bugs, one test, one fix: proven once for both (O6, 2026-09-28: 4 sandbox runs, ~25 min,
+#    for two bugs linked to test_gate_friction.sh and fixed by the same commit) ─
+CNT="$TMP/runs.count"; : > "$CNT"
+new_project "echo run >> $CNT; $UT"; cd "$P"
+printf 'def add(a, b):\n    return a + b\n' > src/calc.py; printf '%s' "$TEST_ADD" > tests/test_calc.py
+B17="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "add sai A" --fixed --test tests/test_calc.py 2>&1)")"
+B18="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "add sai B" --fixed --test tests/test_calc.py 2>&1)")"
+: > "$CNT"
+python3 "$PROOF" "$P" --bug "$B17,$B18" --wait >/dev/null 2>&1
+[ "$(proof "$B17")" = PROVEN ] && [ "$(proof "$B18")" = PROVEN ] && [ "$(wc -l < "$CNT" | tr -d ' ')" = 2 ] \
+  && ok "two bugs sharing test + fix: one RED + one GREEN run, both PROVEN" \
+  || fail "shared proof: $(proof "$B17")/$(proof "$B18") runs=$(wc -l < "$CNT" | tr -d ' ')"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_red_proof: all passed" || { echo "❌ test_red_proof: $FAILS failed"; exit 1; }

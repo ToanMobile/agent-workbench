@@ -261,6 +261,92 @@ rc2="$(pg "$P9/src/New.kt" "class New")"
 rc="$(pg "$P9/src/Old.kt" "class Old")"
 [ "$rc" = 2 ] && ok "existing file never read: still blocked" || fail "blind edit allowed (rc=$rc)"
 
+# ── 7. run_impacted skips what this gate already ran (O2) ────────────────────
+# post-fix-gate lists every test script it has run in DEVKIT_GATE_DONE; REG-DK-ALL-01
+# (run_impacted.sh) re-ran test_proof_gate.sh, test_postfix_gate.sh, hook_contract_test.sh.
+DKP="$(cd "$DEVKIT_DIR" && pwd -P)"
+lst="$(DEVKIT_GATE_DONE="$DKP/tests/test_repo_consistency.sh" bash "$DEVKIT_DIR/tests/run_impacted.sh" --list)"
+printf '%s\n' "$lst" | grep -q 'test_repo_consistency.sh' \
+  && fail "run_impacted re-selects a suite the gate already ran: $lst" \
+  || ok "run_impacted leaves out the suites in DEVKIT_GATE_DONE"
+lst="$(bash "$DEVKIT_DIR/tests/run_impacted.sh" --list)"
+printf '%s\n' "$lst" | grep -q 'test_repo_consistency.sh' && ok "without DEVKIT_GATE_DONE: unchanged selection" \
+  || fail "selection changed without DEVKIT_GATE_DONE: $lst"
+
+# ── 8. rules-index: the path once per file, not on every line (O5) ────────────
+# OfficeReader's index was 17.7 KB, most of it `sed -n 'a,bp' .agents/local/rules/<file>` repeated
+# on each of 152 lines — loaded at every session start. Every line stays (a bold lead is a rule).
+R8="$TMP/r8"; mkdir -p "$R8/.agents/local/rules" "$R8/.agents/context"
+printf '# Luật voice\n\n1. **Xe im còn hơn làm sai** khi không chắc lệnh.\n2. **Không đoán ESC là điều hoà** trong mọi trường hợp.\n\n## Bluetooth A2DP\nĐổi bài qua A2DP.\n' \
+  > "$R8/.agents/local/rules/voice.md"
+idx="$(python3 "$DEVKIT_DIR/scripts/rules_index.py" "$R8")"
+printf '%s' "$idx" > "$R8/.agents/context/rules-index.md"
+[ "$(printf '%s' "$idx" | grep -c '\.agents/local/rules/voice\.md')" = 1 ] && printf '%s' "$idx" | grep -q 'Xe im còn hơn làm sai — L3–3' \
+  && printf '%s' "$idx" | grep -q "sed -n 'a,bp'" \
+  && ok "index: path once in the heading, each rule line keeps its lead + L a–b, header says how to open it" \
+  || fail "index format: $(printf '%s' "$idx" | tail -5 | tr '\n' '|')"
+out="$(printf '{"prompt":"sửa lỗi xe đoán ESC là điều hoà"}' | CLAUDE_PROJECT_DIR="$R8" python3 "$DEVKIT_DIR/scripts/rule_context.py")"
+printf '%s' "$out" | grep -q "sed -n '4,5p' .agents/local/rules/voice.md" \
+  && ok "rule_context: a matching rule comes back as a runnable sed command (new format)" \
+  || fail "rule_context new format: $out"
+printf '# Rules index\n- Bluetooth và đổi bài hát A2DP — `sed -n '"'"'1,20p'"'"' .agents/local/rules/audio.md`\n' > "$R8/.agents/context/rules-index.md"
+out="$(printf '{"prompt":"lỗi bluetooth đổi bài hát a2dp"}' | CLAUDE_PROJECT_DIR="$R8" python3 "$DEVKIT_DIR/scripts/rule_context.py")"
+printf '%s' "$out" | grep -q "sed -n '1,20p' .agents/local/rules/audio.md" \
+  && ok "rule_context: an index not yet re-synced (old format) still works" || fail "rule_context old format: $out"
+
+# ── 9. the same Stop block twice: items kept, long command + advice not repeated (O4) ──
+# GeelyEx2 session 2bcee73a: regression_gate blocked 31 times, 32 k characters of feedback, the
+# 600-character Gradle command of REG-CAR-VOICE on every block. Antigravity review: never drop the
+# items (id, status, exit, log) — the earlier block may have been compacted away.
+M9="$TMP/m9"; mkdir -p "$M9/src" "$M9/.agents"; git -C "$M9" init -q; git -C "$M9" config user.email t@t; git -C "$M9" config user.name t
+echo "fun ok() = 1" > "$M9/src/Core.kt"
+LONGCMD="true && true && true && true && true && true && true && true && true && true && true && true && true && true && true && echo voice-funnel-failed && exit 3"
+python3 -c 'import json,sys; json.dump({"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
+  "mandatory_regression_tests":[{"id":"REG-LONG","name":"voice funnel","command":sys.argv[1]}]}]}, open(sys.argv[2],"w"))' "$LONGCMD" "$M9/.agents/regression_matrix.active.json"
+git -C "$M9" add -A; git -C "$M9" commit -qm init; echo "fun ok() = 2" > "$M9/src/Core.kt"
+o4stop() { printf '{"session_id":"s-o4","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$M9" FLAKY_RETRY=0 bash "$DEVKIT_DIR/hooks/regression_gate.sh" >/dev/null 2>"$1"; }
+o4stop "$TMP/e1"; r1=$?; sleep 1; o4stop "$TMP/e2"; r2=$?   # a new evidence-log stamp, as between real stops
+[ "$r1" = 2 ] && [ "$r2" = 2 ] && grep -q 'REG-LONG' "$TMP/e2" && grep -q 'exit 3' "$TMP/e2" && grep -q 'log:' "$TMP/e2" \
+  && [ "$(wc -c < "$TMP/e2")" -lt "$(( $(wc -c < "$TMP/e1") * 70 / 100 ))" ] && ! grep -q 'Sửa code/test' "$TMP/e2" \
+  && ok "repeat block: same items (id, exit, log), long command cut, advice not repeated" \
+  || fail "repeat block (rc $r1/$r2, $(wc -c < "$TMP/e1")→$(wc -c < "$TMP/e2") B): $(head -3 "$TMP/e2" | tr '\n' '|')"
+P10="$TMP/p10"; mkdir -p "$P10"; : > "$P10/tr.jsonl"
+te10() { printf '{"session_id":"s-o4te","transcript_path":"%s/tr.jsonl","last_assistant_message":"Đã fix lỗi đăng nhập."}' "$P10" \
+  | CLAUDE_PROJECT_DIR="$P10" LESSON_REMINDER=0 BUG_LINK_REMINDER=0 bash "$DEVKIT_DIR/hooks/test_evidence_gate.sh" >/dev/null 2>"$1"; }
+te10 "$TMP/t1"; r1=$?; te10 "$TMP/t2"; r2=$?
+[ "$r1" = 2 ] && [ "$r2" = 2 ] && grep -q 'CHECK 7' "$TMP/t2" && grep -q 'RED→GREEN' "$TMP/t2" \
+  && [ "$(wc -c < "$TMP/t2")" -lt "$(( $(wc -c < "$TMP/t1") * 60 / 100 ))" ] \
+  && ok "test_evidence_gate repeat: the requirement kept, the explanation not repeated" \
+  || fail "test_evidence repeat (rc $r1/$r2, $(wc -c < "$TMP/t1")→$(wc -c < "$TMP/t2") B)"
+
+# ── 10. a long context gets one reminder per threshold (O7) ──────────────────
+# GeelyEx2 session 2bcee73a: 214 M cache-read tokens — every call re-reads the whole context.
+P11="$TMP/p11"; mkdir -p "$P11/.agents"
+ctx() { python3 -c 'import json,sys; print(json.dumps({"type":"assistant","message":{"id":"m"+sys.argv[1],"usage":{"input_tokens":10,
+  "cache_read_input_tokens":int(sys.argv[1]),"cache_creation_input_tokens":0,"output_tokens":5},"content":[{"type":"text","text":"ok"}]}}))' "$1" >> "$P11/tr.jsonl"; }
+pc() { printf '{"session_id":"s-o7","transcript_path":"%s/tr.jsonl","prompt":"sửa lỗi nút thanh toán bấm hai lần"}' "$P11" \
+  | CLAUDE_PROJECT_DIR="$P11" CONTEXT_WARN_TOKENS=150000 bash "$DEVKIT_DIR/hooks/prompt_context.sh" 2>/dev/null; }
+: > "$P11/tr.jsonl"; ctx 90000; o1="$(pc)"
+ctx 170000; o2="$(pc)"; o3="$(pc)"
+! printf '%s' "$o1" | grep -q 'Context phiên' && printf '%s' "$o2" | grep -q 'Context phiên' && printf '%s' "$o2" | grep -q '/compact' \
+  && printf '%s' "$o2" | grep -q 'vẫn mở' && ! printf '%s' "$o3" | grep -q 'Context phiên' \
+  && ok "context over the threshold: one reminder (/compact suggested, rules still opened), not repeated" \
+  || fail "context reminder: under=$(printf '%s' "$o1" | grep -c 'Context phiên') over=$(printf '%s' "$o2" | grep -c 'Context phiên') again=$(printf '%s' "$o3" | grep -c 'Context phiên')"
+
+# ── 11. a suite run from a git hook does not write into the commit's index ────
+# agent-workbench 2026-09-28: the pre-commit ran a suite that builds scratch repos with git; it
+# inherited GIT_INDEX_FILE, its `git add` landed in the commit's temporary index with objects of
+# another repo, and `git commit` died: "invalid object … Error building trees".
+R12="$TMP/r12"; mkdir -p "$R12/.agents"; git -C "$R12" init -q; git -C "$R12" config user.email t@t; git -C "$R12" config user.name t
+echo a > "$R12/a.txt"
+python3 -c 'import json,sys; json.dump({"project":"t","rules":[{"component":"A","watch_files":["a.txt"],
+  "mandatory_regression_tests":[{"id":"REG-GIT","name":"scratch repo","command":sys.argv[1]}]}]}, open(sys.argv[2],"w"))' \
+  "rm -rf $TMP/inner12; git init -q $TMP/inner12 && touch $TMP/inner12/zz_foreign && git -C $TMP/inner12 add zz_foreign" "$R12/.agents/regression_matrix.active.json"
+git -C "$R12" add -A; git -C "$R12" commit -qm init; echo b > "$R12/a.txt"; git -C "$R12" add a.txt
+( cd "$R12" && GIT_INDEX_FILE="$R12/.git/index" CLAUDE_PROJECT_DIR="$R12" python3 "$DEVKIT_DIR/bin/post-fix-gate.py" --staged --json >/dev/null 2>&1 )
+git -C "$R12" ls-files | grep -q zz_foreign && fail "a pre-commit suite wrote into the commit's index (GIT_INDEX_FILE inherited)" \
+  || ok "suites run by the gate get no GIT_INDEX_FILE / GIT_DIR of the commit"
+
 echo
 [ "$FAILS" -eq 0 ] && echo "test_gate_friction: all checks passed" || echo "test_gate_friction: $FAILS failed"
 exit "$FAILS"

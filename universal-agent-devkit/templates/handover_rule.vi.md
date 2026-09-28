@@ -15,7 +15,7 @@ LUẬT ĐỨNG — NGHIỆM THU THEO LOẠI LƯỢT. Áp dụng cho Claude Code,
    Hai lần sửa cho cùng một nguyên nhân mà vẫn đỏ: dừng, bỏ giả thuyết đó, đổi hướng.
 
 3. Loại B, C — cổng nghiệm thu, chạy từ gốc repo:
-   python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full
+   python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief
    - Exit 0 (PASS): qua bước tiếp.
    - Exit 1 (REJECT): dán 30 dòng cuối log, sửa, chạy lại bước 3 từ đầu.
    - Exit 2 (UNVERIFIED) hoặc 4 (UNTESTED): dừng. Trả lời CHƯA XONG, dán lý do cổng in ra. Không sửa matrix hay test cũ để qua cổng.

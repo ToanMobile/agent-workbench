@@ -1499,6 +1499,23 @@ if check7:
 
 logline(f"[{ts}] BLOCK — problems={len(problems)} repeat={[t for t,_ in repeat_failures]} "
         f"redcheck={[c for c,_ in redcheck]} check7={bool(check7)}")
+# The same block again in this session (O4, 2026-09-28): the headers (they carry the requirement)
+# and the items stay, the explanation is not repeated. Compared without time stamps.
+import hashlib as _hl
+_shown = os.path.join(state_dir, f"test_evidence_gate_shown_{_sid}")
+_digest = _hl.sha256(re.sub(r"\d{8}-\d{6}|\d{2}:\d{2}:\d{2}", "#", "\n".join(out)).encode()).hexdigest()[:16]
+try:
+    _again = open(_shown).read().strip() == _digest
+except OSError:
+    _again = False
+try:
+    with open(_shown, "w") as _fh:
+        _fh.write(_digest)
+except OSError:
+    pass
+if _again:
+    out = [l for l in out if l.startswith("⛔") or l.lstrip().startswith(("•", "- ", "python3 "))] + \
+          ["(Như lần chặn trước trong phiên — phần giải thích không lặp lại.)"]
 sys.stderr.write("\n".join(out) + "\n")
 sys.exit(2)
 PY

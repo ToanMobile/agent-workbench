@@ -270,7 +270,7 @@ if not isinstance(state, dict):
 def save_state():
     # Atomic: sessions running side by side share this file, and a torn write read back
     # as {} reset every loop-guard counter (OfficeReader 2026-09-25: two sessions racing).
-    for key, keep in (("attempts", 200), ("sessions", 50)):
+    for key, keep in (("attempts", 200), ("sessions", 50), ("shown", 50)):
         if isinstance(state.get(key), dict) and len(state[key]) > keep:
             state[key] = dict(list(state[key].items())[-keep:])
     try:
@@ -312,7 +312,28 @@ def block(lines, cure, rc, reused=False):
             sys.exit(0)
         sess["blocks"] = n + 1
         save_state()
-    print("\n".join(lines + cure), file=sys.stderr)
+    # The same block again in this session (O4, 2026-09-28: 31 blocks, 32 k characters in one
+    # GeelyEx2 session): every item stays (id, status, exit, log — the first block may have been
+    # compacted away), only a long command is cut and the advice is not repeated.
+    shown = state.setdefault("shown", {})
+    # Each run writes a new evidence log (…/20260928-140109.log): compare without the stamp.
+    digest = hashlib.sha256(re.sub(r"\d{8}-\d{6}", "#", "\n".join(lines)).encode()).hexdigest()[:16]
+    again = shown.get(sid) == digest
+    shown[sid] = digest
+    save_state()
+    if again:
+        def cut(l):
+            i = l.find("(lệnh: ")
+            if i < 0 or len(l) < 200:
+                return l
+            j = l.rfind(", exit ")
+            return l[:i + 7] + l[i + 7:i + 87] + "…" + (l[j:] if j > i else ")")
+        print("\n".join([cut(l) for l in lines if not l.startswith("Checklist: ")]
+                        + ["(Như lần chặn trước trong phiên: mục lỗi giữ nguyên; lệnh đầy đủ và hướng dẫn: %s)"
+                           % next((l.split("báo cáo: ", 1)[-1] for l in lines if l.startswith("Checklist: ")), "-")]),
+              file=sys.stderr)
+    else:
+        print("\n".join(lines + cure), file=sys.stderr)
     sys.exit(2)
 
 if state.get("pass_fp") == fp:

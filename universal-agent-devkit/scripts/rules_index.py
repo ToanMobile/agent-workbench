@@ -77,14 +77,17 @@ def build(project):
         return None
     out = [f"# Project rules — index {GENERATED_MARK}; do not edit)", "",
            "Each line is a section of `.agents/local/rules/`. The bold lead of a numbered rule",
-           "is the rule itself; open the section (`sed -n` from the project root) before",
+           "is the rule itself. `L a–b` is its line range in the file named by the `##` heading",
+           "above it: open it with `sed -n 'a,bp' <that file>` from the project root before",
            "working in that area. The prompt hook also names the sections that match a request.", ""]
     for f in files:
         rel = os.path.relpath(f, project)
         out.append(f"## {os.path.basename(f)} — `{rel}`")
         for start, end, level, title in sections(f):
             indent = "  " * max(0, min(level, 3) - 1)
-            out.append(f"{indent}- {title} — `sed -n '{start},{end}p' {rel}`")
+            # The path is in the ## heading: repeating it on each line made OfficeReader's index
+            # 17.7 KB, loaded at every session start (O5, 2026-09-28).
+            out.append(f"{indent}- {title} — L{start}–{end}")
         out.append("")
     return "\n".join(out) + "\n"
 

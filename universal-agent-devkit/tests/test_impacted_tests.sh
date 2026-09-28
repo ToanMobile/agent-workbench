@@ -150,7 +150,7 @@ echo "// tweak" >> app/src/main/kotlin/pkg/Foo.kt
 out="$(run_gate --full)"; check_exit "--full -> PASS" 0 $?
 [ "$(ran)" = "testDebugUnitTest" ] && ok "--full ran the full command (no --tests)" || bad "--full ran: $(ran)"
 has "--full reason printed" "full run forced (--full)" "$out"
-out="$(POSTFIX_GATE_FULL=1 run_gate --run-tests)"
+out="$(POSTFIX_GATE_FULL=1 DEVKIT_GATE_CACHE=0 run_gate --run-tests)"   # same content as the --full run above: no reuse (O1)
 [ "$(ran)" = "testDebugUnitTest" ] && ok "POSTFIX_GATE_FULL=1 ran the full command" || bad "POSTFIX_GATE_FULL=1 ran: $(ran)"
 
 # --- an impacted FAIL is a real failure ------------------------------------------------

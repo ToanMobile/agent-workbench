@@ -69,7 +69,7 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   then `git push origin <branch>` — never `<sha>:<branch>` that the local branch does not
   hold. The git guard blocks the rest; session start names drift and leftovers (AGENTS.md §7.1).
 - **Done means verified**: run the post-fix gate
-  (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full`, exit 0 only) and
+  (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`, exit 0 only) and
   attach a real proof PNG from this turn (when step 4 of "Every prompt" applies) before the
   reply may open with XONG. The Stop hooks enforce the gate on hosts that have them. They do
   not take the screenshot; on Claude Code `proof_gate.sh` refuses a reply opening with XONG
@@ -87,7 +87,7 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
 2. A code or bug prompt: run the failing oracle and see RED before editing production,
    then the same oracle GREEN after. Keep the command log and the exit code.
 3. From the repo root, once:
-   `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full`
+   `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`
    Exit 0 is required. Any other exit: paste the last 30 log lines, fix, and repeat this
    step. A dry-run, `--help`, or a single Gradle test does not replace this command.
 4. A proof image is blocking, same rank as exit 0, unless the change surely cannot show on a

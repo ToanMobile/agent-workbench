@@ -913,6 +913,98 @@ out="$(run_gate --run-tests --full)"; check "tool log only (artifacts/red-proof/
 echo "fun other() = 1" > src/Other.kt
 out="$(run_gate --run-tests --full)"; check "log + unwatched code -> still UNVERIFIED" 2 $? "$out" "PASS —"
 
+# --- The same command in two matrix rules runs once per gate (O2, 2026-09-28) ------------
+# agent-workbench: test_proof_gate.sh was one command under REG-DK-GATE-02 and REG-DK-HOOK-02 —
+# 151 s + 125 s for one result. The second rule reuses the first's result (and its FAIL).
+rm -rf "$TMP/repo" && mkdir -p "$TMP/repo/src" && cd "$TMP/repo" && git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt; echo "fun b() = 1" > src/B.kt
+cat > matrix.json <<'JSON'
+{"project":"t","rules":[
+ {"component":"Core","watch_files":["src/Core.kt"],"mandatory_regression_tests":[{"id":"REG-A","name":"a","command":"echo run >> runs.txt"}]},
+ {"component":"B","watch_files":["src/B.kt"],"mandatory_regression_tests":[{"id":"REG-B","name":"b","command":"echo  run >>  runs.txt"}]}]}
+JSON
+printf 'runs.txt\n' > .gitignore; git add -A && git commit -qm init
+echo "fun ok() = 2" > src/Core.kt; echo "fun b() = 2" > src/B.kt
+out="$(run_gate --run-tests --full)"
+check "two rules, one command (whitespace aside): gate PASS" 0 $? "$out"
+[ "$(wc -l < runs.txt | tr -d ' ')" = 1 ] && echo "✔ the shared command ran once" || { echo "✖ shared command ran $(wc -l < runs.txt | tr -d ' ') times"; FAILS=$((FAILS + 1)); }
+expect_in "…and the second rule says whose result it reuses" "REG-A" "$(printf '%s' "$out" | grep REG-B)"
+# DEVKIT_GATE_DONE lists only scripts a command RAN (Antigravity review): `cat tests/x.sh` is not a run.
+rm -rf "$TMP/repo" && mkdir -p "$TMP/repo/src" "$TMP/repo/tests" && cd "$TMP/repo" && git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt; echo 'exit 0' > tests/test_a.sh; echo 'exit 0' > tests/test_b.sh
+cat > matrix.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],"mandatory_regression_tests":[
+ {"id":"REG-CAT","name":"cat","command":"cat tests/test_a.sh >/dev/null"},
+ {"id":"REG-RUN","name":"run","command":"bash tests/test_b.sh"},
+ {"id":"REG-SEE","name":"see","command":"printf '%s\\n' \"$DEVKIT_GATE_DONE\" > done.txt"}]}]}
+JSON
+printf 'done.txt\n' > .gitignore; git add -A && git commit -qm init; echo "fun ok() = 2" > src/Core.kt
+run_gate --run-tests --full >/dev/null
+grep -q 'tests/test_b.sh$' done.txt && ! grep -q 'test_a.sh' done.txt && echo "✔ DEVKIT_GATE_DONE: the executed script, not the one only read" \
+  || { echo "✖ DEVKIT_GATE_DONE: $(cat done.txt 2>&1 | tr '\n' ' ')"; FAILS=$((FAILS + 1)); }
+
+# --- A PASS on the same content is reused (O1, 2026-09-28) --------------------------------
+# GeelyEx2 session 2bcee73a: 16 full runs, 40 min of waiting, many on content that had already
+# passed. Same tree fingerprint + same gate + same matrix, within DEVKIT_GATE_CACHE_MAX_S → reuse.
+make_repo "echo run >> runs.txt"; printf 'runs.txt\n' > .gitignore; git add .gitignore; git commit -qm ign
+echo "fun ok() = 2" > src/Core.kt
+runs() { wc -l < runs.txt 2>/dev/null | tr -d ' '; }
+out="$(run_gate --run-tests --full)"; check "first full run: PASS" 0 $? "$out"
+[ "$(runs)" = 1 ] && echo "✔ first run ran the suite" || { echo "✖ first run: $(runs) runs"; FAILS=$((FAILS + 1)); }
+out="$(run_gate --run-tests --full)"; check "same content again: PASS" 0 $? "$out"
+[ "$(runs)" = 1 ] && echo "✔ same content: the suite is not run again" || { echo "✖ same content re-ran: $(runs) runs"; FAILS=$((FAILS + 1)); }
+expect_in "…and the output says the result is reused" "dùng lại" "$out"
+out="$(run_gate --run-tests)"; check "impacted run on the same content: PASS" 0 $? "$out"
+[ "$(runs)" = 1 ] && echo "✔ a full PASS also covers the Stop hook's run" || { echo "✖ impacted re-ran: $(runs) runs"; FAILS=$((FAILS + 1)); }
+echo "fun ok() = 3" > src/Core.kt
+out="$(run_gate --run-tests --full)"; check "changed content: PASS" 0 $? "$out"
+[ "$(runs)" = 2 ] && echo "✔ changed content runs the suite again" || { echo "✖ changed content: $(runs) runs"; FAILS=$((FAILS + 1)); }
+out="$(run_gate --run-tests --full --no-cache)"; [ "$(runs)" = 3 ] && echo "✔ --no-cache runs it again" || { echo "✖ --no-cache: $(runs) runs"; FAILS=$((FAILS + 1)); }
+out="$(DEVKIT_GATE_CACHE=0 run_gate --run-tests --full)"; [ "$(runs)" = 4 ] && echo "✔ DEVKIT_GATE_CACHE=0 runs it again" || { echo "✖ cache=0: $(runs) runs"; FAILS=$((FAILS + 1)); }
+out="$(DEVKIT_GATE_CACHE_MAX_S=0 run_gate --run-tests --full)"; [ "$(runs)" = 5 ] && echo "✔ an expired PASS is not reused" || { echo "✖ expired: $(runs) runs"; FAILS=$((FAILS + 1)); }
+# Antigravity review: a git-ignored config the tests read is outside tree_fp — it must void the reuse.
+printf 'local.properties\n' >> .gitignore; git add .gitignore; git commit -qm ign2
+echo "sdk.dir=/a" > local.properties; run_gate --run-tests --full >/dev/null; n="$(runs)"
+run_gate --run-tests --full >/dev/null; [ "$(runs)" = "$n" ] && echo "✔ same content + same local.properties: reused" || { echo "✖ not reused with local.properties"; FAILS=$((FAILS + 1)); }
+echo "sdk.dir=/b" > local.properties; run_gate --run-tests --full >/dev/null
+[ "$(runs)" = "$((n + 1))" ] && echo "✔ an ignored local.properties change runs the suite again" || { echo "✖ local.properties change reused a PASS"; FAILS=$((FAILS + 1)); }
+# …and a suite that talks to a device is never reused; the others still are.
+rm -rf "$TMP/repo" && mkdir -p "$TMP/repo/src" && cd "$TMP/repo" && git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt
+cat > matrix.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],"mandatory_regression_tests":[
+ {"id":"REG-JVM","name":"jvm","command":"echo run >> runs.txt"},
+ {"id":"REG-DEV","name":"device","command":"true adb-shell-check; echo dev >> dev.txt"}]}]}
+JSON
+printf 'runs.txt\ndev.txt\n' > .gitignore; git add -A && git commit -qm init; echo "fun ok() = 2" > src/Core.kt
+run_gate --run-tests --full >/dev/null; run_gate --run-tests --full >/dev/null
+[ "$(runs)" = 1 ] && [ "$(wc -l < dev.txt | tr -d ' ')" = 2 ] && echo "✔ device suite re-runs, the JVM suite is reused" \
+  || { echo "✖ device reuse: jvm=$(runs) dev=$(wc -l < dev.txt | tr -d ' ')"; FAILS=$((FAILS + 1)); }
+
+# A reused result keeps the suite's real duration: pre-commit picks "light" suites by the
+# recorded duration, and a cached "0s" made it run the 100-400 s suites (2026-09-28).
+make_repo "sleep 1; echo run >> runs.txt"; printf 'runs.txt\n' > .gitignore; git add .gitignore; git commit -qm ign
+echo "fun ok() = 2" > src/Core.kt
+run_gate --run-tests --full >/dev/null; run_gate --run-tests --full >/dev/null
+d="$(python3 -c 'import json; print(json.load(open(".agents/regression_status.json"))["items"]["REG-1"]["last"]["duration"])' 2>/dev/null)"
+[ "$(runs)" = 1 ] && [ -n "$d" ] && [ "$d" != "0s" ] && echo "✔ a reused PASS records the suite's real duration ($d)" \
+  || { echo "✖ reused PASS duration: '$d' (runs=$(runs))"; FAILS=$((FAILS + 1)); }
+
+# --- --brief: the agent reads the verdict and what failed, not 70 lines of ✔ (O3, 2026-09-28) ---
+make_repo "echo run"; echo "fun ok() = 2" > src/Core.kt
+full="$(run_gate --run-tests --full --no-cache)"; brief="$(run_gate --run-tests --full --no-cache --brief)"; rc=$?
+check "--brief keeps the exit code (PASS)" 0 $rc "$brief"
+expect_in "--brief keeps the verdict" "KẾT LUẬN" "$brief"
+expect_in "--brief names the full output file" "last_output" "$brief"
+[ "$(printf '%s' "$brief" | wc -c)" -lt "$(( $(printf '%s' "$full" | wc -c) * 45 / 100 ))" ] \
+  && echo "✔ --brief is under 45% of the full output" || { echo "✖ --brief $(printf '%s' "$brief" | wc -c) vs full $(printf '%s' "$full" | wc -c)"; FAILS=$((FAILS + 1)); }
+make_repo "echo boom-detail; exit 7"; echo "fun ok() = 2" > src/Core.kt
+brief="$(run_gate --run-tests --full --brief)"; rc=$?
+check "--brief keeps the exit code (REJECT)" 1 $rc "$brief"
+expect_in "--brief names the failing suite" "REG-1" "$brief"
+expect_in "--brief keeps its exit code" "exit=7" "$brief"
+expect_in "--brief keeps the tail of its output" "boom-detail" "$brief"
+
 if [ "$FAILS" -ne 0 ]; then
   echo "post-fix-gate: $FAILS FAILED"; exit 1
 fi

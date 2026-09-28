@@ -222,7 +222,7 @@ def full_gate_problem():
     except (OSError, ValueError):
         rec = None
     if not rec or rec.get("exit") != 0:
-        return "không có lần chạy `post-fix-gate.py --run-tests --full` nào ra exit 0 trên code hiện tại"
+        return "không có lần chạy `post-fix-gate.py --run-tests --full --brief` nào ra exit 0 trên code hiện tại"
     if start is None:
         return "không xác định được lúc bắt đầu lượt để so với lần chạy cổng --full"
     if rec.get("time", 0) < start:
@@ -266,7 +266,7 @@ lines = ["⛔ PROOF-GATE: câu trả lời mở bằng XONG nhưng lượt này 
 if missing_report:
     lines.append("  - BÁO CÁO 4 mục (core-rules §1.3, mỗi mục 1–2 dòng) còn thiếu: " + " · ".join(missing_report))
 if gate_problem:
-    lines.append("  - CỔNG: " + gate_problem + ". Chạy từ gốc repo: python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full")
+    lines.append("  - CỔNG: " + gate_problem + ". Chạy từ gốc repo: python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief")
 if problems or (not good and need_image):
     if need_image:
         lines.append("  - ẢNH cần vì: " + scope)

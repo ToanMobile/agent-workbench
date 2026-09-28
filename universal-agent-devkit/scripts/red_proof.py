@@ -710,6 +710,7 @@ def main(argv=None) -> int:
         if mf.is_file():
             rc.sync_from_matrix(data, json.loads(mf.read_text(encoding="utf-8")))
         ids = resolved + (pending_ids(data, project) if pending else [])
+        shared = {}
         for bid in dict.fromkeys(ids):
             # A kept patch that puts the bug back beats any fix commit: it does not depend on
             # history (old fixes are huge or no longer revert). --fix-commit given → that wins.
@@ -729,7 +730,16 @@ def main(argv=None) -> int:
                 # not this bug's fix — session mode would compare against the wrong "fix".
                 why = ("không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; "
                        "chạy --bug <ID> --fix-commit <sha>")
-            result = prove(project, data, bid, fix_commit=fc, heavy=heavy, fix_reason=why)
+            # Bugs linked to the same tests and suites with the same fix share one proof (O6,
+            # 2026-09-28: two bugs of one session, one test, one fix commit — 4 sandbox runs).
+            item = data["items"][bid]
+            key = (tuple(sorted(test_paths(project, item))), tuple(sorted(item.get("tests") or [])), fc, why, heavy)
+            if key in shared:
+                first, done = shared[key]
+                result = {**done, "reason": f"{done.get('reason', '')} (cùng test và bản sửa với {first} — dùng chung lần chứng minh)"}
+            else:
+                result = prove(project, data, bid, fix_commit=fc, heavy=heavy, fix_reason=why)
+                shared[key] = (bid, result)
             with rc.locked(project):
                 fresh = rc.load(project)
                 if bid in fresh["items"]:

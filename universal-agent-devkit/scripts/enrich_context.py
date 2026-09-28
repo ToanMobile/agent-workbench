@@ -659,6 +659,59 @@ def req_hint(prompt, dossier, project_root):
             "review độc lập so tiêu chí với nguyên văn prompt; link test từng tiêu chí: `agent-kit req link <REQ> <n|all> <test>`")
 
 
+def context_note(payload, project_dir, session_id):
+    """O7 (2026-09-28): one line when the session's context passed a multiple of
+    CONTEXT_WARN_TOKENS (default 160 000; 0 = off) — GeelyEx2 session 2bcee73a re-read 214 M
+    cached tokens, every call reads the whole context. Size = the last assistant call's
+    input + cache read + cache creation, from the last 256 KB of the transcript. Once per
+    threshold step per session; it never tells the agent to skip reading rules."""
+    try:
+        limit = int(os.environ.get("CONTEXT_WARN_TOKENS", "160000"))
+    except ValueError:
+        limit = 160000
+    tp = payload.get("transcript_path") if isinstance(payload, dict) else None
+    if limit <= 0 or not isinstance(tp, str) or not tp:
+        return ""
+    try:
+        with open(tp, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - 262144))
+            tail = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return ""
+    used = 0
+    for line in reversed(tail):
+        if '"usage"' not in line:
+            continue
+        try:
+            u = json.loads(line)["message"]["usage"]
+            used = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens",
+                                                     "cache_creation_input_tokens"))
+            break
+        except (ValueError, KeyError, TypeError, AttributeError):
+            continue
+    if used < limit:
+        return ""
+    step = used // limit
+    state = os.path.join(project_dir, ".claude", "audit-gate",
+                         "context_note_" + (re.sub(r"[^A-Za-z0-9_-]", "_", session_id)[:64] or "default"))
+    try:
+        with open(state) as fh:
+            last = int(fh.read().strip() or 0)
+    except (OSError, ValueError):
+        last = 0
+    if step <= last:
+        return ""
+    try:
+        os.makedirs(os.path.dirname(state), exist_ok=True)
+        with open(state, "w") as fh:
+            fh.write(str(step))
+    except OSError:
+        pass
+    return (f"- Context phiên đã ~{used // 1000} nghìn token (mỗi lượt đọc lại toàn bộ): ghi checkpoint tiến độ, không đọc "
+            "lại file lớn đã đọc; gợi ý người dùng gõ /compact khi tiện — vẫn mở file luật khi cần.")
+
+
 if __name__ == "__main__":
     if "--hook" in sys.argv[1:]:
         # hooks/prompt_context.sh: the hook payload on stdin, one process for all of it.
@@ -679,7 +732,8 @@ if __name__ == "__main__":
             log_surfaced(project_dir, session_id, prompt_input, shown_refs(res))
             extra = [l for l in (capture_bug(prompt_input, res, project_dir, session_id, hook_payload),
                                  req_hint(prompt_input, res, project_dir), watch_inbox(project_dir),
-                                 command_words(prompt_input, project_dir)) if l]
+                                 command_words(prompt_input, project_dir),
+                                 context_note(hook_payload, project_dir, session_id)) if l]
             if extra:
                 text = "\n".join(([text] if text else [f"[DevKit] Ngữ cảnh tự động (profile: {res['active_profile']}):"])
                                   + extra)
