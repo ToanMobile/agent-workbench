@@ -791,6 +791,7 @@ STAGED = False       # --staged: audit the index — what `git commit` will reco
 STAGED_MODES = {}    # project-relative path -> index mode ("100644", "120000", "160000", …)
 _CONTENT_CACHE = {}
 BASE_REF = "HEAD"    # what "already there" means for a secret: HEAD, or the --diff base
+VACUITY_BASE = "HEAD"  # the code the vacuity revert puts back: BASE_REF, or the --since base
 _BASE_CACHE = {}
 PREEXISTING_SECRETS = []   # (file:line, label) found in the base version too — warned, not blocked
 
@@ -2247,8 +2248,9 @@ def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
     Default VACUITY_REVERT=narrow: only a PASS whose command names tests
     (--tests / --filter), including a package fallback that names *Class*.
     VACUITY_REVERT=1 also covers those modes without a name filter.
-    VACUITY_REVERT=0 skips. The re-run puts production files back to HEAD in this
-    tree and restores them afterwards. red_proof.py remains the sandbox path.
+    VACUITY_REVERT=0 skips. The re-run puts production files back to VACUITY_BASE (HEAD, the
+    --diff base, or the --since base for committed work) in this tree and restores them
+    afterwards. red_proof.py remains the sandbox path.
     """
     flag = os.environ.get("VACUITY_REVERT", "narrow")
     cmd = test.get("command") or ""
@@ -2271,7 +2273,7 @@ def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
             path = project_dir / rel
             saved.append((rel, path.read_bytes() if path.is_file() else None))
             res = subprocess.run(
-                ["git", "-C", str(get_repo_root()), "show", f"{BASE_REF}:{prefix}{rel}"],
+                ["git", "-C", str(get_repo_root()), "show", f"{VACUITY_BASE}:{prefix}{rel}"],
                 capture_output=True)
             if res.returncode != 0:
                 if path.is_file():
@@ -3027,6 +3029,11 @@ def main():
         log_err(tr(f"--diff không hợp lệ: {args.diff!r} (phải là một git ref, không được bắt đầu bằng '-')",
                    f"invalid --diff: {args.diff!r} (must be a git ref and must not start with '-')"))
         return 2
+    # --since reaches `git diff` and `git show <ref>:<file>` (vacuity revert) as a ref too.
+    if args.since is not None and (not args.since or args.since.startswith("-")):
+        log_err(tr(f"--since không hợp lệ: {args.since!r} (phải là một git ref, không được bắt đầu bằng '-')",
+                   f"invalid --since: {args.since!r} (must be a git ref and must not start with '-')"))
+        return 2
     if args.staged and (args.diff or args.run_tests or args.record_lesson or args.full):
         log_err(tr("--staged chỉ kiểm tĩnh nội dung đã stage — không dùng chung với --diff / --run-tests / --record-lesson",
                    "--staged only statically checks the staged content — it cannot be combined with --diff / --run-tests / --full / --record-lesson"))
@@ -3041,9 +3048,12 @@ def main():
             left = mb or left
         base_ref = left
 
-    global STAGED, BASE_REF
+    global STAGED, BASE_REF, VACUITY_BASE
     STAGED = args.staged or bool(args.commit_msg)
     BASE_REF = base_ref
+    # --since gates committed work (regression_gate.sh: unverified commits): HEAD already holds the
+    # fix there, so the vacuity revert must put back the --since base or every test looks vacuous.
+    VACUITY_BASE = args.since if args.since and not STAGED else base_ref
     try:
         all_changed = get_staged_files() if STAGED else get_modified_files(args.diff)
     except RuntimeError as e:
