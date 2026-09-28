@@ -1463,6 +1463,24 @@ def needs_no_test(rel_file: str) -> bool:
             or clean.lower().endswith(".log"))
 
 
+def new_orphan_tests(modified_files, matrix, base_ref) -> list:
+    """Test files this change ADDS (absent at base_ref) that no suite of the matrix executes — a
+    test only ever run by hand (GeelyEx2 tests/scripts/test-retrace-treo.py, 28/09/2026). The rule
+    is regression_checklist.orphan_tests; orphans already committed are checklist rows only."""
+    if not (matrix or {}).get("rules"):
+        return []
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
+    except ImportError:
+        return []
+    prefix = get_project_prefix()
+    new = [f for f in modified_files if f not in DELETED_FILES and rc.is_test_candidate(f)
+           and subprocess.run(["git", "-C", str(get_repo_root()), "cat-file", "-e", f"{base_ref}:{prefix}{f}"],
+                              capture_output=True).returncode != 0]
+    return rc.orphan_tests(get_project_dir(), matrix, candidates=new) if new else []
+
+
 def uncovered_code_files(modified_files, rules, covers=None) -> list:
     """Changed source files that no matrix rule watches — changes nothing will re-test later."""
     covers = checklist_covers() if covers is None else covers
@@ -2518,6 +2536,13 @@ def _update_regression_checklist(args, matrix, rules, modified_files, regression
         recorded = [dict(t, status="PASS_IMPACTED") if t.get("mode") == "impacted" and t.get("status") == "PASS"
                     else t for t in regression_tests]
         rc.record_results(data, recorded, task=args.task, commit=commit, project=get_project_dir())
+    # After the results: a guard row linked now shows NOT_RUN until a run AFTER its link.
+    synced = rc.sync_project(data, project_dir, matrix)   # + guards.json guards, orphan tests
+    if synced["guards"]:
+        log_ok(tr(f"Đã thêm {len(synced['guards'])} guard của .agents/local/guards.json vào checklist "
+                  "(chưa PASS tới khi chạy thật sau khi link + chứng minh ĐỎ): ",
+                  f"Added {len(synced['guards'])} guards of .agents/local/guards.json to the checklist "
+                  "(not PASS before a real run after the link + a RED proof): ") + ", ".join(synced["guards"][:10]))
     rc.prune_uncovered(data, lambda files: [f for f in uncovered_code_files(files, rules) if (project_dir / f).exists()])
     # No trusted rules (no matrix, or one the gate does not trust): every changed file
     # would look uncovered — rows that say nothing true. Record UNCOVERED only against
@@ -2536,7 +2561,9 @@ def _update_regression_checklist(args, matrix, rules, modified_files, regression
     c = rc.summary(data)
     print(f"  • Regression checklist: ✅ {c.get('PASS', 0)} · ❌ {c.get('FAIL', 0) + c.get('TIMEOUT', 0)}"
           f" · ⚠️ {c.get('UNCOVERED', 0) + c.get('NEEDS_TEST', 0)} · ⏳ {c.get('NOT_RUN', 0)}"
-          f" → {project_dir / rc.VIEW_FILE}")
+          + (f" · ⚠️ {c['ORPHAN_TEST']} {tr('test mồ côi (không suite nào chạy)', 'orphan tests (no suite runs them)')}"
+             if c.get("ORPHAN_TEST") else "")
+          + f" → {project_dir / rc.VIEW_FILE}")
     if added:
         log_warn(tr(f"{len(added)} file thay đổi CHƯA có test hồi quy — gắn test bằng ",
                     f"{len(added)} changed files have NO regression test — link one with ")
@@ -3380,6 +3407,15 @@ def main():
     # Every changed source file must be re-testable later; one no rule watches would
     # silently fall out of the regression checklist.
     uncovered = [] if args.allow_no_tests else uncovered_code_files(modified_files, rules)
+    # A NEW test file no suite executes runs only by hand: --full (the handover run) refuses it; the
+    # Stop hook's impacted run warns. Orphans already committed are checklist rows, never a block.
+    orphans_new = new_orphan_tests(modified_files, matrix, base_ref)
+    orphan_fix = tr("gọi nó trong lệnh của một suite ma trận (hoặc trong script lệnh đó chạy), hoặc đặt nó dưới watch_files của suite chạy cả module",
+                    "call it from a matrix suite's command (or a script that command runs), or put it under the watch_files of a suite that runs the whole module")
+    if orphans_new and not force_reason:
+        log_warn(tr(f"{len(orphans_new)} file test MỚI không suite nào của ma trận chạy (--full sẽ chặn): ",
+                    f"{len(orphans_new)} NEW test files no matrix suite runs (--full will block): ")
+                 + ", ".join(orphans_new[:5]) + f" — {orphan_fix}")
 
     print(f"\n{BOLD}{CYAN}──────────────────────────────────────────────────────────────────────────────────────{RESET}")
     if not static_ok or (run_tests and not tests_ok):
@@ -3397,6 +3433,10 @@ def main():
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — test hồi quy chưa chạy (dry-run)", "UNVERIFIED — regression tests not run (dry-run)"), YELLOW, 2
     elif unreadable:
         verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(unreadable)} file không đọc được để quét", f"UNVERIFIED — {len(unreadable)} files could not be read for scanning"), YELLOW, 2
+    elif orphans_new and force_reason:
+        shown = ", ".join(orphans_new[:5]) + (" …" if len(orphans_new) > 5 else "")
+        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(orphans_new)} file test MỚI mà không suite nào của ma trận chạy ({shown}): gate sẽ không bao giờ chạy lại nó — {orphan_fix}",
+                                                    f"UNVERIFIED — {len(orphans_new)} NEW test files that no matrix suite runs ({shown}): the gate would never run them again — {orphan_fix}"), YELLOW, 2
     elif uncovered and not no_coverage:
         verdict_text, verdict_color, exit_code = f"CHƯA XÁC MINH — {len(uncovered)} file code thay đổi chưa có test hồi quy (thêm vào regression_matrix.json, hoặc --allow-no-tests)", YELLOW, 2
     elif no_coverage:
@@ -3514,6 +3554,7 @@ def main():
             "report": str(report_file),
             "matrix_path": str(find_matrix_path(args.matrix) or ""),
             "uncovered": [] if args.allow_no_tests else uncovered_code_files(modified_files, rules),
+            "orphan_tests": orphans_new,   # new test files no matrix suite runs (block with --full)
             "checklist": str(get_project_dir() / ".agents" / "regression_checklist.md"),
         }, ensure_ascii=False))
 

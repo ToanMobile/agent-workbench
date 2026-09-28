@@ -169,7 +169,7 @@ try:
         except Exception:
             pass  # the background re-run is a convenience; the counts below must still print
     bad = {k: v for k, v in counts.items() if k in ("FAIL", "TIMEOUT", "FLAKY", "STALE", "UNCOVERED", "NEEDS_TEST",
-                                                    "NOT_IN_MATRIX", "OPEN")}
+                                                    "NOT_IN_MATRIX", "OPEN", "ORPHAN_TEST")}
     if bad:
         parts.append("checklist còn " + ", ".join(f"{v} {k}" for k, v in sorted(bad.items()))
                      + " (.agents/CHECKLIST.md)")

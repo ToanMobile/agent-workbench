@@ -19,6 +19,11 @@ Rules that keep it honest (same lesson as post-fix-gate: never a fabricated PASS
     nobody invents a test for it; a human/agent must map it to a real test id.
   - A recorded bug starts as "needs test" until it is linked to a test id; from then
     on it shows that test's real last result.
+  - Every guard of .agents/local/guards.json is a bug row (sync_guards): its own id, or the
+    row that already is it (BUG-<id>, same red patch, one-to-one same test) — never PASS
+    before a real run and a RED proof.
+  - A test file no matrix suite executes is an ORPHAN_TEST row (sync_orphans); post-fix-gate
+    --full refuses a change that ADDS one.
 
 CLI:
   regression_checklist.py show                     print the checklist
@@ -89,6 +94,7 @@ ICON = {
     "AUTO_CLOSED": "💤 tự đóng (REPORTED 14 ngày không ai đụng)",
     "VACUOUS": "🚫 TEST VÔ HIỆU (xanh cả khi bỏ bản sửa)",
     "NEEDS_CAR": "🚗 chờ chạy lặp trên xe",
+    "ORPHAN_TEST": "⚠️ test mồ côi (không suite nào chạy)",
 }
 SESSIONS_LIMIT = 20
 # Bug states that mean "nothing guards this bug from coming back".
@@ -728,6 +734,291 @@ def sync_from_matrix(data: dict, matrix: dict) -> None:
                 item["impacted_command"] = test["impacted_command"]
             else:
                 item.pop("impacted_command", None)
+
+
+# ── Which suite of the matrix EXECUTES a test file (orphan tests, guard links) ────────────────
+# A test file the gate never runs guards nothing: GeelyEx2 tests/scripts/test-retrace-treo.py
+# (28/09/2026) ran only by hand. A suite executes a test file when
+#   (a) its command is a whole-module runner of the file's language (Gradle for .kt/.java, go test
+#       for .go, …; no --tests/--filter narrowing), a watch pattern of its rule matches the file and
+#       the command runs its source set (_runs_source_set: src/androidTest needs a connected/androidTest
+#       task, Unity EditMode/PlayMode their mode); or
+#   (b) the file's name is in the command, or in a script the command invokes (one level: a token
+#       naming an existing text file), or a glob of that script (`tests/test_*.sh`) matches it.
+# ponytail: a name in a script comment counts as running it, and a two-level chain (suite → a.sh →
+# b.sh → test) is not followed — follow more levels when a real orphan hides behind one.
+TEST_CANDIDATE_RE = re.compile(
+    r"((Test|Tests|Spec)\.(kt|java|swift|scala|groovy|cs|m|mm)$"      # JVM / Swift / C# test classes
+    r"|_test\.(go|py|dart|rb|sh|js|ts)$|\.(test|spec)\.[cm]?[jt]sx?$"   # go, pytest, jest/vitest
+    r"|^test[_-][^/]*\.(py|sh|bash|js|mjs|ts|rb)$)")                  # test_x.py, test-x.py, test_x.sh
+_CLASS_TEST_EXT = (".kt", ".java", ".swift", ".scala", ".groovy", ".cs", ".m", ".mm")
+_SCRIPT_EXT = (".sh", ".bash", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", "")
+_RUNNERS = (   # (whole-module runner, file extensions it executes)
+    (re.compile(r"(?:^|[\s/])(?:gradlew|gradle|mvnw|mvn)(?:\s|$)"), (".kt", ".java", ".groovy", ".scala")),
+    (re.compile(r"\bxcodebuild\b.*\btest\b|\bswift\s+test\b"), (".swift", ".m", ".mm")),
+    (re.compile(r"-runTests\b|unity|\bdotnet\s+test\b", re.I), (".cs",)),
+    (re.compile(r"\bgo\s+test\b"), (".go",)),
+    (re.compile(r"\bcargo\s+test\b"), (".rs",)),
+    (re.compile(r"\b(?:npm|yarn|pnpm|bun)\s+(?:run\s+)?test\b|\b(?:jest|vitest|mocha)\b"),
+     (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")),
+    (re.compile(r"\bpytest\b|\bunittest\s+discover\b"), (".py",)),
+    (re.compile(r"\b(?:flutter|dart)\s+test\b"), (".dart",)),
+)
+_NARROW = re.compile(r"(?:^|\s)(?:--tests?|--filter|-only-testing\S*|-k)(?:[\s=]|$)|\S+\.py\b|::")
+_GLOB_TOKEN = re.compile(r"[A-Za-z0-9_.*?/-]*[*?][A-Za-z0-9_.*?/-]*")
+
+
+def is_test_candidate(path: str) -> bool:
+    """A file that is itself a test (not a helper next to one): a test-shaped name and, for a
+    class-based language or a shell test, a test directory (src/test/, src/commonTest/, Tests/…) above it."""
+    parts = path.replace("\\", "/").split("/")
+    if not TEST_CANDIDATE_RE.search(parts[-1]):
+        return False
+    if parts[-1].endswith(_CLASS_TEST_EXT):
+        return any(p.lower().endswith(("test", "tests")) or p.lower() in ("spec", "specs") for p in parts[:-1])
+    if parts[-1].startswith("test") and parts[-1].endswith((".sh", ".bash")):
+        return any(p.lower() in ("test", "tests") for p in parts[:-1])
+    return True
+
+
+def _segments(command: str) -> list:
+    """[(cd dir or "", segment)] of a shell command split on && ; || |; a `cd X` sets the dir of
+    the segments after it."""
+    out, cwd = [], ""
+    for seg in re.split(r"&&|\|\||;|\|", command or ""):
+        seg = seg.strip()
+        m = re.match(r"cd\s+(\S+)$", seg)
+        if m:
+            cwd = m.group(1).strip("'\"").rstrip("/")
+            cwd = "" if cwd in (".", "./") else cwd
+            continue
+        if seg:
+            out.append((cwd, seg))
+    return out
+
+
+def _script_text(project: Path, cwd: str, tok: str):
+    """(text, dir relative to the project) of the script a command token names, or None."""
+    for cand in dict.fromkeys([project / cwd / tok, project / tok]):
+        try:
+            if not cand.is_file() or cand.suffix not in _SCRIPT_EXT or cand.stat().st_size > 2_000_000:
+                continue
+            text = cand.read_text(encoding="utf-8", errors="replace")
+            base = cand.parent.resolve().relative_to(project.resolve()).as_posix()
+        except (OSError, ValueError):
+            continue
+        if "\0" not in text[:4096]:
+            return text, "" if base == "." else base
+    return None
+
+
+def suite_index(project: Path, matrix: dict) -> list:
+    """Per matrix suite, what it executes: whole-module segments, the words of its command and of
+    the scripts it invokes, the globs of those scripts. Built once per sync."""
+    import fnmatch
+    project = Path(project)
+    out = []
+    for rule in (matrix or {}).get("rules", []) or []:
+        pats = [p.replace("\\", "/") for p in rule.get("watch_files", []) or []]
+        pats += [p[3:] for p in pats if p.startswith("**/")]
+        watch = re.compile("|".join(fnmatch.translate(p) for p in pats)) if pats else None
+        for test in rule.get("mandatory_regression_tests", []) or []:
+            cmd = test.get("command") or ""
+            if not test.get("id") or not cmd:
+                continue
+            whole, texts, globs = [], [cmd], []
+            for cwd, seg in _segments(cmd):
+                exts = tuple(e for rx, ex in _RUNNERS if rx.search(seg) for e in ex)
+                if exts and not _NARROW.search(seg):
+                    whole.append((cwd, seg, exts))
+                for tok in seg.split():
+                    tok = tok.strip("'\"")
+                    if not tok or tok.startswith("-") or "=" in tok:
+                        continue
+                    found = _script_text(project, cwd, tok)
+                    if not found:
+                        continue
+                    text, base = found
+                    texts.append(text)
+                    # quotes and $VARs out: "$ROOT/workflows"/*.test.mjs is the glob workflows/*.test.mjs
+                    for g in _GLOB_TOKEN.findall(re.sub(r"\$\{?\w+\}?|[\"']", "", text)):
+                        g = g[2:] if g.startswith("./") else g.lstrip("/")
+                        if ("/" in g or re.search(r"\.\w+$", g)) and re.search(r"[A-Za-z]", g):
+                            globs.append(g if "/" in g else f"{base}/{g}".lstrip("/"))
+            words = set()
+            for text in texts:
+                words.update(re.findall(r"[\w.-]+", text))
+                words.update(re.findall(r"[\w-]+", text))
+            out.append({"id": test["id"], "watch": watch, "whole": whole, "words": words,
+                        "globs": [re.compile(fnmatch.translate(g) + "|" + fnmatch.translate("*/" + g))
+                                  if "/" in g else re.compile(fnmatch.translate(g)) for g in dict.fromkeys(globs)]})
+    return out
+
+
+def running_suites(project: Path, path: str, index: list) -> list:
+    """Ids of the suites (suite_index) that execute the test file at path."""
+    path = path.replace("\\", "/")
+    name = path.rsplit("/", 1)[-1]
+    stem = name.rsplit(".", 1)[0]
+    ext = "." + name.rsplit(".", 1)[-1] if "." in name else ""
+    ids = []
+    for s in index:
+        hit = name in s["words"] or (len(stem) >= 6 and stem in s["words"]) or any(g.match(path) for g in s["globs"])
+        if not hit and s["watch"] is not None and s["watch"].match(path):
+            for cwd, seg, exts in s["whole"]:
+                if ext not in exts:
+                    continue
+                if cwd and path.startswith(cwd + "/"):   # a Gradle task path is relative to the cd dir
+                    hit = _runs_source_set(path[len(cwd) + 1:], seg, Path(project) / cwd)
+                else:
+                    hit = _runs_source_set(path, seg, Path(project))
+                if hit:
+                    break
+        if hit:
+            ids.append(s["id"])
+    return ids
+
+
+def orphan_tests(project: Path, matrix: dict, candidates=None, index=None) -> list:
+    """Test files (candidates; default every file git knows in the project) that exist and that no
+    suite of the matrix executes. [] without matrix rules: nothing can be said."""
+    if not (matrix or {}).get("rules"):
+        return []
+    project = Path(project)
+    if candidates is None:
+        candidates = _git_lines(project, "ls-files", "--cached", "--others", "--exclude-standard", "--", ".") or []
+    index = suite_index(project, matrix) if index is None else index
+    return [f for f in dict.fromkeys(candidates)
+            if is_test_candidate(f) and (project / f).is_file() and not running_suites(project, f, index)]
+
+
+def sync_orphans(data: dict, project: Path, matrix: dict, index=None) -> tuple:
+    """ORPHAN_TEST:<path> rows = the test files no suite executes now: new ones added, the others
+    removed (a DevKit save records the removal: no rollback). Returns (added, removed)."""
+    found = set(orphan_tests(project, matrix, index=index))
+    rows = [k for k, it in data["items"].items() if it.get("kind") == "orphan"]
+    removed = [k for k in rows if data["items"][k].get("file") not in found]
+    for k in removed:
+        del data["items"][k]
+    added = []
+    for f in sorted(found):
+        key = f"ORPHAN_TEST:{f}"
+        if key not in data["items"]:
+            data["items"][key] = {"id": key, "kind": "orphan", "title": f, "component": "-", "file": f,
+                                  "created_at": _now(), "last": None, "history": []}
+            added.append(key)
+    return added, removed
+
+
+GUARDS_FILE = Path(".agents") / "local" / "guards.json"
+
+
+def _own_refs(item: dict) -> set:
+    return set(item.get("runs_in_suite") or []) | set(item.get("test_refs") or [])
+
+
+def sync_guards(data: dict, project: Path, matrix: dict | None = None, index=None) -> list:
+    """Every guard of .agents/local/guards.json (a measured fix: id, title, tests, red_patch) is a
+    bug row — GeelyEx2 28/09: RELAY-0928-heartbeat-khong-phai-join had a red-patch-proven test and
+    no row. The row that already is the guard: its id; one listing it in "guards"; one whose RED
+    proof used the guard's red_patch (that proof is reused, never invented); or — one-to-one only —
+    the one bug row whose own test files cover the guard's tests and whose proof (if any) used no
+    other patch (two guards of one shared test get two rows). Else a new row linked to the suites that execute its tests: NOT_RUN, then UNPROVEN
+    until a RED proof (red_proof.py --bug <id> --patch <red_patch>). Returns the ids created."""
+    try:
+        raw = json.loads((Path(project) / GUARDS_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    guards = [g for g in (raw.get("guards", []) if isinstance(raw, dict) else raw)
+              if isinstance(g, dict) and isinstance(g.get("id"), str) and g["id"].strip()]
+    items = data["items"]
+    bugs = {k: it for k, it in items.items() if it.get("kind") == "bug"}
+    claimed = {gid for it in bugs.values() for gid in it.get("guards") or []}
+    todo = []
+    for g in guards:
+        gid = g["id"].strip()
+        # `bugs add --id X` stores BUG-X: the same guard with or without the prefix (GeelyEx2 28/09).
+        same = next((k for k in (gid, f"BUG-{gid}", gid[4:] if gid.upper().startswith("BUG-") else None)
+                     if k and k in bugs), None)
+        if same:
+            todo.append((g, same))
+            continue
+        if gid in claimed or gid in items:   # another row is this guard, or the id is a suite's
+            continue
+        patch = str(g.get("red_patch") or "")
+        row = next((k for k, it in bugs.items() if patch and (
+            (it.get("red_proof") or {}).get("patch") == patch or Path(patch).stem == k)), None)
+        if row:
+            bugs[row].setdefault("guards", []).append(gid)
+            continue
+        todo.append((g, None))
+    # Same-test claims: a row exactly one guard points at, that no guard owns already, and whose
+    # RED proof (if any) covered these very tests.
+    wants: dict = {}
+    taken = {row for _, row in todo if row}
+    for g, row in todo:
+        tests = set(g.get("tests") or [])
+        if row is not None or not tests:
+            continue
+        for k, it in bugs.items():
+            if k in taken or it.get("source") == "guards.json" or it.get("guards") \
+                    or it.get("state") in ("reported", "auto_closed"):
+                continue
+            proof = it.get("red_proof") or {}
+            if g.get("red_patch") and proof.get("patch") and proof["patch"] != g["red_patch"]:
+                continue   # proven with another patch: maybe another bug on the same test — never inherit it
+            if tests <= _own_refs(it) and (proof.get("status") != "PROVEN" or tests <= set(proof.get("files") or {})):
+                wants.setdefault(k, []).append(g["id"].strip())
+    created = []
+    for g, row in todo:
+        gid = g["id"].strip()
+        mine = [k for k, ids in wants.items() if ids == [gid]]
+        if row is None and len(mine) == 1:
+            bugs[mine[0]].setdefault("guards", []).append(gid)
+            continue
+        if index is None:
+            index = suite_index(project, matrix or {})
+        item = items.get(row or gid)
+        # A row someone linked by hand keeps its links; only a guard test it lacks is added.
+        tests = [t for t in g.get("tests") or []
+                 if item is None or item.get("source") == "guards.json" or t not in _own_refs(item)]
+        in_suite, outside, ids = [], [], []
+        for t in tests:
+            run = running_suites(project, t, index)
+            ids += [i for i in run if i not in ids]
+            (in_suite if run else outside).append(t)
+        if item is None:
+            item = items[gid] = {"id": gid, "kind": "bug", "created_at": _now(), "last": None, "history": [],
+                                 "tests": [], "fixed": True, "state": "confirmed", "source": "guards.json",
+                                 "component": str(g.get("file") or "-").split("/")[0] or "-"}
+            created.append(gid)
+        if item.get("source") == "guards.json":
+            item["title"] = " ".join(str(g.get("title") or gid).split())
+            if g.get("red_patch"):
+                item["red_patch"] = g["red_patch"]
+            if g.get("handbook"):
+                item["evidence"] = g["handbook"]
+        new_ids = [i for i in ids if i not in item.setdefault("tests", [])]
+        if new_ids:
+            item["tests"] += new_ids
+            item["linked_at"], item["linked_ts"] = _now(), time.time()   # older results predate the link
+        for key, vals in (("runs_in_suite", in_suite), ("test_refs", outside)):
+            for v in vals:
+                if v not in item.setdefault(key, []):
+                    item[key].append(v)
+        if gid not in item.setdefault("guards", []):
+            item["guards"].append(gid)
+    return created
+
+
+def sync_project(data: dict, project: Path, matrix: dict | None) -> dict:
+    """The checklist's sync: matrix suites, guards.json guards, orphan tests (one suite index)."""
+    matrix = matrix or {}
+    sync_from_matrix(data, matrix)
+    index = suite_index(project, matrix) if matrix.get("rules") else []
+    created = sync_guards(data, project, matrix, index=index)
+    added, removed = sync_orphans(data, project, matrix, index=index)
+    return {"guards": created, "orphans": added, "orphans_gone": removed}
 
 
 EVIDENCE_DIR = Path(".agents") / "evidence"
@@ -1558,6 +1849,8 @@ def effective_status(data: dict, item: dict) -> str:
     kind = item.get("kind")
     if kind == "uncovered":
         return "UNCOVERED"
+    if kind == "orphan":
+        return "ORPHAN_TEST"
     if kind == "req":
         crit = item.get("criteria") or []
         if not crit or any(not c.get("tests") for c in crit):
@@ -1665,6 +1958,8 @@ ALERT_TODO = {
     "NOT_IN_MATRIX": "test có nhưng gate không chạy — đưa vào ma trận hoặc link suite của ma trận",
     "OPEN": "sửa theo ĐỎ→XANH rồi `agent-kit bugs link`",
     "UNCOVERED": "file code chưa có test — gắn test (`regression_checklist.py link`)",
+    "ORPHAN_TEST": "gate không bao giờ chạy test này — gọi nó trong lệnh của một suite ma trận (hoặc script lệnh đó "
+                   "chạy), hoặc đặt nó dưới watch_files của suite chạy cả module",
     "NEEDS_CAR": f"chạy lặp trên xe sau bản sửa (≥{REPEAT_MIN} lượt đạt, 0 hỏng) → `agent-kit bugs repeat <ID> <ket-qua.json>`",
 }
 ARCHIVE_FILE = Path(".agents") / "archive" / "BUG_ARCHIVE.md"
@@ -1730,6 +2025,7 @@ def render(project_dir: Path, data: dict) -> Path:
         f"**An toàn {pct}% ({passed}/{len(confirmed)})** · ❌ {c.get('FAIL', 0) + c.get('TIMEOUT', 0)}"
         f" · 🔁 {c.get('FLAKY', 0)} · 🚫 {c.get('VACUOUS', 0)} · 🟡 {c.get('STALE', 0)} cần chạy lại"
         f" · ⚠️ {c.get('UNCOVERED', 0) + c.get('NEEDS_TEST', 0) + c.get('NOT_IN_MATRIX', 0)} cần test"
+        f" · ⚠️ {c.get('ORPHAN_TEST', 0)} test mồ côi"
         f" · 🐞 {c.get('OPEN', 0)} chưa sửa · ⏳ {c.get('NOT_RUN', 0) + c.get('UNPROVEN', 0)} chờ"
         f" · 🚗 {c.get('NEEDS_CAR', 0)} chờ chạy lặp trên xe"
         f" · 🟡 REPORTED {c.get('REPORTED', 0)}"
@@ -1743,7 +2039,7 @@ def render(project_dir: Path, data: dict) -> Path:
         "",
     ]
     order = {"FAIL": 0, "TIMEOUT": 0, "VACUOUS": 0, "FLAKY": 1, "STALE": 2, "OPEN": 3, "NEEDS_TEST": 4,
-             "NOT_IN_MATRIX": 4, "UNCOVERED": 5}
+             "NOT_IN_MATRIX": 4, "UNCOVERED": 5, "ORPHAN_TEST": 5}
     alert = sorted((i for i in items if status[i] in ALERT_TODO), key=lambda i: (order.get(status[i], 9), i))
     lines.append(f"## 🚨 Cần xử lý ({len(alert)})")
     lines.append("")
@@ -1832,9 +2128,10 @@ def render(project_dir: Path, data: dict) -> Path:
 
 
 def _sync_matrix(data: dict, project: Path) -> None:
+    """Matrix suites (their ids must be known to be linked), guards.json guards, orphan tests."""
     matrix_file = project / ".agents" / "regression_matrix.active.json"
-    if matrix_file.is_file():   # matrix test ids must be known to be linked
-        sync_from_matrix(data, json.loads(matrix_file.read_text(encoding="utf-8")))
+    matrix = json.loads(matrix_file.read_text(encoding="utf-8")) if matrix_file.is_file() else {}
+    sync_project(data, project, matrix)
 
 
 def _bug_command(args, project: Path) -> int:
@@ -2012,9 +2309,7 @@ def main(argv=None) -> int:
             return _bug_command(args, project)
         data = load(project)
         if args.cmd == "import":
-            matrix_file = project / ".agents" / "regression_matrix.active.json"
-            if matrix_file.is_file():   # matrix test ids must be known to be linked
-                sync_from_matrix(data, json.loads(matrix_file.read_text(encoding="utf-8")))
+            _sync_matrix(data, project)
             rows = parse_bug_table(Path(args.table).read_text(encoding="utf-8"))
             counts = import_bugs(data, rows, source=os.path.basename(args.table), project=project)
             c = {}
@@ -2036,6 +2331,7 @@ def main(argv=None) -> int:
         elif args.cmd == "render":
             with locked(project):
                 data = load(project)
+                _sync_matrix(data, project)
                 save(project, data)
             print(project / VIEW_FILE)
         else:
