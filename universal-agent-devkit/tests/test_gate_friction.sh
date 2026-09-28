@@ -204,6 +204,18 @@ printf '{"session_id":"s8","hook_event_name":"SessionStart"}' | HOME="$GH" CLAUD
 [ -f "$TMP/clone8/.agents/devkit/bin/post-fix-gate.py" ] && [ ! -e "$TMP/clone8/app/google-services.json" ] \
   && ok "clone with no known source: DevKit link only, no config guessed" \
   || fail "clone8: $(ls -a "$TMP/clone8/.agents" "$TMP/clone8/app" 2>&1 | tr '\n' ' ')"
+# Security (check 4c, 2026-09-28): a clone has its own .git/info/exclude. A secret the source
+# checkout ignores only there would land in the clone NOT ignored — one `git add` from a push.
+M10="$TMP/main10"; mkdir -p "$M10/app"; git -C "$M10" init -q
+git -C "$M10" config user.email t@t; git -C "$M10" config user.name t
+echo x > "$M10/README.md"; git -C "$M10" add -A; git -C "$M10" commit -qm init
+echo 'app/google-services.json' >> "$M10/.git/info/exclude"; echo '{}' > "$M10/app/google-services.json"
+git clone -q "$M10" "$TMP/clone10" 2>/dev/null
+mkdir -p "$GH/.grok/sessions/x/s10"; printf '{"source_workspace_dir": "%s"}' "$M10" > "$GH/.grok/sessions/x/s10/summary.json"
+( cd "$TMP/clone10" && HOME="$GH" python3 "$DEVKIT_DIR/scripts/worktree.py" heal --session=s10 >/dev/null 2>&1 )
+[ ! -e "$TMP/clone10/app/google-services.json" ] && [ -z "$(git -C "$TMP/clone10" status --porcelain)" ] \
+  && ok "heal never copies a file the clone would not ignore (source ignores it only in .git/info/exclude)" \
+  || fail "secret copied un-ignored into the clone: $(git -C "$TMP/clone10" status --porcelain)"
 
 # ── 6. a file this session created is not "never looked at" ──────────────────
 # OfficeReader 2026-09-28: Grok created PdfViewportRestore.kt (search_replace, empty

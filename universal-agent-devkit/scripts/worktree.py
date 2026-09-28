@@ -130,6 +130,11 @@ def _copy(main, wt, rel):
     src, dst = os.path.join(main, rel), os.path.join(wt, rel)
     if not os.path.isfile(src) or os.path.lexists(dst):
         return False
+    # Only where the DESTINATION ignores it too: a separate clone (Grok) has its own
+    # .git/info/exclude, so a secret the source ignores only there would land un-ignored,
+    # one `git add` from a push (security review 2026-09-28).
+    if git(wt, "check-ignore", "-q", "--no-index", "--", rel, check=False).returncode != 0:
+        return False
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.copy2(src, dst)
     return True
