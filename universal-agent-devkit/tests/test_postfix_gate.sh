@@ -1005,6 +1005,14 @@ expect_in "--brief names the failing suite" "REG-1" "$brief"
 expect_in "--brief keeps its exit code" "exit=7" "$brief"
 expect_in "--brief keeps the tail of its output" "boom-detail" "$brief"
 
+# --brief of a failing suite shows WHICH sub-test failed, not only the last 5 lines (2026-09-28:
+# run_impacted's ✖ tests/test_guards_orphans.sh sat mid-output; --brief showed five ✔ lines).
+make_repo "printf '✔ a\\\\n✖ tests/test_mid.sh — boom\\\\n✔ b\\\\n✔ c\\\\n✔ d\\\\n✔ e\\\\n✔ f\\\\n✔ g\\\\n'; exit 1"; echo "fun ok() = 2" > src/Core.kt
+brief="$(run_gate --run-tests --full --brief)"
+expect_in "--brief names the failing sub-test from mid-output" "| ✖ tests/test_mid.sh — boom" "$brief"
+full="$(run_gate --run-tests --full --no-cache)"
+expect_in "the full report names it too" "| ✖ tests/test_mid.sh — boom" "$full"
+
 if [ "$FAILS" -ne 0 ]; then
   echo "post-fix-gate: $FAILS FAILED"; exit 1
 fi

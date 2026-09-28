@@ -135,3 +135,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Hai chỗ trong DevKit phân loại cùng một thứ khác nhau
 - **Nguyên nhân:** needs_no_test (post-fix-gate) không coi *.log là tài liệu dù tree_fp đã coi; RUNNER_FAIL_RX không đọc failures="N" của JUnit XML dù gate XML đọc được; proof_gate coi git push trong repo nháp là bàn giao — agent GeelyEx2 bị chặn nhầm và một lần chạy đỏ bị tính là xanh (2026-09-28)
 - **Quy tắc phòng ngừa & Cách fix:** Khi thêm/đổi luật phân loại (file không cần test, dấu hiệu đỏ, lệnh bàn giao) ở một gate, grep mọi gate khác có luật cùng loại và dùng chung một hàm/regex; mỗi dạng output thật agent hay in (log redirect, XML tóm tắt) phải có ca test ĐỎ và XANH
+
+---
+
+### [INSTINCT-016] Cài DevKit từ bản stage cũ ghi đè commit của phiên khác
+- **Ngày phát hiện:** 2026-09-28
+- **Hiện tượng lỗi:** Cài DevKit từ bản stage cũ ghi đè commit của phiên khác
+- **Nguyên nhân:** Stage chép từ bản đang chạy lúc bắt đầu việc; một phiên khác commit vào cùng file sau đó; install_atomic ghi đè cả file bằng bản stage nên mất hunk của commit 7e2ea43 (2 lần, 2026-09-28)
+- **Quy tắc phòng ngừa & Cách fix:** Trước khi cài một file: so bản đang chạy với HEAD và với bản gốc của stage; nếu HEAD đã đổi thì gộp 3 chiều (git merge-file) hoặc sửa tại chỗ bằng thay đúng đoạn (đọc từ đĩa, ghi file tạm + os.replace); không bao giờ ghi đè cả file bằng bản trong bộ nhớ; sau khi cài kiểm git diff HEAD không có dòng xoá lạ

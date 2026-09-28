@@ -3237,7 +3237,7 @@ def main():
             prev = ran_cmds.get(key)
             if prev is not None:
                 for k in ("status", "exit_code", "output_tail", "log", "flaky", "infra", "infra_retry",
-                          "env_blocked", "vacuity"):
+                          "env_blocked", "vacuity", "fail_lines"):
                     if k in prev:
                         t[k] = prev[k]
                 t["duration"] = prev.get("duration") or "0s"   # its real cost, for pre-commit's light-suite pick
@@ -3279,6 +3279,9 @@ def main():
                 if t["status"] == "FAIL" and environment_blocked(proc.returncode, out):
                     t["env_blocked"] = True     # still FAIL: the verdict never turns into a PASS
                 t["output_tail"] = (out or "")[-2000:]
+                # Which sub-test failed, from the WHOLE output: run_impacted's "✖ tests/x.sh" sits
+                # mid-output, outside the last lines shown (2026-09-28, --brief showed five ✔).
+                t["fail_lines"] = [l.rstrip()[:300] for l in (out or "").splitlines() if FAIL_LINE.search(l)][:8]
             except subprocess.TimeoutExpired:
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)
@@ -3332,7 +3335,8 @@ def main():
         extra = f", exit={t['exit_code']}" if "exit_code" in t else ""
         print(f"           {DIM}{tr('Lệnh chạy', 'Command')}: {t['command']} ({t['duration']}{extra}){RESET}")
         if st in ("FAIL", "TIMEOUT", "UNTESTED") and t.get("output_tail"):
-            for line in t["output_tail"].strip().splitlines()[-5:]:
+            last = t["output_tail"].strip().splitlines()[-5:]
+            for line in [l for l in t.get("fail_lines") or [] if l not in last] + last:
                 print(f"           {DIM}| {line}{RESET}")
         mark = "x" if st == "PASS" else " "
         mode_note = ""
@@ -3622,6 +3626,9 @@ def main():
     return exit_code
 
 
+FAIL_LINE = re.compile(r"✖|✗|❌|\bFAILED\b|\bFAIL\b|\bERROR\b|Traceback|AssertionError|\bException\b")
+
+
 def run_brief():
     """--brief (O3, 2026-09-28): an agent reads the verdict and what failed, not ~70 lines of ✔ —
     each run's output stays in its context and is re-read on every later call. The gate runs
@@ -3654,7 +3661,7 @@ def run_brief():
         tail = 0
         if "✖" in plain or re.search(r"\[ \] (?!PASS)", plain):
             keep.append(line)
-            tail = 7
+            tail = 16   # up to 8 failing sub-test lines + the last 5 lines + the command line
     json_line = text.rstrip().splitlines()[-1] if "--json" in sys.argv and text.strip() else ""
     keep.append(tr(f"  (đầy đủ: {out} — last_output.log)", f"  (full output: {out} — last_output.log)"))
     if json_line.startswith("{") and (not keep or keep[-1] != json_line):
