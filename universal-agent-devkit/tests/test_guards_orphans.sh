@@ -164,37 +164,42 @@ render
 [ "$(has tests/test-b.py)" = False ] && ok "B9 the row goes away once a suite script runs the test" || fail "B9 still orphan after run.sh names it"
 git add run.sh && git commit -qm "run test-b"
 
-# The gate: a NEW orphan test in the diff fails --full; the same file once committed only warns.
-echo "print('new')" > tests/test-new.py
+# The gate blocks only a SURE orphan: a new test no rule watches and no suite command / script names
+# (extra/ here). A new test under a watched dir is never blocked, only listed (checklist ⚠️).
+mkdir -p extra
+echo "print('new')" > extra/test_new.py; echo "fun ok() = 2" > src/Core.kt
 gate --run-tests --full; rc=$?
-[ "$rc" = 2 ] && grep -q 'file test MỚI mà không suite.*tests/test-new.py' "$TMP/out" && ok "B10 --full fails (exit 2) on a new test no suite runs, naming it" \
+[ "$rc" = 2 ] && grep -q 'file test MỚI mà không suite.*extra/test_new.py' "$TMP/out" && ok "B10 --full fails (exit 2) on a new test no rule watches and no suite names" \
   || fail "B10 --full exit $rc: $(tail -5 "$TMP/out")"
 gate --run-tests --full --allow-orphan-tests; rc=$?
 [ "$rc" = 0 ] && ok "B10b --allow-orphan-tests lets --full pass with a new orphan test" || fail "B10b exit $rc: $(tail -3 "$TMP/out")"
 gate --run-tests; rc=$?
 [ "$rc" = 0 ] && ok "B11 the impacted run (Stop hook) only warns about it" || fail "B11 impacted exit $rc: $(tail -5 "$TMP/out")"
-git add tests/test-new.py && git commit -qm "an orphan, committed"
+git add extra src && git commit -qm "an orphan, committed"
 echo "fun ok() = 3" > src/Core.kt
 gate --run-tests --full; rc=$?
 [ "$rc" = 0 ] && ok "B12 an orphan already committed does not fail --full (checklist row only)" || fail "B12 exit $rc: $(tail -5 "$TMP/out")"
-[ "$(has tests/test-new.py)" = True ] && ok "B13 the committed orphan is a checklist row" || fail "B13 no row for test-new.py"
+[ "$(has extra/test_new.py)" = True ] && ok "B13 the committed orphan is a checklist row" || fail "B13 no row for extra/test_new.py"
 echo "print('ok')" > tests/test_d.py
 printf 'for t in tests/test_*.sh; do sh "$t" || exit 1; done\npython3 tests/test_d.py\n' > runall.sh
 gate --run-tests --full; rc=$?
 [ "$rc" = 0 ] && ok "B14 a new test that a changed suite script runs passes --full" || fail "B14 exit $rc: $(tail -5 "$TMP/out")"
 echo "fun ok() = 1" > src/Core.kt
 git add -A tests runall.sh src && git commit -qm "test_d"
-git mv tests/test-new.py tests/test-renamed.py
+git mv extra/test_new.py extra/test_renamed.py; echo "fun ok() = 4" > src/Core.kt
 gate --run-tests --full; rc=$?
 [ "$rc" = 0 ] && ok "B15 renaming an orphan test already committed does not fail --full" || fail "B15 exit $rc: $(tail -4 "$TMP/out")"
-git commit -qm "rename"
-echo "print('in range')" > tests/test-range.py && git add tests/test-range.py && git commit -qm "an orphan in a commit"
+git add -A extra src && git commit -qm "rename"
+echo "print('in range')" > extra/test_range.py && echo "fun ok() = 5" > src/Core.kt && git add extra src && git commit -qm "an orphan in a commit"
 gate --run-tests --full --diff HEAD~1..HEAD; rc=$?
-[ "$rc" = 2 ] && grep -q 'file test MỚI mà không suite.*tests/test-range.py' "$TMP/out" && ok "B16 --diff A..B checks the tests the range adds (base = A)" || fail "B16 exit $rc: $(tail -4 "$TMP/out")"
-cp tests/test-range.py tests/test-copy.py && echo "print('changed')" >> tests/test-range.py && git add tests/test-copy.py tests/test-range.py
+[ "$rc" = 2 ] && grep -q 'file test MỚI mà không suite.*extra/test_range.py' "$TMP/out" && ok "B16 --diff A..B checks the tests the range adds (base = A)" || fail "B16 exit $rc: $(tail -4 "$TMP/out")"
+cp extra/test_range.py extra/test_copy.py && echo "print('changed')" >> extra/test_range.py && echo "fun ok() = 6" > src/Core.kt && git add extra src
 gate --run-tests --full; rc=$?
-[ "$rc" = 2 ] && grep -q 'file test MỚI mà không suite.*tests/test-copy.py' "$TMP/out" && ok "B17 a copied test is a new test (only a rename keeps its history)" || fail "B17 exit $rc: $(grep -m2 -E 'KẾT LUẬN|mồ côi' "$TMP/out")"
+[ "$rc" = 2 ] && grep -q 'file test MỚI mà không suite.*extra/test_copy.py' "$TMP/out" && ok "B17 a copied test is a new test (only a rename keeps its history)" || fail "B17 exit $rc: $(grep -m2 -E 'KẾT LUẬN|mồ côi' "$TMP/out")"
 git commit -qm "copy"
+echo "print('w')" > tests/test_watched_new.py
+gate --run-tests --full; rc=$?
+[ "$rc" = 0 ] && ok "B18 a new test under a watched dir is never blocked (whatever the runner analysis says)" || fail "B18 exit $rc: $(grep -m2 -E 'KẾT LUẬN|mồ côi' "$TMP/out")"
 
 # ── C. suites that run tests through a runner (not by naming the file) ─────────
 covered() {  # <repo> <test path> → True when some suite of its matrix runs it
@@ -255,9 +260,10 @@ printf 'case "$1" in\n  test) node --test test/ ;;\n  health) echo ok ;;\nesac\n
 C="$TMP/d6"; mkdir -p "$C/.agents" "$C/tests" "$C/scripts" && (cd "$C" && git init -q . && git config user.email t@t && git config user.name t)
 printf '{"project":"d","rules":[{"component":"T","watch_files":["tests/*"],"mandatory_regression_tests":[{"id":"REG-T","name":"t","command":"python3 tests/test_a.py"}]},{"component":"F","watch_files":["scripts/*.sh"],"mandatory_regression_tests":[{"id":"REG-FMT","name":"fmt","command":"sh scripts/fmt.sh"},{"id":"REG-GOFMT","name":"gofmt","command":"sh scripts/gofmt.sh"}]}]}\n' > "$C/.agents/regression_matrix.active.json"
 echo "echo fmt-ok" > "$C/scripts/fmt.sh"; echo "gofmt -l . || true" > "$C/scripts/gofmt.sh"; echo "print(1)" > "$C/tests/test_a.py"
-(cd "$C" && git add -A && git commit -qm init && echo "print(2)" > tests/test_new.py)
+(cd "$C" && git add -A && git commit -qm init && mkdir -p extra && echo "print(2)" > extra/test_new.py && echo "echo x" > scripts/other.sh)
 CLAUDE_PROJECT_DIR="$C" python3 "$GATE" --run-tests --full >"$TMP/d.out" 2>&1; rc=$?
-[ "$rc" = 2 ] && ! grep -q 'REG-FMT\|REG-GOFMT' "$TMP/d.out" && ok "D6 a readable wrapper that runs no test (echo, gofmt) never turns a new orphan into a warning" \
+[ "$rc" = 2 ] && grep -q 'file test MỚI mà không suite.*extra/test_new.py' "$TMP/d.out" && ! grep -E 'file test MỚI|có thể' "$TMP/d.out" | grep -q 'REG-FMT\|REG-GOFMT' \
+  && ok "D6 a sure orphan (no watch, no name) still blocks; wrappers that run no test are not named" \
   || fail "D6 exit $rc: $(grep -m3 -E 'KẾT LUẬN|mồ côi|REG-FMT' "$TMP/d.out")"
 C="$TMP/d7"; mkcase "$C" "python3 -m pytest tests/unit" "src/*.py"; mkdir -p "$C/tests/unit" "$C/tests/other"
 echo "x=1" > "$C/tests/unit/test_one.py"; echo "x=1" > "$C/tests/other/test_unrelated.py"
@@ -269,8 +275,8 @@ C="$TMP/d8"; mkcase "$C" "node --test tests/a.test.mjs" "src/*.js"; echo 1 > "$C
 C="$TMP/d9"; mkcase "$C" "sh loop.sh" "src/*.py"; mkdir -p "$C/tests/unit" "$C/tests/other"
 printf 'for f in tests/unit/test_one.py; do python3 -m pytest "$f"; done\n' > "$C/loop.sh"
 echo "x=1" > "$C/tests/unit/test_one.py"; echo "x=1" > "$C/tests/other/test_two.py"
-[ "$(covered "$C" tests/unit/test_one.py)" = True ] && [ "$(covered "$C" tests/other/test_two.py)" = False ] \
-  && ok "D9 a runner given \$VAR runs an unknown set: not the whole module" || fail "D9 \$VAR runner counted as whole"
+[ "$(covered "$C" tests/unit/test_one.py)" = True ] && [ "$(covered "$C" tests/other/test_two.py)" = True ] \
+  && ok "D9 a runner given \$VAR runs an unknown set: never called an orphan" || fail "D9 \$VAR scope: $(covered "$C" tests/other/test_two.py)"
 C="$TMP/d10"; mkcase "$C" "./gradlew :app:build" "app/*"; mkdir -p "$C/app/src/test" "$C/core/src/test"
 touch "$C/app/build.gradle" "$C/core/build.gradle"; echo "class ATest" > "$C/app/src/test/ATest.kt"; echo "class CTest" > "$C/core/src/test/CTest.kt"
 [ "$(covered "$C" app/src/test/ATest.kt)" = True ] && [ "$(covered "$C" core/src/test/CTest.kt)" = False ] \
@@ -288,5 +294,52 @@ mkdir -p "$C/universal-agent-devkit/bin" "$C/zz_demo"; cp "$DEVKIT_DIR/bin/agent
 echo "x=1" > "$C/zz_demo/test_orphan_demo.py"; echo 1 > "$C/zz_demo/orphan_demo.test.mjs"
 [ "$(covered "$C" zz_demo/test_orphan_demo.py)" = False ] && [ "$(covered "$C" zz_demo/orphan_demo.test.mjs)" = False ] \
   && ok "D14 agent-kit health (agent-workbench) does not cover new tests in zz_demo/" || fail "D14 zz_demo covered: $(covered "$C" zz_demo/test_orphan_demo.py)/$(covered "$C" zz_demo/orphan_demo.test.mjs)"
+
+# ── E. real-world suites the runner analysis misread (8d5d39b blocked each one) ─
+FAKE="$TMP/fakebin"; mkdir -p "$FAKE"
+for b in make npm bun pytest mocha xcodebuild dotnet cargo node; do printf '#!/bin/sh\nexit 0\n' > "$FAKE/$b"; chmod +x "$FAKE/$b"; done
+egate() {  # <case> <command> <watch> <new test> — the gate on a new test the suite may run: exit code
+  local C="$TMP/$1"
+  (cd "$C" && git add -A && git commit -qm init && mkdir -p "$(dirname "$4")" && echo "x = 1" > "$4")
+  PATH="$FAKE:$PATH" CLAUDE_PROJECT_DIR="$C" python3 "$GATE" --run-tests --full >"$TMP/$1.out" 2>&1; echo $?
+}
+ecase() {  # <case> <command> <watch> <new test> <label> [setup: shell run inside the repo]
+  local C="$TMP/$1"; mkcase "$C" "$2" "$3"; (cd "$C" && eval "${6:-true}")
+  rc="$(egate "$1" "$2" "$3" "$4")"
+  [ "$rc" = 0 ] && ok "$1 $5: --full passes" || fail "$1 $5: --full exit $rc $(grep -m2 -E 'KẾT LUẬN' "$TMP/$1.out")"
+}
+ecase E1 "pytest -x tests/" "tests/*" tests/test_e.py "pytest -x (not Gradle's -x test)"
+ecase E2 "./gradlew check -x connectedAndroidTest" "src/*" src/test/ETest.kt "gradle check -x connectedAndroidTest" "printf '#!/bin/sh\nexit 0\n' > gradlew && chmod +x gradlew"
+ecase E3 "make test" "tests/*" tests/test_m.py "make test → prerequisite unit" "printf 'test: unit\nunit:\n\tpytest tests/\n' > Makefile"
+ecase E4 "make check" "tests/*" tests/test_m.py "make check: lint test" "printf 'check: lint test\nlint:\n\ttrue\ntest:\n\tpytest\n' > Makefile"
+ecase E5 "make" "tests/*" tests/test_m.py "make (all: test)" "printf 'all: test\ntest:\n\tpytest\n' > Makefile"
+ecase E6 "make test" "tests/*" tests/test_m.py "make recipe \$(PYTEST)" "printf 'PYTEST ?= pytest\ntest:\n\t\$(PYTEST) tests/\n' > Makefile"
+ecase E7 "npm test" "src/*" src/a.test.js "scripts.test = npm run test:unit" "printf '{\"scripts\":{\"test\":\"npm run test:unit\",\"test:unit\":\"vitest run\"}}' > package.json"
+ecase E8 "npm test" "src/*" src/a.test.js "scripts.test = run-s" "printf '{\"scripts\":{\"test\":\"run-s lint unit\",\"unit\":\"vitest run\",\"lint\":\"eslint .\"}}' > package.json"
+ecase E9 "npm test" "src/*" src/a.test.js "react-scripts test" "printf '{\"scripts\":{\"test\":\"react-scripts test\"}}' > package.json"
+ecase E10 "npm test" "src/*" src/a.spec.ts "ng test" "printf '{\"scripts\":{\"test\":\"ng test\"}}' > package.json"
+ecase E11 "npm test" "src/*" src/a.spec.ts "playwright test" "printf '{\"scripts\":{\"test\":\"playwright test\"}}' > package.json"
+ecase E12 "npm test" "src/*" src/a.test.js "scripts.test calls a sh script" "mkdir -p scripts && printf 'vitest run\n' > scripts/test.sh && printf '{\"scripts\":{\"test\":\"sh scripts/test.sh\"}}' > package.json"
+ecase E13 "bun test" "src/*" src/a.test.ts "bun test"
+ecase E14 "sh run.sh" "tests/*" tests/test_w.py 'wrapper pytest "$@"' "printf 'pytest \"\$@\"\n' > run.sh"
+ecase E15 "sh run.sh" "tests/*" tests/test_w.py 'wrapper pytest $PYTEST_ARGS' "printf 'pytest \$PYTEST_ARGS\n' > run.sh"
+ecase E16 "sh run.sh" "tests/*" tests/test_w.py 'case "$1" parsing an option' "printf 'case \"\$1\" in\n  -v) V=1 ;;\nesac\npytest tests/\n' > run.sh"
+ecase E17 "pytest --ignore tests/slow" "tests/*" tests/test_i.py "pytest --ignore tests/slow"
+ecase E18 "pytest --cov src" "tests/*" tests/test_i.py "pytest --cov src"
+ecase E19 "pytest --basetemp /tmp/pt" "tests/*" tests/test_i.py "pytest --basetemp /tmp/pt"
+ecase E20 "mocha --require x 'test/**/*.spec.js'" "test/*" test/unit/a.spec.js "mocha --require x 'glob'"
+ecase E21 "xcodebuild test -project App.xcodeproj -scheme App -resultBundlePath out/r" "AppTests/*" AppTests/LoginTests.swift "xcodebuild -project/-scheme/-resultBundlePath" "mkdir -p App out"
+ecase E22 "dotnet test App.sln" "tests/*" tests/Unit/CalcTests.cs "dotnet test App.sln" "touch App.sln"
+ecase E24 "node --test 'tests/**/*.test.mjs'" "tests/*" tests/deep/a.test.mjs "node --test 'glob' (fnmatch, not startswith)"
+# the checklist reads these runs too (no ⚠️ row)
+for c in E1:tests/test_e.py E2:src/test/ETest.kt E3:tests/test_m.py E5:tests/test_m.py E6:tests/test_m.py E13:src/a.test.ts E14:tests/test_w.py E15:tests/test_w.py E16:tests/test_w.py E17:tests/test_i.py E20:test/unit/a.spec.js E22:tests/Unit/CalcTests.cs E24:tests/deep/a.test.mjs; do
+  [ "$(covered "$TMP/${c%%:*}" "${c#*:}")" = True ] && ok "${c%%:*} the checklist sees the suite run ${c#*:}" || fail "${c%%:*} checklist still calls ${c#*:} an orphan"
+done
+C="$TMP/e23"; mkcase "$C" "cargo test --manifest-path rs/Cargo.toml" "rs/*"
+[ "$(runs "$C" rs/tests/it.rs)" = "['REG-C']" ] && ok "E23 cargo --manifest-path is no test path scope" || fail "E23 cargo manifest: $(runs "$C" rs/tests/it.rs)"
+C="$TMP/e25"; mkcase "$C" "make test" "src/*.py"; printf 'test:\n\t@echo running && pytest\n\t-@true\n' > "$C/Makefile"; echo "x=1" > "$C/tests/test_r.py"
+[ "$(covered "$C" tests/test_r.py)" = True ] && ok "E25 a make recipe line with @ / - and echo && pytest runs pytest" || fail "E25 @ recipe"
+C="$TMP/e26"; mkcase "$C" "sh run.sh" "src/*.py"; printf 'N=$((1<<2))\npytest\n' > "$C/run.sh"; echo "x=1" > "$C/tests/test_h.py"
+[ "$(covered "$C" tests/test_h.py)" = True ] && ok "E26 \$((1<<2)) is no heredoc: the lines after it are read" || fail "E26 arithmetic shift read as heredoc"
 
 [ "$FAILS" = 0 ] && echo "ALL PASS" || { echo "$FAILS FAILED"; exit 1; }
