@@ -297,11 +297,15 @@ TEST_SKIP_RE = re.compile(r"@Ignore\b|@Disabled\b|\[Ignore\b|\bt\.Skip|\bpytest\
 def test_change_is_append_only(base_ref: str, repo_path: str) -> bool:
     """True when the working tree only ADDS lines to this existing test file (a new test
     appended to it) and none of them is a skip marker. Any removed or changed line — or a
-    diff git cannot produce — keeps the file counted as an edited test."""
+    diff git cannot produce — keeps the file counted as an edited test. A file equal to
+    base_ref is no edit at all: a test added in `--since` commits is in the change, unchanged
+    against HEAD (2026-09-28: three new tests blocked the Stop hook as "edited")."""
     res = subprocess.run(["git", "-C", str(get_repo_root()), "diff", "-U0", "--no-color", "--no-ext-diff",
                           base_ref, "--", repo_path], capture_output=True, text=True, errors="replace")
-    if res.returncode != 0 or not res.stdout:
+    if res.returncode != 0:
         return False
+    if not res.stdout:
+        return True
     added = []
     for line in res.stdout.splitlines():
         if line.startswith(("---", "+++")):
