@@ -125,10 +125,12 @@ if [ ! -x ./gradlew ] && [ -z "$(git ls-files -- '*/gradlew' 2>/dev/null | head 
   log "SKIP — no ./gradlew"; exit 0
 fi
 
-# Uncommitted .kt/.java, staged + unstaged + untracked.
+# Uncommitted .kt/.java, staged + unstaged + untracked — plus the files of commits past the last
+# verified HEAD (devkit_harness since-files, T0003): a commit made mid-work is compiled too.
 CHANGED="$( { git diff --name-only --diff-filter=ACMR 2>/dev/null
               git diff --cached --name-only --diff-filter=ACMR 2>/dev/null
               git ls-files --others --exclude-standard 2>/dev/null
+              [ -n "${HARNESS}" ] && python3 "${HARNESS}" since-files "${REPO_ROOT}" 2>/dev/null
             } | grep -E '\.(kt|java)$' | grep -v '/build/' | sort -u )"
 
 [ -n "${CHANGED}" ] || { log "PASS — no uncommitted Kotlin/Java changes"; exit 0; }

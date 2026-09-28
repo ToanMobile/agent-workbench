@@ -2923,6 +2923,9 @@ def main():
     parser.add_argument("--brief", action="store_true",
                         help="Print only the verdict block, errors (✖) and failing suites with their output tail; "
                              "the full output goes to <git dir>/postfix-gate/last_output.log (O3: fewer tokens for agents)")
+    parser.add_argument("--since", help="Also audit the files of the commits REF..HEAD (the regression Stop hook passes "
+                                        "the last verified HEAD); unlike --diff, the matrix and the edited-test check "
+                                        "still read HEAD")
     parser.add_argument("--no-cache", action="store_true",
                         help="Run the tests even when the last full PASS holds for this exact content (DEVKIT_GATE_CACHE=0 does the same)")
     parser.add_argument("--timeout", type=int, default=900, help="Timeout (seconds) per regression command")
@@ -2974,6 +2977,16 @@ def main():
     except RuntimeError as e:
         log_err(str(e))
         return 2
+    if args.since and not STAGED:
+        # Commits since the last verified HEAD (regression_gate, T0003): their files join the
+        # change for test selection; the matrix and the edited-test check still read HEAD.
+        r = subprocess.run(["git", "-C", str(get_project_dir()), "diff", "--name-only", "--relative",
+                            args.since, "HEAD"], capture_output=True, text=True)
+        if r.returncode != 0:
+            log_err(tr(f"--since {args.since}: git diff thất bại", f"--since {args.since}: git diff failed"))
+            return 2
+        extra = [f for f in r.stdout.splitlines() if f and os.path.exists(os.path.join(str(get_project_dir()), f))]
+        all_changed = sorted(set(all_changed) | set(extra))
     devkit_artifacts = [f for f in all_changed if is_devkit_artifact(f)]
     modified_files = [f for f in all_changed if f not in devkit_artifacts]
     if args.commit_msg:

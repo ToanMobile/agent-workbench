@@ -51,6 +51,11 @@ except Exception: pass' 2>/dev/null)"
   HEALED="$(cd "${REPO_ROOT}" 2>/dev/null && python3 "${WT_SCRIPT}" heal "--devkit=$(dirname "$(dirname "${SELF}")")" "--session=${WT_SID}" 2>/dev/null)"
   [ -n "${HEALED}" ] && echo "[DevKit] ${HEALED}"
 fi
+# The regression baseline (T0003): verified_head recorded before the first turn can commit, so a
+# commit of turn 1 is never taken as already verified.
+HARNESS_PY="$(dirname "${SELF}")/devkit_harness.py"
+[ -f "${HARNESS_PY}" ] && git -C "${REPO_ROOT}" rev-parse -q --verify HEAD >/dev/null 2>&1 \
+  && python3 "${HARNESS_PY}" baseline "${REPO_ROOT}" >/dev/null 2>&1
 
 REPO_ROOT="${REPO_ROOT}" INDEXER="${INDEXER}" HOOK_FILE="${HOOK_FILE}" GATE_HOOK="${GATE_HOOK}" python3 - <<'PY' 2>/dev/null
 import json, os, re, signal, subprocess, sys

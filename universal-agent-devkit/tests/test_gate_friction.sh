@@ -347,6 +347,114 @@ git -C "$R12" add -A; git -C "$R12" commit -qm init; echo b > "$R12/a.txt"; git 
 git -C "$R12" ls-files | grep -q zz_foreign && fail "a pre-commit suite wrote into the commit's index (GIT_INDEX_FILE inherited)" \
   || ok "suites run by the gate get no GIT_INDEX_FILE / GIT_DIR of the commit"
 
+# ── 12. heavy Stop gates only at the handover turn (T0003) ────────────────────
+# GeelyEx2: regression_gate blocked 204 times in ~4 days, mostly progress replies — each block a
+# model round re-reading the whole context. Skip ONLY when the reply says it is unfinished,
+# claims nothing and ran no git commit/push; everything else keeps the gate (fail closed).
+M13="$TMP/m13"; mkdir -p "$M13/src" "$M13/.agents"; git -C "$M13" init -q; git -C "$M13" config user.email t@t; git -C "$M13" config user.name t
+echo "fun ok() = 1" > "$M13/src/Core.kt"
+python3 -c 'import json,sys; json.dump({"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
+  "mandatory_regression_tests":[{"id":"REG-RED","name":"red","command":"echo red-suite; exit 1"}]}]}, open(sys.argv[1],"w"))' "$M13/.agents/regression_matrix.active.json"
+git -C "$M13" add -A; git -C "$M13" commit -qm init; sleep 2; echo "fun ok() = 2" > "$M13/src/Core.kt"
+tr13() { python3 - "$TMP/tr13.jsonl" "$@" <<'PY'
+import json, sys, time
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
+now = time.time(); recs = [{"type": "user", "sessionId": "s13", "timestamp": iso(now - 1), "message": {"role": "user", "content": "làm tiếp"}}]
+for i, cmd in enumerate(sys.argv[2:]):
+    recs.append({"type": "assistant", "sessionId": "s13", "timestamp": iso(now + i), "message": {"content": [
+        {"type": "tool_use", "id": "b%d" % i, "name": "Bash", "input": {"command": cmd}}]}})
+open(sys.argv[1], "w").write("".join(json.dumps(r) + "\n" for r in recs))
+PY
+}
+rg13() { python3 -c 'import json,sys; print(json.dumps({"session_id":"s13","hook_event_name":"Stop","transcript_path":sys.argv[1],"last_assistant_message":sys.argv[2]}))' "$TMP/tr13.jsonl" "$1" \
+  | CLAUDE_PROJECT_DIR="$M13" REGRESSION_GATE_MAX_ATTEMPTS=100 FLAKY_RETRY=0 ${2:+env $2} bash "$DEVKIT_DIR/hooks/regression_gate.sh" >/dev/null 2>&1; echo $?; }
+tr13 "ls"
+r_wip="$(rg13 "CHƯA XONG — còn sửa tiếp")"; r_md="$(rg13 "**CHƯA XONG**
+Đang làm bước 2.")"; r_claim="$(rg13 "CHƯA XONG — nhưng đã fix lỗi A")"; r_xong="$(rg13 "XONG")"
+r_empty="$(rg13 "")"; r_every="$(rg13 "CHƯA XONG — còn sửa" DEVKIT_GATE_EVERY_STOP=1)"
+tr13 "ls" "git push origin main"; r_commit="$(rg13 "CHƯA XONG — còn sửa")"   # a push is a handover
+[ "$r_wip" = 0 ] && [ "$r_md" = 0 ] && ok "progress reply (CHƯA XONG, markdown too) with red tests: no test run, no block" \
+  || fail "WIP skip: plain=$r_wip markdown=$r_md"
+[ "$r_claim" = 2 ] && [ "$r_xong" = 2 ] && [ "$r_empty" = 2 ] && [ "$r_every" = 2 ] && [ "$r_commit" = 2 ] \
+  && ok "claim / XONG / no reply / EVERY_STOP=1 / push this turn: still blocked" \
+  || fail "fail-closed: claim=$r_claim xong=$r_xong empty=$r_empty every=$r_every commit=$r_commit"
+# A turn that committed the red change leaves a clean tree: the gate tests the commit.
+sleep 2; tr13 "git commit -qm red"; git -C "$M13" add -A; git -C "$M13" commit -qm "red change"
+r_clean="$(rg13 "XONG")"
+[ "$r_clean" = 2 ] && ok "clean tree after a commit this turn: the committed change is still tested" \
+  || fail "committed red change passed the stop (rc=$r_clean)"
+# Antigravity review: a commit made outside the transcript's words (alias, script, subagent) and a
+# commit from an EARLIER progress turn are still gated — HEAD past the last verified one.
+M15="$TMP/m15"; mkdir -p "$M15/src" "$M15/.agents"; git -C "$M15" init -q; git -C "$M15" config user.email t@t; git -C "$M15" config user.name t
+echo "fun ok() = 1" > "$M15/src/Core.kt"; cp "$M13/.agents/regression_matrix.active.json" "$M15/.agents/"
+git -C "$M15" add -A; git -C "$M15" commit -qm init
+rg15() { python3 -c 'import json,sys; print(json.dumps({"session_id":"s15","hook_event_name":"Stop","transcript_path":sys.argv[1],"last_assistant_message":sys.argv[2]}))' "$TMP/tr13.jsonl" "$1" \
+  | CLAUDE_PROJECT_DIR="$M15" REGRESSION_GATE_MAX_ATTEMPTS=100 FLAKY_RETRY=0 bash "$DEVKIT_DIR/hooks/regression_gate.sh" >/dev/null 2>&1; echo $?; }
+tr13 "ls"; r_base="$(rg15 "CHƯA XONG — bắt đầu")"                        # records the baseline
+echo "fun ok() = 2" > "$M15/src/Core.kt"; git -C "$M15" commit -qam "via alias"   # not in the transcript
+r_alias="$(rg15 "CHƯA XONG — còn làm")"; r_later="$(rg15 "XONG")"
+[ "$r_base" = 0 ] && [ "$r_alias" = 0 ] && [ "$r_later" = 2 ] \
+  && ok "a local commit mid-work is not gated; the handover turn still tests it (made outside the transcript)" \
+  || fail "unverified commit: base=$r_base wip=$r_alias later=$r_later"
+# …but once unverified commits are on the upstream (pushed by any path), a progress reply is gated.
+git init -q --bare "$TMP/up15.git"; git -C "$M15" remote add origin "$TMP/up15.git"
+git -C "$M15" push -q -u origin HEAD 2>/dev/null
+r_pushed="$(rg15 "CHƯA XONG — còn làm")"
+[ "$r_pushed" = 2 ] && ok "unverified commits already on the upstream: gated even on a progress reply" \
+  || fail "pushed unverified commit passed a progress reply (rc=$r_pushed)"
+# An amend/reset with no upstream must not re-baseline to HEAD (Antigravity review v4): the
+# rewritten commit is tested from the last point both histories share.
+M17="$TMP/m17"; mkdir -p "$M17/src" "$M17/.agents"; git -C "$M17" init -q; git -C "$M17" config user.email t@t; git -C "$M17" config user.name t
+echo "fun ok() = 1" > "$M17/src/Core.kt"; cp "$M13/.agents/regression_matrix.active.json" "$M17/.agents/"
+git -C "$M17" add -A; git -C "$M17" commit -qm init; echo "fun ok() = 2" > "$M17/src/B.kt"; git -C "$M17" add -A; git -C "$M17" commit -qm "B"
+rg17() { python3 -c 'import json,sys; print(json.dumps({"session_id":"s17","hook_event_name":"Stop","transcript_path":sys.argv[1],"last_assistant_message":sys.argv[2]}))' "$TMP/tr13.jsonl" "$1" \
+  | CLAUDE_PROJECT_DIR="$M17" REGRESSION_GATE_MAX_ATTEMPTS=100 FLAKY_RETRY=0 bash "$DEVKIT_DIR/hooks/regression_gate.sh" >/dev/null 2>&1; echo $?; }
+r0="$(rg17 "XONG")"                                  # baseline = B (clean tree)
+echo "fun ok() = 9" > "$M17/src/Core.kt"; git -C "$M17" commit -q -a --amend -m "B amended"   # rewrites B, touches Core.kt
+r_amend="$(rg17 "XONG")"
+[ "$r0" = 0 ] && [ "$r_amend" = 2 ] && ok "amend with no upstream: the rewritten commit is still tested" \
+  || fail "amend slipped through (base=$r0 amend=$r_amend)"
+# A teammate's push to the shared upstream is not "our unverified commits on the remote".
+git clone -q "$TMP/up15.git" "$TMP/mate15" 2>/dev/null; git -C "$TMP/mate15" config user.email m@m; git -C "$TMP/mate15" config user.name m
+echo mate > "$TMP/mate15/mate.txt"; git -C "$TMP/mate15" add -A; git -C "$TMP/mate15" commit -qm mate; git -C "$TMP/mate15" push -q 2>/dev/null
+M18="$TMP/m18"; git clone -q "$TMP/up15.git" "$M18" 2>/dev/null
+git -C "$M18" reset -q --hard HEAD~1   # our clone (tracking its upstream), one behind the mate
+git -C "$M18" rev-parse -q --verify '@{u}' >/dev/null || fail "fixture: m18 has no upstream"
+python3 -c 'import json,sys,os; os.makedirs(sys.argv[1]+"/.claude/audit-gate",exist_ok=True); json.dump({"verified_head":sys.argv[2]},open(sys.argv[1]+"/.claude/audit-gate/regression_gate.state.json","w"))' "$M18" "$(git -C "$M18" rev-parse HEAD)"
+printf '*\n' > "$M18/.claude/audit-gate/.gitignore"; echo "fun ok() = 5" > "$M18/src/Core.kt"
+r_mate="$(python3 -c 'import json,sys; print(json.dumps({"session_id":"s18","hook_event_name":"Stop","transcript_path":sys.argv[1],"last_assistant_message":"CHƯA XONG — đang làm"}))' "$TMP/tr13.jsonl" \
+  | CLAUDE_PROJECT_DIR="$M18" REGRESSION_GATE_MAX_ATTEMPTS=100 FLAKY_RETRY=0 bash "$DEVKIT_DIR/hooks/regression_gate.sh" >/dev/null 2>&1; echo $?)"
+[ "$r_mate" = 0 ] && ok "a teammate's push to the upstream does not turn our progress reply into a handover" \
+  || fail "teammate push gated a progress reply (rc=$r_mate)"
+# …nor does pulling it in (Antigravity review v5): HEAD now holds the mate's commit; ours are not pushed.
+git -C "$M18" stash -q 2>/dev/null; git -C "$M18" pull -q --ff-only 2>/dev/null; git -C "$M18" stash pop -q 2>/dev/null
+r_pull="$(python3 -c 'import json,sys; print(json.dumps({"session_id":"s18","hook_event_name":"Stop","transcript_path":sys.argv[1],"last_assistant_message":"CHƯA XONG — đang làm"}))' "$TMP/tr13.jsonl" \
+  | CLAUDE_PROJECT_DIR="$M18" REGRESSION_GATE_MAX_ATTEMPTS=100 FLAKY_RETRY=0 bash "$DEVKIT_DIR/hooks/regression_gate.sh" >/dev/null 2>&1; echo $?)"
+[ "$r_pull" = 0 ] && ok "after pulling a teammate's commit, a progress reply is still not a handover" \
+  || fail "pulled teammate commit gated a progress reply (rc=$r_pull)"
+# SessionStart records the baseline before the first turn can commit (Antigravity review v3).
+M16="$TMP/m16"; mkdir -p "$M16"; git -C "$M16" init -q; git -C "$M16" config user.email t@t; git -C "$M16" config user.name t
+echo x > "$M16/x"; git -C "$M16" add -A; git -C "$M16" commit -qm i
+printf '{"session_id":"s16","hook_event_name":"SessionStart"}' | CLAUDE_PROJECT_DIR="$M16" SESSION_FETCH=0 bash "$DEVKIT_DIR/hooks/session_context.sh" >/dev/null 2>&1
+[ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verified_head",""))' "$M16/.claude/audit-gate/regression_gate.state.json" 2>/dev/null)" = "$(git -C "$M16" rev-parse HEAD)" ] \
+  && ok "SessionStart records verified_head" || fail "SessionStart baseline missing"
+# review_gate: the fresh-context review is asked at the handover, not on a progress reply.
+M14="$TMP/m14"; mkdir -p "$M14/src"; git -C "$M14" init -q; git -C "$M14" config user.email t@t; git -C "$M14" config user.name t
+echo "fun a() = 1" > "$M14/src/A.kt"; git -C "$M14" add -A; git -C "$M14" commit -qm init; echo "fun a() = 2" > "$M14/src/A.kt"
+python3 - "$TMP/tr13.jsonl" "$M14/src/A.kt" <<'PY'
+import json, sys, time
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t)); now = time.time()
+recs = [{"type": "user", "sessionId": "s14", "timestamp": iso(now - 20), "message": {"role": "user", "content": "sửa A"}},
+        {"type": "assistant", "sessionId": "s14", "timestamp": iso(now - 10), "message": {"content": [
+            {"type": "tool_use", "id": "e1", "name": "Edit", "input": {"file_path": sys.argv[2], "old_string": "1", "new_string": "2"}}]}}]
+open(sys.argv[1], "w").write("".join(json.dumps(r) + "\n" for r in recs))
+PY
+rv14() { python3 -c 'import json,sys; print(json.dumps({"session_id":"s14","transcript_path":sys.argv[1],"last_assistant_message":sys.argv[2],"cwd":sys.argv[3]}))' "$TMP/tr13.jsonl" "$1" "$M14" \
+  | CLAUDE_PROJECT_DIR="$M14" bash "$DEVKIT_DIR/hooks/review_gate.sh" >/dev/null 2>&1; echo $?; }
+rv_wip="$(rv14 "CHƯA XONG — còn sửa")"; rv_x="$(rv14 "XONG")"
+[ "$rv_wip" = 0 ] && [ "$rv_x" = 2 ] && ok "review_gate: progress reply not held, XONG still needs the fresh-context review" \
+  || fail "review_gate: wip=$rv_wip xong=$rv_x"
+
 echo
 [ "$FAILS" -eq 0 ] && echo "test_gate_friction: all checks passed" || echo "test_gate_friction: $FAILS failed"
 exit "$FAILS"

@@ -145,6 +145,38 @@ if info and info["terminal_stop"] and not probe:
 def git(*args):
     return subprocess.run(["git", "-C", repo, *args], capture_output=True).stdout
 
+# verified_head (T0003, Antigravity review): HEAD at the last PASS (devkit_harness, shared with
+# testsourceset/review gates). Commits past it — made by any path, in any earlier turn — are
+# unverified: the run covers verified_head..HEAD (--since) plus what is uncommitted. A local commit
+# mid-work is fine; a push of unverified commits is a handover.
+vh = head = ""
+unverified = pushed = False
+if info is not None:
+    try:
+        vh, head, reset_why = devkit_harness.verified_head(repo, write=not probe)
+        unverified = bool(head and vh and head != vh)
+        pushed = unverified and devkit_harness.pushed_unverified(repo, vh)
+        if reset_why and not probe:
+            note("verified_head reset (%s): now %s" % (reset_why, vh[:12]))
+            print(json.dumps({"systemMessage": "ℹ regression_gate: lịch sử git bị viết lại (%s) — mốc đã kiểm lùi về "
+                              "điểm chung cuối của hai lịch sử; mọi commit viết lại sau đó được kiểm ở lượt bàn giao."
+                              % reset_why}, ensure_ascii=False))
+    except Exception as e:
+        note("verified_head failed: %r" % e)
+
+# A reply that declares itself unfinished (CHƯA XONG / CHỜ DUYỆT …), claims no outcome and pushed
+# nothing unverified: no test run now — the handover turn runs it (T0003, 2026-09-28).
+if info is not None and not probe and not pushed:
+    try:
+        if devkit_harness.work_in_progress(data):
+            note("skip: work in progress (status line %r) sid=%s" % (devkit_harness.status_line(
+                data.get("last_assistant_message"))[:40], sid))
+            sys.exit(0)
+    except SystemExit:
+        raise
+    except Exception as e:
+        note("work_in_progress failed: %r" % e)
+
 def emit(obj):
     print(json.dumps(obj, ensure_ascii=False))
 
@@ -153,8 +185,11 @@ status = git("status", "--porcelain=v1", "-z", "-uall")
 own = (".claude/audit-gate/", ".agents/regression_status.json", ".agents/regression_checklist.md",
        ".agents/CHECKLIST.md", ".agents/INBOX.md", ".agents/evidence/", ".agents/archive/")
 entries = [e for e in status.decode("utf-8", "replace").split("\0") if len(e) > 3 and not e[3:].startswith(own)]
-if not entries and not probe:
+commit_base = vh if unverified else None
+if not entries and not probe and not unverified:
     sys.exit(0)
+if commit_base:
+    note("unverified commits %s..%s: gating --since" % (vh[:12], head[:12]))
 
 # Adopted matrix? (committed in the repo, not a byte-for-byte DevKit sample)
 def norm(p):
@@ -258,7 +293,10 @@ if not real.startswith(toplevel + os.sep) or is_sample:
 excl = [":(exclude).claude/audit-gate", ":(exclude).agents/regression_status.json",
         ":(exclude).agents/regression_checklist.md", ":(exclude).agents/CHECKLIST.md",
         ":(exclude).agents/INBOX.md", ":(exclude).agents/evidence", ":(exclude).agents/archive"]
-fp = hashlib.sha256("\0".join(entries).encode() + git("diff", "HEAD", "--binary", "--", ".", *excl)).hexdigest()[:20]
+_tree = "\0".join(entries).encode() + git("diff", "HEAD", "--binary", "--", ".", *excl)
+# fp_plain: what the next stop computes once this range is verified (verified_head = HEAD then).
+fp_plain = hashlib.sha256(_tree).hexdigest()[:20]
+fp = hashlib.sha256(_tree + (("\0" + vh + ".." + head).encode() if unverified else b"")).hexdigest()[:20]
 state_file = os.path.join(os.path.dirname(log), "regression_gate.state.json")
 try:
     state = json.load(open(state_file, encoding="utf-8"))
@@ -353,7 +391,8 @@ if degraded and sess.get("fp") == tree_fp:
 # the suites could pass the 1800 s timeout of this hook); past it the gate reports "busy".
 res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "session-" + sid[:12],
                       "--timeout", os.environ.get("REGRESSION_GATE_TEST_TIMEOUT", "600"),
-                      "--session", str(data.get("session_id") or ""), "--transcript", str(data.get("transcript_path") or "")],
+                      "--session", str(data.get("session_id") or ""), "--transcript", str(data.get("transcript_path") or "")]
+                     + (["--since", commit_base] if commit_base else []),
                      cwd=repo, capture_output=True, text=True, errors="replace",
                      env={**os.environ, "CLAUDE_PROJECT_DIR": repo,
                           "TEST_RUN_LOCK_WAIT_S": os.environ.get("TEST_RUN_LOCK_WAIT_S", "120")})
@@ -366,7 +405,8 @@ for line in reversed(res.stdout.splitlines()):
         except ValueError:
             pass
 if res.returncode in (0, 3):
-    state["pass_fp"] = fp
+    state["pass_fp"] = fp_plain
+    state["verified_head"] = head or state.get("verified_head")
     state.pop("attempts", None)
     if degraded:
         sess.update({"fp": tree_fp, "result": "pass", "blocks": 0, "lines": None, "cure": None})

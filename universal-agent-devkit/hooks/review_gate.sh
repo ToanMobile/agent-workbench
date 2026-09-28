@@ -95,6 +95,25 @@ except Exception as e:
     logline(f"[{ts}] stdin parse fail: {e!r} — fail-open")
     sys.exit(0)
 
+# A progress reply (status line CHƯA XONG / CHỜ DUYỆT …, no outcome claimed, no git commit/push
+# this turn): the fresh-context review is asked at the handover turn, not on every stop (T0003).
+for _hd in (os.environ.get("CLAIM_HOOKDIR", ""),
+            os.path.dirname(os.path.realpath(os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "review_gate.sh"))),
+            os.path.join(repo, ".agents", "devkit", "hooks")):
+    if os.path.isfile(os.path.join(_hd, "devkit_harness.py")):
+        try:
+            sys.path.insert(0, _hd)
+            sys.dont_write_bytecode = True
+            import devkit_harness
+            if devkit_harness.work_in_progress(d):
+                logline(f"[{ts}] skip: work in progress — review at the handover turn")
+                sys.exit(0)
+        except SystemExit:
+            raise
+        except Exception as e:
+            logline(f"[{ts}] work_in_progress failed: {e!r}")
+        break
+
 cwd = d.get("cwd") or repo
 try:
     repo_root = subprocess.run(
@@ -138,7 +157,15 @@ try:
         capture_output=True, text=True, timeout=10)
     # A symlink's content is a path, not code to review (DevKit hook links such as
     # .claude/hooks/devkit_profile.py in a symlink install).
-    changed = sorted({l for l in (diff.stdout.splitlines() + untracked.stdout.splitlines())
+    # Commits past the last verified HEAD (T0003): code committed mid-work still needs its review.
+    since = []
+    try:
+        import devkit_harness as _dh
+        _vh = _dh.verified_head(repo_root, write=False)[0]
+        since = [f for f in _dh.files_since(repo_root, _vh) if f.endswith(tuple(CODE_EXTS))]
+    except Exception as e:
+        logline(f"[{ts}] since-files failed: {e!r}")
+    changed = sorted({l for l in (diff.stdout.splitlines() + untracked.stdout.splitlines() + since)
                       if l.strip() and not os.path.islink(os.path.join(repo_root, l))})
 except Exception as e:
     logline(f"[{ts}] git query failed: {e!r} — fail-open")

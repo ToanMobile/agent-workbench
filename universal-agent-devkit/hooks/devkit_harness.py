@@ -236,6 +236,175 @@ class SessionGuard:
         write_json(self.path, self.state)
 
 
+# ── Work in progress vs handover (T0003, 2026-09-28) ─────────────────────────────────────────
+# The heavy Stop gates (tests, fresh-context review) cost a model round per block and re-read the
+# whole context: GeelyEx2 blocked 204 times in ~4 days, mostly on progress replies. They are
+# skipped ONLY for a reply that declares itself unfinished in its status line, claims no outcome,
+# and ran no git commit/push in the turn. Anything else — no reply, no Claude transcript, a claim,
+# a commit — keeps them (fail closed). DEVKIT_GATE_EVERY_STOP=1 restores a gate on every stop.
+WIP_STATUS = re.compile(r"(?:CHƯA\s+XONG|CHỜ\s+DUYỆT|BLOCKED|WIP|NOT\s+DONE|IN\s+PROGRESS)\b", re.I)
+OUTCOME = re.compile(r"(?<![\wÀ-ỹ])XONG(?![\wÀ-ỹ])|\b(?:đã|vừa)\s+(?:fix|sửa\s+xong|sửa\s+được|xong|hoàn\s+tất|hoàn\s+thành)"
+                     r"|hết\s+bug|\bfixed\b|\bdone\b|\ball\s+(?:tests?\s+)?pass|✅|\bPASS\b")
+GIT_WRITE = re.compile(r"(?:^|[;&|(]|\n)\s*(?:\w+=\S*\s+)*git(?:\s+-[Cc]\s+\S+|\s+--?[\w.-]+(?:=\S+)?)*\s+(commit|push)\b"
+                       r"(?![^\n;&|]*--dry-run)")
+
+
+def status_line(reply):
+    for line in (reply or "").splitlines():
+        s = re.sub(r"^[\s>#*_`\-]+|[\s*_`]+$", "", line)
+        if s:
+            return s
+    return ""
+
+
+def turn_start(tp):
+    """Epoch of the last real user prompt in a Claude transcript, or None."""
+    import datetime
+    last = None
+    try:
+        with open(tp, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                if '"user"' not in raw:
+                    continue
+                try:
+                    e = json.loads(raw)
+                except ValueError:
+                    continue
+                if e.get("type") != "user" or e.get("isMeta"):
+                    continue
+                c = (e.get("message") or {}).get("content")
+                if (isinstance(c, str) or (isinstance(c, list) and any(
+                        isinstance(x, dict) and x.get("type") == "text" for x in c))) and e.get("timestamp"):
+                    last = e["timestamp"]
+    except OSError:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(last.replace("Z", "+00:00")).timestamp() if last else None
+    except ValueError:
+        return None
+
+
+def git_writes_in_turn(tp, start):
+    """{"commit", "push"} run by Bash tool calls after `start` (epoch)."""
+    import datetime
+    found = set()
+    try:
+        with open(tp, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                if "commit" not in raw and "push" not in raw:
+                    continue
+                try:
+                    e = json.loads(raw)
+                    t = datetime.datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")).timestamp()
+                except (ValueError, AttributeError):
+                    continue
+                if t < start or e.get("type") != "assistant":
+                    continue
+                for c in (e.get("message") or {}).get("content") or []:
+                    cmd = (c.get("input") or {}).get("command", "") if isinstance(c, dict) and c.get("type") == "tool_use" else ""
+                    if isinstance(cmd, str):
+                        found.update(m.group(1) for m in GIT_WRITE.finditer(cmd))
+    except OSError:
+        return found     # unreadable transcript: what was seen so far (callers treat it as no push)
+    return found
+
+
+def work_in_progress(payload, env=None):
+    """True only for a reply that declares itself unfinished (status line), claims no outcome
+    and ran no git commit/push this turn — then the heavy Stop gates may skip. False otherwise."""
+    env = os.environ if env is None else env
+    if env.get("DEVKIT_GATE_EVERY_STOP") == "1" or not isinstance(payload, dict):
+        return False
+    reply = payload.get("last_assistant_message")
+    tp = payload.get("transcript_path")
+    if not isinstance(reply, str) or not reply.strip() or transcript_kind(tp) != "claude":
+        return False
+    head = status_line(reply)
+    if not WIP_STATUS.match(head):
+        return False
+    body = re.sub(r"(?i)chưa\s+xong", "", reply)
+    if OUTCOME.search(body):
+        return False
+    start = turn_start(tp)
+    # A local commit is fine mid-work (its range is tested at the handover, --since the verified
+    # HEAD); a push is a handover (Antigravity review of T0003 v3).
+    return start is not None and "push" not in git_writes_in_turn(tp, start)
+
+
+# ── verified HEAD (T0003) ────────────────────────────────────────────────────────────────────
+# HEAD at the last regression PASS, kept in .claude/audit-gate/regression_gate.state.json. Every
+# heavy gate widens its change set to the commits verified_head..HEAD, so a commit made mid-work
+# (by any path: alias, script, subagent) is still checked at the handover.
+GATE_STATE = os.path.join(".claude", "audit-gate", "regression_gate.state.json")
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
+def _git(repo, *args):
+    try:
+        r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=10)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _ancestor(repo, a, b):
+    try:
+        return subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", a, b],
+                              capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def verified_head(repo, write=True):
+    """(verified_head, HEAD, reset_reason). Missing → the merge-base with the upstream (its
+    unpushed commits stay unverified), else HEAD. Not an ancestor of HEAD (rebase/reset) → the
+    same fallback, reset_reason set. write=False never touches the state (probe)."""
+    head = _git(repo, "rev-parse", "-q", "--verify", "HEAD")
+    path = os.path.join(repo, GATE_STATE)
+    state = read_json(path) or {}
+    vh, why = state.get("verified_head"), ""
+    if head and vh and vh != head and not _ancestor(repo, vh, head):
+        # Rebase / amend / reset: the last point both histories share, never HEAD itself (an amended
+        # commit would pass untested — Antigravity review v4). No common point: the empty tree.
+        why = "rebase/reset"
+        vh = _git(repo, "merge-base", vh, "HEAD") or EMPTY_TREE
+        if write:
+            state["verified_head"] = vh
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            write_json(path, state)
+    if head and not vh:
+        vh = _git(repo, "merge-base", "HEAD", "@{u}") or head
+        if write:
+            state["verified_head"] = vh
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            ign = os.path.join(os.path.dirname(path), ".gitignore")
+            if not os.path.exists(ign):     # hook state, never part of the change (as every hook does)
+                with open(ign, "w") as fh:
+                    fh.write("*\n")
+            write_json(path, state)
+    return vh or "", head, why
+
+
+def pushed_unverified(repo, vh):
+    """This branch's own commits after verified_head are on the upstream (a teammate's push to a
+    shared branch does not count — Antigravity review v4)."""
+    common = _git(repo, "merge-base", "HEAD", "@{u}")
+    if not (common and vh and common != vh and _ancestor(repo, vh, common)):
+        return False
+    # A pull brings the mate's commits into that range too (Antigravity review v5): only ours count.
+    me = _git(repo, "config", "user.email")
+    authors = _git(repo, "log", "--format=%ae", vh + ".." + common).splitlines()
+    return (me in authors) if me else bool(authors)
+
+
+def files_since(repo, vh):
+    """Project-relative files of the commits verified_head..HEAD that still exist."""
+    if not vh:
+        return []
+    out = _git(repo, "diff", "--name-only", "--relative", vh, "HEAD")
+    return [f for f in out.splitlines() if f and os.path.exists(os.path.join(repo, f))]
+
+
 def _cli(argv, stdin):
     """Shell entry points (bash hooks). Prints the answer; never raises."""
     cmd = argv[0] if argv else ""
@@ -250,6 +419,11 @@ def _cli(argv, stdin):
         return "\t".join([info["session"], info["agent"], info["transcript"], "1" if info["degraded"] else "0",
                           "1" if info["terminal_stop"] else "0",
                           _clean(data.get("reason") or "", 32) if isinstance(data, dict) else ""])
+    if cmd == "since-files" and len(argv) > 1:
+        vh, _head, _why = verified_head(argv[1], write=False)
+        return "\n".join(files_since(argv[1], vh))
+    if cmd == "baseline" and len(argv) > 1:
+        return verified_head(argv[1])[0]
     if cmd == "fingerprint" and len(argv) > 1:
         return tree_fingerprint(argv[1])
     if cmd == "sysmsg" and len(argv) > 1:
