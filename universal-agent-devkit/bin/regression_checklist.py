@@ -806,11 +806,19 @@ def is_test_candidate(path: str) -> bool:
     return True
 
 
+def _mask_quotes(text: str) -> str:
+    """text with the inside of each '…' / "…" string replaced by x, same length: a word in a
+    quoted argument (`python3 -c "import pytest; …"`) is neither a command nor a separator."""
+    return re.sub(r"'[^']*'|\"[^\"]*\"", lambda q: q.group(0)[0] + "x" * (len(q.group(0)) - 2) + q.group(0)[-1], text)
+
+
 def _segments(command: str, cwd: str = "") -> list:
-    """[(cd dir or "", segment)] of a shell command split on && ; || |; a `cd X` sets the dir of
-    the segments after it (a dir we cannot read — `$ROOT`, `..` — counts as the project root)."""
-    out = []
-    for seg in re.split(r"&&|\|\||;|\|", command or ""):
+    """[(cd dir or "", segment)] of a shell command split on && ; || | outside quotes; a `cd X`
+    sets the dir of the segments after it (a dir we cannot read — `$ROOT`, `..` — counts as the
+    project root)."""
+    out, command = [], command or ""
+    cuts = [(m.start(), m.end()) for m in re.finditer(r"&&|\|\||;|\|", _mask_quotes(command))]
+    for seg in [command[a:b] for a, b in zip([0] + [e for _, e in cuts], [s for s, _ in cuts] + [len(command)])]:
         seg = seg.strip().lstrip("@-+").strip()     # make recipe prefixes
         m = re.match(r"cd\s+(\S+)$", seg)
         if m:
@@ -830,7 +838,7 @@ def _runner(project: Path, cwd: str, seg: str):
     rule's watch decides outside it), also when an argument is `$VAR` (unknown: never an orphan);
     else the project-relative dirs, files or globs its path arguments name. Narrowed to named tests
     (--tests, -k, ::, cargo --test) or tests skipped (Gradle/Maven -DskipTests, -x test): None."""
-    found = [(m, ex) for rx, ex in _RUNNERS for m in [rx.search(seg)] if m]
+    found = [(m, ex) for rx, ex in _RUNNERS for m in [rx.search(_mask_quotes(seg))] if m]
     if not found or _NARROW.search(seg) or _CARGO_NARROW.search(seg):
         return None
     if _BUILD_TOOL.search(seg) and _SKIP_TESTS.search(seg):
@@ -1516,6 +1524,17 @@ def record_results(data: dict, tests: list, *, task: str | None, commit: str | N
         item = data["items"][tid]
         if t.get("status") not in RESULT_STATES:
             item["impacted_at"] = _now()
+            continue
+        if t.get("mode") == "cached":
+            # A reused full PASS ran nothing now: the row stays the run that backs it, never a
+            # fresh one with no exit code (2026-09-28: every reused row read "exit None").
+            last = item.get("last") or {}
+            if not (last.get("status") == "PASS" and last.get("log") == t.get("log")):
+                ts = t.get("tested_at") or time.time()
+                item["last"] = last = {"status": "PASS", "at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)),
+                                       "ts": ts, "task": task, "commit": commit, "duration": t.get("duration"),
+                                       "exit_code": 0, "log": t.get("log")}
+            last["reused_at"] = _now()
             continue
         result = {"status": t["status"], "at": _now(), "ts": time.time(), "task": task, "commit": commit,
                   "duration": t.get("duration"), "exit_code": t.get("exit_code"), "log": t.get("log")}

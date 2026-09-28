@@ -515,11 +515,28 @@ def cached_full_pass(project_dir, matrix_arg):
     return r if fp and r.get("fingerprint") == fp else None
 
 
-def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None):
+# Modes that ran a subset of a suite's command, or nothing: never a full PASS — no PASS row in
+# the checklist, no full-pass receipt (audit 2026-09-28: a RESOURCE run that ran nothing and a
+# PACKAGE subset were both stamped as a full PASS, and a later --full reused them).
+PARTIAL_MODES = ("impacted", "resource", "package", "module")
+
+
+def tree_fp_of(project_dir):
+    """The tree fingerprint (bin/tree_fp.py) of project_dir now; "" when it cannot be taken."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import tree_fp  # noqa: PLC0415 - sibling module in bin/
+    except ImportError:
+        return ""
+    return tree_fp.tree_fingerprint(project_dir)
+
+
+def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None, tested_fp=None):
     """After a full regression run: drop the previous receipt, and on exit 0 record
     {time, fingerprint} of the audited code in .git/postfix-gate/full_pass.json (outside the
     tree). hooks/proof_gate.sh accepts an XONG only with a receipt from this turn whose
-    fingerprint still matches the code (bin/tree_fp.py)."""
+    fingerprint still matches the code (bin/tree_fp.py). tested_fp is the fingerprint taken
+    before the suites ran: code that changed during the run was not the code tested."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
@@ -535,6 +552,10 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     if exit_code != 0:
         return
     fingerprint = tree_fp.tree_fingerprint(project_dir)
+    if tested_fp is not None and fingerprint != tested_fp:
+        log_warn(tr("Code đổi trong lúc chạy test — không ghi biên nhận PASS đầy đủ (XONG sẽ bị proof_gate chặn): chạy lại gate",
+                    "Code changed while the suites ran — no full-pass receipt (proof_gate will refuse XONG): run the gate again"))
+        return
     if not fingerprint:   # proof_gate never matches an empty one: say why XONG will be refused
         log_warn(tr(f"Không tính được dấu vân tay code — XONG sẽ bị proof_gate chặn: {getattr(tree_fp.tree_fingerprint, 'error', '') or 'git add thất bại'}",
                     f"Code fingerprint unavailable — proof_gate will refuse XONG: {getattr(tree_fp.tree_fingerprint, 'error', '') or 'git add failed'}"))
@@ -2552,9 +2573,9 @@ def _update_regression_checklist(args, matrix, rules, modified_files, regression
         log_ok(tr(f"Đã gắn {len(tagged)} tag [BUG]/[FIX]/[INSTINCT] trong test vào checklist (chưa đổi trạng thái đã sửa)",
                   f"Linked {len(tagged)} [BUG]/[FIX]/[INSTINCT] tags from tests into the checklist (fix state unchanged)"))
     if run_tests:
-        # An impacted PASS ran a subset: it flags the row as impacted but never records
-        # PASS (that needs the full command). An impacted FAIL is a real failure.
-        recorded = [dict(t, status="PASS_IMPACTED") if t.get("mode") == "impacted" and t.get("status") == "PASS"
+        # An impacted / package PASS ran a subset, a resource PASS ran nothing: it flags the row
+        # as impacted but never records PASS (that needs the full command). A FAIL is real.
+        recorded = [dict(t, status="PASS_IMPACTED") if t.get("mode") in PARTIAL_MODES and t.get("status") == "PASS"
                     else t for t in regression_tests]
         rc.record_results(data, recorded, task=args.task, commit=commit, project=get_project_dir())
     # After the results: a guard row linked now shows NOT_RUN until a run AFTER its link.
@@ -3165,6 +3186,7 @@ def main():
     # Held for every suite run, re-run and vacuity revert (which rewrites production files in
     # the tree) of this gate; released when the process ends at the latest.
     cache = None
+    tested_fp = tree_fp_of(project_dir) if run_tests and force_reason else None
     if run_tests and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0" \
             and any(t.get("command") for t in regression_tests):
         cache = cached_full_pass(project_dir, args.matrix)
@@ -3176,7 +3198,8 @@ def main():
                 if t.get("command"):
                     # the real duration: pre-commit picks light suites by the recorded one
                     t.update({"status": "PASS", "duration": prev[t["id"]].get("duration") or "0s", "mode": "cached",
-                              "log": prev[t["id"]].get("log"),
+                              "log": prev[t["id"]].get("log"), "exit_code": 0,
+                              "tested_at": float(cache.get("tested_at") or 0),
                               "label": tr(f"PASS (dùng lại kết quả lúc {at}, cùng nội dung)", f"PASS (reused from {at}, same content)")})
             print(f"    {CYAN}▶ {tr(f'dùng lại PASS đầy đủ lúc {at}: cùng nội dung, cùng gate, cùng ma trận (--no-cache để chạy lại)', f'reusing the full PASS of {at}: same content, gate and matrix (--no-cache to re-run)')}{RESET}")
         else:
@@ -3532,9 +3555,12 @@ def main():
     print(f"  • {tr('Gate không xác minh: DESIGN.md/a11y, RED/GREEN, Immutable Guards, OpenCodeReview. Ảnh nghiệm thu không nằm trong exit code; agent vẫn phải gắn PNG của lượt này trước khi nói XONG, trừ khi thay đổi chắc chắn không lên màn hình (essentials bước 4).', 'The gate does not verify: DESIGN.md/a11y, RED/GREEN, immutable guards, OpenCodeReview. The proof image is outside the exit code; the agent still attaches a PNG from this turn before saying XONG unless the change surely cannot show on a screen (essentials step 4).')}")
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
-    if run_tests and not impacted_run:
+    partial = not force_reason or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)
+    if run_tests and not impacted_run and (not partial or exit_code != 0):
+        # only a full run writes the receipt; a partial PASS leaves the last full one as it is
         write_full_pass_receipt(project_dir, exit_code, args.matrix, regression_tests,
-                                tested_at=float(cache.get("tested_at") or 0) if cache else None)
+                                tested_at=float(cache.get("tested_at") or 0) if cache else None,
+                                tested_fp=tested_fp)
 
     if not args.no_checklist:
         update_regression_checklist(
