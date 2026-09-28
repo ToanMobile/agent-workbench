@@ -27,6 +27,7 @@ echo "fun ok() = 1" > src/Core.kt
 echo "class FooTest" > src/test/FooTest.kt
 echo "class BarTest" > src/test/BarTest.kt
 echo "class BazTest" > src/test/BazTest.kt
+echo "class QuxTest" > src/test/QuxTest.kt
 echo "class ThingTests" > src/iosTest/ThingTests.swift
 echo "class NarrowTest" > lib/src/test/NarrowTest.kt
 echo "class OtherTest" > lib/src/test/OtherTest.kt
@@ -35,6 +36,7 @@ echo "print('b')" > tests/test-b.py
 echo "exit 0" > tests/test_c.sh
 echo "X = 1" > tests/helper.py
 printf '#!/bin/sh\nexit 0\n' > gradlew && chmod +x gradlew
+touch src/build.gradle lib/build.gradle   # two Gradle modules: :src and :lib
 printf 'python3 tests/test_a.py\n' > run.sh
 printf 'for t in tests/test_*.sh; do sh "$t" || exit 1; done\n' > runall.sh
 mkdir -p more && echo "print('q')" > more/test_q.py
@@ -42,7 +44,7 @@ printf 'for t in "$ROOT/more"/test_*.py; do :; done\n' > runq.sh
 cat > .agents/regression_matrix.active.json <<'JSON'
 {"project":"t","rules":[
  {"component":"App","watch_files":["src/*"],
-  "mandatory_regression_tests":[{"id":"REG-MOD","name":"app unit","command":"./gradlew testDebugUnitTest"}]},
+  "mandatory_regression_tests":[{"id":"REG-MOD","name":"app unit","command":"./gradlew :src:testDebugUnitTest"}]},
  {"component":"Lib","watch_files":["lib/*"],
   "mandatory_regression_tests":[{"id":"REG-LIB","name":"lib narrow","command":"./gradlew :lib:testDebugUnitTest --tests com.x.NarrowTest"}]},
  {"component":"Scripts","watch_files":["tests/*","run.sh","runall.sh"],
@@ -66,6 +68,11 @@ import json, sys, time
 p = sys.argv[1]; d = json.load(open(p))
 d["items"]["BUG-BAZ"]["red_proof"] = {"status": "PROVEN", "ts": time.time(), "mode": "patch",
     "patch": ".agents/local/red-patches/BUG-BAZ.patch", "files": {"src/test/BazTest.kt": "x"}}
+# A row proven by REVERTING its fix (no patch): a guard with its own red patch has not been seen RED.
+d["items"]["BUG-REV"] = {"id": "BUG-REV", "kind": "bug", "title": "rev bug", "component": "-", "fixed": True,
+    "state": "confirmed", "tests": ["REG-MOD"], "runs_in_suite": ["src/test/QuxTest.kt"], "last": None, "history": [],
+    "red_proof": {"status": "PROVEN", "ts": time.time(), "mode": "revert", "fix_commit": "abc1234",
+                  "files": {"src/test/QuxTest.kt": "x"}}}
 json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
 PY
 cat > .agents/local/guards.json <<'JSON'
@@ -74,12 +81,18 @@ cat > .agents/local/guards.json <<'JSON'
   "test_command":"python3 tests/test_a.py","red_patch":".agents/local/red-patches/G-NEW.patch","handbook":"sổ tay mục 1"},
  {"id":"G-PATCH","title":"the old bug, by its patch","file":"src/Core.kt","tests":["src/test/FooTest.kt"],
   "red_patch":".agents/local/red-patches/BUG-OLD.patch"},
- {"id":"G-ONE","title":"the bug of test c","file":"tests/test_c.sh","tests":["tests/test_c.sh"]},
+ {"id":"G-ONE","title":"the bug of test c","file":"tests/test_c.sh","tests":["tests/test_c.sh"],
+  "red_patch":".agents/local/red-patches/G-ONE.patch"},
  {"id":"G-SAME1","title":"first guard of BarTest","file":"src/Core.kt","tests":["src/test/BarTest.kt"]},
  {"id":"G-SAME2","title":"second guard of BarTest","file":"src/Core.kt","tests":["src/test/BarTest.kt"]},
  {"id":"G-PFX","title":"a guard added by hand first","file":"src/Core.kt","tests":["src/test/FooTest.kt"]},
  {"id":"G-BAZ","title":"another bug on BazTest","file":"src/Core.kt","tests":["src/test/BazTest.kt"],
-  "red_patch":".agents/local/red-patches/G-BAZ.patch"}]}
+  "red_patch":".agents/local/red-patches/G-BAZ.patch"},
+ {"id":"G-REV","title":"a patch guard on a revert-proven test","file":"src/Core.kt","tests":["src/test/QuxTest.kt"],
+  "red_patch":".agents/local/red-patches/G-REV.patch"},
+ {"id":"REG-MOD","title":"a guard named like a suite","file":"src/Core.kt","tests":["src/test/FooTest.kt"]},
+ {"id":"G-STR","title":"tests given as one string","file":"tests/test_a.py","tests":"tests/test_a.py"},
+ {"title":"a guard without an id"}, "not a guard", null]}
 JSON
 render
 
@@ -103,11 +116,29 @@ st="$(py "rc.effective_status(d, I['G-NEW']) if 'G-NEW' in I else 'MISSING'")"
   && [ "$(py "rc.effective_status(d, I['G-BAZ']) if 'G-BAZ' in I else 'MISSING'")" != PASS ] \
   && ok "A6c a row proven with another red patch is not the guard's row (its PROVEN is not inherited)" \
   || fail "A6c G-BAZ: $(py "('G-BAZ' in I, I['BUG-BAZ'].get('guards'))")"
+[ "$(py "'G-REV' in I and not I['BUG-REV'].get('guards')")" = True ] \
+  && ok "A6d a row proven by revert (no patch) is not the row of a guard with its own red patch" \
+  || fail "A6d G-REV: $(py "('G-REV' in I, I['BUG-REV'].get('guards'))")"
+[ "$(py "I['BUG-C'].get('red_patch')")" = ".agents/local/red-patches/G-ONE.patch" ] \
+  && ok "A6e a guard merged into an existing row brings its red_patch" || fail "A6e BUG-C red_patch: $(py "I['BUG-C'].get('red_patch')")"
+[ "$(py "I.get('BUG-REG-MOD',{}).get('guards')")" = "['REG-MOD']" ] && [ "$(py "I['REG-MOD']['kind']")" = test ] \
+  && ok "A6f a guard id equal to a suite id gets the row BUG-<id>, the suite stays" || fail "A6f: $(py "(I.get('BUG-REG-MOD'), I['REG-MOD']['kind'])")"
+[ "$(py "I.get('G-STR',{}).get('runs_in_suite')")" = "['tests/test_a.py']" ] \
+  && ok "A6g tests given as one string is one test file, not its characters" || fail "A6g G-STR: $(py "I.get('G-STR')")"
 n1="$(py "len(I)")"; render; n2="$(py "len(I)")"
 [ "$n1" = "$n2" ] && ok "A7 a second sync adds nothing ($n2 rows)" || fail "A7 rows $n1 → $n2"
 python3 "$RC" --project "$TMP/noguards" render >/dev/null 2>&1
 [ "$(python3 -c "import json; print(sum(1 for v in json.load(open('$TMP/noguards/.agents/regression_status.json'))['items'].values() if v.get('kind')=='bug'))")" = 0 ] \
   && ok "A8 no guards.json: no bug row is made" || fail "A8 bug rows appeared without guards.json"
+N="$TMP/noguards"
+for bad in '{"guards": null}' '"just a string"' '{"guards": 7}'; do
+  printf '%s\n' "$bad" > "$N/.agents/local/guards.json"
+  python3 "$RC" --project "$N" render >"$TMP/bad.out" 2>&1; rc=$?
+  echo "fun ok() = 9" > "$N/src/Core.kt"
+  CLAUDE_PROJECT_DIR="$N" python3 "$GATE" --matrix "$N/.agents/regression_matrix.active.json" --run-tests >>"$TMP/bad.out" 2>&1; grc=$?
+  [ "$rc" = 0 ] && [ "$grc" = 0 ] && ! grep -q Traceback "$TMP/bad.out" \
+    && ok "A8b guards.json $bad: render and gate still work (exit 0, no traceback)" || fail "A8b $bad: render $rc gate $grc $(grep -m2 -E 'Error|Traceback' "$TMP/bad.out")"
+done
 echo "print('a2')" > tests/test_a.py
 gate --run-tests
 st="$(py "rc.effective_status(d, I['G-NEW']) if 'G-NEW' in I else 'MISSING'")"
@@ -136,8 +167,10 @@ git add run.sh && git commit -qm "run test-b"
 # The gate: a NEW orphan test in the diff fails --full; the same file once committed only warns.
 echo "print('new')" > tests/test-new.py
 gate --run-tests --full; rc=$?
-[ "$rc" != 0 ] && grep -q 'tests/test-new.py' "$TMP/out" && ok "B10 --full fails (exit $rc) on a new test no suite runs, naming it" \
+[ "$rc" = 2 ] && grep -q 'file test MỚI mà không suite.*tests/test-new.py' "$TMP/out" && ok "B10 --full fails (exit 2) on a new test no suite runs, naming it" \
   || fail "B10 --full exit $rc: $(tail -5 "$TMP/out")"
+gate --run-tests --full --allow-orphan-tests; rc=$?
+[ "$rc" = 0 ] && ok "B10b --allow-orphan-tests lets --full pass with a new orphan test" || fail "B10b exit $rc: $(tail -3 "$TMP/out")"
 gate --run-tests; rc=$?
 [ "$rc" = 0 ] && ok "B11 the impacted run (Stop hook) only warns about it" || fail "B11 impacted exit $rc: $(tail -5 "$TMP/out")"
 git add tests/test-new.py && git commit -qm "an orphan, committed"
@@ -149,5 +182,51 @@ echo "print('ok')" > tests/test_d.py
 printf 'for t in tests/test_*.sh; do sh "$t" || exit 1; done\npython3 tests/test_d.py\n' > runall.sh
 gate --run-tests --full; rc=$?
 [ "$rc" = 0 ] && ok "B14 a new test that a changed suite script runs passes --full" || fail "B14 exit $rc: $(tail -5 "$TMP/out")"
+echo "fun ok() = 1" > src/Core.kt
+git add -A tests runall.sh src && git commit -qm "test_d"
+git mv tests/test-new.py tests/test-renamed.py
+gate --run-tests --full; rc=$?
+[ "$rc" = 0 ] && ok "B15 renaming an orphan test already committed does not fail --full" || fail "B15 exit $rc: $(tail -4 "$TMP/out")"
+git commit -qm "rename"
+echo "print('in range')" > tests/test-range.py && git add tests/test-range.py && git commit -qm "an orphan in a commit"
+gate --run-tests --full --diff HEAD~1..HEAD; rc=$?
+[ "$rc" = 2 ] && grep -q 'file test MỚI mà không suite.*tests/test-range.py' "$TMP/out" && ok "B16 --diff A..B checks the tests the range adds (base = A)" || fail "B16 exit $rc: $(tail -4 "$TMP/out")"
+
+# ── C. suites that run tests through a runner (not by naming the file) ─────────
+covered() {  # <repo> <test path> → True when some suite of its matrix runs it
+  python3 -c "import json,sys; sys.path.insert(0,'$DEVKIT_DIR/bin'); import regression_checklist as rc; from pathlib import Path
+p=Path('$1'); m=json.load(open(p/'.agents/regression_matrix.active.json'))
+print(not rc.orphan_tests(p, m, candidates=['$2']))"
+}
+mkcase() {  # <dir> <command> <watch glob>
+  mkdir -p "$1/.agents" "$1/tests" "$1/src" && (cd "$1" && git init -q . && git config user.email t@t && git config user.name t)
+  printf '{"project":"c","rules":[{"component":"C","watch_files":["%s"],"mandatory_regression_tests":[{"id":"REG-C","name":"c","command":"%s"}]}]}\n' "$3" "$2" > "$1/.agents/regression_matrix.active.json"
+}
+C="$TMP/c1"; mkcase "$C" "sh scripts/run-tests.sh" "src/*.py"; mkdir -p "$C/scripts"
+printf 'cd "$(dirname "$0")/.."\npython3 -m unittest discover -s tests -t .\n' > "$C/scripts/run-tests.sh"
+echo "x = 1" > "$C/src/app.py"; touch "$C/tests/__init__.py"; printf 'import unittest\nclass T(unittest.TestCase):\n    def test_x(self): self.assertEqual(1, 1)\n' > "$C/tests/test_b.py"
+[ "$(covered "$C" tests/test_b.py)" = True ] && ok "C1 a wrapper script whose runner is unittest discover runs tests/test_b.py" || fail "C1 wrapper unittest"
+(cd "$C" && git add -A && git commit -qm init && cp tests/test_b.py tests/test_new.py && echo "x = 2" > src/app.py)
+CLAUDE_PROJECT_DIR="$C" python3 "$GATE" --run-tests --full >"$TMP/c.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && ok "C1b --full passes a new test the wrapper's runner collects" || fail "C1b exit $rc: $(grep -m3 -E 'CHƯA|UNVERIFIED|mồ côi' "$TMP/c.out")"
+C="$TMP/c2"; mkcase "$C" "make test" "src/*.py"; printf 'test:\n\tpytest tests/\n' > "$C/Makefile"; echo "x=1" > "$C/tests/test_m.py"
+[ "$(covered "$C" tests/test_m.py)" = True ] && ok "C2 make test → the Makefile recipe pytest tests/" || fail "C2 make test"
+C="$TMP/c3"; mkcase "$C" "tox -e py" "src/*.py"; printf '[testenv]\ncommands = pytest\n' > "$C/tox.ini"; echo "x=1" > "$C/tests/test_t.py"
+[ "$(covered "$C" tests/test_t.py)" = True ] && ok "C3 tox -e py → tox.ini commands" || fail "C3 tox"
+C="$TMP/c4"; mkcase "$C" "npm run unit" "src/*.js"; mkdir -p "$C/test"; printf '{"scripts":{"unit":"node --test test/"}}\n' > "$C/package.json"; echo "1" > "$C/test/foo.test.js"
+[ "$(covered "$C" test/foo.test.js)" = True ] && ok "C4 npm run unit → the package.json script node --test" || fail "C4 npm run unit"
+C="$TMP/c5"; mkcase "$C" "python3 -m unittest" "src/*.py"; echo "x=1" > "$C/tests/test_u.py"
+[ "$(covered "$C" tests/test_u.py)" = True ] && ok "C5 python3 -m unittest (discovery) runs tests/test_u.py" || fail "C5 unittest"
+C="$TMP/c6"; mkcase "$C" "./gradlew build" "src/main/*"; mkdir -p "$C/src/test"; echo "class XTest" > "$C/src/test/XTest.kt"
+[ "$(covered "$C" src/test/XTest.kt)" = True ] && ok "C6 ./gradlew build runs the unit tests (watch only src/main)" || fail "C6 gradlew build"
+C="$TMP/c7"; mkcase "$C" "mvn verify" "src/main/*"; mkdir -p "$C/src/test/java"; echo "class YTest {}" > "$C/src/test/java/YTest.java"
+[ "$(covered "$C" src/test/java/YTest.java)" = True ] && ok "C7 mvn verify runs the unit tests" || fail "C7 mvn verify"
+C="$TMP/c8"; mkcase "$C" "pytest -q" "src/*.py"; echo "x=1" > "$C/tests/test_p.py"
+[ "$(covered "$C" tests/test_p.py)" = True ] && ok "C8 pytest at the root runs tests/ although only src/*.py is watched" || fail "C8 pytest watch"
+C="$TMP/c9"; mkcase "$C" "sh ci.sh" "tests/*"; printf 'true\n' > "$C/ci.sh"; echo "x=1" > "$C/tests/test_o.py"
+(cd "$C" && git add -A && git commit -qm init && echo "x=2" > tests/test_new.py)
+CLAUDE_PROJECT_DIR="$C" python3 "$GATE" --run-tests --full >"$TMP/c.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && grep -q 'tests/test_new.py' "$TMP/c.out" && ok "C9 a wrapper whose runner cannot be read only warns about a new orphan" \
+  || fail "C9 exit $rc: $(grep -m3 -E 'CHƯA|mồ côi|orphan' "$TMP/c.out")"
 
 [ "$FAILS" = 0 ] && echo "ALL PASS" || { echo "$FAILS FAILED"; exit 1; }

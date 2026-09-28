@@ -1463,22 +1463,40 @@ def needs_no_test(rel_file: str) -> bool:
             or clean.lower().endswith(".log"))
 
 
-def new_orphan_tests(modified_files, matrix, base_ref) -> list:
-    """Test files this change ADDS (absent at base_ref) that no suite of the matrix executes — a
-    test only ever run by hand (GeelyEx2 tests/scripts/test-retrace-treo.py, 28/09/2026). The rule
-    is regression_checklist.orphan_tests; orphans already committed are checklist rows only."""
+def new_orphan_tests(modified_files, matrix, base_ref) -> tuple:
+    """(test files this change ADDS — absent at base_ref, not a rename/copy of a test that was
+    there — that no suite of the matrix executes, ids of suites whose runner cannot be read). A test
+    only ever run by hand: GeelyEx2 tests/scripts/test-retrace-treo.py, 28/09/2026. The rule is
+    regression_checklist.orphan_tests; orphans already committed are checklist rows only."""
     if not (matrix or {}).get("rules"):
-        return []
+        return [], []
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
     except ImportError:
-        return []
+        return [], []
     prefix = get_project_prefix()
     new = [f for f in modified_files if f not in DELETED_FILES and rc.is_test_candidate(f)
            and subprocess.run(["git", "-C", str(get_repo_root()), "cat-file", "-e", f"{base_ref}:{prefix}{f}"],
                               capture_output=True).returncode != 0]
-    return rc.orphan_tests(get_project_dir(), matrix, candidates=new) if new else []
+    if not new:
+        return [], []
+    # A renamed / copied test keeps its history: only a test that did not exist before is new.
+    raw = subprocess.run(["git", "-C", str(get_project_dir()), "diff", "-M", "-C", "--name-status", "-z", "--relative",
+                          base_ref, "--", "."], capture_output=True).stdout.decode("utf-8", "surrogateescape").split("\0")
+    moved, j = set(), 0
+    while j < len(raw):
+        if raw[j][:1] in ("R", "C") and j + 2 < len(raw):
+            if rc.is_test_candidate(raw[j + 1]):
+                moved.add(raw[j + 2])
+            j += 3
+        else:
+            j += 2 if raw[j] else 1
+    new = [f for f in new if f not in moved]
+    project = get_project_dir()
+    index = rc.suite_index(project, matrix)
+    return (rc.orphan_tests(project, matrix, candidates=new, index=index) if new else [],
+            rc.opaque_suites(project, matrix, index=index))
 
 
 def uncovered_code_files(modified_files, rules, covers=None) -> list:
@@ -2537,7 +2555,12 @@ def _update_regression_checklist(args, matrix, rules, modified_files, regression
                     else t for t in regression_tests]
         rc.record_results(data, recorded, task=args.task, commit=commit, project=get_project_dir())
     # After the results: a guard row linked now shows NOT_RUN until a run AFTER its link.
-    synced = rc.sync_project(data, project_dir, matrix)   # + guards.json guards, orphan tests
+    try:
+        synced = rc.sync_project(data, project_dir, matrix)   # + guards.json guards, orphan tests
+    except Exception as e:  # noqa: BLE001 — a bad guards.json or script never fails the gate
+        synced = {"guards": []}
+        log_warn(tr(f"Không đồng bộ được guard/test mồ côi vào checklist: {e!r}",
+                    f"Could not sync guards / orphan tests into the checklist: {e!r}"))
     if synced["guards"]:
         log_ok(tr(f"Đã thêm {len(synced['guards'])} guard của .agents/local/guards.json vào checklist "
                   "(chưa PASS tới khi chạy thật sau khi link + chứng minh ĐỎ): ",
@@ -2906,6 +2929,8 @@ def main():
     parser.add_argument("--json", action="store_true", help="Also print the result as JSON (last stdout line)")
     parser.add_argument("--allow-no-tests", action="store_true",
                         help="Allow PASS when there is no matrix / no regression test matches the change")
+    parser.add_argument("--allow-orphan-tests", action="store_true",
+                        help="Do not block --full on a NEW test file no matrix suite runs (it is still listed)")
     parser.add_argument("--record-lesson", help="Lesson / new code trap to record in .agents/instincts.md (only on PASS)")
     parser.add_argument("--cause", help="Root cause of the bug just fixed")
     parser.add_argument("--prevention", help="Prevention rule / how the fix avoids a recurrence")
@@ -2932,6 +2957,14 @@ def main():
                    "--staged only statically checks the staged content — it cannot be combined with --diff / --run-tests / --full / --record-lesson"))
         return 2
     base_ref = args.diff if args.diff and ".." not in args.diff else "HEAD"
+    if args.diff and ".." in args.diff:   # A..B / A...B: the change is B against A (merge base for ...)
+        left, right = args.diff.split("...", 1) if "..." in args.diff else args.diff.split("..", 1)
+        left = left or "HEAD"
+        if "..." in args.diff:
+            mb = subprocess.run(["git", "-C", str(get_project_dir()), "merge-base", left, right or "HEAD"],
+                                capture_output=True, text=True).stdout.strip()
+            left = mb or left
+        base_ref = left
 
     global STAGED, BASE_REF
     STAGED = args.staged or bool(args.commit_msg)
@@ -3409,13 +3442,19 @@ def main():
     uncovered = [] if args.allow_no_tests else uncovered_code_files(modified_files, rules)
     # A NEW test file no suite executes runs only by hand: --full (the handover run) refuses it; the
     # Stop hook's impacted run warns. Orphans already committed are checklist rows, never a block.
-    orphans_new = new_orphan_tests(modified_files, matrix, base_ref)
+    orphans_new, opaque = new_orphan_tests(modified_files, matrix, base_ref)
+    # a suite whose wrapper we cannot read may run it: say so, never block on a guess
+    orphan_block = bool(orphans_new) and bool(force_reason) and not opaque and not args.allow_orphan_tests
     orphan_fix = tr("gọi nó trong lệnh của một suite ma trận (hoặc trong script lệnh đó chạy), hoặc đặt nó dưới watch_files của suite chạy cả module",
                     "call it from a matrix suite's command (or a script that command runs), or put it under the watch_files of a suite that runs the whole module")
-    if orphans_new and not force_reason:
-        log_warn(tr(f"{len(orphans_new)} file test MỚI không suite nào của ma trận chạy (--full sẽ chặn): ",
-                    f"{len(orphans_new)} NEW test files no matrix suite runs (--full will block): ")
-                 + ", ".join(orphans_new[:5]) + f" — {orphan_fix}")
+    if orphans_new and not orphan_block:
+        why = (tr(f" — suite {', '.join(opaque[:3])} gọi script/task không đọc được runner, có thể nó chạy: chỉ cảnh báo",
+                  f" — suite {', '.join(opaque[:3])} calls a script/task whose runner cannot be read and may run it: warning only")
+               if opaque else tr(" (--allow-orphan-tests)", " (--allow-orphan-tests)") if args.allow_orphan_tests
+               else tr(" (--full sẽ chặn)", " (--full will block)"))
+        log_warn(tr(f"{len(orphans_new)} file test MỚI không suite nào của ma trận chạy: ",
+                    f"{len(orphans_new)} NEW test files no matrix suite runs: ")
+                 + ", ".join(orphans_new[:5]) + f"{why} — {orphan_fix}")
 
     print(f"\n{BOLD}{CYAN}──────────────────────────────────────────────────────────────────────────────────────{RESET}")
     if not static_ok or (run_tests and not tests_ok):
@@ -3433,10 +3472,10 @@ def main():
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — test hồi quy chưa chạy (dry-run)", "UNVERIFIED — regression tests not run (dry-run)"), YELLOW, 2
     elif unreadable:
         verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(unreadable)} file không đọc được để quét", f"UNVERIFIED — {len(unreadable)} files could not be read for scanning"), YELLOW, 2
-    elif orphans_new and force_reason:
+    elif orphan_block:
         shown = ", ".join(orphans_new[:5]) + (" …" if len(orphans_new) > 5 else "")
-        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(orphans_new)} file test MỚI mà không suite nào của ma trận chạy ({shown}): gate sẽ không bao giờ chạy lại nó — {orphan_fix}",
-                                                    f"UNVERIFIED — {len(orphans_new)} NEW test files that no matrix suite runs ({shown}): the gate would never run them again — {orphan_fix}"), YELLOW, 2
+        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(orphans_new)} file test MỚI mà không suite nào của ma trận chạy ({shown}): gate sẽ không bao giờ chạy lại nó — {orphan_fix} (cố ý: --allow-orphan-tests)",
+                                                    f"UNVERIFIED — {len(orphans_new)} NEW test files that no matrix suite runs ({shown}): the gate would never run them again — {orphan_fix} (on purpose: --allow-orphan-tests)"), YELLOW, 2
     elif uncovered and not no_coverage:
         verdict_text, verdict_color, exit_code = f"CHƯA XÁC MINH — {len(uncovered)} file code thay đổi chưa có test hồi quy (thêm vào regression_matrix.json, hoặc --allow-no-tests)", YELLOW, 2
     elif no_coverage:

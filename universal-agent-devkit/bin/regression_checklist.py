@@ -761,10 +761,14 @@ _RUNNERS = (   # (whole-module runner, file extensions it executes)
     (re.compile(r"\bcargo\s+test\b"), (".rs",)),
     (re.compile(r"\b(?:npm|yarn|pnpm|bun)\s+(?:run\s+)?test\b|\b(?:jest|vitest|mocha)\b"),
      (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")),
-    (re.compile(r"\bpytest\b|\bunittest\s+discover\b"), (".py",)),
+    (re.compile(r"\bnode\s+--test\b"), (".js", ".mjs", ".cjs", ".ts")),
+    # `python -m unittest` alone discovers; tox runs the env's commands (pytest as a rule)
+    (re.compile(r"\bpytest\b|\bunittest\s+discover\b|-m\s+unittest\s*$|^tox\b"), (".py",)),
     (re.compile(r"\b(?:flutter|dart)\s+test\b"), (".dart",)),
 )
-_NARROW = re.compile(r"(?:^|\s)(?:--tests?|--filter|-only-testing\S*|-k)(?:[\s=]|$)|\S+\.py\b|::")
+_SHELL_EXT = (".sh", ".bash", "")
+_BUILD_WRAPPERS = ("gradlew", "mvnw")   # their own text says nothing about which tests run
+_NARROW = re.compile(r"(?:^|\s)(?:--tests|--filter|-only-testing\S*|-k)(?:[\s=]|$)|\S+\.py\b|::")
 _GLOB_TOKEN = re.compile(r"[A-Za-z0-9_.*?/-]*[*?][A-Za-z0-9_.*?/-]*")
 
 
@@ -781,35 +785,68 @@ def is_test_candidate(path: str) -> bool:
     return True
 
 
-def _segments(command: str) -> list:
+def _segments(command: str, cwd: str = "") -> list:
     """[(cd dir or "", segment)] of a shell command split on && ; || |; a `cd X` sets the dir of
-    the segments after it."""
-    out, cwd = [], ""
+    the segments after it (a dir we cannot read — `$ROOT`, `..` — counts as the project root)."""
+    out = []
     for seg in re.split(r"&&|\|\||;|\|", command or ""):
         seg = seg.strip()
         m = re.match(r"cd\s+(\S+)$", seg)
         if m:
-            cwd = m.group(1).strip("'\"").rstrip("/")
-            cwd = "" if cwd in (".", "./") else cwd
+            d = m.group(1).strip("'\"").rstrip("/")
+            if d in (".", "./", "") or "$" in d or "`" in d or ".." in d or d.startswith(("/", "~")):
+                cwd = "" if d not in (".", "./") else cwd
+            else:
+                cwd = f"{cwd}/{d}" if cwd else d
             continue
         if seg:
             out.append((cwd, seg))
     return out
 
 
+def _read_text(path: Path):
+    try:
+        if not path.is_file() or path.stat().st_size > 2_000_000:
+            return None
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    return None if "\0" in text[:4096] else text
+
+
 def _script_text(project: Path, cwd: str, tok: str):
-    """(text, dir relative to the project) of the script a command token names, or None."""
+    """(text, dir relative to the project, path) of the script a command token names, or None."""
     for cand in dict.fromkeys([project / cwd / tok, project / tok]):
+        if cand.suffix not in _SCRIPT_EXT or cand.name in _BUILD_WRAPPERS:
+            continue
+        text = _read_text(cand)
         try:
-            if not cand.is_file() or cand.suffix not in _SCRIPT_EXT or cand.stat().st_size > 2_000_000:
-                continue
-            text = cand.read_text(encoding="utf-8", errors="replace")
-            base = cand.parent.resolve().relative_to(project.resolve()).as_posix()
+            rel = cand.resolve().relative_to(project.resolve()).as_posix()
         except (OSError, ValueError):
             continue
-        if "\0" not in text[:4096]:
-            return text, "" if base == "." else base
+        if text is not None:
+            base = rel.rsplit("/", 1)[0] if "/" in rel else ""
+            return text, base, rel
     return None
+
+
+def _task_runner_text(project: Path, cwd: str, seg: str):
+    """(is a task runner, the text of its task file or None): `make …` → Makefile, `tox …` →
+    tox.ini, `npm|yarn|pnpm|bun run X` / `npm test` → the scripts of package.json."""
+    words = [w for w in seg.split() if "=" not in w or w.startswith("-")]
+    first = words[0] if words else ""
+    root = project / cwd
+    if first in ("make", "gmake"):
+        return True, next((t for t in (_read_text(root / n) for n in ("GNUmakefile", "makefile", "Makefile")) if t), None)
+    if first == "tox":
+        return True, _read_text(root / "tox.ini")
+    if first in ("npm", "yarn", "pnpm", "bun") and len(words) > 1 and words[1] not in ("install", "ci", "i", "add"):
+        try:
+            scripts = json.loads(_read_text(root / "package.json") or "").get("scripts") or {}
+        except (ValueError, AttributeError):
+            return True, None
+        return True, "\n".join(str(v) for v in scripts.values()) if isinstance(scripts, dict) and scripts else None
+    return False, None
 
 
 def suite_index(project: Path, matrix: dict) -> list:
@@ -827,10 +864,23 @@ def suite_index(project: Path, matrix: dict) -> list:
             if not test.get("id") or not cmd:
                 continue
             whole, texts, globs = [], [cmd], []
-            for cwd, seg in _segments(cmd):
+            wrapper, unread, wrapper_texts = False, False, []
+
+            def runner(cwd, seg):
                 exts = tuple(e for rx, ex in _RUNNERS if rx.search(seg) for e in ex)
                 if exts and not _NARROW.search(seg):
                     whole.append((cwd, seg, exts))
+
+            for cwd, seg in _segments(cmd):
+                runner(cwd, seg)
+                shell = []   # wrapper texts whose lines are commands: scanned for a runner too
+                is_task, task_text = _task_runner_text(project, cwd, seg)
+                if is_task:
+                    wrapper = True
+                    if task_text is None:
+                        unread = True
+                    else:
+                        texts.append(task_text); shell.append(task_text); wrapper_texts.append(task_text)
                 for tok in seg.split():
                     tok = tok.strip("'\"")
                     if not tok or tok.startswith("-") or "=" in tok:
@@ -838,18 +888,30 @@ def suite_index(project: Path, matrix: dict) -> list:
                     found = _script_text(project, cwd, tok)
                     if not found:
                         continue
-                    text, base = found
+                    text, base, rel = found
                     texts.append(text)
+                    if Path(rel).suffix in _SHELL_EXT and not is_test_candidate(rel):
+                        wrapper = True
+                        shell.append(text); wrapper_texts.append(text)
                     # quotes and $VARs out: "$ROOT/workflows"/*.test.mjs is the glob workflows/*.test.mjs
                     for g in _GLOB_TOKEN.findall(re.sub(r"\$\{?\w+\}?|[\"']", "", text)):
                         g = g[2:] if g.startswith("./") else g.lstrip("/")
                         if ("/" in g or re.search(r"\.\w+$", g)) and re.search(r"[A-Za-z]", g):
                             globs.append(g if "/" in g else f"{base}/{g}".lstrip("/"))
+                for text in shell:   # one level: the runner a wrapper script / task calls
+                    for line in text.splitlines():
+                        for c2, s2 in _segments(line.split("#", 1)[0], cwd):
+                            runner(c2, s2)
             words = set()
             for text in texts:
                 words.update(re.findall(r"[\w.-]+", text))
                 words.update(re.findall(r"[\w-]+", text))
-            out.append({"id": test["id"], "watch": watch, "whole": whole, "words": words,
+            # A wrapper whose runner we cannot read and that names no test: we cannot tell what it
+            # runs, so a new orphan it might run only warns (post-fix-gate).
+            refs = bool(globs) or any(TEST_CANDIDATE_RE.search(w.rsplit("/", 1)[-1])
+                                      for t in wrapper_texts for w in re.findall(r"[\w./-]+", t))
+            opaque = (wrapper or unread) and not whole and not refs
+            out.append({"id": test["id"], "watch": watch, "whole": whole, "words": words, "opaque": opaque,
                         "globs": [re.compile(fnmatch.translate(g) + "|" + fnmatch.translate("*/" + g))
                                   if "/" in g else re.compile(fnmatch.translate(g)) for g in dict.fromkeys(globs)]})
     return out
@@ -864,9 +926,12 @@ def running_suites(project: Path, path: str, index: list) -> list:
     ids = []
     for s in index:
         hit = name in s["words"] or (len(stem) >= 6 and stem in s["words"]) or any(g.match(path) for g in s["globs"])
-        if not hit and s["watch"] is not None and s["watch"].match(path):
+        watched = s["watch"] is not None and s["watch"].match(path)
+        if not hit:
             for cwd, seg, exts in s["whole"]:
-                if ext not in exts:
+                # a module runner runs every test under the dir it runs in (pytest at the root collects
+                # tests/ even when the rule only watches src/*.py); outside it, the rule's watch decides
+                if ext not in exts or not (watched or not cwd or path.startswith(cwd + "/")):
                     continue
                 if cwd and path.startswith(cwd + "/"):   # a Gradle task path is relative to the cd dir
                     hit = _runs_source_set(path[len(cwd) + 1:], seg, Path(project) / cwd)
@@ -890,6 +955,13 @@ def orphan_tests(project: Path, matrix: dict, candidates=None, index=None) -> li
     index = suite_index(project, matrix) if index is None else index
     return [f for f in dict.fromkeys(candidates)
             if is_test_candidate(f) and (project / f).is_file() and not running_suites(project, f, index)]
+
+
+def opaque_suites(project: Path, matrix: dict, index=None) -> list:
+    """Suites that call a wrapper (script, make, tox, npm run) whose runner we cannot read and that
+    names no test: any test may run through them, so a new orphan only warns."""
+    index = suite_index(project, matrix) if index is None else index
+    return [s["id"] for s in index if s.get("opaque")]
 
 
 def sync_orphans(data: dict, project: Path, matrix: dict, index=None) -> tuple:
@@ -922,42 +994,59 @@ def sync_guards(data: dict, project: Path, matrix: dict | None = None, index=Non
     bug row — GeelyEx2 28/09: RELAY-0928-heartbeat-khong-phai-join had a red-patch-proven test and
     no row. The row that already is the guard: its id; one listing it in "guards"; one whose RED
     proof used the guard's red_patch (that proof is reused, never invented); or — one-to-one only —
-    the one bug row whose own test files cover the guard's tests and whose proof (if any) used no
-    other patch (two guards of one shared test get two rows). Else a new row linked to the suites that execute its tests: NOT_RUN, then UNPROVEN
-    until a RED proof (red_proof.py --bug <id> --patch <red_patch>). Returns the ids created."""
+    the one bug row whose own test files cover the guard's tests and has no RED proof by a revert,
+    a session or another patch (two guards of one shared test get two rows). Else a new row (BUG-<id> when a suite has that id) linked to the suites that execute its tests: NOT_RUN,
+    then UNPROVEN until a RED proof (red_proof.py --bug <id> --patch <red_patch>). Returns the ids created."""
     try:
         raw = json.loads((Path(project) / GUARDS_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
-    guards = [g for g in (raw.get("guards", []) if isinstance(raw, dict) else raw)
-              if isinstance(g, dict) and isinstance(g.get("id"), str) and g["id"].strip()]
+    # A hand-written file: anything off-shape is skipped, never a crash of the gate that syncs it.
+    listed = raw.get("guards") if isinstance(raw, dict) else raw
+    guards = []
+    for g in listed if isinstance(listed, list) else []:
+        if not (isinstance(g, dict) and isinstance(g.get("id"), str) and g["id"].strip()):
+            continue
+        tests = g.get("tests")
+        tests = [tests] if isinstance(tests, str) else tests if isinstance(tests, list) else []
+        guards.append({**g, "id": g["id"].strip(), "tests": [t for t in tests if isinstance(t, str) and t.strip()],
+                       "red_patch": g["red_patch"] if isinstance(g.get("red_patch"), str) else ""})
     items = data["items"]
     bugs = {k: it for k, it in items.items() if it.get("kind") == "bug"}
     claimed = {gid for it in bugs.values() for gid in it.get("guards") or []}
+
+    def claim(row, g):
+        it = bugs[row]
+        if g["id"] not in it.setdefault("guards", []):
+            it["guards"].append(g["id"])
+        if g["red_patch"]:
+            it.setdefault("red_patch", g["red_patch"])
+
     todo = []
     for g in guards:
-        gid = g["id"].strip()
+        gid = g["id"]
         # `bugs add --id X` stores BUG-X: the same guard with or without the prefix (GeelyEx2 28/09).
         same = next((k for k in (gid, f"BUG-{gid}", gid[4:] if gid.upper().startswith("BUG-") else None)
                      if k and k in bugs), None)
         if same:
             todo.append((g, same))
             continue
-        if gid in claimed or gid in items:   # another row is this guard, or the id is a suite's
+        if gid in claimed:   # another row already is this guard
             continue
-        patch = str(g.get("red_patch") or "")
+        patch = g["red_patch"]
         row = next((k for k, it in bugs.items() if patch and (
             (it.get("red_proof") or {}).get("patch") == patch or Path(patch).stem == k)), None)
         if row:
-            bugs[row].setdefault("guards", []).append(gid)
+            claim(row, g)
             continue
         todo.append((g, None))
     # Same-test claims: a row exactly one guard points at, that no guard owns already, and whose
-    # RED proof (if any) covered these very tests.
+    # RED proof (if any) is the guard's own: proven with another patch, by a revert or in a session,
+    # it never saw the guard's red patch RED — the guard keeps its own row.
     wants: dict = {}
     taken = {row for _, row in todo if row}
     for g, row in todo:
-        tests = set(g.get("tests") or [])
+        tests = set(g["tests"])
         if row is not None or not tests:
             continue
         for k, it in bugs.items():
@@ -965,22 +1054,24 @@ def sync_guards(data: dict, project: Path, matrix: dict | None = None, index=Non
                     or it.get("state") in ("reported", "auto_closed"):
                 continue
             proof = it.get("red_proof") or {}
-            if g.get("red_patch") and proof.get("patch") and proof["patch"] != g["red_patch"]:
-                continue   # proven with another patch: maybe another bug on the same test — never inherit it
+            if g["red_patch"] and proof.get("status") not in (None, "PENDING") and proof.get("patch") != g["red_patch"]:
+                continue
             if tests <= _own_refs(it) and (proof.get("status") != "PROVEN" or tests <= set(proof.get("files") or {})):
-                wants.setdefault(k, []).append(g["id"].strip())
+                wants.setdefault(k, []).append(g["id"])
     created = []
     for g, row in todo:
-        gid = g["id"].strip()
+        gid = g["id"]
         mine = [k for k, ids in wants.items() if ids == [gid]]
         if row is None and len(mine) == 1:
-            bugs[mine[0]].setdefault("guards", []).append(gid)
+            claim(mine[0], g)
             continue
         if index is None:
             index = suite_index(project, matrix or {})
-        item = items.get(row or gid)
+        # an id a suite (or another non-bug row) already has: the guard's row is BUG-<id>
+        rid = row or (f"BUG-{gid}" if gid in items else gid)
+        item = items.get(rid)
         # A row someone linked by hand keeps its links; only a guard test it lacks is added.
-        tests = [t for t in g.get("tests") or []
+        tests = [t for t in g["tests"]
                  if item is None or item.get("source") == "guards.json" or t not in _own_refs(item)]
         in_suite, outside, ids = [], [], []
         for t in tests:
@@ -988,15 +1079,16 @@ def sync_guards(data: dict, project: Path, matrix: dict | None = None, index=Non
             ids += [i for i in run if i not in ids]
             (in_suite if run else outside).append(t)
         if item is None:
-            item = items[gid] = {"id": gid, "kind": "bug", "created_at": _now(), "last": None, "history": [],
+            item = items[rid] = {"id": rid, "kind": "bug", "created_at": _now(), "last": None, "history": [],
                                  "tests": [], "fixed": True, "state": "confirmed", "source": "guards.json",
                                  "component": str(g.get("file") or "-").split("/")[0] or "-"}
-            created.append(gid)
+            bugs[rid] = item
+            created.append(rid)
         if item.get("source") == "guards.json":
             item["title"] = " ".join(str(g.get("title") or gid).split())
-            if g.get("red_patch"):
+            if g["red_patch"]:
                 item["red_patch"] = g["red_patch"]
-            if g.get("handbook"):
+            if isinstance(g.get("handbook"), str) and g["handbook"]:
                 item["evidence"] = g["handbook"]
         new_ids = [i for i in ids if i not in item.setdefault("tests", [])]
         if new_ids:
@@ -1006,8 +1098,7 @@ def sync_guards(data: dict, project: Path, matrix: dict | None = None, index=Non
             for v in vals:
                 if v not in item.setdefault(key, []):
                     item[key].append(v)
-        if gid not in item.setdefault("guards", []):
-            item["guards"].append(gid)
+        claim(rid, g)
     return created
 
 
@@ -1761,14 +1852,15 @@ def _runs_source_set(path: str, command: str, project: Path = None) -> bool:
         return "editmode" in c or "-testplatform editmode" in c
     if "/playmode/" in p:
         return "playmode" in c
-    if "test" not in c and "check" not in c:
+    # Gradle `build` and Maven `verify`/`install`/`package` run the unit tests too.
+    if "test" not in c and "check" not in c and not re.search(r"(?:gradlew?|mvnw?)\b.*\b(?:build|verify|install|package)\b", c):
         return False
     # A Gradle command naming module tasks (:app:testReleaseUnitTest) runs only those
     # modules; an unqualified task (testDebugUnitTest) runs every module that has it.
     if project is not None and "gradlew" in c:
         tasks = [t for t in (command or "").split() if not t.startswith("-")][1:]
         qualified = [t.rsplit(":", 1)[0] for t in tasks if t.startswith(":") and t.count(":") >= 2]
-        if tasks and len(qualified) == len([t for t in tasks if "test" in t.lower() or "check" in t.lower()]):
+        if qualified and len(qualified) == len([t for t in tasks if "test" in t.lower() or "check" in t.lower()]):
             return _gradle_module(project, path) in qualified
     return True
 
