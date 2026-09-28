@@ -829,6 +829,90 @@ assert "thiếu công cụ" not in v and "missing tool" not in v, v' "$json" 2>/
   && echo "✔ lock held by another run -> exit 4, summary busy=true, verdict does not blame a missing tool" \
   || { echo "✖ busy summary: $(printf '%s' "$json" | cut -c1-300)"; FAILS=$((FAILS + 1)); }
 
+# --- A vacuous test / duplicate proof made by ANOTHER session must not block this one ------
+# GeelyEx2 2026-09-27: another session's QuickInstallLaBanMoiNhatTest and byte-identical
+# proof-*.png REJECTed this session 13 times; it stopped 3 times to ask the user. Same
+# attribution as the edited-test rule: other -> warning; this session or unknown -> block.
+other_session_repo() {
+  make_repo "true"
+  echo "fun ok() = 2" > src/Core.kt
+  mkdir -p src/test reports
+  printf 'class NewTest {\n  @Test fun a() { val x = 1 }\n}\n' > src/test/NewTest.kt
+  printf '\x89PNG\r\n\x1a\nsame-bytes' > reports/proof-a.png
+  printf '\x89PNG\r\n\x1a\nsame-bytes' > reports/proof-b.png
+  set_mtime reports/proof-a.png -310; set_mtime reports/proof-b.png -300; set_mtime src/test/NewTest.kt -300
+  ledger_window s-other b1 -315 -295; ledger_window s-me m1 -590 -589
+}
+other_session_repo
+fake_session s-me "$TMP/me.jsonl"
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "vacuous test + duplicate proof of another session -> not blocked" 0 $? "$out"
+expect_in "…but warned, naming the test" "src/test/NewTest.kt" "$out"
+expect_in "…and the proof" "proof-b.png" "$out"
+other_session_repo
+fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/NewTest.kt" Write
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "vacuous test written by this session -> REJECT" 1 $? "$out"
+other_session_repo
+out="$(run_gate --run-tests)"
+check "no session info -> vacuous test + duplicate proof still REJECT" 1 $? "$out"
+
+# --- An edited existing test the USER approved in an AskUserQuestion answer --------------
+# GeelyEx2 2026-09-27: the user picked "Duyệt" for the snapshot diff, yet the gate still said
+# "review or commit" and the agent had to stop and ask for a commit. The harness writes the
+# answer (toolUseResult.answers) — the agent cannot. Bound to the file: the question names it,
+# the chosen label approves, and the file has not changed since the answer.
+# approval_tr <file> <question> <label> <answer-offset-s>
+approval_tr() {
+  mkdir -p "$TMP/tr"
+  python3 - "$@" <<'PY'
+import json, sys, time
+out, q, label, off = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
+ts = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + off))
+rec = {"type": "user", "sessionId": "s-me", "timestamp": ts,
+       "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "q1", "content": "answered"}]},
+       "toolUseResult": {"questions": [{"question": q, "header": "Test", "options": [
+           {"label": "Duyệt", "description": "giữ diff"}, {"label": "Không", "description": "đổi hướng"}]}],
+           "answers": {q: label}}}
+with open(out, "a") as fh:
+    fh.write(json.dumps(rec) + "\n")
+PY
+}
+Q="Duyệt diff test src/test/CoreTest.kt (git diff HEAD -- src/test/CoreTest.kt)?"
+mkdir -p "$TMP/tr"
+existing_test_repo; set_mtime src/test/CoreTest.kt -300
+fake_session s-me "$TMP/tr/me.jsonl"; approval_tr "$TMP/tr/me.jsonl" "$Q" "Duyệt" -10
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/tr/me.jsonl")"
+check "edited test approved by the user in AskUserQuestion -> PASS" 0 $? "$out"
+existing_test_repo; set_mtime src/test/CoreTest.kt -5
+fake_session s-me "$TMP/tr/me.jsonl"; approval_tr "$TMP/tr/me.jsonl" "$Q" "Duyệt" -60
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/tr/me.jsonl")"
+check "test edited AFTER the approval -> still UNVERIFIED" 2 $? "$out" "PASS —"
+existing_test_repo; set_mtime src/test/CoreTest.kt -300
+fake_session s-me "$TMP/tr/me.jsonl"; approval_tr "$TMP/tr/me.jsonl" "$Q" "Không" -10
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/tr/me.jsonl")"
+check "user answered 'Không' -> still UNVERIFIED" 2 $? "$out" "PASS —"
+existing_test_repo; set_mtime src/test/CoreTest.kt -300
+fake_session s-me "$TMP/tr/me.jsonl"; approval_tr "$TMP/tr/me.jsonl" "Giữ đánh đổi này không?" "Duyệt" -10
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/tr/me.jsonl")"
+check "approval that does not name the file -> still UNVERIFIED" 2 $? "$out" "PASS —"
+# The agent's own `--full` run passes no --session/--transcript: the project's transcript
+# folder is searched (DEVKIT_TRANSCRIPTS_DIR stands in for ~/.claude/projects/<project>).
+existing_test_repo; set_mtime src/test/CoreTest.kt -300
+rm -f "$TMP/tr/"*.jsonl; approval_tr "$TMP/tr/other.jsonl" "$Q" "Duyệt (Recommended)" -10
+out="$(DEVKIT_TRANSCRIPTS_DIR="$TMP/tr" run_gate --run-tests)"
+check "no --transcript: approval found in the project's transcripts -> PASS" 0 $? "$out"
+
+# --- A tool-written *.log needs no regression test ----------------------------------------
+# GeelyEx2 2026-09-28: pre-push wrote artifacts/red-proof/<time>.log; on an otherwise clean
+# tree the Stop hook blocked twice with "no regression test matches the change". tree_fp
+# already treats *.log anywhere as off-screen; needs_no_test did not.
+make_repo "true"
+mkdir -p artifacts/red-proof && echo "PROVEN 10" > artifacts/red-proof/20260928-091310.log
+out="$(run_gate --run-tests --full)"; check "tool log only (artifacts/red-proof/*.log) needs no test -> PASS" 0 $? "$out"
+echo "fun other() = 1" > src/Other.kt
+out="$(run_gate --run-tests --full)"; check "log + unwatched code -> still UNVERIFIED" 2 $? "$out" "PASS —"
+
 if [ "$FAILS" -ne 0 ]; then
   echo "post-fix-gate: $FAILS FAILED"; exit 1
 fi

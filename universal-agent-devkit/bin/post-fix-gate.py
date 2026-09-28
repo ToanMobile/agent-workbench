@@ -35,6 +35,7 @@ code: it cannot run on this machine — e.g. no Unity Editor).
 """
 
 import argparse
+import calendar
 import fnmatch
 import hashlib
 import json
@@ -369,6 +370,84 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
             sid = session_authorship.window_owner(mt, windows + edits.get(rp, []))
             owners[f] = "other" if sid and sid != session else None
     return ([f for f in paths if owners[f] != "other"], [f for f in paths if owners[f] == "other"])
+
+
+APPROVE_LABEL = re.compile(r"^\s*(?:duyệt|đồng ý|chấp nhận|approve[ds]?|accept(?:ed)?)\b", re.I)
+
+
+def split_user_approved(paths: list, transcript) -> tuple:
+    """(still_blocking, approved): an edited existing test the USER approved in an
+    AskUserQuestion answer (GeelyEx2 2026-09-27: "Duyệt" was picked for the snapshot diff, yet
+    the gate still wanted a commit and the agent had to stop). Evidence is the harness-written
+    `toolUseResult.answers` record — the agent cannot author it. Per file, all three hold:
+    the question (header, options) names the file's path or basename, the chosen label
+    approves (APPROVE_LABEL), and the file has not changed since that answer. Searched: the
+    transcript's folder, else DEVKIT_TRANSCRIPTS_DIR, else ~/.claude/projects/<project>/ —
+    only transcripts written after the oldest of those files changed."""
+    if not paths:
+        return paths, []
+    root = Path(os.path.realpath(get_project_dir()))
+    mtimes = {}
+    for f in paths:
+        try:
+            mtimes[f] = os.stat(root / f).st_mtime
+        except OSError:
+            pass                                  # deleted: nothing to bind an approval to
+    if not mtimes:
+        return paths, []
+    folder = (Path(transcript).parent if transcript else
+              Path(os.environ.get("DEVKIT_TRANSCRIPTS_DIR") or
+                   Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(root))))
+    approved_at = {}                              # path -> latest approving answer (epoch s)
+    oldest = min(mtimes.values())
+    try:
+        candidates = [p for p in folder.glob("*.jsonl") if p.stat().st_mtime >= oldest]
+    except OSError:
+        candidates = []
+    for tp in candidates:
+        try:
+            fh = open(tp, encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        with fh:
+            for line in fh:
+                if '"answers"' not in line or '"toolUseResult"' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    res = rec.get("toolUseResult") or {}
+                    t = calendar.timegm(time.strptime(rec["timestamp"][:19], "%Y-%m-%dT%H:%M:%S"))
+                except (ValueError, KeyError, TypeError, AttributeError):
+                    continue
+                if rec.get("type") != "user" or not isinstance(res, dict):
+                    continue
+                answers = res.get("answers") or {}
+                for q in res.get("questions") or []:
+                    if not isinstance(q, dict):
+                        continue
+                    label = answers.get(q.get("question"), "")
+                    if not isinstance(label, str) or not APPROVE_LABEL.search(label):
+                        continue
+                    text = json.dumps(q, ensure_ascii=False)
+                    for f in mtimes:
+                        if f in text or (len(Path(f).name) >= 6 and Path(f).name in text):
+                            approved_at[f] = max(approved_at.get(f, 0), t)
+    ok = [f for f in paths if f in mtimes and approved_at.get(f, 0) >= mtimes[f]]
+    return [f for f in paths if f not in ok], ok
+
+
+def demote_other_session(category, findings: list, session, transcript) -> tuple:
+    """(blocking, other) for [(rel, message)] findings: a vacuous test or duplicate proof that
+    another session made is a warning for this one, not a block (GeelyEx2 2026-09-27: another
+    session's test and PNG REJECTed this session 13 times). Same attribution and fail-closed
+    rule as split_tests_by_author: no session info or unknown author -> blocking."""
+    if not findings:
+        return findings, []
+    _mine, other = split_tests_by_author(sorted({f for f, _ in findings}), session, transcript)
+    if not other:
+        return findings, []
+    FINDINGS[:] = [x for x in FINDINGS if not (x["category"] == category and x["file"] in other)]
+    return [x for x in findings if x[0] not in other], [x for x in findings if x[0] in other]
 
 
 def write_full_pass_receipt(project_dir, exit_code):
@@ -1308,7 +1387,10 @@ def needs_no_test(rel_file: str) -> bool:
     clean = rel_file.replace("\\", "/")
     return (clean.lower().endswith(DOC_EXT) or Path(clean).name in DOC_NAMES
             or clean in AGENT_STATE_FILES or clean.startswith(".agents/local/memory/")
-            or re.fullmatch(r"reports/proof-[^/]+\.png", clean) is not None)
+            or re.fullmatch(r"reports/proof-[^/]+\.png", clean) is not None
+            # A tool-written log (pre-push red-patch-gate, GeelyEx2 2026-09-28), like tree_fp's
+            # off-screen *.log. ponytail: a .log fixture production code reads also skips.
+            or clean.lower().endswith(".log"))
 
 
 def uncovered_code_files(modified_files, rules, covers=None) -> list:
@@ -2149,7 +2231,7 @@ def run_proof_block(modified_files: list) -> tuple:
             if bits is not None:
                 bits_of[label] = bits
     def found(rel, label):   # recorded too: the Stop hook shows the summary's findings (GeelyEx2 2026-09-26)
-        findings.append(_L(label))
+        findings.append((rel, _L(label)))
         _record("proof", rel, label)
 
     for _mtime, rel, data in sorted(fresh):
@@ -2766,6 +2848,7 @@ def main():
     # used to block every Stop of every session until it was committed (2026-09-25).
     # Unattributable edits stay blocking.
     tests_touched, tests_touched_other = split_tests_by_author(tests_touched, args.session, args.transcript)
+    tests_touched, tests_approved = split_user_approved(tests_touched, args.transcript)
     run_tests = (args.run_tests or args.full) and not args.dry_run
 
     print(f"\n{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}")
@@ -3109,6 +3192,11 @@ def main():
         for f, lbl in hw_findings:
             log_err(f"{f}: {lbl}")
     assert_ok, assert_findings = run_assertion_audit(modified_files)
+    assert_findings, assert_other = demote_other_session("vacuity", assert_findings, args.session, args.transcript)
+    assert_ok = not assert_findings
+    for f, lbl in assert_other:
+        log_warn(tr(f"{f}: {lbl} — do phiên khác / người khác tạo (không chặn phiên này; cần sửa trước khi commit)",
+                    f"{f}: {lbl} — made by another session or a person (not blocking this session; fix before commit)"))
     if assert_ok:
         log_ok(tr("Test đổi trong lượt này: 0 hàm test không có assertion phân biệt",
                   "Tests changed in this run: 0 test functions without a distinguishing assertion"))
@@ -3116,11 +3204,15 @@ def main():
         for f, lbl in assert_findings:
             log_err(f"{f}: {lbl}")
     proof_ok, proof_findings = run_proof_block(modified_files)
+    proof_findings, proof_other = demote_other_session("proof", proof_findings, args.session, args.transcript)
+    proof_ok = not proof_findings
+    for _f, msg in proof_other:
+        log_warn(tr(f"{msg} — ảnh của phiên khác (không chặn phiên này)", f"{msg} — another session's image (not blocking this session)"))
     if proof_ok:
         log_ok(tr("Thư mục proof: 0 ảnh trùng byte hoặc ≥ 98% cùng một màn",
                   "Proof folders: 0 byte-identical or ≥98% same-screen duplicates"))  # similar ones only warn
     else:
-        for msg in proof_findings:
+        for _f, msg in proof_findings:
             log_err(msg)
     for note in hardware_boundary_notes(modified_files):
         log_warn(note)
@@ -3177,8 +3269,8 @@ def main():
         # Kept UNVERIFIED (an edited test can weaken the very assertion the run relies on);
         # the verdict names the one cure: a person reads that diff, or it gets committed.
         touched_diff = f"git diff {base_ref} -- " + " ".join(tests_touched[:3]) + (" …" if len(tests_touched) > 3 else "")
-        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần người review diff test (`{touched_diff}`), hoặc commit nó, rồi chạy lại gate",
-                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: have a human review the test diff (`{touched_diff}`), or commit it, then re-run the gate"), YELLOW, 2
+        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần người review diff test (`{touched_diff}`): hỏi NGAY trong lượt bằng AskUserQuestion, câu hỏi nêu đường dẫn file, phương án 'Duyệt' (gate nhận câu trả lời đó) — hoặc commit nó — rồi chạy lại gate",
+                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: have a human review the test diff (`{touched_diff}`): ask in this turn with AskUserQuestion naming the file, option 'Approve' (the gate accepts that answer) — or commit it — then re-run the gate"), YELLOW, 2
     elif unverified:
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — test hồi quy chưa chạy (dry-run)", "UNVERIFIED — regression tests not run (dry-run)"), YELLOW, 2
     elif unreadable:
@@ -3213,6 +3305,8 @@ def main():
         print(f"  • {YELLOW}{tr('Không đọc được để quét:', 'Could not read for scanning:')}{RESET} {f}")
     for f in tests_touched[:5]:
         print(f"  • {YELLOW}{tr('Test đã có bị sửa/xoá:', 'Existing test edited/deleted:')}{RESET} {f}")
+    for f in tests_approved[:5]:
+        print(f"  • {GREEN}{tr('Test đã có bị sửa — người dùng đã duyệt (AskUserQuestion), file không đổi sau đó:', 'Existing test edited — approved by the user (AskUserQuestion), unchanged since:')}{RESET} {f}")
     for f in tests_touched_other[:5]:
         print(f"  • {YELLOW}{tr('Test đã có bị phiên khác / người khác sửa (không chặn phiên này, cần người review trước khi commit):', 'Existing test edited by another session or a person (not blocking this session; needs a human review before commit):')}{RESET} {f}")
     print(f"  • {tr('Gate không xác minh: DESIGN.md/a11y, RED/GREEN, Immutable Guards, OpenCodeReview. Ảnh nghiệm thu không nằm trong exit code; agent vẫn phải gắn PNG của lượt này trước khi nói XONG, trừ khi thay đổi chắc chắn không lên màn hình (essentials bước 4).', 'The gate does not verify: DESIGN.md/a11y, RED/GREEN, immutable guards, OpenCodeReview. The proof image is outside the exit code; the agent still attaches a PNG from this turn before saying XONG unless the change surely cannot show on a screen (essentials step 4).')}")
@@ -3285,7 +3379,7 @@ def main():
             "verdict": verdict_text, "exit_code": exit_code, "files": modified_files,
             "unreadable": unreadable, "regression_tests": regression_tests,
             "matrix_problem": matrix_problem, "tests_touched": tests_touched,
-            "tests_touched_other": tests_touched_other,
+            "tests_touched_other": tests_touched_other, "tests_approved": tests_approved,
             "busy": run_tests and not lock_held,   # another run held test_run.lock: tests not run
             "test_mode": test_mode, "full_run_required": bool(impacted_run),
             "devkit_artifacts_skipped": len(devkit_artifacts), "device": device_state,

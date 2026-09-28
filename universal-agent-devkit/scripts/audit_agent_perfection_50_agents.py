@@ -499,8 +499,8 @@ def run_full_audit() -> int:
 
     def t49():
         cr = auditor.read_file("rules/core-rules.md")
-        ok = "CHỈ thực hiện git commit, git push hoặc tạo PR" in cr and "YÊU CẦU TƯỜNG MINH" in cr
-        return ok, "Quyền hạn AI tuyệt đối: CHỈ commit/push/PR khi người dùng yêu cầu tường minh"
+        ok = "TỰ commit" in cr and "Chỉ hỏi người dùng trước: force-push" in cr
+        return ok, "Quyền hạn AI: tự commit/push khi gate xanh; force-push, xoá nhánh, phát hành chỉ khi người dùng duyệt"
     auditor.run_agent(10, C10, 49, "SoloDevGitAuthorityComplianceAuditor", "Kiểm tra tuân thủ tuyệt đối giới hạn quyền hạn commit/push theo lệnh rõ ràng", t49)
 
     def t50():

@@ -138,8 +138,8 @@ def main():
     auditor.run_agent(2, c2, idx, "CredentialEnvironmentAuditor", "Ép buộc quản lý credential qua biến môi trường an toàn", test_07); idx += 1
 
     def test_08():
-        ok = "CHỈ thực hiện git commit, git push" in core_rules and "YÊU CẦU TƯỜNG MINH" in core_rules
-        return ok, "Quyền hạn AI tối cao: Tuyệt đối không tự ý commit/push khi chưa có lệnh tường minh"
+        ok = "TỰ commit" in core_rules and "Chỉ hỏi người dùng trước: force-push" in core_rules
+        return ok, "Quyền hạn AI: tự commit/push khi gate xanh; force-push, xoá nhánh, phát hành chỉ khi người dùng duyệt"
     auditor.run_agent(2, c2, idx, "PermissionLeastPrivilegeAuditor", "Kiểm soát quyền hạn tối thiểu của Agent, ngăn chặn tự ý thay đổi hạ tầng", test_08); idx += 1
 
     def test_09():

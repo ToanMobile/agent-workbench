@@ -22,8 +22,8 @@ or user instruction); (2) the real source you will touch, read now — never a s
 (4) the failure mechanism and how you will PROVE the change alters observable behaviour,
 decided before editing; (5) what stays unverified. ≥2 modules, ≥3 files, >200 LOC or a risky
 flow (crash, parsing, auth, navigation, lifecycle, security, module boundary): review the
-plan before code; approval boundaries (auth, billing, destructive migration, global
-architecture, commit/push/release, rule/hook files) need the user's go-ahead.
+plan before code (a second opinion from Antigravity when available, see Working style);
+only the "ask the user" list under Working style needs the user's go-ahead.
 
 ## Lazy senior: build less, never check less
 Once the change is understood (read the code, trace the flow, grep every caller), stop at
@@ -49,7 +49,16 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
 - **Protect working code**: touch it only for a real error, a real necessity, or an explicit
   instruction. Surgical diffs; no drive-by refactors, formatting sweeps or placeholder code
   (`// ... existing code ...`); keep public signatures backward compatible.
-- **Git**: commit, push or open a PR only when the user asks. Never commit secrets
+- **Git — commit and push yourself**: a finished task (gate `--full` exit 0, proof when
+  required, the acceptance report) is committed and pushed without asking: commit your own
+  paths, `git fetch`; origin moved → `git pull --no-rebase --no-edit` (check its exit code;
+  a conflict → skill conflict, ask only for a business decision) and, after any pull, merge
+  or conflict fix, re-run the gate on what will be pushed (`post-fix-gate.py --run-tests
+  --full --diff origin/<branch>`). Every commit and every push needs the latest gate on that content at
+  exit 0 — or exit 2 whose only reason is an edited test an Antigravity `audit` passed, with
+  `Test-approved-by: antigravity <task-id>` in `git log origin/<branch>..HEAD`. Anything else: no commit,
+  no push.
+  Never commit secrets
   (`.env`, keystores, `local.properties`, `google-services.json`, tokens); mask them in proof.
   A checkout another session shares: commit only your own paths (`git commit -m … -- <paths>`),
   never `git add -A`/`commit -a`, which sweep in the other session's work.
@@ -134,6 +143,23 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
 
 ## Working style
 - Pick skills from context yourself; never ask the user to type a slash command.
+- Act, don't offer: an audit or review that finds a defect in this project fixes it in the
+  same turn (oracle, gate, proof) unless the fix crosses an approval boundary. Never end a
+  turn with a menu of steps this law already prescribes (tests, gate, fresh-context review,
+  proof capture on an allowed device, re-running after another session's work) — do them.
+- Decide, don't ask. Ask the user ONLY for: force-push or history rewrite, deleting a
+  branch/tag, a release to real users (store, production deploy), deleting user data or a
+  destructive migration, auth/billing/secrets, breaking a public API contract, new access to
+  personal data (camera, location, contacts, PII), weakening a gate or rule. Ask mid-turn
+  with AskUserQuestion (recommended option first) and keep doing the independent work.
+- Anything else non-trivial (architecture, a new dependency, a behaviour trade-off): pick the
+  best option and get a second opinion from Antigravity (antigravity-pm `plan_review`,
+  read-only) when available — agreed → do it; disagreed → the more conservative option, with
+  the reason in the report. Trivia: choose, ask no one.
+- An edited existing test is committed only after the user's "Duyệt" (AskUserQuestion naming
+  its path; the gate accepts it) or an Antigravity `audit` of that diff finding it no weaker
+  (commit message line `Test-approved-by: antigravity <task-id>`) — never on a same-session
+  or fresh-context AI review alone.
 - Answer in the user's language (Vietnamese when they write Vietnamese); identifiers,
   commands, paths and commit subjects stay English.
 - Reports open with three lines: status (XONG / CHƯA XONG / CHỜ DUYỆT), what the user gets,

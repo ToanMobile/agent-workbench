@@ -61,6 +61,20 @@ def _hook_key(hook):
 DEVKIT_HOOK = "devkit-hook:"
 
 
+def _rewire_through_claude_hooks(groups, devkit_keys):
+    """A DevKit hook wired as .agents/devkit/hooks/X runs through .claude/hooks/X instead (the
+    link the installer makes next to every DevKit hook). .agents/devkit is git-ignored, so a
+    worktree the host creates (Grok, OfficeReader 2026-09-28) has no such path: the Stop hook
+    died with exit 127 and the host skipped it — the proof gate never ran."""
+    for g in groups:
+        if not (isinstance(g, dict) and isinstance(g.get("hooks"), list)):
+            continue
+        for h in g["hooks"]:
+            if isinstance(h, dict) and isinstance(h.get("command"), str) \
+                    and _hook_key(h) in devkit_keys and ".agents/devkit/hooks/" in h["command"]:
+                h["command"] = h["command"].replace(".agents/devkit/hooks/", ".claude/hooks/")
+
+
 def _drop_twins(groups, devkit_keys):
     """A DevKit hook — one the source (DevKit template) wires — wired twice under overlapping
     matchers keeps its first wiring (the project's placement); a group only this emptied goes.
@@ -142,6 +156,7 @@ def _merge_list(source, target):
                    for h in i["hooks"]}
     devkit_keys = {k for k in devkit_keys if k.startswith(DEVKIT_HOOK)}
     if devkit_keys and any(isinstance(t, dict) and isinstance(t.get("hooks"), list) for t in target):
+        _rewire_through_claude_hooks(target, devkit_keys)
         _drop_twins(target, devkit_keys)
 
 

@@ -58,7 +58,7 @@ AGENTS_SPEC = [
     (10, "DebounceAndAntiSpamGateAuditor", "Kiểm tra rào chắn chống spam request và ép buộc debounce giao dịch", "rules/core-rules.md", r"Debounce|Chống Spam"),
 
     # Council 3: Core Solo-Dev Quality Rules
-    (11, "GitAuthorityComplianceAuditor", "Kiểm tra quyền hạn AI: CHỈ commit/push/PR khi người dùng yêu cầu tường minh", "rules/core-rules.md", r"YÊU CẦU TƯỜNG MINH"),
+    (11, "GitAuthorityComplianceAuditor", "Kiểm tra quyền hạn AI: tự commit/push khi gate xanh, force-push/xoá nhánh/phát hành chỉ khi người dùng duyệt", "rules/core-rules.md", r"Chỉ hỏi người dùng trước: force-push"),
     (12, "SecretZeroExposureAuditor", "Kiểm tra tuyệt đối cấm commit .env, keystore, credential trần", "rules/core-rules.md", r"Tuyệt đối KHÔNG commit bí mật"),
     (13, "LeanDevLoopAuditor", "Kiểm tra quy trình 4 bước: Test cục bộ -> Self Review -> Ảnh nghiệm thu -> Commit", "rules/core-rules.md", r"Quy trình làm việc tinh gọn"),
     (14, "DualModePreservationAuditor", "Kiểm tra bảo toàn 2 chế độ DEMO / LIVE trên mọi nghiệp vụ mới", "rules/core-rules.md", r"DEMO / LIVE"),

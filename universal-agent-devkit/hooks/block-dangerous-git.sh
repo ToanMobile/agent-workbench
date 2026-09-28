@@ -572,7 +572,12 @@ def analyse(text, depth=0, stripped=False):
             segment.append(tok)
     return None
 
-CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd))  # any cd, even after the restore
+# Only a cd BEFORE the last restore can move the paths it resolves (GeelyEx2 2026-09-27:
+# "restore -- f && cd CarConnect && ./gradlew ..." was blocked). A loop, function, eval or
+# xargs can re-run the restore after a later cd: then every cd counts.
+_rs = [m.start() for m in re.finditer(r"\brestore\b", cmd)]
+_upto = len(cmd) if not _rs or re.search(r"\b(do|done|eval|xargs|function)\b|\(\)\s*\{", cmd) else _rs[-1]
+CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd[:_upto]))
 reason = analyse(cmd)
 if not reason and not do_backups():
     reason = "không sao lưu được file trước khi restore"

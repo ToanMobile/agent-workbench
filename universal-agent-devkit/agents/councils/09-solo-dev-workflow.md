@@ -29,4 +29,4 @@ Hội đồng kiểm soát quy trình làm việc thực chiến của Kỹ sư 
 
 5. **Agent 9.5 — Git Discipline & Secret Leak Preventer:**
    - Tuân thủ quy tắc Solo Dev: làm việc trực tiếp trên nhánh chính hoặc nhánh tính năng đơn giản, commit bằng tiếng Việt có tiền tố chuẩn (`feat:`, `fix:`, `test:`, `chore:`, `docs:`).
-   - Chỉ thực hiện commit/push khi có yêu cầu tường minh từ người dùng. Tuyệt đối không commit bí mật hay credentials.
+   - Việc xong (gate `--full` exit 0, ảnh, báo cáo) thì tự commit đúng file của mình và push; force-push, xoá nhánh/tag, phát hành chỉ khi người dùng duyệt (`rules/essentials.md` mục Git). Tuyệt đối không commit bí mật hay credentials.

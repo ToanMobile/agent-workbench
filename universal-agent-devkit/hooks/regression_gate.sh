@@ -493,8 +493,9 @@ for f in summary.get("findings", [])[:10]:
     # static findings (secrets, placeholders, dependencies …) with the exact place to fix
     lines.append("  - %s %s:%s: %s" % (f.get("category"), f.get("file"), f.get("line") or "?", f.get("message")))
 for f in touched[:10]:
-    lines.append("  - TEST ĐÃ CÓ BỊ SỬA/XOÁ: %s — cần người review diff test (`git diff HEAD -- %s`) hoặc commit nó; "
-                 "không sửa test cũ để lách" % (f, f))
+    lines.append("  - TEST ĐÃ CÓ BỊ SỬA/XOÁ: %s — cần người review diff test (`git diff HEAD -- %s`): hỏi NGAY trong lượt "
+                 "bằng AskUserQuestion (câu hỏi nêu đường dẫn file + diff, phương án đầu \"Duyệt\"; gate nhận câu trả lời, "
+                 "không cần commit) hoặc commit nó; không sửa test cũ để lách" % (f, f))
 for f in uncovered[:10]:
     lines.append("  - UNCOVERED:%s — file code đổi nhưng chưa test hồi quy nào theo dõi" % f)
 lines.append("Checklist: %s · báo cáo: %s" % (summary.get("checklist", ".agents/CHECKLIST.md"), summary.get("report", "-")))

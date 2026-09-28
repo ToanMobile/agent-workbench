@@ -529,6 +529,27 @@ TEST_RUNNER_RX = re.compile(
     # The DevKit's own bash suites (tests/test_*.sh, the hook contract suites, run_impacted,
     # `agent-kit test`): judged by their summary line (DEVKIT_SUITE_* below).
     r"\btests/test_[\w.-]+\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b", re.I)
+# Plain script tests (python3/node/bash …/tests/…/test-*.py|js|sh) and every command the
+# project's regression matrix declares are test runners too (GeelyEx2 2026-09-27: a real
+# RED→GREEN of `python3 tests/scripts/test-admin-….py` was not seen; CHECK 7 held 7 stops).
+SCRIPT_RUNNER_RX = re.compile(
+    r"\b(?:python\d?(?:\.\d+)?|node|bash|sh)\s+(?:\S*/)?tests?/(?:\S*/)?test[-_]?[\w.-]*\.(?:py|m?js|sh)\b", re.I)
+def _matrix_commands():
+    try:
+        with open(os.path.join(repo, ".agents", "regression_matrix.active.json"), encoding="utf-8") as fh:
+            m = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    out = []
+    for rule in (m.get("rules") or []) if isinstance(m, dict) else []:
+        for t in rule.get("mandatory_regression_tests") or []:
+            c = re.sub(r"^(?:\s*[A-Za-z_]\w*=\S*\s+)+", "", str(t.get("command") or "")).strip()
+            if len(c) >= 12:          # never a bare `true` / `make`
+                out.append(c)
+    return out
+MATRIX_CMDS = _matrix_commands()
+def is_test_runner(cmd):
+    return bool(TEST_RUNNER_RX.search(cmd) or SCRIPT_RUNNER_RX.search(cmd) or any(c in cmd for c in MATRIX_CMDS))
 DEVKIT_SUITE_RX = re.compile(r"\btests/test_[\w.-]+\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b")
 # Their check names may carry FAIL / REJECT / ERROR in capitals ("✔ REJECT on secrets"), so
 # the verdict is the summary: red on "N failed/FAILED", "N deviating" (N > 0), "❌" or a "✖"
@@ -543,6 +564,9 @@ RUNNER_FAIL_RX = re.compile(
     r"(?i:\b[1-9]\d*\s+(failed|failing|failures?|errors?)\b)|(?i:\btests?:\s+[1-9]\d*\s+failed)|"
     r"(?i:^\s*(?:[#ℹ*•-]\s*)?(fail|failures?|errors?)\s*[:=]?\s*[1-9]\d*\b)|"
     r"<test-run\b[^>\n]*\sfailed=\"[1-9]\d*\"|"
+    # JUnit XML summary printed by the agent (`<testsuite … failures="5">`) after sending the
+    # runner's own output to a log (GeelyEx2 2026-09-28: every real red read as green).
+    r"\b(?:failures|errors)=\"[1-9]\d*\"|"
     r"\bFAIL(ED)?\b|test result: FAILED|^not ok\b|\bpanicked\b|\bERRORS?\b|--- FAIL", re.M)
 # mcp__antigravity-pm__pm_run kind=test runs the project's test command and prints
 # `exit=N` per command (a timeout adds "(QUA HAN)"; "CHUA TINH" = exit 0 that its own
@@ -683,7 +707,7 @@ if tp and os.path.exists(tp):
                                 and BUGS_CMD_RX.search(str(use["input"].get("command", "")))):
                             bugs_touched.update(BUG_ID_RX.findall(txt))
                         if (use and use["name"] == "Bash"
-                                and TEST_RUNNER_RX.search(str(use["input"].get("command", "")))):
+                                and is_test_runner(str(use["input"].get("command", "")))):
                             cmd = str(use["input"].get("command", ""))
                             st = runner_state(blk.get("is_error") is True, txt, command=cmd)
                             if st:

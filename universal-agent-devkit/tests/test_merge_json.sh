@@ -152,6 +152,12 @@ JSON
 python3 "$MERGE" "$TMP/pg_src.json" "$TMP/pg_user.json" >/dev/null 2>&1
 [ "$(grep -c proof_gate "$TMP/pg_user.json")" = 1 ] && ok "the .claude/hooks copy of a hook wired via .agents/devkit is not added again" \
   || fail "proof_gate wired twice: $(cat "$TMP/pg_user.json")"
+# …and it is re-wired through .claude/hooks/: .agents/devkit is git-ignored, so a worktree the
+# host makes (Grok, OfficeReader 2026-09-28) has no such path — the Stop hook died with
+# "exit 127: No such file" and the host skipped it: the proof gate never ran.
+grep -q '.claude/hooks/proof_gate.sh' "$TMP/pg_user.json" && ! grep -q '.agents/devkit/hooks' "$TMP/pg_user.json" \
+  && ok "a DevKit hook wired via .agents/devkit/hooks is re-wired through .claude/hooks" \
+  || fail "proof_gate still wired via .agents/devkit: $(cat "$TMP/pg_user.json")"
 cat > "$TMP/pg_both.json" <<'JSON'
 {"hooks": {"Stop": [{"matcher": "", "hooks": [
    {"type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.agents/devkit/hooks/proof_gate.sh\"", "timeout": 30},
@@ -159,9 +165,9 @@ cat > "$TMP/pg_both.json" <<'JSON'
    {"type": "command", "command": "bash scripts/my_own_gate.sh"}]}]}}
 JSON
 python3 "$MERGE" "$TMP/pg_src.json" "$TMP/pg_both.json" >/dev/null 2>&1
-[ "$(grep -c proof_gate "$TMP/pg_both.json")" = 1 ] && grep -q '.agents/devkit/hooks/proof_gate.sh' "$TMP/pg_both.json" \
+[ "$(grep -c proof_gate "$TMP/pg_both.json")" = 1 ] && grep -q '.claude/hooks/proof_gate.sh' "$TMP/pg_both.json" \
   && grep -q my_own_gate "$TMP/pg_both.json" \
-  && ok "an existing double wiring collapses to the first one; the user's own hook stays" \
+  && ok "an existing double wiring collapses to one, wired through .claude/hooks; the user's own hook stays" \
   || fail "double wiring kept or wrong one dropped: $(cat "$TMP/pg_both.json")"
 
 # The user's own script under .claude/hooks/, wired twice with different arguments, is not a

@@ -115,6 +115,16 @@ if rel.startswith(".."):
 # Creating a genuinely new file: nothing exists to have read.
 if not os.path.exists(path):
     logline(f"[{ts}] {base}: file mới — pass")
+    # The session writes the whole file, so its later edits are not blind: note it in the read
+    # ledger (OfficeReader 2026-09-28: Grok created a .kt, and its next edit of it was blocked
+    # because only a Read reached the ledger). A path that already exists never gets here.
+    _led, _sid = os.environ.get("PG_LEDGER", ""), d.get("session_id") or ""
+    if _led and isinstance(_sid, str) and _sid and "\t" not in target and "\n" not in target:
+        try:
+            with open(_led, "a") as fh:
+                fh.write(f"{_sid}\t{target}\n")
+        except OSError as e:
+            logline(f"[{ts}] ledger write fail: {e!r}")
     sys.exit(0)
 
 looked = False

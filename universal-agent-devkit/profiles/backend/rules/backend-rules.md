@@ -1,7 +1,7 @@
 # Backend Service Engineering Rules (API / Workers)
 
 ## 1. Solo-Dev & Git Security (BẮT BUỘC)
-- CHỈ `git commit`, `git push` hoặc tạo PR khi người dùng YÊU CẦU TƯỜNG MINH.
+- Việc xong (gate `--full` exit 0, ảnh khi cần, báo cáo nghiệm thu) thì TỰ commit đúng các file của mình và push nhánh hiện tại, không hỏi (quy trình pull/test lại/push: `rules/essentials.md` mục Git). Chỉ hỏi người dùng trước: force-push/viết lại lịch sử, xoá nhánh/tag, phát hành cho người dùng thật (store, deploy production).
 - Secret chỉ nạp qua biến môi trường / secret manager; không commit `.env`, key, dump database.
 - Không đưa dữ liệu production thật vào test fixture.
 

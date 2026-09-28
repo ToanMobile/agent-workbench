@@ -1,7 +1,7 @@
 # Universal General & Clean Architecture Engineering Rules
 
 ## 1. Solo-Dev & Git Security (BẮT BUỘC)
-- CHỈ thực hiện `git commit`, `git push` hoặc tạo PR (`gh pr create`) khi người dùng YÊU CẦU TƯỜNG MINH.
+- Việc xong (gate `--full` exit 0, ảnh khi cần, báo cáo nghiệm thu) thì TỰ commit đúng các file của mình và push nhánh hiện tại, không hỏi (quy trình pull/test lại/push: `rules/essentials.md` mục Git). Chỉ hỏi người dùng trước: force-push/viết lại lịch sử, xoá nhánh/tag, phát hành cho người dùng thật (store, deploy production).
 - Tuyệt đối KHÔNG commit bí mật / credentials: `.env`, keys, token, mật khẩu, cookies.
 - Mọi tài khoản hoặc cấu hình nhạy cảm phải nạp qua biến môi trường hoặc file cấu hình cục bộ (`.gitignore`).
 - Soát kỹ `git diff` trước khi báo cáo hoàn thành.

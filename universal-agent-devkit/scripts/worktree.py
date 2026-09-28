@@ -6,6 +6,7 @@ Usage (normally `agent-kit worktree …`, run inside the repo):
   worktree.py diff <path>      the worktree's own changes as a binary patch
   worktree.py remove <path>    remove it once nothing of its work would be lost
   worktree.py list
+  worktree.py heal [--devkit=DIR] [--session=ID]   a checkout the host made (Grok): link the DevKit, copy ignored config
 
 add: `git worktree add` on <branch> (default feat/<folder name>; created from --base or
 HEAD when it does not exist), copies the main checkout's git-ignored local config
@@ -30,6 +31,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -294,6 +296,66 @@ def cmd_remove(cwd, args):
     return 0
 
 
+def _grok_source(session, wt):
+    """Grok's worktree is a separate clone: its session summary names the checkout it came from."""
+    import glob
+    if not session or not re.fullmatch(r"[\w.-]+", session):
+        return None
+    for f in glob.glob(os.path.join(os.path.expanduser("~"), ".grok", "sessions", "*", session, "summary.json")):
+        try:
+            with open(f, encoding="utf-8") as fh:
+                src = json.load(fh).get("source_workspace_dir")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(src, str) and os.path.isdir(src) and os.path.realpath(src) != os.path.realpath(wt):
+            top = git(src, "rev-parse", "--show-toplevel", check=False).stdout.strip()
+            if top:
+                return top
+    return None
+
+
+def cmd_heal(cwd, args):
+    """A checkout the HOST made — Grok's worktree session, a separate clone (OfficeReader
+    2026-09-28), or a plain `git worktree` — never went through `add`: no .agents/devkit link
+    (git-ignored) and no ignored local config. Run at session start: link .agents/devkit to the
+    running DevKit (--devkit) or the source checkout's, and copy the source checkout's ignored
+    local config and build inputs when the source is known (git worktree list, or --session: the
+    Grok session summary). Only what git ignores is created, so nothing of it can be committed.
+    Never an error: a session must start whatever happens here."""
+    devkit, session = None, None
+    for a in args:
+        if a.startswith("--devkit="):
+            devkit = a.split("=", 1)[1]
+        elif a.startswith("--session="):
+            session = a.split("=", 1)[1]
+    wt = git(cwd, "rev-parse", "--show-toplevel", check=False).stdout.strip()
+    if not wt:
+        return 0
+    src = None
+    try:
+        main = main_checkout(cwd)
+        if os.path.realpath(main) != os.path.realpath(wt):
+            src = main
+    except SystemExit:
+        pass
+    src = src or _grok_source(session, wt)
+    done = []
+    link = os.path.join(wt, ".agents", "devkit")
+    target = os.path.join(src, ".agents", "devkit") if src else None
+    target = target if target and os.path.isdir(target) else devkit
+    if target and os.path.isfile(os.path.join(target, "bin", "post-fix-gate.py")) and not os.path.lexists(link) \
+            and git(wt, "check-ignore", "-q", "--no-index", ".agents/devkit", check=False).returncode == 0:
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        os.symlink(os.path.realpath(target), link)
+        done.append(".agents/devkit")
+    if src:
+        done += copy_local_config(src, wt) + copy_build_inputs(src, wt)
+    if done:
+        print(tr("checkout do host tạo: đã chuẩn bị như `agent-kit worktree add` — ",
+                 "host-made checkout: set up like `agent-kit worktree add` — ") + ", ".join(done))
+    return 0
+
+
 def main(argv):
     cwd = os.getcwd()
     set_lang(resolve_lang(None, cwd))
@@ -309,6 +371,8 @@ def main(argv):
         return cmd_diff(cwd, rest)
     if action in ("remove", "rm"):
         return cmd_remove(cwd, rest)
+    if action == "heal":
+        return cmd_heal(cwd, rest)
     if action == "list":
         return subprocess.run(["git", "-C", cwd, "worktree", "list"]).returncode
     die(tr(f"lệnh không hợp lệ '{action}'", f"unknown action '{action}'") + " (add | diff | remove | list)")

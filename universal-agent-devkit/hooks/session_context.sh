@@ -25,7 +25,7 @@ set -u
 
 [ "${SESSION_CONTEXT:-1}" = "0" ] && exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
-cat >/dev/null  # stdin is not needed
+INPUT="$(cat)"  # only the session id is used (worktree heal below)
 
 REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 SELF="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null)"
@@ -41,6 +41,16 @@ GATE_HOOK="$(dirname "${SELF}")/regression_gate.sh"
 # rules and DevKit updates — refreshed in the background for the next session.
 CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/context_sync.py"
 [ -f "${CTX_SYNC}" ] && [ -d "${REPO_ROOT}/.agents" ] && (python3 "${CTX_SYNC}" "${REPO_ROOT}" --quiet >/dev/null 2>&1 &)
+# A worktree the host made itself (Grok, OfficeReader 2026-09-28) lacks the git-ignored
+# .agents/devkit link and local config: set it up like `agent-kit worktree add` (no-op elsewhere).
+WT_SCRIPT="$(dirname "$(dirname "${SELF}")")/scripts/worktree.py"
+if [ -f "${WT_SCRIPT}" ]; then
+  WT_SID="$(printf '%s' "${INPUT:-}" | python3 -c 'import json,sys
+try: print(str(json.load(sys.stdin).get("session_id") or ""))
+except Exception: pass' 2>/dev/null)"
+  HEALED="$(cd "${REPO_ROOT}" 2>/dev/null && python3 "${WT_SCRIPT}" heal "--devkit=$(dirname "$(dirname "${SELF}")")" "--session=${WT_SID}" 2>/dev/null)"
+  [ -n "${HEALED}" ] && echo "[DevKit] ${HEALED}"
+fi
 
 REPO_ROOT="${REPO_ROOT}" INDEXER="${INDEXER}" HOOK_FILE="${HOOK_FILE}" GATE_HOOK="${GATE_HOOK}" python3 - <<'PY' 2>/dev/null
 import json, os, re, signal, subprocess, sys

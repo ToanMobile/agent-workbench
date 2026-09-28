@@ -36,7 +36,11 @@ _ASSERT = re.compile(
     r"|\bpytest\.raises\b"
     r"|\bself\.assert\w+\s*\("
     r"|\bassert\s+(?!True\b|False\b)"
+    # Kotlin's assert(cond) (Gradle runs tests with -ea) and JUnit/kotlin.test fail(…)
+    r"|\bassert\s*\(|\bfail\s*\("
 )
+# @Test(expected = X::class) / TestNG expectedExceptions: the thrown exception is the assertion.
+_EXPECTS = re.compile(r"\s*\(\s*(?:expected|expectedExceptions)\s*=")
 _VACUOUS = re.compile(
     r"assertTrue\s*\(\s*true\s*\)"
     r"|assertFalse\s*\(\s*false\s*\)"
@@ -45,6 +49,7 @@ _VACUOUS = re.compile(
     r"|assert\s+True\b"
     r"|assert\s+False\b"
     r"|assert\s+1\s*==\s*1\b"
+    r"|\bassert\s*\(\s*(?:true|false)\s*\)"
     r"|assert(?:Equals|Equal)\s*\(\s*(?P<lit>[0-9]+|true|false|\"[^\"\n]*\"|'[^'\n]*')\s*,\s*(?P=lit)\s*\)"
     r"|Assert\.AreEqual\s*\(\s*(?P<lit2>[0-9]+|true|false|\"[^\"\n]*\")\s*,\s*(?P=lit2)\s*\)",
     re.IGNORECASE,
@@ -90,13 +95,54 @@ def _distinguishing(body: str) -> bool:
     return any(not inside_vacuous(m.span()) for m in _ASSERT.finditer(body))
 
 
+# A same-file helper a test calls: Kotlin `fun`, Python `def`, Java/C# `void` methods.
+_HELPER_DEF = re.compile(
+    r"\bfun\s+(?:<[^>\n]*>\s*)?(?:[\w.]+\.)?(\w+)\s*\("
+    r"|^[ \t]*def[ \t]+(\w+)\s*\("
+    r"|\bvoid\s+(\w+)\s*\(",
+    re.M,
+)
+
+
+def _asserting_helpers(text: str) -> set:
+    """Names of same-file functions whose body asserts, directly or through another such
+    helper (GeelyEx2 2026-09-27: five tests calling `kiem(...)` were called vacuous and
+    rewritten only to please the gate). A helper whose only assertion is vacuous does not count."""
+    defs = list(_HELPER_DEF.finditer(text))
+    bodies = {}
+    for i, m in enumerate(defs):
+        name = m.group(1) or m.group(2) or m.group(3)
+        if m.group(2):
+            body = _python_body(text, m.start())
+        else:
+            limit = defs[i + 1].start() if i + 1 < len(defs) else None
+            nxt = _MARKER.search(text, m.end())
+            if nxt and (limit is None or nxt.start() < limit):
+                limit = nxt.start()
+            body = _body(text, m.end(), limit)
+            if "{" not in text[m.end():limit if limit is not None else len(text)]:
+                body = text[m.end():limit]          # expression body: fun f() = assertX(...)
+        bodies[name] = bodies.get(name, "") + body
+    helpers = {n for n, b in bodies.items() if _distinguishing(b)}
+    changed = True
+    while changed:
+        changed = False
+        for n, b in bodies.items():
+            if n not in helpers and helpers and re.search(r"\b(?:%s)\s*\(" % "|".join(map(re.escape, helpers)), b):
+                helpers.add(n)
+                changed = True
+    return helpers
+
+
 def findings(text: str) -> list:
     """[(line, name)] methods that never assert on a value."""
     out = []
+    helpers = _asserting_helpers(text)
+    calls_helper = re.compile(r"\b(?:%s)\s*\(" % "|".join(map(re.escape, helpers))) if helpers else None
     for m in _MARKER.finditer(text):
         window_start = max(0, m.start() - 120)
         prelude = text[window_start:m.end()]
-        if _SKIP.search(prelude):
+        if _SKIP.search(prelude) or (not m.group(1) and _EXPECTS.match(text, m.end())):
             continue
         name = m.group(1) or m.group(0)[:40]
         if m.group(1):
@@ -104,7 +150,7 @@ def findings(text: str) -> list:
         else:
             nxt = _MARKER.search(text, m.end())
             body = _body(text, m.end(), nxt.start() if nxt else None)
-        if not _distinguishing(body):
+        if not _distinguishing(body) and not (calls_helper and calls_helper.search(body)):
             line = text.count("\n", 0, m.start()) + 1
             out.append((line, name.strip()))
     return out

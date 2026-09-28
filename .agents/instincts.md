@@ -127,3 +127,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Gate nhận lệnh shell chỉ ở đầu đoạn và coi mọi file lạ là code
 - **Nguyên nhân:** hardware_safety_gate chỉ nhận adb đứng đầu đoạn lệnh nên 'then adb -s &lt;máy denylist> reboot' lọt; security_gate coi redirect ra scratchpad và '>' trong code Python là ghi vào repo; post-fix-gate coi ảnh proof và config agent là code cần test — 22+ lần chặn nhầm trong 1 ngày (2026-09-27)
 - **Quy tắc phòng ngừa & Cách fix:** Gate phân tích lệnh shell phải bỏ qua từ khoá ghép (if/then/do/else/{/() trước khi xét vị trí lệnh; chỉ tính ghi khi đích nằm trong repo; file do agent tự sinh (reports/proof-*.png, .antigravity-pm.json, .adb-denylist, memory) không cần test; mỗi luật nới có ca âm đối kháng (biến gán lại, for/read, repo khác) viết trước
+
+---
+
+### [INSTINCT-015] Hai chỗ trong DevKit phân loại cùng một thứ khác nhau
+- **Ngày phát hiện:** 2026-09-28
+- **Hiện tượng lỗi:** Hai chỗ trong DevKit phân loại cùng một thứ khác nhau
+- **Nguyên nhân:** needs_no_test (post-fix-gate) không coi *.log là tài liệu dù tree_fp đã coi; RUNNER_FAIL_RX không đọc failures="N" của JUnit XML dù gate XML đọc được; proof_gate coi git push trong repo nháp là bàn giao — agent GeelyEx2 bị chặn nhầm và một lần chạy đỏ bị tính là xanh (2026-09-28)
+- **Quy tắc phòng ngừa & Cách fix:** Khi thêm/đổi luật phân loại (file không cần test, dấu hiệu đỏ, lệnh bàn giao) ở một gate, grep mọi gate khác có luật cùng loại và dùng chung một hàm/regex; mỗi dạng output thật agent hay in (log redirect, XML tóm tắt) phải có ca test ĐỎ và XANH
