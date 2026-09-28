@@ -1429,8 +1429,10 @@ def mark_stale(data: dict, project_dir: Path) -> list:
                     if (project / f).stat().st_mtime > ts:
                         hits.append(f)
                 except OSError:
-                    if not dirty:
-                        hits.append(f)   # deleted since a clean run
+                    # deleted since a clean run; since a dirty run unless already gone when it ran
+                    # (`deleted`, kept by record_results — an older result has none: no hit)
+                    if not dirty or ("deleted" in last and f not in last["deleted"]):
+                        hits.append(f)
         if hits:
             if not item.get("stale_since"):
                 item["stale_since"] = _now()
@@ -1516,7 +1518,10 @@ def _names_own_test(failed: list, refs: list) -> bool:
 def record_results(data: dict, tests: list, *, task: str | None, commit: str | None, project=None) -> None:
     """Store results of tests the gate ACTUALLY ran. NOT_RUN only flags the row as impacted.
     A red result keeps the failing test names (read from its evidence log under `project`,
-    else from its output tail): a bug row then takes the result of its own tests."""
+    else from its output tail): a bug row then takes the result of its own tests. With `project`
+    a result also keeps `deleted`, the tracked files missing from the tree when it ran: one
+    removed later is a change since the run, even after a dirty run (mark_stale)."""
+    deleted = ...                          # one git call, on the first fresh result
     for t in tests:
         tid = t.get("id")
         if not tid or tid not in data["items"]:
@@ -1538,6 +1543,10 @@ def record_results(data: dict, tests: list, *, task: str | None, commit: str | N
             continue
         result = {"status": t["status"], "at": _now(), "ts": time.time(), "task": task, "commit": commit,
                   "duration": t.get("duration"), "exit_code": t.get("exit_code"), "log": t.get("log")}
+        if deleted is ...:
+            deleted = _git_lines(Path(project), "diff", "--name-only", "--diff-filter=D", "HEAD") if project else None
+        if deleted is not None:              # unknown (no project, git failed): the old rule
+            result["deleted"] = deleted
         if t["status"] == "FAIL":
             out = t.get("output_tail") or ""
             if project and t.get("log"):

@@ -28,6 +28,10 @@
 #      them to .claude/audit-gate/restore-backup/; skipping git hooks is blocked:
 #      `commit|push --no-verify`, `commit -n`, `-c core.hooksPath=…`, `DEVKIT_PRECOMMIT=0`.
 #      Not a full shell parser: indirection through files/functions is out of scope.
+#   3c. (2026-09-28) abbreviated long options (`reset --k`, `push --forc`) count as the full one;
+#      config that skips hooks or forces a push is blocked in `-c`, `--config-env` and `git config`
+#      (core.hooksPath, alias.*, remote.*.push +ref, remote.*.mirror); `branch -f/-M/-C <name>`
+#      and `update-ref refs/heads/…` (or --stdin) overwrite a branch.
 #   4. FAIL-CLOSED: if the command can't be tokenized, or contains `$(`/backticks
 #      whose output could become a command, the raw text is scanned with a broad
 #      regex instead. Missing python3 blocks.
@@ -99,7 +103,83 @@ def short_flags(args):
             out.update(a[1:])
     return out
 
+# git takes any unique prefix of a long option: `git reset --k HEAD~1` IS --keep (measured
+# 2026-09-28, git 2.55). Per subcommand: the long options danger_in_git reacts to, and the safe
+# options sharing the longest prefix with them (from `git <sub> --git-completion-helper-all`) —
+# a prefix of a safe one is ambiguous to git too, so it is left alone.
+ABBREV = {
+    "reset": ("--hard --merge --keep", "--mixed"),
+    "clean": ("--force", ""),
+    "branch": ("--delete --force", "--format"),
+    "checkout": ("--force", ""),
+    "switch": ("--force --discard-changes --force-create", "--detach"),
+    "rm": ("--force", ""),
+    "push": ("--force --force-with-lease --force-if-includes --delete --mirror --prune --no-verify",
+             "--dry-run --follow-tags --no-verbose --progress"),
+    "commit": ("--no-verify", "--no-verbose"),
+    "merge": ("--no-verify", "--no-verify-signatures"),
+    "am": ("--no-verify", "--no-quiet"),
+    "gc": ("--prune", ""),
+    "worktree": ("--force", ""),
+    "update-ref": ("--stdin", ""),
+}
+
+def expand_abbrev(sub, args):
+    """`--forc` -> `--force` (and `--forc=x` -> `--force=x`) for the options in ABBREV[sub],
+    so every check below sees the full name. An exact option name wins; `--` ends the options."""
+    danger, safe = (s.split() for s in ABBREV.get(sub, ("", "")))
+    out = []
+    for k, a in enumerate(args):
+        if a == "--":
+            return out + args[k:]
+        name, eq, val = a.partition("=")
+        if name.startswith("--") and len(name) >= 3 and name not in danger and name not in safe:
+            hit = next((d for d in danger if d.startswith(name)), None)
+            if hit and not any(s.startswith(name) for s in safe):
+                a = hit + eq + val
+        out.append(a)
+    return out
+
+def config_danger(key, val):
+    """A config key=val (git -c, --config-env, git config) that skips the hooks or forces a push.
+    val None = unknown (from an environment variable). Section and name are case-insensitive."""
+    parts = key.lower().split(".")
+    if parts == ["core", "hookspath"]:
+        return "core.hooksPath tắt git hook (pre-commit kiểm secret/chất lượng)"
+    if parts[0] == "alias" and len(parts) > 1:
+        return "alias lấy từ biến môi trường, không kiểm được" if val is None else git_danger_from_alias(val)
+    if parts[0] == "remote" and len(parts) > 2:
+        if parts[-1] == "push" and (val is None or val.startswith(("+", ":"))):
+            return "remote.<tên>.push +refspec / :ref ghi đè hoặc xoá trên remote"
+        if parts[-1] == "mirror" and (val is None or val.lower() not in ("false", "no", "off", "0", "")):
+            return "remote.<tên>.mirror = push --mirror ghi đè/xoá trên remote"
+    return None
+
+CONFIG_OPTS_WITH_ARG = {"-f", "--file", "--blob", "--type", "--default", "--comment", "--value", "--url"}
+CONFIG_READ = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool",
+               "--list", "-l", "--unset", "--unset-all", "--remove-section", "--rename-section", "--edit", "-e"}
+
+def config_write_danger(args):
+    """`git config [set] <key> <value>` writing a key config_danger rejects. Reads pass."""
+    pos, k = [], 0
+    while k < len(args):
+        a = args[k]
+        if a in CONFIG_OPTS_WITH_ARG:
+            k += 2
+            continue
+        if a.split("=", 1)[0] in CONFIG_READ:
+            return None
+        if not a.startswith("-"):
+            pos.append(a)
+        k += 1
+    if pos[:1] == ["set"]:
+        pos = pos[1:]
+    elif pos[:1] and pos[0] in ("get", "list", "unset", "rename-section", "remove-section", "edit"):
+        return None
+    return config_danger(pos[0], pos[1]) if len(pos) >= 2 else None
+
 def danger_in_git(sub, args):
+    args = expand_abbrev(sub, args)
     long_ = set(a.split("=", 1)[0] for a in args if a.startswith("--"))
     short = short_flags(args)
     pos = [a for a in args if not a.startswith("-")]
@@ -109,6 +189,8 @@ def danger_in_git(sub, args):
         return "clean --force xoá file chưa track"
     if sub == "branch" and ("D" in short or (("d" in short or "--delete" in long_) and ("f" in short or "--force" in long_))):
         return "branch -D xoá branch chưa merge"
+    if sub == "branch" and pos and (short & {"M", "C", "f"} or "--force" in long_):
+        return "branch -f/-M/-C ghi đè branch đã có"
     if sub in ("checkout", "switch"):
         if "f" in short or long_ & {"--force", "--discard-changes"}:
             return f"{sub} --force vứt thay đổi local"
@@ -137,6 +219,12 @@ def danger_in_git(sub, args):
         return "gc --prune xoá object không còn tham chiếu"
     if sub == "update-ref" and ("d" in short or "--delete" in long_):
         return "update-ref -d xoá ref"
+    if sub == "update-ref" and ("--stdin" in long_ or any(p.startswith("refs/heads/") for p in pos)):
+        return "update-ref ghi thẳng vào nhánh (như reset/branch -f)"
+    if sub == "config":
+        reason = config_write_danger(args)
+        if reason:
+            return f"git config {reason}"
     if sub in ("filter-branch", "filter-repo"):
         return f"{sub} viết lại lịch sử"
     # Skipping the git hooks skips the pre-commit secret/quality gate (githooks.sh).
@@ -267,9 +355,34 @@ def solo_branch_rule(sub, args, gdir, allow=False):
                           "(repo/thư mục hoặc nguồn không xác định)")
             if reason:
                 break
+        if not reason:
+            reason = push_gate_rule(vals, gdir)
     if reason:
         SOLO_HIT.append(reason)
     return reason
+
+
+def push_gate_rule(vals, gdir):
+    """A push the last full gate PASS does not cover (bin/push_gate.py; audit 2026-09-28: the
+    rule "every push needs the gate at exit 0" was enforced nowhere). None when covered."""
+    revs = []   # every source the push sends (one push may name several branches); none → HEAD
+    for spec in vals[1:]:
+        s = spec.lstrip("+").split(":", 1)[0]
+        if s and solo_git(gdir, "rev-parse", "--verify", "-q", s + "^{commit}") == 0:
+            revs.append(s)
+    here = os.path.dirname(os.path.realpath(sys.argv[1])) if len(sys.argv) > 1 else ""
+    tool = os.path.join(os.path.dirname(here), "bin", "push_gate.py")
+    if not gdir or not os.path.isdir(gdir) or not os.path.isfile(tool):
+        return "push: không kiểm được biên nhận gate (thư mục repo hoặc bin/push_gate.py không xác định)"
+    for rev in revs or ["HEAD"]:
+        try:
+            r = subprocess.run([sys.executable, tool, gdir, rev], stdin=subprocess.DEVNULL,
+                               capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.SubprocessError) as e:
+            return f"push: không kiểm được biên nhận gate ({e})"
+        if r.returncode != 0:
+            return f"push {rev} chưa qua gate: " + ((r.stdout or r.stderr).strip() or f"push_gate exit {r.returncode}")
+    return None
 
 RESTORE_FLAGS = {"--worktree", "-W", "--staged", "-S", "--quiet", "-q", "--progress", "--no-progress"}
 PENDING_BACKUPS = []   # files to copy once the WHOLE command is allowed
@@ -416,17 +529,21 @@ def analyse_simple(tokens, depth):
         if rest[j] == "-C" and j + 1 < len(rest):
             p = os.path.expanduser(rest[j + 1])
             gdir = p if os.path.isabs(p) else (os.path.join(gdir, p) if gdir else None)
-        if opt == "-c" and j + 1 < len(rest) and rest[j + 1].startswith("alias.") and "=" in rest[j + 1]:
-            k, v = rest[j + 1].split("=", 1)
-            aliases[k[len("alias."):]] = v
-        cfg = rest[j + 1] if opt == "-c" and j + 1 < len(rest) else rest[j].split("=", 1)[-1] if opt == "-c" else ""
-        if cfg.lower().startswith("core.hookspath"):
-            return "git -c core.hooksPath=… tắt git hook (pre-commit kiểm secret/chất lượng)"
+        if opt in ("-c", "--config-env"):
+            spec = rest[j].split("=", 1)[1] if "=" in rest[j] else (rest[j + 1] if j + 1 < len(rest) else "")
+            key, eq, val = spec.partition("=")
+            val = (val if eq else "true") if opt == "-c" else None  # --config-env: value in an env var
+            if key.lower().startswith("alias."):
+                aliases[key[len("alias."):].lower()] = val   # checked only if the alias is run
+            else:
+                reason = config_danger(key, val)
+                if reason:
+                    return f"git {opt} {reason}"
         j += 2 if (opt in GIT_OPTS_WITH_ARG and "=" not in rest[j]) else 1
     if j >= len(rest):
         return None
-    if rest[j] in aliases:
-        reason = git_danger_from_alias(aliases[rest[j]])
+    if rest[j].lower() in aliases:
+        reason = config_danger("alias." + rest[j], aliases[rest[j].lower()])
         if reason:
             return f"alias {rest[j]} → {reason}"
     relocated = any(o.split("=", 1)[0] in ("-C", "--git-dir", "--work-tree") for o in rest[:j])
@@ -647,4 +764,4 @@ if reason:
           "Nếu thực sự cần, User sẽ tự chạy qua prefix \"!\".", file=sys.stderr)
     sys.exit(2)
 sys.exit(0)
-'
+' "$0"

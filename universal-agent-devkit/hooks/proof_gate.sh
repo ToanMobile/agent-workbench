@@ -3,8 +3,9 @@
 # proof_gate.sh — Stop hook: a reply that opens with XONG must carry the turn's
 # acceptance image (rules/essentials.md "Every prompt", step 4/5).
 #
-# Only the status line decides: first non-empty line of the reply, markdown
-# stripped. "XONG" → checked; "CHƯA XONG", "CHỜ DUYỆT", anything else → allowed.
+# Only the status line decides (devkit_harness.reply_status): first non-empty line of the
+# reply, markdown, leading emoji and a `Status:`/`Trạng thái:` label stripped, any case.
+# "XONG" → checked; "CHƯA XONG", "CHỜ DUYỆT", anything else → allowed.
 # Checked = both halves of step 5, from this turn:
 #   - .git/postfix-gate/full_pass.json, written by `post-fix-gate --run-tests --full` on
 #     exit 0, newer than the turn's user message, whose fingerprint (bin/tree_fp.py) still
@@ -51,7 +52,7 @@ SELF="$0"
 while [ -L "${SELF}" ]; do
   L="$(readlink "${SELF}")"; case "${L}" in /*) SELF="${L}" ;; *) SELF="$(dirname "${SELF}")/${L}" ;; esac
 done
-PROOF_INPUT="${INPUT}" PROOF_REPO="${REPO_ROOT}" PROOF_LOG_DIR="${LOG_DIR}" \
+PROOF_INPUT="${INPUT}" PROOF_REPO="${REPO_ROOT}" PROOF_LOG_DIR="${LOG_DIR}" PROOF_HOOKDIR="$(dirname "${SELF}")" \
 PROOF_BIN="$(cd "$(dirname "${SELF}")/../bin" 2>/dev/null && pwd)" python3 <<'PY'
 import datetime, glob, hashlib, json, os, re, sys
 
@@ -78,13 +79,23 @@ except ValueError:
 reply = d.get("last_assistant_message") or ""
 session = d.get("session_id") or "?"
 
-status = ""
-for line in reply.splitlines():
-    s = re.sub(r"^[\s>#*_`\-]+|[\s*_`]+$", "", line)
-    if s:
-        status = s
+# The status line is read by devkit_harness.reply_status, shared with the other Stop hooks:
+# `✅ XONG`, `Xong.`, `Status: XONG`, `Trạng thái: XONG` are XONG too. Without the helper (a hook
+# copied alone) the plain uppercase XONG check still runs.
+xong = None
+for _hd in (os.environ.get("PROOF_HOOKDIR", ""), os.path.join(repo, ".agents", "devkit", "hooks")):
+    if _hd and os.path.isfile(os.path.join(_hd, "devkit_harness.py")):
+        try:
+            sys.path.insert(0, _hd)
+            sys.dont_write_bytecode = True
+            import devkit_harness
+            xong = devkit_harness.reply_status(reply) == "DONE"
+        except Exception as e:
+            log("devkit_harness failed: %r" % e)
         break
-xong = bool(re.match(r"XONG\b", status))
+if xong is None:
+    status = next((s for s in (re.sub(r"^[\s>#*_`\-]+|[\s*_`]+$", "", l) for l in reply.splitlines()) if s), "")
+    xong = bool(re.match(r"XONG\b", status))
 # The 4-item acceptance report (core-rules §1.3) every handover carries: an XONG, or a turn
 # that ran `git push` whatever its status line says (2026-09-25: a push turn left it out).
 REPORT_ITEMS = (("1. Đã fix gì (tên lỗi, nguyên nhân gốc, RED→GREEN)", r"đã\s+(fix|sửa)\s*(gì|:)|what\s+was\s+fixed"),

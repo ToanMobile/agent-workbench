@@ -135,6 +135,60 @@ def file_hash(path: Path) -> str | None:
         return None
 
 
+def head_hash(project: Path, rel: str) -> str | None:
+    """file_hash of HEAD's copy of `rel` — what a revert / patch sandbox runs for a tracked test."""
+    r = subprocess.run(["git", "-C", str(project), "show", f"HEAD:{rel}"], capture_output=True)
+    return hashlib.sha1(r.stdout).hexdigest()[:16] if r.returncode == 0 else None
+
+
+# A RED that only says "the API the fix adds is not there yet" never ran the old behaviour. Only
+# when the missing name is a symbol the fix diff ADDS: an AttributeError on a real None, or on a
+# name the fix does not define, stays a behavioural RED.
+API_MISSING = re.compile(r"\bAttributeError: (?:module '[\w.]+'|type object '\w+'|'(?!NoneType')\w+' object) "
+                         r"has no attribute '(\w+)'|\bNameError: name '(\w+)' is not defined|"
+                         r"\bTypeError: [\w.<>]+\(\) got an unexpected keyword argument '(\w+)'")
+EXC_NAME = re.compile(r"\b[A-Z]\w*(?:Error|Exception)\b")
+BARE_API_EXC = re.compile(r"\b(?:AttributeError|NameError|TypeError)\s*$")   # pytest "t.py:5: AttributeError"
+ADDED_SYMBOL = re.compile(r"^\s*(?:async\s+)?def\s+(\w+)|^\s*class\s+(\w+)|^\s*(\w+)\s*(?::[^=]*)?=(?!=)|"
+                          r"^\s*export\b.*?\b(?:function\*?|class|const|let|var)\s+(\w+)")
+DEF_PARAMS = re.compile(r"^\s*(?:async\s+)?def\s+\w+\s*\((.*)")
+
+
+def added_symbols(lines: list) -> set:
+    """Names the fix defines on its added lines: def / class / `name =` / export …, plus the
+    parameters of an added `def` line (a new keyword argument)."""
+    out = set()
+    for line in lines:
+        m = ADDED_SYMBOL.search(line)
+        if m:
+            out.update(g for g in m.groups() if g)
+        d = DEF_PARAMS.search(line)
+        if d:
+            out.update(re.findall(r"\b([A-Za-z_]\w*)\s*(?=[:=,)])", d.group(1)))
+    return out
+
+
+def api_only_red(outputs: list, added: set) -> list:
+    """The added names the RED output reports missing, when EVERY exception it reports is one of
+    those (else [] — some other failure is a behavioural RED)."""
+    names = []
+    for line in ANSI.sub("", "\n".join(outputs)).splitlines():
+        if not EXC_NAME.search(line):
+            continue
+        m = API_MISSING.search(line)
+        name = next((g for g in m.groups() if g), None) if m else None
+        if name and name in added:
+            names.append(name)
+        elif not BARE_API_EXC.search(line):
+            return []
+    return list(dict.fromkeys(names))
+
+
+def diff_lines(diff: str, sign: str) -> list:
+    """The +/- lines of a unified diff (headers dropped), without their sign."""
+    return [line[1:] for line in diff.splitlines() if line.startswith(sign) and not line.startswith(sign * 3)]
+
+
 def resolve_id(data: dict, ref: str) -> str | None:
     for cand in (ref, f"BUG-{ref}", ref[4:] if ref.upper().startswith("BUG-") else None):
         if cand and (data["items"].get(cand) or {}).get("kind") in ("bug", "req"):
@@ -511,13 +565,28 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
         if not fix:
             return {**base, "status": "INCONCLUSIVE",
                     "reason": "không có bản sửa chưa commit — fix đã commit: chạy với --fix-commit <sha>"}
+    fix_added = []          # lines the fix adds (1b: an API-only RED)
+    if mode == "session":
+        fix_added = diff_lines(git(project, "diff", "HEAD", "--", *fix).stdout, "+")
+        for f in fix:
+            if git(project, "ls-files", "--error-unmatch", "--", f).returncode != 0:
+                with contextlib.suppress(OSError):
+                    fix_added += (project / f).read_text(encoding="utf-8", errors="replace").splitlines()
+    elif mode == "patch":
+        with contextlib.suppress(OSError):   # the patch puts the bug BACK: what it removes, the fix added
+            fix_added = diff_lines(patch.read_text(encoding="utf-8", errors="replace"), "-")
+    # Session mode proves the tree's uncommitted test. Patch / revert prove an old bug against
+    # HEAD: a tracked test someone is half-way through editing (asserting a change HEAD does
+    # not have) would fail GREEN too — only tests HEAD does not have yet come in from the tree.
+    bring = tests if mode == "session" else [
+        t for t in tests if git(project, "cat-file", "-e", f"HEAD:{t}").returncode != 0]
     try:
         timeout = float(os.environ.get("RED_PROOF_TIMEOUT_S", "1800"))
     except ValueError:
         timeout = 1800.0
     stems = {Path(t).stem for t in tests}
     log, red_all_green, green_ok, ran_nothing, red_compile = [], True, True, False, False
-    red_stems = set()
+    red_stems, red_outs = set(), []
     try:
         with worktree(project) as red_box, worktree(project) as green_box:
             if mode == "patch":
@@ -544,6 +613,7 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
                     return {**base, "status": "INCONCLUSIVE", "mode": mode, "fix_commit": fix_commit,
                             "reason": f"commit {fix_commit} không đổi code sản xuất"}
                 patch = git(project, "diff", "--binary", f"{fix_commit}^", fix_commit, "--", *prod).stdout
+                fix_added = diff_lines(patch, "+")
                 pf = red_box / ".red_proof.patch"
                 pf.write_text(patch, encoding="utf-8")
                 r = subprocess.run(["git", "apply", "-3", "-R", "--whitespace=nowarn", pf.name], cwd=str(red_box),
@@ -556,11 +626,6 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
                                       (", ".join(conflicts[:6]) or r.stderr.strip()[:160])}
             for box in (red_box, green_box):
                 furnish(project, box)
-            # Session mode proves the tree's uncommitted test. Patch / revert prove an old bug against
-            # HEAD: a tracked test someone is half-way through editing (asserting a change HEAD does
-            # not have) would fail GREEN too — only tests HEAD does not have yet come in from the tree.
-            bring = tests if mode == "session" else [
-                t for t in tests if git(project, "cat-file", "-e", f"HEAD:{t}").returncode != 0]
             copy_in(project, red_box, bring)
             copy_in(project, green_box, bring + fix)
             for cmd in cmds:
@@ -569,6 +634,7 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
                 ran_nothing = ran_nothing or bool(NO_TESTS.search(out))
                 if code != 0:
                     red_all_green = False
+                    red_outs.append(out)
                     if COMPILE_RED.search(out):
                         red_compile = True
                     elif code is not None:
@@ -594,6 +660,9 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
     elif red_compile and not red_ok:
         status, reason = "INCONCLUSIVE", ("đỏ vì lỗi biên dịch/import khi bỏ bản sửa (test gọi thứ chỉ bản sửa mới có) — "
                                           "test không chạy trên code cũ, chưa phải bằng chứng")
+    elif red_ok and (api := api_only_red(red_outs, added_symbols(fix_added))):
+        status, reason = "INCONCLUSIVE", (f"đỏ chỉ vì API bản sửa thêm chưa có ({', '.join(api[:4])}) — test không chạy "
+                                          "hành vi cũ, chưa phải bằng chứng (test hành vi, không chỉ gọi API mới)")
     elif red_ok and green_ok and still_green:
         status, reason = "INCONCLUSIVE", (f"chỉ {len(red_stems & runnable)}/{len(runnable)} file test đỏ khi bỏ bản sửa — còn xanh: "
                                           f"{', '.join(still_green[:4])} (phần bug đó chưa được chứng minh: tách bug, sửa test, "
@@ -615,7 +684,9 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
                   "VACUOUS": "test vẫn xanh khi áp patch đưa bug trở lại — test (hoặc patch) không bắt đúng bug"
                   }.get(status, reason.replace("bỏ bản sửa", "áp patch").replace("có bản sửa", "HEAD"))
     meta = {"bug": bid, "mode": mode, "fix_commit": fix_commit, "status": status, "tests": ", ".join(tests)}
-    files = {t: file_hash(project / t) for t in tests}
+    # The content that RAN: the tree's copy of a test brought into the sandbox, else HEAD's — a
+    # tracked test edited in the tree and never run must read OUTDATED, not PROVEN (mark_stale).
+    files = {t: file_hash(project / t) if t in bring else head_hash(project, t) for t in tests}
     if patch:
         meta["patch"] = str(patch_rel(bid))
         files[str(patch_rel(bid))] = file_hash(project / patch_rel(bid))   # patch edited → OUTDATED
@@ -721,7 +792,7 @@ def main(argv=None) -> int:
                     fresh = rc.load(project)
                     if bid in fresh["items"]:
                         fresh["items"][bid]["red_proof"] = result
-                        rc.save(project, fresh)
+                        rc.save(project, fresh, stale=False)   # the proof as it ran; the next STALE pass judges the tree
                 print(f"{bid}: {result['status']} — {result.get('reason', '')}")
                 continue
             fc, why = (fix_commit, None) if fix_commit or not pending else fix_commit_of(project, data["items"][bid])
@@ -744,7 +815,7 @@ def main(argv=None) -> int:
                 fresh = rc.load(project)
                 if bid in fresh["items"]:
                     fresh["items"][bid]["red_proof"] = result
-                    rc.save(project, fresh)
+                    rc.save(project, fresh, stale=False)
             print(f"{bid}: {result['status']} — {result.get('reason', '')}")
     return 0
 

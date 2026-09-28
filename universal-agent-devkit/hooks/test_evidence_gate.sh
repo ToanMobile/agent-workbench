@@ -175,7 +175,12 @@ CLAIM = re.compile(
     r"|(?:pass|xanh|green)[^.\n]{0,24}test"
     r"|\d+\s*/\s*\d+\s+test"
     r"|tests?\s+passed"
-    r"|(?:toàn\s+bộ|tất\s+cả)\s+(?:kiểm\s+thử|tests?)[^.\n]{0,16}(?:đều\s+)?đạt)", re.I)
+    r"|(?:toàn\s+bộ|tất\s+cả)\s+(?:kiểm\s+thử|tests?)[^.\n]{0,16}(?:đều\s+)?đạt"
+    # 2026-09-28: plainer wording slipped through ("Tests OK (12)", "The suite is green: 12/12
+    # passed", "everything passes", "chạy lại thấy ổn").
+    r"|\btests?\s+(?:are\s+|all\s+)?ok(?:ay)?\b|\bsuites?\s+(?:is\s+|are\s+)?(?:green|xanh)\b"
+    r"|\d+\s*/\s*\d+\s+(?:pass(?:ed|es|ing)?|green|xanh|đạt)\b|\beverything\s+(?:now\s+)?pass(?:es|ed)?\b"
+    r"|chạy\s+lại[,:]?\s+(?:thì\s+|đều\s+)?(?:thấy\s+)?(?:ổn|ok|tốt)\b)", re.I)
 # A PROHIBITION is not a result. Quoting the rule it enforces ("cấm sửa test cho
 # xanh", "đừng gọi là pass") puts the trigger words in the sentence with the
 # meaning inverted, and bold `**…**` is not scrubbed the way backticks/quotes are.
@@ -360,7 +365,7 @@ OUTCOME = re.compile(
     r"|đã\s+giải\s+quyết(?:\s+xong)?|hết\s+bug"
     r"|(?:the\s+)?fix\s+(?:works?|worked|has\s+worked|(?:đã\s+)?có\s+tác\s+dụng)"
     r"|bug\s+đã\s+(?:được\s+)?fix|(?:lỗi|bug)[^.\n]{0,48}không\s+(?:còn\s+)?tái\s+hiện(?:\s+nữa)?"
-    r"|\bfixed\b|\bresolved\b)", re.I)
+    r"|\bfixed\b|\bresolved\b|\b(?:bug|issue|crash|error)\s+(?:is|was|has)\s+(?:now\s+)?gone\b)", re.I)
 
 outcome_claims = []
 for sent_idx, sent in enumerate(sentences):

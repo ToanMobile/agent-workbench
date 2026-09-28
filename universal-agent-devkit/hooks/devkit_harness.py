@@ -242,7 +242,6 @@ class SessionGuard:
 # skipped ONLY for a reply that declares itself unfinished in its status line, claims no outcome,
 # and ran no git commit/push in the turn. Anything else — no reply, no Claude transcript, a claim,
 # a commit — keeps them (fail closed). DEVKIT_GATE_EVERY_STOP=1 restores a gate on every stop.
-WIP_STATUS = re.compile(r"(?:CHƯA\s+XONG|CHỜ\s+DUYỆT|BLOCKED|WIP|NOT\s+DONE|IN\s+PROGRESS)\b", re.I)
 OUTCOME = re.compile(r"(?<![\wÀ-ỹ])XONG(?![\wÀ-ỹ])|\b(?:đã|vừa)\s+(?:fix|sửa\s+xong|sửa\s+được|xong|hoàn\s+tất|hoàn\s+thành)"
                      r"|hết\s+bug|\bfixed\b|\bdone\b|\ball\s+(?:tests?\s+)?pass|✅|\bPASS\b")
 GIT_WRITE = re.compile(r"(?:^|[;&|(]|\n)\s*(?:\w+=\S*\s+)*git(?:\s+-[Cc]\s+\S+|\s+--?[\w.-]+(?:=\S+)?)*\s+(commit|push)\b"
@@ -255,6 +254,40 @@ def status_line(reply):
         if s:
             return s
     return ""
+
+
+# The one reader of a reply's status line, for every Stop hook (proof_gate, regression_gate,
+# review_gate). 2026-09-28: `✅ XONG`, `Xong.`, `Status: XONG`, `Trạng thái: XONG` passed
+# proof_gate unchecked because it matched only an exact uppercase `XONG` at the line start.
+_STATUS_LEAD = re.compile(r"^[\W_]+")      # markdown (#*_>`-), emoji, symbols, spaces
+_STATUS_LABEL = re.compile(r"^(?:status|trạng\s+thái|line\s*1)\s*[:：]", re.I)
+_STATUS_NOT_DONE = re.compile(r"^(?:chưa\s+xong|chua\s+xong|chờ\s+duyệt|cho\s+duyet|blocked|wip"
+                              r"|not\s+done|in\s+progress)\b", re.I)
+# Uppercase XONG opens a status line whatever follows (as proof_gate always read it); another
+# case only when the whole line is the word ("Xong.", "xong!"), not a progress sentence
+# ("Xong bước 1. Tiếp tục bước 2.", "Xong phần A, còn B", "Xong việc nhỏ.").
+_STATUS_DONE = re.compile(r"XONG\b|(?i:xong)[\W_]*$")
+
+
+def reply_status(text):
+    """"DONE" | "NOT_DONE" | "NONE" from the first non-empty line of a reply, with markdown,
+    leading emoji/symbols and a leading `Status:` / `Trạng thái:` / `Line 1:` label stripped.
+    NOT_DONE (CHƯA XONG, CHỜ DUYỆT, BLOCKED, WIP, NOT DONE, IN PROGRESS, any case) wins over DONE
+    (XONG, or a bare Xong/xong); anything else, a progress line included, is NONE."""
+    import unicodedata
+    for line in unicodedata.normalize("NFC", text if isinstance(text, str) else "").splitlines():
+        s = line
+        while True:
+            t = _STATUS_LABEL.sub("", _STATUS_LEAD.sub("", s))
+            if t == s:
+                break
+            s = t
+        if not s.strip():
+            continue
+        if _STATUS_NOT_DONE.match(s):
+            return "NOT_DONE"
+        return "DONE" if _STATUS_DONE.match(s) else "NONE"
+    return "NONE"
 
 
 def turn_start(tp):
@@ -319,8 +352,7 @@ def work_in_progress(payload, env=None):
     tp = payload.get("transcript_path")
     if not isinstance(reply, str) or not reply.strip() or transcript_kind(tp) != "claude":
         return False
-    head = status_line(reply)
-    if not WIP_STATUS.match(head):
+    if reply_status(reply) != "NOT_DONE":
         return False
     body = re.sub(r"(?i)chưa\s+xong", "", reply)
     if OUTCOME.search(body):
@@ -419,6 +451,8 @@ def _cli(argv, stdin):
         return "\t".join([info["session"], info["agent"], info["transcript"], "1" if info["degraded"] else "0",
                           "1" if info["terminal_stop"] else "0",
                           _clean(data.get("reason") or "", 32) if isinstance(data, dict) else ""])
+    if cmd == "status":
+        return reply_status(stdin.read())
     if cmd == "since-files" and len(argv) > 1:
         vh, _head, _why = verified_head(argv[1], write=False)
         return "\n".join(files_since(argv[1], vh))

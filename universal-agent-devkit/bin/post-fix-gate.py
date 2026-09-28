@@ -535,6 +535,26 @@ def tree_fp_of(project_dir):
     return tree_fp.tree_fingerprint(project_dir)
 
 
+def head_and_dirty(project_dir):
+    """(HEAD sha, {path from the repo root: blob sha, or None when deleted}) of every file that
+    differs from HEAD: what bin/push_gate.py compares a push against. (None, {}) on a git error."""
+    run = lambda *a: subprocess.run(["git", "-C", str(project_dir), *a], capture_output=True, text=True)
+    top, head = run("rev-parse", "--show-toplevel"), run("rev-parse", "HEAD")
+    if top.returncode or head.returncode:
+        return None, {}
+    top = top.stdout.strip()
+    names = sorted({p for args in (("diff", "--name-only", "-z", "HEAD"), ("ls-files", "-o", "--exclude-standard", "-z"))
+                    for p in subprocess.run(["git", "-C", top, *args], capture_output=True, text=True).stdout.split("\0") if p})
+    present = [p for p in names if os.path.isfile(os.path.join(top, p))]
+    shas = subprocess.run(["git", "-C", top, "hash-object", "--stdin-paths"], input="\n".join(present),
+                          capture_output=True, text=True).stdout.split() if present else []
+    if len(shas) != len(present):
+        return None, {}
+    dirty = dict.fromkeys(names)
+    dirty.update(zip(present, shas))
+    return head.stdout.strip(), dirty
+
+
 def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None, tested_fp=None):
     """After a full regression run: drop the previous receipt, and on exit 0 record
     {time, fingerprint} of the audited code in .git/postfix-gate/full_pass.json (outside the
@@ -564,12 +584,13 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
         log_warn(tr(f"Không tính được dấu vân tay code — XONG sẽ bị proof_gate chặn: {getattr(tree_fp.tree_fingerprint, 'error', '') or 'git add thất bại'}",
                     f"Code fingerprint unavailable — proof_gate will refuse XONG: {getattr(tree_fp.tree_fingerprint, 'error', '') or 'git add failed'}"))
     try:
+        head, dirty = head_and_dirty(project_dir)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"time": time.time(), "exit": 0, "project": str(Path(project_dir).resolve()),
                        "fingerprint": fingerprint, "tested_at": tested_at or time.time(),
                        "gate_sha": _sha_file(__file__), "matrix_sha": _sha_file(find_matrix_path(matrix_arg)),
-                       "local_sha": local_state_sha(project_dir),
+                       "local_sha": local_state_sha(project_dir), "head": head, "dirty": dirty,
                        "tests": [{"id": t.get("id"), "status": t.get("status"), "log": t.get("log"),
                                   "duration": t.get("duration")}
                                  for t in (tests or []) if t.get("command")]}, f)
