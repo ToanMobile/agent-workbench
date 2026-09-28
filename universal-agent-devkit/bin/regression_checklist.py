@@ -762,7 +762,7 @@ _RUNNERS = (   # (test runner, file extensions it executes)
     (re.compile(r"\bcargo\s+test\b"), (".rs",)),
     (re.compile(r"\b(?:jest|vitest|mocha|karma)\b|\bbun\s+test\b|\b(?:react-scripts|ng|playwright)\s+test\b"), _JS),
     (re.compile(r"\bnode\s+--test\b"), (".js", ".mjs", ".cjs", ".ts")),
-    (re.compile(r"\bpytest\b|\bunittest\s+discover\b|-m\s+unittest\s*$"), (".py",)),   # `-m unittest` alone discovers
+    (re.compile(r"\bpytest\b|\bunittest\s+discover\b|-m\s+unittest(\s+-\S+)*\s*$"), (".py",)),   # `-m unittest [-v]` discovers
     (re.compile(r"\b(?:flutter|dart)\s+test\b"), (".dart",)),
 )
 _BUILD_TOOL = re.compile(r"(?:^|[\s/])(?:gradlew|gradle|mvnw|mvn)(?:\s|$)")
@@ -783,6 +783,13 @@ _BUILD_WRAPPERS = ("gradlew", "mvnw")   # their own text says nothing about whic
 # a script with subcommands: `case "$1" in … name) …` (not a case that only parses `-v)` options)
 _SUBCOMMANDS = re.compile(r"\bcase\s+\"?\$\{?1\b[^\n]*\n(?:(?!\s*esac\b)[^\n]*\n)*?\s*[A-Za-z][\w|-]*\)")
 _NOT_A_COMMAND = re.compile(r"(?:echo|printf|cat|read|say|log|info|warn|die|usage|help|print|true)\b")
+# What the analysis cannot follow: the suite is `unresolved` and nothing is a sure orphan (below).
+_KNOWN_TOOLS = {"gradle", "gradlew", "mvn", "mvnw", "xcodebuild", "swift", "dotnet", "go", "cargo", "jest", "vitest",
+                "mocha", "karma", "bun", "react-scripts", "ng", "playwright", "node", "pytest", "python", "python3",
+                "flutter", "dart", "make", "gmake", "tox", "npm", "yarn", "pnpm", "sh", "bash"}
+_UNKNOWN_RUN = re.compile(r"^(?:\S*/)?(?:nox|hatch|just|rake|deno|bazel|bazelisk|gotestsum)\b"
+                          r"|\bpnpm\s+(?:-r|--recursive)\b|\bnpm\s+--prefix\b|--workspaces?\b|\s-ws\b|\byarn\s+workspaces?\b"
+                          r"|-m\s+unittest\s+-")
 _GLOB_TOKEN = re.compile(r"[A-Za-z0-9_.*?/-]*[*?][A-Za-z0-9_.*?/-]*")
 
 
@@ -1032,11 +1039,21 @@ def suite_index(project: Path, matrix: dict) -> list:
             cmd = test.get("command") or ""
             if not test.get("id") or not cmd:
                 continue
-            texts, globs, runs = [cmd], [], []
+            texts, globs, runs, why = [cmd], [], [], []
 
             def scan(text, cwd, depth, top=False):
-                """Runs of these command lines, and the scripts / tasks they call (depth levels)."""
-                lines = [text] if top else ([] if _SUBCOMMANDS.search(text) else _command_lines(text))
+                """Runs of these command lines, and the scripts / tasks they call (depth levels).
+                Whatever it cannot follow goes to `why`: the suite is unresolved."""
+                if top:
+                    lines = [text]
+                elif _SUBCOMMANDS.search(text):
+                    why.append("script with subcommands (case \"$1\")")
+                    return
+                else:
+                    lines = _command_lines(text)
+                    if not lines:
+                        why.append("wrapper without a command line")
+                        return
                 for line in lines:
                     for c, seg in _segments(line, cwd):
                         if _NOT_A_COMMAND.match(seg):
@@ -1044,21 +1061,38 @@ def suite_index(project: Path, matrix: dict) -> list:
                         r = _runner(project, c, seg)
                         if r:
                             runs.append((c, seg, r))
-                        if depth <= 0:
-                            continue
+                        tool = re.match(r"^(?:\S*/)?([\w.-]+)\s+test\b", seg)
+                        if _UNKNOWN_RUN.search(seg) or (not r and tool and tool.group(1) not in _KNOWN_TOOLS):
+                            why.append(f"runner not understood: {seg[:60]}")
                         is_task, task_text, whole = _task_runner_text(project, c, seg)
-                        if whole:
-                            texts.append(whole)
-                        if task_text:
-                            scan(task_text, c, depth - 1)
+                        scripts = []
                         for tok in seg.split():
                             tok = tok.strip("'\"")
                             if not tok or tok.startswith("-") or "=" in tok:
                                 continue
                             found = _script_text(project, c, tok)
-                            if not found or found[0] is None:
+                            if found:
+                                scripts.append(found)
+                        if depth <= 0:
+                            if is_task or any(f[0] is not None and Path(f[2]).suffix in _SHELL_EXT
+                                              and not is_test_candidate(f[2]) for f in scripts):
+                                why.append(f"call chain deeper than read: {seg[:60]}")
+                            continue
+                        if whole:
+                            texts.append(whole)
+                        if is_task:
+                            if task_text is None or not task_text.strip():
+                                why.append(f"task file / task not read: {seg[:60]}")
+                            elif seg.split()[0] in ("make", "gmake") and (
+                                    re.search(r"(?:^|\s)-[fC]\b", seg) or re.search(r"\$[({]", task_text)
+                                    or re.search(r"^\s*-?include\b", whole or "", re.M)):
+                                why.append(f"make not expanded (include / $(VAR) / -f / -C): {seg[:60]}")
+                            if task_text:
+                                scan(task_text, c, depth - 1)
+                        for stext, base, rel in scripts:
+                            if stext is None:     # a script we cannot read (binary, over 2 MB)
+                                why.append(f"script not readable: {rel}")
                                 continue
-                            stext, base, rel = found
                             texts.append(stext)
                             # quotes and $VARs out: "$ROOT/workflows"/*.test.mjs is the glob workflows/*.test.mjs
                             for g in _GLOB_TOKEN.findall(re.sub(r"\$\{?\w+\}?|[\"']", "", stext)):
@@ -1073,7 +1107,7 @@ def suite_index(project: Path, matrix: dict) -> list:
             for text in texts:
                 words.update(re.findall(r"[\w.-]+", text))
                 words.update(re.findall(r"[\w-]+", text))
-            out.append({"id": test["id"], "watch": watch, "runs": runs, "words": words,
+            out.append({"id": test["id"], "watch": watch, "runs": runs, "words": words, "unresolved": why,
                         "globs": [re.compile(fnmatch.translate(g) + "|" + fnmatch.translate("*/" + g))
                                   if "/" in g else re.compile(fnmatch.translate(g)) for g in dict.fromkeys(globs)]})
     return out
@@ -1135,11 +1169,15 @@ def sure_orphans(project: Path, matrix: dict, candidates, index=None) -> list:
     """The candidates that are CERTAINLY run by no suite — what post-fix-gate may block on: no rule
     watches the path and no suite command, script it calls, Makefile / tox.ini / package.json
     names the file or its class — and the runner analysis sees no suite run it either (it may only
-    lift a block, never make one). Anything else it concludes is a checklist row only."""
+    lift a block, never make one). Anything else it concludes is a checklist row only.
+    One suite the analysis cannot follow (unresolved: include, $(MAKE), a subcommand script, a
+    runner it does not know, a chain deeper than it reads…) may run anything: then nothing is sure."""
     if not (matrix or {}).get("rules"):
         return []
     project = Path(project)
     index = suite_index(project, matrix) if index is None else index
+    if any(s.get("unresolved") for s in index):
+        return []
     return [f for f in dict.fromkeys(candidates)
             if is_test_candidate(f) and (project / f).is_file()
             and not any((s["watch"] is not None and s["watch"].match(f)) or _named(s, f, min_stem=3) for s in index)

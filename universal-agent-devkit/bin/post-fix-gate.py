@@ -2587,7 +2587,7 @@ def _update_regression_checklist(args, matrix, rules, modified_files, regression
     c = rc.summary(data)
     print(f"  • Regression checklist: ✅ {c.get('PASS', 0)} · ❌ {c.get('FAIL', 0) + c.get('TIMEOUT', 0)}"
           f" · ⚠️ {c.get('UNCOVERED', 0) + c.get('NEEDS_TEST', 0)} · ⏳ {c.get('NOT_RUN', 0)}"
-          + (f" · ⚠️ {c['ORPHAN_TEST']} {tr('test mồ côi (không suite nào chạy)', 'orphan tests (no suite runs them)')}"
+          + (f" · ⚠️ {c['ORPHAN_TEST']} {tr('test có thể không suite nào chạy', 'tests maybe run by no suite')}"
              if c.get("ORPHAN_TEST") else "")
           + f" → {project_dir / rc.VIEW_FILE}")
     if added:

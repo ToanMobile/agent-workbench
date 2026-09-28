@@ -342,4 +342,35 @@ C="$TMP/e25"; mkcase "$C" "make test" "src/*.py"; printf 'test:\n\t@echo running
 C="$TMP/e26"; mkcase "$C" "sh run.sh" "src/*.py"; printf 'N=$((1<<2))\npytest\n' > "$C/run.sh"; echo "x=1" > "$C/tests/test_h.py"
 [ "$(covered "$C" tests/test_h.py)" = True ] && ok "E26 \$((1<<2)) is no heredoc: the lines after it are read" || fail "E26 arithmetic shift read as heredoc"
 
+# ── F. the block rule itself: the new test is OUTSIDE every watch (watch src/*.py, test in tests/).
+#       A suite the analysis cannot follow may run it: nothing is sure, --full passes (⚠️ row only).
+for b in pnpm yarn tox; do printf '#!/bin/sh\nexit 0\n' > "$FAKE/$b"; chmod +x "$FAKE/$b"; done
+fcase() {  # <case> <command> <label> <setup> [expected exit=0] [watch] [new test] [changed file]
+  local C="$TMP/$1" want="${5:-0}" nt="${7:-tests/test_new.py}" ch="${8:-src/app.py}"
+  mkcase "$C" "$2" "${6:-src/*.py}"; touch "$C/tests/__init__.py"; mkdir -p "$(dirname "$C/$ch")"; echo "x = 1" > "$C/$ch"
+  (cd "$C" && eval "$4" && git add -A && git commit -qm init && mkdir -p "$(dirname "$nt")" && echo "x = 2" > "$ch" \
+    && case "$nt" in *.py) printf 'import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertEqual(1 + 1, 2)\n' > "$nt" ;; *) echo "class CTest" > "$nt" ;; esac)
+  PATH="$FAKE:$PATH" CLAUDE_PROJECT_DIR="$C" python3 "$GATE" --run-tests --full >"$TMP/$1.out" 2>&1; local rc=$?
+  [ "$rc" = "$want" ] && ok "$1 $3: --full exit $rc" || fail "$1 $3: --full exit $rc (want $want) $(grep -m1 -E 'KẾT LUẬN' "$TMP/$1.out")"
+}
+fcase F1 "make test" "make with include ci.mk" "printf 'include ci.mk\ntest: ci-test\n' > Makefile && printf 'ci-test:\n\tpytest tests/\n' > ci.mk"
+fcase F2 "make test" "make recipe \$(MAKE) -C tests" "printf 'test:\n\t\$(MAKE) -C tests\n' > Makefile && printf 'all:\n\tpytest\n' > tests/Makefile"
+fcase F3 "make -f ci.mk test" "make -f ci.mk test" "printf 'test:\n\tpytest\n' > ci.mk"
+fcase F4 "pnpm -r test" "pnpm -r test" "true"
+fcase F5 "npm --prefix web test" "npm --prefix web test" "mkdir -p web && printf '{\"scripts\":{\"test\":\"vitest run\"}}' > web/package.json"
+fcase F6 "npm test --workspaces" "npm test --workspaces" "printf '{\"scripts\":{\"test\":\"echo root\"}}' > package.json"
+fcase F7 "yarn workspace web test" "yarn workspace web test" "printf '{\"scripts\":{\"build\":\"tsc\"}}' > package.json"
+fcase F8 "sh a.sh" "a 3-level script chain" "printf 'sh b.sh\n' > a.sh && printf 'sh c.sh\n' > b.sh && printf 'pytest tests/\n' > c.sh"
+fcase F9 "sh run.sh" 'case "$1" in ci) … esac then pytest tests/' "printf 'case \"\$1\" in\n  ci) CI=1 ;;\n  *) ;;\nesac\npytest tests/\n' > run.sh"
+fcase F10 "tox" "tox configured in pyproject.toml" "printf '[tool.tox]\nlegacy_tox_ini = \"\"\"\n[testenv]\ncommands = pytest\n\"\"\"\n' > pyproject.toml"
+fcase F11 "python3 -m unittest -v" "python3 -m unittest -v" "true"
+# …and a sure orphan still blocks when every suite is read to the end:
+fcase F12 "./gradlew :app:testDebugUnitTest" "gradle :app:testDebugUnitTest, new test in core/" \
+  "printf '#!/bin/sh\nexit 0\n' > gradlew && chmod +x gradlew && mkdir -p app/src/main core/src/test && touch app/build.gradle core/build.gradle" \
+  2 "app/*" core/src/test/CTest.kt app/src/main/A.kt
+grep -q 'file test MỚI mà không suite.*core/src/test/CTest.kt' "$TMP/F12.out" && ok "F12 names the sure orphan" || fail "F12 message"
+[ "$(python3 -c "import json,sys; sys.path.insert(0,'$DEVKIT_DIR/bin'); import regression_checklist as rc; from pathlib import Path
+p=Path('$TMP/F11'); print(bool(rc.running_suites(p, 'tests/test_new.py', rc.suite_index(p, json.load(open(p/'.agents/regression_matrix.active.json'))))))")" = True ] \
+  && ok "F11b python3 -m unittest -v is read as a discovery run" || fail "F11b -m unittest -v not a runner"
+
 [ "$FAILS" = 0 ] && echo "ALL PASS" || { echo "$FAILS FAILED"; exit 1; }
