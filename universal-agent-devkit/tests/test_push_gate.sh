@@ -72,4 +72,24 @@ git commit -qam "a rule now watches the agent config" && git push -q origin HEAD
 echo '{"hooks":{"Stop":[]}}' > .claude/settings.json; git commit -qm "config" -- .claude/settings.json
 expect "the pushed config is watched by a matrix rule, no receipt: blocked" 2
 
+# An UNTESTED full run (exit 4: a suite's untested_exit, 2026-09-29) leaves a receipt with
+# "exit": 4 (its PASS suites are reused by the next run) — never the exit 0 a push needs.
+cd "$TMP" && rm -rf "$TMP/repo" "$TMP/origin.git" && mkdir -p "$TMP/repo/src" "$TMP/repo/.agents" && cd "$TMP/repo" || exit 1
+git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt
+cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],
+ "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"true"},
+  {"id":"REG-CAR","name":"real car","command":"exit 2","untested_exit":2}]}]}
+JSON
+git add -A && git commit -qm init
+git init -q --bare "$TMP/origin.git" && git remote add origin "$TMP/origin.git" && git push -q -u origin HEAD 2>/dev/null
+echo "fun ok() = 2" > src/Core.kt
+CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --run-tests --full --brief >/dev/null 2>&1; g=$?
+git commit -qam "fix"
+rexit="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("exit"))' "$(git rev-parse --absolute-git-dir)/postfix-gate/full_pass.json" 2>/dev/null)"
+[ "$g" = 4 ] && [ "$rexit" = 4 ] && echo "✔ setup: --full UNTESTED wrote an exit-4 receipt" \
+  || { echo "✖ setup: gate exit $g, receipt exit '$rexit'"; FAILS=$((FAILS + 1)); }
+expect "an exit-4 (UNTESTED) receipt covering the pushed code: push blocked" 2
+
 [ "$FAILS" -eq 0 ] && echo "push gate: all checks passed" || { echo "push gate: $FAILS FAILED"; exit 1; }

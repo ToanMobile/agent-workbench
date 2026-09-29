@@ -641,7 +641,9 @@ def cached_full_pass(project_dir, matrix_arg):
     """The last full PASS when it still holds for this exact code (O1, 2026-09-28: GeelyEx2 ran
     16 full gates in one session, many on content that had already passed): same tree
     fingerprint, same RESULT_FORMAT, same matrix, tested within DEVKIT_GATE_CACHE_MAX_S (default
-    6 h — ignored files, devices and the network can drift). None otherwise."""
+    6 h — ignored files, devices and the network can drift). None otherwise. An UNTESTED full run
+    (exit 4, its "untested" ids ended with their matrix untested_exit) counts for its PASS suites
+    only: reuse_full_pass runs the untested ones again (2026-09-29, GeelyEx2)."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
@@ -651,7 +653,9 @@ def cached_full_pass(project_dir, matrix_arg):
         max_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
     except (ImportError, OSError, ValueError, TypeError):
         return None
-    if not isinstance(r, dict) or r.get("exit") != 0 or not r.get("tests"):
+    if not isinstance(r, dict) or not r.get("tests"):
+        return None
+    if r.get("exit") != 0 and not (r.get("exit") == 4 and r.get("untested") and isinstance(r["untested"], list)):
         return None
     if time.time() - float(r.get("tested_at") or 0) > max_s:
         return None
@@ -699,12 +703,16 @@ def head_and_dirty(project_dir):
     return head.stdout.strip(), dirty
 
 
-def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None, tested_fp=None):
+def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None, tested_fp=None,
+                            untested=None):
     """After a full regression run: drop the previous receipt, and on exit 0 record
     {time, fingerprint} of the audited code in .git/postfix-gate/full_pass.json (outside the
     tree). hooks/proof_gate.sh accepts an XONG only with a receipt from this turn whose
     fingerprint still matches the code (bin/tree_fp.py). tested_fp is the fingerprint taken
-    before the suites ran: code that changed during the run was not the code tested."""
+    before the suites ran: code that changed during the run was not the code tested.
+    untested: the ids of an UNTESTED exit 4 (untested_exit, never BUSY) — recorded with "exit": 4
+    so cached_full_pass reuses the suites that passed (2026-09-29, GeelyEx2: no receipt at all,
+    every --full re-ran them); proof_gate and push_gate still accept only "exit": 0."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
@@ -713,7 +721,7 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     path = tree_fp.receipt_path(project_dir)
     if not path:
         return
-    if exit_code != 0:
+    if exit_code != 0 and not (exit_code == 4 and untested):
         try:
             os.remove(path)
         except OSError:
@@ -730,7 +738,7 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     try:
         head, dirty = head_and_dirty(project_dir)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        data = {"time": time.time(), "exit": 0, "project": str(Path(project_dir).resolve()),
+        data = {"time": time.time(), "exit": exit_code, "project": str(Path(project_dir).resolve()),
                 "fingerprint": fingerprint, "tested_at": tested_at or time.time(),
                 "result_format": RESULT_FORMAT,
                 "gate_sha": _sha_file(__file__), "matrix_sha": _sha_file(find_matrix_path(matrix_arg)),
@@ -738,6 +746,8 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
                 "tests": [{"id": t.get("id"), "status": t.get("status"), "log": t.get("log"),
                            "duration": t.get("duration")}
                           for t in (tests or []) if t.get("command")]}
+        if exit_code != 0:
+            data["untested"] = sorted(untested)
         fd, tmp = tempfile.mkstemp(prefix=".tmp_full_pass.", dir=os.path.dirname(path))
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f)
@@ -3417,7 +3427,9 @@ def main():
         """Mark every reusable suite PASS from the last full PASS of this exact content; its receipt, or None."""
         found = cached_full_pass(project_dir, args.matrix)
         prev = {x.get("id"): x for x in (found or {}).get("tests") or []}
-        reusable = [t for t in regression_tests if t.get("command") and not DEVICE_SUITE.search(t["command"])]
+        untested = set((found or {}).get("untested") or [])   # an exit-4 receipt: those run again
+        reusable = [t for t in regression_tests if t.get("command") and not DEVICE_SUITE.search(t["command"])
+                    and t.get("id") not in untested]
         if not (found and reusable and all(prev.get(t["id"], {}).get("status") == "PASS" for t in reusable)):
             return None
         at = time.strftime("%H:%M", time.localtime(float(found.get("tested_at") or 0)))
@@ -3747,6 +3759,7 @@ def main():
                     f"{len(orphans_new)} NEW test files no rule watches and no suite names: ")
                  + ", ".join(orphans_new[:5]) + f"{why} — {orphan_fix}")
     print(f"\n{BOLD}{CYAN}──────────────────────────────────────────────────────────────────────────────────────{RESET}")
+    receipt_untested = None
     if not static_ok or (run_tests and not tests_ok):
         verdict_text, verdict_color, exit_code = tr("REJECT — CẦN KHẮC PHỤC CÁC ĐIỂM CHƯA ĐẠT", "REJECT — FIX THE FAILED CHECKS"), RED, 1
     elif matrix_problem:
@@ -3778,6 +3791,9 @@ def main():
         verdict_text, verdict_color, exit_code = tr("UNTESTED — một lượt chạy test khác đang giữ khoá dự án (TEST_RUN_LOCK_WAIT_S) — chạy lại sau; KHÔNG phải PASS",
                                                     "UNTESTED — another test run holds the project lock (TEST_RUN_LOCK_WAIT_S) — run again later; NOT a PASS"), YELLOW, 4
     elif run_tests and tests_untested:
+        # UNTESTED by untested_exit (BUSY marks suites only when the lock was not held — the
+        # summary "busy"): a full run records it in the receipt so its PASS suites are reused.
+        receipt_untested = sorted({t["id"] or "?" for t in regression_tests if t["status"] == "UNTESTED"}) if lock_held else None
         names = ", ".join(t["id"] or "?" for t in tests_untested)
         verdict_text, verdict_color, exit_code = tr(f"UNTESTED — {names} không chạy được trên máy này (thiếu công cụ/thiết bị); KHÔNG phải PASS",
                                                     f"UNTESTED — {names} cannot run on this machine (missing tool/device); NOT a PASS"), YELLOW, 4
@@ -3811,11 +3827,12 @@ def main():
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
     partial = not force_reason or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)
-    if run_tests and not impacted_run and (not partial or exit_code != 0):
-        # only a full run writes the receipt; a partial PASS leaves the last full one as it is
+    if run_tests and not impacted_run and (not partial or (exit_code != 0 and not receipt_untested)):
+        # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
+        # suites all passed (2026-09-29) — leaves the last full one as it is
         write_full_pass_receipt(project_dir, exit_code, args.matrix, regression_tests,
                                 tested_at=float(cache.get("tested_at") or 0) if cache else None,
-                                tested_fp=tested_fp)
+                                tested_fp=tested_fp, untested=receipt_untested)
 
     if not args.no_checklist:
         update_regression_checklist(

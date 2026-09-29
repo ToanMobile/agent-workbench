@@ -470,6 +470,62 @@ kstop; rc=$?
 [ "$rc" = 0 ] && [ -f "$TMP/b_wait" ] && ok "degraded: the same tree runs its suite once the lock is free" \
   || fail "degraded: BUSY result reused, suite not run (rc=$rc)"
 
+# ── UNTESTED (untested_exit) advances verified_head; the same content is not re-run ─────
+# 2026-09-29 (GeelyEx2: REG-QC-05 "test on the real car" always exits 2): exit 4 left
+# verified_head stuck, so every Stop re-ran every suite for the growing --since range (4-5 min,
+# 16 times). Now: the range counts as verified for what can run here, the next Stop of the same
+# content runs nothing, the UNTESTED warning is still said once per change. BUSY caches nothing.
+V="$TMP/untested_range"; mkdir -p "$V/src" "$V/.agents" && cd "$V" || exit 1
+git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt
+printf 'echo x >> "%s"\nexit 0\n' "$TMP/v_runs" > ok.sh; : > "$TMP/v_runs"
+cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/Core.kt"],
+ "mandatory_regression_tests":[{"id":"REG-OK","name":"core","command":"sh ok.sh"},
+  {"id":"REG-CAR","name":"real car","command":"echo x && exit 2","untested_exit":2}]}]}
+JSON
+git add -A && git commit -qm init
+printf '%s\n' '{"type":"user","message":{"role":"user","content":"fix it"},"uuid":"u1","sessionId":"v-1"}' > "$TMP/v.jsonl"
+vstop() { printf '{"session_id":"v-1","hook_event_name":"Stop","transcript_path":"%s"}' "$TMP/v.jsonl" \
+  | CLAUDE_PROJECT_DIR="$V" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+vruns() { grep -c x "$TMP/v_runs" | tr -d ' '; }
+vhead() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verified_head") or "")' \
+  "$V/.claude/audit-gate/regression_gate.state.json" 2>/dev/null; }
+vstop   # clean tree: records verified_head = HEAD (the regression baseline)
+base="$(git rev-parse HEAD)"; [ "$(vhead)" = "$base" ] || fail "setup: baseline not recorded ($(vhead))"
+echo "fun ok() = 2" > src/Core.kt && git commit -qam "mid-work commit"
+# BUSY control: another run holds the test lock — nothing cached, verified_head not advanced.
+rm -f "$TMP/v_held"
+python3 - "$V" "$TMP/v_held" <<'PY' &
+import fcntl, os, sys, time
+os.makedirs(sys.argv[1] + "/.claude/audit-gate", exist_ok=True)
+with open(sys.argv[1] + "/.claude/audit-gate/test_run.lock", "w") as f:
+    fcntl.flock(f, fcntl.LOCK_EX)
+    open(sys.argv[2], "w").close()
+    time.sleep(60)
+PY
+v_holder=$!
+for _ in $(seq 1 50); do [ -f "$TMP/v_held" ] && break; sleep 0.1; done
+TEST_RUN_LOCK_WAIT_S=1 vstop; rc=$?
+[ "$rc" = 0 ] && grep -q "$BUSY_MSG" "$TMP/out" && [ "$(vhead)" = "$base" ] && [ "$(vruns)" = 0 ] \
+  && ok "BUSY on a --since range: verified_head not advanced, nothing ran" \
+  || fail "BUSY advanced or ran (rc=$rc vh=$(vhead) base=$base runs=$(vruns) out='$(cat "$TMP/out")')"
+kill "$v_holder" 2>/dev/null; wait "$v_holder" 2>/dev/null
+vstop; rc=$?; n1="$(vruns)"
+[ "$rc" = 0 ] && grep -q "UNTESTED" "$TMP/out" && grep -q "REG-CAR" "$TMP/out" && grep -q "KHÔNG phải PASS" "$TMP/out" \
+  && [ "$n1" = 1 ] && ok "UNTESTED on a --since range: stop allowed, warning names REG-CAR, runnable suite ran once" \
+  || fail "UNTESTED range stop (rc=$rc runs=$n1 out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")')"
+[ "$(vhead)" = "$(git rev-parse HEAD)" ] && ok "UNTESTED advances verified_head to HEAD (like a PASS)" \
+  || fail "UNTESTED left verified_head stuck at $(vhead) (HEAD $(git rev-parse HEAD))"
+vstop; rc=$?; n2="$(vruns)"
+[ "$rc" = 0 ] && [ "$n2" = "$n1" ] && [ ! -s "$TMP/out" ] \
+  && ok "UNTESTED, same content next Stop: gate not re-run, warning not repeated" \
+  || fail "UNTESTED same content re-ran the gate (rc=$rc runs ${n1} then ${n2} out='$(cat "$TMP/out")')"
+echo "fun ok() = 3" > src/Core.kt; vstop; rc=$?; n3="$(vruns)"
+[ "$rc" = 0 ] && [ "$n3" -gt "$n2" ] && grep -q "UNTESTED" "$TMP/out" \
+  && ok "UNTESTED, new content: the gate runs again and says UNTESTED again" \
+  || fail "UNTESTED new content not re-run/said (rc=$rc runs ${n2} then ${n3} out='$(cat "$TMP/out")')"
+
 # The hook never ends a Stop on a bare full_pass.json: reusing a full PASS is post-fix-gate's
 # job (cached_full_pass: tree_fp fingerprint, result format, matrix, local config, age) and the
 # run keeps --session/--since. Audit 2026-09-29: a shortcut compared the receipt with
@@ -497,6 +553,30 @@ stop; rc=$?
 [ "$rc" = 2 ] && grep -q "REG-1" "$TMP/err" \
   && ok "a bare exit-0 full_pass.json does not end the Stop: the gate runs and the failing REG-1 blocks" \
   || fail "the hook trusted a bare full_pass.json and skipped the gate (rc=$rc)"
+
+# The skip keys (pass_fp / untested_fp) must cover the CONTENT of untracked files: fp hashes
+# status + `git diff HEAD`, so an edit inside a new untracked file left the key unchanged and the
+# next Stop skipped the suites (review 2026-09-29). Both the PASS and the UNTESTED path.
+for kind in pass untested; do
+  REPO="$TMP/repo_ukey_$kind"; mkdir -p "$REPO/src" "$REPO/.agents" && cd "$REPO" || exit 1
+  git init -q . && git config user.email t@t && git config user.name t
+  printf '! grep -rq BUG src\n' > ok.sh
+  if [ "$kind" = untested ]; then
+    extra=',{"id":"REG-CAR","name":"on the car","command":"exit 2","untested_exit":2}'
+  else extra=''; fi
+  cat > .agents/regression_matrix.active.json <<JSON
+{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],
+ "mandatory_regression_tests":[{"id":"REG-OK","name":"no BUG in src","command":"sh ok.sh"}$extra]}]}
+JSON
+  echo "fun ok() = 1" > src/Core.kt; git add -A && git commit -qm init
+  echo "fun n() = 1" > src/New.kt          # untracked, clean
+  stop; rc1=$?
+  echo "fun n() = BUG" > src/New.kt        # same untracked file, content now fails REG-OK
+  stop; rc2=$?
+  [ "$rc1" = 0 ] && [ "$rc2" = 2 ] && grep -q "REG-OK" "$TMP/err" \
+    && ok "$kind: an edit inside an untracked file is not skipped — REG-OK runs and blocks" \
+    || fail "$kind: untracked content edit skipped the suites (rc $rc1 then $rc2)"
+done
 cd "$TMP" || exit 1
 
 if [ "$FAILS" -ne 0 ]; then echo "regression gate hook: $FAILS FAILED"; exit 1; fi

@@ -406,5 +406,27 @@ Gate exit 0 · ảnh $P"; rc=$?
   && ok "control: a real user prompt after the gate still needs a gate of the new turn" \
   || fail "control: receipt from before the user's new prompt accepted (gate=$g rc=$rc)"
 
+# An UNTESTED full run (exit 4: a suite's untested_exit, 2026-09-29) now leaves a receipt with
+# "exit": 4 so its PASS suites can be reused — it is never the exit 0 an XONG needs.
+reset
+python3 - "$REPO/templates/regression_matrix.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+m["rules"][0]["mandatory_regression_tests"].append({"id": "REG-CAR", "name": "real car", "command": "exit 2", "untested_exit": 2})
+json.dump(m, open(sys.argv[1], "w"))
+PY
+(cd "$REPO" && git commit -qam "car suite" && echo "fun ok() = 43" > src/Core.kt)
+turn_start; gate_full; g=$?
+rexit="$(python3 -c 'import json,subprocess,sys
+gd = subprocess.run(["git", "-C", sys.argv[1], "rev-parse", "--absolute-git-dir"], capture_output=True, text=True).stdout.strip()
+print(json.load(open(gd + "/postfix-gate/full_pass.json")).get("exit"))' "$REPO" 2>/dev/null)"
+P="reports/proof-$(date +%Y%m%d-%H%M%S).png"; png "$REPO/$P" 20000
+stop "XONG
+Đã sửa lỗi X.
+Gate exit 4 · ảnh $P"; rc=$?
+[ "$g" = 4 ] && [ "$rexit" = 4 ] && [ "$rc" = 2 ] && grep -q "chưa có exit 0" "$TMP/err" \
+  && ok "an exit-4 (UNTESTED) receipt of this turn does not satisfy XONG" \
+  || fail "exit-4 receipt (gate=$g receipt exit=$rexit rc=$rc err=$(head -3 "$TMP/err" | tr '\n' ' '))"
+
 if [ "$FAILS" -ne 0 ]; then echo "proof gate: $FAILS FAILED"; exit 1; fi
 echo "proof gate: all checks passed"

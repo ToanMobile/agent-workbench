@@ -395,7 +395,29 @@ def block(lines, cure, rc, reused=False, reusable=True, repeat_hit=False):
         print("\n".join(lines + cure + ([REUSED] if repeat_hit else [])), file=sys.stderr)
     sys.exit(2)
 
-if state.get("pass_fp") == fp:
+# pass_fp / untested_fp name the CONTENT too: fp hashes status + `git diff HEAD` only, so an edit
+# inside an untracked file kept the key and the next Stop skipped the suites (review 2026-09-29).
+# Same content hash as reuse_key (devkit_harness.tree_fingerprint). Without the helper (a hook
+# copied alone) the per-fingerprint key stays as it was.
+content_fp = ""
+if info is not None:
+    try:
+        content_fp = devkit_harness.tree_fingerprint(repo)
+    except Exception as e:
+        note("content fingerprint failed: %r" % e)
+
+
+def skip_key(f):
+    return f + ":" + content_fp if content_fp else f
+
+
+if state.get("pass_fp") == skip_key(fp):
+    sys.exit(0)
+# UNTESTED content (every suite that can run here passed; one says by its untested_exit that it
+# cannot run on this machine) was already said to the user and cannot give another result here.
+# 2026-09-29 (GeelyEx2: verified_head stuck, every Stop re-ran the --since range 4-5 min).
+if state.get("untested_fp") == skip_key(fp):
+    note(f"untested fp={fp} (reused result)")
     sys.exit(0)
 # A full PASS of this exact content is reused inside the gate run below (post-fix-gate
 # cached_full_pass: ~1 s, with its format/matrix/local-config/age checks and --session/--since);
@@ -433,15 +455,19 @@ for line in reversed(res.stdout.splitlines()):
             break
         except ValueError:
             pass
-if res.returncode in (0, 3):
-    state["pass_fp"] = fp_plain
+def range_verified():
+    # HEAD is verified: the next stop computes fp_plain (no --since range) for the same content.
     state["verified_head"] = head or state.get("verified_head")
     if isinstance(state.get("attempts"), dict):
         state["attempts"].pop(fp, None)
-    if degraded:
-        sess.update({"fp": tree_fp, "result": "pass", "blocks": 0, "lines": None, "cure": None})
     if isinstance(state.get("repeat"), dict):
         state["repeat"].pop(sid, None)
+
+if res.returncode in (0, 3):
+    state["pass_fp"] = skip_key(fp_plain)
+    range_verified()
+    if degraded:
+        sess.update({"fp": tree_fp, "result": "pass", "blocks": 0, "lines": None, "cure": None})
     save_state()
     note(f"pass fp={fp} exit={res.returncode}")
     other = summary.get("tests_touched_other") or []
@@ -456,17 +482,20 @@ if res.returncode == 4 and summary.get("busy"):
     print(json.dumps({"systemMessage": "Regression gate UNTESTED — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau "
                       "(.claude/audit-gate/test_run.lock); test hồi quy CHƯA chạy, KHÔNG phải PASS."}, ensure_ascii=False))
     sys.exit(0)
-if res.returncode == 4:
+if res.returncode == 4 and summary:
     # UNTESTED: every test that could run passed, but one cannot run on this machine
     # (its matrix untested_exit, e.g. unity-batch.sh without a Unity Editor). Blocking
     # would stop every session on that machine; passing would claim a PASS nobody saw.
-    # Say it once per change and let the stop through.
+    # Say it once per change and let the stop through. The range counts as verified for what
+    # can run here (never pass_fp): 2026-09-29 (GeelyEx2: verified_head stuck, every Stop
+    # re-ran the --since range 4-5 min); untested_fp = fp_plain ends the next stop of this content.
     if degraded:
         sess.update({"fp": tree_fp, "result": "untested"})
-        save_state()
-    if state.get("untested_fp") != fp:
-        state["untested_fp"] = fp
-        save_state()
+    first = state.get("untested_fp") != skip_key(fp)
+    state["untested_fp"] = skip_key(fp_plain)
+    range_verified()
+    save_state()
+    if first:
         names = ["%s (%s)" % (t.get("id"), t.get("command")) for t in summary.get("regression_tests", [])
                  if t.get("status") == "UNTESTED"]
         print(json.dumps({"systemMessage": "Regression gate UNTESTED — không chạy được trên máy này, KHÔNG phải PASS: "

@@ -94,4 +94,49 @@ runs="$(wc -l < .runs | tr -d ' ')"
   && ok "control: other content after the wait still runs its suites (runs $runs)" \
   || bad "control: waiting run on other content did not run its suites (exit $rb, runs $runs)"
 
+# UNTESTED (untested_exit) --full: 2026-09-29 (GeelyEx2: REG-QC-05 "test on the real car" always
+# exits 2) the receipt was deleted on exit 4, so the suites that DID pass were never reused and
+# every --full ran them all again. Now: an exit-4 receipt naming the untested ids; the next --full
+# of the same content reuses the PASS entries and still runs the untested suite. A partial run
+# never writes it.
+rm -rf "$TMP/repo" && mkdir -p "$TMP/repo/src" && cd "$TMP/repo" || exit 1
+git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt
+printf 'echo run >> .runs\nexit 0\n' > ok.sh; printf 'echo car >> .car\nexit 2\n' > car.sh
+cat > matrix.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],
+ "mandatory_regression_tests":[{"id":"REG-OK","name":"core","command":"sh ok.sh"},
+  {"id":"REG-CAR","name":"real car","command":"sh car.sh","untested_exit":2}]}]}
+JSON
+printf '.runs\n.car\n' >> .git/info/exclude
+git add -A && git commit -qm init
+echo "fun ok() = 2" > src/Core.kt
+rcpt() { python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r.get("exit"), ",".join(r.get("untested") or []))' \
+  "$(git rev-parse --absolute-git-dir)/postfix-gate/full_pass.json" 2>/dev/null; }
+out="$(run_gate --run-tests)"; rc=$?
+[ "$rc" = 4 ] && ! receipt && ok "a run without --full ending UNTESTED writes no receipt" \
+  || bad "partial UNTESTED run (exit $rc, receipt '$(rcpt)')"
+rm -f .runs .car
+out="$(run_gate --run-tests --full)"; rc=$?
+[ "$rc" = 4 ] && [ "$(rcpt)" = "4 REG-CAR" ] && ok "--full with an untested_exit suite: exit 4, receipt {exit 4, untested [REG-CAR]}" \
+  || bad "--full UNTESTED receipt (exit $rc, receipt '$(rcpt)')"
+out="$(run_gate --run-tests --full)"; rc=$?
+runs="$(wc -l < .runs | tr -d ' ')"; cars="$(wc -l < .car | tr -d ' ')"
+[ "$rc" = 4 ] && [ "$runs" = 1 ] && [ "$cars" = 2 ] && [ "$(rcpt)" = "4 REG-CAR" ] \
+  && ok "second --full, same content: REG-OK reused (ran once), REG-CAR run again, still exit 4" \
+  || bad "exit-4 receipt not reused (exit $rc, REG-OK runs $runs, REG-CAR runs $cars, receipt '$(rcpt)')"
+out="$(run_gate --run-tests)"; rc=$?   # the Stop hook's run: no --full
+runs="$(wc -l < .runs | tr -d ' ')"
+[ "$rc" = 4 ] && [ "$runs" = 1 ] && [ "$(rcpt)" = "4 REG-CAR" ] \
+  && ok "a partial run ending UNTESTED reuses REG-OK and leaves the exit-4 receipt (like a partial PASS)" \
+  || bad "partial UNTESTED run on the same content (exit $rc, REG-OK runs $runs, receipt '$(rcpt)')"
+echo "fun ok() = 3" > src/Core.kt
+out="$(run_gate --run-tests --full)"; rc=$?
+runs="$(wc -l < .runs | tr -d ' ')"
+[ "$rc" = 4 ] && [ "$runs" = 2 ] && ok "control: other content runs REG-OK again" || bad "control: other content (exit $rc, runs $runs)"
+printf 'echo run >> .runs\nexit 1\n' > ok.sh
+out="$(run_gate --run-tests --full)"; rc=$?
+[ "$rc" = 1 ] && [ -z "$(rcpt)" ] && ok "control: a FAIL next to the untested suite deletes the receipt" \
+  || bad "control: FAIL + UNTESTED left a receipt (exit $rc, receipt '$(rcpt)')"
+
 [ "$FAILS" -eq 0 ] && echo "gate receipt: all checks passed" || { echo "gate receipt: $FAILS FAILED"; exit 1; }
