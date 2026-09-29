@@ -262,5 +262,25 @@ broken_lib; claude_stop mcp__claude_ai_Atlassian_Rovo__getJiraIssue '{"issueIdOr
 [ "$RC" = 2 ] && [ "$(ncalls)" = 1 ] && ok "no bin/session_authorship.py next to the hook → repo-wide compile (fail closed)" \
   || fail "missing shared rule: want exit 2 + compile; got exit $RC, calls=$(ncalls)"
 
+# ── 13. a Claude (scoped) session: a PASS is re-used while tree and scope are unchanged ──
+# Audit 2026-09-29: scoped runs compiled on every Stop — a blocked Stop (by another hook)
+# re-ran Gradle on the same content. Only a PASS is re-used: a block always compiles again.
+new_repo
+module lib 'plugins { id("com.android.library") }'
+echo ":lib:compileDebugUnitTestKotlin" > "$R/.tasks"
+claude_stop Write "{\"file_path\":\"$(FOO_ABS)\",\"content\":\"class Foo\"}"; rc1=$RC
+claude_stop Write "{\"file_path\":\"$(FOO_ABS)\",\"content\":\"class Foo\"}"; rc2=$RC
+[ "$rc1$rc2" = 00 ] && [ "$(ncalls)" = 1 ] && ok "scoped PASS on an unchanged tree: the second Stop does not compile again" \
+  || fail "scoped PASS re-compiled on the same tree (exits $rc1$rc2, calls=$(ncalls))"
+echo "class Foo2" > "$R/lib/src/main/kotlin/Foo.kt"
+claude_stop Write "{\"file_path\":\"$(FOO_ABS)\",\"content\":\"class Foo2\"}"
+[ "$RC" = 0 ] && [ "$(ncalls)" = 2 ] && ok "scoped: a changed tree compiles again" \
+  || fail "scoped: changed tree not compiled (exit $RC, calls=$(ncalls))"
+broken_lib
+claude_stop Write "{\"file_path\":\"$(FOO_ABS)\",\"content\":\"class Foo\"}"; rc1=$RC
+claude_stop Write "{\"file_path\":\"$(FOO_ABS)\",\"content\":\"class Foo\"}"; rc2=$RC
+[ "$rc1$rc2" = 22 ] && [ "$(ncalls)" = 2 ] && ok "scoped block on an unchanged tree: compiled again, never re-used" \
+  || fail "scoped block re-used or not blocking (exits $rc1$rc2, calls=$(ncalls))"
+
 if [ "$FAILS" -ne 0 ]; then echo "test_testsourceset: $FAILS FAILED"; exit 1; fi
 echo "test_testsourceset: all checks passed"

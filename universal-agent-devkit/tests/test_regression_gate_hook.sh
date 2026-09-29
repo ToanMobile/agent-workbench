@@ -469,6 +469,34 @@ kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
 kstop; rc=$?
 [ "$rc" = 0 ] && [ -f "$TMP/b_wait" ] && ok "degraded: the same tree runs its suite once the lock is free" \
   || fail "degraded: BUSY result reused, suite not run (rc=$rc)"
+
+# The hook never ends a Stop on a bare full_pass.json: reusing a full PASS is post-fix-gate's
+# job (cached_full_pass: tree_fp fingerprint, result format, matrix, local config, age) and the
+# run keeps --session/--since. Audit 2026-09-29: a shortcut compared the receipt with
+# devkit_harness.tree_fingerprint (another fingerprint) and skipped the gate on any receipt with
+# exit 0 — dead only because the two fingerprints never matched.
+REPO="$TMP/repo_receipt"; mkdir -p "$REPO/src" "$REPO/.agents" && cd "$REPO" || exit 1
+git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt && echo 'exit 1' > result.sh
+cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
+ "mandatory_regression_tests":[{"id":"REG-1","name":"core flow","command":"sh result.sh"}]}]}
+JSON
+git add -A && git commit -qm init
+echo "fun ok() = 2" > src/Core.kt
+python3 - "$DEVKIT_DIR/hooks" "$REPO" <<'PY'
+import json, os, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import devkit_harness
+repo = sys.argv[2]
+gd = subprocess.run(["git", "-C", repo, "rev-parse", "--absolute-git-dir"], capture_output=True, text=True).stdout.strip()
+os.makedirs(os.path.join(gd, "postfix-gate"), exist_ok=True)
+json.dump({"exit": 0, "fingerprint": devkit_harness.tree_fingerprint(repo)}, open(os.path.join(gd, "postfix-gate", "full_pass.json"), "w"))
+PY
+stop; rc=$?
+[ "$rc" = 2 ] && grep -q "REG-1" "$TMP/err" \
+  && ok "a bare exit-0 full_pass.json does not end the Stop: the gate runs and the failing REG-1 blocks" \
+  || fail "the hook trusted a bare full_pass.json and skipped the gate (rc=$rc)"
 cd "$TMP" || exit 1
 
 if [ "$FAILS" -ne 0 ]; then echo "regression gate hook: $FAILS FAILED"; exit 1; fi

@@ -243,14 +243,18 @@ else
   log "SCOPE — repo-wide (rc=${SCOPE_RC}: no usable transcript or bin/session_authorship.py, a write tool the scope cannot see through (rc=4), or this session's Kotlin/Java writes are not dirty; agent=${AGENT} transcript=${TKIND})"
 fi
 
-# Repo-wide compile at most once per unchanged tree per session: the result for the same
-# tree fingerprint (HEAD + diff + untracked contents) is re-used. Scoped runs (a Claude
-# transcript named the files) are cheap and keep compiling.
+# Compile at most once per unchanged tree per session: the result for the same tree
+# fingerprint (HEAD + diff + untracked contents) is re-used. A scoped run (a Claude transcript
+# named the files) keys on the tree AND its file list, and re-uses only a PASS — a block always
+# compiles again (audit 2026-09-29: a Stop blocked by another hook re-ran Gradle on the same content).
 TREE_FP=""; CACHED=""
-if [ -z "${SCOPED}" ] && [ -n "${HARNESS}" ]; then
+if [ -n "${HARNESS}" ]; then
   TREE_FP="$(python3 "${HARNESS}" fingerprint "${REPO_ROOT}" 2>/dev/null || true)"
+  if [ -n "${TREE_FP}" ] && [ -n "${SCOPED}" ]; then
+    TREE_FP="${TREE_FP}-$(printf '%s' "${SCOPED}" | shasum | cut -c1-12)"
+  fi
   [ -n "${TREE_FP}" ] && CACHED="$(guard get "${TREE_FP}")"
-  [ "${CACHED}" = block ] && [ ! -s "${BLOCK_MSG_FILE}" ] && CACHED=""
+  [ "${CACHED}" = block ] && { [ -n "${SCOPED}" ] || [ ! -s "${BLOCK_MSG_FILE}" ]; } && CACHED=""
 fi
 if [ "${CACHED}" = pass ]; then
   log "PASS (reused result, tree unchanged fp=${TREE_FP})"

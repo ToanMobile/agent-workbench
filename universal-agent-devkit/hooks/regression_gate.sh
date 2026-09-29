@@ -397,19 +397,9 @@ def block(lines, cure, rc, reused=False, reusable=True, repeat_hit=False):
 
 if state.get("pass_fp") == fp:
     sys.exit(0)
-try:
-    rec_p = os.path.join(repo, ".git", "postfix-gate", "full_pass.json")
-    if os.path.isfile(rec_p):
-        with open(rec_p, encoding="utf-8") as f_rec:
-            rec = json.load(f_rec)
-        if rec.get("exit") == 0 and rec.get("fingerprint") == devkit_harness.tree_fingerprint(repo):
-            state["pass_fp"] = fp_plain
-            if isinstance(state.get("repeat"), dict):
-                state["repeat"].pop(sid, None)
-            save_state()
-            sys.exit(0)
-except Exception:
-    pass
+# A full PASS of this exact content is reused inside the gate run below (post-fix-gate
+# cached_full_pass: ~1 s, with its format/matrix/local-config/age checks and --session/--since);
+# never end the Stop here on a bare full_pass.json.
 if degraded and sess.get("fp") == tree_fp:
     # Same tree as the last run of this session: the result cannot have changed. Re-use it
     # instead of re-running the whole suite on every stop.

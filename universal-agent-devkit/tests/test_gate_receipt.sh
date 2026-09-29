@@ -63,4 +63,33 @@ out="$(run_gate --run-tests --full)"; rc=$?
 receipt && bad "code changed during the run was stamped as tested (receipt written, exit $rc)" \
   || ok "code changed during the run: no full-pass receipt (exit $rc)"
 
+# A --full that WAITED for the test-run lock of another run of the same content re-uses the
+# PASS that run just recorded instead of running the suites again (audit 2026-09-29: two
+# sessions / a background gate + a foreground gate on one checkout paid every suite twice).
+make_repo "$MOD" "./gradlew :app:testDebugUnitTest"
+printf '#!/bin/sh\necho run >> .runs\nsleep 4\nexit 0\n' > gradlew && git commit -qam slow-gradlew
+printf '.runs\n' >> .git/info/exclude
+echo "// tweak" >> app/src/main/kotlin/pkg/Lonely.kt
+run_gate --run-tests --full > "$TMP/a.out" & pa=$!
+sleep 1.5
+out="$(TEST_RUN_LOCK_WAIT_S=60 run_gate --run-tests --full)"; rb=$?
+wait "$pa"; ra=$?
+runs="$(wc -l < .runs | tr -d ' ')"
+[ "$ra$rb" = 00 ] && [ "$runs" = 1 ] && receipt \
+  && ok "a --full that waited for the lock re-uses the PASS of the same content (suite ran once)" \
+  || bad "the waiting --full ran the suite again (exits $ra$rb, suite runs $runs)"
+make_repo "$MOD" "./gradlew :app:testDebugUnitTest"
+printf '#!/bin/sh\necho run >> .runs\nsleep 4\nexit 0\n' > gradlew && git commit -qam slow-gradlew
+printf '.runs\n' >> .git/info/exclude
+echo "// tweak" >> app/src/main/kotlin/pkg/Lonely.kt
+run_gate --run-tests --full > "$TMP/a.out" & pa=$!
+sleep 1.5
+echo "// edited while A runs" >> app/src/main/kotlin/pkg/Lonely.kt
+out="$(TEST_RUN_LOCK_WAIT_S=60 run_gate --run-tests --full)"; rb=$?
+wait "$pa"
+runs="$(wc -l < .runs | tr -d ' ')"
+[ "$rb" = 0 ] && [ "$runs" = 2 ] \
+  && ok "control: other content after the wait still runs its suites (runs $runs)" \
+  || bad "control: waiting run on other content did not run its suites (exit $rb, runs $runs)"
+
 [ "$FAILS" -eq 0 ] && echo "gate receipt: all checks passed" || { echo "gate receipt: $FAILS FAILED"; exit 1; }

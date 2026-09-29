@@ -100,16 +100,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-09-29 16:32:52",
-        "ts": 1790674372.215847,
+        "at": "2026-09-29 17:44:54",
+        "ts": 1790678694.222949,
         "task": null,
-        "commit": "1f3e842+dirty",
-        "duration": "83.47s",
+        "commit": "89bf549+dirty",
+        "duration": "92.71s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-01/20260929-162513.log",
+        "log": ".agents/evidence/REG-DK-GATE-01/20260929-174022.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-29 17:44:54",
+          "ts": 1790678694.222949,
+          "task": null,
+          "commit": "89bf549+dirty",
+          "duration": "92.71s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20260929-174022.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-09-29 16:32:52",
@@ -208,17 +219,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-01/20260929-110238.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-09-29 10:58:04",
-          "ts": 1790654284.1707468,
-          "task": null,
-          "commit": "5e08aef+dirty",
-          "duration": "56.91s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-01/20260929-105153.log",
-          "deleted": []
         }
       ],
       "title": "post-fix gate",
@@ -236,16 +236,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-09-29 16:32:52",
-        "ts": 1790674372.224619,
+        "at": "2026-09-29 17:44:54",
+        "ts": 1790678694.231154,
         "task": null,
-        "commit": "1f3e842+dirty",
-        "duration": "131.15s",
+        "commit": "89bf549+dirty",
+        "duration": "126.93s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-02/20260929-162724.log",
+        "log": ".agents/evidence/REG-DK-GATE-02/20260929-174228.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-29 17:44:54",
+          "ts": 1790678694.231154,
+          "task": null,
+          "commit": "89bf549+dirty",
+          "duration": "126.93s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20260929-174228.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-09-29 16:32:52",
@@ -344,17 +355,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-02/20260929-110451.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-09-29 10:58:04",
-          "ts": 1790654284.182524,
-          "task": null,
-          "commit": "5e08aef+dirty",
-          "duration": "126.28s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20260929-105359.log",
-          "deleted": []
         }
       ],
       "title": "proof gate (tree_fp)",
@@ -372,16 +372,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-09-29 16:32:52",
-        "ts": 1790674372.224632,
+        "at": "2026-09-29 17:44:54",
+        "ts": 1790678694.2311602,
         "task": null,
-        "commit": "1f3e842+dirty",
-        "duration": "56.00s",
+        "commit": "89bf549+dirty",
+        "duration": "44.56s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-01/20260929-162820.log",
+        "log": ".agents/evidence/REG-DK-HOOK-01/20260929-174313.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-29 17:44:54",
+          "ts": 1790678694.2311602,
+          "task": null,
+          "commit": "89bf549+dirty",
+          "duration": "44.56s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20260929-174313.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-09-29 16:32:52",
@@ -480,17 +491,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-01/20260929-110534.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-09-29 10:58:04",
-          "ts": 1790654284.1825411,
-          "task": null,
-          "commit": "5e08aef+dirty",
-          "duration": "43.31s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20260929-105442.log",
-          "deleted": []
         }
       ],
       "title": "hook contract",
@@ -505,16 +505,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-09-29 16:32:52",
-        "ts": 1790674372.224637,
+        "at": "2026-09-29 17:44:54",
+        "ts": 1790678694.231165,
         "task": null,
-        "commit": "1f3e842+dirty",
-        "duration": "131.15s",
+        "commit": "89bf549+dirty",
+        "duration": "126.93s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-02/20260929-162724.log",
+        "log": ".agents/evidence/REG-DK-GATE-02/20260929-174228.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-29 17:44:54",
+          "ts": 1790678694.231165,
+          "task": null,
+          "commit": "89bf549+dirty",
+          "duration": "126.93s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20260929-174228.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-09-29 16:32:52",
@@ -612,17 +623,6 @@
           "duration": "132.18s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-02/20260929-110451.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-09-29 10:58:04",
-          "ts": 1790654284.182545,
-          "task": null,
-          "commit": "5e08aef+dirty",
-          "duration": "126.28s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20260929-105359.log",
           "deleted": []
         }
       ],
@@ -760,16 +760,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-09-29 16:32:52",
-        "ts": 1790674372.224639,
+        "at": "2026-09-29 17:44:54",
+        "ts": 1790678694.231169,
         "task": null,
-        "commit": "1f3e842+dirty",
-        "duration": "270.68s",
+        "commit": "89bf549+dirty",
+        "duration": "99.89s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20260929-163251.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20260929-174453.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-29 17:44:54",
+          "ts": 1790678694.231169,
+          "task": null,
+          "commit": "89bf549+dirty",
+          "duration": "99.89s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20260929-174453.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-09-29 16:32:52",
@@ -868,17 +879,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20260929-111918.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-09-29 11:09:02",
-          "ts": 1790654942.853621,
-          "task": null,
-          "commit": "5e08aef+dirty",
-          "duration": "207.99s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20260929-110902.log",
-          "deleted": []
         }
       ],
       "title": "DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit",
@@ -921,16 +921,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-09-29 16:32:52",
-        "ts": 1790674372.224641,
+        "at": "2026-09-29 17:44:54",
+        "ts": 1790678694.231173,
         "task": null,
-        "commit": "1f3e842+dirty",
-        "duration": "0.52s",
+        "commit": "89bf549+dirty",
+        "duration": "0.45s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-WB-CONFIG-01/20260929-163251.log",
+        "log": ".agents/evidence/REG-WB-CONFIG-01/20260929-174453.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-29 17:44:54",
+          "ts": 1790678694.231173,
+          "task": null,
+          "commit": "89bf549+dirty",
+          "duration": "0.45s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20260929-174453.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-09-29 16:32:52",
@@ -1028,17 +1039,6 @@
           "duration": "0.49s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-WB-CONFIG-01/20260929-105803.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-09-29 10:50:48",
-          "ts": 1790653848.551807,
-          "task": null,
-          "commit": "5e08aef+dirty",
-          "duration": "0.34s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-WB-CONFIG-01/20260929-105048.log",
           "deleted": []
         }
       ],
@@ -1238,42 +1238,6 @@
       ],
       "state": "confirmed"
     },
-    "BUG-20260929-sua-loi-nut-thanh-toan-bi-bam-2-lan-vang": {
-      "id": "BUG-20260929-sua-loi-nut-thanh-toan-bi-bam-2-lan-vang",
-      "kind": "bug",
-      "title": "sửa lỗi nút thanh toán bị bấm 2 lần văng app",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-09-29 11:08:53",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-09-29 11:08:53",
-      "sessions": [
-        "test-sess"
-      ]
-    },
-    "BUG-20260929-sua-loi-crash-khi-xoay-man-hinh": {
-      "id": "BUG-20260929-sua-loi-crash-khi-xoay-man-hinh",
-      "kind": "bug",
-      "title": "sửa lỗi crash khi xoay màn hình",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-09-29 11:09:30",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-09-29 11:09:30",
-      "sessions": [
-        "test-sess"
-      ]
-    },
     "BUG-20260929-audit-review-nguyen-nhan-tai-sao-cac-ses": {
       "id": "BUG-20260929-audit-review-nguyen-nhan-tai-sao-cac-ses",
       "kind": "bug",
@@ -1282,32 +1246,21 @@
       "component": "-",
       "created_at": "2026-09-29 16:30:06",
       "task": null,
-      "tests": [],
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
       "last": null,
       "history": [],
-      "state": "reported",
-      "fixed": null,
+      "state": "confirmed",
+      "fixed": true,
       "touched_at": "2026-09-29 16:30:06",
       "sessions": [
         "df745645-52d9-4479-8521-acbd4675470e"
-      ]
-    },
-    "BUG-20260929-sua-loi-hien-thi-nut": {
-      "id": "BUG-20260929-sua-loi-hien-thi-nut",
-      "kind": "bug",
-      "title": "sửa lỗi hiển thị nút",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-09-29 16:30:29",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-09-29 16:30:29",
-      "sessions": [
-        "timing-test"
+      ],
+      "linked_at": "2026-09-29 17:38:21",
+      "linked_ts": 1790678301.496632,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/test_regression_gate_hook.sh"
       ]
     }
   },
@@ -1316,6 +1269,6 @@
   },
   "stats": {
     "reported_total": 18,
-    "reported_dropped": 7
+    "reported_dropped": 10
   }
 }

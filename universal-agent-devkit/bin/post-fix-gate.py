@@ -3380,26 +3380,38 @@ def main():
     # the tree) of this gate; released when the process ends at the latest.
     cache = None
     tested_fp = tree_fp_of(project_dir) if run_tests and force_reason else None
-    if run_tests and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0" \
-            and any(t.get("command") for t in regression_tests):
-        cache = cached_full_pass(project_dir, args.matrix)
-        prev = {x.get("id"): x for x in (cache or {}).get("tests") or []}
+    use_cache = run_tests and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0" \
+        and any(t.get("command") for t in regression_tests)
+
+    def reuse_full_pass():
+        """Mark every reusable suite PASS from the last full PASS of this exact content; its receipt, or None."""
+        found = cached_full_pass(project_dir, args.matrix)
+        prev = {x.get("id"): x for x in (found or {}).get("tests") or []}
         reusable = [t for t in regression_tests if t.get("command") and not DEVICE_SUITE.search(t["command"])]
-        if cache and reusable and all(prev.get(t["id"], {}).get("status") == "PASS" for t in reusable):
-            at = time.strftime("%H:%M", time.localtime(float(cache.get("tested_at") or 0)))
-            for t in reusable:
-                if t.get("command"):
-                    # the real duration: pre-commit picks light suites by the recorded one
-                    t.update({"status": "PASS", "duration": prev[t["id"]].get("duration") or "0s", "mode": "cached",
-                              "log": prev[t["id"]].get("log"), "exit_code": 0,
-                              "tested_at": float(cache.get("tested_at") or 0),
-                              "label": tr(f"PASS (dùng lại kết quả lúc {at}, cùng nội dung)", f"PASS (reused from {at}, same content)")})
-            print(f"    {CYAN}▶ {tr(f'dùng lại PASS đầy đủ lúc {at}: cùng nội dung, cùng cách đọc kết quả, cùng ma trận (--no-cache để chạy lại)', f'reusing the full PASS of {at}: same content, result format and matrix (--no-cache to re-run)')}{RESET}")
-        else:
-            cache = None
+        if not (found and reusable and all(prev.get(t["id"], {}).get("status") == "PASS" for t in reusable)):
+            return None
+        at = time.strftime("%H:%M", time.localtime(float(found.get("tested_at") or 0)))
+        for t in reusable:
+            # the real duration: pre-commit picks light suites by the recorded one
+            t.update({"status": "PASS", "duration": prev[t["id"]].get("duration") or "0s", "mode": "cached",
+                      "log": prev[t["id"]].get("log"), "exit_code": 0,
+                      "tested_at": float(found.get("tested_at") or 0),
+                      "label": tr(f"PASS (dùng lại kết quả lúc {at}, cùng nội dung)", f"PASS (reused from {at}, same content)")})
+        print(f"    {CYAN}▶ {tr(f'dùng lại PASS đầy đủ lúc {at}: cùng nội dung, cùng cách đọc kết quả, cùng ma trận (--no-cache để chạy lại)', f'reusing the full PASS of {at}: same content, result format and matrix (--no-cache to re-run)')}{RESET}")
+        return found
+
+    if use_cache:
+        cache = reuse_full_pass()
     to_run = [t for t in regression_tests if t.get("mode") != "cached"]
+    lock_wait_start = time.monotonic()
     lock_fh, lock_held = (acquire_test_run_lock(project_dir)
                           if run_tests and any(t.get("command") for t in to_run) else (None, True))
+    # Waited for another run's lock (a second session, or a gate still running in the background):
+    # that run may have just recorded a full PASS of this same content — re-use it instead of
+    # running every suite again (audit 2026-09-29).
+    if use_cache and cache is None and lock_held and time.monotonic() - lock_wait_start > 1.0:
+        cache = reuse_full_pass()
+        to_run = [t for t in regression_tests if t.get("mode") != "cached"]
     # One run per distinct command (O2, 2026-09-28): two rules naming one command share its result,
     # and the test scripts run so far go to DEVKIT_GATE_DONE so run_impacted.sh skips them.
     ran_cmds, done_scripts = {}, []
