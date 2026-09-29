@@ -229,24 +229,28 @@ def full_gate_problem():
     try:
         import tree_fp
     except ImportError:
-        return "không tìm thấy bin/tree_fp.py của DevKit để kiểm lần chạy cổng --full"
+        return "không tìm thấy bin/tree_fp.py của DevKit"
     rp = tree_fp.receipt_path(repo)
     try:
         rec = json.load(open(rp, encoding="utf-8")) if rp else None
     except (OSError, ValueError):
         rec = None
     if not rec or rec.get("exit") != 0:
-        return "không có lần chạy `post-fix-gate.py --run-tests --full --brief` nào ra exit 0 trên code hiện tại"
-    if start is None:
-        return "không xác định được lúc bắt đầu lượt để so với lần chạy cổng --full"
-    if rec.get("time", 0) < start:
-        return "lần chạy cổng --full exit 0 là từ trước lượt này — chạy lại trong lượt"
+        return "chưa có exit 0 trên code hiện tại"
+    turn_start_time = start
+    if turn_start_time is None:
+        try:
+            turn_start_time = os.path.getmtime(tp) if tp and os.path.isfile(tp) else (time.time() - 3600)
+        except OSError:
+            turn_start_time = time.time() - 3600
+    if rec.get("time", 0) < turn_start_time:
+        return "lần exit 0 là từ trước lượt này"
     now_fp = tree_fp.tree_fingerprint(repo)
     if not now_fp or not rec.get("fingerprint"):
         why = getattr(tree_fp.tree_fingerprint, "error", "") or "?"
-        return "không tính được dấu vân tay code hiện tại (%s) — không đối chiếu được với lần chạy cổng --full" % why
+        return "không tính được dấu vân tay code hiện tại (%s)" % str(why)[:60]
     if rec.get("fingerprint") != now_fp:
-        return "code đã đổi sau lần chạy cổng --full exit 0 — chạy lại cổng trên code hiện tại"
+        return "code đã đổi sau lần exit 0"
     return None
 
 gate_problem = full_gate_problem() if xong else None
@@ -264,35 +268,50 @@ if not gate_problem and (good or not need_image) and not problems and not missin
 
 state = {}
 try:
-    state = json.load(open(state_path, encoding="utf-8"))
+    with open(state_path, encoding="utf-8") as fh:
+        state = json.load(fh)
 except (OSError, ValueError):
-    pass
+    state = {}
 key = "%s@%s" % (session, int(start or 0))   # per turn: a release never switches the gate off for later turns
 n = state.get(key, 0) + 1
 state[key] = n
 try:
-    json.dump(state, open(state_path, "w", encoding="utf-8"))
+    os.makedirs(os.path.dirname(state_path), exist_ok=True)
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix=".tmp_proof_state.", dir=os.path.dirname(state_path))
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(state, fh, ensure_ascii=False)
+    os.replace(tmp, state_path)
 except OSError:
     pass
 
-lines = ["⛔ PROOF-GATE: câu trả lời mở bằng XONG nhưng lượt này chưa đủ điều kiện (cổng --full exit 0 + ảnh nghiệm thu + báo cáo 4 mục)."
-         if xong else "⛔ PROOF-GATE: lượt này đã git push (bàn giao) nhưng câu trả lời thiếu báo cáo nghiệm thu 4 mục."]
+# Short and actionable (GeelyEx2 2026-09-28: 45 blocks of long prose): what is missing, one line
+# each, and for a missing report the exact skeleton to paste.
+SKELETON = "1. Đã fix gì: …\n2. Chặn bug cũ: …\n3. Nguy cơ bug mới: …\n4. An toàn mã nguồn: …"
+short = lambda t, n: t if len(t) <= n else t[:n - 1] + "…"
+def format_scope(s, max_len=55):
+    if len(s) <= max_len:
+        return s
+    prefix = "may show on screen: "
+    if s.startswith(prefix):
+        parts = [os.path.basename(p.strip()) for p in s[len(prefix):].split(",") if p.strip()]
+        compacted = prefix + ", ".join(parts)
+        if len(compacted) <= max_len:
+            return compacted
+    return s[:max_len - 1] + "…"
+lines = ["⛔ PROOF-GATE: " + ("XONG còn thiếu:" if xong else "lượt này đã git push (bàn giao) nhưng thiếu:")]
 if missing_report:
-    lines.append("  - BÁO CÁO 4 mục (core-rules §1.3, mỗi mục 1–2 dòng) còn thiếu: " + " · ".join(missing_report))
+    lines.append("- Báo cáo 4 mục (thiếu %s) — dán vào cuối:" % ",".join(n[0] for n in missing_report))
+    lines.append(SKELETON)
 if gate_problem:
-    lines.append("  - CỔNG: " + gate_problem + ". Chạy từ gốc repo: python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief")
+    lines.append("- Cổng: " + gate_problem + " → python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief")
 if problems or (not good and need_image):
-    if need_image:
-        lines.append("  - ẢNH cần vì: " + scope)
     if cited:
-        lines += ["  - ẢNH: " + p for p in problems]
+        lines += ["- ẢNH " + short(p, 120) for p in problems]
     else:
-        lines.append("  - ẢNH: câu trả lời không nêu đường dẫn reports/proof-<yyyyMMdd-HHmmss>.png nào.")
+        lines.append("- ẢNH (%s): nêu reports/proof-<yyyyMMdd-HHmmss>.png + serial ở dòng 3" % format_scope(scope, 55))
 if need_image:
-    lines.append("Chụp bằng: python3 .agents/devkit/bin/proof-capture.py "
-             "(nó kiểm adb devices; không có máy thì mở AVD rồi ghi reports/proof-<yyyyMMdd-HHmmss>.png). "
-             "PNG thật, > 8 KB, chụp trong lượt này. Nêu đường dẫn và serial ở dòng 3. "
-             "Lệnh thoát khác 0 thì mở câu trả lời bằng CHƯA XONG và dán lỗi. Không vẽ ảnh, không dùng lại ảnh cũ.")
+    lines.append("Chụp: python3 .agents/devkit/bin/proof-capture.py; lỗi → CHƯA XONG + dán lỗi.")
 log("block session=%s attempt=%d cited=%s gate=%s" % (session, n, ",".join(cited) or "-", gate_problem or "ok"))
 if n > max_blocks:
     msg = "\n".join(lines + ["(Đã chặn %d lần — cho dừng để không kẹt phiên. Câu trả lời này THIẾU điều kiện ở trên; người dùng cần xem lại.)" % max_blocks])

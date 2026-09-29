@@ -13,6 +13,12 @@
 # Silent (adds nothing) for slash commands, very short prompts, and requests that
 # match no intent and no trap — questions and chit-chat pay no context cost.
 #
+# Once per session (enrich_context.py dedupe_session, state .claude/audit-gate/prompt_seen_<id>):
+# the "Yêu cầu ngầm định", "Bẫy đã gặp" and "Skill phù hợp" lines are sent only the first time;
+# an unchanged injection becomes "(ngữ cảnh DevKit như lượt trước)" (+ the RED→GREEN rule).
+# A compaction (compact_boundary in the transcript) or a new session_id sends everything again.
+# PROMPT_DEDUPE=0 turns it off. Test: hooks/tests/test_prompt_dedupe.sh.
+#
 # A bug prompt also becomes a REPORTED checklist row (BUG_CAPTURE, scripts/enrich_context.py)
 # — never for agent / harness prompts ("You are …" openings, tool/JSON schemas, long
 # instruction blocks). The agent running the hook does not matter: under Grok, Codex, Gemini or

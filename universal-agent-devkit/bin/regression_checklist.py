@@ -168,7 +168,12 @@ JOURNAL_LOCK_WAIT = 2.0   # seconds a read-only load() waits for the journal loc
 
 def _lock_path(project_dir: Path, kind: str) -> str:
     key = hashlib.sha1(str(Path(project_dir).resolve()).encode()).hexdigest()[:16]
-    return os.path.join(tempfile.gettempdir(), f"{kind}.{key}.lock")
+    gate_dir = Path(project_dir) / ".claude" / "audit-gate"
+    try:
+        gate_dir.mkdir(parents=True, exist_ok=True)
+        return str(gate_dir / f"{kind}.lock")
+    except OSError:
+        return os.path.join(tempfile.gettempdir(), f"{kind}.{key}.lock")
 
 
 def _holds_checklist(project_dir: Path) -> bool:
@@ -178,10 +183,10 @@ def _holds_checklist(project_dir: Path) -> bool:
 @contextlib.contextmanager
 def locked(project_dir: Path):
     """Serialize load → change → save of one checklist between the prompt hook and the
-    CLI (two sessions, one project). The lock file lives in the temp dir, not .agents/."""
+    CLI (two sessions, one project). The lock file lives in .claude/audit-gate/ (or temp dir)."""
     import fcntl
     path = _lock_path(project_dir, "regression_status")
-    with open(path, "w") as fh:
+    with open(path, "a") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
         _HELD[path] = _HELD.get(path, 0) + 1
         try:
@@ -1376,8 +1381,35 @@ def write_evidence(project_dir: Path, test_id: str, output: str, meta: dict) -> 
 
 def _git_lines(project: Path, *args) -> list | None:
     import subprocess
-    r = subprocess.run(["git", "-C", str(project), *args], capture_output=True, text=True)
+    r = subprocess.run(["git", "-C", str(project), "-c", "core.quotepath=false", *args], capture_output=True, text=True)
     return r.stdout.splitlines() if r.returncode == 0 else None
+
+
+_WORKTREE = "\0worktree"   # key of the worktree-vs-HEAD listing in mark_stale's diff memo
+
+
+def _changed_since(project: Path, sha: str, memo: dict) -> list | None:
+    """Files that differ between `sha` and the working tree, or None when `sha` does not resolve.
+    Built as (tree diff sha..HEAD) ∪ (worktree diff HEAD), the worktree one taken once per
+    mark_stale call (memo), both with --no-renames: rename detection was the cost (GeelyEx2
+    2026-09-28: `git diff --name-only <sha>` 0.57 s for a sha 2 800 files back, the same tree
+    diff 0.016 s without it; 4-18 shas, twice per gate). Both steps only ever ADD paths to what
+    `git diff <sha>` listed: a file equal in sha and the worktree differs from it in neither, so
+    none is missed; over-reported are (1) a file changed after sha and changed back in the
+    worktree (sha → HEAD edit, reverted uncommitted) and (2) the old path of a rename, now
+    listed as a deleted file. At worst an extra STALE, never a missed one. If HEAD cannot be
+    diffed, the direct worktree diff against sha is used."""
+    if not sha or sha.startswith("-"):
+        return None
+    if _WORKTREE not in memo:
+        memo[_WORKTREE] = _git_lines(project, "diff", "--name-only", "--no-renames", "HEAD")
+    worktree = memo[_WORKTREE]
+    if worktree is None:
+        return _git_lines(project, "diff", "--name-only", "--no-renames", sha)
+    committed = _git_lines(project, "diff", "--name-only", "--no-renames", sha, "HEAD")
+    if committed is None:
+        return None
+    return list(dict.fromkeys(committed + worktree))
 
 
 def mark_stale(data: dict, project_dir: Path) -> list:
@@ -1385,8 +1417,9 @@ def mark_stale(data: dict, project_dir: Path) -> list:
     cleared when nothing changed. A watched file that differs from the run's commit counts
     only if it was modified after the run (mtime) — a dirty run already tested what was in
     the tree, even once committed; a file gone since a clean run counts; a run commit that
-    no longer resolves counts (nothing proves the code is the same). One `git diff` per
-    distinct commit, one untracked-file listing. Needs git: not on the prompt-hook path.
+    no longer resolves counts (nothing proves the code is the same). One worktree `git diff`
+    (against HEAD) plus one tree diff per distinct commit (_changed_since), one untracked-file
+    listing. Needs git: not on the prompt-hook path.
     Returns the ids newly marked."""
     import fnmatch
     project = Path(project_dir)
@@ -1414,9 +1447,9 @@ def mark_stale(data: dict, project_dir: Path) -> list:
         raw = last.get("commit") or ""
         sha, dirty = raw.split("+")[0], raw.endswith("+dirty")
         if sha not in diffs:
-            diffs[sha] = _git_lines(project, "diff", "--name-only", sha) if sha else None
+            diffs[sha] = _changed_since(project, sha, diffs) if sha else None
         changed = diffs[sha]
-        pats = list(item.get("watch_files", [])) + [f for f in covers.get(tid, [])]
+        pats = [p.replace("\\", "/") for p in item.get("watch_files", [])] + [f.replace("\\", "/") for f in covers.get(tid, [])]
         if changed is None:
             hits = ["(commit %s không còn trong repo)" % (sha or "?")]
         else:

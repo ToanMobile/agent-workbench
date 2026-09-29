@@ -32,7 +32,11 @@
 # read-only, runs no test. session_context.sh reports it at session start.
 #
 # Cheap when nothing changed: the result is cached per working-tree fingerprint,
-# so a second Stop on the same diff does not re-run the tests.
+# so a second Stop on the same diff does not re-run the tests. A block is re-used too: when
+# this session's previous Stop blocked on the same content (tree incl. untracked contents +
+# unverified range), the stored reason is returned without running the gate (GeelyEx2,
+# 2026-09-28: 100 of 214 blocks re-ran the suites on unchanged content). Not re-used: a block
+# with an edited existing test (cleared by the user's answer, not by the tree) or a BUSY item.
 # Loop-guard: MAX_ATTEMPTS blocks per fingerprint, then the stop is allowed with a
 # visible warning (systemMessage) — a broken test can never trap the session.
 # Non-Claude agent or no usable Claude transcript ("degraded", hooks/devkit_harness.py:
@@ -308,7 +312,7 @@ if not isinstance(state, dict):
 def save_state():
     # Atomic: sessions running side by side share this file, and a torn write read back
     # as {} reset every loop-guard counter (OfficeReader 2026-09-25: two sessions racing).
-    for key, keep in (("attempts", 200), ("sessions", 50), ("shown", 50)):
+    for key, keep in (("attempts", 200), ("sessions", 50), ("shown", 50), ("repeat", 50)):
         if isinstance(state.get(key), dict) and len(state[key]) > keep:
             state[key] = dict(list(state[key].items())[-keep:])
     try:
@@ -325,12 +329,28 @@ sess = state.setdefault("sessions", {}).setdefault(sid, {}) if degraded else {}
 # Its tree key also hashes untracked contents (a fix in a new test file is a new tree);
 # the per-fingerprint key above names untracked files only.
 tree_fp = devkit_harness.tree_fingerprint(repo) if degraded else fp
+# Claude session with its transcript: the last block of this session, keyed by fp (it carries the
+# unverified range) and the full tree fingerprint (a fix in an untracked file is new content).
+reuse_key = None
+if info is not None and not degraded and (data.get("session_id") or data.get("sessionId") or sid != "nosession"):
+    try:
+        reuse_key = hashlib.sha256((fp + ":" + devkit_harness.tree_fingerprint(repo)).encode()).hexdigest()[:20]
+    except Exception as e:
+        note("reuse key failed: %r" % e)
+repeat = state.get("repeat") if isinstance(state.get("repeat"), dict) else {}
+REUSED = "cùng nội dung với lần chặn trước — chưa chạy lại; sửa code hoặc chạy post-fix-gate --full"
 
-def block(lines, cure, rc, reused=False):
+def block(lines, cure, rc, reused=False, reusable=True, repeat_hit=False):
     attempts = state.setdefault("attempts", {})
     attempts[fp] = attempts.get(fp, 0) + 1
     if degraded:
         sess.update({"fp": tree_fp, "result": "block", "lines": lines, "cure": cure, "rc": rc})
+    if reuse_key:
+        state["repeat"] = repeat
+        if reusable:
+            repeat[sid] = {"key": reuse_key, "lines": lines, "cure": cure, "rc": rc}
+        else:
+            repeat.pop(sid, None)
     save_state()
     note("block fp=%s attempt=%d exit=%s%s%s" % (fp, attempts[fp], rc, " (reused result)" if reused else "",
                                                 (" sid=%s agent=%s" % (sid, info["agent"])) if degraded else ""))
@@ -368,14 +388,28 @@ def block(lines, cure, rc, reused=False):
             return l[:i + 7] + l[i + 7:i + 87] + "…" + (l[j:] if j > i else ")")
         print("\n".join([cut(l) for l in lines if not l.startswith("Checklist: ")]
                         + ["(Như lần chặn trước trong phiên: mục lỗi giữ nguyên; lệnh đầy đủ và hướng dẫn: %s)"
-                           % next((l.split("báo cáo: ", 1)[-1] for l in lines if l.startswith("Checklist: ")), "-")]),
+                           % next((l.split("báo cáo: ", 1)[-1] for l in lines if l.startswith("Checklist: ")), "-")]
+                        + ([REUSED] if repeat_hit else [])),
               file=sys.stderr)
     else:
-        print("\n".join(lines + cure), file=sys.stderr)
+        print("\n".join(lines + cure + ([REUSED] if repeat_hit else [])), file=sys.stderr)
     sys.exit(2)
 
 if state.get("pass_fp") == fp:
     sys.exit(0)
+try:
+    rec_p = os.path.join(repo, ".git", "postfix-gate", "full_pass.json")
+    if os.path.isfile(rec_p):
+        with open(rec_p, encoding="utf-8") as f_rec:
+            rec = json.load(f_rec)
+        if rec.get("exit") == 0 and rec.get("fingerprint") == devkit_harness.tree_fingerprint(repo):
+            state["pass_fp"] = fp_plain
+            if isinstance(state.get("repeat"), dict):
+                state["repeat"].pop(sid, None)
+            save_state()
+            sys.exit(0)
+except Exception:
+    pass
 if degraded and sess.get("fp") == tree_fp:
     # Same tree as the last run of this session: the result cannot have changed. Re-use it
     # instead of re-running the whole suite on every stop.
@@ -384,6 +418,11 @@ if degraded and sess.get("fp") == tree_fp:
     if sess.get("result") in ("untested", "matrix", "env"):
         note("%s fp=%s (reused result) sid=%s" % (sess["result"], fp, sid))
         sys.exit(0)
+last = repeat.get(sid) if reuse_key else None
+if isinstance(last, dict) and last.get("key") == reuse_key and isinstance(last.get("lines"), list):
+    # This session already blocked on exactly this content: the gate would say the same (a flaky
+    # suite is no reason to re-run every Stop). Same reason, no run.
+    block(last["lines"], last.get("cure") or [], last.get("rc", 1), reused=True, repeat_hit=True)
 
 # --session/--transcript: an existing test edited by ANOTHER session (or a person) is a warning,
 # only the test edits of THIS session block (post-fix-gate split_tests_by_author).
@@ -407,9 +446,12 @@ for line in reversed(res.stdout.splitlines()):
 if res.returncode in (0, 3):
     state["pass_fp"] = fp_plain
     state["verified_head"] = head or state.get("verified_head")
-    state.pop("attempts", None)
+    if isinstance(state.get("attempts"), dict):
+        state["attempts"].pop(fp, None)
     if degraded:
         sess.update({"fp": tree_fp, "result": "pass", "blocks": 0, "lines": None, "cure": None})
+    if isinstance(state.get("repeat"), dict):
+        state["repeat"].pop(sid, None)
     save_state()
     note(f"pass fp={fp} exit={res.returncode}")
     other = summary.get("tests_touched_other") or []
@@ -583,5 +625,7 @@ if res.returncode == 2 and touched and not failing and not problem and not uncov
         sys.exit(0)
     state["touched_fp"] = fp
     save_state()
-block(lines, cure, res.returncode)
+# An edited existing test is cleared by the answer of the user in the transcript, a BUSY item by the lock
+# going free — neither by the tree: such a block is never re-used.
+block(lines, cure, res.returncode, reusable=not touched and not busy)
 ' || exit $?

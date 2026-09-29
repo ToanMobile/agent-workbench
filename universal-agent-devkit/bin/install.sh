@@ -47,7 +47,7 @@ Options:
                           (default: ask; with -y: detected from the domain)
   -a, --agents <list>     Comma-separated agents or 'all'
                           Supported: claude, codex, gemini, cursor, all
-                          (`grok` writes nothing of its own — same AGENTS.md)
+                          (\`grok\` writes nothing of its own — same AGENTS.md)
   -m, --mode <mode>       Install mode: symlink | copy (default: symlink)
                           symlink = absolute links into this DevKit checkout (single machine);
                           copy    = real files (use this if the project is committed for a team/CI)

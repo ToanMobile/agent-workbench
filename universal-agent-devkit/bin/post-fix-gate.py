@@ -422,15 +422,28 @@ def split_user_approved(paths: list, transcript) -> tuple:
             pass                                  # deleted: nothing to bind an approval to
     if not mtimes:
         return paths, []
-    folder = (Path(transcript).parent if transcript else
-              Path(os.environ.get("DEVKIT_TRANSCRIPTS_DIR") or
-                   Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(root))))
+    folders = []
+    if transcript:
+        folders.append(Path(transcript).parent)
+    if os.environ.get("DEVKIT_TRANSCRIPTS_DIR"):
+        folders.append(Path(os.environ["DEVKIT_TRANSCRIPTS_DIR"]))
+    folders.append(Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(root)))
+    agy_brain = Path.home() / ".gemini" / "antigravity" / "brain"
+    if agy_brain.is_dir():
+        try:
+            folders.extend(agy_brain.glob("*/.system_generated/logs"))
+        except OSError:
+            pass
+
     approved_at = {}                              # path -> latest approving answer (epoch s)
     oldest = min(mtimes.values())
-    try:
-        candidates = [p for p in folder.glob("*.jsonl") if p.stat().st_mtime >= oldest]
-    except OSError:
-        candidates = []
+    candidates = []
+    for fld in folders:
+        try:
+            candidates.extend(p for p in fld.glob("*.jsonl") if p.stat().st_mtime >= oldest)
+        except OSError:
+            pass
+
     for tp in candidates:
         try:
             fh = open(tp, encoding="utf-8", errors="replace")
@@ -438,27 +451,41 @@ def split_user_approved(paths: list, transcript) -> tuple:
             continue
         with fh:
             for line in fh:
-                if '"answers"' not in line or '"toolUseResult"' not in line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                    res = rec.get("toolUseResult") or {}
-                    t = calendar.timegm(time.strptime(rec["timestamp"][:19], "%Y-%m-%dT%H:%M:%S"))
-                except (ValueError, KeyError, TypeError, AttributeError):
-                    continue
-                if rec.get("type") != "user" or not isinstance(res, dict):
-                    continue
-                answers = res.get("answers") or {}
-                for q in res.get("questions") or []:
-                    if not isinstance(q, dict):
+                if '"answers"' in line and '"toolUseResult"' in line:
+                    try:
+                        rec = json.loads(line)
+                        res = rec.get("toolUseResult") or {}
+                        t = calendar.timegm(time.strptime(rec["timestamp"][:19], "%Y-%m-%dT%H:%M:%S"))
+                    except (ValueError, KeyError, TypeError, AttributeError):
                         continue
-                    label = answers.get(q.get("question"), "")
-                    if not isinstance(label, str) or not APPROVE_LABEL.search(label):
+                    if rec.get("type") != "user" or not isinstance(res, dict):
                         continue
-                    text = json.dumps(q, ensure_ascii=False)
-                    for f in mtimes:
-                        if f in text or (len(Path(f).name) >= 6 and Path(f).name in text):
-                            approved_at[f] = max(approved_at.get(f, 0), t)
+                    answers = res.get("answers") or {}
+                    for q in res.get("questions") or []:
+                        if not isinstance(q, dict):
+                            continue
+                        label = answers.get(q.get("question"), "")
+                        if not isinstance(label, str) or not APPROVE_LABEL.search(label):
+                            continue
+                        text = json.dumps(q, ensure_ascii=False)
+                        for f in mtimes:
+                            if f in text or (len(Path(f).name) >= 6 and Path(f).name in text):
+                                approved_at[f] = max(approved_at.get(f, 0), t)
+                elif re.search(r"A\d+:\s*(?:\(Recommended\)\s*)?", line):
+                    try:
+                        rec = json.loads(line)
+                        cnt = rec.get("content") or ""
+                        ts = rec.get("created_at") or rec.get("timestamp") or ""
+                        t = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
+                    except (ValueError, KeyError, TypeError, AttributeError):
+                        continue
+                    m = re.search(r"A\d+:\s*(?:\(Recommended\)\s*)?(.*)", cnt)
+                    if m:
+                        label = m.group(1).strip()
+                        if APPROVE_LABEL.search(label):
+                            for f in mtimes:
+                                if f in cnt or (len(Path(f).name) >= 6 and Path(f).name in cnt):
+                                    approved_at[f] = max(approved_at.get(f, 0), t)
     ok = [f for f in paths if f in mtimes and approved_at.get(f, 0) >= mtimes[f]]
     return [f for f in paths if f not in ok], ok
 
@@ -498,8 +525,11 @@ def local_state_sha(project_dir):
     try:
         from worktree import LOCAL_CONFIG  # noqa: PLC0415
         from build_inputs import build_inputs  # noqa: PLC0415
+        pathspecs = []
+        for p in LOCAL_CONFIG:
+            pathspecs.extend([p, f"**/{p}"])
         out = subprocess.run(["git", "-C", str(project_dir), "ls-files", "-z", "--others", "--ignored",
-                              "--exclude-standard", "--directory"], capture_output=True, text=True).stdout
+                              "--exclude-standard", "--"] + pathspecs, capture_output=True, text=True).stdout
         files = {r for r in out.split("\0") if r and not r.endswith("/")
                  and any(fnmatch.fnmatch(os.path.basename(r), p) for p in LOCAL_CONFIG)}
         files |= set(build_inputs(project_dir))
@@ -516,10 +546,21 @@ RAN_SCRIPT = re.compile(r"(?:^|[;&|(]\s*|\s)(?:ba|z)?sh\s+(?:-\w+\s+)*" + _SCRIP
                         + r"|(?:^|[;&|(]\s*)\./" + _SCRIPT.replace("(", "(?:", 1).replace("(?:(?:", "((?:", 1))
 
 
+# Version of how this gate reads suite results. Bump it in any change that alters that reading:
+# pass/fail parsing (exit codes, untested_exit, flaky/infra retry, vacuity), what counts as a
+# suite run (modes, DEVICE_SUITE, which suites --full adds). A receipt with another value — or
+# none, as written before this key existed — is never reused. It replaced the sha of this file
+# in the reuse key: projects symlink the live DevKit and its source changed 44 times in 5 days
+# (GeelyEx2, 2026-09-28), so the reuse almost never hit. The receipt still records gate_sha.
+# ponytail: a forgotten bump reuses a PASS read by old parsing rules; upgrade (hash the parsing
+# functions' source) when parsing changes are frequent.
+RESULT_FORMAT = 1
+
+
 def cached_full_pass(project_dir, matrix_arg):
     """The last full PASS when it still holds for this exact code (O1, 2026-09-28: GeelyEx2 ran
     16 full gates in one session, many on content that had already passed): same tree
-    fingerprint, same gate script, same matrix, tested within DEVKIT_GATE_CACHE_MAX_S (default
+    fingerprint, same RESULT_FORMAT, same matrix, tested within DEVKIT_GATE_CACHE_MAX_S (default
     6 h — ignored files, devices and the network can drift). None otherwise."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
@@ -534,7 +575,7 @@ def cached_full_pass(project_dir, matrix_arg):
         return None
     if time.time() - float(r.get("tested_at") or 0) > max_s:
         return None
-    if r.get("gate_sha") != _sha_file(__file__) or r.get("matrix_sha") != _sha_file(find_matrix_path(matrix_arg)):
+    if r.get("result_format") != RESULT_FORMAT or r.get("matrix_sha") != _sha_file(find_matrix_path(matrix_arg)):
         return None
     if r.get("local_sha") in (None, "?") or r.get("local_sha") != local_state_sha(project_dir):
         return None
@@ -592,11 +633,11 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     path = tree_fp.receipt_path(project_dir)
     if not path:
         return
-    try:
-        os.remove(path)
-    except OSError:
-        pass
     if exit_code != 0:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
         return
     fingerprint = tree_fp.tree_fingerprint(project_dir)
     if tested_fp is not None and fingerprint != tested_fp:
@@ -609,14 +650,18 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     try:
         head, dirty = head_and_dirty(project_dir)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"time": time.time(), "exit": 0, "project": str(Path(project_dir).resolve()),
-                       "fingerprint": fingerprint, "tested_at": tested_at or time.time(),
-                       "gate_sha": _sha_file(__file__), "matrix_sha": _sha_file(find_matrix_path(matrix_arg)),
-                       "local_sha": local_state_sha(project_dir), "head": head, "dirty": dirty,
-                       "tests": [{"id": t.get("id"), "status": t.get("status"), "log": t.get("log"),
-                                  "duration": t.get("duration")}
-                                 for t in (tests or []) if t.get("command")]}, f)
+        data = {"time": time.time(), "exit": 0, "project": str(Path(project_dir).resolve()),
+                "fingerprint": fingerprint, "tested_at": tested_at or time.time(),
+                "result_format": RESULT_FORMAT,
+                "gate_sha": _sha_file(__file__), "matrix_sha": _sha_file(find_matrix_path(matrix_arg)),
+                "local_sha": local_state_sha(project_dir), "head": head, "dirty": dirty,
+                "tests": [{"id": t.get("id"), "status": t.get("status"), "log": t.get("log"),
+                           "duration": t.get("duration")}
+                          for t in (tests or []) if t.get("command")]}
+        fd, tmp = tempfile.mkstemp(prefix=".tmp_full_pass.", dir=os.path.dirname(path))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)
     except OSError as e:
         log_err(f"full-pass receipt not written: {e}")
 
@@ -1150,8 +1195,11 @@ def dependency_names(kind, text: str) -> set:
     if kind == "podfile":
         return set(re.findall(r"(?m)^\s*pod\s+['\"]([^'\"]+)['\"]", text))
     if kind == "swiftpm":
-        return {u.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
-                for u in re.findall(r"\.package\s*\([^)]*?\burl\s*:\s*\"([^\"]+)\"", text)}
+        names = set()
+        for u in re.findall(r"\.package\s*\([^)]*?\burl\s*:\s*\"([^\"]+)\"", text):
+            pkg_name = u.rstrip("/").rsplit("/", 1)[-1]
+            names.add(pkg_name[:-4] if pkg_name.endswith(".git") else pkg_name)
+        return names
     if kind == "pubspec":
         return _pubspec_names(text)
     if kind == "cargo":
@@ -2510,7 +2558,7 @@ def acquire_test_run_lock(project_dir):
         state.mkdir(parents=True, exist_ok=True)
         if not (state / ".gitignore").exists():
             (state / ".gitignore").write_text("*\n", encoding="utf-8")
-        fh = open(state / TEST_RUN_LOCK, "w")
+        fh = open(state / TEST_RUN_LOCK, "a")
     except OSError as e:
         log_warn(tr(f"Không tạo được khoá chạy test ({e}) — chạy không khoá", f"Cannot create the test-run lock ({e}) — running unlocked"))
         return None, True
@@ -3273,7 +3321,7 @@ def main():
                               "log": prev[t["id"]].get("log"), "exit_code": 0,
                               "tested_at": float(cache.get("tested_at") or 0),
                               "label": tr(f"PASS (dùng lại kết quả lúc {at}, cùng nội dung)", f"PASS (reused from {at}, same content)")})
-            print(f"    {CYAN}▶ {tr(f'dùng lại PASS đầy đủ lúc {at}: cùng nội dung, cùng gate, cùng ma trận (--no-cache để chạy lại)', f'reusing the full PASS of {at}: same content, gate and matrix (--no-cache to re-run)')}{RESET}")
+            print(f"    {CYAN}▶ {tr(f'dùng lại PASS đầy đủ lúc {at}: cùng nội dung, cùng cách đọc kết quả, cùng ma trận (--no-cache để chạy lại)', f'reusing the full PASS of {at}: same content, result format and matrix (--no-cache to re-run)')}{RESET}")
         else:
             cache = None
     to_run = [t for t in regression_tests if t.get("mode") != "cached"]

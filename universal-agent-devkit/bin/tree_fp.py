@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 EXCLUDE = (".claude/audit-gate", ".agents/regression_status.json", ".agents/regression_checklist.md",
-           ".agents/CHECKLIST.md", ".agents/INBOX.md", ".agents/evidence", ".agents/archive", "reports")
+           ".agents/CHECKLIST.md", ".agents/INBOX.md", ".agents/evidence", ".agents/archive", ".agents/instincts.md", "reports")
 RECEIPT = "full_pass.json"
 
 

@@ -65,7 +65,9 @@ install_msg_hook() {
   {
     echo "#!/usr/bin/env bash"
     echo "# $MARKER — fix commits name their bug (Bug: <id>) or say why not (No-Guard: <reason>)."
-    printf 'DEVKIT_HOOK=%q\n' "$MSG_BODY"
+    echo 'REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"'
+    echo 'DEVKIT_HOOK="${REPO_ROOT}/.agents/devkit/scripts/git-commit-msg.sh"'
+    printf '[ -f "$DEVKIT_HOOK" ] || DEVKIT_HOOK=%q\n' "$MSG_BODY"
     # shellcheck disable=SC2016
     echo '[ -f "$DEVKIT_HOOK" ] || { echo "✖ DevKit commit-msg: $DEVKIT_HOOK not found — re-run agent-kit githooks install, or git commit --no-verify" >&2; exit 1; }'
     echo 'exec bash "$DEVKIT_HOOK" "$@"'
@@ -87,9 +89,11 @@ install_relink_hooks() {
     {
       echo "#!/usr/bin/env bash"
       echo "# $MARKER — restores DevKit links a git operation removed (agent-kit githooks uninstall removes it)."
-      printf 'RELINK=%q\n' "$RELINK"
+      echo 'REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"'
+      echo 'RELINK="${REPO_ROOT}/.agents/devkit/scripts/relink_check.py"'
+      printf '[ -f "$RELINK" ] || RELINK=%q\n' "$RELINK"
       # shellcheck disable=SC2016
-      echo "[ -f \"\$RELINK\" ] && python3 \"\$RELINK\" \"\$(git rev-parse --show-toplevel)\" --hook=$h \"\$@\" || true"
+      echo '[ -f "$RELINK" ] && python3 "$RELINK" "$REPO_ROOT" --hook='$h' "$@" || true'
     } > "$f.devkit-tmp" && chmod +x "$f.devkit-tmp" && mv "$f.devkit-tmp" "$f"
   done
 }
@@ -137,7 +141,9 @@ case "$ACTION" in
       echo "#!/usr/bin/env bash"
       echo "# $MARKER — written by 'agent-kit githooks install'; remove with 'agent-kit githooks uninstall'."
       echo "# Static post-fix gate on the staged content. Skip once: git commit --no-verify"
-      printf 'DEVKIT_HOOK=%q\n' "$BODY"
+      echo 'REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"'
+      echo 'DEVKIT_HOOK="${REPO_ROOT}/.agents/devkit/scripts/git-pre-commit.sh"'
+      printf '[ -f "$DEVKIT_HOOK" ] || DEVKIT_HOOK=%q\n' "$BODY"
       # shellcheck disable=SC2016
       echo '[ -f "$DEVKIT_HOOK" ] || { echo "✖ DevKit pre-commit: $DEVKIT_HOOK not found (DevKit moved?) — re-run agent-kit githooks install, or git commit --no-verify" >&2; exit 1; }'
       echo 'exec bash "$DEVKIT_HOOK" "$@"'

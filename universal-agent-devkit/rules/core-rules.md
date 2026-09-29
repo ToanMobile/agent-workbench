@@ -22,7 +22,12 @@ Thứ tự: Làm & Chạy test cục bộ → Self Review (Diff + DEMO/LIVE) →
      2. **Đã chặn đứng bug cũ nào (Zero Reopened Bugs):** Danh sách các rào chắn bất biến lịch sử (`immutable_guards`) và test hồi quy được chạy lại đạt `[x] PASS`.
      3. **Nguy cơ bug mới nào đã triệt tiêu (Zero Collateral Damage):** Kết quả rà soát điểm gọi ngược (inbound callers) và module liên đới, xác nhận không có tác dụng phụ.
      4. **Trạng thái an toàn mã nguồn:** Kết quả quét bí mật/token (SẠCH), chống code lười biếng (0 placeholder), và phân tích tĩnh Alibaba OCR (0 leak).
-   - Báo cáo thiếu bằng chứng hoặc thiếu 4 mục trên bị coi là CHƯA ĐỦ ĐIỀU KIỆN nghiệm thu.
+   - Kèm **Biên Bản Phản Biện Song Phương Claude ↔ Antigravity (Cross-Review Accord):**
+     - **Điểm số đánh giá chất lượng (Thang 100):** Claude Score: X/100 · Antigravity Score: Y/100 · Điểm đồng thuận: Z/100 (ngưỡng nghiệm thu $\ge 95/100$, không có tiêu chuẩn nào $< 90$).
+     - **Antigravity phản biện gì & chọn/làm gì:** Tóm tắt điểm Antigravity chất vấn (về blast radius, graph, tài nguyên, 7 tiêu chuẩn vàng) và quyết định/hành động đã chọn.
+     - **Claude phản biện gì & chọn/làm gì:** Tóm tắt điểm Claude Opus chất vấn (về semantic edge-cases, logic, paired test RED→GREEN) và quyết định/hành động đã chọn.
+   - **Ảnh nghiệm thu tinh gọn:** Đúng 1 dòng ảnh hiển thị trực tiếp (không lặp path): `![Ảnh nghiệm thu](reports/proof-<stamp>.png)` — tuyệt đối không vẽ heading dài dòng hay lặp link rườm rà.
+   - Báo cáo thiếu bằng chứng hoặc thiếu các mục trên bị coi là CHƯA ĐỦ ĐIỀU KIỆN nghiệm thu.
 4. **Commit & Bàn giao:**
    - Commit bằng ngôn ngữ rõ ràng, tiền tố conventional: `feat:`, `fix:`, `test:`, `chore:`, `docs:`.
    - Báo cáo kết quả kiểm thử kèm ảnh nghiệm thu thành công đầy đủ cho Tech Lead / Reviewer.
@@ -163,3 +168,19 @@ Mọi tác vụ thực thi BẮT BUỘC phải tuân thủ 5 nguyên tắc vàng
 4. **Cô Lập Thư Mục Rác & Giới Hạn Quyền Đọc (Permissions Deny Gate):**
    - Cấm Agent đọc các thư mục tự sinh và tệp nhị phân (`build/`, `.gradle/`, `node_modules/`, `dist/`, `*.apk`, `*.hprof`).
 5. **Chống Phình Ngữ Cảnh:** quy tắc gốc ở §7 (ngưỡng >50% → checkpoint + `/compact`/handoff trước refactor nhiều file).
+
+## 18. Cơ Chế Cộng Tác Claude ↔ Antigravity & Kiểm Định Độc Lập (7 Tiêu Chuẩn Vàng Bắt Buộc)
+Khi Claude bắt đầu một task mới (hoặc thay đổi kiến trúc/logic lớn), trước khi viết dòng code đầu tiên, BẮT BUỘC phải gọi qua Antigravity (qua MCP `antigravity-pm` `plan_review` / `pm_plan` hoặc bàn luận trực tiếp) để phản biện, chốt phương án tối ưu nhất. Sau khi code và test xong, BẮT BUỘC dispatch Antigravity audit (`pm_dispatch kind=audit` / review như quy trình `/giao`) kiểm định độc lập toàn bộ diff trước khi nghiệm thu XONG.
+
+Mọi phương án kỹ thuật và kết quả nghiệm thu BẮT BUỘC đối chiếu theo 7 tiêu chuẩn vàng:
+1. **Chính xác phẫu thuật (Surgical & Zero Blast Radius):** Can thiệp trúng đích với diff tối thiểu, cô lập rủi ro tuyệt đối và không làm xước bất kỳ mô xung quanh nào.
+2. **Tất định & Tự kiểm chứng (Deterministic & Verifiable):** Luôn cho kết quả nhất quán 100%, bịt kín mọi failure mode và tự chứng minh tính đúng đắn bằng paired test (RED → GREEN).
+3. **Hiển nhiên & Tối giản (Boring & Low Cognitive Load):** Không "múa" code thông minh phức tạp; logic sáng rõ đến mức kỹ sư trực on-call đọc hiểu ngay cơ chế trong 10 giây.
+4. **Kỷ luật vòng đời & Hiệu năng (Resource & Lifecycle Hygiene):** Không nghẽn UI thread, không $O(N^2)$ bừa bãi, giải phóng sạch sẽ stream/listener và triệt tiêu mọi nguy cơ rò rỉ bộ nhớ.
+5. **Thấu suốt vận hành (Operability & 3 AM Debuggability):** Log có cấu trúc, không nuốt ngoại lệ, đủ context định danh để khoanh vùng chính xác sự cố thực tế trong 5 phút.
+6. **Phòng thủ ranh giới (Defensive & Zero-Trust Security):** Validate nghiêm ngặt mọi dữ liệu đi qua biên hệ thống, tuyệt đối không hardcode hay để lộ lọt secret và thông tin nhạy cảm.
+7. **Dễ tiêu hủy & Tiến hóa (Deletable & Backward Compatible):** Ranh giới module khép kín, sẵn sàng bị xóa bỏ sạch sẽ khi hết hạn mà không để lại mô sẹo hay phá vỡ hợp đồng dữ liệu cũ.
+
+### Quy Chuẩn Điểm Đánh Giá & Hiển Thị Nghiệm Thu (Thang Điểm 100):
+- **Chấm điểm Agent (Agent Quality Score /100):** Mỗi Agent được chấm điểm độc lập trên thang 100 dựa trên mức độ đáp ứng 7 tiêu chuẩn vàng. Điều kiện để nghiệm thu bàn giao: Cả hai Agent đều phải đạt $\ge 95/100$, không có bất kỳ tiêu chuẩn nào dưới 90 điểm. Điểm đồng thuận = trung bình cộng của hai Agent.
+- **Ảnh nghiệm thu tinh gọn:** Nhúng đúng 1 dòng ảnh hiển thị trực tiếp (không lặp path): `![Ảnh nghiệm thu](reports/proof-<stamp>.png)`.

@@ -20,10 +20,22 @@ Fill all five, or collect evidence first: (1) target + authority (verified error
 or user instruction); (2) the real source you will touch, read now — never a stale memory;
 (3) every consumer of a signature/public API/shared object you change, tests included;
 (4) the failure mechanism and how you will PROVE the change alters observable behaviour,
-decided before editing; (5) what stays unverified. ≥2 modules, ≥3 files, >200 LOC or a risky
-flow (crash, parsing, auth, navigation, lifecycle, security, module boundary): review the
-plan before code (a second opinion from Antigravity when available, see Working style);
-only the "ask the user" list under Working style needs the user's go-ahead.
+decided before editing; (5) what stays unverified.
+- **Claude ↔ Antigravity pre-code collaboration (bắt buộc khi bắt đầu task mới)**: Khi bắt đầu
+  task mới hoặc thay đổi logic/kiến trúc, trước khi viết code, Claude BẮT BUỘC gọi Antigravity
+  (qua `antigravity-pm` `plan_review` / `pm_plan` hoặc bàn luận trực tiếp) để phản biện, chốt
+  phương án tối ưu nhất theo 7 tiêu chuẩn vàng:
+  (1) *Chính xác phẫu thuật:* diff tối thiểu, Zero Blast Radius, không làm xước mô xung quanh.
+  (2) *Tất định & Tự kiểm chứng:* paired test RED → GREEN, bịt kín mọi failure mode.
+  (3) *Hiển nhiên & Tối giản:* không múa code phức tạp, on-call đọc hiểu cơ chế trong 10 giây.
+  (4) *Kỷ luật tài nguyên:* không nghẽn UI, không O(N²), dọn sạch stream/listener/leak.
+  (5) *Thấu suốt vận hành:* log có cấu trúc, không nuốt ngoại lệ, khoanh vùng lỗi trong 5 phút.
+  (6) *Phòng thủ ranh giới:* zero-trust, validate biên nghiêm ngặt, không lộ secret/PII.
+  (7) *Dễ tiêu hủy & Tiến hóa:* module khép kín, sẵn sàng xóa sạch, tương thích ngược.
+  Chỉ bắt đầu code khi phương án đã được chốt và đồng thuận.
+- ≥2 modules, ≥3 files, >200 LOC or a risky flow (crash, parsing, auth, navigation, lifecycle,
+  security, module boundary): review the plan before code; only the "ask the user" list under
+  Working style needs the user's go-ahead.
 
 ## Lazy senior: build less, never check less
 Once the change is understood (read the code, trace the flow, grep every caller), stop at
@@ -71,10 +83,13 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
 - **Done means verified**: run the post-fix gate
   (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`, exit 0 only) and
   attach a real proof PNG from this turn (when step 4 of "Every prompt" applies) before the
-  reply may open with XONG. The Stop hooks enforce the gate on hosts that have them. They do
-  not take the screenshot; on Claude Code `proof_gate.sh` refuses a reply opening with XONG
-  unless this turn has a `--full` exit 0 on the current code and, for app source on a
-  profile with a screen, names a fresh proof PNG.
+  reply may open with XONG. Sau khi gate PASS (exit 0), BẮT BUỘC gọi Antigravity audit / review
+  check độc lập (qua `antigravity-pm` `audit` hoặc quy trình như `/giao`) để rà soát toàn bộ diff,
+  kiểm chứng test bằng chứng, rủi ro hồi quy và an toàn mã nguồn trước khi nghiệm thu hoàn tất.
+  The Stop hooks enforce the gate on hosts that have them. They do not take the screenshot; on
+  Claude Code `proof_gate.sh` refuses a reply opening with XONG unless this turn has a `--full`
+  exit 0 on the current code and, for app source on a profile with a screen, names a fresh proof
+  PNG.
 
 ## Every prompt (standing law)
 Applies to Claude Code, Gemini CLI, Antigravity, Codex, Cursor and Grok, to every turn that
@@ -113,7 +128,8 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    - Install the build this turn produced on that serial and reach the success screen,
      then run the command again so the PNG shows that screen.
    - Put the PNG in the reply with the path and serial the command printed. Real PNG,
-     larger than 8 KB, mtime in this turn.
+     larger than 8 KB, mtime in this turn. Bắt buộc hiển thị trực tiếp (inline, không lặp path):
+     `![Ảnh nghiệm thu](reports/proof-<stamp>.png)`.
    - The command exits non-zero when it cannot open a device. Open with CHƯA XONG and
      paste that error. Do not draw, reuse an old image, or substitute a test XML.
 5. The reply may open with XONG only when this turn has exit 0 from step 3 and, when step 4
@@ -123,6 +139,8 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    report (core-rules §1.3), 1–2 lines each: 1. Đã fix gì (lỗi, nguyên nhân gốc, RED→GREEN)
    · 2. Chặn bug cũ (test hồi quy / immutable_guards chạy lại PASS) · 3. Nguy cơ bug mới
    (caller, module liên đới đã rà) · 4. An toàn mã nguồn (secret, placeholder, OCR).
+   Kèm điểm đánh giá chất lượng Agent trên thang 100 (ngưỡng $\ge 95/100$) và biên bản phản
+   biện song phương Claude ↔ Antigravity.
    `proof_gate.sh` refuses the reply without all four.
    A change of Markdown (`.md/.rst/.adoc`) or LICENSE-type files only needs no regression
    test: the gate passes it.
@@ -155,7 +173,9 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
 - Anything else non-trivial (architecture, a new dependency, a behaviour trade-off): pick the
   best option and get a second opinion from Antigravity (antigravity-pm `plan_review`,
   read-only) when available — agreed → do it; disagreed → the more conservative option, with
-  the reason in the report. Trivia: choose, ask no one.
+  the reason in the report. Bắt đầu task mới: bắt buộc trao đổi với Antigravity chốt phương án
+  tối ưu nhất trước khi code. Kết thúc task: bắt buộc dispatch Antigravity audit kiểm tra độc lập
+  (như `/giao`) trước khi nghiệm thu / XONG. Trivia: choose, ask no one.
 - An edited existing test is committed only after the user's "Duyệt" (AskUserQuestion naming
   its path; the gate accepts it) or an Antigravity `audit` of that diff finding it no weaker
   (commit message line `Test-approved-by: antigravity <task-id>`) — never on a same-session

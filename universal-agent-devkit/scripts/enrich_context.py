@@ -650,6 +650,22 @@ FEATURE_RE = re.compile(
     r"|\b(?:add|implement|build|create)\s+(?:a |an |the |new )?(?:feature|screen|page|endpoint|button|flow|report)")
 
 
+def antigravity_collab_hint(prompt, dossier, project_root):
+    """Claude ↔ Antigravity: When starting a new task, collaborate with Antigravity
+    to debate and lock the optimal plan before coding; after task completion, dispatch
+    audit/review like /giao."""
+    if len(prompt.strip()) < 8 or prompt.strip().startswith("/"):
+        return ""
+    intents = [i for i in dossier.get("detected_intents", []) if i != "GENERAL_TASK"]
+    refs = shown_refs(dossier)
+    if not intents and not refs:
+        return ""
+    return ("- Bắt buộc [Claude ↔ Antigravity]: Khi bắt đầu task mới, gọi Antigravity (MCP antigravity-pm plan_review) "
+            "để bàn luận chốt phương án tối ưu nhất (chất lượng, hiệu năng, kiến trúc theo 7 chuẩn vàng: phẫu thuật tối thiểu, "
+            "tất định RED→GREEN, tối giản hiển nhiên, kỷ luật tài nguyên, log thấu suốt, phòng thủ biên, dễ tiêu hủy) TRƯỚC KHI CODE; "
+            "khi xong task, gọi qua Antigravity audit/review diff độc lập trước khi nghiệm thu XONG (như quy trình /giao).")
+
+
 def req_hint(prompt, dossier, project_root):
     if "BUG_FIX" in dossier["detected_intents"] or not _checklist_on(project_root) \
             or not FEATURE_RE.search(normalize(prompt)):
@@ -712,6 +728,89 @@ def context_note(payload, project_dir, session_id):
             "lại file lớn đã đọc; gợi ý người dùng gõ /compact khi tiện — vẫn mở file luật khi cần.")
 
 
+# Lines the model keeps once it has read them in this session (2026-09-28: GeelyEx2, 5 days,
+# 492 injections — the same ~700-char requirements line re-sent 43.9k chars, each copy re-read
+# on every API call). "Loại việc" and the RED→GREEN rule are short and stay every time.
+ONCE_PER_SESSION = ("- Yêu cầu ngầm định: ", "- Bẫy đã gặp: ", "- Skill phù hợp: ")
+SAME_AS_BEFORE = "(ngữ cảnh DevKit như lượt trước)"
+COMPACT_MARKS = (b'"subtype":"compact_boundary"', b'"subtype": "compact_boundary"')  # Claude Code transcript line after a compaction
+NO_TRANSCRIPT_CAP = 20  # without a transcript a compaction is invisible: resend after 20 prompts
+
+
+def _compacted_since(transcript, offset, size):
+    """True when a compaction was written to the transcript after byte `offset`, or the
+    file shrank (rewritten). Only the bytes appended since the last prompt are read."""
+    if size < offset:
+        return True
+    try:
+        with open(transcript, "rb") as fh:
+            fh.seek(offset)
+            tail = b""
+            while True:
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    return False
+                if any(m in tail + chunk for m in COMPACT_MARKS):
+                    return True
+                tail = chunk[-32:]
+    except OSError as e:
+        print(f"warning: transcript unreadable ({transcript}): {e}", file=sys.stderr)
+        return False
+
+
+def dedupe_session(text, project_dir, session_id, payload):
+    """The hook text minus what this session already received. State per session in
+    .claude/audit-gate/prompt_seen_<session>. A compaction (compact_boundary in the transcript),
+    a new session_id, or NO_TRANSCRIPT_CAP prompts without a transcript: everything again.
+    No session_id or PROMPT_DEDUPE=0: unchanged."""
+    if not text or not session_id or os.environ.get("PROMPT_DEDUPE", "1") == "0":
+        return text
+    import hashlib
+
+    def h(s):
+        return hashlib.sha1(s.encode("utf-8")).hexdigest()[:16]
+
+    state = os.path.join(project_dir, ".claude", "audit-gate",
+                         "prompt_seen_" + (re.sub(r"[^A-Za-z0-9_-]", "_", session_id)[:64] or "default"))
+    try:
+        with open(state, encoding="utf-8") as fh:
+            st = json.load(fh)
+        if not isinstance(st, dict):
+            st = {}
+    except (OSError, ValueError):
+        st = {}
+    tp = payload.get("transcript_path") if isinstance(payload, dict) else None
+    size = None
+    if isinstance(tp, str) and tp:
+        try:
+            size = os.path.getsize(tp)
+        except OSError:
+            size = None
+    compacted = bool(st) and size is not None and _compacted_since(tp, int(st.get("offset") or 0), size)
+    if compacted or (size is None and int(st.get("n") or 0) >= NO_TRANSCRIPT_CAP):
+        st = {}
+    sent = set(st.get("sent") or [])
+    lines = text.split("\n")
+    if st.get("last") == h(text):
+        # The bug-fix RED→GREEN rule stays on every bug prompt, even an unchanged one.
+        out = "\n".join([SAME_AS_BEFORE] + [l for l in lines if l.startswith("- Bắt buộc: ")])
+    else:
+        out = "\n".join(l for l in lines if not (l.startswith(ONCE_PER_SESSION) and h(l) in sent))
+    sent.update(h(l) for l in lines if l.startswith(ONCE_PER_SESSION))
+    st = {"sent": sorted(sent), "last": h(text), "n": int(st.get("n") or 0) + 1,
+          "offset": size if size is not None else 0}
+    try:
+        os.makedirs(os.path.dirname(state), exist_ok=True)
+        import tempfile
+        fd, tmp = tempfile.mkstemp(prefix=".tmp_seen.", dir=os.path.dirname(state))
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(st, fh)
+        os.replace(tmp, state)
+    except OSError as e:
+        print(f"warning: prompt dedupe state not saved ({state}): {e}", file=sys.stderr)
+    return out
+
+
 if __name__ == "__main__":
     if "--hook" in sys.argv[1:]:
         # hooks/prompt_context.sh: the hook payload on stdin, one process for all of it.
@@ -730,13 +829,15 @@ if __name__ == "__main__":
         text = compact(res, project_dir)
         if "--hook" in sys.argv[1:]:
             log_surfaced(project_dir, session_id, prompt_input, shown_refs(res))
-            extra = [l for l in (capture_bug(prompt_input, res, project_dir, session_id, hook_payload),
+            extra = [l for l in (antigravity_collab_hint(prompt_input, res, project_dir),
+                                 capture_bug(prompt_input, res, project_dir, session_id, hook_payload),
                                  req_hint(prompt_input, res, project_dir), watch_inbox(project_dir),
                                  command_words(prompt_input, project_dir),
                                  context_note(hook_payload, project_dir, session_id)) if l]
             if extra:
                 text = "\n".join(([text] if text else [f"[DevKit] Ngữ cảnh tự động (profile: {res['active_profile']}):"])
                                   + extra)
+            text = dedupe_session(text, project_dir, session_id, hook_payload)
         if text:
             print(text)
     else:
