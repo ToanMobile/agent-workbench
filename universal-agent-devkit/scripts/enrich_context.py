@@ -536,8 +536,8 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
     """A bug prompt → a REPORTED row in .agents/regression_status.json (deduplicated
     against rows still open), so a reported bug is on the checklist before anyone fixes
     it. Only in a project that already keeps a checklist or matrix; never raises.
-    Not for agent / harness prompts (harness_prompt), nor for prompts under a non-Claude
-    harness: Grok discards this hook's output, so the row would be written silently.
+    Not for agent / harness prompts (harness_prompt) nor probe payloads (probe_payload); a real
+    bug prompt is recorded whichever agent ran the hook (Grok, Codex, Gemini, Cursor).
     Returns the context line to add, or ""."""
     if "BUG_FIX" not in dossier["detected_intents"] or os.environ.get("BUG_CAPTURE", "1") == "0":
         return ""
