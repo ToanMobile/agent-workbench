@@ -251,7 +251,9 @@ TREE_FP=""; CACHED=""
 if [ -n "${HARNESS}" ]; then
   TREE_FP="$(python3 "${HARNESS}" fingerprint "${REPO_ROOT}" 2>/dev/null || true)"
   if [ -n "${TREE_FP}" ] && [ -n "${SCOPED}" ]; then
-    TREE_FP="${TREE_FP}-$(printf '%s' "${SCOPED}" | shasum | cut -c1-12)"
+    SCOPE_ID="$(printf '%s' "${SCOPED}" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:12])' 2>/dev/null)"
+    # no scope id → no key: never let two file lists share one cached PASS
+    if [ -n "${SCOPE_ID}" ]; then TREE_FP="${TREE_FP}-${SCOPE_ID}"; else TREE_FP=""; fi
   fi
   [ -n "${TREE_FP}" ] && CACHED="$(guard get "${TREE_FP}")"
   [ "${CACHED}" = block ] && { [ -n "${SCOPED}" ] || [ ! -s "${BLOCK_MSG_FILE}" ]; } && CACHED=""

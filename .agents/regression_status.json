@@ -100,16 +100,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-09-29 17:44:54",
-        "ts": 1790678694.222949,
+        "at": "2026-09-29 19:46:57",
+        "ts": 1790686017.6687071,
         "task": null,
-        "commit": "89bf549+dirty",
-        "duration": "92.71s",
+        "commit": "a49bc13+dirty",
+        "duration": "84.97s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-01/20260929-174022.log",
+        "log": ".agents/evidence/REG-DK-GATE-01/20260929-194136.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-29 19:46:57",
+          "ts": 1790686017.6687071,
+          "task": null,
+          "commit": "a49bc13+dirty",
+          "duration": "84.97s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20260929-194136.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-09-29 17:44:54",
@@ -208,17 +219,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-01/20260929-111035.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-09-29 11:09:02",
-          "ts": 1790654942.8454819,
-          "task": null,
-          "commit": "5e08aef+dirty",
-          "duration": "83.25s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-01/20260929-110238.log",
-          "deleted": []
         }
       ],
       "title": "post-fix gate",
@@ -236,16 +236,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-09-29 17:44:54",
-        "ts": 1790678694.231154,
+        "at": "2026-09-29 19:46:57",
+        "ts": 1790686017.67989,
         "task": null,
-        "commit": "89bf549+dirty",
-        "duration": "126.93s",
+        "commit": "a49bc13+dirty",
+        "duration": "138.58s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-02/20260929-174228.log",
+        "log": ".agents/evidence/REG-DK-GATE-02/20260929-194355.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-29 19:46:57",
+          "ts": 1790686017.67989,
+          "task": null,
+          "commit": "a49bc13+dirty",
+          "duration": "138.58s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20260929-194355.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-09-29 17:44:54",
@@ -344,17 +355,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-02/20260929-111320.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-09-29 11:09:02",
-          "ts": 1790654942.85361,
-          "task": null,
-          "commit": "5e08aef+dirty",
-          "duration": "132.18s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20260929-110451.log",
-          "deleted": []
         }
       ],
       "title": "proof gate (tree_fp)",
@@ -372,16 +372,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-09-29 17:44:54",
-        "ts": 1790678694.2311602,
+        "at": "2026-09-29 19:46:57",
+        "ts": 1790686017.679898,
         "task": null,
-        "commit": "89bf549+dirty",
-        "duration": "44.56s",
+        "commit": "a49bc13+dirty",
+        "duration": "57.82s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-01/20260929-174313.log",
+        "log": ".agents/evidence/REG-DK-HOOK-01/20260929-194453.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-29 19:46:57",
+          "ts": 1790686017.679898,
+          "task": null,
+          "commit": "a49bc13+dirty",
+          "duration": "57.82s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20260929-194453.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-09-29 17:44:54",
@@ -480,17 +491,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-01/20260929-111449.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-09-29 11:09:02",
-          "ts": 1790654942.8536162,
-          "task": null,
-          "commit": "5e08aef+dirty",
-          "duration": "42.98s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20260929-110534.log",
-          "deleted": []
         }
       ],
       "title": "hook contract",
@@ -505,16 +505,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-09-29 17:44:54",
-        "ts": 1790678694.231165,
+        "at": "2026-09-29 19:46:57",
+        "ts": 1790686017.679905,
         "task": null,
-        "commit": "89bf549+dirty",
-        "duration": "126.93s",
+        "commit": "a49bc13+dirty",
+        "duration": "138.58s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-02/20260929-174228.log",
+        "log": ".agents/evidence/REG-DK-GATE-02/20260929-194355.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-29 19:46:57",
+          "ts": 1790686017.679905,
+          "task": null,
+          "commit": "a49bc13+dirty",
+          "duration": "138.58s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20260929-194355.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-09-29 17:44:54",
@@ -612,17 +623,6 @@
           "duration": "165.43s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-02/20260929-111320.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-09-29 11:09:02",
-          "ts": 1790654942.853618,
-          "task": null,
-          "commit": "5e08aef+dirty",
-          "duration": "132.18s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20260929-110451.log",
           "deleted": []
         }
       ],
@@ -760,16 +760,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-09-29 17:44:54",
-        "ts": 1790678694.231169,
+        "at": "2026-09-29 19:46:57",
+        "ts": 1790686017.679908,
         "task": null,
-        "commit": "89bf549+dirty",
-        "duration": "99.89s",
+        "commit": "a49bc13+dirty",
+        "duration": "123.93s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20260929-174453.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20260929-194657.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-09-29 19:46:57",
+          "ts": 1790686017.679908,
+          "task": null,
+          "commit": "a49bc13+dirty",
+          "duration": "123.93s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20260929-194657.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-09-29 17:44:54",
@@ -868,17 +879,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20260929-140627.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-09-29 11:19:19",
-          "ts": 1790655559.7352068,
-          "task": null,
-          "commit": "5e08aef+dirty",
-          "duration": "268.51s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20260929-111918.log",
-          "deleted": []
         }
       ],
       "title": "DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit",
@@ -928,7 +928,8 @@
         "duration": "0.45s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-WB-CONFIG-01/20260929-174453.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-09-29 17:45:32"
       },
       "history": [
         {

@@ -281,6 +281,19 @@ claude_stop Write "{\"file_path\":\"$(FOO_ABS)\",\"content\":\"class Foo\"}"; rc
 claude_stop Write "{\"file_path\":\"$(FOO_ABS)\",\"content\":\"class Foo\"}"; rc2=$RC
 [ "$rc1$rc2" = 22 ] && [ "$(ncalls)" = 2 ] && ok "scoped block on an unchanged tree: compiled again, never re-used" \
   || fail "scoped block re-used or not blocking (exits $rc1$rc2, calls=$(ncalls))"
+# The scope key must not depend on a tool a machine may lack (shasum ships with perl on Linux):
+# a failing hasher collapsed every file list to one key, so lib's PASS was re-used for lib2.
+mkdir -p "$TMP/nohash"; printf '#!/bin/sh\nexit 127\n' > "$TMP/nohash/shasum"; chmod +x "$TMP/nohash/shasum"
+new_repo
+module lib 'plugins { id("com.android.library") }'
+module lib2 'plugins { id("com.android.library") }'
+printf ':lib:compileDebugUnitTestKotlin\n:lib2:compileDebugUnitTestKotlin\n' > "$R/.tasks"
+echo ":lib2:compileDebugUnitTestKotlin" > "$R/.broken"
+PATH="$TMP/nohash:$PATH" claude_stop Write "{\"file_path\":\"$(FOO_ABS)\",\"content\":\"class Foo\"}"; rc1=$RC
+PATH="$TMP/nohash:$PATH" claude_stop Write "{\"file_path\":\"$R/lib2/src/main/kotlin/Foo.kt\",\"content\":\"class Foo\"}"; rc2=$RC
+[ "$rc1$rc2" = 02 ] && grep -qF ":lib2:compileDebugUnitTestKotlin" "$R/.calls" \
+  && ok "another file list on the same tree is its own key (no shasum on the machine): lib2 compiled, blocks" \
+  || fail "lib's PASS re-used for lib2 (exits $rc1$rc2, calls: $(tr '\n' ' ' < "$R/.calls" 2>/dev/null))"
 
 if [ "$FAILS" -ne 0 ]; then echo "test_testsourceset: $FAILS FAILED"; exit 1; fi
 echo "test_testsourceset: all checks passed"

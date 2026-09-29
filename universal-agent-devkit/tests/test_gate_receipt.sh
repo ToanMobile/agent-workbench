@@ -66,12 +66,14 @@ receipt && bad "code changed during the run was stamped as tested (receipt writt
 # A --full that WAITED for the test-run lock of another run of the same content re-uses the
 # PASS that run just recorded instead of running the suites again (audit 2026-09-29: two
 # sessions / a background gate + a foreground gate on one checkout paid every suite twice).
+# wait_suite_started: A holds the test-run lock and has taken its fingerprint once its suite started
+wait_suite_started() { i=0; while [ ! -s .runs ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i + 1)); done; }
 make_repo "$MOD" "./gradlew :app:testDebugUnitTest"
 printf '#!/bin/sh\necho run >> .runs\nsleep 4\nexit 0\n' > gradlew && git commit -qam slow-gradlew
 printf '.runs\n' >> .git/info/exclude
 echo "// tweak" >> app/src/main/kotlin/pkg/Lonely.kt
 run_gate --run-tests --full > "$TMP/a.out" & pa=$!
-sleep 1.5
+wait_suite_started
 out="$(TEST_RUN_LOCK_WAIT_S=60 run_gate --run-tests --full)"; rb=$?
 wait "$pa"; ra=$?
 runs="$(wc -l < .runs | tr -d ' ')"
@@ -83,7 +85,7 @@ printf '#!/bin/sh\necho run >> .runs\nsleep 4\nexit 0\n' > gradlew && git commit
 printf '.runs\n' >> .git/info/exclude
 echo "// tweak" >> app/src/main/kotlin/pkg/Lonely.kt
 run_gate --run-tests --full > "$TMP/a.out" & pa=$!
-sleep 1.5
+wait_suite_started
 echo "// edited while A runs" >> app/src/main/kotlin/pkg/Lonely.kt
 out="$(TEST_RUN_LOCK_WAIT_S=60 run_gate --run-tests --full)"; rb=$?
 wait "$pa"

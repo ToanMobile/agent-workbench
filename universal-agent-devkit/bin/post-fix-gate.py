@@ -3408,8 +3408,9 @@ def main():
                           if run_tests and any(t.get("command") for t in to_run) else (None, True))
     # Waited for another run's lock (a second session, or a gate still running in the background):
     # that run may have just recorded a full PASS of this same content — re-use it instead of
-    # running every suite again (audit 2026-09-29).
-    if use_cache and cache is None and lock_held and time.monotonic() - lock_wait_start > 1.0:
+    # running every suite again (audit 2026-09-29). A free lock is taken at once (LOCK_NB); a
+    # contended one costs at least one 0.5 s poll, so 0.25 s separates "waited" from "free".
+    if use_cache and cache is None and lock_held and time.monotonic() - lock_wait_start > 0.25:
         cache = reuse_full_pass()
         to_run = [t for t in regression_tests if t.get("mode") != "cached"]
     # One run per distinct command (O2, 2026-09-28): two rules naming one command share its result,
