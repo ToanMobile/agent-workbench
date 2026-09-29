@@ -143,3 +143,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Cài DevKit từ bản stage cũ ghi đè commit của phiên khác
 - **Nguyên nhân:** Stage chép từ bản đang chạy lúc bắt đầu việc; một phiên khác commit vào cùng file sau đó; install_atomic ghi đè cả file bằng bản stage nên mất hunk của commit 7e2ea43 (2 lần, 2026-09-28)
 - **Quy tắc phòng ngừa & Cách fix:** Trước khi cài một file: so bản đang chạy với HEAD và với bản gốc của stage; nếu HEAD đã đổi thì gộp 3 chiều (git merge-file) hoặc sửa tại chỗ bằng thay đúng đoạn (đọc từ đĩa, ghi file tạm + os.replace); không bao giờ ghi đè cả file bằng bản trong bộ nhớ; sau khi cài kiểm git diff HEAD không có dòng xoá lạ
+
+---
+
+### [INSTINCT-017] Khoá cache dựng sai làm dùng nhầm hoặc không bao giờ dùng lại kết quả test
+- **Ngày phát hiện:** 2026-09-29
+- **Hiện tượng lỗi:** Khoá cache dựng sai làm dùng nhầm hoặc không bao giờ dùng lại kết quả test
+- **Nguyên nhân:** testsourceset_gate băm scope bằng shasum (máy thiếu shasum → mọi scope chung 1 khoá, PASS của lib dùng cho lib2); regression_gate so fingerprint devkit_harness (20 hex) với receipt tree_fp (24 hex) nên đoạn đi tắt chết; post-fix-gate chỉ kiểm cache TRƯỚC khi chờ khoá test nên lượt chờ chạy lại toàn bộ suite (2026-09-29)
+- **Quy tắc phòng ngừa & Cách fix:** Khoá cache chỉ dựng bằng python3 hashlib/cùng một hàm fingerprint (bin/tree_fp) ở mọi nơi đọc và ghi; không tính được khoá thì không dùng cache; kiểm lại cache sau khi chờ khoá; mỗi khoá có ca test ĐỎ cho 'khoá khác nhau phải không dùng chung PASS'
