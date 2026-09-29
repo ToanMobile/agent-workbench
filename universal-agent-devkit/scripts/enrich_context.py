@@ -650,20 +650,32 @@ FEATURE_RE = re.compile(
     r"|\b(?:add|implement|build|create)\s+(?:a |an |the |new )?(?:feature|screen|page|endpoint|button|flow|report)")
 
 
+LARGE_TASK_RE = re.compile(
+    r"(?<!\w)(?:kiến\s*trúc|architecture|tái\s*cấu\s*trúc|refactor|migration|di\s*chuyển|"
+    r"nhiều\s*module|multi[-_ ]?module|bảo\s*mật|security|lỗ\s*hổng|vulnerability|"
+    r"xác\s*thực|auth(?:entication)?|phân\s*quyền|thanh\s*toán|payment|"
+    r"crashlytics|anr|out\s*of\s*memory|memory\s*leak|rò\s*rỉ\s*bộ\s*nhớ|deadlock|"
+    r"2\s*agent|hai\s*agent|cross[-_ ]?review|antigravity\s*(?:review|audit|phản\s*biện)|giao\s*antigravity)\b",
+    re.I
+)
+
+
 def antigravity_collab_hint(prompt, dossier, project_root):
-    """Claude ↔ Antigravity: When starting a new task, collaborate with Antigravity
-    to debate and lock the optimal plan before coding; after task completion, dispatch
-    audit/review like /giao."""
+    """Claude ↔ Antigravity: Scope cross-review strictly to LARGE/RISKY tasks (≥2 modules,
+    ≥3 files, >200 LOC, architecture, security, auth, migration). For simple tasks, whichever
+    agent is invoked executes directly without two-agent review overhead."""
     if len(prompt.strip()) < 8 or prompt.strip().startswith("/"):
         return ""
-    intents = [i for i in dossier.get("detected_intents", []) if i != "GENERAL_TASK"]
-    refs = shown_refs(dossier)
-    if not intents and not refs:
+    # Only trigger for large/risky tasks or explicit multi-agent requests
+    norm = normalize(prompt)
+    is_large = bool(LARGE_TASK_RE.search(norm))
+    intents = dossier.get("detected_intents", [])
+    if not is_large and not any(i in ("ARCHITECTURE_CHANGE", "SECURITY_AUDIT", "MIGRATION") for i in intents):
         return ""
-    return ("- Bắt buộc [Claude ↔ Antigravity]: Khi bắt đầu task mới, gọi Antigravity (MCP antigravity-pm plan_review) "
-            "để bàn luận chốt phương án tối ưu nhất (chất lượng, hiệu năng, kiến trúc theo 7 chuẩn vàng: phẫu thuật tối thiểu, "
-            "tất định RED→GREEN, tối giản hiển nhiên, kỷ luật tài nguyên, log thấu suốt, phòng thủ biên, dễ tiêu hủy) TRƯỚC KHI CODE; "
-            "khi xong task, gọi qua Antigravity audit/review diff độc lập trước khi nghiệm thu XONG (như quy trình /giao).")
+    return ("- Bắt buộc [Claude ↔ Antigravity - Task lớn]: Khi bắt đầu task lớn/kiến trúc (≥2 module, ≥3 files, "
+            ">200 LOC hoặc rủi ro cao), gọi Antigravity (MCP antigravity-pm plan_review) để bàn luận chốt phương án "
+            "tối ưu nhất theo 7 chuẩn vàng TRƯỚC KHI CODE; khi xong task, gọi qua Antigravity audit/review diff độc lập "
+            "trước khi nghiệm thu XONG (Task đơn giản: agent được gọi tự làm từ A-Z, không cần 2-agent review).")
 
 
 def req_hint(prompt, dossier, project_root):

@@ -25,11 +25,38 @@ def _git(project_dir, *args):
 
 
 def receipt_path(project_dir):
-    """.git/postfix-gate/full_pass.json of the repo holding project_dir, or None."""
+    """.git/postfix-gate/full_pass.json of the repo holding project_dir, or .agents/audit-gate/full_pass.json for non-git."""
     res = _git(project_dir, "rev-parse", "--absolute-git-dir")
     if res.returncode != 0:
-        return None
+        return os.path.join(str(project_dir), ".agents", "audit-gate", RECEIPT)
     return os.path.join(res.stdout.decode().strip(), "postfix-gate", RECEIPT)
+
+
+def _non_git_fingerprint(project_dir):
+    h = hashlib.sha256()
+    try:
+        from pathlib import Path
+        proj = Path(project_dir)
+        for root, dirs, files in os.walk(project_dir):
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("node_modules", "build", "dist", "reports", "__pycache__")]
+            for f in sorted(files):
+                if f.startswith("."):
+                    continue
+                p = Path(root) / f
+                try:
+                    rel = str(p.relative_to(proj)).replace("\\", "/")
+                except ValueError:
+                    continue
+                if any(rel == ex or rel.startswith(ex + "/") for ex in EXCLUDE):
+                    continue
+                try:
+                    st = p.stat()
+                    h.update(f"{rel}:{st.st_size}:{st.st_mtime_ns}".encode())
+                except OSError:
+                    continue
+        return h.hexdigest()[:24]
+    except Exception:
+        return ""
 
 
 def tree_fingerprint(project_dir):
@@ -40,7 +67,7 @@ def tree_fingerprint(project_dir):
     import shutil
     import tempfile
     if _git(project_dir, "rev-parse", "HEAD").returncode != 0:
-        return ""
+        return _non_git_fingerprint(project_dir)
     gitdir = _git(project_dir, "rev-parse", "--absolute-git-dir").stdout.decode().strip()
     prefix = _git(project_dir, "rev-parse", "--show-prefix").stdout.decode().strip()
     objects = _git(project_dir, "rev-parse", "--path-format=absolute", "--git-path", "objects").stdout.decode().strip()

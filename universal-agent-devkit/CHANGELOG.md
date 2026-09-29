@@ -4,6 +4,11 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
 
 ## Unreleased
 
+- **Tối ưu tự chủ cho Agent & Phân định phạm vi 2-Agent Review theo yêu cầu người dùng (29/09)**:
+  - **Tự động Auto-Duyệt test và code (Decide, don't ask)**: Agent tự động đánh giá và auto-duyệt (`--auto-approve-tests`, `DEVKIT_AUTO_APPROVE_TESTS=1` hoặc ghi nhận auto-duyệt trong phiên) khi thấy thay đổi là tốt hơn, cần thiết, hợp lý và test chạy PASS. Loại bỏ hoàn toàn việc chặn gate exit code 2 bắt người dùng bấm "Duyệt" qua `AskUserQuestion`.
+  - **Phân định rõ phạm vi Claude ↔ Antigravity cross-review**: Cơ chế phản biện 2 agent CHỈ ÁP DỤNG cho các Task Lớn / Rủi Ro Cao (chạm ≥2 modules, ≥3 files, >200 LOC net diff, hoặc luồng kiến trúc, auth, payment, database migration, production crashlytics triage).
+  - **Đường ray siêu tốc cho Task Đơn Giản (Single-agent fast path)**: Đối với các task đơn giản hoặc trung bình (bug fix cục bộ 1-2 files, tinh chỉnh UI, cập nhật test, sửa script), gọi agent nào (Claude hoặc Antigravity) thì agent đó tự làm luôn từ A-Z cho nhanh, tự kiểm chứng (paired test RED→GREEN, gate exit 0), không cần gọi 2 agent review để tiết kiệm thời gian và token.
+
 - **Cơ chế cộng tác Claude ↔ Antigravity & Kiểm định độc lập trước khi code và sau khi xong task**:
   - **Bàn luận chốt phương án tối ưu trước khi code (Pre-code collaboration)**: Bổ sung quy định bắt buộc trong `rules/essentials.md`, `rules/core-rules.md` (§18) và hook gợi ý prompt (`enrich_context.py`): khi bắt đầu task mới hoặc thay đổi kiến trúc/logic lớn, Claude bắt buộc gọi qua Antigravity (MCP `antigravity-pm` `plan_review` / `pm_plan`) để phản biện, chốt phương án tối ưu nhất theo **7 tiêu chuẩn vàng**:
     1. *Chính xác phẫu thuật (Surgical & Zero Blast Radius):* Can thiệp trúng đích với diff tối thiểu, cô lập rủi ro tuyệt đối, không làm xước mô xung quanh.

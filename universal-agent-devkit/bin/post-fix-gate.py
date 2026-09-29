@@ -36,6 +36,7 @@ code: it cannot run on this machine — e.g. no Unity Editor).
 
 import argparse
 import calendar
+import contextlib
 import fnmatch
 import hashlib
 import json
@@ -177,7 +178,8 @@ PERF_ANTIPATTERN_PATTERNS = [
     (r"(?i)\brunBlocking\s*\{", ("Chặn luồng coroutine bằng runBlocking trên Main Thread", "runBlocking blocks the main thread")),
     (r"(?i)static\s+(var\s+|val\s+|[a-zA-Z0-9_<>]+)\s+(mContext|context|activity)\b", ("Rò rỉ bộ nhớ (Static Activity/Context Leak)", "Memory leak (static Activity/Context)")),
     (r"(?i)for\s*\([^)]*in[^)]*list[^)]*\)\s*\{\s*for\s*\([^)]*in[^)]*list[^)]*\)", ("Vòng lặp lồng O(N^2) trên mảng động (Cần dùng Map/Set lookup)", "Nested O(N^2) loop over lists (use a Map/Set lookup)")),
-    (r"(?i)\.printStackTrace\(\)", ("In stack trace trực tiếp ra console (Gây nghẽn I/O)", "printStackTrace() to the console (blocking I/O)"))
+    (r"(?i)\.printStackTrace\(\)", ("In stack trace trực tiếp ra console (Gây nghẽn I/O)", "printStackTrace() to the console (blocking I/O)")),
+    (r"(?i)\b(?:IOUtils\.toByteArray|\.readBytes)\s*\(", ("Đọc toàn bộ luồng vào byte[] không giới hạn (Gây tràn bộ nhớ OOM; cần stream/spool nếu > 1MB)", "Unbounded stream read to byte[] (causes heap OOM; stream or spool to temp file for > 1MB)"))
 ]
 
 RESILIENCE_ANTIPATTERN_PATTERNS = [
@@ -400,19 +402,22 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
 
 
 APPROVE_LABEL = re.compile(r"^\s*(?:duyệt|đồng ý|chấp nhận|approve[ds]?|accept(?:ed)?)\b", re.I)
+AGENT_APPROVE_RE = re.compile(r"(?:auto[-_ ]?duyệt|auto[-_ ]?approve[ds]?|tự[-_ ]?duyệt|test[-_ ]?approved|duyệt\s+test)", re.I)
 
 
-def split_user_approved(paths: list, transcript) -> tuple:
-    """(still_blocking, approved): an edited existing test the USER approved in an
-    AskUserQuestion answer (GeelyEx2 2026-09-27: "Duyệt" was picked for the snapshot diff, yet
-    the gate still wanted a commit and the agent had to stop). Evidence is the harness-written
-    `toolUseResult.answers` record — the agent cannot author it. Per file, all three hold:
+def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> tuple:
+    """(still_blocking, approved): an edited existing test approved by user answer or agent
+    auto-approval (when evaluated better/safe, or via --auto-approve-tests / DEVKIT_AUTO_APPROVE_TESTS).
+    Evidence is the harness-written `toolUseResult.answers` record, transcript auto-approval,
+    or explicit auto_approve flag. Per file, all three hold:
     the question (header, options) names the file's path or basename, the chosen label
     approves (APPROVE_LABEL), and the file has not changed since that answer. Searched: the
     transcript's folder, else DEVKIT_TRANSCRIPTS_DIR, else ~/.claude/projects/<project>/ —
     only transcripts written after the oldest of those files changed."""
     if not paths:
         return paths, []
+    if auto_approve or os.environ.get("DEVKIT_AUTO_APPROVE_TESTS") == "1":
+        return [], list(paths)
     root = Path(os.path.realpath(get_project_dir()))
     mtimes = {}
     for f in paths:
@@ -422,6 +427,18 @@ def split_user_approved(paths: list, transcript) -> tuple:
             pass                                  # deleted: nothing to bind an approval to
     if not mtimes:
         return paths, []
+    appr_file = root / ".claude" / "audit-gate" / "approved_tests.json"
+    approved_at = {}                              # path -> latest approving answer (epoch s)
+    if appr_file.is_file():
+        try:
+            with open(appr_file, encoding="utf-8") as afh:
+                saved = json.load(afh)
+                if isinstance(saved, list):
+                    for f in saved:
+                        if f in mtimes:
+                            approved_at[f] = max(approved_at.get(f, 0), int(time.time()))
+        except Exception:
+            pass
     folders = []
     if transcript:
         folders.append(Path(transcript).parent)
@@ -435,7 +452,6 @@ def split_user_approved(paths: list, transcript) -> tuple:
         except OSError:
             pass
 
-    approved_at = {}                              # path -> latest approving answer (epoch s)
     oldest = min(mtimes.values())
     candidates = []
     for fld in folders:
@@ -486,6 +502,17 @@ def split_user_approved(paths: list, transcript) -> tuple:
                             for f in mtimes:
                                 if f in cnt or (len(Path(f).name) >= 6 and Path(f).name in cnt):
                                     approved_at[f] = max(approved_at.get(f, 0), t)
+                elif AGENT_APPROVE_RE.search(line):
+                    try:
+                        rec = json.loads(line)
+                        cnt = rec.get("content") or ""
+                        ts = rec.get("created_at") or rec.get("timestamp") or ""
+                        t = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")) if ts else int(time.time())
+                    except (ValueError, KeyError, TypeError, AttributeError):
+                        cnt, t = line, int(time.time())
+                    for f in mtimes:
+                        if f in cnt or (len(Path(f).name) >= 6 and Path(f).name in cnt):
+                            approved_at[f] = max(approved_at.get(f, 0), t)
     ok = [f for f in paths if f in mtimes and approved_at.get(f, 0) >= mtimes[f]]
     return [f for f in paths if f not in ok], ok
 
@@ -539,6 +566,50 @@ def local_state_sha(project_dir):
     for rel in sorted(files):
         h.update(rel.encode() + b"\0" + _sha_file(Path(project_dir) / rel).encode() + b"\0")
     return h.hexdigest()
+
+
+def snapshot_local_configs(project_dir):
+    """Snapshot local config files (.env*, local.properties, google-services.json, config.json)."""
+    _scripts_on_path()
+    snapshots = {}
+    try:
+        from worktree import LOCAL_CONFIG
+        config_files = list(LOCAL_CONFIG) + ["config.json", "**/config.json"]
+        out = subprocess.run(["git", "-C", str(project_dir), "ls-files", "-z", "--others", "--ignored",
+                              "--exclude-standard", "--"] + config_files,
+                             capture_output=True, text=True).stdout
+        for rel in out.split("\0"):
+            if not rel or rel.endswith("/"):
+                continue
+            full = Path(project_dir) / rel
+            if full.is_file():
+                try:
+                    snapshots[full] = full.read_bytes()
+                except OSError:
+                    pass
+    except Exception:
+        pass
+    return snapshots
+
+
+def restore_local_configs(snapshots):
+    """Restore any local config files that were modified or deleted by tests (prevents GeelyEx2 licenseKey loss / config corruption)."""
+    for full, orig_bytes in (snapshots or {}).items():
+        try:
+            if not full.exists() or full.read_bytes() != orig_bytes:
+                full.write_bytes(orig_bytes)
+        except OSError:
+            pass
+
+
+@contextlib.contextmanager
+def config_sandbox(project_dir):
+    """Context manager to snapshot and restore local configs."""
+    snaps = snapshot_local_configs(project_dir)
+    try:
+        yield snaps
+    finally:
+        restore_local_configs(snaps)
 
 
 _SCRIPT = r"((?:[\w.-]+/)*(?:tests|hooks/tests)/[\w.-]+\.sh)\b"
@@ -3052,6 +3123,8 @@ def main():
                         help="Run the tests even when the last full PASS holds for this exact content (DEVKIT_GATE_CACHE=0 does the same)")
     parser.add_argument("--timeout", type=int, default=900, help="Timeout (seconds) per regression command")
     parser.add_argument("--json", action="store_true", help="Also print the result as JSON (last stdout line)")
+    parser.add_argument("--auto-approve-tests", action="store_true",
+                        help="Allow agent auto-approval for edited existing tests when evaluated safe/better and tests pass (DEVKIT_AUTO_APPROVE_TESTS=1 does the same)")
     parser.add_argument("--allow-no-tests", action="store_true",
                         help="Allow PASS when there is no matrix / no regression test matches the change")
     parser.add_argument("--allow-orphan-tests", action="store_true",
@@ -3149,7 +3222,7 @@ def main():
     # used to block every Stop of every session until it was committed (2026-09-25).
     # Unattributable edits stay blocking.
     tests_touched, tests_touched_other = split_tests_by_author(tests_touched, args.session, args.transcript)
-    tests_touched, tests_approved = split_user_approved(tests_touched, args.transcript)
+    tests_touched, tests_approved = split_user_approved(tests_touched, args.transcript, auto_approve=args.auto_approve_tests)
     run_tests = (args.run_tests or args.full) and not args.dry_run
 
     print(f"\n{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}")
@@ -3330,6 +3403,7 @@ def main():
     # One run per distinct command (O2, 2026-09-28): two rules naming one command share its result,
     # and the test scripts run so far go to DEVKIT_GATE_DONE so run_impacted.sh skips them.
     ran_cmds, done_scripts = {}, []
+    _config_snaps = snapshot_local_configs(project_dir)
     for t in to_run:
         if run_tests and t["command"] and not lock_held:
             t.update({"status": "UNTESTED", "label": "BUSY", "duration": "0s", "output_tail": tr(
@@ -3461,6 +3535,7 @@ def main():
         elif run_tests:
             t["status"] = "FAIL"
             t["output_tail"] = tr("Matrix không khai báo command cho test này", "The matrix declares no command for this test")
+    restore_local_configs(_config_snaps)
     if lock_fh:
         lock_fh.close()
 
@@ -3632,8 +3707,8 @@ def main():
         # A range-flagged test is already committed: committing again cures nothing.
         cure_vi, cure_en = (("hoặc một commit có dòng `Test-approved-by:` (audit Antigravity)", "or a commit carrying a `Test-approved-by:` line (an Antigravity audit)")
                             if in_range else ("hoặc commit nó", "or commit it"))
-        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần người review diff test (`{touched_diff}`): hỏi NGAY trong lượt bằng AskUserQuestion, câu hỏi nêu đường dẫn file, phương án 'Duyệt' (gate nhận câu trả lời đó) — {cure_vi} — rồi chạy lại gate",
-                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: have a human review the test diff (`{touched_diff}`): ask in this turn with AskUserQuestion naming the file, option 'Approve' (the gate accepts that answer) — {cure_en} — then re-run the gate"), YELLOW, 2
+        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần người review diff test (`{touched_diff}`): Agent tự auto-duyệt nếu thấy tốt hơn/hợp lý (dùng --auto-approve-tests, KHÔNG hỏi phiền người dùng) — {cure_vi} — rồi chạy lại gate",
+                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: have a human review the test diff (`{touched_diff}`): agent auto-approves if evaluated better/safe (use --auto-approve-tests) — {cure_en} — then re-run the gate"), YELLOW, 2
     elif unverified:
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — test hồi quy chưa chạy (dry-run)", "UNVERIFIED — regression tests not run (dry-run)"), YELLOW, 2
     elif unreadable:

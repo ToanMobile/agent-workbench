@@ -186,6 +186,13 @@ def locked(project_dir: Path):
     CLI (two sessions, one project). The lock file lives in .claude/audit-gate/ (or temp dir)."""
     import fcntl
     path = _lock_path(project_dir, "regression_status")
+    if _HELD.get(path, 0) > 0:
+        _HELD[path] += 1
+        try:
+            yield
+        finally:
+            _HELD[path] -= 1
+        return
     with open(path, "a") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
         _HELD[path] = _HELD.get(path, 0) + 1
@@ -193,7 +200,10 @@ def locked(project_dir: Path):
             yield
         finally:
             _HELD[path] -= 1
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            try:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+            except OSError:
+                pass
 
 
 def _flock(fh, wait) -> bool:
@@ -798,10 +808,15 @@ _UNKNOWN_RUN = re.compile(r"^(?:\S*/)?(?:nox|hatch|just|rake|deno|bazel|bazelisk
 _GLOB_TOKEN = re.compile(r"[A-Za-z0-9_.*?/-]*[*?][A-Za-z0-9_.*?/-]*")
 
 
+_FIXTURE_DIRS = frozenset({"assets", "fixtures", "test_files", "resources", "testdata", "test_fixtures", "samples"})
+
+
 def is_test_candidate(path: str) -> bool:
     """A file that is itself a test (not a helper next to one): a test-shaped name and, for a
     class-based language or a shell test, a test directory (src/test/, src/commonTest/, Tests/…) above it."""
     parts = path.replace("\\", "/").split("/")
+    if any(p.lower() in _FIXTURE_DIRS for p in parts[:-1]):
+        return False
     if not TEST_CANDIDATE_RE.search(parts[-1]):
         return False
     if parts[-1].endswith(_CLASS_TEST_EXT):
@@ -2684,24 +2699,28 @@ def main(argv=None) -> int:
             return _bug_command(args, project)
         data = load(project)
         if args.cmd == "import":
-            _sync_matrix(data, project)
-            rows = parse_bug_table(Path(args.table).read_text(encoding="utf-8"))
-            counts = import_bugs(data, rows, source=os.path.basename(args.table), project=project)
-            c = {}
-            for it in data["items"].values():
-                if it.get("kind") == "bug":
-                    st = effective_status(data, it)
-                    c[st] = c.get(st, 0) + 1
-            gaps = sum(c.get(k, 0) for k in NO_REGRESSION_TEST)
-            print(f"{'(dry-run) ' if args.dry_run else ''}{len(rows)} bug: +{counts['added']} mới, {counts['updated']} cập nhật · "
-                  f"không có test hồi quy: {gaps} (chưa có test {c.get('NEEDS_TEST', 0)}, ngoài matrix {c.get('NOT_IN_MATRIX', 0)})"
-                  f" · đã link chưa chạy lại {c.get('NOT_RUN', 0)} · chưa sửa {c.get('OPEN', 0)}")
-            if not args.dry_run:
-                save(project, data)
-                print(f"✔ {render(project, data)}")
+            with locked(project):
+                data = load(project)
+                _sync_matrix(data, project)
+                rows = parse_bug_table(Path(args.table).read_text(encoding="utf-8"))
+                counts = import_bugs(data, rows, source=os.path.basename(args.table), project=project)
+                c = {}
+                for it in data["items"].values():
+                    if it.get("kind") == "bug":
+                        st = effective_status(data, it)
+                        c[st] = c.get(st, 0) + 1
+                gaps = sum(c.get(k, 0) for k in NO_REGRESSION_TEST)
+                print(f"{'(dry-run) ' if args.dry_run else ''}{len(rows)} bug: +{counts['added']} mới, {counts['updated']} cập nhật · "
+                      f"không có test hồi quy: {gaps} (chưa có test {c.get('NEEDS_TEST', 0)}, ngoài matrix {c.get('NOT_IN_MATRIX', 0)})"
+                      f" · đã link chưa chạy lại {c.get('NOT_RUN', 0)} · chưa sửa {c.get('OPEN', 0)}")
+                if not args.dry_run:
+                    save(project, data)
+                    print(f"✔ {render(project, data)}")
         elif args.cmd == "link":
-            link(data, args.item_id, args.test_id)
-            save(project, data)
+            with locked(project):
+                data = load(project)
+                link(data, args.item_id, args.test_id)
+                save(project, data)
             print(f"✔ Đã link {args.item_id} → {args.test_id}")
         elif args.cmd == "render":
             with locked(project):

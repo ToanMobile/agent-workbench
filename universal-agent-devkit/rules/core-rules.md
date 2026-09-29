@@ -22,10 +22,12 @@ Thứ tự: Làm & Chạy test cục bộ → Self Review (Diff + DEMO/LIVE) →
      2. **Đã chặn đứng bug cũ nào (Zero Reopened Bugs):** Danh sách các rào chắn bất biến lịch sử (`immutable_guards`) và test hồi quy được chạy lại đạt `[x] PASS`.
      3. **Nguy cơ bug mới nào đã triệt tiêu (Zero Collateral Damage):** Kết quả rà soát điểm gọi ngược (inbound callers) và module liên đới, xác nhận không có tác dụng phụ.
      4. **Trạng thái an toàn mã nguồn:** Kết quả quét bí mật/token (SẠCH), chống code lười biếng (0 placeholder), và phân tích tĩnh Alibaba OCR (0 leak).
-   - Kèm **Biên Bản Phản Biện Song Phương Claude ↔ Antigravity (Cross-Review Accord):**
-     - **Điểm số đánh giá chất lượng (Thang 100):** Claude Score: X/100 · Antigravity Score: Y/100 · Điểm đồng thuận: Z/100 (ngưỡng nghiệm thu $\ge 95/100$, không có tiêu chuẩn nào $< 90$).
-     - **Antigravity phản biện gì & chọn/làm gì:** Tóm tắt điểm Antigravity chất vấn (về blast radius, graph, tài nguyên, 7 tiêu chuẩn vàng) và quyết định/hành động đã chọn.
-     - **Claude phản biện gì & chọn/làm gì:** Tóm tắt điểm Claude Opus chất vấn (về semantic edge-cases, logic, paired test RED→GREEN) và quyết định/hành động đã chọn.
+   - Kèm **Biên Bản Phản Biện Song Phương Claude ↔ Antigravity (CHỈ BẮT BUỘC VỚI TASK LỚN):**
+     - Với task lớn (≥2 modules, ≥3 files, >200 LOC net diff hoặc luồng rủi ro cao):
+       - **Điểm số đánh giá chất lượng (Thang 100):** Claude Score: X/100 · Antigravity Score: Y/100 · Điểm đồng thuận: Z/100 (ngưỡng nghiệm thu $\ge 95/100$, không có tiêu chuẩn nào $< 90$).
+       - **Antigravity phản biện gì & chọn/làm gì:** Tóm tắt điểm Antigravity chất vấn (về blast radius, graph, tài nguyên, 7 tiêu chuẩn vàng) và quyết định/hành động đã chọn.
+       - **Claude phản biện gì & chọn/làm gì:** Tóm tắt điểm Claude Opus chất vấn (về semantic edge-cases, logic, paired test RED→GREEN) và quyết định/hành động đã chọn.
+     - Với task đơn giản / trung bình: agent được gọi tự thực thi và nghiệm thu trực tiếp theo 4 mục kỹ thuật cốt lõi trên, không cần biên bản 2 agent.
    - **Ảnh nghiệm thu tinh gọn:** Đúng 1 dòng ảnh hiển thị trực tiếp (không lặp path): `![Ảnh nghiệm thu](reports/proof-<stamp>.png)` — tuyệt đối không vẽ heading dài dòng hay lặp link rườm rà.
    - Báo cáo thiếu bằng chứng hoặc thiếu các mục trên bị coi là CHƯA ĐỦ ĐIỀU KIỆN nghiệm thu.
 4. **Commit & Bàn giao:**
@@ -169,8 +171,10 @@ Mọi tác vụ thực thi BẮT BUỘC phải tuân thủ 5 nguyên tắc vàng
    - Cấm Agent đọc các thư mục tự sinh và tệp nhị phân (`build/`, `.gradle/`, `node_modules/`, `dist/`, `*.apk`, `*.hprof`).
 5. **Chống Phình Ngữ Cảnh:** quy tắc gốc ở §7 (ngưỡng >50% → checkpoint + `/compact`/handoff trước refactor nhiều file).
 
-## 18. Cơ Chế Cộng Tác Claude ↔ Antigravity & Kiểm Định Độc Lập (7 Tiêu Chuẩn Vàng Bắt Buộc)
-Khi Claude bắt đầu một task mới (hoặc thay đổi kiến trúc/logic lớn), trước khi viết dòng code đầu tiên, BẮT BUỘC phải gọi qua Antigravity (qua MCP `antigravity-pm` `plan_review` / `pm_plan` hoặc bàn luận trực tiếp) để phản biện, chốt phương án tối ưu nhất. Sau khi code và test xong, BẮT BUỘC dispatch Antigravity audit (`pm_dispatch kind=audit` / review như quy trình `/giao`) kiểm định độc lập toàn bộ diff trước khi nghiệm thu XONG.
+## 18. Cơ Chế Cộng Tác Claude ↔ Antigravity (CHỈ DÀNH CHO TASK LỚN & RỦI RO CAO)
+Cơ chế phản biện song phương Claude ↔ Antigravity (qua MCP `antigravity-pm` `plan_review` / `pm_plan` trước khi code và `audit` sau khi xong) CHỈ ÁP DỤNG CHO TASK LỚN: chạm ≥2 modules, ≥3 files, >200 LOC net diff, hoặc luồng rủi ro cao (auth, payment, database migration, production crashlytics triage, thay đổi kiến trúc cốt lõi).
+
+Đối với TASK ĐƠN GIẢN / TRUNG BÌNH (bug fix cục bộ, tinh chỉnh UI, cập nhật test, sửa script, logic 1-2 file): gọi agent nào (Claude hoặc Antigravity) thì agent đó TỰ LÀM LUÔN TỪ A-Z cho nhanh, tự kiểm chứng (paired test RED→GREEN, gate exit 0), KHÔNG CẦN gọi agent thứ 2 review để tối ưu tốc độ và tiết kiệm token.
 
 Mọi phương án kỹ thuật và kết quả nghiệm thu BẮT BUỘC đối chiếu theo 7 tiêu chuẩn vàng:
 1. **Chính xác phẫu thuật (Surgical & Zero Blast Radius):** Can thiệp trúng đích với diff tối thiểu, cô lập rủi ro tuyệt đối và không làm xước bất kỳ mô xung quanh nào.

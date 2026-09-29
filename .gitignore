@@ -46,3 +46,4 @@ tmp/
 .agents/local/memory/
 .gemini/settings.json
 .claude/agent-memory/
+.antigravity-pm/

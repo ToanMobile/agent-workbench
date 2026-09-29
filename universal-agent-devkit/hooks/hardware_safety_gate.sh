@@ -534,7 +534,19 @@ def target_serial(exe, opts, env_serial, lits=None):
     env_serial = expand_literals(env_serial, lits)
     if "-s" in opts:
         s = os.path.expandvars(expand_literals(opts[opts.index("-s") + 1], lits))
-        return (None, "serial " + s + " không xác định được") if "$" in s else (s, None)
+        if "$" in s:
+            return (None, "serial " + s + " không xác định được")
+        if any(s.startswith(pfx) for pfx in ("model:", "usb:", "product:", "device:")):
+            adb = exe if "/" in exe and os.access(exe, os.X_OK) else (shutil.which("adb") or sdk_adb())
+            if adb:
+                try:
+                    r = subprocess.run([adb] + opts + ["get-serialno"], capture_output=True, text=True, timeout=8)
+                    resolved = r.stdout.strip()
+                    if r.returncode == 0 and resolved and resolved != "unknown":
+                        return (resolved, None)
+                except Exception:
+                    pass
+        return (s, None)
     if "$" in env_serial:
         return None, "ANDROID_SERIAL=" + env_serial + " không xác định được"
     adb = exe if "/" in exe and os.access(exe, os.X_OK) else (shutil.which("adb") or sdk_adb())

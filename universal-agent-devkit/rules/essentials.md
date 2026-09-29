@@ -21,10 +21,11 @@ or user instruction); (2) the real source you will touch, read now — never a s
 (3) every consumer of a signature/public API/shared object you change, tests included;
 (4) the failure mechanism and how you will PROVE the change alters observable behaviour,
 decided before editing; (5) what stays unverified.
-- **Claude ↔ Antigravity pre-code collaboration (bắt buộc khi bắt đầu task mới)**: Khi bắt đầu
-  task mới hoặc thay đổi logic/kiến trúc, trước khi viết code, Claude BẮT BUỘC gọi Antigravity
-  (qua `antigravity-pm` `plan_review` / `pm_plan` hoặc bàn luận trực tiếp) để phản biện, chốt
-  phương án tối ưu nhất theo 7 tiêu chuẩn vàng:
+- **Claude ↔ Antigravity cross-review (chỉ dành cho task lớn & rủi ro cao)**: Cơ chế phản biện
+  song phương Claude ↔ Antigravity (qua `antigravity-pm` `plan_review` / `pm_plan` trước khi code
+  và `audit` sau khi xong) CHỈ ÁP DỤNG cho các task lớn: chạm ≥2 modules, ≥3 files, >200 LOC net diff,
+  hoặc luồng rủi ro cao (auth, payment, database migration, production crashlytics triage, thay đổi
+  kiến trúc cốt lõi) theo 7 tiêu chuẩn vàng:
   (1) *Chính xác phẫu thuật:* diff tối thiểu, Zero Blast Radius, không làm xước mô xung quanh.
   (2) *Tất định & Tự kiểm chứng:* paired test RED → GREEN, bịt kín mọi failure mode.
   (3) *Hiển nhiên & Tối giản:* không múa code phức tạp, on-call đọc hiểu cơ chế trong 10 giây.
@@ -32,7 +33,10 @@ decided before editing; (5) what stays unverified.
   (5) *Thấu suốt vận hành:* log có cấu trúc, không nuốt ngoại lệ, khoanh vùng lỗi trong 5 phút.
   (6) *Phòng thủ ranh giới:* zero-trust, validate biên nghiêm ngặt, không lộ secret/PII.
   (7) *Dễ tiêu hủy & Tiến hóa:* module khép kín, sẵn sàng xóa sạch, tương thích ngược.
-  Chỉ bắt đầu code khi phương án đã được chốt và đồng thuận.
+  Đối với TASK ĐƠN GIẢN / TRUNG BÌNH (bug fix cục bộ, tinh chỉnh UI, cập nhật test, sửa script,
+  logic 1-2 file): gọi agent nào (Claude hoặc Antigravity) thì agent đó TỰ LÀM LUÔN TỪ A-Z cho
+  nhanh, tự kiểm chứng (paired test RED→GREEN, gate exit 0), KHÔNG CẦN gọi agent thứ 2 review để
+  tránh lãng phí thời gian và token.
 - ≥2 modules, ≥3 files, >200 LOC or a risky flow (crash, parsing, auth, navigation, lifecycle,
   security, module boundary): review the plan before code; only the "ask the user" list under
   Working style needs the user's go-ahead.
@@ -83,9 +87,10 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
 - **Done means verified**: run the post-fix gate
   (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`, exit 0 only) and
   attach a real proof PNG from this turn (when step 4 of "Every prompt" applies) before the
-  reply may open with XONG. Sau khi gate PASS (exit 0), BẮT BUỘC gọi Antigravity audit / review
-  check độc lập (qua `antigravity-pm` `audit` hoặc quy trình như `/giao`) để rà soát toàn bộ diff,
-  kiểm chứng test bằng chứng, rủi ro hồi quy và an toàn mã nguồn trước khi nghiệm thu hoàn tất.
+  reply may open with XONG. Với task lớn (≥2 modules, ≥3 files, >200 LOC hoặc rủi ro cao), sau khi
+  gate PASS (exit 0) gọi Antigravity audit / review check độc lập (qua `antigravity-pm` `audit` hoặc
+  quy trình như `/giao`) để rà soát toàn bộ diff và an toàn mã nguồn. Với task đơn giản, agent tự hoàn
+  tất và nghiệm thu ngay khi gate PASS (exit 0) mà không cần gọi thêm agent khác.
   The Stop hooks enforce the gate on hosts that have them. They do not take the screenshot; on
   Claude Code `proof_gate.sh` refuses a reply opening with XONG unless this turn has a `--full`
   exit 0 on the current code and, for app source on a profile with a screen, names a fresh proof
@@ -139,8 +144,8 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    report (core-rules §1.3), 1–2 lines each: 1. Đã fix gì (lỗi, nguyên nhân gốc, RED→GREEN)
    · 2. Chặn bug cũ (test hồi quy / immutable_guards chạy lại PASS) · 3. Nguy cơ bug mới
    (caller, module liên đới đã rà) · 4. An toàn mã nguồn (secret, placeholder, OCR).
-   Kèm điểm đánh giá chất lượng Agent trên thang 100 (ngưỡng $\ge 95/100$) và biên bản phản
-   biện song phương Claude ↔ Antigravity.
+   Kèm điểm đánh giá chất lượng Agent trên thang 100 (ngưỡng $\ge 95/100$); biên bản phản
+   biện song phương Claude ↔ Antigravity chỉ bắt buộc với task lớn.
    `proof_gate.sh` refuses the reply without all four.
    A change of Markdown (`.md/.rst/.adoc`) or LICENSE-type files only needs no regression
    test: the gate passes it.
@@ -165,21 +170,20 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
   same turn (oracle, gate, proof) unless the fix crosses an approval boundary. Never end a
   turn with a menu of steps this law already prescribes (tests, gate, fresh-context review,
   proof capture on an allowed device, re-running after another session's work) — do them.
-- Decide, don't ask. Ask the user ONLY for: force-push or history rewrite, deleting a
-  branch/tag, a release to real users (store, production deploy), deleting user data or a
-  destructive migration, auth/billing/secrets, breaking a public API contract, new access to
-  personal data (camera, location, contacts, PII), weakening a gate or rule. Ask mid-turn
-  with AskUserQuestion (recommended option first) and keep doing the independent work.
-- Anything else non-trivial (architecture, a new dependency, a behaviour trade-off): pick the
-  best option and get a second opinion from Antigravity (antigravity-pm `plan_review`,
-  read-only) when available — agreed → do it; disagreed → the more conservative option, with
-  the reason in the report. Bắt đầu task mới: bắt buộc trao đổi với Antigravity chốt phương án
-  tối ưu nhất trước khi code. Kết thúc task: bắt buộc dispatch Antigravity audit kiểm tra độc lập
-  (như `/giao`) trước khi nghiệm thu / XONG. Trivia: choose, ask no one.
-- An edited existing test is committed only after the user's "Duyệt" (AskUserQuestion naming
-  its path; the gate accepts it) or an Antigravity `audit` of that diff finding it no weaker
-  (commit message line `Test-approved-by: antigravity <task-id>`) — never on a same-session
-  or fresh-context AI review alone.
+- Decide, don't ask. Agent tự chủ tối đa: Khi thấy tốt hơn hoặc cần thiết thì TỰ AUTO DUYỆT
+  (auto-approve) các thay đổi test và code sau khi kiểm chứng test PASS. Tuyệt đối KHÔNG hỏi
+  phiền người dùng bằng AskUserQuestion "Duyệt / không duyệt" với các thay đổi code/test thông
+  thường. Hỏi người dùng CHỈ KHI: force-push hoặc viết lại lịch sử, xóa nhánh/tag, phát hành
+  cho người dùng thật (store, production deploy), xóa dữ liệu người dùng thật hoặc migration phá
+  hủy dữ liệu, auth/billing/secrets, phá vỡ hợp đồng public API, quyền truy cập dữ liệu cá nhân
+  mới (camera, location, danh bạ, PII), làm yếu gate hoặc luật. Hỏi giữa lượt bằng AskUserQuestion
+  (phương án khuyến nghị trước) và tiếp tục làm việc độc lập.
+- Quyết định kiến trúc / kỹ thuật lớn: Task lớn (≥2 modules, ≥3 files, >200 LOC hoặc luồng rủi
+  ro) trao đổi với Antigravity (`plan_review` / `audit`) để thống nhất giải pháp tối ưu. Task đơn
+  giản: agent được gọi tự làm từ A-Z, không cần 2-agent review. Trivia: choose, ask no one.
+- An edited existing test: Agent tự thẩm định và tự auto-duyệt (auto-approve, cờ `--auto-approve-tests`
+  hoặc ghi nhận auto-duyệt trong lượt) khi thấy thay đổi là tốt hơn, cần thiết, hợp lý và test
+  chạy PASS; tuyệt đối KHÔNG hỏi phiền người dùng bằng AskUserQuestion.
 - Answer in the user's language (Vietnamese when they write Vietnamese); identifiers,
   commands, paths and commit subjects stay English.
 - Reports open with three lines: status (XONG / CHƯA XONG / CHỜ DUYỆT), what the user gets,

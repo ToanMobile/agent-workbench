@@ -107,17 +107,22 @@ fi
 # file behind. A live PID, or any Unity whose command line has this project path, is
 # someone else's session: stop. A dead PID (or no PID and no such process) is stale.
 if [ -f "$ROOT/Temp/UnityLockfile" ]; then
-  if pgrep -fi -- "projectpath[= ]*$ROOT" >/dev/null 2>&1; then
-    echo "UNTESTED: an Editor already has $ROOT open (Temp/UnityLockfile + live process). Close it, then re-run." >&2
-    exit 2
+  if ! pgrep -i "Unity" >/dev/null 2>&1; then
+    echo "Stale Temp/UnityLockfile (no Unity Editor process running). Removing it and continuing." >&2
+    rm -f "$ROOT/Temp/UnityLockfile"
+  else
+    if pgrep -fi -- "projectpath[= ]*$ROOT" >/dev/null 2>&1; then
+      echo "UNTESTED: an Editor already has $ROOT open (Temp/UnityLockfile + live process). Close it, then re-run." >&2
+      exit 2
+    fi
+    lock_pid="$(head -n 1 "$ROOT/Temp/UnityLockfile" | tr -cd '0-9' | cut -c1-12)"
+    if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+      echo "UNTESTED: Temp/UnityLockfile belongs to live pid $lock_pid. Close that Editor, then re-run." >&2
+      exit 2
+    fi
+    echo "Stale Temp/UnityLockfile (pid ${lock_pid:-none} is not running). Removing it and continuing." >&2
+    rm -f "$ROOT/Temp/UnityLockfile"
   fi
-  lock_pid="$(head -n 1 "$ROOT/Temp/UnityLockfile" | tr -cd '0-9' | cut -c1-12)"
-  if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
-    echo "UNTESTED: Temp/UnityLockfile belongs to live pid $lock_pid. Close that Editor, then re-run." >&2
-    exit 2
-  fi
-  echo "Stale Temp/UnityLockfile (pid ${lock_pid:-none} is not running). Removing it and continuing." >&2
-  rm -f "$ROOT/Temp/UnityLockfile"
 fi
 
 OUT="${UNITY_BATCH_OUT:-$ROOT/Logs/agent-kit}"
