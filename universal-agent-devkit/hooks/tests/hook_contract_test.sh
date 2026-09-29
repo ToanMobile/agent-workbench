@@ -1197,6 +1197,17 @@ run_case "inline-code outcome assertion still needs proof" test_evidence_gate.sh
   "{\"session_id\":\"h5-code-assertion\",\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"Trạng thái: \`fixed\`.\"}"
 run_case "metalinguistic quoted outcome is not a claim" test_evidence_gate.sh 0 \
   "{\"session_id\":\"h5-meta-quote\",\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"Cụm từ \\\"đã fix\\\" là outcome claim cần proof.\"}"
+# 2026-09-29: "Đã fix gì" is the heading proof_gate.sh requires in every acceptance report
+# (interrogative: "what was fixed") — not a claim; a claim written after it still is.
+run_case "acceptance heading 'Đã fix gì' is not an outcome claim" test_evidence_gate.sh 0 \
+  "{\"session_id\":\"h5-heading\",\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"1. Đã fix gì: lượt này chỉ đổi cấu hình, không có bug nào.\\n2. Chặn bug cũ: không áp dụng.\"}"
+run_case "guard: claim after the heading still needs proof" test_evidence_gate.sh 2 \
+  "{\"session_id\":\"h5-heading-claim\",\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"1. Đã fix gì: đã fix bug X trong reader.\"}"
+# The heading forms proof_gate.sh REPORT_ITEMS accepts (review 2026-09-29): the English one too.
+run_case "acceptance heading 'What was fixed' is not an outcome claim" test_evidence_gate.sh 0 \
+  "{\"session_id\":\"h5-heading-en\",\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"1. What was fixed: config only, no bug.\\n2. Old bugs blocked: n/a.\"}"
+run_case "guard: claim after the English heading still needs proof" test_evidence_gate.sh 2 \
+  "{\"session_id\":\"h5-heading-en-claim\",\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"1. What was fixed: fixed bug X in the reader.\"}"
 run_case "acceptance text is not an outcome result" test_evidence_gate.sh 0 \
   "{\"session_id\":\"h5-acceptance\",\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"Acceptance: bug A is fixed.\"}"
 run_case "acceptance prefix cannot hide independent outcome" test_evidence_gate.sh 2 \
@@ -1730,6 +1741,15 @@ te_ledger "${TE_P}" te-f7 -7200 -3600
 te_case "guard: foreign XML only read, no window of mine"       2 te-f7 "${MSG_F}" "${SANDBOX}/te_f_cat.jsonl"
 te_ledger "${TE_P}" te-other -600 600
 te_case "guard: foreign XML another session's window produced"  2 te-f8 "${MSG_F}" "${SANDBOX}/te_f_cat.jsonl"
+# 2026-09-29: the foreign project's OWN ledger is read too. A long Bash window of this session
+# (a 10-min gate) used to "own" XML another session wrote in that project meanwhile.
+te_ledger "${TE_P}" te-f10 -600 600
+te_ledger "${TE_F}" te-foreign-other -60 60
+te_case "guard: foreign XML inside a narrower window of that project's session" 2 te-f10 "${MSG_F}" "${SANDBOX}/te_f_cat.jsonl"
+te_ledger "${TE_P}" te-f11 -600 600
+te_ledger "${TE_F}" te-foreign-other -7200 -3600
+te_case "foreign ledger with no window around the XML: still mine" 0 te-f11 "${MSG_F}" "${SANDBOX}/te_f_cat.jsonl"
+rm -f "${TE_F}/.claude/audit-gate/bash_write_ledger.tsv"
 rm -f "${TE_P}/.claude/audit-gate/bash_write_ledger.tsv"
 te_case "guard: foreign XML only read, no ledger at all"        2 te-f9 "${MSG_F}" "${SANDBOX}/te_f_cat.jsonl"
 te_case "guard: foreign XML no Bash of this session named"      2 te-f4 "${MSG_F}" "${SANDBOX}/te_f_none.jsonl"

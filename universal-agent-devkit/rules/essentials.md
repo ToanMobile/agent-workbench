@@ -84,6 +84,9 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   command (`git pull --ff-only`, or `--no-rebase` when both moved; check its exit code),
   then `git push origin <branch>` — never `<sha>:<branch>` that the local branch does not
   hold. The git guard blocks the rest; session start names drift and leftovers (AGENTS.md §7.1).
+- **One checkout, one session**: an agent with no hooks (Antigravity) runs `python3 .agents/devkit/bin/session_lock.py --status`
+  before editing; exit 3 = another live session holds it → do not edit (wait, or ask for a worktree) unless
+  that session dispatched this task to you (antigravity-pm, `/giao`: it is your PM and reviews your diff).
 - **Done means verified**: run the post-fix gate
   (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`, exit 0 only) and
   attach a real proof PNG from this turn (when step 4 of "Every prompt" applies) before the

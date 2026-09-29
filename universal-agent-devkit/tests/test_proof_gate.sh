@@ -377,5 +377,34 @@ reset; turn_start
 PROOF_GATE=0 stop "XONG"; [ $? = 0 ] && grep -q "PROOF_GATE=0" "$REPO/.claude/audit-gate/proof_gate.log" \
   && ok "PROOF_GATE=0 skips, logged" || fail "escape hatch"
 
+# 2026-09-29: a gate run in the background finished, and its <task-notification> (a "user" entry the
+# harness writes, origin.kind task-notification) was taken for the user's next prompt — the exit-0
+# receipt became "from before this turn" and the full gate had to run again on unchanged code.
+# Only a human prompt starts a turn; the receipt must still match the current code.
+append_user() { # <origin kind> <content>
+  python3 -c 'import datetime,json,sys
+t=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+print(json.dumps({"type":"user","timestamp":t,"origin":{"kind":sys.argv[1]},"message":{"role":"user","content":sys.argv[2]}}))' "$1" "$2" >> "$TR"; }
+reset; turn_start; echo "fun ok() = 41" > "$REPO/src/Core.kt"; gate_full; g=$?; sleep 1
+append_user task-notification "<task-notification>
+<task-id>b1</task-id>
+<status>completed</status>
+</task-notification>"
+P="reports/proof-$(date +%Y%m%d-%H%M%S).png"; png "$REPO/$P" 20000
+stop "XONG
+Đã sửa lỗi X.
+Gate exit 0 · ảnh $P"; rc=$?
+[ "$g" = 0 ] && [ "$rc" = 0 ] && ok "a task-notification after the gate does not start a new turn: receipt of this turn accepted" \
+  || fail "background-gate receipt refused after its task-notification (gate=$g rc=$rc err=$(head -3 "$TMP/err" | tr '\n' ' '))"
+reset; turn_start; echo "fun ok() = 42" > "$REPO/src/Core.kt"; gate_full; g=$?; sleep 1
+append_user human "push luôn đi"
+P="reports/proof-$(date +%Y%m%d-%H%M%S).png"; png "$REPO/$P" 20000
+stop "XONG
+Đã sửa lỗi X.
+Gate exit 0 · ảnh $P"; rc=$?
+[ "$g" = 0 ] && [ "$rc" = 2 ] && grep -q "trước lượt này" "$TMP/err" \
+  && ok "control: a real user prompt after the gate still needs a gate of the new turn" \
+  || fail "control: receipt from before the user's new prompt accepted (gate=$g rc=$rc)"
+
 if [ "$FAILS" -ne 0 ]; then echo "proof gate: $FAILS FAILED"; exit 1; fi
 echo "proof gate: all checks passed"

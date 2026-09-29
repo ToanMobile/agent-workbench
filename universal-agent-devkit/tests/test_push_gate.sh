@@ -34,4 +34,42 @@ git reset -q --hard HEAD~2; git checkout -q -- . 2>/dev/null
 rm -f .agents/regression_matrix.active.json; git commit -qam "no matrix"
 expect "a repo without a regression matrix is not checked" 0
 
+# 2026-09-29 (Goods-Triple-Shelf-Match-3D): a commit of .claude/settings.json only could not be
+# pushed — no receipt, and the full gate REJECTed unrelated WIP in the working tree. Pushed files
+# that post-fix-gate's needs_no_test() classifies as needing no test AND no matrix rule watches
+# need no receipt. Code, or a watched file, still needs one.
+cd "$TMP" && rm -rf "$TMP/repo" "$TMP/origin.git" && mkdir -p "$TMP/repo/src" "$TMP/repo/.agents" "$TMP/repo/.claude" && cd "$TMP/repo" || exit 1
+git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt; echo '{}' > .claude/settings.json
+cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],
+ "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"true"}]}]}
+JSON
+git add -A && git commit -qm init
+git init -q --bare "$TMP/origin.git" && git remote add origin "$TMP/origin.git" && git push -q -u origin HEAD 2>/dev/null
+echo '{"hooks":{}}' > .claude/settings.json; echo "# notes" > NOTES.md; git add -A; git commit -qm "agent config + doc"
+echo "fun ok() = 9" > src/Core.kt   # unrelated failing WIP left in the tree, not pushed
+expect "only agent config + a doc pushed, no receipt: allowed" 0
+git commit -qam "code"
+expect "a code file in the pushed range, no receipt: blocked" 2
+git reset -q --hard HEAD~1
+# A rename is a delete of the old path: `git diff --name-only` with rename detection named only the
+# new one (review 2026-09-29), so moving watched code to docs/ looked like "a doc" and passed.
+mkdir -p docs && git mv src/Core.kt docs/Core.md && git commit -qm "move code to docs"
+expect "a watched code file renamed to a doc, no receipt: blocked" 2
+git reset -q --hard HEAD~1
+CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --run-tests --full --brief >/dev/null 2>&1
+mkdir -p docs && git mv src/Core.kt docs/Core.md && git commit -qm "move code to docs after the gate"
+expect "a watched code file renamed to a doc after the gate PASS: blocked" 2
+git reset -q --hard HEAD~1
+cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],
+ "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"true"}]},
+ {"component":"Cfg","watch_files":[".claude/settings.json"],
+ "mandatory_regression_tests":[{"id":"REG-CFG","name":"config","command":"true"}]}]}
+JSON
+git commit -qam "a rule now watches the agent config" && git push -q origin HEAD 2>/dev/null
+echo '{"hooks":{"Stop":[]}}' > .claude/settings.json; git commit -qm "config" -- .claude/settings.json
+expect "the pushed config is watched by a matrix rule, no receipt: blocked" 2
+
 [ "$FAILS" -eq 0 ] && echo "push gate: all checks passed" || { echo "push gate: $FAILS FAILED"; exit 1; }

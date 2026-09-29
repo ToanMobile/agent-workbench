@@ -402,6 +402,10 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
 
 
 APPROVE_LABEL = re.compile(r"^\s*(?:duyệt|đồng ý|chấp nhận|approve[ds]?|accept(?:ed)?)\b", re.I)
+# Who approved each file split_user_approved returned: "user" (an AskUserQuestion / Antigravity
+# answer) or "agent" (--auto-approve-tests, DEVKIT_AUTO_APPROVE_TESTS, approved_tests.json, an
+# auto-approval line). 2026-09-29: the agent's own approval was printed as the user's.
+APPROVED_BY = {}
 AGENT_APPROVE_RE = re.compile(r"(?:auto[-_ ]?duyệt|auto[-_ ]?approve[ds]?|tự[-_ ]?duyệt|test[-_ ]?approved|duyệt\s+test)", re.I)
 
 
@@ -417,6 +421,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
     if not paths:
         return paths, []
     if auto_approve or os.environ.get("DEVKIT_AUTO_APPROVE_TESTS") == "1":
+        APPROVED_BY.update(dict.fromkeys(paths, "agent"))
         return [], list(paths)
     root = Path(os.path.realpath(get_project_dir()))
     mtimes = {}
@@ -429,6 +434,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
         return paths, []
     appr_file = root / ".claude" / "audit-gate" / "approved_tests.json"
     approved_at = {}                              # path -> latest approving answer (epoch s)
+    user_at = {}                                  # path -> latest approving answer of the user
     if appr_file.is_file():
         try:
             with open(appr_file, encoding="utf-8") as afh:
@@ -487,6 +493,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
                         for f in mtimes:
                             if f in text or (len(Path(f).name) >= 6 and Path(f).name in text):
                                 approved_at[f] = max(approved_at.get(f, 0), t)
+                                user_at[f] = max(user_at.get(f, 0), t)
                 elif re.search(r"A\d+:\s*(?:\(Recommended\)\s*)?", line):
                     try:
                         rec = json.loads(line)
@@ -502,6 +509,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
                             for f in mtimes:
                                 if f in cnt or (len(Path(f).name) >= 6 and Path(f).name in cnt):
                                     approved_at[f] = max(approved_at.get(f, 0), t)
+                                    user_at[f] = max(user_at.get(f, 0), t)
                 elif AGENT_APPROVE_RE.search(line):
                     try:
                         rec = json.loads(line)
@@ -514,6 +522,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
                         if f in cnt or (len(Path(f).name) >= 6 and Path(f).name in cnt):
                             approved_at[f] = max(approved_at.get(f, 0), t)
     ok = [f for f in paths if f in mtimes and approved_at.get(f, 0) >= mtimes[f]]
+    APPROVED_BY.update({f: "user" if user_at.get(f, 0) >= mtimes[f] else "agent" for f in ok})
     return [f for f in paths if f not in ok], ok
 
 
@@ -1638,7 +1647,10 @@ DOC_NAMES = {"LICENSE", "NOTICE", "AUTHORS", "CODEOWNERS"}
 # What the agent's own tooling writes: proof screenshots, the Antigravity PM config, the device
 # denylist, agent memory. No program reads them, so they need no regression test either
 # (OfficeReader 2026-09-27: a roadmap edit next to them stayed UNVERIFIED for 12 Stops).
-AGENT_STATE_FILES = {".antigravity-pm.json", ".adb-denylist"}
+# The agents' own harness config (.claude/settings*.json) is read by no project program either
+# (2026-09-29, Goods: a settings-only commit needed a full Unity gate to be pushed). A project that
+# does test it (a matrix rule watching the file) keeps that test: coverage comes from the matrix.
+AGENT_STATE_FILES = {".antigravity-pm.json", ".adb-denylist", ".claude/settings.json", ".claude/settings.local.json"}
 
 
 def needs_no_test(rel_file: str) -> bool:
@@ -3159,6 +3171,24 @@ def main():
         log_err(tr("--staged chỉ kiểm tĩnh nội dung đã stage — không dùng chung với --diff / --run-tests / --record-lesson",
                    "--staged only statically checks the staged content — it cannot be combined with --diff / --run-tests / --full / --record-lesson"))
         return 2
+    # 2026-09-29: after a commit, --full on the clean tree said "nothing to audit" (exit 3), so the
+    # commits about to be pushed got no receipt unless the agent found `--diff <sha>` by hand. A clean
+    # tree AHEAD of its upstream audits upstream..HEAD — exactly what a push sends. No upstream, or
+    # level with it: unchanged (exit 3).
+    if (args.run_tests or args.full) and not (args.diff or args.since or args.staged or args.commit_msg):
+        try:
+            clean = not [f for f in get_modified_files() if not is_devkit_artifact(f)]
+        except RuntimeError:
+            clean = False
+        if clean:
+            proj = str(get_project_dir())
+            up = subprocess.run(["git", "-C", proj, "rev-parse", "--verify", "-q", "@{u}"],
+                                capture_output=True, text=True).stdout.strip()
+            ahead = subprocess.run(["git", "-C", proj, "rev-list", "--count", f"{up}..HEAD"],
+                                   capture_output=True, text=True).stdout.strip() if up else ""
+            if up and ahead.isdigit() and int(ahead) > 0:
+                args.diff = up
+                print(f"    {CYAN}▶ {tr(f'Working tree sạch, HEAD đi trước upstream {ahead} commit: kiểm {up[:12]}..HEAD (nội dung sẽ push)', f'Clean working tree, HEAD {ahead} commit(s) ahead of upstream: auditing {up[:12]}..HEAD (what a push sends)')}{RESET}")
     base_ref = args.diff if args.diff and ".." not in args.diff else "HEAD"
     if args.diff and ".." in args.diff:   # A..B / A...B: the change is B against A (merge base for ...)
         left, right = args.diff.split("...", 1) if "..." in args.diff else args.diff.split("..", 1)
@@ -3400,17 +3430,27 @@ def main():
         print(f"    {CYAN}▶ {tr(f'dùng lại PASS đầy đủ lúc {at}: cùng nội dung, cùng cách đọc kết quả, cùng ma trận (--no-cache để chạy lại)', f'reusing the full PASS of {at}: same content, result format and matrix (--no-cache to re-run)')}{RESET}")
         return found
 
+    def receipt_stamp():
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        try:
+            import tree_fp  # noqa: PLC0415 - sibling module in bin/
+            st = os.stat(tree_fp.receipt_path(project_dir))
+            return (st.st_mtime_ns, st.st_size)
+        except (ImportError, OSError, TypeError):
+            return None
+
+    stamp_before = receipt_stamp() if use_cache else None
     if use_cache:
         cache = reuse_full_pass()
     to_run = [t for t in regression_tests if t.get("mode") != "cached"]
-    lock_wait_start = time.monotonic()
     lock_fh, lock_held = (acquire_test_run_lock(project_dir)
                           if run_tests and any(t.get("command") for t in to_run) else (None, True))
-    # Waited for another run's lock (a second session, or a gate still running in the background):
-    # that run may have just recorded a full PASS of this same content — re-use it instead of
-    # running every suite again (audit 2026-09-29). A free lock is taken at once (LOCK_NB); a
-    # contended one costs at least one 0.5 s poll, so 0.25 s separates "waited" from "free".
-    if use_cache and cache is None and lock_held and time.monotonic() - lock_wait_start > 0.25:
+    # Another run (a second session, or a gate still running in the background) may have recorded a
+    # full PASS of this same content since the check above — while we waited for its lock, or just
+    # before we reached the lock: re-use it instead of running every suite again (audit 2026-09-29).
+    # Keyed on the receipt file changing, not on how long the lock took: under load the other run
+    # can finish before this one reaches the lock (a timing threshold missed that; review 2026-09-29).
+    if use_cache and cache is None and lock_held and receipt_stamp() not in (None, stamp_before):
         cache = reuse_full_pass()
         to_run = [t for t in regression_tests if t.get("mode") != "cached"]
     # One run per distinct command (O2, 2026-09-28): two rules naming one command share its result,
@@ -3761,7 +3801,10 @@ def main():
     for f in tests_touched[:5]:
         print(f"  • {YELLOW}{tr('Test đã có bị sửa/xoá:', 'Existing test edited/deleted:')}{RESET} {f}")
     for f in tests_approved[:5]:
-        print(f"  • {GREEN}{tr('Test đã có bị sửa — người dùng đã duyệt (AskUserQuestion), file không đổi sau đó:', 'Existing test edited — approved by the user (AskUserQuestion), unchanged since:')}{RESET} {f}")
+        if APPROVED_BY.get(f) == "user":
+            print(f"  • {GREEN}{tr('Test đã có bị sửa — người dùng đã duyệt (AskUserQuestion), file không đổi sau đó:', 'Existing test edited — approved by the user (AskUserQuestion), unchanged since:')}{RESET} {f}")
+        else:
+            print(f"  • {YELLOW}{tr('Test đã có bị sửa — agent tự duyệt (--auto-approve-tests / auto-duyệt), KHÔNG phải người dùng; file không đổi sau đó:', 'Existing test edited — the agent auto-approved it (--auto-approve-tests / auto-approval), NOT the user; unchanged since:')}{RESET} {f}")
     for f in tests_touched_other[:5]:
         print(f"  • {YELLOW}{tr('Test đã có bị phiên khác / người khác sửa (không chặn phiên này, cần người review trước khi commit):', 'Existing test edited by another session or a person (not blocking this session; needs a human review before commit):')}{RESET} {f}")
     print(f"  • {tr('Gate không xác minh: DESIGN.md/a11y, RED/GREEN, Immutable Guards, OpenCodeReview. Ảnh nghiệm thu không nằm trong exit code; agent vẫn phải gắn PNG của lượt này trước khi nói XONG, trừ khi thay đổi chắc chắn không lên màn hình (essentials bước 4).', 'The gate does not verify: DESIGN.md/a11y, RED/GREEN, immutable guards, OpenCodeReview. The proof image is outside the exit code; the agent still attaches a PNG from this turn before saying XONG unless the change surely cannot show on a screen (essentials step 4).')}")

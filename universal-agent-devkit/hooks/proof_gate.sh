@@ -117,6 +117,9 @@ def turn_start(tp):
                     continue
                 if e.get("type") != "user" or e.get("isMeta"):
                     continue
+                # same rule as devkit_harness.is_user_prompt (used when it loads, below)
+                if isinstance(e.get("origin"), dict) and e["origin"].get("kind") in ("task-notification", "peer", "auto-continuation"):
+                    continue
                 c = (e.get("message") or {}).get("content")
                 human = isinstance(c, str) or (isinstance(c, list) and any(
                     isinstance(x, dict) and x.get("type") == "text" for x in c))
@@ -131,7 +134,8 @@ def turn_start(tp):
     except ValueError:
         return None
 
-start = turn_start(d.get("transcript_path") or "")
+# One definition of "the user's last prompt" for every hook (INSTINCT-015): devkit_harness when it loads.
+start = (harness.turn_start if harness else turn_start)(d.get("transcript_path") or "")
 
 # A push that did not go through is no handover: its result is an error (a denied permission),
 # shows git refusing it, or says the command went to the background (GeelyEx2 2026-09-26, and a

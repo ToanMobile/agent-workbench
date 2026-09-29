@@ -12,6 +12,10 @@ git writes, post-fix-gate, and shell redirects into the checkout. Reads, builds 
 blocks: it takes the lock or prints who holds it. SessionEnd releases the holder's lock. Sub-agents share their
 parent's session_id, so they count as the same session.
 
+Agents with no hook API (Antigravity) cannot be blocked, so they ask (2026-09-29, rules/essentials.md):
+`python3 .agents/devkit/bin/session_lock.py --status [--session ID] [dir]` — read-only; exit 3 while another live
+session holds the checkout (do not edit it), 0 when free, stale, its own, or not a git checkout.
+
 Escape hatch: DEVKIT_ALLOW_SHARED_CHECKOUT=1 (logged to <git dir>/devkit-session.log).
 ponytail: Bash writes are recognised by pattern (git writes, post-fix-gate, `>`/`>>` into the checkout) — cp/mv/rm/
 sed -i by a second session still pass; upgrade to hooks/worktree_guard.sh's write classifier if that happens.
@@ -115,7 +119,33 @@ def take(path, lock, sid, cwd, now):
     write_lock(path, {"session_id": sid, "started": started, "heartbeat": now, "cwd": cwd})
 
 
+def status(argv):
+    """`--status [--session ID] [dir]`, read-only (2026-09-29): an agent with no hook API (Antigravity) cannot be
+    blocked, so it asks before editing. Exit 3: another live session holds the checkout; 0: free, stale, its own
+    (--session), or not a git checkout."""
+    sid = ""
+    if "--session" in argv:
+        i = argv.index("--session")
+        sid = argv[i + 1] if i + 1 < len(argv) else ""
+        argv = argv[:i] + argv[i + 2:]
+    target = argv[0] if argv else os.getcwd()
+    gdir, top = git_dir(target)
+    if not gdir:
+        print(f"session_lock: {target} không phải git checkout — không có khoá")
+        return 0
+    now = time.time()
+    lock = read_lock(os.path.join(gdir, LOCK))
+    if is_free_for(lock, sid, now):
+        print(f"session_lock: {top} trống — được sửa")
+        return 0
+    print(f"session_lock: {top} đang do {describe(lock, now)} giữ — KHÔNG sửa ở đây: chờ phiên đó xong, "
+          f"hoặc làm trong worktree riêng (`agent-kit worktree add`)")
+    return 3
+
+
 def main():
+    if "--status" in sys.argv[1:]:
+        return status([a for a in sys.argv[1:] if a != "--status"])
     try:
         d = json.load(sys.stdin)
     except ValueError:

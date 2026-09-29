@@ -42,6 +42,22 @@ run_gate() {
 make_repo "true"
 out="$(run_gate --run-tests)"; check "clean tree is not PASS" 3 $? "$out" "PASS —"
 
+# 2026-09-29: after committing, `--full` on the now-clean tree said "nothing to audit" (exit 3),
+# so the commits about to be pushed had no receipt unless the agent found `--diff <sha>` by hand.
+# A clean tree AHEAD of its upstream audits upstream..HEAD (the content a push sends).
+git init -q --bare "$TMP/origin.git" && git remote add origin "$TMP/origin.git" && git push -q -u origin HEAD 2>/dev/null
+out="$(run_gate --run-tests --full)"; check "clean tree, level with upstream: still nothing to audit" 3 $? "$out" "PASS —"
+echo "fun ok() = 3" > src/Core.kt && git commit -qam "code change"
+out="$(run_gate --run-tests --full)"; rc=$?
+check "clean tree AHEAD of upstream: audits upstream..HEAD -> PASS" 0 $rc "$out"
+[ -f .git/postfix-gate/full_pass.json ] && echo "✔ …and writes the full-pass receipt for the commits to push" \
+  || { echo "✖ no full-pass receipt for the commits ahead of upstream"; FAILS=$((FAILS + 1)); }
+make_repo "false"
+git init -q --bare "$TMP/origin2.git" && git remote add origin "$TMP/origin2.git" && git push -q -u origin HEAD 2>/dev/null
+echo "fun ok() = 3" > src/Core.kt && git commit -qam "code change"
+out="$(run_gate --run-tests --full)"; check "clean tree ahead of upstream with a failing suite -> REJECT" 1 $? "$out" "PASS —"
+make_repo "true"   # the checks below start from the plain repo of the first check
+
 echo "fun ok() = 2" > src/Core.kt
 out="$(run_gate)"; check "dry-run default is UNVERIFIED" 2 $? "$out" "\[x\] PASS"
 out="$(run_gate --dry-run --run-tests)"; check "--dry-run overrides --run-tests" 2 $? "$out" "\[x\] PASS"
@@ -902,6 +918,15 @@ existing_test_repo; set_mtime src/test/CoreTest.kt -300
 rm -f "$TMP/tr/"*.jsonl; approval_tr "$TMP/tr/other.jsonl" "$Q" "Duyệt (Recommended)" -10
 out="$(DEVKIT_TRANSCRIPTS_DIR="$TMP/tr" run_gate --run-tests)"
 check "no --transcript: approval found in the project's transcripts -> PASS" 0 $? "$out"
+expect_in "a real AskUserQuestion approval is labelled as the user's" "người dùng đã duyệt" "$out"
+# 2026-09-29: --auto-approve-tests (the agent's own approval) was printed as "người dùng đã duyệt
+# (AskUserQuestion)" — a user approval that never happened. The agent's approval says so.
+existing_test_repo; set_mtime src/test/CoreTest.kt -300
+rm -f "$TMP/tr/"*.jsonl
+out="$(DEVKIT_TRANSCRIPTS_DIR="$TMP/tr" run_gate --run-tests --auto-approve-tests)"
+check "--auto-approve-tests: edited test approved -> PASS" 0 $? "$out"
+expect_not_in "--auto-approve-tests is not labelled as the user's approval" "người dùng đã duyệt" "$out"
+expect_in "--auto-approve-tests is labelled as the agent's own approval" "agent tự duyệt" "$out"
 
 # --- A tool-written *.log needs no regression test ----------------------------------------
 # GeelyEx2 2026-09-28: pre-push wrote artifacts/red-proof/<time>.log; on an otherwise clean

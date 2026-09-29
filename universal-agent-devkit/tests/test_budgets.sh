@@ -50,7 +50,7 @@ print(int(statistics.median(ts)))
 PY
 }
 
-python3 -c 'import json; print(json.dumps({"prompt": "App bị crash khi mở màn hình bản đồ lần thứ hai", "session_id": "b"}))' > "$TMP/prompt.json"
+python3 -c 'import json; print(json.dumps({"prompt": "App bị crash khi mở màn hình bản đồ lần thứ hai", "session_id": "b", "transcript_path": "/nonexistent/claude-tr.jsonl"}))' > "$TMP/prompt.json"
 ms="$(STDIN_FILE="$TMP/prompt.json" median_ms bash "$DEVKIT_DIR/hooks/prompt_context.sh")"
 [ "$ms" -le 150 ] && ok "prompt hook with bug capture: ${ms} ms (≤ 150)" || fail "prompt hook: ${ms} ms > 150"
 echo '{}' > "$TMP/empty.json"

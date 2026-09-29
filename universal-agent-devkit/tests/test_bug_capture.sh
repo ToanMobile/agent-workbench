@@ -75,7 +75,8 @@ bash "$KIT" bugs drop "$B2" >/dev/null 2>&1; [ "$(row "$B2")" = MISSING ] && ok 
 grep -q "$B2" .agents/regression_checklist.md && fail "dropped row still in the view" || ok "view regenerated after drop"
 
 # ── prompt hook: REPORTED rows ───────────────────────────────────────────────
-hook() { python3 -c 'import json,sys; print(json.dumps({"prompt": sys.argv[1], "session_id": sys.argv[2]}))' "$1" "$2" 2>/dev/null \
+# Claude Code always sends transcript_path (the file may not exist yet): a payload without it is a probe.
+hook() { python3 -c 'import json,sys; print(json.dumps({"prompt": sys.argv[1], "session_id": sys.argv[2], "transcript_path": sys.argv[3]}))' "$1" "$2" "$TMP/claude-tr.jsonl" 2>/dev/null \
           | CLAUDE_PROJECT_DIR="${3:-$P}" bash "$PROMPT_HOOK" 2>&1; }
 before="$(nbugs)"
 out="$(hook "PlayerPrefs bị xóa khi chạy test
@@ -108,7 +109,7 @@ out="$(bash "$KIT" bugs add "PlayerPrefs bị xoá bởi test EditMode" --id "$R
 # ── prompt hook: agent / harness prompts are not bug reports ─────────────────
 # raw_hook <payload-json> [ENV=VAL …] — the prompt hook with a hand-made payload.
 raw_hook() { p="$1"; shift; printf '%s' "$p" | env CLAUDE_PROJECT_DIR="$P" "$@" bash "$PROMPT_HOOK" 2>&1; }
-payload() { python3 -c 'import json,sys; print(json.dumps({"prompt": sys.argv[1], "session_id": sys.argv[2]}))' "$1" "$2"; }
+payload() { python3 -c 'import json,sys; print(json.dumps({"prompt": sys.argv[1], "session_id": sys.argv[2], "transcript_path": sys.argv[3]}))' "$1" "$2" "$TMP/claude-tr.jsonl"; }
 nothing() { # <name> <output> — no new bug row, no "Bug đã ghi" line
   if [ "$(nbugs)" = "$n0" ] && ! printf '%s' "$2" | grep -q "Bug đã ghi"; then ok "$1"; else fail "$1: registered ($(nbugs) vs $n0): $(printf '%s' "$2" | grep 'Bug đã ghi')"; fi; }
 n0="$(nbugs)"
@@ -213,6 +214,36 @@ Response: {"error": "NullPointerException at CouponService.apply"}' h3)"; RE="$(
 [ -n "$RE" ] && [ "$(row "$RE")" = "REPORTED " ] && ok "English bug report quoting a JSON body → REPORTED row" || fail "EN report with JSON dropped: $out"
 out="$(hook "Crash: the 'You are offline' banner never hides after reconnecting" h3)"; RO="$(bug_id "$out")"
 [ -n "$RO" ] && ok "'You are …' quoted inside a real report (not the opening) → REPORTED row" || fail "quoted 'You are' dropped: $out"
+
+# ── not a report: "is there a bug?" questions, and probes with no transcript (2026-09-29) ──
+# workbench, 2026-09-29: "audit, review … có lỗi gì hay ko?" became a REPORTED row, and so did two
+# hand-made probes (`echo '{"prompt":…,"session_id":"test-sess"}' | prompt_context.sh`).
+tp_payload() { python3 -c 'import json,sys; print(json.dumps({"prompt": sys.argv[1], "session_id": sys.argv[2], "transcript_path": sys.argv[3]}))' "$1" "$2" "$TMP/claude-tr.jsonl"; }
+n0="$(nbugs)"
+i=0
+for p in "audit, review nguyên nhân tại sao các sesion cài dev kit chạy rất chậm có lỗi gì hay ko?" \
+         "có bug gì không?" "check xem có lỗi gì ko" "review module thanh toán xem có vấn đề gì không nhé" \
+         "Review the checkout module, any bugs?" "Is there any bug in the new sync code?"; do
+  i=$((i + 1)); out="$(raw_hook "$(tp_payload "$p" "q$i")")"
+  nothing "'is there a bug?' question '${p:0:40}…' → no row" "$out"
+done
+i=0
+for p in "sửa lỗi crash khi xoay màn hình (q)" "app bị crash khi mở file pdf (q)" \
+         "tại sao app crash khi xoay màn hình ở trang cài đặt?" "app có lỗi không mở được file PDF có mật khẩu" \
+         "có lỗi gì không mà app văng khi bấm Lưu?"; do
+  i=$((i + 1)); out="$(raw_hook "$(tp_payload "$p" "qr$i")")"
+  landed "report next to a question '${p:0:40}…' → REPORTED row" "$out"
+done
+n0="$(nbugs)"
+out="$(raw_hook '{"prompt":"App crash khi mở file PDF có chữ ký số","session_id":"test-sess"}')"
+nothing "probe payload (no transcript_path, no agent marker) → no row" "$out"
+printf '%s' "$out" | grep -q "RED→GREEN\|ĐỎ" && ok "probe payload still gets the rest of the context" || fail "probe lost its context: $out"
+out="$(raw_hook "$(tp_payload "App crash khi mở file PDF có chữ ký số" "real1")")"
+landed "same prompt from Claude Code (transcript_path present, file not written yet) → REPORTED row" "$out"
+out="$(raw_hook '{"prompt":"App treo khi xoá thư mục có 2000 file","session_id":"empty-tp","transcript_path":""}')"
+landed "transcript_path key present but empty → still Claude Code's shape, REPORTED row (key presence, not truthiness)" "$out"
+out="$(raw_hook '{"prompt":"App văng khi đổi ngôn ngữ ở màn Cài đặt","session_id":"b-1"}' DEVKIT_AGENT=codex)"
+landed "bridged agent (DEVKIT_AGENT, sends no transcript) → REPORTED row" "$out"
 
 # ── SessionStart counts ──────────────────────────────────────────────────────
 R2="$(bug_id "$(hook "Nút lưu không hoạt động trên tablet" s3)")"

@@ -21,6 +21,7 @@ CLI: push_gate.py <dir> [<rev>]  → exit 0 covered · 2 not covered (reason on 
 """
 import json
 import os
+import pathlib
 import subprocess
 import sys
 
@@ -52,6 +53,36 @@ def blobs(top, rev, paths):
     return res
 
 
+def untestable_only(top, project, paths):
+    """True when every path (repo-relative) is a file post-fix-gate's needs_no_test() says needs no
+    test (docs, agent state, the agents' harness config) AND no rule of the project's active matrix
+    watches it. The gate's own classifier and matcher are used — never a second rule (INSTINCT-015).
+    2026-09-29 (Goods): a commit of .claude/settings.json alone could not be pushed without a full
+    gate, which REJECTed unrelated WIP in the working tree. Any doubt → False (a receipt is needed)."""
+    import importlib.util  # noqa: PLC0415
+    prefix = os.path.relpath(project, top).replace(os.sep, "/")
+    prefix = "" if prefix == "." else prefix + "/"
+    rel = [p[len(prefix):] if p.startswith(prefix) else None for p in paths
+           if not any(p == prefix + e or p.startswith(prefix + e + "/") for e in tree_fp.EXCLUDE)]
+    if not rel or None in rel:
+        return False
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "post_fix_gate", os.path.join(os.path.dirname(os.path.abspath(__file__)), "post-fix-gate.py"))
+        pfg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pfg)
+        with open(os.path.join(project, MATRIX), encoding="utf-8") as f:
+            rules = json.load(f).get("rules") or []
+        # the gate's own "watched" rule: watch_files + files linked to a rule's tests (INSTINCT-015)
+        pfg.get_project_dir = lambda: pathlib.Path(project)
+        covers = pfg.checklist_covers()
+        pats = [w for r in rules if isinstance(r, dict) for w in pfg.rule_watch(r, covers)]
+        return all(pfg.needs_no_test(p) and not any(pfg.match_pattern(p, w) for w in pats) for p in rel)
+    except Exception as e:  # noqa: BLE001 — cannot classify: fall back to requiring a receipt
+        print(f"push_gate: không phân loại được file sắp push ({e}) — cần biên nhận gate", file=sys.stderr)
+        return False
+
+
 def approved(top, rng):
     rc, out = git(top, "log", "--format=%B", rng)
     return rc == 0 and APPROVED in out
@@ -70,11 +101,16 @@ def check(cwd, rev="HEAD"):
     except (TypeError, OSError, ValueError):
         receipt = None
     project = (receipt or {}).get("project") or top
-    if not any(os.path.isfile(os.path.join(d, MATRIX)) for d in {project, top, os.path.abspath(cwd)}):
+    homes = [d for d in (project, top, os.path.abspath(cwd)) if os.path.isfile(os.path.join(d, MATRIX))]
+    if not homes:
         return True, "no regression matrix"
     if not isinstance(receipt, dict) or receipt.get("exit") != 0 or not receipt.get("head"):
         if approved(top, "@{u}.." + rev):
             return True, APPROVED
+        # --no-renames: a rename is also a delete of the old path (src/Foo.kt -> docs/Foo.md is code leaving)
+        rc, out = git(top, "diff", "--name-only", "--no-renames", "-z", "@{u}", rev)
+        if rc == 0 and untestable_only(top, homes[0], [p for p in out.split("\0") if p]):
+            return True, "only files that need no test (docs / agent config), none watched by the matrix"
         return False, "chưa có biên nhận gate --full exit 0 (có head) cho code sắp push"
     head = receipt["head"]
     if subprocess.run(["git", "-C", top, "merge-base", "--is-ancestor", head, rev],
@@ -82,7 +118,7 @@ def check(cwd, rev="HEAD"):
         return False, f"lần gate PASS gần nhất ({head[:10]}) không nằm trong lịch sử của {rev} (pull/rebase sau gate?)"
     if approved(top, f"{head}..{rev}"):
         return True, APPROVED
-    rc, out = git(top, "diff", "--name-only", "-z", head, rev)
+    rc, out = git(top, "diff", "--name-only", "--no-renames", "-z", head, rev)
     if rc != 0:
         raise RuntimeError("git diff failed")
     prefix = os.path.relpath(project, top).replace(os.sep, "/")
@@ -92,6 +128,8 @@ def check(cwd, rev="HEAD"):
     dirty = receipt.get("dirty") or {}
     now, then = blobs(top, rev, changed), blobs(top, head, changed)
     bad = [p for p in changed if now.get(p) != (dirty[p] if p in dirty else then.get(p))]
+    if bad and untestable_only(top, project, bad):
+        return True, "files changed since the gate need no test (docs / agent config), none watched by the matrix"
     if bad:
         return False, (f"{len(bad)} file sắp push khác bản gate đã test (sửa/commit sau lần gate PASS): "
                        + ", ".join(bad[:5]))

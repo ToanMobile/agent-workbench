@@ -27,7 +27,7 @@ JSON
     git add -A && git commit -qm init )
 }
 report() {  # report <session> <prompt> → bug id
-  python3 -c 'import json,sys; print(json.dumps({"prompt": sys.argv[1], "session_id": sys.argv[2]}))' "$2" "$1" 2>/dev/null \
+  python3 -c 'import json,sys; print(json.dumps({"prompt": sys.argv[1], "session_id": sys.argv[2], "transcript_path": sys.argv[3]}))' "$2" "$1" "$P/prompt-tr.jsonl" 2>/dev/null \
     | CLAUDE_PROJECT_DIR="$P" bash "$PROMPT_HOOK" 2>/dev/null | grep -o 'BUG-[A-Za-z0-9_-]*' | head -1; }
 # transcript <steps…>: w:<test file> | r:<test file>  (red run naming it) | e:<src file> | g (green run)
 transcript() {

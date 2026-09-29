@@ -59,4 +59,21 @@ git -C "$REPO" worktree add -q "$TMP/wt" -b wt >/dev/null 2>&1
 hook C PreToolUse Edit "$TMP/wt"; [ $? = 0 ] && ok "a linked worktree is its own checkout" || fail "worktree blocked by main lock"
 hook D PreToolUse Edit "$TMP/plain"; [ $? = 0 ] && ok "not a git repo: not its business" || fail "plain dir blocked"
 
+# --status (2026-09-29): Antigravity has no hook API, so it cannot be blocked — it asks. Read-only:
+# exit 3 while another live session holds the checkout, 0 when free / stale / its own / not a repo.
+LOCKF="$REPO/.git/devkit-session.lock"
+before="$(cat "$LOCKF" 2>/dev/null)"
+st() { python3 "$DEVKIT_DIR/bin/session_lock.py" --status "$@" > "$TMP/st.out" 2>&1; }
+st "$REPO"; rc=$?
+[ "$rc" = 3 ] && grep -q "A" "$TMP/st.out" && ok "--status: held by a live session → exit 3, names the holder" || fail "--status held: rc=$rc $(cat "$TMP/st.out")"
+( cd "$REPO/src" && python3 "$DEVKIT_DIR/bin/session_lock.py" --status > /dev/null 2>&1 ); rc=$?
+[ "$rc" = 3 ] && ok "--status with no dir checks the current directory's checkout" || fail "--status cwd: rc=$rc"
+st --session A "$REPO"; [ $? = 0 ] && ok "--status --session <holder> → exit 0 (its own lock)" || fail "--status own: $(cat "$TMP/st.out")"
+DEVKIT_SESSION_LOCK_STALE_S=0 st "$REPO"; [ $? = 0 ] && ok "--status: a stale lock → exit 0 (free)" || fail "--status stale: $(cat "$TMP/st.out")"
+st "$TMP/plain"; [ $? = 0 ] && ok "--status: not a git repo → exit 0" || fail "--status plain: $(cat "$TMP/st.out")"
+[ "$(cat "$LOCKF" 2>/dev/null)" = "$before" ] && ok "--status is read-only (lock file unchanged)" || fail "--status wrote the lock"
+st "$TMP/wt"; rc=$?
+[ "$rc" = 3 ] && grep -q "phiên C" "$TMP/st.out" && ! grep -q "phiên A" "$TMP/st.out" \
+  && ok "--status: a linked worktree reports its own holder (C), not the main checkout's (A)" || fail "--status worktree: rc=$rc $(cat "$TMP/st.out")"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_session_lock: all passed" || { echo "❌ test_session_lock: $FAILS failed"; exit 1; }

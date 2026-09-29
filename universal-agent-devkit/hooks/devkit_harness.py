@@ -288,6 +288,26 @@ def reply_status(text):
     return "NONE"
 
 
+# "user" entries the harness writes that no person typed: a background task finishing, a message
+# from another session, a usage-limit auto-continue. 2026-09-29: a background gate's
+# <task-notification> was taken for the next prompt, so its exit-0 receipt was "from before this
+# turn" and the full gate re-ran on unchanged code.
+NOT_A_PROMPT_ORIGINS = ("task-notification", "peer", "auto-continuation")
+
+
+def is_user_prompt(e):
+    """True for a transcript entry a person typed (not a tool result, meta line or harness message)."""
+    if not isinstance(e, dict) or e.get("type") != "user" or e.get("isMeta"):
+        return False
+    if ((e.get("origin") or {}).get("kind") if isinstance(e.get("origin"), dict) else None) in NOT_A_PROMPT_ORIGINS:
+        return False
+    c = (e.get("message") or {}).get("content")
+    if isinstance(c, str) and c.lstrip().startswith("<task-notification>"):
+        return False
+    return isinstance(c, str) or (isinstance(c, list) and any(
+        isinstance(x, dict) and x.get("type") == "text" for x in c))
+
+
 def turn_start(tp):
     """Epoch of the last real user prompt in a Claude transcript, or None."""
     import datetime
@@ -301,11 +321,7 @@ def turn_start(tp):
                     e = json.loads(raw)
                 except ValueError:
                     continue
-                if e.get("type") != "user" or e.get("isMeta"):
-                    continue
-                c = (e.get("message") or {}).get("content")
-                if (isinstance(c, str) or (isinstance(c, list) and any(
-                        isinstance(x, dict) and x.get("type") == "text" for x in c))) and e.get("timestamp"):
+                if is_user_prompt(e) and e.get("timestamp"):
                     last = e["timestamp"]
     except OSError:
         return None

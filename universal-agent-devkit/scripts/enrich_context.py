@@ -461,6 +461,15 @@ BUG_EVIDENCE_RE = re.compile(r"(?<![\w-])bugs?/[^\n]{0,200}?\.(?:png|jpe?g|gif|w
 # Only that clause goes (to the next , . ; ! ? or line end): "app bị crash khi mở PDF, không phải
 # lỗi mạng" still reports its crash (review 2026-09-26).
 NOT_A_REPORT_RE = re.compile(r"(?<!\w)(?:không|ko|chẳng|chả)\s+(?:hỏi|phải|nói)\s+(?:về\s+)?(?:vấn đề|lỗi|bug|bị gì)[^,.;!?\n]*")
+# Asking WHETHER there is a bug reports none (workbench 2026-09-29: "… chạy rất chậm có lỗi gì hay
+# ko?" became a REPORTED row). Only the question words go, the rest still counts: "có lỗi gì không mà
+# app văng" keeps "văng". Without gì/nào the question must end the clause, so "app có lỗi không mở
+# được file" (a report: it does not open) is untouched.
+IS_THERE_A_BUG_RE = re.compile(
+    r"(?<!\w)có\s+(?:lỗi|bug|vấn đề)\s+(?:gì|nào)\s+(?:(?:hay|hoặc)\s+)?(?:không|ko|k|chưa)(?!\w)"
+    r"|(?<!\w)có\s+(?:lỗi|bug|vấn đề)\s+(?:(?:hay|hoặc)\s+)?(?:không|ko|k|chưa)(?=\s*(?:[?.!,;]|$|(?:vậy|nhỉ|thế|ạ|nhé)(?!\w)))"
+    r"|(?<!\w)any\s+(?:bugs?|issues?|problems?|errors?)(?=\s*\?)"
+    r"|(?<!\w)is\s+there\s+(?:a|an|any)\s+(?:bug|issue|problem|error)s?(?!\w)")
 # Only the word bug(s) goes, the counting in front of it stays: "fix 2 crash bugs" keeps "crash".
 KNOWN_BUGS_RE = re.compile(
     r"((?<!\w)(?:các|những|mấy|mọi|tất cả|all|\d+|tổng số|số lượng|số|link|gắn|viết test cho|test cho"
@@ -506,6 +515,23 @@ def harness_prompt(prompt, payload=None, env=None):
     return ""
 
 
+def probe_payload(payload):
+    """A hand-made hook call (`echo '{"prompt":…,"session_id":"test-sess"}' | prompt_context.sh`)
+    is no user's prompt (workbench 2026-09-29: two probes became REPORTED rows). Claude Code always
+    sends transcript_path — the file may not exist yet on a session's first prompt, so only a
+    payload WITHOUT the key counts, and only with no marker of another harness: a bridged agent
+    (DEVKIT_AGENT) or Grok sends no Claude transcript and keeps its capture (devkit_harness.non_claude)."""
+    if not isinstance(payload, dict) or "transcript_path" in payload or "transcriptPath" in payload:
+        return False
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks"))
+        sys.dont_write_bytecode = True
+        from devkit_harness import non_claude
+    except ImportError:
+        return False     # cannot tell: keep the capture (a lost report is worse than a probe row)
+    return not non_claude(payload)
+
+
 def capture_bug(prompt, dossier, project_root, session, payload=None):
     """A bug prompt → a REPORTED row in .agents/regression_status.json (deduplicated
     against rows still open), so a reported bug is on the checklist before anyone fixes
@@ -515,7 +541,7 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
     Returns the context line to add, or ""."""
     if "BUG_FIX" not in dossier["detected_intents"] or os.environ.get("BUG_CAPTURE", "1") == "0":
         return ""
-    if harness_prompt(prompt, payload):
+    if harness_prompt(prompt, payload) or probe_payload(payload):
         return ""
     agents = os.path.join(project_root, ".agents")
     if not (os.path.isfile(os.path.join(agents, "regression_status.json"))
@@ -526,7 +552,7 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
     if not first or first.startswith("<"):
         return ""
     p_norm = normalize(prompt)
-    p_norm = NOT_A_REPORT_RE.sub(" ", p_norm)
+    p_norm = IS_THERE_A_BUG_RE.sub(" ", NOT_A_REPORT_RE.sub(" ", p_norm))
     p_lower = KNOWN_BUGS_RE.sub(r"\1 ", PATHLIKE_RE.sub(" ", p_norm))
     if not (BUG_EVIDENCE_RE.search(p_norm) or mentions(p_lower, DEFECT_WORDS) or DEFECT_RE.search(p_lower)):
         return ""

@@ -358,14 +358,16 @@ for sent in sentences:
 # An outcome claim is separate from a test-pass claim. This must be classified
 # before the cheap early exit below; otherwise plain "đã fix bug" bypasses the
 # entire outcome-evidence check when no new XML exists.
+# "đã fix gì" / "what was fixed" are interrogative — the acceptance-report headings proof_gate.sh
+# REPORT_ITEMS accepts — never a claim; a claim written after them is matched on its own (2026-09-29).
 OUTCOME = re.compile(
-    r"(đã\s+fix\b|đã\s+sửa\s+xong|đã\s+(?:được\s+)?sửa\s+(?:xong\s+)?(?:bug|lỗi)"
+    r"(đã\s+fix\b(?!\s+gì\b)|đã\s+sửa\s+xong|đã\s+(?:được\s+)?sửa\s+(?:xong\s+)?(?:bug|lỗi)"
     r"|(?:bug|lỗi)[^.\n]{0,32}đã\s+(?:được\s+)?sửa\b"
     r"|đã\s+khắc\s+phục|đã\s+xử\s+lý"
     r"|đã\s+giải\s+quyết(?:\s+xong)?|hết\s+bug"
     r"|(?:the\s+)?fix\s+(?:works?|worked|has\s+worked|(?:đã\s+)?có\s+tác\s+dụng)"
     r"|bug\s+đã\s+(?:được\s+)?fix|(?:lỗi|bug)[^.\n]{0,48}không\s+(?:còn\s+)?tái\s+hiện(?:\s+nữa)?"
-    r"|\bfixed\b|\bresolved\b|\b(?:bug|issue|crash|error)\s+(?:is|was|has)\s+(?:now\s+)?gone\b)", re.I)
+    r"|(?<!\bwhat\swas\s)\bfixed\b|\bresolved\b|\b(?:bug|issue|crash|error)\s+(?:is|was|has)\s+(?:now\s+)?gone\b)", re.I)
 
 outcome_claims = []
 for sent_idx, sent in enumerate(sentences):
@@ -853,8 +855,10 @@ if tp and os.path.exists(tp):
 # hooks/bash_write_ledger.sh: session \t start|end \t <ts> \t <tool_use_id>); the narrowest
 # containing window wins. Fail-closed: no ledger, no containing window, or a tie between
 # sessions → ours. A background command (start, no end) stays open until now. Audit G5.
-def _load_windows():
-    path = os.path.join(repo, ".claude", "audit-gate", "bash_write_ledger.tsv")
+LEDGER_REL = os.path.join(".claude", "audit-gate", "bash_write_ledger.tsv")
+
+def _load_windows(path=None):
+    path = path or os.path.join(repo, LEDGER_REL)
     wins, opens = [], {}
     try:
         if not os.path.isfile(path):
@@ -885,10 +889,10 @@ def _load_windows():
 _WINDOWS = _load_windows()
 _MY_SID = str(d.get("session_id") or "")
 
-def _window_owner(mtime):
+def _window_owner(mtime, windows=None):
     """Session of the narrowest ledger window containing mtime; None when none or a tie."""
     best_w, best_sid = None, None
-    for st, en, sid_ in _WINDOWS:
+    for st, en, sid_ in (_WINDOWS if windows is None else windows):
         if st <= mtime <= en:
             w = en - st
             if best_w is None or w < best_w:
@@ -903,11 +907,34 @@ def ran_here(mtime):
     owner = _window_owner(mtime)
     return True if owner is None else owner == _MY_SID
 
-def ran_in_my_window(mtime):
+_FOREIGN_LEDGERS = {}
+
+def _foreign_windows(xml_path):
+    """Windows of the ledger of the project holding xml_path (nearest ancestor with one); [] when
+    there is none or it is this repo's own (already in _WINDOWS)."""
+    own = os.path.realpath(os.path.join(repo, LEDGER_REL))
+    cur = os.path.dirname(os.path.abspath(xml_path))
+    while True:
+        cand = os.path.join(cur, LEDGER_REL)
+        if os.path.isfile(cand):
+            if os.path.realpath(cand) == own:
+                return []
+            if cand not in _FOREIGN_LEDGERS:
+                _FOREIGN_LEDGERS[cand] = _load_windows(cand)
+            return _FOREIGN_LEDGERS[cand]
+        up = os.path.dirname(cur)
+        if up == cur:
+            return []
+        cur = up
+
+def ran_in_my_window(mtime, xml_path=None):
     """Foreign XML only, fail-CLOSED: the narrowest window holding the write is THIS session's.
     No ledger, no containing window, or a tie → not ours. A green XML another agent left in a
-    project this session only `cat`ed is not our run (2026-09-25 review P3)."""
-    return bool(_WINDOWS and _MY_SID) and _window_owner(mtime) == _MY_SID
+    project this session only `cat`ed is not our run (2026-09-25 review P3). The foreign project's
+    own ledger counts too (2026-09-29): its sessions log their Bash windows there, so a long window
+    of this session (a 10-min gate) no longer "owns" XML another session wrote in that project."""
+    windows = _WINDOWS + (_foreign_windows(xml_path) if xml_path else [])
+    return bool(_WINDOWS and _MY_SID) and _window_owner(mtime, windows) == _MY_SID
 
 # ── XML this session produced in ANOTHER project ─────────────────────────────
 # (2026-09-25) A session working on two projects ran/read the tests of the other one
@@ -983,7 +1010,7 @@ def foreign_xmls():
             mt = os.path.getmtime(pth)
         except OSError:
             continue
-        if mt >= start and ran_in_my_window(mt):
+        if mt >= start and ran_in_my_window(mt, pth):
             out[pth] = mt
     return out
 

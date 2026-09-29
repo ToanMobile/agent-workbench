@@ -23,6 +23,8 @@
 # — never for agent / harness prompts ("You are …" openings, tool/JSON schemas, long
 # instruction blocks). The agent running the hook does not matter: under Grok, Codex, Gemini or
 # Cursor a user's bug prompt is recorded too (the user, 2026-09-25).
+# Nor for an "is there a bug?" question, nor a probe payload with no transcript_path and no
+# other-agent marker (2026-09-29, enrich_context.py IS_THERE_A_BUG_RE / probe_payload).
 #
 # Never blocks: always exit 0. Escape hatch: PROMPT_CONTEXT=0.
 # Protocol: stdin JSON {"prompt": …}; stdout is added to the context.
