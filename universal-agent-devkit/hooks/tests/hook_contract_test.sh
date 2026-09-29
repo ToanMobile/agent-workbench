@@ -1427,6 +1427,19 @@ run_case "foreign-repo gate: no transcript fails open" foreign_repo_gate.sh 0 \
 run_case "foreign-repo gate: only project edits pass" foreign_repo_gate.sh 0 \
   "{\"session_id\":\"s-fr\",\"hook_event_name\":\"Stop\",\"transcript_path\":\"${SEEN_TR}\"}"
 
+# ── session_lock.sh — SessionStart/PreToolUse/SessionEnd (tests/test_session_lock.sh has the full cases) ──
+echo "session_lock.sh"
+SL_REPO="${SANDBOX}/sl-repo"
+mkdir -p "${SL_REPO}" && git -C "${SL_REPO}" init -q .
+run_case "session lock: holder's Edit allowed" session_lock.sh 0 \
+  "{\"session_id\":\"s-sl-a\",\"hook_event_name\":\"PreToolUse\",\"cwd\":\"${SL_REPO}\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${SL_REPO}/a.kt\"}}"
+run_case "session lock: other live session's Edit blocked" session_lock.sh 2 \
+  "{\"session_id\":\"s-sl-b\",\"hook_event_name\":\"PreToolUse\",\"cwd\":\"${SL_REPO}\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${SL_REPO}/a.kt\"}}"
+run_case "session lock: other session's read-only Bash allowed" session_lock.sh 0 \
+  "{\"session_id\":\"s-sl-b\",\"hook_event_name\":\"PreToolUse\",\"cwd\":\"${SL_REPO}\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git status\"}}"
+run_case "session lock: SessionStart never blocks" session_lock.sh 0 \
+  "{\"session_id\":\"s-sl-b\",\"hook_event_name\":\"SessionStart\",\"cwd\":\"${SL_REPO}\"}"
+
 # ── churn_guard.sh — PostToolUse ────────────────────────────────────────────
 echo "churn_guard.sh"
 run_case "3rd blind edit of one file warns" churn_guard.sh 2 \
