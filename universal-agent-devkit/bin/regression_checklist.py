@@ -75,7 +75,7 @@ from pathlib import Path
 STATUS_FILE = Path(".agents") / "regression_status.json"
 VIEW_FILE = Path(".agents") / "CHECKLIST.md"
 OLD_VIEW_FILE = Path(".agents") / "regression_checklist.md"   # a link to VIEW_FILE
-HISTORY_LIMIT = 10
+HISTORY_LIMIT = 5   # was 10: the sliding window rewrote ~10 lines per item on every gate run (diff +3729/-1745 in GeelyEx2)
 RESULT_STATES = {"PASS", "FAIL", "TIMEOUT"}
 
 ICON = {

@@ -147,9 +147,13 @@ if [ "$PROFILE" != "ask" ]; then
   [ -n "$norm" ] || die_usage "unknown profile '$PROFILE' (available: $PROFILES_AVAILABLE | none)"
   PROFILE="$norm"
 fi
-if [ "$ASSUME_YES" = 1 ]; then
+# Nobody can answer a menu: -y, or no terminal to read from (an agent runner, CI).
+can_ask=1
+if [ "$ASSUME_YES" = 1 ] || { ! [ -t 0 ] && ! (exec 3</dev/tty) 2>/dev/null; }; then can_ask=0; fi
+if [ "$can_ask" = 0 ]; then
   # A re-init of a project that already has the DevKit keeps the agents it was set up
-  # for (a platform the user removed must not come back with `init -y`); a first
+  # for (a platform the user removed must not come back with `init -y`, nor with a bare
+  # `init .` from an agent: 2026-09-30 it added .codex/.cursor in three projects); a first
   # install gets them all.
   if [ "$AGENTS" = "ask" ]; then
     kept=""
@@ -162,6 +166,14 @@ if [ "$ASSUME_YES" = 1 ]; then
       kept="grok"
     fi
     [ -n "$kept" ] && AGENTS="${kept#,}" && echo "  - Re-init: keeping the agents already set up: $AGENTS (-a to change)"
+  fi
+  # The profile too: its MCPs and hooks (android-code-search, validate-assets …) go with it.
+  if [ "$PROFILE" = "ask" ]; then
+    kept_profile="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("profile",""))' "$TARGET_DIR/.agents/active-profile.json" 2>/dev/null || true)"   # set -e: no file on a first install
+    if [ -n "$kept_profile" ] && norm_kept="$(normalize_profile "$kept_profile")" && [ -n "$norm_kept" ]; then
+      PROFILE="$norm_kept"
+      echo "  - Re-init: keeping the profile already set up: $PROFILE (-p to change)"
+    fi
   fi
   [ "$AGENTS" = "ask" ] && AGENTS="all"
   [ "$PROFILE" = "ask" ] && PROFILE="auto"

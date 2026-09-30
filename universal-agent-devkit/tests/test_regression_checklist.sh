@@ -43,6 +43,12 @@ gate --run-tests --task T0002-regress
 [ "$(jq_py 'len(d["items"]["REG-1"]["history"])')" = 2 ] && ok "history keeps both runs" || fail "history wrong"
 grep -q '❌ FAIL | REG-1' .agents/regression_checklist.md && ok "view shows ❌ FAIL" || fail "view missing FAIL"
 
+# 3b. History is capped at 5 entries: a longer window made every gate run rewrite thousands of
+# lines of regression_status.json (GeelyEx2 diff +3729/-1745, 2026-09-30).
+for i in 1 2 3 4 5 6; do echo "# run $i" >> src/Core.kt; gate --run-tests --task "T010$i"; done
+[ "$(jq_py 'len(d["items"]["REG-1"]["history"])')" = 5 ] && ok "history is capped at 5 entries" || fail "history not capped at 5: $(jq_py 'len(d["items"]["REG-1"]["history"])')"
+[ "$(jq_py 'd["items"]["REG-1"]["history"][0]["task"]')" = T0106 ] && ok "  … newest run first" || fail "  newest run not first"
+
 # 4. A changed source file no rule covers becomes UNCOVERED; linking resolves it.
 echo 'exit 0' > result.sh
 echo "fun other() = 1" > src/Other.kt
