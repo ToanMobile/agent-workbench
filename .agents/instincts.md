@@ -151,3 +151,19 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Khoá cache dựng sai làm dùng nhầm hoặc không bao giờ dùng lại kết quả test
 - **Nguyên nhân:** testsourceset_gate băm scope bằng shasum (máy thiếu shasum → mọi scope chung 1 khoá, PASS của lib dùng cho lib2); regression_gate so fingerprint devkit_harness (20 hex) với receipt tree_fp (24 hex) nên đoạn đi tắt chết; post-fix-gate chỉ kiểm cache TRƯỚC khi chờ khoá test nên lượt chờ chạy lại toàn bộ suite (2026-09-29)
 - **Quy tắc phòng ngừa & Cách fix:** Khoá cache chỉ dựng bằng python3 hashlib/cùng một hàm fingerprint (bin/tree_fp) ở mọi nơi đọc và ghi; không tính được khoá thì không dùng cache; kiểm lại cache sau khi chờ khoá; mỗi khoá có ca test ĐỎ cho 'khoá khác nhau phải không dùng chung PASS'
+
+---
+
+### [INSTINCT-018] Kết quả 'không chạy được trên máy này' làm kẹt mốc đã kiểm nên mọi lượt Stop chạy lại cả dải commit
+- **Ngày phát hiện:** 2026-09-30
+- **Hiện tượng lỗi:** Kết quả 'không chạy được trên máy này' làm kẹt mốc đã kiểm nên mọi lượt Stop chạy lại cả dải commit
+- **Nguyên nhân:** regression_gate.sh chỉ dời verified_head khi gate exit 0/3; suite REG-QC-05 (test trên xe thật, untested_exit) làm mọi lượt ra exit 4 nên mốc kẹt ở b747…, mỗi Stop GeelyEx2 chạy lại toàn bộ suite cho dải --since ngày càng dài (4-5 phút, 16 lần); --full exit 4 còn xoá receipt nên cache không bao giờ dùng lại (2026-09-29)
+- **Quy tắc phòng ngừa & Cách fix:** Mọi trạng thái kết thúc hợp lệ của gate (PASS, UNTESTED theo untested_exit) phải dời mốc đã kiểm và được nhớ theo khoá gồm nội dung cây; chỉ BUSY/FAIL mới không dời; mỗi trạng thái có test 'Stop lần 2 cùng nội dung không chạy lại gate'
+
+---
+
+### [INSTINCT-019] Đo thời gian hook bằng đồng hồ tường mà không trừ lúc máy ngủ
+- **Ngày phát hiện:** 2026-09-30
+- **Hiện tượng lỗi:** Đo thời gian hook bằng đồng hồ tường mà không trừ lúc máy ngủ
+- **Nguyên nhân:** durationMs của stop_hook_summary tính cả lúc laptop ngủ: một lượt Stop 420 s ở GeelyEx2 thật ra là 417 s máy ngủ (pmset: Sleep 07:01:52, 417 secs, pin 4%), một lượt 2698 s ở OfficeReader cũng vậy; audit ban đầu quy nhầm cho review_gate và thổi số trung bình lên (2026-09-30)
+- **Quy tắc phòng ngừa & Cách fix:** Audit tốc độ phải trừ các khoảng Sleep lấy từ 'pmset -g log' (dòng Sleep có '&lt;N> secs'; không ghép Sleep với dòng 'Wake Requests') khỏi khoảng [kết thúc − thời lượng, kết thúc] của từng lượt; mọi hook cùng lượt bằng nhau ~X giây là dấu hiệu máy ngủ, không phải hook chậm
