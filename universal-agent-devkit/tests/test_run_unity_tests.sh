@@ -81,6 +81,12 @@ printf 'm_EditorVersion: 1999.1.0f1\n' > "$PROJ/ProjectSettings/ProjectVersion.t
 [ "$RC" = 2 ] && grep -q '1999.1.0f1' "$TMP/out" \
   && ok "pinned Editor missing: exit 2 naming the version" || fail "missing editor: rc=$RC $(cat "$TMP/out")"
 
+# A stale unity_test.log from an earlier run does not survive a run that never opened the Editor.
+echo "old log" > "$TMP/reports/unity_test.log"
+(cd "$TMP" && env -u UNITY_PATH FAKE_DIR="$TMP" python3 "$CMD" --project "$PROJ") >"$TMP/out" 2>&1; RC=$?
+[ "$RC" = 2 ] && [ ! -e "$TMP/reports/unity_test.log" ] \
+  && ok "stale unity_test.log removed when the run wrote none" || fail "stale log: rc=$RC $(cat "$TMP/reports/unity_test.log" 2>&1)"
+
 # Hub scan: versions installed under a Hub folder, matched to ProjectVersion.txt.
 HUB="$TMP/hub"
 for v in 2022.3.1f1 6000.6.0f1; do

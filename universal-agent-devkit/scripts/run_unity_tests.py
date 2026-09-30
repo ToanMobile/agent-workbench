@@ -12,6 +12,9 @@ ProjectSettings/ProjectVersion.txt, else unity-batch.sh looks in the Hub seconda
 Another Editor version is never used: opening a project with it in batchmode upgrades the project.
 
 Exit: 0 = every test passed · 1 = a test failed · 2 = compile error, no results, no Editor.
+ponytail: "compile error" = the unity-batch.sh regex over the whole Editor log, so a test that
+logs "error CS1234" also exits 2; scope the scan to the pre-test part of the log in both files
+if that happens.
 """
 from __future__ import annotations
 
@@ -82,6 +85,8 @@ def main(argv=None) -> int:
         tmp_xml, tmp_log = Path(out) / ("tests_%s.xml" % platform), Path(out) / ("tests_%s.log" % platform)
         if tmp_log.is_file():
             shutil.copyfile(tmp_log, log)
+        else:
+            log.unlink(missing_ok=True)  # an earlier run's log is not this run's log
         if tmp_xml.is_file():
             shutil.copyfile(tmp_xml, output)
         else:

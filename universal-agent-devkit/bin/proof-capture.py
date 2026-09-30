@@ -11,10 +11,11 @@ It does not screencap a dead ip:port and it does not substitute another
 plugged-in phone. Denylist: ADB_DENY_SERIALS, ~/.config/universal-agent-devkit/adb-denylist,
 <project>/.adb-denylist.
 
-iOS: provider type `simctl` (optional `udid`), or profile `ios`, screenshots the one
+iOS: provider type `simctl` or a declared `udid`, or profile `ios`, screenshots the one
 Booted simulator (`xcrun simctl list devices -j`) with `xcrun simctl io <udid> screenshot`;
 none or several Booted is a failure, never an Android fallback. With no declared provider
-and a profile that is not android/automotive, a Booted simulator is used before adb.
+(no serial/avd) and a profile that is not android/automotive, a single Booted simulator is
+used before adb; several Booted ones leave it to adb.
 """
 from __future__ import annotations
 
@@ -283,10 +284,13 @@ def distinct_row_share(data: bytes) -> float | None:
 
 def screencap(adb: str, serial: str, dest: Path, timeout_s: float) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    res = subprocess.run(
-        [adb, "-s", serial, "exec-out", "screencap", "-p"],
-        capture_output=True, timeout=timeout_s,
-    )
+    try:
+        res = subprocess.run(
+            [adb, "-s", serial, "exec-out", "screencap", "-p"],
+            capture_output=True, timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        raise SystemExit("Chup anh serial %s qua %ss khong xong." % (serial, int(timeout_s)))
     data = res.stdout or b""
     dest.write_bytes(data)
     check_png(dest, data, serial, res)
@@ -294,7 +298,11 @@ def screencap(adb: str, serial: str, dest: Path, timeout_s: float) -> None:
 
 def simctl_capture(xcrun: str, udid: str, dest: Path, timeout_s: float) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    res = subprocess.run([xcrun, "simctl", "io", udid, "screenshot", str(dest)], capture_output=True, timeout=timeout_s)
+    try:
+        res = subprocess.run([xcrun, "simctl", "io", udid, "screenshot", str(dest)], capture_output=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        dest.unlink(missing_ok=True)
+        raise SystemExit("Chup anh simulator %s qua %ss khong xong." % (udid, int(timeout_s)))
     data = dest.read_bytes() if dest.is_file() else b""
     check_png(dest, data, udid, res)
 
@@ -303,9 +311,11 @@ def check_png(dest: Path, data: bytes, serial: str, res) -> None:
     """Refuse a failed capture, a non-PNG, a file <= MIN_BYTES and a one-colour screen."""
     if res.returncode != 0 or not data.startswith(PNG_SIG):
         tail = (res.stderr or b"").decode("utf-8", "replace")[:400]
+        dest.unlink(missing_ok=True)
         raise SystemExit("Chup anh that bai (exit %s) serial %s: %s" % (res.returncode, serial, tail))
-    if dest.stat().st_size <= MIN_BYTES:
-        raise SystemExit("Anh %s chi %d byte — man hinh trong hoac chua kip ve." % (dest, dest.stat().st_size))
+    if len(data) <= MIN_BYTES:
+        dest.unlink()
+        raise SystemExit("Anh %s chi %d byte — man hinh trong hoac chua kip ve." % (dest, len(data)))
     share = distinct_row_share(data)
     if share is not None and share < MIN_DISTINCT_ROWS:
         dest.unlink()
@@ -319,6 +329,8 @@ def booted_sims(xcrun: str) -> list:
         res = run([xcrun, "simctl", "list", "devices", "-j"], 15)
         runtimes = json.loads(res.stdout or "{}").get("devices") or {}
     except (OSError, ValueError, subprocess.SubprocessError, AttributeError):
+        return []
+    if not isinstance(runtimes, dict):
         return []
     return [{"udid": d["udid"], "name": d.get("name", "")}
             for devs in runtimes.values() if isinstance(devs, list)
@@ -345,11 +357,12 @@ def resolve(project: Path, adb: str, emulator: str | None, connect_timeout: floa
     provider = proof["provider"]
     kind = provider.get("type")
     profile = read_profile(project)
-    if kind == "simctl" or (kind is None and not provider.get("serial") and profile == "ios"):
+    adb_declared = bool(provider.get("serial") or provider.get("avd"))
+    if kind == "simctl" or (kind is None and not adb_declared and (profile == "ios" or provider.get("udid"))):
         return plan_sim(booted_sims(xcrun), provider.get("udid") or None)
-    if kind is None and not provider.get("serial") and profile not in ("android", "automotive"):
+    if kind is None and not adb_declared and profile not in ("android", "automotive"):
         sims = booted_sims(xcrun)
-        if sims:
+        if len(sims) == 1:
             return plan_sim(sims, None)
     if kind not in (None, "adb"):
         return {

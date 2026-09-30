@@ -134,12 +134,12 @@ printf '%s' "$out" | grep -q '"action": "fail"' && printf '%s' "$out" | grep -q 
   || fail "shell provider: rc=$rc $out"
 
 # ---------- iOS Simulator (xcrun simctl) ----------
-# mkpng <path> real|black: level-0 zlib keeps both > 8 KB; black repeats one row.
+# mkpng <path> real|black|small: level-0 zlib keeps real/black > 8 KB; black repeats one row; small < 8 KB.
 mkpng() {
   python3 - "$1" "$2" <<'PY'
 import os, struct, sys, zlib
 path, kind = sys.argv[1], sys.argv[2]
-w = h = 120
+w = h = 8 if kind == "small" else 120
 row = lambda: b"\0" + (bytes(w * 3) if kind == "black" else os.urandom(w * 3))
 raw = b"".join(row() for _ in range(h))
 def chunk(t, d):
@@ -215,5 +215,44 @@ out="$(simcap "$S6" 2>&1)"; rc=$?
 [ "$rc" = 1 ] && ! ls "$S6"/reports/proof-*.png >/dev/null 2>&1 && printf '%s' "$out" | grep -q 'mot mau' \
   && ok "simulator one-colour screenshot is refused and deleted" \
   || fail "ios black: rc=$rc out=$out"
+
+# Review 7de08da: a declared AVD is an adb provider — a Booted simulator does not take it over.
+S7="$TMP/avd-sim"; sim_project "$S7" game SIM-AAAA; touch "$S7/state/adb-online"
+printf '%s\n' '{"proof":{"defaultProvider":"d","providers":{"d":{"avd":"Pixel"}}}}' > "$S7/.antigravity-pm.json"
+out="$(simcap "$S7" --plan-only 2>&1)"; rc=$?
+printf '%s' "$out" | grep -q '"action": "screencap"' && printf '%s' "$out" | grep -q 'R58M' \
+  && [ "$rc" = 0 ] && ok "declared AVD keeps adb while a simulator is booted" || fail "avd+sim: rc=$rc out=$out"
+
+# No provider, not ios: two Booted simulators are ambiguous → the adb path as before, not a failure.
+S8="$TMP/two-any"; sim_project "$S8" - SIM-AAAA SIM-BBBB; touch "$S8/state/adb-online"
+out="$(simcap "$S8" --plan-only 2>&1)"; rc=$?
+printf '%s' "$out" | grep -q '"action": "screencap"' && [ "$rc" = 0 ] \
+  && ok "no profile, two simulators: falls back to adb" || fail "two any: rc=$rc out=$out"
+
+# A failed simulator capture leaves no proof-<stamp>.png behind.
+S9="$TMP/ios-small"; sim_project "$S9" ios SIM-AAAA; printf 'not a png' > "$S9/state/shot.png"
+out="$(simcap "$S9" 2>&1)"; rc=$?
+[ "$rc" = 1 ] && ! ls "$S9"/reports/proof-*.png >/dev/null 2>&1 \
+  && ok "failed simulator capture deletes the partial file" || fail "partial: rc=$rc out=$out $(ls "$S9/reports" 2>&1)"
+
+# simctl JSON whose "devices" is not a map: no traceback, just "no simulator".
+S10="$TMP/ios-badjson"; sim_project "$S10" ios; printf '{"devices": [{"state": "Booted"}]}' > "$S10/state/sims.json"
+out="$(simcap "$S10" 2>&1)"; rc=$?
+[ "$rc" = 1 ] && ! printf '%s' "$out" | grep -q Traceback \
+  && ok "malformed simctl JSON is 'no simulator', not a traceback" || fail "badjson: rc=$rc out=$out"
+
+# A valid PNG under 8 KB (screen not drawn yet): refused with the size message, no traceback, no file.
+S11="$TMP/ios-tiny"; sim_project "$S11" ios SIM-AAAA; mkpng "$S11/state/shot.png" small
+out="$(simcap "$S11" 2>&1)"; rc=$?
+[ "$rc" = 1 ] && printf '%s' "$out" | grep -q 'byte' && ! printf '%s' "$out" | grep -q Traceback \
+  && ! ls "$S11"/reports/proof-*.png >/dev/null 2>&1 \
+  && ok "PNG under 8 KB is refused and deleted" || fail "tiny: rc=$rc out=$out"
+
+# A provider that names a udid (no type, no serial/avd) is a simulator provider on any profile.
+S12="$TMP/udid-only"; sim_project "$S12" game SIM-AAAA SIM-BBBB; touch "$S12/state/adb-online"
+printf '%s\n' '{"proof":{"defaultProvider":"s","providers":{"s":{"udid":"SIM-BBBB"}}}}' > "$S12/.antigravity-pm.json"
+out="$(simcap "$S12" --plan-only 2>&1)"; rc=$?
+printf '%s' "$out" | grep -q '"action": "simctl"' && printf '%s' "$out" | grep -q 'SIM-BBBB' && [ "$rc" = 0 ] \
+  && ok "declared udid picks that simulator" || fail "udid only: rc=$rc out=$out"
 
 [ "$FAILS" = 0 ] && echo "ok" || { echo "$FAILS failed"; exit 1; }
