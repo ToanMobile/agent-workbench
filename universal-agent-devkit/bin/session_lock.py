@@ -66,6 +66,204 @@ def write_lock(path, data):
     os.replace(tmp, path)
 
 
+def git_common_dir(cwd):
+    try:
+        r = subprocess.run(["git", "-C", cwd, "rev-parse", "--git-common-dir", "--show-toplevel"],
+                           capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None, None
+    if r.returncode != 0:
+        return None, None
+    lines = r.stdout.strip().splitlines()
+    common = lines[0]
+    top = lines[1] if len(lines) >= 2 else cwd
+    if not os.path.isabs(common):
+        common = os.path.normpath(os.path.join(cwd, common))
+    return common, top
+
+
+def sessions_dir(cwd):
+    common, top = git_common_dir(cwd)
+    if not common:
+        return None, None
+    sdir = os.path.join(common, "devkit-sessions")
+    return sdir, top
+
+
+def register_session(cwd, sid, agent="agent", pid=None, status="working"):
+    if not sid:
+        return
+    sdir, top = sessions_dir(cwd)
+    if not sdir:
+        return
+    try:
+        os.makedirs(sdir, exist_ok=True)
+        now = time.time()
+        file_path = os.path.join(sdir, f"{sid}.json")
+        if pid is None:
+            pid = os.getppid()
+        data = {
+            "session_id": sid,
+            "agent": agent,
+            "pid": pid,
+            "started": now,
+            "heartbeat": now,
+            "cwd": cwd,
+            "status": status,
+        }
+        write_lock(file_path, data)
+    except OSError:
+        pass
+
+
+def heartbeat_session(cwd, sid):
+    if not sid:
+        return
+    sdir, top = sessions_dir(cwd)
+    if not sdir:
+        return
+    file_path = os.path.join(sdir, f"{sid}.json")
+    data = read_lock(file_path)
+    now = time.time()
+    if data:
+        if now - float(data.get("heartbeat") or 0) < 15:
+            return  # throttle
+        data["heartbeat"] = now
+        write_lock(file_path, data)
+    else:
+        register_session(cwd, sid)
+
+
+def unregister_session(cwd, sid):
+    if not sid:
+        return
+    sdir, top = sessions_dir(cwd)
+    if not sdir:
+        return
+    file_path = os.path.join(sdir, f"{sid}.json")
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    except OSError:
+        pass
+
+
+def is_pid_alive(pid):
+    if not pid or not isinstance(pid, int) or pid <= 1:
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+
+
+def get_active_sessions(cwd=None, current_sid=None, stale_s=180.0):
+    """Returns (all_active_sessions, other_sessions, is_last_active).
+    is_last_active is True if NO other sessions are currently actively working."""
+    target = cwd or os.getcwd()
+    sdir, top = sessions_dir(target)
+    now = time.time()
+    active = []
+    other = []
+    if not sdir or not os.path.exists(sdir):
+        # Fallback check legacy devkit-session.lock
+        gdir, _ = git_dir(target)
+        if gdir:
+            lock = read_lock(os.path.join(gdir, LOCK))
+            if lock and lock.get("session_id") and (now - float(lock.get("heartbeat") or 0) <= stale_s):
+                sid = lock.get("session_id")
+                active.append(lock)
+                if current_sid and sid != current_sid:
+                    other.append(lock)
+        return active, other, len(other) == 0
+
+    try:
+        entries = os.listdir(sdir)
+    except OSError:
+        return active, other, True
+
+    for entry in entries:
+        if not entry.endswith(".json"):
+            continue
+        file_path = os.path.join(sdir, entry)
+        info = read_lock(file_path)
+        if not info or not info.get("session_id"):
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+            continue
+
+        hb = float(info.get("heartbeat") or 0)
+        pid = info.get("pid")
+        alive = is_pid_alive(pid)
+        # Dual-tier pruning:
+        # 1. Dead process -> prune immediately (0s delay)
+        # 2. Alive process -> allow up to 600s before stale (handles long builds/tests)
+        # 3. Unknown PID -> fallback to stale_s (180s)
+        is_stale = False
+        if pid and not alive:
+            is_stale = True
+        elif pid and alive:
+            is_stale = (now - hb > 600.0)
+        else:
+            is_stale = (now - hb > stale_s)
+
+        if is_stale:
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+            continue
+
+        sid = info.get("session_id")
+        active.append(info)
+        if current_sid and sid != current_sid:
+            other.append(info)
+        elif not current_sid:
+            if pid != os.getpid() and pid != os.getppid():
+                other.append(info)
+
+    return active, other, len(other) == 0
+
+
+def check_last_active(argv):
+    """`--check-last-active [--session ID] [--json] [dir]`
+    Exit 0 if this session is the only/last active session.
+    Exit 1 if other sessions are active."""
+    sid = ""
+    is_json = False
+    if "--session" in argv:
+        i = argv.index("--session")
+        sid = argv[i + 1] if i + 1 < len(argv) else ""
+        argv = argv[:i] + argv[i + 2:]
+    if "--json" in argv:
+        is_json = True
+        argv = [a for a in argv if a != "--json"]
+    target = argv[0] if argv else os.getcwd()
+    active, other, is_last = get_active_sessions(cwd=target, current_sid=sid)
+    if is_json:
+        print(json.dumps({
+            "is_last_active": is_last,
+            "session_id": sid,
+            "active_count": len(active),
+            "other_count": len(other),
+            "other_sessions": [s.get("session_id") for s in other]
+        }))
+    else:
+        if is_last:
+            print(f"session_lock: phiên {sid[:12] if sid else 'hiện tại'} là phiên cuối cùng/duy nhất đang hoạt động.")
+        else:
+            other_ids = ", ".join(s.get("session_id", "?")[:12] for s in other)
+            print(f"session_lock: phát hiện {len(other)} phiên khác đang hoạt động ({other_ids}).")
+    return 0 if is_last else 1
+
+
 def log(gdir, line):
     try:
         with open(os.path.join(gdir, LOG), "a", encoding="utf-8") as f:
@@ -82,10 +280,13 @@ def stale_after():
 
 
 def is_free_for(lock, sid, now):
-    """True when `sid` may hold the checkout: no lock, its own lock, or a stale one."""
+    """True when `sid` may hold the checkout: no lock, its own lock, a dead process, or a stale one."""
     if not lock or not lock.get("session_id"):
         return True
     if lock.get("session_id") == sid:
+        return True
+    lock_pid = lock.get("pid")
+    if lock_pid and not is_pid_alive(lock_pid):
         return True
     return now - float(lock.get("heartbeat") or 0) > stale_after()
 
@@ -112,11 +313,13 @@ def bash_collides(cmd, top):
     return False
 
 
-def take(path, lock, sid, cwd, now):
+def take(path, lock, sid, cwd, now, pid=None):
     started = lock.get("started") if lock and lock.get("session_id") == sid else now
     if lock and lock.get("session_id") == sid and now - float(lock.get("heartbeat") or 0) < 30:
         return  # heartbeat throttle
-    write_lock(path, {"session_id": sid, "started": started, "heartbeat": now, "cwd": cwd})
+    if pid is None:
+        pid = os.getppid()
+    write_lock(path, {"session_id": sid, "started": started, "heartbeat": now, "cwd": cwd, "pid": pid})
 
 
 def status(argv):
@@ -146,6 +349,52 @@ def status(argv):
 def main():
     if "--status" in sys.argv[1:]:
         return status([a for a in sys.argv[1:] if a != "--status"])
+    if "--check-last-active" in sys.argv[1:]:
+        return check_last_active([a for a in sys.argv[1:] if a != "--check-last-active"])
+    if "--register" in sys.argv[1:]:
+        argv = [a for a in sys.argv[1:] if a != "--register"]
+        sid = ""
+        agent = "agent"
+        if "--session" in argv:
+            i = argv.index("--session")
+            sid = argv[i + 1] if i + 1 < len(argv) else ""
+            argv = argv[:i] + argv[i + 2:]
+        if "--agent" in argv:
+            i = argv.index("--agent")
+            agent = argv[i + 1] if i + 1 < len(argv) else "agent"
+            argv = argv[:i] + argv[i + 2:]
+        pid = None
+        if "--pid" in argv:
+            i = argv.index("--pid")
+            try:
+                pid = int(argv[i + 1])
+            except (ValueError, IndexError):
+                pid = None
+            argv = argv[:i] + argv[i + 2:]
+        target = argv[0] if argv else os.getcwd()
+        register_session(target, sid, agent=agent, pid=pid)
+        return 0
+    if "--unregister" in sys.argv[1:]:
+        argv = [a for a in sys.argv[1:] if a != "--unregister"]
+        sid = ""
+        if "--session" in argv:
+            i = argv.index("--session")
+            sid = argv[i + 1] if i + 1 < len(argv) else ""
+            argv = argv[:i] + argv[i + 2:]
+        target = argv[0] if argv else os.getcwd()
+        unregister_session(target, sid)
+        return 0
+    if "--heartbeat" in sys.argv[1:]:
+        argv = [a for a in sys.argv[1:] if a != "--heartbeat"]
+        sid = ""
+        if "--session" in argv:
+            i = argv.index("--session")
+            sid = argv[i + 1] if i + 1 < len(argv) else ""
+            argv = argv[:i] + argv[i + 2:]
+        target = argv[0] if argv else os.getcwd()
+        heartbeat_session(target, sid)
+        return 0
+
     try:
         d = json.load(sys.stdin)
     except ValueError:
@@ -163,6 +412,7 @@ def main():
     lock = read_lock(path)
 
     if event == "SessionEnd":
+        unregister_session(cwd, sid)
         if lock and lock.get("session_id") == sid:
             try:
                 os.remove(path)
@@ -171,6 +421,7 @@ def main():
         return 0
 
     if event == "SessionStart":
+        register_session(cwd, sid, agent="claude")
         if is_free_for(lock, sid, now):
             if lock and lock.get("session_id") not in (None, sid):
                 log(gdir, f"{sid} nhận khoá cũ đã hết hạn của {lock.get('session_id')}")
@@ -183,6 +434,7 @@ def main():
 
     if event != "PreToolUse":
         return 0
+    heartbeat_session(cwd, sid)
     tool = str(d.get("tool_name") or "")
     if tool in EDIT_TOOLS:
         collides = True

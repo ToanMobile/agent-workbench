@@ -47,3 +47,4 @@ tmp/
 .gemini/settings.json
 .claude/agent-memory/
 .antigravity-pm/
+.sandboxes/

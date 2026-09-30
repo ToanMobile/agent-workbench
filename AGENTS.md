@@ -8,7 +8,7 @@ Loaded at every session start. Claude Code and Gemini CLI expand the `@` lines. 
 - Project rules index (`.agents/local/rules/`): @.agents/context/rules-index.md
 
 On demand — everything agent-related lives in `.agents/`: master rules `.agents/devkit/AGENTS.md` · engineering standards `.agents/devkit/rules/core-rules.md` · skills `.agents/skills/` · traps from past bugs `.agents/instincts.md` · profile `.agents/active-profile.json`.
-Post-fix gate: `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full` — only exit `0` counts as PASS. A turn that changes app source on a profile with a screen also attaches a real proof PNG from this turn before the reply may open with XONG. Standing text: the top of this file and the essentials below ("Every prompt"). A serial in `.adb-denylist`, or forbidden by a project rule, is never captured.
+Post-fix gate: `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief` — only exit `0` counts as PASS. A turn that changes app source on a profile with a screen also attaches a real proof PNG from this turn before the reply may open with XONG. Standing text: the top of this file and the essentials below ("Every prompt"). A serial in `.adb-denylist`, or forbidden by a project rule, is never captured.
 
 <!-- devkit-essentials:start — generated from the DevKit's rules/essentials.md by scripts/context_sync.py; do not edit -->
 # DevKit Essentials — always loaded
@@ -97,6 +97,9 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   command (`git pull --ff-only`, or `--no-rebase` when both moved; check its exit code),
   then `git push origin <branch>` — never `<sha>:<branch>` that the local branch does not
   hold. The git guard blocks the rest; session start names drift and leftovers (AGENTS.md §7.1).
+- **One checkout, one session**: an agent with no hooks (Antigravity) runs `python3 .agents/devkit/bin/session_lock.py --status`
+  before editing; exit 3 = another live session holds it → do not edit (wait, or ask for a worktree) unless
+  that session dispatched this task to you (antigravity-pm, `/giao`: it is your PM and reviews your diff).
 - **Done means verified**: run the post-fix gate
   (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`, exit 0 only) and
   attach a real proof PNG from this turn (when step 4 of "Every prompt" applies) before the
@@ -104,6 +107,9 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   gate PASS (exit 0) gọi Antigravity audit / review check độc lập (qua `antigravity-pm` `audit` hoặc
   quy trình như `/giao`) để rà soát toàn bộ diff và an toàn mã nguồn. Với task đơn giản, agent tự hoàn
   tất và nghiệm thu ngay khi gate PASS (exit 0) mà không cần gọi thêm agent khác.
+  Khi chạy nhiều agent / nhiều prompt song song: chỉ test đúng ca đang làm (`--run-tests --brief`).
+  Cổng kiểm thử tự động kiểm tra toàn bộ sessions và chỉ kích hoạt kiểm tra toàn diện (`--full`)
+  khi xác nhận đây là phiên cuối cùng duy nhất đang làm việc (tránh lock contention và chạy lặp).
   The Stop hooks enforce the gate on hosts that have them. They do not take the screenshot; on
   Claude Code `proof_gate.sh` refuses a reply opening with XONG unless this turn has a `--full`
   exit 0 on the current code and, for app source on a profile with a screen, names a fresh proof
@@ -121,8 +127,10 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    then the same oracle GREEN after. Keep the command log and the exit code.
 3. From the repo root, once:
    `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`
-   Exit 0 is required. Any other exit: paste the last 30 log lines, fix, and repeat this
-   step. A dry-run, `--help`, or a single Gradle test does not replace this command.
+   Exit 0 is required. Khi làm việc qua nhiều prompt hoặc nhiều agent, gate tự động tối ưu:
+   chỉ chạy test ca đang làm (impacted mode) khi còn các phiên khác đang chạy, và chỉ chạy toàn diện
+   `--full` khi đây là phiên cuối cùng duy nhất hoàn tất công việc. Một lượt hoãn/impacted in "CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU", không ghi receipt và KHÔNG phải bằng chứng cho bước 5: phiên cuối chạy `--full`, hoặc thêm `--force-full` khi phải nghiệm thu ngay. Any other exit: paste the last
+   30 log lines, fix, and repeat this step. A dry-run, `--help`, or a single Gradle test does not replace this command.
 4. A proof image is blocking, same rank as exit 0, unless the change surely cannot show on a
    screen: the profile was backend when the turn started (committed, or an uncommitted profile
    file written before the turn), or every file changed since HEAD at

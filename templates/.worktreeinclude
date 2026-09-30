@@ -1,0 +1,21 @@
+# .worktreeinclude
+# Quy ước khai báo các file/thư mục cục bộ (thường bị .gitignore)
+# cần được tự động nhân bản (APFS CoW) sang Worktree Sandbox.
+#
+# Nguyên tắc:
+# 1. Mỗi dòng là 1 đường dẫn tương đối so với gốc repository.
+# 2. Không hỗ trợ ký tự đại diện glob (*, ?) để đảm bảo tính tất định.
+# 3. Dòng bắt đầu bằng '#' là ghi chú, dòng trống bị bỏ qua.
+
+# Cấu hình môi trường & Biến bí mật cục bộ
+.env
+.env.local
+.env.development
+
+# Android / Mobile Keystore & SDK Paths
+local.properties
+keystore.properties
+
+# Cấu hình PM & DevKit cục bộ
+.antigravity-pm.json
+.active-profile.json

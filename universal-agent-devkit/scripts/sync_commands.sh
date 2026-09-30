@@ -46,6 +46,7 @@ ALIASES=(
   "module-design:deep-module-design"
   "skill-author:writing-skills"
   "step:incremental-implementation"
+  "sandbox:worktree-sandbox"
   # QA ladder (1.1.0): plan-tests -> review-code -> check -> done (+ /audit-gate)
   "plan-tests:qa-review"
   "review-code:open-code-review"

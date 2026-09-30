@@ -1793,6 +1793,10 @@ def force_full_reason(args):
     """Why this run must use the full commands, or None (selection allowed)."""
     if getattr(args, "full", False):
         return "--full"
+    if getattr(args, "force_full", False):
+        return "--force-full"
+    if os.environ.get("POSTFIX_GATE_FORCE_FULL") == "1":
+        return "POSTFIX_GATE_FORCE_FULL=1"
     if os.environ.get("POSTFIX_GATE_FULL") == "1":
         return "POSTFIX_GATE_FULL=1"
     if (os.environ.get("CI") or "").lower() in ("1", "true", "yes"):
@@ -3134,6 +3138,8 @@ def main():
                         help="Run every matrix command in full, ignoring impacted_command (implies --run-tests). "
                              "Without it, --run-tests runs only the impacted tests where the matrix declares an "
                              "impacted_command. Use --full before handover; POSTFIX_GATE_FULL=1 and CI=true do the same")
+    parser.add_argument("--force-full", action="store_true",
+                        help="Force full test run unconditionally even if other active sessions are currently running (bypasses multi-session optimization)")
     parser.add_argument("--dry-run", action="store_true", help="Only list impacted tests, do not run them (default without --run-tests; never PASS)")
     parser.add_argument("--brief", action="store_true",
                         help="Print only the verdict block, errors (✖) and failing suites with their output tail; "
@@ -3263,7 +3269,7 @@ def main():
     # Unattributable edits stay blocking.
     tests_touched, tests_touched_other = split_tests_by_author(tests_touched, args.session, args.transcript)
     tests_touched, tests_approved = split_user_approved(tests_touched, args.transcript, auto_approve=args.auto_approve_tests)
-    run_tests = (args.run_tests or args.full) and not args.dry_run
+    run_tests = (args.run_tests or args.full or getattr(args, "force_full", False)) and not args.dry_run
 
     print(f"\n{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}")
     print(f"{BOLD}{CYAN}      🛡️  POST-FIX AUDIT & TIA REGRESSION VERIFICATION GATE                          {RESET}")
@@ -3382,7 +3388,36 @@ def main():
         for guard in rule.get("immutable_guards", []):
             immutable_guards_protected.append((comp_name, guard))
     impacted_tests = list(regression_tests)   # what the change itself needs (coverage verdicts)
-    if run_tests and force_full_reason(args):
+    project_dir = get_project_dir()
+    force_reason = force_full_reason(args)
+    deferred_by = []   # sibling session ids that made this run defer --full (verdict must say so)
+    if force_reason and not getattr(args, "force_full", False) and os.environ.get("POSTFIX_GATE_FORCE_FULL") != "1":
+        # Multi-session optimization: if sibling sessions are active, downgrade --full to impacted mode ("test đúng case đang làm thôi")
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import session_lock
+            cur_sid = (args.session or os.environ.get("DEVKIT_SESSION_ID")
+                       or os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID"))
+            # Without a session id this run cannot tell its own session from a sibling: fail toward full.
+            active_list, other_list, is_last = session_lock.get_active_sessions(
+                cwd=str(project_dir), current_sid=cur_sid
+            ) if cur_sid else ([], [], True)
+            if not is_last and other_list:
+                deferred_by = [s.get("session_id", "?")[:12] for s in other_list]
+                other_ids = ", ".join(s.get("session_id", "?")[:12] for s in other_list)
+                print(f"    {YELLOW}⚡ [DevKit Optimization] {tr(f'Phát hiện {len(other_list)} phiên khác đang hoạt động ({other_ids}) — hoãn --full, chỉ test ca đang làm (chế độ impacted). Kiểm tra toàn diện (--full) sẽ chạy một lần duy nhất tại phiên cuối cùng khi hoàn tất.', f'Detected {len(other_list)} other active session(s) ({other_ids}) — deferring --full to test current case only (impacted mode). Full verification will run once on the final active session.')} {tr('Cần --full ngay: thêm --force-full.', 'Need --full now: add --force-full.')}{RESET}")
+                force_reason = None
+        except Exception:
+            pass
+    if args.session:
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import session_lock
+            session_lock.heartbeat_session(str(project_dir), args.session)
+        except Exception:
+            pass
+
+    if run_tests and force_reason:
         stale = stale_suite_ids() - {t["id"] for t in regression_tests}
         for rule in rules:
             for test in rule.get("mandatory_regression_tests", []):
@@ -3410,8 +3445,6 @@ def main():
     else:
         print(f"  • {tr('Component liên đới', 'Impacted components')}: {DIM}{tr('không có (không file nào khớp watch_files)', 'none (no file matches watch_files)')}{RESET}\n")
 
-    project_dir = get_project_dir()
-    force_reason = force_full_reason(args)
     selection_cache = {}
     unity_will_test = any(
         any(tok in (t.get("command") or "").lower() for tok in ("editmode", "playmode"))
@@ -3806,6 +3839,11 @@ def main():
     else:
         verdict_text, verdict_color, exit_code = tr("PASS — ĐỦ ĐIỀU KIỆN NGHIỆM THU & BÀN GIAO", "PASS — READY FOR ACCEPTANCE & HANDOVER"), GREEN, 0
 
+    if deferred_by and exit_code == 0:
+        # --full was deferred for sibling sessions: a partial PASS, never the handover verdict.
+        verdict_text = tr(
+            f"PASS (hoãn --full: phiên {', '.join(deferred_by)} còn hoạt động) — CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU: không ghi receipt; chạy lại ở phiên cuối hoặc thêm --force-full",
+            f"PASS (--full deferred: session {', '.join(deferred_by)} still active) — NOT READY FOR ACCEPTANCE: no receipt written; re-run in the last session or add --force-full")
     print(f"  {BOLD}{tr('KẾT LUẬN CỔNG POST-FIX AUDIT:', 'POST-FIX AUDIT GATE VERDICT:')}{RESET} {verdict_color}{BOLD}{verdict_text}{RESET}")
     print(f"  • {tr('Test hồi quy đạt', 'Regression tests passed')}: {tests_passed}/{len(regression_tests)}" + (tr(" (chưa chạy)", " (not run)") if unverified else "")
           + (tr(f" — {len(impacted_run)} lệnh chỉ chạy test bị ảnh hưởng ({impacted_n} test), lệnh đầy đủ CHƯA chạy",

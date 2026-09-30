@@ -246,6 +246,21 @@ The DevKit provides 10 council subagent prompts in `agents/councils/` (5 focus a
 - **Council 9 — Solo Dev & Operational Process (5 Agents):** Anti-spam click & debounce verification, mandatory acceptance screenshot with PASS badge, audit trail logging, DEMO vs LIVE isolation, fail-closed receipt signing.
 - **Council 10 — Standards Compliance & Delivery (5 Agents):** Bidirectional requirement traceability, protocol & data stream integrity, accessibility & UX visual safety, offline resilience & fault tolerance, Tech Lead handover formatting.
 
+### 8.3.1 10 Specialized Audit Agents & Sandbox Engine
+Bổ sung từ `agency-agents` & `orca` (chuẩn hóa Zero-Defect DevKit):
+- **`minimal-change-auditor`:** Thẩm định diff tối thiểu, Zero Blast Radius, từ chối premature abstraction và scope creep.
+- **`worktree-sandbox-auditor`:** Thẩm định cô lập sandbox song song, APFS CoW, .worktreeinclude, và dọn sạch .git/worktrees/.
+- **`performance-anr-auditor`:** Thẩm định nghẽn main-thread, ANR, O(N²), hot loop allocations và debounce $\ge 1000$ms.
+- **`security-penetration-auditor`:** Thẩm định Zero-Trust, rò rỉ secret, mask PII, SQLi, Intent Spoofing và Path Traversal.
+- **`database-reliability-auditor`:** Thẩm định schema migrations, paired migration test, cấm DROP cột LIVE, cột `mode` (DEMO/LIVE).
+- **`mobile-release-auditor`:** Thẩm định keystore signing, Proguard/R8 rules, đồng bộ bump version 4 nền tảng (Android, iOS, Flutter, RN).
+- **`api-contract-resilience-auditor`:** Thẩm định backward compatibility, explicit timeouts ($\le 10$s/$\le 15$s), idempotency keys, retry jitter.
+- **`real-device-ui-auditor`:** Thẩm định UI Automator accessibility tree, touch target $\ge 48$dp, xác thực proof image thành công.
+- **`game-gc-rendering-auditor`:** Thẩm định Zero-Allocation Update loop, draw call batching, texture compression, Unity/Blender memory.
+- **`token-cost-telemetry-auditor`:** Thẩm định token usage, bảng giá Claude/Gemini, prompt caching savings, 5-minute root cause telemetry.
+- **APFS Worktree Sandbox (`scripts/worktree_sandbox.py`):** Điều phối worktree song song bằng macOS APFS CoW (<100ms, 0-byte đĩa), nạp `.worktreeinclude`, cô lập dependencies và trọng tài so sánh diff chọn Winner.
+- **Token Cost Engine (`scripts/token_cost_tracker.py`):** Bóc tách transcript JSONL và tính toán chi phí token USD cho báo cáo nghiệm thu.
+
 ### 8.4 Engineering Excellence & Failure Prevention
 - **`DESIGN.md`, touch targets, instant feedback:** `rules/core-rules.md` §6.
 - **Instincts & Failure Memory (`.agents/instincts.md`):** Traps, anti-patterns and past regressions. **[hook]** Surfaced automatically — the map at session start, the matching entries on each request; recorded with `agent-kit learn` or `postfix-gate --record-lesson`. It lowers repeats; it cannot guarantee none.

@@ -1444,6 +1444,10 @@ SL_REPO="${SANDBOX}/sl-repo"
 mkdir -p "${SL_REPO}" && git -C "${SL_REPO}" init -q .
 run_case "session lock: holder's Edit allowed" session_lock.sh 0 \
   "{\"session_id\":\"s-sl-a\",\"hook_event_name\":\"PreToolUse\",\"cwd\":\"${SL_REPO}\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${SL_REPO}/a.kt\"}}"
+# The holder's hook ran in a $(…) subshell that is gone by now, so its recorded pid is dead and the
+# lock would count as free (dead pid = free). Re-record it with this harness's live pid: a real
+# session's parent (claude) outlives its hooks.
+python3 -c 'import json,sys,time; json.dump({"session_id":"s-sl-a","started":time.time(),"heartbeat":time.time(),"cwd":sys.argv[1],"pid":int(sys.argv[2])}, open(sys.argv[1]+"/.git/devkit-session.lock","w"))' "${SL_REPO}" "$$"
 run_case "session lock: other live session's Edit blocked" session_lock.sh 2 \
   "{\"session_id\":\"s-sl-b\",\"hook_event_name\":\"PreToolUse\",\"cwd\":\"${SL_REPO}\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${SL_REPO}/a.kt\"}}"
 run_case "session lock: other session's read-only Bash allowed" session_lock.sh 0 \

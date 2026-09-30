@@ -94,6 +94,9 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   gate PASS (exit 0) gọi Antigravity audit / review check độc lập (qua `antigravity-pm` `audit` hoặc
   quy trình như `/giao`) để rà soát toàn bộ diff và an toàn mã nguồn. Với task đơn giản, agent tự hoàn
   tất và nghiệm thu ngay khi gate PASS (exit 0) mà không cần gọi thêm agent khác.
+  Khi chạy nhiều agent / nhiều prompt song song: chỉ test đúng ca đang làm (`--run-tests --brief`).
+  Cổng kiểm thử tự động kiểm tra toàn bộ sessions và chỉ kích hoạt kiểm tra toàn diện (`--full`)
+  khi xác nhận đây là phiên cuối cùng duy nhất đang làm việc (tránh lock contention và chạy lặp).
   The Stop hooks enforce the gate on hosts that have them. They do not take the screenshot; on
   Claude Code `proof_gate.sh` refuses a reply opening with XONG unless this turn has a `--full`
   exit 0 on the current code and, for app source on a profile with a screen, names a fresh proof
@@ -111,8 +114,10 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    then the same oracle GREEN after. Keep the command log and the exit code.
 3. From the repo root, once:
    `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`
-   Exit 0 is required. Any other exit: paste the last 30 log lines, fix, and repeat this
-   step. A dry-run, `--help`, or a single Gradle test does not replace this command.
+   Exit 0 is required. Khi làm việc qua nhiều prompt hoặc nhiều agent, gate tự động tối ưu:
+   chỉ chạy test ca đang làm (impacted mode) khi còn các phiên khác đang chạy, và chỉ chạy toàn diện
+   `--full` khi đây là phiên cuối cùng duy nhất hoàn tất công việc. Một lượt hoãn/impacted in "CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU", không ghi receipt và KHÔNG phải bằng chứng cho bước 5: phiên cuối chạy `--full`, hoặc thêm `--force-full` khi phải nghiệm thu ngay. Any other exit: paste the last
+   30 log lines, fix, and repeat this step. A dry-run, `--help`, or a single Gradle test does not replace this command.
 4. A proof image is blocking, same rank as exit 0, unless the change surely cannot show on a
    screen: the profile was backend when the turn started (committed, or an uncommitted profile
    file written before the turn), or every file changed since HEAD at
