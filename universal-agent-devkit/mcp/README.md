@@ -13,6 +13,7 @@ Universal configuration and schemas for Model Context Protocol (MCP) servers use
 | **`android-code-search`** | `npx -y cs-android-mcp` | Tìm kiếm mã nguồn và symbol trong Android Open Source Project (AOSP) (`search_android_code`, `suggest_symbols`). |
 | **`android-skills`** | `npx -y android-skills-mcp` | Tra cứu kỹ năng phát triển Android chính thức (`list_skills`, `search_skills`, `get_skill`). |
 | **`replicant-mcp`** | `npx -y replicant-mcp` | Điều khiển thiết bị Android qua ADB, capture màn hình, query UI node, click/swipe UI, đọc logcat, chạy Gradle build & test (`adb-device`, `ui-query`, `ui-action`, `adb-logcat`, `gradle-build`). |
+| **`agentmemory`** | `npx -y @agentmemory/agentmemory@0.9.29 mcp` | Trí nhớ dài hạn xuyên session, chế độ gọn: server stdio độc lập, 7 tool (`memory_save`, `memory_recall`, `memory_smart_search`, …), dữ liệu ở `~/.agentmemory/`, không hook, không ghi vào repo. Cài cho mọi profile (`essential_mcps` của `universal`). Lệnh trần không có `mcp` là trình cài + server :3111, không phải MCP. |
 | **`play-store`** | Python stdio (`play-store-mcp`) | Quản lý Google Play Console, triển khai APK/AAB, track crash rate, ANR rate, review response, subscriptions, vitals summary (`deploy_app`, `get_crash_rate`, `get_reviews`, `get_vitals_summary`). |
 
 ---

@@ -108,7 +108,9 @@ case " $got " in *" android-code-search "*|*" replicant-mcp "*|*" play-store "*)
 case " $got " in *" android-skills "*) case " $got " in *" my-own "*) ok "game: the user's own and user-edited MCP entries are kept" ;; *) fail "game: user MCP lost: $got" ;; esac ;;
   *) fail "game: the user-edited android-skills entry was removed: $got" ;; esac
 case " $got " in *" context7 "*) ok "game: generic MCPs (context7) installed" ;; *) fail "game: context7 missing: $got" ;; esac
+case " $got " in *" agentmemory "*) ok "game: agentmemory (universal essential MCP) installed" ;; *) fail "game: agentmemory missing: $got" ;; esac
 got="$(servers "$U/mcp_config.json")"
+case " $got " in *" agentmemory "*) ok "game: agentmemory in mcp_config.json (Gemini)" ;; *) fail "game: agentmemory missing in mcp_config.json: $got" ;; esac
 case " $got " in *" android-code-search "*|*" android-skills "*|*" replicant-mcp "*) fail "game: Android MCPs in mcp_config.json: $got" ;;
   *) ok "game: mcp_config.json (Gemini) filtered the same way" ;; esac
 [ ! -e "$U/.claude/agents/android-principal-architect.md" ] && [ ! -L "$U/.claude/agents/android-principal-architect.md" ] \
@@ -119,6 +121,7 @@ install "$A" -a claude
 [ -L "$A/.claude/agents/android-principal-architect.md" ] && ok "android: android-principal-architect linked" || fail "android: android-principal-architect missing"
 got="$(servers "$A/.mcp.json")"
 case " $got " in *" android-code-search "*) ok "android: Android MCPs installed" ;; *) fail "android: Android MCPs missing: $got" ;; esac
+case " $got " in *" agentmemory "*) ok "android: agentmemory installed" ;; *) fail "android: agentmemory missing: $got" ;; esac
 
 # --- An MCP binary that is not on PATH is never added -------------------------------------
 NOPS=""; IFS=: read -ra dirs <<< "$PATH"

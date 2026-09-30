@@ -208,11 +208,14 @@ for f in ("mcp/.mcp.json", "mcp/mcp_config.json"):
     mcp_names |= set(json.load(open(os.path.join(ROOT, f)))["mcpServers"])
 # agentmemory (lean): bare `npx @agentmemory/agentmemory` is the setup wizard + a server on :3111
 # that prints a banner on stdout; only its `mcp` subcommand is a stdio MCP server (7 local tools).
-am = json.load(open(os.path.join(ROOT, "mcp_config.json")))["mcpServers"].get("agentmemory") or {}
-am_args = am.get("args") or []
-check(am.get("command") == "npx" and am_args[-1:] == ["mcp"]
-      and any(re.fullmatch(r"@agentmemory/agentmemory@\d+\.\d+\.\d+", a) for a in am_args),
-      "R6 mcp_config.json agentmemory runs the pinned stdio `mcp` subcommand", json.dumps(am))
+am_bad = []
+for f in ("mcp_config.json", "mcp/.mcp.json", "mcp/mcp_config.json"):
+    am = json.load(open(os.path.join(ROOT, f)))["mcpServers"].get("agentmemory") or {}
+    am_args = am.get("args") or []
+    if not (am.get("command") == "npx" and am_args[-1:] == ["mcp"]
+            and any(re.fullmatch(r"@agentmemory/agentmemory@\d+\.\d+\.\d+", a) for a in am_args)):
+        am_bad.append(f"{f}: {json.dumps(am)}")
+check(not am_bad, "R6 agentmemory runs the pinned stdio `mcp` subcommand (DevKit + install sources)", "; ".join(am_bad))
 prof_problems = []
 profiles = sorted(d for d in os.listdir(os.path.join(ROOT, "profiles"))
                   if os.path.isfile(os.path.join(ROOT, "profiles", d, "profile.json")))

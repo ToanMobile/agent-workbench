@@ -64,7 +64,7 @@ python3 "$CFG" -p nosuch -t "$TMP/p6" >/dev/null 2>&1; rc=$?
 [ "$rc" -ne 0 ] && [ ! -e "$TMP/p6/.agents/active-profile.json" ] && ok "P-3: invalid profile exits $rc and writes nothing" || fail "P-3: invalid profile accepted"
 
 # P-4: MCP check reads the project's .mcp.json.
-mkdir -p "$TMP/p7" && echo '{"mcpServers":{"codebase-memory-mcp":{},"context7":{}}}' > "$TMP/p7/.mcp.json"
+mkdir -p "$TMP/p7" && echo '{"mcpServers":{"codebase-memory-mcp":{},"context7":{},"agentmemory":{}}}' > "$TMP/p7/.mcp.json"
 out="$(python3 "$CFG" -p universal -t "$TMP/p7" 2>&1)"
 echo "$out" | grep -q "CHƯA khai báo" && fail "P-4: project .mcp.json ignored" || ok "P-4: MCPs from project .mcp.json recognised"
 

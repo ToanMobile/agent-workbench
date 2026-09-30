@@ -5,7 +5,8 @@
   "description_en": "Baseline for any project: Clean Architecture, TDD paired oracle, zero secret leakage, solo-dev delivery, TIA regression verification.",
   "essential_mcps": [
     "codebase-memory-mcp",
-    "context7"
+    "context7",
+    "agentmemory"
   ],
   "active_councils": [
     "02-architecture-blast-radius.md",
