@@ -175,3 +175,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Dọn/kiểm kê worktree đọc lỗi git thành 'sạch' và cho file mới lọt allowlist theo tiền tố
 - **Nguyên nhân:** sandbox cleanup và worktree status bỏ qua returncode của git status/rev-list (stdout rỗng = sạch), dùng --untracked-files=no, allowlist theo tiền tố thư mục, đo ahead bằng 'trừ mọi ref khác'; việc ở worktree này bị xoá khi gom worktree khác
 - **Quy tắc phòng ngừa & Cách fix:** kiểm kê fail-closed: rc≠0 hoặc None = chưa gộp; file mới chưa add là việc thật (-uall, so byte với bản nguồn mới coi là bỏ được); đo 'chưa gộp' bằng main_head..head, đo 'sẽ mất' riêng bằng ref; chạy agent-kit worktree status trước khi gộp hoặc xoá bất kỳ worktree nào
+
+---
+
+### [INSTINCT-021] Nguồn tự dò mới giành quyền cấu hình đã khai
+- **Ngày phát hiện:** 2026-09-30
+- **Hiện tượng lỗi:** Nguồn tự dò mới giành quyền cấu hình đã khai
+- **Nguyên nhân:** proof-capture thêm nhánh 'có iOS Simulator Booted thì chụp simulator' nhưng chỉ coi provider có serial là đã khai; provider chỉ khai avd (và 2 simulator Booted) bị đẩy sang simctl/fail, đổi hành vi adb đang chạy (review 7de08da, 2026-09-30)
+- **Quy tắc phòng ngừa & Cách fix:** Thêm một nguồn tự dò (thiết bị, file, env) thì liệt kê MỌI trường cấu hình người dùng có thể khai (serial, avd, udid, type…) — trường nào có mặt thì nó thắng; tự dò chỉ quyết khi không khai gì và kết quả đúng 1 ứng viên, còn lại rơi về đường cũ. Viết test 'đã khai X + nguồn tự dò có mặt → vẫn đường cũ' cho từng trường.
