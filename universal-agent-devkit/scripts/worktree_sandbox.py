@@ -12,6 +12,7 @@ Trích xuất & nâng cấp từ Git Engine của Orca:
 """
 
 import os
+import filecmp
 import sys
 import subprocess
 import shutil
@@ -241,8 +242,32 @@ def compare_sandboxes(name_a: str, name_b: str) -> None:
     print("💡 Tiêu chí chọn Winner: Exit 0 trên Post-Fix Gate + Diff phẫu thuật ít dòng hơn.")
 
 
-def cleanup_sandbox(name: Optional[str] = None, cleanup_all: bool = False) -> None:
-    """Dọn dẹp worktree an toàn, unregister và xoá sạch nhánh."""
+def sandbox_unsaved_work(s_path: Path, repo_root: Path) -> Optional[str]:
+    """Why this sandbox must not be deleted silently, or None when only disposable setup files are left.
+    Fail closed: an unreadable status (broken worktree admin dir, a folder that is not a worktree) is unsaved work."""
+    top = run_cmd(["git", "rev-parse", "--show-toplevel"], cwd=s_path, check=False)
+    if top.returncode != 0 or os.path.realpath(top.stdout.strip()) != os.path.realpath(str(s_path)):
+        return "  (không đọc được git status của sandbox này: không phải worktree hợp lệ)"
+    proc = run_cmd(["git", "status", "--porcelain", "-uall"], cwd=s_path, check=False)
+    if proc.returncode != 0:
+        return f"  (git status lỗi rc={proc.returncode}: {proc.stderr.strip()})"
+    included = [i.rstrip("/") for i in parse_worktree_include(repo_root)]   # copied in by create_sandbox
+    left = []
+    for line in proc.stdout.splitlines():
+        rel = line[3:].strip()
+        if line.startswith("??") and not rel.startswith('"'):   # a quoted (odd) name is never assumed disposable
+            under_include = any(rel == i or rel.startswith(i + "/") for i in included)
+            src, dst = Path(repo_root) / rel, Path(s_path) / rel
+            # Disposable only when it is the recorded setup file, or a byte-identical copy of an included file.
+            if rel == ".sandbox-env.sh" or (under_include and src.is_file() and dst.is_file()
+                                            and filecmp.cmp(src, dst, shallow=False)):
+                continue
+        left.append(line)
+    return "\n".join(left) or None
+
+
+def cleanup_sandbox(name: Optional[str] = None, cleanup_all: bool = False, force: bool = False) -> None:
+    """Dọn dẹp worktree an toàn. Sandbox còn file tracked chưa commit, hoặc nhánh còn commit chưa merge, được GIỮ NGUYÊN trừ khi force=True."""
     if name and not re.match(r"^[a-zA-Z0-9_-]+$", name):
         raise ValueError(f"Tên sandbox không hợp lệ: '{name}'. Chỉ chấp nhận chữ cái, số, gạch dưới và gạch ngang.")
 
@@ -264,12 +289,26 @@ def cleanup_sandbox(name: Optional[str] = None, cleanup_all: bool = False) -> No
         branch_name = f"sandbox/{t}"
         print(f"🧹 Dọn dẹp sandbox '{t}'...")
         if s_path.exists():
-            run_cmd(["git", "worktree", "remove", "--force", str(s_path)], cwd=repo_root, check=False)
-            if s_path.exists():
-                shutil.rmtree(s_path, ignore_errors=True)
-        # Xóa nhánh sandbox
-        run_cmd(["git", "branch", "-D", branch_name], cwd=repo_root, check=False)
-        print(f"   ✓ Đã gỡ bỏ {t} và xoá nhánh {branch_name} sạch sẽ.")
+            unsaved = sandbox_unsaved_work(s_path, repo_root)
+            if unsaved and not force:
+                print(f"   ⚠ '{t}' còn việc chưa commit hoặc không đọc được trạng thái — giữ nguyên (thêm --force để xoá hẳn):\n{unsaved}")
+                continue
+            # Only the recorded setup files and ignored files (or an explicit --force) are deleted here.
+            try:
+                shutil.rmtree(s_path)
+            except OSError as e:
+                print(f"   ✖ không xoá được {s_path}: {e} — giữ nguyên.")
+                continue
+        run_cmd(["git", "worktree", "prune"], cwd=repo_root, check=False)
+        ahead = run_cmd(["git", "rev-list", "--count", f"HEAD..{branch_name}"], cwd=repo_root, check=False).stdout.strip()
+        if ahead not in ("", "0") and not force:
+            print(f"   ⚠ nhánh {branch_name} giữ {ahead} commit chưa merge — giữ nhánh (thêm --force để xoá hẳn).")
+            continue
+        res = run_cmd(["git", "branch", "-D" if force else "-d", branch_name], cwd=repo_root, check=False)
+        if res.returncode != 0 and "not found" not in (res.stderr or ""):
+            print(f"   ⚠ đã gỡ {t} nhưng chưa xoá được nhánh {branch_name}: {(res.stderr or '').strip()}")
+            continue
+        print(f"   ✓ Đã gỡ bỏ {t} và xoá nhánh {branch_name}.")
 
     run_cmd(["git", "worktree", "prune"], cwd=repo_root, check=False)
     print("✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.")
@@ -291,11 +330,11 @@ def merge_winner(name: str, squash: bool = False, clean_others: bool = False) ->
     if not sandbox_path.exists():
         raise RuntimeError(f"Không tìm thấy sandbox '{name}' để merge.")
 
-    # 1. Kiểm tra uncommitted changes trong các file tracked
-    proc = run_cmd(["git", "status", "--porcelain", "--untracked-files=no"], cwd=sandbox_path)
-    if proc.stdout.strip():
+    # 1. Kiểm tra việc chưa commit (file tracked sửa, file mới chưa add) hoặc trạng thái không đọc được
+    unsaved = sandbox_unsaved_work(sandbox_path, repo_root)
+    if unsaved:
         raise RuntimeError(
-            f"Sandbox '{name}' đang có file tracked chưa commit. Hãy commit hoặc revert trước khi merge:\n{proc.stdout}"
+            f"Sandbox '{name}' đang có việc chưa commit. Hãy commit (git add cả file mới) hoặc bỏ đi trước khi merge:\n{unsaved}"
         )
 
     branch_name = f"sandbox/{name}"
@@ -323,7 +362,12 @@ def merge_winner(name: str, squash: bool = False, clean_others: bool = False) ->
             print(f"   Đang dọn tiếp {len(remaining)} sandbox thua cuộc còn lại...")
             cleanup_sandbox(cleanup_all=True)
 
-    print("🎉 TOÀN BỘ WORKTREE ĐÃ ĐƯỢC DỌN DẸP SẠCH 100%, KHÔNG ĐỂ LẠI RÁC TRONG REPO!")
+    if squash:
+        # A squash merge leaves the change staged (not committed) and creates no ancestry, so the
+        # sandbox branch still looks unmerged and is kept.
+        print(f"⚠ Squash: thay đổi mới ở trạng thái staged. Commit nó rồi chạy `cleanup --name {name} --force` để xoá nhánh {branch_name}.")
+    else:
+        print("🎉 Đã merge và dọn sandbox thắng cuộc. Sandbox khác (nếu có) được giữ nguyên.")
 
 
 def main():
@@ -359,6 +403,7 @@ def main():
     p_clean = subparsers.add_parser("cleanup", help="Dọn dẹp sandbox")
     p_clean.add_argument("--name", help="Tên sandbox cần dọn")
     p_clean.add_argument("--all", action="store_true", help="Dọn sạch toàn bộ sandboxes")
+    p_clean.add_argument("--force", action="store_true", help="Xoá cả sandbox còn thay đổi chưa commit và nhánh chưa merge (mất việc)")
 
     args = parser.parse_args()
 
@@ -377,7 +422,7 @@ def main():
     elif args.command == "merge-winner":
         merge_winner(args.name, args.squash, args.clean_others)
     elif args.command == "cleanup":
-        cleanup_sandbox(args.name, args.all)
+        cleanup_sandbox(args.name, args.all, args.force)
 
 
 if __name__ == "__main__":

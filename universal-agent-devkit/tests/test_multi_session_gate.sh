@@ -82,6 +82,26 @@ final_out=$(CLAUDE_PROJECT_DIR="$REPO" python3 "$GATE" --matrix "$REPO/.agents/r
 echo "$final_out" | grep -q "FULL_TEST_EXECUTED" && ok "final session: --full executes in full" || fail "expected full execution for final session"
 echo "$final_out" | grep -q "PASS — ĐỦ ĐIỀU KIỆN NGHIỆM THU" && ok "  … only a full run prints the acceptance verdict" || fail "final session missing the acceptance verdict"
 
+# 6b. A session working in another linked worktree of the same repo is not a sibling of this checkout:
+# its gate run, build dir and receipt are its own (it used to downgrade every other worktree's --full).
+WT="$TMP/repo-wt"
+git -C "$REPO" worktree add -q -b wt-branch "$WT" >/dev/null 2>&1 || fail "could not create a linked worktree"
+python3 "$SESSION_LOCK" --register --session S3 "$WT"
+out=$(python3 "$SESSION_LOCK" --check-last-active --session S1 --json "$REPO" || true)
+echo "$out" | grep -q '"is_last_active": true' && ok "session in another worktree does not count as a sibling" || fail "worktree session counted as sibling: $out"
+python3 "$SESSION_LOCK" --unregister --session S3 "$WT"
+# …also when that worktree sits INSIDE the repo (the DevKit's own .sandboxes/<name>)
+git -C "$REPO" worktree add -q -b nested-branch "$REPO/.sandboxes/nest" >/dev/null 2>&1 || fail "could not create a nested worktree"
+python3 "$SESSION_LOCK" --register --session S4 "$REPO/.sandboxes/nest"
+out=$(python3 "$SESSION_LOCK" --check-last-active --session S1 --json "$REPO" || true)
+echo "$out" | grep -q '"is_last_active": true' && ok "session in a nested .sandboxes worktree does not count as a sibling" || fail "nested worktree session counted as sibling: $out"
+python3 "$SESSION_LOCK" --unregister --session S4 "$REPO/.sandboxes/nest"
+# a relative path given to --register is stored absolute
+( cd "$REPO" && python3 "$SESSION_LOCK" --register --session S5 . )
+stored=$(python3 -c 'import json,glob,sys; print(json.load(open(glob.glob(sys.argv[1]+"/.git/devkit-sessions/S5.json")[0]))["cwd"])' "$REPO")
+[ "${stored#/}" != "$stored" ] && ok "--register stores an absolute cwd" || fail "--register stored a relative cwd: $stored"
+python3 "$SESSION_LOCK" --unregister --session S5 "$REPO"
+
 # 7. The agent's OWN session, identified only by Claude Code's env var, must not count as "other".
 python3 "$SESSION_LOCK" --register --session OWN1 "$REPO"
 env_out=$(CLAUDE_PROJECT_DIR="$REPO" CLAUDE_CODE_SESSION_ID=OWN1 python3 "$GATE" --matrix "$REPO/.agents/regression_matrix.active.json" --run-tests --full 2>&1 || true)

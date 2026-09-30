@@ -117,6 +117,81 @@ else
   fail ".worktreeinclude accepted a repo-root path: $INC"
 fi
 
+# Test 6: cleanup never discards work unless --force is given
+python3 "$SCRIPT" create dirty_sb >/dev/null 2>&1
+echo "uncommitted work" >> "$P/.sandboxes/dirty_sb/README.md"
+python3 "$SCRIPT" cleanup --name dirty_sb >/dev/null 2>&1
+if [ -d "$P/.sandboxes/dirty_sb" ] && grep -q "uncommitted work" "$P/.sandboxes/dirty_sb/README.md"; then
+  ok "cleanup keeps a sandbox that has uncommitted changes"
+else
+  fail "cleanup destroyed uncommitted work without --force"
+fi
+python3 "$SCRIPT" create ahead_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/ahead_sb" && echo x > ahead.txt && git add ahead.txt && git commit -q -m "feat: unmerged" )
+python3 "$SCRIPT" cleanup --name ahead_sb >/dev/null 2>&1
+if git -C "$P" rev-parse --verify -q "sandbox/ahead_sb" >/dev/null; then
+  ok "cleanup keeps the branch that holds unmerged commits"
+else
+  fail "cleanup deleted a branch with unmerged commits without --force"
+fi
+python3 "$SCRIPT" cleanup --name dirty_sb --force >/dev/null 2>&1
+python3 "$SCRIPT" cleanup --name ahead_sb --force >/dev/null 2>&1
+if [ ! -d "$P/.sandboxes/dirty_sb" ] && [ ! -d "$P/.sandboxes/ahead_sb" ] && ! git -C "$P" rev-parse --verify -q "sandbox/ahead_sb" >/dev/null; then
+  ok "--force removes the sandbox and the unmerged branch on explicit request"
+else
+  fail "--force did not remove the sandboxes and branch"
+fi
+
+# Test 7: a new file that was never `git add`ed is work too (not a disposable leftover)
+python3 "$SCRIPT" create untracked_sb >/dev/null 2>&1
+echo "print('feature')" > "$P/.sandboxes/untracked_sb/feature.py"
+python3 "$SCRIPT" cleanup --name untracked_sb >/dev/null 2>&1
+if [ -f "$P/.sandboxes/untracked_sb/feature.py" ]; then
+  ok "cleanup keeps a sandbox holding a new untracked file"
+else
+  fail "cleanup deleted an untracked new file without --force"
+fi
+if python3 "$SCRIPT" merge-winner untracked_sb >/dev/null 2>&1; then
+  fail "merge-winner accepted a sandbox holding an untracked new file"
+else
+  ok "merge-winner refuses a sandbox holding an untracked new file"
+fi
+[ -f "$P/.sandboxes/untracked_sb/feature.py" ] && ok "  … and the file is still there" || fail "merge-winner lost the untracked file"
+python3 "$SCRIPT" cleanup --name untracked_sb --force >/dev/null 2>&1
+
+# Test 8: an unreadable worktree (admin dir gone) must not look clean
+python3 "$SCRIPT" create broken_sb >/dev/null 2>&1
+echo "tracked edit" >> "$P/.sandboxes/broken_sb/README.md"
+GCD="$(git -C "$P" rev-parse --path-format=absolute --git-common-dir)"
+mv "$GCD/worktrees/broken_sb" "$TMP/broken_sb_admin"
+python3 "$SCRIPT" cleanup --name broken_sb >/dev/null 2>&1
+if [ -f "$P/.sandboxes/broken_sb/README.md" ] && grep -q "tracked edit" "$P/.sandboxes/broken_sb/README.md"; then
+  ok "cleanup keeps a sandbox whose git status cannot be read"
+else
+  fail "cleanup deleted a sandbox whose status was unreadable"
+fi
+mv "$TMP/broken_sb_admin" "$GCD/worktrees/broken_sb"
+python3 "$SCRIPT" cleanup --name broken_sb --force >/dev/null 2>&1
+
+# Test 9: .worktreeinclude may name a DIRECTORY; a new file inside it is still work, an unchanged copy is not
+mkdir -p "$P/config" && echo "base" > "$P/config/base.txt"
+printf 'config\n.env\n' > "$P/.worktreeinclude"
+python3 "$SCRIPT" create dir_sb >/dev/null 2>&1
+echo "print('mine')" > "$P/.sandboxes/dir_sb/config/new_work.py"
+python3 "$SCRIPT" cleanup --name dir_sb >/dev/null 2>&1
+if [ -f "$P/.sandboxes/dir_sb/config/new_work.py" ]; then
+  ok "cleanup keeps a new file inside an included directory"
+else
+  fail "cleanup deleted a new file inside an included directory"
+fi
+rm -f "$P/.sandboxes/dir_sb/config/new_work.py"
+python3 "$SCRIPT" cleanup --name dir_sb >/dev/null 2>&1
+if [ ! -d "$P/.sandboxes/dir_sb" ]; then
+  ok "a sandbox holding only unchanged copies of included files is cleaned up"
+else
+  fail "a sandbox with only unchanged included copies was kept"
+fi
+
 if [ $FAILS -gt 0 ]; then
   echo "FAILED: $FAILS errors"
   exit 1

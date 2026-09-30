@@ -245,8 +245,8 @@ try:
     wt_branches = {l[len("branch refs/heads/"):] for l in porcelain if l.startswith("branch refs/heads/")}
     extra_wt = [w for w in wts[1:] if os.path.realpath(w) != here]
     if extra_wt:
-        drift.append(f"{len(extra_wt)} worktree còn lại: {', '.join(extra_wt[:3])} — gộp xong thì "
-                     "`agent-kit worktree remove <path>`")
+        drift.append(f"{len(extra_wt)} worktree còn lại: {', '.join(extra_wt[:3])} — TRƯỚC khi gộp/xoá bất kỳ cái nào chạy "
+                     "`agent-kit worktree status` (cái nào còn việc CHƯA gộp thì đem về trước), rồi `agent-kit worktree remove <path>`")
     heads = (git_out("for-each-ref", "--format=%(refname:short)", "refs/heads/") or "").splitlines()
     extra = [b for b in heads if b and b != cur and b not in wt_branches and not main_like.match(b)]
     merged = set((git_out("branch", "--format=%(refname:short)", "--merged", "HEAD") or "").splitlines())

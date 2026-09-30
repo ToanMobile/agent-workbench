@@ -314,6 +314,7 @@ Commands:
   worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init]
                       Git worktree for a parallel agent (branch default feat/<folder>), set up
                       like the main checkout: ignored local config copied, DevKit installed
+  worktree status     Every worktree and which ones still hold work not in the main checkout (run BEFORE gathering/removing any)
   worktree diff <path>
                       Its own changes as a patch, DevKit setup left out; bring them back
                       with: agent-kit worktree diff ../app-x | git apply --3way

@@ -249,6 +249,120 @@ def cmd_add(cwd, args):
     return 0
 
 
+def _uncommitted(path):
+    """Number of uncommitted paths of a worktree (setup files of a `worktree add` worktree excluded), or
+    None when git cannot say. Fail closed: an unreadable status must never read as clean."""
+    if not os.path.isdir(path):
+        return 0   # directory gone (prunable): nothing uncommitted is left to lose
+    r = git(path, "status", "--porcelain", "-uall", check=False)
+    if r.returncode != 0:
+        return None
+    try:
+        with open(os.path.join(git_dir(path), STATE)) as f:
+            return len(changes_since(path, json.load(f)))
+    except (OSError, ValueError, KeyError, SystemExit):
+        return len([l for l in r.stdout.splitlines() if l.strip()])
+
+
+def _count(cwd, *revs, stdin=None):
+    """`git rev-list --count`, or None when git fails (a broken ref must not read as zero commits)."""
+    args = ["rev-list", "--count"] + (["--stdin"] if stdin is not None else list(revs))
+    r = git(cwd, *args, inp=stdin, check=False)
+    out = r.stdout.strip()
+    return int(out) if r.returncode == 0 and out.isdigit() else None
+
+
+def _patch_already_in_main(cwd, main_head, head):
+    """True when every file the worktree's commits touch already has the same content in the main checkout's HEAD."""
+    base = git(cwd, "merge-base", main_head, head, check=False).stdout.strip()
+    if not base:
+        return False
+    files = git(cwd, "diff", "--name-only", "--no-renames", "-z", base, head, check=False).stdout.split("\0")
+    files = [f for f in files if f]
+    if not files or len(files) > 500:
+        return False
+    return git(cwd, "diff", "--quiet", main_head, head, "--", *files, check=False,
+               env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).returncode == 0
+
+
+def inventory(cwd, only=None):
+    """Every linked worktree (or just `only`):
+    [{path, branch, detached, dirty, ahead, unreachable, unintegrated}]. `ahead` = commits of its HEAD that are not
+    in the main checkout's HEAD (and whose files are not already there with the same content): the work not
+    integrated. `unreachable` = a detached HEAD whose commits no branch, tag or remote ref holds: a removal loses
+    them. `dirty`/`ahead` are None when git could not say; that counts as unintegrated (fail closed)."""
+    entries, cur = [], None
+    for line in git(cwd, "worktree", "list", "--porcelain").stdout.splitlines() + [""]:
+        if line.startswith("worktree "):
+            cur = {"path": line[len("worktree "):], "branch": None, "head": None, "detached": False}
+        elif cur is not None and line.startswith("HEAD "):
+            cur["head"] = line[len("HEAD "):]
+        elif cur is not None and line.startswith("branch refs/heads/"):
+            cur["branch"] = line[len("branch refs/heads/"):]
+        elif cur is not None and line == "detached":
+            cur["detached"] = True
+        elif cur is not None and line == "":
+            entries.append(cur)
+            cur = None
+    main_head = entries[0]["head"] if entries else None
+    refs = git(cwd, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes", "refs/tags",
+               check=False).stdout.split()
+    skip = os.path.realpath(only) if only else None
+    rows = []
+    for e in entries[1:]:
+        path, head = e["path"], e["head"]
+        if skip and os.path.realpath(path) != skip:
+            continue
+        dirty = _uncommitted(path)
+        ahead = _count(cwd, f"{main_head}..{head}") if head and main_head else None   # None: git could not say
+        if ahead and _patch_already_in_main(cwd, main_head, head):
+            ahead = 0   # brought back the documented way (diff | apply, committed in main)
+        held_only = None   # commits no other ref holds (what a removal would lose); None: git could not say
+        if head and e["detached"]:   # a branch keeps its own commits reachable; only a detached HEAD can lose them
+            rev_in = [head] + ["^" + r for r in refs] + (["^" + main_head] if main_head else [])
+            held_only = _count(cwd, stdin="\n".join(rev_in) + "\n")
+        rows.append({"path": path, "branch": e["branch"], "detached": e["detached"], "dirty": dirty, "ahead": ahead,
+                     "unreachable": bool(e["detached"] and ahead != 0 and (held_only is None or held_only > 0)),
+                     "unintegrated": bool(dirty is None or dirty or ahead is None or ahead)})
+    return rows
+
+
+def describe(r):
+    tag = ("UNINTEGRATED" if r["unintegrated"] else "clean").ljust(12)
+    where = r["branch"] or "(detached)"
+    note = "  UNREACHABLE: its commits are on no branch, removing the worktree loses them" if r["unreachable"] else ""
+    return f"{tag} {r['path']}  [{where}]  dirty={'?' if r['dirty'] is None else r['dirty']} ahead={'?' if r['ahead'] is None else r['ahead']}{note}"
+
+
+def warn_others(cwd, exclude=None):
+    """After bringing ONE worktree back: name every other worktree that still holds work."""
+    skip = os.path.realpath(exclude) if exclude else None
+    try:
+        others = [r for r in inventory(cwd) if r["unintegrated"] and os.path.realpath(r["path"]) != skip]
+    except (Exception, SystemExit) as e:   # a warning must never break the operation it accompanies
+        print("⚠ " + tr(f"không kiểm kê được các worktree khác: {e}", f"could not inventory the other worktrees: {e}"), file=sys.stderr)
+        return
+    if others:
+        print("⚠ " + tr(f"{len(others)} worktree khác còn việc CHƯA gộp — đừng xoá/bỏ khi chưa đem về:",
+                        f"{len(others)} other worktree(s) still hold work that is NOT integrated — do not drop them before bringing it back:"),
+              file=sys.stderr)
+        for r in others:
+            print("   " + describe(r), file=sys.stderr)
+
+
+def cmd_status(cwd, args):
+    rows = inventory(cwd)
+    if not rows:
+        print(tr("không có worktree nào khác main checkout", "no worktree besides the main checkout"))
+        return 0
+    for r in rows:
+        print(describe(r))
+    pending = [r for r in rows if r["unintegrated"]]
+    print(tr(f"{len(pending)}/{len(rows)} worktree còn việc chưa gộp vào main checkout",
+             f"{len(pending)}/{len(rows)} worktree(s) hold work not in the main checkout"))
+    return 1 if pending and "--strict" in args else 0
+
+
 def cmd_diff(cwd, args):
     if len(args) != 1:
         die("usage: agent-kit worktree diff <path>")
@@ -270,6 +384,7 @@ def cmd_diff(cwd, args):
         sys.stdout.buffer.write(out.stdout)
     finally:
         os.unlink(index)
+    warn_others(cwd, exclude=wt)
     return 0
 
 
@@ -277,6 +392,12 @@ def cmd_remove(cwd, args):
     if len(args) != 1:
         die("usage: agent-kit worktree remove <path>")
     wt = os.path.abspath(os.path.join(cwd, args[0]))
+    for r in inventory(cwd, only=wt):
+        if r["unreachable"]:
+            die(tr(f"{wt}: UNREACHABLE — HEAD tách rời, {r['ahead']} commit không thuộc nhánh nào; gỡ worktree là mất chúng. "
+                   "Tạo nhánh giữ chúng trước: git -C <worktree> switch -c <tên>",
+                   f"{wt}: UNREACHABLE — detached HEAD, {r['ahead']} commit(s) on no branch; removing the worktree loses them. "
+                   "Keep them on a branch first: git -C <worktree> switch -c <name>"), 1)
     state = load_state(wt)
     main = main_checkout(cwd)
     if os.path.realpath(wt) == os.path.realpath(main):
@@ -376,11 +497,13 @@ def main(argv):
         return cmd_diff(cwd, rest)
     if action in ("remove", "rm"):
         return cmd_remove(cwd, rest)
+    if action == "status":
+        return cmd_status(cwd, rest)
     if action == "heal":
         return cmd_heal(cwd, rest)
     if action == "list":
         return subprocess.run(["git", "-C", cwd, "worktree", "list"]).returncode
-    die(tr(f"lệnh không hợp lệ '{action}'", f"unknown action '{action}'") + " (add | diff | remove | list)")
+    die(tr(f"lệnh không hợp lệ '{action}'", f"unknown action '{action}'") + " (add | diff | remove | status | list)")
 
 
 if __name__ == "__main__":

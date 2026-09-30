@@ -108,7 +108,8 @@ def register_session(cwd, sid, agent="agent", pid=None, status="working"):
             "pid": pid,
             "started": now,
             "heartbeat": now,
-            "cwd": cwd,
+            "cwd": os.path.abspath(cwd),
+            "gitdir": git_dir(cwd)[0],
             "status": status,
         }
         write_lock(file_path, data)
@@ -167,6 +168,7 @@ def get_active_sessions(cwd=None, current_sid=None, stale_s=180.0):
     is_last_active is True if NO other sessions are currently actively working."""
     target = cwd or os.getcwd()
     sdir, top = sessions_dir(target)
+    my_gitdir = git_dir(target)[0] if sdir else None
     now = time.time()
     active = []
     other = []
@@ -220,6 +222,19 @@ def get_active_sessions(cwd=None, current_sid=None, stale_s=180.0):
             except OSError:
                 pass
             continue
+
+        # Another linked worktree of the same repo has its own tree, build dir and gate receipt: its
+        # session is not a sibling of this checkout (the registry is shared through the git common dir).
+        info_cwd = info.get("cwd")
+        if info.get("gitdir") and my_gitdir:
+            # Exact: each worktree has its own git dir (also for one nested inside this checkout).
+            if os.path.realpath(info["gitdir"]) != os.path.realpath(my_gitdir):
+                continue
+        elif top and info_cwd:
+            # Older record without a git dir: compare by path.
+            real_top, real_cwd = os.path.realpath(top), os.path.realpath(info_cwd)
+            if real_cwd != real_top and not real_cwd.startswith(real_top + os.sep):
+                continue
 
         sid = info.get("session_id")
         active.append(info)
