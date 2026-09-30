@@ -167,3 +167,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Đo thời gian hook bằng đồng hồ tường mà không trừ lúc máy ngủ
 - **Nguyên nhân:** durationMs của stop_hook_summary tính cả lúc laptop ngủ: một lượt Stop 420 s ở GeelyEx2 thật ra là 417 s máy ngủ (pmset: Sleep 07:01:52, 417 secs, pin 4%), một lượt 2698 s ở OfficeReader cũng vậy; audit ban đầu quy nhầm cho review_gate và thổi số trung bình lên (2026-09-30)
 - **Quy tắc phòng ngừa & Cách fix:** Audit tốc độ phải trừ các khoảng Sleep lấy từ 'pmset -g log' (dòng Sleep có '&lt;N> secs'; không ghép Sleep với dòng 'Wake Requests') khỏi khoảng [kết thúc − thời lượng, kết thúc] của từng lượt; mọi hook cùng lượt bằng nhau ~X giây là dấu hiệu máy ngủ, không phải hook chậm
+
+---
+
+### [INSTINCT-020] Dọn/kiểm kê worktree đọc lỗi git thành 'sạch' và cho file mới lọt allowlist theo tiền tố
+- **Ngày phát hiện:** 2026-09-30
+- **Hiện tượng lỗi:** Dọn/kiểm kê worktree đọc lỗi git thành 'sạch' và cho file mới lọt allowlist theo tiền tố
+- **Nguyên nhân:** sandbox cleanup và worktree status bỏ qua returncode của git status/rev-list (stdout rỗng = sạch), dùng --untracked-files=no, allowlist theo tiền tố thư mục, đo ahead bằng 'trừ mọi ref khác'; việc ở worktree này bị xoá khi gom worktree khác
+- **Quy tắc phòng ngừa & Cách fix:** kiểm kê fail-closed: rc≠0 hoặc None = chưa gộp; file mới chưa add là việc thật (-uall, so byte với bản nguồn mới coi là bỏ được); đo 'chưa gộp' bằng main_head..head, đo 'sẽ mất' riêng bằng ref; chạy agent-kit worktree status trước khi gộp hoặc xoá bất kỳ worktree nào
