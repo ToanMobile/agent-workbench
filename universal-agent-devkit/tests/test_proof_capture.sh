@@ -133,4 +133,87 @@ printf '%s' "$out" | grep -q '"action": "fail"' && printf '%s' "$out" | grep -q 
   && [ "$rc" = 1 ] && ok "non-adb provider is not sent to an Android emulator" \
   || fail "shell provider: rc=$rc $out"
 
+# ---------- iOS Simulator (xcrun simctl) ----------
+# mkpng <path> real|black: level-0 zlib keeps both > 8 KB; black repeats one row.
+mkpng() {
+  python3 - "$1" "$2" <<'PY'
+import os, struct, sys, zlib
+path, kind = sys.argv[1], sys.argv[2]
+w = h = 120
+row = lambda: b"\0" + (bytes(w * 3) if kind == "black" else os.urandom(w * 3))
+raw = b"".join(row() for _ in range(h))
+def chunk(t, d):
+    return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+open(path, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                        + chunk(b"IDAT", zlib.compress(raw, 0)) + chunk(b"IEND", b""))
+PY
+}
+# sim_project <dir> <profile|-> <booted udids…>: fake xcrun + an adb that only logs.
+sim_project() {
+  local d="$1" prof="$2"; shift 2
+  mkdir -p "$d/state" "$d/.agents"
+  [ "$prof" != "-" ] && printf '{"profile":"%s"}\n' "$prof" > "$d/.agents/active-profile.json"
+  python3 - "$d/state/sims.json" "$@" <<'PY'
+import json, sys
+booted = sys.argv[2:]
+devs = [{"udid": u, "name": "iPhone %d" % i, "state": "Booted", "isAvailable": True} for i, u in enumerate(booted)]
+devs.append({"udid": "OFF-0000", "name": "iPhone Off", "state": "Shutdown", "isAvailable": True})
+json.dump({"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-27-0": devs}}, open(sys.argv[1], "w"))
+PY
+  mkpng "$d/state/shot.png" real
+  cat > "$d/xcrun" <<SH
+#!/bin/sh
+echo "\$*" >> "$d/xcrun-calls"
+if [ "\$1 \$2 \$3" = "simctl list devices" ]; then cat "$d/state/sims.json"; exit 0; fi
+if [ "\$1 \$2" = "simctl io" ] && [ "\$4" = "screenshot" ]; then cp "$d/state/shot.png" "\$5"; exit 0; fi
+exit 1
+SH
+  cat > "$d/adb" <<SH
+#!/bin/sh
+echo "\$*" >> "$d/adb-calls"
+if [ "\$1" = "devices" ]; then echo "List of devices attached"; [ -f "$d/state/adb-online" ] && echo "R58M device"; exit 0; fi
+if [ "\$1" = "-s" ] && [ "\$3" = "exec-out" ]; then cat "$d/state/shot.png"; exit 0; fi
+exit 0
+SH
+  chmod +x "$d/xcrun" "$d/adb"
+}
+simcap() { python3 "$CMD" --project "$1" --adb "$1/adb" --emulator "$EMU1" --xcrun "$1/xcrun" --connect-timeout 1 "${@:2}"; }
+
+S1="$TMP/ios"; sim_project "$S1" ios SIM-AAAA
+out="$(simcap "$S1" 2>"$S1/err")"; rc=$?
+printf '%s' "$out" | grep -q 'serial: SIM-AAAA' && ls "$S1"/reports/proof-*.png >/dev/null 2>&1 \
+  && grep -q 'simctl io SIM-AAAA screenshot' "$S1/xcrun-calls" && [ ! -f "$S1/adb-calls" ] \
+  && [ "$rc" = 0 ] && ok "ios profile: screenshots the booted simulator by UDID, never adb" \
+  || fail "ios capture: rc=$rc out=$out err=$(cat "$S1/err")"
+
+S2="$TMP/ios-none"; sim_project "$S2" ios
+out="$(simcap "$S2" 2>&1)"; rc=$?
+[ "$rc" = 1 ] && printf '%s' "$out" | grep -qi 'simulator' && [ ! -f "$S2/adb-calls" ] \
+  && ! ls "$S2"/reports/proof-*.png >/dev/null 2>&1 \
+  && ok "ios profile with no booted simulator fails, no Android fallback" \
+  || fail "ios none: rc=$rc out=$out adb=$(cat "$S2/adb-calls" 2>/dev/null)"
+
+S3="$TMP/ios-two"; sim_project "$S3" ios SIM-AAAA SIM-BBBB
+out="$(simcap "$S3" --plan-only 2>&1)"; rc=$?
+[ "$rc" = 1 ] && printf '%s' "$out" | grep -q 'SIM-AAAA' && printf '%s' "$out" | grep -q 'SIM-BBBB' \
+  && ok "two booted simulators: refuses to guess" || fail "ios two: rc=$rc out=$out"
+
+S4="$TMP/android-sim"; sim_project "$S4" android SIM-AAAA; touch "$S4/state/adb-online"
+out="$(simcap "$S4" --plan-only 2>&1)"; rc=$?
+printf '%s' "$out" | grep -q '"action": "screencap"' && printf '%s' "$out" | grep -q 'R58M' \
+  && [ "$rc" = 0 ] && ok "android profile keeps adb even while a simulator is booted" \
+  || fail "android+sim: rc=$rc out=$out"
+
+S5="$TMP/any-sim"; sim_project "$S5" - SIM-CCCC
+out="$(simcap "$S5" --plan-only 2>&1)"; rc=$?
+printf '%s' "$out" | grep -q '"action": "simctl"' && printf '%s' "$out" | grep -q 'SIM-CCCC' \
+  && [ "$rc" = 0 ] && ok "no profile, no provider: the one booted simulator is used" \
+  || fail "any sim: rc=$rc out=$out"
+
+S6="$TMP/ios-black"; sim_project "$S6" ios SIM-AAAA; mkpng "$S6/state/shot.png" black
+out="$(simcap "$S6" 2>&1)"; rc=$?
+[ "$rc" = 1 ] && ! ls "$S6"/reports/proof-*.png >/dev/null 2>&1 && printf '%s' "$out" | grep -q 'mot mau' \
+  && ok "simulator one-colour screenshot is refused and deleted" \
+  || fail "ios black: rc=$rc out=$out"
+
 [ "$FAILS" = 0 ] && echo "ok" || { echo "$FAILS failed"; exit 1; }

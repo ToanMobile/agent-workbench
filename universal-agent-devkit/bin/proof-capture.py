@@ -10,6 +10,11 @@ waits until `sys.boot_completed=1`, then screencaps that emulator.
 It does not screencap a dead ip:port and it does not substitute another
 plugged-in phone. Denylist: ADB_DENY_SERIALS, ~/.config/universal-agent-devkit/adb-denylist,
 <project>/.adb-denylist.
+
+iOS: provider type `simctl` (optional `udid`), or profile `ios`, screenshots the one
+Booted simulator (`xcrun simctl list devices -j`) with `xcrun simctl io <udid> screenshot`;
+none or several Booted is a failure, never an Android fallback. With no declared provider
+and a profile that is not android/automotive, a Booted simulator is used before adb.
 """
 from __future__ import annotations
 
@@ -284,6 +289,18 @@ def screencap(adb: str, serial: str, dest: Path, timeout_s: float) -> None:
     )
     data = res.stdout or b""
     dest.write_bytes(data)
+    check_png(dest, data, serial, res)
+
+
+def simctl_capture(xcrun: str, udid: str, dest: Path, timeout_s: float) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    res = subprocess.run([xcrun, "simctl", "io", udid, "screenshot", str(dest)], capture_output=True, timeout=timeout_s)
+    data = dest.read_bytes() if dest.is_file() else b""
+    check_png(dest, data, udid, res)
+
+
+def check_png(dest: Path, data: bytes, serial: str, res) -> None:
+    """Refuse a failed capture, a non-PNG, a file <= MIN_BYTES and a one-colour screen."""
     if res.returncode != 0 or not data.startswith(PNG_SIG):
         tail = (res.stderr or b"").decode("utf-8", "replace")[:400]
         raise SystemExit("Chup anh that bai (exit %s) serial %s: %s" % (res.returncode, serial, tail))
@@ -296,10 +313,44 @@ def screencap(adb: str, serial: str, dest: Path, timeout_s: float) -> None:
                          "da xoa anh. Mo dung man hinh can chung minh roi chup lai." % (serial, share * 100))
 
 
-def resolve(project: Path, adb: str, emulator: str | None, connect_timeout: float) -> dict:
+def booted_sims(xcrun: str) -> list:
+    """Booted iOS simulators from `xcrun simctl list devices -j`; [] when xcrun is missing or fails."""
+    try:
+        res = run([xcrun, "simctl", "list", "devices", "-j"], 15)
+        runtimes = json.loads(res.stdout or "{}").get("devices") or {}
+    except (OSError, ValueError, subprocess.SubprocessError, AttributeError):
+        return []
+    return [{"udid": d["udid"], "name": d.get("name", "")}
+            for devs in runtimes.values() if isinstance(devs, list)
+            for d in devs if isinstance(d, dict) and d.get("state") == "Booted" and d.get("udid")
+            and d.get("isAvailable", True) is not False]
+
+
+def plan_sim(sims: list, udid: str | None) -> dict:
+    shown = ", ".join("%s (%s)" % (s["udid"], s["name"]) for s in sims)
+    if udid:
+        if any(s["udid"] == udid for s in sims):
+            return {"action": "simctl", "serial": udid}
+        return {"action": "fail", "message": "Simulator %s khong Booted. Dang Booted: %s." % (udid, shown or "(khong co)")}
+    if len(sims) == 1:
+        return {"action": "simctl", "serial": sims[0]["udid"]}
+    if sims:
+        return {"action": "fail", "message": "Nhieu iOS Simulator dang Booted (%s), khai udid trong provider simctl." % shown}
+    return {"action": "fail", "message": "Khong co iOS Simulator nao dang Booted (xcrun simctl list devices). "
+            "Mo simulator (xcrun simctl boot <udid>), mo man can chung minh roi chay lai. Khong chup may Android thay the."}
+
+
+def resolve(project: Path, adb: str, emulator: str | None, connect_timeout: float, xcrun: str = "xcrun") -> dict:
     proof = load_proof(project)
     provider = proof["provider"]
     kind = provider.get("type")
+    profile = read_profile(project)
+    if kind == "simctl" or (kind is None and not provider.get("serial") and profile == "ios"):
+        return plan_sim(booted_sims(xcrun), provider.get("udid") or None)
+    if kind is None and not provider.get("serial") and profile not in ("android", "automotive"):
+        sims = booted_sims(xcrun)
+        if sims:
+            return plan_sim(sims, None)
     if kind not in (None, "adb"):
         return {
             "action": "fail",
@@ -307,7 +358,7 @@ def resolve(project: Path, adb: str, emulator: str | None, connect_timeout: floa
         }
     configured = provider.get("serial") or None
     declared_avd = provider.get("avd") or None
-    avd = pick_avd(list_avds(emulator), declared_avd, read_profile(project))
+    avd = pick_avd(list_avds(emulator), declared_avd, profile)
     denied = load_deny(project)
     devices = adb_devices(adb)
     plan = plan_target(configured, devices, denied, avd, False)
@@ -346,6 +397,7 @@ def main(argv=None) -> int:
     parser.add_argument("--project", default=".")
     parser.add_argument("--adb", default=os.environ.get("PROOF_ADB") or "adb")
     parser.add_argument("--emulator", default=os.environ.get("PROOF_EMULATOR") or "")
+    parser.add_argument("--xcrun", default=os.environ.get("PROOF_XCRUN") or "xcrun")
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument("--connect-timeout", type=float, default=5)
     parser.add_argument("--boot-timeout", type=float, default=180)
@@ -353,7 +405,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     project = Path(args.project).resolve()
     emulator = args.emulator or find_emulator()
-    plan = resolve(project, args.adb, emulator, args.connect_timeout)
+    plan = resolve(project, args.adb, emulator, args.connect_timeout, args.xcrun)
     if args.plan_only:
         printable = {k: plan[k] for k in ("action", "serial", "avd", "message") if k in plan}
         print(json.dumps(printable, ensure_ascii=False))
@@ -362,6 +414,12 @@ def main(argv=None) -> int:
         print(plan["message"], file=sys.stderr)
         return 1
     serial = plan.get("serial")
+    if plan["action"] == "simctl":
+        dest = project / "reports" / ("proof-%s.png" % time.strftime("%Y%m%d-%H%M%S"))
+        simctl_capture(args.xcrun, serial, dest, 60)
+        print("serial: %s" % serial)
+        print("file: %s" % dest)
+        return 0
     if plan["action"] == "boot":
         if not emulator:
             print("Khong tim thay binary emulator de mo AVD %s." % plan["avd"], file=sys.stderr)
