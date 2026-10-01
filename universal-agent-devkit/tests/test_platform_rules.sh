@@ -142,6 +142,26 @@ install "$S" -a claude -p game
 got="$(servers "$S/.mcp.json")"
 case " $got " in *" android-code-search "*) fail "profile switch android → game kept the unused Android MCP: $got" ;;
   *) ok "profile switch android → game still removes the unmodified Android MCPs" ;; esac
+# A pre-1.3 project keeps its profile in the root .active-profile.json: same profile → keep too.
+G="$(newproj legacy)"; echo '{"profile": "universal"}' > "$G/.active-profile.json"
+cp "$DEVKIT_DIR/mcp/.mcp.json" "$G/.mcp.json"
+install "$G" -a claude -p universal
+case " $(servers "$G/.mcp.json") " in *" android-code-search "*) ok "re-init of a pre-1.3 project (root .active-profile.json), same profile: declared MCPs kept" ;;
+  *) fail "pre-1.3 re-init, same profile, removed declared MCPs: $(servers "$G/.mcp.json")" ;; esac
+# `agent-kit profile game` switches without the adapters; the next init must still drop the Android MCPs.
+K="$(newproj kitswitch)"; mkdir -p "$K/app"; touch "$K/settings.gradle.kts"
+install "$K" -a claude -p android
+python3 "$DEVKIT_DIR/bin/agent-config.py" --profile game --target "$K" > /dev/null 2>&1
+install "$K" -a claude -p game
+case " $(servers "$K/.mcp.json") " in *" android-code-search "*) fail "agent-kit profile android→game then init: Android MCPs left: $(servers "$K/.mcp.json")" ;;
+  *) ok "agent-kit profile android → game, then init: the Android MCPs are removed" ;; esac
+# Same, for a project installed before "mcp_profile" existed (its state file has only "profile").
+O="$(newproj oldstate)"; mkdir -p "$O/.agents"; echo '{"profile": "android"}' > "$O/.agents/active-profile.json"
+cp "$DEVKIT_DIR/mcp/.mcp.json" "$O/.mcp.json"
+python3 "$DEVKIT_DIR/bin/agent-config.py" --profile game --target "$O" > /dev/null 2>&1
+install "$O" -a claude -p game
+case " $(servers "$O/.mcp.json") " in *" android-code-search "*) fail "pre-mcp_profile project, agent-kit profile android→game then init: Android MCPs left" ;;
+  *) ok "pre-mcp_profile project, agent-kit profile android → game, then init: the Android MCPs are removed" ;; esac
 
 # --- An MCP binary that is not on PATH is never added -------------------------------------
 NOPS=""; IFS=: read -ra dirs <<< "$PATH"

@@ -291,10 +291,21 @@ def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None)
         "regression_matrix": meta.get("regression_matrix", "")
     }
     target_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        old = json.loads((active_file if active_file.exists() else legacy).read_text(encoding="utf-8"))
+        old = old if isinstance(old, dict) else {}
+    except (OSError, ValueError):
+        old = {}
+    # "mcp_profile": the profile whose MCP set install.sh last applied (it passes DEVKIT_MCP_APPLIED).
+    # `agent-kit profile X` alone keeps the old value, so the next init sees the switch and drops
+    # the previous profile's unmodified MCP servers (bin/install.sh DEVKIT_MCP_PRUNE).
+    # A state file written before "mcp_profile" existed: its "profile" is the one whose MCPs were applied.
+    mcp_profile = os.environ.get("DEVKIT_MCP_APPLIED") or old.get("mcp_profile") or old.get("profile")
+    if mcp_profile:
+        status_data["mcp_profile"] = mcp_profile
     # Re-applying the same profile (a re-init) keeps the old timestamp: a tracked
     # .active-profile.json must not turn dirty on every `agent-kit init`.
     try:
-        old = json.loads((active_file if active_file.exists() else legacy).read_text(encoding="utf-8"))
         if {k: v for k, v in old.items() if k != "updated_at"} == {k: v for k, v in status_data.items() if k != "updated_at"}:
             status_data["updated_at"] = old.get("updated_at", status_data["updated_at"])
     except (OSError, ValueError, AttributeError):

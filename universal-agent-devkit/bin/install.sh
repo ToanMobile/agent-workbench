@@ -396,7 +396,20 @@ fi
 # profile SWITCH only. A re-init with the same profile keeps them: identical to the DevKit's
 # entry does not mean unused (OfficeReader 2026-10-01: an Android app on the universal profile
 # lost the Android MCPs it relies on). The profile file is written in step 6, so it is the old one here.
-prev_profile="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("profile") or "")' "$TARGET_DIR/.agents/active-profile.json" 2>/dev/null || true)"
+# "mcp_profile" = the profile whose MCP set was last applied (`agent-kit profile X` alone does not
+# change it, so the next init still drops the old profile's servers); a pre-1.3 project keeps
+# its state in the root .active-profile.json.
+prev_profile="$(python3 - "$TARGET_DIR" <<'PY' 2>/dev/null || true
+import json, os, sys
+for f in (".agents/active-profile.json", ".active-profile.json"):
+    try:
+        d = json.load(open(os.path.join(sys.argv[1], f), encoding="utf-8"))
+    except (OSError, ValueError):
+        continue
+    print(d.get("mcp_profile") or d.get("profile") or "")
+    break
+PY
+)"
 DEVKIT_MCP_PRUNE=1
 [ -n "$prev_profile" ] && [ "$(normalize_profile "$prev_profile" 2>/dev/null || true)" = "$PROFILE" ] && DEVKIT_MCP_PRUNE=0
 export DEVKIT_AGENTS_EXCLUDED DEVKIT_MCPS_ALLOWED DEVKIT_MCP_PRUNE
@@ -577,7 +590,7 @@ fi
 
 # 6. Activate the domain profile, if one was chosen
 if [ -n "$PROFILE" ] && [ "$PROFILE" != "none" ]; then
-  if ! python3 "$DEVKIT_ROOT/bin/agent-config.py" --profile "$PROFILE" --target "$TARGET_DIR" --lang "$DEVKIT_LANG"; then
+  if ! DEVKIT_MCP_APPLIED="$PROFILE" python3 "$DEVKIT_ROOT/bin/agent-config.py" --profile "$PROFILE" --target "$TARGET_DIR" --lang "$DEVKIT_LANG"; then
     echo "✖ Activating profile '$PROFILE' failed — the project was set up without a profile." >&2
     exit 1
   fi
