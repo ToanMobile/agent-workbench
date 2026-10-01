@@ -74,7 +74,8 @@ try:
 except (OSError, ValueError):
     sys.exit(0)
 mine = data.get("mcpServers") if isinstance(data, dict) else None
-gone = [n for n, c in servers.items() if n not in keep and isinstance(mine, dict) and mine.get(n) == c]
+gone = [n for n, c in servers.items() if n not in keep and isinstance(mine, dict) and mine.get(n) == c
+        and os.environ.get("DEVKIT_MCP_PRUNE", "1") == "1"]   # re-init, same profile: keep (bin/install.sh)
 if gone and not os.path.islink(dst):
     for n in gone:
         del mine[n]

@@ -123,6 +123,26 @@ got="$(servers "$A/.mcp.json")"
 case " $got " in *" android-code-search "*) ok "android: Android MCPs installed" ;; *) fail "android: Android MCPs missing: $got" ;; esac
 case " $got " in *" agentmemory "*) ok "android: agentmemory installed" ;; *) fail "android: agentmemory missing: $got" ;; esac
 
+# --- Re-init with the SAME profile never removes MCP servers the project declares ----------
+# OfficeReader 2026-10-01: an Android app on the universal profile kept the Android MCPs in
+# mcp_config.json on purpose; `agent-kit init -p universal` (no profile change) deleted them.
+R="$(newproj reinit)"; mkdir -p "$R/.agents"
+echo '{"profile": "universal"}' > "$R/.agents/active-profile.json"
+cp "$DEVKIT_DIR/mcp/.mcp.json" "$R/.mcp.json"; cp "$DEVKIT_DIR/mcp/mcp_config.json" "$R/mcp_config.json"
+install "$R" -a claude,gemini -p universal
+for f in .mcp.json mcp_config.json; do
+  got="$(servers "$R/$f")"
+  case " $got " in *" android-code-search "*) ok "re-init, same profile: declared MCPs kept in $f" ;;
+    *) fail "re-init with the same profile removed declared MCPs from $f: $got" ;; esac
+done
+S="$(newproj switch)"; mkdir -p "$S/.agents"
+echo '{"profile": "android"}' > "$S/.agents/active-profile.json"
+cp "$DEVKIT_DIR/mcp/.mcp.json" "$S/.mcp.json"
+install "$S" -a claude -p game
+got="$(servers "$S/.mcp.json")"
+case " $got " in *" android-code-search "*) fail "profile switch android → game kept the unused Android MCP: $got" ;;
+  *) ok "profile switch android → game still removes the unmodified Android MCPs" ;; esac
+
 # --- An MCP binary that is not on PATH is never added -------------------------------------
 NOPS=""; IFS=: read -ra dirs <<< "$PATH"
 for d in "${dirs[@]}"; do [ -x "$d/play-store-mcp" ] || NOPS="$NOPS${NOPS:+:}$d"; done

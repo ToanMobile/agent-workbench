@@ -392,7 +392,14 @@ PY
   DEVKIT_MCPS_ALLOWED="$(printf '%s\n' "$filters" | sed -n 2p)"
   [ -n "$DEVKIT_AGENTS_EXCLUDED" ] && echo "  - $(L "Profile '$PROFILE' bỏ qua subagent không liên quan" "Profile '$PROFILE' skips unrelated subagents"): $DEVKIT_AGENTS_EXCLUDED"
 fi
-export DEVKIT_AGENTS_EXCLUDED DEVKIT_MCPS_ALLOWED
+# Removing unmodified DevKit MCP entries the profile does not use is for a first install or a
+# profile SWITCH only. A re-init with the same profile keeps them: identical to the DevKit's
+# entry does not mean unused (OfficeReader 2026-10-01: an Android app on the universal profile
+# lost the Android MCPs it relies on). The profile file is written in step 6, so it is the old one here.
+prev_profile="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("profile") or "")' "$TARGET_DIR/.agents/active-profile.json" 2>/dev/null || true)"
+DEVKIT_MCP_PRUNE=1
+[ -n "$prev_profile" ] && [ "$(normalize_profile "$prev_profile" 2>/dev/null || true)" = "$PROFILE" ] && DEVKIT_MCP_PRUNE=0
+export DEVKIT_AGENTS_EXCLUDED DEVKIT_MCPS_ALLOWED DEVKIT_MCP_PRUNE
 
 # 4. Configure selected agents
 IFS=',' read -ra AGENT_LIST <<< "$AGENTS"
