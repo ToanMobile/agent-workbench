@@ -11,6 +11,7 @@ or directly:
     python scripts/tests/test_core.py
 """
 
+import csv
 import os
 import json
 import subprocess
@@ -337,6 +338,46 @@ class TestDiagnosticsContracts(unittest.TestCase):
         diagnosed = search_stack("performance", "react", max_results=1, diagnostics=True)
         self.assertEqual(set(baseline.keys()), set(diagnosed.keys()) - {"diagnostics"})
         self.assertIn("diagnostics", diagnosed)
+
+
+class TestUnityUguiStack(unittest.TestCase):
+    """Game-UI queries a solo Unity dev types must reach the rule that answers them."""
+
+    # query → a word of the Guideline that must come FIRST
+    CASES = {
+        "draw calls batching": "draw calls",
+        "canvas scaler reference resolution": "CanvasScaler",
+        "scroll list pooling": "ScrollRect",
+        "hide panel setactive": "Canvas.enabled",
+        "overdraw transparent image": "overdraw",
+        "double tap debounce": "Debounce",
+        "input system ui module": "InputSystemUIInputModule",
+        "thumb zone bottom buttons": "thumb zone",
+    }
+
+    def _row(self, guideline_word):
+        rows = list(csv.DictReader(open(core.DATA_DIR / "stacks/unity-ugui.csv", encoding="utf-8")))
+        return next(r for r in rows if guideline_word.casefold() in r["Guideline"].casefold())
+
+    def test_each_query_tops_with_its_rule(self):
+        for query, marker in self.CASES.items():
+            with self.subTest(query=query):
+                result = search_stack(query, "unity-ugui", max_results=1)
+                top = result["results"][0]["Guideline"] if result["results"] else ""
+                self.assertIn(marker.casefold(), top.casefold(), f"{query!r} → {top!r}")
+
+    def test_rules_match_unity6_defaults(self):
+        self.assertIn("Expand", self._row("CanvasScaler")["Code Good"])        # match=0 clips 3:4 tablets
+        self.assertIn("Cull Transparent Mesh", self._row("overdraw")["Do"])   # alpha-0 is culled by default
+        debounce = self._row("Debounce")["Code Good"]
+        self.assertIn("finally", debounce)                                    # a thrown purchase must not lock the button
+        self.assertIn("1f", debounce)                                         # the 1000 ms cooldown the rule states
+
+    def test_threshold_exemption_is_declared_per_stack_not_by_row_count(self):
+        # Same small file registered without the key → the normal floor applies and a weak query abstains.
+        with patch.dict(core.STACK_CONFIG, {"tiny-probe": {"file": core.STACK_CONFIG["unity-ugui"]["file"]}}):
+            self.assertEqual(search_stack("juice", "tiny-probe", max_results=1)["count"], 0)
+        self.assertGreater(search_stack("juice", "unity-ugui", max_results=1)["count"], 0)
 
 
 if __name__ == "__main__":

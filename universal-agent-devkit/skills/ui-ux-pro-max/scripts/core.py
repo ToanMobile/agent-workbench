@@ -109,7 +109,8 @@ STACK_CONFIG = {
     "avalonia":         {"file": "stacks/avalonia.csv"},
     "uno":              {"file": "stacks/uno.csv"},
     "uwp":              {"file": "stacks/uwp.csv"},
-    "unity-ugui":       {"file": "stacks/unity-ugui.csv"},
+    # ponytail: the 3.6 BM25 floor is calibrated on ~50-row stacks; drop "none" once this file reaches ~50 rows
+    "unity-ugui":       {"file": "stacks/unity-ugui.csv", "threshold": "none"},
 }
 
 # Common columns for all stacks
@@ -963,7 +964,8 @@ def search_stack(query, stack, max_results=MAX_RESULTS, diagnostics=False):
 
     rows = _load_rows_or_empty(filepath)
     row_filter, cache_variant = _stack_row_filter(rows, query, stack)
-    threshold = _NO_THRESHOLD if (cache_variant == "legacy-only" or len(rows) < 25) else _STACK_THRESHOLD
+    threshold = (_NO_THRESHOLD if cache_variant == "legacy-only" or STACK_CONFIG[stack].get("threshold") == "none"
+                 else _STACK_THRESHOLD)
     exact = (_legacy_successor_guidance(rows, query, stack, row_filter)
              or _exact_stack_identifier(rows, query, row_filter))
     if exact is not None:
