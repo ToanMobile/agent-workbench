@@ -168,6 +168,24 @@ print(" ".join(ec.enrich_prompt(sys.argv[2], sys.argv[3], sys.argv[4])["detected
 PY
 )"
 has "$s" BUG_FIX && ok "non-string profile value → context still built" || fail "non-string profile → '$s'"
+# An ambiguous word routes only in its technical context.
+s="$(pskills android "docker compose chậm khi build image")"
+has "$s" compose-recomp-audit && fail "'docker compose' → compose-recomp-audit: '$s'" || ok "'docker compose' is not Jetpack Compose"
+s="$(skills "sửa lỗi đặt lịch cho app thẩm mỹ viện")"
+has "$s" ui-ux-pro-max && fail "'thẩm mỹ viện' (beauty salon) → design skill: '$s'" || ok "'thẩm mỹ viện' is a business domain, not design"
+has "$(intents "skill nào là lựa chọn tối ưu nhất cho task này?")" PERFORMANCE_AND_RESPONSIVENESS \
+  && fail "'lựa chọn tối ưu' (best choice) → PERFORMANCE" || ok "'tối ưu' meaning 'best' is not a performance task"
+has "$(intents "tối ưu hiệu năng màn hình danh sách")" PERFORMANCE_AND_RESPONSIVENESS \
+  && ok "'tối ưu hiệu năng' → PERFORMANCE" || fail "'tối ưu hiệu năng' lost PERFORMANCE"
+s="$(skills "giao diện app bị phèn, làm lại cho đẹp")"
+has "$s" ui-ux-pro-max && ok "'UI bị phèn' → ui-ux-pro-max" || fail "'bị phèn' → '$s'"
+for p in "tối ưu startup" "tối ưu app cho mượt" "tối ưu RAM" "cách tối ưu RAM" "giải pháp tối ưu cho LazyColumn"; do
+  has "$(intents "$p")" PERFORMANCE_AND_RESPONSIVENESS && ok "'$p' → PERFORMANCE" || fail "'$p' lost PERFORMANCE"
+done
+s="$(pskills android "Compose UI bị lag")"
+has "$s" compose-recomp-audit && ok "'Compose UI bị lag' → compose-recomp-audit" || fail "'Compose UI bị lag' → '$s'"
+s="$(pskills android "Jetpack Compose màn hình chính bị giật")"
+has "$s" compose-recomp-audit && ok "'Jetpack Compose … giật' → compose-recomp-audit" || fail "Jetpack Compose jank → '$s'"
 
 # ── 2. Recall ────────────────────────────────────────────────────────────────
 r="$(refs "mở file DOCX bị lỗi XML")"

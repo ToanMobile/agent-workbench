@@ -353,10 +353,13 @@ class TestUnityUguiStack(unittest.TestCase):
         "double tap debounce": "Debounce",
         "input system ui module": "InputSystemUIInputModule",
         "thumb zone bottom buttons": "thumb zone",
+        "android notch cutout": "cutout",
+        "localization vietnamese font fallback": "Localize",
     }
 
     def _row(self, guideline_word):
-        rows = list(csv.DictReader(open(core.DATA_DIR / "stacks/unity-ugui.csv", encoding="utf-8")))
+        with open(core.DATA_DIR / "stacks/unity-ugui.csv", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
         return next(r for r in rows if guideline_word.casefold() in r["Guideline"].casefold())
 
     def test_each_query_tops_with_its_rule(self):
@@ -371,13 +374,26 @@ class TestUnityUguiStack(unittest.TestCase):
         self.assertIn("Cull Transparent Mesh", self._row("overdraw")["Do"])   # alpha-0 is culled by default
         debounce = self._row("Debounce")["Code Good"]
         self.assertIn("finally", debounce)                                    # a thrown purchase must not lock the button
-        self.assertIn("1f", debounce)                                         # the 1000 ms cooldown the rule states
+        self.assertIn("WaitForSecondsAsync(1f)", debounce)                    # the 1000 ms cooldown the rule states
+
+    def test_code_good_is_runtime_code(self):
+        # A Code Good snippet is pasted into a MonoBehaviour: an Editor-only API there breaks the player build.
+        with open(core.DATA_DIR / "stacks/unity-ugui.csv", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                with self.subTest(row=row["No"]):
+                    self.assertNotRegex(row["Code Good"], r"\b(?:PlayerSettings|UnityEditor|EditorUtility|AssetDatabase)\b")
+
+    def test_natural_short_queries_never_come_back_empty(self):
+        # A small stack scores below the 3.6 floor calibrated on ~50-row stacks; it must still answer.
+        for query in ["notch", "juice", "text looks blurry", "dotween button"]:
+            with self.subTest(query=query):
+                self.assertGreater(search_stack(query, "unity-ugui", max_results=1)["count"], 0)
 
     def test_threshold_exemption_is_declared_per_stack_not_by_row_count(self):
         # Same small file registered without the key → the normal floor applies and a weak query abstains.
         with patch.dict(core.STACK_CONFIG, {"tiny-probe": {"file": core.STACK_CONFIG["unity-ugui"]["file"]}}):
-            self.assertEqual(search_stack("juice", "tiny-probe", max_results=1)["count"], 0)
-        self.assertGreater(search_stack("juice", "unity-ugui", max_results=1)["count"], 0)
+            self.assertEqual(search_stack("notch", "tiny-probe", max_results=1)["count"], 0)
+        self.assertGreater(search_stack("notch", "unity-ugui", max_results=1)["count"], 0)
 
 
 if __name__ == "__main__":

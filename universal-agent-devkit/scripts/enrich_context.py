@@ -106,6 +106,7 @@ STOPWORDS = {
     "hiện", "tại", "sau", "trước", "vẫn", "luôn", "hết", "đúng", "sai", "code", "file", "app",
 }
 STOPWORDS = {normalize(w) for w in STOPWORDS}
+NON_TECHNICAL_PHRASES = re.compile(r"(?:lựa chọn|phương án) tối ưu|tối ưu nhất|docker[ -]compose|thẩm mỹ viện")
 
 # Technical words the trap entries use for each detected intent — the request says
 # "bấm 2 lần", the entry says "double-click / debounce".
@@ -145,6 +146,9 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
             pass
 
     p_lower = normalize(prompt)
+    # Phrases where an ambiguous routing word means something else ("tối ưu nhất" = best,
+    # "docker compose", "thẩm mỹ viện" = beauty salon); removed before the keyword match only.
+    p_route = NON_TECHNICAL_PHRASES.sub(" ", p_lower)
 
     # 2. Detect Intents & Recommend Skills
     if mentions(p_lower, ["lỗi", "bug", "crash", "văng", "hỏng", "fail", "sửa", "chết", "die"]) \
@@ -165,7 +169,7 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
         if dossier["active_profile"] == "android":
             dossier["recommended_skills"].append("android-real-device-qa")
 
-    if mentions(p_lower, ["lag", "chậm", "đơ", "anr", "tối ưu", "hiệu năng", "fps", "treo", "freeze", "xoay",
+    if mentions(p_route, ["lag", "chậm", "đơ", "anr", "tối ưu", "hiệu năng", "fps", "treo", "freeze", "xoay",
                                    "giật", "jank", "stutter", "recompos", "leak", "rò rỉ", "retain cycle",
                                    "memory", "bộ nhớ", "oom"]):
         dossier["detected_intents"].append("PERFORMANCE_AND_RESPONSIVENESS")
@@ -174,7 +178,7 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
         dossier["injected_nfrs"].append("Zero memory leaks: unregister listeners/observers upon lifecycle destroy.")
         if mentions(p_lower, ["unity", "gc alloc", "monobehaviour", "update loop"]):
             dossier["recommended_skills"].append("unity-gc-audit")
-        if mentions(p_lower, ["compose", "recompos", "lazycolumn"]):
+        if mentions(p_route, ["compose", "recompos", "lazycolumn"]):
             dossier["recommended_skills"].append("compose-recomp-audit")
         dossier["recommended_skills"].append("observability-instrumentation")
         if dossier["active_profile"] == "android":
@@ -244,7 +248,7 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
 
     # Visual design only (a crash "khi xoay màn hình" is UI_INTERACTION but needs no palette/font search).
     # Last, so the top-5 cut drops this one rather than qa-visual / android-real-device-qa.
-    if mentions(p_lower, ["ux", "ui/ux", "thiết kế giao diện", "thiết kế lại giao diện", "thẩm mỹ", "bảng màu",
+    if mentions(p_route, ["ux", "ui/ux", "thiết kế giao diện", "thiết kế lại giao diện", "thẩm mỹ", "phèn", "bảng màu",
                           "typography", "font chữ", "micro-interaction", "juice", "hud", "design system",
                           "hiệu ứng nảy", "hiệu ứng động", "hiệu ứng chuyển", "hiệu ứng bấm"]):
         dossier["detected_intents"].append("VISUAL_DESIGN")
