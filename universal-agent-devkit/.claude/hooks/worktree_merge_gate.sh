@@ -1,0 +1,1 @@
+../../hooks/worktree_merge_gate.sh

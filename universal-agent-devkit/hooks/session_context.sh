@@ -57,7 +57,7 @@ HARNESS_PY="$(dirname "${SELF}")/devkit_harness.py"
 [ -f "${HARNESS_PY}" ] && git -C "${REPO_ROOT}" rev-parse -q --verify HEAD >/dev/null 2>&1 \
   && python3 "${HARNESS_PY}" baseline "${REPO_ROOT}" >/dev/null 2>&1
 
-REPO_ROOT="${REPO_ROOT}" INDEXER="${INDEXER}" HOOK_FILE="${HOOK_FILE}" GATE_HOOK="${GATE_HOOK}" python3 - <<'PY' 2>/dev/null
+REPO_ROOT="${REPO_ROOT}" INDEXER="${INDEXER}" HOOK_FILE="${HOOK_FILE}" GATE_HOOK="${GATE_HOOK}" WT_SCRIPT="${WT_SCRIPT}" python3 - <<'PY' 2>/dev/null
 import json, os, re, signal, subprocess, sys
 
 root = os.environ["REPO_ROOT"]
@@ -245,8 +245,33 @@ try:
     wt_branches = {l[len("branch refs/heads/"):] for l in porcelain if l.startswith("branch refs/heads/")}
     extra_wt = [w for w in wts[1:] if os.path.realpath(w) != here]
     if extra_wt:
-        drift.append(f"{len(extra_wt)} worktree còn lại: {', '.join(extra_wt[:3])} — TRƯỚC khi gộp/xoá bất kỳ cái nào chạy "
-                     "`agent-kit worktree status` (cái nào còn việc CHƯA gộp thì đem về trước), rồi `agent-kit worktree remove <path>`")
+        # Name each worktree whose work is NOT in trunk (scripts/worktree.py inventory): a bare count let
+        # finished worktrees sit unmerged while tasks were redone (OfficeReader / GeelyEx2, 2026-10-01).
+        class _WtTimeout(BaseException):   # not OSError/SystemExit: worktree.py catches those around git calls
+            pass
+
+        def _wt_timeout(*_):
+            raise _WtTimeout()
+        try:
+            sys.path.insert(0, os.path.dirname(os.environ.get("WT_SCRIPT") or ""))
+            import worktree as _wt
+            signal.signal(signal.SIGALRM, _wt_timeout)
+            signal.alarm(4)   # git status per worktree: never let it eat the whole session-start budget
+            todo = [r for r in _wt.inventory(root) if r["unintegrated"] and os.path.realpath(r["path"]) != here]
+        except (Exception, SystemExit, _WtTimeout):
+            todo = None
+        finally:
+            signal.alarm(0)
+        if todo is None:
+            drift.append(f"{len(extra_wt)} worktree còn lại: {', '.join(extra_wt[:3])} — TRƯỚC khi gộp/xoá bất kỳ cái nào chạy "
+                         "`agent-kit worktree status` (cái nào còn việc CHƯA gộp thì đem về trước), rồi `agent-kit worktree remove <path>`")
+        elif todo:
+            items = "; ".join(f"{r['path']} [{r['branch'] or 'detached'}] ahead={'?' if r['ahead'] is None else r['ahead']} "
+                              f"dirty={'?' if r['dirty'] is None else r['dirty']}" for r in todo[:4])
+            drift.append(f"{len(todo)} worktree còn việc CHƯA về trunk: {items} — đem về (`agent-kit worktree diff <path> | git apply --3way` "
+                         "hoặc `git merge --no-edit <branch>`), commit, rồi `agent-kit worktree remove <path>`; worktree phiên khác đang làm thì để yên")
+        else:
+            drift.append(f"{len(extra_wt)} worktree đã gộp hết nhưng còn để lại: {', '.join(extra_wt[:3])} — xoá: `agent-kit worktree remove <path>`")
     heads = (git_out("for-each-ref", "--format=%(refname:short)", "refs/heads/") or "").splitlines()
     extra = [b for b in heads if b and b != cur and b not in wt_branches and not main_like.match(b)]
     merged = set((git_out("branch", "--format=%(refname:short)", "--merged", "HEAD") or "").splitlines())

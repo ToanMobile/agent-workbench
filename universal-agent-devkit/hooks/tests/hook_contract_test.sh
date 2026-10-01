@@ -1438,6 +1438,13 @@ run_case "foreign-repo gate: no transcript fails open" foreign_repo_gate.sh 0 \
 run_case "foreign-repo gate: only project edits pass" foreign_repo_gate.sh 0 \
   "{\"session_id\":\"s-fr\",\"hook_event_name\":\"Stop\",\"transcript_path\":\"${SEEN_TR}\"}"
 
+# ── worktree_merge_gate.sh — Stop (tests/test_worktree_merge_gate.sh has the full cases) ──
+echo "worktree_merge_gate.sh"
+run_case "worktree-merge gate: no transcript fails open" worktree_merge_gate.sh 0 \
+  '{"session_id":"s-wm","hook_event_name":"Stop","transcript_path":"/nonexistent.jsonl"}'
+run_case "worktree-merge gate: no linked worktree passes" worktree_merge_gate.sh 0 \
+  "{\"session_id\":\"s-wm\",\"hook_event_name\":\"Stop\",\"transcript_path\":\"${SEEN_TR}\"}"
+
 # ── session_lock.sh — SessionStart/PreToolUse/SessionEnd (tests/test_session_lock.sh has the full cases) ──
 echo "session_lock.sh"
 SL_REPO="${SANDBOX}/sl-repo"

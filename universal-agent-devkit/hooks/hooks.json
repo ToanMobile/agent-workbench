@@ -176,6 +176,11 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/foreign_repo_gate.sh\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree_merge_gate.sh\"",
+            "timeout": 15
           }
         ]
       }
