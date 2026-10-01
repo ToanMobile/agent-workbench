@@ -139,7 +139,8 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
         try:
             with open(active_profile_file, "r") as f:
                 prof_data = json.load(f)
-                dossier["active_profile"] = prof_data.get("profile", "universal")
+                profile = prof_data.get("profile")
+                dossier["active_profile"] = profile if isinstance(profile, str) and profile else "universal"
         except Exception:
             pass
 
@@ -171,6 +172,10 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
         dossier["injected_nfrs"].append("Non-blocking Main Thread: Move heavy work/IO to background dispatchers.")
         dossier["injected_nfrs"].append("Algorithm complexity: O(1) lookup via Map/Set; avoid O(N^2) dynamic loops.")
         dossier["injected_nfrs"].append("Zero memory leaks: unregister listeners/observers upon lifecycle destroy.")
+        if mentions(p_lower, ["unity", "gc alloc", "monobehaviour", "update loop"]):
+            dossier["recommended_skills"].append("unity-gc-audit")
+        if mentions(p_lower, ["compose", "recompos", "lazycolumn"]):
+            dossier["recommended_skills"].append("compose-recomp-audit")
         dossier["recommended_skills"].append("observability-instrumentation")
         if dossier["active_profile"] == "android":
             dossier["recommended_skills"].append("android-real-device-qa")
@@ -236,6 +241,14 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
     if mentions(p_lower, ["viết skill", "tạo skill", "chuẩn hóa skill", "rule mới"]):
         dossier["detected_intents"].append("SKILL_AUTHORING")
         dossier["recommended_skills"].append("writing-skills")
+
+    # Visual design only (a crash "khi xoay màn hình" is UI_INTERACTION but needs no palette/font search).
+    # Last, so the top-5 cut drops this one rather than qa-visual / android-real-device-qa.
+    if mentions(p_lower, ["ux", "ui/ux", "thiết kế giao diện", "thiết kế lại giao diện", "thẩm mỹ", "bảng màu",
+                          "typography", "font chữ", "micro-interaction", "juice", "hud", "design system",
+                          "hiệu ứng nảy", "hiệu ứng động", "hiệu ứng chuyển", "hiệu ứng bấm"]):
+        dossier["detected_intents"].append("VISUAL_DESIGN")
+        dossier["recommended_skills"].append("ui-ux-pro-max")
 
     # Fallback default intent if none matched
     if not dossier["detected_intents"]:
@@ -344,8 +357,16 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
             "trace_path(function_name=\"<TargetFunction>\", direction=\"inbound\")"
         ]
 
-    # Deduplicate recommended skills
-    dossier["recommended_skills"] = list(dict.fromkeys(dossier["recommended_skills"]))
+    # Deduplicate recommended skills; never recommend one the active profile leaves uninstalled
+    excluded = set()
+    profile_json = os.path.join(devkit_root, "profiles", dossier["active_profile"], "profile.json")
+    if os.path.exists(profile_json):
+        try:
+            with open(profile_json, "r") as f:
+                excluded = set(json.load(f).get("exclude_skills", []))
+        except (OSError, ValueError) as e:
+            print(f"[enrich_context] unreadable {profile_json}: {e}", file=sys.stderr)
+    dossier["recommended_skills"] = [s for s in dict.fromkeys(dossier["recommended_skills"]) if s not in excluded]
 
     return dossier
 

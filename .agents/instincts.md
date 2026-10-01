@@ -183,3 +183,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Nguồn tự dò mới giành quyền cấu hình đã khai
 - **Nguyên nhân:** proof-capture thêm nhánh 'có iOS Simulator Booted thì chụp simulator' nhưng chỉ coi provider có serial là đã khai; provider chỉ khai avd (và 2 simulator Booted) bị đẩy sang simctl/fail, đổi hành vi adb đang chạy (review 7de08da, 2026-09-30)
 - **Quy tắc phòng ngừa & Cách fix:** Thêm một nguồn tự dò (thiết bị, file, env) thì liệt kê MỌI trường cấu hình người dùng có thể khai (serial, avd, udid, type…) — trường nào có mặt thì nó thắng; tự dò chỉ quyết khi không khai gì và kết quả đúng 1 ứng viên, còn lại rơi về đường cũ. Viết test 'đã khai X + nguồn tự dò có mặt → vẫn đường cũ' cho từng trường.
+
+---
+
+### [INSTINCT-022] Gắn skill vào intent rộng làm đổi dòng 'Skill phù hợp' và đẩy skill khác khỏi top 5
+- **Ngày phát hiện:** 2026-10-01
+- **Hiện tượng lỗi:** Gắn skill vào intent rộng làm đổi dòng 'Skill phù hợp' và đẩy skill khác khỏi top 5
+- **Nguyên nhân:** enrich_context khử trùng lặp theo cả dòng và cắt skills[:5]; thêm skill vào nhánh UI_INTERACTION khiến prompt bug 'xoay màn hình' có dòng skill khác (test_prompt_dedupe đỏ) và đẩy android-real-device-qa/qa-visual ra
+- **Quy tắc phòng ngừa & Cách fix:** Skill chuyên biệt có nhánh từ khoá riêng, hẹp; sau khi sửa enrich_context chạy cả tests/test_prompt_context.sh và hooks/tests/test_prompt_dedupe.sh (run_impacted không tự chạy test dedupe)

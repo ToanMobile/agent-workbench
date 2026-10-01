@@ -117,6 +117,57 @@ for p in "chuẩn bị thiết bị thật để chạy thử" "tối ưu build 
 done
 has "$(intents "tối ưu build script cho nhanh")" UI_INTERACTION \
   && fail "'ui' inside 'build' → UI_INTERACTION" || ok "short keywords match whole words only ('ui' ≠ build)"
+# skills <prompt> → the "Skill phù hợp" line the hook prints (compact(), not the raw dossier)
+skills() {
+  python3 - "$ENRICH" "$1" "$TMP/emptykit" "$TMP/proj" <<'PY'
+import importlib.util, re, sys
+spec = importlib.util.spec_from_file_location("ec", sys.argv[1])
+ec = importlib.util.module_from_spec(spec); spec.loader.exec_module(ec)
+out = ec.compact(ec.enrich_prompt(sys.argv[2], sys.argv[3], sys.argv[4]), sys.argv[4])
+m = re.search(r"Skill phù hợp: (.*)", out)
+print(m.group(1).replace(",", " ") if m else "")
+PY
+}
+for p in "thiết kế lại giao diện màn hình cài đặt" "đổi font chữ cho màn hình chính" "chọn bảng màu cho app"; do
+  s="$(skills "$p")"
+  has "$s" ui-ux-pro-max && ok "design request '$p' → hook shows ui-ux-pro-max" || fail "design request '$p' → hook skills '$s'"
+done
+s="$(skills "app crash khi xoay màn hình")"
+has "$s" ui-ux-pro-max && fail "crash prompt got the design skill: '$s'" || ok "crash prompt → no design skill"
+s="$(skills "sửa lỗi hud bị vỡ layout")"
+case "$s" in *qa-visual*ui-ux-pro-max*) ok "design skill comes after qa-visual (never crowds it out of the top 5)" ;;
+  *) fail "skill order '$s' (want qa-visual before ui-ux-pro-max)" ;; esac
+s="$(skills "làm màn shop cho game puzzle dọc, nút mua có hiệu ứng nảy")"
+has "$s" ui-ux-pro-max && ok "game UI juice prompt → ui-ux-pro-max" || fail "game UI juice prompt → '$s'"
+# pskills <profile> <prompt> → hook skill line with the real DevKit profiles (exclude_skills applies)
+pskills() {
+  mkdir -p "$TMP/p_$1/.agents" && printf '{"profile": "%s"}\n' "$1" > "$TMP/p_$1/.agents/active-profile.json"
+  python3 - "$ENRICH" "$2" "$DEVKIT_DIR" "$TMP/p_$1" <<'PY'
+import importlib.util, re, sys
+spec = importlib.util.spec_from_file_location("ec", sys.argv[1])
+ec = importlib.util.module_from_spec(spec); spec.loader.exec_module(ec)
+out = ec.compact(ec.enrich_prompt(sys.argv[2], sys.argv[3], sys.argv[4]), sys.argv[4])
+m = re.search(r"Skill phù hợp: (.*)", out)
+print(m.group(1).replace(",", " ") if m else "")
+PY
+}
+s="$(pskills game "Unity bị giật GC alloc mỗi frame trong Update")"
+has "$s" unity-gc-audit && ok "game: Unity GC prompt → unity-gc-audit" || fail "game: Unity GC prompt → '$s'"
+s="$(pskills android "Compose recompose liên tục làm LazyColumn lag")"
+has "$s" compose-recomp-audit && ok "android: recomposition prompt → compose-recomp-audit" || fail "android: recomposition → '$s'"
+s="$(pskills backend "build apk release ký keystore")"
+has "$s" deploy && fail "backend profile recommends excluded skill deploy: '$s'" || ok "profile exclude_skills never recommended"
+s="$(skills "fix lỗi hiệu ứng phụ khi gọi API lưu đơn")"
+has "$s" ui-ux-pro-max && fail "'hiệu ứng phụ' (side effect) → design skill: '$s'" || ok "'hiệu ứng phụ' is not a design request"
+mkdir -p "$TMP/pnull/.agents" && echo '{"profile": null}' > "$TMP/pnull/.agents/active-profile.json"
+s="$(python3 - "$ENRICH" "app bị crash khi mở" "$DEVKIT_DIR" "$TMP/pnull" 2>&1 <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ec", sys.argv[1])
+ec = importlib.util.module_from_spec(spec); spec.loader.exec_module(ec)
+print(" ".join(ec.enrich_prompt(sys.argv[2], sys.argv[3], sys.argv[4])["detected_intents"]))
+PY
+)"
+has "$s" BUG_FIX && ok "non-string profile value → context still built" || fail "non-string profile → '$s'"
 
 # ── 2. Recall ────────────────────────────────────────────────────────────────
 r="$(refs "mở file DOCX bị lỗi XML")"
