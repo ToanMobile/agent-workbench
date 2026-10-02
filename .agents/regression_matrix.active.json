@@ -135,6 +135,46 @@
       ]
     },
     {
+      "component": "devkit-session-lock",
+      "watch_files": [
+        "universal-agent-devkit/bin/session_lock.py",
+        "universal-agent-devkit/bin/post-fix-gate.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SESSION-01",
+          "name": "session lock + multi-session gate verdict (own session is never counted as another)",
+          "command": "bash universal-agent-devkit/tests/test_session_lock.sh && bash universal-agent-devkit/tests/test_multi_session_gate.sh"
+        }
+      ]
+    },
+    {
+      "component": "devkit-worktree-sandbox",
+      "watch_files": [
+        "universal-agent-devkit/scripts/worktree_sandbox.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SANDBOX-01",
+          "name": "worktree sandbox cleanup keeps unmerged work unless --force",
+          "command": "bash universal-agent-devkit/tests/test_worktree_sandbox.sh"
+        }
+      ]
+    },
+    {
+      "component": "devkit-token-cost",
+      "watch_files": [
+        "universal-agent-devkit/scripts/token_cost_tracker.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-COST-01",
+          "name": "token cost tracker counts each message id once and prices the longest model key",
+          "command": "bash universal-agent-devkit/tests/test_token_cost_tracker.sh"
+        }
+      ]
+    },
+    {
       "component": "devkit-all",
       "watch_files": [
         "universal-agent-devkit/*"
