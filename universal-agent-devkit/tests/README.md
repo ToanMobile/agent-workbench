@@ -3,11 +3,13 @@
 Thư mục `tests/` chứa toàn bộ 89 bài kiểm thử hồi quy tĩnh và thực thi (Executable Regression Tests) của DevKit.
 
 > **Quy ước kiến trúc (Architectural Invariant):**
-> Toàn bộ test script `test_*.sh` được giữ phẳng tại `tests/` để:
-> 1. Đảm bảo tính nhất quán tuyệt đối của đường dẫn gốc `DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"`.
-> 2. Đảm bảo cơ chế tự động phát hiện và chạy test tác động (`run_impacted.sh`) hoạt động tốc độ cao theo regex `tests/test_*.sh`.
+> Mỗi test nằm đúng MỘT cấp thư mục theo phân vùng bên dưới: `tests/<phân vùng>/test_*.sh`
+> (`gates/`, `installer/`, `context_memory/`, `worktree_git/`, `verification/`). Không để `test_*.sh` phẳng trong `tests/`.
+> 1. Gốc DevKit trong mỗi test: `DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"` (một `/..` thêm so với trước).
+> 2. `run_impacted.sh` và `agent-kit test` duyệt glob `tests/*/test_*.sh`; `test_repo_consistency.sh` (R9) giữ cho cấu trúc,
+>    các glob đó và regex của `test_evidence_gate.sh` luôn khớp nhau — một glob còn trỏ `tests/test_*.sh` sẽ khớp 0 file và đạt im lặng.
 > 3. Tránh vượt ngưỡng timeout 900 giây (15 phút) của Post-Fix Gate (`post-fix-gate.py`).
-
+> Thêm test mới: đặt vào đúng phân vùng, rồi chạy `bash tests/verification/test_repo_consistency.sh`.
 ---
 
 ## 5 Phân Vùng Nghiệp Vụ (Domain Test Groups)

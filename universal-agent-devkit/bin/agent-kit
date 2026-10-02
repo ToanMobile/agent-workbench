@@ -69,7 +69,7 @@ case "$CMD" in
     echo "================================================================="
     echo "  🧰 Running Installer & Gate Regression Tests..."
     echo "================================================================="
-    for t in "$DEVKIT_ROOT"/tests/test_*.sh; do
+    for t in "$DEVKIT_ROOT"/tests/*/test_*.sh; do
       echo "▶ $(basename "$t")"
       bash "$t" || exit 1
     done

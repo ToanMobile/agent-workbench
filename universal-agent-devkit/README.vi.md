@@ -452,7 +452,7 @@ Mỗi lần gate chạy sẽ cập nhật `.agents/CHECKLIST.md` (dashboard; `.a
 | 9 | `09-solo-dev-workflow.md` | Debounce/khóa nút tức thì, ảnh minh chứng, audit trail, tách DEMO/LIVE. |
 | 10 | `10-standards-compliance-delivery.md` | Truy vết yêu cầu, toàn vẹn dữ liệu, a11y, chịu lỗi offline, bàn giao. |
 
-**Kiểm tra tự nhất quán:** `scripts/audit_*_agents.py` và `scripts/adversarial_chaos_test_10_agents.py` là các kiểm tra dựa trên grep rằng tài liệu và script của chính DevKit vẫn chứa những gì cần có; chúng in `N/M checks passed` và không review code của bạn. Bài test sự thật ở cấp repo là `tests/test_repo_consistency.sh` (link, JSON, frontmatter, lệnh và con số trong tài liệu).
+**Kiểm tra tự nhất quán:** `scripts/audit_*_agents.py` và `scripts/adversarial_chaos_test_10_agents.py` là các kiểm tra dựa trên grep rằng tài liệu và script của chính DevKit vẫn chứa những gì cần có; chúng in `N/M checks passed` và không review code của bạn. Bài test sự thật ở cấp repo là `tests/verification/test_repo_consistency.sh` (link, JSON, frontmatter, lệnh và con số trong tài liệu).
 
 > **Health check:** `agent-kit health` chấm điểm cài đặt và cấu hình (profile, rules, skills, hội đồng, hooks, MCP của profile đang active). Mặc định **không** chạy test (`tests: not run`); `agent-kit health --run-tests` chạy `agent-kit test` và trừ điểm khi có suite fail.
 
@@ -720,7 +720,7 @@ agent-kit sync
 - `hooks/tests/hook_contract_test.sh` — contract point cho mọi hook được wire (ca chặn/cho qua, thử lách, thiếu python3).
 - `hooks/tests/contract_facts_test.sh` — 3 registry hook khớp nhau, không có hook mồ côi, mọi hook gọi qua `bash`.
 - `node --test workflows/*.test.mjs` — test của workflow engine.
-- `tests/test_*.sh` — CLI & an toàn installer, idempotency, cách ly X_old, merge JSON/Markdown, post-fix gate, đổi profile, health, linter, `restore-old`, `uninstall`, và test nhất quán của repo.
+- `tests/<group>/test_*.sh` (gates, installer, context_memory, worktree_git, verification) — CLI & an toàn installer, idempotency, cách ly X_old, merge JSON/Markdown, post-fix gate, đổi profile, health, linter, `restore-old`, `uninstall`, và test nhất quán của repo.
 
 Mỗi suite tự in số lượng; tài liệu cố ý không ghi cứng con số.
 

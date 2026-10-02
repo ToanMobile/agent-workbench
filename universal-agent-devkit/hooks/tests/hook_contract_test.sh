@@ -1431,21 +1431,21 @@ run_case "red <testsuites>-wrapped XML blocks a pass claim" test_evidence_gate.s
 rm -f "${INSTR_DIR}"/TEST-*.xml
 echo
 
-# ── foreign_repo_gate.sh — Stop (tests/test_foreign_repo_gate.sh has the full cases) ──
+# ── foreign_repo_gate.sh — Stop (tests/gates/test_foreign_repo_gate.sh has the full cases) ──
 echo "foreign_repo_gate.sh"
 run_case "foreign-repo gate: no transcript fails open" foreign_repo_gate.sh 0 \
   '{"session_id":"s-fr","hook_event_name":"Stop","transcript_path":"/nonexistent.jsonl"}'
 run_case "foreign-repo gate: only project edits pass" foreign_repo_gate.sh 0 \
   "{\"session_id\":\"s-fr\",\"hook_event_name\":\"Stop\",\"transcript_path\":\"${SEEN_TR}\"}"
 
-# ── worktree_merge_gate.sh — Stop (tests/test_worktree_merge_gate.sh has the full cases) ──
+# ── worktree_merge_gate.sh — Stop (tests/gates/test_worktree_merge_gate.sh has the full cases) ──
 echo "worktree_merge_gate.sh"
 run_case "worktree-merge gate: no transcript fails open" worktree_merge_gate.sh 0 \
   '{"session_id":"s-wm","hook_event_name":"Stop","transcript_path":"/nonexistent.jsonl"}'
 run_case "worktree-merge gate: no linked worktree passes" worktree_merge_gate.sh 0 \
   "{\"session_id\":\"s-wm\",\"hook_event_name\":\"Stop\",\"transcript_path\":\"${SEEN_TR}\"}"
 
-# ── session_lock.sh — SessionStart/PreToolUse/SessionEnd (tests/test_session_lock.sh has the full cases) ──
+# ── session_lock.sh — SessionStart/PreToolUse/SessionEnd (tests/context_memory/test_session_lock.sh has the full cases) ──
 echo "session_lock.sh"
 SL_REPO="${SANDBOX}/sl-repo"
 mkdir -p "${SL_REPO}" && git -C "${SL_REPO}" init -q .
@@ -1507,7 +1507,7 @@ run_case "non-code file not scanned" comment_claim_guard.sh 0 \
 echo
 
 # ── testsourceset_gate.sh — Stop (documented SKIP paths only) ───────────────
-# ── regression_gate.sh — Stop (full scenarios: tests/test_regression_gate_hook.sh) ──
+# ── regression_gate.sh — Stop (full scenarios: tests/gates/test_regression_gate_hook.sh) ──
 echo "regression_gate.sh"
 run_case "not a git repo: allowed (silent)"     regression_gate.sh 0 \
   '{"session_id":"s","hook_event_name":"Stop"}'
@@ -2053,7 +2053,7 @@ def cycle(name, first_red=True, second_green=True):
         for b in blocks:
             fh.write(json.dumps({"message": {"content": [b]}}) + "\n")
 cycle("redgreen.jsonl")
-# The DevKit's own bash suites (2026-09-25: a real RED→GREEN of tests/test_bug_capture.sh was
+# The DevKit's own bash suites (2026-09-25: a real RED→GREEN of tests/verification/test_bug_capture.sh was
 # not seen as a runner at all). Their verdict is the summary line: passing check names may
 # carry FAIL / REJECT / ERROR in capitals.
 def suite(name, runs):
@@ -2068,13 +2068,13 @@ def suite(name, runs):
     with open(os.path.join(d, name), "w") as fh:
         for b in blocks:
             fh.write(json.dumps({"message": {"content": [b]}}) + "\n")
-BC = "cd ../devkit-wt/universal-agent-devkit && bash tests/test_bug_capture.sh 2>&1 | tail -4"
+BC = "cd ../devkit-wt/universal-agent-devkit && bash tests/verification/test_bug_capture.sh 2>&1 | tail -4"
 suite("devkit_redgreen.jsonl", [
     (BC, "✖ a real bug prompt under Grok → REPORTED row: not recorded\n❌ test_bug_capture: 3 failed", False),
     ("EDIT", "", False),
     (BC, "✔ failing regression command -> REJECT\n✔ ERROR banner stays hidden\n✅ test_bug_capture: all passed", False)])
 suite("devkit_green_names.jsonl", [("EDIT", "", False),
-    ("bash tests/test_postfix_gate.sh", "✔ full gate not exit 0 -> FAILED run blocked\n✔ REJECT on secrets\npost-fix-gate: all checks passed", False)])
+    ("bash tests/gates/test_postfix_gate.sh", "✔ full gate not exit 0 -> FAILED run blocked\n✔ REJECT on secrets\npost-fix-gate: all checks passed", False)])
 suite("devkit_deviating.jsonl", [("EDIT", "", False),
     ("bash hooks/tests/hook_contract_test.sh", "  DEVIATES  proof gate case\ncontract points: 480 ok, 3 deviating", False)])
 with open(os.path.join(d, "redgreen.jsonl")) as src_tr, open(os.path.join(d, "redgreen_learned.jsonl"), "w") as fh:

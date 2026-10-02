@@ -453,7 +453,7 @@ Every gate run updates `.agents/CHECKLIST.md` (the dashboard; `.agents/regressio
 | 9 | `09-solo-dev-workflow.md` | Debounce/instant disable, visual proof, audit trail, DEMO vs LIVE isolation. |
 | 10 | `10-standards-compliance-delivery.md` | Requirement traceability, data integrity, accessibility, offline resilience, handover. |
 
-**Self-consistency checks:** `scripts/audit_*_agents.py` and `scripts/adversarial_chaos_test_10_agents.py` are grep-based checks that the DevKit's own docs and scripts still contain what they should; they print `N/M checks passed` and do not review your code. The repository-level truth test is `tests/test_repo_consistency.sh` (links, JSON, frontmatter, documented commands and counts).
+**Self-consistency checks:** `scripts/audit_*_agents.py` and `scripts/adversarial_chaos_test_10_agents.py` are grep-based checks that the DevKit's own docs and scripts still contain what they should; they print `N/M checks passed` and do not review your code. The repository-level truth test is `tests/verification/test_repo_consistency.sh` (links, JSON, frontmatter, documented commands and counts).
 
 > **Health check:** `agent-kit health` scores installation and configuration (profiles, rules, skills, councils, hooks, the active profile's MCP servers). Tests are **not** run by default (`tests: not run`); `agent-kit health --run-tests` runs `agent-kit test` and lowers the score when a suite fails.
 
@@ -721,7 +721,7 @@ agent-kit sync
 - `hooks/tests/hook_contract_test.sh` — contract points for every wired hook (block/allow cases, bypass attempts, missing python3).
 - `hooks/tests/contract_facts_test.sh` — the three hook registries agree, no orphan hooks, every hook runs via `bash`.
 - `node --test workflows/*.test.mjs` — workflow engine tests.
-- `tests/test_*.sh` — installer CLI & safety, idempotency, X_old isolation, JSON/Markdown merge, post-fix gate, profile switching, health, linters, `restore-old`, `uninstall`, and the repository consistency test.
+- `tests/<group>/test_*.sh` (gates, installer, context_memory, worktree_git, verification) — installer CLI & safety, idempotency, X_old isolation, JSON/Markdown merge, post-fix gate, profile switching, health, linters, `restore-old`, `uninstall`, and the repository consistency test.
 
 Counts are printed by each suite; the docs deliberately do not hard-code them.
 

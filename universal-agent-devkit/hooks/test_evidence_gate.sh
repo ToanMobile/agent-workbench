@@ -533,9 +533,9 @@ TEST_RUNNER_RX = re.compile(
     # Unity: the DevKit's unity-batch.sh test modes (not `compile`/`execute`), a
     # project's scripts/unity-test.sh, or the Editor itself with -runTests.
     r"\bunity-batch\.sh\b[^\n|;&]*\b(edit|play)mode\b|\bunity-test\.sh\b|(?<![\w-])-runTests\b|"
-    # The DevKit's own bash suites (tests/test_*.sh, the hook contract suites, run_impacted,
+    # The DevKit's own bash suites (tests/*/test_*.sh, the hook contract suites, run_impacted,
     # `agent-kit test`): judged by their summary line (DEVKIT_SUITE_* below).
-    r"\btests/test_[\w.-]+\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b", re.I)
+    r"\btests/(?:[\w-]+/)?test_[\w.-]+\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b", re.I)
 # Plain script tests (python3/node/bash …/tests/…/test-*.py|js|sh) and every command the
 # project's regression matrix declares are test runners too (GeelyEx2 2026-09-27: a real
 # RED→GREEN of `python3 tests/scripts/test-admin-….py` was not seen; CHECK 7 held 7 stops).
@@ -557,7 +557,7 @@ def _matrix_commands():
 MATRIX_CMDS = _matrix_commands()
 def is_test_runner(cmd):
     return bool(TEST_RUNNER_RX.search(cmd) or SCRIPT_RUNNER_RX.search(cmd) or any(c in cmd for c in MATRIX_CMDS))
-DEVKIT_SUITE_RX = re.compile(r"\btests/test_[\w.-]+\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b")
+DEVKIT_SUITE_RX = re.compile(r"\btests/(?:[\w-]+/)?test_[\w.-]+\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b")
 # Their check names may carry FAIL / REJECT / ERROR in capitals ("✔ REJECT on secrets"), so
 # the verdict is the summary: red on "N failed/FAILED", "N deviating" (N > 0), "❌" or a "✖"
 # line; green only on an explicit pass summary; anything else is not a verdict.

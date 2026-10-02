@@ -103,7 +103,7 @@ Stop; mỗi commit khác nhau một `git diff`.
 - Báo cáo tuần 1 dòng: số lần người phải động tay, tỷ lệ REPORTED bị drop (chỉnh bộ nhận diện bug),
   số FLAKY, số TEST VÔ HIỆU bị bắt.
 
-## 8. Lộ trình (mỗi phase: test ĐỎ→XANH trong `tests/test_*.sh`, `./bin/agent-kit test` rc 0)
+## 8. Lộ trình (mỗi phase: test ĐỎ→XANH trong `tests/*/test_*.sh`, `./bin/agent-kit test` rc 0)
 
 | Phase | Nội dung | Nghiệm thu |
 |---|---|---|

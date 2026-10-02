@@ -19,17 +19,17 @@ else
 fi
 changed="$( { git diff HEAD --name-only --relative -- . ; git ls-files -o --exclude-standard -- . ; printf '%s\n' "$unpushed"; } 2>/dev/null \
   | grep -vE '(^|/)(CHANGELOG|README[^/]*)\.md$' | sort -u)"   # templates and rules are read by tests too
-tests="tests/test_repo_consistency.sh"
+tests="tests/verification/test_repo_consistency.sh"
 for f in $changed; do
   case "$f" in
-    tests/test_*.sh|hooks/tests/*.sh) tests="$tests $f"; continue ;;
+    tests/*/test_*.sh|hooks/tests/*.sh) tests="$tests $f"; continue ;;
   esac   # a helper under tests/ falls through: every test that sources it names it
-  tests="$tests $(grep -l -F -- "$(basename "$f")" tests/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')"
+  tests="$tests $(grep -l -F -- "$(basename "$f")" tests/*/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')"
   # …or its stem as a whole word: tests reach scripts through commands ("agent-kit githooks
   # install" → scripts/githooks.sh; test_githooks went unrun on 2026-09-26).
   stem="$(basename "$f")"; stem="${stem%.*}"
   [ -n "$stem" ] && [ "$stem" != "$(basename "$f")" ] \
-    && tests="$tests $(grep -l -w -F -- "$stem" tests/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')"
+    && tests="$tests $(grep -l -w -F -- "$stem" tests/*/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')"
 done
 selected="$(printf '%s\n' $tests | sort -u)"
 # post-fix-gate lists the test scripts it already ran in this gate (O2): not run twice.

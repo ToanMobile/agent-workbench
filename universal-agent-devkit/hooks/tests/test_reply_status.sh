@@ -56,7 +56,7 @@ cls DONE "xong!"
 cls NONE "xong — đã sửa lỗi X"
 cls NONE "Xong bước 1. Tiếp tục bước 2."
 cls NONE "Xong phần A, còn B"
-cls NONE "Xong việc nhỏ."   # a sentence, not a status word (tests/test_proof_gate.sh false-push cases)
+cls NONE "Xong việc nhỏ."   # a sentence, not a status word (tests/gates/test_proof_gate.sh false-push cases)
 
 # ── A2: proof_gate — a DONE reply with no receipt and no image is blocked ───────
 echo "proof_gate.sh"

@@ -190,7 +190,7 @@ Mẫu ghi nhận:
 - **Ngày phát hiện:** 2026-10-01
 - **Hiện tượng lỗi:** Gắn skill vào intent rộng làm đổi dòng 'Skill phù hợp' và đẩy skill khác khỏi top 5
 - **Nguyên nhân:** enrich_context khử trùng lặp theo cả dòng và cắt skills[:5]; thêm skill vào nhánh UI_INTERACTION khiến prompt bug 'xoay màn hình' có dòng skill khác (test_prompt_dedupe đỏ) và đẩy android-real-device-qa/qa-visual ra
-- **Quy tắc phòng ngừa & Cách fix:** Skill chuyên biệt có nhánh từ khoá riêng, hẹp; sau khi sửa enrich_context chạy cả tests/test_prompt_context.sh và hooks/tests/test_prompt_dedupe.sh (run_impacted không tự chạy test dedupe)
+- **Quy tắc phòng ngừa & Cách fix:** Skill chuyên biệt có nhánh từ khoá riêng, hẹp; sau khi sửa enrich_context chạy cả tests/context_memory/test_prompt_context.sh và hooks/tests/test_prompt_dedupe.sh (run_impacted không tự chạy test dedupe)
 
 ---
 

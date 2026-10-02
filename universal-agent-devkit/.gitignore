@@ -58,7 +58,7 @@ tmp/
 *_old
 *_old.*
 *_old_*
-!tests/test_x_old_*.sh
+!tests/*/test_*_old*.sh
 .claude/settings_old.json
 .active-profile.json
 .antigravity-pm.json
