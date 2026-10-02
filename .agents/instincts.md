@@ -208,3 +208,11 @@ Mẫu ghi nhận:
 - **Nguyên nhân:** Dùng `flow.collectAsState()` trong Jetpack Compose thay vì `collectAsStateWithLifecycle()`, khiến Flow upstream tiếp tục emit dữ liệu khi app ở `Lifecycle.State.STOPPED`; thực hiện JSON parsing / Database fetch trực tiếp trong Composable function.
 - **Quy tắc phòng ngừa & Cách fix:** Bắt buộc dùng `collectAsStateWithLifecycle()` cho mọi StateFlow trong Compose; 100% logic tính toán nặng/IO phải bọc trong `LaunchedEffect(key) { withContext(Dispatchers.IO) { ... } }` hoặc đưa vào ViewModel.
 
+
+---
+
+### [INSTINCT-025] Chia nhóm thư mục làm hỏng đường dẫn mà grep chuỗi literal không bắt hết, và hook nuốt lỗi bằng 2>/dev/null che mất
+- **Ngày phát hiện:** 2026-10-02
+- **Hiện tượng lỗi:** Sau khi chia scripts/ thành 6 nhóm, 13 test gọi script ở đường dẫn cũ và hook session_context.sh âm thầm bỏ qua toàn bộ khối checklist/STALE ở đầu phiên
+- **Nguyên nhân:** Cổng chỉ chạy các test nhắc tên file đổi nên 13 test hỏng không bao giờ được chạy; session_context.sh suy ra bin/ bằng dirname(dirname(index_memory.py)) và ghép stale_rerun.py cạnh index_memory.py, mà hai file nay ở hai thư mục khác nhau; khối Python chạy dưới 2>/dev/null nên import lỗi không để lại dấu vết (2026-10-02)
+- **Quy tắc phòng ngừa & Cách fix:** Sau khi di chuyển file: (1) lấy danh sách chính thức bằng git show --name-status -M rồi grep cả đường dẫn cũ LẪN các phép ghép đường dẫn (dirname(...)/x.py, os.path.dirname lồng nhau, sys.path.insert), không chỉ chuỗi scripts/x.py; (2) chạy MỌI script test trước và sau, so sánh từng script về mã thoát và số ca đạt, không dựa vào lựa chọn test tác động của cổng; (3) hook chạy Python dưới 2>/dev/null phải có test khẳng định ĐẦU RA chứa khối mong đợi
