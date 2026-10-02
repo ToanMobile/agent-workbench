@@ -349,7 +349,9 @@ with open(os.path.join(repo, ".claude/audit-gate/bash_write_ledger.tsv"), "w") a
 open(tp, "w").write("".join(json.dumps(r) + "\n" for r in [
     {"type": "user", "timestamp": iso(now - 600), "message": {"role": "user", "content": "fix it"}},
     {"type": "assistant", "timestamp": iso(now - 590), "message": {"content": [
-        {"type": "tool_use", "id": "m1", "name": "Bash", "input": {"command": "git status"}}]}}]))
+        {"type": "tool_use", "id": "m1", "name": "Bash", "input": {"command": "git status"}},
+        {"type": "tool_use", "id": "e0", "name": "Edit", "input": {"file_path": os.path.join(repo, "src/Core.kt"),
+                                                                   "old_string": "1", "new_string": "2"}}]}}]))
 PY
 ystop() { printf '{"session_id":"s-y","hook_event_name":"Stop","transcript_path":"%s"}' "$1" \
   | CLAUDE_PROJECT_DIR="$X" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
@@ -577,6 +579,144 @@ JSON
     && ok "$kind: an edit inside an untracked file is not skipped — REG-OK runs and blocks" \
     || fail "$kind: untracked content edit skipped the suites (rc $rc1 then $rc2)"
 done
+# ── A session that wrote nothing here is not gated for another agent's change ────────────
+# 2026-10-02 (agent-workbench): every Stop re-ran the whole matrix (~11 min a run, 27 min seen) for
+# a 301-file diff another agent had made while this session only read. Evidence that a session
+# wrote a changed file: its Edit/Write paths, a write verb naming it (or a path held in a variable),
+# the file's mtime inside one of its own Bash windows (bash_write_ledger.tsv). A tool that may
+# write unseen, or no usable transcript, keeps the gate (fail closed). REGRESSION_GATE_ALL_SESSIONS=1
+# turns the shortcut off.
+W="$TMP/readonly"; mkdir -p "$W/src" "$W/.agents" && cd "$W" || exit 1
+git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt
+printf 'echo x >> "%s"\nexit 1\n' "$TMP/w_runs" > result.sh; : > "$TMP/w_runs"
+cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/*.kt"],
+ "mandatory_regression_tests":[{"id":"REG-W","name":"core","command":"sh result.sh"}]}]}
+JSON
+git add -A && git commit -qm init
+echo "fun ok() = 2" > src/Core.kt            # another agent's uncommitted change
+wruns() { grep -c x "$TMP/w_runs" | tr -d ' '; }
+# wtrace <name> <tool_use json>…: a Claude transcript whose assistant turn made these calls (@REPO@ = $W)
+wtrace() { python3 - "$TMP/$1.jsonl" "$W" "${@:2}" <<'PY'
+import json, sys, time
+tp, repo, uses = sys.argv[1], sys.argv[2], sys.argv[3:]
+blocks = [dict(json.loads(u.replace("@REPO@", repo)), type="tool_use", id="t%d" % i) for i, u in enumerate(uses)]
+iso = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 600))
+open(tp, "w").write(json.dumps({"type": "user", "timestamp": iso, "message": {"role": "user", "content": "look"}}) + "\n"
+                    + json.dumps({"type": "assistant", "timestamp": iso, "message": {"content": blocks}}) + "\n")
+PY
+}
+# wstop <session> <transcript> [reply]: the reply defaults to a plain one that claims no outcome
+wstop() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"hook_event_name":"Stop","transcript_path":sys.argv[2],"last_assistant_message":sys.argv[3]}))' \
+    "$1" "$TMP/$2.jsonl" "${3-Đây là phần giải thích: gate chạy ba bước.}" \
+  | CLAUDE_PROJECT_DIR="$W" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+# a blocking case needs a new tree each time: the loop guard releases the third block of one tree
+newtree() { echo "fun ok() = $1" > "$W/src/Core.kt"; }
+
+wtrace w_ro '{"name":"Read","input":{"file_path":"@REPO@/src/Core.kt"}}' '{"name":"Bash","input":{"command":"git status"}}'
+wstop w-ro w_ro; rc=$?
+[ "$rc" = 0 ] && [ "$(wruns)" = 0 ] && grep -q systemMessage "$TMP/out" && grep -q 'không ghi file' "$TMP/out" && grep -q 'KHÔNG phải PASS' "$TMP/out" \
+  && ok "read-only session: the dirty tree is another agent's — suites not run, said (not a PASS)" \
+  || fail "read-only session still gated (rc=$rc runs=$(wruns) out='$(cat "$TMP/out")' err='$(head -2 "$TMP/err")')"
+wstop w-ro w_ro; rc=$?
+[ "$rc" = 0 ] && [ ! -s "$TMP/out" ] && [ "$(wruns)" = 0 ] && ok "read-only session: said once per session" \
+  || fail "read-only notice repeated or suites ran (rc=$rc runs=$(wruns) out='$(cat "$TMP/out")')"
+
+wtrace w_out '{"name":"Write","input":{"file_path":"/tmp/elsewhere/x.md","content":"x"}}'
+newtree 3; wstop w-out w_out; rc=$?
+[ "$rc" = 0 ] && [ "$(wruns)" = 0 ] && ok "session that only wrote OUTSIDE this checkout: not gated" || fail "outside write gated (rc=$rc runs=$(wruns))"
+
+wtrace w_ed '{"name":"Edit","input":{"file_path":"@REPO@/src/Core.kt","old_string":"a","new_string":"b"}}'
+newtree 4; wstop w-ed w_ed; rc=$?
+[ "$rc" = 2 ] && [ "$(wruns)" -gt 0 ] && grep -q REG-W "$TMP/err" && ok "session that edited a changed file (Edit): gated as before" || fail "Edit session not gated (rc=$rc runs=$(wruns))"
+
+wtrace w_sed '{"name":"Bash","input":{"command":"sed -i s/a/b/ src/Core.kt"}}'
+newtree 5; n0="$(wruns)"; wstop w-sed w_sed; rc=$?
+[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "write verb naming a changed file (sed -i): gated" || fail "sed -i session not gated (rc=$rc)"
+
+wtrace w_var '{"name":"Bash","input":{"command":"F=src/Core.kt; sed -i s/a/b/ $F"}}'
+newtree 6; n0="$(wruns)"; wstop w-var w_var; rc=$?
+[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "a path held in a shell variable cannot be matched to a file: gated (fail closed)" || fail "variable-path session skipped (rc=$rc)"
+
+wtrace w_bw '{"name":"Bash","input":{"command":"python3 gen.py"}}'
+mkdir -p .claude/audit-gate
+python3 - "$W/.claude/audit-gate/bash_write_ledger.tsv" <<'PY'
+import sys, time
+now = time.time()
+open(sys.argv[1], "a").write("w-bw\tstart\t%.3f\tb1\nw-bw\tend\t%.3f\tb1\n" % (now - 5, now + 60))
+PY
+newtree 7; n0="$(wruns)"; wstop w-bw w_bw; rc=$?
+[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "changed file written inside the session's own Bash window: gated" || fail "own-window write skipped (rc=$rc)"
+
+wtrace w_op '{"name":"mcp__foo__do_thing","input":{}}'
+newtree 8; n0="$(wruns)"; wstop w-op w_op; rc=$?
+[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "a tool that may write unseen (opaque MCP tool): gated (fail closed)" || fail "opaque-tool session skipped (rc=$rc)"
+
+newtree 10; n0="$(wruns)"; wstop w-xong w_ro "XONG"; rc=$?
+[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "read-only session whose reply claims XONG: gated (a claim is verified)" || fail "XONG reply skipped (rc=$rc)"
+newtree 11; n0="$(wruns)"; wstop w-empty w_ro ""; rc=$?
+[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "read-only session with no reply text: gated (fail closed)" || fail "empty reply skipped (rc=$rc)"
+newtree 12; n0="$(wruns)"; wtrace w_push '{"name":"Bash","input":{"command":"git push origin main"}}'; wstop w-push w_push; rc=$?
+[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "read-only session that pushed this turn: gated (a push is a handover)" || fail "push turn skipped (rc=$rc)"
+newtree 13; n0="$(wruns)"; DEVKIT_GATE_EVERY_STOP=1 wstop w-every w_ro; rc=$?
+[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "DEVKIT_GATE_EVERY_STOP=1: even a read-only session is gated" || fail "EVERY_STOP ignored (rc=$rc)"
+newtree 9; n0="$(wruns)"; REGRESSION_GATE_ALL_SESSIONS=1 wstop w-all w_ro; rc=$?
+[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "REGRESSION_GATE_ALL_SESSIONS=1: even a read-only session is gated" || fail "opt-out ignored (rc=$rc)"
+cd "$TMP" || exit 1
+
+# ── A total time budget for one Stop run ─────────────────────────────────────────────────
+# 2026-10-02 (agent-workbench): ~10 suites in a row, 600 s each and no total cap — a Stop ran 27 minutes
+# until the hook's own 1800 s timeout cut it without a word. GATE_TOTAL_BUDGET_S (the hook passes
+# REGRESSION_GATE_BUDGET_S, default 900) stops STARTING suites once the time is spent: the rest are
+# UNTESTED (label BUDGET), never PASS, exit 4, and nothing is cached for the tree (the next Stop runs again).
+BG="$TMP/budget"; mkdir -p "$BG/src" "$BG/.agents" && cd "$BG" || exit 1
+git init -q . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt
+for n in 1 2 3; do printf 'echo x >> "%s"\nsleep 2\nexit 0\n' "$TMP/bg_runs" > "s$n.sh"; done; : > "$TMP/bg_runs"
+cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/*.kt"],
+ "mandatory_regression_tests":[{"id":"REG-B1","name":"one","command":"sh s1.sh"},
+  {"id":"REG-B2","name":"two","command":"sh s2.sh"},{"id":"REG-B3","name":"three","command":"sh s3.sh"}]}]}
+JSON
+git add -A && git commit -qm init
+echo "fun ok() = 2" > src/Core.kt
+bgruns() { grep -c x "$TMP/bg_runs" | tr -d ' '; }
+bgstop() { printf '{"session_id":"bg-1","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$BG" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+
+# the gate itself: after the budget no new suite starts
+CLAUDE_PROJECT_DIR="$BG" GATE_TOTAL_BUDGET_S=1 python3 "$DEVKIT_DIR/bin/post-fix-gate.py" --run-tests --json >"$TMP/bg_gate.out" 2>/dev/null; rc=$?
+python3 - "$TMP/bg_gate.out" "$rc" <<'PY' && ok "gate: budget spent after the first suite — the other two are UNTESTED/BUDGET, exit 4, not a PASS" || fail "gate budget (see $TMP/bg_gate.out)"
+import json, sys
+rc = int(sys.argv[2])
+last = [l for l in open(sys.argv[1], encoding="utf-8").read().splitlines() if l.startswith("{")][-1]
+d = json.loads(last)
+st = {t["id"]: (t["status"], t.get("label")) for t in d["regression_tests"]}
+assert rc == 4 and d.get("exit_code") == 4, (rc, d.get("exit_code"))
+assert d.get("budget_exhausted") is True, d.get("budget_exhausted")
+assert st["REG-B1"][0] == "PASS", st
+assert st["REG-B2"] == ("UNTESTED", "BUDGET") and st["REG-B3"] == ("UNTESTED", "BUDGET"), st
+PY
+
+# the Stop hook: says so, lets the stop through (nothing to fix in the change), caches nothing
+: > "$TMP/bg_runs"; echo "fun ok() = 3" > src/Core.kt
+REGRESSION_GATE_BUDGET_S=3 bgstop; rc=$?
+[ "$rc" = 0 ] && [ "$(bgruns)" = 2 ] && grep -q systemMessage "$TMP/out" && grep -q 'ngân sách' "$TMP/out" && grep -q 'REG-B3' "$TMP/out" && grep -q 'KHÔNG phải PASS' "$TMP/out" \
+  && ok "hook: budget spent mid-run — stop allowed, the message names the suite left, not a PASS" \
+  || fail "hook budget (rc=$rc runs=$(bgruns) out='$(cat "$TMP/out")' err='$(head -2 "$TMP/err")')"
+python3 -c 'import json,sys
+d = json.load(open(sys.argv[1]))
+sys.exit(1 if d.get("pass_fp") or d.get("untested_fp") or any(s.get("result") for s in d.get("sessions", {}).values()) else 0)' \
+  "$BG/.claude/audit-gate/regression_gate.state.json" && ok "hook: a budget-cut run is cached as nothing (no pass_fp / untested_fp / session result)" \
+  || fail "budget cut cached: $(cat "$BG/.claude/audit-gate/regression_gate.state.json")"
+n0="$(bgruns)"; REGRESSION_GATE_BUDGET_S=3 bgstop
+[ "$(bgruns)" -gt "$n0" ] && ok "hook: the same tree runs its suites again on the next stop" || fail "budget-cut tree not re-run (runs $n0 then $(bgruns))"
+
+# without a budget in the way (default 900 s) every suite runs
+: > "$TMP/bg_runs"; echo "fun ok() = 4" > src/Core.kt
+bgstop; rc=$?
+[ "$rc" = 0 ] && [ "$(bgruns)" = 3 ] && ! grep -q 'ngân sách' "$TMP/out" && ok "hook: default budget (900 s) does not cut a short run — all 3 suites ran" \
+  || fail "default budget cut the run (rc=$rc runs=$(bgruns) out='$(cat "$TMP/out")')"
 cd "$TMP" || exit 1
 
 if [ "$FAILS" -ne 0 ]; then echo "regression gate hook: $FAILS FAILED"; exit 1; fi

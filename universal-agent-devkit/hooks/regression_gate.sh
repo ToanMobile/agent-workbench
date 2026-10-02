@@ -436,17 +436,76 @@ if isinstance(last, dict) and last.get("key") == reuse_key and isinstance(last.g
     # suite is no reason to re-run every Stop). Same reason, no run.
     block(last["lines"], last.get("cure") or [], last.get("rc", 1), reused=True, repeat_hit=True)
 
+# A session that wrote none of the changed files is not the author of this change: a diff another agent made
+# (301 files) re-ran the whole matrix (~11 min a run, 27 min seen) at the end of every read-only
+# session (agent-workbench, 2026-10-02). Evidence of writing is session_authorship.wrote_any: Edit/Write
+# paths, write verbs naming a changed file, a changed file inside its own Bash windows. A tool
+# that may write unseen, no usable transcript, a push or unverified commits, and a reply that claims
+# an outcome (or says nothing) keep the gate.
+# REGRESSION_GATE_ALL_SESSIONS=1 turns the shortcut off.
+def wrote_nothing_here():
+    sid_raw, tp = str(data.get("session_id") or ""), data.get("transcript_path")
+    if info is None or degraded or pushed or unverified or not sid_raw or not tp \
+            or os.environ.get("REGRESSION_GATE_ALL_SESSIONS") == "1" or os.environ.get("DEVKIT_GATE_EVERY_STOP") == "1":
+        return False
+    reply = data.get("last_assistant_message")
+    try:
+        # Same fail-closed contract as the progress-reply skip: a reply that claims an outcome, says
+        # nothing, or follows a commit/push this turn is the handover and is verified.
+        start = devkit_harness.turn_start(tp)
+        if not isinstance(reply, str) or not reply.strip() or devkit_harness.reply_status(reply) == "DONE" \
+                or devkit_harness.OUTCOME.search(re.sub(r"(?i)chưa\s+xong", "", reply)) \
+                or start is None or devkit_harness.git_writes_in_turn(tp, start):
+            return False
+        sys.dont_write_bytecode = True
+        sys.path.insert(0, os.path.join(devkit, "bin"))
+        import session_authorship
+        recs, paths, i = status.decode("utf-8", "replace").split("\0"), [], 0
+        while i < len(recs):
+            rec = recs[i]
+            i += 1
+            if len(rec) <= 3:
+                continue
+            paths.append(rec[3:])
+            if ("R" in rec[:2] or "C" in rec[:2]) and i < len(recs):   # rename/copy: the next record is its source
+                paths.append(recs[i])
+                i += 1
+        paths = [p for p in paths if p and not p.startswith(own)]
+        return bool(paths) and session_authorship.wrote_any(tp, sid_raw, repo, paths, root=toplevel) is False
+    except Exception as e:
+        note("wrote_nothing_here failed: %r" % e)
+        return False
+
+if wrote_nothing_here():
+    note("skip: session wrote none of the changed files sid=%s" % sid)
+    flag = os.path.join(os.path.dirname(log), "regression_gate.readonly." + sid)
+    if not os.path.exists(flag):
+        try:
+            open(flag, "w").close()
+        except OSError:
+            pass
+        print(json.dumps({"systemMessage": "ℹ regression_gate: phiên này không ghi file nào trong các thay đổi đang có "
+                          "(của agent/người khác) nên KHÔNG chạy lại test hồi quy ở lượt dừng — KHÔNG phải PASS. Test chạy ở "
+                          "phiên có sửa file, khi commit/push, hoặc chạy tay `postfix-gate --run-tests --full`. (regression gate "
+                          "skipped: this session wrote none of the changed files — not a PASS; REGRESSION_GATE_ALL_SESSIONS=1 "
+                          "runs it anyway)"}, ensure_ascii=False))
+    sys.exit(0)
+
 # --session/--transcript: an existing test edited by ANOTHER session (or a person) is a warning,
 # only the test edits of THIS session block (post-fix-gate split_tests_by_author).
 # TEST_RUN_LOCK_WAIT_S: a short wait for the test_run.lock another run holds (the CLI default 900 plus
 # the suites could pass the 1800 s timeout of this hook); past it the gate reports "busy".
+# Total time for the suites of one Stop run: 120 s lock wait + this budget stay well inside the 1800 s hook timeout, so the
+# hook is never cut silently (2026-10-02: 27 min). REGRESSION_GATE_BUDGET_S=0 turns it off.
+budget_s = os.environ.get("REGRESSION_GATE_BUDGET_S", "900")
 res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "session-" + sid[:12],
                       "--timeout", os.environ.get("REGRESSION_GATE_TEST_TIMEOUT", "600"),
                       "--session", str(data.get("session_id") or ""), "--transcript", str(data.get("transcript_path") or "")]
                      + (["--since", commit_base] if commit_base else []),
                      cwd=repo, capture_output=True, text=True, errors="replace",
                      env={**os.environ, "CLAUDE_PROJECT_DIR": repo,
-                          "TEST_RUN_LOCK_WAIT_S": os.environ.get("TEST_RUN_LOCK_WAIT_S", "120")})
+                          "TEST_RUN_LOCK_WAIT_S": os.environ.get("TEST_RUN_LOCK_WAIT_S", "120"),
+                          "GATE_TOTAL_BUDGET_S": budget_s})
 summary = {}
 for line in reversed(res.stdout.splitlines()):
     if line.startswith("{"):
@@ -481,6 +540,15 @@ if res.returncode == 4 and summary.get("busy"):
     note(f"busy fp={fp}")
     print(json.dumps({"systemMessage": "Regression gate UNTESTED — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau "
                       "(.claude/audit-gate/test_run.lock); test hồi quy CHƯA chạy, KHÔNG phải PASS."}, ensure_ascii=False))
+    sys.exit(0)
+if res.returncode == 4 and summary.get("budget_exhausted"):
+    # Time budget spent: some suites did not start. Nothing to fix in the change and no verdict to remember: say it every
+    # time, cache nothing (the next stop runs again), do not advance verified_head.
+    left = [str(t.get("id") or "?") for t in summary.get("regression_tests", []) if t.get("label") == "BUDGET"]
+    note("budget fp=%s left=%s" % (fp, ",".join(left)))
+    print(json.dumps({"systemMessage": "Regression gate UNTESTED — hết ngân sách thời gian (%ss): %s chưa chạy — KHÔNG phải PASS; "
+                      "chạy `postfix-gate --run-tests --full` trước khi bàn giao. (REGRESSION_GATE_BUDGET_S)"
+                      % (budget_s, ", ".join(left))}, ensure_ascii=False))
     sys.exit(0)
 if res.returncode == 4 and summary:
     # UNTESTED: every test that could run passed, but one cannot run on this machine
@@ -610,7 +678,8 @@ for t in failing:
 for t in busy:
     lines.append("  - %s %s: %s — chưa chạy (%s); KHÔNG phải PASS" % (
         t.get("id"), t.get("name"), t.get("label") or t.get("status"),
-        "một lượt khác giữ khoá test, chạy lại sau" if t.get("label") == "BUSY" else "không chạy được trên máy này"))
+        "một lượt khác giữ khoá test, chạy lại sau" if t.get("label") == "BUSY"
+        else "hết ngân sách thời gian, chạy lại sau" if t.get("label") == "BUDGET" else "không chạy được trên máy này"))
 for f in summary.get("findings", [])[:10]:
     # static findings (secrets, placeholders, dependencies …) with the exact place to fix
     lines.append("  - %s %s:%s: %s" % (f.get("category"), f.get("file"), f.get("line") or "?", f.get("message")))

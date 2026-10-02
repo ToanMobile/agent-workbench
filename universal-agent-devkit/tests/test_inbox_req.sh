@@ -12,7 +12,7 @@
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 KIT="$DEVKIT_DIR/bin/agent-kit"; GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
-PROMPT_HOOK="$DEVKIT_DIR/hooks/prompt_context.sh"; PROOF="$DEVKIT_DIR/scripts/red_proof.py"
+PROMPT_HOOK="$DEVKIT_DIR/hooks/prompt_context.sh"; PROOF="$DEVKIT_DIR/scripts/testing/red_proof.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 unset PROMPT_CONTEXT BUG_CAPTURE INBOX_WATCH

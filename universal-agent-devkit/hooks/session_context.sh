@@ -152,7 +152,10 @@ try:
     indexer = os.environ.get("INDEXER") or ""
     counts = {}
     if indexer and os.path.isfile(status):
-        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(indexer)), "bin"))
+        _top = os.path.dirname(os.path.dirname(indexer))    # DevKit root when index_memory.py sits in scripts/
+        if not os.path.isfile(os.path.join(_top, "bin", "regression_checklist.py")):
+            _top = os.path.dirname(_top)                     # …or in scripts/<group>/ since the regrouping
+        sys.path.insert(0, os.path.join(_top, "bin"))
         sys.dont_write_bytecode = True
         import regression_checklist as rc  # the same status rules the checklist view uses
         with rc.locked(root):   # code changed since a PASS → STALE, written back only when it changed
@@ -165,7 +168,10 @@ try:
         counts = rc.summary(data)
         out.extend(filter(None, [rc.rollback_warning(root)]))  # checklist rolled back outside the DevKit
         try:
-            rerun = os.path.join(os.path.dirname(indexer), "stale_rerun.py")
+            _gov = os.path.dirname(indexer)    # scripts/governance (scripts/ before the regrouping)
+            rerun = next((p for p in (os.path.join(os.path.dirname(_gov), "testing", "stale_rerun.py"),
+                                      os.path.join(_gov, "stale_rerun.py")) if os.path.isfile(p)),
+                         os.path.join(_gov, "stale_rerun.py"))
             sys.path.insert(0, os.path.dirname(rerun))
             from stale_rerun import is_light     # the same light/heavy rule the re-run applies
             light = [t for t, it in data["items"].items() if it.get("kind") == "test"

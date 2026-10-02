@@ -14,7 +14,7 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 python3 - <<PY
 import sys
-sys.path[:0] = ["$S", "$B"]
+sys.path[:0] = ["$S", "$S/audits", "$S/context", "$S/git", "$S/governance", "$S/linters", "$S/testing", "$B"]
 from pathlib import Path
 import hardware_source_lint as hw
 import assertion_lint as al
@@ -100,7 +100,7 @@ PY
 [ $? -eq 0 ] && ok "linters, dHash, boundaries, autolink" || fail "python checks"
 
 bash -n "$DEVKIT_DIR/profiles/game/scripts/unity-batch.sh" && ok "unity-batch.sh syntax" || fail "unity-batch.sh syntax"
-python3 -m py_compile "$B/post-fix-gate.py" "$B/regression_checklist.py" "$S/enrich_context.py" \
+python3 -m py_compile "$B/post-fix-gate.py" "$B/regression_checklist.py" "$S/context/enrich_context.py" \
   && ok "py_compile gate" || fail "py_compile gate"
 
 # Stale lock (dead pid) is removed. Live pid is kept.

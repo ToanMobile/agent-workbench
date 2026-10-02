@@ -10,7 +10,7 @@
 #    add/remove keep the project list
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-NIGHTLY="$DEVKIT_DIR/scripts/nightly.py"; GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
+NIGHTLY="$DEVKIT_DIR/scripts/governance/nightly.py"; GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 export HOME="$TMP/home"; mkdir -p "$HOME"

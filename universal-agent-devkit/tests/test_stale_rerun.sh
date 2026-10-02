@@ -8,7 +8,7 @@
 #  - SessionStart says what it started
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-GATE="$DEVKIT_DIR/bin/post-fix-gate.py"; RERUN="$DEVKIT_DIR/scripts/stale_rerun.py"
+GATE="$DEVKIT_DIR/bin/post-fix-gate.py"; RERUN="$DEVKIT_DIR/scripts/testing/stale_rerun.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 

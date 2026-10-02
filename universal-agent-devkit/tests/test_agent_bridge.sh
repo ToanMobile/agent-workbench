@@ -6,7 +6,7 @@ set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BRIDGE="$DEVKIT_DIR/hooks/agent_bridge.sh"
-AH="$DEVKIT_DIR/scripts/agent_hooks.py"
+AH="$DEVKIT_DIR/scripts/context/agent_hooks.py"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export DEVKIT_LANG=en

@@ -425,6 +425,37 @@ def _other_session_edits(transcript, session, targets, since, edited=(), bash=()
     return found
 
 
+def wrote_any(transcript, session, project, rels, root=None):
+    """Could this session have written one of the repo-relative paths in rels? True: its Edit/Write
+    calls, a write verb naming one (or a path held in a variable, which no file can be matched to),
+    or its own Bash windows in the ledger (a script, codegen) cover one. False: none does. None: it
+    cannot be told — no usable transcript, or a tool that may write unseen (read_only_tool). A
+    deleted path has no mtime: only a named write verb places it. root: where rels are relative to
+    (default project). Used by regression_gate.sh to leave a read-only session out of a gate run
+    for another agent's change.
+    ponytail: O(paths x tokens) realpath calls (3000 x 450 took 3 s), memoise the token targets when a
+    diff passes 10k paths. A detached process of an earlier session can write unseen, sign the ledger
+    if an agent is ever found forging it."""
+    trace = session_trace(transcript)
+    if trace is None or trace[4]:
+        return None
+    edited, named = trace[0], shell_named(trace[1])
+    if any("$" in t or "`" in t for t in named):
+        return True
+    base = os.path.realpath(root or project)
+    mine = [(st, en) for st, en, sid in bash_windows(project) if sid == session]
+    for rel in rels:
+        if os.path.realpath(os.path.join(base, rel)) in edited or names_path(named, base, rel):
+            return True
+        try:
+            mt = os.lstat(os.path.join(base, rel)).st_mtime
+        except OSError:
+            continue
+        if any(st <= mt <= en for st, en in mine):
+            return True
+    return False
+
+
 def window_owner(mt, windows):
     """Session of the narrowest window holding mtime mt; "" on an exact tie across sessions;
     None when no window holds it."""

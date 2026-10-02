@@ -3526,11 +3526,25 @@ def main():
     # and the test scripts run so far go to DEVKIT_GATE_DONE so run_impacted.sh skips them.
     ran_cmds, done_scripts = {}, []
     _config_snaps = snapshot_local_configs(project_dir)
+    # GATE_TOTAL_BUDGET_S: seconds after which no NEW suite starts (a Stop hook has a hard timeout; 2026-10-02: a run of
+    # ~10 suites at 600 s each, no total cap, was cut silently at 27 min). Suites left are UNTESTED/BUDGET, never PASS.
+    # ponytail: a suite already running is not cut (its own --timeout bounds it), and nothing resumes where it stopped.
+    # Persist per-suite PASS keyed by tree_fp if a budget-cut run is ever the normal case.
+    try:
+        budget_s = float(os.environ.get("GATE_TOTAL_BUDGET_S") or 0)
+    except ValueError:
+        budget_s = 0.0
+    budget_start = time.monotonic()
     for t in to_run:
         if run_tests and t["command"] and not lock_held:
             t.update({"status": "UNTESTED", "label": "BUSY", "duration": "0s", "output_tail": tr(
                 "Một lượt chạy test khác giữ khoá dự án quá TEST_RUN_LOCK_WAIT_S — không chạy song song (Gradle ghi đè build/test-results)",
                 "Another test run held the project lock past TEST_RUN_LOCK_WAIT_S — not run side by side (Gradle corrupts build/test-results)")})
+            continue
+        if run_tests and t["command"] and budget_s > 0 and time.monotonic() - budget_start >= budget_s:
+            t.update({"status": "UNTESTED", "label": "BUDGET", "duration": "0s", "output_tail": tr(
+                f"Hết ngân sách thời gian GATE_TOTAL_BUDGET_S ({budget_s:.0f}s) — suite này chưa chạy",
+                f"Time budget GATE_TOTAL_BUDGET_S ({budget_s:.0f}s) spent — this suite did not run")})
             continue
         if run_tests and t["command"] and unity_will_test and "compile" in (t["command"] or "").lower() and "test" not in (t["command"] or "").lower().split("compile", 1)[-1]:
             t["status"] = "PASS"
@@ -3847,6 +3861,11 @@ def main():
     elif run_tests and tests_untested and all(t.get("label") == "BUSY" for t in tests_untested):
         verdict_text, verdict_color, exit_code = tr("UNTESTED — một lượt chạy test khác đang giữ khoá dự án (TEST_RUN_LOCK_WAIT_S) — chạy lại sau; KHÔNG phải PASS",
                                                     "UNTESTED — another test run holds the project lock (TEST_RUN_LOCK_WAIT_S) — run again later; NOT a PASS"), YELLOW, 4
+    elif run_tests and any(t.get("label") == "BUDGET" for t in tests_untested):
+        left = ", ".join(t["id"] or "?" for t in tests_untested if t.get("label") == "BUDGET")
+        verdict_text, verdict_color, exit_code = tr(
+            f"UNTESTED — hết ngân sách thời gian ({budget_s:.0f}s, GATE_TOTAL_BUDGET_S): {left} chưa chạy — chạy `postfix-gate --run-tests --full`; KHÔNG phải PASS",
+            f"UNTESTED — time budget spent ({budget_s:.0f}s, GATE_TOTAL_BUDGET_S): {left} not run — run `postfix-gate --run-tests --full`; NOT a PASS"), YELLOW, 4
     elif run_tests and tests_untested:
         # UNTESTED by untested_exit (BUSY marks suites only when the lock was not held — the
         # summary "busy"): a full run records it in the receipt so its PASS suites are reused.
@@ -3962,6 +3981,7 @@ def main():
             "matrix_problem": matrix_problem, "tests_touched": tests_touched,
             "tests_touched_other": tests_touched_other, "tests_approved": tests_approved,
             "busy": run_tests and not lock_held,   # another run held test_run.lock: tests not run
+            "budget_exhausted": any(t.get("label") == "BUDGET" for t in regression_tests),   # GATE_TOTAL_BUDGET_S spent
             "test_mode": test_mode, "full_run_required": bool(impacted_run),
             "devkit_artifacts_skipped": len(devkit_artifacts), "device": device_state,
             "static": {"secrets": len(secrets), "lazy": len(lazy_findings), "dependencies": len(dep_findings),
