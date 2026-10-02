@@ -1736,6 +1736,7 @@ w("te_f_cd.jsonl", bash(1, f"cd {green} && ./gradlew :app:testDebugUnitTest --co
 w("te_f_edit.jsonl", [{"type": "tool_use", "id": "e1", "name": "Edit", "input": {
     "file_path": os.path.join(green, "app/src/main/java/A.kt"), "old_string": "A", "new_string": "A"}},
     {"type": "tool_result", "tool_use_id": "e1", "content": "ok"}] + bash(2, f"ls {green}/app/build/test-results"))
+w("te_f_nonrun.jsonl", bash(1, f"cd {green} && git status --short"))   # names the project, runs no test
 w("te_f_none.jsonl", bash(1, "ls /tmp >/dev/null"))
 w("te_f_old.jsonl", bash(1, "cat " + os.path.join(old, xml % "GreenSuite")))
 w("te_f_red.jsonl", bash(1, "cat " + os.path.join(red, xml % "RedSuite")))
@@ -1748,6 +1749,10 @@ te_ledger "${TE_P}" te-f2 -600 600
 te_case "foreign Gradle root run via cd backs the claim"        0 te-f2 "${MSG_F}" "${SANDBOX}/te_f_cd.jsonl"
 te_ledger "${TE_P}" te-f3 -600 600
 te_case "foreign module edited then its XML read backs claim"   0 te-f3 "${MSG_F}" "${SANDBOX}/te_f_edit.jsonl"
+# 2026-10-02: a Bash that only names a foreign project (cd … && git status, a lock check) is no test run;
+# XML another session wrote there inside this session's long window must not back this session's claim.
+te_ledger "${TE_P}" te-f12 -600 600
+te_case "guard: foreign project only cd'd into, no test command" 2 te-f12 "${MSG_F}" "${SANDBOX}/te_f_nonrun.jsonl"
 te_ledger "${TE_P}" te-f7 -7200 -3600
 te_case "guard: foreign XML only read, no window of mine"       2 te-f7 "${MSG_F}" "${SANDBOX}/te_f_cat.jsonl"
 te_ledger "${TE_P}" te-other -600 600

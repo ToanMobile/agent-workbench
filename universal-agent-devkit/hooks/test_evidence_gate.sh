@@ -980,6 +980,8 @@ def foreign_xmls():
                     roots.append(("module", tok.split(marker)[0]))
             if re.search(r"(?:^|/)(?:TEST-[^/]*|tests_[^/]*)\.xml$", tok) and os.path.isfile(tok):
                 files.add(tok)
+            if not is_test_runner(cmd):
+                continue   # naming a project (cd … && git status, a lock check) is no test run there
             cur = tok if os.path.isdir(tok) else os.path.dirname(tok)
             for _ in range(4):
                 if any(os.path.exists(os.path.join(cur, m)) for m in PROJECT_MARKERS):
