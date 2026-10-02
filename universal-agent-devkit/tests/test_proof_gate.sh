@@ -227,6 +227,11 @@ for rel in ("README.md", "docs/guide.md", "app/src/test/kotlin/FooTest.kt", "tes
     cases.append((rel + " (off-screen)", tree_fp.image_required(d, start)[0], False))
 d, g = repo("be", "backend"); start = time.time(); time.sleep(1.1); write(d, "app/src/Screen.kt", "d\n")
 cases.append(("backend profile set before the turn", tree_fp.image_required(d, start)[0], False))
+# `agent-kit init` rewrites the profile file with the SAME profile (new updated_at, extra keys):
+# not a switch, so the backend waiver holds (agent-workbench 2026-10-02: .mcp.json demanded a PNG)
+d, g = repo("rein", "backend"); start = time.time(); time.sleep(1.1)
+write(d, ".agents/active-profile.json", '{"profile":"backend","updated_at":"2026-10-02T03:05:05Z","mcp_profile":"backend"}'); write(d, ".mcp.json", "{}\n")
+cases.append(("re-init rewrote the same backend profile", tree_fp.image_required(d, start)[0], False))
 bad = [f"{n}: required={got}, want {want}" for n, got, want in cases if got != want]
 assert not bad, "; ".join(bad)
 PYT

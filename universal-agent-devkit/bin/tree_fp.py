@@ -143,9 +143,9 @@ def _profile_at(project_dir, base, since):
         res = _git(project_dir, "show", f"{base}:./{rel}")
         path = os.path.join(str(project_dir), rel)
         try:
-            if res.returncode == 0:   # bytes: a CRLF file must not look changed
-                now = open(path, "rb").read() if os.path.isfile(path) else b""
-                return parse(res.stdout.decode()), now != res.stdout
+            if res.returncode == 0:   # the profile VALUE: a re-init rewriting the same profile is no switch
+                now = open(path, encoding="utf-8").read() if os.path.isfile(path) else ""
+                return parse(res.stdout.decode()), parse(now) != parse(res.stdout.decode())
             if os.path.isfile(path):
                 return parse(open(path, encoding="utf-8").read()), not since or os.path.getmtime(path) >= since
         except (OSError, ValueError, AttributeError):
