@@ -875,6 +875,84 @@ def load_active_matrix(matrix_path: str = None, base_ref: str = "HEAD"):
     return matrix, None
 
 
+def _renamed_paths(base_ref: str, staged: bool = False) -> dict:
+    """{old: new}, project-relative: what git itself records as RENAMED between base_ref and the working
+    tree (the index with staged) and whose old path is gone. A copy keeps its old path and a path nobody
+    removed is never re-pointed, so the map can follow a move but never redirect a command elsewhere."""
+    root = get_project_dir()
+    cmd = ["git", "-C", str(root), "diff", "--name-status", "-z", "-M", "--relative"] + (["--cached"] if staged else []) + [base_ref]
+    res = subprocess.run(cmd, capture_output=True)
+    if res.returncode != 0:
+        return {}
+    parts = res.stdout.decode("utf-8", errors="surrogateescape").split("\0")
+    moved, i = {}, 0
+    while i < len(parts):
+        status = parts[i]
+        i += 1
+        if not status:
+            continue
+        if status[0] in "RC":   # R<score>\0old\0new   (C: a copy, never followed)
+            if i + 1 >= len(parts):
+                break
+            old, new = parts[i], parts[i + 1]
+            i += 2
+            if status[0] == "R" and not (root / old).exists() and (root / new).exists():
+                moved[old] = new
+        elif i < len(parts):
+            i += 1
+    return moved
+
+
+def _repoint(matrix: dict, renames: dict) -> dict:
+    """matrix with every renamed path — as a whole path token of a test command or a watch_files entry — re-pointed."""
+    if not renames:
+        return matrix
+    rx = re.compile(r"(?:(?<=\./)|(?<![\w./-]))(" + "|".join(re.escape(p) for p in sorted(renames, key=len, reverse=True))
+                    + r")(?![\w./-])")
+    sub = lambda v: rx.sub(lambda m: renames[m.group(1)], v) if isinstance(v, str) else v  # noqa: E731
+    out = json.loads(json.dumps(matrix))
+    for rule in out.get("rules") or []:
+        if not isinstance(rule, dict):
+            continue
+        if isinstance(rule.get("watch_files"), list):
+            rule["watch_files"] = [sub(w) for w in rule["watch_files"]]
+        for t in rule.get("mandatory_regression_tests") or []:
+            if isinstance(t, dict):
+                for key in ("command", "impacted_command"):
+                    if key in t:
+                        t[key] = sub(t[key])
+    return out
+
+
+def follow_matrix_renames(matrix: dict, problem, matrix_path, base_ref: str, staged: bool = False):
+    """(matrix, problem). The audited change cannot be trusted with its own matrix, so the commands are the
+    base ref's. When the change MOVES a test file that command names a path the change removed (exit 127: a
+    test moved into tests/<group>/ could not pass, 2026-10-02). Re-point exactly the renames git records.
+    The matrix edit stops being the human-review problem only when the working matrix equals that
+    re-pointing; any other edit stays the problem. A matrix that still names the old path is reported:
+    it runs here, and would break once pushed.
+    ponytail: a renamed test whose content also changed is judged by the edited-test rules, not here; move that
+    check here if a weakened rename ever slips through."""
+    if not matrix:
+        return matrix, problem
+    renames = _renamed_paths(base_ref, staged)
+    moved = _repoint(matrix, renames)
+    if moved == matrix:
+        return matrix, problem
+    if problem:
+        path = find_matrix_path(matrix_path)
+        try:
+            current = json.loads(path.read_text(encoding="utf-8")) if path else None
+        except (OSError, ValueError):
+            current = None
+        return moved, (None if current == moved else problem)
+    named = sorted(o for o in renames if o in json.dumps(matrix))
+    return moved, tr(f"regression matrix còn nêu file mà thay đổi này đổi tên ({', '.join(named[:5])}) — sửa lệnh/watch_files sang đường dẫn mới "
+                     f"(sau khi push lệnh cũ sẽ thoát 127)",
+                     f"the regression matrix still names file(s) this change renames ({', '.join(named[:5])}) — update its command/watch_files "
+                     f"to the new path (the old command exits 127 once pushed)")
+
+
 def devkit_profile_matrices() -> set:
     """Contents of every DevKit profile matrix (outside any audited project repo)."""
     out = set()
@@ -3024,7 +3102,8 @@ def run_precommit_tests(modified_files) -> tuple:
     mode = os.environ.get("DEVKIT_PRECOMMIT_TESTS", "light")
     if mode == "0" or not modified_files:
         return [], [], [], []
-    matrix, _ = load_active_matrix(None, "HEAD")
+    matrix, _problem = load_active_matrix(None, "HEAD")
+    matrix, _problem = follow_matrix_renames(matrix, _problem, None, "HEAD", staged=True)
     covers = checklist_covers()
     suites = {}
     for rule in matrix.get("rules", []):
@@ -3269,6 +3348,7 @@ def main():
     if STAGED:
         return run_staged_audit(args, modified_files, devkit_artifacts)
     matrix, matrix_problem = load_active_matrix(args.matrix, base_ref)
+    matrix, matrix_problem = follow_matrix_renames(matrix, matrix_problem, args.matrix, base_ref)
     # Editing an existing test in the same change can weaken the very assertion the
     # regression run relies on. New test files are fine (that is the RED test), and so is a
     # test appended to an existing file: no old line changed and no skip marker added.

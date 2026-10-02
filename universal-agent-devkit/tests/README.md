@@ -1,6 +1,6 @@
 # Universal Agent DevKit — Test Suite Architecture
 
-Thư mục `tests/` chứa toàn bộ 89 bài kiểm thử hồi quy tĩnh và thực thi (Executable Regression Tests) của DevKit.
+Thư mục `tests/` chứa toàn bộ 90 bài kiểm thử hồi quy tĩnh và thực thi (Executable Regression Tests) của DevKit.
 
 > **Quy ước kiến trúc (Architectural Invariant):**
 > Mỗi test nằm đúng MỘT cấp thư mục theo phân vùng bên dưới: `tests/<phân vùng>/test_*.sh`
@@ -25,6 +25,7 @@ Bảo vệ tính toàn vẹn của cổng kiểm thử sau khi sửa code, bằn
 - `test_foreign_repo_gate.sh`: Ngăn chặn agent can thiệp hoặc chạy script trên repo bên ngoài chưa được cấp quyền.
 - `test_gate_cache_key.sh` & `test_gate_cache_record.sh`: Quản lý bộ nhớ đệm cache kết quả test gate.
 - `test_gate_fixes.sh`, `test_gate_friction.sh`, `test_gate_full_stale.sh`, `test_gate_reasons.sh`, `test_gate_receipt.sh`, `test_gate_since_new_test.sh`, `test_gate_since_test_edit.sh`: Các quy tắc kiểm tra ma trận lý do chặn/cho phép của gate.
+- `test_gate_matrix_rename.sh`: Đổi tên file test mà ma trận nhắc tới: gate theo dõi rename do chính git ghi nhận, không để sửa ma trận lách test.
 - `test_multi_session_gate.sh`: Cơ chế khóa phiên đa tác nhân và phát hiện xung đột phiên song song.
 - `test_worktree_merge_gate.sh`: Cổng kiểm tra tính an toàn trước khi sáp nhập worktree sandbox vào main.
 
