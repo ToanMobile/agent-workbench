@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# scripts/run_unity_tests.py: wraps profiles/game/scripts/unity-batch.sh and maps the result
+# scripts/testing/run_unity_tests.py: wraps profiles/game/scripts/unity-batch.sh and maps the result
 # to 0 = every test passed, 1 = a test failed, 2 = compile error / no results / no Editor.
 # No Unity: a fake Editor (UNITY_PATH) writes the log and an NUnit 3 result file.
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-CMD="$DEVKIT_DIR/scripts/run_unity_tests.py"
+CMD="$DEVKIT_DIR/scripts/testing/run_unity_tests.py"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 FAILS=0

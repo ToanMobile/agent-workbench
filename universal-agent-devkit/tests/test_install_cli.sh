@@ -120,7 +120,7 @@ changed="$(find "$DK" ! -type d -newer "$MARK" ! -path '*/__pycache__/*' \
 
 # ---------------------------------------------------------------- M-19 two backups in the same second
 # shellcheck disable=SC1090
-( source "$DK/scripts/backup_conflict.sh"
+( source "$DK/scripts/git/backup_conflict.sh"
   B="$TMP/bk"; mkdir -p "$B"; echo v0 > "$B/CLAUDE_old.md"
   echo v1 > "$B/CLAUDE.md"; backup_conflict "$B/CLAUDE.md" "" >/dev/null
   echo v2 > "$B/CLAUDE.md"; backup_conflict "$B/CLAUDE.md" "" >/dev/null
@@ -134,15 +134,15 @@ changed="$(find "$DK" ! -type d -newer "$MARK" ! -path '*/__pycache__/*' \
 # ---------------------------------------------------------------- M-20 merge_markdown with backslashes
 printf 'match \\d+ and \\1 literally\n' > "$TMP/blk.md"
 echo "# Mine" > "$TMP/t.md"
-python3 "$DK/scripts/merge_markdown.py" "$TMP/blk.md" "$TMP/t.md" >/dev/null 2>&1 \
-  && python3 "$DK/scripts/merge_markdown.py" "$TMP/blk.md" "$TMP/t.md" >/dev/null 2>&1 \
+python3 "$DK/scripts/governance/merge_markdown.py" "$TMP/blk.md" "$TMP/t.md" >/dev/null 2>&1 \
+  && python3 "$DK/scripts/governance/merge_markdown.py" "$TMP/blk.md" "$TMP/t.md" >/dev/null 2>&1 \
   && grep -qF 'match \d+ and \1 literally' "$TMP/t.md" && [ "$(grep -c 'universal-agent-devkit:start' "$TMP/t.md")" = 1 ] \
   && ok "M-20 block with \\d / \\1 merges and re-merges without crashing" || fail "M-20 merge_markdown backslash block"
 
 # ---------------------------------------------------------------- M-24 sync never deletes a hand-written command
 rm -f "$DK/commands/test.md"; echo "HANDWRITTEN" > "$DK/commands/test.md"
 cp "$DK/skills/qc/SKILL.md" "$TMP/qc.before"
-bash "$DK/scripts/sync_commands.sh" >/dev/null 2>&1
+bash "$DK/scripts/governance/sync_commands.sh" >/dev/null 2>&1
 [ ! -L "$DK/commands/test.md" ] && grep -qx HANDWRITTEN "$DK/commands/test.md" && cmp -s "$DK/skills/qc/SKILL.md" "$TMP/qc.before" \
   && ok "M-24 sync keeps a hand-written command and never writes through into SKILL.md" || fail "M-24 hand-written command replaced"
 

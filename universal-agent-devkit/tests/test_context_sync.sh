@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Regression test: scripts/context_sync.py writes the DevKit essentials IN FULL between the
+# Regression test: scripts/governance/context_sync.py writes the DevKit essentials IN FULL between the
 # devkit-essentials markers of the project's AGENTS.md. Antigravity reads AGENTS.md as plain
 # text and expands no `@` import (measured 2026-09-25), so an import alone never reached it.
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SYNC="$DEVKIT_DIR/scripts/context_sync.py"
+SYNC="$DEVKIT_DIR/scripts/governance/context_sync.py"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 FAILS=0

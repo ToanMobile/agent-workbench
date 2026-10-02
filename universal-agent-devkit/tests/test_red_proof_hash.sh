@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test: scripts/red_proof.py records evidence for what the sandbox really ran.
+# Regression test: scripts/testing/red_proof.py records evidence for what the sandbox really ran.
 #  - revert / patch mode runs HEAD's copy of a tracked test: the proof hashes THAT content, not a
 #    half-edited working-tree copy — so a test weakened without a commit reads OUTDATED (mark_stale),
 #    never PROVEN for a file that never ran
@@ -8,7 +8,7 @@
 #    an AttributeError on a real None, or on a name the fix does not add, stays a behavioural RED
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PROOF="$DEVKIT_DIR/scripts/red_proof.py"; KIT="$DEVKIT_DIR/bin/agent-kit"
+PROOF="$DEVKIT_DIR/scripts/testing/red_proof.py"; KIT="$DEVKIT_DIR/bin/agent-kit"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 

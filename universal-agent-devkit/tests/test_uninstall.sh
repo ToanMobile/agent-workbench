@@ -64,7 +64,8 @@ snapshot() {
   done)
 }
 
-devkit_snapshot() { (cd "$DEVKIT" && ls -A . rules skills commands hooks | shasum); }
+# __pycache__ is created by the first import of a DevKit helper: a fresh checkout has none, a used one has it
+devkit_snapshot() { (cd "$DEVKIT" && ls -A . rules skills commands hooks | grep -v '^__pycache__$' | shasum); }
 
 dangling_hook_refs() { # settings.json commands naming .claude/hooks/<x> that does not exist
   python3 - "$1" <<'PY'
