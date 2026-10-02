@@ -69,10 +69,7 @@ case "$CMD" in
     echo "================================================================="
     echo "  🧰 Running Installer & Gate Regression Tests..."
     echo "================================================================="
-    for t in "$DEVKIT_ROOT"/tests/*/test_*.sh; do
-      echo "▶ $(basename "$t")"
-      bash "$t" || exit 1
-    done
+    bash "$DEVKIT_ROOT/tests/run_impacted.sh" --all || exit 1   # parallel: the sequential loop took ~19 min, past health's 900 s
     ;;
   sync)
     echo "Synchronizing commands and skills..."

@@ -338,8 +338,8 @@ check(len(grouped) > 0 and len(grouped) == len(anywhere),
       "%d at tests/<group>/, %d anywhere under tests/" % (len(grouped), len(anywhere)))
 _ak = open(os.path.join(ROOT, "bin", "agent-kit"), encoding="utf-8").read()
 _ri = open(os.path.join(ROOT, "tests", "run_impacted.sh"), encoding="utf-8").read()
-check("tests/*/test_*.sh" in _ak and "tests/*/test_*.sh" in _ri and "tests/test_*.sh" not in (_ak + _ri).replace("tests/*/test_*.sh", ""),
-      "R9 agent-kit test and run_impacted.sh enumerate tests/*/test_*.sh, nothing still globs tests/test_*.sh")
+check('run_impacted.sh" --all' in _ak and "tests/*/test_*.sh" in _ri and "tests/test_*.sh" not in (_ak + _ri).replace("tests/*/test_*.sh", ""),
+      "R9 agent-kit test runs the suite through run_impacted.sh --all, which enumerates tests/*/test_*.sh; nothing still globs tests/test_*.sh")
 _ev = re.findall(r'DEVKIT_SUITE_RX = re\.compile\(r"([^"]+)"\)', open(os.path.join(ROOT, "hooks", "test_evidence_gate.sh"), encoding="utf-8").read())
 check(bool(_ev) and re.search(_ev[0], "bash tests/gate/test_x.sh") is not None and re.search(_ev[0], "bash tests/test_x.sh") is not None,
       "R9 test_evidence_gate counts tests/<group>/test_*.sh (and a flat one) as a DevKit suite")

@@ -72,5 +72,26 @@ printf '%s' "$out" | grep -q "✔ tests/context_memory/test_budgets.sh" && ok "t
 [ "$(printf '%s\n' "$out" | grep -E '^[✔✖] ' | sed 's/^. //' | tr '\n' ' ')" = "$(printf '%s\n' "$out" | grep -E '^[✔✖] ' | sed 's/^. //' | sort | tr '\n' ' ')" ] \
   && ok "results are printed in list order" || fail "order: $out"
 
+# `agent-kit test` runs the WHOLE suite through `run_impacted.sh --all`: one test after another took ~19 min,
+# past the 900 s `agent-kit health --run-tests` allows (2026-10-02: score 96/100, "Test suite: timed out").
+# --all selects every tests/*/test_*.sh whatever changed, in parallel, and finding none is an error, not a pass.
+A="$TMP/all"; mkdir -p "$A/tests/verification" "$A/tests/context_memory"; cp "$DEVKIT_DIR/tests/run_impacted.sh" "$A/tests/"
+echo 'echo ok' > "$A/tests/verification/test_repo_consistency.sh"
+for n in a b c; do printf 'sleep 2; echo %s-done\n' "$n" > "$A/tests/verification/test_slow_$n.sh"; done
+printf 'echo broken; exit 3\n' > "$A/tests/verification/test_broken.sh"
+echo 'echo budgets' > "$A/tests/context_memory/test_budgets.sh"
+( cd "$A" && git init -q . && git config user.email t@t && git config user.name t && git add -A && git commit -qm init
+  git clone -q --bare . "$TMP/origin_all.git" && git remote add origin "$TMP/origin_all.git" && git fetch -q origin \
+    && { git branch -q -u origin/main 2>/dev/null || git branch -q -u origin/master; } )   # clean and pushed: nothing "changed"
+[ "$(cd "$A" && bash tests/run_impacted.sh --list)" = "tests/verification/test_repo_consistency.sh" ] || fail "setup: the --all fixture is not clean"
+t0=$(date +%s); out="$(cd "$A" && DEVKIT_TEST_JOBS=4 bash tests/run_impacted.sh --all 2>&1)"; rc=$?; t1=$(date +%s)
+n_ran="$(printf '%s\n' "$out" | grep -cE '^[✔✖] tests/')"
+[ "$n_ran" = 6 ] && ok "--all on a clean tree selects every test ($n_ran)" || fail "--all selected $n_ran tests, not 6: $out"
+[ $((t1 - t0)) -lt 5 ] && ok "--all runs them in parallel ($((t1 - t0)) s < 5 s)" || fail "--all not parallel: $((t1 - t0)) s"
+[ "$rc" = 1 ] && printf '%s' "$out" | grep -q "✖ tests/verification/test_broken.sh" && ok "--all: a failing test fails the run, named" || fail "--all rc=$rc: $out"
+E="$TMP/none"; mkdir -p "$E/tests"; cp "$DEVKIT_DIR/tests/run_impacted.sh" "$E/tests/"; ( cd "$E" && git init -q . )
+out="$(cd "$E" && bash tests/run_impacted.sh --all 2>&1)"; rc=$?
+[ "$rc" = 2 ] && printf '%s' "$out" | grep -q "no tests found" && ok "--all with no tests is an error (exit 2), never a silent pass" || fail "--all with no tests: rc=$rc out=$out"
+
 if [ "$FAILS" -ne 0 ]; then echo "run_impacted: $FAILS FAILED"; exit 1; fi
 echo "run_impacted: all checks passed"

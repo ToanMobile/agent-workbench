@@ -6,7 +6,8 @@
 # The full suite (`agent-kit test`) runs far longer than post-fix-gate's 900 s per command,
 # so a regression matrix that watches the DevKit (agent-workbench's) uses this instead.
 # ponytail: a changed file that no test names gets repo-consistency only, add a test when such a file breaks
-# Usage: run_impacted.sh [--list]   (--list prints the selection and runs nothing)
+# Usage: run_impacted.sh [--list | --all]   (--list prints the selection and runs nothing; --all runs the whole
+# suite, whatever changed: what `agent-kit test` calls, in parallel — one test after another took ~19 min)
 # bash 3.2 compatible.
 set -u
 DK="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,6 +33,11 @@ for f in $changed; do
     && tests="$tests $(grep -l -w -F -- "$stem" tests/*/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')"
 done
 selected="$(printf '%s\n' $tests | sort -u)"
+# --all: every test. Finding none is an error — a glob that matches nothing must not pass.
+if [ "${1:-}" = "--all" ]; then
+  selected="$(ls tests/*/test_*.sh 2>/dev/null)"
+  [ -n "$selected" ] || { echo "run_impacted --all: no tests found under tests/*/test_*.sh" >&2; exit 2; }
+fi
 # post-fix-gate lists the test scripts it already ran in this gate (O2): not run twice.
 if [ -n "${DEVKIT_GATE_DONE:-}" ]; then
   DKP="$(pwd -P)"; keep=""
