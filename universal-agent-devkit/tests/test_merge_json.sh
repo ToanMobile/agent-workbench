@@ -3,7 +3,8 @@
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-MERGE="$DEVKIT_DIR/scripts/merge_json.py"
+MERGE="$DEVKIT_DIR/scripts/governance/merge_json.py"
+[ -f "$MERGE" ] || MERGE="$DEVKIT_DIR/scripts/merge_json.py"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 FAILS=0

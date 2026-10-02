@@ -12,7 +12,9 @@
 #    how often a surfaced trap was then read (Read of that instincts.md range, or sed -n a,b)
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK="$DEVKIT_DIR/hooks/prompt_context.sh"; STATS="$DEVKIT_DIR/scripts/memory_stats.py"
+HOOK="$DEVKIT_DIR/hooks/prompt_context.sh"
+STATS="$DEVKIT_DIR/scripts/governance/memory_stats.py"
+[ -f "$STATS" ] || STATS="$DEVKIT_DIR/scripts/memory_stats.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 unset PROMPT_CONTEXT SURFACED_LOG

@@ -70,7 +70,8 @@ out="$(bash "$KIT" githooks install 2>&1)"; rc=$?
 printf '%s' "$out" | grep -q 'git-pre-commit.sh' && ok "refusal prints the chaining line" || fail "no chaining line"
 printf '%s' "$out" | grep -qi 'after the first\|NGAY SAU' && ! printf '%s' "$out" | grep -qi 'append this line' \
   && ok "chaining advice says: insert after the shebang (an appended line can sit after 'exit 0')" || fail "chaining advice still says append"
-cp "$HOOK" "$HOOK.own"; printf '#!/bin/sh\nbash %s "$@" || exit 1\necho mine\nexit 0\n' "$DEVKIT_DIR/scripts/git-pre-commit.sh" > "$HOOK"
+_gpc="$DEVKIT_DIR/scripts/git/git-pre-commit.sh"; [ -f "$_gpc" ] || _gpc="$DEVKIT_DIR/scripts/git-pre-commit.sh"
+cp "$HOOK" "$HOOK.own"; printf '#!/bin/sh\nbash %s "$@" || exit 1\necho mine\nexit 0\n' "$_gpc" > "$HOOK"
 bash "$KIT" githooks status 2>&1 | grep -q "chaining the DevKit gate\|có gọi cổng DevKit" \
   && ok "status recognises a project hook that chains the DevKit gate" || fail "chained hook not recognised: $(bash "$KIT" githooks status 2>&1)"
 mv "$HOOK.own" "$HOOK"
@@ -85,7 +86,8 @@ bash "$KIT" githooks install >/dev/null 2>&1
 # agent-kit uninstall removes the stub too.
 new_repo
 bash "$KIT" githooks install >/dev/null 2>&1
-python3 "$DEVKIT_DIR/scripts/devkit_uninstall.py" "$TMP/repo" --apply >/dev/null 2>&1
+_uninst="$DEVKIT_DIR/scripts/governance/devkit_uninstall.py"; [ -f "$_uninst" ] || _uninst="$DEVKIT_DIR/scripts/devkit_uninstall.py"
+python3 "$_uninst" "$TMP/repo" --apply >/dev/null 2>&1
 [ ! -e .git/hooks/pre-commit ] && ok "agent-kit uninstall removes the hook" || fail "agent-kit uninstall left the hook"
 
 if [ "$FAILS" -ne 0 ]; then

@@ -4,7 +4,8 @@
 # one worktree was lost when another was gathered; nothing told the user the earlier ones existed).
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-WT="$DEVKIT_DIR/scripts/worktree.py"
+WT="$DEVKIT_DIR/scripts/git/worktree.py"
+[ -f "$WT" ] || WT="$DEVKIT_DIR/scripts/worktree.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 

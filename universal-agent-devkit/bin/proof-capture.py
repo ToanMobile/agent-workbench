@@ -364,6 +364,8 @@ def resolve(project: Path, adb: str, emulator: str | None, connect_timeout: floa
         sims = booted_sims(xcrun)
         if len(sims) == 1:
             return plan_sim(sims, None)
+    if kind in ("3d", "blender"):
+        return {"action": "3d", "serial": "blender-3d"}
     if kind not in (None, "adb"):
         return {
             "action": "fail",
@@ -395,8 +397,11 @@ def boot_avd(adb: str, emulator: str, avd: str, devices: list, port: int, boot_t
             print("AVD %s da mo tai %s" % (avd, dev["serial"]), file=sys.stderr)
             return dev["serial"]
     serial = "emulator-%d" % port
+    cmd = [emulator, "-avd", avd, "-port", str(port), "-no-boot-anim"]
+    if avd == "CarConnect":
+        cmd.extend(["-writable-system", "-gpu", "auto", "-allow-host-audio"])
     subprocess.Popen(
-        [emulator, "-avd", avd, "-port", str(port), "-no-boot-anim"],
+        cmd,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
     if not wait_boot(adb, serial, boot_timeout):
@@ -427,6 +432,21 @@ def main(argv=None) -> int:
         print(plan["message"], file=sys.stderr)
         return 1
     serial = plan.get("serial")
+    if plan["action"] == "3d":
+        dest = project / "reports" / ("proof-%s.png" % time.strftime("%Y%m%d-%H%M%S"))
+        _base = Path(__file__).resolve().parent.parent
+        script = _base / "scripts" / "testing" / "capture_3d_proof.py"
+        if not script.is_file():
+            script = _base / "scripts" / "capture_3d_proof.py"
+        res = subprocess.run([sys.executable, str(script), "--project", str(project), "--output", str(dest)],
+                             capture_output=True, text=True)
+        if res.returncode == 0 and dest.is_file():
+            print("serial: %s" % serial)
+            print("file: %s" % dest)
+            return 0
+        else:
+            print("Chup anh 3D proof that bai: %s" % res.stderr, file=sys.stderr)
+            return 1
     if plan["action"] == "simctl":
         dest = project / "reports" / ("proof-%s.png" % time.strftime("%Y%m%d-%H%M%S"))
         simctl_capture(args.xcrun, serial, dest, 60)

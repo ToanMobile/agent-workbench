@@ -91,3 +91,28 @@ Tuân thủ hệ số bội của $4\text{px} / 4\text{dp}$:
    - Tween UI chạy theo unscaled time khi game pause/hit-stop; mọi hiệu ứng có thể tắt (rung, nhấp nháy mạnh).
 6. **Hiệu năng UI:** 60 fps (16,7 ms/frame) là mục tiêu, 30 fps là sàn máy yếu; tách Canvas động/tĩnh, `raycastTarget` tắt cho phần trang trí, sprite UI trong atlas, không đổi layout mỗi frame.
 7. **Trạng thái tương tác:** nút có Default / Pressed / Disabled rõ ràng (Disabled mờ + không nhận chạm); nút tốn tài nguyên (xu, quảng cáo, IAP) khóa ngay lần chạm đầu cho tới khi có kết quả; nút Back (Android)/ESC đóng modal trên cùng.
+
+---
+
+## 7. Tiêu chuẩn Thẩm mỹ Đồ họa Cao Cấp & Chống Phèn (Studio Art Direction)
+*(Chắt lọc từ Art Director & Technical Artist của Claude Code Game Studios)*
+
+1. **Quy tắc Phối màu 60-30-10 & Bảng màu Ngữ nghĩa:**
+   - **60% Nền/Cơ sở:** Tone tối hoặc dịu (`#1A1A2E`, `#16213E`, `#F4F5F7`), không làm mỏi mắt.
+   - **30% Cấu trúc:** Khung panel, bệ đỡ (`#C5A059`, `#8A9BA8`, `#3F51B5`).
+   - **10% Điểm nhấn CTA:** Nút chính, phần thưởng, nguy hiểm (`#FFA000`, `#00E676`, `#FF1744`).
+2. **URP Global Volume Post-Processing (Bắt buộc trong mọi Scene):**
+   - **Tonemapping ACES:** Bắt buộc bật để chống hiện tượng cháy trắng và giữ dải màu hoạt hình điện ảnh.
+   - **Bloom:** Threshold $1.15$, Intensity $1.0$, Scatter $0.7$ (làm rực ngọc/tia lửa/aura).
+   - **Vignette:** Intensity $0.22$, Smoothness $0.4$ (hút tầm nhìn vào giữa màn hình dọc).
+   - **Color Adjustments:** Post Exposure $+0.1$, Contrast $+12$, Saturation $+8$.
+3. **TextMeshPro Styling Cao cấp:**
+   - CẤM dùng Text trần trụi. Luôn dùng Material Preset SDF với **Underlay Drop Shadow** (Offset Y = $-0.5$, Dilate = $0.1$, Softness = $0.2$) và **Outline** $0.15$ tương phản.
+4. **9-Sliced Sprites có viền nổi (Bevel/Highlight):**
+   - CẤM hình chữ nhật phẳng lì. Nút bấm và popup phải có cạnh viền trên sáng hơn $20\%$, bóng cạnh đáy tối hơn $30\%$ để tạo cảm giác nút vật lý có thể nhấn xuống.
+5. **Game Feel & Squash & Stretch:**
+   - Nút bấm nén $0.92\times$ trục Y khi chạm, nảy $1.08\times$ overshoot `Ease.OutBack` khi buông.
+   - Camera Shake dùng Trauma decay ($Trauma^2 \times \text{PerlinNoise}$).
+6. **Props 3D Baked Sprites:**
+   - Dùng Blender render 3D studio lighting ra PNG 512×512 alpha trong suốt cho coin, gem, rương, cúp; không dùng icon emoji hoặc ảnh phẳng thô sơ.
+

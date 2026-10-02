@@ -1455,8 +1455,10 @@ def red_proof_actions():
     if fix_proven and os.environ.get("RED_PROOF", "1") != "0":
         todo = [bid for bid, it in rows.items() if it.get("tests") and it.get("fixed") is not False
                 and (it.get("red_proof") or {}).get("status") in (None, "PENDING", "OUTDATED")]
-        script = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(os.environ.get("TE_SELF", "")))),
-                              "scripts", "red_proof.py")
+        _te_root = os.path.dirname(os.path.dirname(os.path.realpath(os.environ.get("TE_SELF", ""))))
+        script = os.path.join(_te_root, "scripts", "testing", "red_proof.py")
+        if not os.path.isfile(script):
+            script = os.path.join(_te_root, "scripts", "red_proof.py")
         if todo and os.path.isfile(script):
             import subprocess
             subprocess.Popen([sys.executable, script, repo, "--bug", ",".join(sorted(todo)), "--wait"],

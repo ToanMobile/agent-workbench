@@ -2,7 +2,8 @@
 # Regression test: worktree_sandbox.py creation, .worktreeinclude CoW copy, and cleanup
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SCRIPT="$DEVKIT_DIR/scripts/worktree_sandbox.py"
+SCRIPT="$DEVKIT_DIR/scripts/git/worktree_sandbox.py"
+[ -f "$SCRIPT" ] || SCRIPT="$DEVKIT_DIR/scripts/worktree_sandbox.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
@@ -110,7 +111,7 @@ fi
 
 # Test 5: a '.' line in .worktreeinclude must never select the repo root
 printf '.\n./\n.env\n' > "$P/.worktreeinclude"
-INC=$(python3 -c "import sys; sys.path.insert(0, '$DEVKIT_DIR/scripts'); import worktree_sandbox as w; from pathlib import Path; print(w.parse_worktree_include(Path('$P')))")
+INC=$(python3 -c "import sys; sys.path.extend(['$DEVKIT_DIR/scripts/git', '$DEVKIT_DIR/scripts']); import worktree_sandbox as w; from pathlib import Path; print(w.parse_worktree_include(Path('$P')))")
 if [ "$INC" = "['.env']" ]; then
   ok ".worktreeinclude '.' / './' lines are ignored"
 else

@@ -7,7 +7,9 @@
 #  - red_proof.py --pending proves an old bug by reverting the fix commit its evidence names
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-KIT="$DEVKIT_DIR/bin/agent-kit"; PROMPT_HOOK="$DEVKIT_DIR/hooks/prompt_context.sh"; PROOF="$DEVKIT_DIR/scripts/red_proof.py"
+KIT="$DEVKIT_DIR/bin/agent-kit"; PROMPT_HOOK="$DEVKIT_DIR/hooks/prompt_context.sh"
+PROOF="$DEVKIT_DIR/scripts/testing/red_proof.py"
+[ -f "$PROOF" ] || PROOF="$DEVKIT_DIR/scripts/red_proof.py"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }

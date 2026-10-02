@@ -19,7 +19,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+_scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+sys.path.insert(0, str(_scripts_dir))
+for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
+    _sub_path = str(_scripts_dir / _sub)
+    if _sub_path not in sys.path:
+        sys.path.insert(0, _sub_path)
 from devkit_i18n import resolve_lang, set_lang, tr  # noqa: E402
 
 # Fix Unicode on Windows consoles if needed
@@ -193,7 +198,10 @@ def instruction_files(target: Path, score: Score):
                        tr("`.agents/devkit` thiếu/hỏng — master rules và post-fix gate không tới được",
                           "`.agents/devkit` missing/broken — master rules and the post-fix gate are unreachable")):
         score.fatal.append(tr("thiếu .agents/devkit", ".agents/devkit missing"))
-    res = subprocess.run([sys.executable, str(BASE_DIR / "scripts" / "context_sync.py"), str(target), "--check"],
+    _cs = BASE_DIR / "scripts" / "governance" / "context_sync.py"
+    if not _cs.is_file():
+        _cs = BASE_DIR / "scripts" / "context_sync.py"
+    res = subprocess.run([sys.executable, str(_cs), str(target), "--check"],
                          capture_output=True, text=True)
     score.check(res.returncode == 0, tr("`.agents/context/` khớp DevKit, profile và luật dự án",
                                         "`.agents/context/` matches the DevKit, profile and project rules"),
@@ -254,12 +262,21 @@ def project_wiring(target: Path, score: Score):
                          capture_output=True, text=True, cwd=str(target), env={**os.environ, "CLAUDE_PROJECT_DIR": str(target)})
     try:
         trust = json.loads(res.stdout.strip().splitlines()[-1])
-        if not score.check(trust["rules"] > 0 and not trust["problem"],
-                    tr(f"Gate tin ma trận hồi quy ({trust['rules']} rule) — Stop sẽ chạy test thật",
-                       f"The gate trusts the regression matrix ({trust['rules']} rules) — Stop runs real tests"),
-                    tr(f"Gate KHÔNG chạy test hồi quy: {trust['problem'] or 'không có ma trận'}",
-                       f"The gate runs NO regression tests: {trust['problem'] or 'no matrix'}")):
+        if trust["rules"] == 0:
+            score.check(False, "",
+                        tr(f"Gate KHÔNG chạy test hồi quy: {trust['problem'] or 'không có ma trận'}",
+                           f"The gate runs NO regression tests: {trust['problem'] or 'no matrix'}"))
             score.fatal.append(tr("không có test hồi quy nào chạy", "no regression test runs"))
+        elif trust["problem"]:
+            score.check(True,
+                        tr(f"Gate chạy test hồi quy theo bản HEAD ({trust['rules']} rule, bản local đang sửa: cần review)",
+                           f"The gate runs regression tests from HEAD ({trust['rules']} rules, local is modified: needs review)"),
+                        "", warn_only=True)
+        else:
+            score.check(True,
+                        tr(f"Gate tin ma trận hồi quy ({trust['rules']} rule) — Stop sẽ chạy test thật",
+                           f"The gate trusts the regression matrix ({trust['rules']} rules) — Stop runs real tests"),
+                        "")
     except (ValueError, IndexError, KeyError):
         score.check(False, "", tr(f"Không đọc được trạng thái ma trận: {res.stderr[-200:]}", f"Cannot read the matrix state: {res.stderr[-200:]}"))
     out = subprocess.run(["git", "-C", str(target), "ls-files", "-o", "--exclude-standard", "-z"], capture_output=True, text=True)
@@ -356,7 +373,9 @@ def main(argv=None):
     # 4. Self-consistency checks (grep-based) — kiểm DevKit tự nhất quán, không kiểm code dự án
     section(tr("[4/6] Self-consistency checks của DevKit (grep-based)", "[4/6] DevKit self-consistency checks (grep-based)"))
     for name in SELF_CONSISTENCY_SCRIPTS:
-        script = BASE_DIR / "scripts" / name
+        script = BASE_DIR / "scripts" / "audits" / name
+        if not script.is_file():
+            script = BASE_DIR / "scripts" / name
         if not script.is_file():
             score.check(False, "", tr(f"Thiếu script `{name}`", f"Missing script `{name}`"))
             continue

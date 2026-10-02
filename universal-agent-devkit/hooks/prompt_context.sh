@@ -44,8 +44,11 @@ while [ -L "${SELF}" ]; do
   case "${LINK}" in /*) SELF="${LINK}" ;; *) SELF="$(dirname "${SELF}")/${LINK}" ;; esac
 done
 ENRICH=""
-for cand in "$(cd -P "$(dirname "${SELF}")/.." 2>/dev/null && pwd)/scripts/enrich_context.py" \
+for cand in "$(cd -P "$(dirname "${SELF}")/.." 2>/dev/null && pwd)/scripts/context/enrich_context.py" \
+            "$(cd -P "$(dirname "${SELF}")/.." 2>/dev/null && pwd)/scripts/enrich_context.py" \
+            "${DEVKIT_ROOT:-}/scripts/context/enrich_context.py" \
             "${DEVKIT_ROOT:-}/scripts/enrich_context.py" \
+            "${HOME}/.universal-agent-devkit/scripts/context/enrich_context.py" \
             "${HOME}/.universal-agent-devkit/scripts/enrich_context.py"; do
   [ -f "${cand}" ] && { ENRICH="${cand}"; break; }
 done

@@ -21,6 +21,7 @@ repo rồi chạy lệnh test/lint tương ứng — không chạy `./gradlew` t
 | `Cargo.toml` | `cargo test` | `cargo clippy -- -D warnings` |
 | `*.xcodeproj`, `*.xcworkspace`, `Package.swift` | `xcodebuild test -scheme <scheme> -destination '<dest>'` hoặc `swift test` | `swiftlint` nếu có cấu hình |
 | `*.sln`, `*.csproj` | `dotnet test` | `dotnet format --verify-no-changes` |
+| `ProjectSettings/ProjectVersion.txt`, `Assets/` (Unity) | `python3 .agents/devkit/scripts/run_unity_tests.py` | `python3 .agents/devkit/scripts/lint_unity_gc.py Assets/` |
 
 Nếu có nhiều build tool (monorepo) thì chạy theo module bị đổi. Không tìm thấy build tool → báo rõ
 "không xác định được lệnh test", không claim PASS.

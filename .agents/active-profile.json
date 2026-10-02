@@ -2,7 +2,7 @@
   "profile": "backend",
   "name": "🗄️ Backend (API / Services / Python · Go · Rust · Node)",
   "lang": "vi",
-  "updated_at": "2026-09-25T00:26:19Z",
+  "updated_at": "2026-10-02T08:34:45Z",
   "description": "Cấu hình cho dịch vụ backend: hợp đồng API ổn định, idempotency, migration an toàn, timeout/retry có giới hạn, log có cấu trúc không lộ PII, test runner phát hiện theo go.mod/Cargo.toml/pyproject.toml/package.json.",
   "essential_mcps": [
     "codebase-memory-mcp",
@@ -20,5 +20,6 @@
     "10-standards-compliance-delivery.md"
   ],
   "rules_file": "profiles/backend/rules/backend-rules.md",
-  "regression_matrix": "profiles/backend/regression_matrix.json"
+  "regression_matrix": "profiles/backend/regression_matrix.json",
+  "mcp_profile": "backend"
 }

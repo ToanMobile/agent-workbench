@@ -183,7 +183,7 @@ fi
 TARGET_DIR="$(cd "$TARGET_DIR" && pwd -P)"
 
 # Output language, shared with every adapter / agent-config / gate run from here.
-source "$DEVKIT_ROOT/scripts/i18n.sh"
+source "$DEVKIT_ROOT/scripts/governance/i18n.sh" 2>/dev/null || source "$DEVKIT_ROOT/scripts/i18n.sh"
 DEVKIT_LANG="$(devkit_resolve_lang "$LANGUAGE" "$TARGET_DIR")"
 export DEVKIT_LANG
 LANGUAGE="$DEVKIT_LANG"
@@ -320,7 +320,7 @@ echo
 #    developing the devkit itself).
 
 # 2. Source X_old Conflict Protection Helper
-source "$DEVKIT_ROOT/scripts/backup_conflict.sh"
+source "$DEVKIT_ROOT/scripts/git/backup_conflict.sh" 2>/dev/null || source "$DEVKIT_ROOT/scripts/backup_conflict.sh"
 
 # 3. The DevKit inside the project: everything agent-related lives in .agents/, the
 #    DevKit itself at .agents/devkit (devkit_place_devkit_dir). A root rules/ skills/
@@ -345,7 +345,9 @@ fi
 #     .agents/skills and .claude/commands. Empty = every skill (no profile / self-install).
 DEVKIT_SKILLS_ALLOWED=""
 if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
-  if ! DEVKIT_SKILLS_ALLOWED="$(python3 "$DEVKIT_ROOT/scripts/profile_skills.py" "${PROFILE:-none}" | tr '\n' ' ')"; then
+  _ps_script="$DEVKIT_ROOT/scripts/governance/profile_skills.py"
+  [ -f "$_ps_script" ] || _ps_script="$DEVKIT_ROOT/scripts/profile_skills.py"
+  if ! DEVKIT_SKILLS_ALLOWED="$(python3 "$_ps_script" "${PROFILE:-none}" | tr '\n' ' ')"; then
     echo "✖ profiles/$PROFILE/profile.json lists an unknown skill — fix it before installing." >&2
     exit 1
   fi
@@ -537,7 +539,9 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
 *_old.*
 *_old_*
 GI_EOF
-    python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$GI_BLOCK" "$TARGET_DIR/.gitignore" "universal-agent-devkit" --comment-style=hash >/dev/null
+    _mm_script="$DEVKIT_ROOT/scripts/governance/merge_markdown.py"
+    [ -f "$_mm_script" ] || _mm_script="$DEVKIT_ROOT/scripts/merge_markdown.py"
+    python3 "$_mm_script" "$GI_BLOCK" "$TARGET_DIR/.gitignore" "universal-agent-devkit" --comment-style=hash >/dev/null
     rm -f "$GI_BLOCK"
     echo "  - .gitignore: DevKit state and *_old backups excluded"
     # The project's lessons and tier are meant to be committed. A rule of the project's
@@ -558,12 +562,14 @@ fi
 #     commits made outside the agent. A project's own pre-commit hook is never
 #     replaced (githooks.sh prints the line to chain it instead).
 if [ "$GITHOOKS" = 1 ] && [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && git -C "$TARGET_DIR" rev-parse --git-dir >/dev/null 2>&1; then
-  bash "$DEVKIT_ROOT/scripts/githooks.sh" install "$TARGET_DIR" 2>&1 | sed 's/^/  /' || true
+  _gh_script="$DEVKIT_ROOT/scripts/git/githooks.sh"
+  [ -f "$_gh_script" ] || _gh_script="$DEVKIT_ROOT/scripts/githooks.sh"
+  bash "$_gh_script" install "$TARGET_DIR" 2>&1 | sed 's/^/  /' || true
 fi
 
 # 5c. The same gates for the other agents that support hooks (OpenAI Codex, Gemini CLI,
 #     Cursor): hooks/agent_bridge.sh + the bridged hooks go to .agents/hooks/, and
-#     scripts/agent_hooks.py registers them in .codex/hooks.json, .gemini/settings.json
+#     scripts/context/agent_hooks.py registers them in .codex/hooks.json, .gemini/settings.json
 #     and .cursor/hooks.json (only DevKit-owned entries are ever touched).
 #     Grok is not here: it reads AGENTS.md and has no directory of its own.
 if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
@@ -582,8 +588,10 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
              prompt_context.sh regression_gate.sh; do
       devkit_place "$DEVKIT_ROOT/hooks/$h" "$TARGET_DIR/.agents/hooks/$h" "$MODE"
     done
+    _ah_script="$DEVKIT_ROOT/scripts/context/agent_hooks.py"
+    [ -f "$_ah_script" ] || _ah_script="$DEVKIT_ROOT/scripts/agent_hooks.py"
     for p in $bridge_platforms; do
-      python3 "$DEVKIT_ROOT/scripts/agent_hooks.py" install "$p" "$TARGET_DIR" || true
+      python3 "$_ah_script" install "$p" "$TARGET_DIR" || true
     done
   fi
 fi
@@ -599,7 +607,9 @@ fi
 # 6a. The files AGENTS.md loads at startup (.agents/context/): real files in the project,
 #     since neither Claude Code nor Gemini CLI loads an import through a link out of it.
 if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
-  python3 "$DEVKIT_ROOT/scripts/context_sync.py" "$TARGET_DIR" || exit 1
+  _cs_script="$DEVKIT_ROOT/scripts/governance/context_sync.py"
+  [ -f "$_cs_script" ] || _cs_script="$DEVKIT_ROOT/scripts/context_sync.py"
+  python3 "$_cs_script" "$TARGET_DIR" || exit 1
 fi
 
 # 6b. Symlink mode: the links into this DevKit are absolute paths of THIS machine — never
@@ -633,8 +643,9 @@ for sub in (".claude", ".agents", "rules", "skills", "commands"):
 print("# Machine-local DevKit links (symlink install) — recreated by `agent-kit init`")
 print("\n".join(out))
 PY
-    mkdir -p "$(dirname "$EXCLUDE")"; touch "$EXCLUDE"
-    python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$EX_BLOCK" "$EXCLUDE" "universal-agent-devkit" --comment-style=hash >/dev/null
+    _mm_script2="$DEVKIT_ROOT/scripts/governance/merge_markdown.py"
+    [ -f "$_mm_script2" ] || _mm_script2="$DEVKIT_ROOT/scripts/merge_markdown.py"
+    python3 "$_mm_script2" "$EX_BLOCK" "$EXCLUDE" "universal-agent-devkit" --comment-style=hash >/dev/null
     echo "  - $(L "Đã thêm" "Added") $(($(wc -l < "$EX_BLOCK") - 1)) $(L "link DevKit (chỉ máy này) vào .git/info/exclude" "DevKit links (this machine only) to .git/info/exclude")"
     rm -f "$EX_BLOCK"
   fi

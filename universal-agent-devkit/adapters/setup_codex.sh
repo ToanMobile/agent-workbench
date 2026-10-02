@@ -11,7 +11,8 @@ DOMAIN="${4:-general}"
 
 case "$MODE" in symlink|copy) ;; *) echo "$(basename "$0"): invalid mode '$MODE' (symlink | copy)" >&2; exit 2 ;; esac
 
-source "$DEVKIT_ROOT/scripts/backup_conflict.sh"
+_bc="$DEVKIT_ROOT/scripts/git/backup_conflict.sh"; [ -f "$_bc" ] || _bc="$DEVKIT_ROOT/scripts/backup_conflict.sh"
+source "$_bc"
 
 echo "Configuring OpenAI Codex / ChatGPT for: $TARGET_DIR (mode: $MODE, domain: $DOMAIN, lang: $LANGUAGE)"
 

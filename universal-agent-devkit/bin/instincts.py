@@ -37,6 +37,10 @@ from pathlib import Path
 
 DEVKIT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DEVKIT_ROOT / "scripts"))
+for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
+    _sub_path = str(DEVKIT_ROOT / "scripts" / _sub)
+    if _sub_path not in sys.path:
+        sys.path.insert(0, _sub_path)
 from devkit_i18n import resolve_lang, set_lang, tr  # noqa: E402
 
 try:

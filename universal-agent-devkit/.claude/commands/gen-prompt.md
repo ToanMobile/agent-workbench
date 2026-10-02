@@ -1,0 +1,1 @@
+../../commands/gen-prompt.md

@@ -12,7 +12,10 @@
 #    this session whose test is VACUOUS holds the stop
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-GATE="$DEVKIT_DIR/bin/post-fix-gate.py"; PROOF="$DEVKIT_DIR/scripts/red_proof.py"; KIT="$DEVKIT_DIR/bin/agent-kit"
+GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
+PROOF="$DEVKIT_DIR/scripts/testing/red_proof.py"
+[ -f "$PROOF" ] || PROOF="$DEVKIT_DIR/scripts/red_proof.py"
+KIT="$DEVKIT_DIR/bin/agent-kit"
 STOP_GATE="$DEVKIT_DIR/hooks/test_evidence_gate.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -318,7 +321,7 @@ LOG9b="$M/${P9b#* }"
 mkdir -p "$M/CarConnect/lib/src/test/kotlin/pkg"; printf 'plugins { id("x") }\n' > "$M/CarConnect/lib/build.gradle.kts"
 for f in app/src/test/kotlin/pkg/ATest app/src/test/kotlin/pkg/BTest lib/src/test/kotlin/pkg/LTest; do
   printf 'package pkg\nclass %s\n' "${f##*/}" > "$M/CarConnect/$f.kt"; done
-NR="$(cd "$DEVKIT_DIR/scripts" && python3 - "$M" <<'PY'
+NR="$(cd "$DEVKIT_DIR/scripts/testing" && python3 - "$M" <<'PY'
 import sys; from pathlib import Path
 import red_proof as rp
 M = Path(sys.argv[1]); a = "CarConnect/app/src/test/kotlin/pkg/"; l = "CarConnect/lib/src/test/kotlin/pkg/"
@@ -336,7 +339,7 @@ PY
 #    so AccessControlJvmTest inside CarTcpServerJvmLoopbackTest.kt never ran → VACUOUS) ─
 printf 'package pkg\nclass TwoTest {\n}\n\ninternal class AlsoTest {\n    class Nested\n}\nabstract class BaseTest\ndata class Fixture(val a: Int)\n' \
   > "$M/CarConnect/app/src/test/kotlin/pkg/TwoTest.kt"
-NR2="$(cd "$DEVKIT_DIR/scripts" && python3 - "$M" <<'PY'
+NR2="$(cd "$DEVKIT_DIR/scripts/testing" && python3 - "$M" <<'PY'
 import sys; from pathlib import Path
 import red_proof as rp
 print(rp.narrowed(Path(sys.argv[1]), "cd CarConnect && ./gradlew {gradle_module_tests:testDebugUnitTest}",
@@ -347,7 +350,7 @@ PY
   && ok "every top-level test class of a file is in the filter" || fail "classes: $NR2"
 
 # ── "no tests ran" must not match a real total that ends in 0 ("20 tests completed, 2 failed") ─
-NT="$(cd "$DEVKIT_DIR/scripts" && python3 -c 'import red_proof as rp
+NT="$(cd "$DEVKIT_DIR/scripts/testing" && python3 -c 'import red_proof as rp
 print(bool(rp.NO_TESTS.search("20 tests completed, 2 failed")), bool(rp.NO_TESTS.search("0 tests completed")))')"
 [ "$NT" = "False True" ] && ok "NO_TESTS: 20 tests completed is a real run, 0 tests completed is not" || fail "NO_TESTS: $NT"
 
@@ -355,7 +358,7 @@ print(bool(rp.NO_TESTS.search("20 tests completed, 2 failed")), bool(rp.NO_TESTS
 #    a failure in any of them counts as that file going red ─
 K="$TMP/kmulti"; mkdir -p "$K/app/src/test/kotlin/pkg" && touch "$K/settings.gradle.kts" "$K/app/build.gradle.kts"
 printf 'package pkg\n\nimport org.junit.Test\n\nclass LoopbackTest {\n    @Test fun a() {}\n}\n\ninternal class AccessControlJvmTest {\n    @Test fun b() {}\n}\n' > "$K/app/src/test/kotlin/pkg/LoopbackTest.kt"
-python3 -c "import sys; sys.path.insert(0,'$DEVKIT_DIR/scripts'); import red_proof as r
+python3 -c "import sys; sys.path.insert(0,'$DEVKIT_DIR/scripts/testing'); sys.path.insert(0,'$DEVKIT_DIR/scripts'); import red_proof as r
 from pathlib import Path
 c = r.narrowed(Path('$K'), './gradlew :app:testDebugUnitTest {gradle_tests}', ['app/src/test/kotlin/pkg/LoopbackTest.kt'])
 assert \"pkg.LoopbackTest\" in c and \"pkg.AccessControlJvmTest\" in c, c
@@ -369,7 +372,7 @@ assert not r.failed_stems('pkg.OtherTest > c FAILED', {'LoopbackTest'}, {'Loopba
 # ── the strict rule only requires red from linked files the (narrowed) command REALLY runs:
 #    a linked .sh no suite runs, or a class outside `--tests`, is not "still green" ─
 mkdir -p "$M/scripts/qa/tests"
-SEL="$(cd "$DEVKIT_DIR/scripts" && python3 - "$M" <<'PY'
+SEL="$(cd "$DEVKIT_DIR/scripts/testing" && python3 - "$M" <<'PY'
 import sys; from pathlib import Path
 import red_proof as rp
 M = Path(sys.argv[1]); a = "CarConnect/app/src/test/kotlin/pkg/"
@@ -415,7 +418,7 @@ P="$P_KEEP"; cd "$P"
 
 # ── proof slots: "jobs" in .agents/local/red_proof.json lets N proofs run at once (default 1) ─
 SL="$TMP/slots"; mkdir -p "$SL/.agents/local"
-SLOT="$(cd "$DEVKIT_DIR/scripts" && python3 - "$SL" <<'PY'
+SLOT="$(cd "$DEVKIT_DIR/scripts/testing" && python3 - "$SL" <<'PY'
 import json, os, sys; from pathlib import Path
 import red_proof as rp
 P = Path(sys.argv[1]); st = P / ".claude" / "audit-gate"; st.mkdir(parents=True, exist_ok=True)

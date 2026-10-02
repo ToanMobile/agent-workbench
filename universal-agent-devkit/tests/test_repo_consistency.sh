@@ -181,7 +181,10 @@ for c in sorted(glob.glob(os.path.join(ROOT, "commands/*.md"))):
         unlinked.append(os.path.basename(c))
 check(not unlinked, "R5 every command is linked (relative) from .claude/commands/", ", ".join(unlinked[:10]))
 
-sync = open(os.path.join(ROOT, "scripts/sync_commands.sh"), encoding="utf-8").read()
+_sync_path = os.path.join(ROOT, "scripts/governance/sync_commands.sh")
+if not os.path.isfile(_sync_path):
+    _sync_path = os.path.join(ROOT, "scripts/sync_commands.sh")
+sync = open(_sync_path, encoding="utf-8").read()
 alias_missing = [a for a in re.findall(r'^\s*"([a-z0-9-]+):[a-z0-9-]+"\s*$', sync, re.M)
                  if not os.path.exists(os.path.join(ROOT, "commands", a + ".md"))]
 check(not alias_missing, "R5 every alias in sync_commands.sh has commands/<alias>.md", ", ".join(alias_missing))

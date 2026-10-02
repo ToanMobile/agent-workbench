@@ -112,7 +112,9 @@ grep -qx "my own deploy notes" "$A/.claude/commands/build.md" 2>/dev/null && ok 
 # Every profile lists only existing skills.
 for d in "$DEVKIT_DIR"/profiles/*/; do
   p="$(basename "$d")"
-  python3 "$DEVKIT_DIR/scripts/profile_skills.py" "$p" >/dev/null 2>"$TMP/err" && ok "profile $p: skill filter names only existing skills" || fail "profile $p: $(cat "$TMP/err")"
+  _ps_script="$DEVKIT_DIR/scripts/governance/profile_skills.py"
+  [ -f "$_ps_script" ] || _ps_script="$DEVKIT_DIR/scripts/profile_skills.py"
+  python3 "$_ps_script" "$p" >/dev/null 2>"$TMP/err" && ok "profile $p: skill filter names only existing skills" || fail "profile $p: $(cat "$TMP/err")"
 done
 
 # ---------------------------------------------------------------- gate reads .agents/regression_matrix.active.json

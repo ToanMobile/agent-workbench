@@ -14,6 +14,7 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 # ── 1. assertion in a helper ──────────────────────────────────────────────────
 out="$(DK="$DEVKIT_DIR" python3 - <<'PY'
 import os, sys
+sys.path.insert(0, os.path.join(os.environ["DK"], "scripts", "linters"))
 sys.path.insert(0, os.path.join(os.environ["DK"], "scripts"))
 import assertion_lint as al
 kt = '''
@@ -55,6 +56,7 @@ PY
 # QuickInstallPortTest, AcProgramStoreTest, HashUtilTest were called vacuous).
 out="$(DK="$DEVKIT_DIR" python3 - <<'PY'
 import os, sys
+sys.path.insert(0, os.path.join(os.environ["DK"], "scripts", "linters"))
 sys.path.insert(0, os.path.join(os.environ["DK"], "scripts"))
 import assertion_lint as al
 kt = """
@@ -204,12 +206,13 @@ printf '.agents/devkit\napp/google-services.json\n' > "$M5/.gitignore"
 echo '{}' > "$M5/app/google-services.json"; ln -s "$DEVKIT_DIR" "$M5/.agents/devkit"
 echo x > "$M5/README.md"; git -C "$M5" add -A; git -C "$M5" commit -qm init
 git -C "$M5" worktree add -q --detach "$TMP/wt5" 2>/dev/null
-( cd "$TMP/wt5" && python3 "$DEVKIT_DIR/scripts/worktree.py" heal >/dev/null 2>&1 ); rc=$?
+_wt="$DEVKIT_DIR/scripts/git/worktree.py"; [ -f "$_wt" ] || _wt="$DEVKIT_DIR/scripts/worktree.py"
+( cd "$TMP/wt5" && python3 "$_wt" heal >/dev/null 2>&1 ); rc=$?
 [ "$rc" = 0 ] && [ -f "$TMP/wt5/.agents/devkit/bin/post-fix-gate.py" ] && [ -f "$TMP/wt5/app/google-services.json" ] \
   && [ -z "$(git -C "$TMP/wt5" status --porcelain)" ] \
   && ok "heal: DevKit link + ignored local config in a host-made worktree, nothing to commit" \
   || fail "heal (rc=$rc): devkit=$(ls "$TMP/wt5/.agents" 2>&1) config=$(ls "$TMP/wt5/app" 2>&1) status=$(git -C "$TMP/wt5" status --porcelain)"
-( cd "$M5" && python3 "$DEVKIT_DIR/scripts/worktree.py" heal >/dev/null 2>&1 ); rc=$?
+( cd "$M5" && python3 "$_wt" heal >/dev/null 2>&1 ); rc=$?
 [ "$rc" = 0 ] && ok "heal in the main checkout: no-op, exit 0" || fail "heal in main checkout rc=$rc"
 git -C "$M5" worktree add -q --detach "$TMP/wt6" 2>/dev/null
 out="$(printf '{"session_id":"s6","hook_event_name":"SessionStart"}' | CLAUDE_PROJECT_DIR="$TMP/wt6" SESSION_FETCH=0 \
@@ -243,7 +246,8 @@ echo x > "$M10/README.md"; git -C "$M10" add -A; git -C "$M10" commit -qm init
 echo 'app/google-services.json' >> "$M10/.git/info/exclude"; echo '{}' > "$M10/app/google-services.json"
 git clone -q "$M10" "$TMP/clone10" 2>/dev/null
 mkdir -p "$GH/.grok/sessions/x/s10"; printf '{"source_workspace_dir": "%s"}' "$M10" > "$GH/.grok/sessions/x/s10/summary.json"
-( cd "$TMP/clone10" && HOME="$GH" python3 "$DEVKIT_DIR/scripts/worktree.py" heal --session=s10 >/dev/null 2>&1 )
+_wt="$DEVKIT_DIR/scripts/git/worktree.py"; [ -f "$_wt" ] || _wt="$DEVKIT_DIR/scripts/worktree.py"
+( cd "$TMP/clone10" && HOME="$GH" python3 "$_wt" heal --session=s10 >/dev/null 2>&1 )
 [ ! -e "$TMP/clone10/app/google-services.json" ] && [ -z "$(git -C "$TMP/clone10" status --porcelain)" ] \
   && ok "heal never copies a file the clone would not ignore (source ignores it only in .git/info/exclude)" \
   || fail "secret copied un-ignored into the clone: $(git -C "$TMP/clone10" status --porcelain)"
@@ -279,18 +283,20 @@ printf '%s\n' "$lst" | grep -q 'test_repo_consistency.sh' && ok "without DEVKIT_
 R8="$TMP/r8"; mkdir -p "$R8/.agents/local/rules" "$R8/.agents/context"
 printf '# Luật voice\n\n1. **Xe im còn hơn làm sai** khi không chắc lệnh.\n2. **Không đoán ESC là điều hoà** trong mọi trường hợp.\n\n## Bluetooth A2DP\nĐổi bài qua A2DP.\n' \
   > "$R8/.agents/local/rules/voice.md"
-idx="$(python3 "$DEVKIT_DIR/scripts/rules_index.py" "$R8")"
+_ri="$DEVKIT_DIR/scripts/context/rules_index.py"; [ -f "$_ri" ] || _ri="$DEVKIT_DIR/scripts/rules_index.py"
+idx="$(python3 "$_ri" "$R8")"
 printf '%s' "$idx" > "$R8/.agents/context/rules-index.md"
 [ "$(printf '%s' "$idx" | grep -c '\.agents/local/rules/voice\.md')" = 1 ] && printf '%s' "$idx" | grep -q 'Xe im còn hơn làm sai — L3–3' \
   && printf '%s' "$idx" | grep -q "sed -n 'a,bp'" \
   && ok "index: path once in the heading, each rule line keeps its lead + L a–b, header says how to open it" \
   || fail "index format: $(printf '%s' "$idx" | tail -5 | tr '\n' '|')"
-out="$(printf '{"prompt":"sửa lỗi xe đoán ESC là điều hoà"}' | CLAUDE_PROJECT_DIR="$R8" python3 "$DEVKIT_DIR/scripts/rule_context.py")"
+_rc="$DEVKIT_DIR/scripts/context/rule_context.py"; [ -f "$_rc" ] || _rc="$DEVKIT_DIR/scripts/rule_context.py"
+out="$(printf '{"prompt":"sửa lỗi xe đoán ESC là điều hoà"}' | CLAUDE_PROJECT_DIR="$R8" python3 "$_rc")"
 printf '%s' "$out" | grep -q "sed -n '4,5p' .agents/local/rules/voice.md" \
   && ok "rule_context: a matching rule comes back as a runnable sed command (new format)" \
   || fail "rule_context new format: $out"
 printf '# Rules index\n- Bluetooth và đổi bài hát A2DP — `sed -n '"'"'1,20p'"'"' .agents/local/rules/audio.md`\n' > "$R8/.agents/context/rules-index.md"
-out="$(printf '{"prompt":"lỗi bluetooth đổi bài hát a2dp"}' | CLAUDE_PROJECT_DIR="$R8" python3 "$DEVKIT_DIR/scripts/rule_context.py")"
+out="$(printf '{"prompt":"lỗi bluetooth đổi bài hát a2dp"}' | CLAUDE_PROJECT_DIR="$R8" python3 "$_rc")"
 printf '%s' "$out" | grep -q "sed -n '1,20p' .agents/local/rules/audio.md" \
   && ok "rule_context: an index not yet re-synced (old format) still works" || fail "rule_context old format: $out"
 

@@ -11,9 +11,11 @@
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-ENRICH="$DEVKIT_DIR/scripts/enrich_context.py"
+ENRICH="$DEVKIT_DIR/scripts/context/enrich_context.py"
+[ -f "$ENRICH" ] || ENRICH="$DEVKIT_DIR/scripts/enrich_context.py"
 HOOK="$DEVKIT_DIR/hooks/prompt_context.sh"
-INDEXER="$DEVKIT_DIR/scripts/index_memory.py"
+INDEXER="$DEVKIT_DIR/scripts/governance/index_memory.py"
+[ -f "$INDEXER" ] || INDEXER="$DEVKIT_DIR/scripts/index_memory.py"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 unset PROMPT_CONTEXT

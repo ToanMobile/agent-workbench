@@ -11,7 +11,8 @@ DOMAIN="${4:-general}"
 
 case "$MODE" in symlink|copy) ;; *) echo "$(basename "$0"): invalid mode '$MODE' (symlink | copy)" >&2; exit 2 ;; esac
 
-source "$DEVKIT_ROOT/scripts/backup_conflict.sh"
+_bc="$DEVKIT_ROOT/scripts/git/backup_conflict.sh"; [ -f "$_bc" ] || _bc="$DEVKIT_ROOT/scripts/backup_conflict.sh"
+source "$_bc"
 
 echo "Configuring Cursor IDE for: $TARGET_DIR (mode: $MODE, domain: $DOMAIN, lang: $LANGUAGE)"
 
@@ -52,7 +53,8 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   # The essentials section is filled in AGENTS.md only (context_sync.py); Cursor loads that file itself.
   sed -e '/universal-agent-devkit:start/d' -e '/universal-agent-devkit:end/d' -e '/SSOT: @AGENTS\.md$/d' \
       -e '/devkit-essentials:/d' "$BLOCK_TMP" > "$BLOCK_TMP.body"
-  python3 "$DEVKIT_ROOT/scripts/merge_markdown.py" "$BLOCK_TMP.body" "$MDC" "universal-agent-devkit" >/dev/null
+  _mm="$DEVKIT_ROOT/scripts/governance/merge_markdown.py"; [ -f "$_mm" ] || _mm="$DEVKIT_ROOT/scripts/merge_markdown.py"
+  python3 "$_mm" "$BLOCK_TMP.body" "$MDC" "universal-agent-devkit" >/dev/null
   rm -f "$BLOCK_TMP" "$BLOCK_TMP.body"
   echo "  - .cursor/rules/universal-agent-devkit.mdc: DevKit rules, always applied"
 fi

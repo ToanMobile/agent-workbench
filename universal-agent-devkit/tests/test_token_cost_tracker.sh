@@ -2,7 +2,8 @@
 # Regression test: token_cost_tracker.py pricing calculations and transcript parsing
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SCRIPT="$DEVKIT_DIR/scripts/token_cost_tracker.py"
+SCRIPT="$DEVKIT_DIR/scripts/governance/token_cost_tracker.py"
+[ -f "$SCRIPT" ] || SCRIPT="$DEVKIT_DIR/scripts/token_cost_tracker.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 

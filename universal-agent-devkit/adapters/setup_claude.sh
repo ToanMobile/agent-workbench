@@ -9,7 +9,8 @@ MODE="${2:-symlink}" # symlink or copy
 LANGUAGE="${3:-en}"
 SKIP_EXISTING="${SKIP_EXISTING:-0}"
 
-source "$DEVKIT_ROOT/scripts/backup_conflict.sh"
+_bc="$DEVKIT_ROOT/scripts/git/backup_conflict.sh"; [ -f "$_bc" ] || _bc="$DEVKIT_ROOT/scripts/backup_conflict.sh"
+source "$_bc"
 
 echo "Configuring Claude Code for: $TARGET_DIR (mode: $MODE, lang: $LANGUAGE, skip_existing: $SKIP_EXISTING)"
 
@@ -64,7 +65,8 @@ if gone and not os.path.islink(dst):
 PY
 fi
 # merge_json.py backs up the file itself (as .mcp_old.json) only when the merge changes it.
-python3 "$DEVKIT_ROOT/scripts/merge_json.py" "$MCP_SRC" "$TARGET_DIR/.mcp.json"
+_mj="$DEVKIT_ROOT/scripts/governance/merge_json.py"; [ -f "$_mj" ] || _mj="$DEVKIT_ROOT/scripts/merge_json.py"
+python3 "$_mj" "$MCP_SRC" "$TARGET_DIR/.mcp.json"
 rm -f "$MCP_SRC"
 echo "  - Merged MCP servers into .mcp.json (preserved existing custom MCPs)"
 
@@ -86,7 +88,7 @@ PY
 
 # merge_json.py backs up settings.json itself (as settings_old.json) only when the merge changes it.
 
-python3 "$DEVKIT_ROOT/scripts/merge_json.py" "$DEFAULT_SETTINGS" "$TARGET_DIR/.claude/settings.json"
+python3 "$_mj" "$DEFAULT_SETTINGS" "$TARGET_DIR/.claude/settings.json"
 echo "  - Merged safety gates into .claude/settings.json (preserved custom settings)"
 
 # 4. Smart Item-by-Item Link for Hooks (Preserving custom user hooks)
@@ -152,7 +154,8 @@ fi
 # 8. Claude Code's auto-memory: kept in the project (.agents/local/memory/claude-auto/)
 #    instead of ~/.claude/projects/<slug>/memory — see scripts/claude_memory.py.
 if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
-  python3 "$DEVKIT_ROOT/scripts/claude_memory.py" "$TARGET_DIR" || true
+  _cm="$DEVKIT_ROOT/scripts/governance/claude_memory.py"; [ -f "$_cm" ] || _cm="$DEVKIT_ROOT/scripts/claude_memory.py"
+  python3 "$_cm" "$TARGET_DIR" || true
 fi
 
 # Clean broken symlinks if any

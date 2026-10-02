@@ -47,7 +47,7 @@
     "antigravity-pm": {
       "command": "node",
       "args": [
-        "../antigravity-pm-mcp/bin/antigravity-pm-mcp.js"
+        "../mcp-servers/antigravity-pm-mcp/bin/antigravity-pm-mcp.js"
       ]
     },
     "agentmemory": {

@@ -51,7 +51,12 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+_scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+sys.path.insert(0, str(_scripts_dir))
+for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
+    _sub_path = str(_scripts_dir / _sub)
+    if _sub_path not in sys.path:
+        sys.path.insert(0, _sub_path)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from devkit_i18n import resolve_lang, set_lang, tr  # noqa: E402
 from instincts import append_lesson, md_escape  # noqa: E402
@@ -913,6 +918,7 @@ def resolve_path(rel_file: str) -> Path:
 
 
 DELETED_FILES = set()
+RENAME_SOURCES = {}
 
 
 def _to_project_rel(repo_rel: str):
@@ -958,7 +964,8 @@ def note_preexisting(rel_file: str, content: str, m, label):
 def base_text(rel_file: str):
     """The file at BASE_REF, or None (new file, not in git, unreadable)."""
     if rel_file not in _BASE_CACHE:
-        res = subprocess.run(["git", "-C", str(get_repo_root()), "show", f"{BASE_REF}:{get_project_prefix()}{rel_file}"],
+        src = RENAME_SOURCES.get(rel_file, rel_file)
+        res = subprocess.run(["git", "-C", str(get_repo_root()), "show", f"{BASE_REF}:{get_project_prefix()}{src}"],
                              capture_output=True)
         _BASE_CACHE[rel_file] = res.stdout.decode("utf-8", errors="replace") if res.returncode == 0 else None
     return _BASE_CACHE[rel_file]
@@ -1000,7 +1007,10 @@ def _parse_name_status(raw: bytes) -> set:
         if not status:
             continue
         if status[0] in "RC":
+            src = parts[j]
             j += 1  # skip source
+            if j < len(parts) and parts[j]:
+                RENAME_SOURCES[parts[j]] = src
         if j < len(parts) and parts[j]:
             if status[0] == "D":
                 DELETED_FILES.add(parts[j])
@@ -1046,6 +1056,10 @@ def get_modified_files(diff_ref: str = None) -> list:
             continue
         xy, path = entry[:2], _to_project_rel(entry[3:])
         if "R" in xy or "C" in xy:
+            if i < len(entries):
+                src = _to_project_rel(entries[i])
+                if src and path:
+                    RENAME_SOURCES[path] = src
             i += 1  # the next NUL field is the rename/copy SOURCE; keep the destination
         if path is None:
             continue
@@ -1337,6 +1351,10 @@ def run_performance_audit(modified_files: list) -> tuple:
     check_unity_gc = None
     try:
         sys.path.insert(0, str(devkit_dir / "scripts"))
+        for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
+            _sub_path = str(devkit_dir / "scripts" / _sub)
+            if _sub_path not in sys.path:
+                sys.path.insert(0, _sub_path)
         from lint_compose_stability import check_kotlin_file as check_kotlin_stability
         from lint_unity_gc import check_csharp_file as check_unity_gc
     except Exception:
@@ -2378,9 +2396,13 @@ _VACUITY_EXT = {".kt", ".kts", ".java", ".cs", ".py", ".swift"}
 
 
 def _scripts_on_path():
-    scripts = str(get_devkit_dir() / "scripts")
-    if scripts not in sys.path:
-        sys.path.insert(0, scripts)
+    scripts = get_devkit_dir() / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
+        _sub_path = str(scripts / _sub)
+        if _sub_path not in sys.path:
+            sys.path.insert(0, _sub_path)
 
 
 def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
@@ -2496,6 +2518,8 @@ def run_assertion_audit(modified_files: list) -> tuple:
             continue
         content = read_changed_text(rel)
         if not content:
+            continue
+        if rel in RENAME_SOURCES and base_text(rel) == content:
             continue
         for line, name in al.findings(content):
             label = (f"Test rỗng ở dòng {line} ({name}): không có assertion phân biệt dữ liệu",

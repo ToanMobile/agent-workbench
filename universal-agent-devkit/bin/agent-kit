@@ -12,6 +12,15 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
 DEVKIT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+find_script() {
+  local sub="$1" name="$2"
+  if [ -f "$DEVKIT_ROOT/scripts/$sub/$name" ]; then
+    printf '%s' "$DEVKIT_ROOT/scripts/$sub/$name"
+  else
+    printf '%s' "$DEVKIT_ROOT/scripts/$name"
+  fi
+}
+
 CMD="${1:-help}"
 
 case "$CMD" in
@@ -67,7 +76,7 @@ case "$CMD" in
     ;;
   sync)
     echo "Synchronizing commands and skills..."
-    bash "$DEVKIT_ROOT/scripts/sync_commands.sh"
+    bash "$(find_script governance sync_commands.sh)"
     ;;
   list|skills)
     skill_count="$(find "$DEVKIT_ROOT/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | xargs)"
@@ -112,7 +121,7 @@ case "$CMD" in
   githooks|git-hooks)
     # githooks [install|uninstall|status] [path]
     shift || true
-    bash "$DEVKIT_ROOT/scripts/githooks.sh" "${1:-status}" "${2:-$PWD}"
+    bash "$(find_script git githooks.sh)" "${1:-status}" "${2:-$PWD}"
     ;;
   bugs)
     # bugs add "<title>" [opts] | link <BUG-ID> <test> | drop <BUG-ID> | import <table> [--dry-run] | [show]
@@ -163,14 +172,14 @@ case "$CMD" in
     # memory-stats [project…] [--json] [--top N] — traps/rules the prompt hook surfaces on the
     # user's real prompts (replayed from Claude transcripts, read-only) and how often they are read
     shift || true
-    python3 "$DEVKIT_ROOT/scripts/memory_stats.py" "$@"
+    python3 "$(find_script governance memory_stats.py)" "$@"
     ;;
   nightly)
     # nightly run | add [path] | remove [path] | install [--hour H] [--minute M] | uninstall | status
     shift || true
     case "${1:-status}" in
-      add|remove) python3 "$DEVKIT_ROOT/scripts/nightly.py" "$1" "${2:-${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}}" ;;
-      *) python3 "$DEVKIT_ROOT/scripts/nightly.py" "$@" ;;
+      add|remove) python3 "$(find_script governance nightly.py)" "$1" "${2:-${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}}" ;;
+      *) python3 "$(find_script governance nightly.py)" "$@" ;;
     esac
     ;;
   learn)
@@ -181,17 +190,17 @@ case "$CMD" in
   clean)
     # clean [path] [--days=N] [--apply] [--old-installs] — dry-run unless --apply
     shift || true
-    python3 "$DEVKIT_ROOT/scripts/devkit_clean.py" "$@"
+    python3 "$(find_script governance devkit_clean.py)" "$@"
     ;;
   matrix)
     # matrix [--write] — regression matrix from this project's own test runner
     shift || true
-    python3 "$DEVKIT_ROOT/scripts/matrix_detect.py" "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" "$@"
+    python3 "$(find_script governance matrix_detect.py)" "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" "$@"
     ;;
   worktree|wt)
     # worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init] | diff <path> | remove <path> | list
     shift || true
-    python3 "$DEVKIT_ROOT/scripts/worktree.py" "$@"
+    python3 "$(find_script git worktree.py)" "$@"
     ;;
   completion)
     # completion [bash|zsh] — eval "$(agent-kit completion bash)" in ~/.bashrc (zsh: ~/.zshrc)
@@ -208,11 +217,11 @@ case "$CMD" in
     shift || true
     # Default: the current project's failure memory (not the DevKit's own).
     TARGET_F="${1:-${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/.agents/instincts.md}"
-    python3 "$DEVKIT_ROOT/scripts/index_memory.py" "$TARGET_F"
+    python3 "$(find_script governance index_memory.py)" "$TARGET_F"
     ;;
   list-old|old|backups)
     shift || true
-    bash "$DEVKIT_ROOT/scripts/backup_conflict.sh" list "${1:-$PWD}"
+    bash "$(find_script git backup_conflict.sh)" list "${1:-$PWD}"
     ;;
   restore-old|restore)
     # restore-old [path] [--apply] — dry-run unless --apply
@@ -225,12 +234,12 @@ case "$CMD" in
         *) R_TARGET="$a" ;;
       esac
     done
-    DEVKIT_ROOT="$DEVKIT_ROOT" bash "$DEVKIT_ROOT/scripts/backup_conflict.sh" restore "$R_TARGET" $R_APPLY
+    DEVKIT_ROOT="$DEVKIT_ROOT" bash "$(find_script git backup_conflict.sh)" restore "$R_TARGET" $R_APPLY
     ;;
   uninstall|remove)
     # uninstall [path] [--apply] — dry-run unless --apply; see scripts/devkit_uninstall.py
     shift || true
-    python3 "$DEVKIT_ROOT/scripts/devkit_uninstall.py" "$@"
+    python3 "$(find_script governance devkit_uninstall.py)" "$@"
     ;;
   help|*)
     cat << HELP_EOF

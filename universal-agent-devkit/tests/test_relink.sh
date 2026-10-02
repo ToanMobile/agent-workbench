@@ -57,7 +57,8 @@ bash "$H/post-merge" 0 >/dev/null 2>&1
 
 t0=$(python3 -c 'import time;print(time.time())'); bash "$H/post-checkout" "$(git rev-parse HEAD)" "$(git rev-parse HEAD)" 1 >/dev/null 2>&1; t1=$(python3 -c 'import time;print(time.time())')
 python3 -c "import sys; sys.exit(0 if ($t1-$t0) < 1.0 else 1)" && ok "nothing missing: the hook is instant ($(python3 -c "print(round(($t1-$t0)*1000))") ms)" || fail "relink hook slow when nothing is missing"
-bash "$DEVKIT_DIR/scripts/githooks.sh" uninstall "$P" >/dev/null 2>&1
+_gh="$DEVKIT_DIR/scripts/git/githooks.sh"; [ -f "$_gh" ] || _gh="$DEVKIT_DIR/scripts/githooks.sh"
+bash "$_gh" uninstall "$P" >/dev/null 2>&1
 [ ! -e "$H/post-merge" ] && ok "githooks uninstall removes the link-repair hooks" || fail "post-merge left after uninstall"
 if [ "$FAILS" -ne 0 ]; then echo "relink: $FAILS FAILED"; exit 1; fi
 echo "relink: all checks passed"

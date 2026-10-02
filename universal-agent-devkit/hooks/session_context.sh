@@ -30,8 +30,11 @@ INPUT="$(cat)"  # only the session id is used (worktree heal below)
 REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 SELF="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null)"
 INDEXER=""
-for cand in "$(dirname "$(dirname "${SELF}")")/scripts/index_memory.py" \
+for cand in "$(dirname "$(dirname "${SELF}")")/scripts/governance/index_memory.py" \
+            "$(dirname "$(dirname "${SELF}")")/scripts/index_memory.py" \
+            "${DEVKIT_ROOT:-}/scripts/governance/index_memory.py" \
             "${DEVKIT_ROOT:-}/scripts/index_memory.py" \
+            "${HOME}/.universal-agent-devkit/scripts/governance/index_memory.py" \
             "${HOME}/.universal-agent-devkit/scripts/index_memory.py"; do
   [ -f "${cand}" ] && { INDEXER="${cand}"; break; }
 done
@@ -39,11 +42,13 @@ HOOK_FILE="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-path h
 GATE_HOOK="$(dirname "${SELF}")/regression_gate.sh"
 # The files AGENTS.md loads at startup (.agents/context/) follow edits to the project's
 # rules and DevKit updates — refreshed in the background for the next session.
-CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/context_sync.py"
+CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/governance/context_sync.py"
+[ -f "${CTX_SYNC}" ] || CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/context_sync.py"
 [ -f "${CTX_SYNC}" ] && [ -d "${REPO_ROOT}/.agents" ] && (python3 "${CTX_SYNC}" "${REPO_ROOT}" --quiet >/dev/null 2>&1 &)
 # A worktree the host made itself (Grok, OfficeReader 2026-09-28) lacks the git-ignored
 # .agents/devkit link and local config: set it up like `agent-kit worktree add` (no-op elsewhere).
-WT_SCRIPT="$(dirname "$(dirname "${SELF}")")/scripts/worktree.py"
+WT_SCRIPT="$(dirname "$(dirname "${SELF}")")/scripts/git/worktree.py"
+[ -f "${WT_SCRIPT}" ] || WT_SCRIPT="$(dirname "$(dirname "${SELF}")")/scripts/worktree.py"
 if [ -f "${WT_SCRIPT}" ]; then
   WT_SID="$(printf '%s' "${INPUT:-}" | python3 -c 'import json,sys
 try: print(str(json.load(sys.stdin).get("session_id") or ""))
@@ -188,7 +193,7 @@ try:
     text = open(hook, encoding="utf-8", errors="replace").read()
     # the DevKit's hook, or the project's own one chaining the DevKit gate (githooks.sh status)
     pre = "universal-agent-devkit:githook" in text or any(
-        "scripts/git-pre-commit.sh" in l and not l.lstrip().startswith("#") for l in text.splitlines())
+        ("scripts/git-pre-commit.sh" in l or "scripts/git/git-pre-commit.sh" in l) and not l.lstrip().startswith("#") for l in text.splitlines())
 except OSError:
     pre = False
 parts.append("git pre-commit: " + ("bật" if pre else "chưa cài (agent-kit githooks install)"))

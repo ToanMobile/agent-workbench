@@ -9,7 +9,8 @@ MODE="${2:-symlink}" # symlink or copy
 LANGUAGE="${3:-en}"
 SKIP_EXISTING="${SKIP_EXISTING:-0}"
 
-source "$DEVKIT_ROOT/scripts/backup_conflict.sh"
+_bc="$DEVKIT_ROOT/scripts/git/backup_conflict.sh"; [ -f "$_bc" ] || _bc="$DEVKIT_ROOT/scripts/backup_conflict.sh"
+source "$_bc"
 
 echo "Configuring Antigravity / Google Gemini for: $TARGET_DIR (mode: $MODE, lang: $LANGUAGE, skip_existing: $SKIP_EXISTING)"
 
@@ -88,7 +89,8 @@ if gone and not os.path.islink(dst):
 PY
 fi
 # merge_json.py backs up mcp_config.json itself (as mcp_config_old.json) only when the merge changes it.
-python3 "$DEVKIT_ROOT/scripts/merge_json.py" "$MCP_SRC" "$TARGET_DIR/mcp_config.json"
+_mj="$DEVKIT_ROOT/scripts/governance/merge_json.py"; [ -f "$_mj" ] || _mj="$DEVKIT_ROOT/scripts/merge_json.py"
+python3 "$_mj" "$MCP_SRC" "$TARGET_DIR/mcp_config.json"
 rm -f "$MCP_SRC"
 echo "  - Merged MCP servers into mcp_config.json (preserved existing custom MCPs)"
 

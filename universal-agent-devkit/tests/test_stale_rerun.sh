@@ -77,6 +77,7 @@ for _ in $(seq 1 50); do [ -f "$TMP/held" ] && break; sleep 0.1; done
 python3 - "$P" "$TMP" "$DEVKIT_DIR" <<'PY'
 import sys; from pathlib import Path
 p, tmp, kit = sys.argv[1:]
+sys.path.insert(0, kit + "/scripts/testing")
 sys.path.insert(0, kit + "/scripts"); import stale_rerun
 stale_rerun.run_one(Path(p), "REG-A", "python3 -c 'import time; print(time.time())' > %s/ran_at" % tmp, [], 30)
 PY
@@ -107,6 +108,7 @@ rm -f "$TMP/busy_ran"; hold_lock 6
 res="$(python3 - "$P" "$TMP" "$DEVKIT_DIR" <<'PY'
 import sys, time; from pathlib import Path
 p, tmp, kit = sys.argv[1:]
+sys.path.insert(0, kit + "/scripts/testing")
 sys.path.insert(0, kit + "/scripts"); import stale_rerun
 t0 = time.monotonic()
 line = stale_rerun.run_one(Path(p), "REG-A", "touch %s/busy_ran" % tmp, [], 2)
@@ -127,6 +129,7 @@ hold_lock 2
 res="$(python3 - "$P" "$TMP" "$DEVKIT_DIR" <<'PY'
 import sys; from pathlib import Path
 p, tmp, kit = sys.argv[1:]
+sys.path.insert(0, kit + "/scripts/testing")
 sys.path.insert(0, kit + "/scripts"); import stale_rerun
 print(stale_rerun.run_one(Path(p), "REG-A", "sleep 3", [], 4))
 PY
@@ -141,6 +144,7 @@ hold_lock 1.5
 res="$(python3 - "$P" "$DEVKIT_DIR" <<'PY'
 import sys; from pathlib import Path
 p, kit = sys.argv[1:]
+sys.path.insert(0, kit + "/scripts/testing")
 sys.path.insert(0, kit + "/scripts"); import stale_rerun
 print(stale_rerun.run_one(Path(p), "REG-A", "sleep 30", [], 8))
 PY

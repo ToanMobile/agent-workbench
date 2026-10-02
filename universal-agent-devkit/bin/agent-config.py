@@ -24,7 +24,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+_scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+sys.path.insert(0, str(_scripts_dir))
+for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
+    _sub_path = str(_scripts_dir / _sub)
+    if _sub_path not in sys.path:
+        sys.path.insert(0, _sub_path)
 from devkit_i18n import pick, resolve_lang, set_lang, tr  # noqa: E402
 
 # Fix Unicode on Windows consoles if needed
@@ -253,7 +258,11 @@ def profile_state_file(target_dir: Path) -> Path:
 
 def sync_context(target_dir: Path):
     """Re-write .agents/context/ (profile-rules.md follows the new profile) — context_sync.py."""
-    subprocess.run([sys.executable, str(get_base_dir() / "scripts" / "context_sync.py"), str(target_dir)], check=False)
+    base = get_base_dir()
+    script = base / "scripts" / "governance" / "context_sync.py"
+    if not script.is_file():
+        script = base / "scripts" / "context_sync.py"
+    subprocess.run([sys.executable, str(script), str(target_dir)], check=False)
 
 
 def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None):

@@ -6,7 +6,8 @@
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-MD="$DEVKIT_DIR/scripts/matrix_detect.py"
+MD="$DEVKIT_DIR/scripts/governance/matrix_detect.py"
+[ -f "$MD" ] || MD="$DEVKIT_DIR/scripts/matrix_detect.py"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export DEVKIT_LANG=en
@@ -130,7 +131,9 @@ out="$(printf '{"session_id":"md1","hook_event_name":"Stop"}' | CLAUDE_PROJECT_D
 rm -f "$P/fail"
 
 # --- uninstall removes an unchanged generated matrix -------------------------------
-python3 "$DEVKIT_DIR/scripts/devkit_uninstall.py" "$P" --apply >/dev/null 2>&1
+_uninst="$DEVKIT_DIR/scripts/governance/devkit_uninstall.py"
+[ -f "$_uninst" ] || _uninst="$DEVKIT_DIR/scripts/devkit_uninstall.py"
+python3 "$_uninst" "$P" --apply >/dev/null 2>&1
 [ ! -e "$M" ] && ok "uninstall removes the unchanged generated matrix" || fail "generated matrix left behind"
 
 # --- monorepo: first-level modules with their own runner -------------------------------

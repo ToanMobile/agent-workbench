@@ -112,7 +112,8 @@ bash "$DEVKIT_DIR/bin/install.sh" -t "$F" -p none -y --no-githooks >/dev/null 2>
   && ok "a first install with -y still sets up every agent, and Grok adds no directory" || fail "first install missed agents"
 
 # --- uninstall takes .agents/devkit and the generated context away -----------------------
-python3 "$DEVKIT_DIR/scripts/devkit_uninstall.py" "$B" --apply >/dev/null 2>&1
+_uninst="$DEVKIT_DIR/scripts/governance/devkit_uninstall.py"; [ -f "$_uninst" ] || _uninst="$DEVKIT_DIR/scripts/devkit_uninstall.py"
+python3 "$_uninst" "$B" --apply >/dev/null 2>&1
 [ ! -e "$B/.agents/devkit" ] && [ ! -L "$B/.agents/devkit" ] && [ ! -e "$B/.agents/context" ] \
   && ok "uninstall removes .agents/devkit and .agents/context" || fail "left after uninstall: $(ls -A "$B/.agents" 2>/dev/null | tr '\n' ' ')"
 grep -q '^## 6. Ours' "$B/AGENTS.md" && ! grep -q 'universal-agent-devkit' "$B/AGENTS.md" && ok "uninstall keeps the project's AGENTS.md text, block gone" || fail "AGENTS.md after uninstall"

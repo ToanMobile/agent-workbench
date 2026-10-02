@@ -141,7 +141,7 @@ for meta in glob.glob(os.path.join(os.path.splitext(tp)[0], "subagents", "*.meta
 finished = {os.path.realpath(p) for p in finished}
 running = meta_paths - finished
 
-sys.path[:0] = [os.path.join(devkit, "scripts"), os.path.join(devkit, "bin")]
+sys.path[:0] = [os.path.join(devkit, "scripts", "git"), os.path.join(devkit, "scripts", "governance"), os.path.join(devkit, "scripts"), os.path.join(devkit, "bin")]
 try:
     import worktree as wt
     import session_lock

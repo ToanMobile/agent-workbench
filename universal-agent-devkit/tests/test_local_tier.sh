@@ -89,7 +89,8 @@ bash "$KIT" restore-old "$R" --apply >/dev/null 2>&1
 R1="$TMP/r1"; mkdir -p "$R1/.claude/commands"; (cd "$R1" && git init -q)
 echo "my fix" > "$R1/.claude/commands/fix.md"
 install "$R1"
-(source "$DK/scripts/backup_conflict.sh" && _devkit_local_readme v1) > "$R1/.agents/local/README.md"
+_bc_script="$DK/scripts/git/backup_conflict.sh"; [ -f "$_bc_script" ] || _bc_script="$DK/scripts/backup_conflict.sh"
+(source "$_bc_script" && _devkit_local_readme v1) > "$R1/.agents/local/README.md"
 grep -q "are reference only, never linked\.$" "$R1/.agents/local/README.md" || fail "v1 README fixture is not the old text"
 bash "$KIT" uninstall "$R1" --apply >/dev/null 2>&1
 bash "$KIT" restore-old "$R1" --apply >/dev/null 2>&1

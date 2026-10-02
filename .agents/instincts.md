@@ -191,3 +191,20 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Gắn skill vào intent rộng làm đổi dòng 'Skill phù hợp' và đẩy skill khác khỏi top 5
 - **Nguyên nhân:** enrich_context khử trùng lặp theo cả dòng và cắt skills[:5]; thêm skill vào nhánh UI_INTERACTION khiến prompt bug 'xoay màn hình' có dòng skill khác (test_prompt_dedupe đỏ) và đẩy android-real-device-qa/qa-visual ra
 - **Quy tắc phòng ngừa & Cách fix:** Skill chuyên biệt có nhánh từ khoá riêng, hẹp; sau khi sửa enrich_context chạy cả tests/test_prompt_context.sh và hooks/tests/test_prompt_dedupe.sh (run_impacted không tự chạy test dedupe)
+
+---
+
+### [INSTINCT-023] Swift Concurrency / MainActor Isolation & Task Cancellation Leak
+- **Ngày phát hiện:** 2026-10-02
+- **Hiện tượng lỗi:** UI SwiftUI giật lag hoặc crash runtime "Publishing changes from background threads is not allowed"; hoặc Task chạy ngầm tiếp tục fetch network/tiêu thụ pin sau khi View đã bị dismiss.
+- **Nguyên nhân:** Cập nhật `@Published` / `@Observable` state từ background async task mà không cô lập `@MainActor`; tạo `Task { ... }` không giữ reference hoặc không handle `Task.isCancelled` khi view lifecycle kết thúc (`.onDisappear`).
+- **Quy tắc phòng ngừa & Cách fix:** Mọi ViewModel/State binding cập nhật UI bắt buộc gắn `@MainActor`; background async task dài hạn phải kiểm tra `try Task.checkCancellation()`; dùng `.task { ... }` modifier gắn liền với vòng đời View thay vì `onAppear { Task { ... } }`.
+
+---
+
+### [INSTINCT-024] Android StateFlow Lifecycle Collection & Main Thread Blocking trong Jetpack Compose
+- **Ngày phát hiện:** 2026-10-02
+- **Hiện tượng lỗi:** App tiêu hao pin/bộ nhớ ngầm ngay cả khi user đã minimize app ra background; hoặc ANR 5s khi composable render.
+- **Nguyên nhân:** Dùng `flow.collectAsState()` trong Jetpack Compose thay vì `collectAsStateWithLifecycle()`, khiến Flow upstream tiếp tục emit dữ liệu khi app ở `Lifecycle.State.STOPPED`; thực hiện JSON parsing / Database fetch trực tiếp trong Composable function.
+- **Quy tắc phòng ngừa & Cách fix:** Bắt buộc dùng `collectAsStateWithLifecycle()` cho mọi StateFlow trong Compose; 100% logic tính toán nặng/IO phải bọc trong `LaunchedEffect(key) { withContext(Dispatchers.IO) { ... } }` hoặc đưa vào ViewModel.
+
