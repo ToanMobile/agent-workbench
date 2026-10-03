@@ -279,6 +279,15 @@ done
 case "$(skl "$(pctx android "sửa lỗi hud bị vỡ layout trên màn hình chính")")" in
   *qa-visual\ ui-ux-pro-max*) ok "android hud prompt: qa-visual stays right before ui-ux-pro-max" ;;
   *) fail "android hud prompt: '$(skl "$(pctx android "sửa lỗi hud bị vỡ layout trên màn hình chính")")'" ;; esac
+# The false-friend phrases must not eat the routing words next to them: "compose up" is a command, "recompose up to"
+# and "Compose update/upgrade" are not (review round 2: they lost compose-recomp-audit / PERFORMANCE).
+for p in "Compose update xong thì list bị giật" "Compose upgrade lên 1.7 làm màn hình lag" "nâng Compose up to 1.7 thì list bị giật"; do
+  s="$(skl "$(pctx android "$p")")"
+  has "$s" compose-recomp-audit && ok "android '$p' → compose-recomp-audit" || fail "android '$p' → '$s'"
+done
+for p in "Text recompose up to 60 lần mỗi giây" "LazyColumn item recompose update liên tục"; do
+  has "$(intents "$p")" PERFORMANCE_AND_RESPONSIVENESS && ok "'$p' → PERFORMANCE" || fail "'$p' lost PERFORMANCE: $(intents "$p")"
+done
 # Traps: the UI trap terms (click, debounce, 48dp) belong to a prompt that talks about UI. When only the PROFILE
 # says UI they would crowd the 4 trap slots (and dedupe then hides them): a DOCX prompt keeps its own trap.
 mkdir -p "$TMP/p_android/.agents" && cp "$TMP/proj/.agents/instincts.md" "$TMP/p_android/.agents/instincts.md"
@@ -303,6 +312,18 @@ has "$r" INSTINCT-F48 && ! has "$r" INSTINCT-F07 \
   && ok "android profile, DOCX prompt → its own trap (F48), not the UI trap F07 ($r)" || fail "android profile DOCX prompt traps: '$r'"
 r="$(prefs android "bấm nút mua 2 lần bị trừ tiền hai lần")"
 has "$r" INSTINCT-F07 && ok "a prompt that talks about UI still gets the UI trap (F07)" || fail "UI prompt lost F07: '$r'"
+# An aesthetic word (vfx, shading, đồ họa, phèn) opens the door for the mandate but is no evidence for the UI traps
+# either: such a prompt keeps its own traps and never gets the double-click one — on an app profile or off it.
+mkdir -p "$TMP/p_universal/.agents" && cp "$TMP/p_android/.agents/instincts.md" "$TMP/p_universal/.agents/instincts.md"
+for prof in universal android; do
+  for p in "thêm vfx cho combo nổ" "tối ưu shading của nước trong game" "đồ họa map 2 bị vỡ" "hiệu ứng vfx nổ của particle quá phèn" \
+           "typography tiêu đề phèn" "hud quá phèn" "font chữ quá phèn" "theme tối nhìn phèn" "animation vfx quá phèn" "đổi palette màu game phèn"; do
+    r="$(prefs "$prof" "$p")"
+    has "$r" INSTINCT-F07 && fail "$prof: aesthetic prompt '$p' got the UI trap F07 ($r)" || ok "$prof: aesthetic prompt '$p' → no UI trap"
+  done
+done
+r="$(prefs universal "bấm nút mua 2 lần bị trừ tiền hai lần")"
+has "$r" INSTINCT-F07 && ok "universal: a prompt that talks about UI still gets F07" || fail "universal UI prompt lost F07: '$r'"
 # A profile-only UI intent does not lift the 'strong match only' bar of a prompt that names no kind of work.
 python3 - "$ENRICH" <<'PY' && ok "shown_refs: profile-only intents keep the 3-point bar, real intents lift it" || fail "shown_refs bar"
 import importlib.util, sys

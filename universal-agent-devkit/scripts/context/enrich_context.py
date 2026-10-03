@@ -116,7 +116,7 @@ STOPWORDS = {normalize(w) for w in STOPWORDS}
 NON_TECHNICAL_PHRASES = re.compile(
     r"(?:lựa chọn|phương án) tối ưu|tối ưu nhất|docker[ -]compose|thẩm mỹ viện"
     # UI words that mean something else in backend work (the UI door reads p_route):
-    r"|compose(?:\.ya?ml| up)|(?:sql|materialized|django) views?|views\.py|grafana panels?|panels? grafana"
+    r"|(?<!\w)compose(?:\.ya?ml|\s+up(?!\s+to\b))(?!\w)|(?:sql|materialized|django) views?|views\.py|grafana panels?|panels? grafana"
     r"|(?:credit|debit|payment|bank|gift|sim|sd) cards?|card numbers?|số card|dialog (?:state|manager|system)")
 
 # The UI door (docs/plans/ui-context-injection-zero-slop.md): a UI word in the prompt, or an app
@@ -131,6 +131,8 @@ UI_KEYWORDS = ["giao diện", "màn hình", "nút", "bấm", "button", "tap", "c
 # only says "layout"/"click" still reads memory layout / ClickHouse as UI (as before): add the phrase to
 # NON_TECHNICAL_PHRASES when one shows up.
 UI_WHOLE_WORDS = re.compile(r"(?<!\w)(?:view|card|compose|screen|panel|dialog|theme|font)s?(?!\w)")
+# Words that style the screen: they open the door but are no evidence for the interaction traps (click, 48dp).
+UI_STYLE_WORDS = re.compile(r"(?<!\w)(?:typography|animation|palette)\w*|(?<!\w)(?:hud|font|theme)s?(?!\w)")
 APP_PROFILES = ("android", "game", "ios", "web")  # any task there may touch the screen
 # One NFR entry, many lines: compact() prints each line on its own so dedupe_session (ONCE_PER_SESSION) can too.
 ZERO_SLOP_MANDATE = "\n".join((
@@ -164,7 +166,7 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
         "injected_nfrs": [],
         "paired_oracle_spec": {},
         "recommended_skills": [],
-        "profile_intents": []   # intents only the profile switched on: they say nothing about this prompt
+        "profile_intents": []   # intents that say nothing about this prompt (profile / style word only): no UI trap terms, no weak-match relief
     }
 
     # 1. Read Active Profile
@@ -201,11 +203,13 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
                                    "typography", "font chữ", "micro-interaction", "juice", "hud", "design system",
                                    "hiệu ứng nảy", "hiệu ứng động", "hiệu ứng chuyển", "hiệu ứng bấm", "game feel",
                                    "art bible", "vfx", "shading", "đồ họa"])
+    p_inter = UI_STYLE_WORDS.sub(" ", p_route)
+    ui_terms = mentions(p_inter, UI_KEYWORDS) or bool(UI_WHOLE_WORDS.search(p_inter))  # interaction words only
     ui_words = aesthetic or mentions(p_route, UI_KEYWORDS) or bool(UI_WHOLE_WORDS.search(p_route))
     ui_door = ui_words or dossier["active_profile"] in APP_PROFILES
     if ui_door:
         dossier["detected_intents"].append("UI_INTERACTION")
-        if not ui_words:
+        if not ui_terms:  # opened by the profile or an aesthetic word only: no click / 48dp trap terms (INTENT_TERMS loop)
             dossier["profile_intents"].append("UI_INTERACTION")
         dossier["injected_nfrs"].append("Debounce >= 1000ms + Instant Disable on 1st click + Loading indicator.")
         dossier["injected_nfrs"].append("Touch Target >= 48dp (Mobile) / >= 44px (Web).")
@@ -302,7 +306,7 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
         # The four game-feel lines stay with the aesthetic words: the profile alone would tax every game prompt with them.
         if aesthetic and (dossier["active_profile"] == "game" or mentions(p_lower, ["game", "unity", "godot", "unreal", "blender", "ugui"])):
             dossier["injected_nfrs"].append("Anti-Phèn Visual Standard: Studio-grade aesthetics; no raw unlit primitives or flat single-color boxes.")
-            dossier["injected_nfrs"].append("Game Feel & Juice Engine: Squash & Stretch tween on tap (0.92x squash, 1.08x overshoot on release), Trauma-decay Camera Shake (T^2), Hit-stop impact freeze.")
+            dossier["injected_nfrs"].append("Game Feel & Juice Engine: Squash & Stretch on tap (0.92x squash that settles on the 0.95 pressed pose, 1.08x overshoot on release), Trauma-decay Camera Shake (T^2), Hit-stop impact freeze.")
             dossier["injected_nfrs"].append("Art Direction & Color Harmony: 60-30-10 palette balance, URP Global Volume (ACES Tonemapping + Bloom threshold <= 1.2 + subtle Vignette).")
             dossier["injected_nfrs"].append("3D Baked Sprites: 3-point studio lighting in Blender for coin/gem/reward icons to give depth with zero extra draw calls.")
 
@@ -327,7 +331,7 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
                 if len(w) >= 3 and normalize(w) not in STOPWORDS}
     said = set(keywords)  # what the user wrote, before the intent's technical terms
     for intent in dossier["detected_intents"]:
-        if intent not in dossier["profile_intents"]:  # the UI traps (click, 48dp) are no evidence for a prompt with no UI word
+        if intent not in dossier["profile_intents"]:  # the UI traps (click, 48dp) are no evidence for a prompt with no UI interaction word
             keywords |= INTENT_TERMS.get(intent, set())
     entries, seen_titles = [], set()
     for instincts_file in instinct_sources(devkit_root, project_root):

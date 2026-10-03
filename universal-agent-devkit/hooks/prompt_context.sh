@@ -11,10 +11,14 @@
 # project-rule sections whose title matches (scripts/rule_context.py).
 #
 # Silent (adds nothing) for slash commands, very short prompts, and requests that
-# match no intent and no trap — questions and chit-chat pay no context cost.
+# match no intent and no trap — questions and chit-chat pay no context cost. Not on an app
+# profile (android / game / ios / web): its UI door always matches, so every prompt there
+# carries at least the "Loại việc" line (enrich_context.py APP_PROFILES).
 #
 # Once per session (enrich_context.py dedupe_session, state .claude/audit-gate/prompt_seen_<id>):
-# the "Yêu cầu ngầm định", "Bẫy đã gặp" and "Skill phù hợp" lines are sent only the first time;
+# the "Yêu cầu ngầm định", "Bẫy đã gặp" and "Skill phù hợp" lines and the ZERO-SLOP UI MANDATE
+# block are sent only the first time (the Codex / Gemini / Cursor bridge passes no session_id,
+# so nothing is deduplicated there: hooks/agent_bridge.sh);
 # an unchanged injection becomes "(ngữ cảnh DevKit như lượt trước)" (+ the RED→GREEN rule).
 # A compaction (compact_boundary in the transcript) or a new session_id sends everything again.
 # PROMPT_DEDUPE=0 turns it off. Test: hooks/tests/test_prompt_dedupe.sh.

@@ -152,15 +152,30 @@ Không blocker; 3 should-fix, 5 nit, đều có số đo. Xử lý:
 |---|---|---|
 | 1 | `hooks/agent_bridge.sh` nhánh `prompt` không chuyển `session_id` nên Gemini/Codex/Cursor không dedupe: mandate (~1,1 KB) lặp ở mọi prompt trên profile app | **Chưa sửa**: plan loại trừ tường minh bridge. Đề xuất một dòng: chuyển `session_id` / `conversation_id` ở nhánh `prompt` như nhánh `stop`. Ghi vào CHANGELOG và INSTINCT-026 |
 | 2 | Từ UI mới bắt nhầm từ vựng backend (`sql view`, `Django views`, `compose.yaml`, `compose up`, `Grafana panel`, `screening`, `Dialogflow`, `theme_id`, `card` trong log thanh toán); replay prompt thật: cửa UI mở 3 → 5 lần | Sửa: 5 từ prefix thành nguyên từ, thêm cụm vào `NON_TECHNICAL_PHRASES`, 11 ca âm mới. Replay lại 319 prompt: HEAD 4, bản đầu 8, bản sửa 7; 3 lần tăng đều là văn bản dài (2 bản tóm tắt phiên tự sinh, 1 prompt vai trò dán vào) |
-| 3 | 0.92 (squash lúc chạm) và 0.95 (pressed của mandate) cùng được tiêm cho một sự kiện | Giữ số của plan, nói rõ vai trò: 0.92 là tween lúc chạm, 0.95 + lún là tư thế giữ nút, trả lại khi nhả (`game-rules.md`, uGUI #32 kèm bước nhả, dòng NFR juice) |
+| 3 | 0.92 (squash lúc chạm) và 0.95 (pressed của mandate) cùng được tiêm cho một sự kiện | Giữ số của plan. Bản đầu gọi 0.92 là tween thoáng qua: sai, vì uGUI #22 giữ squash tới lúc nhả. Nay: tween squash kết thúc ở tư thế Pressed 0.95 + lún, trả lại khi nhả; sửa graphic con của nút (LayoutGroup điều khiển vị trí nút); ghi ở `game-rules.md`, uGUI #32 và dòng NFR juice. **Cần chủ quy chuẩn xác nhận**: hàng #22 và #3 (có sẵn) vẫn mô tả squash giữ tới lúc nhả |
 | 4 | Prompt chỉ có từ thẩm mỹ (`bảng màu`, `phèn`) được skill nhưng không có mandate, trong khi `palette` mở cửa | Từ thẩm mỹ cũng mở cửa; điều kiện `VISUAL_DESIGN` rút gọn thành `ui_door` |
 | 5 | `/distill …` ở đầu prompt bị hook bỏ qua (prompt bắt đầu bằng `/`) | Tiêu đề mục trong `SKILL.md` dặn viết giữa câu |
 | 6 | `SKILL.md` ghi 3 trạng thái nút, thiếu Disabled | Sửa thành 4 trạng thái |
 | 7 | Phạm vi cấm gradient tím-xanh lệch giữa mandate (tuyệt đối, nguyên văn plan) và data (chỉ bản template); `styles.csv` (Aurora UI, Vaporwave) lại gợi ý gradient xanh→tím | **Để nguyên, cần người quyết**: hai bên mâu thuẫn về chính sách, không phải lỗi mã |
 | 8 | Test: ca game+GC không bắt được đột biến "thay skill cuối"; ca dedupe mandate chưa có trường hợp chỉ-do-profile; ca âm pass giả nếu helper crash | Thêm ca dedupe chỉ-do-profile và dấu `HELPER-CRASH` cho ca âm. Ca game+GC giữ nguyên: trên profile game `unity-gc-audit` luôn là skill thứ 4 nên không có input nào phân biệt được |
 
-Mutation check (10 đột biến: bỏ loại intent-profile khỏi bẫy hoặc khỏi ngưỡng, mandate dính dòng NFR, bỏ tiền tố `ONCE_PER_SESSION`, skill line 5 đầu thuần, profile kéo `android-real-device-qa`, từ nguyên từ thành prefix, bỏ cụm backend, từ thẩm mỹ không mở cửa, NFR juice theo profile): cả 10 đều làm ít nhất một ca đỏ.
+### Review delta của `756c2e9` (cùng reviewer, sau bản sửa vòng 1)
 
-Kết quả đo: `test_prompt_context.sh` 105/105 (cả bash 3.2), `test_prompt_dedupe.sh` 30/30, `hook_contract_test.sh` 687 ok / 0 deviating, `validate_data.py` exit 0, health 100/100. Còn đỏ sẵn ở HEAD, không thuộc thay đổi này: `contract_facts_test.sh` F2 (`user_project_bridge.sh` thiếu header OPT-IN HELPER, từ commit `18f4591`) và `test_threshold_exemption…` nói trên.
+Bản sửa vòng 1 gây 2 hồi quy; reviewer bắt cả hai bằng reproducer, đã sửa ở commit sau:
+
+| # | Phát hiện | Xử lý |
+|---|---|---|
+| 1 | Từ thẩm mỹ mở cửa nên `UI_INTERACTION` thành intent thật và nạp lại bẫy click/debounce/48dp (F07 đứng đầu ở prompt `vfx`, `shading`, `đồ họa`), trái đúng luật INSTINCT-026 | Tách `ui_terms` (từ UI tương tác) khỏi `ui_words` (cộng từ thẩm mỹ): intent UI chỉ nạp bẫy khi có `ui_terms`; prompt thẩm mỹ vẫn có mandate. Ngưỡng bẫy yếu giữ như HEAD nhờ `VISUAL_DESIGN` |
+| 2 | `compose(?:\.ya?ml\| up)` không có ranh giới từ nên ăn `recompose up to`, `Compose update/upgrade`: mất `compose-recomp-audit` và `PERFORMANCE` (hồi quy so với HEAD) | `(?<!\w)compose(?:\.ya?ml\|\s+up)(?!\w)` |
+| 3 | Câu "0.92 chỉ là tween" sai so với uGUI #22 (squash giữ tới lúc nhả); làm theo cả hai thì tư thế giữ ra (1.05, 0.92), không bao giờ 0.95; sink bằng `anchoredPosition` của nút bị LayoutGroup ghi đè | Xem hàng 3 của bảng trên: đổi câu chữ, #32 áp lên graphic con. **Cần chủ quy chuẩn xác nhận** |
+| 4 | Test không bắt hai hồi quy đầu | Thêm 12 ca (4 compose/PERFORMANCE, 8 từ thẩm mỹ không kéo F07), mutation J và K |
+| 5 | Lệnh kiểm tra của INSTINCT-026 kết thúc bằng `\| tail -2` nên nuốt exit code | Bỏ `\| tail -2` |
+| 6 | Header `hooks/prompt_context.sh` vẫn nói chit-chat không tốn context và chỉ kể 3 loại dòng dedupe | Sửa comment (4 dòng) qua cài nguyên tử: ghi ngoại lệ profile app và bridge |
+
+Không lỗi theo reviewer: regex (mọi nhánh có nhóm, không backtracking: 1,8 MB ≤ 0,07 s), thứ tự intent/NFR/skill khi `aesthetic` lên trước (với prompt thẩm mỹ `UI_INTERACTION` chen ngay sau `BUG_FIX`; android + từ thẩm mỹ thêm `android-real-device-qa`), bash 3.2, CSV 13 cột, `validate_data.py`.
+
+Mutation check (12 đột biến: bỏ loại intent-profile khỏi bẫy hoặc khỏi ngưỡng, mandate dính dòng NFR, bỏ tiền tố `ONCE_PER_SESSION`, skill line 5 đầu thuần, profile kéo `android-real-device-qa`, từ nguyên từ thành prefix, bỏ cụm backend, từ thẩm mỹ không mở cửa, NFR juice theo profile, từ thẩm mỹ nạp lại bẫy UI, `compose up` không ranh giới): cả 12 đều làm ít nhất một ca đỏ.
+
+Kết quả đo (bản cuối): `test_prompt_context.sh` 118/118 (cả bash 3.2), `test_prompt_dedupe.sh` 30/30, `hook_contract_test.sh` 687 ok / 0 deviating, `validate_data.py` exit 0, health 100/100; replay 319 prompt đã gõ: cửa UI mở 4 lần ở HEAD, 7 lần nay (3 lần tăng là văn bản dài). Còn đỏ sẵn ở HEAD, không thuộc thay đổi này: `contract_facts_test.sh` F2 (`user_project_bridge.sh` thiếu header OPT-IN HELPER, từ commit `18f4591`) và `test_threshold_exemption…` nói trên.
 
 Điểm cần biết: `tests/run_impacted.sh` chọn test theo tên file đổi; `hook_contract_test.sh` chỉ nêu `prompt_context` nên một lần sửa `enrich_context.py` thuần không kéo nó vào gate. Chưa sửa (ngoài phạm vi); nếu sửa tiếp `enrich_context.py`, chạy tay `bash universal-agent-devkit/hooks/tests/hook_contract_test.sh`.
