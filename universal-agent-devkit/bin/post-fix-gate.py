@@ -3082,10 +3082,17 @@ def _recorded_seconds() -> dict:
 def suite_env():
     """The environment a test suite runs in, without the variables git sets for a hook
     (GIT_INDEX_FILE, GIT_DIR, …): a suite that builds scratch repos otherwise writes into the
-    commit's own index — "invalid object … Error building trees" (agent-workbench 2026-09-28)."""
+    commit's own index — "invalid object … Error building trees" (agent-workbench 2026-09-28).
+    Nor the author / committer identity `git commit` exports to its hook (2026-10-03): every scratch
+    repo's commit would carry it, and tests/gates/test_gate_friction.sh could not tell a teammate's
+    commit from ours — it failed only inside `git commit`, and the pre-commit gate REJECTed."""
     drop = {"GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_PREFIX", "GIT_COMMON_DIR",
-            "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE"}
-    return {k: v for k, v in os.environ.items() if k not in drop}
+            "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
+            "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
+            "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
+            "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"}  # `git -c k=v commit` reaches the hook as GIT_CONFIG_PARAMETERS
+    return {k: v for k, v in os.environ.items()
+            if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
 
 
 def run_precommit_tests(modified_files) -> tuple:
