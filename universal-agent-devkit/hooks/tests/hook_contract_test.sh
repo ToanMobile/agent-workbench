@@ -1536,7 +1536,7 @@ CLAUDE_TR="${SANDBOX}/claude_tr.jsonl"
 printf '%s\n' '{"type":"user","message":{"role":"user","content":"hi"},"sessionId":"c"}' > "${CLAUDE_TR}"
 harness_case() { # name payload expect(agent:degraded) [ENV=VAL …]
   hname="$1"; hpayload="$2"; hwant="$3"; shift 3
-  hgot="$(printf '%s' "${hpayload}" | env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u DEVKIT_AGENT "$@" \
+  hgot="$(printf '%s' "${hpayload}" | env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT "$@" \
           python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null \
           | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%s:%s" % (d["agent"], int(d["degraded"])))' 2>/dev/null)"
   if [ "${hgot}" = "${hwant}" ]; then
@@ -1560,9 +1560,11 @@ harness_case "no transcript at all → unknown, degraded" \
   '{"session_id":"u"}' "unknown:1"
 harness_case "bridged agent (DEVKIT_AGENT=codex) → codex" \
   '{"session_id":"b"}' "codex:1" DEVKIT_AGENT=codex
-NOSID_A="$(printf '{"cwd":"/x"}' | HOOK_PPID=42 python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
-NOSID_B="$(printf '{"cwd":"/x"}' | HOOK_PPID=42 python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
-NOSID_C="$(printf '{"cwd":"/x"}' | HOOK_PPID=43 python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
+# No session id in the payload. session_key also reads GROK_SESSION_ID, which a
+# Grok runner exports — drop it so this case measures the pid+cwd key.
+NOSID_A="$(printf '{"cwd":"/x"}' | env -u GROK_SESSION_ID HOOK_PPID=42 python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
+NOSID_B="$(printf '{"cwd":"/x"}' | env -u GROK_SESSION_ID HOOK_PPID=42 python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
+NOSID_C="$(printf '{"cwd":"/x"}' | env -u GROK_SESSION_ID HOOK_PPID=43 python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
 if [ -n "${NOSID_A}" ] && [ "${NOSID_A}" = "${NOSID_B}" ] && [ "${NOSID_A}" != "${NOSID_C}" ]; then
   PASS=$((PASS + 1)); printf '  ok   %-46s\n' "no session id: key = harness pid + cwd, stable"
 else

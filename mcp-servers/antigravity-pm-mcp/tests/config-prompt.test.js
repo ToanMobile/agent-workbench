@@ -9,6 +9,40 @@ import {
 } from '../src/prompt.js';
 import { tmpProject, tmpGlobalConfig, cleanup, writeFile, sampleTaskArgs } from './helpers.js';
 
+test('gradle testDebugUnitTest duoc mo rong bang dung mot lenh ma tran co them task module', () => {
+  const dir = tmpProject({ testCommand: './gradlew testDebugUnitTest' });
+  const agents = path.join(dir, '.agents');
+  fs.mkdirSync(agents, { recursive: true });
+  fs.writeFileSync(path.join(agents, 'regression_matrix.active.json'), JSON.stringify({
+    rules: [{
+      mandatory_regression_tests: [
+        { id: 'REG-OR-APP', command: './gradlew :app:testReleaseUnitTest -PexcludeScreenshotTests' },
+        { id: 'REG-OR-ALL', command: './gradlew testDebugUnitTest :app:testReleaseUnitTest -PexcludeScreenshotTests --continue' },
+      ],
+    }],
+  }));
+  const cfg = loadConfig(dir);
+  assert.equal(cfg.testCommand, './gradlew testDebugUnitTest :app:testReleaseUnitTest -PexcludeScreenshotTests --continue');
+  assert.ok(cfg.warnings.some((w) => w.includes(':app:testReleaseUnitTest')));
+  cleanup(dir);
+});
+
+test('hai lenh ma tran cung rong hon thi giu testCommand da khai', () => {
+  const dir = tmpProject({ testCommand: './gradlew testDebugUnitTest' });
+  fs.mkdirSync(path.join(dir, '.agents'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.agents', 'regression_matrix.active.json'), JSON.stringify({
+    rules: [{
+      mandatory_regression_tests: [
+        { command: './gradlew testDebugUnitTest :app:testReleaseUnitTest' },
+        { command: './gradlew testDebugUnitTest :core:common:testDebugUnitTest' },
+      ],
+    }],
+  }));
+  const cfg = loadConfig(dir);
+  assert.equal(cfg.testCommand, './gradlew testDebugUnitTest');
+  cleanup(dir);
+});
+
 test('cau hinh project ghi de mac dinh, khoa la thi canh bao chu khong no', () => {
   const dir = tmpProject({ testCommand: './gradlew test', proof: { require: 3 }, khoaLa: 1 });
   const cfg = loadConfig(dir);

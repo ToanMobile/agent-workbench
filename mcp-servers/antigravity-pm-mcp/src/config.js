@@ -194,7 +194,41 @@ export function loadConfig(projectInput) {
   if (!Array.isArray(cfg.rulesFiles)) cfg.rulesFiles = [];
   if (!Array.isArray(cfg.auditCommands)) cfg.auditCommands = [];
   if (typeof cfg.proof?.require !== 'number' || cfg.proof.require < 0) cfg.proof.require = 1;
+  const widened = widenGradleTestCommand(root, cfg.testCommand);
+  if (widened && widened !== cfg.testCommand) {
+    warnings.push(`testCommand "${cfg.testCommand}" thieu task module trong ma tran — dung "${widened}"`);
+    cfg.testCommand = widened;
+  }
   return cfg;
+}
+
+// `./gradlew testDebugUnitTest` o goc bo qua module chi co testReleaseUnitTest (OfficeReader :app).
+// Ma tran da ghi lenh day du. Chi doi khi dung mot lenh rong hon; hai lenh thi giu khai bao.
+function widenGradleTestCommand(root, testCommand) {
+  if (typeof testCommand !== 'string') return null;
+  const trimmed = testCommand.trim();
+  const match = trimmed.match(/^\.\/gradlew\s+(\S+)$/);
+  if (!match) return null;
+  const task = match[1];
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(path.join(root, '.agents', 'regression_matrix.active.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+  const commands = [];
+  for (const rule of data.rules || []) {
+    for (const t of rule.mandatory_regression_tests || []) {
+      if (t && typeof t.command === 'string') commands.push(t.command.trim());
+    }
+  }
+  const wider = commands.filter((cmd) => {
+    if (!cmd.startsWith('./gradlew ')) return false;
+    const parts = cmd.split(/\s+/);
+    if (!parts.includes(task)) return false;
+    return parts.some((p) => p.startsWith(':') && p !== task);
+  });
+  return wider.length === 1 ? wider[0] : null;
 }
 
 // Cac khoa quyet dinh cong nghiem thu va lenh PM TU CHAY. `.antigravity-pm.json` nam trong repo => agent sua duoc

@@ -156,6 +156,13 @@ def plan_target(configured, devices, denied, avd, connect_tried: bool) -> dict:
     listed = list(devices or [])
     online = [d for d in listed if d["state"] == "device" and d["serial"] not in deny]
     if configured and configured in deny:
+        # Never screencap a denied serial. A declared AVD is the same fallback as an offline serial.
+        if avd:
+            return {
+                "action": "boot",
+                "avd": avd,
+                "message": "Serial %s nam trong denylist — mo AVD %s." % (configured, avd),
+            }
         return {"action": "fail", "message": "Serial %s nam trong denylist — khong chup." % configured}
     if configured:
         hit = next((d for d in listed if d["serial"] == configured), None)
@@ -177,6 +184,13 @@ def plan_target(configured, devices, denied, avd, connect_tried: bool) -> dict:
     if len(online) == 1:
         return {"action": "screencap", "serial": online[0]["serial"]}
     if len(online) > 1:
+        # One online device still wins over a declared AVD. Several devices need the AVD to choose.
+        if avd:
+            return {
+                "action": "boot",
+                "avd": avd,
+                "message": "Nhieu may online (%s) — mo AVD %s." % (", ".join(d["serial"] for d in online), avd),
+            }
         return {"action": "fail", "message": "Nhieu may online (%s), khai serial." % ", ".join(d["serial"] for d in online)}
     if avd:
         return {"action": "boot", "avd": avd, "message": "Khong co may online."}

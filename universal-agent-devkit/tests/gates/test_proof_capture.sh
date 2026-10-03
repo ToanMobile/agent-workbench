@@ -51,6 +51,41 @@ printf '%s' "$out" | grep -q '"action": "boot"' && printf '%s' "$out" | grep -q 
   && [ "$rc" = 0 ] && ok "offline serial boots the declared AVD, skips the denylisted phone" \
   || fail "boot plan: rc=$rc $out"
 
+# Declared serial is itself denylisted and online, AVD set → boot that AVD.
+P2d="$TMP/denied-avd"; mkdir -p "$P2d"
+printf '%s\n' '{"proof":{"defaultProvider":"device","providers":{"device":{"type":"adb","serial":"RFCWA1KQT1Y","avd":"PhoneConnect"}}}}' > "$P2d/.antigravity-pm.json"
+printf '%s\n' 'RFCWA1KQT1Y' > "$P2d/.adb-denylist"
+ADB2d="$P2d/adb"; cat > "$ADB2d" <<'SH'
+#!/bin/sh
+echo "List of devices attached"
+echo "RFCWA1KQT1Y device"
+SH
+chmod +x "$ADB2d"
+EMU2d="$P2d/emu"; printf '#!/bin/sh\necho PhoneConnect\n' > "$EMU2d"; chmod +x "$EMU2d"
+out="$(plan "$P2d" "$ADB2d" "$EMU2d")"; rc=$?
+printf '%s' "$out" | grep -q '"action": "boot"' && printf '%s' "$out" | grep -q '"avd": "PhoneConnect"' \
+  && ! printf '%s' "$out" | grep -q '"action": "screencap"' \
+  && ! printf '%s' "$out" | grep -q '"serial": "RFCWA1KQT1Y"' \
+  && [ "$rc" = 0 ] && ok "denylisted declared serial boots the AVD" \
+  || fail "denied+avd: rc=$rc $out"
+
+# Denylisted declared serial and no AVD on the machine → fail, never screencap it.
+P2e="$TMP/denied-none"; mkdir -p "$P2e"
+printf '%s\n' '{"proof":{"defaultProvider":"device","providers":{"device":{"type":"adb","serial":"RFCWA1KQT1Y"}}}}' > "$P2e/.antigravity-pm.json"
+printf '%s\n' 'RFCWA1KQT1Y' > "$P2e/.adb-denylist"
+ADB2e="$P2e/adb"; cat > "$ADB2e" <<'SH'
+#!/bin/sh
+echo "List of devices attached"
+echo "RFCWA1KQT1Y device"
+SH
+chmod +x "$ADB2e"
+EMU2e="$P2e/emu"; printf '#!/bin/sh\nexit 0\n' > "$EMU2e"; chmod +x "$EMU2e"
+out="$(plan "$P2e" "$ADB2e" "$EMU2e")"; rc=$?
+printf '%s' "$out" | grep -q '"action": "fail"' && printf '%s' "$out" | grep -q 'denylist' \
+  && ! printf '%s' "$out" | grep -q '"serial"' \
+  && [ "$rc" = 1 ] && ok "denylisted serial with no AVD is a failure" \
+  || fail "denied+noavd: rc=$rc $out"
+
 # No avd in config: the only non-car AVD is chosen. Car images are not.
 P3="$TMP/pick"; mkdir -p "$P3"
 printf '%s\n' '{"proof":{"defaultProvider":"device","providers":{"device":{"type":"adb","serial":"192.168.1.20:5555"}}}}' > "$P3/.antigravity-pm.json"
@@ -222,6 +257,32 @@ printf '%s\n' '{"proof":{"defaultProvider":"d","providers":{"d":{"avd":"Pixel"}}
 out="$(simcap "$S7" --plan-only 2>&1)"; rc=$?
 printf '%s' "$out" | grep -q '"action": "screencap"' && printf '%s' "$out" | grep -q 'R58M' \
   && [ "$rc" = 0 ] && ok "declared AVD keeps adb while a simulator is booted" || fail "avd+sim: rc=$rc out=$out"
+
+# No serial and several online devices: a declared AVD picks the emulator.
+# One online device still wins (S7). No AVD still refuses to guess.
+Pmany="$TMP/many-avd"; mkdir -p "$Pmany"
+printf '%s\n' '{"proof":{"defaultProvider":"device","providers":{"device":{"type":"adb","avd":"PhoneConnect"}}}}' > "$Pmany/.antigravity-pm.json"
+ADBm="$Pmany/adb"; cat > "$ADBm" <<'SH'
+#!/bin/sh
+echo "List of devices attached"
+echo "emulator-5554 device"
+echo "RFCW504KFKJ device"
+SH
+chmod +x "$ADBm"
+EMUm="$Pmany/emu"; printf '#!/bin/sh\necho PhoneConnect\n' > "$EMUm"; chmod +x "$EMUm"
+out="$(plan "$Pmany" "$ADBm" "$EMUm")"; rc=$?
+printf '%s' "$out" | grep -q '"action": "boot"' && printf '%s' "$out" | grep -q '"avd": "PhoneConnect"' \
+  && [ "$rc" = 0 ] && ok "several online devices with a declared AVD boot that AVD" \
+  || fail "many+avd: rc=$rc $out"
+
+Pguess="$TMP/many-none"; mkdir -p "$Pguess"
+printf '%s\n' '{"proof":{"defaultProvider":"device","providers":{"device":{"type":"adb"}}}}' > "$Pguess/.antigravity-pm.json"
+cp "$ADBm" "$Pguess/adb"; chmod +x "$Pguess/adb"
+EMUg="$Pguess/emu"; printf '#!/bin/sh\nexit 0\n' > "$EMUg"; chmod +x "$EMUg"
+out="$(plan "$Pguess" "$Pguess/adb" "$EMUg")"; rc=$?
+printf '%s' "$out" | grep -q '"action": "fail"' && printf '%s' "$out" | grep -q 'Nhieu may' \
+  && [ "$rc" = 1 ] && ok "several online devices and no AVD still refuse to guess" \
+  || fail "many+none: rc=$rc $out"
 
 # No provider, not ios: two Booted simulators are ambiguous → the adb path as before, not a failure.
 S8="$TMP/two-any"; sim_project "$S8" - SIM-AAAA SIM-BBBB; touch "$S8/state/adb-online"
