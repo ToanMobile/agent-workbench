@@ -150,7 +150,7 @@ def _host_port(serial: str) -> bool:
     return bool(re.match(r"^[^:\s]+:\d+$", serial or ""))
 
 
-def plan_target(configured, devices, denied, avd, connect_tried: bool) -> dict:
+def plan_target(configured, devices, denied, avd, connect_tried: bool, declared_avd: str | None = None) -> dict:
     """Decide the next step. Never returns a serial that is offline or denied."""
     deny = set(denied or [])
     listed = list(devices or [])
@@ -184,12 +184,13 @@ def plan_target(configured, devices, denied, avd, connect_tried: bool) -> dict:
     if len(online) == 1:
         return {"action": "screencap", "serial": online[0]["serial"]}
     if len(online) > 1:
-        # One online device still wins over a declared AVD. Several devices need the AVD to choose.
-        if avd:
+        # One online device still wins over a declared AVD. An AVD inferred from
+        # the SDK image list is not a choice: several devices still refuse.
+        if declared_avd:
             return {
                 "action": "boot",
-                "avd": avd,
-                "message": "Nhieu may online (%s) — mo AVD %s." % (", ".join(d["serial"] for d in online), avd),
+                "avd": declared_avd,
+                "message": "Nhieu may online (%s) — mo AVD %s." % (", ".join(d["serial"] for d in online), declared_avd),
             }
         return {"action": "fail", "message": "Nhieu may online (%s), khai serial." % ", ".join(d["serial"] for d in online)}
     if avd:
@@ -390,14 +391,14 @@ def resolve(project: Path, adb: str, emulator: str | None, connect_timeout: floa
     avd = pick_avd(list_avds(emulator), declared_avd, profile)
     denied = load_deny(project)
     devices = adb_devices(adb)
-    plan = plan_target(configured, devices, denied, avd, False)
+    plan = plan_target(configured, devices, denied, avd, False, declared_avd)
     if plan["action"] == "connect":
         try:
             run([adb, "connect", plan["serial"]], connect_timeout)
         except subprocess.TimeoutExpired:
             pass
         devices = adb_devices(adb)
-        plan = plan_target(configured, devices, denied, avd, True)
+        plan = plan_target(configured, devices, denied, avd, True, declared_avd)
     plan["devices"] = devices
     plan["denied"] = sorted(denied)
     return plan

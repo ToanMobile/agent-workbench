@@ -284,6 +284,18 @@ printf '%s' "$out" | grep -q '"action": "fail"' && printf '%s' "$out" | grep -q 
   && [ "$rc" = 1 ] && ok "several online devices and no AVD still refuse to guess" \
   || fail "many+none: rc=$rc $out"
 
+# The SDK may contain one phone AVD. That is not a declaration, so several
+# online devices still refuse instead of booting the inferred image.
+Pinfer="$TMP/many-inferred"; mkdir -p "$Pinfer"
+printf '%s\n' '{"proof":{"defaultProvider":"device","providers":{"device":{"type":"adb"}}}}' > "$Pinfer/.antigravity-pm.json"
+cp "$ADBm" "$Pinfer/adb"; chmod +x "$Pinfer/adb"
+cp "$EMUm" "$Pinfer/emu"; chmod +x "$Pinfer/emu"
+out="$(plan "$Pinfer" "$Pinfer/adb" "$Pinfer/emu")"; rc=$?
+printf '%s' "$out" | grep -q '"action": "fail"' && printf '%s' "$out" | grep -q 'Nhieu may' \
+  && ! printf '%s' "$out" | grep -q '"action": "boot"' \
+  && [ "$rc" = 1 ] && ok "several online devices do not boot an AVD the project did not declare" \
+  || fail "many+inferred: rc=$rc $out"
+
 # No provider, not ios: two Booted simulators are ambiguous → the adb path as before, not a failure.
 S8="$TMP/two-any"; sim_project "$S8" - SIM-AAAA SIM-BBBB; touch "$S8/state/adb-online"
 out="$(simcap "$S8" --plan-only 2>&1)"; rc=$?

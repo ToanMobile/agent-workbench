@@ -60,6 +60,10 @@ export function planCaptureTarget({ configured, devices, denied, provider, provi
   const online = list.filter((d) => d.state === 'device' && !deny.has(d.serial));
 
   if (configured && deny.has(configured)) {
+    if (provider?.avd) {
+      warnings.push(`Serial ${configured} nam trong denylist — mo AVD ${provider.avd}.`);
+      return { action: 'boot-avd', avd: String(provider.avd), warnings };
+    }
     return { action: 'fail', warnings, message: `Serial ${configured} nam trong denylist — khong chup.` };
   }
 
@@ -71,6 +75,10 @@ export function planCaptureTarget({ configured, devices, denied, provider, provi
   } else if (online.length === 1) {
     return { action: 'screencap', serial: online[0].serial, warnings };
   } else if (online.length > 1) {
+    if (provider?.avd) {
+      warnings.push(`Nhieu thiet bi online (${online.map((d) => d.serial).join(', ')}) — mo AVD ${provider.avd}.`);
+      return { action: 'boot-avd', avd: String(provider.avd), warnings };
+    }
     return {
       action: 'fail',
       warnings,
@@ -146,7 +154,8 @@ export async function adbReadinessLines(cfg, runFn = run) {
     const serial = p.serial || '(trong)';
     const hit = p.serial ? devices.find((d) => d.serial === p.serial) : null;
     if (p.serial && denied.has(p.serial)) {
-      lines.push(`  provider ${name}: serial ${serial} nam trong denylist`);
+      const next = p.avd ? ` — se mo AVD ${p.avd}` : '';
+      lines.push(`  provider ${name}: serial ${serial} nam trong denylist${next}`);
     } else if (p.serial && hit?.state === 'device') {
       lines.push(`  provider ${name}: serial ${serial} dang online`);
     } else if (!p.serial && devices.filter((d) => d.state === 'device' && !denied.has(d.serial)).length === 1) {

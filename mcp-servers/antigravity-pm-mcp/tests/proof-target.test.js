@@ -113,6 +113,66 @@ test('cong emulator tranh cong da co may', () => {
   assert.equal(nextEmulatorPort([], 5554), 5554);
 });
 
+test('serial khai bao nam trong denylist va co AVD thi mo AVD, khong chup serial do', () => {
+  const plan = planCaptureTarget({
+    configured: 'RFCWA1KQT1Y',
+    devices: [{ serial: 'RFCWA1KQT1Y', state: 'device' }],
+    denied: new Set(['RFCWA1KQT1Y']),
+    provider: { type: 'adb', serial: 'RFCWA1KQT1Y', avd: 'PhoneConnect' },
+    providers: {},
+    connectTried: true,
+  });
+  assert.equal(plan.action, 'boot-avd');
+  assert.equal(plan.avd, 'PhoneConnect');
+  assert.equal(plan.serial, undefined);
+});
+
+test('serial trong denylist ma khong co AVD thi fail', () => {
+  const plan = planCaptureTarget({
+    configured: 'RFCWA1KQT1Y',
+    devices: [{ serial: 'RFCWA1KQT1Y', state: 'device' }],
+    denied: new Set(['RFCWA1KQT1Y']),
+    provider: { type: 'adb', serial: 'RFCWA1KQT1Y' },
+    providers: {},
+    connectTried: true,
+  });
+  assert.equal(plan.action, 'fail');
+  assert.match(plan.message, /denylist/);
+  assert.equal(plan.serial, undefined);
+});
+
+test('nhieu may online va provider khai AVD thi mo AVD do', () => {
+  const plan = planCaptureTarget({
+    configured: null,
+    devices: [
+      { serial: 'emulator-5554', state: 'device' },
+      { serial: 'RFCW504KFKJ', state: 'device' },
+    ],
+    denied: new Set(),
+    provider: { type: 'adb', avd: 'PhoneConnect' },
+    providers: {},
+    connectTried: true,
+  });
+  assert.equal(plan.action, 'boot-avd');
+  assert.equal(plan.avd, 'PhoneConnect');
+});
+
+test('nhieu may online va khong khai AVD thi tu choi doan', () => {
+  const plan = planCaptureTarget({
+    configured: null,
+    devices: [
+      { serial: 'emulator-5554', state: 'device' },
+      { serial: 'RFCW504KFKJ', state: 'device' },
+    ],
+    denied: new Set(),
+    provider: { type: 'adb' },
+    providers: {},
+    connectTried: true,
+  });
+  assert.equal(plan.action, 'fail');
+  assert.match(plan.message, /Nhieu thiet bi/);
+});
+
 test('adbReadinessLines: serial khai bao offline thi noi se mo AVD, khong goi la dang online', async () => {
   const lines = await adbReadinessLines({
     projectRoot: '/tmp/khong-co-denylist-agpm',
