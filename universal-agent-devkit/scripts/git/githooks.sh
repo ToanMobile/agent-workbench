@@ -33,6 +33,18 @@ esac
 [ -d "$TARGET" ] || die "$(L "không có thư mục: $TARGET" "no such directory: $TARGET")" 2
 git -C "$TARGET" rev-parse --git-dir >/dev/null 2>&1 \
   || die "$(L "$TARGET không phải git repository" "$TARGET is not a git repository")" 2
+# A checkout that already tracks .githooks should run those files. A linked worktree
+# gets the setting only for itself, so the main checkout keeps the hooks path it has.
+if [ "$ACTION" = "install" ] && [ -d "$TARGET/.githooks" ]; then
+  _common="$(git -C "$TARGET" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  _gitdir="$(git -C "$TARGET" rev-parse --path-format=absolute --git-dir 2>/dev/null || true)"
+  if [ -n "$_common" ] && [ -n "$_gitdir" ] && [ "$_common" != "$_gitdir" ]; then
+    git -C "$TARGET" config extensions.worktreeConfig true
+    git -C "$TARGET" config --worktree core.hooksPath .githooks
+  else
+    git -C "$TARGET" config core.hooksPath .githooks
+  fi
+fi
 HOOKS_DIR="$(git -C "$TARGET" rev-parse --path-format=absolute --git-path hooks 2>/dev/null)" || {
   GIT_DIR="$(cd "$TARGET" && git rev-parse --git-dir 2>/dev/null)" || die "$(L "không đọc được git dir" "cannot resolve git dir")" 2
   HOOKS_DIR="$(cd "$TARGET" && cd "$GIT_DIR" && pwd -P)/hooks"

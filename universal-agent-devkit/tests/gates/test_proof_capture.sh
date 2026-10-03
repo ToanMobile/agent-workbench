@@ -164,8 +164,8 @@ printf '%s' "$out" | grep -q '"avd": "CarConnect"' && ! printf '%s' "$out" | gre
 P5="$TMP/shell"; mkdir -p "$P5"
 printf '%s\n' '{"proof":{"defaultProvider":"gameview","providers":{"gameview":{"type":"shell","command":"echo hi"}}}}' > "$P5/.antigravity-pm.json"
 out="$(plan "$P5" "$ADB3" "$EMU3")"; rc=$?
-printf '%s' "$out" | grep -q '"action": "fail"' && printf '%s' "$out" | grep -q 'shell' \
-  && [ "$rc" = 1 ] && ok "non-adb provider is not sent to an Android emulator" \
+printf '%s' "$out" | grep -q '"action": "shell"' && ! printf '%s' "$out" | grep -q '"action": "boot"' \
+  && [ "$rc" = 0 ] && ok "shell provider is planned in place, not sent to an Android emulator" \
   || fail "shell provider: rc=$rc $out"
 
 # ---------- iOS Simulator (xcrun simctl) ----------
@@ -183,6 +183,42 @@ open(path, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBB
                         + chunk(b"IDAT", zlib.compress(raw, 0)) + chunk(b"IEND", b""))
 PY
 }
+# A shell provider writes {{out}} itself and must not call adb or the emulator.
+Psh="$TMP/shellrun"; mkdir -p "$Psh"
+mkpng "$Psh/src.png" real
+python3 - "$Psh" <<'PY'
+import json, sys
+root = sys.argv[1]
+cmd = "cp %s/src.png {{out}} && printf %%s {{project}} > %s/seen" % (root, root)
+json.dump({"proof": {"defaultProvider": "gameview", "providers": {"gameview": {
+    "type": "shell", "command": cmd, "timeoutMs": 15000}}}},
+    open(root + "/.antigravity-pm.json", "w"))
+PY
+cat > "$Psh/adb" <<'SH'
+#!/bin/sh
+echo called >> "$0.log"
+exit 99
+SH
+cp "$Psh/adb" "$Psh/emu" && chmod +x "$Psh/adb" "$Psh/emu"
+out="$(python3 "$CMD" --project "$Psh" --adb "$Psh/adb" --emulator "$Psh/emu" --connect-timeout 1 2>&1)"; rc=$?
+png="$(find "$Psh/reports" -name 'proof-*.png' 2>/dev/null | head -1)"
+seen="$(cat "$Psh/seen" 2>/dev/null || true)"
+want="$(cd "$Psh" && pwd -P)"
+[ "$rc" = 0 ] && [ -n "$png" ] && [ ! -e "$Psh/adb.log" ] && [ ! -e "$Psh/emu.log" ] && [ "$seen" = "$want" ] \
+  && ok "shell provider writes the png and does not boot Android" \
+  || fail "shell run: rc=$rc png=${png:-none} seen=$seen out=$out"
+python3 - "$Psh" <<'PY'
+import json, sys
+root = sys.argv[1]
+json.dump({"proof": {"defaultProvider": "gameview", "providers": {"gameview": {
+    "type": "shell", "command": "true", "timeoutMs": 5000}}}},
+    open(root + "/.antigravity-pm.json", "w"))
+PY
+rm -rf "$Psh/reports"
+out="$(python3 "$CMD" --project "$Psh" --adb "$Psh/adb" --emulator "$Psh/emu" --connect-timeout 1 2>&1)"; rc=$?
+[ "$rc" != 0 ] && [ -z "$(find "$Psh/reports" -name 'proof-*.png' 2>/dev/null)" ] \
+  && ok "shell provider that writes no png fails" \
+  || fail "shell no-png: rc=$rc out=$out"
 # sim_project <dir> <profile|-> <booted udids…>: fake xcrun + an adb that only logs.
 sim_project() {
   local d="$1" prof="$2"; shift 2

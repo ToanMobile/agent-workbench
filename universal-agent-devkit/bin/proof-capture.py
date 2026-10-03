@@ -11,6 +11,9 @@ It does not screencap a dead ip:port and it does not substitute another
 plugged-in phone. Denylist: ADB_DENY_SERIALS, ~/.config/universal-agent-devkit/adb-denylist,
 <project>/.adb-denylist.
 
+A provider of type shell runs its own command ({{out}} is the png path, {{project}}
+is this checkout). That path does not boot an Android emulator.
+
 iOS: provider type `simctl` or a declared `udid`, or profile `ios`, screenshots the one
 Booted simulator (`xcrun simctl list devices -j`) with `xcrun simctl io <udid> screenshot`;
 none or several Booted is a failure, never an Android fallback. With no declared provider
@@ -23,6 +26,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -322,6 +326,44 @@ def simctl_capture(xcrun: str, udid: str, dest: Path, timeout_s: float) -> None:
     check_png(dest, data, udid, res)
 
 
+def shell_plan(proof: dict, provider: dict) -> dict:
+    """Run the project's own capture command. Never an Android emulator."""
+    command = provider.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return {"action": "fail", "message": "Provider %s type shell nhung khong co command." % proof.get("name")}
+    raw = provider.get("timeoutMs")
+    try:
+        timeout_s = float(raw) / 1000.0 if raw is not None else 60.0
+    except (TypeError, ValueError):
+        timeout_s = 60.0
+    if timeout_s < 1:
+        timeout_s = 1.0
+    if timeout_s > 180:
+        timeout_s = 180.0
+    return {"action": "shell", "command": command, "timeout": timeout_s, "serial": proof.get("name") or "shell"}
+
+
+def run_shell_proof(project: Path, command: str, dest: Path, timeout_s: float) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    rendered = command.replace("{{out}}", shlex.quote(str(dest))).replace("{{project}}", shlex.quote(str(project)))
+    try:
+        res = subprocess.run(rendered, shell=True, cwd=str(project), timeout=timeout_s, capture_output=True)
+    except subprocess.TimeoutExpired:
+        dest.unlink(missing_ok=True)
+        raise SystemExit("Provider shell qua %ss." % int(timeout_s))
+    if res.returncode != 0:
+        dest.unlink(missing_ok=True)
+        tail = (res.stderr or res.stdout or b"").decode("utf-8", "replace")[:400]
+        raise SystemExit("Provider shell thoat %s: %s" % (res.returncode, tail))
+    data = dest.read_bytes() if dest.is_file() else b""
+
+    class Done:
+        returncode = 0
+        stderr = b""
+
+    check_png(dest, data, "shell", Done())
+
+
 def check_png(dest: Path, data: bytes, serial: str, res) -> None:
     """Refuse a failed capture, a non-PNG, a file <= MIN_BYTES and a one-colour screen."""
     if res.returncode != 0 or not data.startswith(PNG_SIG):
@@ -381,6 +423,8 @@ def resolve(project: Path, adb: str, emulator: str | None, connect_timeout: floa
             return plan_sim(sims, None)
     if kind in ("3d", "blender"):
         return {"action": "3d", "serial": "blender-3d"}
+    if kind == "shell":
+        return shell_plan(proof, provider)
     if kind not in (None, "adb"):
         return {
             "action": "fail",
@@ -466,6 +510,12 @@ def main(argv=None) -> int:
         dest = project / "reports" / ("proof-%s.png" % time.strftime("%Y%m%d-%H%M%S"))
         simctl_capture(args.xcrun, serial, dest, 60)
         print("serial: %s" % serial)
+        print("file: %s" % dest)
+        return 0
+    if plan["action"] == "shell":
+        dest = project / "reports" / ("proof-%s.png" % time.strftime("%Y%m%d-%H%M%S"))
+        run_shell_proof(project, plan["command"], dest, float(plan.get("timeout") or 60))
+        print("serial: %s" % (plan.get("serial") or "shell"))
         print("file: %s" % dest)
         return 0
     if plan["action"] == "boot":

@@ -83,6 +83,28 @@ git config core.hooksPath .githooks
 bash "$KIT" githooks install >/dev/null 2>&1
 [ -f .githooks/pre-commit ] && [ ! -f .git/hooks/pre-commit ] && ok "installs into core.hooksPath" || fail "core.hooksPath ignored"
 
+# A repo that already has .githooks gets that relative path, so a clone can run the tracked hooks.
+new_repo
+mkdir -p .githooks
+bash "$KIT" githooks install >/dev/null 2>&1
+[ "$(git config --get core.hooksPath)" = ".githooks" ] && [ -x .githooks/pre-commit ] && [ ! -e .git/hooks/pre-commit ] \
+  && ok "tracked .githooks becomes core.hooksPath" || fail "tracked .githooks not activated: $(git config --get core.hooksPath)"
+
+# A linked worktree must not retarget the main checkout's hooks.
+new_repo
+git branch -M main
+git worktree add -q "$TMP/wt" -b side
+cd "$TMP/wt" || exit 1
+mkdir -p .githooks
+printf '#!/bin/sh\necho mine\n' > .githooks/pre-commit && chmod +x .githooks/pre-commit
+bash "$KIT" githooks install >/dev/null 2>&1
+[ "$(git config --worktree --get core.hooksPath)" = ".githooks" ] && grep -q 'echo mine' .githooks/pre-commit \
+  && ok "worktree hooksPath stays on its .githooks and keeps a foreign hook" \
+  || fail "worktree hooksPath: $(git config --worktree --get core.hooksPath)"
+cd "$TMP/repo" || exit 1
+[ -z "$(git config --get core.hooksPath)" ] && ok "main checkout hooksPath unchanged" \
+  || fail "main hooksPath changed: $(git config --get core.hooksPath)"
+
 # agent-kit uninstall removes the stub too.
 new_repo
 bash "$KIT" githooks install >/dev/null 2>&1
