@@ -124,3 +124,6 @@
 - Icon có ý nghĩa có `contentDescription` (chuỗi resource); icon trang trí `contentDescription = null`; icon chỉ hướng dùng `Icons.AutoMirrored.*` và layout dùng start/end cho RTL.
 - Màu/khoảng cách/typography lấy từ theme/design-system (`MaterialTheme.colorScheme`, token của dự án), không `Color(0x…)`/số dp rải rác; chuỗi hiển thị qua `stringResource`.
 - Zero-Slop (chống giao diện phèn): cấm `Card { Card { … } }` lồng nhau (dùng whitespace + divider mảnh); cấm icon tile (ô vuông bo góc nhạt chứa icon) đặt trên heading; cấm `Color.Gray` / `#808080` trần và gradient tím-xanh mặc định (neutral pha 3–5% tông chủ đạo, ví dụ `MaterialTheme.colorScheme.onSurfaceVariant`); spacing 4–8dp trong nhóm / 12–16dp nội dung / 24–32dp giữa section, không 16dp cho mọi thứ. Dữ liệu chi tiết: skill `ui-ux-pro-max` (stack `jetpack-compose`, nhóm `VisualSlop`).
+- **Hit area và kích thước nhìn:** Icon nhìn thấy có thể 24–32dp; hit area bắt buộc ≥ 48×48dp. Hai vùng tương tác cách nhau ≥ 8dp.
+- **Thumb zone:** Primary CTA (Ký, Xác nhận, Tiếp tục) nằm trong 40% nửa dưới màn hình.
+- **Frame budget 16.6ms:** Cấm `Column` + `verticalScroll` cho danh sách động. Dùng `LazyColumn`/`LazyRow` với stable key. Tính toán nặng trong Composable đi qua `remember` hoặc `derivedStateOf`.

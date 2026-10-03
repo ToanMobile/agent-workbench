@@ -51,12 +51,13 @@ Tuân thủ hệ số bội của $4\text{px} / 4\text{dp}$:
 ## 4. Rào Chắn Khả Năng Tiếp Cận & Tương Tác (Accessibility & a11y)
 
 1. **Kích thước Vùng Chạm Tối thiểu (Touch Target Size):**
-   - Mọi nút bấm, icon button, switch, checkbox bắt buộc phải có kích thước vùng bấm tối thiểu:
-     $$\text{Touch Target} \ge 48\times 48\text{dp} \quad (\text{Web: } \ge 44\times 44\text{px})$$
-   - Tuyệt đối không đặt các nút bấm quá sát nhau gây bấm nhầm trên màn hình cảm ứng.
-2. **Độ tương phản màu (Contrast Ratio):**
+   - Icon nhìn thấy có thể 24–32dp. Hit area (vùng cảm ứng) bắt buộc ≥ 48×48dp. Hai vùng tương tác cách nhau ≥ 8dp.
+   - Web: ≥ 44×44px.
+   - Primary CTA (Ký, Xác nhận, Tiếp tục) đặt trong 40% nửa dưới màn hình (thumb zone).
+2. **Frame budget 16.6ms:** danh sách động dùng `LazyColumn`/`LazyRow` với stable key, không `Column` + `verticalScroll`. Tính toán nặng trong Composable bọc `remember` hoặc `derivedStateOf`.
+3. **Độ tương phản màu (Contrast Ratio):**
    - Đảm bảo tỷ lệ tương phản chữ/nền tối thiểu $4.5:1$ cho văn bản thường và $3:1$ cho văn bản lớn (chuẩn WCAG AA).
-3. **Trạng thái Tương tác Rõ ràng (Interaction States):**
+4. **Trạng thái Tương tác Rõ ràng (Interaction States):**
    - Mỗi component tương tác bắt buộc phải hỗ trợ đủ 4 trạng thái: `Default`, `Pressed/Hover`, `Focused`, và `Disabled`.
    - Khi ở trạng thái `Disabled`, độ mờ (opacity) chuẩn là $0.38$, không nhận bất kỳ sự kiện click nào.
 
