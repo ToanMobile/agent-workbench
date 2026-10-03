@@ -48,6 +48,31 @@ printf '%s' "$OUT" | python3 -c 'import json,sys; assert "additional_context" in
 bridge gemini prompt prompt_context.sh "{\"prompt\":\"sửa lỗi nút thanh toán bị bấm 2 lần\",\"cwd\":\"$P\"}"
 printf '%s' "$OUT" | grep -q "INSTINCT-001" && ok "gemini: BeforeAgent gets the matching trap" || fail "gemini prompt context: $OUT"
 
+# --- prompt dedupe: the bridge must hand the session id on, or every prompt re-sends every line ----
+# On an app profile each prompt carries the ~1 KB ZERO-SLOP mandate; prompt_context.sh sends it once per session,
+# but only when the payload names the session (Gemini / Codex: session_id, Cursor: conversation_id).
+A="$TMP/app"; mkdir -p "$A/.agents"; printf '{"profile":"android"}\n' > "$A/.agents/active-profile.json"; (cd "$A" && git init -q .)
+bridge_in() { # dir platform kind hook json → sets OUT, RC
+  OUT="$(cd "$1" && printf '%s' "$5" | bash "$BRIDGE" "$2" "$3" "$4" 2>"$TMP/err")"; RC=$?
+}
+has_mandate() { # the text (plain or JSON-wrapped) holds a bullet of the mandate
+  printf '%s' "$1" | python3 -c 'import sys, json
+s = sys.stdin.read()
+try: s = json.dumps(json.loads(s), ensure_ascii=False)
+except ValueError: pass
+sys.exit(0 if "Cấm Cardocalypse" in s else 1)'
+}
+for spec in "gemini|session_id|g" "codex|session_id|c" "cursor|conversation_id|k"; do
+  plat="${spec%%|*}"; rest="${spec#*|}"; key="${rest%%|*}"; tag="${rest##*|}"
+  bridge_in "$A" "$plat" prompt prompt_context.sh "{\"$key\":\"${tag}1\",\"prompt\":\"sửa lại nút bấm trong màn hình inventory\",\"cwd\":\"$A\"}"
+  has_mandate "$OUT" && ok "$plat: 1st prompt of a session carries the mandate" || fail "$plat: 1st prompt has no mandate: $OUT"
+  bridge_in "$A" "$plat" prompt prompt_context.sh "{\"$key\":\"${tag}1\",\"prompt\":\"sửa lỗi lag khi cuộn danh sách trong màn hình inventory\",\"cwd\":\"$A\"}"
+  has_mandate "$OUT" && fail "$plat: 2nd prompt of the same $key re-sends the mandate (bridge dropped the session id)" \
+    || ok "$plat: 2nd prompt of the same session does not repeat the mandate"
+  bridge_in "$A" "$plat" prompt prompt_context.sh "{\"$key\":\"${tag}2\",\"prompt\":\"sửa lại nút bấm trong màn hình inventory\",\"cwd\":\"$A\"}"
+  has_mandate "$OUT" && ok "$plat: a new $key gets the mandate again" || fail "$plat: new $key got no mandate: $OUT"
+done
+
 # --- stop: a failing regression test keeps the agent working ---------------------
 mkdir -p "$P/src"; echo "fun ok() = 1" > "$P/src/Core.kt"; echo 'exit 1' > "$P/result.sh"
 cat > "$P/.agents/regression_matrix.active.json" <<'JSON'

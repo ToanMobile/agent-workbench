@@ -17,8 +17,8 @@
 #
 # Once per session (enrich_context.py dedupe_session, state .claude/audit-gate/prompt_seen_<id>):
 # the "Yêu cầu ngầm định", "Bẫy đã gặp" and "Skill phù hợp" lines and the ZERO-SLOP UI MANDATE
-# block are sent only the first time (the Codex / Gemini / Cursor bridge passes no session_id,
-# so nothing is deduplicated there: hooks/agent_bridge.sh);
+# block are sent only the first time (under Codex / Gemini / Cursor too: hooks/agent_bridge.sh hands on
+# session_id / conversation_id);
 # an unchanged injection becomes "(ngữ cảnh DevKit như lượt trước)" (+ the RED→GREEN rule).
 # A compaction (compact_boundary in the transcript) or a new session_id sends everything again.
 # PROMPT_DEDUPE=0 turns it off. Test: hooks/tests/test_prompt_dedupe.sh.

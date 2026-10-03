@@ -25,6 +25,10 @@
 # Hooks that read Claude's transcript (review, test-evidence, claims) are not bridged:
 # the other agents write different transcripts.
 #
+# The prompt payload hands on session_id (Gemini, Codex) or conversation_id (Cursor), so prompt_context.sh
+# sends its once-per-session lines (traps, skills, the ZERO-SLOP mandate) once, as under Claude Code. No
+# transcript_path: without it a compaction is invisible and the full context returns after 20 prompts.
+#
 # Cursor's stop payload carries no session id: regression_gate's per-session loop
 # guard is shared across Cursor chats there (the diff-keyed result cache still works),
 # and Cursor's own loop_limit (default 5) bounds the follow-ups.
@@ -58,7 +62,7 @@ if kind == "shell":
     if isinstance(d.get("cwd"), str) and d["cwd"]:
         out["cwd"] = d["cwd"]  # where the command runs: relative rm targets start here
 elif kind == "prompt":
-    out = {"prompt": d.get("prompt") or ""}
+    out = {"prompt": d.get("prompt") or "", "session_id": d.get("session_id") or d.get("conversation_id") or ""}
 elif kind == "stop":
     out = {"session_id": d.get("session_id") or d.get("conversation_id") or "", "hook_event_name": "Stop"}
 else:
