@@ -134,8 +134,31 @@ for p in "thiết kế lại giao diện màn hình cài đặt" "đổi font ch
   s="$(skills "$p")"
   has "$s" ui-ux-pro-max && ok "design request '$p' → hook shows ui-ux-pro-max" || fail "design request '$p' → hook skills '$s'"
 done
-s="$(skills "app crash khi xoay màn hình")"
-has "$s" ui-ux-pro-max && fail "crash prompt got the design skill: '$s'" || ok "crash prompt → no design skill"
+# ctx <prompt> → the whole text the hook prints (fixture project, no profile, no DevKit traps)
+ctx() {
+  python3 - "$ENRICH" "$1" "$TMP/emptykit" "$TMP/proj" <<'PY' || echo "HELPER-CRASH"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ec", sys.argv[1])
+ec = importlib.util.module_from_spec(spec); spec.loader.exec_module(ec)
+print(ec.compact(ec.enrich_prompt(sys.argv[2], sys.argv[3], sys.argv[4]), sys.argv[4]))
+PY
+}
+# pctx <profile> <prompt> → the same with the real DevKit profile (exclude_skills applies)
+pctx() {
+  mkdir -p "$TMP/p_$1/.agents" && printf '{"profile": "%s"}\n' "$1" > "$TMP/p_$1/.agents/active-profile.json"
+  python3 - "$ENRICH" "$2" "$DEVKIT_DIR" "$TMP/p_$1" <<'PY' || echo "HELPER-CRASH"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ec", sys.argv[1])
+ec = importlib.util.module_from_spec(spec); spec.loader.exec_module(ec)
+print(ec.compact(ec.enrich_prompt(sys.argv[2], sys.argv[3], sys.argv[4]), sys.argv[4]))
+PY
+}
+zs() { printf '%s\n' "$1" | grep -qF "ZERO-SLOP UI MANDATE"; }                       # the mandate is in the hook text
+skl() { printf '%s\n' "$1" | sed -n 's/^- Skill phù hợp: //p' | tr -d ','; }          # its skill line, space separated
+# A prompt that touches the screen gets the design skill and the mandate: a crash on rotation too
+# (it used to be the one UI prompt that got neither; spec docs/plans/ui-context-injection-zero-slop.md).
+o="$(ctx "app crash khi xoay màn hình")"
+has "$(skl "$o")" ui-ux-pro-max && zs "$o" && ok "screen crash prompt → ui-ux-pro-max + ZERO-SLOP" || fail "screen crash prompt → '$o'"
 s="$(skills "sửa lỗi hud bị vỡ layout")"
 case "$s" in *qa-visual*ui-ux-pro-max*) ok "design skill comes after qa-visual (never crowds it out of the top 5)" ;;
   *) fail "skill order '$s' (want qa-visual before ui-ux-pro-max)" ;; esac
@@ -188,6 +211,108 @@ s="$(pskills android "Compose UI bị lag")"
 has "$s" compose-recomp-audit && ok "'Compose UI bị lag' → compose-recomp-audit" || fail "'Compose UI bị lag' → '$s'"
 s="$(pskills android "Jetpack Compose màn hình chính bị giật")"
 has "$s" compose-recomp-audit && ok "'Jetpack Compose … giật' → compose-recomp-audit" || fail "Jetpack Compose jank → '$s'"
+
+# ── 1b. Zero-Slop UI door ────────────────────────────────────────────────────
+# A UI word in the prompt, or ANY prompt on an app profile (android / game / ios / web), switches on
+# UI_INTERACTION + VISUAL_DESIGN, the ZERO-SLOP mandate and ui-ux-pro-max. Elsewhere nothing changes.
+o="$(ctx "sửa lại nút bấm trong màn hình inventory")"
+has "$(skl "$o")" ui-ux-pro-max && zs "$o" && ok "'nút bấm … màn hình' → ui-ux-pro-max + ZERO-SLOP" || fail "inventory prompt → '$o'"
+for p in "gộp card lồng card trong danh sách" "đổi theme tối cho dialog xác nhận" "thêm popup túi đồ cho game" \
+         "chỉnh view đăng nhập" "Compose chưa đúng ý" "canvas bị tràn ra ngoài" "chọn palette mới" "thêm animation mở menu" \
+         "đổi font chữ tiêu đề" "widget thời tiết thiếu icon" "typography chưa cân" "chụp screen rồi so sánh" "ugui bị lệch" \
+         "đổi bảng màu cho app" "UX trang checkout phèn quá"; do
+  o="$(ctx "$p")"
+  zs "$o" && has "$(skl "$o")" ui-ux-pro-max && ok "UI / design word '$p' → mandate + design skill" || fail "UI word '$p' → '$o'"
+done
+# Ambiguous words: only in their UI sense (profile universal and backend: no profile door). Each of these was a real
+# false positive in the review: a SQL view, a Django view, compose.yaml, a Grafana panel, sanctions screening,
+# Dialogflow, a theme_id column, a card number in a payment log.
+for p in "tối ưu build script cho nhanh" "fix lỗi hiệu ứng phụ khi gọi API lưu đơn" "docker compose chậm khi build image" \
+         "sửa lỗi đặt lịch cho app thẩm mỹ viện" "skill nào là lựa chọn tối ưu nhất cho task này?" \
+         "refactor ViewModel lưu cache đơn hàng" "giảm cardinality của metric http_requests" \
+         "cài composer cho dự án PHP" "cardholder bị trùng khi import" \
+         "thêm cột discount vào sql view doanh thu" "sửa Django views trả về 500 khi thiếu token" \
+         "sửa compose.yaml thêm service redis" "chạy compose up -d cho môi trường dev" "thêm panel Grafana đo độ trễ" \
+         "sanctions screening chạy chậm" "tích hợp Dialogflow cho tổng đài" "thêm field theme_id vào bảng user" \
+         "mask số card trong log thanh toán" "sửa dialog state machine của trợ lý" "chụp screenshot để so sánh"; do
+  o="$(ctx "$p")"; b="$(pctx backend "$p")"
+  case "$o$b" in *HELPER-CRASH*) fail "helper crashed on '$p'"; continue ;; esac
+  if zs "$o" || zs "$b" || has "$(skl "$o")" ui-ux-pro-max || has "$(skl "$b")" ui-ux-pro-max; then
+    fail "'$p' is not UI work but got the mandate / design skill"
+  else ok "'$p' → no mandate, no design skill"; fi
+done
+# The profile alone is enough: no UI word in the prompt, still the intents, the mandate and the design skill.
+for prof in android game ios web; do
+  o="$(pctx "$prof" "sửa null trong repository")"
+  l="$(printf '%s\n' "$o" | sed -n 's/^- Loại việc: //p')"
+  case "$l" in *UI_INTERACTION*VISUAL_DESIGN*) li=1 ;; *) li=0 ;; esac
+  [ "$li" = 1 ] && zs "$o" && has "$(skl "$o")" ui-ux-pro-max \
+    && ok "$prof profile, no UI word → UI_INTERACTION + VISUAL_DESIGN + mandate + ui-ux-pro-max" || fail "$prof profile → '$o'"
+done
+o="$(pctx android "sửa null trong repository")"
+has "$(skl "$o")" android-real-device-qa && fail "android profile alone pulled the device-QA skill into a non-UI prompt: $(skl "$o")" \
+  || ok "android profile without a UI word → no android-real-device-qa"
+# The four long game-feel lines belong to the aesthetic words ("hiệu ứng nảy", "juice"…), not to the game profile.
+o="$(pctx game "sửa null trong repository")"
+printf '%s\n' "$o" | grep -qF "Anti-Phèn Visual Standard" && fail "game profile alone adds the game-feel lines: $o" \
+  || ok "game profile, no aesthetic word → no game-feel lines"
+o="$(pctx game "thêm hiệu ứng nảy cho nút mua")"
+printf '%s\n' "$o" | grep -qF "Anti-Phèn Visual Standard" && ok "game profile + aesthetic word → game-feel lines kept" || fail "game-feel lines lost: $o"
+o="$(pctx android "sửa lại nút bấm trong màn hình inventory")"
+has "$(skl "$o")" android-real-device-qa && ok "android + UI word → android-real-device-qa" || fail "android + UI word → '$(skl "$o")'"
+# The mandate is its own block: the "Yêu cầu ngầm định" line stays one short line, the six bullets are lines of their own
+# (dedupe_session drops repeated lines one by one; a bullet glued to another line would be re-sent or orphaned).
+n="$(printf '%s\n' "$o" | grep -c '^• ')"
+printf '%s\n' "$o" | grep '^- Yêu cầu ngầm định:' | grep -qF "ZERO-SLOP" && fail "mandate glued to the requirements line" \
+  || { [ "$n" = 6 ] && ok "mandate = header + 6 bullet lines, apart from the requirements line" || fail "mandate bullets: $n (want 6): $o"; }
+for w in Cardocalypse "Icon Tile" "xám trần" "Spacing" "Tactile Depth" "Touch Target"; do
+  printf '%s\n' "$o" | grep '^• ' | grep -qF "$w" || fail "mandate lost its '$w' bullet"
+done
+# Skill line: at most 5; ui-ux-pro-max is never the one cut, and a tool audit is never the one it replaces.
+for c in "android|Compose UI bị lag|compose-recomp-audit" "game|Unity bị giật GC alloc mỗi frame trong Update|unity-gc-audit" \
+         "android|sửa lỗi hud bị vỡ layout trên màn hình chính|qa-visual"; do
+  prof="${c%%|*}"; rest="${c#*|}"; p="${rest%%|*}"; want="${rest##*|}"
+  s="$(skl "$(pctx "$prof" "$p")")"
+  [ "$(printf '%s\n' $s | wc -l | tr -d ' ')" -le 5 ] && has "$s" "$want" && has "$s" ui-ux-pro-max \
+    && ok "$prof '$p' → $want and ui-ux-pro-max both in the 5 ($s)" || fail "$prof '$p' → '$s' (want $want + ui-ux-pro-max, ≤5)"
+done
+case "$(skl "$(pctx android "sửa lỗi hud bị vỡ layout trên màn hình chính")")" in
+  *qa-visual\ ui-ux-pro-max*) ok "android hud prompt: qa-visual stays right before ui-ux-pro-max" ;;
+  *) fail "android hud prompt: '$(skl "$(pctx android "sửa lỗi hud bị vỡ layout trên màn hình chính")")'" ;; esac
+# Traps: the UI trap terms (click, debounce, 48dp) belong to a prompt that talks about UI. When only the PROFILE
+# says UI they would crowd the 4 trap slots (and dedupe then hides them): a DOCX prompt keeps its own trap.
+mkdir -p "$TMP/p_android/.agents" && cp "$TMP/proj/.agents/instincts.md" "$TMP/p_android/.agents/instincts.md"
+cat >> "$TMP/p_android/.agents/instincts.md" <<'EOF'
+
+### [INSTINCT-F07] Nút mua bị bấm đúp: thiếu debounce và vùng chạm 48dp
+- **Hiện tượng lỗi:** Người dùng double click nút mua, đơn bị tạo hai lần.
+- **Quy tắc phòng ngừa:** Disable nút sau click đầu tiên, debounce 1000 ms, touch target 48dp.
+EOF
+# prefs <profile> <prompt> → the trap ids compact() shows for a project of that profile (fixture traps only)
+prefs() {
+  python3 - "$ENRICH" "$2" "$TMP/emptykit" "$TMP/p_$1" <<'PY'
+import importlib.util, re, sys
+spec = importlib.util.spec_from_file_location("ec", sys.argv[1])
+ec = importlib.util.module_from_spec(spec); spec.loader.exec_module(ec)
+out = ec.compact(ec.enrich_prompt(sys.argv[2], sys.argv[3], sys.argv[4]), sys.argv[4])
+print(" ".join(re.findall(r"Bẫy đã gặp: \[(INSTINCT-[\w-]+)\]", out)))
+PY
+}
+r="$(prefs android "mở file DOCX bị lỗi XML")"
+has "$r" INSTINCT-F48 && ! has "$r" INSTINCT-F07 \
+  && ok "android profile, DOCX prompt → its own trap (F48), not the UI trap F07 ($r)" || fail "android profile DOCX prompt traps: '$r'"
+r="$(prefs android "bấm nút mua 2 lần bị trừ tiền hai lần")"
+has "$r" INSTINCT-F07 && ok "a prompt that talks about UI still gets the UI trap (F07)" || fail "UI prompt lost F07: '$r'"
+# A profile-only UI intent does not lift the 'strong match only' bar of a prompt that names no kind of work.
+python3 - "$ENRICH" <<'PY' && ok "shown_refs: profile-only intents keep the 3-point bar, real intents lift it" || fail "shown_refs bar"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ec", sys.argv[1])
+ec = importlib.util.module_from_spec(spec); spec.loader.exec_module(ec)
+ref = {"title": "[INSTINCT-X] t", "file": "f", "line": 1, "score": 2}
+base = {"matched_instinct_refs": [ref], "detected_intents": ["UI_INTERACTION", "VISUAL_DESIGN"]}
+assert ec.shown_refs({**base, "profile_intents": ["UI_INTERACTION", "VISUAL_DESIGN"]}) == [], "profile-only: weak ref shown"
+assert ec.shown_refs({**base, "profile_intents": []}) == [ref], "real UI intent: weak ref hidden"
+PY
 
 # ── 2. Recall ────────────────────────────────────────────────────────────────
 r="$(refs "mở file DOCX bị lỗi XML")"

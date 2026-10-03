@@ -113,7 +113,35 @@ STOPWORDS = {
     "hiện", "tại", "sau", "trước", "vẫn", "luôn", "hết", "đúng", "sai", "code", "file", "app",
 }
 STOPWORDS = {normalize(w) for w in STOPWORDS}
-NON_TECHNICAL_PHRASES = re.compile(r"(?:lựa chọn|phương án) tối ưu|tối ưu nhất|docker[ -]compose|thẩm mỹ viện")
+NON_TECHNICAL_PHRASES = re.compile(
+    r"(?:lựa chọn|phương án) tối ưu|tối ưu nhất|docker[ -]compose|thẩm mỹ viện"
+    # UI words that mean something else in backend work (the UI door reads p_route):
+    r"|compose(?:\.ya?ml| up)|(?:sql|materialized|django) views?|views\.py|grafana panels?|panels? grafana"
+    r"|(?:credit|debit|payment|bank|gift|sim|sd) cards?|card numbers?|số card|dialog (?:state|manager|system)")
+
+# The UI door (docs/plans/ui-context-injection-zero-slop.md): a UI word in the prompt, or an app
+# profile, switches on UI_INTERACTION + VISUAL_DESIGN, the Zero-Slop mandate and ui-ux-pro-max.
+# mentions() reads UI_KEYWORDS like every keyword: 4+ letters match the start of a word
+# ("canvas" finds "canvasgroup"), up to 3 only the whole word ("ui" is not in "build").
+UI_KEYWORDS = ["giao diện", "màn hình", "nút", "bấm", "button", "tap", "click", "ui", "layout",
+               "hud", "ugui", "canvas", "palette", "widget", "popup", "animation", "typography"]
+# Whole word only: as a word start they would catch ViewModel, cardinality (a metric term), composer (PHP),
+# screenshot / screening, Dialogflow, theme_id, fontconfig.
+# ponytail: a CamelCase UI class (ScreenState, DialogFragment) is missed off the app profiles, and a prompt that
+# only says "layout"/"click" still reads memory layout / ClickHouse as UI (as before): add the phrase to
+# NON_TECHNICAL_PHRASES when one shows up.
+UI_WHOLE_WORDS = re.compile(r"(?<!\w)(?:view|card|compose|screen|panel|dialog|theme|font)s?(?!\w)")
+APP_PROFILES = ("android", "game", "ios", "web")  # any task there may touch the screen
+# One NFR entry, many lines: compact() prints each line on its own so dedupe_session (ONCE_PER_SESSION) can too.
+ZERO_SLOP_MANDATE = "\n".join((
+    "ZERO-SLOP UI MANDATE (Impeccable Standard):",
+    "• Cấm Cardocalypse: Cấm Card lồng Card (Compose/Flutter) và Panel lồng Panel (Unity). Dùng whitespace và subtle divider để làm phẳng layout.",
+    "• Cấm Icon Tile trên Heading: Không bọc icon vào ô vuông bo góc màu nhạt đặt trên tiêu đề.",
+    "• Cấm Màu xám trần & Gradient tím-xanh: Cấm Color.Gray trần (#808080); bắt buộc dùng Tinted Neutrals (pha 3-5% tông chủ đạo).",
+    "• Nhịp điệu Spacing: Cấm 16dp đều chằn chặn; 4-8dp cho item cùng nhóm, 12-16dp nội dung, 24-32dp phân cách section.",
+    "• Game UI Tactile Depth (Unity): Cấm nút phẳng lì kiểu web; bắt buộc có độ dày 3D (9-slice bevel), pressed state scale 0.95 lún 2-4px, cấm font mặc định LiberationSans SDF.",
+    "• Touch Target: Bắt buộc >= 48dp (Mobile) / >= 44px (Web) kèm immediate visual feedback (Ripple/Scale).",
+))
 
 # Technical words the trap entries use for each detected intent — the request says
 # "bấm 2 lần", the entry says "double-click / debounce".
@@ -135,7 +163,8 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
         "matched_instincts": [],
         "injected_nfrs": [],
         "paired_oracle_spec": {},
-        "recommended_skills": []
+        "recommended_skills": [],
+        "profile_intents": []   # intents only the profile switched on: they say nothing about this prompt
     }
 
     # 1. Read Active Profile
@@ -168,12 +197,22 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
             "compile_only_permitted_if": "The root defect itself is a compilation/build failure."
         }
 
-    if mentions(p_lower, ["nút", "click", "bấm", "giao diện", "ui", "màn hình", "layout", "button", "tap"]):
+    aesthetic = mentions(p_route, ["ux", "ui/ux", "thiết kế giao diện", "thiết kế lại giao diện", "thẩm mỹ", "phèn", "bảng màu",
+                                   "typography", "font chữ", "micro-interaction", "juice", "hud", "design system",
+                                   "hiệu ứng nảy", "hiệu ứng động", "hiệu ứng chuyển", "hiệu ứng bấm", "game feel",
+                                   "art bible", "vfx", "shading", "đồ họa"])
+    ui_words = aesthetic or mentions(p_route, UI_KEYWORDS) or bool(UI_WHOLE_WORDS.search(p_route))
+    ui_door = ui_words or dossier["active_profile"] in APP_PROFILES
+    if ui_door:
         dossier["detected_intents"].append("UI_INTERACTION")
+        if not ui_words:
+            dossier["profile_intents"].append("UI_INTERACTION")
         dossier["injected_nfrs"].append("Debounce >= 1000ms + Instant Disable on 1st click + Loading indicator.")
         dossier["injected_nfrs"].append("Touch Target >= 48dp (Mobile) / >= 44px (Web).")
         dossier["injected_nfrs"].append("Design Tokens adherence: Semantic colors from DESIGN.md.")
-        if dossier["active_profile"] == "android":
+        dossier["injected_nfrs"].append(ZERO_SLOP_MANDATE)
+        # The profile alone does not pull the device-QA skill into a prompt about a database.
+        if dossier["active_profile"] == "android" and ui_words:
             dossier["recommended_skills"].append("android-real-device-qa")
 
     if mentions(p_route, ["lag", "chậm", "đơ", "anr", "tối ưu", "hiệu năng", "fps", "treo", "freeze", "xoay",
@@ -253,17 +292,17 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
         dossier["detected_intents"].append("SKILL_AUTHORING")
         dossier["recommended_skills"].append("writing-skills")
 
-    # Visual design only (a crash "khi xoay màn hình" is UI_INTERACTION but needs no palette/font search).
-    # Last, so the top-5 cut drops this one rather than qa-visual / android-real-device-qa.
-    if mentions(p_route, ["ux", "ui/ux", "thiết kế giao diện", "thiết kế lại giao diện", "thẩm mỹ", "phèn", "bảng màu",
-                          "typography", "font chữ", "micro-interaction", "juice", "hud", "design system",
-                          "hiệu ứng nảy", "hiệu ứng động", "hiệu ứng chuyển", "hiệu ứng bấm", "game feel",
-                          "art bible", "vfx", "shading", "đồ họa"]):
+    # Visual design: the UI door (a UI or aesthetic word, an app profile) — the Zero-Slop mandate points at
+    # ui-ux-pro-max. Last, so it follows qa-visual; compact() keeps it inside the 5 skills it prints.
+    if ui_door:
         dossier["detected_intents"].append("VISUAL_DESIGN")
+        if not ui_words:
+            dossier["profile_intents"].append("VISUAL_DESIGN")
         dossier["recommended_skills"].append("ui-ux-pro-max")
-        if dossier["active_profile"] == "game" or mentions(p_lower, ["game", "unity", "godot", "unreal", "blender", "ugui"]):
+        # The four game-feel lines stay with the aesthetic words: the profile alone would tax every game prompt with them.
+        if aesthetic and (dossier["active_profile"] == "game" or mentions(p_lower, ["game", "unity", "godot", "unreal", "blender", "ugui"])):
             dossier["injected_nfrs"].append("Anti-Phèn Visual Standard: Studio-grade aesthetics; no raw unlit primitives or flat single-color boxes.")
-            dossier["injected_nfrs"].append("Game Feel & Juice Engine: Squash & Stretch on tap (0.92x press, 1.08x overshoot release), Trauma-decay Camera Shake (T^2), Hit-stop impact freeze.")
+            dossier["injected_nfrs"].append("Game Feel & Juice Engine: Squash & Stretch tween on tap (0.92x squash, 1.08x overshoot on release), Trauma-decay Camera Shake (T^2), Hit-stop impact freeze.")
             dossier["injected_nfrs"].append("Art Direction & Color Harmony: 60-30-10 palette balance, URP Global Volume (ACES Tonemapping + Bloom threshold <= 1.2 + subtle Vignette).")
             dossier["injected_nfrs"].append("3D Baked Sprites: 3-point studio lighting in Blender for coin/gem/reward icons to give depth with zero extra draw calls.")
 
@@ -288,7 +327,8 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
                 if len(w) >= 3 and normalize(w) not in STOPWORDS}
     said = set(keywords)  # what the user wrote, before the intent's technical terms
     for intent in dossier["detected_intents"]:
-        keywords |= INTENT_TERMS.get(intent, set())
+        if intent not in dossier["profile_intents"]:  # the UI traps (click, 48dp) are no evidence for a prompt with no UI word
+            keywords |= INTENT_TERMS.get(intent, set())
     entries, seen_titles = [], set()
     for instincts_file in instinct_sources(devkit_root, project_root):
         try:
@@ -388,16 +428,20 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
     return dossier
 
 GENERIC_NFRS = 3  # the last three injected_nfrs apply to every task (already in the rules)
+# compact() never lets ui-ux-pro-max push these out of the 5 skills it prints: each answers one stack's question.
+KEEP_SKILLS = ("qa-visual", "compose-recomp-audit", "unity-gc-audit")
 
 
 def shown_refs(dossier, limit=4):
     """The trap entries the hook actually prints for this dossier (compact() and the
     recall log / scripts/memory_stats.py share this one rule)."""
-    intents = [i for i in dossier["detected_intents"] if i != "GENERAL_TASK"]
+    intents = [i for i in dossier["detected_intents"]
+               if i != "GENERAL_TASK" and i not in dossier.get("profile_intents", [])]
     refs = dossier.get("matched_instinct_refs", [])
     if not intents:
-        # No kind of work detected (chit-chat, a general question): two stray word hits
-        # are noise — only a strong match (3+ points, e.g. a title hit) is worth context.
+        # No kind of work detected (chit-chat, a general question; an intent only the profile switched on
+        # is not one): two stray word hits are noise — only a strong match (3+ points, e.g. a title hit)
+        # is worth context.
         refs = [r for r in refs if r["score"] >= 3]
     return refs[:limit]
 
@@ -434,7 +478,9 @@ def log_surfaced(project_root, session, prompt, refs):
 
 def compact(dossier, project_root, limit=4):
     """A few lines for the UserPromptSubmit hook — empty when the request matched no
-    intent and no instinct (questions, chit-chat): no context tax on those."""
+    intent and no instinct (questions, chit-chat): no context tax on those. Except on an
+    app profile (APP_PROFILES): the UI door always matches there, so every prompt gets
+    the UI lines (once per session, dedupe_session) — the price of "no UI word needed"."""
     intents = [i for i in dossier["detected_intents"] if i != "GENERAL_TASK"]
     refs = shown_refs(dossier, limit)
     if not intents and not refs:
@@ -446,16 +492,25 @@ def compact(dossier, project_root, limit=4):
         out.append("- Bắt buộc: chạy test tái hiện lỗi thấy ĐỎ trước khi sửa, XANH sau khi sửa "
                    "(Stop hook chỉ chấp nhận 'đã fix' khi thấy cặp RED→GREEN này).")
     specific = dossier["injected_nfrs"][:-GENERIC_NFRS]
-    if specific:
-        out.append("- Yêu cầu ngầm định: " + " · ".join(specific))
+    short = [n for n in specific if "\n" not in n]
+    if short:
+        out.append("- Yêu cầu ngầm định: " + " · ".join(short))
+    # A multi-line requirement (the Zero-Slop mandate) keeps its lines apart: dedupe_session sends each once per session.
+    out.extend(n for n in specific if "\n" in n)
     for r in refs:
         rel = r["file"]
         if project_root and os.path.realpath(rel).startswith(os.path.realpath(project_root) + os.sep):
             rel = os.path.relpath(os.path.realpath(rel), os.path.realpath(project_root))
         out.append(f"- Bẫy đã gặp: {r['title']} — xem `sed -n '{r['line']},{r['line'] + 12}p' {rel}`")
     skills = [s for s in dossier["recommended_skills"] if s != "incremental-implementation" or intents]
-    if skills:
-        out.append("- Skill phù hợp: " + ", ".join(skills[:5]))
+    shown = skills[:5]
+    if "ui-ux-pro-max" in skills and "ui-ux-pro-max" not in shown:
+        # The Zero-Slop mandate names this skill, so it must not fall off the 5: it takes the place of the last
+        # one that is not a tool audit (the list is deduplicated, so at most 3 of the 5 are).
+        shown.remove(next((s for s in reversed(shown) if s not in KEEP_SKILLS), shown[-1]))
+        shown.append("ui-ux-pro-max")
+    if shown:
+        out.append("- Skill phù hợp: " + ", ".join(shown))
     return "\n".join(out)
 
 
@@ -906,7 +961,8 @@ def context_note(payload, project_dir, session_id):
 # Lines the model keeps once it has read them in this session (2026-09-28: GeelyEx2, 5 days,
 # 492 injections — the same ~700-char requirements line re-sent 43.9k chars, each copy re-read
 # on every API call). "Loại việc" and the RED→GREEN rule are short and stay every time.
-ONCE_PER_SESSION = ("- Yêu cầu ngầm định: ", "- Bẫy đã gặp: ", "- Skill phù hợp: ")
+ONCE_PER_SESSION = ("- Yêu cầu ngầm định: ", "- Bẫy đã gặp: ", "- Skill phù hợp: ",
+                    "ZERO-SLOP UI MANDATE", "• ")  # the last two: the lines of ZERO_SLOP_MANDATE
 SAME_AS_BEFORE = "(ngữ cảnh DevKit như lượt trước)"
 COMPACT_MARKS = (b'"subtype":"compact_boundary"', b'"subtype": "compact_boundary"')  # Claude Code transcript line after a compaction
 NO_TRANSCRIPT_CAP = 20  # without a transcript a compaction is invisible: resend after 20 prompts

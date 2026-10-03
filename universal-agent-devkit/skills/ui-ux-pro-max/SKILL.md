@@ -212,3 +212,37 @@ Then synthesize the design system + detailed searches and implement.
 ## Before Delivering App UI
 
 Read `references/pro-rules.md` and run through its canonical Pre-Delivery Checklist. It covers icon/visual-element discipline, interaction feedback, light/dark contrast, safe-area layout, and accessibility — scoped to native/mobile app UI (iOS/Android/React Native/Flutter).
+
+---
+
+## Anti-AI Slop Engine (Chống Phèn - Adapted from Impeccable)
+
+Tránh tuyệt đối các "tật xấu" phổ biến khiến giao diện do AI sinh ra bị chê là phèn, rập khuôn và giả tạo (AI Design Slop). Áp dụng bộ từ vựng chỉ đạo (Design Verbs) và 6 nguyên tắc cấm:
+
+### 1. Bộ lệnh chỉ đạo thiết kế (Design Verbs — từ chỉ đạo viết giữa câu trong prompt; không đặt `/` ở đầu prompt, vì đó là slash command và hook ngữ cảnh bỏ qua)
+- **`/distill` (Tước bỏ râu ria):** Tước bỏ các lớp Card, Panel, viền lồng nhau thừa thãi; dùng khoảng trắng (whitespace) và kiểu chữ (typography) để phân cấp nội dung thay vì bọc hộp.
+- **`/bolder` (Tăng cá tính & Độ sâu):** Tăng tương phản, dùng typography có phong cách riêng (Arcade/Brutalist/Neo-Tokyo), thêm depth 3D cho nút bấm, phá vỡ bố cục đối xứng nhàm chán.
+- **`/quieter` (Giảm tông tinh tế):** Giảm bớt các hiệu ứng phát sáng (glow neon), hạ độ dày viền màu, loại bỏ các đốm sáng mờ cạnh (radial halo) không có mục đích thông tin.
+- **`/harden` (Bịt kín trường hợp biên Mobile & Game):** Xử lý notch tai thỏ, camera khoét lỗ (cutout), dynamic island, safe-area insets, text tràn viền khi dịch đa ngôn ngữ, tỷ lệ màn hình 20:9 và tablet.
+- **`/typeset` (Cân chỉnh font & Tỷ lệ):** Chọn font có cá tính thay vì font hệ thống mặc định; thiết lập type scale rõ rệt giữa display, headline và body; kiểm tra line-height $\ge 1.5$ cho text đọc.
+- **`/polish` (Gọt giũa hoàn thiện):** Rà soát trạng thái nhấn (pressed/ripple), âm thanh haptic, 9-slice sprite, viền bevel, bán kính bo góc (border radius) đồng nhất.
+
+### 2. 6 Quy tắc cấm AI Slop trên Mobile & Game
+1. **Cấm Cardocalypse (Bệnh bọc thẻ vô tội vạ):**
+   - *Android/Flutter:* Cấm `Card { Card { ... } }` lồng nhau $\ge 2$ tầng. Chỉ bọc thẻ khi khối nội dung có thể tương tác độc lập hoặc kéo thả.
+   - *Game Unity:* Cấm Panel xám mờ lồng Panel viền vàng che kín màn hình gameplay. Ưu tiên Floating HUD với gameplay mờ nhẹ phía sau.
+2. **Cấm Icon Tile trên Heading:**
+   - Cấm tạo ô vuông bo góc nhạt màu (`Box(shape=RoundedCorner(8.dp), background=Primary.copy(0.1f))`) chứa icon nằm chễm chệ ngay trên tiêu đề H3/Title. Hãy để icon hòa cùng dòng văn bản hoặc bỏ hẳn khung trang trí thừa.
+3. **Cấm Bảng màu SaaS & Chữ xám trần:**
+   - Cấm dùng nguyên mẫu tím/hồng mặc định của Material 3 hoặc template web tím-xanh.
+   - Cấm dùng chữ xám trung tính trần (`Color.Gray`, `#808080`). Luôn dùng Semantic Tinted Neutrals (pha nhẹ 3–5% tông màu chủ đạo vào màu xám) để tạo độ trong và sang.
+4. **Cấm Spacing đều chằn chặn (Monotonous Spacing):**
+   - Cấm áp dụng `16dp` cho tất cả mọi view từ trên xuống dưới.
+   - Áp dụng nhịp điệu thị giác (Visual Grouping): 4–8dp cho các item cùng nhóm ngữ nghĩa (icon + text, label + input); 12–16dp cho các phần tử cùng thẻ; 24–32dp cho các section riêng biệt.
+5. **Cấm Nút Game phẳng lì như Web SaaS:**
+   - Trong Game, button phẳng lì không viền, không depth là biểu hiện rẻ tiền nhất của AI.
+   - Mọi nút bấm trong Game bắt buộc phải có độ dày 3D (9-slice bevel/drop shadow) và 4 trạng thái rõ rệt: Normal, Pressed (đang giữ nút: scale $0.95$ kèm lún xuống 2–4px, trả lại khi nhả), Hover/Selected, Disabled.
+6. **Cấm Font mặc định lười biếng:**
+   - *Game Unity:* Cấm dùng font mặc định `LiberationSans SDF` của TextMeshPro.
+   - *Android:* Cấm dùng font hệ thống `Roboto` trần cho các tiêu đề quan trọng. Phải chọn font định vị đúng thể loại game/app (Arcade, Cyberpunk, Minimal, Editorial).
+

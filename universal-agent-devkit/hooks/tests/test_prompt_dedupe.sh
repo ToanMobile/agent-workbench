@@ -72,12 +72,14 @@ for n in 1 2 3; do
 done
 
 # ── partly new context: only the unseen lines are added ─────────────────────────
-hook "$TMP/o3b" s1 "$TMP/tr1.jsonl" "app crash ViewModel mất trạng thái khi xoay"
+# Same screen words as prompts 1-3 (a screen word brings the design skill, so the skill line is the same
+# line), plus a network word: only the requirements line is new.
+hook "$TMP/o3b" s1 "$TMP/tr1.jsonl" "app crash ViewModel mất trạng thái khi xoay màn hình, gọi API lỗi"
 has "$TMP/o3b" "Loại việc" && ok "partly new context: the kind of work stays" || fail "lost 'Loại việc': $(cat "$TMP/o3b")"
 has "$TMP/o3b" "$RED_LINE" && ok "partly new context: RED→GREEN rule present" || fail "RED lost: $(cat "$TMP/o3b")"
 grep -qE "Bẫy đã gặp|Skill phù hợp" "$TMP/o3b" && fail "traps/skills already sent are repeated: $(cat "$TMP/o3b")" \
   || ok "partly new context: traps and skills already sent are not repeated"
-has "$TMP/o3b" "Yêu cầu ngầm định: Non-blocking" && ok "partly new context: a different requirements line is shown" \
+has "$TMP/o3b" "Explicit Timeouts" && ok "partly new context: a different requirements line is shown" \
   || fail "new requirements line hidden: $(cat "$TMP/o3b")"
 
 # ── a trap not yet shown in the session is still shown ─────────────────────────
@@ -114,5 +116,32 @@ has "$TMP/n21" "Yêu cầu ngầm định" && has "$TMP/n21" "Bẫy đã gặp: 
 hook "$TMP/x1" "" "" "app bị crash khi xoay màn hình, ViewModel mất trạng thái"
 hook "$TMP/x2" "" "" "app bị crash khi xoay màn hình, ViewModel mất trạng thái"
 has "$TMP/x2" "Yêu cầu ngầm định" && ok "no session_id: never suppressed" || fail "no session_id suppressed: $(cat "$TMP/x2")"
+
+# ── the Zero-Slop mandate (any prompt on an app profile) is a block of lines, each sent once ─────
+# dedupe_session drops repeated lines ONE BY ONE: a mandate glued onto the "Yêu cầu ngầm định" line would
+# be re-sent whenever that line changes, and bullets on lines of their own would be re-sent for ever
+# while their header is dropped (orphan bullets).
+A="$TMP/app"; mkdir -p "$A/.agents" && printf '{"profile": "android"}\n' > "$A/.agents/active-profile.json"
+: > "$TMP/tr3.jsonl"
+CLAUDE_PROJECT_DIR="$A" hook "$TMP/z1" s9 "$TMP/tr3.jsonl" "sửa lại nút bấm trong màn hình inventory"
+CLAUDE_PROJECT_DIR="$A" hook "$TMP/z2" s9 "$TMP/tr3.jsonl" "sửa lỗi lag khi cuộn danh sách trong màn hình inventory"
+has "$TMP/z1" "ZERO-SLOP UI MANDATE" && [ "$(grep -c '^• ' "$TMP/z1")" = 6 ] \
+  && ok "app profile, 1st prompt: the mandate (header + 6 bullets)" || fail "1st app prompt has no full mandate: $(cat "$TMP/z1")"
+grep -qE "^• |ZERO-SLOP" "$TMP/z2" && fail "2nd prompt (different text) re-sends the mandate / orphan bullets: $(cat "$TMP/z2")" \
+  || ok "app profile, 2nd prompt with other text: no mandate line repeated, no orphan bullet"
+has "$TMP/z2" "Loại việc" && has "$TMP/z2" "$RED_LINE" && ok "2nd app prompt: kind of work and RED→GREEN rule stay" || fail "2nd app prompt lost lines: $(cat "$TMP/z2")"
+printf '%s\n' '{"parentUuid":null,"isSidechain":false,"type":"system","subtype":"compact_boundary","content":"Conversation compacted","level":"info"}' >> "$TMP/tr3.jsonl"
+CLAUDE_PROJECT_DIR="$A" hook "$TMP/z3" s9 "$TMP/tr3.jsonl" "sửa lỗi lag khi cuộn danh sách trong màn hình inventory"
+has "$TMP/z3" "ZERO-SLOP UI MANDATE" && [ "$(grep -c '^• ' "$TMP/z3")" = 6 ] \
+  && ok "after a compact_boundary: the whole mandate again" || fail "mandate not re-sent after compaction: $(cat "$TMP/z3")"
+# The same when only the PROFILE opens the door (no UI word in either prompt, and the texts differ).
+: > "$TMP/tr4.jsonl"
+CLAUDE_PROJECT_DIR="$A" hook "$TMP/y1" s10 "$TMP/tr4.jsonl" "sửa null trong repository"
+CLAUDE_PROJECT_DIR="$A" hook "$TMP/y2" s10 "$TMP/tr4.jsonl" "thêm trường vào repository lưu đơn hàng"
+has "$TMP/y1" "ZERO-SLOP UI MANDATE" && [ "$(grep -c '^• ' "$TMP/y1")" = 6 ] \
+  && ok "profile-only door, 1st prompt: the mandate" || fail "profile-only 1st prompt has no full mandate: $(cat "$TMP/y1")"
+grep -qE "^• |ZERO-SLOP" "$TMP/y2" && fail "profile-only 2nd prompt re-sends the mandate: $(cat "$TMP/y2")" \
+  || ok "profile-only door, 2nd prompt with other text: mandate not repeated"
+has "$TMP/y2" "Loại việc: UI_INTERACTION, VISUAL_DESIGN" && ok "profile-only door: the kind of work is still named" || fail "profile-only 2nd prompt: $(cat "$TMP/y2")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_prompt_dedupe: all passed" || { echo "❌ test_prompt_dedupe: $FAILS failed"; exit 1; }
