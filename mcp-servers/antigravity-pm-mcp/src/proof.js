@@ -179,6 +179,17 @@ export async function prepareAdbTarget(cfg, provider, extra = {}) {
   throw new Error(plan.message || `Khong chup duoc (ke hoach ${plan.action}).`);
 }
 
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", `'"'"'`)}'`;
+}
+
+/** {{out}} is the png path, {{project}} is this checkout. Both are shell-quoted. */
+export function renderShellCommand(command, outFile, projectRoot) {
+  return String(command)
+    .replaceAll('{{out}}', shellQuote(outFile))
+    .replaceAll('{{project}}', shellQuote(projectRoot || ''));
+}
+
 /** Chay 1 provider, tra ve duong dan anh vua tao. */
 async function capture(cfg, provider, outFile, extra = {}) {
   const type = provider.type;
@@ -211,7 +222,7 @@ async function capture(cfg, provider, outFile, extra = {}) {
   }
   if (type === 'shell') {
     if (!provider.command) throw new Error(`provider shell thieu "command"`);
-    const cmd = String(provider.command).replaceAll('{{out}}', outFile);
+    const cmd = renderShellCommand(provider.command, outFile, cfg.projectRoot);
     const r = await runShell(cmd, { timeoutMs: provider.timeoutMs || 180000, cwd: cfg.projectRoot });
     return { cmd, r };
   }

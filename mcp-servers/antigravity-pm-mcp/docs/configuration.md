@@ -127,7 +127,7 @@ Ghi đè tại chỗ gọi: `pm_capture_proof { serial: "emulator-5554" }`. `pm_
 { "type": "shell", "command": "npx playwright screenshot http://localhost:5173 {{out}}" }
 ```
 
-`{{out}}` được thay bằng đường dẫn file đích. Lệnh chạy với `cwd` = gốc project. Exit code khác 0, hoặc file sinh ra không phải PNG/JPEG ⇒ **báo lỗi thẳng**, không nhận làm bằng chứng.
+`{{out}}` được thay bằng đường dẫn file đích, `{{project}}` bằng gốc checkout đang chụp. Cả hai được bọc nháy cho shell. Lệnh chạy với `cwd` = gốc project. Exit code khác 0, hoặc file sinh ra không phải PNG/JPEG ⇒ **báo lỗi thẳng**, không nhận làm bằng chứng.
 
 ### `file` — nhận ảnh agent đã chụp
 

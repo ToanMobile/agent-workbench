@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/config.js';
 import { captureProof } from '../src/proof.js';
@@ -29,6 +30,29 @@ test('provider shell: chay lenh tu khai de sinh anh', async () => {
   assert.equal(out.provider, 'fake');
   assert.equal(out.mime, 'image/png');
   cleanup(dir);
+});
+
+test('provider shell: {{project}} la dung checkout, ke ca duong dan co dau cach', async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-space-'));
+  const dir = path.join(parent, 'my proj');
+  fs.mkdirSync(dir);
+  const png = writeFile(path.join(parent, 'src.png'), PNG_1PX);
+  const seen = path.join(parent, 'seen');
+  writeFile(path.join(dir, '.antigravity-pm.json'), JSON.stringify({
+    proof: {
+      providers: {
+        game: {
+          type: 'shell',
+          command: `cp ${JSON.stringify(png)} {{out}} && printf %s {{project}} > ${JSON.stringify(seen)}`,
+        },
+      },
+    },
+  }));
+  const cfg = loadConfig(dir);
+  const out = await captureProof(cfg, { proofDir: path.join(parent, 'proof'), label: 'game', providerName: 'game' });
+  assert.equal(out.mime, 'image/png');
+  assert.equal(fs.readFileSync(seen, 'utf8'), dir);
+  cleanup(parent);
 });
 
 test('lenh chay xong nhung ra thu khong phai anh => no to, khong lua PM', async () => {
