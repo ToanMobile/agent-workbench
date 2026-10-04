@@ -185,7 +185,7 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
 - UI: tokens from `DESIGN.md`, touch targets ≥48 dp (≥44 px web), immediate feedback, and
   expensive actions disabled/debounced ≥1000 ms after the first tap. Editing a UI file (`*.kt`/`*.java`/`*.xml`,
   `*.swift`, `*.dart`, `*.tsx`/`*.jsx`/`*.vue`/`*.css`, `*.prefab`, `*UI*.cs`) also means Zero-Slop: no card in
-  card or panel in panel, no icon tile above a heading, no bare `Color.Gray`/`#808080` or purple-blue gradient
+  card or panel in panel, no icon tile above a heading, no bare Color.Gray (or any named grey constant)/`#808080` or purple-blue gradient
   (tint neutrals 3–5 %), spacing 4–8 / 12–16 / 24–32 (never 16 everywhere); game: 9-slice bevel, pressed scale
   0.95 with a 2–4 px sink, never `LiberationSans SDF`.
 
