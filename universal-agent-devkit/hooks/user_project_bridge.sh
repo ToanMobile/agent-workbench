@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# OPT-IN HELPER — not wired in hooks/hooks.json and registered by no DevKit script: a user's own
+# Codex / Cursor hook config is pointed at it by hand.
 # User-level Codex/Cursor hook. Runs the project's DevKit bridge when this
 # checkout has .agents/hooks/agent_bridge.sh and does not already register that
 # platform (so a project hooks.json is not executed twice). No-op everywhere else.

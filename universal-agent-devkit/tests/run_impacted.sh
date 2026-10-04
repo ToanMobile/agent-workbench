@@ -20,6 +20,9 @@ else
 fi
 changed="$( { git diff HEAD --name-only --relative -- . ; git ls-files -o --exclude-standard -- . ; printf '%s\n' "$unpushed"; } 2>/dev/null \
   | grep -vE '(^|/)(CHANGELOG|README[^/]*)\.md$' | sort -u)"   # templates and rules are read by tests too
+# Only tests/verification/test_impact_map.sh sets this, and only for --list (which runs nothing): it pretends these
+# files changed (newline separated). A run that executes tests ignores it, so nobody can shrink the gate's selection.
+[ "${1:-}" = "--list" ] && [ -n "${DEVKIT_IMPACT_TEST_CHANGED:-}" ] && changed="$DEVKIT_IMPACT_TEST_CHANGED"
 tests="tests/verification/test_repo_consistency.sh"
 for f in $changed; do
   case "$f" in
@@ -31,6 +34,11 @@ for f in $changed; do
   stem="$(basename "$f")"; stem="${stem%.*}"
   [ -n "$stem" ] && [ "$stem" != "$(basename "$f")" ] \
     && tests="$tests $(grep -l -w -F -- "$stem" tests/*/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')"
+  # …and the tests tests/impact_map.txt declares for a file they exercise without naming it.
+  while read -r glob rest; do
+    case "$glob" in ''|'#'*) continue ;; esac
+    case "$f" in $glob) tests="$tests $rest" ;; esac
+  done < tests/impact_map.txt
 done
 selected="$(printf '%s\n' $tests | sort -u)"
 # --all: every test. Finding none is an error — a glob that matches nothing must not pass.

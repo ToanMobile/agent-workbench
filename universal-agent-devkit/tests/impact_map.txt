@@ -1,0 +1,7 @@
+# tests/impact_map.txt — tests run_impacted.sh adds for a changed file that they EXERCISE WITHOUT NAMING it.
+# (run_impacted.sh selects a test only when its text mentions the changed file's name; a file read through
+# another script slips through. Add a line when a regression shows such a gap; test_impact_map.sh keeps it honest.)
+# <glob, relative to the kit; * also matches />   <test> [<test> ...]
+scripts/context/enrich_context.py   hooks/tests/test_prompt_dedupe.sh hooks/tests/hook_contract_test.sh
+bin/post-fix-gate.py               tests/gates/test_gate_friction.sh
+skills/ui-ux-pro-max/*             tests/verification/test_ui_ux_pro_max_data.sh

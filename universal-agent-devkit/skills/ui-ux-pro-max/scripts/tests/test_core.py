@@ -390,9 +390,15 @@ class TestUnityUguiStack(unittest.TestCase):
                 self.assertGreater(search_stack(query, "unity-ugui", max_results=1)["count"], 0)
 
     def test_threshold_exemption_is_declared_per_stack_not_by_row_count(self):
-        # Same small file registered without the key → the normal floor applies and a weak query abstains.
-        with patch.dict(core.STACK_CONFIG, {"tiny-probe": {"file": core.STACK_CONFIG["unity-ugui"]["file"]}}):
-            self.assertEqual(search_stack("notch", "tiny-probe", max_results=1)["count"], 0)
+        # One small FIXED file (tests/fixtures/stacks/tiny-weak-stack.csv, so the answer cannot flip when the real
+        # stack grows) registered twice: without the key the normal floor applies and the weak query "pitch"
+        # abstains; with "threshold": "none" the same file answers it.
+        fixture = str(Path(__file__).resolve().parent / "fixtures" / "stacks" / "tiny-weak-stack.csv")
+        with patch.dict(core.STACK_CONFIG, {"tiny-probe": {"file": fixture},
+                                            "tiny-exempt": {"file": fixture, "threshold": "none"}}):
+            self.assertEqual(search_stack("pitch", "tiny-probe", max_results=1)["count"], 0)
+            self.assertGreater(search_stack("pitch", "tiny-exempt", max_results=1)["count"], 0)
+        # …and the real small stack stays exempt.
         self.assertGreater(search_stack("notch", "unity-ugui", max_results=1)["count"], 0)
 
 
