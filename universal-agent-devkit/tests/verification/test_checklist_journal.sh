@@ -11,6 +11,7 @@
 #  - a normal save, or an out-of-band write that only ADDS content → no warning
 #  - `agent-kit checklist restore` merges: newer red_proof per row by ts, union of links minus
 #    recorded unlinks, rows added after the rollback kept
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="$DEVKIT_DIR/bin/agent-kit"

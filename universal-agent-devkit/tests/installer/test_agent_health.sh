@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Regression test: bin/agent-health.py must report only what it measured in this run.
 # (H-1: no hardcoded "100% PASS" test counts; L-2: only the active profile's MCPs are required.)
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

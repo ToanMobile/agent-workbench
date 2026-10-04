@@ -3,6 +3,7 @@
 # Every case replays the exact command from the QA report (I-*, O-*, M-*, L-*).
 # Runs against a throwaway COPY of the devkit, so it can also assert that installing
 # never writes into the devkit checkout itself (O10).
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 SRC_DEVKIT="$(cd "$(dirname "$0")/../.." && pwd -P)"

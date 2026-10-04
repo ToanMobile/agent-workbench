@@ -2,6 +2,7 @@
 # Regression test: hooks/block-dangerous-git.sh blocks a `git push` that the last full gate PASS
 # does not cover (bin/push_gate.py), and lets it through once bin/post-fix-gate.py --full passed
 # on that content. Audit 2026-09-28: `git push origin main` passed with no gate run at all.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="${HOOK:-$DEVKIT_DIR/hooks/block-dangerous-git.sh}"; GATE="$DEVKIT_DIR/bin/post-fix-gate.py"

@@ -8,6 +8,7 @@
 # committed change, dirty change, deleted file (clean / dirty run), untracked file, unknown
 # commit, mtime rule, unchanged file. Documented over-reports (extra STALE, never a missed one):
 # a file changed after the run and reverted in the worktree, the old path of a rename.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

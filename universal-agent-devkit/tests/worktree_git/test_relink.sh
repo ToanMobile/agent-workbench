@@ -4,6 +4,7 @@
 # tracked absolute links, the fast-forward deleted them, every guard exited 127).
 # The repair only re-creates links: no installer run, no tracked file or profile change,
 # and nothing at all in a linked worktree, on a file checkout or in an un-migrated tree.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT

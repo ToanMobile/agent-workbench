@@ -6,6 +6,7 @@
 #      guard's row — no duplicate. No guards.json: nothing changes.
 #   B. A test file no suite of the matrix executes is an ⚠️ ORPHAN_TEST row; `post-fix-gate --full`
 #      fails when the current diff ADDS such a file (an existing orphan only warns).
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

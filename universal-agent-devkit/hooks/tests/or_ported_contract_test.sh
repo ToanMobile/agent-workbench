@@ -28,6 +28,7 @@
 # Exit 0 = every contract point holds. Exit 1 = at least one deviation.
 # bash 3.2 compatible.
 # ─────────────────────────────────────────────────────────────────────────────
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -10,6 +10,7 @@
 #    (no REPORTED row, no inbox write), and reports: % of prompts that got a trap or a rule,
 #    the traps never surfaced, and — from what the hook really printed in those sessions —
 #    how often a surfaced trap was then read (Read of that instincts.md range, or sed -n a,b)
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$DEVKIT_DIR/hooks/prompt_context.sh"

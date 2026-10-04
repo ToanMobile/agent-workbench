@@ -6,6 +6,7 @@
 #    tested neither the old nor the new code) and the row stays STALE
 #  - heavy suites stay STALE for the nightly job; STALE_RERUN=0 turns it off
 #  - SessionStart says what it started
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"; RERUN="$DEVKIT_DIR/scripts/testing/stale_rerun.py"

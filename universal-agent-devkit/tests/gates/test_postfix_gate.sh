@@ -4,6 +4,7 @@
 # - impacted, dry-run     -> exit 2 (UNVERIFIED), never PASS
 # - --run-tests, `false`  -> exit 1 (REJECT)
 # - --run-tests, `true`   -> exit 0 (PASS)
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

@@ -6,6 +6,7 @@
 #   - a real acceptance PNG: reports/proof-<yyyyMMdd-HHmmss>.png, PNG bytes, > 8 KB, newer
 #     than the turn's user message.
 # Any other status line is not checked. Never traps the session.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

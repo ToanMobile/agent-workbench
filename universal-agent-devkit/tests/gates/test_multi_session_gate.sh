@@ -3,6 +3,7 @@
 # When multiple agent sessions are active, test execution only runs impacted tests
 # for the current case. Only when checked and confirmed as the final/only active
 # session does --full execute.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -euo pipefail
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -61,16 +62,42 @@ echo "$out" | grep -q '"is_last_active": false' && ok "with S2 active: S1 is NOT
 echo "$out" | grep -q '"other_sessions": \["S2"\]' && ok "  … S2 named in other_sessions" || fail "S2 missing from other_sessions"
 
 # 3. Run gate with --full when S2 is active: should DEFER --full to impacted mode!
-gate_out=$(CLAUDE_PROJECT_DIR="$REPO" python3 "$GATE" --matrix "$REPO/.agents/regression_matrix.active.json" --run-tests --full --session S1 2>&1 || true)
+gate_out=$(CLAUDE_PROJECT_DIR="$REPO" python3 "$GATE" --matrix "$REPO/.agents/regression_matrix.active.json" --run-tests --full --session S1 2>&1) && rc_deferred=0 || rc_deferred=$?
 echo "$gate_out" | grep -q "DevKit Optimization" && ok "multi-session active: --full deferred with optimization notice" || fail "optimization notice missing"
 # A deferred (impacted) run is not acceptance evidence: it must never claim the full-gate verdict.
 ! echo "$gate_out" | grep -q "PASS — ĐỦ ĐIỀU KIỆN" && ok "  … impacted run does NOT print the acceptance verdict" || fail "impacted run printed the acceptance verdict"
 echo "$gate_out" | grep -q "CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU" && ok "  … impacted run says it is NOT acceptance-ready" || fail "impacted verdict missing"
 echo "$gate_out" | grep -q -- "--force-full" && ok "  … downgrade notice names --force-full" || fail "--force-full not named"
+# Acceptance was asked for (--full) and not given: exit 5, never 0 — an agent reading only the exit code must not call it a PASS.
+[ "$rc_deferred" = 5 ] && ok "  … a deferred --full exits 5 (not accepted), not 0" || fail "deferred --full exited $rc_deferred (want 5)"
+json_out=$(CLAUDE_PROJECT_DIR="$REPO" python3 "$GATE" --matrix "$REPO/.agents/regression_matrix.active.json" --run-tests --full --session S1 --json 2>&1 || true)
+echo "$json_out" | grep -q '"accepted": false' && ok "  … --json says accepted: false" || fail "--json accepted flag missing or true on a deferred run"
+# No --full (what the Stop hook runs): the impacted run still exits 0, so a turn can end.
+nofull_out=$(CLAUDE_PROJECT_DIR="$REPO" python3 "$GATE" --matrix "$REPO/.agents/regression_matrix.active.json" --run-tests --session S1 2>&1) && rc_nofull=0 || rc_nofull=$?
+[ "$rc_nofull" = 0 ] && ok "  … without --full (Stop hook) the sibling-session run still exits 0" || fail "run without --full exited $rc_nofull (want 0)"
 
 # 4. S1 with --force-full: bypasses optimization even when S2 is active
-force_out=$(CLAUDE_PROJECT_DIR="$REPO" python3 "$GATE" --matrix "$REPO/.agents/regression_matrix.active.json" --run-tests --full --force-full --session S1 2>&1 || true)
+force_out=$(CLAUDE_PROJECT_DIR="$REPO" python3 "$GATE" --matrix "$REPO/.agents/regression_matrix.active.json" --run-tests --full --force-full --session S1 2>&1) && rc_force=0 || rc_force=$?
 echo "$force_out" | grep -q "FULL_TEST_EXECUTED" && ok "--force-full: forces full execution even with sibling session" || fail "expected full execution"
+[ "$rc_force" = 0 ] && ok "  … and exits 0 when it passes" || fail "--force-full exited $rc_force (want 0)"
+# That full run wrote the receipt proof_gate and the push gate trust. A LATER deferred --full (S2 still active) is
+# "no acceptance now", not "the earlier acceptance is void": it must leave the receipt alone (a first version of
+# exit 5 made the gate delete it).
+RECEIPT="$REPO/.git/postfix-gate/full_pass.json"
+[ -f "$RECEIPT" ] && ok "--force-full wrote the full-pass receipt" || fail "no receipt after --force-full ($RECEIPT)"
+# (captured with $(…) like every other gate run here: the gate heartbeats its --session with its PARENT pid, and a direct
+# child of this shell would leave S1 looking alive to the OWN1 check below)
+_=$(CLAUDE_PROJECT_DIR="$REPO" python3 "$GATE" --matrix "$REPO/.agents/regression_matrix.active.json" --run-tests --full --session S1 2>&1) && rc_again=0 || rc_again=$?
+[ "$rc_again" = 5 ] && [ -f "$RECEIPT" ] && ok "  … a deferred --full (exit 5) leaves that receipt alone" \
+  || fail "deferred --full: rc=$rc_again, receipt $([ -f "$RECEIPT" ] && echo kept || echo DELETED)"
+# "accepted" is true only for a full run that passed — not for an impacted / no --full run that exits 0
+fj=$(CLAUDE_PROJECT_DIR="$REPO" python3 "$GATE" --matrix "$REPO/.agents/regression_matrix.active.json" --run-tests --full --force-full --session S1 --json 2>&1 || true)
+echo "$fj" | grep -q '"accepted": true' && ok "  … --json: accepted is true for the full run that passed" || fail "accepted not true on a passing full run"
+nj=$(CLAUDE_PROJECT_DIR="$REPO" python3 "$GATE" --matrix "$REPO/.agents/regression_matrix.active.json" --run-tests --session S1 --json 2>&1 || true)
+echo "$nj" | grep -q '"accepted": false' && ok "  … --json: accepted is false without --full" || fail "accepted true on a run without --full"
+# POSTFIX_GATE_FULL=1 in the environment is not a request for acceptance (the Stop hook inherits the environment): exit stays 0
+_=$(CLAUDE_PROJECT_DIR="$REPO" POSTFIX_GATE_FULL=1 python3 "$GATE" --matrix "$REPO/.agents/regression_matrix.active.json" --run-tests --session S1 2>&1) && rc_env=0 || rc_env=$?
+[ "$rc_env" = 0 ] && ok "  … POSTFIX_GATE_FULL=1 alone does not turn a deferral into exit 5" || fail "POSTFIX_GATE_FULL=1 run exited $rc_env (want 0)"
 
 # 5. S2 completes / unregisters: now S1 is the final/only active session!
 python3 "$SESSION_LOCK" --unregister --session S2 "$REPO"

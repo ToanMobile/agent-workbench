@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Regression test: `agent-kit learn` — next [INSTINCT-NNN] id, duplicate titles
 # refused, Markdown escaped, never written into the shared DevKit.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

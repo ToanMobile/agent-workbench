@@ -5,6 +5,7 @@
 # nothing could rename a matrix test (2026-10-02: tests/ regrouped into tests/<group>/). git's own rename
 # record re-points the base command; the matrix edit counts as a pure rename (no human-review problem)
 # only when it is EXACTLY that re-pointing — any other edit stays the review problem.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"

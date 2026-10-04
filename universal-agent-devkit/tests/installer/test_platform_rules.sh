@@ -13,6 +13,7 @@
 #     (exclude_agents); a server whose binary is not on PATH is never added.
 #   - A project with its own design system gets a pointer DESIGN.md, not the token table.
 #   - Deprecated command stubs stay while the plugin version is below 1.2.0.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd -P)"

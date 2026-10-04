@@ -8,6 +8,7 @@
 #    Vietnamese phrase ("cửa sổ") is not enough to call an entry relevant.
 #  - the index skips commented-out templates, its `sed -n` commands run from the
 #    project root, and it stays under 20 KB without dropping entries.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

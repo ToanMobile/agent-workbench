@@ -3,6 +3,7 @@
 # (ignored local config copied, DevKit installed with the same profile), a diff that
 # carries the agent's work but not the DevKit setup and applies to the main checkout,
 # and a remove that refuses while uncommitted work would be lost.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

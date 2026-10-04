@@ -6,6 +6,7 @@
 #  - a RED that is only "the API the fix adds does not exist yet" (AttributeError / NameError /
 #    TypeError unexpected keyword naming a symbol the fix diff adds) is no proof → INCONCLUSIVE;
 #    an AttributeError on a real None, or on a name the fix does not add, stays a behavioural RED
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 PROOF="$DEVKIT_DIR/scripts/testing/red_proof.py"; KIT="$DEVKIT_DIR/bin/agent-kit"

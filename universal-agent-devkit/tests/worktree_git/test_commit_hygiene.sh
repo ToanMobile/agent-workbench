@@ -6,6 +6,7 @@
 #    (`Bug: <id>`, checked against guards.json / the checklist when they exist) or says why
 #    there is none (`No-Guard: <reason>`); ~12 car bugs were fixed on 25-26/09 with 0 guards
 #  - the installer never overwrites a project's own commit-msg hook
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="$DEVKIT_DIR/bin/agent-kit"

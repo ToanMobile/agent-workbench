@@ -6,6 +6,7 @@
 #  2. post-fix-gate's Compose / Unity AST linters blocked findings that were already in the
 #     base version of a touched file, unlike every regex layer (split_new: legacy lines
 #     must not block). A NEW finding must still block.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

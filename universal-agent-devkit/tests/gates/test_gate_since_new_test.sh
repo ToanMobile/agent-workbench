@@ -3,6 +3,7 @@
 # after the last verified HEAD) must not call a test file ADDED in <ref>..HEAD an "existing test
 # edited". 2026-09-28: three new test files, committed in the turn, blocked the Stop hook as
 # edited tests — test_change_is_append_only read an empty diff against HEAD as an edit.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"

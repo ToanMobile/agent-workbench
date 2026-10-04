@@ -5,6 +5,7 @@
 #  - dirty run, then a watched file removed → STALE
 #  - control: the file was already deleted when the run was recorded → still PASS
 #  - an old result without `deleted` keeps the old rule (dirty run: a missing file is no hit)
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT

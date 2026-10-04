@@ -3,6 +3,7 @@
 # project reaches it through a symlink. Runs against a throwaway COPY of the devkit.
 #   1. project/.claude/commands is a symlink into DEVKIT/commands
 #   2. the target is a symlinked alias of the devkit (or /tmp vs /private/tmp)
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 SRC_DEVKIT="$(cd "$(dirname "$0")/../.." && pwd -P)"

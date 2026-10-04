@@ -2,6 +2,7 @@
 # Regression test: `agent-kit completion` — the printed script loads in bash, completes
 # commands, profiles (read from the DevKit's profiles/), sub-actions and flags; the zsh
 # form adds bashcompinit; every command in `agent-kit help` is offered.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

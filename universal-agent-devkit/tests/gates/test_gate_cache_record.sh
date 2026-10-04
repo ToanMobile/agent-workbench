@@ -3,6 +3,7 @@
 # is recorded by bin/regression_checklist.py as that earlier run, not as a fresh one.
 # 2026-09-28: every reused row read "exit None" with the reuse's own time, so the checklist
 # showed a run that never happened and no exit code for it.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

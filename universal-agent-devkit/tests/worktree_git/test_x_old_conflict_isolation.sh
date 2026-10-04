@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # test_x_old_conflict_isolation.sh — Verify X_old Conflict Protection for Old vs Fresh Projects
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

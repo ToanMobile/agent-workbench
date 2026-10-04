@@ -10,6 +10,7 @@
 #   - --full, POSTFIX_GATE_FULL=1                 -> full command
 #   - an impacted FAIL is a REJECT; an impacted PASS never becomes the checklist row's PASS
 #   - {gradle_module_tests:<task>}, {pytest_nodes}, {unity_filter} expand to their runner syntax
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

@@ -3,6 +3,7 @@
 # matrix state the Stop gate will really see — adopted or sample, trusted (committed,
 # or byte-identical to a DevKit/generated matrix) or not — instead of calling any
 # .agents/regression_matrix.active.json "active".
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

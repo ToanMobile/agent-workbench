@@ -8,6 +8,7 @@
 #  - bug ledger: ID | description | protecting test | status | evidence
 #  - archive: a bug PASS for ≥ 30 days and ≥ 30 commits since its link moves to
 #    .agents/archive/BUG_ARCHIVE.md (view only — still checked); back in the alert zone when red
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"; KIT="$DEVKIT_DIR/bin/agent-kit"; RC="$DEVKIT_DIR/bin/regression_checklist.py"

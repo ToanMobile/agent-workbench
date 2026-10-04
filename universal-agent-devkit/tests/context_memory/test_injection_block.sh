@@ -9,6 +9,7 @@
 #   - the profile rules (.agents/context/profile-rules.md) follow `agent-kit profile`
 # and every @-import of the block is a real file inside the project (an import through
 # a link out of the project is not loaded by Claude Code / Gemini CLI).
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

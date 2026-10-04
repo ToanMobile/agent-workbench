@@ -5,6 +5,7 @@
 # HEAD: HEAD already holds the fix, so a revert to HEAD changes nothing, every test stays green
 # and is labelled VACUOUS (OfficeReader, 2026-09-28: three bugs PROVEN by red_proof.py were still
 # rejected as "vacuous" after they were committed).
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

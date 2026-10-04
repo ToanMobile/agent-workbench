@@ -2,6 +2,7 @@
 # Regression test: tests/run_impacted.sh picks the tests that name a changed file — from the
 # working tree, new files, AND commits not pushed yet (a commit made inside the turn must not
 # leave the gate testing nothing), plus helpers under tests/ through the tests that source them.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"

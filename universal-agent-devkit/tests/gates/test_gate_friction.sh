@@ -2,6 +2,7 @@
 # Regression (GeelyEx2 sessions 2026-09-27): gate findings that stopped a finished agent
 # or pushed it to rewrite a correct test — the "agent asks the human for nothing" class.
 #  1. assertion_lint: a test whose assertion sits in a same-file helper is not vacuous.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

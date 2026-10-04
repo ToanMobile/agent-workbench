@@ -4,6 +4,7 @@
 # named EVERY file — `cd <repo> && rm -f /tmp/x.log`, `grep -rn … .`, `git diff --patch` — so
 # testsourceset_gate blocked on other sessions' broken modules again and another session's test
 # edit was taken as this session's. A write verb only names the paths of its own segment.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"

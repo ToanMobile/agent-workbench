@@ -8,6 +8,7 @@
 #  - untrusted matrix → the project is skipped and said so
 #  - install/uninstall write/remove the LaunchAgent plist (launchctl injectable for tests);
 #    add/remove keep the project list
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 NIGHTLY="$DEVKIT_DIR/scripts/governance/nightly.py"; GATE="$DEVKIT_DIR/bin/post-fix-gate.py"

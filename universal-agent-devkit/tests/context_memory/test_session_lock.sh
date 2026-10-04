@@ -4,6 +4,7 @@
 # files mid-run, and push_gate then blocked the push. hooks/session_lock.sh: one agent session per checkout (per git
 # dir — a linked worktree is its own checkout). The holder works; another live session is read-only: its
 # Edit/Write/MultiEdit/NotebookEdit and its git-write / post-fix-gate Bash calls are blocked, reads and builds pass.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$DEVKIT_DIR/hooks/session_lock.sh"

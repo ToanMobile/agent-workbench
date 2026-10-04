@@ -29,7 +29,10 @@ never PASS.
 Exit codes: 0 PASS, 1 REJECT, 2 UNVERIFIED (tests not run, matrix untrusted, existing
 test edited, unreadable file, no coverage, bad --diff), 3 nothing to audit,
 4 UNTESTED (everything else passed, but a test exited with its matrix `untested_exit`
-code: it cannot run on this machine — e.g. no Unity Editor).
+code: it cannot run on this machine — e.g. no Unity Editor), 5 NOT ACCEPTED (`--full` was
+asked for but deferred because another session is live: the impacted checks passed, no
+receipt written, the last full one left as it is — re-run in the last session or add
+--force-full).
 
 100% Standard Library — Zero external dependencies.
 """
@@ -3066,16 +3069,27 @@ def _env_float(name, default):
 
 
 def _recorded_seconds() -> dict:
-    """Suite id → seconds of its last recorded run (.agents/regression_status.json)."""
+    """Suite id → seconds the pre-commit gate believes it takes (.agents/regression_status.json): the
+    LONGEST PASS/FAIL run in its history, else its last run. The last run alone made the same commit run a
+    suite or skip it depending on the previous gate run (REG-DK-ALL-01, whose length follows the diff:
+    165 s, 164 s, 23 s, 17 s). A suite with only untested / busy / cached runs has no belief.
+    ponytail: biased towards skipping, and the history window (5 runs) lets a suite that really got faster
+    drift back in after five fast runs; declare the length in the matrix if that ever matters."""
     try:
         items = json.loads((get_project_dir() / ".agents" / "regression_status.json").read_text(encoding="utf-8")).get("items", {})
     except (OSError, ValueError, AttributeError):
         return {}
+
+    def seconds(run):
+        m = re.match(r"^([\d.]+)s$", str((run or {}).get("duration") or ""))
+        return float(m.group(1)) if m and (run or {}).get("status") in ("PASS", "FAIL") else None
+
     out = {}
     for sid, it in items.items():
-        m = re.match(r"^([\d.]+)s$", str(((it or {}).get("last") or {}).get("duration") or ""))
-        if m:
-            out[sid] = float(m.group(1))
+        runs = [seconds(r) for r in [*((it or {}).get("history") or []), (it or {}).get("last")]]
+        runs = [r for r in runs if r is not None]
+        if runs:
+            out[sid] = max(runs)
     return out
 
 
@@ -3501,6 +3515,9 @@ def main():
     impacted_tests = list(regression_tests)   # what the change itself needs (coverage verdicts)
     project_dir = get_project_dir()
     force_reason = force_full_reason(args)
+    # Acceptance was asked for (--full), not a Stop-hook style check: if it is deferred
+    # below, the exit code must say "not accepted" (5), because an agent reading only the code would call 0 a PASS.
+    asked_full = bool(getattr(args, "full", False))   # the flag only: the Stop hook inherits the environment (POSTFIX_GATE_FULL)
     deferred_by = []   # sibling session ids that made this run defer --full (verdict must say so)
     if force_reason and not getattr(args, "force_full", False) and os.environ.get("POSTFIX_GATE_FORCE_FULL") != "1":
         # Multi-session optimization: if sibling sessions are active, downgrade --full to impacted mode ("test đúng case đang làm thôi")
@@ -3974,6 +3991,13 @@ def main():
         verdict_text = tr(
             f"PASS (hoãn --full: phiên {', '.join(deferred_by)} còn hoạt động) — CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU: không ghi receipt; chạy lại ở phiên cuối hoặc thêm --force-full",
             f"PASS (--full deferred: session {', '.join(deferred_by)} still active) — NOT READY FOR ACCEPTANCE: no receipt written; re-run in the last session or add --force-full")
+        if asked_full:
+            # Exit 5 = "not accepted": the checks that ran passed, the acceptance that was asked for did not happen.
+            # The Stop hook never passes --full, so a turn still ends on its impacted run (exit 0).
+            exit_code, verdict_color = 5, YELLOW
+            verdict_text = tr(
+                f"CHƯA NGHIỆM THU (exit 5) — --full bị hoãn: phiên {', '.join(deferred_by)} còn hoạt động; CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU, không ghi receipt: chạy lại ở phiên cuối hoặc thêm --force-full",
+                f"NOT ACCEPTED (exit 5) — --full deferred: session {', '.join(deferred_by)} still active; NOT READY FOR ACCEPTANCE, no receipt written: re-run in the last session or add --force-full")
     print(f"  {BOLD}{tr('KẾT LUẬN CỔNG POST-FIX AUDIT:', 'POST-FIX AUDIT GATE VERDICT:')}{RESET} {verdict_color}{BOLD}{verdict_text}{RESET}")
     print(f"  • {tr('Test hồi quy đạt', 'Regression tests passed')}: {tests_passed}/{len(regression_tests)}" + (tr(" (chưa chạy)", " (not run)") if unverified else "")
           + (tr(f" — {len(impacted_run)} lệnh chỉ chạy test bị ảnh hưởng ({impacted_n} test), lệnh đầy đủ CHƯA chạy",
@@ -3995,7 +4019,7 @@ def main():
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
     partial = not force_reason or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)
-    if run_tests and not impacted_run and (not partial or (exit_code != 0 and not receipt_untested)):
+    if run_tests and not impacted_run and not deferred_by and (not partial or (exit_code != 0 and not receipt_untested)):
         # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
         # suites all passed (2026-09-29) — leaves the last full one as it is
         write_full_pass_receipt(project_dir, exit_code, args.matrix, regression_tests,
@@ -4063,7 +4087,9 @@ def main():
 
     if args.json:
         print(json.dumps({
-            "verdict": verdict_text, "exit_code": exit_code, "files": modified_files,
+            "verdict": verdict_text, "exit_code": exit_code,
+            "accepted": exit_code == 0 and run_tests and not partial and not deferred_by and not impacted_run,   # a full run that passed
+            "files": modified_files,
             "unreadable": unreadable, "regression_tests": regression_tests,
             "matrix_problem": matrix_problem, "tests_touched": tests_touched,
             "tests_touched_other": tests_touched_other, "tests_approved": tests_approved,

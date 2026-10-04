@@ -2,6 +2,7 @@
 # Regression test: `worktree.py status` lists EVERY worktree and flags the ones holding work that is not in
 # the main line, so bringing one worktree back never silently forgets the others (2026-09-30: work done in
 # one worktree was lost when another was gathered; nothing told the user the earlier ones existed).
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 WT="$DEVKIT_DIR/scripts/git/worktree.py"

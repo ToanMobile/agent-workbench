@@ -7,6 +7,7 @@
 #  - the run's commit no longer resolves → STALE (nothing proves the code is the same)
 #  - the gate selected the suite but ran only part of it (impacted) after the PASS → STALE
 #  - a new real run clears it; SessionStart reports the count
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"; RC="$DEVKIT_DIR/bin/regression_checklist.py"

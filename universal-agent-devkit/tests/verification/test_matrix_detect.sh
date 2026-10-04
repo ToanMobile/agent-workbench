@@ -3,6 +3,7 @@
 # project's own test runner replaces the illustrative sample matrices, is trusted by the
 # post-fix gate only while byte-identical to a fresh generation, and is enforced by the
 # Stop-time regression gate.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

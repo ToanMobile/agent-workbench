@@ -8,6 +8,7 @@
 #   - a new session_id, or a compaction in the transcript → everything again
 #   - no transcript (bridged agents) → everything again after 20 prompts
 # bash 3.2 compatible.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$DEVKIT_DIR/hooks/prompt_context.sh"

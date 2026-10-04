@@ -6,6 +6,7 @@
 # as "lacks the task" — its broken src/test passed the gate. The task is derived the way
 # scripts/matrix_detect.py reads testBuildType (comment lines ignored). Fake ./gradlew
 # only: it records its arguments and answers like Gradle; no real build runs.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

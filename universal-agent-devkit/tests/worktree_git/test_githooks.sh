@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Regression test: `agent-kit githooks` — the git pre-commit hook runs the gate's
 # static checks on every commit and never clobbers a project's own hook.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

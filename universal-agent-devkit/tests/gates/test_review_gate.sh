@@ -2,6 +2,7 @@
 # Regression test: hooks/review_gate.sh does not count a symlink (a DevKit hook link such
 # as .claude/hooks/devkit_profile.py) as uncommitted code needing review — a real
 # untracked source file still does.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT

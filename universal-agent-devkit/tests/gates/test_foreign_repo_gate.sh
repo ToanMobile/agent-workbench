@@ -4,6 +4,7 @@
 # hooks/foreign_repo_gate.sh: a session that Edit/Wrote files of ANOTHER repo with the DevKit
 # installed is stopped ONCE, with that repo's gate command; later stops pass. Repos without the
 # DevKit, and edits inside the project, are not its business.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$DEVKIT_DIR/hooks/foreign_repo_gate.sh"

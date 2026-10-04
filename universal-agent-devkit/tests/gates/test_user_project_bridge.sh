@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # user_project_bridge.sh: a user-level hook runs the project bridge only when
 # the checkout has one and does not already register that platform.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 CMD="$DEVKIT_DIR/hooks/user_project_bridge.sh"

@@ -5,6 +5,7 @@
 # and a command clashing with a DevKit one; `uninstall --apply` + `restore-old --apply`
 # must give back exactly the original project (ignoring *_old backups and ledgers),
 # keep the user's hook, and leave no settings entry pointing at a removed hook.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 export DEVKIT_LANG=en   # the assertions below match the English output
 

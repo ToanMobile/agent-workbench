@@ -8,6 +8,7 @@
 #   no link, the reminder instead. AUTO_LINK=0 turns it off.
 # Also: a REPORTED row nobody touched for 14 days → 💤 AUTO_CLOSED (not counted, not
 #   deleted); the same bug prompt again reopens that row.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 PROMPT_HOOK="$DEVKIT_DIR/hooks/prompt_context.sh"; STOP_GATE="$DEVKIT_DIR/hooks/test_evidence_gate.sh"

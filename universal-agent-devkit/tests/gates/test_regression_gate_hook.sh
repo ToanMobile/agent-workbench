@@ -2,6 +2,7 @@
 # Regression test: hooks/regression_gate.sh (Stop hook) blocks finishing while a
 # related regression test fails or a changed source file has no test — only for a
 # project that adopted its own matrix — and never traps the session.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

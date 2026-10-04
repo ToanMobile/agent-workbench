@@ -2,6 +2,7 @@
 # Regression test: bin/push_gate.py lets a push through only when the last full PASS of
 # bin/post-fix-gate.py (receipt head + dirty blobs) covers what the push sends. Audit 2026-09-28:
 # nothing enforced "every push needs the latest gate at exit 0".
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"; PG="$DEVKIT_DIR/bin/push_gate.py"

@@ -2,6 +2,7 @@
 # Regression test: bin/quick-install.sh — a second run updates in place (git pull) instead
 # of nesting a new copy inside the old one; an old non-git copy is moved aside; offline
 # and unreachable cases. Uses a local "agent-workbench" repo as the remote, no network.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 SRC_DEVKIT="$(cd "$(dirname "$0")/../.." && pwd)"

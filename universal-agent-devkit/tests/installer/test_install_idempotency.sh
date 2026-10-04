@@ -3,6 +3,7 @@
 # must be idempotent — the DevKit lives at .agents/devkit (one link, or a copy of
 # AGENTS.md rules/ bin/), nothing is written into the devkit through a link, copies
 # have no dangling links, and devkit-owned files never produce *_old backups.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

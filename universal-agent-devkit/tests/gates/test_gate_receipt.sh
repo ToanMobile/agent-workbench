@@ -7,6 +7,7 @@
 #     recorded the row PASS — a later --full reused that subset as a full PASS;
 #   - the fingerprint was taken after the suites, so code changed during the run was stamped
 #     as tested.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 export VACUITY_REVERT=0
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

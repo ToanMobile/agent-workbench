@@ -2,6 +2,7 @@
 # Regression test: `post-fix-gate --run-tests --full` re-runs every STALE suite of the checklist,
 # not only the suites the diff touches (GeelyEx2 2026-09-26: --full printed PASS "2/2" while the
 # checklist had 143 bug rows "CẦN CHẠY LẠI"). Without --full nothing changes: impacted suites only.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"

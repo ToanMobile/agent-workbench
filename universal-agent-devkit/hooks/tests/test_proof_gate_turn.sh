@@ -10,6 +10,7 @@
 #
 # Usage: bash hooks/tests/test_proof_gate_turn.sh   Exit 0 = all hold. bash 3.2 compatible.
 # ─────────────────────────────────────────────────────────────────────────────
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 HOOKS="$(cd "$(dirname "$0")/.." && pwd)"

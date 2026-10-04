@@ -19,6 +19,7 @@
 #    prompt is recorded whichever agent (Grok, Codex, Gemini, Cursor) ran the hook
 #    (GROK_HOOK_EVENT / camelCase Grok payload / DEVKIT_AGENT). A long
 #    pasted crash log (Vietnamese) and an English report quoting a JSON body still do.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="$DEVKIT_DIR/bin/agent-kit"

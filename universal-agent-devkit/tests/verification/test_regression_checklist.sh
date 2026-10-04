@@ -2,6 +2,7 @@
 # Regression test: living regression checklist written by post-fix-gate.
 # PASS/FAIL comes only from tests the gate actually ran; uncovered changes and
 # recorded bugs are tracked; the gate never audits its own checklist files.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

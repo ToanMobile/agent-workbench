@@ -5,6 +5,7 @@
 #    command; a bug whose evidence names its fix commit gets the revert RED-proof command
 #  - "làm inbox": the inbox items not done yet (seen before or new), to do them all
 #  - red_proof.py --pending proves an old bug by reverting the fix commit its evidence names
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="$DEVKIT_DIR/bin/agent-kit"; PROMPT_HOOK="$DEVKIT_DIR/hooks/prompt_context.sh"

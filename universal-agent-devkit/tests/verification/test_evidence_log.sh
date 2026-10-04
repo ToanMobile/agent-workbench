@@ -6,6 +6,7 @@
 #    git-ignored (a runner can print secrets). `agent-kit clean` never touches it.
 #  - the gate's checklist update waits for the checklist lock (the prompt hook and
 #    `agent-kit bugs` write the same file): no lost rows between two writers.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"

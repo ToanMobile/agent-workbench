@@ -6,6 +6,7 @@
 #                                                               python start-up is ~40 ms of it)
 #   SessionStart (STALE, auto-close, counts)          ≤ 2 s
 #   Stop evidence gate on a proven fix (no test run)  ≤ 5 s
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT

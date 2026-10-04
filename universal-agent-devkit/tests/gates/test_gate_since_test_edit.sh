@@ -4,6 +4,7 @@
 # 2026-09-28: the edited-test check compared against HEAD only, so a weakened test committed after
 # <ref> equalled HEAD and passed silently. Escapes: an append-only change, a commit in the range
 # touching the file with `Test-approved-by:`, and (control) a test ADDED in the range.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"

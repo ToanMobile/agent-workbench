@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Regression test: EN/VI output language (P2-4), web/backend profiles (P2-5) and
 # profile-based skill filtering (P1-5). Installs only into temp projects.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

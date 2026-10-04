@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Regression test: worktree_sandbox.py creation, .worktreeinclude CoW copy, and cleanup
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$DEVKIT_DIR/scripts/git/worktree_sandbox.py"

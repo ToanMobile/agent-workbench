@@ -10,6 +10,7 @@
 #  - a bug whose suite passed is PASS only once PROVEN; before that ⏳ UNPROVEN; VACUOUS shows apart
 #  - Stop: a proven fix starts the proof of this session's bugs in the background, and a bug of
 #    this session whose test is VACUOUS holds the stop
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"

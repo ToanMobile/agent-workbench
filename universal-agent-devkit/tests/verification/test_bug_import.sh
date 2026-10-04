@@ -3,6 +3,7 @@
 # and never reports one as PASS on import: no test → NEEDS_TEST, a test the gate never
 # runs → NOT_IN_MATRIX, a matrix test → NOT_RUN until a real gate run after the import,
 # not fixed → OPEN. The view counts the bugs no regression test guards.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="$DEVKIT_DIR/bin/agent-kit"; GATE="$DEVKIT_DIR/bin/post-fix-gate.py"

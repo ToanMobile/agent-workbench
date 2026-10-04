@@ -9,6 +9,7 @@
 #    records it; ticked lines are ignored; the view lists pending items and their REQ.
 #  - a feature prompt gets the "ghi REQ trước khi code" line; the view path creates an empty
 #    INBOX.md template only when there is none (the hook never does).
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="$DEVKIT_DIR/bin/agent-kit"; GATE="$DEVKIT_DIR/bin/post-fix-gate.py"

@@ -5,6 +5,7 @@
 # (created after the session started, or named in its transcript as a subagent worktreePath) still
 # holds commits or files that are not in the main checkout. Older unreferenced worktrees, worktrees
 # another live session holds, and a session that itself runs in a linked worktree are not its business.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$DEVKIT_DIR/hooks/worktree_merge_gate.sh"

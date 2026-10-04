@@ -4,6 +4,7 @@
 #    FLAKY_RETRY_MAX_S, default 120 s); red then green → the run stays FAIL (the gate still
 #    rejects) and is flagged flaky; the checklist shows 🔁 FLAKY and opens a bug for it.
 #  - a suite that fails twice is FAIL, not flaky; FLAKY_RETRY=0 turns the re-run off.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"

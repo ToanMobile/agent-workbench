@@ -2,6 +2,7 @@
 # Regression test: `agent-kit init .` with no -y/-p/-a (how an agent runs it, no tty) must keep what the
 # project already has — its agents and its profile. 2026-09-30: GeelyEx2, OfficeReader and
 # Goods-Triple each lost MCP entries / a hook / their profile and gained .codex/ + .cursor/.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 P="$(mktemp -d -t devkit-reinit-XXXXXX)"

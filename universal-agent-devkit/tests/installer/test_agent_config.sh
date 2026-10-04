@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Regression test: bin/agent-config.py (agent-kit profile) must write into the project,
 # never into the DevKit, and must never destroy user data when switching profiles.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

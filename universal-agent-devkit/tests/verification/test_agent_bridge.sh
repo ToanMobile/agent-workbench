@@ -2,6 +2,7 @@
 # Regression test: the DevKit gates on OpenAI Codex, Gemini CLI and Cursor —
 # hooks/agent_bridge.sh translates each platform's hook protocol, scripts/agent_hooks.py
 # registers it without touching the project's own hooks, install/uninstall round trip.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

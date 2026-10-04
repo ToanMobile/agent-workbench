@@ -3,6 +3,7 @@
 # sharing a DevKit name moves to .agents/local/<kind>/, the DevKit item is installed,
 # project items with a free name are linked in, and re-installing — also after the
 # DevKit itself was updated — never rewrites the project tier.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 SRC_DEVKIT="$(cd "$(dirname "$0")/../.." && pwd)"

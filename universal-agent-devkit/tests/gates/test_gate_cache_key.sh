@@ -5,6 +5,7 @@
 # changed 44 times in 5 days (projects symlink the live DevKit), so the reuse almost never hit.
 # Also: a receipt written with the old key (gate_sha, no result_format) is never reused, and the
 # receipt still records gate_sha.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

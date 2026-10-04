@@ -5,6 +5,7 @@
 #  2. A suite failed for vacuity (production diff reverted, test still green) was shown as a bare
 #     "FAIL" whose command exits 0 (OfficeReader: 5 blocks, ~25 min).
 #  3. A crashed gate (Python traceback, exit 1, no JSON) read as REJECT with no reason.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"

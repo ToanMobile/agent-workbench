@@ -9,6 +9,7 @@
 #      (an external config file the hook cannot read) skipped the config checks.
 # The allowed half pins that the fix did not turn everyday commands into blocks.
 # Usage: bash hooks/tests/test_git_guard_nested.sh — exit 0 = all cases hold. bash 3.2 compatible.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 HOOK="$(cd "$(dirname "$0")/.." && pwd)/block-dangerous-git.sh"

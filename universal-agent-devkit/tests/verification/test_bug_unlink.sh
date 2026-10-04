@@ -6,6 +6,7 @@
 #    row still maps to it; a suite linked directly by id can be unlinked by its id
 #  - the RED-proof becomes OUTDATED (what it proved changed); the unlink is noted on the row
 #  - unknown bug / test not linked → error, nothing changed
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="$DEVKIT_DIR/bin/agent-kit"
