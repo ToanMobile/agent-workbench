@@ -27,8 +27,8 @@ DEVKIT_LANG="$(devkit_resolve_lang "" "$TARGET")"; export DEVKIT_LANG
 
 die() { echo "✖ githooks: $1" >&2; exit "${2:-1}"; }
 
-case "$ACTION" in install|uninstall|status) ;; *)
-  die "$(L "lệnh không hợp lệ '$ACTION' (install | uninstall | status)" "unknown action '$ACTION' (install | uninstall | status)")" 2 ;;
+case "$ACTION" in install|uninstall|status|state) ;; *)
+  die "$(L "lệnh không hợp lệ '$ACTION' (install | uninstall | status | state)" "unknown action '$ACTION' (install | uninstall | status | state)")" 2 ;;
 esac
 [ -d "$TARGET" ] || die "$(L "không có thư mục: $TARGET" "no such directory: $TARGET")" 2
 git -C "$TARGET" rev-parse --git-dir >/dev/null 2>&1 \
@@ -117,20 +117,30 @@ install_relink_hooks() {
 }
 
 is_ours() { [ -f "$HOOK" ] && grep -qF "$MARKER" "$HOOK"; }
+# git ignores a hook that is not executable ("hint: … was ignored because it's not set as executable"), and a chain
+# line sitting in a comment never runs: neither counts.
+# ponytail: also matches the legacy scripts/git-pre-commit.sh (hooks/session_context.sh and the stubs we write do too);
+# a chain line to a file that no longer exists is not detected. Upgrade when a host with the old path shows up.
+runs_gate() { [ -x "$HOOK" ] && grep -vE '^[[:space:]]*#' "$HOOK" 2>/dev/null | grep -qE "scripts/(git/)?git-pre-commit\.sh"; }
+# One word for tools (agent-health): installed | chained | project-unchained | absent. `status` prints from it too,
+# so there is a single detection of "does the DevKit gate run on this commit".
+pre_commit_state() {
+  if is_ours && [ -x "$HOOK" ]; then echo installed
+  elif ! is_ours && runs_gate; then echo chained
+  elif [ -e "$HOOK" ]; then echo project-unchained
+  else echo absent; fi
+}
 
 case "$ACTION" in
   status)
     n=0; for h in $RELINK_HOOKS; do relink_is_ours "$h" && n=$((n + 1)); done
     echo "• $(L "tự sửa link sau merge/checkout/rebase" "link repair after merge/checkout/rebase"): $n/3 hook"
-    if is_ours; then
-      echo "✔ pre-commit: $(L "đã cài (DevKit)" "installed (DevKit)") — $HOOK"
-    elif [ -e "$HOOK" ] && grep -qE "scripts/(git/)?git-pre-commit\.sh" "$HOOK" 2>/dev/null; then
-      echo "✔ pre-commit: $(L "hook riêng của dự án, có gọi cổng DevKit" "the project's own hook, chaining the DevKit gate") — $HOOK"
-    elif [ -e "$HOOK" ]; then
-      echo "• pre-commit: $(L "có hook riêng của dự án, không phải DevKit" "a project hook exists, not the DevKit's") — $HOOK"
-    else
-      echo "• pre-commit: $(L "chưa cài" "not installed") — $HOOK"
-    fi
+    case "$(pre_commit_state)" in
+      installed) echo "✔ pre-commit: $(L "đã cài (DevKit)" "installed (DevKit)") — $HOOK" ;;
+      chained) echo "✔ pre-commit: $(L "hook riêng của dự án, có gọi cổng DevKit" "the project's own hook, chaining the DevKit gate") — $HOOK" ;;
+      project-unchained) echo "• pre-commit: $(L "có hook riêng của dự án, không phải DevKit" "a project hook exists, not the DevKit's") — $HOOK" ;;
+      *) echo "• pre-commit: $(L "chưa cài" "not installed") — $HOOK" ;;
+    esac
     if msg_is_ours; then
       echo "✔ commit-msg: $(L "đã cài (DevKit)" "installed (DevKit)") — $MSG_HOOK"
     elif msg_is_chained; then
@@ -140,6 +150,9 @@ case "$ACTION" in
     else
       echo "• commit-msg: $(L "chưa cài" "not installed") — $MSG_HOOK"
     fi
+    ;;
+  state)
+    pre_commit_state
     ;;
   install)
     mkdir -p "$HOOKS_DIR" 2>/dev/null

@@ -178,6 +178,15 @@ for p in "có viết test cho 4 bug critical đi" "duyệt, commit merge push v�
   i=$((i + 1)); out="$(hook "$p" "m$i")"
   nothing "task about known bugs '${p:0:40}…' → no row" "$out"
 done
+# 2026-10-04: "bị out update / bị cũ / bị lỗi thời" says a thing is OUTDATED, not broken. A question about
+# dropping Dependabot ("…bỏ ko dùng đúng ko? Vì bị out update r") became a REPORTED row and got the RED-first law.
+i=0
+for p in "là dependabot bỏ ko dùng đúng ko? Vì bị out update r" "dependabot bị out update rồi" \
+         "plugin bị lỗi thời, thay bằng cái khác nhé" "công cụ này bị lạc hậu rồi, bỏ đi nhé" \
+         "thư viện này bị lỗi thời quá" "thư viện bị lỗi thời thay bằng X nhé" "code lỗi thời để lại làm gì"; do
+  i=$((i + 1)); out="$(hook "$p" "o$i")"
+  nothing "outdated, not broken '${p:0:40}…' → no row" "$out"
+done
 # …while a report that also says "bug" still lands.
 i=0
 for p in "fix bug crash khi mở file PDF có mật khẩu" "bug: nút Lưu không phản hồi sau khi đổi ngôn ngữ" \
@@ -191,7 +200,11 @@ for p in "fix bug crash khi mở file PDF có mật khẩu" "bug: nút Lưu khô
          "màn cài đặt lệch bugs/Screenshot 2026-09-25 at 10.23.45.png" \
          "log báo xe bị gì?" "app ko mở được, bị treo ở màn chờ" \
          "app bị crash khi mở PDF, không phải lỗi mạng" "Không phải lỗi mạng đâu, app bị treo ở màn chờ" \
-         "màn hình đen khi vào CarPlay, ko phải bug cũ"; do
+         "màn hình đen khi vào CarPlay, ko phải bug cũ" \
+         "user bị out khỏi tài khoản sau khi đổi mật khẩu" "dữ liệu bị mất sau khi update app" \
+         "danh sách bị cũ, kéo refresh không cập nhật" "token bị hết hạn sau 5 phút" \
+         "đồng hồ bị lỗi thời gian khi đổi múi giờ" "cache bị outdated sau khi đổi tài khoản" \
+         "app bị lỗi thời khoá biểu khi đồng bộ" "màn hình bị lỗi thời trang trí lệch"; do
   i=$((i + 1)); out="$(raw_hook "$(payload "$p" "r$i")")"
   landed "report '${p:0:40}…' → REPORTED row" "$out"
 done

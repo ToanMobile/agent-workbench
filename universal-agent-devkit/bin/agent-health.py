@@ -215,6 +215,32 @@ def instruction_files(target: Path, score: Score):
                 warn_only=True)
 
 
+def git_gate_wiring(target: Path, score: Score):
+    """Does the DevKit pre-commit gate see this project's commits? scripts/git/githooks.sh `state` says:
+    installed / chained pass; a project hook that never calls the gate (OfficeReader's .githooks/pre-commit,
+    2026-10-04: every commit skipped the static checks while health said 100) fails; no hook at all is a
+    choice (--no-githooks), so it is information only and leaves the score alone."""
+    script = BASE_DIR / "scripts" / "git" / "githooks.sh"
+    if not script.is_file():
+        return
+    try:
+        res = subprocess.run(["bash", str(script), "state", str(target)], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return
+    state = res.stdout.strip() if res.returncode == 0 else ""
+    if state in ("installed", "chained"):
+        score.check(True, tr("Cổng pre-commit DevKit chạy trên mọi commit", "The DevKit pre-commit gate runs on every commit"), "")
+    elif state == "project-unchained":
+        score.check(False, "", tr("Hook pre-commit riêng của dự án không gọi cổng DevKit: commit không qua kiểm tĩnh "
+                                  "(chèn `bash .agents/devkit/scripts/git/git-pre-commit.sh \"$@\" || exit 1` vào hook đó; "
+                                  "xem `agent-kit githooks status`)",
+                                  "The project's own pre-commit hook never calls the DevKit gate, so commits skip the static "
+                                  "checks (add `bash .agents/devkit/scripts/git/git-pre-commit.sh \"$@\" || exit 1` to it; "
+                                  "see `agent-kit githooks status`)"))
+    elif state == "absent":
+        info(tr("Chưa có hook pre-commit (agent-kit githooks install) — bỏ qua", "No pre-commit hook (agent-kit githooks install) — skipped"))
+
+
 def project_wiring(target: Path, score: Score):
     """What the project actually runs with — the DevKit's own dirs can be fine while the
     project's hooks are missing, its imports dangle or the gate distrusts its matrix."""
@@ -258,6 +284,7 @@ def project_wiring(target: Path, score: Score):
     score.check(not broken, tr("Không có link hỏng trong .claude/ và .agents/", "No broken links in .claude/ and .agents/"),
                 tr(f"Link hỏng: {broken[:5]}", f"Broken links: {broken[:5]}"))
     instruction_files(target, score)
+    git_gate_wiring(target, score)
     res = subprocess.run([sys.executable, "-c", MATRIX_TRUST_PY, str(BASE_DIR / "bin" / "post-fix-gate.py")],
                          capture_output=True, text=True, cwd=str(target), env={**os.environ, "CLAUDE_PROJECT_DIR": str(target)})
     try:

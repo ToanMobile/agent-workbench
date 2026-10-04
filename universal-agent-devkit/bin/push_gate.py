@@ -16,7 +16,11 @@ ponytail: a file dirty at gate time and left uncommitted (another session's work
 checkout) was in the tested tree but is not pushed — accepted; checking it blocks every push
 from a shared checkout. Upgrade when pushes from shared trees are rare.
 
-CLI: push_gate.py <dir> [<rev>]  → exit 0 covered · 2 not covered (reason on stdout).
+A plain tag push (the guard passes --tag-remote <name> only for one) of commits the remote already has
+uploads nothing new, so it needs no receipt: an old release tag can never contain the commit the last
+gate passed (GeelyEx2 / OfficeReader, 2026-10-04). Any doubt falls back to the normal rule.
+
+CLI: push_gate.py <dir> [<rev>] [--tag-remote <name>]  → exit 0 covered · 2 not covered (reason on stdout).
 100% standard library.
 """
 import json
@@ -36,6 +40,30 @@ APPROVED = "Test-approved-by:"
 def git(cwd, *args):
     r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=5)
     return r.returncode, r.stdout
+
+
+def on_remote_only(top, rev, remote):
+    """True when every commit of rev is reachable from a tip the remote ITSELF advertises now (git ls-remote),
+    not from refs/remotes/* — a ref this repo's agent can write (update-ref, fetch . HEAD:refs/remotes/…) or one
+    gone stale (review 2026-10-04). A name that is not a configured remote (a URL), no network, a git error or a
+    timeout → False, and the normal receipt rule applies."""
+    rc, names = git(top, "remote")
+    if rc != 0 or remote not in names.split():
+        return False
+    try:
+        r = subprocess.run(["git", "-C", top, "ls-remote", "--refs", remote], capture_output=True, text=True,
+                           timeout=10, stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+        tips = [ln.split("\t", 1)[0] for ln in r.stdout.splitlines() if "\t" in ln] if r.returncode == 0 else []
+        if not tips:
+            return False
+        chk = subprocess.run(["git", "-C", top, "cat-file", "--batch-check"], input="\n".join(tips) + "\n",
+                             capture_output=True, text=True, timeout=5)
+        have = [ln.split()[0] for ln in chk.stdout.splitlines() if ln.strip() and not ln.rstrip().endswith("missing")]
+        out = subprocess.run(["git", "-C", top, "rev-list", "-n", "1", rev, "--not", *have],
+                             capture_output=True, text=True, timeout=5)
+        return out.returncode == 0 and not out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def blobs(top, rev, paths):
@@ -88,12 +116,14 @@ def approved(top, rng):
     return rc == 0 and APPROVED in out
 
 
-def check(cwd, rev="HEAD"):
+def check(cwd, rev="HEAD", tag_remote=None):
     """(ok, reason)."""
     rc, top = git(cwd, "rev-parse", "--show-toplevel")
     if rc != 0:
         return True, "not a git repo"
     top = top.strip()
+    if tag_remote and on_remote_only(top, rev, tag_remote):
+        return True, "a tag of commits the remote already has: nothing new is pushed"
     rp = tree_fp.receipt_path(top)
     try:
         with open(rp, encoding="utf-8") as f:
@@ -137,10 +167,16 @@ def check(cwd, rev="HEAD"):
 
 
 def main(argv):
+    argv = list(argv)
+    tag_remote = None
+    if "--tag-remote" in argv:
+        k = argv.index("--tag-remote")
+        tag_remote = argv[k + 1] if k + 1 < len(argv) else None
+        del argv[k:k + 2]
     cwd = argv[1] if len(argv) > 1 else "."
     rev = argv[2] if len(argv) > 2 else "HEAD"
     try:
-        ok, reason = check(cwd, rev)
+        ok, reason = check(cwd, rev, tag_remote)
     except (subprocess.TimeoutExpired, RuntimeError, OSError) as e:
         ok, reason = False, f"không kiểm được biên nhận gate ({e})"
     if not ok:

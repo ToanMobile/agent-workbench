@@ -1768,9 +1768,30 @@ def needs_no_test(rel_file: str) -> bool:
     return (clean.lower().endswith(DOC_EXT) or Path(clean).name in DOC_NAMES
             or clean in AGENT_STATE_FILES or clean.startswith(".agents/local/memory/")
             or re.fullmatch(r"reports/proof-[^/]+\.png", clean) is not None
+            # What the project's tooling writes under reports/ (Goods: its PlayMode screen tour saves
+            # reports/tour-<time>/…), like tree_fp. Never source: a Django app called reports/ keeps its code.
+            # ponytail: a data file a program reads from reports/ also skips; narrow to a pattern when one does.
+            or (clean.startswith("reports/") and Path(clean).suffix.lower() not in profile_source_exts())
             # A tool-written log (pre-push red-patch-gate, GeelyEx2 2026-09-28), like tree_fp's
             # off-screen *.log. ponytail: a .log fixture production code reads also skips.
             or clean.lower().endswith(".log"))
+
+
+# A document a test READS stays a test even as Markdown (OfficeReader: androidTest/assets/test_files/*.md).
+FIXTURE_DIR_NAMES = {"assets", "resources", "fixtures", "testfixtures", "testdata", "test_files", "samples"}
+
+
+def is_test_doc(rel_file: str) -> bool:
+    """A README or a Markdown file under the top-level docs/ that merely sits in a test-named directory (GeelyEx2
+    docs/specs/*.md, OfficeReader app/src/test/snapshots/README.md): not a test, so editing it is not "an
+    existing test edited". Nothing else qualifies: a golden .md, a .log fixture or code under reports/ is still
+    a test (review 2026-10-04: needs_no_test here switched the oracle guard off for them)."""
+    clean = rel_file.replace("\\", "/")
+    parts = clean.lower().split("/")
+    if not clean.lower().endswith(DOC_EXT) or any(p in FIXTURE_DIR_NAMES for p in parts[:-1]):
+        return False
+    # readme.md, not readme_parser_test.md; the TOP-LEVEL docs/ only (tests/docs/test_parser.md is a test)
+    return parts[-1].split(".")[0] == "readme" or parts[0] == "docs"
 
 
 def new_orphan_tests(modified_files, matrix, base_ref) -> tuple:
@@ -3374,7 +3395,7 @@ def main():
     # regression run relies on. New test files are fine (that is the RED test), and so is a
     # test appended to an existing file: no old line changed and no skip marker added.
     prefix = get_project_prefix()
-    tests_touched = [f for f in modified_files if is_test_path(f) and subprocess.run(
+    tests_touched = [f for f in modified_files if is_test_path(f) and not is_test_doc(f) and subprocess.run(
         ["git", "-C", str(get_repo_root()), "cat-file", "-e", f"{base_ref}:{prefix}{f}"],
         capture_output=True).returncode == 0 and not test_change_is_append_only(base_ref, prefix + f)]
     # --since: a test weakened (or deleted) and COMMITTED in <since>..HEAD equals HEAD, so the
@@ -3386,7 +3407,7 @@ def main():
         up = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--verify", "-q", "@{u}"],
                             capture_output=True, text=True)
         upstream = up.stdout.strip() if up.returncode == 0 else ""
-    since_touched = [f for f in since_paths if f not in tests_touched and is_test_path(f)
+    since_touched = [f for f in since_paths if f not in tests_touched and is_test_path(f) and not is_test_doc(f)
                      and not is_devkit_artifact(f) and since_test_weakened(args.since, prefix + f, upstream)]
     tests_touched += since_touched
     # Only THIS session's edits block. On a shared tree another session's in-flight test edit

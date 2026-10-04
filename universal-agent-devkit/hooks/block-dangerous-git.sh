@@ -394,27 +394,55 @@ def solo_branch_rule(sub, args, gdir, allow=False):
             if reason:
                 break
         if not reason:
-            reason = push_gate_rule(vals, gdir)
+            forced = bool(short & {"f", "d"} or long_ & {"--force", "--force-with-lease", "--force-if-includes", "--delete", "--prune"})
+            reason = push_gate_rule(vals, gdir, forced)
     if reason:
         SOLO_HIT.append(reason)
     return reason
 
 
-def push_gate_rule(vals, gdir):
+RETARGETED = [False]   # set once per command, before analyse(): see the assignment above analyse(cmd)
+
+def tag_name(spec):
+    src = spec.partition(":")[0]
+    return src[len("refs/tags/"):] if src.startswith("refs/tags/") else src
+
+def plain_tag_spec(spec, gdir, forced):
+    """A refspec that names a LOCAL TAG ref and nothing else: not forced or deleting, no leading + or :, the
+    destination is empty or that same refs/tags/ ref (a bare `X:X` can land on a remote BRANCH X), the name is
+    not also a branch, and it is a real refs/tags/ entry (show-ref, not rev-parse: ORIG_HEAD, v1~0 resolve)."""
+    if forced or RETARGETED[0] or spec.startswith(("+", ":")):
+        return False
+    name = tag_name(spec)
+    if not name or solo_git(gdir, "show-ref", "--verify", "--quiet", "refs/tags/" + name) != 0:
+        return False
+    if solo_git(gdir, "show-ref", "--verify", "--quiet", "refs/heads/" + name) == 0:
+        return False
+    return spec.partition(":")[2] in ("", "refs/tags/" + name)
+
+def push_gate_rule(vals, gdir, forced=False):
     """A push the last full gate PASS does not cover (bin/push_gate.py; audit 2026-09-28: the
-    rule "every push needs the gate at exit 0" was enforced nowhere). None when covered."""
-    revs = []   # every source the push sends (one push may name several branches); none → HEAD
+    rule "every push needs the gate at exit 0" was enforced nowhere). None when covered. A plain tag
+    push of commits the remote already has is covered (push_gate.py --tag-remote; 2026-10-04)."""
+    revs = []   # (rev, is a plain tag push) per refspec (one push may name several); none → HEAD
+    unresolved = False
     for spec in vals[1:]:
         s = spec.lstrip("+").split(":", 1)[0]
         if s and solo_git(gdir, "rev-parse", "--verify", "-q", s + "^{commit}") == 0:
-            revs.append(s)
+            is_tag = plain_tag_spec(spec, gdir, forced)
+            revs.append(("refs/tags/" + tag_name(spec) if is_tag else s, is_tag))   # the full ref: never a pseudoref
+        else:
+            unresolved = True   # a tag of a tree/blob or an unknown name rides along unchecked: no shortcut at all
+    if unresolved:
+        revs = [(r, False) for r, _ in revs]
     here = os.path.dirname(os.path.realpath(sys.argv[1])) if len(sys.argv) > 1 else ""
     tool = os.path.join(os.path.dirname(here), "bin", "push_gate.py")
     if not gdir or not os.path.isdir(gdir) or not os.path.isfile(tool):
         return "push: không kiểm được biên nhận gate (thư mục repo hoặc bin/push_gate.py không xác định)"
-    for rev in revs or ["HEAD"]:
+    for rev, is_tag in revs or [("HEAD", False)]:
         try:
-            r = subprocess.run([sys.executable, tool, gdir, rev], stdin=subprocess.DEVNULL,
+            r = subprocess.run([sys.executable, tool, gdir, rev] + (["--tag-remote", vals[0]] if is_tag else []),
+                               stdin=subprocess.DEVNULL,
                                capture_output=True, text=True, timeout=20)
         except (OSError, subprocess.SubprocessError) as e:
             return f"push: không kiểm được biên nhận gate ({e})"
@@ -837,6 +865,9 @@ def analyse(text, depth=0, stripped=False):
 _rs = [m.start() for m in re.finditer(r"\brestore\b", cmd)]
 _upto = len(cmd) if not _rs or re.search(r"\b(do|done|eval|xargs|function)\b|\(\)\s*\{", cmd) else _rs[-1]
 CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd[:_upto]))
+# A command that points git at another repository (--git-dir, GIT_DIR, …) makes gdir the wrong one: the
+# plain-tag shortcut is off for it (review 2026-10-04: --git-dir=<other> checked the tag of the wrong repository).
+RETARGETED[0] = bool(re.search(r"--git-dir|--work-tree|\bGIT_(?:DIR|WORK_TREE|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES)\b", cmd))
 reason = analyse(cmd)
 if not reason and not do_backups():
     reason = "không sao lưu được file trước khi restore"

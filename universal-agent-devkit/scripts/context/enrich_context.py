@@ -88,10 +88,12 @@ def mentions(text, keywords):
 # A defect report names what went wrong, not the word "bug": "bị xóa", "bị mất",
 # "không chạy", "hiển thị sai". "bị" + verb is the adversative passive — something
 # happened to the user — except in compounds (thiết bị, chuẩn bị, bị động) and when it
-# is what the change should prevent ("không bị", "tránh bị").
+# is what the change should prevent ("không bị", "tránh bị") or says a tool is plainly obsolete ("bị out
+# update", "bị lỗi thời", "bị lạc hậu": a question about dropping Dependabot, 2026-10-04). Not exempt, because
+# they are reports: "bị cũ" / "bị outdated" (stale data or cache), "bị hết hạn" (an expired token), "lỗi thời gian".
 DEFECT_RE = re.compile(
     r"(?<!thiết )(?<!chuẩn )(?<!trang )(?<!dự )(?<!phòng )(?<!không )(?<!ko )(?<!tránh )(?<!khỏi )"
-    r"(?<!\w)bị(?!\w)(?! động)"
+    r"(?<!\w)bị(?!\w)(?! động)(?!\s+(?:out[ -]?update|outdatedterm)(?!\w))"
     r"|(?<!\w)(?:không|chẳng) (?:chạy|hoạt động|hiện|hiển thị|lên|mở|lưu|nhận|vào|load|tải|phản hồi|"
     r"kết nối|phát|nghe|đóng|tắt|bật)(?!\w)"
     r"|(?<!\w)(?:sai|kẹt|treo|màn hình đen|đen màn hình|mất dữ liệu|mất sạch|hồi quy|broken|wrong|regression)(?!\w)"
@@ -189,8 +191,9 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
     p_route = NON_TECHNICAL_PHRASES.sub(" ", p_lower)
 
     # 2. Detect Intents & Recommend Skills
-    if mentions(p_lower, ["lỗi", "bug", "crash", "văng", "hỏng", "fail", "sửa", "chết", "die"]) \
-            or DEFECT_RE.search(p_lower):
+    p_bug = OUTDATED_RE.sub("outdatedterm", p_lower)
+    if mentions(p_bug, ["lỗi", "bug", "crash", "văng", "hỏng", "fail", "sửa", "chết", "die"]) \
+            or DEFECT_RE.search(p_bug):
         dossier["detected_intents"].append("BUG_FIX")
         dossier["recommended_skills"].extend(["fixbugs", "tdd-workflow", "verification-before-completion"])
         dossier["paired_oracle_spec"] = {
@@ -655,6 +658,14 @@ BUG_EVIDENCE_RE = re.compile(r"(?<![\w-])bugs?/[^\n]{0,200}?\.(?:png|jpe?g|gif|w
 # phải bug" (2026-09-26; measured on 6158 real prompts: the only 2 user prompts it matches).
 # Only that clause goes (to the next , . ; ! ? or line end): "app bị crash khi mở PDF, không phải
 # lỗi mạng" still reports its crash (review 2026-09-26).
+# "lỗi thời" / "lạc hậu" mean OUTDATED: the "lỗi" inside is no defect word (2026-10-04) — but only when the phrase
+# ENDS the clause or is followed by a function word ("bị lỗi thời, …", "lỗi thời rồi", "lạc hậu quá"). "lỗi thời
+# gian / khoá biểu / trang …" is a noun compound ("time error", "timetable error") and stays a report (Antigravity
+# audit: an exclusion list always misses a compound). An unknown continuation is read as a report: the safe side,
+# one extra REPORTED row the user can drop beats a lost bug. Replaced by a private token, not removed: a bare "bị" left
+# behind would read as a defect, and DEFECT_RE skips "bị outdatedterm" only.
+OUTDATED_RE = re.compile(
+    r"(?<!\w)(?:lỗi thời|lạc hậu)(?=\s*(?:[,.;:!?)]|$|(?:rồi|r|quá|lắm|nên|nhé|nhỉ|hết|và|với|vì|do|nhưng|mà|đúng|ko|không|k|thay|để|thì|chắc|thế|nữa|đi|luôn)(?!\w)))")
 NOT_A_REPORT_RE = re.compile(r"(?<!\w)(?:không|ko|chẳng|chả)\s+(?:hỏi|phải|nói)\s+(?:về\s+)?(?:vấn đề|lỗi|bug|bị gì)[^,.;!?\n]*")
 # Asking WHETHER there is a bug reports none (workbench 2026-09-29: "… chạy rất chậm có lỗi gì hay
 # ko?" became a REPORTED row). Only the question words go, the rest still counts: "có lỗi gì không mà
@@ -747,7 +758,7 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
     if not first or first.startswith("<"):
         return ""
     p_norm = normalize(prompt)
-    p_norm = IS_THERE_A_BUG_RE.sub(" ", NOT_A_REPORT_RE.sub(" ", p_norm))
+    p_norm = OUTDATED_RE.sub("outdatedterm", IS_THERE_A_BUG_RE.sub(" ", NOT_A_REPORT_RE.sub(" ", p_norm)))
     p_lower = KNOWN_BUGS_RE.sub(r"\1 ", PATHLIKE_RE.sub(" ", p_norm))
     if not (BUG_EVIDENCE_RE.search(p_norm) or mentions(p_lower, DEFECT_WORDS) or DEFECT_RE.search(p_lower)):
         return ""
