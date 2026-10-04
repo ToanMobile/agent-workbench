@@ -20,7 +20,13 @@ A plain tag push (the guard passes --tag-remote <name> only for one) of commits 
 uploads nothing new, so it needs no receipt: an old release tag can never contain the commit the last
 gate passed (GeelyEx2 / OfficeReader, 2026-10-04). Any doubt falls back to the normal rule.
 
-CLI: push_gate.py <dir> [<rev>] [--tag-remote <name>]  → exit 0 covered · 2 not covered (reason on stdout).
+`git push --tags` / `--all` / `--branches` used to skip the guard altogether (measured 2026-10-04: exit 0 with an
+ungated commit). --all-tags <remote>: every tag must point at a commit the remote already advertises, so it never
+uploads one. --all-branches <remote>: every local branch has nothing new to send (its tip is in the remote branch of
+the same name) or is covered exactly like `git push <remote> <branch>`.
+
+CLI: push_gate.py <dir> [<rev>] [--tag-remote <name>] | --all-tags <name> | --all-branches <name>
+→ exit 0 covered · 2 not covered (reason on stdout).
 100% standard library.
 """
 import json
@@ -42,28 +48,141 @@ def git(cwd, *args):
     return r.returncode, r.stdout
 
 
-def on_remote_only(top, rev, remote):
-    """True when every commit of rev is reachable from a tip the remote ITSELF advertises now (git ls-remote),
-    not from refs/remotes/* — a ref this repo's agent can write (update-ref, fetch . HEAD:refs/remotes/…) or one
-    gone stale (review 2026-10-04). A name that is not a configured remote (a URL), no network, a git error or a
-    timeout → False, and the normal receipt rule applies."""
+def remote_refs(top, remote):
+    """{refname: sha} the remote ITSELF advertises now (git ls-remote), not refs/remotes/* — a ref this repo's agent
+    can write (update-ref, fetch . HEAD:refs/remotes/…) or one gone stale (review 2026-10-04). None when <remote>
+    is not a configured remote name (a URL), there is no network, git fails or times out."""
     rc, names = git(top, "remote")
     if rc != 0 or remote not in names.split():
-        return False
+        return None
+    # ls-remote asks the fetch url; `git push` goes to the push url (remote.<n>.pushurl, pushInsteadOf): when they
+    # differ the answer is about another server (review 2026-10-04).
+    rc1, fetch_url = git(top, "remote", "get-url", remote)
+    rc2, push_url = git(top, "remote", "get-url", "--push", remote)
+    if rc1 != 0 or rc2 != 0 or fetch_url.strip() != push_url.strip():
+        return None
     try:
         r = subprocess.run(["git", "-C", top, "ls-remote", "--refs", remote], capture_output=True, text=True,
                            timeout=10, stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
-        tips = [ln.split("\t", 1)[0] for ln in r.stdout.splitlines() if "\t" in ln] if r.returncode == 0 else []
-        if not tips:
-            return False
-        chk = subprocess.run(["git", "-C", top, "cat-file", "--batch-check"], input="\n".join(tips) + "\n",
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    refs = {}
+    for ln in r.stdout.splitlines():
+        sha, _, name = ln.partition("\t")
+        if name:
+            refs[name] = sha
+    return refs
+
+
+def unpushed(top, commits, remote):
+    """The set of commits reachable from <commits> that the remote does not have, or None when the remote cannot be
+    asked (see remote_refs). A commit c of <commits> is on the remote exactly when c is not in the returned set."""
+    refs = remote_refs(top, remote)
+    if not refs:
+        return None
+    try:
+        chk = subprocess.run(["git", "-C", top, "cat-file", "--batch-check"], input="\n".join(refs.values()) + "\n",
                              capture_output=True, text=True, timeout=5)
         have = [ln.split()[0] for ln in chk.stdout.splitlines() if ln.strip() and not ln.rstrip().endswith("missing")]
-        out = subprocess.run(["git", "-C", top, "rev-list", "-n", "1", rev, "--not", *have],
-                             capture_output=True, text=True, timeout=5)
-        return out.returncode == 0 and not out.stdout.strip()
+        out = subprocess.run(["git", "-C", top, "rev-list", "--stdin"],
+                             input="\n".join(commits) + "\n--not\n" + "\n".join(have) + "\n",
+                             capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
+        return None
+    return set(out.stdout.split()) if out.returncode == 0 else None
+
+
+def toplevel(cwd):
+    """(top, why). Inside a .git directory `rev-parse --show-toplevel` fails although `git push` works there
+    (review 2026-10-04: cwd=.git made every check fail open as "not a git repo"): the work tree is then the parent of
+    a .git dir; a bare repository or any other layout → (None, "no work tree"), never fail-open. (None, None) = not a
+    git repo at all."""
+    rc, top = git(cwd, "rev-parse", "--show-toplevel")
+    if rc == 0 and top.strip():
+        return top.strip(), None
+    rc, gd = git(cwd, "rev-parse", "--absolute-git-dir")
+    if rc != 0:
+        return None, None
+    gd = gd.strip()
+    return (os.path.dirname(gd), None) if os.path.basename(gd) == ".git" else (None, "no work tree")
+
+
+def on_remote_only(top, rev, remote):
+    """True when every commit of rev is on the remote (as the remote itself says). Any doubt → False, and the
+    normal receipt rule applies."""
+    rc, sha = git(top, "rev-parse", "--verify", "-q", rev + "^{commit}")
+    if rc != 0:
         return False
+    missing = unpushed(top, [sha.strip()], remote)
+    return missing is not None and not missing
+
+
+def check_all_tags(cwd, remote):
+    """(ok, reason) for `git push --tags <remote>`: no new commit may ride along."""
+    top, why = toplevel(cwd)
+    if why:
+        return False, f"repository without a work tree here ({why}): cannot find the gate receipt"
+    if top is None:
+        return True, "not a git repo"
+    rc, out = git(top, "for-each-ref", "--format=%(refname)", "refs/tags")
+    if rc != 0:
+        return False, "cannot list the tags"
+    refs = out.split()
+    try:     # one process for every tag (a subprocess per tag took 15 s for 2000 tags and timed out near 6000)
+        chk = subprocess.run(["git", "-C", top, "cat-file", "--batch-check"],
+                             input="".join(f"{r}^{{commit}}\n" for r in refs), capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return False, "cannot read the tags"
+    lines = chk.stdout.splitlines()
+    if chk.returncode != 0 or len(lines) != len(refs):
+        return False, "cannot read the tags"
+    pairs, odd = [], []
+    for ref, ln in zip(refs, lines):
+        (odd if ln.endswith(" missing") else pairs).append((ref[len("refs/tags/"):], ln.split()[0]))
+    if odd:
+        return False, "--tags would send tag(s) that do not point at a commit: " + ", ".join(n for n, _ in odd[:5])
+    if not pairs:
+        return True, "no tags"
+    missing = unpushed(top, [c for _, c in pairs], remote)
+    if missing is None:
+        return False, f"cannot ask the remote \"{remote}\" (not a configured remote name, or no network): nothing says the tags' commits are already there"
+    off = [n for n, c in pairs if c in missing]
+    if off:
+        return False, (f"--tags would send {len(off)} tag(s) of commits the remote does not have ({', '.join(off[:5])}): "
+                       "push the branch first, through the gate, then the tags")
+    return True, "every tag points at a commit the remote already has"
+
+
+def check_all_branches(cwd, remote):
+    """(ok, reason) for `git push --all|--branches <remote>`: each local branch has nothing new to send or is covered."""
+    top, why = toplevel(cwd)
+    if why:
+        return False, f"repository without a work tree here ({why}): cannot find the gate receipt"
+    if top is None:
+        return True, "not a git repo"
+    rc, out = git(top, "for-each-ref", "--format=%(refname)", "refs/heads")
+    if rc != 0:
+        return False, "cannot list the branches"
+    refs_raw = remote_refs(top, remote)
+    refs = refs_raw or {}
+    bad = []
+    for ref in out.split():
+        rc, tip = git(top, "rev-parse", "--verify", "-q", ref + "^{commit}")
+        r_tip = refs.get(ref)
+        if refs_raw and ref not in refs_raw:      # (an empty remote is a first push: the receipt rule decides)
+            bad.append(f"{ref[len('refs/heads/'):]}: the remote has no such branch, --all would create it (1 dev, 1 branch): "
+                       "push it by name or delete it locally")
+            continue
+        if rc == 0 and r_tip and git(top, "cat-file", "-e", r_tip + "^{commit}")[0] == 0 \
+                and subprocess.run(["git", "-C", top, "merge-base", "--is-ancestor", tip.strip(), r_tip],
+                                   capture_output=True, timeout=5).returncode == 0:
+            continue                      # the remote branch of that name already has everything
+        ok, reason = check(top, ref)
+        if not ok:
+            bad.append(f"{ref[len('refs/heads/'):]}: {reason}")
+    return (not bad), "; ".join(bad[:3])
 
 
 def blobs(top, rev, paths):
@@ -118,10 +237,11 @@ def approved(top, rng):
 
 def check(cwd, rev="HEAD", tag_remote=None):
     """(ok, reason)."""
-    rc, top = git(cwd, "rev-parse", "--show-toplevel")
-    if rc != 0:
+    top, why = toplevel(cwd)
+    if why:
+        return False, f"repository without a work tree here ({why}): cannot find the gate receipt"
+    if top is None:
         return True, "not a git repo"
-    top = top.strip()
     if tag_remote and on_remote_only(top, rev, tag_remote):
         return True, "a tag of commits the remote already has: nothing new is pushed"
     rp = tree_fp.receipt_path(top)
@@ -176,7 +296,10 @@ def main(argv):
     cwd = argv[1] if len(argv) > 1 else "."
     rev = argv[2] if len(argv) > 2 else "HEAD"
     try:
-        ok, reason = check(cwd, rev, tag_remote)
+        if rev in ("--all-tags", "--all-branches") and len(argv) > 3:
+            ok, reason = (check_all_tags if rev == "--all-tags" else check_all_branches)(cwd, argv[3])
+        else:
+            ok, reason = check(cwd, rev, tag_remote)
     except (subprocess.TimeoutExpired, RuntimeError, OSError) as e:
         ok, reason = False, f"không kiểm được biên nhận gate ({e})"
     if not ok:

@@ -119,8 +119,8 @@ ABBREV = {
     "checkout": ("--force", ""),
     "switch": ("--force --discard-changes --force-create", "--detach"),
     "rm": ("--force", ""),
-    "push": ("--force --force-with-lease --force-if-includes --delete --mirror --prune --no-verify",
-             "--dry-run --follow-tags --no-verbose --progress"),
+    "push": ("--force --force-with-lease --force-if-includes --delete --mirror --prune --no-verify --all --branches --tags",
+             "--dry-run --follow-tags --no-verbose --progress --atomic --thin --no-thin"),
     "commit": ("--no-verify", "--no-verbose"),
     "merge": ("--no-verify", "--no-verify-signatures"),
     "am": ("--no-verify", "--no-quiet"),
@@ -155,9 +155,17 @@ def config_danger(key, val):
         return "include.path/includeIf nạp file config ngoài, không kiểm được"
     if parts[0] == "alias" and len(parts) > 1:
         return "alias lấy từ biến môi trường, không kiểm được" if val is None else git_danger_from_alias(val)
+    if parts == ["push", "default"] and (val is None or val.lower() == "matching"):
+        return "push.default=matching đẩy mọi nhánh trùng tên với remote"
+    if parts == ["remote", "pushdefault"] or (parts[0] == "branch" and len(parts) > 2 and parts[-1] in ("pushremote", "remote")):
+        return "remote.pushDefault / branch.<b>.pushRemote|remote đổi remote mà git push gửi tới, không kiểm được"
+    if parts[0] == "url" and len(parts) > 2 and parts[-1] in ("insteadof", "pushinsteadof"):
+        return "url.<base>.insteadOf/pushInsteadOf đổi nơi push gửi tới, không kiểm được"
     if parts[0] == "remote" and len(parts) > 2:
-        if parts[-1] == "push" and (val is None or val.startswith(("+", ":"))):
-            return "remote.<tên>.push +refspec / :ref ghi đè hoặc xoá trên remote"
+        if parts[-1] == "pushurl":
+            return "remote.<tên>.pushurl đổi máy chủ mà git push gửi tới, không kiểm được"
+        if parts[-1] == "push":
+            return "remote.<tên>.push đổi những ref mà git push gửi (cả refspec không glob), không kiểm được"
         if parts[-1] == "mirror" and (val is None or val.lower() not in ("false", "no", "off", "0", "")):
             return "remote.<tên>.mirror = push --mirror ghi đè/xoá trên remote"
     return None
@@ -319,7 +327,38 @@ BRANCH_LIST_SHORT = set("dDmMlaruv")
 BRANCH_LIST_LONG = {"--delete", "--move", "--list", "--all", "--remotes", "--contains", "--no-contains",
                     "--merged", "--no-merged", "--points-at", "--show-current", "--set-upstream-to",
                     "--unset-upstream", "--edit-description", "--format", "--sort", "--column", "--verbose"}
-PUSH_OPTS_WITH_ARG = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
+PUSH_OPTS_WITH_ARG = {"-o", "--push-option", "--repo", "--receive-pack", "--exec", "--recurse-submodules"}
+LONG_PUSH_ARG_OPTS = ("--push-option", "--repo", "--receive-pack", "--exec", "--recurse-submodules")
+
+def push_arg_option(a):
+    """The option when `a` takes its value in the NEXT token (-o X, --repo X, --recurse-submodules mode …): the exact
+    name or a UNIQUE abbreviation git accepts (--recurse, --rep). An ambiguous prefix is an error in git: left alone."""
+    if a == "-o":
+        return a
+    if not a.startswith("--") or "=" in a or len(a) < 3:
+        return None
+    hits = [o for o in LONG_PUSH_ARG_OPTS if o.startswith(a)]
+    return hits[0] if len(hits) == 1 else None
+
+def solo_out(gdir, *args):
+    """Stdout (stripped) of a read-only git query run in gdir; empty when it cannot run or fails."""
+    if not gdir or not os.path.isdir(gdir):
+        return ""
+    try:
+        r = subprocess.run(["git", "-C", gdir, *args], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return ""
+
+def default_push_remote(gdir):
+    """The remote a push with no remote named goes to: branch.<b>.pushRemote, remote.pushDefault, branch.<b>.remote,
+    then origin (the order git uses). The hook used to assume origin (a repo whose remote is called github)."""
+    cur = solo_out(gdir, "symbolic-ref", "--short", "-q", "HEAD")
+    for key in ((f"branch.{cur}.pushRemote",) if cur else ()) + ("remote.pushDefault",) + ((f"branch.{cur}.remote",) if cur else ()):
+        val = solo_out(gdir, "config", "--get", key)
+        if val:
+            return val
+    return "origin"
 
 def solo_git(gdir, *args):
     """Exit code of a read-only git query run in gdir; None when it cannot run."""
@@ -349,6 +388,8 @@ def solo_branch_rule(sub, args, gdir, allow=False):
     """allow (the user asked for a branch) lifts the new-branch checks, never the push of
     <src>:<dst> that the local <dst> does not hold."""
     args = drop_redirects(args)
+    if sub == "push":
+        args = expand_abbrev(sub, args)   # git accepts --tag, --al, --b: the checks below must see the full names
     long_ = set(a.split("=", 1)[0] for a in args if a.startswith("--"))
     short = short_flags(args)
     pos = [a for a in args if not a.startswith("-")]
@@ -363,16 +404,23 @@ def solo_branch_rule(sub, args, gdir, allow=False):
         reason = f"branch {pos[0]} tạo nhánh mới"
     elif sub == "worktree" and pos[:1] == ["add"]:
         reason = "worktree add tạo worktree + nhánh mới"
-    elif sub == "push" and not long_ & {"--all", "--branches", "--tags", "--mirror"}:
-        vals, k = [], 0
+    elif sub == "push" and "--mirror" not in long_:
+        vals, k, repo_opt = [], 0, None
         while k < len(args):
-            if args[k] in PUSH_OPTS_WITH_ARG:
+            a = args[k]
+            full = push_arg_option(a)
+            if full:
+                if full == "--repo" and k + 1 < len(args):
+                    repo_opt = args[k + 1]
                 k += 2
                 continue
-            if not args[k].startswith("-"):
-                vals.append(args[k])
+            if a.startswith("--repo="):
+                repo_opt = a.split("=", 1)[1]
+            if not a.startswith("-"):
+                vals.append(a)
             k += 1
-        for spec in vals[1:]:
+        specs = vals if repo_opt else vals[1:]      # with --repo every positional is a refspec
+        for spec in specs:
             if ":" not in spec or spec.startswith(("+", ":")):
                 continue
             src, dst = spec.split(":", 1)
@@ -393,15 +441,16 @@ def solo_branch_rule(sub, args, gdir, allow=False):
                           "(repo/thư mục hoặc nguồn không xác định)")
             if reason:
                 break
-        if not reason:
+        if not reason and not ("--dry-run" in long_ or "n" in short):     # a dry run uploads nothing
             forced = bool(short & {"f", "d"} or long_ & {"--force", "--force-with-lease", "--force-if-includes", "--delete", "--prune"})
-            reason = push_gate_rule(vals, gdir, forced)
+            reason = push_gate_rule(vals, gdir, forced, bool(long_ & {"--all", "--branches"}), "--tags" in long_, repo_opt)
     if reason:
         SOLO_HIT.append(reason)
     return reason
 
 
-RETARGETED = [False]   # set once per command, before analyse(): see the assignment above analyse(cmd)
+RETARGETED = [False]   # a --git-dir/--work-tree option or a GIT_DIR-like assignment was seen earlier in this command line
+RETARGET_ENV = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"}
 
 def tag_name(spec):
     src = spec.partition(":")[0]
@@ -420,34 +469,55 @@ def plain_tag_spec(spec, gdir, forced):
         return False
     return spec.partition(":")[2] in ("", "refs/tags/" + name)
 
-def push_gate_rule(vals, gdir, forced=False):
+def push_gate_rule(vals, gdir, forced=False, all_branches=False, all_tags=False, repo_opt=None):
     """A push the last full gate PASS does not cover (bin/push_gate.py; audit 2026-09-28: the
     rule "every push needs the gate at exit 0" was enforced nowhere). None when covered. A plain tag
     push of commits the remote already has is covered (push_gate.py --tag-remote; 2026-10-04)."""
+    if RETARGETED[0]:
+        # --git-dir / --work-tree / GIT_DIR make gdir the wrong repository: the receipt checked is not the one pushed from
+        return "push với --git-dir/--work-tree/GIT_DIR: hook không biết repo nào gửi đi — đẩy riêng và dùng git -C <thư mục>"
     revs = []   # (rev, is a plain tag push) per refspec (one push may name several); none → HEAD
     unresolved = False
-    for spec in vals[1:]:
+    for spec in (vals if repo_opt else vals[1:]):
         s = spec.lstrip("+").split(":", 1)[0]
-        if s and solo_git(gdir, "rev-parse", "--verify", "-q", s + "^{commit}") == 0:
-            is_tag = plain_tag_spec(spec, gdir, forced)
-            revs.append(("refs/tags/" + tag_name(spec) if is_tag else s, is_tag))   # the full ref: never a pseudoref
-        else:
-            unresolved = True   # a tag of a tree/blob or an unknown name rides along unchecked: no shortcut at all
+        if not s:
+            continue                            # :ref deletes are refused by the danger rule
+        if re.search(r"[*?\[]", s):            # a glob names many refs: only the two whole-namespace globs map to a sweep
+            if s == "refs/heads/*":
+                all_branches = True
+            elif s == "refs/tags/*":
+                all_tags = True
+            else:
+                return f"push {spec}: refspec có ký tự đại diện, không kiểm được những ref nào sẽ đi"
+            continue
+        if solo_git(gdir, "rev-parse", "--verify", "-q", s + "^{commit}") != 0:
+            if solo_git(gdir, "rev-parse", "--verify", "-q", s) == 0:
+                # an object that is not a commit (a tree, a blob): its content would ride along unchecked
+                return f"push {spec}: không phải commit (tree/blob), không kiểm được nội dung sắp đẩy"
+            unresolved = True   # a name nobody here can resolve (a $b, a $(…) placeholder, a typo): what git sends is unknown,
+            continue            # so no tag shortcut anywhere (review round 2: v1 plus an unknown name sent main ungated)
+        is_tag = plain_tag_spec(spec, gdir, forced)
+        revs.append(("refs/tags/" + tag_name(spec) if is_tag else s, is_tag))   # the full ref: never a pseudoref
     if unresolved:
         revs = [(r, False) for r, _ in revs]
+    # --repo=<name> names it; otherwise the first positional; otherwise the default remote git would use
+    remote = repo_opt or (vals[0] if vals else default_push_remote(gdir))
+    sweeps = ([["--all-branches", remote]] if all_branches else []) + ([["--all-tags", remote]] if all_tags else [])
+    if not revs and not sweeps:
+        revs = [("HEAD", False)]
     here = os.path.dirname(os.path.realpath(sys.argv[1])) if len(sys.argv) > 1 else ""
     tool = os.path.join(os.path.dirname(here), "bin", "push_gate.py")
     if not gdir or not os.path.isdir(gdir) or not os.path.isfile(tool):
         return "push: không kiểm được biên nhận gate (thư mục repo hoặc bin/push_gate.py không xác định)"
-    for rev, is_tag in revs or [("HEAD", False)]:
+    jobs = [[rev] + (["--tag-remote", remote] if is_tag else []) for rev, is_tag in revs] + sweeps
+    for job in jobs:
         try:
-            r = subprocess.run([sys.executable, tool, gdir, rev] + (["--tag-remote", vals[0]] if is_tag else []),
-                               stdin=subprocess.DEVNULL,
-                               capture_output=True, text=True, timeout=20)
+            r = subprocess.run([sys.executable, tool, gdir] + job, stdin=subprocess.DEVNULL,
+                               capture_output=True, text=True, timeout=30)
         except (OSError, subprocess.SubprocessError) as e:
             return f"push: không kiểm được biên nhận gate ({e})"
         if r.returncode != 0:
-            return f"push {rev} chưa qua gate: " + ((r.stdout or r.stderr).strip() or f"push_gate exit {r.returncode}")
+            return f"push {job[0]} chưa qua gate: " + ((r.stdout or r.stderr).strip() or f"push_gate exit {r.returncode}")
     return None
 
 RESTORE_FLAGS = {"--worktree", "-W", "--staged", "-S", "--quiet", "-q", "--progress", "--no-progress"}
@@ -558,6 +628,8 @@ def analyse_simple(tokens, depth):
             break
     if i < len(tokens) and tokens[i] in ("export", "declare", "typeset"):
         assigns.update(a.split("=", 1) for a in tokens[i + 1:] if "=" in a and not a.startswith("-"))
+    if RETARGET_ENV & set(assigns):
+        RETARGETED[0] = True
     reason = env_config_danger(assigns) if assigns else None
     if reason:
         return reason
@@ -648,6 +720,8 @@ def analyse_simple(tokens, depth):
         if reason:
             return f"alias {rest[j]} → {reason}"
     relocated = any(o.split("=", 1)[0] in ("-C", "--git-dir", "--work-tree") for o in rest[:j])
+    if any(o.split("=", 1)[0] in ("--git-dir", "--work-tree") for o in rest[:j]):
+        RETARGETED[0] = True
     if rest[j] == "restore" and not relocated and backup_then_allow_restore(rest[j + 1:]):
         return None
     if hooks_off and rest[j] in ("commit", "merge", "am", "cherry-pick", "revert"):
@@ -865,9 +939,7 @@ def analyse(text, depth=0, stripped=False):
 _rs = [m.start() for m in re.finditer(r"\brestore\b", cmd)]
 _upto = len(cmd) if not _rs or re.search(r"\b(do|done|eval|xargs|function)\b|\(\)\s*\{", cmd) else _rs[-1]
 CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd[:_upto]))
-# A command that points git at another repository (--git-dir, GIT_DIR, …) makes gdir the wrong one: the
-# plain-tag shortcut is off for it (review 2026-10-04: --git-dir=<other> checked the tag of the wrong repository).
-RETARGETED[0] = bool(re.search(r"--git-dir|--work-tree|\bGIT_(?:DIR|WORK_TREE|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES)\b", cmd))
+# (RETARGETED is set from the parsed tokens in analyse_simple: a regex over the raw text was beaten by GIT_""DIR.)
 reason = analyse(cmd)
 if not reason and not do_backups():
     reason = "không sao lưu được file trước khi restore"
