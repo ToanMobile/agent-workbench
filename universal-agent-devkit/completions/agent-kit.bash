@@ -38,7 +38,7 @@ _agent_kit() {
       if [ "${COMP_CWORD}" -eq 2 ]; then
         COMPREPLY=( $(compgen -W "add diff remove list" -- "${cur}") )
       elif [ "${COMP_WORDS[2]}" = "add" ] && [[ "${cur}" == -* ]]; then
-        COMPREPLY=( $(compgen -W "--base= --profile= --no-init" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "--base= --profile= --no-init --share-memory" -- "${cur}") )
       else
         COMPREPLY=( $(compgen -d -- "${cur}") )
       fi ;;

@@ -2,7 +2,7 @@
 """worktree.py — one git worktree per parallel agent, set up like the main checkout.
 
 Usage (normally `agent-kit worktree …`, run inside the repo):
-  worktree.py add <path> [branch] [--base=REF] [--profile=ID] [--no-init]
+  worktree.py add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory]
   worktree.py diff <path> [--with-checklist]   the worktree's own changes as a binary patch
   worktree.py remove <path>    remove it once nothing of its work would be lost
   worktree.py list
@@ -18,9 +18,11 @@ DevKit installer with the main checkout's profile, agents and mode, then records
 that setup left in `git status` — file by file, with a content fingerprint — in the
 worktree's own git dir. Hook state (.claude/audit-gate) and the gate report
 (<git dir>/postfix-gate) are per worktree already. Claude Code's auto-memory
-(.claude/settings.local.json autoMemoryDirectory, which the installer points at the
-worktree's own empty folder) is pointed at the main checkout's, so a note saved in a
-worktree is not lost with it.
+(.claude/settings.local.json autoMemoryDirectory) stays the worktree's OWN folder, as the
+installer sets it. With --share-memory it is pointed at the main checkout's folder instead,
+so a note saved in a worktree survives it; every worktree then shares ONE MEMORY.md: two
+agents saving at once overwrite each other, and what one agent saves (even after reading
+untrusted content) reaches every later session. Off by default for that reason.
 
 diff: everything that differs from the recorded setup — commits since the base and
 uncommitted edits — as one patch against the base, DevKit files left out. The checklist
@@ -368,7 +370,7 @@ def copy_build_inputs(main, wt):
 
 
 def share_main_memory(main, wt):
-    """Point the worktree's Claude auto-memory at the main checkout's: .claude/settings.local.json
+    """(only for `worktree add --share-memory`) Point the worktree's Claude auto-memory at the main checkout's: .claude/settings.local.json
     autoMemoryDirectory, which the installer (claude_memory.py) set to the worktree's own empty folder. A note an
     agent saves in a worktree then outlives it (worktree_guard.sh lets a worktree session write M's claude-auto/).
     Only that default is replaced, and only by the main checkout's OWN <main>/.agents/local/memory/claude-auto folder
@@ -441,7 +443,7 @@ def install_args(main, wt, profile):
 
 
 def cmd_add(cwd, args):
-    base, profile, no_init, pos = None, None, False, []
+    base, profile, no_init, share_memory, pos = None, None, False, False, []
     for a in args:
         if a.startswith("--base="):
             base = a.split("=", 1)[1]
@@ -449,12 +451,14 @@ def cmd_add(cwd, args):
             profile = a.split("=", 1)[1]
         elif a == "--no-init":
             no_init = True
+        elif a == "--share-memory":
+            share_memory = True
         elif a.startswith("-"):
-            die(tr(f"tuỳ chọn không hợp lệ '{a}'", f"unknown option '{a}'") + " (--base=REF, --profile=ID, --no-init)")
+            die(tr(f"tuỳ chọn không hợp lệ '{a}'", f"unknown option '{a}'") + " (--base=REF, --profile=ID, --no-init, --share-memory)")
         else:
             pos.append(a)
     if not 1 <= len(pos) <= 2:
-        die("usage: agent-kit worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init]")
+        die("usage: agent-kit worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory]")
     wt = os.path.abspath(os.path.join(cwd, pos[0]))
     branch = pos[1] if len(pos) == 2 else None   # none named: DETACHED (one developer, one branch; the folder name is no branch name)
     main = main_checkout(cwd)
@@ -477,7 +481,7 @@ def cmd_add(cwd, args):
             sys.stderr.write(r.stdout[-2000:] + r.stderr[-2000:])
             die(tr(f"cài DevKit vào worktree thất bại (exit {r.returncode}); worktree vẫn ở {wt}",
                    f"DevKit install in the worktree failed (exit {r.returncode}); the worktree stays at {wt}"), 1)
-    shared = share_main_memory(main, wt) if not no_init else False   # before the snapshot: it is part of the setup
+    shared = share_main_memory(main, wt) if share_memory and not no_init else False   # only when asked; before the snapshot: it is part of the setup
     state = {"branch": branch, "base": start, "main": main, "baseline": snapshot(wt), "fp": FP_VERSION}
     with open(os.path.join(git_dir(wt), STATE), "w") as f:
         json.dump(state, f, indent=1, sort_keys=True)
@@ -486,6 +490,9 @@ def cmd_add(cwd, args):
     if shared:
         print("  " + tr("auto-memory của Claude dùng chung với main checkout (autoMemoryDirectory)",
                         "Claude auto-memory shared with the main checkout (autoMemoryDirectory)"))
+    elif share_memory:
+        print("  " + tr("auto-memory của Claude KHÔNG dùng chung (--share-memory): main checkout không có thư mục claude-auto riêng, hoặc worktree đã có giá trị của người dùng, hoặc --no-init",
+                        "Claude auto-memory NOT shared (--share-memory): the main checkout has no claude-auto/ folder of its own, the worktree already has a value of the user's, or --no-init"))
     if copied:
         print("  " + tr("đã chép cấu hình cục bộ (bị ignore): ", "copied local config (git-ignored): ") + ", ".join(copied))
     if inputs:
@@ -1223,6 +1230,29 @@ def removal_blockers(cwd, wt, budget=None, shown=None):
     return out
 
 
+def _unsaved_memory(wt, main):
+    """Notes saved in the worktree's OWN claude-auto folder that the main checkout's folder does not hold (missing there, or other bytes):
+    they go with the worktree. [] when there are none, or when the worktree shares the main checkout's folder (--share-memory)."""
+    own, theirs = os.path.join(wt, MEMORY_REL), os.path.join(main, MEMORY_REL)
+    if not os.path.isdir(own) or _same_path(own, theirs):
+        return []
+    lost = []
+    for d, _dirs, files in os.walk(own):
+        for f in files:
+            if f.startswith("."):
+                continue
+            rel = os.path.relpath(os.path.join(d, f), own)
+            try:
+                same = fingerprint(os.path.join(own, rel)) == fingerprint(os.path.join(theirs, rel))
+            except OSError:
+                same = False   # unreadable: it may be a note
+            if not same:
+                lost.append(rel)
+        if len(lost) > 200:
+            break
+    return lost
+
+
 def cmd_remove(cwd, args):
     if len(args) != 1:
         die("usage: agent-kit worktree remove <path>")
@@ -1241,10 +1271,20 @@ def cmd_remove(cwd, args):
     main = main_checkout(cwd)
     # Verified above: nothing but the recorded setup and ignored files is left, so
     # --force here drops no work (plain `remove` refuses any untracked file).
+    try:
+        notes = _unsaved_memory(wt, main)   # read BEFORE the folder goes
+    except Exception:  # noqa: BLE001 - a warning only: never in the way of the removal
+        notes = []
     git(main, "worktree", "remove", "--force", wt, bounded=False)
     branch = state.get("branch")
     print(f"✔ {tr('đã gỡ', 'removed')} {wt}" + (f"; {tr('nhánh', 'branch')} {branch} "
           + tr("giữ lại (xoá khi đã merge: git branch -d ", "kept (delete once merged: git branch -d ") + branch + ")" if branch else ""))
+    if notes:
+        shown = ", ".join(notes[:5]) + (f" (+{len(notes) - 5})" if len(notes) > 5 else "")
+        print("⚠ " + tr(f"{len(notes)} memory note(s) lưu trong thư mục claude-auto RIÊNG của worktree (không có trong claude-auto của main) đã đi theo worktree: {shown}. "
+                        f"Lần sau: chép chúng vào {os.path.join(main, MEMORY_REL)} TRƯỚC khi gỡ, hoặc tạo worktree với --share-memory.",
+                        f"{len(notes)} memory note(s) saved in the worktree's OWN claude-auto folder (not in the main checkout's) went with it: {shown}. "
+                        f"Next time: copy them into {os.path.join(main, MEMORY_REL)} BEFORE removing, or create the worktree with --share-memory."), file=sys.stderr)
     return 0
 
 

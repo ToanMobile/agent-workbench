@@ -23,7 +23,11 @@
 # At most 3 holds per session and pending set, then the Stop passes with a systemMessage (a merge
 # conflict that needs the user must never trap the session); the debt stays for the next session,
 # and session_context.sh names each unintegrated worktree at every start.
-# Fail-open on any error or after 8 s. Off: WORKTREE_MERGE_GATE=0.
+# Fail-open after 8 s (the alarm below) and whenever there is NOTHING to protect (no worktree this session is responsible for).
+# An internal error while there IS something to protect HOLDS the Stop instead of passing it: inventory() raising, worktree.py or
+# session_lock.py not importable, or a responsible worktree whose git dir cannot be determined. Those holds go through the same
+# cap as every other (3 per session and pending set), so a persistent error never traps a session; after the cap the Stop passes
+# with a systemMessage that says the gate could not run. Off: WORKTREE_MERGE_GATE=0.
 # ─────────────────────────────────────────────────────────────────────────────
 INPUT="$(cat)"
 [ "${WORKTREE_MERGE_GATE:-1}" = "0" ] && exit 0
@@ -142,11 +146,17 @@ finished = {os.path.realpath(p) for p in finished}
 running = meta_paths - finished
 
 sys.path[:0] = [os.path.join(devkit, "scripts", "git"), os.path.join(devkit, "scripts", "governance"), os.path.join(devkit, "scripts"), os.path.join(devkit, "bin")]
+# An import that fails is not a reason to pass before we know whether there is anything to protect: responsibility is computed first,
+# and the failure is raised at the inventory call below, where it holds the Stop only when a responsible worktree exists.
+wt, session_lock, import_error, lock_error = None, None, None, None
 try:
     import worktree as wt
+except (Exception, SystemExit) as e:
+    wt, import_error = None, e
+try:
     import session_lock
-except (Exception, SystemExit):
-    sys.exit(0)
+except (Exception, SystemExit) as e:
+    session_lock, lock_error = None, e   # without it a lock held by another live session is not seen: more worktrees count as ours (held, capped), and the hold text says so
 
 state_path = os.path.join(repo, ".claude", "audit-gate", "worktree_merge_gate.state")
 try:
@@ -164,12 +174,21 @@ owed = {p for p in (state.get("owed") or []) if isinstance(p, str) and p in live
 # Decide responsibility first (cheap), then inventory only those worktrees (git status per worktree is the cost).
 here = os.path.realpath(str(d.get("cwd") or repo))
 now, pending, want = time.time(), [], []
+
+def unknown_row(path, reason, kind):
+    """A worktree the gate could not judge: it counts as holding work (held), listed with the reason. kind: gitdir | error."""
+    return {"path": path, "branch": None, "detached": False, "dirty": None, "ahead": None, "reflog": None, "busy": None,
+            "unreachable": False, "unintegrated": True, "reason": reason, "kind": kind}
+
 for path in paths:
     real = os.path.realpath(path)
     if real not in live or real in running:
         continue
     admin = git("rev-parse", "--absolute-git-dir", cwd=path)
     if not admin:
+        # no git dir, so no creation time and no lock to read: responsible when the session made, named or owes it. Held, never skipped.
+        if real in finished or real in owed or mentioned(path, real):
+            pending.append(unknown_row(path, "cannot determine its git dir", "gitdir"))
         continue
     try:
         created = os.path.getmtime(os.path.join(admin, "commondir"))
@@ -179,7 +198,7 @@ for path in paths:
                  and mentioned(path, real))
     if real not in finished and real not in owed and not made_here:
         continue   # not made, named or owed by this session: not its work
-    if not session_lock.is_free_for(session_lock.read_lock(os.path.join(admin, session_lock.LOCK)), sid, now):
+    if session_lock is not None and not session_lock.is_free_for(session_lock.read_lock(os.path.join(admin, session_lock.LOCK)), sid, now):
         continue   # another live session works there
     if here == real or here.startswith(real + os.sep):
         owed.add(real)   # the session is in it right now (EnterWorktree, or a cd to look): owed, held once it leaves
@@ -187,9 +206,16 @@ for path in paths:
     want.append(path)
 try:   # ONE inventory for all of them (the ref tips are read once, not once per worktree)
     if want:
+        if wt is None:
+            raise import_error or ImportError("worktree.py")
         pending += wt.inventory(repo, only=want)   # unintegrated → bring it back; integrated but still there → remove it
-except (Exception, SystemExit):
-    sys.exit(0)
+except (Exception, SystemExit) as e:
+    # something to protect and the gate cannot judge it: HOLD (through the same counter and cap below), never pass
+    if isinstance(e, SystemExit):   # die() = exit 2, a failing git = exit 1 with a message: say what happened
+        why = "worktree.py called exit(" + str(e.code)[:120].replace(chr(10), " ") + ")"
+    else:
+        why = type(e).__name__ + ": " + str(e)[:160].replace(chr(10), " ")
+    pending += [unknown_row(w, "gate error: " + why, "error") for w in want]
 
 def save():
     try:
@@ -208,7 +234,7 @@ if not pending:
     sys.exit(0)
 owed |= {os.path.realpath(r["path"]) for r in pending}
 
-fp = hashlib.sha1(json.dumps(sorted((r["path"], r["unintegrated"]) for r in pending)).encode()).hexdigest()   # counts change while work goes on: not in the key
+fp = hashlib.sha1(json.dumps(sorted(r["path"] for r in pending)).encode()).hexdigest()   # the paths only: neither the counts nor the CAUSE (an error row, a merged-but-present row) may reset the cap, so 3 holds bound any mix of causes
 mine = sessions.get(sid) if isinstance(sessions.get(sid), dict) else {}
 held = mine.get("n", 0) if mine.get("fp") == fp else 0
 
@@ -217,13 +243,20 @@ def line(r):
     if not r["unintegrated"]:
         return f"  - {r['path']} [{where}] đã gộp xong — XOÁ: agent-kit worktree remove {r['path']}"
     lost = "  ⚠ commit không nằm trên nhánh nào — xoá worktree là MẤT" if r["unreachable"] else ""
+    if r.get("reason"):
+        return f"  - {r['path']} [?] không kiểm tra được ({r['reason']})"
     return f"  - {r['path']} [{where}] ahead={'?' if r['ahead'] is None else r['ahead']} dirty={'?' if r['dirty'] is None else r['dirty']}{lost}"
 
 listing = "\n".join(line(r) for r in pending)
+could_not_run = any(r.get("reason") for r in pending)
+lock_note = ("⚠ session_lock.py không import được (" + type(lock_error).__name__ + "): khóa của phiên khác không thấy được, nên worktree của phiên khác có thể bị tính nhầm là của phiên này.\n"
+             if session_lock is None else "")
 if held >= 3:
     save()   # the debt survives the cap: the next session is held on it
-    print(json.dumps({"systemMessage": "⚠ WORKTREE-MERGE GATE: phiên dừng khi worktree vẫn còn việc CHƯA về trunk:\n"
-                      + listing + "\nĐem về trước khi làm tiếp: `agent-kit worktree status`."}, ensure_ascii=False))
+    head = ("⚠ WORKTREE-MERGE GATE: cổng KHÔNG chạy được (lỗi nội bộ / không đọc được git dir) nên không biết worktree còn việc CHƯA về trunk hay không:\n"
+            if could_not_run else "⚠ WORKTREE-MERGE GATE: phiên dừng khi worktree vẫn còn việc CHƯA về trunk:\n")
+    advice = "`git worktree list` (kiểm tra bằng tay)" if could_not_run else "`agent-kit worktree status`"
+    print(json.dumps({"systemMessage": head + listing + "\n" + lock_note + "Đem về trước khi làm tiếp: " + advice + "."}, ensure_ascii=False))
     sys.exit(0)
 sessions[sid] = {"fp": fp, "n": held + 1}
 if not save():
@@ -232,14 +265,24 @@ if not save():
 # A detached worktree (the `agent-kit worktree add` default) has no branch to merge: only the diff | apply way.
 merge_hint = "     (hoặc: git merge --no-edit <branch>)" if any(r["branch"] for r in pending) else ""
 detached_note = ("  (worktree [(detached)] không có nhánh để merge: dùng diff | git apply --3way rồi commit ở main checkout)\n"
-                 if any(not r["branch"] for r in pending) else "")
+                 if any(not r["branch"] and not r.get("reason") for r in pending) else "")
+error_note = lock_note
+if could_not_run:
+    error_note += "⚠ Cổng KHÔNG chạy được cho các worktree có lý do ở trên."
+    if any(r.get("kind") == "error" for r in pending):
+        error_note += " Lỗi git/cài đặt: sửa rồi dừng lại."
+    if any(r.get("kind") == "gitdir" for r in pending):
+        error_note += (" Worktree có con trỏ .git hỏng hoặc mất (agent-kit worktree remove từ chối vì không đọc được trạng thái của nó): người dùng chạy `git worktree prune` "
+                       "SAU KHI kiểm tra thư mục đó đã mất hoặc không còn cần.")
+    error_note += (" WORKTREE_MERGE_GATE=0 phải đặt trong môi trường TRƯỚC khi khởi động phiên (không đặt được cho một lần dừng của phiên đang chạy); "
+                   "sau 3 lần giữ cổng vẫn cho qua.\n")
 sys.stderr.write(
     "⛔ WORKTREE-MERGE GATE: worktree phải được GỘP vào nhánh chính rồi XOÁ trước khi dừng — để lại là trunk thiếu code:\n"
-    + listing + "\n"
+    + listing + "\n" + error_note +
     "Đem về từ main checkout, kiểm diff, commit, rồi dọn:\n"
     "  agent-kit worktree diff <path> | git apply --3way" + merge_hint + "\n" + detached_note +
     "  agent-kit worktree remove <path>\n"
-    f"Lần giữ {held + 1}/3 cho cùng danh sách; WORKTREE_MERGE_GATE=0 để tắt.\n")
+    f"Lần giữ {held + 1}/3 cho cùng danh sách; WORKTREE_MERGE_GATE=0 (đặt TRƯỚC khi khởi động phiên) để tắt.\n")
 sys.exit(2)
 PY
 rc=$?

@@ -3,7 +3,7 @@
 # (ignored local config copied, DevKit installed with the same profile), a diff that
 # carries the agent's work but not the DevKit setup and applies to the main checkout,
 # and a remove that refuses while uncommitted work would be lost. A worktree is DETACHED unless a branch is
-# named (one developer, one branch: the project rule), and its Claude auto-memory is the main checkout's.
+# named (one developer, one branch: the project rule). Its Claude auto-memory stays its OWN folder unless `--share-memory` is given.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
@@ -47,9 +47,48 @@ W="$TMP/wt-a"
 [ "$rc" = 0 ] && [ -z "$(git -C "$W" branch --show-current)" ] && [ "$(git for-each-ref --format='%(refname)' refs/heads)" = "$heads_before" ] \
   && ok "add: no branch named -> a DETACHED worktree, no branch created" || { fail "add (rc=$rc): branch='$(git -C "$W" branch --show-current)'"; echo "$out"; }
 mem_of() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("autoMemoryDirectory", ""))' "$1/.claude/settings.local.json" 2>/dev/null; }
-[ -n "$(mem_of "$M")" ] && [ "$(mem_of "$W")" = "$(mem_of "$M")" ] \
-  && ok "add: the worktree's Claude auto-memory is the main checkout's (autoMemoryDirectory)" \
-  || fail "worktree memory dir '$(mem_of "$W")' is not the main checkout's '$(mem_of "$M")'"
+own_mem() { printf '%s' "$(cd "$1" && pwd -P)/.agents/local/memory/claude-auto"; }   # the folder the installer gives a checkout
+# default: NOT shared (several agents writing at once would overwrite ONE MEMORY.md, and what one saves would reach every later session)
+[ -n "$(mem_of "$M")" ] && [ "$(mem_of "$W")" != "$(mem_of "$M")" ] && [ "$(mem_of "$W")" = "$(own_mem "$W")" ] \
+  && ok "add: by default the worktree's Claude auto-memory stays its OWN folder (not the main checkout's)" \
+  || fail "default worktree memory dir '$(mem_of "$W")' (main's '$(mem_of "$M")', own '$(own_mem "$W")')"
+printf '%s' "$out" | grep -qi "auto-memory shared" && fail "add: the default run claims shared memory" || ok "add: the default run does not claim shared memory"
+# --share-memory: the old expectation, under the flag
+out_m="$(bash "$KIT" worktree add ../wt-m --share-memory 2>&1)"; rc_m=$?
+[ "$rc_m" = 0 ] && [ -n "$(mem_of "$M")" ] && [ "$(mem_of "$TMP/wt-m")" = "$(mem_of "$M")" ] \
+  && ok "add --share-memory: the worktree's Claude auto-memory is the main checkout's (autoMemoryDirectory)" \
+  || fail "--share-memory (rc=$rc_m): worktree memory dir '$(mem_of "$TMP/wt-m")' is not the main checkout's '$(mem_of "$M")'"
+printf '%s' "$out_m" | grep -qi "auto-memory shared" && ok "add --share-memory: the shared memory is reported" || fail "--share-memory not reported: $out_m"
+bash "$KIT" worktree remove ../wt-m >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$TMP/wt-m" ] && [ -d "$M/.agents/local/memory/claude-auto" ] && ok "remove: a worktree that shared the memory goes; the main checkout's folder stays" || fail "remove of the --share-memory worktree (rc=$rc)"
+# --share-memory but the main checkout has no folder of its own: nothing to share, the worktree keeps its own, and says so
+mv "$M/.agents/local/memory/claude-auto" "$TMP/claude-auto-away"
+out_n="$(bash "$KIT" worktree add ../wt-n --share-memory 2>&1)"; rc_n=$?
+mv "$TMP/claude-auto-away" "$M/.agents/local/memory/claude-auto"
+[ "$rc_n" = 0 ] && [ "$(mem_of "$TMP/wt-n")" = "$(own_mem "$TMP/wt-n")" ] && printf '%s' "$out_n" | grep -qi "not shared" \
+  && ok "add --share-memory: no claude-auto/ folder in the main checkout -> left alone, the output says not shared" || fail "--share-memory without a main folder (rc=$rc_n): '$(mem_of "$TMP/wt-n")' / $out_n"
+bash "$KIT" worktree remove ../wt-n >/dev/null 2>&1
+bash "$KIT" worktree add ../wt-x --bogus-flag >/dev/null 2>&1; [ $? = 2 ] && ok "add: an unknown option is still refused" || fail "unknown add option accepted"
+grep -q -e "--share-memory" "$DEVKIT_DIR/completions/agent-kit.bash" && ok "completion: worktree add offers --share-memory" || fail "bash completion lacks --share-memory"
+# a note saved in the worktree's OWN claude-auto folder goes with it: remove WARNS (it does not refuse) when main's folder lacks it
+bash "$KIT" worktree add ../wt-w >/dev/null 2>&1; WW="$TMP/wt-w"; mkdir -p "$WW/.agents/local/memory/claude-auto"
+printf 'lesson\n' > "$WW/.agents/local/memory/claude-auto/note.md"
+out_w="$(bash "$KIT" worktree remove ../wt-w 2>&1)"; rc_w=$?
+[ "$rc_w" = 0 ] && [ ! -e "$WW" ] && printf '%s' "$out_w" | grep -q "1 memory note" && printf '%s' "$out_w" | grep -q "share-memory" && printf '%s' "$out_w" | grep -q "claude-auto" \
+  && ok "remove: a note only in the worktree's own claude-auto folder -> WARNING (count + both cures), the worktree is still removed" || fail "memory note warning (rc=$rc_w): $out_w"
+bash "$KIT" worktree add ../wt-w2 >/dev/null 2>&1; WW="$TMP/wt-w2"; mkdir -p "$WW/.agents/local/memory/claude-auto"
+printf 'lesson\n' > "$WW/.agents/local/memory/claude-auto/note.md"; cp "$WW/.agents/local/memory/claude-auto/note.md" "$M/.agents/local/memory/claude-auto/note.md"
+out_w="$(bash "$KIT" worktree remove ../wt-w2 2>&1)"; rc_w=$?
+[ "$rc_w" = 0 ] && ! printf '%s' "$out_w" | grep -qi "memory note" && ok "remove: the same note already in the main checkout's folder -> no warning" || fail "warned about a note main has (rc=$rc_w): $out_w"
+rm -f "$M/.agents/local/memory/claude-auto/note.md"
+bash "$KIT" worktree add ../wt-w4 >/dev/null 2>&1; WW="$TMP/wt-w4"; mkdir -p "$WW/.agents/local/memory/claude-auto"
+printf 'main version\n' > "$M/.agents/local/memory/claude-auto/MEMORY.md"; printf 'worktree version, edited\n' > "$WW/.agents/local/memory/claude-auto/MEMORY.md"
+out_w="$(bash "$KIT" worktree remove ../wt-w4 2>&1)"; rc_w=$?
+[ "$rc_w" = 0 ] && printf '%s' "$out_w" | grep -q "1 memory note" && ok "remove: a note of the same name with OTHER bytes in main is also warned about" || fail "edited note not warned (rc=$rc_w): $out_w"
+rm -f "$M/.agents/local/memory/claude-auto/MEMORY.md"
+bash "$KIT" worktree add ../wt-w3 --share-memory >/dev/null 2>&1
+out_w="$(bash "$KIT" worktree remove ../wt-w3 2>&1)"; rc_w=$?
+[ "$rc_w" = 0 ] && ! printf '%s' "$out_w" | grep -qi "memory note" && ok "remove: a --share-memory worktree -> no warning (its notes are in main's folder)" || fail "warned for a shared-memory worktree (rc=$rc_w): $out_w"
 [ "$(cat "$W/.env" 2>/dev/null)" = "API_KEY=local" ] && [ -f "$W/app/google-services.json" ] \
   && ok "add: git-ignored local config copied (.env, app/google-services.json)" || fail "local config not copied"
 missing=""
