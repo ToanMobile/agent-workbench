@@ -47,7 +47,7 @@ fi
 CLAIM_INPUT="${INPUT}" CLAIM_LOG="${LOG}" CLAIM_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
 CLAIM_REPO="${REPO_ROOT}" CLAIM_LOGDIR="${LOG_DIR}" CLAIM_MAX="${MAX_ATTEMPTS}" \
 CLAIM_HOOKDIR="$(cd "$(dirname "$0")" && pwd)" \
-python3 <<'PY'
+python3 -I <<'PY'
 import os, sys, json, re, subprocess, time
 
 raw     = os.environ.get("CLAIM_INPUT", "")

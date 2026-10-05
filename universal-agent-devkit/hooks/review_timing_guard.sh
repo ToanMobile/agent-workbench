@@ -51,7 +51,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 RT_INPUT="${INPUT}" RT_LOG="${LOG_DIR}/review_timing_guard.log" \
 RT_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
-python3 <<'PY'
+python3 -I <<'PY'
 import os, sys, json
 
 raw = os.environ.get("RT_INPUT", "")

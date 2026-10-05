@@ -45,14 +45,14 @@ command -v python3 >/dev/null 2>&1 || exit 0
 [ -f "${HERE}/${HOOK}" ] || exit 0
 case "${PLATFORM}:${KIND}" in codex:*|gemini:*|cursor:*) ;; *) exit 0 ;; esac
 
-ROOT="$(printf '%s' "${RAW}" | python3 -c 'import json,sys
+ROOT="$(printf '%s' "${RAW}" | python3 -I -c 'import json,sys
 try: d = json.load(sys.stdin)
 except Exception: d = {}
 print(d.get("cwd") or "")' 2>/dev/null)"
 [ -n "${ROOT}" ] && [ -d "${ROOT}" ] || ROOT="$PWD"
 ROOT="$(git -C "${ROOT}" rev-parse --show-toplevel 2>/dev/null || printf '%s' "${ROOT}")"
 
-IN="$(printf '%s' "${RAW}" | KIND="${KIND}" python3 -c 'import json,os,sys
+IN="$(printf '%s' "${RAW}" | KIND="${KIND}" python3 -I -c 'import json,os,sys
 try: d = json.load(sys.stdin)
 except Exception: d = {}
 kind = os.environ["KIND"]
@@ -77,7 +77,7 @@ trap 'rm -f "${OUT_F}" "${ERR_F}"' EXIT
 printf '%s' "${IN}" | DEVKIT_AGENT="${PLATFORM}" CLAUDE_PROJECT_DIR="${ROOT}" bash "${HERE}/${HOOK}" >"${OUT_F}" 2>"${ERR_F}"
 RC=$?
 
-PLATFORM="${PLATFORM}" KIND="${KIND}" RC="${RC}" OUT_F="${OUT_F}" ERR_F="${ERR_F}" python3 - <<'PY'
+PLATFORM="${PLATFORM}" KIND="${KIND}" RC="${RC}" OUT_F="${OUT_F}" ERR_F="${ERR_F}" python3 -I - <<'PY'
 import json, os, sys
 platform, kind, rc = os.environ["PLATFORM"], os.environ["KIND"], int(os.environ["RC"])
 out = open(os.environ["OUT_F"], encoding="utf-8", errors="replace").read().strip()

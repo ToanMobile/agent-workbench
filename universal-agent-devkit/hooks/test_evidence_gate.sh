@@ -93,7 +93,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 TE_INPUT="${INPUT}" TE_LOG="${LOG_DIR}/test_evidence_gate.log" TE_DIR="${LOG_DIR}" \
 TE_TS="$(date +%Y-%m-%dT%H:%M:%S)" TE_REPO="${REPO_ROOT}" TE_SELF="$0" \
-python3 <<'PY'
+python3 -I <<'PY'
 import os, sys, json, re, glob, time
 import xml.etree.ElementTree as ET
 

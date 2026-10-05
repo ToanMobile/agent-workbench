@@ -67,7 +67,7 @@ fi
 PG_INPUT="${INPUT}" PG_LOG="${LOG_DIR}/precode_gate.log" \
 PG_LEDGER="${LOG_DIR}/read_ledger.tsv" PG_REPO="${REPO_ROOT}" \
 PG_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
-python3 <<'PY'
+python3 -I <<'PY'
 import os, subprocess, sys, json
 
 raw = os.environ.get("PG_INPUT", "")

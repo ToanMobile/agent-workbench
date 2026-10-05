@@ -75,7 +75,9 @@ def tree_fingerprint(project_dir):
     with tempfile.TemporaryDirectory() as tmp:
         index = os.path.join(tmp, "index")
         if os.path.isfile(os.path.join(gitdir, "index")):
-            shutil.copyfile(os.path.join(gitdir, "index"), index)
+            # copy2, not copyfile: the copy must keep the index mtime, or git stops treating entries written in that same
+            # second as "racily clean" and trusts their stat, so a same-size edit in that second is not seen
+            shutil.copy2(os.path.join(gitdir, "index"), index)
         # New blobs go to a throw-away object store that reads the real one as an alternate:
         # the real .git/objects never grows because the gate or the Stop hook looked.
         os.makedirs(os.path.join(tmp, "objects", "info"))

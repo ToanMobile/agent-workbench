@@ -40,7 +40,7 @@ RC=$?
 LAST="$(printf '%s\n' "$OUT" | tail -n 1)"
 # The verdict comes from the gate's JSON line, not the exit code alone: exit 2 also
 # means "bad arguments / git failed", which must not let a commit through.
-STATE="$(printf '%s' "$LAST" | python3 -c 'import json,sys
+STATE="$(printf '%s' "$LAST" | python3 -I -c 'import json,sys
 try: d = json.load(sys.stdin)
 except ValueError: sys.exit(0)
 if d.get("mode") != "staged": sys.exit(0)

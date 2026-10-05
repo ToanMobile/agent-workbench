@@ -2631,6 +2631,20 @@ def run_assertion_audit(modified_files: list) -> tuple:
     return len(findings) == 0, findings
 
 
+def _proof_hash_cache_path(base) -> "str | None":
+    """<git-common-dir>/postfix-gate/proof-hash-cache.json, shared by the worktrees of one repo and outside the
+    audited tree. None outside a git repo: nothing is cached there (the old behaviour)."""
+    try:
+        res = subprocess.run(["git", "-C", str(base), "rev-parse", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = res.stdout.strip()
+    if res.returncode != 0 or not out:
+        return None
+    return str(Path(str(base), out) / "postfix-gate" / "proof-hash-cache.json")
+
+
 def run_proof_block(modified_files: list) -> tuple:
     """Hard-fail when a proof image made in this turn is empty or repeats another proof.
     Only fresh images are judged: on disk (changed, or in a proof folder even when ignored or
@@ -2668,24 +2682,40 @@ def run_proof_block(modified_files: list) -> tuple:
                     continue
 
     sha_of, bits_of, findings = {}, {}, []
-    fresh = []
+    fresh, refs = [], []
     for path, (label, is_fresh) in images.items():
+        if not is_fresh:
+            refs.append((label, path))   # read below, and only when a fresh image needs them
+            continue
         try:
             data = path.read_bytes()
         except OSError:
             continue
-        if is_fresh:
-            fresh.append((path.stat().st_mtime, label, data))
-        elif data:   # a reference: remembered, never judged
-            sha_of.setdefault(hashlib.sha256(data).hexdigest(), label)
-            bits = ph.dhash(data)
-            if bits is not None:
-                bits_of[label] = bits
+        fresh.append((path.stat().st_mtime, label, data))
+    if not fresh:   # references are never judged: nothing fresh means nothing to find, so none is read or hashed
+        return True, []
+    fresh.sort()
+    # dhash of an image is remembered by the sha256 of its bytes (never path or mtime): an old screenshot is hashed once
+    cache = ph.HashCache(_proof_hash_cache_path(base))
+    fresh_bits = [cache.get(data) if data else None for _mtime, _rel, data in fresh]
+    need_ref_bits = any(bits is not None for bits in fresh_bits)   # a reference is compared only with a hashable fresh image
+    for label, path in refs:
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        if data:   # a reference: remembered, never judged
+            digest = hashlib.sha256(data).hexdigest()
+            sha_of.setdefault(digest, label)
+            if need_ref_bits:
+                bits = cache.get(data, digest)
+                if bits is not None:
+                    bits_of[label] = bits
     def found(rel, label):   # recorded too: the Stop hook shows the summary's findings (GeelyEx2 2026-09-26)
         findings.append((rel, _L(label)))
         _record("proof", rel, label)
 
-    for _mtime, rel, data in sorted(fresh):
+    for (_mtime, rel, data), bits in zip(fresh, fresh_bits):
         if not data:
             found(rel, (f"{rel}: ảnh proof 0 byte", f"{rel}: zero-byte proof image"))
             continue
@@ -2694,7 +2724,6 @@ def run_proof_block(modified_files: list) -> tuple:
             found(rel, (f"{rel}: trùng byte với {sha_of[digest]}", f"{rel}: identical bytes to {sha_of[digest]}"))
             continue
         sha_of[digest] = rel
-        bits = ph.dhash(data)
         if bits is None:
             continue
         for other, prev in bits_of.items():
@@ -2707,6 +2736,10 @@ def run_proof_block(modified_files: list) -> tuple:
                             f"{rel}: ≥98% similar to {other} (same screen) — for a new state capture another screen; do not delete older proofs"))
                 break
         bits_of[rel] = bits
+    try:
+        cache.save()
+    except OSError as e:
+        log_warn(tr(f"Không ghi được cache hash ảnh proof: {e}", f"proof hash cache not written: {e}"))
     return len(findings) == 0, findings
 
 
@@ -2771,7 +2804,7 @@ TEST_RUN_LOCK = "test_run.lock"
 
 def acquire_test_run_lock(project_dir):
     """(file handle, held) — the per-project test-run flock under .claude/audit-gate/. Waits at
-    most TEST_RUN_LOCK_WAIT_S (default 900 from the CLI; hooks/regression_gate.sh passes 120 so
+    most TEST_RUN_LOCK_WAIT_S (default 900 from the CLI; hooks/regression_gate.sh passes 45 so
     the wait plus the suites stay inside the Stop hook's own 1800 s timeout) for another run;
     not held → the tests are BUSY (summary "busy"). (None, True) when the lock file cannot be
     made (never worse than no lock)."""
@@ -3956,6 +3989,7 @@ def main():
                  + ", ".join(orphans_new[:5]) + f"{why} — {orphan_fix}")
     print(f"\n{BOLD}{CYAN}──────────────────────────────────────────────────────────────────────────────────────{RESET}")
     receipt_untested = None
+    lock_busy = False   # exit 4 because the lock was not held: no suite ran, so the receipt is neither written nor deleted
     if not static_ok or (run_tests and not tests_ok):
         verdict_text, verdict_color, exit_code = tr("REJECT — CẦN KHẮC PHỤC CÁC ĐIỂM CHƯA ĐẠT", "REJECT — FIX THE FAILED CHECKS"), RED, 1
     elif matrix_problem:
@@ -3986,6 +4020,7 @@ def main():
     elif run_tests and tests_untested and all(t.get("label") == "BUSY" for t in tests_untested):
         verdict_text, verdict_color, exit_code = tr("UNTESTED — một lượt chạy test khác đang giữ khoá dự án (TEST_RUN_LOCK_WAIT_S) — chạy lại sau; KHÔNG phải PASS",
                                                     "UNTESTED — another test run holds the project lock (TEST_RUN_LOCK_WAIT_S) — run again later; NOT a PASS"), YELLOW, 4
+        lock_busy = True
     elif run_tests and any(t.get("label") == "BUDGET" for t in tests_untested):
         left = ", ".join(t["id"] or "?" for t in tests_untested if t.get("label") == "BUDGET")
         verdict_text, verdict_color, exit_code = tr(
@@ -4040,9 +4075,10 @@ def main():
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
     partial = not force_reason or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)
-    if run_tests and not impacted_run and not deferred_by and (not partial or (exit_code != 0 and not receipt_untested)):
+    if run_tests and not impacted_run and not deferred_by and not lock_busy and (not partial or (exit_code != 0 and not receipt_untested)):
         # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
-        # suites all passed (2026-09-29) — leaves the last full one as it is
+        # suites all passed (2026-09-29) — leaves the last full one as it is; a BUSY run (lock not held, nothing ran)
+        # leaves it alone too: it used to delete even a valid one, so a Stop whose lock wait ran out forced a new --full
         write_full_pass_receipt(project_dir, exit_code, args.matrix, regression_tests,
                                 tested_at=float(cache.get("tested_at") or 0) if cache else None,
                                 tested_fp=tested_fp, untested=receipt_untested)

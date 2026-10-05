@@ -35,7 +35,7 @@ while [ -L "${SELF}" ]; do
 done
 DEVKIT="$(cd -P "$(dirname "${SELF}")/.." 2>/dev/null && pwd)"
 REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-WMG_INPUT="${INPUT}" WMG_REPO="${REPO_ROOT}" WMG_DEVKIT="${DEVKIT}" python3 <<'PY'
+WMG_INPUT="${INPUT}" WMG_REPO="${REPO_ROOT}" WMG_DEVKIT="${DEVKIT}" python3 -I <<'PY'
 import datetime, glob, hashlib, json, os, re, shlex, signal, subprocess, sys, time
 
 def fail_open(*_):

@@ -55,7 +55,7 @@ list | grep -qx "tests/verification/test_tool_cmd.sh" && ok "a test naming only 
 ! list | grep -qx "tests/verification/test_toolbox.sh" && ok "  … as a whole word only (toolbox is not tool)" || fail "stem matched inside a word"
 (cd "$K" && git checkout -q -- scripts/tool.sh)
 
-# The run is parallel (DEVKIT_TEST_JOBS, default 4): the DevKit suite took 740 s of the 900 s
+# The run is parallel (DEVKIT_TEST_JOBS, default min(cores-2, 10) with a floor of 4; this test pins 4): the DevKit suite took 740 s of the 900 s
 # gate limit on 2026-09-26. Output stays in list order; one failing test still fails the run;
 # test_budgets (timings) runs alone after the others.
 R="$TMP/par"; mkdir -p "$R/tests/verification" "$R/tests/context_memory"; cp "$DEVKIT_DIR/tests/run_impacted.sh" "$R/tests/"

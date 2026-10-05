@@ -89,7 +89,7 @@ elif command -v perl >/dev/null 2>&1; then
 fi
 case "${STAMP}" in
   *[0-9].[0-9][0-9][0-9]) ;;
-  *) STAMP="$(python3 -S -c 'import time; print("%.3f" % time.time())' 2>/dev/null)"
+  *) STAMP="$(python3 -I -S -c 'import time; print("%.3f" % time.time())' 2>/dev/null)"
      case "${STAMP}" in *[0-9].[0-9][0-9][0-9]) ;; *) STAMP="$(date +%s).000" ;; esac ;;
 esac
 

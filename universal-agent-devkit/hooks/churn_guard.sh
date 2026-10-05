@@ -44,7 +44,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 CHURN_INPUT="${INPUT}" CHURN_LOG="${LOG_DIR}/churn_guard.log" \
 CHURN_TS="$(date +%Y-%m-%dT%H:%M:%S)" CHURN_MAX="${CHURN_GUARD_MAX:-3}" \
-python3 <<'PY'
+python3 -I <<'PY'
 import os, sys, json, re
 
 raw    = os.environ.get("CHURN_INPUT", "")

@@ -308,8 +308,18 @@ def is_user_prompt(e):
         isinstance(x, dict) and x.get("type") == "text" for x in c))
 
 
-def turn_start(tp):
-    """Epoch of the last real user prompt in a Claude transcript, or None."""
+# The last real prompt sits near the END of a transcript that reaches 90 MB, and every Stop hook asks for it: the
+# forward scan of the whole file cost ~90 ms per hook per stop (2026-10-04 measurement). turn_start reads the last
+# _TAIL_BYTES once and looks for the prompt there, last line first. The tail holds no prompt (a very long turn, or
+# none at all), or cannot be read: the forward scan below answers, untouched. Same answer as the forward scan:
+# "the last prompt in file order" is the first one met backwards, and bytes.splitlines splits where text mode does
+# (\n, \r\n, a lone \r). One deliberate difference: a malformed user line (message not an object) BEFORE the last
+# prompt crashed the forward scan (AttributeError; a crashed hook is exit 0, nothing checked) and is never read now.
+_TAIL_BYTES = 1 << 19
+
+
+def _turn_start_forward(tp):
+    """The whole-file scan: the old turn_start, and the answer whenever the tail cannot give one."""
     import datetime
     last = None
     try:
@@ -329,6 +339,33 @@ def turn_start(tp):
         return datetime.datetime.fromisoformat(last.replace("Z", "+00:00")).timestamp() if last else None
     except ValueError:
         return None
+
+
+def turn_start(tp):
+    """Epoch of the last real user prompt in a Claude transcript, or None. Looks in the last _TAIL_BYTES first."""
+    import datetime
+    try:
+        with open(tp, "rb") as f:
+            size = f.seek(0, os.SEEK_END)
+            f.seek(max(size - _TAIL_BYTES, 0))
+            lines = f.read().splitlines()
+    except OSError:
+        return _turn_start_forward(tp)
+    if size > _TAIL_BYTES:
+        del lines[:1]                       # the window starts mid-line: that first line is cut
+    for raw in reversed(lines):
+        if b'"user"' not in raw:
+            continue
+        try:
+            e = json.loads(raw.decode("utf-8", "replace"))
+        except ValueError:
+            continue
+        if is_user_prompt(e) and e.get("timestamp"):
+            try:
+                return datetime.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                return None
+    return _turn_start_forward(tp)
 
 
 # ── git commit / push as a real command (one classifier for every Stop hook) ─────────────────

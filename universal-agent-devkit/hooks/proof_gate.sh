@@ -53,8 +53,8 @@ while [ -L "${SELF}" ]; do
   L="$(readlink "${SELF}")"; case "${L}" in /*) SELF="${L}" ;; *) SELF="$(dirname "${SELF}")/${L}" ;; esac
 done
 PROOF_INPUT="${INPUT}" PROOF_REPO="${REPO_ROOT}" PROOF_LOG_DIR="${LOG_DIR}" PROOF_HOOKDIR="$(dirname "${SELF}")" \
-PROOF_BIN="$(cd "$(dirname "${SELF}")/../bin" 2>/dev/null && pwd)" python3 <<'PY'
-import datetime, glob, hashlib, json, os, re, sys
+PROOF_BIN="$(cd "$(dirname "${SELF}")/../bin" 2>/dev/null && pwd)" python3 -I <<'PY'
+import datetime, glob, hashlib, json, math, os, re, sys, time
 
 repo = os.environ["PROOF_REPO"]
 log_dir = os.environ["PROOF_LOG_DIR"]
@@ -229,7 +229,9 @@ for rel in cited:
 
 def full_gate_problem():
     """None when this turn has a full-gate exit 0 on the current code, else the reason."""
-    sys.path.insert(0, os.environ.get("PROOF_BIN") or "")
+    _pb = os.environ.get("PROOF_BIN") or ""
+    if os.path.isabs(_pb):   # "" (copy-mode install: no ../bin) would put the cwd first on sys.path again and undo -I
+        sys.path.insert(0, _pb)
     try:
         import tree_fp
     except ImportError:
@@ -239,15 +241,28 @@ def full_gate_problem():
         rec = json.load(open(rp, encoding="utf-8")) if rp else None
     except (OSError, ValueError):
         rec = None
-    if not rec or rec.get("exit") != 0:
+    if not rec:
         return "chưa có exit 0 trên code hiện tại"
+    if not isinstance(rec, dict):
+        return "receipt hỏng (full_pass.json không phải object JSON)"
+    if rec.get("exit") != 0:
+        return "chưa có exit 0 trên code hiện tại"
+    rtime = rec.get("time", 0)
+    # A wrong-shaped receipt used to crash this function: python exit 1, the wrapper turns it into exit 0, XONG passes.
+    # (an int is always finite, and math.isfinite raises OverflowError on 10**400: test floats only)
+    if isinstance(rtime, bool) or not isinstance(rtime, (int, float)) or (isinstance(rtime, float) and not math.isfinite(rtime)):
+        return "receipt hỏng (full_pass.json: time không phải số)"
     turn_start_time = start
     if turn_start_time is None:
-        try:
-            turn_start_time = os.path.getmtime(tp) if tp and os.path.isfile(tp) else (time.time() - 3600)
-        except OSError:
-            turn_start_time = time.time() - 3600
-    if rec.get("time", 0) < turn_start_time:
+        # No human prompt in the transcript. The code that stood here read `tp` and `time`, two names that do not exist in
+        # this script: NameError, exit 1, wrapper exit 0 = the XONG went through unchecked. Its intent (the transcript's
+        # mtime) could never hold anyway: Claude Code writes the gate's tool_result and the reply AFTER the receipt.
+        # ponytail: a session fed only by peer messages accepts a receipt younger than 1 h whose fingerprint still matches
+        # the code, and blocks twice per hour (key below). Upgrade when a real per-turn scope is needed: the mark must come
+        # from the transcript and must skip isMeta entries of Stop-hook feedback, [Image: ...] and skills, task-notification
+        # and auto-continuation (rv5/rv7 reviews, 2026-10-04: marking by "the last user entry" blocked 22 of 95 valid XONG).
+        turn_start_time = time.time() - 3600
+    if rtime < turn_start_time:
         return "lần exit 0 là từ trước lượt này"
     now_fp = tree_fp.tree_fingerprint(repo)
     if not now_fp or not rec.get("fingerprint"):
@@ -276,7 +291,9 @@ try:
         state = json.load(fh)
 except (OSError, ValueError):
     state = {}
-key = "%s@%s" % (session, int(start or 0))   # per turn: a release never switches the gate off for later turns
+# per turn: a release never switches the gate off for later turns. No turn start (peer-only session, no transcript):
+# one budget per hour, not one constant key (`session@0`) spent once and then letting every later XONG through.
+key = "%s@%s" % (session, "h%d" % int(time.time() // 3600) if start is None else int(start or 0))
 n = state.get(key, 0) + 1
 state[key] = n
 try:

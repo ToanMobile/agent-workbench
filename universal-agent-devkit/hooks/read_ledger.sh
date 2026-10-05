@@ -49,7 +49,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 
-RL_INPUT="${INPUT}" RL_LEDGER="${LOG_DIR}/read_ledger.tsv" RL_REPO="${REPO_ROOT}" python3 <<'PY' 2>/dev/null || true
+RL_INPUT="${INPUT}" RL_LEDGER="${LOG_DIR}/read_ledger.tsv" RL_REPO="${REPO_ROOT}" python3 -I <<'PY' 2>/dev/null || true
 import os, sys, json
 
 raw    = os.environ.get("RL_INPUT", "")

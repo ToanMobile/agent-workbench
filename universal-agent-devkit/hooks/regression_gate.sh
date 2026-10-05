@@ -76,11 +76,11 @@ command -v python3 >/dev/null 2>&1 || exit 0
 git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
 # Locate the DevKit: this script's real path (symlink install), else `postfix-gate` on PATH.
-SELF="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null)"
+SELF="$(python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null)"
 GATE="$(dirname "$(dirname "${SELF}")")/bin/post-fix-gate.py"
 if [ ! -f "${GATE}" ]; then
   PG="$(command -v postfix-gate 2>/dev/null || true)"
-  [ -n "${PG}" ] && GATE="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${PG}")"
+  [ -n "${PG}" ] && GATE="$(python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${PG}")"
 fi
 # Copy-mode installs have no link back to the DevKit: try $DEVKIT_ROOT and the
 # quick-install location too.
@@ -91,7 +91,7 @@ done
 if [ ! -f "${GATE}" ]; then
   [ "${PROBE}" = "1" ] && { printf '%s\n' '{"state":"nogate"}'; exit 0; }
   echo "$(date +%Y-%m-%dT%H:%M:%S) skipped: post-fix-gate.py not found" >> "${LOG}"
-  SID="$(printf '%s' "${INPUT}" | python3 -c 'import json,re,sys
+  SID="$(printf '%s' "${INPUT}" | python3 -I -c 'import json,re,sys
 try: print(re.sub(r"[^A-Za-z0-9_-]", "_", str(json.load(sys.stdin).get("session_id") or ""))[:40])
 except Exception: print("")' 2>/dev/null)"
   FLAG="${LOG_DIR}/regression_gate.notfound.${SID:-nosession}"
@@ -104,7 +104,7 @@ fi
 
 printf '%s' "${INPUT}" | REPO_ROOT="${REPO_ROOT}" GATE="${GATE}" LOG="${LOG}" PROBE="${PROBE}" \
   MAX_ATTEMPTS="${REGRESSION_GATE_MAX_ATTEMPTS:-2}" MAX_SESSION_BLOCKS="${REGRESSION_GATE_MAX_SESSION_BLOCKS:-3}" \
-  HOOK_PPID="${PPID}" HOOK_DIRS="$(dirname "${SELF}"):$(dirname "$0")" python3 -c '
+  HOOK_PPID="${PPID}" HOOK_DIRS="$(dirname "${SELF}"):$(dirname "$0")" python3 -I -c '
 import contextlib, fnmatch, hashlib, io, json, os, re, subprocess, sys, tempfile, time
 
 repo, gate, log = os.environ["REPO_ROOT"], os.environ["GATE"], os.environ["LOG"]
@@ -494,8 +494,12 @@ if wrote_nothing_here():
 # --session/--transcript: an existing test edited by ANOTHER session (or a person) is a warning,
 # only the test edits of THIS session block (post-fix-gate split_tests_by_author).
 # TEST_RUN_LOCK_WAIT_S: a short wait for the test_run.lock another run holds (the CLI default 900 plus
-# the suites could pass the 1800 s timeout of this hook); past it the gate reports "busy".
-# Total time for the suites of one Stop run: 120 s lock wait + this budget stay well inside the 1800 s hook timeout, so the
+# the suites could pass the 1800 s timeout of this hook); past it the gate reports "busy" (UNTESTED, never a PASS,
+# nothing cached: the next stop runs the suites). Default 45 s, env overrides. Measured 2026-09-26..10-04 on 4 repos:
+# 73 BUSY outcomes in the hook logs, each a full 120 s wait that ran nothing (the holder is a full matrix run, minutes
+# long); in workbench about 5 waits ended in a run (12-90 s, 33.8 and 41.4 s among them) against about 33 BUSY, so 120 s
+# buys few runs. Trade-off: a stop that would have run after a 45-120 s wait now ends BUSY and runs at the next stop.
+# Total time for the suites of one Stop run: 45 s lock wait + this budget stay well inside the 1800 s hook timeout, so the
 # hook is never cut silently (2026-10-02: 27 min). REGRESSION_GATE_BUDGET_S=0 turns it off.
 budget_s = os.environ.get("REGRESSION_GATE_BUDGET_S", "900")
 res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "session-" + sid[:12],
@@ -504,7 +508,7 @@ res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "
                      + (["--since", commit_base] if commit_base else []),
                      cwd=repo, capture_output=True, text=True, errors="replace",
                      env={**os.environ, "CLAUDE_PROJECT_DIR": repo,
-                          "TEST_RUN_LOCK_WAIT_S": os.environ.get("TEST_RUN_LOCK_WAIT_S", "120"),
+                          "TEST_RUN_LOCK_WAIT_S": os.environ.get("TEST_RUN_LOCK_WAIT_S", "45"),
                           "GATE_TOTAL_BUDGET_S": budget_s})
 summary = {}
 for line in reversed(res.stdout.splitlines()):

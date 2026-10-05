@@ -18,7 +18,7 @@ INPUT="$(cat)"
 [ "${FOREIGN_REPO_GATE:-1}" = "0" ] && exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-FRG_INPUT="${INPUT}" FRG_REPO="${REPO_ROOT}" python3 <<'PY'
+FRG_INPUT="${INPUT}" FRG_REPO="${REPO_ROOT}" python3 -I <<'PY'
 import json, os, sys
 
 try:

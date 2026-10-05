@@ -25,10 +25,10 @@ set -u
 
 [ "${SESSION_CONTEXT:-1}" = "0" ] && exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
-INPUT="$(cat)"  # only the session id is used (worktree heal below)
+INPUT="$(cat)"  # only the session id (worktree heal below) and the start source (network fetch) are used
 
 REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-SELF="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null)"
+SELF="$(python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null)"
 INDEXER=""
 for cand in "$(dirname "$(dirname "${SELF}")")/scripts/governance/index_memory.py" \
             "$(dirname "$(dirname "${SELF}")")/scripts/index_memory.py" \
@@ -50,7 +50,7 @@ CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/governance/context_sync.py"
 WT_SCRIPT="$(dirname "$(dirname "${SELF}")")/scripts/git/worktree.py"
 [ -f "${WT_SCRIPT}" ] || WT_SCRIPT="$(dirname "$(dirname "${SELF}")")/scripts/worktree.py"
 if [ -f "${WT_SCRIPT}" ]; then
-  WT_SID="$(printf '%s' "${INPUT:-}" | python3 -c 'import json,sys
+  WT_SID="$(printf '%s' "${INPUT:-}" | python3 -I -c 'import json,sys
 try: print(str(json.load(sys.stdin).get("session_id") or ""))
 except Exception: pass' 2>/dev/null)"
   HEALED="$(cd "${REPO_ROOT}" 2>/dev/null && python3 "${WT_SCRIPT}" heal "--devkit=$(dirname "$(dirname "${SELF}")")" "--session=${WT_SID}" 2>/dev/null)"
@@ -62,8 +62,10 @@ HARNESS_PY="$(dirname "${SELF}")/devkit_harness.py"
 [ -f "${HARNESS_PY}" ] && git -C "${REPO_ROOT}" rev-parse -q --verify HEAD >/dev/null 2>&1 \
   && python3 "${HARNESS_PY}" baseline "${REPO_ROOT}" >/dev/null 2>&1
 
-REPO_ROOT="${REPO_ROOT}" INDEXER="${INDEXER}" HOOK_FILE="${HOOK_FILE}" GATE_HOOK="${GATE_HOOK}" WT_SCRIPT="${WT_SCRIPT}" python3 - <<'PY' 2>/dev/null
-import json, os, re, signal, subprocess, sys
+# SESSION_START_INPUT: the payload (a few hundred bytes), capped so an oversized one can never fail the exec with E2BIG;
+# a cut payload is not JSON, so the python block falls back to the old behaviour (fetch).
+REPO_ROOT="${REPO_ROOT}" INDEXER="${INDEXER}" HOOK_FILE="${HOOK_FILE}" GATE_HOOK="${GATE_HOOK}" WT_SCRIPT="${WT_SCRIPT}" SESSION_START_INPUT="${INPUT:0:16384}" python3 -I - <<'PY' 2>/dev/null
+import json, os, re, signal, subprocess, sys, time
 
 root = os.environ["REPO_ROOT"]
 out = []
@@ -207,7 +209,8 @@ out.append("Trạng thái: " + "; ".join(parts) + ".")
 
 # One developer, one branch: a branch behind/ahead of its upstream, leftover worktrees and extra
 # local branches split the code (GeelyEx2, 2026-09-26: local main 2 commits behind origin).
-# Fetch first (bounded; SESSION_FETCH=0 skips it) so "behind" covers pushes from elsewhere.
+# Fetch first (bounded; SESSION_FETCH=0 skips it; a resume/clear/compact skips it while the last fetch is
+# recent, see fetched_recently) so "behind" covers pushes from elsewhere.
 def git_out(*args, timeout=5):
     try:
         r = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True, timeout=timeout,
@@ -216,12 +219,49 @@ def git_out(*args, timeout=5):
         return None
     return r.stdout.strip() if r.returncode == 0 else None
 
+# The payload's "source" is startup | resume | clear | compact | fork. The fetch is the slow part of session
+# start (3.6 s of 4.4 s over ssh) and only a NEW session must pay it every time: a resumed, cleared or compacted
+# one skips it while the last fetch is recent (below) and then reports ahead/behind from those refs, with the
+# same wording. A missing, malformed or unknown source (fork included) keeps the old behaviour: fetch.
+try:
+    _src = json.loads(os.environ.pop("SESSION_START_INPUT", "") or "{}").get("source")
+except Exception:   # not JSON, not an object, nested past the recursion limit: unknown source, old behaviour
+    _src = None
+refs_from_last_start = _src in ("resume", "clear", "compact")
+
+FETCH_MAX_AGE_S = 1800   # "recent": a fetch that ended less than this long ago (SESSION_FETCH_MAX_AGE_S overrides)
+
+def fetched_recently():
+    """True when a fetch of this repository SUCCEEDED less than SESSION_FETCH_MAX_AGE_S seconds ago. FETCH_HEAD
+    is written by every fetch, per worktree, while the remote-tracking refs are shared: this worktree's FETCH_HEAD
+    and the common dir's both count. A fetch that fails (offline, bad remote, ssh killed at the bound) truncates
+    FETCH_HEAD to 0 bytes and still bumps its mtime, so an empty one is not a fetch. A bad limit means
+    FETCH_MAX_AGE_S; a missing, empty, unreadable or future (clock skew) FETCH_HEAD, or a git without
+    --path-format, means False: fetch, the old behaviour."""
+    try:
+        limit = int(os.environ.get("SESSION_FETCH_MAX_AGE_S", ""))
+        if limit < 0:
+            raise ValueError(limit)
+    except ValueError:
+        limit = FETCH_MAX_AGE_S
+    paths = (git_out("rev-parse", "--path-format=absolute", "--git-path", "FETCH_HEAD", "--git-common-dir") or "").splitlines()
+    if len(paths) != 2:
+        return False
+    for fetch_head in (paths[0], os.path.join(paths[1], "FETCH_HEAD")):
+        try:
+            st = os.stat(fetch_head)
+            if st.st_size > 0 and 0 <= time.time() - st.st_mtime < limit:
+                return True
+        except OSError:
+            pass
+    return False
+
 try:
     drift = []
     main_like = re.compile(r"^(main|master|trunk|develop|release/.+|hotfix/.+)$")
     cur = git_out("symbolic-ref", "-q", "--short", "HEAD")
     up = git_out("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}") if cur else None
-    if up and os.environ.get("SESSION_FETCH", "1") != "0":
+    if up and os.environ.get("SESSION_FETCH", "1") != "0" and not (refs_from_last_start and fetched_recently()):
         # Never prompt (BatchMode), and on timeout kill the whole group so no ssh outlives it.
         ssh = os.environ.get("GIT_SSH_COMMAND") or git_out("config", "core.sshCommand") or "ssh"
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0",

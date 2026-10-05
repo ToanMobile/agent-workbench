@@ -72,7 +72,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 SG_INPUT="${INPUT}" SG_LOG="${LOG_DIR}/security_gate.log" SG_DIR="${LOG_DIR}" SG_REPO="${REPO_ROOT}" \
 SG_TS="$(date +%Y-%m-%dT%H:%M:%S)" SG_MAX="${SECURITY_GATE_MAX_ATTEMPTS:-3}" \
-python3 <<'PY'
+python3 -I <<'PY'
 import os, sys, json, re
 
 raw   = os.environ.get("SG_INPUT", "")

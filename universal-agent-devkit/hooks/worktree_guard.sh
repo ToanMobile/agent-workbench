@@ -110,7 +110,14 @@ if [ -z "${DEVKIT_WORKTREE:-}" ]; then
       linked=1
     else
       from=$(( off > 4096 ? off - 4096 : 0 ))
-      tail -c +$((from + 1)) "${tp}" 2>/dev/null \
+      # BSD `tail -c +N` copies byte by byte (2.3 s for a cold 88 MB scan); dd reads the same bytes at disk speed, and
+      # `grep -aF` hands the SAME `grep -E` only the lines that hold the literal (a call needs it and cannot span lines).
+      # dd starts at the 64 KB block that holds `from`, so up to 64 KB BEFORE `from` are scanned too. With a cache this
+      # hook wrote those bytes were scanned already and held no call: same verdict as `tail`. Only a cache that says "no
+      # call" over a call before its offset (a hand-made state, fuzzed) now finds that call: STRICTER, so the guard can
+      # block (exit 2) a write the old scan let through; it never lets through one the old scan blocked.
+      # No python here: nothing of the project's (a mmap.py in the hook's cwd) can change the answer. Devkit-speed 1a.
+      dd if="${tp}" bs=65536 skip=$(( from / 65536 )) 2>/dev/null | grep -aF EnterWorktree \
         | grep -qE '"name":[[:space:]]*"EnterWorktree"[[:space:]]*,[[:space:]]*"input"' && linked=1
       if [ "${size}" -gt 0 ]; then
         [ -d "${LOG_DIR}/wg_scan" ] || mkdir -p "${LOG_DIR}/wg_scan" 2>/dev/null
@@ -142,7 +149,7 @@ mkdir -p "${LOG_DIR}" 2>/dev/null
 [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
 
 WG_INPUT="${INPUT}" WG_LOG="${LOG_DIR}/worktree_guard.log" WG_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
-python3 <<'PY'
+python3 -I <<'PY'
 import json, os, re, shlex, sys
 
 log = os.environ.get("WG_LOG", "/dev/null")

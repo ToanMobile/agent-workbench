@@ -51,7 +51,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 CC_INPUT="${INPUT}" CC_LOG="${LOG_DIR}/comment_claim_guard.log" \
 CC_TS="$(date +%Y-%m-%dT%H:%M:%S)" CCG_HOOKDIR="$(cd "$(dirname "$0")" && pwd)" CCG_REPO="${REPO_ROOT}" \
-python3 <<'PY'
+python3 -I <<'PY'
 import os, sys, json, re
 
 raw = os.environ.get("CC_INPUT", "")

@@ -68,7 +68,7 @@ ARGS_Q=""
 for a in "$@"; do ARGS_Q="$ARGS_Q $(printf '%q' "$a")"; done
 CMDLINE="adb$ARGS_Q"
 gate() { # gate <command line> — run it through hardware_safety_gate.sh
-  python3 -c 'import json,sys; print(json.dumps({"tool_input": {"command": sys.argv[1]}}))' "$1" \
+  python3 -I -c 'import json,sys; print(json.dumps({"tool_input": {"command": sys.argv[1]}}))' "$1" \
     | bash "$GATE" || { echo "✖ adb-safe-exec: refused by hardware_safety_gate" >&2; exit 2; }
 }
 if [ -f "$GATE" ]; then
@@ -121,7 +121,7 @@ LOG="$("${ADB[@]}" logcat -d -T "$T0" -b main -b system -b crash 2>&1)"
 LRC=$?
 CRASH=""
 if [ "$LRC" -eq 0 ]; then
-  CRASH="$(printf '%s\n' "$LOG" | python3 -c '
+  CRASH="$(printf '%s\n' "$LOG" | python3 -I -c '
 import re, sys
 pkg = sys.argv[1]
 lines = sys.stdin.read().splitlines()
@@ -151,7 +151,7 @@ mkdir -p "$EVID_DIR" 2>/dev/null || EVID_DIR=""
 NATIVE=""
 TOMB=""
 if printf '%s\n' "$CRASH" | grep -qE 'Fatal signal [0-9]+|SIGSEGV|SIGABRT'; then
-  TOMB_TXT="$(printf '%s\n' "$LOG" | python3 -c '
+  TOMB_TXT="$(printf '%s\n' "$LOG" | python3 -I -c '
 import re, sys
 pkg = sys.argv[1]
 start = re.compile(r"(?:\*\*\* ){4,}")  # debuggerd header: *** *** *** …

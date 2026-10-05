@@ -48,7 +48,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 CLAIM_INPUT="${INPUT}" CLAIM_LOG="${LOG}" CLAIM_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
 CLAIM_REPO="${REPO_ROOT}" \
-python3 <<'PY'
+python3 -I <<'PY'
 import os, sys, json, re
 
 raw = os.environ.get("CLAIM_INPUT", "")

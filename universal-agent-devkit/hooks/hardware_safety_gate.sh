@@ -59,7 +59,7 @@
 #     replicant's own process-runner blocks `rm -rf /system`, dd, su and format, but
 #     not `mount … rw /system`, `pm uninstall <system package>` or the device policy.
 #
-# FAIL-CLOSED: malformed JSON or missing python3 → exit 2 (the command is not
+# FAIL-CLOSED: malformed JSON, missing python3 or an uncaught internal error → exit 2 (the command is not
 # allowed through unexamined). Empty stdin → exit 0 (no tool call to judge).
 #
 # Protocol: stdin JSON; exit 2 blocks (stderr -> Agent); exit 0 allows.
@@ -105,8 +105,26 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 2
 fi
 
-printf '%s' "$INPUT" | REPO_ROOT="${REPO_ROOT}" python3 -c '
-import sys, json, re, os, fnmatch, shlex, shutil, subprocess
+printf '%s' "$INPUT" | REPO_ROOT="${REPO_ROOT}" python3 -I -c '
+import sys, os
+# FAIL-CLOSED on a crash (2026-10-04): an uncaught exception exits 1, which Claude Code lets through. Installed before any other
+# import. -I (above) keeps the cwd off sys.path: a json.py / shlex.py in the project root would otherwise replace the stdlib module.
+def _fail_closed(etype, value, tb):
+    try:
+        why = (str(value).splitlines() or [""])[0][:100]
+        sys.stderr.write("🛑 [HARDWARE SAFETY GATE] lỗi nội bộ (" + etype.__name__ + ": " + why + ") — chặn để an toàn. Nếu đây là lỗi của cổng: người dùng tự chạy lệnh qua prefix `!` (hoặc HARDWARE_OVERRIDE=1).\n")
+        sys.stderr.flush()
+    finally:
+        os._exit(2)
+sys.excepthook = _fail_closed
+import json, re, fnmatch, shlex, shutil, subprocess
+
+def _fnm(name, pat):
+    # Python 3.9 raises re.error for a reversed range ([z-a], the s[:-1] of a script); bash reads such a bracket as "no match"
+    try:
+        return fnmatch.fnmatch(name, pat)
+    except re.error:
+        return False
 
 raw = sys.stdin.read()
 if not raw.strip():
@@ -243,7 +261,7 @@ def unglob(tok):
     base = tok.rsplit("/", 1)[-1]
     if re.search(r"[*?\[]", base):
         for t in TOOLS:
-            if fnmatch.fnmatch(t, base.lower()):
+            if _fnm(t, base.lower()):
                 return t
     return tok
 try:
@@ -337,7 +355,7 @@ def rm_segment_problem(toks, cwds, env, depth):
     if i >= len(toks):
         return None
     prog, rest = os.path.basename(toks[i]), toks[i + 1:]
-    if GLOB.search(prog) and fnmatch.fnmatch("rm", prog.lower()):
+    if GLOB.search(prog) and _fnm("rm", prog.lower()):
         prog = "rm"
     if prog in ("bash", "sh", "zsh", "dash", "ksh") and "-c" in rest:
         k = rest.index("-c")
@@ -404,12 +422,24 @@ def rm_problem(text, cwds, depth=0):
                 i += 1
             head = os.path.basename(seg[i]) if i < len(seg) else ""
             if head in ("cd", "pushd", "popd"):
-                arg = next((a for a in seg[i + 1:] if not a.startswith("-")), "~")
-                if head == "popd" or arg == "-" or "$" in arg or GLOB.search(arg):
+                # raw words: options (-L -P -e -@ --, pushd -n) are skipped, but "-" (cd -) and +N / -N (pushd +1) are not options
+                args, k, opts = seg[i + 1:], 0, []
+                while k < len(args) and args[k].startswith("-") and len(args[k]) > 1 and not re.fullmatch(r"-\d+", args[k]):
+                    opts.append(args[k]); k += 1
+                    if args[k - 1] == "--":
+                        break
+                arg = args[k] if k < len(args) else ("~" if head == "cd" else None)
+                if head == "pushd" and "-n" in opts:
+                    pass   # pushd -n only edits the directory stack: the shell stays where it is
+                elif (head == "popd" or arg is None or arg == "-" or re.fullmatch(r"[+-]\d+", arg) or "$" in arg or GLOB.search(arg)
+                      or (CDPATH_SET and not arg.startswith(("/", "~")))):
+                    # popd / bare pushd / cd - / pushd +N come back to a directory this walk never saw; with CDPATH a relative
+                    # name may resolve anywhere ("CDPATH=/opt cd data" enters /opt/data)
                     pending = [None]
                 else:
                     arg = os.path.expanduser(arg)
-                    pending = [os.path.normpath(os.path.join(c, arg)) if c or os.path.isabs(arg) else None
+                    # c is None after `cd $VAR`: an absolute arg ignores it (join(None, arg) raised TypeError, rc 1, command ran)
+                    pending = [os.path.normpath(os.path.join(c or "/", arg)) if c or os.path.isabs(arg) else None
                                for c in cwds]
             else:
                 why = rm_segment_problem(seg, cwds, env, depth)
@@ -430,6 +460,7 @@ def rm_problem(text, cwds, depth=0):
         seg = []
     return None
 
+CDPATH_SET = bool(os.environ.get("CDPATH")) or "CDPATH" in cmd   # set in the environment or anywhere in the command
 rm_why = None if (label or MCP) else rm_problem(cmd, [CWD])
 
 
@@ -672,3 +703,7 @@ if not MCP and active_profile() == "automotive":
         sys.exit(2)
 sys.exit(0)
 '
+rc=$?
+case "${rc}" in 0|2) exit "${rc}" ;; esac
+echo "🛑 [HARDWARE SAFETY GATE] python không chạy được (rc ${rc}) — chặn để an toàn (người dùng tự chạy lệnh qua prefix ! hoặc HARDWARE_OVERRIDE=1)." >&2
+exit 2

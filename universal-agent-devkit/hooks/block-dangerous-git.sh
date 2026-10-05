@@ -39,7 +39,7 @@
 #      includeIf.* (an external config file) are blocked.
 #   4. FAIL-CLOSED: if the command can't be tokenized, or contains `$(`/backticks
 #      whose output could become a command, the raw text is scanned with a broad
-#      regex instead. Missing python3 blocks.
+#      regex instead. Missing python3, or an uncaught internal error in the parser, blocks.
 
 INPUT=$(cat)
 
@@ -66,8 +66,26 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 2
 fi
 
-printf '%s' "$INPUT" | python3 -c '
-import fnmatch, json, os, re, shlex, shutil, subprocess, sys, time
+printf '%s' "$INPUT" | python3 -I -c '
+import os, sys
+# FAIL-CLOSED on a crash (2026-10-04): an uncaught exception exits 1, which Claude Code lets through. Installed before any other
+# import. -I (above) keeps the cwd off sys.path: a json.py / shlex.py in the project root would otherwise replace the stdlib module.
+def _fail_closed(etype, value, tb):
+    try:
+        why = (str(value).splitlines() or [""])[0][:100]
+        sys.stderr.write("BLOCKED: block-dangerous-git.sh lỗi nội bộ (" + etype.__name__ + ": " + why + "). Chặn để an toàn. Nếu đây là lỗi của cổng: người dùng tự chạy lệnh qua prefix \"!\".\n")
+        sys.stderr.flush()
+    finally:
+        os._exit(2)
+sys.excepthook = _fail_closed
+import fnmatch, json, re, shlex, shutil, subprocess, time
+
+def _fnm(name, pat):
+    # Python 3.9 raises re.error for a reversed range ([z-a], the s[:-1] of a script); bash reads such a bracket as "no match"
+    try:
+        return fnmatch.fnmatch(name, pat)
+    except re.error:
+        return False
 
 try:
     PAYLOAD = json.load(sys.stdin)
@@ -637,7 +655,7 @@ def analyse_simple(tokens, depth):
         return None
     prog, rest = tokens[i].rsplit("/", 1)[-1], tokens[i + 1:]
     # macOS resolves GIT / Git to git, and a glob like g?t or gi[t] can expand to it.
-    if prog.lower() == "git" or (re.search(r"[*?\[]", prog) and fnmatch.fnmatch("git", prog)):
+    if prog.lower() == "git" or (re.search(r"[*?\[]", prog) and _fnm("git", prog)):
         prog = "git"
     if prog in ("cd", "pushd", "popd"):
         CHANGES_DIR.append(prog)
@@ -955,3 +973,7 @@ if reason:
     sys.exit(2)
 sys.exit(0)
 ' "$0"
+rc=$?
+case "${rc}" in 0|2) exit "${rc}" ;; esac
+echo "BLOCKED: block-dangerous-git.sh: python không chạy được (rc ${rc}). Chặn để an toàn (người dùng tự chạy lệnh qua prefix ! nếu đây là lỗi của cổng)." >&2
+exit 2

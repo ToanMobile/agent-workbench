@@ -67,7 +67,7 @@ command -v python3 >/dev/null 2>&1 || HAVE_PY=0
 # transcript, TERMINAL=1 for Grok's session-end Stop. Without the helper: old behaviour.
 HARNESS=""
 for cand in "$(dirname "$0")/devkit_harness.py" \
-            "$(python3 -c 'import os,sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0" 2>/dev/null)/devkit_harness.py"; do
+            "$(python3 -I -c 'import os,sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0" 2>/dev/null)/devkit_harness.py"; do
   [ -f "${cand}" ] && { HARNESS="${cand}"; break; }
 done
 AGENT="unknown"; TKIND="?"; DEGRADED=0; TERMINAL=0; REASON=""
@@ -81,7 +81,7 @@ if [ -n "${INPUT}" ] && [ "${HAVE_PY}" = 1 ]; then
     IFS="${OLDIFS}"
     [ $# -ge 5 ] && { SID_RAW="$1"; AGENT="$2"; TKIND="$3"; DEGRADED="$4"; TERMINAL="$5"; REASON="${6:-}"; }
   fi
-  [ -n "${SID_RAW}" ] || SID_RAW="$(printf '%s' "${INPUT}" | python3 -c '
+  [ -n "${SID_RAW}" ] || SID_RAW="$(printf '%s' "${INPUT}" | python3 -I -c '
 import sys, json, re
 try:
     d = json.load(sys.stdin)
@@ -163,14 +163,14 @@ CHANGED="$( { git diff --name-only --diff-filter=ACMR 2>/dev/null
 # writes are none of them dirty.
 SCOPED=""
 SCOPE_RC=1
-SELF_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null)"
+SELF_REAL="$(python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null)"
 AUTHORSHIP_BIN=""
 for cand in "$(dirname "$(dirname "${SELF_REAL:-$0}")")/bin" "${REPO_ROOT}/.agents/devkit/bin" \
             "${DEVKIT_ROOT:-/nonexistent}/bin" "${HOME}/.universal-agent-devkit/bin"; do
   [ -f "${cand}/session_authorship.py" ] && { AUTHORSHIP_BIN="${cand}"; break; }
 done
 if [ "${HAVE_PY}" = 1 ] && [ -n "${INPUT}" ] && [ -n "${AUTHORSHIP_BIN}" ]; then
-  SCOPED="$(TS_INPUT="${INPUT}" TS_CHANGED="${CHANGED}" TS_ROOT="${REPO_ROOT}" TS_BIN="${AUTHORSHIP_BIN}" python3 -c '
+  SCOPED="$(TS_INPUT="${INPUT}" TS_CHANGED="${CHANGED}" TS_ROOT="${REPO_ROOT}" TS_BIN="${AUTHORSHIP_BIN}" python3 -I -c '
 import os, sys, json
 raw = os.environ.get("TS_INPUT", "")
 changed = [l for l in os.environ.get("TS_CHANGED", "").splitlines() if l.strip()]
@@ -251,7 +251,7 @@ TREE_FP=""; CACHED=""
 if [ -n "${HARNESS}" ]; then
   TREE_FP="$(python3 "${HARNESS}" fingerprint "${REPO_ROOT}" 2>/dev/null || true)"
   if [ -n "${TREE_FP}" ] && [ -n "${SCOPED}" ]; then
-    SCOPE_ID="$(printf '%s' "${SCOPED}" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:12])' 2>/dev/null)"
+    SCOPE_ID="$(printf '%s' "${SCOPED}" | python3 -I -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:12])' 2>/dev/null)"
     # no scope id → no key: never let two file lists share one cached PASS
     if [ -n "${SCOPE_ID}" ]; then TREE_FP="${TREE_FP}-${SCOPE_ID}"; else TREE_FP=""; fi
   fi

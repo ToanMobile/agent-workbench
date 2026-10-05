@@ -412,7 +412,7 @@ printf '{"session_id":"s-y3","hook_event_name":"Stop","transcript_path":"%s"}' "
   || fail "MCP-tool test edit let through (rc=$rc out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")')"
 
 # ── Another run holds the project's test-run lock (BUSY) ──────────────────────────────
-# The Stop hook hands the gate a short lock wait (TEST_RUN_LOCK_WAIT_S=120 unless set: 900
+# The Stop hook hands the gate a short lock wait (TEST_RUN_LOCK_WAIT_S=45 unless set: 900
 # plus the suites could pass the hook's own 1800 s timeout), says the real cause — not
 # "missing tool" — and caches nothing: the next stop runs the suite.
 B="$TMP/busy"; mkdir -p "$B/src" "$B/.agents" && cd "$B" || exit 1
@@ -455,8 +455,8 @@ TEST_RUN_LOCK_WAIT_S=1 bstop; rc=$?
   || fail "second BUSY stop silent (rc=$rc out='$(cat "$TMP/out")')"
 kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
 bstop; rc=$?
-[ "$rc" = 0 ] && [ "$(cat "$TMP/b_wait" 2>/dev/null)" = 120 ] \
-  && ok "lock free: the same tree's suite runs on the next stop, with TEST_RUN_LOCK_WAIT_S=120 from the hook" \
+[ "$rc" = 0 ] && [ "$(cat "$TMP/b_wait" 2>/dev/null)" = 45 ] \
+  && ok "lock free: the same tree's suite runs on the next stop, with TEST_RUN_LOCK_WAIT_S=45 from the hook" \
   || fail "suite not re-run after BUSY, or wrong wait (rc=$rc wait='$(cat "$TMP/b_wait" 2>/dev/null)')"
 # Degraded mode (Grok-shaped Stop) reuses the last result per tree: BUSY must not be that result.
 kstop() { printf '{"hookEventName":"stop","hook_event_name":"Stop","sessionId":"k-1","session_id":"k-1","workspaceRoot":"%s","transcript_path":"%s","reason":"end_turn","stopHookActive":false}' \

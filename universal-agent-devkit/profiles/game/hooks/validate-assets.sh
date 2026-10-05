@@ -57,14 +57,14 @@ INPUT=""
 [ -t 0 ] || INPUT="$(cat 2>/dev/null || true)"
 FILE_PATH=""
 if [ -n "$INPUT" ]; then
-  FILE_PATH="$(printf '%s' "$INPUT" | python3 -c 'import json,sys
+  FILE_PATH="$(printf '%s' "$INPUT" | python3 -I -c 'import json,sys
 try: print((json.load(sys.stdin).get("tool_input") or {}).get("file_path") or "")
 except Exception: print("")' 2>/dev/null)"
 fi
 if [ -n "$FILE_PATH" ]; then
   case "$FILE_PATH" in
     "$REPO_ROOT"/*) REL="${FILE_PATH#"$REPO_ROOT"/}" ;;
-    /*) REL="$(python3 -c 'import os,sys; print(os.path.relpath(os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])))' "$FILE_PATH" "$REPO_ROOT" 2>/dev/null)" ;;
+    /*) REL="$(python3 -I -c 'import os,sys; print(os.path.relpath(os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])))' "$FILE_PATH" "$REPO_ROOT" 2>/dev/null)" ;;
     *) REL="$FILE_PATH" ;;
   esac
   if is_rogue "$REL"; then

@@ -78,7 +78,7 @@ if [ -n "${RULES_OUT}" ]; then
   # Recall log: the matched project-rule sections, next to the traps enrich_context.py
   # logged (.claude/audit-gate/surfaced.jsonl; prompt sha1 only). SURFACED_LOG=0 off.
   if [ -s "${RULES_OUT}" ] && [ "${SURFACED_LOG:-1}" != "0" ] && [ -d "${REPO_ROOT}/.agents" ]; then
-    PAYLOAD="${PAYLOAD}" RULES_FILE="${RULES_OUT}" LOG_DIR="${REPO_ROOT}/.claude/audit-gate" python3 - <<'PY' 2>/dev/null
+    PAYLOAD="${PAYLOAD}" RULES_FILE="${RULES_OUT}" LOG_DIR="${REPO_ROOT}/.claude/audit-gate" python3 -I - <<'PY' 2>/dev/null
 import hashlib, json, os, re, time
 d = json.loads(os.environ.get("PAYLOAD") or "{}")
 secs = [{"title": m.group(1), "cmd": m.group(2)} for m in
