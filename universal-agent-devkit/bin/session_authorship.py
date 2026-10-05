@@ -240,12 +240,94 @@ def names_path(named, root, rel) -> bool:
     return False
 
 
-def bash_windows(project) -> list:
-    """(start, end, session) of every Bash command in bash_write_ledger.tsv; a start with no
-    end (a backgrounded command) stays open until now."""
-    windows, opens = [], {}
+LEDGER_REL = os.path.join(".claude", "audit-gate", "bash_write_ledger.tsv")
+# A window is OPEN (a `start`, no `end`) when its command never reported back: a backgrounded one (no
+# `end` by design: hooks/bash_write_ledger.sh), one that FAILED (the harness fires PostToolUseFailure,
+# not PostToolUse: 5-7% of the Bash calls in the live ledgers), an interrupted one, a killed session.
+# Stretching every open window to "now" let one such row (37-121 h old in the live ledgers) cover every
+# later change, so a person's edit of an existing test read as "another session's" and only warned.
+# DIRECTION. Cutting a window only ever NARROWS it, and window_owner picks the narrowest window, so a cut
+# window can take a file from a wider window of mine (block_owner) or hide one more claim (credit). Two
+# kinds of caller, two rules: a caller for whom "another session" is the LENIENT answer (post-fix-gate: a
+# warning instead of a block; test_evidence_gate ran_here) asks block_owner, which says "another session"
+# only when the old rule and the cut rule both do; a caller that CREDITS a window to me (test_evidence_gate
+# ran_in_my_window, testsourceset_gate, wrote_any) keeps the old rule: bash_windows(project), me=None.
+OPEN_MAX_AGE_S = 2 * 3600.0     # an open window of a LIVE session covers at most this long after its start
+LIVE_IDLE_S = 600.0             # registered, pid alive: live for this long after its last sign of life
+LIVE_IDLE_NO_PID_S = 180.0      # registered without a pid: same two tiers as session_lock.get_active_sessions
+PID_MAX = 1 << 22               # the largest pid any supported OS hands out (Linux pid_max); more is garbage
+
+
+def _session_seen(project, sids, last_seen, now) -> dict:
+    """{sid: (live, last sign of life)} of the sessions in sids, from the registry session_lock keeps
+    in <git common dir>/devkit-sessions/<sid>.json (pid + heartbeat). A session with no readable entry
+    is not live: only a registry entry, a live pid and a fresh sign of life (heartbeat or ledger row)
+    prove it. The registry is a file an agent can write: whatever is wrong in it (a pid past the OS range,
+    a string, nesting that overflows the JSON parser) means "not live", never a crash of the gate.
+    ponytail: a live session idle 10+ minutes behind a background job stops covering its window (a
+    person's edit then blocks instead of warning); upgrade to a process start-time check if that bites."""
+    seen = {sid: (False, last_seen.get(sid, 0.0)) for sid in sids}
     try:
-        with open(Path(project) / ".claude" / "audit-gate" / "bash_write_ledger.tsv", encoding="utf-8") as fh:
+        import session_lock  # noqa: PLC0415 - bin/ is on sys.path of every caller
+        sdir, _top = session_lock.sessions_dir(str(project))
+    except Exception:  # noqa: BLE001 - fail closed: no registry, nobody else is live
+        return seen
+    if not sdir:
+        return seen
+    for sid in sids:
+        if not sid or os.path.basename(sid) != sid or sid in (".", ".."):
+            continue
+        try:
+            info = session_lock.read_lock(os.path.join(sdir, sid + ".json"))
+            if not info or info.get("session_id") != sid:
+                continue
+            try:
+                beat = float(info.get("heartbeat") or 0.0)
+            except (TypeError, ValueError):
+                beat = 0.0
+            last = max(last_seen.get(sid, 0.0), beat if beat <= now else 0.0)
+            pid = info.get("pid")
+            if pid is None or pid == 0:
+                live = now - last <= LIVE_IDLE_NO_PID_S
+            elif type(pid) is int and 1 < pid <= PID_MAX:
+                live = session_lock.is_pid_alive(pid) and now - last <= LIVE_IDLE_S
+            else:
+                continue                  # a pid that is not one: a forged entry, its heartbeat proves nothing
+            seen[sid] = (live, last)
+        except Exception:  # noqa: BLE001 - fail closed (see the docstring)
+            continue
+    return seen
+
+
+def open_windows(opens, last_seen, project, me, now) -> list:
+    """(start, end, session) for the open windows in opens ({(sid, tuid): start}); last_seen:
+    {sid: newest ledger stamp <= now}. me: the session being judged, whose own windows stay open
+    until now (it is live, and may have a background job writing). me None: every window stays
+    open until now, the old rule. Another session's window ends at now while that session is live,
+    at most OPEN_MAX_AGE_S after its start; a dead one (no registry entry, pid gone, no sign of life
+    for LIVE_IDLE_S) ended at its last sign of life, or at its start when it left none."""
+    if me is None:
+        return [(st, now, sid) for (sid, _), st in opens.items()]
+    seen = _session_seen(project, {sid for sid, _ in opens} - {me}, last_seen, now)
+    out = []
+    for (sid, _), st in opens.items():
+        if sid == me:
+            out.append((st, now, sid))
+            continue
+        live, last = seen[sid]
+        out.append((st, min(now if live else max(st, last), st + OPEN_MAX_AGE_S), sid))
+    return out
+
+
+def bash_windows(project, me=None) -> list:
+    """(start, end, session) of every Bash command in bash_write_ledger.tsv; [] when it is unreadable.
+    A start with no end (backgrounded, failed, interrupted, killed) is open: me None, every open window
+    reaches now, as it always did; me = the session being judged, open_windows cuts the windows of
+    sessions that are gone (read it together with block_owner: the cut windows are for callers that
+    must not credit "another session" on them alone)."""
+    windows, opens, last, now = [], {}, {}, time.time()
+    try:
+        with open(Path(project) / LEDGER_REL, encoding="utf-8", errors="replace") as fh:   # anyone can append bytes that are not UTF-8
             for line in fh:
                 parts = line.rstrip("\n").split("\t")
                 if len(parts) != 4:
@@ -255,13 +337,28 @@ def bash_windows(project) -> list:
                     stamp = float(stamp)
                 except ValueError:
                     continue
+                if stamp <= now:
+                    last[sid] = max(last.get(sid, 0.0), stamp)
                 if kind == "start":
                     opens[(sid, tuid)] = stamp
                 elif kind == "end" and (sid, tuid) in opens:
                     windows.append((opens.pop((sid, tuid)), stamp, sid))
     except OSError:
         return []
-    return windows + [(st, time.time(), sid) for (sid, _), st in opens.items()]
+    return windows + open_windows(opens, last, project, me, now)
+
+
+def block_owner(mt, old, cut, me, extra=()):
+    """window_owner(mt, ...) for a caller where "another session" is the LENIENT answer. old: the
+    windows under the old rule (bash_windows(project)); cut: under the cut rule (bash_windows(project,
+    me)); extra: windows both sides share. Mine under the old rule stays mine, nobody (or a tie) stays
+    so, and "another session" survives only when the cut rule says some session too: a window of a
+    session that is gone no longer hides a change, but its cut window never takes a file from a wider
+    window of mine."""
+    owner = window_owner(mt, list(old) + list(extra))
+    if owner == me or not owner:          # mine, nobody (None) or a tie (""): the old answer stands
+        return owner
+    return window_owner(mt, list(cut) + list(extra))
 
 
 # Bounds of the scan of other sessions' transcripts (it runs inside a Stop hook).

@@ -7,6 +7,7 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 CMD="$DEVKIT_DIR/bin/proof-capture.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+export PROOF_DEVICE_LOCK_DIR="$TMP/device-locks"   # the device lock never touches the real ~/.config
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 python3 - "$TMP" <<'PY'

@@ -19,19 +19,39 @@ Booted simulator (`xcrun simctl list devices -j`) with `xcrun simctl io <udid> s
 none or several Booted is a failure, never an Android fallback. With no declared provider
 (no serial/avd) and a profile that is not android/automotive, a single Booted simulator is
 used before adb; several Booted ones leave it to adb.
+
+Device lock (adb only): several agents share one phone, so the capture holds a per-SERIAL flock around its
+device commands (AVD boot, wakefulness, screencap; the `adb devices`/`connect` that pick the device run
+before it). A second capture for the same serial waits (PROOF_DEVICE_LOCK_WAIT seconds in total, default
+300, capped at 3600) and then exits 75 saying who holds it and since when; other serials, and an AVD versus
+a phone, never wait for each other. Installing a build is not part of this tool and is not covered. The lock is taken
+AFTER the device was chosen and the denylist applied, so a denied serial never reaches it. It lives in
+$PROOF_DEVICE_LOCK_DIR (tests only) or ~/.config/universal-agent-devkit/device-locks (0700, one file per
+sha256(kind:name)); the kernel drops it when the holder dies. An unusable lock dir is a warning, not a
+failure (the old unlocked behaviour). Off: --no-device-lock or PROOF_DEVICE_LOCK=0.
+Exit codes: 0 captured, 1 refused/failed, 2 usage, 75 device lock not obtained in time.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
+import errno
+import hashlib
 import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import time
 import zlib
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # no flock on this platform: the device lock degrades to a warning
+    fcntl = None
 
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
 MIN_BYTES = 8192
@@ -140,9 +160,9 @@ def pick_avd(avds: list, declared: str | None, profile: str | None = None) -> st
     return None
 
 
-def next_port(devices: list, start: int = 5554) -> int:
+def next_port(devices: list, start: int = 5554, denied=()) -> int:
     port = int(start) if int(start) % 2 == 0 else int(start) + 1
-    used = {d["serial"] for d in devices}
+    used = {d["serial"] for d in devices} | set(denied)  # a denied serial is never booted onto either
     for _ in range(16):
         if "emulator-%d" % port not in used:
             return port
@@ -448,9 +468,11 @@ def resolve(project: Path, adb: str, emulator: str | None, connect_timeout: floa
     return plan
 
 
-def boot_avd(adb: str, emulator: str, avd: str, devices: list, port: int, boot_timeout: float) -> str:
+def boot_avd(adb: str, emulator: str, avd: str, devices: list, port: int, boot_timeout: float, denied=()) -> str:
     for dev in devices:
         if dev["state"] != "device" or not dev["serial"].startswith("emulator-"):
+            continue
+        if dev["serial"] in denied:  # never reuse (nor even ask) an emulator the denylist forbids
             continue
         if avd_name(adb, dev["serial"]) == avd:
             print("AVD %s da mo tai %s" % (avd, dev["serial"]), file=sys.stderr)
@@ -469,8 +491,192 @@ def boot_avd(adb: str, emulator: str, avd: str, devices: list, port: int, boot_t
     return serial
 
 
+# ---- device lock -------------------------------------------------------------------------------------
+LOCK_BUSY_EXIT = 75  # EX_TEMPFAIL: the device lock was not obtained in time; retry later
+LOCK_WAIT_DEFAULT = 300.0
+LOCK_WAIT_MAX = 3600.0
+LOCK_POLL_S = 0.2
+
+
+class DeviceLockBusy(Exception):
+    """Another capture still holds the device after the whole wait."""
+
+
+def lock_wait_seconds() -> float:
+    """PROOF_DEVICE_LOCK_WAIT: seconds to wait for a busy device. Garbage, nan, inf and negatives mean the default."""
+    try:
+        value = float(os.environ.get("PROOF_DEVICE_LOCK_WAIT"))
+    except (TypeError, ValueError):
+        return LOCK_WAIT_DEFAULT
+    if value != value or value < 0 or value == float("inf"):
+        return LOCK_WAIT_DEFAULT
+    return min(value, LOCK_WAIT_MAX)
+
+
+def device_lock_enabled(flag_off: bool = False) -> bool:
+    if flag_off:
+        return False
+    return os.environ.get("PROOF_DEVICE_LOCK", "1").strip().lower() not in ("0", "off", "false", "no")
+
+
+def device_lock_dir() -> Path:
+    # Not TMPDIR: that differs per user session/sandbox, and the lock only works when every agent on the
+    # machine agrees on one path. PROOF_DEVICE_LOCK_DIR is for tests; nothing else reads it.
+    override = os.environ.get("PROOF_DEVICE_LOCK_DIR")
+    if override:
+        return Path(override)
+    return Path.home() / ".config" / "universal-agent-devkit" / "device-locks"
+
+
+def lock_path(directory: Path, kind: str, name: str) -> Path:
+    digest = hashlib.sha256(("%s:%s" % (kind, name)).encode("utf-8", "backslashreplace")).hexdigest()[:32]
+    return Path(directory) / (digest + ".lock")
+
+
+def _clean(value, limit: int = 120) -> str:
+    """Text from another process, safe to print: control characters and escapes become '?'."""
+    return "".join(ch if ch.isprintable() else "?" for ch in str(value))[:limit]
+
+
+def _label(kind: str, name: str) -> str:
+    return ("AVD %s" if kind == "avd" else "serial %s") % _clean(name, 80)
+
+
+def _open_lock(directory: Path, path: Path) -> int:
+    """Open the lock file (created if missing) in a private directory; OSError when it cannot be trusted. The
+    holder later writes its identity INTO this file, so it must be a regular file with no other name."""
+    os.makedirs(str(directory), mode=0o700, exist_ok=True)  # a symlinked dir is followed; two creators may race
+    st = os.stat(str(directory))
+    if st.st_uid != os.geteuid() or st.st_mode & 0o022:
+        raise OSError(errno.EACCES, "lock dir %s is not private (owner or mode %o)" % (directory, stat.S_IMODE(st.st_mode)))
+    # O_NOFOLLOW: a planted symlink must not be written through. O_NONBLOCK: a planted FIFO must not hang us.
+    fd = os.open(str(path), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:  # a hardlink would let the identity write truncate another file
+        os.close(fd)
+        raise OSError(errno.EINVAL, "%s is not a regular file with a single name" % path)
+    return fd
+
+
+def _holder_text(fd: int) -> str:
+    """Who holds the lock, from the identity the holder wrote. For the message only, never for a decision."""
+    try:
+        info = json.loads(os.pread(fd, 4096, 0).decode("utf-8", "replace"))
+    except (OSError, ValueError):
+        info = None
+    if not isinstance(info, dict):
+        return "khong doc duoc nguoi giu khoa"
+    since = ""
+    try:
+        started = float(info.get("started"))
+        since = ", tu %s (%d giay truoc)" % (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), max(0, int(time.time() - started)))
+    except (TypeError, ValueError, OverflowError, OSError):
+        pass
+    return "pid %s, session %s, cwd %s%s" % (_clean(info.get("pid"), 12), _clean(info.get("session") or "-", 60),
+                                              _clean(info.get("cwd") or "?", 240), since)
+
+
+def _write_identity(fd: int, kind: str, name: str) -> None:
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        cwd = "?"
+    session = os.environ.get("DEVKIT_SESSION_ID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID") or ""
+    data = json.dumps({"pid": os.getpid(), "session": session, "cwd": cwd, "started": time.time(),
+                       "key": "%s:%s" % (kind, name)}).encode("utf-8")
+    try:
+        os.ftruncate(fd, 0)
+        os.pwrite(fd, data, 0)
+    except OSError as exc:  # the lock is held either way; only the message loses its detail
+        print("Canh bao: khong ghi duoc nguoi giu khoa thiet bi: %s" % _clean(exc), file=sys.stderr)
+
+
+def _unlocked(kind: str, name: str, why) -> tuple:
+    print("Canh bao: khong dung duoc khoa thiet bi cho %s (%s) — chup khong khoa nhu truoc; "
+          "hai phien cung may co the chup de len nhau." % (_label(kind, name), _clean(why, 200)), file=sys.stderr)
+    return None, 0.0
+
+
+def _acquire_lock(kind: str, name: str, wait_s: float) -> tuple:
+    """(fd, seconds waited) with the flock held; (None, 0.0) after a warning when the lock cannot be used at all."""
+    if fcntl is None:
+        return _unlocked(kind, name, "fcntl.flock khong co tren he nay")
+    try:
+        directory = device_lock_dir()
+        fd = _open_lock(directory, lock_path(directory, kind, name))
+    except (OSError, RuntimeError, ValueError) as exc:
+        return _unlocked(kind, name, exc)
+    announced = False
+    start = time.monotonic()
+    deadline = start + wait_s
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    os.close(fd)
+                    return _unlocked(kind, name, exc)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise DeviceLockBusy(
+                    "Thiet bi (%s) dang duoc phien khac dung de chup (%s). Da cho %d giay. Chay lai sau, hoac tang "
+                    "PROOF_DEVICE_LOCK_WAIT (giay, mac dinh 300), hoac tat khoa bang --no-device-lock / "
+                    "PROOF_DEVICE_LOCK=0 (khi do hai phien co the chup de len nhau)."
+                    % (_label(kind, name), _holder_text(fd), int(time.monotonic() - start)))
+            if not announced:
+                announced = True
+                print("Cho khoa thiet bi cho %s: %s. Cho toi da %d giay (PROOF_DEVICE_LOCK_WAIT)." % (
+                    _label(kind, name), _holder_text(fd), int(remaining)), file=sys.stderr)
+            time.sleep(min(LOCK_POLL_S, remaining))
+        _write_identity(fd, kind, name)
+        return fd, time.monotonic() - start
+    except BaseException:  # DeviceLockBusy, Ctrl-C, anything: never leave the fd (and the lock) behind
+        os.close(fd)
+        raise
+
+
+@contextlib.contextmanager
+def device_lock(kind: str, name: str, wait_s: float):
+    """Hold the flock for (kind, name) until the block ends, whatever ends it. Yields the seconds spent waiting
+    for it (0.0 when free). Not re-entrant: a second hold of the same key in one process waits, then fails (75)."""
+    fd, spent = _acquire_lock(kind, name, wait_s)
+    try:
+        yield spent
+    finally:
+        if fd is not None:
+            os.close(fd)  # closing the descriptor drops the flock; a killed process loses it the same way
+
+
+def locked_device(locks, args, plan: dict, emulator, use_lock: bool) -> str:
+    """Boot the planned AVD if need be, take the serial lock (in `locks`) and return the serial.
+    One wait budget covers both locks; a boot plan locks the AVD first and re-reads adb devices after."""
+    budget = lock_wait_seconds()
+    serial = plan.get("serial")
+    if plan["action"] == "boot":
+        denied = set(plan.get("denied") or [])
+        if use_lock:
+            budget -= locks.enter_context(device_lock("avd", plan["avd"], budget))
+            plan["devices"] = adb_devices(args.adb)  # whoever held the AVD before us may have booted it
+        serial = boot_avd(args.adb, emulator, plan["avd"], plan["devices"], next_port(plan["devices"], args.port, denied),
+                          args.boot_timeout, denied)
+        if serial in denied:  # the denylist outranks the AVD fallback: refuse before any lock or capture on it
+            raise SystemExit("Serial %s nam trong denylist — khong chup." % serial)
+    if use_lock:
+        locks.enter_context(device_lock("serial", serial, max(budget, 0.0)))
+    return serial
+
+
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Chup anh nghiem thu, mo may ao neu khong co device.")
+    parser = argparse.ArgumentParser(
+        description="Chup anh nghiem thu, mo may ao neu khong co device.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Khoa thiet bi (adb): moi serial mot khoa, giu quanh cac lenh chup (mo AVD, kiem tra man hinh, screencap;\n"
+               "khong gom cai build); phien thu hai cung serial cho toi da PROOF_DEVICE_LOCK_WAIT giay (tong, mac dinh 300,\n"
+               "toi da 3600) roi thoat 75.\n"
+               "Tat: --no-device-lock hoac PROOF_DEVICE_LOCK=0. Thu muc khoa: ~/.config/universal-agent-devkit/device-locks\n"
+               "(PROOF_DEVICE_LOCK_DIR chi dung cho test). Exit: 0 chup xong, 1 that bai/tu choi, 2 sai tham so, 75 khong lay duoc khoa.")
     parser.add_argument("--project", default=".")
     parser.add_argument("--adb", default=os.environ.get("PROOF_ADB") or "adb")
     parser.add_argument("--emulator", default=os.environ.get("PROOF_EMULATOR") or "")
@@ -479,6 +685,7 @@ def main(argv=None) -> int:
     parser.add_argument("--connect-timeout", type=float, default=5)
     parser.add_argument("--boot-timeout", type=float, default=180)
     parser.add_argument("--port", type=int, default=5554)
+    parser.add_argument("--no-device-lock", action="store_true", help="do not serialise captures of the same device")
     args = parser.parse_args(argv)
     project = Path(args.project).resolve()
     emulator = args.emulator or find_emulator()
@@ -518,22 +725,28 @@ def main(argv=None) -> int:
         print("serial: %s" % (plan.get("serial") or "shell"))
         print("file: %s" % dest)
         return 0
-    if plan["action"] == "boot":
-        if not emulator:
-            print("Khong tim thay binary emulator de mo AVD %s." % plan["avd"], file=sys.stderr)
-            return 1
-        serial = boot_avd(args.adb, emulator, plan["avd"], plan["devices"], next_port(plan["devices"], args.port), args.boot_timeout)
-    wake = wakefulness(args.adb, serial)
-    if wake and wake != "Awake":
-        print("Man hinh serial %s dang %s (dumpsys power: mWakefulness) — khong chup. "
-              "Bat man hinh, mo man can chung minh roi chay lai." % (serial, wake), file=sys.stderr)
+    if plan["action"] == "boot" and not emulator:
+        print("Khong tim thay binary emulator de mo AVD %s." % plan["avd"], file=sys.stderr)
         return 1
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    dest = project / "reports" / ("proof-%s.png" % stamp)
-    screencap(args.adb, serial, dest, 60)
-    print("serial: %s" % serial)
-    print("file: %s" % dest)
-    return 0
+    # The device is chosen and the denylist applied (resolve): only now is a lock taken. A boot plan has no
+    # serial yet, so it locks the AVD first and the serial it ends up with after.
+    try:
+        with contextlib.ExitStack() as locks:
+            serial = locked_device(locks, args, plan, emulator, device_lock_enabled(args.no_device_lock))
+            wake = wakefulness(args.adb, serial)
+            if wake and wake != "Awake":
+                print("Man hinh serial %s dang %s (dumpsys power: mWakefulness) — khong chup. "
+                      "Bat man hinh, mo man can chung minh roi chay lai." % (serial, wake), file=sys.stderr)
+                return 1
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            dest = project / "reports" / ("proof-%s.png" % stamp)
+            screencap(args.adb, serial, dest, 60)
+            print("serial: %s" % serial)
+            print("file: %s" % dest)
+            return 0
+    except DeviceLockBusy as exc:
+        print(exc, file=sys.stderr)
+        return LOCK_BUSY_EXIT
 
 
 if __name__ == "__main__":

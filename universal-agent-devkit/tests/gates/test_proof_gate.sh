@@ -12,12 +12,28 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$DEVKIT_DIR/hooks/proof_gate.sh"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# Fast, and safe next to other tests (2026-10-05, DevKit speed Wave 1): this test took ~140 s of wall time for ~21 s of CPU, ~115 s of
+# it fixed `sleep`s (a turn needs a commit and a prompt at distinct seconds). The scenarios below are split into GROUPS (grp_*) that
+# are independent of each other: each starts from its own fresh repo and transcript under $ROOT/<name> (own repo, state, log; no shared
+# path, port or global state), so the groups run at the same time and their sleeps overlap. A group body is the original scenarios in
+# the original order, verbatim except the two python image_required blocks (ir_py1, ir_py2): their `sleep 1.1`s, which put commits and
+# the turn start on different seconds, became commits dated 20 s back (GIT_*_DATE) and a turn start 5 s back. The groups' output is
+# printed in that order after all of them finished.
+ROOT="$(mktemp -d)" || exit 1
+PIDS=""   # the groups' process-group ids while they run
+cleanup() {   # normal end, a failure, Ctrl-C or TERM: stop every group whole (its own process group; never `kill 0`), then remove the run dir
+  local p
+  for p in $PIDS; do kill -TERM -- "-$p" 2>/dev/null; done
+  wait 2>/dev/null
+  if [ -n "$ROOT" ]; then rm -rf "$ROOT"; fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
-
+mkrepo() {  # the fixture repo of one group (TMP is that group's directory)
 REPO="$TMP/repo"; mkdir -p "$REPO/src" "$REPO/templates" "$REPO/reports"
 ( cd "$REPO" && git init -q . && git config user.email t@t && git config user.name t
   echo "fun ok() = 1" > src/Core.kt && echo 'exit 0' > result.sh
@@ -29,6 +45,7 @@ REPO="$TMP/repo"; mkdir -p "$REPO/src" "$REPO/templates" "$REPO/reports"
 JSON
   git add -A && git commit -qm init && echo "fun ok() = 2" > src/Core.kt )
 TR="$TMP/transcript.jsonl"
+}
 # The turn started 2 s ago (the user's prompt); gate run and proof must be newer than that.
 turn_start() { sleep 1; python3 -c 'import datetime,json
 t=(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -56,7 +73,9 @@ $REPORT"
     "last_assistant_message":sys.argv[2],"stop_hook_active":sys.argv[3]=="1"}))' "$TR" "$reply" "${2:-0}" \
   | CLAUDE_PROJECT_DIR="$REPO" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
 reset() { rm -f "$REPO/.claude/audit-gate/proof_gate.state"; }
+prof() { echo "{\"profile\":\"$1\"}" > "$REPO/.agents/active-profile.json"; (cd "$REPO" && git add -A && git commit -qm "profile $1"); }
 
+grp_receipt() {   # the full-gate receipt: missing, stale, from an earlier turn
 turn_start
 stop "CHƯA XONG
 Không có thiết bị online."; [ $? = 0 ] && ok "CHƯA XONG: not checked" || fail "CHƯA XONG blocked"
@@ -90,7 +109,8 @@ P3="reports/proof-20260924-101520.png"; png "$REPO/$P3" 20000
 stop "XONG
 ảnh $P3"; rc=$?
 [ "$rc" = 2 ] && grep -q "trước lượt" "$TMP/err" && ok "full gate run from an earlier turn: blocked" || fail "old receipt accepted (rc=$rc err=$(head -3 "$TMP/err"))"
-
+}
+grp_gate_exit_png() {   # a failing full run leaves no receipt; the PNG checks (size, age, bytes, missing)
 # A failing full run leaves no receipt.
 reset; echo 'exit 1' > "$REPO/result.sh"; (cd "$REPO" && git commit -qam red && echo "fun ok() = 4" > src/Core.kt)
 turn_start; gate_full; g=$?
@@ -123,9 +143,8 @@ reset; turn_start; gate_full
 stop "XONG
 ảnh reports/proof-20260924-101599.png"; rc=$?
 [ "$rc" = 2 ] && ok "cited PNG missing on disk: blocked" || fail "missing PNG not blocked (rc=$rc)"
-
-# The image is required only when the change touches app source on a profile with a screen.
-prof() { echo "{\"profile\":\"$1\"}" > "$REPO/.agents/active-profile.json"; (cd "$REPO" && git add -A && git commit -qm "profile $1"); }
+}
+grp_image_scope() {   # the image is required only for app source on a profile with a screen
 reset; prof android; sleep 2   # the profile commit (it carries src/Core.kt) lands before the turn
 mkdir -p "$REPO/docs"; echo "note" > "$REPO/docs/NOTE.md"
 turn_start; gate_full; g=$?
@@ -155,7 +174,8 @@ reset; turn_start; (cd "$REPO" && git add -A && git commit -qm "fix in the turn"
 stop "XONG
 Gate exit 0"; rc=$?
 [ "$rc" = 2 ] && grep -q "ẢNH" "$TMP/err" && ok "app source committed during the turn still needs the image" || fail "commit-then-XONG skipped the image (rc=$rc)"
-
+}
+grp_waiver() {   # what waives the image is decided by what is surely off-screen (review 2026-09-25)
 # Review 2026-09-25: the waiver is decided by what is SURELY off-screen, never by an app-extension list.
 for f in "app/src/main/res/drawable/logo.png" "Assets/Scenes/Main.unity" "app/src/main/java/acme/ui/tools/Toolbar.kt"; do
   reset; prof android; sleep 2; mkdir -p "$REPO/$(dirname "$f")"; echo "x$RANDOM" > "$REPO/$f"
@@ -176,8 +196,8 @@ Gate exit 0 · ảnh reports/proof-20260925-000001.png"; rc=$?
 reset; turn_start; stop "XONG
 Gate exit 0"; rc=$?
 [ "$rc" = 2 ] && ! grep -q "proof-capture" "$TMP/err" && ok "backend blocked on the gate only: no screenshot instruction" || fail "backend told to capture (rc=$rc)"
-(cd "$REPO" && git add -A && git commit -qm be)
-
+}
+grp_commit_keeps() {   # committing the gated code in the same turn keeps the receipt
 # Committing the gated code in the same turn keeps the receipt: the fingerprint is the content, not HEAD.
 reset; prof backend; sleep 2; echo "fun ok() = 10" > "$REPO/src/Core.kt"
 turn_start; gate_full; g=$?; (cd "$REPO" && git add -A && git commit -qm "gated change")
@@ -189,54 +209,58 @@ reset; echo "fun ok() = 11" > "$REPO/src/Core.kt"; (cd "$REPO" && git commit -qa
 stop "XONG
 Gate exit 0"; rc=$?
 [ "$rc" = 2 ] && grep -q "code đã đổi" "$TMP/err" && ok "a different commit after the gate still voids it" || fail "edited commit accepted (rc=$rc)"
-
+}
+grp_ir_py1() {   # tree_fp.image_required: merges, profile switch, deep Markdown/test dirs, renames (review 2)
 # Review 2 (2026-09-25): "changed in the turn" = everything since HEAD at the turn start, whatever
 # moved HEAD (commit, merge, pull, reset); the profile read at the turn start; Markdown / test dirs
 # waived only where they cannot be app content.
 python3 - "$DEVKIT_DIR/bin" "$TMP/ir" <<'PYT' 2>"$TMP/ir.err" && ok "image_required: merges, profile switch, deep Markdown/test dirs, renames" || fail "image_required: $(tail -3 "$TMP/ir.err")"
 import os, subprocess, sys, time
+OLD = dict(os.environ, GIT_AUTHOR_DATE=str(int(time.time()) - 20) + " +0000", GIT_COMMITTER_DATE=str(int(time.time()) - 20) + " +0000")   # pre-turn commits: 20 s old
 sys.path.insert(0, sys.argv[1]); import tree_fp
 base = sys.argv[2]
 def repo(name, profile="android"):
     d = os.path.join(base, name); os.makedirs(os.path.join(d, ".agents"))
     g = lambda *a: subprocess.run(["git", "-C", d, *a], check=True, capture_output=True)
+    g.old = lambda *a: subprocess.run(["git", "-C", d, *a], check=True, capture_output=True, env=OLD)
     g("init", "-q"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
     open(os.path.join(d, ".agents/active-profile.json"), "w").write('{"profile":"%s"}' % profile)
     os.makedirs(os.path.join(d, "app/src")); open(os.path.join(d, "app/src/Screen.kt"), "w").write("a\n")
-    g("add", "-A"); g("commit", "-qm", "init"); time.sleep(1.1)
+    g("add", "-A"); g.old("commit", "-qm", "init")
     return d, g
 def write(d, rel, text="x\n"):
     os.makedirs(os.path.dirname(os.path.join(d, rel)) or d, exist_ok=True); open(os.path.join(d, rel), "w").write(text)
 cases = []
 for how in ("--no-ff", "--ff-only"):
     d, g = repo("merge" + how)
-    g("checkout", "-qb", "feat"); write(d, "app/src/Screen.kt", "b\n"); g("commit", "-qam", "ui"); g("checkout", "-q", "-")
-    time.sleep(1.1); start = time.time(); time.sleep(1.1)
+    g.old("checkout", "-qb", "feat"); write(d, "app/src/Screen.kt", "b\n"); g.old("commit", "-qam", "ui"); g.old("checkout", "-q", "-")
+    start = time.time() - 5
     g("merge", "-q", how, "feat", "-m", "m")
     cases.append(("merge " + how + " of a UI change", tree_fp.image_required(d, start)[0], True))
-d, g = repo("prof"); start = time.time(); time.sleep(1.1)
+d, g = repo("prof"); start = time.time() - 5
 write(d, ".agents/active-profile.json", '{"profile":"backend"}'); write(d, "app/src/Screen.kt", "c\n")
 cases.append(("profile switched to backend in the turn", tree_fp.image_required(d, start)[0], True))
 for rel in ("src/content/blog/post.md", "src/pages/tests/index.tsx", "app/src/main/assets/help.txt"):
-    d, g = repo("deep" + str(len(cases))); start = time.time(); time.sleep(1.1); write(d, rel)
+    d, g = repo("deep" + str(len(cases))); start = time.time() - 5; write(d, rel)
     cases.append((rel, tree_fp.image_required(d, start)[0], True))
-d, g = repo("mv"); start = time.time(); time.sleep(1.1); os.makedirs(os.path.join(d, "tests")); g("mv", "app/src/Screen.kt", "tests/Screen.kt")
+d, g = repo("mv"); start = time.time() - 5; os.makedirs(os.path.join(d, "tests")); g("mv", "app/src/Screen.kt", "tests/Screen.kt")
 cases.append(("git mv of a screen into tests/", tree_fp.image_required(d, start)[0], True))
 for rel in ("README.md", "docs/guide.md", "app/src/test/kotlin/FooTest.kt", "tests/test_x.py", "scripts/a.sh", "shared/src/commonTest/kotlin/X.kt",
             "artifacts/red-proof/20260925-185724.log"):  # a log never reaches a screen (GeelyEx2 2026-09-26)
-    d, g = repo("ok" + str(len(cases))); start = time.time(); time.sleep(1.1); write(d, rel)
+    d, g = repo("ok" + str(len(cases))); start = time.time() - 5; write(d, rel)
     cases.append((rel + " (off-screen)", tree_fp.image_required(d, start)[0], False))
-d, g = repo("be", "backend"); start = time.time(); time.sleep(1.1); write(d, "app/src/Screen.kt", "d\n")
+d, g = repo("be", "backend"); start = time.time() - 5; write(d, "app/src/Screen.kt", "d\n")
 cases.append(("backend profile set before the turn", tree_fp.image_required(d, start)[0], False))
 # `agent-kit init` rewrites the profile file with the SAME profile (new updated_at, extra keys):
 # not a switch, so the backend waiver holds (agent-workbench 2026-10-02: .mcp.json demanded a PNG)
-d, g = repo("rein", "backend"); start = time.time(); time.sleep(1.1)
+d, g = repo("rein", "backend"); start = time.time() - 5
 write(d, ".agents/active-profile.json", '{"profile":"backend","updated_at":"2026-10-02T03:05:05Z","mcp_profile":"backend"}'); write(d, ".mcp.json", "{}\n")
 cases.append(("re-init rewrote the same backend profile", tree_fp.image_required(d, start)[0], False))
 bad = [f"{n}: required={got}, want {want}" for n, got, want in cases if got != want]
 assert not bad, "; ".join(bad)
 PYT
-
+}
+grp_redated() {   # a proof re-dated with touch or copied to a new stamp is not this turn's
 # Review 2: a proof re-dated with `touch` or copied to a new stamp is not this turn's screenshot.
 reset; prof backend; sleep 2; echo "fun ok() = 12" > "$REPO/src/Core.kt"; (cd "$REPO" && git commit -qam pre)
 reset; prof android; sleep 2
@@ -251,7 +275,8 @@ stop "XONG
 ảnh $NEWN"; rc=$?
 [ "$rc" = 2 ] && grep -q "trùng" "$TMP/err" && ok "old proof copied to a new stamp: blocked as a duplicate" || fail "copied proof accepted (rc=$rc err=$(head -3 "$TMP/err"))"
 rm -f "$REPO/$OLD" "$REPO/$NEWN"; (cd "$REPO" && git add -A && git commit -qm c13)
-
+}
+grp_future() {   # a stamp from the future is not this turn either
 # Review 3: a stamp from the future is not this turn either; an uncommitted backend profile that
 # predates the turn still waives; on a web profile docs/ can be the site itself.
 reset; prof android; sleep 2; echo "fun ok() = 14" > "$REPO/src/Core.kt"; turn_start; gate_full
@@ -260,31 +285,35 @@ stop "XONG
 ảnh $FUT"; rc=$?
 [ "$rc" = 2 ] && grep -q "tương lai" "$TMP/err" && ok "stamp in the future: blocked, named as such" || fail "future stamp accepted (rc=$rc)"
 rm -f "$REPO/$FUT"; (cd "$REPO" && git add -A && git commit -qm c14)
+}
+grp_ir_py2() {   # tree_fp.image_required: uncommitted backend profile, web docs/
 python3 - "$DEVKIT_DIR/bin" "$TMP/ir3" <<'PYT' 2>"$TMP/ir3.err" && ok "image_required: uncommitted backend profile, web docs/" || fail "image_required r3: $(tail -3 "$TMP/ir3.err")"
 import os, subprocess, sys, time
+OLD = dict(os.environ, GIT_AUTHOR_DATE=str(int(time.time()) - 20) + " +0000", GIT_COMMITTER_DATE=str(int(time.time()) - 20) + " +0000")   # pre-turn commits: 20 s old
 sys.path.insert(0, sys.argv[1]); import tree_fp
 def repo(name):
     d = os.path.join(sys.argv[2], name); os.makedirs(d)
     g = lambda *a: subprocess.run(["git", "-C", d, *a], check=True, capture_output=True)
     g("init", "-q"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
     os.makedirs(os.path.join(d, "server")); open(os.path.join(d, "server/app.py"), "w").write("a\n")
-    g("add", "-A"); g("commit", "-qm", "init"); return d
+    g("add", "-A"); subprocess.run(["git", "-C", d, "commit", "-qm", "init"], check=True, capture_output=True, env=OLD); return d
 def prof(d, p):
     os.makedirs(os.path.join(d, ".agents"), exist_ok=True); open(os.path.join(d, ".agents/active-profile.json"), "w").write('{"profile":"%s"}' % p)
-d = repo("be-untracked"); prof(d, "backend"); time.sleep(1.1); start = time.time(); time.sleep(1.1)
+d = repo("be-untracked"); prof(d, "backend"); os.utime(os.path.join(d, ".agents/active-profile.json"), (time.time() - 20,) * 2); start = time.time() - 5
 open(os.path.join(d, "server/app.py"), "w").write("b\n")
 r1 = tree_fp.image_required(d, start)
-d = repo("be-in-turn"); start = time.time(); time.sleep(1.1); prof(d, "backend")
+d = repo("be-in-turn"); start = time.time() - 5; prof(d, "backend")
 open(os.path.join(d, "server/app.py"), "w").write("c\n")
 r2 = tree_fp.image_required(d, start)
-d = repo("web-docs"); prof(d, "web"); subprocess.run(["git", "-C", d, "add", "-A"], check=True); subprocess.run(["git", "-C", d, "commit", "-qm", "p"], check=True)
-time.sleep(1.1); start = time.time(); time.sleep(1.1); os.makedirs(os.path.join(d, "docs")); open(os.path.join(d, "docs/index.md"), "w").write("# site\n")
+d = repo("web-docs"); prof(d, "web"); subprocess.run(["git", "-C", d, "add", "-A"], check=True); subprocess.run(["git", "-C", d, "commit", "-qm", "p"], check=True, capture_output=True, env=OLD)
+start = time.time() - 5; os.makedirs(os.path.join(d, "docs")); open(os.path.join(d, "docs/index.md"), "w").write("# site\n")
 r3 = tree_fp.image_required(d, start)
 assert r1[0] is False, ("untracked backend profile from before the turn", r1)
 assert r2[0] is True, ("backend profile created in the turn", r2)
 assert r3[0] is True, ("web profile, docs/ changed", r3)
 PYT
-
+}
+grp_objects() {   # the content fingerprint leaves no objects in the real object store
 # Review 2: the content fingerprint must not leave objects in the real object store.
 head -c 300000 /dev/urandom > "$REPO/blob.bin"
 before="$(cd "$REPO" && git count-objects -v | awk '/^(count|size):/{s+=$2} END{print s}')"
@@ -292,7 +321,8 @@ python3 "$DEVKIT_DIR/bin/tree_fp.py" "$REPO" >/dev/null
 after="$(cd "$REPO" && git count-objects -v | awk '/^(count|size):/{s+=$2} END{print s}')"
 [ "$before" = "$after" ] && ok "fingerprint writes no object into .git/objects" || fail "object store grew: $before -> $after"
 rm -f "$REPO/blob.bin"
-
+}
+grp_handover() {   # the 4-item handover report; what counts as a git push
 # Handover report (core-rules §1.3): XONG, or a turn that ran `git push`, carries the 4 items.
 reset; prof backend; sleep 2; echo "fun ok() = 15" > "$REPO/src/Core.kt"; turn_start; gate_full
 NOREPORT=1 stop "XONG
@@ -339,7 +369,8 @@ for cmd in "cd repo && git push origin main" "git -C /x/repo push -q origin HEAD
   NOREPORT=1 stop "Đã push."; rc=$?
   [ "$rc" = 2 ] && ok "real push counted: $cmd" || fail "real push missed: $cmd (rc=$rc)"
 done
-
+}
+grp_push_fail() {   # a push that did not happen is no handover; one that went out partly is
 # A push that did not happen is no handover (GeelyEx2 2026-09-26: the push was still running / had
 # been rejected by pre-push; this workbench session: the push was denied by the permission check).
 push_with_result() { # <is_error 0|1> <result text>
@@ -373,6 +404,8 @@ Exit code 1" \
   [ "$rc" = 2 ] && ok "a push that went out (partly, or in the background) still needs the report" || fail "went-out push not counted (rc=$rc): ${res:0:40}"
 done
 
+}
+grp_loop_notif() {   # loop guard, PROOF_GATE=0, task-notification vs a human prompt
 # Loop guard: 2 blocks for the same session, then the stop goes through with a warning.
 reset; turn_start
 stop "XONG"; r1=$?; stop "XONG" 1; r2=$?; stop "XONG" 1; r3=$?
@@ -411,7 +444,8 @@ Gate exit 0 · ảnh $P"; rc=$?
 [ "$g" = 0 ] && [ "$rc" = 2 ] && grep -q "trước lượt này" "$TMP/err" \
   && ok "control: a real user prompt after the gate still needs a gate of the new turn" \
   || fail "control: receipt from before the user's new prompt accepted (gate=$g rc=$rc)"
-
+}
+grp_untested() {   # an exit-4 (UNTESTED) receipt never satisfies XONG
 # An UNTESTED full run (exit 4: a suite's untested_exit, 2026-09-29) now leaves a receipt with
 # "exit": 4 so its PASS suites can be reused — it is never the exit 0 an XONG needs.
 reset
@@ -433,6 +467,25 @@ Gate exit 4 · ảnh $P"; rc=$?
 [ "$g" = 4 ] && [ "$rexit" = 4 ] && [ "$rc" = 2 ] && grep -q "chưa có exit 0" "$TMP/err" \
   && ok "an exit-4 (UNTESTED) receipt of this turn does not satisfy XONG" \
   || fail "exit-4 receipt (gate=$g receipt exit=$rexit rc=$rc err=$(head -3 "$TMP/err" | tr '\n' ' '))"
+
+}
+
+# Run the groups at the same time (job control on only for these launches: every group is its own process group, which `cleanup`
+# stops whole). A group body sets short variables (g, rc, P, i ...), so the loop variable is `grp`, which none of them uses. A group
+# that dies before its end leaves no fails file: that is a failure, never a silent pass.
+GROUPS_IN_ORDER="receipt gate_exit_png image_scope waiver commit_keeps ir_py1 redated future ir_py2 objects handover push_fail loop_notif untested"
+set -m
+for grp in $GROUPS_IN_ORDER; do
+  ( TMP="$ROOT/$grp"; mkdir -p "$TMP"; mkrepo; "grp_$grp"; echo "$FAILS" > "$ROOT/fails.$grp" ) >"$ROOT/out.$grp" 2>&1 </dev/null &
+  PIDS="$PIDS $!"
+done
+set +m
+wait
+PIDS=""
+for grp in $GROUPS_IN_ORDER; do
+  cat "$ROOT/out.$grp"
+  if [ -f "$ROOT/fails.$grp" ]; then FAILS=$((FAILS + $(cat "$ROOT/fails.$grp"))); else fail "group $grp did not finish"; fi
+done
 
 if [ "$FAILS" -ne 0 ]; then echo "proof gate: $FAILS FAILED"; exit 1; fi
 echo "proof gate: all checks passed"

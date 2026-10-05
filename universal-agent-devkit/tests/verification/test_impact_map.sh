@@ -34,6 +34,19 @@ out="$(sel bin/post-fix-gate.py)"
 printf '%s\n' "$out" | grep -qx "tests/gates/test_gate_friction.sh" && ok "post-fix-gate.py change selects test_gate_friction.sh" || fail "post-fix-gate.py change does not select test_gate_friction.sh"
 out="$(sel skills/ui-ux-pro-max/data/stacks/unity-ugui.csv)"
 printf '%s\n' "$out" | grep -qx "tests/verification/test_ui_ux_pro_max_data.sh" && ok "a ui-ux-pro-max data change selects its data test" || fail "ui-ux-pro-max change does not select test_ui_ux_pro_max_data.sh"
+# 2026-10-05: bin/install.sh runs adapters/setup_*.sh and sources scripts/git/backup_conflict.sh, and no test names them: a change to an
+# adapter selected repo consistency only, one to backup_conflict.sh missed the four install tests that catch a mutation of it.
+for f in adapters/setup_claude.sh adapters/setup_codex.sh adapters/setup_cursor.sh adapters/setup_gemini.sh scripts/git/backup_conflict.sh; do
+  out="$(sel "$f")"; miss=""
+  for t in tests/installer/test_install_idempotency.sh tests/installer/test_install_safety.sh tests/installer/test_platform_rules.sh tests/installer/test_uninstall.sh; do
+    printf '%s\n' "$out" | grep -qx "$t" || miss="$miss $t"
+  done
+  [ -z "$miss" ] && ok "$f change selects the install tests" || fail "$f change does not select:$miss"
+done
+# git-commit-msg.sh is the body of the commit-msg hook: only test_commit_hygiene makes commits through it (a mutant that turns the rule off
+# leaves test_githooks green and turns test_commit_hygiene red), and it names the hook, not the script.
+out="$(sel scripts/git/git-commit-msg.sh)"
+printf '%s\n' "$out" | grep -qx "tests/worktree_git/test_commit_hygiene.sh" && ok "git-commit-msg.sh change selects test_commit_hygiene.sh" || fail "git-commit-msg.sh change does not select test_commit_hygiene.sh"
 out="$(sel LICENSE)"
 printf '%s\n' "$out" | grep -qx "hooks/tests/test_prompt_dedupe.sh" && fail "an unrelated change selects a mapped test" || ok "an unrelated change selects nothing from the map"
 

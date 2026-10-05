@@ -15,7 +15,9 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 install() { bash "$DEVKIT_ROOT/bin/install.sh" -t "$PROJ" -y -p universal -m "$1" >/dev/null 2>&1 || fail "install -m $1 exited non-zero"; }
 count_old() { find "$PROJ" -maxdepth 4 \( -name "*_old" -o -name "*_old.*" -o -name "*_old_*" \) | wc -l | xargs; }
-devkit_snapshot() { ls -A "$DEVKIT_ROOT/rules" "$DEVKIT_ROOT/skills" "$DEVKIT_ROOT/commands" "$DEVKIT_ROOT/bin"; }
+# __pycache__ is not the DevKit's content: python3 -I (every hook) ignores PYTHONDONTWRITEBYTECODE, so in a fresh tree a test that runs
+# beside this one creates bin/__pycache__ mid-run and the listing changed (flaked once under 10 parallel jobs, 2026-10-05)
+devkit_snapshot() { ls -A "$DEVKIT_ROOT/rules" "$DEVKIT_ROOT/skills" "$DEVKIT_ROOT/commands" "$DEVKIT_ROOT/bin" | grep -vx '__pycache__'; }
 DK="$PROJ/.agents/devkit"
 
 before="$(devkit_snapshot)"

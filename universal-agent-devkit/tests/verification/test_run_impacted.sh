@@ -7,6 +7,7 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+TOK="$(basename "$TMP" | tr -cd 'A-Za-z0-9')"   # this run's token: the slow tests below carry it, so test_budgets' pgrep sees only this run's own
 FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -60,11 +61,11 @@ list | grep -qx "tests/verification/test_tool_cmd.sh" && ok "a test naming only 
 # test_budgets (timings) runs alone after the others.
 R="$TMP/par"; mkdir -p "$R/tests/verification" "$R/tests/context_memory"; cp "$DEVKIT_DIR/tests/run_impacted.sh" "$R/tests/"
 echo 'echo ok' > "$R/tests/verification/test_repo_consistency.sh"
-for n in a b c; do printf 'sleep 2; echo %s-done\n' "$n" > "$R/tests/verification/test_slow_$n.sh"; done
+for n in a b c; do printf 'sleep 2; echo %s-done\n' "$n" > "$R/tests/verification/test_slow_${TOK}_$n.sh"; done
 printf 'echo broken; exit 3\n' > "$R/tests/verification/test_broken.sh"
-printf 'for f in tests/verification/test_slow_*.sh; do [ -e "$f" ]; done; [ -z "$(pgrep -f "tests/verification/test_slow_" | head -1)" ] && echo alone || { echo "not alone"; exit 1; }\n' > "$R/tests/context_memory/test_budgets.sh"
+printf 'for f in tests/verification/test_slow_*.sh; do [ -e "$f" ]; done; [ -z "$(pgrep -f "tests/verification/test_slow_%s_" | head -1)" ] && echo alone || { echo "not alone"; exit 1; }\n' "$TOK" > "$R/tests/context_memory/test_budgets.sh"
 ( cd "$R" && git init -q . && git config user.email t@t && git config user.name t && git add -A && git commit -qm init )
-( cd "$R" && echo "# x" >> tests/verification/test_slow_a.sh && echo "# x" >> tests/verification/test_slow_b.sh && echo "# x" >> tests/verification/test_slow_c.sh \
+( cd "$R" && echo "# x" >> tests/verification/test_slow_${TOK}_a.sh && echo "# x" >> tests/verification/test_slow_${TOK}_b.sh && echo "# x" >> tests/verification/test_slow_${TOK}_c.sh \
   && echo "# x" >> tests/verification/test_broken.sh && echo "# x" >> tests/context_memory/test_budgets.sh )
 t0=$(date +%s); out="$(cd "$R" && DEVKIT_TEST_JOBS=4 bash tests/run_impacted.sh 2>&1)"; rc=$?; t1=$(date +%s)
 [ $((t1 - t0)) -lt 5 ] && ok "3 × 2 s tests run in parallel ($((t1 - t0)) s < 5 s)" || fail "not parallel: $((t1 - t0)) s"

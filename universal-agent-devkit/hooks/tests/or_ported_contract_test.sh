@@ -121,6 +121,21 @@ run_case "guard: ledger PostToolUse exits 0" bash_write_ledger.sh 0 "$(bl_payloa
 assert_file "ledger records an end row" "${BL_LEDGER}" "^bl-1${TAB}end${TAB}[0-9]+\\.[0-9]{3}${TAB}tu-1\$" yes
 assert_file "every ledger row is session-scoped" "${BL_LEDGER}" "^bl-1${TAB}" yes
 
+# A command that exits non-zero fires PostToolUseFailure, NOT PostToolUse (measured on Claude Code 2.1.289):
+# without its end row every failed command left a window open for ever (W1-i). The registration of this
+# event is a settings change; the hook must already close the window when it is wired.
+rm -f "${BL_LEDGER}"
+run_case "guard: ledger PostToolUseFailure exits 0" bash_write_ledger.sh 0 "$(bl_payload PostToolUseFailure '')"
+assert_file "a FAILED command (PostToolUseFailure) records an end row" "${BL_LEDGER}" "^bl-1${TAB}end${TAB}[0-9]+\\.[0-9]{3}${TAB}tu-1\$" yes
+rm -f "${BL_LEDGER}"
+run_case "guard: ledger PreToolUse exits 0 (background, failing)" bash_write_ledger.sh 0 \
+  "$(bl_payload PreToolUse ',"run_in_background":true')"
+run_case "guard: ledger PostToolUseFailure exits 0 (background)" bash_write_ledger.sh 0 \
+  "$(bl_payload PostToolUseFailure ',"run_in_background":true')"
+assert_file "a failed BACKGROUND command writes no end row either" "${BL_LEDGER}" "${TAB}end${TAB}" no
+run_case "guard: ledger ignores an unknown hook event (exit 0)" bash_write_ledger.sh 0 "$(bl_payload SomeOtherEvent '')"
+assert_file "an unknown event writes no end row" "${BL_LEDGER}" "${TAB}end${TAB}" no
+
 # A backgrounded command must NOT close its window (it is still writing).
 rm -f "${BL_LEDGER}"
 run_case "guard: ledger PreToolUse exits 0 (background)" bash_write_ledger.sh 0 \

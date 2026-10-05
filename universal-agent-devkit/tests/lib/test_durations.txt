@@ -3,9 +3,10 @@
 # A test missing from this file starts FIRST (unknown = possibly slow); a missing or unreadable file = alphabetical order.
 # Only the START order depends on it: the set of tests, the exit code and the order of the printed results never do.
 # Measured 2026-10-04 on a 12-core M4 Pro, 4 tests at a time; only the relative order matters, so a stale number is harmless.
+# 2026-10-05: test_proof_gate re-measured (137 -> 20 s, scenario groups run at the same time) and 5 tests that were missing added
+# (each alone, wall seconds on a shared machine at load 20-40: indicative).
 # Refresh on a quiet machine (about 5 min), then replace the lines below with the output:
 #   cd universal-agent-devkit && ls tests/*/test_*.sh hooks/tests/*.sh | xargs -P 4 -I{} bash -c 's=$(date +%s); bash {} >/dev/null 2>&1; echo "$(($(date +%s)-s)) {}"' | sort -rn
-137 tests/gates/test_proof_gate.sh
 82 tests/gates/test_postfix_gate.sh
 77 tests/installer/test_install_cli.sh
 71 tests/context_memory/test_local_tier.sh
@@ -19,9 +20,12 @@
 36 tests/context_memory/test_injection_block.sh
 30 tests/gates/test_guards_orphans.sh
 26 tests/verification/test_run_unity_tests.sh
+26 tests/context_memory/test_session_context.sh
+24 tests/gates/test_hook_python_isolation.sh
 23 tests/installer/test_uninstall.sh
 23 tests/verification/test_stale_rerun.sh
 20 hooks/tests/test_proof_gate_turn.sh
+20 tests/gates/test_proof_gate.sh
 19 tests/gates/test_gate_receipt.sh
 18 tests/worktree_git/test_commit_hygiene.sh
 17 tests/verification/test_testsourceset.sh
@@ -35,6 +39,7 @@
 11 tests/verification/test_impacted_tests.sh
 10 tests/verification/test_flaky.sh
 10 tests/installer/test_reinit_keeps_setup.sh
+10 tests/gates/test_gate_python_failures.sh
 9 tests/verification/test_evidence_log.sh
 9 tests/verification/test_stale.sh
 9 tests/installer/test_install_safety.sh
@@ -68,6 +73,7 @@
 3 tests/verification/test_repo_consistency.sh
 3 tests/gates/test_push_gate_hook.sh
 3 tests/gates/test_push_gate.sh
+3 tests/gates/test_hardware_gate_cwd_unknown.sh
 2 tests/installer/test_agent_config.sh
 2 tests/worktree_git/test_worktree_status.sh
 2 tests/worktree_git/test_worktree_sandbox.sh
@@ -97,6 +103,7 @@
 1 tests/context_memory/test_anti_loop_ownership.sh
 1 tests/verification/test_lint_scripts.sh
 1 tests/verification/test_legacy_lint_and_red_gradle.sh
+1 tests/gates/test_hook_python_static_ratchet.sh
 0 tests/worktree_git/test_restore_old.sh
 0 tests/worktree_git/test_clean.sh
 0 tests/context_memory/test_context_sync.sh
@@ -123,3 +130,7 @@
 1 tests/gates/test_turn_start_reverse.sh
 22 tests/context_memory/test_session_fetch_source.sh
 6 tests/gates/test_tree_fp_racy.sh
+100 tests/gates/test_proof_capture_lock.sh
+35 tests/gates/test_session_lock_resolve.sh
+18 tests/gates/test_gate_cache_order.sh
+15 tests/gates/test_ledger_stale_window.sh

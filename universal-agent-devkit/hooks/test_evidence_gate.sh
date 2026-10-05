@@ -886,8 +886,32 @@ def _load_windows(path=None):
         return []
     return wins
 
-_WINDOWS = _load_windows()
+_WINDOWS = _load_windows()   # open windows reach now: the rule that CREDITS a window to this session (ran_in_my_window)
 _MY_SID = str(d.get("session_id") or "")
+
+def _authorship():
+    """bin/session_authorship.py of this kit, or None."""
+    me = os.environ.get("TE_SELF", "")
+    if not me:
+        return None
+    try:
+        sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(me))), "bin"))   # after the stdlib, never before it
+        sys.dont_write_bytecode = True
+        import session_authorship
+        return session_authorship
+    except Exception as e:   # anything, an import error included: the old rule stays in force, never "allow"
+        logline(f"[{ts}] session_authorship unavailable ({e!r}): open windows reach now")
+        return None
+
+# Open windows of sessions that are gone are cut (bin/session_authorship.py: open_windows). They only ever
+# decide "another session ran it" (ran_here, below, together with _WINDOWS: block_owner's rule); crediting
+# a window to this session (ran_in_my_window, own and foreign ledger) keeps the old rule.
+_SA = _authorship()
+try:
+    _WINDOWS_CUT = _SA.bash_windows(repo, _MY_SID) if _SA is not None and _MY_SID else _WINDOWS
+except Exception as e:   # a crash here would exit 1 and this hook then exits 0: fall back to the old rule instead
+    logline(f"[{ts}] cut windows unavailable ({e!r}): the old rule decides")
+    _WINDOWS_CUT = _WINDOWS
 
 def _window_owner(mtime, windows=None):
     """Session of the narrowest ledger window containing mtime; None when none or a tie."""
@@ -904,8 +928,13 @@ def _window_owner(mtime, windows=None):
 def ran_here(mtime):
     if not _WINDOWS or not _MY_SID:
         return True
-    owner = _window_owner(mtime)
-    return True if owner is None else owner == _MY_SID
+    old = _window_owner(mtime)
+    try:
+        cut = _window_owner(mtime, _WINDOWS_CUT)
+    except Exception:    # malformed windows from the module: the old rule decides
+        cut = old
+    # another session's run only when BOTH rules say so: a window cut narrower never takes the run from a wider window of mine
+    return not (old is not None and cut is not None and old != _MY_SID and cut != _MY_SID)
 
 _FOREIGN_LEDGERS = {}
 

@@ -370,7 +370,14 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
         return list(paths), []
     project = get_project_dir()
     root = Path(os.path.realpath(project))
-    windows = session_authorship.bash_windows(project)
+    # "other" needs both rules (session_authorship.block_owner): an open window of a session that is gone no longer
+    # hides a change, but its cut window never takes a file from a wider window of this session
+    old_windows = session_authorship.bash_windows(project)
+    try:
+        windows = session_authorship.bash_windows(project, session)
+    except Exception as exc:   # the cut rule must never crash the gate (a crash reads as no verdict): the old rule decides
+        print(f"post-fix-gate: cut ledger windows unavailable ({exc!r}); the old rule decides", file=sys.stderr)
+        windows = old_windows
     named = session_authorship.shell_named(bash)
     owners, undecided = {}, {}   # undecided: realpath -> (path, mtime) changed during the session
     for f in paths:
@@ -386,7 +393,7 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
                 if bash_calls == 0:
                     owner = "other"
             if mt is not None:
-                sid = session_authorship.window_owner(mt, windows)
+                sid = session_authorship.block_owner(mt, old_windows, windows, session)
                 if sid == session:
                     owner = "me"
                 elif sid:
@@ -404,7 +411,7 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
         edits = session_authorship.other_session_edits(transcript, session, undecided, started - 60,
                                                        edited, bash)
         for rp, (f, mt) in undecided.items():
-            sid = session_authorship.window_owner(mt, windows + edits.get(rp, []))
+            sid = session_authorship.block_owner(mt, old_windows, windows, session, edits.get(rp, []))
             owners[f] = "other" if sid and sid != session else None
     return ([f for f in paths if owners[f] != "other"], [f for f in paths if owners[f] == "other"])
 
@@ -669,10 +676,13 @@ def cached_full_pass(project_dir, matrix_arg):
         return None
     if r.get("result_format") != RESULT_FORMAT or r.get("matrix_sha") != _sha_file(find_matrix_path(matrix_arg)):
         return None
-    if r.get("local_sha") in (None, "?") or r.get("local_sha") != local_state_sha(project_dir):
+    if r.get("local_sha") in (None, "?"):
         return None
+    # Both must match: the cheap one first (tree_fp 0.25 s, local_state_sha 0.7-6.4 s), so an edited tree never pays for it.
     fp = tree_fp.tree_fingerprint(project_dir)
-    return r if fp and r.get("fingerprint") == fp else None
+    if not fp or r.get("fingerprint") != fp:
+        return None
+    return r if r.get("local_sha") == local_state_sha(project_dir) else None
 
 
 # Modes that ran a subset of a suite's command, or nothing: never a full PASS — no PASS row in

@@ -16,7 +16,8 @@
 # FORMAT (consumers depend on it byte for byte — do not change):
 #   file  ${REPO_ROOT}/.claude/audit-gate/bash_write_ledger.tsv   (shared, all sessions)
 #   row   <session_id>\t<start|end>\t<epoch seconds, 3 decimals>\t<tool_use_id>\n
-#   PreToolUse → `start`; PostToolUse → `end`, EXCEPT when tool_input.run_in_background
+#   PreToolUse → `start`; PostToolUse (and PostToolUseFailure: the harness fires THAT, not PostToolUse,
+#   for a command that exits non-zero) → `end`, EXCEPT when tool_input.run_in_background
 #   is true: a backgrounded command has not finished writing when Post fires, so it
 #   gets NO `end` and its window stays open until Stop. Pair rows on
 #   (session_id, tool_use_id). The file is trimmed to its last 4000 rows once it is
@@ -57,7 +58,7 @@ RX_EVENT='"hook_event_name"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
 [[ ${INPUT} =~ ${RX_EVENT} ]] || exit 0
 case "${BASH_REMATCH[1]}" in
   PreToolUse)  KIND="start" ;;
-  PostToolUse)
+  PostToolUse|PostToolUseFailure)
     KIND="end"
     RX_BG='"run_in_background"[[:space:]]*:[[:space:]]*true'
     [[ ${INPUT} =~ ${RX_BG} ]] && exit 0 ;;
