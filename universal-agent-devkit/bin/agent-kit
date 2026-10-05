@@ -4,11 +4,31 @@ set -euo pipefail
 
 # Called through a link (~/.local/bin/agent-kit, agent-install) the folder holding the
 # link is not the DevKit: follow the links to the real file first (bash 3.2: no readlink -f).
+# At most 32 hops; the target is read exactly (readlink -n + a sentinel: `$(...)` would strip a trailing newline of it and follow
+# a different file). A loop, a longer chain, an empty or newline-bearing target or no readlink: python's realpath of the original path;
+# if that gives no real file either: an error on stderr and exit 1.
 SELF="${BASH_SOURCE[0]}"
-while [ -L "$SELF" ]; do
-  LINK="$(readlink "$SELF")"
-  case "$LINK" in /*) SELF="$LINK" ;; *) SELF="$(dirname "$SELF")/$LINK" ;; esac
+_hops=0
+while [ -L "$SELF" ] && [ "$_hops" -lt 32 ]; do
+  _hops=$((_hops + 1))
+  LINK="$(readlink -n "$SELF" 2>/dev/null && printf x)" || LINK=""
+  LINK="${LINK%x}"
+  case "$LINK" in
+    ""|*$'\n'*) _hops=99 ;;
+    /*) SELF="$LINK" ;;
+    *) SELF="$(dirname "$SELF")/$LINK" ;;
+  esac
 done
+if [ -L "$SELF" ]; then
+  _real="$(python3 -I -c 'import os,sys; sys.stdout.write(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}" 2>/dev/null)" || _real=""
+  # No answer (no python3): going on would take the folder of the LINK for the kit, a wrong kit used quietly. The code before the
+  # 32-hop bound did not get there (a failing readlink stopped it under `set -e`, a loop never ended): stop, and say why.
+  if [ -z "$_real" ]; then
+    echo "agent-kit: cannot find its own folder: the link chain of ${BASH_SOURCE[0]} could not be followed (a loop, 32+ links or an unreadable link) and python3 gave no real path" >&2
+    exit 1
+  fi
+  SELF="$_real"
+fi
 SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
 DEVKIT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -50,6 +70,44 @@ case "$CMD" in
     echo "You can now run 'agent-kit init' inside any project directory!"
     ;;
   test|check)
+    # The pool (run_impacted.sh --all, ~160 s) does not need what runs before it (hook contract tests, contract facts,
+    # workflow tests: ~80 s one after another), so it starts first and they run beside it, in the foreground, unchanged and
+    # in order. The pool's output is held and printed after theirs: the text, its order and the exit code (1 on the first
+    # failing part) are the old `|| exit 1` chain's, minus ~80 s. The pool gets its own process group (set -m for its launch
+    # only), so a failure of an earlier suite, ^C or a kill ends every test it started. DEVKIT_TEST_JOBS=1 (one at a time)
+    # keeps the old order: the pool starts when they are done. A kill of this shell alone (not its group) is acted on when the
+    # suite running right now returns: bash runs a trap only between commands. SIGKILL runs no trap: the pool then ends by itself
+    # when it waits for the timing-test file (run_impacted.sh sees its parent gone); its parallel phase runs on to its end.
+    # ABSOLUTE: run_impacted.sh does a `cd` into the kit, so the file it is told to wait for (prefix.done) would otherwise be looked for
+    # in the wrong folder under a relative TMPDIR (TMPDIR=rt) and the pool would wait its 15 minutes.
+    # ponytail: SIGKILL of this shell runs no trap, so this dir stays in TMPDIR (a few small files); upgrade if that ever piles up.
+    TEST_BASE="${TMPDIR:-/tmp}"; case "$TEST_BASE" in /*) ;; *) TEST_BASE="$PWD/$TEST_BASE" ;; esac
+    TEST_TMP="$(mktemp -d "$TEST_BASE/agent-kit-test.XXXXXX")"
+    POOL_PID=""
+    test_stop() { # the pool (its whole process group), reaped before the held output goes: its last act may be a file in it
+      if [ -n "$POOL_PID" ]; then
+        kill -TERM "$POOL_PID" 2>/dev/null || true; kill -TERM -- "-$POOL_PID" 2>/dev/null || true   # its shell first: it would report "Terminated" for its killed child
+        kill -CONT -- "-$POOL_PID" 2>/dev/null || true   # a group stopped by SIGTTIN (a test that reads the terminal) acts on the TERM only once continued
+        wait "$POOL_PID" 2>/dev/null || true; POOL_PID=""
+      fi
+      if [ -n "$TEST_TMP" ]; then rm -rf -- "$TEST_TMP" || true; TEST_TMP=""; fi
+    }
+    trap test_stop EXIT
+    trap 'test_stop; trap - HUP EXIT; kill -HUP $$' HUP     # clean up, then die by the signal itself: the caller sees what it saw before
+    trap 'test_stop; trap - INT EXIT; kill -INT $$' INT
+    trap 'test_stop; trap - TERM EXIT; kill -TERM $$' TERM
+    trap 'test_stop; trap - QUIT EXIT; kill -QUIT $$' QUIT   # ^\ : without this the pool (its own group) outlives the kill and its temp dir stays
+    start_pool() { # set -m for this launch only: bash gives the job its own process group and leaves its signals at the default
+      { # (a "child setpgid ... Operation not permitted" warning, seen on an overloaded machine, would go to this stderr: dropped)
+        set -m
+        DEVKIT_ALONE_AFTER_FILE="$TEST_TMP/prefix.done" bash "$DEVKIT_ROOT/tests/run_impacted.sh" --all </dev/null >"$TEST_TMP/pool.out" 2>"$TEST_TMP/pool.err" &   # parallel: the sequential loop took ~19 min, past health's 900 s
+        POOL_PID=$!
+        set +m
+      } 2>/dev/null
+    }
+    SERIAL=0
+    case "${DEVKIT_TEST_JOBS:-}" in ''|*[!0-9]*) ;; *) if [ $((10#$DEVKIT_TEST_JOBS)) -eq 1 ]; then SERIAL=1; fi ;; esac
+    if [ "$SERIAL" -eq 0 ]; then start_pool; fi
     echo "================================================================="
     echo "  🧪 Running Hook Contract Tests..."
     echo "================================================================="
@@ -65,11 +123,15 @@ case "$CMD" in
     echo "  ⚡ Running Workflow Engine Tests..."
     echo "================================================================="
     node --test "$DEVKIT_ROOT/workflows"/*.test.mjs || exit 1
+    : >"$TEST_TMP/prefix.done"   # run_impacted.sh holds its timing tests back until this exists: they still run alone
+    if [ -z "$POOL_PID" ]; then start_pool; fi
     echo
     echo "================================================================="
     echo "  🧰 Running Installer & Gate Regression Tests..."
     echo "================================================================="
-    bash "$DEVKIT_ROOT/tests/run_impacted.sh" --all || exit 1   # parallel: the sequential loop took ~19 min, past health's 900 s
+    rc=0; wait "$POOL_PID" || rc=$?; POOL_PID=""
+    cat "$TEST_TMP/pool.out"; cat "$TEST_TMP/pool.err" >&2
+    [ "$rc" -eq 0 ] || exit 1
     ;;
   sync)
     echo "Synchronizing commands and skills..."
@@ -318,15 +380,16 @@ Commands:
                       swift, npm/pnpm/yarn/bun, pytest, go, cargo, flutter); --write activates it
                       (agent-kit profile does this when the profile only has a sample matrix)
   worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init]
-                      Git worktree for a parallel agent (branch default feat/<folder>), set up
-                      like the main checkout: ignored local config copied, DevKit installed
+                      Git worktree for a parallel agent (DETACHED at HEAD unless a branch is named),
+                      set up like the main checkout: ignored local config copied, DevKit installed
   worktree status     Every worktree and which ones still hold work not in the main checkout (run BEFORE gathering/removing any)
   worktree diff <path>
                       Its own changes as a patch, DevKit setup left out; bring them back
                       with: agent-kit worktree diff ../app-x | git apply --3way
   worktree remove <path>
-                      Remove it once every uncommitted change is in the main checkout
-                      (the branch and its commits are kept)
+                      Remove it once nothing of its work would be lost (uncommitted changes in the
+                      main checkout; a named branch keeps its commits, a detached worktree's
+                      commits must be brought back first)
   index-memory [file] Line-numbered index of a large .agents/instincts.md (default: this project's;
                       the SessionStart hook also refreshes it automatically above 20 KB)
   completion [bash|zsh]

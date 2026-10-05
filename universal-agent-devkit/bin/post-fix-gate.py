@@ -1708,13 +1708,25 @@ def checklist_covers() -> dict:
             if isinstance(it, dict) and it.get("kind") == "test" and it.get("covers")}
 
 
-def stale_suite_ids() -> set:
+def overlay_bind(project_dir, matrix_arg) -> dict:
+    """What a worktree's recorded results are bound to besides the suite's own files: the matrix and the local state (the same
+    keys cached_full_pass gives a reused full PASS)."""
+    return {"matrix_sha": _sha_file(find_matrix_path(matrix_arg)), "local_sha": local_state_sha(project_dir),
+            "result_format": RESULT_FORMAT}
+
+
+def stale_suite_ids(matrix_arg=None) -> set:
     """Checklist test suites whose PASS went STALE (code changed since the run): `--full` re-runs
     them, so a full PASS never stands next to rows that still need a re-run (GeelyEx2 2026-09-26)."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
         data = rc.load(get_project_dir())
+        if rc.skip_bookkeeping(get_project_dir()):   # a LINKED worktree: what its own gate runs proved (never the tracked file)
+            try:
+                rc.apply_overlay(data, get_project_dir(), lambda: overlay_bind(get_project_dir(), matrix_arg))
+            except Exception:  # noqa: BLE001 - an overlay that cannot be read counts as none: the STALE suites run, as before
+                pass
         rc.mark_stale(data, get_project_dir())
     except (ImportError, OSError, ValueError, AttributeError) as e:
         log_warn(tr(f"Không đọc được checklist để tìm suite STALE ({e}) — --full chỉ chạy suite bị ảnh hưởng",
@@ -2892,6 +2904,62 @@ def keep_evidence(project_dir, t, cmd, out):
         return None
 
 
+def skip_bookkeeping(project_dir) -> bool:
+    """True in a LINKED git worktree (regression_checklist.skip_bookkeeping: ONE definition for the gate and every hook).
+    Any trouble reads as False: the gate then keeps its old behaviour and writes."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
+        return rc.skip_bookkeeping(project_dir)
+    except (ImportError, AttributeError):
+        return False
+
+
+def capture_overlay_pre(args, matrix, project_dir, regression_tests):
+    """Before the suites run, in a linked worktree that will keep their results in its own state: the fingerprint of each suite's
+    watched files and the overlay bind. A file edited WHILE a suite runs must not be vouched for by a PASS that never saw it, so
+    these are taken first (a fingerprint taken afterwards would bind the result to the newer content). None: nothing to keep."""
+    if args.checklist or args.no_checklist:
+        return None
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
+        if not rc.skip_bookkeeping(project_dir):
+            return None
+        data = rc.load(project_dir)
+        rc.sync_from_matrix(data, matrix)
+        ids = {t.get("id") for t in regression_tests if t.get("id")}
+        fps = {tid: rc.watched_fingerprint(project_dir, list(it.get("watch_files", [])) + list(it.get("covers", [])))
+               for tid, it in data["items"].items() if tid in ids and isinstance(it, dict) and it.get("kind") == "test"}
+        return {"fps": fps, "bind": overlay_bind(project_dir, args.matrix)}
+    except Exception:  # noqa: BLE001 - no snapshot, nothing is kept: the suites run again next time (as before)
+        return None
+
+
+def record_worktree_results(args, matrix, modified_files, regression_tests, run_tests, pre=None):
+    """A LINKED worktree does not write the tracked checklist, so the next --full would re-run every STALE suite again. Keep
+    what this run proved in the worktree's own state (<git dir>/postfix-gate/, never tracked); stale_suite_ids reads it back.
+    mark_stale still judges it against the watched files, so the PASS of another tree is never this tree's. Never fails the gate."""
+    if not run_tests or not pre:
+        return
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
+        project_dir = get_project_dir()
+        data = rc.load(project_dir)
+        rc.sync_from_matrix(data, matrix)
+        head = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--short", "HEAD"],
+                              capture_output=True, text=True).stdout.strip() or None
+        commit = f"{head}+dirty" if head and modified_files else head
+        recorded = [dict(t, status="PASS_IMPACTED") if t.get("mode") in PARTIAL_MODES and t.get("status") == "PASS" else t
+                    for t in regression_tests]
+        rc.record_results(data, recorded, task=args.task, commit=commit, project=project_dir)
+        rc.overlay_save_tests(project_dir, data, [t["id"] for t in recorded if t.get("id") and t.get("status") in rc.RESULT_STATES],
+                              pre["bind"], pre["fps"])
+    except Exception as e:  # noqa: BLE001 - never fails the gate (its verdict is decided)
+        log_warn(tr(f"Không ghi được kết quả vào state của worktree: {e}", f"Cannot keep the results in the worktree state: {e}"))
+
+
 def update_regression_checklist(*args):
     """Under the checklist lock: the prompt hook and `agent-kit bugs` write the same file."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -3351,6 +3419,9 @@ def main():
     parser.add_argument("--task", help="Task id / name being accepted (recorded in the regression checklist)")
     parser.add_argument("--no-checklist", action="store_true",
                         help="Do not update .agents/regression_checklist.md / regression_status.json")
+    parser.add_argument("--checklist", action="store_true",
+                        help="Update that checklist even in a LINKED git worktree (skipped there by default: two worktrees "
+                             "that each rewrote the tracked files conflict when their work is brought back into main)")
     parser.add_argument("--session", help="Agent session id (the Stop hook passes it): an existing test "
                         "edited by another session or a person is warned about, not blocked")
     parser.add_argument("--transcript", help="That session's transcript (.jsonl) — its Edit/Write/Bash calls")
@@ -3610,7 +3681,7 @@ def main():
             pass
 
     if run_tests and force_reason:
-        stale = stale_suite_ids() - {t["id"] for t in regression_tests}
+        stale = stale_suite_ids(args.matrix) - {t["id"] for t in regression_tests}
         for rule in rules:
             for test in rule.get("mandatory_regression_tests", []):
                 if test.get("id") in stale:
@@ -3642,11 +3713,15 @@ def main():
         any(tok in (t.get("command") or "").lower() for tok in ("editmode", "playmode"))
         for t in regression_tests)
     # Held for every suite run, re-run and vacuity revert (which rewrites production files in
-    # the tree) of this gate; released when the process ends at the latest.
+    # the tree) of this gate, and NOT closed after the suite loop: a run waiting for this lock
+    # polls every 0.5 s and, if it won the lock before the full-pass receipt below was written
+    # (the static audits and the receipt's own fingerprint sit in between: 0.1-20 s), found no
+    # receipt to re-use and ran every suite again. Closed right after the receipt block below.
     cache = None
     tested_fp = tree_fp_of(project_dir) if run_tests and force_reason else None
     use_cache = run_tests and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0" \
         and any(t.get("command") for t in regression_tests)
+    overlay_pre = capture_overlay_pre(args, matrix, project_dir, regression_tests) if run_tests else None   # BEFORE any suite runs
 
     def reuse_full_pass():
         """Mark every reusable suite PASS from the last full PASS of this exact content; its receipt, or None."""
@@ -3840,8 +3915,6 @@ def main():
             t["status"] = "FAIL"
             t["output_tail"] = tr("Matrix không khai báo command cho test này", "The matrix declares no command for this test")
     restore_local_configs(_config_snaps)
-    if lock_fh:
-        lock_fh.close()
 
     checklist_markdown = []
     for t in regression_tests:
@@ -4085,17 +4158,33 @@ def main():
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
     partial = not force_reason or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)
-    if run_tests and not impacted_run and not deferred_by and not lock_busy and (not partial or (exit_code != 0 and not receipt_untested)):
-        # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
-        # suites all passed (2026-09-29) — leaves the last full one as it is; a BUSY run (lock not held, nothing ran)
-        # leaves it alone too: it used to delete even a valid one, so a Stop whose lock wait ran out forced a new --full
-        write_full_pass_receipt(project_dir, exit_code, args.matrix, regression_tests,
-                                tested_at=float(cache.get("tested_at") or 0) if cache else None,
-                                tested_fp=tested_fp, untested=receipt_untested)
+    try:
+        if run_tests and not impacted_run and not deferred_by and not lock_busy and (not partial or (exit_code != 0 and not receipt_untested)):
+            # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
+            # suites all passed (2026-09-29) — leaves the last full one as it is; a BUSY run (lock not held, nothing ran)
+            # leaves it alone too: it used to delete even a valid one, so a Stop whose lock wait ran out forced a new --full
+            write_full_pass_receipt(project_dir, exit_code, args.matrix, regression_tests,
+                                    tested_at=float(cache.get("tested_at") or 0) if cache else None,
+                                    tested_fp=tested_fp, untested=receipt_untested)
+    finally:
+        # Only now may another run take the test-run lock: it finds the receipt (or its settled absence), and the
+        # checklist update below does not run under it. A BUSY run holds no lock (lock_fh is None); a kill before
+        # this line frees the lock with the process.
+        if lock_fh:
+            lock_fh.close()
 
     if not args.no_checklist:
-        update_regression_checklist(
-            args, matrix, rules, modified_files, regression_tests, run_tests, exit_code)
+        # A LINKED worktree leaves the tracked checklist files alone (--checklist asks for the write): the verdict and
+        # exit code above are already decided and do not depend on it. A --record-lesson still writes its lesson
+        # (instincts.md, which `worktree diff` carries) but not the bug row: that file is left out of the patch.
+        if args.checklist or not skip_bookkeeping(project_dir):
+            update_regression_checklist(
+                args, matrix, rules, modified_files, regression_tests, run_tests, exit_code)
+        else:
+            record_worktree_results(args, matrix, modified_files, regression_tests, run_tests, overlay_pre)
+            print(f"  • {DIM}{tr('Regression checklist: không ghi trong worktree liên kết (thêm --checklist để ghi); kết quả chạy giữ trong state riêng của worktree', 'Regression checklist: not written in a linked worktree (add --checklist to write it); this run results are kept in the worktree own state')}{RESET}")
+            if args.record_lesson and exit_code == 0:
+                print(f"  • {DIM}{tr('Bài học vào instincts.md; dòng bug KHÔNG ghi ở đây — thêm ở main checkout: agent-kit bugs add ...', 'The lesson goes to instincts.md; its bug row is NOT written here — add it in the main checkout: agent-kit bugs add ...')}{RESET}")
 
     def box(ok):
         return "x" if ok else " "

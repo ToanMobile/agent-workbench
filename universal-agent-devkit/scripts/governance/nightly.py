@@ -119,6 +119,8 @@ def run_project(project: Path) -> tuple:
     """(turned red: [(id, status)], message) for one project."""
     if not (project / rc.STATUS_FILE).is_file() and not (project / ".agents" / "regression_matrix.active.json").is_file():
         return [], f"{project.name}: không có checklist/ma trận — bỏ qua"
+    if rc.skip_bookkeeping(project):   # a LINKED worktree leaves the tracked checklist alone: a night's runs could not be recorded
+        return [], f"{project.name}: worktree liên kết — không ghi checklist ở đó, bỏ qua (DEVKIT_WORKTREE_CHECKLIST=1 để ghi)"
     if not stale_rerun.matrix_trusted(project):
         return [], f"{project.name}: ma trận không được gate tin (chưa commit / khác bản agent-kit matrix) — bỏ qua"
     with rc.locked(project):

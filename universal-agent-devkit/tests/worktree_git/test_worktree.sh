@@ -2,7 +2,8 @@
 # Regression test: `agent-kit worktree` — a worktree set up like the main checkout
 # (ignored local config copied, DevKit installed with the same profile), a diff that
 # carries the agent's work but not the DevKit setup and applies to the main checkout,
-# and a remove that refuses while uncommitted work would be lost.
+# and a remove that refuses while uncommitted work would be lost. A worktree is DETACHED unless a branch is
+# named (one developer, one branch: the project rule), and its Claude auto-memory is the main checkout's.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
@@ -17,9 +18,10 @@ ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 M="$TMP/main"
-mkdir -p "$M/src" "$M/app"
+mkdir -p "$M/src" "$M/app" "$M/.agents/local/memory/claude-auto"   # a project that has used Claude auto-memory: the folder exists
 cd "$M" || exit 1
 git init -q -b main . && git config user.email t@t && git config user.name t
+git config core.excludesFile /dev/null   # not the user's global ignore: Claude Code adds .claude/settings.local.json to it, which would hide it from the fresh-worktree diff check below
 printf '{"name":"x","scripts":{"test":"node -e 0"}}\n' > package.json
 printf 'export const a = 1;\n' > src/a.js
 printf 'export const gone = 1;\n' > src/gone.js
@@ -37,12 +39,17 @@ printf '{"copy": ["CarConnect/keys/**", "CarConnect/app/src/main/assets/overlay/
 printf 'NOT-IGNORED' > stray/libs/loose.aar     # matches a pattern but is NOT ignored: never copied
 bash "$KIT" init "$M" -y -a claude -p web --no-githooks >/dev/null 2>&1 || { echo "cannot install into the main checkout"; exit 1; }
 main_status="$(git status --porcelain)"
+heads_before="$(git for-each-ref --format='%(refname)' refs/heads)"
 
 # --- add ------------------------------------------------------------------------------
 out="$(bash "$KIT" worktree add ../wt-a 2>&1)"; rc=$?
 W="$TMP/wt-a"
-[ "$rc" = 0 ] && [ "$(git -C "$W" branch --show-current)" = "feat/wt-a" ] \
-  && ok "add: worktree on feat/<folder>" || { fail "add (rc=$rc)"; echo "$out"; }
+[ "$rc" = 0 ] && [ -z "$(git -C "$W" branch --show-current)" ] && [ "$(git for-each-ref --format='%(refname)' refs/heads)" = "$heads_before" ] \
+  && ok "add: no branch named -> a DETACHED worktree, no branch created" || { fail "add (rc=$rc): branch='$(git -C "$W" branch --show-current)'"; echo "$out"; }
+mem_of() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("autoMemoryDirectory", ""))' "$1/.claude/settings.local.json" 2>/dev/null; }
+[ -n "$(mem_of "$M")" ] && [ "$(mem_of "$W")" = "$(mem_of "$M")" ] \
+  && ok "add: the worktree's Claude auto-memory is the main checkout's (autoMemoryDirectory)" \
+  || fail "worktree memory dir '$(mem_of "$W")' is not the main checkout's '$(mem_of "$M")'"
 [ "$(cat "$W/.env" 2>/dev/null)" = "API_KEY=local" ] && [ -f "$W/app/google-services.json" ] \
   && ok "add: git-ignored local config copied (.env, app/google-services.json)" || fail "local config not copied"
 missing=""
@@ -70,12 +77,13 @@ bash "$KIT" worktree add ../wt-a >/dev/null 2>&1; [ $? != 0 ] && ok "add: existi
 
 # --- remove: a fresh worktree goes, its branch stays ------------------------------------
 bash "$KIT" worktree remove ../wt-a >/dev/null 2>&1; rc=$?
-[ "$rc" = 0 ] && [ ! -e "$W" ] && git rev-parse --verify -q refs/heads/feat/wt-a >/dev/null \
-  && ok "remove: setup-only worktree removed, branch kept" || fail "remove of a fresh worktree (rc=$rc)"
+[ "$rc" = 0 ] && [ ! -e "$W" ] && [ "$(git for-each-ref --format='%(refname)' refs/heads)" = "$heads_before" ] \
+  && ok "remove: setup-only worktree removed, no branch left behind" || fail "remove of a fresh worktree (rc=$rc)"
 
 # --- work in a worktree ------------------------------------------------------------------
 bash "$KIT" worktree add ../wt-b fix/b >/dev/null 2>&1 || fail "add wt-b"
 W="$TMP/wt-b"
+[ "$(git -C "$W" branch --show-current)" = "fix/b" ] && ok "add: an explicit branch argument still gives that branch" || fail "explicit branch not used"
 printf 'export const a = 2;\n' > "$W/src/a.js"
 printf 'export const b = 1;\n' > "$W/src/b.js"
 rm "$W/src/gone.js"
@@ -99,15 +107,84 @@ bash "$KIT" worktree diff ../wt-b | git apply --3way >/dev/null 2>&1 \
 bash "$KIT" worktree remove ../wt-b >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && [ ! -e "$W" ] && ok "remove: allowed once every change is in the main checkout" || fail "remove after bring-back (rc=$rc)"
 
-# --- committed work stays on the branch --------------------------------------------------
+# --- committed work: on a named branch it stays there; on a detached worktree it is brought back first ---------
 bash "$KIT" worktree add ../wt-c >/dev/null 2>&1
 W="$TMP/wt-c"
 printf 'export const c = 1;\n' > "$W/src/c.js"
 git -C "$W" add src/c.js && git -C "$W" commit -qm c
 bash "$KIT" worktree diff ../wt-c | grep -q "^diff --git a/src/c.js " && ok "diff: includes commits since the base" || fail "diff misses committed work"
-bash "$KIT" worktree remove ../wt-c >/dev/null 2>&1; rc=$?
-[ "$rc" = 0 ] && git show feat/wt-c:src/c.js >/dev/null 2>&1 \
-  && ok "remove: committed work is safe on the branch" || fail "remove with commits (rc=$rc)"
+bash "$KIT" worktree remove ../wt-c >"$TMP/rm.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$W" ] && grep -q "UNREACHABLE" "$TMP/rm.out" && ! grep -q "switch -c" "$TMP/rm.out" \
+  && ok "remove: a detached worktree's commits are on no branch -> refused, and the advice is not a new branch (the git guard blocks those)" \
+  || { fail "remove of a detached worktree with commits (rc=$rc)"; cat "$TMP/rm.out"; }
+bash "$KIT" worktree diff ../wt-c | git apply --3way >/dev/null 2>&1 && git add src/c.js && git commit -qm "c, brought back" \
+  && bash "$KIT" worktree remove ../wt-c >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$W" ] && git show HEAD:src/c.js >/dev/null 2>&1 \
+  && ok "remove: allowed once the commits' content is committed in main" || fail "remove after bring-back (rc=$rc)"
+bash "$KIT" worktree add ../wt-d feat/d >/dev/null 2>&1
+W="$TMP/wt-d"
+printf 'export const d = 1;\n' > "$W/src/d.js"
+git -C "$W" add src/d.js && git -C "$W" commit -qm d
+bash "$KIT" worktree remove ../wt-d >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && git show feat/d:src/d.js >/dev/null 2>&1 \
+  && ok "remove: committed work on a NAMED branch is safe on the branch" || fail "remove with commits on a branch (rc=$rc)"
+
+# --- auto-memory: only the installer's own default (the worktree's empty folder) is repointed ----------------
+python3 - "$DEVKIT_DIR/scripts/git" "$TMP" >"$TMP/mem.out" 2>&1 <<'PY'
+import json, os, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import worktree as w
+root = os.path.join(sys.argv[2], "mem"); os.makedirs(root)
+def repo(name, ignore_local=True):
+    d = os.path.join(root, name); os.makedirs(os.path.join(d, ".claude"))
+    subprocess.run(["git", "init", "-q", d], check=True)
+    subprocess.run(["git", "-C", d, "config", "core.excludesFile", os.devnull], check=True)   # not the user's global ignore (Claude Code adds settings.local.json to it)
+    if ignore_local:
+        open(os.path.join(d, ".gitignore"), "w").write(".claude/settings.local.json\n")
+    return d
+def put(d, data, raw=None):
+    open(os.path.join(d, ".claude", "settings.local.json"), "w").write(raw if raw is not None else json.dumps(data))
+def get(d):
+    p = os.path.join(d, ".claude", "settings.local.json")
+    return json.load(open(p)) if os.path.exists(p) else None
+rel = os.path.join(".agents", "local", "memory", "claude-auto")
+main = repo("main"); target = os.path.join(os.path.realpath(main), rel); put(main, {"autoMemoryDirectory": target}); os.makedirs(target)
+ok = []
+def check(name, cond): ok.append((name, bool(cond)))
+
+wt = repo("wt1"); put(wt, {"autoMemoryDirectory": os.path.join(os.path.realpath(wt), rel), "keep": 1})
+changed = w.share_main_memory(main, wt)
+check("the worktree's own default is replaced by the main checkout's folder, other keys kept", changed is True and get(wt) == {"autoMemoryDirectory": target, "keep": 1})
+check("running it again changes nothing", w.share_main_memory(main, wt) is False and get(wt)["autoMemoryDirectory"] == target)
+wt = repo("wt2"); put(wt, {"autoMemoryDirectory": "/custom/mine"})
+check("a custom autoMemoryDirectory of the user's is kept", w.share_main_memory(main, wt) is False and get(wt) == {"autoMemoryDirectory": "/custom/mine"})
+wt = repo("wt3"); put(wt, {"autoMemoryDirectory": os.path.join(os.path.realpath(wt), rel)})
+other = repo("main-without"); put(other, {"theme": "x"})
+check("the main checkout has no autoMemoryDirectory: nothing to share", w.share_main_memory(other, wt) is False and get(wt)["autoMemoryDirectory"].startswith(os.path.realpath(wt)))
+put(other, {"autoMemoryDirectory": "relative/dir"})
+check("a relative path in the main checkout is not shared", w.share_main_memory(other, wt) is False)
+wt = repo("wt4"); put(wt, None, raw="{not json")
+check("an unreadable settings file is left alone", w.share_main_memory(main, wt) is False and open(os.path.join(wt, ".claude", "settings.local.json")).read() == "{not json")
+wt = repo("wt5", ignore_local=True)
+check("no settings file and the name is git-ignored: created, memory shared", w.share_main_memory(main, wt) is True and get(wt) == {"autoMemoryDirectory": target})
+wt = repo("wt6", ignore_local=False)
+check("no settings file and the name is NOT git-ignored: not created (one git add from a commit)", w.share_main_memory(main, wt) is False and get(wt) is None)
+# the target must BE the main checkout's claude-auto/ folder (no traversal, no folder of someone else) and exist
+for label, value, make in (("a folder outside the main checkout", "/elsewhere/memory", False),
+                           ("a path that climbs out of claude-auto/ with ..", os.path.join(target, "..", "..", "x"), False)):
+    m2 = repo("main-" + label.split()[1]); put(m2, {"autoMemoryDirectory": value})
+    wt = repo("wtx-" + label.split()[1]); put(wt, {"autoMemoryDirectory": os.path.join(os.path.realpath(wt), rel)})
+    check("main's autoMemoryDirectory is " + label + ": not shared", w.share_main_memory(m2, wt) is False and get(wt)["autoMemoryDirectory"].startswith(os.path.realpath(wt)))
+m3 = repo("main-nodir"); put(m3, {"autoMemoryDirectory": os.path.join(os.path.realpath(m3), rel)})
+wt = repo("wt-nodir"); put(wt, {"autoMemoryDirectory": os.path.join(os.path.realpath(wt), rel)})
+check("main's claude-auto/ folder does not exist (yet): nothing to share", w.share_main_memory(m3, wt) is False)
+for name, good in ok:
+    print(("PASS " if good else "FAIL ") + name)
+sys.exit(0 if all(g for _, g in ok) else 1)
+PY
+mem_rc=$?
+while IFS= read -r l; do case "$l" in PASS*) ok "memory: ${l#PASS }" ;; FAIL*) fail "memory: ${l#FAIL }" ;; *) echo "$l" ;; esac; done < "$TMP/mem.out"
+[ "$mem_rc" = 0 ] || fail "memory sharing checks exited $mem_rc"
 
 # --- guards ------------------------------------------------------------------------------
 mkdir -p "$TMP/other" && git -C "$TMP/other" init -q

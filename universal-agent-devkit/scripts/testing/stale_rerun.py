@@ -180,6 +180,8 @@ def main(argv=None) -> int:
     project = Path(args[0] if args else os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
     if os.environ.get("STALE_RERUN", "1") == "0" or not (project / rc.STATUS_FILE).is_file():
         return 0
+    if rc.skip_bookkeeping(project):   # a LINKED worktree leaves the tracked checklist alone: a re-run could not be recorded
+        return 0
     if not wait:   # detach: SessionStart must not wait for tests
         subprocess.Popen([sys.executable, __file__, str(project), "--wait"], cwd=str(project),
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)

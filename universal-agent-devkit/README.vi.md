@@ -689,9 +689,9 @@ agent-kit githooks install      # uninstall | status
 agent-kit learn "<bẫy>" --cause="<nguyên nhân>" --rule="<cách phòng ngừa>"
 
 # 4d. Tạo git worktree cho từng agent song song, cấu hình y hệt nhánh chính:
-agent-kit worktree add ../app-login            # branch feat/app-login
+agent-kit worktree add ../app-login            # tách rời tại HEAD (thêm tên nhánh nếu muốn có nhánh)
 agent-kit worktree diff ../app-login | git apply --3way   # lấy code về (không đụng file DevKit)
-agent-kit worktree remove ../app-login         # chỉ gỡ sau khi đã lấy code; branch vẫn giữ
+agent-kit worktree remove ../app-login         # chỉ gỡ sau khi đã lấy code (commit của worktree tách rời phải đem về trước)
 
 # 4e. Tab completion (bash; zsh: completion zsh) — thêm vào ~/.bashrc:
 eval "$(agent-kit completion bash)"

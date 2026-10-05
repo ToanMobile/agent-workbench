@@ -66,6 +66,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 import time
@@ -1398,6 +1399,214 @@ def _git_lines(project: Path, *args) -> list | None:
     import subprocess
     r = subprocess.run(["git", "-C", str(project), "-c", "core.quotepath=false", *args], capture_output=True, text=True)
     return r.stdout.splitlines() if r.returncode == 0 else None
+
+
+_GIT_LOCATION_ENV = ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+                     "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE")
+
+
+def _clean_git_env() -> dict:
+    """The environment without the variables that RE-POINT git (GIT_DIR in a hook, or planted by an agent): the answer must
+    be about the directory, not about what the caller exported."""
+    return {k: v for k, v in os.environ.items() if k not in _GIT_LOCATION_ENV}
+
+
+def in_linked_worktree(project_dir) -> bool:
+    """True when project_dir is a LINKED git worktree: its git dir is not the repo's common dir AND its top level holds a `.git`
+    FILE ("gitdir: <common>/worktrees/<name>") whose git dir has a `commondir` that leads back to the common dir. A main
+    checkout has a `.git` DIRECTORY, so neither GIT_DIR in the environment nor a planted `.git/commondir` can make it one.
+    Any git trouble reads as False, so a caller keeps its old behaviour (a bare repo, a submodule and the main checkout are
+    False)."""
+    import subprocess
+    try:
+        res = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--show-toplevel", "--absolute-git-dir", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=10, env=_clean_git_env())
+    except (OSError, subprocess.SubprocessError):
+        return False
+    lines = res.stdout.splitlines()
+    if res.returncode != 0 or len(lines) != 3:
+        return False
+    top, gdir, common = lines[0], lines[1], os.path.join(str(project_dir), lines[2])
+    real = os.path.realpath
+    if real(gdir) == real(common):
+        return False
+    try:
+        with open(os.path.join(top, ".git"), encoding="utf-8") as f:
+            first = f.readline().strip()
+        with open(os.path.join(gdir, "commondir"), encoding="utf-8") as f:
+            back = f.readline().strip()
+    except OSError:
+        return False
+    if not first.startswith("gitdir:"):
+        return False
+    named = os.path.join(top, first[len("gitdir:"):].strip())
+    return (real(named) == real(gdir) and real(os.path.join(gdir, back)) == real(common)
+            and real(os.path.dirname(os.path.dirname(gdir))) == real(common))
+
+
+def skip_bookkeeping(project_dir) -> bool:
+    """True when an AUTOMATIC writer of the tracked checklist files (the gate, a hook, a background job) must leave
+    them alone: a LINKED worktree. Two worktrees that each rewrote them conflict when their work is brought back into
+    main (`agent-kit worktree diff` leaves them out), and what a worktree records dies with it. A command the user
+    types (`bugs add`, `link`, `req`) still writes. DEVKIT_WORKTREE_CHECKLIST=1 asks for the write. Not in the worktrees
+    of a BARE repo: there is no main checkout to conflict with, so nobody else would ever write the checklist."""
+    return os.environ.get("DEVKIT_WORKTREE_CHECKLIST") != "1" and in_linked_worktree(project_dir) and not _common_dir_is_bare(project_dir)
+
+
+OVERLAY_FILE = "worktree_checklist.json"   # <absolute git dir>/postfix-gate/: per worktree, never tracked, gone with the worktree
+_OVERLAY_TEST_KEYS = ("last", "history")
+_OVERLAY_MAX_BYTES = 8_000_000
+_OVERLAY_MAX_FILES = 5000   # a suite that watches more files than this is never trusted from the overlay (re-run instead)
+
+
+def _overlay_path(project_dir):
+    lines = _git_lines(Path(project_dir), "rev-parse", "--absolute-git-dir")
+    return Path(lines[0]) / "postfix-gate" / OVERLAY_FILE if lines else None
+
+
+def _overlay_fresh(ts) -> bool:
+    """A time stamp the overlay may believe: a number, not in the future (+60 s of clock skew) and not older than
+    DEVKIT_GATE_CACHE_MAX_S (default 6 h: the limit post-fix-gate.py gives a reused full PASS). The file is writable by
+    whoever runs in the worktree, so it is trusted no further than the gate's own receipt."""
+    try:
+        max_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
+    except ValueError:
+        max_s = 21600.0
+    return isinstance(ts, (int, float)) and not isinstance(ts, bool) and time.time() - max_s <= ts <= time.time() + 60
+
+
+def read_overlay(project_dir) -> dict:
+    """{"tests": {id: {...}}, "rows": {id: {...}}}: what the hooks and the gate recorded in THIS worktree where the tracked
+    checklist is not written (skip_bookkeeping). Missing, unreadable or malformed: empty."""
+    empty = {"tests": {}, "rows": {}}
+    path = _overlay_path(project_dir)
+    try:
+        st = os.stat(path) if path else None
+        if st is None or not stat.S_ISREG(st.st_mode) or st.st_size > _OVERLAY_MAX_BYTES:   # a FIFO would hang the reader
+            return empty
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):   # missing, bad UTF-8, bad JSON, JSON nested too deep
+        return empty
+    if not isinstance(data, dict):
+        return empty
+    return {k: (data.get(k) if isinstance(data.get(k), dict) else {}) for k in ("tests", "rows")}
+
+
+def _write_overlay(project_dir, ov: dict) -> None:
+    path = _overlay_path(project_dir)
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".worktree_checklist.")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(ov, f)
+    os.replace(tmp, path)
+
+
+def watched_fingerprint(project_dir, patterns) -> str:
+    """Hash of the CONTENT of the files (tracked or not, not ignored) that match any of `patterns`; "" when it cannot be taken
+    or there are too many files. A recorded PASS is bound to it: it holds only while the suite's own files are as they were."""
+    import fnmatch
+    import subprocess
+    pats = [str(x).replace("\\", "/") for x in patterns if x]
+    if not pats:
+        return ""
+    try:
+        listed = subprocess.run(["git", "-C", str(project_dir), "ls-files", "-z", "-co", "--exclude-standard"], capture_output=True)
+        if listed.returncode != 0:
+            return ""
+        names = [n for n in listed.stdout.decode("utf-8", "surrogateescape").split("\0") if n]
+        sel = sorted(f for f in set(names) if any(fnmatch.fnmatch(f, pat) for pat in pats) and (Path(project_dir) / f).is_file())
+        if len(sel) > _OVERLAY_MAX_FILES or any("\n" in f for f in sel):
+            return ""
+        r = subprocess.run(["git", "-C", str(project_dir), "hash-object", "--stdin-paths"],
+                           input=("\n".join(sel) + "\n").encode("utf-8", "surrogateescape"), capture_output=True)
+        blobs = r.stdout.decode().split()
+        if r.returncode != 0 or len(blobs) != len(sel):
+            return ""
+        h = hashlib.sha256()
+        for f, b in zip(sel, blobs):
+            st = os.lstat(Path(project_dir) / f)   # the blob id ignores the mode: an exec bit or a symlink swap must show too
+            h.update(f"{f}\0{b}\0{st.st_mode & 0o170111:o}\n".encode("utf-8", "surrogateescape"))
+        return h.hexdigest()[:24]
+    except (OSError, ValueError, re.error):   # a bad watch pattern (fnmatch reversed range), a vanished file...: not trusted
+        return ""
+
+
+def overlay_save_tests(project_dir, data: dict, ids, bind: dict, fps: dict) -> None:
+    """Keep the results `data` holds for the test ids that just ran, bound to `bind` (the gate's matrix and local-state hashes)
+    and to `fps[id]`, the fingerprint of the suite's watched files taken BEFORE it ran (none: nothing is kept for it)."""
+    ov = read_overlay(project_dir)
+    for tid in ids:
+        item = (data.get("items") or {}).get(tid)
+        if isinstance(item, dict) and item.get("kind") == "test" and item.get("last") and fps.get(tid):
+            ov["tests"][tid] = {**{k: item[k] for k in _OVERLAY_TEST_KEYS if k in item}, "bind": bind,
+                                "watched_fp": fps[tid], "saved_at": time.time()}
+    _write_overlay(project_dir, ov)
+
+
+def overlay_save_rows(project_dir, data: dict, ids) -> None:
+    """Keep bug / REQ rows (a REPORTED bug, an auto-link, a RED-proof) a hook made in this worktree."""
+    ov = read_overlay(project_dir)
+    for rid in ids:
+        item = (data.get("items") or {}).get(rid)
+        if isinstance(item, dict):
+            ov["rows"][rid] = {"row": item, "saved_at": time.time()}
+    _write_overlay(project_dir, ov)
+
+
+def apply_overlay(data: dict, project_dir, bind=None) -> None:
+    """Lay what this worktree recorded over the checklist read from the tracked file. Rows: the overlay's row replaces the
+    tracked one (a hook made it here, newer than the commit). Test results only when `bind` (a dict, or a function returning
+    it, called once and only if there is something to check) equals what they were saved under, they are fresh
+    (_overlay_fresh: a forged 9e9 is refused), their suite's watched files hold the same content, and they are newer than
+    the tracked result; mark_stale then judges them like any other, so a PASS of another tree is never this tree's."""
+    ov = read_overlay(project_dir)
+    items = data.setdefault("items", {})
+    for rid, ent in ov["rows"].items():
+        if isinstance(ent, dict) and isinstance(ent.get("row"), dict) and _overlay_fresh(ent.get("saved_at")):
+            items[rid] = {**items.get(rid, {}), **ent["row"]}
+    if bind is None or not ov["tests"]:
+        return
+    want = bind() if callable(bind) else bind
+    for tid, ent in ov["tests"].items():
+        item = items.get(tid)
+        if not isinstance(item, dict) or item.get("kind") != "test" or not isinstance(ent, dict):
+            continue
+        last = ent.get("last")
+        if not isinstance(last, dict) or not _overlay_fresh(ent.get("saved_at")) or not _overlay_fresh(last.get("ts")):
+            continue
+        if ent.get("bind") != want or not ent.get("watched_fp"):
+            continue
+        if ent["watched_fp"] != watched_fingerprint(project_dir, list(item.get("watch_files", [])) + list(item.get("covers", []))):
+            continue
+        if (last.get("ts") or 0) > ((item.get("last") or {}).get("ts") or 0):
+            item.update({k: ent[k] for k in _OVERLAY_TEST_KEYS if k in ent})
+
+
+def load_view(project_dir) -> dict:
+    """load(), plus (in a LINKED worktree) the rows this worktree's hooks recorded in its overlay: what a hook there must read
+    to behave as it does in the main checkout. Never written back through save()."""
+    data = load(project_dir)
+    if skip_bookkeeping(project_dir):
+        try:
+            apply_overlay(data, project_dir)
+        except Exception:  # noqa: BLE001 - an unreadable overlay counts as none: the tracked rows alone (what the main checkout would see)
+            pass
+    return data
+
+
+def _common_dir_is_bare(project_dir) -> bool:
+    import subprocess
+    try:
+        c = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--git-common-dir"], capture_output=True, text=True, timeout=10,
+                           env=_clean_git_env())
+        common = os.path.join(str(project_dir), c.stdout.strip())
+        r = subprocess.run(["git", "--git-dir", common, "rev-parse", "--is-bare-repository"], capture_output=True, text=True, timeout=10,
+                           env=_clean_git_env())
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return c.returncode == 0 and r.returncode == 0 and r.stdout.strip() == "true"
 
 
 _WORKTREE = "\0worktree"   # key of the worktree-vs-HEAD listing in mark_stale's diff memo

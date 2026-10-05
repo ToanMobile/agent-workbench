@@ -84,6 +84,12 @@ fi
 # the gate's 900 s (2026-09-26). Every test works in its own mktemp dir. Timing tests
 # (test_budgets, test_session_context's bounded fetch) run alone afterwards, so the others cannot slow them. Output keeps list order.
 JOBS="$(jobs_now)"
+# `agent-kit test` runs its earlier suites beside the parallel phase and names a file that appears when they have ended: the
+# timing tests below wait for it, so they still run alone (15 minutes at most: a file that never comes must not hang the run; and not
+# at all once the process that started this run is gone: a SIGKILLed `agent-kit test` leaves no trap to stop its pool).
+# Not set: no wait. Read once and unset, so no test started below (some run their own copy of this runner) sees it.
+after="${DEVKIT_ALONE_AFTER_FILE:-}"; unset DEVKIT_ALONE_AFTER_FILE
+parent="$PPID"   # whoever started this run (agent-kit): the wait below ends when that process is gone, a SIGKILL leaves no trap to tell us
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 run_one() { # <test> <out dir>
@@ -108,6 +114,13 @@ if [ -n "$parallel" ] && [ -r "$dur" ]; then
   [ "$(printf '%s\n' $ordered | LC_ALL=C sort)" = "$(printf '%s\n' $parallel | LC_ALL=C sort)" ] && parallel="$ordered"
 fi
 [ -n "$parallel" ] && printf '%s\n' $parallel | xargs -P "$JOBS" -I{} bash -c 'run_one "$1" "$2"' _ {} "$out"
+# ponytail: the parallel phase above still runs to its end after a kill of the parent (~3 min, bounded), and only a changed parent pid is
+# seen (no ps answer: it keeps waiting); upgrade (poll between tests) if that ever hurts.
+w=0; while [ -n "$after" ] && [ -n "$alone" ] && [ ! -e "$after" ] && [ "$w" -lt 900 ]; do
+  now="$(ps -o ppid= -p $$ 2>/dev/null)"; now="${now// /}"
+  if [ -n "$now" ] && [ "$now" != "$parent" ]; then echo "run_impacted.sh: the process that started this run ($parent) is gone: stopping, the timing tests are not run" >&2; exit 1; fi
+  sleep 1; w=$((w + 1))
+done
 for t in $alone; do run_one "$t" "$out"; done
 rc=0
 for t in $selected; do

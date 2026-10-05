@@ -134,3 +134,7 @@
 35 tests/gates/test_session_lock_resolve.sh
 18 tests/gates/test_gate_cache_order.sh
 15 tests/gates/test_ledger_stale_window.sh
+53 tests/worktree_git/test_worktree_remove_safety.sh
+36 tests/verification/test_agent_kit_test_order.sh
+15 tests/gates/test_gate_lock_receipt_gap.sh
+3 tests/verification/test_agent_kit_self_resolve.sh

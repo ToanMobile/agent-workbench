@@ -770,16 +770,24 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
         sys.dont_write_bytecode = True     # no __pycache__ inside a linked DevKit
         import regression_checklist as rc
         with rc.locked(project_root):
-            data = rc.load(project_root)
+            data = getattr(rc, "load_view", rc.load)(project_root)   # + the rows this worktree kept in its overlay
             before = json.dumps(data["items"].get(rc.find_bug(data, title, open_only=True) or ""), sort_keys=True)
             bid, created = rc.register_bug(data, title, state="reported", session=session or None, open_only=True)
             if created or json.dumps(data["items"][bid], sort_keys=True) != before:
-                rc.save(project_root, data, stale=False)
+                if _linked(rc, project_root):   # a LINKED worktree leaves the tracked checklist files alone: its own state
+                    rc.overlay_save_rows(project_root, data, [bid])
+                else:
+                    rc.save(project_root, data, stale=False)
             status = rc.effective_status(data, data["items"][bid])
     except Exception:  # noqa: BLE001 — a corrupt checklist must never break the prompt
         return ""
     return (f"- Bug đã ghi vào checklist: {bid} ({status}) — link test ĐỎ→XANH khi sửa xong: "
             f"`agent-kit bugs link {bid} <test>`; không phải bug: `agent-kit bugs drop {bid}`")
+
+
+def _linked(rc, project_root):
+    """regression_checklist.skip_bookkeeping, True in a LINKED worktree; an older regression_checklist without it: False (writes, as before)."""
+    return getattr(rc, "skip_bookkeeping", lambda _p: False)(project_root)
 
 
 def _checklist_on(project_root):
@@ -798,6 +806,8 @@ def watch_inbox(project_root):
         sys.path.insert(0, os.path.join(get_devkit_dir(), "bin"))
         sys.dont_write_bytecode = True
         import regression_checklist as rc
+        if _linked(rc, project_root):
+            return ""   # a LINKED worktree writes no "seen" keys, so the item would be listed (and "@làm" ordered) on EVERY prompt: the INBOX is the main checkout's
         with rc.locked(project_root):
             data = rc.load(project_root)
             new = rc.inbox_new(data, project_root)

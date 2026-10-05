@@ -160,12 +160,13 @@ try:
         sys.path.insert(0, os.path.join(_top, "bin"))
         sys.dont_write_bytecode = True
         import regression_checklist as rc  # the same status rules the checklist view uses
+        _skip = getattr(rc, "skip_bookkeeping", lambda p: False)   # a LINKED worktree leaves the tracked checklist files alone
         with rc.locked(root):   # code changed since a PASS → STALE, written back only when it changed
             data = rc.load(root)
             before = json.dumps(data, sort_keys=True)
             rc.mark_stale(data, root)
             rc.auto_close_reported(data)
-            if json.dumps(data, sort_keys=True) != before:
+            if json.dumps(data, sort_keys=True) != before and not _skip(root):
                 rc.save(root, data, stale=False)
         counts = rc.summary(data)
         out.extend(filter(None, [rc.rollback_warning(root)]))  # checklist rolled back outside the DevKit
@@ -178,7 +179,7 @@ try:
             from stale_rerun import is_light     # the same light/heavy rule the re-run applies
             light = [t for t, it in data["items"].items() if it.get("kind") == "test"
                      and rc.effective_status(data, it) == "STALE" and is_light(it.get("command"))]
-            if light and state == "trusted" and os.environ.get("STALE_RERUN", "1") != "0":
+            if light and state == "trusted" and os.environ.get("STALE_RERUN", "1") != "0" and not _skip(root):   # a linked worktree records nothing: no re-run
                 # detaches at once; heavy suites wait for the nightly job
                 subprocess.Popen([sys.executable, rerun, root], stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL, start_new_session=True)
@@ -319,8 +320,10 @@ try:
         elif todo:
             items = "; ".join(f"{r['path']} [{r['branch'] or 'detached'}] ahead={'?' if r['ahead'] is None else r['ahead']} "
                               f"dirty={'?' if r['dirty'] is None else r['dirty']}" for r in todo[:4])
-            drift.append(f"{len(todo)} worktree còn việc CHƯA về trunk: {items} — đem về (`agent-kit worktree diff <path> | git apply --3way` "
-                         "hoặc `git merge --no-edit <branch>`), commit, rồi `agent-kit worktree remove <path>`; worktree phiên khác đang làm thì để yên")
+            how = ("`agent-kit worktree diff <path> | git apply --3way` hoặc `git merge --no-edit <branch>`" if any(r["branch"] for r in todo)
+                   else "`agent-kit worktree diff <path> | git apply --3way` (worktree tách rời: không có nhánh để merge)")
+            drift.append(f"{len(todo)} worktree còn việc CHƯA về trunk: {items} — đem về ({how}), commit, "
+                         "rồi `agent-kit worktree remove <path>`; worktree phiên khác đang làm thì để yên")
         else:
             drift.append(f"{len(extra_wt)} worktree đã gộp hết nhưng còn để lại: {', '.join(extra_wt[:3])} — xoá: `agent-kit worktree remove <path>`")
     heads = (git_out("for-each-ref", "--format=%(refname:short)", "refs/heads/") or "").splitlines()

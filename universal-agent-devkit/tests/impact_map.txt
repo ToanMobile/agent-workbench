@@ -14,3 +14,5 @@ adapters/*                         tests/installer/test_install_idempotency.sh t
 scripts/git/backup_conflict.sh     tests/installer/test_install_idempotency.sh tests/installer/test_install_safety.sh tests/installer/test_platform_rules.sh tests/installer/test_uninstall.sh
 # The commit-msg hook body: no test names it, test_commit_hygiene commits through it (turning its rule off turns that test red).
 scripts/git/git-commit-msg.sh      tests/worktree_git/test_commit_hygiene.sh
+# worktree.py is the shared rule of `worktree remove`, `status`, `diff` and the Stop hook worktree_merge_gate.sh: those tests run it without naming it.
+scripts/git/worktree.py            tests/gates/test_worktree_merge_gate.sh tests/context_memory/test_session_context.sh tests/worktree_git/test_worktree_remove_safety.sh

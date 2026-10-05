@@ -163,7 +163,7 @@ owed = {p for p in (state.get("owed") or []) if isinstance(p, str) and p in live
 
 # Decide responsibility first (cheap), then inventory only those worktrees (git status per worktree is the cost).
 here = os.path.realpath(str(d.get("cwd") or repo))
-now, pending = time.time(), []
+now, pending, want = time.time(), [], []
 for path in paths:
     real = os.path.realpath(path)
     if real not in live or real in running:
@@ -184,10 +184,12 @@ for path in paths:
     if here == real or here.startswith(real + os.sep):
         owed.add(real)   # the session is in it right now (EnterWorktree, or a cd to look): owed, held once it leaves
         continue
-    try:
-        pending += wt.inventory(repo, only=path)   # unintegrated → bring it back; integrated but still there → remove it
-    except (Exception, SystemExit):
-        sys.exit(0)
+    want.append(path)
+try:   # ONE inventory for all of them (the ref tips are read once, not once per worktree)
+    if want:
+        pending += wt.inventory(repo, only=want)   # unintegrated → bring it back; integrated but still there → remove it
+except (Exception, SystemExit):
+    sys.exit(0)
 
 def save():
     try:
@@ -227,11 +229,15 @@ sessions[sid] = {"fp": fp, "n": held + 1}
 if not save():
     sys.exit(0)   # cannot count the holds: never risk blocking every stop
 
+# A detached worktree (the `agent-kit worktree add` default) has no branch to merge: only the diff | apply way.
+merge_hint = "     (hoặc: git merge --no-edit <branch>)" if any(r["branch"] for r in pending) else ""
+detached_note = ("  (worktree [(detached)] không có nhánh để merge: dùng diff | git apply --3way rồi commit ở main checkout)\n"
+                 if any(not r["branch"] for r in pending) else "")
 sys.stderr.write(
     "⛔ WORKTREE-MERGE GATE: worktree phải được GỘP vào nhánh chính rồi XOÁ trước khi dừng — để lại là trunk thiếu code:\n"
     + listing + "\n"
     "Đem về từ main checkout, kiểm diff, commit, rồi dọn:\n"
-    "  agent-kit worktree diff <path> | git apply --3way     (hoặc: git merge --no-edit <branch>)\n"
+    "  agent-kit worktree diff <path> | git apply --3way" + merge_hint + "\n" + detached_note +
     "  agent-kit worktree remove <path>\n"
     f"Lần giữ {held + 1}/3 cho cùng danh sách; WORKTREE_MERGE_GATE=0 để tắt.\n")
 sys.exit(2)

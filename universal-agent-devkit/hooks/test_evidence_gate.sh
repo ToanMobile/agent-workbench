@@ -1392,7 +1392,10 @@ def bug_link_reminder():
     try:
         items = json.load(open(os.path.join(repo, ".agents", "regression_status.json"), encoding="utf-8"))["items"]
     except Exception:
-        return None
+        if not linked_worktree():
+            return None
+        items = {}   # (as in session_bug_rows)
+    items = with_overlay(items)   # a linked worktree: the auto-link and the REPORTED rows its hooks kept in its own state
     raw_sid = str(d.get("session_id") or "")
     def missing_test(it):
         if it.get("kind") == "req":   # a REQ needs a test for EVERY criterion
@@ -1431,6 +1434,32 @@ def is_test_path(fp):
     return bool(SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp)
                 or "/src/test/" in fp or "/src/androidTest/" in fp or re.search(r"/Tests?/.*\.cs$|Tests?\.cs$", fp))
 
+_linked_wt = []          # [bool]: this repo is a LINKED worktree (its tracked checklist files are not written)
+
+def linked_worktree():
+    if not _linked_wt:
+        try:
+            sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(os.environ.get("TE_SELF", "")))), "bin"))
+            sys.dont_write_bytecode = True
+            import regression_checklist as rc
+            _linked_wt.append(bool(getattr(rc, "skip_bookkeeping", lambda p: False)(repo)))
+        except Exception:  # noqa: BLE001 — unknown: write as before
+            _linked_wt.append(False)
+    return _linked_wt[0]
+
+def with_overlay(items):
+    """In a LINKED worktree the rows its hooks kept in the worktree's own state (an auto-link, a RED-proof, a REPORTED bug) join the
+    tracked ones, so the reminders and the VACUOUS hold below behave as in the main checkout."""
+    if not linked_worktree():
+        return items
+    try:
+        import regression_checklist as rc
+        view = {"items": dict(items)}
+        rc.apply_overlay(view, repo)
+        return view["items"]
+    except Exception:  # noqa: BLE001 — unreadable overlay: the tracked rows alone
+        return items
+
 def auto_link():
     if not fix_proven or os.environ.get("AUTO_LINK", "1") == "0":
         return
@@ -1456,13 +1485,16 @@ def auto_link():
         import regression_checklist as rc
         from pathlib import Path as _P
         with rc.locked(repo):
-            data = rc.load(_P(repo))
+            data = getattr(rc, "load_view", rc.load)(_P(repo))
             mf = _P(repo) / ".agents" / "regression_matrix.active.json"
             if mf.is_file():
                 rc.sync_from_matrix(data, json.loads(mf.read_text(encoding="utf-8")))
             in_matrix, _ = rc.link_bug(data, unlinked[0], rel, project=_P(repo))
             data["items"][unlinked[0]]["linked_by"] = "auto"
-            rc.save(_P(repo), data)
+            if linked_worktree():
+                rc.overlay_save_rows(repo, data, [unlinked[0]])   # the worktree's own state, read back by with_overlay
+            else:
+                rc.save(_P(repo), data)
         logline(f"[{ts}] auto-link {unlinked[0]} → {rel} ({in_matrix})")
     except Exception as e:  # noqa: BLE001 — never fail the Stop over the convenience link
         logline(f"[{ts}] auto-link failed: {e!r}")
@@ -1474,8 +1506,11 @@ def session_bug_rows():
     try:
         items = json.load(open(os.path.join(repo, ".agents", "regression_status.json"), encoding="utf-8"))["items"]
     except Exception:
-        return {}
+        if not linked_worktree():
+            return {}
+        items = {}   # a linked worktree whose tracked checklist is not there: the rows of its own state still count
     raw_sid = str(d.get("session_id") or "")
+    items = with_overlay(items)
     return {bid: it for bid, it in items.items() if isinstance(it, dict) and it.get("kind") in ("bug", "req")
             and (bid in bugs_touched or (raw_sid and raw_sid in (it.get("sessions") or [])))}
 

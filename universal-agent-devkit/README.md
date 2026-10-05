@@ -690,9 +690,9 @@ agent-kit githooks install      # uninstall | status
 agent-kit learn "<trap>" --cause="<root cause>" --rule="<prevention>"
 
 # 4d. One git worktree per parallel agent, set up like this checkout (config copied, DevKit installed):
-agent-kit worktree add ../app-login            # branch feat/app-login
+agent-kit worktree add ../app-login            # detached at HEAD (add a branch name for a branch)
 agent-kit worktree diff ../app-login | git apply --3way   # bring its work back (DevKit files left out)
-agent-kit worktree remove ../app-login         # only once its work is here; the branch stays
+agent-kit worktree remove ../app-login         # only once its work is here (a detached worktree's commits must be brought back first)
 
 # 4e. Tab completion (bash; zsh: completion zsh) — put it in ~/.bashrc:
 eval "$(agent-kit completion bash)"

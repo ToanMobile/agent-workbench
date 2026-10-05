@@ -718,6 +718,18 @@ def pending_ids(data: dict, project: Path | None = None) -> list:
     return out
 
 
+def keep_proof(project, bid, result, record):
+    """Put the proof on the bug row: in the tracked checklist, or (record False: a LINKED worktree) in the worktree's own state."""
+    with rc.locked(project):
+        fresh = rc.load_view(project)
+        if bid in fresh["items"]:
+            fresh["items"][bid]["red_proof"] = result
+            if record:
+                rc.save(project, fresh, stale=False)
+            else:
+                rc.overlay_save_rows(project, fresh, [bid])
+
+
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if os.environ.get("RED_PROOF", "1") == "0":
@@ -753,7 +765,7 @@ def main(argv=None) -> int:
         return 2
     if not (bugs or pending):
         return 0
-    data = rc.load(project)
+    data = rc.load_view(project)   # (+ the rows a linked worktree kept in its own state)
     resolved, unknown = [], []
     for b in bugs:
         rid = resolve_id(data, b)
@@ -780,8 +792,11 @@ def main(argv=None) -> int:
     state = project / ".claude" / "audit-gate"
     state.mkdir(parents=True, exist_ok=True)
     # jobs_of() proofs at a time per project (default 1: each is two full builds)
+    record = not rc.skip_bookkeeping(project)   # a LINKED worktree keeps the proof in its own state, not in the tracked checklist
+    if not record:
+        print("red_proof: linked worktree - the proof is kept in the worktree's own state, not in the tracked checklist (DEVKIT_WORKTREE_CHECKLIST=1 writes it)", file=sys.stderr)
     with proof_slot(state, jobs_of(project)):
-        data = rc.load(project)
+        data = rc.load_view(project)
         mf = project / ".agents" / "regression_matrix.active.json"
         if mf.is_file():
             rc.sync_from_matrix(data, json.loads(mf.read_text(encoding="utf-8")))
@@ -793,11 +808,7 @@ def main(argv=None) -> int:
             bug_patch = None if fix_commit else patch_of(project, bid)
             if bug_patch:
                 result = prove(project, data, bid, fix_commit=None, heavy=heavy, patch=bug_patch)
-                with rc.locked(project):
-                    fresh = rc.load(project)
-                    if bid in fresh["items"]:
-                        fresh["items"][bid]["red_proof"] = result
-                        rc.save(project, fresh, stale=False)   # the proof as it ran; the next STALE pass judges the tree
+                keep_proof(project, bid, result, record)   # the proof as it ran; the next STALE pass judges the tree
                 print(f"{bid}: {result['status']} — {result.get('reason', '')}")
                 continue
             fc, why = (fix_commit, None) if fix_commit or not pending else fix_commit_of(project, data["items"][bid])
@@ -816,11 +827,7 @@ def main(argv=None) -> int:
             else:
                 result = prove(project, data, bid, fix_commit=fc, heavy=heavy, fix_reason=why)
                 shared[key] = (bid, result)
-            with rc.locked(project):
-                fresh = rc.load(project)
-                if bid in fresh["items"]:
-                    fresh["items"][bid]["red_proof"] = result
-                    rc.save(project, fresh, stale=False)
+            keep_proof(project, bid, result, record)
             print(f"{bid}: {result['status']} — {result.get('reason', '')}")
     return 0
 

@@ -12,7 +12,13 @@ set -u
 export VACUITY_REVERT=0
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)"
+# BEFORE the trap: an empty $TMP (mktemp failed) would make its `pkill -f -- "$TMP/"` a `pkill -f -- /`, SIGTERM for nearly every process
+case "$TMP" in /?*) [ -d "$TMP" ] || TMP="" ;; *) TMP="" ;; esac
+if [ -z "$TMP" ]; then echo "✖ no temp dir (mktemp failed): nothing was run" >&2; exit 1; fi
+# The background runs further down (pa, pb, pz) are started with SIGINT ignored (bash does that for every `&` job): after a ^C they ran on for
+# minutes with their folder gone (hold.py alarm 300 s, a gate run). Their command lines hold $TMP/, so they are found by it.
+trap 'pkill -f -- "$TMP/" 2>/dev/null; rm -rf "$TMP"' EXIT
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -67,33 +73,90 @@ receipt && bad "code changed during the run was stamped as tested (receipt writt
 # A --full that WAITED for the test-run lock of another run of the same content re-uses the
 # PASS that run just recorded instead of running the suites again (audit 2026-09-29: two
 # sessions / a background gate + a foreground gate on one checkout paid every suite twice).
-# wait_suite_started: A holds the test-run lock and has taken its fingerprint once its suite started
-wait_suite_started() { i=0; while [ ! -s .runs ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i + 1)); done; }
+# No fixed time window (a `sleep 4` in the fake suite made the check depend on how long the second run took to start, and ~10 tests run
+# beside this one): run A's fake suite stays inside the lock until GO exists, which the test creates once B has said it is WAITING for
+# the lock. Every wait is bounded (45-70 s, so a broken lock fails the check in a couple of minutes, not at the outer timeout): a run that
+# never comes is a failed check, not a hang.
+GO="$TMP/go"
+wait_suite_started() { i=0; while [ ! -s .runs ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i + 1)); done; }   # A holds the test-run lock and has taken its fingerprint once its suite started
+wait_for() { i=0; while ! grep -q -- "$2" "$1" 2>/dev/null && { [ -z "${3:-}" ] || kill -0 "$3" 2>/dev/null; } && [ $i -lt 450 ]; do sleep 0.1; i=$((i + 1)); done; }   # <file> <text> [pid: stop when it has ended]
+held_gradlew() { printf '#!/bin/sh\necho run >> .runs\ni=0; while [ ! -e "%s" ] && [ -d "%s" ] && [ $i -lt 700 ]; do sleep 0.1; i=$((i + 1)); done\nexit 0\n' "$GO" "$TMP" > gradlew && git commit -qam slow-gradlew; }
+# The gate closes its test-run lock a moment BEFORE it writes the receipt (a gap of ~0.1 s, far more under load), and a waiting run polls the
+# lock every 0.5 s: one that wins the lock inside the gap sees no receipt and runs the suites again, a cost only, and the thing this check
+# is not about (it flaked on that alone, ~1 run in 4). hold.py stands in the gap: it waits for the lock beside B, takes it the moment A
+# lets go and keeps it until A's receipt exists, so B can only get the lock after the receipt (30 s at most, then it lets go regardless). An
+# optional 4th argument is a file it also waits for (the control run below edits the tree in that window).
+cat > "$TMP/hold.py" <<'PY'
+import fcntl, os, signal, sys, time
+lock, rcpt, ready = sys.argv[1:4]
+extra = sys.argv[4] if len(sys.argv) > 4 else ""
+signal.alarm(150)
+def stamp():
+    try:
+        st = os.stat(rcpt)
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+before = stamp()
+end = time.time() + 45
+while not os.path.exists(lock) and time.time() < end:
+    time.sleep(0.02)
+fh = open(lock, "a")
+with open(ready, "w") as f:
+    f.write("ready")
+fcntl.flock(fh, fcntl.LOCK_EX)          # blocks while A holds it, wakes the moment A lets go
+end = time.time() + 30
+while stamp() == before and time.time() < end:
+    time.sleep(0.01)
+end = time.time() + 30
+while extra and not os.path.exists(extra) and time.time() < end:
+    time.sleep(0.01)
+PY
+rm -f "$GO" "$TMP/zready"
 make_repo "$MOD" "./gradlew :app:testDebugUnitTest"
-printf '#!/bin/sh\necho run >> .runs\nsleep 4\nexit 0\n' > gradlew && git commit -qam slow-gradlew
+held_gradlew
 printf '.runs\n' >> .git/info/exclude
 echo "// tweak" >> app/src/main/kotlin/pkg/Lonely.kt
 run_gate --run-tests --full > "$TMP/a.out" & pa=$!
 wait_suite_started
-out="$(TEST_RUN_LOCK_WAIT_S=60 run_gate --run-tests --full)"; rb=$?
+python3 -I "$TMP/hold.py" "$(pwd)/.claude/audit-gate/test_run.lock" "$(git rev-parse --absolute-git-dir)/postfix-gate/full_pass.json" "$TMP/zready" & pz=$!
+wait_for "$TMP/zready" ready
+TEST_RUN_LOCK_WAIT_S=90 run_gate --run-tests --full > "$TMP/b.out" & pb=$!
+wait_for "$TMP/b.out" "waiting for it" "$pb"      # B is in the queue for the lock: now A may finish
+: > "$GO"
+wait "$pb"; rb=$?
 wait "$pa"; ra=$?
+wait "$pz"
 runs="$(wc -l < .runs | tr -d ' ')"
 [ "$ra$rb" = 00 ] && [ "$runs" = 1 ] && receipt \
   && ok "a --full that waited for the lock re-uses the PASS of the same content (suite ran once)" \
   || bad "the waiting --full ran the suite again (exits $ra$rb, suite runs $runs)"
+# The control: the receipt A leaves is for OTHER content than the tree B finds once it has the lock. (Editing the tree while A runs, as this
+# check did, makes A write NO receipt at all, so B ran for that reason and never reached the re-use test.) So A runs to the end and writes its
+# receipt; hold.py keeps the lock until the test has edited the tree AFTER that receipt: B then wakes to a receipt that does not match.
+rm -f "$GO" "$TMP/zready2" "$TMP/edited2"
 make_repo "$MOD" "./gradlew :app:testDebugUnitTest"
-printf '#!/bin/sh\necho run >> .runs\nsleep 4\nexit 0\n' > gradlew && git commit -qam slow-gradlew
+held_gradlew
 printf '.runs\n' >> .git/info/exclude
 echo "// tweak" >> app/src/main/kotlin/pkg/Lonely.kt
 run_gate --run-tests --full > "$TMP/a.out" & pa=$!
 wait_suite_started
-echo "// edited while A runs" >> app/src/main/kotlin/pkg/Lonely.kt
-out="$(TEST_RUN_LOCK_WAIT_S=60 run_gate --run-tests --full)"; rb=$?
-wait "$pa"
+python3 -I "$TMP/hold.py" "$(pwd)/.claude/audit-gate/test_run.lock" "$(git rev-parse --absolute-git-dir)/postfix-gate/full_pass.json" "$TMP/zready2" "$TMP/edited2" & pz=$!
+wait_for "$TMP/zready2" ready
+TEST_RUN_LOCK_WAIT_S=90 run_gate --run-tests --full > "$TMP/b.out" & pb=$!
+wait_for "$TMP/b.out" "waiting for it" "$pb"
+: > "$GO"
+i=0; while ! receipt && [ $i -lt 450 ]; do sleep 0.1; i=$((i + 1)); done   # A's PASS of the old content is on disk
+had_receipt=0; receipt && had_receipt=1
+echo "// edited after A's receipt" >> app/src/main/kotlin/pkg/Lonely.kt
+: > "$TMP/edited2"                                       # hold.py lets go: B gets the lock and finds a receipt of other content
+wait "$pb"; rb=$?
+wait "$pa"; ra=$?
+wait "$pz"
 runs="$(wc -l < .runs | tr -d ' ')"
-[ "$rb" = 0 ] && [ "$runs" = 2 ] \
+[ "$had_receipt" = 1 ] && [ "$ra$rb" = 00 ] && [ "$runs" = 2 ] \
   && ok "control: other content after the wait still runs its suites (runs $runs)" \
-  || bad "control: waiting run on other content did not run its suites (exit $rb, runs $runs)"
+  || bad "control: waiting run on other content did not run its suites (exits $ra$rb, runs $runs, A's receipt written: $had_receipt)"
 
 # UNTESTED (untested_exit) --full: 2026-09-29 (GeelyEx2: REG-QC-05 "test on the real car" always
 # exits 2) the receipt was deleted on exit 4, so the suites that DID pass were never reused and
