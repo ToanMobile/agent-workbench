@@ -17,7 +17,8 @@ build inputs (the red_proof.py set: libs/*.aar|jar, *.jks, … plus .agents/loca
 DevKit installer with the main checkout's profile, agents and mode, then records what
 that setup left in `git status` — file by file, with a content fingerprint — in the
 worktree's own git dir. Hook state (.claude/audit-gate) and the gate report
-(<git dir>/postfix-gate) are per worktree already. Claude Code's auto-memory
+(<git dir>/postfix-gate) are per worktree already; the gate's run log (runs.jsonl) is the one
+exception: it lives in the common dir (<git-common-dir>/postfix-gate), so it outlives the worktree. Claude Code's auto-memory
 (.claude/settings.local.json autoMemoryDirectory) stays the worktree's OWN folder, as the
 installer sets it. With --share-memory it is pointed at the main checkout's folder instead,
 so a note saved in a worktree survives it; every worktree then shares ONE MEMORY.md: two

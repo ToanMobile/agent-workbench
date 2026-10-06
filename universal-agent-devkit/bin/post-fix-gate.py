@@ -3381,7 +3381,218 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
     return exit_code
 
 
+# ── Run log (DATA ONLY) ────────────────────────────────────────────────────────────────────────────────────────
+# One JSON line per `--run-tests` run (modes full | impacted; nothing for static runs, --dry-run, --commit-msg, --staged, a clean tree,
+# an argument error, a run the hook timeout killed, or any run that ends before the verdict: the totals are a LOWER bound) appended to
+# <git-common-dir>/postfix-gate/runs.jsonl, to measure how often a --full run is triggered by a documentation-only change and what it
+# costs (scripts/governance/gate_runs_report.py). NOTHING reads this file for any decision.
+# It can never change the gate's result and never waits for anything the gate has not already waited for: it reads no file, runs no git
+# command and no process (it only uses values main() already holds, so a FIFO planted at a profile file cannot hang it), takes no lock,
+# prints nothing, and drops every error (`except Exception` only, so Ctrl-C and SystemExit still pass). Its one write is < 3 KB to a file
+# opened without following a link and without blocking (the directory is agent-writable: a FIFO, a link, a directory or a hard-linked
+# file at the path is skipped); a short write is finished, a torn line is ended with a newline.
+# No file name, absolute path, commit message or session id is recorded. Rotation: above RUN_LOG_MAX_BYTES the newest lines are kept.
+# Retention (measured line sizes: 2 suites ~400 B, 12 suites ~760 B, 40 suites ~1.8 KB (cut to 3 KB)): RUN_LOG_KEEP_BYTES 1 MiB holds
+# ~2600 / ~1380 / ~580 runs, and a rotation (a rewrite of ~1 MiB) happens about every 650 / 350 / 150 runs.
+RUN_LOG_NAME = "runs.jsonl"
+RUN_LOG_MAX_BYTES = 1280 * 1024   # rotate above this ...
+RUN_LOG_KEEP_BYTES = 1024 * 1024  # ... keeping at most this much (always below RUN_LOG_MAX_BYTES, so the next run does not rotate again)
+RUN_LOG_KEEP_LINES = 4000
+RUN_LOG_LINE_MAX = 3000
+RUN_LOG_STALE_TMP_S = 3600        # a rotation temp file older than this belongs to a dead run
+_MAIN_T0 = None                   # time.monotonic() at the start of main()
+
+
+def _run_log_open_flags():
+    return getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+
+
+def _run_log_dir(git_dir):
+    """<git-common-dir>/postfix-gate for the absolute git dir main() already resolved. A linked worktree's git dir is
+    <common>/worktrees/<id> (git's own layout): its common dir is two levels up, found by the path alone (no file is read, no git call).
+    Anything else (the main checkout, a submodule's git dir) is its own common dir."""
+    base = str(git_dir)
+    parent = os.path.dirname(base)
+    if os.path.basename(parent) == "worktrees":
+        base = os.path.dirname(parent)
+    return os.path.join(base, "postfix-gate")
+
+
+def _run_log_suites(regression_tests, ran_cmds):
+    """[[id, status, seconds]] per suite. seconds is the real duration of a command that RAN in this run (once: a suite that shared a
+    command, a re-used PASS, a skipped or BUSY/BUDGET one has null), so their sum is what this run cost."""
+    ran = {id(t) for t in ran_cmds.values()}
+    out = []
+    for t in regression_tests:
+        secs = None
+        if id(t) in ran:
+            try:
+                secs = round(float(str(t.get("duration")).rstrip("s")), 2)
+            except ValueError:
+                secs = None
+        out.append([str(t.get("id") or "?")[:40], str(t.get("status") or "?")[:16], secs])
+    return out
+
+
+def _end_torn_line(fd):
+    try:
+        os.write(fd, b"\n")
+    except OSError:
+        return
+
+
+def _write_whole(fd, data):
+    """Write data to fd whole: a short write is finished (at most 8 tries). A line left torn is ended with a newline so that it cannot
+    swallow the next run's line. (No `return` inside `finally`: Python 3.14 warns about it on stderr.)"""
+    done = 0
+    try:
+        for _ in range(8):
+            done += os.write(fd, data[done:])
+            if done >= len(data):
+                return
+    finally:
+        if 0 < done < len(data):
+            _end_torn_line(fd)
+
+
+def _append_run_log(directory, data):
+    import stat as _stat  # noqa: PLC0415
+    try:
+        os.mkdir(directory)   # one level, no parents: the common dir has no postfix-gate/ yet when only linked worktrees ran the gate
+    except FileExistsError:
+        if not os.path.isdir(directory):
+            raise             # a file / FIFO there: the line is dropped by the caller's guard
+    fd = os.open(os.path.join(directory, RUN_LOG_NAME), os.O_WRONLY | os.O_APPEND | os.O_CREAT | _run_log_open_flags(), 0o600)
+    try:
+        st = os.fstat(fd)
+        if not _stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            return
+        _write_whole(fd, data)
+        size = st.st_size + len(data)
+    finally:
+        os.close(fd)
+    if size > RUN_LOG_MAX_BYTES:
+        _rotate_run_log(os.path.join(directory, RUN_LOG_NAME))
+
+
+def _drop_stale_tmp(directory):
+    """Remove runs.jsonl.<pid>.tmp files older than RUN_LOG_STALE_TMP_S (a rotation that died): not followed, bounded to 200 entries."""
+    cutoff = time.time() - RUN_LOG_STALE_TMP_S
+    with os.scandir(directory) as it:
+        for n, entry in enumerate(it):
+            if n >= 200:
+                return
+            if entry.name.startswith(RUN_LOG_NAME + ".") and entry.name.endswith(".tmp") and entry.stat(follow_symlinks=False).st_mtime < cutoff:
+                os.unlink(entry.path)
+
+
+def _rotate_run_log(path):
+    """Keep the newest RUN_LOG_KEEP_LINES lines (and at most RUN_LOG_KEEP_BYTES): temp file + os.replace. Best effort: a line another
+    run appends meanwhile may be lost, any failure leaves the file as it is."""
+    import stat as _stat  # noqa: PLC0415
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    try:
+        fd = os.open(path, os.O_RDONLY | _run_log_open_flags())
+        try:
+            st = os.fstat(fd)
+            if not _stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+                return
+            n = min(st.st_size, RUN_LOG_KEEP_BYTES)
+            raw = os.pread(fd, n, st.st_size - n)
+        finally:
+            os.close(fd)
+        lines = raw.split(b"\n")
+        if raw[-1:] != b"\n":
+            lines = lines[:-1]                      # a write in flight: not a whole line yet
+        if n < st.st_size:
+            lines = lines[1:]                       # the first line of a tail read starts mid-line
+        keep = [l for l in lines if l][-RUN_LOG_KEEP_LINES:]
+        if not keep:
+            return
+        body = b"\n".join(keep) + b"\n"
+        tfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _run_log_open_flags(), 0o600)
+        try:
+            view = memoryview(body)
+            while view:
+                view = view[os.write(tfd, view):]
+        finally:
+            os.close(tfd)
+        os.replace(tmp, path)
+        _drop_stale_tmp(os.path.dirname(path))
+    except Exception:  # noqa: BLE001 — best effort: the log is only data
+        try:
+            os.unlink(tmp)
+        except OSError:
+            return
+
+
+def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
+                  cache, run_tests, force_reason, no_test_only, project_dir, git_dir):
+    """Append the run log line (see above). Takes only values the gate already has and reads nothing; `no_test_only` is main()'s own
+    `docs_only` (every changed file passes needs_no_test()), while the logged `docs_only` is stricter: every changed file, rename source
+    included, is documentation by DOC_EXT / DOC_NAMES. Any error is dropped: the verdict and exit code are decided before this runs."""
+    try:
+        if not (run_tests and git_dir):
+            return
+        files = [str(f) for f in modified_files]
+        # a rename's SOURCE is a changed file too (modified_files holds only the destination; a deleted file is already in it)
+        sources = sorted({str(RENAME_SOURCES[f]) for f in files if f in RENAME_SOURCES} - set(files))
+        files += sources
+        docs = [f for f in files if f.replace("\\", "/").lower().endswith(DOC_EXT) or Path(f.replace("\\", "/")).name in DOC_NAMES]
+        suites = _run_log_suites(regression_tests, ran_cmds)
+        suites_wall = round(sum(s[2] for s in suites if s[2] is not None), 2)
+        if lock_busy:
+            verdict = "BUSY"
+        elif exit_code == 1:
+            verdict = "FAIL"
+        elif deferred_by and exit_code in (0, 5):
+            verdict = "DEFERRED"
+        elif exit_code == 0 and cache and not any(s[2] is not None for s in suites):
+            verdict = "REUSED"
+        elif exit_code == 0:
+            verdict = "PASS"
+        else:
+            verdict = "UNTESTED"   # exit 2 (UNVERIFIED), 3, 4 (untested_exit / BUDGET): the exit code says which
+        z = time.strftime("%z")
+        rec = {
+            "v": 1,
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S") + (z[:3] + ":" + z[3:] if len(z) == 5 else ""),
+            "epoch": int(time.time()),
+            "project": os.path.basename(str(project_dir))[:64],
+            "mode": "full" if (force_reason or deferred_by) else "impacted",
+            "source": "hook" if (args.session or args.transcript) else "cli",
+            "exit": int(exit_code),
+            "verdict": verdict,
+            "deferred": bool(deferred_by),
+            "busy": bool(run_tests and not lock_held),
+            "reused_full_pass": bool(cache),
+            "n_changed": len(files),
+            "n_docs": len(docs),
+            "docs_only": bool(files) and len(docs) == len(files),
+            # needs_no_test() is the gate's own flag over modified_files; it would read the profile for a reports/ source, so a
+            # rename source counts only when it is documentation itself (never turns a False into a True)
+            "no_test_only": bool(files) and bool(no_test_only) and all(f in docs for f in sources),
+            "suites": suites,
+            "suites_wall_s": suites_wall,
+            "force_full": bool(getattr(args, "force_full", False)),
+            "impacted_run": bool(impacted_run),
+        }
+        if _MAIN_T0 is not None:
+            rec["total_wall_s"] = round(time.monotonic() - _MAIN_T0, 2)
+        data = (json.dumps(rec, separators=(",", ":")) + "\n").encode("ascii")
+        while len(data) > RUN_LOG_LINE_MAX and rec["suites"]:
+            rec["suites"] = rec["suites"][:len(rec["suites"]) // 2]
+            rec["suites_cut"] = True
+            data = (json.dumps(rec, separators=(",", ":")) + "\n").encode("ascii")
+        if len(data) <= RUN_LOG_LINE_MAX:
+            _append_run_log(_run_log_dir(git_dir), data)
+    except Exception:  # noqa: BLE001 — the log is only data: it must never change the gate's result, and prints nothing
+        return
+
+
 def main():
+    global _MAIN_T0
+    _MAIN_T0 = time.monotonic()
     parser = argparse.ArgumentParser(description="Post-Fix Audit & TIA Regression Verification Gate")
     parser.add_argument("--diff", help="Git diff reference (e.g. HEAD~1, origin/main)")
     parser.add_argument("--staged", action="store_true",
@@ -4272,6 +4483,9 @@ def main():
         else:
             log_warn(tr("Không ghi bài học vào instincts.md vì gate chưa PASS.", "Lesson not recorded in instincts.md: the gate did not PASS."))
 
+    # Last: the run log (data only, see _log_gate_run). Plain names only: nothing here can fail before the function's own guard.
+    _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
+                  cache, run_tests, force_reason, docs_only, project_dir, git_dir)
     return exit_code
 
 

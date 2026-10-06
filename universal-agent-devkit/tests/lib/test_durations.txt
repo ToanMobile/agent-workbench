@@ -138,3 +138,5 @@
 36 tests/verification/test_agent_kit_test_order.sh
 15 tests/gates/test_gate_lock_receipt_gap.sh
 3 tests/verification/test_agent_kit_self_resolve.sh
+43 tests/gates/test_gate_run_log.sh
+3 tests/gates/test_gate_runs_report.sh
