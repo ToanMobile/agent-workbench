@@ -33,7 +33,10 @@ Xếp hạng theo *thứ có thể hỏng mà diff không cho thấy*:
 | `api` | mọi client đang gọi (kể cả app mobile bản cũ) | contract có breaking không? Client cũ còn chạy được không? |
 | `deps` | toàn bộ runtime | bản mới có breaking change không? Vì sao nâng? |
 | `config` | mọi môi trường | biến mới có mặt ở staging/prod chưa? Thiếu thì app chết hay chạy sai âm thầm? |
-| `ui` | luồng người dùng, layout các màn liên quan | → chuyển tiếp `qa-visual` |
+| `ui (web)` | luồng người dùng web, layout các màn liên quan | → chuyển tiếp `qa-visual` |
+| `ui (mobile)` | vòng đời Activity/Fragment/Composable, xoay màn, tai thỏ, touch target | state có giữ khi xoay/background? Vùng chạm $\ge 48\text{dp}$? Có lẹm camera cutout? |
+| `ui (game)` | Canvas Scaler, Anchor Presets, HUD Safe Area, Game Loop | Notch có che mất nút/máu? Đổi ratio (20:9 vs 4:3) UI có méo? Có leak trong `Update()`? |
+| `shader` | hiệu năng GPU mobile, draw calls, tương thích platform | tương thích GLES3/Vulkan/Metal? Có làm drop FPS / nóng máy? |
 
 ## Khi nào phải đọc ngoài diff
 

@@ -1,6 +1,6 @@
 ---
 name: qa-review
-description: Chất vấn một thay đổi code trước khi tạo PR. Dùng khi cần đọc diff (branch, commit, hoặc PR số) rồi đặt câu hỏi làm rõ tính năng, sinh acceptance criteria kiểm chứng được, và dựng ma trận test scenario theo vai trò × trạng thái dữ liệu × luồng lỗi. Kích hoạt khi người dùng nói "review diff trước khi tạo PR", "chất vấn tính năng này", "viết acceptance criteria", "liệt kê test case cho thay đổi này", "QA cái PR này". Đây là bước hỏi và lập kế hoạch test, không phải bước tìm bug trong code hay chạy test.
+description: Chất vấn một thay đổi code trước khi tạo PR (hỗ trợ cả Web, Mobile Android/iOS/Flutter, Unity Game). Dùng khi cần đọc diff (branch, commit, hoặc PR số) rồi đặt câu hỏi làm rõ tính năng, sinh acceptance criteria kiểm chứng được, và dựng ma trận test scenario theo vai trò × trạng thái dữ liệu × luồng lỗi. Kích hoạt khi người dùng nói "review diff trước khi tạo PR", "chất vấn tính năng này", "viết acceptance criteria", "liệt kê test case cho thay đổi này", "QA cái PR này". Đây là bước hỏi và lập kế hoạch test, không phải bước tìm bug trong code hay chạy test.
 ---
 
 # qa-review
@@ -26,9 +26,10 @@ description: Chất vấn một thay đổi code trước khi tạo PR. Dùng kh
 | File | Load khi |
 |---|---|
 | `references/diff-analysis.md` | đọc diff, viết acceptance criteria |
-| `references/question-protocol.md` | quyết định hỏi gì, hỏi bao nhiêu |
+| `references/question-protocol.md` | quyết định hỏi gì, hỏi bao nhiêu (hỗ trợ Web, Mobile, Game, Shader) |
 | `references/scenario-generation.md` | dựng ma trận test scenario |
-| `scripts/scaffold-playwright.mjs` | sinh file Playwright spec (.spec.ts) từ ma trận |
+| `scripts/scaffold-playwright.mjs` | sinh file Playwright spec (.spec.ts) từ ma trận (dành cho Web) |
+| `scripts/upload-proof-r2.mjs` | upload ảnh screenshot nghiệm thu (Android/iOS/Unity) lên Cloudflare R2 |
 
 ## Đầu ra
 
@@ -41,7 +42,9 @@ Bố cục report, đúng 5 mục:
 2. **Acceptance criteria** — mỗi dòng: input cụ thể → kết quả quan sát được
 3. **Câu hỏi cho dev** — nhóm theo loại thay đổi, 3–7 câu, mỗi câu nêu tên hàm/field thật
 4. **Ma trận scenario** — bảng theo 4 trục, có cột ưu tiên P0/P1/P2
-5. **Bước tiếp** — có file `category: ui` thì chỉ đích danh route cần chạy `qa-visual`; gợi ý dev chạy `node scripts/scaffold-playwright.mjs` để biến kịch bản thành test Playwright chạy được ngay.
+5. **Bước tiếp**:
+   - Web UI: chỉ đích danh route cần chạy `qa-visual` hoặc chạy `node scripts/scaffold-playwright.mjs`.
+   - Mobile / Game: chạy Paired Oracle trên device/emulator, chụp ảnh nghiệm thu qua `proof-capture.py` hoặc test runner, rồi chạy `node .agents/skills/qa-review/scripts/upload-proof-r2.mjs` để lấy link ảnh CDN nhúng vào PR.
 
 Diff `truncated: true` → nói rõ trong mục 1 là report chỉ phủ các file đã đọc, liệt kê file chưa đọc.
 

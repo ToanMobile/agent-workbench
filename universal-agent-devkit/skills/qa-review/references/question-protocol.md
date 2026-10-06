@@ -54,11 +54,28 @@ Checklist chung chung là cách nhanh nhất để dev bỏ qua toàn bộ repor
 - Thiếu biến thì app **chết ngay** hay **chạy sai âm thầm**? Cái sau nguy hiểm hơn.
 - Giá trị mặc định dùng cho môi trường nào?
 
-### `ui`
+### `ui (web)`
 - Trạng thái rỗng / đang tải / lỗi trông thế nào? Diff có nhánh nào cho chúng không?
 - Chuỗi dài, số lớn, tên nhiều dòng thì layout ra sao?
 - Màn hẹp (390px) còn dùng được không?
 - → Sau khi trả lời, chạy `qa-visual` để nhìn thật, đừng đoán.
+
+### `ui (mobile — Android / iOS / Flutter)`
+- **Vòng đời & Xoay màn (Lifecycle / Config Change):** Xoay màn hình (orientation) state/form có bị reset không? App bị minimize/background (cuộc gọi đến, home button) rồi restore sau process death có giữ nguyên dữ liệu không?
+- **Vùng chạm (Touch Target) & Chống Spam:** Vùng bấm các button/icon có đạt chuẩn tối thiểu $\ge 48\times 48\text{dp}$ (Android) / $44\times 44\text{pt}$ (iOS)? Nút xác nhận/thanh toán/ký có debounce $\ge 1000\text{ms}$ chống spam double tap không?
+- **Camera Cutout & Safe Area:** Layout có xử lý WindowInsets (`safeDrawingPadding`, `systemBarsPadding`) để tránh camera notch / tai thỏ / đục lỗ không? Màn hình siêu nhỏ (320dp/360dp) hay foldable/tablet có bị đè vỡ chữ không?
+- **Mạng chập chờn & Threading:** Rớt mạng giữa chừng hoặc timeout $\ge 10\text{s}$ có hiện retry UI không? Có I/O hoặc heavy parsing trên Main/UI Thread gây ANR không?
+
+### `ui (game — Unity uGUI / Casual / Arcade)`
+- **Safe Area & Tai thỏ:** HUD, nút Pause, điểm số, thanh máu có bị tai thỏ / Dynamic Island che mất trên tỷ lệ 19.5:9, 20:9 không? Có gắn script `SafeAreaFitter` neo theo `Screen.safeArea` không?
+- **Aspect Ratio & Multi-resolution:** Canvas Scaler có đặt `Scale With Screen Size` (reference resolution chuẩn 1080×1920 hoặc 1920×1080) không? Chuyển giữa điện thoại (20:9) sang tablet / màn hình gập (4:3) thì các element UI neo (Anchor) có bị méo mó, lệch vị trí hay chồng lấp không?
+- **Hiệu năng & Tài nguyên:** Có gọi `Instantiate`, `Destroy` hay `GetComponent` trong hàm `Update()` không? Có rò rỉ bộ nhớ texture/audio gây tụt FPS hay giật lag không?
+- **Interruption Loop:** Đang trong game loop mà có cuộc gọi / thông báo hệ thống đè lên thì game loop có tự động pause nhạc nền và gameplay không?
+
+### `shader`
+- **Tương thích GPU Mobile:** Shader có tương thích OpenGL ES 3.0 / Vulkan / Metal không? Có dùng instruction quá nặng cho chip mobile tầm trung không?
+- **Draw Calls & Batching:** Shader/Material mới có phá vỡ Dynamic Batching / SRP Batcher làm tăng vọt draw calls không?
+
 
 ## Điều không được làm
 

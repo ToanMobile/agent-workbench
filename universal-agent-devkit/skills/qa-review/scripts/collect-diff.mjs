@@ -11,6 +11,7 @@
  *
  * Output: JSON ra stdout. Mọi log/cảnh báo ra stderr để pipe được.
  */
+import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
@@ -18,23 +19,25 @@ import process from 'node:process';
 const MAX_DIFF_LINES_DEFAULT = 2000;
 
 /** Mức rủi ro dùng để ưu tiên khi phải cắt diff. Cao hơn = giữ lại trước. */
-const CATEGORY_RISK = { schema: 5, auth: 5, api: 4, deps: 3, config: 3, ui: 2, test: 1, tooling: 0, docs: 0, other: 1 };
+const CATEGORY_RISK = { schema: 5, auth: 5, api: 4, deps: 3, config: 3, shader: 3, ui: 2, test: 1, tooling: 0, docs: 0, other: 1 };
 
 /** Thứ tự có ý nghĩa: khớp trước thì thắng. schema/auth đứng trước ui vì blast radius lớn hơn. */
 const CATEGORY_RULES = [
   // Đứng đầu: file của chính bộ công cụ agent, không phải thay đổi tính năng.
   // Ngay sau khi cài skill, cả cây .claude/ hiện ra trong diff — gom lại một chỗ,
   // xếp rủi ro thấp nhất để nó nằm cuối danh sách thay vì lẫn vào code thật.
-  { category: 'tooling', re: /(^|\/)\.claude\// },
+  { category: 'tooling', re: /(^|\/)(\.claude|\.agents|\.gemini|universal-agent-devkit)\// },
   { category: 'schema', re: /(^|\/)(migrations?|migrate)\//i },
-  { category: 'schema', re: /(schema\.prisma|schema\.sql|\.migration\.|models?\/.*\.(ts|js|py|go|rb)$)/i },
+  { category: 'schema', re: /(schema\.prisma|schema\.sql|\.migration\.|models?\/.*\.(ts|js|py|go|rb|kt|swift|cs)$)/i },
   { category: 'auth',   re: /(^|\/)(auth|authn|authz|permissions?|roles?|guards?|policies|rbac)(\/|[.-])/i },
-  { category: 'deps',   re: /(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|package\.json|go\.(mod|sum)|requirements\.txt|poetry\.lock|Gemfile\.lock|Cargo\.(toml|lock))$/i },
-  { category: 'test',   re: /(\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)(tests?|__tests__|e2e|cypress|playwright)\/)/i },
+  { category: 'deps',   re: /(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|package\.json|go\.(mod|sum)|requirements\.txt|poetry\.lock|Gemfile\.lock|Cargo\.(toml|lock)|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|libs\.versions\.toml|Podfile(\.lock)?|Package\.swift|pubspec\.(yaml|lock)|Packages\/manifest\.json)$/i },
+  { category: 'test',   re: /(\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)(tests?|__tests__|e2e|cypress|playwright|androidTest|test)\/|(Test|Tests|Spec|Specs)\.(kt|java|swift|cs)$)/i },
   { category: 'api',    re: /(^|\/)(routes?|controllers?|handlers?|endpoints?|resolvers?|api)(\/|[.-])|(\/route\.[cm]?[jt]s$)/i },
   { category: 'ui',     re: /\.(tsx|jsx|vue|svelte)$/i },
   { category: 'ui',     re: /\.(css|scss|sass|less|styl)$/i },
-  { category: 'config', re: /(\.env\.example|\.github\/workflows\/|Dockerfile|docker-compose|\.(yml|yaml|toml|ini)$|(^|\/)(config|configs)\/)/i },
+  { category: 'ui',     re: /(^|\/)(res\/(layout|drawable|values|navigation)\/.*\.xml|.*(Screen|View|Dialog|BottomSheet|Widget|Page)\.(kt|java|swift|dart)|.*(UI|HUD|Menu|Panel|Popup|View|Canvas)\.cs|.*\.(prefab|unity))$/i },
+  { category: 'shader', re: /\.(shader|hlsl|glsl|compute|mat)$/i },
+  { category: 'config', re: /(\.env\.example|\.github\/workflows\/|Dockerfile|docker-compose|\.(yml|yaml|toml|ini)$|(^|\/)(config|configs)\/|AndroidManifest\.xml|Info\.plist|ProjectSettings\/.*\.asset$)/i },
   { category: 'docs',   re: /(\.mdx?$|(^|\/)docs?\/)/i },
 ];
 
@@ -320,6 +323,13 @@ async function main() {
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
 }
 
-const isDirectRun =
-  process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+function isEntrypoint() {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(new URL(import.meta.url).pathname);
+  } catch {
+    return path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+  }
+}
+const isDirectRun = isEntrypoint();
 if (isDirectRun) await main();

@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (210 dòng, 20.1 KB) · 27 mục
+> **Tệp gốc:** `.agents/instincts.md` (237 dòng, 26.2 KB) · 30 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -28,5 +28,8 @@
 - [INSTINCT-021] Nguồn tự dò mới giành quyền cấu hình đã khai — `sed -n '181,188p' .agents/instincts.md`
 - [INSTINCT-022] Gắn skill vào intent rộng làm đổi dòng 'Skill phù hợp' và đẩy skill khác khỏi top 5 — `sed -n '189,196p' .agents/instincts.md`
 - [INSTINCT-023] Swift Concurrency / MainActor Isolation & Task Cancellation Leak — `sed -n '197,204p' .agents/instincts.md`
-- [INSTINCT-024] Android StateFlow Lifecycle Collection & Main Thread Blocking trong Jetpack Compose — `sed -n '205,210p' .agents/instincts.md`
+- [INSTINCT-024] Android StateFlow Lifecycle Collection & Main Thread Blocking trong Jetpack Compose — `sed -n '205,213p' .agents/instincts.md`
+- [INSTINCT-025] Chia nhóm thư mục làm hỏng đường dẫn mà grep chuỗi literal không bắt hết, và hook nuốt lỗi bằng… — `sed -n '214,221p' .agents/instincts.md`
+- [INSTINCT-026] Thêm khối ngữ cảnh luôn bật vào hook prompt: dedupe theo dòng, bẫy UI chen slot, từ khoá UI mơ hồ và… — `sed -n '222,230p' .agents/instincts.md`
+- [INSTINCT-027] Lối tắt của cổng tin trạng thái agent ghi được và tái dùng bộ phân loại của việc khác — `sed -n '231,237p' .agents/instincts.md`
 
