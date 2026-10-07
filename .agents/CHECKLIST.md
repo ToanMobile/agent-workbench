@@ -2,7 +2,7 @@
 
 **An toàn 41% (12/29)** · ❌ 0 · 🔁 0 · 🚫 0 · 🟡 0 cần chạy lại · ⚠️ 0 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 0 chưa sửa · ⏳ 17 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 0 · ma trận chờ duyệt: không
 
-> Sinh tự động lúc 2026-10-06 06:42:06 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
+> Sinh tự động lúc 2026-10-07 16:10:18 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
 
 **Bug không có test hồi quy nào chặn tái phát: 0** (0 chưa có test · 0 có test nhưng gate không chạy)
 
@@ -22,7 +22,7 @@ Không có gì — mọi dòng đã xác nhận đang an toàn hoặc chờ lầ
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| ✅ PASS | REG-DK-ALL-01 | DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit | 2026-10-06 06:42:05 · 83.53s · exit 0 · 1b291aa+dirty · [log](evidence/REG-DK-ALL-01/20261006-064205.log) | bash universal-agent-devkit/tests/run_impacted.sh |
+| ✅ PASS | REG-DK-ALL-01 | DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit | 2026-10-07 16:06:25 · 158.88s · exit 0 · 7d7c6f7+dirty · [log](evidence/REG-DK-ALL-01/20261007-160624.log) | bash universal-agent-devkit/tests/run_impacted.sh |
 
 </details>
 
@@ -30,8 +30,8 @@ Không có gì — mọi dòng đã xác nhận đang an toàn hoặc chờ lầ
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| ✅ PASS | REG-DK-GATE-01 | post-fix gate | 2026-10-05 22:28:21 · 64.16s · exit 0 · 02ea8bf+dirty · [log](evidence/REG-DK-GATE-01/20261005-222555.log) | bash universal-agent-devkit/tests/gates/test_postfix_gate.sh |
-| ✅ PASS | REG-DK-GATE-02 | proof gate (tree_fp) | 2026-10-05 22:28:21 · 18.91s · exit 0 · 02ea8bf+dirty · [log](evidence/REG-DK-GATE-02/20261005-222614.log) | bash universal-agent-devkit/tests/gates/test_proof_gate.sh |
+| ✅ PASS | REG-DK-GATE-01 | post-fix gate | 2026-10-07 16:06:25 · 89.10s · exit 0 · 7d7c6f7+dirty · [log](evidence/REG-DK-GATE-01/20261007-160222.log) | bash universal-agent-devkit/tests/gates/test_postfix_gate.sh |
+| ✅ PASS | REG-DK-GATE-02 | proof gate (tree_fp) | 2026-10-07 16:06:25 · 19.27s · exit 0 · 7d7c6f7+dirty · [log](evidence/REG-DK-GATE-02/20261007-160241.log) | bash universal-agent-devkit/tests/gates/test_proof_gate.sh |
 
 </details>
 
@@ -47,8 +47,8 @@ Không có gì — mọi dòng đã xác nhận đang an toàn hoặc chờ lầ
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| ✅ PASS | REG-DK-HOOK-01 | hook contract | 2026-10-06 06:42:05 · 45.38s · exit 0 · 1b291aa+dirty · [log](evidence/REG-DK-HOOK-01/20261006-064023.log) | bash universal-agent-devkit/hooks/tests/hook_contract_test.sh |
-| ✅ PASS | REG-DK-HOOK-02 | proof gate | 2026-10-06 06:42:05 · 18.97s · exit 0 · 1b291aa+dirty · [log](evidence/REG-DK-HOOK-02/20261006-064042.log) | bash universal-agent-devkit/tests/gates/test_proof_gate.sh |
+| ✅ PASS | REG-DK-HOOK-01 | hook contract | 2026-10-07 16:06:25 · 56.12s · exit 0 · 7d7c6f7+dirty · [log](evidence/REG-DK-HOOK-01/20261007-160337.log) | bash universal-agent-devkit/hooks/tests/hook_contract_test.sh |
+| ✅ PASS | REG-DK-HOOK-02 | proof gate | 2026-10-07 16:06:25 · 19.27s · exit 0 · 7d7c6f7+dirty · [log](evidence/REG-DK-GATE-02/20261007-160241.log) | bash universal-agent-devkit/tests/gates/test_proof_gate.sh |
 
 </details>
 
@@ -56,7 +56,7 @@ Không có gì — mọi dòng đã xác nhận đang an toàn hoặc chờ lầ
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| ✅ PASS | REG-DK-SESSION-01 | session lock + multi-session gate verdict (own session is never counted as another) | 2026-10-05 22:28:21 · 4.73s · exit 0 · 02ea8bf+dirty · [log](evidence/REG-DK-SESSION-01/20261005-222700.log) | bash universal-agent-devkit/tests/context_memory/test_session_lock.sh && bash universal-agent-devkit/tests/gates/test_multi_session_gate.sh |
+| ✅ PASS | REG-DK-SESSION-01 | session lock + multi-session gate verdict (own session is never counted as another) | 2026-10-07 16:06:25 · 8.07s · exit 0 · 7d7c6f7+dirty · [log](evidence/REG-DK-SESSION-01/20261007-160345.log) | bash universal-agent-devkit/tests/context_memory/test_session_lock.sh && bash universal-agent-devkit/tests/gates/test_multi_session_gate.sh |
 
 </details>
 
@@ -104,19 +104,19 @@ Không có gì — mọi dòng đã xác nhận đang an toàn hoặc chờ lầ
 
 | Trạng thái | Mã | Mô tả | Component | Test bảo vệ | Bằng chứng |
 |---|---|---|---|---|---|
-| ⏳ chưa chứng minh ĐỎ | BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du | prompt báo bug thật cũng sẽ không còn được ghi nhận nữa -> là sao bug đúng ko fix đi phải tự động ghi nhận chứ | - | REG-DK-ALL-01 | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261006-064205.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20260926-dev-kit-lam-tao-branch-push-lung-tung-kh | dev kit làm tạo branch, push lung tung không đồng bộ dẫn tới lệch code, vd geely ex2 hiện có 2 pull chưa pull về dẫn tớ… | - | REG-DK-ALL-01, REG-DK-HOOK-01, REG-DK-HOOK-02, universal-agent-devkit/hooks/tests/hook_contract_test.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261006-064205.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20260928-audit-review-them-geely-ex2-hien-no-bao | audit, review thêm geely ex2 hiện nó báo tôi rất nhiều lỗi vậy có nghĩa là bộ devkit hoàn toàn chất lượng kém để thủng… | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_friction.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261006-064205.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20260928-fix-luon-loi-git-guard-chan-grep-di-ngoa | fix luôn lỗi git guard chặn grep đi ngoài ra đã tối ưu token sử dụng cũng như thời gian chạy chưa ? Đề xuất các phương… | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_friction.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261006-064205.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20260928-push-geely-va-fix-luon-loi-red-proof | push geely và fix luôn lỗi red_proof | - | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_red_proof.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261006-064205.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20260928-san-check-luon-chat-luong-dev-kit-workfl | sẵn check luôn chất lượng dev kit workflow có bị lỗi gì ko fix luôn đi | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_friction.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261006-064205.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20260929-audit-review-nguyen-nhan-tai-sao-cac-ses | audit, review nguyên nhân tại sao các sesion cài dev kit chạy rất chậm có lỗi gì hay ko? | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_regression_gate_hook.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261006-064205.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du | prompt báo bug thật cũng sẽ không còn được ghi nhận nữa -> là sao bug đúng ko fix đi phải tự động ghi nhận chứ | - | REG-DK-ALL-01 | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261007-160624.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20260926-dev-kit-lam-tao-branch-push-lung-tung-kh | dev kit làm tạo branch, push lung tung không đồng bộ dẫn tới lệch code, vd geely ex2 hiện có 2 pull chưa pull về dẫn tớ… | - | REG-DK-ALL-01, REG-DK-HOOK-01, REG-DK-HOOK-02, universal-agent-devkit/hooks/tests/hook_contract_test.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261007-160624.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20260928-audit-review-them-geely-ex2-hien-no-bao | audit, review thêm geely ex2 hiện nó báo tôi rất nhiều lỗi vậy có nghĩa là bộ devkit hoàn toàn chất lượng kém để thủng… | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_friction.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261007-160624.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20260928-fix-luon-loi-git-guard-chan-grep-di-ngoa | fix luôn lỗi git guard chặn grep đi ngoài ra đã tối ưu token sử dụng cũng như thời gian chạy chưa ? Đề xuất các phương… | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_friction.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261007-160624.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20260928-push-geely-va-fix-luon-loi-red-proof | push geely và fix luôn lỗi red_proof | - | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_red_proof.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261007-160624.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20260928-san-check-luon-chat-luong-dev-kit-workfl | sẵn check luôn chất lượng dev kit workflow có bị lỗi gì ko fix luôn đi | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_friction.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261007-160624.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20260929-audit-review-nguyen-nhan-tai-sao-cac-ses | audit, review nguyên nhân tại sao các sesion cài dev kit chạy rất chậm có lỗi gì hay ko? | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_regression_gate_hook.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261007-160624.log) |
 | ⏳ chưa chứng minh ĐỎ | BUG-20261001-lam-luon-fix-bug-worktree-di | làm luôn fix bug worktree đi | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_worktree_merge_gate.sh (trong suite) | RED-proof INCONCLUSIVE: [log](evidence/redproof-BUG-20261001-lam-luon-fix-bug-worktree-di/20261001-175745.log) |
 | ⏳ chưa chứng minh ĐỎ | BUG-20261001-sua-luon-bug-init-xoa-mcp-server-di | sửa luôn bug init xoá MCP server đi | - | REG-DK-ALL-01, universal-agent-devkit/tests/installer/test_platform_rules.sh (trong suite) | RED-proof INCONCLUSIVE: [log](evidence/redproof-BUG-20261001-sua-luon-bug-init-xoa-mcp-server-di/20261001-192737.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261002-agent-kit-health-run-tests-scores-96-100 | agent-kit health --run-tests scores 96/100: agent-kit test runs ~90 test scripts one after another (~19 min), past the 900 s limit health allows | devkit-health | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_run_impacted.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261006-064205.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261002-chay-finagling-running-stop-hooks-8-9-27 | chạy Finagling… (running Stop hooks… 8/9 · 27m 24s · ↓ 46.3k tokens) quá lâu audit, review sửa lại đi Stop hooks… rất h… | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_regression_gate_hook.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261006-064205.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261002-evidence-gate-foreign-xml-nonrunner | test_evidence_gate: a Bash that only names a foreign project (cd && git status) made its fresh XML count as this session's test evidence | devkit | REG-DK-ALL-01, REG-DK-HOOK-01, REG-DK-HOOK-02, universal-agent-devkit/hooks/tests/hook_contract_test.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261006-064205.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261002-gate-rejects-a-change-that-moves-a-test | Gate REJECTs a change that moves a test file the matrix names: it runs the base matrix, whose command names the removed path (exit 127), and flags the matrix edit for review | devkit-gate | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_matrix_rename.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261006-064205.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261002-proof-gate-reinit-same-profile | proof gate: re-init rewriting the same backend profile counted as a profile switch and demanded a PNG | devkit | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_proof_gate.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261006-064205.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261002-sessionstart-skips-the-checklist-block-a | SessionStart skips the checklist block and the background STALE re-run after the scripts/ regrouping (bin/ and stale_rerun.py paths) | devkit-hooks | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_stale.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261006-064205.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-VACUITY-SINCE-BASE | gate: vacuity revert uses HEAD under --since, so committed fixes look vacuous | - | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_vacuity_since.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261006-064205.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20261002-agent-kit-health-run-tests-scores-96-100 | agent-kit health --run-tests scores 96/100: agent-kit test runs ~90 test scripts one after another (~19 min), past the 900 s limit health allows | devkit-health | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_run_impacted.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261007-160624.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20261002-chay-finagling-running-stop-hooks-8-9-27 | chạy Finagling… (running Stop hooks… 8/9 · 27m 24s · ↓ 46.3k tokens) quá lâu audit, review sửa lại đi Stop hooks… rất h… | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_regression_gate_hook.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261007-160624.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20261002-evidence-gate-foreign-xml-nonrunner | test_evidence_gate: a Bash that only names a foreign project (cd && git status) made its fresh XML count as this session's test evidence | devkit | REG-DK-ALL-01, REG-DK-HOOK-01, REG-DK-HOOK-02, universal-agent-devkit/hooks/tests/hook_contract_test.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261007-160624.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20261002-gate-rejects-a-change-that-moves-a-test | Gate REJECTs a change that moves a test file the matrix names: it runs the base matrix, whose command names the removed path (exit 127), and flags the matrix edit for review | devkit-gate | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_matrix_rename.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261007-160624.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20261002-proof-gate-reinit-same-profile | proof gate: re-init rewriting the same backend profile counted as a profile switch and demanded a PNG | devkit | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_proof_gate.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261007-160624.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20261002-sessionstart-skips-the-checklist-block-a | SessionStart skips the checklist block and the background STALE re-run after the scripts/ regrouping (bin/ and stale_rerun.py paths) | devkit-hooks | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_stale.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261007-160624.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-VACUITY-SINCE-BASE | gate: vacuity revert uses HEAD under --since, so committed fixes look vacuous | - | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_vacuity_since.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261007-160624.log) |
