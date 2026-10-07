@@ -99,6 +99,12 @@ case("the module's build/test-results path named",
      lambda p, f, x: ["ls " + os.path.dirname(x)], 0)
 
 # ── controls ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+case("cd <mine> && ./gradlew test; git -C <other> status: -C on a later non-test segment roots nothing",
+     lambda p, f, x: ["cd %s && ./gradlew test; git -C %s status" % (p, f)], 2, "TEST-*.xml")
+case("cd <other relative to this repo> && ./gradlew test: a relative cd is where the run happens",
+     lambda p, f, x: ["cd %s && ./gradlew test" % os.path.relpath(f, p)], 0)
+case("F=<other>; cd \"$F\" && ./gradlew test: the variable expands to where the run happens",
+     lambda p, f, x: ['F=%s; cd "$F" && ./gradlew test' % f], 0)
 case("a command that is not a test run (cd <other> && git status) roots nothing",
      lambda p, f, x: ["cd %s && git status" % f], 2, "TEST-*.xml")
 case("a DevKit gate really invoked in <other> (cd … && python3 …/post-fix-gate.py --run-tests --full)",

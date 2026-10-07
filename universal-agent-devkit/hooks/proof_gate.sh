@@ -249,8 +249,11 @@ def full_gate_problem():
         return "chưa có exit 0 trên code hiện tại"
     rtime = rec.get("time", 0)
     # A wrong-shaped receipt used to crash this function: python exit 1, the wrapper turns it into exit 0, XONG passes.
-    # (an int is always finite, and math.isfinite raises OverflowError on 10**400: test floats only)
-    if isinstance(rtime, bool) or not isinstance(rtime, (int, float)) or (isinstance(rtime, float) and not math.isfinite(rtime)):
+    # An int is finite, but math.isfinite raises OverflowError on 10**400, and a 400-digit time is not a timestamp.
+    # A real receipt time is a unix epoch (well under 10**12, year 33658). Negative is not one either.
+    if (isinstance(rtime, bool) or not isinstance(rtime, (int, float))
+            or (isinstance(rtime, float) and not math.isfinite(rtime))
+            or rtime < 0 or rtime > 10 ** 12):
         return "receipt hỏng (full_pass.json: time không phải số)"
     turn_start_time = start
     if turn_start_time is None:

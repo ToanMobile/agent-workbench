@@ -1249,7 +1249,7 @@ def run_git_hygiene_audit(modified_files: list) -> tuple:
 
         # 2. Kiểm tra nội dung file tìm secret / password / key
         # Bỏ qua quét nội dung binary hoặc ảnh
-        if rel_file.endswith((".pyc", ".png", ".jpg", ".jpeg", ".webp", ".so", ".dylib", ".a", ".jar", ".aar")):
+        if rel_file.endswith((".pyc", ".png", ".jpg", ".jpeg", ".webp", ".so", ".dylib", ".a", ".jar", ".aar", ".apk", ".idsig", ".dex")):
             continue
         content = read_changed_text(rel_file)
         if content is not None:
@@ -3260,6 +3260,32 @@ def _recorded_seconds() -> dict:
     return out
 
 
+def estimated_suite_seconds(cmd):
+    """Longest tests/lib/test_durations.txt path that is a substring of cmd, else None.
+    Only for a suite with no recorded history. Unknown stays runnable (the caller does not skip).
+    ponytail: a short path that is a substring of a longer one loses; the longest path wins."""
+    try:
+        text = (Path(__file__).resolve().parent.parent / "tests" / "lib" / "test_durations.txt").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    best, best_len = None, -1
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        try:
+            secs = float(parts[0])
+        except ValueError:
+            continue
+        path = parts[1].strip()
+        if path and path in cmd and len(path) > best_len:
+            best, best_len = secs, len(path)
+    return best
+
+
 def suite_env():
     """The environment a test suite runs in, without the variables git sets for a hook
     (GIT_INDEX_FILE, GIT_DIR, …): a suite that builds scratch repos otherwise writes into the
@@ -3284,7 +3310,10 @@ def run_precommit_tests(modified_files) -> tuple:
     A commit must stay quick: a suite whose last recorded run took over DEVKIT_PRECOMMIT_MAX_S
     (30 s) is skipped, the run stops starting suites past DEVKIT_PRECOMMIT_BUDGET_S (120 s), and
     a suite past DEVKIT_PRECOMMIT_TEST_TIMEOUT (60 s) is a warning, not a block — the DevKit's own
-    run_impacted.sh takes 165–740 s. skipped = [(id, why)].
+    run_impacted.sh takes 165–740 s. A suite with no recorded length is estimated from
+    tests/lib/test_durations.txt; an estimate over that kill timeout is skipped (not failed).
+    The 30 s history threshold is not applied to the estimate. Unknown duration stays runnable.
+    skipped = [(id, why)].
     ponytail: runs on the working tree (unstaged edits included), not the staged blobs alone;
     run from a `git stash --keep-index` copy if unstaged edits ever mask a failure."""
     mode = os.environ.get("DEVKIT_PRECOMMIT_TESTS", "light")
@@ -3314,6 +3343,12 @@ def run_precommit_tests(modified_files) -> tuple:
         if mode != "all" and recorded.get(sid, 0.0) > max_s:
             skipped.append((sid, f"{recorded[sid]:.0f}s > {max_s:.0f}s"))
             continue
+        if mode != "all" and recorded.get(sid) is None:
+            est = estimated_suite_seconds(cmd)
+            if est is not None and est > timeout:
+                skipped.append((sid, tr(f"ước lượng {est:.0f}s > {timeout:.0f}s",
+                                        f"estimate {est:.0f}s > {timeout:.0f}s")))
+                continue
         if spent >= budget:
             skipped.append((sid, tr(f"hết ngân sách {budget:.0f}s", f"budget {budget:.0f}s used")))
             continue
@@ -4319,6 +4354,7 @@ def main():
     print(f"\n{BOLD}{CYAN}──────────────────────────────────────────────────────────────────────────────────────{RESET}")
     receipt_untested = None
     lock_busy = False   # exit 4 because the lock was not held: no suite ran, so the receipt is neither written nor deleted
+    budget_cut = False  # exit 4 because the time budget stopped a suite from starting: same, do not write or delete
     if not static_ok or (run_tests and not tests_ok):
         verdict_text, verdict_color, exit_code = tr("REJECT — CẦN KHẮC PHỤC CÁC ĐIỂM CHƯA ĐẠT", "REJECT — FIX THE FAILED CHECKS"), RED, 1
     elif matrix_problem:
@@ -4355,6 +4391,7 @@ def main():
         verdict_text, verdict_color, exit_code = tr(
             f"UNTESTED — hết ngân sách thời gian ({budget_s:.0f}s, GATE_TOTAL_BUDGET_S): {left} chưa chạy — chạy `postfix-gate --run-tests --full`; KHÔNG phải PASS",
             f"UNTESTED — time budget spent ({budget_s:.0f}s, GATE_TOTAL_BUDGET_S): {left} not run — run `postfix-gate --run-tests --full`; NOT a PASS"), YELLOW, 4
+        budget_cut = True
     elif run_tests and tests_untested:
         # UNTESTED by untested_exit (BUSY marks suites only when the lock was not held — the
         # summary "busy"): a full run records it in the receipt so its PASS suites are reused.
@@ -4405,10 +4442,11 @@ def main():
 
     partial = not force_reason or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)
     try:
-        if run_tests and not impacted_run and not deferred_by and not lock_busy and (not partial or (exit_code != 0 and not receipt_untested)):
+        if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and (not partial or (exit_code != 0 and not receipt_untested)):
             # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
             # suites all passed (2026-09-29) — leaves the last full one as it is; a BUSY run (lock not held, nothing ran)
-            # leaves it alone too: it used to delete even a valid one, so a Stop whose lock wait ran out forced a new --full
+            # and a BUDGET run (a suite never started) leave it alone too: either used to delete even a valid one,
+            # so a Stop whose lock wait or time budget ran out forced a new --full
             write_full_pass_receipt(project_dir, exit_code, args.matrix, regression_tests,
                                     tested_at=float(cache.get("tested_at") or 0) if cache else None,
                                     tested_fp=tested_fp, untested=receipt_untested, partial=partial)

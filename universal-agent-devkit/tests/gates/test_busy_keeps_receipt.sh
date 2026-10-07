@@ -101,6 +101,36 @@ make_repo 0; hold_lock
 out="$(TEST_RUN_LOCK_WAIT_S=1 run_gate --run-tests --full)"; rc=$?; release_lock
 [ "$rc" = 4 ] && [ ! -e "$(RCPT)" ] && ok "BUSY with no receipt: exit 4 and none is written" || bad "BUSY with no receipt: exit $rc, receipt $([ -e "$(RCPT)" ] && echo written || echo none)"
 
+# ── BUDGET: a suite that never started must not delete a full PASS receipt ────────────────────────────
+# BUSY sets lock_busy and skips write_full_pass_receipt. BUDGET (exit 4, GATE_TOTAL_BUDGET_S) called it
+# with untested=None, and that deletes the receipt — partial and --full. Nothing that did not run may
+# erase a full PASS. Budget 0 disables the cap, so the first suite sleeps past a tiny positive budget.
+make_budget() {
+  rm -rf "$R" && mkdir -p "$R/src" && cd "$R" || exit 1
+  git init -q . && git config user.email t@t && git config user.name t
+  echo "fun ok() = 1" > src/Core.kt
+  printf 'sleep 0.3\nexit 0\n' > slow.sh
+  printf 'exit 0\n' > later.sh
+  cat > matrix.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],
+ "mandatory_regression_tests":[{"id":"REG-FIRST","name":"first","command":"sh slow.sh"},
+  {"id":"REG-LATER","name":"later","command":"sh later.sh"}]}]}
+JSON
+  git add -A && git commit -qm init
+  echo "fun ok() = 2" > src/Core.kt
+}
+for mode in valid stale; do
+  for flag in "" "--full"; do
+    label="${flag:-partial (the Stop hook)}"
+    make_budget; plant "$mode"; before="$(cat "$(RCPT)")"
+    out="$(GATE_TOTAL_BUDGET_S=0.05 run_gate --run-tests $flag)"; rc=$?
+    printf '%s' "$out" | grep -q "time budget" && [ "$rc" = 4 ] \
+      && ok "BUDGET $label, $mode receipt: exit 4" || bad "BUDGET $label, $mode receipt: exit $rc, $(printf '%s' "$out" | grep -i verdict | head -1)"
+    [ -f "$(RCPT)" ] && [ "$(cat "$(RCPT)")" = "$before" ] \
+      && ok "BUDGET $label: the $mode receipt is still there, byte for byte" || bad "BUDGET $label: the $mode receipt was deleted or rewritten"
+  done
+done
+
 # ── controls: the same runs with the lock free behave as before ───────────────────────────────────────
 make_repo 0; plant valid; before="$(cat "$(RCPT)")"
 out="$(run_gate --run-tests)"; rc=$?

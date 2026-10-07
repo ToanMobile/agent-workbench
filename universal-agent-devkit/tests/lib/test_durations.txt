@@ -140,3 +140,12 @@
 3 tests/verification/test_agent_kit_self_resolve.sh
 43 tests/gates/test_gate_run_log.sh
 3 tests/gates/test_gate_runs_report.sh
+# 2026-10-07: 8 tests that were missing, each alone, wall seconds, exit 0. Relative order only.
+6 tests/gates/test_full_rerun_after_unverified.sh
+1 tests/gates/test_receipt_survives_unverified.sh
+2 tests/gates/test_verified_head_rewrite.sh
+1 tests/verification/test_evidence_foreign_roots.sh
+2 tests/verification/test_evidence_runners.sh
+21 tests/worktree_git/test_worktree_checklist.sh
+22 tests/worktree_git/test_worktree_remove.sh
+43 tests/worktree_git/test_worktree_writers.sh

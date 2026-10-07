@@ -269,8 +269,7 @@ for tail, count, nmax, big in ((None, 220, 40, True), (16, 60, 8, False), (64, 8
 set_tail(None)
 check(not bad, "%d generated transcripts (all endings, BOM, NUL, junk lines, tails of 16..4096 bytes): same answer as the forward scan" % cases,
       repr(bad[:2]))
-check(deliberate > 0, "…and the generator does hit the one deliberate exception: %d transcripts where a malformed line before the last prompt "
-      "crashed the old scan and turn_start returns the right answer" % deliberate)
+check(deliberate == 0, "a non-dict user message is not a prompt: neither scan crashes on it (%d crashes)" % deliberate)
 # every window size on small files: a line, a CRLF or a lone CR cut by the window edge at every offset
 bad, sweeps = [], 0
 for style in ("crlf", "cr", "mixed", "lf"):
@@ -328,6 +327,13 @@ check(got == outcome(ref_turn_start, far) and got[1] is not None and nb > 2 * (1
 peer_only = write("peeronly.jsonl", b"\n".join([jl({"type": "user", "isMeta": True, "origin": {"kind": "peer"}, "timestamp": stamp(1), "message": {"role": "user", "content": "Another Claude session sent a message: x"}}),
                                                  assistant(2), tool_result(3), assistant(4)]) + b"\n")
 check(outcome(H.turn_start, peer_only) == outcome(ref_turn_start, peer_only) == ("ok", None), "only peer messages, no human prompt: None, as the forward scan says")
+# A malformed user line AFTER the last prompt is the first line the reverse scan reads. It used to raise
+# AttributeError (message is not an object); a crashed hook is exit 0, so XONG was not checked.
+bad_after = write("bad_after.jsonl", prompt(100, "sửa lỗi X") + b"\n"
+                  + jl({"type": "user", "timestamp": stamp(200), "message": "not-an-object"}) + b"\n")
+got, want = outcome(H.turn_start, bad_after), outcome(tolerant_turn_start, bad_after)
+check(got[0] == "ok" and got == want and got[1] is not None,
+      "a malformed user line AFTER the last prompt is skipped; the prompt time is kept", repr((got, want)))
 
 # ── D. the decisions proof_gate.sh draws from the boundary ─────────────────────────────────
 HOOK = os.path.join(hooks, "proof_gate.sh")
@@ -568,7 +574,17 @@ for i, raw in enumerate(('{"exit":0,"time":null,"fingerprint":"x"}', '[1]', '"la
 # an integer too large for a float must not crash a finiteness test (math.isfinite raises OverflowError on it)
 put_receipt(raw='{"exit":0,"time":1' + "0" * 400 + ',"fingerprint":"x"}')
 rc, err, _ = stop(hp, session="g-huge")
-check(rc == 2 and clean(err), "receipt time a 400-digit integer: no crash (blocked here by the fingerprint)", "exit %s stderr=%r" % (rc, err[-200:]))
+check(rc == 2 and "receipt hỏng" in err and clean(err),
+      "receipt time a 400-digit integer is a broken receipt, even when the fingerprint would also miss",
+      "exit %s stderr=%r" % (rc, err[-240:]))
+hp_bad = write("g_bad_after.jsonl",
+               jl({"type": "user", "timestamp": iso(time.time() - 30), "message": {"role": "user", "content": "sửa lỗi X"}}) + b"\n"
+               + jl({"type": "user", "timestamp": iso(time.time() - 1), "message": "not-an-object"}) + b"\n")
+put_receipt(7200)
+rc, err, _ = stop(hp_bad, session="g-bad-after")
+check(rc == 2 and "trước" in err and clean(err),
+      "a malformed user line after the prompt does not fail-open: an old receipt is still blocked",
+      "exit %s stderr=%r" % (rc, err[-240:]))
 put_receipt(0.0)
 rc, err, _ = stop(hp, session="g-ok")
 check(rc == 0 and clean(err), "control: the same human-prompt transcript with a valid receipt is allowed", "exit %s stderr=%r" % (rc, err[-200:]))

@@ -198,4 +198,37 @@ stopk "$KITX" sl1 "$P2"
 grep -q "session_lock" "$TMP/err" && ok "a failing session_lock import is named in the hold text" || fail "session_lock cause not named: $(cat "$TMP/err")"
 nopyc; cp "$TMP/session_lock.py.orig2" "$KITX/bin/session_lock.py"
 
+# git worktree list failing must not wipe a debt. A None from git used to become "", paths empty,
+# owed filtered to nothing, and save() wrote owed: []. The next Stop then had nothing to hold.
+P6="$TMP/proj6"; mkdir -p "$P6" && G "$P6" init -q -b main . && echo a > "$P6/a.txt" && G "$P6" add a.txt && G "$P6" commit -qm init
+TR6="$TMP/tr6.jsonl"
+python3 - "$TR6" "$TMP/wt-list" <<'PY'
+import json, sys
+tr, wt = sys.argv[1], sys.argv[2]
+open(tr, "w").write(
+    json.dumps({"type": "user", "timestamp": "2020-01-01T00:00:00.000Z", "message": {"role": "user", "content": "go"}}) + "\n"
+    + json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t", "name": "Bash",
+        "input": {"command": "git worktree add -b flist " + wt}}]}}) + "\n")
+PY
+G "$P6" worktree add -q -b flist "$TMP/wt-list"
+WTREAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TMP/wt-list")"
+mkdir -p "$P6/.claude/audit-gate"
+python3 -c 'import json,sys; json.dump({"owed":[sys.argv[1]],"sessions":{}}, open(sys.argv[2],"w"))' \
+  "$WTREAL" "$P6/.claude/audit-gate/worktree_merge_gate.state"
+mkdir -p "$TMP/shim-list"
+printf '#!/bin/bash\ncase " $* " in *" worktree list "*) echo "fatal: simulated list" >&2; exit 128;; esac\nexec "%s" "$@"\n' "$REALGIT" > "$TMP/shim-list/git"
+chmod +x "$TMP/shim-list/git"
+PATH="$TMP/shim-list:$PATH" stopk "$DEVKIT_DIR" sl1 "$P6" "$TR6"; rc=$?
+owed_after="$(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1])).get("owed") or []))' "$P6/.claude/audit-gate/worktree_merge_gate.state")"
+printf '%s\n' "$owed_after" | grep -q "$WTREAL" && [ "$rc" = 2 ] && grep -q "git worktree list failed" "$TMP/err" \
+  && ok "git worktree list failed: the owed worktree is still owed and the Stop is held" \
+  || fail "list failure wiped the debt or passed (rc=$rc owed='$owed_after' err=$(cat "$TMP/err"))"
+P7="$TMP/proj7"; mkdir -p "$P7" && G "$P7" init -q -b main . && echo a > "$P7/a.txt" && G "$P7" add a.txt && G "$P7" commit -qm init
+TR7="$TMP/tr7.jsonl"
+printf '%s\n' '{"type":"user","timestamp":"2020-01-01T00:00:00.000Z","message":{"role":"user","content":"look"}}' > "$TR7"
+PATH="$TMP/shim-list:$PATH" stopk "$DEVKIT_DIR" sl2 "$P7" "$TR7"; rc=$?
+[ "$rc" = 0 ] && [ ! -f "$P7/.claude/audit-gate/worktree_merge_gate.state" ] \
+  && ok "git worktree list failed with nothing owed and nothing named: the Stop passes and writes no empty debt" \
+  || fail "list failure with nothing to protect (rc=$rc state=$([ -f "$P7/.claude/audit-gate/worktree_merge_gate.state" ] && echo written || echo none))"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_merge_gate: all passed" || { echo "❌ test_worktree_merge_gate: $FAILS failed"; exit 1; }

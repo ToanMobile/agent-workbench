@@ -121,6 +121,22 @@ case("the gate's name inside pgrep -f \"…\" is a process lookup, not a run", [
 case("the gate's name inside grep -E is not a run", [E, ["bash", "ps aux | grep -E 'post-fix-gate.py --run-tests'", G_PASS]], 2, NO)
 case("the gate run directly by path (./bin/post-fix-gate.py --run-tests) counts", [E, ["bash", "./bin/post-fix-gate.py --run-tests --full --brief", G_PASS]], 0)
 
+# ── a reader that merely names a runner is not a run; a real invocation the old regex missed still is ──
+case("grep of a suite path whose output says all checks passed is not a run",
+     [E, ["bash", 'grep -n "all checks passed" tests/gates/test_x.sh', "12:all checks passed"]], 2, NO)
+case("echo of the gate command with a PASS verdict is not a run",
+     [E, ["bash", "echo python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full", G_PASS]], 2, NO)
+case("python3 -c that prints the gate invocation is not a run",
+     [E, ["bash", "python3 -c \"print('python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full')\"", G_PASS]], 2, NO)
+case("the gate invoked by its bare path (no python, no ./) with PASS and 6/6",
+     [E, ["bash", ".agents/devkit/bin/post-fix-gate.py --run-tests --full --brief", G_PASS]], 0)
+case("the interpreter held in $py and the gate path literal",
+     [E, ["bash", 'py=python3; $py .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief', G_PASS]], 0)
+case('python3 "$GATE" after GATE= the gate path',
+     [E, ["bash", 'GATE=.agents/devkit/bin/post-fix-gate.py; python3 "$GATE" --run-tests --full --brief', G_PASS]], 0)
+case('for f in tests/gates/test_*.sh; do bash "$f"; done with a pass summary',
+     [E, ["bash", 'for f in tests/gates/test_*.sh; do bash "$f"; done', "all checks passed"]], 0)
+
 # ── unchanged behaviour ─────────────────────────────────────────────────────
 case("control: a literal kit suite path still counts", [E, ["bash", "bash tests/gates/test_x.sh", "x: all checks passed"]], 0)
 case("CHECK 7 is untouched: a gate PASS is no RED→GREEN pair for an outcome claim",

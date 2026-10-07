@@ -399,6 +399,9 @@ def block(lines, cure, rc, reused=False, reusable=True, repeat_hit=False):
 # inside an untracked file kept the key and the next Stop skipped the suites (review 2026-09-29).
 # Same content hash as reuse_key (devkit_harness.tree_fingerprint). Without the helper (a hook
 # copied alone) the per-fingerprint key stays as it was.
+# tree_fingerprint leaves gitignored files out. A suite can read .env / local.properties, so the
+# key also hashes that ignored set (2026-10-07). None means the list failed: do not skip, and do
+# not store a key (a stored None matches a missing pass_fp and would skip the next Stop).
 content_fp = ""
 if info is not None:
     try:
@@ -407,16 +410,117 @@ if info is not None:
         note("content fingerprint failed: %r" % e)
 
 
+def _local_ignored_sha():
+    """Hex sha of gitignored local config and build inputs. None if they cannot be listed."""
+    local_base = (".env", ".env.*", "*.env", "local.properties", "keystore.properties",
+                  "secrets.properties", "google-services.json", "GoogleService-Info.plist", ".npmrc")
+    build_globs = ("local.properties", "**/local.properties", "google-services.json",
+                   "**/google-services.json", "**/GoogleService-Info.plist", "key.properties",
+                   "**/key.properties", "**/keystore.properties", "**/*.jks", "**/*.keystore",
+                   "**/libs/*.aar", "**/libs/*.jar", ".env", ".env.*", "**/.env")
+    skip_walk = {".git", "build", ".gradle", "node_modules", "Library", "Temp", "Logs", "obj",
+                 ".venv", "venv", "__pycache__", ".idea", ".agents", ".claude", "dist", "out",
+                 ".cxx", ".kotlin"}
+    extra = []
+    try:
+        copied = json.loads(open(os.path.join(repo, ".agents", "local", "red_proof.json"),
+                                  encoding="utf-8").read()).get("copy", [])
+        if isinstance(copied, list):
+            extra = [p for p in copied if isinstance(p, str) and p and "\n" not in p and not p.startswith("-")]
+    except (OSError, ValueError, AttributeError, TypeError):
+        extra = []
+    specs, seen = [], set()
+
+    def add(pat):
+        spec = (":(glob)" + pat) if any(c in pat for c in "*?[") else pat
+        if spec not in seen:
+            seen.add(spec)
+            specs.append(spec)
+
+    for pat in local_base:
+        add(pat)
+        add("**/" + pat)
+    for pat in build_globs + tuple(extra):
+        add(pat)
+    excludes = []
+    for d in sorted(skip_walk):
+        excludes.append(":(exclude)" + d)
+        excludes.append(":(exclude,glob)" + d + "/**")
+
+    def listed(pathspecs):
+        try:
+            proc = subprocess.run(["git", "-C", repo, "ls-files", "-z", "--others", "--ignored",
+                                   "--exclude-standard", "--", *pathspecs], capture_output=True)
+        except OSError:
+            return None
+        if proc.returncode != 0:
+            return None
+        return proc.stdout.split(b"\0")
+
+    rows = listed(specs + excludes)
+    if rows is None and extra:
+        bare, seen_bare = [], set()
+
+        def add_bare(pat):
+            spec = (":(glob)" + pat) if any(c in pat for c in "*?[") else pat
+            if spec not in seen_bare:
+                seen_bare.add(spec)
+                bare.append(spec)
+
+        for pat in local_base:
+            add_bare(pat)
+            add_bare("**/" + pat)
+        for pat in build_globs:
+            add_bare(pat)
+        rows = listed(bare + excludes)
+    if rows is None:
+        return None
+    pats = build_globs + tuple(extra)
+    kept = []
+    for raw in rows:
+        if not raw or raw.endswith(b"/"):
+            continue
+        rel = raw.decode("utf-8", "surrogateescape").replace("\\", "/")
+        parts = rel.split("/")
+        if any(part in skip_walk for part in parts):
+            continue
+        base = parts[-1]
+        if any(fnmatch.fnmatch(base, pat) for pat in local_base) or any(
+                fnmatch.fnmatch(rel, pat) or (pat.startswith("**/") and fnmatch.fnmatch(rel, pat[3:]))
+                for pat in pats):
+            kept.append(rel)
+    h = hashlib.sha256()
+    for rel in sorted(set(kept)):
+        digest = ""
+        try:
+            fh = hashlib.sha256()
+            with open(os.path.join(repo, rel), "rb") as src:
+                for chunk in iter(lambda: src.read(1024 * 1024), b""):
+                    fh.update(chunk)
+            digest = fh.hexdigest()
+        except OSError:
+            digest = ""
+        h.update(rel.encode("utf-8", "surrogateescape") + b"\0" + digest.encode() + b"\0")
+    return h.hexdigest()
+
+
+_local_sha = _local_ignored_sha()
+
+
 def skip_key(f):
-    return f + ":" + content_fp if content_fp else f
+    if _local_sha is None:
+        return None
+    base = f + ":" + content_fp if content_fp else f
+    return base + ":" + _local_sha
 
 
-if state.get("pass_fp") == skip_key(fp):
+_sk_fp = skip_key(fp)
+if _sk_fp is not None and state.get("pass_fp") == _sk_fp:
     sys.exit(0)
 # UNTESTED content (every suite that can run here passed; one says by its untested_exit that it
 # cannot run on this machine) was already said to the user and cannot give another result here.
 # 2026-09-29 (GeelyEx2: verified_head stuck, every Stop re-ran the --since range 4-5 min).
-if state.get("untested_fp") == skip_key(fp):
+if _sk_fp is not None and state.get("untested_fp") == _sk_fp:
     note(f"untested fp={fp} (reused result)")
     sys.exit(0)
 # A full PASS of this exact content is reused inside the gate run below (post-fix-gate
@@ -527,7 +631,9 @@ def range_verified():
         state["repeat"].pop(sid, None)
 
 if res.returncode in (0, 3):
-    state["pass_fp"] = skip_key(fp_plain)
+    sk_plain = skip_key(fp_plain)
+    if sk_plain is not None:
+        state["pass_fp"] = sk_plain
     range_verified()
     if degraded:
         sess.update({"fp": tree_fp, "result": "pass", "blocks": 0, "lines": None, "cure": None})
@@ -563,8 +669,12 @@ if res.returncode == 4 and summary:
     # re-ran the --since range 4-5 min); untested_fp = fp_plain ends the next stop of this content.
     if degraded:
         sess.update({"fp": tree_fp, "result": "untested"})
-    first = state.get("untested_fp") != skip_key(fp)
-    state["untested_fp"] = skip_key(fp_plain)
+    sk_now, sk_plain = skip_key(fp), skip_key(fp_plain)
+    if sk_plain is None:
+        first = True
+    else:
+        first = state.get("untested_fp") != sk_now
+        state["untested_fp"] = sk_plain
     range_verified()
     save_state()
     if first:

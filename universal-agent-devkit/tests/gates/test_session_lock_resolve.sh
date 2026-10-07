@@ -71,6 +71,9 @@ def fail(msg):
     fails.append(msg)
     print("  FAIL " + msg)
 
+if not re.search(r'(?m)^exec python3 -I "\$HERE/../bin/session_lock\.py"', NEW):
+    fail("session_lock.sh must exec python3 -I so PYTHONPATH cannot shadow the stdlib")
+
 
 def write(path, text, mode=None):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -354,16 +357,25 @@ if total != EXPECT_CASES:
 # ───────────────────── python start shim, used by (a), (b) and (c) ─────────────────────
 SHIM_DIR = os.path.join(ROOT, "shim")
 write(os.path.join(SHIM_DIR, "python3"), """#!/bin/sh
-# logs every start; SHIM_MODE=run execs the real python, SHIM_MODE=log (default) execs it only for `-I -c ...` (the old resolver
-# line) and for a script launch just logs its path and exits 0 (session_lock.py is not wanted in the resolver table).
-if [ "${1:-}" = "-I" ]; then printf 'resolver-start\\n' >> "$SHIM_LOG"; exec "%s" "$@"; fi
+# logs every start. SHIM_MODE=run execs the real python. SHIM_MODE=log (default) execs it only for
+# `python3 -I -c ...` (the resolver). `python3 -I script.py` is a script launch, same as `python3 script.py`:
+# log the script path and do not exec it (session_lock.py is not wanted in the resolver table).
+if [ "${1:-}" = "-I" ] && [ "${2:-}" = "-c" ]; then printf 'resolver-start\\n' >> "$SHIM_LOG"; exec "%s" "$@"; fi
+if [ "${1:-}" = "-I" ]; then
+  printf 'script %%s\\n' "${2:-}" >> "$SHIM_LOG"
+  if [ "${SHIM_MODE:-log}" = "run" ]; then exec "%s" "$@"; fi
+  if [ "${SHIM_MODE:-log}" = "probe" ]; then
+    env | sort > "$SHIM_LOG.env"; cat > "$SHIM_LOG.in"; printf '%%s\\n' "$PPID" > "$SHIM_LOG.ppid"
+  fi
+  exit 0
+fi
 printf 'script %%s\\n' "${1:-}" >> "$SHIM_LOG"
 if [ "${SHIM_MODE:-log}" = "run" ]; then exec "%s" "$@"; fi
-if [ "${SHIM_MODE:-log}" = "probe" ]; then   # what the hook execs: environment, stdin, process ids
-  env | sort > "$SHIM_LOG.env"; cat > "$SHIM_LOG.in"; printf '%%s\n' "$PPID" > "$SHIM_LOG.ppid"
+if [ "${SHIM_MODE:-log}" = "probe" ]; then
+  env | sort > "$SHIM_LOG.env"; cat > "$SHIM_LOG.in"; printf '%%s\\n' "$PPID" > "$SHIM_LOG.ppid"
 fi
 exit 0
-""" % (REAL_PY, REAL_PY), 0o755)
+""" % (REAL_PY, REAL_PY, REAL_PY), 0o755)
 REAL_READLINK = shutil.which("readlink")
 write(os.path.join(SHIM_DIR, "readlink"), """#!/bin/sh
 # counts its calls in $SHIM_RL_COUNT and kills the whole run (its process group) after 80: a loop with no bound cannot hang the test;
@@ -736,7 +748,7 @@ for lab, mut, why, secs in mutant_results:
     else:
         fail("(d) SURVIVED mutation: %s" % lab)
 
-for lab, edits in (("(a1) exec dropped: a bash stays alive between", [('exec python3 "$HERE', 'python3 "$HERE')]),
+for lab, edits in (("(a1) exec dropped: a bash stays alive between", [('exec python3 -I "$HERE', 'python3 -I "$HERE')]),
                    ("(a1) a hook variable is exported into the python environment", [('_sl_self="$0"', 'export _sl_self="$0"')])):
     if any(NEW.count(o) < 1 for o, n in edits):
         fail("(d) mutation target missing in the hook (%s)" % lab)

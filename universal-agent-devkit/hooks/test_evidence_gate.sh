@@ -98,7 +98,7 @@ fi
 TE_INPUT="${INPUT}" TE_LOG="${LOG_DIR}/test_evidence_gate.log" TE_DIR="${LOG_DIR}" \
 TE_TS="$(date +%Y-%m-%dT%H:%M:%S)" TE_REPO="${REPO_ROOT}" TE_SELF="$0" \
 python3 -I <<'PY'
-import os, sys, json, re, glob, time
+import os, sys, json, re, glob, time, shlex
 import xml.etree.ElementTree as ET
 
 raw    = os.environ.get("TE_INPUT", "")
@@ -570,13 +570,193 @@ GATE_VERDICT_RX = re.compile(r"(?:KẾT LUẬN CỔNG POST-FIX AUDIT|POST-FIX AU
 GATE_COUNT_RX = re.compile(r"(?:Test hồi quy đạt|Regression tests passed)\s*:\s*([1-9]\d*)\s*/\s*([1-9]\d*)\b")
 ANSI_RX = re.compile(r"\x1b\[[0-9;]*m")
 def is_test_runner(cmd):
-    return bool(TEST_RUNNER_RX.search(cmd) or SCRIPT_RUNNER_RX.search(cmd) or GATE_RUN_RX.search(cmd) or any(c in cmd for c in MATRIX_CMDS))
+    return _is_test_runner(cmd)
 DEVKIT_SUITE_RX = re.compile(r"\btests/(?:[\w-]+/)?(?:test_[\w.-]+|\$\{?\w+\}?)\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b")
 # Their check names may carry FAIL / REJECT / ERROR in capitals ("✔ REJECT on secrets"), so
 # the verdict is the summary: red on "N failed/FAILED", "N deviating" (N > 0), "❌" or a "✖"
 # line; green only on an explicit pass summary; anything else is not a verdict.
 DEVKIT_SUITE_RED = re.compile(r"\b[1-9]\d*\s+(failed|FAILED|deviating)\b|❌|^\s*✖ ", re.M)
 DEVKIT_SUITE_GREEN = re.compile(r"all (checks )?passed|ALL [\w ,-]*PASSED|\b0 deviating\b|: all passed", re.I)
+# A command is a runner only in the segment that actually runs it. `&&` / `||` / `;` split segments
+# (not inside quotes, or inside for/while/until/if/case … done/fi/esac). A reader (echo, grep, git,
+# python -c, …) that merely names a suite or the gate is not a run. `cd` / a `$VAR` expansion still
+# says where a real run happens. ponytail: `echo done` inside a for-loop can close the compound early.
+_READERS = frozenset({
+    "echo", "printf", "grep", "egrep", "fgrep", "rg", "pgrep", "pkill", "cat", "ls", "head", "tail",
+    "sed", "awk", "find", "wc", "file", "stat", "less", "more", "nl", "cut", "sort", "uniq", "tr", "tee",
+    "true", "false", "cd", "pushd", "popd", "pwd", "which", "type", "command", "export", "git", "ps",
+    "sleep", "date", "basename", "dirname", "realpath", "readlink",
+})
+_ASSIGN_RX = re.compile(r"(?:^|[\s;&|(])([A-Za-z_]\w*)=(?:\"([^\"\n]*)\"|'([^'\n]*)'|([^\s;&|]+))")
+_GATE_FLAG = ("--run-tests", "--full", "--force-full")
+
+def _argv0(word):
+    base = word.replace("\\", "/").split("/")[-1]
+    return base[2:] if base.startswith("./") else base
+
+def _collect_assigns(text):
+    env = {}
+    for m in _ASSIGN_RX.finditer(text or ""):
+        val = m.group(2) if m.group(2) is not None else (m.group(3) if m.group(3) is not None else (m.group(4) or ""))
+        env[m.group(1)] = val
+    return env
+
+def _expand_vars(text, env):
+    def repl(m):
+        name = m.group(1) or m.group(2)
+        return env.get(name, m.group(0))
+    return re.sub(r"\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)", repl, text or "")
+
+def _env_for(cmd):
+    env = {}
+    for earlier in bash_cmds:
+        env.update(_collect_assigns(earlier))
+    env.update(_collect_assigns(cmd))
+    return env
+
+def _split_segments(cmd):
+    """Top-level && / || / ; pieces. Not inside quotes or a for/while/until/if/case compound."""
+    parts, buf, word = [], [], []
+    i, n, quote, paren, compound = 0, len(cmd), None, 0, 0
+
+    def end_word():
+        nonlocal compound
+        if not word:
+            return
+        w = "".join(word)
+        word.clear()
+        if w in ("for", "while", "until", "if", "case"):
+            compound += 1
+        elif w in ("done", "fi", "esac") and compound:
+            compound -= 1
+
+    while i < n:
+        c = cmd[i]
+        if quote:
+            buf.append(c)
+            word.append(c)
+            if c == "\\" and i + 1 < n:
+                buf.append(cmd[i + 1])
+                word.append(cmd[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in "\"'":
+            quote = c
+            buf.append(c)
+            word.append(c)
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            buf.append(c)
+            buf.append(cmd[i + 1])
+            word.append(cmd[i + 1])
+            i += 2
+            continue
+        if c == "(":
+            paren += 1
+            end_word()
+            buf.append(c)
+            i += 1
+            continue
+        if c == ")":
+            paren = max(0, paren - 1)
+            end_word()
+            buf.append(c)
+            i += 1
+            continue
+        if c in " \t\r\n":
+            end_word()
+            buf.append(c)
+            i += 1
+            continue
+        if paren == 0 and compound == 0 and (cmd.startswith("&&", i) or cmd.startswith("||", i) or c == ";"):
+            end_word()
+            seg = "".join(buf).strip()
+            if seg:
+                parts.append(seg)
+            buf = []
+            i += 2 if c != ";" else 1
+            continue
+        buf.append(c)
+        word.append(c)
+        i += 1
+    end_word()
+    seg = "".join(buf).strip()
+    if seg:
+        parts.append(seg)
+    return parts or ([cmd.strip()] if cmd.strip() else [])
+
+def _words(seg):
+    try:
+        return shlex.split(seg, posix=True)
+    except ValueError:
+        return seg.split()
+
+def _strip_assigns(words):
+    i = 0
+    while i < len(words) and re.match(r"^[A-Za-z_]\w*=", words[i]):
+        i += 1
+    return words[i:]
+
+def _is_reader(words):
+    return bool(words) and _argv0(words[0]) in _READERS
+
+def _is_python_c(words):
+    if not words or not re.match(r"^python\d?(?:\.\d+)?$", _argv0(words[0])):
+        return False
+    return any(w == "-c" or (w.startswith("-c") and w != "-c") for w in words[1:4]) or "-c" in words[1:4]
+
+def _has_gate_flag(words):
+    return any(w.split("=", 1)[0] in _GATE_FLAG for w in words)
+
+def _invokes_gate_words(words):
+    return any(_argv0(w) == "post-fix-gate.py" for w in words) and _has_gate_flag(words)
+
+def _simple_runner(seg):
+    words = _strip_assigns(_words(seg))
+    if not words or _is_reader(words) or _is_python_c(words):
+        return False
+    if TEST_RUNNER_RX.search(seg) or SCRIPT_RUNNER_RX.search(seg) or GATE_RUN_RX.search(seg) or _invokes_gate_words(words):
+        return True
+    return any(c in seg for c in MATRIX_CMDS)
+
+def _compound_body(seg):
+    m = re.search(r"\bdo\b(.*)\bdone\b", seg, re.S) or re.search(r"\bthen\b(.*)\bfi\b", seg, re.S)
+    return m.group(1) if m else ""
+
+def _segment_is_runner(seg):
+    if re.match(r"(?:for|while|until|if|case)\b", seg.lstrip()):
+        body = _compound_body(seg)
+        if any(_segment_is_runner(p) for p in _split_segments(body)):
+            return True
+        # The suite path sits in the header (`for f in tests/gates/test_*.sh`) and the body only has bash "$f".
+        return bool(re.search(r"\b(?:bash|sh)\b", body) and re.search(
+            r"(?:^|[\s\"'])tests/(?:[\w.-]+/)?test_[\w*.${}-]*\.sh|\$\w+/tests/", seg))
+    return _simple_runner(seg)
+
+def _segment_invokes_gate(seg):
+    if re.match(r"(?:for|while|until|if|case)\b", seg.lstrip()):
+        return any(_segment_invokes_gate(p) for p in _split_segments(_compound_body(seg)))
+    words = _strip_assigns(_words(seg))
+    if not words or _is_reader(words) or _is_python_c(words):
+        return False
+    return _invokes_gate_words(words) or bool(GATE_RUN_RX.search(seg))
+
+def _command_segments(cmd):
+    return _split_segments(_expand_vars(cmd, _env_for(cmd)))
+
+def _is_test_runner(cmd):
+    return any(_segment_is_runner(seg) for seg in _command_segments(cmd))
+
+def _command_invokes_gate(cmd):
+    return any(_segment_invokes_gate(seg) for seg in _command_segments(cmd))
+
+def _command_is_suite(cmd):
+    return any(_segment_is_runner(seg) and DEVKIT_SUITE_RX.search(seg) for seg in _command_segments(cmd))
 # Failure markers. Counts only when non-zero ("fail 0", "0 failed" are green), and the
 # bare words only in the capitals runners print (FAIL, FAILED, ERROR) — a passing test
 # named "shows error message" or node's "ℹ fail 0" summary must not read as red.
@@ -597,14 +777,14 @@ PM_RUN_EXIT_RX = re.compile(r"^exit=(-?\d+|null)", re.M)
 
 def runner_state(is_error, txt, pm_run=False, command=""):
     """"red", "green", "gate-green" (the DevKit gate: not a check-7 pair), or None (not a verdict) for one runner tool_result."""
-    if command and GATE_RUN_RX.search(command):
+    if command and _command_invokes_gate(command):
         clean = ANSI_RX.sub("", txt)
         verdicts, counts = GATE_VERDICT_RX.findall(clean), GATE_COUNT_RX.findall(clean)
         if (not is_error and verdicts and all(v == "PASS" for v in verdicts)
                 and counts and all(a == b for a, b in counts)):
             return "gate-green"
         return None
-    if command and DEVKIT_SUITE_RX.search(command):
+    if command and _command_is_suite(command):
         if is_error or DEVKIT_SUITE_RED.search(txt):
             return "red"
         return "green" if DEVKIT_SUITE_GREEN.search(txt) else None
@@ -1037,6 +1217,31 @@ def _session_start():
         return getattr(os.stat(tp), "st_birthtime", None)
     return None
 
+def _resolve_dir(tok, cwd):
+    tok = (tok or "").strip().strip("\"'").rstrip("/.,:")
+    if not tok or tok.startswith(FOREIGN_SKIP):
+        return None
+    if not os.path.isabs(tok):
+        tok = os.path.normpath(os.path.join(cwd or repo, tok))
+    else:
+        tok = os.path.normpath(tok)
+    return tok
+
+def _note_project(tok, roots):
+    if not tok or str(tok).startswith(FOREIGN_SKIP):
+        return
+    cur = tok if os.path.isdir(tok) else os.path.dirname(tok)
+    for _ in range(4):
+        if not cur or str(cur).startswith(FOREIGN_SKIP):
+            return
+        if any(os.path.exists(os.path.join(cur, m)) for m in PROJECT_MARKERS):
+            roots.append(("project", cur))
+            return
+        up = os.path.dirname(cur)
+        if up == cur:
+            return
+        cur = up
+
 def foreign_xmls():
     start = _session_start()
     if start is None or not bash_cmds:
@@ -1052,18 +1257,26 @@ def foreign_xmls():
                     roots.append(("module", tok.split(marker)[0]))
             if re.search(r"(?:^|/)(?:TEST-[^/]*|tests_[^/]*)\.xml$", tok) and os.path.isfile(tok):
                 files.add(tok)
-        if not is_test_runner(cmd):
-            continue   # naming a project (cd … && git status, a lock check) is no test run there
-        for tok in run_targets(cmd):   # where the run HAPPENS, never every path the command mentions
-            cur = tok if os.path.isdir(tok) else os.path.dirname(tok)
-            for _ in range(4):
-                if any(os.path.exists(os.path.join(cur, m)) for m in PROJECT_MARKERS):
-                    roots.append(("project", cur))
-                    break
-                up = os.path.dirname(cur)
-                if up == cur:
-                    break
-                cur = up
+        # Only the segment that runs the tests contributes a root. `git -C <other>` later in the
+        # same command does not. A relative `cd` and a `$VAR` expand against this repo.
+        cwd = repo
+        for seg in _command_segments(cmd):
+            words = _strip_assigns(_words(seg))
+            if words and _argv0(words[0]) in ("cd", "pushd") and len(words) > 1 and not words[1].startswith("-"):
+                dest = _resolve_dir(words[1], cwd)
+                if dest:
+                    cwd = dest
+                continue
+            if not _segment_is_runner(seg):
+                continue
+            noted = False
+            for tok in run_targets(seg):
+                dest = tok if os.path.isabs(tok) else _resolve_dir(tok, cwd)
+                if dest:
+                    _note_project(dest, roots)
+                    noted = True
+            if not noted:
+                _note_project(cwd, roots)
     seen_roots = []
     for kind, root in roots:
         if (kind, root) not in seen_roots:

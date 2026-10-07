@@ -580,6 +580,33 @@ JSON
     && ok "$kind: an edit inside an untracked file is not skipped — REG-OK runs and blocks" \
     || fail "$kind: untracked content edit skipped the suites (rc $rc1 then $rc2)"
 done
+# gitignored local config is outside tree_fingerprint. A pass_fp of that fingerprint alone skipped
+# the next Stop after only .env changed, even when the suite reads .env (2026-10-07 review).
+REPO="$TMP/repo_env"; mkdir -p "$REPO/src" "$REPO/.agents" && cd "$REPO" || exit 1
+git init -q . && git config user.email t@t && git config user.name t
+printf '.env\nlocal.properties\n' > .gitignore
+printf 'echo x >> "%s"\ngrep -q "^OK=1$" .env\n' "$TMP/env_runs" > ok.sh
+cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],
+ "mandatory_regression_tests":[{"id":"REG-OK","name":"env token","command":"sh ok.sh"}]}]}
+JSON
+echo "fun ok() = 1" > src/Core.kt
+git add -A && git commit -qm init
+echo "fun ok() = 2" > src/Core.kt
+printf 'OK=1\n' > .env
+: > "$TMP/env_runs"
+# FLAKY_RETRY would run the failing command a second time; this case counts runs of ok.sh.
+# export: a bare assignment is not visible to the hook's child processes.
+export FLAKY_RETRY=0
+stop; rc1=$?; n1=$(grep -c x "$TMP/env_runs" | tr -d ' ')
+stop; rc_same=$?; n_same=$(grep -c x "$TMP/env_runs" | tr -d ' ')
+printf 'OK=0\n' > .env
+stop; rc2=$?; n2=$(grep -c x "$TMP/env_runs" | tr -d ' ')
+unset FLAKY_RETRY
+[ "$rc1" = 0 ] && [ "$n1" = 1 ] && [ "$rc_same" = 0 ] && [ "$n_same" = 1 ] \
+  && [ "$rc2" = 2 ] && [ "$n2" = 2 ] && grep -q "REG-OK" "$TMP/err" \
+  && ok "pass_fp: a gitignored .env change is not skipped — REG-OK runs again and blocks" \
+  || fail "pass_fp skipped a .env change (rc $rc1/$rc_same/$rc2 runs $n1/$n_same/$n2 err=$(head -3 "$TMP/err"))"
 # ── A session that wrote nothing here is not gated for another agent's change ────────────
 # 2026-10-02 (agent-workbench): every Stop re-ran the whole matrix (~11 min a run, 27 min seen) for
 # a 301-file diff another agent had made while this session only read. Evidence that a session

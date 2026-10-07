@@ -301,7 +301,13 @@ def is_user_prompt(e):
         return False
     if ((e.get("origin") or {}).get("kind") if isinstance(e.get("origin"), dict) else None) in NOT_A_PROMPT_ORIGINS:
         return False
-    c = (e.get("message") or {}).get("content")
+    # A user line whose message is not an object ("not-an-object", a list, a bool) is not a prompt.
+    # .get on that value raised AttributeError; turn_start reads the tail backwards, so a malformed
+    # line AFTER the last prompt crashed the hook (exit 1, and the wrapper turns that into exit 0).
+    message = e.get("message")
+    if not isinstance(message, dict):
+        return False
+    c = message.get("content")
     if isinstance(c, str) and c.lstrip().startswith("<task-notification>"):
         return False
     return isinstance(c, str) or (isinstance(c, list) and any(

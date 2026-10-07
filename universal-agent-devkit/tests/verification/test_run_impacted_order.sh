@@ -166,6 +166,13 @@ if [ -r "$DUR" ]; then
   [ -z "$badl" ] && [ "$nent" -gt 50 ] && ok "tests/lib/test_durations.txt: $nent entries '<seconds> <test path>', no malformed line" || fail "tests/lib/test_durations.txt malformed (entries $nent): $badl"
   gone="$(grep -E '^[0-9]' "$DUR" | cut -d' ' -f2 | while read -r p; do [ -f "$DEVKIT_DIR/$p" ] || echo "$p"; done | tr '\n' ' ')"
   [ -z "$gone" ] || echo "  warn: tests/lib/test_durations.txt names tests that no longer exist (harmless, refresh the file): $gone"
+  missing=""
+  for p in "$DEVKIT_DIR"/tests/*/test_*.sh; do
+    rel="${p#"$DEVKIT_DIR"/}"
+    grep -qE "^[0-9]+(\\.[0-9]+)? ${rel}$" "$DUR" || missing="$missing $rel"
+  done
+  [ -z "$missing" ] && ok "every tests/*/test_*.sh has a measured duration (an unlisted test would start first)" \
+    || fail "unlisted tests start first:$missing"
 else fail "tests/lib/test_durations.txt is missing or unreadable"; fi
 
 if [ "$FAILS" -ne 0 ]; then echo "run_impacted_order: $FAILS FAILED"; exit 1; fi

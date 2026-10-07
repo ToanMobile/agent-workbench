@@ -166,10 +166,16 @@ try:
 except (OSError, ValueError):
     state = {}
 sessions = state.get("sessions") if isinstance(state.get("sessions"), dict) else {}
-paths = [l[len("worktree "):] for l in (git("worktree", "list", "--porcelain") or "").splitlines()
-         if l.startswith("worktree ")][1:]
-live = {os.path.realpath(p) for p in paths if os.path.isdir(p)}
-owed = {p for p in (state.get("owed") or []) if isinstance(p, str) and p in live}   # a held worktree stays owed until removed
+listed = git("worktree", "list", "--porcelain")
+if listed is None:
+    # A failed or timed-out list is not "there are no worktrees". Filtering owed by an empty
+    # live set used to save owed: [] and the next Stop had nothing left to hold.
+    paths, live = [], set()
+    owed = {p for p in (state.get("owed") or []) if isinstance(p, str)}
+else:
+    paths = [l[len("worktree "):] for l in listed.splitlines() if l.startswith("worktree ")][1:]
+    live = {os.path.realpath(p) for p in paths if os.path.isdir(p)}
+    owed = {p for p in (state.get("owed") or []) if isinstance(p, str) and p in live}   # a held worktree stays owed until removed
 
 # Decide responsibility first (cheap), then inventory only those worktrees (git status per worktree is the cost).
 here = os.path.realpath(str(d.get("cwd") or repo))
@@ -179,6 +185,22 @@ def unknown_row(path, reason, kind):
     """A worktree the gate could not judge: it counts as holding work (held), listed with the reason. kind: gitdir | error."""
     return {"path": path, "branch": None, "detached": False, "dirty": None, "ahead": None, "reflog": None, "busy": None,
             "unreachable": False, "unintegrated": True, "reason": reason, "kind": kind}
+
+if listed is None:
+    # Keep the debt and anything this session named. Do not save an empty list over a debt we could not re-read.
+    named = list(finished)
+    named.extend(re.findall(r"(/[^\s\"'<>]+)", mentions))
+    hold, seen = [], set()
+    for p in list(owed) + named:
+        rp = os.path.realpath(p) if p else ""
+        if rp and rp not in seen:
+            seen.add(rp)
+            hold.append(rp)
+    if not hold:
+        sys.exit(0)
+    pending = [unknown_row(p, "git worktree list failed", "error") for p in hold]
+    owed = set(hold)
+    paths = []
 
 for path in paths:
     real = os.path.realpath(path)

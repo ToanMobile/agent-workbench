@@ -31,4 +31,4 @@ if [ -n "$0" ] && [ "$_sl_n" -lt 32 ]; then
   case "$_sl_dir" in *"$_sl_nl"*) ;; *) HERE="$(unset CDPATH; cd -P -- "$_sl_dir" 2>/dev/null && pwd -P)" || HERE="" ;; esac
 fi
 [ -n "$HERE" ] || HERE="$(cd "$(dirname "$(python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")")" && pwd)"
-exec python3 "$HERE/../bin/session_lock.py"
+exec python3 -I "$HERE/../bin/session_lock.py"
