@@ -559,12 +559,13 @@ def _matrix_commands():
                 out.append(c)
     return out
 MATRIX_CMDS = _matrix_commands()
-# The DevKit gate itself (`post-fix-gate.py --run-tests|--full|--force-full`): the one runner every DevKit project has, and the one
+# The DevKit gate itself (`python… post-fix-gate.py --run-tests|--full|--force-full`, or `./…/post-fix-gate.py …`; its name inside `pgrep -f "…"`
+# or `grep` is a process lookup, not a run): the one runner every DevKit project has, and the one
 # the rules name ("only exit 0 counts"). It prints no TEST-*.xml and its tool_result is often a grep of the log, so the verdict is read
 # from ITS text: every verdict line PASS and every "N/M suites" line N == M ≥ 1 (a PASS that ran 0 suites proves nothing). Its result is
 # "gate-green": a green for check 2 and for the RED-check of a test file written this session (so a green gate with no RED before it is
 # still blocked there), never a RED→GREEN pair for check 7 (a gate has no RED of its own here).
-GATE_RUN_RX = re.compile(r"\bpost-fix-gate\.py\b[^\n|;&]*?(?:--run-tests|--full|--force-full)\b")
+GATE_RUN_RX = re.compile(r"(?:\bpython\S*\s+(?:-\S+\s+)*|(?<![\w\"'./-])(?=\.?/))\S*post-fix-gate\.py\b[^\n|;&]*?(?:--run-tests|--full|--force-full)\b")
 GATE_VERDICT_RX = re.compile(r"(?:KẾT LUẬN CỔNG POST-FIX AUDIT|POST-FIX AUDIT GATE VERDICT)\s*:\s*(\S+)")
 GATE_COUNT_RX = re.compile(r"(?:Test hồi quy đạt|Regression tests passed)\s*:\s*([1-9]\d*)\s*/\s*([1-9]\d*)\b")
 ANSI_RX = re.compile(r"\x1b\[[0-9;]*m")
@@ -1003,6 +1004,28 @@ MODULE_XML = ("build/test-results/*/TEST-*.xml", "build/outputs/androidTest-resu
 PROJECT_MARKERS = ("gradlew", "settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts",
                    "ProjectSettings/ProjectVersion.txt")
 
+# Where a test command RUNS, not every path it mentions: the `cd`/`pushd` target, the value of -p / -C / --project-dir / --project / --prefix /
+# --manifest-path / -projectPath / --cwd, the runner executable itself (…/gradlew, mvnw) and the script handed to an interpreter. A path that
+# is only an argument of ls / cat / grep / a smoke script in the same command as a test run is no run there (2026-10-07: a command that ran the
+# kit's suites and read the state of four repos made one of them "a project this session ran tests in", and its fresh XML, written by another
+# agent, was credited to the session).
+_RUN_PATH = r"""[\"']?(/[^\s\"'`;|&<>()$*?\[\]{}]+)"""
+RUN_TARGET_RXS = (
+    re.compile(r"(?:^|[\s;&|(])(?:cd|pushd)\s+" + _RUN_PATH),
+    re.compile(r"(?:^|\s)(?:-p|-C|--project-dir|--project|--prefix|--manifest-path|-projectPath|--cwd)(?:=|\s+)" + _RUN_PATH),
+    re.compile(r"(?<![\w.~$-])(/[^\s\"'`;|&<>()$*?\[\]{}]*/(?:gradlew|gradle|mvnw|mvn))(?![\w.-])"),
+    re.compile(r"\b(?:bash|sh|zsh|python\d?(?:\.\d+)?|node|ruby)\s+" + _RUN_PATH),
+)
+
+def run_targets(cmd):
+    out = []
+    for rx in RUN_TARGET_RXS:
+        for tok in rx.findall(cmd):
+            tok = tok.rstrip("/.,:")
+            if tok and not tok.startswith(FOREIGN_SKIP) and tok not in out:
+                out.append(tok)
+    return out
+
 def _session_start():
     if first_ts:
         try:
@@ -1029,8 +1052,9 @@ def foreign_xmls():
                     roots.append(("module", tok.split(marker)[0]))
             if re.search(r"(?:^|/)(?:TEST-[^/]*|tests_[^/]*)\.xml$", tok) and os.path.isfile(tok):
                 files.add(tok)
-            if not is_test_runner(cmd):
-                continue   # naming a project (cd … && git status, a lock check) is no test run there
+        if not is_test_runner(cmd):
+            continue   # naming a project (cd … && git status, a lock check) is no test run there
+        for tok in run_targets(cmd):   # where the run HAPPENS, never every path the command mentions
             cur = tok if os.path.isdir(tok) else os.path.dirname(tok)
             for _ in range(4):
                 if any(os.path.exists(os.path.join(cur, m)) for m in PROJECT_MARKERS):

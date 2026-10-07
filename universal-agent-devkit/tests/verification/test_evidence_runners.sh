@@ -116,6 +116,11 @@ case("a test file written this session + only a green gate (no RED before it) is
 case("same, with a RED runner after the test edit and before the green gate: accepted",
      [TE, ["bash", "pytest tests/test_foo.py", "FAILED tests/test_foo.py::test_a - assert 2\n1 failed", True], E, ["bash", GATE_CMD, G_PASS]], 0)
 
+# ── the gate counts only when it is INVOKED (2026-10-07: its name inside a pgrep/grep made a process lookup a "test run") ──
+case("the gate's name inside pgrep -f \"…\" is a process lookup, not a run", [E, ["bash", 'pgrep -f "post-fix-gate.py --run-tests"; echo done', G_PASS]], 2, NO)
+case("the gate's name inside grep -E is not a run", [E, ["bash", "ps aux | grep -E 'post-fix-gate.py --run-tests'", G_PASS]], 2, NO)
+case("the gate run directly by path (./bin/post-fix-gate.py --run-tests) counts", [E, ["bash", "./bin/post-fix-gate.py --run-tests --full --brief", G_PASS]], 0)
+
 # ── unchanged behaviour ─────────────────────────────────────────────────────
 case("control: a literal kit suite path still counts", [E, ["bash", "bash tests/gates/test_x.sh", "x: all checks passed"]], 0)
 case("CHECK 7 is untouched: a gate PASS is no RED→GREEN pair for an outcome claim",
