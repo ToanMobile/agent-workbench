@@ -94,12 +94,14 @@
         {
           "id": "REG-DK-GATE-01",
           "name": "post-fix gate",
-          "command": "bash universal-agent-devkit/tests/gates/test_postfix_gate.sh"
+          "command": "bash universal-agent-devkit/tests/gates/test_postfix_gate.sh",
+          "parallel_safe": true
         },
         {
           "id": "REG-DK-GATE-02",
           "name": "proof gate (tree_fp)",
-          "command": "bash universal-agent-devkit/tests/gates/test_proof_gate.sh"
+          "command": "bash universal-agent-devkit/tests/gates/test_proof_gate.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -112,12 +114,14 @@
         {
           "id": "REG-DK-HOOK-01",
           "name": "hook contract",
-          "command": "bash universal-agent-devkit/hooks/tests/hook_contract_test.sh"
+          "command": "bash universal-agent-devkit/hooks/tests/hook_contract_test.sh",
+          "parallel_safe": true
         },
         {
           "id": "REG-DK-HOOK-02",
           "name": "proof gate",
-          "command": "bash universal-agent-devkit/tests/gates/test_proof_gate.sh"
+          "command": "bash universal-agent-devkit/tests/gates/test_proof_gate.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -130,7 +134,8 @@
         {
           "id": "REG-DK-HEALTH-01",
           "name": "health",
-          "command": "bash universal-agent-devkit/tests/installer/test_agent_health.sh"
+          "command": "bash universal-agent-devkit/tests/installer/test_agent_health.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -144,7 +149,8 @@
         {
           "id": "REG-DK-SESSION-01",
           "name": "session lock + multi-session gate verdict (own session is never counted as another)",
-          "command": "bash universal-agent-devkit/tests/context_memory/test_session_lock.sh && bash universal-agent-devkit/tests/gates/test_multi_session_gate.sh"
+          "command": "bash universal-agent-devkit/tests/context_memory/test_session_lock.sh && bash universal-agent-devkit/tests/gates/test_multi_session_gate.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -157,7 +163,8 @@
         {
           "id": "REG-DK-SANDBOX-01",
           "name": "worktree sandbox cleanup keeps unmerged work unless --force",
-          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_sandbox.sh"
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_sandbox.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -170,7 +177,8 @@
         {
           "id": "REG-DK-COST-01",
           "name": "token cost tracker counts each message id once and prices the longest model key",
-          "command": "bash universal-agent-devkit/tests/context_memory/test_token_cost_tracker.sh"
+          "command": "bash universal-agent-devkit/tests/context_memory/test_token_cost_tracker.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -183,7 +191,8 @@
         {
           "id": "REG-DK-ALL-01",
           "name": "DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit",
-          "command": "bash universal-agent-devkit/tests/run_impacted.sh"
+          "command": "bash universal-agent-devkit/tests/run_impacted.sh",
+          "parallel_safe": true
         }
       ]
     },
