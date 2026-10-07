@@ -564,9 +564,16 @@ def _sha_file(path):
 
 
 # A suite that talks to a device, an emulator or an engine is never reused: its outcome depends
-# on state no fingerprint holds (Antigravity review of O1, 2026-09-28).
-DEVICE_SUITE = re.compile(r"\badb\b|connected\w*(?:Test|Check)|\bemulator\b|\bsimctl\b|unity-batch|-runTests\b|"
-                          r"\bxcodebuild\b[^\n]*\btest\b|replicant", re.I)
+# on state no fingerprint holds (Antigravity review of O1, 2026-09-28). One exception, decided by the user on 2026-10-07
+# (Goods: ~30 % of the gate was Unity runs on content that had already passed; a real Unity run was measured NOT to change
+# tree_fp): a Unity TEST suite (UNITY_SUITE: unity-batch editmode|playmode; a bare -runTests command stays never re-used) whose command touches no real or
+# emulated device (HARD_DEVICE_SUITE) is re-used from a receipt that matched fingerprint, matrix, local config and format,
+# when that suite ran less than DEVKIT_UNITY_REUSE_MAX_S ago (default 3600; 0 = never; receipt tests[].ran_at).
+# DEVICE_SUITE stays the union of the hard part and the loose Unity match it always had: every other reader is unchanged.
+HARD_DEVICE_SUITE = re.compile(r"\badb\b|connected\w*(?:Test|Check)|\bemulator\b|\bsimctl\b|"
+                               r"\bxcodebuild\b[^\n]*\btest\b|replicant|-testPlatform[ =]+(?!EditMode\b|PlayMode\b)\w+", re.I)
+UNITY_SUITE = re.compile(r"\bunity-batch\b[^\n]*\b(?:editmode|playmode)\b", re.I)
+DEVICE_SUITE = re.compile(HARD_DEVICE_SUITE.pattern + r"|unity-batch|-runTests\b", re.I)
 
 
 def local_state_sha(project_dir):
@@ -650,7 +657,10 @@ RAN_SCRIPT = re.compile(r"(?:^|[;&|(]\s*|\s)(?:ba|z)?sh\s+(?:-\w+\s+)*" + _SCRIP
 # (GeelyEx2, 2026-09-28), so the reuse almost never hit. The receipt still records gate_sha.
 # ponytail: a forgotten bump reuses a PASS read by old parsing rules; upgrade (hash the parsing
 # functions' source) when parsing changes are frequent.
-RESULT_FORMAT = 1
+RESULT_FORMAT = 2   # 2 (2026-10-07): a Unity test suite may be re-used (DEVKIT_UNITY_REUSE_MAX_S), receipt tests[].ran_at
+# suite id -> when it really ran (a re-used suite keeps its first stamp). Not a key of the suite dict: that dict is printed by
+# --json, whose stdout must stay byte-stable between runs (tests/gates/test_gate_run_log.sh).
+SUITE_RAN_AT = {}
 
 
 def cached_full_pass(project_dir, matrix_arg):
@@ -795,7 +805,7 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
                 "gate_sha": _sha_file(__file__), "matrix_sha": _sha_file(find_matrix_path(matrix_arg)),
                 "local_sha": local_state_sha(project_dir), "head": head, "dirty": dirty,
                 "tests": [{"id": t.get("id"), "status": t.get("status"), "log": t.get("log"),
-                           "duration": t.get("duration")}
+                           "duration": t.get("duration"), "ran_at": SUITE_RAN_AT.get(t.get("id"))}
                           for t in (tests or []) if t.get("command")]}
         if exit_code != 0:
             # exit 2 names its UNTESTED suites like exit 4 (REG-QC-05 is UNTESTED by design): reuse_full_pass needs every other
@@ -4016,12 +4026,28 @@ def main():
         found = cached_full_pass(project_dir, args.matrix)
         prev = {x.get("id"): x for x in (found or {}).get("tests") or []}
         untested = set((found or {}).get("untested") or [])   # an exit-4 receipt: those run again
-        reusable = [t for t in regression_tests if t.get("command") and not DEVICE_SUITE.search(t["command"])
+        try:
+            unity_max_s = float(os.environ.get("DEVKIT_UNITY_REUSE_MAX_S", "3600"))
+        except ValueError:
+            unity_max_s = 3600.0
+
+        def ran_at(t):   # when this suite really ran: its own stamp, else the receipt's (a receipt without ran_at)
+            return float((prev.get(t.get("id")) or {}).get("ran_at") or (found or {}).get("tested_at") or 0)
+
+        def reusable_suite(t):
+            cmd = t["command"]
+            if not DEVICE_SUITE.search(cmd):
+                return True
+            return bool(UNITY_SUITE.search(cmd) and not HARD_DEVICE_SUITE.search(cmd) and 0 < unity_max_s
+                        and 0 <= time.time() - ran_at(t) <= unity_max_s)
+
+        reusable = [t for t in regression_tests if t.get("command") and reusable_suite(t)
                     and t.get("id") not in untested]
         if not (found and reusable and all(prev.get(t["id"], {}).get("status") == "PASS" for t in reusable)):
             return None
         at = time.strftime("%H:%M", time.localtime(float(found.get("tested_at") or 0)))
         for t in reusable:
+            SUITE_RAN_AT[t.get("id")] = ran_at(t)   # a re-use never renews the stamp
             # the real duration: pre-commit picks light suites by the recorded one
             t.update({"status": "PASS", "duration": prev[t["id"]].get("duration") or "0s", "mode": "cached",
                       "log": prev[t["id"]].get("log"), "exit_code": 0,
@@ -4155,6 +4181,7 @@ def main():
             out = proc.communicate()[0]
             t["status"] = "TIMEOUT"
         t["duration"] = f"{time.perf_counter() - started:.2f}s"
+        SUITE_RAN_AT[t.get("id")] = time.time()
         t["log"] = keep_evidence(project_dir, t, cmd, out)
         if t["status"] == "PASS" and mode == "impacted":
             t["label"] = f"PASS (impacted: {t['impacted_count']} tests)"

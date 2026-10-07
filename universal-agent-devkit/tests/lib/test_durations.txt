@@ -150,3 +150,4 @@
 22 tests/worktree_git/test_worktree_remove.sh
 43 tests/worktree_git/test_worktree_writers.sh
 18 tests/gates/test_gate_parallel_suites.sh
+23 tests/gates/test_gate_unity_reuse.sh
