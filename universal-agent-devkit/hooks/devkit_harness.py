@@ -550,6 +550,21 @@ def _ancestor(repo, a, b):
         return False
 
 
+def _filter_repo_successor(repo, old):
+    """The commit `git filter-repo` made of `old` (.git/filter-repo/commit-map, lines `old new`), or "" (no map,
+    not listed, pruned = all zeros)."""
+    gd = _git(repo, "rev-parse", "--git-common-dir")
+    try:
+        with open(os.path.join(repo, gd, "filter-repo", "commit-map"), encoding="ascii") as f:
+            for line in f:
+                p = line.split()
+                if len(p) == 2 and p[0] == old:
+                    return "" if set(p[1]) == {"0"} else p[1]
+    except (OSError, UnicodeDecodeError):
+        pass
+    return ""
+
+
 def verified_head(repo, write=True):
     """(verified_head, HEAD, reset_reason). Missing → the merge-base with the upstream (its
     unpushed commits stay unverified), else HEAD. Not an ancestor of HEAD (rebase/reset) → the
@@ -558,11 +573,16 @@ def verified_head(repo, write=True):
     path = os.path.join(repo, GATE_STATE)
     state = read_json(path) or {}
     vh, why = state.get("verified_head"), ""
-    if head and vh and vh != head and not _ancestor(repo, vh, head):
+    # EMPTY_TREE is the stored "nothing verified" mark, a tree: never an ancestor, so without this test every Stop
+    # reset it again and said so (GeelyEx2 2026-10-06/07: 55 times).
+    if head and vh and vh != head and vh != EMPTY_TREE and not _ancestor(repo, vh, head):
         # Rebase / amend / reset: the last point both histories share, never HEAD itself (an amended
-        # commit would pass untested — Antigravity review v4). No common point: the empty tree.
+        # commit would pass untested — Antigravity review v4). A history rewritten by git filter-repo shares no
+        # commit: the mark becomes the commit filter-repo made of it (same code, so the range stays the real one,
+        # not the whole repo). No common point and no such commit: the empty tree.
         why = "rebase/reset"
-        vh = _git(repo, "merge-base", vh, "HEAD") or EMPTY_TREE
+        new = _filter_repo_successor(repo, vh)
+        vh = new if new and _ancestor(repo, new, head) else (_git(repo, "merge-base", vh, "HEAD") or EMPTY_TREE)
         if write:
             state["verified_head"] = vh
             os.makedirs(os.path.dirname(path), exist_ok=True)

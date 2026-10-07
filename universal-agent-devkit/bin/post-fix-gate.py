@@ -658,7 +658,8 @@ def cached_full_pass(project_dir, matrix_arg):
     fingerprint, same RESULT_FORMAT, same matrix, tested within DEVKIT_GATE_CACHE_MAX_S (default
     6 h — ignored files, devices and the network can drift). None otherwise. An UNTESTED full run
     (exit 4, its "untested" ids ended with their matrix untested_exit) counts for its PASS suites
-    only: reuse_full_pass runs the untested ones again (2026-09-29, GeelyEx2)."""
+    only: reuse_full_pass runs the untested ones again (2026-09-29, GeelyEx2). An UNVERIFIED run (exit 2, no suite
+    failed: an edited test waits for review, a code file nothing covers) is kept the same way (2026-10-07)."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
@@ -670,7 +671,7 @@ def cached_full_pass(project_dir, matrix_arg):
         return None
     if not isinstance(r, dict) or not r.get("tests"):
         return None
-    if r.get("exit") != 0 and not (r.get("exit") == 4 and r.get("untested") and isinstance(r["untested"], list)):
+    if r.get("exit") not in (0, 2) and not (r.get("exit") == 4 and r.get("untested") and isinstance(r["untested"], list)):
         return None
     if time.time() - float(r.get("tested_at") or 0) > max_s:
         return None
@@ -722,7 +723,7 @@ def head_and_dirty(project_dir):
 
 
 def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None, tested_fp=None,
-                            untested=None):
+                            untested=None, partial=False):
     """After a full regression run: drop the previous receipt, and on exit 0 record
     {time, fingerprint} of the audited code in .git/postfix-gate/full_pass.json (outside the
     tree). hooks/proof_gate.sh accepts an XONG only with a receipt from this turn whose
@@ -730,7 +731,12 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     before the suites ran: code that changed during the run was not the code tested.
     untested: the ids of an UNTESTED exit 4 (untested_exit, never BUSY) — recorded with "exit": 4
     so cached_full_pass reuses the suites that passed (2026-09-29, GeelyEx2: no receipt at all,
-    every --full re-ran them); proof_gate and push_gate still accept only "exit": 0."""
+    every --full re-ran them); proof_gate and push_gate still accept only "exit": 0.
+    An UNVERIFIED exit 2 whose suites all passed or could not run (an edited test waits for review, a code file nothing
+    covers) says nothing about the suites: it keeps them reusable the same way, as "exit": 2 (2026-10-07, OfficeReader and
+    GeelyEx2: every --full after an exit 2 ran all the suites again). A FULL run records its own results; a PARTIAL run
+    (the Stop hook: only a subset ran) turns the receipt of the same code from exit 0 to 2, so XONG and push are refused
+    as before while its suites stay reusable; a receipt of other code is dropped."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
@@ -739,7 +745,28 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     path = tree_fp.receipt_path(project_dir)
     if not path:
         return
-    if exit_code != 0 and not (exit_code == 4 and untested):
+    unverified_ok = exit_code == 2 and not any(
+        t.get("status") not in ("PASS", "UNTESTED", "BUSY") for t in (tests or []) if t.get("command"))
+    if partial and unverified_ok:
+        try:
+            with open(path, encoding="utf-8") as f:
+                kept = json.load(f)
+            same = isinstance(kept, dict) and kept.get("fingerprint") == (tested_fp or tree_fp.tree_fingerprint(project_dir))
+            if same and kept.get("exit") == 0:
+                kept.update({"exit": 2, "untested": []})
+                fd, tmp = tempfile.mkstemp(prefix=".tmp_full_pass.", dir=os.path.dirname(path))
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(kept, f)
+                os.replace(tmp, path)
+            elif not same:
+                os.remove(path)
+        except (OSError, ValueError):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        return
+    if exit_code != 0 and not (exit_code == 4 and untested) and not unverified_ok:
         try:
             os.remove(path)
         except OSError:
@@ -749,6 +776,11 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     if tested_fp is not None and fingerprint != tested_fp:
         log_warn(tr("Code đổi trong lúc chạy test — không ghi biên nhận PASS đầy đủ (XONG sẽ bị proof_gate chặn): chạy lại gate",
                     "Code changed while the suites ran — no full-pass receipt (proof_gate will refuse XONG): run the gate again"))
+        if exit_code == 2:   # as before this change: a non-zero run leaves no receipt of the code it did not test
+            try:
+                os.remove(path)
+            except OSError:
+                pass
         return
     if not fingerprint:   # proof_gate never matches an empty one: say why XONG will be refused
         log_warn(tr(f"Không tính được dấu vân tay code — XONG sẽ bị proof_gate chặn: {getattr(tree_fp.tree_fingerprint, 'error', '') or 'git add thất bại'}",
@@ -765,7 +797,10 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
                            "duration": t.get("duration")}
                           for t in (tests or []) if t.get("command")]}
         if exit_code != 0:
-            data["untested"] = sorted(untested)
+            # exit 2 names its UNTESTED suites like exit 4 (REG-QC-05 is UNTESTED by design): reuse_full_pass needs every other
+            # suite PASS, so without the ids one such suite would cancel the whole reuse
+            data["untested"] = sorted(untested or ({t.get("id") or "?" for t in (tests or []) if t.get("command") and t.get("status") == "UNTESTED"}
+                                                   if exit_code == 2 else []))
         fd, tmp = tempfile.mkstemp(prefix=".tmp_full_pass.", dir=os.path.dirname(path))
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f)
@@ -4376,7 +4411,7 @@ def main():
             # leaves it alone too: it used to delete even a valid one, so a Stop whose lock wait ran out forced a new --full
             write_full_pass_receipt(project_dir, exit_code, args.matrix, regression_tests,
                                     tested_at=float(cache.get("tested_at") or 0) if cache else None,
-                                    tested_fp=tested_fp, untested=receipt_untested)
+                                    tested_fp=tested_fp, untested=receipt_untested, partial=partial)
     finally:
         # Only now may another run take the test-run lock: it finds the receipt (or its settled absence), and the
         # checklist update below does not run under it. A BUSY run holds no lock (lock_fh is None); a kill before
