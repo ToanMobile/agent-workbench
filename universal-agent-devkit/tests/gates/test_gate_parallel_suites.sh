@@ -17,6 +17,8 @@
 #  11. a suite that waited for a group slot past the budget is not started
 #  12. Ctrl-C ends the gate at once while a group runs (daemon threads), as it did with the sequential loop
 #  13. the functions a worker thread calls put bin/ on sys.path once, not on every call
+#  14. the contract the group stands on: vacuity_revert (it rewrites production files in the tree) does nothing for a
+#      mode "full" suite, whatever VACUITY_REVERT says; only such suites join a group
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 export VACUITY_REVERT=0
@@ -181,5 +183,25 @@ PY
 )"
 if [ "$cnt" = 1 ]; then ok "13: three calls of the worker-thread helpers put bin/ on sys.path once"
 else bad "13: bin/ is on sys.path ${cnt:-?} times after 3 calls (it is re-inserted on every call)"; fi
+
+# 14. vacuity_revert never acts on a mode "full" suite (the only kind a group holds), for every VACUITY_REVERT setting
+make_repo "$(suite REG-A 'sh tests/fine.sh')"
+res="$(python3 -I - "$GATE" "$R" <<'PY'
+import importlib.util, os, pathlib, sys
+spec = importlib.util.spec_from_file_location("pfg", sys.argv[1]); m = importlib.util.module_from_spec(spec)
+sys.modules["pfg"] = m; spec.loader.exec_module(m)
+t = {"id": "X", "status": "PASS", "mode": "full", "command": "bash tests/x.sh --tests Foo --filter Bar", "files": ["src/Core.kt"]}
+out = []
+for flag in (None, "0", "1", "narrow", "2"):
+    if flag is None:
+        os.environ.pop("VACUITY_REVERT", None)
+    else:
+        os.environ["VACUITY_REVERT"] = flag
+    out.append(m.vacuity_revert(pathlib.Path(sys.argv[2]), dict(t), 5))
+print(" ".join(out))
+PY
+)"
+if [ "$res" = "skip skip skip skip skip" ]; then ok "14: vacuity_revert skips a mode \"full\" suite for every VACUITY_REVERT setting (a group never holds a reverting suite)"
+else bad "14: vacuity_revert acted on a mode \"full\" suite: '$res'"; fi
 
 [ "$FAILS" = 0 ] && echo "ALL OK" || { echo "$FAILS FAILED"; exit 1; }
