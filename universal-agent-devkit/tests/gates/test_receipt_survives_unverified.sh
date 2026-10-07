@@ -134,4 +134,4 @@ PY
 out="$("$PY" -I "$TMP/t.py" 2>&1)"; rc=$?
 printf '%s\n' "$out"
 [ "$rc" = 0 ] && ok "UNVERIFIED runs keep the suite results reusable" || bad "UNVERIFIED runs destroy reusable suite results (rc=$rc)"
-[ "$FAILS" = 0 ] && exit 0 || exit 1
+[ "$FAILS" -eq 0 ] && echo "receipt survives unverified: all checks passed" || { echo "receipt survives unverified: $FAILS FAILED"; exit 1; }

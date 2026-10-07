@@ -141,4 +141,4 @@ PY
 out="$("$PY" -I "$TMP/t.py")"; rc=$?
 printf '%s\n' "$out"
 [ "$rc" = 0 ] && ok "verified_head survives a history rewrite" || bad "verified_head after a history rewrite (rc=$rc)"
-[ "$FAILS" = 0 ] && exit 0 || exit 1
+[ "$FAILS" -eq 0 ] && echo "verified_head rewrite: all checks passed" || { echo "verified_head rewrite: $FAILS FAILED"; exit 1; }

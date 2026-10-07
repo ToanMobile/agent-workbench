@@ -62,7 +62,11 @@
 #
 # Non-Gradle repos (no gradlew/build.gradle*): with no XML, a successful test
 # runner call (npm/jest/vitest/pytest/cargo/go/swift/dotnet/… test) after the last
-# source edit, whose output shows no failure, backs the claim (QA K-10).
+# source edit, whose output shows no failure, backs the claim (QA K-10). A script under tests/
+# named or run through a $VAR (`for t in …; do bash "$K/tests/gates/$t.sh"`, `$py tests/…/test-x.py`)
+# counts like a literal path; the DevKit gate `post-fix-gate.py --run-tests|--full` counts when ITS
+# verdict is PASS with N/N suites, N ≥ 1 (a green like any runner: a test file written this session still
+# needs a RED seen before it; never a RED→GREEN pair for check 7).
 # Unity counts too: unity-batch.sh editmode|playmode, scripts/unity-test.sh, the Editor
 # with -runTests, or mcp__antigravity-pm__pm_run kind=test (`exit=N`). Their NUnit 3
 # XML (Logs/agent-kit/tests_*.xml) is read like TEST-*.xml: `<test-run failed="N">`,
@@ -535,12 +539,12 @@ TEST_RUNNER_RX = re.compile(
     r"\bunity-batch\.sh\b[^\n|;&]*\b(edit|play)mode\b|\bunity-test\.sh\b|(?<![\w-])-runTests\b|"
     # The DevKit's own bash suites (tests/*/test_*.sh, the hook contract suites, run_impacted,
     # `agent-kit test`): judged by their summary line (DEVKIT_SUITE_* below).
-    r"\btests/(?:[\w-]+/)?test_[\w.-]+\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b", re.I)
+    r"\btests/(?:[\w-]+/)?(?:test_[\w.-]+|\$\{?\w+\}?)\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b", re.I)
 # Plain script tests (python3/node/bash …/tests/…/test-*.py|js|sh) and every command the
 # project's regression matrix declares are test runners too (GeelyEx2 2026-09-27: a real
 # RED→GREEN of `python3 tests/scripts/test-admin-….py` was not seen; CHECK 7 held 7 stops).
 SCRIPT_RUNNER_RX = re.compile(
-    r"\b(?:python\d?(?:\.\d+)?|node|bash|sh)\s+(?:\S*/)?tests?/(?:\S*/)?test[-_]?[\w.-]*\.(?:py|m?js|sh)\b", re.I)
+    r"(?:\b(?:python\d?(?:\.\d+)?|node|bash|sh)|\"?\$\{?\w+\}?\"?)\s+(?:\S*/)?tests?/(?:\S*/)?test[-_]?[\w.${}-]*\.(?:py|m?js|sh)\b", re.I)
 def _matrix_commands():
     try:
         with open(os.path.join(repo, ".agents", "regression_matrix.active.json"), encoding="utf-8") as fh:
@@ -555,9 +559,18 @@ def _matrix_commands():
                 out.append(c)
     return out
 MATRIX_CMDS = _matrix_commands()
+# The DevKit gate itself (`post-fix-gate.py --run-tests|--full|--force-full`): the one runner every DevKit project has, and the one
+# the rules name ("only exit 0 counts"). It prints no TEST-*.xml and its tool_result is often a grep of the log, so the verdict is read
+# from ITS text: every verdict line PASS and every "N/M suites" line N == M ≥ 1 (a PASS that ran 0 suites proves nothing). Its result is
+# "gate-green": a green for check 2 and for the RED-check of a test file written this session (so a green gate with no RED before it is
+# still blocked there), never a RED→GREEN pair for check 7 (a gate has no RED of its own here).
+GATE_RUN_RX = re.compile(r"\bpost-fix-gate\.py\b[^\n|;&]*?(?:--run-tests|--full|--force-full)\b")
+GATE_VERDICT_RX = re.compile(r"(?:KẾT LUẬN CỔNG POST-FIX AUDIT|POST-FIX AUDIT GATE VERDICT)\s*:\s*(\S+)")
+GATE_COUNT_RX = re.compile(r"(?:Test hồi quy đạt|Regression tests passed)\s*:\s*([1-9]\d*)\s*/\s*([1-9]\d*)\b")
+ANSI_RX = re.compile(r"\x1b\[[0-9;]*m")
 def is_test_runner(cmd):
-    return bool(TEST_RUNNER_RX.search(cmd) or SCRIPT_RUNNER_RX.search(cmd) or any(c in cmd for c in MATRIX_CMDS))
-DEVKIT_SUITE_RX = re.compile(r"\btests/(?:[\w-]+/)?test_[\w.-]+\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b")
+    return bool(TEST_RUNNER_RX.search(cmd) or SCRIPT_RUNNER_RX.search(cmd) or GATE_RUN_RX.search(cmd) or any(c in cmd for c in MATRIX_CMDS))
+DEVKIT_SUITE_RX = re.compile(r"\btests/(?:[\w-]+/)?(?:test_[\w.-]+|\$\{?\w+\}?)\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b")
 # Their check names may carry FAIL / REJECT / ERROR in capitals ("✔ REJECT on secrets"), so
 # the verdict is the summary: red on "N failed/FAILED", "N deviating" (N > 0), "❌" or a "✖"
 # line; green only on an explicit pass summary; anything else is not a verdict.
@@ -582,7 +595,14 @@ RUNNER_FAIL_RX = re.compile(
 PM_RUN_EXIT_RX = re.compile(r"^exit=(-?\d+|null)", re.M)
 
 def runner_state(is_error, txt, pm_run=False, command=""):
-    """"red", "green", or None (not a verdict) for one runner tool_result."""
+    """"red", "green", "gate-green" (the DevKit gate: not a check-7 pair), or None (not a verdict) for one runner tool_result."""
+    if command and GATE_RUN_RX.search(command):
+        clean = ANSI_RX.sub("", txt)
+        verdicts, counts = GATE_VERDICT_RX.findall(clean), GATE_COUNT_RX.findall(clean)
+        if (not is_error and verdicts and all(v == "PASS" for v in verdicts)
+                and counts and all(a == b for a, b in counts)):
+            return "gate-green"
+        return None
     if command and DEVKIT_SUITE_RX.search(command):
         if is_error or DEVKIT_SUITE_RED.search(txt):
             return "red"
@@ -1178,7 +1198,7 @@ if claimed:
     gradle_repo = any(os.path.exists(os.path.join(repo, f)) for f in
                       ("gradlew", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"))
     runner_ok = [r for r in runner_results
-                 if r[1] > last_src_edit_idx and r[5] == "green"]
+                 if r[1] > last_src_edit_idx and r[5] in ("green", "gate-green")]
     if not mtimes and not gradle_repo and runner_ok:
         logline(f"[{ts}] non-Gradle repo: test runner result #{runner_ok[-1][0]} backs the claim")
     elif not mtimes and not gradle_repo:

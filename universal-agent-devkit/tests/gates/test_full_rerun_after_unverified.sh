@@ -64,4 +64,4 @@ echo "// changed after the exit 2" >> app/src/main/kotlin/pkg/Lonely.kt
 run_gate --run-tests --full --auto-approve-tests >/dev/null
 [ "$(runs)" = 2 ] && ok "C: code that changed after the exit 2 runs the suite again (2 runs)" || bad "C: the suite ran $(runs) times, expected 2"
 
-[ "$FAILS" = 0 ] && exit 0 || exit 1
+[ "$FAILS" -eq 0 ] && echo "full rerun after unverified: all checks passed" || { echo "full rerun after unverified: $FAILS FAILED"; exit 1; }
