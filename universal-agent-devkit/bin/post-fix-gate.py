@@ -51,6 +51,7 @@ import signal
 import subprocess
 import tempfile
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -2812,7 +2813,9 @@ def hardware_boundary_notes(modified_files: list) -> list:
 
 def test_failure_reported(output):
     """Did the runner report a failing TEST (not just a broken build)? — regression_checklist's rule."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    _bin = str(Path(__file__).resolve().parent)
+    if _bin not in sys.path:   # called from the worker threads of a suite group: insert once, not on every call
+        sys.path.insert(0, _bin)
     try:
         import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
         return rc.test_failure_reported(output)
@@ -2928,7 +2931,9 @@ def flaky_retry(cmd, project_dir, timeout, elapsed, infra=False):
 def keep_evidence(project_dir, t, cmd, out):
     """The run's full output as acceptance evidence (.agents/evidence/<test-id>/, the
     checklist row links it). A failure to write is a warning, never a gate result."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    _bin = str(Path(__file__).resolve().parent)
+    if _bin not in sys.path:   # called from the worker threads of a suite group: insert once, not on every call
+        sys.path.insert(0, _bin)
     try:
         import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
         return rc.write_evidence(project_dir, t.get("id") or "test", out or "", {
@@ -3490,7 +3495,8 @@ def _run_log_dir(git_dir):
 
 def _run_log_suites(regression_tests, ran_cmds):
     """[[id, status, seconds]] per suite. seconds is the real duration of a command that RAN in this run (once: a suite that shared a
-    command, a re-used PASS, a skipped or BUSY/BUDGET one has null), so their sum is what this run cost."""
+    command, a re-used PASS, a skipped or BUSY/BUDGET one has null). Their sum is what the run cost ONLY when it was
+    sequential: suites of a parallel_safe group overlap, the run's own length is total_wall_s."""
     ran = {id(t) for t in ran_cmds.values()}
     out = []
     for t in regression_tests:
@@ -3923,6 +3929,7 @@ def main():
                 "impacted_command": test.get("impacted_command"),
                 "files": rule_files,
                 "untested_exit": test.get("untested_exit"),
+                "parallel_safe": test.get("parallel_safe") is True,
                 "status": "NOT_RUN",
                 "duration": "-",
             })
@@ -3972,7 +3979,7 @@ def main():
                         "name": test.get("name"), "command": test.get("command"),
                         "impacted_command": test.get("impacted_command"), "files": [],
                         "untested_exit": test.get("untested_exit"), "status": "NOT_RUN", "duration": "-",
-                        "stale_rerun": True})
+                        "parallel_safe": test.get("parallel_safe") is True, "stale_rerun": True})
         reran = [t["id"] for t in regression_tests if t.get("stale_rerun")]
         if reran:
             print(f"  • {tr('Chạy lại suite STALE của checklist (--full)', 'Re-running the checklist STALE suites (--full)')}: "
@@ -4059,16 +4066,160 @@ def main():
     except ValueError:
         budget_s = 0.0
     budget_start = time.monotonic()
+    # Plan 1c (2026-10-07): suites the base-ref matrix marks "parallel_safe": true, next to each other in matrix order,
+    # run side by side as one group: the DevKit's five independent suites took the SUM of their times. A suite without
+    # the flag is a barrier: the group before it finishes first, so nothing runs next to it. Only mode "full" joins a
+    # group, which keeps vacuity_revert (it rewrites production files in the tree) from ever running next to another
+    # suite. DEVKIT_GATE_PARALLEL=0 turns it off; a number caps the group (default 6).
+    # ponytail: a flaky re-run of a grouped suite sees os.environ's DEVKIT_GATE_DONE, the scripts of the suites run alone
+    # before it, not its group mates' (it re-runs them: slower, never less checked); upgrade if grouped suites retry often.
+    # ponytail: a grouped suite's recorded duration is wall time under contention (GATE-02 20 s alone, 26 s in the group), so
+    # pre-commit's "skip a suite that took > DEVKIT_PRECOMMIT_MAX_S" can fire earlier; the Stop and push gates still run it.
+    try:
+        parallel_cap = int(os.environ.get("DEVKIT_GATE_PARALLEL", "6"))
+    except ValueError:
+        parallel_cap = 6
+    slots = threading.BoundedSemaphore(max(parallel_cap, 1))
+    group, group_ts, deferred = [], set(), []
+
+    def budget_spent():
+        return budget_s > 0 and time.monotonic() - budget_start >= budget_s
+
+    def mark_budget(t):
+        t.update({"status": "UNTESTED", "label": "BUDGET", "duration": "0s", "output_tail": tr(
+            f"Hết ngân sách thời gian GATE_TOTAL_BUDGET_S ({budget_s:.0f}s) — suite này chưa chạy",
+            f"Time budget GATE_TOTAL_BUDGET_S ({budget_s:.0f}s) spent — this suite did not run")})
+
+    def may_join(t):
+        # flagged, and not a suite that must run alone: Gradle/Unity/device runs share build state (build/test-results)
+        c = t.get("command") or ""
+        return bool(parallel_cap > 1 and t.get("parallel_safe") and not (PRECOMMIT_HEAVY.search(c) or DEVICE_SUITE.search(c)))
+
+    def share_result(t, prev):
+        for k in ("status", "exit_code", "output_tail", "log", "flaky", "infra", "infra_retry",
+                  "env_blocked", "vacuity", "fail_lines"):
+            if k in prev:
+                t[k] = prev[k]
+        t["duration"] = prev.get("duration") or "0s"   # its real cost, for pre-commit's light-suite pick
+        t["label"] = f"{prev.get('label') or prev['status']} ({tr('cùng lệnh với', 'same command as')} {prev['id']})"
+
+    def note_ran(cmd):
+        # Only a script the command RUNS (`bash|sh|zsh <path>`, `./<path>` opening a segment):
+        # `cat tests/x.sh` read it, it did not run it (Antigravity review).
+        for m in RAN_SCRIPT.finditer(cmd):
+            done_scripts.append(os.path.realpath(os.path.join(str(project_dir), m.group(1) or m.group(2))))
+
+    def run_suite(t, cmd, mode, env):
+        started = time.perf_counter()
+        # Own session/process group so a timeout kills the whole tree (gradle daemons,
+        # test workers), not just the shell. Commands come from the matrix at the base
+        # ref (load_active_matrix), so the audited change cannot rewrite them.
+        proc = subprocess.Popen(cmd, shell=True, cwd=str(project_dir),
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, errors="replace", start_new_session=True, env=env)
+        try:
+            out, _ = proc.communicate(timeout=args.timeout)
+            t["status"] = "PASS" if proc.returncode == 0 else "FAIL"
+            # The command's own "cannot run here" code (unity-batch.sh: 2 = no Editor):
+            # UNTESTED — not a failing test, and never a PASS.
+            if proc.returncode != 0 and isinstance(t.get("untested_exit"), int) \
+                    and proc.returncode == t["untested_exit"]:
+                t["status"] = "UNTESTED"
+            t["exit_code"] = proc.returncode
+            if t["status"] == "FAIL":
+                first = out or ""
+                infra = infra_failure(first)
+                retry = flaky_retry(cmd, project_dir, args.timeout, time.perf_counter() - started, infra=infra)
+                if retry:
+                    out = first + retry[1]
+                    if retry[0] == 0 and (infra or not test_failure_reported(first)):
+                        # the first run broke in the build (no test failed) or lost its results
+                        # store; the re-run of the same code ran green: a real PASS, flagged —
+                        # not a flaky test
+                        t.update({"status": "PASS", "exit_code": 0, "infra_retry": True})
+                    elif not infra:
+                        t["flaky"] = retry[0] == 0  # a test failed, then passed on the same code: still FAIL
+                if t["status"] == "FAIL" and infra:
+                    t["infra"] = True   # still FAIL, never FLAKY: that run's output is not a test result
+            if t["status"] == "FAIL" and environment_blocked(proc.returncode, out):
+                t["env_blocked"] = True     # still FAIL: the verdict never turns into a PASS
+            t["output_tail"] = (out or "")[-2000:]
+            # Which sub-test failed, from the WHOLE output: run_impacted's "✖ tests/x.sh" sits
+            # mid-output, outside the last lines shown (2026-09-28, --brief showed five ✔).
+            t["fail_lines"] = [l.rstrip()[:300] for l in (out or "").splitlines() if FAIL_LINE.search(l)][:8]
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            out = proc.communicate()[0]
+            t["status"] = "TIMEOUT"
+        t["duration"] = f"{time.perf_counter() - started:.2f}s"
+        t["log"] = keep_evidence(project_dir, t, cmd, out)
+        if t["status"] == "PASS" and mode == "impacted":
+            t["label"] = f"PASS (impacted: {t['impacted_count']} tests)"
+        elif t["status"] == "PASS" and mode in ("package", "module"):
+            t["label"] = f"PASS ({mode})"
+        else:
+            t["label"] = t["status"]
+        proved = vacuity_revert(project_dir, t, args.timeout)
+        if proved == "vacuous":
+            t["status"] = "FAIL"
+            t["label"] = "VACUOUS"
+            t["output_tail"] = tr(
+                "Test rỗng: revert mã nguồn sản xuất mà test vẫn XANH — không có năng lực phát hiện lỗi",
+                "Vacuous test: production diff reverted and the test stayed GREEN — it cannot detect the bug")
+        elif proved == "ok":
+            t["vacuity"] = "red"
+        elif proved == "weak":
+            log_warn(tr(
+                f"{t.get('id')}: revert không ra assertion failure (có thể chỉ lỗi biên dịch) — chưa chứng minh test bắt được lỗi",
+                f"{t.get('id')}: revert did not show an assertion failure (possibly a compile error) — the test has not proved it catches the bug"))
+
+    def start_job(t, cmd, mode, env):
+        box = {}
+
+        def work():
+            try:
+                with slots:
+                    if budget_spent():   # it waited for a slot past the budget: not started, as in the sequential loop
+                        mark_budget(t)
+                        return
+                    run_suite(t, cmd, mode, env)
+            except BaseException as e:   # drain() re-raises it: a bug in a worker fails the gate, it is never hidden
+                box["err"] = e
+        # daemon: Ctrl-C ends the gate at once, as the sequential loop did; the suites' own process groups (start_new_session)
+        # are left behind in both cases, ponytail: kill them if a grouped suite must never outlive the gate
+        th = threading.Thread(target=work, name=f"suite-{t['id']}", daemon=True)
+        th.start()
+        group.append((th, box))
+        group_ts.add(id(t))
+
+    def drain():
+        """Wait for the running group, then give the suites that shared a command with a member its result."""
+        errors = []
+        for th, box in group:
+            th.join()
+            if "err" in box:
+                errors.append(box["err"])
+        group.clear()
+        group_ts.clear()
+        if errors:   # before sharing: a worker that died left its suite without a status
+            raise errors[0]
+        for t, prev in deferred:
+            share_result(t, prev)
+        deferred.clear()
+
     for t in to_run:
+        if group and not may_join(t):
+            drain()
         if run_tests and t["command"] and not lock_held:
             t.update({"status": "UNTESTED", "label": "BUSY", "duration": "0s", "output_tail": tr(
                 "Một lượt chạy test khác giữ khoá dự án quá TEST_RUN_LOCK_WAIT_S — không chạy song song (Gradle ghi đè build/test-results)",
                 "Another test run held the project lock past TEST_RUN_LOCK_WAIT_S — not run side by side (Gradle corrupts build/test-results)")})
             continue
-        if run_tests and t["command"] and budget_s > 0 and time.monotonic() - budget_start >= budget_s:
-            t.update({"status": "UNTESTED", "label": "BUDGET", "duration": "0s", "output_tail": tr(
-                f"Hết ngân sách thời gian GATE_TOTAL_BUDGET_S ({budget_s:.0f}s) — suite này chưa chạy",
-                f"Time budget GATE_TOTAL_BUDGET_S ({budget_s:.0f}s) spent — this suite did not run")})
+        if run_tests and t["command"] and budget_spent():
+            mark_budget(t)
             continue
         if run_tests and t["command"] and unity_will_test and "compile" in (t["command"] or "").lower() and "test" not in (t["command"] or "").lower().split("compile", 1)[-1]:
             t["status"] = "PASS"
@@ -4113,88 +4264,30 @@ def main():
             key = " ".join(cmd.split())
             prev = ran_cmds.get(key)
             if prev is not None:
-                for k in ("status", "exit_code", "output_tail", "log", "flaky", "infra", "infra_retry",
-                          "env_blocked", "vacuity", "fail_lines"):
-                    if k in prev:
-                        t[k] = prev[k]
-                t["duration"] = prev.get("duration") or "0s"   # its real cost, for pre-commit's light-suite pick
-                t["label"] = f"{prev.get('label') or prev['status']} ({tr('cùng lệnh với', 'same command as')} {prev['id']})"
+                if id(prev) in group_ts:   # still running in the group: it takes the result when the group is drained
+                    deferred.append((t, prev))
+                else:
+                    share_result(t, prev)
                 continue
+            if may_join(t) and mode == "full":
+                # joins the group; its own DEVKIT_GATE_DONE (the scripts of the suites before it), never os.environ
+                env = suite_env()
+                if done_scripts:
+                    env["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
+                start_job(t, cmd, mode, env)
+                ran_cmds[key] = t
+                note_ran(cmd)
+                continue
+            drain()
             if done_scripts:
                 os.environ["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
-            started = time.perf_counter()
-            # Own session/process group so a timeout kills the whole tree (gradle daemons,
-            # test workers), not just the shell. Commands come from the matrix at the base
-            # ref (load_active_matrix), so the audited change cannot rewrite them.
-            proc = subprocess.Popen(cmd, shell=True, cwd=str(project_dir),
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, errors="replace", start_new_session=True, env=suite_env())
-            try:
-                out, _ = proc.communicate(timeout=args.timeout)
-                t["status"] = "PASS" if proc.returncode == 0 else "FAIL"
-                # The command's own "cannot run here" code (unity-batch.sh: 2 = no Editor):
-                # UNTESTED — not a failing test, and never a PASS.
-                if proc.returncode != 0 and isinstance(t.get("untested_exit"), int) \
-                        and proc.returncode == t["untested_exit"]:
-                    t["status"] = "UNTESTED"
-                t["exit_code"] = proc.returncode
-                if t["status"] == "FAIL":
-                    first = out or ""
-                    infra = infra_failure(first)
-                    retry = flaky_retry(cmd, project_dir, args.timeout, time.perf_counter() - started, infra=infra)
-                    if retry:
-                        out = first + retry[1]
-                        if retry[0] == 0 and (infra or not test_failure_reported(first)):
-                            # the first run broke in the build (no test failed) or lost its results
-                            # store; the re-run of the same code ran green: a real PASS, flagged —
-                            # not a flaky test
-                            t.update({"status": "PASS", "exit_code": 0, "infra_retry": True})
-                        elif not infra:
-                            t["flaky"] = retry[0] == 0  # a test failed, then passed on the same code: still FAIL
-                    if t["status"] == "FAIL" and infra:
-                        t["infra"] = True   # still FAIL, never FLAKY: that run's output is not a test result
-                if t["status"] == "FAIL" and environment_blocked(proc.returncode, out):
-                    t["env_blocked"] = True     # still FAIL: the verdict never turns into a PASS
-                t["output_tail"] = (out or "")[-2000:]
-                # Which sub-test failed, from the WHOLE output: run_impacted's "✖ tests/x.sh" sits
-                # mid-output, outside the last lines shown (2026-09-28, --brief showed five ✔).
-                t["fail_lines"] = [l.rstrip()[:300] for l in (out or "").splitlines() if FAIL_LINE.search(l)][:8]
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                out = proc.communicate()[0]
-                t["status"] = "TIMEOUT"
-            t["duration"] = f"{time.perf_counter() - started:.2f}s"
-            t["log"] = keep_evidence(project_dir, t, cmd, out)
-            if t["status"] == "PASS" and mode == "impacted":
-                t["label"] = f"PASS (impacted: {t['impacted_count']} tests)"
-            elif t["status"] == "PASS" and mode in ("package", "module"):
-                t["label"] = f"PASS ({mode})"
-            else:
-                t["label"] = t["status"]
-            proved = vacuity_revert(project_dir, t, args.timeout)
-            if proved == "vacuous":
-                t["status"] = "FAIL"
-                t["label"] = "VACUOUS"
-                t["output_tail"] = tr(
-                    "Test rỗng: revert mã nguồn sản xuất mà test vẫn XANH — không có năng lực phát hiện lỗi",
-                    "Vacuous test: production diff reverted and the test stayed GREEN — it cannot detect the bug")
-            elif proved == "ok":
-                t["vacuity"] = "red"
-            elif proved == "weak":
-                log_warn(tr(
-                    f"{t.get('id')}: revert không ra assertion failure (có thể chỉ lỗi biên dịch) — chưa chứng minh test bắt được lỗi",
-                    f"{t.get('id')}: revert did not show an assertion failure (possibly a compile error) — the test has not proved it catches the bug"))
+            run_suite(t, cmd, mode, suite_env())
             ran_cmds[key] = t
-            # Only a script the command RUNS (`bash|sh|zsh <path>`, `./<path>` opening a segment):
-            # `cat tests/x.sh` read it, it did not run it (Antigravity review).
-            for m in RAN_SCRIPT.finditer(cmd):
-                done_scripts.append(os.path.realpath(os.path.join(str(project_dir), m.group(1) or m.group(2))))
+            note_ran(cmd)
         elif run_tests:
             t["status"] = "FAIL"
             t["output_tail"] = tr("Matrix không khai báo command cho test này", "The matrix declares no command for this test")
+    drain()
     restore_local_configs(_config_snaps)
 
     checklist_markdown = []
