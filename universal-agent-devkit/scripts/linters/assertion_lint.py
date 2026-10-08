@@ -55,6 +55,14 @@ _VACUOUS = re.compile(
     re.IGNORECASE,
 )
 
+# ponytail: Python assertIsNotNone/pytest is not None không được phủ; thêm khi một dự án Python cần
+_EXISTENCE = re.compile(
+    r"\bassertNotNull\s*\(\s*(.*?)\s*\)(?=\s*(?:;|\n|$))"
+    r"|\bAssert\.IsNotNull\s*\(\s*(.*?)\s*\)(?=\s*(?:;|\n|$))"
+    r"|\bassertThat\s*\(\s*(.*?)\s*\)\s*\.\s*(?:isNotNull\s*\(\)|exists\s*\(\))",
+    re.IGNORECASE
+)
+
 
 def _body(text: str, start: int, limit: int | None = None) -> str:
     """Brace block of the method that starts at `start`, never crossing `limit`."""
@@ -88,6 +96,28 @@ def _python_body(text: str, start: int) -> str:
 
 def _distinguishing(body: str) -> bool:
     vacuous_spans = [(m.start(), m.end()) for m in _VACUOUS.finditer(body)]
+
+    for m in _EXISTENCE.finditer(body):
+        args_str = (m.group(1) or m.group(2) or m.group(3))
+        if args_str:
+            args_str = args_str.strip()
+            # Remove string literal argument at the start (e.g. assertNotNull("msg", x))
+            args_str = re.sub(r'^\s*(?:"[^"]*"|\'[^\']*\')\s*,\s*', '', args_str)
+            # Remove string literal argument at the end (e.g. assertNotNull(x, "msg"))
+            args_str = re.sub(r'\s*,\s*(?:"[^"]*"|\'[^\']*\')\s*$', '', args_str)
+            arg = args_str.strip()
+            
+            # literal string, number, true/false, null
+            if re.match(r"^(?:true|false|null|undefined|\d+|[\"'].*[\"'])$", arg, re.IGNORECASE):
+                vacuous_spans.append(m.span())
+            # Singleton / capitalized bare reference
+            elif re.match(r"^[A-Z]\w*$", arg):
+                vacuous_spans.append(m.span())
+            # var created by constructor (must be a bare word)
+            elif re.match(r"^\w+$", arg):
+                if re.search(r"\b" + re.escape(arg) + r"\s*=\s*(?:new\s+)?[A-Z]\w*\([^()\n]*\)\s*;?\s*$", body, re.MULTILINE):
+                    if len(re.findall(r"\b" + re.escape(arg) + r"\s*=(?!=)", body)) == 1:
+                        vacuous_spans.append(m.span())
 
     def inside_vacuous(span) -> bool:
         return any(a <= span[0] and span[1] <= b for a, b in vacuous_spans)

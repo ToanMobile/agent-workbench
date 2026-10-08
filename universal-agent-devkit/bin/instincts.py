@@ -28,6 +28,7 @@ Exit codes: 0 added (or --dry-run), 1 duplicate title, 2 usage / file error.
 import argparse
 import json
 import os
+import tempfile
 import re
 import shutil
 import subprocess
@@ -188,8 +189,112 @@ def cmd_add(args) -> int:
         print(f"{tr('(dry-run) Sẽ thêm vào', '(dry-run) Would add to')} {target}:\n\n{entry}")
     else:
         print(f"✔ {tr('Đã ghi', 'Recorded')} [{inst_id}] {tr('vào', 'in')} {target}")
+        if getattr(args, "generic", False):
+            queue = project / ".agents" / "local" / "upstream-queue.md"
+            queue.parent.mkdir(parents=True, exist_ok=True)
+            lock_path = project / ".claude" / "audit-gate" / "upstream-queue.lock"
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(lock_path, "a") as lf:
+                if fcntl is not None:
+                    fcntl.flock(lf, fcntl.LOCK_EX)
+                with open(queue, "a+", encoding="utf-8") as f:
+                    f.seek(0, 2)
+                    lead = "" if f.tell() == 0 else "\n"
+                    f.write(f"{lead}---\n\n{entry}")
     return 0
 
+
+
+
+def cmd_promote(args) -> int:
+    source_project = Path(args.from_project).resolve()
+    queue = source_project / ".agents" / "local" / "upstream-queue.md"
+    if not queue.is_file():
+        print(f"✖ {queue} không tồn tại", file=sys.stderr)
+        return 2
+
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", args.profile):
+        print(f"✖ Tên profile không hợp lệ: {args.profile}", file=sys.stderr)
+        return 2
+
+    kit_dir = Path(args.kit).resolve() if getattr(args, "kit", None) else DEVKIT_ROOT
+    profile_file = (kit_dir / "profiles" / args.profile / "instincts.md").resolve()
+    
+    if not str(profile_file).startswith(str(kit_dir / "profiles")):
+        print(f"✖ Tên profile không hợp lệ: {args.profile}", file=sys.stderr)
+        return 2
+
+    if not profile_file.is_file():
+        print(f"✖ Profile file {profile_file} không tồn tại", file=sys.stderr)
+        return 2
+
+    lock_path = source_project / ".claude" / "audit-gate" / "upstream-queue.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "a") as lf:
+        if fcntl is not None:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            
+        with open(queue, "r", encoding="utf-8") as f:
+            text = f.read()
+            
+        chunks = re.split(r'\n---\n', text)
+        changed = False
+        new_chunks = []
+        
+        with open(profile_file, "a+", encoding="utf-8") as pf:
+            if fcntl is not None:
+                fcntl.flock(pf, fcntl.LOCK_EX)
+            pf.seek(0)
+            profile_text = pf.read()
+            
+            for chunk in chunks:
+                if not chunk.strip():
+                    new_chunks.append(chunk)
+                    continue
+                    
+                title_match = re.search(r'^###\s+\[INSTINCT-[^\]]+\]\s+(.*)$', chunk, re.MULTILINE)
+                if not title_match:
+                    new_chunks.append(chunk)
+                    continue
+                    
+                title = title_match.group(1).strip()
+                if f"**promoted:** {args.profile}" in chunk:
+                    new_chunks.append(chunk)
+                    continue
+                    
+                dup = find_duplicate(profile_text, title)
+                if dup:
+                    if not args.dry_run:
+                        chunk = chunk.rstrip() + f"\n- **promoted:** {args.profile}\n"
+                        changed = True
+                    new_chunks.append(chunk)
+                    continue
+                    
+                if not args.dry_run:
+                    inst_id = next_id(profile_text)
+                    clean_chunk = chunk.lstrip("-").lstrip()
+                    new_entry = re.sub(r'^###\s+\[INSTINCT-[^\]]+\]', f'### [{inst_id}]', clean_chunk, count=1, flags=re.MULTILINE)
+                    pf.seek(0, 2)
+                    lead = "" if pf.tell() == 0 or profile_text.endswith("\n\n") else "\n"
+                    separator = "\n---\n\n" if pf.tell() > 0 else ""
+                    pf.write(f"{lead}{separator}{new_entry.strip()}\n")
+                    profile_text += f"{lead}{separator}{new_entry.strip()}\n"
+                    
+                    chunk = chunk.rstrip() + f"\n- **promoted:** {args.profile}\n"
+                    changed = True
+                    print(f"✔ Đã promote [{inst_id}] {title}")
+                else:
+                    print(f"• (dry-run) Sẽ promote: {title}")
+                    
+                new_chunks.append(chunk)
+                
+        if changed and not args.dry_run:
+            fd, tmp = tempfile.mkstemp(dir=queue.parent, prefix="upstream-queue.md.tmp.")
+            with os.fdopen(fd, "w", encoding="utf-8") as tf:
+                tf.write("\n---\n".join(new_chunks))
+            os.replace(tmp, queue)
+            
+    return 0
 
 def cmd_import(args) -> int:
     """--from-json FILE: a list of lessons, e.g. memory an agent classified. Items with a
@@ -257,8 +362,18 @@ def main(argv=None) -> int:
     add.add_argument("--file", help="instincts file (default: <project>/.agents/instincts.md)")
     add.add_argument("--force", action="store_true", help="add even if the title is already recorded")
     add.add_argument("--dry-run", action="store_true", help="print the entry, write nothing")
+    add.add_argument("--generic", action="store_true", help="enqueue to upstream-queue.md")
     add.add_argument("-l", "--lang", choices=["en", "vi"], help="output language")
+
+    promote = sub.add_parser("promote", help="promote a generic lesson")
+    promote.add_argument("--from", dest="from_project", required=True, help="source project directory")
+    promote.add_argument("--profile", required=True, help="target profile id")
+    promote.add_argument("--kit", help="devkit path override")
+    promote.add_argument("--dry-run", action="store_true", help="print but write nothing")
+
     args = parser.parse_args(argv)
+    if args.cmd == "promote":
+        return cmd_promote(args)
     set_lang(resolve_lang(args.lang, project_dir()))
     if args.from_json:
         if args.title:

@@ -242,9 +242,13 @@ case "$CMD" in
     esac
     ;;
   learn)
-    # learn "<title>" [--cause TEXT] [--rule TEXT] [--check CMD] [--file PATH] [--force] [--dry-run]
+    # learn "<title>" [--cause TEXT] [--rule TEXT] [--check CMD] [--file PATH] [--generic] [--force] [--dry-run]
     shift || true
     python3 "$DEVKIT_ROOT/bin/instincts.py" add "$@"
+    ;;
+  promote)
+    shift || true
+    python3 "$DEVKIT_ROOT/bin/instincts.py" promote "$@"
     ;;
   clean)
     # clean [path] [--days=N] [--apply] [--old-installs] — dry-run unless --apply
@@ -366,12 +370,15 @@ Commands:
                       Past bugs into the regression checklist (.agents/CHECKLIST.md):
                       bug_id | title | severity | fixed? | module | test_id_or_NONE | evidence
                       (tab or | separated). Never PASS on import — shows which bugs no test guards
-  learn "<title>" [--cause TEXT] [--rule TEXT] [--check CMD] [--dry-run]
+  learn "<title>" [--cause TEXT] [--rule TEXT] [--check CMD] [--generic] [--dry-run]
                       Record a lesson in .agents/instincts.md as the next [INSTINCT-NNN]
-                      (a title already recorded is refused; --force to add anyway)
+                      (a title already recorded is refused; --force to add anyway).
+                      --generic also enqueues the lesson to upstream-queue.md for devkit promotion.
   learn --from-json FILE [--dry-run]
                       Add every {"verdict":"INSTINCT", title, cause, rule, source, found_on}
                       item of a JSON list (e.g. classified old memory); re-runnable
+  promote --from PROJ --profile ID [--kit DIR] [--dry-run]
+                      Promote generic lessons from PROJ's upstream-queue.md to ID's profile instincts
   clean [path] [--days=N] [--apply] [--old-installs]
                       Remove hook logs, session state, restore backups and adb evidence
                       in .claude/audit-gate older than N days (default 14); trims logs over

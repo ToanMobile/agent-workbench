@@ -22,7 +22,7 @@ _agent_kit() {
   COMPREPLY=()
 
   if [ "${COMP_CWORD}" -eq 1 ]; then
-    words="init install-global profile health gate githooks bugs checklist req nightly memory-stats learn clean matrix worktree
+    words="init install-global profile health gate githooks bugs checklist req nightly memory-stats learn promote clean matrix worktree
            index-memory test sync list commands list-old restore-old uninstall completion help"
     COMPREPLY=( $(compgen -W "${words}" -- "${cur}") )
     return 0
@@ -56,7 +56,9 @@ _agent_kit() {
       [[ "${cur}" == -* ]] && COMPREPLY=( $(compgen -W "--days= --apply --old-installs" -- "${cur}") ) \
         || COMPREPLY=( $(compgen -d -- "${cur}") ) ;;
     learn)
-      COMPREPLY=( $(compgen -W "--cause --rule --symptom --check --file --force --dry-run --from-json" -- "${cur}") ) ;;
+      COMPREPLY=( $(compgen -W "--cause --rule --symptom --check --file --force --generic --dry-run --from-json" -- "${cur}") ) ;;
+    promote)
+      COMPREPLY=( $(compgen -W "--from --profile --dry-run --kit" -- "${cur}") ) ;;
     matrix)
       COMPREPLY=( $(compgen -W "--write" -- "${cur}") ) ;;
     restore-old|restore|uninstall|remove)
