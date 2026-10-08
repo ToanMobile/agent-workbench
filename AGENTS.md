@@ -142,7 +142,7 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    write "ảnh: không cần — <reason>" in line 3 and skip this step. Cite only this turn's
    proofs: every cited PNG is checked (stamp in its name from this turn, not a byte copy of
    another proof). A UI change committed in an earlier turn is that turn's proof to attach —
-   a later turn that only touches tests is not asked again. `hooks/proof_gate.sh` applies the same rule (`bin/tree_fp.py`). From the
+   a later turn that only touches tests is not asked again. For a UI or gesture bug, capture BEFORE evidence from the unfixed build (`reports/before-<yyyyMMdd-HHmmss>.png`) or write `before: không cần — <reason>`. `hooks/proof_gate.sh` applies the same rule (`bin/tree_fp.py`). From the
    repo root: `python3 .agents/devkit/bin/proof-capture.py`
    The command checks `adb devices` first. A declared serial is used only when its
    state is `device` and it is not on the denylist. If that serial is offline, or no

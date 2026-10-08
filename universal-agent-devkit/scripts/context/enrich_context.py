@@ -6,6 +6,8 @@ import sys
 import os
 import json
 import re
+import time
+
 import subprocess
 import unicodedata
 
@@ -463,7 +465,6 @@ def log_surfaced(project_root, session, prompt, refs):
     if os.environ.get("SURFACED_LOG", "1") == "0" or not os.path.isdir(os.path.join(project_root, ".agents")):
         return
     import hashlib
-    import time
     rows = []
     for r in refs:
         m = INSTINCT_ID_RE.search(r["title"])
@@ -1067,6 +1068,39 @@ def dedupe_session(text, project_dir, session_id, payload):
     return out
 
 
+def write_turn_class(project_dir, session_id, dossier):
+    try:
+        if not session_id:
+            return
+        state = os.path.join(project_dir, ".claude", "audit-gate", "turn_class_" + (re.sub(r"[^A-Za-z0-9_-]", "_", session_id)[:64] or "default") + ".json")
+        intents = dossier.get("detected_intents", [])
+        if "BUG_FIX" in intents and "UI_INTERACTION" in intents and "UI_INTERACTION" not in dossier.get("profile_intents", []) and dossier.get("active_profile") in APP_PROFILES:
+            data = {"ts": time.time(), "intents": intents}
+        else:
+            data = None
+        if data:
+            try:
+                os.makedirs(os.path.dirname(state), exist_ok=True)
+                import tempfile
+                fd, tmp = tempfile.mkstemp(prefix=".tmp_turn_class.", dir=os.path.dirname(state))
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    json.dump(data, fh)
+                os.replace(tmp, state)
+            except OSError as e:
+                print(f"warning: write_turn_class failed to write/replace: {e}", file=sys.stderr)
+                try:
+                    os.unlink(tmp)
+                except (OSError, NameError):
+                    pass
+        else:
+            try:
+                if os.path.exists(state):
+                    os.remove(state)
+            except OSError as e:
+                print(f"warning: write_turn_class failed to remove old state: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"warning: write_turn_class failed: {e}", file=sys.stderr)
+
 if __name__ == "__main__":
     is_hook = "--hook" in sys.argv[1:]
     is_compact = "--compact" in sys.argv[1:]
@@ -1091,6 +1125,7 @@ if __name__ == "__main__":
         text = compact(res, project_dir)
         if is_hook:
             log_surfaced(project_dir, session_id, prompt_input, shown_refs(res))
+            write_turn_class(project_dir, session_id, res)
             extra = [l for l in (antigravity_collab_hint(prompt_input, res, project_dir),
                                  capture_bug(prompt_input, res, project_dir, session_id, hook_payload),
                                  req_hint(prompt_input, res, project_dir), watch_inbox(project_dir),

@@ -144,6 +144,13 @@ PUSH_FAILED = re.compile(r"\[(?:remote )?rejected\]|error: failed to push|^fatal
 # A ref that went out ("   a1b2..c3d4  main -> main", "* [new branch] x -> x") on a line that is not a rejection.
 PUSH_WENT = re.compile(r"^(?!.*\[(?:remote )?rejected\]).*\S\s+->\s+\S", re.M)
 
+
+def safe_digest(p):
+    try:
+        with open(p, "rb") as f: return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
+
 def pushed_in_turn(tp):
     """True when a Bash call of this turn (after the last user prompt) ran `git push` that did not
     visibly fail. A push is what devkit_harness.git_writes reads as one — the classifier
@@ -190,7 +197,7 @@ def pushed_in_turn(tp):
 if not xong and not (missing_report and pushed_in_turn(d.get("transcript_path") or "")):
     sys.exit(0)
 cited = sorted(set(re.findall(r"(?:[\w./-]*/)?reports/proof-\d{8}-\d{6}\.png", reply))) if xong else []
-problems, good = [], []
+problems, good, before_problems = [], [], []
 for rel in cited:
     path = rel if os.path.isabs(rel) else os.path.join(repo, rel)
     if not os.path.isfile(path):
@@ -222,7 +229,7 @@ for rel in cited:
         digest = hashlib.sha256(f.read()).hexdigest()
     twin = next((o for o in sorted(glob.glob(os.path.join(repo, "reports", "*.png")))
                  if os.path.realpath(o) != os.path.realpath(path)
-                 and hashlib.sha256(open(o, "rb").read()).hexdigest() == digest), None)
+                 and safe_digest(o) == digest), None)
     if twin:
         problems.append("%s: trùng byte với %s (ảnh cũ chép sang tên mới)" % (rel, os.path.relpath(twin, repo))); continue
     good.append(rel)
@@ -283,8 +290,101 @@ if xong:
         need_image, scope = tree_fp.image_required(repo, start)
     except Exception as e:  # an unreadable scope must never waive the image
         scope = "scope check failed: %s" % e
+
+def first_app_source_edit_time(tp):
+    if not start: return None
+    try:
+        import tree_fp
+        with open(tp, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                if '"tool_use"' not in raw: continue
+                try:
+                    e = json.loads(raw)
+                    t = datetime.datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")).timestamp()
+                except (ValueError, AttributeError, TypeError): continue
+                if t < start: continue
+                for c in (e.get("message") or {}).get("content") or []:
+                    if not isinstance(c, dict) or c.get("type") != "tool_use": continue
+                    args = c.get("input") or {}
+                    if not isinstance(args, dict): continue
+                    paths = []
+                    # ponytail: sua qua shell (sed -i, >, tee) khong thay duoc nen kiem thu tu mtime bi bo qua cho lan sua do; parse tu khoa ghi cua lenh khi mot luot chi sua qua shell
+                    if "TargetFile" in args and isinstance(args["TargetFile"], str):
+                        paths.append(args["TargetFile"])
+                    if "file_path" in args and isinstance(args["file_path"], str):
+                        paths.append(args["file_path"])
+                    if "notebook_path" in args and isinstance(args["notebook_path"], str):
+                        paths.append(args["notebook_path"])
+                    for p in paths:
+                        try:
+                            abs_p = os.path.realpath(p if os.path.isabs(p) else os.path.join(repo, p))
+                            abs_repo = os.path.realpath(repo)
+                            rel = os.path.relpath(abs_p, abs_repo)
+                        except ValueError: continue
+                        if rel.startswith(".."): continue
+                        if not tree_fp._off_screen(rel): 
+                            return t
+    except Exception as e: log("first_edit lookup failed: %s" % e)
+    return None
+if xong and need_image and os.environ.get("PROOF_BEFORE", "1") != "0":
+    try:
+        tc_path = os.path.join(repo, ".claude", "audit-gate", "turn_class_%s.json" % (re.sub(r"[^A-Za-z0-9_-]", "_", session)[:64] or "default"))
+        try:
+            with open(tc_path, encoding="utf-8") as f:
+                tc = json.load(f)
+            if not isinstance(tc, dict):
+                raise ValueError("not dict")
+            raw_ts = tc.get("ts", 0)
+            if not isinstance(raw_ts, (int, float)) or __import__('math').isnan(raw_ts) or __import__('math').isinf(raw_ts):
+                raise ValueError("ts not finite number")
+            tc_ts = float(raw_ts)
+            raw_intents = tc.get("intents", [])
+            if not isinstance(raw_intents, list) or not all(isinstance(x, str) for x in raw_intents):
+                raise ValueError("intents not string list")
+            tc_intents = set(raw_intents)
+        except (OSError, ValueError):
+            tc_ts = 0
+            tc_intents = set()
+        
+        if start and tc_ts >= start - 30 and "BUG_FIX" in tc_intents and "UI_INTERACTION" in tc_intents:
+            waived_before = re.search(r"before:\s*không cần\s*—\s*(.+)", reply, re.I)
+            if not waived_before:
+                before_cited = sorted(set(re.findall(r"(?:[\w./-]*/)?reports/before-\d{8}-\d{6}\.(?:png|txt|xml)", reply)))
+                if not before_cited:
+                    before_problems.append("BEFORE EVIDENCE: thiếu báo cáo trạng thái trước khi sửa (reports/before-... hoặc `before: không cần — <lý do>`)")
+                else:
+                    first_edit = first_app_source_edit_time(d.get("transcript_path") or "")
+                    for rel in before_cited:
+                        path = rel if os.path.isabs(rel) else os.path.join(repo, rel)
+                        if not os.path.isfile(path):
+                            before_problems.append("BEFORE %s: không có file này" % rel)
+                            continue
+                        try:
+                            st = os.stat(path)
+                        except OSError as e:
+                            before_problems.append("BEFORE %s: không đọc được (%s)" % (rel, e))
+                            continue
+                        if st.st_size <= 0:
+                            before_problems.append("BEFORE %s: 0 byte không phải bằng chứng" % rel)
+                            continue
+                        if path.endswith(".png"):
+                            try:
+                                with open(path, "rb") as f:
+                                    head = f.read(8)
+                                if head != PNG_SIG:
+                                    before_problems.append("BEFORE %s: không phải định dạng PNG hợp lệ (sai chữ ký)" % rel)
+                                    continue
+                            except OSError as e:
+                                before_problems.append("BEFORE %s: không đọc được (%s)" % (rel, e))
+                                continue
+                        if first_edit is not None and st.st_mtime >= first_edit:
+                            before_problems.append("BEFORE %s: phải chụp TRƯỚC lần sửa app source đầu tiên lúc %s, nhưng file tạo lúc %s" % (rel, datetime.datetime.fromtimestamp(first_edit).strftime("%H:%M:%S"), datetime.datetime.fromtimestamp(st.st_mtime).strftime("%H:%M:%S")))
+                            continue
+    except Exception as e:
+        log("before check failed: %s" % e)
+
 # A cited PNG is always checked: a waived image never excuses a bogus one.
-if not gate_problem and (good or not need_image) and not problems and not missing_report:
+if not gate_problem and (good or not need_image) and not problems and not missing_report and not before_problems:
     log("pass session=%s proof=%s scope=%s" % (session, ",".join(good) or "-", scope))
     sys.exit(0)
 
@@ -329,6 +429,8 @@ if missing_report:
     lines.append(SKELETON)
 if gate_problem:
     lines.append("- Cổng: " + gate_problem + " → python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief (bị hoãn: --force-full)")
+for bp in before_problems:
+    lines.append("- " + bp)
 if problems or (not good and need_image):
     if cited:
         lines += ["- ẢNH " + short(p, 120) for p in problems]
