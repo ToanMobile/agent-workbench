@@ -178,7 +178,8 @@
         "duration": "110.02s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-GATE-01/20261008-201908.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-08 20:48:58"
       },
       "history": [
         {
@@ -259,7 +260,8 @@
         "duration": "21.77s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-GATE-02/20261008-201740.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-08 20:48:58"
       },
       "history": [
         {
@@ -577,7 +579,8 @@
         "duration": "116.90s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-ALL-01/20261008-201915.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-08 20:48:58"
       },
       "history": [
         {
@@ -1073,7 +1076,8 @@
         "duration": "11.20s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-SESSION-01/20261008-201729.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-08 20:48:58"
       },
       "history": [
         {
