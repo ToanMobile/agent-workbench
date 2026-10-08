@@ -37,6 +37,10 @@
 # unverified range), the stored reason is returned without running the gate (GeelyEx2,
 # 2026-09-28: 100 of 214 blocks re-ran the suites on unchanged content). Not re-used: a block
 # with an edited existing test (cleared by the user's answer, not by the tree) or a BUSY item.
+# The reminder that follows such an edit ("waiting for a person to review the test diff", never a block)
+# is re-used by the SAME session for REGRESSION_GATE_TOUCHED_RECHECK_S seconds (default 300; 0 = run the
+# gate on every Stop) on the same content, without running the gate (OfficeReader 2026-10-08: 58 of 71
+# Stop runs, 31-37 s each); a BUSY suite, another session, other content or a new commit never re-use it.
 # Loop-guard: MAX_ATTEMPTS blocks per fingerprint, then the stop is allowed with a
 # visible warning (systemMessage) — a broken test can never trap the session.
 # Non-Claude agent or no usable Claude transcript ("degraded", hooks/devkit_harness.py:
@@ -312,7 +316,7 @@ if not isinstance(state, dict):
 def save_state():
     # Atomic: sessions running side by side share this file, and a torn write read back
     # as {} reset every loop-guard counter (OfficeReader 2026-09-25: two sessions racing).
-    for key, keep in (("attempts", 200), ("sessions", 50), ("shown", 50), ("repeat", 50)):
+    for key, keep in (("attempts", 200), ("sessions", 50), ("shown", 50), ("repeat", 50), ("touched", 50)):
         if isinstance(state.get(key), dict) and len(state[key]) > keep:
             state[key] = dict(list(state[key].items())[-keep:])
     try:
@@ -515,6 +519,17 @@ def skip_key(f):
 
 
 _sk_fp = skip_key(fp)
+# Per-session key of the stored "tests touched" reminder: the gate result depends on the session and its
+# transcript (an edit of another session is only a warning, the same edit of this one blocks), so the
+# reminder of one session is never shown to another. reuse_key is None without a real session id.
+_tkey = None if (reuse_key is None or _sk_fp is None) else reuse_key + "|" + _sk_fp
+
+
+def remind(lines):
+    print(json.dumps({"systemMessage": "\n".join(["⚠ Vẫn chờ người duyệt diff test (không chặn lại, KHÔNG phải PASS):"]
+                                                 + [str(l) for l in lines])}, ensure_ascii=False))
+
+
 if _sk_fp is not None and state.get("pass_fp") == _sk_fp:
     sys.exit(0)
 # UNTESTED content (every suite that can run here passed; one says by its untested_exit that it
@@ -523,6 +538,30 @@ if _sk_fp is not None and state.get("pass_fp") == _sk_fp:
 if _sk_fp is not None and state.get("untested_fp") == _sk_fp:
     note(f"untested fp={fp} (reused result)")
     sys.exit(0)
+# An edited existing test that only a person can clear (the "tests-touched reminder" at the end): the
+# gate result of this session for this exact content is known, so a repeat Stop prints the stored
+# reminder and does not run the gate. 2026-10-08, OfficeReader (10 sessions in one checkout): 58 of 71
+# Stop gate runs in 17 h were this repeat, 31-37 s each. The gate runs again after
+# REGRESSION_GATE_TOUCHED_RECHECK_S (300 s, 0 = every stop), so the answer of the user still clears it.
+# Never reused: by another session, for other content or another commit range (the key holds fp, which
+# also names verified_head..HEAD, and the tree fingerprint), after a run that was not this outcome, or
+# when the reminder came with a BUSY suite. Limit: gitignored files the gate reads (proof images under
+# reports/ and .claude/audit-gate/) are outside the key, as they already are for pass_fp; the window bounds it.
+try:
+    _recheck_s = float(os.environ.get("REGRESSION_GATE_TOUCHED_RECHECK_S", "300"))
+except ValueError:
+    _recheck_s = 300.0
+_t = state["touched"].get(sid) if isinstance(state.get("touched"), dict) else None
+if _recheck_s > 0 and _tkey is not None and isinstance(_t, dict) and _t.get("key") == _tkey \
+        and isinstance(_t.get("lines"), list):
+    try:
+        _age = time.time() - float(_t.get("at"))
+    except (TypeError, ValueError, OverflowError):
+        _age = -1.0
+    if 0 <= _age < _recheck_s:
+        note(f"tests-touched reminder fp={fp} (reused, no run)")
+        remind(_t["lines"])
+        sys.exit(0)
 # A full PASS of this exact content is reused inside the gate run below (post-fix-gate
 # cached_full_pass: ~1 s, with its format/matrix/local-config/age checks and --session/--since);
 # never end the Stop here on a bare full_pass.json.
@@ -614,6 +653,8 @@ res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "
                      env={**os.environ, "CLAUDE_PROJECT_DIR": repo,
                           "TEST_RUN_LOCK_WAIT_S": os.environ.get("TEST_RUN_LOCK_WAIT_S", "45"),
                           "GATE_TOTAL_BUDGET_S": budget_s})
+if isinstance(state.get("touched"), dict) and state["touched"].pop(sid, None) is not None:
+    save_state()      # this run decides again; the touched branch below stores a new reminder
 summary = {}
 for line in reversed(res.stdout.splitlines()):
     if line.startswith("{"):
@@ -820,10 +861,14 @@ if res.returncode == 2 and touched and not failing and not problem and not uncov
     # Only a person clears an edited existing test (review the diff, or commit it). Block ONCE per
     # change so the agent tells the user; later stops of the same change go through with a
     # reminder instead of blocking every turn (2026-09-25: 6 consecutive stops blocked).
+    if _tkey is not None and not busy:     # a BUSY suite has not run: its line must not outlive the lock
+        if not isinstance(state.get("touched"), dict):
+            state["touched"] = {}
+        state["touched"][sid] = {"key": _tkey, "lines": lines[1:], "at": time.time()}
     if state.get("touched_fp") == fp:
+        save_state()
         note(f"tests-touched reminder fp={fp}")
-        print(json.dumps({"systemMessage": "\n".join(["⚠ Vẫn chờ người duyệt diff test (không chặn lại, KHÔNG phải PASS):"]
-                                                     + lines[1:])}, ensure_ascii=False))
+        remind(lines[1:])
         sys.exit(0)
     state["touched_fp"] = fp
     save_state()

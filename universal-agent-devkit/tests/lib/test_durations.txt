@@ -158,3 +158,4 @@
 1 tests/verification/test_assertion_lint_existence_only.sh
 3 tests/verification/test_instincts_generic_promote.sh
 1 tests/verification/test_android_overlap_template.sh
+32 tests/gates/test_regression_gate_reminder_throttle.sh
