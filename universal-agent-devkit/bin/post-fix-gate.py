@@ -1312,6 +1312,8 @@ def run_git_hygiene_audit(modified_files: list) -> tuple:
         if rel_file.endswith((".pyc", ".png", ".jpg", ".jpeg", ".webp", ".so", ".dylib", ".a", ".jar", ".aar", ".apk", ".idsig", ".dex")):
             continue
         content = read_changed_text(rel_file)
+        if content is not None and "\x00" in content[:8192]:
+            continue   # binary (a NUL in the first 8 KB): 21 regexes over a 13 MB .tflite cost 2.9 s per gate run; the NAME check above still applies
         if content is not None:
             patterns = list(SECRET_PATTERNS)
             if name.endswith(CONFIG_EXTENSIONS) or re.search(ENV_FILE_PATTERN, clean_rel):
