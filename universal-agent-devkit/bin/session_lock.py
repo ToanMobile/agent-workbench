@@ -16,13 +16,22 @@ Agents with no hook API (Antigravity) cannot be blocked, so they ask (2026-09-29
 `python3 .agents/devkit/bin/session_lock.py --status [--session ID] [dir]` — read-only; exit 3 while another live
 session holds the checkout (do not edit it), 0 when free, stale, its own, or not a git checkout.
 
-Escape hatch: DEVKIT_ALLOW_SHARED_CHECKOUT=1 (logged to <git dir>/devkit-session.log).
+Writes are judged by their TARGET (OfficeReader 2026-10-08, three hours lost): a git write or gate run aimed at ANOTHER
+repository (`cd /clone && git commit`, `git -C /clone push`, `CLAUDE_PROJECT_DIR=/clone post-fix-gate`) and an Edit/Write of a
+path outside this checkout never collide; a target that cannot be resolved ($VAR, ~, a missing directory) still does.
+
+Escape hatches (both logged to <git dir>/devkit-session.log): DEVKIT_ALLOW_SHARED_CHECKOUT=1 in the hook's own environment, and
+the user's approval for a RUNNING session: `! agent-kit allow-shared [--minutes N]` (default 60) writes
+<git dir>/devkit-allow-shared, `agent-kit allow-shared off` removes it. An agent's own Bash call that runs the command or
+writes the flag file is blocked (pattern-based: ponytail — a python one-liner that opens the file is not recognised;
+upgrade to a signed flag if that is ever seen).
 ponytail: Bash writes are recognised by pattern (git writes, post-fix-gate, `>`/`>>` into the checkout) — cp/mv/rm/
 sed -i by a second session still pass; upgrade to hooks/worktree_guard.sh's write classifier if that happens.
 """
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -30,10 +39,99 @@ import time
 LOCK = "devkit-session.lock"
 LOG = "devkit-session.log"
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+# (?![\w-]) ends the verb: `git merge-base`, `merge-tree` and `commit-tree` are read-only plumbing, not `merge` / `commit` (the old
+# `\b` matched before the hyphen and blocked them). `opts` are git's global options before the verb (-C <dir>, -c k=v, --git-dir ...).
 GIT_WRITE = re.compile(
-    r"(^|[\s;&|(])git\s+(-C\s+\S+\s+)?(commit|push|pull|add|rm|mv|reset|checkout|restore|switch|stash|merge|rebase|"
-    r"cherry-pick|revert|am|apply|tag|clean)\b")
-GATE = re.compile(r"post-fix-gate(\.py)?\b|\bpostfix-gate\b")
+    r"(^|[\s;&|(/])git\s+(?P<opts>(?:(?:-C\s+(?:\"[^\"]*\"|'[^']*'|\S+)|-c\s+(?:[^\s\"']|\"[^\"]*\"|'[^']*')+|--(?:git-dir|work-tree)\s+\S+|--[\w-]+(?:=\S+)?|-[pP])\s+)*)"
+    r"(commit|push|pull|add|rm|mv|reset|checkout|restore|switch|stash|merge|rebase|cherry-pick|revert|am|apply|tag|clean)(?![\w-])")
+GATE = re.compile(r"post-fix-gate(\.py)?\b|\bpostfix-gate\b|\bagent-kit\s+(?:worktree|wt)\s+(?:finish|automerge)\b|worktree\.py\s+(?:finish|automerge)\b")
+SEPARATOR = re.compile(r"(&&|\|\||[;|&\n])")
+CD_ONLY = re.compile(r"^\s*(?:builtin\s+)?cd\s+(?:--\s+)?(\"[^\"]*\"|'[^']*'|[^\s;&|()<>$`\\]+)\s*$")
+PROJECT_DIR = re.compile(r"\bCLAUDE_PROJECT_DIR=(\"[^\"]*\"|'[^']*'|\S+)")
+ALLOW_FLAG = "devkit-allow-shared"
+# A directory change the segment walk cannot follow (subshell, `bash -c`, eval, pushd, a cd with a redirect, GIT_DIR=...): the directory
+# is UNKNOWN from there on, so every later write fails closed (review 2026-10-08: `cd B && (cd A && git commit)` slipped through).
+DIR_CHANGE = re.compile(r"(?:^|[\s;&|(`])(?:cd|pushd|popd)\b|\beval\b|\b(?:ba|z|da)?sh\s+-\w*c\b|\bGIT_DIR=|\bGIT_WORK_TREE=|--git-dir|--work-tree|\benv\s+(?:-\S+\s+)*-C\b|--chdir|^\s*\(")
+WRAPPERS = {"env", "command", "exec", "xargs", "nohup", "time", "sudo", "bash", "sh", "zsh", "dash", "eval"}
+WRITE_CMDS = {"touch", "cp", "mv", "ln", "install", "tee", "dd", "rsync", "truncate", "perl", "ruby", "node"}
+READERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "cat", "bat", "less", "more", "head", "tail", "wc", "file", "stat", "ls", "echo",
+           "printf", "diff", "cmp", "git", "man", "type", "which", "find", "sed", "awk"}   # (sed writes only with -i: see is_self_grant)
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
+RUNS_BODY = {"bash", "sh", "zsh", "dash", "ksh", "python", "python3", "perl", "ruby", "node", "eval", "source", "."}   # a heredoc fed to these is CODE
+
+
+def _strip_heredocs(cmd):
+    """Drop the body of every heredoc that feeds a data command (cat, a commit message, a patch): its lines are text, not commands. A
+    heredoc fed to a shell or an interpreter keeps its body - those lines run."""
+    lines = cmd.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        m = _HEREDOC.search(line)
+        if not m:
+            continue
+        head = re.split(r"[;&|(]|\$\(|`", line[:m.start()])[-1].split()
+        head = [w for w in head if not re.match(r"^[A-Za-z_]\w*=", w)]
+        word = os.path.basename(head[0]) if head else ""
+        runs = word in RUNS_BODY or word.startswith("python")
+        j = i
+        while j < len(lines) and lines[j].strip() != m.group(2):
+            j += 1
+        if runs:
+            out.extend(lines[i:j])
+        i = j
+    return "\n".join(out)
+
+
+def _split_segments(cmd):
+    """[segment, separator, segment, ...] like SEPARATOR.split, but a separator inside quotes does not split, a `&` that belongs to a
+    redirect (2>&1, &>) does not split, and heredoc bodies of data commands are gone."""
+    cmd = _strip_heredocs(cmd)
+    out, buf, quote, i, n = [], [], None, 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        if quote:
+            buf.append(c)
+            if c == "\\" and quote == '"' and i + 1 < n:
+                buf.append(cmd[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            buf.append(c)
+            buf.append(cmd[i + 1])
+            i += 2
+            continue
+        if c in "\"'":
+            quote = c
+            buf.append(c)
+            i += 1
+            continue
+        if cmd[i:i + 2] in ("&&", "||"):
+            out.append("".join(buf))
+            out.append(cmd[i:i + 2])
+            buf = []
+            i += 2
+            continue
+        if c == "&" and ((i > 0 and cmd[i - 1] in "<>") or cmd[i + 1:i + 2] == ">"):
+            buf.append(c)
+            i += 1
+            continue
+        if c in ";|&\n":
+            out.append("".join(buf))
+            out.append(c)
+            buf = []
+            i += 1
+            continue
+        buf.append(c)
+        i += 1
+    out.append("".join(buf))
+    return out
 REDIRECT = re.compile(r"\d*>>?\|?\s*([^\s;&|<>()]+)")
 TEMP_PREFIXES = ("/dev/", "/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
 
@@ -52,6 +150,8 @@ def git_dir(cwd):
 
 def read_lock(path):
     try:
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return None   # a FIFO planted here would block open() until the hook times out
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
         return d if isinstance(d, dict) else None
@@ -313,19 +413,193 @@ def describe(lock, now):
     return f"phiên {sid[:12]} (giữ từ {started}, hoạt động cách đây {age}s)"
 
 
-def bash_collides(cmd, top):
-    if GIT_WRITE.search(cmd) or GATE.search(cmd):
-        return True
-    for m in REDIRECT.finditer(cmd):
-        target = m.group(1)
-        if target.startswith("&") or target.startswith(TEMP_PREFIXES):
+def is_self_grant(cmd):
+    """True when a Bash command switches the user's approval (`agent-kit allow-shared`, session_lock.py --allow-shared[-off], under any wrapper
+    - nice, timeout, uv run, bash -c ...) or WRITES the flag file (a redirect INTO it, `sed -i`, or touch / cp / mv / tee / an interpreter
+    naming it). Judged per segment (quotes and heredoc bodies are not segments): a command that only READS (grep, cat, ls, git log, sed -n,
+    awk ...) is fine, so is a commit message that talks about the switch.
+    ponytail: a python one-liner that builds the file name from pieces is not recognised; upgrade to a signed flag if that is ever seen."""
+    if ALLOW_FLAG not in cmd and "allow-shared" not in cmd:
+        return False
+    import shlex   # noqa: PLC0415 - only commands that mention the switch pay for it
+    for seg in _split_segments(cmd)[::2]:
+        if ALLOW_FLAG in seg and re.search(r">>?\s*\S*" + ALLOW_FLAG, seg):
+            return True
+        try:
+            words = shlex.split(seg)
+        except ValueError:
+            words = seg.split()
+        while words and re.match(r"^[A-Za-z_]\w*=", words[0]):
+            words = words[1:]
+        if not words:
             continue
-        tmpdir = os.environ.get("TMPDIR", "")
-        if tmpdir and target.startswith(tmpdir):
+        base = [os.path.basename(w) for w in words]
+        w0 = base[0]
+        if w0 == "sed" and ALLOW_FLAG in seg and any(w.startswith("-i") or w == "--in-place" for w in words[1:]):
+            return True
+        if w0 in READERS:
             continue
-        if not target.startswith("/") or (top and os.path.realpath(target).startswith(os.path.realpath(top) + os.sep)):
+        if ALLOW_FLAG in seg and (w0 in WRITE_CMDS or any(b in WRITE_CMDS or b.startswith("python") for b in base)):
+            return True
+        if re.search(r"\bagent-kit\s+allow-shared\b|session_lock\.py\s+(?:\S+\s+)*?--allow-shared", seg):
             return True
     return False
+
+
+def _unquote(word):
+    return word[1:-1] if len(word) >= 2 and word[0] in "\"'" and word[-1] == word[0] else word
+
+
+def _target(path):
+    """(real toplevel, git dir) of the checkout that holds `path`; (None, None) when that cannot be told (no such directory, not a
+    repository, an unexpanded $VAR / ~ / backtick, git timing out)."""
+    if not path or "$" in path or "`" in path or path.startswith("~") or not os.path.isdir(path):
+        return None, None
+    gdir, top = git_dir(path)
+    if not gdir or not top:
+        return None, None
+    return os.path.realpath(top), gdir
+
+
+def _resolve(base, word):
+    """A cd / -C argument as an absolute path from `base` (None when base is unknown)."""
+    word = _unquote(word)
+    if os.path.isabs(word):
+        return word
+    return os.path.join(base, word) if base else None
+
+
+def _git_target(cur, opts):
+    """The directory a git command acts on: `cur` moved by each `-C <dir>` in order; None (unknown) with --git-dir / --work-tree."""
+    if re.search(r"--(?:git-dir|work-tree)", opts):
+        return None
+    for d in re.findall(r"-C\s+(\"[^\"]*\"|'[^']*'|\S+)", opts):
+        cur = _resolve(cur, d)
+    return cur
+
+
+def write_hits_locked(cmd, top, cwd, sid=""):
+    """(hits_top, foreign): hits_top - a git write / gate run in `cmd` can land in the locked checkout `top`, or its target cannot be told
+    (fail closed); foreign - (toplevel, git dir, lock) of ANOTHER checkout the command writes to that ANOTHER live session holds (it
+    counts even when the session's own checkout is free). The command is walked segment by segment (&&, ||, ;, |, &, newline; not
+    inside quotes): a segment that is only `cd <dir>` moves the working directory for the segments after it, but only when it runs in
+    the same shell (followed by && ; or a newline); a cd that may not have run (before | & ||) and any directory change the walk cannot
+    follow (DIR_CHANGE) make the directory unknown; each write is judged by the toplevel of its `git -C <dir>` / `CLAUDE_PROJECT_DIR=<dir>`
+    / working directory."""
+    locked = os.path.realpath(top) if top else None
+    cur = cwd or top
+    pieces = _split_segments(cmd)   # segment, separator, segment, ...
+    seen, hits_top, foreign = False, False, None
+    for i in range(0, len(pieces), 2):
+        seg = pieces[i]
+        sep = pieces[i + 1] if i + 1 < len(pieces) else ""
+        cd = CD_ONLY.match(seg)
+        if cd:
+            cur = _resolve(cur, cd.group(1)) if sep in ("&&", ";", "\n", "") else None
+            continue
+        if DIR_CHANGE.search(seg):
+            cur = None
+        targets = [_git_target(cur, m.group("opts")) for m in GIT_WRITE.finditer(seg)]
+        if GATE.search(seg):
+            pd = PROJECT_DIR.search(seg)
+            targets.append(_resolve(cur, pd.group(1)) if pd else cur)
+        for target in targets:
+            seen = True
+            tl, tgdir = _target(target)
+            if tl is None or tl == locked:
+                hits_top = True
+                continue
+            lock = read_lock(os.path.join(tgdir, LOCK))
+            if foreign is None and not is_free_for(lock, sid, time.time()):
+                foreign = (tl, tgdir, lock)   # another repository, but a live session holds THAT one
+    # the regexes see a write the segment walk did not (e.g. an unterminated quote): judge it by the text, as before
+    if not seen:
+        stripped = _strip_heredocs(cmd)
+        hits_top = bool(GIT_WRITE.search(stripped) or GATE.search(stripped))
+    return hits_top, foreign
+
+
+def edit_hits_locked(tool_input, top, cwd, gdir=None):
+    """Edit / Write / MultiEdit / NotebookEdit collide only for a file inside the locked checkout or its git dir (a linked worktree's
+    lies OUTSIDE it); no path at all fails closed."""
+    ti = tool_input if isinstance(tool_input, dict) else {}
+    path = ti.get("file_path") or ti.get("notebook_path") or ti.get("path")
+    if not path or not top or not isinstance(path, str):
+        return True
+    real = os.path.realpath(path if os.path.isabs(path) else os.path.join(cwd or top, path))
+    for root in (top, gdir):
+        if root:
+            r = os.path.realpath(root)
+            if real == r or real.startswith(r + os.sep):
+                return True
+    return False
+
+
+def allow_shared_until(gdir):
+    """Epoch until which the USER allowed a second live session to write here (0 when never / expired / unreadable)."""
+    d = read_lock(os.path.join(gdir, ALLOW_FLAG))
+    try:
+        return float((d or {}).get("until") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def allow_shared(argv, off=False):
+    """`--allow-shared [--minutes N] [dir]` / `--allow-shared-off [dir]`: run by the USER (`! agent-kit allow-shared`), never by an
+    agent (main() blocks an agent's Bash call that does). Lets any live session write in the checkout for N minutes
+    (default 60, 1..480) without restarting it; the hook reads the flag on every call and logs each use."""
+    minutes = 60
+    if "--minutes" in argv:
+        i = argv.index("--minutes")
+        try:
+            minutes = int(argv[i + 1])
+        except (ValueError, IndexError):
+            print("session_lock: --minutes needs a whole number (1..480)")
+            return 2
+        argv = argv[:i] + argv[i + 2:]
+    minutes = max(1, min(480, minutes))
+    target = argv[0] if argv else os.getcwd()
+    gdir, top = git_dir(target)
+    if not gdir:
+        print(f"session_lock: {target} không phải git checkout")
+        return 1
+    path = os.path.join(gdir, ALLOW_FLAG)
+    if off:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            print(f"session_lock: không gỡ được {path}: {e}")
+            return 1
+        log(gdir, "người dùng tắt cho phép ghi song song")
+        print(f"session_lock: đã tắt cho phép ghi song song ở {top}")
+        return 0
+    now = time.time()
+    write_lock(path, {"until": now + minutes * 60, "granted": now, "by": "user"})
+    until = time.strftime("%H:%M", time.localtime(now + minutes * 60))
+    log(gdir, f"người dùng cho phép ghi song song {minutes} phút (tới {until})")
+    print(f"session_lock: {top} cho phép phiên khác ghi song song {minutes} phút (tới {until}). Tắt sớm: agent-kit allow-shared off")
+    return 0
+
+
+def bash_collides(cmd, top, cwd=None, sid=""):
+    """(hits_top, foreign) - see write_hits_locked; a redirect into the locked checkout also counts as hits_top."""
+    hits_top, foreign = False, None
+    if GIT_WRITE.search(cmd) or GATE.search(cmd):
+        hits_top, foreign = write_hits_locked(cmd, top, cwd, sid)
+    if not hits_top:
+        for m in REDIRECT.finditer(cmd):
+            target = m.group(1)
+            if target.startswith("&") or target.startswith(TEMP_PREFIXES):
+                continue
+            tmpdir = os.environ.get("TMPDIR", "")
+            if tmpdir and target.startswith(tmpdir):
+                continue
+            if not target.startswith("/") or (top and os.path.realpath(target).startswith(os.path.realpath(top) + os.sep)):
+                hits_top = True
+                break
+    return hits_top, foreign
 
 
 def take(path, lock, sid, cwd, now, pid=None):
@@ -356,14 +630,23 @@ def status(argv):
     if is_free_for(lock, sid, now):
         print(f"session_lock: {top} trống — được sửa")
         return 0
+    until = allow_shared_until(gdir)
+    if until > now:
+        print(f"session_lock: {top} đang do {describe(lock, now)} giữ, nhưng người dùng đã cho phép ghi song song tới "
+              f"{time.strftime('%H:%M', time.localtime(until))} — được sửa")
+        return 0
     print(f"session_lock: {top} đang do {describe(lock, now)} giữ — KHÔNG sửa ở đây: chờ phiên đó xong, "
-          f"hoặc làm trong worktree riêng (`agent-kit worktree add`)")
+          f"hoặc làm trong worktree riêng (`agent-kit worktree add`), hoặc nhờ người dùng chạy `! agent-kit allow-shared`")
     return 3
 
 
 def main():
     if "--status" in sys.argv[1:]:
         return status([a for a in sys.argv[1:] if a != "--status"])
+    if "--allow-shared" in sys.argv[1:]:
+        return allow_shared([a for a in sys.argv[1:] if a != "--allow-shared"])
+    if "--allow-shared-off" in sys.argv[1:]:
+        return allow_shared([a for a in sys.argv[1:] if a != "--allow-shared-off"], off=True)
     if "--check-last-active" in sys.argv[1:]:
         return check_last_active([a for a in sys.argv[1:] if a != "--check-last-active"])
     if "--register" in sys.argv[1:]:
@@ -451,12 +734,33 @@ def main():
         return 0
     heartbeat_session(cwd, sid)
     tool = str(d.get("tool_name") or "")
+    command = str((d.get("tool_input") or {}).get("command") or "") if tool == "Bash" else ""
+    if tool in EDIT_TOOLS:   # the approval flag and the lock file are written by the user's command and by this hook, never by an Edit/Write
+        ti = d.get("tool_input") if isinstance(d.get("tool_input"), dict) else {}
+        target_path = ti.get("file_path") or ti.get("notebook_path") or ti.get("path")
+        if isinstance(target_path, str) and os.path.basename(target_path) in (ALLOW_FLAG, LOCK):
+            print("⛔ [DevKit] File công tắc / khoá của DevKit không được ghi bằng Edit/Write: công tắc là của NGƯỜI DÙNG "
+                  "(`! agent-kit allow-shared`).", file=sys.stderr)
+            return 2
+    if command and is_self_grant(command):
+        print("⛔ [DevKit] Công tắc 'cho phép ghi song song' là của NGƯỜI DÙNG: agent không tự bật hay tắt. Nhờ người dùng chạy "
+              "`! agent-kit allow-shared` (mặc định 60 phút; `agent-kit allow-shared off` để tắt).", file=sys.stderr)
+        return 2
+    foreign = None
     if tool in EDIT_TOOLS:
-        collides = True
+        collides = edit_hits_locked(d.get("tool_input"), top, cwd, gdir)
     elif tool == "Bash":
-        collides = bash_collides(str((d.get("tool_input") or {}).get("command") or ""), top)
+        collides, foreign = bash_collides(command, top, cwd, sid)
     else:
         return 0
+    if foreign:   # a write into ANOTHER checkout that another live session holds: judged by THAT lock, whatever this session's own checkout says
+        ftop, fgdir, flock = foreign
+        if os.environ.get("DEVKIT_ALLOW_SHARED_CHECKOUT") == "1" or allow_shared_until(fgdir) > now:
+            log(fgdir, f"{sid} ghi song song khi {flock.get('session_id')} đang giữ (được cho phép): {tool}")
+        else:
+            print(f"⛔ [DevKit] Một thư mục — một phiên: lệnh này ghi vào checkout {ftop}, đang do {describe(flock, now)} giữ. Chờ phiên kia xong, "
+                  f"làm trong worktree riêng, hoặc người dùng gõ `! agent-kit allow-shared` (trong chính checkout đó).", file=sys.stderr)
+            return 2
 
     if is_free_for(lock, sid, now):
         if lock and lock.get("session_id") not in (None, sid):
@@ -469,9 +773,15 @@ def main():
     if os.environ.get("DEVKIT_ALLOW_SHARED_CHECKOUT") == "1":
         log(gdir, f"{sid} ghi song song khi {lock.get('session_id')} đang giữ (DEVKIT_ALLOW_SHARED_CHECKOUT=1): {tool}")
         return 0
+    until = allow_shared_until(gdir)
+    if until > now:
+        log(gdir, f"{sid} ghi song song khi {lock.get('session_id')} đang giữ (người dùng cho phép tới "
+                  f"{time.strftime('%H:%M', time.localtime(until))}): {tool}")
+        return 0
     print(f"⛔ [DevKit] Một thư mục — một phiên: checkout {top} đang do {describe(lock, now)} giữ. Phiên này chỉ đọc "
           f"ở đây: chờ phiên kia xong (khoá tự hết hạn sau {int(stale_after())}s không hoạt động), hoặc xin người dùng tạo "
-          f"worktree riêng. Người dùng cố ý cho chạy song song: DEVKIT_ALLOW_SHARED_CHECKOUT=1.", file=sys.stderr)
+          f"worktree riêng. Người dùng cố ý cho chạy song song: gõ `! agent-kit allow-shared` (không cần khởi động lại "
+          f"phiên) hoặc đặt DEVKIT_ALLOW_SHARED_CHECKOUT=1 trước khi mở phiên.", file=sys.stderr)
     return 2
 
 

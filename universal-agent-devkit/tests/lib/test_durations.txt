@@ -161,3 +161,7 @@
 32 tests/gates/test_regression_gate_reminder_throttle.sh
 20 tests/gates/test_gate_covered_by.sh
 2 tests/gates/test_gate_binary_skip.sh
+5 tests/gates/test_session_lock_target_repo.sh
+4 tests/gates/test_push_gate_recovery_hint.sh
+22 tests/worktree_git/test_worktree_automerge.sh
+39 tests/gates/test_worktree_merge_gate_owner.sh

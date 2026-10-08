@@ -39,7 +39,7 @@ has web "$out" && has android "$out" && has universal "$out" && ok "profile: ids
 out="$(complete_words agent-kit init . -p "we")"
 [ "$out" = "web " ] && ok "init -p completes a profile" || fail "init -p: '$out'"
 out="$(complete_words agent-kit worktree "")"
-[ "$out" = "add diff list remove " ] && ok "worktree: sub-actions" || fail "worktree: '$out'"
+[ "$out" = "add diff finish list remove status " ] && ok "worktree: sub-actions" || fail "worktree: '$out'"
 out="$(complete_words agent-kit githooks "st")"
 [ "$out" = "status " ] && ok "githooks: sub-actions" || fail "githooks: '$out'"
 out="$(complete_words agent-kit clean --a)"

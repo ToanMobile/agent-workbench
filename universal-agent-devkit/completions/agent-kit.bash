@@ -22,7 +22,7 @@ _agent_kit() {
   COMPREPLY=()
 
   if [ "${COMP_CWORD}" -eq 1 ]; then
-    words="init install-global profile health gate githooks bugs checklist req nightly memory-stats learn promote clean matrix worktree
+    words="init install-global profile health gate githooks bugs checklist req nightly memory-stats learn promote clean matrix worktree allow-shared
            index-memory test sync list commands list-old restore-old uninstall completion help"
     COMPREPLY=( $(compgen -W "${words}" -- "${cur}") )
     return 0
@@ -36,7 +36,7 @@ _agent_kit() {
         || COMPREPLY=( $(compgen -d -- "${cur}") ) ;;
     worktree|wt)
       if [ "${COMP_CWORD}" -eq 2 ]; then
-        COMPREPLY=( $(compgen -W "add diff remove list" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "add diff finish remove status list" -- "${cur}") )
       elif [ "${COMP_WORDS[2]}" = "add" ] && [[ "${cur}" == -* ]]; then
         COMPREPLY=( $(compgen -W "--base= --profile= --no-init --share-memory" -- "${cur}") )
       else

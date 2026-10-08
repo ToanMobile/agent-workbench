@@ -190,7 +190,10 @@ G "$R" -c protocol.file.allow=always submodule update -q --init >/dev/null 2>&1
 wt t6; G "$TMP/rm-t6" -c protocol.file.allow=always submodule update -q --init >/dev/null 2>&1
 echo "t6" > "$TMP/rm-t6/lib/f" && G "$TMP/rm-t6/lib" commit -qam "t6 sub work"; same_rule t6 1 "a submodule commit on no remote ref"
 wt t7; ( cd "$TMP/rm-t7" && CLAUDE_PROJECT_DIR="$TMP/rm-t7" bash "$KIT" bugs add "t7 bug" --fixed >/dev/null 2>&1 ); wcommit t7 "t7 bug row"; same_rule t7 1 "a committed bug row"
-G "$R" worktree add -q --detach "$TMP/rm-t8" >/dev/null 2>&1; same_rule t8 2 "a worktree not made by agent-kit worktree add"
+G "$R" worktree add -q --detach "$TMP/rm-t8" >/dev/null 2>&1; out8="$(blockers_first t8)"
+[ "$out8" = "0 " ] && bash "$KIT" worktree remove ../rm-t8 >/dev/null 2>&1 && [ ! -d "$TMP/rm-t8" ] \
+  && ok "removal_blockers: a clean worktree not made by agent-kit worktree add is adopted -> [] and remove removes it (EnterWorktree / subagent worktrees)" || fail "adopted clean worktree: '$out8'"
+G "$R" worktree add -q --detach "$TMP/rm-t8b" >/dev/null 2>&1; echo "t8b" > "$TMP/rm-t8b/t8b.txt"; same_rule t8b 1 "an adopted worktree with an uncommitted file main does not hold (the same checks as any worktree)"
 wt t9; out9="$(blockers_first t9)"
 [ "$out9" = "0 " ] && bash "$KIT" worktree remove ../rm-t9 >/dev/null 2>&1 && [ ! -d "$TMP/rm-t9" ] \
   && ok "removal_blockers: a clean worktree -> [] and remove removes it" || fail "clean worktree: '$out9'"

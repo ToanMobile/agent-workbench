@@ -4,6 +4,8 @@
 Usage (normally `agent-kit worktree …`, run inside the repo):
   worktree.py add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory]
   worktree.py diff <path> [--with-checklist]   the worktree's own changes as a binary patch
+  worktree.py finish <path>    merge its work into the main branch AUTOMATICALLY, then remove it (exit 0 done, 3 conflict, 1 blocked)
+  worktree.py automerge <path> the same, one JSON line on stdout (what the Stop gate runs)
   worktree.py remove <path>    remove it once nothing of its work would be lost
   worktree.py list
   worktree.py heal [--devkit=DIR] [--session=ID]   a checkout the host made (Grok): link the DevKit, copy ignored config
@@ -32,6 +34,13 @@ regression_status.json, …) is left out too, and named on stderr: two worktrees
 each rewrote it conflict when brought back; --with-checklist keeps it. Bring it
 back with: agent-kit worktree diff <path> | git apply --3way
 
+finish / automerge (run from the main checkout; the Stop gate runs automerge by itself): the worktree's uncommitted work is
+committed IN the worktree; main is merged INTO the worktree (so a conflict is resolved there, in a folder nobody else touches);
+then the main branch only FAST-FORWARDS to the worktree's HEAD (`git merge --ff-only`: git itself refuses when main has
+uncommitted edits on a file the merge changes, and then nothing moved), then `remove`. A conflict leaves the merge open in the
+worktree (exit 3, the files named): resolve them there, `git add`, and run it again (it concludes the merge). Works on worktrees
+`worktree add` did not make (EnterWorktree, a subagent's isolated worktree): see _adopted_state.
+
 remove: refused while an uncommitted change of the worktree is not in the main
 checkout byte-for-byte (the executable bit too; edits git hides with skip-worktree /
 assume-unchanged count), while a commit is named only by the worktree's own reflog (also
@@ -42,9 +51,12 @@ and its commits are kept (a detached worktree's commits must be brought back fir
 Only the recorded setup and ignored files (copied config, hook logs) go with the folder.
 """
 
+import contextlib
 import errno
 import fnmatch
 import hashlib
+import importlib.util
+import io
 import json
 import os
 import re
@@ -314,14 +326,44 @@ def snapshot(wt):
     return {p: fingerprint(os.path.join(wt, p)) for p in status_paths(wt)}
 
 
+AUTOMERGE_SKIP = (".claude/", ".gemini/", ".idea/", ".vscode/", ".agents/devkit")   # harness and DevKit files: never "the work"
+
+
+def _adopted_state(wt):
+    """A state for a worktree `agent-kit worktree add` did not make (EnterWorktree, a subagent's isolated worktree, a plain `git
+    worktree add`): it has no devkit-worktree.json, and `diff` / `remove` used to refuse it outright, so the Stop gate told the agent
+    to run a command that could never succeed and the worktree stayed behind for the user to delete (OfficeReader 2026-10-08). The
+    adopted state lives for one command and is never written: base = where the worktree left main; the only "setup" are
+    harness / DevKit files (AUTOMERGE_SKIP) that main holds with the SAME bytes (a copy of its own local settings); everything else -
+    an edited agent definition, a new agent-memory note under .claude/ - is work (review 2026-10-08: calling every dirty .claude/ path
+    "setup" removed such a worktree and its work silently)."""
+    main = main_checkout(wt)
+    main_head = git(main, "rev-parse", "HEAD").stdout.strip()
+    base = git(wt, "merge-base", main_head, "HEAD", check=False).stdout.strip() or git(wt, "rev-parse", "HEAD").stdout.strip()
+    branch = git(wt, "symbolic-ref", "-q", "--short", "HEAD", check=False).stdout.strip() or None
+    baseline = {p: fp for p, fp in snapshot(wt).items() if p.startswith(AUTOMERGE_SKIP) and _same_in_main(wt, main, p)}
+    return {"base": base, "baseline": baseline, "branch": branch, "fp": FP_VERSION, "adopted": True}
+
+
+def _has_state_file(wt):
+    """True when something sits where the worktree's devkit-worktree.json belongs - a corrupt file, a FIFO an agent planted, a symlink - or
+    when git cannot say. Only an ABSENT file lets a worktree be adopted: a state that is there and unreadable must never read as "no setup"."""
+    try:
+        return os.path.lexists(os.path.join(git_dir(wt), STATE))
+    except SystemExit:
+        return True
+
+
 def load_state(wt):
     if not os.path.isdir(wt):
         die(tr(f"không có thư mục: {wt}", f"no such directory: {wt}"))
     try:
         return _read_state(wt)
     except (OSError, ValueError, SystemExit):
-        die(tr(f"{wt} không được tạo bằng 'agent-kit worktree add' (thiếu {STATE})",
-               f"{wt} was not made by 'agent-kit worktree add' (no {STATE})"))
+        if _has_state_file(wt):
+            die(tr(f"{wt} không được tạo bằng 'agent-kit worktree add' (thiếu {STATE})",
+                   f"{wt} was not made by 'agent-kit worktree add' (no {STATE})"))
+        return _adopted_state(wt)
 
 
 def changes_since(wt, state):
@@ -1181,10 +1223,12 @@ def _iter_blockers(cwd, wt, shown, budget):
         except (OSError, ValueError, SystemExit):
             state = None
     if not isinstance(state, dict):
-        yield (2, "not_ours", tr(f"{wt} không được tạo bằng 'agent-kit worktree add' (thiếu {STATE})",
-                                 f"{wt} was not made by 'agent-kit worktree add' (no {STATE})") if os.path.isdir(wt)
-               else tr(f"không có thư mục: {wt}", f"no such directory: {wt}"), [])
-        return
+        if not os.path.isdir(wt) or _has_state_file(wt):   # (a state file that is there but unreadable is NOT "no setup": refused as ever)
+            yield (2, "not_ours", tr(f"{wt} không được tạo bằng 'agent-kit worktree add' (thiếu {STATE})",
+                                     f"{wt} was not made by 'agent-kit worktree add' (no {STATE})") if os.path.isdir(wt)
+                   else tr(f"không có thư mục: {wt}", f"no such directory: {wt}"), [])
+            return
+        state = _adopted_state(wt)   # same checks as for any worktree; only the recorded-setup list is rebuilt (see _adopted_state)
     main = main_checkout(cwd)
     if os.path.realpath(wt) == os.path.realpath(main):
         yield (2, "main", tr("đây là main checkout", "that is the main checkout"), [])
@@ -1289,6 +1333,318 @@ def cmd_remove(cwd, args):
     return 0
 
 
+AUTOMERGE_LOCK = "devkit-automerge.lock"
+
+
+def _trunk_branch(main):
+    """The branch worktrees are merged into: origin's default branch, else the first of main / master / trunk that exists; None when
+    neither can be told (then any branch the main checkout is on is accepted)."""
+    r = git(main, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD", check=False)
+    if r.returncode == 0 and "/" in r.stdout.strip():
+        return r.stdout.strip().split("/", 1)[1]
+    for name in ("main", "master", "trunk"):
+        if git(main, "show-ref", "--verify", "-q", f"refs/heads/{name}", check=False).returncode == 0:
+            return name
+    return None
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+
+
+def _lock_file(path, wait=0.0, stale=900.0):
+    """An O_EXCL lock file {pid, at}; waits up to `wait` seconds for a live holder; a dead holder or one older than `stale` seconds is taken
+    over; a file that is still being written (empty, a moment old) is a live holder. The path, or None when somebody else holds it."""
+    deadline = time.time() + wait
+    while True:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            try:
+                with open(path, encoding="utf-8") as f:
+                    held = json.load(f)
+                pid, at = int(held.get("pid", 0)), float(held.get("at", 0))
+            except (OSError, ValueError, TypeError, AttributeError):
+                pid, at = 0, 0.0
+                try:
+                    at = os.stat(path).st_mtime if time.time() - os.stat(path).st_mtime < 5 else 0.0   # just created, not written yet
+                    pid = os.getpid() if at else 0
+                except OSError:
+                    pass
+            if pid > 1 and _pid_alive(pid) and time.time() - at < stale:
+                if time.time() >= deadline:
+                    return None
+                time.sleep(0.1)
+                continue
+            try:
+                os.unlink(path)
+            except OSError:
+                return None
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"pid": os.getpid(), "at": time.time()}, f)
+        return path
+
+
+def _lock_automerge(wt):
+    """One automatic merge per worktree at a time (the Stop hooks of two sessions may both start one). None: somebody else is merging it."""
+    return _lock_file(os.path.join(git_dir(wt), AUTOMERGE_LOCK), wait=0.0, stale=900.0)
+
+
+MAIN_LOCK = "devkit-automerge-main.lock"
+
+
+def _unlink_quiet(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _authored_status_changed(wt):
+    """True when the worktree's regression_status.json differs from HEAD's in a row a PERSON made (the rows nothing regenerates)."""
+    old = git(wt, "show", f"HEAD:{STATUS_FILE}", check=False)
+    try:
+        with open(os.path.join(wt, STATUS_FILE), encoding="utf-8") as f:
+            cur = json.load(f)
+        prev = json.loads(old.stdout) if old.returncode == 0 else {"items": {}}
+        a = {k: _authored(v) for k, v in cur["items"].items() if _authored(v) is not None}
+        b = {k: _authored(v) for k, v in prev["items"].items() if _authored(v) is not None}
+        return a != b
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return True   # cannot tell: treat it as work
+
+
+SECRET_FILES = LOCAL_CONFIG + (".netrc", "*.p8", "AuthKey_*", "*serviceAccount*.json", "*service-account*.json", "credentials*.json")   # extras on top of the gate's list
+_GATE_SECRETS = []
+
+
+def _secret_like(path):
+    """True for a path the post-fix gate's own forbidden-file rules reject (FORBIDDEN_SECRET_FILES: one classifier, INSTINCT-015), a name in
+    SECRET_FILES, and not an exact template (.env.example, ...). The gate module is read once; if it cannot be, a short built-in list stands in."""
+    if not _GATE_SECRETS:
+        try:
+            spec = importlib.util.spec_from_file_location("post_fix_gate_rules", os.path.join(DEVKIT, "bin", "post-fix-gate.py"))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _GATE_SECRETS.append(([re.compile(p) for p, _label in mod.FORBIDDEN_SECRET_FILES], tuple(mod.SAFE_TEMPLATE_SUFFIXES)))
+        except Exception:  # noqa: BLE001 - a rules file that cannot be loaded must not stop a merge that the built-in list can still guard
+            _GATE_SECRETS.append(([re.compile(r"\.(keystore|jks|p12|pfx|mobileprovision|pem|key)$"), re.compile(r"(^|/)id_(rsa|dsa|ecdsa|ed25519)$")],
+                                  (".example", ".sample", ".template", ".dist")))
+    pats, suffixes = _GATE_SECRETS[0]
+    if path.endswith(suffixes):
+        return False
+    return any(p.search(path) for p in pats) or any(fnmatch.fnmatch(os.path.basename(path), pat) for pat in SECRET_FILES)
+
+
+def _commit_pending(wt, state):
+    """Commit the worktree's uncommitted work IN the worktree (an isolated folder: nobody else's index). Bookkeeping the gate and the
+    hooks regenerate is put back to HEAD (a file HEAD does not have is deleted), except the rows a person made. A local-config or
+    secret-looking file is NEVER committed on its own: the whole merge stops, naming it, before anything is touched.
+    None when done, else a (status, message, extra) refusal."""
+    changed = changes_since(wt, state)
+    if not changed:
+        return None
+    book = [p for p in changed if p in BOOKKEEPING and not (p == STATUS_FILE and _authored_status_changed(wt))]
+    work = [p for p in changed if p not in book]
+    secret = [p for p in work if _secret_like(p)]
+    if secret:
+        return ("blocked", tr(f"{len(secret)} file cấu hình cục bộ / giống bí mật sẽ không được tự commit: {', '.join(secret[:6])}. Thêm vào .gitignore, chuyển ra ngoài, "
+                              f"hoặc tự commit nếu cố ý; chưa có gì bị commit hay gộp", f"{len(secret)} local-config / secret-looking file(s) are never committed "
+                              f"automatically: {', '.join(secret[:6])}. Add them to .gitignore, move them out, or commit them yourself if meant; nothing was committed or merged"),
+                {"files": secret[:20]})
+    if book:
+        in_head = set(git(wt, "ls-tree", "-r", "--name-only", "HEAD", "--", *book, check=False).stdout.split("\n"))
+        tracked = [p for p in book if p in in_head]
+        if tracked:
+            git(wt, "checkout", "HEAD", "--", *tracked, check=False, bounded=False)
+        for p in book:
+            if p not in in_head:
+                try:
+                    os.unlink(os.path.join(wt, p))
+                except OSError:
+                    pass
+    if not work:
+        return None
+    env = dict(os.environ, GIT_LITERAL_PATHSPECS="1")
+    git(wt, "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul", inp="\0".join(work) + "\0", env=env, bounded=False)
+    msg = f"wip({os.path.basename(wt)}): {len(work)} file(s) brought back by the DevKit auto-merge"
+    r = git(wt, "commit", "-q", "-m", msg, "--pathspec-from-file=-", "--pathspec-file-nul", inp="\0".join(work) + "\0", env=env,
+            check=False, bounded=False)
+    if r.returncode != 0:
+        return ("blocked", tr("commit trong worktree bị từ chối (hook pre-commit?): sửa rồi commit ở worktree, lần merge sau sẽ chạy tiếp: ",
+                              "the commit in the worktree was refused (pre-commit hook?): fix it and commit in the worktree, the next merge goes on: ")
+                + (r.stdout + r.stderr).strip()[-500:], {"files": work[:20]})
+    return None
+
+
+def _conflict(wt, unmerged):
+    return ("conflict", tr(f"xung đột khi gộp main vào worktree ở {len(unmerged)} file: {', '.join(unmerged[:8])}. Sửa NGAY trong {wt} (đây là thư mục riêng, an toàn): "
+                           f"bỏ dấu <<<<<<< ======= >>>>>>> giữ đúng ý cả hai bên, `git -C {shlex.quote(wt)} add <file>`; xong chạy lại "
+                           f"`agent-kit worktree finish {shlex.quote(wt)}` (nó tự kết thúc merge, fast-forward main và gỡ worktree)",
+                           f"conflict merging main into the worktree in {len(unmerged)} file(s): {', '.join(unmerged[:8])}. Resolve it NOW in {wt} "
+                           f"(a folder of its own, so it is safe): remove the <<<<<<< ======= >>>>>>> markers keeping what both sides meant, "
+                           f"`git -C {shlex.quote(wt)} add <file>`; then run `agent-kit worktree finish {shlex.quote(wt)}` again (it concludes the "
+                           f"merge, fast-forwards main and removes the worktree)"), {"files": unmerged})
+
+
+def automerge(cwd, wt):
+    """Merge a worktree's work into the main branch and remove it. (status, message, extra); status: merged | nothing | conflict | blocked.
+    Main's working tree is only ever touched by `git merge --ff-only`, so another session's uncommitted or staged files are safe."""
+    main = main_checkout(cwd)
+    if not _same_path(git(cwd, "rev-parse", "--show-toplevel").stdout.strip(), main):
+        return "blocked", tr(f"chạy từ MAIN checkout ({main})", f"run it from the MAIN checkout ({main})"), {}
+    if not any(_same_path(e["path"], wt) for e in _worktree_entries(cwd)[1:] if not e["broken"]):
+        return "blocked", tr(f"{wt} không phải worktree đã đăng ký của repo này", f"{wt} is not a registered worktree of this repository"), {}
+    if not os.path.isdir(wt):
+        return "blocked", tr(f"thư mục {wt} đã mất: `git worktree prune`", f"the folder {wt} is gone: `git worktree prune`"), {}
+    branch = git(main, "symbolic-ref", "-q", "--short", "HEAD", check=False).stdout.strip()
+    if not branch:
+        return "blocked", tr("main checkout đang detached HEAD: không fast-forward được", "the main checkout has a detached HEAD: it cannot be fast-forwarded"), {}
+    trunk = _trunk_branch(main)
+    if trunk and branch != trunk:
+        return "blocked", tr(f"main checkout đang ở nhánh '{branch}', không phải nhánh chính '{trunk}': không tự gộp vào nhánh khác (release/hotfix...). "
+                             f"Chuyển về '{trunk}' rồi chạy lại",
+                             f"the main checkout is on branch '{branch}', not on the trunk '{trunk}': nothing is merged into another branch (release/hotfix ...). "
+                             f"Switch back to '{trunk}' and run it again"), {}
+    wt_branch = git(wt, "symbolic-ref", "-q", "--short", "HEAD", check=False).stdout.strip()
+    if wt_branch and (git(wt, "for-each-ref", "--format=%(refname)", f"refs/remotes/*/{wt_branch}", check=False).stdout.strip()
+                      or git(wt, "config", "--get", f"branch.{wt_branch}.remote", check=False).stdout.strip()):
+        return "blocked", tr(f"worktree đang ở nhánh '{wt_branch}' đã PUBLISH (có nhánh remote / upstream): không tự commit thêm hay gộp nó vào main — gộp bằng tay (merge/PR)",
+                             f"the worktree is on branch '{wt_branch}', which is PUBLISHED (a remote ref / upstream exists): nothing is committed to it or merged from it automatically - merge it by hand (merge / PR)"), {}
+    lock = _lock_automerge(wt)
+    if lock is None:
+        return "blocked", tr("một lần tự gộp khác của worktree này đang chạy", "another automatic merge of this worktree is running"), {"running": True}
+    try:
+        return _automerge_locked(cwd, main, wt)
+    finally:
+        try:
+            os.unlink(lock)
+        except OSError:
+            pass
+
+
+def _automerge_locked(cwd, main, wt):
+    try:
+        state = _read_state(wt)
+    except (OSError, ValueError, SystemExit):
+        if _has_state_file(wt):
+            return "blocked", tr(f"{wt}: file {STATE} có mặt nhưng không đọc được (hỏng? bị thay?): không tự gộp, không đụng gì",
+                                 f"{wt}: the {STATE} file is there but unreadable (corrupt? replaced?): nothing is merged or touched"), {}
+        state = _adopted_state(wt)
+    busy = _in_progress(wt)
+    if busy == "merge":   # a conflict left open earlier: resolved and staged -> conclude it; still unmerged -> say so again
+        unmerged = git(wt, "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
+        if unmerged:
+            return _conflict(wt, unmerged)
+        r = git(wt, "commit", "--no-edit", "-q", check=False, bounded=False)
+        if r.returncode != 0:
+            return "blocked", tr("không kết thúc được merge đang mở trong worktree: ", "cannot conclude the merge open in the worktree: ") + (r.stdout + r.stderr).strip()[-400:], {}
+    elif busy:
+        return "blocked", tr(f"worktree đang dở một {busy}: hoàn tất hoặc huỷ nó trước", f"a {busy} is in progress in the worktree: finish or abort it first"), {}
+    refusal = _commit_pending(wt, state)
+    if refusal:
+        return refusal
+    # ONE integration of main at a time: a Stop with many subagent worktrees starts many merges at once, and two `merge --ff-only` racing on
+    # main's index left staged renames / deletions behind (review 2026-10-08); with the lock held from the first merge-in to the fast-forward the
+    # merges queue and main cannot move under one of them (only a person committing can, hence the retries)
+    mlock = _lock_file(os.path.join(git_dir(main), MAIN_LOCK), wait=180.0, stale=300.0)
+    if mlock is None:
+        return "blocked", tr("một lần tự gộp khác giữ khoá main quá lâu: chạy lại", "another automatic merge held the main lock too long: run it again"), {"running": True}
+    status = None
+    try:
+        for _ in range(8):   # main may move (a person committing) between reading it and fast-forwarding it
+            main_head = git(main, "rev-parse", "HEAD").stdout.strip()
+            w_head = git(wt, "rev-parse", "HEAD").stdout.strip()
+            if _is_ancestor(main, w_head, main_head):
+                status = "nothing"   # everything the worktree has is already in main
+                break
+            if _is_ancestor(main, main_head, w_head):
+                r = git(main, "merge", "--ff-only", w_head, check=False, bounded=False)
+                if r.returncode == 0:
+                    status = "merged"
+                    break
+                err = r.stdout + r.stderr
+                if "overwritten" in err or "commit your changes or stash" in err:
+                    files = [l.strip() for l in err.splitlines() if l.startswith("\t")]
+                    return "blocked", tr(f"main có sửa đổi CHƯA commit trên file mà worktree cũng đổi (không gì bị đụng): {', '.join(files[:8]) or err.strip()[-200:]}. "
+                                         f"Commit hoặc cất chúng ở main rồi chạy lại `agent-kit worktree finish {shlex.quote(wt)}`",
+                                         f"main has UNCOMMITTED edits on files the worktree also changed (nothing was touched): {', '.join(files[:8]) or err.strip()[-200:]}. "
+                                         f"Commit or stash them in main, then run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"files": files}
+                continue
+            r = git(wt, "merge", "--no-edit", "-m", f"Merge main into {os.path.basename(wt)} (DevKit auto-merge)", main_head, check=False, bounded=False)
+            if r.returncode != 0:
+                unmerged = git(wt, "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
+                if unmerged:
+                    return _conflict(wt, unmerged)
+                git(wt, "merge", "--abort", check=False, bounded=False)
+                return "blocked", tr("git merge thất bại: ", "git merge failed: ") + (r.stderr or r.stdout).strip()[-400:], {}
+    finally:
+        _unlink_quiet(mlock)
+    if status is None:
+        return "blocked", tr("main liên tục có commit mới trong lúc gộp: chạy lại", "main kept moving while merging: run it again"), {}
+    saved = []
+    try:
+        for rel in _unsaved_memory(wt, main):   # notes only the worktree's own (git-ignored) agent-memory folder holds: a removal would delete them
+            src, dst = os.path.join(wt, MEMORY_REL, rel), os.path.join(main, MEMORY_REL, rel)
+            if os.path.exists(dst):
+                dst += ".from-" + os.path.basename(wt)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+            saved.append(rel)
+    except (OSError, SystemExit) as e:
+        return "blocked", tr(f"đã gộp vào main nhưng không chép được memory note của worktree ({e}); worktree còn nguyên", f"merged into main but the worktree's memory notes could not be copied ({e}); the worktree is untouched"), {"merged": True}
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            rc = cmd_remove(cwd, [wt])
+        except SystemExit as e:
+            rc = e.code if isinstance(e.code, int) else 1
+            if not isinstance(e.code, int):
+                err.write(str(e.code))
+    if rc != 0:
+        why = (err.getvalue() + out.getvalue()).strip()[-600:]
+        return "blocked", tr(f"đã gộp vào main nhưng CHƯA gỡ được worktree: {why}. Nếu chỉ còn file sinh ra/ không cần: NGƯỜI DÙNG chạy `git worktree remove --force {wt}`",
+                             f"merged into main but the worktree could NOT be removed: {why}. If only generated / unneeded files are left: the USER runs `git worktree remove --force {wt}`"), {"merged": True}
+    note = (tr(f" ({len(saved)} memory note đã chép sang main: {', '.join(saved[:5])})", f" ({len(saved)} memory note(s) copied into main: {', '.join(saved[:5])})") if saved else "")
+    return status, (tr("đã gộp vào main và gỡ worktree", "merged into main and the worktree is removed") if status == "merged"
+                    else tr("không có gì chưa về main; đã gỡ worktree", "nothing that was not in main; the worktree is removed")) + note, {"memory_saved": saved}
+
+
+def _automerge_args(cwd, args, usage):
+    if len(args) != 1 or args[0].startswith("--"):
+        die(usage)
+    return os.path.abspath(os.path.join(cwd, args[0]))
+
+
+def _run_automerge(cwd, args, usage):
+    wt = _automerge_args(cwd, args, usage)
+    try:
+        status, message, extra = automerge(cwd, wt)
+    except SystemExit as e:
+        status, message, extra = "blocked", str(e.code), {}
+    return wt, status, message, extra
+
+
+def cmd_automerge(cwd, args):
+    wt, status, message, extra = _run_automerge(cwd, args, "usage: agent-kit worktree automerge <path>")
+    print(json.dumps(dict(extra, status=status, message=message, path=wt), ensure_ascii=False))
+    return {"merged": 0, "nothing": 0, "conflict": 3}.get(status, 1)
+
+
+def cmd_finish(cwd, args):
+    wt, status, message, extra = _run_automerge(cwd, args, "usage: agent-kit worktree finish <path>")
+    mark = {"merged": "✔", "nothing": "✔", "conflict": "⚠", "blocked": "✖"}[status]
+    print(f"{mark} worktree {status}: {message}")
+    return {"merged": 0, "nothing": 0, "conflict": 3}.get(status, 1)
+
+
 def _grok_source(session, wt):
     """Grok's worktree is a separate clone: its session summary names the checkout it came from."""
     import glob
@@ -1362,6 +1718,10 @@ def main(argv):
         return cmd_add(cwd, rest)
     if action == "diff":
         return cmd_diff(cwd, rest)
+    if action == "finish":
+        return cmd_finish(cwd, rest)
+    if action == "automerge":
+        return cmd_automerge(cwd, rest)
     if action in ("remove", "rm"):
         return cmd_remove(cwd, rest)
     if action == "status":
@@ -1370,7 +1730,7 @@ def main(argv):
         return cmd_heal(cwd, rest)
     if action == "list":
         return subprocess.run(["git", "-C", cwd, "worktree", "list"]).returncode
-    die(tr(f"lệnh không hợp lệ '{action}'", f"unknown action '{action}'") + " (add | diff | remove | status | list)")
+    die(tr(f"lệnh không hợp lệ '{action}'", f"unknown action '{action}'") + " (add | diff | finish | remove | status | list)")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@
 # another live session holds, and a session that itself runs in a linked worktree are not its business.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
+export WORKTREE_AUTO_MERGE=0   # this file tests the HOLD logic; the automatic merge has its own tests (test_worktree_merge_gate_owner.sh, tests/worktree_git/test_worktree_automerge.sh)
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$DEVKIT_DIR/hooks/worktree_merge_gate.sh"
 TMP="$(mktemp -d)"

@@ -260,8 +260,19 @@ case "$CMD" in
     shift || true
     python3 "$(find_script governance matrix_detect.py)" "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" "$@"
     ;;
+  allow-shared)
+    # allow-shared [--minutes N] | off — the USER's approval for a second live session to write in a checkout another session holds
+    # (bin/session_lock.py): run it with `!`; an agent's own Bash call that does is blocked by the lock hook
+    shift || true
+    if [ "${1:-}" = "off" ]; then
+      shift || true
+      python3 "$DEVKIT_ROOT/bin/session_lock.py" --allow-shared-off "$@"
+    else
+      python3 "$DEVKIT_ROOT/bin/session_lock.py" --allow-shared "$@"
+    fi
+    ;;
   worktree|wt)
-    # worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory] | diff <path> | remove <path> | list
+    # worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory] | diff <path> | finish <path> | remove <path> | list
     shift || true
     python3 "$(find_script git worktree.py)" "$@"
     ;;
@@ -395,6 +406,15 @@ Commands:
   worktree diff <path>
                       Its own changes as a patch, DevKit setup left out; bring them back
                       with: agent-kit worktree diff ../app-x | git apply --3way
+  worktree finish <path>
+                      Merge its work into the main branch BY ITSELF and remove it (the Stop gate runs it
+                      for you): uncommitted work is committed in the worktree, main is merged into the
+                      worktree (a conflict is resolved THERE, safely), main only fast-forwards, then the
+                      removal. Exit 0 done, 3 conflict (resolve in the worktree, run it again), 1 blocked.
+                      Works on worktrees EnterWorktree / a subagent made. automerge = same, one JSON line
+  allow-shared [--minutes N] | off
+                      The USER lets a second live session write in a checkout another session holds
+                      (default 60 minutes; type it after a "!" in the prompt); agents cannot switch it on or off
   worktree remove <path>
                       Remove it once nothing of its work would be lost (uncommitted changes in the
                       main checkout; a named branch keeps its commits, a detached worktree's

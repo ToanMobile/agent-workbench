@@ -212,7 +212,7 @@ def c_merge_gate(root, v):
     jl(tr, [{"type": "user", "timestamp": ts, "message": {"content": "go"}}, tool("Bash", {"command": "git worktree add -b feat %s" % wt})])
     git(p, "worktree", "add", "-q", "-b", "feat", wt)
     write(os.path.join(wt, "n.txt"), "n\n"); git(wt, "add", "n.txt"); git(wt, "commit", "-qm", "new")
-    return dict(hook="worktree_merge_gate.sh", env={"CLAUDE_PROJECT_DIR": p},
+    return dict(hook="worktree_merge_gate.sh", env={"CLAUDE_PROJECT_DIR": p, "WORKTREE_AUTO_MERGE": "0"},   # (this fixture tests the isolation of the HOLD path)
                 payload={"session_id": "s-" + v, "hook_event_name": "Stop", "transcript_path": tr})
 
 

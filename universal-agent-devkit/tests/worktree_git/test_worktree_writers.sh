@@ -358,7 +358,7 @@ TR="$TMP/mg.jsonl"
 python3 -c 'import json,datetime;print(json.dumps({"type":"user","timestamp":datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00","Z"),"message":{"content":"go"}}))' > "$TR"
 sleep 1.2
 M="$TMP/mg"; mkdir -p "$M" && G "$M" init -q -b main . && echo a > "$M/a.txt" && G "$M" add a.txt && G "$M" commit -qm init
-mg_stop() { printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "$1" "$TR" | CLAUDE_PROJECT_DIR="$M" bash "$DEVKIT_DIR/hooks/worktree_merge_gate.sh" >"$TMP/mg.out" 2>"$TMP/mg.err"; }
+mg_stop() { printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "$1" "$TR" | CLAUDE_PROJECT_DIR="$M" WORKTREE_AUTO_MERGE=0 bash "$DEVKIT_DIR/hooks/worktree_merge_gate.sh" >"$TMP/mg.out" 2>"$TMP/mg.err"; }   # (these cases test the HOLD advice; the automatic merge has its own tests)
 mg_use() { python3 -c 'import json,sys;print(json.dumps({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":sys.argv[1]}}]}}))' "$1" >> "$TR"; }
 mg_use "agent-kit worktree add ../mg-det"; G "$M" worktree add -q --detach "$TMP/mg-det" && echo d > "$TMP/mg-det/d.txt"
 mg_stop s1; rc=$?

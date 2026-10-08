@@ -32,6 +32,7 @@ CLI: push_gate.py <dir> [<rev>] [--tag-remote <name>] | --all-tags <name> | --al
 import json
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 
@@ -230,6 +231,33 @@ def untestable_only(top, project, paths):
         return False
 
 
+def recovery_hint(top, rev, head):
+    """Second line of the "gated commit is not in the history of <rev>" refusal (OfficeReader 2026-10-08: a clone on a detached
+    HEAD passed the gate, then `git push origin main` said only that, and nobody could tell the LOCAL main was stale): where the
+    repository is, where HEAD is, and - when the branch <rev> is an ancestor of HEAD and the gated commit is in HEAD's history -
+    the one command that fast-forwards it. Never raises: a hint must not turn a refusal into a crash."""
+    gate_advice = f"`{GATE}` (exit 0) trên đúng code sẽ push, commit, rồi push lại"
+    try:
+        def is_ancestor(a, b):
+            return subprocess.run(["git", "-C", top, "merge-base", "--is-ancestor", a, b],
+                                  capture_output=True, timeout=5).returncode == 0
+        rc, cur = git(top, "symbolic-ref", "-q", "--short", "HEAD")
+        branch = cur.strip() if rc == 0 else ""
+        rc, tip = git(top, "rev-parse", "HEAD")
+        tip = tip.strip() if rc == 0 else ""
+        where = f"repo {top}, " + (f"HEAD ở nhánh {branch}" if branch else "HEAD đang detached") + (f" tại {tip[:10]}" if tip else "")
+        rc, _ = git(top, "rev-parse", "--verify", "-q", f"refs/heads/{rev}")
+        if rev != "HEAD" and rc == 0 and tip and is_ancestor(rev, tip) and is_ancestor(head, tip):
+            fix = f"cd {shlex.quote(top)} && git switch {shlex.quote(rev)} && git merge --ff-only {tip}"
+            covered, _why = check(top, tip)   # would the push of HEAD itself pass? (a commit added after the gate would not)
+            then = "rồi push lại (không cần chạy lại gate)" if covered else f"rồi chạy lại {gate_advice} (HEAD có code mới hơn lần gate)"
+            return (f"{where}. Nhánh local {rev} cũ hơn commit đã qua gate (clone detached hoặc đang ở nhánh khác): "
+                    f"chạy `{fix}` {then}")
+        return f"{where}. Nếu đã pull/rebase/squash sau lần gate: chạy {gate_advice}"
+    except (OSError, subprocess.SubprocessError, ValueError, RuntimeError):   # (check() below may raise RuntimeError: a hint never turns a refusal into a crash)
+        return f"repo {top}. Chạy {gate_advice}"
+
+
 def approved(top, rng):
     rc, out = git(top, "log", "--format=%B", rng)
     return rc == 0 and APPROVED in out
@@ -265,7 +293,8 @@ def check(cwd, rev="HEAD", tag_remote=None):
     head = receipt["head"]
     if subprocess.run(["git", "-C", top, "merge-base", "--is-ancestor", head, rev],
                       capture_output=True, timeout=5).returncode != 0:
-        return False, f"lần gate PASS gần nhất ({head[:10]}) không nằm trong lịch sử của {rev} (pull/rebase sau gate?)"
+        return False, (f"lần gate PASS gần nhất ({head[:10]}) không nằm trong lịch sử của {rev} (pull/rebase sau gate?)\n"
+                       + recovery_hint(top, rev, head))
     if approved(top, f"{head}..{rev}"):
         return True, APPROVED
     rc, out = git(top, "diff", "--name-only", "--no-renames", "-z", head, rev)
@@ -303,7 +332,8 @@ def main(argv):
     except (subprocess.TimeoutExpired, RuntimeError, OSError) as e:
         ok, reason = False, f"không kiểm được biên nhận gate ({e})"
     if not ok:
-        print(f"{reason} — chạy `{GATE}` (exit 0) trên đúng code sẽ push, commit, rồi push lại")
+        # a reason with a second line carries its own next step (recovery_hint): the generic one would contradict it
+        print(reason if "\n" in reason else f"{reason} — chạy `{GATE}` (exit 0) trên đúng code sẽ push, commit, rồi push lại")
     return 0 if ok else 2
 
 
