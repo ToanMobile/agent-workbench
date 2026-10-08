@@ -14,6 +14,8 @@ Audits the working-tree changes after a bug fix:
     command. `--run-tests` alone (the Stop hook) uses selection and reports
     "PASS (impacted: N tests)"; `--full`, POSTFIX_GATE_FULL=1, CI=true and
     --record-lesson run every command in full — the run required before handover.
+  - "covered_by": "<suite id>" on a matrix test: not run when that suite ran its FULL command earlier
+    in the same run and passed (shown PASS, label COVERED); any other state runs it as before.
     `--staged` (pre-commit) runs no test at all.
   - Reports only what was actually checked. RED/GREEN oracle receipts, immutable
     guards and OpenCodeReview are listed as "not verified here".
@@ -3987,6 +3989,7 @@ def main():
                 "files": rule_files,
                 "untested_exit": test.get("untested_exit"),
                 "parallel_safe": test.get("parallel_safe") is True,
+                "covered_by": test.get("covered_by") if isinstance(test.get("covered_by"), str) else None,
                 "status": "NOT_RUN",
                 "duration": "-",
             })
@@ -4036,7 +4039,8 @@ def main():
                         "name": test.get("name"), "command": test.get("command"),
                         "impacted_command": test.get("impacted_command"), "files": [],
                         "untested_exit": test.get("untested_exit"), "status": "NOT_RUN", "duration": "-",
-                        "parallel_safe": test.get("parallel_safe") is True, "stale_rerun": True})
+                        "parallel_safe": test.get("parallel_safe") is True, "stale_rerun": True,
+                        "covered_by": test.get("covered_by") if isinstance(test.get("covered_by"), str) else None})
         reran = [t["id"] for t in regression_tests if t.get("stale_rerun")]
         if reran:
             print(f"  • {tr('Chạy lại suite STALE của checklist (--full)', 'Re-running the checklist STALE suites (--full)')}: "
@@ -4295,6 +4299,23 @@ def main():
         if run_tests and t["command"] and budget_spent():
             mark_budget(t)
             continue
+        if (run_tests and t["command"] and t.get("covered_by") and t["covered_by"] != t.get("id")
+                and (force_reason or not t.get("impacted_command"))):
+            # "covered_by": the matrix says another suite already runs this suite's tests (GeelyEx2: REG-CAR-VOICE is a
+            # --tests subset of REG-CAR-01's task, 30 of 30 runs repeated it, median 90 s). Skipped only when that suite ran its
+            # FULL command earlier in this run and passed; any other state (it failed, is UNTESTED, ran impacted, comes later,
+            # is unknown, is itself covered) runs this suite as before. The matrix that says so is the base-ref one. A suite
+            # that would run IMPACTED here (an impacted_command and no --full) is not covered: that run is also where the
+            # vacuity revert checks its tests.
+            drain()   # the cover may still be running in the group
+            cov = next((c for c in regression_tests if c.get("id") == t["covered_by"]), None)
+            if cov is not None and cov.get("mode") == "full" and cov.get("status") == "PASS":   # "full" = its own full command
+                t.update({"status": "PASS", "label": "COVERED", "duration": "0s", "mode": "covered",
+                          "exit_code": cov.get("exit_code"), "log": cov.get("log"),
+                          "mode_reason": tr(f"{cov['id']} đã chạy lệnh đầy đủ và PASS trong lượt này",
+                                            f"{cov['id']} ran its full command and passed in this run")})
+                print(f"    {CYAN}▶ {t['id']}: {tr('ĐÃ ĐƯỢC PHỦ', 'COVERED')} — {t['mode_reason']}{RESET}")
+                continue
         if run_tests and t["command"] and unity_will_test and "compile" in (t["command"] or "").lower() and "test" not in (t["command"] or "").lower().split("compile", 1)[-1]:
             t["status"] = "PASS"
             t["label"] = "SKIP compile"
