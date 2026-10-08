@@ -1,0 +1,8 @@
+id,isLandscape,isGestureNav,statusInset,navInset,cutoutInset,fontScale,isRtl
+portrait_gesture,false,true,24,16,0,1.0,false
+portrait_3button,false,false,24,48,0,1.0,false
+landscape_gesture,true,true,24,16,0,1.0,false
+landscape_3button,true,false,24,48,0,1.0,false
+portrait_cutout,false,true,24,16,32,1.0,false
+portrait_font200,false,true,24,16,0,2.0,false
+portrait_rtl,false,true,24,16,0,1.0,true

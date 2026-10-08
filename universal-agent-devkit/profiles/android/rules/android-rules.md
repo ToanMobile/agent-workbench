@@ -127,3 +127,4 @@
 - **Hit area và kích thước nhìn:** Icon nhìn thấy có thể 24–32dp; hit area bắt buộc ≥ 48×48dp. Hai vùng tương tác cách nhau ≥ 8dp.
 - **Thumb zone:** Primary CTA (Ký, Xác nhận, Tiếp tục) nằm trong 40% nửa dưới màn hình.
 - **Frame budget 16.6ms:** Cấm `Column` + `verticalScroll` cho danh sách động. Dùng `LazyColumn`/`LazyRow` với stable key. Tính toán nặng trong Composable đi qua `remember` hoặc `derivedStateOf`.
+- **Kiểm chứng bất biến chồng lấn/Insets:** Khi đổi layout/overlay/inset/cử chỉ có nhiều vùng chạm/chrome đáy-cạnh ⇒ thêm/cập nhật test bảng cấu hình bằng helper `compose-overlap-invariants` + ma trận trạng thái (hướng × kiểu điều hướng cử chỉ/3 nút × inset status/nav/cutout × font scale × RTL và các trạng thái riêng của màn hình (ví dụ thanh công cụ ẩn/hiện, trình phát nổi), mỗi ô một dòng kết quả). Không dùng snapshot toạ độ tuyệt đối trừ khi thật sự cần.
