@@ -179,7 +179,7 @@
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-GATE-01/20261008-151148.log",
         "deleted": [],
-        "reused_at": "2026-10-08 15:21:49"
+        "reused_at": "2026-10-08 15:22:43"
       },
       "history": [
         {
@@ -261,7 +261,7 @@
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-GATE-02/20261008-150932.log",
         "deleted": [],
-        "reused_at": "2026-10-08 15:21:49"
+        "reused_at": "2026-10-08 15:22:43"
       },
       "history": [
         {
@@ -343,7 +343,7 @@
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-HOOK-01/20261008-151033.log",
         "deleted": [],
-        "reused_at": "2026-10-08 15:21:49"
+        "reused_at": "2026-10-08 15:22:43"
       },
       "history": [
         {
@@ -422,7 +422,7 @@
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-GATE-02/20261008-150932.log",
         "deleted": [],
-        "reused_at": "2026-10-08 15:21:49"
+        "reused_at": "2026-10-08 15:22:43"
       },
       "history": [
         {
@@ -580,7 +580,7 @@
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-ALL-01/20261008-151418.log",
         "deleted": [],
-        "reused_at": "2026-10-08 15:21:49"
+        "reused_at": "2026-10-08 15:22:43"
       },
       "history": [
         {
@@ -687,7 +687,7 @@
         "exit_code": 0,
         "log": ".agents/evidence/REG-WB-CONFIG-01/20261008-151418.log",
         "deleted": [],
-        "reused_at": "2026-10-08 15:21:49"
+        "reused_at": "2026-10-08 15:22:43"
       },
       "history": [
         {
@@ -1077,7 +1077,7 @@
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-SESSION-01/20261008-150922.log",
         "deleted": [],
-        "reused_at": "2026-10-08 15:21:49"
+        "reused_at": "2026-10-08 15:22:43"
       },
       "history": [
         {
