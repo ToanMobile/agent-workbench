@@ -537,6 +537,53 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
                     for f in mtimes:
                         if f in cnt or (len(Path(f).name) >= 6 and Path(f).name in cnt):
                             approved_at[f] = max(approved_at.get(f, 0), t)
+    # ponytail: duyệt được nhớ theo (đường dẫn, nội dung) trong phạm vi transcript còn quét được, không gắn với blob HEAD gốc; gắn base blob nếu việc yếu hoá lại test sau khi revert thành vấn đề
+    hash_file = root / ".claude" / "audit-gate" / "approved_hashes.json"
+    saved_hashes = {}
+    if hash_file.is_file():
+        try:
+            with open(hash_file, "r", encoding="utf-8") as hf:
+                saved_hashes = json.load(hf)
+                if not isinstance(saved_hashes, dict):
+                    saved_hashes = {}
+        except Exception:
+            saved_hashes = {}
+
+    new_hashes = saved_hashes.copy()
+    
+    for f in paths:
+        if f not in mtimes:
+            continue
+            
+        try:
+            with open(root / f, "rb") as content_file:
+                file_hash = hashlib.sha256(content_file.read()).hexdigest()
+        except OSError:
+            continue
+            
+        if user_at.get(f, 0) >= mtimes[f]:
+            new_hashes[f] = file_hash
+        elif user_at.get(f, 0) > 0 and saved_hashes.get(f) == file_hash:
+            new_hashes[f] = file_hash
+            # Exempt from mtime check by updating the approval timestamps
+            t_now = mtimes[f] + 1
+            approved_at[f] = max(approved_at.get(f, 0), t_now)
+            user_at[f] = max(user_at.get(f, 0), t_now)
+
+    for old_f in list(new_hashes.keys()):
+        if not (root / old_f).is_file():
+            del new_hashes[old_f]
+
+    if new_hashes != saved_hashes:
+        try:
+            hash_file.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(dir=hash_file.parent, prefix='approved_hashes.', suffix='.tmp')
+            with os.fdopen(fd, 'w', encoding="utf-8") as th:
+                json.dump(new_hashes, th)
+            os.replace(tmp_path, hash_file)
+        except (OSError, ValueError):
+            pass
+
     ok = [f for f in paths if f in mtimes and approved_at.get(f, 0) >= mtimes[f]]
     APPROVED_BY.update({f: "user" if user_at.get(f, 0) >= mtimes[f] else "agent" for f in ok})
     return [f for f in paths if f not in ok], ok

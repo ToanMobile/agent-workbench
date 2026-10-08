@@ -17,6 +17,11 @@
 # unit-test variants only for the testBuildType, so a `testBuildType = "release"`
 # module has no Debug task and used to be dropped as "lacks the task" (OfficeReader
 # :app, 2026-09-23). Read the way scripts/matrix_detect.py reads it.
+#
+# Khóa (Locking): Cần `.claude/audit-gate/test_run.lock` khi biên dịch. Nếu bị giữ
+# quá TESTSOURCESET_LOCK_WAIT_S (mặc định 20s), trả về BUSY = exit 0 + systemMessage
+# 'UNTESTED', không cache, không biên dịch. Nếu cây đã cache 'block', không chờ khóa.
+#
 # Skips entirely when there are no uncommitted .kt/.java changes, and when THIS
 # session wrote none of them (bin/session_authorship.py, post-fix-gate's rule: Edit/Write/
 # MultiEdit, a sub-agent's edit, a write-shaped Bash command, or an mtime inside one of its
@@ -264,8 +269,44 @@ if [ "${CACHED}" = pass ]; then
   exit 0
 fi
 
+
+if [ "${CACHED}" != block ] && [ "${HAVE_PY}" = 1 ]; then
+  LOCK_FILE="${LOG_DIR}/test_run.lock"
+  { exec 9>>"${LOCK_FILE}"; } 2>/dev/null || true
+  if { >&9; } 2>/dev/null; then
+    WAIT_LIMIT="${TESTSOURCESET_LOCK_WAIT_S:-20}"
+    LOCKED="$(TS_WAIT="${WAIT_LIMIT}" python3 -I -c '
+import sys, fcntl, time, os
+try:
+    end = time.monotonic() + float(os.environ.get("TS_WAIT", "20"))
+except ValueError:
+    end = time.monotonic() + 20.0
+while True:
+    try:
+        fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        print("1")
+        sys.exit(0)
+    except BlockingIOError:
+        if time.monotonic() >= end:
+            print("0")
+            sys.exit(0)
+        time.sleep(0.5)
+    except Exception:
+        print("1")
+        sys.exit(0)
+' 2>/dev/null)"
+    if [ "${LOCKED}" = "0" ]; then
+      log "BUSY — lock held (waited ${WAIT_LIMIT}s)"
+      sysmsg "⚠ TEST-SOURCESET GATE UNTESTED — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau (${LOG_DIR}/test_run.lock); test source set CHƯA chạy, KHÔNG phải PASS."
+      { exec 9>&-; } 2>/dev/null || true
+      exit 0
+    fi
+  fi
+fi
+
 # Paths are newline-separated and may contain spaces (QA K-7): iterate on
 # newlines only, with globbing off.
+
 set -f
 NL='
 '
@@ -343,7 +384,7 @@ compile_root() {
   # the modules Gradle names as lacking the task and re-run the rest.
   local keep missing
   for _round in 1 2 3; do
-    OUT="$(cd "${root}" && ./gradlew ${TASKS} --quiet 2>&1)"
+    OUT="$(cd "${root}" && ./gradlew ${TASKS} --quiet 2>&1 9>&-)"
     RC=$?
     [ ${RC} -eq 0 ] && break
     missing="$(printf '%s\n' "${OUT}" | sed -n "s/.*not found in project '\\(:[^']*\\)'.*/\\1/p" | sort -u)"
