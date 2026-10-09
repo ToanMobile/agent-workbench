@@ -202,6 +202,10 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
   system denies is never worked around: report CHƯA XONG with what was denied and why it is
   needed, everything else finished. Only the "ask the user" list below, a login only the user
   can type, and a switch the kit reserves for the user go to the user.
+- Clean up what you create (user, 2026-10-09: 33 GB of scratch filled the disk): a repo copy,
+  stage kit or fixture is deleted in the same turn its purpose is served, a copy as soon as it
+  was pushed from. The session hooks remove the session's temp dir at SessionEnd and prune
+  dead sessions' dirs (idle 24 h) at SessionStart (`scripts/governance/scratch_cleanup.py`).
 - Decide, don't ask. Agent tự chủ tối đa: Khi thấy tốt hơn hoặc cần thiết thì TỰ AUTO DUYỆT
   (auto-approve) các thay đổi test và code sau khi kiểm chứng test PASS. Tuyệt đối KHÔNG hỏi
   phiền người dùng bằng AskUserQuestion "Duyệt / không duyệt" với các thay đổi code/test thông

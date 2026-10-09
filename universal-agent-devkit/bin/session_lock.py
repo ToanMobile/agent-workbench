@@ -452,6 +452,21 @@ def check_last_active(argv):
     return 0 if is_last else 1
 
 
+def spawn_scratch_cleanup(*args):
+    """Detached scripts/governance/scratch_cleanup.py (user 2026-10-09: 33 GB of Claude Code temp dirs, disk 99 % full): the
+    session hooks never wait for a large rmtree. DEVKIT_SCRATCH_CLEANUP=0 turns it off."""
+    if os.environ.get("DEVKIT_SCRATCH_CLEANUP") == "0":
+        return
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "governance", "scratch_cleanup.py")
+    if not os.path.isfile(script):
+        return
+    try:
+        subprocess.Popen([sys.executable, "-I", script, *args], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+    except OSError as e:
+        print(f"session_lock: scratch cleanup not started: {e}", file=sys.stderr)
+
+
 def log(gdir, line):
     try:
         with open(os.path.join(gdir, LOG), "a", encoding="utf-8") as f:
@@ -787,6 +802,7 @@ def main():
     lock = read_checkout_lock(gdir)
 
     if event == "SessionEnd":
+        spawn_scratch_cleanup("--end", sid)   # this session's temp dir under /tmp/claude-<uid>/ goes with it
         unregister_session(cwd, sid)
         if lock and lock.get("session_id") == sid:
             try:
@@ -796,6 +812,7 @@ def main():
         return 0
 
     if event == "SessionStart":
+        spawn_scratch_cleanup("--prune", "--keep", sid)   # temp dirs of sessions dead for more than 24 h
         register_session(cwd, sid, agent="claude")
         if is_free_for(lock, sid, now, idle_frees=False):
             if lock and lock.get("session_id") not in (None, sid):
