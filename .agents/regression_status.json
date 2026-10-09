@@ -579,7 +579,8 @@
         "duration": "93.60s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-ALL-01/20261009-125809.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-09 12:58:56"
       },
       "history": [
         {
@@ -685,7 +686,8 @@
         "duration": "0.48s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-WB-CONFIG-01/20261009-125809.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-09 12:58:56"
       },
       "history": [
         {
