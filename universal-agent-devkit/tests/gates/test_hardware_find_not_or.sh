@@ -66,5 +66,10 @@ check 0 "find . -name '*.pyc' \\( -type f -o -type l \\) -delete"
 check 0 "find . -name '*.tmp' -exec grep -q -o y {} \\; -delete"
 check 2 'find . \( -type f -o -name "*.x" \) -delete'
 check 2 "find . -name '*.pyc' , -delete"                       # the comma operator: -delete on its own matches everything
+# delta review: a primary's ARGUMENT that looks like an operator is not an operator
+check 2 "find . -name '(' -o -delete"                           # deletes everything but a file named (
+check 2 "find . -name x -printf '(' -o -delete"
+check 2 "find . -name x -printf '(' -o -delete -printf ')'"
+check 0 "find . -name '(' -delete"                              # a filter is still a filter, whatever its pattern is
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_find_not_or: all passed" || { echo "❌ test_hardware_find_not_or: $FAILS failed"; exit 1; }

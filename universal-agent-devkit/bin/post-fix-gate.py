@@ -436,7 +436,7 @@ _STATUS_NEUTRALIZER = re.compile(r"\bexit\s+0\b|^\s*exit\s*(?:[;#].*)?$|^\s*(?:t
 # (`echo done`) makes it exit 0 over a failing check before it (decided with the user, 2026-10-09,
 # tests/gates/test_gate_runner_no_errexit.sh: an appended code line is an edit of a shell runner that has no errexit).
 # A #! flag (#!/bin/sh -e) is not errexit: the matrix runs a runner as `bash path`, which ignores it.
-_ERREXIT = re.compile(r"^[ \t]*set[ \t]+(?:(?:-[A-Za-z]+|-o[ \t]+\w+)[ \t]+)*(?:-[A-Za-z]*e[A-Za-z]*|-o[ \t]+errexit)\b", re.M)
+_ERREXIT = re.compile(r"^[ \t]*set[ \t]+(?:(?:[-+][A-Za-z]+|[-+]o[ \t]+\w+)[ \t]+)*(?:-[A-Za-z]*e[A-Za-z]*|-o[ \t]+errexit)\b", re.M)
 
 
 def _shell_runner_without_errexit(repo_path: str, base_text: str) -> bool:

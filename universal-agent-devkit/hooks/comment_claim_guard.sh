@@ -174,10 +174,11 @@ for i, ln in enumerate(written.split("\n"), 1):
                 if end >= 0:
                     doc = None
                 continue
-            if data:   # inside an assigned triple-quoted string: its closing line is no docstring opening, its lines are data
-                if data in ln:
-                    data = None
-                continue
+            if data:   # inside an assigned triple-quoted string: its lines are data; the rest of its closing line is code
+                if data not in ln:
+                    continue
+                ln = ln[ln.index(data) + 3:]
+                data = None
             dm = DOCSTR_RE.match(ln)
             if dm:
                 rest = dm.group(2)
@@ -188,7 +189,6 @@ for i, ln in enumerate(written.split("\n"), 1):
                 if end < 0:
                     doc = dm.group(1)
                 continue
-            data = next((q for q in ("\"\"\"", "\x27\x27\x27") if ln.count(q) % 2 == 1), None)   # opens an assigned string: the rest of the line is code
         m = HASH_RE.match(ln)
         if m:
             if not ln.lstrip().startswith("#!") and not HASH_MARKER.match(m.group(1)):
@@ -201,6 +201,9 @@ for i, ln in enumerate(written.split("\n"), 1):
             body = tail.strip()
             if body:
                 comment_lines.append((i, body))
+        if is_py:   # an odd number of triple quotes in the CODE part (not in a comment) opens an assigned string
+            code = ln if tail is None else ln[:len(ln) - len(tail) - 1]
+            data = next((q for q in ("\"\"\"", "\x27\x27\x27") if code.count(q) % 2 == 1), None)
         continue
     m = COMMENT_RE.match(ln)
     if m:

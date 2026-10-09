@@ -62,6 +62,9 @@ check 0 ".md is not code"                                         notes.md      
 # review (fresh context): the CLOSING line of an assigned triple-quoted string is no docstring opening
 check 2 ".py: a claim in a real docstring after an assigned SQL string"  app/sql.py Write 'SQL = """\nSELECT 1\n"""\n\ndef f():\n    """Only used by the CLI."""\n    return 1\n'
 check 0 ".py: code after an assigned string is not read as comment"        app/msg.py Write 'MSG = textwrap.dedent("""\n    hello\n""")\nprint("covered by ops")\n'
+# delta review: a triple quote inside a COMMENT is no string, and the closing line of an assigned string keeps its trailing comment
+check 2 ".py: a comment with triple quotes does not blind the next comments" app/quote.py Write '# Wrap the body in """ quotes.\ndef f():\n    pass  # never called\n'
+check 2 ".py: a trailing comment after the closing line of an assigned string" app/sql2.py Write 'SQL = """\nselect 1\n"""  # covered by test_sql\n'
 # the full-line forms are unchanged
 check 2 ".py: full-line '# covered by' (control)"                 app/orders.py Write '# covered by test_orders\nX = 1\n'
 check 2 ".go: full-line '// covered by' (control)"                app/main.go   Write 'package main\n// covered by FooTest\nfunc f() {}\n'

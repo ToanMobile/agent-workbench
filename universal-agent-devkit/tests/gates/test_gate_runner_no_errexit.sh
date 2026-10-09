@@ -87,6 +87,11 @@ set -o pipefail -e
 grep -q "return 1" src/core.py
 ' 'echo done
 '
+case_ "set +o pipefail -e: an appended command stays a pure append" free    '#!/bin/bash
+set +o pipefail -e
+grep -q "return 1" src/core.py
+' 'echo done
+'
 # the neutralisers the gate already caught are still caught under set -e
 case_ "set -e: an appended 'exit 0' is still an edit"           flagged '#!/bin/sh
 set -e

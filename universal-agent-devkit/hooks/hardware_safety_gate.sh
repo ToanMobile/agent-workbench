@@ -377,6 +377,9 @@ def rm_target_problem(t, cwds, env, forced=True):
 # piped into `xargs rm -r…` (cat list, git ls-files, ls) cannot be read and is refused.
 FIND_NAME_FILTERS = {"-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex"}
 FIND_ESC = {"__ESC_SEMI__": ";", "__ESC_LP__": "(", "__ESC_RP__": ")"}
+FIND_ARG1 = {"-printf", "-fprint", "-fprint0", "-fls", "-type", "-xtype", "-newer", "-anewer", "-cnewer", "-user", "-group", "-perm", "-size",
+             "-atime", "-ctime", "-mtime", "-amin", "-cmin", "-mmin", "-maxdepth", "-mindepth", "-inum", "-links", "-samefile", "-regextype",
+             "-uid", "-gid", "-lname", "-ilname", "-fstype", "-context"}   # primaries with ONE argument that is no operator, whatever it looks like
 XARGS_OPTS_WITH_ARG = {"-I", "-J", "-R", "-S", "-n", "-P", "-L", "-d", "-E", "-s", "-a", "-i"}
 
 def find_starts(args):
@@ -444,7 +447,15 @@ def find_narrowed(args, starts):
                     i += 3 if nxt in FIND_NAME_FILTERS else 1
             elif a == "(":
                 sub, i = seq(i + 1, True)
+                if i >= len(args):   # never closed: nothing is known about what it covers
+                    return False, i
                 cur, i = cur or sub, i + 1
+            elif a in FIND_NAME_FILTERS:   # the pattern is an argument, whatever it looks like (-name "(")
+                cur, i = cur or i in live, i + 2
+            elif a == "-fprintf":
+                i += 3
+            elif a in FIND_ARG1:
+                i += 2
             elif a in ("-exec", "-execdir", "-ok", "-okdir"):
                 while i < len(args) and args[i] not in (";", "+"):
                     i += 1

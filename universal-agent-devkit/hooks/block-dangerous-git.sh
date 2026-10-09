@@ -707,6 +707,8 @@ def analyse_simple(tokens, depth):
     # `$g reset --hard` / `${GIT} clean -f`: a variable in command position may be git. So may a $(…) / backtick there
     # (`$(echo gi)t reset --hard`, 2026-10-09): its output is the program name.
     if prog.startswith("$") or SUBST in prog:
+        if IN_C_SCRIPT[0] and SUBST in prog:
+            PENDING_FEED.append(UNREADABLE_CSUBST)   # bash -c "( $(curl ...) )", "if $(...)", "exec $(...)": the command word is generated text
         return danger_in_git(rest[0], rest[1:]) if rest else None
     if prog in AWKS:
         reason = git_in_literals(" ".join(rest))
@@ -748,9 +750,13 @@ def analyse_simple(tokens, depth):
                 while k < len(rest) and rest[k] != "--" and len(rest[k]) > 1 and rest[k][0] in "-+":
                     k += 2 if rest[k] in SHELL_OPTS_WITH_ARG else 1
                 k += 1 if k < len(rest) and rest[k] == "--" else 0
-                if k < len(rest) and subst_command_word(rest[k]):
-                    PENDING_FEED.append(UNREADABLE_CSUBST)   # bash -c "$(curl ...)": the script is whatever the command prints
-                return analyse(rest[k], depth + 1) if k < len(rest) else None
+                if k >= len(rest):
+                    return None
+                IN_C_SCRIPT[0] += 1   # inside the script: a command word made by a command substitution is refused (analyse_simple)
+                try:
+                    return analyse(rest[k], depth + 1)
+                finally:
+                    IN_C_SCRIPT[0] -= 1
         for j, a in enumerate(rest):
             if a.startswith("<<<"):   # bash <<< STR: the here-string is the script
                 here = a[3:] if len(a) > 3 else (rest[j + 1] if j + 1 < len(rest) else "")
@@ -969,6 +975,7 @@ def outside_single_quotes(text):
 UNREADABLE_FEED = ("shell chạy văn bản do lệnh khác sinh ra (pipe / here-string vào sh, bash, xargs sh -c): cổng không "
                    "đọc được nội dung — chỉ echo / printf / cat <<heredoc literal được phân tích; chạy thẳng lệnh đó")
 PENDING_FEED = []   # an unreadable feed: the verdict when nothing else in the command blocks
+IN_C_SCRIPT = [0]   # depth of bash -c scripts being analysed
 ESCAPE = re.compile(r"\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{4}|0?[0-7]{1,3}|.)", re.S)
 ESCAPE_CHARS = {"n": "\n", "t": "\t", "r": "\r", "a": "\a", "b": "\b", "f": "\f", "v": "\v", "e": "\x1b", "\\": "\\"}
 PRINTF_SPEC = re.compile(r"%(?:%|[-+ #0]*\d*(?:\.\d+)?([a-zA-Z]))")
@@ -1072,17 +1079,6 @@ UNREADABLE_CSUBST = ("shell -c chạy văn bản do $(…) sinh ra (bash -c \"$(
                      "chạy thẳng lệnh đó")
 UNREADABLE_OSUBST = ("shell trong >(…) đọc văn bản do lệnh khác ghi vào (… | tee >(sh)): cổng không đọc được nội dung — "
                      "chạy thẳng lệnh đó")
-
-def subst_command_word(script):
-    """True when a command of a -c script starts with a generated word (a command substitution): ": ; $(curl ...)", "${V:+}$(...)",
-    "a && $(...)". NAME=value words in front of it do not count as the command."""
-    for part in re.split(r"[;&|\n]+", script):
-        words = part.split()
-        while words and re.match(r"[A-Za-z_]\w*=", words[0]):
-            words.pop(0)
-        if words and SUBST in words[0]:
-            return True
-    return False
 
 def out_subst_shell(inner):
     """True when a command inside >(…) is a shell that runs what is written to it (no -c, no script operand, or -s / a lone -)."""
