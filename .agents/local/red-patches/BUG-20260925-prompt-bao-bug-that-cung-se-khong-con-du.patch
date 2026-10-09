@@ -1,0 +1,16 @@
+diff --git a/universal-agent-devkit/scripts/context/enrich_context.py b/universal-agent-devkit/scripts/context/enrich_context.py
+--- a/universal-agent-devkit/scripts/context/enrich_context.py
++++ b/universal-agent-devkit/scripts/context/enrich_context.py
+@@ -695,10 +695,8 @@
+ # "As an AI/assistant …", "Bạn là (một) <vai>", "(Hãy) đóng vai …". A user's report that just
+ # starts with those words ("You are right, but it still crashes", "Bạn là dev Android thì xem
+ # giúp: app crash …", "Your task is to fix the crash") is still recorded (review 2026-09-25).
+-ROLE_OPENING = re.compile(
+-    r"^\W*((you are|you're|act as)\s+(a|an|the)\s+\w|your role is\b|as an? (ai|assistant|language model)\b|"
+-    r"(bạn là|mày là)\s+(một\s+)?(reviewer|agent|trợ lý|chuyên gia|kỹ sư|kiểm thử viên|planner|writer|auditor|"
+-    r"người (viết|đánh giá|kiểm|review))\b|(hãy\s+)?đóng vai\b)", re.I)
++ROLE_OPENING = re.compile(r"^\W*(you are|you're|act as|your (role|task|job) is|as an? (ai|assistant|agent|expert)\b|"
++                          r"bạn là|mày là|đóng vai|hãy đóng vai)\b", re.I)
+ SCHEMA_MARKERS = [re.compile(p, re.I) for p in (
+     r'"input_schema"\s*:', r'"\$schema"\s*:', r'"properties"\s*:\s*\{', r'"type"\s*:\s*"object"',
+     r'"parameters"\s*:\s*\{', r'"required"\s*:\s*\[', r"<tool_call\b", r"<function_calls>", r"</invoke>",

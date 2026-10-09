@@ -62,7 +62,16 @@
 set -u
 
 INPUT="$(cat)"
-REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+# The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
+# none). Outside a git tree there is no project and nothing is written (tests/gates/test_hook_log_dir.sh): a run at /
+# created /.claude/audit-gate/.
+REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
+if [ -z "${REPO_ROOT}" ]; then
+  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+  [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+  REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
+fi
+[ -n "${REPO_ROOT}" ] || { [ "${REGRESSION_GATE_PROBE:-0}" = "1" ] && printf '%s\n' '{"state":"disabled"}'; exit 0; }
 LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
 PROBE="${REGRESSION_GATE_PROBE:-0}"
 if [ "${PROBE}" != "1" ]; then  # the probe writes nothing

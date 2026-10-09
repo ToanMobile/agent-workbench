@@ -39,7 +39,8 @@ echo "X = 1" > tests/helper.py
 printf '#!/bin/sh\nexit 0\n' > gradlew && chmod +x gradlew
 touch src/build.gradle lib/build.gradle   # two Gradle modules: :src and :lib
 printf 'python3 tests/test_a.py\n' > run.sh
-printf 'for t in tests/test_*.sh; do sh "$t" || exit 1; done\n' > runall.sh
+# set -e: a runner without it counts a command appended to it as an edited test (tests/gates/test_gate_runner_no_errexit.sh); this one only gains a test
+printf 'set -e\nfor t in tests/test_*.sh; do sh "$t" || exit 1; done\n' > runall.sh
 mkdir -p more && echo "print('q')" > more/test_q.py
 printf 'for t in "$ROOT/more"/test_*.py; do :; done\n' > runq.sh
 cat > .agents/regression_matrix.active.json <<'JSON'
@@ -182,7 +183,7 @@ gate --run-tests --full; rc=$?
 [ "$rc" = 0 ] && ok "B12 an orphan already committed does not fail --full (checklist row only)" || fail "B12 exit $rc: $(tail -5 "$TMP/out")"
 [ "$(has extra/test_new.py)" = True ] && ok "B13 the committed orphan is a checklist row" || fail "B13 no row for extra/test_new.py"
 echo "print('ok')" > tests/test_d.py
-printf 'for t in tests/test_*.sh; do sh "$t" || exit 1; done\npython3 tests/test_d.py\n' > runall.sh
+printf 'set -e\nfor t in tests/test_*.sh; do sh "$t" || exit 1; done\npython3 tests/test_d.py\n' > runall.sh
 gate --run-tests --full; rc=$?
 [ "$rc" = 0 ] && ok "B14 a new test that a changed suite script runs passes --full" || fail "B14 exit $rc: $(tail -5 "$TMP/out")"
 echo "fun ok() = 1" > src/Core.kt

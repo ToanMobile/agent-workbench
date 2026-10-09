@@ -44,7 +44,7 @@ expect() {
   [ -e "$N/.claude" ] && bad="$bad N/.claude"
   if [ "$want" = "-" ]; then
     [ -e "$R/.claude" ] && bad="$bad R/.claude"
-  else
+  elif [ "$want" != "*" ]; then   # "*": the hook may write into the repo or not, but never into X / N
     [ -e "$R/.claude/audit-gate/$want" ] || bad="$bad (no R/.claude/audit-gate/$want)"
   fi
   [ -z "$bad" ] && ok "$label" || fail "$label:$bad"
@@ -70,6 +70,13 @@ claim_check.sh|Stop||||claim_check.log|{"last_assistant_message":"Lỗi nằm �
 review_gate.sh|Stop||||review_gate.log|{"last_assistant_message":"xong"}|
 hardware_safety_gate.sh|PreToolUse|Bash|{"command":"adb reboot"}|{"command":"adb reboot"}|hardware_safety_gate.log||HARDWARE_OVERRIDE=1
 block-dangerous-git.sh|PreToolUse|Bash|{"command":"git restore @R@/src/A.kt"}|{"command":"git restore @X@/repo/src/A.kt"}|restore-backup||
+bash_write_ledger.sh|PostToolUse|Bash|{"command":"echo hi > a.txt"}|{"command":"echo hi > a.txt"}|bash_write_ledger.tsv|{"tool_use_id":"tu1"}|
+security_gate.sh|Stop||||.gitignore|{"last_assistant_message":"xong"}|
+proof_gate.sh|Stop||||.gitignore|{"last_assistant_message":"XONG"}|
+regression_gate.sh|Stop||||.gitignore|{"last_assistant_message":"XONG"}|
+test_evidence_gate.sh|Stop||||.gitignore|{"last_assistant_message":"da fix, test pass"}|
+review_timing_guard.sh|PostToolUse|Edit|{"file_path":"@R@/src/A.kt","old_string":"a","new_string":"b"}|{"file_path":"@N@/B.kt","old_string":"a","new_string":"b"}|.gitignore||
+prompt_context.sh|UserPromptSubmit||||*|{"prompt":"fix the crash in the login flow please, it throws NPE"}|
 EOF
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hook_log_dir: all passed" || { echo "❌ test_hook_log_dir: $FAILS failed"; exit 1; }

@@ -52,6 +52,29 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "⚠ churn_guard: python3 không có — gate này KHÔNG chạy, kết quả không được kiểm." >&2
   exit 0
 fi
+# Fast path (2026-10-09, decision-neutral; tests/gates/test_churn_guard_fast_path.sh): python warns only when the transcript holds
+# exactly N landed edits of this file NAME since the last evidence call (N = CHURN_GUARD_MAX, 3 by default). Every landed edit is a
+# tool_use line that names the file, so fewer than N lines naming it cannot warn: count them with grep (~8 ms on a 27 MB transcript)
+# and skip python (~30 ms a call). Anything unusual (a JSON escape in the name, a non-numeric N, no transcript, a payload over
+# 128 KiB) goes to python as before.
+if [ "${#INPUT}" -lt 131072 ]; then
+  _CG_N="${CHURN_GUARD_MAX:-3}"
+  case "${_CG_N}" in ''|*[!0-9]*) _CG_N="" ;; *) [ "${_CG_N}" -ge 2 ] || _CG_N=2 ;; esac
+  _CG_RX_F='"(file_path|notebook_path)"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+  _CG_RX_T='"transcript_path"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+  _CG_RX_B='^[A-Za-z0-9._+@=, -]+$'   # a name JSON writes as it is: no escape to miss in the transcript
+  if [ -n "${_CG_N}" ] && [[ ${INPUT} =~ ${_CG_RX_F} ]]; then
+    _CG_B="${BASH_REMATCH[2]##*/}"
+    if [ -n "${_CG_B}" ] && [[ ${_CG_B} =~ ${_CG_RX_B} ]] && [[ ${INPUT} =~ ${_CG_RX_T} ]] && [ -f "${BASH_REMATCH[1]}" ]; then
+      _CG_C="$(grep -c -F -- "${_CG_B}" "${BASH_REMATCH[1]}" 2>/dev/null)"
+      case "${_CG_C}" in ''|*[!0-9]*) ;; *)
+        if [ "${_CG_C}" -lt "${_CG_N}" ]; then
+          [ -n "${LOG_DIR}" ] && echo "[$(date +%Y-%m-%dT%H:%M:%S)] ${_CG_B}: ${_CG_C}/${_CG_N} lines naming it — pass (fast path)" >> "${LOG_DIR}/churn_guard.log" 2>/dev/null
+          exit 0
+        fi ;; esac
+    fi
+  fi
+fi
 # The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable python could not
 # start and the guard stayed quiet (tests/gates/test_hook_large_payload.sh).
 CHURN_LOG="${LOG_DIR:+${LOG_DIR}/churn_guard.log}" \

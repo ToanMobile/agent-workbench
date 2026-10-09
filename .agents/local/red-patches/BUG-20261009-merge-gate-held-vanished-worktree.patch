@@ -1,0 +1,20 @@
+diff --git a/universal-agent-devkit/hooks/worktree_merge_gate.sh b/universal-agent-devkit/hooks/worktree_merge_gate.sh
+index 016c955..e561dfe 100755
+--- a/universal-agent-devkit/hooks/worktree_merge_gate.sh
++++ b/universal-agent-devkit/hooks/worktree_merge_gate.sh
+@@ -281,15 +281,6 @@ except (Exception, SystemExit) as e:
+     else:
+         why = type(e).__name__ + ": " + str(e)[:160].replace(chr(10), " ")
+     pending += [unknown_row(w, "gate error: " + why, "error") for w in want]
+-# A worktree whose folder is gone by now was removed since the inventory: the background merge of the last Stop finished its last step
+-# while this Stop was reading it (tests/gates/test_worktree_merge_gate_vanished.sh). That is what this gate asks for, so its row is
+-# done, not a hold ("merged, remove it" for a path that no longer exists). A row with a reason (the gate could not judge it) stays.
+-vanished = [r for r in pending if not r.get("reason") and not os.path.isdir(r["path"])]
+-if vanished:
+-    pending = [r for r in pending if r not in vanished]
+-    for r in vanished:
+-        owed.discard(os.path.realpath(r["path"]))
+-        owners.pop(os.path.realpath(r["path"]), None)
+ 
+ am_done, am_running = [], []
+ if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != "0":

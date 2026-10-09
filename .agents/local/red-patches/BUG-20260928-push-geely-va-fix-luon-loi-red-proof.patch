@@ -1,0 +1,41 @@
+diff --git a/universal-agent-devkit/scripts/testing/red_proof.py b/universal-agent-devkit/scripts/testing/red_proof.py
+index 06dd06b..c6d971c 100755
+--- a/universal-agent-devkit/scripts/testing/red_proof.py
++++ b/universal-agent-devkit/scripts/testing/red_proof.py
+@@ -535,7 +535,6 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
+         return {**base, "status": "PENDING",
+                 "reason": "suite nặng (Gradle/Unity) — chạy với --heavy (`agent-kit nightly` nếu đã cài, hoặc tay: red_proof.py . --pending --heavy --wait)"}
+     fix_commit = None if patch else (fix_commit or item.get("fix_commit"))
+-    guessed = False
+     if not fix_commit and not patch and fix_reason:
+         return {**base, "status": "INCONCLUSIVE", "reason": fix_reason}
+     if patch:
+@@ -549,18 +548,6 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
+                     "reason": "patch sửa file test (" + ", ".join(in_tests[:4]) + ") — chứng minh chỉ được đổi code sản xuất"}
+     elif fix_commit:
+         mode, fix = "revert", []
+-    elif tests and all(git(project, "cat-file", "-e", f"HEAD:{t}").returncode == 0 for t in tests) \
+-            and git(project, "diff", "--quiet", "HEAD", "--", *tests).returncode == 0:
+-        # Every test is committed unchanged, so the fix is committed too and HEAD already holds it:
+-        # session mode would run RED on the fixed code and call a real guard VACUOUS (agent-workbench
+-        # 2026-09-28, with another session's file as "the fix"). The commit that added the test is
+-        # the TDD pair — revert it. A guess never convicts the test: VACUOUS → INCONCLUSIVE below.
+-        adds = list(dict.fromkeys(a for a in (git(project, "log", "-1", "--diff-filter=A", "--format=%H", "--", t)
+-                                               .stdout.strip() for t in tests) if a))
+-        if len(adds) != 1:
+-            return {**base, "status": "INCONCLUSIVE",
+-                    "reason": "test đã commit — không suy ra được commit sửa (chạy với --fix-commit <sha>)"}
+-        fix_commit, guessed, mode, fix = adds[0][:12], True, "revert", []
+     else:
+         mode = "session"
+         changed = git(project, "diff", "--name-only", "HEAD").stdout.split() + \
+@@ -681,9 +668,6 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
+                                           "khai trong .agents/local/red_proof.json {\"copy\": [...]})")
+     else:
+         status, reason = "INCONCLUSIVE", "đỏ khi bỏ bản sửa nhưng output không nêu tên test — đỏ vì lý do khác?"
+-    if guessed and status == "VACUOUS":
+-        status, reason = "INCONCLUSIVE", (f"test vẫn xanh khi bỏ {fix_commit} — commit tự suy ra (commit thêm test) có thể "
+-                                          "không phải bản sửa: chạy với --fix-commit <sha>")
+     if mode == "patch":
+         reason = {"PROVEN": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+                   "VACUOUS": "test vẫn xanh khi áp patch đưa bug trở lại — test (hoặc patch) không bắt đúng bug"

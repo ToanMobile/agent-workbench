@@ -202,3 +202,8 @@
 4 tests/gates/test_worktree_merge_gate_vanished.sh
 1 tests/gates/test_review_timing_guard_big_payload.sh
 1 tests/verification/test_run_impacted_since.sh
+1 tests/gates/test_churn_guard_fast_path.sh
+2 tests/gates/test_comment_claim_docstring_trailing.sh
+3 tests/gates/test_gate_js_describe_scope.sh
+6 tests/gates/test_gate_runner_no_errexit.sh
+1 tests/verification/test_impact_map_bug_capture.sh

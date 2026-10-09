@@ -1,0 +1,70 @@
+diff --git a/universal-agent-devkit/bin/post-fix-gate.py b/universal-agent-devkit/bin/post-fix-gate.py
+index 4897cd9..314124a 100755
+--- a/universal-agent-devkit/bin/post-fix-gate.py
++++ b/universal-agent-devkit/bin/post-fix-gate.py
+@@ -5170,7 +5170,6 @@ def main():
+             "matrix_problem": matrix_problem, "tests_touched": tests_touched,
+             "tests_touched_other": tests_touched_other, "tests_approved": tests_approved,
+             "busy": run_tests and not lock_held,   # another run held test_run.lock: tests not run
+-            "budget_exhausted": any(t.get("label") == "BUDGET" for t in regression_tests),   # GATE_TOTAL_BUDGET_S spent
+             "test_mode": test_mode, "full_run_required": bool(impacted_run),
+             "devkit_artifacts_skipped": len(devkit_artifacts), "device": device_state,
+             "static": {"secrets": len(secrets), "lazy": len(lazy_findings), "dependencies": len(dep_findings),
+diff --git a/universal-agent-devkit/hooks/regression_gate.sh b/universal-agent-devkit/hooks/regression_gate.sh
+index 3c9f873..053ebf3 100755
+--- a/universal-agent-devkit/hooks/regression_gate.sh
++++ b/universal-agent-devkit/hooks/regression_gate.sh
+@@ -639,15 +639,6 @@ if res.returncode == 4 and summary.get("busy"):
+     print(json.dumps({"systemMessage": "Regression gate UNTESTED — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau "
+                       "(.claude/audit-gate/test_run.lock); test hồi quy CHƯA chạy, KHÔNG phải PASS."}, ensure_ascii=False))
+     sys.exit(0)
+-if res.returncode == 4 and summary.get("budget_exhausted"):
+-    # Time budget spent: some suites did not start. Nothing to fix in the change and no verdict to remember: say it every
+-    # time, cache nothing (the next stop runs again), do not advance verified_head.
+-    left = [str(t.get("id") or "?") for t in summary.get("regression_tests", []) if t.get("label") == "BUDGET"]
+-    note("budget fp=%s left=%s" % (fp, ",".join(left)))
+-    print(json.dumps({"systemMessage": "Regression gate UNTESTED — hết ngân sách thời gian (%ss): %s chưa chạy — KHÔNG phải PASS; "
+-                      "chạy `postfix-gate --run-tests --full` trước khi bàn giao. (REGRESSION_GATE_BUDGET_S)"
+-                      % (budget_s, ", ".join(left))}, ensure_ascii=False))
+-    sys.exit(0)
+ if res.returncode == 4 and summary:
+     # UNTESTED: every test that could run passed, but one cannot run on this machine
+     # (its matrix untested_exit, e.g. unity-batch.sh without a Unity Editor). Blocking
+@@ -780,8 +771,7 @@ for t in failing:
+ for t in busy:
+     lines.append("  - %s %s: %s — chưa chạy (%s); KHÔNG phải PASS" % (
+         t.get("id"), t.get("name"), t.get("label") or t.get("status"),
+-        "một lượt khác giữ khoá test, chạy lại sau" if t.get("label") == "BUSY"
+-        else "hết ngân sách thời gian, chạy lại sau" if t.get("label") == "BUDGET" else "không chạy được trên máy này"))
++        "một lượt khác giữ khoá test, chạy lại sau" if t.get("label") == "BUSY" else "không chạy được trên máy này"))
+ for f in summary.get("findings", [])[:10]:
+     # static findings (secrets, placeholders, dependencies …) with the exact place to fix
+     lines.append("  - %s %s:%s: %s" % (f.get("category"), f.get("file"), f.get("line") or "?", f.get("message")))
+diff --git a/universal-agent-devkit/hooks/session_context.sh b/universal-agent-devkit/hooks/session_context.sh
+index cd73282..098bfb5 100755
+--- a/universal-agent-devkit/hooks/session_context.sh
++++ b/universal-agent-devkit/hooks/session_context.sh
+@@ -154,10 +154,7 @@ try:
+     indexer = os.environ.get("INDEXER") or ""
+     counts = {}
+     if indexer and os.path.isfile(status):
+-        _top = os.path.dirname(os.path.dirname(indexer))    # DevKit root when index_memory.py sits in scripts/
+-        if not os.path.isfile(os.path.join(_top, "bin", "regression_checklist.py")):
+-            _top = os.path.dirname(_top)                     # …or in scripts/<group>/ since the regrouping
+-        sys.path.insert(0, os.path.join(_top, "bin"))
++        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(indexer)), "bin"))
+         sys.dont_write_bytecode = True
+         import regression_checklist as rc  # the same status rules the checklist view uses
+         _skip = getattr(rc, "skip_bookkeeping", lambda p: False)   # a LINKED worktree leaves the tracked checklist files alone
+@@ -171,10 +168,7 @@ try:
+         counts = rc.summary(data)
+         out.extend(filter(None, [rc.rollback_warning(root)]))  # checklist rolled back outside the DevKit
+         try:
+-            _gov = os.path.dirname(indexer)    # scripts/governance (scripts/ before the regrouping)
+-            rerun = next((p for p in (os.path.join(os.path.dirname(_gov), "testing", "stale_rerun.py"),
+-                                      os.path.join(_gov, "stale_rerun.py")) if os.path.isfile(p)),
+-                         os.path.join(_gov, "stale_rerun.py"))
++            rerun = os.path.join(os.path.dirname(indexer), "stale_rerun.py")
+             sys.path.insert(0, os.path.dirname(rerun))
+             from stale_rerun import is_light     # the same light/heavy rule the re-run applies
+             light = [t for t, it in data["items"].items() if it.get("kind") == "test"

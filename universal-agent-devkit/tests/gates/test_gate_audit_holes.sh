@@ -92,7 +92,8 @@ else bad "A11: src/cfg_é.py from the --since range was dropped (files: $(j 'd["
 # ── A2: a runner script the base-ref suite command runs counts like an edited existing test ───────────────────
 mk runner
 printf '#!/bin/sh\nsh scripts/check.sh\n' > scripts/ci.sh
-printf '#!/bin/sh\ngrep -q "return 1" src/core.py\n' > scripts/check.sh
+# set -e: a runner that stops at its first failure still accepts a pure append (a runner without it does not: tests/gates/test_gate_runner_no_errexit.sh)
+printf '#!/bin/sh\nset -e\ngrep -q "return 1" src/core.py\n' > scripts/check.sh
 cat > matrix.json <<'JSON'
 {"project":"t","rules":[{"component":"Core","watch_files":["src/*","scripts/*"],
  "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"sh scripts/check.sh"}]},

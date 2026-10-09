@@ -1,0 +1,94 @@
+diff --git a/universal-agent-devkit/hooks/block-dangerous-git.sh b/universal-agent-devkit/hooks/block-dangerous-git.sh
+index 61dcd5f..4637a8b 100755
+--- a/universal-agent-devkit/hooks/block-dangerous-git.sh
++++ b/universal-agent-devkit/hooks/block-dangerous-git.sh
+@@ -66,9 +66,8 @@ fast_allow() { # $1 = trigger ERE
+ # A pipe into a shell (`cat x | sh`, `… | xargs bash -c`) or a here-string (`bash <<< …`) runs text the fast path cannot
+ # see: the parser reads it (2026-10-09, tests/gates/test_git_guard_shell_feed.sh). Bracket expressions, not \b: POSIX
+ # ERE has no \b (glibc adds it, macOS regcomp need not). A process substitution <(…) can be a shell's script (`bash <(curl …)`,
+-# 2026-10-09, tests/gates/test_git_guard_process_subst.sh): the parser reads it too, and so does `tee >(sh)`, a shell that reads
+-# what an output process substitution is fed (tests/gates/test_git_guard_shell_subst.sh). `bash -c "$(…)"` has a `$`: the parser.
+-fast_allow 'git|eval|devkit_precommit|hookspath|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]|>[(]' && exit 0
++# 2026-10-09, tests/gates/test_git_guard_process_subst.sh): the parser reads it too.
++fast_allow 'git|eval|devkit_precommit|hookspath|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]' && exit 0
+ 
+ if ! command -v python3 >/dev/null 2>&1; then
+   echo "BLOCKED: block-dangerous-git.sh cần 'python3' để phân tích lệnh. Chặn để an toàn." >&2
+@@ -748,8 +747,6 @@ def analyse_simple(tokens, depth):
+                 while k < len(rest) and rest[k] != "--" and len(rest[k]) > 1 and rest[k][0] in "-+":
+                     k += 2 if rest[k] in SHELL_OPTS_WITH_ARG else 1
+                 k += 1 if k < len(rest) and rest[k] == "--" else 0
+-                if k < len(rest) and rest[k].lstrip().startswith(SUBST):
+-                    PENDING_FEED.append(UNREADABLE_CSUBST)   # bash -c "$(curl ...)": the script is whatever the command prints
+                 return analyse(rest[k], depth + 1) if k < len(rest) else None
+         for j, a in enumerate(rest):
+             if a.startswith("<<<"):   # bash <<< STR: the here-string is the script
+@@ -861,10 +858,10 @@ def subst_end(text, i):
+         j += 1
+     return None if depth else j
+ 
+-def strip_subst(text, inners=None, outs=None):
++def strip_subst(text, inners=None):
+     """Each $(...), <(...), >(...) and backtick span becomes one SUBST word; single-quoted text and
+     comments stay literal. None when a span is not closed. The text inside each span (a command
+-    the shell runs) is appended to inners, and that of each unquoted >(...) to outs too."""
++    the shell runs) is appended to inners."""
+     out, i, n, dq = [], 0, len(text), False
+     while i < n:
+         c = text[i]
+@@ -890,8 +887,6 @@ def strip_subst(text, inners=None, outs=None):
+                 return None
+             if inners is not None:
+                 inners.append(text[i + 2:j - 1])
+-            if outs is not None and c == ">" and not dq:
+-                outs.append(text[i + 2:j - 1])
+             out.append(PSUBST if c == "<" and not dq else SUBST)
+             i = j
+         elif c == "`":
+@@ -1065,24 +1060,6 @@ def reads_script(seg):
+ # `diff <(a) <(b)` (no shell), `bash x.sh <(…)` (an argument), `eval "$(…)"`, `bash x.sh`, `bash < file` (documented limits).
+ UNREADABLE_PSUBST = ("shell chạy văn bản do process substitution sinh ra (bash <(…), bash < <(…)): cổng không đọc được "
+                      "nội dung — chạy thẳng lệnh đó")
+-# `bash -c "$(curl …)"` and `… | tee >(sh)` (2026-10-09, tests/gates/test_git_guard_shell_subst.sh) run the same generated text: -c with
+-# a command substitution as its script, and a shell inside an output process substitution reading what tee writes to it. Still
+-# allowed (documented limits): `eval "$(…)"`, `source <(…)`, `. <(…)`, `bash x.sh`, `bash < file`, `bash -c "echo $(date)"`.
+-UNREADABLE_CSUBST = ("shell -c chạy văn bản do $(…) sinh ra (bash -c \"$(curl …)\"): cổng không đọc được nội dung — "
+-                     "chạy thẳng lệnh đó")
+-UNREADABLE_OSUBST = ("shell trong >(…) đọc văn bản do lệnh khác ghi vào (… | tee >(sh)): cổng không đọc được nội dung — "
+-                     "chạy thẳng lệnh đó")
+-
+-def out_subst_shell(inner):
+-    """True when a command inside >(…) is a shell that runs what is written to it (no -c, no script operand, or -s / a lone -)."""
+-    for part in re.split(r"[;&|\n]+", inner):
+-        try:
+-            words = shlex.split(part)
+-        except ValueError:
+-            continue
+-        if words and reads_script(words):
+-            return True
+-    return False
+ 
+ def proc_subst_script(rest):
+     """rest: the words after a shell (no -c, no <<<). True when its script is a <(…): the script operand, or stdin with no
+@@ -1167,18 +1144,16 @@ def analyse(text, depth=0, stripped=False):
+     if depth == 0:
+         text = drop_literal_heredocs(text)
+     live = outside_single_quotes(text)
+-    if not stripped and ("`" in live or "$(" in live or "<(" in live or ">(" in live):
++    if not stripped and ("`" in live or "$(" in live or "<(" in live):
+         flat = text.replace("\\\n", " ").replace("\n", " ; ")
+         m = RAW.search(flat)
+         if m:
+             return f"{m.group(1).split()[0]} (trong lệnh có $(...)/backtick)"
+         # 2026-09-28: the command inside $(...)/backticks gets the same parser as a top-level one
+         # (the raw regex above knows no abbreviation: `echo $(git reset --har HEAD~1)` passed).
+-        inners, outs = [], []
+-        plain = strip_subst(text, inners, outs)
++        inners = []
++        plain = strip_subst(text, inners)
+         if plain is not None:
+-            if any(out_subst_shell(o) for o in outs):
+-                PENDING_FEED.append(UNREADABLE_OSUBST)
+             for inner in inners:
+                 here = CUR_DIR[0]   # a cd inside $(...) runs in a subshell
+                 reason = analyse(inner, depth + 1)

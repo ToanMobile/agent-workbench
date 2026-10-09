@@ -1,0 +1,13 @@
+diff --git a/universal-agent-devkit/hooks/block-dangerous-git.sh b/universal-agent-devkit/hooks/block-dangerous-git.sh
+index 61dcd5f..d66e644 100755
+--- a/universal-agent-devkit/hooks/block-dangerous-git.sh
++++ b/universal-agent-devkit/hooks/block-dangerous-git.sh
+@@ -805,7 +805,7 @@ def analyse_simple(tokens, depth):
+         return None
+     if hooks_off and rest[j] in ("commit", "merge", "am", "cherry-pick", "revert"):
+         return "DEVKIT_PRECOMMIT=0 tắt pre-commit hook (kiểm secret/chất lượng)"
+-    return danger_in_git(rest[j], rest[j + 1:]) or solo_branch_rule(rest[j], rest[j + 1:], gdir, allow_branch)
++    return danger_in_git(rest[j], rest[j + 1:])
+ 
+ RAW = re.compile(
+     r"\bgit\b[^;&|\n]*?\s(reset\s+[^;&|\n]*--(hard|merge|keep)"

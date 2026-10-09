@@ -1,0 +1,258 @@
+diff --git a/universal-agent-devkit/bin/post-fix-gate.py b/universal-agent-devkit/bin/post-fix-gate.py
+index 4897cd9..692cafe 100755
+--- a/universal-agent-devkit/bin/post-fix-gate.py
++++ b/universal-agent-devkit/bin/post-fix-gate.py
+@@ -4901,11 +4901,6 @@ def main():
+         for f, lbl in hw_findings:
+             log_err(f"{f}: {lbl}")
+     assert_ok, assert_findings = run_assertion_audit(modified_files)
+-    assert_findings, assert_other = demote_other_session("vacuity", assert_findings, args.session, args.transcript)
+-    assert_ok = not assert_findings
+-    for f, lbl in assert_other:
+-        log_warn(tr(f"{f}: {lbl} — do phiên khác / người khác tạo (không chặn phiên này; cần sửa trước khi commit)",
+-                    f"{f}: {lbl} — made by another session or a person (not blocking this session; fix before commit)"))
+     if assert_ok:
+         log_ok(tr("Test đổi trong lượt này: 0 hàm test không có assertion phân biệt",
+                   "Tests changed in this run: 0 test functions without a distinguishing assertion"))
+@@ -4913,15 +4908,11 @@ def main():
+         for f, lbl in assert_findings:
+             log_err(f"{f}: {lbl}")
+     proof_ok, proof_findings = run_proof_block(modified_files)
+-    proof_findings, proof_other = demote_other_session("proof", proof_findings, args.session, args.transcript)
+-    proof_ok = not proof_findings
+-    for _f, msg in proof_other:
+-        log_warn(tr(f"{msg} — ảnh của phiên khác (không chặn phiên này)", f"{msg} — another session's image (not blocking this session)"))
+     if proof_ok:
+         log_ok(tr("Thư mục proof: 0 ảnh trùng byte hoặc ≥ 98% cùng một màn",
+                   "Proof folders: 0 byte-identical or ≥98% same-screen duplicates"))  # similar ones only warn
+     else:
+-        for _f, msg in proof_findings:
++        for msg in proof_findings:
+             log_err(msg)
+     for note in hardware_boundary_notes(modified_files):
+         log_warn(note)
+diff --git a/universal-agent-devkit/hooks/precode_gate.sh b/universal-agent-devkit/hooks/precode_gate.sh
+index 9fa9fae..754fdd7 100755
+--- a/universal-agent-devkit/hooks/precode_gate.sh
++++ b/universal-agent-devkit/hooks/precode_gate.sh
+@@ -142,16 +142,6 @@ if rel.startswith(".."):
+ # Creating a genuinely new file: nothing exists to have read.
+ if not os.path.exists(path):
+     logline(f"[{ts}] {base}: file mới — pass")
+-    # The session writes the whole file, so its later edits are not blind: note it in the read
+-    # ledger (OfficeReader 2026-09-28: Grok created a .kt, and its next edit of it was blocked
+-    # because only a Read reached the ledger). A path that already exists never gets here.
+-    _led, _sid = os.environ.get("PG_LEDGER", ""), d.get("session_id") or ""
+-    if _led and isinstance(_sid, str) and _sid and "\t" not in target and "\n" not in target:
+-        try:
+-            with open(_led, "a") as fh:
+-                fh.write(f"{_sid}\t{target}\n")
+-        except OSError as e:
+-            logline(f"[{ts}] ledger write fail: {e!r}")
+     sys.exit(0)
+ 
+ looked = False
+diff --git a/universal-agent-devkit/hooks/regression_gate.sh b/universal-agent-devkit/hooks/regression_gate.sh
+index 3c9f873..48b71fc 100755
+--- a/universal-agent-devkit/hooks/regression_gate.sh
++++ b/universal-agent-devkit/hooks/regression_gate.sh
+@@ -786,9 +786,8 @@ for f in summary.get("findings", [])[:10]:
+     # static findings (secrets, placeholders, dependencies …) with the exact place to fix
+     lines.append("  - %s %s:%s: %s" % (f.get("category"), f.get("file"), f.get("line") or "?", f.get("message")))
+ for f in touched[:10]:
+-    lines.append("  - TEST ĐÃ CÓ BỊ SỬA/XOÁ: %s — cần người review diff test (`git diff HEAD -- %s`): hỏi NGAY trong lượt "
+-                 "bằng AskUserQuestion (câu hỏi nêu đường dẫn file + diff, phương án đầu \"Duyệt\"; gate nhận câu trả lời, "
+-                 "không cần commit) hoặc commit nó; không sửa test cũ để lách" % (f, f))
++    lines.append("  - TEST ĐÃ CÓ BỊ SỬA/XOÁ: %s — cần người review diff test (`git diff HEAD -- %s`) hoặc commit nó; "
++                 "không sửa test cũ để lách" % (f, f))
+ for f in uncovered[:10]:
+     lines.append("  - UNCOVERED:%s — file code đổi nhưng chưa test hồi quy nào theo dõi" % f)
+ lines.append("Checklist: %s · báo cáo: %s" % (summary.get("checklist", ".agents/CHECKLIST.md"), summary.get("report", "-")))
+diff --git a/universal-agent-devkit/hooks/test_evidence_gate.sh b/universal-agent-devkit/hooks/test_evidence_gate.sh
+index 4a730aa..c85ef1b 100755
+--- a/universal-agent-devkit/hooks/test_evidence_gate.sh
++++ b/universal-agent-devkit/hooks/test_evidence_gate.sh
+@@ -771,9 +771,6 @@ RUNNER_FAIL_RX = re.compile(
+     r"(?i:\b[1-9]\d*\s+(failed|failing|failures?|errors?)\b)|(?i:\btests?:\s+[1-9]\d*\s+failed)|"
+     r"(?i:^\s*(?:[#ℹ*•-]\s*)?(fail|failures?|errors?)\s*[:=]?\s*[1-9]\d*\b)|"
+     r"<test-run\b[^>\n]*\sfailed=\"[1-9]\d*\"|"
+-    # JUnit XML summary printed by the agent (`<testsuite … failures="5">`) after sending the
+-    # runner's own output to a log (GeelyEx2 2026-09-28: every real red read as green).
+-    r"\b(?:failures|errors)=\"[1-9]\d*\"|"
+     r"\bFAIL(ED)?\b|test result: FAILED|^not ok\b|\bpanicked\b|\bERRORS?\b|--- FAIL", re.M)
+ # mcp__antigravity-pm__pm_run kind=test runs the project's test command and prints
+ # `exit=N` per command (a timeout adds "(QUA HAN)"; "CHUA TINH" = exit 0 that its own
+@@ -921,7 +918,7 @@ if tp and os.path.exists(tp):
+                                 and BUGS_CMD_RX.search(str(use["input"].get("command", "")))):
+                             bugs_touched.update(BUG_ID_RX.findall(txt))
+                         if (use and use["name"] == "Bash"
+-                                and is_test_runner(str(use["input"].get("command", "")))):
++                                and TEST_RUNNER_RX.search(str(use["input"].get("command", "")))):
+                             cmd = str(use["input"].get("command", ""))
+                             st = runner_state(blk.get("is_error") is True, txt, command=cmd)
+                             if st:
+diff --git a/universal-agent-devkit/scripts/audits/audit_agent_perfection_50_agents.py b/universal-agent-devkit/scripts/audits/audit_agent_perfection_50_agents.py
+index 866f59a..3deadce 100755
+--- a/universal-agent-devkit/scripts/audits/audit_agent_perfection_50_agents.py
++++ b/universal-agent-devkit/scripts/audits/audit_agent_perfection_50_agents.py
+@@ -502,8 +502,8 @@ def run_full_audit() -> int:
+ 
+     def t49():
+         cr = auditor.read_file("rules/core-rules.md")
+-        ok = "TỰ commit" in cr and "Chỉ hỏi người dùng trước: force-push" in cr
+-        return ok, "Quyền hạn AI: tự commit/push khi gate xanh; force-push, xoá nhánh, phát hành chỉ khi người dùng duyệt"
++        ok = "CHỈ thực hiện git commit, git push hoặc tạo PR" in cr and "YÊU CẦU TƯỜNG MINH" in cr
++        return ok, "Quyền hạn AI tuyệt đối: CHỈ commit/push/PR khi người dùng yêu cầu tường minh"
+     auditor.run_agent(10, C10, 49, "SoloDevGitAuthorityComplianceAuditor", "Kiểm tra tuân thủ tuyệt đối giới hạn quyền hạn commit/push theo lệnh rõ ràng", t49)
+ 
+     def t50():
+diff --git a/universal-agent-devkit/scripts/audits/audit_production_lifecycle_50_agents.py b/universal-agent-devkit/scripts/audits/audit_production_lifecycle_50_agents.py
+index 4c43a20..a4df37a 100755
+--- a/universal-agent-devkit/scripts/audits/audit_production_lifecycle_50_agents.py
++++ b/universal-agent-devkit/scripts/audits/audit_production_lifecycle_50_agents.py
+@@ -141,8 +141,8 @@ def main():
+     auditor.run_agent(2, c2, idx, "CredentialEnvironmentAuditor", "Ép buộc quản lý credential qua biến môi trường an toàn", test_07); idx += 1
+ 
+     def test_08():
+-        ok = "TỰ commit" in core_rules and "Chỉ hỏi người dùng trước: force-push" in core_rules
+-        return ok, "Quyền hạn AI: tự commit/push khi gate xanh; force-push, xoá nhánh, phát hành chỉ khi người dùng duyệt"
++        ok = "CHỈ thực hiện git commit, git push" in core_rules and "YÊU CẦU TƯỜNG MINH" in core_rules
++        return ok, "Quyền hạn AI tối cao: Tuyệt đối không tự ý commit/push khi chưa có lệnh tường minh"
+     auditor.run_agent(2, c2, idx, "PermissionLeastPrivilegeAuditor", "Kiểm soát quyền hạn tối thiểu của Agent, ngăn chặn tự ý thay đổi hạ tầng", test_08); idx += 1
+ 
+     def test_09():
+diff --git a/universal-agent-devkit/scripts/audits/audit_workflows_rules_skills_50_agents.py b/universal-agent-devkit/scripts/audits/audit_workflows_rules_skills_50_agents.py
+index 776a9bc..779f49c 100755
+--- a/universal-agent-devkit/scripts/audits/audit_workflows_rules_skills_50_agents.py
++++ b/universal-agent-devkit/scripts/audits/audit_workflows_rules_skills_50_agents.py
+@@ -58,7 +58,7 @@ AGENTS_SPEC = [
+     (10, "DebounceAndAntiSpamGateAuditor", "Kiểm tra rào chắn chống spam request và ép buộc debounce giao dịch", "rules/core-rules.md", r"Debounce|Chống Spam"),
+ 
+     # Council 3: Core Solo-Dev Quality Rules
+-    (11, "GitAuthorityComplianceAuditor", "Kiểm tra quyền hạn AI: tự commit/push khi gate xanh, force-push/xoá nhánh/phát hành chỉ khi người dùng duyệt", "rules/core-rules.md", r"Chỉ hỏi người dùng trước: force-push"),
++    (11, "GitAuthorityComplianceAuditor", "Kiểm tra quyền hạn AI: CHỈ commit/push/PR khi người dùng yêu cầu tường minh", "rules/core-rules.md", r"YÊU CẦU TƯỜNG MINH"),
+     (12, "SecretZeroExposureAuditor", "Kiểm tra tuyệt đối cấm commit .env, keystore, credential trần", "rules/core-rules.md", r"Tuyệt đối KHÔNG commit bí mật"),
+     (13, "LeanDevLoopAuditor", "Kiểm tra quy trình 4 bước: Test cục bộ -> Self Review -> Ảnh nghiệm thu -> Commit", "rules/core-rules.md", r"Quy trình làm việc tinh gọn"),
+     (14, "DualModePreservationAuditor", "Kiểm tra bảo toàn 2 chế độ DEMO / LIVE trên mọi nghiệp vụ mới", "rules/core-rules.md", r"DEMO / LIVE"),
+diff --git a/universal-agent-devkit/scripts/governance/merge_json.py b/universal-agent-devkit/scripts/governance/merge_json.py
+index 2ae9fe1..1ad997f 100755
+--- a/universal-agent-devkit/scripts/governance/merge_json.py
++++ b/universal-agent-devkit/scripts/governance/merge_json.py
+@@ -61,20 +61,6 @@ def _hook_key(hook):
+ DEVKIT_HOOK = "devkit-hook:"
+ 
+ 
+-def _rewire_through_claude_hooks(groups, devkit_keys):
+-    """A DevKit hook wired as .agents/devkit/hooks/X runs through .claude/hooks/X instead (the
+-    link the installer makes next to every DevKit hook). .agents/devkit is git-ignored, so a
+-    worktree the host creates (Grok, OfficeReader 2026-09-28) has no such path: the Stop hook
+-    died with exit 127 and the host skipped it — the proof gate never ran."""
+-    for g in groups:
+-        if not (isinstance(g, dict) and isinstance(g.get("hooks"), list)):
+-            continue
+-        for h in g["hooks"]:
+-            if isinstance(h, dict) and isinstance(h.get("command"), str) \
+-                    and _hook_key(h) in devkit_keys and ".agents/devkit/hooks/" in h["command"]:
+-                h["command"] = h["command"].replace(".agents/devkit/hooks/", ".claude/hooks/")
+-
+-
+ def _drop_twins(groups, devkit_keys):
+     """A DevKit hook — one the source (DevKit template) wires — wired twice under overlapping
+     matchers keeps its first wiring (the project's placement); a group only this emptied goes.
+@@ -169,7 +155,6 @@ def _merge_list(source, target):
+                    for h in i["hooks"]}
+     devkit_keys = {k for k in devkit_keys if k.startswith(DEVKIT_HOOK)}
+     if devkit_keys and any(isinstance(t, dict) and isinstance(t.get("hooks"), list) for t in target):
+-        _rewire_through_claude_hooks(target, devkit_keys)
+         _drop_twins(target, devkit_keys)
+ 
+ 
+diff --git a/universal-agent-devkit/scripts/linters/assertion_lint.py b/universal-agent-devkit/scripts/linters/assertion_lint.py
+index dc22f18..1a68567 100755
+--- a/universal-agent-devkit/scripts/linters/assertion_lint.py
++++ b/universal-agent-devkit/scripts/linters/assertion_lint.py
+@@ -36,11 +36,7 @@ _ASSERT = re.compile(
+     r"|\bpytest\.raises\b"
+     r"|\bself\.assert\w+\s*\("
+     r"|\bassert\s+(?!True\b|False\b)"
+-    # Kotlin's assert(cond) (Gradle runs tests with -ea) and JUnit/kotlin.test fail(…)
+-    r"|\bassert\s*\(|\bfail\s*\("
+ )
+-# @Test(expected = X::class) / TestNG expectedExceptions: the thrown exception is the assertion.
+-_EXPECTS = re.compile(r"\s*\(\s*(?:expected|expectedExceptions)\s*=")
+ _VACUOUS = re.compile(
+     r"assertTrue\s*\(\s*true\s*\)"
+     r"|assertFalse\s*\(\s*false\s*\)"
+@@ -49,7 +45,6 @@ _VACUOUS = re.compile(
+     r"|assert\s+True\b"
+     r"|assert\s+False\b"
+     r"|assert\s+1\s*==\s*1\b"
+-    r"|\bassert\s*\(\s*(?:true|false)\s*\)"
+     r"|assert(?:Equals|Equal)\s*\(\s*(?P<lit>[0-9]+|true|false|\"[^\"\n]*\"|'[^'\n]*')\s*,\s*(?P=lit)\s*\)"
+     r"|Assert\.AreEqual\s*\(\s*(?P<lit2>[0-9]+|true|false|\"[^\"\n]*\")\s*,\s*(?P=lit2)\s*\)",
+     re.IGNORECASE,
+@@ -125,54 +120,13 @@ def _distinguishing(body: str) -> bool:
+     return any(not inside_vacuous(m.span()) for m in _ASSERT.finditer(body))
+ 
+ 
+-# A same-file helper a test calls: Kotlin `fun`, Python `def`, Java/C# `void` methods.
+-_HELPER_DEF = re.compile(
+-    r"\bfun\s+(?:<[^>\n]*>\s*)?(?:[\w.]+\.)?(\w+)\s*\("
+-    r"|^[ \t]*def[ \t]+(\w+)\s*\("
+-    r"|\bvoid\s+(\w+)\s*\(",
+-    re.M,
+-)
+-
+-
+-def _asserting_helpers(text: str) -> set:
+-    """Names of same-file functions whose body asserts, directly or through another such
+-    helper (GeelyEx2 2026-09-27: five tests calling `kiem(...)` were called vacuous and
+-    rewritten only to please the gate). A helper whose only assertion is vacuous does not count."""
+-    defs = list(_HELPER_DEF.finditer(text))
+-    bodies = {}
+-    for i, m in enumerate(defs):
+-        name = m.group(1) or m.group(2) or m.group(3)
+-        if m.group(2):
+-            body = _python_body(text, m.start())
+-        else:
+-            limit = defs[i + 1].start() if i + 1 < len(defs) else None
+-            nxt = _MARKER.search(text, m.end())
+-            if nxt and (limit is None or nxt.start() < limit):
+-                limit = nxt.start()
+-            body = _body(text, m.end(), limit)
+-            if "{" not in text[m.end():limit if limit is not None else len(text)]:
+-                body = text[m.end():limit]          # expression body: fun f() = assertX(...)
+-        bodies[name] = bodies.get(name, "") + body
+-    helpers = {n for n, b in bodies.items() if _distinguishing(b)}
+-    changed = True
+-    while changed:
+-        changed = False
+-        for n, b in bodies.items():
+-            if n not in helpers and helpers and re.search(r"\b(?:%s)\s*\(" % "|".join(map(re.escape, helpers)), b):
+-                helpers.add(n)
+-                changed = True
+-    return helpers
+-
+-
+ def findings(text: str) -> list:
+     """[(line, name)] methods that never assert on a value."""
+     out = []
+-    helpers = _asserting_helpers(text)
+-    calls_helper = re.compile(r"\b(?:%s)\s*\(" % "|".join(map(re.escape, helpers))) if helpers else None
+     for m in _MARKER.finditer(text):
+         window_start = max(0, m.start() - 120)
+         prelude = text[window_start:m.end()]
+-        if _SKIP.search(prelude) or (not m.group(1) and _EXPECTS.match(text, m.end())):
++        if _SKIP.search(prelude):
+             continue
+         name = m.group(1) or m.group(0)[:40]
+         if m.group(1):
+@@ -180,7 +134,7 @@ def findings(text: str) -> list:
+         else:
+             nxt = _MARKER.search(text, m.end())
+             body = _body(text, m.end(), nxt.start() if nxt else None)
+-        if not _distinguishing(body) and not (calls_helper and calls_helper.search(body)):
++        if not _distinguishing(body):
+             line = text.count("\n", 0, m.start()) + 1
+             out.append((line, name.strip()))
+     return out

@@ -1,0 +1,151 @@
+diff --git a/universal-agent-devkit/scripts/governance/scratch_cleanup.py b/universal-agent-devkit/scripts/governance/scratch_cleanup.py
+index 214f9f0..e33a584 100755
+--- a/universal-agent-devkit/scripts/governance/scratch_cleanup.py
++++ b/universal-agent-devkit/scripts/governance/scratch_cleanup.py
+@@ -5,9 +5,8 @@ User 2026-10-09: "thư mục tạm của Claude Code chiếm tới 33 GB … mà
+ /tmp/claude-<uid>/<project-slug>/<session-uuid>/ (scratchpad, background task output) and never removes it; one session's
+ two CoW repo copies (29 GB) filled the boot disk to 99 %.
+ 
+-  --end SESSION_ID [--self-pid PID]     remove that session's dirs (under every project slug) — run at SessionEnd; kept while
+-                                        another live Claude process (not PID) holds the same session id
+-  --prune [--keep ID] [--ttl-hours N]   remove the dirs of sessions idle for more than N hours (default 168): the session's
++  --end SESSION_ID                      remove that session's dirs (under every project slug) — run at SessionEnd
++  --prune [--keep ID] [--ttl-hours N]   remove the dirs of sessions idle for more than N hours (default 24): the session's
+                                         transcript (~/.claude/projects/<slug>/<id>.jsonl) and the newest entry in the top two
+                                         levels of its dir are all older — run at SessionStart, keeping the session itself
+ 
+@@ -15,13 +14,9 @@ Only <root>/<slug>/<uuid>/ real directories are ever touched: the root must be a
+ symlink), slug and session entries must be real directories (a symlink is never followed or removed), the name a UUID.
+ DEVKIT_SCRATCH_ROOT and DEVKIT_CLAUDE_PROJECTS override the two roots (tests). Every removal is logged to
+ <root>/devkit-scratch-cleanup.log. Exit 0 (nothing to do included), 2 = bad usage.
+-Removal is fd-based (audit T0023, TOCTOU): root and project dir are opened with O_NOFOLLOW and the session dir is removed with
+-rmtree(dir_fd=…), so a project dir swapped for a symlink after the listing is never followed; a Python without that support skips.
+-ponytail: liveness is the transcript and the top two levels (no running process maps to its session id); a session left open
+-and idle for over the TTL (7 days, audit T0023: 24 h could hit a session left open overnight) loses its scratchpad — SessionEnd
+-already removes every normally closed session, so the prune only catches crashed ones; raise --ttl-hours if that ever bites.
++ponytail: idleness is read from the transcript and the top two levels only (a deep walk of a 14 GB copy is slow); a session
++idle longer than the TTL loses its scratchpad, which it may recreate — raise --ttl-hours if that ever bites.
+ """
+-import json
+ import os
+ import re
+ import shutil
+@@ -30,7 +25,7 @@ import sys
+ import time
+ 
+ UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+-DEFAULT_TTL_H = 168.0
++DEFAULT_TTL_H = 24.0
+ 
+ 
+ def scratch_root():
+@@ -44,43 +39,8 @@ def scratch_root():
+     return r
+ 
+ 
+-def claude_home():
+-    return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+-
+-
+ def projects_root():
+-    return os.environ.get("DEVKIT_CLAUDE_PROJECTS") or os.path.join(claude_home(), "projects")
+-
+-
+-def live_sessions(exclude_pid=None):
+-    """{session id: pid} of running Claude Code processes: <claude home>/sessions/<pid>.json holds {pid, sessionId} (review
+-    2026-10-09: the only signal that a session idle at the prompt for days is alive). A stale file of a dead pid counts for
+-    nothing; a pid this user may not signal (EPERM) counts as alive; a reused pid only keeps a dir (the safe side)."""
+-    d = os.environ.get("DEVKIT_CLAUDE_SESSIONS") or os.path.join(claude_home(), "sessions")
+-    live = {}
+-    try:
+-        names = os.listdir(d)
+-    except OSError:
+-        return live
+-    for n in names:
+-        if not n.endswith(".json"):
+-            continue
+-        try:
+-            with open(os.path.join(d, n), encoding="utf-8") as f:
+-                info = json.load(f)
+-            pid, sid = int(info.get("pid")), str(info.get("sessionId") or "")
+-        except (OSError, ValueError, TypeError, AttributeError):
+-            continue
+-        if pid <= 1 or pid == exclude_pid or not UUID.match(sid):
+-            continue
+-        try:
+-            os.kill(pid, 0)
+-        except ProcessLookupError:
+-            continue
+-        except OSError:
+-            pass   # EPERM and the like: alive
+-        live[sid] = pid
+-    return live
++    return os.environ.get("DEVKIT_CLAUDE_PROJECTS") or os.path.join(os.path.expanduser("~"), ".claude", "projects")
+ 
+ 
+ def real_dir(p):
+@@ -130,25 +90,9 @@ def last_activity(slug, sid, path):
+     return max(times) if times else time.time()
+ 
+ 
+-def remove(root, slug, name, why):
+-    """rmtree <root>/<slug>/<name> without following a symlink anywhere on the way, even one swapped in after the listing."""
+-    path, errors, fds = os.path.join(root, slug, name), [], []
+-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW
+-    try:
+-        fds.append(os.open(root, flags))
+-        fds.append(os.open(slug, flags, dir_fd=fds[0]))
+-        st = os.fstat(fds[1])
+-        if st.st_uid != os.getuid() or not stat.S_ISDIR(os.lstat(name, dir_fd=fds[1]).st_mode):
+-            return
+-        if not getattr(shutil.rmtree, "avoids_symlink_attacks", False):
+-            errors.append("this Python cannot remove a tree without following symlinks: skipped")
+-        else:
+-            shutil.rmtree(name, dir_fd=fds[1], onerror=lambda fn, p, exc: errors.append("%s: %s" % (p, exc[1])))
+-    except (OSError, TypeError) as e:   # a symlink swapped in (ELOOP / ENOTDIR), or rmtree without dir_fd (Python < 3.11)
+-        errors.append("not removed: %s" % e)
+-    finally:
+-        for fd in fds:
+-            os.close(fd)
++def remove(root, path, why):
++    errors = []
++    shutil.rmtree(path, onerror=lambda fn, p, exc: errors.append("%s: %s" % (p, exc[1])))
+     line = "%s removed %s (%s)%s" % (time.strftime("%Y-%m-%d %H:%M:%S"), path, why,
+                                     " — errors: " + "; ".join(errors[:3]) if errors else "")
+     try:
+@@ -171,30 +115,27 @@ def main(argv):
+             return val
+         return default
+ 
+-    end, keep, ttl, self_pid = opt("--end"), opt("--keep", ""), opt("--ttl-hours"), opt("--self-pid")
++    end, keep, ttl = opt("--end"), opt("--keep", ""), opt("--ttl-hours")
+     prune = "--prune" in args
+     if (end is None) == (not prune) or (end is not None and not UUID.match(end)):
+         print(__doc__.strip().splitlines()[6].strip(), file=sys.stderr)
+         return 2
+     try:
+         ttl_h = float(ttl) if ttl is not None else DEFAULT_TTL_H
+-        self_pid = int(self_pid) if self_pid else None
+     except ValueError:
+         return 2
+     root = scratch_root()
+     if root is None:
+         return 0
+     if end is not None:
+-        if end in live_sessions(exclude_pid=self_pid):
+-            return 0   # another live process holds this session id (a --resume elsewhere): not ours to remove
+         for slug, sid, path in list(session_dirs(root)):
+             if sid == end:
+-                remove(root, slug, sid, "session ended")
++                remove(root, path, "session ended")
+         return 0
+-    cutoff, live = time.time() - ttl_h * 3600, live_sessions()
++    cutoff = time.time() - ttl_h * 3600
+     for slug, sid, path in list(session_dirs(root)):
+-        if sid != keep and sid not in live and last_activity(slug, sid, path) < cutoff:
+-            remove(root, slug, sid, "idle > %g h" % ttl_h)
++        if sid != keep and last_activity(slug, sid, path) < cutoff:
++            remove(root, path, "idle > %g h" % ttl_h)
+     return 0
+ 
+ 

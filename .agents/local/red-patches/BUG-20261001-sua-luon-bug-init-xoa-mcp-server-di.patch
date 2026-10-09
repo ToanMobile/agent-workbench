@@ -1,0 +1,28 @@
+diff --git a/universal-agent-devkit/adapters/setup_claude.sh b/universal-agent-devkit/adapters/setup_claude.sh
+index 78b25ee..7d691a8 100755
+--- a/universal-agent-devkit/adapters/setup_claude.sh
++++ b/universal-agent-devkit/adapters/setup_claude.sh
+@@ -58,8 +58,7 @@ try:
+ except (OSError, ValueError):
+     sys.exit(0)                        # no file yet / unparseable: merge_json.py reports it
+ mine = data.get("mcpServers") if isinstance(data, dict) else None
+-gone = [n for n, c in servers.items() if n not in keep and isinstance(mine, dict) and mine.get(n) == c
+-        and os.environ.get("DEVKIT_MCP_PRUNE", "1") == "1"]   # re-init, same profile: keep (bin/install.sh)
++gone = [n for n, c in servers.items() if n not in keep and isinstance(mine, dict) and mine.get(n) == c]
+ if gone and not os.path.islink(dst):
+     for n in gone:
+         del mine[n]
+diff --git a/universal-agent-devkit/adapters/setup_gemini.sh b/universal-agent-devkit/adapters/setup_gemini.sh
+index f6832cf..5fe0cf5 100755
+--- a/universal-agent-devkit/adapters/setup_gemini.sh
++++ b/universal-agent-devkit/adapters/setup_gemini.sh
+@@ -89,8 +89,7 @@ try:
+ except (OSError, ValueError):
+     sys.exit(0)
+ mine = data.get("mcpServers") if isinstance(data, dict) else None
+-gone = [n for n, c in servers.items() if n not in keep and isinstance(mine, dict) and mine.get(n) == c
+-        and os.environ.get("DEVKIT_MCP_PRUNE", "1") == "1"]   # re-init, same profile: keep (bin/install.sh)
++gone = [n for n, c in servers.items() if n not in keep and isinstance(mine, dict) and mine.get(n) == c]
+ if gone and not os.path.islink(dst):
+     for n in gone:
+         del mine[n]

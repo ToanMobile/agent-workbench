@@ -1,0 +1,13 @@
+diff --git a/universal-agent-devkit/bin/session_lock.py b/universal-agent-devkit/bin/session_lock.py
+index e141cab..5c95f38 100755
+--- a/universal-agent-devkit/bin/session_lock.py
++++ b/universal-agent-devkit/bin/session_lock.py
+@@ -997,7 +997,7 @@ def status(argv):
+         print(f"session_lock: {target} không phải git checkout — không có khoá")
+         return 0
+     now = time.time()
+-    lock = read_checkout_lock(gdir)
++    lock = read_lock(os.path.join(gdir, LOCK))
+     if is_free_for(lock, sid, now):
+         print(f"session_lock: {top} trống — được sửa")
+         return 0

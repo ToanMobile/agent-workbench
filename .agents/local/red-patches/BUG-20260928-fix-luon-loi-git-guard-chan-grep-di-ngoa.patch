@@ -1,0 +1,14 @@
+diff --git a/universal-agent-devkit/hooks/block-dangerous-git.sh b/universal-agent-devkit/hooks/block-dangerous-git.sh
+--- a/universal-agent-devkit/hooks/block-dangerous-git.sh
++++ b/universal-agent-devkit/hooks/block-dangerous-git.sh
+@@ -1164,9 +1164,7 @@
+ def analyse(text, depth=0, stripped=False):
+     if depth > 5:
+         return "lồng lệnh quá sâu để phân tích"
+-    if depth == 0:
+-        text = drop_literal_heredocs(text)
+-    live = outside_single_quotes(text)
++    live = text
+     if not stripped and ("`" in live or "$(" in live or "<(" in live or ">(" in live):
+         flat = text.replace("\\\n", " ").replace("\n", " ; ")
+         m = RAW.search(flat)

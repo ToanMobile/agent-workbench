@@ -1,0 +1,173 @@
+diff --git a/universal-agent-devkit/.claude/settings.json b/universal-agent-devkit/.claude/settings.json
+index 87a7feb..e869444 100644
+--- a/universal-agent-devkit/.claude/settings.json
++++ b/universal-agent-devkit/.claude/settings.json
+@@ -196,18 +196,6 @@
+         ]
+       }
+     ],
+-    "Notification": [
+-      {
+-        "matcher": "idle_prompt",
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/session_lock.sh\"",
+-            "timeout": 10
+-          }
+-        ]
+-      }
+-    ],
+     "SessionEnd": [
+       {
+         "hooks": [
+diff --git a/universal-agent-devkit/bin/session_authorship.py b/universal-agent-devkit/bin/session_authorship.py
+index c63ee6a..89bea3c 100644
+--- a/universal-agent-devkit/bin/session_authorship.py
++++ b/universal-agent-devkit/bin/session_authorship.py
+@@ -293,8 +293,6 @@ def _session_seen(project, sids, last_seen, now) -> dict:
+                 live = session_lock.is_pid_alive(pid) and now - last <= LIVE_IDLE_S
+             else:
+                 continue                  # a pid that is not one: a forged entry, its heartbeat proves nothing
+-            if info.get("status") == "idle":
+-                live = False   # turn over, no gate running (Notification idle_prompt): its checkout is free to others, so are its windows
+             seen[sid] = (live, last)
+         except Exception:  # noqa: BLE001 - fail closed (see the docstring)
+             continue
+diff --git a/universal-agent-devkit/bin/session_lock.py b/universal-agent-devkit/bin/session_lock.py
+index e141cab..29e69b4 100755
+--- a/universal-agent-devkit/bin/session_lock.py
++++ b/universal-agent-devkit/bin/session_lock.py
+@@ -12,14 +12,6 @@ git writes, post-fix-gate, and shell redirects into the checkout. Reads, builds
+ blocks: it takes the lock or prints who holds it. SessionEnd releases the holder's lock. Sub-agents share their
+ parent's session_id, so they count as the same session.
+ 
+-An IDLE holder frees the checkout (user, 2026-10-09: "phiên đó ngừng chạy thì là ok rồi chứ sao bắt phải /exit"): a
+-session that finished its turn and waits at the prompt is a live process, so the pid check kept its lock for the whole
+-heartbeat window. Claude Code's Notification `idle_prompt` (about 60 s after the turn ended, the user has not typed, no
+-background agent runs) marks the lock `idle_since` and the session's registry entry `status: idle`; an idle lock is free
+-for another session and an idle session is not an active sibling for the gate's --full. Not marked while the project's
+-test_run.lock is held (an end-of-turn gate still running). The holder's next Bash/Edit call clears it. Not Stop: Stop
+-hooks run in parallel (the end-of-turn gate among them) and a blocked Stop means the turn goes on.
+-
+ Agents with no hook API (Antigravity) cannot be blocked, so they ask (2026-09-29, rules/essentials.md):
+ `python3 .agents/devkit/bin/session_lock.py --status [--session ID] [dir]` — read-only; exit 3 while another live
+ session holds the checkout (do not edit it), 0 when free, stale, its own, or not a git checkout.
+@@ -613,8 +605,6 @@ def get_active_sessions(cwd=None, current_sid=None, stale_s=180.0):
+             except OSError:
+                 pass
+             continue
+-        if info.get("status") == "idle":
+-            continue   # finished its turn, waiting for the user (Notification idle_prompt): not a working sibling
+ 
+         # Another linked worktree of the same repo has its own tree, build dir and gate receipt: its
+         # session is not a sibling of this checkout (the registry is shared through the git common dir).
+@@ -702,16 +692,12 @@ def stale_after():
+         return 600.0
+ 
+ 
+-def is_free_for(lock, sid, now, idle_frees=True):
+-    """True when `sid` may hold the checkout: no lock, its own lock, an idle holder, a dead process, or a stale one.
+-    idle_frees=False: an idle holder still counts as present (it is alive and may come back) — for callers that would
+-    otherwise act ON that session's tree (worktree_merge_gate merging or removing it), not just write next to it."""
++def is_free_for(lock, sid, now):
++    """True when `sid` may hold the checkout: no lock, its own lock, a dead process, or a stale one."""
+     if not lock or not lock.get("session_id"):
+         return True
+     if lock.get("session_id") == sid:
+         return True
+-    if idle_frees and lock.get("idle_since"):
+-        return True   # the holder finished its turn and waits for the user (Notification idle_prompt)
+     lock_pid = lock.get("pid")
+     if lock_pid and not is_pid_alive(lock_pid):
+         return True
+@@ -1006,7 +992,7 @@ def status(argv):
+         print(f"session_lock: {top} đang do {describe(lock, now)} giữ, nhưng người dùng đã cho phép ghi song song tới "
+               f"{time.strftime('%H:%M', time.localtime(until))} — được sửa")
+         return 0
+-    print(f"session_lock: {top} đang do {describe(lock, now)} giữ — KHÔNG sửa ở đây: chờ phiên đó xong lượt (khoá tự nhả khoảng 1 phút sau khi nó chờ người dùng gõ), "
++    print(f"session_lock: {top} đang do {describe(lock, now)} giữ — KHÔNG sửa ở đây: chờ phiên đó xong, "
+           f"hoặc làm trong worktree riêng (`agent-kit worktree add`), hoặc nhờ người dùng chạy `! agent-kit allow-shared`")
+     return 3
+ 
+@@ -1196,7 +1182,7 @@ def main():
+                   f"{time.strftime('%H:%M', time.localtime(until))}): {tool}")
+         return 0
+     print(f"⛔ [DevKit] Một thư mục — một phiên: checkout {top} đang do {describe(lock, now)} giữ. Phiên này chỉ đọc "
+-          f"ở đây: chờ phiên kia xong lượt (khoá tự nhả khoảng 1 phút sau khi nó chờ người dùng gõ, hoặc sau {int(stale_after())}s không hoạt động), hoặc xin người dùng tạo "
++          f"ở đây: chờ phiên kia xong (khoá tự hết hạn sau {int(stale_after())}s không hoạt động), hoặc xin người dùng tạo "
+           f"worktree riêng. Người dùng cố ý cho chạy song song: gõ `! agent-kit allow-shared` (không cần khởi động lại "
+           f"phiên) hoặc đặt DEVKIT_ALLOW_SHARED_CHECKOUT=1 trước khi mở phiên.", file=sys.stderr)
+     return 2
+diff --git a/universal-agent-devkit/hooks/hooks.json b/universal-agent-devkit/hooks/hooks.json
+index 2b8d121..f46ee55 100644
+--- a/universal-agent-devkit/hooks/hooks.json
++++ b/universal-agent-devkit/hooks/hooks.json
+@@ -185,18 +185,6 @@
+         ]
+       }
+     ],
+-    "Notification": [
+-      {
+-        "matcher": "idle_prompt",
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session_lock.sh\"",
+-            "timeout": 10
+-          }
+-        ]
+-      }
+-    ],
+     "SessionEnd": [
+       {
+         "hooks": [
+diff --git a/universal-agent-devkit/hooks/worktree_merge_gate.sh b/universal-agent-devkit/hooks/worktree_merge_gate.sh
+index 016c955..2f27610 100755
+--- a/universal-agent-devkit/hooks/worktree_merge_gate.sh
++++ b/universal-agent-devkit/hooks/worktree_merge_gate.sh
+@@ -261,9 +261,8 @@ for path in paths:
+         owners[real] = sid   # this session made or named it: its debt
+     elif owners.get(real) not in (None, sid) and session_alive(owners[real]):
+         continue   # owed because ANOTHER session was held on it, and that session is still working: not a bystander's to merge or remove
+-    if session_lock is not None and not session_lock.is_free_for(session_lock.read_lock(os.path.join(admin, session_lock.LOCK)), sid, now,
+-                                                                  idle_frees=False):
+-        continue   # another live session works there (an idle one too: it is alive and may come back to it)
++    if session_lock is not None and not session_lock.is_free_for(session_lock.read_lock(os.path.join(admin, session_lock.LOCK)), sid, now):
++        continue   # another live session works there
+     if here == real or here.startswith(real + os.sep):
+         owed.add(real)   # the session is in it right now (EnterWorktree, or a cd to look): owed, held once it leaves
+         continue
+@@ -294,8 +293,7 @@ if vanished:
+ am_done, am_running = [], []
+ if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != "0":
+     cand = [r for r in pending if not r.get("reason") and r.get("busy") in (None, "merge") and os.path.isdir(r["path"])]
+-    main_free = session_lock is not None and session_lock.is_free_for(session_lock.read_lock(os.path.join(gdir, session_lock.LOCK)), sid, now,
+-                                                                      idle_frees=False)   # an idle holder of main is still there
++    main_free = session_lock is not None and session_lock.is_free_for(session_lock.read_lock(os.path.join(gdir, session_lock.LOCK)), sid, now)
+     if cand and not main_free:
+         for r in cand:
+             r["am"] = "main checkout đang do phiên khác giữ: phiên đó (hoặc phiên sau) sẽ tự gộp; phiên này không ghi vào main"
+diff --git a/universal-agent-devkit/templates/claude_settings.json b/universal-agent-devkit/templates/claude_settings.json
+index 3db0219..92167e6 100644
+--- a/universal-agent-devkit/templates/claude_settings.json
++++ b/universal-agent-devkit/templates/claude_settings.json
+@@ -196,18 +196,6 @@
+         ]
+       }
+     ],
+-    "Notification": [
+-      {
+-        "matcher": "idle_prompt",
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/session_lock.sh\"",
+-            "timeout": 10
+-          }
+-        ]
+-      }
+-    ],
+     "SessionEnd": [
+       {
+         "hooks": [
