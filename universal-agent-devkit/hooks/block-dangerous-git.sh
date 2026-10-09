@@ -1198,7 +1198,7 @@ def analyse(text, depth=0, stripped=False):
                 PENDING_FEED.append(UNREADABLE_OSUBST)
             for inner in inners:
                 here = CUR_DIR[0]   # a cd inside $(...) runs in a subshell
-                reason = analyse_free(inner, depth + 1)
+                reason = (analyse_free if inner.startswith("(") else analyse)(inner, depth + 1)   # only $(( … )) is data; a plain $( … ) runs in the -c shell
                 CUR_DIR[0] = here
                 if reason:
                     return reason
@@ -1222,7 +1222,7 @@ def analyse(text, depth=0, stripped=False):
     feed = None   # after a pipe: the producer segment ([] = a ( … ) / { … } group, not one literal command)
     for tok in tokens + [";"]:
         if tok in SEPARATORS or set(tok) <= set(";&|\n()"):
-            opens_data = bool(segment) and segment[-1].endswith("=")
+            opens_data = tok.startswith("(") and bool(segment) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=", segment[-1]) is not None
             if segment:
                 saved_c = IN_C_SCRIPT[0]
                 if any(data_groups):

@@ -51,6 +51,8 @@ Quyết định chính sách do người dùng chọn qua câu hỏi: runner thi
 
 **Review ngữ cảnh sạch** (principal-code-reviewer trên 94f388c..6e6642b, bắt buộc bởi `review_gate`) tìm 6 điểm P3, đã sửa trong `fcf9fea`, mỗi điểm một ca đỏ → xanh: `find` nhóm dương chứa `-o` / đối số `-exec` bị từ chối nhầm (hồi quy của chính tôi) và toán tử `,`; chuỗi ba nháy gán mở docstring giả; `#!/bin/sh -e` không phải errexit; `bash -c ": ; $(…)"` lọt; `security_gate` mất luật fail-closed khi thiếu python3 ngoài cây git; registry phiên so git dir bằng chuỗi. Bảy dòng bug bị ảnh hưởng đã chứng minh ĐỎ lại (PROVEN).
 
+Ba vòng review sau đó (chỉ commit sửa của vòng trước) tìm thêm 1 P2 + 3 P3, 2 P2 + 3 P3, rồi 2 P3 ở `b4ad8a9`; tất cả đã sửa, mỗi điểm một ca đỏ → xanh (vòng bốn: ĐỎ 7 trong `test_git_guard_shell_subst.sh` — một dấu ngoặc trong phép so sánh tắt kiểm tra phần còn lại của script `-c`, và thân `$( … )` thường bị coi là dữ liệu). Chi tiết và giới hạn đã chấp nhận (ngoặc trong nháy, `watch`/`ssh` trong `bash -c`) ở `CHANGELOG.md` "Đợt 13". Vòng 8 RED-proof: hai dòng `hardware-find-negated-or-unfiltered` và `git-guard-bash-c-subst-tee-shell` PROVEN lại sau các vòng sửa.
+
 Giới hạn đã biết (chưa đóng): regex lấy `cwd` của payload (9 hook cũ + 7 hook mới) không đọc JSON thoát (`é`, `\\`); chỉ ảnh hưởng khi `CLAUDE_PROJECT_DIR` không đặt VÀ cwd tiến trình nằm ngoài cây git. Nâng cấp khi có harness gửi payload `ensure_ascii`: giải mã bằng python ở nhánh hiếm đó.
 
 ## Bước 6 (mục 5 cũ) — kiểm chứng trên macOS
