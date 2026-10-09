@@ -58,5 +58,8 @@ check 0 "find . -name '*.pyc' -not -name keep.pyc -delete"
 check 0 "find build ! -name '*.keep' -delete"
 check 0 "find build -name '*.pyc' -o -type f -delete"
 check 0 "find . -name '*.pyc' -print0 | xargs -0 rm -rf"
+# a negated group only restricts what a positive filter already narrows (independent audit T0024): not a reason to refuse
+check 0 'find . -name "*.txt" ! \( -name "*.py" \) -delete'
+check 0 'find . -name "*.txt" -not \( -name "keep*" -o -name "*.md" \) -delete'
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_find_not_or: all passed" || { echo "❌ test_hardware_find_not_or: $FAILS failed"; exit 1; }

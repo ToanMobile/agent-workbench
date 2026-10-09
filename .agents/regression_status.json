@@ -333,16 +333,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 18:50:36",
-        "ts": 1791546636.5457191,
+        "at": "2026-10-09 19:25:00",
+        "ts": 1791548700.710457,
         "task": null,
-        "commit": "430fb87+dirty",
-        "duration": "82.43s",
+        "commit": "63f9561+dirty",
+        "duration": "73.04s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-01/20261009-184845.log",
+        "log": ".agents/evidence/REG-DK-HOOK-01/20261009-192419.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 19:25:00",
+          "ts": 1791548700.710457,
+          "task": null,
+          "commit": "63f9561+dirty",
+          "duration": "73.04s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261009-192419.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 18:50:36",
@@ -386,17 +397,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-01/20261009-163322.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 16:19:33",
-          "ts": 1791537573.876394,
-          "task": null,
-          "commit": "4425001+dirty",
-          "duration": "87.05s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261009-161830.log",
-          "deleted": []
         }
       ],
       "title": "hook contract",
@@ -411,16 +411,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 18:50:36",
-        "ts": 1791546636.545724,
+        "at": "2026-10-09 19:25:00",
+        "ts": 1791548700.719469,
         "task": null,
-        "commit": "430fb87+dirty",
-        "duration": "24.64s",
+        "commit": "63f9561+dirty",
+        "duration": "24.10s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-02/20261009-184747.log",
+        "log": ".agents/evidence/REG-DK-HOOK-02/20261009-192330.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 19:25:00",
+          "ts": 1791548700.719469,
+          "task": null,
+          "commit": "63f9561+dirty",
+          "duration": "24.10s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261009-192330.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 18:50:36",
@@ -463,17 +474,6 @@
           "duration": "25.59s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-02/20261009-163224.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 16:19:33",
-          "ts": 1791537573.887839,
-          "task": null,
-          "commit": "4425001+dirty",
-          "duration": "26.28s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-02/20261009-161729.log",
           "deleted": []
         }
       ],
@@ -568,16 +568,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 18:50:36",
-        "ts": 1791546636.5457332,
+        "at": "2026-10-09 19:25:00",
+        "ts": 1791548700.719481,
         "task": null,
-        "commit": "430fb87+dirty",
-        "duration": "193.16s",
+        "commit": "63f9561+dirty",
+        "duration": "113.62s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261009-185035.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261009-192500.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 19:25:00",
+          "ts": 1791548700.719481,
+          "task": null,
+          "commit": "63f9561+dirty",
+          "duration": "113.62s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261009-192500.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 18:50:36",
@@ -621,17 +632,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261009-163323.log",
           "deleted": []
-        },
-        {
-          "status": "FAIL",
-          "at": "2026-10-09 16:19:33",
-          "ts": 1791537573.887851,
-          "task": null,
-          "commit": "4425001+dirty",
-          "duration": "150.20s",
-          "exit_code": 1,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261009-161933.log",
-          "deleted": []
         }
       ],
       "title": "DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit",
@@ -663,17 +663,17 @@
       "linked_at": "2026-09-25 19:05:07",
       "linked_ts": 1790337907.491837,
       "red_proof": {
-        "at": "2026-10-09 18:22:38",
-        "ts": 1791544958.3853152,
-        "status": "VACUOUS",
-        "reason": "test vẫn xanh khi áp patch đưa bug trở lại — test (hoặc patch) không bắt đúng bug",
+        "at": "2026-10-09 18:57:53",
+        "ts": 1791547073.901273,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
           "universal-agent-devkit/tests/verification/test_bug_capture.sh": "e8f95651ef48d167",
           ".agents/local/red-patches/BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du.patch": "eb2863ded3e3d988"
         },
-        "log": ".agents/evidence/redproof-BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du/20261009-182331.log",
+        "log": ".agents/evidence/redproof-BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du/20261009-185852.log",
         "patch": ".agents/local/red-patches/BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du.patch"
       },
       "runs_in_suite": [
@@ -1485,12 +1485,18 @@
         "universal-agent-devkit/hooks/tests/hook_contract_test.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 17:40:29",
-        "ts": 1791542429.3572538,
-        "status": "INCONCLUSIVE",
-        "mode": "revert",
-        "fix_commit": "cf9ef39",
-        "reason": "commit cf9ef39 không đổi code sản xuất"
+        "at": "2026-10-09 18:58:52",
+        "ts": 1791547132.2431989,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/hooks/tests/hook_contract_test.sh": "5e3dc258af8ad418",
+          ".agents/local/red-patches/BUG-20261002-evidence-gate-foreign-xml-nonrunner.patch": "6b2f0420ff56461d"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261002-evidence-gate-foreign-xml-nonrunner/20261009-190334.log",
+        "patch": ".agents/local/red-patches/BUG-20261002-evidence-gate-foreign-xml-nonrunner.patch"
       }
     },
     "BUG-20261002-chay-finagling-running-stop-hooks-8-9-27": {
@@ -1909,8 +1915,8 @@
       "red_proof": {
         "at": "2026-10-09 18:19:28",
         "ts": 1791544768.18126,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -1999,7 +2005,21 @@
       "linked_ts": 1791541917.0944588,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-09 19:03:35",
+        "ts": 1791547415.2518442,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh": "fa7ee7ddd6c997e2",
+          ".agents/local/red-patches/BUG-20261009-comment-claim-docstring-trailing.patch": "498b83097422a3c7"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261009-comment-claim-docstring-trailing/20261009-190433.log",
+        "patch": ".agents/local/red-patches/BUG-20261009-comment-claim-docstring-trailing.patch"
+      }
     },
     "BUG-20261009-gate-runner-no-errexit-append": {
       "id": "BUG-20261009-gate-runner-no-errexit-append",
@@ -2021,7 +2041,21 @@
       "linked_ts": 1791541917.5860631,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-09 19:07:42",
+        "ts": 1791547662.585096,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh": "e3cb5ca6d120dc8b",
+          ".agents/local/red-patches/BUG-20261009-gate-runner-no-errexit-append.patch": "5e60a0842668a3c9"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261009-gate-runner-no-errexit-append/20261009-191044.log",
+        "patch": ".agents/local/red-patches/BUG-20261009-gate-runner-no-errexit-append.patch"
+      }
     },
     "BUG-20261009-gate-js-describe-title-false-flag": {
       "id": "BUG-20261009-gate-js-describe-title-false-flag",
@@ -2043,7 +2077,21 @@
       "linked_ts": 1791541918.063992,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_gate_js_describe_scope.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-09 19:10:45",
+        "ts": 1791547845.5730271,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_gate_js_describe_scope.sh": "6d9134e81e793ee4",
+          ".agents/local/red-patches/BUG-20261009-gate-js-describe-title-false-flag.patch": "5e60a0842668a3c9"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261009-gate-js-describe-title-false-flag/20261009-191327.log",
+        "patch": ".agents/local/red-patches/BUG-20261009-gate-js-describe-title-false-flag.patch"
+      }
     },
     "BUG-20261009-hooks-log-dir-process-cwd": {
       "id": "BUG-20261009-hooks-log-dir-process-cwd",
@@ -2065,7 +2113,21 @@
       "linked_ts": 1791541918.491476,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_hook_log_dir.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-09 19:05:33",
+        "ts": 1791547533.282363,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_hook_log_dir.sh": "3ebe878de8982e5b",
+          ".agents/local/red-patches/BUG-20261009-hooks-log-dir-process-cwd.patch": "b76ed358f476968a"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261009-hooks-log-dir-process-cwd/20261009-190741.log",
+        "patch": ".agents/local/red-patches/BUG-20261009-hooks-log-dir-process-cwd.patch"
+      }
     },
     "BUG-20261009-churn-guard-no-fast-path": {
       "id": "BUG-20261009-churn-guard-no-fast-path",
@@ -2087,6 +2149,42 @@
       "linked_ts": 1791541918.9270642,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_churn_guard_fast_path.sh"
+      ],
+      "red_proof": {
+        "at": "2026-10-09 19:04:33",
+        "ts": 1791547473.95009,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_churn_guard_fast_path.sh": "aa5ff9438bdb9d1a",
+          ".agents/local/red-patches/BUG-20261009-churn-guard-no-fast-path.patch": "c168d8f3e9b0ac5d"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261009-churn-guard-no-fast-path/20261009-190532.log",
+        "patch": ".agents/local/red-patches/BUG-20261009-churn-guard-no-fast-path.patch"
+      }
+    },
+    "BUG-20261009-automerge-refusal-reason-lost": {
+      "id": "BUG-20261009-automerge-refusal-reason-lost",
+      "kind": "bug",
+      "title": "worktree automerge: a commit refused by the repo's pre-commit gate was reported with only the last 500 characters of the gate output, which is the passed-checks footer, never the finding: the worktree stayed unmerged and nobody could tell why (GeelyEx2 giao-tichhop-09-10, base-hoiquy-09-10)",
+      "cause": null,
+      "component": "devkit-worktree",
+      "created_at": "2026-10-09 19:20:22",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "GeelyEx2 .git/devkit-automerge-*.out 2026-10-09 19:03: message ends in '0 phát hiện … REJECT'; test_worktree_automerge_reason.sh red 3, green",
+      "linked_at": "2026-10-09 19:20:22",
+      "linked_ts": 1791548422.899133,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/worktree_git/test_worktree_automerge_reason.sh"
       ]
     }
   },

@@ -427,8 +427,14 @@ def find_narrowed(args, starts):
         a = args[i]
         if a in ("!", "-not"):
             nxt = args[i + 1] if i + 1 < len(args) else ""
-            if nxt == "(":
-                return False
+            if nxt == "(":   # a negated group only restricts further (AND NOT): skip it whole, its filters narrow nothing
+                depth, i = 0, i + 1
+                while i < len(args):
+                    depth += (args[i] == "(") - (args[i] == ")")
+                    i += 1
+                    if depth == 0:
+                        break
+                continue
             i += 3 if nxt in FIND_NAME_FILTERS else 1
             continue
         if a in ("-o", "-or"):

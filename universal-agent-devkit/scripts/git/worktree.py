@@ -1480,8 +1480,24 @@ def _commit_pending(wt, state):
     if r.returncode != 0:
         return ("blocked", tr("commit trong worktree bị từ chối (hook pre-commit?): sửa rồi commit ở worktree, lần merge sau sẽ chạy tiếp: ",
                               "the commit in the worktree was refused (pre-commit hook?): fix it and commit in the worktree, the next merge goes on: ")
-                + (r.stdout + r.stderr).strip()[-500:], {"files": work[:20]})
+                + _refusal_text(r.stdout + r.stderr), {"files": work[:20]})
     return None
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_REFUSAL_LINE = re.compile(r"✖|REJECT|BLOCK|refus|error|fatal|từ chối", re.I)
+
+
+def _refusal_text(out, limit=1200):
+    """Why a hook refused a commit, in `limit` characters: the lines that name the refusal (✖ / REJECT / BLOCK / error …) first, then the last
+    lines, colour codes dropped. A gate prints its findings ABOVE a long list of passed checks and a footer, so the last 500 characters said
+    "0 findings" and never the reason (GeelyEx2 2026-10-09, tests/worktree_git/test_worktree_automerge_reason.sh)."""
+    lines = [l.strip() for l in _ANSI.sub("", out).splitlines() if l.strip()]
+    kept = []
+    for l in [l for l in lines if _REFUSAL_LINE.search(l)][:8] + lines[-3:]:
+        if l not in kept:
+            kept.append(l)
+    return " | ".join(kept)[:limit]
 
 
 def _conflict(wt, unmerged):
