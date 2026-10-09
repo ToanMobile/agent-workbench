@@ -333,16 +333,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 16:42:21",
-        "ts": 1791538941.3057978,
+        "at": "2026-10-09 17:01:15",
+        "ts": 1791540075.323097,
         "task": null,
-        "commit": "4425001+dirty",
-        "duration": "69.55s",
+        "commit": "94f388c+dirty",
+        "duration": "57.10s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-01/20261009-164220.log",
+        "log": ".agents/evidence/REG-DK-HOOK-01/20261009-170039.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 17:01:15",
+          "ts": 1791540075.323097,
+          "task": null,
+          "commit": "94f388c+dirty",
+          "duration": "57.10s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261009-170039.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 16:42:21",
@@ -386,17 +397,6 @@
           "exit_code": null,
           "log": ".agents/evidence/REG-DK-HOOK-01/20261009-151709.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 12:36:11",
-          "ts": 1791524171.685948,
-          "task": null,
-          "commit": "44bbfc5+dirty",
-          "duration": "60.27s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261009-123530.log",
-          "deleted": []
         }
       ],
       "title": "hook contract",
@@ -411,16 +411,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 16:42:21",
-        "ts": 1791538941.313996,
+        "at": "2026-10-09 17:01:15",
+        "ts": 1791540075.330157,
         "task": null,
-        "commit": "4425001+dirty",
-        "duration": "24.68s",
+        "commit": "94f388c+dirty",
+        "duration": "21.69s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-02/20261009-164135.log",
+        "log": ".agents/evidence/REG-DK-HOOK-02/20261009-170003.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 17:01:15",
+          "ts": 1791540075.330157,
+          "task": null,
+          "commit": "94f388c+dirty",
+          "duration": "21.69s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261009-170003.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 16:42:21",
@@ -463,17 +474,6 @@
           "duration": "31.22s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-02/20261009-160904.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 12:36:11",
-          "ts": 1791524171.69315,
-          "task": null,
-          "commit": "44bbfc5+dirty",
-          "duration": "22.80s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-02/20261009-123453.log",
           "deleted": []
         }
       ],
@@ -568,16 +568,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 16:42:21",
-        "ts": 1791538941.314007,
+        "at": "2026-10-09 17:01:15",
+        "ts": 1791540075.3301618,
         "task": null,
-        "commit": "4425001+dirty",
-        "duration": "69.92s",
+        "commit": "94f388c+dirty",
+        "duration": "92.99s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261009-164220.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261009-170114.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 17:01:15",
+          "ts": 1791540075.3301618,
+          "task": null,
+          "commit": "94f388c+dirty",
+          "duration": "92.99s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261009-170114.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 16:42:21",
@@ -620,17 +631,6 @@
           "duration": "120.07s",
           "exit_code": 1,
           "log": ".agents/evidence/REG-DK-ALL-01/20261009-161033.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 15:15:16",
-          "ts": 1791533716.3027751,
-          "task": "stale-rerun",
-          "commit": "3c96afe+dirty",
-          "duration": "6.30s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261009-151516.log",
           "deleted": []
         }
       ],
@@ -1722,6 +1722,50 @@
       "linked_ts": 1791539007.878189,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh"
+      ]
+    },
+    "BUG-20261009-review-timing-guard-env-payload": {
+      "id": "BUG-20261009-review-timing-guard-env-payload",
+      "kind": "bug",
+      "title": "review_timing_guard: the hook payload travelled in an environment variable, so an Edit of a big file (payload past the 1 MiB exec limit) made the shell fail with Argument list too long and the guard never ran",
+      "cause": null,
+      "component": "devkit-hooks",
+      "created_at": "2026-10-09 16:59:35",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "low",
+      "evidence": "macOS 2026-10-09: 1.3 MB payload -> /bin/date and python3 Argument list too long; test_review_timing_guard_big_payload.sh red 2, green with fd 3",
+      "linked_at": "2026-10-09 16:59:35",
+      "linked_ts": 1791539975.893065,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_timing_guard_big_payload.sh"
+      ]
+    },
+    "BUG-20261009-run-impacted-recent-commits-in-sandbox": {
+      "id": "BUG-20261009-run-impacted-recent-commits-in-sandbox",
+      "kind": "bug",
+      "title": "run_impacted.sh in a checkout with no upstream (every RED-proof sandbox) selected the tests of every commit of the last 6 hours: 25+ minutes per proof instead of the few tests of the reverted file",
+      "cause": null,
+      "component": "devkit-tests",
+      "created_at": "2026-10-09 16:59:36",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "low",
+      "evidence": "macOS 2026-10-09: first RED-proof ran 15 min without finishing; DEVKIT_IMPACTED_SINCE=0 test_run_impacted_since.sh red 1, green",
+      "linked_at": "2026-10-09 16:59:36",
+      "linked_ts": 1791539976.141431,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_run_impacted_since.sh"
       ]
     }
   },

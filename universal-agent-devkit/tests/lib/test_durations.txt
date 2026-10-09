@@ -196,3 +196,9 @@
 2 tests/gates/test_hardware_rm_unforced.sh
 2 tests/gates/test_hardware_find_match_all.sh
 1 tests/gates/test_git_guard_process_subst.sh
+# 2026-10-09 (macOS follow-up), each alone, wall seconds:
+2 tests/gates/test_git_guard_shell_subst.sh
+2 tests/gates/test_hardware_find_not_or.sh
+4 tests/gates/test_worktree_merge_gate_vanished.sh
+1 tests/gates/test_review_timing_guard_big_payload.sh
+1 tests/verification/test_run_impacted_since.sh

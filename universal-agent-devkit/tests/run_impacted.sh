@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Runs the DevKit tests that name a changed DevKit code file, every changed test script itself,
 # and the fast repo-consistency check. "Changed" = working tree vs HEAD, new files, and commits
-# not pushed yet (no upstream: the last 6 hours), so committing inside a turn does not leave the
-# gate testing nothing. A helper under tests/ selects the tests that source it by name.
+# not pushed yet (no upstream: the last 6 hours, or DEVKIT_IMPACTED_SINCE=<git date>; =0 none: a RED-proof sandbox), so committing
+# inside a turn does not leave the gate testing nothing. A helper under tests/ selects the tests that source it by name.
 # The full suite (`agent-kit test`) runs far longer than post-fix-gate's 900 s per command,
 # so a regression matrix that watches the DevKit (agent-workbench's) uses this instead.
 # ponytail: a changed file that no test names gets repo-consistency only, add a test when such a file breaks
@@ -34,8 +34,10 @@ jobs_now() { # what a run uses: the override when valid, else the default
 
 if git rev-parse -q --verify '@{u}' >/dev/null 2>&1; then
   unpushed="$(git log '@{u}..HEAD' --name-only --relative --format= -- . 2>/dev/null)"
+elif [ "${DEVKIT_IMPACTED_SINCE:-}" = 0 ]; then
+  unpushed=""   # a RED-proof sandbox (no upstream, a detached worktree): only the file it reverted is a change, not every commit of the last hours
 else
-  unpushed="$(git log --since=6.hours --name-only --relative --format= -- . 2>/dev/null)"
+  unpushed="$(git log --since="${DEVKIT_IMPACTED_SINCE:-6.hours}" --name-only --relative --format= -- . 2>/dev/null)"
 fi
 changed="$( { git diff HEAD --name-only --relative -- . ; git ls-files -o --exclude-standard -- . ; printf '%s\n' "$unpushed"; } 2>/dev/null \
   | grep -vE '(^|/)(CHANGELOG|README[^/]*)\.md$' | sort -u)"   # templates and rules are read by tests too

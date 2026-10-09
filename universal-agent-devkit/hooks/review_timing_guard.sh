@@ -49,12 +49,18 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "⚠ review_timing_guard: python3 không có — gate này KHÔNG chạy, kết quả không được kiểm." >&2
   exit 0
 fi
-RT_INPUT="${INPUT}" RT_LOG="${LOG_DIR}/review_timing_guard.log" \
+# The payload goes in on fd 3, not in the environment: an Edit of a big file puts its whole text in the payload, and past the exec limit
+# for arguments + environment (1 MiB on macOS) not even `date` would start (tests/gates/test_review_timing_guard_big_payload.sh).
+RT_LOG="${LOG_DIR}/review_timing_guard.log" \
 RT_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
-python3 -I <<'PY'
+python3 -I <<'PY' 3<<<"${INPUT}"
 import os, sys, json
 
-raw = os.environ.get("RT_INPUT", "")
+try:
+    with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
+        raw = _fh.read()
+except OSError:
+    raw = ""
 log = os.environ.get("RT_LOG", "/dev/null")
 ts  = os.environ.get("RT_TS", "?")
 
