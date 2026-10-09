@@ -95,13 +95,19 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "⚠ test_evidence_gate: python3 không có — gate này KHÔNG chạy, kết quả không được kiểm." >&2
   exit 0
 fi
-TE_INPUT="${INPUT}" TE_LOG="${LOG_DIR}/test_evidence_gate.log" TE_DIR="${LOG_DIR}" \
+# The payload goes to python on fd 3, not in an env var (2026-10-09): a reply past the OS limit for one variable could not
+# start python and the gate passed it unchecked (tests/gates/test_hook_large_payload.sh).
+TE_LOG="${LOG_DIR}/test_evidence_gate.log" TE_DIR="${LOG_DIR}" \
 TE_TS="$(date +%Y-%m-%dT%H:%M:%S)" TE_REPO="${REPO_ROOT}" TE_SELF="$0" \
-python3 -I <<'PY'
+python3 -I <<'PY' 3<<<"${INPUT}"
 import os, sys, json, re, glob, time, shlex
 import xml.etree.ElementTree as ET
 
-raw    = os.environ.get("TE_INPUT", "")
+try:
+    with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
+        raw = _fh.read()
+except OSError:
+    raw = ""
 log    = os.environ.get("TE_LOG", "/dev/null")
 state_dir = os.environ.get("TE_DIR", "/tmp")
 ts     = os.environ.get("TE_TS", "?")

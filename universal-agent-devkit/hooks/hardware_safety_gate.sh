@@ -77,7 +77,7 @@ INPUT="$(cat)"
 # Everything else — and any payload the regex cannot read — goes to the full parser.
 # An MCP payload never takes it: its "command" is a DEVICE shell command (adb-shell).
 fast_allow() { # $1 = trigger ERE
-  local re='"command"[[:space:]]*:[[:space:]]*"((\\.|[^"\\])*)"' c bash_re='"tool_name"[[:space:]]*:[[:space:]]*"Bash"'
+  local re='"command"[[:space:]]*:[[:space:]]*"((\\.|[^"\\])*)"' c bash_re='"tool(_n|N)ame"[[:space:]]*:[[:space:]]*"Bash"'
   [[ $INPUT =~ $bash_re ]] || return 1
   [[ $INPUT =~ $re ]] || return 1
   c="${BASH_REMATCH[1]}"
@@ -91,12 +91,22 @@ fast_allow() { # $1 = trigger ERE
   shopt -u nocasematch
   return 0
 }
-fast_allow 'adb|fastboot|dd|mount|rm|fastlane|security|xcrun|simctl|eval|flash|publish|vercel|netlify|firebase|prisma|db:|drop|truncate|flush|kubectl|terraform|tofu|pulumi|helm|docker|s3' && exit 0
+# delete: `find . -delete` removes a tree with no rm in it (2026-10-09, tests/gates/test_hardware_rm_containment.sh).
+fast_allow 'adb|fastboot|dd|mount|rm|delete|fastlane|security|xcrun|simctl|eval|flash|publish|vercel|netlify|firebase|prisma|db:|drop|truncate|flush|kubectl|terraform|tofu|pulumi|helm|docker|s3' && exit 0
 
-REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
+# The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
+# none); outside a git tree the rm guard measures from the process cwd as before, and nothing is logged
+# (tests/gates/test_hook_log_dir.sh: a run at / created /.claude/audit-gate/).
+REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
+if [ -z "${REPO_ROOT}" ]; then   # the regex costs ~10 ms on a 1 MB payload: only when it is needed
+  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+  [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+  REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
+fi
+LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"
+REPO_ROOT="${REPO_ROOT:-$(pwd)}"
 if [ "${HARDWARE_SAFETY_GATE:-1}" = "0" ] || [ "${HARDWARE_OVERRIDE:-0}" = "1" ]; then
-  if mkdir -p "${LOG_DIR}" 2>/dev/null; then
+  if [ -n "${LOG_DIR}" ] && mkdir -p "${LOG_DIR}" 2>/dev/null; then
     [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
     echo "[$(date +%Y-%m-%dT%H:%M:%S)] HARDWARE_SAFETY_GATE=${HARDWARE_SAFETY_GATE:-1} HARDWARE_OVERRIDE=${HARDWARE_OVERRIDE:-0} — gate bypassed" \
       >> "${LOG_DIR}/hardware_safety_gate.log" 2>/dev/null
@@ -136,7 +146,8 @@ if not raw.strip():
 
 try:
     data = json.loads(raw)
-    inp = data.get("tool_input") or data.get("input") or {}
+    # toolInput / toolName: the camelCase envelope (Grok, hooks/devkit_harness.py; 2026-10-09 it found no command and passed)
+    inp = data.get("tool_input") or data.get("toolInput") or data.get("input") or {}
     cmd = inp.get("command") or inp.get("CommandLine") or ""
 except Exception:
     sys.stderr.write("🛑 [HARDWARE SAFETY GATE] không đọc được JSON đầu vào — chặn để an toàn.\n")
@@ -146,7 +157,7 @@ if not isinstance(cmd, str):
     sys.exit(2)
 
 # ── replicant-mcp: the adb command each tool runs (replicant-mcp 1.6.7 dist/tools) ──
-tool = str(data.get("tool_name") or "")
+tool = str(data.get("tool_name") or data.get("toolName") or "")
 MCP = tool.startswith("mcp__")
 REPLICANT_HOST_ONLY = {"gradle-build", "gradle-test", "gradle-list", "gradle-get-details",
                        "emulator-device", "cache", "rtfm"}
@@ -336,14 +347,64 @@ def rm_target_problem(t, cwds, env):
             if len(rel) == 1:
                 return f"{orig}: là thư mục cấp 1 của project"
             continue
+        # Before the /tmp exemption (2026-10-09): a project under /tmp or $TMPDIR is inside its parent, and
+        # `rm -rf ..` from it passed while `rm -rf <project>` was blocked.
+        if under(ROOT, p):
+            return f"{orig}: chứa thư mục gốc project ({ROOT})"
         if any(under(p, d) for d in TMP_ROOTS):
             continue
         return f"{orig}: nằm ngoài project ({p})"
     return None
 
-def rm_segment_problem(toks, cwds, env, depth):
-    """Problem of one simple command, or None."""
+# find and xargs delete paths that are not on the rm command line (2026-10-09, tests/gates/test_hardware_rm_containment.sh):
+# `find P -delete`, `find P -exec rm -rf {} +` and `find P | xargs rm -rf` are judged as rm -rf of the start points P —
+# unless a -name/-path/-regex filter narrows what find matches (then the verdict is unchanged: the pinned contract case
+# `find . -name __pycache__ -exec rm -rf {} +` stays allowed). `echo a b | xargs rm -rf` is rm -rf a b; any other text
+# piped into `xargs rm -r…` (cat list, git ls-files, ls) cannot be read and is refused.
+FIND_NAME_FILTERS = {"-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex"}
+FIND_ESC = {"__ESC_SEMI__": ";", "__ESC_LP__": "(", "__ESC_RP__": ")"}
+XARGS_OPTS_WITH_ARG = {"-I", "-J", "-R", "-S", "-n", "-P", "-L", "-d", "-E", "-s", "-a", "-i"}
+
+def find_starts(args):
+    """The start points of find: the operands before its expression (BSD -f PATH too); "." when there is none."""
+    i, starts = 0, []
+    while i < len(args):
+        a = args[i]
+        if a in ("-H", "-L", "-P", "-E", "-X", "-d", "-s", "-x") or re.match(r"^-O\d$", a):
+            i += 1
+        elif a == "-D":
+            i += 2
+        elif a == "-f" and i + 1 < len(args):
+            starts.append(args[i + 1])
+            i += 2
+        else:
+            break
+    while i < len(args) and not args[i].startswith("-") and args[i] not in ("!", "(", ")", ","):
+        starts.append(args[i])
+        i += 1
+    return starts or ["."]
+
+def feed_paths(feed):
+    """The paths a command piped into `xargs rm` names: find start points ([] when a name filter narrows them), the
+    words of a literal echo / printf; None when they cannot be read."""
+    if not feed:
+        return None
     i = 0
+    while i < len(feed) and (re.match(r"^[A-Za-z_]\w*=", feed[i]) or os.path.basename(feed[i]) in RM_WRAPPERS):
+        i += 1
+    if i >= len(feed):
+        return None
+    prog, args = os.path.basename(feed[i]), [FIND_ESC.get(x, x) for x in feed[i + 1:]]
+    if prog == "find":
+        return [] if any(a in FIND_NAME_FILTERS for a in args) else find_starts(args)
+    if prog in ("echo", "printf") and not any(c in a for a in args for c in "$`("):
+        words = re.split(r"(?:\s|\\[nt0])+", " ".join(a for a in args if not re.fullmatch(r"-[neE]+", a)))
+        return [w for w in words if w and "%" not in w]
+    return None
+
+def rm_segment_problem(toks, cwds, env, depth, feed=None):
+    """Problem of one simple command, or None. feed: the command piped into this one (`find . | xargs rm -rf`)."""
+    i, xargs, xargs_file, repl = 0, False, False, {"{}"}
     while i < len(toks):
         tk = toks[i]
         if re.match(r"^[A-Za-z_]\w*=", tk):
@@ -351,9 +412,20 @@ def rm_segment_problem(toks, cwds, env, depth):
             env[k] = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), v)
             i += 1
         elif os.path.basename(tk) in RM_WRAPPERS:
+            w = os.path.basename(tk)
+            xargs = xargs or w == "xargs"
             i += 1
             while i < len(toks) and (toks[i].startswith("-") or re.match(r"^\d+\w?$", toks[i])):
-                i += 1
+                if w == "xargs":
+                    o = toks[i]
+                    xargs_file = xargs_file or o == "-a" or o.startswith("--arg-file")
+                    if o in ("-I", "-J") and i + 1 < len(toks):
+                        repl.add(toks[i + 1])
+                    elif o[:2] in ("-I", "-J") and len(o) > 2:
+                        repl.add(o[2:])
+                    i += 2 if o in XARGS_OPTS_WITH_ARG else 1
+                else:
+                    i += 1
         else:
             break
     if i >= len(toks):
@@ -367,6 +439,12 @@ def rm_segment_problem(toks, cwds, env, depth):
     if prog == "eval":
         return rm_problem(" ".join(rest), cwds, depth + 1)
     if prog == "find":
+        rest = [FIND_ESC.get(x, x) for x in rest]
+        starts, named = find_starts(rest), any(a in FIND_NAME_FILTERS for a in rest)
+        if "-delete" in rest and not named:
+            why = rm_segment_problem(["rm", "-rf", "--"] + starts, cwds, env, depth + 1)
+            if why:
+                return why + " (find -delete)"
         for j, a in enumerate(rest):
             if a in ("-exec", "-execdir", "-ok", "-okdir"):
                 sub = []
@@ -374,6 +452,8 @@ def rm_segment_problem(toks, cwds, env, depth):
                     if x in (";", "+"):
                         break
                     sub.append(x)
+                if not named:   # {} stands for everything under the start points
+                    sub = [y for x in sub for y in (starts if x == "{}" else [x])]
                 why = rm_segment_problem(sub, cwds, env, depth + 1)
                 if why:
                     return why
@@ -389,15 +469,26 @@ def rm_segment_problem(toks, cwds, env, depth):
             longs.add(a)
         elif not opts_done and a.startswith("-") and len(a) > 1:
             flags += a[1:]
-        elif a not in ("{}", ""):
+        elif a not in repl and a != "":
             targets.append(a)
     if not (("r" in flags or "R" in flags or "--recursive" in longs) and ("f" in flags or "--force" in longs)):
         return None
+    if xargs:
+        fed = None if xargs_file else feed_paths(feed)
+        if fed is None:
+            return "xargs rm: đường dẫn lấy từ lệnh trước, không đọc được (chỉ find / echo / printf literal được phân tích)"
+        targets += fed
     for t in targets:
         why = rm_target_problem(t, cwds, env)
         if why:
             return why
     return None
+
+# find operators written escaped or quoted (\; \( \) and their quoted forms) are words of find, not shell separators
+# (2026-10-09): split there, `find . \( … \) -delete` and `find . -exec … \; -delete` lost their -delete. An escaped
+# backslash before them (`\\;`) is not an escape of the operator.
+FIND_OP = re.compile(r"(?<!\\)((?:\\\\)*)\\([;()])|\x27([;()])\x27|\x22([;()])\x22")
+FIND_OP_WORD = {";": " __ESC_SEMI__ ", "(": " __ESC_LP__ ", ")": " __ESC_RP__ "}
 
 def rm_problem(text, cwds, depth=0):
     """Walk the command like the shell: `cd` moves the cwd (after `&&` for sure; after
@@ -408,6 +499,7 @@ def rm_problem(text, cwds, depth=0):
     # `…` is $(…): the lexer splits "$" from "(", so a target built from one stays "$…"
     # (unresolvable, refused) while the inner command is walked as its own segment.
     text = re.sub(r"`([^`]*)`?", r"$(\1)", text.replace("\\\n", " ").replace("\n", " ; "))
+    text = FIND_OP.sub(lambda m: (m.group(1) or "") + FIND_OP_WORD[m.group(2) or m.group(3) or m.group(4)], text)
     try:
         lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
         lex.whitespace = " \t\r"
@@ -415,7 +507,7 @@ def rm_problem(text, cwds, depth=0):
         toks = list(lex)
     except ValueError:
         toks = [x.strip("\"\x27") for x in re.split(r"\s+|([;&|()]+)", text) if x and x.strip()]
-    stack, seg, pending = [], [], None
+    stack, seg, pending, feed = [], [], None, None
     for tk in toks + [";"]:
         if not set(tk) <= set(";&|()"):
             seg.append(tk)
@@ -446,7 +538,7 @@ def rm_problem(text, cwds, depth=0):
                     pending = [os.path.normpath(os.path.join(c or "/", arg)) if c or os.path.isabs(arg) else None
                                for c in cwds]
             else:
-                why = rm_segment_problem(seg, cwds, env, depth)
+                why = rm_segment_problem(seg, cwds, env, depth, feed)
                 if why:
                     return why
             for tok_seg in seg:  # "$(…)" / `…` inside a quoted word runs too
@@ -461,6 +553,7 @@ def rm_problem(text, cwds, depth=0):
             stack.append(cwds)
         if ")" in tk and stack:
             cwds = stack.pop()
+        feed = seg if ("|" in tk and "||" not in tk and not tk.startswith(")")) else None   # what `| xargs rm` reads
         seg = []
     return None
 
@@ -666,7 +759,7 @@ def logcat_violation(text):
 
 if rm_why:
     sys.stderr.write("\n🛑 [HARDWARE SAFETY GATE REJECTED]\n")
-    sys.stderr.write("rm đệ quy + force (-rf, -fr, -r -f, --recursive --force) bị chặn — xoá không đảo ngược được:\n")
+    sys.stderr.write("rm đệ quy + force (-rf, -fr, -r -f, --recursive --force; cả find -delete / -exec rm, xargs rm) bị chặn — xoá không đảo ngược được:\n")
     sys.stderr.write(f"  • {rm_why}\n")
     sys.stderr.write(f"  • Lệnh: {cmd}\n\n")
     sys.stderr.write("Được phép: build output trong project (build/, dist/, node_modules/, .gradle/, Library/, Temp/, obj/, bin/ …\n"

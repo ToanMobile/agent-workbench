@@ -40,16 +40,26 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 
-REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
-mkdir -p "${LOG_DIR}"
-[ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
-
 # Drain stdin before any early exit, otherwise the caller gets EPIPE.
 INPUT="$(cat)"
 
+# The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
+# none). Outside a git tree there is no project and nothing is written (tests/gates/test_hook_log_dir.sh): a run at /
+# created /.claude/audit-gate/.
+REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
+if [ -z "${REPO_ROOT}" ]; then   # the regex costs ~10 ms on a 1 MB payload: only when it is needed
+  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+  [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+  REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
+fi
+LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"
+if [ -n "${LOG_DIR}" ]; then
+  [ -d "${LOG_DIR}" ] || mkdir -p "${LOG_DIR}"
+  [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+fi
+
 if [ "${PRECODE_GATE:-1}" = "0" ]; then
-  echo "[$(date +%Y-%m-%dT%H:%M:%S)] PRECODE_GATE=0 — gate bypassed" >> "${LOG_DIR}/precode_gate.log" 2>/dev/null
+  [ -n "${LOG_DIR}" ] && echo "[$(date +%Y-%m-%dT%H:%M:%S)] PRECODE_GATE=0 — gate bypassed" >> "${LOG_DIR}/precode_gate.log" 2>/dev/null
   exit 0
 fi
 
@@ -64,13 +74,30 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "🛑 precode_gate: cần python3 để kiểm tra — chặn để an toàn. Cài python3 hoặc đặt PRECODE_GATE=0 để tắt gate." >&2
   exit 2
 fi
-PG_INPUT="${INPUT}" PG_LOG="${LOG_DIR}/precode_gate.log" \
-PG_LEDGER="${LOG_DIR}/read_ledger.tsv" PG_REPO="${REPO_ROOT}" \
+# Fast path (2026-10-09, decision-neutral; tests/gates/test_edit_hook_fast_path.sh): python below acts only on a
+# tool_input.file_path whose extension is in SRC_EXT. When no file_path value in the payload ends in one, and none holds a
+# JSON escape that could spell one (A\u002ekt), python would exit 0 without a word: skip its start (~30 ms a call). Keep
+# the list in sync (ratchet).
+PG_SRC='\.(kt|kts|java|swift|ts|tsx|js|jsx|mjs|py|go|rs|dart|cs|c|cc|cpp|h|hpp|m|mm)"'
+_RX_HIT='"(file_path)"[[:space:]]*:[[:space:]]*"[^"\\]*'"${PG_SRC}"
+_RX_ESC='"(file_path)"[[:space:]]*:[[:space:]]*"[^"\\]*\\'
+# Under 128 KiB only: a regex over 1 MB costs ~25 ms in a UTF-8 locale, more than the python start it saves.
+if [ "${#INPUT}" -lt 131072 ]; then
+  [[ ${INPUT} =~ ${_RX_HIT} ]] || [[ ${INPUT} =~ ${_RX_ESC} ]] || exit 0
+fi
+# The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable (Linux 128 KiB,
+# macOS ~1 MiB for args + env) python could not start and a blind Write of a big file passed (tests/gates/test_hook_large_payload.sh).
+PG_LOG="${LOG_DIR:+${LOG_DIR}/precode_gate.log}" \
+PG_LEDGER="${LOG_DIR:+${LOG_DIR}/read_ledger.tsv}" PG_REPO="${REPO_ROOT}" \
 PG_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
-python3 -I <<'PY'
+python3 -I <<'PY' 3<<<"${INPUT}"
 import os, subprocess, sys, json
 
-raw = os.environ.get("PG_INPUT", "")
+try:
+    with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
+        raw = _fh.read()
+except OSError:
+    raw = ""
 log = os.environ.get("PG_LOG", "/dev/null")
 ts  = os.environ.get("PG_TS", "?")
 
@@ -87,7 +114,7 @@ except Exception as e:
     logline(f"[{ts}] stdin parse fail: {e!r} — fail-open")
     sys.exit(0)
 
-inp = d.get("tool_input") or {}
+inp = d.get("tool_input") or d.get("toolInput") or {}   # toolInput: the camelCase envelope (Grok), 2026-10-09
 if not isinstance(inp, dict):
     sys.exit(0)
 SRC_EXT = (".kt", ".kts", ".java", ".swift", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py",

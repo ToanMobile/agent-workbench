@@ -63,7 +63,10 @@ fast_allow() { # $1 = trigger ERE
   shopt -u nocasematch
   return 0
 }
-fast_allow 'git|eval|devkit_precommit|hookspath' && exit 0
+# A pipe into a shell (`cat x | sh`, `… | xargs bash -c`) or a here-string (`bash <<< …`) runs text the fast path cannot
+# see: the parser reads it (2026-10-09, tests/gates/test_git_guard_shell_feed.sh). Bracket expressions, not \b: POSIX
+# ERE has no \b (glibc adds it, macOS regcomp need not).
+fast_allow 'git|eval|devkit_precommit|hookspath|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<' && exit 0
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "BLOCKED: block-dangerous-git.sh cần 'python3' để phân tích lệnh. Chặn để an toàn." >&2
@@ -93,7 +96,9 @@ def _fnm(name, pat):
 
 try:
     PAYLOAD = json.load(sys.stdin)
-    cmd = PAYLOAD.get("tool_input", {}).get("command") or ""
+    # toolInput: the camelCase envelope (Grok, hooks/devkit_harness.py); input: as hardware_safety_gate (2026-10-09:
+    # {"toolName":"Bash","toolInput":{"command":"git push -f …"}} found no command and passed).
+    cmd = (PAYLOAD.get("tool_input") or PAYLOAD.get("toolInput") or PAYLOAD.get("input") or {}).get("command") or ""
 except Exception:
     print("BLOCKED: block-dangerous-git.sh không đọc được JSON đầu vào. Chặn để an toàn.", file=sys.stderr)
     sys.exit(2)
@@ -119,7 +124,10 @@ WRAPPERS = {
     "flock": ({"-w", "-E", "--timeout"}, 1),
 }
 INTERPRETERS = {"python", "python2", "python3", "node", "perl", "ruby", "php", "deno", "bun"}
+# awk runs commands with system() and `print … | "sh"`: the string literals of its program are checked (2026-10-09).
+AWKS = {"awk", "gawk", "mawk", "nawk"}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
+SHELL_OPTS_WITH_ARG = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
 GIT_OPTS_WITH_ARG = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix", "--config-env"}
 
 def short_flags(args):
@@ -571,7 +579,9 @@ def backup_then_allow_restore(args):
             i += 1
     if not paths or CHANGES_DIR:
         return False
-    root = os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    root = backup_root()
+    if not root:
+        return False   # no project to keep the backup in: the restore stays blocked
     for p in paths:
         if p in (".", "./") or any(c in p for c in "*?[:") or not os.path.isfile(p) or os.path.islink(p):
             return False
@@ -580,11 +590,22 @@ def backup_then_allow_restore(args):
     PENDING_BACKUPS.extend(os.path.realpath(p) for p in paths)
     return True
 
+def backup_root():
+    """The project the restore backup goes into (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (the
+    process cwd without one); None outside a git tree — the backup made .claude/audit-gate/ in a non-git cwd."""
+    if os.environ.get("CLAUDE_PROJECT_DIR"):
+        return os.path.realpath(os.environ["CLAUDE_PROJECT_DIR"])
+    try:
+        r = subprocess.run(["git", "-C", _cwd or ".", "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return os.path.realpath(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+
 def do_backups():
     """Copy the files a restore will overwrite — only after the whole command passed."""
     if not PENDING_BACKUPS:
         return True
-    root = os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    root = backup_root()
     audit = os.path.join(root, ".claude", "audit-gate")
     dest = os.path.join(audit, "restore-backup", time.strftime("%Y%m%d-%H%M%S"))
     try:
@@ -637,6 +658,19 @@ def analyse_simple(tokens, depth):
         if prog == "env":
             i += 1
             while i < len(tokens) and (tokens[i].startswith("-") or "=" in tokens[i]):
+                # env -S STRING / --split-string=STRING splits STRING into the words env runs (2026-10-09: the value was
+                # skipped as an option argument, so `env -S "git reset --hard"` passed): those words replace it.
+                t = tokens[i]
+                split = (tokens[i + 1] if t in ("-S", "--split-string") and i + 1 < len(tokens)
+                         else t[2:] if t.startswith("-S") and len(t) > 2
+                         else t.split("=", 1)[1] if t.startswith("--split-string=") else None)
+                if split is not None:
+                    try:
+                        words = shlex.split(split)
+                    except ValueError:
+                        m = RAW.search(split)
+                        return f"{m.group(1).split()[0]} (env -S)" if m else "env -S: chuỗi lệnh không phân tích được"
+                    return analyse_simple(tokens[:i] + words + tokens[i + (2 if t in ("-S", "--split-string") else 1):], depth + 1)
                 hooks_off = hooks_off or bool(HOOK_OFF_ENV.match(tokens[i]))
                 allow_branch = allow_branch or tokens[i] == ALLOW_BRANCH_ENV
                 if "=" in tokens[i] and not tokens[i].startswith("-"):
@@ -668,9 +702,13 @@ def analyse_simple(tokens, depth):
         CUR_DIR[0] = None if unknown else os.path.join(CUR_DIR[0], os.path.expanduser(tgt))
     if prog == "export" and ALLOW_BRANCH_ENV in rest:
         ALLOW_BRANCH[0] = True
-    # `$g reset --hard` / `${GIT} clean -f`: a variable in command position may be git.
-    if prog.startswith("$"):
+    # `$g reset --hard` / `${GIT} clean -f`: a variable in command position may be git. So may a $(…) / backtick there
+    # (`$(echo gi)t reset --hard`, 2026-10-09): its output is the program name.
+    if prog.startswith("$") or SUBST in prog:
         return danger_in_git(rest[0], rest[1:]) if rest else None
+    if prog in AWKS:
+        reason = git_in_literals(" ".join(rest))
+        return f"{reason} (gọi qua {prog})" if reason else None
     if prog in INTERPRETERS:
         for j, a in enumerate(rest):
             if a in ("-c", "-e", "--eval", "-E", "-r") and j + 1 < len(rest):
@@ -702,7 +740,20 @@ def analyse_simple(tokens, depth):
             return analyse(" ".join(rest), depth + 1)
         for j, a in enumerate(rest):
             if a == "-c" or (a.startswith("-") and not a.startswith("--") and "c" in a[1:]):
-                return analyse(rest[j + 1], depth + 1) if j + 1 < len(rest) else None
+                # Options may follow -c: the command is the first operand (`bash -c -- STR`, `bash -c -e STR`; 2026-10-09
+                # the `--` was analysed instead of STR).
+                k = j + 1
+                while k < len(rest) and rest[k] != "--" and len(rest[k]) > 1 and rest[k][0] in "-+":
+                    k += 2 if rest[k] in SHELL_OPTS_WITH_ARG else 1
+                k += 1 if k < len(rest) and rest[k] == "--" else 0
+                return analyse(rest[k], depth + 1) if k < len(rest) else None
+        for j, a in enumerate(rest):
+            if a.startswith("<<<"):   # bash <<< STR: the here-string is the script
+                here = a[3:] if len(a) > 3 else (rest[j + 1] if j + 1 < len(rest) else "")
+                if not literal_word(here):
+                    PENDING_FEED.append(UNREADABLE_FEED)
+                    return None
+                return analyse(here, depth + 1)
         return None
     if prog == "ssh":
         j = 0
@@ -901,6 +952,157 @@ def outside_single_quotes(text):
             i += 1
     return "".join(out)
 
+# ── Text fed to a shell on stdin (2026-10-09, tests/gates/test_git_guard_shell_feed.sh) ──────────────────────────────
+# `echo STR | bash`, `bash <<< STR`, `… | xargs sh -c`: the shell runs what it reads, so it is analysed like a -c string when
+# the producer is a literal (echo / printf / cat with a here-doc or here-string; a here-doc body is analysed where it
+# stands in the command). Text a command GENERATES (cat FILE, curl, base64 -d, a $… word) cannot be read here: the
+# command is then blocked with UNREADABLE_FEED, unless something else in it blocks first.
+UNREADABLE_FEED = ("shell chạy văn bản do lệnh khác sinh ra (pipe / here-string vào sh, bash, xargs sh -c): cổng không "
+                   "đọc được nội dung — chỉ echo / printf / cat <<heredoc literal được phân tích; chạy thẳng lệnh đó")
+PENDING_FEED = []   # an unreadable feed: the verdict when nothing else in the command blocks
+ESCAPE = re.compile(r"\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{4}|0?[0-7]{1,3}|.)", re.S)
+ESCAPE_CHARS = {"n": "\n", "t": "\t", "r": "\r", "a": "\a", "b": "\b", "f": "\f", "v": "\v", "e": "\x1b", "\\": "\\"}
+PRINTF_SPEC = re.compile(r"%(?:%|[-+ #0]*\d*(?:\.\d+)?([a-zA-Z]))")
+
+def unescape(s):
+    """The escapes printf, echo -e and zsh echo turn into characters: \\x67 is g."""
+    def one(m):
+        e = m.group(1)
+        if e[0] in "xu" and len(e) > 1:
+            return chr(int(e[1:], 16))
+        if e[0] in "01234567":
+            return chr(int(e, 8) & 0xFF)
+        return ESCAPE_CHARS.get(e, "\\" + e)
+    return ESCAPE.sub(one, s)
+
+def literal_word(w):
+    """No $var, $(…) or backtick left in the word: its text is what the command line says."""
+    return "$" not in w and "`" not in w and SUBST not in w
+
+def printf_text(args):
+    """What `printf FMT ARG…` prints, close enough to scan: FMT escapes, %s / %b filled from the ARGs, FMT reused."""
+    args = args[1:] if args[:1] == ["--"] else args
+    if not args:
+        return ""
+    fmt, vals, pos, out = unescape(args[0]), args[1:], [0], []
+    def fill(m):
+        if m.group(0) == "%%":
+            return "%"
+        v = vals[pos[0]] if pos[0] < len(vals) else ""
+        pos[0] += 1
+        return unescape(v) if m.group(1) == "b" else v
+    while len(out) < 64:
+        start = pos[0]
+        out.append(PRINTF_SPEC.sub(fill, fmt))
+        if pos[0] == start or pos[0] >= len(vals):
+            break
+    return "".join(out)
+
+def prog_index(seg):
+    """Index of the program word of a simple command: after NAME=…, keywords, env (and its options) and wrappers."""
+    i = 0
+    while i < len(seg):
+        t, p = seg[i], seg[i].rsplit("/", 1)[-1]
+        if t in KEYWORDS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t):
+            i += 1
+        elif p == "env":
+            i += 1
+            while i < len(seg) and (seg[i].startswith("-") or "=" in seg[i]):
+                i += 2 if seg[i] in ("-u", "-C", "-S") else 1
+        elif p in WRAPPERS:
+            i = skip_wrapper(seg, i, p)
+        else:
+            break
+    return i
+
+def reads_script(seg):
+    """A shell that runs what arrives on its stdin (no -c, no script operand, or -s / a lone -, stdin not redirected), or
+    xargs running a shell (the piped words become its command line)."""
+    i = prog_index(seg)
+    if i >= len(seg):
+        return False
+    prog, rest = seg[i].rsplit("/", 1)[-1], seg[i + 1:]
+    if prog == "xargs":
+        j = 0
+        while j < len(rest) and rest[j].startswith("-"):
+            j += 2 if rest[j] in ("-I", "-n", "-P", "-L", "-d", "-E", "-s", "-a") else 1
+        k = j + prog_index(rest[j:])
+        return k < len(rest) and rest[k].rsplit("/", 1)[-1] in SHELLS
+    if prog not in SHELLS:
+        return False
+    j, s_flag = 0, False
+    while j < len(rest):
+        a = rest[j]
+        if a.startswith("<"):
+            return False             # < FILE / <<X / <<< STR: stdin is not the pipe (a here-string is checked on its own)
+        if REDIRECT.match(a):
+            j += 2 if re.fullmatch(r"\d*(>>?|<|&>)", a) else 1
+            continue
+        if a == "--":
+            j += 1
+            break
+        if len(a) > 1 and a[0] in "-+":
+            short = a[0] == "-" and not a.startswith("--")
+            if short and "c" in a[1:]:
+                return False         # -c STR: analysed as a command string
+            s_flag = s_flag or (short and "s" in a[1:])
+            j += 2 if a in SHELL_OPTS_WITH_ARG else 1
+            continue
+        break
+    return s_flag or j >= len(rest) or rest[j] == "-"
+
+def feed_texts(seg):
+    """Readings of what a literal producer writes to the pipe (each analysed), or None when it is not a literal."""
+    i = prog_index(seg)
+    if i >= len(seg):
+        return None
+    prog, args = seg[i].rsplit("/", 1)[-1], seg[i + 1:]
+    if prog == "cat":
+        texts, here, k = [], False, 0
+        while k < len(args):
+            a = args[k]
+            if a.startswith("<<"):
+                here = True
+                w = a[3:] if a.startswith("<<<") else ""
+                if a in ("<<", "<<-", "<<<"):
+                    w = args[k + 1] if k + 1 < len(args) else ""
+                    k += 1
+                if a.startswith("<<<"):
+                    if not literal_word(w):
+                        return None
+                    texts.append(w)
+            elif REDIRECT.match(a):
+                k += 1 if re.fullmatch(r"\d*(>>?|<|&>)", a) else 0
+            elif a != "-" and not a.startswith("-"):
+                return None          # cat FILE: what it prints is not in the command
+            k += 1
+        return texts if here else None
+    if prog not in ("echo", "printf"):
+        return None
+    args = drop_redirects(args)
+    if not all(literal_word(a) for a in args):
+        return None
+    if prog == "printf":
+        return [printf_text(args), "\n".join(unescape(a) for a in args)]
+    while args and re.fullmatch(r"-[neE]+", args[0]):
+        args = args[1:]
+    text = " ".join(args)
+    return [text, unescape(text)]
+
+def judge_feed(producer, depth):
+    """producer piped into a shell: the reason its text is dangerous, None; an unreadable producer is noted in PENDING_FEED."""
+    texts = feed_texts(producer) if producer else None
+    if texts is None:
+        PENDING_FEED.append(UNREADABLE_FEED)
+        return None
+    for t in texts:
+        here = CUR_DIR[0]   # the fed shell is its own process: a cd in it does not move this command
+        reason = analyse(t, depth + 1) if t.strip() else None
+        CUR_DIR[0] = here
+        if reason:
+            return reason
+    return None
+
 def analyse(text, depth=0, stripped=False):
     if depth > 5:
         return "lồng lệnh quá sâu để phân tích"
@@ -939,12 +1141,21 @@ def analyse(text, depth=0, stripped=False):
         return f"{m.group(1).split()[0]} (lệnh không phân tích được)" if m else None
     segment = []
     dirs = []
+    feed = None   # after a pipe: the producer segment ([] = a ( … ) / { … } group, not one literal command)
     for tok in tokens + [";"]:
         if tok in SEPARATORS or set(tok) <= set(";&|\n()"):
             if segment:
                 reason = analyse_simple(segment, depth)
                 if reason:
                     return reason
+                if feed is not None and reads_script(segment):
+                    reason = judge_feed(feed, depth)
+                    if reason:
+                        return reason
+            if "|" in tok and "||" not in tok:
+                feed = segment if segment and ")" not in tok.split("|", 1)[0] else []
+            elif tok not in ("(", "{"):
+                feed = None   # `a | ( sh )` / `a | { sh; }`: the pipe reaches the first command of the group
             segment = []
             for ch in tok:
                 if ch == "(":
@@ -962,7 +1173,7 @@ _rs = [m.start() for m in re.finditer(r"\brestore\b", cmd)]
 _upto = len(cmd) if not _rs or re.search(r"\b(do|done|eval|xargs|function)\b|\(\)\s*\{", cmd) else _rs[-1]
 CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd[:_upto]))
 # (RETARGETED is set from the parsed tokens in analyse_simple: a regex over the raw text was beaten by GIT_""DIR.)
-reason = analyse(cmd)
+reason = analyse(cmd) or (PENDING_FEED[0] if PENDING_FEED else None)
 if not reason and not do_backups():
     reason = "không sao lưu được file trước khi restore"
 if reason and reason in SOLO_HIT:

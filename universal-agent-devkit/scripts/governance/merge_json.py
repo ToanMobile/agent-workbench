@@ -137,6 +137,19 @@ def _merge_list(source, target):
                 missing = set() if cover is None else src_m - cover
                 if missing:
                     _merge_list([{**item, "matcher": "|".join(sorted(missing)), "hooks": [h]}], target)
+            # A DevKit hook still wired with the plain spelling older templates wrote
+            # (`bash "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/X"`) takes the template's current
+            # command, so a re-sync brings a changed wiring (2026-10-09: SessionStart says when
+            # the hook files are missing instead of exiting 127). Any other command is the user's.
+            for h in item["hooks"]:
+                key = _hook_key(h)
+                if not (isinstance(h, dict) and key.startswith(DEVKIT_HOOK) and key in present):
+                    continue
+                plain = 'bash "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/' + key[len(DEVKIT_HOOK):] + '"'
+                for t in target:
+                    for th in (t.get("hooks") if isinstance(t, dict) and isinstance(t.get("hooks"), list) else []):
+                        if isinstance(th, dict) and th.get("command") == plain and h.get("command") != plain:
+                            th["command"] = h["command"]
             new_hooks = [h for h in item["hooks"] if _hook_key(h) not in present]
             if not new_hooks:
                 continue

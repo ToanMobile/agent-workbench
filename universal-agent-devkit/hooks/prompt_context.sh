@@ -78,9 +78,12 @@ if [ -n "${RULES_OUT}" ]; then
   # Recall log: the matched project-rule sections, next to the traps enrich_context.py
   # logged (.claude/audit-gate/surfaced.jsonl; prompt sha1 only). SURFACED_LOG=0 off.
   if [ -s "${RULES_OUT}" ] && [ "${SURFACED_LOG:-1}" != "0" ] && [ -d "${REPO_ROOT}/.agents" ]; then
-    PAYLOAD="${PAYLOAD}" RULES_FILE="${RULES_OUT}" LOG_DIR="${REPO_ROOT}/.claude/audit-gate" python3 -I - <<'PY' 2>/dev/null
+    # The payload goes to python on fd 3, not in an env var (2026-10-09): a prompt past the OS limit for one variable
+    # could not start python and the log line was lost (tests/gates/test_hook_large_payload.sh).
+    RULES_FILE="${RULES_OUT}" LOG_DIR="${REPO_ROOT}/.claude/audit-gate" python3 -I - <<'PY' 3<<<"${PAYLOAD}" 2>/dev/null
 import hashlib, json, os, re, time
-d = json.loads(os.environ.get("PAYLOAD") or "{}")
+with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
+    d = json.loads(_fh.read().strip() or "{}")
 secs = [{"title": m.group(1), "cmd": m.group(2)} for m in
         (re.match(r"\s*- (.+?) — (`.+`)\s*$", l) for l in open(os.environ["RULES_FILE"], encoding="utf-8")) if m]
 if secs:

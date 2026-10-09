@@ -29,7 +29,7 @@ no regression run, device probe or report. A clean result is exit 2 (tests not r
 never PASS.
 
 Exit codes: 0 PASS, 1 REJECT, 2 UNVERIFIED (tests not run, matrix untrusted, existing
-test edited, unreadable file, no coverage, bad --diff), 3 nothing to audit,
+test or suite runner script edited, unreadable file, no coverage, bad --diff, no git on PATH), 3 nothing to audit,
 4 UNTESTED (everything else passed, but a test exited with its matrix `untested_exit`
 code: it cannot run on this machine — e.g. no Unity Editor), 5 NOT ACCEPTED (`--full` was
 asked for but deferred because another session is live: the impacted checks passed, no
@@ -307,42 +307,117 @@ TEST_SKIP_RE = re.compile(r"@Ignore\b|@Disabled\b|\[Ignore\b|\bt\.Skip|\bpytest\
                           r"\bunittest\.skip|\b(?:it|test|describe)\.skip\b|\bx(?:it|describe|test)\s*\(|XCTSkip")
 
 
-def test_change_is_append_only(base_ref: str, repo_path: str, old_path: str = "") -> bool:
+# Definitions an appended block can REDEFINE, shadowing the test of that name in the base version (A6, 2026-10-09: an
+# appended `def test_sub(self): self.assertIsNotNone(sub)` replaced the real test_sub and passed as append-only).
+_PY_TEST_DEF = re.compile(r"^[ \t]*(?:async[ \t]+)?def[ \t]+(test\w*)[ \t]*\(", re.M)   # when the file does not parse
+_JVM_TEST_DEF = re.compile(r"@(?:Test|ParameterizedTest|RepeatedTest|TestFactory)\b(?:\([^)\n]*\))?\s*(?:@[\w.]+(?:\([^)\n]*\))?\s*)*"
+                           r"(?:(?:public|private|protected|internal|open|override|suspend|final|static)\s+)*"
+                           r"(?:fun|void)\s+(`[^`\n]+`|\w+)\s*\(")
+_JS_TEST_DEF = re.compile(r"(?<![.\w$])(?:it|test)(?:\.only)?[ \t]*\([ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|`([^`\n]*)`)")
+_SH_FUNC_DEF = re.compile(r"^[ \t]*(?:function[ \t]+([A-Za-z_][\w:.-]*)|([A-Za-z_][\w:.-]*)[ \t]*\(\))", re.M)
+_DEF_RULES = ((".kt", ".kts", ".java", ".groovy", ".scala"), _JVM_TEST_DEF), \
+             ((".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"), _JS_TEST_DEF), \
+             ((".sh", ".bash", ".zsh", ""), _SH_FUNC_DEF)
+
+
+def _def_counts(rx, text: str) -> dict:
+    out = {}
+    for m in rx.finditer(text):
+        name = next((g for g in m.groups() if g is not None), None)
+        if name is not None:
+            out[name] = out.get(name, 0) + 1
+    return out
+
+
+def _py_def_counts(text: str):
+    """Test definitions per scope (module-level classes and test functions, Class.test_method), or None when the text
+    does not parse. Scoped: a new class that reuses another class's method names shadows nothing."""
+    import ast  # noqa: PLC0415
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+    out = {}
+    for node in tree.body:
+        names = []
+        if isinstance(node, ast.ClassDef):
+            names = [node.name] + [f"{node.name}.{s.name}" for s in node.body
+                                   if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)) and s.name.startswith("test")]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
+            names = [node.name]
+        for n in names:
+            out[n] = out.get(n, 0) + 1
+    return out
+
+
+def redefines_test(repo_path: str, base: str, new: str) -> bool:
+    """True when new defines a test of base once more (Python test / class, JUnit @Test fun|void, it|test('title'),
+    shell function): the appended copy shadows (or doubles) the existing one."""
+    ext = os.path.splitext(repo_path)[1].lower()
+    if ext == ".py":
+        b, n = _py_def_counts(base), _py_def_counts(new)
+        if b is None or n is None:
+            b, n = _def_counts(_PY_TEST_DEF, base), _def_counts(_PY_TEST_DEF, new)
+    else:
+        rx = next((r for exts, r in _DEF_RULES if ext in exts), None)
+        if rx is None:
+            return False
+        b, n = _def_counts(rx, base), _def_counts(rx, new)
+    return any(cnt > b.get(k, 0) >= 1 for k, cnt in n.items())
+
+
+# An appended line that can turn a suite runner's exit status green whatever ran before it (A2): `exit 0`, `true` last,
+# `|| true`, `set +e`, `sys.exit()`.
+_STATUS_NEUTRALIZER = re.compile(r"\bexit\s+0\b|^\s*exit\s*(?:[;#].*)?$|^\s*(?:true|:)\s*(?:[;#].*)?$|\|\|\s*(?:true|:)\s*$|"
+                                 r"\bset\s+\+e\b|\bexit\s*\(\s*0?\s*\)")
+
+
+def _git_line_split(data: bytes) -> list:
+    """git's line model: a line ends at "\\n"; a last line without one is a different line than the same text with one."""
+    parts = data.split(b"\n")
+    return [p + b"\n" for p in parts[:-1]] + ([parts[-1]] if parts[-1] else [])
+
+
+def test_change_is_append_only(base_ref: str, repo_path: str, old_path: str = "", runner: bool = False) -> bool:
     """True when the working tree only ADDS lines to this existing test file (a new test
     appended to it) and none of them is a skip marker. Any removed or changed line — or a
-    diff git cannot produce — keeps the file counted as an edited test. A file equal to
+    binary file — keeps the file counted as an edited test. A file equal to
     base_ref is no edit at all: a test added in `--since` commits is in the change, unchanged
     against HEAD (2026-09-28: three new tests blocked the Stop hook as "edited").
-    old_path: the file was renamed from it (git mv): diffed against it as one rename."""
-    paths = ["-M", base_ref, "--", old_path, repo_path] if old_path else [base_ref, "--", repo_path]
-    res = subprocess.run(["git", "-C", str(get_repo_root()), "diff", "-U0", "--no-color", "--no-ext-diff"] + paths,
-                         capture_output=True, text=True, errors="replace")
-    if res.returncode != 0:
+    old_path: the file was renamed from it (git mv): compared with it.
+    Compared in-process from blobs read in batches, not one `git diff -U0` per file (A12, 2026-10-09): only additions
+    exist exactly when every base line is kept in order (a subsequence), which is what git's minimal diff shows; the
+    added lines are the same whatever the alignment. An appended definition that redefines an existing test is an edit
+    (redefines_test, A6). runner: a suite runner script (A2): an appended _STATUS_NEUTRALIZER line is an edit too."""
+    base = blob_at(base_ref, old_path or repo_path)
+    new = worktree_bytes(repo_path)
+    if new is not None and new == base:
+        return True                                   # no edit at all, or a pure move
+    if new is None or (base is None and object_info(base_ref, old_path or repo_path) is not None):
+        return False                                  # deleted, no longer a regular file, or a directory before
+    base = base or b""
+    if b"\0" in base[:8000] or b"\0" in new[:8000]:
+        return False                                  # git: "Binary files … differ"
+    old_lines, i, added = _git_line_split(base), 0, []
+    for line in _git_line_split(new):
+        if i < len(old_lines) and line == old_lines[i]:
+            i += 1
+        else:
+            added.append(line.decode("utf-8", errors="replace"))
+    if i < len(old_lines) or any(TEST_SKIP_RE.search(a) or (runner and _STATUS_NEUTRALIZER.search(a)) for a in added):
         return False
-    if not res.stdout:
-        return True
-    added = []
-    for line in res.stdout.splitlines():
-        if line.startswith(("---", "+++")):
-            continue
-        if line.startswith("-") or line.startswith("Binary files"):
-            return False
-        if line.startswith("+"):
-            added.append(line[1:])
-    if old_path and not added:
-        return True                                   # a pure move: rename headers, no changed line
-    return bool(added) and not any(TEST_SKIP_RE.search(a) for a in added)
+    return not redefines_test(repo_path, base.decode("utf-8", errors="replace"), new.decode("utf-8", errors="replace"))
 
 
-def since_test_weakened(since: str, repo_path: str, upstream: str = "") -> bool:
+def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: bool = False) -> bool:
     """True when this test existed at `since`, a LOCAL-ONLY commit of `since..HEAD` (one not
     reachable from `upstream`; no upstream → every range commit) touches it, and its change to
     the working tree is not append-only — counted from the latest range commit touching it whose
     message holds a `Test-approved-by:` line (that commit's content was audited), else from
-    `since`. A commit already on the remote (a teammate's, pulled in) passed its own push gate."""
+    `since`. A commit already on the remote (a teammate's, pulled in) passed its own push gate.
+    runner: a suite runner script (A2), judged by test_change_is_append_only(runner=True)."""
     root = str(get_repo_root())
-    if subprocess.run(["git", "-C", root, "cat-file", "-e", f"{since}:{repo_path}"],
-                      capture_output=True).returncode != 0:
+    if object_info(since, repo_path) is None:
         return False
     local = subprocess.run(["git", "-C", root, "rev-list", "-1", f"{since}..HEAD"]
                            + (["--not", upstream] if upstream else []) + ["--", repo_path],
@@ -354,7 +429,7 @@ def since_test_weakened(since: str, repo_path: str, upstream: str = "") -> bool:
                           "--", repo_path], capture_output=True, text=True)
     if res.returncode != 0:
         return True                                   # cannot read the range: fail closed
-    return not test_change_is_append_only(res.stdout.strip() or since, repo_path)
+    return not test_change_is_append_only(res.stdout.strip() or since, repo_path, runner=runner)
 
 
 def split_tests_by_author(paths: list, session, transcript) -> tuple:
@@ -641,7 +716,8 @@ def local_state_sha(project_dir):
         for p in LOCAL_CONFIG:
             pathspecs.extend([p, f"**/{p}"])
         out = subprocess.run(["git", "-C", str(project_dir), "ls-files", "-z", "--others", "--ignored",
-                              "--exclude-standard", "--"] + pathspecs, capture_output=True, text=True).stdout
+                              "--exclude-standard", "--"] + pathspecs, capture_output=True, text=True,
+                             errors="surrogateescape").stdout   # a non-UTF-8 name must not disable the reuse (A8)
         files = {r for r in out.split("\0") if r and not r.endswith("/")
                  and any(fnmatch.fnmatch(os.path.basename(r), p) for p in LOCAL_CONFIG)}
         files |= set(build_inputs(project_dir))
@@ -649,7 +725,7 @@ def local_state_sha(project_dir):
         return "?"
     h = hashlib.sha256()
     for rel in sorted(files):
-        h.update(rel.encode() + b"\0" + _sha_file(Path(project_dir) / rel).encode() + b"\0")
+        h.update(os.fsencode(rel) + b"\0" + _sha_file(Path(project_dir) / rel).encode() + b"\0")
     return h.hexdigest()
 
 
@@ -662,7 +738,7 @@ def snapshot_local_configs(project_dir):
         config_files = list(LOCAL_CONFIG) + ["config.json", "**/config.json"]
         out = subprocess.run(["git", "-C", str(project_dir), "ls-files", "-z", "--others", "--ignored",
                               "--exclude-standard", "--"] + config_files,
-                             capture_output=True, text=True).stdout
+                             capture_output=True, text=True, errors="surrogateescape").stdout
         for rel in out.split("\0"):
             if not rel or rel.endswith("/"):
                 continue
@@ -716,14 +792,16 @@ RESULT_FORMAT = 2   # 2 (2026-10-07): a Unity test suite may be re-used (DEVKIT_
 SUITE_RAN_AT = {}
 
 
-def cached_full_pass(project_dir, matrix_arg):
+def cached_full_pass(project_dir, matrix_arg, fp=None):
     """The last full PASS when it still holds for this exact code (O1, 2026-09-28: GeelyEx2 ran
     16 full gates in one session, many on content that had already passed): same tree
     fingerprint, same RESULT_FORMAT, same matrix, tested within DEVKIT_GATE_CACHE_MAX_S (default
     6 h — ignored files, devices and the network can drift). None otherwise. An UNTESTED full run
     (exit 4, its "untested" ids ended with their matrix untested_exit) counts for its PASS suites
     only: reuse_full_pass runs the untested ones again (2026-09-29, GeelyEx2). An UNVERIFIED run (exit 2, no suite
-    failed: an edited test waits for review, a code file nothing covers) is kept the same way (2026-10-07)."""
+    failed: an edited test waits for review, a code file nothing covers) is kept the same way (2026-10-07).
+    fp: the tree fingerprint the caller took a moment ago with nothing run since (A13, 2026-10-09: a --full run took it
+    three times); None takes it here."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
@@ -744,7 +822,7 @@ def cached_full_pass(project_dir, matrix_arg):
     if r.get("local_sha") in (None, "?"):
         return None
     # Both must match: the cheap one first (tree_fp 0.25 s, local_state_sha 0.7-6.4 s), so an edited tree never pays for it.
-    fp = tree_fp.tree_fingerprint(project_dir)
+    fp = fp or tree_fp.tree_fingerprint(project_dir)
     if not fp or r.get("fingerprint") != fp:
         return None
     return r if r.get("local_sha") == local_state_sha(project_dir) else None
@@ -769,21 +847,24 @@ def tree_fp_of(project_dir):
 def head_and_dirty(project_dir):
     """(HEAD sha, {path from the repo root: blob sha, or None when deleted}) of every file that
     differs from HEAD: what bin/push_gate.py compares a push against. (None, {}) on a git error."""
-    run = lambda *a: subprocess.run(["git", "-C", str(project_dir), *a], capture_output=True, text=True)
+    # Paths decoded with surrogateescape, as everywhere else: a non-UTF-8 name crashed text=True here, AFTER the gate
+    # printed PASS (A8, 2026-10-09). Such a key reaches the receipt as a \udcXX escape (json's ensure_ascii).
+    run = lambda *a: subprocess.run(["git", "-C", str(project_dir), *a], capture_output=True)
     top, head = run("rev-parse", "--show-toplevel"), run("rev-parse", "HEAD")
     if top.returncode or head.returncode:
         return None, {}
-    top = top.stdout.strip()
+    top = os.fsdecode(top.stdout.strip())
     names = sorted({p for args in (("diff", "--name-only", "-z", "HEAD"), ("ls-files", "-o", "--exclude-standard", "-z"))
-                    for p in subprocess.run(["git", "-C", top, *args], capture_output=True, text=True).stdout.split("\0") if p})
+                    for p in subprocess.run(["git", "-C", top, *args], capture_output=True).stdout
+                    .decode("utf-8", errors="surrogateescape").split("\0") if p})
     present = [p for p in names if os.path.isfile(os.path.join(top, p))]
-    shas = subprocess.run(["git", "-C", top, "hash-object", "--stdin-paths"], input="\n".join(present),
-                          capture_output=True, text=True).stdout.split() if present else []
+    shas = subprocess.run(["git", "-C", top, "hash-object", "--stdin-paths"], capture_output=True,
+                          input="\n".join(present).encode("utf-8", "surrogateescape")).stdout.decode().split() if present else []
     if len(shas) != len(present):
         return None, {}
     dirty = dict.fromkeys(names)
     dirty.update(zip(present, shas))
-    return head.stdout.strip(), dirty
+    return head.stdout.decode().strip(), dirty
 
 
 def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None, tested_fp=None,
@@ -1109,6 +1190,7 @@ def resolve_path(rel_file: str) -> Path:
 
 DELETED_FILES = set()
 RENAME_SOURCES = {}
+UNTRACKED_FILES = set()   # `??` in git status: a path the index does not hold (a `git rm --cached` file left on disk)
 
 
 def _to_project_rel(repo_rel: str):
@@ -1121,10 +1203,103 @@ def _to_project_rel(repo_rel: str):
 STAGED = False       # --staged: audit the index — what `git commit` will record
 STAGED_MODES = {}    # project-relative path -> index mode ("100644", "120000", "160000", …)
 _CONTENT_CACHE = {}
-BASE_REF = "HEAD"    # what "already there" means for a secret: HEAD, or the --diff base
+BASE_REF = "HEAD"    # what "already there" means for a secret: HEAD, the --diff base, or the --since base
 VACUITY_BASE = "HEAD"  # the code the vacuity revert puts back: BASE_REF, or the --since base
 _BASE_CACHE = {}
+_BASE_REF_FOR = {}   # project-relative path -> its own base ref (--since: a file only upstream commits touched keeps HEAD)
 PREEXISTING_SECRETS = []   # (file:line, label) found in the base version too — warned, not blocked
+# git objects read in batches (A12, audit 2026-10-09): 600 changed files cost ~1235 git processes (one `git show`,
+# `cat-file -e` or `diff -U0` per file), ~4 s of fork/exec. Keyed by (ref, path from the repo root); ref "" = the index.
+_BLOBS = {}          # -> bytes of the blob, or None when <ref>:<path> is no blob
+_OBJ_INFO = {}       # -> (type, size) as `git cat-file --batch-check` printed it, or None when missing
+_BATCH_MAX_BYTES = 2_000_000   # a larger blob is read only when asked (blob_at), never prefetched
+_BATCH_TOTAL_BYTES = 256_000_000   # nor more than this in one prefetch: the rest is read when asked
+
+
+def prefetch_blobs(ref: str, repo_paths) -> None:
+    """Fill _OBJ_INFO / _BLOBS for many `<ref>:<path>` with two git processes (cat-file --batch-check, then --batch for
+    the blobs up to _BATCH_MAX_BYTES). Any trouble leaves the entries out: object_info / blob_at then ask git per file,
+    as before. A path with a newline cannot be named on one line: left to that fallback too."""
+    todo = [p for p in dict.fromkeys(repo_paths) if p and "\n" not in p and (ref, p) not in _OBJ_INFO]
+    if not todo:
+        return
+    root = str(get_repo_root())
+    try:
+        chk = subprocess.run(["git", "-C", root, "cat-file", "--batch-check"], capture_output=True,
+                             input="".join(f"{ref}:{p}\n" for p in todo).encode("utf-8", "surrogateescape"))
+    except OSError:
+        return
+    lines = chk.stdout.split(b"\n")
+    if chk.returncode != 0 or len(lines) < len(todo):
+        return
+    want, total = [], 0
+    for p, line in zip(todo, lines):
+        parts = line.rsplit(b" ", 2)
+        if line.endswith(b" missing"):
+            _OBJ_INFO[(ref, p)] = None
+            _BLOBS[(ref, p)] = None
+        elif len(parts) == 3 and parts[2].isdigit() and len(parts[0]) in (40, 64) and b" " not in parts[0]:
+            kind, size = parts[1].decode(), int(parts[2])
+            _OBJ_INFO[(ref, p)] = (kind, size)
+            if kind != "blob":
+                _BLOBS[(ref, p)] = None
+            elif size <= _BATCH_MAX_BYTES and total + size <= _BATCH_TOTAL_BYTES:
+                want.append((p, parts[0].decode()))
+                total += size
+        # anything else ("ambiguous", …): not cached, the per-file fallback decides
+    if not want:
+        return
+    try:
+        out = subprocess.run(["git", "-C", root, "cat-file", "--batch"], capture_output=True,
+                             input="".join(f"{sha}\n" for _p, sha in want).encode()).stdout
+    except OSError:
+        return
+    pos = 0
+    for p, sha in want:   # "<sha> blob <size>\n<content>\n" per object, in input order
+        nl = out.find(b"\n", pos)
+        head = out[pos:nl].split() if nl >= 0 else []
+        if len(head) != 3 or head[0].decode() != sha or not head[2].isdigit():
+            return
+        size = int(head[2])
+        _BLOBS[(ref, p)] = out[nl + 1:nl + 1 + size]
+        pos = nl + 1 + size + 1
+
+
+def object_info(ref: str, repo_path: str):
+    """(type, size) of <ref>:<path>, or None when git has no such object (`git cat-file -e` failing)."""
+    key = (ref, repo_path)
+    if key not in _OBJ_INFO:
+        res = subprocess.run(["git", "-C", str(get_repo_root()), "cat-file", "--batch-check"], capture_output=True,
+                             input=f"{ref}:{repo_path}\n".encode("utf-8", "surrogateescape"))
+        parts = res.stdout.strip().rsplit(b" ", 2)
+        ok = res.returncode == 0 and len(parts) == 3 and parts[2].isdigit() and not res.stdout.strip().endswith(b" missing")
+        _OBJ_INFO[key] = (parts[1].decode(), int(parts[2])) if ok else None
+    return _OBJ_INFO[key]
+
+
+def blob_at(ref: str, repo_path: str):
+    """Bytes of the blob <ref>:<path> (ref "" = the index), or None (no such blob: new file, a tree, unreadable)."""
+    key = (ref, repo_path)
+    if key not in _BLOBS:
+        res = subprocess.run(["git", "-C", str(get_repo_root()), "cat-file", "blob", f"{ref}:{repo_path}"],
+                             capture_output=True)
+        _BLOBS[key] = res.stdout if res.returncode == 0 else None
+    return _BLOBS[key]
+
+
+def worktree_bytes(repo_path: str):
+    """The working-tree content git would diff for this path (a symlink: its target), or None: absent, or not a
+    regular file (a FIFO is never opened: reading one would block the gate)."""
+    full = os.path.join(str(get_repo_root()), repo_path)
+    try:
+        if os.path.islink(full):
+            return os.fsencode(os.readlink(full))
+        if not os.path.isfile(full):
+            return None
+        with open(full, "rb") as f:
+            return f.read()
+    except OSError:
+        return None
 
 
 def split_new(rel_file: str, pat: str, content: str):
@@ -1155,9 +1330,8 @@ def base_text(rel_file: str):
     """The file at BASE_REF, or None (new file, not in git, unreadable)."""
     if rel_file not in _BASE_CACHE:
         src = RENAME_SOURCES.get(rel_file, rel_file)
-        res = subprocess.run(["git", "-C", str(get_repo_root()), "show", f"{BASE_REF}:{get_project_prefix()}{src}"],
-                             capture_output=True)
-        _BASE_CACHE[rel_file] = res.stdout.decode("utf-8", errors="replace") if res.returncode == 0 else None
+        data = blob_at(_BASE_REF_FOR.get(rel_file, BASE_REF), f"{get_project_prefix()}{src}")   # prefetched in main()
+        _BASE_CACHE[rel_file] = data.decode("utf-8", errors="replace") if data is not None else None
     return _BASE_CACHE[rel_file]
 
 
@@ -1170,10 +1344,9 @@ def read_changed_text(rel_file: str):
     text = None
     if STAGED:
         if STAGED_MODES.get(rel_file, "").startswith("100"):
-            res = subprocess.run(["git", "-C", str(get_repo_root()), "cat-file", "blob",
-                                  f":{get_project_prefix()}{rel_file}"], capture_output=True)
-            if res.returncode == 0:
-                text = res.stdout.decode("utf-8", errors="replace")
+            data = blob_at("", f"{get_project_prefix()}{rel_file}")   # the index; prefetched in run_staged_audit
+            if data is not None:
+                text = data.decode("utf-8", errors="replace")
     else:
         full = resolve_path(rel_file)
         if full.is_file() and not full.is_symlink():
@@ -1255,6 +1428,8 @@ def get_modified_files(diff_ref: str = None) -> list:
             continue
         if "D" in xy:
             DELETED_FILES.add(path)
+        if xy == "??":
+            UNTRACKED_FILES.add(path)
         files.add(path)
     if diff_ref:
         res_diff = subprocess.run(["git", "-C", proj, "diff", "--relative", "--name-status", "-z",
@@ -1288,6 +1463,17 @@ def is_devkit_artifact(rel_file: str) -> bool:
         return False
 
 
+# DevKit state folders the other checks skip (is_devkit_artifact) but the secret scan does not: a runner's log can print a
+# token, and a key force-added under .agents/archive/ was exit 3 — which the pre-commit hook lets through (A5, 2026-10-09).
+SECRET_SCAN_STATE_DIRS = (".claude/audit-gate/", ".agents/evidence/", ".agents/archive/", ".agents/context/")
+
+
+def secret_scan_state_files(devkit_artifacts: list) -> list:
+    """The changed files of SECRET_SCAN_STATE_DIRS (not the links the installer places: their content is a link target)."""
+    return [f for f in devkit_artifacts if f.replace("\\", "/").startswith(SECRET_SCAN_STATE_DIRS)
+            and not resolve_path(f).is_symlink()]
+
+
 def match_pattern(file_path: str, pattern: str) -> bool:
     clean_path = file_path.replace("\\", "/")
     clean_pat = pattern.replace("\\", "/")
@@ -1304,8 +1490,12 @@ def run_git_hygiene_audit(modified_files: list) -> tuple:
         clean_rel = rel_file.replace("\\", "/")
         name = clean_rel.rsplit("/", 1)[-1].lower()
         exempt_name = name.endswith(SAFE_TEMPLATE_SUFFIXES)
+        # A deletion of a forbidden file is the remediation, never a finding: `git rm --cached .env` was REJECTed by
+        # --staged and --full, blocking the very commit that removes it (A4, 2026-10-09). Still a finding while the
+        # file stays in what the change holds: on disk and not ignored (`??` next to the deletion).
+        removed = rel_file in DELETED_FILES and rel_file not in UNTRACKED_FILES
         # 1. Kiểm tra tên file nhạy cảm cấm commit (Keystore, JKS, Provisioning, Service Configs)
-        if not exempt_name:
+        if not exempt_name and not removed:
             for file_pat, label in FORBIDDEN_SECRET_FILES:
                 if re.search(file_pat, clean_rel, re.IGNORECASE):
                     secrets_found.append((rel_file, tr("File cấm: ", "Forbidden file: ") + _L(label)))
@@ -1753,24 +1943,59 @@ def check_anti_false_green(is_hardware_project: bool = False) -> tuple:
     total_images = 0
     duplicate_images = []
     zero_byte_images = []
+    # Every run read and sha256-hashed every proof image again, for a warning (A14, 2026-10-09: 300 x 1 MB = 300 MB per
+    # gate run). The digest is remembered per (path, size, mtime) next to run_proof_block's hash cache
+    # (<git-common-dir>/postfix-gate/); a rewritten image has a new mtime and is read again. ponytail: an agent can
+    # write a wrong digest into that file and hide this duplicate WARNING (never a block); key by inode+ctime if that is seen.
+    sha_path = _proof_hash_cache_path(base_dir)
+    sha_path = sha_path and os.path.join(os.path.dirname(sha_path), "proof-sha-cache.json")
+    try:
+        with open(sha_path, encoding="utf-8") as f:
+            known = json.load(f)
+        known = known if isinstance(known, dict) else {}
+    except (OSError, ValueError, TypeError):
+        known = {}
+    seen = {}
 
     for pdir in proof_dirs:
         if pdir.exists():
             for img_file in list(pdir.glob("*.jpg")) + list(pdir.glob("*.png")):
                 total_images += 1
-                sz = img_file.stat().st_size
-                if sz == 0:
+                try:
+                    st = img_file.stat()
+                except OSError:
+                    continue
+                if st.st_size == 0:
                     zero_byte_images.append(img_file.name)
                     continue
                 try:
-                    with open(img_file, "rb") as f:
-                        h = hashlib.sha256(f.read()).hexdigest()
+                    key = str(img_file.resolve())
+                    entry = known.get(key)
+                    if isinstance(entry, list) and len(entry) == 3 and entry[:2] == [st.st_size, st.st_mtime_ns] \
+                            and isinstance(entry[2], str):
+                        h = entry[2]
+                    else:
+                        with open(img_file, "rb") as f:
+                            h = hashlib.sha256(f.read()).hexdigest()
+                    seen[key] = [st.st_size, st.st_mtime_ns, h]
                     if h in image_hashes and image_hashes[h] != img_file.name:
                         duplicate_images.append((img_file.name, image_hashes[h]))
                     else:
                         image_hashes[h] = img_file.name
                 except OSError:
                     pass
+    if sha_path and seen != known:   # only the images seen now: the file never grows past them
+        tmp = None
+        try:
+            os.makedirs(os.path.dirname(sha_path), exist_ok=True)
+            fd, tmp = tempfile.mkstemp(prefix=".tmp_proof_sha.", dir=os.path.dirname(sha_path))
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(seen, f)
+            os.replace(tmp, sha_path)
+        except OSError:   # a cache that cannot be written only costs the next run a re-read
+            if tmp:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
 
     if zero_byte_images:
         findings.append(tr(f"Phát hiện {len(zero_byte_images)} ảnh chụp minh chứng 0-byte (Corrupt/Blank)",
@@ -1931,9 +2156,9 @@ def new_orphan_tests(modified_files, matrix, base_ref) -> tuple:
     except ImportError:
         return [], []
     prefix = get_project_prefix()
-    new = [f for f in modified_files if f not in DELETED_FILES and rc.is_test_candidate(f)
-           and subprocess.run(["git", "-C", str(get_repo_root()), "cat-file", "-e", f"{base_ref}:{prefix}{f}"],
-                              capture_output=True).returncode != 0]
+    cands = [f for f in modified_files if f not in DELETED_FILES and rc.is_test_candidate(f)]
+    prefetch_blobs(base_ref, [prefix + f for f in cands])   # one git process, not one `cat-file -e` per file (A12)
+    new = [f for f in cands if object_info(base_ref, prefix + f) is None]
     if not new:
         return [], []
     # A renamed test keeps its history; a copy is one more test nothing may run.
@@ -1967,6 +2192,77 @@ def uncovered_code_files(modified_files, rules, covers=None) -> list:
         and f.replace("\\", "/").split("/")[0] not in NOT_CODE_ROOTS
         and not is_test_path(f) and not any(match_pattern(f, pat) for pat in watch)
     ]
+
+
+_RUNNER_FOLLOW_EXT = (".sh", ".bash", ".zsh")
+_INTERPRETER = re.compile(r"(?:ba|z|da|k)?sh|source|\.|python[\d.]*|node|ruby|perl|php|pwsh")
+_PREFIX_WORDS = {"exec", "env", "command", "time", "nohup", "nice"}
+
+
+def _run_words(seg: str) -> list:
+    """The file a command segment RUNS: its first word when that is a path (`./gradlew`, `scripts/ci`), or the script an
+    interpreter is given (`sh scripts/check.sh`, `python3 -u tools/run.py`). Never an argument the command only reads
+    (`grep -q x src/core.py`), nor a module or inline code (`python3 -m pytest`, `bash -c '…'`)."""
+    words = [w.strip("'\"") for w in seg.split()]
+    i = 0
+    while i < len(words) and ("=" in words[i] or os.path.basename(words[i]) in _PREFIX_WORDS):
+        i += 1
+    if i >= len(words):
+        return []
+    if _INTERPRETER.fullmatch(os.path.basename(words[i])):
+        for w in words[i + 1:]:
+            if w in ("-m", "-c", "-e"):
+                return []
+            if not w.startswith("-"):
+                return [w]
+        return []
+    return [words[i]] if "/" in words[i] else []
+
+
+def suite_runner_paths(matrix: dict, ref: str, candidates: set) -> set:
+    """The candidates (project-relative paths) a suite command of the matrix runs (A2, 2026-10-09): the file a command
+    segment runs (_run_words: `sh scripts/check.sh`, `./gradlew`, `python3 tools/run.py`), and what the shell scripts
+    it runs run in turn, read at `ref` — two levels, as deep as regression_checklist.suite_index reads. Task files
+    (Makefile, package.json, tox.ini) and build wrappers (gradlew) are not followed; a word with $VAR or `…` is not
+    resolved."""
+    if not candidates:
+        return set()
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
+    except ImportError:
+        return set()
+    prefix = get_project_prefix()
+    found, seen = set(), set()
+    level = [(t["command"], "", True) for rule in (matrix or {}).get("rules") or [] if isinstance(rule, dict)
+             for t in rule.get("mandatory_regression_tests") or [] if isinstance(t, dict) and isinstance(t.get("command"), str)]
+    for depth in range(3):   # the commands, the scripts they name, the scripts those name
+        scripts = []
+        for text, here, top in level:
+            for line in ([text] if top else rc._command_lines(text)):
+                for cwd, seg in rc._segments(line):
+                    for tok in _run_words(seg):
+                        if not tok or "$" in tok or "`" in tok:
+                            continue
+                        for cand in dict.fromkeys(os.path.normpath(os.path.join(d, tok)).replace("\\", "/") for d in (cwd, "", here)):
+                            if cand in seen or cand in (".", "..") or cand.startswith(("../", "/")):
+                                continue
+                            seen.add(cand)
+                            if cand in candidates:
+                                found.add(cand)
+                            suffix = Path(cand).suffix
+                            if depth < 2 and Path(cand).name not in ("gradlew", "mvnw") and (
+                                    suffix in _RUNNER_FOLLOW_EXT or (suffix == "" and "/" in tok)):
+                                scripts.append(cand)
+        if not scripts:
+            break
+        prefetch_blobs(ref, [prefix + s for s in scripts])
+        level = []
+        for s in scripts:
+            data = blob_at(ref, prefix + s)
+            if data and b"\0" not in data[:8000]:
+                level.append((data.decode("utf-8", errors="replace"), os.path.dirname(s), False))
+    return found
 
 
 # ── Impacted-test selection ────────────────────────────────────────────────────────
@@ -2636,9 +2932,33 @@ def _scripts_on_path():
 # 2026-10-09, tests/verification/test_vacuity_signal.sh). The re-run may be in a suite worker thread, where no handler can
 # be installed, so main() installs _vacuity_on_signal and it acts on this registry. ponytail: SIGKILL still loses the fix,
 # back the files up on disk and restore them at the next start if that is ever seen.
+# _VACUITY_PGIDS holds the process group of EVERY suite command the gate is running (run_in_group: the suites, their
+# flaky re-run, the vacuity re-run, pre-commit suites), not only the vacuity re-run: each runs in its own session, so a
+# SIGTERM / SIGHUP / SIGINT to the gate left them running as orphans (A9, 2026-10-09, tests/gates/test_gate_robustness.sh).
 _VACUITY_LIVE: dict = {}
 _VACUITY_PGIDS: set = set()
 _VACUITY_LOCK = threading.RLock()
+
+
+def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
+    """(exit code, output, timed out) of a shell command in its own session/process group, so a timeout kills the
+    whole tree (gradle daemons, test workers), not just the shell. The group is in _VACUITY_PGIDS while it runs: a
+    signal handler (_vacuity_on_signal) can end it from any thread."""
+    with _VACUITY_LOCK:   # registered in the same step as the start: a signal in between still finds it
+        proc = subprocess.Popen(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, errors="replace", start_new_session=True, env=env)
+        _VACUITY_PGIDS.add(proc.pid)
+    try:
+        try:
+            out, _ = proc.communicate(timeout=timeout)
+            return proc.returncode, out, False
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            return proc.returncode, proc.communicate()[0], True
+    finally:
+        with _VACUITY_LOCK:
+            _VACUITY_PGIDS.discard(proc.pid)
 
 
 def _vacuity_restore(items) -> None:
@@ -2699,7 +3019,6 @@ def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
         return "skip"
     prefix = get_project_prefix()
     saved = []
-    proc = None
     try:
         for rel in files:
             path = project_dir / rel
@@ -2715,29 +3034,16 @@ def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
                 else:
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(res.stdout)
-        with _VACUITY_LOCK:
-            proc = subprocess.Popen(test["command"], shell=True, cwd=str(project_dir),
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, errors="replace", start_new_session=True, env=suite_env())
-            _VACUITY_PGIDS.add(proc.pid)
-        try:
-            out, _ = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            proc.communicate()
+        code, out, timed_out = run_in_group(test["command"], str(project_dir), suite_env(), timeout)
+        if timed_out:
             return "weak"
-        if proc.returncode == 0:
+        if code == 0:
             return "vacuous"
         if _VACUITY_RED.search(out or ""):
             return "ok"
         return "weak"
     finally:
         with _VACUITY_LOCK:
-            if proc is not None:
-                _VACUITY_PGIDS.discard(proc.pid)
             for rel, _blob in saved:
                 _VACUITY_LIVE.pop(project_dir / rel, None)
             _vacuity_restore([(project_dir / rel, blob) for rel, blob in saved])
@@ -3016,19 +3322,11 @@ def flaky_retry(cmd, project_dir, timeout, elapsed, infra=False):
         cap = 120.0
     if elapsed > cap and not infra:
         return None
-    proc = subprocess.Popen(cmd, shell=True, cwd=str(project_dir), stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, errors="replace", start_new_session=True, env=suite_env())
-    try:
-        out, _ = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        proc.communicate()
+    code, out, timed_out = run_in_group(cmd, str(project_dir), suite_env(), timeout)
+    if timed_out:
         return None
     label = "INFRA_RETRY" if infra else "FLAKY_RETRY"
-    return proc.returncode, f"\n# --- chạy lại 1 lần ({label}) — exit {proc.returncode} ---\n{out or ''}"
+    return code, f"\n# --- chạy lại 1 lần ({label}) — exit {code} ---\n{out or ''}"
 
 
 def keep_evidence(project_dir, t, cmd, out):
@@ -3177,7 +3475,7 @@ def _update_regression_checklist(args, matrix, rules, modified_files, regression
         bug_id = rc.add_bug(data, args.record_lesson, cause=args.cause, task=args.task, test_ids=passed)
     try:
         rc.save(project_dir, data)
-    except OSError as e:
+    except (OSError, ValueError) as e:   # ValueError: a non-UTF-8 file name in a row cannot be written as UTF-8 (A8)
         log_warn(tr(f"Không ghi được regression checklist: {e}", f"Cannot write the regression checklist: {e}"))
         return
     c = rc.summary(data)
@@ -3219,16 +3517,20 @@ def run_large_file_audit(modified_files: list) -> tuple:
     root = str(get_repo_root())
     prefix = get_project_prefix()
     findings = []
-    for f in modified_files:
-        if f in DELETED_FILES or not STAGED_MODES.get(f, "100").startswith("100"):
+    files = [f for f in modified_files if f not in DELETED_FILES and STAGED_MODES.get(f, "100").startswith("100")]
+    # One `check-attr --stdin` and one `cat-file --batch-check` for all of them, not two git processes per file (A12).
+    lfs = set()
+    if files:
+        res = subprocess.run(["git", "-C", root, "check-attr", "--stdin", "-z", "filter"], capture_output=True,
+                             input=b"".join((prefix + f).encode("utf-8", "surrogateescape") + b"\0" for f in files))
+        parts = res.stdout.decode("utf-8", errors="surrogateescape").split("\0")
+        lfs = {parts[i] for i in range(0, len(parts) - 2, 3) if parts[i + 1] == "filter" and parts[i + 2] == "lfs"}
+        prefetch_blobs("", [prefix + f for f in files])
+    for f in files:
+        if prefix + f in lfs:
             continue
-        lfs = subprocess.run(["git", "-C", root, "check-attr", "filter", "--", prefix + f],
-                             capture_output=True, text=True).stdout.strip().endswith(": lfs")
-        if lfs:
-            continue
-        size = subprocess.run(["git", "-C", root, "cat-file", "-s", ":" + prefix + f],
-                              capture_output=True, text=True).stdout.strip()
-        mb = int(size) / 1e6 if size.isdigit() else 0
+        info = object_info("", prefix + f)
+        mb = info[1] / 1e6 if info else 0
         if mb > MAX_STAGED_MB:
             findings.append((f, tr(f"file {mb:.1f} MB > {MAX_STAGED_MB:g} MB — không commit file lớn (DEVKIT_ALLOW_LARGE=1 nếu User yêu cầu)",
                                    f"file {mb:.1f} MB > {MAX_STAGED_MB:g} MB — large files are not committed (DEVKIT_ALLOW_LARGE=1 when the user asks)")))
@@ -3462,17 +3764,9 @@ def run_precommit_tests(modified_files) -> tuple:
             continue
         started = time.perf_counter()
         print(f"  {DIM}▶ {sid}: {cmd}{RESET}")
-        proc = subprocess.Popen(cmd, shell=True, cwd=str(get_project_dir()), stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, errors="replace", start_new_session=True, env=suite_env())
-        try:
-            out, _ = proc.communicate(timeout=timeout)
-            rc = proc.returncode
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            out, rc = (proc.communicate()[0] or "") + "\n(TIMEOUT)", "TIMEOUT"
+        rc, out, timed_out = run_in_group(cmd, str(get_project_dir()), suite_env(), timeout)
+        if timed_out:
+            out, rc = (out or "") + "\n(TIMEOUT)", "TIMEOUT"
         spent += time.perf_counter() - started
         if rc == "TIMEOUT":
             skipped.append((sid, tr(f"quá {timeout:.0f}s, đã dừng", f"over {timeout:.0f}s, stopped")))
@@ -3491,6 +3785,19 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
     and must not reach outside the repository. Clean is exit 2: tests were not run,
     so this is never a PASS."""
     print(f"\n{BOLD}{CYAN}🛡️  POST-FIX GATE — {tr('kiểm tĩnh nội dung đã stage (pre-commit)', 'static checks on the staged content (pre-commit)')}{RESET}")
+    state_files = secret_scan_state_files(devkit_artifacts)   # the secret scan only (A5)
+    prefix = get_project_prefix()
+    prefetch_blobs("", [prefix + f for f in modified_files + state_files if STAGED_MODES.get(f, "").startswith("100")])
+    prefetch_blobs(BASE_REF, [prefix + RENAME_SOURCES.get(f, f) for f in modified_files + state_files])
+    state_ok, state_findings = run_git_hygiene_audit(state_files) if state_files and not modified_files else (True, [])
+    if not state_ok:
+        for f, lbl in state_findings:
+            log_err(f"{f}: {lbl}")
+        print(f"  {BOLD}{tr('KẾT LUẬN', 'VERDICT')}:{RESET} {RED}{BOLD}{tr('REJECT — sửa các điểm trên rồi commit lại', 'REJECT — fix the findings above, then commit again')}{RESET}\n")
+        if args.json:
+            print(json.dumps({"mode": "staged", "exit_code": 1, "static_ok": False, "files": [], "static": {"secrets": len(state_findings)},
+                              "findings": FINDINGS}, ensure_ascii=False))
+        return 1
     if not modified_files:
         log_warn(tr("Không có thay đổi nào được stage để kiểm.", "Nothing staged to check.")
                  + (f" {DIM}({tr('bỏ qua', 'skipped')} {len(devkit_artifacts)} {tr('link/state do devkit cài', 'DevKit-installed links/state')}){RESET}" if devkit_artifacts else ""))
@@ -3499,7 +3806,7 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
         return 3
     print(f"  • {tr('File đã stage', 'Staged files')}: {BOLD}{len(modified_files)}{RESET}")
     checks = [
-        ("secrets", tr("Bí mật / file cấm", "Secrets / forbidden files"), run_git_hygiene_audit),
+        ("secrets", tr("Bí mật / file cấm", "Secrets / forbidden files"), lambda files: run_git_hygiene_audit(files + state_files)),
         ("large", tr("File lớn / video / gói nhị phân", "Large files / video / binary packages"), run_large_file_audit),
         ("lazy", tr("Placeholder lười biếng", "Lazy placeholders"), run_anti_laziness_audit),
         ("dependencies", tr("Dependency (version thả nổi / http://)", "Dependencies (floating versions / http://)"), run_dependency_audit),
@@ -3773,8 +4080,11 @@ def main():
     global _MAIN_T0
     _MAIN_T0 = time.monotonic()
     if threading.current_thread() is threading.main_thread():
-        for _sig in (signal.SIGTERM, signal.SIGHUP):
-            if signal.getsignal(_sig) == signal.SIG_DFL:   # an ignored SIGHUP (nohup) stays ignored
+        # SIGINT too (A9, 2026-10-09): its KeyboardInterrupt left the suites running; the handler dies by SIGINT like an
+        # uncaught KeyboardInterrupt does, so the exit status is unchanged. An ignored signal (nohup, a background job's
+        # SIGINT) stays ignored.
+        for _sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            if signal.getsignal(_sig) in (signal.SIG_DFL, signal.default_int_handler):
                 signal.signal(_sig, _vacuity_on_signal)
     parser = argparse.ArgumentParser(description="Post-Fix Audit & TIA Regression Verification Gate")
     parser.add_argument("--diff", help="Git diff reference (e.g. HEAD~1, origin/main)")
@@ -3795,8 +4105,8 @@ def main():
                         help="Print only the verdict block, errors (✖) and failing suites with their output tail; "
                              "the full output goes to <git dir>/postfix-gate/last_output.log (O3: fewer tokens for agents)")
     parser.add_argument("--since", help="Also audit the files of the commits REF..HEAD (the regression Stop hook passes "
-                                        "the last verified HEAD); unlike --diff, the matrix and the edited-test check "
-                                        "still read HEAD")
+                                        "the last verified HEAD); the static checks compare with REF (without --diff), "
+                                        "while unlike --diff the matrix and the edited-test check still read HEAD")
     parser.add_argument("--no-cache", action="store_true",
                         help="Run the tests even when the last full PASS holds for this exact content (DEVKIT_GATE_CACHE=0 does the same)")
     parser.add_argument("--timeout", type=int, default=900, help="Timeout (seconds) per regression command")
@@ -3825,6 +4135,13 @@ def main():
 
     base_dir = get_base_dir()
     set_lang(resolve_lang(args.lang, base_dir))
+
+    # Without git on PATH every git call raised FileNotFoundError: a traceback and exit 1, read as a REJECT (A10,
+    # 2026-10-09). Nothing can be listed or audited without git: UNVERIFIED, said plainly.
+    if shutil.which("git") is None:
+        log_err(tr("Không tìm thấy `git` trong PATH — gate không liệt kê được thay đổi để kiểm: CHƯA XÁC MINH (cài git hoặc sửa PATH rồi chạy lại)",
+                   "`git` not found on PATH — the gate cannot list the change it audits: UNVERIFIED (install git or fix PATH, then re-run)"))
+        return 2
 
     # A ref that starts with "-" would be parsed by git as an option (`--output=<file>`).
     if args.diff is not None and (not args.diff or args.diff.startswith("-")):
@@ -3883,16 +4200,49 @@ def main():
     if args.since and not STAGED:
         # Commits since the last verified HEAD (regression_gate, T0003): their files join the
         # change for test selection; the matrix reads HEAD, the edited-test check HEAD and <since>.
-        r = subprocess.run(["git", "-C", str(get_project_dir()), "diff", "--name-only", "--relative",
-                            args.since, "HEAD"], capture_output=True, text=True)
+        # -z (A11, 2026-10-09): --name-only quoted a non-ASCII name ("src/cfg_\303\251.py"), which never exists, so
+        # the file was never audited. -M: a file renamed in the range is compared with its old path at <since>.
+        r = subprocess.run(["git", "-C", str(get_project_dir()), "diff", "--name-status", "-z", "-M", "--relative",
+                            args.since, "HEAD"], capture_output=True)
         if r.returncode != 0:
             log_err(tr(f"--since {args.since}: git diff thất bại", f"--since {args.since}: git diff failed"))
             return 2
-        since_paths = [f for f in r.stdout.splitlines() if f]
+        since_renames, parts, i = {}, r.stdout.decode("utf-8", errors="surrogateescape").split("\0"), 0
+        while i < len(parts):
+            status, i = parts[i], i + 1
+            if status[:1] in ("R", "C") and i + 1 < len(parts):
+                if status[0] == "R":
+                    since_renames[parts[i + 1]] = parts[i]
+                since_paths.append(parts[i + 1])
+                i += 2
+            elif status and i < len(parts):
+                since_paths.append(parts[i])
+                i += 1
         extra = [f for f in since_paths if os.path.exists(os.path.join(str(get_project_dir()), f))]
         all_changed = sorted(set(all_changed) | set(extra))
+        # The static checks judge the committed work too (A1, 2026-10-09): against HEAD, an AWS key or a placeholder
+        # committed in <since>..HEAD was "already there" — exit 0 and a receipt. Their base is <since>; a file renamed
+        # in the range (or renamed again in the tree) is read at <since> under its old path. A file only commits already
+        # on the upstream touched (a teammate's, pulled in) keeps HEAD: they passed their own gate (as since_test_weakened).
+        if not args.diff:
+            BASE_REF = args.since
+            up = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--verify", "-q", "@{u}"],
+                                capture_output=True, text=True).stdout.strip()
+            if up:
+                lg = subprocess.run(["git", "-C", str(get_project_dir()), "log", "--format=", "--name-only", "-z", "--cc",
+                                     "--relative", f"{args.since}..HEAD", "--not", up], capture_output=True)
+                local = set(lg.stdout.decode("utf-8", errors="surrogateescape").split("\0")) if lg.returncode == 0 else None
+                if local is not None:
+                    _BASE_REF_FOR.update((f, "HEAD") for f in since_paths if f not in local)
+            for dst, src in list(RENAME_SOURCES.items()):
+                if dst not in _BASE_REF_FOR:
+                    RENAME_SOURCES[dst] = since_renames.get(src, src)
+            for dst, src in since_renames.items():
+                if dst not in _BASE_REF_FOR:
+                    RENAME_SOURCES.setdefault(dst, src)
     devkit_artifacts = [f for f in all_changed if is_devkit_artifact(f)]
     modified_files = [f for f in all_changed if f not in devkit_artifacts]
+    state_files = secret_scan_state_files(devkit_artifacts)   # the secret scan only (A5)
     if args.commit_msg:
         return run_commit_msg_check(args.commit_msg, modified_files)
     if STAGED:
@@ -3906,11 +4256,14 @@ def main():
     # its rename (audit 2026-10-09, tests/gates/test_gate_renamed_test_edit.sh).
     prefix = get_project_prefix()
     renamed_from = {new: old for old, new in _renamed_paths(base_ref).items()}
+    # Every base blob the checks below read, in two git processes instead of one or three per file (A12, 2026-10-09).
+    prefetch_blobs(BASE_REF, [prefix + RENAME_SOURCES.get(f, f) for f in modified_files + state_files if f not in _BASE_REF_FOR])
+    prefetch_blobs("HEAD", [prefix + RENAME_SOURCES.get(f, f) for f in modified_files if f in _BASE_REF_FOR])
+    prefetch_blobs(base_ref, [prefix + renamed_from.get(f, f) for f in modified_files if is_test_path(f)])
 
     def _edited_existing_test(f):
         src = renamed_from.get(f, f)
-        if subprocess.run(["git", "-C", str(get_repo_root()), "cat-file", "-e", f"{base_ref}:{prefix}{src}"],
-                          capture_output=True).returncode != 0:
+        if object_info(base_ref, prefix + src) is None:
             return False
         return not test_change_is_append_only(base_ref, prefix + f, prefix + src if src != f else "")
     tests_touched = [f for f in modified_files if is_test_path(f) and not is_test_doc(f) and _edited_existing_test(f)]
@@ -3925,6 +4278,19 @@ def main():
         upstream = up.stdout.strip() if up.returncode == 0 else ""
     since_touched = [f for f in since_paths if f not in tests_touched and is_test_path(f) and not is_test_doc(f)
                      and not is_devkit_artifact(f) and since_test_weakened(args.since, prefix + f, upstream)]
+    # A script a base-ref suite command runs is a file of the change (A2, 2026-10-09: with scripts/check.sh set to
+    # `exit 0`, `sh scripts/check.sh` passed whatever the code did). Its change counts like an edited existing test —
+    # UNVERIFIED unless approved, same paths — and like a test, a pure append (a line running one more test) is no edit,
+    # unless an appended line can force its status green (_STATUS_NEUTRALIZER). Test files keep the test rule.
+    runner_paths = suite_runner_paths(matrix, base_ref, {f for f in set(modified_files) | set(since_paths)
+                                                         if not is_test_path(f) and not is_devkit_artifact(f)})
+    runners_touched = [f for f in sorted(runner_paths) if f in modified_files and object_info(base_ref, prefix + f) is not None
+                       and not test_change_is_append_only(base_ref, prefix + f, runner=True)]
+    since_runners = [f for f in sorted(runner_paths) if f in since_paths and f not in runners_touched
+                     and since_test_weakened(args.since, prefix + f, upstream, runner=True)]
+    tests_touched += runners_touched
+    since_touched += since_runners
+    runners_touched += since_runners
     tests_touched += since_touched
     # Only THIS session's edits block. On a shared tree another session's in-flight test edit
     # used to block every Stop of every session until it was committed (2026-09-25).
@@ -3944,6 +4310,16 @@ def main():
         if devkit_artifacts:
             log_warn(tr(f"Chỉ có {len(devkit_artifacts)} link/state do devkit cài — không phải thay đổi của người dùng.",
                         f"Only {len(devkit_artifacts)} DevKit-installed links/state files — not a change of yours."))
+        # Still a leak when it is only DevKit state (A5): a token in a tracked evidence log was exit 3.
+        state_ok, state_findings = run_git_hygiene_audit(state_files) if state_files else (True, [])
+        if not state_ok:
+            for f, lbl in state_findings:
+                log_err(f"{f}: {lbl}")
+            print(f"  {BOLD}{tr('KẾT LUẬN CỔNG POST-FIX AUDIT:', 'POST-FIX AUDIT GATE VERDICT:')}{RESET} {RED}{BOLD}{tr('REJECT — CẦN KHẮC PHỤC CÁC ĐIỂM CHƯA ĐẠT', 'REJECT — FIX THE FAILED CHECKS')}{RESET}")
+            if args.json:
+                print(json.dumps({"exit_code": 1, "accepted": False, "files": [], "static": {"secrets": len(state_findings)},
+                                  "findings": FINDINGS}, ensure_ascii=False))
+            return 1
         log_warn(tr("Working tree sạch và không có --diff khớp: KHÔNG có thay đổi nào để kiểm toán.",
                     "Clean working tree and no matching --diff: NOTHING to audit."))
         log_warn(tr("Gate không kết luận PASS khi không có gì để kiểm. Dùng --diff <ref> để kiểm một commit.",
@@ -3955,10 +4331,14 @@ def main():
     unreadable = [f for f in modified_files
                   if f not in DELETED_FILES and not resolve_path(f).is_symlink()
                   and not resolve_path(f).is_file()]
+    # A nested git repository (a submodule with uncommitted work, an untracked repo such as vendor/tool/) is a directory,
+    # not a file the gate can or must read: it made every run "1 file could not be read", exit 2 for ever (A3, 2026-10-09).
+    nested_repos = [f for f in unreadable if resolve_path(f).is_dir()]
+    unreadable = [f for f in unreadable if f not in nested_repos]
 
     # Layer 1: Git Diff, Hygiene & Anti-Laziness Audit
     print(f"{BOLD}[1/8] {tr('(CHẶN) Quét bí mật, placeholder lười biếng & dependency:', '(BLOCKING) Secrets, lazy placeholders & dependencies:')}{RESET}")
-    hygiene_ok, secrets = run_git_hygiene_audit(modified_files)
+    hygiene_ok, secrets = run_git_hygiene_audit(modified_files + state_files)
     anti_laziness_ok, lazy_findings = run_anti_laziness_audit(modified_files)
     deps_ok, dep_findings = run_dependency_audit(modified_files)
     instincts_ok, instincts_msg = check_instincts_memory()
@@ -4128,9 +4508,9 @@ def main():
         and any(t.get("command") for t in regression_tests)
     overlay_pre = capture_overlay_pre(args, matrix, project_dir, regression_tests) if run_tests else None   # BEFORE any suite runs
 
-    def reuse_full_pass():
+    def reuse_full_pass(fp=None):
         """Mark every reusable suite PASS from the last full PASS of this exact content; its receipt, or None."""
-        found = cached_full_pass(project_dir, args.matrix)
+        found = cached_full_pass(project_dir, args.matrix, fp)
         prev = {x.get("id"): x for x in (found or {}).get("tests") or []}
         untested = set((found or {}).get("untested") or [])   # an exit-4 receipt: those run again
         try:
@@ -4174,7 +4554,9 @@ def main():
 
     stamp_before = receipt_stamp() if use_cache else None
     if use_cache:
-        cache = reuse_full_pass()
+        # tested_fp was taken just above and nothing has run since: the same tree (A13). The re-check after the lock wait
+        # below takes a fresh one: the tree may have changed while this run waited.
+        cache = reuse_full_pass(tested_fp)
     to_run = [t for t in regression_tests if t.get("mode") != "cached"]
     lock_fh, lock_held = (acquire_test_run_lock(project_dir)
                           if run_tests and any(t.get("command") for t in to_run) else (None, True))
@@ -4244,21 +4626,18 @@ def main():
 
     def run_suite(t, cmd, mode, env):
         started = time.perf_counter()
-        # Own session/process group so a timeout kills the whole tree (gradle daemons,
-        # test workers), not just the shell. Commands come from the matrix at the base
+        # Own session/process group (run_in_group) so a timeout or a signal to the gate kills the whole tree
+        # (gradle daemons, test workers), not just the shell. Commands come from the matrix at the base
         # ref (load_active_matrix), so the audited change cannot rewrite them.
-        proc = subprocess.Popen(cmd, shell=True, cwd=str(project_dir),
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, errors="replace", start_new_session=True, env=env)
-        try:
-            out, _ = proc.communicate(timeout=args.timeout)
-            t["status"] = "PASS" if proc.returncode == 0 else "FAIL"
+        code, out, timed_out = run_in_group(cmd, str(project_dir), env, args.timeout)
+        if not timed_out:
+            t["status"] = "PASS" if code == 0 else "FAIL"
             # The command's own "cannot run here" code (unity-batch.sh: 2 = no Editor):
             # UNTESTED — not a failing test, and never a PASS.
-            if proc.returncode != 0 and isinstance(t.get("untested_exit"), int) \
-                    and proc.returncode == t["untested_exit"]:
+            if code != 0 and isinstance(t.get("untested_exit"), int) \
+                    and code == t["untested_exit"]:
                 t["status"] = "UNTESTED"
-            t["exit_code"] = proc.returncode
+            t["exit_code"] = code
             if t["status"] == "FAIL":
                 first = out or ""
                 infra = infra_failure(first)
@@ -4274,18 +4653,13 @@ def main():
                         t["flaky"] = retry[0] == 0  # a test failed, then passed on the same code: still FAIL
                 if t["status"] == "FAIL" and infra:
                     t["infra"] = True   # still FAIL, never FLAKY: that run's output is not a test result
-            if t["status"] == "FAIL" and environment_blocked(proc.returncode, out):
+            if t["status"] == "FAIL" and environment_blocked(code, out):
                 t["env_blocked"] = True     # still FAIL: the verdict never turns into a PASS
             t["output_tail"] = (out or "")[-2000:]
             # Which sub-test failed, from the WHOLE output: run_impacted's "✖ tests/x.sh" sits
             # mid-output, outside the last lines shown (2026-09-28, --brief showed five ✔).
             t["fail_lines"] = [l.rstrip()[:300] for l in (out or "").splitlines() if FAIL_LINE.search(l)][:8]
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            out = proc.communicate()[0]
+        else:
             t["status"] = "TIMEOUT"
         t["duration"] = f"{time.perf_counter() - started:.2f}s"
         SUITE_RAN_AT[t.get("id")] = time.time()
@@ -4323,7 +4697,7 @@ def main():
             except BaseException as e:   # drain() re-raises it: a bug in a worker fails the gate, it is never hidden
                 box["err"] = e
         # daemon: Ctrl-C ends the gate at once, as the sequential loop did; the suites' own process groups (start_new_session)
-        # are left behind in both cases, ponytail: kill them if a grouped suite must never outlive the gate
+        # are killed by the signal handler in both cases (run_in_group registers them, A9 2026-10-09)
         th = threading.Thread(target=work, name=f"suite-{t['id']}", daemon=True)
         th.start()
         group.append((th, box))
@@ -4672,8 +5046,12 @@ def main():
           f"{tr('đạt', 'passed') if static_ok else tr('CÓ PHÁT HIỆN', 'FINDINGS')}")
     for f in unreadable[:5]:
         print(f"  • {YELLOW}{tr('Không đọc được để quét:', 'Could not read for scanning:')}{RESET} {f}")
+    for f in nested_repos[:5]:
+        print(f"  • {DIM}{tr('Repo git lồng (submodule / repo con), không phải file — nội dung bên trong không quét ở đây:', 'Nested git repository (submodule / inner repo), not a file — its content is not scanned here:')}{RESET} {f}")
     for f in tests_touched[:5]:
-        print(f"  • {YELLOW}{tr('Test đã có bị sửa/xoá:', 'Existing test edited/deleted:')}{RESET} {f}")
+        what = (tr("Script lệnh suite của ma trận chạy bị sửa/xoá:", "Suite runner script (run by a matrix command) edited/deleted:")
+                if f in runners_touched else tr("Test đã có bị sửa/xoá:", "Existing test edited/deleted:"))
+        print(f"  • {YELLOW}{what}{RESET} {f}")
     for f in tests_approved[:5]:
         if APPROVED_BY.get(f) == "user":
             print(f"  • {GREEN}{tr('Test đã có bị sửa — người dùng đã duyệt (AskUserQuestion), file không đổi sau đó:', 'Existing test edited — approved by the user (AskUserQuestion), unchanged since:')}{RESET} {f}")
@@ -4724,7 +5102,8 @@ def main():
     report_file = (Path(git_dir) if git_dir else Path(tempfile.gettempdir())) / "postfix-gate" / "last_report.md"
     try:
         report_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(report_file, "w", encoding="utf-8") as f:
+        # backslashreplace: a non-UTF-8 file name (decoded with surrogateescape) crashed this write AFTER the verdict (A8)
+        with open(report_file, "w", encoding="utf-8", errors="backslashreplace") as f:
             f.write(tr("# 📋 Báo Cáo Kiểm Toán Post-Fix Gate\n\n", "# 📋 Post-Fix Gate Audit Report\n\n"))
             f.write(f"**{tr('Thời gian', 'Time')}:** {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"**{tr('Dự án', 'Project')}:** {matrix.get('project', 'Universal Platform')}\n")
@@ -4815,18 +5194,24 @@ def run_brief():
     exactly as without it; the full output is saved to <git dir>/postfix-gate/last_output.log."""
     import contextlib, io  # noqa: E401, PLC0415
     buf = io.StringIO()
+    crash = None
     with contextlib.redirect_stdout(buf):
         try:
             code = main()
         except SystemExit as e:
             code = e.code if isinstance(e.code, int) else 1
+        except BaseException as e:   # noqa: BLE001 - any other exception lost the whole output (A8, 2026-10-09): kept, then re-raised
+            crash, code = e, 1
     text = buf.getvalue()
-    gd = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--absolute-git-dir"],
-                        capture_output=True, text=True).stdout.strip()
+    try:
+        gd = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--absolute-git-dir"],
+                            capture_output=True, text=True, errors="surrogateescape").stdout.strip()
+    except OSError:   # no git on PATH (A10): the log goes to the temp dir
+        gd = ""
     out = (Path(gd) if gd else Path(tempfile.gettempdir())) / "postfix-gate" / "last_output.log"
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(text, encoding="utf-8")
+        out.write_text(text, encoding="utf-8", errors="backslashreplace")
     except OSError as e:
         out = Path(f"(không ghi được: {e})")
     keep, tail, summary = [], 0, False
@@ -4843,10 +5228,14 @@ def run_brief():
             keep.append(line)
             tail = 16   # up to 8 failing sub-test lines + the last 5 lines + the command line
     json_line = text.rstrip().splitlines()[-1] if "--json" in sys.argv and text.strip() else ""
+    if crash is not None:   # the lines just before the crash say where it stopped
+        keep += [line for line in text.splitlines()[-10:] if line not in keep]
     keep.append(tr(f"  (đầy đủ: {out} — last_output.log)", f"  (full output: {out} — last_output.log)"))
     if json_line.startswith("{") and (not keep or keep[-1] != json_line):
         keep.append(json_line)
     print("\n".join(keep))
+    if crash is not None:
+        raise crash   # the traceback and exit status of the crash, as without --brief
     return code
 
 

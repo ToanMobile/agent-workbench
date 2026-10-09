@@ -85,6 +85,19 @@ def missing(project):
     return sorted(set(out))
 
 
+def link_root(project):
+    """The DevKit path new links go through: the one the installer wrote into .agents/devkit when it is this DevKit (the
+    stable alias of quick-install.sh: install.sh links through it, so a moved checkout only needs the alias re-pointed;
+    2026-10-09, tests/worktree_git/test_relink_alias.sh), else DEVKIT (the real path)."""
+    link = os.path.join(project, ".agents", "devkit")
+    try:
+        target = os.readlink(link)
+    except OSError:
+        return DEVKIT
+    target = target if os.path.isabs(target) else os.path.normpath(os.path.join(os.path.dirname(link), target))
+    return target if os.path.realpath(target) == os.path.realpath(DEVKIT) else DEVKIT
+
+
 def source_for(project, rel):
     """What a missing link should point at: the DevKit's item, else the project tier's."""
     if rel == ".agents/devkit":
@@ -92,7 +105,7 @@ def source_for(project, rel):
     kind, name = rel.split("/")[1], os.path.basename(rel)   # hooks | commands
     for cand in (os.path.join(DEVKIT, kind, name), os.path.join(project, ".agents", "local", kind, name)):
         if os.path.exists(cand):
-            return cand
+            return os.path.join(link_root(project), kind, name) if cand.startswith(DEVKIT + os.sep) else cand
     return None
 
 

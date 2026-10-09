@@ -10,7 +10,13 @@ while [ -L "$SELF" ]; do
   case "$LINK" in /*) SELF="$LINK" ;; *) SELF="$(dirname "$SELF")/$LINK" ;; esac
 done
 SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
-DEVKIT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+# Reached through a symlinked alias of the DevKit (quick-install.sh: ~/.universal-agent-devkit ->
+# the checkout), every link goes through the alias, so moving the checkout and re-pointing the
+# alias keeps the project working (2026-10-09: pwd -P baked the checkout path in; after a move
+# 97 links dangled and every hook exited 127). The real path otherwise (a /tmp -> /private/tmp
+# parent is not an alias), and for a self-install (below, once the target is known).
+DEVKIT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+[ -L "$DEVKIT_ROOT" ] || DEVKIT_ROOT="$(cd "$DEVKIT_ROOT" && pwd -P)"
 
 TARGET_DIR="$PWD"
 DOMAIN="auto"
@@ -181,6 +187,7 @@ fi
 [ -d "$TARGET_DIR" ] || die_usage "target directory does not exist: $TARGET_DIR"
 
 TARGET_DIR="$(cd "$TARGET_DIR" && pwd -P)"
+[ "$(cd "$DEVKIT_ROOT" && pwd -P)" = "$TARGET_DIR" ] && DEVKIT_ROOT="$TARGET_DIR"   # self-install through the alias
 
 # Output language, shared with every adapter / agent-config / gate run from here.
 source "$DEVKIT_ROOT/scripts/governance/i18n.sh" 2>/dev/null || source "$DEVKIT_ROOT/scripts/i18n.sh"
@@ -314,6 +321,46 @@ echo "  Link Mode:       $MODE"
 echo "  Profile:         $PROFILE"
 echo "================================================================="
 echo
+
+# 0. Every JSON file of the project the selected agents merge into must parse BEFORE the first
+#    write: a trailing comma in .claude/settings.json used to stop the install half way, with
+#    AGENTS.md written, .mcp.json edited and an absolute .agents/devkit link left (2026-10-09).
+#    (.claude/settings.local.json is optional: claude_memory.py leaves an unparseable one alone.)
+json_inputs=""
+IFS=',' read -ra _ags <<< "$AGENTS"
+for _ag in "${_ags[@]}"; do
+  case "$(echo "$_ag" | tr '[:upper:]' '[:lower:]' | xargs)" in
+    claude) json_inputs="$json_inputs .claude/settings.json .mcp.json" ;;
+    gemini|antigravity) json_inputs="$json_inputs mcp_config.json .gemini/settings.json" ;;
+    codex|chatgpt|openai) json_inputs="$json_inputs .codex/hooks.json" ;;
+    cursor) json_inputs="$json_inputs .cursor/hooks.json" ;;
+    all) json_inputs="$json_inputs .claude/settings.json .mcp.json mcp_config.json .gemini/settings.json .codex/hooks.json .cursor/hooks.json" ;;
+  esac
+done
+# shellcheck disable=SC2086  # a list of fixed relative paths
+if ! python3 - "$TARGET_DIR" $json_inputs <<'PY'
+import json, os, sys
+bad = []
+for rel in dict.fromkeys(sys.argv[2:]):
+    path = os.path.join(sys.argv[1], rel)
+    if not os.path.exists(path):
+        continue
+    try:
+        with open(path, encoding="utf-8") as f:
+            ok = isinstance(json.load(f), dict)
+        why = "not a JSON object"
+    except (OSError, ValueError) as e:
+        ok, why = False, e
+    if not ok:
+        bad.append(f"{rel}: {why}")
+for b in bad:
+    print(f"✖ {b}", file=sys.stderr)
+sys.exit(1 if bad else 0)
+PY
+then
+  echo "✖ $(L "Không cài: các file JSON trên không đọc được (JSON không có comment, không dấu phẩy thừa) — sửa rồi chạy lại. Chưa có gì bị thay đổi." "Nothing installed: the JSON files above do not parse (JSON has no comments, no trailing commas) — fix them and re-run. Nothing was changed.")" >&2
+  exit 1
+fi
 
 # 1. The devkit's own commands/ is committed as-is. Installing into a project must
 #    never rewrite files inside the devkit checkout (run `agent-kit sync` when

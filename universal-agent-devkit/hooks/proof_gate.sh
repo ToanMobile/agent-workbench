@@ -52,8 +52,10 @@ SELF="$0"
 while [ -L "${SELF}" ]; do
   L="$(readlink "${SELF}")"; case "${L}" in /*) SELF="${L}" ;; *) SELF="$(dirname "${SELF}")/${L}" ;; esac
 done
-PROOF_INPUT="${INPUT}" PROOF_REPO="${REPO_ROOT}" PROOF_LOG_DIR="${LOG_DIR}" PROOF_HOOKDIR="$(dirname "${SELF}")" \
-PROOF_BIN="$(cd "$(dirname "${SELF}")/../bin" 2>/dev/null && pwd)" python3 -I <<'PY'
+# The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable (Linux 128 KiB,
+# macOS ~1 MiB for args + env) python could not start and the gate passed (tests/gates/test_hook_large_payload.sh).
+PROOF_REPO="${REPO_ROOT}" PROOF_LOG_DIR="${LOG_DIR}" PROOF_HOOKDIR="$(dirname "${SELF}")" \
+PROOF_BIN="$(cd "$(dirname "${SELF}")/../bin" 2>/dev/null && pwd)" python3 -I <<'PY' 3<<<"${INPUT}"
 import datetime, glob, hashlib, json, math, os, re, sys, time
 
 repo = os.environ["PROOF_REPO"]
@@ -72,7 +74,12 @@ def log(msg):
         pass
 
 try:
-    d = json.loads(os.environ.get("PROOF_INPUT") or "{}")
+    with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
+        _raw = _fh.read()
+except OSError:
+    _raw = ""
+try:
+    d = json.loads(_raw.strip() or "{}")
 except ValueError:
     log("fail-open: bad stdin JSON")
     sys.exit(0)

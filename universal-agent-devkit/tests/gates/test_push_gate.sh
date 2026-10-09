@@ -29,8 +29,16 @@ git commit -qam "fix" ; expect "the tested content committed: push allowed" 0
 echo "b" > other.txt; expect "another file dirty and not pushed: allowed (ponytail)" 0
 echo "fun ok() = 3" > src/Core.kt; git commit -qm "after gate" -- src/Core.kt
 expect "a change committed after the gate: push blocked" 2
-git commit -q --allow-empty -m "audit" -m "Test-approved-by: antigravity T0004"
-expect "Test-approved-by in the pushed commits: allowed" 0
+# 2026-10-09: the line alone is something the agent writes itself; it counts only with antigravity-pm's audit pass record
+# (outside the repo) for that task of this repository (tests/gates/test_push_gate_integrity.sh has the refused forms).
+git commit -q --allow-empty -m "audit" -m "Test-approved-by: antigravity T0004-audit"
+export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
+expect "Test-approved-by with no antigravity-pm audit record: blocked" 2
+mkdir -p "$TMP/pm/projects/repo-x/tasks/T0004-audit"
+printf '{"id":"T0004-audit","project":"%s","verdicts":{"audit":{"verdict":"pass","round":1}}}\n' "$TMP/repo" \
+  > "$TMP/pm/projects/repo-x/tasks/T0004-audit/task.json"
+expect "Test-approved-by in the pushed commits, audit recorded as pass: allowed" 0
+unset ANTIGRAVITY_PM_STATE_HOME
 git reset -q --hard HEAD~2; git checkout -q -- . 2>/dev/null
 rm -f .agents/regression_matrix.active.json; git commit -qam "no matrix"
 expect "a repo without a regression matrix is not checked" 0

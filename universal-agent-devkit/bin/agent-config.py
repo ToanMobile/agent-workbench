@@ -100,6 +100,17 @@ def log_err(msg):
 def get_base_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
+
+def link_base_dir(target_dir: Path) -> Path:
+    """The DevKit folder links in a project point through: the symlinked alias this script was run
+    through (quick-install.sh: ~/.universal-agent-devkit -> the checkout), so moving the checkout and
+    re-pointing the alias keeps them working (2026-10-09: bin/install.sh does the same); the real
+    folder otherwise, and for the DevKit's own self-install."""
+    alias = Path(os.path.abspath(__file__)).parent.parent
+    if alias.is_symlink() and not is_within(target_dir, get_base_dir()):
+        return alias
+    return get_base_dir()
+
 def load_profile_meta(profile_id: str) -> dict:
     base_dir = get_base_dir()
     profile_json = base_dir / "profiles" / profile_id / "profile.json"
@@ -341,7 +352,7 @@ def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None)
         # Thư mục/file thật của người dùng → X_old, không rmtree (P-2)
         x_old_backup(active_link)
     try:
-        rel = os.path.relpath(profile_dir.resolve(), agents_dir.resolve())
+        rel = os.path.relpath(link_base_dir(target_dir) / "profiles" / profile_id, agents_dir.resolve())
         active_link.symlink_to(rel)
         log_ok(tr(f"Đã liên kết `.agents/active-profile` -> `{rel}`", f"Linked `.agents/active-profile` -> `{rel}`"))
     except Exception as e:
@@ -424,7 +435,8 @@ def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None)
                             dst.unlink()  # bản copy chưa sửa của chính DevKit
                         else:
                             x_old_backup(dst)
-                    dst.symlink_to(os.path.relpath(h.resolve(), target_hooks_dir.resolve()))
+                    dst.symlink_to(os.path.relpath(link_base_dir(target_dir) / "profiles" / profile_id / "hooks" / h.name,
+                                                   target_hooks_dir.resolve()))
                     log_ok(tr(f"Đã liên kết hook chuyên dụng của profile: `{dst.name}` -> `{h}`",
                               f"Linked profile hook: `{dst.name}` -> `{h}`"))
                 except Exception:

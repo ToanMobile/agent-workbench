@@ -94,6 +94,8 @@ def link_is_devkit_owned(path):
         t = os.path.join(os.path.dirname(path), t)
     d = os.path.realpath(os.path.dirname(t)) if os.path.exists(os.path.dirname(t)) else os.path.dirname(t)
     t = os.path.join(d, os.path.basename(t))
+    if os.path.islink(t) and os.path.realpath(t) == DEVKIT:
+        return True     # .agents/devkit -> the symlinked alias of the DevKit (bin/install.sh, 2026-10-09)
     return t == DEVKIT or t.startswith(DEVKIT + os.sep)
 
 
@@ -267,6 +269,21 @@ def strip_template(cur, tmpl, old):
             del cur[key]
 
 
+def hook_commands(data):
+    """Every hook command string in a settings dict."""
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    return {h.get("command") for groups in (hooks.values() if isinstance(hooks, dict) else []) if isinstance(groups, list)
+            for g in groups if isinstance(g, dict) and isinstance(g.get("hooks"), list)
+            for h in g["hooks"] if isinstance(h, dict)}
+
+
+def drop_restored_backup(plan, backup, path):
+    """A backup byte-identical to the file just put back holds nothing more: remove it, so a full
+    uninstall + restore-old leaves no *_old file (2026-10-09: 5-6 were left untracked)."""
+    if plan.apply and os.path.isfile(backup) and not os.path.islink(backup) and same_bytes(backup, path):
+        os.unlink(backup)
+
+
 def strip_devkit_hooks(cur, hook_names):
     hooks = cur.get("hooks")
     if not isinstance(hooks, dict):
@@ -332,18 +349,28 @@ def json_config(plan, path, template, hook_names=None):
         else:
             new_text = json.dumps(new, indent=2, ensure_ascii=False) + "\n"
 
+    # The file goes back to exactly what it was before the install (or the installer created it
+    # and it held DevKit content only): the uninstall backup would be a copy of the DevKit's own
+    # entries — none is written. A DevKit hook whose command is not the template's (an older
+    # spelling, a user tweak) still gets one.
+    restores = isinstance(old, dict) and new_text is not None and new_text == open(old_path, encoding="utf-8").read()
+    gone = hook_commands(cur) - hook_commands(json.loads(new_text) if new_text else {})
+    redundant = (restores or (new_text is None and old is None)) and gone <= hook_commands(template)
+    note = lambda bak: f" ({tr('bản lưu', 'backup')}: {plan.rel(bak)})" if bak else ""
     if new_text is None:
         if plan.apply:
-            bak = backup_before_edit(path)
+            bak = None if redundant else backup_before_edit(path)
             os.unlink(path)
-            plan.say("đã gỡ", "removed", path, f" ({tr('bản lưu', 'backup')}: {plan.rel(bak)})")
+            plan.say("đã gỡ", "removed", path, note(bak))
         else:
             plan.say("sẽ gỡ", "would remove", path)
     else:
         if plan.apply:
-            bak = backup_before_edit(path)
+            bak = None if redundant else backup_before_edit(path)
             write_atomic(path, new_text)
-            plan.say("đã sửa", "cleaned", path, f" ({tr('bản lưu', 'backup')}: {plan.rel(bak)})")
+            plan.say("đã sửa", "cleaned", path, note(bak) or tr(" (bản gốc đã về chỗ)", " (original put back)"))
+            if restores:
+                drop_restored_backup(plan, old_path, path)
         else:
             plan.say("sẽ sửa", "would clean", path)
     plan.removed += 1
@@ -412,6 +439,7 @@ def unfold_agent_files(plan, project):
         body = re.sub(r"<!-- " + re.escape(MARKER) + r":start -->.*?<!-- " + re.escape(MARKER) + r":end -->\n?", "", body, flags=re.S)
         if plan.apply:
             write_atomic(dst, body)
+            drop_restored_backup(plan, backup, dst)
         plan.say("đã khôi phục" if plan.apply else "sẽ khôi phục", "restored" if plan.apply else "would restore", dst,
                  tr(" (từ phần đã gộp vào AGENTS.md)", " (from its part folded into AGENTS.md)"))
         plan.removed += 1
@@ -473,6 +501,12 @@ def main(argv):
     unfold_agent_files(plan, project)
     for name in ("CLAUDE.md", "AGENTS.md", "GEMINI.md", "Agent.md", "CODEX.md", ".cursorrules"):
         strip_block(plan, os.path.join(project, name))
+        # The installer's first copy of the project's own file (AGENTS_old.md, CODEX_old.md,
+        # .cursorrules_old): once the block is gone the file is that copy again.
+        stem, ext = os.path.splitext(name)
+        backup = os.path.join(project, f"{stem}_old{ext}")
+        if os.path.isfile(os.path.join(project, name)) and not os.path.islink(os.path.join(project, name)):
+            drop_restored_backup(plan, backup, os.path.join(project, name))
     strip_block(plan, os.path.join(project, ".gitignore"), style="hash")
     # The always-applied Cursor rule setup_cursor.sh writes: its block goes; a file left
     # with only the DevKit's own front matter goes too.

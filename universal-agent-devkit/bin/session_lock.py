@@ -35,42 +35,63 @@ writes the flag file is blocked (pattern-based: ponytail — a python one-liner 
 upgrade to a signed flag if that is ever seen).
 ponytail: Bash writes are recognised by pattern (git writes, post-fix-gate, `>`/`>>` into the checkout) — cp/mv/rm/
 sed -i by a second session still pass; upgrade to hooks/worktree_guard.sh's write classifier if that happens.
+
+Read-decide-write of the lock runs under an exclusive flock on <git dir>/devkit-session.guard (audit 2026-10-09: two sessions
+whose first writes started together were both allowed). A lock or registry number that is not a number (heartbeat, started)
+counts as missing, so the lock is stale — as a lock with no heartbeat always was, and as an unreadable lock is free.
 """
 import json
 import os
 import re
 import stat
-import subprocess
 import sys
 import time
+# subprocess is imported where git really has to run (2026-10-09: it cost ~7 ms of every PreToolUse call; see _find_git)
 
 LOCK = "devkit-session.lock"
 LOG = "devkit-session.log"
+GUARD = "devkit-session.guard"
+GUARD_WAIT_S = 2.0   # the guard covers a read, a pid check and one small write: held for about a millisecond
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+
+
+class _Re:
+    """A regex compiled on first use (2026-10-09: compiling these at import cost ~1.7 ms of every Edit call, which uses none)."""
+    def __init__(self, pattern):
+        self._pattern, self._rx = pattern, None
+
+    def __getattr__(self, name):
+        if self._rx is None:
+            self._rx = re.compile(self._pattern)
+        return getattr(self._rx, name)
+
+
 # (?![\w-]) ends the verb: `git merge-base`, `merge-tree` and `commit-tree` are read-only plumbing, not `merge` / `commit` (the old
 # `\b` matched before the hyphen and blocked them). `opts` are git's global options before the verb (-C <dir>, -c k=v, --git-dir ...).
-GIT_WRITE = re.compile(
+GIT_WRITE = _Re(
     r"(^|[\s;&|(/])git\s+(?P<opts>(?:(?:-C\s+(?:\"[^\"]*\"|'[^']*'|\S+)|-c\s+(?:[^\s\"']|\"[^\"]*\"|'[^']*')+|--(?:git-dir|work-tree)\s+\S+|--[\w-]+(?:=\S+)?|-[pP])\s+)*)"
     r"(commit|push|pull|add|rm|mv|reset|checkout|restore|switch|stash|merge|rebase|cherry-pick|revert|am|apply|tag|clean)(?![\w-])")
-GATE = re.compile(r"post-fix-gate(\.py)?\b|\bpostfix-gate\b|\bagent-kit\s+(?:worktree|wt)\s+(?:finish|automerge)\b|worktree\.py\s+(?:finish|automerge)\b")
-SEPARATOR = re.compile(r"(&&|\|\||[;|&\n])")
-CD_ONLY = re.compile(r"^\s*(?:builtin\s+)?cd\s+(?:--\s+)?(\"[^\"]*\"|'[^']*'|[^\s;&|()<>$`\\]+)\s*$")
-PROJECT_DIR = re.compile(r"\bCLAUDE_PROJECT_DIR=(\"[^\"]*\"|'[^']*'|\S+)")
+GATE = _Re(r"post-fix-gate(\.py)?\b|\bpostfix-gate\b|\bagent-kit\s+(?:worktree|wt)\s+(?:finish|automerge)\b|worktree\.py\s+(?:finish|automerge)\b")
+SEPARATOR = _Re(r"(&&|\|\||[;|&\n])")
+CD_ONLY = _Re(r"^\s*(?:builtin\s+)?cd\s+(?:--\s+)?(\"[^\"]*\"|'[^']*'|[^\s;&|()<>$`\\]+)\s*$")
+PROJECT_DIR = _Re(r"\bCLAUDE_PROJECT_DIR=(\"[^\"]*\"|'[^']*'|\S+)")
 ALLOW_FLAG = "devkit-allow-shared"
 # A directory change the segment walk cannot follow (subshell, `bash -c`, eval, pushd, a cd with a redirect, GIT_DIR=...): the directory
 # is UNKNOWN from there on, so every later write fails closed (review 2026-10-08: `cd B && (cd A && git commit)` slipped through).
-DIR_CHANGE = re.compile(r"(?:^|[\s;&|(`])(?:cd|pushd|popd)\b|\beval\b|\b(?:ba|z|da)?sh\s+-\w*c\b|\bGIT_DIR=|\bGIT_WORK_TREE=|--git-dir|--work-tree|\benv\s+(?:-\S+\s+)*-C\b|--chdir|^\s*\(")
+DIR_CHANGE = _Re(r"(?:^|[\s;&|(`])(?:cd|pushd|popd)\b|\beval\b|\b(?:ba|z|da)?sh\s+-\w*c\b|\bGIT_DIR=|\bGIT_WORK_TREE=|--git-dir|--work-tree|\benv\s+(?:-\S+\s+)*-C\b|--chdir|^\s*\(")
 WRAPPERS = {"env", "command", "exec", "xargs", "nohup", "time", "sudo", "bash", "sh", "zsh", "dash", "eval"}
 WRITE_CMDS = {"touch", "cp", "mv", "ln", "install", "tee", "dd", "rsync", "truncate", "perl", "ruby", "node"}
 READERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "cat", "bat", "less", "more", "head", "tail", "wc", "file", "stat", "ls", "echo",
            "printf", "diff", "cmp", "git", "man", "type", "which", "find", "sed", "awk"}   # (sed writes only with -i: see is_self_grant)
-_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
+_HEREDOC = _Re(r"<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
 RUNS_BODY = {"bash", "sh", "zsh", "dash", "ksh", "python", "python3", "perl", "ruby", "node", "eval", "source", "."}   # a heredoc fed to these is CODE
+SHELL_BODY = {"bash", "sh", "zsh", "dash", "ksh", "eval", "source", "."}   # ... and these run it as SHELL code (a `>` there redirects)
 
 
-def _strip_heredocs(cmd):
+def _strip_heredocs(cmd, shell_only=False):
     """Drop the body of every heredoc that feeds a data command (cat, a commit message, a patch): its lines are text, not commands. A
-    heredoc fed to a shell or an interpreter keeps its body - those lines run."""
+    heredoc fed to a shell or an interpreter keeps its body - those lines run. shell_only: keep only bodies a SHELL runs (the redirect
+    check: `print(1 > 0)` fed to python is not a shell redirect)."""
     lines = cmd.split("\n")
     out, i = [], 0
     while i < len(lines):
@@ -83,7 +104,7 @@ def _strip_heredocs(cmd):
         head = re.split(r"[;&|(]|\$\(|`", line[:m.start()])[-1].split()
         head = [w for w in head if not re.match(r"^[A-Za-z_]\w*=", w)]
         word = os.path.basename(head[0]) if head else ""
-        runs = word in RUNS_BODY or word.startswith("python")
+        runs = word in SHELL_BODY if shell_only else (word in RUNS_BODY or word.startswith("python"))
         j = i
         while j < len(lines) and lines[j].strip() != m.group(2):
             j += 1
@@ -140,11 +161,168 @@ def _split_segments(cmd):
         i += 1
     out.append("".join(buf))
     return out
-REDIRECT = re.compile(r"\d*>>?\|?\s*([^\s;&|<>()]+)")
-TEMP_PREFIXES = ("/dev/", "/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
+
+
+def _redirect_targets(cmd):
+    """The target of every output redirect (`>`, `>>`, `>|`, `&>`, `N>`) in cmd, unquoted; "" for a fd copy (`>&2`) or `>(...)`. A `>`
+    inside quotes, escaped, or in the body of a heredoc no shell runs is text (D5, audit 2026-10-09: `grep -n "a > b" f`,
+    `git log --format='%h -> %s'` and `python3 -c "print(1>0)"` were blocked as redirects into the checkout)."""
+    s = _strip_heredocs(cmd, shell_only=True)
+    out, quote, i, n = [], None, 0, len(s)
+    while i < n:
+        c = s[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c == "\\":
+            i += 2
+            continue
+        if c in "\"'":
+            quote = c
+            i += 1
+            continue
+        i += 1
+        if c != ">":
+            continue
+        if i < n and s[i] in ">|":
+            i += 1
+        while i < n and s[i] in " \t":
+            i += 1
+        word, q = [], None
+        while i < n:
+            ch = s[i]
+            if q:
+                if ch == q:
+                    q = None
+                else:
+                    word.append(ch)
+            elif ch in "\"'":
+                q = ch
+            elif ch.isspace() or ch in ";&|<>()":
+                break
+            else:
+                word.append(ch)
+            i += 1
+        out.append("".join(word))
+    return out
+
+
+# Variables that change how git finds the repository: with any of them set, git itself is asked (_find_git).
+_GIT_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM")
+
+
+def _env_moves_git():
+    """True when the environment can change which repository git finds: a _GIT_ENV variable, or config given in the environment
+    (GIT_CONFIG_COUNT / GIT_CONFIG_PARAMETERS) that names a core.*, safe.* or include key. Other config there (a proxy, a CA file:
+    cloud sessions set http.* this way) leaves discovery alone."""
+    if any(os.environ.get(k) for k in _GIT_ENV):
+        return True
+    keys = os.environ.get("GIT_CONFIG_PARAMETERS", "").lower()
+    try:
+        n = int(os.environ.get("GIT_CONFIG_COUNT") or 0)
+    except ValueError:
+        return True
+    if n > 100:
+        return True
+    keys += " ".join(os.environ.get(f"GIT_CONFIG_KEY_{i}", "") for i in range(n)).lower()
+    return any(k in keys for k in ("core.", "safe.", "include"))
+
+
+def _plain_config(path):
+    """False when a repository config file sets core.worktree / core.bare or includes another file (git must read it); True when it
+    sets none of those or does not exist."""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(1 << 20)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    for line in raw.lower().splitlines():
+        s = line.split(b"#")[0].split(b";")[0].replace(b" ", b"").replace(b"\t", b"")
+        if s.startswith((b"worktree=", b"[include")) or s in (b"bare=true", b"bare=yes", b"bare=on", b"bare=1", b"bare"):
+            return False
+    return True
+
+
+def _find_git(cwd):
+    """(absolute git dir, toplevel, common dir) found WITHOUT spawning git; (None, None, None) when cwd is in no repository; None when
+    the layout is not a plain one and git must say (D7, 2026-10-09: two `git rev-parse` per hook call were ~12 ms of the ~50 ms every
+    Bash/Edit call pays on macOS). Plain: nothing in the environment moves git (_env_moves_git); cwd an existing directory; walking up (realpath, same filesystem) the
+    first `.git` is a directory, or a regular file `gitdir: <dir>` (linked worktree: <dir>/commondir names the shared git dir;
+    submodule: none); its git dir has HEAD; this user owns the toplevel and the git dir; no core.worktree / core.bare / include in
+    the repository config; no level on the way is itself a git dir (cwd inside .git or a bare repo). Anything else: None.
+    ponytail: core.worktree set from the user's global config is not seen; nobody sets it there — fall back if that is ever met."""
+    if _env_moves_git():
+        return None
+    try:
+        d = os.path.realpath(cwd)
+        st = os.stat(d)
+    except (OSError, ValueError, TypeError):
+        return None
+    if not stat.S_ISDIR(st.st_mode):
+        return None
+    dev = st.st_dev
+    while True:
+        dotgit = os.path.join(d, ".git")
+        try:
+            lst = os.lstat(dotgit)
+        except FileNotFoundError:
+            lst = None
+        except OSError:
+            return None
+        if lst is not None:
+            break
+        if os.path.isfile(os.path.join(d, "HEAD")) and os.path.isdir(os.path.join(d, "objects")):
+            return None   # a git dir itself (inside .git, a bare repository): git knows what that means
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None, None, None
+        try:
+            if os.stat(parent).st_dev != dev:
+                return None   # git stops at a filesystem boundary unless told otherwise: let it decide
+        except OSError:
+            return None
+        d = parent
+    if stat.S_ISDIR(lst.st_mode):
+        gdir = dotgit
+    elif stat.S_ISREG(lst.st_mode):
+        try:
+            with open(dotgit, "rb") as f:
+                head = f.read(4096).decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+        if not head.startswith("gitdir: ") or head.count("\n") > 1:
+            return None
+        gdir = os.path.realpath(os.path.join(d, head[len("gitdir: "):].strip()))
+    else:
+        return None   # a symlink or anything stranger
+    common = gdir
+    try:
+        if os.path.lexists(os.path.join(gdir, "commondir")):
+            with open(os.path.join(gdir, "commondir"), encoding="utf-8") as f:
+                common = os.path.realpath(os.path.join(gdir, f.read(4096).strip()))
+        uid = os.geteuid()
+        if (not os.path.isfile(os.path.join(gdir, "HEAD")) or not os.path.isdir(common)
+                or os.stat(d).st_uid != uid or os.stat(gdir).st_uid != uid):
+            return None   # broken pointer, or another user's repository (safe.directory): git decides
+    except (OSError, ValueError):
+        return None
+    if not _plain_config(os.path.join(common, "config")) or not _plain_config(os.path.join(gdir, "config.worktree")):
+        return None
+    return gdir, d, common
 
 
 def git_dir(cwd):
+    found = _find_git(cwd)
+    if found is not None:
+        return found[0], found[1]
+    import subprocess  # noqa: PLC0415 - only a layout _find_git cannot read pays for it
     try:
         r = subprocess.run(["git", "-C", cwd, "rev-parse", "--absolute-git-dir", "--show-toplevel"],
                            capture_output=True, text=True, timeout=5)
@@ -163,8 +341,21 @@ def read_lock(path):
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
         return d if isinstance(d, dict) else None
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):   # (nesting deep enough to overflow the parser: as unreadable)
         return None
+
+
+def _num(v, default=0.0):
+    """A lock / registry number (heartbeat, started) as a float; anything else - a string that is not a number, a bool, a list,
+    NaN, ±inf - is `default`: a garbled value counts as missing (D6, audit 2026-10-09: float("abc") crashed the hook and --status
+    with a traceback, exit 1, and the write went ahead)."""
+    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+        return default
+    try:
+        f = float(v)
+    except (ValueError, OverflowError):
+        return default
+    return f if f - f == 0 else default   # NaN and ±inf fail f - f == 0
 
 
 def read_checkout_lock(gdir):
@@ -192,6 +383,10 @@ def write_lock(path, data):
 
 
 def git_common_dir(cwd):
+    found = _find_git(cwd)
+    if found is not None:
+        return found[2], found[1]
+    import subprocess  # noqa: PLC0415 - only a layout _find_git cannot read pays for it
     try:
         r = subprocess.run(["git", "-C", cwd, "rev-parse", "--git-common-dir", "--show-toplevel"],
                            capture_output=True, text=True, timeout=5)
@@ -252,7 +447,7 @@ def heartbeat_session(cwd, sid):
     data = read_lock(file_path)
     now = time.time()
     if data:
-        if data.get("status") != "idle" and now - float(data.get("heartbeat") or 0) < 15:
+        if data.get("status") != "idle" and now - _num(data.get("heartbeat")) < 15:
             return  # throttle (an idle session's first call always writes: it is working again)
         data["heartbeat"] = now
         data["status"] = "working"
@@ -355,7 +550,7 @@ def is_pid_alive(pid):
         return False
     except PermissionError:
         return True
-    except OSError:
+    except (OSError, OverflowError):   # (a pid past the OS range: unknown, like a pid that is not a number)
         return True
 
 
@@ -373,7 +568,7 @@ def get_active_sessions(cwd=None, current_sid=None, stale_s=180.0):
         gdir, _ = git_dir(target)
         if gdir:
             lock = read_lock(os.path.join(gdir, LOCK))
-            if lock and lock.get("session_id") and not lock.get("idle_since") and (now - float(lock.get("heartbeat") or 0) <= stale_s):
+            if lock and lock.get("session_id") and not lock.get("idle_since") and (now - _num(lock.get("heartbeat")) <= stale_s):
                 sid = lock.get("session_id")
                 active.append(lock)
                 if current_sid and sid != current_sid:
@@ -397,7 +592,7 @@ def get_active_sessions(cwd=None, current_sid=None, stale_s=180.0):
                 pass
             continue
 
-        hb = float(info.get("heartbeat") or 0)
+        hb = _num(info.get("heartbeat"))
         pid = info.get("pid")
         alive = is_pid_alive(pid)
         # Dual-tier pruning:
@@ -472,7 +667,7 @@ def check_last_active(argv):
         if is_last:
             print(f"session_lock: phiên {sid[:12] if sid else 'hiện tại'} là phiên cuối cùng/duy nhất đang hoạt động.")
         else:
-            other_ids = ", ".join(s.get("session_id", "?")[:12] for s in other)
+            other_ids = ", ".join(str(s.get("session_id", "?"))[:12] for s in other)
             print(f"session_lock: phát hiện {len(other)} phiên khác đang hoạt động ({other_ids}).")
     return 0 if is_last else 1
 
@@ -485,6 +680,7 @@ def spawn_scratch_cleanup(*args):
     script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "governance", "scratch_cleanup.py")
     if not os.path.isfile(script):
         return
+    import subprocess  # noqa: PLC0415 - SessionStart / SessionEnd only
     try:
         subprocess.Popen([sys.executable, "-I", script, *args], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
@@ -520,13 +716,16 @@ def is_free_for(lock, sid, now, idle_frees=True):
     lock_pid = lock.get("pid")
     if lock_pid and not is_pid_alive(lock_pid):
         return True
-    return now - float(lock.get("heartbeat") or 0) > stale_after()
+    return now - _num(lock.get("heartbeat")) > stale_after()   # not a number: missing, i.e. stale (D6)
 
 
 def describe(lock, now):
     sid = str(lock.get("session_id", "?"))
-    started = time.strftime("%H:%M", time.localtime(float(lock.get("started") or now)))
-    age = int(now - float(lock.get("heartbeat") or now))
+    try:
+        started = time.strftime("%H:%M", time.localtime(_num(lock.get("started"), now) or now))
+    except (OverflowError, OSError, ValueError):   # a number past the platform's time range
+        started = "?"
+    age = int(now - _num(lock.get("heartbeat"), now))
     return f"phiên {sid[:12]} (giữ từ {started}, hoạt động cách đây {age}s)"
 
 
@@ -705,23 +904,52 @@ def bash_collides(cmd, top, cwd=None, sid=""):
     hits_top, foreign = False, None
     if GIT_WRITE.search(cmd) or GATE.search(cmd):
         hits_top, foreign = write_hits_locked(cmd, top, cwd, sid)
-    if not hits_top:
-        for m in REDIRECT.finditer(cmd):
-            target = m.group(1)
-            if target.startswith("&") or target.startswith(TEMP_PREFIXES):
+    if not hits_top and ">" in cmd:
+        for target in _redirect_targets(cmd):
+            if not target or target.startswith("&"):
                 continue
-            tmpdir = os.environ.get("TMPDIR", "")
-            if tmpdir and target.startswith(tmpdir):
-                continue
+            # An absolute target collides only inside the checkout - also one that lives under /tmp (a temp-dir prefix used to be
+            # skipped first, and a quoted path into such a checkout passed once quotes were read, 2026-10-09); outside it (/dev/null,
+            # a temp dir, another directory) it never does. A relative one, $VAR or ~ lands here or cannot be told: it does.
             if not target.startswith("/") or (top and os.path.realpath(target).startswith(os.path.realpath(top) + os.sep)):
                 hits_top = True
                 break
     return hits_top, foreign
 
 
+def _guard(gdir):
+    """(fd, None) once this process holds the exclusive flock on <git dir>/devkit-session.guard - closing fd (or exiting) frees it;
+    (None, why) when it cannot be had within GUARD_WAIT_S. Every read-decide-write of the lock runs under it (D1, audit 2026-10-09:
+    two sessions whose first write hooks started together both read "free" and both were allowed, 19 of 20 runs - the window was the
+    whole hook run, not microseconds). flock, not a lock file: the kernel frees it when the hook dies, so it never goes stale."""
+    import fcntl  # noqa: PLC0415 - builtin, cheap
+    path = os.path.join(gdir, GUARD)
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600)
+    except OSError as e:
+        return None, f"không mở được {path}: {e}"
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            return None, f"{path} không phải file thường"
+        deadline = time.monotonic() + GUARD_WAIT_S
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return fd, None
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    os.close(fd)
+                    return None, f"{path} bị tiến trình khác giữ quá {GUARD_WAIT_S:g}s"
+                time.sleep(0.005)
+    except OSError as e:
+        os.close(fd)
+        return None, f"không khoá được {path}: {e}"
+
+
 def take(path, lock, sid, cwd, now, pid=None):
     started = lock.get("started") if lock and lock.get("session_id") == sid else now
-    if lock and lock.get("session_id") == sid and not lock.get("idle_since") and now - float(lock.get("heartbeat") or 0) < 30:
+    if lock and lock.get("session_id") == sid and not lock.get("idle_since") and now - _num(lock.get("heartbeat")) < 30:
         return  # heartbeat throttle (an idle mark is always cleared: the holder works again)
     if pid is None:
         pid = holder_pid()
@@ -812,8 +1040,10 @@ def main():
 
     try:
         d = json.load(sys.stdin)
-    except ValueError:
+    except (ValueError, RecursionError):
         return 0
+    if not isinstance(d, dict):
+        return 0   # an array, a string, null: no event to judge - a no-op like unparsable JSON (D6, audit 2026-10-09: it crashed, exit 1)
     event = str(d.get("hook_event_name") or "")
     sid = str(d.get("session_id") or "")
     cwd = str(d.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
@@ -824,7 +1054,7 @@ def main():
         return 0
     path = os.path.join(gdir, LOCK)
     now = time.time()
-    lock = read_checkout_lock(gdir)
+    # Every branch below reads the lock again under the guard (_guard, D1) right before it decides and writes.
 
     if event == "SessionEnd":
         # This session's temp dir under /tmp/claude-<uid>/ goes with it — not on /clear or /resume: the process lives on under a new
@@ -832,7 +1062,11 @@ def main():
         if str(d.get("reason") or "") not in ("clear", "resume"):
             spawn_scratch_cleanup("--end", sid, "--self-pid", str(holder_pid()))
         unregister_session(cwd, sid)
-        if lock and lock.get("session_id") == sid:
+        guard, why = _guard(gdir)
+        lock = read_checkout_lock(gdir)
+        if guard is None:
+            print(f"session_lock: khoá để lại (không lấy được {GUARD}: {why}) — pid của phiên chết theo nó thì khoá tự trống", file=sys.stderr)
+        elif lock and lock.get("session_id") == sid:
             try:
                 os.remove(path)
             except OSError as e:
@@ -842,7 +1076,11 @@ def main():
     if event == "SessionStart":
         spawn_scratch_cleanup("--prune", "--keep", sid)   # temp dirs of sessions dead for more than 24 h
         register_session(cwd, sid, agent="claude")
-        if is_free_for(lock, sid, now, idle_frees=False):
+        guard, why = _guard(gdir)
+        now, lock = time.time(), read_checkout_lock(gdir)
+        if guard is None:
+            print(f"session_lock: chưa nhận khoá lúc mở phiên ({why}); lần ghi đầu sẽ nhận", file=sys.stderr)
+        if guard is not None and is_free_for(lock, sid, now, idle_frees=False):
             if lock and lock.get("session_id") not in (None, sid):
                 log(gdir, f"{sid} nhận khoá của {lock.get('session_id')} ({'phiên đó đang rảnh' if lock.get('idle_since') else 'đã hết hạn'})")
             take(path, lock, sid, cwd, now)
@@ -858,16 +1096,18 @@ def main():
     if event == "Notification":
         if str(d.get("notification_type") or "") != "idle_prompt":
             return 0
+        lock = read_checkout_lock(gdir)
         reg0 = read_session(cwd, sid) or {}   # read before anything else: both writes below compare against these heartbeats
         if test_run_active({top, os.environ.get("CLAUDE_PROJECT_DIR") or top}):
             return 0   # an end-of-turn gate still runs: the session is not idle yet (the lock stays, as before)
         if reg0:
             mark_idle_session(cwd, sid, expect_heartbeat=reg0.get("heartbeat"))
-        cur = read_lock(path)   # compare-then-write: a take() by the holder resuming meanwhile (new heartbeat) is never marked idle
+        guard, _why = _guard(gdir)   # no guard: not marked (the lock stays, as while a gate runs)
+        cur = read_lock(path) if guard is not None else None   # compare-then-write: a take() by the holder resuming meanwhile (new heartbeat) is never marked idle
         if (lock and cur and cur.get("session_id") == sid and lock.get("session_id") == sid and not cur.get("idle_since")
                 and cur.get("heartbeat") == lock.get("heartbeat")):
             cur["idle_since"] = now
-            write_lock(path, cur)   # ponytail: not atomic (no O_EXCL), a microsecond window remains; take() has the same shape
+            write_lock(path, cur)
             log(gdir, f"{sid} rảnh (xong lượt, chờ người dùng gõ) — phiên khác được nhận khoá")
         return 0
 
@@ -875,9 +1115,9 @@ def main():
         return 0
     heartbeat_session(cwd, sid)
     tool = str(d.get("tool_name") or "")
-    command = str((d.get("tool_input") or {}).get("command") or "") if tool == "Bash" else ""
+    ti = d.get("tool_input") if isinstance(d.get("tool_input"), dict) else {}   # (a string or a list: no command, no path - D6)
+    command = str(ti.get("command") or "") if tool == "Bash" else ""
     if tool in EDIT_TOOLS:   # the approval flag and the lock file are written by the user's command and by this hook, never by an Edit/Write
-        ti = d.get("tool_input") if isinstance(d.get("tool_input"), dict) else {}
         target_path = ti.get("file_path") or ti.get("notebook_path") or ti.get("path")
         if isinstance(target_path, str) and os.path.basename(target_path) in (ALLOW_FLAG, LOCK):
             print("⛔ [DevKit] File công tắc / khoá của DevKit không được ghi bằng Edit/Write: công tắc là của NGƯỜI DÙNG "
@@ -903,6 +1143,16 @@ def main():
                   f"làm trong worktree riêng, hoặc người dùng gõ `! agent-kit allow-shared` (trong chính checkout đó).", file=sys.stderr)
             return 2
 
+    # D1: read, decide and take under the guard - two sessions starting their first write together used to both read "free"
+    guard, why = _guard(gdir)
+    if guard is None:
+        if not collides:
+            return 0   # a read needs no lock (its heartbeat refresh waits for the next call)
+        print(f"⛔ [DevKit] Một thư mục — một phiên: không lấy được khoá phụ của checkout {top} ({why}), nên không biết phiên nào "
+              f"đang giữ — lệnh ghi bị chặn cho chắc. Chạy lại lệnh; nếu vẫn bị, một tiến trình treo đang giữ {GUARD} (xem `lsof`).",
+              file=sys.stderr)
+        return 2
+    now, lock = time.time(), read_checkout_lock(gdir)
     if is_free_for(lock, sid, now):
         if collides or (lock and lock.get("session_id") == sid):
             if lock and lock.get("session_id") not in (None, sid):   # logged only when it is really taken (not on every read)

@@ -73,8 +73,18 @@ def main(argv):
     if current is None:
         try:
             data = json.load(open(local, encoding="utf-8"))
-        except (OSError, ValueError):
+        except FileNotFoundError:
             data = {}
+        except (OSError, ValueError) as e:
+            data = e
+        if not isinstance(data, dict):
+            # 2026-10-09: one trailing comma made this {} and the rewrite dropped the user's
+            # permission allowlist and MCP approvals. Their file is never rewritten; the old
+            # per-user notes stay where Claude Code still reads them (no move below).
+            why = data if isinstance(data, Exception) else "not a JSON object"
+            print(f"  ⚠ .claude/settings.local.json does not parse ({why}) — left untouched, autoMemoryDirectory "
+                  f"not set (fix the file, then re-run `agent-kit init`)")
+            return 0
         data["autoMemoryDirectory"] = target
         os.makedirs(os.path.dirname(local), exist_ok=True)
         tmp = local + ".devkit-tmp"

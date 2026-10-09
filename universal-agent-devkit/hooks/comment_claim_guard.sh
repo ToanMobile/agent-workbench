@@ -11,7 +11,8 @@
 # does not exist) plus one wrong line reference.
 #
 # SCOPE: scans ONLY the text just written (Edit.new_string / Write.content), only
-# its comment lines, in //-comment languages of the active profile (devkit_profile.py). Never re-scans the whole file, so
+# its comment lines, in //-comment languages of the active profile (devkit_profile.py), and full-line # comments in .py / .rb
+# of the active profile and in .sh / .bash / .zsh / .yaml / .yml (2026-10-09). Never re-scans the whole file, so
 # pre-existing comments do not fire on every edit.
 #
 # THREE FAMILIES ONLY (precision > recall, same policy as claim_check):
@@ -31,16 +32,26 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 
-REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
-mkdir -p "${LOG_DIR}"
-[ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
-
 # Drain stdin before any early exit, otherwise the caller gets EPIPE.
 INPUT="$(cat)"
 
+# The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
+# none). Outside a git tree there is no project and nothing is written (tests/gates/test_hook_log_dir.sh): a run at /
+# created /.claude/audit-gate/.
+REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
+if [ -z "${REPO_ROOT}" ]; then   # the regex costs ~10 ms on a 1 MB payload: only when it is needed
+  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+  [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+  REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
+fi
+LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"
+if [ -n "${LOG_DIR}" ]; then
+  [ -d "${LOG_DIR}" ] || mkdir -p "${LOG_DIR}"
+  [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+fi
+
 if [ "${COMMENT_CLAIM_GUARD:-1}" = "0" ]; then
-  echo "[$(date +%Y-%m-%dT%H:%M:%S)] COMMENT_CLAIM_GUARD=0 — gate bypassed" >> "${LOG_DIR}/comment_claim_guard.log" 2>/dev/null
+  [ -n "${LOG_DIR}" ] && echo "[$(date +%Y-%m-%dT%H:%M:%S)] COMMENT_CLAIM_GUARD=0 — gate bypassed" >> "${LOG_DIR}/comment_claim_guard.log" 2>/dev/null
   exit 0
 fi
 
@@ -49,12 +60,29 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "⚠ comment_claim_guard: python3 không có — gate này KHÔNG chạy, kết quả không được kiểm." >&2
   exit 0
 fi
-CC_INPUT="${INPUT}" CC_LOG="${LOG_DIR}/comment_claim_guard.log" \
+# Fast path (2026-10-09, decision-neutral; tests/gates/test_edit_hook_fast_path.sh): python below acts only on a
+# tool_input.file_path whose extension is in devkit_profile.SLASH_COMMENT_EXTS or the # languages below (every profile
+# picks from these). When no file_path value in the payload ends in one, and none holds a JSON escape that could spell one
+# (A\u002ekt), python would exit 0 without a word: skip its start (~30 ms a call). Keep the list in sync (ratchet).
+CC_EXT='\.(kt|kts|java|swift|m|mm|ts|tsx|js|jsx|mjs|cjs|go|rs|php|cs|dart|c|cc|cpp|h|hpp|scala|py|rb|sh|bash|zsh|yaml|yml)"'
+_RX_HIT='"(file_path)"[[:space:]]*:[[:space:]]*"[^"\\]*'"${CC_EXT}"
+_RX_ESC='"(file_path)"[[:space:]]*:[[:space:]]*"[^"\\]*\\'
+# Under 128 KiB only: a regex over 1 MB costs ~25 ms in a UTF-8 locale, more than the python start it saves.
+if [ "${#INPUT}" -lt 131072 ]; then
+  [[ ${INPUT} =~ ${_RX_HIT} ]] || [[ ${INPUT} =~ ${_RX_ESC} ]] || exit 0
+fi
+# The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable python could not
+# start and a claim comment in a big file passed (tests/gates/test_hook_large_payload.sh).
+CC_LOG="${LOG_DIR:+${LOG_DIR}/comment_claim_guard.log}" \
 CC_TS="$(date +%Y-%m-%dT%H:%M:%S)" CCG_HOOKDIR="$(cd "$(dirname "$0")" && pwd)" CCG_REPO="${REPO_ROOT}" \
-python3 -I <<'PY'
+python3 -I <<'PY' 3<<<"${INPUT}"
 import os, sys, json, re
 
-raw = os.environ.get("CC_INPUT", "")
+try:
+    with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
+        raw = _fh.read()
+except OSError:
+    raw = ""
 log = os.environ.get("CC_LOG", "/dev/null")
 ts  = os.environ.get("CC_TS", "?")
 repo = os.environ.get("CCG_REPO", ".")
@@ -76,15 +104,23 @@ inp = d.get("tool_input") or {}
 if not isinstance(inp, dict):
     sys.exit(0)
 path = inp.get("file_path") or ""
+# #-comment languages (2026-10-09, tests/gates/test_comment_claim_hash.sh): Python, the backend profile's main language,
+# was never checked. .py / .rb follow the active profile like the // languages; shell and YAML are in every project.
+HASH_SOURCE_EXTS = (".py", ".rb")
+HASH_SCRIPT_EXTS = (".sh", ".bash", ".zsh", ".yaml", ".yml")
 try:
     sys.dont_write_bytecode = True  # no __pycache__ inside the project's .claude/hooks
     sys.path.insert(0, os.environ.get("CCG_HOOKDIR", ""))
     from devkit_profile import SLASH_COMMENT_EXTS, source_exts
-    exts = tuple(e for e in source_exts(repo) if e in SLASH_COMMENT_EXTS)
+    _src = source_exts(repo)
+    exts = tuple(e for e in _src if e in SLASH_COMMENT_EXTS)
+    hash_exts = tuple(e for e in _src if e in HASH_SOURCE_EXTS) + HASH_SCRIPT_EXTS
 except Exception:
     exts = (".kt", ".java", ".kts")
-if not isinstance(path, str) or not path.endswith(exts):
+    hash_exts = HASH_SOURCE_EXTS + HASH_SCRIPT_EXTS
+if not isinstance(path, str) or not path.endswith(exts + hash_exts):
     sys.exit(0)
+hash_lang = path.endswith(hash_exts) and not path.endswith(exts)
 
 # Only the text written by THIS call.
 written = inp.get("new_string")
@@ -93,10 +129,22 @@ if not isinstance(written, str):
 if not isinstance(written, str) or not written.strip():
     sys.exit(0)
 
-# Comment lines only: //, ///, /*, *, */ — plus KDoc bodies.
+# Comment lines only: //, ///, /*, *, */ — plus KDoc bodies. In a #-comment language: full-line # comments, without a
+# shebang, a `-*- coding` / `coding:` line and tool markers (`type:`, `noqa`, `pragma:`, `pylint:`, `shellcheck disable`).
 COMMENT_RE = re.compile(r"^\s*(?://+|/\*+|\*+/?)\s?(.*)$")
+HASH_RE = re.compile(r"^\s*#+\s?(.*)$")
+HASH_MARKER = re.compile(r"^(?:-\*-|(?:type|pragma|pylint|mypy|pyright|fmt|isort|ruff|flake8|vim?|ex|frozen_string_literal"
+                         r"|yaml-language-server|rubocop)\s*:|(?:en)?coding\s*[:=]|noqa\b|nosec\b"
+                         r"|shellcheck\s+(?:disable|enable|source|shell)\b|noinspection\b)", re.I)
 comment_lines = []
 for i, ln in enumerate(written.split("\n"), 1):
+    if hash_lang:
+        m = HASH_RE.match(ln)
+        if m and not ln.lstrip().startswith("#!") and not HASH_MARKER.match(m.group(1)):
+            body = m.group(1).strip()
+            if body:
+                comment_lines.append((i, body))
+        continue
     m = COMMENT_RE.match(ln)
     if m:
         body = re.sub(r"\*+/\s*$", "", m.group(1)).strip()

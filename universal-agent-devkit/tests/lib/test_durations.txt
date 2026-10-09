@@ -172,3 +172,23 @@
 1 tests/verification/test_taste_mobile_skill.sh
 1 tests/gates/test_hook_fast_path_quotes.sh
 1 tests/gates/test_gate_renamed_test_edit.sh
+# 2026-10-09 audit fixes: each new test alone on a 4-core Linux container (reported by the run that wrote it)
+31 tests/installer/test_install_alias.sh
+19 tests/installer/test_install_user_data.sh
+11 tests/installer/test_uninstall_no_leftovers.sh
+10 tests/installer/test_install_claude_only.sh
+10 tests/installer/test_session_start_missing_hooks.sh
+5 tests/context_memory/test_session_lock_robust.sh
+5 tests/gates/test_git_guard_shell_feed.sh
+5 tests/gates/test_hook_large_payload.sh
+4 tests/gates/test_push_gate_integrity.sh
+4 tests/gates/test_hardware_rm_containment.sh
+2 tests/gates/test_hook_log_dir.sh
+2 tests/worktree_git/test_relink_alias.sh
+1 tests/gates/test_comment_claim_hash.sh
+1 tests/gates/test_hook_camelcase_payload.sh
+1 tests/gates/test_edit_hook_fast_path.sh
+1 tests/verification/test_checklist_retired_rows.sh
+8 tests/gates/test_gate_audit_holes.sh
+7 tests/gates/test_gate_robustness.sh
+4 tests/gates/test_gate_git_batching.sh

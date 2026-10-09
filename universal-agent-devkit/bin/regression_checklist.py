@@ -750,6 +750,18 @@ def sync_from_matrix(data: dict, matrix: dict) -> None:
                 item["impacted_command"] = test["impacted_command"]
             else:
                 item.pop("impacted_command", None)
+    # A suite gone from the matrix stayed "⏳ chưa chạy" for ever and kept the safety % down (2026-10-09: a test fixture's REG-01
+    # in the workbench, "An toàn 39%"). Dropped only when it holds nothing: never run, no history, named by no other row (a bug
+    # or REQ link). With no matrix at all nothing is dropped. tests/verification/test_checklist_retired_rows.sh
+    ids = {t.get("id") for r in matrix.get("rules", []) or [] for t in r.get("mandatory_regression_tests", []) or []}
+    if ids:
+        idle = [k for k, it in data["items"].items() if isinstance(it, dict) and it.get("kind") == "test" and k not in ids
+                and not it.get("last") and not it.get("history")]
+        if idle:
+            others = json.dumps([it for k, it in data["items"].items() if k not in idle], ensure_ascii=False)
+            for k in idle:
+                if k not in others:
+                    del data["items"][k]
 
 
 # ── Which suite of the matrix EXECUTES a test file (orphan tests, guard links) ────────────────
@@ -1397,7 +1409,10 @@ def write_evidence(project_dir: Path, test_id: str, output: str, meta: dict) -> 
 
 def _git_lines(project: Path, *args) -> list | None:
     import subprocess
-    r = subprocess.run(["git", "-C", str(project), "-c", "core.quotepath=false", *args], capture_output=True, text=True)
+    # errors="replace": a non-UTF-8 file name crashed the strict decode (record_results, called by post-fix-gate AFTER its
+    # verdict, A8 2026-10-09); a lone surrogate would crash save()'s UTF-8 encode instead, so not surrogateescape.
+    r = subprocess.run(["git", "-C", str(project), "-c", "core.quotepath=false", *args], capture_output=True, text=True,
+                       errors="replace")
     return r.stdout.splitlines() if r.returncode == 0 else None
 
 
@@ -1719,10 +1734,13 @@ def mark_stale(data: dict, project_dir: Path) -> list:
 # A red run counts as a FAILED TEST (so red-then-green is FLAKY) only when the runner reported a
 # test failure. A build / infra failure — Gradle losing its own output file when two builds share
 # a tree, a daemon crash, a lock — then green on the re-run is a real PASS of the same code.
+# A line that opens with ✖ / ✗ / ❌ is the DevKit's own failed-test line (tests/run_impacted.sh "✖ tests/x.sh", a test's
+# "✖ <case>"), the marks post-fix-gate's FAIL_LINE shows: without it a red-then-green run_impacted.sh was a PASS
+# (infra_retry), never FLAKY (A7, 2026-10-09, tests/gates/test_gate_audit_holes.sh).
 TEST_FAILED_RE = re.compile(
     r"There were failing tests|\d+ tests? completed, \d+ failed|^\S.* > .+ FAILED\s*$|FAIL: (?:Edit|Play)Mode|"
     r"\b[1-9]\d* (?:failed|failures?|failing)\b|FAILED \((?:failures|errors)=|^--- FAIL:|^not ok\b|"
-    r"AssertionError|AssertionFailedError|Expected: .*\n\s+But was|\[Failed\]", re.M)
+    r"AssertionError|AssertionFailedError|Expected: .*\n\s+But was|\[Failed\]|^[ \t]*[✖✗❌]", re.M)
 
 
 def test_failure_reported(output: str) -> bool:

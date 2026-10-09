@@ -157,7 +157,7 @@
     {
       "component": "devkit-worktree-sandbox",
       "watch_files": [
-        "universal-agent-devkit/scripts/worktree_sandbox.py"
+        "universal-agent-devkit/scripts/git/worktree_sandbox.py"
       ],
       "mandatory_regression_tests": [
         {
@@ -171,7 +171,7 @@
     {
       "component": "devkit-token-cost",
       "watch_files": [
-        "universal-agent-devkit/scripts/token_cost_tracker.py"
+        "universal-agent-devkit/scripts/governance/token_cost_tracker.py"
       ],
       "mandatory_regression_tests": [
         {

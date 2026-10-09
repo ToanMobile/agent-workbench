@@ -47,7 +47,9 @@ while [ -L "${SELF}" ]; do
 done
 DEVKIT="$(cd -P "$(dirname "${SELF}")/.." 2>/dev/null && pwd)"
 REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-WMG_INPUT="${INPUT}" WMG_REPO="${REPO_ROOT}" WMG_DEVKIT="${DEVKIT}" python3 -I <<'PY'
+# The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable (Linux 128 KiB,
+# macOS ~1 MiB for args + env) python could not start and the gate passed (tests/gates/test_hook_large_payload.sh).
+WMG_REPO="${REPO_ROOT}" WMG_DEVKIT="${DEVKIT}" python3 -I <<'PY' 3<<<"${INPUT}"
 import datetime, glob, hashlib, json, os, re, shlex, signal, subprocess, sys, time
 
 def fail_open(*_):
@@ -56,7 +58,12 @@ def fail_open(*_):
 signal.signal(signal.SIGALRM, fail_open)
 signal.alarm(13)
 try:
-    d = json.loads(os.environ.get("WMG_INPUT") or "{}")
+    with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
+        _raw = _fh.read()
+except OSError:
+    _raw = ""
+try:
+    d = json.loads(_raw.strip() or "{}")
 except ValueError:
     sys.exit(0)
 tp, sid = d.get("transcript_path") or "", str(d.get("session_id") or "")

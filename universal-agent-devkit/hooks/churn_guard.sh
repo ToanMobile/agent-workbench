@@ -24,16 +24,26 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 
-REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
-mkdir -p "${LOG_DIR}"
-[ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
-
 # Drain stdin before any early exit, otherwise the caller gets EPIPE.
 INPUT="$(cat)"
 
+# The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
+# none). Outside a git tree there is no project and nothing is written (tests/gates/test_hook_log_dir.sh): a run at /
+# created /.claude/audit-gate/.
+REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
+if [ -z "${REPO_ROOT}" ]; then   # the regex costs ~10 ms on a 1 MB payload: only when it is needed
+  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+  [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+  REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
+fi
+LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"
+if [ -n "${LOG_DIR}" ]; then
+  [ -d "${LOG_DIR}" ] || mkdir -p "${LOG_DIR}"
+  [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+fi
+
 if [ "${CHURN_GUARD:-1}" = "0" ]; then
-  echo "[$(date +%Y-%m-%dT%H:%M:%S)] CHURN_GUARD=0 — gate bypassed" >> "${LOG_DIR}/churn_guard.log" 2>/dev/null
+  [ -n "${LOG_DIR}" ] && echo "[$(date +%Y-%m-%dT%H:%M:%S)] CHURN_GUARD=0 — gate bypassed" >> "${LOG_DIR}/churn_guard.log" 2>/dev/null
   exit 0
 fi
 
@@ -42,12 +52,18 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "⚠ churn_guard: python3 không có — gate này KHÔNG chạy, kết quả không được kiểm." >&2
   exit 0
 fi
-CHURN_INPUT="${INPUT}" CHURN_LOG="${LOG_DIR}/churn_guard.log" \
+# The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable python could not
+# start and the guard stayed quiet (tests/gates/test_hook_large_payload.sh).
+CHURN_LOG="${LOG_DIR:+${LOG_DIR}/churn_guard.log}" \
 CHURN_TS="$(date +%Y-%m-%dT%H:%M:%S)" CHURN_MAX="${CHURN_GUARD_MAX:-3}" \
-python3 -I <<'PY'
+python3 -I <<'PY' 3<<<"${INPUT}"
 import os, sys, json, re
 
-raw    = os.environ.get("CHURN_INPUT", "")
+try:
+    with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
+        raw = _fh.read()
+except OSError:
+    raw = ""
 log    = os.environ.get("CHURN_LOG", "/dev/null")
 ts     = os.environ.get("CHURN_TS", "?")
 try:

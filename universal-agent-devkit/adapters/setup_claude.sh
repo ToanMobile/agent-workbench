@@ -4,7 +4,14 @@ set -euo pipefail
 
 TARGET_DIR="${1:-$PWD}"
 TARGET_DIR="$(cd "$TARGET_DIR" 2>/dev/null && pwd -P || echo "$TARGET_DIR")"
-DEVKIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# Reached through a symlinked alias of the DevKit (quick-install.sh: ~/.universal-agent-devkit ->
+# the checkout), links go through the alias: moving the checkout and re-pointing the alias keeps
+# them working (2026-10-09: pwd -P baked the checkout path in, 97 links dangled after a move).
+# The real path otherwise, and when the target is the DevKit itself (self-install).
+DEVKIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ ! -L "$DEVKIT_ROOT" ] || [ "$(cd "$DEVKIT_ROOT" && pwd -P)" = "$TARGET_DIR" ]; then
+  DEVKIT_ROOT="$(cd "$DEVKIT_ROOT" && pwd -P)"
+fi
 MODE="${2:-symlink}" # symlink or copy
 LANGUAGE="${3:-en}"
 SKIP_EXISTING="${SKIP_EXISTING:-0}"
@@ -158,7 +165,12 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   python3 "$_cm" "$TARGET_DIR" || true
 fi
 
-# Clean broken symlinks if any
-find "$TARGET_DIR/.claude/hooks" "$TARGET_DIR/.claude/commands" "$TARGET_DIR/.claude/agents" -type l ! -exec test -e {} \; -delete 2>/dev/null || true
+# 9. Skills in .agents/skills: AGENTS.md names that folder for every agent, so a Claude-only
+#    install places them too (same helper as setup_gemini.sh).
+devkit_place_skills "$TARGET_DIR" "$MODE"
+
+# Dangling links the installer owns (a DevKit item no longer shipped, a deleted project-tier
+# item); the user's own dangling links stay (devkit_remove_dangling).
+devkit_remove_dangling "$TARGET_DIR/.claude/hooks" "$TARGET_DIR/.claude/commands" "$TARGET_DIR/.claude/agents"
 
 echo "✓ Claude Code integration complete (Non-destructive smart merge; custom files preserved)."

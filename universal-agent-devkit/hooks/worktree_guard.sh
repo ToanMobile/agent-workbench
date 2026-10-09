@@ -71,18 +71,27 @@ set -u
 
 INPUT="$(cat 2>/dev/null)" || INPUT=""
 
-REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
+# The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
+# none). Outside a git tree there is no project and nothing is written (tests/gates/test_hook_log_dir.sh): a run at /
+# created /.claude/audit-gate/.
+REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
+if [ -z "${REPO_ROOT}" ]; then   # the regex costs ~10 ms on a 1 MB payload: only when it is needed
+  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+  [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+  REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
+fi
+LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"
 
 if [ "${WORKTREE_GUARD:-1}" = "0" ]; then
-  mkdir -p "${LOG_DIR}" 2>/dev/null && \
+  [ -n "${LOG_DIR}" ] && mkdir -p "${LOG_DIR}" 2>/dev/null && \
     echo "[$(date +%Y-%m-%dT%H:%M:%S)] WORKTREE_GUARD=0 — guard bypassed" >> "${LOG_DIR}/worktree_guard.log" 2>/dev/null
   exit 0
 fi
 
-RX_TOOL='"tool_name"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+# toolName: the camelCase envelope (Grok, hooks/devkit_harness.py) — 2026-10-09 it exited here and the write passed.
+RX_TOOL='"tool(_n|N)ame"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
 [[ ${INPUT} =~ ${RX_TOOL} ]] || exit 0
-case "${BASH_REMATCH[1]}" in Bash|Edit|Write|MultiEdit|NotebookEdit) ;; *) exit 0 ;; esac
+case "${BASH_REMATCH[2]}" in Bash|Edit|Write|MultiEdit|NotebookEdit) ;; *) exit 0 ;; esac
 
 # ── fast path: nothing declares a worktree → exit before python ──────────────
 if [ -z "${DEVKIT_WORKTREE:-}" ]; then
@@ -119,7 +128,7 @@ if [ -z "${DEVKIT_WORKTREE:-}" ]; then
       # No python here: nothing of the project's (a mmap.py in the hook's cwd) can change the answer. Devkit-speed 1a.
       dd if="${tp}" bs=65536 skip=$(( from / 65536 )) 2>/dev/null | grep -aF EnterWorktree \
         | grep -qE '"name":[[:space:]]*"EnterWorktree"[[:space:]]*,[[:space:]]*"input"' && linked=1
-      if [ "${size}" -gt 0 ]; then
+      if [ "${size}" -gt 0 ] && [ -n "${LOG_DIR}" ]; then
         [ -d "${LOG_DIR}/wg_scan" ] || mkdir -p "${LOG_DIR}/wg_scan" 2>/dev/null
         [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null
         printf '%s %s\n' "${size}" "${linked}" > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}" 2>/dev/null
@@ -145,11 +154,15 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "⚠ worktree_guard: python3 không có — guard này KHÔNG chạy (ghi vào main checkout không bị chặn)." >&2
   exit 0
 fi
-mkdir -p "${LOG_DIR}" 2>/dev/null
-[ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+if [ -n "${LOG_DIR}" ]; then
+  mkdir -p "${LOG_DIR}" 2>/dev/null
+  [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+fi
 
-WG_INPUT="${INPUT}" WG_LOG="${LOG_DIR}/worktree_guard.log" WG_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
-python3 -I <<'PY'
+# The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable python could not
+# start and a big Write into the main checkout passed (tests/gates/test_hook_large_payload.sh).
+WG_LOG="${LOG_DIR:+${LOG_DIR}/worktree_guard.log}" WG_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
+python3 -I <<'PY' 3<<<"${INPUT}"
 import json, os, re, shlex, sys
 
 log = os.environ.get("WG_LOG", "/dev/null")
@@ -163,11 +176,12 @@ def logline(s):
         pass
 
 try:
-    d = json.loads(os.environ.get("WG_INPUT", ""))
+    with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
+        d = json.loads(_fh.read())
 except Exception:
     sys.exit(0)
-tool = d.get("tool_name", "")
-inp = d.get("tool_input") or {}
+tool = d.get("tool_name") or d.get("toolName") or ""
+inp = d.get("tool_input") or d.get("toolInput") or {}
 cwd = d.get("cwd") or os.getcwd()
 agent = str(d.get("agent_id") or "")
 tp = str(d.get("transcript_path") or "")

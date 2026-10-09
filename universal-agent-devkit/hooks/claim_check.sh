@@ -31,13 +31,23 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 
-REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
+INPUT="$(cat)"
+
+# The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
+# none). Outside a git tree there is no project and nothing is written (tests/gates/test_hook_log_dir.sh): a run at /
+# created /.claude/audit-gate/.
+REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
+if [ -z "${REPO_ROOT}" ]; then   # the regex costs ~10 ms on a 1 MB payload: only when it is needed
+  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+  [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+  REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
+fi
+LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"
+# No project: the loop guard below has nowhere to count re-Stops, and a gate that cannot count could hold every Stop.
+[ -n "${LOG_DIR}" ] || exit 0
 mkdir -p "${LOG_DIR}"
 [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
 LOG="${LOG_DIR}/claim_check.log"
-
-INPUT="$(cat)"
 
 # All logic in python3 (the macOS system interpreter); emit the block message
 # on fd 2 and signal block via a sentinel exit handled below.
@@ -46,12 +56,18 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "⚠ claim_check: python3 không có — gate này KHÔNG chạy, kết quả không được kiểm." >&2
   exit 0
 fi
-CLAIM_INPUT="${INPUT}" CLAIM_LOG="${LOG}" CLAIM_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
+# The payload goes to python on fd 3, not in an env var (2026-10-09): a reply past the OS limit for one variable could not
+# start python and the gate passed it unchecked (tests/gates/test_hook_large_payload.sh).
+CLAIM_LOG="${LOG}" CLAIM_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
 CLAIM_REPO="${REPO_ROOT}" \
-python3 -I <<'PY'
+python3 -I <<'PY' 3<<<"${INPUT}"
 import os, sys, json, re
 
-raw = os.environ.get("CLAIM_INPUT", "")
+try:
+    with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
+        raw = _fh.read()
+except OSError:
+    raw = ""
 log_path = os.environ.get("CLAIM_LOG", "/dev/null")
 ts = os.environ.get("CLAIM_TS", "?")
 repo_root = os.environ.get("CLAIM_REPO", "") or os.getcwd()

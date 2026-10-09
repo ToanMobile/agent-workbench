@@ -7,12 +7,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session_context.sh\"",
+            "command": "bash -c 'if [ -f \"$1\" ]; then exec bash \"$1\"; fi; echo \"DevKit: hooks are not installed in this checkout, so every DevKit guard and gate is OFF. Run: agent-kit init . -y\"' _ \"${CLAUDE_PLUGIN_ROOT}/hooks/session_context.sh\"",
             "timeout": 20
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session_lock.sh\"",
+            "command": "bash -c 'if [ -f \"$1\" ]; then exec bash \"$1\"; fi' _ \"${CLAUDE_PLUGIN_ROOT}/hooks/session_lock.sh\"",
             "timeout": 10
           }
         ]

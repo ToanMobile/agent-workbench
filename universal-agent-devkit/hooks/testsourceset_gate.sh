@@ -175,9 +175,11 @@ for cand in "$(dirname "$(dirname "${SELF_REAL:-$0}")")/bin" "${REPO_ROOT}/.agen
   [ -f "${cand}/session_authorship.py" ] && { AUTHORSHIP_BIN="${cand}"; break; }
 done
 if [ "${HAVE_PY}" = 1 ] && [ -n "${INPUT}" ] && [ -n "${AUTHORSHIP_BIN}" ]; then
-  SCOPED="$(TS_INPUT="${INPUT}" TS_CHANGED="${CHANGED}" TS_ROOT="${REPO_ROOT}" TS_BIN="${AUTHORSHIP_BIN}" python3 -I -c '
+  # The payload goes to python on stdin, not in an env var (2026-10-09): past the OS limit for one variable python could
+  # not start (tests/gates/test_hook_large_payload.sh).
+  SCOPED="$(printf '%s' "${INPUT}" | TS_CHANGED="${CHANGED}" TS_ROOT="${REPO_ROOT}" TS_BIN="${AUTHORSHIP_BIN}" python3 -I -c '
 import os, sys, json
-raw = os.environ.get("TS_INPUT", "")
+raw = sys.stdin.buffer.read().decode("utf-8", "replace")
 changed = [l for l in os.environ.get("TS_CHANGED", "").splitlines() if l.strip()]
 # realpath BOTH sides: on macOS /var is a symlink to /private/var.
 root = os.path.realpath(os.environ.get("TS_ROOT", "."))

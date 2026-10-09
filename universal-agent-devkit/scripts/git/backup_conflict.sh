@@ -34,7 +34,15 @@ link_is_devkit_owned() {
   [ -L "$link" ] && [ -n "$root" ] || return 1
   t="$(resolve_link_target "$link")"
   root_p="$(cd "$root" 2>/dev/null && pwd -P)" || root_p="$root"
-  [[ "$t" == "$root_p"/* || "$t" == "$root"/* || "$t" == "$root_p" || "$t" == "$root" ]]
+  [[ "$t" == "$root_p"/* || "$t" == "$root"/* || "$t" == "$root_p" || "$t" == "$root" ]] && return 0
+  # A link written through a symlinked alias of the DevKit (quick-install.sh's
+  # ~/.universal-agent-devkit, 2026-10-09) while this run reached it by its real path: compare
+  # the target's physical folder (the target itself when it is a folder: the .agents/devkit link).
+  # A relative target resolve_link_target could not resolve is not judged from the cwd.
+  case "$t" in /*) ;; *) return 1 ;; esac
+  if [ -d "$t" ]; then t="$(cd "$t" 2>/dev/null && pwd -P)" || return 1
+  else t="$(cd "$(dirname "$t")" 2>/dev/null && pwd -P)/$(basename "$t")" || return 1; fi
+  [[ "$t" == "$root_p"/* || "$t" == "$root_p" ]]
 }
 
 has_user_content() {
@@ -753,6 +761,45 @@ devkit_remove_root_item() {
     [ -L "$l" ] && link_is_devkit_owned "$l" "$DEVKIT_ROOT" && rm -f "$l"
   done
   return 0
+}
+
+# devkit_remove_dangling <dir> … — remove the dangling links under each dir that the
+# installer owns: into the DevKit (an item it no longer ships) or into the project tier
+# (.agents/local, an item the team deleted). Any other dangling link is the user's (a docs
+# file not generated yet) and stays: `find … -delete` removed those without a trace or a
+# backup (2026-10-09). Needs DEVKIT_ROOT and TARGET_DIR (every adapter sets both).
+devkit_remove_dangling() {
+  local l
+  while IFS= read -r l; do
+    if link_is_devkit_owned "$l" "${DEVKIT_ROOT:-}" || devkit_is_local_link "$l"; then rm -f "$l"; fi
+  done < <(find "$@" -type l ! -exec test -e {} \; -print 2>/dev/null)
+  return 0
+}
+
+# devkit_place_skills <target_dir> <symlink|copy> — the DevKit skills the profile allows in
+# <target>/.agents/skills, plus the project tier's own skills. AGENTS.md names .agents/skills/
+# for every agent, so every adapter that writes it places them (2026-10-09: a Claude-only
+# install had none — agent-health FAILed and AGENTS.md pointed at a missing folder).
+devkit_place_skills() {
+  local target="$1" mode="$2" skill name dst
+  mkdir -p "$target/.agents/skills"
+  for skill in "$DEVKIT_ROOT/skills"/*; do
+    [ -e "$skill" ] || continue
+    name="$(basename "$skill")"
+    dst="$target/.agents/skills/$name"
+    if ! devkit_skill_allowed "$name"; then
+      devkit_remove_filtered "$dst"  # not part of the active profile
+      continue
+    fi
+    if [ "${SKIP_EXISTING:-0}" = "1" ] && [ -e "$dst" ] && [ ! -L "$dst" ]; then
+      echo "  - Preserved custom skill: $name (--skip-existing active)"
+      continue
+    fi
+    devkit_place "$skill" "$dst" "$mode" || return 1
+  done
+  # Project tier: the project's own skills (.agents/local/skills) whose name the DevKit does not use.
+  [ "$target" = "$DEVKIT_ROOT" ] || devkit_link_local "$target" skills .agents/skills
+  devkit_remove_dangling "$target/.agents/skills"
 }
 
 # ---- Profile skill filter (P1-5) -------------------------------------------------

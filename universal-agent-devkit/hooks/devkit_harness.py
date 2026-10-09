@@ -6,7 +6,10 @@ The DevKit's hooks are written for Claude Code, but other agents run them too:
     `permissionMode`, `promptId`, `stopHookActive`, `lastAssistantMessage`, `subagentType`)
     next to a few snake_case aliases (`hook_event_name`, `session_id`, `transcript_path`),
     and the runner sets GROK_HOOK_EVENT / GROK_HOOK_NAME / GROK_SESSION_ID /
-    GROK_WORKSPACE_ROOT on every hook process (Grok 1.0.41 hooks guide). Its
+    GROK_WORKSPACE_ROOT on every hook process (Grok 1.0.41 hooks guide). A tool call may
+    carry only `toolName` / `toolInput`: the Bash / Edit guards (block-dangerous-git,
+    hardware_safety_gate, worktree_guard, precode_gate, read_ledger) read both spellings
+    (2026-10-09: a camelCase `git push -f` passed them). Its
     `transcript_path` is Grok's own `updates.jsonl` ({"timestamp","method","params"} per
     line), which no Claude-transcript parser can read. It also fires an observe-only Stop
     at session end (`reason`: "channel_closed" / "shutdown"; a real stop is "end_turn").

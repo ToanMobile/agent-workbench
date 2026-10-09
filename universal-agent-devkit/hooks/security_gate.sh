@@ -70,12 +70,18 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "🛑 security_gate: cần python3 để kiểm tra — chặn để an toàn. Cài python3 hoặc đặt SECURITY_GATE=0 để tắt gate." >&2
   exit 2
 fi
-SG_INPUT="${INPUT}" SG_LOG="${LOG_DIR}/security_gate.log" SG_DIR="${LOG_DIR}" SG_REPO="${REPO_ROOT}" \
+# The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable python could not
+# start and the gate passed (tests/gates/test_hook_large_payload.sh).
+SG_LOG="${LOG_DIR}/security_gate.log" SG_DIR="${LOG_DIR}" SG_REPO="${REPO_ROOT}" \
 SG_TS="$(date +%Y-%m-%dT%H:%M:%S)" SG_MAX="${SECURITY_GATE_MAX_ATTEMPTS:-3}" \
-python3 -I <<'PY'
+python3 -I <<'PY' 3<<<"${INPUT}"
 import os, sys, json, re
 
-raw   = os.environ.get("SG_INPUT", "")
+try:
+    with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
+        raw = _fh.read()
+except OSError:
+    raw = ""
 log   = os.environ.get("SG_LOG", "/dev/null")
 sdir  = os.environ.get("SG_DIR", "/tmp")
 ts    = os.environ.get("SG_TS", "?")
@@ -279,7 +285,7 @@ def _segments(stripped):
 def _under(path, root):
     return path == root or path.startswith(root.rstrip("/") + "/")
 
-# The macOS spellings are listed as written too (as session_lock.py TEMP_PREFIXES does): realpath("/tmp") only yields
+# The macOS spellings are listed as written too (macOS resolves /tmp to /private/tmp): realpath("/tmp") only yields
 # /private/tmp on macOS, so on Linux a /private/tmp/… scratch path was judged a repo write.
 TEMP_ROOTS = sorted({os.path.realpath(p) for p in ("/tmp", "/var/folders", os.environ.get("TMPDIR") or "/tmp")}
                     | {"/private/tmp", "/private/var/folders"})

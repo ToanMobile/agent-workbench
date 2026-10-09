@@ -4,7 +4,14 @@ set -euo pipefail
 
 TARGET_DIR="${1:-$PWD}"
 TARGET_DIR="$(cd "$TARGET_DIR" 2>/dev/null && pwd -P || echo "$TARGET_DIR")"
-DEVKIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# Reached through a symlinked alias of the DevKit (quick-install.sh: ~/.universal-agent-devkit ->
+# the checkout), links go through the alias: moving the checkout and re-pointing the alias keeps
+# them working (2026-10-09: pwd -P baked the checkout path in, 97 links dangled after a move).
+# The real path otherwise, and when the target is the DevKit itself (self-install).
+DEVKIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ ! -L "$DEVKIT_ROOT" ] || [ "$(cd "$DEVKIT_ROOT" && pwd -P)" = "$TARGET_DIR" ]; then
+  DEVKIT_ROOT="$(cd "$DEVKIT_ROOT" && pwd -P)"
+fi
 MODE="${2:-symlink}" # symlink or copy
 LANGUAGE="${3:-en}"
 SKIP_EXISTING="${SKIP_EXISTING:-0}"
@@ -28,13 +35,20 @@ devkit_install_agents_md "$TARGET_DIR" "$MODE" GEMINI.md Agent.md
 #     Copy mode is committed for a team and gets no machine path.
 if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   mkdir -p "$TARGET_DIR/.gemini"
-  python3 - "$TARGET_DIR/.gemini/settings.json" "$([ "$MODE" = symlink ] && echo "$DEVKIT_ROOT")" <<'PY_EOF'
+  # The real path (not an alias): Gemini compares the REAL path of the file it reads.
+  python3 - "$TARGET_DIR/.gemini/settings.json" "$([ "$MODE" = symlink ] && cd "$DEVKIT_ROOT" && pwd -P)" <<'PY_EOF'
 import json, os, sys
 path, devkit = sys.argv[1], sys.argv[2]
 try:
     data = json.load(open(path, encoding="utf-8"))
-except (OSError, ValueError):
+except FileNotFoundError:
     data = {}
+except (OSError, ValueError) as e:
+    data = e
+if not isinstance(data, dict):
+    # 2026-10-09: a JSONC file (comments) read as {} was rewritten with only the DevKit keys.
+    sys.exit(f"setup_gemini: {path} does not parse ({data if isinstance(data, Exception) else 'not a JSON object'})"
+             " — left untouched; fix it (JSON has no comments) and re-run.")
 ctx = data.setdefault("context", {})
 before = json.dumps(ctx, sort_keys=True)
 names = ctx.get("fileName")
@@ -94,27 +108,8 @@ python3 "$_mj" "$MCP_SRC" "$TARGET_DIR/mcp_config.json"
 rm -f "$MCP_SRC"
 echo "  - Merged MCP servers into mcp_config.json (preserved existing custom MCPs)"
 
-# 3. Smart Item-by-Item Link for Skills (Preserving custom user skills)
-for skill in "$DEVKIT_ROOT/skills"/*; do
-  [ -e "$skill" ] || continue
-  skill_name="$(basename "$skill")"
-  target_skill_path="$TARGET_DIR/.agents/skills/$skill_name"
-  if ! devkit_skill_allowed "$skill_name"; then
-    devkit_remove_filtered "$target_skill_path"  # not part of the active profile
-    continue
-  fi
-  if [ "$SKIP_EXISTING" = "1" ] && [ -e "$target_skill_path" ] && [ ! -L "$target_skill_path" ]; then
-    echo "  - Preserved custom skill: $skill_name (--skip-existing active)"
-    continue
-  fi
-  devkit_place "$skill" "$target_skill_path" "$MODE"
-done
-
-# 4. Project tier: the project's own skills kept in .agents/local/skills are linked in
-#    when no DevKit skill has that name (DevKit is the core and wins).
-[ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && devkit_link_local "$TARGET_DIR" skills .agents/skills
-
-# Clean broken symlinks if any
-find "$TARGET_DIR/.agents/skills" -type l ! -exec test -e {} \; -delete 2>/dev/null || true
+# 3. Item-by-item skills in .agents/skills (custom user skills preserved, the project tier's
+#    own skills linked in, dangling DevKit links cleaned) — shared with setup_claude.sh.
+devkit_place_skills "$TARGET_DIR" "$MODE"
 
 echo "✓ Antigravity & Google Gemini (.agents/skills, AGENTS.md, mcp_config.json) ready."

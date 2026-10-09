@@ -18,11 +18,18 @@ INPUT="$(cat)"
 [ "${FOREIGN_REPO_GATE:-1}" = "0" ] && exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-FRG_INPUT="${INPUT}" FRG_REPO="${REPO_ROOT}" python3 -I <<'PY'
+# The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable (Linux 128 KiB,
+# macOS ~1 MiB for args + env) python could not start and the gate passed (tests/gates/test_hook_large_payload.sh).
+FRG_REPO="${REPO_ROOT}" python3 -I <<'PY' 3<<<"${INPUT}"
 import json, os, sys
 
 try:
-    d = json.loads(os.environ.get("FRG_INPUT") or "{}")
+    with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
+        _raw = _fh.read()
+except OSError:
+    _raw = ""
+try:
+    d = json.loads(_raw.strip() or "{}")
 except ValueError:
     sys.exit(0)
 tp = d.get("transcript_path") or ""
