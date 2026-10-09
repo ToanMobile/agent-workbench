@@ -1,14 +1,14 @@
 <div align="center">
 
 # 🚀 Universal AI Agent DevKit & Quality Protocol
-### *Bộ quy tắc chung, lifecycle hooks, 27 skills, các domain profile (Android, iOS, web, backend, game, automotive, voice, universal) và cổng kiểm tra diff tĩnh sau khi sửa lỗi cho Claude Code, OpenAI Codex, Google Gemini/Antigravity và Cursor — cài vào dự án mà không ghi đè những gì đã có.*
+### *Bộ quy tắc chung, lifecycle hooks, 28 skills, các domain profile (Android, iOS, web, backend, game, automotive, voice, universal) và cổng kiểm tra diff tĩnh sau khi sửa lỗi cho Claude Code, OpenAI Codex, Google Gemini/Antigravity và Cursor — cài vào dự án mà không ghi đè những gì đã có.*
 
 [![GitHub Repository](https://img.shields.io/badge/GitHub-ToanMobile%2Fagent--workbench-blue.svg?style=for-the-badge&logo=github)](https://github.com/ToanMobile/agent-workbench)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](./LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-agent--kit%20test-success.svg?style=for-the-badge)](#-verification--devkit-cli-agent-kit)
 [![Supported Agents](https://img.shields.io/badge/Agents-4%20N%E1%BB%81n%20T%E1%BA%A3ng-orange.svg?style=for-the-badge)](#-universal-multi-agent-matrix)
 [![Rulebook](https://img.shields.io/badge/Rules-AGENTS.md%20(SSOT)-red.svg?style=for-the-badge)](#-quy-chuẩn-kỹ-thuật-tập-trung-single-source-of-truth)
-[![Skills Catalog](https://img.shields.io/badge/Skills-27%20Curated-purple.svg?style=for-the-badge)](#-27-curated-engineering-skills-catalog)
+[![Skills Catalog](https://img.shields.io/badge/Skills-28%20Curated-purple.svg?style=for-the-badge)](#-28-curated-engineering-skills-catalog)
 [![Domain Profiles](https://img.shields.io/badge/Profiles-Android%20%C2%B7%20iOS%20%C2%B7%20Web%20%C2%B7%20Backend%20%C2%B7%20more-cyan.svg?style=for-the-badge)](#-hệ-thống-dynamic-domain-profiles)
 [![Review Councils](https://img.shields.io/badge/Councils-10%20Reviewer%20Prompts-yellow.svg?style=for-the-badge)](#-10-hội-đồng-review--kiểm-tra-tự-nhất-quán)
 [![MCP Servers](https://img.shields.io/badge/MCP-6%20Integrated-brightgreen.svg?style=for-the-badge)](#-mcp-model-context-protocol-hub)
@@ -102,7 +102,7 @@ DevKit cung cấp một hệ sinh thái khép kín:
 
    **Những gì tự chạy (hook):** mở phiên mới là nạp mục lục bẫy trong `.agents/instincts.md` và trạng thái checklist hồi quy; mỗi yêu cầu được chèn các bẫy khớp và, nếu là sửa bug, luật RED→GREEN; Bash chặn git nguy hiểm, `--no-verify` và lệnh làm hỏng thiết bị; khi dừng thì chạy ma trận hồi quy (tự sinh từ test runner của dự án khi profile chỉ có ma trận mẫu — `agent-kit matrix`), không cho nói "test pass" khi test mới viết chưa từng đỏ, không cho nói "đã fix" nếu phiên chưa có cặp test đỏ→xanh, không cho dừng khi code đổi mà chưa review context sạch, và sau khi sửa bug xong thì nhắc một lần ghi bài học (`agent-kit learn`). Claude Code có đủ, kể cả guard worktree (`worktree_guard.sh`): agent làm trong git worktree không ghi được vào checkout chính (`DEVKIT_WORKTREE=<đường dẫn>` khai báo tay, `WORKTREE_GUARD=0` tắt); OpenAI Codex, Gemini CLI và Cursor có phần ngữ cảnh, guard và test hồi quy qua `hooks/agent_bridge.sh` (Grok đọc cùng `AGENTS.md`; installer không ghi file riêng cho Grok); Antigravity chỉ có luật (`AGENTS.md` §7). Lệnh Bash vô hại đi qua guard trong ~5 ms (fast path bằng bash); `agent-kit clean` dọn log và bản sao lưu cũ của hook.
 5. **10 Hội đồng Review:** các prompt reviewer trong `agents/councils/` (cô lập shared flow, kiến trúc/blast radius, TDD, OpenCodeReview, bảo mật, game/Unity/Blender, hiệu năng/ANR, quản trị bộ nhớ, quy trình solo-dev, chuẩn/bàn giao) được profile kích hoạt. Các script `scripts/audit_*` là kiểm tra tự nhất quán dựa trên grep trên chính file của DevKit, không phải reviewer code.
-6. **26 Kho Kỹ Năng Tinh Gọn (Curated Engineering Skills):** Chuẩn hóa theo định dạng `SKILL.md`, chia 5 nhóm, gồm cả hai skill hiệu năng domain `compose-recomp-audit` và `unity-gc-audit`, cùng wrapper cho CLI **Alibaba OpenCodeReview (`ocr`)**.
+6. **28 Kho Kỹ Năng Tinh Gọn (Curated Engineering Skills):** Chuẩn hóa theo định dạng `SKILL.md`, chia 5 nhóm, gồm cả hai skill hiệu năng domain `compose-recomp-audit` và `unity-gc-audit`, cùng wrapper cho CLI **Alibaba OpenCodeReview (`ocr`)**.
 7. **Cơ Chế Bảo Vệ Cách Ly X_old (X_old Conflict Isolation):** Cài đặt không ghi đè vào dự án cũ. Skill/command/agent/hook cùng tên được chuyển vào tầng dự án `.agents/local/` (DevKit thắng, bản của bạn vẫn được commit và được link lại khi tên không trùng); file gốc bị trùng (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`) có bản chụp `*_old`; thư mục gốc `commands/`, `rules/`, `skills/` chứa nội dung agent được chuyển vào `.agents/local/` (thư mục source code giữ nguyên, item DevKit được đặt vào trong). File rule trong `.agents/local/rules/` vẫn có hiệu lực: mỗi lần cài, chúng được liệt kê dạng import `@.agents/local/rules/<file>` trong khối DevKit của `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `CODEX.md` và `AGENTS.md` riêng của bạn; chúng bổ sung cho rule DevKit, chỗ nào mâu thuẫn với `AGENTS.md` §6 hoặc `rules/core-rules.md` thì rule DevKit thắng. Xem bằng `agent-kit list-old`, khôi phục bằng `agent-kit restore-old`.
 8. **Hệ thống Thiết kế & Ký ức Thất bại:** Chuẩn hóa Design Tokens giao diện (`DESIGN.md`, Touch Target $\ge 48\text{dp}$, WCAG AA, Debounce nút bấm) kết hợp cùng kinh nghiệm phòng ngừa bẫy mã nguồn lịch sử (`.agents/instincts.md`).
 9. **An Toàn Thiết Bị & Chẩn Đoán Sập Native Android:**
@@ -133,7 +133,7 @@ DevKit cung cấp một hệ sinh thái khép kín:
 │ Diff tĩnh + test hồi quy   │ Android, iOS, Web, Backend │ Prompt reviewer              │
 │ (/audit-gate / agent-kit)  │ Game, Auto, Voice, Univ.   │ (agents/councils/)           │
 ├────────────────────────────┴────────────────────────────┴──────────────────────────────┤
-│ 🧰 27 Curated Skills (gồm Compose & Unity performance) • 🛡️ Cơ Chế Bảo Vệ X_old        │
+│ 🧰 28 Curated Skills (gồm Compose & Unity performance) • 🛡️ Cơ Chế Bảo Vệ X_old        │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -166,7 +166,7 @@ DevKit cung cấp một hệ sinh thái khép kín:
 - **Prompt reviewer:** mỗi hội đồng trong `agents/councils/` là một prompt subagent với 5 mảng trọng tâm; profile đang active quyết định hội đồng nào được áp dụng.
 - **Biên nhận của workflow engine:** các engine trong `workflows/` ràng buộc bằng chứng bằng hàm băm SHA-256 (không phải chữ ký số).
 
-### 7. 🧰 Kho 27 Kỹ Năng Kỹ Thuật Tinh Gọn
+### 7. 🧰 Kho 28 Kỹ Năng Kỹ Thuật Tinh Gọn
 - **Bao quát trọn vòng đời phát triển:** các kỹ năng nền tảng cùng hai skill hiệu năng domain (`compose-recomp-audit` và `unity-gc-audit`), bao phủ TDD, Sửa lỗi, Lập kế hoạch Spec-Kit Lite, Visual QA, Triage Crashlytics, Giải quyết conflict Git, Khám phá AST Knowledge Graph và Review mã nguồn qua Alibaba OpenCodeReview (`ocr`).
 
 ### 8. 🛡️ Cơ Chế Bảo Vệ Cách Ly X_old & An Ninh P0 Tuyệt Đối
@@ -187,7 +187,7 @@ graph TD
         PostFixGate["⚡ Cổng Hậu Sửa Lỗi<br/>(diff tĩnh + test hồi quy)"]
         AuditCouncils["🏛️ 10 Hội Đồng Review<br/>(agents/councils/)"]
         Gates["🔒 Lifecycle Hooks<br/>(wired + helper opt-in)"]
-        SkillsCatalog["🧰 27 Curated Skills"]
+        SkillsCatalog["🧰 28 Curated Skills"]
         DesignMemory["🎨 DESIGN.md & Ký Ức Thất Bại (.agents/instincts.md)"]
         MCPHub["🔌 6-Server MCP Hub (100+ Schemas)"]
     end
@@ -509,9 +509,9 @@ Các file được import là bản sao thật, không phải link: một `@` im
 
 ---
 
-## 🧰 27 Curated Engineering Skills Catalog
+## 🧰 28 Curated Engineering Skills Catalog
 
-Kho 27 kỹ năng chuẩn hóa theo định dạng `SKILL.md` (YAML frontmatter + Progressive Disclosure), chia thành **5 nhóm**:
+Kho 28 kỹ năng chuẩn hóa theo định dạng `SKILL.md` (YAML frontmatter + Progressive Disclosure), chia thành **5 nhóm**:
 
 ### 1. 🧪 Testing & Zero-Defect QA
 | Skill | Slash Command | Chức Năng & Mục Đích Sử Dụng |
@@ -531,6 +531,7 @@ Kho 27 kỹ năng chuẩn hóa theo định dạng `SKILL.md` (YAML frontmatter 
 | **`open-code-review`** | `/ocr`, `/review-code`, `/open-code-review` | Wrapper cho CLI **Alibaba OpenCodeReview** (`ocr`, cài riêng): comment review theo từng dòng trên diff. |
 | **`qa-visual`** | `/qa-visual`, `/visual` | Tự động chụp màn hình và audit lỗi bố cục layout DOM (tràn khung, lệch align, chồng lấp) kèm upload cloud. |
 | **`ui-ux-pro-max`** | `/ui-ux-pro-max` | Tra cứu dữ liệu thiết kế UI/UX (style, bảng màu, font, luật UX) và guideline theo stack gồm SwiftUI, Flutter, Compose, Unity 6 uGUI (`scripts/search.py --stack`). |
+| **`taste-mobile-app`** | `/taste-mobile-app` | Dùng khi thiết kế màn hình, luồng mobile mới hoặc làm lại UI rập khuôn (3 dial, 4 trạng thái, Zero-Slop). |
 | **`android-real-device-qa`** | `/android-qa` | Kiểm thử thiết bị thật/emulator qua ADB/Replicant: đo FPS SurfaceFlinger, dump view hierarchy, triage ANR logcat. |
 
 ---
@@ -572,7 +573,7 @@ Kho 27 kỹ năng chuẩn hóa theo định dạng `SKILL.md` (YAML frontmatter 
 
 ## ⌨️ Danh Mục Đầy Đủ Slash Commands
 
-Toàn bộ 27 skills, lệnh đổi profile và cổng hậu sửa lỗi đều được ánh xạ thành slash command kèm alias gõ tắt (`agent-kit commands` liệt kê đầy đủ):
+Toàn bộ 28 skills, lệnh đổi profile và cổng hậu sửa lỗi đều được ánh xạ thành slash command kèm alias gõ tắt (`agent-kit commands` liệt kê đầy đủ):
 
 | Lệnh Slash Command | Tên Viết Tắt (Aliases) | Kỹ Năng / Đích Ánh Xạ | Chức Năng Cốt Lõi |
 |---|---|---|---|
@@ -699,7 +700,7 @@ eval "$(agent-kit completion bash)"
 # 5. Chạy mọi suite hồi quy:
 agent-kit test
 
-# 6. Liệt kê toàn bộ 27 Curated Skills:
+# 6. Liệt kê toàn bộ 28 Curated Skills:
 agent-kit list
 
 # 7. Liệt kê toàn bộ Slash Commands:
@@ -769,7 +770,7 @@ universal-agent-devkit/
 │   ├── game/scripts/            # Unity test runner và bot marathon
 │   └── ios/                     # iOS Swift 6, SwiftUI, Concurrency rules & matrix
 ├── rules/                       # Core rules & Dynamic profile rules symlinks
-├── skills/                      # 27 Curated Skills
+├── skills/                      # 28 Curated Skills
 ├── commands/                    # Slash command & alias (link vào skills/, cùng audit-gate & profile)
 ├── agents/                      # Subagent (.md) và 10 hội đồng (agents/councils/)
 ├── hooks/                       # Lifecycle hooks (hooks.json) và contract test (hooks/tests/)

@@ -1,0 +1,1 @@
+../skills/taste-mobile-app/SKILL.md

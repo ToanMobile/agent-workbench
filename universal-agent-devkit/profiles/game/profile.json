@@ -27,7 +27,8 @@
   "exclude_skills": [
     "android-real-device-qa",
     "compose-recomp-audit",
-    "deploy"
+    "deploy",
+    "taste-mobile-app"
   ],
   "exclude_agents": [
     "android-principal-architect"

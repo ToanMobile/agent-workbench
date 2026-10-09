@@ -73,3 +73,10 @@ Quy chuẩn kỹ thuật bắt buộc dành cho AI Agent khi phát triển, tố
      leaks -atExit -- ./build/Build/Products/Debug-iphonesimulator/App.app/App
      ```
    - Đảm bảo 0 memory leaks, 0 retain cycles được báo cáo.
+
+## 5. SwiftUI UI & Apple HIG (Anti-Slop)
+- **Safe Area & Insets**: Nút CTA dính đáy dùng `.safeAreaInset(edge: .bottom)` để đẩy nội dung; tuyệt đối không dùng `.ignoresSafeArea()` tràn lan gây lẹm chữ vào tai thỏ/Dynamic Island.
+- **Bàn phím & Navigation**: Bàn phím không được che khuất input (SwiftUI tự xử lý nếu dùng đúng form/scroll view). Sheet nên dùng `.presentationDetents([.medium, .large])` (iOS 16+) để người dùng dễ vuốt đóng.
+- **Mandatory 4 trạng thái**: Mọi màn hình phải có đủ 4 trạng thái thiết kế: Loading (dùng skeleton/redacted thay vì spinner), Empty (kèm CTA), Error (kèm Thử lại), Populated.
+- **Zero-Slop & Vùng chạm**: Hit area $\ge 44\times 44\text{pt}$ (xem lại §3). Cấm thiết kế rập khuôn: Card lồng Card, dùng `Color.gray` trần, gradient tím-indigo mặc định, và câu chào sáo rỗng "Welcome back 👋".
+- Quy trình chuẩn: Sử dụng skill `taste-mobile-app` để định hướng thẩm mỹ và kiểm tra UI/UX.

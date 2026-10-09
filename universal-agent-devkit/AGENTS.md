@@ -227,6 +227,7 @@ The agent MUST trigger these skills from context by itself and NEVER ask the use
 | **4. Device & Visual QA** | `android-real-device-qa` | Kiểm thử Android trên thiết bị thật / máy ảo emulator | Tự động đo FPS SurfaceFlinger, dump view hierarchy XML, triage ANR logcat, tombstone native crash, quét DEX. |
 | **4. Device & Visual QA** | `compose-recomp-audit` | Tối ưu Compose 120 FPS, loại bỏ Recomposition thừa | Tự động audit tính ổn định tham số (@Stable/@Immutable), derivedStateOf, deferred state reads, LazyColumn keying. |
 | **4. Device & Visual QA** | `unity-gc-audit` | Triệt tiêu GC Alloc trong Unity 6, hướng tới Zero-GC Update loop | Tự động quét LINQ/boxing trong frame loops, NonAlloc physics APIs, cache coroutines, chống rò rỉ C# events khi đổi Scene. |
+| **4. Device & Visual QA** | `taste-mobile-app` | Thiết kế màn hình, luồng mobile mới hoặc làm lại UI rập khuôn | Tự động áp dụng nguyên lý 3 dial, 4 trạng thái, touch target, edge-to-edge và chống slop. |
 | **4. Device & Visual QA** | `qa-visual` | Kiểm tra giao diện, audit layout, chống vỡ màn hình | Tự động audit tràn khung, lệch align, touch target >= 48dp, upload screenshot lên R2. |
 | **4. Device & Visual QA** | `qa-review` | Chuẩn bị trước khi tạo PR / bàn giao Tech Lead | Tự động chất vấn diff, tạo acceptance criteria kiểm chứng được và dựng ma trận test scenario. |
 | **5. Acceptance & Delivery** | `merge-conflict-resolver` | Xung đột git khi merge, rebase, cherry-pick | Tự động phân tích AST và ngữ cảnh để giải quyết xung đột mà không làm mất mát logic. |
