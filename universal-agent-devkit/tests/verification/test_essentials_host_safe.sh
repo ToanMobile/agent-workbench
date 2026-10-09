@@ -12,4 +12,9 @@ fail() { echo "✖ $1" >&2; exit 1; }
 bad="$(grep -noE '`[A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*\.[A-Za-z][A-Za-z0-9]*`' "$ESS" \
   | grep -viE '\.(md|py|sh|json|txt|kt|java|xml|png|csv|ya?ml|mdc|toml|gradle|swift|cs|dart|tsx?|jsx?|vue|css)`$')"
 [ -z "$bad" ] || fail "rules/essentials.md has a backticked code-looking name a host doc verifier reads as a symbol: $(echo "$bad" | tr '\n' ' ')"
-echo "✅ test_essentials_host_safe: no host-unsafe backticked symbol in rules/essentials.md"
+# 09/10/2026: GeelyEx2's verify-docs.sh resolves a backticked `scripts/…` / `tools/…` / `docs/…` pointer from the HOST root;
+# essentials named `scripts/governance/scratch_cleanup.py`, which exists only under `.agents/devkit/` there (REG-DOCS-01 red).
+# A kit file is named with its host path `.agents/devkit/<path>`.
+ptr="$(grep -noE '`(\./)?(scripts|tools|docs)/[A-Za-z0-9_./-]+`' "$ESS")"
+[ -z "$ptr" ] || fail "rules/essentials.md has a backticked kit path a host verifier resolves from its own root (write .agents/devkit/<path>): $(echo "$ptr" | tr '\n' ' ')"
+echo "✅ test_essentials_host_safe: no host-unsafe backticked symbol or pointer in rules/essentials.md"

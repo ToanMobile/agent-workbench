@@ -192,7 +192,7 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
 - Clean up what you create (user, 2026-10-09: 33 GB of scratch filled the disk): a repo copy,
   stage kit or fixture is deleted in the same turn its purpose is served, a copy as soon as it
   was pushed from. The session hooks remove the session's temp dir at SessionEnd and prune
-  dead sessions' dirs (idle 7 days) at SessionStart (`scripts/governance/scratch_cleanup.py`).
+  dead sessions' dirs (idle 7 days) at SessionStart (`.agents/devkit/scripts/governance/scratch_cleanup.py`).
   Anything that must outlive the session (a stage awaiting the user, a handoff) lives outside
   `/tmp/claude-<uid>`, e.g. in the repo's ignored `.agents/local/`.
 - Decide, don't ask. Agent tự chủ tối đa: Khi thấy tốt hơn hoặc cần thiết thì TỰ AUTO DUYỆT

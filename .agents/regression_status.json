@@ -572,16 +572,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 12:43:08",
-        "ts": 1791524588.591918,
+        "at": "2026-10-09 12:58:10",
+        "ts": 1791525490.0575979,
         "task": null,
-        "commit": "6dca60d+dirty",
-        "duration": "149.21s",
+        "commit": "86e7126+dirty",
+        "duration": "93.60s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261009-124308.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261009-125809.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 12:58:10",
+          "ts": 1791525490.0575979,
+          "task": null,
+          "commit": "86e7126+dirty",
+          "duration": "93.60s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261009-125809.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 12:43:08",
@@ -625,17 +636,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261009-121701.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 12:14:57",
-          "ts": 1791522897.101845,
-          "task": null,
-          "commit": "3bde912+dirty",
-          "duration": "98.51s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261009-121456.log",
-          "deleted": []
         }
       ],
       "title": "DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit",
@@ -678,17 +678,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 12:36:11",
-        "ts": 1791524171.6931672,
+        "at": "2026-10-09 12:58:10",
+        "ts": 1791525490.066028,
         "task": null,
-        "commit": "44bbfc5+dirty",
-        "duration": "0.44s",
+        "commit": "86e7126+dirty",
+        "duration": "0.48s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-WB-CONFIG-01/20261009-123611.log",
-        "deleted": [],
-        "reused_at": "2026-10-09 12:37:16"
+        "log": ".agents/evidence/REG-WB-CONFIG-01/20261009-125809.log",
+        "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 12:58:10",
+          "ts": 1791525490.066028,
+          "task": null,
+          "commit": "86e7126+dirty",
+          "duration": "0.48s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20261009-125809.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 12:36:11",
@@ -731,17 +741,6 @@
           "duration": "0.44s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-WB-CONFIG-01/20261009-121456.log",
-          "deleted": []
-        },
-        {
-          "status": "FAIL",
-          "at": "2026-10-09 12:12:35",
-          "ts": 1791522755.1609101,
-          "task": null,
-          "commit": "3bde912+dirty",
-          "duration": "0.96s",
-          "exit_code": 1,
-          "log": ".agents/evidence/REG-WB-CONFIG-01/20261009-121234.log",
           "deleted": []
         }
       ],
