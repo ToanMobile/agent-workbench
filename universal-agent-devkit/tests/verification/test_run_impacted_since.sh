@@ -7,6 +7,7 @@
 # date for --since (default 6.hours). With an upstream the window never applies (the unpushed commits are the change).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
+unset DEVKIT_IMPACTED_SINCE   # the "default" case must not inherit a caller's value (the RED-proof recipe exports 0)
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

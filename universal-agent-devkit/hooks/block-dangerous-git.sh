@@ -1169,8 +1169,8 @@ def judge_feed(producer, depth):
     return None
 
 def analyse_free(text, depth):
-    """analyse() of text that is not the script of the enclosing bash -c itself (an eval operand, an ssh or watch command, the body of a
-    $(...) or an arithmetic expansion): a command substitution there is ordinary, only the script own command word is judged."""
+    """analyse() of text that is not the script of the enclosing bash -c itself (an eval operand, an ssh or watch command, the body of an
+    arithmetic expansion): a command substitution there is ordinary, only the script own command word is judged."""
     saved = IN_C_SCRIPT[0]
     IN_C_SCRIPT[0] = 0
     try:
@@ -1198,7 +1198,8 @@ def analyse(text, depth=0, stripped=False):
                 PENDING_FEED.append(UNREADABLE_OSUBST)
             for inner in inners:
                 here = CUR_DIR[0]   # a cd inside $(...) runs in a subshell
-                reason = (analyse_free if inner.startswith("(") else analyse)(inner, depth + 1)   # only $(( … )) is data; a plain $( … ) runs in the -c shell
+                arith = inner.startswith("(") and subst_end("$" + inner, 0) == len(inner) + 1   # only $(( … )) is data: its first paren closes at the very end
+                reason = (analyse_free if arith else analyse)(inner, depth + 1)   # $((:); $(cmd)) is a subshell, a plain $( … ) runs in the -c shell
                 CUR_DIR[0] = here
                 if reason:
                     return reason
