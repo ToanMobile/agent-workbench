@@ -173,4 +173,28 @@ PY
 )"
 [ "$race2" = working/working ] && ok "  … and a resume before the registry write leaves lock AND registry working" || fail "race2: lock/registry = $race2"
 
+# A copied checkout (2026-10-09: AGENTS.md §7.1 says integrate around another session's files in a `cp -Rc` copy) carries the
+# original's lock file in its .git: the copy was "held" by the original's live holder for up to 600 s. A lock whose cwd is not
+# inside this checkout belongs to the checkout it was copied from: not a holder here.
+R5="$TMP/repo5"; mkdir -p "$R5/src" && git -C "$R5" init -q . && echo x > "$R5/src/A.kt"
+hook A PreToolUse Edit "$R5"; [ $? = 0 ] || fail "copy setup: A could not take repo5"
+cp -R "$R5" "$TMP/repo5-copy"
+st "$TMP/repo5-copy"; [ $? = 0 ] && ok "copy: --status of a copied checkout says free (the copied lock is the original's)" || fail "--status copy: $(cat "$TMP/st.out")"
+hook B PreToolUse Edit "$TMP/repo5-copy"; [ $? = 0 ] && ok "  … and a write there takes it" || fail "copied lock blocks the copy: $(cat "$TMP/err")"
+hook B PreToolUse Edit "$R5"; [ $? = 2 ] && ok "  … while the original checkout stays held by its live holder" || fail "original lost its holder"
+cp -R "$R5" "$TMP/repo5-copy2"
+hook C PreToolUse Bash "$R2" "cd $TMP/repo5-copy2 && git commit -m x"; [ $? = 0 ] && ok "  … and a git write aimed at a copy from ANOTHER checkout is not judged by the copied lock" || fail "foreign copied lock blocks: $(cat "$TMP/err")"
+# Review 2026-10-09 (P2): judged by the lock's cwd STRING, a holder whose cwd differs only in letter case (APFS is case-insensitive) read as
+# "copied" and lost its live lock to the next writer. The lock records its git dir and is compared by inode (os.path.samefile).
+R6="$TMP/repo6"; mkdir -p "$R6/src" && git -C "$R6" init -q . && echo x > "$R6/src/A.kt"
+if [ -d "$TMP/REPO6" ]; then
+  python3 -c 'import json,sys; print(json.dumps({"session_id": "A", "hook_event_name": "PreToolUse", "cwd": sys.argv[1], "tool_name": "Edit",
+    "tool_input": {"file_path": sys.argv[2] + "/src/A.kt"}}))' "$TMP/REPO6" "$R6" > "$TMP/in.json"
+  CLAUDE_PROJECT_DIR="$TMP/REPO6" bash "$HOOK" < "$TMP/in.json" > "$TMP/out" 2> "$TMP/err"
+  [ -f "$R6/.git/devkit-session.lock" ] || fail "case setup: A (cwd in other letter case) took no lock"
+  hook B PreToolUse Edit "$R6"; [ $? = 2 ] && ok "copy: a live holder whose cwd differs only in letter case still holds the checkout" || fail "case-only cwd difference freed a live holder"
+else
+  ok "copy: case-insensitive check skipped (case-sensitive filesystem)"
+fi
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_session_lock: all passed" || { echo "❌ test_session_lock: $FAILS failed"; exit 1; }

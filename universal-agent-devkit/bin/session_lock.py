@@ -167,6 +167,23 @@ def read_lock(path):
         return None
 
 
+def read_checkout_lock(gdir):
+    """The lock in git dir `gdir`, or None when it was copied along with that git dir (`cp -Rc <checkout> <scratch>`,
+    AGENTS.md §7.1): its recorded gitdir is another directory (compared by inode — paths differ in case on APFS and by
+    symlinks), so it belongs to the checkout it came from and nobody holds the copy. A lock without a gitdir (written
+    before 2026-10-09) still counts: fail closed; the holder rewrites it within 30 s."""
+    lock = read_lock(os.path.join(gdir, LOCK))
+    lock_gdir = lock.get("gitdir") if lock else None
+    if isinstance(lock_gdir, str) and lock_gdir:
+        try:
+            same = os.path.samefile(lock_gdir, gdir)
+        except OSError:
+            same = False   # the original git dir is gone: certainly not this one
+        if not same:
+            return None
+    return lock
+
+
 def write_lock(path, data):
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -569,7 +586,7 @@ def write_hits_locked(cmd, top, cwd, sid=""):
             if tl is None or tl == locked:
                 hits_top = True
                 continue
-            lock = read_lock(os.path.join(tgdir, LOCK))
+            lock = read_checkout_lock(tgdir)
             if foreign is None and not is_free_for(lock, sid, time.time()):
                 foreign = (tl, tgdir, lock)   # another repository, but a live session holds THAT one
     # the regexes see a write the segment walk did not (e.g. an unterminated quote): judge it by the text, as before
@@ -668,7 +685,7 @@ def take(path, lock, sid, cwd, now, pid=None):
         return  # heartbeat throttle (an idle mark is always cleared: the holder works again)
     if pid is None:
         pid = os.getppid()
-    write_lock(path, {"session_id": sid, "started": started, "heartbeat": now, "cwd": cwd, "pid": pid})
+    write_lock(path, {"session_id": sid, "started": started, "heartbeat": now, "cwd": cwd, "pid": pid, "gitdir": os.path.dirname(path)})
 
 
 def status(argv):
@@ -686,7 +703,7 @@ def status(argv):
         print(f"session_lock: {target} không phải git checkout — không có khoá")
         return 0
     now = time.time()
-    lock = read_lock(os.path.join(gdir, LOCK))
+    lock = read_checkout_lock(gdir)
     if is_free_for(lock, sid, now):
         print(f"session_lock: {top} trống — được sửa")
         return 0
@@ -767,7 +784,7 @@ def main():
         return 0
     path = os.path.join(gdir, LOCK)
     now = time.time()
-    lock = read_lock(path)
+    lock = read_checkout_lock(gdir)
 
     if event == "SessionEnd":
         unregister_session(cwd, sid)

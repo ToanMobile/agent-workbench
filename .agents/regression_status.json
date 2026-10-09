@@ -342,7 +342,8 @@
         "duration": "74.44s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-HOOK-01/20261009-095248.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-09 09:58:12"
       },
       "history": [
         {
@@ -420,7 +421,8 @@
         "duration": "22.78s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-HOOK-02/20261009-095156.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-09 09:58:12"
       },
       "history": [
         {
@@ -570,16 +572,38 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 09:55:30",
-        "ts": 1791514530.929031,
+        "at": "2026-10-09 10:33:58",
+        "ts": 1791516838.057646,
         "task": null,
-        "commit": "115d1eb+dirty",
-        "duration": "236.29s",
+        "commit": "e122c0e+dirty",
+        "duration": "114.00s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261009-095530.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261009-103357.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 10:33:58",
+          "ts": 1791516838.057646,
+          "task": null,
+          "commit": "e122c0e+dirty",
+          "duration": "114.00s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261009-103357.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-09 10:24:21",
+          "ts": 1791516261.4317281,
+          "task": "session-7e6472ed-4f3",
+          "commit": "e122c0e+dirty",
+          "duration": "124.68s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261009-102421.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 09:55:30",
@@ -611,28 +635,6 @@
           "duration": "399.39s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261009-092904.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 09:21:57",
-          "ts": 1791512517.366139,
-          "task": null,
-          "commit": "510d2ea+dirty",
-          "duration": "277.28s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261009-092156.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 09:15:08",
-          "ts": 1791512108.7230458,
-          "task": null,
-          "commit": "510d2ea+dirty",
-          "duration": "251.06s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261009-091507.log",
           "deleted": []
         }
       ],
@@ -683,7 +685,8 @@
         "duration": "0.47s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-WB-CONFIG-01/20261009-095530.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-09 09:58:12"
       },
       "history": [
         {
@@ -1065,16 +1068,38 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 09:55:30",
-        "ts": 1791514530.929028,
+        "at": "2026-10-09 10:33:58",
+        "ts": 1791516838.050068,
         "task": null,
-        "commit": "115d1eb+dirty",
-        "duration": "15.85s",
+        "commit": "e122c0e+dirty",
+        "duration": "12.99s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-SESSION-01/20261009-095149.log",
+        "log": ".agents/evidence/REG-DK-SESSION-01/20261009-103216.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 10:33:58",
+          "ts": 1791516838.050068,
+          "task": null,
+          "commit": "e122c0e+dirty",
+          "duration": "12.99s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-SESSION-01/20261009-103216.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-09 10:24:21",
+          "ts": 1791516261.421644,
+          "task": "session-7e6472ed-4f3",
+          "commit": "e122c0e+dirty",
+          "duration": "12.14s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-SESSION-01/20261009-102228.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 09:55:30",
@@ -1106,28 +1131,6 @@
           "duration": "18.11s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-SESSION-01/20261009-092243.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 09:21:57",
-          "ts": 1791512517.366134,
-          "task": null,
-          "commit": "510d2ea+dirty",
-          "duration": "20.02s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-SESSION-01/20261009-091739.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 09:15:08",
-          "ts": 1791512108.723041,
-          "task": null,
-          "commit": "510d2ea+dirty",
-          "duration": "15.52s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-SESSION-01/20261009-091112.log",
           "deleted": []
         }
       ],
@@ -1579,6 +1582,28 @@
       "evidence": "user 2026-10-09; test_session_lock.sh idle section RED 6 on 510d2ea",
       "linked_at": "2026-10-09 09:30:49",
       "linked_ts": 1791513049.547332,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/context_memory/test_session_lock.sh"
+      ]
+    },
+    "BUG-20261009-session-lock-a-cp-rc-copy-of-a-checkout": {
+      "id": "BUG-20261009-session-lock-a-cp-rc-copy-of-a-checkout",
+      "kind": "bug",
+      "title": "session_lock: a cp -Rc copy of a checkout carried the original's lock and was held by its live holder up to 600 s",
+      "cause": null,
+      "component": "devkit-session-lock",
+      "created_at": "2026-10-09 10:32:02",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "low",
+      "evidence": "2026-10-09 OfficeReader/GeelyEx2 sync in a CoW copy; test_session_lock.sh copy section RED 2",
+      "linked_at": "2026-10-09 10:32:02",
+      "linked_ts": 1791516722.6525939,
       "runs_in_suite": [
         "universal-agent-devkit/tests/context_memory/test_session_lock.sh"
       ]
