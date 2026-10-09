@@ -333,16 +333,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 21:04:34",
-        "ts": 1791554674.8890638,
+        "at": "2026-10-09 21:31:20",
+        "ts": 1791556280.604364,
         "task": null,
-        "commit": "36082b1+dirty",
-        "duration": "71.91s",
+        "commit": "2ce95b2+dirty",
+        "duration": "55.35s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-01/20261009-210314.log",
+        "log": ".agents/evidence/REG-DK-HOOK-01/20261009-213120.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 21:31:20",
+          "ts": 1791556280.604364,
+          "task": null,
+          "commit": "2ce95b2+dirty",
+          "duration": "55.35s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261009-213120.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 21:04:34",
@@ -386,17 +397,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-01/20261009-192419.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 18:50:36",
-          "ts": 1791546636.5457191,
-          "task": null,
-          "commit": "430fb87+dirty",
-          "duration": "82.43s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261009-184845.log",
-          "deleted": []
         }
       ],
       "title": "hook contract",
@@ -411,16 +411,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 21:04:34",
-        "ts": 1791554674.889067,
+        "at": "2026-10-09 21:31:20",
+        "ts": 1791556280.612193,
         "task": null,
-        "commit": "36082b1+dirty",
-        "duration": "23.12s",
+        "commit": "2ce95b2+dirty",
+        "duration": "21.91s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-02/20261009-210225.log",
+        "log": ".agents/evidence/REG-DK-HOOK-02/20261009-213046.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 21:31:20",
+          "ts": 1791556280.612193,
+          "task": null,
+          "commit": "2ce95b2+dirty",
+          "duration": "21.91s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261009-213046.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 21:04:34",
@@ -463,17 +474,6 @@
           "duration": "24.10s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-02/20261009-192330.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 18:50:36",
-          "ts": 1791546636.545724,
-          "task": null,
-          "commit": "430fb87+dirty",
-          "duration": "24.64s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261009-184747.log",
           "deleted": []
         }
       ],
@@ -568,16 +568,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 21:04:34",
-        "ts": 1791554674.889075,
+        "at": "2026-10-09 21:31:20",
+        "ts": 1791556280.612201,
         "task": null,
-        "commit": "36082b1+dirty",
-        "duration": "151.65s",
+        "commit": "2ce95b2+dirty",
+        "duration": "55.39s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261009-210434.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261009-213120.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 21:31:20",
+          "ts": 1791556280.612201,
+          "task": null,
+          "commit": "2ce95b2+dirty",
+          "duration": "55.39s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261009-213120.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 21:04:34",
@@ -620,17 +631,6 @@
           "duration": "3.49s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261009-194732.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 19:46:40",
-          "ts": 1791550000.428234,
-          "task": null,
-          "commit": "6e6642b+dirty",
-          "duration": "4.75s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261009-194640.log",
           "deleted": []
         }
       ],
@@ -1877,17 +1877,17 @@
         "universal-agent-devkit/tests/gates/test_git_guard_shell_subst.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 20:26:39",
-        "ts": 1791552399.567415,
+        "at": "2026-10-09 21:07:00",
+        "ts": 1791554820.684811,
         "status": "OUTDATED",
         "reason": "universal-agent-devkit/tests/gates/test_git_guard_shell_subst.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/gates/test_git_guard_shell_subst.sh": "f5203c6f9dd08351",
-          ".agents/local/red-patches/BUG-20261009-git-guard-bash-c-subst-tee-shell.patch": "dddfb3d6b659d4f7"
+          "universal-agent-devkit/tests/gates/test_git_guard_shell_subst.sh": "cb8af70122d32ea9",
+          ".agents/local/red-patches/BUG-20261009-git-guard-bash-c-subst-tee-shell.patch": "156926a644c433a9"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-git-guard-bash-c-subst-tee-shell/20261009-202817.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-git-guard-bash-c-subst-tee-shell/20261009-210754.log",
         "patch": ".agents/local/red-patches/BUG-20261009-git-guard-bash-c-subst-tee-shell.patch"
       }
     },
@@ -1913,17 +1913,17 @@
         "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 20:18:37",
-        "ts": 1791551917.876618,
+        "at": "2026-10-09 21:06:05",
+        "ts": 1791554765.792042,
         "status": "OUTDATED",
         "reason": "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh": "cbf28f65140c1d4a",
-          ".agents/local/red-patches/BUG-20261009-hardware-find-negated-or-unfiltered.patch": "6a43afb9834afc51"
+          "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh": "bd2780de3842381f",
+          ".agents/local/red-patches/BUG-20261009-hardware-find-negated-or-unfiltered.patch": "4f33dda53d0601d2"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-hardware-find-negated-or-unfiltered/20261009-201935.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-hardware-find-negated-or-unfiltered/20261009-210700.log",
         "patch": ".agents/local/red-patches/BUG-20261009-hardware-find-negated-or-unfiltered.patch"
       }
     },
@@ -2007,17 +2007,17 @@
         "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 20:19:35",
-        "ts": 1791551975.78979,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-09 21:07:54",
+        "ts": 1791554874.346621,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh": "542114a46ad563d4",
-          ".agents/local/red-patches/BUG-20261009-comment-claim-docstring-trailing.patch": "3be18666c3bedddf"
+          "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh": "61190ff8c4d5b252",
+          ".agents/local/red-patches/BUG-20261009-comment-claim-docstring-trailing.patch": "faf26fedefe7c8a5"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-comment-claim-docstring-trailing/20261009-202054.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-comment-claim-docstring-trailing/20261009-210844.log",
         "patch": ".agents/local/red-patches/BUG-20261009-comment-claim-docstring-trailing.patch"
       }
     },
@@ -2043,17 +2043,17 @@
         "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 20:20:54",
-        "ts": 1791552054.1102111,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-09 21:08:45",
+        "ts": 1791554925.009863,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh": "1adb4a9239a0e43f",
+          "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh": "d4f16177fd1751a1",
           ".agents/local/red-patches/BUG-20261009-gate-runner-no-errexit-append.patch": "5cecd13ecdabc1e8"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-gate-runner-no-errexit-append/20261009-202354.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-gate-runner-no-errexit-append/20261009-211102.log",
         "patch": ".agents/local/red-patches/BUG-20261009-gate-runner-no-errexit-append.patch"
       }
     },
@@ -2079,8 +2079,8 @@
         "universal-agent-devkit/tests/gates/test_gate_js_describe_scope.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 20:23:54",
-        "ts": 1791552234.592203,
+        "at": "2026-10-09 21:11:02",
+        "ts": 1791555062.796758,
         "status": "PROVEN",
         "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
@@ -2089,7 +2089,7 @@
           "universal-agent-devkit/tests/gates/test_gate_js_describe_scope.sh": "6d9134e81e793ee4",
           ".agents/local/red-patches/BUG-20261009-gate-js-describe-title-false-flag.patch": "5cecd13ecdabc1e8"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-gate-js-describe-title-false-flag/20261009-202639.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-gate-js-describe-title-false-flag/20261009-211414.log",
         "patch": ".agents/local/red-patches/BUG-20261009-gate-js-describe-title-false-flag.patch"
       }
     },

@@ -1,16 +1,16 @@
 diff --git a/universal-agent-devkit/hooks/block-dangerous-git.sh b/universal-agent-devkit/hooks/block-dangerous-git.sh
 --- a/universal-agent-devkit/hooks/block-dangerous-git.sh
 +++ b/universal-agent-devkit/hooks/block-dangerous-git.sh
-@@ -748,7 +748,7 @@
-                 while k < len(rest) and rest[k] != "--" and len(rest[k]) > 1 and rest[k][0] in "-+":
-                     k += 2 if rest[k] in SHELL_OPTS_WITH_ARG else 1
-                 k += 1 if k < len(rest) and rest[k] == "--" else 0
--                if k < len(rest) and subst_command_word(rest[k]):
-+                if False:
-                     PENDING_FEED.append(UNREADABLE_CSUBST)   # bash -c "$(curl ...)": the script is whatever the command prints
-                 return analyse(rest[k], depth + 1) if k < len(rest) else None
-         for j, a in enumerate(rest):
-@@ -1188,7 +1188,7 @@
+@@ -707,7 +707,7 @@
+     # `$g reset --hard` / `${GIT} clean -f`: a variable in command position may be git. So may a $(…) / backtick there
+     # (`$(echo gi)t reset --hard`, 2026-10-09): its output is the program name.
+     if prog.startswith("$") or SUBST in prog:
+-        if IN_C_SCRIPT[0] and SUBST in prog:
++        if False:
+             PENDING_FEED.append(UNREADABLE_CSUBST)   # bash -c "( $(curl ...) )", "if $(...)", "exec $(...)": the command word is generated text
+         return danger_in_git(rest[0], rest[1:]) if rest else None
+     if prog in AWKS:
+@@ -1184,7 +1184,7 @@
          inners, outs = [], []
          plain = strip_subst(text, inners, outs)
          if plain is not None:

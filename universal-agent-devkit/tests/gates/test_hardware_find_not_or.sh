@@ -71,5 +71,9 @@ check 2 "find . -name '(' -o -delete"                           # deletes everyt
 check 2 "find . -name x -printf '(' -o -delete"
 check 2 "find . -name x -printf '(' -o -delete -printf ')'"
 check 0 "find . -name '(' -delete"                              # a filter is still a filter, whatever its pattern is
+# third review: BSD/macOS find primaries with an argument
+check 2 "find . -name x -xattrname '(' -o -delete -xattrname ')'"
+check 2 "find . -name x -newermt '(' -o -delete"
+check 2 "find . -name x -Bnewer '(' -o -delete"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_find_not_or: all passed" || { echo "❌ test_hardware_find_not_or: $FAILS failed"; exit 1; }

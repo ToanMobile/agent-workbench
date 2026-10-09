@@ -726,7 +726,7 @@ def analyse_simple(tokens, depth):
         j = 0
         while j < len(rest) and rest[j].startswith("-"):
             j += 2 if rest[j] in ("-n", "-d", "--interval") else 1
-        return analyse(" ".join(rest[j:]), depth + 1) if j < len(rest) else None
+        return analyse_free(" ".join(rest[j:]), depth + 1) if j < len(rest) else None
     if prog == "find":
         for j, a in enumerate(rest):
             if a in ("-exec", "-execdir", "-ok", "-okdir"):
@@ -741,7 +741,7 @@ def analyse_simple(tokens, depth):
         return None
     if prog in SHELLS or prog == "eval":
         if prog == "eval":
-            return analyse(" ".join(rest), depth + 1)
+            return analyse_free(" ".join(rest), depth + 1)
         for j, a in enumerate(rest):
             if a == "-c" or (a.startswith("-") and not a.startswith("--") and "c" in a[1:]):
                 # Options may follow -c: the command is the first operand (`bash -c -- STR`, `bash -c -e STR`; 2026-10-09
@@ -771,7 +771,7 @@ def analyse_simple(tokens, depth):
         j = 0
         while j < len(rest) and rest[j].startswith("-"):
             j += 2 if rest[j] in ("-p", "-i", "-l", "-o", "-F", "-J", "-L", "-R", "-D") else 1
-        return analyse(" ".join(rest[j + 1:]), depth + 1) if j + 1 < len(rest) else None
+        return analyse_free(" ".join(rest[j + 1:]), depth + 1) if j + 1 < len(rest) else None
     if prog == "xargs":
         j = 0
         while j < len(rest) and rest[j].startswith("-"):
@@ -1168,6 +1168,16 @@ def judge_feed(producer, depth):
             return reason
     return None
 
+def analyse_free(text, depth):
+    """analyse() of text that is not the script of the enclosing bash -c itself (an eval operand, an ssh or watch command, the body of a
+    $(...) or an arithmetic expansion): a command substitution there is ordinary, only the script own command word is judged."""
+    saved = IN_C_SCRIPT[0]
+    IN_C_SCRIPT[0] = 0
+    try:
+        return analyse(text, depth)
+    finally:
+        IN_C_SCRIPT[0] = saved
+
 def analyse(text, depth=0, stripped=False):
     if depth > 5:
         return "lồng lệnh quá sâu để phân tích"
@@ -1188,7 +1198,7 @@ def analyse(text, depth=0, stripped=False):
                 PENDING_FEED.append(UNREADABLE_OSUBST)
             for inner in inners:
                 here = CUR_DIR[0]   # a cd inside $(...) runs in a subshell
-                reason = analyse(inner, depth + 1)
+                reason = analyse_free(inner, depth + 1)
                 CUR_DIR[0] = here
                 if reason:
                     return reason
@@ -1208,11 +1218,19 @@ def analyse(text, depth=0, stripped=False):
         return f"{m.group(1).split()[0]} (lệnh không phân tích được)" if m else None
     segment = []
     dirs = []
+    data_groups = []   # one flag per open paren: NAME=( ... ) and (( ... )) hold data, so a substitution there is no command word
     feed = None   # after a pipe: the producer segment ([] = a ( … ) / { … } group, not one literal command)
     for tok in tokens + [";"]:
         if tok in SEPARATORS or set(tok) <= set(";&|\n()"):
+            opens_data = bool(segment) and segment[-1].endswith("=")
             if segment:
-                reason = analyse_simple(segment, depth)
+                saved_c = IN_C_SCRIPT[0]
+                if any(data_groups):
+                    IN_C_SCRIPT[0] = 0
+                try:
+                    reason = analyse_simple(segment, depth)
+                finally:
+                    IN_C_SCRIPT[0] = saved_c
                 if reason:
                     return reason
                 if feed is not None and reads_script(segment):
@@ -1227,8 +1245,12 @@ def analyse(text, depth=0, stripped=False):
             for ch in tok:
                 if ch == "(":
                     dirs.append(CUR_DIR[0])
-                elif ch == ")" and dirs:
-                    CUR_DIR[0] = dirs.pop()
+                    data_groups.append(opens_data or tok.count("(") > 1)
+                elif ch == ")":
+                    if data_groups:
+                        data_groups.pop()
+                    if dirs:
+                        CUR_DIR[0] = dirs.pop()
         else:
             segment.append(tok)
     return None

@@ -379,7 +379,8 @@ FIND_NAME_FILTERS = {"-name", "-iname", "-path", "-ipath", "-wholename", "-iwhol
 FIND_ESC = {"__ESC_SEMI__": ";", "__ESC_LP__": "(", "__ESC_RP__": ")"}
 FIND_ARG1 = {"-printf", "-fprint", "-fprint0", "-fls", "-type", "-xtype", "-newer", "-anewer", "-cnewer", "-user", "-group", "-perm", "-size",
              "-atime", "-ctime", "-mtime", "-amin", "-cmin", "-mmin", "-maxdepth", "-mindepth", "-inum", "-links", "-samefile", "-regextype",
-             "-uid", "-gid", "-lname", "-ilname", "-fstype", "-context"}   # primaries with ONE argument that is no operator, whatever it looks like
+             "-uid", "-gid", "-lname", "-ilname", "-fstype", "-context", "-xattrname", "-Bnewer", "-mnewer", "-Bmin", "-Btime", "-flags", "-used",
+             "-files0-from"}   # primaries with ONE argument that is no operator, whatever it looks like
 XARGS_OPTS_WITH_ARG = {"-I", "-J", "-R", "-S", "-n", "-P", "-L", "-d", "-E", "-s", "-a", "-i"}
 
 def find_starts(args):
@@ -454,7 +455,7 @@ def find_narrowed(args, starts):
                 cur, i = cur or i in live, i + 2
             elif a == "-fprintf":
                 i += 3
-            elif a in FIND_ARG1:
+            elif a in FIND_ARG1 or re.fullmatch(r"-newer[aBcmt][aBcmt]", a):
                 i += 2
             elif a in ("-exec", "-execdir", "-ok", "-okdir"):
                 while i < len(args) and args[i] not in (";", "+"):

@@ -19,7 +19,7 @@ diff --git a/universal-agent-devkit/hooks/comment_claim_guard.sh b/universal-age
          if tail is not None and not HASH_MARKER.match(tail.strip()):
              body = tail.strip()
              if body:
-@@ -208,7 +208,7 @@
+@@ -211,7 +211,7 @@
          if body:
              comment_lines.append((i, body))
          continue

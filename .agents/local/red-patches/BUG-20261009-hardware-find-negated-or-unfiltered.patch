@@ -1,7 +1,7 @@
 diff --git a/universal-agent-devkit/hooks/hardware_safety_gate.sh b/universal-agent-devkit/hooks/hardware_safety_gate.sh
 --- a/universal-agent-devkit/hooks/hardware_safety_gate.sh
 +++ b/universal-agent-devkit/hooks/hardware_safety_gate.sh
-@@ -422,38 +422,7 @@
+@@ -425,46 +425,7 @@
              hit = lambda x: _fnm(x.lower(), pat.lower()) if fold else _fnm(x, pat)
          if not any(all(hit(x) for x in g) for g in groups):
              live.add(k)
@@ -27,7 +27,15 @@ diff --git a/universal-agent-devkit/hooks/hardware_safety_gate.sh b/universal-ag
 -                    i += 3 if nxt in FIND_NAME_FILTERS else 1
 -            elif a == "(":
 -                sub, i = seq(i + 1, True)
+-                if i >= len(args):   # never closed: nothing is known about what it covers
+-                    return False, i
 -                cur, i = cur or sub, i + 1
+-            elif a in FIND_NAME_FILTERS:   # the pattern is an argument, whatever it looks like (-name "(")
+-                cur, i = cur or i in live, i + 2
+-            elif a == "-fprintf":
+-                i += 3
+-            elif a in FIND_ARG1:
+-                i += 2
 -            elif a in ("-exec", "-execdir", "-ok", "-okdir"):
 -                while i < len(args) and args[i] not in (";", "+"):
 -                    i += 1
