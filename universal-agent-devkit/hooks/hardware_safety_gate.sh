@@ -401,7 +401,11 @@ def find_starts(args):
 def find_narrowed(args, starts):
     """Whether a -name/-path/-regex filter narrows what find matches. One whose pattern matches every entry under a start
     point (`*`, `*/*`, `./*`, regex `.*`) narrows nothing and counts as no filter (2026-10-09, tests/gates/test_hardware_find_match_all.sh);
-    a regex python cannot read counts as none too. Probe entries: names no real filter matches all of."""
+    a regex python cannot read counts as none too. Probe entries: names no real filter matches all of.
+    A filter after ! / -not narrows nothing (it keeps everything else), `! ( … )` is read as no filter at all, and every -o
+    alternative needs a filter of its own (`find . -name x -o -type f -delete`) (2026-10-09 follow-up,
+    tests/gates/test_hardware_find_not_or.sh)."""
+    live = set()   # positions of the filters that narrow on their own
     for k, a in enumerate(args[:-1]):
         if a not in FIND_NAME_FILTERS:
             continue
@@ -417,8 +421,24 @@ def find_narrowed(args, starts):
         else:
             hit = lambda x: _fnm(x.lower(), pat.lower()) if fold else _fnm(x, pat)
         if not any(all(hit(x) for x in g) for g in groups):
-            return True
-    return False
+            live.add(k)
+    alt_live, i = False, 0
+    while i < len(args):
+        a = args[i]
+        if a in ("!", "-not"):
+            nxt = args[i + 1] if i + 1 < len(args) else ""
+            if nxt == "(":
+                return False
+            i += 3 if nxt in FIND_NAME_FILTERS else 1
+            continue
+        if a in ("-o", "-or"):
+            if not alt_live:
+                return False
+            alt_live = False
+        elif i in live:
+            alt_live = True
+        i += 1
+    return alt_live
 
 def feed_paths(feed):
     """The paths a command piped into `xargs rm` names: find start points ([] when a name filter narrows them), the

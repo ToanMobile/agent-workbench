@@ -194,6 +194,8 @@ if [ -d "$TMP/REPO6" ]; then
   CLAUDE_PROJECT_DIR="$TMP/REPO6" bash "$HOOK" < "$TMP/in.json" > "$TMP/out" 2> "$TMP/err"
   [ -f "$R6/.git/devkit-session.lock" ] || fail "case setup: A (cwd in other letter case) took no lock"
   hook B PreToolUse Edit "$R6"; [ $? = 2 ] && ok "copy: a live holder whose cwd differs only in letter case still holds the checkout" || fail "case-only cwd difference freed a live holder"
+  # The same directory in another spelling is the checkout for every containment check (string prefixes missed it on macOS).
+  hook B PreToolUse Bash "$R6" "echo x > $TMP/REPO6/src/new.txt"; [ $? = 2 ] && ok "  … and a redirect into it spelled in the other letter case collides too" || fail "a redirect into the held checkout (other letter case) passed: $(cat "$TMP/err")"
 else
   ok "copy: case-insensitive check skipped (case-sensitive filesystem)"
 fi

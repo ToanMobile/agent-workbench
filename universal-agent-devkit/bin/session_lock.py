@@ -625,8 +625,7 @@ def get_active_sessions(cwd=None, current_sid=None, stale_s=180.0):
                 continue
         elif top and info_cwd:
             # Older record without a git dir: compare by path.
-            real_top, real_cwd = os.path.realpath(top), os.path.realpath(info_cwd)
-            if real_cwd != real_top and not real_cwd.startswith(real_top + os.sep):
+            if not _inside(info_cwd, top):
                 continue
 
         sid = info.get("session_id")
@@ -766,6 +765,38 @@ def _unquote(word):
     return word[1:-1] if len(word) >= 2 and word[0] in "\"'" and word[-1] == word[0] else word
 
 
+def _same_dir(a, b):
+    """The same directory by inode (see _inside), False when either is gone."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _inside(path, root):
+    """True when `path` is `root` or lies below it. realpath keeps the letter case it was given and a case-insensitive filesystem
+    (APFS) spells one directory two ways ("Repo" / "repo"), so a string prefix is not enough: when it fails, `root`'s inode is
+    looked for among `path` and its parents (a path that does not exist yet is judged by its nearest existing parent)."""
+    r, p = os.path.realpath(root), os.path.realpath(path)
+    if p == r or p.startswith(r + os.sep):
+        return True
+    try:
+        rst = os.stat(r)
+    except OSError:
+        return False
+    while True:
+        try:
+            st = os.stat(p)
+            if (st.st_dev, st.st_ino) == (rst.st_dev, rst.st_ino):
+                return True
+        except OSError:
+            pass   # not there (yet): its parent decides
+        up = os.path.dirname(p)
+        if up == p:
+            return False
+        p = up
+
+
 def _target(path):
     """(real toplevel, git dir) of the checkout that holds `path`; (None, None) when that cannot be told (no such directory, not a
     repository, an unexpanded $VAR / ~ / backtick, git timing out)."""
@@ -822,7 +853,7 @@ def write_hits_locked(cmd, top, cwd, sid=""):
         for target in targets:
             seen = True
             tl, tgdir = _target(target)
-            if tl is None or tl == locked:
+            if tl is None or tl == locked or _same_dir(tl, locked):
                 hits_top = True
                 continue
             lock = read_checkout_lock(tgdir)
@@ -843,12 +874,7 @@ def edit_hits_locked(tool_input, top, cwd, gdir=None):
     if not path or not top or not isinstance(path, str):
         return True
     real = os.path.realpath(path if os.path.isabs(path) else os.path.join(cwd or top, path))
-    for root in (top, gdir):
-        if root:
-            r = os.path.realpath(root)
-            if real == r or real.startswith(r + os.sep):
-                return True
-    return False
+    return any(_inside(real, root) for root in (top, gdir) if root)
 
 
 def allow_shared_until(gdir):
@@ -911,7 +937,7 @@ def bash_collides(cmd, top, cwd=None, sid=""):
             # An absolute target collides only inside the checkout - also one that lives under /tmp (a temp-dir prefix used to be
             # skipped first, and a quoted path into such a checkout passed once quotes were read, 2026-10-09); outside it (/dev/null,
             # a temp dir, another directory) it never does. A relative one, $VAR or ~ lands here or cannot be told: it does.
-            if not target.startswith("/") or (top and os.path.realpath(target).startswith(os.path.realpath(top) + os.sep)):
+            if not target.startswith("/") or (top and _inside(target, top)):
                 hits_top = True
                 break
     return hits_top, foreign

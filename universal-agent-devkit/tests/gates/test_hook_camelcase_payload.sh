@@ -48,12 +48,15 @@ check 2 block-dangerous-git.sh "$R" '{"tool_name":"Bash","input":{"command":"git
 check 0 block-dangerous-git.sh "$R" "$(grok "$R" Bash '{"command":"git status"}')" "toolInput git status"
 check 2 hardware_safety_gate.sh "$R" "$(grok "$R" Bash '{"command":"rm -rf src"}')" "toolInput rm -rf src"
 check 0 hardware_safety_gate.sh "$R" "$(grok "$R" Bash '{"command":"ls -la"}')" "toolInput ls -la"
-check 2 worktree_guard.sh "$W" "$(grok "$W" Write "{\"file_path\":\"$M/src/a.kt\",\"content\":\"y\"}" "$TMP/wt.jsonl")" \
-  "toolInput Write into the main checkout from a worktree session"
-check 2 precode_gate.sh "$R" "$(grok "$R" Edit "{\"file_path\":\"$R/src/A.kt\",\"old_string\":\"A\",\"new_string\":\"B\"}")" \
-  "toolInput Edit of a file never read"
-check 0 read_ledger.sh "$R" "$(grok "$R" Read "{\"file_path\":\"$R/src/A.kt\"}" | sed 's/"PreToolUse"/"PostToolUse"/g')" "toolInput Read recorded"
-check 0 precode_gate.sh "$R" "$(grok "$R" Edit "{\"file_path\":\"$R/src/A.kt\",\"old_string\":\"A\",\"new_string\":\"B\"}")" \
-  "toolInput Edit after the camelCase Read"
+# bash 3.2 (macOS /bin/bash) splits a word like "$(cmd "{\"a\":\"b\"}")" at its escaped quotes, so the payload reached `check` mangled
+# and the hook ran on garbage (macOS 2026-10-09: rc 0 for these two, want 2). A payload with \" inside is built in an assignment,
+# which bash 3.2 parses right, and then passed as "$var".
+P_WRITE="$(grok "$W" Write "{\"file_path\":\"$M/src/a.kt\",\"content\":\"y\"}" "$TMP/wt.jsonl")"
+P_EDIT="$(grok "$R" Edit "{\"file_path\":\"$R/src/A.kt\",\"old_string\":\"A\",\"new_string\":\"B\"}")"
+P_READ="$(grok "$R" Read "{\"file_path\":\"$R/src/A.kt\"}" | sed 's/"PreToolUse"/"PostToolUse"/g')"
+check 2 worktree_guard.sh "$W" "$P_WRITE" "toolInput Write into the main checkout from a worktree session"
+check 2 precode_gate.sh "$R" "$P_EDIT" "toolInput Edit of a file never read"
+check 0 read_ledger.sh "$R" "$P_READ" "toolInput Read recorded"
+check 0 precode_gate.sh "$R" "$P_EDIT" "toolInput Edit after the camelCase Read"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hook_camelcase_payload: all passed" || { echo "❌ test_hook_camelcase_payload: $FAILS failed"; exit 1; }
