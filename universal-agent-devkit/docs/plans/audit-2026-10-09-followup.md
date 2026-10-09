@@ -49,6 +49,8 @@ Quyết định chính sách do người dùng chọn qua câu hỏi: runner thi
 | `prompt_context` ~150 ms | **không đổi**: đo 160–240 ms/prompt; `enrich_context.py` 83 ms việc thật (biên dịch regex 20 ms, hai lần `git` 14 ms, import 28 ms) — không có phép tối ưu tất định đáng kể | — |
 | Gate khởi động ~110 ms | **không đổi**: biên dịch 46 ms của 5,3 nghìn dòng; muốn bỏ phải tách file mà test nạp nó theo đường dẫn | — |
 
+**Review ngữ cảnh sạch** (principal-code-reviewer trên 94f388c..6e6642b, bắt buộc bởi `review_gate`) tìm 6 điểm P3, đã sửa trong `fcf9fea`, mỗi điểm một ca đỏ → xanh: `find` nhóm dương chứa `-o` / đối số `-exec` bị từ chối nhầm (hồi quy của chính tôi) và toán tử `,`; chuỗi ba nháy gán mở docstring giả; `#!/bin/sh -e` không phải errexit; `bash -c ": ; $(…)"` lọt; `security_gate` mất luật fail-closed khi thiếu python3 ngoài cây git; registry phiên so git dir bằng chuỗi. Bảy dòng bug bị ảnh hưởng đã chứng minh ĐỎ lại (PROVEN).
+
 Giới hạn đã biết (chưa đóng): regex lấy `cwd` của payload (9 hook cũ + 7 hook mới) không đọc JSON thoát (`é`, `\\`); chỉ ảnh hưởng khi `CLAUDE_PROJECT_DIR` không đặt VÀ cwd tiến trình nằm ngoài cây git. Nâng cấp khi có harness gửi payload `ensure_ascii`: giải mã bằng python ở nhánh hiếm đó.
 
 ## Bước 6 (mục 5 cũ) — kiểm chứng trên macOS

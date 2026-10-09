@@ -1,0 +1,27 @@
+diff --git a/universal-agent-devkit/bin/session_lock.py b/universal-agent-devkit/bin/session_lock.py
+--- a/universal-agent-devkit/bin/session_lock.py
++++ b/universal-agent-devkit/bin/session_lock.py
+@@ -768,10 +768,7 @@
+ 
+ def _same_dir(a, b):
+     """The same directory by inode (see _inside), False when either is gone."""
+-    try:
+-        return os.path.samefile(a, b)
+-    except OSError:
+-        return False
++    return False   # bug put back: string comparison only
+ 
+ 
+ def _inside(path, root):
+@@ -781,10 +778,7 @@
+     r, p = os.path.realpath(root), os.path.realpath(path)
+     if p == r or p.startswith(r + os.sep):
+         return True
+-    try:
+-        rst = os.stat(r)
+-    except OSError:
+-        return False
++    return False   # bug put back: string comparison only
+     while True:
+         try:
+             st = os.stat(p)

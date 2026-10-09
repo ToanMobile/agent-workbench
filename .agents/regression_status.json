@@ -568,16 +568,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 20:17:01",
-        "ts": 1791551821.999082,
+        "at": "2026-10-09 20:38:56",
+        "ts": 1791553136.225357,
         "task": null,
-        "commit": "e504f82+dirty",
-        "duration": "242.03s",
+        "commit": "fcf9fea+dirty",
+        "duration": "5.98s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261009-201701.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261009-203855.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 20:38:56",
+          "ts": 1791553136.225357,
+          "task": null,
+          "commit": "fcf9fea+dirty",
+          "duration": "5.98s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261009-203855.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 20:17:01",
@@ -620,17 +631,6 @@
           "duration": "113.62s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261009-192500.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 18:50:36",
-          "ts": 1791546636.5457332,
-          "task": null,
-          "commit": "430fb87+dirty",
-          "duration": "193.16s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261009-185035.log",
           "deleted": []
         }
       ],
@@ -1697,17 +1697,17 @@
         "universal-agent-devkit/tests/context_memory/test_session_lock.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 17:05:57",
-        "ts": 1791540357.196966,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/context_memory/test_session_lock.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-09 20:33:28",
+        "ts": 1791552808.794166,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/context_memory/test_session_lock.sh": "619f72b5dfe13e56",
+          "universal-agent-devkit/tests/context_memory/test_session_lock.sh": "7030d05eb20ea38a",
           ".agents/local/red-patches/BUG-20261009-session-lock-an-idle-holder-turn-over-wa.patch": "ceac962355043653"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-session-lock-an-idle-holder-turn-over-wa/20261009-171402.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-session-lock-an-idle-holder-turn-over-wa/20261009-203838.log",
         "patch": ".agents/local/red-patches/BUG-20261009-session-lock-an-idle-holder-turn-over-wa.patch"
       }
     },
@@ -1733,17 +1733,17 @@
         "universal-agent-devkit/tests/context_memory/test_session_lock.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 17:04:35",
-        "ts": 1791540275.7733572,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/context_memory/test_session_lock.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-09 20:32:19",
+        "ts": 1791552739.2442508,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/context_memory/test_session_lock.sh": "619f72b5dfe13e56",
+          "universal-agent-devkit/tests/context_memory/test_session_lock.sh": "7030d05eb20ea38a",
           ".agents/local/red-patches/BUG-20261009-session-lock-a-cp-rc-copy-of-a-checkout.patch": "1813313c630aeb62"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-session-lock-a-cp-rc-copy-of-a-checkout/20261009-170555.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-session-lock-a-cp-rc-copy-of-a-checkout/20261009-203323.log",
         "patch": ".agents/local/red-patches/BUG-20261009-session-lock-a-cp-rc-copy-of-a-checkout.patch"
       }
     },
@@ -1805,17 +1805,17 @@
         "universal-agent-devkit/tests/context_memory/test_session_lock.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 18:10:42",
-        "ts": 1791544242.0883589,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/context_memory/test_session_lock.sh đã đổi sau lần chứng minh",
-        "mode": "revert",
-        "fix_commit": "94f388c",
+        "at": "2026-10-09 20:28:17",
+        "ts": 1791552497.3749871,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/context_memory/test_session_lock.sh": "619f72b5dfe13e56",
-          ".agents/local/red-patches/BUG-20261009-session-lock-case-only-path.patch": null
+          "universal-agent-devkit/tests/context_memory/test_session_lock.sh": "7030d05eb20ea38a",
+          ".agents/local/red-patches/BUG-20261009-session-lock-case-only-path.patch": "eadff5f0caaf6ca2"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-session-lock-case-only-path/20261009-181158.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-session-lock-case-only-path/20261009-202937.log",
         "patch": ".agents/local/red-patches/BUG-20261009-session-lock-case-only-path.patch"
       }
     },
@@ -1877,17 +1877,17 @@
         "universal-agent-devkit/tests/gates/test_git_guard_shell_subst.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 18:18:13",
-        "ts": 1791544693.29121,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_git_guard_shell_subst.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-09 20:26:39",
+        "ts": 1791552399.567415,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/gates/test_git_guard_shell_subst.sh": "99aa26e0e4172e23",
-          ".agents/local/red-patches/BUG-20261009-git-guard-bash-c-subst-tee-shell.patch": "0f738360adb4d10e"
+          "universal-agent-devkit/tests/gates/test_git_guard_shell_subst.sh": "f5203c6f9dd08351",
+          ".agents/local/red-patches/BUG-20261009-git-guard-bash-c-subst-tee-shell.patch": "dddfb3d6b659d4f7"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-git-guard-bash-c-subst-tee-shell/20261009-181927.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-git-guard-bash-c-subst-tee-shell/20261009-202817.log",
         "patch": ".agents/local/red-patches/BUG-20261009-git-guard-bash-c-subst-tee-shell.patch"
       }
     },
@@ -1913,17 +1913,17 @@
         "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 19:25:46",
-        "ts": 1791548746.342955,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-09 20:18:37",
+        "ts": 1791551917.876618,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh": "72cfaa2e42475de0",
-          ".agents/local/red-patches/BUG-20261009-hardware-find-negated-or-unfiltered.patch": "1c2ab86cec5de9cf"
+          "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh": "cbf28f65140c1d4a",
+          ".agents/local/red-patches/BUG-20261009-hardware-find-negated-or-unfiltered.patch": "6a43afb9834afc51"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-hardware-find-negated-or-unfiltered/20261009-192637.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-hardware-find-negated-or-unfiltered/20261009-201935.log",
         "patch": ".agents/local/red-patches/BUG-20261009-hardware-find-negated-or-unfiltered.patch"
       }
     },
@@ -2007,17 +2007,17 @@
         "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 19:03:35",
-        "ts": 1791547415.2518442,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-09 20:19:35",
+        "ts": 1791551975.78979,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh": "fa7ee7ddd6c997e2",
-          ".agents/local/red-patches/BUG-20261009-comment-claim-docstring-trailing.patch": "498b83097422a3c7"
+          "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh": "542114a46ad563d4",
+          ".agents/local/red-patches/BUG-20261009-comment-claim-docstring-trailing.patch": "3be18666c3bedddf"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-comment-claim-docstring-trailing/20261009-190433.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-comment-claim-docstring-trailing/20261009-202054.log",
         "patch": ".agents/local/red-patches/BUG-20261009-comment-claim-docstring-trailing.patch"
       }
     },
@@ -2043,17 +2043,17 @@
         "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 19:07:42",
-        "ts": 1791547662.585096,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-09 20:20:54",
+        "ts": 1791552054.1102111,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh": "e3cb5ca6d120dc8b",
-          ".agents/local/red-patches/BUG-20261009-gate-runner-no-errexit-append.patch": "5e60a0842668a3c9"
+          "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh": "1adb4a9239a0e43f",
+          ".agents/local/red-patches/BUG-20261009-gate-runner-no-errexit-append.patch": "5cecd13ecdabc1e8"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-gate-runner-no-errexit-append/20261009-191044.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-gate-runner-no-errexit-append/20261009-202354.log",
         "patch": ".agents/local/red-patches/BUG-20261009-gate-runner-no-errexit-append.patch"
       }
     },
@@ -2079,17 +2079,17 @@
         "universal-agent-devkit/tests/gates/test_gate_js_describe_scope.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 19:10:45",
-        "ts": 1791547845.5730271,
+        "at": "2026-10-09 20:23:54",
+        "ts": 1791552234.592203,
         "status": "PROVEN",
         "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
           "universal-agent-devkit/tests/gates/test_gate_js_describe_scope.sh": "6d9134e81e793ee4",
-          ".agents/local/red-patches/BUG-20261009-gate-js-describe-title-false-flag.patch": "5e60a0842668a3c9"
+          ".agents/local/red-patches/BUG-20261009-gate-js-describe-title-false-flag.patch": "5cecd13ecdabc1e8"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-gate-js-describe-title-false-flag/20261009-191327.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-gate-js-describe-title-false-flag/20261009-202639.log",
         "patch": ".agents/local/red-patches/BUG-20261009-gate-js-describe-title-false-flag.patch"
       }
     },
@@ -2115,17 +2115,17 @@
         "universal-agent-devkit/tests/gates/test_hook_log_dir.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 19:05:33",
-        "ts": 1791547533.282363,
+        "at": "2026-10-09 20:29:37",
+        "ts": 1791552577.698313,
         "status": "PROVEN",
         "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
           "universal-agent-devkit/tests/gates/test_hook_log_dir.sh": "3ebe878de8982e5b",
-          ".agents/local/red-patches/BUG-20261009-hooks-log-dir-process-cwd.patch": "b76ed358f476968a"
+          ".agents/local/red-patches/BUG-20261009-hooks-log-dir-process-cwd.patch": "b38254e2761ea595"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-hooks-log-dir-process-cwd/20261009-190741.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-hooks-log-dir-process-cwd/20261009-203143.log",
         "patch": ".agents/local/red-patches/BUG-20261009-hooks-log-dir-process-cwd.patch"
       }
     },
