@@ -77,4 +77,100 @@ st "$TMP/wt"; rc=$?
 [ "$rc" = 3 ] && grep -q "phiên C" "$TMP/st.out" && ! grep -q "phiên A" "$TMP/st.out" \
   && ok "--status: a linked worktree reports its own holder (C), not the main checkout's (A)" || fail "--status worktree: rc=$rc $(cat "$TMP/st.out")"
 
+# Idle holder (user, 2026-10-09: "phiên đó ngừng chạy thì là ok rồi chứ sao bắt phải /exit"): a session that finished its
+# turn and waits at the prompt is a live process, so the pid check kept its lock for the whole 600 s heartbeat window and the
+# user had to /exit it. Claude Code's Notification `idle_prompt` (~60 s after the turn ended, no typing, no background agent)
+# marks the holder idle; an idle lock is free for another session. Not Stop: Stop hooks run in parallel, the end-of-turn gate
+# among them, and a blocked Stop means the turn goes on.
+R2="$TMP/repo2"
+mkdir -p "$R2/src" && git -C "$R2" init -q . && echo x > "$R2/src/A.kt"
+git -C "$R2" -c user.email=t@t -c user.name=t add -A >/dev/null && git -C "$R2" -c user.email=t@t -c user.name=t commit -qm init
+notify() {   # notify <session> <cwd> <notification_type>
+  python3 -c 'import json,sys; print(json.dumps({"session_id": sys.argv[1], "hook_event_name": "Notification", "cwd": sys.argv[2],
+    "notification_type": sys.argv[3], "message": "Claude is waiting for your input"}))' "$@" > "$TMP/in.json"
+  CLAUDE_PROJECT_DIR="$2" bash "$HOOK" < "$TMP/in.json" > "$TMP/out" 2> "$TMP/err"
+}
+last() { python3 "$DEVKIT_DIR/bin/session_lock.py" --check-last-active --session "$1" "$R2" > /dev/null 2>&1; }
+hook A SessionStart "" "$R2"; hook B SessionStart "" "$R2"
+hook A PreToolUse Edit "$R2"; [ $? = 0 ] || fail "idle setup: A could not take repo2"
+last B; [ $? = 1 ] && ok "idle: a working holder counts as another active session (gate defers --full)" || fail "working A not counted active"
+notify A "$R2" permission_prompt; [ $? = 0 ] || fail "Notification hook failed"
+hook B PreToolUse Edit "$R2"; [ $? = 2 ] && ok "idle: a permission prompt is not idle — lock kept" || fail "permission_prompt freed the lock"
+notify B "$R2" idle_prompt
+hook B PreToolUse Edit "$R2"; [ $? = 2 ] && ok "idle: a NON-holder going idle frees nothing" || fail "B's own idle freed A's lock"
+GATE_STATE="$R2/.claude/audit-gate"; mkdir -p "$GATE_STATE"
+python3 -c 'import fcntl,sys,time; f=open(sys.argv[1],"a"); fcntl.flock(f, fcntl.LOCK_EX); open(sys.argv[2],"w").close(); time.sleep(30)' \
+  "$GATE_STATE/test_run.lock" "$TMP/flock.ready" & FL=$!
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [ -f "$TMP/flock.ready" ] && break; python3 -c 'import time; time.sleep(0.1)'; done
+notify A "$R2" idle_prompt
+hook B PreToolUse Edit "$R2"; [ $? = 2 ] && ok "idle: not marked while an end-of-turn test run holds test_run.lock" || fail "idle marked during a gate run"
+kill "$FL" 2>/dev/null; wait "$FL" 2>/dev/null
+notify A "$R2" idle_prompt
+st "$R2"; [ $? = 0 ] && ok "idle: --status reports an idle holder's checkout as free" || fail "--status idle: $(cat "$TMP/st.out")"
+last B; [ $? = 0 ] && ok "idle: an idle session is not an active sibling (the gate may run --full)" || fail "idle A still counted active"
+hook A PreToolUse Edit "$R2"; [ $? = 0 ] && ok "idle: the holder's next tool call resumes it" || fail "idle holder blocked on its own lock"
+hook B PreToolUse Edit "$R2"; [ $? = 2 ] && ok "  … and the lock is held again (idle cleared despite the 30 s heartbeat throttle)" || fail "resumed holder's lock still idle"
+last B; [ $? = 1 ] && ok "  … and it is an active sibling again" || fail "resumed A not counted active"
+notify A "$R2" idle_prompt
+hook B PreToolUse Bash "$R2" "ls src"; n0="$(grep -c "B nhận khoá của A" "$R2/.git/devkit-session.log" 2>/dev/null)"
+[ "${n0:-0}" = 0 ] && ok "idle: a read-only call on an idle lock takes nothing and logs no takeover" || fail "phantom takeover logged ($n0)"
+hook B PreToolUse Edit "$R2"; [ $? = 0 ] && ok "idle: another session's write takes an idle holder's checkout" || fail "idle lock still blocks: $(cat "$TMP/err")"
+grep -q "B nhận khoá của A" "$R2/.git/devkit-session.log" 2>/dev/null && ok "  … logged" || fail "idle takeover not logged"
+hook A PreToolUse Edit "$R2"; [ $? = 2 ] && ok "  … after which the old holder is the read-only one" || fail "old idle holder still writes"
+notify B "$R2" idle_prompt
+holder() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["session_id"])' "$R2/.git/devkit-session.lock"; }
+hook C SessionStart "" "$R2"
+! grep -q "CHỈ ĐỌC" "$TMP/out" && [ "$(holder)" = B ] \
+  && ok "idle: a new session over an idle lock gets no read-only warning and takes nothing before it writes" || fail "SessionStart over idle: holder=$(holder) $(cat "$TMP/out")"
+hook B PreToolUse Edit "$R2"; [ $? = 0 ] && ok "  … so the idle holder coming back still works (a session opened and never prompted never goes idle)" || fail "SessionStart stole an idle lock"
+hook C PreToolUse Edit "$R2"; [ $? = 2 ] && ok "  … and the new session's write is then blocked by the working holder" || fail "C wrote over a working B"
+# Audit T0021 (Antigravity): the idle hook read the lock at its start and wrote that dict back with idle_since — a take() by the
+# holder resuming in between (fresh heartbeat, no idle mark) was overwritten and the WORKING holder marked idle. Now compare-then-write.
+R3="$TMP/repo3"; mkdir -p "$R3" && git -C "$R3" init -q .
+hook A SessionStart "" "$R3"; hook A PreToolUse Edit "$R3"
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["heartbeat"]-=120; json.dump(d,open(p,"w"))' "$R3/.git/devkit-session.lock"
+race="$(python3 -I - "$DEVKIT_DIR/bin" "$R3" <<'PY'
+import io, json, os, sys, time
+sys.path.insert(0, sys.argv[1])
+import session_lock as sl
+repo = sys.argv[2]
+path = os.path.join(repo, ".git", sl.LOCK)
+orig = sl.mark_idle_session
+def racing(cwd, sid, **kw):   # the holder resumes while its idle hook runs: its PreToolUse take() lands right here
+    orig(cwd, sid, **kw)
+    sl.take(path, sl.read_lock(path), sid, cwd, time.time())
+sl.mark_idle_session = racing
+sys.stdin = io.StringIO(json.dumps({"session_id": "A", "hook_event_name": "Notification", "cwd": repo, "notification_type": "idle_prompt"}))
+sl.main()
+print("idle" if sl.read_lock(path).get("idle_since") else "working")
+PY
+)"
+[ "$race" = working ] && ok "idle: a holder that resumed while its idle hook ran is not marked idle (compare-then-write)" || fail "race: resumed holder marked $race"
+# Audit T0021 round 2: the same resume landing BEFORE the registry write (PreToolUse: heartbeat_session + take) left the lock working but
+# the registry entry "idle" — the gate and session_authorship then treated a working session as gone. The registry write compares too.
+R4="$TMP/repo4"; mkdir -p "$R4" && git -C "$R4" init -q .
+hook A SessionStart "" "$R4"; hook A PreToolUse Edit "$R4"
+python3 -c 'import json,sys
+for p in sys.argv[1:]:
+    d=json.load(open(p)); d["heartbeat"]-=120; json.dump(d,open(p,"w"))' "$R4/.git/devkit-session.lock" "$R4/.git/devkit-sessions/A.json"
+race2="$(python3 -I - "$DEVKIT_DIR/bin" "$R4" <<'PY'
+import io, json, os, sys, time
+sys.path.insert(0, sys.argv[1])
+import session_lock as sl
+repo = sys.argv[2]
+path = os.path.join(repo, ".git", sl.LOCK)
+orig = sl.test_run_active
+def resume_first(dirs):   # the holder resumes after the hook read its state, before any idle write: its PreToolUse runs here
+    sl.heartbeat_session(repo, "A")
+    sl.take(path, sl.read_lock(path), "A", repo, time.time())
+    return orig(dirs)
+sl.test_run_active = resume_first
+sys.stdin = io.StringIO(json.dumps({"session_id": "A", "hook_event_name": "Notification", "cwd": repo, "notification_type": "idle_prompt"}))
+sl.main()
+reg = json.load(open(os.path.join(repo, ".git", "devkit-sessions", "A.json")))
+print(("idle" if sl.read_lock(path).get("idle_since") else "working") + "/" + str(reg.get("status")))
+PY
+)"
+[ "$race2" = working/working ] && ok "  … and a resume before the registry write leaves lock AND registry working" || fail "race2: lock/registry = $race2"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_session_lock: all passed" || { echo "❌ test_session_lock: $FAILS failed"; exit 1; }

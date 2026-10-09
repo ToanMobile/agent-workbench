@@ -293,6 +293,8 @@ def _session_seen(project, sids, last_seen, now) -> dict:
                 live = session_lock.is_pid_alive(pid) and now - last <= LIVE_IDLE_S
             else:
                 continue                  # a pid that is not one: a forged entry, its heartbeat proves nothing
+            if info.get("status") == "idle":
+                live = False   # turn over, no gate running (Notification idle_prompt): its checkout is free to others, so are its windows
             seen[sid] = (live, last)
         except Exception:  # noqa: BLE001 - fail closed (see the docstring)
             continue

@@ -195,6 +195,13 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
   same turn (oracle, gate, proof) unless the fix crosses an approval boundary. Never end a
   turn with a menu of steps this law already prescribes (tests, gate, fresh-context review,
   proof capture on an allowed device, re-running after another session's work) — do them.
+- Never hand the work to the user (user, 2026-10-09: "tự xử lý luôn đi, tôi không đọc đâu"):
+  no `!` command, no "run this", no checklist for the user. The agent itself runs the gate of
+  every repo the change reaches, the fresh-context review and its fixes, the Antigravity audit
+  when required, the kit install and host re-sync, commit and push. A step the permission
+  system denies is never worked around: report CHƯA XONG with what was denied and why it is
+  needed, everything else finished. Only the "ask the user" list below, a login only the user
+  can type, and a switch the kit reserves for the user go to the user.
 - Decide, don't ask. Agent tự chủ tối đa: Khi thấy tốt hơn hoặc cần thiết thì TỰ AUTO DUYỆT
   (auto-approve) các thay đổi test và code sau khi kiểm chứng test PASS. Tuyệt đối KHÔNG hỏi
   phiền người dùng bằng AskUserQuestion "Duyệt / không duyệt" với các thay đổi code/test thông

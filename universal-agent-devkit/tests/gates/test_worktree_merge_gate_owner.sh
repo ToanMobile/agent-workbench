@@ -70,7 +70,17 @@ HEAD4="$(G "$P" rev-parse HEAD)"
 python3 -c 'import json,sys,time;json.dump({"session_id":"holder","started":time.time(),"heartbeat":time.time(),"pid":int(sys.argv[2]),"cwd":sys.argv[3]},open(sys.argv[1],"w"))' "$(G "$P" rev-parse --absolute-git-dir)/devkit-session.lock" "$$" "$P"
 stop A "$TRA"; rc=$?
 [ "$rc" = 2 ] && [ -d "$TMP/wt-feat3" ] && [ "$(G "$P" rev-parse HEAD)" = "$HEAD4" ] && grep -q "phiên khác giữ" "$TMP/err" && ok "4: main held by another live session: nothing merged, the hold names the reason" || fail "4: (rc=$rc): $(cat "$TMP/err")"
+# 4b (2026-10-09): session_lock frees an IDLE holder's checkout for another session's writes (Notification idle_prompt), but the merge gate
+# must not read "idle" as "gone": the holder is alive and may come back; its main and its worktree are still not a bystander's to merge
+idle_lock() { python3 -c 'import json,sys,time;json.dump({"session_id":"holder","started":time.time(),"heartbeat":time.time(),"pid":int(sys.argv[2]),"cwd":sys.argv[3],"idle_since":time.time()},open(sys.argv[1],"w"))' "$1/devkit-session.lock" "$$" "$2"; }
+idle_lock "$(G "$P" rev-parse --absolute-git-dir)" "$P"
+stop A "$TRA"; rc=$?
+[ "$rc" = 2 ] && [ -d "$TMP/wt-feat3" ] && [ "$(G "$P" rev-parse HEAD)" = "$HEAD4" ] && grep -q "phiên khác giữ" "$TMP/err" && ok "4b: main held by an IDLE live session: still nothing merged into it" || fail "4b: idle main holder (rc=$rc): $(cat "$TMP/err")"
 rm -f "$(G "$P" rev-parse --absolute-git-dir)/devkit-session.lock"
+idle_lock "$(G "$TMP/wt-feat3" rev-parse --absolute-git-dir)" "$TMP/wt-feat3"
+stop A "$TRA"; rc=$?
+[ -d "$TMP/wt-feat3" ] && [ ! -f "$P/t.txt" ] && [ "$(G "$P" rev-parse HEAD)" = "$HEAD4" ] && ok "  … and a worktree an IDLE live session holds is not merged or removed under it" || fail "  … idle worktree holder: merged/removed (rc=$rc): $(cat "$TMP/out")"
+rm -f "$(G "$TMP/wt-feat3" rev-parse --absolute-git-dir)/devkit-session.lock"
 
 # 5: switched off: the old hold, with one command and the real path
 WORKTREE_AUTO_MERGE=0 stop A "$TRA"; rc=$?

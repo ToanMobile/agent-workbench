@@ -254,8 +254,9 @@ for path in paths:
         owners[real] = sid   # this session made or named it: its debt
     elif owners.get(real) not in (None, sid) and session_alive(owners[real]):
         continue   # owed because ANOTHER session was held on it, and that session is still working: not a bystander's to merge or remove
-    if session_lock is not None and not session_lock.is_free_for(session_lock.read_lock(os.path.join(admin, session_lock.LOCK)), sid, now):
-        continue   # another live session works there
+    if session_lock is not None and not session_lock.is_free_for(session_lock.read_lock(os.path.join(admin, session_lock.LOCK)), sid, now,
+                                                                  idle_frees=False):
+        continue   # another live session works there (an idle one too: it is alive and may come back to it)
     if here == real or here.startswith(real + os.sep):
         owed.add(real)   # the session is in it right now (EnterWorktree, or a cd to look): owed, held once it leaves
         continue
@@ -277,7 +278,8 @@ except (Exception, SystemExit) as e:
 am_done, am_running = [], []
 if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != "0":
     cand = [r for r in pending if not r.get("reason") and r.get("busy") in (None, "merge") and os.path.isdir(r["path"])]
-    main_free = session_lock is not None and session_lock.is_free_for(session_lock.read_lock(os.path.join(gdir, session_lock.LOCK)), sid, now)
+    main_free = session_lock is not None and session_lock.is_free_for(session_lock.read_lock(os.path.join(gdir, session_lock.LOCK)), sid, now,
+                                                                      idle_frees=False)   # an idle holder of main is still there
     if cand and not main_free:
         for r in cand:
             r["am"] = "main checkout đang do phiên khác giữ: phiên đó (hoặc phiên sau) sẽ tự gộp; phiên này không ghi vào main"

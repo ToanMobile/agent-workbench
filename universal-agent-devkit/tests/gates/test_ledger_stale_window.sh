@@ -47,11 +47,12 @@ JSON
 }
 # row <sid> <start|end> <offset seconds from now> <tool_use_id>
 row() { mkdir -p .claude/audit-gate; python3 -I -c 'import sys,time; print("%s\t%s\t%.3f\t%s" % (sys.argv[1], sys.argv[2], time.time()+float(sys.argv[3]), sys.argv[4]))' "$@" >> .claude/audit-gate/bash_write_ledger.tsv; }
-# reg <sid> <pid|none> <heartbeat offset> — a session_lock registry entry (the git common dir is .git here)
+# reg <sid> <pid|none> <heartbeat offset> [status] — a session_lock registry entry (the git common dir is .git here)
 reg() { mkdir -p .git/devkit-sessions; python3 -I -c '
 import json, sys, time
 sid, pid, off = sys.argv[1], sys.argv[2], float(sys.argv[3])
-d = {"session_id": sid, "agent": "claude", "started": time.time() - 7200, "heartbeat": time.time() + off, "status": "working"}
+d = {"session_id": sid, "agent": "claude", "started": time.time() - 7200, "heartbeat": time.time() + off,
+     "status": sys.argv[4] if len(sys.argv) > 4 else "working"}
 if pid != "none":
     d["pid"] = int(pid)
 json.dump(d, open(".git/devkit-sessions/%s.json" % sid, "w"))' "$@"; }
@@ -113,6 +114,11 @@ decide "S1b [CHANGE] registry entry whose pid is gone -> dead, blocked" 2
 
 new_repo; set_mtime $TESTF -120; row s-me start -590 m1; row s-me end -589 m1; reg s-idle $LIVE_PID -1800; row s-idle start -2000 i1
 decide "S1c [CHANGE] pid alive but no sign of life for 30 min -> not live, blocked" 2
+
+# 2026-10-09 (audit T0021): a session the registry marks idle (Notification idle_prompt: turn over, no gate running) frees its
+# checkout to other sessions' writes, so it must not keep an open window over their edits either
+new_repo; set_mtime $TESTF -120; row s-me start -590 m1; row s-me end -589 m1; reg s-rest $LIVE_PID -300 idle; row s-rest start -400 r1
+decide "S1e [CHANGE] pid alive, heartbeat 5 min old, registry status idle -> not live, blocked" 2
 
 new_repo; set_mtime $TESTF -120; row s-me start -590 m1; row s-me end -589 m1; row s-dead start -400 d1; row s-dead start -300 d2; row s-dead end -200 d2
 decide "S1h [CHANGE] dead session, its last sign of life (-200) is before the edit (-120): the window ended there -> blocked" 2

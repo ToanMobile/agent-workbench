@@ -12,6 +12,14 @@ git writes, post-fix-gate, and shell redirects into the checkout. Reads, builds 
 blocks: it takes the lock or prints who holds it. SessionEnd releases the holder's lock. Sub-agents share their
 parent's session_id, so they count as the same session.
 
+An IDLE holder frees the checkout (user, 2026-10-09: "phiên đó ngừng chạy thì là ok rồi chứ sao bắt phải /exit"): a
+session that finished its turn and waits at the prompt is a live process, so the pid check kept its lock for the whole
+heartbeat window. Claude Code's Notification `idle_prompt` (about 60 s after the turn ended, the user has not typed, no
+background agent runs) marks the lock `idle_since` and the session's registry entry `status: idle`; an idle lock is free
+for another session and an idle session is not an active sibling for the gate's --full. Not marked while the project's
+test_run.lock is held (an end-of-turn gate still running). The holder's next Bash/Edit call clears it. Not Stop: Stop
+hooks run in parallel (the end-of-turn gate among them) and a blocked Stop means the turn goes on.
+
 Agents with no hook API (Antigravity) cannot be blocked, so they ask (2026-09-29, rules/essentials.md):
 `python3 .agents/devkit/bin/session_lock.py --status [--session ID] [dir]` — read-only; exit 3 while another live
 session holds the checkout (do not edit it), 0 when free, stale, its own, or not a git checkout.
@@ -227,12 +235,58 @@ def heartbeat_session(cwd, sid):
     data = read_lock(file_path)
     now = time.time()
     if data:
-        if now - float(data.get("heartbeat") or 0) < 15:
-            return  # throttle
+        if data.get("status") != "idle" and now - float(data.get("heartbeat") or 0) < 15:
+            return  # throttle (an idle session's first call always writes: it is working again)
         data["heartbeat"] = now
+        data["status"] = "working"
         write_lock(file_path, data)
     else:
         register_session(cwd, sid)
+
+
+def read_session(cwd, sid):
+    """This session's registry entry, or None."""
+    sdir, _top = sessions_dir(cwd)
+    return read_lock(os.path.join(sdir, f"{sid}.json")) if sdir and sid else None
+
+
+def mark_idle_session(cwd, sid, expect_heartbeat=None):
+    """Registry entry -> status idle (Notification idle_prompt); heartbeat_session sets it back to working.
+    expect_heartbeat: compare-then-write — a session whose heartbeat moved since the hook read it has resumed: left working."""
+    sdir, _top = sessions_dir(cwd)
+    if not sdir:
+        return
+    file_path = os.path.join(sdir, f"{sid}.json")
+    data = read_lock(file_path)
+    if data and data.get("status") != "idle" and (expect_heartbeat is None or data.get("heartbeat") == expect_heartbeat):
+        data["status"] = "idle"
+        try:
+            write_lock(file_path, data)
+        except OSError as e:
+            print(f"session_lock: không ghi được trạng thái rảnh: {e}", file=sys.stderr)
+
+
+def test_run_active(dirs):
+    """True when a test run (post-fix gate, testsourceset gate, stale re-run) holds <dir>/.claude/audit-gate/test_run.lock.
+    Probed with a shared non-blocking flock released at once; every holder of that lock retries, so the probe costs nothing.
+    Anything that cannot be probed counts as running (the lock then stays, as before)."""
+    import fcntl
+    for d in dirs:
+        p = os.path.join(d, ".claude", "audit-gate", "test_run.lock")
+        try:
+            fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return True
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            return True
+        finally:
+            os.close(fd)
+    return False
 
 
 def unregister_session(cwd, sid):
@@ -277,7 +331,7 @@ def get_active_sessions(cwd=None, current_sid=None, stale_s=180.0):
         gdir, _ = git_dir(target)
         if gdir:
             lock = read_lock(os.path.join(gdir, LOCK))
-            if lock and lock.get("session_id") and (now - float(lock.get("heartbeat") or 0) <= stale_s):
+            if lock and lock.get("session_id") and not lock.get("idle_since") and (now - float(lock.get("heartbeat") or 0) <= stale_s):
                 sid = lock.get("session_id")
                 active.append(lock)
                 if current_sid and sid != current_sid:
@@ -322,6 +376,8 @@ def get_active_sessions(cwd=None, current_sid=None, stale_s=180.0):
             except OSError:
                 pass
             continue
+        if info.get("status") == "idle":
+            continue   # finished its turn, waiting for the user (Notification idle_prompt): not a working sibling
 
         # Another linked worktree of the same repo has its own tree, build dir and gate receipt: its
         # session is not a sibling of this checkout (the registry is shared through the git common dir).
@@ -394,12 +450,16 @@ def stale_after():
         return 600.0
 
 
-def is_free_for(lock, sid, now):
-    """True when `sid` may hold the checkout: no lock, its own lock, a dead process, or a stale one."""
+def is_free_for(lock, sid, now, idle_frees=True):
+    """True when `sid` may hold the checkout: no lock, its own lock, an idle holder, a dead process, or a stale one.
+    idle_frees=False: an idle holder still counts as present (it is alive and may come back) — for callers that would
+    otherwise act ON that session's tree (worktree_merge_gate merging or removing it), not just write next to it."""
     if not lock or not lock.get("session_id"):
         return True
     if lock.get("session_id") == sid:
         return True
+    if idle_frees and lock.get("idle_since"):
+        return True   # the holder finished its turn and waits for the user (Notification idle_prompt)
     lock_pid = lock.get("pid")
     if lock_pid and not is_pid_alive(lock_pid):
         return True
@@ -604,8 +664,8 @@ def bash_collides(cmd, top, cwd=None, sid=""):
 
 def take(path, lock, sid, cwd, now, pid=None):
     started = lock.get("started") if lock and lock.get("session_id") == sid else now
-    if lock and lock.get("session_id") == sid and now - float(lock.get("heartbeat") or 0) < 30:
-        return  # heartbeat throttle
+    if lock and lock.get("session_id") == sid and not lock.get("idle_since") and now - float(lock.get("heartbeat") or 0) < 30:
+        return  # heartbeat throttle (an idle mark is always cleared: the holder works again)
     if pid is None:
         pid = os.getppid()
     write_lock(path, {"session_id": sid, "started": started, "heartbeat": now, "cwd": cwd, "pid": pid})
@@ -635,7 +695,7 @@ def status(argv):
         print(f"session_lock: {top} đang do {describe(lock, now)} giữ, nhưng người dùng đã cho phép ghi song song tới "
               f"{time.strftime('%H:%M', time.localtime(until))} — được sửa")
         return 0
-    print(f"session_lock: {top} đang do {describe(lock, now)} giữ — KHÔNG sửa ở đây: chờ phiên đó xong, "
+    print(f"session_lock: {top} đang do {describe(lock, now)} giữ — KHÔNG sửa ở đây: chờ phiên đó xong lượt (khoá tự nhả khoảng 1 phút sau khi nó chờ người dùng gõ), "
           f"hoặc làm trong worktree riêng (`agent-kit worktree add`), hoặc nhờ người dùng chạy `! agent-kit allow-shared`")
     return 3
 
@@ -720,14 +780,33 @@ def main():
 
     if event == "SessionStart":
         register_session(cwd, sid, agent="claude")
-        if is_free_for(lock, sid, now):
+        if is_free_for(lock, sid, now, idle_frees=False):
             if lock and lock.get("session_id") not in (None, sid):
-                log(gdir, f"{sid} nhận khoá cũ đã hết hạn của {lock.get('session_id')}")
+                log(gdir, f"{sid} nhận khoá của {lock.get('session_id')} ({'phiên đó đang rảnh' if lock.get('idle_since') else 'đã hết hạn'})")
             take(path, lock, sid, cwd, now)
-        else:
+        elif not is_free_for(lock, sid, now):
             print(f"⚠️ [DevKit] Checkout này đang do {describe(lock, now)} giữ. Luật: MỘT thư mục — MỘT phiên. Phiên này "
-                  f"CHỈ ĐỌC ở đây (Edit/Write, git ghi, post-fix-gate bị chặn) cho tới khi phiên kia xong; muốn làm song "
+                  f"CHỈ ĐỌC ở đây (Edit/Write, git ghi, post-fix-gate bị chặn) cho tới khi phiên kia xong lượt (khoá tự nhả khoảng 1 "
+                  f"phút sau khi nó chờ người dùng gõ, không cần /exit); muốn làm song "
                   f"song thì xin người dùng tạo worktree riêng.")
+        # else an IDLE holder: free for this session's first write, but not taken now — a session opened and never prompted
+        # never goes idle, so taking it here would lock the idle holder out for the whole heartbeat window
+        return 0
+
+    if event == "Notification":
+        if str(d.get("notification_type") or "") != "idle_prompt":
+            return 0
+        reg0 = read_session(cwd, sid) or {}   # read before anything else: both writes below compare against these heartbeats
+        if test_run_active({top, os.environ.get("CLAUDE_PROJECT_DIR") or top}):
+            return 0   # an end-of-turn gate still runs: the session is not idle yet (the lock stays, as before)
+        if reg0:
+            mark_idle_session(cwd, sid, expect_heartbeat=reg0.get("heartbeat"))
+        cur = read_lock(path)   # compare-then-write: a take() by the holder resuming meanwhile (new heartbeat) is never marked idle
+        if (lock and cur and cur.get("session_id") == sid and lock.get("session_id") == sid and not cur.get("idle_since")
+                and cur.get("heartbeat") == lock.get("heartbeat")):
+            cur["idle_since"] = now
+            write_lock(path, cur)   # ponytail: not atomic (no O_EXCL), a microsecond window remains; take() has the same shape
+            log(gdir, f"{sid} rảnh (xong lượt, chờ người dùng gõ) — phiên khác được nhận khoá")
         return 0
 
     if event != "PreToolUse":
@@ -763,9 +842,9 @@ def main():
             return 2
 
     if is_free_for(lock, sid, now):
-        if lock and lock.get("session_id") not in (None, sid):
-            log(gdir, f"{sid} nhận khoá cũ đã hết hạn của {lock.get('session_id')}")
         if collides or (lock and lock.get("session_id") == sid):
+            if lock and lock.get("session_id") not in (None, sid):   # logged only when it is really taken (not on every read)
+                log(gdir, f"{sid} nhận khoá của {lock.get('session_id')} ({'phiên đó đang rảnh' if lock.get('idle_since') else 'đã hết hạn'})")
             take(path, lock, sid, cwd, now)
         return 0
     if not collides:
@@ -779,7 +858,7 @@ def main():
                   f"{time.strftime('%H:%M', time.localtime(until))}): {tool}")
         return 0
     print(f"⛔ [DevKit] Một thư mục — một phiên: checkout {top} đang do {describe(lock, now)} giữ. Phiên này chỉ đọc "
-          f"ở đây: chờ phiên kia xong (khoá tự hết hạn sau {int(stale_after())}s không hoạt động), hoặc xin người dùng tạo "
+          f"ở đây: chờ phiên kia xong lượt (khoá tự nhả khoảng 1 phút sau khi nó chờ người dùng gõ, hoặc sau {int(stale_after())}s không hoạt động), hoặc xin người dùng tạo "
           f"worktree riêng. Người dùng cố ý cho chạy song song: gõ `! agent-kit allow-shared` (không cần khởi động lại "
           f"phiên) hoặc đặt DEVKIT_ALLOW_SHARED_CHECKOUT=1 trước khi mở phiên.", file=sys.stderr)
     return 2
