@@ -251,7 +251,7 @@ LEDGER_REL = os.path.join(".claude", "audit-gate", "bash_write_ledger.tsv")
 # kinds of caller, two rules: a caller for whom "another session" is the LENIENT answer (post-fix-gate: a
 # warning instead of a block; test_evidence_gate ran_here) asks block_owner, which says "another session"
 # only when the old rule and the cut rule both do; a caller that CREDITS a window to me (test_evidence_gate
-# ran_in_my_window, testsourceset_gate, wrote_any) keeps the old rule: bash_windows(project), me=None.
+# ran_in_my_window, testsourceset_gate) keeps the old rule: bash_windows(project), me=None.
 OPEN_MAX_AGE_S = 2 * 3600.0     # an open window of a LIVE session covers at most this long after its start
 LIVE_IDLE_S = 600.0             # registered, pid alive: live for this long after its last sign of life
 LIVE_IDLE_NO_PID_S = 180.0      # registered without a pid: same two tiers as session_lock.get_active_sessions
@@ -522,37 +522,6 @@ def _other_session_edits(transcript, session, targets, since, edited=(), bash=()
             if end is not None:
                 found.setdefault(rp, []).append((st - 1, end + 1, sid))
     return found
-
-
-def wrote_any(transcript, session, project, rels, root=None):
-    """Could this session have written one of the repo-relative paths in rels? True: its Edit/Write
-    calls, a write verb naming one (or a path held in a variable, which no file can be matched to),
-    or its own Bash windows in the ledger (a script, codegen) cover one. False: none does. None: it
-    cannot be told — no usable transcript, or a tool that may write unseen (read_only_tool). A
-    deleted path has no mtime: only a named write verb places it. root: where rels are relative to
-    (default project). Used by regression_gate.sh to leave a read-only session out of a gate run
-    for another agent's change.
-    ponytail: O(paths x tokens) realpath calls (3000 x 450 took 3 s), memoise the token targets when a
-    diff passes 10k paths. A detached process of an earlier session can write unseen, sign the ledger
-    if an agent is ever found forging it."""
-    trace = session_trace(transcript)
-    if trace is None or trace[4]:
-        return None
-    edited, named = trace[0], shell_named(trace[1])
-    if any("$" in t or "`" in t for t in named):
-        return True
-    base = os.path.realpath(root or project)
-    mine = [(st, en) for st, en, sid in bash_windows(project) if sid == session]
-    for rel in rels:
-        if os.path.realpath(os.path.join(base, rel)) in edited or names_path(named, base, rel):
-            return True
-        try:
-            mt = os.lstat(os.path.join(base, rel)).st_mtime
-        except OSError:
-            continue
-        if any(st <= mt <= en for st, en in mine):
-            return True
-    return False
 
 
 def window_owner(mt, windows):

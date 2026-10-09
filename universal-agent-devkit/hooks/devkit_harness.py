@@ -239,11 +239,17 @@ class SessionGuard:
 # ── Work in progress vs handover (T0003, 2026-09-28) ─────────────────────────────────────────
 # The heavy Stop gates (tests, fresh-context review) cost a model round per block and re-read the
 # whole context: GeelyEx2 blocked 204 times in ~4 days, mostly on progress replies. They are
-# skipped ONLY for a reply that declares itself unfinished in its status line, claims no outcome,
-# and ran no git commit/push in the turn. Anything else — no reply, no Claude transcript, a claim,
-# a commit — keeps them (fail closed). DEVKIT_GATE_EVERY_STOP=1 restores a gate on every stop.
-OUTCOME = re.compile(r"(?<![\wÀ-ỹ])XONG(?![\wÀ-ỹ])|\b(?:đã|vừa)\s+(?:fix|sửa\s+xong|sửa\s+được|xong|hoàn\s+tất|hoàn\s+thành)"
-                     r"|hết\s+bug|\bfixed\b|\bdone\b|\ball\s+(?:tests?\s+)?pass|✅|\bPASS\b")
+# skipped for a reply that declares itself unfinished in its status line (regression_gate since 2026-10-09: or has
+# no status line at all), claims no outcome and ran no git push in the turn. Anything else — no reply, no Claude
+# transcript, a claim, a push — keeps them (fail closed). DEVKIT_GATE_EVERY_STOP=1 restores a gate on every stop.
+# Claim words in any case (review 2026-10-09: "Đã fix …", "Fixed …", "Done.", "Xong: …", "Hoàn tất …" read as no claim once a reply
+# without a status line counted as mid-work); `XONG` and `PASS` stay uppercase so "pass the value" is no claim. Callers strip
+# "chưa xong" / "not done" first (MIDWORK_WORDS).
+OUTCOME = re.compile(r"(?<![\wÀ-ỹ])XONG(?![\wÀ-ỹ])|✅|\bPASS\b"
+                     r"|(?i:(?<![\wÀ-ỹ])(?:đã|vừa)\s+(?:fix|sửa\s+xong|sửa\s+được|xong|hoàn\s+tất|hoàn\s+thành)"
+                     r"|hết\s+bug|\bfixed\b|\bdone\b|\ball\s+(?:tests?\s+)?pass"
+                     r"|^[\s>#*_`\-]*(?:xong|hoàn\s+tất|hoàn\s+thành)(?![\wÀ-ỹ]))", re.M)
+MIDWORK_WORDS = re.compile(r"(?i)chưa\s+xong|chua\s+xong|\bnot\s+done\b")
 
 
 def status_line(reply):
@@ -511,9 +517,11 @@ def git_writes_in_turn(tp, start):
     return found
 
 
-def work_in_progress(payload, env=None):
+def work_in_progress(payload, env=None, status_optional=False):
     """True only for a reply that declares itself unfinished (status line), claims no outcome
-    and ran no git commit/push this turn — then the heavy Stop gates may skip. False otherwise."""
+    and ran no git commit/push this turn — then the heavy Stop gates may skip. False otherwise.
+    status_optional=True (regression_gate: user 2026-10-09, "chỉ test khi bàn giao", tested once at the
+    handover over every change since the last PASS): a reply with NO status line is unfinished too."""
     env = os.environ if env is None else env
     if env.get("DEVKIT_GATE_EVERY_STOP") == "1" or not isinstance(payload, dict):
         return False
@@ -521,9 +529,9 @@ def work_in_progress(payload, env=None):
     tp = payload.get("transcript_path")
     if not isinstance(reply, str) or not reply.strip() or transcript_kind(tp) != "claude":
         return False
-    if reply_status(reply) != "NOT_DONE":
+    if reply_status(reply) not in (("NOT_DONE", "NONE") if status_optional else ("NOT_DONE",)):
         return False
-    body = re.sub(r"(?i)chưa\s+xong", "", reply)
+    body = MIDWORK_WORDS.sub("", reply)
     if OUTCOME.search(body):
         return False
     start = turn_start(tp)

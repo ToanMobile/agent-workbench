@@ -607,13 +607,13 @@ unset FLAKY_RETRY
   && [ "$rc2" = 2 ] && [ "$n2" = 2 ] && grep -q "REG-OK" "$TMP/err" \
   && ok "pass_fp: a gitignored .env change is not skipped — REG-OK runs again and blocks" \
   || fail "pass_fp skipped a .env change (rc $rc1/$rc_same/$rc2 runs $n1/$n_same/$n2 err=$(head -3 "$TMP/err"))"
-# ── A session that wrote nothing here is not gated for another agent's change ────────────
-# 2026-10-02 (agent-workbench): every Stop re-ran the whole matrix (~11 min a run, 27 min seen) for
-# a 301-file diff another agent had made while this session only read. Evidence that a session
-# wrote a changed file: its Edit/Write paths, a write verb naming it (or a path held in a variable),
-# the file's mtime inside one of its own Bash windows (bash_write_ledger.tsv). A tool that may
-# write unseen, or no usable transcript, keeps the gate (fail closed). REGRESSION_GATE_ALL_SESSIONS=1
-# turns the shortcut off.
+# ── A mid-work Stop runs no test, whatever the session wrote; a handover is always tested ────
+# 2026-10-02 (agent-workbench): every Stop re-ran the whole matrix (~11 min a run, 27 min seen) for a 301-file diff
+# another agent had made while this session only read — a "this session wrote nothing" shortcut skipped those.
+# 2026-10-09 (user, "chỉ test khi bàn giao"; 15 h of Stop-hook test runs in 3 days): a reply that claims nothing
+# and pushed nothing is mid-work and skips the tests whoever wrote what, so that shortcut was removed (its cases
+# below now pin the mid-work rule). A claim (XONG), an empty reply, a push this turn and DEVKIT_GATE_EVERY_STOP=1
+# are handovers / fail-closed and are still tested — over verified_head..HEAD.
 W="$TMP/readonly"; mkdir -p "$W/src" "$W/.agents" && cd "$W" || exit 1
 git init -q . && git config user.email t@t && git config user.name t
 echo "fun ok() = 1" > src/Core.kt
@@ -644,12 +644,12 @@ newtree() { echo "fun ok() = $1" > "$W/src/Core.kt"; }
 
 wtrace w_ro '{"name":"Read","input":{"file_path":"@REPO@/src/Core.kt"}}' '{"name":"Bash","input":{"command":"git status"}}'
 wstop w-ro w_ro; rc=$?
-[ "$rc" = 0 ] && [ "$(wruns)" = 0 ] && grep -q systemMessage "$TMP/out" && grep -q 'không ghi file' "$TMP/out" && grep -q 'KHÔNG phải PASS' "$TMP/out" \
-  && ok "read-only session: the dirty tree is another agent's — suites not run, said (not a PASS)" \
+[ "$rc" = 0 ] && [ "$(wruns)" = 0 ] \
+  && ok "read-only session, mid-work reply: suites not run" \
   || fail "read-only session still gated (rc=$rc runs=$(wruns) out='$(cat "$TMP/out")' err='$(head -2 "$TMP/err")')"
 wstop w-ro w_ro; rc=$?
-[ "$rc" = 0 ] && [ ! -s "$TMP/out" ] && [ "$(wruns)" = 0 ] && ok "read-only session: said once per session" \
-  || fail "read-only notice repeated or suites ran (rc=$rc runs=$(wruns) out='$(cat "$TMP/out")')"
+[ "$rc" = 0 ] && [ ! -s "$TMP/out" ] && [ "$(wruns)" = 0 ] && ok "  … and again on the next mid-work stop, silently" \
+  || fail "mid-work stop repeated a notice or ran suites (rc=$rc runs=$(wruns) out='$(cat "$TMP/out")')"
 
 wtrace w_out '{"name":"Write","input":{"file_path":"/tmp/elsewhere/x.md","content":"x"}}'
 newtree 3; wstop w-out w_out; rc=$?
@@ -657,15 +657,15 @@ newtree 3; wstop w-out w_out; rc=$?
 
 wtrace w_ed '{"name":"Edit","input":{"file_path":"@REPO@/src/Core.kt","old_string":"a","new_string":"b"}}'
 newtree 4; wstop w-ed w_ed; rc=$?
-[ "$rc" = 2 ] && [ "$(wruns)" -gt 0 ] && grep -q REG-W "$TMP/err" && ok "session that edited a changed file (Edit): gated as before" || fail "Edit session not gated (rc=$rc runs=$(wruns))"
+[ "$rc" = 0 ] && [ "$(wruns)" = 0 ] && ok "session that edited a changed file (Edit), mid-work reply: not tested yet (the handover is)" || fail "Edit session tested mid-work (rc=$rc runs=$(wruns))"
 
 wtrace w_sed '{"name":"Bash","input":{"command":"sed -i s/a/b/ src/Core.kt"}}'
 newtree 5; n0="$(wruns)"; wstop w-sed w_sed; rc=$?
-[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "write verb naming a changed file (sed -i): gated" || fail "sed -i session not gated (rc=$rc)"
+[ "$rc" = 0 ] && [ "$(wruns)" = "$n0" ] && ok "write verb naming a changed file (sed -i), mid-work: not tested yet" || fail "sed -i session tested mid-work (rc=$rc)"
 
 wtrace w_var '{"name":"Bash","input":{"command":"F=src/Core.kt; sed -i s/a/b/ $F"}}'
 newtree 6; n0="$(wruns)"; wstop w-var w_var; rc=$?
-[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "a path held in a shell variable cannot be matched to a file: gated (fail closed)" || fail "variable-path session skipped (rc=$rc)"
+[ "$rc" = 0 ] && [ "$(wruns)" = "$n0" ] && ok "a path held in a shell variable, mid-work: not tested yet" || fail "variable-path session tested mid-work (rc=$rc)"
 
 wtrace w_bw '{"name":"Bash","input":{"command":"python3 gen.py"}}'
 mkdir -p .claude/audit-gate
@@ -675,11 +675,11 @@ now = time.time()
 open(sys.argv[1], "a").write("w-bw\tstart\t%.3f\tb1\nw-bw\tend\t%.3f\tb1\n" % (now - 5, now + 60))
 PY
 newtree 7; n0="$(wruns)"; wstop w-bw w_bw; rc=$?
-[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "changed file written inside the session's own Bash window: gated" || fail "own-window write skipped (rc=$rc)"
+[ "$rc" = 0 ] && [ "$(wruns)" = "$n0" ] && ok "changed file written inside the session's own Bash window, mid-work: not tested yet" || fail "own-window write tested mid-work (rc=$rc)"
 
 wtrace w_op '{"name":"mcp__foo__do_thing","input":{}}'
 newtree 8; n0="$(wruns)"; wstop w-op w_op; rc=$?
-[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "a tool that may write unseen (opaque MCP tool): gated (fail closed)" || fail "opaque-tool session skipped (rc=$rc)"
+[ "$rc" = 0 ] && [ "$(wruns)" = "$n0" ] && ok "a tool that may write unseen (opaque MCP tool), mid-work: not tested yet" || fail "opaque-tool session tested mid-work (rc=$rc)"
 
 newtree 10; n0="$(wruns)"; wstop w-xong w_ro "XONG"; rc=$?
 [ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "read-only session whose reply claims XONG: gated (a claim is verified)" || fail "XONG reply skipped (rc=$rc)"
@@ -689,8 +689,9 @@ newtree 12; n0="$(wruns)"; wtrace w_push '{"name":"Bash","input":{"command":"git
 [ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "read-only session that pushed this turn: gated (a push is a handover)" || fail "push turn skipped (rc=$rc)"
 newtree 13; n0="$(wruns)"; DEVKIT_GATE_EVERY_STOP=1 wstop w-every w_ro; rc=$?
 [ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "DEVKIT_GATE_EVERY_STOP=1: even a read-only session is gated" || fail "EVERY_STOP ignored (rc=$rc)"
-newtree 9; n0="$(wruns)"; REGRESSION_GATE_ALL_SESSIONS=1 wstop w-all w_ro; rc=$?
-[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "REGRESSION_GATE_ALL_SESSIONS=1: even a read-only session is gated" || fail "opt-out ignored (rc=$rc)"
+newtree 9; n0="$(wruns)"; wtrace w_edx '{"name":"Edit","input":{"file_path":"@REPO@/src/Core.kt","old_string":"a","new_string":"b"}}'
+wstop w-edx w_edx "XONG"; rc=$?
+[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && grep -q REG-W "$TMP/err" && ok "session that edited a changed file and claims XONG: gated (the handover)" || fail "Edit + XONG not gated (rc=$rc runs=$(wruns))"
 cd "$TMP" || exit 1
 
 # ── A total time budget for one Stop run ─────────────────────────────────────────────────

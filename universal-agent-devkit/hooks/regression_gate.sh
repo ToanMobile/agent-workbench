@@ -172,11 +172,13 @@ if info is not None:
     except Exception as e:
         note("verified_head failed: %r" % e)
 
-# A reply that declares itself unfinished (CHƯA XONG / CHỜ DUYỆT …), claims no outcome and pushed
-# nothing unverified: no test run now — the handover turn runs it (T0003, 2026-09-28).
+# A reply that declares itself unfinished (CHƯA XONG / CHỜ DUYỆT …) or carries no status line at all, claims
+# no outcome and pushed nothing (unverified): no test run now — the handover turn runs it, over verified_head..HEAD (T0003,
+# 2026-09-28; user 2026-10-09: 15 h of Stop-hook test runs in 3 days, "chỉ test khi bàn giao"). proof_gate
+# (XONG needs a --full exit 0 of the same turn), push_gate and pre-commit still hold every handover. DEVKIT_GATE_EVERY_STOP=1: old rule.
 if info is not None and not probe and not pushed:
     try:
-        if devkit_harness.work_in_progress(data):
+        if devkit_harness.work_in_progress(data, status_optional=True):
             note("skip: work in progress (status line %r) sid=%s" % (devkit_harness.status_line(
                 data.get("last_assistant_message"))[:40], sid))
             sys.exit(0)
@@ -578,61 +580,6 @@ if isinstance(last, dict) and last.get("key") == reuse_key and isinstance(last.g
     # This session already blocked on exactly this content: the gate would say the same (a flaky
     # suite is no reason to re-run every Stop). Same reason, no run.
     block(last["lines"], last.get("cure") or [], last.get("rc", 1), reused=True, repeat_hit=True)
-
-# A session that wrote none of the changed files is not the author of this change: a diff another agent made
-# (301 files) re-ran the whole matrix (~11 min a run, 27 min seen) at the end of every read-only
-# session (agent-workbench, 2026-10-02). Evidence of writing is session_authorship.wrote_any: Edit/Write
-# paths, write verbs naming a changed file, a changed file inside its own Bash windows. A tool
-# that may write unseen, no usable transcript, a push or unverified commits, and a reply that claims
-# an outcome (or says nothing) keep the gate.
-# REGRESSION_GATE_ALL_SESSIONS=1 turns the shortcut off.
-def wrote_nothing_here():
-    sid_raw, tp = str(data.get("session_id") or ""), data.get("transcript_path")
-    if info is None or degraded or pushed or unverified or not sid_raw or not tp \
-            or os.environ.get("REGRESSION_GATE_ALL_SESSIONS") == "1" or os.environ.get("DEVKIT_GATE_EVERY_STOP") == "1":
-        return False
-    reply = data.get("last_assistant_message")
-    try:
-        # Same fail-closed contract as the progress-reply skip: a reply that claims an outcome, says
-        # nothing, or follows a commit/push this turn is the handover and is verified.
-        start = devkit_harness.turn_start(tp)
-        if not isinstance(reply, str) or not reply.strip() or devkit_harness.reply_status(reply) == "DONE" \
-                or devkit_harness.OUTCOME.search(re.sub(r"(?i)chưa\s+xong", "", reply)) \
-                or start is None or devkit_harness.git_writes_in_turn(tp, start):
-            return False
-        sys.dont_write_bytecode = True
-        sys.path.insert(0, os.path.join(devkit, "bin"))
-        import session_authorship
-        recs, paths, i = status.decode("utf-8", "replace").split("\0"), [], 0
-        while i < len(recs):
-            rec = recs[i]
-            i += 1
-            if len(rec) <= 3:
-                continue
-            paths.append(rec[3:])
-            if ("R" in rec[:2] or "C" in rec[:2]) and i < len(recs):   # rename/copy: the next record is its source
-                paths.append(recs[i])
-                i += 1
-        paths = [p for p in paths if p and not p.startswith(own)]
-        return bool(paths) and session_authorship.wrote_any(tp, sid_raw, repo, paths, root=toplevel) is False
-    except Exception as e:
-        note("wrote_nothing_here failed: %r" % e)
-        return False
-
-if wrote_nothing_here():
-    note("skip: session wrote none of the changed files sid=%s" % sid)
-    flag = os.path.join(os.path.dirname(log), "regression_gate.readonly." + sid)
-    if not os.path.exists(flag):
-        try:
-            open(flag, "w").close()
-        except OSError:
-            pass
-        print(json.dumps({"systemMessage": "ℹ regression_gate: phiên này không ghi file nào trong các thay đổi đang có "
-                          "(của agent/người khác) nên KHÔNG chạy lại test hồi quy ở lượt dừng — KHÔNG phải PASS. Test chạy ở "
-                          "phiên có sửa file, khi commit/push, hoặc chạy tay `postfix-gate --run-tests --full`. (regression gate "
-                          "skipped: this session wrote none of the changed files — not a PASS; REGRESSION_GATE_ALL_SESSIONS=1 "
-                          "runs it anyway)"}, ensure_ascii=False))
-    sys.exit(0)
 
 # --session/--transcript: an existing test edited by ANOTHER session (or a person) is a warning,
 # only the test edits of THIS session block (post-fix-gate split_tests_by_author).

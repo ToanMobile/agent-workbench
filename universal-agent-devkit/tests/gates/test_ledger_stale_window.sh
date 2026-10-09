@@ -246,7 +246,7 @@ led(("me", "start", -500, "m1"), ("dead", "start", -400, "d1"))
 w = {s: (a, b) for a, b, s in sa.bash_windows(repo, "me")}
 check("me: own open window reaches now", near(w["me"][1], time.time()))
 check("dead: ends at its start (no later sign of life)", near(w["dead"][1], now - 400))
-# 2. me=None is the old rule for every caller that does not pass a session (testsourceset_gate, wrote_any)
+# 2. me=None is the old rule for every caller that does not pass a session (testsourceset_gate)
 w = {s: (a, b) for a, b, s in sa.bash_windows(repo)}
 check("me=None: every open window reaches now", near(w["me"][1], time.time()) and near(w["dead"][1], time.time()))
 # 3. a live session reaches now, capped at start + 2 h

@@ -385,6 +385,32 @@ tr13 "ls" "git push origin main"; r_commit="$(rg13 "CHƯA XONG — còn sửa")"
 [ "$r_claim" = 2 ] && [ "$r_xong" = 2 ] && [ "$r_empty" = 2 ] && [ "$r_every" = 2 ] && [ "$r_commit" = 2 ] \
   && ok "claim / XONG / no reply / EVERY_STOP=1 / push this turn: still blocked" \
   || fail "fail-closed: claim=$r_claim xong=$r_xong empty=$r_empty every=$r_every commit=$r_commit"
+# User 2026-10-09 ("Stop hooks… cứ chạy hoài mà lâu vậy?", chose "chỉ test khi bàn giao"): 15 h of Stop-hook gate runs in 3 days,
+# most on mid-work turns. A reply with NO status line that claims nothing and committed/pushed nothing is mid-work too: no test run.
+# A claim or a push this turn is a handover and is still tested — over verified_head..HEAD, so a mid-work commit is tested there
+# (pre-commit runs the light suites, push_gate refuses an ungated push); review_gate keeps the old rule (status line required).
+tr13 "ls"
+r_none="$(rg13 "Đang chờ Antigravity phản biện kế hoạch.")"
+r_none_claim="$(rg13 "Gate chạy lại: PASS 5/5.")"
+r_none_every="$(rg13 "Đang chờ Antigravity phản biện kế hoạch." DEVKIT_GATE_EVERY_STOP=1)"
+tr13 "ls" "git push origin main"; r_none_push="$(rg13 "Đang chờ Antigravity phản biện kế hoạch.")"
+tr13 "ls"
+[ "$r_none" = 0 ] && ok "no status line, no claim, no commit/push: mid-work, no test run" || fail "no-status mid-work reply still gated (rc=$r_none)"
+# Review 2026-10-09 (P1): OUTCOME was case-sensitive, so a no-status reply claiming the work done in ordinary sentence case
+# ("Đã fix …", "Fixed …", "Done.", "Xong: …", "Hoàn tất …", a later "Xong." line) read as mid-work and skipped the suites.
+claims_ok=1; for claim in "Đã fix lỗi crash ở parser; test hồi quy chạy lại xanh." "Fixed the crash in the parser; tests pass." \
+    "Done. The parser no longer crashes." "Vừa sửa xong parser." "Xong: parser đã ổn." "Hoàn tất: parser đã ổn." \
+    "Tóm tắt thay đổi:
+
+Xong. Gate pass."; do
+  rc="$(rg13 "$claim")"; [ "$rc" = 2 ] || { claims_ok=0; fail "no-status claim skipped the suites (rc=$rc): $claim"; }
+done
+[ "$claims_ok" = 1 ] && ok "  … a no-status claim in sentence case (Đã fix / Fixed / Done / Xong: / Hoàn tất / a later Xong line) still runs the tests"
+r_notdone="$(rg13 "NOT DONE — still fixing the parser")"
+[ "$r_notdone" = 0 ] && ok "  … while 'NOT DONE — …' stays mid-work (done inside 'not done' is no claim)" || fail "NOT DONE read as a claim (rc=$r_notdone)"
+[ "$r_none_claim" = 2 ] && [ "$r_none_every" = 2 ] && [ "$r_none_push" = 2 ] \
+  && ok "  … but a claim / DEVKIT_GATE_EVERY_STOP=1 / a push this turn still runs the tests" \
+  || fail "no-status handover not gated: claim=$r_none_claim every=$r_none_every push=$r_none_push"
 # A turn that committed the red change leaves a clean tree: the gate tests the commit.
 sleep 2; tr13 "git commit -qm red"; git -C "$M13" add -A; git -C "$M13" commit -qm "red change"
 r_clean="$(rg13 "XONG")"
@@ -461,6 +487,9 @@ rv14() { python3 -c 'import json,sys; print(json.dumps({"session_id":"s14","tran
 rv_wip="$(rv14 "CHƯA XONG — còn sửa")"; rv_x="$(rv14 "XONG")"
 [ "$rv_wip" = 0 ] && [ "$rv_x" = 2 ] && ok "review_gate: progress reply not held, XONG still needs the fresh-context review" \
   || fail "review_gate: wip=$rv_wip xong=$rv_x"
+rv_none="$(rv14 "Đang chờ Antigravity phản biện kế hoạch.")"
+[ "$rv_none" = 2 ] && ok "review_gate: a reply with no status line is still held (only the regression gate skips it)" \
+  || fail "review_gate loosened for a no-status reply (rc=$rv_none)"
 
 echo
 [ "$FAILS" -eq 0 ] && echo "test_gate_friction: all checks passed" || echo "test_gate_friction: $FAILS failed"
