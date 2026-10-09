@@ -29,7 +29,7 @@ def receipt_path(project_dir):
     res = _git(project_dir, "rev-parse", "--absolute-git-dir")
     if res.returncode != 0:
         return os.path.join(str(project_dir), ".agents", "audit-gate", RECEIPT)
-    return os.path.join(res.stdout.decode().strip(), "postfix-gate", RECEIPT)
+    return os.path.join(res.stdout.decode(errors="surrogateescape").strip(), "postfix-gate", RECEIPT)   # a non-UTF-8 folder name (2026-10-09)
 
 
 def _non_git_fingerprint(project_dir):

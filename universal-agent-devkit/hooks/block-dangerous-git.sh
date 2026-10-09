@@ -65,8 +65,9 @@ fast_allow() { # $1 = trigger ERE
 }
 # A pipe into a shell (`cat x | sh`, `… | xargs bash -c`) or a here-string (`bash <<< …`) runs text the fast path cannot
 # see: the parser reads it (2026-10-09, tests/gates/test_git_guard_shell_feed.sh). Bracket expressions, not \b: POSIX
-# ERE has no \b (glibc adds it, macOS regcomp need not).
-fast_allow 'git|eval|devkit_precommit|hookspath|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<' && exit 0
+# ERE has no \b (glibc adds it, macOS regcomp need not). A process substitution <(…) can be a shell's script (`bash <(curl …)`,
+# 2026-10-09, tests/gates/test_git_guard_process_subst.sh): the parser reads it too.
+fast_allow 'git|eval|devkit_precommit|hookspath|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]' && exit 0
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "BLOCKED: block-dangerous-git.sh cần 'python3' để phân tích lệnh. Chặn để an toàn." >&2
@@ -754,6 +755,8 @@ def analyse_simple(tokens, depth):
                     PENDING_FEED.append(UNREADABLE_FEED)
                     return None
                 return analyse(here, depth + 1)
+        if proc_subst_script(rest):
+            PENDING_FEED.append(UNREADABLE_PSUBST)
         return None
     if prog == "ssh":
         j = 0
@@ -816,6 +819,7 @@ RAW = re.compile(
     r"|-c\s*core\.hooks[pP]ath)")
 
 SUBST = "__DEVKIT_SUBST__"
+PSUBST = SUBST + "IN__"   # an unquoted <(…): a file that reads what its command prints (contains SUBST: every SUBST test holds)
 
 HEREDOC = re.compile(r"<<-?[ \t]*([\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
@@ -883,7 +887,7 @@ def strip_subst(text, inners=None):
                 return None
             if inners is not None:
                 inners.append(text[i + 2:j - 1])
-            out.append(SUBST)
+            out.append(PSUBST if c == "<" and not dq else SUBST)
             i = j
         elif c == "`":
             j = text.find("`", i + 1)
@@ -1050,6 +1054,37 @@ def reads_script(seg):
             continue
         break
     return s_flag or j >= len(rest) or rest[j] == "-"
+
+# A shell fed by process substitution (2026-10-09, tests/gates/test_git_guard_process_subst.sh): `bash <(curl …)` runs the
+# text <(…) prints as its script, `bash < <(…)` reads it on stdin — generated text, refused like UNREADABLE_FEED. Not
+# `diff <(a) <(b)` (no shell), `bash x.sh <(…)` (an argument), `eval "$(…)"`, `bash x.sh`, `bash < file` (documented limits).
+UNREADABLE_PSUBST = ("shell chạy văn bản do process substitution sinh ra (bash <(…), bash < <(…)): cổng không đọc được "
+                     "nội dung — chạy thẳng lệnh đó")
+
+def proc_subst_script(rest):
+    """rest: the words after a shell (no -c, no <<<). True when its script is a <(…): the script operand, or stdin with no
+    script operand (or -s / a lone -)."""
+    j, s_flag, stdin_ps, script, opts = 0, False, False, None, True
+    while j < len(rest):
+        a = rest[j]
+        if REDIRECT.match(a):
+            two = bool(re.fullmatch(r"\d*(>>?|<|&>)", a))
+            src = rest[j + 1] if two and j + 1 < len(rest) else a
+            stdin_ps = stdin_ps or (re.match(r"0?<(?![<&])", a) is not None and PSUBST in src)
+            j += 2 if two else 1
+            continue
+        if opts and a == "--":
+            opts = False
+        elif opts and len(a) > 1 and a[0] in "-+":
+            s_flag = s_flag or (a[0] == "-" and not a.startswith("--") and "s" in a[1:])
+            j += 2 if a in SHELL_OPTS_WITH_ARG else 1
+            continue
+        elif script is None:
+            script, opts = a, False
+        j += 1
+    if script is not None and script != "-" and not s_flag:
+        return PSUBST in script
+    return stdin_ps
 
 def feed_texts(seg):
     """Readings of what a literal producer writes to the pipe (each analysed), or None when it is not a literal."""

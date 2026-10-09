@@ -56,7 +56,9 @@ HEX_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 
 def git(cwd, *args):
-    r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=5)
+    # surrogateescape: a path git prints that is not valid UTF-8 (cfg_<0xE9>.py) crashed the gate with a traceback (2026-10-09);
+    # it now round-trips to the same bytes in argv and stdin, as bin/post-fix-gate.py decodes them
+    r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, errors="surrogateescape", timeout=5)
     return r.returncode, r.stdout
 
 
@@ -75,7 +77,7 @@ def remote_refs(top, remote):
         return None
     try:
         r = subprocess.run(["git", "-C", top, "ls-remote", "--refs", remote], capture_output=True, text=True,
-                           timeout=10, stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                           errors="surrogateescape", timeout=10, stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
     except (OSError, subprocess.SubprocessError):
         return None
     if r.returncode != 0:
@@ -144,7 +146,8 @@ def check_all_tags(cwd, remote):
     refs = out.split()
     try:     # one process for every tag (a subprocess per tag took 15 s for 2000 tags and timed out near 6000)
         chk = subprocess.run(["git", "-C", top, "cat-file", "--batch-check"],
-                             input="".join(f"{r}^{{commit}}\n" for r in refs), capture_output=True, text=True, timeout=15)
+                             input="".join(f"{r}^{{commit}}\n" for r in refs), capture_output=True, text=True,
+                             errors="surrogateescape", timeout=15)
     except (OSError, subprocess.SubprocessError):
         return False, "cannot read the tags"
     lines = chk.stdout.splitlines()
@@ -393,7 +396,8 @@ def tested_fingerprint(top, project, head, dirty, rev):
                    GIT_ALTERNATE_OBJECT_DIRECTORIES=objects.strip())
 
         def run(cwd, *args, stdin=None):
-            r = subprocess.run(["git", "-C", cwd, *args], input=stdin, capture_output=True, text=True, timeout=60, env=env)
+            r = subprocess.run(["git", "-C", cwd, *args], input=stdin, capture_output=True, text=True, errors="surrogateescape",
+                               timeout=60, env=env)
             if r.returncode != 0:
                 raise RuntimeError(f"git {args[0]} failed: {r.stderr.strip()[:200]}")
             return r.stdout.strip()
@@ -557,6 +561,8 @@ def check(cwd, rev="HEAD", tag_remote=None):
 
 
 def main(argv):
+    if hasattr(sys.stderr, "reconfigure"):   # untestable_only()'s warning may name a non-UTF-8 path too (see the print below)
+        sys.stderr.reconfigure(errors="backslashreplace")
     argv = list(argv)
     tag_remote = None
     if "--tag-remote" in argv:
@@ -573,6 +579,10 @@ def main(argv):
     except (subprocess.TimeoutExpired, RuntimeError, OSError) as e:
         ok, reason = False, f"không kiểm được biên nhận gate ({e})"
     if not ok:
+        # backslashreplace: a reason naming a non-UTF-8 path or tag (decoded with surrogateescape) crashed the print on a
+        # strict UTF-8 stdout (macOS, 2026-10-09). Set here, not at start: importing post-fix-gate.py resets it to "replace".
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(errors="backslashreplace")
         # a reason with a second line carries its own next step (recovery_hint): the generic one would contradict it
         print(reason if "\n" in reason else f"{reason} — chạy `{GATE}` (exit 0) trên đúng code sẽ push, commit, rồi push lại")
     return 0 if ok else 2

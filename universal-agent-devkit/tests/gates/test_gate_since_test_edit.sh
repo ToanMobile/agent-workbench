@@ -43,14 +43,30 @@ printf '[ 3 = 3 ]\n' >> tests/test_old.sh; echo "fun ok() = 2" > src/Core.kt
 git commit -qam "append a test + fix"
 expect "append-only change committed in the range is not flagged" no 0 "$base"
 
+# 2026-10-09: the trailer counts only with antigravity-pm's audit pass record for that task of this repository (kept outside
+# the repo, as bin/push_gate.py checks it); a line the agent writes itself is not an audit.
+export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
+pm_pass() { # <task-id>: an audit pass recorded for the repo in $PWD
+  mkdir -p "$TMP/pm/projects/$(basename "$PWD")/tasks/$1"
+  printf '{"id":"%s","project":"%s","verdicts":{"audit":{"verdict":"pass","round":1}}}\n' "$1" "$PWD" \
+    > "$TMP/pm/projects/$(basename "$PWD")/tasks/$1/task.json"
+}
+
+mk self_approved; base="$(git rev-parse HEAD)"
+printf '#!/bin/sh\ntrue\n' > tests/test_old.sh; echo "fun ok() = 2" > src/Core.kt
+git commit -qam "weaken test + fix" -m "Test-approved-by: antigravity T0001-audit"
+expect "a Test-approved-by line with no antigravity-pm audit record is still flagged" yes 2 "$base"
+
 mk approved; base="$(git rev-parse HEAD)"
 printf '#!/bin/sh\ntrue\n' > tests/test_old.sh; echo "fun ok() = 2" > src/Core.kt
-git commit -qam "weaken test + fix" -m "Test-approved-by: antigravity T1"
+git commit -qam "weaken test + fix" -m "Test-approved-by: antigravity T0001-audit"
+pm_pass T0001-audit
 expect "weakened test in a Test-approved-by commit is not flagged" no 0 "$base"
 
 mk approved_then_weakened; base="$(git rev-parse HEAD)"
 printf '#!/bin/sh\ntrue\n' > tests/test_old.sh
-git commit -qam "weaken test" -m "Test-approved-by: antigravity T1"
+git commit -qam "weaken test" -m "Test-approved-by: antigravity T0001-audit"
+pm_pass T0001-audit
 printf '#!/bin/sh\n' > tests/test_old.sh; echo "fun ok() = 2" > src/Core.kt
 git commit -qam "weaken again, no approval"
 expect "a later unapproved weakening after an approved commit is flagged" yes 2 "$base"

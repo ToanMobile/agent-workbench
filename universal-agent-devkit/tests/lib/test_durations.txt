@@ -192,3 +192,7 @@
 8 tests/gates/test_gate_audit_holes.sh
 7 tests/gates/test_gate_robustness.sh
 4 tests/gates/test_gate_git_batching.sh
+3 tests/gates/test_push_gate_non_utf8.sh
+2 tests/gates/test_hardware_rm_unforced.sh
+2 tests/gates/test_hardware_find_match_all.sh
+1 tests/gates/test_git_guard_process_subst.sh

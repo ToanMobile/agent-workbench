@@ -19,6 +19,8 @@
 #     deeper project paths (src/main/old), and a single existing file. Relative paths
 #     start at the payload's cwd and follow `cd` (a `cd` that may not run keeps the old
 #     directory in play too); an unresolvable $VAR / $(…) target is refused.
+#   • (2026-10-09) a recursive rm WITHOUT -f (rm -r, -R, --recursive: run without a terminal it does not ask) whose target
+#     is or holds the project root, the home folder, / or a system partition. Any other target stays allowed (rm -r src).
 #   • adb shell pm uninstall|disable(-user)|hide of a system package (android,
 #     com.android.*, com.google.android.*, vendor namespaces)
 #   • iOS signing & simulators: fastlane match nuke, security delete-keychain|
@@ -315,14 +317,19 @@ def git_tracks(p):
     except (OSError, subprocess.SubprocessError):
         return False
 
-def rm_target_problem(t, cwds, env):
-    """Why removing target t recursively is refused, or None."""
+HOME = os.path.realpath(os.path.expanduser("~"))
+SYS_PART_DIRS = {"/" + d for d in ("system", "vendor", "boot", "product", "odm", "data", "persist", "efs")}
+
+def rm_target_problem(t, cwds, env, forced=True):
+    """Why removing target t recursively is refused, or None. Without -f (forced=False; 2026-10-09,
+    tests/gates/test_hardware_rm_unforced.sh) only a target that is or holds the project root, the home folder, / or a
+    system partition: rm -r with no terminal to ask on deletes all the same. A target it cannot resolve is not refused then."""
     orig = t
     if t.startswith("~"):
         t = os.path.expanduser(t)
     t = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), t)
     if "$" in t or "`" in t:
-        return f"{orig}: không xác định được đường dẫn ($VAR / lệnh con)"
+        return f"{orig}: không xác định được đường dẫn ($VAR / lệnh con)" if forced else None
     glob = bool(GLOB.search(t))
     if glob:  # judged as its directory: rm -rf src/* empties src
         parts = t.split("/")
@@ -330,12 +337,19 @@ def rm_target_problem(t, cwds, env):
         t = "/".join(parts[:k]) or ("/" if t.startswith("/") else ".")
     for cwd in ([None] if os.path.isabs(t) else cwds):
         if cwd is None and not os.path.isabs(t):
+            if not forced:
+                continue
             return f"{orig}: không biết thư mục hiện tại (cd tới $VAR / lệnh con / popd)"
         p = os.path.normpath(os.path.join(cwd or "/", t))
         # the parent resolved, the last name kept: rm removes a symlink, not its target
         p = os.path.realpath(p) if p == os.sep else os.path.join(os.path.realpath(os.path.dirname(p)), os.path.basename(p))
         if not glob and os.path.lexists(p) and (os.path.islink(p) or not os.path.isdir(p)):
             continue  # a single file
+        if not forced:   # / holds the project root, so it is caught by the first test
+            hit = next((d for d in (ROOT, HOME) if p == d or under(d, p)), None) or (p if p in SYS_PART_DIRS else None)
+            if hit:
+                return f"{orig}: là hoặc chứa {hit} (gốc project / home / phân vùng hệ thống)"
+            continue
         if p == ROOT:
             return f"{orig}: là thư mục gốc project"
         if under(p, ROOT):
@@ -358,7 +372,7 @@ def rm_target_problem(t, cwds, env):
 
 # find and xargs delete paths that are not on the rm command line (2026-10-09, tests/gates/test_hardware_rm_containment.sh):
 # `find P -delete`, `find P -exec rm -rf {} +` and `find P | xargs rm -rf` are judged as rm -rf of the start points P —
-# unless a -name/-path/-regex filter narrows what find matches (then the verdict is unchanged: the pinned contract case
+# unless a -name/-path/-regex filter narrows what find matches (`-name *`, `-path */*` narrow nothing: find_narrowed) (then the verdict is unchanged: the pinned contract case
 # `find . -name __pycache__ -exec rm -rf {} +` stays allowed). `echo a b | xargs rm -rf` is rm -rf a b; any other text
 # piped into `xargs rm -r…` (cat list, git ls-files, ls) cannot be read and is refused.
 FIND_NAME_FILTERS = {"-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex"}
@@ -384,6 +398,28 @@ def find_starts(args):
         i += 1
     return starts or ["."]
 
+def find_narrowed(args, starts):
+    """Whether a -name/-path/-regex filter narrows what find matches. One whose pattern matches every entry under a start
+    point (`*`, `*/*`, `./*`, regex `.*`) narrows nothing and counts as no filter (2026-10-09, tests/gates/test_hardware_find_match_all.sh);
+    a regex python cannot read counts as none too. Probe entries: names no real filter matches all of."""
+    for k, a in enumerate(args[:-1]):
+        if a not in FIND_NAME_FILTERS:
+            continue
+        pat, fold = args[k + 1], a.startswith("-i")
+        groups = ([("0", ".Q", "Zz-9.x")] if a in ("-name", "-iname")
+                  else [[s.rstrip("/") + "/" + n for n in ("0", ".Q/Zz-9.x")] for s in starts])
+        if a.endswith("regex"):
+            try:
+                rx = re.compile(pat, re.I if fold else 0)
+            except re.error:
+                continue
+            hit = lambda x: rx.fullmatch(x) is not None
+        else:
+            hit = lambda x: _fnm(x.lower(), pat.lower()) if fold else _fnm(x, pat)
+        if not any(all(hit(x) for x in g) for g in groups):
+            return True
+    return False
+
 def feed_paths(feed):
     """The paths a command piped into `xargs rm` names: find start points ([] when a name filter narrows them), the
     words of a literal echo / printf; None when they cannot be read."""
@@ -396,7 +432,8 @@ def feed_paths(feed):
         return None
     prog, args = os.path.basename(feed[i]), [FIND_ESC.get(x, x) for x in feed[i + 1:]]
     if prog == "find":
-        return [] if any(a in FIND_NAME_FILTERS for a in args) else find_starts(args)
+        starts = find_starts(args)
+        return [] if find_narrowed(args, starts) else starts
     if prog in ("echo", "printf") and not any(c in a for a in args for c in "$`("):
         words = re.split(r"(?:\s|\\[nt0])+", " ".join(a for a in args if not re.fullmatch(r"-[neE]+", a)))
         return [w for w in words if w and "%" not in w]
@@ -440,7 +477,8 @@ def rm_segment_problem(toks, cwds, env, depth, feed=None):
         return rm_problem(" ".join(rest), cwds, depth + 1)
     if prog == "find":
         rest = [FIND_ESC.get(x, x) for x in rest]
-        starts, named = find_starts(rest), any(a in FIND_NAME_FILTERS for a in rest)
+        starts = find_starts(rest)
+        named = find_narrowed(rest, starts)
         if "-delete" in rest and not named:
             why = rm_segment_problem(["rm", "-rf", "--"] + starts, cwds, env, depth + 1)
             if why:
@@ -471,15 +509,16 @@ def rm_segment_problem(toks, cwds, env, depth, feed=None):
             flags += a[1:]
         elif a not in repl and a != "":
             targets.append(a)
-    if not (("r" in flags or "R" in flags or "--recursive" in longs) and ("f" in flags or "--force" in longs)):
+    if not ("r" in flags or "R" in flags or "--recursive" in longs):
         return None
+    force = "f" in flags or "--force" in longs
     if xargs:
         fed = None if xargs_file else feed_paths(feed)
-        if fed is None:
+        if fed is None and force:
             return "xargs rm: đường dẫn lấy từ lệnh trước, không đọc được (chỉ find / echo / printf literal được phân tích)"
-        targets += fed
+        targets += fed or []
     for t in targets:
-        why = rm_target_problem(t, cwds, env)
+        why = rm_target_problem(t, cwds, env, force)
         if why:
             return why
     return None
@@ -759,7 +798,8 @@ def logcat_violation(text):
 
 if rm_why:
     sys.stderr.write("\n🛑 [HARDWARE SAFETY GATE REJECTED]\n")
-    sys.stderr.write("rm đệ quy + force (-rf, -fr, -r -f, --recursive --force; cả find -delete / -exec rm, xargs rm) bị chặn — xoá không đảo ngược được:\n")
+    sys.stderr.write("rm đệ quy (-rf, -fr, -r -f, --recursive --force; cả find -delete / -exec rm, xargs rm; rm -r không -f trên gốc\n"
+                     "project / home / / / phân vùng hệ thống — không có terminal thì rm -r không hỏi) bị chặn — xoá không đảo ngược được:\n")
     sys.stderr.write(f"  • {rm_why}\n")
     sys.stderr.write(f"  • Lệnh: {cmd}\n\n")
     sys.stderr.write("Được phép: build output trong project (build/, dist/, node_modules/, .gradle/, Library/, Temp/, obj/, bin/ …\n"

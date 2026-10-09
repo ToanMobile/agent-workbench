@@ -424,12 +424,25 @@ def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: 
                            capture_output=True, text=True)
     if local.returncode == 0 and not local.stdout.strip():
         return False                                  # only upstream commits touch it
-    res = subprocess.run(["git", "-C", root, "log", "-1", "--format=%H", "-E",
+    res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",
                           "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{since}..HEAD",
                           "--", repo_path], capture_output=True, text=True)
     if res.returncode != 0:
         return True                                   # cannot read the range: fail closed
-    return not test_change_is_append_only(res.stdout.strip() or since, repo_path, runner=runner)
+    # The line counts only as push_gate counts it (2026-10-09): a real trailer whose task has antigravity-pm's audit pass
+    # record; a line the agent writes itself is no audit (tests/gates/test_gate_since_test_edit.sh).
+    base = since
+    for sha in res.stdout.split():                    # newest first
+        if _push_gate().approved(root, f"{sha}^!")[0]:
+            base = sha
+            break
+    return not test_change_is_append_only(base, repo_path, runner=runner)
+
+
+def _push_gate():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import push_gate  # noqa: PLC0415 - sibling module in bin/, only when a Test-approved-by commit is in the range
+    return push_gate
 
 
 def split_tests_by_author(paths: list, session, transcript) -> tuple:
@@ -3870,7 +3883,7 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
 # One JSON line per `--run-tests` run (modes full | impacted; nothing for static runs, --dry-run, --commit-msg, --staged, a clean tree,
 # an argument error, a run the hook timeout killed, or any run that ends before the verdict: the totals are a LOWER bound) appended to
 # <git-common-dir>/postfix-gate/runs.jsonl, to measure how often a --full run is triggered by a documentation-only change and what it
-# costs (scripts/governance/gate_runs_report.py). NOTHING reads this file for any decision.
+# costs (scripts/governance/gate_runs_report.py). bin/push_gate.py cross-checks a receipt against its line (2026-10-09), so a record must stay as written.
 # It can never change the gate's result and never waits for anything the gate has not already waited for: it reads no file, runs no git
 # command and no process (it only uses values main() already holds, so a FIFO planted at a profile file cannot hang it), takes no lock,
 # prints nothing, and drops every error (`except Exception` only, so Ctrl-C and SystemExit still pass). Its one write is < 3 KB to a file
