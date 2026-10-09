@@ -1,0 +1,126 @@
+diff --git a/universal-agent-devkit/bin/post-fix-gate.py b/universal-agent-devkit/bin/post-fix-gate.py
+index f6589af..4897cd9 100755
+--- a/universal-agent-devkit/bin/post-fix-gate.py
++++ b/universal-agent-devkit/bin/post-fix-gate.py
+@@ -350,65 +350,9 @@ def _py_def_counts(text: str):
+     return out
+ 
+ 
+-_JS_DESCRIBE = re.compile(r"(?<![.\w$])(?:describe|context|suite)(?:\.(?:only|skip))?[ \t]*\([ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|`([^`\n]*)`)")
+-_JS_CALLBACK_OPEN = re.compile(r"(?:=>|function[^{(]*\([^)]*\))\s*\{")
+-
+-
+-def _js_block_end(text: str, i: int):
+-    """Index just past the `}` that closes the `{` at text[i], skipping strings, template literals and comments; None when unbalanced."""
+-    depth, n = 0, len(text)
+-    while i < n:
+-        c = text[i]
+-        if c in "'\"`":
+-            q = c
+-            i += 1
+-            while i < n and text[i] != q:
+-                i += 2 if text[i] == "\\" else 1
+-            i += 1
+-            continue
+-        if text.startswith("//", i):
+-            j = text.find("\n", i)
+-            i = n if j < 0 else j
+-            continue
+-        if text.startswith("/*", i):
+-            j = text.find("*/", i + 2)
+-            i = n if j < 0 else j + 2
+-            continue
+-        if c == "{":
+-            depth += 1
+-        elif c == "}":
+-            depth -= 1
+-            if depth == 0:
+-                return i + 1
+-        i += 1
+-    return None
+-
+-
+-def _js_def_counts(text: str):
+-    """it/test titles counted per enclosing describe path (the same title in two describe blocks is two tests), or None when the
+-    describe blocks cannot be delimited (unbalanced braces, an unusual callback): the caller then counts the whole file."""
+-    scopes = []   # (start, end, title) of every describe callback body, in source order = outermost first
+-    for m in _JS_DESCRIBE.finditer(text):
+-        cb = _JS_CALLBACK_OPEN.search(text, m.end())
+-        if cb is None:
+-            return None
+-        end = _js_block_end(text, cb.end() - 1)
+-        if end is None:
+-            return None
+-        scopes.append((cb.end() - 1, end, next(g for g in m.groups() if g is not None)))
+-    out = {}
+-    for m in _JS_TEST_DEF.finditer(text):
+-        name = next((g for g in m.groups() if g is not None), None)
+-        if name is None:
+-            continue
+-        key = "/".join(t for b, e, t in scopes if b < m.start() < e) + "::" + name
+-        out[key] = out.get(key, 0) + 1
+-    return out
+-
+-
+ def redefines_test(repo_path: str, base: str, new: str) -> bool:
+-    """True when new defines a test of base once more (Python test / class, JUnit @Test fun|void, it|test('title') within the same
+-    describe path, shell function): the appended copy shadows (or doubles) the existing one."""
++    """True when new defines a test of base once more (Python test / class, JUnit @Test fun|void, it|test('title'),
++    shell function): the appended copy shadows (or doubles) the existing one."""
+     ext = os.path.splitext(repo_path)[1].lower()
+     if ext == ".py":
+         b, n = _py_def_counts(base), _py_def_counts(new)
+@@ -418,11 +362,7 @@ def redefines_test(repo_path: str, base: str, new: str) -> bool:
+         rx = next((r for exts, r in _DEF_RULES if ext in exts), None)
+         if rx is None:
+             return False
+-        b = n = None
+-        if rx is _JS_TEST_DEF:
+-            b, n = _js_def_counts(base), _js_def_counts(new)
+-        if b is None or n is None:
+-            b, n = _def_counts(rx, base), _def_counts(rx, new)
++        b, n = _def_counts(rx, base), _def_counts(rx, new)
+     return any(cnt > b.get(k, 0) >= 1 for k, cnt in n.items())
+ 
+ 
+@@ -432,18 +372,6 @@ _STATUS_NEUTRALIZER = re.compile(r"\bexit\s+0\b|^\s*exit\s*(?:[;#].*)?$|^\s*(?:t
+                                  r"\bset\s+\+e\b|\bexit\s*\(\s*0?\s*\)")
+ 
+ 
+-# A shell runner's exit status is its LAST command's unless `set -e` stops it at the first failure: one command appended at the end
+-# (`echo done`) makes it exit 0 over a failing check before it (decided with the user, 2026-10-09,
+-# tests/gates/test_gate_runner_no_errexit.sh: an appended code line is an edit of a shell runner that has no errexit).
+-_ERREXIT = re.compile(r"^#![^\n]*[ \t]-[A-Za-z]*e|^[ \t]*set[ \t]+(?:-[A-Za-z]*e[A-Za-z]*|-o[ \t]+errexit)\b", re.M)
+-
+-
+-def _shell_runner_without_errexit(repo_path: str, base_text: str) -> bool:
+-    ext = os.path.splitext(repo_path)[1].lower()
+-    shell = ext in (".sh", ".bash", ".zsh") or (ext == "" and base_text.startswith("#!") and "sh" in base_text.split("\n", 1)[0])
+-    return shell and not _ERREXIT.search(base_text)
+-
+-
+ def _git_line_split(data: bytes) -> list:
+     """git's line model: a line ends at "\\n"; a last line without one is a different line than the same text with one."""
+     parts = data.split(b"\n")
+@@ -460,8 +388,7 @@ def test_change_is_append_only(base_ref: str, repo_path: str, old_path: str = ""
+     Compared in-process from blobs read in batches, not one `git diff -U0` per file (A12, 2026-10-09): only additions
+     exist exactly when every base line is kept in order (a subsequence), which is what git's minimal diff shows; the
+     added lines are the same whatever the alignment. An appended definition that redefines an existing test is an edit
+-    (redefines_test, A6). runner: a suite runner script (A2): an appended _STATUS_NEUTRALIZER line is an edit too, and so is any
+-    appended code line of a shell runner whose base has no errexit (_shell_runner_without_errexit)."""
++    (redefines_test, A6). runner: a suite runner script (A2): an appended _STATUS_NEUTRALIZER line is an edit too."""
+     base = blob_at(base_ref, old_path or repo_path)
+     new = worktree_bytes(repo_path)
+     if new is not None and new == base:
+@@ -479,10 +406,7 @@ def test_change_is_append_only(base_ref: str, repo_path: str, old_path: str = ""
+             added.append(line.decode("utf-8", errors="replace"))
+     if i < len(old_lines) or any(TEST_SKIP_RE.search(a) or (runner and _STATUS_NEUTRALIZER.search(a)) for a in added):
+         return False
+-    base_text = base.decode("utf-8", errors="replace")
+-    if runner and _shell_runner_without_errexit(repo_path, base_text) and any(a.strip() and not a.lstrip().startswith("#") for a in added):
+-        return False                                  # no set -e: the appended command decides the exit status
+-    return not redefines_test(repo_path, base_text, new.decode("utf-8", errors="replace"))
++    return not redefines_test(repo_path, base.decode("utf-8", errors="replace"), new.decode("utf-8", errors="replace"))
+ 
+ 
+ def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: bool = False) -> bool:

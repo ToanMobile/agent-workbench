@@ -1,0 +1,84 @@
+diff --git a/universal-agent-devkit/hooks/comment_claim_guard.sh b/universal-agent-devkit/hooks/comment_claim_guard.sh
+index 28102bf..d47c27b 100755
+--- a/universal-agent-devkit/hooks/comment_claim_guard.sh
++++ b/universal-agent-devkit/hooks/comment_claim_guard.sh
+@@ -136,64 +136,12 @@ HASH_RE = re.compile(r"^\s*#+\s?(.*)$")
+ HASH_MARKER = re.compile(r"^(?:-\*-|(?:type|pragma|pylint|mypy|pyright|fmt|isort|ruff|flake8|vim?|ex|frozen_string_literal"
+                          r"|yaml-language-server|rubocop)\s*:|(?:en)?coding\s*[:=]|noqa\b|nosec\b"
+                          r"|shellcheck\s+(?:disable|enable|source|shell)\b|noinspection\b)", re.I)
+-# Also read (2026-10-09 follow-up, tests/gates/test_comment_claim_docstring_trailing.sh): the body of a Python docstring (a string
+-# statement that starts a line with triple quotes; an ASSIGNED triple-quoted string is data) and a comment after code on the same
+-# line (a # or // outside any string literal).
+-DOCSTR_RE = re.compile(r"^\s*[rRuUbB]{0,2}(\"\"\"|\x27\x27\x27)(.*)$")
+-
+-def trailing_comment(ln, hash_lang):
+-    """The text of a comment that follows code on the same line, or None."""
+-    q, i, n = None, 0, len(ln)
+-    while i < n:
+-        c = ln[i]
+-        if q:
+-            if c == "\\":
+-                i += 2
+-                continue
+-            if c == q:
+-                q = None
+-        elif c in "\"\x27`":
+-            q = c
+-        elif hash_lang and c == "#" and i > 0 and ln[i - 1] in " \t":
+-            return ln[i + 1:]
+-        elif not hash_lang and c == "/" and ln.startswith("//", i) and (i == 0 or ln[i - 1] != ":"):
+-            return ln[i + 2:]
+-        i += 1
+-    return None
+-
+ comment_lines = []
+-is_py, doc = path.endswith(".py"), None   # doc: the closing triple quote of the docstring being read
+ for i, ln in enumerate(written.split("\n"), 1):
+     if hash_lang:
+-        if is_py:
+-            if doc:
+-                end = ln.find(doc)
+-                body = (ln if end < 0 else ln[:end]).strip()
+-                if body:
+-                    comment_lines.append((i, body))
+-                if end >= 0:
+-                    doc = None
+-                continue
+-            dm = DOCSTR_RE.match(ln)
+-            if dm:
+-                rest = dm.group(2)
+-                end = rest.find(dm.group(1))
+-                body = (rest if end < 0 else rest[:end]).strip()
+-                if body:
+-                    comment_lines.append((i, body))
+-                if end < 0:
+-                    doc = dm.group(1)
+-                continue
+         m = HASH_RE.match(ln)
+-        if m:
+-            if not ln.lstrip().startswith("#!") and not HASH_MARKER.match(m.group(1)):
+-                body = m.group(1).strip()
+-                if body:
+-                    comment_lines.append((i, body))
+-            continue
+-        tail = trailing_comment(ln, True)
+-        if tail is not None and not HASH_MARKER.match(tail.strip()):
+-            body = tail.strip()
++        if m and not ln.lstrip().startswith("#!") and not HASH_MARKER.match(m.group(1)):
++            body = m.group(1).strip()
+             if body:
+                 comment_lines.append((i, body))
+         continue
+@@ -202,12 +150,6 @@ for i, ln in enumerate(written.split("\n"), 1):
+         body = re.sub(r"\*+/\s*$", "", m.group(1)).strip()
+         if body:
+             comment_lines.append((i, body))
+-        continue
+-    tail = trailing_comment(ln, False)
+-    if tail is not None:
+-        body = tail.strip()
+-        if body:
+-            comment_lines.append((i, body))
+ if not comment_lines:
+     sys.exit(0)
+ 

@@ -1,0 +1,188 @@
+diff --git a/universal-agent-devkit/hooks/bash_write_ledger.sh b/universal-agent-devkit/hooks/bash_write_ledger.sh
+index 92b7adb..68ac6f9 100755
+--- a/universal-agent-devkit/hooks/bash_write_ledger.sh
++++ b/universal-agent-devkit/hooks/bash_write_ledger.sh
+@@ -72,16 +72,7 @@ TUID=""
+ RX_TUID='"tool_use_id"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+ [[ ${INPUT} =~ ${RX_TUID} ]] && TUID="${BASH_REMATCH[1]}"
+ 
+-# The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
+-# none). Outside a git tree there is no project and nothing is written (tests/gates/test_hook_log_dir.sh): a run at /
+-# created /.claude/audit-gate/.
+-REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
+-if [ -z "${REPO_ROOT}" ]; then
+-  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+-  [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+-  REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
+-fi
+-[ -n "${REPO_ROOT}" ] || exit 0
++REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+ LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
+ [ -d "${LOG_DIR}" ] || mkdir -p "${LOG_DIR}" 2>/dev/null || exit 0
+ [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+diff --git a/universal-agent-devkit/hooks/prompt_context.sh b/universal-agent-devkit/hooks/prompt_context.sh
+index 90e28a0..b41f131 100755
+--- a/universal-agent-devkit/hooks/prompt_context.sh
++++ b/universal-agent-devkit/hooks/prompt_context.sh
+@@ -62,17 +62,8 @@ done
+ # commands and prompts under 8 characters.
+ # rule_context.py then names the project-rule sections (.agents/context/rules-index.md)
+ # whose title matches the request — the rules themselves are not loaded at startup.
++REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+ PAYLOAD="$(cat)"
+-# The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
+-# none). Outside a git tree there is no project and nothing is written (tests/gates/test_hook_log_dir.sh): a run at /
+-# created /.claude/audit-gate/.
+-REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
+-if [ -z "${REPO_ROOT}" ]; then
+-  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+-  [[ ${PAYLOAD} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+-  REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
+-fi
+-[ -n "${REPO_ROOT}" ] || exit 0
+ RULES="$(dirname "${ENRICH}")/rule_context.py"
+ RULES_OUT=""
+ if [ -f "${RULES}" ] && [ -f "${REPO_ROOT}/.agents/context/rules-index.md" ]; then
+diff --git a/universal-agent-devkit/hooks/proof_gate.sh b/universal-agent-devkit/hooks/proof_gate.sh
+index 9b483a5..2c52c12 100755
+--- a/universal-agent-devkit/hooks/proof_gate.sh
++++ b/universal-agent-devkit/hooks/proof_gate.sh
+@@ -33,22 +33,12 @@
+ # ─────────────────────────────────────────────────────────────────────────────
+ set -u
+ 
+-INPUT="$(cat)"
+-
+-# The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
+-# none). Outside a git tree there is no project and nothing is written (tests/gates/test_hook_log_dir.sh): a run at /
+-# created /.claude/audit-gate/.
+-REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
+-if [ -z "${REPO_ROOT}" ]; then
+-  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+-  [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+-  REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
+-fi
+-[ -n "${REPO_ROOT}" ] || exit 0
++REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+ LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
+ mkdir -p "${LOG_DIR}" 2>/dev/null
+ [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+ 
++INPUT="$(cat)"
+ if [ "${PROOF_GATE:-1}" = "0" ]; then
+   echo "[$(date +%Y-%m-%dT%H:%M:%S)] skipped: PROOF_GATE=0" >> "${LOG_DIR}/proof_gate.log"
+   exit 0
+diff --git a/universal-agent-devkit/hooks/regression_gate.sh b/universal-agent-devkit/hooks/regression_gate.sh
+index 899a82b..3c9f873 100755
+--- a/universal-agent-devkit/hooks/regression_gate.sh
++++ b/universal-agent-devkit/hooks/regression_gate.sh
+@@ -62,16 +62,7 @@
+ set -u
+ 
+ INPUT="$(cat)"
+-# The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
+-# none). Outside a git tree there is no project and nothing is written (tests/gates/test_hook_log_dir.sh): a run at /
+-# created /.claude/audit-gate/.
+-REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
+-if [ -z "${REPO_ROOT}" ]; then
+-  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+-  [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+-  REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
+-fi
+-[ -n "${REPO_ROOT}" ] || { [ "${REGRESSION_GATE_PROBE:-0}" = "1" ] && printf '%s\n' '{"state":"disabled"}'; exit 0; }
++REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+ LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
+ PROBE="${REGRESSION_GATE_PROBE:-0}"
+ if [ "${PROBE}" != "1" ]; then  # the probe writes nothing
+diff --git a/universal-agent-devkit/hooks/review_timing_guard.sh b/universal-agent-devkit/hooks/review_timing_guard.sh
+index 132c314..2f075d6 100755
+--- a/universal-agent-devkit/hooks/review_timing_guard.sh
++++ b/universal-agent-devkit/hooks/review_timing_guard.sh
+@@ -31,23 +31,14 @@
+ # ─────────────────────────────────────────────────────────────────────────────
+ set -u
+ 
+-# Drain stdin before any early exit, otherwise the caller gets EPIPE.
+-INPUT="$(cat)"
+-
+-# The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
+-# none). Outside a git tree there is no project and nothing is written (tests/gates/test_hook_log_dir.sh): a run at /
+-# created /.claude/audit-gate/.
+-REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
+-if [ -z "${REPO_ROOT}" ]; then
+-  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+-  [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+-  REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
+-fi
+-[ -n "${REPO_ROOT}" ] || exit 0
++REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+ LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
+ mkdir -p "${LOG_DIR}"
+ [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+ 
++# Drain stdin before any early exit, otherwise the caller gets EPIPE.
++INPUT="$(cat)"
++
+ if [ "${REVIEW_TIMING_GUARD:-1}" = "0" ]; then
+   echo "[$(date +%Y-%m-%dT%H:%M:%S)] REVIEW_TIMING_GUARD=0 — gate bypassed" >> "${LOG_DIR}/review_timing_guard.log" 2>/dev/null
+   exit 0
+diff --git a/universal-agent-devkit/hooks/security_gate.sh b/universal-agent-devkit/hooks/security_gate.sh
+index 0328e01..0287084 100755
+--- a/universal-agent-devkit/hooks/security_gate.sh
++++ b/universal-agent-devkit/hooks/security_gate.sh
+@@ -47,22 +47,13 @@
+ # ─────────────────────────────────────────────────────────────────────────────
+ set -u
+ 
+-INPUT="$(cat)"
+-
+-# The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
+-# none). Outside a git tree there is no project and nothing is written (tests/gates/test_hook_log_dir.sh): a run at /
+-# created /.claude/audit-gate/.
+-REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
+-if [ -z "${REPO_ROOT}" ]; then
+-  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+-  [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+-  REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
+-fi
+-[ -n "${REPO_ROOT}" ] || exit 0
++REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+ LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
+ mkdir -p "${LOG_DIR}"
+ [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+ 
++INPUT="$(cat)"
++
+ if [ "${SECURITY_GATE:-1}" = "0" ]; then
+   echo "[$(date +%Y-%m-%dT%H:%M:%S)] SECURITY_GATE=0 — gate bypassed" >> "${LOG_DIR}/security_gate.log" 2>/dev/null
+   exit 0
+diff --git a/universal-agent-devkit/hooks/test_evidence_gate.sh b/universal-agent-devkit/hooks/test_evidence_gate.sh
+index bdc9de9..4a730aa 100755
+--- a/universal-agent-devkit/hooks/test_evidence_gate.sh
++++ b/universal-agent-devkit/hooks/test_evidence_gate.sh
+@@ -78,22 +78,13 @@
+ # ─────────────────────────────────────────────────────────────────────────────
+ set -u
+ 
+-INPUT="$(cat)"
+-
+-# The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
+-# none). Outside a git tree there is no project and nothing is written (tests/gates/test_hook_log_dir.sh): a run at /
+-# created /.claude/audit-gate/.
+-REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
+-if [ -z "${REPO_ROOT}" ]; then
+-  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+-  [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+-  REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
+-fi
+-[ -n "${REPO_ROOT}" ] || exit 0
++REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+ LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
+ mkdir -p "${LOG_DIR}"
+ [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+ 
++INPUT="$(cat)"
++
+ if [ "${TEST_EVIDENCE_GATE:-1}" = "0" ]; then
+   echo "[$(date +%Y-%m-%dT%H:%M:%S)] TEST_EVIDENCE_GATE=0 — gate bypassed" >> "${LOG_DIR}/test_evidence_gate.log" 2>/dev/null
+   exit 0

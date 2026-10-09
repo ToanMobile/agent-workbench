@@ -1,0 +1,12 @@
+diff --git a/universal-agent-devkit/scripts/git/worktree.py b/universal-agent-devkit/scripts/git/worktree.py
+--- a/universal-agent-devkit/scripts/git/worktree.py
++++ b/universal-agent-devkit/scripts/git/worktree.py
+@@ -1480,7 +1480,7 @@
+     if r.returncode != 0:
+         return ("blocked", tr("commit trong worktree bị từ chối (hook pre-commit?): sửa rồi commit ở worktree, lần merge sau sẽ chạy tiếp: ",
+                               "the commit in the worktree was refused (pre-commit hook?): fix it and commit in the worktree, the next merge goes on: ")
+-                + _refusal_text(r.stdout + r.stderr), {"files": work[:20]})
++                + (r.stdout + r.stderr).strip()[-500:], {"files": work[:20]})
+     return None
+ 
+ 

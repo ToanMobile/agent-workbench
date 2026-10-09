@@ -1,0 +1,12 @@
+diff --git a/universal-agent-devkit/hooks/test_evidence_gate.sh b/universal-agent-devkit/hooks/test_evidence_gate.sh
+--- a/universal-agent-devkit/hooks/test_evidence_gate.sh
++++ b/universal-agent-devkit/hooks/test_evidence_gate.sh
+@@ -1282,8 +1282,6 @@
+                 if dest:
+                     cwd = dest
+                 continue
+-            if not _segment_is_runner(seg):
+-                continue
+             noted = False
+             for tok in run_targets(seg):
+                 dest = tok if os.path.isabs(tok) else _resolve_dir(tok, cwd)
