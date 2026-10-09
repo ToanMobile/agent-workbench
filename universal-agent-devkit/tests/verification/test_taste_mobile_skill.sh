@@ -125,15 +125,16 @@ else:
 
 import subprocess
 script = os.path.join(ROOT, "scripts", "governance", "profile_skills.py")
-for prof in ["android", "ios", "universal", "backend"]:
+for prof in ["android", "ios", "automotive", "universal", "backend"]:
     out = subprocess.check_output(["python3", script, prof], text=True)
     if "taste-mobile-app" not in out:
         fail(f"profile_skills.py missing taste-mobile-app for {prof}")
         break
 else:
-    out = subprocess.check_output(["python3", script, "game"], text=True)
-    if "taste-mobile-app" in out:
-        fail("profile_skills.py returned taste-mobile-app for game")
+    # game (Unity UI) and web (the skill's own description skips web; 2026-10-09 host install) never get it
+    leaked = [p for p in ("game", "web") if "taste-mobile-app" in subprocess.check_output(["python3", script, p], text=True).split()]
+    if leaked:
+        fail(f"profile_skills.py returned taste-mobile-app for {leaked}")
     else:
         ok("profile_skills.py output valid")
 

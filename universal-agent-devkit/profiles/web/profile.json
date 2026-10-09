@@ -23,6 +23,7 @@
     "android-real-device-qa",
     "compose-recomp-audit",
     "deploy",
+    "taste-mobile-app",
     "unity-gc-audit"
   ],
   "exclude_agents": [

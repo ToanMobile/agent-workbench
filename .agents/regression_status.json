@@ -342,7 +342,8 @@
         "duration": "60.27s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-HOOK-01/20261009-123530.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-09 12:37:16"
       },
       "history": [
         {
@@ -420,7 +421,8 @@
         "duration": "22.80s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-HOOK-02/20261009-123453.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-09 12:37:16"
       },
       "history": [
         {
@@ -570,16 +572,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-09 12:36:11",
-        "ts": 1791524171.693163,
+        "at": "2026-10-09 12:43:08",
+        "ts": 1791524588.591918,
         "task": null,
-        "commit": "44bbfc5+dirty",
-        "duration": "100.27s",
+        "commit": "6dca60d+dirty",
+        "duration": "149.21s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261009-123610.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261009-124308.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-09 12:43:08",
+          "ts": 1791524588.591918,
+          "task": null,
+          "commit": "6dca60d+dirty",
+          "duration": "149.21s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261009-124308.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-09 12:36:11",
@@ -622,17 +635,6 @@
           "duration": "98.51s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261009-121456.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-09 12:12:35",
-          "ts": 1791522755.160903,
-          "task": null,
-          "commit": "3bde912+dirty",
-          "duration": "101.19s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261009-121234.log",
           "deleted": []
         }
       ],
@@ -683,7 +685,8 @@
         "duration": "0.44s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-WB-CONFIG-01/20261009-123611.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-09 12:37:16"
       },
       "history": [
         {
@@ -1072,7 +1075,8 @@
         "duration": "16.17s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-SESSION-01/20261009-123446.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-09 12:37:16"
       },
       "history": [
         {
@@ -1641,7 +1645,15 @@
       "linked_ts": 1791524179.754949,
       "runs_in_suite": [
         "universal-agent-devkit/tests/context_memory/test_scratch_cleanup.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-09 12:37:18",
+        "ts": 1791524238.7939122,
+        "status": "INCONCLUSIVE",
+        "mode": "revert",
+        "fix_commit": "44bbfc5adb45",
+        "reason": "revert 44bbfc5adb45 xung đột với code hiện tại: Falling back to direct application...\nerror: patch failed: universal-agent-devkit/scripts/governance/scratch_cleanup.py:1\nerror: universal-agent-devkit/scripts/"
+      }
     }
   },
   "meta": {

@@ -196,9 +196,9 @@ Whenever the user asks to fix a bug, refactor code, or change behavior in a comp
 > | `android` | Compose, Coroutines, Vitals | — |
 > | `automotive` | AAOS, CAN, Vehicle HAL | `unity-gc-audit` |
 > | `ios` | Swift 6, SwiftUI | Android/Unity skills |
-> | `web` | TypeScript, React/Next.js | Android/Unity skills |
+> | `web` | TypeScript, React/Next.js | Android/Unity skills + `taste-mobile-app` |
 > | `backend` | API services (Python/Go/Rust/Node) | Android/Unity skills + `qa-visual` |
-> | `game` | Unity 6, Zero-GC | Android skills |
+> | `game` | Unity 6, Zero-GC | Android skills + `taste-mobile-app` |
 > | `voice-assistant` | edge audio AI | `compose-recomp-audit`, `unity-gc-audit` |
 > | `universal` | anything else | Android/Unity skills |
 >
