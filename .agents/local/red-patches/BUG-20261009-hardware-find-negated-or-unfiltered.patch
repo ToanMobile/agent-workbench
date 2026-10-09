@@ -1,7 +1,7 @@
 diff --git a/universal-agent-devkit/hooks/hardware_safety_gate.sh b/universal-agent-devkit/hooks/hardware_safety_gate.sh
 --- a/universal-agent-devkit/hooks/hardware_safety_gate.sh
 +++ b/universal-agent-devkit/hooks/hardware_safety_gate.sh
-@@ -425,46 +425,7 @@
+@@ -426,46 +426,7 @@
              hit = lambda x: _fnm(x.lower(), pat.lower()) if fold else _fnm(x, pat)
          if not any(all(hit(x) for x in g) for g in groups):
              live.add(k)
@@ -34,7 +34,7 @@ diff --git a/universal-agent-devkit/hooks/hardware_safety_gate.sh b/universal-ag
 -                cur, i = cur or i in live, i + 2
 -            elif a == "-fprintf":
 -                i += 3
--            elif a in FIND_ARG1:
+-            elif a in FIND_ARG1 or re.fullmatch(r"-newer[aBcmt][aBcmt]", a):
 -                i += 2
 -            elif a in ("-exec", "-execdir", "-ok", "-okdir"):
 -                while i < len(args) and args[i] not in (";", "+"):

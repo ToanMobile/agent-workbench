@@ -10,7 +10,7 @@ diff --git a/universal-agent-devkit/hooks/block-dangerous-git.sh b/universal-age
              PENDING_FEED.append(UNREADABLE_CSUBST)   # bash -c "( $(curl ...) )", "if $(...)", "exec $(...)": the command word is generated text
          return danger_in_git(rest[0], rest[1:]) if rest else None
      if prog in AWKS:
-@@ -1184,7 +1184,7 @@
+@@ -1194,7 +1194,7 @@
          inners, outs = [], []
          plain = strip_subst(text, inners, outs)
          if plain is not None:
