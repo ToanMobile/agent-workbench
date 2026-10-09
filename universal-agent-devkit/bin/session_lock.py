@@ -621,7 +621,8 @@ def get_active_sessions(cwd=None, current_sid=None, stale_s=180.0):
         info_cwd = info.get("cwd")
         if info.get("gitdir") and my_gitdir:
             # Exact: each worktree has its own git dir (also for one nested inside this checkout).
-            if os.path.realpath(info["gitdir"]) != os.path.realpath(my_gitdir):
+            reg_gdir, my_gdir = os.path.realpath(info["gitdir"]), os.path.realpath(my_gitdir)
+            if reg_gdir != my_gdir and not _same_dir(reg_gdir, my_gdir):   # APFS: one git dir, two spellings
                 continue
         elif top and info_cwd:
             # Older record without a git dir: compare by path.

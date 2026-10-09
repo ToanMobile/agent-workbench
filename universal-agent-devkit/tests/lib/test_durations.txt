@@ -208,3 +208,4 @@
 6 tests/gates/test_gate_runner_no_errexit.sh
 1 tests/verification/test_impact_map_bug_capture.sh
 2 tests/worktree_git/test_worktree_automerge_reason.sh
+1 tests/gates/test_security_gate_no_project.sh

@@ -78,7 +78,12 @@ set -o errexit
 grep -q "return 1" src/core.py
 ' 'echo done
 '
-case_ "#!/bin/sh -e: an appended command stays a pure append"   free    '#!/bin/sh -e
+case_ "#!/bin/sh -e alone is no errexit (bash run.sh ignores it)" flagged '#!/bin/sh -e
+grep -q "return 1" src/core.py
+' 'echo done
+'
+case_ "set -o pipefail -e: an appended command stays a pure append" free    '#!/bin/bash
+set -o pipefail -e
 grep -q "return 1" src/core.py
 ' 'echo done
 '

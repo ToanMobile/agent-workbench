@@ -58,7 +58,13 @@ if [ -z "${REPO_ROOT}" ]; then
   [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
   REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
 fi
-[ -n "${REPO_ROOT}" ] || exit 0
+if [ -z "${REPO_ROOT}" ]; then   # no project to guard, and nothing is written; the gate still fails CLOSED without python3 (below)
+  [ "${SECURITY_GATE:-1}" = "0" ] && exit 0
+  command -v python3 >/dev/null 2>&1 && exit 0
+  case "${INPUT}" in *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exit 0 ;; esac
+  echo "🛑 security_gate: cần python3 để kiểm tra — chặn để an toàn. Cài python3 hoặc đặt SECURITY_GATE=0 để tắt gate." >&2
+  exit 2
+fi
 LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
 mkdir -p "${LOG_DIR}"
 [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true

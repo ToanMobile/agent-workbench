@@ -422,29 +422,38 @@ def find_narrowed(args, starts):
             hit = lambda x: _fnm(x.lower(), pat.lower()) if fold else _fnm(x, pat)
         if not any(all(hit(x) for x in g) for g in groups):
             live.add(k)
-    alt_live, i = False, 0
-    while i < len(args):
-        a = args[i]
-        if a in ("!", "-not"):
-            nxt = args[i + 1] if i + 1 < len(args) else ""
-            if nxt == "(":   # a negated group only restricts further (AND NOT): skip it whole, its filters narrow nothing
-                depth, i = 0, i + 1
-                while i < len(args):
-                    depth += (args[i] == "(") - (args[i] == ")")
+    def seq(i, in_group):
+        """(narrows, next index) of the expression from args[i] to the ")" that closes its group (or the end). It narrows when EVERY
+        alternative (split at -o / -or / a comma) holds a positive filter of its own; a nested group is one term that counts when it
+        narrows by itself; a negated filter or group, and the arguments of -exec / -execdir / -ok / -okdir, narrow nothing."""
+        alts, cur = [], False
+        while i < len(args):
+            a = args[i]
+            if a == ")":
+                if in_group:
+                    break
+                i += 1
+            elif a in ("-o", "-or", ","):
+                alts.append(cur)
+                cur, i = False, i + 1
+            elif a in ("!", "-not"):
+                nxt = args[i + 1] if i + 1 < len(args) else ""
+                if nxt == "(":   # a negated group only restricts further (AND NOT): skip it whole
+                    i = seq(i + 2, True)[1] + 1
+                else:
+                    i += 3 if nxt in FIND_NAME_FILTERS else 1
+            elif a == "(":
+                sub, i = seq(i + 1, True)
+                cur, i = cur or sub, i + 1
+            elif a in ("-exec", "-execdir", "-ok", "-okdir"):
+                while i < len(args) and args[i] not in (";", "+"):
                     i += 1
-                    if depth == 0:
-                        break
-                continue
-            i += 3 if nxt in FIND_NAME_FILTERS else 1
-            continue
-        if a in ("-o", "-or"):
-            if not alt_live:
-                return False
-            alt_live = False
-        elif i in live:
-            alt_live = True
-        i += 1
-    return alt_live
+                i += 1
+            else:
+                cur, i = cur or i in live, i + 1
+        alts.append(cur)
+        return all(alts), i
+    return seq(0, False)[0]
 
 def feed_paths(feed):
     """The paths a command piped into `xargs rm` names: find start points ([] when a name filter narrows them), the

@@ -748,7 +748,7 @@ def analyse_simple(tokens, depth):
                 while k < len(rest) and rest[k] != "--" and len(rest[k]) > 1 and rest[k][0] in "-+":
                     k += 2 if rest[k] in SHELL_OPTS_WITH_ARG else 1
                 k += 1 if k < len(rest) and rest[k] == "--" else 0
-                if k < len(rest) and rest[k].lstrip().startswith(SUBST):
+                if k < len(rest) and subst_command_word(rest[k]):
                     PENDING_FEED.append(UNREADABLE_CSUBST)   # bash -c "$(curl ...)": the script is whatever the command prints
                 return analyse(rest[k], depth + 1) if k < len(rest) else None
         for j, a in enumerate(rest):
@@ -1072,6 +1072,17 @@ UNREADABLE_CSUBST = ("shell -c chạy văn bản do $(…) sinh ra (bash -c \"$(
                      "chạy thẳng lệnh đó")
 UNREADABLE_OSUBST = ("shell trong >(…) đọc văn bản do lệnh khác ghi vào (… | tee >(sh)): cổng không đọc được nội dung — "
                      "chạy thẳng lệnh đó")
+
+def subst_command_word(script):
+    """True when a command of a -c script starts with a generated word (a command substitution): ": ; $(curl ...)", "${V:+}$(...)",
+    "a && $(...)". NAME=value words in front of it do not count as the command."""
+    for part in re.split(r"[;&|\n]+", script):
+        words = part.split()
+        while words and re.match(r"[A-Za-z_]\w*=", words[0]):
+            words.pop(0)
+        if words and SUBST in words[0]:
+            return True
+    return False
 
 def out_subst_shell(inner):
     """True when a command inside >(…) is a shell that runs what is written to it (no -c, no script operand, or -s / a lone -)."""

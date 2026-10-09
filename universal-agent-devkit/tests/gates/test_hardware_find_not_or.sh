@@ -61,5 +61,10 @@ check 0 "find . -name '*.pyc' -print0 | xargs -0 rm -rf"
 # a negated group only restricts what a positive filter already narrows (independent audit T0024): not a reason to refuse
 check 0 'find . -name "*.txt" ! \( -name "*.py" \) -delete'
 check 0 'find . -name "*.txt" -not \( -name "keep*" -o -name "*.md" \) -delete'
+# review (fresh context): -o inside a positive group, and -o as an argument of -exec, are not alternatives of the whole expression
+check 0 "find . -name '*.pyc' \\( -type f -o -type l \\) -delete"
+check 0 "find . -name '*.tmp' -exec grep -q -o y {} \\; -delete"
+check 2 'find . \( -type f -o -name "*.x" \) -delete'
+check 2 "find . -name '*.pyc' , -delete"                       # the comma operator: -delete on its own matches everything
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_find_not_or: all passed" || { echo "❌ test_hardware_find_not_or: $FAILS failed"; exit 1; }

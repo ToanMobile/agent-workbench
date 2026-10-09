@@ -162,7 +162,7 @@ def trailing_comment(ln, hash_lang):
     return None
 
 comment_lines = []
-is_py, doc = path.endswith(".py"), None   # doc: the closing triple quote of the docstring being read
+is_py, doc, data = path.endswith(".py"), None, None   # doc: closing triple quote of the docstring being read; data: of an ASSIGNED string
 for i, ln in enumerate(written.split("\n"), 1):
     if hash_lang:
         if is_py:
@@ -174,6 +174,10 @@ for i, ln in enumerate(written.split("\n"), 1):
                 if end >= 0:
                     doc = None
                 continue
+            if data:   # inside an assigned triple-quoted string: its closing line is no docstring opening, its lines are data
+                if data in ln:
+                    data = None
+                continue
             dm = DOCSTR_RE.match(ln)
             if dm:
                 rest = dm.group(2)
@@ -184,6 +188,7 @@ for i, ln in enumerate(written.split("\n"), 1):
                 if end < 0:
                     doc = dm.group(1)
                 continue
+            data = next((q for q in ("\"\"\"", "\x27\x27\x27") if ln.count(q) % 2 == 1), None)   # opens an assigned string: the rest of the line is code
         m = HASH_RE.match(ln)
         if m:
             if not ln.lstrip().startswith("#!") and not HASH_MARKER.match(m.group(1)):

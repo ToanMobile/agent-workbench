@@ -243,3 +243,19 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Nới nhánh bỏ qua gate biến lỗ phân loại cũ thành fail-open
 - **Nguyên nhân:** 2026-10-09 Dot 11: regression_gate cho lượt không dòng trạng thái được bỏ qua test nếu OUTCOME không thấy claim; OUTCOME phân biệt hoa/thường nên 'Đã fix…', 'Fixed', 'Done.', 'Xong:' bị coi là làm dở và bỏ qua test — trước đó lỗ này vô hại vì chỉ áp cho câu CHƯA XONG. Cùng ngày: nhả khoá ở Stop sẽ đua với gate cuối lượt vì các hook Stop chạy SONG SONG (docs Claude Code).
 - **Quy tắc phòng ngừa & Cách fix:** Khi mở rộng điều kiện SKIP của một gate: liệt kê mọi câu bàn giao thật (mọi kiểu hoa/thường, dòng trạng thái ở dòng sau, tiếng Anh/Việt) thành ca test phải bị chặn, chạy ĐỎ trên bộ phân loại hiện tại trước khi nới; từ khoá claim không phân biệt hoa/thường, chỉ XONG/PASS viết hoa. Tín hiệu 'phiên rảnh' dùng Notification idle_prompt, không dùng Stop.
+
+---
+
+### [INSTINCT-029] Test bảo vệ không được sandbox RED-proof chọn nên bằng chứng ra VACUOUS giả
+- **Ngày phát hiện:** 2026-10-09
+- **Hiện tượng lỗi:** Test bảo vệ không được sandbox RED-proof chọn nên bằng chứng ra VACUOUS giả
+- **Nguyên nhân:** run_impacted.sh chỉ chọn test có nhắc TÊN file đổi; test_bug_capture.sh chạm enrich_context.py qua prompt_context.sh nên không bao giờ được chọn: gate không chạy nó và RED-proof (sandbox không có upstream, cửa sổ 6 giờ) kết luận test không bắt bug (2026-10-09)
+- **Quy tắc phòng ngừa & Cách fix:** Trước khi tin VACUOUS/INCONCLUSIVE chạy run_impacted.sh --list với file bị đưa bug trở lại; thiếu test bảo vệ thì thêm dòng vào tests/impact_map.txt (kèm test). Đặt DEVKIT_IMPACTED_SINCE=0 khi chứng minh trong sandbox
+
+---
+
+### [INSTINCT-030] bash 3.2 cắt đối số "$(cmd "{\"a\":…}")" tại dấu nháy thoát
+- **Ngày phát hiện:** 2026-10-09
+- **Hiện tượng lỗi:** bash 3.2 cắt đối số "$(cmd "{\"a\":…}")" tại dấu nháy thoát
+- **Nguyên nhân:** Trên macOS /bin/bash 3.2 một từ dạng "$(f x "…\"…\"…")" làm đối số lệnh bị tách ở dấu nháy thoát; hook chạy trên payload rác và test camelCase khẳng định sai rc (2026-10-09), Linux bash 5 không lỗi
+- **Quy tắc phòng ngừa & Cách fix:** Dựng chuỗi có \" trong phép gán (v="$(cmd …)") rồi truyền "$v"; kiểm test bash bằng /bin/bash trên macOS, không chỉ bash 5

@@ -59,6 +59,9 @@ check 0 ".py: trailing tool marker"                               app/orders.py 
 check 0 ".py: a URL with // after code"                           app/msg.py    Write 'URL = "http://example.com/never called"\n'
 check 0 ".py when the profile has no .py (gated like //)"         app/orders.py Write 'def f():\n    """covered by test_orders"""\n' DEVKIT_SOURCE_EXTS=.kt
 check 0 ".md is not code"                                         notes.md      Write 'x  # covered by test_orders\n'
+# review (fresh context): the CLOSING line of an assigned triple-quoted string is no docstring opening
+check 2 ".py: a claim in a real docstring after an assigned SQL string"  app/sql.py Write 'SQL = """\nSELECT 1\n"""\n\ndef f():\n    """Only used by the CLI."""\n    return 1\n'
+check 0 ".py: code after an assigned string is not read as comment"        app/msg.py Write 'MSG = textwrap.dedent("""\n    hello\n""")\nprint("covered by ops")\n'
 # the full-line forms are unchanged
 check 2 ".py: full-line '# covered by' (control)"                 app/orders.py Write '# covered by test_orders\nX = 1\n'
 check 2 ".go: full-line '// covered by' (control)"                app/main.go   Write 'package main\n// covered by FooTest\nfunc f() {}\n'

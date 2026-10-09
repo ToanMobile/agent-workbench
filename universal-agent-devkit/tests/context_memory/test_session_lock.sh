@@ -196,6 +196,18 @@ if [ -d "$TMP/REPO6" ]; then
   hook B PreToolUse Edit "$R6"; [ $? = 2 ] && ok "copy: a live holder whose cwd differs only in letter case still holds the checkout" || fail "case-only cwd difference freed a live holder"
   # The same directory in another spelling is the checkout for every containment check (string prefixes missed it on macOS).
   hook B PreToolUse Bash "$R6" "echo x > $TMP/REPO6/src/new.txt"; [ $? = 2 ] && ok "  … and a redirect into it spelled in the other letter case collides too" || fail "a redirect into the held checkout (other letter case) passed: $(cat "$TMP/err")"
+  # review (fresh context): the registry of live sessions (--full deferral) compares the same git dir by inode too
+  R7="$TMP/repo7"; mkdir -p "$R7" && git -C "$R7" init -q . && echo x > "$R7/a.txt"   # a fresh repo: no other session registered in it
+  python3 -I "$DEVKIT_DIR/bin/session_lock.py" --register --session RA --pid "$$" "$R7" >/dev/null 2>&1
+  nother="$(python3 -I - "$DEVKIT_DIR/bin" "$TMP/REPO7" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import session_lock as sl
+active, other, alone = sl.get_active_sessions(cwd=sys.argv[2], current_sid="RB")
+print(len(other))
+PY
+)"
+  [ "$nother" = 1 ] && ok "  … and the session registry sees a live session whose checkout is spelled in the other letter case" || fail "registry missed the session spelled in another letter case (other=$nother)"
 else
   ok "copy: case-insensitive check skipped (case-sensitive filesystem)"
 fi
