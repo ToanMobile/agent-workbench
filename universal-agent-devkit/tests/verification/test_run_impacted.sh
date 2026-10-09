@@ -71,7 +71,8 @@ t0=$(date +%s); out="$(cd "$R" && DEVKIT_TEST_JOBS=4 bash tests/run_impacted.sh 
 [ $((t1 - t0)) -lt 5 ] && ok "3 × 2 s tests run in parallel ($((t1 - t0)) s < 5 s)" || fail "not parallel: $((t1 - t0)) s"
 [ "$rc" = 1 ] && printf '%s' "$out" | grep -q "✖ tests/verification/test_broken.sh" && ok "a failing test still fails the run, named" || fail "rc=$rc: $out"
 printf '%s' "$out" | grep -q "✔ tests/context_memory/test_budgets.sh" && ok "test_budgets runs alone, after the others" || fail "budgets not alone: $out"
-[ "$(printf '%s\n' "$out" | grep -E '^[✔✖] ' | sed 's/^. //' | tr '\n' ' ')" = "$(printf '%s\n' "$out" | grep -E '^[✔✖] ' | sed 's/^. //' | sort | tr '\n' ' ')" ] \
+# (✔|✖), not [✔✖]: under a POSIX locale (Linux, LANG unset) grep reads a multibyte bracket class byte by byte and matches nothing
+[ "$(printf '%s\n' "$out" | grep -E '^(✔|✖) ' | sed 's/^[^ ]* //' | tr '\n' ' ')" = "$(printf '%s\n' "$out" | grep -E '^(✔|✖) ' | sed 's/^[^ ]* //' | sort | tr '\n' ' ')" ] \
   && ok "results are printed in list order" || fail "order: $out"
 
 # `agent-kit test` runs the WHOLE suite through `run_impacted.sh --all`: one test after another took ~19 min,
@@ -87,7 +88,7 @@ echo 'echo budgets' > "$A/tests/context_memory/test_budgets.sh"
     && { git branch -q -u origin/main 2>/dev/null || git branch -q -u origin/master; } )   # clean and pushed: nothing "changed"
 [ "$(cd "$A" && bash tests/run_impacted.sh --list)" = "tests/verification/test_repo_consistency.sh" ] || fail "setup: the --all fixture is not clean"
 t0=$(date +%s); out="$(cd "$A" && DEVKIT_TEST_JOBS=4 bash tests/run_impacted.sh --all 2>&1)"; rc=$?; t1=$(date +%s)
-n_ran="$(printf '%s\n' "$out" | grep -cE '^[✔✖] tests/')"
+n_ran="$(printf '%s\n' "$out" | grep -cE '^(✔|✖) tests/')"
 [ "$n_ran" = 6 ] && ok "--all on a clean tree selects every test ($n_ran)" || fail "--all selected $n_ran tests, not 6: $out"
 [ $((t1 - t0)) -lt 5 ] && ok "--all runs them in parallel ($((t1 - t0)) s < 5 s)" || fail "--all not parallel: $((t1 - t0)) s"
 [ "$rc" = 1 ] && printf '%s' "$out" | grep -q "✖ tests/verification/test_broken.sh" && ok "--all: a failing test fails the run, named" || fail "--all rc=$rc: $out"

@@ -307,14 +307,16 @@ TEST_SKIP_RE = re.compile(r"@Ignore\b|@Disabled\b|\[Ignore\b|\bt\.Skip|\bpytest\
                           r"\bunittest\.skip|\b(?:it|test|describe)\.skip\b|\bx(?:it|describe|test)\s*\(|XCTSkip")
 
 
-def test_change_is_append_only(base_ref: str, repo_path: str) -> bool:
+def test_change_is_append_only(base_ref: str, repo_path: str, old_path: str = "") -> bool:
     """True when the working tree only ADDS lines to this existing test file (a new test
     appended to it) and none of them is a skip marker. Any removed or changed line — or a
     diff git cannot produce — keeps the file counted as an edited test. A file equal to
     base_ref is no edit at all: a test added in `--since` commits is in the change, unchanged
-    against HEAD (2026-09-28: three new tests blocked the Stop hook as "edited")."""
-    res = subprocess.run(["git", "-C", str(get_repo_root()), "diff", "-U0", "--no-color", "--no-ext-diff",
-                          base_ref, "--", repo_path], capture_output=True, text=True, errors="replace")
+    against HEAD (2026-09-28: three new tests blocked the Stop hook as "edited").
+    old_path: the file was renamed from it (git mv): diffed against it as one rename."""
+    paths = ["-M", base_ref, "--", old_path, repo_path] if old_path else [base_ref, "--", repo_path]
+    res = subprocess.run(["git", "-C", str(get_repo_root()), "diff", "-U0", "--no-color", "--no-ext-diff"] + paths,
+                         capture_output=True, text=True, errors="replace")
     if res.returncode != 0:
         return False
     if not res.stdout:
@@ -327,6 +329,8 @@ def test_change_is_append_only(base_ref: str, repo_path: str) -> bool:
             return False
         if line.startswith("+"):
             added.append(line[1:])
+    if old_path and not added:
+        return True                                   # a pure move: rename headers, no changed line
     return bool(added) and not any(TEST_SKIP_RE.search(a) for a in added)
 
 
@@ -2626,6 +2630,45 @@ def _scripts_on_path():
             sys.path.insert(0, _sub_path)
 
 
+# What a vacuity re-run has reverted in the LIVE tree right now (path -> original bytes, None = it did not exist) and the
+# process group of that re-run. A SIGTERM / SIGHUP (the Stop hook's timeout, a closed terminal) killed python without the
+# `finally` of vacuity_revert: the agent's uncommitted fix stayed reverted and the re-run ran on as an orphan (audit
+# 2026-10-09, tests/verification/test_vacuity_signal.sh). The re-run may be in a suite worker thread, where no handler can
+# be installed, so main() installs _vacuity_on_signal and it acts on this registry. ponytail: SIGKILL still loses the fix,
+# back the files up on disk and restore them at the next start if that is ever seen.
+_VACUITY_LIVE: dict = {}
+_VACUITY_PGIDS: set = set()
+_VACUITY_LOCK = threading.RLock()
+
+
+def _vacuity_restore(items) -> None:
+    for path, blob in items:
+        try:
+            if blob is None:
+                if path.is_file():
+                    path.unlink()
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(blob)
+        except OSError as e:
+            log_err(tr(f"Không khôi phục được {path} sau revert vacuity: {e}",
+                       f"Could not restore {path} after the vacuity revert: {e}"))
+
+
+def _vacuity_on_signal(signum, _frame):
+    """Put the reverted files back and end the re-run, then die by the same signal as before (same exit status)."""
+    with _VACUITY_LOCK:
+        items, pgids = list(_VACUITY_LIVE.items()), list(_VACUITY_PGIDS)
+        _VACUITY_LIVE.clear()
+        _VACUITY_PGIDS.clear()
+    for pgid in pgids:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(pgid, signal.SIGKILL)
+    _vacuity_restore(items)
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
+
+
 def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
     """Re-run an impacted PASS with the production diff put back.
 
@@ -2656,22 +2699,27 @@ def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
         return "skip"
     prefix = get_project_prefix()
     saved = []
+    proc = None
     try:
         for rel in files:
             path = project_dir / rel
-            saved.append((rel, path.read_bytes() if path.is_file() else None))
             res = subprocess.run(
                 ["git", "-C", str(get_repo_root()), "show", f"{VACUITY_BASE}:{prefix}{rel}"],
                 capture_output=True)
-            if res.returncode != 0:
-                if path.is_file():
-                    path.unlink()
-            else:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(res.stdout)
-        proc = subprocess.Popen(test["command"], shell=True, cwd=str(project_dir),
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, errors="replace", start_new_session=True, env=suite_env())
+            with _VACUITY_LOCK:   # recorded before the write: a signal between the two still restores this file
+                saved.append((rel, path.read_bytes() if path.is_file() else None))
+                _VACUITY_LIVE[path] = saved[-1][1]
+                if res.returncode != 0:
+                    if path.is_file():
+                        path.unlink()
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(res.stdout)
+        with _VACUITY_LOCK:
+            proc = subprocess.Popen(test["command"], shell=True, cwd=str(project_dir),
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, errors="replace", start_new_session=True, env=suite_env())
+            _VACUITY_PGIDS.add(proc.pid)
         try:
             out, _ = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -2687,18 +2735,12 @@ def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
             return "ok"
         return "weak"
     finally:
-        for rel, blob in saved:
-            path = project_dir / rel
-            try:
-                if blob is None:
-                    if path.is_file():
-                        path.unlink()
-                else:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(blob)
-            except OSError as e:
-                log_err(tr(f"Không khôi phục được {rel} sau revert vacuity: {e}",
-                           f"Could not restore {rel} after the vacuity revert: {e}"))
+        with _VACUITY_LOCK:
+            if proc is not None:
+                _VACUITY_PGIDS.discard(proc.pid)
+            for rel, _blob in saved:
+                _VACUITY_LIVE.pop(project_dir / rel, None)
+            _vacuity_restore([(project_dir / rel, blob) for rel, blob in saved])
 
 
 def run_hardware_source_audit(modified_files: list) -> tuple:
@@ -3730,6 +3772,10 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
 def main():
     global _MAIN_T0
     _MAIN_T0 = time.monotonic()
+    if threading.current_thread() is threading.main_thread():
+        for _sig in (signal.SIGTERM, signal.SIGHUP):
+            if signal.getsignal(_sig) == signal.SIG_DFL:   # an ignored SIGHUP (nohup) stays ignored
+                signal.signal(_sig, _vacuity_on_signal)
     parser = argparse.ArgumentParser(description="Post-Fix Audit & TIA Regression Verification Gate")
     parser.add_argument("--diff", help="Git diff reference (e.g. HEAD~1, origin/main)")
     parser.add_argument("--staged", action="store_true",
@@ -3856,10 +3902,18 @@ def main():
     # Editing an existing test in the same change can weaken the very assertion the
     # regression run relies on. New test files are fine (that is the RED test), and so is a
     # test appended to an existing file: no old line changed and no skip marker added.
+    # A test moved with `git mv` is judged against its OLD path: base:<new path> does not exist, so a weakened test hid behind
+    # its rename (audit 2026-10-09, tests/gates/test_gate_renamed_test_edit.sh).
     prefix = get_project_prefix()
-    tests_touched = [f for f in modified_files if is_test_path(f) and not is_test_doc(f) and subprocess.run(
-        ["git", "-C", str(get_repo_root()), "cat-file", "-e", f"{base_ref}:{prefix}{f}"],
-        capture_output=True).returncode == 0 and not test_change_is_append_only(base_ref, prefix + f)]
+    renamed_from = {new: old for old, new in _renamed_paths(base_ref).items()}
+
+    def _edited_existing_test(f):
+        src = renamed_from.get(f, f)
+        if subprocess.run(["git", "-C", str(get_repo_root()), "cat-file", "-e", f"{base_ref}:{prefix}{src}"],
+                          capture_output=True).returncode != 0:
+            return False
+        return not test_change_is_append_only(base_ref, prefix + f, prefix + src if src != f else "")
+    tests_touched = [f for f in modified_files if is_test_path(f) and not is_test_doc(f) and _edited_existing_test(f)]
     # --since: a test weakened (or deleted) and COMMITTED in <since>..HEAD equals HEAD, so the
     # check above never sees it (2026-09-28). Such a path is judged against <since> too — on top
     # of the HEAD check, never instead of it. A range commit touching it with `Test-approved-by:`

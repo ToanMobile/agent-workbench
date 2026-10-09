@@ -413,12 +413,20 @@ def shim_run(argv, env_extra=None, cwd=None, inp=b"", timeout=30):
 
 
 # ───────────────────── (a1) what the hook EXECs: script path, environment, stdin, process chain ─────────────────────
+# Claude Code launches a hook with `sh -c '<cmd>'`. macOS /bin/sh (bash) execs that last command; Linux dash forks it and stays as a
+# parent until the hook ends, so "nothing stayed alive between" cannot hold there for ANY hook text, old or new (2026-10-09). (a1) is about
+# the hook's OWN exec, so where sh does not exec, the probe launches with bash in posix mode (what macOS sh is). The dash parent itself:
+# tests/context_memory/test_session_lock_sh_parent.sh.
+_sh = subprocess.run(["sh", "-c", '"$0" -c "import os; print(os.getppid())"', sys.executable], capture_output=True, text=True)
+PROBE_SH = ["sh", "-c"] if _sh.stdout.strip() == str(os.getpid()) else ["bash", "--posix", "-c"]
+
+
 def probe(L, text):
     write(L.real, text, 0o755)
     clear(L)
     payload = render(pre("Edit", {"file_path": "{PROJ}/src/A.kt"}, session_id=ME), L)
     env = dict(L.extra_env, CLAUDE_PROJECT_DIR=L.proj, SHIM_MODE="probe")
-    rc, out, err, lines, x = shim_run(["sh", "-c", L.cmd], env, L.cwd, payload)
+    rc, out, err, lines, x = shim_run(PROBE_SH + [L.cmd], env, L.cwd, payload)
     log = x["log"]
     rd = lambda f: open(f, "rb").read().decode("utf-8", "replace") if os.path.exists(f) else None
     write(L.real, NEW, 0o755)

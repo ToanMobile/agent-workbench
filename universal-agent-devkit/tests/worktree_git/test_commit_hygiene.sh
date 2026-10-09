@@ -128,7 +128,8 @@ rm -f "$HOOKS/commit-msg" && ln -s "$PWD/tracked-hooks/commit-msg" "$HOOKS/commi
 bash "$KIT" githooks install >/dev/null 2>&1
 [ -L "$HOOKS/commit-msg" ] && grep -q "universal-agent-devkit-chain" tracked-hooks/commit-msg \
   && ok "a symlinked hook: the link stays, its target gets the chain line" || fail "symlink replaced or target not chained"
-[ "$(stat -f %Lp tracked-hooks/commit-msg 2>/dev/null || stat -c %a tracked-hooks/commit-msg)" = 775 ] \
+# GNU first: GNU `stat -f` is filesystem status, it prints that AND fails on "%Lp", so the BSD-first form captured both outputs
+[ "$(stat -c %a tracked-hooks/commit-msg 2>/dev/null || stat -f %Lp tracked-hooks/commit-msg)" = 775 ] \
   && ok "  … and keeps its mode" || fail "mode changed"
 bash "$KIT" githooks uninstall >/dev/null 2>&1
 [ -L "$HOOKS/commit-msg" ] && ! grep -q "universal-agent-devkit-chain" tracked-hooks/commit-msg \

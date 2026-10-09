@@ -165,3 +165,10 @@
 4 tests/gates/test_push_gate_recovery_hint.sh
 22 tests/worktree_git/test_worktree_automerge.sh
 39 tests/gates/test_worktree_merge_gate_owner.sh
+# 2026-10-09: 4 tests that were missing (an unlisted test starts first; test_run_impacted_order was red), each alone on a 4-core Linux container
+4 tests/context_memory/test_scratch_cleanup.sh
+2 tests/verification/test_vacuity_signal.sh
+1 tests/context_memory/test_session_lock_sh_parent.sh
+1 tests/verification/test_taste_mobile_skill.sh
+1 tests/gates/test_hook_fast_path_quotes.sh
+1 tests/gates/test_gate_renamed_test_edit.sh

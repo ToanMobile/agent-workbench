@@ -76,7 +76,8 @@ want="test_e_unknown1 test_f_unknown2 test_g_longest test_c_long test_b_mid test
   || fail "a: start order '$(started)' not '$want'"
 
 # (b) the printed results keep LIST order whatever the start order was
-shown="$(printf '%s\n' "$OUT" | grep -E '^[✔✖] tests/' | sed 's/^. //')"
+# (✔|✖), not [✔✖]: under a POSIX locale (Linux, LANG unset) grep reads a multibyte bracket class byte by byte and matches nothing
+shown="$(printf '%s\n' "$OUT" | grep -E '^(✔|✖) tests/' | sed 's/^[^ ]* //')"
 [ "$shown" = "$ALL" ] && ok "b: results are printed in list order, not start order" || fail "b: printed order: $(printf '%s' "$shown" | tr '\n' ' ')"
 
 # (c) same set, same pass/fail, same exit code: the one fake that exits 3 fails the run and is named

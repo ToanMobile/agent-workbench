@@ -19,8 +19,18 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 # Vietnamese letters with diacritics — English output must contain none.
 VI='[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ]'
+# has_vi <file>: exit 0 when the file holds one of $VI, printing up to 3 such lines. Matched as characters in python: grep reads a
+# multibyte bracket class BYTE by byte under a POSIX locale (Linux CI, LANG unset), so "═" (E2 95 90) matched "Ố" (E1 BB 90).
+has_vi() {
+  python3 -c 'import re,sys
+rx = re.compile(sys.argv[1])
+hits = ["%d:%s" % (i, l.rstrip("\n")) for i, l in enumerate(open(sys.argv[2], encoding="utf-8", errors="replace"), 1) if rx.search(l)]
+print(" ".join(hits[:3]))
+sys.exit(0 if hits else 1)' "$VI" "$1"
+}
 no_vi() { # <label> <file>
-  if grep -qE "$VI" "$2"; then fail "$1 (Vietnamese left: $(grep -nE "$VI" "$2" | head -3 | tr '\n' ' '))"; else ok "$1"; fi
+  local hits
+  if hits="$(has_vi "$2")"; then fail "$1 (Vietnamese left: $hits)"; else ok "$1"; fi
 }
 
 newproj() { # <name> <marker-file> [content]
@@ -42,7 +52,7 @@ no_vi "agent-config reuses the saved language (no --lang, no DEVKIT_LANG)" "$TMP
 DEVKIT_LANG=en python3 "$CFG" -p universal -t "$TMP/cfg_en" >"$TMP/out" 2>&1
 no_vi "DEVKIT_LANG=en agent-config output is English" "$TMP/out"
 python3 "$CFG" -p universal -t "$TMP/cfg_vi" >"$TMP/out" 2>&1
-grep -qE "$VI" "$TMP/out" && ok "default language stays Vietnamese" || fail "default language is no longer vi"
+has_vi "$TMP/out" >/dev/null && ok "default language stays Vietnamese" || fail "default language is no longer vi"
 python3 "$CFG" -p universal -t "$TMP/cfg_vi" --lang en >"$TMP/out" 2>&1
 no_vi "--lang beats the saved language" "$TMP/out"
 

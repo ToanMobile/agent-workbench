@@ -106,7 +106,9 @@ make_repo "sleep 30 & echo \$! > $TMP/child.pid; wait"
 echo "fun ok() = 9" > src/Core.kt
 out="$(run_gate --run-tests --timeout 2)"; check "timeout -> REJECT" 1 $? "$out"
 sleep 1
-if kill -0 "$(cat "$TMP/child.pid" 2>/dev/null)" 2>/dev/null; then
+# a killed child whose new parent (pid 1) does not reap it stays a zombie (a container without an init): dead, though kill -0 succeeds
+_child_stat="$(ps -o stat= -p "$(cat "$TMP/child.pid" 2>/dev/null)" 2>/dev/null)"
+if [ -n "$_child_stat" ] && [ "${_child_stat#Z}" = "$_child_stat" ]; then
   echo "✖ timed-out test left a child process running"; FAILS=$((FAILS + 1)); kill "$(cat "$TMP/child.pid")"
 else echo "✔ timed-out test's child process was killed"; fi
 

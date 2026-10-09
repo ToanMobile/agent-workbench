@@ -77,11 +77,15 @@ INPUT="$(cat)"
 # Everything else — and any payload the regex cannot read — goes to the full parser.
 # An MCP payload never takes it: its "command" is a DEVICE shell command (adb-shell).
 fast_allow() { # $1 = trigger ERE
-  local re='"command"[[:space:]]*:[[:space:]]*"([^"\\]*)"' c bash_re='"tool_name"[[:space:]]*:[[:space:]]*"Bash"'
+  local re='"command"[[:space:]]*:[[:space:]]*"((\\.|[^"\\])*)"' c bash_re='"tool_name"[[:space:]]*:[[:space:]]*"Bash"'
   [[ $INPUT =~ $bash_re ]] || return 1
   [[ $INPUT =~ $re ]] || return 1
   c="${BASH_REMATCH[1]}"
-  case "$c" in ""|*[\'\$\`\*\?\[\]]*) return 1 ;; esac
+  # A REAL backslash (JSON \\: printf '\x67it' | sh, a gi\<newline>t continuation) or a \u escape can spell a word: parser.
+  case "$c" in ""|*[\$\`\*\?\[\]]*|*'\\'*|*'\u'*) return 1 ;; esac
+  # Quotes only hide a word by splitting it (g'i't, "gi"t): dropped before the check, with the JSON escape marks (\" \n), so a
+  # quoted argument no longer sends every grep -n "x" to python (2026-10-09, tests/gates/test_hook_fast_path_quotes.sh: ~55 ms a call).
+  c="${c//\\/}"; c="${c//\'/}"; c="${c//\"/}"
   shopt -s nocasematch
   if [[ $c =~ $1 ]]; then shopt -u nocasematch; return 1; fi
   shopt -u nocasematch

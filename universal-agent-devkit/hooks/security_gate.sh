@@ -279,7 +279,10 @@ def _segments(stripped):
 def _under(path, root):
     return path == root or path.startswith(root.rstrip("/") + "/")
 
-TEMP_ROOTS = sorted({os.path.realpath(p) for p in ("/tmp", "/var/folders", os.environ.get("TMPDIR") or "/tmp")})
+# The macOS spellings are listed as written too (as session_lock.py TEMP_PREFIXES does): realpath("/tmp") only yields
+# /private/tmp on macOS, so on Linux a /private/tmp/… scratch path was judged a repo write.
+TEMP_ROOTS = sorted({os.path.realpath(p) for p in ("/tmp", "/var/folders", os.environ.get("TMPDIR") or "/tmp")}
+                    | {"/private/tmp", "/private/var/folders"})
 
 def _scratch(path):
     """A file in a temp dir outside the repo (the agent's scratchpad): not part of the repo's diff.

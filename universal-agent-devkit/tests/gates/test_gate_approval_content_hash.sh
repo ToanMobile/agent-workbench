@@ -47,6 +47,9 @@ mkdir -p "$HOME/.claude/projects" "$HOME/.gemini/antigravity/brain"
 
 B="$TMP/repo"; mkdir -p "$B/tests" && cd "$B" || exit 1
 git init -q
+# HOME is a temp dir: no user.email. macOS git guesses one from the host name, Linux git refuses the commit ("unable to auto-detect
+# email address") and every case below ran on a repo with no commit (2026-10-09).
+git config user.email t@t && git config user.name t
 mkdir -p .claude/audit-gate
 echo '{"DEVKIT_IMPACT_TEST_ENABLED":"1","DEVKIT_REGRESSION_TEST_ENABLED":"1"}' > .claude/config.json
 cat > matrix.json <<'JSON'

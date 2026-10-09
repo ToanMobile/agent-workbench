@@ -304,7 +304,9 @@ if recs:
         and r["impacted_run"] is False and r["busy"] is False and r["deferred"] is False and r["reused_full_pass"] is False
         and r["project"] == "pj-docs", "docs-only: mode full, docs_only, no_test_only, 1 doc file, no code, PASS, cli", repr(r))
     chk([s[0] for s in r["suites"]] == ["REG-A", "REG-B"] and all(s[1] == "PASS" and isinstance(s[2], (int, float)) for s in r["suites"])
-        and r["suites_wall_s"] > 0, "docs-only: both suites present with PASS and their seconds", repr(r["suites"]))
+        # the sum, not "> 0": an `exit 0` suite takes ~2 ms on Linux and rounds to 0.00 s (it is > 0 only where a spawn is slower)
+        and r["suites_wall_s"] == round(sum(s[2] for s in r["suites"]), 2),
+        "docs-only: both suites present with PASS and their seconds", repr(r["suites"]))
 
 # docs + LICENSE + agent state: no_test_only true but docs_only false (the gate's own `docs_only` local is the no_test_only one)
 root = make_repo("state")

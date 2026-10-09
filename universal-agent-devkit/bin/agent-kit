@@ -86,7 +86,9 @@ case "$CMD" in
     POOL_PID=""
     test_stop() { # the pool (its whole process group), reaped before the held output goes: its last act may be a file in it
       if [ -n "$POOL_PID" ]; then
-        kill -TERM "$POOL_PID" 2>/dev/null || true; kill -TERM -- "-$POOL_PID" 2>/dev/null || true   # its shell first: it would report "Terminated" for its killed child
+        # ONE TERM to the whole group (its shell is in it): a TERM to its shell then one to the group, back to back, killed bash 5.2
+        # by the second before it ran its EXIT trap, so run_impacted.sh's temp dir stayed (5 runs in 6 on Linux, 2026-10-09)
+        kill -TERM -- "-$POOL_PID" 2>/dev/null || kill -TERM "$POOL_PID" 2>/dev/null || true
         kill -CONT -- "-$POOL_PID" 2>/dev/null || true   # a group stopped by SIGTTIN (a test that reads the terminal) acts on the TERM only once continued
         wait "$POOL_PID" 2>/dev/null || true; POOL_PID=""
       fi

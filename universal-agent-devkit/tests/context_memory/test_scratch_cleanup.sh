@@ -114,7 +114,11 @@ chmod 755 "$ROOT/-proj/$K/tasks"
 [ "$rc" = 0 ] && [ -d "$ROOT/-proj/$H" ] && ok "prune: a 200 h old dir of a session whose Claude process is alive is kept" || fail "prune removed a live process's session dir (rc=$rc)"
 [ ! -e "$ROOT/-proj/$I" ] && ok "  … a stale sessions/<pid>.json of a dead pid does not keep it" || fail "a dead pid's session file kept its dir"
 [ -f "$ROOT/-proj/$J/tasks/x.output" ] && ok "  … a dir whose task output was just written is kept" || fail "prune removed a dir with fresh task output"
-[ -f "$ROOT/-proj/$K/scratchpad/big" ] && ok "  … a dir with a level that cannot be read is kept (cannot judge)" || fail "prune removed a dir it could not judge"
+if [ "$(id -u)" = 0 ]; then   # root reads a mode-000 dir: there is no unreadable level to judge (a root container, 2026-10-09)
+  ok "  … (skipped as root: chmod 000 does not stop root from reading, the cannot-judge case cannot be built)"
+else
+  [ -f "$ROOT/-proj/$K/scratchpad/big" ] && ok "  … a dir with a level that cannot be read is kept (cannot judge)" || fail "prune removed a dir it could not judge"
+fi
 setup; mk "$L" 0
 python3 -c 'import json,sys; json.dump({"pid": int(sys.argv[2]), "sessionId": sys.argv[3]}, open(sys.argv[1] + "/%s.json" % sys.argv[2], "w"))' "$SESS" "$$" "$L"
 DEVKIT_CLAUDE_SESSIONS="$SESS" run --end "$L" --self-pid 1234567; rc=$?

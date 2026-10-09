@@ -226,7 +226,7 @@ def register_session(cwd, sid, agent="agent", pid=None, status="working"):
         now = time.time()
         file_path = os.path.join(sdir, f"{sid}.json")
         if pid is None:
-            pid = os.getppid()
+            pid = holder_pid()
         data = {
             "session_id": sid,
             "agent": agent,
@@ -318,6 +318,31 @@ def unregister_session(cwd, sid):
             os.remove(file_path)
     except OSError:
         pass
+
+
+def holder_pid():
+    """The process that lives as long as the session: the hook's parent. Claude Code runs a hook as `/bin/sh -c 'bash …'`; bash
+    (macOS /bin/sh) execs that last command, so the parent is claude. dash (Linux /bin/sh) forks it and stays as a short-lived
+    parent: its pid was dead at the next call and every lock read as free (audit 2026-10-09,
+    tests/context_memory/test_session_lock_sh_parent.sh). Such a sh/dash parent is skipped (via /proc: Linux only, where dash is)."""
+    pid = os.getppid()
+    for _ in range(3):
+        try:
+            with open(f"/proc/{pid}/stat", "rb") as f:
+                stat = f.read()
+        except OSError:
+            return pid
+        close = stat.rfind(b")")   # comm may hold spaces or ')': it ends at the last ')'
+        if stat[stat.find(b"(") + 1:close] not in (b"sh", b"dash"):
+            return pid
+        try:
+            ppid = int(stat[close + 2:].split()[1])   # after ") ": state, ppid
+        except (IndexError, ValueError):
+            return pid
+        if ppid <= 1:
+            return pid
+        pid = ppid
+    return pid
 
 
 def is_pid_alive(pid):
@@ -414,7 +439,7 @@ def get_active_sessions(cwd=None, current_sid=None, stale_s=180.0):
         if current_sid and sid != current_sid:
             other.append(info)
         elif not current_sid:
-            if pid != os.getpid() and pid != os.getppid():
+            if pid not in (os.getpid(), os.getppid(), holder_pid()):
                 other.append(info)
 
     return active, other, len(other) == 0
@@ -699,7 +724,7 @@ def take(path, lock, sid, cwd, now, pid=None):
     if lock and lock.get("session_id") == sid and not lock.get("idle_since") and now - float(lock.get("heartbeat") or 0) < 30:
         return  # heartbeat throttle (an idle mark is always cleared: the holder works again)
     if pid is None:
-        pid = os.getppid()
+        pid = holder_pid()
     write_lock(path, {"session_id": sid, "started": started, "heartbeat": now, "cwd": cwd, "pid": pid, "gitdir": os.path.dirname(path)})
 
 
@@ -805,7 +830,7 @@ def main():
         # This session's temp dir under /tmp/claude-<uid>/ goes with it — not on /clear or /resume: the process lives on under a new
         # session id (review 2026-10-09), the prune takes that dir later. --self-pid: the claude process ending (it is still alive).
         if str(d.get("reason") or "") not in ("clear", "resume"):
-            spawn_scratch_cleanup("--end", sid, "--self-pid", str(os.getppid()))
+            spawn_scratch_cleanup("--end", sid, "--self-pid", str(holder_pid()))
         unregister_session(cwd, sid)
         if lock and lock.get("session_id") == sid:
             try:

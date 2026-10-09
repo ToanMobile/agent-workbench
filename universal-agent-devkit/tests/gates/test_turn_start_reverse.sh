@@ -228,7 +228,9 @@ ref_bytes, _ = bytes_read(ref_turn_start, p60)
 ref_calls = bytes_read.calls
 check(ref_bytes >= size * 0.95 and ref_calls > 1000, "counter sanity: the forward scan reads the whole %d MB file (%d reads)" % (size // 2**20, ref_calls), "read %d" % ref_bytes)
 check(got == ("ok", expect), "60 MB transcript: same turn start as the forward scan", repr((got, expect)))
-check(got_bytes < size // 20 and got_calls < 50, "60 MB transcript: turn_start reads the tail in a few reads, not the file",
+# the tail is read in io.DEFAULT_BUFFER_SIZE chunks (8 KiB on Python 3.13: 65 reads for 512 KiB), the whole file would be ~7700
+max_calls = (DEFAULT_TAIL or 1 << 19) // io.DEFAULT_BUFFER_SIZE + 2
+check(got_bytes < size // 20 and got_calls <= max_calls, "60 MB transcript: turn_start reads the tail in a few reads, not the file",
       "read %d of %d bytes in %d reads" % (got_bytes, size, got_calls))
 def best(fn, runs=5):
     r = []
