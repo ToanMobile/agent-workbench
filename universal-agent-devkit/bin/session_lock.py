@@ -802,7 +802,10 @@ def main():
     lock = read_checkout_lock(gdir)
 
     if event == "SessionEnd":
-        spawn_scratch_cleanup("--end", sid)   # this session's temp dir under /tmp/claude-<uid>/ goes with it
+        # This session's temp dir under /tmp/claude-<uid>/ goes with it — not on /clear or /resume: the process lives on under a new
+        # session id (review 2026-10-09), the prune takes that dir later. --self-pid: the claude process ending (it is still alive).
+        if str(d.get("reason") or "") not in ("clear", "resume"):
+            spawn_scratch_cleanup("--end", sid, "--self-pid", str(os.getppid()))
         unregister_session(cwd, sid)
         if lock and lock.get("session_id") == sid:
             try:

@@ -32,6 +32,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
+export DEVKIT_SCRATCH_CLEANUP=0   # these cases run the real session hooks: never prune the real /tmp/claude-<uid> (review 2026-10-09)
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 HOOKS="$(cd "${HERE}/.." && pwd)"

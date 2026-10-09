@@ -235,3 +235,11 @@ Mẫu ghi nhận:
 - **Quy tắc phòng ngừa & Cách fix:** Lối tắt trong cổng: miễn trừ hẹp theo ca thật, không tái dùng bộ phân loại của việc khác; đối chiếu với nguồn chứng thực (git ls-remote), truyền tên ref đầy đủ (refs/tags/…), tắt lối tắt khi lệnh đổi repo (--git-dir, GIT_DIR) hoặc có spec không phải commit; mỗi ngoại lệ regex kèm ca dương tính cùng chữ khác nghĩa. Chạy reviewer ngữ cảnh sạch với lệnh tìm cách vượt TRƯỚC khi cài; dò cả cờ làm bỏ qua cả khối kiểm (--all, --tags)
 - **Lệnh kiểm tra:** `bash universal-agent-devkit/tests/gates/test_push_gate_tags.sh && bash universal-agent-devkit/tests/gates/test_gate_nontest_docs.sh && bash universal-agent-devkit/tests/verification/test_bug_capture.sh && bash universal-agent-devkit/tests/verification/test_health_githook_chain.sh`
 - **Nguồn:** audit workflow DevKit 04/10 (review ngữ cảnh sạch)
+
+---
+
+### [INSTINCT-028] Nới nhánh bỏ qua gate biến lỗ phân loại cũ thành fail-open
+- **Ngày phát hiện:** 2026-10-09
+- **Hiện tượng lỗi:** Nới nhánh bỏ qua gate biến lỗ phân loại cũ thành fail-open
+- **Nguyên nhân:** 2026-10-09 Dot 11: regression_gate cho lượt không dòng trạng thái được bỏ qua test nếu OUTCOME không thấy claim; OUTCOME phân biệt hoa/thường nên 'Đã fix…', 'Fixed', 'Done.', 'Xong:' bị coi là làm dở và bỏ qua test — trước đó lỗ này vô hại vì chỉ áp cho câu CHƯA XONG. Cùng ngày: nhả khoá ở Stop sẽ đua với gate cuối lượt vì các hook Stop chạy SONG SONG (docs Claude Code).
+- **Quy tắc phòng ngừa & Cách fix:** Khi mở rộng điều kiện SKIP của một gate: liệt kê mọi câu bàn giao thật (mọi kiểu hoa/thường, dòng trạng thái ở dòng sau, tiếng Anh/Việt) thành ca test phải bị chặn, chạy ĐỎ trên bộ phân loại hiện tại trước khi nới; từ khoá claim không phân biệt hoa/thường, chỉ XONG/PASS viết hoa. Tín hiệu 'phiên rảnh' dùng Notification idle_prompt, không dùng Stop.
