@@ -21,7 +21,11 @@
 # PNG is checked even then. The full gate is never waived.
 # Handover report (core-rules §1.3): an XONG, and any turn that ran `git push` (transcript Bash
 # call after the last user prompt), must carry the 4 items — Đã fix · bug cũ · bug mới · An
-# toàn mã nguồn (English labels accepted). A push turn is checked for the report only.
+# toàn mã nguồn (English labels accepted). A push turn is checked for the report only. A push turn
+# that does not open with XONG may carry the report in an earlier message instead of the final reply:
+# one assistant text message (not a subagent line, thinking block or tool result) written after the
+# LAST successful push of the turn, with all 4 items, is enough (PROOF_REPORT_AFTER_PUSH=0 turns this
+# off). An XONG reply always carries the report itself.
 # The hook never takes the screenshot; it only refuses an XONG without one.
 #
 # Loop guard: PROOF_GATE_MAX_BLOCKS (default 2) blocks per session, then the stop
@@ -169,19 +173,23 @@ def safe_digest(p):
         return None
 
 def pushed_in_turn(tp):
-    """True when a Bash call of this turn (after the last user prompt) ran `git push` that did not
-    visibly fail. A push is what devkit_harness.git_writes reads as one — the classifier
+    """(pushed, report_after) for the turn after the last user prompt. pushed: a Bash call ran `git push`
+    that did not visibly fail. A push is what devkit_harness.git_writes reads as one — the classifier
     work_in_progress (regression_gate, review_gate) uses too: a real `git push` command, not the
     words in a heredoc body, a string, `git stash push` or a --dry-run. Without the helper (a hook
-    copied alone) no push is detected."""
+    copied alone) no push is detected. report_after: an assistant text message (no subagent line, no
+    thinking block, no tool result) that carries all 4 REPORT_ITEMS stands LATER IN THE FILE than the last
+    successful push settled (its tool_result, else its call). File order, not timestamps: lines of one
+    millisecond keep their order."""
     if harness is None:
         log("push check skipped: devkit_harness not loaded")
-        return False
-    pushes = {}   # tool_use id -> True (went through or unknown) / False (failed)
+        return False, False
+    pushes = {}   # tool_use id -> [call line, result line or None, True (went through or unknown) / False (failed)]
+    report_at = -1
     try:
         with open(tp, encoding="utf-8", errors="replace") as f:
-            for raw in f:
-                if "push" not in raw and not any(i in raw for i in pushes):
+            for n, raw in enumerate(f):
+                if "push" not in raw and not any(i in raw for i in pushes) and not (pushes and '"text"' in raw):
                     continue          # most lines: no JSON parse on every Stop
                 try:
                     e = json.loads(raw)
@@ -190,13 +198,15 @@ def pushed_in_turn(tp):
                     continue
                 if start is None or t < start:
                     continue
-                for c in (e.get("message") or {}).get("content") or []:
+                msg = e.get("message")
+                blocks = msg.get("content") if isinstance(msg, dict) else None
+                for c in blocks if isinstance(blocks, list) else ():   # a line of another shape is skipped, never a crash (= a pass)
                     if not isinstance(c, dict):
                         continue
                     if e.get("type") == "assistant" and c.get("type") == "tool_use":
                         cmd = (c.get("input") or {}).get("command", "")
                         if "push" in harness.git_writes(cmd):
-                            pushes[c.get("id") or "no-id-%d" % len(pushes)] = True
+                            pushes[c.get("id") or "no-id-%d" % len(pushes)] = [n, None, True]
                     elif c.get("type") == "tool_result" and c.get("tool_use_id") in pushes:
                         body = c.get("content")
                         if isinstance(body, list):
@@ -206,13 +216,24 @@ def pushed_in_turn(tp):
                         # push usually completes. Only a failure with nothing sent is no handover.
                         failed = (bool(c.get("is_error")) or bool(PUSH_FAILED.search(body))) \
                             and not PUSH_WENT.search(body) and "running in background" not in body
-                        pushes[c["tool_use_id"]] = not failed
+                        pushes[c["tool_use_id"]][1:] = [n, not failed]
+                    elif (pushes and e.get("type") == "assistant" and not e.get("isSidechain") and c.get("type") == "text"
+                          and isinstance(c.get("text"), str) and all(re.search(rx, c["text"], re.I) for _, rx in REPORT_ITEMS)):
+                        report_at = n
     except OSError:
         pass
-    return any(pushes.values())
+    settled = [p[1] if p[1] is not None else p[0] for p in pushes.values() if p[2]]
+    return bool(settled), bool(settled) and report_at > max(settled)
 
-if not xong and not (missing_report and pushed_in_turn(d.get("transcript_path") or "")):
-    sys.exit(0)
+if not xong:
+    if not missing_report:
+        sys.exit(0)
+    pushed, report_after = pushed_in_turn(d.get("transcript_path") or "")
+    if not pushed:
+        sys.exit(0)
+    if report_after and os.environ.get("PROOF_REPORT_AFTER_PUSH", "1") != "0":
+        log("pass session=%s report-after-push" % session)
+        sys.exit(0)
 cited = sorted(set(re.findall(r"(?:[\w./-]*/)?reports/proof-\d{8}-\d{6}\.png", reply))) if xong else []
 problems, good, before_problems = [], [], []
 for rel in cited:

@@ -333,16 +333,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-10 10:21:01",
-        "ts": 1791602461.4397519,
-        "task": "session-021af085-218",
-        "commit": "6f1734f+dirty",
-        "duration": "61.98s",
+        "at": "2026-10-10 12:55:22",
+        "ts": 1791611722.7220118,
+        "task": null,
+        "commit": "9b52da4+dirty",
+        "duration": "62.07s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-01/20261010-101956.log",
+        "log": ".agents/evidence/REG-DK-HOOK-01/20261010-125433.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-10 12:55:22",
+          "ts": 1791611722.7220118,
+          "task": null,
+          "commit": "9b52da4+dirty",
+          "duration": "62.07s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261010-125433.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-10 10:21:01",
@@ -386,17 +397,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-01/20261010-092854.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-10 08:30:44",
-          "ts": 1791595844.366314,
-          "task": null,
-          "commit": "81f8e2a+dirty",
-          "duration": "44.80s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261010-083044.log",
-          "deleted": []
         }
       ],
       "title": "hook contract",
@@ -411,16 +411,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-10 10:21:01",
-        "ts": 1791602461.439756,
-        "task": "session-021af085-218",
-        "commit": "6f1734f+dirty",
-        "duration": "24.43s",
+        "at": "2026-10-10 12:55:22",
+        "ts": 1791611722.7332091,
+        "task": null,
+        "commit": "9b52da4+dirty",
+        "duration": "25.67s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-02/20261010-101918.log",
+        "log": ".agents/evidence/REG-DK-HOOK-02/20261010-125357.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-10 12:55:22",
+          "ts": 1791611722.7332091,
+          "task": null,
+          "commit": "9b52da4+dirty",
+          "duration": "25.67s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261010-125357.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-10 10:21:01",
@@ -463,17 +474,6 @@
           "duration": "26.18s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-02/20261010-092801.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-10 08:30:44",
-          "ts": 1791595844.3743339,
-          "task": null,
-          "commit": "81f8e2a+dirty",
-          "duration": "19.32s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-02/20261010-083018.log",
           "deleted": []
         }
       ],
@@ -567,16 +567,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-10 12:05:43",
-        "ts": 1791608743.182351,
+        "at": "2026-10-10 12:55:22",
+        "ts": 1791611722.733216,
         "task": null,
-        "commit": "810b396+dirty",
-        "duration": "141.21s",
+        "commit": "9b52da4+dirty",
+        "duration": "110.66s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261010-120542.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261010-125522.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-10 12:55:22",
+          "ts": 1791611722.733216,
+          "task": null,
+          "commit": "9b52da4+dirty",
+          "duration": "110.66s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261010-125522.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-10 12:05:43",
@@ -619,17 +630,6 @@
           "duration": "10.26s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261010-101904.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-10 10:14:18",
-          "ts": 1791602058.332099,
-          "task": null,
-          "commit": "81f8e2a+dirty",
-          "duration": "197.86s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261010-101417.log",
           "deleted": []
         }
       ],
@@ -2444,6 +2444,27 @@
         "log": ".agents/evidence/redproof-BUG-20261010-gate-wants-a-regression-test-for-red-pro/20261010-103756.log",
         "patch": ".agents/local/red-patches/BUG-20261010-gate-wants-a-regression-test-for-red-pro.patch"
       }
+    },
+    "BUG-20261010-proof-gate-blocks-a-push-turn-whose-4-it": {
+      "id": "BUG-20261010-proof-gate-blocks-a-push-turn-whose-4-it",
+      "kind": "bug",
+      "title": "proof_gate blocks a push turn whose 4-item report was already written right after the push",
+      "cause": null,
+      "component": "proof_gate",
+      "created_at": "2026-10-10 12:53:14",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "low",
+      "linked_at": "2026-10-10 12:53:14",
+      "linked_ts": 1791611594.8108191,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_proof_gate_report_after_push.sh"
+      ]
     }
   },
   "meta": {

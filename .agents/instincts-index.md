@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (261 dòng, 28.9 KB) · 33 mục
+> **Tệp gốc:** `.agents/instincts.md` (269 dòng, 30.3 KB) · 34 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -34,5 +34,6 @@
 - [INSTINCT-027] Lối tắt của cổng tin trạng thái agent ghi được và tái dùng bộ phân loại của việc khác — `sed -n '231,240p' .agents/instincts.md`
 - [INSTINCT-028] Nới nhánh bỏ qua gate biến lỗ phân loại cũ thành fail-open — `sed -n '241,248p' .agents/instincts.md`
 - [INSTINCT-029] Test bảo vệ không được sandbox RED-proof chọn nên bằng chứng ra VACUOUS giả — `sed -n '249,256p' .agents/instincts.md`
-- [INSTINCT-030] bash 3.2 cắt đối số "$(cmd "{\"a\":…}")" tại dấu nháy thoát — `sed -n '257,261p' .agents/instincts.md`
+- [INSTINCT-030] bash 3.2 cắt đối số "$(cmd "{\"a\":…}")" tại dấu nháy thoát — `sed -n '257,264p' .agents/instincts.md`
+- [INSTINCT-031] Hook lexer: shlex hides what follows a hash, and the one-line fix opens a new hole — `sed -n '265,269p' .agents/instincts.md`
 
