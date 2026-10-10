@@ -333,16 +333,39 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-10 18:32:29",
-        "ts": 1791631949.4717991,
-        "task": "session-2836c3d3-04e",
-        "commit": "03d3db2+dirty",
-        "duration": "63.41s",
+        "at": "2026-10-10 19:05:08",
+        "ts": 1791633908.383299,
+        "task": null,
+        "commit": "2a3ba88+dirty",
+        "duration": "57.13s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-01/20261010-183229.log",
-        "deleted": []
+        "log": ".agents/evidence/REG-DK-HOOK-01/20261010-190503.log",
+        "deleted": [],
+        "reused_at": "2026-10-10 19:05:24"
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-10 19:05:08",
+          "ts": 1791633908.383299,
+          "task": null,
+          "commit": "2a3ba88+dirty",
+          "duration": "57.13s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261010-190503.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-10 18:49:36",
+          "ts": 1791632976.655523,
+          "task": null,
+          "commit": "2a3ba88+dirty",
+          "duration": "72.77s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261010-184930.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-10 18:32:29",
@@ -375,28 +398,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-01/20261010-180420.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-10 13:01:22",
-          "ts": 1791612082.599127,
-          "task": "session-2836c3d3-04e",
-          "commit": "55c54fa+dirty",
-          "duration": "56.18s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261010-130122.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-10 12:55:22",
-          "ts": 1791611722.7220118,
-          "task": null,
-          "commit": "9b52da4+dirty",
-          "duration": "62.07s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261010-125433.log",
-          "deleted": []
         }
       ],
       "title": "hook contract",
@@ -411,16 +412,39 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-10 18:32:29",
-        "ts": 1791631949.494626,
-        "task": "session-2836c3d3-04e",
-        "commit": "03d3db2+dirty",
-        "duration": "21.41s",
+        "at": "2026-10-10 19:05:08",
+        "ts": 1791633908.394887,
+        "task": null,
+        "commit": "2a3ba88+dirty",
+        "duration": "23.57s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-02/20261010-183147.log",
-        "deleted": []
+        "log": ".agents/evidence/REG-DK-HOOK-02/20261010-190429.log",
+        "deleted": [],
+        "reused_at": "2026-10-10 19:05:24"
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-10 19:05:08",
+          "ts": 1791633908.394887,
+          "task": null,
+          "commit": "2a3ba88+dirty",
+          "duration": "23.57s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261010-190429.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-10 18:49:36",
+          "ts": 1791632976.666037,
+          "task": null,
+          "commit": "2a3ba88+dirty",
+          "duration": "26.46s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261010-184844.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-10 18:32:29",
@@ -452,28 +476,6 @@
           "duration": "26.74s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-02/20261010-180333.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-10 13:01:22",
-          "ts": 1791612082.6110988,
-          "task": "session-2836c3d3-04e",
-          "commit": "55c54fa+dirty",
-          "duration": "23.04s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-02/20261010-130049.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-10 12:55:22",
-          "ts": 1791611722.7332091,
-          "task": null,
-          "commit": "9b52da4+dirty",
-          "duration": "25.67s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-02/20261010-125357.log",
           "deleted": []
         }
       ],
@@ -567,16 +569,39 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-10 18:36:26",
-        "ts": 1791632186.7009149,
+        "at": "2026-10-10 19:05:08",
+        "ts": 1791633908.3948941,
         "task": null,
-        "commit": "03d3db2+dirty",
-        "duration": "32.80s",
+        "commit": "2a3ba88+dirty",
+        "duration": "61.88s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261010-183626.log",
-        "deleted": []
+        "log": ".agents/evidence/REG-DK-ALL-01/20261010-190507.log",
+        "deleted": [],
+        "reused_at": "2026-10-10 19:05:24"
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-10 19:05:08",
+          "ts": 1791633908.3948941,
+          "task": null,
+          "commit": "2a3ba88+dirty",
+          "duration": "61.88s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261010-190507.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-10 18:49:36",
+          "ts": 1791632976.666046,
+          "task": null,
+          "commit": "2a3ba88+dirty",
+          "duration": "78.02s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261010-184935.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-10 18:36:26",
@@ -608,28 +633,6 @@
           "duration": "80.87s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261010-182913.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-10 18:04:51",
-          "ts": 1791630291.1106648,
-          "task": null,
-          "commit": "55c54fa+dirty",
-          "duration": "102.73s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261010-180449.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-10 13:01:22",
-          "ts": 1791612082.6111119,
-          "task": "session-2836c3d3-04e",
-          "commit": "55c54fa+dirty",
-          "duration": "5.89s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261010-130032.log",
           "deleted": []
         }
       ],
@@ -2584,6 +2587,27 @@
         "log": ".agents/evidence/redproof-BUG-20261010-test-evidence-gate-rebuilds-the-shell-va/20261010-183459.log",
         "patch": ".agents/local/red-patches/BUG-20261010-test-evidence-gate-rebuilds-the-shell-va.patch"
       }
+    },
+    "BUG-20261010-test-evidence-gate-treats-a-source-file": {
+      "id": "BUG-20261010-test-evidence-gate-treats-a-source-file",
+      "kind": "bug",
+      "title": "test_evidence_gate treats a source file written in a temp or scratchpad dir as the last code edit, so a green run goes stale (36% of 171 real blocks)",
+      "cause": null,
+      "component": "test_evidence_gate",
+      "created_at": "2026-10-10 18:48:03",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "linked_at": "2026-10-10 18:48:03",
+      "linked_ts": 1791632883.020313,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_evidence_scratch_edits.sh"
+      ]
     }
   },
   "meta": {

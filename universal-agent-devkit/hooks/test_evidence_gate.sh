@@ -109,7 +109,7 @@ fi
 TE_LOG="${LOG_DIR}/test_evidence_gate.log" TE_DIR="${LOG_DIR}" \
 TE_TS="$(date +%Y-%m-%dT%H:%M:%S)" TE_REPO="${REPO_ROOT}" TE_SELF="$0" \
 python3 -I <<'PY' 3<<<"${INPUT}"
-import os, sys, json, re, glob, time, shlex
+import os, sys, json, re, glob, time, shlex, tempfile
 import xml.etree.ElementTree as ET
 
 try:
@@ -825,6 +825,25 @@ def runner_state(is_error, txt, pm_run=False, command=""):
     return "red" if (is_error or RUNNER_FAIL_RX.search(txt)) else "green"
 SRC_EXT = (".kt", ".kts", ".java", ".swift", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py",
            ".go", ".rs", ".dart", ".cs", ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm")
+# A file the session wrote in a TEMP dir that is not the project itself (the scratchpad the harness tells every agent to use, /tmp,
+# $TMPDIR) is a helper, not the code a test claim is about: it must not age a green run or ask for its RED-check. Measured 2026-10-10 over
+# 1227 real transcripts: 62 of 171 blocks of this gate came right after the last source file written lay in such a dir. A project that
+# itself sits under a temp dir (every test project) keeps counting: the project root is checked first.
+# Only absolute roots count (a relative TMPDIR is the directory the hook happens to run in). A root of "/" becomes "//" below and matches no path.
+_TMP_ROOTS = tuple(sorted({os.path.realpath(d) + os.sep for d in
+                           ("/tmp", "/var/tmp", "/dev/shm", tempfile.gettempdir(), os.environ.get("TMPDIR") or "/tmp")
+                           if d and os.path.isabs(d)}))
+_REPO_REAL = os.path.realpath(repo) + os.sep
+
+
+def _is_scratch(path):
+    try:
+        rp = os.path.realpath(path)
+    except (OSError, ValueError):
+        return False
+    return rp.startswith(_TMP_ROOTS) and not rp.startswith(_REPO_REAL)
+
+
 runner_results = []        # (result_idx, use_idx, is_error, text, command, "red"|"green")
 # Bug rows this session registered or changed from the shell (agent-kit bugs add/link,
 # regression_checklist.py add/bug-link): the ids their output printed.
@@ -843,6 +862,7 @@ script_test_idx = {}      # test file path -> transcript position of its last ed
 script_pending = {}       # test file path -> LIFO of (old, new) edits not yet undone
 script_idx_before = {}    # test file path -> [script_test_idx before each edit]
 last_src_edit_idx = -1
+last_scratch_src_idx = -1   # the last source file written in a temp dir: the fallback marker of CHECK 7 when no source edit is in the project
 edit_log = []             # (transcript position, file path) of every Edit/Write/NotebookEdit
 no_id_tool_indices = []
 test_edit_idx = {}       # simple class name -> transcript position of its last edit
@@ -1006,6 +1026,10 @@ if tp and os.path.exists(tp):
                     if nm not in ("Edit", "Write", "NotebookEdit"):
                         continue
                     fp = binp.get("file_path") or ""
+                    if isinstance(fp, str) and fp and _is_scratch(fp):
+                        if fp.endswith(SRC_EXT):
+                            last_scratch_src_idx = blk_idx
+                        continue
                     if isinstance(fp, str) and fp:
                         edit_log.append((blk_idx, fp))
                     if isinstance(fp, str) and fp.endswith(SRC_EXT):
@@ -1612,13 +1636,16 @@ if outcome_claimed:
     # last source edit and one that PASSED after it. A green run alone (no red before
     # the fix) or prose in the message does not count.
     def paired_red_green():
-        if last_src_edit_idx < 0:
+        # The marker is the last source edit in the project; a session whose every source edit lay in a temp dir (a fix made in a stage copy
+        # and installed after) is judged by the last of those, as before the temp-dir rule.
+        marker = last_src_edit_idx if last_src_edit_idx >= 0 else last_scratch_src_idx
+        if marker < 0:
             return False
         # Only a test RUNNER's own result counts as red: `cat` of an old TEST-*.xml
         # prints the same failure markup and must not stand in for a real run.
-        red = any(r[1] < last_src_edit_idx and r[5] == "red"
+        red = any(r[1] < marker and r[5] == "red"
                   for r in runner_results)
-        green = any(r[1] > last_src_edit_idx and r[5] == "green"
+        green = any(r[1] > marker and r[5] == "green"
                     for r in runner_results)
         return red and green
 

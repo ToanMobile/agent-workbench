@@ -283,3 +283,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** A gate that skips unfinished turns must remember what it skipped
 - **Nguyên nhân:** testsourceset_gate (backlog #3, 10/10) skipped the compile on a reply that says CHUA XONG. The handover turn finds work through git (uncommitted files plus verified_head..HEAD), but regression_gate moves verified_head for every session of the checkout, so a commit made in a skipped turn could be declared verified by another session and nothing was left to compile at the handover. Found only by a fresh-context review that replayed the two turns (mutation testing did not find it: no test had two turns).
 - **Quy tắc phòng ngừa & Cách fix:** Every skip rule keeps a per-session list of what it did not check and adds it to the next check that runs; test it with two turns (skip, then handover) and with the shared mark moved in between.
+
+---
+
+### [INSTINCT-034] A hook that ages a green run by the last source edit must only count edits that belong to the project
+- **Ngày phát hiện:** 2026-10-10
+- **Hiện tượng lỗi:** A hook that ages a green run by the last source edit must only count edits that belong to the project
+- **Nguyên nhân:** test_evidence_gate (10/10) took every Edit/Write of a file with a source extension as the last code edit, including helper scripts in the scratchpad the harness tells agents to use: 62 of 171 real blocks followed such a write. The first fix (ignore temp-dir writes) broke CHECK 7 for sessions whose every source edit is a scratch one (the marker stayed unset, the RED->GREEN pair could never be seen): 7 of 59 real transcripts flipped from pass to block. Found by a fresh-context review replaying real transcripts, not by the unit tests.
+- **Quy tắc phòng ngừa & Cách fix:** When a rule drops a class of events from a marker, give every consumer of that marker a fallback and replay real transcripts old vs new: only the intended ones may change.
