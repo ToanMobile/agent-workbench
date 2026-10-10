@@ -2607,7 +2607,21 @@
       "linked_ts": 1791632883.020313,
       "runs_in_suite": [
         "universal-agent-devkit/tests/verification/test_evidence_scratch_edits.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-10 19:06:09",
+        "ts": 1791633969.170589,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/verification/test_evidence_scratch_edits.sh": "ac210b55a35c5a69",
+          ".agents/local/red-patches/BUG-20261010-test-evidence-gate-treats-a-source-file.patch": "364484ba0ea865b8"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261010-test-evidence-gate-treats-a-source-file/20261010-190713.log",
+        "patch": ".agents/local/red-patches/BUG-20261010-test-evidence-gate-treats-a-source-file.patch"
+      }
     }
   },
   "meta": {
