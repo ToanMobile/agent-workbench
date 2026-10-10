@@ -2464,7 +2464,21 @@
       "linked_ts": 1791611594.8108191,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_proof_gate_report_after_push.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-10 12:57:46",
+        "ts": 1791611866.7305658,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_proof_gate_report_after_push.sh": "e0d7b22b42d0b588",
+          ".agents/local/red-patches/BUG-20261010-proof-gate-blocks-a-push-turn-whose-4-it.patch": "49a703c85319e238"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261010-proof-gate-blocks-a-push-turn-whose-4-it/20261010-125933.log",
+        "patch": ".agents/local/red-patches/BUG-20261010-proof-gate-blocks-a-push-turn-whose-4-it.patch"
+      }
     }
   },
   "meta": {
