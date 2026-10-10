@@ -1,14 +1,14 @@
 <div align="center">
 
 # 🚀 Universal AI Agent DevKit & Quality Protocol
-### *Shared rules, lifecycle hooks, 28 skills, domain profiles (Android, iOS, web, backend, game, automotive, voice, universal) and a static post-fix diff gate for Claude Code, OpenAI Codex, Google Gemini/Antigravity and Cursor — installed into your project without overwriting what is already there.*
+### *Shared rules, lifecycle hooks, 29 skills, domain profiles (Android, iOS, web, backend, game, automotive, voice, universal) and a static post-fix diff gate for Claude Code, OpenAI Codex, Google Gemini/Antigravity and Cursor — installed into your project without overwriting what is already there.*
 
 [![GitHub Repository](https://img.shields.io/badge/GitHub-ToanMobile%2Fagent--workbench-blue.svg?style=for-the-badge&logo=github)](https://github.com/ToanMobile/agent-workbench)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](./LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-agent--kit%20test-success.svg?style=for-the-badge)](#-verification--devkit-cli-agent-kit)
 [![Supported Agents](https://img.shields.io/badge/Agents-4%20Core%20Platforms-orange.svg?style=for-the-badge)](#-universal-multi-agent-matrix)
 [![Rulebook](https://img.shields.io/badge/Rules-AGENTS.md%20(SSOT)-red.svg?style=for-the-badge)](#-complete-rulebook--engineering-standards-single-source-of-truth)
-[![Skills Catalog](https://img.shields.io/badge/Skills-28%20Curated-purple.svg?style=for-the-badge)](#-28-curated-engineering-skills-catalog)
+[![Skills Catalog](https://img.shields.io/badge/Skills-29%20Curated-purple.svg?style=for-the-badge)](#-29-curated-engineering-skills-catalog)
 [![Domain Profiles](https://img.shields.io/badge/Profiles-Android%20%C2%B7%20iOS%20%C2%B7%20Web%20%C2%B7%20Backend%20%C2%B7%20more-cyan.svg?style=for-the-badge)](#-dynamic-domain-profiles-system)
 [![Review Councils](https://img.shields.io/badge/Councils-10%20Reviewer%20Prompts-yellow.svg?style=for-the-badge)](#-10-review-councils--self-consistency-checks)
 [![MCP Servers](https://img.shields.io/badge/MCP-6%20Integrated-brightgreen.svg?style=for-the-badge)](#-mcp-model-context-protocol-hub)
@@ -102,7 +102,7 @@ It delivers a complete, closed-loop software engineering ecosystem:
 
    **What runs by itself (hooks):** a new session loads the trap map of `.agents/instincts.md` and the regression checklist state; every request gets the traps that match it and, for a bug fix, the RED→GREEN rule; Bash blocks destructive git, `--no-verify` and device-bricking commands; stopping runs the active regression matrix (generated from the project's own test runner when the profile only ships a sample — `agent-kit matrix`), refuses “tests pass” when a newly written test never ran red, “fixed” without a red→green test pair in the session and changed code without a fresh-context review, and after a proven fix asks once to record the lesson (`agent-kit learn`). Claude Code gets all of these, and its worktree guard (`worktree_guard.sh`) stops an agent that works in a git worktree from writing into the main checkout (`DEVKIT_WORKTREE=<path>` declares one by hand, `WORKTREE_GUARD=0` turns it off; `AGENTS.md` §7.1); OpenAI Codex, Gemini CLI and Cursor get the context, the guards and the regression run through `hooks/agent_bridge.sh` (Grok reads the same `AGENTS.md`; the installer writes no Grok files) (Codex keeps the hooks you approved in `~/.codex/config.toml`: after an `agent-kit init` that changes `.codex/hooks.json`, approve the new entries with `/hooks`); Antigravity has rules only (`AGENTS.md` §7). Harmless Bash calls pass the guards in ~5 ms (bash fast path); `agent-kit clean` removes the hooks' old logs and backups.
 5. **10 Review Councils:** reviewer prompts in `agents/councils/` (subsystem isolation, architecture/blast radius, TDD, OpenCodeReview, security, game/Unity/Blender, performance/ANR, memory governance, solo-dev process, standards/delivery) that a profile activates. The `scripts/audit_*` scripts are grep-based self-consistency checks of the DevKit's own files, not code reviewers.
-6. **28 Curated Engineering Skills:** Standardized `SKILL.md` packages in 5 groups, including the domain performance skills `compose-recomp-audit` and `unity-gc-audit`, and a wrapper for the **Alibaba OpenCodeReview (`ocr`)** CLI.
+6. **29 Curated Engineering Skills:** Standardized `SKILL.md` packages in 5 groups, including the domain performance skills `compose-recomp-audit` and `unity-gc-audit`, and a wrapper for the **Alibaba OpenCodeReview (`ocr`)** CLI.
 7. **X_old Conflict Isolation Protection:** Non-destructive installation for existing repositories. Same-named skills/commands/agents/hooks move to the project tier `.agents/local/` (DevKit wins, yours stays committed and is re-linked when its name is free); colliding top-level files (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`) keep a `*_old` snapshot; root `commands/`, `rules/`, `skills/` holding your agent material move to `.agents/local/` (source-code dirs stay, with the DevKit items placed inside). Rule files kept in `.agents/local/rules/` stay active: every install lists them in the DevKit block of each agent's rule file — `CLAUDE.md` (Claude Code expands the `@` imports), `.cursor/rules/universal-agent-devkit.mdc` (Cursor includes them), `GEMINI.md` (Gemini imports files inside the repo; in symlink mode the DevKit folder is added to `context.includeDirectories` so the linked ones can be read) and `AGENTS.md` / `CODEX.md` (Codex reads them as plain text: the block tells it which files to open). They add to the DevKit rules, and where one contradicts the master rules' §6 or `rules/core-rules.md` the DevKit rule wins. Inspect with `agent-kit list-old`, restore with `agent-kit restore-old`.
 8. **Design System & Proactive Failure Memory:** Strict UI/UX token baselines (`DESIGN.md`, Touch Target $\ge 48\text{dp}$, WCAG AA, Debounced buttons) paired with persistent repository failure lessons (`.agents/instincts.md`).
 9. **Android Device Safety & Native Crash Diagnostics:**
@@ -133,7 +133,7 @@ It delivers a complete, closed-loop software engineering ecosystem:
 │ Static diff + regression   │ Android, iOS, Automotive,  │ Reviewer prompts             │
 │ (/audit-gate / agent-kit)  │ Game, Voice, Universal     │ (agents/councils/)           │
 ├────────────────────────────┴────────────────────────────┴──────────────────────────────┤
-│ 🧰 28 Curated Skills (incl. Compose & Unity performance) • 🛡️ X_old Conflict Protection │
+│ 🧰 29 Curated Skills (incl. Compose & Unity performance) • 🛡️ X_old Conflict Protection │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -167,7 +167,7 @@ It delivers a complete, closed-loop software engineering ecosystem:
 - **Reviewer prompts:** each council in `agents/councils/` is a subagent prompt with 5 focus areas; the active profile chooses which councils apply.
 - **Workflow engine receipts:** the `workflows/` engines bind evidence with SHA-256 content hashes (not signatures).
 
-### 7. 🧰 28 Curated Engineering Skills
+### 7. 🧰 29 Curated Engineering Skills
 - **Complete Software Lifecycle:** foundation skills plus the domain performance skills `compose-recomp-audit` and `unity-gc-audit`, covering TDD, Bug Fixing, Spec-Kit Lite Planning, Visual QA, Crashlytics Triage, Conflict Resolution, Knowledge Graph discovery, and Alibaba OpenCodeReview (`ocr`).
 
 ### 8. 🛡️ X_old Conflict Isolation & P0 Security Hardening
@@ -188,7 +188,7 @@ graph TD
         PostFixGate["⚡ Post-Fix Gate<br/>(static diff gate + regression tests)"]
         AuditCouncils["🏛️ 10 Review Councils<br/>(agents/councils/)"]
         Gates["🔒 Lifecycle Hooks<br/>(wired + opt-in helpers)"]
-        SkillsCatalog["🧰 28 Curated Skills"]
+        SkillsCatalog["🧰 29 Curated Skills"]
         DesignMemory["🎨 DESIGN.md & Failure Memory (.agents/instincts.md)"]
         MCPHub["🔌 6-Server MCP Hub (100+ Schemas)"]
     end
@@ -510,7 +510,7 @@ The imported files are real copies, not links: an `@` import whose real path is 
 
 ---
 
-## 🧰 28 Curated Engineering Skills Catalog
+## 🧰 29 Curated Engineering Skills Catalog
 
 Standardized under the `SKILL.md` format (YAML frontmatter + Progressive Disclosure) in **5 groups**:
 
@@ -561,6 +561,7 @@ Standardized under the `SKILL.md` format (YAML frontmatter + Progressive Disclos
 | **`security-checklist`** | `/scan` | Mobile & platform OWASP security checklist: Intent filters, URI traversal, Storage Access Framework, exported components, permissions. |
 | **`observability-instrumentation`** | `/logging` | Structured logging standardization, metric/trace instrumentation, Crashlytics telemetry, and 100% PII masking. |
 | **`writing-skills`** | `/skill-author` | Authoring, editing, and auditing standardized skills and rules for Agents. |
+| **`devkit-audit`** | `/devkit-audit` | Daily audit → independent review → optimise loop for the DevKit itself across the installed repos: Stop-hook and gate cost measured from the logs, a 100-point rubric, read-only audit agents. |
 
 ---
 
@@ -574,7 +575,7 @@ Standardized under the `SKILL.md` format (YAML frontmatter + Progressive Disclos
 
 ## ⌨️ Complete Slash Commands Catalog
 
-All 28 skills, the profile switcher and the post-fix gate are bound to auto-discovered slash commands with shorthand aliases (`agent-kit commands` lists them):
+All 29 skills, the profile switcher and the post-fix gate are bound to auto-discovered slash commands with shorthand aliases (`agent-kit commands` lists them):
 
 | Slash Command | Shorthand Aliases | Backing Skill / Target | Key Functionality |
 |---|---|---|---|
@@ -595,6 +596,7 @@ All 28 skills, the profile switcher and the post-fix gate are bound to auto-disc
 | `/session-handoff` | `/handoff` | `skills/session-handoff` | Session context packaging and continuity export. |
 | `/worktree-sandbox` | `/sandbox` | `skills/worktree-sandbox` | Instant APFS Copy-on-Write worktrees with dependency isolation and merge auto-cleanup. |
 | `/context-enricher` | `/enrich` | `skills/context-enricher` | Automatically enriches terse user prompts into 5D dossiers. |
+| `/devkit-audit` | — | `skills/devkit-audit` | Daily measured audit and optimisation of the DevKit (Stop-hook cost first), scored against a 100-point rubric. |
 | `/giao` | `/giao` | `skills/giao` | Task allocation and receipt verification between Leader PM and Worker. |
 | `/codebase-memory` | `/graph` | `skills/codebase-memory` | SSOT Knowledge Graph navigation and blast radius tracing. |
 | `/incremental-implementation` | `/step` | `skills/incremental-implementation` | Executes incremental changes with test gates. |
@@ -701,7 +703,7 @@ eval "$(agent-kit completion bash)"
 # 5. Run every regression suite:
 agent-kit test
 
-# 6. List all 28 curated skills:
+# 6. List all 29 curated skills:
 agent-kit list
 
 # 7. List all available slash commands:
@@ -771,7 +773,7 @@ universal-agent-devkit/
 │   ├── game/scripts/            # Unity test runners and bot marathon
 │   └── ios/                     # iOS Swift 6, SwiftUI, Concurrency rules & matrix
 ├── rules/                       # Core rules & dynamic profile rules symlinks
-├── skills/                      # 28 Curated Skills
+├── skills/                      # 29 Curated Skills
 ├── commands/                    # Slash commands & aliases (links into skills/, plus audit-gate & profile)
 ├── agents/                      # Subagents (.md), 10 Specialized Audit Agents, and 10 Councils (agents/councils/)
 ├── hooks/                       # Lifecycle hooks (hooks.json) and their contract tests (hooks/tests/)
