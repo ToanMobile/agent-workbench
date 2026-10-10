@@ -138,7 +138,40 @@ CHANGED="$( { git diff --name-only --diff-filter=ACMR 2>/dev/null
               [ -n "${HARNESS}" ] && python3 "${HARNESS}" since-files "${REPO_ROOT}" 2>/dev/null
             } | grep -E '\.(kt|java)$' | grep -v '/build/' | sort -u )"
 
+# Files an earlier stop of THIS session skipped as work in progress (below) and nothing compiled since: they are compiled with the next
+# stop that is not skipped, even when git no longer calls them unverified (another session moved verified_head past the commit that
+# holds them, 2026-10-10 review). Dropped by a compile that passes; a file that no longer exists is not listed.
+SKIPPED_FILE="${LOG_DIR}/.testsourceset_skipped_${SID_RAW:-default}"
+if [ -s "${SKIPPED_FILE}" ]; then
+  CHANGED="$( { printf '%s\n' "${CHANGED}"
+                while IFS= read -r _f; do [ -f "${_f}" ] && printf '%s\n' "${_f}"; done < "${SKIPPED_FILE}"
+              } | grep -E '\.(kt|java)$' | grep -v '/build/' | sort -u )"
+fi
+
 [ -n "${CHANGED}" ] || { log "PASS — no uncommitted Kotlin/Java changes"; exit 0; }
+
+# A reply that declares itself unfinished (CHƯA XONG / CHỜ DUYỆT …), claims no outcome and ran no git push this turn: the test
+# source sets are compiled at the handover turn, not on every stop of the work (DevKit backlog #3, the extension of Dot 11 that
+# regression_gate has: user 2026-10-09 "chỉ test khi bàn giao"; 8 of 15 minutes of Stop-hook time after Dot 11 were this hook on such
+# turns). The rule is hooks/devkit_harness.py work_in_progress. Commit, push and proof gates hold every handover.
+# TESTSOURCESET_WIP_SKIP=0 or DEVKIT_GATE_EVERY_STOP=1: compile on every stop as before.
+if [ "${TESTSOURCESET_WIP_SKIP:-1}" != "0" ] && [ -n "${HARNESS}" ] && [ "${HAVE_PY}" = 1 ] && [ -n "${INPUT}" ]; then
+  WIP="$(printf '%s' "${INPUT}" | python3 -I -c '
+import json, os, sys
+sys.path.insert(0, os.path.dirname(os.path.realpath(sys.argv[1])))
+sys.dont_write_bytecode = True
+try:
+    import devkit_harness
+    print("1" if devkit_harness.work_in_progress(json.load(sys.stdin)) else "")
+except Exception:
+    print("")
+' "${HARNESS}" 2>/dev/null || true)"
+  if [ "${WIP}" = "1" ]; then
+    log "SKIP — work in progress (the reply declares itself unfinished and claims no outcome): compiled at the handover turn"
+    { printf '%s\n' "${CHANGED}" >> "${SKIPPED_FILE}" && sort -u "${SKIPPED_FILE}" -o "${SKIPPED_FILE}"; } 2>/dev/null || true
+    exit 0
+  fi
+fi
 
 # ── scope to the files THIS session wrote ────────────────────────────────────
 # On a shared worktree, compiling every dirty module means one session's in-flight
@@ -238,7 +271,7 @@ fi
 # in-flight Kotlin here is the cross-session block this scoping exists to remove.
 if [ "${SCOPE_RC}" -eq 3 ]; then
   log "PASS — this session wrote no Kotlin/Java (dirty files belong to another session)"
-  rm -f "${ATTEMPTS_FILE}" 2>/dev/null || true
+  rm -f "${ATTEMPTS_FILE}" "${SKIPPED_FILE}" 2>/dev/null || true
   exit 0
 fi
 if [ -n "${SCOPED}" ]; then
@@ -267,7 +300,7 @@ if [ -n "${HARNESS}" ]; then
 fi
 if [ "${CACHED}" = pass ]; then
   log "PASS (reused result, tree unchanged fp=${TREE_FP})"
-  rm -f "${ATTEMPTS_FILE}" 2>/dev/null || true
+  rm -f "${ATTEMPTS_FILE}" "${SKIPPED_FILE}" 2>/dev/null || true
   exit 0
 fi
 
@@ -429,7 +462,7 @@ TASKS_STR="$(printf '%s ' ${TASKS})"
 
 if [ ${RC} -eq 0 ]; then
   log "PASS — ${ALL_TASKS}"
-  rm -f "${ATTEMPTS_FILE}" 2>/dev/null || true
+  rm -f "${ATTEMPTS_FILE}" "${SKIPPED_FILE}" 2>/dev/null || true
   [ -n "${TREE_FP}" ] && guard store "${TREE_FP}" pass
   exit 0
 fi

@@ -622,10 +622,18 @@ def _expand_vars(text, env):
         return env.get(name, m.group(0))
     return re.sub(r"\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)", repl, text or "")
 
+# The variables of EVERY earlier Bash command of the session, a later assignment winning. bash_cmds only grows (append), so the
+# table is extended with the commands added since the last call instead of rebuilt from the first command for each command: that
+# rebuild was quadratic (OfficeReader, 58 MB transcript: 1.43 million regex scans, 25 of the 26 s of a Stop; backlog #4, 2026-10-10).
+_env_all = {}
+_env_seen = 0
+
 def _env_for(cmd):
-    env = {}
-    for earlier in bash_cmds:
-        env.update(_collect_assigns(earlier))
+    global _env_seen
+    for earlier in bash_cmds[_env_seen:]:
+        _env_all.update(_collect_assigns(earlier))
+    _env_seen = len(bash_cmds)
+    env = dict(_env_all)
     env.update(_collect_assigns(cmd))
     return env
 

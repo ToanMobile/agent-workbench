@@ -275,3 +275,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Stop hook that accepts a report from any earlier transcript line: the hook's own feedback holds the skeleton, and an odd line crashes it into a pass
 - **Nguyên nhân:** proof_gate report-after-push (10/10): a text pre-filter let every later line with the word text reach code that assumed a message object; Python in the hook exits 1 and the wrapper turns exit 1 into exit 0, so one odd line after a push let a reply with no report through. The Stop hook feedback itself (a user-role isMeta line) carries the 4-item skeleton, so without the assistant-role check the second Stop after a block passed. Both found only by a fresh-context review and a mutation run (mutant M6 survived until a case for the feedback line existed).
 - **Quy tắc phòng ngừa & Cách fix:** A hook that reads a transcript line to accept something checks role, isSidechain, block type and shape before matching text; every hook test turns a Traceback in stderr into a failure (a crash is a pass); run mutants of each guard and add the case for every survivor.
+
+---
+
+### [INSTINCT-033] A gate that skips unfinished turns must remember what it skipped
+- **Ngày phát hiện:** 2026-10-10
+- **Hiện tượng lỗi:** A gate that skips unfinished turns must remember what it skipped
+- **Nguyên nhân:** testsourceset_gate (backlog #3, 10/10) skipped the compile on a reply that says CHUA XONG. The handover turn finds work through git (uncommitted files plus verified_head..HEAD), but regression_gate moves verified_head for every session of the checkout, so a commit made in a skipped turn could be declared verified by another session and nothing was left to compile at the handover. Found only by a fresh-context review that replayed the two turns (mutation testing did not find it: no test had two turns).
+- **Quy tắc phòng ngừa & Cách fix:** Every skip rule keeps a per-session list of what it did not check and adds it to the next check that runs; test it with two turns (skip, then handover) and with the shared mark moved in between.
