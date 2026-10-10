@@ -1,0 +1,20 @@
+--- a/universal-agent-devkit/bin/agent-health.py
++++ b/universal-agent-devkit/bin/agent-health.py
+@@ -283,17 +283,6 @@
+             broken += [f"{d}/{e.name}" for e in (target / d).iterdir() if e.is_symlink() and not e.exists()]
+     score.check(not broken, tr("Không có link hỏng trong .claude/ và .agents/", "No broken links in .claude/ and .agents/"),
+                 tr(f"Link hỏng: {broken[:5]}", f"Broken links: {broken[:5]}"))
+-    # A COMMITTED symlink (git mode 120000) whose target is gone, anywhere in the repo, breaks every clone and CI (GeelyEx2 2026-10-10:
+-    # scripts/red_proof.py kept pointing at the path the kit had moved, and the check above looks only inside .claude/ and .agents/).
+-    tracked = subprocess.run(["git", "-C", str(target), "ls-files", "-s", "-z"], capture_output=True, text=True, errors="surrogateescape")
+-    dead = []
+-    for rec in (tracked.stdout.split("\0") if tracked.returncode == 0 else []):
+-        meta, _, rel = rec.partition("\t")
+-        if meta.startswith("120000 ") and (target / rel).is_symlink() and not (target / rel).exists():
+-            dead.append(rel)
+-    score.check(not dead, tr("Không có symlink đã commit trỏ vào đích không tồn tại", "No tracked symlink points at a missing target"),
+-                tr(f"{len(dead)} symlink đã commit trỏ vào đích không tồn tại (clone hoặc CI sẽ hỏng): {dead[:5]}",
+-                   f"{len(dead)} tracked symlinks point at a missing target (a clone or CI breaks): {dead[:5]}"), warn_only=True)
+     instruction_files(target, score)
+     git_gate_wiring(target, score)
+     res = subprocess.run([sys.executable, "-c", MATRIX_TRUST_PY, str(BASE_DIR / "bin" / "post-fix-gate.py")],

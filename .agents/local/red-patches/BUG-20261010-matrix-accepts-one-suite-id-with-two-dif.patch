@@ -1,0 +1,13 @@
+--- a/universal-agent-devkit/bin/post-fix-gate.py
++++ b/universal-agent-devkit/bin/post-fix-gate.py
+@@ -4362,10 +4362,6 @@
+         return run_staged_audit(args, modified_files, devkit_artifacts)
+     matrix, matrix_problem = load_active_matrix(args.matrix, base_ref)
+     matrix, matrix_problem = follow_matrix_renames(matrix, matrix_problem, args.matrix, base_ref)
+-    for _sid, _cmds in matrix_id_conflicts(matrix).items():
+-        # log_err, not log_warn: --brief keeps only ✖ lines, so a ⚠ here would never reach the agent that runs the standard command
+-        log_err(tr(f"Matrix: suite id {_sid} có {len(_cmds)} lệnh khác nhau — chung một dòng trạng thái và evidence, mỗi suite cần id riêng (không chặn)",
+-                   f"Matrix: suite id {_sid} has {len(_cmds)} different commands — they share one status row and evidence folder; give each suite its own id (not blocking)"))
+     # Editing an existing test in the same change can weaken the very assertion the
+     # regression run relies on. New test files are fine (that is the RED test), and so is a
+     # test appended to an existing file: no old line changed and no skip marker added.

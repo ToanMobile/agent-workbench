@@ -1,0 +1,37 @@
+--- a/universal-agent-devkit/bin/post-fix-gate.py
++++ b/universal-agent-devkit/bin/post-fix-gate.py
+@@ -1832,28 +1832,19 @@
+     base_dir = get_base_dir()
+     devkit_dir = get_devkit_dir()
+ 
+-    # Load the AST linters this change needs, each on its own: a failed import is printed (the lint is OFF for the run), never swallowed,
+-    # and it does not take the other linter down (2026-10-10: one try/except-pass hid both).
++    # Load AST linters dynamically if available
+     check_kotlin_stability = None
+     check_unity_gc = None
+-    need_kt = any(f.endswith(".kt") for f in modified_files)
+-    need_cs = any(f.endswith(".cs") for f in modified_files)
+-    if need_kt or need_cs:
++    try:
+         sys.path.insert(0, str(devkit_dir / "scripts"))
+         for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
+             _sub_path = str(devkit_dir / "scripts" / _sub)
+             if _sub_path not in sys.path:
+                 sys.path.insert(0, _sub_path)
+-    if need_kt:
+-        try:
+-            from lint_compose_stability import check_kotlin_file as check_kotlin_stability
+-        except Exception as e:
+-            log_err(f"lint_compose_stability unavailable ({e}) — Compose stability lint is OFF for this run")
+-    if need_cs:
+-        try:
+-            from lint_unity_gc import check_csharp_file as check_unity_gc
+-        except Exception as e:
+-            log_err(f"lint_unity_gc unavailable ({e}) — Unity Zero-GC lint is OFF for this run")
++        from lint_compose_stability import check_kotlin_file as check_kotlin_stability
++        from lint_unity_gc import check_csharp_file as check_unity_gc
++    except Exception:
++        pass
+ 
+     for rel_file in modified_files:
+         # Exclude tests and build scripts from performance antipattern checks

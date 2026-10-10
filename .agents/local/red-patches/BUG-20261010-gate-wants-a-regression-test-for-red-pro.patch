@@ -1,0 +1,11 @@
+--- a/universal-agent-devkit/bin/post-fix-gate.py
++++ b/universal-agent-devkit/bin/post-fix-gate.py
+@@ -2227,7 +2227,7 @@
+     """Documentation or agent state: nothing a regression test could catch."""
+     clean = rel_file.replace("\\", "/")
+     return (clean.lower().endswith(DOC_EXT) or Path(clean).name in DOC_NAMES
+-            or clean in AGENT_STATE_FILES or clean.startswith((".agents/local/memory/", ".agents/local/red-patches/"))   # red_proof's bug-back patches: data of the proof tool
++            or clean in AGENT_STATE_FILES or clean.startswith(".agents/local/memory/")
+             or re.fullmatch(r"reports/proof-[^/]+\.png", clean) is not None
+             # What the project's tooling writes under reports/ (Goods: its PlayMode screen tour saves
+             # reports/tour-<time>/…), like tree_fp. Never source: a Django app called reports/ keeps its code.
