@@ -1,0 +1,186 @@
+diff --git a/universal-agent-devkit/hooks/regression_gate.sh b/universal-agent-devkit/hooks/regression_gate.sh
+index 8fead90..899a82b 100755
+--- a/universal-agent-devkit/hooks/regression_gate.sh
++++ b/universal-agent-devkit/hooks/regression_gate.sh
+@@ -117,8 +117,8 @@ fi
+ 
+ printf '%s' "${INPUT}" | REPO_ROOT="${REPO_ROOT}" GATE="${GATE}" LOG="${LOG}" PROBE="${PROBE}" \
+   MAX_ATTEMPTS="${REGRESSION_GATE_MAX_ATTEMPTS:-2}" MAX_SESSION_BLOCKS="${REGRESSION_GATE_MAX_SESSION_BLOCKS:-3}" \
+-  HOOK_PPID="${PPID}" HOOK_DIRS="$(dirname "${SELF}"):$(dirname "$0")" HOOK_SELF="${SELF}" python3 -I -c '
+-import contextlib, copy, errno, fcntl, fnmatch, hashlib, io, json, os, re, subprocess, sys, tempfile, time
++  HOOK_PPID="${PPID}" HOOK_DIRS="$(dirname "${SELF}"):$(dirname "$0")" python3 -I -c '
++import contextlib, fnmatch, hashlib, io, json, os, re, subprocess, sys, tempfile, time
+ 
+ repo, gate, log = os.environ["REPO_ROOT"], os.environ["GATE"], os.environ["LOG"]
+ max_attempts = int(os.environ.get("MAX_ATTEMPTS", "2"))
+@@ -324,79 +324,19 @@ except Exception:
+ if not isinstance(state, dict):
+     state = {}
+ 
+-_GONE = object()
+-# What this process last read from, or wrote to, the state file: save_state applies only what changed SINCE.
+-_base = copy.deepcopy(state)
+-
+-def _merge_into(disk, mine, base):
+-    # What this process changed since base, put onto the state another session may have written meanwhile: per entry
+-    # of the per-session and per-content tables, and per scalar. Without it the session that finished last erased the
+-    # entries of the one that finished first (the file is read at the start of a run and written minutes later).
+-    for k in set(mine) | set(base):
+-        mv, bv = mine.get(k, _GONE), base.get(k, _GONE)
+-        if isinstance(mv, dict) or isinstance(bv, dict):
+-            md = mv if isinstance(mv, dict) else {}
+-            bd = bv if isinstance(bv, dict) else {}
+-            dd = disk.get(k) if isinstance(disk.get(k), dict) else {}
+-            for sk in set(md) | set(bd):
+-                if md.get(sk, _GONE) != bd.get(sk, _GONE):
+-                    if sk in md:
+-                        dd[sk] = md[sk]
+-                    else:
+-                        dd.pop(sk, None)
+-            disk[k] = dd
+-        elif mv != bv:
+-            if mv is _GONE:
+-                disk.pop(k, None)
+-            else:
+-                disk[k] = mv
+-
+ def save_state():
+     # Atomic: sessions running side by side share this file, and a torn write read back
+     # as {} reset every loop-guard counter (OfficeReader 2026-09-25: two sessions racing).
+-    # Read-merge-write under a lock file (a few ms; waits 3 s at most, then merges anyway).
+-    global _base
+-    lock = None
++    for key, keep in (("attempts", 200), ("sessions", 50), ("shown", 50), ("repeat", 50), ("touched", 50)):
++        if isinstance(state.get(key), dict) and len(state[key]) > keep:
++            state[key] = dict(list(state[key].items())[-keep:])
+     try:
+-        lock = open(state_file + ".lock", "a")
+-        for _ in range(60):
+-            try:
+-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-                break
+-            except OSError as e:
+-                if e.errno not in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES):
+-                    note("state lock not supported here (%r): merged without it" % e)   # SMB / NFS / FUSE: waiting would not help
+-                    break
+-                time.sleep(0.05)
+-        else:
+-            note("state lock busy: merged without it")
++        fd, tmp = tempfile.mkstemp(prefix=".regression_gate.", dir=os.path.dirname(state_file))
++        with os.fdopen(fd, "w", encoding="utf-8") as fh:
++            json.dump(state, fh, ensure_ascii=False)
++        os.replace(tmp, state_file)
+     except OSError as e:
+-        note("state lock not opened: %r" % e)
+-    try:
+-        try:
+-            merged = json.load(open(state_file, encoding="utf-8"))
+-        except Exception:
+-            merged = None
+-        if not isinstance(merged, dict):
+-            # Removed, cut short or not an object: there is nothing to merge into, and a delta alone would drop what this process
+-            # read at its start (verified_head, pass_fp ...). Write the whole state, as before the merge existed.
+-            merged = copy.deepcopy(state)
+-        else:
+-            _merge_into(merged, state, _base)
+-        for key, keep in (("attempts", 200), ("sessions", 50), ("shown", 50), ("repeat", 50), ("touched", 50)):
+-            if isinstance(merged.get(key), dict) and len(merged[key]) > keep:
+-                merged[key] = dict(list(merged[key].items())[-keep:])
+-        try:
+-            fd, tmp = tempfile.mkstemp(prefix=".regression_gate.", dir=os.path.dirname(state_file))
+-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+-                json.dump(merged, fh, ensure_ascii=False)
+-            os.replace(tmp, state_file)
+-            _base = copy.deepcopy(state)
+-        except OSError as e:
+-            note("state not saved: %r" % e)
+-    finally:
+-        if lock is not None:
+-            lock.close()
++        note("state not saved: %r" % e)
+ 
+ # Degraded mode: the last result of this session, reused while the tree is unchanged, and its
+ # total block count (reset by a pass).
+@@ -420,14 +360,10 @@ def block(lines, cure, rc, reused=False, reusable=True, repeat_hit=False):
+     attempts[fp] = attempts.get(fp, 0) + 1
+     if degraded:
+         sess.update({"fp": tree_fp, "result": "block", "lines": lines, "cure": cure, "rc": rc})
+-    if rkey:
++    if reuse_key:
+         state["repeat"] = repeat
+         if reusable:
+-            # "at" is the time of the REAL run: a reuse keeps it, so the age limit counts from the run and not from the last Stop.
+-            prev = repeat.get(sid)
+-            at = prev.get("at") if reused and isinstance(prev, dict) and prev.get("key") == rkey else None
+-            repeat[sid] = {"key": rkey, "lines": lines, "cure": cure, "rc": rc,
+-                           "at": at if isinstance(at, (int, float)) and not isinstance(at, bool) else time.time()}
++            repeat[sid] = {"key": reuse_key, "lines": lines, "cure": cure, "rc": rc}
+         else:
+             repeat.pop(sid, None)
+     save_state()
+@@ -586,41 +522,6 @@ def _local_ignored_sha():
+ _local_sha = _local_ignored_sha()
+ 
+ 
+-def _stat_sig(*paths):
+-    # size and mtime of the files whose logic produced a stored result: a fix of the hook or of the gate drops it
+-    sig = []
+-    for p in paths:
+-        try:
+-            st = os.stat(p)
+-            sig.append("%d:%d" % (st.st_mtime_ns, st.st_size))
+-        except OSError:
+-            sig.append("-")
+-    return ",".join(sig)
+-
+-
+-# Key of the stored block (repeat): the content (reuse_key), the gitignored local config the suites read, and the hook
+-# and the gate themselves. None (the local config could not be listed) stores and serves nothing, like skip_key.
+-rkey = None
+-if reuse_key and _local_sha is not None:
+-    _self = os.environ.get("HOOK_SELF", "")
+-    rkey = hashlib.sha256((reuse_key + ":" + _local_sha + ":" + _stat_sig(
+-        gate, _self, os.path.join(os.path.dirname(_self), "devkit_harness.py") if _self else "")).encode()).hexdigest()[:20]
+-try:
+-    _repeat_ttl = float(os.environ.get("REGRESSION_GATE_REPEAT_TTL_S", "1800"))
+-except ValueError:
+-    _repeat_ttl = 1800.0
+-
+-
+-def _repeat_fresh(at):
+-    # A stored block is served for REGRESSION_GATE_REPEAT_TTL_S seconds after the real run (0 = never serve one). A block
+-    # stored without a time (written by the previous hook) is not served.
+-    try:
+-        age = time.time() - float(at)
+-    except (TypeError, ValueError, OverflowError):
+-        return False
+-    return _repeat_ttl > 0 and 0 <= age < _repeat_ttl
+-
+-
+ def skip_key(f):
+     if _local_sha is None:
+         return None
+@@ -683,8 +584,8 @@ if degraded and sess.get("fp") == tree_fp:
+     if sess.get("result") in ("untested", "matrix", "env"):
+         note("%s fp=%s (reused result) sid=%s" % (sess["result"], fp, sid))
+         sys.exit(0)
+-last = repeat.get(sid) if rkey else None
+-if isinstance(last, dict) and last.get("key") == rkey and isinstance(last.get("lines"), list) and _repeat_fresh(last.get("at")):
++last = repeat.get(sid) if reuse_key else None
++if isinstance(last, dict) and last.get("key") == reuse_key and isinstance(last.get("lines"), list):
+     # This session already blocked on exactly this content: the gate would say the same (a flaky
+     # suite is no reason to re-run every Stop). Same reason, no run.
+     block(last["lines"], last.get("cure") or [], last.get("rc", 1), reused=True, repeat_hit=True)
+@@ -927,9 +828,7 @@ if res.returncode == 2 and touched and not failing and not problem and not uncov
+         sys.exit(0)
+     state["touched_fp"] = fp
+     save_state()
+-# An edited existing test is cleared by the answer of the user in the transcript, a BUSY or BUDGET item by the lock
+-# going free or a new time budget — neither by the tree: such a block is never re-used. An item that cannot run on this
+-# machine at all (UNTESTED, untested_exit) is permanent here and does not keep the FAIL block from being stored.
+-block(lines, cure, res.returncode,
+-      reusable=not touched and not any(t.get("label") in ("BUSY", "BUDGET") for t in busy))
++# An edited existing test is cleared by the answer of the user in the transcript, a BUSY item by the lock
++# going free — neither by the tree: such a block is never re-used.
++block(lines, cure, res.returncode, reusable=not touched and not busy)
+ ' || exit $?
