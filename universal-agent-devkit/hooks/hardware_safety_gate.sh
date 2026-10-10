@@ -576,6 +576,39 @@ def rm_segment_problem(toks, cwds, env, depth, feed=None):
 FIND_OP = re.compile(r"(?<!\\)((?:\\\\)*)\\([;()])|\x27([;()])\x27|\x22([;()])\x22")
 FIND_OP_WORD = {";": " __ESC_SEMI__ ", "(": " __ESC_LP__ ", ")": " __ESC_RP__ "}
 
+def drop_comments(text):
+    """The text without its shell comments: a # that begins a word, outside quotes, up to the end of its line. A # inside a word
+    (a#b, $#, an escaped space before it, the ) that ends a substitution), inside ${ } or inside backticks is data, as in bash.
+    Quotes, ${ or a backtick still open at the end: the text whole (fail closed). 2026-10-10: shlex dropped everything after any #,
+    so a command after a comment line or after a#b was never judged; the first fix still read an escaped space, a CR, a ) and a
+    # inside ${ } or backticks as a word start (independent review)."""
+    out, i, n, q, brace, bt, esc = [], 0, len(text), None, 0, False, False
+    while i < n:
+        c = text[i]
+        prev_esc, esc = esc, False
+        if q is None:
+            if c == "\\" and i + 1 < n:
+                out.append(text[i:i + 2]); i += 2; esc = True; continue
+            if c in "\x27\x22":
+                q = "$\x27" if c == "\x27" and i and text[i - 1] == "$" else c
+            elif c == "`":
+                bt = not bt
+            elif c == "{" and i and text[i - 1] == "$":
+                brace += 1
+            elif c == "}" and brace:
+                brace -= 1
+            elif c == "#" and not (brace or bt) and (i == 0 or (not prev_esc and text[i - 1] in " \t\n;&|(")):
+                while i < n and text[i] != "\n":
+                    i += 1
+                continue
+        else:
+            if c == "\\" and q != "\x27" and i + 1 < n:
+                out.append(text[i:i + 2]); i += 2; continue
+            if c == q[-1]:
+                q = None
+        out.append(c); i += 1
+    return text if (q or brace or bt) else "".join(out)
+
 def rm_problem(text, cwds, depth=0):
     """Walk the command like the shell: `cd` moves the cwd (after `&&` for sure; after
     ; || | & both the old and the new directory stay possible), ( ) restores it."""
@@ -584,12 +617,13 @@ def rm_problem(text, cwds, depth=0):
     env = {"HOME": os.path.expanduser("~"), "TMPDIR": os.environ.get("TMPDIR") or "/tmp"}
     # `…` is $(…): the lexer splits "$" from "(", so a target built from one stays "$…"
     # (unresolvable, refused) while the inner command is walked as its own segment.
-    text = re.sub(r"`([^`]*)`?", r"$(\1)", text.replace("\\\n", " ").replace("\n", " ; "))
+    text = re.sub(r"`([^`]*)`?", r"$(\1)", drop_comments(text).replace("\\\n", " ").replace("\n", " ; "))
     text = FIND_OP.sub(lambda m: (m.group(1) or "") + FIND_OP_WORD[m.group(2) or m.group(3) or m.group(4)], text)
     try:
         lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
         lex.whitespace = " \t\r"
         lex.whitespace_split = True
+        lex.commenters = ""   # real comments are gone (drop_comments); a # left inside a word is data
         toks = list(lex)
     except ValueError:
         toks = [x.strip("\"\x27") for x in re.split(r"\s+|([;&|()]+)", text) if x and x.strip()]

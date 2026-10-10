@@ -1158,6 +1158,20 @@ def load_active_matrix(matrix_path: str = None, base_ref: str = "HEAD"):
     return matrix, None
 
 
+def matrix_id_conflicts(matrix) -> dict:
+    """{suite id: [commands]} for an id the matrix gives two DIFFERENT commands (2026-10-10, GeelyEx2 REG-OPS-11): they share one status
+    row, one evidence folder and one stale window, so a pass of one hides a failure of the other. One id under two rules with the same
+    command is a shared suite, not a conflict."""
+    seen = {}
+    for rule in (matrix.get("rules") if isinstance(matrix, dict) else None) or []:
+        for t in (rule.get("mandatory_regression_tests") if isinstance(rule, dict) else None) or []:
+            if isinstance(t, dict) and t.get("id") and isinstance(t.get("command"), str):
+                cmds = seen.setdefault(t["id"], [])
+                if t["command"] not in cmds:
+                    cmds.append(t["command"])
+    return {i: c for i, c in seen.items() if len(c) > 1}
+
+
 def _renamed_paths(base_ref: str, staged: bool = False) -> dict:
     """{old: new}, project-relative: what git itself records as RENAMED between base_ref and the working
     tree (the index with staged) and whose old path is gone. A copy keeps its old path and a path nobody
@@ -1818,19 +1832,28 @@ def run_performance_audit(modified_files: list) -> tuple:
     base_dir = get_base_dir()
     devkit_dir = get_devkit_dir()
 
-    # Load AST linters dynamically if available
+    # Load the AST linters this change needs, each on its own: a failed import is printed (the lint is OFF for the run), never swallowed,
+    # and it does not take the other linter down (2026-10-10: one try/except-pass hid both).
     check_kotlin_stability = None
     check_unity_gc = None
-    try:
+    need_kt = any(f.endswith(".kt") for f in modified_files)
+    need_cs = any(f.endswith(".cs") for f in modified_files)
+    if need_kt or need_cs:
         sys.path.insert(0, str(devkit_dir / "scripts"))
         for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
             _sub_path = str(devkit_dir / "scripts" / _sub)
             if _sub_path not in sys.path:
                 sys.path.insert(0, _sub_path)
-        from lint_compose_stability import check_kotlin_file as check_kotlin_stability
-        from lint_unity_gc import check_csharp_file as check_unity_gc
-    except Exception:
-        pass
+    if need_kt:
+        try:
+            from lint_compose_stability import check_kotlin_file as check_kotlin_stability
+        except Exception as e:
+            log_err(f"lint_compose_stability unavailable ({e}) — Compose stability lint is OFF for this run")
+    if need_cs:
+        try:
+            from lint_unity_gc import check_csharp_file as check_unity_gc
+        except Exception as e:
+            log_err(f"lint_unity_gc unavailable ({e}) — Unity Zero-GC lint is OFF for this run")
 
     for rel_file in modified_files:
         # Exclude tests and build scripts from performance antipattern checks
@@ -2204,7 +2227,7 @@ def needs_no_test(rel_file: str) -> bool:
     """Documentation or agent state: nothing a regression test could catch."""
     clean = rel_file.replace("\\", "/")
     return (clean.lower().endswith(DOC_EXT) or Path(clean).name in DOC_NAMES
-            or clean in AGENT_STATE_FILES or clean.startswith(".agents/local/memory/")
+            or clean in AGENT_STATE_FILES or clean.startswith((".agents/local/memory/", ".agents/local/red-patches/"))   # red_proof's bug-back patches: data of the proof tool
             or re.fullmatch(r"reports/proof-[^/]+\.png", clean) is not None
             # What the project's tooling writes under reports/ (Goods: its PlayMode screen tour saves
             # reports/tour-<time>/…), like tree_fp. Never source: a Django app called reports/ keeps its code.
@@ -4339,6 +4362,10 @@ def main():
         return run_staged_audit(args, modified_files, devkit_artifacts)
     matrix, matrix_problem = load_active_matrix(args.matrix, base_ref)
     matrix, matrix_problem = follow_matrix_renames(matrix, matrix_problem, args.matrix, base_ref)
+    for _sid, _cmds in matrix_id_conflicts(matrix).items():
+        # log_err, not log_warn: --brief keeps only ✖ lines, so a ⚠ here would never reach the agent that runs the standard command
+        log_err(tr(f"Matrix: suite id {_sid} có {len(_cmds)} lệnh khác nhau — chung một dòng trạng thái và evidence, mỗi suite cần id riêng (không chặn)",
+                   f"Matrix: suite id {_sid} has {len(_cmds)} different commands — they share one status row and evidence folder; give each suite its own id (not blocking)"))
     # Editing an existing test in the same change can weaken the very assertion the
     # regression run relies on. New test files are fine (that is the RED test), and so is a
     # test appended to an existing file: no old line changed and no skip marker added.

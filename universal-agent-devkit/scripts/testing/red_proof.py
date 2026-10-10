@@ -116,6 +116,18 @@ def patch_rel(bid: str) -> Path:
     return PATCH_DIR / (re.sub(r"[^A-Za-z0-9._-]", "_", bid) + ".patch")
 
 
+def patch_cap_bytes() -> int:
+    """DEVKIT_RED_PATCH_MAX_MB (default 5): the kept patch lives in a tracked folder, and a bug-back patch holds production code
+    only (2026-10-10, Goods: two patches of ~53 MB, a diff of a Unity scene, took .git to 241 MB)."""
+    try:
+        mb = float(os.environ.get("DEVKIT_RED_PATCH_MAX_MB") or 5)
+    except ValueError:
+        mb = 5.0
+    if mb != mb:   # nan
+        mb = 5.0
+    return sys.maxsize if mb == float("inf") else int(max(mb, 0.001) * 1024 * 1024)   # inf / 1e400: no cap
+
+
 def patch_of(project: Path, bid: str) -> Path | None:
     p = project / patch_rel(bid)
     return p if p.is_file() else None
@@ -783,6 +795,12 @@ def main(argv=None) -> int:
         # the patch is seen (its hash is in the proof → OUTDATED).
         kept = project / patch_rel(resolved[0])
         if patch_arg != kept.resolve():
+            size = patch_arg.stat().st_size
+            if size > patch_cap_bytes():
+                print(f"✖ patch {patch_arg.name} nặng {size / 1048576:.1f} MiB, quá trần {patch_cap_bytes() / 1048576:g} MiB: nó được giữ trong thư mục "
+                      "được git theo dõi, mà patch đưa bug trở lại chỉ chứa code sản xuất. Bỏ scene, file nhị phân, file sinh ra khỏi patch "
+                      "(DEVKIT_RED_PATCH_MAX_MB nâng trần)", file=sys.stderr)
+                return 2
             kept.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(patch_arg, kept)
     if not wait:

@@ -967,6 +967,39 @@ def outside_single_quotes(text):
             i += 1
     return "".join(out)
 
+def drop_comments(text):
+    """The text without its shell comments: a # that begins a word, outside quotes, up to the end of its line. A # inside a word
+    (a#b, $#, an escaped space before it, the ) that ends a substitution), inside ${ } or inside backticks is data, as in bash.
+    Quotes, ${ or a backtick still open at the end: the text whole (fail closed). 2026-10-10: shlex dropped everything after any #,
+    so a command after a comment line or after a#b was never judged; the first fix still read an escaped space, a CR, a ) and a
+    # inside ${ } or backticks as a word start (independent review)."""
+    out, i, n, q, brace, bt, esc = [], 0, len(text), None, 0, False, False
+    while i < n:
+        c = text[i]
+        prev_esc, esc = esc, False
+        if q is None:
+            if c == "\\" and i + 1 < n:
+                out.append(text[i:i + 2]); i += 2; esc = True; continue
+            if c in "\x27\x22":
+                q = "$\x27" if c == "\x27" and i and text[i - 1] == "$" else c
+            elif c == "`":
+                bt = not bt
+            elif c == "{" and i and text[i - 1] == "$":
+                brace += 1
+            elif c == "}" and brace:
+                brace -= 1
+            elif c == "#" and not (brace or bt) and (i == 0 or (not prev_esc and text[i - 1] in " \t\n;&|(")):
+                while i < n and text[i] != "\n":
+                    i += 1
+                continue
+        else:
+            if c == "\\" and q != "\x27" and i + 1 < n:
+                out.append(text[i:i + 2]); i += 2; continue
+            if c == q[-1]:
+                q = None
+        out.append(c); i += 1
+    return text if (q or brace or bt) else "".join(out)
+
 # ── Text fed to a shell on stdin (2026-10-09, tests/gates/test_git_guard_shell_feed.sh) ──────────────────────────────
 # `echo STR | bash`, `bash <<< STR`, `… | xargs sh -c`: the shell runs what it reads, so it is analysed like a -c string when
 # the producer is a literal (echo / printf / cat with a here-doc or here-string; a here-doc body is analysed where it
@@ -1208,11 +1241,12 @@ def analyse(text, depth=0, stripped=False):
             SOLO_HIT.append("lệnh có $( hoặc backtick không đóng, không kiểm được push/nhánh trong đó; tách lệnh git ra riêng")
             return SOLO_HIT[-1]
         return None
-    text = text.replace("\\\n", " ").replace("\n", " ; ")
+    text = drop_comments(text).replace("\\\n", " ").replace("\n", " ; ")
     try:
         lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
         lex.whitespace = " \t\r"
         lex.whitespace_split = True
+        lex.commenters = ""   # real comments are gone (drop_comments); a # left inside a word is data
         tokens = list(lex)
     except ValueError:
         m = RAW.search(text)

@@ -70,8 +70,35 @@ class _Re:
 # `\b` matched before the hyphen and blocked them). `opts` are git's global options before the verb (-C <dir>, -c k=v, --git-dir ...).
 GIT_WRITE = _Re(
     r"(^|[\s;&|(/])git\s+(?P<opts>(?:(?:-C\s+(?:\"[^\"]*\"|'[^']*'|\S+)|-c\s+(?:[^\s\"']|\"[^\"]*\"|'[^']*')+|--(?:git-dir|work-tree)\s+\S+|--[\w-]+(?:=\S+)?|-[pP])\s+)*)"
-    r"(commit|push|pull|add|rm|mv|reset|checkout|restore|switch|stash|merge|rebase|cherry-pick|revert|am|apply|tag|clean)(?![\w-])")
+    r"(commit|push|pull|add|rm|mv|reset|checkout|restore|switch|stash(?![ \t]+(?:list|show)(?![\w-]))|merge|rebase|cherry-pick|revert|am|apply|tag|clean)(?![\w-])")
 GATE = _Re(r"post-fix-gate(\.py)?\b|\bpostfix-gate\b|\bagent-kit\s+(?:worktree|wt)\s+(?:finish|automerge)\b|worktree\.py\s+(?:finish|automerge)\b")
+# Commands that only READ: naming the gate to them (`grep -c post-fix-gate AGENTS.md`, `cat bin/post-fix-gate.py`) does not run it. echo / printf
+# stay out (`echo $(postfix-gate)` runs it) and so does sed / awk (`sed -i` writes); a substitution anywhere in the segment is never excused.
+# git reads only through its read verbs, named right after it: `git bisect run`, `git submodule foreach` and `git -c alias.x=!… x` run commands.
+_GATE_READERS = frozenset(("grep", "egrep", "fgrep", "rg", "ag", "cat", "bat", "less", "more", "head", "tail", "wc", "nl", "file", "stat", "ls",
+                           "diff", "cmp"))
+_GIT_READ_VERBS = frozenset(("log", "show", "diff", "grep", "blame", "status", "ls-files", "rev-parse", "rev-list", "cat-file", "describe", "shortlog"))
+_GATE_PREFIX = frozenset(("env", "time", "nohup", "command", "exec", "builtin", "sudo", "nice"))
+
+
+def _gate_run(seg):
+    """The segment runs the post-fix gate / worktree finish: GATE names it and the first command word is not a pure reader. A quote or a
+    backslash in the words up to the command word means the plain word split cannot tell which is the command: it counts as running."""
+    if not GATE.search(seg):
+        return False
+    if "$(" in seg or "`" in seg or "<(" in seg:
+        return True
+    words = seg.split()
+    for k, w in enumerate(words):
+        if any(c in w for c in "\"'\\"):
+            return True
+        if w in _GATE_PREFIX or ("=" in w and w.split("=", 1)[0].isidentifier()):
+            continue
+        head = os.path.basename(w)
+        if head == "git":
+            return not (k + 1 < len(words) and words[k + 1] in _GIT_READ_VERBS)
+        return head not in _GATE_READERS
+    return True
 SEPARATOR = _Re(r"(&&|\|\||[;|&\n])")
 CD_ONLY = _Re(r"^\s*(?:builtin\s+)?cd\s+(?:--\s+)?(\"[^\"]*\"|'[^']*'|[^\s;&|()<>$`\\]+)\s*$")
 PROJECT_DIR = _Re(r"\bCLAUDE_PROJECT_DIR=(\"[^\"]*\"|'[^']*'|\S+)")
@@ -848,7 +875,7 @@ def write_hits_locked(cmd, top, cwd, sid=""):
         if DIR_CHANGE.search(seg):
             cur = None
         targets = [_git_target(cur, m.group("opts")) for m in GIT_WRITE.finditer(seg)]
-        if GATE.search(seg):
+        if _gate_run(seg):
             pd = PROJECT_DIR.search(seg)
             targets.append(_resolve(cur, pd.group(1)) if pd else cur)
         for target in targets:
@@ -863,7 +890,7 @@ def write_hits_locked(cmd, top, cwd, sid=""):
     # the regexes see a write the segment walk did not (e.g. an unterminated quote): judge it by the text, as before
     if not seen:
         stripped = _strip_heredocs(cmd)
-        hits_top = bool(GIT_WRITE.search(stripped) or GATE.search(stripped))
+        hits_top = bool(GIT_WRITE.search(stripped) or _gate_run(stripped))
     return hits_top, foreign
 
 

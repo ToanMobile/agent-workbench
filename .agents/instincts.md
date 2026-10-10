@@ -259,3 +259,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** bash 3.2 cắt đối số "$(cmd "{\"a\":…}")" tại dấu nháy thoát
 - **Nguyên nhân:** Trên macOS /bin/bash 3.2 một từ dạng "$(f x "…\"…\"…")" làm đối số lệnh bị tách ở dấu nháy thoát; hook chạy trên payload rác và test camelCase khẳng định sai rc (2026-10-09), Linux bash 5 không lỗi
 - **Quy tắc phòng ngừa & Cách fix:** Dựng chuỗi có \" trong phép gán (v="$(cmd …)") rồi truyền "$v"; kiểm test bash bằng /bin/bash trên macOS, không chỉ bash 5
+
+---
+
+### [INSTINCT-031] Hook lexer: shlex hides what follows a hash, and the one-line fix opens a new hole
+- **Ngày phát hiện:** 2026-10-10
+- **Hiện tượng lỗi:** Hook lexer: shlex hides what follows a hash, and the one-line fix opens a new hole
+- **Nguyên nhân:** shlex.shlex has commenters='#' by default, so everything after a '#' token never reached the judge (a comment line, or a#b, followed by a destructive command passed with rc 0) in block-dangerous-git.sh and hardware_safety_gate.sh. Setting commenters='' alone looked enough but a quote inside a REAL comment then makes shlex raise ValueError, the git hook falls back to its raw regex and loses its branch rules, and harmless commands with a trailing comment start to be blocked. Also: the Python of these hooks sits in a bash single-quoted python3 -c string, so one literal single quote in new code (even in a docstring) breaks the hook for every session.
+- **Quy tắc phòng ngừa & Cách fix:** Cut real comments first (drop_comments: a # at the start of a word, outside quotes, up to the newline, BEFORE backslash-newline is joined), then set commenters=''. Test a comment with an apostrophe, a comment ending in a backslash, a#b and $'..' next to each command, in both directions (blocked and allowed). Write new hook Python with \x27, never a literal single quote. Edit live hooks as temp file + mv after testing in a cp -Rc clone of the kit.
