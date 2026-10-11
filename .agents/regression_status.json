@@ -567,16 +567,50 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-11 11:49:47",
-        "ts": 1791694187.896687,
+        "at": "2026-10-11 12:21:03",
+        "ts": 1791696063.4532769,
         "task": null,
-        "commit": "2f625c1+dirty",
-        "duration": "3.49s",
+        "commit": "dda26e2+dirty",
+        "duration": "3.64s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261011-114947.log",
-        "deleted": []
+        "log": ".agents/evidence/REG-DK-ALL-01/20261011-122102.log",
+        "deleted": [],
+        "reused_at": "2026-10-11 12:21:25"
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-11 12:21:03",
+          "ts": 1791696063.4532769,
+          "task": null,
+          "commit": "dda26e2+dirty",
+          "duration": "3.64s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261011-122102.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-11 12:20:04",
+          "ts": 1791696004.8383942,
+          "task": null,
+          "commit": "dda26e2+dirty",
+          "duration": "5.39s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261011-122004.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-11 11:50:43",
+          "ts": 1791694243.7244081,
+          "task": null,
+          "commit": "dda26e2+dirty",
+          "duration": "3.61s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261011-115042.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-11 11:49:47",
@@ -597,39 +631,6 @@
           "duration": "3.31s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261011-114837.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-10 19:08:46",
-          "ts": 1791634126.634542,
-          "task": "session-2836c3d3-04e",
-          "commit": "0352edc+dirty",
-          "duration": "3.39s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261010-190801.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-10 19:05:08",
-          "ts": 1791633908.3948941,
-          "task": null,
-          "commit": "2a3ba88+dirty",
-          "duration": "61.88s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261010-190507.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-10 18:49:36",
-          "ts": 1791632976.666046,
-          "task": null,
-          "commit": "2a3ba88+dirty",
-          "duration": "78.02s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261010-184935.log",
           "deleted": []
         }
       ],
@@ -2619,6 +2620,27 @@
         "log": ".agents/evidence/redproof-BUG-20261010-test-evidence-gate-treats-a-source-file/20261010-190713.log",
         "patch": ".agents/local/red-patches/BUG-20261010-test-evidence-gate-treats-a-source-file.patch"
       }
+    },
+    "BUG-20261011-review-log-py-loses-lines-under-concurre": {
+      "id": "BUG-20261011-review-log-py-loses-lines-under-concurre",
+      "kind": "bug",
+      "title": "review_log.py loses lines under concurrent writes, erases damaged lines, reads the model from text, takes older results for newer dispatches and counts implement runs as reviews",
+      "cause": null,
+      "component": "review_log",
+      "created_at": "2026-10-11 12:21:35",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "linked_at": "2026-10-11 12:21:35",
+      "linked_ts": 1791696095.687464,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_review_log.sh"
+      ]
     }
   },
   "meta": {
