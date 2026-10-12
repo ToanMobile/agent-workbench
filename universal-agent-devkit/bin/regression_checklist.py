@@ -1225,10 +1225,10 @@ def sure_orphans(project: Path, matrix: dict, candidates, index=None) -> list:
             and not running_suites(project, f, index)]
 
 
-def sync_orphans(data: dict, project: Path, matrix: dict, index=None) -> tuple:
+def sync_orphans(data: dict, project: Path, matrix: dict, index=None, candidates=None) -> tuple:
     """ORPHAN_TEST:<path> rows = the test files no suite executes now: new ones added, the others
     removed (a DevKit save records the removal: no rollback). Returns (added, removed)."""
-    found = set(orphan_tests(project, matrix, index=index))
+    found = set(orphan_tests(project, matrix, candidates=candidates, index=index))
     rows = [k for k, it in data["items"].items() if it.get("kind") == "orphan"]
     removed = [k for k in rows if data["items"][k].get("file") not in found]
     for k in removed:
@@ -1364,13 +1364,45 @@ def sync_guards(data: dict, project: Path, matrix: dict | None = None, index=Non
 
 
 def sync_project(data: dict, project: Path, matrix: dict | None) -> dict:
-    """The checklist's sync: matrix suites, guards.json guards, orphan tests (one suite index)."""
+    """The checklist's sync: matrix suites, guards.json guards, orphan tests, test refs that resolve now (one suite
+    index, one file listing)."""
     matrix = matrix or {}
     sync_from_matrix(data, matrix)
     index = suite_index(project, matrix) if matrix.get("rules") else []
     created = sync_guards(data, project, matrix, index=index)
-    added, removed = sync_orphans(data, project, matrix, index=index)
-    return {"guards": created, "orphans": added, "orphans_gone": removed}
+    listing = (_git_lines(Path(project), "ls-files", "--cached", "--others", "--exclude-standard", "--", ".") or []) \
+        if matrix.get("rules") else None
+    added, removed = sync_orphans(data, project, matrix, index=index, candidates=listing)
+    relinked = relink_refs(data, project, listing=listing)
+    return {"guards": created, "orphans": added, "orphans_gone": removed, "relinked": relinked}
+
+
+def relink_refs(data: dict, project: Path, listing: list | None = None) -> list:
+    """A fixed bug's test_refs that resolve to a matrix suite NOW move to tests / runs_in_suite, as link_bug puts them.
+    2026-10-12, OfficeReader: all 11 rows counted as "no regression test guards it" had been linked to a test file that
+    git did not track yet (`bugs add --test` in the turn that wrote the test), and nothing resolved them again once the
+    file was committed. A ref that still resolves to nothing stays in test_refs. Returns the bug ids it linked."""
+    todo = [(k, it) for k, it in data["items"].items()
+            if it.get("kind") == "bug" and it.get("fixed") and it.get("test_refs")]
+    if not todo:
+        return []
+    if listing is None:
+        listing = _git_lines(Path(project), "ls-files", "--cached", "--others", "--exclude-standard", "--", ".") or []
+    moved = []
+    for bid, item in todo:
+        in_matrix, outside, in_suite = _resolve_refs(data, list(item["test_refs"]), project, listing=listing)
+        if not in_matrix:
+            continue
+        new = [t for t in in_matrix if t not in item.setdefault("tests", [])]
+        item["tests"] += new
+        if new:
+            item["linked_at"], item["linked_ts"] = _now(), time.time()
+        for v in in_suite:
+            if v not in item.setdefault("runs_in_suite", []):
+                item["runs_in_suite"].append(v)
+        item["test_refs"] = outside
+        moved.append(bid)
+    return moved
 
 
 EVIDENCE_DIR = Path(".agents") / "evidence"
@@ -1990,12 +2022,12 @@ def link(data: dict, item_id: str, test_id: str) -> None:
     item["linked_at"], item["linked_ts"] = _now(), time.time()  # older results predate the link: not re-run yet
 
 
-def _resolve_refs(data: dict, refs: list, project: Path | None) -> tuple:
+def _resolve_refs(data: dict, refs: list, project: Path | None, listing: list | None = None) -> tuple:
     """(matrix ids, refs the matrix never runs, refs shown next to their suite) — the
     same resolution `import_bugs` uses."""
     in_matrix, outside, in_suite = [], [], []
     for t in refs:
-        ids = resolve_test_ref(project, t, data) if project else \
+        ids = resolve_test_ref(project, t, data, listing=listing) if project else \
             ([t] if (data["items"].get(t) or {}).get("kind") == "test" else [])
         if ids:
             in_matrix += [i for i in ids if i not in in_matrix]
@@ -2390,7 +2422,7 @@ def _runs_source_set(path: str, command: str, project: Path = None) -> bool:
     return True
 
 
-def resolve_test_ref(project: Path, ref: str, data: dict) -> list:
+def resolve_test_ref(project: Path, ref: str, data: dict, listing: list | None = None) -> list:
     """Matrix test ids whose suite runs the test `ref` names: a matrix id itself, or a file
     path / class name (com.a.FooTest, FooTest#m, CozyGoods.Tests.EditMode.WalletMergeTests)
     found with `git ls-files`, whose path a rule watches and whose command runs its source
@@ -2399,7 +2431,7 @@ def resolve_test_ref(project: Path, ref: str, data: dict) -> list:
         return [ref]
     import fnmatch
     ids = []
-    for path in ref_paths(project, ref):
+    for path in ref_paths(project, ref, listing=listing):
         for tid, item in data["items"].items():
             if item.get("kind") != "test":
                 continue
@@ -2409,10 +2441,11 @@ def resolve_test_ref(project: Path, ref: str, data: dict) -> list:
     return sorted(ids)
 
 
-def ref_paths(project: Path, ref: str) -> list:
+def ref_paths(project: Path, ref: str, listing: list | None = None) -> list:
     """The test files a reference names: a path that exists, or a class / module name
     (com.a.FooTest, FooTest#m, :module|path#Class.method [TAGS], Ns.EditMode.FooTests)
-    found with `git ls-files`."""
+    found among the files git knows, tracked or not yet added but not ignored (`listing`: that file
+    list, already read by the caller). A test written in the same turn as `bugs add --test` is untracked."""
     import subprocess
     import re as _re
     name = _re.sub(r"\s*\[[^\]]*\]\s*$", "", ref.strip())      # trailing [TAGS]
@@ -2427,8 +2460,11 @@ def ref_paths(project: Path, ref: str) -> list:
         # Namespace.Class, Class.method, EditMode.Class.method: the class is one of the
         # last dotted parts — the first that names a file wins.
         for cls in list(reversed(base.split(".")))[:3]:
-            out = subprocess.run(["git", "-C", str(project), "ls-files", f"*/{cls}.*", f"{cls}.*"],
-                                 capture_output=True, text=True).stdout.split()
+            if listing is None:
+                out = subprocess.run(["git", "-C", str(project), "ls-files", "--cached", "--others", "--exclude-standard",
+                                      f"*/{cls}.*", f"{cls}.*"], capture_output=True, text=True).stdout.split()
+            else:
+                out = [x for x in listing if x.rsplit("/", 1)[-1].startswith(cls + ".")]
             paths = [x for x in out if x.rsplit("/", 1)[-1].split(".")[0] == cls]
             if paths:
                 break

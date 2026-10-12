@@ -567,16 +567,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-12 22:02:26",
-        "ts": 1791817346.679181,
-        "task": "session-c01ac57e-153",
-        "commit": "1e07fce+dirty",
-        "duration": "19.01s",
+        "at": "2026-10-12 22:23:17",
+        "ts": 1791818597.186618,
+        "task": null,
+        "commit": "4ea0e89+dirty",
+        "duration": "79.72s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261012-220120.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261012-222316.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-12 22:23:17",
+          "ts": 1791818597.186618,
+          "task": null,
+          "commit": "4ea0e89+dirty",
+          "duration": "79.72s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261012-222316.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-12 22:02:26",
@@ -619,17 +630,6 @@
           "duration": "131.85s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261012-204248.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-12 20:39:31",
-          "ts": 1791812371.360318,
-          "task": "session-c01ac57e-153",
-          "commit": "892125a+dirty",
-          "duration": "155.30s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261012-203930.log",
           "deleted": []
         }
       ],
@@ -3039,6 +3039,27 @@
         "log": ".agents/evidence/redproof-BUG-20261012-test-evidence-gate-lets-a-pass-claim-thr/20261012-220235.log",
         "patch": ".agents/local/red-patches/BUG-20261012-test-evidence-gate-lets-a-pass-claim-thr.patch"
       }
+    },
+    "BUG-20261012-a-bug-linked-to-a-test-file-git-does-not": {
+      "id": "BUG-20261012-a-bug-linked-to-a-test-file-git-does-not",
+      "kind": "bug",
+      "title": "a bug linked to a test file git does not track yet stays NOT_IN_MATRIX forever (no regression test counted)",
+      "cause": null,
+      "component": "checklist",
+      "created_at": "2026-10-12 22:21:55",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "linked_at": "2026-10-12 22:21:55",
+      "linked_ts": 1791818515.551539,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_bug_untracked_test_ref.sh"
+      ]
     }
   },
   "meta": {
