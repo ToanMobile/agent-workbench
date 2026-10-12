@@ -37,3 +37,9 @@ Với auth/cloud/file/permission path, review Security/Privacy và mọi entry p
 ## Verification
 
 Trong debug/staging phù hợp, gây một success/failure có kiểm soát và xác nhận signal xuất hiện, field đã redact, correlation nối đúng và duplicate/noise không tăng. Nếu thiếu device/dashboard/access, báo residual; compile hoặc unit test mock không chứng minh telemetry production hoạt động.
+
+## OpenTelemetry (chỉ backend/web đã dùng hoặc chọn dùng OTel; Android/iOS/game/đầu xe giữ công cụ riêng của profile)
+
+- Telemetry không bao giờ ném lỗi vào luồng nghiệp vụ; thư viện chỉ phụ thuộc OTel API, SDK/exporter nằm ở entrypoint app.
+- Tên span/`http.route` là template (không id thô); label metric bị chặn giá trị; log trong span mang `trace_id` + `span_id`; status span theo semconv (server 4xx Unset, 5xx Error).
+- Danh sách kiểm chứng và quy ước đầy đủ (SpanKind, status, sampling, loại metric, dải severity): `references/otel-signals.md`.

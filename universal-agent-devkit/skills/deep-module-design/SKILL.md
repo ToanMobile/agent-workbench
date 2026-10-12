@@ -35,3 +35,5 @@ Nếu abstraction chỉ pass-through, dùng một lần hoặc tạo seam giả 
 - Trước khi đổi public API, DI graph hoặc module boundary: trace 100% caller qua MCP Graph (`trace_path`).
 
 Khi có nhiều thiết kế hợp lý, tự phác ít nhất hai phương án, so sánh depth/locality/compatibility và chọn phương án evidence-supported. Chỉ dùng sub-agent khi harness/project policy cho phép và task đủ lớn.
+
+Kiến trúc tầng theo nền tảng, mỗi file chỉ cho đúng một profile (profile khác, kể cả game, automotive, ios, không nạp): `references/architecture-android.md` (profile android), `references/architecture-web.md` (profile web), `references/architecture-backend.md` (profile backend). Chỉ nạp khi thiết kế seam/module boundary; không dựng tầng cho CRUD nhỏ.

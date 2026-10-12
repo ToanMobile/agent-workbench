@@ -93,3 +93,9 @@ không claim đã qua release gate.
   (ví dụ `Tests: 12 passed`, `12 passed in 0.8s`, `ok  ./...`, `test result: ok. 12 passed`).
 - **Cảnh báo**: Kết quả `UP-TO-DATE` hoặc `No tests found` (`total = 0`) **KHÔNG** được tính là PASS.
 - Mọi lỗi fail phải được phân tích nguyên nhân gốc (Root Cause) trước khi sửa code.
+
+## 7. Kiểm tra chất lượng test (JS/TS, nguồn: goldbergyoni/javascript-testing-best-practices)
+
+- Trước khi tin một lần chạy xanh trên dự án JS/TS: grep không còn `.only`/`.skip`/`xit`/`fit` và không có test thiếu assertion (linter test: `jest/expect-expect`, `no-focused-tests`, `no-disabled-tests` hoặc tương đương nếu dự án đã cài).
+- Coverage: nguồn chỉ nói ~80% là đủ và 100% gây xao nhãng; việc coi nó là sàn là quy ước DevKit, chỉ áp khi dự án chưa có ngưỡng (ngưỡng của repo/User thắng, theo `tdd-workflow`). Thấy module quan trọng có coverage cao mà test yếu thì chạy mutation testing (ví dụ Stryker) trên module đó.
+- Chi tiết (flaky, cô lập dữ liệu, mã sạch): skill `tdd-workflow` → `references/testing-practices.md`.

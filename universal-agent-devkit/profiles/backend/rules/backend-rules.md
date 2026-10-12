@@ -32,3 +32,25 @@
 ## 7. Bảo mật
 - AuthN ở middleware, AuthZ kiểm tra theo **từng tài nguyên** (chống IDOR).
 - Rate limit cho endpoint đăng nhập/gửi mã; không trả khác biệt thông báo giữa "sai user" và "sai mật khẩu".
+
+## 8. Kiến trúc Hexagonal / DDD (nguồn: Sairyss/domain-driven-hexagon)
+- Phụ thuộc chỉ hướng vào trong: domain (entity, aggregate, value object, domain service/event) không import controller/DTO/ORM/framework. CI bắt bằng dependency-cruiser (`no-domain-deps`, severity error) hoặc ArchUnit (Java).
+- Port = interface ở tầng application/domain, adapter ở infrastructure, nối bằng DI. Chỉ tạo port ở ranh giới thật (DB, HTTP, queue); port cho mọi thứ là over-abstraction (core §4).
+- Một use case = một application service/handler; controller không chứa nghiệp vụ. Command đổi state và chỉ trả metadata (ID); query chỉ đọc.
+- Module là lát cắt dọc; không import trực tiếp giữa module, đi qua facade/mediator/message. Aggregate tham chiếu aggregate khác bằng ID, một transaction một aggregate, value object không ra DTO/event/DB model.
+- Domain không ném HTTP exception: lỗi nghiệp vụ phục hồi được trả kiểu `Result`, lỗi kỹ thuật ném; controller ánh xạ sang HTTP status (không biết → 500). Response DTO whitelist field, không lộ model persistence.
+- Không áp full DDD cho CRUD đơn giản (chính nguồn cũng nói vậy). Chi tiết: `skills/deep-module-design/references/architecture-backend.md`.
+
+## 9. Node.js production (nguồn: goldbergyoni/nodebestpractices — chỉ áp dụng khi dự án là Node)
+- Mọi lỗi kế thừa một `AppError extends Error` (`code` ổn định, `isOperational`); một error handler trung tâm; cấm `throw "chuỗi"`. Lỗi không-operational: log đủ ngữ cảnh, drain, thoát khác 0 để supervisor khởi động lại.
+- `unhandledRejection` và `uncaughtException` đăng ký ở entrypoint; `return await` trong `try/catch` để giữ stack; mọi emitter/stream có handler `'error'`.
+- Config validate bằng schema lúc boot và thoát nếu sai; body/query/param validate bằng schema (Zod/Joi/ajv) → 4xx mã ổn định. API public có giới hạn kích thước payload (413), rate limit (429), header bảo mật (helmet) — mỗi cái có test.
+- CPU nặng không chạy trên event loop (worker/process riêng). Regex từ input người dùng phải qua kiểm tra ReDoS; cấm `eval`.
+- Docker/CI: `USER` không phải root, base image ghim tag/digest (không `latest`), `CMD ["node", …]` (không `npm start`) và xử lý SIGTERM để drain, `.dockerignore` loại `.env`/`.npmrc`, `npm ci` + audit phụ thuộc trong CI.
+
+## 10. Observability theo OpenTelemetry (nguồn: open-telemetry/opentelemetry-specification)
+- Tên span và `http.route` là template ít biến thể (`GET /users/{id}`); id, email, URL thô vào attribute chứ không vào tên span/label metric.
+- Span status: server giữ Unset với 4xx, đặt Error với 5xx/lỗi mạng (kèm `error.type`); `Ok` chỉ do code ứng dụng đặt, thư viện không đặt.
+- Log có `trace_id` + `span_id` khi đang trong span; severity map theo dải OTel (ERROR ≥ 17). Xoá credential/chữ ký trong URL attribute.
+- Telemetry không bao giờ ném lỗi vào luồng nghiệp vụ: bọc exporter/callback; test với exporter hỏng, kết quả request phải không đổi.
+- Thư viện chỉ phụ thuộc OTel API; SDK/exporter cấu hình ở entrypoint ứng dụng. Sampling mặc định `ParentBased(AlwaysOn)`; chốt tỉ lệ trước production và không rẽ logic nghiệp vụ theo cờ sampled. Chi tiết: `skills/observability-instrumentation/references/otel-signals.md`.

@@ -115,4 +115,8 @@ Tuân thủ hệ số bội của $4\text{px} / 4\text{dp}$:
    - Camera Shake dùng Trauma decay ($Trauma^2 \times \text{PerlinNoise}$).
 6. **Props 3D Baked Sprites:**
    - Dùng Blender render 3D studio lighting ra PNG 512×512 alpha trong suốt cho coin, gem, rương, cúp; không dùng icon emoji hoặc ảnh phẳng thô sơ.
+7. **Asset Standards (kho asset mẫu & icon; chỉ áp dụng cho profile game):**
+   - Kenney: `kenney.nl/support` nêu asset là CC0 (dùng thương mại, không cần ghi công), nhưng đọc file license của từng pack trước khi dùng. Lucide: giấy phép ISC (giữ thông báo bản quyền), SVG; README không nói cách dùng trong Unity nên rasterize thành sprite rồi gom vào SpriteAtlas.
+   - Nút và panel kéo giãn luôn là sprite 9-slice có viền (border) đặt đúng trong Sprite Editor; kiểm tra bằng Game View ở 1080×1920 và một tỉ lệ khác, không để texture méo hoặc vỡ viền.
+   - Mỗi asset ngoài ghi nguồn và giấy phép vào sổ `docs/third-party-licenses.md` ngoài `Assets/` (luật không có tài liệu trong `Assets/`, `game-rules.md` §6); không đưa asset thiếu giấy phép vào build.
 

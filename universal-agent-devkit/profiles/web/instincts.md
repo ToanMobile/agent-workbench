@@ -39,6 +39,14 @@
 
 ---
 
+### [INSTINCT-WEB-06] Feature Import Chéo Feature — Vòng Phụ Thuộc Âm Thầm
+- **Hiện tượng lỗi:** Sửa một feature làm vỡ feature khác; import vòng khiến bundle/test lỗi khó đoán; team đông thì cấu trúc thư mục mất ý nghĩa.
+- **Nguyên nhân gốc rễ:** Không có luật ranh giới được máy ép; import tiện tay giữa `features/` (nguồn: bulletproof-react, project-structure).
+- **Quy tắc bắt buộc:** Feature không import feature; luồng shared → features → app; ép bằng ESLint `import/no-restricted-paths` (severity error), ghép feature ở tầng app.
+- **Kiểm tra tự động:** `npx eslint src` trong CI với rule `import/no-restricted-paths` đã bật; mutation: thêm import chéo phải làm lint đỏ.
+
+---
+
 ## Nhật ký bẫy bổ sung
 
 <!--

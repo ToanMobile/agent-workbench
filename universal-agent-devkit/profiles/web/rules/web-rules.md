@@ -31,3 +31,11 @@
 ## 7. Accessibility (WCAG 2.2 AA)
 - Vùng bấm ≥ 44×44px, tương phản ≥ 4.5:1, focus ring nhìn thấy, điều hướng bàn phím đầy đủ.
 - Dùng phần tử HTML ngữ nghĩa trước ARIA; mọi ảnh có `alt`, mọi input có `<label>`.
+
+## 8. Kiến trúc feature-based & Chất lượng mã (nguồn: alan2207/bulletproof-react · ryanmcdermott/clean-code-javascript · goldbergyoni/javascript-testing-best-practices)
+- Cấu trúc `src/features/<tên>/{api,components,hooks,stores,types,utils}`; feature KHÔNG import feature khác, luồng một chiều shared → features → app. Ép bằng ESLint `import/no-restricted-paths` (severity error) và đặt tên file/thư mục kebab-case (`check-file`); vi phạm làm CI đỏ.
+- Một API client duy nhất; mỗi endpoint gồm type/schema + fetcher + query hook đặt cùng chỗ. Interceptor xử lý chung (thông báo, 401 → refresh/đăng xuất).
+- Tách loại state: component, application, server cache (React Query/SWR), form, URL. Dữ liệu server không nhét vào global store; state đặt gần chỗ dùng; Context chỉ cho dữ liệu đổi chậm.
+- Nhiều error boundary theo vùng (không một boundary bọc cả app); production báo lỗi lên tracker kèm source map, không kèm PII (core §11).
+- Quy ước review: hàm ≤ 2 tham số (nhiều hơn → options object), một việc, không cờ boolean, không mutate tham số, không code chết/comment-out, magic number → hằng số, `===`, `async/await`, không để promise nổi (`no-floating-promises`).
+- Test: phần lớn là integration (Testing Library + MSW chặn HTTP, không mock `fetch`), unit cho logic dùng chung, E2E Playwright ít và chạy headless trong CI. Tên test 3 phần (đơn vị, kịch bản, kết quả), AAA, một khái niệm/test; mỗi test tự tạo dữ liệu, không seed toàn cục; truy vấn UI theo label/test-id (hoặc role khi dùng Testing Library); không `sleep` cố định. Coverage: nguồn nói ~80% là đủ, coi là sàn là quy ước DevKit và chỉ áp khi dự án chưa có ngưỡng (theo `tdd-workflow`); mutation testing cho module quan trọng; linter test cấm test không assert. Chi tiết: `skills/deep-module-design/references/architecture-web.md` và `skills/tdd-workflow/references/testing-practices.md`.

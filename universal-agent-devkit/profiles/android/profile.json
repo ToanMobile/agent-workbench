@@ -23,7 +23,9 @@
   ],
   "regression_matrix": "profiles/android/regression_matrix.json",
   "rules_file": "profiles/android/rules/android-rules.md",
-  "exclude_skills": [],
+  "exclude_skills": [
+    "unity-gc-audit"
+  ],
   "source_extensions": [
     ".kt",
     ".kts",

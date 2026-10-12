@@ -39,6 +39,30 @@
 
 ---
 
+### [INSTINCT-BE-06] Domain Import Framework/ORM — Nghiệp Vụ Dính Chặt Hạ Tầng
+- **Hiện tượng lỗi:** Nâng ORM/framework phải sửa cả entity và use case; unit test nghiệp vụ cần DB hoặc HTTP.
+- **Nguyên nhân gốc rễ:** Entity/aggregate import decorator ORM, controller, DTO hoặc ném HTTP exception (nguồn: domain-driven-hexagon, dependency rule).
+- **Quy tắc bắt buộc:** Domain không import controller/DTO/database/repository; port ở application/domain, adapter ở infrastructure; domain trả `Result`, controller ánh xạ sang HTTP.
+- **Kiểm tra tự động:** dependency-cruiser rule `no-domain-deps` (severity error) hoặc ArchUnit chạy trong CI; mutation: thêm một import cấm vào domain phải làm CI đỏ.
+
+---
+
+### [INSTINCT-BE-07] Lỗi Không Bắt Ở Entrypoint Và Lỗi Tuỳ Tiện (Node)
+- **Hiện tượng lỗi:** Promise reject rơi im lặng, tiến trình tiếp tục ở trạng thái hỏng; client nhận stack trace hoặc `throw "chuỗi"` không có mã.
+- **Nguyên nhân gốc rễ:** Thiếu handler `unhandledRejection`/`uncaughtException`; không có lớp lỗi chung; nhiều nơi tự xử lý lỗi (nguồn: nodebestpractices mục 2).
+- **Quy tắc bắt buộc:** Một `AppError` (`code`, `isOperational`), một error handler trung tâm; lỗi không-operational: log, drain, thoát khác 0; response không kèm stack.
+- **Kiểm tra tự động:** grep -E "throw +['\"]" trong mã nguồn = 0; test ném `AppError` và lỗi lạ, assert body không chứa stack và exit code của lỗi không-operational.
+
+---
+
+### [INSTINCT-BE-08] Telemetry Làm Hỏng Request, Hoặc Span/Label Nổ Cardinality
+- **Hiện tượng lỗi:** Exporter lỗi làm request 500; dashboard chậm hoặc đắt vì mỗi `user_id` thành một chuỗi thời gian; span tên `GET /users/42` không gom được.
+- **Nguyên nhân gốc rễ:** Gọi API telemetry không bọc; nhét id/URL thô vào tên span hoặc label metric (spec OTel: tên span ít biến thể; telemetry không được ném).
+- **Quy tắc bắt buộc:** Bọc exporter/callback, tên span theo `{method} {http.route}`, id vào attribute chứ không vào label metric, log mang `trace_id`/`span_id`.
+- **Kiểm tra tự động:** test exporter hỏng → kết quả request không đổi; gọi hai id khác nhau → một tên span.
+
+---
+
 ## Nhật ký bẫy bổ sung
 
 <!--

@@ -100,3 +100,9 @@ Kỹ năng chuyên sâu kiểm toán mã nguồn C# trong Unity 6, triệt tiêu
    bash .agents/active-profile/scripts/unity-batch.sh playmode --category SceneTransition
    ```
    - Tiêu chuẩn: Sau khi dỡ bỏ màn chơi (`Resources.UnloadUnusedAssets()`), không còn tham chiếu tĩnh nào trỏ đến đối tượng đã bị phá hủy.
+
+## Tham chiếu on-demand (nạp khi cần)
+
+- `references/gameplay-patterns.md` — mẫu thiết kế gameplay (State, Command, Observer/Event Bus, Pool, Dirty Flag, Spatial Partition…), ScriptableObject Architecture, bẫy từng mẫu. Rule ngắn: `game-rules.md` §7.
+- `references/unity-ui-motion-qa.md` — gói UI uGUI (UIEffect, UIParticle, SoftMask), tween không cấp phát (PrimeTween/LitMotion so với DOTween), QA bot, bảng đối chiếu tuyên bố và giấy phép. Rule ngắn: `game-rules.md` §3–§6.
+- `references/dod-and-render-debug.md` — Data-Oriented Design rút từ EnTT cho Unity, quy trình triage lỗi render bằng RenderDoc (kể cả giới hạn Metal/GLES).

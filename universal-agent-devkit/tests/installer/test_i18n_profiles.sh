@@ -109,8 +109,9 @@ done
 
 A="$(newproj android build.gradle '')"
 install_q -t "$A" -a claude,gemini -p android
-miss=""; for s in $ANDROID_ONLY; do [ -e "$A/.agents/skills/$s" ] || miss="$miss $s"; done
-[ -z "$miss" ] && ok "android: every skill installed (incl. Android/Unity)" || fail "android: missing$miss"
+miss=""; for s in android-real-device-qa compose-recomp-audit deploy; do [ -e "$A/.agents/skills/$s" ] || miss="$miss $s"; done
+[ -z "$miss" ] && ok "android: every Android skill installed" || fail "android: missing$miss"
+[ ! -e "$A/.agents/skills/unity-gc-audit" ] && ok "android: game-only skill unity-gc-audit not installed (apps never get game skills)" || fail "android: unity-gc-audit leaked into an app profile"
 [ -e "$A/.claude/commands/deploy.md" ] && ok "android: /deploy command installed" || fail "android: /deploy missing"
 
 # Switching the project to a profile that excludes skills removes only DevKit items.

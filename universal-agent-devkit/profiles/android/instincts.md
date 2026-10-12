@@ -125,6 +125,14 @@
 
 ---
 
+### [INSTINCT-AND-12] ViewModel Lộ MutableStateFlow Hoặc Để Lỗi Rơi Khỏi viewModelScope
+- **Hiện tượng lỗi:** UI sửa state trực tiếp; một lỗi của luồng dữ liệu làm crash hoặc làm UI kẹt Loading vĩnh viễn; test ViewModel lệch vì dispatcher thật.
+- **Nguyên nhân gốc rễ:** `MutableStateFlow` public, không `.catch` thành state, không inject dispatcher/Main test (nguồn: android/architecture-samples — UDF, `MainCoroutineRule`).
+- **Quy tắc bắt buộc:** Mutable private, lộ `StateFlow<UiState>` bất biến qua `stateIn`; lỗi thành state; test ViewModel dùng `MainCoroutineRule` và fake repository (xem `android-rules.md` §16).
+- **Kiểm tra tự động:** grep `val .*: MutableStateFlow` không `private` trong ViewModel = 0; test repository ném lỗi → `UiState` chứa lỗi, không crash.
+
+---
+
 ## 2. Nhật Ký Bẫy Mã Nguồn Bổ Sung (Dành cho Dev / Agent thêm mới)
 
 <!--

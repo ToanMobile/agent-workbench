@@ -130,3 +130,11 @@
 - **Thumb zone:** Primary CTA (Ký, Xác nhận, Tiếp tục) nằm trong 40% nửa dưới màn hình.
 - **Frame budget 16.6ms:** Cấm `Column` + `verticalScroll` cho danh sách động. Dùng `LazyColumn`/`LazyRow` với stable key. Tính toán nặng trong Composable đi qua `remember` hoặc `derivedStateOf`.
 - **Kiểm chứng bất biến chồng lấn/Insets:** Khi đổi layout/overlay/inset/cử chỉ có nhiều vùng chạm/chrome đáy-cạnh ⇒ thêm/cập nhật test bảng cấu hình bằng helper `compose-overlap-invariants` + ma trận trạng thái (hướng × kiểu điều hướng cử chỉ/3 nút × inset status/nav/cutout × font scale × RTL và các trạng thái riêng của màn hình (ví dụ thanh công cụ ẩn/hiện, trình phát nổi), mỗi ô một dòng kết quả). Không dùng snapshot toạ độ tuyệt đối trừ khi thật sự cần.
+
+## 16. Kiến trúc tầng & Kiểm thử (nguồn: android/architecture-samples)
+- Tầng UI (Screen + ViewModel) → Repository (interface) → data source (Room cục bộ + network). Tầng domain chỉ thêm khi logic được dùng lại ở nhiều nơi (nhánh `main` của sample không có).
+- ViewModel giữ `MutableStateFlow` ở dạng private và lộ một `StateFlow<UiState>` qua `stateIn(viewModelScope, <chính sách chia sẻ, ví dụ SharingStarted.WhileSubscribed(timeout)>, initial)` (sample dùng helper riêng `WhileUiSubscribed`). `UiState` là `data class` bất biến; UI gửi sự kiện bằng hàm của ViewModel; thông báo một lần là state và được xoá bằng hàm "đã hiển thị".
+- Lỗi của luồng dữ liệu thành state (`.catch` → `Async.Error`/`userMessage`), không để lọt ra khỏi `viewModelScope`.
+- Repository: đọc trả `Flow` từ Room (nguồn sự thật), ghi local rồi mới đồng bộ network; ánh xạ entity/DTO ↔ model ngoài bằng hàm riêng, không lộ entity Room lên UI. Dispatcher và application scope inject bằng qualifier (`@IoDispatcher`, `@DefaultDispatcher`, `@ApplicationScope`).
+- Test: fake viết tay trong module dùng chung (`FakeRepository`/`FakeDao`/`FakeNetworkDataSource`) ưu tiên hơn mock repository; `MainCoroutineRule` set/reset `Dispatchers.Main` bằng test dispatcher; mỗi `@Module` có `@TestInstallIn(replaces = …)` đối ứng; test Room dùng DB in-memory (§10, §11).
+- Package theo feature (`tasks/`, `taskdetail/`, …), mỗi feature có Screen + ViewModel và test phản chiếu cấu trúc đó. Chi tiết: `skills/deep-module-design/references/architecture-android.md`.

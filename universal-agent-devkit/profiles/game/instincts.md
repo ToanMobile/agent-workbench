@@ -192,6 +192,22 @@
 
 ---
 
+### [INSTINCT-G20] Vòng Lặp Mô Phỏng Bước Biến Thiên Hoặc Bù Bước Không Giới Hạn
+- **Hiện tượng lỗi:** Cùng seed nhưng bot-marathon ra kết quả khác nhau giữa máy nhanh/chậm; hoặc sau một lần khựng, game đứng hình ngày càng nặng (xoắn ốc bù bước).
+- **Nguyên nhân gốc rễ:** Logic luật chơi nhân `Time.deltaTime` biến thiên; hoặc vòng `while (lag >= step)` không có trần và một bước `update()` tốn hơn bước cố định (nguồn: Game Programming Patterns, chương Game Loop).
+- **Quy tắc bắt buộc:** Mô phỏng chạy bước cố định có trần số vòng bù mỗi frame (DevKit: ≤ 5), render nội suy phần dư; chi phí một bước phải thấp hơn bước cố định trên máy yếu nhất. Chi tiết: `skills/unity-gc-audit/references/gameplay-patterns.md`.
+- **Kiểm tra tự động:** test EditMode chạy cùng seed với hai chuỗi `deltaTime` khác nhau phải ra cùng trạng thái cuối.
+
+---
+
+### [INSTINCT-G21] ScriptableObject Giữ Giá Trị Runtime Và Listener Không Huỷ Đăng Ký
+- **Hiện tượng lỗi (có thể xảy ra; việc SO giữ giá trị giữa các lần Play và khi tắt Domain Reload CHƯA được nguồn xác nhận, phải tự đo):** lần Play thứ hai trong Editor bắt đầu với máu/điểm của lần trước; sự kiện SO gọi vào object đã bị huỷ; `Raise` duyệt xuôi có thể hỏng khi một listener tự huỷ đăng ký giữa chừng (suy luận của DevKit).
+- **Nguyên nhân gốc rễ:** Biến SO bị ghi lúc runtime nhưng không reset (mã mẫu Unite 2017 phải đặt `ResetHP` thủ công); listener đăng ký `OnEnable` mà không huỷ ở `OnDisable`; `Raise` duyệt xuôi (mã mẫu duyệt ngược).
+- **Quy tắc bắt buộc:** Reset giá trị SO runtime lúc bắt đầu phiên chơi (không dùng SO làm save data), mỗi biến một nơi ghi, `Raise` duyệt ngược, đăng ký/huỷ đối xứng; test với Domain Reload tắt (nguồn không xác nhận hành vi này nên phải tự đo).
+- **Kiểm tra tự động:** PlayMode: Enter/Exit Play hai lần, giá trị khởi đầu của mọi biến SO phải bằng mặc định; grep cặp `Register`/`Unregister` theo file.
+
+---
+
 ## 2. Nhật Ký Bẫy Mã Nguồn Bổ Sung (Dành cho Dev / Agent thêm mới)
 
 <!--
