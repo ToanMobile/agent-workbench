@@ -296,7 +296,7 @@ def attributed_or_negated(prefix, matched_text):
 # an audit reply that only planned one was blocked twice). Exempt only when the sentence says it
 # is a plan / not done yet, says nothing is done, and no result word or N/N count follows the
 # compound: "Test RED→GREEN ✅", "Đã chạy test RED→GREEN", "Test RED→GREEN, 12/12 pass" are claims.
-RED_GREEN_NAME = re.compile(r"\bred\s*(?:→|->|=>)\s*(?:green|xanh)\b", re.I)
+RED_GREEN_NAME = re.compile(r"\b(?:red|đỏ)\s*(?:→|->|=>)\s*(?:green|xanh)\b", re.I)   # đỏ: the Vietnamese name, 2026-10-12
 CYCLE_PLAN = re.compile(r"\b(?:sẽ|kế\s+hoạch|cần|nên|phải|chưa|will|plan(?:ned)?|need|must|should"
                         r"|not\s+yet|before)\b|trước\s+khi", re.I)
 CYCLE_DONE = re.compile(r"\b(?:đã|rồi|xong|done|ran|passed)\b|✅|✔|✓", re.I)
@@ -308,6 +308,30 @@ def cycle_name_only(sentence, match):
         return False
     rest = RED_GREEN_NAME.sub(" ", sentence[match.start():])
     return not re.search(r"pass|xanh|green|thành\s+công|đạt|\d+\s*/\s*\d+", rest, re.I)
+
+# A sentence that MENTIONS the trigger words quotes them after a word that says so (chữ "test" đứng gần "xanh", cụm
+# "test ĐỎ→XANH", mẫu `test…xanh`; 2026-10-12: four blocks in one session of replies that only talked about this gate).
+# Both ends of the match must sit inside quotes or backticks, so a quoted RESULT with no such word (Kết quả: "12/12 test
+# pass") or a result outside the quotes (Chữ "test" thì 12/12 test pass) is still a claim.
+MENTION_WORD = re.compile(r"\b(?:chữ|từ|cụm|mẫu|chuỗi|câu|words?|phrases?|patterns?|regex|terms?)\b", re.I)
+QUOTED_SPAN = re.compile(r"\"[^\"\n]*\"|“[^”\n]*”|`[^`\n]*`")
+
+import bisect
+_QUOTES = {}     # sentence -> (end of its first mention word or None, quoted span starts, spans): once per sentence, not per match
+
+def quoted_mention(sentence, match):
+    q = _QUOTES.get(sentence)
+    if q is None:
+        mw = MENTION_WORD.search(sentence)
+        spans = [(x.start(), x.end()) for x in QUOTED_SPAN.finditer(sentence)]
+        q = _QUOTES[sentence] = (mw.end() if mw else None, [a for a, _ in spans], spans)
+    first_end, starts, spans = q
+    if first_end is None or first_end > match.start():
+        return False
+    def inside(i):
+        k = bisect.bisect_right(starts, i) - 1
+        return k >= 0 and spans[k][0] < i < spans[k][1] - 1
+    return inside(match.start()) and inside(match.end() - 1)
 
 def is_nonassertive(sentence, match, kind):
     """Only explicit grammar may exempt a matched result/outcome phrase.
@@ -337,6 +361,8 @@ def is_nonassertive(sentence, match, kind):
         return True
     if META_QUOTE_PREFIX.search(prefix):
         return True
+    if kind == "test" and quoted_mention(sentence, match):
+        return True
     if kind == "test":
         suffix = sentence[match.end():]
         return bool(
@@ -365,8 +391,24 @@ def is_nonassertive(sentence, match, kind):
     return bool(OUTCOME_GUIDANCE_PREFIX.search(prefix))
 
 claimed = False
+def _claim_matches(sent):
+    """CLAIM matches; after one that crosses a clause break the scan resumes at the last break inside it, so an exempted
+    match cannot hide a claim of its own clause (2026-10-12 fail-open: "Không có test nào fail, 12/12 test pass." - the
+    negator exempted the match running from the first test to the last pass). A match with no break inside resumes after
+    it, as finditer did (a rescan from every character made a long reply 3 times slower)."""
+    pos = 0
+    while True:
+        m = CLAIM.search(sent, pos)
+        if not m:
+            return
+        yield m
+        cut = None
+        for b in CLAUSE_BREAK.finditer(sent, m.start(), m.end()):
+            cut = b.end()
+        pos = cut if cut is not None and m.start() < cut < m.end() else m.end()
+
 for sent in sentences:
-    for m in CLAIM.finditer(sent):
+    for m in _claim_matches(sent):
         if is_nonassertive(sent, m, "test"):
             continue
         claimed = True
