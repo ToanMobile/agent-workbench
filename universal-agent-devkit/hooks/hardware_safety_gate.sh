@@ -255,6 +255,14 @@ PATTERNS = [
     (r"\baws\s+s3\s+(?:rm\b[^;&|\n]*--recursive|rb\b[^;&|\n]*--force)", "aws s3 rm --recursive / rb --force"),
 ]
 
+# /data/local/tmp is adb scratch space (pushed APKs, logcat dumps): clearing it cannot brick a device (user, 2026-10-12: allow).
+# Only the folder itself or a path under it, with no `..` leaving it and nothing the shell expands at run time ($, backtick).
+SCRATCH_OK = re.compile(r"^/data/local/tmp(?:/[^$\x60]*)?[\x22\x27]?$")
+def _sys_target(a):
+    if SCRATCH_OK.match(a) and not re.search(r"(?:^|/)\.\.(?:/|$|[\x22\x27])", a):
+        return False
+    return bool(re.match(SYS_PARTS, a + " "))
+
 def rm_hits(text):
     """rm with both recursive and force flags on a system partition or /."""
     for seg in re.split(r"[;&|\n]+", text):
@@ -268,7 +276,7 @@ def rm_hits(text):
             rec = "r" in flags or "R" in flags or "--recursive" in longs
             force = "f" in flags or "--force" in longs
             targets = [a for a in args if not a.startswith("-")]
-            if rec and force and any(re.match(SYS_PARTS, a + " ") for a in targets):
+            if rec and force and any(_sys_target(a) for a in targets):
                 return True
     return False
 

@@ -10,7 +10,7 @@
 Thứ tự: Làm & Chạy test cục bộ → Self Review (Diff + DEMO/LIVE) → Chụp ảnh nghiệm thu thành công → Commit / Báo cáo nghiệm thu.
 
 1. **Quản lý Git tinh giản:**
-   - **1 dev, 1 nhánh:** làm trực tiếp trên nhánh hiện tại (`main`/`trunk`). Nhánh, worktree hay nhánh remote mới chỉ khi người dùng yêu cầu (`DEVKIT_ALLOW_BRANCH=1` trước lệnh git); git guard chặn phần còn lại (`AGENTS.md` §7.1).
+   - **1 dev, 1 nhánh:** làm trực tiếp trên nhánh hiện tại (`main`/`trunk`). Nhánh, worktree hay nhánh remote mới chỉ khi người dùng yêu cầu (`DEVKIT_ALLOW_BRANCH=1` trước lệnh git); ngoại lệ duy nhất được duyệt sẵn: checkout đang do phiên khác giữ thì tự tạo worktree riêng (`agent-kit worktree add`, xong thì `agent-kit worktree finish`), không dừng lại hỏi (người dùng, 12/10). Git guard chặn phần còn lại (`AGENTS.md` §7.1).
    - Trước khi push: kéo origin về nhánh local bằng một lệnh riêng (`git pull --ff-only`, hai bên cùng có commit mới thì `git pull --no-rebase`), kiểm exit code, rồi `git push origin <nhánh>`. Không push `<sha>:<nhánh>` mà nhánh local chưa chứa: remote sẽ có code local thiếu.
 2. **Self review + QA trước khi commit:**
    - Soát git diff: đúng yêu cầu, sửa đổi phẫu thuật tối thiểu (Surgical Edits), không lộ secret, có ghi audit log ở nghiệp vụ mới.
