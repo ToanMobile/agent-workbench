@@ -3364,6 +3364,17 @@ def environment_blocked(exit_code, output):
     return bool(ENV_BLOCKED_RE.search(output or "")) and not test_failure_reported(output)
 
 
+def killed_from_outside(exit_code, output):
+    """True when the run was killed by SIGKILL / SIGTERM (exit 137 / 143 through a shell, -9 / -15 direct) and printed no
+    failing test: it reached no verdict, and no change to the audited code answers a kill (GeelyEx2 2026-10-11: REG-CAR-01
+    "Killed: 9" twice, 7.2 min of Stop-hook wall and 2 blocks; OfficeReader 09:57:37: REG-OR-APP exit 143, 163.7 s). Still FAIL
+    and still no receipt: this only tells the Stop hook it is not a code problem. The gate's own timeout is TIMEOUT, not this.
+    REGRESSION_GATE_KILLED_IS_ENV=0 turns it off."""
+    if os.environ.get("REGRESSION_GATE_KILLED_IS_ENV", "1") == "0":
+        return False
+    return exit_code in (137, 143, -9, -15) and not test_failure_reported(output)
+
+
 # The test runner lost its own results store — Gradle's build/test-results/**/binary/*.bin
 # truncated or deleted under it, what two Gradle runs in one project tree do to each other
 # (OfficeReader, 2026-09-25: "> java.io.EOFException" next to the test failures the corrupted
@@ -4755,11 +4766,17 @@ def main():
                     and code == t["untested_exit"]:
                 t["status"] = "UNTESTED"
             t["exit_code"] = code
+            last_code = code    # exit code of the LAST run of this suite (the re-run's when there was one)
+            first_is_kill = True    # with no re-run the only run is the last one
             if t["status"] == "FAIL":
                 first = out or ""
                 infra = infra_failure(first)
                 retry = flaky_retry(cmd, project_dir, args.timeout, time.perf_counter() - started, infra=infra)
                 if retry:
+                    last_code = retry[0]
+                    # a compile error followed by a re-run that is killed is still a code problem: the first run must be
+                    # a kill itself, or a lost results store (infra), for the final kill to mean "no verdict"
+                    first_is_kill = infra or killed_from_outside(code, first)
                     out = first + retry[1]
                     if retry[0] == 0 and (infra or not test_failure_reported(first)):
                         # the first run broke in the build (no test failed) or lost its results
@@ -4770,7 +4787,8 @@ def main():
                         t["flaky"] = retry[0] == 0  # a test failed, then passed on the same code: still FAIL
                 if t["status"] == "FAIL" and infra:
                     t["infra"] = True   # still FAIL, never FLAKY: that run's output is not a test result
-            if t["status"] == "FAIL" and environment_blocked(code, out):
+            if t["status"] == "FAIL" and (environment_blocked(code, out)
+                                          or (first_is_kill and killed_from_outside(last_code, out))):
                 t["env_blocked"] = True     # still FAIL: the verdict never turns into a PASS
             t["output_tail"] = (out or "")[-2000:]
             # Which sub-test failed, from the WHOLE output: run_impacted's "✖ tests/x.sh" sits

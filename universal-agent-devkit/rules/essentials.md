@@ -80,13 +80,18 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   never `git add -A`/`commit -a`, which sweep in the other session's work.
 - **One developer, one branch**: work on the current branch. No new branch, worktree or
   remote branch unless the user asks for it (then prefix the git command with
-  `DEVKIT_ALLOW_BRANCH=1`). Before a push, bring origin into the local branch with its own
+  `DEVKIT_ALLOW_BRANCH=1`); the one pre-authorized exception is the held-checkout worktree
+  below. Before a push, bring origin into the local branch with its own
   command (`git pull --ff-only`, or `--no-rebase` when both moved; check its exit code),
   then `git push origin <branch>` — never `<sha>:<branch>` that the local branch does not
   hold. The git guard blocks the rest; session start names drift and leftovers (AGENTS.md §7.1).
 - **One checkout, one session**: an agent with no hooks (Antigravity) runs `python3 .agents/devkit/bin/session_lock.py --status`
-  before editing; exit 3 = another live session holds it → do not edit (wait, or ask for a worktree) unless
-  that session dispatched this task to you (antigravity-pm, `/giao`: it is your PM and reviews your diff).
+  before editing; exit 3 = another live session holds it → never edit there and never stop to ask the user (pre-authorized
+  by the user, 2026-10-12: handle it yourself, stop only when the work is done): make your own detached worktree with
+  `agent-kit worktree add ../<repo>-<task>`, work, run the gate and commit in it, then `agent-kit worktree finish <path>`
+  (fast-forwards the trunk and removes the worktree; the Stop hook finishes it too). Main still held when you are done →
+  wait for the holder to idle (about a minute after its turn) and finish then. Only a task that session dispatched to you
+  (antigravity-pm, `/giao`: it is your PM and reviews your diff) is done in its checkout.
 - **Done means verified**: run the post-fix gate
   (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`, exit 0 only) and
   attach a real proof PNG from this turn (when step 4 of "Every prompt" applies) before the

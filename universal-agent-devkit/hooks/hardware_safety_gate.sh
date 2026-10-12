@@ -208,7 +208,9 @@ CWD = data.get("cwd") if isinstance(data.get("cwd"), str) and os.path.isdir(data
 # Options adb/fastboot accept before the subcommand (with or without a value).
 ADB_OPTS = r"(?:\s+(?:-[sHPtL]\s+\S+|-[adeU]|--\S+(?:\s+\S+)?))*"
 FB_OPTS = r"(?:\s+(?:-[sSciopn]\s+\S+|-w|-u|--\S+(?:=\S+)?))*"
-SYS_PARTS = r"/(?:system|vendor|boot|product|odm|data|persist|efs)?(?:/|\s|$|[;&|])"
+# first alternative: / or a system partition, then / whitespace end ; & |; second: a glob in the FIRST path component (/*, /data*,
+# /sys*, /s*, /dat?, /syste[m], /?ystem) can reach a system partition, while /sdcard/* and /tmp/x* cannot
+SYS_PARTS = r"/(?:system|system_ext|system_dlkm|vendor|vendor_dlkm|boot|product|odm|odm_dlkm|apex|metadata|data|persist|efs)?(?:/|\s|$|[;&|])|/[^/\s]*[*?\[][^/\s]*(?:/|\s|$|[;&|])"
 
 PATTERNS = [
     (r"\badb" + ADB_OPTS + r"\s+(?:remount|disable-verity|enable-verity)\b",
@@ -284,8 +286,13 @@ def unglob(tok):
 try:
     norm = " ".join(unglob(t) for t in shlex.split(cmd, comments=False, posix=True))
 except ValueError:
-    norm = cmd
-variants = [cmd, norm]
+    norm = cmd      # an unbalanced quote (a lone apostrophe in a comment is enough): the shell still runs the line
+# Every quote and backslash character dropped, no tokenising. unglob() rewrites any ARGUMENT whose last path component holds a
+# glob (adb shell "rm -rf /system/*", rm -rf "/system/*" -> adb), which drops the rm and its target from norm; this variant keeps
+# them. It also survives an unbalanced quote, nested quotes (sh -c with quotes inside quotes), \rm and r""m, which shlex either
+# rejects or unwraps only one level.
+norm_strip = re.sub(r"[\\\x27\x22]", "", re.sub(r"\$(?=[\x27\x22])", "", cmd))   # ANSI-C and locale quoting (dollar then a quote) lose the dollar too
+variants = [cmd, norm_strip, norm]
 
 label = None
 for pat, lab in PATTERNS:

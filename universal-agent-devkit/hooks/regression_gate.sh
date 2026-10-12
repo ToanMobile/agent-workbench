@@ -861,8 +861,8 @@ if res.returncode == 1 and failing and all(t.get("env_blocked") for t in failing
         state["env_fp"] = fp
         save_state()
         names = ["%s (%s)" % (t.get("id"), t.get("command")) for t in failing]
-        print(json.dumps({"systemMessage": "Regression gate REJECT vì môi trường — máy này thiếu công cụ/SDK/mạng nên "
-                          "test không chạy, KHÔNG phải PASS: " + "; ".join(names)
+        print(json.dumps({"systemMessage": "Regression gate REJECT vì môi trường — máy này thiếu công cụ/SDK/mạng, hoặc suite "
+                          "bị kill từ ngoài (exit 137/143) nên test không chạy đến kết luận, KHÔNG phải PASS: " + "; ".join(names)
                           + ". Chạy lại trên máy có đủ công cụ trước khi báo xong."}, ensure_ascii=False))
     note(f"env-blocked fp={fp}")
     sys.exit(0)

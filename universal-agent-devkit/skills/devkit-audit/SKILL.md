@@ -10,12 +10,12 @@ Mục tiêu: đưa chính DevKit tới **100/100** theo `skills/devkit-audit/ref
 ## 7 pha (lệnh và bẫy: `skills/devkit-audit/references/procedure.md`; bài học: `references/lessons.md`; ứng viên sẵn: `references/backlog.md`)
 
 0. **Chuẩn bị**: đọc note bàn giao mới nhất và mục Unreleased của `CHANGELOG.md`; tìm repo đã cài; kiểm khoá checkout và đĩa.
-1. **Đo**: `skills/devkit-audit/scripts/devkit_metrics.py --json` cho mọi repo, so với dòng trend hôm trước.
+1. **Đo**: `skills/devkit-audit/scripts/devkit_metrics.py --json` cho 4 repo white list (đường dẫn ở `procedure.md` pha 0), so với dòng trend hôm trước.
 2. **Audit chỉ đọc**: một agent mỗi repo, một agent guard, một agent tốc độ (`references/agent-briefs.md`). Tự kiểm lại mọi claim; gắn nhãn "tự xác nhận" hoặc "agent báo".
 3. **Chọn và lên kế hoạch**: hook Stop trước, rồi phút tiết kiệm đã đo ÷ rủi ro; tối đa 3 mục; chưa có số đo thì đo trước. Qua `/giao`: `pm_task_create`, `pm_plan`, `pm_dispatch kind=plan_review`; tự kiểm từng phát hiện, rồi sửa kế hoạch.
 4. **Sửa**: trong bản sao `cp -Rc` của kit; test ĐỎ trước, XANH sau; cài từng file bằng file tạm rồi `mv`.
 5. **Review độc lập**: agent ngữ cảnh mới và `pm_dispatch kind=audit` cùng đọc toàn diff, thử phá. Sửa mọi lỗi thật, rồi review lại phần vừa sửa.
-6. **Cổng và bàn giao**: gate `--full` exit 0 ở mọi repo đã đụng, đăng ký bug và RED-proof, commit đúng file của mình, push, cập nhật note bàn giao, dòng trend và `agent-kit learn`.
+6. **Cổng và bàn giao**: gate `--full` exit 0 ở mọi repo white list đã đụng, đăng ký bug và RED-proof, commit đúng file của mình, push, cập nhật note bàn giao, dòng trend và `agent-kit learn`.
 7. **Báo cáo**: 3 dòng đầu, 4 mục nghiệm thu, điểm /100 kèm mục bị trừ.
 
 ## Luật cứng

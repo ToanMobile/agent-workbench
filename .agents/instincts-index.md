@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (269 dòng, 30.3 KB) · 34 mục
+> **Tệp gốc:** `.agents/instincts.md` (293 dòng, 33.6 KB) · 37 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -35,5 +35,8 @@
 - [INSTINCT-028] Nới nhánh bỏ qua gate biến lỗ phân loại cũ thành fail-open — `sed -n '241,248p' .agents/instincts.md`
 - [INSTINCT-029] Test bảo vệ không được sandbox RED-proof chọn nên bằng chứng ra VACUOUS giả — `sed -n '249,256p' .agents/instincts.md`
 - [INSTINCT-030] bash 3.2 cắt đối số "$(cmd "{\"a\":…}")" tại dấu nháy thoát — `sed -n '257,264p' .agents/instincts.md`
-- [INSTINCT-031] Hook lexer: shlex hides what follows a hash, and the one-line fix opens a new hole — `sed -n '265,269p' .agents/instincts.md`
+- [INSTINCT-031] Hook lexer: shlex hides what follows a hash, and the one-line fix opens a new hole — `sed -n '265,272p' .agents/instincts.md`
+- [INSTINCT-032] Stop hook that accepts a report from any earlier transcript line: the hook's own feedback holds the… — `sed -n '273,280p' .agents/instincts.md`
+- [INSTINCT-033] A gate that skips unfinished turns must remember what it skipped — `sed -n '281,288p' .agents/instincts.md`
+- [INSTINCT-034] A hook that ages a green run by the last source edit must only count edits that belong to the project — `sed -n '289,293p' .agents/instincts.md`
 

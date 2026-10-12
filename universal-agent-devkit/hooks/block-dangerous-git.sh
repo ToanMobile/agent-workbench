@@ -1304,7 +1304,8 @@ if reason and reason in SOLO_HIT:
     print(f"BLOCKED: {cmd!r} — {reason}. Luật \"1 dev, 1 nhánh\" (DevKit): làm thẳng trên nhánh hiện tại. "
           "Đưa code lên remote: merge/ff vào nhánh local bằng một lệnh riêng (kiểm exit code), rồi "
           "`git push origin <nhánh>`; không push `<sha>:<nhánh>` mà local chưa chứa. Nhánh/worktree mới chỉ khi "
-          "User yêu cầu: chạy lại với DEVKIT_ALLOW_BRANCH=1 trước lệnh git.", file=sys.stderr)
+          "User yêu cầu: chạy lại với DEVKIT_ALLOW_BRANCH=1 trước lệnh git. Ngoại lệ đã duyệt sẵn: checkout đang bị phiên khác giữ "
+          "-> TỰ chạy `agent-kit worktree add ../<repo>-<việc>` (không phải git worktree add), xong `agent-kit worktree finish <đường dẫn>`.", file=sys.stderr)
     sys.exit(2)
 if reason:
     print(f"BLOCKED: {cmd!r} — {reason}. User đã chặn thao tác git khó revert này. "

@@ -1034,8 +1034,9 @@ def status(argv):
         print(f"session_lock: {top} đang do {describe(lock, now)} giữ, nhưng người dùng đã cho phép ghi song song tới "
               f"{time.strftime('%H:%M', time.localtime(until))} — được sửa")
         return 0
-    print(f"session_lock: {top} đang do {describe(lock, now)} giữ — KHÔNG sửa ở đây: chờ phiên đó xong lượt (khoá tự nhả khoảng 1 phút sau khi nó chờ người dùng gõ), "
-          f"hoặc làm trong worktree riêng (`agent-kit worktree add`), hoặc nhờ người dùng chạy `! agent-kit allow-shared`")
+    print(f"session_lock: {top} đang do {describe(lock, now)} giữ — KHÔNG sửa ở đây và KHÔNG dừng lại hỏi: TỰ làm trong worktree riêng "
+          f"(`agent-kit worktree add ../<repo>-<việc>`, người dùng đã duyệt sẵn; xong thì `agent-kit worktree finish <đường dẫn>` gộp vào main "
+          f"rồi xoá worktree; main còn bị giữ thì chờ phiên đó xong lượt, khoá tự nhả khoảng 1 phút sau khi nó chờ người dùng gõ)")
     return 3
 
 
@@ -1141,8 +1142,9 @@ def main():
         elif not is_free_for(lock, sid, now):
             print(f"⚠️ [DevKit] Checkout này đang do {describe(lock, now)} giữ. Luật: MỘT thư mục — MỘT phiên. Phiên này "
                   f"CHỈ ĐỌC ở đây (Edit/Write, git ghi, post-fix-gate bị chặn) cho tới khi phiên kia xong lượt (khoá tự nhả khoảng 1 "
-                  f"phút sau khi nó chờ người dùng gõ, không cần /exit); muốn làm song "
-                  f"song thì xin người dùng tạo worktree riêng.")
+                  f"phút sau khi nó chờ người dùng gõ, không cần /exit); cần ghi thì TỰ làm trong worktree riêng "
+                  f"(`agent-kit worktree add ../<repo>-<việc>`, người dùng đã duyệt sẵn, không hỏi lại; xong thì "
+                  f"`agent-kit worktree finish <đường dẫn>`).")
         # else an IDLE holder: free for this session's first write, but not taken now — a session opened and never prompted
         # never goes idle, so taking it here would lock the idle holder out for the whole heartbeat window
         return 0
@@ -1193,8 +1195,9 @@ def main():
         if os.environ.get("DEVKIT_ALLOW_SHARED_CHECKOUT") == "1" or allow_shared_until(fgdir) > now:
             log(fgdir, f"{sid} ghi song song khi {flock.get('session_id')} đang giữ (được cho phép): {tool}")
         else:
-            print(f"⛔ [DevKit] Một thư mục — một phiên: lệnh này ghi vào checkout {ftop}, đang do {describe(flock, now)} giữ. Chờ phiên kia xong, "
-                  f"làm trong worktree riêng, hoặc người dùng gõ `! agent-kit allow-shared` (trong chính checkout đó).", file=sys.stderr)
+            print(f"⛔ [DevKit] Một thư mục — một phiên: lệnh này ghi vào checkout {ftop}, đang do {describe(flock, now)} giữ. KHÔNG dừng lại hỏi: "
+                  f"TỰ làm trong worktree riêng (`agent-kit worktree add ../<repo>-<việc>`, người dùng đã duyệt sẵn; xong thì "
+                  f"`agent-kit worktree finish <đường dẫn>`), hoặc chờ phiên kia xong lượt.", file=sys.stderr)
             return 2
 
     # D1: read, decide and take under the guard - two sessions starting their first write together used to both read "free"
@@ -1224,9 +1227,10 @@ def main():
                   f"{time.strftime('%H:%M', time.localtime(until))}): {tool}")
         return 0
     print(f"⛔ [DevKit] Một thư mục — một phiên: checkout {top} đang do {describe(lock, now)} giữ. Phiên này chỉ đọc "
-          f"ở đây: chờ phiên kia xong lượt (khoá tự nhả khoảng 1 phút sau khi nó chờ người dùng gõ, hoặc sau {int(stale_after())}s không hoạt động), hoặc xin người dùng tạo "
-          f"worktree riêng. Người dùng cố ý cho chạy song song: gõ `! agent-kit allow-shared` (không cần khởi động lại "
-          f"phiên) hoặc đặt DEVKIT_ALLOW_SHARED_CHECKOUT=1 trước khi mở phiên.", file=sys.stderr)
+          f"ở đây. KHÔNG dừng lại hỏi: TỰ làm trong worktree riêng (`agent-kit worktree add ../<repo>-<việc>`, người dùng đã duyệt sẵn; "
+          f"xong thì `agent-kit worktree finish <đường dẫn>` gộp vào main rồi xoá worktree), hoặc chờ phiên kia xong lượt (khoá tự nhả "
+          f"khoảng 1 phút sau khi nó chờ người dùng gõ, hoặc sau {int(stale_after())}s không hoạt động). Chỉ khi người dùng cố ý cho chạy "
+          f"song song trong chính checkout này: `! agent-kit allow-shared` hoặc DEVKIT_ALLOW_SHARED_CHECKOUT=1 trước khi mở phiên.", file=sys.stderr)
     return 2
 
 

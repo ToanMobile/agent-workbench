@@ -150,7 +150,8 @@ def non_claude(payload, env=None):
 
 # ── tree fingerprint ─────────────────────────────────────────────────────────
 OWN = (".claude/audit-gate", ".agents/regression_status.json", ".agents/regression_checklist.md",
-       ".agents/CHECKLIST.md", ".agents/INBOX.md", ".agents/evidence", ".agents/archive")
+       ".agents/CHECKLIST.md", ".agents/INBOX.md", ".agents/evidence", ".agents/archive",
+       ".agents/local/memory/claude-auto")   # agent notes, not code: same as bin/tree_fp.EXCLUDE (memory/voice stays in)
 
 
 def tree_fingerprint(repo, exclude=OWN, max_untracked=2000, max_bytes=8 << 20):
@@ -248,10 +249,16 @@ class SessionGuard:
 # Claim words in any case (review 2026-10-09: "Đã fix …", "Fixed …", "Done.", "Xong: …", "Hoàn tất …" read as no claim once a reply
 # without a status line counted as mid-work); `XONG` and `PASS` stay uppercase so "pass the value" is no claim. Callers strip
 # "chưa xong" / "not done" first (MIDWORK_WORDS).
-OUTCOME = re.compile(r"(?<![\wÀ-ỹ])XONG(?![\wÀ-ỹ])|✅|\bPASS\b"
+# 2026-10-12 (user-approved, 24 h of GeelyEx2 + OfficeReader transcripts): 17 replies whose status line said unfinished still matched
+# this pattern, 6 of them plainly misread: a ✅ or "PASS 13/13" inside a markdown table row of a progress report, a ✅ marking one
+# finished step in a list. The ✅ sign and a table row no longer count as a claim; every word form, and PASS / XONG outside a table,
+# still do ("CHƯA XONG … đã xong" keeps its claim). DEVKIT_OUTCOME_WIDE=1 restores the old reading.
+OUTCOME = re.compile(r"(?<![\wÀ-ỹ])XONG(?![\wÀ-ỹ])|\bPASS\b"
                      r"|(?i:(?<![\wÀ-ỹ])(?:đã|vừa)\s+(?:fix|sửa\s+xong|sửa\s+được|xong|hoàn\s+tất|hoàn\s+thành)"
                      r"|hết\s+bug|\bfixed\b|\bdone\b|\ball\s+(?:tests?\s+)?pass"
                      r"|^[\s>#*_`\-]*(?:xong|hoàn\s+tất|hoàn\s+thành)(?![\wÀ-ỹ]))", re.M)
+OUTCOME_WIDE = re.compile(r"✅|" + OUTCOME.pattern, re.M)
+TABLE_ROW = re.compile(r"^[ \t]*\|.*$", re.M)
 MIDWORK_WORDS = re.compile(r"(?i)chưa\s+xong|chua\s+xong|\bnot\s+done\b")
 
 
@@ -295,6 +302,24 @@ def reply_status(text):
             return "NOT_DONE"
         return "DONE" if _STATUS_DONE.match(s) else "NONE"
     return "NONE"
+
+
+_STATUS_AWAITING = re.compile(r"^(?:chờ\s+duyệt|cho\s+duyet)\b", re.I)
+
+
+def _awaiting_approval(text):
+    """True when the status line (first non-empty line, markdown / emoji / `Status:` label stripped like reply_status) says CHỜ DUYỆT."""
+    import unicodedata
+    for line in unicodedata.normalize("NFC", text if isinstance(text, str) else "").splitlines():
+        s = line
+        while True:
+            t = _STATUS_LABEL.sub("", _STATUS_LEAD.sub("", s))
+            if t == s:
+                break
+            s = t
+        if s.strip():
+            return bool(_STATUS_AWAITING.match(s))
+    return False
 
 
 # "user" entries the harness writes that no person typed: a background task finishing, a message
@@ -532,10 +557,15 @@ def work_in_progress(payload, env=None, status_optional=False):
     tp = payload.get("transcript_path")
     if not isinstance(reply, str) or not reply.strip() or transcript_kind(tp) != "claude":
         return False
-    if reply_status(reply) not in (("NOT_DONE", "NONE") if status_optional else ("NOT_DONE",)):
+    st = reply_status(reply)
+    if st not in (("NOT_DONE", "NONE") if status_optional else ("NOT_DONE",)):
         return False
     body = MIDWORK_WORDS.sub("", reply)
-    if OUTCOME.search(body):
+    # The narrow reading (no check mark, no table rows) is only for a reply whose status line says it is UNFINISHED. A reply with no
+    # status line, or one waiting for approval (CHỜ DUYỆT), may be a handover (round-2 review of Dot 20: "✅ Hoàn tất toàn bộ yêu cầu",
+    # "CHỜ DUYỆT" + a PASS table skipped all three gates): it keeps the wide reading.
+    narrow = st == "NOT_DONE" and not _awaiting_approval(reply) and env.get("DEVKIT_OUTCOME_WIDE") != "1"
+    if (OUTCOME.search(TABLE_ROW.sub("", body)) if narrow else OUTCOME_WIDE.search(body)):
         return False
     start = turn_start(tp)
     # A local commit is fine mid-work (its range is tested at the handover, --since the verified

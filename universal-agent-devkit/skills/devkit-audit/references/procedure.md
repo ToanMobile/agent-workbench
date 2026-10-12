@@ -5,9 +5,9 @@
 ## Pha 0. Chuẩn bị
 
 1. Đọc note bàn giao mới nhất trong `.agents/local/memory/claude-auto/` (tên bắt đầu `handoff-`), mục `Unreleased` của `CHANGELOG.md` và dòng cuối của `devkit-audit-trend.jsonl` nếu có. Việc còn mở và quyết định của người dùng nằm ở đó.
-2. Tìm repo đã cài (mọi repo có `.agents/devkit` trỏ về kit này, kể cả ngoài thư mục cha của kit; ngày 10/10 ra 7 repo, quét thư mục cha chỉ ra 4):
+2. Phạm vi repo là WHITE LIST của người dùng (12/10: "4 repo này là repo chính tôi dùng"), không phải mọi repo có link về kit: GeelyEx2 `/Volumes/Data/Toan/GeelyEx2`, OfficeReader `/Volumes/Data/Toan/OfficeReader/OfficeReader` (thư mục con mới là git root; thư mục ngoài rỗng), Goods `/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D`, Neighbours-From-Hell `/Volumes/Data/Toan/Game/Neighbours-From-Hell`, cộng agent-workbench (nhà của kit, nơi sửa). Chép đường dẫn, không đoán. Repo khác có link về kit (GalaxyHolding, `*-keystore`, bản sao worktree) không đo; nêu nhiều nhất một dòng "ngoài white list". Danh sách gốc: memory `default-four-repos`. Muốn xem repo nào đang link về kit (chỉ để báo cáo, không audit):
    `KIT=$(cd .agents/devkit && pwd -P); find /Volumes -maxdepth 6 -path '*/.agents/devkit' -type l -lname "*$(basename "$KIT")" | sed 's#/.agents/devkit##'`
-   Repo không có phiên nào gần đây thì chỉ đo và nêu trong báo cáo, không audit sâu.
+   Repo trong white list không có phiên nào gần đây thì chỉ đo và nêu trong báo cáo, không audit sâu.
 3. Khoá checkout, trong từng repo: `python3 .agents/devkit/bin/session_lock.py --status`. Exit 0 là trống, 3 là có phiên giữ. Từ lệnh con, khoá của chính phiên này cũng báo 3: xem `session_id` trong `.git/devkit-session.lock`. Repo do phiên khác giữ thì chỉ đọc; không dùng `agent-kit allow-shared`.
 4. Đĩa: `df -h <ổ của repo>`; dưới 10 GiB trống thì dọn bản sao và scratch của chính mình trước (ENOSPC từng làm công cụ lỗi trước khi chạy lệnh).
 

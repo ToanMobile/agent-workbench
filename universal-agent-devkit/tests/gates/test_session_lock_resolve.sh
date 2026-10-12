@@ -652,6 +652,11 @@ def check_resolver(new_text, label="", stop=False):
         # the only stderr text that may differ is the line number inside a bash message of a case that cannot happen for a real hook
         # (a $0 whose directory does not exist: bash could not have opened the script): the old line was line 7, the fallback is not
         err_o, err_n = re.sub(r"line \d+:", "line N:", err_o), re.sub(r"line \d+:", "line N:", err_n)
+        if "oldonly" in tk:
+            # same cases: macOS bash 3.2 words a `cd` into a missing directory as "No such file or directory" or "Invalid argument" by
+            # the directory the TEST was started from (the unpatched kit flips the same way, 2026-10-12); rc, HERE and starts stay compared
+            _wd = r"(cd: [^\n]*?): (?:No such file or directory|Invalid argument)\n"
+            err_o, err_n = re.sub(_wd, r"\1: ERRNO\n", err_o), re.sub(_wd, r"\1: ERRNO\n", err_n)
         ho, hn = here_of(lo), here_of(ln)
         same = (rc_o == rc_n and os.path.realpath(ho) == os.path.realpath(hn)) if "samedir" in tk else (rc_o, ho) == (rc_n, hn)
         if not same:
