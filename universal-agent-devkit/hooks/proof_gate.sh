@@ -476,7 +476,10 @@ if problems or (not good and need_image):
         lines.append("- ẢNH (%s): nêu reports/proof-<yyyyMMdd-HHmmss>.png + serial ở dòng 3" % format_scope(scope, 55))
 if need_image:
     lines.append("Chụp: python3 .agents/devkit/bin/proof-capture.py; lỗi → CHƯA XONG + dán lỗi.")
-log("block session=%s attempt=%d cited=%s gate=%s" % (session, n, ",".join(cited) or "-", gate_problem or "ok"))
+# why it blocked, so a block can be told from another (Office 2026-10-12: 14 blocks, one line each, no reason)
+log("block session=%s attempt=%d cited=%s gate=%s report=%s before=%d image=%s" % (
+    session, n, ",".join(cited) or "-", gate_problem or "ok", ",".join(m[0] for m in missing_report) or "ok",
+    len(before_problems), "need" if (problems or (not good and need_image)) else "ok"))
 if n > max_blocks:
     msg = "\n".join(lines + ["(Đã chặn %d lần — cho dừng để không kẹt phiên. Câu trả lời này THIẾU điều kiện ở trên; người dùng cần xem lại.)" % max_blocks])
     print(json.dumps({"systemMessage": msg}, ensure_ascii=False))
