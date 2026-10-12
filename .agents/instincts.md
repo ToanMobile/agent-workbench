@@ -291,3 +291,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** A hook that ages a green run by the last source edit must only count edits that belong to the project
 - **Nguyên nhân:** test_evidence_gate (10/10) took every Edit/Write of a file with a source extension as the last code edit, including helper scripts in the scratchpad the harness tells agents to use: 62 of 171 real blocks followed such a write. The first fix (ignore temp-dir writes) broke CHECK 7 for sessions whose every source edit is a scratch one (the marker stayed unset, the RED->GREEN pair could never be seen): 7 of 59 real transcripts flipped from pass to block. Found by a fresh-context review replaying real transcripts, not by the unit tests.
 - **Quy tắc phòng ngừa & Cách fix:** When a rule drops a class of events from a marker, give every consumer of that marker a fallback and replay real transcripts old vs new: only the intended ones may change.
+
+---
+
+### [INSTINCT-035] zsh and && chains in install steps
+- **Ngày phát hiện:** 2026-10-12
+- **Hiện tượng lỗi:** zsh and && chains in install steps
+- **Nguyên nhân:** zsh does not word-split command substitutions, so git add $(... | tr) passed one argument; and a chain a && b; c && mv still ran mv after a failed a, installing a half-checked hook
+- **Quy tắc phòng ngừa & Cách fix:** use xargs for lists in zsh; one && chain from check to mv; python comments inside hooks sh carry no apostrophe
