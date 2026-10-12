@@ -1,0 +1,14 @@
+diff --git a/universal-agent-devkit/hooks/devkit_harness.py b/universal-agent-devkit/hooks/devkit_harness.py
+index f569225..1511ad3 100644
+--- a/universal-agent-devkit/hooks/devkit_harness.py
++++ b/universal-agent-devkit/hooks/devkit_harness.py
+@@ -150,8 +150,7 @@ def non_claude(payload, env=None):
+ 
+ # ── tree fingerprint ─────────────────────────────────────────────────────────
+ OWN = (".claude/audit-gate", ".agents/regression_status.json", ".agents/regression_checklist.md",
+-       ".agents/CHECKLIST.md", ".agents/INBOX.md", ".agents/evidence", ".agents/archive",
+-       ".agents/local/memory/claude-auto")   # agent notes, not code: same as bin/tree_fp.EXCLUDE (memory/voice stays in)
++       ".agents/CHECKLIST.md", ".agents/INBOX.md", ".agents/evidence", ".agents/archive")
+ 
+ 
+ def tree_fingerprint(repo, exclude=OWN, max_untracked=2000, max_bytes=8 << 20):

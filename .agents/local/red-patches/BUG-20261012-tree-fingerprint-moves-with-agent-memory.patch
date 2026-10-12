@@ -1,0 +1,14 @@
+diff --git a/universal-agent-devkit/bin/tree_fp.py b/universal-agent-devkit/bin/tree_fp.py
+index c79c6d3..c2b216e 100755
+--- a/universal-agent-devkit/bin/tree_fp.py
++++ b/universal-agent-devkit/bin/tree_fp.py
+@@ -16,8 +16,7 @@ import subprocess
+ import sys
+ 
+ EXCLUDE = (".claude/audit-gate", ".agents/regression_status.json", ".agents/regression_checklist.md",
+-           ".agents/CHECKLIST.md", ".agents/INBOX.md", ".agents/evidence", ".agents/archive", ".agents/instincts.md", "reports",
+-           ".agents/local/memory/claude-auto")   # the agent's own notes: not code (memory/voice is, GeelyEx2 tests read it)
++           ".agents/CHECKLIST.md", ".agents/INBOX.md", ".agents/evidence", ".agents/archive", ".agents/instincts.md", "reports")
+ RECEIPT = "full_pass.json"
+ 
+ 

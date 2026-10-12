@@ -333,16 +333,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-12 20:42:49",
-        "ts": 1791812569.589344,
-        "task": null,
-        "commit": "892125a+dirty",
-        "duration": "94.96s",
+        "at": "2026-10-12 20:45:06",
+        "ts": 1791812706.338026,
+        "task": "session-c01ac57e-153",
+        "commit": "3cf19a2+dirty",
+        "duration": "66.66s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-01/20261012-204212.log",
+        "log": ".agents/evidence/REG-DK-HOOK-01/20261012-204506.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-12 20:45:06",
+          "ts": 1791812706.338026,
+          "task": "session-c01ac57e-153",
+          "commit": "3cf19a2+dirty",
+          "duration": "66.66s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261012-204506.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-12 20:42:49",
@@ -386,17 +397,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-01/20261012-195632.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-12 19:53:15",
-          "ts": 1791809595.105748,
-          "task": null,
-          "commit": "f4a87d7+dirty",
-          "duration": "127.17s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261012-194720.log",
-          "deleted": []
         }
       ],
       "title": "hook contract",
@@ -411,16 +411,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-12 20:42:49",
-        "ts": 1791812569.601027,
-        "task": null,
-        "commit": "892125a+dirty",
-        "duration": "29.98s",
+        "at": "2026-10-12 20:45:06",
+        "ts": 1791812706.3504379,
+        "task": "session-c01ac57e-153",
+        "commit": "3cf19a2+dirty",
+        "duration": "22.84s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-02/20261012-204107.log",
+        "log": ".agents/evidence/REG-DK-HOOK-02/20261012-204422.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-12 20:45:06",
+          "ts": 1791812706.3504379,
+          "task": "session-c01ac57e-153",
+          "commit": "3cf19a2+dirty",
+          "duration": "22.84s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261012-204422.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-12 20:42:49",
@@ -463,17 +474,6 @@
           "duration": "27.14s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-02/20261012-195501.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-12 19:53:15",
-          "ts": 1791809595.1057532,
-          "task": null,
-          "commit": "f4a87d7+dirty",
-          "duration": "28.87s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261012-194542.log",
           "deleted": []
         }
       ],
@@ -567,16 +567,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-12 20:42:49",
-        "ts": 1791812569.601037,
-        "task": null,
-        "commit": "892125a+dirty",
-        "duration": "131.85s",
+        "at": "2026-10-12 20:45:06",
+        "ts": 1791812706.3504472,
+        "task": "session-c01ac57e-153",
+        "commit": "3cf19a2+dirty",
+        "duration": "8.08s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261012-204248.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261012-204407.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-12 20:45:06",
+          "ts": 1791812706.3504472,
+          "task": "session-c01ac57e-153",
+          "commit": "3cf19a2+dirty",
+          "duration": "8.08s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261012-204407.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-12 20:42:49",
@@ -619,17 +630,6 @@
           "duration": "442.36s",
           "exit_code": 1,
           "log": ".agents/evidence/REG-DK-ALL-01/20261012-200156.log",
-          "deleted": []
-        },
-        {
-          "status": "FAIL",
-          "at": "2026-10-12 19:53:15",
-          "ts": 1791809595.105762,
-          "task": null,
-          "commit": "f4a87d7+dirty",
-          "duration": "480.19s",
-          "exit_code": 1,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261012-195313.log",
           "deleted": []
         }
       ],
@@ -2669,7 +2669,21 @@
       "linked_ts": 1791775632.097427,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_regression_gate_killed_suite.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-12 20:49:43",
+        "ts": 1791812983.5859861,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_regression_gate_killed_suite.sh": "a66411ba8109700a",
+          ".agents/local/red-patches/BUG-20261012-regression-gate-blocks-the-stop-on-a-sui.patch": "11f7db65b1c26685"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261012-regression-gate-blocks-the-stop-on-a-sui/20261012-205459.log",
+        "patch": ".agents/local/red-patches/BUG-20261012-regression-gate-blocks-the-stop-on-a-sui.patch"
+      }
     },
     "BUG-20261012-tree-fingerprint-moves-with-agent-memory": {
       "id": "BUG-20261012-tree-fingerprint-moves-with-agent-memory",
@@ -2690,7 +2704,21 @@
       "linked_ts": 1791775632.3935559,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_tree_fp_claude_auto.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-12 20:46:14",
+        "ts": 1791812774.945699,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_tree_fp_claude_auto.sh": "ac1a64a119fe9073",
+          ".agents/local/red-patches/BUG-20261012-tree-fingerprint-moves-with-agent-memory.patch": "f1f95f8a6e521537"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261012-tree-fingerprint-moves-with-agent-memory/20261012-204933.log",
+        "patch": ".agents/local/red-patches/BUG-20261012-tree-fingerprint-moves-with-agent-memory.patch"
+      }
     },
     "BUG-20261012-hardware-gate-passes-a-quoted-or-root-gl": {
       "id": "BUG-20261012-hardware-gate-passes-a-quoted-or-root-gl",
@@ -2711,7 +2739,21 @@
       "linked_ts": 1791775632.6762218,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_hardware_unglob_quoted.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-12 20:54:59",
+        "ts": 1791813299.511648,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_hardware_unglob_quoted.sh": "475bc8fdc17615de",
+          ".agents/local/red-patches/BUG-20261012-hardware-gate-passes-a-quoted-or-root-gl.patch": "661adebc62bd7074"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261012-hardware-gate-passes-a-quoted-or-root-gl/20261012-205707.log",
+        "patch": ".agents/local/red-patches/BUG-20261012-hardware-gate-passes-a-quoted-or-root-gl.patch"
+      }
     },
     "BUG-20261012-review-them": {
       "id": "BUG-20261012-review-them",
@@ -2750,7 +2792,21 @@
       "linked_ts": 1791790979.1039748,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_outcome_table_rows.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-12 21:08:37",
+        "ts": 1791814117.3166049,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_outcome_table_rows.sh": "d6687818acbeeb2b",
+          ".agents/local/red-patches/BUG-20261012-stop-gates-run-on-progress-replies-whose.patch": "a0fe0fa3ff2a7943"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261012-stop-gates-run-on-progress-replies-whose/20261012-211004.log",
+        "patch": ".agents/local/red-patches/BUG-20261012-stop-gates-run-on-progress-replies-whose.patch"
+      }
     },
     "BUG-20261012-user-prompt-hook-exits-127-silently-when": {
       "id": "BUG-20261012-user-prompt-hook-exits-127-silently-when",
@@ -2771,7 +2827,21 @@
       "linked_ts": 1791790979.904421,
       "runs_in_suite": [
         "universal-agent-devkit/tests/installer/test_prompt_hook_missing.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-12 20:57:07",
+        "ts": 1791813427.669277,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/installer/test_prompt_hook_missing.sh": "c8610a59cbdfb1f8",
+          ".agents/local/red-patches/BUG-20261012-user-prompt-hook-exits-127-silently-when.patch": "40925f3f3f5935e5"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261012-user-prompt-hook-exits-127-silently-when/20261012-210439.log",
+        "patch": ".agents/local/red-patches/BUG-20261012-user-prompt-hook-exits-127-silently-when.patch"
+      }
     },
     "BUG-20261012-a-session-blocked-by-a-held-checkout-sto": {
       "id": "BUG-20261012-a-session-blocked-by-a-held-checkout-sto",
@@ -2792,7 +2862,21 @@
       "linked_ts": 1791790980.965384,
       "runs_in_suite": [
         "universal-agent-devkit/tests/context_memory/test_session_lock_worktree_hint.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-12 21:04:39",
+        "ts": 1791813879.959284,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/context_memory/test_session_lock_worktree_hint.sh": "7b540401215c2aff",
+          ".agents/local/red-patches/BUG-20261012-a-session-blocked-by-a-held-checkout-sto.patch": "870063a98bff33d2"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261012-a-session-blocked-by-a-held-checkout-sto/20261012-210656.log",
+        "patch": ".agents/local/red-patches/BUG-20261012-a-session-blocked-by-a-held-checkout-sto.patch"
+      }
     },
     "BUG-20261012-ok-lam-theo-de-xuat-di-ngoai-ra-check-th": {
       "id": "BUG-20261012-ok-lam-theo-de-xuat-di-ngoai-ra-check-th",
@@ -2849,7 +2933,21 @@
       "linked_ts": 1791809384.878048,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_harness_fp_claude_auto.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-12 21:06:56",
+        "ts": 1791814016.613966,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_harness_fp_claude_auto.sh": "16fee60ee8aee57b",
+          ".agents/local/red-patches/BUG-20261012-regression-gate-reuse-key-moves-with-age.patch": "0361605b7597e43a"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261012-regression-gate-reuse-key-moves-with-age/20261012-210837.log",
+        "patch": ".agents/local/red-patches/BUG-20261012-regression-gate-reuse-key-moves-with-age.patch"
+      }
     },
     "BUG-20261012-hardware-gate-passes-ansi-c-or-locale-qu": {
       "id": "BUG-20261012-hardware-gate-passes-ansi-c-or-locale-qu",
@@ -2870,7 +2968,21 @@
       "linked_ts": 1791811461.542546,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_hardware_unglob_quoted.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-12 21:10:04",
+        "ts": 1791814204.9407098,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_hardware_unglob_quoted.sh": "475bc8fdc17615de",
+          ".agents/local/red-patches/BUG-20261012-hardware-gate-passes-ansi-c-or-locale-qu.patch": "ea26cf5ad26d468c"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261012-hardware-gate-passes-ansi-c-or-locale-qu/20261012-211115.log",
+        "patch": ".agents/local/red-patches/BUG-20261012-hardware-gate-passes-ansi-c-or-locale-qu.patch"
+      }
     },
     "BUG-20261012-test-session-lock-resolve-compares-bash": {
       "id": "BUG-20261012-test-session-lock-resolve-compares-bash",

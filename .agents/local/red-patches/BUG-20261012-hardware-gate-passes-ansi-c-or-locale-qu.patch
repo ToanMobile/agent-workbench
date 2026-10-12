@@ -1,0 +1,15 @@
+diff --git a/universal-agent-devkit/hooks/hardware_safety_gate.sh b/universal-agent-devkit/hooks/hardware_safety_gate.sh
+old mode 100755
+new mode 100644
+index a922e46..b7ccb39
+--- a/universal-agent-devkit/hooks/hardware_safety_gate.sh
++++ b/universal-agent-devkit/hooks/hardware_safety_gate.sh
+@@ -291,7 +291,7 @@ except ValueError:
+ # glob (adb shell "rm -rf /system/*", rm -rf "/system/*" -> adb), which drops the rm and its target from norm; this variant keeps
+ # them. It also survives an unbalanced quote, nested quotes (sh -c with quotes inside quotes), \rm and r""m, which shlex either
+ # rejects or unwraps only one level.
+-norm_strip = re.sub(r"[\\\x27\x22]", "", re.sub(r"\$(?=[\x27\x22])", "", cmd))   # ANSI-C and locale quoting (dollar then a quote) lose the dollar too
++norm_strip = re.sub(r"[\\\x27\x22]", "", cmd)
+ variants = [cmd, norm_strip, norm]
+ 
+ label = None
