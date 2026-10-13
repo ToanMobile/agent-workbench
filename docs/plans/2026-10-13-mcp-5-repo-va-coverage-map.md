@@ -66,7 +66,7 @@ Còn lại:
 ## 5. Quyết định cần người dùng
 
 - **ocr không được hook nào chạy.** Skill `open-code-review` và CLI `ocr` có ở cả 5 repo, nhưng chỉ chạy khi agent tự chọn; `review_gate.sh` chỉ chấp nhận skill đó làm bằng chứng review, `enrich_context.py` chỉ gợi ý khi prompt thuộc loại review. Nếu muốn review bằng ocr không bị bỏ sót, cần quyết định có thêm một hook chạy `ocr delegate preview` ở bước Review hay không. Hiện chưa làm.
-- **Gate của kit chạy sát giới hạn 900 giây.** `REG-DK-ALL-01` (cả bộ test kit) và `REG-CAR-01` (Geely) hết giờ khi máy tải, làm REJECT cả những thay đổi chỉ động vào JSON. Cần quyết định có nới giới hạn, tách bộ test, hay chạy gate theo hàng đợi. Chưa đổi gì.
+- **Gate của kit chạy sát giới hạn 900 giây.** `REG-DK-ALL-01` (cả bộ test kit) và `REG-CAR-01` (Geely) hết giờ khi máy tải, làm REJECT cả những thay đổi chỉ động vào JSON. Đã kiểm chứng ngày 13/10: ngay cả một diff chỉ có một file markdown (chính file kế hoạch này) cũng bị `REG-DK-ALL-01` hết giờ ở 900,15 giây, trong khi các test khác của cùng lần gate đều đạt. Vậy nguyên nhân là bộ test kit chạy quá giới hạn của gate, không phải do nội dung thay đổi. Cần quyết định có nới giới hạn, tách bộ test, hay chạy gate theo hàng đợi. Chưa đổi gì.
 - **Commit tự động "wip".** Khi phiên kết thúc mà worktree còn thay đổi, DevKit tự gộp chúng vào `main` dưới dạng commit `wip(...)` không qua gate (đã xảy ra với `4de90cb` dashboard và `9a41b19` mcpfix). Nội dung vẫn đúng nhưng chưa có gate PASS cho chúng.
 
 ## 6. Dọn dẹp
