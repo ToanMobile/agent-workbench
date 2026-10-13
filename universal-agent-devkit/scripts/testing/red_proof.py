@@ -320,7 +320,11 @@ def furnish(project: Path, box: Path) -> None:
         dst = box / rel
         if not dst.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(project / rel, dst)   # not copy2: its flags (macOS `chflags uchg` on a keystore) would make the box undeletable
+            old_umask = os.umask(0o077)   # a keystore copy is never readable by others while shutil.copy creates it
+            try:
+                shutil.copy(project / rel, dst)   # not copy2: its flags (macOS `chflags uchg` on a keystore) would make the box undeletable
+            finally:
+                os.umask(old_umask)
     for d in DEP_DIRS:
         if (project / d).is_dir() and not (box / d).exists():
             (box / d).symlink_to(project / d)
