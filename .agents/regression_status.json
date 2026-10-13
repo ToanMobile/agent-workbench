@@ -3094,7 +3094,21 @@
       "linked_ts": 1791819581.2744162,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_hardware_data_local_tmp.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-12 22:42:58",
+        "ts": 1791819778.957385,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_hardware_data_local_tmp.sh": "0c5c8dd9ee764ec0",
+          ".agents/local/red-patches/BUG-20261012-hardware-gate-refuses-clearing-adb-scrat.patch": "9fe8d1ba1e1275a1"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261012-hardware-gate-refuses-clearing-adb-scrat/20261012-224411.log",
+        "patch": ".agents/local/red-patches/BUG-20261012-hardware-gate-refuses-clearing-adb-scrat.patch"
+      }
     }
   },
   "meta": {
