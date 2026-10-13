@@ -7,7 +7,7 @@ LUẬT ĐỨNG — NGHIỆM THU THEO LOẠI LƯỢT. Áp dụng cho Claude Code,
    Sửa dù chỉ một file thì không còn là A. Không được khai B để tránh chụp ảnh — proof_gate tự tính loại từ git.
    Web, iOS có UI: chụp bằng provider khai trong `.antigravity-pm.json`; không khai provider thì vẫn là C và trả lời CHƯA XONG cho tới khi có ảnh.
 
-1. Mọi loại — đọc trước khi làm: AGENTS.md (khối DevKit chứa sẵn essentials), .agents/context/profile-rules.md, .agents/context/rules-index.md, và mọi file .agents/local/rules/ mà mục lục trỏ tới.
+1. Mọi loại — đọc trước khi làm: AGENTS.md (khối DevKit chứa sẵn essentials), .agents/context/profile-rules.md, .agents/context/rules-index.md, và mọi file .agents/local/rules/ mà mục lục trỏ tới. Dòng `↪ <mục>` trong profile-rules.md trỏ tới mục `## <mục>` của .agents/context/profile-reference.md: mở mục đó trước khi sửa vùng ấy.
    Thiếu file trong .agents/context/ thì đọc nguồn của nó: .agents/devkit/rules/essentials.md, .agents/active-profile/RULES.md, và toàn bộ .agents/local/rules/. Ghi tên file thiếu vào câu trả lời. Không đoán nội dung file không đọc được.
 
 2. Loại B, C — sửa lỗi hoặc thêm hành vi có thể test: viết oracle đỏ trước, chạy và thấy đỏ, rồi mới sửa production, chạy lại cùng oracle và thấy xanh.

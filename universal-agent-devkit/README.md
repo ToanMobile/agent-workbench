@@ -492,7 +492,7 @@ All engineering rules, multi-agent architecture contracts, and quality protocols
 AGENTS.md                  project text + DevKit block (imports the three .agents/context/ files)
 .agents/
   devkit -> <DevKit>        master rules, core-rules, skills, post-fix gate (copy mode: a copy)
-  context/                  generated, git-ignored: essentials.md, profile-rules.md, rules-index.md
+  context/                  generated, git-ignored: essentials.md, profile-rules.md, rules-index.md, profile-reference.md (on demand, not imported)
   active-profile.json       the profile state; active-profile -> the profile folder
   local/                    the project tier (commit it): rules/ memory/ knowledge/ skills/ commands/ agents/ hooks/
   skills/  hooks/           per-skill links (Gemini/Antigravity), bridged hooks (Gemini)

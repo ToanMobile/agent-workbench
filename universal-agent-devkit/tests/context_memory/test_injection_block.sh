@@ -34,8 +34,18 @@ A="$TMP/a"; mkdir -p "$A" && (cd "$A" && git init -q)
 install "$A" -p android
 [ -f "$A/AGENTS.md" ] && [ ! -L "$A/AGENTS.md" ] && [ ! -e "$A/CLAUDE.md" ] && block "$A/AGENTS.md" | grep -q '^## Lazy senior' \
   && ok "no AGENTS.md: a project AGENTS.md with the block, no CLAUDE.md" || fail "AGENTS.md: $(ls -la "$A" | grep -E 'AGENTS|CLAUDE')"
-block "$A/AGENTS.md" | grep -q '@.agents/context/profile-rules.md' && [ "$(body_of "$A/.agents/context/profile-rules.md")" = "$(cat "$DEVKIT_DIR/profiles/android/RULES.md")" ] \
-  && ok "profile rules loaded from .agents/context/profile-rules.md (a copy of android RULES.md)" || fail "profile rules import missing"
+# android RULES.md has on-demand blocks (Dot 28): the loaded copy is the file with them cut to stubs, the cut text is in profile-reference.md.
+android_loaded="$(python3 - "$DEVKIT_DIR" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + "/scripts/governance")
+import context_sync as c
+a, b = c.split_rules(open(sys.argv[1] + "/profiles/android/RULES.md", encoding="utf-8").read())
+print((c.PREAMBLE if b else "") + a, end="")
+PY
+)"
+block "$A/AGENTS.md" | grep -q '@.agents/context/profile-rules.md' && [ -n "$android_loaded" ] && [ "$(body_of "$A/.agents/context/profile-rules.md")" = "$android_loaded" ] \
+  && grep -q '^## §9 SAF' "$A/.agents/context/profile-reference.md" && ! block "$A/AGENTS.md" | grep -q '@.agents/context/profile-reference.md' \
+  && ok "profile rules loaded from .agents/context/profile-rules.md (android RULES.md, on-demand blocks cut); the cut text is in profile-reference.md, not imported" || fail "profile rules import missing"
 [ "$(body_of "$A/.agents/context/essentials.md")" = "$(cat "$DEVKIT_DIR/rules/essentials.md")" ] && ok "essentials.md is the DevKit's rules/essentials.md" || fail "essentials copy differs"
 [ -z "$(unresolved "$A" AGENTS.md)" ] && ok "every @-import in AGENTS.md is a real file in the project" || fail "not loadable: $(unresolved "$A" AGENTS.md | tr '\n' ' ')"
 [ -L "$A/.agents/devkit" ] && [ -f "$A/.agents/devkit/rules/core-rules.md" ] && [ ! -e "$A/rules" ] && [ ! -e "$A/skills" ] && [ ! -e "$A/commands" ] \

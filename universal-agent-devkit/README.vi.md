@@ -491,7 +491,7 @@ Mọi quy chuẩn kỹ thuật, hợp đồng kiến trúc đa agent và quy tr�
 AGENTS.md                  nội dung của dự án + khối DevKit (import 3 file trong .agents/context/)
 .agents/
   devkit -> <DevKit>        master rules, core-rules, skills, post-fix gate (chế độ copy: một bản sao)
-  context/                  tự sinh, git-ignore: essentials.md, profile-rules.md, rules-index.md
+  context/                  tự sinh, git-ignore: essentials.md, profile-rules.md, rules-index.md, profile-reference.md (nạp theo yêu cầu, không import)
   active-profile.json       trạng thái profile; active-profile -> thư mục profile
   local/                    tầng riêng của dự án (commit nó): rules/ memory/ knowledge/ skills/ commands/ agents/ hooks/
   skills/  hooks/           link từng skill (Gemini/Antigravity), hook qua bridge (Gemini)

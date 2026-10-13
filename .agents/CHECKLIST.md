@@ -1,16 +1,17 @@
 # 🧪 Regression Checklist
 
-**An toàn 89% (64/72)** · ❌ 0 · 🔁 0 · 🚫 0 · 🟡 0 cần chạy lại · ⚠️ 0 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 1 chưa sửa · ⏳ 7 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 2 · ma trận chờ duyệt: không
+**An toàn 90% (66/73)** · ❌ 0 · 🔁 0 · 🚫 0 · 🟡 0 cần chạy lại · ⚠️ 0 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 2 chưa sửa · ⏳ 5 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 2 · ma trận chờ duyệt: không
 
-> Sinh tự động lúc 2026-10-13 07:26:31 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
+> Sinh tự động lúc 2026-10-13 09:37:51 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
 
 **Bug không có test hồi quy nào chặn tái phát: 0** (0 chưa có test · 0 có test nhưng gate không chạy)
 
-## 🚨 Cần xử lý (1)
+## 🚨 Cần xử lý (2)
 
 | Trạng thái | ID | Tính năng / Bug | Component | Việc cần làm |
 |---|---|---|---|---|
 | 🐞 chưa sửa | BUG-20261012-test-chap-chon-flaky-reg-dk-session-01 | Test chập chờn (flaky): REG-DK-SESSION-01 | devkit-session-lock | sửa theo ĐỎ→XANH rồi `agent-kit bugs link` |
+| 🐞 chưa sửa | BUG-20261013-test-chap-chon-flaky-reg-dk-all-01 | Test chập chờn (flaky): REG-DK-ALL-01 | devkit-all | sửa theo ĐỎ→XANH rồi `agent-kit bugs link` |
 
 ## 🧩 Phân hệ
 
@@ -18,7 +19,7 @@
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| ✅ PASS | REG-DK-ALL-01 | DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit | 2026-10-13 07:26:30 · 73.93s · exit 0 · 8e8aea6+dirty · [log](evidence/REG-DK-ALL-01/20261013-072630.log) | bash universal-agent-devkit/tests/run_impacted.sh |
+| ✅ PASS | REG-DK-ALL-01 | DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit | 2026-10-13 09:37:50 · 501.55s · exit 0 · 3a5c3be+dirty · [log](evidence/REG-DK-ALL-01/20261013-093750.log) | bash universal-agent-devkit/tests/run_impacted.sh |
 
 </details>
 
@@ -26,8 +27,8 @@
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| ✅ PASS | REG-DK-GATE-01 | post-fix gate | 2026-10-13 07:19:36 · 118.60s · exit 0 · 24813c0+dirty · [log](evidence/REG-DK-GATE-01/20261013-071935.log) | bash universal-agent-devkit/tests/gates/test_postfix_gate.sh |
-| ✅ PASS | REG-DK-GATE-02 | proof gate (tree_fp) | 2026-10-13 07:19:36 · 24.91s · exit 0 · 24813c0+dirty · [log](evidence/REG-DK-GATE-02/20261013-071801.log) | bash universal-agent-devkit/tests/gates/test_proof_gate.sh |
+| ✅ PASS | REG-DK-GATE-01 | post-fix gate | 2026-10-13 09:37:50 · 232.24s · exit 0 · 3a5c3be+dirty · [log](evidence/REG-DK-GATE-01/20261013-093320.log) | bash universal-agent-devkit/tests/gates/test_postfix_gate.sh |
+| ✅ PASS | REG-DK-GATE-02 | proof gate (tree_fp) | 2026-10-13 09:37:50 · 33.80s · exit 0 · 3a5c3be+dirty · [log](evidence/REG-DK-GATE-02/20261013-093002.log) | bash universal-agent-devkit/tests/gates/test_proof_gate.sh |
 
 </details>
 
@@ -43,8 +44,8 @@
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| ✅ PASS | REG-DK-HOOK-01 | hook contract | 2026-10-13 07:19:36 · 78.59s · exit 0 · 24813c0+dirty · [log](evidence/REG-DK-HOOK-01/20261013-071855.log) | bash universal-agent-devkit/hooks/tests/hook_contract_test.sh |
-| ✅ PASS | REG-DK-HOOK-02 | proof gate | 2026-10-13 07:19:36 · 24.91s · exit 0 · 24813c0+dirty · [log](evidence/REG-DK-GATE-02/20261013-071801.log) | bash universal-agent-devkit/tests/gates/test_proof_gate.sh |
+| ✅ PASS | REG-DK-HOOK-01 | hook contract | 2026-10-13 09:37:50 · 117.32s · exit 0 · 3a5c3be+dirty · [log](evidence/REG-DK-HOOK-01/20261013-093125.log) | bash universal-agent-devkit/hooks/tests/hook_contract_test.sh |
+| ✅ PASS | REG-DK-HOOK-02 | proof gate | 2026-10-13 09:37:50 · 33.80s · exit 0 · 3a5c3be+dirty · [log](evidence/REG-DK-GATE-02/20261013-093002.log) | bash universal-agent-devkit/tests/gates/test_proof_gate.sh |
 
 </details>
 
@@ -52,7 +53,7 @@
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| ✅ PASS | REG-DK-SESSION-01 | session lock + multi-session gate verdict (own session is never counted as another) | 2026-10-13 07:09:52 · 17.75s · exit 0 · 4a1e16c+dirty · [log](evidence/REG-DK-SESSION-01/20261013-070649.log) | bash universal-agent-devkit/tests/context_memory/test_session_lock.sh && bash universal-agent-devkit/tests/gates/test_multi_session_gate.sh |
+| ✅ PASS | REG-DK-SESSION-01 | session lock + multi-session gate verdict (own session is never counted as another) | 2026-10-13 09:37:50 · 30.63s · exit 0 · 3a5c3be+dirty · [log](evidence/REG-DK-SESSION-01/20261013-092959.log) | bash universal-agent-devkit/tests/context_memory/test_session_lock.sh && bash universal-agent-devkit/tests/gates/test_multi_session_gate.sh |
 
 </details>
 
@@ -96,21 +97,22 @@
 
 </details>
 
-## 📒 Sổ tay bug (60)
+## 📒 Sổ tay bug (61)
 
 | Trạng thái | Mã | Mô tả | Component | Test bảo vệ | Bằng chứng |
 |---|---|---|---|---|---|
-| 🐞 chưa sửa | BUG-20261012-test-chap-chon-flaky-reg-dk-session-01 | Test chập chờn (flaky): REG-DK-SESSION-01 | devkit-session-lock | REG-DK-SESSION-01 | [log REG-DK-SESSION-01](evidence/REG-DK-SESSION-01/20261013-070649.log) |
+| 🐞 chưa sửa | BUG-20261012-test-chap-chon-flaky-reg-dk-session-01 | Test chập chờn (flaky): REG-DK-SESSION-01 | devkit-session-lock | REG-DK-SESSION-01 | [log REG-DK-SESSION-01](evidence/REG-DK-SESSION-01/20261013-092959.log) |
+| 🐞 chưa sửa | BUG-20261013-test-chap-chon-flaky-reg-dk-all-01 | Test chập chờn (flaky): REG-DK-ALL-01 | devkit-all | REG-DK-ALL-01 | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261013-093750.log) |
 | ✅ PASS | BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du | prompt báo bug thật cũng sẽ không còn được ghi nhận nữa -> là sao bug đúng ko fix đi phải tự động ghi nhận chứ | - | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_bug_capture.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du/20261009-185852.log) |
 | ✅ PASS | BUG-20260926-dev-kit-lam-tao-branch-push-lung-tung-kh | dev kit làm tạo branch, push lung tung không đồng bộ dẫn tới lệch code, vd geely ex2 hiện có 2 pull chưa pull về dẫn tớ… | - | REG-DK-ALL-01, REG-DK-HOOK-01, REG-DK-HOOK-02, universal-agent-devkit/hooks/tests/hook_contract_test.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20260926-dev-kit-lam-tao-branch-push-lung-tung-kh/20261009-181041.log) |
 | ✅ PASS | BUG-20260928-audit-review-them-geely-ex2-hien-no-bao | audit, review thêm geely ex2 hiện nó báo tôi rất nhiều lỗi vậy có nghĩa là bộ devkit hoàn toàn chất lượng kém để thủng… | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_friction.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20260928-audit-review-them-geely-ex2-hien-no-bao/20261009-180103.log) |
 | ✅ PASS | BUG-20260928-fix-luon-loi-git-guard-chan-grep-di-ngoa | fix luôn lỗi git guard chặn grep đi ngoài ra đã tối ưu token sử dụng cũng như thời gian chạy chưa ? Đề xuất các phương… | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_friction.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20260928-fix-luon-loi-git-guard-chan-grep-di-ngoa/20261009-182605.log) |
 | ✅ PASS | BUG-20260928-push-geely-va-fix-luon-loi-red-proof | push geely và fix luôn lỗi red_proof | - | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_red_proof.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20260928-push-geely-va-fix-luon-loi-red-proof/20261009-174029.log) |
 | ✅ PASS | BUG-20260928-san-check-luon-chat-luong-dev-kit-workfl | sẵn check luôn chất lượng dev kit workflow có bị lỗi gì ko fix luôn đi | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_friction.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20260928-san-check-luon-chat-luong-dev-kit-workfl/20261009-180602.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20260929-audit-review-nguyen-nhan-tai-sao-cac-ses | audit, review nguyên nhân tại sao các sesion cài dev kit chạy rất chậm có lỗi gì hay ko? | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_regression_gate_hook.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261013-072630.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20260929-audit-review-nguyen-nhan-tai-sao-cac-ses | audit, review nguyên nhân tại sao các sesion cài dev kit chạy rất chậm có lỗi gì hay ko? | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_regression_gate_hook.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261013-093750.log) |
 | ✅ PASS | BUG-20261001-lam-luon-fix-bug-worktree-di | làm luôn fix bug worktree đi | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_worktree_merge_gate.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261001-lam-luon-fix-bug-worktree-di/20261009-182503.log) |
 | ✅ PASS | BUG-20261001-sua-luon-bug-init-xoa-mcp-server-di | sửa luôn bug init xoá MCP server đi | - | REG-DK-ALL-01, universal-agent-devkit/tests/installer/test_platform_rules.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261001-sua-luon-bug-init-xoa-mcp-server-di/20261009-175104.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261002-agent-kit-health-run-tests-scores-96-100 | agent-kit health --run-tests scores 96/100: agent-kit test runs ~90 test scripts one after another (~19 min), past the 900 s limit health allows | devkit-health | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_run_impacted.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261013-072630.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20261002-agent-kit-health-run-tests-scores-96-100 | agent-kit health --run-tests scores 96/100: agent-kit test runs ~90 test scripts one after another (~19 min), past the 900 s limit health allows | devkit-health | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_run_impacted.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261013-093750.log) |
 | ✅ PASS | BUG-20261002-chay-finagling-running-stop-hooks-8-9-27 | chạy Finagling… (running Stop hooks… 8/9 · 27m 24s · ↓ 46.3k tokens) quá lâu audit, review sửa lại đi Stop hooks… rất h… | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_regression_gate_hook.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261002-chay-finagling-running-stop-hooks-8-9-27/20261009-173819.log) |
 | ✅ PASS | BUG-20261002-evidence-gate-foreign-xml-nonrunner | test_evidence_gate: a Bash that only names a foreign project (cd && git status) made its fresh XML count as this session's test evidence | devkit | REG-DK-ALL-01, REG-DK-HOOK-01, REG-DK-HOOK-02, universal-agent-devkit/hooks/tests/hook_contract_test.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261002-evidence-gate-foreign-xml-nonrunner/20261009-190334.log) |
 | ✅ PASS | BUG-20261002-gate-rejects-a-change-that-moves-a-test | Gate REJECTs a change that moves a test file the matrix names: it runs the base matrix, whose command names the removed path (exit 127), and flags the matrix edit for review | devkit-gate | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_matrix_rename.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261002-gate-rejects-a-change-that-moves-a-test/20261009-172300.log) |
@@ -127,7 +129,7 @@
 | ✅ PASS | BUG-20261009-hooks-log-dir-process-cwd | 7 hooks (bash_write_ledger, security_gate, proof_gate, regression_gate, test_evidence_gate, review_timing_guard, prompt_context) took the project from the PROCESS cwd when CLAUDE_PROJECT_DIR was unset and created .claude/audit-gate there (a run at / wrote /.claude) | devkit-hooks | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_hook_log_dir.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261009-hooks-log-dir-process-cwd/20261009-203143.log) |
 | ✅ PASS | BUG-20261009-merge-gate-held-vanished-worktree | worktree_merge_gate: a worktree removed by the last Stop's background merge while this Stop decided stayed in the hold list (flaky test_worktree_merge_gate_owner) | devkit-worktree | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_worktree_merge_gate_vanished.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261009-merge-gate-held-vanished-worktree/20261009-181812.log) |
 | ✅ PASS | BUG-20261009-review-timing-guard-env-payload | review_timing_guard: the hook payload travelled in an environment variable, so an Edit of a big file (payload past the 1 MiB exec limit) made the shell fail with Argument list too long and the guard never ran | devkit-hooks | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_review_timing_guard_big_payload.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261009-review-timing-guard-env-payload/20261009-181603.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261009-run-impacted-recent-commits-in-sandbox | run_impacted.sh in a checkout with no upstream (every RED-proof sandbox) selected the tests of every commit of the last 6 hours: 25+ minutes per proof instead of the few tests of the reverted file | devkit-tests | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_run_impacted_since.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261013-072630.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20261009-run-impacted-recent-commits-in-sandbox | run_impacted.sh in a checkout with no upstream (every RED-proof sandbox) selected the tests of every commit of the last 6 hours: 25+ minutes per proof instead of the few tests of the reverted file | devkit-tests | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_run_impacted_since.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261013-093750.log) |
 | ✅ PASS | BUG-20261009-scratch-cleanup-prune-could-delete-a-liv | scratch_cleanup: prune could delete a live idle session's dir and follow a slug swapped for a symlink (TOCTOU) | devkit-scratch-cleanup | REG-DK-ALL-01, universal-agent-devkit/tests/context_memory/test_scratch_cleanup.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261009-scratch-cleanup-prune-could-delete-a-liv/20261009-171413.log) |
 | ✅ PASS | BUG-20261009-session-lock-a-cp-rc-copy-of-a-checkout | session_lock: a cp -Rc copy of a checkout carried the original's lock and was held by its live holder up to 600 s | devkit-session-lock | REG-DK-ALL-01, universal-agent-devkit/tests/context_memory/test_session_lock.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261009-session-lock-a-cp-rc-copy-of-a-checkout/20261009-203323.log) |
 | ✅ PASS | BUG-20261009-session-lock-an-idle-holder-turn-over-wa | session_lock: an idle holder (turn over, waiting at the prompt) kept the checkout 600 s, other sessions needed /exit | devkit-session-lock | REG-DK-ALL-01, universal-agent-devkit/tests/context_memory/test_session_lock.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261009-session-lock-an-idle-holder-turn-over-wa/20261009-203838.log) |
@@ -144,7 +146,7 @@
 | ✅ PASS | BUG-20261010-test-evidence-gate-rebuilds-the-shell-va | test_evidence_gate rebuilds the shell variable table of every earlier command for each command (quadratic, 25 s on a 58 MB transcript) | test_evidence_gate | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_evidence_gate_linear.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261010-test-evidence-gate-rebuilds-the-shell-va/20261010-183459.log) |
 | ✅ PASS | BUG-20261010-test-evidence-gate-treats-a-source-file | test_evidence_gate treats a source file written in a temp or scratchpad dir as the last code edit, so a green run goes stale (36% of 171 real blocks) | test_evidence_gate | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_evidence_scratch_edits.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261010-test-evidence-gate-treats-a-source-file/20261010-190713.log) |
 | ✅ PASS | BUG-20261010-testsourceset-gate-compiles-the-test-sou | testsourceset_gate compiles the test source sets on every unfinished (CHUA XONG) stop | testsourceset_gate | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_testsourceset_wip_skip.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261010-testsourceset-gate-compiles-the-test-sou/20261010-183332.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261011-review-log-py-loses-lines-under-concurre | review_log.py loses lines under concurrent writes, erases damaged lines, reads the model from text, takes older results for newer dispatches and counts implement runs as reviews | review_log | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_review_log.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261013-072630.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20261011-review-log-py-loses-lines-under-concurre | review_log.py loses lines under concurrent writes, erases damaged lines, reads the model from text, takes older results for newer dispatches and counts implement runs as reviews | review_log | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_review_log.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261013-093750.log) |
 | ✅ PASS | BUG-20261012-a-bug-linked-to-a-test-file-git-does-not | a bug linked to a test file git does not track yet stays NOT_IN_MATRIX forever (no regression test counted) | checklist | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_bug_untracked_test_ref.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261012-a-bug-linked-to-a-test-file-git-does-not/20261012-222502.log) |
 | ✅ PASS | BUG-20261012-a-session-blocked-by-a-held-checkout-sto | a session blocked by a held checkout stops to ask the user instead of making its own worktree | session-lock | REG-DK-ALL-01, universal-agent-devkit/tests/context_memory/test_session_lock_worktree_hint.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261012-a-session-blocked-by-a-held-checkout-sto/20261012-210656.log) |
 | ✅ PASS | BUG-20261012-hardware-gate-passes-a-quoted-or-root-gl | hardware gate passes a quoted or root-glob rm on a system partition | hardware-gate | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_hardware_unglob_quoted.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261012-hardware-gate-passes-a-quoted-or-root-gl/20261012-205707.log) |
@@ -154,11 +156,11 @@
 | ✅ PASS | BUG-20261012-regression-gate-reuse-key-moves-with-age | regression_gate reuse key moves with agent memory notes because devkit_harness.OWN lacks claude-auto (tree_fp already excludes it) | tree-fp | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_harness_fp_claude_auto.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261012-regression-gate-reuse-key-moves-with-age/20261012-210837.log) |
 | ✅ PASS | BUG-20261012-stop-gates-run-on-progress-replies-whose | stop gates run on progress replies whose only claim is a check mark or a table row | stop-hook | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_outcome_table_rows.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261012-stop-gates-run-on-progress-replies-whose/20261012-211004.log) |
 | ✅ PASS | BUG-20261012-test-evidence-gate-lets-a-pass-claim-thr | test_evidence_gate lets a pass claim through when an exempted match swallows it, and blocks the Vietnamese cycle name or quoted mentions of its trigger words | test-evidence-gate | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_evidence_claim_mentions.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261012-test-evidence-gate-lets-a-pass-claim-thr/20261012-220235.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261012-test-session-lock-resolve-compares-bash | test_session_lock_resolve compares bash errno wording that flips with the directory the test is started from (red from the repo root, also on the unpatched kit) | session-lock | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_session_lock_resolve.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261013-072630.log) |
+| ⏳ chưa chứng minh ĐỎ | BUG-20261012-test-session-lock-resolve-compares-bash | test_session_lock_resolve compares bash errno wording that flips with the directory the test is started from (red from the repo root, also on the unpatched kit) | session-lock | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_session_lock_resolve.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261013-093750.log) |
 | ✅ PASS | BUG-20261012-tree-fingerprint-moves-with-agent-memory | tree fingerprint moves with agent memory notes so a green gate receipt is lost | tree-fp | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_tree_fp_claude_auto.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261012-tree-fingerprint-moves-with-agent-memory/20261012-204933.log) |
 | ✅ PASS | BUG-20261012-user-prompt-hook-exits-127-silently-when | user prompt hook exits 127 silently when the hook files are gone, so every guard is off with no warning | hooks | REG-DK-ALL-01, universal-agent-devkit/tests/installer/test_prompt_hook_missing.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261012-user-prompt-hook-exits-127-silently-when/20261012-210439.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261013-a-repo-link-to-the-old-scripts-red-proof | a repo link to the old scripts/red_proof.py path is broken since scripts/ was split into groups | installer | REG-DK-ALL-01, universal-agent-devkit/tests/installer/test_legacy_script_paths.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261013-072630.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261013-relink-check-never-links-a-skill-the-dev | relink_check never links a skill the DevKit gained after the install | relink | REG-DK-ALL-01, universal-agent-devkit/tests/worktree_git/test_relink_skills.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261013-072630.log) |
+| ✅ PASS | BUG-20261013-a-repo-link-to-the-old-scripts-red-proof | a repo link to the old scripts/red_proof.py path is broken since scripts/ was split into groups | installer | REG-DK-ALL-01, universal-agent-devkit/tests/installer/test_legacy_script_paths.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261013-a-repo-link-to-the-old-scripts-red-proof/20261013-072833.log) |
+| ✅ PASS | BUG-20261013-relink-check-never-links-a-skill-the-dev | relink_check never links a skill the DevKit gained after the install | relink | REG-DK-ALL-01, universal-agent-devkit/tests/worktree_git/test_relink_skills.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261013-relink-check-never-links-a-skill-the-dev/20261013-072848.log) |
 | ✅ PASS | BUG-VACUITY-SINCE-BASE | gate: vacuity revert uses HEAD under --since, so committed fixes look vacuous | - | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_vacuity_since.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-VACUITY-SINCE-BASE/20261009-171732.log) |
 
 ## 🟡 REPORTED — bug báo qua prompt, chưa xác nhận (2)

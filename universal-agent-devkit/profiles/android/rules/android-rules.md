@@ -37,10 +37,12 @@
 - JVM unit test xanh KHÔNG chứng minh hành vi phụ thuộc nền tảng (XML parser, Charset, `File.renameTo` qua FUSE/SAF, font/line-break, R8, Room trên SQLite thật): cần instrumented test hoặc chạy trên máy.
 
 ## 5. Gradle nhiều module, `build-logic` & Version Catalog
+<!-- on-demand: §5 Gradle, build-logic, Version Catalog, testBuildType -->
 - Cấu hình dùng chung (compileSdk/minSdk, Kotlin/JVM target, Compose, lint, test options) nằm trong **convention plugin** ở `build-logic/`; module chỉ áp plugin + khai báo phần riêng. Không copy khối `android { … }` vào từng module.
 - Version và coordinate thư viện chỉ ở `gradle/libs.versions.toml`; không hardcode version trong `build.gradle.kts` của module.
 - Sửa `build-logic/`, `libs.versions.toml`, `gradle.properties` hay root `build.gradle.kts` = đổi build của MỌI module → compile lại mọi module bị ảnh hưởng **kèm test source set**: `./gradlew :<m>:compileDebugKotlin :<m>:compileDebugUnitTestKotlin`. `assembleDebug`/`compileDebugKotlin` KHÔNG compile `src/test` — đổi chữ ký có thể vỡ test mà build vẫn xanh.
 - Biến thể test theo `testBuildType`: module đặt `testBuildType = "release"` chỉ có `testReleaseUnitTest` — root `./gradlew testDebugUnitTest` bỏ qua module đó. Xác định task thật bằng `./gradlew :<m>:tasks --all | grep UnitTest` trước khi tin một lệnh test.
+<!-- /on-demand -->
 - Ranh giới module là hợp đồng: module thư viện dùng chung không phụ thuộc ngược lên `app`/feature; feature không import trực tiếp feature khác (đi qua navigation/interface ở core). Đổi ranh giới = hỏi trước.
 - Giữ tương thích configuration cache: không đọc file/env/`System.getProperty` lúc configuration mà không qua `providers.*`.
 - Nâng AGP/Kotlin/Compose compiler/KSP: nâng theo bảng tương thích chính thức, cùng một thay đổi, rồi build + test toàn bộ.
@@ -48,28 +50,35 @@
 ## 6. Jetpack Compose — Stability & Recomposition
 - `@Immutable` = bất biến sâu thật sự; `@Stable` = mọi thay đổi quan sát được đều báo cho Compose. Không gắn annotation để "làm im" compiler report.
 - File **stability configuration** (`stabilityConfigurationFiles`) chỉ liệt kê kiểu **thực tế bất biến trong cách dự án dùng**. Kiểu mutable (`java.util.Date`, `PointF`, `RectF`, `Rect`, mảng, collection mutable) nếu được khai stable thì **cấm mutate instance sau khi đã truyền vào composable** — Compose sẽ bỏ qua recomposition và UI hiển thị giá trị cũ. Luôn tạo instance mới khi giá trị đổi.
+<!-- on-demand: §6 Compose: state owner, collection, LazyColumn key, compiler reports -->
 - Collection trong UI state: `kotlinx.collections.immutable` (`ImmutableList`/`PersistentList`) hoặc wrapper `@Immutable`; không để `MutableList` trong state.
 - Đọc state ở owner hẹp nhất; lambda/callback ổn định (method reference hoặc `remember`); `LazyColumn`/`LazyVerticalGrid` có `key` theo identity ổn định và `contentType`.
 - Không cấp phát/sort/format nặng trong composition hoặc draw loop; tính trước ở state holder.
 - Chứng minh vấn đề và kết quả bằng Compose compiler reports/metrics, Layout Inspector (recomposition counts) hoặc Macrobenchmark/Perfetto trên cùng kịch bản trước/sau. Compile xanh không chứng minh giảm recomposition.
 - Thu thập Flow trong UI bằng `collectAsStateWithLifecycle()`, không `collectAsState()` cho luồng tốn tài nguyên.
+<!-- /on-demand -->
 
 ## 7. Baseline Profiles & Startup
+<!-- on-demand: §7 Baseline Profiles, Macrobenchmark, startup -->
 - Sinh profile bằng module `androidx.baselineprofile` + Macrobenchmark trên build release-like (minified), cho các hành trình quan trọng thật (khởi động, mở màn hình chính, cuộn danh sách).
 - Không sửa tay file `baseline-prof.txt` sinh ra; sinh lại sau thay đổi lớn về startup/navigation.
 - Kiểm tra profile thực sự được đóng gói (artifact trong APK/AAB, `ProfileInstaller`) — "generate thành công" không phải bằng chứng runtime.
 - Đo trước/sau cùng giao thức (cùng loại máy, `CompilationMode`, số vòng lặp). Ngưỡng cải thiện lấy từ baseline đo được, không lấy số mẫu.
 - Selector trong generator/benchmark dựa trên semantics/resource-id/state, không `sleep` cố định hay toạ độ cứng.
+<!-- /on-demand -->
 
 ## 8. R8 / ProGuard Keep Rules
 - Release luôn `isMinifyEnabled = true` + `isShrinkResources = true`; **chạy thử bản release đã minify trên máy** trước khi phát hành — debug build không bao giờ lộ lỗi R8.
 - Keep rule hẹp, có lý do: code gọi qua reflection, JNI (`native` method + class/field mà C/C++ truy cập), serialization (Kotlin Serialization/Gson/Moshi), enum `values()/valueOf()`, class nạp theo tên (`Class.forName`, ServiceLoader, `META-INF/services`). Cấm `-keep class ** { *; }`; `-dontwarn` phải kèm lý do.
+<!-- on-demand: §8 R8 / ProGuard: repackage, consumerProguardFiles, mapping.txt -->
 - R8 có thể **repackage** class về package khác: `SomeClass::class.java.getResourceAsStream("file.txt")` (đường dẫn TƯƠNG ĐỐI theo package của class) trả `null` ở release dù resource vẫn nằm trong APK. Dùng `classLoader.getResourceAsStream("full/path/file.txt")` (tuyệt đối, không `/` đầu) hoặc keep package của class đó.
 - Module thư viện ship keep rule qua `consumerProguardFiles`, không bắt app đoán.
 - Lưu `mapping.txt` mỗi bản release và upload cho Crashlytics/Play để deobfuscate stack trace.
 - Oracle cho lỗi chỉ xảy ra khi minify: test trên bản release, hoặc test JVM mô phỏng việc đổi tên/dời package (ví dụ remap class bằng ASM) — không kết luận từ debug build.
+<!-- /on-demand -->
 
 ## 9. Storage Access Framework & `content://` URI
+<!-- on-demand: §9 SAF, content:// URI, OpenableColumns, persistable permission -->
 - URI từ SAF/`ACTION_VIEW`/`ACTION_SEND` là `content://`: **không suy ra file path** (`uri.path`, `_data`, `/storage/emulated/0/...`). Đọc/ghi bằng `ContentResolver.openInputStream/openOutputStream/openFileDescriptor` + `use {}`.
 - Tên hiển thị/kích thước lấy từ `OpenableColumns.DISPLAY_NAME`/`SIZE` (có thể null/0 — xử lý); không lấy segment cuối của URI làm tên file.
 - `takePersistableUriPermission` chỉ áp dụng cho grant từ `ACTION_OPEN_DOCUMENT`/`ACTION_OPEN_DOCUMENT_TREE`/`CREATE_DOCUMENT` có flag persistable; số grant lưu được có giới hạn — giải phóng grant không còn dùng.
@@ -78,32 +87,40 @@
 - Mọi truy vấn provider/`DocumentFile` chạy ngoài main thread (§3). Quét cây thư mục lớn: giới hạn độ sâu/đồng thời, huỷ được, không BFS song song không giới hạn.
 - Đọc `Intent` extra theo API mới (`getParcelableExtra(key, Uri::class.java)` từ API 33, `IntentCompat` cho bản cũ); kiểm tra MIME/kích thước trước khi mở.
 - Không log/analytics URI, đường dẫn hay tên file thật (§12).
+<!-- /on-demand -->
 
 ## 10. Hilt / Dependency Injection
+<!-- on-demand: §10 Hilt: scope, ViewModel, Worker, test, binding dùng chung -->
 - Ưu tiên constructor injection (`@Inject constructor`) + `@Binds` cho interface; `@Provides` chỉ cho kiểu không sở hữu.
 - Scope đúng vòng đời: `@Singleton` cho client/DB/repository dùng chung; không `@Singleton` cho state theo người dùng/tài liệu, không giữ object nặng theo tài liệu (renderer, parser session) ở scope rộng.
 - Không inject/giữ `Activity`/`Fragment`/`View` trong object sống lâu hơn nó; cần Context ở tầng dưới thì `@ApplicationContext`.
 - ViewModel: `@HiltViewModel` + `SavedStateHandle` cho tham số điều hướng/khôi phục process death. Worker: `@HiltWorker` + `HiltWorkerFactory`.
 - Test: `@HiltAndroidTest` + `@TestInstallIn`/`@UninstallModules` thay module; không sửa graph production cho test.
 - Đổi binding dùng chung = đổi hành vi mọi consumer → liệt kê consumer (graph/grep, gồm `src/test`, `src/androidTest`) trước khi sửa.
+<!-- /on-demand -->
 
 ## 11. Room — Schema & Migration
 - `exportSchema = true`, thư mục schema được commit; mọi lần tăng `version` phải có `Migration`/`AutoMigration` **và** test bằng `MigrationTestHelper` (tạo DB ở version N-1 với dữ liệu thật, migrate, kiểm tra dữ liệu còn nguyên).
 - Cấm `fallbackToDestructiveMigration()` ở release (mất dữ liệu người dùng); nếu buộc phải dùng thì chỉ `fallbackToDestructiveMigrationFrom(...)` các version cụ thể, có duyệt.
+<!-- on-demand: §11 Room: REPLACE + CASCADE, transaction, Flow, index, Paging -->
 - **Bẫy `@Insert(onConflict = REPLACE)` + `ForeignKey(onDelete = CASCADE)`**: REPLACE thực chất là DELETE + INSERT → xoá sạch bản ghi con qua CASCADE. Cập nhật bản ghi cha có con thì dùng `@Upsert`/`@Update` (update tại chỗ). Có test: upsert cha → con còn nguyên.
 - Nhiều thao tác phụ thuộc nhau: `@Transaction` / `withTransaction`; transaction ngắn, không I/O mạng bên trong.
 - Truy vấn trả `Flow` hoặc là `suspend`; không `allowMainThreadQueries()` ngoài test.
 - Index cho cột lọc/sắp xếp thường xuyên; danh sách lớn phân trang (Paging 3), không load toàn bộ bảng lên UI.
+<!-- /on-demand -->
 
 ## 12. Analytics, Crashlytics & PII
 - Không gửi PII vào analytics/Crashlytics (event param, custom key, log, message của exception): tên file, đường dẫn, URI, nội dung tài liệu, email, token, ID thiết bị thô. ID cần thiết thì hash; đường dẫn → chỉ gửi loại/nhóm (extension đã chuẩn hoá, bucket kích thước).
+<!-- on-demand: §12 Analytics, Crashlytics: cardinality, consent, non-fatal -->
 - Tên event và giá trị param là **hằng số ít cardinality**: không ghép tên event động, không dùng **chuỗi UI đã dịch** hay message exception làm giá trị (một lỗi sẽ vỡ thành hàng chục giá trị theo ngôn ngữ). Tách "message cho người dùng" khỏi "error key cho analytics" ngay tại nguồn.
 - Tôn trọng giới hạn của nền tảng analytics (độ dài tên event/param, số param, số user property) — verify theo docs hiện hành, có test cho schema.
 - Consent trước khi thu thập (Consent Mode / UMP); trạng thái `analytics_storage` không suy ra từ quyền quảng cáo.
 - Crashlytics non-fatal: lọc `CancellationException` (coroutine huỷ hợp lệ) và lỗi dự kiến (mất mạng, file bị xoá, quyền bị thu hồi, người dùng huỷ) tại **helper trung tâm**, không rải ở call site. Lọc theo kiểu exception, không theo prefix chuỗi của lớp wrapper.
 - Kiểm chứng event bằng DebugView/`adb shell setprop debug.firebase.analytics.app <pkg>` trên build có cấu hình giống release; dashboard trễ/không thấy ≠ event không gửi.
+<!-- /on-demand -->
 
 ## 13. Bitmap, PDF & File Lớn — Bộ nhớ
+<!-- on-demand: §13 Bitmap, PdfRenderer, file lớn, OOM, tài nguyên native -->
 - Giải mã ảnh theo kích thước hiển thị: `BitmapFactory.Options.inSampleSize` (đọc `inJustDecodeBounds` trước) hoặc `ImageDecoder.setTargetSize`; thư viện ảnh (Coil/Glide) phải có `size(...)`. Không decode ảnh gốc 12–50 MP vào `ARGB_8888`.
 - Trang PDF: render theo viewport/zoom, tile cho zoom cao; bitmap cache bị chặn (`LruCache` tính theo byte, dựa `ActivityManager.memoryClass`); giải phóng khi trang ra khỏi màn hình.
 - `android.graphics.pdf.PdfRenderer`: chỉ MỘT page mở tại một thời điểm (đóng page trước khi mở page khác), không thread-safe → tuần tự hoá mọi truy cập; renderer **sở hữu** `ParcelFileDescriptor` truyền vào và tự đóng nó — đừng đóng PFD lần hai hay giữ PFD riêng. Verify quyền sở hữu tài nguyên theo source SDK đã resolve trước khi thiết kế wrapper cleanup.
@@ -112,6 +129,7 @@
 - Tài nguyên native/stream/cursor/renderer đóng ở MỌI nhánh (thành công, lỗi, huỷ coroutine, dispose muộn sau khi màn hình đã đóng); callback đến sau dispose phải no-op an toàn.
 - Không giữ tham chiếu tĩnh tới `Activity`/`Context`/`View` (kể cả trong singleton của thư viện render) — rò rỉ cả cây view và bitmap.
 - Đo bằng dữ liệu thật: fixture lớn/hỏng/mã hoá, Memory Profiler/LeakCanary/heap dump; không đẩy HPROF lên dịch vụ ngoài khi chưa được duyệt.
+<!-- /on-demand -->
 
 ## 14. Vòng đời, Process Death & Công việc nền
 - State cần sống qua process death đi vào `SavedStateHandle`/`rememberSaveable`; kiểm tra bằng "Don't keep activities" hoặc `adb shell am kill`.
@@ -134,7 +152,9 @@
 ## 16. Kiến trúc tầng & Kiểm thử (nguồn: android/architecture-samples)
 - Tầng UI (Screen + ViewModel) → Repository (interface) → data source (Room cục bộ + network). Tầng domain chỉ thêm khi logic được dùng lại ở nhiều nơi (nhánh `main` của sample không có).
 - ViewModel giữ `MutableStateFlow` ở dạng private và lộ một `StateFlow<UiState>` qua `stateIn(viewModelScope, <chính sách chia sẻ, ví dụ SharingStarted.WhileSubscribed(timeout)>, initial)` (sample dùng helper riêng `WhileUiSubscribed`). `UiState` là `data class` bất biến; UI gửi sự kiện bằng hàm của ViewModel; thông báo một lần là state và được xoá bằng hàm "đã hiển thị".
+<!-- on-demand: §16 Kiến trúc tầng: StateFlow, Repository, fake, package theo feature -->
 - Lỗi của luồng dữ liệu thành state (`.catch` → `Async.Error`/`userMessage`), không để lọt ra khỏi `viewModelScope`.
 - Repository: đọc trả `Flow` từ Room (nguồn sự thật), ghi local rồi mới đồng bộ network; ánh xạ entity/DTO ↔ model ngoài bằng hàm riêng, không lộ entity Room lên UI. Dispatcher và application scope inject bằng qualifier (`@IoDispatcher`, `@DefaultDispatcher`, `@ApplicationScope`).
 - Test: fake viết tay trong module dùng chung (`FakeRepository`/`FakeDao`/`FakeNetworkDataSource`) ưu tiên hơn mock repository; `MainCoroutineRule` set/reset `Dispatchers.Main` bằng test dispatcher; mỗi `@Module` có `@TestInstallIn(replaces = …)` đối ứng; test Room dùng DB in-memory (§10, §11).
 - Package theo feature (`tasks/`, `taskdetail/`, …), mỗi feature có Screen + ViewModel và test phản chiếu cấu trúc đó. Chi tiết: `skills/deep-module-design/references/architecture-android.md`.
+<!-- /on-demand -->
