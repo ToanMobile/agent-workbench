@@ -70,26 +70,30 @@ def copy_with_apfs_cow(source: Path, target: Path) -> bool:
     
     target.parent.mkdir(parents=True, exist_ok=True)
 
+    if not source.is_dir():
+        # A file (.env, keystore.properties, ...): shutil.copy keeps content + mode only. cp -c (clonefile) and copy2 keep macOS user flags,
+        # so a keystore the user locked with `chflags uchg` became a copy the sandbox could never delete (tests/worktree_git/test_worktree_immutable_copy.sh)
+        old_umask = os.umask(0o077)   # shutil.copy creates the file with the umask's mode and fixes it afterwards: a secret is never readable by others in between
+        try:
+            shutil.copy(source, target)
+        finally:
+            os.umask(old_umask)
+        return True
+
     if sys.platform == "darwin":
         # Trên macOS, dùng /bin/cp -c (clonefile)
-        cmd = ["/bin/cp", "-c"]
-        if source.is_dir():
-            cmd.extend(["-R", f"{source}/.", str(target)])
-            target.mkdir(parents=True, exist_ok=True)
-        else:
-            cmd.extend([str(source), str(target)])
-        
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        target.mkdir(parents=True, exist_ok=True)
+        res = subprocess.run(["/bin/cp", "-c", "-R", f"{source}/.", str(target)], capture_output=True, text=True, timeout=120)
         if res.returncode == 0:
+            # cp -c -R keeps the user flags too (a jks locked with `chflags uchg` inside a signing/ folder): clear them or the sandbox can never be cleaned.
+            # -R does not follow links; a failure shows up at cleanup, which names the file it cannot delete
+            subprocess.run(["chflags", "-R", "nouchg,nouappnd", str(target)], capture_output=True, text=True, timeout=120)
             return True
 
     # Fallback tiêu chuẩn
-    if source.is_dir():
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.copytree(source, target, symlinks=True)
-    else:
-        shutil.copy2(source, target)
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(source, target, symlinks=True, copy_function=shutil.copy)   # not the default copy2: it keeps the flags
     return True
 
 
