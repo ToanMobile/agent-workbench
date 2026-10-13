@@ -320,7 +320,7 @@ def furnish(project: Path, box: Path) -> None:
         dst = box / rel
         if not dst.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(project / rel, dst)
+            shutil.copy(project / rel, dst)   # not copy2: its flags (macOS `chflags uchg` on a keystore) would make the box undeletable
     for d in DEP_DIRS:
         if (project / d).is_dir() and not (box / d).exists():
             (box / d).symlink_to(project / d)
@@ -334,7 +334,7 @@ def copy_in(project: Path, box: Path, files: list) -> None:
         src, dst = project / f, box / f
         if src.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+            shutil.copy(src, dst)
         elif dst.exists():
             dst.unlink()        # deleted by the fix
 

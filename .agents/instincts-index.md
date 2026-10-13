@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (301 dòng, 34.1 KB) · 38 mục
+> **Tệp gốc:** `.agents/instincts.md` (317 dòng, 36.0 KB) · 40 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -39,5 +39,7 @@
 - [INSTINCT-032] Stop hook that accepts a report from any earlier transcript line: the hook's own feedback holds the… — `sed -n '273,280p' .agents/instincts.md`
 - [INSTINCT-033] A gate that skips unfinished turns must remember what it skipped — `sed -n '281,288p' .agents/instincts.md`
 - [INSTINCT-034] A hook that ages a green run by the last source edit must only count edits that belong to the project — `sed -n '289,296p' .agents/instincts.md`
-- [INSTINCT-035] zsh and && chains in install steps — `sed -n '297,301p' .agents/instincts.md`
+- [INSTINCT-035] zsh and && chains in install steps — `sed -n '297,304p' .agents/instincts.md`
+- [INSTINCT-036] A new tests/*/test_*.sh needs a line in tests/lib/test_durations.txt, and the gate only shows it when… — `sed -n '305,312p' .agents/instincts.md`
+- [INSTINCT-037] A MUST/CẤM regex lint cannot see obligations phrased without a keyword, so an on-demand split needs a… — `sed -n '313,317p' .agents/instincts.md`
 
