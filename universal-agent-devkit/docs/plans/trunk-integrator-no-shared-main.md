@@ -73,3 +73,30 @@ Gốc chung: **có một checkout chính mà người ta vừa sửa vừa dùng
 2. **Phạm vi repo:** chỉ 3 repo không phải Unity ở pha 1–3, đúng không?
 3. **Người dùng có miễn trừ** khi sửa tay trong checkout chính không?
 4. **Có chấp nhận `--full` chỉ chạy một lần ở cuối** (đúng luật DevKit hiện có) thay vì mỗi phiên?
+
+## 8. Việc còn lại (cập nhật cuối ngày 13/10, đo lúc ~14:00)
+
+### 8.1 Phải làm trước, độc lập với C+D
+| # | Việc | Trạng thái đo được | Hành động |
+|---|---|---|---|
+| 1 | **Gộp worktree `agent-workbench-dot30b` vào main** | `aaf9805` (sửa theo review Đợt 30) và `204750d` (plan này) CHƯA vào main; `e4a16f3`, `33259ef` đã vào main và đã push | Khi phiên `c01ac57e` nhả khoá: khôi phục các bản cũ của chính mình ở main (`worktree.py`, `worktree_sandbox.py`, `test_worktree_immutable_copy.sh`, `.agents/instincts.md`; riêng `CHANGELOG.md` giữ cả mục Đợt 31), chạy `agent-kit worktree finish /Volumes/Data/Toan/agent-workbench-dot30b`, gate `--full --force-full --timeout 2400` exit 0, rồi `git pull --ff-only`/`--no-rebase` (kiểm exit code) và `git push origin main` |
+| 2 | **Gate chưa có biên nhận cho `aaf9805` / `204750d`** | Lần đỏ gần nhất: `test_worktree_merge_gate_owner.sh` (race có sẵn); gate trên commit chỉ-Markdown vẫn TIMEOUT 900 s vì `REG-DK-ALL-01` chọn quá nhiều test | Chạy với `--timeout 2400`; điều tra vì sao commit docs kéo cả suite DevKit |
+| 3 | **Sửa race `worktree_merge_gate`** | Đỏ ở cả 4 lần gate hôm nay; A/B song song: kit cũ 7/30, kit mới 18/30 lượt đỏ (có nhiễu: một số lượt kit mới chạy trong git worktree) — **chưa chứng minh Đợt 30 không làm xấu thêm** | Sửa hàng "gate error" cho thư mục vừa mất thành "đã xong"; chạy `inventory` riêng từng worktree; viết test tất định (chèn lỗi); đo lại A/B cùng điều kiện |
+| 4 | **Xoá 7 thư mục `/Volumes/Data/Toan/GeelyEx2-{car-debug,cardbg,push-1013,push-1013b,push-1013c,regen-persist-sliders,xe-debug}`** | Đã gỡ cờ `uchg`, không có việc nào chỉ nằm trong đó (đối chiếu cây với lịch sử) | Người dùng gõ `! rm -rf …` (hook `hardware_safety_gate` chặn agent). Giải phóng ~1,2 GB |
+| 5 | **Kiểm thư mục `/Volumes/Data/Toan/agent-workbench-dashboard`** | Còn thư mục `.agents` rỗng nghĩa, git không còn đăng ký | Đối chiếu nội dung với main rồi xoá |
+| 6 | **Worktree của phiên khác, KHÔNG xoá khi chưa rõ chủ** | `agent-workbench-sprite-forge` (12 file sửa dở), `Neighbours-From-Hell-keystore` (3 file + thư mục `keystore/` chưa track), Goods `Goods-Triple-Shelf-Match-3D-mcp` (1 commit `4405395` chưa vào main, 7 file sửa dở của Unity) | Hỏi người dùng; Goods `-mcp`: `agent-kit worktree finish` từ checkout Goods sau khi xem 7 file sửa dở |
+| 7 | **Việc dở của hai phiên kia** | `cd6390a4`: chưa chạy `claude mcp list` cho 5 repo sau khi gộp; `c01ac57e`: Đợt 31 OCR (`REVIEW_GATE_OCR=full`, `hooks/review_gate.sh`, `bin/ocr-review`, 4 test mới) chưa commit — xem `docs/plans/goal-100-2026-10-13.md` | Hoàn tất trong phiên đó hoặc phiên mới theo bản bàn giao `handoff-2026-10-13-gom-3-phien-chay-full-mot-lan.md` |
+
+### 8.2 Khoá chính sách (đang chờ người dùng)
+Việc nới chính sách khoá cho D1 (xoá `finish|automerge` khỏi regex `GATE` trong `bin/session_lock.py`; bỏ nhánh "main không rảnh thì không gộp" trong `hooks/worktree_merge_gate.sh`; sửa test `test_worktree_merge_gate_owner.sh` case 4/4b và `test_session_lock_target_repo.sh` dòng 253; cập nhật `AGENTS.md` §7.1) **bị hệ thống tự động từ chối ngày 13/10** (nhãn "Security Weaken"). Chưa có thay đổi nào được ghi. Cần người dùng: một câu xác nhận trong chat (agent thử lại), hoặc thêm rule `Edit` cho các đường dẫn trên trong settings.
+
+### 8.3 Thứ tự đề nghị sau khi duyệt
+1. Mục 8.1 #1–#3 (gộp, gate, sửa race) → có biên nhận sạch.
+2. Pha 0 của mục 5 (đo cơ sở: thời gian `worktree add` kèm cài DevKit, `finish`, thời gian đợi khoá, dung lượng mỗi worktree).
+3. Pha 1 (D1+D3+D4) trên `agent-workbench`, rồi pha 2–4 theo mục 5.
+4. Dọn 8.1 #4–#6 song song, không chặn.
+
+### 8.4 Chưa đo / chưa kiểm
+- Thời gian tiết kiệm của C+D (chưa có số đo cơ sở); công sức triển khai.
+- C với repo Unity (Library lớn) và với nhiều thiết bị adb.
+- Có xảy ra `HEAD` nhảy làm hỏng gate phiên khác ở mức nào (pha 1 sẽ đo).
