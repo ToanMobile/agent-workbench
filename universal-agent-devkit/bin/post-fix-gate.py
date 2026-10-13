@@ -794,6 +794,27 @@ UNITY_SUITE = re.compile(r"\bunity-batch\b[^\n]*\b(?:editmode|playmode)\b", re.I
 DEVICE_SUITE = re.compile(HARD_DEVICE_SUITE.pattern + r"|unity-batch|-runTests\b", re.I)
 
 
+_IGNORED_LISTING = {}
+
+
+def _ignored_files(project_dir, pathspecs):
+    """`git ls-files --others --ignored` for these pathspecs, read once per run: the walk costs 1.5 s warm and 3.8 s cold in
+    OfficeReader (2026-10-13) and a run asked for it up to 5 times. Only the NAMES are kept: every caller hashes or reads the
+    files again. A config created or deleted during the run is missed here; the next run lists afresh and its key differs, so
+    the suites run again (never a wrong reuse). DEVKIT_GATE_LISTING_CACHE=0: one walk per call."""
+    key = (os.path.realpath(str(project_dir)), tuple(pathspecs))
+    cache = os.environ.get("DEVKIT_GATE_LISTING_CACHE", "1") != "0"
+    if cache and key in _IGNORED_LISTING:
+        return _IGNORED_LISTING[key]
+    out = subprocess.run(["git", "-C", str(project_dir), "ls-files", "-z", "--others", "--ignored",
+                          "--exclude-standard", "--"] + list(pathspecs), capture_output=True, text=True,
+                         errors="surrogateescape").stdout   # a non-UTF-8 name must not disable the reuse (A8)
+    files = [r for r in out.split("\0") if r and not r.endswith("/")]
+    if cache:
+        _IGNORED_LISTING[key] = files
+    return files
+
+
 def local_state_sha(project_dir):
     """sha of the git-ignored files a build or test reads that tree_fp leaves out: the local
     config worktree.py copies (.env*, local.properties, google-services.json, …) and the build
@@ -805,11 +826,8 @@ def local_state_sha(project_dir):
         pathspecs = []
         for p in LOCAL_CONFIG:
             pathspecs.extend([p, f"**/{p}"])
-        out = subprocess.run(["git", "-C", str(project_dir), "ls-files", "-z", "--others", "--ignored",
-                              "--exclude-standard", "--"] + pathspecs, capture_output=True, text=True,
-                             errors="surrogateescape").stdout   # a non-UTF-8 name must not disable the reuse (A8)
-        files = {r for r in out.split("\0") if r and not r.endswith("/")
-                 and any(fnmatch.fnmatch(os.path.basename(r), p) for p in LOCAL_CONFIG)}
+        files = {r for r in _ignored_files(project_dir, pathspecs)
+                 if any(fnmatch.fnmatch(os.path.basename(r), p) for p in LOCAL_CONFIG)}
         files |= set(build_inputs(project_dir))
     except Exception:   # any failure only disables the reuse
         return "?"
@@ -826,12 +844,7 @@ def snapshot_local_configs(project_dir):
     try:
         from worktree import LOCAL_CONFIG
         config_files = list(LOCAL_CONFIG) + ["config.json", "**/config.json"]
-        out = subprocess.run(["git", "-C", str(project_dir), "ls-files", "-z", "--others", "--ignored",
-                              "--exclude-standard", "--"] + config_files,
-                             capture_output=True, text=True, errors="surrogateescape").stdout
-        for rel in out.split("\0"):
-            if not rel or rel.endswith("/"):
-                continue
+        for rel in _ignored_files(project_dir, config_files):
             full = Path(project_dir) / rel
             if full.is_file():
                 try:
