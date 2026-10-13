@@ -94,27 +94,39 @@ Plan gửi Antigravity phản biện, chỉ đọc code:
 - **v2:** 1 lỗi chặn, 3 lớn, 2 nhỏ; điểm của v1 đã sửa đúng.
 - **v3:** 1 lỗi chặn, 4 lớn, 2 nhỏ. Lỗi chặn: bộ lọc "worktree đã biến mất" có từ 09/10 bỏ qua cả việc chưa gộp; Antigravity chạy thử
   thấy rc 0. Đã sửa, có test.
-- **v4:** đang phản biện vòng 4.
+- **v4:** 2 lỗi chặn, 3 lớn, 2 nhỏ.
+  - Lỗi chặn 1, có từ trước: worktree bị xoá thư mục TRƯỚC khi hook Stop chạy thì rơi khỏi `live` (`worktree_merge_gate.sh:197`,
+    `:293`), bị xoá khỏi `owed`, và Stop thoát 0.
+  - Lỗi chặn 2, sai sự thật trong plan: `devkit-worktree.json` (`worktree.py:532`) KHÔNG ghi session id.
+  - Các điểm còn lại đã đưa vào bảng dưới (bản v5).
+  - **Dừng vòng phản biện plan ở v5.** Mỗi bước W1 khi làm vẫn có test ĐỎ trước, review ngữ cảnh sạch và Antigravity `audit`.
+- Song song, review ngữ cảnh sạch trên code đã commit bắt thêm 2 lỗi P2 ở `work_in_main` (commit chỉ còn trong reflog, nhánh bị rewind)
+  và 1 lỗi P1 ở bộ đọc duyệt test (gate tự duyệt bằng chính phản hồi chặn của nó). Cả ba đã sửa, có test ĐỎ→XANH (`42af92b`, `cd0fb04`).
 
 Bản đầy đủ: `.antigravity-pm/tasks/T0035-…/plan.md`.
 
 | Luật | Nội dung | Vì sao (lỗi phản biện bắt được) |
 |---|---|---|
-| R1 | Worktree tạo lười, một cái cho cả phiên. Lần ghi đầu vào main bị chặn một lần; hook chạy `agent-kit worktree add ../<repo>-<sid8>` (chép `.env`, `local.properties`…, `agent-kit init`; khoảng 8,4 s, nên timeout tĩnh của hook đó nâng lên 30 s) rồi báo đường dẫn. Phiên chỉ đọc không tạo gì | Hook PreToolUse không đổi được cwd của phiên, và timeout của hook là tĩnh. `EnterWorktree` chỉ có ở Claude và không chép cấu hình cục bộ, nên không dùng |
+| R1 | Worktree tạo lười, một cái cho cả phiên. Lần ghi đầu vào main bị chặn một lần; hook chạy `agent-kit worktree add ../<repo>-<sid8>` (chép `.env`, `local.properties`…, `agent-kit init`; khoảng 8,4 s, nên timeout tĩnh của `session_lock.sh`/`worktree_guard.sh` nâng lên 30 s ở cả matcher Bash lẫn Edit\|Write, trong `hooks/hooks.json` VÀ `templates/claude_settings.json`, rồi cài lại) rồi báo đường dẫn. Phiên chỉ đọc không tạo gì. *(v5)* Hook chặn chỉ có ở Claude Code; Antigravity, Codex, Gemini, Cursor không có hook ghi file nên làm theo luật trong `AGENTS.md` và `session_lock.py --status` (R2) | Hook PreToolUse không đổi được cwd của phiên, và timeout của hook là tĩnh. `EnterWorktree` chỉ có ở Claude và không chép cấu hình cục bộ, nên không dùng |
 | R2 | Agent không ghi vào main, kể cả Antigravity: `session_lock.py --status` trả mã riêng "main chỉ để gộp". Người dùng sửa trong IDE thì không bị ảnh hưởng | Không có người giữ main thì `--status` sẽ báo "trống" |
 | R3 | Gộp mỗi việc xong:<br>1. Commit trong worktree; đặt `target_base` = HEAD main.<br>2. Gộp `target_base` vào worktree.<br>3. Chạy gate theo diff.<br>4. Lấy `MAIN_LOCK`; HEAD main vẫn bằng `target_base` thì `ff-only`.<br>5. Nếu main đã đi tiếp: đặt `target_base` mới, gộp vào worktree, chạy lại gate theo diff (nhỏ nhờ R4), tối đa 3 vòng; không bỏ gate kể cả khi file không giao nhau.<br>Lần gộp giữa phiên dùng `automerge --keep`; worktree chỉ bị xoá ở `SessionEnd` | `ff-only` hỏng khi main đi tiếp trong lúc gate chạy; `automerge` hiện xoá worktree ngay sau lần gộp đầu; bỏ gate khi file không giao nhau là sai (main đổi interface thì caller trong worktree gãy) |
 | R4 | File đã đổi của worktree: `git diff --name-only $(git merge-base HEAD <trunk>) HEAD` cộng file bẩn. `--full` chạy một lần trên main sau lần gộp cuối, rồi push | `git log --name-only` không in file của merge commit, nên bỏ sót phần giải conflict |
-| R5 | Không bao giờ để sót:<br>(a) gate không tạo lại thư mục project đã mất `.git`;<br>(b) `agent-kit worktree gc` chạy nền lúc SessionStart/SessionEnd: gỡ worktree đã gộp, xoá thư mục `<repo>-*` chỉ chứa sổ sách DevKit, có hoặc không có `.git` (bỏ qua `.DS_Store`, thư mục cache rỗng; có file khác thì chỉ liệt kê); liệt kê worktree của phiên chết để Stop của phiên sau nhận nuôi qua gate, không tự gộp. Phiên chết trước Stop đầu tiên cũng được nhận ra nhờ phiên tạo đã ghi trong `devkit-worktree.json`. Không đụng worktree `keystore`;<br>(c) đĩa: dưới 10 GiB thì gc và cảnh báo, dưới 3 GiB thì không tạo worktree mới; tối đa 3 worktree mỗi repo | Ngưỡng cứng 10 GiB sẽ chặn mọi phiên (đĩa còn 3–6 GiB); thư mục mồ côi do gate tạo không có `.git`; tự gộp ở SessionStart thì không qua gate |
+| R5 | Không bao giờ để sót:<br>(a) gate không tạo lại thư mục project đã mất `.git`;<br>(b) `agent-kit worktree gc` chạy nền lúc SessionStart/SessionEnd: gỡ worktree đã gộp, xoá thư mục `<repo>-*` chỉ chứa sổ sách DevKit, có hoặc không có `.git` (bỏ qua `.DS_Store`, thư mục cache rỗng; có file khác thì chỉ liệt kê); liệt kê worktree của phiên chết để Stop của phiên sau nhận nuôi qua gate, không tự gộp. *(v5, sửa sai sự thật)* Phiên chết trước Stop đầu tiên chỉ nhận ra được khi `cmd_add` ghi thêm `session_id` vào `devkit-worktree.json` (hiện chưa ghi). `.agents/INBOX.md` giống bản mẫu hoặc giống bản ở main cũng tính là rác. Không đụng worktree `keystore`;<br>(c) đĩa: dưới 10 GiB thì gc và cảnh báo, dưới 3 GiB thì không tạo worktree mới; tối đa 3 worktree mỗi repo | Ngưỡng cứng 10 GiB sẽ chặn mọi phiên (đĩa còn 3–6 GiB); thư mục mồ côi do gate tạo không có `.git`; tự gộp ở SessionStart thì không qua gate |
 | R6 | Unity: `cp -Rc Library` rồi `chflags -R nouchg,nouappnd`, xoá file khoá của Unity. Gradle dùng build cache chung (đo ở Phase 0) | `cp -c` thiếu `-R`; cờ `uchg` (INSTINCT-038) |
 | R7 | Có công tắc `WORKTREE_TRUNK_MODE=0` để trở về hành vi cũ | — |
 
 Thứ tự trong W1, mỗi bước có test ĐỎ trước:
+-1. *(13/10 tối)* Lỗ P1 có từ trước: gate tự duyệt test từ record `queue-operation` (tin nhắn phiên khác, prompt xếp hàng), xem
+   `issues-bugs.md` A.1b #11. Đây là lỗ bảo mật của chính cổng nên làm trước mọi thứ.
+0. *(v5)* Merge gate không bao giờ cho qua một worktree mất thư mục TRƯỚC khi Stop chạy (lỗi chặn vòng 4, ghi ở `issues-bugs.md` A.2 #3).
+   Worktree còn đăng ký thì xét theo HEAD trong `git worktree list` và reflog đọc từ admin dir; HEAD hoặc reflog chưa vào main thì giữ
+   Stop, kèm lý do. Phải xong trước gc, vì gc cũng xoá.
 1. R5b gc (đĩa đang cạn)
 2. R5a
 3. R5c
 4. R4
 5. R3
-6. Phase 0 đo thời gian tạo worktree, lần build đầu và dung lượng mỗi repo
+6. Phase 0: đo thời gian tạo worktree (`agent-kit worktree add`), lần build đầu và dung lượng mỗi repo
 7. R1, R2, R7: bật ở workbench trước, rồi GeelyEx2, OfficeReader, cuối cùng hai repo Unity sau R6
 
 **Đã làm trong phiên này (13/10 ~18:15, chưa commit):** test hay đỏ ngẫu nhiên `test_worktree_merge_gate_owner.sh` §7 có cơ chế khác với mô tả ở
