@@ -23,8 +23,16 @@ REPOS = {
     "Goods": "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D",
     "Neighbours-From-Hell": "/Volumes/Data/Toan/Game/Neighbours-From-Hell",
 }
-# user requirement 2026-10-13: these must run in every repo
-REQUIRED_MCPS = ["codebase-memory-mcp", "context7", "agentmemory", "play-store", "replicant-mcp"]
+# user requirement 2026-10-13, per repo: MCP servers that must run there (anything else is optional)
+BASE_MCPS = ["codebase-memory-mcp", "context7", "agentmemory"]
+ALL_MCPS = BASE_MCPS + ["play-store", "replicant-mcp"]
+REQUIRED_MCPS = {
+    "agent-workbench": BASE_MCPS,                    # no replicant-mcp, no play-store: it has no app or device
+    "GeelyEx2": BASE_MCPS + ["replicant-mcp"],       # no play-store
+    "OfficeReader": ALL_MCPS,
+    "Goods": ALL_MCPS,
+    "Neighbours-From-Hell": ALL_MCPS,
+}
 TOOLS = ["ocr", "agent-kit", "codebase-memory-mcp", "npx", "uvx", "git", "python3"]
 STAGE_ORDER = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "Notification", "SessionEnd"]
 
@@ -238,16 +246,17 @@ for name, path in REPOS.items():
     local = jload(r / ".claude/settings.local.json") or {}
     enabled, disabled = set(local.get("enabledMcpjsonServers", [])), set(local.get("disabledMcpjsonServers", []))
     all_ok = bool(local.get("enableAllProjectMcpServers"))
-    for m in sorted(set(mcp) | set(REQUIRED_MCPS)):
-        req = m in REQUIRED_MCPS
+    need = REQUIRED_MCPS[name]
+    for m in sorted(set(mcp) | set(ALL_MCPS)):
+        req = m in need
         if m not in mcp:
-            state, det = "missing", "not declared in .mcp.json"
+            state, det = ("missing", "chưa khai báo trong .mcp.json") if req else ("na", "repo này không cần server này")
         elif m in disabled:
-            state, det = "off", "declared, but disabled in settings.local.json"
+            state, det = "off", "đã khai báo nhưng bị tắt trong settings.local.json"
         elif m in enabled or all_ok:
-            state, det = "ok", "declared and enabled"
+            state, det = "ok", "đã khai báo và bật"
         else:
-            state, det = "off", "declared, not yet enabled"
+            state, det = "off", "đã khai báo nhưng chưa được bật"
         add("mcp", "required" if req else "extra", m, state, "tool call", det)
 
     # --- tools on PATH

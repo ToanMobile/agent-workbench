@@ -17,27 +17,6 @@
         "@agentmemory/agentmemory@0.9.29",
         "mcp"
       ]
-    },
-    "replicant-mcp": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "replicant-mcp@1.6.7"
-      ],
-      "env": {
-        "ANDROID_HOME": "${ANDROID_HOME:-}"
-      }
-    },
-    "play-store": {
-      "command": "/Volumes/Data/Toan/agent-workbench/mcp-servers/play-store-mcp/.venv/bin/play-store-mcp",
-      "args": [
-        "--transport",
-        "stdio"
-      ],
-      "env": {
-        "GOOGLE_APPLICATION_CREDENTIALS": "${GOOGLE_APPLICATION_CREDENTIALS:-}",
-        "PLAY_STORE_MCP_READ_ONLY": "true"
-      }
     }
   }
 }

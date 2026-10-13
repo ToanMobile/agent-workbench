@@ -110,7 +110,7 @@
 
   <section class="detail">
     <h2>MCP server từng repo</h2>
-    <p class="note">Năm server bạn yêu cầu phải chạy ở mọi repo nằm ở đầu bảng. "Tắt" nghĩa là đã khai báo nhưng bị tắt hoặc chưa được bật trong settings.local.json.</p>
+    <p class="note">"Không cần" nghĩa là repo đó không yêu cầu server này. Hiện yêu cầu: agent-workbench cần 3 server nền; GeelyEx2 thêm replicant-mcp; OfficeReader, Goods và Neighbours-From-Hell cần đủ 5. "Tắt" nghĩa là đã khai báo nhưng bị tắt hoặc chưa được bật trong settings.local.json.</p>
     <div class="scroll" data-source="mcp_matrix">
       <table id="dc-mcp"></table>
     </div>
@@ -209,6 +209,7 @@ dash.calc('mcp_matrix', {
       }
       m.get(r.item)[r.repo] = r.state;
       m.get(r.item)[r.repo + '#note'] = r.detail;
+      if (r.group === 'required') m.get(r.item).group = 'required';
     }
     return [...m.values()].sort((a, b) => ((a.group === 'required' ? 0 : 1) - (b.group === 'required' ? 0 : 1)) || a.item.localeCompare(b.item));
   },
@@ -232,7 +233,7 @@ dash.calc('mcp_matrix', {
     ['p7', 'Nghiệm thu', 'Cổng post-fix phải exit 0. Repo có màn hình thì phải có ảnh chứng minh của lượt này.'],
     ['p8', 'Chốt & giao', 'Kiểm câu báo cáo, bảo mật, repo khác và worktree; sau đó git hook chạy lúc commit và push.'],
   ];
-  const STATE = { ok: 'Có', missing: 'Thiếu', off: 'Tắt', broken: 'Hỏng', empty: 'Trống', na: 'Không áp dụng', local: 'Có (riêng repo)', excluded: 'Loại theo profile', none: '—' };
+  const STATE = { ok: 'Có', missing: 'Thiếu', off: 'Tắt', broken: 'Hỏng', empty: 'Trống', na: 'Không cần', local: 'Có (riêng repo)', excluded: 'Loại theo profile', none: '—' };
   const PHASE_NAME = Object.fromEntries(PHASES.map((p) => [p[0], p[1]]));
   const rowsOf = (id) => {
     const d = dash.data(id);
@@ -394,7 +395,7 @@ dash.calc('mcp_matrix', {
       const tr = el('tr');
       const name = el('td', 'name');
       name.appendChild(el('code', '', r.item));
-      if (r.group === 'required') name.appendChild(el('span', 'why', 'bắt buộc ở mọi repo'));
+      if (r.group === 'required') name.appendChild(el('span', 'why', 'bạn yêu cầu ở ít nhất một repo'));
       tr.appendChild(name);
       repos.forEach((repo) => tr.appendChild(stateCell(r, repo)));
       body.appendChild(tr);

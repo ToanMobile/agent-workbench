@@ -96,7 +96,7 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Bash",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
  },
  {
@@ -106,7 +106,7 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "trigger": "Bash",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
  },
  {
@@ -577,7 +577,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "agent-workbench",
@@ -587,7 +587,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "agent-workbench",
@@ -597,27 +597,27 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "agent-workbench",
   "area": "mcp",
-  "group": "required",
+  "group": "extra",
   "item": "play-store",
   "kind": "",
-  "state": "missing",
+  "state": "ok",
   "trigger": "tool call",
-  "detail": "not declared in .mcp.json"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "agent-workbench",
   "area": "mcp",
-  "group": "required",
+  "group": "extra",
   "item": "replicant-mcp",
   "kind": "",
-  "state": "missing",
+  "state": "ok",
   "trigger": "tool call",
-  "detail": "not declared in .mcp.json"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "agent-workbench",
@@ -767,7 +767,7 @@
   "kind": "MCP",
   "state": "ok",
   "trigger": "gọi khi agent cần",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "agent-workbench",
@@ -777,7 +777,7 @@
   "kind": "MCP",
   "state": "ok",
   "trigger": "gọi khi agent cần",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "agent-workbench",
@@ -1163,16 +1163,6 @@
   "repo": "agent-workbench",
   "area": "worktree",
   "group": "unmerged?",
-  "item": "agent-workbench-dashboard",
-  "kind": "",
-  "state": "warn",
-  "trigger": "",
-  "detail": "/Volumes/Data/Toan/agent-workbench-dashboard"
- },
- {
-  "repo": "agent-workbench",
-  "area": "worktree",
-  "group": "unmerged?",
   "item": "agent-workbench-dot30b",
   "kind": "",
   "state": "warn",
@@ -1183,11 +1173,11 @@
   "repo": "agent-workbench",
   "area": "worktree",
   "group": "unmerged?",
-  "item": "agent-workbench-mcp",
+  "item": "agent-workbench-mcpfix",
   "kind": "",
   "state": "warn",
   "trigger": "",
-  "detail": "/Volumes/Data/Toan/agent-workbench-mcp"
+  "detail": "/Volumes/Data/Toan/agent-workbench-mcpfix"
  },
  {
   "repo": "agent-workbench",
@@ -1225,8 +1215,8 @@
   "group": "SessionStart",
   "item": "session_lock.sh",
   "kind": "",
-  "state": "local",
-  "trigger": "startup|resume",
+  "state": "missing",
+  "trigger": "any tool",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
  },
  {
@@ -1235,8 +1225,8 @@
   "group": "SessionStart",
   "item": "session_lock.sh",
   "kind": "",
-  "state": "missing",
-  "trigger": "any tool",
+  "state": "local",
+  "trigger": "startup|resume",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
  },
  {
@@ -1316,7 +1306,7 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Bash",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
  },
  {
@@ -1326,7 +1316,7 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "trigger": "Bash",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
  },
  {
@@ -1877,7 +1867,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "GeelyEx2",
@@ -1887,7 +1877,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "GeelyEx2",
@@ -1897,7 +1887,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "GeelyEx2",
@@ -1907,17 +1897,17 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "GeelyEx2",
   "area": "mcp",
-  "group": "required",
+  "group": "extra",
   "item": "play-store",
   "kind": "",
   "state": "off",
   "trigger": "tool call",
-  "detail": "declared, not yet enabled"
+  "detail": "đã khai báo nhưng chưa được bật"
  },
  {
   "repo": "GeelyEx2",
@@ -1927,7 +1917,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "GeelyEx2",
@@ -1937,7 +1927,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "GeelyEx2",
@@ -2087,7 +2077,7 @@
   "kind": "MCP",
   "state": "ok",
   "trigger": "gọi khi agent cần",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "GeelyEx2",
@@ -2097,7 +2087,7 @@
   "kind": "MCP",
   "state": "ok",
   "trigger": "gọi khi agent cần",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "GeelyEx2",
@@ -2480,6 +2470,16 @@
   "detail": "ghi bàn giao khi kết thúc phiên"
  },
  {
+  "repo": "GeelyEx2",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "GeelyEx2-mcpfix",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/GeelyEx2-mcpfix"
+ },
+ {
   "repo": "OfficeReader",
   "area": "profile",
   "group": "profile",
@@ -2586,7 +2586,7 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Bash",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
  },
  {
@@ -2596,7 +2596,7 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "trigger": "Bash",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
  },
  {
@@ -3067,7 +3067,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "OfficeReader",
@@ -3077,7 +3077,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "OfficeReader",
@@ -3087,7 +3087,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "OfficeReader",
@@ -3097,7 +3097,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "OfficeReader",
@@ -3107,7 +3107,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "OfficeReader",
@@ -3117,7 +3117,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "OfficeReader",
@@ -3127,7 +3127,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "OfficeReader",
@@ -3277,7 +3277,7 @@
   "kind": "MCP",
   "state": "ok",
   "trigger": "gọi khi agent cần",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "OfficeReader",
@@ -3287,7 +3287,7 @@
   "kind": "MCP",
   "state": "ok",
   "trigger": "gọi khi agent cần",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "OfficeReader",
@@ -3776,7 +3776,7 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Bash",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
  },
  {
@@ -3786,7 +3786,7 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "trigger": "Bash",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
  },
  {
@@ -4337,7 +4337,7 @@
   "kind": "",
   "state": "off",
   "trigger": "tool call",
-  "detail": "declared, but disabled in settings.local.json"
+  "detail": "đã khai báo nhưng bị tắt trong settings.local.json"
  },
  {
   "repo": "Goods",
@@ -4347,7 +4347,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "Goods",
@@ -4357,7 +4357,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "Goods",
@@ -4367,7 +4367,7 @@
   "kind": "",
   "state": "off",
   "trigger": "tool call",
-  "detail": "declared, but disabled in settings.local.json"
+  "detail": "đã khai báo nhưng bị tắt trong settings.local.json"
  },
  {
   "repo": "Goods",
@@ -4377,7 +4377,7 @@
   "kind": "",
   "state": "missing",
   "trigger": "tool call",
-  "detail": "not declared in .mcp.json"
+  "detail": "chưa khai báo trong .mcp.json"
  },
  {
   "repo": "Goods",
@@ -4527,7 +4527,7 @@
   "kind": "MCP",
   "state": "ok",
   "trigger": "gọi khi agent cần",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "Goods",
@@ -4537,7 +4537,7 @@
   "kind": "MCP",
   "state": "off",
   "trigger": "gọi khi agent cần",
-  "detail": "declared, but disabled in settings.local.json"
+  "detail": "đã khai báo nhưng bị tắt trong settings.local.json"
  },
  {
   "repo": "Goods",
@@ -5026,7 +5026,7 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Bash",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
  },
  {
@@ -5036,7 +5036,7 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "trigger": "Bash",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
  },
  {
@@ -5517,7 +5517,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5527,7 +5527,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5537,7 +5537,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5545,9 +5545,9 @@
   "group": "required",
   "item": "play-store",
   "kind": "",
-  "state": "off",
+  "state": "ok",
   "trigger": "tool call",
-  "detail": "declared, not yet enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5555,9 +5555,9 @@
   "group": "required",
   "item": "replicant-mcp",
   "kind": "",
-  "state": "off",
+  "state": "ok",
   "trigger": "tool call",
-  "detail": "declared, not yet enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5707,7 +5707,7 @@
   "kind": "MCP",
   "state": "ok",
   "trigger": "gọi khi agent cần",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5717,7 +5717,7 @@
   "kind": "MCP",
   "state": "ok",
   "trigger": "gọi khi agent cần",
-  "detail": "declared and enabled"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "Neighbours-From-Hell",
