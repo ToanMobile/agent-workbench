@@ -299,3 +299,19 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** zsh and && chains in install steps
 - **Nguyên nhân:** zsh does not word-split command substitutions, so git add $(... | tr) passed one argument; and a chain a && b; c && mv still ran mv after a failed a, installing a half-checked hook
 - **Quy tắc phòng ngừa & Cách fix:** use xargs for lists in zsh; one && chain from check to mv; python comments inside hooks sh carry no apostrophe
+
+---
+
+### [INSTINCT-036] A new tests/*/test_*.sh needs a line in tests/lib/test_durations.txt, and the gate only shows it when that test is selected
+- **Ngày phát hiện:** 2026-10-13
+- **Hiện tượng lỗi:** A new tests/*/test_*.sh needs a line in tests/lib/test_durations.txt, and the gate only shows it when that test is selected
+- **Nguyên nhân:** test_run_impacted_order.sh fails on any tests/*/test_*.sh missing from tests/lib/test_durations.txt; 30 tests from earlier Dots were already unlisted at HEAD, so the first gate whose impacted set included the order test (Dot 28, 13/10) went red on 31 tests, not on its own
+- **Quy tắc phòng ngừa & Cách fix:** When adding a test file, add '&lt;seconds> &lt;path>' to tests/lib/test_durations.txt in the same commit; before a gate on a new test run bash tests/verification/test_run_impacted_order.sh directly (a number measured under load is fine: only the start order uses it)
+
+---
+
+### [INSTINCT-037] A MUST/CẤM regex lint cannot see obligations phrased without a keyword, so an on-demand split needs a hand review and pinned guardrails
+- **Ngày phát hiện:** 2026-10-13
+- **Hiện tượng lỗi:** A MUST/CẤM regex lint cannot see obligations phrased without a keyword, so an on-demand split needs a hand review and pinned guardrails
+- **Nguyên nhân:** Dot 28 moved rule blocks to an on-demand file after a regex check for MUST/CẤM/BẮT BUỘC/bất biến; two independent reviewers then found obligations the regex missed (analytics PII, 'đổi ranh giới = hỏi trước', 'luôn DOKill(true)', 'không thêm Singleton mới')
+- **Quy tắc phòng ngừa & Cách fix:** Cut a rule block only after reading each line for an obligation (phải, không, luôn, chỉ khi, hỏi trước) and pin the ones that must stay in the LOADED text as needles in tests/context_memory/test_profile_split.sh; a rule that applies to every turn belongs in the loaded file (INSTINCT-011)
