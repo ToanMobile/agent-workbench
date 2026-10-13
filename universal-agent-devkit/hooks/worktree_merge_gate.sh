@@ -298,10 +298,10 @@ def gone_admin_dir(path):
         adm = os.path.join(common, "worktrees", d)
         try:
             with open(os.path.join(adm, "gitdir"), encoding="utf-8") as fh:
-                wt = os.path.dirname(os.path.normpath(os.path.join(adm, fh.read().strip())))   # --relative-paths stores ../../..
+                wt_dir = os.path.dirname(os.path.normpath(os.path.join(adm, fh.read().strip())))   # --relative-paths stores ../../..
         except OSError:
             continue
-        if wt == path or os.path.realpath(wt) == os.path.realpath(path):
+        if wt_dir == path or os.path.realpath(wt_dir) == os.path.realpath(path):
             return adm
     return None
 
@@ -320,6 +320,14 @@ def gone_folder_reason(path):
         return "thư mục đã bị xoá và git không so được commit của nó với main"
     if not out:
         return ""
+    if wt is not None:   # several commits brought back as ONE squashed diff: the same checks inventory uses for a live worktree
+        try:
+            mh = git("rev-parse", "HEAD")
+            if mh and not wt._empty_commit_between(repo, mh, base) and (
+                    wt._patch_already_in_main(repo, mh, base) or wt._adds_nothing_to_main(repo, mh, base)):
+                return ""
+        except (Exception, SystemExit):   # cannot say: keep the hold below
+            pass
     sha = out.split()[0]
     branch = listed_branch.get(path) or listed_branch.get(os.path.realpath(path))
     how = f"merge nhánh {branch}" if branch else f"git cherry-pick {sha[:10]}"
@@ -336,14 +344,16 @@ for path in paths:
         if os.path.exists(path) or not (real in finished or real in raw_owed or mentioned(path, real)):
             continue
         if owners.get(real) not in (None, sid) and session_alive(owners[real]):
+            owed.add(real)   # kept in the debt (the live filter dropped it): its owner or a later session still sees it
             continue   # another live session's worktree: not a bystander's to hold on or take over
         adm = gone_admin_dir(path)
         if adm and session_lock is not None and not session_lock.is_free_for(session_lock.read_lock(os.path.join(adm, session_lock.LOCK)),
                                                                              sid, now, idle_frees=False):
+            owed.add(real)
             continue
         why = gone_folder_reason(path)
         if why:
-            owners.setdefault(real, sid)
+            owners[real] = sid   # a dead or no owner: this session is held on it, so it is its debt now (a live other owner left above)
             owed.add(real)
             row = unknown_row(path, why, "gone")
             row["branch"] = listed_branch.get(path) or listed_branch.get(real)

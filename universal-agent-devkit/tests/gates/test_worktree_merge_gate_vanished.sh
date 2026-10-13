@@ -216,8 +216,34 @@ python3 -I "$LOCKPY" --register --session OWNER --pid "$$" "$P"
 rm -rf "$WT13"
 stop A "$TRA"; rc=$?
 [ "$rc" = 0 ] && ok "8d: a deleted worktree another live session owns does not hold a bystander" || fail "8d: bystander held (rc=$rc): $(cat "$TMP/err")"
-python3 -c 'import json,os,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("owners",{}).get(os.path.realpath(sys.argv[2])) in (None,"OWNER") else 1)' \
-  "$P/.claude/audit-gate/worktree_merge_gate.state" "$WT13" && ok "  … and its owner is not overwritten" || fail "  … the bystander took the owner over"
+python3 -c 'import json,os,sys; d=json.load(open(sys.argv[1])); r=os.path.realpath(sys.argv[2]); sys.exit(0 if d.get("owners",{}).get(r)=="OWNER" and r in d.get("owed",[]) else 1)' \
+  "$P/.claude/audit-gate/worktree_merge_gate.state" "$WT13" && ok "  … and its owner and its debt are kept (a later session still sees it)" \
+  || fail "  … the bystander dropped the owner or the debt: $(cat "$P/.claude/audit-gate/worktree_merge_gate.state")"
 G "$P" worktree prune; G "$P" branch -q -D feat13 2>/dev/null
+python3 -I "$LOCKPY" --unregister --session OWNER "$P" >/dev/null 2>&1
+
+# 8e (review of 8695853): a detached worktree with TWO commits brought back as ONE squashed diff (diff | git apply, one commit in
+# main: the documented way), then its folder deleted. Its patch is in main as a whole: no hold.
+sleep 1.2
+WT14="$TMP/wt-det14"; mention det14 "$WT14"; G "$P" worktree add -q --detach "$WT14" && echo a > "$WT14/a14.txt" && G "$WT14" add a14.txt \
+  && G "$WT14" commit -qm det14a && echo b > "$WT14/b14.txt" && G "$WT14" add b14.txt && G "$WT14" commit -qm det14b \
+  && G "$WT14" diff HEAD~2 HEAD | G "$P" apply && G "$P" add a14.txt b14.txt && G "$P" commit -qm "det14 brought back squashed"
+rm -rf "$WT14"
+stop A "$TRA"; rc=$?
+[ "$rc" = 0 ] && ok "8e: a deleted worktree whose two commits came back as one squashed diff does not hold the Stop" || fail "8e: held (rc=$rc): $(cat "$TMP/err")"
+G "$P" worktree prune
+
+# 8f (review of 8695853): the recorded owner is DEAD: the session that is held on the deleted worktree becomes its owner (so a third
+# session leaves it to this live one), as a live worktree's debt is adopted
+sleep 1.2
+WT15="$TMP/wt-feat15"; mention feat15 "$WT15"; G "$P" worktree add -q -b feat15 "$WT15" && echo z > "$WT15/z.txt" && G "$WT15" add z.txt && G "$WT15" commit -qm feat15
+python3 -c 'import json,os,sys; p=sys.argv[1]; d=json.load(open(p)) if os.path.exists(p) else {}; d.setdefault("owners",{})[os.path.realpath(sys.argv[2])]="DEADSESSION"; d.setdefault("owed",[]).append(os.path.realpath(sys.argv[2])); json.dump(d,open(p,"w"))' \
+  "$P/.claude/audit-gate/worktree_merge_gate.state" "$WT15"
+rm -rf "$WT15"
+stop A "$TRA"; rc=$?
+[ "$rc" = 2 ] && ok "8f: the deleted worktree of a dead owner holds the Stop" || fail "8f: rc=$rc: $(cat "$TMP/err")"
+python3 -c 'import json,os,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("owners",{}).get(os.path.realpath(sys.argv[2]))=="A" else 1)' \
+  "$P/.claude/audit-gate/worktree_merge_gate.state" "$WT15" && ok "  … and the held session becomes its owner" || fail "  … the dead owner was kept: $(cat "$P/.claude/audit-gate/worktree_merge_gate.state")"
+G "$P" worktree prune; G "$P" branch -q -D feat15 2>/dev/null
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_merge_gate_vanished: all passed" || { echo "❌ test_worktree_merge_gate_vanished: $FAILS failed"; exit 1; }
