@@ -1313,7 +1313,7 @@ def _clear_user_locks(top):
             try:
                 st = os.lstat(p)
                 if st.st_flags & UF_LOCK:
-                    (os.lchflags if stat.S_ISLNK(st.st_mode) else os.chflags)(p, st.st_flags & ~UF_LOCK)
+                    os.lchflags(p, st.st_flags & ~UF_LOCK)   # lchflags, never chflags: a path swapped for a link after the lstat must not unlock its target (the main checkout's keystore)
             except OSError:
                 stuck.append(p)   # named in the refusal below, if the folder then survives
     return stuck

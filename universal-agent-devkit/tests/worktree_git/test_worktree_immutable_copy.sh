@@ -14,7 +14,10 @@ export DEVKIT_LANG=en
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="$DEVKIT_DIR/bin/agent-kit"
 if ! command -v chflags >/dev/null 2>&1; then echo "SKIPPED (no chflags): immutable-copy test NOT RUN - macOS only"; echo "worktree immutable copy: SKIPPED - NOT RUN"; exit 0; fi
-TMP="$(cd "$(mktemp -d)" && pwd -P)"
+# a failing mktemp must never leave TMP at the cwd (`cd ""` stays put, and the EXIT trap below deletes TMP)
+mk_tmp() { local t; t="$(mktemp -d 2>/dev/null)" || return 1; case "$t" in /?*) [ -d "$t" ] || return 1 ;; *) return 1 ;; esac; (cd "$t" && pwd -P); }
+TMP="$(mk_tmp)" || { echo "✖ cannot make a scratch dir"; exit 1; }
+[ -n "$TMP" ] && [ -d "$TMP" ] || { echo "✖ cannot make a scratch dir"; exit 1; }
 # a RED run leaves undeletable files behind: unlock before rm, or /tmp fills up with them
 trap 'chflags -R nouchg "$TMP" 2>/dev/null; chmod -R u+rwX "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
