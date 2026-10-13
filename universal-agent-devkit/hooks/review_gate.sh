@@ -182,13 +182,14 @@ try:
     try:
         import devkit_harness as _dh
         _vh = _dh.verified_head(repo_root, write=False)[0]
-        since = [f for f in _dh.files_since(repo_root, _vh) if f.endswith(tuple(CODE_EXTS))]
+        since = [f for f in _dh.files_since(repo_root, _vh) if f.endswith(tuple(CODE_EXTS)) and not os.path.islink(os.path.join(repo_root, f))]
         since_base = _vh or ""
     except Exception as e:
         logline(f"[{ts}] since-files failed: {e!r}")
     changed = sorted({l for l in (diff.stdout.splitlines() + untracked.stdout.splitlines() + since)
                       if l.strip() and not os.path.islink(os.path.join(repo_root, l))})
-    dirty = {l for l in diff.stdout.splitlines() + untracked.stdout.splitlines() if l.strip()}   # what a workspace OCR run sees
+    dirty = {l for l in diff.stdout.splitlines() + untracked.stdout.splitlines()   # the code a workspace OCR run sees
+             if l.strip() and not os.path.islink(os.path.join(repo_root, l))}
 except Exception as e:
     logline(f"[{ts}] git query failed: {e!r} — fail-open")
     sys.exit(0)
@@ -319,7 +320,7 @@ idx = 0
 OCR_CMD = re.compile(r"(?:^|[;&|(\n]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:python3?\s+)?(?:\S*/)?(ocr-review|ocr\s+(?:review|r))\b")
 ocr_pending = {}   # tool_use id -> (transcript index, "helper" | "plain", command)
 ocr_reports = []   # (transcript index, report path) of OCR runs that named a report
-ocr_fallbacks = []   # (transcript index, spec) of ocr-review runs that ASKED the LLM and fell back to delegation for want of an endpoint
+ocr_fallbacks = []   # (transcript index, spec, argv) of ocr-review runs that ASKED the LLM and fell back to delegation for want of an endpoint
 OCR_NOT_A_RUN = re.compile(r"(?:^|\s)(?:--help|-h|--version)(?:\s|$)")
 
 
@@ -338,6 +339,77 @@ def _ocr_report_path(kind, cmd, txt):
             return ""
         rp = next((words[i + 1] for i, w in enumerate(words[:-1]) if w in ("-o", "--output")), "")
     return os.path.join(cwd, rp) if rp and not os.path.isabs(rp) else rp
+
+def _helper_argv(cmd):
+    """The words of the OCR command itself (from `ocr-review` / `ocr review` up to the next ;, &&, ||, |): a `-c` of `bash -c` or
+    `git -c` elsewhere in the line is not its flag, and `--from=X` is not one either (the helper reads separate words only)."""
+    import shlex
+    om = OCR_CMD.search(cmd)
+    if not om:
+        return []
+    try:
+        lex = shlex.shlex(cmd[om.start(1):], posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        words = []
+        for w in lex:
+            if w and set(w) <= set(";&|()<>"):
+                break
+            words.append(w)
+        return words
+    except ValueError:   # an unbalanced quote (the command sits inside `bash -c '…'`): not a plain run of the helper
+        return []
+
+
+def _rev(ref):
+    try:
+        r = subprocess.run(["git", "-C", repo_root, "rev-parse", "-q", "--verify", ref + "^{commit}"], capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def _covers_since(argv):
+    """A ranged OCR run covers the code committed since the verified head: `--from` at or before it (to HEAD), or `--commit` of
+    the one commit since it. A later base or another commit reviews only part of it (OCR, 14/10)."""
+    if not since_base:
+        return False
+    val = {w: argv[i + 1] for i, w in enumerate(argv[:-1]) if w in ("--from", "--to", "--commit", "-c")}
+    head = _rev("HEAD")
+    if "--from" in val:
+        if val.get("--to", "HEAD") != "HEAD" and _rev(val["--to"]) != head:
+            return False
+        frm = _rev(val["--from"])
+        try:
+            return bool(frm) and subprocess.run(["git", "-C", repo_root, "merge-base", "--is-ancestor", frm, since_base],
+                                                capture_output=True, timeout=5).returncode == 0
+        except Exception:
+            return False
+    c = _rev(val.get("--commit") or val.get("-c") or "")
+    return bool(c) and c == head and _rev(c + "^") == _rev(since_base)
+
+
+def _short_circuited(cmd):
+    """`… || ocr-review`: the helper only runs when what comes before fails — its output may be anyone's (review 13/10)."""
+    om = OCR_CMD.search(cmd)
+    return bool(om) and om.start() > 0 and cmd[om.start()] == "|" and cmd[om.start() - 1] == "|"
+
+
+def _spec_from_run(cmd, spec):
+    """The spec sits where THIS run writes: its --out folder, else the helper's own mkdtemp folder (ocr-review.*) — not a file
+    made by hand somewhere and named in echoed output (review 13/10)."""
+    words = _helper_argv(cmd)
+    out = next((words[i + 1] for i, w in enumerate(words[:-1]) if w == "--out"), "")
+    folder = os.path.realpath(os.path.dirname(spec))
+    try:   # the helper makes its folder private (mkdtemp, or chmod 0700 of --out): a folder made by hand is not
+        st = os.stat(folder)
+        if st.st_uid != os.getuid() or (st.st_mode & 0o777) != 0o700:
+            return False
+    except OSError:
+        return False
+    if out:
+        return folder == os.path.realpath(out if os.path.isabs(out) else os.path.join(cwd, out))
+    return os.path.basename(folder).startswith("ocr-review.")
+
 
 def _result_text(blk):
     c = blk.get("content")
@@ -363,15 +435,16 @@ if tp and os.path.exists(tp):
             for blk in content:
                 if isinstance(blk, dict) and blk.get("type") == "tool_result" and blk.get("tool_use_id") in ocr_pending:
                     at, kind, ocmd = ocr_pending.pop(blk.get("tool_use_id"))
-                    _rp = "" if blk.get("is_error") else _ocr_report_path(kind, ocmd, _result_text(blk))
-                    if _rp:
-                        ocr_reports.append((at, _rp))
-                    elif kind == "helper" and not blk.get("is_error") and "--delegate-only" not in ocmd and not OCR_NOT_A_RUN.search(ocmd):
+                    _rp = "" if blk.get("is_error") or _short_circuited(ocmd) else _ocr_report_path(kind, ocmd, _result_text(blk))
+                    if _rp:   # a run over a commit range (--from / --commit) or over the workspace: each covers its own code
+                        ocr_reports.append((at, _rp, _helper_argv(ocmd)))
+                    elif kind == "helper" and not blk.get("is_error") and "--delegate-only" not in ocmd and not OCR_NOT_A_RUN.search(ocmd) \
+                            and not _short_circuited(ocmd):
                         _txt = _result_text(blk)
                         _spec = next((l[6:].strip() for l in _txt.splitlines() if l.startswith("spec: ")), "")
                         _spec = os.path.join(cwd, _spec) if _spec and not os.path.isabs(_spec) else _spec   # a relative --out
-                        if "no valid LLM endpoint configured" in _txt and "mode: delegate" in _txt and _spec:
-                            ocr_fallbacks.append((at, _spec))
+                        if "no valid LLM endpoint configured" in _txt and "mode: delegate" in _txt and _spec and _spec_from_run(ocmd, _spec):
+                            ocr_fallbacks.append((at, _spec, _helper_argv(ocmd)))
                     continue
                 if not isinstance(blk, dict) or blk.get("type") != "tool_use":
                     continue
@@ -406,7 +479,7 @@ if tp and os.path.exists(tp):
 
 # An OCR report (or a delegation spec) counts only when it is newer than every file this session edited (one from before the last
 # edit is stale).
-last_ocr_idx = -1
+last_ocr_ws_idx = last_ocr_range_idx = -1   # newest valid OCR report over the workspace / over a commit range
 _newest = 0.0
 for _f in session_unreviewed:
     try:
@@ -414,10 +487,16 @@ for _f in session_unreviewed:
     except OSError:
         pass   # deleted since the edit: nothing newer to compare
 if ocr_reports:
-    for _at, _rp in ocr_reports:
+    for _at, _rp, _argv in ocr_reports:
         if _valid_ocr_report(_rp, _newest):
             last_review_idx = max(last_review_idx, _at)
-            last_ocr_idx = max(last_ocr_idx, _at)
+            if any(w in ("--from", "--commit", "-c") for w in _argv[:-1]):
+                if _covers_since(_argv):
+                    last_ocr_range_idx = max(last_ocr_range_idx, _at)
+                else:
+                    logline(f"[{ts}] OCR run at #{_at} covers only part of the code committed since {since_base[:12]} — not counted for it")
+            else:
+                last_ocr_ws_idx = max(last_ocr_ws_idx, _at)
         else:
             logline(f"[{ts}] OCR run at #{_at} named {_rp}: not a fresh OCR report — not counted")
 
@@ -437,9 +516,25 @@ def _spec_ok(sp):   # the helper's own spec file, written after every edited fil
         return False
 
 
-# the fallback stands in only when an agent review came AFTER it (somebody read the spec) and its spec file is real and fresh
-ocr_missing = (reviewed_after_edits and last_ocr_idx <= last_edit_idx
-               and not any(last_edit_idx < i < last_review_idx and _spec_ok(sp) for i, sp in ocr_fallbacks)
+# OCR must have covered what is unreviewed: the uncommitted code (a workspace run) and the code committed since the verified head
+# (a --from run; a workspace run sees none of it). The fallback stands in only when an agent review came AFTER it (somebody read
+# the spec) and its spec file is this run's, real and fresh.
+need_ws = bool(dirty) or not since   # uncommitted code, or nothing committed since the verified head: a workspace run
+
+
+def _fallback_for(ranged_scope):
+    """A delegation fallback after the last edit, read by an agent review after it, whose spec is this run's — credited to the
+    scope its run covered, like a report: a workspace run for the uncommitted code, a covering ranged run for the committed."""
+    for i, sp, argv in ocr_fallbacks:
+        ranged = any(w in ("--from", "--commit", "-c") for w in argv[:-1])
+        if last_edit_idx < i < last_review_idx and _spec_ok(sp) and ranged == ranged_scope and (not ranged or _covers_since(argv)):
+            return True
+    return False
+
+
+ocr_done = ((not need_ws or last_ocr_ws_idx > last_edit_idx or _fallback_for(False))
+            and (not since or last_ocr_range_idx > last_edit_idx or _fallback_for(True)))
+ocr_missing = (reviewed_after_edits and not ocr_done
                and os.environ.get("REVIEW_GATE_OCR", "1") != "0" and os.environ.get("REVIEW_GATE_REQUIRE_OCR", "1") != "0"
                and shutil.which("ocr") is not None)
 if ocr_missing:   # an agent review alone; `ocr` is here, so OCR must review the final code too (a full OCR run below still passes)
@@ -581,7 +676,7 @@ if ocr_missing:   # the agent review is done: say exactly what is left
         "⛔ REVIEW-GATE: đã có review context sạch (agent hoặc skill) sau lần sửa cuối, nhưng máy có `ocr`:",
         "BẮT BUỘC thêm một lượt OpenCodeReview trên code cuối (người dùng 13/10: OCR luôn chạy lại sau principal-code-reviewer —",
         "hai bên tìm ra lỗi khác nhau). Chạy:",
-        *(['  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm>'] if dirty or not since else []),
+        *(['  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm>'] if need_ws else []),
         *([f'  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm khác> --from {since_base[:12]}'
            "   (phần đã commit sau lần xác minh cuối: lệnh không --from chỉ xem phần chưa commit)"] if since else []),
         "rồi xử lý từng phát hiện (sửa, hoặc nói vì sao không); sửa code thì review lại. Máy chưa có LLM endpoint thì lệnh tự rơi về",

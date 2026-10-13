@@ -83,6 +83,9 @@ def range_args(argv):
             if a not in ("-b", "--background"):
                 dkeep += [a, v]
             vals[a] = v
+    if "--from" in vals and "--to" not in vals:   # `ocr review --from X` alone fails ("--to is required"): to HEAD, as the spec reads it
+        keep += ["--to", "HEAD"]
+        dkeep += ["--to", "HEAD"]
     if "--commit" in vals or "-c" in vals:
         c = vals.get("--commit") or vals.get("-c")
         diff = ["git", "show", c, "--"]

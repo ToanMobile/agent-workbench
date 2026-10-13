@@ -33,6 +33,8 @@ case "$1 $2" in
       echo "Error: anthropic: 401 invalid x-api-key sk-""ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789 for model claude-sonnet-5-5" >&2; exit 1
     fi
     if [ "$OCR_FAKE" = endpoint ]; then
+      [ -n "${OCR_ARGS_LOG:-}" ] && echo "$*" >> "$OCR_ARGS_LOG"
+      case " $* " in *" --from "*) case " $* " in *" --to "*) ;; *) echo "Error: --to is required when --from is specified" >&2; exit 1 ;; esac ;; esac
       out=""; prev=""
       for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
       printf '{"comments":[{"path":"a.py","line":2,"message":"division by zero when x == 0"}]}\n' > "$out"; exit 0
@@ -103,6 +105,12 @@ mkdir -p "$TMP/elsewhere"; ln -s "$TMP/elsewhere" "$TMP/link"
 rc="$(PATH="$TMP/bin:$PATH" OCR_FAKE=noendpoint python3 "$HELPER" --delegate-only --out "$TMP/link" > "$TMP/out" 2> "$TMP/err"; echo $?)"
 [ "$rc" = 1 ] && [ -z "$(ls -A "$TMP/elsewhere")" ] && ok "--out that is a symlink: refused (exit 1), nothing written through it" \
   || fail "--out symlink: rc=$rc, wrote: $(ls "$TMP/elsewhere")"
+
+# 3g. --from alone (what review_gate tells an agent to run for committed code): the helper adds --to HEAD, as its spec already reads
+base="$(git -C "$R" rev-parse HEAD)"
+rc="$(PATH="$TMP/bin:$PATH" OCR_FAKE=endpoint OCR_ARGS_LOG="$TMP/rng.args" python3 "$HELPER" --from "$base" --out "$TMP/rng" > "$TMP/out" 2> "$TMP/err"; echo $?)"
+[ "$rc" = 0 ] && grep -q '^mode: review' "$TMP/out" && grep -q -- "--from $base --to HEAD" "$TMP/rng.args" \
+  && ok "--from without --to: the review runs to HEAD (exit 0, ocr got --to HEAD)" || fail "--from alone: rc=$rc $(cat "$TMP/err" "$TMP/rng.args" 2>&1)"
 
 # 4. ocr not installed: exit 3 with the install hint
 rc="$(PATH="/usr/bin:/bin" python3 "$HELPER" > "$TMP/out" 2> "$TMP/err"; echo $?)"

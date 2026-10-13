@@ -77,6 +77,7 @@ stop b REVIEW_GATE_OCR=0; rc=$?
 # 3. a full OCR review that succeeded after the edit counts as the review
 mkdir -p "$TMP/rep"; printf '{"comments":[]}\n' > "$TMP/rep/ocr-review.json"; printf '{"comments":[]}\n' > "$TMP/rep/plain.json"
 mkdir -p "$TMP/spec" "$P/rel"; echo "# OCR review spec" > "$TMP/spec/ocr-spec.md"; echo "# OCR review spec" > "$P/rel/ocr-spec.md"
+chmod 700 "$TMP/spec" "$P/rel"   # what bin/ocr-review makes of its --out folder
 # a real delegation spec, newer than app.py: set, not left to the clock (a 1 s filesystem would give both one mtime)
 python3 -c 'import os,sys,time; [os.utime(f,(time.time()-60,)*2) for f in sys.argv[1:2]]; [os.utime(f,(time.time()+5,)*2) for f in sys.argv[2:]]' \
   "$P/app.py" "$TMP/spec/ocr-spec.md" "$P/rel/ocr-spec.md"
@@ -143,12 +144,12 @@ stop q; rc=$?
 ev result t3 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/ocr-review.json")"
 stop r; rc=$?
 [ "$rc" = 0 ] && ok "  … then an OCR review: passes (rc 0)" || fail "principal + OCR review still blocked (rc $rc)"
-: > "$TR"; ev edit t1 "$P/app.py"; ev bash t3 ".agents/devkit/bin/ocr-review"; ev result t3 ok $'ocr review needs an LLM endpoint (no valid LLM endpoint configured); using OCR delegation mode (no LLM, no key)\nmode: delegate\nspec: '"$TMP/spec/ocr-spec.md"
+: > "$TR"; ev edit t1 "$P/app.py"; ev bash t3 ".agents/devkit/bin/ocr-review --out $TMP/spec"; ev result t3 ok $'ocr review needs an LLM endpoint (no valid LLM endpoint configured); using OCR delegation mode (no LLM, no key)\nmode: delegate\nspec: '"$TMP/spec/ocr-spec.md"
 ev agent t4 principal-code-reviewer
 stop s; rc=$?
 [ "$rc" = 0 ] && ok "  … no LLM endpoint (OCR fell back to its delegation spec) + an agent review after the edit: passes (rc 0)" \
   || fail "delegation fallback + agent review blocked (rc $rc)"
-: > "$TR"; ev bash t3 ".agents/devkit/bin/ocr-review"
+: > "$TR"; ev bash t3 ".agents/devkit/bin/ocr-review --out $TMP/spec"
 ev result t3 ok $'ocr review needs an LLM endpoint (no valid LLM endpoint configured); using OCR delegation mode (no LLM, no key)\nmode: delegate\nspec: '"$TMP/spec/ocr-spec.md"
 ev edit t1 "$P/app.py"
 ev agent t4 principal-code-reviewer
@@ -171,7 +172,7 @@ for rp in skipped zero; do
   stop "y$rp"; rc=$?
   [ "$rc" = 2 ] && ok "  … an OCR report that reviewed nothing ($rp: the code was committed first) is no review (rc 2)" || fail "$rp report counted (rc $rc)"
 done
-: > "$TR"; ev edit t1 "$P/app.py"; ev agent t2 principal-code-reviewer; ev bash t3 ".agents/devkit/bin/ocr-review"
+: > "$TR"; ev edit t1 "$P/app.py"; ev agent t2 principal-code-reviewer; ev bash t3 ".agents/devkit/bin/ocr-review --out $TMP/spec"
 ev result t3 ok "$(printf '%s\nmode: delegate\nspec: %s' "ocr review needs an LLM endpoint (no valid LLM endpoint configured); using OCR delegation mode (no LLM, no key)" "$TMP/spec/ocr-spec.md")"
 stop z1; rc=$?
 [ "$rc" = 2 ] && ok "  … a delegation fallback AFTER the agent review (nobody read the spec) does not count (rc 2)" || fail "fallback after the agent counted (rc $rc)"
@@ -189,6 +190,79 @@ ev agent t4 principal-code-reviewer
 printf '{"session_id":"s-z4","transcript_path":"%s","cwd":"%s","hook_event_name":"Stop"}' "$TR" "$P" \
   | (cd / && PATH="$TMP/bin:$PATH" CLAUDE_PROJECT_DIR="$P" bash "$DEVKIT_DIR/hooks/review_gate.sh") >"$TMP/out" 2>"$TMP/err"; rc=$?
 [ "$rc" = 0 ] && ok "  … a fallback whose --out was relative: its spec is read against the session cwd (rc 0)" || fail "relative spec path rejected (rc $rc)"
+# a forged fallback: a spec file made by hand and the fallback words echoed, the helper never run (`true || ocr-review`)
+mkdir -p "$TMP/forge"; echo x > "$TMP/forge/ocr-spec.md"; python3 -c 'import os,sys,time; os.utime(sys.argv[1],(time.time()+5,)*2)' "$TMP/forge/ocr-spec.md"
+: > "$TR"; ev edit t1 "$P/app.py"; ev bash t3 "echo no valid LLM endpoint configured; echo mode: delegate; echo spec: $TMP/forge/ocr-spec.md; true || ocr-review"
+ev result t3 ok "$(printf 'no valid LLM endpoint configured\nmode: delegate\nspec: %s' "$TMP/forge/ocr-spec.md")"; ev agent t4 principal-code-reviewer
+stop z5; rc=$?
+[ "$rc" = 2 ] && ok "  … a hand-made spec with the words echoed and the helper short-circuited (true || ocr-review) does not count (rc 2)" \
+  || fail "forged fallback counted (rc $rc)"
+FBT="$(printf 'ocr review needs an LLM endpoint (no valid LLM endpoint configured)\nmode: delegate\nspec: %s' "$TMP/spec/ocr-spec.md")"
+: > "$TR"; ev edit t1 "$P/app.py"; ev bash t3 "true || .agents/devkit/bin/ocr-review --out $TMP/spec"; ev result t3 ok "$FBT"; ev agent t4 principal-code-reviewer
+stop z6; rc=$?
+[ "$rc" = 2 ] && ok "  … the real spec folder but the helper behind || (it never ran): no (rc 2)" || fail "short-circuited helper counted (rc $rc)"
+: > "$TR"; ev edit t1 "$P/app.py"; ev bash t3 ".agents/devkit/bin/ocr-review --out $TMP/other"; ev result t3 ok "$FBT"; ev agent t4 principal-code-reviewer
+stop z7; rc=$?
+[ "$rc" = 2 ] && ok "  … a spec outside the run's own --out folder: no (rc 2)" || fail "spec outside --out counted (rc $rc)"
+mkdir -p "$TMP/ocr-review.real"; chmod 700 "$TMP/ocr-review.real"; echo x > "$TMP/ocr-review.real/ocr-spec.md"
+python3 -c 'import os,sys,time; os.utime(sys.argv[1],(time.time()+5,)*2)' "$TMP/ocr-review.real/ocr-spec.md"
+: > "$TR"; ev edit t1 "$P/app.py"; ev bash t3 ".agents/devkit/bin/ocr-review"
+ev result t3 ok "$(printf 'ocr review needs an LLM endpoint (no valid LLM endpoint configured)\nmode: delegate\nspec: %s' "$TMP/ocr-review.real/ocr-spec.md")"
+ev agent t4 principal-code-reviewer
+stop z9; rc=$?
+[ "$rc" = 0 ] && ok "  … the helper's own default folder (private ocr-review.*, no --out): the fallback counts (rc 0)" || fail "default fallback folder rejected (rc $rc)"
+mkdir -p "$TMP/ocr-review.byhand"; chmod 755 "$TMP/ocr-review.byhand"; echo x > "$TMP/ocr-review.byhand/ocr-spec.md"
+python3 -c 'import os,sys,time; os.utime(sys.argv[1],(time.time()+5,)*2)' "$TMP/ocr-review.byhand/ocr-spec.md"
+: > "$TR"; ev edit t1 "$P/app.py"; ev bash t3 ".agents/devkit/bin/ocr-review"
+ev result t3 ok "$(printf 'ocr review needs an LLM endpoint (no valid LLM endpoint configured)\nmode: delegate\nspec: %s' "$TMP/ocr-review.byhand/ocr-spec.md")"
+ev agent t4 principal-code-reviewer
+stop z8; rc=$?
+[ "$rc" = 2 ] && ok "  … a hand-made ocr-review.* folder (not the helper's private 0700 one): no (rc 2)" || fail "hand-made ocr-review.* folder counted (rc $rc)"
+# code committed after the verified head (since): a workspace OCR run sees none of it; only a run over that range counts
+C="$TMP/c"; mkdir -p "$C/.claude/audit-gate"; (cd "$C" && git init -q && git config user.email t@t && git config user.name t \
+  && echo "def g(x): return x" > app.py && git add app.py && git commit -qm i)
+printf '{"verified_head": "%s"}\n' "$(git -C "$C" rev-parse HEAD)" > "$C/.claude/audit-gate/regression_gate.state.json"
+echo "def g(x): return 2 / x" > "$C/app.py" && git -C "$C" commit -qam "committed before the review"
+printf '{"comments":[]}\n' > "$TMP/rep/c.json"
+python3 -c 'import os,sys,time; [os.utime(f,(time.time()+5,)*2) for f in sys.argv[1:]]' "$TMP/rep/c.json" "$TMP/spec/ocr-spec.md"   # newer than this app.py
+crun() { printf '{"session_id":"s-%s","transcript_path":"%s","cwd":"%s","hook_event_name":"Stop"}' "$1" "$TR" "$C" \
+  | PATH="$TMP/bin:$PATH" CLAUDE_PROJECT_DIR="$C" bash "$DEVKIT_DIR/hooks/review_gate.sh" >"$TMP/out" 2>"$TMP/err"; }
+: > "$TR"; ev edit t1 "$C/app.py"; ev agent t2 principal-code-reviewer
+crun c1; rc=$?
+[ "$rc" = 2 ] && grep -q -- "--from $(git -C "$C" rev-parse --short=12 HEAD~1)" "$TMP/err" && ! grep -q 'out <thư mục tạm>$' "$TMP/err" \
+  && ok "committed code: the block names the --from run only (no workspace run: nothing is dirty)" || fail "committed code message: rc $rc $(grep ocr-review "$TMP/err")"
+ev bash t3 ".agents/devkit/bin/ocr-review"; ev result t3 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/c.json")"
+crun c2; rc=$?
+[ "$rc" = 2 ] && ok "  … a workspace OCR report alone does not cover the committed code (rc 2)" || fail "workspace report counted for committed code (rc $rc)"
+for cmd in ".agents/devkit/bin/ocr-review --from=abc" "bash -c 'cd x; .agents/devkit/bin/ocr-review'" "git -c core.x=1 status; .agents/devkit/bin/ocr-review"; do
+  : > "$TR"; ev edit t1 "$C/app.py"; ev agent t2 principal-code-reviewer; ev bash t4 "$cmd"; ev result t4 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/c.json")"
+  crun c4; rc=$?
+  [ "$rc" = 2 ] && ok "  … '$cmd' is no run over the committed range (rc 2)" || fail "'$cmd' read as a ranged run (rc $rc)"
+done
+: > "$TR"; ev edit t1 "$C/app.py"; ev agent t2 principal-code-reviewer
+ev bash t4 ".agents/devkit/bin/ocr-review --from $(git -C "$C" rev-parse HEAD~1) --to HEAD"; ev result t4 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/c.json")"
+crun c3; rc=$?
+[ "$rc" = 0 ] && ok "  … an OCR report over the committed range does (rc 0)" || fail "ranged report not counted (rc $rc)"
+: > "$TR"; ev edit t1 "$C/app.py"; ev agent t2 principal-code-reviewer
+ev bash t4 ".agents/devkit/bin/ocr-review --from HEAD --to HEAD"; ev result t4 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/c.json")"
+crun c5; rc=$?
+[ "$rc" = 2 ] && ok "  … a --from newer than the verified head covers only part of it: no (rc 2)" || fail "--from HEAD counted for the committed range (rc $rc)"
+: > "$TR"; ev edit t1 "$C/app.py"; ev agent t2 principal-code-reviewer
+ev bash t4 ".agents/devkit/bin/ocr-review -c HEAD"; ev result t4 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/c.json")"
+crun c6; rc=$?
+[ "$rc" = 0 ] && ok "  … -c HEAD when the one commit since the verified head is HEAD: covers it (rc 0)" || fail "-c HEAD over the whole range not counted (rc $rc)"
+: > "$TR"; ev edit t1 "$C/app.py"; ev agent t2 principal-code-reviewer
+ev bash t4 "true || .agents/devkit/bin/ocr-review --from $(git -C "$C" rev-parse HEAD~1) --to HEAD"; ev result t4 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/c.json")"
+crun c7; rc=$?
+[ "$rc" = 2 ] && ok "  … a report named by a helper behind || (it never ran): no (rc 2)" || fail "short-circuited report counted (rc $rc)"
+CFB="$(printf 'ocr review needs an LLM endpoint (no valid LLM endpoint configured)\nmode: delegate\nspec: %s' "$TMP/spec/ocr-spec.md")"
+: > "$TR"; ev edit t1 "$C/app.py"; ev bash t3 ".agents/devkit/bin/ocr-review --out $TMP/spec"; ev result t3 ok "$CFB"; ev agent t4 principal-code-reviewer
+crun c8; rc=$?
+[ "$rc" = 2 ] && ok "  … no endpoint: a workspace fallback spec does not cover the committed code either (rc 2)" || fail "workspace fallback counted for committed code (rc $rc)"
+: > "$TR"; ev edit t1 "$C/app.py"; ev bash t3 ".agents/devkit/bin/ocr-review --from $(git -C "$C" rev-parse HEAD~1) --to HEAD --out $TMP/spec"
+ev result t3 ok "$CFB"; ev agent t4 principal-code-reviewer
+crun c9; rc=$?
+[ "$rc" = 0 ] && ok "  … a fallback over the committed range does (rc 0)" || fail "ranged fallback not counted (rc $rc)"
 if [ -x /usr/bin/ocr ] || [ -x /bin/ocr ]; then ok "SKIP no-ocr case: this host has ocr in /usr/bin or /bin"; else
 mkdir -p "$TMP/noocr"; for x in git python3; do ln -sf "$(command -v "$x")" "$TMP/noocr/$x"; done
 : > "$TR"; ev edit t1 "$P/app.py"; ev agent t2 principal-code-reviewer

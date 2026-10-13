@@ -26,7 +26,7 @@ for _ in $(seq 1 900); do [ -s "$TMP/gate.rc" ] && break; sleep 0.1; done   # bo
 wait 2>/dev/null
 rc="$(cat "$TMP/gate.rc" 2>/dev/null)"
 [ ! -e "$W" ] && ok "the folder removed mid-run stays removed" || fail "the gate re-created it: $(cd "$W" 2>/dev/null && find . -type f | head -8 | tr '\n' ' ')"
-[ "$rc" != 0 ] && ok "  … and the gate does not pass (rc $rc)" || fail "a run whose project vanished passed (rc 0)"
+[ "$rc" = 1 ] && ! grep -q Traceback "$TMP/gate.out" && ok "  … and the gate ends UNVERIFIED, exit 1, no crash" || fail "want exit 1 without a traceback, got rc '$rc'"
 grep -qE "project folder was removed|thư mục project đã bị gỡ" "$TMP/gate.out" && ok "  … and it says why" || fail "no reason given: $(tail -3 "$TMP/gate.out")"
 [ ! -e "$R/.git/worktrees/repo-wt" ] && ok "  … nor its admin dir in the main repo" || fail "the admin dir came back: $(ls "$R/.git/worktrees/repo-wt")"
 [ -z "$(git -C "$R" status --porcelain)" ] && ok "the main checkout is untouched" || fail "main changed: $(git -C "$R" status --porcelain)"
