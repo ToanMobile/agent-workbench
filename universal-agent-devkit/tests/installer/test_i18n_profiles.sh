@@ -114,6 +114,24 @@ miss=""; for s in android-real-device-qa compose-recomp-audit deploy; do [ -e "$
 [ ! -e "$A/.agents/skills/unity-gc-audit" ] && ok "android: game-only skill unity-gc-audit not installed (apps never get game skills)" || fail "android: unity-gc-audit leaked into an app profile"
 [ -e "$A/.claude/commands/deploy.md" ] && ok "android: /deploy command installed" || fail "android: /deploy missing"
 
+# Agent Sprite Forge (vendored, MIT): game-only 2D art skills.
+SPRITE_FORGE="generate2dmedia generate2dsprite video2dsprite"
+leak=""; for s in $SPRITE_FORGE; do [ -e "$A/.agents/skills/$s" ] && leak="$leak $s"; done
+[ -z "$leak" ] && ok "android: no Sprite Forge skills (game-only)" || fail "android: Sprite Forge leaked:$leak"
+G="$(newproj game_sf package.json '{}')"
+install_q -t "$G" -a claude,gemini -p game
+miss=""; for s in $SPRITE_FORGE; do [ -f "$G/.agents/skills/$s/SKILL.md" ] || miss="$miss $s"; done
+[ -z "$miss" ] && ok "game: every Sprite Forge skill installed" || fail "game: Sprite Forge missing:$miss"
+# DevKit billing rule (vendor patch 2, 13/10 security review): upstream says a configured API key is the owner's consent to spend, with
+# no per-call question; under the DevKit billing needs the user's go-ahead. No vendored text may keep that claim, and generate2dmedia
+# names the approval step (dry run, estimate, yes, then a budget cap).
+consent="$(grep -rlE "owner's consent|key is consent|no per-call question" $(for s in $SPRITE_FORGE; do printf '%s ' "$DEVKIT_DIR/skills/$s"; done) 2>/dev/null)"
+[ -z "$consent" ] && ok "Sprite Forge: no vendored text treats a configured key as consent to spend" \
+  || fail "Sprite Forge: key-is-consent text left in:$(printf ' %s' $consent | sed "s|$DEVKIT_DIR/skills/||g")"
+grep -q -- '--dry-run' "$DEVKIT_DIR/skills/generate2dmedia/SKILL.md" && grep -q -- '--budget-usd' "$DEVKIT_DIR/skills/generate2dmedia/SKILL.md" \
+  && grep -q 'Paid calls (DevKit' "$DEVKIT_DIR/skills/generate2dmedia/SKILL.md" \
+  && ok "generate2dmedia: paid calls need the user's yes after a dry run, then a budget cap" || fail "generate2dmedia: no DevKit paid-call approval step"
+
 # Switching the project to a profile that excludes skills removes only DevKit items.
 echo "my own deploy notes" > "$TMP/mine.md"
 rm -f "$A/.claude/commands/build.md" && cp "$TMP/mine.md" "$A/.claude/commands/build.md"

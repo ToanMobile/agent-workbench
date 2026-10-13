@@ -25,7 +25,10 @@
     "compose-recomp-audit",
     "deploy",
     "qa-visual",
-    "unity-gc-audit"
+    "unity-gc-audit",
+    "generate2dmedia",
+    "generate2dsprite",
+    "video2dsprite"
   ],
   "exclude_agents": [
     "android-principal-architect"

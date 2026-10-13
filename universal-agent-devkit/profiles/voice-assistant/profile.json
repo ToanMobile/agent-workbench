@@ -20,7 +20,10 @@
   "rules_file": "profiles/voice-assistant/rules/voice-assistant-rules.md",
   "exclude_skills": [
     "compose-recomp-audit",
-    "unity-gc-audit"
+    "unity-gc-audit",
+    "generate2dmedia",
+    "generate2dsprite",
+    "video2dsprite"
   ],
   "source_extensions": [
     ".kt",
