@@ -181,6 +181,25 @@ if info is not None:
     except Exception as e:
         note("verified_head failed: %r" % e)
 
+# Held by ANOTHER live, active session (2026-10-13): this session is read-only in the checkout (session_lock refuses its writes
+# and pushes), so it has nothing to hand over, and verified_head is shared: the holder next handover gates the same range.
+# Gating here ran the holder in-progress diff and blocked a session that had changed nothing (five Stops, 08:45 to 09:20).
+# No lock, its own lock, a stale lock, an idle holder or a dead holder process: gated as before. Any error: gated as before.
+if not probe:
+    try:
+        sys.path.insert(0, os.path.join(devkit, "bin"))
+        import session_lock as _sl
+        _gdir, _top = _sl.git_dir(repo)
+        _lock = _sl.read_checkout_lock(_gdir) if _gdir else None
+        _now = time.time()
+        if _gdir and not _sl.is_free_for(_lock, str(data.get("session_id") or ""), _now) and _sl.allow_shared_until(_gdir) <= _now:
+            note("skip: checkout held by another live session (%s) sid=%s" % (str((_lock or {}).get("session_id"))[:12], sid))
+            sys.exit(0)
+    except SystemExit:
+        raise
+    except Exception as e:
+        note("held-by-other check failed: %r" % e)
+
 # A reply that declares itself unfinished (CHƯA XONG / CHỜ DUYỆT …) or carries no status line at all, claims
 # no outcome and pushed nothing (unverified): no test run now — the handover turn runs it, over verified_head..HEAD (T0003,
 # 2026-09-28; user 2026-10-09: 15 h of Stop-hook test runs in 3 days, "chỉ test khi bàn giao"). proof_gate
