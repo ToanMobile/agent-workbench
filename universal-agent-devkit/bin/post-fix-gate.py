@@ -701,6 +701,13 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
                     try:
                         rec = json.loads(line)
                         cnt = rec.get("content") or ""
+                        msg = rec.get("message")
+                        if not cnt and isinstance(msg, dict):
+                            # Claude Code: the reply is message.content, a string or a list of parts. Only text parts approve:
+                            # a tool_result (a file the agent printed) or a tool_use input that names the file is not an approval.
+                            mc = msg.get("content")
+                            cnt = mc if isinstance(mc, str) else " ".join(
+                                p.get("text", "") for p in (mc or []) if isinstance(p, dict) and p.get("type") == "text")
                         ts = rec.get("created_at") or rec.get("timestamp") or ""
                         t = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")) if ts else int(time.time())
                     except (ValueError, KeyError, TypeError, AttributeError):

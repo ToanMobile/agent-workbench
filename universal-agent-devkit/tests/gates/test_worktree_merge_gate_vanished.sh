@@ -69,9 +69,11 @@ WT4="$TMP/wt-feat4"; mention feat4 "$WT4"; G "$P" worktree add -q -b feat4 "$WT4
 cat > "$TMP/shim/git" <<'SH'
 #!/bin/sh
 # once, at automerge's first `git -C <that worktree> symbolic-ref`: the other merge lands the branch and removes the worktree first
-if [ "$1" = "-C" ] && [ "$2" = "$VANISH_DIR" ] && [ "$3" = symbolic-ref ] && [ ! -e "$VANISH_MARK" ]; then
-  : > "$VANISH_MARK"
-  "$REAL_GIT" -C "$VANISH_MAIN" merge -q --ff-only "$VANISH_BRANCH" && rm -rf "$VANISH_DIR" && "$REAL_GIT" -C "$VANISH_MAIN" worktree prune
+if [ "$1" = "-C" ] && [ "$2" = "$VANISH_DIR" ] && [ "$3" = symbolic-ref ] && [ ! -e "$VANISH_MARK.tried" ]; then
+  : > "$VANISH_MARK.tried"
+  # the mark proves the OTHER merge really landed it (review 13/10: a mark set first let the case pass on this Stop's own merge)
+  "$REAL_GIT" -C "$VANISH_MAIN" merge -q --ff-only "$VANISH_BRANCH" && rm -rf "$VANISH_DIR" && "$REAL_GIT" -C "$VANISH_MAIN" worktree prune \
+    && : > "$VANISH_MARK"
 fi
 exec "$REAL_GIT" "$@"
 SH
@@ -129,5 +131,45 @@ PATH="$TMP/shim:$PATH" stop A "$TRA"; rc=$?
   || fail "setup: the shim never fired or main got s.txt (mark=$([ -e "$VANISH_MARK" ] && echo y || echo n))"
 [ "$rc" = 2 ] && ok "a vanished worktree whose branch is NOT in main still holds the Stop" || fail "passed (rc=$rc) although feat6's work never reached main"
 grep -q "feat6" "$TMP/err" && ok "  … and the hold names it" || fail "  … the hold does not name feat6: $(cat "$TMP/err")"
+
+# Fresh-context review 13/10 (two silent passes of the first fix). One shim for the rest: at automerge's first
+# `git -C <worktree> symbolic-ref`, run $VANISH_PRE in the worktree (if set), then delete the folder and prune the registration.
+cat > "$TMP/shim/git" <<'SH'
+#!/bin/sh
+if [ "$1" = "-C" ] && [ "$2" = "$VANISH_DIR" ] && [ "$3" = symbolic-ref ] && [ ! -e "$VANISH_MARK" ]; then
+  : > "$VANISH_MARK"
+  [ -n "${VANISH_PRE:-}" ] && (cd "$VANISH_DIR" && sh -c "$VANISH_PRE")
+  rm -rf "$VANISH_DIR" && "$REAL_GIT" -C "$VANISH_MAIN" worktree prune
+fi
+exec "$REAL_GIT" "$@"
+SH
+chmod +x "$TMP/shim/git"
+
+# 5: a commit only a reflog still names. A detached worktree made commit X, then went back to main's commit: HEAD is in main,
+# X is in the worktree's HEAD reflog only. Removed from outside while its merge runs: X must not pass in silence.
+sleep 1.2
+WT7="$TMP/wt-reflog"; mention reflog "$WT7"; G "$P" worktree add -q --detach "$WT7" && echo x > "$WT7/x.txt" && G "$WT7" add x.txt \
+  && G "$WT7" commit -qm only-in-reflog && G "$WT7" checkout -q --detach HEAD~1
+VANISH_DIR="$(cd "$WT7" && pwd -P)"; VANISH_MARK="$TMP/vanished5"; VANISH_PRE=""; export VANISH_DIR VANISH_MARK VANISH_PRE
+PATH="$TMP/shim:$PATH" stop A "$TRA"; rc=$?
+[ -e "$VANISH_MARK" ] && [ ! -d "$WT7" ] && ok "setup: the reflog-only worktree went while its merge ran" || fail "setup: the shim never fired for the reflog-only worktree"
+[ "$rc" = 2 ] && ok "5: a commit only its reflog named still holds the Stop" || fail "5: passed (rc=$rc) although commit X was only in the worktree's reflog"
+
+# 6: the branch was rewound before the folder went (reset --hard to main): commit B is not in main, the tip now is. Must hold.
+sleep 1.2
+WT8="$TMP/wt-feat8"; mention feat8 "$WT8"; G "$P" worktree add -q -b feat8 "$WT8" && echo b > "$WT8/b.txt" && G "$WT8" add b.txt && G "$WT8" commit -qm feat8
+VANISH_DIR="$(cd "$WT8" && pwd -P)"; VANISH_MARK="$TMP/vanished6"; VANISH_PRE="git reset -q --hard $(G "$P" rev-parse HEAD)"; export VANISH_DIR VANISH_MARK VANISH_PRE
+PATH="$TMP/shim:$PATH" stop A "$TRA"; rc=$?
+[ -e "$VANISH_MARK" ] && [ ! -d "$WT8" ] && [ ! -f "$P/b.txt" ] && ok "setup: feat8 was rewound to main, then removed" || fail "setup: the rewind case did not set up"
+[ "$rc" = 2 ] && ok "6: a rewound branch whose commit B never reached main still holds the Stop" || fail "6: passed (rc=$rc) although B never reached main"
+
+# 7 (kills a mutant that drops gone() from landed()): the merge is REFUSED while the folder is still there and its base is in main
+# (only uncommitted work; the pre-commit hook rejects the commit). The worktree exists and holds work: the Stop must hold.
+sleep 1.2
+WT9="$TMP/wt-feat9"; mention feat9 "$WT9"; G "$P" worktree add -q -b feat9 "$WT9" && echo u > "$WT9/u.txt"
+mkdir -p "$P/.git/hooks" && printf '#!/bin/sh\nexit 1\n' > "$P/.git/hooks/pre-commit" && chmod +x "$P/.git/hooks/pre-commit"
+stop A "$TRA"; rc=$?
+rm -f "$P/.git/hooks/pre-commit"
+[ -d "$WT9" ] && [ "$rc" = 2 ] && ok "7: a refused merge of a worktree that is still there holds the Stop" || fail "7: (rc=$rc, exists=$([ -d "$WT9" ] && echo y || echo n)): $(cat "$TMP/err")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_merge_gate_vanished: all passed" || { echo "❌ test_worktree_merge_gate_vanished: $FAILS failed"; exit 1; }

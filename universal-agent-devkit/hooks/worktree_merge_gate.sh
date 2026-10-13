@@ -243,14 +243,12 @@ def in_main(sha):
         return False
 
 def work_in_main(r, base):
-    """The commits a gone worktree could still give back are in main: the HEAD seen before (`base`) is in main, or its branch moved past
-    it (someone committed its uncommitted work: the background merge) to a tip that is in main. An rm -rf from outside leaves the branch
-    where it was, so commits not in main keep the Stop held (they are still on the branch: the hold says to bring them back). Uncommitted
-    files of a folder that is gone cannot be brought back by any hold."""
-    if in_main(base):
-        return True
-    tip = git("rev-parse", "--verify", "-q", "refs/heads/" + r["branch"] + "^{commit}") if r.get("branch") else None
-    return bool(tip) and tip != base and in_main(tip)
+    """The commits a gone worktree could still give back are in main: no commit only its reflog names (inventory `reflog`: [] = none,
+    None = cannot say) and the HEAD seen before (`base`) is in main. A merge only adds commits on top of `base`, so a landed worktree
+    always has `base` in main; a branch tip is never looked at (a rewound branch's tip can be in main while its commit is not). Commits
+    not in main keep the Stop held (the hold says to bring them back). Uncommitted files of a folder that is gone cannot be brought back
+    by any hold."""
+    return r.get("reflog") == [] and in_main(base)
 
 def landed(r):
     """Another merge finished this worktree: folder AND registration gone, and its work is in main (HEAD read just before this Stop's

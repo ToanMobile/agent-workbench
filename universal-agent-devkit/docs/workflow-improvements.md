@@ -121,8 +121,9 @@ Thứ tự trong W1, mỗi bước có test ĐỎ trước:
 `issues-bugs.md` A.2 #3:
 - **Cơ chế thật:** hai lần `automerge` của MỘT worktree chạy chồng nhau. Lần chạy nền của Stop trước đã gộp và xoá worktree; lần của Stop sau
   chết vì thư mục đã mất, và lỗi đó biến thành giữ Stop. Bước kiểm kê thì chịu được việc thư mục biến mất (shim tất định đã chứng minh).
-- **Sửa:** `hooks/worktree_merge_gate.sh` dùng một luật chung `work_in_main(r, base)`: HEAD thấy trước đó (`base`) đã nằm trong main,
-  hoặc nhánh đã đi tiếp khỏi `base` (có người commit phần dở) tới một đầu nhánh nằm trong main. Luật này áp ở hai chỗ:
+- **Sửa:** `hooks/worktree_merge_gate.sh` dùng một luật chung `work_in_main(r, base)`: không còn commit nào chỉ nằm trong reflog
+  (`reflog == []`), và HEAD thấy trước đó (`base`) đã nằm trong main. Bản đầu còn có nhánh dự phòng "đầu nhánh nằm trong main"; review
+  ngữ cảnh sạch chỉ ra hai lỗi ở bản đó — commit chỉ còn trong reflog, và nhánh bị rewind — nên đã bỏ nhánh này. Luật áp ở hai chỗ:
   - `landed()`: thư mục và đăng ký đều đã mất, cộng `work_in_main` với HEAD đọc ngay trước lần gộp;
   - bộ lọc "worktree đã biến mất" (có từ 09/10, vòng 3 bắt được là nó bỏ qua MỌI hàng mất thư mục): chỉ bỏ qua khi đã tích hợp, hoặc
     `work_in_main` với HEAD do `git worktree list` đọc trước bước kiểm kê.
@@ -132,6 +133,7 @@ Thứ tự trong W1, mỗi bước có test ĐỎ trước:
   - ca 2 (lần gộp kia đã đưa vào main) → cho qua: ĐỎ rc 2 → XANH;
   - ca 3 (xoá + prune mà KHÔNG gộp) → giữ: ĐỎ rc 0 → XANH;
   - ca 4 (thư mục mất sau bước kiểm kê, commit chưa vào main) → giữ: ĐỎ rc 0 → XANH;
+  - ca 5 (commit chỉ còn trong reflog) và ca 6 (nhánh bị rewind) → giữ: ĐỎ rc 0 → XANH; ca 7 (lần gộp bị từ chối khi thư mục còn) → giữ;
   - `test_worktree_merge_gate_owner.sh` chạy 7/7 lần không đỏ; `test_worktree_merge_gate.sh` xanh.
 - **Phát hiện phụ:** `block-dangerous-git.sh` chặn nhầm một `python3 - <<'EOF'` vì thân heredoc có dấu backtick. Đây cùng loại lỗi W3 phải sửa.
 

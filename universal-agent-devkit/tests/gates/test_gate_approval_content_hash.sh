@@ -196,5 +196,44 @@ else
   fail "7.1: Agent approval not respected or showed user approval. Out: $out"
 fi
 
+# 7.2 Agent approval in a CLAUDE CODE transcript (2026-10-13): Claude writes the reply under message.content as a list of parts,
+# never a top-level "content", so the agent's in-turn approval was never read on Claude Code and every Stop asked for one again.
+# Only text parts count: a tool_result (a file the agent cat-ed) or a tool_use input naming the file never approves it.
+rm -f "$TR"
+python3 - "$TR" <<'PY'
+import json, sys, time
+ts = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time()))
+recs = [
+    {"type": "user", "timestamp": ts, "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t1", "content": "echo 'auto-approve tests/test_old.sh'"}]}},
+    {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [
+        {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "echo tự duyệt tests/test_old.sh"}}]}},
+]
+with open(sys.argv[1], "w") as fh:
+    for r in recs:
+        fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+PY
+touch "$TR"; out="$(run_gate)"
+if printf '%s' "$out" | grep -q 'agent tự duyệt'; then
+  fail "7.2a: a tool_result / tool_use input naming the file counted as the agent's approval. Out: $out"
+else
+  ok "7.2a: only a reply's text approves, not a tool_result or a tool_use input"
+fi
+python3 - "$TR" <<'PY'
+import json, sys, time
+ts = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time()))
+rec = {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [
+    {"type": "text", "text": "Diff chỉ thêm kiểm tra, không nới assertion: tôi tự duyệt tests/test_old.sh."}]}}
+with open(sys.argv[1], "a") as fh:
+    fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+PY
+touch "$TR"; out="$(run_gate)"
+if printf '%s' "$out" | grep -q 'agent tự duyệt'; then
+  ok "7.2b: the agent's approval in a Claude Code reply (message.content text) is read"
+else
+  fail "7.2b: the agent's approval in a Claude Code transcript was not read. Out: $out"
+fi
+if printf '%s' "$out" | grep -q 'người dùng đã duyệt'; then fail "7.2c: the agent's reply became the user's approval"; else ok "7.2c: and it is never the user's approval"; fi
+
 [ $FAILS -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }
 
