@@ -342,7 +342,8 @@
         "duration": "71.37s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-HOOK-01/20261013-182759.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-13 18:34:56"
       },
       "history": [
         {
@@ -420,7 +421,8 @@
         "duration": "21.83s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-HOOK-02/20261013-182709.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-13 18:34:56"
       },
       "history": [
         {
@@ -576,7 +578,8 @@
         "duration": "339.62s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-ALL-01/20261013-183227.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-13 18:35:49"
       },
       "history": [
         {
@@ -1197,7 +1200,8 @@
         "duration": "3.25s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-SANDBOX-01/20261013-182651.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-13 18:34:56"
       },
       "history": [
         {
