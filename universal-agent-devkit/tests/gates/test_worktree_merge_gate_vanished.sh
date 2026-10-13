@@ -171,5 +171,53 @@ mkdir -p "$P/.git/hooks" && printf '#!/bin/sh\nexit 1\n' > "$P/.git/hooks/pre-co
 stop A "$TRA"; rc=$?
 rm -f "$P/.git/hooks/pre-commit"
 [ -d "$WT9" ] && [ "$rc" = 2 ] && ok "7: a refused merge of a worktree that is still there holds the Stop" || fail "7: (rc=$rc, exists=$([ -d "$WT9" ] && echo y || echo n)): $(cat "$TMP/err")"
+rm -rf "$WT9"; G "$P" worktree prune; G "$P" branch -q -D feat9 2>/dev/null
+
+# 8 (Antigravity T0035 round 4, blocker): the folder is deleted BEFORE the Stop runs (rm -rf from outside, no prune). The hook's live
+# set kept only folders that exist, so the worktree was skipped, dropped from the debt and the Stop passed with its commit not in main.
+sleep 1.2
+WT10="$TMP/wt-feat10"; mention feat10 "$WT10"; G "$P" worktree add -q -b feat10 "$WT10" && echo t > "$WT10/t.txt" && G "$WT10" add t.txt && G "$WT10" commit -qm feat10
+rm -rf "$WT10"
+stop A "$TRA"; rc=$?
+[ "$rc" = 2 ] && ok "8: a worktree whose folder was deleted before the Stop, its commit not in main, holds the Stop" || fail "8: passed (rc=$rc) although feat10 never reached main"
+grep -q "feat10" "$TMP/err" && ok "  … and the hold names it" || fail "  … the hold does not name feat10: $(cat "$TMP/err")"
+grep -q "$(G "$P" rev-parse --short=10 feat10)" "$TMP/err" && ok "  … and the commit to bring back" || fail "  … the hold does not give the commit: $(cat "$TMP/err")"
+grep -q "git worktree prune" "$TMP/err" && grep -qv "ĐỪNG" "$TMP/err" && ! grep -q "ĐỪNG.*prune\|prune.*ĐỪNG" "$TMP/err" \
+  && fail "  … the hold advises git worktree prune (for a detached worktree it drops the reflog that names the commit)" || ok "  … and never advises prune"
+grep -q "không kiểm tra được\|KHÔNG chạy được" "$TMP/err" && fail "  … the hold calls a checked worktree 'could not be checked'" || ok "  … and does not call it a gate failure"
+G "$P" worktree prune; G "$P" branch -q -D feat10 2>/dev/null
+
+# 8b: the same, but its work is in main (merged earlier): nothing to bring back, the Stop passes and names nothing
+sleep 1.2
+WT11="$TMP/wt-feat11"; mention feat11 "$WT11"; G "$P" worktree add -q -b feat11 "$WT11" && echo v > "$WT11/v.txt" && G "$WT11" add v.txt && G "$WT11" commit -qm feat11 \
+  && G "$P" merge -q --ff-only feat11
+rm -rf "$WT11"
+stop A "$TRA"; rc=$?
+[ "$rc" = 0 ] && ok "8b: a deleted worktree whose work is in main does not hold the Stop" || fail "8b: held (rc=$rc) over work already in main: $(cat "$TMP/err")"
+grep -q "prune" "$TMP/err" && fail "  … a hold advised git worktree prune" || ok "  … and nothing advises prune"
+G "$P" worktree prune
+
+# 8c (review of step 0): the work came back as the same patch, not the same commit — a detached worktree brought back with
+# `diff | git apply` + a commit in main (the documented way), then its folder deleted. Nothing is lost: no hold.
+sleep 1.2
+WT12="$TMP/wt-det12"; mention det12 "$WT12"; G "$P" worktree add -q --detach "$WT12" && echo w > "$WT12/w.txt" && G "$WT12" add w.txt && G "$WT12" commit -qm det12 \
+  && G "$WT12" diff HEAD~1 HEAD | G "$P" apply && G "$P" add w.txt && G "$P" commit -qm "det12 brought back"
+rm -rf "$WT12"
+stop A "$TRA"; rc=$?
+[ "$rc" = 0 ] && ok "8c: a deleted worktree whose commit came back as the same patch does not hold the Stop" || fail "8c: held (rc=$rc) although its patch is in main: $(cat "$TMP/err")"
+G "$P" worktree prune
+
+# 8d (review of step 0): another LIVE session owns the deleted worktree: a bystander neither holds on it nor takes it over
+sleep 1.2
+WT13="$TMP/wt-feat13"; mention feat13 "$WT13"; G "$P" worktree add -q -b feat13 "$WT13" && echo y > "$WT13/y.txt" && G "$WT13" add y.txt && G "$WT13" commit -qm feat13
+python3 -c 'import json,os,sys; p=sys.argv[1]; d=json.load(open(p)) if os.path.exists(p) else {}; d.setdefault("owners",{})[os.path.realpath(sys.argv[2])]="OWNER"; d.setdefault("owed",[]).append(os.path.realpath(sys.argv[2])); json.dump(d,open(p,"w"))' \
+  "$P/.claude/audit-gate/worktree_merge_gate.state" "$WT13"
+python3 -I "$LOCKPY" --register --session OWNER --pid "$$" "$P"
+rm -rf "$WT13"
+stop A "$TRA"; rc=$?
+[ "$rc" = 0 ] && ok "8d: a deleted worktree another live session owns does not hold a bystander" || fail "8d: bystander held (rc=$rc): $(cat "$TMP/err")"
+python3 -c 'import json,os,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("owners",{}).get(os.path.realpath(sys.argv[2])) in (None,"OWNER") else 1)' \
+  "$P/.claude/audit-gate/worktree_merge_gate.state" "$WT13" && ok "  … and its owner is not overwritten" || fail "  … the bystander took the owner over"
+G "$P" worktree prune; G "$P" branch -q -D feat13 2>/dev/null
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_merge_gate_vanished: all passed" || { echo "❌ test_worktree_merge_gate_vanished: $FAILS failed"; exit 1; }

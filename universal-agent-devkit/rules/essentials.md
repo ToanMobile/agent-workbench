@@ -212,7 +212,7 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
   ro) trao đổi với Antigravity (`plan_review` / `audit`) để thống nhất giải pháp tối ưu. Task đơn
   giản: agent được gọi tự làm từ A-Z, không cần 2-agent review. Trivia: choose, ask no one.
 - An edited existing test: Agent tự thẩm định và tự auto-duyệt (auto-approve, cờ `--auto-approve-tests`
-  hoặc ghi nhận auto-duyệt trong lượt) khi thấy thay đổi là tốt hơn, cần thiết, hợp lý và test
+  hoặc một dòng riêng `AUTO-APPROVE: <đường dẫn test>` trong câu trả lời — câu văn xuôi không được tính) khi thấy thay đổi là tốt hơn, cần thiết, hợp lý và test
   chạy PASS; tuyệt đối KHÔNG hỏi phiền người dùng bằng AskUserQuestion.
 - Answer in the user's language (Vietnamese when they write Vietnamese); identifiers,
   commands, paths and commit subjects stay English.

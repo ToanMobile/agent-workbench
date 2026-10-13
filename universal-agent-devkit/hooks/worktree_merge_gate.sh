@@ -256,12 +256,14 @@ def landed(r):
     return gone(r["path"]) and work_in_main(r, r.get("_head"))
 
 # HEAD of each worktree as `git worktree list` read it before the inventory: what must be in main if its folder is gone afterwards
-listed_heads, _cur = {}, None
+listed_heads, listed_branch, _cur = {}, {}, None
 for _l in (listed or "").splitlines():
     if _l.startswith("worktree "):
         _cur = _l[len("worktree "):]
     elif _l.startswith("HEAD ") and _cur:
         listed_heads[_cur] = listed_heads[os.path.realpath(_cur)] = _l[len("HEAD "):]
+    elif _l.startswith("branch refs/heads/") and _cur:
+        listed_branch[_cur] = listed_branch[os.path.realpath(_cur)] = _l[len("branch refs/heads/"):]
 
 def vanished_done(r):
     """A row whose folder vanished after the inventory is done when it was integrated already, or its work is in main (work_in_main,
@@ -286,9 +288,66 @@ if listed is None:
     owed = set(hold)
     paths = []
 
+def gone_admin_dir(path):
+    """The admin dir (<common>/worktrees/<id>) git keeps for a registered worktree until a prune; None when not found."""
+    try:
+        names = os.listdir(os.path.join(common, "worktrees"))
+    except OSError:
+        return None
+    for d in names:
+        adm = os.path.join(common, "worktrees", d)
+        try:
+            with open(os.path.join(adm, "gitdir"), encoding="utf-8") as fh:
+                wt = os.path.dirname(os.path.normpath(os.path.join(adm, fh.read().strip())))   # --relative-paths stores ../../..
+        except OSError:
+            continue
+        if wt == path or os.path.realpath(wt) == os.path.realpath(path):
+            return adm
+    return None
+
+def gone_folder_reason(path):
+    """A registered worktree whose folder is gone (rm -rf from outside, no prune): '' when the HEAD `git worktree list` showed is in
+    main, or main holds the same patches (brought back with diff | git apply, cherry-picked, amended and merged); else why it is held,
+    naming the commit to bring back. A git error is "cannot say", which holds. Commits only its HEAD reflog named are not checked here
+    (the folder that reflog-only analysis needs is gone; see docs/issues-bugs.md A.2 #3)."""
+    base = listed_heads.get(path) or listed_heads.get(os.path.realpath(path))
+    if not base:
+        return "thư mục đã bị xoá và git không còn biết HEAD của nó: không biết commit đã về main chưa"
+    if in_main(base):
+        return ""
+    out = git("rev-list", "--cherry-pick", "--right-only", "--no-merges", "HEAD..." + base)
+    if out is None:
+        return "thư mục đã bị xoá và git không so được commit của nó với main"
+    if not out:
+        return ""
+    sha = out.split()[0]
+    branch = listed_branch.get(path) or listed_branch.get(os.path.realpath(path))
+    how = f"merge nhánh {branch}" if branch else f"git cherry-pick {sha[:10]}"
+    return f"thư mục đã bị xoá nhưng commit {sha[:10]} chưa có trong main: đem về ({how})"
+
+raw_owed = {os.path.realpath(p) for p in (state.get("owed") or []) if isinstance(p, str)}   # owed before the live filter
 for path in paths:
     real = os.path.realpath(path)
-    if real not in live or real in running:
+    if real in running:
+        continue
+    if real not in live:
+        # Registered, folder gone before this Stop (Antigravity T0035 round 4: it was skipped and dropped from the debt, and the Stop
+        # passed with its commit not in main; tests/gates/test_worktree_merge_gate_vanished.sh cases 8-8d). Same owner rules as a live one.
+        if os.path.exists(path) or not (real in finished or real in raw_owed or mentioned(path, real)):
+            continue
+        if owners.get(real) not in (None, sid) and session_alive(owners[real]):
+            continue   # another live session's worktree: not a bystander's to hold on or take over
+        adm = gone_admin_dir(path)
+        if adm and session_lock is not None and not session_lock.is_free_for(session_lock.read_lock(os.path.join(adm, session_lock.LOCK)),
+                                                                             sid, now, idle_frees=False):
+            continue
+        why = gone_folder_reason(path)
+        if why:
+            owners.setdefault(real, sid)
+            owed.add(real)
+            row = unknown_row(path, why, "gone")
+            row["branch"] = listed_branch.get(path) or listed_branch.get(real)
+            pending.append(row)
         continue
     admin = git("rev-parse", "--absolute-git-dir", cwd=path)
     if not admin:
@@ -429,12 +488,14 @@ def line(r):
     if not r["unintegrated"]:
         return f"  - {r['path']} [{where}] đã gộp xong — XOÁ: agent-kit worktree remove {r['path']}"
     lost = "  ⚠ commit không nằm trên nhánh nào — xoá worktree là MẤT" if r["unreachable"] else ""
+    if r.get("kind") == "gone":
+        return f"  - {r['path']} [{where}] {r['reason']}"
     if r.get("reason"):
         return f"  - {r['path']} [?] không kiểm tra được ({r['reason']})"
     return f"  - {r['path']} [{where}] ahead={'?' if r['ahead'] is None else r['ahead']} dirty={'?' if r['dirty'] is None else r['dirty']}{lost}"
 
 listing = "\n".join(line(r) for r in pending)
-could_not_run = any(r.get("reason") for r in pending)
+could_not_run = any(r.get("reason") and r.get("kind") != "gone" for r in pending)   # "gone": checked, a commit is missing
 lock_note = ("⚠ session_lock.py không import được (" + type(lock_error).__name__ + "): khóa của phiên khác không thấy được, nên worktree của phiên khác có thể bị tính nhầm là của phiên này.\n"
              if session_lock is None else "")
 if held >= 3:
@@ -464,6 +525,9 @@ merge_hint = "     (hoặc: git merge --no-edit <branch>)" if any(r["branch"] fo
 detached_note = ("  (worktree [(detached)] không có nhánh để merge: dùng diff | git apply --3way rồi commit ở main checkout)\n"
                  if any(not r["branch"] and not r.get("reason") for r in pending) else "")
 error_note = lock_note
+if any(r.get("kind") == "gone" for r in pending):
+    error_note += ("⚠ Worktree bị xoá thư mục khi commit chưa về main: đem commit đó về trước. ĐỪNG chạy `git worktree prune` trước khi đem về "
+                   "(với worktree detached, prune xoá luôn reflog đang giữ commit; gc sau đó xoá hẳn).\n")
 if could_not_run:
     error_note += "⚠ Cổng KHÔNG chạy được cho các worktree có lý do ở trên."
     if any(r.get("kind") == "error" for r in pending):

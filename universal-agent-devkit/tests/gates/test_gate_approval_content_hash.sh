@@ -36,7 +36,7 @@ import json, sys, time
 out, file, off = sys.argv[1], sys.argv[2], float(sys.argv[3])
 ts = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + off))
 rec = {"type": "assistant", "sessionId": "s-me", "created_at": ts,
-       "content": f"Agent tự duyệt {file}"}
+       "content": f"Diff chỉ thêm kiểm tra.\nAUTO-APPROVE: {file}"}   # the one form an agent approves with (13/10: prose no longer counts)
 with open(out, "w") as fh:
     fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 PY
@@ -241,6 +241,75 @@ else
   fail "7.2b: the AUTO-APPROVE line in a Claude Code reply was not read. Out: $out"
 fi
 if printf '%s' "$out" | grep -q 'người dùng đã duyệt'; then fail "7.2c: the agent's reply became the user's approval"; else ok "7.2c: and it is never the user's approval"; fi
+
+# 7.3 The top-level "content" path (Antigravity logs; issue #11, 2026-10-13 review of cd0fb04). Claude Code writes `queue-operation`
+# records with a top-level "content" (messages from other sessions, task notifications, queued user prompts): one that said "…tôi không
+# duyệt… bạn cần tự duyệt diff" approved the test. Now every source follows one rule: only an `AUTO-APPROVE:` line (case as written),
+# matched to the exact path token, in an agent record (assistant / Antigravity PLANNER_RESPONSE, not isMeta) with a timestamp; a line
+# that is not JSON never approves; an Antigravity log approves only a test of the project it names.
+claude_recs "$TR" '[{"type": "queue-operation", "operation": "enqueue", "timestamp": "TS", "content": "Phiên khác: AUTO-APPROVE: tests/test_old.sh"}]'
+not_approved 7.3a "a queue-operation record (another session's message / a queued prompt)"
+claude_recs "$TR" '[{"type": "USER_INPUT", "created_at": "TS", "content": "AUTO-APPROVE: tests/test_old.sh"}]'
+not_approved 7.3b "an Antigravity USER_INPUT record"
+claude_recs "$TR" '[{"type": "assistant", "created_at": "TS", "content": "- Auto-approve: KHÔNG cho tests/test_old.sh"}]'
+not_approved 7.3c "a lower-case 'Auto-approve:' negation"
+claude_recs "$TR" '[{"type": "assistant", "created_at": "TS", "content": "AUTO-APPROVE: tests/my_test_old.sh"}]'
+not_approved 7.3d "a marker for another file whose name contains this one"
+printf '%s\n' '{"type": "assistant", "timestamp": "2099-01-01T00:00:00.000Z", "content": "AUTO-APPROVE: tests/test_old.sh' > "$TR"
+not_approved 7.3e "a truncated JSON line (concurrent write)"
+claude_recs "$TR" '[{"type": "assistant", "content": "AUTO-APPROVE: tests/test_old.sh"}]'
+not_approved 7.3f "an agent record with no timestamp"
+: > "$TR"
+AGY="$HOME/.gemini/antigravity/brain/conv-other/.system_generated/logs"; mkdir -p "$AGY"
+claude_recs "$AGY/transcript.jsonl" '[{"type": "PLANNER_RESPONSE", "created_at": "TS", "content": "Workspace /some/other/project\nAUTO-APPROVE: tests/test_old.sh"}]'
+not_approved 7.3g "an Antigravity log of another project"
+claude_recs "$AGY/transcript.jsonl" "[{\"type\": \"PLANNER_RESPONSE\", \"created_at\": \"TS\", \"content\": \"Workspace $B\nAUTO-APPROVE: tests/test_old.sh\"}]"
+not_approved 7.4j "a RELATIVE path in an Antigravity log (it covers many projects: only an absolute path names this one)"
+claude_recs "$AGY/transcript.jsonl" "[{\"type\": \"PLANNER_RESPONSE\", \"created_at\": \"TS\", \"content\": \"Workspace $B\nAUTO-APPROVE: $B/tests/test_old.sh\"}]"
+touch "$TR"; out="$(run_gate)"
+if printf '%s' "$out" | grep -q 'agent tự duyệt'; then ok "7.3h: an Antigravity PLANNER_RESPONSE marker with this project's absolute path approves"
+else fail "7.3h: Antigravity's marker for this project was not read. Out: $out"; fi
+rm -rf "$HOME/.gemini/antigravity/brain/conv-other"
+claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "AUTO-APPROVE: tests/test_old.sh, tests/other.sh"}]}}]'
+touch "$TR"; out="$(run_gate)"
+if printf '%s' "$out" | grep -q 'agent tự duyệt'; then ok "7.3i: a marker listing this test among others approves it"
+else fail "7.3i: a marker listing the test was not matched. Out: $out"; fi
+
+# 7.4 Review of W1 step -1 (13/10 night). The Antigravity user-answer branch ("A1: Duyệt …", counted as the USER's approval) took any
+# record: a queue-operation of another session or another project's Antigravity log approved the test as the user (P1, older than this
+# change). Project scope was a substring (`<repo>-v2` passed), every token on a marker line counted ("KHÔNG cho <path>"), a fenced
+# quote counted, `../` and another repo's absolute path matched by suffix, and a reply line with "SHA256:" hid the marker.
+agy_log() {   # agy_log <conversation> <python list literal>  — an Antigravity brain log
+  local d="$HOME/.gemini/antigravity/brain/$1/.system_generated/logs"; mkdir -p "$d"; claude_recs "$d/transcript.jsonl" "$2"
+}
+user_approved() { touch "$TR"; out="$(run_gate)"; printf '%s' "$out" | grep -q 'người dùng đã duyệt'; }
+: > "$TR"
+claude_recs "$TR" '[{"type": "queue-operation", "operation": "enqueue", "timestamp": "TS", "content": "A1: Duyệt tests/test_old.sh"}]'
+not_approved 7.4a "an 'A1: Duyệt' answer inside a queue-operation record"
+: > "$TR"
+agy_log conv-x '[{"type": "USER_INPUT", "created_at": "TS", "content": "Workspace /some/other/project\nA1: Duyệt tests/test_old.sh"}]'
+not_approved 7.4b "an 'A1: Duyệt' answer in another project's Antigravity log"
+agy_log conv-x "[{\"type\": \"USER_INPUT\", \"created_at\": \"TS\", \"content\": \"Workspace $B\nA1: Duyệt tests/test_old.sh\"}]"
+# 7.4c (second review of step -1): USER_INPUT records are the prompts antigravity-pm SENDS (1223 of 1224 measured; 0 real "A1: Duyệt"
+# answers), so the "A1:" branch made an agent's "A1: Duyệt lại <path>" the USER's approval: the branch is gone.
+not_approved 7.4c "an 'A1: Duyệt' line in this project's Antigravity USER_INPUT (a dispatched prompt, not the user)"
+agy_log conv-x "[{\"type\": \"PLANNER_RESPONSE\", \"created_at\": \"TS\", \"content\": \"Workspace $B-v2\nAUTO-APPROVE: tests/test_old.sh\"}]"
+not_approved 7.4d "an Antigravity log of a sibling folder <repo>-v2"
+rm -rf "$HOME/.gemini/antigravity/brain/conv-x"
+claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "AUTO-APPROVE: KHÔNG cho tests/test_old.sh"}]}}]'
+not_approved 7.4e "a marker line whose first token is not a path"
+claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "Phiên kia viết:\n```\nAUTO-APPROVE: tests/test_old.sh\n```"}]}}]'
+not_approved 7.4f "a marker quoted inside a code fence"
+claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "Trích:\n~~~\nAUTO-APPROVE: tests/test_old.sh\n~~~"}]}}]'
+not_approved 7.4k "a marker inside a ~~~ fence"
+claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "Trích:\n```\nAUTO-APPROVE: tests/test_old.sh"}]}}]'
+not_approved 7.4l "a marker after an unclosed fence"
+claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "AUTO-APPROVE: ../tests/test_old.sh /Volumes/Other/repo/tests/test_old.sh test_old.sh"}]}}]'
+not_approved 7.4g "../, another repo's absolute path or a bare file name"
+claude_recs "$TR" "[{\"type\": \"assistant\", \"timestamp\": \"TS\", \"message\": {\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"SHA256: abc\nAUTO-APPROVE: \`$B/tests/test_old.sh\`.\"}]}}]"
+touch "$TR"; out="$(run_gate)"
+if printf '%s' "$out" | grep -q 'agent tự duyệt'; then ok "7.4h: a marker with this repo's absolute path in backticks approves, next to a 'SHA256:' line"
+else fail "7.4h: the marker next to 'SHA256:' was not read. Out: $out"; fi
 
 [ $FAILS -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }
 

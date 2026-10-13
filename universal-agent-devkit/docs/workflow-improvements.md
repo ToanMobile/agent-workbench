@@ -117,7 +117,7 @@ Bản đầy đủ: `.antigravity-pm/tasks/T0035-…/plan.md`.
 
 Thứ tự trong W1, mỗi bước có test ĐỎ trước:
 -1. *(13/10 tối)* Lỗ P1 có từ trước: gate tự duyệt test từ record `queue-operation` (tin nhắn phiên khác, prompt xếp hàng), xem
-   `issues-bugs.md` A.1b #11. Đây là lỗ bảo mật của chính cổng nên làm trước mọi thứ.
+   `issues-bugs.md` A.1b #11 (đã sửa ở `8695853`, hàng đã bỏ khỏi file). Đây là lỗ bảo mật của chính cổng nên làm trước mọi thứ.
 0. *(v5)* Merge gate không bao giờ cho qua một worktree mất thư mục TRƯỚC khi Stop chạy (lỗi chặn vòng 4, ghi ở `issues-bugs.md` A.2 #3).
    Worktree còn đăng ký thì xét theo HEAD trong `git worktree list` và reflog đọc từ admin dir; HEAD hoặc reflog chưa vào main thì giữ
    Stop, kèm lý do. Phải xong trước gc, vì gc cũng xoá.

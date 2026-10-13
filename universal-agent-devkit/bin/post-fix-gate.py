@@ -593,26 +593,58 @@ APPROVE_LABEL = re.compile(r"^\s*(?:duyệt|đồng ý|chấp nhận|approve[ds]
 # answer) or "agent" (--auto-approve-tests, DEVKIT_AUTO_APPROVE_TESTS, approved_tests.json, an
 # auto-approval line). 2026-09-29: the agent's own approval was printed as the user's.
 APPROVED_BY = {}
-AGENT_APPROVE_RE = re.compile(r"(?:auto[-_ ]?duyệt|auto[-_ ]?approve[ds]?|tự[-_ ]?duyệt|test[-_ ]?approved|duyệt\s+test)", re.I)
-AUTO_APPROVE_LINE = re.compile(r"(?mi)^[ \t>*-]*AUTO-APPROVE:[ \t]*(\S.*)$")
+AUTO_APPROVE_LINE = re.compile(r"(?m)^[ \t*-]*AUTO-APPROVE:[ \t]*(\S.*)$")   # case as written: "Auto-approve: KHÔNG …" is prose
 
 
-def _claude_auto_approve(rec, msg, tp, transcript):
-    """The paths a Claude Code record approves: only `AUTO-APPROVE: <path …>` lines in the TEXT parts of an ASSISTANT reply of this
-    session's own transcript. Never a user or isMeta record (the gate's own Stop feedback names the test next to "auto-duyệt": it approved
-    the test it was blocking, review 13/10), a tool_use input, a tool_result, prose (a negation such as "không được tự duyệt" matched the
-    keyword) or another session's transcript."""
-    if rec.get("type") != "assistant" or rec.get("isMeta") or not transcript:
-        return ""
-    try:
-        if os.path.realpath(str(tp)) != os.path.realpath(str(transcript)):
-            return ""
-    except (OSError, ValueError):
-        return ""
-    mc = msg.get("content")
-    parts = [mc] if isinstance(mc, str) else [str(p.get("text") or "") for p in mc if isinstance(p, dict) and p.get("type") == "text"] \
-        if isinstance(mc, list) else []
-    return " ".join(m.group(1) for part in parts for m in AUTO_APPROVE_LINE.finditer(part))
+def _agent_marker_tokens(rec, tp, transcript):
+    """The path tokens an agent record approves: only `AUTO-APPROVE: <path …>` lines, in
+    - a Claude Code assistant reply of THIS session's transcript (text parts of message.content), or
+    - a top-level "content" of an agent record: type assistant or Antigravity's PLANNER_RESPONSE.
+    Never an isMeta record (the gate's own Stop feedback names the test next to "auto-duyệt": it approved the test it was blocking), a
+    queue-operation (messages from other sessions, queued prompts) / USER_INPUT / SYSTEM_MESSAGE record, a tool_use input, a tool_result,
+    prose (a negation matched the keyword) or another Claude session's transcript (reviews of 13/10, issue #11)."""
+    if rec.get("isMeta"):
+        return []
+    typ, texts = rec.get("type"), []
+    top = rec.get("content")
+    if isinstance(top, str) and top:
+        if typ in ("assistant", "PLANNER_RESPONSE"):
+            texts = [top]
+    elif typ == "assistant" and isinstance(rec.get("message"), dict) and transcript:
+        try:
+            own = os.path.realpath(str(tp)) == os.path.realpath(str(transcript))
+        except (OSError, ValueError):
+            own = False
+        mc = rec["message"].get("content") if own else None
+        texts = [mc] if isinstance(mc, str) else [str(p.get("text") or "") for p in mc if isinstance(p, dict) and p.get("type") == "text"] \
+            if isinstance(mc, list) else []
+    tokens = []
+    for text in texts:
+        text = _FENCE.sub("", text)   # a marker quoted inside a ``` block is someone else's text, not this reply's approval
+        for m in AUTO_APPROVE_LINE.finditer(text):
+            for raw in re.split(r"[\s,;]+", m.group(1)):
+                tok = raw.rstrip(".:;").strip("`'\"()[]<>").rstrip(".:;")
+                if not _PATH_TOKEN.match(tok):
+                    break   # the paths come first: "AUTO-APPROVE: KHÔNG cho <path>" approves nothing
+                tokens.append(tok)
+    return tokens
+
+
+_FENCE = re.compile(r"(?ms)^[ \t]*(```|~~~)[^\n]*$.*?(?:^[ \t]*\1[^\n]*$|\Z)")   # closed or not, ``` or ~~~
+_PATH_TOKEN = re.compile(r"^[\w.@+~/-]*/[\w.@+~/-]*$|^[\w@+~-][\w.@+~-]*\.[\w]+$")   # has a slash, or is name.ext
+
+
+def _marker_approves(tokens, f, root, absolute_only=False):
+    """A marker token names the test exactly: its project-relative path (normalised, never `..`), or an absolute path whose real path
+    is the test's. Never a substring, a suffix of another repo's path or a bare file name (two tests can share one)."""
+    want = os.path.realpath(os.path.join(str(root), f))
+    for t in tokens:
+        if os.path.isabs(t):
+            if os.path.realpath(t) == want:
+                return True
+        elif not absolute_only and not t.startswith("..") and os.path.normpath(t) == os.path.normpath(f):
+            return True
+    return False
 
 
 def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> tuple:
@@ -673,6 +705,19 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
             pass
 
     for tp in candidates:
+        is_agy = agy_brain in Path(tp).parents
+        agent_ok = None if is_agy else True   # an Antigravity log: decided on its first candidate line only (500+ logs, ~1.5 s to read all)
+
+        def _agy_names_project(path=tp):
+            """An Antigravity log approves only a test of the project it names (the brain logs cover every project)."""
+            try:
+                agy_text = Path(path).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                return False
+            spellings = {str(root), os.environ.get("CLAUDE_PROJECT_DIR") or str(root)}   # macOS: /var/... is /private/var/...
+            spellings |= {s[len("/private"):] for s in spellings if s.startswith("/private/")}
+            # the whole path, not a prefix: <repo>-v2 / <repo>-<task> worktrees sit next to it (review 13/10)
+            return any(s and re.search(re.escape(s.rstrip("/")) + r"(?![\w.@+~-])", agy_text) for s in spellings)
         try:
             fh = open(tp, encoding="utf-8", errors="replace")
         except OSError:
@@ -700,43 +745,24 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
                             if f in text or (len(Path(f).name) >= 6 and Path(f).name in text):
                                 approved_at[f] = max(approved_at.get(f, 0), t)
                                 user_at[f] = max(user_at.get(f, 0), t)
-                elif re.search(r"A\d+:\s*(?:\(Recommended\)\s*)?", line):
+                    continue
+                if "AUTO-APPROVE:" in line and (agent_ok if agent_ok is not None else (agent_ok := _agy_names_project())):   # not elif: a reply line with "SHA256:"/"A1:" must not hide the marker
                     try:
                         rec = json.loads(line)
-                        cnt = rec.get("content") or ""
-                        ts = rec.get("created_at") or rec.get("timestamp") or ""
-                        t = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
-                    except (ValueError, KeyError, TypeError, AttributeError):
-                        continue
-                    m = re.search(r"A\d+:\s*(?:\(Recommended\)\s*)?(.*)", cnt)
-                    if m:
-                        label = m.group(1).strip()
-                        if APPROVE_LABEL.search(label):
-                            for f in mtimes:
-                                if f in cnt or (len(Path(f).name) >= 6 and Path(f).name in cnt):
-                                    approved_at[f] = max(approved_at.get(f, 0), t)
-                                    user_at[f] = max(user_at.get(f, 0), t)
-                elif AGENT_APPROVE_RE.search(line):
-                    try:
-                        rec = json.loads(line)
-                    except ValueError:
-                        rec = None   # a plain-text log line: matched as it is (as before)
+                    except (ValueError, RecursionError):
+                        continue   # not one whole JSON record (a line cut by a concurrent write): never an approval
                     if not isinstance(rec, dict):
-                        cnt, t = line, int(time.time())
-                    else:
-                        cnt = rec.get("content") or ""
-                        msg = rec.get("message")
-                        if not cnt and isinstance(msg, dict):
-                            cnt = _claude_auto_approve(rec, msg, tp, transcript)
-                        try:
-                            ts = str(rec.get("created_at") or rec.get("timestamp") or "")
-                            t = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")) if ts else int(time.time())
-                        except (ValueError, OverflowError):
-                            cnt, t = "", 0   # no usable time: no approval from this record
-                    if not isinstance(cnt, str):
-                        cnt = ""
+                        continue
+                    tokens = _agent_marker_tokens(rec, tp, transcript)
+                    ts = str(rec.get("created_at") or rec.get("timestamp") or "")
+                    if not tokens or not ts:
+                        continue   # no marker, or no time to bind it to the file's last edit
+                    try:
+                        t = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
+                    except (ValueError, OverflowError):
+                        continue
                     for f in mtimes:
-                        if f in cnt or (len(Path(f).name) >= 6 and Path(f).name in cnt):
+                        if _marker_approves(tokens, f, root, absolute_only=is_agy):   # an Antigravity log covers many projects
                             approved_at[f] = max(approved_at.get(f, 0), t)
     # ponytail: duyệt được nhớ theo (đường dẫn, nội dung) trong phạm vi transcript còn quét được, không gắn với blob HEAD gốc; gắn base blob nếu việc yếu hoá lại test sau khi revert thành vấn đề
     hash_file = root / ".claude" / "audit-gate" / "approved_hashes.json"
