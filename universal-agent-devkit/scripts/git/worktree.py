@@ -1776,39 +1776,71 @@ def cmd_heal(cwd, args):
 
 
 GC_NOISE = {".DS_Store", "Thumbs.db", "desktop.ini"}
-GC_BOOKKEEPING_DIRS = (".claude/audit-gate/", ".agents/evidence/", ".agents/regression_journal/", ".antigravity-pm/")
-GC_SECRETS = LOCAL_CONFIG + ("*.jks", "*.keystore", "*.p12", "*.pem", "*.key", "key.properties")
+# machine-written only: .antigravity-pm/ is not here, people write briefs, plans and scripts in it
+GC_BOOKKEEPING_DIRS = (".claude/audit-gate/", ".agents/evidence/", ".agents/regression_journal/")
+GC_SECRETS = LOCAL_CONFIG + ("*.jks", "*.keystore", "*.p12", "*.p8", "*.pem", "*.key", "key.properties", "id_rsa*", "id_ed25519*",
+                             "credentials.json", "*service-account*.json", "*.mobileprovision", "*.keychain*")
+# Only these are rebuildable: an ignored file anywhere else (a database, an IDE workspace, .agents/local/ handoffs) may be the only copy
+GC_BUILD_DIRS = {"build", ".gradle", "node_modules", "dist", "out", "target", "Library", "Temp", "obj", ".dart_tool", "Pods",
+                 "DerivedData", ".cxx", ".externalNativeBuild", "__pycache__", ".pytest_cache", ".next", "coverage"}
+# Regenerated views only: regression_status.json / BUG_ARCHIVE.md hold rows people wrote (_carry_authored_rows protects them)
+GC_VIEWS = (".agents/CHECKLIST.md", ".agents/regression_checklist.md", ".agents/instincts-index.md")
+try:   # a folder changed this recently may be a `worktree add` still being written: never touched
+    GC_MIN_AGE_S = max(0, int(os.environ.get("WORKTREE_GC_MIN_AGE_S", "600")))
+except ValueError:
+    GC_MIN_AGE_S = 600
 
 
-def _gc_live_lock(admin):
-    """True when the worktree's session lock names a live, non-idle session (its pid runs and its heartbeat is recent)."""
+def _gc_young(*paths):
+    """True when one of `paths` changed less than GC_MIN_AGE_S ago, or cannot be read (keep)."""
     try:
-        with open(os.path.join(admin, "devkit-session.lock"), encoding="utf-8") as fh:
-            lock = json.load(fh)
-        if not isinstance(lock, dict) or lock.get("idle_since"):
-            return False
-        os.kill(int(lock.get("pid") or 0), 0)
-        return time.time() - float(lock.get("heartbeat") or 0) < 7200
-    except (OSError, ValueError, TypeError):
-        return False
+        return time.time() - max(os.lstat(x).st_mtime for x in paths if os.path.lexists(x)) < GC_MIN_AGE_S
+    except (OSError, ValueError):
+        return True
+
+
+_REACHABLE = {}
+
+
+def _reachable_blobs(main):
+    """(blob ids, paths) some ref still holds (`rev-list --objects --all`): a blob merely present in the object DB may belong to a commit no
+    ref names any more (a detached commit, a staged file of a worktree whose admin dir is gone) and `git gc` would drop it; a path a kept
+    tree holds is tracked somewhere (a branch force-adds build/keep.txt), so an edit of it is never a build output. None = cannot say.
+    ponytail: rev-list names a blob once, under the first path it meets; a tracked path whose every version is also stored elsewhere can
+    be missed, so an ignored edit of it under a build folder reads as rebuildable. Upgrade to `ls-tree -r` of each ref if that ever bites."""
+    if main not in _REACHABLE:
+        r = git(main, "rev-list", "--objects", "--all", "--filter=object:type=blob", check=False, inp=b"")   # bytes: a path need not be UTF-8
+        if r.returncode != 0:
+            _REACHABLE[main] = None
+        else:
+            pairs = [ln.split(" ", 1) for ln in r.stdout.decode("utf-8", "surrogateescape").splitlines() if ln.strip()]
+            _REACHABLE[main] = ({x[0] for x in pairs}, {x[1] for x in pairs if len(x) == 2})
+    return _REACHABLE[main]
 
 
 def _gc_unique(main, top, dangling):
     """[(rel, why)] of the files in `top` that may be the only copy of something; [] when every file is provably not unique. With no
-    `.git` pointer (`dangling` False) only bookkeeping and noise may be there: anything else means the folder is not a leftover."""
-    files, later = [], []
+    `.git` pointer (`dangling` False) the folder must hold DevKit bookkeeping and nothing but it and noise: anything else (an empty
+    folder or one of links only too) means it is not a leftover."""
+    files = []
     for dirpath, dirs, names in os.walk(top):
         dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(dirpath, d))]   # a link is never followed (.agents/devkit, a link to main)
+        for d in dirs if not dangling else ():   # a folder outside the bookkeeping (even an empty one) is a person's
+            drel = os.path.relpath(os.path.join(dirpath, d), top).replace(os.sep, "/") + "/"
+            if d != "__pycache__" and not any(b.startswith(drel) or drel.startswith(b) for b in GC_BOOKKEEPING_DIRS):
+                return [(drel, tr("không phải sổ sách DevKit", "not DevKit bookkeeping"))]
         for n in names:
             p = os.path.join(dirpath, n)
             rel = os.path.relpath(p, top).replace(os.sep, "/")
-            if rel == ".git" or os.path.islink(p) or n in GC_NOISE or "/__pycache__/" in "/" + rel or rel in BOOKKEEPING \
+            if rel == ".git" or os.path.islink(p) or n in GC_NOISE or "/__pycache__/" in "/" + rel or rel in GC_VIEWS \
                     or rel.startswith(GC_BOOKKEEPING_DIRS):
                 continue
             if not dangling:
                 return [(rel, tr("không phải sổ sách DevKit", "not DevKit bookkeeping"))]
             files.append((rel, p))
-    unique = []
+    if not dangling and not any(os.path.isdir(os.path.join(top, d)) for d in GC_BOOKKEEPING_DIRS):
+        return [("*", tr("không có sổ sách DevKit", "no DevKit bookkeeping"))]
+    unique, later = [], []
     for rel, p in files:
         mine = os.path.join(main, rel)
         try:
@@ -1817,55 +1849,77 @@ def _gc_unique(main, top, dangling):
             same = False
         if same:
             continue
-        if rel.startswith(MEMORY_REL.replace(os.sep, "/") + "/"):
+        if "\r" in rel or "\n" in rel:   # git's line protocol (hash-object --stdin-paths, check-ignore) cannot carry the name
+            unique.append((rel.replace("\r", "\\r").replace("\n", "\\n"), tr("tên có ký tự xuống dòng", "a name with a line break")))
+        elif rel.startswith(MEMORY_REL.replace(os.sep, "/") + "/"):
             unique.append((rel, tr("ghi chú memory không có ở main", "a memory note main lacks")))
-        elif any(fnmatch.fnmatch(os.path.basename(rel), g) for g in GC_SECRETS):
+        elif any(fnmatch.fnmatch(os.path.basename(rel).lower(), g.lower()) for g in GC_SECRETS):
             unique.append((rel, tr("file bí mật chỉ có ở đây: chép về main trước", "a secret only here: copy it to main first")))
         else:
             later.append((rel, p))
-    if later:   # one hash-object + one cat-file + one check-ignore for all of them
-        hashes = git(main, "hash-object", "--no-filters", "--stdin-paths", inp="\n".join(p for _r, p in later) + "\n", check=False)
-        known = git(main, "cat-file", "--batch-check", inp=hashes.stdout, check=False) if hashes.returncode == 0 else None
-        ignored = git(main, "check-ignore", "--no-index", "--stdin", inp="\n".join(r for r, _p in later) + "\n", check=False)
-        if known is None or known.returncode != 0 or ignored.returncode not in (0, 1):
+    if later:   # one hash-object + one check-ignore for all of them, against the blobs some ref still holds
+        reachable = _reachable_blobs(main)
+        try:
+            hashes = git(main, "hash-object", "--no-filters", "--stdin-paths", inp="\n".join(p for _r, p in later) + "\n", check=False)
+            ignored = git(main, "-c", "core.quotePath=false", "check-ignore", "--stdin", inp="\n".join(r for r, _p in later) + "\n", check=False)   # WITH the index: a tracked file is never "ignored"
+        except UnicodeError:   # a name that is not UTF-8 cannot go through git's text protocol: cannot say, keep
             return [("*", tr("git không kiểm được nội dung", "git could not check the content"))]
-        missing = [ln.split()[0] for ln in known.stdout.splitlines() if ln.endswith(" missing")]
         shas = hashes.stdout.split()
+        if reachable is None or hashes.returncode != 0 or len(shas) != len(later) or ignored.returncode not in (0, 1):
+            return [("*", tr("git không kiểm được nội dung", "git could not check the content"))]
+        blobs, tracked = reachable
         build = set(ignored.stdout.splitlines())
         for (rel, _p), sha in zip(later, shas):
-            if sha in missing and rel not in build:
-                unique.append((rel, tr("nội dung chưa từng được commit", "content never committed")))
+            rebuildable = rel in build and rel not in tracked and any(part in GC_BUILD_DIRS for part in rel.split("/")[:-1])
+            if sha not in blobs and not rebuildable:
+                unique.append((rel, tr("nội dung không có trong commit nào còn giữ", "content no kept commit holds")))
     return unique
 
 
+def _gc_log(log, lines):
+    """Append `lines` to the gc log, keeping its last 400 lines (tmp + replace). Called under the gc lock right after each delete, so a
+    crash or kill later in the sweep keeps the record of what was already deleted."""
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(log)), exist_ok=True)
+        try:
+            with open(log, encoding="utf-8", errors="replace") as fh:
+                old = fh.read().splitlines()
+        except FileNotFoundError:
+            old = []
+        tmp = f"{log}.tmp.{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8", errors="replace") as fh:
+            fh.write("\n".join((old + lines)[-400:]) + "\n")
+        os.replace(tmp, log)
+    except OSError as e:
+        print("• gc: " + tr(f"không ghi được log ({e})", f"could not write the log ({e})"))
+
+
+def _gc_why(unique):
+    return "; ".join(f"{rel} ({why})" for rel, why in unique[:3]) + (" …" if len(unique) > 3 else "")
+
+
 def cmd_gc(cwd, args):
-    """Delete what DevKit worktrees left behind, only when nothing in it is unique (docs/workflow-improvements.md I.0 R5b).
-    Registered worktrees already integrated (inventory) are removed with `remove`; `<repo>-*` siblings whose `.git` pointer dangles
-    into this repo, or that hold DevKit bookkeeping only, are deleted after every file is checked (_gc_unique). Kept: a live session's
-    worktree, anything with work not in main, a unique file, a secret only there, a person's folder or clone. --dry-run deletes nothing."""
+    """Delete the folders DevKit worktrees left behind that git no longer knows, only when nothing in them is unique
+    (docs/workflow-improvements.md I.0 R5b): `<repo>-*` siblings whose `.git` pointer dangles into this repo, or with no `.git` that hold
+    DevKit bookkeeping only; every file is checked (_gc_unique). An agent cannot `rm -rf` them (hardware_safety_gate), so before gc they
+    waited for the user. Registered worktrees are never gc's: worktree_merge_gate (Stop) and `worktree remove` judge those (review 3,
+    13/10: removing them from gc opened data-loss holes round after round). Kept: anything with work not in main, a unique file, a secret
+    only there, a folder changed in the last GC_MIN_AGE_S, a person's folder or clone. --dry-run deletes nothing."""
     dry = "--dry-run" in args
+    log = next((a.split("=", 1)[1] for a in args if a.startswith("--log=")), None)   # the SessionStart hook's record of deletions
     main = main_checkout(cwd)
     common = os.path.realpath(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip())
+    try:   # held until exit: two sessions starting together run gc once
+        import fcntl
+        gc_lock = open(os.path.join(common, "devkit-gc.lock"), "a")
+        fcntl.flock(gc_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 0   # another gc runs in this repo and records what it deletes: silent
+    except (OSError, ImportError) as e:   # no flock here (NFS, SMB, no fcntl) or a read-only git dir: run unlocked, and say so
+        print("• gc: " + tr(f"không khoá được ({e}); chạy không khoá", f"no lock ({e}); running unlocked"))
     here = os.path.realpath(cwd)
     deleted, kept = [], []
-    rows = inventory(main)
     registered = {os.path.realpath(e["path"]) for e in _worktree_entries(main)}
-    for r in rows:
-        real = os.path.realpath(r["path"])
-        if r.get("unintegrated") or r.get("reason") or not os.path.isdir(real) or here == real or here.startswith(real + os.sep):
-            continue
-        admin = git(r["path"], "rev-parse", "--absolute-git-dir", check=False).stdout.strip()
-        if admin and _gc_live_lock(admin):
-            kept.append((r["path"], tr("một phiên đang chạy dùng nó", "a running session uses it")))
-            continue
-        if dry:
-            deleted.append(r["path"])
-            continue
-        try:
-            rc = cmd_remove(main, [r["path"]])
-        except SystemExit as e:
-            rc = e.code or 1
-        (deleted.append(r["path"]) if rc == 0 and not os.path.exists(real) else kept.append((r["path"], tr("remove từ chối", "remove refused"))))
     parent, prefix = os.path.dirname(main), os.path.basename(main) + "-"
     try:
         siblings = sorted(os.listdir(parent))
@@ -1878,14 +1932,14 @@ def cmd_gc(cwd, args):
                 or real == os.path.realpath(main) or here == real or here.startswith(real + os.sep):
             continue
         gitp = os.path.join(top, ".git")
-        if os.path.isdir(gitp):
-            continue   # a clone or a copy of its own: never ours
+        if os.path.isdir(gitp) or _gc_young(top, gitp):
+            continue   # a clone or a copy of its own: never ours; or just changed
         dangling = False
         if os.path.isfile(gitp):
             try:
                 with open(gitp, encoding="utf-8") as fh:
                     ptr = fh.read().strip()
-            except OSError:
+            except (OSError, ValueError):   # unreadable or not UTF-8: not a pointer gc can judge
                 continue
             if not ptr.startswith("gitdir:"):
                 continue
@@ -1896,14 +1950,19 @@ def cmd_gc(cwd, args):
         unique = _gc_unique(main, top, dangling)
         if unique:
             if dangling:   # a no-.git folder with a person's file is not ours: not even reported
-                kept.append((top, "; ".join(f"{rel} ({why})" for rel, why in unique[:3]) + (" …" if len(unique) > 3 else "")))
+                kept.append((top, _gc_why(unique)))
             continue
         if dry:
             deleted.append(top)
             continue
         _clear_user_locks(top)
         shutil.rmtree(top, ignore_errors=True)
-        (kept.append((top, tr("không xoá hết được: ", "could not delete it all: ") + _by_hand(top))) if os.path.exists(top) else deleted.append(top))
+        if os.path.exists(top):
+            kept.append((top, tr("không xoá hết được: ", "could not delete it all: ") + _by_hand(top)))
+            continue
+        deleted.append(top)
+        if log:
+            _gc_log(log, (["== " + time.strftime("%Y-%m-%d %H:%M:%S")] if len(deleted) == 1 else []) + ["✔ gc: " + tr("đã xoá ", "deleted ") + top])
     for p in deleted:
         print(("• gc (dry-run): " + tr("sẽ xoá ", "would delete ") if dry else "✔ gc: " + tr("đã xoá ", "deleted ")) + p)
     for p, why in kept:

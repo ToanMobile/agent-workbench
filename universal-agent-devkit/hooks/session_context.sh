@@ -55,6 +55,16 @@ try: print(str(json.load(sys.stdin).get("session_id") or ""))
 except Exception: pass' 2>/dev/null)"
   HEALED="$(cd "${REPO_ROOT}" 2>/dev/null && python3 "${WT_SCRIPT}" heal "--devkit=$(dirname "$(dirname "${SELF}")")" "--session=${WT_SID}" 2>/dev/null)"
   [ -n "${HEALED}" ] && echo "[DevKit] ${HEALED}"
+  # Folders DevKit worktrees left behind that git no longer knows (docs/workflow-improvements.md I.0 R5b): deleted in the background
+  # when nothing in them is unique (`agent-kit worktree gc`). Only from the main checkout (its siblings are what gc sweeps; a linked
+  # worktree would keep the record and go away with it). gc appends what it deleted, stamped, to .claude/audit-gate/worktree_gc.log
+  # under its own lock (last 400 lines; `agent-kit worktree gc --dry-run` says what it keeps and why). WORKTREE_GC=0: off.
+  if [ "${WORKTREE_GC:-1}" != "0" ]; then
+    ( [ "$(git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || exit 0
+      [ "$(git -C "${REPO_ROOT}" rev-parse --absolute-git-dir 2>/dev/null)" = "$(cd "${REPO_ROOT}" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ] || exit 0
+      GC_TOP="$(git -C "${REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null)" && [ -n "${GC_TOP}" ] || exit 0   # REPO_ROOT may be a subfolder
+      cd "${GC_TOP}" && exec python3 "${WT_SCRIPT}" gc "--log=${GC_TOP}/.claude/audit-gate/worktree_gc.log" </dev/null ) >/dev/null 2>&1 &
+  fi
 fi
 # The regression baseline (T0003): verified_head recorded before the first turn can commit, so a
 # commit of turn 1 is never taken as already verified.

@@ -121,7 +121,7 @@ Thứ tự trong W1, mỗi bước có test ĐỎ trước:
 0. *(v5)* Merge gate không bao giờ cho qua một worktree mất thư mục TRƯỚC khi Stop chạy (lỗi chặn vòng 4, ghi ở `issues-bugs.md` A.2 #3).
    Worktree còn đăng ký thì xét theo HEAD trong `git worktree list` và reflog đọc từ admin dir; HEAD hoặc reflog chưa vào main thì giữ
    Stop, kèm lý do. Phải xong trước gc, vì gc cũng xoá.
-1. R5b gc (đĩa đang cạn)
+1. R5b gc (đĩa đang cạn). *(13/10 xong, Đợt 35: `agent-kit worktree gc`, chỉ dọn thư mục mà git không còn biết, chạy nền ở mỗi SessionStart, log `.claude/audit-gate/worktree_gc.log`; worktree còn đăng ký vẫn do `worktree_merge_gate` lo; qua 3 vòng principal-code-reviewer + OpenCodeReview)*
 2. R5a
 3. R5c
 4. R4

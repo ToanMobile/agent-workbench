@@ -35,6 +35,37 @@ printf '%s' "$(ctx "$TMP/chained")" | grep -q "git pre-commit: chưa cài" && ok
   || fail "unchained project hook reported as on"
 cd "$TMP" || exit 1
 
+# Folders DevKit worktrees left behind are swept in the background at session start, from the MAIN checkout only, and what a run
+# DELETED is appended to the main checkout's .claude/audit-gate/worktree_gc.log (W1 R5b). WORKTREE_GC=0 turns it off.
+repo gcrepo && git add -A && git commit -qm init
+git -C "$TMP/gcrepo" worktree add -q --detach "$TMP/gcrepo-linked" 2>/dev/null
+mkdir -p "$TMP/gcrepo-left/.claude/audit-gate" && : > "$TMP/gcrepo-left/.claude/audit-gate/test_run.lock"   # what a gate left behind
+touch -t 202601010000 "$TMP/gcrepo-left"
+GCLOG="$TMP/gcrepo/.claude/audit-gate/worktree_gc.log"
+WORKTREE_GC=0 ctx "$TMP/gcrepo" >/dev/null
+ctx "$TMP/gcrepo/.git" >/dev/null       # inside the git dir: rev-parse --is-inside-work-tree prints "false" and exits 0
+ctx "$TMP/gcrepo-linked" >/dev/null     # a linked worktree: gc would sweep main's siblings and log into the worktree
+mkdir -p "$TMP/nogit" && GIT_CEILING_DIRECTORIES="$TMP" ctx "$TMP/nogit" >/dev/null
+sleep 3   # each of these, had it swept, ends well within this (a sweep here takes < 1 s)
+[ -d "$TMP/gcrepo-left" ] && ok "no sweep with WORKTREE_GC=0, inside .git, or from a linked worktree" \
+  || fail "a sweep ran where it must not: $(cat "$GCLOG" "$TMP/gcrepo-linked/.claude/audit-gate/worktree_gc.log" 2>&1)"
+[ ! -e "$TMP/nogit/.claude/audit-gate" ] && ok "  … and nothing is written in a folder that is not a git repo" || fail "the sweep created .claude/audit-gate outside git"
+ctx "$TMP/gcrepo" >/dev/null
+for _ in $(seq 1 100); do [ -s "$GCLOG" ] && break; sleep 0.1; done
+[ ! -e "$TMP/gcrepo-left" ] && grep -q "gcrepo-left" "$GCLOG" 2>/dev/null \
+  && ok "session start sweeps a leftover in the background and logs it" || fail "no background sweep: $(cat "$GCLOG" 2>&1)"
+TMPR="$(cd "$TMP" && pwd -P)"   # git names the log by its real path (/private/var/… on macOS)
+gc_wait() { sleep 1; for _ in $(seq 1 100); do pgrep -f "worktree.py gc --log=$TMPR" >/dev/null || break; sleep 0.1; done; }
+ctx "$TMP/gcrepo" >/dev/null; gc_wait   # a later start with nothing to do must not wipe that record
+grep -q "gcrepo-left" "$GCLOG" 2>/dev/null && ok "  … and a later run with nothing to do keeps the record" || fail "the deletion record was wiped: $(cat "$GCLOG" 2>&1)"
+# a session started in a subfolder of the main checkout (CLAUDE_PROJECT_DIR) records into the checkout's own log
+mkdir -p "$TMP/gcrepo-left2/.agents/evidence" && : > "$TMP/gcrepo-left2/.agents/evidence/a.log" && touch -t 202601010000 "$TMP/gcrepo-left2"
+ctx "$TMP/gcrepo/src" >/dev/null; gc_wait
+grep -q "gcrepo-left2" "$GCLOG" 2>/dev/null && [ ! -e "$TMP/gcrepo/src/.claude/audit-gate/worktree_gc.log" ] \
+  && ok "  … and a start in a subfolder records into the checkout's log" || fail "subfolder start: $(ls "$TMP/gcrepo/src/.claude/audit-gate" 2>&1)"
+gc_wait   # no sweep left running into the EXIT trap
+export WORKTREE_GC=0   # the starts below must not leave background sweeps running while $TMP is removed
+
 # No matrix at all.
 repo none && git add -A && git commit -qm init
 out="$(ctx "$TMP/none")"; rc=$?
