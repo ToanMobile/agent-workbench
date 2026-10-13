@@ -304,6 +304,12 @@ claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role":
 not_approved 7.4k "a marker inside a ~~~ fence"
 claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "Trích:\n```\nAUTO-APPROVE: tests/test_old.sh"}]}}]'
 not_approved 7.4l "a marker after an unclosed fence"
+claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "Trích:\n````\n```\nAUTO-APPROVE: tests/test_old.sh\n```\n````"}]}}]'
+not_approved 7.4m "a marker inside a triple-backtick block nested in a 4-backtick fence"
+claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "```x``` là ví dụ inline\nAUTO-APPROVE: tests/test_old.sh"}]}}]'
+touch "$TR"; out="$(run_gate)"
+if printf '%s' "$out" | grep -q 'agent tự duyệt'; then ok "7.4n: an inline triple-backtick span at a line start does not swallow the real marker after it"
+else fail "7.4n: the real marker after an inline triple-backtick span was dropped. Out: $out"; fi
 claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "AUTO-APPROVE: ../tests/test_old.sh /Volumes/Other/repo/tests/test_old.sh test_old.sh"}]}}]'
 not_approved 7.4g "../, another repo's absolute path or a bare file name"
 claude_recs "$TR" "[{\"type\": \"assistant\", \"timestamp\": \"TS\", \"message\": {\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"SHA256: abc\nAUTO-APPROVE: \`$B/tests/test_old.sh\`.\"}]}}]"

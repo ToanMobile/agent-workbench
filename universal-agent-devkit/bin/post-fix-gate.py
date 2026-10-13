@@ -620,7 +620,7 @@ def _agent_marker_tokens(rec, tp, transcript):
             if isinstance(mc, list) else []
     tokens = []
     for text in texts:
-        text = _FENCE.sub("", text)   # a marker quoted inside a ``` block is someone else's text, not this reply's approval
+        text = _strip_fences(text)   # a marker quoted inside a fenced block is someone else's text, not this reply's approval
         for m in AUTO_APPROVE_LINE.finditer(text):
             for raw in re.split(r"[\s,;]+", m.group(1)):
                 tok = raw.rstrip(".:;").strip("`'\"()[]<>").rstrip(".:;")
@@ -630,7 +630,22 @@ def _agent_marker_tokens(rec, tp, transcript):
     return tokens
 
 
-_FENCE = re.compile(r"(?ms)^[ \t]*(```|~~~)[^\n]*$.*?(?:^[ \t]*\1[^\n]*$|\Z)")   # closed or not, ``` or ~~~
+def _strip_fences(text):
+    """Drop fenced blocks (3+ backticks or tildes; closed only by the same character at least as long; an opener whose info string
+    holds a backtick is an inline span, not a fence; an unclosed fence runs to the end)."""
+    out, fence = [], None
+    for ln in text.split("\n"):
+        m = re.match(r"^[ \t]*(`{3,}|~{3,})(.*)$", ln)
+        if fence is None:
+            if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+                fence = m.group(1)
+            else:
+                out.append(ln)
+        elif m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not m.group(2).strip():
+            fence = None
+    return "\n".join(out)
+
+
 _PATH_TOKEN = re.compile(r"^[\w.@+~/-]*/[\w.@+~/-]*$|^[\w@+~-][\w.@+~-]*\.[\w]+$")   # has a slash, or is name.ext
 
 
