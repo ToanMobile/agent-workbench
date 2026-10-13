@@ -1,0 +1,6112 @@
+[
+ {
+  "repo": "agent-workbench",
+  "area": "profile",
+  "group": "profile",
+  "item": "backend",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "9 councils"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "session_context.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "SessionStart hook: what the model must know before the first"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "UserPromptSubmit",
+  "item": "prompt_context.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "UserPromptSubmit hook: the context-enricher step, done by the"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "bash_write_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "block-dangerous-git.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse guard cho Bash tool."
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "hardware_safety_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "mcp__replicant-mcp__.*",
+  "detail": "Physical Hardware & Embedded Device Brick Protection"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "hardware_safety_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "Physical Hardware & Embedded Device Brick Protection"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "precode_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write",
+  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written."
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "bash_write_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "churn_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|NotebookEdit",
+  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard)."
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "comment_claim_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|NotebookEdit",
+  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc."
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "read_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Read",
+  "detail": "PostToolUse hook on Read. Records \"this session looked at"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "Stop",
+  "item": "claim_check.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5)."
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "Stop",
+  "item": "foreign_repo_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: the gates ran for the wrong project."
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "Stop",
+  "item": "proof_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: a reply that opens with XONG must carry the turn's"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "Stop",
+  "item": "regression_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: the living regression checklist must be green"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "Stop",
+  "item": "review_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "Stop",
+  "item": "security_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger)."
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "Stop",
+  "item": "test_evidence_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`."
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "Stop",
+  "item": "testsourceset_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: compile the TEST source set of every module"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "Stop",
+  "item": "worktree_merge_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: a worktree's work never reached trunk."
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "Notification",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "idle_prompt",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "SessionEnd",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "android-real-device-qa",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": "excluded by profile backend"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "codebase-memory",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: churn_guard.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "compose-recomp-audit",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": "excluded by profile backend"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "context-enricher",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: prompt_context.sh",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deep-module-design",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deploy",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "named in hook: hardware_safety_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": "excluded by profile backend"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deprecation-migration",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "devkit-audit",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "documentation-and-adrs",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "fixbugs",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "giao",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: devkit_harness.py, proof_gate.sh, regression_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "grill-plan",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "incremental-implementation",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "merge-conflict-resolver",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "observability-instrumentation",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "open-code-review",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: review_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qa-review",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qa-visual",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": "excluded by profile backend"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qc",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "security-checklist",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: security_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "session-handoff",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "spec-driven-development",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "taste-mobile-app",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "tdd-workflow",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "ui-ux-pro-max",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "unity-gc-audit",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": "excluded by profile backend"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "verification-before-completion",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "worktree-sandbox",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "writing-skills",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "mcp",
+  "group": "required",
+  "item": "agentmemory",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "mcp",
+  "group": "required",
+  "item": "codebase-memory-mcp",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "mcp",
+  "group": "required",
+  "item": "context7",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "mcp",
+  "group": "required",
+  "item": "play-store",
+  "kind": "",
+  "state": "missing",
+  "trigger": "tool call",
+  "detail": "not declared in .mcp.json"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "mcp",
+  "group": "required",
+  "item": "replicant-mcp",
+  "kind": "",
+  "state": "missing",
+  "trigger": "tool call",
+  "detail": "not declared in .mcp.json"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "tool",
+  "group": "cli",
+  "item": "ocr",
+  "kind": "",
+  "state": "ok",
+  "trigger": "không hook nào chạy lệnh này",
+  "detail": "open-code-review v1.12.13 (fabbdb29) darwin/arm64 | runs in repo: yes"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "tool",
+  "group": "cli",
+  "item": "agent-kit",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/agent-kit"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "tool",
+  "group": "cli",
+  "item": "codebase-memory-mcp",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/codebase-memory-mcp"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "tool",
+  "group": "cli",
+  "item": "npx",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/npx"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "tool",
+  "group": "cli",
+  "item": "uvx",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/uvx"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "tool",
+  "group": "cli",
+  "item": "git",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/git"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "tool",
+  "group": "cli",
+  "item": "python3",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/python3"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p1",
+  "item": "session_context.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "nạp ngữ cảnh đầu phiên (profile, bài học, trạng thái)"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p1",
+  "item": "session_lock.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "một thư mục — một phiên; phiên thứ hai chỉ được đọc"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p1",
+  "item": "AGENTS.md (luật chung)",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p1",
+  "item": "Luật theo profile",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p1",
+  "item": "Mục lục luật riêng",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p1",
+  "item": "Luật riêng của repo (.agents/local/rules)",
+  "kind": "luật",
+  "state": "empty",
+  "trigger": "nạp vào phiên",
+  "detail": "chưa có file luật riêng nào"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p1",
+  "item": "Bài học từ bug cũ (instincts)",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "38 bài học"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p1",
+  "item": "codebase-memory-mcp",
+  "kind": "MCP",
+  "state": "ok",
+  "trigger": "gọi khi agent cần",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p1",
+  "item": "agentmemory",
+  "kind": "MCP",
+  "state": "ok",
+  "trigger": "gọi khi agent cần",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p2",
+  "item": "prompt_context.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "gắn loại việc, bẫy từng gặp và skill gợi ý vào prompt"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p2",
+  "item": "context-enricher",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "agent tự chọn",
+  "detail": "làm giàu yêu cầu ngắn thành hồ sơ kỹ thuật"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p2",
+  "item": "spec-driven-development",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "viết spec trước khi code"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p2",
+  "item": "grill-plan",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "phản biện kế hoạch trước khi code"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p3",
+  "item": "precode_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "cổng duy nhất chạy TRƯỚC khi viết code"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p3",
+  "item": "read_ledger.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "ghi file đã đọc, để sửa file phải đọc trước"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p3",
+  "item": "worktree_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn ghi nhầm vào checkout hoặc worktree không phải của phiên"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p3",
+  "item": "codebase-memory",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "tra đồ thị mã nguồn thay vì đoán"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p4",
+  "item": "block-dangerous-git.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn lệnh git nguy hiểm (--no-verify, force...)"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p4",
+  "item": "bash_write_ledger.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "ghi lại các lệnh Bash có ghi file"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p4",
+  "item": "churn_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì chặn"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p4",
+  "item": "comment_claim_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chú thích không được khẳng định điều chưa kiểm chứng"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p4",
+  "item": "hardware_safety_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn lệnh có thể làm hỏng thiết bị phần cứng"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p4",
+  "item": "incremental-implementation",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "làm từng bước nhỏ, kiểm từng bước"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p5",
+  "item": "tdd-workflow",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "quy trình test RED→GREEN"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p5",
+  "item": "fixbugs",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "chẩn đoán và sửa bug có cặp test"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p5",
+  "item": "Ma trận hồi quy (regression_matrix.active.json)",
+  "kind": "test",
+  "state": "ok",
+  "trigger": "chạy khi dừng",
+  "detail": "10 quy tắc hồi quy"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p5",
+  "item": "regression_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "checklist hồi quy phải xanh khi dừng"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p5",
+  "item": "test_evidence_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "nói 'test pass' hay 'đã fix' phải có kết quả runner; test mới phải từng đỏ"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p5",
+  "item": "testsourceset_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "biên dịch bộ test của mọi module khi dừng"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p6",
+  "item": "review_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "thay đổi code phải qua một lần review ngữ cảnh mới mới được dừng"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p6",
+  "item": "qa-review",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "chất vấn diff, sinh tiêu chí chấp nhận"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p6",
+  "item": "open-code-review",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "review diff bằng ocr (Alibaba)"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p6",
+  "item": "ocr",
+  "kind": "công cụ",
+  "state": "ok",
+  "trigger": "agent tự chọn",
+  "detail": "không hook nào chạy ocr, chỉ chạy khi agent tự gọi"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p6",
+  "item": "principal-code-reviewer",
+  "kind": "subagent",
+  "state": "ok",
+  "trigger": "agent tự gọi",
+  "detail": "12 subagent trong .claude/agents"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p6",
+  "item": "giao",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "giao việc cho Antigravity rồi audit"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p7",
+  "item": "Cổng post-fix (post-fix-gate.py)",
+  "kind": "công cụ",
+  "state": "ok",
+  "trigger": "chạy khi nghiệm thu",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p7",
+  "item": "proof_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "câu mở bằng XONG phải kèm ảnh nghiệm thu của lượt này"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p7",
+  "item": "Ảnh nghiệm thu (proof-capture.py)",
+  "kind": "công cụ",
+  "state": "na",
+  "trigger": "bắt buộc khi có màn hình",
+  "detail": "profile backend: không có màn hình"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p7",
+  "item": "verification-before-completion",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "kiểm chứng trước khi báo xong"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p8",
+  "item": "claim_check.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chống bịa: khẳng định phải có bằng chứng"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p8",
+  "item": "security_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "review bảo mật khi thay đổi chạm vùng nhạy cảm"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p8",
+  "item": "foreign_repo_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "cổng đã chạy nhầm repo: phiên sửa file repo khác"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p8",
+  "item": "worktree_merge_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "worktree phải được gộp vào nhánh chính rồi xoá"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p8",
+  "item": "git pre-commit",
+  "kind": "git",
+  "state": "ok",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p8",
+  "item": "git pre-push",
+  "kind": "git",
+  "state": "missing",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p8",
+  "item": "git commit-msg",
+  "kind": "git",
+  "state": "ok",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "flow",
+  "group": "p8",
+  "item": "session-handoff",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "ghi bàn giao khi kết thúc phiên"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "agent-workbench-dashboard",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/agent-workbench-dashboard"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "agent-workbench-dot30b",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/agent-workbench-dot30b"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "agent-workbench-mcp",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/agent-workbench-mcp"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "agent-workbench-sprite-forge",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/agent-workbench-sprite-forge"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "profile",
+  "group": "profile",
+  "item": "automotive",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "8 councils"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "session_context.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "SessionStart hook: what the model must know before the first"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "local",
+  "trigger": "startup|resume",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "missing",
+  "trigger": "any tool",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "so-tay-bug-muc-luc.sh",
+  "kind": "",
+  "state": "local",
+  "trigger": "startup|resume",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "UserPromptSubmit",
+  "item": "prompt_context.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "UserPromptSubmit hook: the context-enricher step, done by the"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "bash_write_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "block-dangerous-git.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse guard cho Bash tool."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "hardware_safety_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "mcp__replicant-mcp__.*",
+  "detail": "Physical Hardware & Embedded Device Brick Protection"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "hardware_safety_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "Physical Hardware & Embedded Device Brick Protection"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "precode_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write",
+  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "bash_write_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "churn_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|NotebookEdit",
+  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard)."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "comment_claim_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|NotebookEdit",
+  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "read_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Read",
+  "detail": "PostToolUse hook on Read. Records \"this session looked at"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "Stop",
+  "item": "claim_check.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5)."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "Stop",
+  "item": "foreign_repo_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: the gates ran for the wrong project."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "Stop",
+  "item": "proof_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: a reply that opens with XONG must carry the turn's"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "Stop",
+  "item": "rebuild-dist.sh",
+  "kind": "",
+  "state": "local",
+  "trigger": "any tool",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "Stop",
+  "item": "regression_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: the living regression checklist must be green"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "Stop",
+  "item": "review_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "Stop",
+  "item": "security_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger)."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "Stop",
+  "item": "test_evidence_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "Stop",
+  "item": "testsourceset_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: compile the TEST source set of every module"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "Stop",
+  "item": "worktree_merge_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: a worktree's work never reached trunk."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "Notification",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "idle_prompt",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "SessionEnd",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "android-real-device-qa",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "codebase-memory",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: churn_guard.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "compose-recomp-audit",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "context-enricher",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: prompt_context.sh",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deep-module-design",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deploy",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: hardware_safety_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deprecation-migration",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "devkit-audit",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "documentation-and-adrs",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "fixbugs",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "giao",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: devkit_harness.py, proof_gate.sh, regression_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "grill-plan",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "incremental-implementation",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "merge-conflict-resolver",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "observability-instrumentation",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "open-code-review",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: review_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qa-review",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qa-visual",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qc",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "security-checklist",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: security_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "session-handoff",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "spec-driven-development",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "taste-mobile-app",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "tdd-workflow",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "ui-ux-pro-max",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "unity-gc-audit",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": "excluded by profile automotive"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "verification-before-completion",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "worktree-sandbox",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "writing-skills",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "project skill",
+  "item": "geely-fixbugs",
+  "kind": "",
+  "state": "local",
+  "trigger": "",
+  "detail": "not from the kit"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "project skill",
+  "item": "geely-qc",
+  "kind": "",
+  "state": "local",
+  "trigger": "",
+  "detail": "not from the kit"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "project skill",
+  "item": "geely-release",
+  "kind": "",
+  "state": "local",
+  "trigger": "",
+  "detail": "not from the kit"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "project skill",
+  "item": "geely-supabase-cleanup",
+  "kind": "",
+  "state": "local",
+  "trigger": "",
+  "detail": "not from the kit"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "project skill",
+  "item": "geely-supabase-migrate",
+  "kind": "",
+  "state": "local",
+  "trigger": "",
+  "detail": "not from the kit"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "project skill",
+  "item": "run",
+  "kind": "",
+  "state": "local",
+  "trigger": "",
+  "detail": "not from the kit"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "project skill",
+  "item": "voice",
+  "kind": "",
+  "state": "local",
+  "trigger": "",
+  "detail": "not from the kit"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "mcp",
+  "group": "required",
+  "item": "agentmemory",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "mcp",
+  "group": "extra",
+  "item": "android-code-search",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "mcp",
+  "group": "required",
+  "item": "codebase-memory-mcp",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "mcp",
+  "group": "required",
+  "item": "context7",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "mcp",
+  "group": "required",
+  "item": "play-store",
+  "kind": "",
+  "state": "off",
+  "trigger": "tool call",
+  "detail": "declared, not yet enabled"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "mcp",
+  "group": "required",
+  "item": "replicant-mcp",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "mcp",
+  "group": "extra",
+  "item": "supabase",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "tool",
+  "group": "cli",
+  "item": "ocr",
+  "kind": "",
+  "state": "ok",
+  "trigger": "không hook nào chạy lệnh này",
+  "detail": "open-code-review v1.12.13 (fabbdb29) darwin/arm64 | runs in repo: yes"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "tool",
+  "group": "cli",
+  "item": "agent-kit",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/agent-kit"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "tool",
+  "group": "cli",
+  "item": "codebase-memory-mcp",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/codebase-memory-mcp"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "tool",
+  "group": "cli",
+  "item": "npx",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/npx"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "tool",
+  "group": "cli",
+  "item": "uvx",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/uvx"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "tool",
+  "group": "cli",
+  "item": "git",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/git"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "tool",
+  "group": "cli",
+  "item": "python3",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/python3"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p1",
+  "item": "session_context.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "nạp ngữ cảnh đầu phiên (profile, bài học, trạng thái)"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p1",
+  "item": "session_lock.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "một thư mục — một phiên; phiên thứ hai chỉ được đọc"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p1",
+  "item": "AGENTS.md (luật chung)",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p1",
+  "item": "Luật theo profile",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p1",
+  "item": "Mục lục luật riêng",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p1",
+  "item": "Luật riêng của repo (.agents/local/rules)",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": "4 file luật"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p1",
+  "item": "Bài học từ bug cũ (instincts)",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "170 bài học"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p1",
+  "item": "codebase-memory-mcp",
+  "kind": "MCP",
+  "state": "ok",
+  "trigger": "gọi khi agent cần",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p1",
+  "item": "agentmemory",
+  "kind": "MCP",
+  "state": "ok",
+  "trigger": "gọi khi agent cần",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p2",
+  "item": "prompt_context.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "gắn loại việc, bẫy từng gặp và skill gợi ý vào prompt"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p2",
+  "item": "context-enricher",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "agent tự chọn",
+  "detail": "làm giàu yêu cầu ngắn thành hồ sơ kỹ thuật"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p2",
+  "item": "spec-driven-development",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "viết spec trước khi code"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p2",
+  "item": "grill-plan",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "phản biện kế hoạch trước khi code"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p3",
+  "item": "precode_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "cổng duy nhất chạy TRƯỚC khi viết code"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p3",
+  "item": "read_ledger.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "ghi file đã đọc, để sửa file phải đọc trước"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p3",
+  "item": "worktree_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn ghi nhầm vào checkout hoặc worktree không phải của phiên"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p3",
+  "item": "codebase-memory",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "tra đồ thị mã nguồn thay vì đoán"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p4",
+  "item": "block-dangerous-git.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn lệnh git nguy hiểm (--no-verify, force...)"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p4",
+  "item": "bash_write_ledger.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "ghi lại các lệnh Bash có ghi file"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p4",
+  "item": "churn_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì chặn"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p4",
+  "item": "comment_claim_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chú thích không được khẳng định điều chưa kiểm chứng"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p4",
+  "item": "hardware_safety_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn lệnh có thể làm hỏng thiết bị phần cứng"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p4",
+  "item": "incremental-implementation",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "làm từng bước nhỏ, kiểm từng bước"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p5",
+  "item": "tdd-workflow",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "quy trình test RED→GREEN"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p5",
+  "item": "fixbugs",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "chẩn đoán và sửa bug có cặp test"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p5",
+  "item": "Ma trận hồi quy (regression_matrix.active.json)",
+  "kind": "test",
+  "state": "ok",
+  "trigger": "chạy khi dừng",
+  "detail": "22 quy tắc hồi quy"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p5",
+  "item": "regression_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "checklist hồi quy phải xanh khi dừng"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p5",
+  "item": "test_evidence_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "nói 'test pass' hay 'đã fix' phải có kết quả runner; test mới phải từng đỏ"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p5",
+  "item": "testsourceset_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "biên dịch bộ test của mọi module khi dừng"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p6",
+  "item": "review_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "thay đổi code phải qua một lần review ngữ cảnh mới mới được dừng"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p6",
+  "item": "qa-review",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "chất vấn diff, sinh tiêu chí chấp nhận"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p6",
+  "item": "open-code-review",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "review diff bằng ocr (Alibaba)"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p6",
+  "item": "ocr",
+  "kind": "công cụ",
+  "state": "ok",
+  "trigger": "agent tự chọn",
+  "detail": "không hook nào chạy ocr, chỉ chạy khi agent tự gọi"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p6",
+  "item": "principal-code-reviewer",
+  "kind": "subagent",
+  "state": "ok",
+  "trigger": "agent tự gọi",
+  "detail": "13 subagent trong .claude/agents"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p6",
+  "item": "giao",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "giao việc cho Antigravity rồi audit"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p7",
+  "item": "Cổng post-fix (post-fix-gate.py)",
+  "kind": "công cụ",
+  "state": "ok",
+  "trigger": "chạy khi nghiệm thu",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p7",
+  "item": "proof_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "câu mở bằng XONG phải kèm ảnh nghiệm thu của lượt này"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p7",
+  "item": "Ảnh nghiệm thu (proof-capture.py)",
+  "kind": "công cụ",
+  "state": "ok",
+  "trigger": "bắt buộc khi có màn hình",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p7",
+  "item": "verification-before-completion",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "kiểm chứng trước khi báo xong"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p8",
+  "item": "claim_check.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chống bịa: khẳng định phải có bằng chứng"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p8",
+  "item": "security_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "review bảo mật khi thay đổi chạm vùng nhạy cảm"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p8",
+  "item": "foreign_repo_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "cổng đã chạy nhầm repo: phiên sửa file repo khác"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p8",
+  "item": "worktree_merge_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "worktree phải được gộp vào nhánh chính rồi xoá"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p8",
+  "item": "git pre-commit",
+  "kind": "git",
+  "state": "ok",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p8",
+  "item": "git pre-push",
+  "kind": "git",
+  "state": "ok",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p8",
+  "item": "git commit-msg",
+  "kind": "git",
+  "state": "ok",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "flow",
+  "group": "p8",
+  "item": "session-handoff",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "ghi bàn giao khi kết thúc phiên"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "profile",
+  "group": "profile",
+  "item": "android",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "9 councils"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "REPO=\"${CLAUDE_PROJECT_DIR:-$PWD}\"; CBM=",
+  "kind": "",
+  "state": "local",
+  "trigger": "any tool",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "session_context.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "SessionStart hook: what the model must know before the first"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "UserPromptSubmit",
+  "item": "prompt_context.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "UserPromptSubmit hook: the context-enricher step, done by the"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "bash_write_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "block-dangerous-git.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse guard cho Bash tool."
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "hardware_safety_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "mcp__replicant-mcp__.*",
+  "detail": "Physical Hardware & Embedded Device Brick Protection"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "hardware_safety_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "Physical Hardware & Embedded Device Brick Protection"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "precode_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write",
+  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written."
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "bash_write_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "churn_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|NotebookEdit",
+  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard)."
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "comment_claim_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|NotebookEdit",
+  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc."
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "read_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Read",
+  "detail": "PostToolUse hook on Read. Records \"this session looked at"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "Stop",
+  "item": "claim_check.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5)."
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "Stop",
+  "item": "foreign_repo_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: the gates ran for the wrong project."
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "Stop",
+  "item": "proof_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: a reply that opens with XONG must carry the turn's"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "Stop",
+  "item": "regression_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: the living regression checklist must be green"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "Stop",
+  "item": "review_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "Stop",
+  "item": "security_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger)."
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "Stop",
+  "item": "test_evidence_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`."
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "Stop",
+  "item": "testsourceset_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: compile the TEST source set of every module"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "Stop",
+  "item": "worktree_merge_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: a worktree's work never reached trunk."
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "Notification",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "idle_prompt",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "SessionEnd",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "android-real-device-qa",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "codebase-memory",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: churn_guard.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "compose-recomp-audit",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "context-enricher",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: prompt_context.sh",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deep-module-design",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deploy",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: hardware_safety_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deprecation-migration",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "devkit-audit",
+  "kind": "",
+  "state": "missing",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "documentation-and-adrs",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "fixbugs",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "giao",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: devkit_harness.py, proof_gate.sh, regression_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "grill-plan",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "incremental-implementation",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "merge-conflict-resolver",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "observability-instrumentation",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "open-code-review",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: review_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qa-review",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qa-visual",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qc",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "security-checklist",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: security_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "session-handoff",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "spec-driven-development",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "taste-mobile-app",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "tdd-workflow",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "ui-ux-pro-max",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "unity-gc-audit",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": "excluded by profile android"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "verification-before-completion",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "worktree-sandbox",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "writing-skills",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "mcp",
+  "group": "required",
+  "item": "agentmemory",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "mcp",
+  "group": "extra",
+  "item": "android-code-search",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "mcp",
+  "group": "extra",
+  "item": "android-skills",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "mcp",
+  "group": "required",
+  "item": "codebase-memory-mcp",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "mcp",
+  "group": "required",
+  "item": "context7",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "mcp",
+  "group": "required",
+  "item": "play-store",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "mcp",
+  "group": "required",
+  "item": "replicant-mcp",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "tool",
+  "group": "cli",
+  "item": "ocr",
+  "kind": "",
+  "state": "ok",
+  "trigger": "không hook nào chạy lệnh này",
+  "detail": "open-code-review v1.12.13 (fabbdb29) darwin/arm64 | runs in repo: yes"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "tool",
+  "group": "cli",
+  "item": "agent-kit",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/agent-kit"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "tool",
+  "group": "cli",
+  "item": "codebase-memory-mcp",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/codebase-memory-mcp"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "tool",
+  "group": "cli",
+  "item": "npx",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/npx"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "tool",
+  "group": "cli",
+  "item": "uvx",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/uvx"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "tool",
+  "group": "cli",
+  "item": "git",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/git"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "tool",
+  "group": "cli",
+  "item": "python3",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/python3"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p1",
+  "item": "session_context.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "nạp ngữ cảnh đầu phiên (profile, bài học, trạng thái)"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p1",
+  "item": "session_lock.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "một thư mục — một phiên; phiên thứ hai chỉ được đọc"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p1",
+  "item": "AGENTS.md (luật chung)",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p1",
+  "item": "Luật theo profile",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p1",
+  "item": "Mục lục luật riêng",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p1",
+  "item": "Luật riêng của repo (.agents/local/rules)",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": "3 file luật"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p1",
+  "item": "Bài học từ bug cũ (instincts)",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "161 bài học"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p1",
+  "item": "codebase-memory-mcp",
+  "kind": "MCP",
+  "state": "ok",
+  "trigger": "gọi khi agent cần",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p1",
+  "item": "agentmemory",
+  "kind": "MCP",
+  "state": "ok",
+  "trigger": "gọi khi agent cần",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p2",
+  "item": "prompt_context.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "gắn loại việc, bẫy từng gặp và skill gợi ý vào prompt"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p2",
+  "item": "context-enricher",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "agent tự chọn",
+  "detail": "làm giàu yêu cầu ngắn thành hồ sơ kỹ thuật"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p2",
+  "item": "spec-driven-development",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "viết spec trước khi code"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p2",
+  "item": "grill-plan",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "phản biện kế hoạch trước khi code"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p3",
+  "item": "precode_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "cổng duy nhất chạy TRƯỚC khi viết code"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p3",
+  "item": "read_ledger.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "ghi file đã đọc, để sửa file phải đọc trước"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p3",
+  "item": "worktree_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn ghi nhầm vào checkout hoặc worktree không phải của phiên"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p3",
+  "item": "codebase-memory",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "tra đồ thị mã nguồn thay vì đoán"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p4",
+  "item": "block-dangerous-git.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn lệnh git nguy hiểm (--no-verify, force...)"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p4",
+  "item": "bash_write_ledger.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "ghi lại các lệnh Bash có ghi file"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p4",
+  "item": "churn_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì chặn"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p4",
+  "item": "comment_claim_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chú thích không được khẳng định điều chưa kiểm chứng"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p4",
+  "item": "hardware_safety_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn lệnh có thể làm hỏng thiết bị phần cứng"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p4",
+  "item": "incremental-implementation",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "làm từng bước nhỏ, kiểm từng bước"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p5",
+  "item": "tdd-workflow",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "quy trình test RED→GREEN"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p5",
+  "item": "fixbugs",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "chẩn đoán và sửa bug có cặp test"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p5",
+  "item": "Ma trận hồi quy (regression_matrix.active.json)",
+  "kind": "test",
+  "state": "ok",
+  "trigger": "chạy khi dừng",
+  "detail": "13 quy tắc hồi quy"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p5",
+  "item": "regression_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "checklist hồi quy phải xanh khi dừng"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p5",
+  "item": "test_evidence_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "nói 'test pass' hay 'đã fix' phải có kết quả runner; test mới phải từng đỏ"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p5",
+  "item": "testsourceset_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "biên dịch bộ test của mọi module khi dừng"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p6",
+  "item": "review_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "thay đổi code phải qua một lần review ngữ cảnh mới mới được dừng"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p6",
+  "item": "qa-review",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "chất vấn diff, sinh tiêu chí chấp nhận"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p6",
+  "item": "open-code-review",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "review diff bằng ocr (Alibaba)"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p6",
+  "item": "ocr",
+  "kind": "công cụ",
+  "state": "ok",
+  "trigger": "agent tự chọn",
+  "detail": "không hook nào chạy ocr, chỉ chạy khi agent tự gọi"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p6",
+  "item": "principal-code-reviewer",
+  "kind": "subagent",
+  "state": "ok",
+  "trigger": "agent tự gọi",
+  "detail": "13 subagent trong .claude/agents"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p6",
+  "item": "giao",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "giao việc cho Antigravity rồi audit"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p7",
+  "item": "Cổng post-fix (post-fix-gate.py)",
+  "kind": "công cụ",
+  "state": "ok",
+  "trigger": "chạy khi nghiệm thu",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p7",
+  "item": "proof_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "câu mở bằng XONG phải kèm ảnh nghiệm thu của lượt này"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p7",
+  "item": "Ảnh nghiệm thu (proof-capture.py)",
+  "kind": "công cụ",
+  "state": "ok",
+  "trigger": "bắt buộc khi có màn hình",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p7",
+  "item": "verification-before-completion",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "kiểm chứng trước khi báo xong"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p8",
+  "item": "claim_check.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chống bịa: khẳng định phải có bằng chứng"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p8",
+  "item": "security_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "review bảo mật khi thay đổi chạm vùng nhạy cảm"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p8",
+  "item": "foreign_repo_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "cổng đã chạy nhầm repo: phiên sửa file repo khác"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p8",
+  "item": "worktree_merge_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "worktree phải được gộp vào nhánh chính rồi xoá"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p8",
+  "item": "git pre-commit",
+  "kind": "git",
+  "state": "ok",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p8",
+  "item": "git pre-push",
+  "kind": "git",
+  "state": "missing",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p8",
+  "item": "git commit-msg",
+  "kind": "git",
+  "state": "ok",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "flow",
+  "group": "p8",
+  "item": "session-handoff",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "ghi bàn giao khi kết thúc phiên"
+ },
+ {
+  "repo": "Goods",
+  "area": "profile",
+  "group": "profile",
+  "item": "game",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "8 councils"
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "session-start.sh",
+  "kind": "",
+  "state": "local",
+  "trigger": "any tool",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "session_context.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "SessionStart hook: what the model must know before the first"
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "UserPromptSubmit",
+  "item": "prompt_context.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "UserPromptSubmit hook: the context-enricher step, done by the"
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "bash_write_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "block-dangerous-git.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse guard cho Bash tool."
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "hardware_safety_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "mcp__replicant-mcp__.*",
+  "detail": "Physical Hardware & Embedded Device Brick Protection"
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "hardware_safety_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "Physical Hardware & Embedded Device Brick Protection"
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "precode_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write",
+  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written."
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "validate-commit.sh",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "bash_write_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "churn_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|NotebookEdit",
+  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard)."
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "comment_claim_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|NotebookEdit",
+  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc."
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "read_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Read",
+  "detail": "PostToolUse hook on Read. Records \"this session looked at"
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "validate-assets.sh",
+  "kind": "",
+  "state": "local",
+  "trigger": "Write|Edit",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "Stop",
+  "item": "claim_check.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5)."
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "Stop",
+  "item": "foreign_repo_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: the gates ran for the wrong project."
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "Stop",
+  "item": "proof_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: a reply that opens with XONG must carry the turn's"
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "Stop",
+  "item": "regression_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: the living regression checklist must be green"
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "Stop",
+  "item": "review_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted"
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "Stop",
+  "item": "security_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger)."
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "Stop",
+  "item": "session-stop.sh",
+  "kind": "",
+  "state": "local",
+  "trigger": "any tool",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "Stop",
+  "item": "test_evidence_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`."
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "Stop",
+  "item": "testsourceset_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: compile the TEST source set of every module"
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "Stop",
+  "item": "worktree_merge_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: a worktree's work never reached trunk."
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "Notification",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "idle_prompt",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "SessionEnd",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PostCompact",
+  "item": "post-compact.sh",
+  "kind": "",
+  "state": "local",
+  "trigger": "any tool",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreCompact",
+  "item": "pre-compact.sh",
+  "kind": "",
+  "state": "local",
+  "trigger": "any tool",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "android-real-device-qa",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": "excluded by profile game"
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "codebase-memory",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: churn_guard.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "compose-recomp-audit",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": "excluded by profile game"
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "context-enricher",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: prompt_context.sh",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deep-module-design",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deploy",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "named in hook: hardware_safety_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": "excluded by profile game"
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deprecation-migration",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "devkit-audit",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "documentation-and-adrs",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "fixbugs",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "giao",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: devkit_harness.py, proof_gate.sh, regression_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "grill-plan",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "incremental-implementation",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "merge-conflict-resolver",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "observability-instrumentation",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "open-code-review",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: review_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qa-review",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qa-visual",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qc",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "security-checklist",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: security_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "session-handoff",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "spec-driven-development",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "taste-mobile-app",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "agent's own choice only",
+  "detail": "excluded by profile game"
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "tdd-workflow",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "ui-ux-pro-max",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "unity-gc-audit",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "verification-before-completion",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "worktree-sandbox",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "writing-skills",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "project skill",
+  "item": "art-direction",
+  "kind": "",
+  "state": "local",
+  "trigger": "",
+  "detail": "not from the kit"
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "project skill",
+  "item": "game-design-doc",
+  "kind": "",
+  "state": "local",
+  "trigger": "",
+  "detail": "not from the kit"
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "project skill",
+  "item": "story-pipeline",
+  "kind": "",
+  "state": "local",
+  "trigger": "",
+  "detail": "not from the kit"
+ },
+ {
+  "repo": "Goods",
+  "area": "mcp",
+  "group": "required",
+  "item": "agentmemory",
+  "kind": "",
+  "state": "off",
+  "trigger": "tool call",
+  "detail": "declared, but disabled in settings.local.json"
+ },
+ {
+  "repo": "Goods",
+  "area": "mcp",
+  "group": "required",
+  "item": "codebase-memory-mcp",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "Goods",
+  "area": "mcp",
+  "group": "required",
+  "item": "context7",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "Goods",
+  "area": "mcp",
+  "group": "required",
+  "item": "play-store",
+  "kind": "",
+  "state": "off",
+  "trigger": "tool call",
+  "detail": "declared, but disabled in settings.local.json"
+ },
+ {
+  "repo": "Goods",
+  "area": "mcp",
+  "group": "required",
+  "item": "replicant-mcp",
+  "kind": "",
+  "state": "missing",
+  "trigger": "tool call",
+  "detail": "not declared in .mcp.json"
+ },
+ {
+  "repo": "Goods",
+  "area": "tool",
+  "group": "cli",
+  "item": "ocr",
+  "kind": "",
+  "state": "ok",
+  "trigger": "không hook nào chạy lệnh này",
+  "detail": "open-code-review v1.12.13 (fabbdb29) darwin/arm64 | runs in repo: yes"
+ },
+ {
+  "repo": "Goods",
+  "area": "tool",
+  "group": "cli",
+  "item": "agent-kit",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/agent-kit"
+ },
+ {
+  "repo": "Goods",
+  "area": "tool",
+  "group": "cli",
+  "item": "codebase-memory-mcp",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/codebase-memory-mcp"
+ },
+ {
+  "repo": "Goods",
+  "area": "tool",
+  "group": "cli",
+  "item": "npx",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/npx"
+ },
+ {
+  "repo": "Goods",
+  "area": "tool",
+  "group": "cli",
+  "item": "uvx",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/uvx"
+ },
+ {
+  "repo": "Goods",
+  "area": "tool",
+  "group": "cli",
+  "item": "git",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/git"
+ },
+ {
+  "repo": "Goods",
+  "area": "tool",
+  "group": "cli",
+  "item": "python3",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/python3"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p1",
+  "item": "session_context.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "nạp ngữ cảnh đầu phiên (profile, bài học, trạng thái)"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p1",
+  "item": "session_lock.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "một thư mục — một phiên; phiên thứ hai chỉ được đọc"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p1",
+  "item": "AGENTS.md (luật chung)",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p1",
+  "item": "Luật theo profile",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p1",
+  "item": "Mục lục luật riêng",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p1",
+  "item": "Luật riêng của repo (.agents/local/rules)",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": "7 file luật"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p1",
+  "item": "Bài học từ bug cũ (instincts)",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "51 bài học"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p1",
+  "item": "codebase-memory-mcp",
+  "kind": "MCP",
+  "state": "ok",
+  "trigger": "gọi khi agent cần",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p1",
+  "item": "agentmemory",
+  "kind": "MCP",
+  "state": "off",
+  "trigger": "gọi khi agent cần",
+  "detail": "declared, but disabled in settings.local.json"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p2",
+  "item": "prompt_context.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "gắn loại việc, bẫy từng gặp và skill gợi ý vào prompt"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p2",
+  "item": "context-enricher",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "agent tự chọn",
+  "detail": "làm giàu yêu cầu ngắn thành hồ sơ kỹ thuật"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p2",
+  "item": "spec-driven-development",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "viết spec trước khi code"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p2",
+  "item": "grill-plan",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "phản biện kế hoạch trước khi code"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p3",
+  "item": "precode_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "cổng duy nhất chạy TRƯỚC khi viết code"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p3",
+  "item": "read_ledger.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "ghi file đã đọc, để sửa file phải đọc trước"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p3",
+  "item": "worktree_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn ghi nhầm vào checkout hoặc worktree không phải của phiên"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p3",
+  "item": "codebase-memory",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "tra đồ thị mã nguồn thay vì đoán"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p4",
+  "item": "block-dangerous-git.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn lệnh git nguy hiểm (--no-verify, force...)"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p4",
+  "item": "bash_write_ledger.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "ghi lại các lệnh Bash có ghi file"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p4",
+  "item": "churn_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì chặn"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p4",
+  "item": "comment_claim_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chú thích không được khẳng định điều chưa kiểm chứng"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p4",
+  "item": "hardware_safety_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn lệnh có thể làm hỏng thiết bị phần cứng"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p4",
+  "item": "incremental-implementation",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "làm từng bước nhỏ, kiểm từng bước"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p5",
+  "item": "tdd-workflow",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "quy trình test RED→GREEN"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p5",
+  "item": "fixbugs",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "chẩn đoán và sửa bug có cặp test"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p5",
+  "item": "Ma trận hồi quy (regression_matrix.active.json)",
+  "kind": "test",
+  "state": "ok",
+  "trigger": "chạy khi dừng",
+  "detail": "3 quy tắc hồi quy"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p5",
+  "item": "regression_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "checklist hồi quy phải xanh khi dừng"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p5",
+  "item": "test_evidence_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "nói 'test pass' hay 'đã fix' phải có kết quả runner; test mới phải từng đỏ"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p5",
+  "item": "testsourceset_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "biên dịch bộ test của mọi module khi dừng"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p6",
+  "item": "review_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "thay đổi code phải qua một lần review ngữ cảnh mới mới được dừng"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p6",
+  "item": "qa-review",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "chất vấn diff, sinh tiêu chí chấp nhận"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p6",
+  "item": "open-code-review",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "review diff bằng ocr (Alibaba)"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p6",
+  "item": "ocr",
+  "kind": "công cụ",
+  "state": "ok",
+  "trigger": "agent tự chọn",
+  "detail": "không hook nào chạy ocr, chỉ chạy khi agent tự gọi"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p6",
+  "item": "principal-code-reviewer",
+  "kind": "subagent",
+  "state": "ok",
+  "trigger": "agent tự gọi",
+  "detail": "19 subagent trong .claude/agents"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p6",
+  "item": "giao",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "giao việc cho Antigravity rồi audit"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p7",
+  "item": "Cổng post-fix (post-fix-gate.py)",
+  "kind": "công cụ",
+  "state": "ok",
+  "trigger": "chạy khi nghiệm thu",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p7",
+  "item": "proof_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "câu mở bằng XONG phải kèm ảnh nghiệm thu của lượt này"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p7",
+  "item": "Ảnh nghiệm thu (proof-capture.py)",
+  "kind": "công cụ",
+  "state": "ok",
+  "trigger": "bắt buộc khi có màn hình",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p7",
+  "item": "verification-before-completion",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "kiểm chứng trước khi báo xong"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p8",
+  "item": "claim_check.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chống bịa: khẳng định phải có bằng chứng"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p8",
+  "item": "security_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "review bảo mật khi thay đổi chạm vùng nhạy cảm"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p8",
+  "item": "foreign_repo_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "cổng đã chạy nhầm repo: phiên sửa file repo khác"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p8",
+  "item": "worktree_merge_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "worktree phải được gộp vào nhánh chính rồi xoá"
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p8",
+  "item": "git pre-commit",
+  "kind": "git",
+  "state": "ok",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p8",
+  "item": "git pre-push",
+  "kind": "git",
+  "state": "missing",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p8",
+  "item": "git commit-msg",
+  "kind": "git",
+  "state": "ok",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "flow",
+  "group": "p8",
+  "item": "session-handoff",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "ghi bàn giao khi kết thúc phiên"
+ },
+ {
+  "repo": "Goods",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "Goods-Triple-Shelf-Match-3D-mcp",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D-mcp"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "profile",
+  "group": "profile",
+  "item": "game",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "8 councils"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "session_context.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "SessionStart hook: what the model must know before the first"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "UserPromptSubmit",
+  "item": "prompt_context.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "UserPromptSubmit hook: the context-enricher step, done by the"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "bash_write_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "block-dangerous-git.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse guard cho Bash tool."
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "hardware_safety_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "mcp__replicant-mcp__.*",
+  "detail": "Physical Hardware & Embedded Device Brick Protection"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "hardware_safety_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "Physical Hardware & Embedded Device Brick Protection"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "precode_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write",
+  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written."
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "bash_write_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "churn_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|NotebookEdit",
+  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard)."
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "comment_claim_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|NotebookEdit",
+  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc."
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "read_ledger.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Read",
+  "detail": "PostToolUse hook on Read. Records \"this session looked at"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "validate-assets.sh",
+  "kind": "",
+  "state": "local",
+  "trigger": "Edit|Write|NotebookEdit",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "Stop",
+  "item": "claim_check.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5)."
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "Stop",
+  "item": "foreign_repo_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: the gates ran for the wrong project."
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "Stop",
+  "item": "proof_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: a reply that opens with XONG must carry the turn's"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "Stop",
+  "item": "regression_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: the living regression checklist must be green"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "Stop",
+  "item": "review_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "Stop",
+  "item": "security_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger)."
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "Stop",
+  "item": "test_evidence_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`."
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "Stop",
+  "item": "testsourceset_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: compile the TEST source set of every module"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "Stop",
+  "item": "worktree_merge_gate.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "Stop hook: a worktree's work never reached trunk."
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "Notification",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "idle_prompt",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "SessionEnd",
+  "item": "session_lock.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "any tool",
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "android-real-device-qa",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": "excluded by profile game"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "codebase-memory",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: churn_guard.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "compose-recomp-audit",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": "excluded by profile game"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "context-enricher",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: prompt_context.sh",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deep-module-design",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deploy",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "named in hook: hardware_safety_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": "excluded by profile game"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "deprecation-migration",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "devkit-audit",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "documentation-and-adrs",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "fixbugs",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "giao",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: devkit_harness.py, proof_gate.sh, regression_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "grill-plan",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "incremental-implementation",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "merge-conflict-resolver",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "observability-instrumentation",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "open-code-review",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: review_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qa-review",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qa-visual",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "qc",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "security-checklist",
+  "kind": "",
+  "state": "ok",
+  "trigger": "named in hook: security_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "session-handoff",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "spec-driven-development",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "taste-mobile-app",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "agent's own choice only",
+  "detail": "excluded by profile game"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "tdd-workflow",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "ui-ux-pro-max",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "unity-gc-audit",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "verification-before-completion",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "worktree-sandbox",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "writing-skills",
+  "kind": "",
+  "state": "ok",
+  "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "mcp",
+  "group": "required",
+  "item": "agentmemory",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "mcp",
+  "group": "required",
+  "item": "codebase-memory-mcp",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "mcp",
+  "group": "required",
+  "item": "context7",
+  "kind": "",
+  "state": "ok",
+  "trigger": "tool call",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "mcp",
+  "group": "required",
+  "item": "play-store",
+  "kind": "",
+  "state": "off",
+  "trigger": "tool call",
+  "detail": "declared, not yet enabled"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "mcp",
+  "group": "required",
+  "item": "replicant-mcp",
+  "kind": "",
+  "state": "off",
+  "trigger": "tool call",
+  "detail": "declared, not yet enabled"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "tool",
+  "group": "cli",
+  "item": "ocr",
+  "kind": "",
+  "state": "ok",
+  "trigger": "không hook nào chạy lệnh này",
+  "detail": "open-code-review v1.12.13 (fabbdb29) darwin/arm64 | runs in repo: yes"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "tool",
+  "group": "cli",
+  "item": "agent-kit",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/agent-kit"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "tool",
+  "group": "cli",
+  "item": "codebase-memory-mcp",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/codebase-memory-mcp"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "tool",
+  "group": "cli",
+  "item": "npx",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/npx"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "tool",
+  "group": "cli",
+  "item": "uvx",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/Users/alex/.local/bin/uvx"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "tool",
+  "group": "cli",
+  "item": "git",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/git"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "tool",
+  "group": "cli",
+  "item": "python3",
+  "kind": "",
+  "state": "ok",
+  "trigger": "",
+  "detail": "/opt/homebrew/bin/python3"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p1",
+  "item": "session_context.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "nạp ngữ cảnh đầu phiên (profile, bài học, trạng thái)"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p1",
+  "item": "session_lock.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "một thư mục — một phiên; phiên thứ hai chỉ được đọc"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p1",
+  "item": "AGENTS.md (luật chung)",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p1",
+  "item": "Luật theo profile",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p1",
+  "item": "Mục lục luật riêng",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "nạp vào phiên",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p1",
+  "item": "Luật riêng của repo (.agents/local/rules)",
+  "kind": "luật",
+  "state": "empty",
+  "trigger": "nạp vào phiên",
+  "detail": "chưa có file luật riêng nào"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p1",
+  "item": "Bài học từ bug cũ (instincts)",
+  "kind": "luật",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "15 bài học"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p1",
+  "item": "codebase-memory-mcp",
+  "kind": "MCP",
+  "state": "ok",
+  "trigger": "gọi khi agent cần",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p1",
+  "item": "agentmemory",
+  "kind": "MCP",
+  "state": "ok",
+  "trigger": "gọi khi agent cần",
+  "detail": "declared and enabled"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p2",
+  "item": "prompt_context.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "gắn loại việc, bẫy từng gặp và skill gợi ý vào prompt"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p2",
+  "item": "context-enricher",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "agent tự chọn",
+  "detail": "làm giàu yêu cầu ngắn thành hồ sơ kỹ thuật"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p2",
+  "item": "spec-driven-development",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "viết spec trước khi code"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p2",
+  "item": "grill-plan",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "phản biện kế hoạch trước khi code"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p3",
+  "item": "precode_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "cổng duy nhất chạy TRƯỚC khi viết code"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p3",
+  "item": "read_ledger.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "ghi file đã đọc, để sửa file phải đọc trước"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p3",
+  "item": "worktree_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn ghi nhầm vào checkout hoặc worktree không phải của phiên"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p3",
+  "item": "codebase-memory",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "tra đồ thị mã nguồn thay vì đoán"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p4",
+  "item": "block-dangerous-git.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn lệnh git nguy hiểm (--no-verify, force...)"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p4",
+  "item": "bash_write_ledger.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "ghi lại các lệnh Bash có ghi file"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p4",
+  "item": "churn_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì chặn"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p4",
+  "item": "comment_claim_guard.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chú thích không được khẳng định điều chưa kiểm chứng"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p4",
+  "item": "hardware_safety_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chặn lệnh có thể làm hỏng thiết bị phần cứng"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p4",
+  "item": "incremental-implementation",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "làm từng bước nhỏ, kiểm từng bước"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p5",
+  "item": "tdd-workflow",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "quy trình test RED→GREEN"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p5",
+  "item": "fixbugs",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "chẩn đoán và sửa bug có cặp test"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p5",
+  "item": "Ma trận hồi quy (regression_matrix.active.json)",
+  "kind": "test",
+  "state": "ok",
+  "trigger": "chạy khi dừng",
+  "detail": "1 quy tắc hồi quy"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p5",
+  "item": "regression_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "checklist hồi quy phải xanh khi dừng"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p5",
+  "item": "test_evidence_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "nói 'test pass' hay 'đã fix' phải có kết quả runner; test mới phải từng đỏ"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p5",
+  "item": "testsourceset_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "biên dịch bộ test của mọi module khi dừng"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p6",
+  "item": "review_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "thay đổi code phải qua một lần review ngữ cảnh mới mới được dừng"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p6",
+  "item": "qa-review",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "chất vấn diff, sinh tiêu chí chấp nhận"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p6",
+  "item": "open-code-review",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "review diff bằng ocr (Alibaba)"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p6",
+  "item": "ocr",
+  "kind": "công cụ",
+  "state": "ok",
+  "trigger": "agent tự chọn",
+  "detail": "không hook nào chạy ocr, chỉ chạy khi agent tự gọi"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p6",
+  "item": "principal-code-reviewer",
+  "kind": "subagent",
+  "state": "ok",
+  "trigger": "agent tự gọi",
+  "detail": "12 subagent trong .claude/agents"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p6",
+  "item": "giao",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "giao việc cho Antigravity rồi audit"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p7",
+  "item": "Cổng post-fix (post-fix-gate.py)",
+  "kind": "công cụ",
+  "state": "ok",
+  "trigger": "chạy khi nghiệm thu",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p7",
+  "item": "proof_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "câu mở bằng XONG phải kèm ảnh nghiệm thu của lượt này"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p7",
+  "item": "Ảnh nghiệm thu (proof-capture.py)",
+  "kind": "công cụ",
+  "state": "ok",
+  "trigger": "bắt buộc khi có màn hình",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p7",
+  "item": "verification-before-completion",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "kiểm chứng trước khi báo xong"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p8",
+  "item": "claim_check.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "chống bịa: khẳng định phải có bằng chứng"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p8",
+  "item": "security_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "review bảo mật khi thay đổi chạm vùng nhạy cảm"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p8",
+  "item": "foreign_repo_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "cổng đã chạy nhầm repo: phiên sửa file repo khác"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p8",
+  "item": "worktree_merge_gate.sh",
+  "kind": "hook",
+  "state": "ok",
+  "trigger": "hook tự chạy",
+  "detail": "worktree phải được gộp vào nhánh chính rồi xoá"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p8",
+  "item": "git pre-commit",
+  "kind": "git",
+  "state": "ok",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p8",
+  "item": "git pre-push",
+  "kind": "git",
+  "state": "ok",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p8",
+  "item": "git commit-msg",
+  "kind": "git",
+  "state": "ok",
+  "trigger": "git tự chạy",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "flow",
+  "group": "p8",
+  "item": "session-handoff",
+  "kind": "skill",
+  "state": "ok",
+  "trigger": "gợi ý trong prompt",
+  "detail": "ghi bàn giao khi kết thúc phiên"
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "Neighbours-From-Hell-keystore",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/Game/Neighbours-From-Hell-keystore"
+ }
+]
