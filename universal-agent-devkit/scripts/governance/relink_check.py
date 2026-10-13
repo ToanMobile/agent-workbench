@@ -82,7 +82,34 @@ def missing(project):
             skill = os.path.basename(os.path.dirname(os.path.realpath(src))) if os.path.islink(src) else None
             if name.endswith(".md") and skill not in excluded and not os.path.lexists(os.path.join(project, ".claude", "commands", name)):
                 out.append(f".claude/commands/{name}")
+    # every DevKit skill the profile keeps, in an install that has .agents/skills/: a skill the DevKit gained after the install
+    # never got its link (OfficeReader 2026-10-13: health 96, .agents/skills/devkit-audit missing)
+    skills_dir = os.path.join(project, ".agents", "skills")
+    if os.path.isdir(skills_dir):
+        for name in sorted(os.listdir(os.path.join(DEVKIT, "skills"))):
+            if (name not in excluded and os.path.isfile(os.path.join(DEVKIT, "skills", name, "SKILL.md"))
+                    and not os.path.lexists(os.path.join(skills_dir, name))):
+                out.append(f".agents/skills/{name}")
     return sorted(set(out))
+
+
+def keep_out_of_git(project, rel):
+    """A new link is local state, as the installer keeps it: /rel goes to .git/info/exclude unless an ignore rule covers it."""
+    if subprocess.run(["git", "-C", project, "check-ignore", "-q", "--", rel], capture_output=True).returncode == 0:
+        return
+    common = git(project, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not common:
+        return
+    path = os.path.join(common, "info", "exclude")
+    line = "/" + rel
+    try:
+        raw = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
+        if line not in raw.splitlines():
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(("\n" if raw and not raw.endswith("\n") else "") + line + "\n")
+    except OSError:
+        pass
 
 
 def link_root(project):
@@ -120,6 +147,7 @@ def relink(project, gone):
         if src.startswith(os.path.join(project, ".agents", "local") + os.sep):
             src = os.path.relpath(src, os.path.dirname(dst))   # project tier: relative, like the installer
         os.symlink(src, dst)
+        keep_out_of_git(project, rel)
     return left
 
 

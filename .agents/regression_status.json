@@ -567,16 +567,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-13 07:19:36",
-        "ts": 1791850776.625567,
+        "at": "2026-10-13 07:26:30",
+        "ts": 1791851190.840332,
         "task": null,
-        "commit": "24813c0+dirty",
-        "duration": "118.72s",
+        "commit": "8e8aea6+dirty",
+        "duration": "73.93s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261013-071935.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261013-072630.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-13 07:26:30",
+          "ts": 1791851190.840332,
+          "task": null,
+          "commit": "8e8aea6+dirty",
+          "duration": "73.93s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261013-072630.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-13 07:19:36",
@@ -619,17 +630,6 @@
           "duration": "171.47s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261012-224234.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-12 22:23:17",
-          "ts": 1791818597.186618,
-          "task": null,
-          "commit": "4ea0e89+dirty",
-          "duration": "79.72s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261012-222316.log",
           "deleted": []
         }
       ],
@@ -3108,6 +3108,48 @@
         "log": ".agents/evidence/redproof-BUG-20261012-hardware-gate-refuses-clearing-adb-scrat/20261012-224411.log",
         "patch": ".agents/local/red-patches/BUG-20261012-hardware-gate-refuses-clearing-adb-scrat.patch"
       }
+    },
+    "BUG-20261013-a-repo-link-to-the-old-scripts-red-proof": {
+      "id": "BUG-20261013-a-repo-link-to-the-old-scripts-red-proof",
+      "kind": "bug",
+      "title": "a repo link to the old scripts/red_proof.py path is broken since scripts/ was split into groups",
+      "cause": null,
+      "component": "installer",
+      "created_at": "2026-10-13 07:25:14",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "low",
+      "linked_at": "2026-10-13 07:25:14",
+      "linked_ts": 1791851114.794415,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/installer/test_legacy_script_paths.sh"
+      ]
+    },
+    "BUG-20261013-relink-check-never-links-a-skill-the-dev": {
+      "id": "BUG-20261013-relink-check-never-links-a-skill-the-dev",
+      "kind": "bug",
+      "title": "relink_check never links a skill the DevKit gained after the install",
+      "cause": null,
+      "component": "relink",
+      "created_at": "2026-10-13 07:25:15",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "low",
+      "linked_at": "2026-10-13 07:25:15",
+      "linked_ts": 1791851115.111962,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/worktree_git/test_relink_skills.sh"
+      ]
     }
   },
   "meta": {
