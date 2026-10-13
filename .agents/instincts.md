@@ -315,3 +315,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** A MUST/CẤM regex lint cannot see obligations phrased without a keyword, so an on-demand split needs a hand review and pinned guardrails
 - **Nguyên nhân:** Dot 28 moved rule blocks to an on-demand file after a regex check for MUST/CẤM/BẮT BUỘC/bất biến; two independent reviewers then found obligations the regex missed (analytics PII, 'đổi ranh giới = hỏi trước', 'luôn DOKill(true)', 'không thêm Singleton mới')
 - **Quy tắc phòng ngừa & Cách fix:** Cut a rule block only after reading each line for an obligation (phải, không, luôn, chỉ khi, hỏi trước) and pin the ones that must stay in the LOADED text as needles in tests/context_memory/test_profile_split.sh; a rule that applies to every turn belongs in the loaded file (INSTINCT-011)
+
+---
+
+### [INSTINCT-038] A copy that keeps the source's macOS user flags (uchg) cannot be deleted, and git drops the worktree registration anyway
+- **Ngày phát hiện:** 2026-10-13
+- **Hiện tượng lỗi:** Seven unregistered GeelyEx2-* folders (150-200 MB each) left after agent-kit worktree finish; the next session could not reuse the name and made -1013b, -1013c
+- **Nguyên nhân:** worktree.py _copy used shutil.copy2, which copies BSD flags: the user's keystore (chflags uchg) became an undeletable copy; git 2.55 worktree remove --force errors on it but still deletes the worktree's admin dir, so the folder stays, no guard lists it, nothing can retry. Earlier memory blamed the sandbox: a wrong mechanism chosen from the symptom alone
+- **Quy tắc phòng ngừa & Cách fix:** Copy secrets with shutil.copy (content+mode), never copy2 or cp -p; a remove/cleanup clears user flags first and verifies the folder is gone (fail closed, exit non-zero, name the path); before blaming a sandbox for EPERM, ls -lO the file: the flag is the discriminating evidence

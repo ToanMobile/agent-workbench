@@ -33,6 +33,9 @@
 14 tests/installer/test_agent_health.sh
 13 hooks/tests/or_ported_contract_test.sh
 13 tests/worktree_git/test_worktree.sh
+2 tests/worktree_git/test_worktree_immutable_copy.sh
+4 tests/gates/test_regression_gate_held_by_other.sh
+1 tests/installer/test_ocr_review_helper.sh
 13 tests/gates/test_gate_friction.sh
 13 tests/gates/test_proof_capture.sh
 12 tests/verification/test_bug_capture.sh

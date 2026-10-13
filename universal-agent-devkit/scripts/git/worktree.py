@@ -384,7 +384,7 @@ def _copy(main, wt, rel):
     if git(wt, "check-ignore", "-q", "--no-index", "--", rel, check=False).returncode != 0:
         return False
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    shutil.copy2(src, dst)
+    shutil.copy(src, dst)   # content + mode, NOT copy2: it carries macOS flags, and a copy of a keystore locked with `chflags uchg` could never be deleted
     return True
 
 
@@ -1298,6 +1298,27 @@ def _unsaved_memory(wt, main):
     return lost
 
 
+UF_LOCK = getattr(stat, "UF_IMMUTABLE", 0) | getattr(stat, "UF_APPEND", 0)   # 0 off macOS/BSD: nothing to clear there
+
+
+def _clear_user_locks(top):
+    """Clear the user-immutable / append-only flags (`chflags uchg`) under `top`; the paths that would not unlock. A worktree made
+    before `_copy` stopped copying flags holds locked copies of the user's keystore, which git cannot delete. os.walk does not follow
+    links, so `.agents/devkit` or any other link into the main checkout is never entered: only files that live in `top` are unlocked."""
+    stuck = []
+    if not UF_LOCK or not hasattr(os, "chflags"):
+        return stuck
+    for dirpath, dirs, files in os.walk(top):
+        for p in [dirpath] + [os.path.join(dirpath, n) for n in dirs + files]:
+            try:
+                st = os.lstat(p)
+                if st.st_flags & UF_LOCK:
+                    (os.lchflags if stat.S_ISLNK(st.st_mode) else os.chflags)(p, st.st_flags & ~UF_LOCK)
+            except OSError:
+                stuck.append(p)   # named in the refusal below, if the folder then survives
+    return stuck
+
+
 def cmd_remove(cwd, args):
     if len(args) != 1:
         die("usage: agent-kit worktree remove <path>")
@@ -1320,7 +1341,17 @@ def cmd_remove(cwd, args):
         notes = _unsaved_memory(wt, main)   # read BEFORE the folder goes
     except Exception:  # noqa: BLE001 - a warning only: never in the way of the removal
         notes = []
-    git(main, "worktree", "remove", "--force", wt, bounded=False)
+    stuck = _clear_user_locks(wt)
+    r = git(main, "worktree", "remove", "--force", wt, check=False, bounded=False)
+    if r.returncode != 0 and any(_same_path(e["path"], wt) for e in _worktree_entries(main)):
+        raise SystemExit(f"✖ worktree: git worktree remove: {r.stderr.strip()}")   # refused before it deleted anything: still registered, retry works
+    left = []
+    if os.path.lexists(wt):   # git (2.55) drops its registration even when it cannot delete the folder: finish here or say what is left
+        shutil.rmtree(wt, **{("onexc" if sys.version_info >= (3, 12) else "onerror"): lambda f, p, e: left.append(p)})
+    if os.path.lexists(wt):
+        names = ", ".join((left or stuck)[:5]) or r.stderr.strip()[-200:]
+        die(tr(f"{wt} KHÔNG xoá hết được (git đã gỡ đăng ký nên không ai còn thấy nó): {names}. Mở khoá/xoá tay thư mục đó",
+               f"{wt} could NOT be deleted completely (git has dropped its registration, so no guard lists it any more): {names}. Unlock and delete the folder by hand"), 1)
     branch = state.get("branch")
     print(f"✔ {tr('đã gỡ', 'removed')} {wt}" + (f"; {tr('nhánh', 'branch')} {branch} "
           + tr("giữ lại (xoá khi đã merge: git branch -d ", "kept (delete once merged: git branch -d ") + branch + ")" if branch else ""))
