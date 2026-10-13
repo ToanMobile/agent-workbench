@@ -44,6 +44,9 @@ a = sys.argv[3:]
 if kind == "edit":
     e = {"type": "assistant", "message": {"role": "assistant", "content": [
         {"type": "tool_use", "id": a[0], "name": "Write", "input": {"file_path": a[1], "content": "x"}}]}}
+elif kind == "agent":
+    e = {"type": "assistant", "message": {"role": "assistant", "content": [
+        {"type": "tool_use", "id": a[0], "name": "Agent", "input": {"subagent_type": a[1], "prompt": "review"}}]}}
 elif kind == "bash":
     e = {"type": "assistant", "message": {"role": "assistant", "content": [
         {"type": "tool_use", "id": a[0], "name": "Bash", "input": {"command": a[1]}}]}}
@@ -73,6 +76,10 @@ stop b REVIEW_GATE_OCR=0; rc=$?
 
 # 3. a full OCR review that succeeded after the edit counts as the review
 mkdir -p "$TMP/rep"; printf '{"comments":[]}\n' > "$TMP/rep/ocr-review.json"; printf '{"comments":[]}\n' > "$TMP/rep/plain.json"
+mkdir -p "$TMP/spec" "$P/rel"; echo "# OCR review spec" > "$TMP/spec/ocr-spec.md"; echo "# OCR review spec" > "$P/rel/ocr-spec.md"
+# a real delegation spec, newer than app.py: set, not left to the clock (a 1 s filesystem would give both one mtime)
+python3 -c 'import os,sys,time; [os.utime(f,(time.time()-60,)*2) for f in sys.argv[1:2]]; [os.utime(f,(time.time()+5,)*2) for f in sys.argv[2:]]' \
+  "$P/app.py" "$TMP/spec/ocr-spec.md" "$P/rel/ocr-spec.md"
 : > "$TR"; ev edit t1 "$P/app.py"; ev bash t2 ".agents/devkit/bin/ocr-review"; ev result t2 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/ocr-review.json")"
 stop c; rc=$?
 [ "$rc" = 0 ] && ok "ocr-review in review mode after the edit: counts as the fresh review (rc 0)" || fail "successful OCR review not counted (rc $rc)"
@@ -125,6 +132,70 @@ printf '{"session_id":"s-p","transcript_path":"%s","cwd":"%s","hook_event_name":
   | PATH="$TMP/bin:$PATH" CLAUDE_PROJECT_DIR="$P" OCR_PWD_LOG="$TMP/pwd.log" bash "$DEVKIT_DIR/hooks/review_gate.sh" >"$TMP/out" 2>"$TMP/err"; rc=$?
 [ "$rc" = 2 ] && [ "$(cat "$TMP/pwd.log" 2>/dev/null)" = "$(cd "$N" && pwd -P)" ] && ok "the delegation ran in the checked repo (cwd toplevel)" \
   || fail "delegation ran in '$(cat "$TMP/pwd.log" 2>/dev/null)', want $N (rc $rc)"
+
+# 5. `ocr` installed: an OCR review after the last edit is REQUIRED (user, 13/10: "open review code phải luôn luôn được chạy lại sau
+#    bước subagent principal-code-reviewer" — the two find different defects). A fresh-context agent alone no longer passes.
+: > "$TR"; ev edit t1 "$P/app.py"; ev agent t2 principal-code-reviewer
+stop q; rc=$?
+[ "$rc" = 2 ] && grep -q "ocr-review" "$TMP/err" && grep -q "principal-code-reviewer" "$TMP/err" \
+  && ok "ocr installed, only principal-code-reviewer after the edit: blocked, told to run OCR (rc 2)" || fail "agent review alone passed with ocr installed (rc $rc)"
+: > "$TR"; ev edit t1 "$P/app.py"; ev agent t2 principal-code-reviewer; ev bash t3 ".agents/devkit/bin/ocr-review"
+ev result t3 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/ocr-review.json")"
+stop r; rc=$?
+[ "$rc" = 0 ] && ok "  … then an OCR review: passes (rc 0)" || fail "principal + OCR review still blocked (rc $rc)"
+: > "$TR"; ev edit t1 "$P/app.py"; ev bash t3 ".agents/devkit/bin/ocr-review"; ev result t3 ok $'ocr review needs an LLM endpoint (no valid LLM endpoint configured); using OCR delegation mode (no LLM, no key)\nmode: delegate\nspec: '"$TMP/spec/ocr-spec.md"
+ev agent t4 principal-code-reviewer
+stop s; rc=$?
+[ "$rc" = 0 ] && ok "  … no LLM endpoint (OCR fell back to its delegation spec) + an agent review after the edit: passes (rc 0)" \
+  || fail "delegation fallback + agent review blocked (rc $rc)"
+: > "$TR"; ev bash t3 ".agents/devkit/bin/ocr-review"
+ev result t3 ok $'ocr review needs an LLM endpoint (no valid LLM endpoint configured); using OCR delegation mode (no LLM, no key)\nmode: delegate\nspec: '"$TMP/spec/ocr-spec.md"
+ev edit t1 "$P/app.py"
+ev agent t4 principal-code-reviewer
+stop u; rc=$?
+[ "$rc" = 2 ] && ok "  … a delegation run BEFORE the last edit does not count (rc 2)" || fail "stale delegation fallback counted (rc $rc)"
+: > "$TR"; ev edit t1 "$P/app.py"; ev bash t3 ".agents/devkit/bin/ocr-review --delegate-only"
+ev result t3 ok $'ocr review needs an LLM endpoint (no valid LLM endpoint configured)\nmode: delegate\nspec: '"$TMP/spec/ocr-spec.md"
+ev agent t4 principal-code-reviewer
+stop x; rc=$?
+[ "$rc" = 2 ] && ok "  … a --delegate-only run (it never asked the LLM) is no fallback (rc 2)" || fail "--delegate-only counted as the OCR fallback (rc $rc)"
+: > "$TR"; ev edit t1 "$P/app.py"; ev agent t2 principal-code-reviewer
+stop v REVIEW_GATE_REQUIRE_OCR=0; rc=$?
+[ "$rc" = 0 ] && ok "  … REVIEW_GATE_REQUIRE_OCR=0: the agent review alone passes (rc 0)" || fail "REVIEW_GATE_REQUIRE_OCR=0 ignored (rc $rc)"
+# review of this rule (13/10): what must NOT stand in for the OCR review
+printf '{"status":"skipped","comments":[]}\n' > "$TMP/rep/skipped.json"
+printf '{"status":"complete","summary":{"files_reviewed":0},"comments":[]}\n' > "$TMP/rep/zero.json"
+for rp in skipped zero; do
+  : > "$TR"; ev edit t1 "$P/app.py"; ev agent t2 principal-code-reviewer; ev bash t3 ".agents/devkit/bin/ocr-review"
+  ev result t3 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/$rp.json")"
+  stop "y$rp"; rc=$?
+  [ "$rc" = 2 ] && ok "  … an OCR report that reviewed nothing ($rp: the code was committed first) is no review (rc 2)" || fail "$rp report counted (rc $rc)"
+done
+: > "$TR"; ev edit t1 "$P/app.py"; ev agent t2 principal-code-reviewer; ev bash t3 ".agents/devkit/bin/ocr-review"
+ev result t3 ok "$(printf '%s\nmode: delegate\nspec: %s' "ocr review needs an LLM endpoint (no valid LLM endpoint configured); using OCR delegation mode (no LLM, no key)" "$TMP/spec/ocr-spec.md")"
+stop z1; rc=$?
+[ "$rc" = 2 ] && ok "  … a delegation fallback AFTER the agent review (nobody read the spec) does not count (rc 2)" || fail "fallback after the agent counted (rc $rc)"
+: > "$TR"; ev edit t1 "$P/app.py"; ev bash t3 'echo "no valid LLM endpoint configured"; echo "mode: delegate"; true || ocr-review'
+ev result t3 ok "$(printf 'no valid LLM endpoint configured\nmode: delegate')"; ev agent t4 principal-code-reviewer
+stop z2; rc=$?
+[ "$rc" = 2 ] && ok "  … echoed fallback words with no spec file do not count (rc 2)" || fail "echoed fallback counted (rc $rc)"
+: > "$TR"; ev edit t1 "$P/app.py"; ev bash t3 'echo "no valid LLM endpoint configured"; echo "mode: delegate"; true || ocr-review'
+ev result t3 ok "$(printf 'no valid LLM endpoint configured\nmode: delegate\nspec: %s' "$P/app.py")"; ev agent t4 principal-code-reviewer
+stop z3; rc=$?
+[ "$rc" = 2 ] && ok "  … a 'spec' that is the edited file itself does not count (rc 2)" || fail "edited file accepted as the spec (rc $rc)"
+: > "$TR"; ev edit t1 "$P/app.py"; ev bash t3 ".agents/devkit/bin/ocr-review --out rel"
+ev result t3 ok $'ocr review needs an LLM endpoint (no valid LLM endpoint configured); using OCR delegation mode (no LLM, no key)\nmode: delegate\nspec: rel/ocr-spec.md'
+ev agent t4 principal-code-reviewer
+printf '{"session_id":"s-z4","transcript_path":"%s","cwd":"%s","hook_event_name":"Stop"}' "$TR" "$P" \
+  | (cd / && PATH="$TMP/bin:$PATH" CLAUDE_PROJECT_DIR="$P" bash "$DEVKIT_DIR/hooks/review_gate.sh") >"$TMP/out" 2>"$TMP/err"; rc=$?
+[ "$rc" = 0 ] && ok "  … a fallback whose --out was relative: its spec is read against the session cwd (rc 0)" || fail "relative spec path rejected (rc $rc)"
+if [ -x /usr/bin/ocr ] || [ -x /bin/ocr ]; then ok "SKIP no-ocr case: this host has ocr in /usr/bin or /bin"; else
+mkdir -p "$TMP/noocr"; for x in git python3; do ln -sf "$(command -v "$x")" "$TMP/noocr/$x"; done
+: > "$TR"; ev edit t1 "$P/app.py"; ev agent t2 principal-code-reviewer
+printf '{"session_id":"s-w","transcript_path":"%s","hook_event_name":"Stop"}' "$TR" \
+  | PATH="$TMP/noocr:/usr/bin:/bin" CLAUDE_PROJECT_DIR="$P" bash "$DEVKIT_DIR/hooks/review_gate.sh" >"$TMP/out" 2>"$TMP/err"; rc=$?
+[ "$rc" = 0 ] && ok "no ocr installed: the agent review alone passes, as before (rc 0)" || fail "no ocr installed, agent review blocked (rc $rc)"
+fi
 
 # 3. a hung ocr: still blocked, well inside the hook's 20 s
 : > "$TR"; ev edit t9 "$P/app.py"

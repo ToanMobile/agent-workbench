@@ -1856,9 +1856,12 @@ PY
 run_case "web profile: unreviewed .ts change blocks" review_gate.sh 2 \
   "{\"session_id\":\"rgweb1\",\"cwd\":\"${RG_WEB}\",\"transcript_path\":\"${RG_WEB}/unreviewed.jsonl\",\"last_assistant_message\":\"xong\"}" \
   CLAUDE_PROJECT_DIR="${RG_WEB}"
+# REVIEW_GATE_REQUIRE_OCR=0: this case is about the profile and the skill counting as a review; with `ocr` installed the gate also
+# wants an OCR run after the edit (13/10), which tests/gates/test_review_gate_ocr.sh section 5 covers, so the result here must not
+# depend on whether this machine has `ocr`
 run_case "web profile: open-code-review after the edit passes" review_gate.sh 0 \
   "{\"session_id\":\"rgweb2\",\"cwd\":\"${RG_WEB}\",\"transcript_path\":\"${RG_WEB}/reviewed.jsonl\",\"last_assistant_message\":\"xong\"}" \
-  CLAUDE_PROJECT_DIR="${RG_WEB}"
+  CLAUDE_PROJECT_DIR="${RG_WEB}" REVIEW_GATE_REQUIRE_OCR=0
 rm -rf "${RG_WEB}"
 echo
 

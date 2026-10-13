@@ -16,7 +16,11 @@
 #     i.e. either none ran, or the last one ran before the latest code change
 #     (the "reviewed-then-kept-coding" hole).
 # Review = Agent/Task tool_use with subagent_type ∈ REVIEW_AGENTS, or a Skill
-# invocation of code-review / review-pr / open-code-review.
+# invocation of code-review / review-pr / open-code-review, or a full OCR review.
+# With `ocr` installed (REVIEW_GATE_REQUIRE_OCR=0: off) an OCR review after the last
+# edit is REQUIRED (user, 13/10: OCR always runs again after principal-code-reviewer;
+# the two find different defects); with no LLM endpoint, `ocr-review` falling back to
+# its delegation spec plus an agent review after the edit stands in for it.
 #
 # Loop-guard: per-session attempts file, MAX_ATTEMPTS — release with a logged
 # warning if the environment genuinely can't run reviews (avoid infinite block).
@@ -60,7 +64,7 @@ CLAIM_LOG="${LOG}" CLAIM_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
 CLAIM_REPO="${REPO_ROOT}" CLAIM_LOGDIR="${LOG_DIR}" CLAIM_MAX="${MAX_ATTEMPTS}" \
 CLAIM_HOOKDIR="$(cd "$(dirname "$0")" && pwd)" \
 python3 -I <<'PY' 3<<<"${INPUT}"
-import os, sys, json, re, subprocess, time
+import os, sys, json, re, shutil, subprocess, time
 
 try:
     with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
@@ -174,15 +178,17 @@ try:
     # A symlink's content is a path, not code to review (DevKit hook links such as
     # .claude/hooks/devkit_profile.py in a symlink install).
     # Commits past the last verified HEAD (T0003): code committed mid-work still needs its review.
-    since = []
+    since, since_base = [], ""
     try:
         import devkit_harness as _dh
         _vh = _dh.verified_head(repo_root, write=False)[0]
         since = [f for f in _dh.files_since(repo_root, _vh) if f.endswith(tuple(CODE_EXTS))]
+        since_base = _vh or ""
     except Exception as e:
         logline(f"[{ts}] since-files failed: {e!r}")
     changed = sorted({l for l in (diff.stdout.splitlines() + untracked.stdout.splitlines() + since)
                       if l.strip() and not os.path.islink(os.path.join(repo_root, l))})
+    dirty = {l for l in diff.stdout.splitlines() + untracked.stdout.splitlines() if l.strip()}   # what a workspace OCR run sees
 except Exception as e:
     logline(f"[{ts}] git query failed: {e!r} — fail-open")
     sys.exit(0)
@@ -235,13 +241,22 @@ def _full_dir():
     return os.path.join(_ocr_root(), "full-" + _code_hash())
 
 
+def _reviewed(rep_):
+    """An OCR JSON report that reviewed something: an object with a comments list (an error object, another schema or a partial write
+    is no review, OCR 13/10), not `status` skipped/error and not 0 files reviewed (code committed before the run: the workspace diff
+    is empty, review 13/10)."""
+    if not isinstance(rep_, dict) or not isinstance(rep_.get("comments"), list) or rep_.get("status") not in (None, "complete"):
+        return False
+    summ = rep_.get("summary")
+    return not (isinstance(summ, dict) and summ.get("files_reviewed") == 0)
+
+
 def _full_report(fdir):
     """The comments of a finished full review in fdir, or None (none yet, or not a full review)."""
     try:
         with open(os.path.join(fdir, "ocr-review.json"), encoding="utf-8") as fh:
             rep_ = json.load(fh)
-        # an error object, another schema or a partial write is no review (OCR, 13/10): only a real comments list counts
-        return rep_["comments"] if isinstance(rep_, dict) and isinstance(rep_.get("comments"), list) else None
+        return rep_["comments"] if _reviewed(rep_) else None
     except (OSError, ValueError):
         return None
 
@@ -252,8 +267,7 @@ def _valid_ocr_report(rp, newest):
         if os.path.getmtime(rp) < newest:
             return False
         with open(rp, encoding="utf-8") as fh:
-            rep_ = json.load(fh)
-        return isinstance(rep_, dict) and isinstance(rep_.get("comments"), list)
+            return _reviewed(json.load(fh))
     except (OSError, ValueError):
         return False
 
@@ -305,6 +319,7 @@ idx = 0
 OCR_CMD = re.compile(r"(?:^|[;&|(\n]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:python3?\s+)?(?:\S*/)?(ocr-review|ocr\s+(?:review|r))\b")
 ocr_pending = {}   # tool_use id -> (transcript index, "helper" | "plain", command)
 ocr_reports = []   # (transcript index, report path) of OCR runs that named a report
+ocr_fallbacks = []   # (transcript index, spec) of ocr-review runs that ASKED the LLM and fell back to delegation for want of an endpoint
 OCR_NOT_A_RUN = re.compile(r"(?:^|\s)(?:--help|-h|--version)(?:\s|$)")
 
 
@@ -351,6 +366,12 @@ if tp and os.path.exists(tp):
                     _rp = "" if blk.get("is_error") else _ocr_report_path(kind, ocmd, _result_text(blk))
                     if _rp:
                         ocr_reports.append((at, _rp))
+                    elif kind == "helper" and not blk.get("is_error") and "--delegate-only" not in ocmd and not OCR_NOT_A_RUN.search(ocmd):
+                        _txt = _result_text(blk)
+                        _spec = next((l[6:].strip() for l in _txt.splitlines() if l.startswith("spec: ")), "")
+                        _spec = os.path.join(cwd, _spec) if _spec and not os.path.isabs(_spec) else _spec   # a relative --out
+                        if "no valid LLM endpoint configured" in _txt and "mode: delegate" in _txt and _spec:
+                            ocr_fallbacks.append((at, _spec))
                     continue
                 if not isinstance(blk, dict) or blk.get("type") != "tool_use":
                     continue
@@ -383,17 +404,20 @@ if tp and os.path.exists(tp):
                     if wf in REVIEW_WORKFLOWS or "multi-lens-audit" in scr:
                         last_review_idx = idx
 
-# An OCR report counts only when it is newer than every file this session edited (a report from before the last edit is stale).
+# An OCR report (or a delegation spec) counts only when it is newer than every file this session edited (one from before the last
+# edit is stale).
+last_ocr_idx = -1
+_newest = 0.0
+for _f in session_unreviewed:
+    try:
+        _newest = max(_newest, os.path.getmtime(os.path.join(repo_root, _f)))
+    except OSError:
+        pass   # deleted since the edit: nothing newer to compare
 if ocr_reports:
-    _newest = 0.0
-    for _f in session_unreviewed:
-        try:
-            _newest = max(_newest, os.path.getmtime(os.path.join(repo_root, _f)))
-        except OSError:
-            pass   # deleted since the edit: nothing newer to compare
     for _at, _rp in ocr_reports:
         if _valid_ocr_report(_rp, _newest):
             last_review_idx = max(last_review_idx, _at)
+            last_ocr_idx = max(last_ocr_idx, _at)
         else:
             logline(f"[{ts}] OCR run at #{_at} named {_rp}: not a fresh OCR report — not counted")
 
@@ -406,6 +430,21 @@ if last_edit_idx == -1:
     sys.exit(0)
 
 reviewed_after_edits = last_review_idx > last_edit_idx and last_review_idx != -1
+def _spec_ok(sp):   # the helper's own spec file, written after every edited file (not an edited file named as one)
+    try:
+        return os.path.basename(sp) == "ocr-spec.md" and os.path.isfile(sp) and os.path.getmtime(sp) > _newest > 0
+    except OSError:
+        return False
+
+
+# the fallback stands in only when an agent review came AFTER it (somebody read the spec) and its spec file is real and fresh
+ocr_missing = (reviewed_after_edits and last_ocr_idx <= last_edit_idx
+               and not any(last_edit_idx < i < last_review_idx and _spec_ok(sp) for i, sp in ocr_fallbacks)
+               and os.environ.get("REVIEW_GATE_OCR", "1") != "0" and os.environ.get("REVIEW_GATE_REQUIRE_OCR", "1") != "0"
+               and shutil.which("ocr") is not None)
+if ocr_missing:   # an agent review alone; `ocr` is here, so OCR must review the final code too (a full OCR run below still passes)
+    reviewed_after_edits = False
+    logline(f"[{ts}] agent review after the last edit, but no OCR review (ocr installed) — OCR required")
 
 # A full review diffs the workspace: code committed past verified_head (`since`) is not in it, so it never passes that (OCR, 13/10).
 if not reviewed_after_edits and OCR_MODE == "full" and not since:
@@ -503,8 +542,9 @@ if n > maxatt:
             f"manual review still required for {changed}")
     sys.stderr.write(
         f"⚠️ REVIEW-GATE: đã nhắc {maxatt} lần, thả Stop để tránh kẹt loop.\n"
-        f"   Nhưng {len(changed)} file code vẫn CHƯA được review context-sạch — "
-        f"tự chịu trách nhiệm review thủ công.\n"
+        + (f"   Nhưng {len(changed)} file code vẫn CHƯA có lượt OpenCodeReview sau lần sửa cuối — tự chịu trách nhiệm.\n" if ocr_missing else
+           f"   Nhưng {len(changed)} file code vẫn CHƯA được review context-sạch — "
+           f"tự chịu trách nhiệm review thủ công.\n") +
         f"   Viết THÊM code chưa review sẽ kích hoạt lại gate.\n")
     sys.exit(0)
 
@@ -536,6 +576,18 @@ lines += [
     "  D) Hoặc Workflow 'multi-lens-audit' nếu môi trường hỗ trợ workflow.",
     "Gom finding → fix theo CLASS (không chỉ instance) → rồi mới stop.",
 ]
+if ocr_missing:   # the agent review is done: say exactly what is left
+    lines = [
+        "⛔ REVIEW-GATE: đã có review context sạch (agent hoặc skill) sau lần sửa cuối, nhưng máy có `ocr`:",
+        "BẮT BUỘC thêm một lượt OpenCodeReview trên code cuối (người dùng 13/10: OCR luôn chạy lại sau principal-code-reviewer —",
+        "hai bên tìm ra lỗi khác nhau). Chạy:",
+        *(['  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm>'] if dirty or not since else []),
+        *([f'  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm khác> --from {since_base[:12]}'
+           "   (phần đã commit sau lần xác minh cuối: lệnh không --from chỉ xem phần chưa commit)"] if since else []),
+        "rồi xử lý từng phát hiện (sửa, hoặc nói vì sao không); sửa code thì review lại. Máy chưa có LLM endpoint thì lệnh tự rơi về",
+        "spec delegation: giao spec đó cho một reviewer agent SAU lần chạy đó. Tắt: REVIEW_GATE_REQUIRE_OCR=0 (trước khi mở phiên).",
+        "",
+    ] + [f"  • {f}" for f in unrev[:20]] + ([f"  … +{len(unrev) - 20} file nữa"] if len(unrev) > 20 else [])
 # OpenCodeReview, run by the gate itself on this block path only (2026-10-13, user: run ocr review in every repo): the delegation
 # mode needs no LLM and no key (~1 s); its spec goes to the reviewer. REVIEW_GATE_OCR=0: off.
 _full_lines = []
@@ -601,7 +653,7 @@ if OCR_MODE == "full":
     except Exception as _e:   # OCR is an aid here, never a reason to fail the gate
         logline(f"[{ts}] OCR full review failed: {_e!r}")
 lines += _full_lines
-if os.environ.get("REVIEW_GATE_OCR", "1") != "0" and not any("đã xong" in l for l in _full_lines):
+if os.environ.get("REVIEW_GATE_OCR", "1") != "0" and not ocr_missing and not any("đã xong" in l for l in _full_lines):
     _helper = os.path.realpath(os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "..", "bin", "ocr-review"))
     try:
         if os.path.isfile(_helper):
