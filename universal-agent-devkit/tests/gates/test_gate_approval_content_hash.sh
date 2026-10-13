@@ -196,42 +196,49 @@ else
   fail "7.1: Agent approval not respected or showed user approval. Out: $out"
 fi
 
-# 7.2 Agent approval in a CLAUDE CODE transcript (2026-10-13): Claude writes the reply under message.content as a list of parts,
-# never a top-level "content", so the agent's in-turn approval was never read on Claude Code and every Stop asked for one again.
-# Only text parts count: a tool_result (a file the agent cat-ed) or a tool_use input naming the file never approves it.
-rm -f "$TR"
-python3 - "$TR" <<'PY'
-import json, sys, time
+# 7.2 Agent approval in a CLAUDE CODE transcript (2026-10-13). Claude writes the reply under message.content (a list of parts), never a
+# top-level "content", so the agent's in-turn approval was never read on Claude Code and every Stop asked for one again. The first fix
+# (42af92b) read message.content of ANY record: the gate's own Stop feedback (a user isMeta record whose verdict says "auto-duyệt …
+# --auto-approve-tests" next to the test path) then approved the test it was blocking (fresh-context review, P1), and so did a
+# negation ("không được tự duyệt"), a user prompt, another session's transcript and, through a crash on "text": null, a tool_use input.
+# Now only an explicit marker line `AUTO-APPROVE: <path>` in a text part of an ASSISTANT record of THIS session's transcript counts.
+claude_recs() {   # claude_recs <file> <python list literal of records>; "TS" in a string is replaced by now
+  python3 - "$1" "$2" <<'PY'
+import ast, json, sys, time
 ts = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time()))
-recs = [
-    {"type": "user", "timestamp": ts, "message": {"role": "user", "content": [
-        {"type": "tool_result", "tool_use_id": "t1", "content": "echo 'auto-approve tests/test_old.sh'"}]}},
-    {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [
-        {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "echo tự duyệt tests/test_old.sh"}}]}},
-]
+recs = ast.literal_eval(sys.argv[2].replace('"TS"', repr(ts)))
 with open(sys.argv[1], "w") as fh:
     for r in recs:
         fh.write(json.dumps(r, ensure_ascii=False) + "\n")
 PY
+}
+not_approved() {   # not_approved <case> <what>
+  touch "$TR"; out="$(run_gate)"
+  if printf '%s' "$out" | grep -q 'agent tự duyệt\|người dùng đã duyệt'; then fail "$1: $2 approved the test. Out: $out"
+  elif printf '%s' "$out" | grep -q 'Traceback'; then fail "$1: traceback. Out: $out"
+  else ok "$1: $2 does not approve"; fi
+}
+claude_recs "$TR" '[{"type": "user", "timestamp": "TS", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "AUTO-APPROVE: tests/test_old.sh"}]}},
+  {"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "echo AUTO-APPROVE: tests/test_old.sh"}}]}}]'
+not_approved 7.2a "a tool_result or a tool_use input"
+claude_recs "$TR" '[{"type": "user", "isMeta": True, "timestamp": "TS", "message": {"role": "user", "content": "Stop hook feedback: CHƯA XÁC MINH — cần người review diff test: Agent tự auto-duyệt nếu thấy tốt hơn (dùng --auto-approve-tests) — TEST ĐÃ CÓ BỊ SỬA/XOÁ: tests/test_old.sh"}}]'
+not_approved 7.2d "the gate's own Stop feedback (user isMeta record)"
+claude_recs "$TR" '[{"type": "user", "timestamp": "TS", "message": {"role": "user", "content": "đừng tự duyệt tests/test_old.sh, AUTO-APPROVE: tests/test_old.sh là sai"}}]'
+not_approved 7.2h "a user prompt"
+claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "Tôi không được tự duyệt tests/test_old.sh: nó là file của phiên khác."}]}}]'
+not_approved 7.2e "a negation in the agent's prose"
+claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": None}, {"type": "tool_use", "id": "t3", "name": "Bash", "input": {"command": "AUTO-APPROVE: tests/test_old.sh"}}]}}]'
+not_approved 7.2f "a record with text null next to a tool_use input"
+: > "$TR"
+claude_recs "$TMP/tr/other-session.jsonl" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "AUTO-APPROVE: tests/test_old.sh"}]}}]'
+not_approved 7.2g "another session's marker"
+rm -f "$TMP/tr/other-session.jsonl"
+claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "Diff chỉ thêm kiểm tra, không nới assertion.\nAUTO-APPROVE: tests/test_old.sh"}]}}]'
 touch "$TR"; out="$(run_gate)"
 if printf '%s' "$out" | grep -q 'agent tự duyệt'; then
-  fail "7.2a: a tool_result / tool_use input naming the file counted as the agent's approval. Out: $out"
+  ok "7.2b: an AUTO-APPROVE line in this session's Claude Code reply is read"
 else
-  ok "7.2a: only a reply's text approves, not a tool_result or a tool_use input"
-fi
-python3 - "$TR" <<'PY'
-import json, sys, time
-ts = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time()))
-rec = {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [
-    {"type": "text", "text": "Diff chỉ thêm kiểm tra, không nới assertion: tôi tự duyệt tests/test_old.sh."}]}}
-with open(sys.argv[1], "a") as fh:
-    fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
-PY
-touch "$TR"; out="$(run_gate)"
-if printf '%s' "$out" | grep -q 'agent tự duyệt'; then
-  ok "7.2b: the agent's approval in a Claude Code reply (message.content text) is read"
-else
-  fail "7.2b: the agent's approval in a Claude Code transcript was not read. Out: $out"
+  fail "7.2b: the AUTO-APPROVE line in a Claude Code reply was not read. Out: $out"
 fi
 if printf '%s' "$out" | grep -q 'người dùng đã duyệt'; then fail "7.2c: the agent's reply became the user's approval"; else ok "7.2c: and it is never the user's approval"; fi
 

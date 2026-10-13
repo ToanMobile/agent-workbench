@@ -171,16 +171,38 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-13 18:53:56",
-        "ts": 1791892436.707752,
+        "at": "2026-10-13 19:22:43",
+        "ts": 1791894163.445801,
         "task": null,
-        "commit": "5b10e65+dirty",
-        "duration": "100.22s",
+        "commit": "42af92b+dirty",
+        "duration": "96.07s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-01/20261013-185022.log",
+        "log": ".agents/evidence/REG-DK-GATE-01/20261013-191912.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-13 19:22:43",
+          "ts": 1791894163.445801,
+          "task": null,
+          "commit": "42af92b+dirty",
+          "duration": "96.07s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20261013-191912.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-13 19:00:30",
+          "ts": 1791892830.296981,
+          "task": "session-d352c03b-d20",
+          "commit": "42af92b+dirty",
+          "duration": "97.80s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20261013-185700.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-13 18:53:56",
@@ -213,28 +235,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-01/20261013-091759.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 08:50:44",
-          "ts": 1791856244.6062112,
-          "task": "session-c01ac57e-153",
-          "commit": "3a5c3be+dirty",
-          "duration": "239.01s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-01/20261013-084938.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 08:45:26",
-          "ts": 1791855926.4815328,
-          "task": "session-c01ac57e-153",
-          "commit": "3a5c3be+dirty",
-          "duration": "160.94s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-01/20261013-084526.log",
-          "deleted": []
         }
       ],
       "title": "post-fix gate",
@@ -252,16 +252,38 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-13 18:53:56",
-        "ts": 1791892436.714915,
+        "at": "2026-10-13 19:22:43",
+        "ts": 1791894163.454578,
         "task": null,
-        "commit": "5b10e65+dirty",
-        "duration": "21.05s",
+        "commit": "42af92b+dirty",
+        "duration": "20.74s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-02/20261013-184903.log",
+        "log": ".agents/evidence/REG-DK-GATE-02/20261013-191756.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-13 19:22:43",
+          "ts": 1791894163.454578,
+          "task": null,
+          "commit": "42af92b+dirty",
+          "duration": "20.74s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20261013-191756.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-13 19:00:30",
+          "ts": 1791892830.306046,
+          "task": "session-d352c03b-d20",
+          "commit": "42af92b+dirty",
+          "duration": "20.92s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20261013-185543.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-13 18:53:56",
@@ -294,28 +316,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-02/20261013-091331.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 08:50:44",
-          "ts": 1791856244.633882,
-          "task": "session-c01ac57e-153",
-          "commit": "3a5c3be+dirty",
-          "duration": "27.78s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261013-084606.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 08:45:26",
-          "ts": 1791855926.500542,
-          "task": "session-c01ac57e-153",
-          "commit": "3a5c3be+dirty",
-          "duration": "23.33s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261013-084308.log",
-          "deleted": []
         }
       ],
       "title": "proof gate (tree_fp)",
@@ -333,16 +333,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-13 18:53:56",
-        "ts": 1791892436.714921,
-        "task": null,
-        "commit": "5b10e65+dirty",
-        "duration": "62.93s",
+        "at": "2026-10-13 19:00:30",
+        "ts": 1791892830.3060522,
+        "task": "session-d352c03b-d20",
+        "commit": "42af92b+dirty",
+        "duration": "61.23s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-01/20261013-184945.log",
+        "log": ".agents/evidence/REG-DK-HOOK-01/20261013-185623.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-13 19:00:30",
+          "ts": 1791892830.3060522,
+          "task": "session-d352c03b-d20",
+          "commit": "42af92b+dirty",
+          "duration": "61.23s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261013-185623.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-13 18:53:56",
@@ -386,17 +397,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-01/20261013-170837.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 17:02:17",
-          "ts": 1791885737.320423,
-          "task": null,
-          "commit": "21bcd69+dirty",
-          "duration": "98.10s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261013-165539.log",
-          "deleted": []
         }
       ],
       "title": "hook contract",
@@ -411,16 +411,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-13 18:53:56",
-        "ts": 1791892436.714924,
-        "task": null,
-        "commit": "5b10e65+dirty",
-        "duration": "21.05s",
+        "at": "2026-10-13 19:00:30",
+        "ts": 1791892830.3060548,
+        "task": "session-d352c03b-d20",
+        "commit": "42af92b+dirty",
+        "duration": "20.92s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-02/20261013-184903.log",
+        "log": ".agents/evidence/REG-DK-GATE-02/20261013-185543.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-13 19:00:30",
+          "ts": 1791892830.3060548,
+          "task": "session-d352c03b-d20",
+          "commit": "42af92b+dirty",
+          "duration": "20.92s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20261013-185543.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-13 18:53:56",
@@ -463,17 +474,6 @@
           "duration": "22.19s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-02/20261013-170749.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 17:02:17",
-          "ts": 1791885737.344579,
-          "task": null,
-          "commit": "21bcd69+dirty",
-          "duration": "24.21s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-02/20261013-165425.log",
           "deleted": []
         }
       ],
@@ -567,16 +567,38 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-13 18:53:56",
-        "ts": 1791892436.714931,
+        "at": "2026-10-13 19:22:43",
+        "ts": 1791894163.454588,
         "task": null,
-        "commit": "5b10e65+dirty",
-        "duration": "313.58s",
+        "commit": "42af92b+dirty",
+        "duration": "306.83s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261013-185356.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261013-192243.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-13 19:22:43",
+          "ts": 1791894163.454588,
+          "task": null,
+          "commit": "42af92b+dirty",
+          "duration": "306.83s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261013-192243.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-13 19:00:30",
+          "ts": 1791892830.3060632,
+          "task": "session-d352c03b-d20",
+          "commit": "42af92b+dirty",
+          "duration": "307.76s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261013-190030.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-13 18:53:56",
@@ -608,28 +630,6 @@
           "duration": "339.62s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261013-183227.log",
-          "deleted": []
-        },
-        {
-          "status": "FAIL",
-          "at": "2026-10-13 17:17:02",
-          "ts": 1791886622.414293,
-          "task": null,
-          "commit": "21bcd69+dirty",
-          "duration": "575.00s",
-          "exit_code": 1,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261013-171702.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 17:02:17",
-          "ts": 1791885737.3445902,
-          "task": null,
-          "commit": "21bcd69+dirty",
-          "duration": "494.81s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261013-170216.log",
           "deleted": []
         }
       ],
@@ -1108,16 +1108,38 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-13 18:53:56",
-        "ts": 1791892436.714926,
+        "at": "2026-10-13 19:22:43",
+        "ts": 1791894163.4545841,
         "task": null,
-        "commit": "5b10e65+dirty",
-        "duration": "8.60s",
+        "commit": "42af92b+dirty",
+        "duration": "7.87s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-SESSION-01/20261013-184851.log",
+        "log": ".agents/evidence/REG-DK-SESSION-01/20261013-191744.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-13 19:22:43",
+          "ts": 1791894163.4545841,
+          "task": null,
+          "commit": "42af92b+dirty",
+          "duration": "7.87s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-SESSION-01/20261013-191744.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-13 19:00:30",
+          "ts": 1791892830.306057,
+          "task": "session-d352c03b-d20",
+          "commit": "42af92b+dirty",
+          "duration": "8.85s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-SESSION-01/20261013-185531.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-13 18:53:56",
@@ -1150,28 +1172,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-SESSION-01/20261013-091329.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 08:50:44",
-          "ts": 1791856244.633941,
-          "task": "session-c01ac57e-153",
-          "commit": "3a5c3be+dirty",
-          "duration": "24.46s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-SESSION-01/20261013-084603.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 08:45:26",
-          "ts": 1791855926.5005598,
-          "task": "session-c01ac57e-153",
-          "commit": "3a5c3be+dirty",
-          "duration": "14.75s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-SESSION-01/20261013-084300.log",
-          "deleted": []
         }
       ],
       "title": "session lock + multi-session gate verdict (own session is never counted as another)",
@@ -1187,16 +1187,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-13 18:41:56",
-        "ts": 1791891716.081555,
+        "at": "2026-10-13 19:00:30",
+        "ts": 1791892830.30606,
         "task": "session-d352c03b-d20",
-        "commit": "5b10e65+dirty",
-        "duration": "2.82s",
+        "commit": "42af92b+dirty",
+        "duration": "3.07s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-SANDBOX-01/20261013-183615.log",
+        "log": ".agents/evidence/REG-DK-SANDBOX-01/20261013-185525.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-13 19:00:30",
+          "ts": 1791892830.30606,
+          "task": "session-d352c03b-d20",
+          "commit": "42af92b+dirty",
+          "duration": "3.07s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-SANDBOX-01/20261013-185525.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-13 18:41:56",
@@ -1239,17 +1250,6 @@
           "duration": "6.48s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-SANDBOX-01/20261013-134422.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 13:07:40",
-          "ts": 1791871660.168225,
-          "task": null,
-          "commit": "5ff3c68+dirty",
-          "duration": "18.00s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-SANDBOX-01/20261013-125256.log",
           "deleted": []
         }
       ],

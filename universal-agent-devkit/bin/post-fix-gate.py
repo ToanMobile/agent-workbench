@@ -594,6 +594,25 @@ APPROVE_LABEL = re.compile(r"^\s*(?:duyệt|đồng ý|chấp nhận|approve[ds]
 # auto-approval line). 2026-09-29: the agent's own approval was printed as the user's.
 APPROVED_BY = {}
 AGENT_APPROVE_RE = re.compile(r"(?:auto[-_ ]?duyệt|auto[-_ ]?approve[ds]?|tự[-_ ]?duyệt|test[-_ ]?approved|duyệt\s+test)", re.I)
+AUTO_APPROVE_LINE = re.compile(r"(?mi)^[ \t>*-]*AUTO-APPROVE:[ \t]*(\S.*)$")
+
+
+def _claude_auto_approve(rec, msg, tp, transcript):
+    """The paths a Claude Code record approves: only `AUTO-APPROVE: <path …>` lines in the TEXT parts of an ASSISTANT reply of this
+    session's own transcript. Never a user or isMeta record (the gate's own Stop feedback names the test next to "auto-duyệt": it approved
+    the test it was blocking, review 13/10), a tool_use input, a tool_result, prose (a negation such as "không được tự duyệt" matched the
+    keyword) or another session's transcript."""
+    if rec.get("type") != "assistant" or rec.get("isMeta") or not transcript:
+        return ""
+    try:
+        if os.path.realpath(str(tp)) != os.path.realpath(str(transcript)):
+            return ""
+    except (OSError, ValueError):
+        return ""
+    mc = msg.get("content")
+    parts = [mc] if isinstance(mc, str) else [str(p.get("text") or "") for p in mc if isinstance(p, dict) and p.get("type") == "text"] \
+        if isinstance(mc, list) else []
+    return " ".join(m.group(1) for part in parts for m in AUTO_APPROVE_LINE.finditer(part))
 
 
 def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> tuple:
@@ -700,18 +719,22 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
                 elif AGENT_APPROVE_RE.search(line):
                     try:
                         rec = json.loads(line)
+                    except ValueError:
+                        rec = None   # a plain-text log line: matched as it is (as before)
+                    if not isinstance(rec, dict):
+                        cnt, t = line, int(time.time())
+                    else:
                         cnt = rec.get("content") or ""
                         msg = rec.get("message")
                         if not cnt and isinstance(msg, dict):
-                            # Claude Code: the reply is message.content, a string or a list of parts. Only text parts approve:
-                            # a tool_result (a file the agent printed) or a tool_use input that names the file is not an approval.
-                            mc = msg.get("content")
-                            cnt = mc if isinstance(mc, str) else " ".join(
-                                p.get("text", "") for p in (mc or []) if isinstance(p, dict) and p.get("type") == "text")
-                        ts = rec.get("created_at") or rec.get("timestamp") or ""
-                        t = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")) if ts else int(time.time())
-                    except (ValueError, KeyError, TypeError, AttributeError):
-                        cnt, t = line, int(time.time())
+                            cnt = _claude_auto_approve(rec, msg, tp, transcript)
+                        try:
+                            ts = str(rec.get("created_at") or rec.get("timestamp") or "")
+                            t = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")) if ts else int(time.time())
+                        except (ValueError, OverflowError):
+                            cnt, t = "", 0   # no usable time: no approval from this record
+                    if not isinstance(cnt, str):
+                        cnt = ""
                     for f in mtimes:
                         if f in cnt or (len(Path(f).name) >= 6 and Path(f).name in cnt):
                             approved_at[f] = max(approved_at.get(f, 0), t)
@@ -5141,8 +5164,8 @@ def main():
         # A range-flagged test is already committed: committing again cures nothing.
         cure_vi, cure_en = (("hoặc một commit có dòng `Test-approved-by:` (audit Antigravity)", "or a commit carrying a `Test-approved-by:` line (an Antigravity audit)")
                             if in_range else ("hoặc commit nó", "or commit it"))
-        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần người review diff test (`{touched_diff}`): Agent tự auto-duyệt nếu thấy tốt hơn/hợp lý (dùng --auto-approve-tests, KHÔNG hỏi phiền người dùng) — {cure_vi} — rồi chạy lại gate",
-                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: have a human review the test diff (`{touched_diff}`): agent auto-approves if evaluated better/safe (use --auto-approve-tests) — {cure_en} — then re-run the gate"), YELLOW, 2
+        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần người review diff test (`{touched_diff}`): Agent tự auto-duyệt nếu thấy tốt hơn/hợp lý (dùng --auto-approve-tests; hook Stop đọc một dòng riêng `AUTO-APPROVE: <đường dẫn>` trong câu trả lời của chính phiên; KHÔNG hỏi phiền người dùng) — {cure_vi} — rồi chạy lại gate",
+                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: have a human review the test diff (`{touched_diff}`): agent auto-approves if evaluated better/safe (use --auto-approve-tests; the Stop hook reads a line of its own `AUTO-APPROVE: <path>` in this session's reply) — {cure_en} — then re-run the gate"), YELLOW, 2
     elif unverified:
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — test hồi quy chưa chạy (dry-run)", "UNVERIFIED — regression tests not run (dry-run)"), YELLOW, 2
     elif unreadable:
