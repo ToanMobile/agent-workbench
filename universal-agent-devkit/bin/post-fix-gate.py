@@ -1145,17 +1145,29 @@ def log_err(msg):
 def get_devkit_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
+_PROJECT_DIRS = {}
+
+
 def get_project_dir() -> Path:
+    """The audited project, resolved ONCE per process (per CLAUDE_PROJECT_DIR / TARGET_DIR value): a project folder removed while
+    the gate runs (`worktree finish`/`remove`, W1 R5a) must stay the project — re-resolving it fell back to the cwd's repo (the main
+    checkout) or crashed on the deleted cwd."""
     target_env = os.environ.get("CLAUDE_PROJECT_DIR") or os.environ.get("TARGET_DIR")
+    if target_env in _PROJECT_DIRS:
+        return _PROJECT_DIRS[target_env]
     if target_env and Path(target_env).exists():
-        return Path(target_env).resolve()
-    try:
-        res = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
-        if res.returncode == 0 and res.stdout.strip():
-            return Path(res.stdout.strip()).resolve()
-    except Exception:
-        pass
-    return Path.cwd().resolve()
+        found = Path(target_env).resolve()
+    else:
+        found = None
+        try:
+            res = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                found = Path(res.stdout.strip()).resolve()
+        except Exception:
+            pass
+        found = found or Path.cwd().resolve()
+    _PROJECT_DIRS[target_env] = found
+    return found
 
 def get_base_dir() -> Path:
     return get_project_dir()
@@ -3164,7 +3176,7 @@ def _vacuity_restore(items) -> None:
             if blob is None:
                 if path.is_file():
                     path.unlink()
-            else:
+            elif get_project_dir().is_dir():   # a project removed meanwhile is not re-created (W1 R5a)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(blob)
         except OSError as e:
@@ -3228,7 +3240,7 @@ def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
                 if res.returncode != 0:
                     if path.is_file():
                         path.unlink()
-                else:
+                elif get_project_dir().is_dir():   # a project removed meanwhile is not re-created (W1 R5a)
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(res.stdout)
         code, out, timed_out = run_in_group(test["command"], str(project_dir), suite_env(), timeout)
@@ -5192,7 +5204,12 @@ def main():
     receipt_untested = None
     lock_busy = False   # exit 4 because the lock was not held: no suite ran, so the receipt is neither written nor deleted
     budget_cut = False  # exit 4 because the time budget stopped a suite from starting: same, do not write or delete
-    if not static_ok or (run_tests and not tests_ok):
+    project_gone = not Path(project_dir).is_dir()   # W1 R5a: `worktree finish`/`remove` took it while the suites ran
+    if project_gone:
+        verdict_text, verdict_color, exit_code = tr(
+            "CHƯA XÁC MINH — thư mục project đã bị gỡ trong lúc gate chạy (worktree finish/remove): không ghi kết quả nào vào đó",
+            "UNVERIFIED — the project folder was removed while the gate ran (worktree finish/remove): no result is recorded there"), YELLOW, 1
+    elif not static_ok or (run_tests and not tests_ok):
         verdict_text, verdict_color, exit_code = tr("REJECT — CẦN KHẮC PHỤC CÁC ĐIỂM CHƯA ĐẠT", "REJECT — FIX THE FAILED CHECKS"), RED, 1
     elif matrix_problem:
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — regression matrix không tin được (xem mục 4): người review rồi commit file ma trận — gate chỉ tin ma trận đã commit, hoặc giống từng byte bản `agent-kit matrix`",
@@ -5298,7 +5315,7 @@ def main():
         if lock_fh:
             lock_fh.close()
 
-    if not args.no_checklist:
+    if not args.no_checklist and not project_gone:
         # A LINKED worktree leaves the tracked checklist files alone (--checklist asks for the write): the verdict and
         # exit code above are already decided and do not depend on it. A --record-lesson still writes its lesson
         # (instincts.md, which `worktree diff` carries) but not the bug row: that file is left out of the patch.

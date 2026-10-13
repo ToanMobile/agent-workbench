@@ -194,7 +194,10 @@ def cmd_run() -> int:
     projects = load_projects()
     reds = []
     for p in projects:
-        turned, msg = run_project(Path(p))
+        try:
+            turned, msg = run_project(Path(p))
+        except OSError as e:   # a project gone mid-run (W1 R5a: save() refuses to re-create it): the others still run
+            turned, msg = [], f"{Path(p).name}: {e}"
         print(msg)
         reds += [f"{Path(p).name} {i} {s}" for i, s in turned]
     if reds:

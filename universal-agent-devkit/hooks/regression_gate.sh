@@ -731,6 +731,8 @@ res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "
                      env={**os.environ, "CLAUDE_PROJECT_DIR": repo,
                           "TEST_RUN_LOCK_WAIT_S": os.environ.get("TEST_RUN_LOCK_WAIT_S", "45"),
                           "GATE_TOTAL_BUDGET_S": budget_s})
+if not os.path.isdir(repo):   # W1 R5a: the project (a worktree) went away while its suites ran — nothing to hold or record here
+    sys.exit(0)
 if isinstance(state.get("touched"), dict) and state["touched"].pop(sid, None) is not None:
     save_state()      # this run decides again; the touched branch below stores a new reminder
 summary = {}

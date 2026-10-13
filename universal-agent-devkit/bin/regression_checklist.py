@@ -131,9 +131,18 @@ def load(project_dir: Path) -> dict:
     return data
 
 
+def project_gone(project_dir) -> bool:
+    """The project folder is no longer there. A gate that outlives its worktree (`worktree finish`/`remove` took the folder while a
+    suite ran) must not bring it back: every writer here made its parents, so the folder returned holding regression_status.json,
+    INBOX.md, evidence and the journal, which `worktree gc` rightly keeps (W1 R5a, 13/10)."""
+    return not Path(project_dir).is_dir()
+
+
 def save(project_dir: Path, data: dict, *, stale: bool = True) -> Path:
     """Write the JSON and re-render the view. stale=False skips the git-based STALE check
     (the prompt hook has no time budget for git)."""
+    if project_gone(project_dir):
+        raise FileNotFoundError(f"project folder gone, nothing written: {project_dir}")
     if stale:
         try:
             mark_stale(data, project_dir)
@@ -171,6 +180,8 @@ def _lock_path(project_dir: Path, kind: str) -> str:
     key = hashlib.sha1(str(Path(project_dir).resolve()).encode()).hexdigest()[:16]
     gate_dir = Path(project_dir) / ".claude" / "audit-gate"
     try:
+        if project_gone(project_dir):
+            raise FileNotFoundError(project_dir)   # the temp-dir lock below: never re-create the project to hold a lock
         gate_dir.mkdir(parents=True, exist_ok=True)
         return str(gate_dir / f"{kind}.lock")
     except OSError:
@@ -1429,7 +1440,9 @@ def write_evidence(project_dir: Path, test_id: str, output: str, meta: dict) -> 
     """Keep one run's full runner output as acceptance evidence:
     .agents/evidence/<test-id>/<timestamp>.log, a `# key: value` header first, only the
     last EVIDENCE_KEEP logs per test (env EVIDENCE_KEEP), the tail of an output over 1 MB.
-    Git-ignored — a runner can print secrets. Returns the path relative to the project."""
+    Git-ignored — a runner can print secrets. Returns the path relative to the project; None when the project folder is gone."""
+    if project_gone(project_dir):
+        return None
     root = Path(project_dir) / EVIDENCE_DIR
     folder = root / re.sub(r"[^A-Za-z0-9_.-]", "_", test_id or "test")
     folder.mkdir(parents=True, exist_ok=True)
