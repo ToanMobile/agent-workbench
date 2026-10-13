@@ -74,3 +74,27 @@ Còn lại:
 - Thư mục rỗng `/Volumes/Data/Toan/agent-workbench-dashboard` (20 KB, đã gỡ khỏi `git worktree list`): hook chặn xóa đệ quy ngoài project. Người dùng xóa tay nếu muốn.
 - Worktree `agent-workbench-dot30b` và `agent-workbench-sprite-forge` thuộc phiên khác, không đụng.
 - Memory về bảng MCP theo repo chưa ghi vì `.agents/local/memory/` nằm trong checkout bị khóa. Nội dung nằm ở mục 1 của file này.
+
+## 7. Đang kẹt khi đóng phiên (13/10, cuối phiên)
+
+Ba worktree đã commit nhưng chưa vào nhánh chính, vì checkout của từng repo đang do một phiên khác giữ (`agent-kit worktree finish` bị chặn):
+
+| Worktree | Commit | Repo giữ bởi phiên | Việc cần làm |
+|---|---|---|---|
+| `/Volumes/Data/Toan/agent-workbench-plan` | `2e3bd42` (file này) | `c01ac57e` | `agent-kit worktree finish /Volumes/Data/Toan/agent-workbench-plan` từ `/Volumes/Data/Toan/agent-workbench` |
+| `/Volumes/Data/Toan/GeelyEx2-mcpfix` | `f0a2c39f2` (gỡ play-store) | `0b9c3540` | `agent-kit worktree finish ../GeelyEx2-mcpfix` từ `/Volumes/Data/Toan/GeelyEx2` |
+| `/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D-mcp` | `4405395` (replicant-mcp, play-store qua `.venv`) | `fb81febe` | `agent-kit worktree finish ../Goods-Triple-Shelf-Match-3D-mcp` từ `/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D` |
+
+Hook Stop của phiên giữ hoặc phiên sau cũng tự gộp chúng. Cần biết:
+- Chưa commit nào trong ba commit này có gate `--full` exit 0. Gate của file này ra REJECT vì `REG-DK-ALL-01` hết giờ (900,15 giây) dù chỉ có một file markdown; gate của Geely hết giờ ở `REG-CAR-01`. Gate của Goods đã PASS (4/4) từ trước.
+- Khi gộp tự động, DevKit có thể tạo commit `wip(...)` thay vì giữ nguyên các commit trên.
+- Sau khi gộp, làm tiếp từ mục 3 (bật MCP trong `settings.local.json`, `claude mcp list`, push) và mục 4 (làm mới dữ liệu dashboard).
+
+Các việc chưa làm hoặc chưa kiểm chứng tại thời điểm đóng phiên:
+- Bật MCP trong `settings.local.json` ở Goods, Neighbours-From-Hell (mục 3.2 và 3.3).
+- `claude mcp list` sau khi các thay đổi vào nhánh chính (mục 3.4).
+- Push mọi repo (mục 3.5).
+- Làm mới `checks.json` và `coverage-map.html` rồi cập nhật artifact (mục 4).
+- Bấm thử `coverage-map.html` trong trình duyệt thật (mục 4).
+- Hai quyết định ở mục 5 (hook chạy ocr; giới hạn 900 giây của gate).
+- Thư mục rỗng `/Volumes/Data/Toan/agent-workbench-dashboard` cần xóa tay (mục 6).
