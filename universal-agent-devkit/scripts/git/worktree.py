@@ -7,6 +7,7 @@ Usage (normally `agent-kit worktree …`, run inside the repo):
   worktree.py finish <path>    merge its work into the main branch AUTOMATICALLY, then remove it (exit 0 done, 3 conflict, 1 blocked)
   worktree.py automerge <path> the same, one JSON line on stdout (what the Stop gate runs)
   worktree.py remove <path>    remove it once nothing of its work would be lost
+  worktree.py gc [--dry-run]   delete what DevKit worktrees left behind, only when nothing in it is unique (kept ones are named)
   worktree.py list
   worktree.py heal [--devkit=DIR] [--session=ID]   a checkout the host made (Grok): link the DevKit, copy ignored config
 
@@ -53,6 +54,7 @@ Only the recorded setup and ignored files (copied config, hook logs) go with the
 
 import contextlib
 import errno
+import filecmp
 import fnmatch
 import hashlib
 import importlib.util
@@ -1773,6 +1775,144 @@ def cmd_heal(cwd, args):
     return 0
 
 
+GC_NOISE = {".DS_Store", "Thumbs.db", "desktop.ini"}
+GC_BOOKKEEPING_DIRS = (".claude/audit-gate/", ".agents/evidence/", ".agents/regression_journal/", ".antigravity-pm/")
+GC_SECRETS = LOCAL_CONFIG + ("*.jks", "*.keystore", "*.p12", "*.pem", "*.key", "key.properties")
+
+
+def _gc_live_lock(admin):
+    """True when the worktree's session lock names a live, non-idle session (its pid runs and its heartbeat is recent)."""
+    try:
+        with open(os.path.join(admin, "devkit-session.lock"), encoding="utf-8") as fh:
+            lock = json.load(fh)
+        if not isinstance(lock, dict) or lock.get("idle_since"):
+            return False
+        os.kill(int(lock.get("pid") or 0), 0)
+        return time.time() - float(lock.get("heartbeat") or 0) < 7200
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _gc_unique(main, top, dangling):
+    """[(rel, why)] of the files in `top` that may be the only copy of something; [] when every file is provably not unique. With no
+    `.git` pointer (`dangling` False) only bookkeeping and noise may be there: anything else means the folder is not a leftover."""
+    files, later = [], []
+    for dirpath, dirs, names in os.walk(top):
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(dirpath, d))]   # a link is never followed (.agents/devkit, a link to main)
+        for n in names:
+            p = os.path.join(dirpath, n)
+            rel = os.path.relpath(p, top).replace(os.sep, "/")
+            if rel == ".git" or os.path.islink(p) or n in GC_NOISE or "/__pycache__/" in "/" + rel or rel in BOOKKEEPING \
+                    or rel.startswith(GC_BOOKKEEPING_DIRS):
+                continue
+            if not dangling:
+                return [(rel, tr("không phải sổ sách DevKit", "not DevKit bookkeeping"))]
+            files.append((rel, p))
+    unique = []
+    for rel, p in files:
+        mine = os.path.join(main, rel)
+        try:
+            same = os.path.isfile(mine) and not os.path.islink(mine) and filecmp.cmp(p, mine, shallow=False)
+        except OSError:
+            same = False
+        if same:
+            continue
+        if rel.startswith(MEMORY_REL.replace(os.sep, "/") + "/"):
+            unique.append((rel, tr("ghi chú memory không có ở main", "a memory note main lacks")))
+        elif any(fnmatch.fnmatch(os.path.basename(rel), g) for g in GC_SECRETS):
+            unique.append((rel, tr("file bí mật chỉ có ở đây: chép về main trước", "a secret only here: copy it to main first")))
+        else:
+            later.append((rel, p))
+    if later:   # one hash-object + one cat-file + one check-ignore for all of them
+        hashes = git(main, "hash-object", "--no-filters", "--stdin-paths", inp="\n".join(p for _r, p in later) + "\n", check=False)
+        known = git(main, "cat-file", "--batch-check", inp=hashes.stdout, check=False) if hashes.returncode == 0 else None
+        ignored = git(main, "check-ignore", "--no-index", "--stdin", inp="\n".join(r for r, _p in later) + "\n", check=False)
+        if known is None or known.returncode != 0 or ignored.returncode not in (0, 1):
+            return [("*", tr("git không kiểm được nội dung", "git could not check the content"))]
+        missing = [ln.split()[0] for ln in known.stdout.splitlines() if ln.endswith(" missing")]
+        shas = hashes.stdout.split()
+        build = set(ignored.stdout.splitlines())
+        for (rel, _p), sha in zip(later, shas):
+            if sha in missing and rel not in build:
+                unique.append((rel, tr("nội dung chưa từng được commit", "content never committed")))
+    return unique
+
+
+def cmd_gc(cwd, args):
+    """Delete what DevKit worktrees left behind, only when nothing in it is unique (docs/workflow-improvements.md I.0 R5b).
+    Registered worktrees already integrated (inventory) are removed with `remove`; `<repo>-*` siblings whose `.git` pointer dangles
+    into this repo, or that hold DevKit bookkeeping only, are deleted after every file is checked (_gc_unique). Kept: a live session's
+    worktree, anything with work not in main, a unique file, a secret only there, a person's folder or clone. --dry-run deletes nothing."""
+    dry = "--dry-run" in args
+    main = main_checkout(cwd)
+    common = os.path.realpath(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip())
+    here = os.path.realpath(cwd)
+    deleted, kept = [], []
+    rows = inventory(main)
+    registered = {os.path.realpath(e["path"]) for e in _worktree_entries(main)}
+    for r in rows:
+        real = os.path.realpath(r["path"])
+        if r.get("unintegrated") or r.get("reason") or not os.path.isdir(real) or here == real or here.startswith(real + os.sep):
+            continue
+        admin = git(r["path"], "rev-parse", "--absolute-git-dir", check=False).stdout.strip()
+        if admin and _gc_live_lock(admin):
+            kept.append((r["path"], tr("một phiên đang chạy dùng nó", "a running session uses it")))
+            continue
+        if dry:
+            deleted.append(r["path"])
+            continue
+        try:
+            rc = cmd_remove(main, [r["path"]])
+        except SystemExit as e:
+            rc = e.code or 1
+        (deleted.append(r["path"]) if rc == 0 and not os.path.exists(real) else kept.append((r["path"], tr("remove từ chối", "remove refused"))))
+    parent, prefix = os.path.dirname(main), os.path.basename(main) + "-"
+    try:
+        siblings = sorted(os.listdir(parent))
+    except OSError:
+        siblings = []
+    for name in siblings:
+        top = os.path.join(parent, name)
+        real = os.path.realpath(top)
+        if not name.startswith(prefix) or os.path.islink(top) or not os.path.isdir(top) or real in registered \
+                or real == os.path.realpath(main) or here == real or here.startswith(real + os.sep):
+            continue
+        gitp = os.path.join(top, ".git")
+        if os.path.isdir(gitp):
+            continue   # a clone or a copy of its own: never ours
+        dangling = False
+        if os.path.isfile(gitp):
+            try:
+                with open(gitp, encoding="utf-8") as fh:
+                    ptr = fh.read().strip()
+            except OSError:
+                continue
+            if not ptr.startswith("gitdir:"):
+                continue
+            target = os.path.realpath(os.path.join(top, ptr[len("gitdir:"):].strip()))
+            if not target.startswith(os.path.join(common, "worktrees") + os.sep) or os.path.exists(target):
+                continue   # points into another repo, or git still has it: not a leftover of this one
+            dangling = True
+        unique = _gc_unique(main, top, dangling)
+        if unique:
+            if dangling:   # a no-.git folder with a person's file is not ours: not even reported
+                kept.append((top, "; ".join(f"{rel} ({why})" for rel, why in unique[:3]) + (" …" if len(unique) > 3 else "")))
+            continue
+        if dry:
+            deleted.append(top)
+            continue
+        _clear_user_locks(top)
+        shutil.rmtree(top, ignore_errors=True)
+        (kept.append((top, tr("không xoá hết được: ", "could not delete it all: ") + _by_hand(top))) if os.path.exists(top) else deleted.append(top))
+    for p in deleted:
+        print(("• gc (dry-run): " + tr("sẽ xoá ", "would delete ") if dry else "✔ gc: " + tr("đã xoá ", "deleted ")) + p)
+    for p, why in kept:
+        print("• gc: " + tr("giữ ", "kept ") + p + ": " + why)
+    if not deleted and not kept:
+        print("✔ gc: " + tr("không có gì để dọn", "nothing to clean"))
+    return 0
+
+
 def main(argv):
     cwd = os.getcwd()
     set_lang(resolve_lang(None, cwd))
@@ -1796,9 +1936,11 @@ def main(argv):
         return cmd_status(cwd, rest)
     if action == "heal":
         return cmd_heal(cwd, rest)
+    if action == "gc":
+        return cmd_gc(cwd, rest)
     if action == "list":
         return subprocess.run(["git", "-C", cwd, "worktree", "list"]).returncode
-    die(tr(f"lệnh không hợp lệ '{action}'", f"unknown action '{action}'") + " (add | diff | finish | remove | status | list)")
+    die(tr(f"lệnh không hợp lệ '{action}'", f"unknown action '{action}'") + " (add | diff | finish | remove | status | gc | list)")
 
 
 if __name__ == "__main__":

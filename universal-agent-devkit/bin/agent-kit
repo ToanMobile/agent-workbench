@@ -405,6 +405,8 @@ Commands:
                       Claude auto-memory stays the worktree's own; --share-memory points it at the
                       main checkout's (every worktree then shares ONE MEMORY.md)
   worktree status     Every worktree and which ones still hold work not in the main checkout (run BEFORE gathering/removing any)
+  worktree gc [--dry-run]  Delete what DevKit worktrees left behind (integrated worktrees, orphan <repo>-* folders) only when
+                      nothing in it is unique; kept ones are named with the reason
   worktree diff <path>
                       Its own changes as a patch, DevKit setup left out; bring them back
                       with: agent-kit worktree diff ../app-x | git apply --3way
