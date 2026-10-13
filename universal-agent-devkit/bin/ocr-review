@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""ocr-review [--from REF --to REF | --commit SHA] [-b TEXT] [--delegate-only] [--out DIR] — run OpenCodeReview (`ocr`) on the change the way this machine can.
+
+  * `ocr review` (the full review) sends the diff to an LLM and needs an endpoint: OCR_LLM_URL/OCR_LLM_TOKEN/OCR_LLM_MODEL,
+    ~/.opencodereview/config.json (`ocr config provider`), or ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN/ANTHROPIC_MODEL.
+    Claude Code's own login is not one. When it runs, its JSON report is kept: `mode: review`, `report: <file>`.
+  * Without an endpoint (2026-10-13 on this machine: every `ocr review` exited 1 with "no valid LLM endpoint configured", and
+    no step said so, so OCR was simply never used) the delegation mode runs instead — `ocr delegate preview` and
+    `ocr delegate rule`, no LLM and no key: the files to review, their diff command and OCR's rules for them go into a spec
+    (`mode: delegate`, `spec: <file>`) that the host agent hands to a fresh-context reviewer (Agent tool), who reports only
+    real defects with file:line.
+--delegate-only skips the LLM attempt (hooks/review_gate.sh runs it on a block: no cost, ~1 s).
+Output goes to a new temp folder (or --out DIR, reused and overwritten: review_gate passes one folder per repo so its block
+message is the same text on every run), never into the repo. Exit 0: report or spec ready (or nothing to review); 1: ocr failed;
+3: ocr is not installed. Standard library only.
+"""
+import json
+import os
+import re
+import shutil
+import shlex
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+
+ENDPOINT_ERR = "no valid LLM endpoint configured"
+# a hung `ocr` must not hang its caller: review_gate.sh runs --delegate-only inside its own 20 s hook budget (two calls, ~0.3-0.8 s
+# each in the 5 repos, 13/10), and a full review (~80 s with Opus) runs detached
+DELEGATE_TIMEOUT_S = 6
+REVIEW_TIMEOUT_S = 900
+# an API key or bearer token that an LLM error may echo: never printed (it would land in the agent transcript)
+SECRET_RX = re.compile(r"(sk-[A-Za-z0-9]{2,8}-)[A-Za-z0-9_-]{8,}|((?:x-api-key|authorization|bearer|token)[\"\x27:= ]+)[A-Za-z0-9._-]{12,}", re.I)
+
+
+try:   # the kit's full key / token pattern list (regression_checklist.redact_secrets), next to this file
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    from regression_checklist import redact_secrets
+except Exception as _e:   # SECRET_RX still masks the forms an LLM error echoes
+    print("ocr-review: redact_secrets unavailable (%r); masking sk-/bearer forms only" % (_e,), file=sys.stderr)
+    redact_secrets = None
+
+
+def mask(text):
+    text = SECRET_RX.sub(lambda m: (m.group(1) or m.group(2)) + "***", text or "")
+    return redact_secrets(text) if redact_secrets else text
+
+
+def _kill_group(p):
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except OSError as e:   # already gone
+        print("ocr-review: could not stop ocr (pid %d): %r" % (p.pid, e), file=sys.stderr)
+
+
+def ocr(*args, timeout=None):
+    """`ocr …`, bounded. ocr.js spawns the native binary, so a timeout kills the whole process group, not node alone."""
+    p = subprocess.Popen(["ocr", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_group(p)
+        out, err = p.communicate()
+        return subprocess.CompletedProcess(p.args, 124, out, (err or "") + "\nocr timed out after %ss" % timeout)
+    except BaseException:
+        _kill_group(p)
+        raise
+    return subprocess.CompletedProcess(p.args, p.returncode, out, err)
+
+
+def range_args(argv):
+    """(flags for `ocr review`, flags for `ocr delegate`, the diff command the spec names for one file). -b/--background is a
+    review-only flag: its value never reaches `ocr delegate` as a stray argument."""
+    keep, dkeep, diff = [], [], ["git", "diff"]
+    it = iter(argv)
+    vals = {}
+    for a in it:
+        if a in ("--from", "--to", "--commit", "-c", "-b", "--background"):
+            v = next(it, "")
+            keep += [a, v]
+            if a not in ("-b", "--background"):
+                dkeep += [a, v]
+            vals[a] = v
+    if "--commit" in vals or "-c" in vals:
+        c = vals.get("--commit") or vals.get("-c")
+        diff = ["git", "show", c, "--"]
+    elif "--from" in vals:
+        diff = ["git", "diff", vals["--from"] + "..." + vals.get("--to", "HEAD"), "--"]
+    else:
+        diff = ["git", "diff", "HEAD", "--"]      # workspace: staged + unstaged (new files: read them whole)
+    return keep, dkeep, diff
+
+
+def main(argv):
+    if shutil.which("ocr") is None:
+        print("ocr-review: `ocr` (OpenCodeReview) is not installed — npm i -g @alibaba-group/open-code-review", file=sys.stderr)
+        print("ocr missing: install with npm i -g @alibaba-group/open-code-review")
+        return 3
+    delegate_only = "--delegate-only" in argv
+    out = ""
+    if "--out" in argv:
+        i = argv.index("--out")
+        out = argv[i + 1] if i + 1 < len(argv) else ""
+        argv = argv[:i] + argv[i + 2:]
+    keep, dkeep, diff = range_args([a for a in argv if a != "--delegate-only"])
+    if out:
+        os.makedirs(out, mode=0o700, exist_ok=True)
+        st = os.lstat(out)   # a folder another user made (or a symlink) at a guessable path would read or redirect the writes
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+            print("ocr-review: --out %s is not a folder of this user (symlink or foreign owner): refused" % out, file=sys.stderr)
+            return 1
+        os.chmod(out, 0o700)
+    else:
+        out = tempfile.mkdtemp(prefix="ocr-review.")
+    if not delegate_only:
+        report = os.path.join(out, "ocr-review.json")
+        r = ocr("review", "--audience", "agent", "--format", "json", "-o", report, *[a for a in keep if a], timeout=REVIEW_TIMEOUT_S)
+        if r.returncode == 0 and os.path.exists(report):
+            print("mode: review")
+            print("report: " + report)
+            return 0
+        why = (r.stderr or r.stdout or "").strip()
+        if ENDPOINT_ERR not in why:
+            print("ocr-review: `ocr review` failed: " + mask(why)[:500], file=sys.stderr)
+            return 1
+        print("ocr review needs an LLM endpoint (" + ENDPOINT_ERR + "); using OCR delegation mode (no LLM, no key)")
+    p = ocr("delegate", "preview", "--format", "json", *[a for a in dkeep if a], timeout=DELEGATE_TIMEOUT_S)
+    try:
+        prev = json.loads(p.stdout)
+    except ValueError:
+        print("ocr-review: `ocr delegate preview` failed: " + mask(p.stderr or p.stdout)[:500], file=sys.stderr)
+        return 1
+    files = [f.get("path") for f in prev.get("reviewable_files") or [] if f.get("path")]
+    if not files:
+        print("mode: delegate")
+        print("nothing to review (ocr delegate preview: 0 reviewable files)")
+        return 0
+    g = ocr("delegate", "rule", "--format", "json", *files, timeout=DELEGATE_TIMEOUT_S)
+    try:
+        groups = json.loads(g.stdout).get("groups") or []
+    except ValueError:
+        print("ocr-review: `ocr delegate rule` failed: " + mask(g.stderr or g.stdout)[:500], file=sys.stderr)
+        return 1
+    spec = os.path.join(out, "ocr-spec.md")
+    lines = ["# OCR review spec (OpenCodeReview delegation mode)", "",
+             "Review ONLY these files, with fresh context. For each, read the change with the command shown (a new file: read it "
+             "whole). Report only real defects you can point to: file:line, what breaks, why. Precision over recall: no style "
+             "notes, no guesses. Apply the OCR rules listed for each file.", "",
+             "## Files (" + str(len(files)) + ")"]
+    meta = {f.get("path"): f for f in prev.get("reviewable_files") or []}
+    for f in files:
+        m = meta.get(f, {})
+        lines.append("- `%s` (%s, +%s/-%s): `%s`" % (f, m.get("status", "?"), m.get("insertions", "?"), m.get("deletions", "?"),
+                                                     shlex.join(diff + [f])))
+    for grp in groups:
+        lines += ["", "## OCR rules for: " + ", ".join("`%s`" % x for x in grp.get("files") or []), "", grp.get("rule", "").strip()]
+    with open(spec, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    print("mode: delegate")
+    print("spec: " + spec)
+    print("next: give this spec to a fresh-context reviewer (Agent tool); its findings are the OCR review")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

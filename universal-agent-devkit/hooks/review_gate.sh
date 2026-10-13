@@ -192,6 +192,98 @@ if not changed:
     logline(f"[{ts}] no uncommitted code ({'|'.join(CODE_EXTS)}) — pass")
     sys.exit(0)
 
+# OpenCodeReview, full mode (REVIEW_GATE_OCR=full, 2026-10-13): one full LLM review per state of the unreviewed code, run in the
+# background (the hook has 20 s, a review ~80 s), kept in <repo>/.git/ocr-review/full-<hash>/ and shared by sessions.
+OCR_MODE = os.environ.get("REVIEW_GATE_OCR", "1")
+
+
+OCR_REVIEW_TIMEOUT_S = 900   # bin/ocr-review stops `ocr review` there: a pid file older than this (+ margin) is not a running review
+OCR_KEEP_RUNS = 10
+_OCR_ROOT = []
+
+
+def _ocr_root():
+    """<git dir>/ocr-review of the repo the gate checks (a worktree: its own git dir; never the working tree), else a per-repo
+    folder under the system temp dir (bin/ocr-review refuses it when it is a symlink or another user's)."""
+    if not _OCR_ROOT:
+        import hashlib, tempfile
+        try:
+            gd = subprocess.run(["git", "-C", repo_root, "rev-parse", "--absolute-git-dir"], capture_output=True, text=True,
+                                timeout=5, check=True).stdout.strip()
+        except Exception as e:
+            logline(f"[{ts}] git dir for OCR failed: {e!r} — temp dir")
+            gd = ""
+        _OCR_ROOT.append(os.path.join(gd, "ocr-review") if gd and os.path.isdir(gd) else os.path.join(
+            tempfile.gettempdir(), "ocr-review-" + hashlib.sha256(os.path.realpath(repo_root).encode()).hexdigest()[:12]))
+    return _OCR_ROOT[0]
+
+
+def _code_hash():
+    import hashlib
+    h = hashlib.sha256()
+    for rel in changed:
+        h.update(rel.encode("utf-8", "surrogateescape") + b"\0")
+        try:
+            with open(os.path.join(repo_root, rel), "rb") as fh:
+                h.update(hashlib.sha256(fh.read()).digest())
+        except OSError:
+            h.update(b"-")
+    return h.hexdigest()[:16]
+
+
+def _full_dir():
+    return os.path.join(_ocr_root(), "full-" + _code_hash())
+
+
+def _full_report(fdir):
+    """The comments of a finished full review in fdir, or None (none yet, or not a full review)."""
+    try:
+        with open(os.path.join(fdir, "ocr-review.json"), encoding="utf-8") as fh:
+            rep_ = json.load(fh)
+        # an error object, another schema or a partial write is no review (OCR, 13/10): only a real comments list counts
+        return rep_["comments"] if isinstance(rep_, dict) and isinstance(rep_.get("comments"), list) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _valid_ocr_report(rp, newest):
+    """rp is an OCR JSON report (an object with a comments list) written after the newest edited file (mtime `newest`)."""
+    try:
+        if os.path.getmtime(rp) < newest:
+            return False
+        with open(rp, encoding="utf-8") as fh:
+            rep_ = json.load(fh)
+        return isinstance(rep_, dict) and isinstance(rep_.get("comments"), list)
+    except (OSError, ValueError):
+        return False
+
+
+def _prune_full_runs(keep_dir):
+    """Keep the newest OCR_KEEP_RUNS full-* runs (each new code state makes one; nothing else removes them)."""
+    import shutil
+    root = _ocr_root()
+    try:
+        runs = sorted((os.path.join(root, n) for n in os.listdir(root) if n.startswith("full-")),
+                      key=os.path.getmtime, reverse=True)
+    except OSError as e:
+        logline(f"[{ts}] OCR prune: {e!r}")
+        return
+    for old in runs[OCR_KEEP_RUNS:]:
+        if os.path.realpath(old) != os.path.realpath(keep_dir):
+            try:
+                shutil.rmtree(old)
+            except OSError as e:
+                logline(f"[{ts}] OCR prune {os.path.basename(old)}: {e!r}")
+
+
+def _shown_to(fdir):
+    try:
+        with open(os.path.join(fdir, "shown"), encoding="utf-8") as fh:
+            return sid in fh.read().split()
+    except OSError:
+        return False
+
+
 def in_diff(fp):
     """Does an absolute edit path correspond to an uncommitted diff entry?"""
     absolute = os.path.realpath(fp if os.path.isabs(fp) else os.path.join(cwd, fp))
@@ -205,6 +297,40 @@ last_edit_idx = -1
 last_review_idx = -1
 session_unreviewed = set()   # diff paths edited by me this session
 idx = 0
+# OpenCodeReview (2026-10-13): a FULL review that succeeded counts as the fresh review. The command must START a command segment
+# (`echo ocr review` is not one), and a REPORT decides, never a word in the output (OpenCodeReview of this gate, 13/10: `--help`,
+# `echo mode: review` and other wording passed): the helper's `report: <file>` (in `mode: review`; a delegation spec alone means
+# nobody reviewed yet) or a plain `ocr review … -o <file>` must be an OCR JSON report (an object with a `comments` list) written
+# after the newest file this session edited. `--help` / `-h` / `--version`: not a review.
+OCR_CMD = re.compile(r"(?:^|[;&|(\n]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:python3?\s+)?(?:\S*/)?(ocr-review|ocr\s+(?:review|r))\b")
+ocr_pending = {}   # tool_use id -> (transcript index, "helper" | "plain", command)
+ocr_reports = []   # (transcript index, report path) of OCR runs that named a report
+OCR_NOT_A_RUN = re.compile(r"(?:^|\s)(?:--help|-h|--version)(?:\s|$)")
+
+
+def _ocr_report_path(kind, cmd, txt):
+    import shlex
+    if OCR_NOT_A_RUN.search(cmd):
+        return ""
+    if kind == "helper":
+        if "mode: review" not in txt:
+            return ""
+        rp = next((l[8:].strip() for l in txt.splitlines() if l.startswith("report: ")), "")
+    else:
+        try:
+            words = shlex.split(cmd)
+        except ValueError:
+            return ""
+        rp = next((words[i + 1] for i, w in enumerate(words[:-1]) if w in ("-o", "--output")), "")
+    return os.path.join(cwd, rp) if rp and not os.path.isabs(rp) else rp
+
+def _result_text(blk):
+    c = blk.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "\n".join(x.get("text", "") for x in c if isinstance(x, dict))
+    return ""
 if tp and os.path.exists(tp):
     with open(tp) as fh:
         for rawline in fh:
@@ -220,6 +346,12 @@ if tp and os.path.exists(tp):
             if not isinstance(content, list):
                 continue
             for blk in content:
+                if isinstance(blk, dict) and blk.get("type") == "tool_result" and blk.get("tool_use_id") in ocr_pending:
+                    at, kind, ocmd = ocr_pending.pop(blk.get("tool_use_id"))
+                    _rp = "" if blk.get("is_error") else _ocr_report_path(kind, ocmd, _result_text(blk))
+                    if _rp:
+                        ocr_reports.append((at, _rp))
+                    continue
                 if not isinstance(blk, dict) or blk.get("type") != "tool_use":
                     continue
                 idx += 1
@@ -240,11 +372,30 @@ if tp and os.path.exists(tp):
                     sk = inp.get("skill", "") or inp.get("command", "")
                     if sk in REVIEW_SKILLS:
                         last_review_idx = idx
+                elif name == "Bash":
+                    om = OCR_CMD.search(str(inp.get("command") or ""))
+                    if om and blk.get("id"):
+                        ocr_pending[blk.get("id")] = (idx, "helper" if om.group(1) == "ocr-review" else "plain",
+                                                      str(inp.get("command") or ""))
                 elif name == "Workflow":
                     wf = inp.get("name", "") or ""
                     scr = inp.get("script", "") or ""
                     if wf in REVIEW_WORKFLOWS or "multi-lens-audit" in scr:
                         last_review_idx = idx
+
+# An OCR report counts only when it is newer than every file this session edited (a report from before the last edit is stale).
+if ocr_reports:
+    _newest = 0.0
+    for _f in session_unreviewed:
+        try:
+            _newest = max(_newest, os.path.getmtime(os.path.join(repo_root, _f)))
+        except OSError:
+            pass   # deleted since the edit: nothing newer to compare
+    for _at, _rp in ocr_reports:
+        if _valid_ocr_report(_rp, _newest):
+            last_review_idx = max(last_review_idx, _at)
+        else:
+            logline(f"[{ts}] OCR run at #{_at} named {_rp}: not a fresh OCR report — not counted")
 
 # No .kt edited by me this session (the dirty files are pre-existing /
 # someone else's) → nothing of mine to gate.
@@ -255,6 +406,19 @@ if last_edit_idx == -1:
     sys.exit(0)
 
 reviewed_after_edits = last_review_idx > last_edit_idx and last_review_idx != -1
+
+# A full review diffs the workspace: code committed past verified_head (`since`) is not in it, so it never passes that (OCR, 13/10).
+if not reviewed_after_edits and OCR_MODE == "full" and not since:
+    try:
+        _fd = _full_dir()
+        if _full_report(_fd) is not None and _shown_to(_fd):
+            reset_attempts()
+            logline(f"[{ts}] OCR full review of this code shown to this session ({os.path.basename(_fd)}) — pass")
+            sys.exit(0)
+    except SystemExit:
+        raise
+    except Exception as _e:
+        logline(f"[{ts}] OCR full check failed: {_e!r}")
 
 if reviewed_after_edits:
     reset_attempts()
@@ -372,6 +536,92 @@ lines += [
     "  D) Hoặc Workflow 'multi-lens-audit' nếu môi trường hỗ trợ workflow.",
     "Gom finding → fix theo CLASS (không chỉ instance) → rồi mới stop.",
 ]
+# OpenCodeReview, run by the gate itself on this block path only (2026-10-13, user: run ocr review in every repo): the delegation
+# mode needs no LLM and no key (~1 s); its spec goes to the reviewer. REVIEW_GATE_OCR=0: off.
+_full_lines = []
+if OCR_MODE == "full":
+    _helper = os.path.realpath(os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "..", "bin", "ocr-review"))
+    try:
+        _fd = _full_dir()
+        _comments = _full_report(_fd)
+        if _comments is not None:
+            _sev = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+            _top = sorted(_comments, key=lambda c: _sev.get(str(c.get("severity", "")).lower(), 4))[:8]
+            _full_lines = ["", f"OCR review đầy đủ cho đúng code này đã xong: {len(_comments)} phát hiện "
+                               f"(report {os.path.join(_fd, 'ocr-review.json')}). Xử lý từng cái (sửa, hoặc nói vì sao không):"]
+            for c in _top:
+                _txt = " ".join(str(c.get("content") or c.get("message") or "").split())[:240]
+                _full_lines.append(f"  • [{c.get('severity', '?')}] {c.get('path', '?')}:{c.get('start_line', '?')} — {_txt}")
+            if len(_comments) > len(_top):
+                _full_lines.append(f"  … +{len(_comments) - len(_top)} phát hiện nữa trong report")
+            _full_lines.append("  Code không đổi thêm thì Stop sau được tính là đã review; sửa code thì OCR review lại."
+                               if not since else
+                               f"  {len(since)} file code đã commit sau lần xác minh cuối không nằm trong review này (OCR chỉ diff "
+                               "workspace): phần đó vẫn cần review context sạch (A–D).")
+            with open(os.path.join(_fd, "shown"), "a", encoding="utf-8") as fh:
+                fh.write(sid + "\n")
+            logline(f"[{ts}] OCR full review shown: {len(_comments)} finding(s) ({os.path.basename(_fd)})")
+        elif os.path.isfile(_helper):
+            _pidf = os.path.join(_fd, "pid")
+            _running = False
+            try:   # older than the helper's own bound: a recycled pid, not a running review
+                _age = time.time() - os.path.getmtime(_pidf)
+                with open(_pidf) as fh:
+                    _ptxt = fh.read().strip()
+                if _age < OCR_REVIEW_TIMEOUT_S + 120:
+                    if _ptxt:
+                        os.kill(int(_ptxt), 0)
+                        _running = True
+                    else:
+                        _running = _age < 30   # claimed by another Stop a moment ago, its pid not written yet
+            except (OSError, ValueError):
+                _running = False
+            _running_line = ["", "OCR review đầy đủ (LLM) đang chạy ở nền cho code này; Stop sau sẽ có kết quả."]
+            if _running:
+                _full_lines = _running_line
+            elif not os.path.isfile(_pidf):
+                os.makedirs(_fd, mode=0o700, exist_ok=True)
+                try:   # claim the run first: two Stops at once start one review, not two writing the same report
+                    _pfd = os.open(_pidf, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                except FileExistsError:
+                    _pfd = None
+                if _pfd is None:
+                    _full_lines = _running_line
+                else:
+                    with open(os.path.join(_fd, "run.log"), "w") as _lg:
+                        _pr = subprocess.Popen([sys.executable, "-I", _helper, "--out", _fd], cwd=repo_root,
+                                               stdin=subprocess.DEVNULL, stdout=_lg, stderr=subprocess.STDOUT, start_new_session=True)
+                    with os.fdopen(_pfd, "w") as fh:
+                        fh.write(str(_pr.pid))
+                    _full_lines = ["", "OCR review đầy đủ (LLM, ~1–2 phút) đã khởi động ở nền cho code này; Stop sau sẽ có kết quả."]
+                    logline(f"[{ts}] OCR full review started in the background pid={_pr.pid} ({os.path.basename(_fd)})")
+                    _prune_full_runs(_fd)
+            else:   # ended without a report (no endpoint, error): the delegation spec below is the way
+                logline(f"[{ts}] OCR full review ended without a report ({os.path.basename(_fd)}) — delegation only")
+    except Exception as _e:   # OCR is an aid here, never a reason to fail the gate
+        logline(f"[{ts}] OCR full review failed: {_e!r}")
+lines += _full_lines
+if os.environ.get("REVIEW_GATE_OCR", "1") != "0" and not any("đã xong" in l for l in _full_lines):
+    _helper = os.path.realpath(os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "..", "bin", "ocr-review"))
+    try:
+        if os.path.isfile(_helper):
+            # one folder per repo, in its git dir (never in the working tree; the message names the repo path, so it reads the same
+            # on every run), of the repo the gate checks (repo_root, the cwd's toplevel; not CLAUDE_PROJECT_DIR: OCR, 13/10);
+            # -I like every hook python: a module planted in the repo or PYTHONPATH must not run here
+            # (tests/gates/test_hook_python_isolation.sh)
+            _out = _ocr_root()
+            # 14 s: past the helper's own bound (2 x 6 s per ocr call) and inside the hook's 20 s, which Claude Code enforces by
+            # killing the hook, and a killed Stop hook lets the Stop through unreviewed (tests/gates/test_review_gate_ocr.sh)
+            _r = subprocess.run([sys.executable, "-I", _helper, "--delegate-only", "--out", _out], cwd=repo_root,
+                                capture_output=True, text=True, timeout=14)
+            _spec = next((l[6:].strip() for l in _r.stdout.splitlines() if l.startswith("spec: ")), "")
+            if _r.returncode == 0 and _spec:
+                lines += ["", "OCR (OpenCodeReview) đã tự chạy chế độ delegation: spec " + _spec,
+                          "  → giao spec này cho reviewer ở mục A; có khoá LLM thì chạy .agents/devkit/bin/ocr-review để OCR tự review "
+                          "(một lượt OCR review thành công sau lần sửa cuối được tính)."]
+            logline(f"[{ts}] ocr-review --delegate-only rc={_r.returncode} spec={_spec or '-'}")
+    except Exception as _e:   # OCR is an aid here, never a reason to fail the gate
+        logline(f"[{ts}] ocr-review failed: {_e!r}")
 sys.stderr.write("\n".join(lines) + "\n")
 sys.exit(2)
 PY

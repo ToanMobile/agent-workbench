@@ -719,6 +719,21 @@ def dismiss_rollback(project_dir: Path) -> bool:
     return True
 
 
+# A key, token or password pasted into a bug report never reaches the checklist (2026-10-13: a pasted API key became a REPORTED
+# row's title and the start of its id, in files every session commits). Redacted where all paths meet: register_bug.
+_SECRET_RX = re.compile(
+    r"\b(?:sk-[A-Za-z0-9]{2,10}-[A-Za-z0-9_-]{12,}|sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+    r"|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|xox[abprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,})"
+    r"|(?P<pre>(?i:bearer\s+|(?:api[_-]?key|token|secret|password|passwd)\s*[=:]\s*))[A-Za-z0-9._~+/-]{12,}")
+
+
+def redact_secrets(text):
+    """`text` with every key / token / password-looking value replaced by «redacted» (None stays None)."""
+    if not isinstance(text, str):
+        return text
+    return _SECRET_RX.sub(lambda m: (m.group("pre") or "") + "«redacted»", text)
+
+
 def _slug(text: str, max_len: int = 40) -> str:
     # Vietnamese titles keep their letters: "bị xóa" → "bi-xoa", not "b-x-a".
     text = unicodedata.normalize("NFKD", text.lower().replace("đ", "d"))
@@ -1955,7 +1970,8 @@ def register_bug(data: dict, title: str, *, fixed=True, component: str = "-", se
     result: linked tests show NOT_RUN until a real gate run. state="reported" is a bug
     prompt nobody confirmed yet; any other call confirms the row. linked_now=False only
     for tests the caller has just run itself (post-fix-gate), so their result counts."""
-    title = " ".join((title or "").split())
+    title = redact_secrets(" ".join((title or "").split()))
+    cause, evidence = redact_secrets(cause), redact_secrets(evidence)
     if not title:
         raise ValueError("thiếu tiêu đề bug")
     component = component or "-"
@@ -2203,8 +2219,8 @@ def register_req(data: dict, title: str, criteria: list, *, component: str = "-"
     """(id, created). A requirement with acceptance criteria. The criteria are locked by
     hash when first written (before the code, so the tests are not fitted to it): a
     different set needs a reason, kept in criteria_changes. Same title + module → same row."""
-    title = " ".join((title or "").split())
-    criteria = [" ".join(c.split()) for c in criteria if c and c.strip()]
+    title = redact_secrets(" ".join((title or "").split()))
+    criteria = [redact_secrets(" ".join(c.split())) for c in criteria if c and c.strip()]
     if not title:
         raise ValueError("thiếu tiêu đề REQ")
     if not criteria:
@@ -2489,8 +2505,8 @@ def import_bugs(data: dict, rows: list, *, source: str, project: Path = None) ->
         else:
             counts["updated"] += 1
         new_links = [t for t in in_matrix if t not in item.get("tests", [])]
-        item.update({"title": row["title"], "severity": row["severity"], "fixed": row["fixed"],
-                     "component": row["module"] or "-", "evidence": row["evidence"],
+        item.update({"title": redact_secrets(row["title"]), "severity": row["severity"], "fixed": row["fixed"],
+                     "component": row["module"] or "-", "evidence": redact_secrets(row["evidence"]),
                      "test_refs": outside, "runs_in_suite": refs, "source": source})
         item.setdefault("tests", []).extend(new_links)
         if new_links:

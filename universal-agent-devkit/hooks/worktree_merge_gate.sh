@@ -223,6 +223,55 @@ def unknown_row(path, reason, kind):
     return {"path": path, "branch": None, "detached": False, "dirty": None, "ahead": None, "reflog": None, "busy": None,
             "unreachable": False, "unintegrated": True, "reason": reason, "kind": kind}
 
+def gone(path):
+    """The folder is missing AND git no longer lists the worktree (worktree remove takes both): another merge finished it. Unsure: not gone."""
+    if os.path.isdir(path):
+        return False
+    now_listed = git("worktree", "list", "--porcelain")
+    if now_listed is None:
+        return False   # cannot say: keep the hold
+    reg = [l[len("worktree "):] for l in now_listed.splitlines() if l.startswith("worktree ")]
+    return path not in reg and os.path.realpath(path) not in {os.path.realpath(p) for p in reg}
+
+def in_main(sha):
+    """The commit is in the main checkout's HEAD (the trunk). No sha, a git error or a timeout: False (keep the hold)."""
+    if not sha:
+        return False
+    try:
+        return subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", sha, "HEAD"], capture_output=True, timeout=5).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+def work_in_main(r, base):
+    """The commits a gone worktree could still give back are in main: the HEAD seen before (`base`) is in main, or its branch moved past
+    it (someone committed its uncommitted work: the background merge) to a tip that is in main. An rm -rf from outside leaves the branch
+    where it was, so commits not in main keep the Stop held (they are still on the branch: the hold says to bring them back). Uncommitted
+    files of a folder that is gone cannot be brought back by any hold."""
+    if in_main(base):
+        return True
+    tip = git("rev-parse", "--verify", "-q", "refs/heads/" + r["branch"] + "^{commit}") if r.get("branch") else None
+    return bool(tip) and tip != base and in_main(tip)
+
+def landed(r):
+    """Another merge finished this worktree: folder AND registration gone, and its work is in main (HEAD read just before this Stop's
+    merge). Anything less is no proof the work reached trunk (an rm -rf + prune of unmerged commits): keep the hold."""
+    return gone(r["path"]) and work_in_main(r, r.get("_head"))
+
+# HEAD of each worktree as `git worktree list` read it before the inventory: what must be in main if its folder is gone afterwards
+listed_heads, _cur = {}, None
+for _l in (listed or "").splitlines():
+    if _l.startswith("worktree "):
+        _cur = _l[len("worktree "):]
+    elif _l.startswith("HEAD ") and _cur:
+        listed_heads[_cur] = listed_heads[os.path.realpath(_cur)] = _l[len("HEAD "):]
+
+def vanished_done(r):
+    """A row whose folder vanished after the inventory is done when it was integrated already, or its work is in main (work_in_main,
+    from the HEAD `git worktree list` showed before the inventory)."""
+    if not r.get("unintegrated"):
+        return True
+    return work_in_main(r, listed_heads.get(r["path"]) or listed_heads.get(os.path.realpath(r["path"])))
+
 if listed is None:
     # Keep the debt and anything this session named. Do not save an empty list over a debt we could not re-read.
     named = list(finished)
@@ -283,8 +332,9 @@ except (Exception, SystemExit) as e:
     pending += [unknown_row(w, "gate error: " + why, "error") for w in want]
 # A worktree whose folder is gone by now was removed since the inventory: the background merge of the last Stop finished its last step
 # while this Stop was reading it (tests/gates/test_worktree_merge_gate_vanished.sh). That is what this gate asks for, so its row is
-# done, not a hold ("merged, remove it" for a path that no longer exists). A row with a reason (the gate could not judge it) stays.
-vanished = [r for r in pending if not r.get("reason") and not os.path.isdir(r["path"])]
+# done, not a hold ("merged, remove it" for a path that no longer exists). A row with a reason (the gate could not judge it) stays, and so
+# does one whose work is not provably in main (vanished_done: an rm -rf from outside must not pass the Stop; same test, case 4).
+vanished = [r for r in pending if not r.get("reason") and not os.path.isdir(r["path"]) and vanished_done(r)]
 if vanished:
     pending = [r for r in pending if r not in vanished]
     for r in vanished:
@@ -303,6 +353,7 @@ if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != 
         script = os.path.join(devkit, "scripts", "git", "worktree.py")
         runs = []
         for r in cand:
+            r["_head"] = git("rev-parse", "HEAD", cwd=r["path"])   # for landed(): what must be in main if the folder is gone afterwards
             out_path = os.path.join(gdir, "devkit-automerge-" + hashlib.sha1(r["path"].encode()).hexdigest()[:10] + ".out")
             try:
                 with open(out_path, "w", encoding="utf-8") as fh:
@@ -337,7 +388,9 @@ if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != 
                 pending.remove(r)
                 owed.add(real_path)
                 continue
-            if res.get("status") in ("merged", "nothing"):
+            # landed(): the previous Stop's background merge landed this worktree and removed it while this run read it, so this run
+            # died on the missing folder (tests/gates/test_worktree_merge_gate_vanished.sh, cases 2 and 3): done, not a hold
+            if res.get("status") in ("merged", "nothing") or landed(r):
                 am_done.append(r["path"])
                 pending.remove(r)
                 owed.discard(real_path)

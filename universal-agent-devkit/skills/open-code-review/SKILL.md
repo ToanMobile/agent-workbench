@@ -18,6 +18,8 @@ Công cụ giải quyết 4 điểm nghẽn lớn của AI code review truyền 
 
 ## 2. Các chế độ thực thi (Execution Modes)
 
+> **Chạy bằng `.agents/devkit/bin/ocr-review` (khuyến nghị).** `ocr review` gửi diff tới một LLM và KHÔNG chạy nếu chưa có endpoint (`OCR_LLM_URL/OCR_LLM_TOKEN/OCR_LLM_MODEL`, `~/.opencodereview/config.json` qua `ocr config provider`, hoặc `ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN/ANTHROPIC_MODEL`): nó thoát 1 với "no valid LLM endpoint configured" (13/10: mọi lượt trên máy này đều vậy, nên OCR không được dùng). Phiên đăng nhập của Claude Code KHÔNG phải endpoint. `ocr-review` tự chọn: có endpoint thì Mode 1, không thì Mode 2 và ghi spec ra thư mục tạm (không ghi vào repo). Khoá LLM là bí mật: người dùng tự nhập bằng `ocr config provider` ngoài phiên agent; đừng export `ANTHROPIC_API_KEY` toàn cục (Claude Code cũng đọc nó). Stop hook `review_gate.sh` chỉ tính một lượt OCR là review khi nó có REPORT JSON thật (dòng `report: <file>` của helper, hoặc `ocr review … -o <file>`), ghi sau lần sửa code cuối; chữ trong output không đủ.
+
 ### Mode 1: Chế độ Review Diff Trực tiếp (`ocr review`)
 Sử dụng khi cần review các thay đổi chưa commit (workspace), branch diff, hoặc một commit cụ thể.
 

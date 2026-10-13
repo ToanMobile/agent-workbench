@@ -14,7 +14,7 @@ Mục tiêu: đưa chính DevKit tới **100/100** theo `skills/devkit-audit/ref
 2. **Audit chỉ đọc**: một agent mỗi repo, một agent guard, một agent tốc độ (`references/agent-briefs.md`). Tự kiểm lại mọi claim; gắn nhãn "tự xác nhận" hoặc "agent báo".
 3. **Chọn và lên kế hoạch**: hook Stop trước, rồi phút tiết kiệm đã đo ÷ rủi ro; tối đa 3 mục; chưa có số đo thì đo trước. Qua `/giao`: `pm_task_create`, `pm_plan`, `pm_dispatch kind=plan_review`; tự kiểm từng phát hiện, rồi sửa kế hoạch.
 4. **Sửa**: trong bản sao `cp -Rc` của kit; test ĐỎ trước, XANH sau; cài từng file bằng file tạm rồi `mv`.
-5. **Review độc lập**: agent ngữ cảnh mới và `pm_dispatch kind=audit` cùng đọc toàn diff, thử phá. Sửa mọi lỗi thật, rồi review lại phần vừa sửa.
+5. **Review độc lập**: agent ngữ cảnh mới, OpenCodeReview (`bin/ocr-review`: tự review khi có khoá LLM, không thì spec delegation giao cho một reviewer ngữ cảnh mới khác) và `pm_dispatch kind=audit` cùng đọc toàn diff, thử phá. Sửa mọi lỗi thật, rồi review lại phần vừa sửa.
 6. **Cổng và bàn giao**: gate `--full` exit 0 ở mọi repo white list đã đụng, đăng ký bug và RED-proof, commit đúng file của mình, push, cập nhật note bàn giao, dòng trend và `agent-kit learn`.
 7. **Báo cáo**: 3 dòng đầu, 4 mục nghiệm thu, điểm /100 kèm mục bị trừ.
 

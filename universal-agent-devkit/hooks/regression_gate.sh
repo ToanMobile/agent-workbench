@@ -185,6 +185,8 @@ if info is not None:
 # and pushes), so it has nothing to hand over, and verified_head is shared: the holder next handover gates the same range.
 # Gating here ran the holder in-progress diff and blocked a session that had changed nothing (five Stops, 08:45 to 09:20).
 # No lock, its own lock, a stale lock, an idle holder or a dead holder process: gated as before. Any error: gated as before.
+# The same three cases session_lock lets write are gated too (OpenCodeReview, 13/10): no session_id in the payload (Grok, bridged
+# agents; session_lock never makes them read-only), DEVKIT_ALLOW_SHARED_CHECKOUT=1 and an active allow-shared grant.
 if not probe:
     try:
         sys.path.insert(0, os.path.join(devkit, "bin"))
@@ -192,7 +194,9 @@ if not probe:
         _gdir, _top = _sl.git_dir(repo)
         _lock = _sl.read_checkout_lock(_gdir) if _gdir else None
         _now = time.time()
-        if _gdir and not _sl.is_free_for(_lock, str(data.get("session_id") or ""), _now) and _sl.allow_shared_until(_gdir) <= _now:
+        _lsid = str(data.get("session_id") or "")   # the id session_lock itself compares, not the harness one
+        if (_gdir and _lsid and os.environ.get("DEVKIT_ALLOW_SHARED_CHECKOUT") != "1"
+                and not _sl.is_free_for(_lock, _lsid, _now) and _sl.allow_shared_until(_gdir) <= _now):
             note("skip: checkout held by another live session (%s) sid=%s" % (str((_lock or {}).get("session_id"))[:12], sid))
             sys.exit(0)
     except SystemExit:

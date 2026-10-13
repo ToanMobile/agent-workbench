@@ -58,6 +58,8 @@ Bẫy khi sửa hook/gate:
 
 ## Pha 5. Review độc lập
 
+**Reviewer thứ hai = OpenCodeReview (OCR), người dùng yêu cầu 13/10.** Chạy `python3 $KIT/bin/ocr-review --from origin/main --to HEAD` (hoặc `--commit <sha>`, hoặc không cờ cho thay đổi chưa commit) từ gốc repo. Có endpoint LLM (`ocr config provider`, khoá do người dùng tự nhập) thì OCR tự review và in `report: <file>`; không có thì in `spec: <file>` (chế độ delegation, không cần khoá): giao spec đó cho một agent `general-purpose` ngữ cảnh mới KHÁC reviewer thứ nhất, nó review đúng các file và luật trong spec. Kết quả OCR đi chung luồng: tự tái hiện từng phát hiện, lỗi thật thì ĐỎ→XANH; ghi `review_log.py note --source ocr --model <model hoặc delegate> …`. `ocr` không cài (`ocr-review` thoát 3): ghi "OCR chưa chạy" trong báo cáo.
+
 Agent `general-purpose` ngữ cảnh mới, chỉ đọc, mẫu trong `agent-briefs.md`. Nó phải tái hiện từng lỗi bằng đầu vào cụ thể và kết quả quan sát. Mọi lỗi thật: sửa với test ĐỎ→XANH, rồi một lượt review thứ hai chỉ trên phần vừa sửa (bản sửa vòng 1 từng gây hai hồi quy mà chỉ review mới bắt được). Việc thuộc phạm vi lớn (từ 3 file, 2 module hoặc 200 dòng) cũng nên hỏi ý Antigravity qua `antigravity-pm` nếu đang chạy; chưa có thì ghi rõ "chưa chạy" trong báo cáo.
 
 ## Pha 6. Cổng và bàn giao

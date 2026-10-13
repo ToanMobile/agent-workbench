@@ -187,7 +187,7 @@ Whenever the user asks to fix a bug, refactor code, or change behavior in a comp
    - Execute the targeted test for the fix (RED → GREEN).
    - Re-run the existing module test suite to verify all existing tests remain 100% GREEN. Never alter existing assertions to mask regressions.
 6. **Deterministic Review with OpenCodeReview (`ocr`):**
-   - If the `ocr` CLI is installed (the DevKit does not install it), run `ocr review` or `ocr delegate preview` on the diff; otherwise use the `open-code-review` skill or a `principal-code-reviewer` subagent. On Claude Code the Stop hook `review_gate.sh` requires one of these after the last code edit.
+   - If the `ocr` CLI is installed (the DevKit does not install it), run `.agents/devkit/bin/ocr-review` on the diff: it runs `ocr review` when an LLM endpoint is configured (`ocr config provider`; Claude Code's own login is not one) and otherwise OCR's delegation mode, a spec for a fresh-context reviewer (2026-10-13: `ocr review` alone failed on every run here with "no valid LLM endpoint configured"). `review_gate.sh` runs the delegation itself when it blocks and counts a successful full OCR review; otherwise use the `open-code-review` skill or a `principal-code-reviewer` subagent. On Claude Code the Stop hook `review_gate.sh` requires one of these after the last code edit.
 
 > **Modular Domain Profiles:**
 > Domain-specific and project-specific rules (such as Automotive Hardware, FlymeAuto, or CAN Bus specifics) are kept isolated in `profiles/` (e.g. `profiles/automotive/`) to keep the DevKit core 100% universal and domain-agnostic.

@@ -335,69 +335,69 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-13 10:03:46",
-        "ts": 1791860626.240354,
-        "task": "session-c01ac57e-153",
-        "commit": "5615acf+dirty",
-        "duration": "66.21s",
+        "at": "2026-10-13 18:32:28",
+        "ts": 1791891148.249951,
+        "task": null,
+        "commit": "21bcd69+dirty",
+        "duration": "71.37s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-01/20261013-100346.log",
+        "log": ".agents/evidence/REG-DK-HOOK-01/20261013-182759.log",
         "deleted": []
       },
       "history": [
         {
           "status": "PASS",
-          "at": "2026-10-13 10:03:46",
-          "ts": 1791860626.240354,
-          "task": "session-c01ac57e-153",
-          "commit": "5615acf+dirty",
-          "duration": "66.21s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261013-100346.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 10:02:06",
-          "ts": 1791860526.184248,
+          "at": "2026-10-13 18:32:28",
+          "ts": 1791891148.249951,
           "task": null,
-          "commit": "e5f7f14+dirty",
-          "duration": "60.41s",
+          "commit": "21bcd69+dirty",
+          "duration": "71.37s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261013-100156.log",
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261013-182759.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-13 09:37:50",
-          "ts": 1791859070.8936052,
+          "at": "2026-10-13 17:17:02",
+          "ts": 1791886622.402293,
           "task": null,
-          "commit": "3a5c3be+dirty",
-          "duration": "117.32s",
+          "commit": "21bcd69+dirty",
+          "duration": "70.13s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261013-093125.log",
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261013-170837.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-13 09:19:39",
-          "ts": 1791857979.948962,
-          "task": "session-c01ac57e-153",
-          "commit": "3a5c3be+dirty",
-          "duration": "138.02s",
+          "at": "2026-10-13 17:02:17",
+          "ts": 1791885737.320423,
+          "task": null,
+          "commit": "21bcd69+dirty",
+          "duration": "98.10s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261013-091520.log",
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261013-165539.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-13 08:50:44",
-          "ts": 1791856244.633931,
-          "task": "session-c01ac57e-153",
-          "commit": "3a5c3be+dirty",
-          "duration": "144.69s",
+          "at": "2026-10-13 15:41:58",
+          "ts": 1791880918.069173,
+          "task": "stale-rerun",
+          "commit": "fbfbf42+dirty",
+          "duration": "101.80s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261013-084803.log",
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261013-154158.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-13 13:53:07",
+          "ts": 1791874387.418476,
+          "task": null,
+          "commit": "5ff3c68+dirty",
+          "duration": "99.18s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261013-134554.log",
           "deleted": []
         }
       ],
@@ -413,69 +413,69 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-13 10:03:46",
-        "ts": 1791860626.251029,
-        "task": "session-c01ac57e-153",
-        "commit": "5615acf+dirty",
-        "duration": "24.75s",
+        "at": "2026-10-13 18:32:28",
+        "ts": 1791891148.258667,
+        "task": null,
+        "commit": "21bcd69+dirty",
+        "duration": "21.83s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-02/20261013-100304.log",
+        "log": ".agents/evidence/REG-DK-HOOK-02/20261013-182709.log",
         "deleted": []
       },
       "history": [
         {
           "status": "PASS",
-          "at": "2026-10-13 10:03:46",
-          "ts": 1791860626.251029,
-          "task": "session-c01ac57e-153",
-          "commit": "5615acf+dirty",
-          "duration": "24.75s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-02/20261013-100304.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 10:02:06",
-          "ts": 1791860526.197998,
+          "at": "2026-10-13 18:32:28",
+          "ts": 1791891148.258667,
           "task": null,
-          "commit": "e5f7f14+dirty",
-          "duration": "23.05s",
+          "commit": "21bcd69+dirty",
+          "duration": "21.83s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-02/20261013-100118.log",
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261013-182709.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-13 09:37:50",
-          "ts": 1791859070.8936079,
+          "at": "2026-10-13 17:17:02",
+          "ts": 1791886622.414285,
           "task": null,
-          "commit": "3a5c3be+dirty",
-          "duration": "33.80s",
+          "commit": "21bcd69+dirty",
+          "duration": "22.19s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261013-093002.log",
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261013-170749.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-13 09:19:39",
-          "ts": 1791857979.948967,
-          "task": "session-c01ac57e-153",
-          "commit": "3a5c3be+dirty",
-          "duration": "28.98s",
+          "at": "2026-10-13 17:02:17",
+          "ts": 1791885737.344579,
+          "task": null,
+          "commit": "21bcd69+dirty",
+          "duration": "24.21s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261013-091331.log",
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261013-165425.log",
+          "deleted": []
+        },
+        {
+          "status": "TIMEOUT",
+          "at": "2026-10-13 15:42:15",
+          "ts": 1791880935.897585,
+          "task": "stale-rerun",
+          "commit": "fbfbf42+dirty",
+          "duration": "17.49s",
+          "exit_code": null,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261013-154215.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-13 08:50:44",
-          "ts": 1791856244.633936,
-          "task": "session-c01ac57e-153",
-          "commit": "3a5c3be+dirty",
-          "duration": "27.78s",
+          "at": "2026-10-13 13:53:07",
+          "ts": 1791874387.4289951,
+          "task": null,
+          "commit": "5ff3c68+dirty",
+          "duration": "26.26s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261013-084606.log",
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261013-134441.log",
           "deleted": []
         }
       ],
@@ -569,69 +569,69 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-13 10:03:46",
-        "ts": 1791860626.25104,
-        "task": "session-c01ac57e-153",
-        "commit": "5615acf+dirty",
-        "duration": "10.38s",
+        "at": "2026-10-13 18:32:28",
+        "ts": 1791891148.258674,
+        "task": null,
+        "commit": "21bcd69+dirty",
+        "duration": "339.62s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261013-100250.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261013-183227.log",
         "deleted": []
       },
       "history": [
         {
           "status": "PASS",
-          "at": "2026-10-13 10:03:46",
-          "ts": 1791860626.25104,
-          "task": "session-c01ac57e-153",
-          "commit": "5615acf+dirty",
-          "duration": "10.38s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261013-100250.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 10:02:06",
-          "ts": 1791860526.198008,
+          "at": "2026-10-13 18:32:28",
+          "ts": 1791891148.258674,
           "task": null,
-          "commit": "e5f7f14+dirty",
-          "duration": "69.86s",
+          "commit": "21bcd69+dirty",
+          "duration": "339.62s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261013-100205.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 09:37:50",
-          "ts": 1791859070.8795142,
-          "task": null,
-          "commit": "3a5c3be+dirty",
-          "duration": "501.55s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261013-093750.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 09:29:02",
-          "ts": 1791858542.6887932,
-          "task": null,
-          "commit": "3a5c3be+dirty",
-          "duration": "561.65s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261013-092902.log",
+          "log": ".agents/evidence/REG-DK-ALL-01/20261013-183227.log",
           "deleted": []
         },
         {
           "status": "FAIL",
-          "at": "2026-10-13 09:19:39",
-          "ts": 1791857979.948975,
-          "task": "session-c01ac57e-153",
-          "commit": "3a5c3be+dirty",
-          "duration": "396.74s",
+          "at": "2026-10-13 17:17:02",
+          "ts": 1791886622.414293,
+          "task": null,
+          "commit": "21bcd69+dirty",
+          "duration": "575.00s",
           "exit_code": 1,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261013-091939.log",
+          "log": ".agents/evidence/REG-DK-ALL-01/20261013-171702.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-13 17:02:17",
+          "ts": 1791885737.3445902,
+          "task": null,
+          "commit": "21bcd69+dirty",
+          "duration": "494.81s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261013-170216.log",
+          "deleted": []
+        },
+        {
+          "status": "TIMEOUT",
+          "at": "2026-10-13 15:36:45",
+          "ts": 1791880605.391264,
+          "task": "stale-rerun",
+          "commit": "fbfbf42+dirty",
+          "duration": "119.69s",
+          "exit_code": null,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261013-153645.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-13 13:53:07",
+          "ts": 1791874387.4290109,
+          "task": null,
+          "commit": "5ff3c68+dirty",
+          "duration": "531.36s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261013-135306.log",
           "deleted": []
         }
       ],
@@ -686,16 +686,38 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-12 20:39:31",
-        "ts": 1791812371.360325,
-        "task": "session-c01ac57e-153",
-        "commit": "892125a+dirty",
-        "duration": "0.78s",
+        "at": "2026-10-13 16:38:32",
+        "ts": 1791884312.7964108,
+        "task": "stale-rerun",
+        "commit": "21bcd69+dirty",
+        "duration": "1.08s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-WB-CONFIG-01/20261012-203931.log",
+        "log": ".agents/evidence/REG-WB-CONFIG-01/20261013-163832.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-13 16:38:32",
+          "ts": 1791884312.7964108,
+          "task": "stale-rerun",
+          "commit": "21bcd69+dirty",
+          "duration": "1.08s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20261013-163832.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-13 13:37:32",
+          "ts": 1791873452.7838452,
+          "task": "stale-rerun",
+          "commit": "5ff3c68+dirty",
+          "duration": "1.18s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20261013-133732.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-12 20:39:31",
@@ -727,28 +749,6 @@
           "duration": "0.54s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-WB-CONFIG-01/20261012-200157.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-12 19:53:15",
-          "ts": 1791809595.106061,
-          "task": null,
-          "commit": "f4a87d7+dirty",
-          "duration": "0.80s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-WB-CONFIG-01/20261012-195314.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-12 19:40:11",
-          "ts": 1791808811.464544,
-          "task": null,
-          "commit": "f4a87d7+dirty",
-          "duration": "0.57s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-WB-CONFIG-01/20261012-194011.log",
           "deleted": []
         }
       ],
@@ -1190,114 +1190,70 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-02 16:10:23",
-        "ts": 1790932223.077049,
+        "at": "2026-10-13 18:32:28",
+        "ts": 1791891148.2586792,
         "task": null,
-        "commit": "cf9ef39+dirty",
-        "duration": "2.54s",
+        "commit": "21bcd69+dirty",
+        "duration": "3.25s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-SANDBOX-01/20261002-160414.log",
-        "deleted": [
-          "universal-agent-devkit/scripts/adversarial_chaos_test_10_agents.py",
-          "universal-agent-devkit/scripts/agent_hooks.py",
-          "universal-agent-devkit/scripts/assertion_lint.py",
-          "universal-agent-devkit/scripts/audit_agent_perfection_50_agents.py",
-          "universal-agent-devkit/scripts/audit_production_lifecycle_50_agents.py",
-          "universal-agent-devkit/scripts/audit_test_suite_50_agents.py",
-          "universal-agent-devkit/scripts/audit_workflows_rules_skills_50_agents.py",
-          "universal-agent-devkit/scripts/audit_zero_regression_10_agents.py",
-          "universal-agent-devkit/scripts/backup_conflict.sh",
-          "universal-agent-devkit/scripts/build_inputs.py",
-          "universal-agent-devkit/scripts/claude_memory.py",
-          "universal-agent-devkit/scripts/context_sync.py",
-          "universal-agent-devkit/scripts/devkit_clean.py",
-          "universal-agent-devkit/scripts/devkit_i18n.py",
-          "universal-agent-devkit/scripts/devkit_uninstall.py",
-          "universal-agent-devkit/scripts/enrich_context.py",
-          "universal-agent-devkit/scripts/fold_agent_file.py",
-          "universal-agent-devkit/scripts/git-commit-msg.sh",
-          "universal-agent-devkit/scripts/git-pre-commit.sh",
-          "universal-agent-devkit/scripts/githooks.sh",
-          "universal-agent-devkit/scripts/hardware_boundaries.py",
-          "universal-agent-devkit/scripts/hardware_source_lint.py",
-          "universal-agent-devkit/scripts/i18n.sh",
-          "universal-agent-devkit/scripts/index_memory.py",
-          "universal-agent-devkit/scripts/lint_compose_stability.py",
-          "universal-agent-devkit/scripts/lint_unity_gc.py",
-          "universal-agent-devkit/scripts/matrix_detect.py",
-          "universal-agent-devkit/scripts/memory_stats.py",
-          "universal-agent-devkit/scripts/merge_json.py",
-          "universal-agent-devkit/scripts/merge_markdown.py",
-          "universal-agent-devkit/scripts/nightly.py",
-          "universal-agent-devkit/scripts/profile_skills.py",
-          "universal-agent-devkit/scripts/proof_phash.py",
-          "universal-agent-devkit/scripts/red_proof.py",
-          "universal-agent-devkit/scripts/relink_check.py",
-          "universal-agent-devkit/scripts/rule_context.py",
-          "universal-agent-devkit/scripts/rules_index.py",
-          "universal-agent-devkit/scripts/run_unity_tests.py",
-          "universal-agent-devkit/scripts/stale_rerun.py",
-          "universal-agent-devkit/scripts/sync_commands.sh",
-          "universal-agent-devkit/scripts/token_cost_tracker.py",
-          "universal-agent-devkit/scripts/worktree.py",
-          "universal-agent-devkit/scripts/worktree_sandbox.py"
-        ]
+        "log": ".agents/evidence/REG-DK-SANDBOX-01/20261013-182651.log",
+        "deleted": []
       },
       "history": [
         {
           "status": "PASS",
-          "at": "2026-10-02 16:10:23",
-          "ts": 1790932223.077049,
+          "at": "2026-10-13 18:32:28",
+          "ts": 1791891148.2586792,
           "task": null,
-          "commit": "cf9ef39+dirty",
-          "duration": "2.54s",
+          "commit": "21bcd69+dirty",
+          "duration": "3.25s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-SANDBOX-01/20261002-160414.log",
-          "deleted": [
-            "universal-agent-devkit/scripts/adversarial_chaos_test_10_agents.py",
-            "universal-agent-devkit/scripts/agent_hooks.py",
-            "universal-agent-devkit/scripts/assertion_lint.py",
-            "universal-agent-devkit/scripts/audit_agent_perfection_50_agents.py",
-            "universal-agent-devkit/scripts/audit_production_lifecycle_50_agents.py",
-            "universal-agent-devkit/scripts/audit_test_suite_50_agents.py",
-            "universal-agent-devkit/scripts/audit_workflows_rules_skills_50_agents.py",
-            "universal-agent-devkit/scripts/audit_zero_regression_10_agents.py",
-            "universal-agent-devkit/scripts/backup_conflict.sh",
-            "universal-agent-devkit/scripts/build_inputs.py",
-            "universal-agent-devkit/scripts/claude_memory.py",
-            "universal-agent-devkit/scripts/context_sync.py",
-            "universal-agent-devkit/scripts/devkit_clean.py",
-            "universal-agent-devkit/scripts/devkit_i18n.py",
-            "universal-agent-devkit/scripts/devkit_uninstall.py",
-            "universal-agent-devkit/scripts/enrich_context.py",
-            "universal-agent-devkit/scripts/fold_agent_file.py",
-            "universal-agent-devkit/scripts/git-commit-msg.sh",
-            "universal-agent-devkit/scripts/git-pre-commit.sh",
-            "universal-agent-devkit/scripts/githooks.sh",
-            "universal-agent-devkit/scripts/hardware_boundaries.py",
-            "universal-agent-devkit/scripts/hardware_source_lint.py",
-            "universal-agent-devkit/scripts/i18n.sh",
-            "universal-agent-devkit/scripts/index_memory.py",
-            "universal-agent-devkit/scripts/lint_compose_stability.py",
-            "universal-agent-devkit/scripts/lint_unity_gc.py",
-            "universal-agent-devkit/scripts/matrix_detect.py",
-            "universal-agent-devkit/scripts/memory_stats.py",
-            "universal-agent-devkit/scripts/merge_json.py",
-            "universal-agent-devkit/scripts/merge_markdown.py",
-            "universal-agent-devkit/scripts/nightly.py",
-            "universal-agent-devkit/scripts/profile_skills.py",
-            "universal-agent-devkit/scripts/proof_phash.py",
-            "universal-agent-devkit/scripts/red_proof.py",
-            "universal-agent-devkit/scripts/relink_check.py",
-            "universal-agent-devkit/scripts/rule_context.py",
-            "universal-agent-devkit/scripts/rules_index.py",
-            "universal-agent-devkit/scripts/run_unity_tests.py",
-            "universal-agent-devkit/scripts/stale_rerun.py",
-            "universal-agent-devkit/scripts/sync_commands.sh",
-            "universal-agent-devkit/scripts/token_cost_tracker.py",
-            "universal-agent-devkit/scripts/worktree.py",
-            "universal-agent-devkit/scripts/worktree_sandbox.py"
-          ]
+          "log": ".agents/evidence/REG-DK-SANDBOX-01/20261013-182651.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-13 16:38:31",
+          "ts": 1791884311.215366,
+          "task": "stale-rerun",
+          "commit": "21bcd69+dirty",
+          "duration": "6.03s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-SANDBOX-01/20261013-163831.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-13 13:53:07",
+          "ts": 1791874387.429003,
+          "task": null,
+          "commit": "5ff3c68+dirty",
+          "duration": "6.48s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-SANDBOX-01/20261013-134422.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-13 13:07:40",
+          "ts": 1791871660.168225,
+          "task": null,
+          "commit": "5ff3c68+dirty",
+          "duration": "18.00s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-SANDBOX-01/20261013-125256.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-13 12:48:58",
+          "ts": 1791870538.572008,
+          "task": null,
+          "commit": "33259ef+dirty",
+          "duration": "6.29s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-SANDBOX-01/20261013-123716.log",
+          "deleted": []
         }
       ],
       "title": "worktree sandbox cleanup keeps unmerged work unless --force",
@@ -1845,8 +1801,8 @@
       "red_proof": {
         "at": "2026-10-09 18:16:20",
         "ts": 1791544580.0016901,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_worktree_merge_gate_vanished.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -2757,24 +2713,6 @@
         "patch": ".agents/local/red-patches/BUG-20261012-hardware-gate-passes-a-quoted-or-root-gl.patch"
       }
     },
-    "BUG-20261012-review-them": {
-      "id": "BUG-20261012-review-them",
-      "kind": "bug",
-      "title": "review thêm",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-12 14:19:43",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-12 14:19:43",
-      "sessions": [
-        "422700de-b5d8-4110-936f-40878bb57ac5"
-      ]
-    },
     "BUG-20261012-stop-gates-run-on-progress-replies-whose": {
       "id": "BUG-20261012-stop-gates-run-on-progress-replies-whose",
       "kind": "bug",
@@ -2879,24 +2817,6 @@
         "log": ".agents/evidence/redproof-BUG-20261012-a-session-blocked-by-a-held-checkout-sto/20261012-210656.log",
         "patch": ".agents/local/red-patches/BUG-20261012-a-session-blocked-by-a-held-checkout-sto.patch"
       }
-    },
-    "BUG-20261012-ok-lam-theo-de-xuat-di-ngoai-ra-check-th": {
-      "id": "BUG-20261012-ok-lam-theo-de-xuat-di-ngoai-ra-check-th",
-      "kind": "bug",
-      "title": "ok làm theo đề xuất đi ngoài ra check thêm case này",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-12 17:31:30",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-12 17:31:30",
-      "sessions": [
-        "d09f355b-a0f2-4edc-b1d2-6f1ca685cfbb"
-      ]
     },
     "BUG-20261012-test-chap-chon-flaky-reg-dk-session-01": {
       "id": "BUG-20261012-test-chap-chon-flaky-reg-dk-session-01",
@@ -3005,7 +2925,15 @@
       "linked_ts": 1791811461.813371,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_session_lock_resolve.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-13 12:04:23",
+        "ts": 1791867863.68338,
+        "status": "INCONCLUSIVE",
+        "mode": "revert",
+        "fix_commit": "2f7f8b7ad686",
+        "reason": "revert 2f7f8b7ad686 xung đột với code hiện tại: universal-agent-devkit/bin/post-fix-gate.py, universal-agent-devkit/bin/session_authorship.py"
+      }
     },
     "BUG-20261012-test-evidence-gate-lets-a-pass-claim-thr": {
       "id": "BUG-20261012-test-evidence-gate-lets-a-pass-claim-thr",
@@ -3221,26 +3149,124 @@
         "universal-agent-devkit/tests/gates/test_regression_gate_held_by_other.sh"
       ],
       "red_proof": {
-        "at": "2026-10-13 10:02:31",
-        "ts": 1791860551.44401,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "at": "2026-10-13 15:11:07",
+        "ts": 1791879067.651967,
+        "status": "INCONCLUSIVE",
+        "reason": "sandbox không chạy xanh được kể cả HEAD (thiếu file build bị ignore? khai trong .agents/local/red_proof.json {\"copy\": [...]})",
         "mode": "patch",
         "fix_commit": null,
         "files": {
           "universal-agent-devkit/tests/gates/test_regression_gate_held_by_other.sh": "1863bac98350f7fb",
           ".agents/local/red-patches/BUG-20261013-regression-gate-blocks-the-stop-of-a-rea.patch": "db7f115f56f5c015"
         },
-        "log": ".agents/evidence/redproof-BUG-20261013-regression-gate-blocks-the-stop-of-a-rea/20261013-100356.log",
+        "log": ".agents/evidence/redproof-BUG-20261013-regression-gate-blocks-the-stop-of-a-rea/20261013-154215.log",
         "patch": ".agents/local/red-patches/BUG-20261013-regression-gate-blocks-the-stop-of-a-rea.patch"
       }
+    },
+    "BUG-WT-1013": {
+      "id": "BUG-WT-1013",
+      "kind": "bug",
+      "title": "worktree copies keep the macOS uchg flag so remove cannot delete them and leaves an unregistered orphan folder",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-13 11:31:10",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-13 11:31:13",
+      "linked_ts": 1791865873.71546,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/worktree_git/test_worktree_immutable_copy.sh"
+      ],
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-13 11:55:55",
+        "ts": 1791867355.149664,
+        "status": "INCONCLUSIVE",
+        "mode": "revert",
+        "fix_commit": "e4a16f3dd11a",
+        "reason": "revert e4a16f3dd11a xung đột với code hiện tại: universal-agent-devkit/scripts/git/worktree.py"
+      }
+    },
+    "BUG-20261013-opencodereview-never-ran-ocr-review-exit": {
+      "id": "BUG-20261013-opencodereview-never-ran-ocr-review-exit",
+      "kind": "bug",
+      "title": "OpenCodeReview never ran: ocr review exits 1 without an LLM endpoint, nothing reported it, and review_gate ignored OCR",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-13 12:33:22",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "linked_at": "2026-10-13 12:33:22",
+      "linked_ts": 1791869602.921802,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_gate_ocr.sh"
+      ],
+      "red_proof": {
+        "at": "2026-10-13 14:32:37",
+        "ts": 1791876757.357156,
+        "status": "INCONCLUSIVE",
+        "reason": "sandbox không chạy xanh được kể cả có bản sửa (thiếu file build bị ignore? khai trong .agents/local/red_proof.json {\"copy\": [...]})",
+        "mode": "session",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_review_gate_ocr.sh": "2a2098ce0c5b80e5"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261013-opencodereview-never-ran-ocr-review-exit/20261013-151107.log"
+      }
+    },
+    "BUG-20261013-bug-capture-copied-a-pasted-secret": {
+      "id": "BUG-20261013-bug-capture-copied-a-pasted-secret",
+      "kind": "bug",
+      "title": "Bug capture copied an API key pasted in a prompt into regression_status.json and CHECKLIST.md (title and id unredacted)",
+      "cause": null,
+      "component": "checklist",
+      "created_at": "2026-10-13 13:40:06",
+      "task": null,
+      "tests": [],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "13/10 workbench: REPORTED row held a pasted key; redact_secrets at register_bug/register_req/import_bugs + capture_bug",
+      "test_refs": [
+        "tests/verification/test_bug_secret_redaction.sh"
+      ]
+    },
+    "BUG-20261013-regression-gate-held-skip-ignored-writers": {
+      "id": "BUG-20261013-regression-gate-held-skip-ignored-writers",
+      "kind": "bug",
+      "title": "regression_gate skipped the Stop for a payload without session_id or with DEVKIT_ALLOW_SHARED_CHECKOUT=1 while another session held the lock",
+      "cause": null,
+      "component": "gates",
+      "created_at": "2026-10-13 13:40:07",
+      "task": null,
+      "tests": [],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P2",
+      "evidence": "OpenCodeReview of Dot 29 (13/10): held-by-other skip ignored the cases session_lock lets write",
+      "test_refs": [
+        "tests/gates/test_regression_gate_held_by_other.sh"
+      ]
     }
   },
   "meta": {
     "matrix_pending": false
   },
   "stats": {
-    "reported_total": 33,
-    "reported_dropped": 20
+    "reported_total": 40,
+    "reported_dropped": 29
   }
 }

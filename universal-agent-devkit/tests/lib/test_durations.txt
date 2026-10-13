@@ -244,3 +244,7 @@
 0 tests/installer/test_legacy_script_paths.sh
 0 tests/gates/test_gate_redpatch_no_test.sh
 0 tests/context_memory/test_session_lock_readonly.sh
+10 tests/gates/test_review_gate_ocr.sh
+4 tests/verification/test_bug_secret_redaction.sh
+23 tests/gates/test_review_gate_ocr_full.sh
+1 tests/installer/test_ocr_review_helper.sh

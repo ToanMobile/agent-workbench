@@ -15,15 +15,149 @@
 
 | Mục | Nội dung | File gốc | Trạng thái |
 |---|---|---|---|
-| I.1 | Mục tiêu DevKit 100/100: việc còn lại (Đợt 31 OCR, Giai đoạn C, chiều 5 ngữ cảnh, giai đoạn D…) | `goal-100-2026-10-13.md` | Việc 1 (Đợt 31): code xong, chưa commit/push, chưa chạy gate `--full`; 2 và 4: dở (patch nháp); 5: chờ người dùng quyết; 6, 7: chưa làm; 8: chờ duyệt; 9: xong. Theo bảng gốc, cập nhật 13/10 15:40 |
-| I.2 | Plan C+D: không ai sửa trong main, một bộ gộp tuần tự | `trunk-integrator-no-shared-main.md` | Bản nháp chờ duyệt (Gate 1), chưa code. Điều kiện tiên quyết số 2 (gộp `aaf9805`) xong 13/10 theo I.1 việc 8 |
-| I.3 | Đề xuất bắt các bug agent không thấy (P1–P10) | `catch-bugs-agents-cannot-see.md` | File gốc: "PROPOSAL — nothing here is implemented" (07/10). CHANGELOG Đợt 6a–6d (08/10) ghi đã làm một phần: xem ghi chú đầu mục |
-| II.A | DevKit chạy nhanh: nghiên cứu 04/10 và kế hoạch 3 đợt | `devkit-speed.md` | CHANGELOG có Đợt 0 (04/10), Đợt 1a (05/10, mục 3b), Đợt 4 (07/10, mục 1c); phần còn lại chưa đối chiếu |
+| **I.0** | **Kế hoạch tối ưu — thứ tự làm duy nhất (audit 13/10 17:00). Đọc mục này trước; I.1–I.3 là chi tiết** | — | Mới. Đợt W0 → W4, mỗi đợt nêu số đo, chiều rubric được cộng và cách kiểm |
+| I.1 | Mục tiêu DevKit 100/100: việc còn lại (Đợt 31 OCR, Giai đoạn C, chiều 5 ngữ cảnh, giai đoạn D…) | `goal-100-2026-10-13.md` | Kiểm lại 13/10 17:00: việc 1 vẫn chưa commit, chưa có gate `--full` exit 0 trên main (lần exit 0 lúc 16:30 là của worktree `docsplit`) → I.0 W0; việc 2, 4: patch nháp vẫn áp sạch vào cây hiện tại → W3, W4; việc 5: đã có quyết định 12/10 → W4; việc 6, 7 → W4, W2; việc 9: xong |
+| I.2 | Plan C+D: không ai sửa trong main, một bộ gộp tuần tự | `trunk-integrator-no-shared-main.md` | Phần lười (D3 `merge=union`, race, dọn mồ côi, một worktree mỗi phiên) đưa vào I.0 W1; phần còn lại (C2, D1 nới khoá) để sau, xem I.0 "Để sau" |
+| I.3 | Đề xuất bắt các bug agent không thấy (P1–P10) | `catch-bugs-agents-cannot-see.md` | Đối chiếu 13/10 17:00 với code: P1, P3 (mẫu), P5, P8 xong; P2, P10 một phần; P4, P6, P7, P9 chưa làm (bảng ở đầu mục). Để sau I.0 |
+| II.A | DevKit chạy nhanh: nghiên cứu 04/10 và kế hoạch 3 đợt | `devkit-speed.md` | Đối chiếu 13/10 17:00 với code: phần lớn xong hoặc đã bỏ sau khi đo. Còn mở: đồng bộ ba danh sách loại trừ, `security_gate` tăng dần, `churn_guard` đọc đuôi, `local_state_sha` một lần mỗi lượt, `.sandboxes/` chưa được ignore. Bảng ở đầu mục |
 | II.B | Living Regression Checklist V3 | `regression-checklist-v3.md` | Phụ lục B: P0–P9 xong 24/09/2026; người dùng quyết không cài job đêm |
 | II.C | UI context injection Zero-Slop | `ui-context-injection-zero-slop.md` | Thực thi ngày 03/10/2026 (mục "Audit và thực thi"); hai điểm chờ người quyết nằm ở `issues-bugs.md` A.4 |
 
 ## Phần I — Đang mở / chờ duyệt
 
+
+### I.0 Kế hoạch tối ưu — thứ tự làm duy nhất (audit 2026-10-13 17:00, phiên d352c03b)
+
+**Người dùng, 13/10 ~17:00:** "rất khó chịu nó tạo nhiều worktree và các worktree này lỡ ko xoá thì tôi lại phải đi giải quyết hậu quả
+rất mất time, stophook bị kẹt cũng rất lâu … Nâng cấp con agent này toàn duyệt để có thể tự động hoá toàn bộ qui trình chất lượng nhất
+mà không cần con người can thiệp." Từ câu này có ba đích, xếp trên mục tiêu điểm 100/100:
+(1) không bao giờ để worktree hay thư mục sót cho người dùng dọn, và tạo ít worktree hơn; (2) Stop hook không kẹt lâu;
+(3) không bước nào cần người, trừ danh sách cuối mục này.
+
+#### Số đo lúc lập plan (13/10 16:50, `devkit_metrics.py --since-days 1`, chỉ đọc)
+
+| Repo | Gate 1 ngày | Suite tốn nhất | Stop: chặn thật / lần Stop | Overhead p50 / p90 | Byte nạp mỗi phiên | Hàng "chờ" |
+|---|---|---|---|---|---|---|
+| agent-workbench | 80 lượt, 447 phút | `REG-DK-ALL-01` 416 phút: 26 PASS, 21 FAIL, 9 TIMEOUT / 56 | 0,27 (50/188; test_evidence 20, proof 10, regression 8, security 8) | 2,0 s / 55 s | 26,6 KB | 0 |
+| GeelyEx2 | 40 lượt, 162 phút | `REG-CAR-01` 91 phút | 0,26 (14/54) | **21,8 s** / 50,6 s | **55,2 KB** | 14 / 391 |
+| OfficeReader | 41 lượt, 127 phút | `REG-OR-APP` 33 phút | 0,41 (26/63) | **15,8 s / 79,9 s** | **47,9 KB** | 67 / 171 |
+| Goods | 57 lượt, 274 phút | `REG-GAME-03` 156 phút | **0,85** (50/59; regression_gate 21) | 4,2 s / 54 s | **47,3 KB** | 42 / 70 |
+| Neighbours | 78 lượt, 137 phút | `REG-AUTO-UNITY-01` 125 phút | 0,37 (22/59) | 6,9 s / 17 s | 35,1 KB | 0 / 1 |
+
+Thêm, đo cùng lúc:
+- **Gate của kit là chỗ tốn thời gian lớn nhất.** 13/10 có 57 lượt gate ở workbench và các worktree của nó, cộng 357 phút; 12/10 là 219 phút.
+  10 log bằng chứng còn giữ của `REG-DK-ALL-01` nêu hai test đỏ: `test_worktree_merge_gate_owner.sh` 3 lần (race, `issues-bugs.md` A.2 #3)
+  và `test_hook_python_isolation.sh` 3 lần (đỏ khi máy tải cao, xanh khi chạy riêng). Log TIMEOUT không nêu tên test.
+- **Main chọn quá nhiều test vì chưa push.** Main đi trước origin 17 commit, nên `tests/run_impacted.sh:35-36` (`@{u}..HEAD`) tính 114 file
+  của 17 commit đó là "đã đổi": `--list` chọn **190 trên 226 test** dù cây bẩn chỉ có 13 file. Ở worktree tách rời không upstream thì
+  cửa sổ 6 giờ chọn 157 test thay vì 11 (`issues-bugs.md` A.2 #2). Hai cơ chế khác nhau, cùng hậu quả: gate 900 s TIMEOUT.
+- **Thư mục mồ côi vẫn sinh ra:** `GeelyEx2-push-1013d` tạo lúc 16:36 hôm nay chỉ chứa `.agents/` và `.claude/audit-gate/*.lock`,
+  do `post-fix-gate.py` ghi sau khi worktree bị gỡ (`issues-bugs.md` A.1 #10). Ổ `/Volumes/Data` còn 9,5 GiB, dưới mốc 10 GiB của rubric chiều 10.
+- **Phiên còn sống lúc lập plan:** workbench chỉ có phiên này (khoá ghi `d352c03b`). Hai tiến trình `claude` khác chạy đã 8 giờ:
+  pid 7157 ở GeelyEx2 (phiên `0b9c3540`, đang chạy gate trong `GeelyEx2-push-1013e`) và pid 9836 ở OfficeReader. Việc ở hai repo
+  đó phải chờ chúng hoặc đi qua worktree.
+- **Hai patch nháp vẫn dùng được:** `guardc/guard.patch` và `ctx5/kit.patch` (trong `.agents/local/memory/wip-2026-10-13/`) đều qua
+  `git apply --check --directory=universal-agent-devkit` trên cây hiện tại, không cần gộp 3 chiều.
+
+**Điểm ước tính lúc này:** khoảng 65/100, các chiều ≈ [6, 5, 4, 10, 5, 5, 10, 8, 8, 4]. Đây là ước tính trên cửa sổ 1 ngày, chưa ghi
+vào trend. Mốc duy nhất đã ghi là **66** (12/10, `.agents/local/memory/claude-auto/devkit-audit-trend.jsonl`, các chiều [6,4,6,8,3,5,10,8,8,8]).
+Con số "~70" ở I.1 chưa bao giờ được ghi; các chiều nó liệt kê cộng ra 71. Theo luật rubric, mức tăng không có số đo thì không tính.
+Chiều 3 chỉ tính repo có từ 100 lần Stop; trong 1 ngày chỉ workbench đủ. Chấm lại bằng `--since-days 3` sau W0, rồi ghi dòng trend.
+Chiều 6 chưa đo lại hôm nay.
+
+#### Đường găng: W0 → W4
+
+Nguyên tắc: mỗi bước nghiệm thu bằng gate `--full` exit 0, nên **độ tin cậy của gate đi trước mọi việc khác**. Mỗi sửa code đều có
+test ĐỎ→XANH. Không bước nào nới cổng: chỉ làm cùng kiểm tra ít lần hơn, cho đúng đích hơn, hoặc dọn đúng hơn (INSTINCT-017).
+
+| Đợt | Việc | Vì sao đứng ở đây | Kiểm chứng | Chiều rubric |
+|---|---|---|---|---|
+| **W0** hạ cánh | Đợt 31 (I.1 việc 1, các bước 1–5) cộng 17 commit chưa push: gate `--full --force-full --timeout 2400`, commit theo pathspec (index đang giữ mục CHANGELOG Đợt 31), `git fetch`, pull kiểm exit code, push; xoá `stash@{0}`/`{1}`; `agent-kit bugs drop` các dòng REPORTED không phải bug (4 dòng, xong 13/10 17:10); sửa danh sách "hỏi người dùng" trong `rules/essentials.md` theo câu 13/10 17:05 rồi `context_sync`; quyết định 2 dòng sửa SIGQUIT chưa rõ chủ trong `tests/verification/test_agent_kit_test_order.sh` (chạy bản HEAD và bản sửa, giữ chỉ khi cần) | Push xong thì `@{u}..HEAD` gần như rỗng, nên mọi gate sau trên main chọn test theo đúng diff (190 → khoảng số file đang sửa; ước tính, đo lại sau push) | `runs.jsonl`: `project=agent-workbench`, exit 0; `--list` sau push | 10 (+2..4), 2 (+2,5 khi suite kit xanh) |
+| **W1** worktree không bao giờ sót + mỗi phiên một worktree | *(viết lại 13/10 18:30 sau phản biện Antigravity T0035)* Làm theo thứ tự R5b gc → R5a → R5c → R4 → R3 → Phase 0 → R1/R2/R7 ở mục "Nhiều phiên cùng lúc: thiết kế đã chốt" bên dưới. Race của `worktree_merge_gate` (A.2 #3) đã sửa trong phiên này, cơ chế thật là hai lần automerge chồng nhau | Đây là phàn nàn số 1 của người dùng và là nguồn đỏ ngẫu nhiên số 1 của gate kit | Mỗi luật có test ĐỎ trước; các test bắt buộc ở mục 6 của plan T0035 (hai phiên không chờ nhau, cùng sửa một file, phiên chỉ đọc, hai lần gộp đồng thời, CHANGELOG hai phía, gate bị giết sau khi gỡ worktree, gc, công tắc tắt, `--list` bằng số test của diff) | 1, 10, 3 |
+| **W2** Stop không kẹt, gate đúng đích | a. `run_impacted.sh`: worktree tách rời không upstream lấy cửa sổ từ `git merge-base HEAD <trunk>` thay vì 6 giờ (đo được 157 → 11 test). Cảnh báo INSTINCT-027: ref local agent ghi được, nên `--full` cuối trên main vẫn là chốt chặn.<br>b. `test_hook_python_isolation.sh` đỏ dưới tải: tìm chỗ phụ thuộc thời gian và sửa cho tất định, không thêm retry.<br>c. Đo "Stop kẹt": thời gian thật từng hook ở từng lần Stop, lấy từ log hook của 5 repo (hook nào, bao lâu, chờ khoá hay chạy suite). Chỉ sửa sau khi có số.<br>d. Replay chặn nhầm trên transcript thật (I.1 việc 7): workbench `test_evidence_gate` 20 + `proof_gate` 10, Goods `regression_gate` 21. Lần chặn nào là nhầm thì có ca test hai chiều. Chưa có công cụ replay. Chỉ `proof_gate.sh:480` ghi `report=`/`image=` (20 dòng ở 5 repo, 12/10 20:36 → 13/10 15:58); `review_gate` không ghi các trường này | Gate chậm và đỏ ngẫu nhiên làm mọi việc sau chậm gấp nhiều lần; Stop chặn nhầm là chiều 3 thấp nhất | `--list` trong worktree bằng số test của chính diff; bảng thời gian Stop trước/sau; tỉ lệ chặn/Stop ≤0,10 ở repo có ≥100 Stop | 3 (+4..6), 2, 4 |
+| **W3** cổng lệnh | Giai đoạn C (I.1 việc 2) cộng lỗ `session_lock` (A.1 #3) trong MỘT bộ chuẩn hoá: lấy bộ quét đích ghi có sẵn trong `hooks/worktree_guard.sh` (dòng 423–544, nhúng trong heredoc) làm module dùng chung, không viết bộ thứ hai. Trước khi bật chặn: kiểm hai lệnh shadow 0→2. Cả hai trông như THÂN heredoc có nháy (`cat > f <<'EOF'`, `python3 - <<'PYEOF'`). Nếu bộ chuẩn hoá đọc dữ liệu heredoc thành lệnh thì đó là chặn nhầm và phải sửa trước. `/giao` plan_review + audit (luồng bảo mật) | Lỗ fail-open đã xảy ra thật (13/10 11:03) | Test hai chiều mỗi dạng; replay 7 ngày: 0 lệnh bị nới, mọi lệnh mới bị chặn đều đúng | 1 (+3..4) |
+| **W4** ngữ cảnh, RED-proof, overhead | a. Ngữ cảnh: áp `ctx5` (tách luật automotive; mọi dòng MUST / an toàn xe vẫn luôn nạp), rồi làm đúng quyết định người dùng 12/10: chuyển luật riêng của repo trong `AGENTS.md` (Geely, Office, Goods) sang `.agents/local/rules/`, không xoá chữ nào, không rút essentials. Repo đang có phiên khác thì làm trong worktree.<br>b. Giai đoạn D: `red_proof.py --pending` mỗi repo (Office 67, Goods 42 hàng chờ; 17 % toàn bộ → mục tiêu ≤2 %). Mã đã có sẵn: `scripts/governance/nightly.py:143-146` chạy `red_proof --pending --heavy --wait`, có cả `agent-kit nightly install`, nhưng chưa cài ở đâu. Người dùng quyết 24/09 không cài job đêm (II.B), nên không cài LaunchAgent. Thay vào đó, lượt `/devkit-audit` hằng ngày tự gọi `nightly.py` một lần cho mỗi repo rảnh.<br>c. Overhead Geely p50 21,8 s, Office p50 15,8 s / p90 79,9 s: đo thời gian từng bước của gate (`runs.jsonl` chưa có số theo bước) rồi mới sửa | Lợi điểm lớn nhưng không chặn ai làm việc | `measure.py` ≤40 960 B mỗi repo, mọi tiêu đề luật còn trong mục lục; `checklist.waiting` ≤2 %; p50 ≤10 s | 5 (+4..5), 2 (+2) |
+
+#### Nhiều phiên cùng lúc: thiết kế đã chốt (13/10 18:30, sau 2 vòng phản biện Antigravity, task T0035)
+
+Lịch sử quyết định:
+1. **17:10:** chỉ đưa D1 vào W1.
+2. **17:20:** người dùng chỉ ra lỗi logic: phiên mở lần lượt đều vào main. Code xác nhận điều này: `bin/session_lock.py:733-746` nhả khoá vô
+   điều kiện khi phiên giữ rảnh, đã chết hoặc hết hạn; log khoá 13/10 ghi khoá chuyền qua lại lúc 08:23, 09:50, 11:03, 12:32.
+3. **17:30:** người dùng: "tôi luôn làm nhiều phiên cùng lúc… có nên mặc định mỗi phiên 1 worktree riêng xong nào thì merge vô main". Số đo
+   12–13/10 xác nhận: workbench có 9 phiên, tối đa 4 phiên cùng lúc, và ≥2 phiên cùng sống 20,8 h; GeelyEx2 16,5 h; Neighbours 4,4 h.
+4. **Kết quả: chọn "mỗi phiên một worktree" (trunk mode).** Bỏ phương án "main thuộc phiên có việc dở", vì nó vẫn giữ người giữ main và phải
+   đoán file dở là của ai.
+
+Plan gửi Antigravity phản biện, chỉ đọc code:
+- **v1:** 2 lỗi chặn, 3 lớn, 2 nhỏ; 9/9 dữ kiện trích dẫn đúng.
+- **v2:** 1 lỗi chặn, 3 lớn, 2 nhỏ; điểm của v1 đã sửa đúng.
+- **v3:** 1 lỗi chặn, 4 lớn, 2 nhỏ. Lỗi chặn: bộ lọc "worktree đã biến mất" có từ 09/10 bỏ qua cả việc chưa gộp; Antigravity chạy thử
+  thấy rc 0. Đã sửa, có test.
+- **v4:** đang phản biện vòng 4.
+
+Bản đầy đủ: `.antigravity-pm/tasks/T0035-…/plan.md`.
+
+| Luật | Nội dung | Vì sao (lỗi phản biện bắt được) |
+|---|---|---|
+| R1 | Worktree tạo lười, một cái cho cả phiên. Lần ghi đầu vào main bị chặn một lần; hook chạy `agent-kit worktree add ../<repo>-<sid8>` (chép `.env`, `local.properties`…, `agent-kit init`; khoảng 8,4 s, nên timeout tĩnh của hook đó nâng lên 30 s) rồi báo đường dẫn. Phiên chỉ đọc không tạo gì | Hook PreToolUse không đổi được cwd của phiên, và timeout của hook là tĩnh. `EnterWorktree` chỉ có ở Claude và không chép cấu hình cục bộ, nên không dùng |
+| R2 | Agent không ghi vào main, kể cả Antigravity: `session_lock.py --status` trả mã riêng "main chỉ để gộp". Người dùng sửa trong IDE thì không bị ảnh hưởng | Không có người giữ main thì `--status` sẽ báo "trống" |
+| R3 | Gộp mỗi việc xong:<br>1. Commit trong worktree; đặt `target_base` = HEAD main.<br>2. Gộp `target_base` vào worktree.<br>3. Chạy gate theo diff.<br>4. Lấy `MAIN_LOCK`; HEAD main vẫn bằng `target_base` thì `ff-only`.<br>5. Nếu main đã đi tiếp: đặt `target_base` mới, gộp vào worktree, chạy lại gate theo diff (nhỏ nhờ R4), tối đa 3 vòng; không bỏ gate kể cả khi file không giao nhau.<br>Lần gộp giữa phiên dùng `automerge --keep`; worktree chỉ bị xoá ở `SessionEnd` | `ff-only` hỏng khi main đi tiếp trong lúc gate chạy; `automerge` hiện xoá worktree ngay sau lần gộp đầu; bỏ gate khi file không giao nhau là sai (main đổi interface thì caller trong worktree gãy) |
+| R4 | File đã đổi của worktree: `git diff --name-only $(git merge-base HEAD <trunk>) HEAD` cộng file bẩn. `--full` chạy một lần trên main sau lần gộp cuối, rồi push | `git log --name-only` không in file của merge commit, nên bỏ sót phần giải conflict |
+| R5 | Không bao giờ để sót:<br>(a) gate không tạo lại thư mục project đã mất `.git`;<br>(b) `agent-kit worktree gc` chạy nền lúc SessionStart/SessionEnd: gỡ worktree đã gộp, xoá thư mục `<repo>-*` chỉ chứa sổ sách DevKit, có hoặc không có `.git` (bỏ qua `.DS_Store`, thư mục cache rỗng; có file khác thì chỉ liệt kê); liệt kê worktree của phiên chết để Stop của phiên sau nhận nuôi qua gate, không tự gộp. Phiên chết trước Stop đầu tiên cũng được nhận ra nhờ phiên tạo đã ghi trong `devkit-worktree.json`. Không đụng worktree `keystore`;<br>(c) đĩa: dưới 10 GiB thì gc và cảnh báo, dưới 3 GiB thì không tạo worktree mới; tối đa 3 worktree mỗi repo | Ngưỡng cứng 10 GiB sẽ chặn mọi phiên (đĩa còn 3–6 GiB); thư mục mồ côi do gate tạo không có `.git`; tự gộp ở SessionStart thì không qua gate |
+| R6 | Unity: `cp -Rc Library` rồi `chflags -R nouchg,nouappnd`, xoá file khoá của Unity. Gradle dùng build cache chung (đo ở Phase 0) | `cp -c` thiếu `-R`; cờ `uchg` (INSTINCT-038) |
+| R7 | Có công tắc `WORKTREE_TRUNK_MODE=0` để trở về hành vi cũ | — |
+
+Thứ tự trong W1, mỗi bước có test ĐỎ trước:
+1. R5b gc (đĩa đang cạn)
+2. R5a
+3. R5c
+4. R4
+5. R3
+6. Phase 0 đo thời gian tạo worktree, lần build đầu và dung lượng mỗi repo
+7. R1, R2, R7: bật ở workbench trước, rồi GeelyEx2, OfficeReader, cuối cùng hai repo Unity sau R6
+
+**Đã làm trong phiên này (13/10 ~18:15, chưa commit):** test hay đỏ ngẫu nhiên `test_worktree_merge_gate_owner.sh` §7 có cơ chế khác với mô tả ở
+`issues-bugs.md` A.2 #3:
+- **Cơ chế thật:** hai lần `automerge` của MỘT worktree chạy chồng nhau. Lần chạy nền của Stop trước đã gộp và xoá worktree; lần của Stop sau
+  chết vì thư mục đã mất, và lỗi đó biến thành giữ Stop. Bước kiểm kê thì chịu được việc thư mục biến mất (shim tất định đã chứng minh).
+- **Sửa:** `hooks/worktree_merge_gate.sh` dùng một luật chung `work_in_main(r, base)`: HEAD thấy trước đó (`base`) đã nằm trong main,
+  hoặc nhánh đã đi tiếp khỏi `base` (có người commit phần dở) tới một đầu nhánh nằm trong main. Luật này áp ở hai chỗ:
+  - `landed()`: thư mục và đăng ký đều đã mất, cộng `work_in_main` với HEAD đọc ngay trước lần gộp;
+  - bộ lọc "worktree đã biến mất" (có từ 09/10, vòng 3 bắt được là nó bỏ qua MỌI hàng mất thư mục): chỉ bỏ qua khi đã tích hợp, hoặc
+    `work_in_main` với HEAD do `git worktree list` đọc trước bước kiểm kê.
+  - File chưa commit của một thư mục đã mất thì không lần giữ Stop nào cứu được (đã ghi chú trong code).
+- **Test** `tests/gates/test_worktree_merge_gate_vanished.sh`:
+  - ca 1 (đã tích hợp) → cho qua;
+  - ca 2 (lần gộp kia đã đưa vào main) → cho qua: ĐỎ rc 2 → XANH;
+  - ca 3 (xoá + prune mà KHÔNG gộp) → giữ: ĐỎ rc 0 → XANH;
+  - ca 4 (thư mục mất sau bước kiểm kê, commit chưa vào main) → giữ: ĐỎ rc 0 → XANH;
+  - `test_worktree_merge_gate_owner.sh` chạy 7/7 lần không đỏ; `test_worktree_merge_gate.sh` xanh.
+- **Phát hiện phụ:** `block-dangerous-git.sh` chặn nhầm một `python3 - <<'EOF'` vì thân heredoc có dấu backtick. Đây cùng loại lỗi W3 phải sửa.
+
+#### "Toàn duyệt": chỗ nào hôm nay còn cần người, và cách bỏ
+
+**Người dùng 13/10 17:05:** "chỉ hỏi khi xoá dữ liệu quan trọng, đụng secrets/billing thôi còn lại tự làm hết đi".
+- Agent tự quyết, tự kiểm, tự commit và push mọi việc W0–W4, kể cả sửa hook, test runner và luật của kit, mà không hỏi lại.
+- Chỉ hỏi trước khi: xoá dữ liệu quan trọng của người dùng (không phải bản sao do DevKit tạo; force-push hay viết lại lịch sử tính là xoá
+  dữ liệu), hoặc đụng secrets/billing.
+- Danh sách "hỏi người dùng" trong essentials (`rules/essentials.md`, "Working style") rộng hơn câu này. Sửa cho khớp ở W0: đây là file luật,
+  nên phải `context_sync` sang 5 repo.
+
+| Chỗ cần người hôm nay | Bằng chứng | Cách bỏ |
+|---|---|---|
+| Xoá worktree hay thư mục sót ngoài project (`hardware_safety_gate` chặn `rm -rf` của agent; A.2 #4 bảo người dùng gõ `! rm -rf`) | A.2 #4; 7 thư mục `GeelyEx2-*` 1,2 GB vẫn còn | W1 R5b `worktree gc`: lệnh của kit tự kiểm rồi tự xoá, chỉ xoá thứ DevKit tạo |
+| Auto mode từ chối hành động của agent | 13/10: sửa `session_lock`/`worktree_merge_gate` ("Security Weaken"); 13/10 16:5x: dừng một tiến trình test do chính agent chạy ("Interfere With Workloads", đã dừng được bằng `TaskStop`) | **Xong 13/10 17:05** (người dùng cho phép): `~/.claude/settings.json` `permissions.allow` có `Edit(//…/universal-agent-devkit/{hooks,bin,scripts}/**)` và `Bash(agent-kit worktree gc[ *])` (cả dạng `.agents/devkit/bin/agent-kit`). Hành động khác bị từ chối: báo, không lách |
+| Phiên đã thoát vẫn giữ khoá, nên phiên mới bị đẩy sang worktree | 13/10 16:37: khoá ghi `77c3a8b1` "hoạt động cách đây 5 s" trong khi người dùng nói đã thoát mọi phiên; 16:40 khoá về `d352c03b`. Nguyên nhân CHƯA đo (giả thuyết: tiến trình nền của phiên cũ còn sống) | W1 R7: trunk mode không còn người giữ main; vẫn đo, rồi cho khoá nhả theo pid còn sống của chính phiên |
+| Worktree ở repo khác (A.3) chờ người quyết | Người dùng 13/10: "chỉ xử lý agent_workbench" | W1 R5b liệt kê, Stop của phiên sau nhận nuôi khi phiên chủ đã chết, và chỉ gộp khi diff sạch. Có việc dở thì giữ lại và báo đúng tên file |
+
+**Người dùng trả lời 13/10 17:05:**
+1. Rule quyền hẹp: cho phép (đã thêm, xem bảng trên).
+2. Ảnh chụp trang API keys ở gốc repo: xoá (đã xoá, chưa từng commit).
+3. Thư mục `keystore/` trong `Neighbours-From-Hell-keystore`: GIỮ. `worktree gc` không bao giờ xoá worktree này; chỉ báo.
+4. Hook `hook-augment`: không bắt buộc, không đổi.
+
+Không còn quyết định nào chờ người dùng.
 
 ### I.1 Mục tiêu DevKit 100/100 — việc còn lại (cập nhật 2026-10-13 15:40) *(trước đây: `docs/plans/goal-100-2026-10-13.md`)*
 
@@ -37,12 +171,12 @@ nhiều phiên cùng làm mục tiêu này — ghi `ĐANG LÀM: phiên <id>` và
 
 | # | Việc | Trạng thái | Ở đâu |
 |---|---|---|---|
-| 1 | **Đợt 31** — OpenCodeReview làm reviewer thứ hai của `/devkit-audit`; `review_gate` tự chạy OCR (delegation khi chặn, công tắc `REVIEW_GATE_OCR=full`); che bí mật trong checklist; `regression_gate` không bỏ qua Stop khi payload thiếu `session_id` / `DEVKIT_ALLOW_SHARED_CHECKOUT=1`; sửa 16 phát hiện của lượt OCR tự review | **CODE XONG + TEST XANH, CHƯA COMMIT, CHƯA PUSH, CHƯA CHẠY GATE `--full`** | cây làm việc của main (HEAD `fbfbf42`) + sao lưu `.agents/local/memory/dot31-backup-2026-10-13/` |
-| 2 | **Giai đoạn C của plan A–D** (KHÁC "Plan C+D" ở việc 8) — một bộ chuẩn hoá lệnh shell dùng chung cho `hardware_safety_gate.sh` và `block-dangerous-git.sh` (gỡ đệ quy `sh -c` / `adb shell` / `su -c` / `ssh` / `eval` / `xargs`, chuẩn hoá đường dẫn, brace expansion; shadow 1 ngày rồi bật chặn) — bỏ trần 89 | dở: patch nháp + replay 7 ngày, agent dừng vì hạn mức | `.agents/local/memory/wip-2026-10-13/guardc/` |
-| 4 | **Chiều 5 ngữ cảnh** (≤40 KB nạp mỗi phiên) — tách luật profile automotive (người dùng duyệt 13/10 ~10:50: mọi dòng MUST / an toàn xe vẫn luôn nạp, chỉ hướng dẫn dài chuyển sang nạp khi cần); KiB đo 13/10: Neighbours 35.1 (đạt), Office 47.9, Goods 47.3, Geely 55.2 | dở: patch nháp kit + 3 repo, agent dừng vì hạn mức | `.agents/local/memory/wip-2026-10-13/ctx5/` |
-| 5 | Phần còn thiếu của chiều 5 sau việc 4 là essentials nhúng sẵn 19.5 KB/repo: chỉ rút essentials hoặc nâng mốc 40 KB mới đủ | **chờ người dùng quyết** | — |
-| 6 | Giai đoạn D — nightly `red_proof.py --pending` mỗi repo, đưa dòng "đang chờ" ≤2 % rồi đo lại cửa sổ 24 h | chưa làm | — |
-| 7 | Replay Stop chặn nhầm trên transcript thật cho `proof_gate` / `review_gate` (đọc trường `report=` / `image=` mới) | chưa làm | — |
+| 1 | **Đợt 31** — OpenCodeReview làm reviewer thứ hai của `/devkit-audit`; `review_gate` tự chạy OCR (delegation khi chặn, công tắc `REVIEW_GATE_OCR=full`); che bí mật trong checklist; `regression_gate` không bỏ qua Stop khi payload thiếu `session_id` / `DEVKIT_ALLOW_SHARED_CHECKOUT=1`; sửa 16 phát hiện của lượt OCR tự review | **CODE XONG + TEST XANH, CHƯA COMMIT, CHƯA PUSH, CHƯA CHẠY GATE `--full`** (kiểm lại 13/10 17:00: vẫn vậy; phiên c01ac57e đã kết thúc, việc này là I.0 W0) | cây làm việc của main (HEAD `21bcd69`) + sao lưu `.agents/local/memory/dot31-backup-2026-10-13/` |
+| 2 | **Giai đoạn C của plan A–D** (KHÁC "Plan C+D" ở việc 8) — một bộ chuẩn hoá lệnh shell dùng chung cho `hardware_safety_gate.sh` và `block-dangerous-git.sh` (gỡ đệ quy `sh -c` / `adb shell` / `su -c` / `ssh` / `eval` / `xargs`, chuẩn hoá đường dẫn, brace expansion; shadow 1 ngày rồi bật chặn) — bỏ trần 89 | dở: patch nháp + replay 7 ngày, agent dừng vì hạn mức. 13/10 17:00: patch áp sạch vào cây hiện tại; không ai đang làm → I.0 W3 | `.agents/local/memory/wip-2026-10-13/guardc/` |
+| 4 | **Chiều 5 ngữ cảnh** (≤40 KB nạp mỗi phiên) — tách luật profile automotive (người dùng duyệt 13/10 ~10:50: mọi dòng MUST / an toàn xe vẫn luôn nạp, chỉ hướng dẫn dài chuyển sang nạp khi cần); KiB đo 13/10: Neighbours 35.1 (đạt), Office 47.9, Goods 47.3, Geely 55.2 | dở: patch nháp kit + 3 repo, agent dừng vì hạn mức. 13/10 17:00: `kit.patch` áp sạch; KiB không đổi (Geely 55,2, Office 47,9, Goods 47,3) → I.0 W4a | `.agents/local/memory/wip-2026-10-13/ctx5/` |
+| 5 | Phần còn thiếu của chiều 5 sau việc 4 là essentials nhúng sẵn 19.5 KB/repo: chỉ rút essentials hoặc nâng mốc 40 KB mới đủ | 13/10 17:00: không còn chờ. Quyết định 12/10 của người dùng (chuyển luật riêng của repo khỏi `AGENTS.md` sang `.agents/local/rules/`, không rút essentials) chưa được làm. Làm ở I.0 W4a rồi đo lại | — |
+| 6 | Giai đoạn D — nightly `red_proof.py --pending` mỗi repo, đưa dòng "đang chờ" ≤2 % rồi đo lại cửa sổ 24 h | *(sửa 13/10 17:00)* mã đã có (`scripts/governance/nightly.py:143-146`), chưa cài ở repo nào, và người dùng không muốn job đêm (24/09) → I.0 W4b: `/devkit-audit` tự gọi | — |
+| 7 | Replay Stop chặn nhầm trên transcript thật cho `proof_gate` / `review_gate` (đọc trường `report=` / `image=` mới) | chưa làm; *(sửa 13/10 17:00)* chỉ `proof_gate` có các trường này, `review_gate` thì không → I.0 W2d | — |
 | 8 | **Plan C+D — trunk integrator** (mục I.2 bên dưới *(trỏ lại khi gộp)*, phiên d1df0d47): không ai sửa trong main, mỗi phiên một worktree, một bộ gộp tuần tự | **chờ người dùng duyệt (Gate 1 + Gate 2)** — không code trước khi duyệt; điều kiện tiên quyết số 2 của nó (gộp `aaf9805` từ `agent-workbench-dot30b`) XONG 13/10 15:3x (`d5ef026`) | — |
 | 9 | Gộp worktree còn sót: workbench `dot30b` (`d5ef026`), `sprite-forge` (`fbfbf42`, vendor Sprite Forge + patch billing của DevKit, gate impacted PASS), `agent-workbench-plan` (`d7fc075`) | **XONG 13/10** — chưa push; `GeelyEx2-mcpfix` và `Goods-…-mcp` chờ phiên giữ repo nhả khoá (mục 7 của `2026-10-13-mcp-5-repo-va-coverage-map.md`) | — |
 
@@ -202,6 +336,21 @@ Việc nới chính sách khoá cho D1 (xoá `finish|automerge` khỏi regex `GA
 
 ### I.3 Proposal — catch the bugs an agent cannot see (state-matrix, device-first, wiring pins) *(trước đây: `docs/plans/catch-bugs-agents-cannot-see.md`)*
 
+> **Đối chiếu với code 13/10 17:00 (agent chỉ đọc):**
+>
+> | P | Trạng thái | Bằng chứng |
+> |---|---|---|
+> | P1 | xong, Đợt 6c `0e572cd` | `hooks/proof_gate.sh:367,390-392` |
+> | P2 | một phần | ma trận trạng thái chỉ có trong `config.csv` của mẫu P3. Chưa có lăng kính trong `agents/principal-code-reviewer.md` hay `agents/councils/*` |
+> | P3 | xong (mẫu), Đợt 6d `38ade98` | `profiles/android/templates/compose-overlap-invariants/`. Bằng chứng ở commit `7ee3d230a^` của OfficeReader chưa chạy |
+> | P4 | chưa làm | — |
+> | P5 | xong, Đợt 6b `3515f54` | `hooks/testsourceset_gate.sh:312` |
+> | P6 | chưa làm | — |
+> | P7 | chưa làm | script của OfficeReader (`scripts/qa/gates/regression_invariants.py:94`) vẫn `os.walk` cả cây |
+> | P8 | xong, Đợt 6b | `bin/post-fix-gate.py:712` `approved_hashes.json` |
+> | P9 | chưa làm | `android-rules.md:113` có từ trước và nói về đường dẫn file |
+> | P10 | một phần, Đợt 6a `68ddb72` | có lệnh `learn --generic`/`promote`. Hai bẫy của đề xuất chưa có trong `profiles/android/instincts.md` |
+>
 > **Trạng thái bổ sung khi gộp (13/10):** file gốc ghi "PROPOSAL — nothing here is implemented" (07/10). CHANGELOG sau đó có Đợt 6a–6d (08/10) nêu nguồn là plan này: 6c = P1 (bằng chứng TRƯỚC khi sửa), 6d = mẫu P2/P3 cho android, 6b = hook biên dịch test nhường khoá của cổng và nhớ duyệt sửa test theo nội dung (đúng nội dung P5 và P8), 6a theo "nhóm S a và d" (lint test chỉ-kiểm-tồn-tại, bài học đi từ dự án lên kit, gần với P10). P4, P6, P7, P9: chưa đối chiếu. Phần gốc bên dưới giữ nguyên.
 
 
@@ -300,6 +449,29 @@ uncommitted working-tree change (pill, overlay stack).
 
 ### II.A DevKit chạy nhanh: nghiên cứu 04/10/2026 và kế hoạch 3 đợt *(trước đây: `docs/plans/devkit-speed.md`)*
 
+> **Đối chiếu với code 13/10 17:00 (agent chỉ đọc):**
+> - **Xong:**
+>   - 0a `dadd7be`; 0b (`regression_gate.sh:732`, 45 s); 0c; 1a-1.
+>   - 1a-2, khác cách làm: `dd|grep` thay cho python.
+>   - 1c `72bc707`; 1d phần lớn.
+>   - base_text qua `cat-file --batch`: `03295d9`. CHANGELOG dòng ~125 vẫn ghi "Chưa làm" — ghi sai.
+>   - Khoá thiết bị của `proof-capture.py` (`2f7f8b7`); `agent-kit test` song song (`02ea8bf`).
+>   - `test_proof_gate` 142 → 24 s; `tree_fp` chạy trước `local_state_sha`; vòng `readlink` của `session_lock.sh`.
+>   - Quyết định #2 `covered_by` (Đợt 7b); #7 `python3 -I`.
+> - **Một phần:**
+>   - 0d: chưa có ghi chú ControlPersist.
+>   - `local_state_sha`: danh sách đã cache, nội dung vẫn băm 3 lần (`post-fix-gate.py:931,1043,2166`).
+>   - `churn_guard`: đường python vẫn `readlines()` cả transcript (`:148`).
+>   - #8 FIFO: còn `open()` thường ở `post-fix-gate.py:912` và `:3423`.
+> - **Chưa làm:**
+>   - Đồng bộ ba danh sách loại trừ: `tree_fp.py:18-20`, `devkit_harness.py:152-154`, `regression_gate.sh:227-228` vẫn khác nhau.
+>   - `security_gate` tăng dần (`security_gate.sh:411-470` quét lại từ đầu).
+>   - Clone `Library` của Unity trong `cmd_add`.
+>   - `.sandboxes/` chưa được ignore ở 4 repo app.
+>   - Quyết định #1 `hook-augment` (cấu hình của người dùng).
+> - **Bỏ sau khi đo (CHANGELOG ~184):** 1b; bể slot, daemon, ledger async; ước lượng pre-commit; log lý do trượt của `testsourceset`.
+>   `worktree land` để ở `_devkit-backups/wave1-unshipped-2026-10-07`, phần lớn đã được `finish`/`automerge` thay.
+>
 > **Trạng thái bổ sung khi gộp (13/10):** file gốc đánh dấu 1c "CODE XONG 07/10". CHANGELOG có Đợt 0 (04/10, "plan `docs/plans/devkit-speed.md`"), Đợt 1a (05/10, mục 3b) và Đợt 4 (07/10, mục 1c). Các mục còn lại chưa đối chiếu. Các lỗi tồn đọng nêu trong plan này được liệt kê ở `issues-bugs.md` A.4.
 
 

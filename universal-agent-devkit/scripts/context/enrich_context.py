@@ -764,12 +764,13 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
     if not (BUG_EVIDENCE_RE.search(p_norm) or mentions(p_lower, DEFECT_WORDS) or DEFECT_RE.search(p_lower)):
         return ""
     title = " ".join(first.split())
-    if len(title) > TITLE_MAX:
-        title = title[:TITLE_MAX - 1].rstrip() + "…"
     try:
         sys.path.insert(0, os.path.join(get_devkit_dir(), "bin"))
         sys.dont_write_bytecode = True     # no __pycache__ inside a linked DevKit
         import regression_checklist as rc
+        title = getattr(rc, "redact_secrets", lambda t: t)(title)   # before find_bug: the stored title is redacted too
+        if len(title) > TITLE_MAX:   # after the redaction: a key cut at the limit leaves a stub no pattern matches (OCR, 13/10)
+            title = title[:TITLE_MAX - 1].rstrip() + "…"
         with rc.locked(project_root):
             data = getattr(rc, "load_view", rc.load)(project_root)   # + the rows this worktree kept in its overlay
             before = json.dumps(data["items"].get(rc.find_bug(data, title, open_only=True) or ""), sort_keys=True)
