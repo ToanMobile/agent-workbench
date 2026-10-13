@@ -1,0 +1,8 @@
+diff --git a/universal-agent-devkit/scripts/red_proof.py b/universal-agent-devkit/scripts/red_proof.py
+deleted file mode 120000
+index 86952bd..0000000
+--- a/universal-agent-devkit/scripts/red_proof.py
++++ /dev/null
+@@ -1 +0,0 @@
+-testing/red_proof.py
+\ No newline at end of file
