@@ -86,8 +86,10 @@ def tree_fingerprint(project_dir):
         env = dict(os.environ, GIT_INDEX_FILE=index, GIT_OBJECT_DIRECTORY=os.path.join(tmp, "objects"),
                    GIT_ALTERNATE_OBJECT_DIRECTORIES=objects)
         run = lambda *a: subprocess.run(["git", "-C", str(project_dir), *a], capture_output=True, env=env)
-        # Exclude after adding: an exclude pathspec naming an ignored path makes `add` fail.
-        added = run("add", "-A", "--", ".")
+        big_files, excludes = _big_untracked(project_dir)
+        # Exclude after adding: an exclude pathspec naming an ignored path makes `add` fail (the big
+        # files excluded here are untracked and NOT ignored, so their exclude is safe).
+        added = run("add", "-A", "--", ".", *excludes)
         if added.returncode != 0:
             tree_fingerprint.error = added.stderr.decode(errors="replace").strip()[:300]
             return ""
@@ -95,7 +97,39 @@ def tree_fingerprint(project_dir):
         tree = run("write-tree").stdout.decode().strip()
         if prefix and tree:
             tree = run("rev-parse", f"{tree}:{prefix.rstrip('/')}").stdout.decode().strip()
-    return hashlib.sha256(tree.encode()).hexdigest()[:24] if tree else ""
+    if not tree:
+        return ""
+    # without big untracked files the value is the one it always was (receipts taken before stay valid)
+    return hashlib.sha256((tree + "".join("\n" + b for b in big_files)).encode(errors="surrogateescape")).hexdigest()[:24]
+
+
+def _big_untracked(project_dir):
+    """Untracked, not ignored files of TREE_FP_BIG_MB MiB or more (default 8, the bound devkit_harness uses): (signatures
+    "path<NUL>size<NUL>mtime_ns", sorted; exclude pathspecs for `git add`). GeelyEx2 2026-10-13: `git add -A` hashed 319 MB of
+    untracked recordings on every fingerprint (6.5-7.3 s). Such a file counts by path, size and mtime, its content is never
+    read. ponytail: a same-size edit that keeps mtime is not seen; content-hash big files only if a writer ever does that.
+    TREE_FP_BIG_MB=0 hashes every file by content."""
+    try:
+        limit = int(float(os.environ.get("TREE_FP_BIG_MB", "8")) * (1 << 20))
+    except ValueError:
+        limit = 8 << 20
+    if limit <= 0:
+        return [], []
+    listed = _git(project_dir, "ls-files", "-z", "--others", "--exclude-standard", "--", ".")
+    if listed.returncode != 0:
+        return [], []
+    sigs, excludes = [], []
+    for rel in listed.stdout.decode(errors="surrogateescape").split("\0"):
+        if not rel or any(rel == ex or rel.startswith(ex + "/") for ex in EXCLUDE):
+            continue
+        try:
+            st = os.lstat(os.path.join(str(project_dir), rel))
+        except OSError:
+            continue
+        if st.st_size >= limit:
+            sigs.append(f"{rel}\0{st.st_size}\0{st.st_mtime_ns}")
+            excludes.append(":(exclude,literal)" + rel)
+    return sorted(sigs), excludes
 
 
 tree_fingerprint.error = ""   # why the last call returned "" (git's stderr), for the gate to print
