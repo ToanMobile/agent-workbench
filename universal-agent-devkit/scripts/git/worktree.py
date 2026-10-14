@@ -2321,6 +2321,8 @@ def cmd_hook_create(cwd, args):
     hands back a plain detached worktree - no EnterWorktree and no isolated subagent is ever stranded by a DevKit fault."""
     d = _hook_payload()
     name, sid = str(d.get("name") or ""), str(d.get("session_id") or "")
+    segs = name.split("/")   # EnterWorktree names are "/"-separated segments (fix/login): one folder, the "/" a "-"
+    name = "-".join(segs) if all(WT_NAME_RE.fullmatch(s) for s in segs) else name
     if not WT_NAME_RE.fullmatch(name) or ".." in name:
         print(f"✖ worktree hook: not a worktree name: {name!r}", file=sys.stderr)
         return 2
@@ -2336,6 +2338,9 @@ def cmd_hook_create(cwd, args):
             rc = cmd_add(main, [wt] + ([f"--session={sid}"] if SESSION_RE.fullmatch(sid) else []))
     except SystemExit as e:
         rc = e.code if isinstance(e.code, int) else 1
+    except Exception as e:  # noqa: BLE001 - any other fault of the set-up (a full disk, a bug): the plain worktree below is still handed back
+        print(f"⚠ worktree hook: set-up failed ({type(e).__name__}: {e})", file=sys.stderr)
+        rc = 1
     if rc == NO_ROOM:
         return NO_ROOM
     if rc != 0:
@@ -2356,7 +2361,7 @@ def cmd_hook_create(cwd, args):
             if cur is None and not _has_state_file(wt) or (isinstance(cur, dict) and cur.get("provisional") and cur.get("session") == sid):
                 _write_state(wt, {"branch": None, "base": git(wt, "rev-parse", "HEAD").stdout.strip(), "main": main, "baseline": snapshot(wt),
                                   "fp": FP_VERSION, **({"session": sid} if SESSION_RE.fullmatch(sid) else {})})
-        except (OSError, SystemExit) as e:
+        except (Exception, SystemExit) as e:   # (a full disk here too: the worktree is still handed back)
             print(f"• worktree hook: state not written ({e})", file=sys.stderr)
         print("⚠ worktree hook: " + tr("cài đặt DevKit vào worktree lỗi; trả về worktree trơn", "the DevKit set-up failed; a plain worktree is handed back"),
               file=sys.stderr)

@@ -61,11 +61,20 @@ create a s1 sess-9; rc=$?
   && ok "the same name again: the same worktree back, untouched" || fail "re-create (rc $rc): $(cat "$TMP/out")"
 
 # 5
-for bad in "../x" ".hidden" "" "a/b"; do
+for bad in "../x" ".hidden" "" "a//b" "a/" "/a" "a/../b" "a/.b"; do   # (R3 review P3a: "a/b" is no longer here, it is a legal EnterWorktree name - see 5b)
   create a "$bad" sess-1; rc=$?
   { [ "$rc" = 2 ] && [ ! -s "$TMP/out" ]; } || fail "name '$bad': rc $rc, out $(cat "$TMP/out")"
 done
-[ ! -e "$TMP/x" ] && [ ! -e "$TMP/a/.claude/x" ] && ok "a name that is a path (../x, a/b), hidden or empty: refused, nothing made" || fail "a bad name made something"
+[ ! -e "$TMP/x" ] && [ ! -e "$TMP/a/.claude/x" ] && ok "a name that is a path (../x, a/../b, a//b, /a), hidden or empty: refused, nothing made" || fail "a bad name made something"
+
+# 5b R3 review P3a: EnterWorktree takes "/"-separated names (fix/login: each segment letters, digits, dots, underscores, dashes); the hook used to refuse
+#    them and so failed the EnterWorktree. The "/" becomes "-" in the folder name (one level under .claude/worktrees/, never a nested folder).
+create a fix/login sess-5b; rc=$?; w5="$TMP/a/.claude/worktrees/fix-login"
+[ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$w5" ] && [ -d "$w5" ] && [ ! -e "$TMP/a/.claude/worktrees/fix" ] && [ "$(state "$w5" session)" = sess-5b ] \
+  && G "$TMP/a" worktree list --porcelain | grep -q "^worktree $w5$" && ok "a name with a slash (fix/login): the worktree is .claude/worktrees/fix-login, registered, owned" \
+  || fail "name fix/login (rc $rc): out=$(cat "$TMP/out") err=$(tail -2 "$TMP/err" | tr '\n' ' ')"
+create a fix/login sess-9; rc=$?
+[ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$w5" ] && [ "$(state "$w5" session)" = sess-5b ] && ok "  … the same slash name again: the same worktree back" || fail "fix/login again (rc $rc): $(cat "$TMP/out")"
 
 # 6 the set-up dies after registration (a kit whose installer fails, a main checkout with a DevKit profile): still a usable worktree
 FK="$TMP/kit"; mkdir -p "$FK/bin" "$FK/profiles" && ln -s "$DEVKIT_DIR/scripts" "$FK/scripts" && ln -s "$DEVKIT_DIR/hooks" "$FK/hooks"
@@ -77,6 +86,31 @@ w6="$TMP/c/.claude/worktrees/s6"
 [ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$w6" ] && [ "$(state "$w6" session)" = sess-6 ] && [ "$(state "$w6" provisional)" = None ] \
   && grep -q "plain worktree" "$TMP/err" && ok "set-up failed after registration: the worktree is handed back, state final, owner kept" \
   || fail "set-up failure (rc $rc): out=$(cat "$TMP/out") provisional=$(state "$w6" provisional) err=$(tail -3 "$TMP/err" | tr '\n' ' ')"
+
+# 6b R3 review P3b: the set-up raises something that is not a SystemExit (a full disk while copying, a bug of the kit): still a worktree handed back
+boom() {   # boom <repo> <name> <session> <early|late>: hook-create with cmd_add raising; early = before git knows the worktree, late = after
+  python3 -c 'import json,sys; print(json.dumps({"name":sys.argv[2],"session_id":sys.argv[3],"cwd":sys.argv[1]}))' "$TMP/$1" "$2" "$3" \
+    | (cd / && python3 -I -c '
+import subprocess, sys
+sys.path.insert(0, sys.argv[1] + "/scripts/git")
+import worktree
+def early(main, args):
+    raise OSError(28, "No space left on device")
+def late(main, args):
+    subprocess.run(["git", "-C", main, "worktree", "add", "-q", "--detach", args[0], "HEAD"], check=True)
+    raise ValueError("late")
+worktree.cmd_add = early if sys.argv[2] == "early" else late
+sys.exit(worktree.main(["worktree.py", "hook-create"]))' "$DEVKIT_DIR" "$4") > "$TMP/out" 2> "$TMP/err"
+}
+repo g; G "$TMP/g" config devkit.trunkMode true
+boom g e1 sess-e1 early; rc=$?; we="$TMP/g/.claude/worktrees/e1"
+[ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$we" ] && G "$TMP/g" worktree list --porcelain | grep -q "^worktree $we$" && [ "$(state "$we" session)" = sess-e1 ] \
+  && ok "the set-up raises an OSError before git knows the worktree: a plain worktree is made and handed back, owned" \
+  || fail "early exception (rc $rc): out=$(cat "$TMP/out") err=$(tail -3 "$TMP/err" | tr '\n' ' ')"
+boom g e2 sess-e2 late; rc=$?; we="$TMP/g/.claude/worktrees/e2"
+[ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$we" ] && [ "$(state "$we" session)" = sess-e2 ] && [ "$(state "$we" provisional)" = None ] \
+  && ok "  … a ValueError after git registered it: handed back, its state final, owner kept" \
+  || fail "late exception (rc $rc): out=$(cat "$TMP/out") provisional=$(state "$we" provisional) err=$(tail -3 "$TMP/err" | tr '\n' ' ')"
 
 # 7 hook-remove
 remove() { python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"WorktreeRemove","worktree_path":sys.argv[1]}))' "$1" \
@@ -131,6 +165,10 @@ repo f
 python3 -c 'import json,sys; print(json.dumps({"name":"s10","session_id":"x","cwd":sys.argv[1]}))' "$TMP/f" | (cd "$TMP/f" && bash "$TMP/lone/session_worktree.sh" worktree-create) > "$TMP/out" 2> "$TMP/err"; rc=$?
 [ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$TMP/f/.claude/worktrees/s10" ] && [ -d "$TMP/f/.claude/worktrees/s10" ] && ok "wrapper without a kit: worktree-create still makes and names a plain worktree" \
   || fail "wrapper fallback create (rc $rc): $(cat "$TMP/out") $(tail -2 "$TMP/err")"
+python3 -c 'import json,sys; print(json.dumps({"name":"fix/login","session_id":"x","cwd":sys.argv[1]}))' "$TMP/f" | (cd "$TMP/f" && bash "$TMP/lone/session_worktree.sh" worktree-create) > "$TMP/out" 2> "$TMP/err"; rc=$?
+python3 -c 'import json,sys; print(json.dumps({"name":"a//b","session_id":"x","cwd":sys.argv[1]}))' "$TMP/f" | (cd "$TMP/f" && bash "$TMP/lone/session_worktree.sh" worktree-create) > "$TMP/out2" 2> "$TMP/err2"; rc2=$?
+[ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$TMP/f/.claude/worktrees/fix-login" ] && [ -d "$TMP/f/.claude/worktrees/fix-login" ] && [ "$rc2" = 2 ] && [ ! -s "$TMP/out2" ] \
+  && ok "  … a slash name there too (fix/login -> fix-login); an empty segment (a//b) refused" || fail "wrapper fallback slash name (rc $rc / $rc2): $(cat "$TMP/out") $(tail -2 "$TMP/err")"
 python3 -c 'import json,sys; print(json.dumps({"worktree_path":sys.argv[1]}))' "$TMP/f/.claude/worktrees/s10" | bash "$TMP/lone/session_worktree.sh" worktree-remove >/dev/null 2>&1; rc=$?
 [ "$rc" = 1 ] && [ -d "$TMP/f/.claude/worktrees/s10" ] && ok "  … worktree-remove it cannot judge: exit 1, the worktree kept" || fail "wrapper fallback remove (rc $rc)"
 

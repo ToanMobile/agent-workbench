@@ -23,10 +23,12 @@ case "${sub}" in
   worktree-create)
     [ -n "${WT_PY}" ] && [ -f "${WT_PY}" ] && exec python3 -I "${WT_PY}" hook-create
     INPUT="$(cat)"
-    RX_NAME='"name"[[:space:]]*:[[:space:]]*"([A-Za-z0-9][A-Za-z0-9._-]*)"'
+    RX_NAME='"name"[[:space:]]*:[[:space:]]*"([A-Za-z0-9][A-Za-z0-9._/-]*)"'
     [[ ${INPUT} =~ ${RX_NAME} ]] || { echo "✖ worktree hook: no usable name in the payload" >&2; exit 2; }
     name="${BASH_REMATCH[1]}"
-    case "${name}" in *..*) echo "✖ worktree hook: not a worktree name: ${name}" >&2; exit 2 ;; esac
+    # an EnterWorktree name is "/"-separated segments (fix/login): one folder, the "/" a "-" (as worktree.py hook-create)
+    case "${name}" in *..*|*//*|*/|*/[!A-Za-z0-9]*) echo "✖ worktree hook: not a worktree name: ${name}" >&2; exit 2 ;; esac
+    name="${name//\//-}"
     # the repo is where Claude runs the hook (the session's directory): with no python3 there is no JSON decoder for an escaped cwd
     common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || { echo "✖ worktree hook: not in a git repo: ${PWD}" >&2; exit 1; }
     main="$(cd -P "${common}/.." 2>/dev/null && pwd -P)" || exit 1
