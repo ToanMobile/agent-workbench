@@ -8,6 +8,7 @@ import {
   discardProofs, anhTrung, hashFile, ackWarning, locCanhBaoDaXem } from './tasks.js';
 import {
   newConversation, sendMessage, getConversationMetadata, conversationProgress, transcriptErrors, MODELS, isAgyModel, agyPath, agyTurnStatus, agyTurnStatusSafe, agyRegistryProblem, agyPermissionPolicy,
+  sameProcess,
 } from './agentapi.js';
 import { discover, agentapiPath } from './discover.js';
 import { requireProjectId, resolveProject } from './projects.js';
@@ -308,20 +309,21 @@ export const TOOLS = [
             return !t.running;
           };
           let created = null;   // ngoai try: khuc finally duoi dung agy cua ping DU loi o buoc nao (ps hong, so dang ky hong...)
-          const pingPids = new Set();   // pid agy cua CA HAI luot (luot 2 la tien trinh agy khac)
+          // pid -> dau van tay (ps lstart) agy cua CA HAI luot (luot 2 la tien trinh agy khac; so dang ky chi giu luot cuoi nen giu o day)
+          const pingTurns = new Map();
           try {
             created = await newConversation({
               model: cfg.defaultModel, cwd: cfg.projectRoot, title: '[PM] ping agy',
               prompt: 'Day la phep thu duong day tu Claude Code. Tra loi dung 1 tu: PONG. KHONG goi tool, KHONG doc file, KHONG sua file, KHONG chay lenh.',
             });
             const { conversationId } = created;
-            pingPids.add(created.parsed?.pid);
+            pingTurns.set(created.parsed?.pid, created.parsed?.pidTag);
             L.push(`Mo hoi thoai agy: OK — ${conversationId}`);
             const md = await getConversationMetadata(conversationId);
             L.push(`Workspace: ${md.workspace} · khop project: ${md.workspace && exists(md.workspace) && fs.realpathSync(md.workspace) === fs.realpathSync(cfg.projectRoot) ? 'CO' : 'KHONG'}`);
             if (await waitTurn(conversationId, 'Luot 1')) {
               const second = await sendMessage({ conversationId, content: 'Phep thu tin nhan tiep theo. Tra loi dung 1 tu: PONG2. Khong dung tool.' });
-              pingPids.add(second.parsed?.pid);
+              pingTurns.set(second.parsed?.pid, second.parsed?.pidTag);
               L.push('Gui tin tiep (agy --conversation --model): OK');
               await waitTurn(conversationId, 'Luot 2');
             }
@@ -332,12 +334,14 @@ export const TOOLS = [
             if (e.hint) L.push(`  Goi y: ${e.hint}`);
             if (e.detail) L.push(`  Chi tiet: ${truncate(String(e.detail), 1200)}`);
           } finally {
-            // Ping chi la phep thu: khong de agent skip-permissions chay khong giam sat. Pid nay do CHINH ping vua mo vai giay truoc (kill -0 khong can ps,
-            // nen van dung duoc khi ps hong); da thoat roi thi khong lam gi.
-            for (const pid of pingPids) {
+            // Ping chi la phep thu: khong de agent skip-permissions chay khong giam sat. Cho toi 90 s: pid co the da thoat va bi tien trinh la
+            // dung lai, nen chi dung khi dau van tay ps con khop. ps hong thi roi ve kill -0 (pid do CHINH ping mo, it giay truoc); da thoat thi thoi.
+            for (const [pid, pidTag] of pingTurns) {
               if (!pid) continue;
               let alive = false;
-              try { process.kill(pid, 0); alive = true; } catch { /* da thoat */ }
+              try { alive = sameProcess(pid, pidTag); } catch {
+                try { process.kill(pid, 0); alive = true; } catch { /* da thoat */ }
+              }
               if (!alive) continue;
               const e2 = killGroup(pid);
               L.push(e2 ? `CANH BAO: khong dung duoc agy pid ${pid} (${e2.message}); dung no: kill -- -${pid}`

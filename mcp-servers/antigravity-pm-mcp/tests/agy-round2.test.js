@@ -640,3 +640,22 @@ test('"SIGKILL ca nhom tien trinh" chi con o MOT cho (util.killGroup), khong che
   assert.equal(hits.length, 1, `process.kill(-...) o ${hits.length} cho: ${hits.join(', ')}`);
   assert.match(hits[0], /^util\.js:/);
 });
+
+test('ping tu don: pid cua luot agy da thoat va bi tien trinh la dung lai thi KHONG giet nhom do (so dau van tay ps, khong chi kill -0)', async (t) => {
+  // Hai luot ping chay xong (giu 400 ms de ghi duoc dau van tay that), roi pid cua chung "song lai" o kill -0 (gia lap pid bi dung lai).
+  // Stub: kill(pid, 0) voi pid cua agy gia => "con song"; SIGKILL nhom toi cac pid do chi GHI LAI, khong bao gio gui that.
+  const fake = fakeAgy(t, { FAKE_AGY_ID: 'cececece-2222-3333-4444-555555555555', FAKE_AGY_HOLD_MS: '400', ANTIGRAVITY_LS_ADDRESS: '127.0.0.1:9', ANTIGRAVITY_CSRF_TOKEN: 'x' });
+  const dir = mkProject(t, { defaultModel: ARGON });
+  const orig = process.kill;
+  const groupKills = [];
+  process.kill = function stub(pid, sig) {
+    const agyPids = new Set(fake.calls().map((c) => c.pid));
+    if (!agyPids.has(Math.abs(pid))) return orig.call(process, pid, sig);
+    if (pid < 0) { groupKills.push(-pid); return true; }
+    return true;   // kill -0: "pid van song" (da bi tien trinh khac dung lai)
+  };
+  let out;
+  try { out = await call('pm_doctor', { project: dir, ping: true }); } finally { process.kill = orig; }
+  assert.match(out.text, /Luot 2: xong/, out.text);
+  assert.deepEqual(groupKills, [], `ping da SIGKILL nhom cua pid khong con la agy cua no: ${groupKills.join(', ')}\n${out.text}`);
+});

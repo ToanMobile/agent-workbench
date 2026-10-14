@@ -222,6 +222,10 @@ function procTag(pid) {
     throw new AgentApiError(`khong doc duoc dau van tay tien trinh ${pid} (ps): ${e.message}`);
   }
 }
+/** Pid con la DUNG tien trinh co dau van tay `pidTag` (pid bi dung lai / da thoat => false; khong co dau van tay => false). Nem khi ps hong. */
+export function sameProcess(pid, pidTag) {
+  return Boolean(pid && pidTag) && procTag(pid) === pidTag;
+}
 const RESERVATION_MAX_MS = 90000;   // = cho init toi da (60 s) + le: cho giu "starting" qua han la cho khong nha duoc (PM van song), khong phai agy dang mo
 function entryBusy(e) {
   if (!e?.pid || !e.pidTag) return false;
@@ -395,7 +399,7 @@ async function agyNewConversation({ prompt, model, cwd }) {
   try {
     saveAgyEntry(r.conversationId, { model, cwd: root, workspace: r.workspace, pid: r.pid, pidTag: r.pidTag, starting: false, out: r.out, at: nowIso() });
   } catch (e) { throw stopUntracked(r, e); }
-  return { conversationId: r.conversationId, raw: `agy pid ${r.pid}`, parsed: { pid: r.pid, out: r.out } };
+  return { conversationId: r.conversationId, raw: `agy pid ${r.pid}`, parsed: { pid: r.pid, pidTag: r.pidTag, out: r.out } };
 }
 
 const busyError = (conversationId, e) => Object.assign(new AgentApiError(e.starting
@@ -432,7 +436,7 @@ async function agySendMessage(conversationId, content) {
     r = await agyStart(agyArgs(entry.model, ['--conversation', conversationId, '--print', String(content)], skip), entry.cwd,
       (child) => saveAgyEntry(conversationId, { pid: child.pid, pidTag: procTag(child.pid), starting: true, reservation: false, reservedAt: nowIso() }));
     saveAgyEntry(conversationId, { pid: r.pid, pidTag: r.pidTag, starting: false, reservation: false, out: r.out, lastSentAt: nowIso(), workspace: r.workspace || entry.workspace });
-    return { ok: true, raw: `agy pid ${r.pid}`, parsed: { pid: r.pid, out: r.out } };
+    return { ok: true, raw: `agy pid ${r.pid}`, parsed: { pid: r.pid, pidTag: r.pidTag, out: r.out } };
   } catch (e) {
     const failure = r ? stopUntracked(r, e) : e;
     try {
