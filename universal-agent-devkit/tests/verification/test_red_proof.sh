@@ -36,7 +36,7 @@ class TestNothing(unittest.TestCase):
         self.assertTrue(callable(calc.add))
 '
 new_project() {  # new_project <command>
-  P="$TMP/p$RANDOM"; mkdir -p "$P/src" "$P/tests" "$P/.agents"
+  P="$(mktemp -d "$TMP/p.XXXXXX")"; mkdir -p "$P/src" "$P/tests" "$P/.agents"   # not $RANDOM: 22 projects, a clash re-used an old repo
   ( cd "$P" && git init -q . && git config user.email t@t && git config user.name t
     printf 'def add(a, b):\n    return a - b\n' > src/calc.py
     python3 -c 'import json,sys; json.dump({"adopted": True, "rules": [{"component": "Calc", "watch_files": ["src/*.py", "tests/*.py"],
@@ -559,5 +559,94 @@ python3 "$PROOF" "$P" --bug "$B17,$B18" --wait >/dev/null 2>&1
 [ "$(proof "$B17")" = PROVEN ] && [ "$(proof "$B18")" = PROVEN ] && [ "$(wc -l < "$CNT" | tr -d ' ')" = 2 ] \
   && ok "two bugs sharing test + fix: one RED + one GREEN run, both PROVEN" \
   || fail "shared proof: $(proof "$B17")/$(proof "$B18") runs=$(wc -l < "$CNT" | tr -d ' ')"
+
+# ── "production" in .agents/local/red_proof.json (14/10, docs/issues-bugs.md A.4): TEST_PATH reads every file under tests/ as
+#    a test, and a proof never changes a test. A runner that lives there (agent-workbench: universal-agent-devkit/tests/
+#    run_impacted.sh, the REG-DK-ALL-01 command) could never prove a bug fixed in it: its bug-back --patch was refused, its
+#    uncommitted fix was no fix in session mode, a commit that changed only it was no fix commit for --pending. The globs declare
+#    such files production code in every mode (revert mode: whatever the extension, a .sh is no SOURCE_EXT); a bug's own linked
+#    test stays a test whatever they say; anything but a list of non-empty strings is no declaration, never a crash. ─
+RUNNER_FIXED='[ "$1" = --all ] && echo all || echo some'
+RUNNER_BUGGY='echo some'
+TEST_RUNNER='import os, subprocess, unittest
+HERE = os.path.dirname(os.path.abspath(__file__))
+class TestRunner(unittest.TestCase):
+    def test_all(self):
+        out = subprocess.run(["sh", os.path.join(HERE, "runner.sh"), "--all"], capture_output=True, text=True).stdout.strip()
+        self.assertEqual(out, "all")
+'
+declare_prod() { mkdir -p "$P/.agents/local"; printf '%s' "$1" > "$P/.agents/local/red_proof.json"; }
+rp() { python3 -c "import json,sys;print((json.load(open('$P/.agents/regression_status.json'))['items'][sys.argv[1]].get('red_proof') or {}).get(sys.argv[2],'-'))" "$1" "$2"; }
+forget() { python3 -c "import json,sys;p='$P/.agents/regression_status.json';d=json.load(open(p));d['items'][sys.argv[1]].pop('red_proof',None);json.dump(d,open(p,'w'))" "$1"; }
+# --patch: a bug-back patch of the runner
+new_project "$UT"; cd "$P"
+printf '%s\n' "$RUNNER_FIXED" > tests/runner.sh; printf '%s' "$TEST_RUNNER" > tests/test_runner.py
+git add -A && git commit -qm "runner --all + its test"
+printf '%s\n' "$RUNNER_BUGGY" > tests/runner.sh; git diff > "$TMP/runner-back.patch"; git checkout -q tests/runner.sh
+PB1="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "runner --all bỏ qua" --fixed --test tests/test_runner.py 2>&1)")"
+python3 "$PROOF" "$P" --bug "$PB1" --patch "$TMP/runner-back.patch" --wait >/dev/null 2>&1
+[ "$(rp "$PB1" status)" = INCONCLUSIVE ] && rp "$PB1" reason | grep -q "file test" \
+  && ok "production: no declaration, a bug-back patch of a runner under tests/ edits a test → INCONCLUSIVE (as before)" \
+  || fail "undeclared runner patch: $(rp "$PB1" status) $(rp "$PB1" reason)"
+declare_prod '{"production": ["tests/runner.sh"]}'
+python3 "$PROOF" "$P" --bug "$PB1" --patch "$TMP/runner-back.patch" --wait >/dev/null 2>&1
+[ "$(rp "$PB1" status)" = PROVEN ] \
+  && ok "production: declared, the runner's bug-back patch applies → its test RED, HEAD GREEN → PROVEN" \
+  || fail "declared runner patch: $(rp "$PB1" status) $(rp "$PB1" reason)"
+# a glob that also takes in the linked test never makes that test production: the patch is refused for the test alone
+declare_prod '{"production": ["tests/*"]}'
+printf '%s\n' "$RUNNER_BUGGY" > tests/runner.sh; printf '# weakened\n' >> tests/test_runner.py
+git diff > "$TMP/both.patch"; git checkout -q tests/runner.sh tests/test_runner.py
+PB2="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "runner + test sửa" --fixed --test tests/test_runner.py 2>&1)")"
+python3 "$PROOF" "$P" --bug "$PB2" --patch "$TMP/both.patch" --wait >/dev/null 2>&1
+r2="$(rp "$PB2" reason)"
+[ "$(rp "$PB2" status)" = INCONCLUSIVE ] && printf '%s' "$r2" | grep -q "tests/test_runner.py" && ! printf '%s' "$r2" | grep -q "tests/runner.sh" \
+  && ok "production: a glob matching the linked test too, the patch that edits that test is refused for the test alone" \
+  || fail "linked test declared production: $(rp "$PB2" status) $r2"
+# …however the link spells it (review 14/10): a ref typed ./tests/… or as an absolute path is still that linked test
+for ref in ./tests/test_runner.py "$P/tests/test_runner.py"; do
+  PBR="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "runner + test sửa, link $ref" --fixed --test REG-CALC --test "$ref" 2>&1)")"
+  python3 "$PROOF" "$P" --bug "$PBR" --patch "$TMP/both.patch" --wait >/dev/null 2>&1
+  [ "$(rp "$PBR" status)" = INCONCLUSIVE ] && rp "$PBR" reason | grep -q "tests/test_runner.py" \
+    && ok "production: a linked test spelled $ref is still refused under a glob that matches it" \
+    || fail "linked test spelled $ref under a glob: $(rp "$PBR" status) $(rp "$PBR" reason)"
+done
+for cfg in '{"production": "tests/runner.sh"}' '{"production": [1, "", null]}' '["tests/runner.sh"]' '{"production": '; do
+  declare_prod "$cfg"
+  out="$(python3 "$PROOF" "$P" --bug "$PB1" --patch "$TMP/runner-back.patch" --wait 2>&1)"; rc=$?
+  { [ "$rc" = 0 ] && ! printf '%s' "$out" | grep -q Traceback && [ "$(rp "$PB1" status)" = INCONCLUSIVE ] \
+      && rp "$PB1" reason | grep -q "file test"; } \
+    && ok "production: malformed red_proof.json ($cfg) is ignored, no crash, the runner stays a test" \
+    || fail "malformed ($cfg): rc=$rc $(rp "$PB1" status) $(rp "$PB1" reason) $(printf '%s' "$out" | tail -2 | tr '\n' ' ')"
+done
+# session mode: the runner fix is uncommitted, its test new
+new_project "$UT"; cd "$P"
+printf '%s\n' "$RUNNER_BUGGY" > tests/runner.sh; git add -A && git commit -qm "runner without --all"
+printf '%s\n' "$RUNNER_FIXED" > tests/runner.sh; printf '%s' "$TEST_RUNNER" > tests/test_runner.py
+PB3="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "runner --all (phiên này)" --fixed --test tests/test_runner.py 2>&1)")"
+python3 "$PROOF" "$P" --bug "$PB3" --wait >/dev/null 2>&1
+[ "$(rp "$PB3" status)" = INCONCLUSIVE ] && rp "$PB3" reason | grep -q "chưa commit" \
+  && ok "production: no declaration, an uncommitted fix of a runner under tests/ is no fix in session mode (as before)" \
+  || fail "undeclared session fix: $(rp "$PB3" status) $(rp "$PB3" reason)"
+declare_prod '{"production": ["tests/runner.sh"]}'
+python3 "$PROOF" "$P" --bug "$PB3" --wait >/dev/null 2>&1
+[ "$(rp "$PB3" status)" = PROVEN ] && [ "$(rp "$PB3" mode)" = session ] && grep -q -- "--all" tests/runner.sh \
+  && ok "production: declared, the uncommitted runner change is the session's fix → PROVEN, the tree untouched" \
+  || fail "declared session fix: $(rp "$PB3" status)/$(rp "$PB3" mode) $(rp "$PB3" reason)"
+# --pending: the commit the evidence names changed only the .sh runner (and its test)
+new_project "$UT"; cd "$P"
+printf '%s\n' "$RUNNER_BUGGY" > tests/runner.sh; git add -A && git commit -qm "runner without --all"
+printf '%s\n' "$RUNNER_FIXED" > tests/runner.sh; printf '%s' "$TEST_RUNNER" > tests/test_runner.py
+git add -A && git commit -qm "runner --all + its test"; FIX="$(git rev-parse --short HEAD)"
+PB4="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "runner --all (commit cũ)" --fixed --test tests/test_runner.py --evidence "fixed in $FIX" 2>&1)")"
+python3 "$PROOF" "$P" --pending --wait >/dev/null 2>&1
+[ "$(rp "$PB4" status)" = INCONCLUSIVE ] && rp "$PB4" reason | grep -q "commit fix" \
+  && ok "production: no declaration, a commit that changed only tests/ files is no fix commit (as before)" \
+  || fail "undeclared fix commit: $(rp "$PB4" status) $(rp "$PB4" reason)"
+declare_prod '{"production": ["tests/runner.sh"]}'; forget "$PB4"
+python3 "$PROOF" "$P" --pending --wait >/dev/null 2>&1
+[ "$(rp "$PB4" status)" = PROVEN ] && [ "$(rp "$PB4" mode)" = revert ] && [ "$(rp "$PB4" fix_commit)" = "$FIX" ] \
+  && ok "production: declared, the evidence's commit is the fix, the .sh runner reverted → PROVEN" \
+  || fail "declared fix commit: $(rp "$PB4" status)/$(rp "$PB4" mode)/$(rp "$PB4" fix_commit) $(rp "$PB4" reason)"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_red_proof: all passed" || { echo "❌ test_red_proof: $FAILS failed"; exit 1; }

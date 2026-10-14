@@ -1,13 +1,12 @@
-diff --git a/universal-agent-devkit/bin/post-fix-gate.py b/universal-agent-devkit/bin/post-fix-gate.py
-index 4897cd9..db22ce0 100755
---- a/universal-agent-devkit/bin/post-fix-gate.py
-+++ b/universal-agent-devkit/bin/post-fix-gate.py
-@@ -946,7 +946,7 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
-     try:
-         head, dirty = head_and_dirty(project_dir)
-         os.makedirs(os.path.dirname(path), exist_ok=True)
--        data = {"time": time.time(), "exit": exit_code, "project": str(Path(project_dir).resolve()),
-+        data = {"time": time.time(), "exit": 0, "project": str(Path(project_dir).resolve()),
-                 "fingerprint": fingerprint, "tested_at": tested_at or time.time(),
-                 "result_format": RESULT_FORMAT,
-                 "gate_sha": _sha_file(__file__), "matrix_sha": _sha_file(find_matrix_path(matrix_arg)),
+diff --git a/universal-agent-devkit/hooks/regression_gate.sh b/universal-agent-devkit/hooks/regression_gate.sh
+index 09faf7b..db53759 100755
+--- a/universal-agent-devkit/hooks/regression_gate.sh
++++ b/universal-agent-devkit/hooks/regression_gate.sh
+@@ -798,7 +798,6 @@ if res.returncode == 4 and summary:
+     else:
+         first = state.get("untested_fp") != sk_now
+         state["untested_fp"] = sk_plain
+-    range_verified()
+     save_state()
+     if first:
+         names = ["%s (%s)" % (t.get("id"), t.get("command")) for t in summary.get("regression_tests", [])

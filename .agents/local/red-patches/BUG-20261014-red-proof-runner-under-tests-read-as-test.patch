@@ -1,0 +1,113 @@
+diff --git a/universal-agent-devkit/scripts/testing/red_proof.py b/universal-agent-devkit/scripts/testing/red_proof.py
+index 5f9afbe..37365f0 100755
+--- a/universal-agent-devkit/scripts/testing/red_proof.py
++++ b/universal-agent-devkit/scripts/testing/red_proof.py
+@@ -27,8 +27,6 @@ working tree is never touched).
+   {gradle_module_tests:<task>}, {unity_filter}, {pytest_nodes}, {jest_paths}); else the full
+   command. A run that executed no test ("No tests found", "Ran 0 tests") is INCONCLUSIVE.
+   Suites naming Gradle / Unity / xcodebuild are PENDING unless --heavy.
+-  A path under tests/ is a test (TEST_PATH) unless .agents/local/red_proof.json {"production": [...]} declares it production
+-  code (a runner the tests exercise, e.g. "universal-agent-devkit/tests/run_impacted.sh"); a bug's linked test stays a test.
+   --pending: every fixed bug/REQ with a linked test and no current proof; a past bug needs its
+   fix commit (--fix-commit or one named in its evidence) — never the tree's uncommitted work.
+   --patch FILE (one --bug): RED = HEAD + a patch that puts the bug BACK (forward, three-way),
+@@ -48,7 +46,6 @@ from __future__ import annotations
+ 
+ import contextlib
+ import difflib
+-import fnmatch
+ import hashlib
+ import json
+ import os
+@@ -226,48 +223,17 @@ def test_paths(project: Path, item: dict) -> list:
+     return out
+ 
+ 
+-def production_globs(project: Path) -> list:
+-    """The "production" globs of .agents/local/red_proof.json: files TEST_PATH reads as tests that are production code,
+-    a runner under tests/ the tests exercise (agent-workbench: "universal-agent-devkit/tests/run_impacted.sh", 14/10: two
+-    bugs fixed in it could not be proven). fnmatch on the path from the project root, `*` crossing `/` as in "copy": name
+-    the file itself, "tests/*.sh" would take in the test scripts too. Anything but a list of non-empty strings, or no
+-    readable file, is none."""
+-    try:
+-        globs = json.loads((project / ".agents" / "local" / "red_proof.json").read_text(encoding="utf-8")).get("production")
+-    except (OSError, ValueError, AttributeError):   # no file (the usual case), bad JSON, not an object: no declaration
+-        return []
+-    return [g for g in globs if isinstance(g, str) and g] if isinstance(globs, list) else []
+-
+-
+-def declared(path: str, production: list) -> bool:
+-    """Does a production_globs() entry name this path?"""
+-    return any(fnmatch.fnmatch(path, g) for g in production)
+-
+-
+-def is_test(path: str, linked, production: list) -> bool:
+-    """A test for the proof, which never changes one: a linked test of the bug whatever red_proof.json says, else a TEST_PATH
+-    that production_globs() does not declare. A declared glob never exempts a file NAMED like a linked test: the link may
+-    spell it ./tests/x.py or as an absolute path, which an exact comparison with git's tests/x.py misses (review 14/10)."""
+-    if path in linked:
+-        return True
+-    if not TEST_PATH.search(path):
+-        return False
+-    return not declared(path, production) or os.path.basename(path) in {os.path.basename(t) for t in linked}
+-
+-
+ def fix_commit_of(project: Path, item: dict) -> tuple:
+     """(sha, None) when the evidence names exactly ONE commit that changes non-test code;
+     (None, reason) when it names several (reverting the wrong one gives a false verdict);
+     (None, None) when it names none."""
+     found = []
+-    shas = list(dict.fromkeys(SHA.findall(str(item.get("evidence") or ""))))
+-    linked, prod_globs = (test_paths(project, item), production_globs(project)) if shas else ([], [])
+-    for sha in shas:
++    for sha in dict.fromkeys(SHA.findall(str(item.get("evidence") or ""))):
+         if git(project, "cat-file", "-t", sha).stdout.strip() != "commit":
+             continue
+         full = git(project, "rev-parse", sha).stdout.strip()
+         files = git(project, "show", "--name-only", "--format=", sha).stdout.split()
+-        if full not in [f for _, f in found] and any(not is_test(f, linked, prod_globs) for f in files):
++        if full not in [f for _, f in found] and any(not TEST_PATH.search(f) for f in files):
+             found.append((sha, full))
+     if len(found) == 1:
+         return found[0][0], None
+@@ -575,7 +541,6 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
+     tests = test_paths(project, item)
+     if not tests:
+         return {**base, "status": "INCONCLUSIVE", "reason": "không biết file test nào (link bằng file/class test)"}
+-    prod_globs = production_globs(project)
+     cmds = []
+     for s in suites:
+         if s.get("command"):
+@@ -594,7 +559,7 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
+         touched = patch_files(patch)
+         if not touched:
+             return {**base, "status": "INCONCLUSIVE", "mode": mode, "reason": f"patch rỗng hoặc hỏng: {patch.name}"}
+-        in_tests = [f for f in touched if is_test(f, tests, prod_globs)]
++        in_tests = [f for f in touched if f in tests or TEST_PATH.search(f)]
+         if in_tests:
+             return {**base, "status": "INCONCLUSIVE", "mode": mode,
+                     "reason": "patch sửa file test (" + ", ".join(in_tests[:4]) + ") — chứng minh chỉ được đổi code sản xuất"}
+@@ -616,7 +581,7 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
+         mode = "session"
+         changed = git(project, "diff", "--name-only", "HEAD").stdout.split() + \
+             git(project, "ls-files", "--others", "--exclude-standard").stdout.split()
+-        fix = [f for f in dict.fromkeys(changed) if not is_test(f, tests, prod_globs)
++        fix = [f for f in dict.fromkeys(changed) if f not in tests and not TEST_PATH.search(f)
+                and not f.startswith((".agents/", ".claude/"))]
+         if not fix:
+             return {**base, "status": "INCONCLUSIVE",
+@@ -662,11 +627,9 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
+                 # conflicts over text that is no part of the fix.
+                 files = git(project, "show", "--name-only", "--format=", fix_commit).stdout.split()
+                 # Source code only (not data, binaries, tool output), and only what still exists:
+-                # a file deleted since the fix has nothing left to take the fix out of. A file red_proof.json
+-                # declares production is code whatever its extension (the .sh runner fix_commit_of accepts).
+-                prod = [f for f in files if not is_test(f, tests, prod_globs) and not f.startswith(NOT_CODE)
+-                        and (f.endswith(SOURCE_EXT) or declared(f, prod_globs))
+-                        and git(project, "cat-file", "-e", f"HEAD:{f}").returncode == 0]
++                # a file deleted since the fix has nothing left to take the fix out of.
++                prod = [f for f in files if not TEST_PATH.search(f) and not f.startswith(NOT_CODE)
++                        and f.endswith(SOURCE_EXT) and git(project, "cat-file", "-e", f"HEAD:{f}").returncode == 0]
+                 if not prod:
+                     return {**base, "status": "INCONCLUSIVE", "mode": mode, "fix_commit": fix_commit,
+                             "reason": f"commit {fix_commit} không đổi code sản xuất"}

@@ -1,0 +1,22 @@
+diff --git a/universal-agent-devkit/tests/run_impacted.sh b/universal-agent-devkit/tests/run_impacted.sh
+index 264a350..ccf0c18 100755
+--- a/universal-agent-devkit/tests/run_impacted.sh
++++ b/universal-agent-devkit/tests/run_impacted.sh
+@@ -37,8 +37,6 @@ if git rev-parse -q --verify '@{u}' >/dev/null 2>&1; then
+   # a diff from the merge-base, not `git log --name-only`: that prints no file for a merge commit, so a conflict resolution that
+   # changed another file went untested (W1 R4, 14/10)
+   unpushed="$(git diff --name-only --relative '@{u}...HEAD' -- . 2>/dev/null)"
+-elif [ "${DEVKIT_IMPACTED_SINCE:-}" = 0 ]; then
+-  unpushed=""   # a RED-proof sandbox (no upstream, a detached worktree): only the file it reverted is a change, not every commit of the last hours
+ elif [ -z "${DEVKIT_IMPACTED_SINCE:-}" ] \
+   && [ "$(cd "$(git rev-parse --git-dir 2>/dev/null)" 2>/dev/null && pwd -P)" != "$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)" ] \
+   && base="$(git merge-base HEAD "$(git worktree list --porcelain 2>/dev/null | sed -n '1,/^$/s/^HEAD //p')" 2>/dev/null)" && [ -n "$base" ]; then
+@@ -46,7 +44,7 @@ elif [ -z "${DEVKIT_IMPACTED_SINCE:-}" ] \
+   # were other sessions' commits already in main (13/10: 157 tests instead of 11). A diff, not `git log`: that skips a merge's files.
+   unpushed="$(git diff --name-only --relative "$base" HEAD -- . 2>/dev/null)"
+ else
+-  unpushed="$(git log --since="${DEVKIT_IMPACTED_SINCE:-6.hours}" --name-only --relative --format= -- . 2>/dev/null)"
++  unpushed="$(git log --since=6.hours --name-only --relative --format= -- . 2>/dev/null)"
+ fi
+ changed="$( { git diff HEAD --name-only --relative -- . ; git ls-files -o --exclude-standard -- . ; printf '%s\n' "$unpushed"; } 2>/dev/null \
+   | grep -vE '(^|/)(CHANGELOG|README[^/]*)\.md$' | sort -u)"   # templates and rules are read by tests too
