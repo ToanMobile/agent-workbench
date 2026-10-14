@@ -141,9 +141,9 @@ if xong is None:
 # a sentence that only starts with the phrase are no item ("Rủi ro còn lại", residual risk, is another item; a bare "Lỗi cũ:" line is
 # content) (OCR + principal-code-reviewer 14/10, 6 rounds).
 _START = r"(?:^|\n)(?![ \t])[>*_#\-\d.()•+ \t]*"
-_END = r"(?:\s+nào)?(?:\s+đã\s+triệt\s+tiêu)?\s*(?:\([^)\n]*\))?[*_]*\s*[:：]"
+_END = r"(?:\s+nào)?(?:\s+đã\s+triệt\s+tiêu)?[*_]*\s*(?:\([^)\n]*\))?[*_]*\s*[:：]"
 REPORT_ITEMS = (("1. Đã fix gì (tên lỗi, nguyên nhân gốc, RED→GREEN)",
-                 r"đã\s+(?:fix|sửa)\s*(?:gì|:)|" + _START + r"đã\s+(?:fix|sửa|làm|thay\s+đổi)(?:\s+được)?\s+gì\s*(?:\([^)\n]*\))?[*_]*\s*[:：]"
+                 r"đã\s+(?:fix|sửa)\s*(?:gì|:)|" + _START + r"đã\s+(?:fix|sửa|làm|thay\s+đổi)(?:\s+được)?\s+gì[*_]*\s*(?:\([^)\n]*\))?[*_]*\s*[:：]"
                  + r"|what\s+was\s+fixed"),
                 ("2. Chặn bug cũ (test hồi quy / immutable_guards chạy lại PASS)",
                  r"bug\s+cũ|" + _START + r"(?:đã\s+)?chặn\s+(?:đứng\s+)?(?:các\s+)?lỗi\s+cũ" + _END + r"|reopened"),

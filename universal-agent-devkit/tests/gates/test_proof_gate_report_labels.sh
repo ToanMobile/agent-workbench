@@ -214,6 +214,11 @@ check 0 "bullet markers" "Đã push.
 • Chặn lỗi cũ: PASS.
 • Nguy cơ mới: không.
 $TAIL4"
+check 0 "bold closes before the gloss: **Label** (gloss):" "Đã push.
+1. **Đã làm gì** (RED→GREEN): một việc.
+2. **Chặn lỗi cũ** (REG-1): PASS.
+3. **Nguy cơ mới** (caller): không.
+$TAIL4"
 # labels with a parenthesis (a list, a gloss) before their colon are labels
 check 0 "label with a parenthesis" "Đã push.
 1. Đã làm gì (RED→GREEN): một việc.
