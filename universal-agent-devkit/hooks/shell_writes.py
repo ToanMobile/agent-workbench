@@ -255,7 +255,7 @@ def targets(cmd, here, depth=0, run_bodies=False):
                 hits.append(("build", wd))
             else:
                 hits += [("interp", a) for a in args[1:] if _exists(a, wd)]
-                if run_bodies and fed and (not args or "-s" in words[1:] or "-" in words[1:]):   # the script is on stdin, not a file
+                if run_bodies and fed and (not args or ("-s" in words[1:] and base in SHELLS) or "-" in words[1:]):   # the script is on stdin, not a file (python's -s is no such flag)
                     for body in fed:
                         if base not in SHELLS:
                             hits += [("file", w.group("p")) for rx in SCRIPT_WRITES for w in rx.finditer(body)]

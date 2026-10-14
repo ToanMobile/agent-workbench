@@ -89,6 +89,9 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (True, "arithmetic << before a python heredoc opening a file of main for writing", m, B("echo $((1<<2)); python3 - <<EOF\nopen('README.md','w').write('x')\nEOF")),
     (True, "a quoted <<EOF on an earlier line, then a real bash heredoc writing into main", m, B('echo "a<<EOF"\nbash <<EOF\necho x > README.md\nEOF')),
     (True, "a <<EOF in a comment, then a real bash heredoc writing into main", m, B("# <<EOF\nbash <<EOF\necho x > README.md\nEOF")),
+    # OCR2 2: `-s` means "script from stdin" for a shell only; python's -s is "no user site-packages", the heredoc is data for tool.py
+    (False, "python3 -s tool.py fed a heredoc of data (no stdin script)", m, B("python3 -s tool.py <<EOF\nopen('README.md','w').write('x')\nEOF")),
+    (True, "python3 -s - fed a python heredoc (stdin script)", m, B("python3 -s - <<EOF\nopen('README.md','w').write('x')\nEOF")),
     (False, "arithmetic << before a bash heredoc that only reads", m, B("echo $((1<<2)); bash <<EOF\ngrep -rn x . | head -3\nEOF")),
     (False, "arithmetic << before a bash heredoc writing in the worktree", w, B("echo $((1<<2)); bash <<EOF\necho x > a.txt\nEOF")),
     (True, "a git commit inside a substitution", m, B("echo $(git commit -qm x)")),
