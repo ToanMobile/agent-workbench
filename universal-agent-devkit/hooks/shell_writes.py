@@ -32,6 +32,7 @@ PREFIX_VALUE_OPTS = {"nice": {"-n"}, "env": {"-u", "-C", "-S", "--chdir", "--uns
                      "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U", "--chdir"}}
 # ... and these move the directory the command runs in (OpenCodeReview 14/10: `env -C <main> rm f` judged f in the old cwd)
 PREFIX_CHDIR = {("env", "-C"), ("env", "--chdir"), ("sudo", "-D"), ("sudo", "--chdir")}
+ENV_SPLIT_SHORT = re.compile(r"-[0iv]*S(.*)", re.S)   # env -S, also after its flags (-iS); the rest of the word is the value
 # Options whose next word is a VALUE, not a target (principal-code-reviewer 14/10: `chmod +x f`, `mkdir -m 755 d`, `touch -t STAMP f`,
 # `truncate -s 0 f`, `touch -r REF f` named the value as a write in the cwd). `--opt=value` carries its value itself.
 VALUE_OPTS = {"chmod": {"--reference"}, "cp": {"-S", "--suffix"}, "mv": {"-S", "--suffix"}, "ln": {"-S", "--suffix"},
@@ -96,6 +97,37 @@ def _cd(here, d):
     return d if os.path.isabs(d) else os.path.join(here, d)
 
 
+def _env_split(opt, words):
+    """(command line, words left) when `opt` is env's split-string option - `-S LINE`, `-SLINE`, `-iS LINE`, `--split-string LINE`,
+    `--split-string=LINE` or an unambiguous prefix of it (`--s…`) - else None. env splits LINE into words and runs them with the
+    words after it appended, so LINE is a command, not an option value (OpenCodeReview 14/10: `env -S 'rm f'` was never judged)."""
+    m = ENV_SPLIT_SHORT.fullmatch(opt)
+    if m and m.group(1):
+        return m.group(1), words
+    name, eq, val = opt.partition("=")
+    long_opt = len(name) > 2 and "--split-string".startswith(name)
+    if long_opt and eq:
+        return val, words
+    if m or long_opt:
+        return (words[0], words[1:]) if words else ("", words)
+    return None
+
+
+def _env_line(line):
+    """`line` with env -S's own escapes that shlex does not know (measured on macOS env 14/10, GNU documents the same): an unquoted
+    `\\_` separates words and a double-quoted one is a space - a space does both under shlex; `\\c` ends the line. Other escapes keep
+    their character inside the word, as shlex reads them. An escaped backslash (`\\\\_`) is matched as a pair, so its `_` stays."""
+    parts, pos = [], 0
+    for m in re.finditer(r"\\(.)", line, re.S):
+        if m.group(1) in ("_", "c"):
+            parts.append(line[pos:m.start()])
+            if m.group(1) == "c":
+                return "".join(parts)
+            parts.append(" ")
+            pos = m.end()
+    return "".join(parts) + line[pos:]
+
+
 def _operands(base, words):
     """(operands, target directory or None) of a file command's words after the verb: options and their values dropped, an
     empty word dropped (`sed -i ''`), everything after `--` kept."""
@@ -136,7 +168,8 @@ def targets(cmd, here, depth=0, run_bodies=False):
     dd of=; sed -i / perl -i operands that exist), "git" (a git write: its -C directory), "build" (a build
     tool or builder module: its working directory), "interp" (an interpreter's operands that exist). A target may hold $VAR or a
     backtick: the caller decides. Heredoc bodies are data, never commands - unless run_bodies and the heredoc feeds a shell (its body is
-    scanned like `bash -c '…'`) or an interpreter (its script's literal write paths: "file"); `bash -c '…'` is scanned three levels deep.
+    scanned like `bash -c '…'`) or an interpreter (its script's literal write paths: "file"); `bash -c '…'` is scanned three levels deep;
+    the line of `env -S '…'` / `--split-string` is split into words in place (_env_split).
     A body run_bodies cannot tokenise comes back as ("unparsed", "", directory)."""
     out, bodies, pos = [], [], 0
     while True:                               # heredoc bodies are data, not commands
@@ -192,7 +225,14 @@ def targets(cmd, here, depth=0, run_bodies=False):
             if w in PREFIX_VALUE_OPTS:   # its options (with their values), then timeout's duration
                 while words and words[0].startswith("-") and words[0] != "-":
                     opt, words = words[0], words[1:]
-                    if "=" in opt and (w, opt.split("=", 1)[0]) in PREFIX_CHDIR:
+                    split = _env_split(opt, words) if w == "env" else None
+                    if split is not None:   # its words go first, in place: env options, VAR=, the command and its operands
+                        line = _env_line(split[0])
+                        try:
+                            words = shlex.split(line) + split[1]
+                        except ValueError:   # \' / \\ inside single quotes (env reads them, shlex cannot) or a broken quote:
+                            words = line.split() + split[1]   # the operands are still judged (OpenCodeReview 14/10)
+                    elif "=" in opt and (w, opt.split("=", 1)[0]) in PREFIX_CHDIR:
                         wd = _cd(wd, opt.split("=", 1)[1])
                     elif opt in PREFIX_VALUE_OPTS[w] and words:
                         val, words = words[0], words[1:]
@@ -231,8 +271,8 @@ def targets(cmd, here, depth=0, run_bodies=False):
             gdir, sub, skip, rest = wd, "", None, []
             for k, a in enumerate(words[1:], 1):
                 if skip:
-                    if skip == "-C":
-                        gdir = a if os.path.isabs(a) else os.path.join(gdir, a)
+                    if skip == "-C":   # ~ expanded as the shell does (OpenCodeReview 14/10); a $VAR one stays for the caller
+                        gdir = os.path.join(gdir, os.path.expanduser(a))
                     skip = None
                 elif a in ("-C", "-c", "--git-dir", "--work-tree"):
                     skip = a

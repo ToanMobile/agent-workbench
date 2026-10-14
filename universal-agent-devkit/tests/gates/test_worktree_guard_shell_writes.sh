@@ -40,6 +40,31 @@ guard "$H" "$W" "env -C $M rm src/a.kt"; rc=$?
 [ "$rc" = 2 ] && ok "env -C <main> rm from the worktree: blocked" || fail "env -C main: rc $rc"
 guard "$H" "$W" "rm src/a.kt"; rc=$?
 [ "$rc" = 0 ] && ok "rm inside its own worktree: allowed" || fail "rm in the worktree: rc $rc $(cat "$TMP/err")"
+# env -S / --split-string holds a whole command line: env splits it into words, puts them first and runs them with the words after it
+# appended. It was dropped as the option's value, so its writes were never seen (OpenCodeReview 14/10, issues-bugs.md A.4 (b)).
+guard "$H" "$M" "env -S 'rm src/a.kt'"; rc=$?
+[ "$rc" = 2 ] && ok "env -S '<rm …>' in the main checkout: blocked" || fail "env -S '<rm …>' in main: rc $rc"
+guard "$H" "$M" "env -S'rm -f' src/a.kt"; rc=$?
+[ "$rc" = 2 ] && ok "env -S'rm -f' src/a.kt (attached, the operand after it): blocked" || fail "env -S'rm -f' + operand in main: rc $rc"
+guard "$H" "$M" "env --split-string 'FOO=1 rm src/a.kt'"; rc=$?
+[ "$rc" = 2 ] && ok "env --split-string '<VAR=… rm …>' in the main checkout: blocked" || fail "env --split-string <line> in main: rc $rc"
+guard "$H" "$M" "env -i --split-string='rm src/a.kt'"; rc=$?
+[ "$rc" = 2 ] && ok "env -i --split-string='<rm …>' in the main checkout: blocked" || fail "env --split-string=<line> in main: rc $rc"
+guard "$H" "$W" "env -S 'rm src/a.kt'"; rc=$?
+[ "$rc" = 0 ] && ok "env -S '<rm …>' inside its own worktree: allowed" || fail "env -S in the worktree: rc $rc $(cat "$TMP/err")"
+# env -S's own escapes (OpenCodeReview 14/10, measured on macOS env): an unquoted \_ separates words, so this is `rm src/a.kt`
+guard "$H" "$M" "env -S 'rm\\_src/a.kt'"; rc=$?
+[ "$rc" = 2 ] && ok "env -S 'rm\\_src/a.kt' (\\_ separates) in the main checkout: blocked" || fail "env -S 'rm\\_…' in main: rc $rc"
+# ... and \' inside single quotes, which env honours and shlex cannot parse: the line's operands are still judged
+guard "$H" "$M" "env -S \"rm 'f\\'g' src/a.kt\""; rc=$?
+[ "$rc" = 2 ] && ok "env -S \"rm 'f\\'g' src/a.kt\" (\\' in single quotes) in the main checkout: blocked" || fail "env -S with \\' in main: rc $rc"
+# `git -C ~/x …`: the shell expands ~ before git sees it, the scanner joined `~/x` to the cwd (OpenCodeReview 14/10, issues-bugs.md
+# A.4 (c)): a commit into the main checkout from the worktree went through, one into the worktree from the main checkout's cwd was
+# blocked. HOME = the fixture dir, so ~/main is the main checkout and ~/wt the worktree.
+HOME="$TMP" guard "$H" "$W" "git -C ~/main commit -qm x"; rc=$?
+[ "$rc" = 2 ] && ok "git -C ~/<main> commit from the worktree: blocked" || fail "git -C ~/main commit from the worktree: rc $rc"
+HOME="$TMP" guard "$H" "$M" "git -C ~/wt commit -qm x"; rc=$?
+[ "$rc" = 0 ] && ok "git -C ~/<worktree> commit from the main checkout's cwd: allowed" || fail "git -C ~/wt commit from main's cwd: rc $rc $(cat "$TMP/err")"
 
 mkdir -p "$TMP/partial" && cp "$H" "$TMP/partial/worktree_guard.sh"   # a partial install: no shell_writes.py beside it
 guard "$TMP/partial/worktree_guard.sh" "$M" "cp /tmp/x src/b.kt"; rc=$?

@@ -117,11 +117,17 @@ def c_worktree_guard(root, v):
                          "tool_input": {"file_path": os.path.join(main, "src", "a.kt"), "old_string": "a", "new_string": "b"}})
 
 
+# The holder's heartbeat age is printed in whole seconds ("hoạt động cách đây Ns"): wall time, not part of the decision. Each variant
+# gets its own age on purpose, so a comparison that read it fails on every run - not only when load stretched one run past a second
+# (W2b, 14/10: red under load, green alone). norm() masks it; the stale limit is pinned so no age here can make a holder stale.
+HB_AGE = {"clean": 0, "exit0": 2, "raise": 4}
+
+
 def c_session_lock(root, v):
     r = repo(os.path.join(root, "repo"))
     write(os.path.join(r, ".git", "devkit-session.lock"),
-          json.dumps({"session_id": "holder", "started": NOW, "heartbeat": time.time(), "cwd": r, "pid": os.getpid()}))   # a live pid: a dead one counts as free
-    return dict(hook="session_lock.sh", env={"CLAUDE_PROJECT_DIR": r},
+          json.dumps({"session_id": "holder", "started": NOW, "heartbeat": time.time() - HB_AGE[v], "cwd": r, "pid": os.getpid()}))   # a live pid: a dead one counts as free
+    return dict(hook="session_lock.sh", env={"CLAUDE_PROJECT_DIR": r, "DEVKIT_SESSION_LOCK_STALE_S": "600"},
                 payload={"session_id": "other", "hook_event_name": "PreToolUse", "cwd": r, "tool_name": "Edit",
                          "tool_input": {"file_path": os.path.join(r, "a.kt")}})
 
@@ -316,6 +322,7 @@ def norm(text, root):
     text = re.sub(r"\d{4}-\d\d-\d\dT[\d:.]+Z?", "<ts>", text)
     text = re.sub(r"\b\d{8}-\d{6}\b", "<stamp>", text)   # evidence log names
     text = re.sub(r"\b\d{9,}(?:\.\d+)?\b", "<n>", text)
+    text = re.sub(r"hoạt động cách đây \d+s\b", "hoạt động cách đây <age>s", text)   # bin/session_lock.py describe(): see HB_AGE
     return text.strip()
 
 

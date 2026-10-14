@@ -50,8 +50,8 @@ PY
   for _ in $(seq 1 50); do [ -f "$TMP/b_held" ] && break; sleep 0.1; done
 }
 
-timed_stop() {
-  python3 - "$HOOK" "$B" "$TMP/b.jsonl" "70" "$TMP/out" "$TMP/err" "$@" <<'PY' >"$TMP/timed"
+timed_stop() {   # TIMED_LIMIT=<s> before the call: kill the hook's process group after that many seconds (default 70)
+  python3 - "$HOOK" "$B" "$TMP/b.jsonl" "${TIMED_LIMIT:-70}" "$TMP/out" "$TMP/err" "$@" <<'PY' >"$TMP/timed"
 import json, os, signal, subprocess, sys, time
 hook, repo, tp, limit, out, err = sys.argv[1:7]
 env = {k: v for k, v in os.environ.items() if k != "TESTSOURCESET_LOCK_WAIT_S"}
@@ -238,5 +238,34 @@ if [ "$T_RC" = "2" ]; then
 else
   fail "8: Setup failed, expected rc=2. err=$(cat $TMP/err) out=$(cat $TMP/out)"
 fi
+
+# 9. A FIFO planted at the lock path AFTER the hook's FIFO sweep (OpenCodeReview 14/10): `exec 9>>test_run.lock` waited for a reader
+#    for ever, and a Stop hook killed by its timeout lets the Stop through. A git shim plants it at the hook's first git call (the
+#    `git diff` that lists the changed files), i.e. after the sweep at its top. Expected: the lock is refused at once and the test
+#    source set is compiled unlocked, as when the lock cannot be created (case 5). New content and a passing gradlew: case 8 left a
+#    cached block, which skips the lock altogether.
+echo "fun ok() = 9" > app/src/main/java/Core.kt
+rm -f "$TMP/b_compiled" "$TMP/err" "$TMP/out"
+cat > gradlew <<EOF
+#!/bin/sh
+echo "1" >> "$TMP/b_compiled"
+exit 0
+EOF
+chmod +x gradlew
+REAL_GIT="$(command -v git)"
+mkdir -p "$TMP/shim"
+cat > "$TMP/shim/git" <<EOF
+#!/bin/sh
+[ -p "$LOG_DIR/test_run.lock" ] || { rm -f "$LOG_DIR/test_run.lock"; mkfifo "$LOG_DIR/test_run.lock"; }
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$TMP/shim/git"
+TIMED_LIMIT=20 timed_stop TESTSOURCESET_LOCK_WAIT_S=3 PATH="$TMP/shim:$PATH"
+if [ "$T_RC" = "0" ] && [ -f "$TMP/b_compiled" ] && grep -q "not a regular file" "$LOG"; then
+  ok "9: FIFO at the lock path after the sweep: refused at once, compiled unlocked (${T_SEC}s)"
+else
+  fail "9: FIFO at the lock path after the sweep: rc=$T_RC in ${T_SEC}s (TIMEOUT = the hook hung on the lock) compiled=$([ -f "$TMP/b_compiled" ] && echo yes || echo no) log: $(tail -2 "$LOG")"
+fi
+rm -f "$LOG_DIR/test_run.lock"
 
 [ $FAILS -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }
