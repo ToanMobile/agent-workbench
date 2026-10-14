@@ -261,7 +261,7 @@ def owner_may_live(osid):
     """Another session owns the worktree and may still work in it: the old rules ask for a sign of life, trunk mode (where this gate merges and
     removes) for proof of death - an owner with no pid and no registry entry is left alone."""
     if session_lock is None:
-        return True
+        return trunk   # trunk mode merges and removes: no proof of death, hands off; the old rules read an unknown owner as not alive (held, capped)
     return not session_lock.owner_gone(repo, osid, sw_mod, repo)[0] if trunk else session_alive(osid)
 
 def state_owner(admin):

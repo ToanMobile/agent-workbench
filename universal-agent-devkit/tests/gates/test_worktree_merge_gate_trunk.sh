@@ -277,5 +277,23 @@ stop "$TMP/u3" s1 "$TMP/u3/.claude/worktrees/s1" "$TMP/t14-u3.jsonl" WORKTREE_AU
   && ok "  … WORKTREE_AUTO_MERGE=0: still rc 2, the note names agent-kit worktree finish --keep for the own worktree, main without the own commit" \
   || fail "auto-merge off with another hold (rc $rc, own in main: $( [ -f "$TMP/u3/own.txt" ] && echo yes || echo no)): err=$(head -c 500 "$TMP/err")"
 
+# 15 session_lock not importable and a worktree whose state names ANOTHER session (OCR2 20): "that session may be alive" was assumed for every
+#    such worktree, also one this repo already owes - legacy mode then dropped it and passed the Stop in silence with the work unintegrated,
+#    against the gate's own rule (no session_lock: MORE worktrees count as ours, held and capped). Trunk mode, which merges and removes on
+#    proof of death, keeps its hands off it.
+owed_state() {   # owed_state <main> <worktree name>: the debt an earlier Stop saved (this worktree owed, no owner recorded)
+  mkdir -p "$1/.claude/audit-gate" && python3 -c 'import json,os,sys; json.dump({"owed":[os.path.realpath(sys.argv[2])],"owners":{},"sessions":{}}, open(sys.argv[1],"w"))' \
+    "$1/.claude/audit-gate/worktree_merge_gate.state" "$1/.claude/worktrees/$2"
+}
+repo w1; G "$TMP/w1" config devkit.trunkMode false; wtadd "$TMP/w1" s9 s9; commit_in "$TMP/w1" s9 nine; owed_state "$TMP/w1" s9
+gate_in "$TMP/kit5" "$TMP/w1" s1 "$TMP/w1"; rc=$?
+[ "$rc" = 2 ] && grep -q "worktrees/s9" "$TMP/err" && [ -d "$TMP/w1/.claude/worktrees/s9" ] \
+  && ok "no session_lock, trunk mode off: an owed worktree whose state names another session still holds the Stop" \
+  || fail "owed worktree of another session dropped without session_lock (rc $rc): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
+repo w2; wtadd "$TMP/w2" s9 s9; commit_in "$TMP/w2" s9 nine; owed_state "$TMP/w2" s9
+gate_in "$TMP/kit5" "$TMP/w2" s1 "$TMP/w2"; rc=$?
+[ "$rc" = 0 ] && [ ! -f "$TMP/w2/nine.txt" ] && [ -d "$TMP/w2/.claude/worktrees/s9" ] \
+  && ok "  … trunk mode on: hands off (no proof of death), nothing merged, nothing held" || fail "trunk mode took another session's worktree without session_lock (rc $rc): err=$(head -c 300 "$TMP/err")"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_worktree_merge_gate_trunk: PASS"; exit 0; } || { echo "test_worktree_merge_gate_trunk: FAIL ($FAILS)"; exit 1; }
