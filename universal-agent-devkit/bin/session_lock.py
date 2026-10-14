@@ -889,6 +889,35 @@ _STDIN_SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
 _STDIN_INTERP = _Re(r"^(?:python[\d.]*|node|deno|ruby|perl|php)$")
 
 
+# The options of a launcher that take a VALUE as the next word (the same table as hooks/shell_writes.py PREFIX_VALUE_OPTS; the trunk test compares them)
+_LAUNCHER_VALUE_OPTS = {"nice": {"-n"}, "env": {"-u", "-C", "-S", "--chdir", "--unset", "--split-string"},
+                        "timeout": {"-s", "-k", "--signal", "--kill-after"},
+                        "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U", "--chdir"}}
+
+
+def _launcher_end(words):
+    """(index of the program in `words`, the command lines `env -S` hands over): past assignments, launchers (_PREFIX_RUN), their options WITH
+    the value of one that takes a value (`env -u FOO`, `sudo -u root`, `nice -n 5`, `timeout -s KILL`) and timeout's duration. The value used to be
+    read as the program, so `env -u FOO git config devkit.trunkMode false` went unseen (OCR2 21). An attached value (`-uFOO`, `--unset=FOO`) is
+    one word and consumes nothing more."""
+    k, launcher, lines = 0, "", []
+    while k < len(words):
+        w = words[k]
+        if os.path.basename(w) in _PREFIX_RUN:
+            launcher = os.path.basename(w)
+        elif w.startswith("-"):
+            if w in _LAUNCHER_VALUE_OPTS.get(launcher, ()) and k + 1 < len(words):
+                k += 1
+                if w in ("-S", "--split-string"):
+                    lines.append(words[k])
+            elif launcher == "env" and (w.startswith("--split-string=") or (w.startswith("-S") and not w.startswith("--"))):
+                lines.append(w.split("=", 1)[1] if w.startswith("--") else w[2:])
+        elif not (re.fullmatch(r"[A-Za-z_]\w*=.*", w, re.S) or not w or re.fullmatch(r"\d+(?:\.\d+)?[smhd]?", w)):
+            break
+        k += 1
+    return k, lines
+
+
 def _cmd_words(seg):
     """The words of one segment up to its first redirection, after assignments and launchers (env, sudo, nice ...) and their options."""
     import shlex   # noqa: PLC0415 - only commands with a pipe, a here-string or a heredoc get here
@@ -901,11 +930,7 @@ def _cmd_words(seg):
         if re.match(r"\d*[<>&]", w):
             words = words[:k]
             break
-    k = 0
-    while k < len(words) and (re.fullmatch(r"[A-Za-z_]\w*=.*", words[k]) or os.path.basename(words[k]) in _PREFIX_RUN or words[k].startswith("-")
-                              or re.fullmatch(r"\d+(?:\.\d+)?[smhd]?", words[k])):
-        k += 1
-    return words[k:]
+    return words[_launcher_end(words)[0]:]
 
 
 def _stdin_reader(words):
@@ -1010,16 +1035,13 @@ def is_trunk_off(cmd, depth=0):
             words = seg.split()
         if words:
             words[0] = words[0].lstrip("({")
-        k = 0
-        while k < len(words):   # what wraps the program (assignments, export / env / sudo ... and their options) comes first
-            w = words[k]
+        k, lines = _launcher_end(words)   # what wraps the program (assignments, export / env / sudo ... and their options) comes first
+        for w in words[:k]:
             m = re.fullmatch(r"WORKTREE_TRUNK_MODE=(.*)", w, re.S)
             if m and (m.group(1) == "0" or "$" in m.group(1) or "`" in m.group(1)):
                 return True
-            if not (re.fullmatch(r"[A-Za-z_]\w*=.*", w, re.S) or w.startswith("-") or not w
-                    or os.path.basename(w) in _PREFIX_RUN or re.fullmatch(r"\d+(?:\.\d+)?[smhd]?", w)):
-                break
-            k += 1
+        if depth < 3 and any(is_trunk_off(line, depth + 1) for line in lines):   # env -S 'git config ...': its value is a command line
+            return True
         words = words[k:]
         if not words:
             continue

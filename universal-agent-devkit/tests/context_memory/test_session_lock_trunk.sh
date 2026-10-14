@@ -231,10 +231,32 @@ cases = [   # (want, command)
     (False, "echo 'agent-kit worktree trunk status' | sh"),
     (False, "bash <<< 'git config --get devkit.trunkMode'"),
     (False, "git status # don't run agent-kit worktree trunk off"),
+    # OCR2 21: a launcher's option that takes a VALUE (env -u FOO, env -C DIR, sudo -u USER, nice -n N, timeout -s SIG) - the loop dropped the option and
+    # read its value as the program, so the git config behind it was never looked at
+    (True, "env -u FOO git config devkit.trunkMode false"),
+    (True, "env -C /x git config devkit.trunkMode false"),
+    (True, "sudo -u root git config devkit.trunkMode false"),
+    (True, "sudo -n -g wheel git config --unset devkit.trunkMode"),
+    (True, "nice -n 5 git config devkit.trunkMode false"),
+    (True, "timeout -s KILL 5 git config devkit.trunkMode false"),
+    (True, "timeout 5 git config devkit.trunkMode false"),
+    (True, "sudo -u root env -u FOO git config devkit.trunkMode false"),
+    (True, "env --unset FOO git config devkit.trunkMode false"),
+    (True, "env -uFOO git config devkit.trunkMode false"),
+    (True, "env -u FOO WORKTREE_TRUNK_MODE=0 git commit -qm x"),
+    (True, "env -S 'git config devkit.trunkMode false'"),
+    (True, "echo 'git config devkit.trunkMode false' | env -u FOO sh"),
+    (False, "env -u FOO git config --get devkit.trunkMode"),
+    (False, "env -C /x git config devkit.trunkMode true"),
+    (False, "env -u FOO git status"),
+    (False, "echo 'git config --get devkit.trunkMode' | env -u FOO sh"),
 ]
 sw = sl._hook_module("session_worktree")
 cases += [(False, f"git config devkit.trunkMode {v}") for v in sorted(sw._TRUE)]   # git's own spellings of true: the kit's list, not a copy
 bad = 0
+if sl._LAUNCHER_VALUE_OPTS != sl._hook_module("shell_writes").PREFIX_VALUE_OPTS:   # one launcher table in two files: they must not drift
+    bad += 1
+    print("✖ session_lock._LAUNCHER_VALUE_OPTS differs from hooks/shell_writes.py PREFIX_VALUE_OPTS")
 for want, cmd in cases:
     got = sl.is_trunk_off(cmd)
     if got != want:
