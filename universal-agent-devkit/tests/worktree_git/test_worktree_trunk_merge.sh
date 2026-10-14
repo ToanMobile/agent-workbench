@@ -125,10 +125,10 @@ repo k; wtadd k w; newcaller k w; rename_on_main k; kb="$(G "$TMP/k" rev-parse H
 printf 'exec -a "%s/slow-sleep" sleep 30\n' "$TMP" > "$TMP/slow.sh"   # the sleeping process itself carries a unique name (a wrapper's command line may hold any fixed string)
 fin k w DURING_GATE="$TMP/slow.sh" WORKTREE_MERGE_GATE_TIMEOUT_S=4; rc=$?
 for _ in 1 2 3 4 5; do pgrep -f "$TMP/slow-sleep" >/dev/null 2>&1 || break; sleep 1; done   # the group may take a moment to go
-command -v pgrep >/dev/null || echo "• pgrep missing: the orphan check below is skipped"
+orphans="its suite stopped"; command -v pgrep >/dev/null || orphans="orphan check skipped: no pgrep"
 [ "$rc" = 1 ] && [ "$(G "$TMP/k" rev-parse HEAD)" = "$kb" ] && grep -qE "không chạy xong|did not finish" "$TMP/out" && { ! command -v pgrep >/dev/null || ! pgrep -f "$TMP/slow-sleep" >/dev/null; } \
   && [ -z "$(G "$TMP/k-w" status --porcelain -- lib.sh app.sh app2.sh check.sh)" ] \
-  && ok "a gate past WORKTREE_MERGE_GATE_TIMEOUT_S: refused, its suite stopped, no file left reverted" \
+  && ok "a gate past WORKTREE_MERGE_GATE_TIMEOUT_S: refused, $orphans, no file left reverted" \
   || fail "gate timeout: rc=$rc leftover=$(pgrep -f "$TMP/slow-sleep" | tr '\n' ' ') status=$(G "$TMP/k-w" status --porcelain | tr '\n' ' ') $(tail -2 "$TMP/out")"
 pkill -f "$TMP/slow-sleep" 2>/dev/null
 # … a refusal that is no verdict (the gate did not finish) is not kept: the next run gates again, and gets the real answer
@@ -179,10 +179,10 @@ fin u w GATE_TOTAL_BUDGET_S=2 DURING_GATE="$TMP/slow2.sh"; rc=$?
 
 # 15 a flaky FAIL (failed, then passed on the gate's own retry) refuses this run but is never kept: the next run gates again and merges
 repo v; wtadd v w; newcaller v w; echo note > "$TMP/v/notes.txt" && G "$TMP/v" add notes.txt && G "$TMP/v" commit -qm "unrelated on main"
-fin v w FAIL_ONCE="$TMP/v.failed-once"; rc=$?
-[ "$rc" = 1 ] && grep -q "REG-APP-01" "$TMP/out" || fail "15 setup: the flaky run should be refused (rc $rc): $(tail -2 "$TMP/out")"
+fin v w FAIL_ONCE="$TMP/v.failed-once" FLAKY_RETRY=1 FLAKY_RETRY_MAX_S=600; rc=$?   # the gate's own retry, whatever the caller exported (FLAKY_RETRY=0 kept the FAIL)
+[ "$rc" = 1 ] && grep -q "REG-APP-01 FAIL" "$TMP/out" || fail "15 setup: the flaky run should be refused (rc $rc): $(tail -2 "$TMP/out")"
 : > "$TMP/v.count"
-fin v w GATE_COUNT="$TMP/v.count" FAIL_ONCE="$TMP/v.failed-once"; rc=$?
+fin v w GATE_COUNT="$TMP/v.count" FAIL_ONCE="$TMP/v.failed-once" FLAKY_RETRY=1 FLAKY_RETRY_MAX_S=600; rc=$?
 [ "$rc" = 0 ] && [ -s "$TMP/v.count" ] && [ -f "$TMP/v/app2.sh" ] && ok "a flaky FAIL is not kept: the next run gates again and merges" \
   || fail "a flaky FAIL was replayed (rc $rc, runs $(wc -l < "$TMP/v.count")): $(tail -2 "$TMP/out")"
 

@@ -40,7 +40,7 @@ done
 [ "$bad" = 0 ] && ok "a dead holder's lock file + 12 waiters: one holder at a time, all 12 served (30 runs)" || fail "$bad of 30 runs had two holders at once or a waiter that gave up"
 
 # 2 a live holder: wait=0 gets None at once; once the holder is killed (no clean-up at all) the lock is free right away
-python3 -I -c 'import sys,time; sys.path.insert(0, sys.argv[1]); import worktree as w; h = w._lock_file(sys.argv[2]); open(sys.argv[3], "w").close(); time.sleep(60)' \
+python3 -I -c 'import sys,time; sys.path.insert(0, sys.argv[1]); import worktree as w; h = w._lock_file(sys.argv[2]); h is None and sys.exit(3); open(sys.argv[3], "w").close(); time.sleep(60)' \
   "$DEVKIT_DIR/scripts/git" "$TMP/live.lock" "$TMP/held" &
 HOLDER=$!
 for _ in $(seq 1 100); do [ -f "$TMP/held" ] && break; sleep 0.05; done
