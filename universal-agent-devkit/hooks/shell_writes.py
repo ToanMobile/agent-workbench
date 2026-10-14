@@ -165,10 +165,11 @@ def targets(cmd, here, depth=0):
                     opt, words = words[0], words[1:]
                     split = _env_split(opt, words) if w == "env" else None
                     if split is not None:   # its words go first, in place: env options, VAR=, the command and its operands
+                        line = _env_line(split[0])
                         try:
-                            words = shlex.split(_env_line(split[0])) + split[1]
-                        except ValueError:   # env refuses a line with an unterminated quote: nothing runs
-                            words = []
+                            words = shlex.split(line) + split[1]
+                        except ValueError:   # \' / \\ inside single quotes (env reads them, shlex cannot) or a broken quote:
+                            words = line.split() + split[1]   # the operands are still judged (OpenCodeReview 14/10)
                     elif "=" in opt and (w, opt.split("=", 1)[0]) in PREFIX_CHDIR:
                         wd = _cd(wd, opt.split("=", 1)[1])
                     elif opt in PREFIX_VALUE_OPTS[w] and words:

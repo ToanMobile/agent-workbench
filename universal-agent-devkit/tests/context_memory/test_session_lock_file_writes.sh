@@ -74,6 +74,7 @@ cases = [   # (want hits_top, label, command); every command runs with cwd = the
     # ... with env -S's own escapes (measured on macOS env): an unquoted \_ separates words, \c ends the line
     (True, "env -S 'rm\\_x.txt' in it (\\_ separates)", "env -S 'rm\\_x.txt'"),
     (False, "env -S 'rm <outside>\\c y.txt': env stops at \\c", f"env -S 'rm {other}/x\\c y.txt'"),
+    (True, "env -S with \\' in single quotes (shlex cannot parse it) in it", "env -S \"rm 'f\\'g' x.txt\""),
 ]
 fails = 0
 for want, label, cmd in cases:
