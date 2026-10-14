@@ -1027,7 +1027,7 @@ def _is_ancestor(wt, a, b):
     return git(wt, "merge-base", "--is-ancestor", a, b, check=False).returncode == 0   # rc 1 (no) and any trouble: no
 
 
-def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False):
+def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False, admin=None):
     """Commits that nothing but this worktree's own HEAD reflog names (`checkout --detach HEAD~1`, `reset`, a commit made detached
     and then `checkout <branch>`): a removal deletes that reflog and the commit is gone at the next gc. [sha, ...] newest first,
     or None when git could not say (fail closed; an unreadable, irregular or corrupt reflog file is such a case). `refs`: the commit
@@ -1035,16 +1035,31 @@ def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False):
     squash, a commit whose files hold the same bytes in main, one that main (or the current HEAD) has as the same patch
     (cherry-picked, rebased), the commits of a chain whose whole patch is in main already (a squash brought back as one diff); for a
     worktree on a BRANCH (`attached`) also a commit the reflog of a local branch names (`reset --hard HEAD~1`, `commit --amend` on
-    the branch: the branch reflog survives the removal)."""
-    on_file = _reflog_file_entries(wt) if reflog_lines is False else reflog_lines   # BEFORE git reads that file: a FIFO there would block `git log -g`
-    if on_file is None:
-        return None
-    r = git(wt, "log", "-g", "--format=%H%x09%gs", "HEAD", check=False)
-    if r.returncode != 0:
-        return None
-    entries = [(l.split("\t", 1) + [""])[:2] for l in r.stdout.splitlines() if l]
-    if on_file > len(entries):
-        return None   # git skipped lines it could not read: what they named is unknown
+    the branch: the branch reflog survives the removal). `admin`: read the HEAD reflog from that admin dir (a worktree whose folder
+    is gone, A.2 #3); `wt` is then any checkout of the repository: every other check reads only the objects and refs all share."""
+    if admin:
+        # ONE read of the reflog file, parsed here (the format `git log -g` reads: newest last): git would also need the admin dir's
+        # HEAD, which a removal running meanwhile may already have deleted, and an integrated worktree being removed read as "cannot say"
+        try:
+            lines = [l for l in _read_regular(os.path.join(admin, "logs", "HEAD")).split(b"\n") if l.strip()]
+        except FileNotFoundError:
+            return []   # no reflog (or the removal already deleted it): nothing only it names
+        except OSError:
+            return None   # a FIFO / device / unreadable file
+        found = [re.fullmatch(rb"([0-9a-f]{40}|[0-9a-f]{64}) ([0-9a-f]{40}|[0-9a-f]{64}) [^\t]*(?:\t(.*))?", l.rstrip(b"\r")) for l in reversed(lines)]
+        if not all(found):
+            return None   # a line that is no reflog entry: what it names is unknown
+        entries = [(m.group(2).decode(), (m.group(3) or b"").decode("utf-8", "replace")) for m in found if m.group(2).strip(b"0")]
+    else:
+        on_file = _reflog_file_entries(wt) if reflog_lines is False else reflog_lines   # BEFORE git reads that file: a FIFO there would block `git log -g`
+        if on_file is None:
+            return None
+        r = git(wt, "log", "-g", "--format=%H%x09%gs", "HEAD", check=False)
+        if r.returncode != 0:
+            return None
+        entries = [(l.split("\t", 1) + [""])[:2] for l in r.stdout.splitlines() if l]
+        if on_file > len(entries):
+            return None   # git skipped lines it could not read: what they named is unknown
     superseded = {entries[i + 1][0] for i in range(len(entries) - 1)
                   if entries[i][1].startswith(("commit (amend)", "rebase (fixup", "rebase (squash"))}   # (reflog subjects: an agent can write them)
     cands = list(dict.fromkeys(e[0] for e in entries if e[0] not in superseded and e[0] != head))
@@ -1095,6 +1110,48 @@ def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False):
 # ponytail (accepted, same as the base): the whole-patch rule above allows a chain that DELIBERATELY reverted itself (add V then delete V, edit then revert,
 # a binary added then deleted, `merge -s ours` of a side commit): its net patch is empty / already in main. Patch ids ignore whitespace and EOL. Upgrade
 # only if such a chain must keep the worktree: judge every commit's own diff against main as well.
+
+
+def _admin_dir(cwd, path):
+    """The admin dir (<common>/worktrees/<id>) git keeps for the registered worktree at `path` until a prune — also when its folder is
+    gone, so the reflog there can still be read (A.2 #3). Matched the way `git worktree list` derives a path from <id>/gitdir (absolute,
+    or relative to the admin dir: worktree.useRelativePaths). "" when git no longer lists `path` (pruned or removed: its reflog went with
+    it); None when it cannot be told (git fails, an unreadable gitdir file, two registrations claiming the path, a listed path not found)."""
+    r = git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir", check=False)
+    common = r.stdout.strip()
+    if r.returncode != 0 or not common:
+        return None
+    root = os.path.join(common, "worktrees")
+    try:
+        ids = os.listdir(root)
+    except FileNotFoundError:
+        ids = []
+    except OSError:
+        return None
+    found, unreadable = [], False
+    for i in ids:
+        adm = os.path.join(root, i)
+        try:
+            raw = _read_regular(os.path.join(adm, "gitdir"), 65536).decode("utf-8", "surrogateescape").rstrip()
+        except FileNotFoundError:
+            continue   # not a worktree's admin dir
+        except OSError:
+            unreadable = True
+            continue
+        p = raw[:-len("/.git")] if raw.endswith("/.git") else raw
+        if not os.path.isabs(p):
+            p = os.path.realpath(os.path.join(adm, p))
+        if p == path or os.path.realpath(p) == os.path.realpath(path):
+            found.append(adm)
+    if len(found) == 1:
+        return found[0]
+    if found or unreadable:
+        return None
+    try:
+        listed = any(not e["broken"] and _same_path(e["path"], path) for e in _worktree_entries(cwd))
+    except SystemExit:
+        return None
+    return None if listed else ""
 
 
 EXTRA_CHECK_BUDGET_S = 3.0   # the checks that can only CLEAR a worktree (patch ids, merge-tree) stop after this much time per inventory
@@ -1159,7 +1216,12 @@ def _inventory(cwd, only, budget):
             held_only = _count(cwd, stdin="\n".join(rev_in) + "\n")
         if head:   # also a worktree on a branch: it can detach, commit, and go back (the commit is then named by its reflog only)
             try:
-                reflog = _reflog_only(path, head, main_head, refs, attached=not e["detached"], reflog_lines=rl) if os.path.isdir(path) else []
+                reflog = _reflog_only(path, head, main_head, refs, attached=not e["detached"], reflog_lines=rl) if os.path.isdir(path) else None
+                if not os.path.isdir(path):
+                    # gone before (or while) its reflog was read: git keeps that reflog in the admin dir until a prune, so it is read
+                    # there (A.2 #3: [] here let a commit only the reflog names pass); unregistered meanwhile: the reflog went with it
+                    adm = _admin_dir(cwd, path)
+                    reflog = None if adm is None else [] if not adm else _reflog_only(cwd, head, main_head, refs, attached=not e["detached"], admin=adm)
             except Exception:  # noqa: BLE001 - cannot say: counts as holding commits no ref keeps
                 reflog = None
         try:
@@ -1736,33 +1798,176 @@ def _authored_status_changed(wt):
         return True   # cannot tell: treat it as work
 
 
-SECRET_FILES = LOCAL_CONFIG + (".netrc", "*.p8", "AuthKey_*", "*serviceAccount*.json", "*service-account*.json", "credentials*.json")   # extras on top of the gate's list
+SECRET_FILES = LOCAL_CONFIG + (".netrc", "*.p8", "AuthKey_*", "*serviceAccount*.json", "*service-account*.json", "credentials*.json",
+                               "key.properties")   # extras on top of the gate's list (key.properties: Flutter / Unity Android signing, holds storePassword)
 _GATE_SECRETS = []
 
 
 def _secret_like(path):
     """True for a path the post-fix gate's own forbidden-file rules reject (FORBIDDEN_SECRET_FILES: one classifier, INSTINCT-015), a name in
-    SECRET_FILES, and not an exact template (.env.example, ...). The gate module is read once; if it cannot be, a short built-in list stands in."""
+    SECRET_FILES, and not an exact template (.env.example, ...), whatever the case of the name (Release.JKS: `worktree gc` already matched its
+    GC_SECRETS that way). The gate module is read once; if it cannot be, a short built-in list stands in."""
     if not _GATE_SECRETS:
         try:
             spec = importlib.util.spec_from_file_location("post_fix_gate_rules", os.path.join(DEVKIT, "bin", "post-fix-gate.py"))
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
-            _GATE_SECRETS.append(([re.compile(p) for p, _label in mod.FORBIDDEN_SECRET_FILES], tuple(mod.SAFE_TEMPLATE_SUFFIXES)))
+            _GATE_SECRETS.append(([re.compile(p, re.I) for p, _label in mod.FORBIDDEN_SECRET_FILES], tuple(mod.SAFE_TEMPLATE_SUFFIXES)))
         except Exception:  # noqa: BLE001 - a rules file that cannot be loaded must not stop a merge that the built-in list can still guard
-            _GATE_SECRETS.append(([re.compile(r"\.(keystore|jks|p12|pfx|mobileprovision|pem|key)$"), re.compile(r"(^|/)id_(rsa|dsa|ecdsa|ed25519)$")],
+            _GATE_SECRETS.append(([re.compile(r"\.(keystore|jks|p12|pfx|mobileprovision|pem|key)$", re.I), re.compile(r"(^|/)id_(rsa|dsa|ecdsa|ed25519)$", re.I)],
                                   (".example", ".sample", ".template", ".dist")))
     pats, suffixes = _GATE_SECRETS[0]
-    if path.endswith(suffixes):
+    if path.lower().endswith(suffixes):
         return False
-    return any(p.search(path) for p in pats) or any(fnmatch.fnmatch(os.path.basename(path), pat) for pat in SECRET_FILES)
+    base = os.path.basename(path).lower()
+    return any(p.search(path) for p in pats) or any(fnmatch.fnmatchcase(base, pat.lower()) for pat in SECRET_FILES)
+
+
+def _carry_skip_dirs():
+    """Folder names whose files are never carried back into main (A.1b #12): rebuilt or downloaded ones — build_inputs.SKIP_WALK (what
+    `worktree add` never copies in), GC_BUILD_DIRS and the usual dependency folders. A package's own test key there (node_modules/**/test.pem)
+    would differ from main's copy and refuse every removal; a key copied into main's build/ would be wiped by the next clean."""
+    from build_inputs import SKIP_WALK  # noqa: PLC0415 - the module top imports only its function
+    return set(SKIP_WALK) | GC_BUILD_DIRS | {"vendor", "bower_components", "jspm_packages", ".tox", ".nox", ".bundle", ".terraform", ".yarn",
+                                             ".pnpm-store", ".cache", "site-packages", ".nuxt", ".svelte-kit", ".parcel-cache", ".turbo", ".expo"}
+
+
+def _ignored_secrets(wt, limit=None):
+    """A.1b #12: ([(rel, absolute path)], cut) — the git-ignored, secret-like (_secret_like) REGULAR files of worktree `wt`: no link, nothing
+    under a _carry_skip_dirs() folder. A folder git lists whole as ignored is walked (links never followed), `limit` files at most
+    (WORKTREE_SECRET_SCAN_MAX, 200000; 0: no limit); `cut`: the ignored folder the walk stopped in ("" when it read everything): what it
+    did not read may hold a key, so the caller must keep the worktree. SystemExit when git cannot list them."""
+    limit = _env_limit("WORKTREE_SECRET_SCAN_MAX", 200000) if limit is None else limit
+    skip = _carry_skip_dirs()
+    r = _git_bytes(wt, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
+    if r.returncode != 0:
+        raise SystemExit(f"✖ worktree: git ls-files --ignored: {r.stderr.decode('utf-8', 'replace').strip()}")
+    found, seen, cut = {}, 0, ""
+    for ent in r.stdout.decode("utf-8", "surrogateescape").split("\0"):
+        parts = ent.rstrip("/").split("/")
+        if not ent or any(p in skip for p in (parts if ent.endswith("/") else parts[:-1])):
+            continue
+        names = [ent]
+        if ent.endswith("/"):
+            names = []
+            for d, dirs, files in os.walk(os.path.join(wt, ent)):
+                dirs[:] = [x for x in dirs if x not in skip and not os.path.islink(os.path.join(d, x))]
+                names += [os.path.relpath(os.path.join(d, f), wt).replace(os.sep, "/") for f in files]
+                seen += len(files)
+                if limit and seen > limit:   # a huge ignored folder outside the skip list (a cache): not read to the end, so not removed either
+                    cut = ent
+                    break
+        for rel in names:
+            try:
+                if _secret_like(rel) and stat.S_ISREG(os.lstat(os.path.join(wt, rel)).st_mode):
+                    found[rel] = os.path.join(wt, rel)
+            except OSError:
+                continue   # gone meanwhile: nothing to carry
+        if cut:
+            break
+    return sorted(found.items()), cut
+
+
+def _carry_secrets(main, items):
+    """A.1b #12: put each (rel, src) — a secret-like file only a worktree (or a leftover folder) holds — at the same path in the main checkout,
+    BEFORE that folder is deleted. Never overwrites: the same bytes already there need nothing; anything else there (other bytes, a link, a
+    folder), a path main tracks, or a parent in main that is a link or a file is refused. A path main's own rules do not ignore first gets an
+    anchored line in main's .git/info/exclude, checked again (a negation in a .gitignore outranks it: refused). Copied with O_EXCL (mode: the
+    source's, at most 0600; new folders 0700) and read back byte for byte; a copy that does not verify is deleted. (copied, [(rel, why)])."""
+    copied, refused, todo = [], [], []
+    for rel, src in items:
+        try:
+            data, mode = _read_regular(src), stat.S_IMODE(os.lstat(src).st_mode) & 0o600 | 0o400   # (the owner can always read it back)
+        except OSError as e:
+            refused.append((rel, tr(f"không đọc được: {e}", f"unreadable: {e}")))
+            continue
+        dst = os.path.join(main, rel)
+        if os.path.lexists(dst):
+            try:
+                same = not os.path.islink(dst) and _read_regular(dst) == data
+            except OSError:
+                same = False
+            if not same:
+                refused.append((rel, tr("main có thứ KHÁC ở đúng đường dẫn này: không bao giờ ghi đè", "main has something DIFFERENT at that path: never overwritten")))
+            continue
+        cur, bad = main, "\n" in rel or "\r" in rel
+        for part in rel.split("/")[:-1]:
+            cur = os.path.join(cur, part)
+            if not os.path.lexists(cur):
+                break
+            if os.path.islink(cur) or not os.path.isdir(cur):
+                bad = True
+                break
+        if bad:
+            refused.append((rel, tr("đường dẫn ở main đi qua một link hoặc file, hoặc tên có ký tự xuống dòng", "its path in main runs through a link or a file, or its name has a line break")))
+            continue
+        todo.append((rel, src, dst, data, mode))
+    if not todo:
+        return copied, refused
+
+    def tracked_in_main(paths):   # literal pathspecs: a name with * or [ is no pattern; None when git fails
+        r = _git_bytes(main, "--literal-pathspecs", "ls-files", "-z", "--", *paths)
+        return set(r.stdout.decode("utf-8", "surrogateescape").split("\0")) if r.returncode == 0 else None
+
+    def ignored_in_main(paths):   # check-ignore takes no literal magic; "./" keeps a name that starts with ':' from reading as magic
+        r = _git_bytes(main, "check-ignore", "-z", "--stdin", inp=("".join("./" + p + "\0" for p in paths)).encode("utf-8", "surrogateescape"))
+        return {p[2:] for p in r.stdout.decode("utf-8", "surrogateescape").split("\0") if p} if r.returncode in (0, 1) else None
+
+    tracked = tracked_in_main([t[0] for t in todo])
+    ignored = ignored_in_main([t[0] for t in todo])
+    if tracked is None or ignored is None:
+        return copied, refused + [(t[0], tr("git không kiểm được ở main", "git could not check it in main")) for t in todo]
+    need = [t[0] for t in todo if t[0] not in tracked and t[0] not in ignored]
+    if need:
+        try:
+            ex = os.path.join(main, git(main, "rev-parse", "--git-path", "info/exclude").stdout.strip())
+            try:
+                prev = _read_regular(ex)
+            except FileNotFoundError:
+                prev = b""
+                os.makedirs(os.path.dirname(ex), exist_ok=True)
+            fd = os.open(ex, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o644)
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    raise OSError(errno.EINVAL, "not a regular file", ex)
+                os.write(fd, (("" if not prev or prev.endswith(b"\n") else "\n") + "# DevKit worktree: secret files copied back from a worktree (A.1b #12)\n"
+                              + "".join("/" + re.sub(r"([\\*?\[ ])", r"\\\1", p) + "\n" for p in need)).encode("utf-8", "surrogateescape"))
+            finally:
+                os.close(fd)
+        except (OSError, SystemExit) as e:
+            return copied, refused + [(p, tr(f"không thêm được vào .git/info/exclude của main: {e}", f"could not add it to main's .git/info/exclude: {e}")) for p in need]
+        ignored |= ignored_in_main(need) or set()
+    for rel, src, dst, data, mode in todo:
+        if rel in tracked or rel not in ignored:
+            refused.append((rel, tr("main theo dõi đường dẫn này", "main tracks that path") if rel in tracked else
+                                 tr("không làm cho git ở main ignore nó được (một dòng ! trong .gitignore?)", "it cannot be made git-ignored in main (a ! line in a .gitignore?)")))
+            continue
+        made = False
+        try:
+            os.makedirs(os.path.dirname(dst), mode=0o700, exist_ok=True)
+            fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600)
+            made = True
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+                fh.flush()
+                os.fchmod(fh.fileno(), mode)
+                os.fsync(fh.fileno())
+            if _read_regular(dst) != data or _read_regular(src) != data:   # the copy, and the file the removal deletes, hold what was read
+                raise OSError(errno.EIO, "the copy does not read back the same as the source", dst)
+            copied.append(rel)
+        except OSError as e:
+            if made:
+                _unlink_quiet(dst)
+            refused.append((rel, tr(f"chép sang main không được: {e}", f"could not copy it into main: {e}")))
+    return copied, refused
 
 
 def _commit_pending(wt, state):
     """Commit the worktree's uncommitted work IN the worktree (an isolated folder: nobody else's index). Bookkeeping the gate and the
     hooks regenerate is put back to HEAD (a file HEAD does not have is deleted), except the rows a person made. A local-config or
-    secret-looking file is NEVER committed on its own: the whole merge stops, naming it, before anything is touched.
-    None when done, else a (status, message, extra) refusal."""
+    secret-looking file, or a symlink HEAD does not have, is NEVER committed on its own: the whole merge stops, naming it, before
+    anything is touched (A.4: a `node_modules` link made to run npm test was committed, and the fast-forward put it in place of main's
+    real, ignored node_modules/). None when done, else a (status, message, extra) refusal."""
     changed = changes_since(wt, state)
     if not changed:
         return None
@@ -1774,6 +1979,25 @@ def _commit_pending(wt, state):
                               f"hoặc tự commit nếu cố ý; chưa có gì bị commit hay gộp", f"{len(secret)} local-config / secret-looking file(s) are never committed "
                               f"automatically: {', '.join(secret[:6])}. Add them to .gitignore, move them out, or commit them yourself if meant; nothing was committed or merged"),
                 {"files": secret[:20]})
+    links = [p for p in work if os.path.islink(os.path.join(wt, p))]
+    if links:   # (staged or not: `git add -A` would have staged one) a link HEAD already holds, retargeted, is ordinary work
+        in_head = set(git(wt, "ls-tree", "-r", "-z", "--name-only", "HEAD", "--", *links, check=False,
+                          env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).stdout.split("\0"))
+        new = [p for p in links if p not in in_head]
+        if new:
+            def shown(p):
+                try:
+                    return f"{p} -> {os.readlink(os.path.join(wt, p))}"
+                except OSError:
+                    return p
+            listing = ", ".join(shown(p) for p in new[:6])
+            return ("blocked", tr(f"{len(new)} symlink mới (HEAD chưa có) không bao giờ được tự commit: {listing}. Link tạo để mượn node_modules / cache build của main "
+                                  "không phải là việc: xoá nó (hoặc ignore bằng mẫu KHÔNG có dấu / cuối: `node_modules/` chỉ khớp thư mục, không khớp link); nếu link "
+                                  "đúng là một phần của repo thì tự `git add` + `git commit` nó trong worktree; chưa có gì bị commit hay gộp",
+                                  f"{len(new)} new symlink(s) (not in HEAD) are never committed automatically: {listing}. A link made to borrow main's node_modules / "
+                                  "build cache is not work: delete it (or ignore it with a pattern WITHOUT the trailing slash: `node_modules/` matches a directory, not a "
+                                  "link); if the link belongs in the repository, `git add` + `git commit` it in the worktree yourself; nothing was committed or merged"),
+                    {"files": new[:20]})
     if book:
         in_head = set(git(wt, "ls-tree", "-r", "--name-only", "HEAD", "--", *book, check=False).stdout.split("\n"))
         tracked = [p for p in book if p in in_head]
@@ -1955,13 +2179,24 @@ def _automerge_locked(cwd, main, wt, keep=False):
         try:
             if git(main, "rev-parse", "HEAD").stdout.strip() != main_head:
                 continue   # main moved while merging / gating: another round
-            r = git(main, "merge", "--ff-only", w_head, check=False, bounded=False)
+            # --no-overwrite-ignore: git's default overwrites IGNORED files and folders of main with what the merge brings (A.4: a committed
+            # link replaced main's real node_modules/); git checks every path before it writes one, so a refusal leaves main as it was
+            r = git(main, "merge", "--ff-only", "--no-overwrite-ignore", w_head, check=False, bounded=False)
             if r.returncode == 0:
                 status = "merged"
                 break
             err = r.stdout + r.stderr
+            files = [l.strip() for l in err.splitlines() if l.startswith("\t")]
+            if "untracked working tree files would be" in err or "would lose untracked files" in err:
+                return "blocked", tr(f"main có file/thư mục CHƯA track hoặc bị git ignore ở đúng đường dẫn mà commit của worktree thêm hoặc thay (không gì bị đụng; "
+                                     f"fast-forward sẽ xoá chúng): {', '.join(files[:8]) or err.strip()[-200:]}. Thường là link hoặc file commit đè lên thư mục main "
+                                     f"để ngoài git (node_modules, output build, cấu hình cục bộ): bỏ nó khỏi commit của worktree (`git rm --cached <path>` rồi commit "
+                                     f"trong worktree), hoặc dời bản ở main đi nếu không cần, rồi chạy lại `agent-kit worktree finish {shlex.quote(wt)}`",
+                                     f"main has UNTRACKED or git-ignored files at paths the worktree's commits add or replace (nothing was touched; the fast-forward "
+                                     f"would have deleted them): {', '.join(files[:8]) or err.strip()[-200:]}. Usually a link or file committed over a folder main keeps "
+                                     f"out of git (node_modules, build output, local config): take it out of the worktree's commits (`git rm --cached <path>` and commit "
+                                     f"in the worktree), or move main's copy away if it is not needed, then run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"files": files}
             if "overwritten" in err or "commit your changes or stash" in err:
-                files = [l.strip() for l in err.splitlines() if l.startswith("\t")]
                 return "blocked", tr(f"main có sửa đổi CHƯA commit trên file mà worktree cũng đổi (không gì bị đụng): {', '.join(files[:8]) or err.strip()[-200:]}. "
                                      f"Commit hoặc cất chúng ở main rồi chạy lại `agent-kit worktree finish {shlex.quote(wt)}`",
                                      f"main has UNCOMMITTED edits on files the worktree also changed (nothing was touched): {', '.join(files[:8]) or err.strip()[-200:]}. "
@@ -1984,6 +2219,28 @@ def _automerge_locked(cwd, main, wt, keep=False):
             saved.append(rel)
     except (OSError, SystemExit) as e:
         return "blocked", tr(f"đã gộp vào main nhưng không chép được memory note của worktree ({e}); worktree còn nguyên", f"merged into main but the worktree's memory notes could not be copied ({e}); the worktree is untouched"), {"merged": True}
+    try:   # A.1b #12: a git-ignored secret only the worktree holds (a keystore made there) goes to main, never with the folder
+        secrets, cut = _ignored_secrets(wt)
+        carried, refused = ([], []) if cut else _carry_secrets(main, secrets)
+    except (OSError, SystemExit, UnicodeError) as e:
+        return "blocked", tr(f"đã gộp vào main nhưng không kiểm / chép được file bí mật bị ignore của worktree ({e}); worktree còn nguyên",
+                             f"merged into main but the worktree's git-ignored secret files could not be checked or copied ({e}); the worktree is untouched"), {"merged": True}
+    if cut:   # what the scan did not read may hold a key: never removed unread
+        return "blocked", tr(f"đã gộp vào main nhưng CHƯA gỡ worktree: dò file bí mật bị git ignore dừng trong {cut} (quá WORKTREE_SECRET_SCAN_MAX file) — phần chưa "
+                             f"đọc có thể có khoá. Thư mục đó là output build / cache thì xoá nó trong worktree, hoặc nâng WORKTREE_SECRET_SCAN_MAX (0: không giới hạn), "
+                             f"rồi chạy lại `agent-kit worktree finish {shlex.quote(wt)}`",
+                             f"merged into main but the worktree is NOT removed: the scan for git-ignored secret files stopped in {cut} (over WORKTREE_SECRET_SCAN_MAX "
+                             f"files) - what it did not read may hold a key. If that folder is build output or a cache, delete it in the worktree, or raise "
+                             f"WORKTREE_SECRET_SCAN_MAX (0: no limit), then run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"merged": True, "files": [cut]}
+    if refused:
+        # ponytail: a config `worktree add` copied in and main changed since differs too, so it is refused like a key made here; record the
+        # copied files' fingerprints at `add` and drop an unchanged stale copy, if that refusal ever shows up in practice
+        listing = "; ".join(f"{rel} ({why})" for rel, why in refused[:6])
+        return "blocked", tr(f"đã gộp vào main nhưng CHƯA gỡ worktree: {len(refused)} file bí mật bị git ignore chỉ worktree có, không đặt được vào main: {listing}. "
+                             f"Không gì bị ghi đè. So hai bản, tự giữ bản cần dùng ở main, xoá bản trong worktree rồi chạy lại `agent-kit worktree finish {shlex.quote(wt)}`",
+                             f"merged into main but the worktree is NOT removed: {len(refused)} git-ignored secret file(s) only the worktree holds cannot be put in main: "
+                             f"{listing}. Nothing was overwritten. Compare the two copies, keep the one you need in main yourself, delete the worktree's copy, then "
+                             f"run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"merged": True, "files": [rel for rel, _why in refused][:20]}
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         try:
@@ -2006,8 +2263,10 @@ def _automerge_locked(cwd, main, wt, keep=False):
         return "blocked", tr(f"đã gộp vào main nhưng CHƯA gỡ được worktree: {why}{how}",
                              f"merged into main but the worktree could NOT be removed: {why}{how}"), {"merged": True}
     note = (tr(f" ({len(saved)} memory note đã chép sang main: {', '.join(saved[:5])})", f" ({len(saved)} memory note(s) copied into main: {', '.join(saved[:5])})") if saved else "")
+    note += (tr(f" ({len(carried)} file bí mật bị git ignore đã chép sang main, ở đó vẫn bị ignore: {', '.join(carried[:5])})",
+                f" ({len(carried)} git-ignored secret file(s) copied into main, ignored there too: {', '.join(carried[:5])})") if carried else "")
     return status, (tr("đã gộp vào main và gỡ worktree", "merged into main and the worktree is removed") if status == "merged"
-                    else tr("không có gì chưa về main; đã gỡ worktree", "nothing that was not in main; the worktree is removed")) + note, {"memory_saved": saved}
+                    else tr("không có gì chưa về main; đã gỡ worktree", "nothing that was not in main; the worktree is removed")) + note, {"memory_saved": saved, "secrets_saved": carried}
 
 
 def _automerge_args(cwd, args, usage):
@@ -2144,10 +2403,12 @@ def _reachable_blobs(main):
     return _REACHABLE[main]
 
 
-def _gc_unique(main, top, dangling):
+def _gc_unique(main, top, dangling, carry=None):
     """[(rel, why)] of the files in `top` that may be the only copy of something; [] when every file is provably not unique. With no
     `.git` pointer (`dangling` False) the folder must hold DevKit bookkeeping and nothing but it and noise: anything else (an empty
-    folder or one of links only too) means it is not a leftover."""
+    folder or one of links only too) means it is not a leftover. `carry` (a list): a secret (GC_SECRETS, and _secret_like) that main
+    lacks, outside a _carry_skip_dirs() folder, goes there as (rel, path) instead of counting as unique: cmd_gc copies it into main first
+    (A.1b #12)."""
     files = []
     for dirpath, dirs, names in os.walk(top):
         dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(dirpath, d))]   # a link is never followed (.agents/devkit, a link to main)
@@ -2179,8 +2440,13 @@ def _gc_unique(main, top, dangling):
             unique.append((rel.replace("\r", "\\r").replace("\n", "\\n"), tr("tên có ký tự xuống dòng", "a name with a line break")))
         elif rel.startswith(MEMORY_REL.replace(os.sep, "/") + "/"):
             unique.append((rel, tr("ghi chú memory không có ở main", "a memory note main lacks")))
-        elif any(fnmatch.fnmatch(os.path.basename(rel).lower(), g.lower()) for g in GC_SECRETS):
-            unique.append((rel, tr("file bí mật chỉ có ở đây: chép về main trước", "a secret only here: copy it to main first")))
+        elif any(fnmatch.fnmatch(os.path.basename(rel).lower(), g.lower()) for g in GC_SECRETS):   # (a name only _secret_like knows is judged below, as ever)
+            if carry is not None and _secret_like(rel) and not os.path.lexists(mine) and not set(rel.split("/")[:-1]) & _carry_skip_dirs():
+                carry.append((rel, p))
+            elif os.path.lexists(mine):
+                unique.append((rel, tr("file bí mật KHÁC bản ở main: không ghi đè", "a secret that differs from main's at that path: never overwritten")))
+            else:
+                unique.append((rel, tr("file bí mật chỉ có ở đây: chép về main trước", "a secret only here: copy it to main first")))
         else:
             later.append((rel, p))
     if later:   # one hash-object + one check-ignore for all of them, against the blobs some ref still holds
@@ -2244,7 +2510,7 @@ def cmd_gc(cwd, args):
     except (OSError, ImportError) as e:   # no flock here (NFS, SMB, no fcntl) or a read-only git dir: run unlocked, and say so
         print("• gc: " + tr(f"không khoá được ({e}); chạy không khoá", f"no lock ({e}); running unlocked"))
     here = os.path.realpath(cwd)
-    deleted, kept = [], []
+    deleted, kept, notes = [], [], {}
     registered = {os.path.realpath(e["path"]) for e in _worktree_entries(main)}
     parent, prefix = os.path.dirname(main), os.path.basename(main) + "-"
     try:
@@ -2273,11 +2539,21 @@ def cmd_gc(cwd, args):
             if not target.startswith(os.path.join(common, "worktrees") + os.sep) or os.path.exists(target):
                 continue   # points into another repo, or git still has it: not a leftover of this one
             dangling = True
-        unique = _gc_unique(main, top, dangling)
+        carry = []
+        unique = _gc_unique(main, top, dangling, carry)
         if unique:
             if dangling:   # a no-.git folder with a person's file is not ours: not even reported
                 kept.append((top, _gc_why(unique)))
             continue
+        if carry:   # A.1b #12: the secrets only this folder holds go to main first (--dry-run: only said)
+            notes[top] = tr(" (chép vào main trước: ", " (copied into main first: ") + ", ".join(rel for rel, _p in carry[:5]) + ")"
+            if not dry:
+                _copied, refused = _carry_secrets(main, carry)
+                if not refused:   # checked again: the copies are main's now, so nothing left may be unique
+                    refused = _gc_unique(main, top, dangling)
+                if refused:
+                    kept.append((top, _gc_why(refused)))
+                    continue
         if dry:
             deleted.append(top)
             continue
@@ -2288,9 +2564,10 @@ def cmd_gc(cwd, args):
             continue
         deleted.append(top)
         if log:
-            _gc_log(log, (["== " + time.strftime("%Y-%m-%d %H:%M:%S")] if len(deleted) == 1 else []) + ["✔ gc: " + tr("đã xoá ", "deleted ") + top])
+            _gc_log(log, (["== " + time.strftime("%Y-%m-%d %H:%M:%S")] if len(deleted) == 1 else [])
+                    + ["✔ gc: " + tr("đã xoá ", "deleted ") + top + notes.get(top, "")])
     for p in deleted:
-        print(("• gc (dry-run): " + tr("sẽ xoá ", "would delete ") if dry else "✔ gc: " + tr("đã xoá ", "deleted ")) + p)
+        print(("• gc (dry-run): " + tr("sẽ xoá ", "would delete ") if dry else "✔ gc: " + tr("đã xoá ", "deleted ")) + p + notes.get(p, ""))
     for p, why in kept:
         print("• gc: " + tr("giữ ", "kept ") + p + ": " + why)
     if not deleted and not kept:

@@ -367,14 +367,46 @@ def gone_admin_dir(path):
             return adm
     return None
 
+gone_rows = []   # [{realpath: inventory row} or None], filled once by gone_reflog
+
+def gone_reflog(path):
+    """The commits only the HEAD reflog of a registered worktree whose folder is gone names (inventory() reads that reflog from the admin
+    dir git keeps until a prune: docs/issues-bugs.md A.2 #3): [] none, None cannot say. ONE inventory, at the first call, for every deleted
+    folder this session made, named or owes (the main loop's test; another session's or an old registration never spends this hook's
+    alarm) and always for `path` (an empty `only` would mean every worktree); budget 0: the checks that clear a worktree are
+    gone_folder_reason's own. No row while a fresh listing still shows the path is "cannot say"; only its absence there proves it
+    unregistered (its reflog went with it)."""
+    if not gone_rows:
+        rows = None
+        if wt is not None:
+            mine = [p for p in paths if not os.path.exists(p)
+                    and (os.path.realpath(p) in finished or os.path.realpath(p) in raw_owed or mentioned(p, os.path.realpath(p)))]
+            try:
+                rows = {os.path.realpath(r["path"]): r for r in wt.inventory(repo, only=mine + ([] if path in mine else [path]), budget=0)}
+            except (Exception, SystemExit):
+                rows = None
+        gone_rows.append(rows)
+    if gone_rows[0] is None:
+        return None
+    row = gone_rows[0].get(os.path.realpath(path))
+    if row is None:
+        return [] if gone(path) else None
+    return row.get("reflog")
+
 def gone_folder_reason(path):
     """A registered worktree whose folder is gone (rm -rf from outside, no prune): '' when the HEAD `git worktree list` showed is in
-    main, or main holds the same patches (brought back with diff | git apply, cherry-picked, amended and merged); else why it is held,
-    naming the commit to bring back. A git error is "cannot say", which holds. Commits only its HEAD reflog named are not checked here
-    (the folder that reflog-only analysis needs is gone; see docs/issues-bugs.md A.2 #3)."""
+    main, or main holds the same patches (brought back with diff | git apply, cherry-picked, amended and merged), and no commit is named
+    only by its HEAD reflog (gone_reflog); else why it is held, naming the commit to bring back. A git error, or worktree.py not
+    importable, is "cannot say", which holds."""
     base = listed_heads.get(path) or listed_heads.get(os.path.realpath(path))
     if not base:
         return "thư mục đã bị xoá và git không còn biết HEAD của nó: không biết commit đã về main chưa"
+    lost = gone_reflog(path)
+    if lost is None:
+        return "thư mục đã bị xoá và không đọc được reflog của nó: không biết còn commit nào chỉ reflog đó giữ"
+    if lost:
+        return (f"thư mục đã bị xoá nhưng {len(lost)} commit chỉ còn trong reflog của nó (không nhánh nào giữ, main chưa có), "
+                f"mới nhất {lost[0][:10]}: giữ bằng nhánh `git -C {shlex.quote(repo)} branch rescue/<tên> {lost[0][:10]}` rồi đem về")
     if in_main(base):
         return ""
     out = git("rev-list", "--cherry-pick", "--right-only", "--no-merges", "HEAD..." + base)
