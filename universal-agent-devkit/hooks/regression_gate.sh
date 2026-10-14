@@ -72,6 +72,7 @@ if [ -z "${REPO_ROOT}" ]; then
   case "${_PCWD}" in *\\*) _PCWD="$(python3 -I -c 'import json,sys; sys.stdout.buffer.write(json.loads("\"%s\"" % sys.argv[1]).encode())' "${_PCWD}" 2>/dev/null)" || _PCWD="." ;; esac
   REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
 fi
+BASE_ROOT="${REPO_ROOT}"   # bash_write_ledger.sh writes bash_write_ledger.tsv under it, whatever tree is judged below
 # W1 v6 (hooks/session_worktree.py): a session that ENTERED a worktree (EnterWorktree: CLAUDE_PROJECT_DIR still names main) or a subagent
 # the harness started in one is judged in that worktree, not in a clean main. Python only when the payload or a session record can need it.
 _SW_SID='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9][A-Za-z0-9._-]*)"'
@@ -132,12 +133,13 @@ except Exception: print("")' 2>/dev/null)"
   exit 0
 fi
 
-printf '%s' "${INPUT}" | REPO_ROOT="${REPO_ROOT}" GATE="${GATE}" LOG="${LOG}" PROBE="${PROBE}" \
+printf '%s' "${INPUT}" | REPO_ROOT="${REPO_ROOT}" LEDGER_ROOT="${BASE_ROOT}" GATE="${GATE}" LOG="${LOG}" PROBE="${PROBE}" \
   MAX_ATTEMPTS="${REGRESSION_GATE_MAX_ATTEMPTS:-2}" MAX_SESSION_BLOCKS="${REGRESSION_GATE_MAX_SESSION_BLOCKS:-3}" \
   HOOK_PPID="${PPID}" HOOK_DIRS="$(dirname "${SELF}"):$(dirname "$0")" HOOK_SELF="${SELF}" python3 -I -c '
 import contextlib, copy, errno, fcntl, fnmatch, hashlib, io, json, os, re, subprocess, sys, tempfile, time
 
 repo, gate, log = os.environ["REPO_ROOT"], os.environ["GATE"], os.environ["LOG"]
+ledger_root = os.environ.get("LEDGER_ROOT") or repo   # main: where the Bash window ledger is written when repo is a worktree
 max_attempts = int(os.environ.get("MAX_ATTEMPTS", "2"))
 devkit = os.path.dirname(os.path.dirname(gate))
 probe = os.environ.get("PROBE") == "1"
@@ -745,7 +747,7 @@ res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "
                       "--session", str(data.get("session_id") or ""), "--transcript", str(data.get("transcript_path") or "")]
                      + (["--since", commit_base] if commit_base else []),
                      cwd=repo, capture_output=True, text=True, errors="replace",
-                     env={**os.environ, "CLAUDE_PROJECT_DIR": repo,
+                     env={**os.environ, "CLAUDE_PROJECT_DIR": repo, "DEVKIT_LEDGER_ROOT": ledger_root,
                           "TEST_RUN_LOCK_WAIT_S": os.environ.get("TEST_RUN_LOCK_WAIT_S", "45"),
                           "GATE_TOTAL_BUDGET_S": budget_s})
 if not os.path.isdir(repo):   # W1 R5a: the project (a worktree) went away while its suites ran — nothing to hold or record here

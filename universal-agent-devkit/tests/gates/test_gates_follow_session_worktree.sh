@@ -160,10 +160,10 @@ Gate exit 0
 M2="$TMP/main2"; W2="$M2/.claude/worktrees/s61"
 mkdir -p "$M2/src/test" "$M2/.agents" && git -C "$M2" init -q -b main && git -C "$M2" config user.email t@t && git -C "$M2" config user.name t \
   && printf '.claude/audit-gate/\n/.claude/worktrees/\n' > "$M2/.gitignore" && echo "fun ok() = 1" > "$M2/src/Core.kt" && echo "assert(true)" > "$M2/src/test/CoreTest.kt" \
-  && printf '%s\n' '{"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/*.kt","src/test/*.kt"],"mandatory_regression_tests":[{"id":"REG-X","name":"core","command":"true"}]}]}' \
+  && printf '{"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/*.kt","src/test/*.kt"],"mandatory_regression_tests":[{"id":"REG-X","name":"core","command":"env | grep -c ^DEVKIT_LEDGER_ROOT= > %s/suite_env_leak; true"}]}]}\n' "$TMP" \
     > "$M2/.agents/regression_matrix.active.json" && git -C "$M2" add -A && git -C "$M2" commit -qm i
 git -C "$M2" worktree add -q --detach "$W2" HEAD
-mkdir -p "$M2/.claude/audit-gate/session_worktree"; for n in 61 62 63; do printf '%s\n' "$W2" > "$M2/.claude/audit-gate/session_worktree/s$n"; done
+mkdir -p "$M2/.claude/audit-gate/session_worktree"; for n in 61 62 63 64; do printf '%s\n' "$W2" > "$M2/.claude/audit-gate/session_worktree/s$n"; done
 ledger_main() {   # ledger_main <session> <start offset s> <end offset s> [<session> <start> <end>]...: Bash windows, written where bash_write_ledger.sh writes them (main)
   python3 -I - "$M2/.claude/audit-gate/bash_write_ledger.tsv" "$@" <<'PY'
 import sys, time
@@ -189,6 +189,36 @@ ledger_main s-other -35 -25; evidence_hook s61; rc=$?
   || fail "test_evidence_gate ledger: another session's window, rc=$rc (want 0) $(head -c 300 "$TMP/gate.err")"
 ledger_main s62 -35 -25; evidence_hook s62; rc=$?
 [ "$rc" = 2 ] && ok "  … inside this session's own window it still counts (ANTI-LOOP)" || fail "test_evidence_gate own window: rc=$rc (want 2) $(head -c 300 "$TMP/gate.err")"
+
+# 15: an existing test changed inside ANOTHER session's window is that session's (a warning); outside every window nothing says whose it is (a block).
+echo "fun ok() = 2" > "$W2/src/Core.kt"; echo "// weakened" > "$W2/src/test/CoreTest.kt"
+python3 -I - "$W2" "$TMP/y63.jsonl" <<'PY'
+import json, os, sys, time
+repo, tp = sys.argv[1:3]
+now = time.time()
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
+os.utime(os.path.join(repo, "src/test/CoreTest.kt"), (now - 300, now - 300))
+open(tp, "w").write("".join(json.dumps(r) + "\n" for r in [
+    {"type": "user", "timestamp": iso(now - 600), "message": {"role": "user", "content": "fix it"}},
+    {"type": "assistant", "timestamp": iso(now - 590), "message": {"content": [
+        {"type": "tool_use", "id": "m1", "name": "Bash", "input": {"command": "git status"}},
+        {"type": "tool_use", "id": "e0", "name": "Edit", "input": {"file_path": os.path.join(repo, "src/Core.kt"), "old_string": "1", "new_string": "2"}}]}}]))
+PY
+regression_stop() {   # regression_stop <session>: regression_gate's Stop in the session's worktree; stdout in $TMP/out, stderr in $TMP/err
+  python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"Stop","session_id":sys.argv[1],"cwd":sys.argv[2],"transcript_path":sys.argv[3]}))' "$1" "$W2" "$TMP/y63.jsonl" \
+    | CLAUDE_PROJECT_DIR="$M2" bash "$DEVKIT_DIR/hooks/regression_gate.sh" >"$TMP/out" 2>"$TMP/err"
+}
+ledger_main s-x -305 -295 s63 -590 -589; regression_stop s63; rc=$?
+[ "$rc" = 0 ] && grep -q systemMessage "$TMP/out" && grep -q "src/test/CoreTest.kt" "$TMP/out" \
+  && ok "regression_gate: a test changed in the worktree inside another session's window (main's ledger): stop allowed, the warning names the file" \
+  || fail "regression_gate ledger: another session's window, rc=$rc (want 0 and a warning) out='$(head -c 300 "$TMP/out")' err='$(head -c 300 "$TMP/err")'"
+[ "$(cat "$TMP/suite_env_leak" 2>/dev/null)" = 0 ] \
+  && ok "  … the suite it ran did not inherit the ledger root (a gate nested in a kit test judges its own ledger)" \
+  || fail "regression_gate suite env: DEVKIT_LEDGER_ROOT leaked into the suites (count='$(cat "$TMP/suite_env_leak" 2>/dev/null)', want 0)"
+echo "fun ok() = 3" > "$W2/src/Core.kt"   # a new tree: the first stop's verdict is not reused
+ledger_main s64 -590 -589; regression_stop s64; rc=$?
+[ "$rc" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/err" && ok "  … with no window around the change it stays blocked (nobody else's)" \
+  || fail "regression_gate no window: rc=$rc (want 2) err='$(head -c 300 "$TMP/err")'"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_gates_follow_session_worktree: PASS"; exit 0; } || { echo "test_gates_follow_session_worktree: FAIL ($FAILS)"; exit 1; }

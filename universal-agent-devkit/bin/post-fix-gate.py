@@ -544,9 +544,11 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
     root = Path(os.path.realpath(project))
     # "other" needs both rules (session_authorship.block_owner): an open window of a session that is gone no longer
     # hides a change, but its cut window never takes a file from a wider window of this session
-    old_windows = session_authorship.bash_windows(project)
+    # The ledger sits where bash_write_ledger.sh writes it, in main; the hook that gates a session's worktree says so (DEVKIT_LEDGER_ROOT).
+    ledger = os.environ.get("DEVKIT_LEDGER_ROOT") or project
+    old_windows = session_authorship.bash_windows(ledger)
     try:
-        windows = session_authorship.bash_windows(project, session)
+        windows = session_authorship.bash_windows(ledger, session)
     except Exception as exc:   # the cut rule must never crash the gate (a crash reads as no verdict): the old rule decides
         print(f"post-fix-gate: cut ledger windows unavailable ({exc!r}); the old rule decides", file=sys.stderr)
         windows = old_windows
@@ -3943,7 +3945,8 @@ def suite_env():
             "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
             "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
             "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
-            "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"}  # `git -c k=v commit` reaches the hook as GIT_CONFIG_PARAMETERS
+            "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",  # `git -c k=v commit` reaches the hook as GIT_CONFIG_PARAMETERS
+            "DEVKIT_LEDGER_ROOT"}  # regression_gate's hint for THIS run: a gate a suite starts on a scratch repo reads that repo's own ledger
     return {k: v for k, v in os.environ.items()
             if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
 
