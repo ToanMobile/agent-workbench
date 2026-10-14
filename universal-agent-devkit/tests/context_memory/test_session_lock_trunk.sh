@@ -104,6 +104,81 @@ hook PreToolUse "$W" Bash '{"command": "echo x > w.txt"}'; rc=$?
   || fail "write in worktree (rc $rc): $(head -c 200 "$TMP/err")"
 hook SessionStart "$M" "" '{}'; ! lockof "$M" && ok "SessionStart in main: no lock taken" || fail "SessionStart took main's lock in trunk mode"
 
+# 2b the USER's switches (R3 review P2-5, like allow-shared): an agent's command may not turn trunk mode off - `agent-kit worktree trunk off`,
+#    `git config devkit.trunkMode <not true>` / --unset ..., WORKTREE_TRUNK_MODE=0 set in the command. `trunk on`, true values and reads only tighten.
+python3 - "$DEVKIT_DIR" > "$TMP/unit2" 2>&1 <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + "/bin")
+import session_lock as sl
+cases = [   # (want, command)
+    (True, "agent-kit worktree trunk off"),
+    (True, "python3 -I scripts/git/worktree.py trunk off"),
+    (True, "nice -n 5 agent-kit worktree trunk off"),
+    (True, "cd /x && agent-kit worktree trunk off"),
+    (True, "git config devkit.trunkMode false"),
+    (True, "git config --local devkit.trunkMode 0"),
+    (True, "git -C /x config devkit.trunkMode no"),
+    (True, "git config devkit.trunkmode off"),
+    (True, "git config devkit.trunkMode ''"),
+    (True, 'git config devkit.trunkMode "$V"'),
+    (True, "git config --bool devkit.trunkMode off"),
+    (True, "git config --unset devkit.trunkMode"),
+    (True, "git config --unset-all devkit.trunkMode"),
+    (True, "git config --replace-all devkit.trunkMode false"),
+    (True, "git config --add devkit.trunkMode false"),
+    (True, "git config --global devkit.trunkMode false"),
+    (True, "git config --file .git/config devkit.trunkMode false"),
+    (True, "git config unset devkit.trunkMode"),
+    (True, "git config set devkit.trunkMode false"),
+    (True, "git config --remove-section devkit"),
+    (True, "WORKTREE_TRUNK_MODE=0 agent-kit worktree finish x"),
+    (True, "FOO=1 WORKTREE_TRUNK_MODE='0' git commit -qm x"),
+    (True, 'WORKTREE_TRUNK_MODE="$X" git commit -qm x'),
+    (True, "export WORKTREE_TRUNK_MODE=0 && git commit -qm x"),
+    (True, "env -i WORKTREE_TRUNK_MODE=0 PATH=/bin git commit -qm x"),
+    (True, "(WORKTREE_TRUNK_MODE=0 git commit -qm x)"),
+    (True, "bash -c 'WORKTREE_TRUNK_MODE=0 git commit -qm x'"),
+    (True, "bash <<'EOF'\nWORKTREE_TRUNK_MODE=0 git commit -qm x\nEOF"),
+    (False, "agent-kit worktree trunk on"),
+    (False, "agent-kit worktree trunk status"),
+    (False, "git config devkit.trunkMode"),
+    (False, "git config --get devkit.trunkMode"),
+    (False, "git config --get-all devkit.trunkMode"),
+    (False, "git config --list"),
+    (False, "git config user.name x"),
+    (False, "git config --unset core.editor"),
+    (False, "WORKTREE_TRUNK_MODE=1 git commit -qm x"),
+    (False, "unset WORKTREE_TRUNK_MODE"),
+    (False, 'git commit -qm "docs: agent-kit worktree trunk off"'),
+    (False, "git commit -qm \"WORKTREE_TRUNK_MODE=0 is the user's switch\""),
+    (False, "echo agent-kit worktree trunk off"),
+    (False, "grep -n WORKTREE_TRUNK_MODE=0 docs/a.md"),
+    (False, 'grep -rn "git config devkit.trunkMode false" docs'),
+    (False, "cat <<EOF\nagent-kit worktree trunk off\nEOF"),
+    (False, "git status --short"),
+]
+sw = sl._hook_module("session_worktree")
+cases += [(False, f"git config devkit.trunkMode {v}") for v in sorted(sw._TRUE)]   # git's own spellings of true: the kit's list, not a copy
+bad = 0
+for want, cmd in cases:
+    got = sl.is_trunk_off(cmd)
+    if got != want:
+        bad += 1
+        print(f"✖ {cmd!r}: want {want}, got {got}")
+print(f"unit-bad={bad} of {len(cases)}")
+PY
+grep -q "unit-bad=0 " "$TMP/unit2" && ok "is_trunk_off: $(grep -o 'of [0-9]*' "$TMP/unit2") cases (trunk off / devkit.trunkMode not true / WORKTREE_TRUNK_MODE=0 refused; on, reads, quoted text, true values pass)" \
+  || { fail "is_trunk_off cases"; grep "✖\|Error\|assert" "$TMP/unit2" | head -12; }
+hook PreToolUse "$M" Bash '{"command": "agent-kit worktree trunk off"}'; r1=$?
+grep -q "NGƯỜI DÙNG" "$TMP/err" && grep -q "trunk off" "$TMP/err" && r1m=said || r1m=silent
+hook PreToolUse "$W" Bash '{"command": "git config devkit.trunkMode false"}'; r2=$?
+hook PreToolUse "$W" Bash '{"command": "WORKTREE_TRUNK_MODE=0 agent-kit worktree finish x"}'; r3=$?
+hook PreToolUse "$M" Bash '{"command": "agent-kit worktree trunk on"}'; r4=$?
+hook PreToolUse "$W" Bash '{"command": "git config --get devkit.trunkMode"}'; r5=$?
+[ "$r1" = 2 ] && [ "$r1m" = said ] && [ "$r2" = 2 ] && [ "$r3" = 2 ] && [ "$r4" = 0 ] && [ "$r5" = 0 ] \
+  && ok "the hook: trunk off / devkit.trunkMode false / WORKTREE_TRUNK_MODE=0 refused with whose switch it is (exit 2); trunk on and a read pass" \
+  || fail "user switches at the hook: off=$r1 ($r1m) config=$r2 env=$r3 on=$r4 read=$r5"
+
 # 3 a lock on main left from before trunk mode (a live other session) changes nothing: writes refused by the trunk rule, the integrator passes
 python3 -c 'import json,os,sys,time; json.dump({"session_id":"old-holder","started":time.time(),"heartbeat":time.time(),"cwd":sys.argv[1],"pid":os.getppid()}, open(sys.argv[2],"w"))' \
   "$M" "$(git -C "$M" rev-parse --absolute-git-dir)/devkit-session.lock"

@@ -790,6 +790,88 @@ def is_self_grant(cmd):
     return False
 
 
+# The USER's trunk-mode switches (W1 R7), kept from an agent like allow-shared: `agent-kit worktree trunk off`, a `git config devkit.trunkMode` that is
+# not true (or unsets it), WORKTREE_TRUNK_MODE=0 set inside a command. `trunk on`, a true value and reads only tighten and stay open.
+_TRUNK_TRUE = {"true", "yes", "on", "1"}   # git's spellings of true, as hooks/session_worktree.py _TRUE (tests/context_memory/test_session_lock_trunk.sh compares)
+_PRINTERS = READERS - {"git", "find", "sed", "awk"}   # print their words and run nothing (find -exec, sed e, awk system() do)
+_PREFIX_RUN = {"export", "env", "declare", "typeset", "readonly", "local", "sudo", "nice", "timeout", "command", "exec", "nohup", "time", "builtin"}
+_CONFIG_VALUE_OPTS = {"-f", "--file", "--blob", "-t", "--type", "--default", "--comment"}   # the next word is their value, not the key
+_CONFIG_READ_OPTS = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list"}
+
+
+def _config_trunk_off(args):
+    """The words after `git config`: True when they unset devkit.trunkMode (or its section) or give it a value that is not a true spelling."""
+    opts, pos, i = [], [], 0
+    while i < len(args):
+        a, i = args[i], i + 1
+        if a.startswith("-") and a != "-":
+            opts.append(a)
+            if a in _CONFIG_VALUE_OPTS:
+                i += 1
+        else:
+            pos.append(a)
+    if pos and pos[0] in ("get", "list", "edit", "set", "unset", "remove-section", "rename-section"):   # git >= 2.46 spells the action as a word
+        opts.append("--" + pos.pop(0))
+    if _CONFIG_READ_OPTS & set(opts):
+        return False
+    if {"--remove-section", "--rename-section"} & set(opts):
+        return bool(pos) and pos[0].lower() == "devkit"
+    if not pos or pos[0].lower() != "devkit.trunkmode":
+        return False
+    if {"--unset", "--unset-all"} & set(opts):
+        return True
+    return len(pos) > 1 and pos[1].lower() not in _TRUNK_TRUE
+
+
+def is_trunk_off(cmd, depth=0):
+    """True when a Bash command turns trunk mode off (see _TRUNK_TRUE above). Judged per segment as is_self_grant does: a quoted word is text,
+    so a commit message or a grep that talks about the switch is fine; heredoc bodies fed to a shell are segments, `bash -c '...'` / eval are read.
+    ponytail: a script or one-liner that builds the key or the value from pieces, and xargs / find -exec, are not recognised; upgrade by
+    making the switch a file only the user's command can write (as the allow-shared flag is)."""
+    if not re.search(r"trunk|-section", re.sub(r"[\"'\\]", "", cmd).lower()):   # (-section: git config --remove-section devkit)
+        return False
+    import shlex   # noqa: PLC0415 - only commands that mention the switch pay for it
+    for seg in _split_segments(cmd)[::2]:
+        try:
+            words = shlex.split(seg)
+        except ValueError:
+            words = seg.split()
+        if words:
+            words[0] = words[0].lstrip("({")
+        k = 0
+        while k < len(words):   # what wraps the program (assignments, export / env / sudo ... and their options) comes first
+            w = words[k]
+            m = re.fullmatch(r"WORKTREE_TRUNK_MODE=(.*)", w, re.S)
+            if m and (m.group(1) == "0" or "$" in m.group(1) or "`" in m.group(1)):
+                return True
+            if not (re.fullmatch(r"[A-Za-z_]\w*=.*", w, re.S) or w.startswith("-") or not w
+                    or os.path.basename(w) in _PREFIX_RUN or re.fullmatch(r"\d+(?:\.\d+)?[smhd]?", w)):
+                break
+            k += 1
+        words = words[k:]
+        if not words:
+            continue
+        base = [os.path.basename(w) for w in words]
+        if base[0] in _PRINTERS:
+            continue
+        for j, w in enumerate(base):   # agent-kit worktree trunk off, worktree.py trunk off, under any launcher
+            if w in ("worktree", "worktree.py", "wt") and [a for a in words[j + 1:] if not a.startswith("-")][:2] == ["trunk", "off"]:
+                return True
+        if base[0] == "git":
+            j = 1
+            while j < len(words) and words[j].startswith("-"):   # git's own options; some take the next word as their value
+                j += 2 if words[j] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path") else 1
+            if j < len(words) and words[j] == "config" and _config_trunk_off(words[j + 1:]):
+                return True
+        elif depth < 3 and base[0] in ("bash", "sh", "zsh", "dash", "ksh"):
+            for j in range(1, len(words) - 1):
+                if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", words[j]) and is_trunk_off(words[j + 1], depth + 1):
+                    return True
+        elif depth < 3 and base[0] == "eval" and is_trunk_off(" ".join(words[1:]), depth + 1):
+            return True
+    return False
+
+
 def _unquote(word):
     return word[1:-1] if len(word) >= 2 and word[0] in "\"'" and word[-1] == word[0] else word
 
@@ -1342,6 +1424,11 @@ def main():
     if command and is_self_grant(command):
         print("⛔ [DevKit] Công tắc 'cho phép ghi song song' là của NGƯỜI DÙNG: agent không tự bật hay tắt. Nhờ người dùng chạy "
               "`! agent-kit allow-shared` (mặc định 60 phút; `agent-kit allow-shared off` để tắt).", file=sys.stderr)
+        return 2
+    if command and is_trunk_off(command):
+        print("⛔ [DevKit] Công tắc trunk mode là của NGƯỜI DÙNG: agent không tự tắt (`agent-kit worktree trunk off`, `git config devkit.trunkMode` "
+              "khác true hay --unset, WORKTREE_TRUNK_MODE=0 trong lệnh). Bật thêm (`trunk on`) và đọc thì được. Cần tắt: nhờ người dùng chạy "
+              "`! agent-kit worktree trunk off`.", file=sys.stderr)
         return 2
     foreign = None
     if tool in EDIT_TOOLS:
