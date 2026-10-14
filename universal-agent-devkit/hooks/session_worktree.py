@@ -346,10 +346,9 @@ def _agent_worktree(payload, main):
     base, name = os.path.splitext(tp)[0], f"agent-{agent}.meta.json"
     for meta in (os.path.join(base, "subagents", name), os.path.join(os.path.dirname(tp), name),
                  os.path.join(os.path.dirname(tp), sid, "subagents", name)):
-        try:
-            with open(meta, encoding="utf-8") as fh:
-                wp = json.load(fh).get("worktreePath")
-        except (OSError, ValueError, AttributeError):
+        try:   # (_read_small, not open(): the folder is the agent's - a FIFO there hangs every gate, INSTINCT-040)
+            wp = json.loads(_read_small(meta) or "").get("worktreePath")
+        except (ValueError, AttributeError):
             continue
         wt = _same_repo_worktree(main, wp)
         if wt:

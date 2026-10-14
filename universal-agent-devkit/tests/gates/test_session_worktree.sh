@@ -89,6 +89,23 @@ rec EnterWorktree s5 "$W" "$W"
 [ "$(proj s5 a2 "$TP")" = "$W" ] && ok "  … with the session in a worktree: the subagent works there too" || fail "subagent of an entered session: $(proj s5 a2 "$TP")"
 printf '{"worktreePath": "%s"}\n' "$TMP/other-wt" > "$TMP/proj/s5/subagents/agent-a3.meta.json"; rec ExitWorktree s5 "$M" ""
 [ "$(proj s5 a3 "$TP")" = "$M" ] && ok "  … a meta naming another repo's worktree: ignored" || fail "foreign subagent meta: $(proj s5 a3 "$TP")"
+# 4b INSTINCT-040 (OCR2 16): the subagent's meta file sits in a folder the agent can write; a FIFO planted there used to hang every gate that
+#    asks project() (a plain open()). Bounded child: a hang prints HANG, a failure is a line, not a stuck test. The FIFO is skipped, and the
+#    next place the meta can be (next to the transcript) is still read.
+mkfifo "$TMP/proj/s5/subagents/agent-a4.meta.json" "$TMP/proj/s5/subagents/agent-a5.meta.json"
+printf '{"worktreePath": "%s"}\n' "$W" > "$TMP/proj/agent-a5.meta.json"
+fifo_proj() {   # fifo_proj <agent id>: "<rc> <project()>" of a bounded child, or HANG
+  python3 -I -c 'import json, os, subprocess, sys
+sw, m, tp, a = sys.argv[1:5]
+d = json.dumps({"session_id": "s5", "agent_id": a, "cwd": m, "transcript_path": tp})
+try:
+    r = subprocess.run([sys.executable, "-I", sw, "project"], input=d, timeout=5, capture_output=True, text=True, env=dict(os.environ, CLAUDE_PROJECT_DIR=m))
+except subprocess.TimeoutExpired:
+    print("HANG"); sys.exit(0)
+print(r.returncode, r.stdout.strip())' "$SW" "$M" "$TP" "$1"
+}
+[ "$(fifo_proj a4)" = "0 $M" ] && ok "a FIFO as a subagent's meta file: no hang, no tree taken (project = main)" || fail "FIFO meta (a4): '$(fifo_proj a4)'"
+[ "$(fifo_proj a5)" = "0 $W" ] && ok "  … skipped, and the meta next to the transcript is still read (project = its worktree)" || fail "FIFO meta, then a real one (a5): '$(fifo_proj a5)'"
 
 # 5 the record hook never fails the tool call: garbage payload, no session, a subagent's EnterWorktree (not the session's) records nothing
 f0=$FAILS; for p in 'not json' '{}' '{"tool_name":"EnterWorktree"}' '[1,2]'; do
