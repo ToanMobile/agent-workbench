@@ -748,17 +748,17 @@ test('task bac IDE (flash) ma hoi thoai la agy (dispatch chon Argon), ps hong + 
   assert.match(out.text, /Khong nhac duoc agent/, out.text);
 });
 
-test('nhanh PLAN: hoi thoai phan bien la agy, ps hong + nudge: KHONG biet luot agy, bo qua nudge, KHONG reject ca tool', async (t) => {
+test('nhanh PLAN: hoi thoai phan bien la agy, ps hong + nudge: KHONG biet luot agy (noi MOT lan), bo qua nudge, KHONG reject ca tool', async (t) => {
   fakeAgy(t, { FAKE_AGY_ID: 'd8d8d8d8-2222-3333-4444-555555555555', FAKE_AGY_HOLD_MS: '3000' });
   const dir = mkProject(t, { defaultModel: ARGON });
   const taskId = await newTask(dir);   // phase PLAN, chua co hoi thoai lam viec
-  const { conversationId } = await newConversation({ prompt: 'x', model: ARGON, cwd: dir });
-  const cfg = loadConfig(dir);
-  updateTask(cfg, loadTask(cfg, taskId), (tk) => { tk.planReviewConversationId = conversationId; });
+  await call('pm_plan', { project: dir, taskId, content: '# x\n1. lam\n2. test', files: ['src/a.js'] });
+  await call('pm_dispatch', { project: dir, taskId, kind: 'plan_review' });
   process.env.ANTIGRAVITY_PM_PS = '/nonexistent/ps';
   const out = await call('pm_status', { project: dir, taskId, nudge: true });
-  assert.match(out.text, /Luot agy: KHONG biet/, out.text);
-  assert.match(out.text, /Khong nhac duoc hoi thoai phan bien/, out.text);
+  assert.match(out.text, /Khong nhac duoc hoi thoai phan bien: khong biet trang thai luot agy/, out.text);
+  // ly do (ps hong) in MOT lan: dong trang thai plan-review.json da noi, nhanh nudge khong lap lai
+  assert.equal((out.text.match(/khong doc duoc dau van tay/g) || []).length, 1, out.text);
 });
 
 test('don so dang ky: het ngan sach ps (3 muc co pid) van don tiep cac muc cu KHONG can ps (khong dung ca vong)', async (t) => {
@@ -785,6 +785,7 @@ test('so dang ky hong + nudge, task bac IDE ma phan bien ke hoach giao model=Arg
   fs.writeFileSync(registryFile(), '{"broken": ');
   const out = await call('pm_status', { project: dir, taskId, nudge: true });
   assert.match(out.text, /Khong nhac duoc hoi thoai phan bien: khong biet trang thai luot agy/, out.text);
+  assert.equal((out.text.match(/agy-conversations\.json hong/g) || []).length, 1, `so dang ky hong phai noi MOT lan:\n${out.text}`);
 });
 
 test('so dang ky hong + nudge, task bac IDE ma trien khai giao model=Argon: dispatch ghi model THAT cua hoi thoai, bo qua nudge, KHONG reject', async (t) => {

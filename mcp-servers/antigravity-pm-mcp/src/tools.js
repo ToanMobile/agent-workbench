@@ -525,7 +525,8 @@ export const TOOLS = [
       } else if (args.nudge === true && task.planReviewConversationId && task.phase === 'PLAN') {
         // Chua co hoi thoai lam viec nhung dang cho phan bien => nhac hoi thoai phan bien.
         const msg = `# ${task.id} — PM kiem tra: chua thay plan-review.json. Neu da phan bien xong: ghi file dung khuon roi dung. Neu dang doc: tiep tuc.`;
-        if (safeAgyTurn(L, task.planReviewConversationId, conversationModel(task, task.planReviewConversationId))?.unknown) {
+        // quiet: dong trang thai plan-review.json (tinhTrangPhanBien) da in ly do "KHONG biet", khong lap lai
+        if (safeAgyTurn(L, task.planReviewConversationId, conversationModel(task, task.planReviewConversationId), true)?.unknown) {
           L.push('Khong nhac duoc hoi thoai phan bien: khong biet trang thai luot agy (ps / so dang ky khong tra loi), khong dam gui chong luot.');
         } else {
           try {
@@ -688,7 +689,8 @@ export const TOOLS = [
           await sendMessage({ conversationId: task.conversationId, projectId: projectIdFor(cfg), content: msg });
         }
         setPhase(cfg, task, 'IMPLEMENT', 'pm', 'plan da chot');
-        // model THAT cua hoi thoai vua mo (conversationModel doc no); gui vao hoi thoai co san thi model la cua lan mo
+        // Lan MO hoi thoai ghi model THAT (args.model); lan gui vao hoi thoai co san de recordDispatch ghi task.model nhu cu:
+        // conversationModel chi doc ban ghi dau tien cua hoi thoai (lan mo)
         recordDispatch(cfg, task, {
           kind: 'implement', conversationId: task.conversationId, ...(moiMo && { model: args.model || task.model }), promptFile, set: { state: 'awaiting_agent' },
         });
