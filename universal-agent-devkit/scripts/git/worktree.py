@@ -906,17 +906,13 @@ def _in_progress(wt):
     return None
 
 
-def _reflog_file_entries(wt, admin=None):
+def _reflog_file_entries(wt):
     """Entries in the worktree's own HEAD reflog FILE (0 when there is none: nothing to lose), or None when it cannot be read.
-    `git log -g` prints nothing and exits 0 for an unreadable or corrupt reflog: only the file shows the difference. `admin`: the
-    worktree's admin dir (_admin_dir), read directly — its folder may be gone, so git cannot be asked there."""
-    if admin:
-        path = os.path.join(admin, "logs", "HEAD")
-    else:
-        r = git(wt, "rev-parse", "--git-path", "logs/HEAD", check=False)
-        path = r.stdout.strip()
-        if r.returncode != 0 or not path:
-            return None
+    `git log -g` prints nothing and exits 0 for an unreadable or corrupt reflog: only the file shows the difference."""
+    r = git(wt, "rev-parse", "--git-path", "logs/HEAD", check=False)
+    path = r.stdout.strip()
+    if r.returncode != 0 or not path:
+        return None
     try:
         return sum(1 for line in _read_regular(os.path.join(wt, path)).split(b"\n") if line.strip())
     except FileNotFoundError:
@@ -946,16 +942,29 @@ def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False, 
     worktree on a BRANCH (`attached`) also a commit the reflog of a local branch names (`reset --hard HEAD~1`, `commit --amend` on
     the branch: the branch reflog survives the removal). `admin`: read the HEAD reflog from that admin dir (a worktree whose folder
     is gone, A.2 #3); `wt` is then any checkout of the repository: every other check reads only the objects and refs all share."""
-    on_file = _reflog_file_entries(wt, admin) if reflog_lines is False else reflog_lines   # BEFORE git reads that file: a FIFO there would block `git log -g`
-    if on_file is None:
-        return None
-    log = ("log", "-g", "--format=%H%x09%gs", "HEAD")
-    r = _gd(admin, *log) if admin else git(wt, *log, check=False)
-    if r.returncode != 0:
-        return None
-    entries = [(l.split("\t", 1) + [""])[:2] for l in r.stdout.splitlines() if l]
-    if on_file > len(entries):
-        return None   # git skipped lines it could not read: what they named is unknown
+    if admin:
+        # ONE read of the reflog file, parsed here (the format `git log -g` reads: newest last): git would also need the admin dir's
+        # HEAD, which a removal running meanwhile may already have deleted, and an integrated worktree being removed read as "cannot say"
+        try:
+            lines = [l for l in _read_regular(os.path.join(admin, "logs", "HEAD")).split(b"\n") if l.strip()]
+        except FileNotFoundError:
+            return []   # no reflog (or the removal already deleted it): nothing only it names
+        except OSError:
+            return None   # a FIFO / device / unreadable file
+        found = [re.fullmatch(rb"([0-9a-f]{40}|[0-9a-f]{64}) ([0-9a-f]{40}|[0-9a-f]{64}) [^\t]*(?:\t(.*))?", l.rstrip(b"\r")) for l in reversed(lines)]
+        if not all(found):
+            return None   # a line that is no reflog entry: what it names is unknown
+        entries = [(m.group(2).decode(), (m.group(3) or b"").decode("utf-8", "replace")) for m in found if m.group(2).strip(b"0")]
+    else:
+        on_file = _reflog_file_entries(wt) if reflog_lines is False else reflog_lines   # BEFORE git reads that file: a FIFO there would block `git log -g`
+        if on_file is None:
+            return None
+        r = git(wt, "log", "-g", "--format=%H%x09%gs", "HEAD", check=False)
+        if r.returncode != 0:
+            return None
+        entries = [(l.split("\t", 1) + [""])[:2] for l in r.stdout.splitlines() if l]
+        if on_file > len(entries):
+            return None   # git skipped lines it could not read: what they named is unknown
     superseded = {entries[i + 1][0] for i in range(len(entries) - 1)
                   if entries[i][1].startswith(("commit (amend)", "rebase (fixup", "rebase (squash"))}   # (reflog subjects: an agent can write them)
     cands = list(dict.fromkeys(e[0] for e in entries if e[0] not in superseded and e[0] != head))

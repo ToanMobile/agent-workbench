@@ -71,6 +71,30 @@ except subprocess.TimeoutExpired:
   || fail "4: $(cat "$TMP/st.out")"
 rm -f "$ADM4/logs/HEAD"; G "$P" worktree prune
 
+# 4b (review of the fix: tests/gates/test_worktree_merge_gate_owner.sh section 7 held a second Stop under load): a background merge
+# REMOVES an integrated worktree while the inventory reads it — its folder and its admin dir's HEAD are already deleted, the reflog file
+# is deleted too or not yet. Nothing is lost: it must read clean, never "cannot say" (`git log -g` needs that HEAD; the file does not)
+mkdir -p "$TMP/shim"
+cat > "$TMP/shim/git" <<'SH'
+#!/bin/sh
+"$REAL_GIT" "$@"; rc=$?
+if [ "$1" = "-C" ] && [ "$2" = "$VANISH_DIR" ] && [ "$3" = rev-parse ] && [ "$4" = --git-path ] && [ ! -e "$VANISH_MARK" ]; then
+  : > "$VANISH_MARK"; rm -rf "$VANISH_DIR"; rm -f "$VANISH_ADMIN/HEAD"; [ -n "${VANISH_REFLOG:-}" ] && rm -f "$VANISH_ADMIN/logs/HEAD"
+fi
+exit $rc
+SH
+chmod +x "$TMP/shim/git"
+for variant in "" drop; do
+  W4B="$TMP/wt-removing$variant"; G "$P" worktree add -q --detach "$W4B"
+  VANISH_DIR="$(cd "$W4B" && pwd -P)"; VANISH_ADMIN="$(G "$W4B" rev-parse --absolute-git-dir)"; VANISH_MARK="$TMP/removing$variant"; VANISH_REFLOG="$variant"
+  export VANISH_DIR VANISH_ADMIN VANISH_MARK VANISH_REFLOG
+  (cd "$P" && PATH="$TMP/shim:$PATH" python3 "$WTPY" status --strict) >"$TMP/st.out" 2>&1; rc=$?
+  [ -e "$VANISH_MARK" ] && [ "$rc" = 0 ] && row "$VANISH_DIR" | grep -q "^clean" \
+    && ok "4b: an integrated worktree removed while the inventory reads it (reflog file ${variant:-kept}) reads clean, not 'cannot say'" \
+    || fail "4b: (rc=$rc, shim fired=$([ -e "$VANISH_MARK" ] && echo y || echo n), reflog file ${variant:-kept}): $(cat "$TMP/st.out")"
+  G "$P" worktree prune
+done
+
 # The Stop hook (hooks/worktree_merge_gate.sh), as in tests/gates/test_worktree_merge_gate_vanished.sh
 TRA="$TMP/tra.jsonl"
 python3 -c 'import json,datetime;print(json.dumps({"type":"user","timestamp":datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00","Z"),"message":{"content":"go"}}))' > "$TRA"
@@ -114,6 +138,42 @@ sleep 1.2
 W7="$TMP/wt-clean"; mention "$W7"; G "$P" worktree add -q --detach "$W7"; rm -rf "$W7"
 stop A "$TRA"; rc=$?
 [ "$rc" = 0 ] && ok "7: a deleted folder with nothing to bring back does not hold the Stop" || fail "7: held (rc=$rc): $(cat "$TMP/err")"
+G "$P" worktree prune
+
+# 8 (OpenCodeReview of the fix): several deleted folders in one Stop share ONE inventory (one ref-tip scan, one budget inside the hook's
+# alarm), not one inventory each — the alarm's exit passes the Stop in silence
+sleep 1.2
+cat > "$TMP/shim/git" <<'SH'
+#!/bin/sh
+for a in "$@"; do [ "$a" = for-each-ref ] && echo x >> "$SCAN_LOG"; done
+exec "$REAL_GIT" "$@"
+SH
+chmod +x "$TMP/shim/git"
+W8A="$TMP/wt-two-a"; W8B="$TMP/wt-two-b"; mention "$W8A"; mention "$W8B"
+G "$P" worktree add -q --detach "$W8A"; G "$P" worktree add -q --detach "$W8B"; rm -rf "$W8A" "$W8B"
+SCAN_LOG="$TMP/scans"; : > "$SCAN_LOG"; export SCAN_LOG
+PATH="$TMP/shim:$PATH" stop A "$TRA"; rc=$?
+[ "$rc" = 0 ] && [ "$(wc -l < "$SCAN_LOG" | tr -d ' ')" = 1 ] && ok "8: two deleted folders, one Stop: one inventory (one ref scan), and it passes" \
+  || fail "8: rc=$rc, ref scans=$(wc -l < "$SCAN_LOG" | tr -d ' '): $(cat "$TMP/err")"
+G "$P" worktree prune
+
+# 9 (OpenCodeReview of the fix): the inventory returns no row for a deleted folder git still lists (a listing it cannot tie to the path):
+# that is "cannot say" (held), never "unregistered, nothing to lose" — only a fresh listing without it proves that
+sleep 1.2
+cat > "$TMP/shim/git" <<'SH'
+#!/bin/sh
+z=""; for a in "$@"; do [ "$a" = -z ] && z=1; done
+if [ "$3" = worktree ] && [ "$4" = list ] && [ -n "$z" ]; then   # only the inventory's -z listing loses it; the hook's own listing keeps it
+  "$REAL_GIT" "$@" | python3 -c 'import os,sys; h=b"worktree "+os.environ["HIDE_DIR"].encode(); sys.stdout.buffer.write(b"\0\0".join(r for r in sys.stdin.buffer.read().split(b"\0\0") if not r.startswith(h)))'
+  exit 0
+fi
+exec "$REAL_GIT" "$@"
+SH
+chmod +x "$TMP/shim/git"
+W9="$TMP/wt-unseen"; mention "$W9"; reflog_only "$W9"; HIDE_DIR="$(cd "$W9" && pwd -P)"; export HIDE_DIR; rm -rf "$W9"
+PATH="$TMP/shim:$PATH" stop A "$TRA"; rc=$?
+[ "$rc" = 2 ] && grep -q "wt-unseen" "$TMP/err" && ok "9: a deleted folder the inventory cannot see while git still lists it holds the Stop" \
+  || fail "9: passed (rc=$rc) although $(cut -c1-10 "$TMP/wt-unseen.sha") is named by its reflog only: $(cat "$TMP/err")"
 G "$P" worktree prune
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_reflog_gone_folder: all passed" || { echo "❌ test_worktree_reflog_gone_folder: $FAILS failed"; exit 1; }

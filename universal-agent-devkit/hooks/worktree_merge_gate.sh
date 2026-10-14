@@ -305,19 +305,38 @@ def gone_admin_dir(path):
             return adm
     return None
 
+gone_rows = []   # [{realpath: inventory row} or None], filled once by gone_reflog
+
+def gone_reflog(path):
+    """The commits only the HEAD reflog of a registered worktree whose folder is gone names (inventory() reads that reflog from the admin
+    dir git keeps until a prune: docs/issues-bugs.md A.2 #3): [] none, None cannot say. ONE inventory for every such folder, read at the
+    first call (one ref-tip scan and one budget inside this hook's alarm; budget 0: the checks that clear a worktree are
+    gone_folder_reason's own). No row while a fresh listing still shows the path is "cannot say"; only its absence there proves it
+    unregistered (its reflog went with it)."""
+    if not gone_rows:
+        rows = None
+        if wt is not None:
+            try:
+                rows = {os.path.realpath(r["path"]): r for r in wt.inventory(repo, only=[p for p in paths if not os.path.isdir(p)], budget=0)}
+            except (Exception, SystemExit):
+                rows = None
+        gone_rows.append(rows)
+    if gone_rows[0] is None:
+        return None
+    row = gone_rows[0].get(os.path.realpath(path))
+    if row is None:
+        return [] if gone(path) else None
+    return row.get("reflog")
+
 def gone_folder_reason(path):
     """A registered worktree whose folder is gone (rm -rf from outside, no prune): '' when the HEAD `git worktree list` showed is in
     main, or main holds the same patches (brought back with diff | git apply, cherry-picked, amended and merged), and no commit is named
-    only by its HEAD reflog (inventory() reads that reflog from the admin dir git keeps until a prune: docs/issues-bugs.md A.2 #3); else
-    why it is held, naming the commit to bring back. A git error, or worktree.py not importable, is "cannot say", which holds."""
+    only by its HEAD reflog (gone_reflog); else why it is held, naming the commit to bring back. A git error, or worktree.py not
+    importable, is "cannot say", which holds."""
     base = listed_heads.get(path) or listed_heads.get(os.path.realpath(path))
     if not base:
         return "thư mục đã bị xoá và git không còn biết HEAD của nó: không biết commit đã về main chưa"
-    try:
-        rows = wt.inventory(repo, only=path) if wt is not None else None
-    except (Exception, SystemExit):
-        rows = None
-    lost = rows[0].get("reflog") if rows else ([] if rows is not None else None)   # [] rows: no longer listed, its reflog went with it
+    lost = gone_reflog(path)
     if lost is None:
         return "thư mục đã bị xoá và không đọc được reflog của nó: không biết còn commit nào chỉ reflog đó giữ"
     if lost:
