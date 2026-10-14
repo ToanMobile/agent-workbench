@@ -135,21 +135,20 @@ if xong is None:
 # Labels as the rule words them and as agents write them (2026-10-14 replay of 7 days of real Stops: 19 replies with all four items
 # were blocked for "Nguy cơ mới", "Đã làm gì", "Đã thay đổi gì", "Chặn lỗi cũ", "Nguy cơ lỗi mới"). The words the old patterns
 # already matched anywhere stay as they were (HEAD behaviour, unchanged: `bug cũ`, `bug mới`, `đã fix gì` still count anywhere in the
-# reply); the NEW variants must be LABELS, so prose like "Rủi ro còn lại: không có rủi ro mới" is no item 3 ("Rủi ro còn lại",
-# residual risk, is another item). A label starts a line (after a list marker, not indented: an indented sub-bullet is the content of
-# the item above), has no colon, comma or full stop before the phrase, and ends with its own colon, a parenthesis allowed: a phrase after
-# another label's colon or after a comma is the CONTENT of an item. Item 1 starts right at the line start; item 2 is "Chặn lỗi cũ"
-# (a bare "Lỗi cũ:" line is content) (OCR + principal-code-reviewer 14/10).
+# reply); the NEW variants must be exactly a LABEL: at the start of a line (after a list marker, never indented: an indented sub-bullet is
+# the content of the item above), nothing before the phrase but "đã" / "chặn", at most "nào" / "đã triệt tiêu" and a parenthesis after
+# it, then its own colon. So "Rủi ro còn lại: không có rủi ro mới", "Rủi ro còn lại — rủi ro mới thấp:", "Không có nguy cơ mới nào:" and
+# a sentence that only starts with the phrase are no item ("Rủi ro còn lại", residual risk, is another item; a bare "Lỗi cũ:" line is
+# content) (OCR + principal-code-reviewer 14/10, 6 rounds).
 _START = r"(?:^|\n)(?![ \t])[>*_#\-\d.()•+ \t]*"
-_LABEL = _START + r"[^:：\n,;.]{0,24}?"
-_COLON = r"(?:[^:：\n,;.(]|\([^)\n]*\)){0,40}[:：]"
+_END = r"(?:\s+nào)?(?:\s+đã\s+triệt\s+tiêu)?\s*(?:\([^)\n]*\))?[*_]*\s*[:：]"
 REPORT_ITEMS = (("1. Đã fix gì (tên lỗi, nguyên nhân gốc, RED→GREEN)",
-                 r"đã\s+(?:fix|sửa)\s*(?:gì|:)|" + _START + r"đã\s+(?:fix|sửa|làm|thay\s+đổi)(?:\s+được)?\s+gì" + _COLON
+                 r"đã\s+(?:fix|sửa)\s*(?:gì|:)|" + _START + r"đã\s+(?:fix|sửa|làm|thay\s+đổi)(?:\s+được)?\s+gì\s*(?:\([^)\n]*\))?[*_]*\s*[:：]"
                  + r"|what\s+was\s+fixed"),
                 ("2. Chặn bug cũ (test hồi quy / immutable_guards chạy lại PASS)",
-                 r"bug\s+cũ|" + _LABEL + r"chặn\s+(?:đứng\s+)?(?:các\s+)?lỗi\s+cũ" + _COLON + r"|reopened"),
+                 r"bug\s+cũ|" + _START + r"(?:đã\s+)?chặn\s+(?:đứng\s+)?(?:các\s+)?lỗi\s+cũ" + _END + r"|reopened"),
                 ("3. Nguy cơ bug mới (caller, module liên đới đã rà)",
-                 r"bug\s+mới|" + _LABEL + r"(?:nguy\s+cơ|rủi\s+ro)\s+(?:(?:bug|lỗi)\s+)?mới" + _COLON + r"|collateral"),
+                 r"bug\s+mới|" + _START + r"(?:nguy\s+cơ|rủi\s+ro)\s+(?:(?:bug|lỗi)\s+)?mới" + _END + r"|collateral"),
                 ("4. An toàn mã nguồn (secret, placeholder, OCR)", r"an\s+toàn\s+mã|code\s+safety"))
 missing_report = [name for name, rx in REPORT_ITEMS if not re.search(rx, reply, re.I)]
 

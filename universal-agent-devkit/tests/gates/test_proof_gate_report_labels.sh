@@ -112,6 +112,44 @@ check 2 "residual risk that mentions 'rủi ro mới' in prose" "Đã push.
 3. Rủi ro còn lại: không có rủi ro mới.
 $TAIL4" "report=3 "
 check 2 "prose with the words but no report" "Đã push. Đã thay đổi tên một trang; không phát sinh lỗi mới; lỗi cũ vẫn bị chặn; an toàn mã OK." "report=1,2,3 "
+# the label is the phrase itself, with at most "đã", "chặn", "nào", "đã triệt tiêu" and a parenthesis around it (OCR 14/10, rounds 5-6): a
+# dash or a parenthesis after residual risk, a negation, or prose that only STARTS with the phrase is no label
+check 2 "dash after residual risk" "Đã push.
+1. Đã fix gì: lỗi X.
+2. Chặn bug cũ: REG-1.
+3. Rủi ro còn lại — rủi ro mới thấp: một việc.
+$TAIL4" "report=3 "
+check 2 "parenthesis after residual risk" "Đã push.
+1. Đã fix gì: lỗi X.
+2. Chặn bug cũ: REG-1.
+3. Rủi ro còn lại (nguy cơ mới): một việc.
+$TAIL4" "report=3 "
+check 2 "negation in label position" "Đã push.
+1. Đã fix gì: lỗi X.
+2. Chặn bug cũ: REG-1.
+Không có nguy cơ mới nào: đã rà caller.
+$TAIL4" "report=3 "
+check 2 "prose that only starts with 'Rủi ro mới'" "Đã push.
+1. Đã fix gì: lỗi X.
+2. Chặn bug cũ: REG-1.
+Rủi ro mới chỉ xuất hiện nếu bỏ qua cảnh báo: một việc.
+$TAIL4" "report=3 "
+check 2 "prose that only starts with 'Chặn lỗi cũ'" "Đã push.
+1. Đã fix gì: lỗi X.
+Chặn lỗi cũ thì chưa làm được vì thiếu fixture: một việc.
+3. Nguy cơ bug mới: không.
+$TAIL4" "report=2 "
+check 2 "prose that only starts with 'Đã làm gì'" "Đã push.
+Đã làm gì thì xem trong git log: abc123.
+2. Chặn bug cũ: REG-1.
+3. Nguy cơ bug mới: không.
+$TAIL4" "report=1 "
+# the label of the rule's own wording, with its closing words
+check 0 "'… nào đã triệt tiêu' and bold around the colon" "Đã push.
+1. **Đã làm gì**: một việc.
+2. **Đã chặn đứng lỗi cũ nào**: PASS.
+3. **Nguy cơ lỗi mới nào đã triệt tiêu**: đã rà caller.
+$TAIL4"
 # the phrase must be IN the label (principal-code-reviewer 14/10): after another label's colon, or after a comma, it is the content of
 # another item, not an item
 check 2 "'lỗi cũ' is the content of item 1, not item 2" "Đã push.
