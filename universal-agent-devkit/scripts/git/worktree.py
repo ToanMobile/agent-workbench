@@ -2349,6 +2349,8 @@ def cmd_hook_create(cwd, args):
     try:
         lock = _lock_file(os.path.join(os.path.realpath(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()),
                                        "devkit-hook-create.lock"), wait=150.0)
+        if lock is None:
+            print("• worktree hook: create lock still held after 150 s; going ahead without it", file=sys.stderr)
     except (OSError, SystemExit) as e:   # no lock: the create goes ahead (a stranded EnterWorktree is worse than a race for one name)
         print(f"• worktree hook: create lock not taken ({e})", file=sys.stderr)
     try:
@@ -2394,6 +2396,9 @@ def _hook_create(main, name, sid):
                 return 1
         elif not _registered(main, wt):
             print(f"✖ worktree hook: {wt} exists and is not a worktree of this repo", file=sys.stderr)
+            return 1
+        elif (o := _owner(wt)) is not None and o != sid:   # `add` failed on a folder another session owns (lock timeout, two ids with one suffix): never hand it over
+            print(f"✖ worktree hook: {wt} belongs to another session; not handed back", file=sys.stderr)
             return 1
         try:   # whatever the set-up got to is set-up - but only OUR set-up: a create of the same name still running elsewhere keeps its
             # provisional state and its owner (OCR 14/10: the second create of one name used to stamp its own final state over it)

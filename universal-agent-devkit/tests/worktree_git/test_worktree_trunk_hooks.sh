@@ -66,6 +66,12 @@ create a s1 sess-9; rc=$?; w4="$TMP/a/.claude/worktrees/s1-sess9"
   && ok "  … by ANOTHER session: a worktree of its own (s1-sess9), the first one's owner and tree untouched" || fail "another session got (rc $rc): out=$(cat "$TMP/out") err=$(tail -2 "$TMP/err" | tr '\n' ' ')"
 create a s1 sess-9; rc=$?
 [ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$w4" ] && ok "  … and again: its own one back" || fail "second create of the other session (rc $rc): $(cat "$TMP/out")"
+# OCR2 1: two ids that reduce to one folder suffix (sess-9, sess9 -> sess9): the third create finds the worktree of its own name taken by the
+#   other session, `add` fails on the existing folder, and the fallback used to hand that tree back - never another session's tree: exit 1, no path
+create a s1 sess9; rc=$?
+[ "$rc" != 0 ] && [ ! -s "$TMP/out" ] && [ "$(state "$w4" session)" = sess-9 ] && grep -q "another session" "$TMP/err" \
+  && ok "  … an id that maps to the SAME suffix as another session's: refused (no path), the owner's tree untouched" \
+  || fail "suffix collision handed out a tree (rc $rc): out=$(cat "$TMP/out") err=$(tail -2 "$TMP/err" | tr '\n' ' ')"
 
 # 4b two creates of ONE name at the same moment, by two sessions: one tree each, never the same path (the loser used to print the winner's);
 #    they take turns on <common dir>/devkit-hook-create.lock, which a waiting create honours
