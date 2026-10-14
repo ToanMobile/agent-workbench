@@ -1694,8 +1694,9 @@ def _secret_like(path):
 def _commit_pending(wt, state):
     """Commit the worktree's uncommitted work IN the worktree (an isolated folder: nobody else's index). Bookkeeping the gate and the
     hooks regenerate is put back to HEAD (a file HEAD does not have is deleted), except the rows a person made. A local-config or
-    secret-looking file is NEVER committed on its own: the whole merge stops, naming it, before anything is touched.
-    None when done, else a (status, message, extra) refusal."""
+    secret-looking file, or a symlink HEAD does not have, is NEVER committed on its own: the whole merge stops, naming it, before
+    anything is touched (A.4: a `node_modules` link made to run npm test was committed, and the fast-forward put it in place of main's
+    real, ignored node_modules/). None when done, else a (status, message, extra) refusal."""
     changed = changes_since(wt, state)
     if not changed:
         return None
@@ -1707,6 +1708,25 @@ def _commit_pending(wt, state):
                               f"hoặc tự commit nếu cố ý; chưa có gì bị commit hay gộp", f"{len(secret)} local-config / secret-looking file(s) are never committed "
                               f"automatically: {', '.join(secret[:6])}. Add them to .gitignore, move them out, or commit them yourself if meant; nothing was committed or merged"),
                 {"files": secret[:20]})
+    links = [p for p in work if os.path.islink(os.path.join(wt, p))]
+    if links:   # (staged or not: `git add -A` would have staged one) a link HEAD already holds, retargeted, is ordinary work
+        in_head = set(git(wt, "ls-tree", "-r", "-z", "--name-only", "HEAD", "--", *links, check=False,
+                          env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).stdout.split("\0"))
+        new = [p for p in links if p not in in_head]
+        if new:
+            def shown(p):
+                try:
+                    return f"{p} -> {os.readlink(os.path.join(wt, p))}"
+                except OSError:
+                    return p
+            listing = ", ".join(shown(p) for p in new[:6])
+            return ("blocked", tr(f"{len(new)} symlink mới (HEAD chưa có) không bao giờ được tự commit: {listing}. Link tạo để mượn node_modules / cache build của main "
+                                  "không phải là việc: xoá nó (hoặc ignore bằng mẫu KHÔNG có dấu / cuối: `node_modules/` chỉ khớp thư mục, không khớp link); nếu link "
+                                  "đúng là một phần của repo thì tự `git add` + `git commit` nó trong worktree; chưa có gì bị commit hay gộp",
+                                  f"{len(new)} new symlink(s) (not in HEAD) are never committed automatically: {listing}. A link made to borrow main's node_modules / "
+                                  "build cache is not work: delete it (or ignore it with a pattern WITHOUT the trailing slash: `node_modules/` matches a directory, not a "
+                                  "link); if the link belongs in the repository, `git add` + `git commit` it in the worktree yourself; nothing was committed or merged"),
+                    {"files": new[:20]})
     if book:
         in_head = set(git(wt, "ls-tree", "-r", "--name-only", "HEAD", "--", *book, check=False).stdout.split("\n"))
         tracked = [p for p in book if p in in_head]
@@ -1879,13 +1899,24 @@ def _automerge_locked(cwd, main, wt, keep=False):
         try:
             if git(main, "rev-parse", "HEAD").stdout.strip() != main_head:
                 continue   # main moved while merging / gating: another round
-            r = git(main, "merge", "--ff-only", w_head, check=False, bounded=False)
+            # --no-overwrite-ignore: git's default overwrites IGNORED files and folders of main with what the merge brings (A.4: a committed
+            # link replaced main's real node_modules/); git checks every path before it writes one, so a refusal leaves main as it was
+            r = git(main, "merge", "--ff-only", "--no-overwrite-ignore", w_head, check=False, bounded=False)
             if r.returncode == 0:
                 status = "merged"
                 break
             err = r.stdout + r.stderr
+            files = [l.strip() for l in err.splitlines() if l.startswith("\t")]
+            if "untracked working tree files would be" in err or "would lose untracked files" in err:
+                return "blocked", tr(f"main có file/thư mục CHƯA track hoặc bị git ignore ở đúng đường dẫn mà commit của worktree thêm hoặc thay (không gì bị đụng; "
+                                     f"fast-forward sẽ xoá chúng): {', '.join(files[:8]) or err.strip()[-200:]}. Thường là link hoặc file commit đè lên thư mục main "
+                                     f"để ngoài git (node_modules, output build, cấu hình cục bộ): bỏ nó khỏi commit của worktree (`git rm --cached <path>` rồi commit "
+                                     f"trong worktree), hoặc dời bản ở main đi nếu không cần, rồi chạy lại `agent-kit worktree finish {shlex.quote(wt)}`",
+                                     f"main has UNTRACKED or git-ignored files at paths the worktree's commits add or replace (nothing was touched; the fast-forward "
+                                     f"would have deleted them): {', '.join(files[:8]) or err.strip()[-200:]}. Usually a link or file committed over a folder main keeps "
+                                     f"out of git (node_modules, build output, local config): take it out of the worktree's commits (`git rm --cached <path>` and commit "
+                                     f"in the worktree), or move main's copy away if it is not needed, then run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"files": files}
             if "overwritten" in err or "commit your changes or stash" in err:
-                files = [l.strip() for l in err.splitlines() if l.startswith("\t")]
                 return "blocked", tr(f"main có sửa đổi CHƯA commit trên file mà worktree cũng đổi (không gì bị đụng): {', '.join(files[:8]) or err.strip()[-200:]}. "
                                      f"Commit hoặc cất chúng ở main rồi chạy lại `agent-kit worktree finish {shlex.quote(wt)}`",
                                      f"main has UNCOMMITTED edits on files the worktree also changed (nothing was touched): {', '.join(files[:8]) or err.strip()[-200:]}. "
