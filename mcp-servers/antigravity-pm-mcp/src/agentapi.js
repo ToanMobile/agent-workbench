@@ -211,9 +211,12 @@ function putAgyEntry(reg, id, entry) {
     let over = keys.length - 500;
     let asked = 0;   // moi lan hoi la mot lenh ps dong bo DUOI khoa: chan tren, khong thi nhieu muc cham giu khoa qua LOCK_STALE_MS va PM khac lay mat
     for (const k of keys.sort((a, b) => used(a).localeCompare(used(b)))) {
-      if (over <= 0 || asked >= 3) break;
+      if (over <= 0) break;
       if (k === id) continue;
-      if (reg[k].pid && reg[k].pidTag) asked += 1;   // chi muc co pid + dau van tay moi can ps (entryBusy tra ve ngay neu khong co)
+      if (reg[k].pid && reg[k].pidTag) {   // chi muc co pid + dau van tay moi can ps (entryBusy tra ve ngay neu khong co)
+        if (asked >= 3) continue;   // het ngan sach ps: GIU muc nay nhung van don tiep cac muc khong can ps (truoc day dung ca vong)
+        asked += 1;
+      }
       let busy = true;   // khong xac dinh duoc (ps loi) thi GIU muc: don nha khong duoc lam hong lan ghi dang dien ra (va khong giu khoa qua lau)
       try { busy = entryBusy(reg[k]); } catch (e) { logStderr(`don so dang ky: giu muc ${k} (${e.message})`); }
       if (busy) continue;

@@ -739,3 +739,18 @@ test('nhanh PLAN: hoi thoai phan bien la agy, ps hong + nudge: KHONG biet luot a
   assert.match(out.text, /Luot agy: KHONG biet/, out.text);
   assert.match(out.text, /Khong nhac duoc hoi thoai phan bien/, out.text);
 });
+
+test('don so dang ky: het ngan sach ps (3 muc co pid) van don tiep cac muc cu KHONG can ps (khong dung ca vong)', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'd7d7d7d7-2222-3333-4444-555555555555' });
+  // 5 muc cu nhat "dang chay" = chinh tien trinh test nay (song, dau van tay dung): khong sinh tien trinh nao
+  const tag = execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(process.pid)], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } }).trim();
+  const reg = {};
+  for (let i = 0; i < 520; i++) reg[`c${i}`] = { model: ARGON, cwd: os.tmpdir(), at: new Date(2020, 0, 1, 0, 0, i).toISOString() };
+  for (let i = 0; i < 5; i++) Object.assign(reg[`c${i}`], { pid: process.pid, pidTag: tag });
+  fs.writeFileSync(registryFile(), JSON.stringify(reg));
+  const r = await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
+  const after = JSON.parse(fs.readFileSync(registryFile(), 'utf8'));
+  assert.equal(Object.keys(after).length, 500, `${Object.keys(after).length} muc sau khi don (phai 500): muc cu khong pid bi giu lai`);
+  for (let i = 0; i < 5; i++) assert.ok(after[`c${i}`], `muc dang chay c${i} bi don`);
+  assert.ok(after[r.conversationId]);
+});
