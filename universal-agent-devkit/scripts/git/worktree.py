@@ -1838,12 +1838,12 @@ def _secret_like(path):
 
 
 def _carry_skip_dirs():
-    """Folder names whose files are never carried back into main (A.1b #12): rebuilt or downloaded ones — build_inputs.SKIP_WALK (what
-    `worktree add` never copies in), GC_BUILD_DIRS and the usual dependency folders. A package's own test key there (node_modules/**/test.pem)
-    would differ from main's copy and refuse every removal; a key copied into main's build/ would be wiped by the next clean."""
-    from build_inputs import SKIP_WALK  # noqa: PLC0415 - the module top imports only its function
-    return set(SKIP_WALK) | GC_BUILD_DIRS | {"vendor", "bower_components", "jspm_packages", ".tox", ".nox", ".bundle", ".terraform", ".yarn",
-                                             ".pnpm-store", ".cache", "site-packages", ".nuxt", ".svelte-kit", ".parcel-cache", ".turbo", ".expo"}
+    """Folder names whose files are never carried back into main (A.1b #12): rebuilt or downloaded ones only — GC_BUILD_DIRS and the usual
+    dependency folders. A package's own test key there (node_modules/**/test.pem) would differ from main's copy and refuse every removal; a
+    key copied into main's build/ would be wiped by the next clean. NOT build_inputs.SKIP_WALK (what `worktree add` never copies in): it
+    also names .agents, .claude, .idea and Logs, which are no rebuildable folders - .agents/local/ is where the kit keeps long-lived files."""
+    return GC_BUILD_DIRS | {".git", ".venv", "venv", ".kotlin", "vendor", "bower_components", "jspm_packages", ".tox", ".nox", ".bundle", ".terraform",
+                            ".yarn", ".pnpm-store", ".cache", "site-packages", ".nuxt", ".svelte-kit", ".parcel-cache", ".turbo", ".expo"}
 
 
 def _ignored_secrets(wt, limit=None):
