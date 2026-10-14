@@ -11,6 +11,9 @@ function killLive() {
   LIVE.clear();
 }
 process.once('exit', killLive);
+/** Tien trinh con tach nhom ma server KHONG de song sau khi no thoat (agy luc dang cho su kien init): dang ky / huy dang ky. */
+export function trackChild(pid) { if (pid) LIVE.add(pid); }
+export function untrackChild(pid) { LIVE.delete(pid); }
 // 'exit' KHONG chay khi server bi SIGTERM/SIGINT/SIGHUP (Claude dong phien, kill nhom) — ma con da tach nhom
 // rieng nen cung khong chet theo. Bat tin hieu: don nhom con roi chet dung bang tin hieu do (giu ma thoat).
 for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {

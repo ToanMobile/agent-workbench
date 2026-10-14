@@ -22,8 +22,13 @@ function realpathSafe(p) {
 export const DEFAULT_CONFIG = {
   // Ten hien thi cua project (chi de bao cao cho dep).
   projectName: null,
-  // Model Antigravity mac dinh: flash_lite | flash | pro
-  defaultModel: 'pro',
+  // Model Antigravity mac dinh. Bac flash_lite | flash | pro (agentapi: model do server quyet, 14/10/2026 ca pro va flash ra gemini-3.8-flash-tiered)
+  // hoac model cu the qua CLI agy: gemini-4-argon-high|medium|low, gemini-3.8-flash-high|medium|low (xem src/agentapi.js).
+  defaultModel: 'gemini-4-argon-high',
+  // Co mac dinh cua /giao (nguoi dung 14/10/2026): true = moi prompt co viec sua file/code tu chay skill giao. KHONG phai viec cua server nay:
+  // hook prompt cua DevKit (scripts/context/enrich_context.py) doc khoa nay tu file cau hinh chung va file project (project de len). Khai o day
+  // de loader khong bao "khoa la".
+  giaoDefault: false,
   // Thu muc file hop dong cua task (brief/plan/result.json/proof/logs), tinh tu goc project — agent doc/ghi o day.
   // task.json (ket luan, lan chay test, vong, anh) KHONG nam o day: xem pmStateRoot (HOME), agent khong sua duoc.
   stateDir: '.antigravity-pm',

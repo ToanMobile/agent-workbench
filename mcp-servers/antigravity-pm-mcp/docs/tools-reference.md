@@ -24,7 +24,7 @@ In ra: cấu hình đang hiệu lực, `testCommand`, `auditCommands`, file lu�
 | `definitionOfDone` | **có** | Danh sách điều kiện **kiểm chứng được** |
 | `type` | không | `bugfix` (mặc định) \| `feature` \| `refactor` \| `docs`. `bugfix` bị đòi oracle đỏ→xanh khi `mustHave.oracle` bật |
 | `proofKind` | không | `device` (mặc định: ảnh phải từ `mustHave.proofFrom`) \| `browser` \| `script` — task web/SQL/CLI: ảnh phải từ provider **type `browser` hoặc `shell`** (lệnh PM chạy), **không bao giờ** nhận ảnh agent đưa (`file`) |
-| `model` | không | `flash_lite` \| `flash` \| `pro` (mặc định theo `defaultModel`) |
+| `model` | không | `flash_lite` \| `flash` \| `pro` (qua `agentapi`) hoặc model cụ thể `gemini-4-argon-high` … (qua `agy`); mặc định theo `defaultModel` |
 
 Tạo `<project>/.antigravity-pm/tasks/T####-<slug>/` với `brief.md` + `logs/plan-template.md` (mẫu kế hoạch có mục "Thứ tự bước NHỎ → LỚN" — agent hay từ chối task lớn, chia bước thì làm được). Ghi `baseCommit = HEAD` lúc tạo. `task.json` của PM ghi ngoài repo: `~/.antigravity-pm/projects/<tên>-<hash>/tasks/T####-<slug>/task.json`. Chưa giao cho ai.
 

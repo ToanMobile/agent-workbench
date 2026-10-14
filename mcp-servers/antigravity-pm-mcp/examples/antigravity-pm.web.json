@@ -1,6 +1,6 @@
 {
   "projectName": "Web app",
-  "defaultModel": "pro",
+  "defaultModel": "gemini-4-argon-high",
   "testCommand": "npm test -- --run",
   "auditCommands": ["npm run lint", "npx tsc --noEmit", "node .claude/skills/qa-visual/scripts/audit-layout.mjs"],
   "rulesFiles": ["AGENTS.md", "CONTRIBUTING.md"],

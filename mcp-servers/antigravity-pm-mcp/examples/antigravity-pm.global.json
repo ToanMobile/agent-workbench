@@ -1,5 +1,5 @@
 {
-  "defaultModel": "pro",
+  "defaultModel": "gemini-4-argon-high",
   "commitPolicy": "forbid",
   "runTimeoutMs": 1800000,
   "stallMinutes": 15,

@@ -9,8 +9,14 @@ phiên bản theo [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Khóa `giaoDefault` (cờ mặc định của `/giao`, hook DevKit đọc) được loader chấp nhận.
+- Model cụ thể qua CLI `agy --model` (mặc định `gemini-4-argon-high`): `agentapi` chỉ nhận bậc `flash_lite|flash|pro` và server tự chọn model (14/10/2026 cả `pro` lẫn `flash` ra `gemini-3.8-flash-tiered`). Tiến trình `agy` tách nhóm chạy hết lượt, `agy-conversations.json` giữ model + cwd + pid từng hội thoại, tin tiếp đi bằng `agy --conversation … --model …`, `pm_doctor ping=true` kiểm vòng đời đầy đủ. Không có `agy` thì báo lỗi, không rơi về flash.
+
 ### Changed
 
+- **Mặc định đổi (BREAKING):** `defaultModel` từ `pro` sang `gemini-4-argon-high`. Cần `agy` cài sẵn và IDE ở chế độ tự chạy lệnh (EAGER/TURBO, hoặc `ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS=1`); thiếu thì dispatch báo lỗi rõ chứ không rơi về flash. Muốn như cũ: `"defaultModel": "flash"` trong `.antigravity-pm.json`.
 - Prompt phản biện kế hoạch và prompt audit luôn liệt kê `.agents/context/essentials.md`, `profile-rules.md`, `rules-index.md` của DevKit (khi file tồn tại), kể cả khi project tự khai `rulesFiles`. `AGENTS.md` chỉ `@`-import các file này; Antigravity đọc `AGENTS.md` như văn bản thường nên có thể bỏ qua import.
 
 ### Fixed

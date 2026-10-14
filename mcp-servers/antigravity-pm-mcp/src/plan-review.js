@@ -8,7 +8,7 @@ import { contractPaths, addHistory, updateTask } from './tasks.js';
 import { kiemKhuonPlanReview } from './policy.js';
 import { kiemBaoCao, dongTomTat } from './cite-check.js';
 import { buildPlanReviewFixMessage } from './prompt.js';
-import { sendMessage } from './agentapi.js';
+import { sendMessage, agyTurnStatusSafe } from './agentapi.js';
 import { requireProjectId } from './projects.js';
 import { run, truncate, nowIso, readJsonIfExists } from './util.js';
 
@@ -45,8 +45,12 @@ export async function tinhTrangPhanBien(cfg, task) {
   if (!task.planReviewDispatchedAt || task.verdicts?.plan?.verdict === 'pass') return L;
   if (!fs.existsSync(critique)) {
     const phut = Math.round((Date.now() - Date.parse(task.planReviewDispatchedAt)) / 60000);
-    if (phut >= (cfg.stallMinutes || 12)) L.push(`plan-review.json: REVIEW TREO — giao phan bien ${phut} phut chua co file (T0024 tung im >30 phut). pm_status nudge=true de nhac, hoac dispatch lai.`);
+    const { status: agyT, error: agyErr } = agyTurnStatusSafe(task.planReviewConversationId);
+    if (agyT?.running) L.push(`plan-review.json: chua co (giao ${phut} phut truoc) — agy van chay${agyT.starting ? ' (dang khoi dong)' : ` (pid ${agyT.pid})`}, khong coi la treo`);
+    else if (agyT) L.push(`plan-review.json: chua co — luot agy DA KET THUC ma khong ghi file (giao ${phut} phut truoc): pm_status nudge=true de nhac, hoac dispatch lai.`);
+    else if (phut >= (cfg.stallMinutes || 12)) L.push(`plan-review.json: REVIEW TREO — giao phan bien ${phut} phut chua co file (T0024 tung im >30 phut). pm_status nudge=true de nhac, hoac dispatch lai.`);
     else L.push(`plan-review.json: chua co (giao ${phut} phut truoc)`);
+    if (agyErr) L.push(`  (luot agy: KHONG biet — ${agyErr})`);   // sau dong trang thai chinh, khong truoc no
     return L;
   }
   const review = readJsonIfExists(critique);

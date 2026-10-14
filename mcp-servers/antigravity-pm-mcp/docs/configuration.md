@@ -27,7 +27,8 @@ Thứ tự đè lên nhau: **mặc định → cấu hình chung → cấu hình
 | Khoá | Mặc định | Ý nghĩa |
 | --- | --- | --- |
 | `projectName` | tên thư mục | Chỉ để báo cáo cho dễ đọc |
-| `defaultModel` | `"pro"` | Model Antigravity: `flash_lite` \| `flash` \| `pro` |
+| `giaoDefault` | `false` | Cờ mặc định của `/giao` (đặt ở file chung hoặc file project, project đè lên): `true` = mọi prompt có việc sửa file/code tự chạy skill `giao`. Server này **không đọc** khóa; hook prompt của DevKit (`scripts/context/enrich_context.py`) đọc, khai ở đây để loader không báo "khóa lạ". Chi tiết: `skills/giao/SKILL.md` §0 của DevKit |
+| `defaultModel` | `"gemini-4-argon-high"` | Model Antigravity. Bậc `flash_lite` \| `flash` \| `pro` đi qua `agentapi` (server tự chọn model: 14/10/2026 cả `pro` lẫn `flash` ra `gemini-3.8-flash-tiered`). Model cụ thể `gemini-4-argon-high\|medium\|low`, `gemini-3.8-flash-high\|medium\|low` đi qua CLI `agy --model` (cách duy nhất chọn được model); cần `agy` (`~/.local/bin/agy`, hoặc `ANTIGRAVITY_PM_AGY`), không có thì báo lỗi chứ **không** tự rơi về flash |
 | `stateDir` | `".antigravity-pm"` | Thư mục file hợp đồng của task (brief/plan/result.json/proof/logs), tính từ gốc project. `task.json` của PM **không** nằm ở đây mà ở `~/.antigravity-pm/projects/<tên>-<hash>/tasks/` (biến môi trường `ANTIGRAVITY_PM_STATE_HOME` đổi gốc `~/.antigravity-pm`) |
 | `rulesFiles` | `["AGENTS.md", "CLAUDE.md"]` | File luật **bắt buộc agent đọc**; file không tồn tại thì bị bỏ qua im lặng (không nhét vào prompt) |
 | `testCommand` | `null` | Lệnh test thật. **Chưa khai thì `pm_run kind=test` báo lỗi** ⇒ cổng nghiệm thu không bao giờ đạt |
