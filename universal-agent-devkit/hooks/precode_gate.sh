@@ -53,6 +53,7 @@ if [ -z "${REPO_ROOT}" ]; then   # the regex costs ~10 ms on a 1 MB payload: onl
   case "${_PCWD}" in *\\*) _PCWD="$(python3 -I -c 'import json,sys; sys.stdout.buffer.write(json.loads("\"%s\"" % sys.argv[1]).encode())' "${_PCWD}" 2>/dev/null)" || _PCWD="." ;; esac
   REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
 fi
+BASE_ROOT="${REPO_ROOT}"   # the hook that writes bash_write_ledger.tsv (bash_write_ledger.sh) writes under it, whatever tree is judged below
 # W1 v6 (hooks/session_worktree.py): a session that ENTERED a worktree (EnterWorktree: CLAUDE_PROJECT_DIR still names main) or a subagent
 # the harness started in one is judged in that worktree, not in a clean main. Python only when the payload or a session record can need it.
 _SW_SID='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9][A-Za-z0-9._-]*)"'
@@ -105,7 +106,7 @@ fi
 # The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable (Linux 128 KiB,
 # macOS ~1 MiB for args + env) python could not start and a blind Write of a big file passed (tests/gates/test_hook_large_payload.sh).
 PG_LOG="${LOG_DIR:+${LOG_DIR}/precode_gate.log}" \
-PG_LEDGER="${LOG_DIR:+${LOG_DIR}/read_ledger.tsv}" PG_REPO="${REPO_ROOT}" \
+PG_LEDGER="${LOG_DIR:+${LOG_DIR}/read_ledger.tsv}" PG_REPO="${REPO_ROOT}" PG_BASE_REPO="${BASE_ROOT}" \
 PG_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
 python3 -I <<'PY' 3<<<"${INPUT}"
 import os, subprocess, sys, json
@@ -268,7 +269,7 @@ def born_in_my_window():
     try:
         st = os.stat(path)
         t = getattr(st, "st_birthtime", None) or st.st_mtime
-        rows = open(os.path.join(os.environ.get("PG_REPO", "."), ".claude", "audit-gate", "bash_write_ledger.tsv"),
+        rows = open(os.path.join(os.environ.get("PG_BASE_REPO") or os.environ.get("PG_REPO", "."), ".claude", "audit-gate", "bash_write_ledger.tsv"),
                     encoding="utf-8", errors="replace").read().splitlines()
     except OSError:
         return False

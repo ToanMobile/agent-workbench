@@ -49,6 +49,7 @@ if [ -z "${REPO_ROOT}" ]; then
   case "${_PCWD}" in *\\*) _PCWD="$(python3 -I -c 'import json,sys; sys.stdout.buffer.write(json.loads("\"%s\"" % sys.argv[1]).encode())' "${_PCWD}" 2>/dev/null)" || _PCWD="." ;; esac
   REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
 fi
+BASE_ROOT="${REPO_ROOT}"   # the hooks that write turn_class_<sid>.json (prompt_context) write under it, whatever tree is judged below
 # W1 v6 (hooks/session_worktree.py): a session that ENTERED a worktree (EnterWorktree: CLAUDE_PROJECT_DIR still names main) or a subagent
 # the harness started in one is judged in that worktree, not in a clean main. Python only when the payload or a session record can need it.
 _SW_SID='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9][A-Za-z0-9._-]*)"'
@@ -86,7 +87,7 @@ while [ -L "${SELF}" ]; do
 done
 # The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable (Linux 128 KiB,
 # macOS ~1 MiB for args + env) python could not start and the gate passed (tests/gates/test_hook_large_payload.sh).
-PROOF_REPO="${REPO_ROOT}" PROOF_LOG_DIR="${LOG_DIR}" PROOF_HOOKDIR="$(dirname "${SELF}")" \
+PROOF_REPO="${REPO_ROOT}" PROOF_LOG_DIR="${LOG_DIR}" PROOF_BASE_LOG_DIR="${BASE_ROOT}/.claude/audit-gate" PROOF_HOOKDIR="$(dirname "${SELF}")" \
 PROOF_BIN="$(cd "$(dirname "${SELF}")/../bin" 2>/dev/null && pwd)" python3 -I <<'PY' 3<<<"${INPUT}"
 import datetime, glob, hashlib, json, math, os, re, stat, sys, time
 
@@ -396,7 +397,7 @@ def first_app_source_edit_time(tp):
     return None
 if xong and need_image and os.environ.get("PROOF_BEFORE", "1") != "0":
     try:
-        tc_path = os.path.join(repo, ".claude", "audit-gate", "turn_class_%s.json" % (re.sub(r"[^A-Za-z0-9_-]", "_", session)[:64] or "default"))
+        tc_path = os.path.join(os.environ.get("PROOF_BASE_LOG_DIR") or log_dir, "turn_class_%s.json" % (re.sub(r"[^A-Za-z0-9_-]", "_", session)[:64] or "default"))
         try:
             with os.fdopen(open_reg(tc_path), encoding="utf-8") as f:
                 tc = json.load(f)

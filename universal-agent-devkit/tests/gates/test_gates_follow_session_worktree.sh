@@ -104,5 +104,54 @@ grep -q "SCOPE — 2 dirty file(s) → 1 written by this session: app/src/main/j
   && ok "  … the Bash ledger the hooks write under main scopes the files the session wrote in the worktree" \
   || fail "testsourceset_gate ledger scope: rc=$rc $(tail -2 "$M/.claude/audit-gate/testsourceset_gate.log" 2>/dev/null)"
 
+# R3 review P3 (14/10): the hooks that write turn_class_<sid>.json (prompt_context) and bash_write_ledger.tsv still write under CLAUDE_PROJECT_DIR
+# (main), but precode_gate and proof_gate judged the worktree and read them there: a file the session made with a shell command was a "blind
+# edit", and the before-evidence a UI bug fix owes went unasked. They read both from main; the read ledger stays the worktree's (read_ledger).
+for n in 31 32 41; do printf '%s\n' "$W" > "$M/.claude/audit-gate/session_worktree/s$n"; done
+mk_tp "$TMP/pc.jsonl" Bash '{"command":"./gen.sh"}'
+pre_hook() {   # pre_hook <session> <file>: rc of precode_gate for an Edit of <file> by that session in its worktree
+  python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"PreToolUse","session_id":sys.argv[1],"cwd":sys.argv[2],"transcript_path":sys.argv[3],"tool_name":"Edit","tool_input":{"file_path":sys.argv[4],"old_string":"a","new_string":"b"}}))' "$1" "$W" "$TMP/pc.jsonl" "$2" \
+    | CLAUDE_PROJECT_DIR="$M" bash "$DEVKIT_DIR/hooks/precode_gate.sh" >/dev/null 2>"$TMP/gate.err"
+}
+echo 'x = 1' > "$W/src/born.py"; echo 'x = 1' > "$W/src/lone.py"
+python3 -c 'import time; n=time.time(); print("s31\tstart\t%.3f\tb1\ns31\tend\t%.3f\tb1\ns32\tstart\t%.3f\tb2\ns32\tend\t%.3f\tb2" % (n-5, n+5, n-100, n-90))' > "$M/.claude/audit-gate/bash_write_ledger.tsv"
+pre_hook s31 "$W/src/born.py"; r1=$?; pre_hook s32 "$W/src/lone.py"; r2=$?
+[ "$r1" = 0 ] && [ "$r2" = 2 ] && ok "precode_gate: a file born in the session's Bash window (main's ledger) is no blind edit; one born in nobody's window is" \
+  || fail "precode_gate ledger: born-in-window rc=$r1 (want 0), other rc=$r2 (want 2) $(head -c 200 "$TMP/gate.err")"
+
+mkdir -p "$W/.agents"; echo '{"profile":"android"}' > "$W/.agents/active-profile.json"
+echo 'fun ok() = 1' > "$W/src/Core.kt"; git -C "$W" add -A && git -C "$W" commit -qm "a screen profile and an app source"
+python3 - "$TMP/pg.jsonl" "$W" <<'PY'
+import datetime, json, sys
+iso = lambda s: (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=s)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+rows = [{"type": "user", "timestamp": iso(2), "message": {"role": "user", "content": "sửa lỗi UI"}},
+        {"type": "assistant", "timestamp": iso(0), "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Edit", "input": {"file_path": sys.argv[2] + "/src/Core.kt"}}]}}]
+open(sys.argv[1], "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+echo "// edit" >> "$W/src/Core.kt"
+python3 -c 'import json,sys,time; print(json.dumps({"ts":time.time(),"intents":["BUG_FIX","UI_INTERACTION"]}))' > "$M/.claude/audit-gate/turn_class_s41.json"   # where prompt_context writes it
+python3 -I - "$DEVKIT_DIR/bin" "$W" <<'PY'
+import json, os, sys, time
+sys.path.insert(0, sys.argv[1])
+import tree_fp
+rp = tree_fp.receipt_path(sys.argv[2])
+os.makedirs(os.path.dirname(rp), exist_ok=True)
+json.dump({"exit": 0, "time": time.time() + 3600, "fingerprint": tree_fp.tree_fingerprint(sys.argv[2])}, open(rp, "w"))
+PY
+mkdir -p "$W/reports"; P="reports/proof-$(date +%Y%m%d-%H%M%S).png"
+python3 -c 'import os,struct,sys,zlib
+c=lambda t,d: struct.pack(">I",len(d))+t+d+struct.pack(">I",zlib.crc32(t+d)&0xffffffff)
+open(sys.argv[1],"wb").write(b"\x89PNG\r\n\x1a\n"+c(b"IHDR",struct.pack(">IIBBBBB",1,1,8,2,0,0,0))+c(b"IDAT",os.urandom(20000))+c(b"IEND",b""))' "$W/$P"
+python3 -c 'import json,sys; print(json.dumps({"session_id":"s41","hook_event_name":"Stop","cwd":sys.argv[1],"transcript_path":sys.argv[2],"last_assistant_message":sys.argv[3],"stop_hook_active":False}))' "$W" "$TMP/pg.jsonl" "XONG
+Đã fix lỗi.
+Gate exit 0
+Ảnh $P
+1. Đã fix gì: abc
+2. Chặn bug cũ: abc
+3. Nguy cơ bug mới: abc
+4. An toàn mã nguồn: abc" | CLAUDE_PROJECT_DIR="$M" bash "$DEVKIT_DIR/hooks/proof_gate.sh" >/dev/null 2>"$TMP/gate.err"; rc=$?
+[ "$rc" = 2 ] && grep -q "before-" "$TMP/gate.err" && ok "proof_gate: the turn class prompt_context wrote under main is read - a UI bug fix in the worktree owes its before-evidence" \
+  || fail "proof_gate turn_class: rc=$rc (want 2, before-evidence asked) $(head -c 300 "$TMP/gate.err")"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_gates_follow_session_worktree: PASS"; exit 0; } || { echo "test_gates_follow_session_worktree: FAIL ($FAILS)"; exit 1; }
