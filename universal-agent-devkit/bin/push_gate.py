@@ -504,8 +504,10 @@ def check(cwd, rev="HEAD", tag_remote=None):
     if tag_remote and on_remote_only(top, rev, tag_remote):
         return True, "a tag of commits the remote already has: nothing new is pushed"
     rp = tree_fp.receipt_path(top)
-    try:
-        with open(rp, encoding="utf-8") as f:
+    try:   # O_NONBLOCK + regular file only: a FIFO planted at the receipt blocked open() until the hook timed out (issues-bugs A.4)
+        with os.fdopen(os.open(rp, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)), encoding="utf-8") as f:
+            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                raise OSError("the receipt is not a regular file")
             receipt = json.load(f)
     except (TypeError, OSError, ValueError, RecursionError):
         receipt = None

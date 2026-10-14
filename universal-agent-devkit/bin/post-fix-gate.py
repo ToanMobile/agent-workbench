@@ -734,7 +734,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
             # the whole path, not a prefix: <repo>-v2 / <repo>-<task> worktrees sit next to it (review 13/10)
             return any(s and re.search(re.escape(s.rstrip("/")) + r"(?![\w.@+~-])", agy_text) for s in spellings)
         try:
-            fh = open(tp, encoding="utf-8", errors="replace")
+            fh = os.fdopen(_state_fd(tp), encoding="utf-8", errors="replace")
         except OSError:
             continue
         with fh:
@@ -850,6 +850,20 @@ def _sha_file(path):
         return hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else ""
     except OSError:
         return ""
+
+
+def _state_fd(path, mode="r"):
+    """fd of the REGULAR file at path, opened for "r" | "a" | "w" without waiting. The gate's state (.git/postfix-gate/,
+    .claude/audit-gate/, proof folders, transcripts) is a path an agent can write: a FIFO planted there blocked a plain open()
+    for ever, and a Stop hook killed by its timeout lets the Stop through (issues-bugs A.4). Anything else raises OSError, as a
+    missing file does (a FIFO with no reader: ENXIO on a write-open). tests/gates/test_state_fifo_no_hang.sh"""
+    import stat as _stat  # noqa: PLC0415
+    flags = {"r": os.O_RDONLY, "a": os.O_WRONLY | os.O_CREAT | os.O_APPEND, "w": os.O_WRONLY | os.O_CREAT | os.O_TRUNC}[mode]
+    fd = os.open(path, flags | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0), 0o666)
+    if not _stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise OSError(f"not a regular file: {path}")
+    return fd
 
 
 # A suite that talks to a device, an emulator or an engine is never reused: its outcome depends
@@ -980,7 +994,7 @@ def cached_full_pass(project_dir, matrix_arg, fp=None):
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
         path = tree_fp.receipt_path(project_dir)
-        with open(path, encoding="utf-8") as f:
+        with os.fdopen(_state_fd(path), encoding="utf-8") as f:
             r = json.load(f)
         max_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
     except (ImportError, OSError, ValueError, TypeError):
@@ -1068,7 +1082,7 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
         t.get("status") not in ("PASS", "UNTESTED", "BUSY") for t in (tests or []) if t.get("command"))
     if partial and unverified_ok:
         try:
-            with open(path, encoding="utf-8") as f:
+            with os.fdopen(_state_fd(path), encoding="utf-8") as f:
                 kept = json.load(f)
             same = isinstance(kept, dict) and kept.get("fingerprint") == (tested_fp or tree_fp.tree_fingerprint(project_dir))
             if same and kept.get("exit") == 0:
@@ -2159,7 +2173,7 @@ def check_anti_false_green(is_hardware_project: bool = False) -> tuple:
     sha_path = _proof_hash_cache_path(base_dir)
     sha_path = sha_path and os.path.join(os.path.dirname(sha_path), "proof-sha-cache.json")
     try:
-        with open(sha_path, encoding="utf-8") as f:
+        with os.fdopen(_state_fd(sha_path), encoding="utf-8") as f:
             known = json.load(f)
         known = known if isinstance(known, dict) else {}
     except (OSError, ValueError, TypeError):
@@ -3364,7 +3378,8 @@ def run_proof_block(modified_files: list) -> tuple:
             refs.append((label, path))   # read below, and only when a fresh image needs them
             continue
         try:
-            data = path.read_bytes()
+            with os.fdopen(_state_fd(path), "rb") as f:   # a FIFO in a proof folder must not hang the gate
+                data = f.read()
         except OSError:
             continue
         fresh.append((path.stat().st_mtime, label, data))
@@ -3377,7 +3392,8 @@ def run_proof_block(modified_files: list) -> tuple:
     need_ref_bits = any(bits is not None for bits in fresh_bits)   # a reference is compared only with a hashable fresh image
     for label, path in refs:
         try:
-            data = path.read_bytes()
+            with os.fdopen(_state_fd(path), "rb") as f:
+                data = f.read()
         except OSError:
             continue
         if data:   # a reference: remembered, never judged
@@ -3503,7 +3519,7 @@ def acquire_test_run_lock(project_dir):
         state.mkdir(parents=True, exist_ok=True)
         if not (state / ".gitignore").exists():
             (state / ".gitignore").write_text("*\n", encoding="utf-8")
-        fh = open(state / TEST_RUN_LOCK, "a")
+        fh = os.fdopen(_state_fd(state / TEST_RUN_LOCK, "a"), "a")
     except OSError as e:
         log_warn(tr(f"Không tạo được khoá chạy test ({e}) — chạy không khoá", f"Cannot create the test-run lock ({e}) — running unlocked"))
         return None, True
@@ -5339,7 +5355,7 @@ def main():
     try:
         report_file.parent.mkdir(parents=True, exist_ok=True)
         # backslashreplace: a non-UTF-8 file name (decoded with surrogateescape) crashed this write AFTER the verdict (A8)
-        with open(report_file, "w", encoding="utf-8", errors="backslashreplace") as f:
+        with os.fdopen(_state_fd(report_file, "w"), "w", encoding="utf-8", errors="backslashreplace") as f:
             f.write(tr("# 📋 Báo Cáo Kiểm Toán Post-Fix Gate\n\n", "# 📋 Post-Fix Gate Audit Report\n\n"))
             f.write(f"**{tr('Thời gian', 'Time')}:** {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"**{tr('Dự án', 'Project')}:** {matrix.get('project', 'Universal Platform')}\n")
@@ -5447,7 +5463,8 @@ def run_brief():
     out = (Path(gd) if gd else Path(tempfile.gettempdir())) / "postfix-gate" / "last_output.log"
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(text, encoding="utf-8", errors="backslashreplace")
+        with os.fdopen(_state_fd(out, "w"), "w", encoding="utf-8", errors="backslashreplace") as f:
+            f.write(text)
     except OSError as e:
         out = Path(f"(không ghi được: {e})")
     keep, tail, summary = [], 0, False

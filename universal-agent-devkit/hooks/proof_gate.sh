@@ -52,7 +52,8 @@ fi
 [ -n "${REPO_ROOT}" ] || exit 0
 LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
 mkdir -p "${LOG_DIR}" 2>/dev/null
-[ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+# -e, not -f: a FIFO planted there is not a file, and the redirect into it blocked the hook until its timeout (= the Stop passes)
+[ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
 
 if [ "${PROOF_GATE:-1}" = "0" ]; then
   echo "[$(date +%Y-%m-%dT%H:%M:%S)] skipped: PROOF_GATE=0" >> "${LOG_DIR}/proof_gate.log"
@@ -71,7 +72,7 @@ done
 # macOS ~1 MiB for args + env) python could not start and the gate passed (tests/gates/test_hook_large_payload.sh).
 PROOF_REPO="${REPO_ROOT}" PROOF_LOG_DIR="${LOG_DIR}" PROOF_HOOKDIR="$(dirname "${SELF}")" \
 PROOF_BIN="$(cd "$(dirname "${SELF}")/../bin" 2>/dev/null && pwd)" python3 -I <<'PY' 3<<<"${INPUT}"
-import datetime, glob, hashlib, json, math, os, re, sys, time
+import datetime, glob, hashlib, json, math, os, re, stat, sys, time
 
 repo = os.environ["PROOF_REPO"]
 log_dir = os.environ["PROOF_LOG_DIR"]
@@ -81,9 +82,18 @@ min_bytes = int(os.environ.get("PROOF_MIN_BYTES", "8192"))
 max_blocks = int(os.environ.get("PROOF_GATE_MAX_BLOCKS", "2"))
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
 
+def open_reg(path, flags=os.O_RDONLY):
+    """fd of the REGULAR file at path, never waited on: a FIFO an agent planted at a state file blocked open() until the hook's
+    timeout, and a Stop hook killed by its timeout lets the Stop through (issues-bugs A.4). OSError otherwise, as for a missing file."""
+    fd = os.open(path, flags | getattr(os, "O_NONBLOCK", 0), 0o666)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise OSError("not a regular file: %s" % path)
+    return fd
+
 def log(msg):
     try:
-        with open(log_path, "a", encoding="utf-8") as f:
+        with os.fdopen(open_reg(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND), "a", encoding="utf-8") as f:
             f.write("[%s] %s\n" % (datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), msg))
     except OSError:
         pass
@@ -169,7 +179,7 @@ PUSH_WENT = re.compile(r"^(?!.*\[(?:remote )?rejected\]).*\S\s+->\s+\S", re.M)
 
 def safe_digest(p):
     try:
-        with open(p, "rb") as f: return hashlib.sha256(f.read()).hexdigest()
+        with os.fdopen(open_reg(p), "rb") as f: return hashlib.sha256(f.read()).hexdigest()
     except OSError:
         return None
 
@@ -284,7 +294,7 @@ def full_gate_problem():
         return "không tìm thấy bin/tree_fp.py của DevKit"
     rp = tree_fp.receipt_path(repo)
     try:
-        rec = json.load(open(rp, encoding="utf-8")) if rp else None
+        rec = json.load(os.fdopen(open_reg(rp), encoding="utf-8")) if rp else None
     except (OSError, ValueError):
         rec = None
     if not rec:
@@ -369,7 +379,7 @@ if xong and need_image and os.environ.get("PROOF_BEFORE", "1") != "0":
     try:
         tc_path = os.path.join(repo, ".claude", "audit-gate", "turn_class_%s.json" % (re.sub(r"[^A-Za-z0-9_-]", "_", session)[:64] or "default"))
         try:
-            with open(tc_path, encoding="utf-8") as f:
+            with os.fdopen(open_reg(tc_path), encoding="utf-8") as f:
                 tc = json.load(f)
             if not isinstance(tc, dict):
                 raise ValueError("not dict")
@@ -429,7 +439,7 @@ if not gate_problem and (good or not need_image) and not problems and not missin
 
 state = {}
 try:
-    with open(state_path, encoding="utf-8") as fh:
+    with os.fdopen(open_reg(state_path), encoding="utf-8") as fh:
         state = json.load(fh)
 except (OSError, ValueError):
     state = {}
