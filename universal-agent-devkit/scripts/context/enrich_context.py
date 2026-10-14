@@ -159,6 +159,35 @@ INTENT_TERMS = {
 }
 
 
+GIAO_CONFIG = ".antigravity-pm.json"
+
+
+def giao_default(project_root):
+    """(on, note) of the /giao default flag (user, 2026-10-14: "mỗi prompt đều mặc định bật /giao lên, khi nào tắt tôi sẽ false sau").
+    `giaoDefault` in <project>/.antigravity-pm.json, else in the global ~/.antigravity-pm.json (ANTIGRAVITY_PM_GLOBAL_CONFIG moves it, as
+    for the PM server); the project file wins. Only a JSON boolean counts: a broken file or another type is OFF and `note` says so, so a typo
+    never turns delegation on or off in silence. Absent = off."""
+    glob = os.environ.get("ANTIGRAVITY_PM_GLOBAL_CONFIG") or os.path.join(os.path.expanduser("~"), GIAO_CONFIG)
+    project_file = os.path.join(project_root, GIAO_CONFIG) if project_root else None
+    for path in (project_file, glob):
+        if not path or not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError, RecursionError) as e:   # RecursionError: a pathologically nested file on the system python 3.9
+            return False, f"{path} không đọc được ({type(e).__name__}): giaoDefault coi như false"   # the PROJECT file wins even when broken: fail closed
+        if not isinstance(data, dict):   # valid JSON but no object ([], true, "x", null): the project file still wins, fail closed
+            return False, f"{path} không phải object JSON: giaoDefault coi như false"
+        value = data.get("giaoDefault")
+        if isinstance(value, bool):
+            return value, ""
+        if value is not None:
+            shown = json.dumps(value, ensure_ascii=False)[:80]   # a huge value must not ride along in every prompt
+            return False, f"giaoDefault trong {path} phải là true/false (JSON boolean), không phải {shown}: coi như false"
+    return False, ""
+
+
 def enrich_prompt(prompt, devkit_root=".", project_root=None):
     dossier = {
         "dossier_type": "5D_CONTEXT_DOSSIER",
@@ -263,6 +292,17 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
     if mentions(p_lower, ["giao cho", "giao việc", "giao task", "antigravity", "pm", "phân công"]):
         dossier["detected_intents"].append("DUAL_AGENT_DELEGATION")
         dossier["recommended_skills"].append("giao")
+
+    giao_on, giao_note = giao_default(project_root or devkit_root)
+    if giao_note:
+        dossier.setdefault("notices", []).append(giao_note)   # printed even when nothing else matched: a bad flag must not be silent
+    if giao_on:
+        # An ORDER, not a classification: a real intent here turned off shown_refs()'s noise filter (weak instinct matches on every chit-chat prompt)
+        # and the GENERAL_TASK fallback (OpenCodeReview 14/10). No slot in the skill line: it shows five, and `giao` there pushed compose-recomp-audit / qa-visual out (INSTINCT-022); the order below names it.
+        dossier.setdefault("orders", []).append(
+            "GIAO MẶC ĐỊNH BẬT (giaoDefault=true trong .antigravity-pm.json, người dùng tự đặt false để tắt): việc nào sẽ sửa file/code thì TỰ chạy skill `giao` "
+            "(task → kế hoạch → phản biện → implement → audit → test → ảnh nghiệm thu → nghiệm thu) thay vì tự làm, kể cả việc nhỏ; "
+            "câu hỏi, đọc, giải thích, không đổi file thì trả lời trực tiếp.")
 
     if mentions(p_lower, ["crashlytics", "traces.txt", "stacktrace", "sập app", "triage"]):
         dossier["detected_intents"].append("CRASH_TRIAGE")
@@ -491,9 +531,13 @@ def compact(dossier, project_root, limit=4):
     the UI lines (once per session, dedupe_session) — the price of "no UI word needed"."""
     intents = [i for i in dossier["detected_intents"] if i != "GENERAL_TASK"]
     refs = shown_refs(dossier, limit)
-    if not intents and not refs:
+    notices = dossier.get("notices") or []
+    orders = dossier.get("orders") or []
+    if not intents and not refs and not notices and not orders:
         return ""
     out = [f"[DevKit] Ngữ cảnh tự động cho yêu cầu này (profile: {dossier['active_profile']}):"]
+    out.extend("- ⚠ " + n for n in notices)
+    out.extend("- " + o for o in orders)
     if intents:
         out.append("- Loại việc: " + ", ".join(intents))
     if dossier.get("paired_oracle_spec", {}).get("required"):
