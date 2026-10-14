@@ -253,6 +253,58 @@ hook PreToolUse "$M" Bash '{"command": "echo '"'"'echo x > README.md'"'"' | sh"}
   && ok "  … at the hook too: the switch inside a substitution or piped into a shell is refused; a piped write is judged where it runs (worktree 0, main 2)" \
   || fail "nested scripts at the hook: subst=$r6 pipe=$r7 worktree-write=$r8 main-write=$r9"
 
+# 2c R4a (principal review 14/10): the `env` block of a Claude settings file is the environment of the hooks of the next session (measured with
+#    `claude -p` 2.1.299: a project .claude/settings.local.json env reached a hook), and settings.local.json is git-ignored: WORKTREE_TRUNK_MODE=0 written
+#    there is the user's switch by another door. Edit / Write / MultiEdit into a settings file, and Bash that writes one, are refused; value 1, reads
+#    and other keys are not.
+python3 - "$DEVKIT_DIR" "$M" > "$TMP/unit4" 2>&1 <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + "/bin")
+import session_lock as sl
+m = sys.argv[2]
+S = m + "/.claude/settings.local.json"
+OFF, ON = '{"env": {"WORKTREE_TRUNK_MODE": "0"}}', '{"env": {"WORKTREE_TRUNK_MODE": "1"}}'
+W = lambda path, content: ("Write", {"file_path": path, "content": content}, "")
+B = lambda c: ("Bash", {"command": c}, c)
+cases = [
+    (True, "Write settings.local.json with the key 0", W(S, OFF)),
+    (True, "Write ~/.claude/settings.json with the key 0", W("/Users/x/.claude/settings.json", OFF)),
+    (True, "Write with the key empty", W(S, '{"env": {"WORKTREE_TRUNK_MODE": ""}}')),
+    (True, "Edit new_string adding the key 0", ("Edit", {"file_path": S, "old_string": '"env": {', "new_string": '"env": {"WORKTREE_TRUNK_MODE": "0", '}, "")),
+    (True, "MultiEdit with one edit adding the key 0", ("MultiEdit", {"file_path": S, "edits": [{"old_string": "a", "new_string": "b"}, {"old_string": "{", "new_string": '{"env": {"WORKTREE_TRUNK_MODE": "0"},'}]}, "")),
+    (True, "Bash echo > settings.local.json", B("echo '" + OFF + "' > .claude/settings.local.json")),
+    (True, "Bash cat > settings.local.json <<EOF", B("cat > .claude/settings.local.json <<'EOF'\n" + OFF + "\nEOF")),
+    (True, "Bash tee", B("echo '" + OFF + "' | tee ~/.claude/settings.json")),
+    (True, "Bash sed -i", B("sed -i 's/\"WORKTREE_TRUNK_MODE\": \"1\"/\"WORKTREE_TRUNK_MODE\": \"0\"/' .claude/settings.json")),
+    (True, "Bash jq > then mv", B("jq '.env.WORKTREE_TRUNK_MODE=\"0\"' .claude/settings.local.json > /tmp/x && mv /tmp/x .claude/settings.local.json")),
+    (True, "Bash python heredoc editing the file", B("python3 - <<'EOF'\nimport json\np = '.claude/settings.local.json'\nd = json.load(open(p)); d.setdefault('env', {})['WORKTREE_TRUNK_MODE'] = '0'; json.dump(d, open(p, 'w'))\nEOF")),
+    (False, "Write settings.local.json with the key 1", W(S, ON)),
+    (False, "Write settings.local.json with other keys", W(S, '{"env": {"FOO": "0"}, "enableAllProjectMcpServers": true}')),
+    (False, "Write a doc that names the key", W(m + "/docs/notes.md", "WORKTREE_TRUNK_MODE=0 turns trunk mode off")),
+    (False, "Edit removing the key", ("Edit", {"file_path": S, "old_string": '"WORKTREE_TRUNK_MODE": "0"', "new_string": '"X": "1"'}, "")),
+    (False, "Bash grep reading the key from settings", B("grep -n WORKTREE_TRUNK_MODE .claude/settings.local.json")),
+    (False, "Bash cat | grep", B("cat .claude/settings.local.json | grep WORKTREE_TRUNK_MODE")),
+    (False, "Bash sed -n | grep", B("sed -n 1,20p .claude/settings.json | grep WORKTREE_TRUNK_MODE")),
+    (False, "a commit message that talks about it", B("git commit -qm \"docs: WORKTREE_TRUNK_MODE=0 in settings.local.json is the user's switch\"")),
+    (False, "Bash writing the key with value 1", B("echo '" + ON + "' > .claude/settings.local.json")),
+    (False, "Bash echo of the key to a file that is no settings file", B("echo WORKTREE_TRUNK_MODE=0 > /tmp/notes.txt")),
+]
+bad = 0
+for want, label, (tool, ti, cmd) in cases:
+    got = sl.trunk_env_in_settings(tool, ti, cmd)
+    if got != want:
+        bad += 1
+        print(f"✖ {label}: want {want}, got {got}")
+print(f"unit-bad={bad} of {len(cases)}")
+PY
+grep -q "unit-bad=0 " "$TMP/unit4" && ok "trunk_env_in_settings: $(grep -o 'of [0-9]*' "$TMP/unit4") cases (WORKTREE_TRUNK_MODE other than 1 into a settings file refused: Write / Edit / MultiEdit / Bash; value 1, reads, other keys, other files pass)" \
+  || { fail "trunk_env_in_settings cases"; grep "✖\|Error\|assert" "$TMP/unit4" | head -12; }
+mkdir -p "$TMP/home/.claude"
+hook PreToolUse "$W" Write "{\"file_path\": \"$TMP/home/.claude/settings.json\", \"content\": \"{\\\"env\\\": {\\\"WORKTREE_TRUNK_MODE\\\": \\\"0\\\"}}\"}"; r1=$?
+grep -q "NGƯỜI DÙNG" "$TMP/err" && r1m=said || r1m=silent
+hook PreToolUse "$W" Write "{\"file_path\": \"$TMP/home/.claude/settings.json\", \"content\": \"{\\\"env\\\": {\\\"FOO\\\": \\\"0\\\"}}\"}"; r2=$?
+[ "$r1" = 2 ] && [ "$r1m" = said ] && [ "$r2" = 0 ] && ok "  … at the hook: a Write of the key 0 into a settings file is refused with whose switch it is; another key passes" || fail "settings env at the hook: key=$r1 ($r1m) other=$r2"
+
 # 3 a lock on main left from before trunk mode (a live other session) changes nothing: writes refused by the trunk rule, the integrator passes
 python3 -c 'import json,os,sys,time; json.dump({"session_id":"old-holder","started":time.time(),"heartbeat":time.time(),"cwd":sys.argv[1],"pid":os.getppid()}, open(sys.argv[2],"w"))' \
   "$M" "$(git -C "$M" rev-parse --absolute-git-dir)/devkit-session.lock"

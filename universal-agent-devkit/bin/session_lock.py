@@ -1044,6 +1044,46 @@ def is_trunk_off(cmd, depth=0):
     return False
 
 
+_SETTINGS_FILE = _Re(r"settings[\w.-]*\.json")
+_SETTINGS_PATH = _Re(r"(?:^|/)settings[\w.-]*\.json$")
+_TRUNK_ENV = _Re(r"WORKTREE_TRUNK_MODE\W{0,12}(?P<v>\w*)")   # JSON `"WORKTREE_TRUNK_MODE": "0"`, shell `WORKTREE_TRUNK_MODE=0`, python `['WORKTREE_TRUNK_MODE']='0'`
+_PURE_READERS = frozenset(("grep", "egrep", "fgrep", "rg", "ag", "cat", "bat", "less", "more", "head", "tail", "wc", "nl", "file", "stat", "ls", "diff", "cmp", "jq"))
+
+
+def trunk_env_in_settings(tool, tool_input, command):
+    """True when a tool call writes WORKTREE_TRUNK_MODE (anything but 1) into a Claude settings file (settings.json, settings.local.json, any
+    folder): that file's `env` block is the environment of the hooks of the next session - MEASURED 14/10 with `claude -p` (Claude Code 2.1.299,
+    a project .claude/settings.local.json `env` reached a hook as printenv shows it) - so this is the user's switch (R7) by another door, and
+    settings.local.json is git-ignored, so no other rule looks at it (principal review R4a). Edit / Write / MultiEdit: the text written into a
+    settings file; Bash: the key with a value that is not 1 in a command that redirects into, or runs a program other than a pure reader on, a
+    settings file named as a word (a commit message or a grep that talks about it is no write). ponytail: a file name built from pieces."""
+    def off(text):
+        return any(m.group("v") != "1" for m in _TRUNK_ENV.finditer(text))
+    if tool in EDIT_TOOLS:
+        ti = tool_input if isinstance(tool_input, dict) else {}
+        path = ti.get("file_path") or ti.get("notebook_path") or ti.get("path")
+        if not (isinstance(path, str) and _SETTINGS_PATH.search(path)):
+            return False
+        texts = [ti.get("content"), ti.get("new_string"), ti.get("new_source")] + [e.get("new_string") for e in ti.get("edits") or [] if isinstance(e, dict)]
+        return any(isinstance(t, str) and off(t) for t in texts)
+    if tool != "Bash" or "WORKTREE_TRUNK_MODE" not in command or not _SETTINGS_FILE.search(command) or not off(command):
+        return False
+    if any(t and _SETTINGS_FILE.search(t) for t in _redirect_targets(command)):
+        return True
+    import shlex   # noqa: PLC0415 - only a command that names the key and a settings file pays for it
+    for seg in _split_segments(_clean(command))[::2]:
+        try:
+            raw = shlex.split(seg)
+        except ValueError:
+            raw = seg.split()
+        if any(_SETTINGS_FILE.search(w) and not re.search(r"\s", w) for w in raw):
+            words = _cmd_words(seg)
+            base = os.path.basename(words[0]) if words else ""
+            if not words or not (base in _PURE_READERS or (base in ("sed", "awk") and not any(w.startswith("-i") or w == "--in-place" for w in words[1:]))):
+                return True
+    return False
+
+
 def _unquote(word):
     return word[1:-1] if len(word) >= 2 and word[0] in "\"'" and word[-1] == word[0] else word
 
@@ -1668,6 +1708,10 @@ def main():
         print("⛔ [DevKit] Công tắc trunk mode là của NGƯỜI DÙNG: agent không tự tắt (`agent-kit worktree trunk off`, `git config devkit.trunkMode` "
               "khác true hay --unset, WORKTREE_TRUNK_MODE=0 trong lệnh). Bật thêm (`trunk on`) và đọc thì được. Cần tắt: nhờ người dùng chạy "
               "`! agent-kit worktree trunk off`.", file=sys.stderr)
+        return 2
+    if trunk_env_in_settings(tool, d.get("tool_input"), command):
+        print("⛔ [DevKit] Công tắc trunk mode là của NGƯỜI DÙNG: agent không ghi WORKTREE_TRUNK_MODE (khác 1) vào file settings của Claude (khối `env` "
+              "của settings*.json là môi trường của hook ở phiên sau). Cần tắt: nhờ người dùng chạy `! agent-kit worktree trunk off`.", file=sys.stderr)
         return 2
     foreign = None
     if tool in EDIT_TOOLS:
