@@ -287,15 +287,25 @@ printf '# Luật voice\n\n1. **Xe im còn hơn làm sai** khi không chắc lệ
 _ri="$DEVKIT_DIR/scripts/context/rules_index.py"; [ -f "$_ri" ] || _ri="$DEVKIT_DIR/scripts/rules_index.py"
 idx="$(python3 "$_ri" "$R8")"
 printf '%s' "$idx" > "$R8/.agents/context/rules-index.md"
-[ "$(printf '%s' "$idx" | grep -c '\.agents/local/rules/voice\.md')" = 1 ] && printf '%s' "$idx" | grep -q 'Xe im còn hơn làm sai — L3–3' \
-  && printf '%s' "$idx" | grep -q "sed -n 'a,bp'" \
-  && ok "index: path once in the heading, each rule line keeps its lead + L a–b, header says how to open it" \
+# Compact line format (ctx5, 13/10: rubric dim 5, OfficeReader's index 9.9 KB): `- <title> La-b`, `La` for one line, one space
+# of indent per level, the path only in the `## \`path\`` heading. Titles are kept as before (a bold lead is a rule).
+[ "$(printf '%s' "$idx" | grep -c '\.agents/local/rules/voice\.md')" = 1 ] && printf '%s\n' "$idx" | grep -qx -- '  - 1\. Xe im còn hơn làm sai L3' \
+  && printf '%s\n' "$idx" | grep -qx -- '  - 2\. Không đoán ESC là điều hoà L4-5' && printf '%s\n' "$idx" | grep -qx -- '## `\.agents/local/rules/voice\.md`' \
+  && printf '%s' "$idx" | grep -q "sed -n 'a,bp'" && ! printf '%s' "$idx" | grep -q ' — L' \
+  && ok "index: path once in the heading, each rule line keeps its lead + La-b (La for one line), header says how to open it" \
   || fail "index format: $(printf '%s' "$idx" | tail -5 | tr '\n' '|')"
 _rc="$DEVKIT_DIR/scripts/context/rule_context.py"; [ -f "$_rc" ] || _rc="$DEVKIT_DIR/scripts/rule_context.py"
 out="$(printf '{"prompt":"sửa lỗi xe đoán ESC là điều hoà"}' | CLAUDE_PROJECT_DIR="$R8" python3 "$_rc")"
 printf '%s' "$out" | grep -q "sed -n '4,5p' .agents/local/rules/voice.md" \
   && ok "rule_context: a matching rule comes back as a runnable sed command (new format)" \
   || fail "rule_context new format: $out"
+out="$(printf '{"prompt":"xe im còn hơn làm sai khi nghe không rõ"}' | CLAUDE_PROJECT_DIR="$R8" python3 "$_rc")"
+printf '%s' "$out" | grep -q "sed -n '3,3p' .agents/local/rules/voice.md" \
+  && ok "rule_context: a one-line rule (La) comes back as sed -n 'a,ap'" || fail "rule_context one-line rule: $out"
+printf '## voice.md — `.agents/local/rules/voice.md`\n    - 2. Không đoán ESC là điều hoà — L4–5\n' > "$R8/.agents/context/rules-index.md"
+out="$(printf '{"prompt":"sửa lỗi xe đoán ESC là điều hoà"}' | CLAUDE_PROJECT_DIR="$R8" python3 "$_rc")"
+printf '%s' "$out" | grep -q "sed -n '4,5p' .agents/local/rules/voice.md" \
+  && ok "rule_context: an index written before the compact format (— L a–b) still works" || fail "rule_context pre-compact format: $out"
 printf '# Rules index\n- Bluetooth và đổi bài hát A2DP — `sed -n '"'"'1,20p'"'"' .agents/local/rules/audio.md`\n' > "$R8/.agents/context/rules-index.md"
 out="$(printf '{"prompt":"lỗi bluetooth đổi bài hát a2dp"}' | CLAUDE_PROJECT_DIR="$R8" python3 "$_rc")"
 printf '%s' "$out" | grep -q "sed -n '1,20p' .agents/local/rules/audio.md" \

@@ -101,14 +101,15 @@ def profile_hits(lines, want):
 def project_hits(lines, want):
     scored, current = [], None
     for line in lines:
-        h = re.match(r"## .+? — `([^`]+)`\s*$", line)
+        h = re.match(r"## (?:.+? — )?`([^`]+)`\s*$", line)
         if h:
             current = h.group(1)
             continue
-        # `- title — L a–b` under the file's ## heading (O5), or the older `- title — \`sed -n …\``.
-        m = re.match(r"\s*- (.+?) — L(\d+)[–-](\d+)\s*$", line)
+        # `- title La-b` / `- title La` under the `## \`path\`` heading (compact, 13/10), `- title — L a–b` (O5, an index
+        # not re-synced yet), or the older `- title — \`sed -n …\``.
+        m = re.match(r"\s*- (.+?) — L(\d+)[–-](\d+)\s*$", line) or re.match(r"\s*- (.+?) L(\d+)(?:-(\d+))?\s*$", line)
         if m and current:
-            cmd = f"`sed -n '{m.group(2)},{m.group(3)}p' {current}`"
+            cmd = f"`sed -n '{m.group(2)},{m.group(3) or m.group(2)}p' {current}`"
         else:
             m = re.match(r"\s*- (.+?) — (`sed -n '\d+,\d+p' [^`]+`)\s*$", line)
             if not m:
