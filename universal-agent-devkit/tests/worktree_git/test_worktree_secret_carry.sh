@@ -117,4 +117,28 @@ mkdir -p "$O/keystore" && echo "ORPHAN" > "$O/keystore/dup.jks"
 [ -d "$O" ] && [ "$(cat "$P/keystore/dup.jks")" = MAIN ] && grep -q "g8-orphan.*keystore/dup.jks" "$TMP/gc.out" \
   && ok "8: gc keeps a folder whose secret differs from main's, names it, main's file intact" || fail "8: $(cat "$TMP/gc.out")"
 
+# 9 (OpenCodeReview): the scan of the ignored folders stops at WORKTREE_SECRET_SCAN_MAX files; what it did not read may hold a key, so
+#   the worktree is KEPT (merged, not removed) and the message says which folder and what to do
+new_main m9 '*.jks
+cache-data/'; W="$TMP/sc-i"; wt "$W"; mkdir -p "$W/cache-data"
+for n in 1 2 3 4 5 6 7 8; do echo "$n" > "$W/cache-data/f$n.bin"; done; echo k > "$W/cache-data/late.jks"; echo i > "$W/i.txt"
+WORKTREE_SECRET_SCAN_MAX=4 fin "$W"; rc=$?
+[ "$rc" = 1 ] && [ -d "$W" ] && [ -f "$P/i.txt" ] && grep -q "cache-data" "$TMP/out" && grep -q "WORKTREE_SECRET_SCAN_MAX" "$TMP/out" \
+  && ok "9: a scan cut short keeps the worktree (merged, not removed), naming the folder and the knob" || fail "9: (rc=$rc, exists=$([ -d "$W" ] && echo y || echo n)): $(cat "$TMP/out")"
+if [ -d "$W" ]; then
+  fin "$W"; rc=$?   # the default cap reads it all: the key is carried, the worktree removed
+  [ "$rc" = 0 ] && [ ! -d "$W" ] && [ "$(cat "$P/cache-data/late.jks" 2>/dev/null)" = k ] && ok "  … read in full, the key reaches main and the worktree goes" || fail "  … (rc=$rc): $(cat "$TMP/out")"
+fi
+
+# 10 (OpenCodeReview): gc judges a name only _secret_like knows (not GC_SECRETS) as before: a package's fixture under node_modules/
+#    (ignored, rebuildable) and a committed fixture main has changed since (its content is in a kept commit) are not unique
+new_main g10 'node_modules/'; mkdir -p "$P/fixtures" && echo "v1" > "$P/fixtures/credentials-test.json" && G "$P" add fixtures && G "$P" commit -qm fixture
+echo "v2" > "$P/fixtures/credentials-test.json" && G "$P" commit -qam "fixture v2"
+O="$TMP/g10-orphan"; G "$P" worktree add -q --detach "$O" && rm -rf "$P/.git/worktrees/g10-orphan"
+mkdir -p "$O/node_modules/pkg/test" && echo '{"type":"x"}' > "$O/node_modules/pkg/test/credentials-ci.json" && echo "v1" > "$O/fixtures/credentials-test.json"
+(cd "$P" && python3 "$WTPY" gc) > "$TMP/gc.out" 2>&1
+[ ! -d "$O" ] && [ ! -e "$P/node_modules" ] && [ "$(cat "$P/fixtures/credentials-test.json")" = v2 ] \
+  && ok "10: gc deletes an orphan whose only such files are a node_modules fixture and a committed fixture (nothing copied into main)" \
+  || fail "10: kept or copied: $(cat "$TMP/gc.out")"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_secret_carry: all passed" || { echo "❌ test_worktree_secret_carry: $FAILS failed"; exit 1; }

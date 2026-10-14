@@ -309,15 +309,18 @@ gone_rows = []   # [{realpath: inventory row} or None], filled once by gone_refl
 
 def gone_reflog(path):
     """The commits only the HEAD reflog of a registered worktree whose folder is gone names (inventory() reads that reflog from the admin
-    dir git keeps until a prune: docs/issues-bugs.md A.2 #3): [] none, None cannot say. ONE inventory for every such folder, read at the
-    first call (one ref-tip scan and one budget inside this hook's alarm; budget 0: the checks that clear a worktree are
-    gone_folder_reason's own). No row while a fresh listing still shows the path is "cannot say"; only its absence there proves it
+    dir git keeps until a prune: docs/issues-bugs.md A.2 #3): [] none, None cannot say. ONE inventory, at the first call, for every deleted
+    folder this session made, named or owes (the main loop's test; another session's or an old registration never spends this hook's
+    alarm) and always for `path` (an empty `only` would mean every worktree); budget 0: the checks that clear a worktree are
+    gone_folder_reason's own. No row while a fresh listing still shows the path is "cannot say"; only its absence there proves it
     unregistered (its reflog went with it)."""
     if not gone_rows:
         rows = None
         if wt is not None:
+            mine = [p for p in paths if not os.path.exists(p)
+                    and (os.path.realpath(p) in finished or os.path.realpath(p) in raw_owed or mentioned(p, os.path.realpath(p)))]
             try:
-                rows = {os.path.realpath(r["path"]): r for r in wt.inventory(repo, only=[p for p in paths if not os.path.isdir(p)], budget=0)}
+                rows = {os.path.realpath(r["path"]): r for r in wt.inventory(repo, only=mine + ([] if path in mine else [path]), budget=0)}
             except (Exception, SystemExit):
                 rows = None
         gone_rows.append(rows)

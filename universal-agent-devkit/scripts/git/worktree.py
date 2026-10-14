@@ -1712,15 +1712,17 @@ def _carry_skip_dirs():
                                              ".pnpm-store", ".cache", "site-packages", ".nuxt", ".svelte-kit", ".parcel-cache", ".turbo", ".expo"}
 
 
-def _ignored_secrets(wt, limit=50000):
+def _ignored_secrets(wt, limit=None):
     """A.1b #12: ([(rel, absolute path)], cut) — the git-ignored, secret-like (_secret_like) REGULAR files of worktree `wt`: no link, nothing
-    under a _carry_skip_dirs() folder. A folder git lists whole as ignored is walked (links never followed), `limit` entries at most (`cut`:
-    the walk stopped there). SystemExit when git cannot list them."""
+    under a _carry_skip_dirs() folder. A folder git lists whole as ignored is walked (links never followed), `limit` files at most
+    (WORKTREE_SECRET_SCAN_MAX, 200000; 0: no limit); `cut`: the ignored folder the walk stopped in ("" when it read everything): what it
+    did not read may hold a key, so the caller must keep the worktree. SystemExit when git cannot list them."""
+    limit = _env_limit("WORKTREE_SECRET_SCAN_MAX", 200000) if limit is None else limit
     skip = _carry_skip_dirs()
     r = _git_bytes(wt, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
     if r.returncode != 0:
         raise SystemExit(f"✖ worktree: git ls-files --ignored: {r.stderr.decode('utf-8', 'replace').strip()}")
-    found, seen, cut = {}, 0, False
+    found, seen, cut = {}, 0, ""
     for ent in r.stdout.decode("utf-8", "surrogateescape").split("\0"):
         parts = ent.rstrip("/").split("/")
         if not ent or any(p in skip for p in (parts if ent.endswith("/") else parts[:-1])):
@@ -1732,8 +1734,8 @@ def _ignored_secrets(wt, limit=50000):
                 dirs[:] = [x for x in dirs if x not in skip and not os.path.islink(os.path.join(d, x))]
                 names += [os.path.relpath(os.path.join(d, f), wt).replace(os.sep, "/") for f in files]
                 seen += len(files)
-                if seen > limit:   # ponytail: a huge ignored folder outside the skip list (a cache) is not read to the end; widen the list when one holds keys
-                    cut = True
+                if limit and seen > limit:   # a huge ignored folder outside the skip list (a cache): not read to the end, so not removed either
+                    cut = ent
                     break
         for rel in names:
             try:
@@ -2090,10 +2092,17 @@ def _automerge_locked(cwd, main, wt, keep=False):
         return "blocked", tr(f"đã gộp vào main nhưng không chép được memory note của worktree ({e}); worktree còn nguyên", f"merged into main but the worktree's memory notes could not be copied ({e}); the worktree is untouched"), {"merged": True}
     try:   # A.1b #12: a git-ignored secret only the worktree holds (a keystore made there) goes to main, never with the folder
         secrets, cut = _ignored_secrets(wt)
-        carried, refused = _carry_secrets(main, secrets)
+        carried, refused = ([], []) if cut else _carry_secrets(main, secrets)
     except (OSError, SystemExit, UnicodeError) as e:
         return "blocked", tr(f"đã gộp vào main nhưng không kiểm / chép được file bí mật bị ignore của worktree ({e}); worktree còn nguyên",
                              f"merged into main but the worktree's git-ignored secret files could not be checked or copied ({e}); the worktree is untouched"), {"merged": True}
+    if cut:   # what the scan did not read may hold a key: never removed unread
+        return "blocked", tr(f"đã gộp vào main nhưng CHƯA gỡ worktree: dò file bí mật bị git ignore dừng trong {cut} (quá WORKTREE_SECRET_SCAN_MAX file) — phần chưa "
+                             f"đọc có thể có khoá. Thư mục đó là output build / cache thì xoá nó trong worktree, hoặc nâng WORKTREE_SECRET_SCAN_MAX (0: không giới hạn), "
+                             f"rồi chạy lại `agent-kit worktree finish {shlex.quote(wt)}`",
+                             f"merged into main but the worktree is NOT removed: the scan for git-ignored secret files stopped in {cut} (over WORKTREE_SECRET_SCAN_MAX "
+                             f"files) - what it did not read may hold a key. If that folder is build output or a cache, delete it in the worktree, or raise "
+                             f"WORKTREE_SECRET_SCAN_MAX (0: no limit), then run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"merged": True, "files": [cut]}
     if refused:
         # ponytail: a config `worktree add` copied in and main changed since differs too, so it is refused like a key made here; record the
         # copied files' fingerprints at `add` and drop an unchanged stale copy, if that refusal ever shows up in practice
@@ -2127,7 +2136,6 @@ def _automerge_locked(cwd, main, wt, keep=False):
     note = (tr(f" ({len(saved)} memory note đã chép sang main: {', '.join(saved[:5])})", f" ({len(saved)} memory note(s) copied into main: {', '.join(saved[:5])})") if saved else "")
     note += (tr(f" ({len(carried)} file bí mật bị git ignore đã chép sang main, ở đó vẫn bị ignore: {', '.join(carried[:5])})",
                 f" ({len(carried)} git-ignored secret file(s) copied into main, ignored there too: {', '.join(carried[:5])})") if carried else "")
-    note += (tr(" (dò file bí mật dừng ở 50000 file trong thư mục bị ignore)", " (the secret scan stopped after 50000 files in ignored folders)") if cut else "")
     return status, (tr("đã gộp vào main và gỡ worktree", "merged into main and the worktree is removed") if status == "merged"
                     else tr("không có gì chưa về main; đã gỡ worktree", "nothing that was not in main; the worktree is removed")) + note, {"memory_saved": saved, "secrets_saved": carried}
 
@@ -2269,8 +2277,9 @@ def _reachable_blobs(main):
 def _gc_unique(main, top, dangling, carry=None):
     """[(rel, why)] of the files in `top` that may be the only copy of something; [] when every file is provably not unique. With no
     `.git` pointer (`dangling` False) the folder must hold DevKit bookkeeping and nothing but it and noise: anything else (an empty
-    folder or one of links only too) means it is not a leftover. `carry` (a list): a secret (_secret_like) that main lacks, outside a
-    _carry_skip_dirs() folder, goes there as (rel, path) instead of counting as unique: cmd_gc copies it into main first (A.1b #12)."""
+    folder or one of links only too) means it is not a leftover. `carry` (a list): a secret (GC_SECRETS, and _secret_like) that main
+    lacks, outside a _carry_skip_dirs() folder, goes there as (rel, path) instead of counting as unique: cmd_gc copies it into main first
+    (A.1b #12)."""
     files = []
     for dirpath, dirs, names in os.walk(top):
         dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(dirpath, d))]   # a link is never followed (.agents/devkit, a link to main)
@@ -2302,7 +2311,7 @@ def _gc_unique(main, top, dangling, carry=None):
             unique.append((rel.replace("\r", "\\r").replace("\n", "\\n"), tr("tên có ký tự xuống dòng", "a name with a line break")))
         elif rel.startswith(MEMORY_REL.replace(os.sep, "/") + "/"):
             unique.append((rel, tr("ghi chú memory không có ở main", "a memory note main lacks")))
-        elif _secret_like(rel) or any(fnmatch.fnmatch(os.path.basename(rel).lower(), g.lower()) for g in GC_SECRETS):   # a secret is never "rebuildable"
+        elif any(fnmatch.fnmatch(os.path.basename(rel).lower(), g.lower()) for g in GC_SECRETS):   # (a name only _secret_like knows is judged below, as ever)
             if carry is not None and _secret_like(rel) and not os.path.lexists(mine) and not set(rel.split("/")[:-1]) & _carry_skip_dirs():
                 carry.append((rel, p))
             elif os.path.lexists(mine):

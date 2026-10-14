@@ -176,4 +176,21 @@ PATH="$TMP/shim:$PATH" stop A "$TRA"; rc=$?
   || fail "9: passed (rc=$rc) although $(cut -c1-10 "$TMP/wt-unseen.sha") is named by its reflog only: $(cat "$TMP/err")"
 G "$P" worktree prune
 
+# 10 (OpenCodeReview): a deleted worktree this session never made, named or owes (an old registration, another session's) is not
+# inventoried for it: only the session's own deleted folders take the hook's time (each inventory row costs git calls inside its alarm)
+sleep 1.2
+cat > "$TMP/shim/git" <<'SH'
+#!/bin/sh
+for a in "$@"; do case "$a" in *"$FOREIGN_HEAD"*) echo x >> "$FOREIGN_LOG" ;; esac; done
+exec "$REAL_GIT" "$@"
+SH
+chmod +x "$TMP/shim/git"
+WF="$TMP/wt-foreign"; G "$P" worktree add -q --detach "$WF" && echo f > "$WF/f.txt" && G "$WF" add f.txt && G "$WF" commit -qm foreign   # never mentioned
+FOREIGN_HEAD="$(G "$WF" rev-parse HEAD)"; FOREIGN_LOG="$TMP/foreign"; : > "$FOREIGN_LOG"; export FOREIGN_HEAD FOREIGN_LOG; rm -rf "$WF"
+W10="$TMP/wt-mine"; mention "$W10"; G "$P" worktree add -q --detach "$W10"; rm -rf "$W10"
+PATH="$TMP/shim:$PATH" stop A "$TRA"; rc=$?
+[ "$rc" = 0 ] && [ ! -s "$FOREIGN_LOG" ] && ok "10: a deleted worktree the session does not own is never inventoried by its Stop" \
+  || fail "10: rc=$rc, git calls naming the foreign HEAD: $(wc -l < "$FOREIGN_LOG" | tr -d ' '): $(cat "$TMP/err")"
+G "$P" worktree prune
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_reflog_gone_folder: all passed" || { echo "❌ test_worktree_reflog_gone_folder: $FAILS failed"; exit 1; }
