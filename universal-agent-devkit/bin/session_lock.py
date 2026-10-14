@@ -1123,7 +1123,10 @@ def trunk_env_in_settings(tool, tool_input, command):
     a project .claude/settings.local.json `env` reached a hook as printenv shows it) - so this is the user's switch (R7) by another door, and
     settings.local.json is git-ignored, so no other rule looks at it (principal review R4a). Edit / Write / MultiEdit: the text written into a
     settings file; Bash: the key with a value that is not 1 in a command that redirects into, or runs a program other than a pure reader on, a
-    settings file named as a word (a commit message or a grep that talks about it is no write). ponytail: a file name built from pieces."""
+    settings file named as a word (a commit message or a grep that talks about it is no write).
+    ponytail: a tripwire against an agent flipping the switch by accident or with a plain command, not a lock - a Bash value-only edit other than
+    `sed -i`, a two-step copy (write the file elsewhere, then cp / mv it over a settings file) and a name built from pieces are not seen, and
+    each review round found one more variant; upgrade: deny agent writes to settings*.json while trunk mode is on."""
     def off(text):
         return any(m.group("v") != "1" for m in _TRUNK_ENV.finditer(text))
     if tool in EDIT_TOOLS:

@@ -290,6 +290,8 @@ def reown(main, sid, here, is_alive, me=None):
         if osid == sid or not (here == rp or here.startswith(rp + os.sep)):
             continue
         rec_pid = raw_pid(main, osid)
+        # Trade-off (OCR2 5): a /resume gets a new pid, so only "the owner is gone" tells it from a bystander; a session with no record that merely
+        # stands (cd) in a dead peer's worktree takes it over too. It then merges that worktree with --keep and keeps it - the work is never lost.
         if not is_alive(osid) or (me and rec_pid == me):
             if write_record(main, sid, rp, pid=rec_pid):
                 clear_record(main, osid)
