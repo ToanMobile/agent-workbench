@@ -123,7 +123,7 @@ In an installed project, `AGENTS.md` is the project's **only** instruction file 
 | **Antigravity** | `AGENTS.md` and `GEMINI.md` as plain text — no `@` import is expanded (measured 2026-09-25), so the DevKit block carries the essentials in full; `.agents/skills` | none (no hook API) — rules only; before editing it asks `bin/session_lock.py --status` (exit 3: another session holds the checkout — it does not edit, unless that session dispatched the task to it via antigravity-pm / `/giao`) |
 
 Every platform also gets the git **pre-commit** gate (`agent-kit githooks install`, installed by `agent-kit init` in git projects). Hooks that read Claude's transcript (review, test evidence, claims) exist only on Claude Code.
-- **Living regression checklist — automatic parts and their off switches** (`=0` turns one off; `.agents/CHECKLIST.md`, `docs/plans/regression-checklist-v3.md`):
+- **Living regression checklist — automatic parts and their off switches** (`=0` turns one off; `.agents/CHECKLIST.md`, `docs/workflow-improvements.md` II.B):
 
   | Switch | What it does | Hook / tool |
   |---|---|---|

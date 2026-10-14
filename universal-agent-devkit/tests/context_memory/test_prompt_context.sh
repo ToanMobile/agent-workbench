@@ -157,7 +157,7 @@ PY
 zs() { printf '%s\n' "$1" | grep -qF "ZERO-SLOP UI MANDATE"; }                       # the mandate is in the hook text
 skl() { printf '%s\n' "$1" | sed -n 's/^- Skill phù hợp: //p' | tr -d ','; }          # its skill line, space separated
 # A prompt that touches the screen gets the design skill and the mandate: a crash on rotation too
-# (it used to be the one UI prompt that got neither; spec docs/plans/ui-context-injection-zero-slop.md).
+# (it used to be the one UI prompt that got neither; spec docs/workflow-improvements.md II.C).
 o="$(ctx "app crash khi xoay màn hình")"
 has "$(skl "$o")" ui-ux-pro-max && zs "$o" && ok "screen crash prompt → ui-ux-pro-max + ZERO-SLOP" || fail "screen crash prompt → '$o'"
 s="$(skills "sửa lỗi hud bị vỡ layout")"

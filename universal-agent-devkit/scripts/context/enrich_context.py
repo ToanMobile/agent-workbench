@@ -123,7 +123,7 @@ NON_TECHNICAL_PHRASES = re.compile(
     r"|(?<!\w)compose(?:\.ya?ml|\s+up(?!\s+to\b))(?!\w)|(?:sql|materialized|django) views?|views\.py|grafana panels?|panels? grafana"
     r"|(?:credit|debit|payment|bank|gift|sim|sd) cards?|card numbers?|số card|dialog (?:state|manager|system)")
 
-# The UI door (docs/plans/ui-context-injection-zero-slop.md): a UI word in the prompt, or an app
+# The UI door (docs/workflow-improvements.md II.C): a UI word in the prompt, or an app
 # profile, switches on UI_INTERACTION + VISUAL_DESIGN, the Zero-Slop mandate and ui-ux-pro-max.
 # mentions() reads UI_KEYWORDS like every keyword: 4+ letters match the start of a word
 # ("canvas" finds "canvasgroup"), up to 3 only the whole word ("ui" is not in "build").

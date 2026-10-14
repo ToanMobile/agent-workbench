@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hooks/comment_claim_guard.sh read only FULL-LINE comments (2026-10-09 follow-up, plan docs/plans/audit-2026-10-09-followup.md
+# hooks/comment_claim_guard.sh read only FULL-LINE comments (2026-10-09 follow-up, docs/issues-bugs.md B.1
 # step 3 item 3): a claim written in a Python docstring, or after code on the same line, exited 0 while the same words in a
 # full-line comment exit 2 (the cases below spell them out). Python docstrings (a string statement that starts a line with triple
 # quotes) and trailing comments (a # or // outside any

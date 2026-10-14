@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bin/post-fix-gate.py, a suite runner script WITHOUT `set -e` (2026-10-09 follow-up, plan docs/plans/audit-2026-10-09-followup.md
+# bin/post-fix-gate.py, a suite runner script WITHOUT `set -e` (2026-10-09 follow-up, docs/issues-bugs.md B.1
 # step 3 item 3; policy decided by the user: yes, only for runners without set -e). A shell runner's exit status is its LAST command's
 # unless `set -e` stops it at the first failure, so one command appended at the end (`echo done`) made a runner exit 0 over a
 # failing check before it, and the gate counted it a pure append (only `exit 0`, `true`, `|| true`, `set +e` were caught). Now:

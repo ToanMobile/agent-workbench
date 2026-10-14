@@ -1074,7 +1074,7 @@ ctx_case "prompt: matching project trap is cited" prompt_context.sh '{"prompt":"
 ctx_case "prompt: XSS / SQL injection → SECURITY" prompt_context.sh '{"prompt":"sửa lỗ hổng XSS ở ô bình luận"}' "SECURITY"
 ctx_case "prompt: slash command adds nothing" prompt_context.sh '{"prompt":"/compact"}' ""
 # An app profile (android / game / ios / web) always gets the UI door — the Zero-Slop mandate needs no UI word
-# (docs/plans/ui-context-injection-zero-slop.md, "Hệ quả cố ý") — so chit-chat is silent only on the other profiles.
+# (docs/workflow-improvements.md II.C, "Hệ quả cố ý") — so chit-chat is silent only on the other profiles.
 ctx_case "prompt: app profile (web) — even chit-chat gets the UI door" prompt_context.sh '{"prompt":"cảm ơn bạn nhiều nhé"}' "ZERO-SLOP UI MANDATE"
 printf '{"profile":"universal"}' > "${CTX_PROJ}/.agents/active-profile.json"
 ctx_case "prompt: chit-chat adds nothing (non-app profile)" prompt_context.sh '{"prompt":"cảm ơn bạn nhiều nhé"}' ""

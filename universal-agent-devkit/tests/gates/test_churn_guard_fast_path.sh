@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # hooks/churn_guard.sh started python on every Edit/Write (~30 ms on macOS, more with the transcript read) although it can warn only
 # at the Nth landed edit of one file NAME since the last evidence call (N = CHURN_GUARD_MAX, 3 by default; plan
-# docs/plans/audit-2026-10-09-followup.md step 3 item 4). Every landed edit is a tool_use line of the transcript that names the file,
+# docs/issues-bugs.md B.1 step 3 item 4). Every landed edit is a tool_use line of the transcript that names the file,
 # so a transcript with fewer than N lines naming it cannot reach N: bash now counts those lines with `grep -c -F` (8 ms on a 27 MB
 # transcript) and exits 0 before python. Decision-neutral: the only difference is the "pass" line python logged.
 #   1. fewer than N lines naming the file: rc 0 and python NOT started (a python3 shim on PATH logs each start);

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hooks/block-dangerous-git.sh, two more ways to hand a shell text the guard cannot read (2026-10-09 follow-up, plan
-# docs/plans/audit-2026-10-09-followup.md step 3 item 2): `bash -c "$(curl …)"` (the -c script is a command substitution) and
+# docs/issues-bugs.md B.1 step 3 item 2): `bash -c "$(curl …)"` (the -c script is a command substitution) and
 # `… | tee >(sh)` (a shell inside an output process substitution reads what tee writes). Both exited 0 while the same text piped
 # into a shell (`curl … | bash`) or fed through `bash <(curl …)` is refused. They now fail closed the same way.
 # Still allowed, deliberately (documented limits of the guard — ssh-agent, brew shellenv, completions): `eval "$(…)"`,

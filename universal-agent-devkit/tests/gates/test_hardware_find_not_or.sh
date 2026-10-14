@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hooks/hardware_safety_gate.sh, find expressions that look filtered and are not (2026-10-09 follow-up, plan
-# docs/plans/audit-2026-10-09-followup.md step 3 item 2). Any -name/-path/-regex filter counted as narrowing what find deletes,
+# docs/issues-bugs.md B.1 step 3 item 2). Any -name/-path/-regex filter counted as narrowing what find deletes,
 # so `find . ! -name '*.keep' -delete` (everything BUT .keep files), `find . -name x -o -type f -delete` (the -o alternative with
 # no filter deletes every file) and `find . ! \( -name a -o -name b \) -delete` were never judged by their start point. A filter
 # under ! / -not narrows nothing, a negated group counts as no filter, and every -o alternative needs a filter of its own.

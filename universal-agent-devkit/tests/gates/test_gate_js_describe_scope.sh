@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bin/post-fix-gate.py, the redefinition check for JS/TS tests (2026-10-09 follow-up, plan
-# docs/plans/audit-2026-10-09-followup.md step 3 item 3). An appended `it('title', …)` / `test('title', …)` that repeats a title the
+# docs/issues-bugs.md B.1 step 3 item 3). An appended `it('title', …)` / `test('title', …)` that repeats a title the
 # base file already has counts as an edit (it can shadow the real test). Titles were counted for the WHOLE file, so a title that
 # sits in two different `describe` blocks — the normal way to test two things the same way — flagged a pure append as an edited
 # test. Titles are now counted per enclosing describe path; the same title in the SAME describe is still a redefinition, and a file
