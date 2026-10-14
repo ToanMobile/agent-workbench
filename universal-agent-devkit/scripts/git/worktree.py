@@ -2311,13 +2311,25 @@ def _registered(main, wt):
         return False
 
 
+def _owner(wt):
+    """The session a worktree's devkit-worktree.json names (`add --session`, written from the moment git registers it); None: none, or unreadable."""
+    try:
+        o = _read_state(wt).get("session")
+    except (OSError, ValueError, SystemExit):
+        return None
+    return o if isinstance(o, str) and o else None
+
+
 def cmd_hook_create(cwd, args):
     """Claude Code's WorktreeCreate hook in trunk mode (W1 R1 v6; wired by `worktree trunk on`). EnterWorktree, `claude --worktree` and a
     subagent's isolation: "worktree" get their worktree from `add --session`: detached at HEAD under <main>/.claude/worktrees/<name> (where
     Claude puts its own: EnterWorktree never asks the user there), local config copied, the DevKit installed, the owning session in its
     state from the moment git registers it. Configuring this hook REPLACES Claude's own `git worktree add` (code.claude.com hooks docs),
     so: the path is the LAST stdout line and everything else goes to stderr; a worktree of that name already registered is handed back
-    as it is; a refusal for room (the disk floor) fails the creation with exit 4 and says why; any other failure of the set-up still
+    only to the session that owns it - another session (also `fix/login` against `fix-login`, one folder name) gets <name>-<8 characters of
+    its id>, so two sessions never work in one tree (R3 review 14/10: the second merged and could remove the first one's work); one create
+    at a time per repo (flock), so a race for a name ends the same way; a refusal for room (the disk floor) fails the creation with exit 4
+    and says why; any other failure of the set-up still
     hands back a plain detached worktree - no EnterWorktree and no isolated subagent is ever stranded by a DevKit fault."""
     d = _hook_payload()
     name, sid = str(d.get("name") or ""), str(d.get("session_id") or "")
@@ -2328,10 +2340,36 @@ def cmd_hook_create(cwd, args):
         return 2
     here = d.get("cwd") if isinstance(d.get("cwd"), str) and os.path.isdir(d["cwd"]) else cwd
     main = os.path.realpath(main_checkout(here))
-    wt = os.path.join(main, ".claude", "worktrees", name)
-    if os.path.isdir(wt) and _registered(main, wt):
-        print(wt)
+    lock = None
+    try:
+        lock = _lock_file(os.path.join(os.path.realpath(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()),
+                                       "devkit-hook-create.lock"), wait=150.0)
+    except (OSError, SystemExit) as e:   # no lock: the create goes ahead (a stranded EnterWorktree is worse than a race for one name)
+        print(f"• worktree hook: create lock not taken ({e})", file=sys.stderr)
+    try:
+        return _hook_create(main, name, sid)
+    finally:
+        if lock is not None:
+            lock.close()
+
+
+def _hook_create(main, name, sid):
+    sid_ok = bool(SESSION_RE.fullmatch(sid))
+    root = os.path.join(main, ".claude", "worktrees")
+    base = os.path.join(root, name)
+    own = os.path.join(root, f"{name[:90]}-{re.sub('[^A-Za-z0-9]', '', sid)[:8] or os.getpid()}")
+
+    def mine(p):
+        return os.path.isdir(p) and _registered(main, p) and sid_ok and _owner(p) == sid
+    if mine(base):
+        print(base)
         return 0
+    wt = base
+    if os.path.isdir(base) and _registered(main, base):   # another session's (or an unowned) worktree of this name: not shared
+        wt = own
+        if mine(own):
+            print(own)
+            return 0
     rc = 1
     try:
         with contextlib.redirect_stdout(sys.stderr):

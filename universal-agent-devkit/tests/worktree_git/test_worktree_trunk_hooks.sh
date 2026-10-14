@@ -55,10 +55,35 @@ create b s4 sess-4 WORKTREE_MAX=1 WORKTREE_TRUNK_MODE=0; rc=$?
 create a s5 sess-5 WORKTREE_DISK_MIN_GIB=99999999; rc=$?
 [ "$rc" = 4 ] && [ ! -e "$TMP/a/.claude/worktrees/s5" ] && [ ! -s "$TMP/out" ] && grep -q "GiB" "$TMP/err" && ok "the disk floor refuses: exit 4, no path, it says why" || fail "disk floor (rc $rc): $(tail -2 "$TMP/err")"
 
-# 4
-create a s1 sess-9; rc=$?
+# 4 the same name again BY THE SAME SESSION: the same worktree back, untouched. By ANOTHER session (R3 review 14/10: it used to get the first
+#   session's tree, whose state still named the first as owner - the second merged it and could remove it): a worktree of its own
+create a s1 sess-1; rc=$?
 [ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$TMP/a/.claude/worktrees/s1" ] && [ "$(state "$TMP/a/.claude/worktrees/s1" session)" = sess-1 ] \
-  && ok "the same name again: the same worktree back, untouched" || fail "re-create (rc $rc): $(cat "$TMP/out")"
+  && ok "the same name again by the same session: the same worktree back, untouched" || fail "re-create (rc $rc): $(cat "$TMP/out")"
+create a s1 sess-9; rc=$?; w4="$TMP/a/.claude/worktrees/s1-sess9"
+[ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$w4" ] && [ "$(state "$w4" session)" = sess-9 ] && [ "$(state "$TMP/a/.claude/worktrees/s1" session)" = sess-1 ] \
+  && G "$TMP/a" worktree list --porcelain | grep -q "^worktree $w4$" \
+  && ok "  … by ANOTHER session: a worktree of its own (s1-sess9), the first one's owner and tree untouched" || fail "another session got (rc $rc): out=$(cat "$TMP/out") err=$(tail -2 "$TMP/err" | tr '\n' ' ')"
+create a s1 sess-9; rc=$?
+[ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$w4" ] && ok "  … and again: its own one back" || fail "second create of the other session (rc $rc): $(cat "$TMP/out")"
+
+# 4b two creates of ONE name at the same moment, by two sessions: one tree each, never the same path (the loser used to print the winner's);
+#    they take turns on <common dir>/devkit-hook-create.lock, which a waiting create honours
+mkcreate() {   # mkcreate <repo> <name> <session> <outfile>: hook-create in a process of its own (the race below runs two at once)
+  python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"WorktreeCreate","name":sys.argv[1],"session_id":sys.argv[2],"cwd":sys.argv[3]}))' "$2" "$3" "$TMP/$1"     | (cd / && python3 -I "$WT" hook-create) > "$4" 2>/dev/null
+}
+f0=$FAILS
+for n in 1 2 3; do
+  mkcreate a race$n sess-ra$n "$TMP/ra$n" & p1=$!; mkcreate a race$n sess-rb$n "$TMP/rb$n" & p2=$!; wait $p1 $p2
+  pa="$(tail -1 "$TMP/ra$n")"; pb="$(tail -1 "$TMP/rb$n")"
+  { [ -n "$pa" ] && [ -n "$pb" ] && [ "$pa" != "$pb" ] && [ "$(state "$pa" session)" = sess-ra$n ] && [ "$(state "$pb" session)" = sess-rb$n ]; }     || fail "race $n: A got '$pa' (owner $(state "$pa" session)), B got '$pb' (owner $(state "$pb" session))"
+done
+[ "$FAILS" = "$f0" ] && ok "two sessions creating one name at the same moment: each gets a tree of its own, never the same path"
+python3 -c 'import fcntl,os,sys,time; fd=os.open(sys.argv[1],os.O_WRONLY|os.O_CREAT,0o600); fcntl.flock(fd,fcntl.LOCK_EX); open(sys.argv[2],"w").close(); time.sleep(3)' \
+  "$(G "$TMP/a" rev-parse --path-format=absolute --git-common-dir)/devkit-hook-create.lock" "$TMP/held" & HOLDER=$!
+for _ in $(seq 1 50); do [ -e "$TMP/held" ] && break; sleep 0.1; done
+t0=$(date +%s); create a locked1 sess-1; rc=$?; t1=$(date +%s); wait "$HOLDER" 2>/dev/null
+[ "$rc" = 0 ] && [ "$(( t1 - t0 ))" -ge 2 ] && [ -d "$TMP/a/.claude/worktrees/locked1" ] && ok "  … a create waits for the one that holds the lock (waited $(( t1 - t0 )) s), then goes ahead" || fail "create did not wait for the lock (rc $rc, $(( t1 - t0 )) s)"
 
 # 5
 for bad in "../x" ".hidden" "" "a//b" "a/" "/a" "a/../b" "a/.b"; do   # (R3 review P3a: "a/b" is no longer here, it is a legal EnterWorktree name - see 5b)
@@ -73,8 +98,14 @@ create a fix/login sess-5b; rc=$?; w5="$TMP/a/.claude/worktrees/fix-login"
 [ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$w5" ] && [ -d "$w5" ] && [ ! -e "$TMP/a/.claude/worktrees/fix" ] && [ "$(state "$w5" session)" = sess-5b ] \
   && G "$TMP/a" worktree list --porcelain | grep -q "^worktree $w5$" && ok "a name with a slash (fix/login): the worktree is .claude/worktrees/fix-login, registered, owned" \
   || fail "name fix/login (rc $rc): out=$(cat "$TMP/out") err=$(tail -2 "$TMP/err" | tr '\n' ' ')"
-create a fix/login sess-9; rc=$?
-[ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$w5" ] && [ "$(state "$w5" session)" = sess-5b ] && ok "  … the same slash name again: the same worktree back" || fail "fix/login again (rc $rc): $(cat "$TMP/out")"
+create a fix/login sess-5b; rc=$?
+[ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$w5" ] && [ "$(state "$w5" session)" = sess-5b ] && ok "  … the same slash name again by the same session: the same worktree back" || fail "fix/login again (rc $rc): $(cat "$TMP/out")"
+create a fix/login sess-9; rc=$?; w5b="$TMP/a/.claude/worktrees/fix-login-sess9"
+[ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$w5b" ] && [ "$(state "$w5b" session)" = sess-9 ] && [ "$(state "$w5" session)" = sess-5b ] \
+  && ok "  … by another session: fix-login-sess9, the first one's tree and owner untouched" || fail "fix/login by another session (rc $rc): $(cat "$TMP/out")"
+create a fix-login sess-8; rc=$?; w5c="$TMP/a/.claude/worktrees/fix-login-sess8"
+[ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$w5c" ] && [ "$(state "$w5c" session)" = sess-8 ] && [ "$(state "$w5" session)" = sess-5b ] \
+  && ok "  … fix-login (the same folder as fix/login) by a third session: its own one too" || fail "fix-login against fix/login (rc $rc): $(cat "$TMP/out")"
 
 # 6 the set-up dies after registration (a kit whose installer fails, a main checkout with a DevKit profile): still a usable worktree
 FK="$TMP/kit"; mkdir -p "$FK/bin" "$FK/profiles" && ln -s "$DEVKIT_DIR/scripts" "$FK/scripts" && ln -s "$DEVKIT_DIR/hooks" "$FK/hooks"
