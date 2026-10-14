@@ -251,3 +251,4 @@
 3 tests/worktree_git/test_worktree_gc.sh
 17 tests/worktree_git/test_worktree_limits.sh
 5 tests/gates/test_gate_project_removed_midrun.sh
+30 tests/worktree_git/test_worktree_lock_helper.sh

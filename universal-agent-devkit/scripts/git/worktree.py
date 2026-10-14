@@ -544,36 +544,6 @@ def _make_room(main, wt):
                         f"{free:.1f} GiB free on the disk after worktree gc (under {DISK_WARN_GIB:g} GiB): clear old build output and caches soon"))
 
 
-def _add_lock(common):
-    """flock on <common>/ADD_LOCK, so the count and `git worktree add` run one at a time per repo. The kernel drops it when its holder
-    dies, so it never goes stale (review 14/10: an O_EXCL lock file a killed add left behind let two waiters take it over together and
-    go past the cap). Waits up to ADD_LOCK_WAIT_S, then exit 1; None when this filesystem has no flock (it runs unlocked and says so)."""
-    try:
-        import fcntl
-        fh = open(os.path.join(common, ADD_LOCK), "a")
-    except (OSError, ImportError) as e:
-        print("• " + tr(f"không khoá được ({e}); chạy không khoá", f"no lock ({e}); running unlocked"))
-        return None
-    deadline, said = time.monotonic() + ADD_LOCK_WAIT_S, False
-    while True:
-        try:
-            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return fh
-        except BlockingIOError:
-            if time.monotonic() >= deadline:
-                fh.close()
-                die(tr(f"một lệnh worktree add khác của repo này đã chạy quá {ADD_LOCK_WAIT_S / 60:g} phút; chạy lại sau",
-                       f"another worktree add in this repo has run for over {ADD_LOCK_WAIT_S / 60:g} minutes; run it again later"), 1)
-            if not said:
-                print("• " + tr("chờ một lệnh worktree add khác của repo này…", "waiting for another worktree add in this repo…"), flush=True)
-                said = True
-            time.sleep(0.2)
-        except OSError as e:   # no flock on this filesystem (NFS, SMB)
-            fh.close()
-            print("• " + tr(f"không khoá được ({e}); chạy không khoá", f"no lock ({e}); running unlocked"))
-            return None
-
-
 def _live_worktrees(main):
     """The linked worktrees that hold a slot: registered with a folder on disk. A red_proof sandbox (red-proof-*, removed by the run that
     made it) and a registration whose folder is gone (prunable) take none."""
@@ -605,7 +575,14 @@ def cmd_add(cwd, args):
         die(tr(f"{wt} đã có và không rỗng", f"{wt} exists and is not empty"))
     _make_room(main, wt)
     common = os.path.realpath(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip())
-    lock = _add_lock(common) if WORKTREE_MAX else None   # count + add: one at a time
+    try:   # count + add: one at a time per repo
+        lock = _lock_file(os.path.join(common, ADD_LOCK), wait=ADD_LOCK_WAIT_S,
+                          waiting=tr("chờ một lệnh worktree add khác của repo này…", "waiting for another worktree add in this repo…")) if WORKTREE_MAX else None
+    except OSError as e:
+        die(tr(f"không mở được khoá {ADD_LOCK} ({e})", f"cannot open the lock {ADD_LOCK} ({e})"), 1)
+    if WORKTREE_MAX and lock is None:
+        die(tr(f"một lệnh worktree add khác của repo này đã chạy quá {ADD_LOCK_WAIT_S / 60:g} phút; chạy lại sau",
+               f"another worktree add in this repo has run for over {ADD_LOCK_WAIT_S / 60:g} minutes; run it again later"), 1)
     try:
         live = _live_worktrees(main) if WORKTREE_MAX else []
         if len(live) >= WORKTREE_MAX > 0:   # never "finish someone else's": a clean worktree may be a live session's that has not edited yet
@@ -623,7 +600,7 @@ def cmd_add(cwd, args):
             git(main, "worktree", "add", "-b", branch, wt, *([base] if base else []), bounded=False)
     finally:
         if lock:
-            lock.close()   # drops the flock
+            lock.close()
     start = git(wt, "rev-parse", "HEAD").stdout.strip()
 
     copied = copy_local_config(main, wt)
@@ -1498,63 +1475,48 @@ def _trunk_branch(main):
     return None
 
 
-def _pid_alive(pid):
+def _lock_file(path, wait=0.0, waiting=None):
+    """An exclusive flock on `path`, held until the returned handle is closed. The kernel drops it when its holder dies, so it never goes
+    stale, and a holder that lives is never taken over however long it runs; the file is never deleted (a waiter would then lock a dead
+    inode). Review 14/10: the O_EXCL lock FILE this replaces let two waiters that both saw a dead holder's file take it over together,
+    and one deleted between the failed create and the read made a waiter give up at once. Waits up to `wait` seconds (printing
+    `waiting` once, on stderr: automerge's stdout is one JSON line); None when somebody else still holds it then. No fcntl (Windows
+    Python) or no flock on this filesystem (NFS, SMB): the handle unlocked, said on stderr. Not a regular file (a planted FIFO, which
+    an open() would wait on forever, a folder, a symlink) or not openable: OSError at once. The fd is not inherited (O_CLOEXEC)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600)   # POSIX-only flags
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise OSError(errno.EINVAL, "not a regular file", path)
+    fh = os.fdopen(fd, "a")
     try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except OSError:
-        return True
-
-
-def _lock_file(path, wait=0.0, stale=900.0):
-    """An O_EXCL lock file {pid, at}; waits up to `wait` seconds for a live holder; a dead holder or one older than `stale` seconds is taken
-    over; a file that is still being written (empty, a moment old) is a live holder. The path, or None when somebody else holds it."""
-    deadline = time.time() + wait
-    while True:
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
+        import fcntl
+        deadline = time.monotonic() + wait
+        while True:
             try:
-                with open(path, encoding="utf-8") as f:
-                    held = json.load(f)
-                pid, at = int(held.get("pid", 0)), float(held.get("at", 0))
-            except (OSError, ValueError, TypeError, AttributeError):
-                pid, at = 0, 0.0
-                try:
-                    at = os.stat(path).st_mtime if time.time() - os.stat(path).st_mtime < 5 else 0.0   # just created, not written yet
-                    pid = os.getpid() if at else 0
-                except OSError:
-                    pass
-            if pid > 1 and _pid_alive(pid) and time.time() - at < stale:
-                if time.time() >= deadline:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return fh
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    fh.close()
                     return None
+                if waiting:
+                    print("• " + waiting, file=sys.stderr, flush=True)
+                    waiting = None
                 time.sleep(0.1)
-                continue
-            try:
-                os.unlink(path)
-            except OSError:
-                return None
-            continue
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump({"pid": os.getpid(), "at": time.time()}, f)
-        return path
+    except (OSError, ImportError) as e:   # no fcntl, or ENOLCK / EOPNOTSUPP: unlocked
+        # ponytail: no mutual exclusion where flock is missing (Windows Python, NFS/SMB) — automerge and MAIN_LOCK had an O_EXCL file there;
+        # add an O_EXCL fallback (with the takeover races fixed) if a main checkout ever lives on such a filesystem
+        print("• " + tr(f"không khoá được {os.path.basename(path)} ({e}); chạy không khoá",
+                        f"cannot lock {os.path.basename(path)} ({e}); running unlocked"), file=sys.stderr)
+        return fh
 
 
 def _lock_automerge(wt):
     """One automatic merge per worktree at a time (the Stop hooks of two sessions may both start one). None: somebody else is merging it."""
-    return _lock_file(os.path.join(git_dir(wt), AUTOMERGE_LOCK), wait=0.0, stale=900.0)
+    return _lock_file(os.path.join(git_dir(wt), AUTOMERGE_LOCK), wait=0.0)
 
 
 MAIN_LOCK = "devkit-automerge-main.lock"
-
-
-def _unlink_quiet(path):
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
 
 
 def _authored_status_changed(wt):
@@ -1690,10 +1652,7 @@ def automerge(cwd, wt):
     try:
         return _automerge_locked(cwd, main, wt)
     finally:
-        try:
-            os.unlink(lock)
-        except OSError:
-            pass
+        lock.close()
 
 
 def _automerge_locked(cwd, main, wt):
@@ -1720,7 +1679,7 @@ def _automerge_locked(cwd, main, wt):
     # ONE integration of main at a time: a Stop with many subagent worktrees starts many merges at once, and two `merge --ff-only` racing on
     # main's index left staged renames / deletions behind (review 2026-10-08); with the lock held from the first merge-in to the fast-forward the
     # merges queue and main cannot move under one of them (only a person committing can, hence the retries)
-    mlock = _lock_file(os.path.join(git_dir(main), MAIN_LOCK), wait=180.0, stale=300.0)
+    mlock = _lock_file(os.path.join(git_dir(main), MAIN_LOCK), wait=180.0)
     if mlock is None:
         return "blocked", tr("một lần tự gộp khác giữ khoá main quá lâu: chạy lại", "another automatic merge held the main lock too long: run it again"), {"running": True}
     status = None
@@ -1752,7 +1711,7 @@ def _automerge_locked(cwd, main, wt):
                 git(wt, "merge", "--abort", check=False, bounded=False)
                 return "blocked", tr("git merge thất bại: ", "git merge failed: ") + (r.stderr or r.stdout).strip()[-400:], {}
     finally:
-        _unlink_quiet(mlock)
+        mlock.close()
     if status is None:
         return "blocked", tr("main liên tục có commit mới trong lúc gộp: chạy lại", "main kept moving while merging: run it again"), {}
     saved = []
@@ -1804,6 +1763,8 @@ def _run_automerge(cwd, args, usage):
         status, message, extra = automerge(cwd, wt)
     except SystemExit as e:
         status, message, extra = "blocked", str(e.code), {}
+    except OSError as e:   # a lock path that is no regular file, an admin dir removed meanwhile: still the one JSON line the Stop hook reads
+        status, message, extra = "blocked", tr("lỗi hệ thống tệp: ", "filesystem error: ") + str(e)[:300], {}
     return wt, status, message, extra
 
 

@@ -335,16 +335,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-14 07:30:15",
-        "ts": 1791937815.841233,
-        "task": null,
-        "commit": "097c3f7+dirty",
-        "duration": "74.06s",
+        "at": "2026-10-14 07:45:12",
+        "ts": 1791938712.283398,
+        "task": "session-d352c03b-d20",
+        "commit": "1111bcd+dirty",
+        "duration": "150.51s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-01/20261014-072319.log",
+        "log": ".agents/evidence/REG-DK-HOOK-01/20261014-073947.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-14 07:45:12",
+          "ts": 1791938712.283398,
+          "task": "session-d352c03b-d20",
+          "commit": "1111bcd+dirty",
+          "duration": "150.51s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261014-073947.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-14 07:30:15",
@@ -388,17 +399,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-01/20261014-005722.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 00:36:52",
-          "ts": 1791913012.9292212,
-          "task": null,
-          "commit": "a148b15+dirty",
-          "duration": "89.87s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261014-003515.log",
-          "deleted": []
         }
       ],
       "title": "hook contract",
@@ -413,16 +413,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-14 07:30:15",
-        "ts": 1791937815.857734,
-        "task": null,
-        "commit": "097c3f7+dirty",
-        "duration": "22.18s",
+        "at": "2026-10-14 07:45:12",
+        "ts": 1791938712.2919638,
+        "task": "session-d352c03b-d20",
+        "commit": "1111bcd+dirty",
+        "duration": "28.58s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-02/20261014-072227.log",
+        "log": ".agents/evidence/REG-DK-HOOK-02/20261014-073745.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-14 07:45:12",
+          "ts": 1791938712.2919638,
+          "task": "session-d352c03b-d20",
+          "commit": "1111bcd+dirty",
+          "duration": "28.58s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261014-073745.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-14 07:30:15",
@@ -465,17 +476,6 @@
           "duration": "20.41s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-02/20261014-005655.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 00:36:52",
-          "ts": 1791913012.929226,
-          "task": null,
-          "commit": "a148b15+dirty",
-          "duration": "25.87s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261014-003411.log",
           "deleted": []
         }
       ],
@@ -569,16 +569,38 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-14 07:30:15",
-        "ts": 1791937815.857749,
+        "at": "2026-10-14 08:37:39",
+        "ts": 1791941859.5084789,
         "task": null,
-        "commit": "097c3f7+dirty",
-        "duration": "489.65s",
+        "commit": "1111bcd+dirty",
+        "duration": "470.38s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261014-073014.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261014-083738.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-14 08:37:39",
+          "ts": 1791941859.5084789,
+          "task": null,
+          "commit": "1111bcd+dirty",
+          "duration": "470.38s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261014-083738.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-14 07:45:12",
+          "ts": 1791938712.2919738,
+          "task": "session-d352c03b-d20",
+          "commit": "1111bcd+dirty",
+          "duration": "475.27s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261014-074512.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-14 07:30:15",
@@ -610,28 +632,6 @@
           "duration": "37.68s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261014-010257.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 00:57:23",
-          "ts": 1791914243.293941,
-          "task": null,
-          "commit": "338b2ca+dirty",
-          "duration": "36.13s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261014-005711.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 00:36:52",
-          "ts": 1791913012.929234,
-          "task": null,
-          "commit": "a148b15+dirty",
-          "duration": "187.13s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261014-003652.log",
           "deleted": []
         }
       ],
@@ -1620,8 +1620,8 @@
       "red_proof": {
         "at": "2026-10-08 23:45:10",
         "ts": 1791477910.249443,
-        "status": "PROVEN",
-        "reason": "đỏ khi bỏ bản sửa, xanh khi có",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/worktree_git/test_worktree_automerge.sh đã đổi sau lần chứng minh",
         "mode": "revert",
         "fix_commit": "68ccbd01480e",
         "files": {
@@ -3427,6 +3427,27 @@
       "linked_ts": 1791936522.715316,
       "runs_in_suite": [
         "universal-agent-devkit/tests/installer/test_ocr_review_helper.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261014-lock-file-stale-takeover-race": {
+      "id": "BUG-20261014-lock-file-stale-takeover-race",
+      "kind": "bug",
+      "title": "worktree.py _lock_file (automerge, MAIN_LOCK, worktree add) let two waiters take over a dead holder's O_EXCL lock file together, and gave up at once when the file vanished mid-read",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-14 08:03:46",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-14 08:03:47",
+      "linked_ts": 1791939827.472948,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/worktree_git/test_worktree_lock_helper.sh"
       ],
       "state": "confirmed"
     }
