@@ -296,6 +296,12 @@ S = m + "/.claude/settings.local.json"
 OFF, ON = '{"env": {"WORKTREE_TRUNK_MODE": "0"}}', '{"env": {"WORKTREE_TRUNK_MODE": "1"}}'
 W = lambda path, content: ("Write", {"file_path": path, "content": content}, "")
 B = lambda c: ("Bash", {"command": c}, c)
+import os
+cfg = os.path.join(os.path.dirname(m), "cfg"); os.makedirs(cfg + "/.claude", exist_ok=True)   # settings files that exist, for the value-only edits
+T1, T0 = cfg + "/.claude/settings.local.json", cfg + "/.claude/settings.json"
+open(T1, "w").write('{"env": {"WORKTREE_TRUNK_MODE": "1", "FOO": "bar"}, "theme": "dark"}')
+open(T0, "w").write('{"env": {"WORKTREE_TRUNK_MODE": "0"}, "theme": "dark"}')
+E = lambda path, old, new, **kw: ("Edit", dict({"file_path": path, "old_string": old, "new_string": new}, **kw), "")
 cases = [
     (True, "Write settings.local.json with the key 0", W(S, OFF)),
     (True, "Write ~/.claude/settings.json with the key 0", W("/Users/x/.claude/settings.json", OFF)),
@@ -318,6 +324,24 @@ cases = [
     (False, "a commit message that talks about it", B("git commit -qm \"docs: WORKTREE_TRUNK_MODE=0 in settings.local.json is the user's switch\"")),
     (False, "Bash writing the key with value 1", B("echo '" + ON + "' > .claude/settings.local.json")),
     (False, "Bash echo of the key to a file that is no settings file", B("echo WORKTREE_TRUNK_MODE=0 > /tmp/notes.txt")),
+    # OCR2 8: a VALUE-only edit names no key, so the written text alone shows nothing; the file as it becomes is judged (Edit / MultiEdit), and
+    # a `sed -i` on a settings file that turns a lone 1 into 0 (Bash: a bounded parse - two-step copies and built names stay out of reach)
+    (True, "Edit turning MODE\": \"1\" into MODE\": \"0\" (the key is only in the file)", E(T1, 'MODE": "1"', 'MODE": "0"')),
+    (True, "Edit turning the unique \"1\" into \"0\"", E(T1, '"1"', '"0"')),
+    (True, "MultiEdit whose second edit flips the value", ("MultiEdit", {"file_path": T1, "edits": [{"old_string": "dark", "new_string": "light"}, {"old_string": '"1"', "new_string": '"0"'}]}, "")),
+    (True, "Edit replace_all of \"1\" with \"0\"", E(T1, '"1"', '"0"', replace_all=True)),
+    (True, "Bash sed -i 's/\"1\"/\"0\"/' on settings.local.json", B("sed -i 's/\"1\"/\"0\"/' .claude/settings.local.json")),
+    (True, "Bash BSD sed -i '' with a partial key", B("sed -i '' 's/MODE\": \"1\"/MODE\": \"0\"/' .claude/settings.local.json")),
+    (True, "Bash sed -i -e s/1/0/ on ~/.claude/settings.json", B("sed -i -e 's/1/0/' ~/.claude/settings.json")),
+    (False, "Edit of an unrelated value in a file that has the key at 1", E(T1, '"dark"', '"light"')),
+    (False, "Edit turning \"0\" into \"1\" (tightens)", E(T0, '"0"', '"1"')),
+    (False, "Edit of an unrelated value in a file already at 0 (nothing left to switch)", E(T0, '"dark"', '"light"')),
+    (False, "Edit whose old_string is not in the file (the tool refuses it anyway)", E(T1, 'nowhere', '"0"')),
+    (False, "Edit of a settings file that does not exist", E(cfg + "/.claude/settings.other.json", '"1"', '"0"')),
+    (False, "Bash sed -i turning \"0\" into \"1\"", B("sed -i 's/\"0\"/\"1\"/' .claude/settings.local.json")),
+    (False, "Bash sed -i of \"v1\" into \"v2\" in a settings file", B("sed -i 's/\"v1\"/\"v2\"/' .claude/settings.local.json")),
+    (False, "Bash sed -n printing a substitution of a settings file", B("sed -n 's/\"1\"/\"0\"/p' .claude/settings.local.json")),
+    (False, "Bash sed -i turning 1 into 0 in a file that is no settings file", B("sed -i 's/\"1\"/\"0\"/' README.md")),
 ]
 bad = 0
 for want, label, (tool, ti, cmd) in cases:
@@ -329,6 +353,17 @@ print(f"unit-bad={bad} of {len(cases)}")
 PY
 grep -q "unit-bad=0 " "$TMP/unit4" && ok "trunk_env_in_settings: $(grep -o 'of [0-9]*' "$TMP/unit4") cases (WORKTREE_TRUNK_MODE other than 1 into a settings file refused: Write / Edit / MultiEdit / Bash; value 1, reads, other keys, other files pass)" \
   || { fail "trunk_env_in_settings cases"; grep "✖\|Error\|assert" "$TMP/unit4" | head -12; }
+# the value-only rule READS the settings file named in the Edit: a FIFO planted at that path (the agent writes there) must not hang the PreToolUse hook
+mkdir -p "$TMP/fifo/.claude" && mkfifo "$TMP/fifo/.claude/settings.local.json"
+r="$(python3 -I -c 'import json, subprocess, sys
+dk, p = sys.argv[1:3]
+code = "import sys; sys.path.insert(0, sys.argv[1] + \"/bin\"); import session_lock as sl; print(sl.trunk_env_in_settings(\"Edit\", {\"file_path\": sys.argv[2], \"old_string\": \"1\", \"new_string\": \"0\"}, \"\"))"
+try:
+    r = subprocess.run([sys.executable, "-I", "-c", code, dk, p], timeout=5, capture_output=True, text=True)
+except subprocess.TimeoutExpired:
+    print("HANG"); sys.exit(0)
+print(r.returncode, r.stdout.strip())' "$DEVKIT_DIR" "$TMP/fifo/.claude/settings.local.json")"
+[ "$r" = "0 False" ] && ok "  … a FIFO as the settings file of an Edit: no hang, nothing to judge (not refused)" || fail "FIFO settings file in an Edit: '$r'"
 mkdir -p "$TMP/home/.claude"
 hook PreToolUse "$W" Write "{\"file_path\": \"$TMP/home/.claude/settings.json\", \"content\": \"{\\\"env\\\": {\\\"WORKTREE_TRUNK_MODE\\\": \\\"0\\\"}}\"}"; r1=$?
 grep -q "NGƯỜI DÙNG" "$TMP/err" && r1m=said || r1m=silent

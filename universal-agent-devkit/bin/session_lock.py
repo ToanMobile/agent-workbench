@@ -1072,6 +1072,51 @@ _TRUNK_ENV = _Re(r"WORKTREE_TRUNK_MODE\W{0,12}(?P<v>\w*)")   # JSON `"WORKTREE_T
 _PURE_READERS = frozenset(("grep", "egrep", "fgrep", "rg", "ag", "cat", "bat", "less", "more", "head", "tail", "wc", "nl", "file", "stat", "ls", "diff", "cmp", "jq"))
 
 
+def _read_text(path, limit=1_000_000):
+    """A regular file's text, read without ever blocking (the path is the agent's to plant a FIFO at: this runs in a PreToolUse hook); a symlinked
+    dotfile is followed. None when it cannot be read."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    except (OSError, ValueError):
+        return None
+    try:
+        return os.read(fd, limit).decode("utf-8", "replace") if stat.S_ISREG(os.fstat(fd).st_mode) else None
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def _edited(text, ti):
+    """`text` after the Edit / MultiEdit of `ti` is applied (the first occurrence, every one with replace_all); None when an old_string is not in it
+    - the tool refuses that edit, so there is no result to judge."""
+    for e in [ti] if "old_string" in ti else [e for e in ti.get("edits") or [] if isinstance(e, dict)]:
+        old, new = e.get("old_string"), e.get("new_string")
+        if not (isinstance(old, str) and isinstance(new, str) and old and old in text):
+            return None
+        text = text.replace(old, new) if e.get("replace_all") else text.replace(old, new, 1)
+    return text
+
+
+_SED_SUBST = _Re(r"s(?P<d>[^\w\s\\])(?P<pat>.*?)(?P=d)(?P<rep>.*?)(?P=d)")
+
+
+def _sed_one_to_zero(command):
+    """True when a segment of `command` is a `sed -i` on a settings file with a substitution that turns a lone 1 into 0 (`s/"1"/"0"/`,
+    `s/MODE": "1"/MODE": "0"/`, `s/1/0/`): the value-only edit of WORKTREE_TRUNK_MODE that names no key. A bounded parse: one `s` word each."""
+    for seg in _split_segments(_clean(command))[::2]:
+        words = _cmd_words(seg)
+        if not (words and os.path.basename(words[0]) == "sed" and any(w.startswith("-i") or w == "--in-place" for w in words[1:])):
+            continue
+        if not any(_SETTINGS_FILE.search(w) and not re.search(r"\s", w) for w in words[1:]):
+            continue
+        for w in words[1:]:
+            m = _SED_SUBST.match(w)
+            if m and re.search(r"(?:^|\W)1\W*$", m.group("pat")) and re.search(r"(?:^|\W)0\W*$", m.group("rep")):
+                return True
+    return False
+
+
 def trunk_env_in_settings(tool, tool_input, command):
     """True when a tool call writes WORKTREE_TRUNK_MODE (anything but 1) into a Claude settings file (settings.json, settings.local.json, any
     folder): that file's `env` block is the environment of the hooks of the next session - MEASURED 14/10 with `claude -p` (Claude Code 2.1.299,
@@ -1087,7 +1132,15 @@ def trunk_env_in_settings(tool, tool_input, command):
         if not (isinstance(path, str) and _SETTINGS_PATH.search(path)):
             return False
         texts = [ti.get("content"), ti.get("new_string"), ti.get("new_source")] + [e.get("new_string") for e in ti.get("edits") or [] if isinstance(e, dict)]
-        return any(isinstance(t, str) and off(t) for t in texts)
+        if any(isinstance(t, str) and off(t) for t in texts):
+            return True
+        if tool in ("Edit", "MultiEdit"):   # a value-only edit (`"1"` -> `"0"`) names no key: judge the file as it becomes (OCR2 8)
+            cur = _read_text(path)
+            after = _edited(cur, ti) if cur is not None and not off(cur) else None
+            return after is not None and off(after)
+        return False
+    if tool == "Bash" and _SETTINGS_FILE.search(command) and _sed_one_to_zero(command):
+        return True
     if tool != "Bash" or "WORKTREE_TRUNK_MODE" not in command or not _SETTINGS_FILE.search(command) or not off(command):
         return False
     if any(t and _SETTINGS_FILE.search(t) for t in _redirect_targets(command)):
