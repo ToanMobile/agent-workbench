@@ -34,7 +34,9 @@ jobs_now() { # what a run uses: the override when valid, else the default
 [ "${1:-}" = "--jobs" ] && { jobs_now; exit 0; }
 
 if git rev-parse -q --verify '@{u}' >/dev/null 2>&1; then
-  unpushed="$(git log '@{u}..HEAD' --name-only --relative --format= -- . 2>/dev/null)"
+  # a diff from the merge-base, not `git log --name-only`: that prints no file for a merge commit, so a conflict resolution that
+  # changed another file went untested (W1 R4, 14/10)
+  unpushed="$(git diff --name-only --relative '@{u}...HEAD' -- . 2>/dev/null)"
 elif [ "${DEVKIT_IMPACTED_SINCE:-}" = 0 ]; then
   unpushed=""   # a RED-proof sandbox (no upstream, a detached worktree): only the file it reverted is a change, not every commit of the last hours
 elif [ -z "${DEVKIT_IMPACTED_SINCE:-}" ] \

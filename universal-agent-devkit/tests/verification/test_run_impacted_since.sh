@@ -54,4 +54,24 @@ wlist env DEVKIT_IMPACTED_SINCE=6.hours | grep -qx "tests/verification/test_foo.
   && ok "linked worktree after merging main in: main's commit is still no change" || fail "worktree after merge: $(wlist env | tr '\n' ' ')"
 ( cd "$K" && git worktree remove --force "$W" )
 
+# A checkout WITH an upstream (main with unpushed work): the change is `git diff @{u}...HEAD`, not `git log @{u}..HEAD --name-only`,
+# which prints no file for a merge commit: a conflict resolved by also editing another file left that file's tests unselected
+# (W1 R4, 14/10).
+U="$TMP/up"; git init -q --bare "$U.git" && git clone -q "$U.git" "$U" 2>/dev/null
+mkdir -p "$U/tests/verification" "$U/scripts"
+cp "$DEVKIT_DIR/tests/run_impacted.sh" "$U/tests/"
+: > "$U/tests/impact_map.txt"
+echo 'echo ok' > "$U/tests/verification/test_repo_consistency.sh"
+for n in foo glue; do echo "$n = 1" > "$U/scripts/$n.py"; printf 'python3 scripts/%s.py\n' "$n" > "$U/tests/verification/test_$n.sh"; done
+( cd "$U" && git config user.email t@t && git config user.name t && git add -A && git commit -qm init && git push -q origin HEAD 2>/dev/null \
+  && git branch -q --set-upstream-to="origin/$(git symbolic-ref --short HEAD)" )
+( cd "$U" && git checkout -q -b side && echo 'foo = 2' > scripts/foo.py && git commit -qam side \
+  && git checkout -q - && echo 'foo = 3' > scripts/foo.py && git commit -qam main-side \
+  && { git merge -q side >/dev/null 2>&1 || true; } && echo 'foo = 4' > scripts/foo.py && echo 'glue = 2' > scripts/glue.py \
+  && git add -A && git commit -qm "merge side: the conflict is resolved by also changing glue.py" ) >/dev/null 2>&1
+ulist() { (cd "$U" && bash tests/run_impacted.sh --list); }
+ulist | grep -qx "tests/verification/test_glue.sh" && ok "upstream: a file changed only in a merge commit's resolution is selected" \
+  || fail "upstream merge resolution: $(ulist | tr '\n' ' ')"
+ulist | grep -qx "tests/verification/test_foo.sh" && ok "upstream: the unpushed commits' files are still selected" || fail "upstream: $(ulist | tr '\n' ' ')"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_run_impacted_since: all passed" || { echo "❌ test_run_impacted_since: $FAILS failed"; exit 1; }
