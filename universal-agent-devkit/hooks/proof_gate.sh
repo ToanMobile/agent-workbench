@@ -140,7 +140,7 @@ if xong is None:
 # the item above), has no colon, comma or full stop before the phrase, and ends with its own colon, a parenthesis allowed: a phrase after
 # another label's colon or after a comma is the CONTENT of an item. Item 1 starts right at the line start; item 2 is "Chặn lỗi cũ"
 # (a bare "Lỗi cũ:" line is content) (OCR + principal-code-reviewer 14/10).
-_START = r"(?:^|\n)(?![ \t])[>*_#\-\d.) \t]*"
+_START = r"(?:^|\n)(?![ \t])[>*_#\-\d.()•+ \t]*"
 _LABEL = _START + r"[^:：\n,;.]{0,24}?"
 _COLON = r"(?:[^:：\n,;.(]|\([^)\n]*\)){0,40}[:：]"
 REPORT_ITEMS = (("1. Đã fix gì (tên lỗi, nguyên nhân gốc, RED→GREEN)",

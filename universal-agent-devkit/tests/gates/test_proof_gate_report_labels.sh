@@ -165,6 +165,17 @@ check 2 "a comma before the phrase: prose, not a label" "Đã push.
 2. Chặn bug cũ: REG-1.
 3. OK, nguy cơ mới vẫn chặn: không.
 $TAIL4" "report=3 "
+# the numbering style of the fixbugs skill, "(1) …", and a bullet, are list markers too (OCR 14/10)
+check 0 "(1) (2) (3) numbering" "Đã push.
+(1) Đã làm gì: một việc.
+(2) Chặn lỗi cũ: PASS.
+(3) Nguy cơ mới: không.
+$TAIL4"
+check 0 "bullet markers" "Đã push.
+• Đã thay đổi gì: một việc.
+• Chặn lỗi cũ: PASS.
+• Nguy cơ mới: không.
+$TAIL4"
 # labels with a parenthesis (a list, a gloss) before their colon are labels
 check 0 "label with a parenthesis" "Đã push.
 1. Đã làm gì (RED→GREEN): một việc.
