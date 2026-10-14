@@ -11,7 +11,8 @@ Usage (normally `agent-kit worktree …`, run inside the repo):
   worktree.py list
   worktree.py heal [--devkit=DIR] [--session=ID]   a checkout the host made (Grok): link the DevKit, copy ignored config
 
-add: `git worktree add` on <branch> when one is named (created from --base or HEAD when it
+add: refuses (exit 4) under WORKTREE_DISK_MIN_GIB (3) free or when the repo already has WORKTREE_MAX (3) linked worktrees; under
+WORKTREE_DISK_WARN_GIB (10) it runs gc first and warns (0 turns each off). Then `git worktree add` on <branch> when one is named (created from --base or HEAD when it
 does not exist); with none, a DETACHED worktree at --base or HEAD — the project keeps one
 branch, and the work comes back with `diff | git apply --3way`. Copies the main checkout's git-ignored local config
 (.env*, local.properties, keystore.properties, google-services.json, …) and git-ignored
@@ -491,6 +492,95 @@ def install_args(main, wt, profile):
             f"--mode={mode}", "-y", "--no-githooks", "-p", profile, "-a", ",".join(agents)]
 
 
+def _env_limit(name, default):
+    """A non-negative number from the environment, 0 = off; anything else (not a number, negative, nan, inf) = the default."""
+    try:
+        v = float(os.environ.get(name, default))
+    except ValueError:
+        return default
+    return v if 0 <= v < 1e9 else default
+
+
+# W1 R5c (docs/workflow-improvements.md I.0): `add` runs `gc` and warns under the warning line, creates nothing under the floor, and
+# keeps at most WORKTREE_MAX linked worktrees per repo. 0 turns each off. SessionStart (hooks/session_context.sh) reads the same numbers.
+DISK_WARN_GIB = _env_limit("WORKTREE_DISK_WARN_GIB", 10.0)
+DISK_MIN_GIB = _env_limit("WORKTREE_DISK_MIN_GIB", 3.0)
+WORKTREE_MAX = _env_limit("WORKTREE_MAX", 3)
+WORKTREE_MAX = int(WORKTREE_MAX) if WORKTREE_MAX == int(WORKTREE_MAX) else 3   # 0.5 is no number of worktrees, and not "off"
+NO_ROOM = 4   # add's exit code when it refuses for want of room (disk or cap): what a hook that creates worktrees tells apart from a usage error
+ADD_LOCK = "devkit-worktree-add.lock"
+ADD_LOCK_WAIT_S = 600.0
+
+
+def free_gib(path):
+    """Free space (GiB) of the volume `path` — or its nearest existing parent — lives on; None when it cannot be read."""
+    while path and not os.path.exists(path) and os.path.dirname(path) != path:
+        path = os.path.dirname(path)
+    try:
+        return shutil.disk_usage(path).free / 2 ** 30
+    except OSError:
+        return None
+
+
+def _make_room(main, wt):
+    """Under DISK_WARN_GIB free: `gc` (the leftovers git no longer knows), then a warning; still under DISK_MIN_GIB: refuse (NO_ROOM)."""
+    free = free_gib(wt)
+    if free is None:
+        print("• " + tr("không đọc được dung lượng đĩa trống; bỏ qua kiểm đĩa", "cannot read the free disk space; disk check skipped"))
+        return
+    if free >= max(DISK_WARN_GIB, DISK_MIN_GIB):   # each line holds on its own: the floor still applies with the warning off
+        return
+    cmd_gc(main, ["--log=" + os.path.join(main, ".claude", "audit-gate", "worktree_gc.log")])   # silent when another gc of this repo runs
+    free = free_gib(wt)
+    if free is None:   # as on the first read: cannot say, so no refusal
+        return
+    if free < DISK_MIN_GIB:
+        die(tr(f"đĩa chỉ còn {free:.1f} GiB trống (dưới {DISK_MIN_GIB:g} GiB, đã chạy worktree gc): không tạo worktree mới — "
+               "xoá build/cache cũ (build/, .gradle/, node_modules/, DerivedData) rồi chạy lại",
+               f"only {free:.1f} GiB free on the disk (under {DISK_MIN_GIB:g} GiB, worktree gc ran): no new worktree — "
+               "delete old build output and caches (build/, .gradle/, node_modules/, DerivedData), then run it again"), NO_ROOM)
+    if free < DISK_WARN_GIB:
+        print("⚠ " + tr(f"đĩa còn {free:.1f} GiB trống sau worktree gc (dưới {DISK_WARN_GIB:g} GiB): dọn build/cache cũ sớm",
+                        f"{free:.1f} GiB free on the disk after worktree gc (under {DISK_WARN_GIB:g} GiB): clear old build output and caches soon"))
+
+
+def _add_lock(common):
+    """flock on <common>/ADD_LOCK, so the count and `git worktree add` run one at a time per repo. The kernel drops it when its holder
+    dies, so it never goes stale (review 14/10: an O_EXCL lock file a killed add left behind let two waiters take it over together and
+    go past the cap). Waits up to ADD_LOCK_WAIT_S, then exit 1; None when this filesystem has no flock (it runs unlocked and says so)."""
+    try:
+        import fcntl
+        fh = open(os.path.join(common, ADD_LOCK), "a")
+    except (OSError, ImportError) as e:
+        print("• " + tr(f"không khoá được ({e}); chạy không khoá", f"no lock ({e}); running unlocked"))
+        return None
+    deadline, said = time.monotonic() + ADD_LOCK_WAIT_S, False
+    while True:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fh
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                fh.close()
+                die(tr(f"một lệnh worktree add khác của repo này đã chạy quá {ADD_LOCK_WAIT_S / 60:g} phút; chạy lại sau",
+                       f"another worktree add in this repo has run for over {ADD_LOCK_WAIT_S / 60:g} minutes; run it again later"), 1)
+            if not said:
+                print("• " + tr("chờ một lệnh worktree add khác của repo này…", "waiting for another worktree add in this repo…"), flush=True)
+                said = True
+            time.sleep(0.2)
+        except OSError as e:   # no flock on this filesystem (NFS, SMB)
+            fh.close()
+            print("• " + tr(f"không khoá được ({e}); chạy không khoá", f"no lock ({e}); running unlocked"))
+            return None
+
+
+def _live_worktrees(main):
+    """The linked worktrees that hold a slot: registered with a folder on disk. A red_proof sandbox (red-proof-*, removed by the run that
+    made it) and a registration whose folder is gone (prunable) take none."""
+    return [e["path"] for e in _worktree_entries(main)[1:]
+            if not e["broken"] and os.path.isdir(e["path"]) and not os.path.basename(e["path"]).startswith("red-proof-")]
+
+
 def cmd_add(cwd, args):
     base, profile, no_init, share_memory, pos = None, None, False, False, []
     for a in args:
@@ -513,12 +603,27 @@ def cmd_add(cwd, args):
     main = main_checkout(cwd)
     if os.path.exists(wt) and os.listdir(wt):
         die(tr(f"{wt} đã có và không rỗng", f"{wt} exists and is not empty"))
-    if branch is None:
-        git(main, "worktree", "add", "--detach", wt, *([base] if base else []), bounded=False)
-    elif git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0:
-        git(main, "worktree", "add", wt, branch, bounded=False)
-    else:
-        git(main, "worktree", "add", "-b", branch, wt, *([base] if base else []), bounded=False)
+    _make_room(main, wt)
+    common = os.path.realpath(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip())
+    lock = _add_lock(common) if WORKTREE_MAX else None   # count + add: one at a time
+    try:
+        live = _live_worktrees(main) if WORKTREE_MAX else []
+        if len(live) >= WORKTREE_MAX > 0:   # never "finish someone else's": a clean worktree may be a live session's that has not edited yet
+            die(tr(f"repo đã có {len(live)} worktree (tối đa {WORKTREE_MAX}): {', '.join(live)} — chỉ gộp và gỡ worktree do CHÍNH phiên "
+                   "này tạo mà đã xong (`agent-kit worktree finish <path>`); worktree của phiên khác, kể cả đang sạch, thì để yên và "
+                   "chờ nó xong",
+                   f"the repo already has {len(live)} worktrees (at most {WORKTREE_MAX}): {', '.join(live)} — merge and remove only a "
+                   "finished worktree THIS session made (`agent-kit worktree finish <path>`); leave another session's alone, even a "
+                   "clean one, and wait for it to finish"), NO_ROOM)
+        if branch is None:
+            git(main, "worktree", "add", "--detach", wt, *([base] if base else []), bounded=False)
+        elif git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0:
+            git(main, "worktree", "add", wt, branch, bounded=False)
+        else:
+            git(main, "worktree", "add", "-b", branch, wt, *([base] if base else []), bounded=False)
+    finally:
+        if lock:
+            lock.close()   # drops the flock
     start = git(wt, "rev-parse", "HEAD").stdout.strip()
 
     copied = copy_local_config(main, wt)

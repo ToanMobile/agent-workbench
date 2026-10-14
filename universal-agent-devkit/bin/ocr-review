@@ -9,6 +9,9 @@
     `ocr delegate rule`, no LLM and no key: the files to review, their diff command and OCR's rules for them go into a spec
     (`mode: delegate`, `spec: <file>`) that the host agent hands to a fresh-context reviewer (Agent tool), who reports only
     real defects with file:line.
+  * An endpoint that rejects EVERY request is no endpoint either (14/10: the API key hit its usage limit until 01/11; every file
+    failed on the provider, 0 tokens, and review_gate then held every Stop): the same delegation, with the provider's reason shown
+    (`LLM endpoint unusable`). A review that reviewed some files and failed others stays a failure (exit 1).
 --delegate-only skips the LLM attempt (hooks/review_gate.sh runs it on a block: no cost, ~1 s).
 Output goes to a new temp folder (or --out DIR, reused and overwritten: review_gate passes one folder per repo so its block
 message is the same text on every run), never into the repo. Exit 0: report or spec ready (or nothing to review); 1: ocr failed;
@@ -26,6 +29,7 @@ import sys
 import tempfile
 
 ENDPOINT_ERR = "no valid LLM endpoint configured"
+UNUSABLE = "LLM endpoint unusable"   # hooks/review_gate.sh credits a fallback that names either of these
 # a hung `ocr` must not hang its caller: review_gate.sh runs --delegate-only inside its own 20 s hook budget (two calls, ~0.3-0.8 s
 # each in the 5 repos, 13/10), and a full review (~80 s with Opus) runs detached
 DELEGATE_TIMEOUT_S = 6
@@ -96,6 +100,21 @@ def range_args(argv):
     return keep, dkeep, diff
 
 
+def rejected_all(report):
+    """True when `ocr review` wrote a report in which the LLM answered nothing: every selected file failed on the provider (quota, bad key,
+    unreachable), none completed or reused, 0 tokens — no review can run, as with no endpoint."""
+    try:
+        with open(report, encoding="utf-8") as fh:
+            d = json.load(fh)
+        cov = d["manifest"]["coverage"]
+        failed = cov.get("failed") or []
+        return (d.get("status") == "failed" and not (d.get("summary") or {}).get("total_tokens") and bool(failed)
+                and not cov.get("completed") and not cov.get("reused")
+                and all(isinstance(f, dict) and f.get("classification") == "provider" for f in failed))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):   # no report, or not OCR's shape: cannot say, so no fallback
+        return False
+
+
 def main(argv):
     if shutil.which("ocr") is None:
         print("ocr-review: `ocr` (OpenCodeReview) is not installed — npm i -g @alibaba-group/open-code-review", file=sys.stderr)
@@ -119,16 +138,26 @@ def main(argv):
         out = tempfile.mkdtemp(prefix="ocr-review.")
     if not delegate_only:
         report = os.path.join(out, "ocr-review.json")
+        try:   # --out is reused: a report left by an earlier run must never stand in for this one
+            os.unlink(report)
+        except FileNotFoundError:
+            pass
         r = ocr("review", "--audience", "agent", "--format", "json", "-o", report, *[a for a in keep if a], timeout=REVIEW_TIMEOUT_S)
         if r.returncode == 0 and os.path.exists(report):
             print("mode: review")
             print("report: " + report)
             return 0
         why = (r.stderr or r.stdout or "").strip()
-        if ENDPOINT_ERR not in why:
+        if ENDPOINT_ERR in why:
+            print("ocr review needs an LLM endpoint (" + ENDPOINT_ERR + "); using OCR delegation mode (no LLM, no key)")
+        elif rejected_all(report):
+            m = re.search(r'"message"\s*:\s*"([^"]{1,300})"', why)
+            reason = m.group(1) if m else (why.splitlines() or [""])[-1]
+            print("ocr review could not use its LLM endpoint (" + UNUSABLE + ": every request rejected, 0 tokens): "
+                  + mask(reason)[:300] + "; using OCR delegation mode (no LLM, no key)")
+        else:
             print("ocr-review: `ocr review` failed: " + mask(why)[:500], file=sys.stderr)
             return 1
-        print("ocr review needs an LLM endpoint (" + ENDPOINT_ERR + "); using OCR delegation mode (no LLM, no key)")
     p = ocr("delegate", "preview", "--format", "json", *[a for a in dkeep if a], timeout=DELEGATE_TIMEOUT_S)
     try:
         prev = json.loads(p.stdout)

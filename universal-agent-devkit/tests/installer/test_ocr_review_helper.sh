@@ -32,6 +32,18 @@ case "$1 $2" in
     if [ "$OCR_FAKE" = badkey ]; then
       echo "Error: anthropic: 401 invalid x-api-key sk-""ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789 for model claude-sonnet-5-5" >&2; exit 1
     fi
+    if [ "$OCR_FAKE" = quota ] || [ "$OCR_FAKE" = partial ]; then   # ocr v1.13 writes its report, then exits 1 (measured 14/10)
+      out=""; prev=""
+      for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
+      if [ "$OCR_FAKE" = quota ]; then
+        printf '{"status":"failed","summary":{"files_reviewed":2,"total_tokens":0},"manifest":{"coverage":{"selected":[{"path":"a.py"},{"path":"b.py"}],"completed":[],"reused":[],"failed":[{"path":"a.py","classification":"provider"},{"path":"b.py","classification":"provider"}]}}}\n' > "$out"
+        echo 'LLM completion error: POST "https://api.anthropic.com/v1/messages": 400 Bad Request {"type":"invalid_request_error","message":"You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC."}' >&2
+      else
+        printf '{"status":"failed","summary":{"files_reviewed":2,"total_tokens":5321},"manifest":{"coverage":{"selected":[{"path":"a.py"},{"path":"b.py"}],"completed":[{"path":"a.py"}],"reused":[],"failed":[{"path":"b.py","classification":"provider"}]}}}\n' > "$out"
+        echo "Error: review failed: 1 of 2 selected item(s) failed" >&2
+      fi
+      exit 1
+    fi
     if [ "$OCR_FAKE" = endpoint ]; then
       [ -n "${OCR_ARGS_LOG:-}" ] && echo "$*" >> "$OCR_ARGS_LOG"
       case " $* " in *" --from "*) case " $* " in *" --to "*) ;; *) echo "Error: --to is required when --from is specified" >&2; exit 1 ;; esac ;; esac
@@ -77,6 +89,20 @@ report="$(sed -n 's/^report: //p' "$TMP/out")"
 # 3. nothing reviewable: says so, exit 0
 rc="$(run empty)"
 [ "$rc" = 0 ] && grep -qi 'nothing to review' "$TMP/out" && ok "no reviewable file: says so (exit 0)" || fail "empty: rc=$rc out=$(cat "$TMP/out")"
+
+# 2b. the endpoint rejects EVERY request (14/10: the API key hit its usage limit until 01/11, every file "provider" failed, 0 tokens):
+#     no review can run, so it is no endpoint — delegation, exit 0, the reason shown; a review that half ran stays a failure (exit 1)
+rc="$(run quota)"
+[ "$rc" = 0 ] && grep -q '^mode: delegate' "$TMP/out" && grep -q '^spec: ' "$TMP/out" && grep -q 'LLM endpoint unusable' "$TMP/out" \
+  && grep -q 'usage limits' "$TMP/out" && ok "every request rejected (usage limit): falls back to delegation, says why (exit 0)" \
+  || fail "quota: rc=$rc out=$(head -3 "$TMP/out" | tr '\n' ' ') err=$(head -2 "$TMP/err" | tr '\n' ' ')"
+rc="$(run partial)"
+[ "$rc" = 1 ] && ! grep -q '^mode: delegate' "$TMP/out" && ok "  … a review that reviewed some files and failed others: exit 1, no fallback" \
+  || fail "partial failure fell back (rc $rc): $(head -3 "$TMP/out" | tr '\n' ' ')"
+
+rc="$(PATH="$TMP/bin:$PATH" OCR_FAKE=quota python3 "$HELPER" --out "$TMP/reuse" > /dev/null 2>&1; PATH="$TMP/bin:$PATH" OCR_FAKE=badkey python3 "$HELPER" --out "$TMP/reuse" > "$TMP/out" 2> "$TMP/err"; echo $?)"
+[ "$rc" = 1 ] && ! grep -q '^mode: delegate' "$TMP/out" && ok "  … a reused --out: the last run's 'every request rejected' report never stands in for a run that wrote none" \
+  || fail "stale report from the previous run read as this run's (rc $rc): $(head -2 "$TMP/out" | tr '\n' ' ')"
 
 # 3b. an auth error that echoes a key: the helper fails (exit 1) and never prints the key
 rc="$(run badkey)"

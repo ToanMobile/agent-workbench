@@ -443,7 +443,8 @@ if tp and os.path.exists(tp):
                         _txt = _result_text(blk)
                         _spec = next((l[6:].strip() for l in _txt.splitlines() if l.startswith("spec: ")), "")
                         _spec = os.path.join(cwd, _spec) if _spec and not os.path.isabs(_spec) else _spec   # a relative --out
-                        if "no valid LLM endpoint configured" in _txt and "mode: delegate" in _txt and _spec and _spec_from_run(ocmd, _spec):
+                        if ("no valid LLM endpoint configured" in _txt or "LLM endpoint unusable" in _txt) and "mode: delegate" in _txt \
+                                and _spec and _spec_from_run(ocmd, _spec):   # no endpoint, or one that rejects every request (bin/ocr-review)
                             ocr_fallbacks.append((at, _spec, _helper_argv(ocmd)))
                     continue
                 if not isinstance(blk, dict) or blk.get("type") != "tool_use":
