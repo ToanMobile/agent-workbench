@@ -633,6 +633,16 @@ test('killGroup (util.js): SIGKILL ca nhom tien trinh (con + chau), khong nem: l
   assert.equal(got?.code, 'ESRCH');
 });
 
+test('killGroup (util.js): pid 0, 1, am hoac khong phai so KHONG bao gio duoc gui tin hieu (kill(-0) = nhom cua chinh server, kill(-1) = moi tien trinh), loi duoc tra ve', () => {
+  const orig = process.kill;
+  const sent = [];
+  process.kill = (pid, sig) => { sent.push([pid, sig]); throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' }); };   // stub: khong tin hieu that nao roi di
+  const got = {};
+  try { for (const pid of [0, 1, -5, NaN, undefined, null, '0', '1']) got[String(pid)] = util.killGroup(pid); } finally { process.kill = orig; }
+  assert.deepEqual(sent, [], `da gui tin hieu toi: ${JSON.stringify(sent)}`);
+  for (const [pid, e] of Object.entries(got)) assert.ok(e instanceof Error, `killGroup(${pid}) khong tra ve loi`);
+});
+
 test('test gia lap "khong co agy" khong tro ANTIGRAVITY_PM_AGY vao duong dan doan duoc trong /tmp dung chung (file dat san o do se bi chay voi skip-permissions)', () => {
   const testsDir = path.dirname(new URL(import.meta.url).pathname);
   const hits = [];
@@ -800,4 +810,16 @@ test('so dang ky hong + nudge, task bac IDE ma trien khai giao model=Argon: disp
   fs.writeFileSync(registryFile(), '{"broken": ');
   const out = await call('pm_status', { project: dir, taskId, nudge: true });
   assert.match(out.text, /Khong nhac duoc agent: khong biet trang thai luot agy/, out.text);
+});
+
+test('trien khai mo hoi thoai Argon nhung workspace lech (strict): task bi chan MA dispatch van ghi model THAT cua hoi thoai (khong roi ve task.model)', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'dbdbdbdb-2222-3333-4444-555555555555', FAKE_AGY_INIT_CWD: '/nowhere/else', ANTIGRAVITY_LS_ADDRESS: '127.0.0.1:9', ANTIGRAVITY_CSRF_TOKEN: 'x' });
+  const dir = mkProject(t, { defaultModel: 'flash' });
+  const taskId = await newTask(dir);
+  await call('pm_plan', { project: dir, taskId, content: '# x\n1. lam\n2. test', files: ['src/a.js'] });
+  await assert.rejects(call('pm_dispatch', { project: dir, taskId, kind: 'implement', force: true, model: ARGON }), /workspace/);
+  const task = loadTask(loadConfig(dir), taskId);
+  assert.equal(task.state, 'blocked');
+  const opened = (task.dispatches || []).find((d) => d.kind === 'implement' && d.conversationId === task.conversationId);
+  assert.equal(opened?.model, ARGON, `dispatch cua hoi thoai ${task.conversationId} khong ghi model that: ${JSON.stringify(task.dispatches)}`);
 });

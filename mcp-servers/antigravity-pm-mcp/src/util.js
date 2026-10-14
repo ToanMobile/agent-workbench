@@ -9,6 +9,8 @@ import os from 'node:os';
  * tra ve null khi da gui, hoac loi (ESRCH = nhom da het) de noi goi tu chon bo qua hay bao ra.
  */
 export function killGroup(pid) {
+  // kill(-0) hits our own group, kill(-1) every process we may signal, a negative pid one process: no pid <= 1 is a group of ours to kill
+  if (!(pid > 1)) return Object.assign(new RangeError(`killGroup: invalid pid ${pid}`), { code: 'EINVAL' });
   try { process.kill(-pid, 'SIGKILL'); return null; } catch (e) { return e; }
 }
 
