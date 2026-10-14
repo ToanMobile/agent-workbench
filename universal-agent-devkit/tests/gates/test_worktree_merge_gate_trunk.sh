@@ -276,6 +276,16 @@ stop "$TMP/u3" s1 "$TMP/u3/.claude/worktrees/s1" "$TMP/t14-u3.jsonl" WORKTREE_AU
 [ "$rc" = 2 ] && [ ! -f "$TMP/u3/own.txt" ] && grep -qF "agent-kit worktree finish $TMP/u3/.claude/worktrees/s1 --keep" "$TMP/err" && grep -q "worktrees/x" "$TMP/err" \
   && ok "  … WORKTREE_AUTO_MERGE=0: still rc 2, the note names agent-kit worktree finish --keep for the own worktree, main without the own commit" \
   || fail "auto-merge off with another hold (rc $rc, own in main: $( [ -f "$TMP/u3/own.txt" ] && echo yes || echo no)): err=$(head -c 500 "$TMP/err")"
+# 14b the hold cap (3 holds on one list, then the Stop passes with a systemMessage) must not drop the own-worktree note either (OCR2 4): the failed
+#     merge, the conflict and the WORKTREE_AUTO_MERGE=0 hint went silent exactly when the session stops for good
+mkhold u4
+for i in 1 2 3; do
+  stop "$TMP/u4" s1 "$TMP/u4/.claude/worktrees/s1" "$TMP/t14-u4.jsonl" WORKTREE_AUTO_MERGE=0; rc=$?; [ "$rc" = 2 ] || fail "u4 hold $i of 3 (rc $rc): $(head -c 300 "$TMP/err")"
+done
+stop "$TMP/u4" s1 "$TMP/u4/.claude/worktrees/s1" "$TMP/t14-u4.jsonl" WORKTREE_AUTO_MERGE=0; rc=$?
+[ "$rc" = 0 ] && grep -q "systemMessage" "$TMP/out" && grep -qF "worktrees/x" "$TMP/out" && grep -qF "agent-kit worktree finish $TMP/u4/.claude/worktrees/s1 --keep" "$TMP/out" \
+  && ok "  … the hold cap reached: the Stop passes, and the systemMessage still carries the own-worktree note (finish --keep)" \
+  || fail "cap-path message without the own-worktree note (rc $rc): out=$(head -c 600 "$TMP/out") err=$(head -c 200 "$TMP/err")"
 
 # 15 session_lock not importable and a worktree whose state names ANOTHER session (OCR2 20): "that session may be alive" was assumed for every
 #    such worktree, also one this repo already owes - legacy mode then dropped it and passed the Stop in silence with the work unintegrated,

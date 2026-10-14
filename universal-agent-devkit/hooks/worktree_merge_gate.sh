@@ -617,12 +617,12 @@ def save():
     except OSError:
         return False
 
+testing_notes = ["… một lần chạy test đang giữ worktree, chưa gộp (lần dừng sau gộp): " + p for p in am_testing] + ([own_note] if own_note else [])
 if not pending:
     if set(state.get("owed") or []) != owed or am_done:
         save()   # removed worktrees leave the debt list
     notes = ["✔ đã tự gộp vào main và gỡ: " + p for p in am_done] + ["… đang tự gộp ở nền (kết quả: lần dừng sau; log trong git dir): " + p for p in am_running]
-    notes += ["… một lần chạy test đang giữ worktree, chưa gộp (lần dừng sau gộp): " + p for p in am_testing]
-    notes += [own_note] if own_note else []
+    notes += testing_notes
     if notes:
         print(json.dumps({"systemMessage": "WORKTREE-MERGE GATE:\n" + "\n".join(notes)}, ensure_ascii=False))
     sys.exit(0)
@@ -654,7 +654,8 @@ if held >= 3:
     head = ("⚠ WORKTREE-MERGE GATE: cổng KHÔNG chạy được (lỗi nội bộ / không đọc được git dir) nên không biết worktree còn việc CHƯA về trunk hay không:\n"
             if could_not_run else "⚠ WORKTREE-MERGE GATE: phiên dừng khi worktree vẫn còn việc CHƯA về trunk:\n")
     advice = "`git worktree list` (kiểm tra bằng tay)" if could_not_run else "`agent-kit worktree finish <path>` (tự gộp + gỡ) hoặc `agent-kit worktree status`"
-    print(json.dumps({"systemMessage": head + listing + "\n" + lock_note + "Đem về trước khi làm tiếp: " + advice + "."}, ensure_ascii=False))
+    print(json.dumps({"systemMessage": head + listing + "\n" + lock_note + "".join(n + "\n" for n in testing_notes)   # the own merge's result must not vanish when the session stops for good
+                      + "Đem về trước khi làm tiếp: " + advice + "."}, ensure_ascii=False))
     sys.exit(0)
 sessions[sid] = {"fp": fp, "n": held + 1}
 if not save():
