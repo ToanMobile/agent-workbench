@@ -113,5 +113,20 @@ stop "$TMP/i" s1 "$TMP/i" "$TMP/t1.jsonl"; rc=$?
 [ "$rc" = 0 ] && [ -f "$TMP/i/seven.txt" ] && [ ! -d "$TMP/i/.claude/worktrees/s7" ] \
   && ok "  … the same record once its pid is gone: adopted (merged, removed)" || fail "dead pid not adopted (rc $rc): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
 
+# 11 the gate's 13 s alarm passes the Stop SILENTLY (os._exit), so a hold still to be decided after merge_own went with it whenever merge_own was
+#    started with the budget nearly spent (R3 review 14/10, P3d). Under 4 s left the own merge is not started: a note, the next Stop merges. The
+#    kit copy below has a 4 s alarm, so merge_own always meets it with less than 4 s left; the real hook (case 1, 13 s alarm) still merges.
+FK="$TMP/kit11"; mkdir -p "$FK/hooks" "$FK/bin" "$FK/profiles" && ln -s "$DEVKIT_DIR/scripts" "$FK/scripts"
+for f in "$DEVKIT_DIR"/hooks/*; do ln -s "$f" "$FK/hooks/"; done; rm -f "$FK/hooks/worktree_merge_gate.sh"
+for f in "$DEVKIT_DIR"/bin/*; do ln -s "$f" "$FK/bin/"; done
+sed 's/signal\.alarm(13)/signal.alarm(4)/' "$HOOK" > "$FK/hooks/worktree_merge_gate.sh"
+grep -q 'signal\.alarm(4)' "$FK/hooks/worktree_merge_gate.sh" || fail "setup: the alarm of the kit copy was not patched"
+repo j; wtadd "$TMP/j" s1 s1; commit_in "$TMP/j" s1 eleven; record "$TMP/j" s1 s1
+REAL_HOOK="$HOOK"; HOOK="$FK/hooks/worktree_merge_gate.sh"
+stop "$TMP/j" s1 "$TMP/j/.claude/worktrees/s1" "$TMP/t1.jsonl"; rc=$?; HOOK="$REAL_HOOK"
+[ "$rc" = 0 ] && [ ! -f "$TMP/j/eleven.txt" ] && grep -q "hết thời gian" "$TMP/out" \
+  && ok "alarm budget nearly spent: the own merge is not started (a note, not merged), the Stop is decided before the alarm" \
+  || fail "own merge started with the budget spent (rc $rc, merged: $( [ -f "$TMP/j/eleven.txt" ] && echo yes || echo no)): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_worktree_merge_gate_trunk: PASS"; exit 0; } || { echo "test_worktree_merge_gate_trunk: FAIL ($FAILS)"; exit 1; }

@@ -509,6 +509,8 @@ if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != 
 def merge_own(path):
     """W1 R1 v6: the session's own worktree into main with `automerge --keep` (the R3 gate runs, main fast-forwards, the worktree stays)
     when its work is committed and no test run holds it. A note for the session, never a hold: it is alive and goes on working there."""
+    if signal.getitimer(signal.ITIMER_REAL)[0] < 4.0:   # the alarm passes the Stop silently (os._exit): a hold still to be decided below would go with it
+        return f"gần hết thời gian của cổng: chưa gộp worktree phiên {path}, lần dừng sau gộp"
     head = git("rev-parse", "HEAD", cwd=path)
     if not head:
         return "không đọc được HEAD của worktree phiên " + path + ": chưa gộp"
@@ -533,7 +535,7 @@ def merge_own(path):
         own_wait = float(os.environ.get("WORKTREE_AUTO_MERGE_WAIT_S", "9"))
     except ValueError:
         own_wait = 9.0
-    deadline = time.time() + max(0.5, min(own_wait, signal.getitimer(signal.ITIMER_REAL)[0] - 1.5))
+    deadline = time.time() + max(0.0, min(own_wait, signal.getitimer(signal.ITIMER_REAL)[0] - 1.5))   # (no 0.5 s floor: it could run past the alarm)
     while proc.poll() is None and time.time() < deadline:
         time.sleep(0.2)
     if proc.poll() is None:
