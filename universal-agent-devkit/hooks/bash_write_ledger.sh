@@ -85,6 +85,7 @@ fi
 [ -n "${REPO_ROOT}" ] || exit 0
 LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
 [ -d "${LOG_DIR}" ] || mkdir -p "${LOG_DIR}" 2>/dev/null || exit 0
+for _fifo in "${LOG_DIR}"/* "${LOG_DIR}"/.[!.]*; do [ ! -p "${_fifo}" ] || rm -f -- "${_fifo}"; done   # a FIFO here (never one of ours) would hang the next open of a log or lock: drop it
 [ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
 LEDGER="${LOG_DIR}/bash_write_ledger.tsv"
 

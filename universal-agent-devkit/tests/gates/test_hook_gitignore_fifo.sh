@@ -31,15 +31,41 @@ for h in hooks:
     with open(os.path.join(p, ".gitignore"), "w") as fh:
         fh.write(".claude/audit-gate/\n")
     os.mkfifo(os.path.join(p, ".claude", "audit-gate", ".gitignore"))
+    # ... and at the hook's own log and the test-run lock (principal-code-reviewer 14/10: review_gate.log, claim_check.log,
+    # test_evidence_gate.log, security_gate.log as FIFOs still hung the Stop hooks; testsourceset's `exec 9>>test_run.lock` too)
+    for extra in (name.replace(".sh", ".log"), "test_run.lock"):
+        os.mkfifo(os.path.join(p, ".claude", "audit-gate", extra))
     payload = {"session_id": "s", "cwd": p, "hook_event_name": "Stop", "transcript_path": "/dev/null",
                "tool_name": "Bash", "tool_input": {"command": "ls"}, "prompt": "hi"}
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["CLAUDE_PROJECT_DIR"] = p
     try:
         subprocess.run(["bash", h], input=json.dumps(payload).encode(), capture_output=True, env=env, cwd=p, timeout=10)
-        print(f"✔ {name}: ends with a FIFO at .claude/audit-gate/.gitignore")
+        print(f"✔ {name}: ends with FIFOs at .claude/audit-gate/ (.gitignore, its log, test_run.lock)")
     except subprocess.TimeoutExpired:
-        print(f"✖ {name}: HUNG on a FIFO at .claude/audit-gate/.gitignore (killed after 10 s)"); fails += 1
+        print(f"✖ {name}: HUNG on a FIFO at .claude/audit-gate/ (killed after 10 s)"); fails += 1
+        continue
+    # a hook that wrote anything there must leave a REGULAR .gitignore in the same run: the sweep runs BEFORE the .gitignore line
+    # (OpenCodeReview 14/10: after it, the FIFO was dropped and nothing ignored the files written next). A hook that left before
+    # that line (a disabled branch, a fast path) wrote nothing and opened nothing.
+    ag = os.path.join(p, ".claude", "audit-gate")
+    wrote = [f for f in os.listdir(ag) if f != ".gitignore" and os.path.isfile(os.path.join(ag, f))]
+    if wrote and not os.path.isfile(os.path.join(ag, ".gitignore")):
+        print(f"✖ {name}: wrote {wrote[:3]} but left no regular .gitignore in the same run"); fails += 1
+
+# worktree_guard's WORKTREE_GUARD=0 branch appends to its log before any sweep (OpenCodeReview 14/10)
+p = os.path.join(tmp, "wg_off")
+os.makedirs(os.path.join(p, ".claude", "audit-gate"))
+subprocess.run(["git", "init", "-q", p], check=True)
+os.mkfifo(os.path.join(p, ".claude", "audit-gate", "worktree_guard.log"))
+env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+env.update(CLAUDE_PROJECT_DIR=p, WORKTREE_GUARD="0")
+try:
+    subprocess.run(["bash", os.path.join(dk, "hooks", "worktree_guard.sh")], input=b'{"tool_name":"Bash"}', capture_output=True,
+                   env=env, cwd=p, timeout=10)
+    print("✔ worktree_guard.sh WORKTREE_GUARD=0: ends with a FIFO at its log")
+except subprocess.TimeoutExpired:
+    print("✖ worktree_guard.sh WORKTREE_GUARD=0: HUNG on a FIFO at its log"); fails += 1
 sys.exit(1 if fails else 0)
 PY
 rc=$?

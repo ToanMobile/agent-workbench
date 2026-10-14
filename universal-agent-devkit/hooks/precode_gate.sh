@@ -56,6 +56,7 @@ fi
 LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"
 if [ -n "${LOG_DIR}" ]; then
   [ -d "${LOG_DIR}" ] || mkdir -p "${LOG_DIR}"
+  for _fifo in "${LOG_DIR}"/* "${LOG_DIR}"/.[!.]*; do [ ! -p "${_fifo}" ] || rm -f -- "${_fifo}"; done   # a FIFO here (never one of ours) would hang the next open of a log or lock: drop it
   [ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
 fi
 

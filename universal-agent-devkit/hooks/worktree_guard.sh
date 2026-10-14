@@ -85,7 +85,7 @@ LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"
 
 if [ "${WORKTREE_GUARD:-1}" = "0" ]; then
   [ -n "${LOG_DIR}" ] && mkdir -p "${LOG_DIR}" 2>/dev/null && \
-    echo "[$(date +%Y-%m-%dT%H:%M:%S)] WORKTREE_GUARD=0 — guard bypassed" >> "${LOG_DIR}/worktree_guard.log" 2>/dev/null
+    { [ -p "${LOG_DIR}/worktree_guard.log" ] || echo "[$(date +%Y-%m-%dT%H:%M:%S)] WORKTREE_GUARD=0 — guard bypassed" >> "${LOG_DIR}/worktree_guard.log"; } 2>/dev/null
   exit 0
 fi
 
@@ -131,6 +131,7 @@ if [ -z "${DEVKIT_WORKTREE:-}" ]; then
         | grep -qE '"name":[[:space:]]*"EnterWorktree"[[:space:]]*,[[:space:]]*"input"' && linked=1
       if [ "${size}" -gt 0 ] && [ -n "${LOG_DIR}" ]; then
         [ -d "${LOG_DIR}/wg_scan" ] || mkdir -p "${LOG_DIR}/wg_scan" 2>/dev/null
+        for _fifo in "${LOG_DIR}"/* "${LOG_DIR}"/.[!.]*; do [ ! -p "${_fifo}" ] || rm -f -- "${_fifo}"; done   # a FIFO here (never one of ours) would hang the next open of a log or lock: drop it
         [ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null
         printf '%s %s\n' "${size}" "${linked}" > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}" 2>/dev/null
       fi
@@ -158,6 +159,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 if [ -n "${LOG_DIR}" ]; then
   mkdir -p "${LOG_DIR}" 2>/dev/null
+  for _fifo in "${LOG_DIR}"/* "${LOG_DIR}"/.[!.]*; do [ ! -p "${_fifo}" ] || rm -f -- "${_fifo}"; done   # a FIFO here (never one of ours) would hang the next open of a log or lock: drop it
   [ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
 fi
 
