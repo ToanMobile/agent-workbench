@@ -12,79 +12,49 @@
 
 | Mục | Nội dung | Nguồn | Trạng thái |
 |---|---|---|---|
-| A.1 | `session_lock` bỏ lọt `cp`/`mv`/`rm`/`tee`/`sed -i` (việc 3); thư mục mồ côi do gate ghi sau khi worktree bị gỡ (việc 10) | `goal-100-2026-10-13.md` | Kiểm lại 13/10 17:00: cả hai vẫn mở; việc 10 lặp lại lúc 16:36. Lịch làm: `workflow-improvements.md` I.0 W3, W1 (R5a) |
-| A.2 | Gate chưa có biên nhận cho `aaf9805`/`204750d`; race `worktree_merge_gate`; dọn thư mục và worktree sót | `trunk-integrator-no-shared-main.md` §8.1 #2–#6 | Kiểm lại 13/10 tối: #2 và phần còn lại của #3 còn mở; #4, #5, #6 đã đóng và đã bỏ khỏi bảng → I.0 W0, W1 |
-| A.3 | Worktree ở Goods chưa gộp | `goal-100-2026-10-13.md` | Kiểm lại 13/10 tối: Goods vẫn vậy; phần GeelyEx2 đã đóng và đã bỏ → I.0 W1 (R5b gc) |
-| A.4 | Tồn đọng ghi trong plan / báo cáo đã làm; con trỏ cũ tới `docs/plans/*` còn sót | các plan II.A, II.C và audit B.1 | Kiểm lại 13/10 tối: 6 hàng đã đóng đã bỏ; 5 hàng còn mở, 3 hàng chưa kiểm được (xem đầu mục) |
+| A.1b | File bí mật sinh ra trong worktree không về main: phần sửa chung cho `finish`/`gc` (việc 12) | review 13/10 tối | Ca Neighbours xong 13/10; phần chung là W1 của phiên d352c03b |
+| A.2 | Race `worktree_merge_gate`: lỗ con reflog đọc sau khi thư mục mất (#3) | `trunk-integrator-no-shared-main.md` §8.1 | W1 của phiên d352c03b |
+| A.4 | Tồn đọng còn lại từ plan / audit cũ | các plan II.A, II.C và audit B.1 | Kiểm lại 14/10 (phiên d91dffdd): 2 việc mở, 1 chờ chủ xe duyệt, 2 quyết định chính sách, 1 không kiểm được |
 | B.1 | Audit DevKit 2026-10-09: kết quả | `audit-2026-10-09-followup.md` | Báo cáo đã đóng |
 
 ## Phần A — Đang mở
 
-
-### A.1 Từ bảng mục tiêu 100/100 (việc 3 và 10)
-
-| # | Việc | Trạng thái | Ở đâu |
-|---|---|---|---|
-| 3 | **Lỗ của `session_lock`** — `bash_collides` (`bin/session_lock.py` ~dòng 956) chỉ coi git write, lệnh chạy gate và redirect `>` là ghi; `cp`/`mv`/`rm`/`tee`/`sed -i`/`touch`/python ghi file vào checkout đang bị giữ đều lọt (13/10 11:03 đã xảy ra) | chưa làm — gộp vào việc 2 (kiểm lại 13/10 17:00: `bin/session_lock.py:956-971` không đổi từ `892125a`) → `workflow-improvements.md` I.0 W3 | `worktree_guard.sh` đã có bộ quét đích ghi, nhúng trong heredoc `python3 -I <<'PY'` (dòng 165–574; bộ quét lệnh Bash ở dòng 423–544): đưa nó vào bộ chuẩn hoá chung, đừng viết bộ thứ hai |
-| 10 | **Lỗi kit: thư mục mồ côi do gate ghi sau khi worktree bị gỡ** — 13/10 hai lần (`agent-workbench-dashboard` 12:57, `agent-workbench-sprite-forge` 15:30): một `post-fix-gate` đang chạy trong worktree, `worktree finish/remove` gỡ worktree, gate kết thúc và ghi `.agents/evidence`, `regression_journal`, `CHECKLIST.md`, `.claude/audit-gate/*.lock` vào đường dẫn cũ → thư mục không có `.git`, git không thấy, không guard nào liệt kê. Sửa: `finish`/`remove` chờ hoặc từ chối khi khoá `test_run.lock` của worktree đang bị giữ, và/hoặc gate không tạo lại gốc project đã biến mất (kiểm `.git` trước khi ghi); `worktree status` liệt kê thư mục `<repo>-*` không còn đăng ký. Test ĐỎ trước. | chưa làm (đã xoá tay hai thư mục). **Kiểm lại 13/10 17:00: vẫn mở và lặp lại lúc 16:36** — `GeelyEx2-push-1013d` (không đăng ký, không `.git`, chỉ `.agents/` và `.claude/audit-gate/*.lock`; `regression_journal` ghi do `post-fix-gate.py` pid 31401). `worktree.py` không nhắc `test_run.lock`; `post-fix-gate.py:1038` `os.makedirs` và `:3420` `state.mkdir(parents=True)` ghi mà không kiểm `.git` → `workflow-improvements.md` I.0 W1 (R5a) | `scripts/git/worktree.py`, `bin/post-fix-gate.py` |
-
-*(Các việc #1, #2, #4 đến #9 của bảng gốc là cải tiến: nằm ở `workflow-improvements.md` mục I.1. Việc 3 ghi "gộp vào việc 2", tức Giai đoạn C ở đó.)*
+**Đóng 14/10 (phiên d91dffdd, "fix hết") và đã bỏ khỏi file**, mỗi việc có test ĐỎ→XANH, bằng chứng trong commit:
+A.1 #3 `session_lock` bỏ lọt `cp`/`mv`/`rm`/`tee`/`sed -i`/`touch` (`7a1c6de`, bộ quét chung `hooks/shell_writes.py`; lỗ còn lại ghi `ponytail` trong `_file_write_hits`);
+A.1 #10 thư mục mồ côi (`338b2ca` R5a + `d5ec03e`/`b0ff762` gc, của phiên d352c03b);
+A.1b #13 `review_gate` không thấy code sửa bằng Bash (`48aabca`);
+A.2 #2 gate chọn quá nhiều test: worktree tách rời tính từ merge-base (`ff27ebb`), checkout có upstream dùng `git diff @{u}...HEAD` (`dfdb7ff`), main có biên nhận `--full` exit 0 ghi `head`;
+A.3 worktree `-mcp` của Goods (7 đường dẫn nhiễu cất vào `stash@{0}` của Goods, gộp và push `5f43e73..58515a7`);
+A.4 regex `cwd` không đọc JSON thoát ở 15 hook (`88d1512`), 5 file `hooks/tests` mồ côi (`1223e12`), con trỏ `docs/plans/` ở 11 file (`64ed509`), FIFO trên state agent ghi được: 15 chỗ đọc/ghi của `post-fix-gate`/`proof_gate`/`push_gate` (`e44764b`) dòng `.gitignore` của 15 hook (`02865cc`), và FIFO ở log / khoá của hook ở cấp đầu `.claude/audit-gate/` bị dọn trước lần mở đầu tiên (commit kế tiếp; principal-code-reviewer bắt `review_gate.log` … còn treo). Giới hạn còn lại, ghi `ponytail` trong `tests/gates/test_hook_gitignore_fifo.sh`: git tự đọc một `.gitignore` là FIFO trong thư mục nó duyệt; khe đua sau `isfile`; thư mục con của `.claude/audit-gate/`; `scripts/testing/stale_rerun.py:115` mở `test_run.lock` thường (không phải hook Stop); `session_lock.test_run_active` coi FIFO là đang chạy test (có từ trước).
 
 ### A.1b Mới 13/10 tối (review ngữ cảnh sạch sau `cd0fb04`)
 
 | # | Việc | Bằng chứng | Sửa |
 |---|---|---|---|
-| 13 | **`review_gate.sh` không thấy code sửa bằng Bash.** Gate chỉ đếm lần sửa qua công cụ Edit/Write/NotebookEdit; code đổi bằng một script (`python3 patch.py`, `sed -i`, heredoc) không đặt `last_edit_idx`, nên gate ghi "none edited this session — pass" và không đòi review. | Phiên d352c03b 13/10 (W1 bước 1): mọi sửa `worktree.py` đều qua script Python, `review_gate.log` không có dòng BLOCK nào; review vẫn chạy vì agent tự giác, không phải vì gate. | Chưa sửa. Hướng: tính là "sửa trong phiên" một file code nằm trong diff mà mtime sau lệnh Bash đầu tiên của phiên nhắc tới đường dẫn của nó (hoặc sau thời điểm phiên bắt đầu, trừ file phiên khác đang giữ), có test ĐỎ trước. |
-| 12 | **File bí mật sinh ra trong worktree không bao giờ về main.** `worktree add` chép LOCAL_CONFIG (`.env`, `*.jks`, `key.properties`…) từ main sang worktree, nhưng `finish`/`automerge` chỉ mang về file git theo dõi. File bị gitignore, đúng là loại file bí mật, nên kẹt lại trong worktree, và worktree không xoá được nếu không mất khoá | Neighbours: `Neighbours-From-Hell-keystore` tạo lúc 12/10 17:32:05; `keystore/key_store_neighbours.jks` + `key.properties` sinh lúc 17:32:23. Main chưa từng có keystore (không file nào, Unity chưa cấu hình keystore Android). Người dùng tưởng main có "keystore gốc" | `finish`/`automerge`/`gc`: file bí mật bị ignore mà CHỈ có trong worktree thì chép về đúng đường dẫn ở main (giữ quyền 600, thêm vào `.git/info/exclude` nếu `.gitignore` chưa chặn), so từng byte, rồi mới gỡ worktree. Bản giống main thì bỏ. Test ĐỎ trước. Ca Neighbours: ĐÃ XONG 13/10 ~20:50 — người dùng duyệt; `keystore/` chép về `Neighbours-From-Hell/keystore/` (700/600, `cmp` trùng từng byte, `keystore/` trong `.git/info/exclude`, `git status` không thấy), rồi `agent-kit worktree remove` gỡ worktree. Phần sửa chung cho `finish`/`gc` vẫn là việc của W1 |
+| 12 | **File bí mật sinh ra trong worktree không bao giờ về main.** `worktree add` chép LOCAL_CONFIG (`.env`, `*.jks`, `key.properties`…) từ main sang worktree, nhưng `finish`/`automerge` chỉ mang về file git theo dõi. File bị gitignore, đúng là loại file bí mật, nên kẹt lại trong worktree, và worktree không xoá được nếu không mất khoá | Neighbours: `Neighbours-From-Hell-keystore` tạo lúc 12/10 17:32:05; `keystore/key_store_neighbours.jks` + `key.properties` sinh lúc 17:32:23. Main chưa từng có keystore (không file nào, Unity chưa cấu hình keystore Android). Người dùng tưởng main có "keystore gốc" | `finish`/`automerge`/`gc`: file bí mật bị ignore mà CHỈ có trong worktree thì chép về đúng đường dẫn ở main (giữ quyền 600, thêm vào `.git/info/exclude` nếu `.gitignore` chưa chặn), so từng byte, rồi mới gỡ worktree. Bản giống main thì bỏ. Test ĐỎ trước. Ca Neighbours: ĐÃ XONG 13/10 ~20:50 — người dùng duyệt; `keystore/` chép về `Neighbours-From-Hell/keystore/` (700/600, `cmp` trùng từng byte, `keystore/` trong `.git/info/exclude`, `git status` không thấy), rồi `agent-kit worktree remove` gỡ worktree. Phần sửa chung cho `finish`/`gc` vẫn là việc của W1 (phiên d352c03b giữ `scripts/git/worktree.py`) |
 
-### A.2 Từ Plan C+D §8.1 (hàng #2 đến #6)
+### A.2 Từ Plan C+D §8.1
 
 | # | Việc | Trạng thái đo được | Hành động |
 |---|---|---|---|
-| 2 | **Gate chưa có biên nhận cho `aaf9805` / `204750d`** | Lần đỏ gần nhất: `test_worktree_merge_gate_owner.sh` (race có sẵn); gate trên commit chỉ-Markdown vẫn TIMEOUT 900 s vì `REG-DK-ALL-01` chọn quá nhiều test | Chạy với `--timeout 2400`; điều tra vì sao commit docs kéo cả suite DevKit. **13/10 17:00:** không nối được với sha: `runs.jsonl` không ghi HEAD, và main không có `full_pass.json`. Gate `--full` gần nhất của main là 13:53, exit 2 UNTESTED (cả 4 suite PASS). Nguyên nhân đã đo ở đoạn dưới; trên main có thêm một nguyên nhân thứ hai: 17 commit chưa push → `--list` chọn 190/226 test → `workflow-improvements.md` I.0 W0 và W2a |
-| 3 | **Sửa race `worktree_merge_gate` — phần còn lại** | Race chính (hai lần `automerge` của một worktree chạy chồng nhau: Đợt 32, `42af92b`) và ca thư mục bị xoá TRƯỚC khi hook Stop chạy (Đợt 34, `8695853`, `tests/gates/test_worktree_merge_gate_vanished.sh` ca 8 ĐỎ→XANH) đã sửa, đã bỏ khỏi hàng này. **Còn mở (review 13/10, có từ trước):** thư mục mất TRƯỚC khi bước kiểm kê đọc reflog thì `worktree.py` (~dòng 982) trả `reflog = []`, nên commit chỉ còn trong reflog vẫn cho qua | Đọc reflog từ admin dir (`git --git-dir=<admin> log -g`), không đổi thành `None` (ca 1 sẽ bị giữ). Test ĐỎ trước → `workflow-improvements.md` I.0 W1 |
+| 3 | **Sửa race `worktree_merge_gate` — phần còn lại** | Race chính (hai lần `automerge` của một worktree chạy chồng nhau: Đợt 32, `42af92b`) và ca thư mục bị xoá TRƯỚC khi hook Stop chạy (Đợt 34, `8695853`, `tests/gates/test_worktree_merge_gate_vanished.sh` ca 8 ĐỎ→XANH) đã sửa, đã bỏ khỏi hàng này. **Còn mở (review 13/10, có từ trước; kiểm lại 14/10: `worktree.py` dòng 1089 trên main `1111bcd` vẫn `reflog = … if os.path.isdir(path) else []`):** thư mục mất TRƯỚC khi bước kiểm kê đọc reflog thì trả `reflog = []`, nên commit chỉ còn trong reflog vẫn cho qua | Đọc reflog từ admin dir (`git --git-dir=<admin> log -g`), không đổi thành `None` (ca 1 sẽ bị giữ). Test ĐỎ trước → `workflow-improvements.md` I.0 W1 (phiên d352c03b) |
 
 *(Hàng #1 và #7 của bảng gốc, cùng 8.2 đến 8.4 và thứ tự đề nghị, nằm ở `workflow-improvements.md` mục I.2.)*
 
-**Nguyên nhân đã đo cho hàng #2, thêm khi gộp (13/10, phiên gộp docs):** gate của một thay đổi chỉ-Markdown chạy 1064 s vì `tests/run_impacted.sh` (dòng ~34–38) khi không có upstream `@{u}` lấy mọi file của các commit trong 6 giờ qua làm "đã đổi". Worktree tách rời không có upstream, nên các commit trong ngày của phiên khác bị tính vào. Đo ở worktree `agent-workbench-docsplit` (18 commit trong 6 giờ): `run_impacted.sh --list` chọn **157 test** với môi trường mặc định và **11 test** với `DEVKIT_IMPACTED_SINCE=0` (11 test này đúng là các test nêu tên file đã đổi, cộng `test_repo_consistency`). Dưới tải máy 400–670 (Unity batch test của repo khác), 2 test (`test_session_fetch_source.sh`, `test_hook_python_isolation.sh`) đỏ trong lần chạy 157 test nhưng xanh khi chạy riêng. Cách chữa đề xuất, chưa làm vì sửa test runner/gate thuộc Gate 2 (d): tính cửa sổ từ `git merge-base` với trunk thay vì 6 giờ, hoặc tự đặt `DEVKIT_IMPACTED_SINCE=0` cho worktree liên kết tách rời không upstream. Kiểm: `--list` trong worktree phải bằng số test của chính diff.
-
-### A.3 Ngoài phạm vi phiên này: worktree ở Goods (người dùng 13/10: "chỉ xử lý agent_workbench thôi")
-
-Worktree Goods vẫn chưa gộp, chưa sửa, chưa xoá gì (danh sách gốc ở mục 7 của `2026-10-13-mcp-5-repo-va-coverage-map.md`).
-Kiểm lại 13/10 tối: vẫn đăng ký, `4405395` chưa nằm trong `main` của Goods (`merge-base --is-ancestor` exit 1), cây còn đúng 7 đường dẫn bẩn như dưới đây. Cách bền: `workflow-improvements.md` I.0 W1 (R5b gc).
-
-| Worktree | Commit | Main đang giữ bởi | Lưu ý trước khi `agent-kit worktree finish` |
-|---|---|---|---|
-| `/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D-mcp` | `4405395` (chỉ đổi `.mcp.json`) | phiên `fb81febe` (đang làm) | **ĐỪNG `finish` khi cây còn bẩn**: `finish` tự commit `wip(...)` mọi thay đổi chưa commit rồi đưa vào main |
-
-Cây làm việc của worktree Goods (kiểm 13/10 15:4x) có thay đổi KHÔNG thuộc việc `.mcp.json`:
-- Unity tự sinh: xoá `Assets/Plugins/Demigiant/DOTween/DOTween.dll.mdb.meta` và `…/Editor/DOTweenEditor.dll.mdb.meta` (file `.mdb` bị
-  gitignore nên không có trong worktree; main còn `.mdb`, xoá meta thì Unity tạo lại GUID mới), `Assets/UniversalRenderPipelineGlobalSettings.asset`
-  bị ghi lại với `m_RuntimeSettings` rỗng (mất 15 mục);
-- IDE: `.vscode/` và `Goods-Triple-Shelf-Match-3D-mcp.slnx` chưa track (main cũng có `.vscode/` chưa track, khác nội dung → `ff-only` có thể hỏng);
-- `.claude/settings.json`, `AGENTS.md` bị sửa (nhiều khả năng do `agent-kit init` trong worktree) — xem diff trước, không đưa vào main nếu chỉ là bản cài DevKit.
-Cách gộp sạch: trong worktree, `git stash push -u -m "<lý do>" -- <các đường dẫn trên>` (lấy lại được), kiểm `git diff main...HEAD` chỉ còn
-`.mcp.json`, rồi `agent-kit worktree finish` từ main của Goods khi phiên giữ nhả khoá. **Gấp:** hook Stop (`worktree_merge_gate`) của phiên `fb81febe`
-cũng tự gộp worktree này — nếu nó chạy trước khi dọn, các file trên vào main dưới dạng commit `wip(...)`: khi đó tách chúng ra bằng commit sửa lại, không
-viết lại lịch sử.
-
-### A.4 Tồn đọng nằm trong plan / báo cáo khác (trạng thái ghi tại thời điểm viết, chưa kiểm lại)
+### A.4 Tồn đọng nằm trong plan / báo cáo khác
 
 Mỗi hàng trích nguyên văn một đoạn ngắn từ nguồn ghi ở cột phải; đọc đoạn đó trong nguồn trước khi làm.
 
-**Kiểm lại 13/10 17:00 (phiên d352c03b), cập nhật 13/10 tối:** 6 hàng đã đóng (`contract_facts` F2, `hook_contract_test.sh` cho `enrich_context.py`, `python3 -c` thiếu `-I`, `pgrep -f test_slow_`, `adapters/*` trong impact_map, file untracked của CarConnect) đã bỏ khỏi mục này. Còn lại:
+**Kiểm lại 14/10 (phiên d91dffdd):**
 - **Vẫn mở:**
-  - regex `cwd` không đọc JSON thoát: 15 hook vẫn dùng `RX_CWD`, ví dụ `bash_write_ledger.sh:80`.
-  - Gộp 3 suite Gradle của Geely: chưa làm. `REG-CAR-01` và `REG-SHARED-01` chạy cùng một lệnh (`REG-SHARED-01` nay có `covered_by: REG-CAR-01`); `REG-PHONE-01` và `REG-SHARED-02` cũng cùng lệnh, chưa có `covered_by`.
-  - `hooks/tests/`: 5 trên 9 file không suite, lệnh hay test nào gọi tới (`git_guard_bypass`, `git_guard_nested`, `proof_gate_turn`, `reply_status`, `stop_repeat`).
-  - Con trỏ `docs/plans/`: còn ở 12 file.
-  - Ba dòng bug của audit 09/10: trong `.agents/CHECKLIST.md` cả ba là "⏳ chưa chứng minh ĐỎ".
-- **Chưa kiểm được:** Gemini qua alias (cần một phiên Gemini thật); nhận nuôi worktree (3) — sẽ đóng ở `workflow-improvements.md` I.0 W1 (R5b gc); FIFO `open()`.
+  - Ba dòng bug của audit 09/10 trong `.agents/CHECKLIST.md` vẫn "⏳ chưa chứng minh ĐỎ". Cả ba chỉ link tới suite `REG-DK-ALL-01`, không link file test nào, nên `red_proof.py` trả "không biết file test nào". Hai dòng (`BUG-20261002-agent-kit-health…`, `BUG-20261009-run-impacted…`) có bản sửa trong `tests/run_impacted.sh`, mà `red_proof.py` (`TEST_PATH`) coi mọi file dưới `tests/` là test nên từ chối red-patch. Hướng: khai runner là code sản xuất trong `.agents/local/red_proof.json` (khoá mới, ví dụ `"production"`), `agent-kit bugs link` tới `test_run_impacted.sh` / `test_run_impacted_since.sh`, viết red-patch, rồi `red_proof.py --pending`. `BUG-20260929-audit-review…` là yêu cầu audit hiệu năng, không có test tất định (revert `a49bc13` xung đột): `agent-kit bugs drop` hoặc giữ là chuyện quyết định.
+  - Nhận nuôi worktree (3): W1 R5b của phiên d352c03b.
+- **Chờ chủ xe duyệt:** gộp suite Gradle của Geely: `REG-SHARED-02` chạy đúng lệnh của `REG-PHONE-01` mà chưa có `covered_by: REG-PHONE-01` (`REG-SHARED-01` đã có `covered_by: REG-CAR-01`). Quy tắc chủ xe ở GeelyEx2: agent không tự sửa ma trận hồi quy (`265d25ce6` cũng đang chờ duyệt, chưa push).
+- **Không kiểm được:** Gemini qua alias. Đo 14/10: Gemini CLI 0.59 trên máy này không đăng nhập được nữa (`IneligibleTierError`, `UNSUPPORTED_CLIENT`: Google ngừng hỗ trợ client này cho gói Gemini Code Assist cá nhân, bảo chuyển sang Antigravity), nên không có phiên Gemini thật nào để thử. Phần Gemini của DevKit ở 4 repo cũng không chạy được tới khi đổi gói / đăng nhập.
 - **Là quyết định chính sách:** squash #22/#3; gradient tím-xanh.
 
 | Trích nguyên văn | Nguồn |
 |---|---|
-| "Giới hạn đã biết (chưa đóng): regex lấy `cwd` của payload (9 hook cũ + 7 hook mới) không đọc JSON thoát (`é`, `\\`)" | Audit 09/10 (B.1), phần "Giới hạn đã biết" |
 | "Gemini qua alias (`includeDirectories` dùng đường dẫn thật): **chưa kiểm** — cần một phiên Gemini thật." | Audit 09/10 (B.1), "Bước 6" |
 | "`BUG-20260929-audit-review-nguyen-nhan-tai-sao-cac-ses` — INCONCLUSIVE" | Audit 09/10 (B.1), "Bước 4" |
 | "`BUG-20261002-agent-kit-health-run-tests-scores-96-100` — chưa chạy" | Audit 09/10 (B.1), "Bước 4" |
@@ -93,14 +63,6 @@ Mỗi hàng trích nguyên văn một đoạn ngắn từ nguồn ghi ở cột 
 | "(3) worktree chưa từng vào danh sách "nợ" của một phiên đã kết thúc không bao giờ được phiên sau nhận nuôi (chỉ liệt kê ở SessionStart) — chưa đổi." | Audit 09/10 (B.1), cùng mục |
 | "**Cần chủ quy chuẩn xác nhận**: hàng #22 và #3 (có sẵn) vẫn mô tả squash giữ tới lúc nhả" | UI context injection (II.C), "Review ngữ cảnh sạch" #3 |
 | "**Để nguyên, cần người quyết**: hai bên mâu thuẫn về chính sách, không phải lỗi mã" | UI context injection (II.C), "Review ngữ cảnh sạch" #7 (cấm gradient tím-xanh) |
-| "Lớp lỗi có từ trước: `open()` chặn trên state agent ghi được nên một FIFO treo gate/hook" | DevKit chạy nhanh (II.A), mục 3 #8 |
-| "6 test trong hooks/tests/ (~45 s) không nằm trong --all, agent-kit test hay ma trận" | DevKit chạy nhanh (II.A), mục 3b cuối (phần `adapters/*` của câu này đã đóng) |
-
-**Con trỏ cũ tới `docs/plans/*` còn sót sau lần gộp 13/10** (tên file cũ nằm trong tiêu đề mục của hai file mới nên `grep` tìm ra):
-
-- `universal-agent-devkit/AGENTS.md` §7, bảng "Living regression checklist" trỏ `docs/plans/regression-checklist-v3.md`. Đây là file luật (Gate 2 d) và đang sửa dở theo Đợt 31; sửa thành `docs/workflow-improvements.md` mục II.B sau khi Đợt 31 commit.
-- Comment trong test và script: `tests/gates/test_review_timing_guard_big_payload.sh`, `test_gate_runner_no_errexit.sh`, `test_git_guard_shell_subst.sh`, `test_churn_guard_fast_path.sh`, `test_gate_js_describe_scope.sh`, `test_hardware_find_not_or.sh`, `test_comment_claim_docstring_trailing.sh`, `tests/verification/test_run_impacted_since.sh`, `tests/context_memory/test_prompt_context.sh`, `hooks/tests/hook_contract_test.sh`, `scripts/context/enrich_context.py`. Chỉ là chú thích; sửa comment test kéo theo duyệt "test đã sửa" nên để dành cho lần chạm các file đó.
-- `CHANGELOG.md` (lịch sử: giữ nguyên) và `.agents/regression_status.json` (chuỗi evidence do máy ghi: không sửa tay).
 
 ## Phần B — Báo cáo đã đóng
 
