@@ -164,13 +164,17 @@ def targets(cmd, here, depth=0, run_bodies=False):
     if cur:
         segs.append(cur)
     found, nbody = [], 0
+    # HEREDOC reads the raw text (it matches `<<EOF` inside quotes and comments, which shlex reads as no operator) while shlex also emits `<<`
+    # for arithmetic (`$((1<<2))`): when the counts differ, pairing a body to an operator by position would hand every later body to the
+    # wrong command (OCR2 14). No clever pairing then: after the loop every body is read as a script of this line.
+    paired = sum(1 for t in toks if t == "<<") == len(bodies)
     for seg in segs:
         words, redirs, fed, i = [], [], [], 0
         while i < len(seg):
             tok = seg[i]
             if tok and set(tok) <= set("<>&|"):
                 nxt = seg[i + 1] if i + 1 < len(seg) else ""
-                if tok == "<<":   # the heredocs come in the order of their operators
+                if tok == "<<" and paired:   # the heredocs come in the order of their operators
                     fed.append(bodies[nbody] if nbody < len(bodies) else "")
                     nbody += 1
                 if ">" in tok and not tok.endswith("&") and nxt and nxt != "/dev/null" \
@@ -258,4 +262,8 @@ def targets(cmd, here, depth=0, run_bodies=False):
                         elif depth < 3:
                             found += _nested(body, wd, depth + 1, run_bodies)
         found += [(kind, t, wd) for kind, t in hits]
+    if run_bodies and not paired and depth < 3:   # (a data body read as commands: a false alarm here is the price of never missing a write)
+        for body in bodies:
+            found += _nested(body, here, depth + 1, run_bodies)
+            found += [("file", w.group("p"), here) for rx in SCRIPT_WRITES for w in rx.finditer(body)]
     return found

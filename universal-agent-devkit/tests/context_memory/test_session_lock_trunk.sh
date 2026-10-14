@@ -83,6 +83,14 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (True, "cat <<EOF | bash with a body cd-ing to main from a worktree", w, B(f"cat <<'EOF' | bash\ncd {m} && echo x > README.md\nEOF")),
     (True, "a bash heredoc with an apostrophe in a comment, then a redirect", m, B("bash <<'EOF'\n# don't worry\necho x > README.md\nEOF")),
     (True, "a bash heredoc whose body cannot be tokenised (fail closed)", m, B("bash <<'EOF'\necho 'oops\nEOF")),
+    # OCR2 14: heredoc bodies are matched to `<<` tokens by position; a stray `<<` (arithmetic) or a `<<EOF` in a quote / comment shifted every body
+    # onto the wrong command and the real one got none. When the counts differ every body is read as a script of the line (fail closed).
+    (True, "arithmetic << before a bash heredoc whose body writes into main", m, B("echo $((1<<2)); bash <<EOF\necho x > README.md\nEOF")),
+    (True, "arithmetic << before a python heredoc opening a file of main for writing", m, B("echo $((1<<2)); python3 - <<EOF\nopen('README.md','w').write('x')\nEOF")),
+    (True, "a quoted <<EOF on an earlier line, then a real bash heredoc writing into main", m, B('echo "a<<EOF"\nbash <<EOF\necho x > README.md\nEOF')),
+    (True, "a <<EOF in a comment, then a real bash heredoc writing into main", m, B("# <<EOF\nbash <<EOF\necho x > README.md\nEOF")),
+    (False, "arithmetic << before a bash heredoc that only reads", m, B("echo $((1<<2)); bash <<EOF\ngrep -rn x . | head -3\nEOF")),
+    (False, "arithmetic << before a bash heredoc writing in the worktree", w, B("echo $((1<<2)); bash <<EOF\necho x > a.txt\nEOF")),
     (True, "a git commit inside a substitution", m, B("echo $(git commit -qm x)")),
     (True, "a redirect inside $( )", m, B("echo $(echo x > README.md)")),
     (True, "a redirect inside backticks", m, B("echo `echo x > README.md`")),
