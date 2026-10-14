@@ -211,4 +211,25 @@ for round in 1 2; do
   [ "$all" = 1 ] && [ "$clean" = 1 ] && ok "19.$round: four automatic merges at once: all landed, main's index and tree are clean" || fail "19.$round: (all=$all clean=$clean) $(G "$P" status --short | head -8) / $(cat "$TMP"/par${round}*.out | cut -c1-200)"
 done
 
+# R3 review P2-6 (14/10): the merge of main INTO a worktree rewrites its files, so a test run of that tree must not have them change under it. The
+# run holds <worktree>/.claude/audit-gate/test_run.lock: while it does, the merge-in is skipped (never waited for, not an error: "running", the next Stop merges),
+# and when it does not, the merge-in itself holds that lock (a post-merge hook probes it from inside the merge).
+wt u; echo u > "$TMP/am-u/u.txt"; G "$TMP/am-u" add -A && G "$TMP/am-u" commit -qm "u"
+echo m > "$P/u-main.txt"; G "$P" add u-main.txt && G "$P" commit -qm "main moves on (u)"   # main is ahead: the worktree needs the merge-in
+UH="$(G "$TMP/am-u" rev-parse HEAD)"; MH="$(G "$P" rev-parse HEAD)"; UL="$TMP/am-u/.claude/audit-gate/test_run.lock"
+mkdir -p "$TMP/am-u/.claude/audit-gate" && printf '*\n' > "$TMP/am-u/.claude/audit-gate/.gitignore"   # as the gates leave it: state is no work to commit
+if hold "$UL"; then
+  t0=$SECONDS; JU="$(cd "$P" && bash "$KIT" worktree automerge ../am-u --keep 2>/dev/null | tail -1)"; t1=$SECONDS; release
+  python3 -c 'import json,sys;d=json.loads(sys.argv[1]);sys.exit(0 if d["status"]=="blocked" and d.get("running") is True and "test run" in d["message"] else 1)' "$JU" \
+    && [ "$(G "$TMP/am-u" rev-parse HEAD)" = "$UH" ] && [ "$(G "$P" rev-parse HEAD)" = "$MH" ] && [ $((t1 - t0)) -lt 20 ] \
+    && ok "20: a test run holds the worktree: main is not merged into it, nothing moves, no waiting (JSON running, said why)" \
+    || fail "20: held by a test run: $JU / worktree HEAD $(G "$TMP/am-u" rev-parse --short HEAD) was $(echo "$UH" | cut -c1-7) / $((t1 - t0))s"
+fi
+printf '#!/bin/sh\npython3 -I -c '"'"'import fcntl,os,sys\nfd = os.open(sys.argv[1], os.O_RDONLY)\ntry:\n    fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB); print("free")\nexcept OSError:\n    print("held")'"'"' "%s" >> "%s"\n' "$UL" "$TMP/probe" > "$P/.git/hooks/post-merge"
+chmod +x "$P/.git/hooks/post-merge"; rm -f "$TMP/probe"
+fin ../am-u --keep; rc=$?
+[ "$rc" = 0 ] && [ -f "$P/u.txt" ] && [ "$(head -1 "$TMP/probe" 2>/dev/null)" = held ] && ok "20b: no test run: merged, and the merge-in held the worktree's test_run.lock (probed from inside it)" \
+  || fail "20b: (rc=$rc) probe: $(tr '\n' ' ' < "$TMP/probe" 2>/dev/null): $(cat "$TMP/out")"
+rm -f "$P/.git/hooks/post-merge"
+
 [ "$FAILS" -eq 0 ] && echo "worktree automerge: all checks passed" || { echo "worktree automerge: $FAILS FAILED"; exit 1; }

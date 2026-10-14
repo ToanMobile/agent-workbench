@@ -1606,6 +1606,31 @@ def _lock_automerge(wt):
 
 
 MAIN_LOCK = "devkit-automerge-main.lock"
+TEST_RUN_LOCK = "test_run.lock"   # in <worktree>/.claude/audit-gate: held by post-fix-gate, the Stop gates and stale_rerun while they test that tree
+
+
+@contextlib.contextmanager
+def _test_run_lock(wt):
+    """The worktree's own test_run.lock for the merge of main INTO it, which rewrites the files a test run of that tree is reading (R3 review
+    14/10, P2-6). Yields False when a test run holds it (never waited for: the caller skips the merge this time), else True with the lock held.
+    Not for the gate that runs after it: post-fix-gate takes the same lock itself. Every other holder retries, so a few seconds cost them nothing.
+    A lock that cannot be made (a planted FIFO, no flock here) is no lock, said on stderr: post-fix-gate's own 'never worse than no lock'."""
+    d, lock = os.path.join(wt, ".claude", "audit-gate"), None
+    try:
+        os.makedirs(d, exist_ok=True)
+        if not os.path.exists(os.path.join(d, ".gitignore")):
+            with open(os.path.join(d, ".gitignore"), "w", encoding="utf-8") as fh:
+                fh.write("*\n")
+        lock = _lock_file(os.path.join(d, TEST_RUN_LOCK), wait=0.0)
+        free = lock is not None
+    except OSError as e:
+        print("• " + tr(f"không khoá được {TEST_RUN_LOCK} ({e}); gộp không khoá", f"cannot lock {TEST_RUN_LOCK} ({e}); merging unlocked"), file=sys.stderr)
+        free = True
+    try:
+        yield free
+    finally:
+        if lock is not None:
+            lock.close()
 
 
 def _unlink_quiet(path):
@@ -1867,7 +1892,11 @@ def _automerge_locked(cwd, main, wt, keep=False):
             if merges >= MERGE_ROUNDS:
                 return "blocked", tr(f"main đi tiếp {merges} lần trong lúc gộp và chạy gate: chạy lại", f"main moved on {merges} times while merging and gating: run it again"), {}
             merges += 1
-            r = git(wt, "merge", "--no-edit", "-m", f"Merge main into {os.path.basename(wt)} (DevKit auto-merge)", main_head, check=False, bounded=False)
+            with _test_run_lock(wt) as free:   # the merge rewrites the tree: not while a test run reads it (the next Stop merges)
+                if not free:
+                    return "blocked", tr("một lần chạy test đang giữ worktree: chưa gộp main vào, lần dừng sau gộp",
+                                         "a test run holds the worktree: main is not merged into it now, the next Stop merges it"), {"running": True}
+                r = git(wt, "merge", "--no-edit", "-m", f"Merge main into {os.path.basename(wt)} (DevKit auto-merge)", main_head, check=False, bounded=False)
             if r.returncode != 0:
                 unmerged = git(wt, "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
                 if unmerged:
