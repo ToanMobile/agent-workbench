@@ -262,3 +262,4 @@
 3 tests/gates/test_state_fifo_no_hang.sh
 20 tests/gates/test_hook_gitignore_fifo.sh
 2 tests/gates/test_proof_gate_report_labels.sh
+2 tests/gates/test_evidence_outcome_mention.sh
