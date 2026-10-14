@@ -15,6 +15,7 @@
 #   7 gc: a leftover folder (admin dir gone) whose only unique file is a secret -> copied to main, the folder deleted; --dry-run copies nothing
 #   8 gc: a different file at that path in main -> the folder is kept, the reason names it, main's file intact
 #   11 a deep secret path: every folder the carry creates in main is 0700
+#   12 `worktree remove` / hook-remove refuse a worktree holding an ignored secret main lacks (or holds differently); finish still carries it
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
 export DEVKIT_LANG=en WORKTREE_GC_MIN_AGE_S=0
@@ -152,5 +153,29 @@ mkdir -p "$W/android/app/keystore" && echo "DEEP" > "$W/android/app/keystore/upl
 [ "$rc" = 0 ] && [ "$(cat "$P/android/app/keystore/upload.jks" 2>/dev/null)" = DEEP ] && ok "11: a deep secret path is carried" || fail "11: (rc=$rc): $(cat "$TMP/out")"
 [ "$(mode "$P/android")" = 0o700 ] && [ "$(mode "$P/android/app")" = 0o700 ] && [ "$(mode "$P/android/app/keystore")" = 0o700 ] \
   && ok "  … and every new folder on the way is 0700 (umask 022)" || fail "  … modes: android $(mode "$P/android" 2>&1) app $(mode "$P/android/app" 2>&1) keystore $(mode "$P/android/app/keystore" 2>&1)"
+
+# 12 (principal review A1): the removal itself - `worktree remove` and the WorktreeRemove hook (ExitWorktree "remove", a finished isolated
+#     subagent) both end in cmd_remove, which only the automerge and gc paths had taught about git-ignored secrets: an ignored keystore only the
+#     worktree holds went with the folder, rc 0. It is a blocker now, like an uncommitted change: nothing removed, the file named, `finish` advised
+rem() { (cd "$P" && python3 "$WTPY" remove "$@" >"$TMP/out" 2>&1); return $?; }
+hookrem() { printf '{"worktree_path":"%s"}' "$1" | (cd / && python3 -I "$WTPY" hook-remove >"$TMP/out" 2>&1); return $?; }
+new_main m12; W="$TMP/sc-l"; wt "$W"; mkdir -p "$W/android/app" && echo "ONLY-HERE" > "$W/android/app/upload.jks"
+rem "$W"; rc=$?
+[ "$rc" != 0 ] && [ -d "$W" ] && [ "$(cat "$W/android/app/upload.jks" 2>/dev/null)" = ONLY-HERE ] && grep -q "android/app/upload.jks" "$TMP/out" && grep -q "worktree finish" "$TMP/out" \
+  && ok "12: worktree remove refuses a worktree holding an ignored keystore main lacks: kept, the file named, finish advised" \
+  || fail "12: (rc=$rc, exists=$([ -d "$W" ] && echo y || echo n)): $(cat "$TMP/out")"
+hookrem "$W"; rc=$?
+[ "$rc" != 0 ] && [ -f "$W/android/app/upload.jks" ] && ok "  … the WorktreeRemove hook refuses it too (Claude keeps the worktree, the Stop hook's merge carries the key)" \
+  || fail "  … hook-remove (rc=$rc): $(cat "$TMP/out")"
+echo "OTHER" > "$P/android/app/upload.jks" 2>/dev/null || { mkdir -p "$P/android/app" && echo "OTHER" > "$P/android/app/upload.jks"; }
+rem "$W"; rc=$?
+[ "$rc" != 0 ] && [ -d "$W" ] && ok "  … a DIFFERENT file at that path in main refuses it as well" || fail "  … different file in main (rc=$rc): $(cat "$TMP/out")"
+echo "ONLY-HERE" > "$P/android/app/upload.jks"
+rem "$W"; rc=$?
+[ "$rc" = 0 ] && [ ! -d "$W" ] && ok "  … main holding the very same bytes: the removal goes through" || fail "  … same bytes in main (rc=$rc): $(cat "$TMP/out")"
+new_main m12b; W="$TMP/sc-m"; wt "$W"; mkdir -p "$W/android/app" && echo "FINISHED" > "$W/android/app/upload.jks"
+fin "$W"; rc=$?
+[ "$rc" = 0 ] && [ ! -d "$W" ] && [ "$(cat "$P/android/app/upload.jks" 2>/dev/null)" = FINISHED ] && ok "  … finish still carries it and removes the worktree (the blocker does not stand in its way)" \
+  || fail "  … finish (rc=$rc): $(cat "$TMP/out")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_secret_carry: all passed" || { echo "❌ test_worktree_secret_carry: $FAILS failed"; exit 1; }

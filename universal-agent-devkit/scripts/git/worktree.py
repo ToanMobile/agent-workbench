@@ -1373,7 +1373,7 @@ def cmd_diff(cwd, args):
 def _iter_blockers(cwd, wt, shown, budget):
     """The reasons a worktree must NOT be removed, one at a time, in the order `remove` has always checked them. Yields
     (exit code, kind, text, detail lines). Lazy: a check that cannot run (not made by `worktree add`) is only reached when
-    nothing earlier blocked. kind: unregistered | busy | unreachable | submodule | not_ours | main | uncommitted."""
+    nothing earlier blocked. kind: unregistered | busy | unreachable | submodule | not_ours | main | uncommitted | secret."""
     rows = inventory(cwd, only=wt, budget=budget)
     if not rows and os.path.isdir(wt):
         # git does not list this directory as a linked worktree (a subdirectory of one, the main checkout, a plain folder, a name the
@@ -1498,6 +1498,20 @@ def _iter_blockers(cwd, wt, shown, budget):
                                     "Checklist bookkeeping: `diff` leaves it out; add --with-checklist to bring it back, or ask the user whether to drop the change"))
         yield (1, "uncommitted", tr(f"{len(lost)} thay đổi chưa có trong main checkout — giữ nguyên {wt}:",
                                     f"{len(lost)} change(s) not in the main checkout — {wt} kept:"), detail)
+    try:   # A.1b #12: a git-ignored secret only this worktree holds (or holds differently) goes with the folder; `finish` carries it first
+        secrets, cut = _ignored_secrets(wt)
+    except (OSError, UnicodeError) as e:   # (SystemExit - git cannot list them - is the caller's, as for every check here)
+        secrets, cut = [], f"({e})"
+    keys = [rel for rel, src in secrets if not _same_bytes(src, os.path.join(main, rel))]
+    if keys:
+        listing = ", ".join(keys[:6])
+        yield (1, "secret", tr(f"{wt}: {len(keys)} file bí mật bị git ignore chỉ worktree có (main chưa có hoặc có bản khác): {listing} — gỡ worktree là mất chúng. "
+                               f"Chạy `agent-kit worktree finish {shlex.quote(shown)}` (chép vào main trước khi gỡ) hoặc tự chép sang main",
+                               f"{wt}: {len(keys)} git-ignored secret file(s) only the worktree holds (main lacks them or holds other bytes): {listing} — a removal "
+                               f"deletes them. Run `agent-kit worktree finish {shlex.quote(shown)}` (it copies them into main first) or copy them to main yourself"), [])
+    if cut:
+        yield (1, "secret", tr(f"{wt}: dò file bí mật bị git ignore dừng ở {cut} (quá WORKTREE_SECRET_SCAN_MAX file hoặc không đọc được) — phần chưa đọc có thể có khoá",
+                               f"{wt}: the scan for git-ignored secret files stopped at {cut} (over WORKTREE_SECRET_SCAN_MAX files, or unreadable) - what it did not read may hold a key"), [])
 
 
 def removal_blockers(cwd, wt, budget=None, shown=None):
@@ -1866,6 +1880,14 @@ def _ignored_secrets(wt, limit=None):
         if cut:
             break
     return sorted(found.items()), cut
+
+
+def _same_bytes(src, dst):
+    """True when `dst` is a regular file (not a link) holding the bytes of `src`; False for anything else, also a file that cannot be read."""
+    try:
+        return not os.path.islink(dst) and _read_regular(dst) == _read_regular(src)
+    except OSError:
+        return False
 
 
 def _carry_secrets(main, items):
