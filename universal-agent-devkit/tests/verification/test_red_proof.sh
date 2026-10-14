@@ -36,7 +36,7 @@ class TestNothing(unittest.TestCase):
         self.assertTrue(callable(calc.add))
 '
 new_project() {  # new_project <command>
-  P="$TMP/p$RANDOM"; mkdir -p "$P/src" "$P/tests" "$P/.agents"
+  P="$(mktemp -d "$TMP/p.XXXXXX")"; mkdir -p "$P/src" "$P/tests" "$P/.agents"   # not $RANDOM: 22 projects, a clash re-used an old repo
   ( cd "$P" && git init -q . && git config user.email t@t && git config user.name t
     printf 'def add(a, b):\n    return a - b\n' > src/calc.py
     python3 -c 'import json,sys; json.dump({"adopted": True, "rules": [{"component": "Calc", "watch_files": ["src/*.py", "tests/*.py"],
@@ -603,6 +603,14 @@ r2="$(rp "$PB2" reason)"
 [ "$(rp "$PB2" status)" = INCONCLUSIVE ] && printf '%s' "$r2" | grep -q "tests/test_runner.py" && ! printf '%s' "$r2" | grep -q "tests/runner.sh" \
   && ok "production: a glob matching the linked test too, the patch that edits that test is refused for the test alone" \
   || fail "linked test declared production: $(rp "$PB2" status) $r2"
+# …however the link spells it (review 14/10): a ref typed ./tests/… or as an absolute path is still that linked test
+for ref in ./tests/test_runner.py "$P/tests/test_runner.py"; do
+  PBR="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "runner + test sửa, link $ref" --fixed --test REG-CALC --test "$ref" 2>&1)")"
+  python3 "$PROOF" "$P" --bug "$PBR" --patch "$TMP/both.patch" --wait >/dev/null 2>&1
+  [ "$(rp "$PBR" status)" = INCONCLUSIVE ] && rp "$PBR" reason | grep -q "tests/test_runner.py" \
+    && ok "production: a linked test spelled $ref is still refused under a glob that matches it" \
+    || fail "linked test spelled $ref under a glob: $(rp "$PBR" status) $(rp "$PBR" reason)"
+done
 for cfg in '{"production": "tests/runner.sh"}' '{"production": [1, "", null]}' '["tests/runner.sh"]' '{"production": '; do
   declare_prod "$cfg"
   out="$(python3 "$PROOF" "$P" --bug "$PB1" --patch "$TMP/runner-back.patch" --wait 2>&1)"; rc=$?

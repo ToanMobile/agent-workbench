@@ -246,8 +246,13 @@ def declared(path: str, production: list) -> bool:
 
 def is_test(path: str, linked, production: list) -> bool:
     """A test for the proof, which never changes one: a linked test of the bug whatever red_proof.json says, else a TEST_PATH
-    that production_globs() does not declare."""
-    return path in linked or (bool(TEST_PATH.search(path)) and not declared(path, production))
+    that production_globs() does not declare. A declared glob never exempts a file NAMED like a linked test: the link may
+    spell it ./tests/x.py or as an absolute path, which an exact comparison with git's tests/x.py misses (review 14/10)."""
+    if path in linked:
+        return True
+    if not TEST_PATH.search(path):
+        return False
+    return not declared(path, production) or os.path.basename(path) in {os.path.basename(t) for t in linked}
 
 
 def fix_commit_of(project: Path, item: dict) -> tuple:

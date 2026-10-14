@@ -1,27 +1,12 @@
 diff --git a/universal-agent-devkit/hooks/regression_gate.sh b/universal-agent-devkit/hooks/regression_gate.sh
-index 09faf7b..bde8e2c 100755
+index 09faf7b..db53759 100755
 --- a/universal-agent-devkit/hooks/regression_gate.sh
 +++ b/universal-agent-devkit/hooks/regression_gate.sh
-@@ -697,9 +697,19 @@ if _recheck_s > 0 and _tkey is not None and isinstance(_t, dict) and _t.get("key
-         note(f"tests-touched reminder fp={fp} (reused, no run)")
-         remind(_t["lines"])
-         sys.exit(0)
--# A full PASS of this exact content is reused inside the gate run below (post-fix-gate
--# cached_full_pass: ~1 s, with its format/matrix/local-config/age checks and --session/--since);
--# never end the Stop here on a bare full_pass.json.
-+try:
-+    rec_p = os.path.join(repo, ".git", "postfix-gate", "full_pass.json")
-+    if os.path.isfile(rec_p):
-+        with open(rec_p, encoding="utf-8") as f_rec:
-+            rec = json.load(f_rec)
-+        if rec.get("exit") == 0 and rec.get("fingerprint") == devkit_harness.tree_fingerprint(repo):
-+            state["pass_fp"] = fp_plain
-+            if isinstance(state.get("repeat"), dict):
-+                state["repeat"].pop(sid, None)
-+            save_state()
-+            sys.exit(0)
-+except Exception:
-+    pass
- if degraded and sess.get("fp") == tree_fp:
-     # Same tree as the last run of this session: the result cannot have changed. Re-use it
-     # instead of re-running the whole suite on every stop.
+@@ -798,7 +798,6 @@ if res.returncode == 4 and summary:
+     else:
+         first = state.get("untested_fp") != sk_now
+         state["untested_fp"] = sk_plain
+-    range_verified()
+     save_state()
+     if first:
+         names = ["%s (%s)" % (t.get("id"), t.get("command")) for t in summary.get("regression_tests", [])
