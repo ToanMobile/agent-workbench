@@ -53,25 +53,31 @@ with open(os.path.join(c, "hook.sh"), "w") as fh:
 hung = not ends(["bash", os.path.join(c, "hook.sh"), os.path.join(c, "grandchild.py"), lock, ready, fifo], b"",
                 {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}, c, limit=2)
 deadline = time.monotonic() + 10
-while not os.path.exists(ready) and time.monotonic() < deadline:   # a grandchild still starting when the limit came
+while not os.path.exists(ready) and time.monotonic() < deadline:   # a leaked grandchild that was still starting shows up late
     time.sleep(0.02)
+armed = os.path.exists(ready)   # the grandchild held its lock (alive or killed since): there is something to judge
 gone = False
-with open(lock, "a") as fh:
-    while not gone:
-        try:
-            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            gone = True
-        except BlockingIOError:
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(0.02)
-if hung and gone:
+if armed:
+    deadline = time.monotonic() + 10   # a wait of its own: the lock is freed once the killed grandchild is gone
+    with open(lock, "a") as fh:
+        while not gone:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                gone = True
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.02)
+# never ✔ for a check that tested nothing (OpenCodeReview 14/10), never ✖ because the machine is slow (W2b)
+if not hung:
+    print("✖ harness: the canary hook (its grandchild blocks on a FIFO) was not reported HUNG"); fails += 1
+elif not armed:
+    print("⚠ harness: the canary's grandchild did not start within the limit (machine busy): group kill not judged this run")
+elif gone:
     print("✔ harness: a hook whose grandchild blocks on a FIFO is reported HUNG, and its whole process group is gone")
 else:
-    print(f"✖ harness: reported HUNG={hung}, grandchild gone={gone} (a grandchild left blocked for ever, holding the hook's pipes)")
-    fails += 1
-    if not gone and os.path.exists(ready):
-        os.kill(int(open(ready).read()), signal.SIGKILL)   # the leaked canary is this test's own: do not leave it behind
+    print("✖ harness: the canary's grandchild outlived the limit (left blocked for ever, holding the hook's pipes)"); fails += 1
+    os.kill(int(open(ready).read()), signal.SIGKILL)   # the leaked canary is this test's own: do not leave it behind
 # ... and a hook that has ended while a DETACHED child (a session of its own) still holds its pipes: at the limit the group holds
 # only the hook's zombie, and macOS refuses killpg on such a group with EPERM (OpenCodeReview 14/10) - HUNG, never a crash.
 ready2 = os.path.join(c, "detached.ready")
@@ -80,20 +86,27 @@ with open(os.path.join(c, "detached.py"), "w") as fh:
              "os.rename(sys.argv[1] + '.tmp', sys.argv[1])\ntime.sleep(30)\n")
 with open(os.path.join(c, "detach.sh"), "w") as fh:
     fh.write('python3 "$1" "$2" &\n')
+crash = None
 try:
     hung2 = not ends(["bash", os.path.join(c, "detach.sh"), os.path.join(c, "detached.py"), ready2], b"",
                      {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}, c, limit=2)
-    print(("✔" if hung2 else "✖") + f" harness: a hook whose detached child holds its pipes past the limit: HUNG={hung2}, no crash")
-    fails += not hung2
 except OSError as e:
-    print(f"✖ harness: killing the group of a hook whose detached child holds its pipes raised {e!r}"); fails += 1
-finally:
-    deadline = time.monotonic() + 5
-    while not os.path.exists(ready2) and time.monotonic() < deadline:   # it detached before the limit: stop it (ours)
-        time.sleep(0.02)
-    if os.path.exists(ready2):
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(int(open(ready2).read()), signal.SIGKILL)
+    hung2, crash = False, e
+deadline = time.monotonic() + 5
+while not os.path.exists(ready2) and time.monotonic() < deadline:   # it detached before the limit, so it lives on
+    time.sleep(0.02)
+armed2 = os.path.exists(ready2)
+if armed2:
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(int(open(ready2).read()), signal.SIGKILL)   # the detached canary is this test's own
+if crash is not None:
+    print(f"✖ harness: killing the group of a hook whose detached child holds its pipes raised {crash!r}"); fails += 1
+elif not armed2:
+    print("⚠ harness: the canary's detached child did not start within the limit (machine busy): EPERM path not judged this run")
+elif hung2:
+    print("✔ harness: a hook whose detached child holds its pipes past the limit: HUNG, no crash")
+else:
+    print("✖ harness: a hook whose detached child holds its pipes past the limit was not reported HUNG"); fails += 1
 
 hooks = sorted(h for h in glob.glob(os.path.join(dk, "hooks", "*.sh"))
                if '/.gitignore" ] || printf' in open(h, encoding="utf-8", errors="replace").read())
