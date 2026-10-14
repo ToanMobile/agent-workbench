@@ -276,7 +276,7 @@ ATTRIBUTION = re.compile(
 _NEG = r"(?:\b(?:chưa|không|chẳng|never|not|no|none\s+of\s+the|zero|did\s+not|does\s+not|do\s+not|failed\s+to)|n't)"
 # "chưa phải đã fix" (2026-10-14) is the negation too. Not "không phải" / "chẳng phải": "Không phải đã fix lỗi X rồi sao?" is a rhetorical
 # question that asserts, and "không phải A mà B" asserts B (OCR + principal-code-reviewer 14/10).
-NEG_BEFORE_RESULT = re.compile(r"(?:\bchưa\s+phải|" + _NEG + r")\s+(?:(?:có|được|hề|all|yet|been|tất\s+cả|the)\s+)*$", re.I)
+NEG_BEFORE_RESULT = re.compile(r"(?:\bchưa\s+phải(?:\s+là)?|" + _NEG + r")\s+(?:(?:có|được|hề|all|yet|been|tất\s+cả|the)\s+)*$", re.I)
 NEG_IN_MATCH = re.compile(_NEG + r"\s+(?:(?:có|được|hề|yet|been)\s+)*(?:pass|xanh|green|thành\s+công|đạt)", re.I)
 NEG_RUN = re.compile(
     r"(?:\b(?:chưa|không|chẳng|never|not|did\s+not|have\s+not|has\s+not|cannot|không\s+thể|chưa\s+thể)|n't)"
@@ -322,7 +322,8 @@ MENTION_WORD = re.compile(r"\b(?:chữ|từ|cụm|mẫu|chuỗi|câu|words?|phra
 # opening quote, after a space (`\s+$`: an odd quote cannot shift the pairs), and it is a word that ONLY names a quote: not `từ` ("from"),
 # `câu`, `claim` (the agent's OWN assertion), nor `mẫu` / `regex` / `pattern` / `term` / `chuỗi` (nouns of the sentence: `Lỗi regex "đã fix"`),
 # and not the connective of "in other words". A naming word further back in the clause is a noun too ("Theo mẫu báo cáo lỗi crash "…"").
-OUTCOME_MENTION_WORD = re.compile(r"\b(?:chữ|cụm(?:\s+từ)?|(?<!other\s)words?|phrases?)\s+$", re.I)
+OUTCOME_MENTION_WORD = re.compile(r"\b(?:chữ|cụm(?:\s+từ)?|words?|phrases?)\s+$", re.I)
+CONNECTIVE_WORDS = re.compile(r"\bother\s+words?\s+$", re.I)   # "In other words "fixed"": the connective, not a naming word
 QUOTED_SPAN = re.compile(r"\"[^\"\n]*\"|“[^”\n]*”|`[^`\n]*`")
 
 import bisect
@@ -336,7 +337,7 @@ def outcome_mention(sentence, match):
         if (x.start() < match.start() and match.end() < x.end() and not sentence[x.start() + 1:match.start()].strip()
                 and re.fullmatch(r"[\s.,;:!?…]*", sentence[match.end():x.end() - 1])
                 and not re.match(r"(?:bug|lỗi)\b", match.group(0), re.I)):   # that branch of OUTCOME carries the object: a claim
-            return bool(OUTCOME_MENTION_WORD.search(sentence[:x.start()]))
+            return bool(OUTCOME_MENTION_WORD.search(sentence[:x.start()]) and not CONNECTIVE_WORDS.search(sentence[:x.start()]))
     return False
 
 def quoted_mention(sentence, match):

@@ -45,6 +45,8 @@ check 0 'Cụm từ "đã fix" là thứ hook đọc, không phải kết quả.
 check 0 'The word "fixed" is what the hook reads.'
 check 0 'Bản vá có test bắt được khi gỡ, chưa phải "đã fix" theo chuẩn của hook.'
 check 0 'Bản vá này chưa phải đã fix theo chuẩn của hook, vì thiếu cặp ĐỎ→XANH.'
+check 0 'Bản vá này chưa phải là đã fix theo chuẩn của hook.'
+check 0 'Bản vá có test bắt được khi gỡ, chưa phải là "đã fix" theo chuẩn của hook.'
 # the gate's own rule stays: no bare-quote bypass, a real claim next to a mention, a negation cut off by a break, a naming word that
 # is also an ordinary word (từ = "from"; claim = what an agent calls its own assertion), a rhetorical question
 check 2 'Kết quả: "đã fix".'
@@ -91,6 +93,7 @@ check 2 'Lỗi regex "đã fix".'
 check 2 'Bug pattern `fixed`.'
 check 2 'Lỗi mẫu "đã khắc phục".'
 check 2 'In other words "fixed".'
+check 2 'In other  words "fixed".'
 # controls that already behaved (must not move)
 check 0 'Chưa fix được lỗi này, đang tìm nguyên nhân.'
 check 0 'Cần đã fix xong mới báo, nên tôi chưa báo gì.'
