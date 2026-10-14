@@ -291,7 +291,9 @@ ATTRIBUTION = re.compile(
     r"|\b(?:the\s+)?user\s+(?:said|says|reported|reports|claims?)\b|\b(?:người\s+dùng|user)\s+(?:nói|báo|kể)\b",
     re.I)
 _NEG = r"(?:\b(?:chưa|không|chẳng|never|not|no|none\s+of\s+the|zero|did\s+not|does\s+not|do\s+not|failed\s+to)|n't)"
-NEG_BEFORE_RESULT = re.compile(_NEG + r"\s+(?:(?:có|được|hề|all|yet|been|tất\s+cả|the)\s+)*$", re.I)
+# "chưa phải đã fix" (2026-10-14) is the negation too. Not "không phải" / "chẳng phải": "Không phải đã fix lỗi X rồi sao?" is a rhetorical
+# question that asserts, and "không phải A mà B" asserts B (OCR + principal-code-reviewer 14/10).
+NEG_BEFORE_RESULT = re.compile(r"(?:\bchưa\s+phải(?:\s+là)?|" + _NEG + r")\s+(?:(?:có|được|hề|all|yet|been|tất\s+cả|the)\s+)*$", re.I)
 NEG_IN_MATCH = re.compile(_NEG + r"\s+(?:(?:có|được|hề|yet|been)\s+)*(?:pass|xanh|green|thành\s+công|đạt)", re.I)
 NEG_RUN = re.compile(
     r"(?:\b(?:chưa|không|chẳng|never|not|did\s+not|have\s+not|has\s+not|cannot|không\s+thể|chưa\s+thể)|n't)"
@@ -333,10 +335,27 @@ def cycle_name_only(sentence, match):
 # Both ends of the match must sit inside quotes or backticks, so a quoted RESULT with no such word (Kết quả: "12/12 test
 # pass") or a result outside the quotes (Chữ "test" thì 12/12 test pass) is still a claim.
 MENTION_WORD = re.compile(r"\b(?:chữ|từ|cụm|mẫu|chuỗi|câu|words?|phrases?|patterns?|regex|terms?)\b", re.I)
+# The same rule for an OUTCOME phrase (`có chữ "đã xử lý"`, 2026-10-14), narrower on purpose: the naming word stands RIGHT BEFORE the
+# opening quote, after a space (`\s+$`: an odd quote cannot shift the pairs), and it is a word that ONLY names a quote: not `từ` ("from"),
+# `câu`, `claim` (the agent's OWN assertion), nor `mẫu` / `regex` / `pattern` / `term` / `chuỗi` (nouns of the sentence: `Lỗi regex "đã fix"`),
+# and not the connective of "in other words". A naming word further back in the clause is a noun too ("Theo mẫu báo cáo lỗi crash "…"").
+OUTCOME_MENTION_WORD = re.compile(r"\b(?:chữ|cụm(?:\s+từ)?|words?|phrases?)\s+$", re.I)
+CONNECTIVE_WORDS = re.compile(r"\bother\s+words?\s+$", re.I)   # "In other words "fixed"": the connective, not a naming word
 QUOTED_SPAN = re.compile(r"\"[^\"\n]*\"|“[^”\n]*”|`[^`\n]*`")
 
 import bisect
 _QUOTES = {}     # sentence -> (end of its first mention word or None, quoted span starts, spans): once per sentence, not per match
+
+def outcome_mention(sentence, match):
+    """An outcome phrase that is the SUBJECT of its quote: the whole match inside ONE pair of quotes or backticks, the quote holding
+    nothing but the phrase (a quote that goes on with the object of the fix is a claim; an odd quote cannot shift the pairs under a
+    claim), and the naming word right before that opening quote."""
+    for x in QUOTED_SPAN.finditer(sentence):
+        if (match.start() == x.start() + 1 and match.end() < x.end()
+                and re.fullmatch(r"[\s.,;:!?…]*", sentence[match.end():x.end() - 1])
+                and not re.match(r"(?:bug|lỗi|issue|crash|error)\b", match.group(0), re.I)):   # these branches of OUTCOME carry the object
+            return bool(OUTCOME_MENTION_WORD.search(sentence[:x.start()]) and not CONNECTIVE_WORDS.search(sentence[:x.start()]))
+    return False
 
 def quoted_mention(sentence, match):
     q = _QUOTES.get(sentence)
@@ -380,7 +399,7 @@ def is_nonassertive(sentence, match, kind):
         return True
     if META_QUOTE_PREFIX.search(prefix):
         return True
-    if kind == "test" and quoted_mention(sentence, match):
+    if (quoted_mention if kind == "test" else outcome_mention)(sentence, match):   # `có chữ "đã xử lý"` (outcome: 2026-10-14)
         return True
     if kind == "test":
         suffix = sentence[match.end():]
@@ -438,10 +457,10 @@ for sent in sentences:
 # An outcome claim is separate from a test-pass claim. This must be classified
 # before the cheap early exit below; otherwise plain "đã fix bug" bypasses the
 # entire outcome-evidence check when no new XML exists.
-# "đã fix gì" / "what was fixed" are interrogative — the acceptance-report headings proof_gate.sh
-# REPORT_ITEMS accepts — never a claim; a claim written after them is matched on its own (2026-09-29).
+# "đã fix gì" / "đã fix được gì" (the wording of core-rules 2.3) / "what was fixed" are interrogative — the acceptance-report
+# headings proof_gate.sh REPORT_ITEMS accepts — never a claim; a claim written after them is matched on its own (2026-09-29).
 OUTCOME = re.compile(
-    r"(đã\s+fix\b(?!\s+gì\b)|đã\s+sửa\s+xong|đã\s+(?:được\s+)?sửa\s+(?:xong\s+)?(?:bug|lỗi)"
+    r"(đã\s+fix\b(?!\s+gì\b|\s+được\s+gì\s*(?:[:?(]|$))|đã\s+sửa\s+xong|đã\s+(?:được\s+)?sửa\s+(?:xong\s+)?(?:bug|lỗi)"
     r"|(?:bug|lỗi)[^.\n]{0,32}đã\s+(?:được\s+)?sửa\b"
     r"|đã\s+khắc\s+phục|đã\s+xử\s+lý"
     r"|đã\s+giải\s+quyết(?:\s+xong)?|hết\s+bug"

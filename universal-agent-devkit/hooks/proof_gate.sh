@@ -148,9 +148,23 @@ if xong is None:
     xong = bool(re.match(r"XONG\b", status))
 # The 4-item acceptance report (core-rules §1.3) every handover carries: an XONG, or a turn
 # that ran `git push` whatever its status line says (2026-09-25: a push turn left it out).
-REPORT_ITEMS = (("1. Đã fix gì (tên lỗi, nguyên nhân gốc, RED→GREEN)", r"đã\s+(fix|sửa)\s*(gì|:)|what\s+was\s+fixed"),
-                ("2. Chặn bug cũ (test hồi quy / immutable_guards chạy lại PASS)", r"bug\s+cũ|reopened"),
-                ("3. Nguy cơ bug mới (caller, module liên đới đã rà)", r"bug\s+mới|collateral"),
+# Labels as the rule words them and as agents write them (2026-10-14 replay of 7 days of real Stops: 19 replies with all four items
+# were blocked for "Nguy cơ mới", "Đã làm gì", "Đã thay đổi gì", "Chặn lỗi cũ", "Nguy cơ lỗi mới"). The words the old patterns
+# already matched anywhere stay as they were (HEAD behaviour, unchanged: `bug cũ`, `bug mới`, `đã fix gì` still count anywhere in the
+# reply); the NEW variants must be exactly a LABEL: at the start of a line (after a list marker, never indented: an indented sub-bullet is
+# the content of the item above), nothing before the phrase but "đã" / "chặn", at most "nào" / "đã triệt tiêu" and a parenthesis after
+# it, then its own colon. So "Rủi ro còn lại: không có rủi ro mới", "Rủi ro còn lại — rủi ro mới thấp:", "Không có nguy cơ mới nào:" and
+# a sentence that only starts with the phrase are no item ("Rủi ro còn lại", residual risk, is another item; a bare "Lỗi cũ:" line is
+# content) (OCR + principal-code-reviewer 14/10, 6 rounds).
+_START = r"(?:^|\n)(?![ \t])[>*_#\-\d.()•+ \t]*"
+_END = r"(?:\s+nào)?(?:\s+đã\s+triệt\s+tiêu)?[*_]*\s*(?:\([^)\n]*\))?[*_]*\s*[:：]"
+REPORT_ITEMS = (("1. Đã fix gì (tên lỗi, nguyên nhân gốc, RED→GREEN)",
+                 r"đã\s+(?:fix|sửa)\s*(?:gì|:)|" + _START + r"đã\s+(?:fix|sửa|làm|thay\s+đổi)(?:\s+được)?\s+gì[*_]*\s*(?:\([^)\n]*\))?[*_]*\s*[:：]"
+                 + r"|what\s+was\s+fixed"),
+                ("2. Chặn bug cũ (test hồi quy / immutable_guards chạy lại PASS)",
+                 r"bug\s+cũ|" + _START + r"(?:đã\s+)?chặn\s+(?:đứng\s+)?(?:các\s+)?lỗi\s+cũ" + _END + r"|reopened"),
+                ("3. Nguy cơ bug mới (caller, module liên đới đã rà)",
+                 r"bug\s+mới|" + _START + r"(?:nguy\s+cơ|rủi\s+ro)\s+(?:(?:bug|lỗi)\s+)?mới" + _END + r"|collateral"),
                 ("4. An toàn mã nguồn (secret, placeholder, OCR)", r"an\s+toàn\s+mã|code\s+safety"))
 missing_report = [name for name, rx in REPORT_ITEMS if not re.search(rx, reply, re.I)]
 

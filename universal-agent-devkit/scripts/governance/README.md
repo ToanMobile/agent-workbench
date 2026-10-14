@@ -18,5 +18,6 @@ Nhóm công cụ quản trị vòng đời, đồng bộ cấu hình và quản 
 - `nightly.py`: Bộ lập lịch kiểm thử định kỳ và chạy lại các test nặng.
 - `profile_skills.py`: Lọc và xác thực danh sách skill hợp lệ theo profile.
 - `relink_check.py`: Tự động phục hồi các symlink bị mất sau git checkout/merge.
+- `stop_replay.py`: Phát lại các lần Stop hook CHẶN trên transcript thật (7 ngày): lần chặn nào đúng, nhầm, đã sửa từ trước hay chưa thể kết luận; bảng theo hook và repo, ví dụ đã che bí mật. Chỉ đọc, `--help` để xem tuỳ chọn.
 - `sync_commands.sh`: Đồng bộ hóa slash commands và aliases.
 - `token_cost_tracker.py`: Giám sát và theo dõi chi phí token theo phiên làm việc.
