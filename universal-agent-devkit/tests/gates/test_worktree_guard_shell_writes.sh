@@ -40,6 +40,18 @@ guard "$H" "$W" "env -C $M rm src/a.kt"; rc=$?
 [ "$rc" = 2 ] && ok "env -C <main> rm from the worktree: blocked" || fail "env -C main: rc $rc"
 guard "$H" "$W" "rm src/a.kt"; rc=$?
 [ "$rc" = 0 ] && ok "rm inside its own worktree: allowed" || fail "rm in the worktree: rc $rc $(cat "$TMP/err")"
+# env -S / --split-string holds a whole command line: env splits it into words, puts them first and runs them with the words after it
+# appended. It was dropped as the option's value, so its writes were never seen (OpenCodeReview 14/10, issues-bugs.md A.4 (b)).
+guard "$H" "$M" "env -S 'rm src/a.kt'"; rc=$?
+[ "$rc" = 2 ] && ok "env -S '<rm …>' in the main checkout: blocked" || fail "env -S '<rm …>' in main: rc $rc"
+guard "$H" "$M" "env -S'rm -f' src/a.kt"; rc=$?
+[ "$rc" = 2 ] && ok "env -S'rm -f' src/a.kt (attached, the operand after it): blocked" || fail "env -S'rm -f' + operand in main: rc $rc"
+guard "$H" "$M" "env --split-string 'FOO=1 rm src/a.kt'"; rc=$?
+[ "$rc" = 2 ] && ok "env --split-string '<VAR=… rm …>' in the main checkout: blocked" || fail "env --split-string <line> in main: rc $rc"
+guard "$H" "$M" "env -i --split-string='rm src/a.kt'"; rc=$?
+[ "$rc" = 2 ] && ok "env -i --split-string='<rm …>' in the main checkout: blocked" || fail "env --split-string=<line> in main: rc $rc"
+guard "$H" "$W" "env -S 'rm src/a.kt'"; rc=$?
+[ "$rc" = 0 ] && ok "env -S '<rm …>' inside its own worktree: allowed" || fail "env -S in the worktree: rc $rc $(cat "$TMP/err")"
 
 mkdir -p "$TMP/partial" && cp "$H" "$TMP/partial/worktree_guard.sh"   # a partial install: no shell_writes.py beside it
 guard "$TMP/partial/worktree_guard.sh" "$M" "cp /tmp/x src/b.kt"; rc=$?

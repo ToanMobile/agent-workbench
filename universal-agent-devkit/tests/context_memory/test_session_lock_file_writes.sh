@@ -66,6 +66,11 @@ cases = [   # (want hits_top, label, command); every command runs with cwd = the
     (True, "env --chdir= into it, then rm", f"cd {other} && env --chdir={top} rm x.txt"),
     (True, "sudo -D into it, then rm", f"cd {other} && sudo -D {top} rm x.txt"),
     (False, "env -C out of it, then rm", f"env -C {other} rm x.txt"),
+    # OpenCodeReview 14/10: env -S / --split-string runs its value as a command line (the words after it appended)
+    (True, "env -S '<rm>' in it", "env -S 'rm x.txt'"),
+    (True, "env -iS 'rm -f' x.txt in it (cluster, operand after)", "env -iS 'rm -f' x.txt"),
+    (True, "env --split-string=<rm> in it", "env --split-string='rm -f x.txt'"),
+    (False, "env -S '<rm>' of an outside path", f"env -S 'rm {other}/x.txt'"),
 ]
 fails = 0
 for want, label, cmd in cases:

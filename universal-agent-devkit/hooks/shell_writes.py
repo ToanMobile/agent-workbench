@@ -32,6 +32,7 @@ PREFIX_VALUE_OPTS = {"nice": {"-n"}, "env": {"-u", "-C", "-S", "--chdir", "--uns
                      "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U", "--chdir"}}
 # ... and these move the directory the command runs in (OpenCodeReview 14/10: `env -C <main> rm f` judged f in the old cwd)
 PREFIX_CHDIR = {("env", "-C"), ("env", "--chdir"), ("sudo", "-D"), ("sudo", "--chdir")}
+ENV_SPLIT_SHORT = re.compile(r"-[0iv]*S(.*)", re.S)   # env -S, also after its flags (-iS); the rest of the word is the value
 # Options whose next word is a VALUE, not a target (principal-code-reviewer 14/10: `chmod +x f`, `mkdir -m 755 d`, `touch -t STAMP f`,
 # `truncate -s 0 f`, `touch -r REF f` named the value as a write in the cwd). `--opt=value` carries its value itself.
 VALUE_OPTS = {"chmod": {"--reference"}, "cp": {"-S", "--suffix"}, "mv": {"-S", "--suffix"}, "ln": {"-S", "--suffix"},
@@ -49,6 +50,22 @@ def _cd(here, d):
         return here
     d = os.path.expanduser(d)
     return d if os.path.isabs(d) else os.path.join(here, d)
+
+
+def _env_split(opt, words):
+    """(command line, words left) when `opt` is env's split-string option - `-S LINE`, `-SLINE`, `-iS LINE`, `--split-string LINE`,
+    `--split-string=LINE` or an unambiguous prefix of it (`--s…`) - else None. env splits LINE into words and runs them with the
+    words after it appended, so LINE is a command, not an option value (OpenCodeReview 14/10: `env -S 'rm f'` was never judged)."""
+    m = ENV_SPLIT_SHORT.fullmatch(opt)
+    if m and m.group(1):
+        return m.group(1), words
+    name, eq, val = opt.partition("=")
+    long_opt = len(name) > 2 and "--split-string".startswith(name)
+    if long_opt and eq:
+        return val, words
+    if m or long_opt:
+        return (words[0], words[1:]) if words else ("", words)
+    return None
 
 
 def _operands(base, words):
@@ -83,7 +100,8 @@ def targets(cmd, here, depth=0):
     "file" (cp / install / rsync / ln / scp destination; mv / rm / touch / truncate / tee / mkdir / rmdir / chmod / unlink operands;
     dd of=; sed -i / perl -i operands that exist), "git" (a git write: its -C directory), "build" (a build
     tool or builder module: its working directory), "interp" (an interpreter's operands that exist). A target may hold $VAR or a
-    backtick: the caller decides. Heredoc bodies are data, never commands; `bash -c '…'` is scanned three levels deep."""
+    backtick: the caller decides. Heredoc bodies are data, never commands; `bash -c '…'` is scanned three levels deep; the line of
+    `env -S '…'` / `--split-string` is split into words in place (_env_split)."""
     out, pos = [], 0
     while True:                               # heredoc bodies are data, not commands
         m = HEREDOC.search(cmd, pos)
@@ -130,7 +148,13 @@ def targets(cmd, here, depth=0):
             if w in PREFIX_VALUE_OPTS:   # its options (with their values), then timeout's duration
                 while words and words[0].startswith("-") and words[0] != "-":
                     opt, words = words[0], words[1:]
-                    if "=" in opt and (w, opt.split("=", 1)[0]) in PREFIX_CHDIR:
+                    split = _env_split(opt, words) if w == "env" else None
+                    if split is not None:   # its words go first, in place: env options, VAR=, the command and its operands
+                        try:
+                            words = shlex.split(split[0]) + split[1]
+                        except ValueError:   # env refuses a line with an unterminated quote: nothing runs
+                            words = []
+                    elif "=" in opt and (w, opt.split("=", 1)[0]) in PREFIX_CHDIR:
                         wd = _cd(wd, opt.split("=", 1)[1])
                     elif opt in PREFIX_VALUE_OPTS[w] and words:
                         val, words = words[0], words[1:]
