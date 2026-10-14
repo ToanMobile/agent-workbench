@@ -566,16 +566,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-14 14:31:03",
-        "ts": 1791963063.99631,
+        "at": "2026-10-14 17:25:34",
+        "ts": 1791973534.8860228,
         "task": null,
-        "commit": "0f2ec12+dirty",
-        "duration": "41.77s",
+        "commit": "2f392ca+dirty",
+        "duration": "124.44s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261014-143103.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261014-172534.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-14 17:25:34",
+          "ts": 1791973534.8860228,
+          "task": null,
+          "commit": "2f392ca+dirty",
+          "duration": "124.44s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261014-172534.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-14 14:31:03",
@@ -618,17 +629,6 @@
           "duration": "35.93s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261014-141622.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 14:13:07",
-          "ts": 1791961987.439329,
-          "task": null,
-          "commit": "da7392e+dirty",
-          "duration": "408.00s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261014-141306.log",
           "deleted": []
         }
       ],
@@ -3481,6 +3481,28 @@
         "log": ".agents/evidence/redproof-BUG-20261014-session-lock-let-cp-mv-rm-tee-sed-i-touc/20261014-134259.log",
         "patch": ".agents/local/red-patches/BUG-20261014-session-lock-let-cp-mv-rm-tee-sed-i-touc.patch"
       }
+    },
+    "BUG-20261014-automerge-gate-result-not-object": {
+      "id": "BUG-20261014-automerge-gate-result-not-object",
+      "kind": "bug",
+      "title": "automerge printed a traceback instead of its JSON line when the gate's last line was JSON but no object",
+      "cause": null,
+      "component": "devkit-worktree",
+      "created_at": "2026-10-14 17:30:10",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "OCR 14/10 1111bcd..7528cc9; test_worktree_trunk_merge case 16 RED 5/5 AttributeError before the fix",
+      "linked_at": "2026-10-14 17:30:10",
+      "linked_ts": 1791973810.996778,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/worktree_git/test_worktree_trunk_merge.sh"
+      ]
     }
   },
   "meta": {

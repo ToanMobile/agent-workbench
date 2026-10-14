@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (333 dòng, 38.6 KB) · 42 mục
+> **Tệp gốc:** `.agents/instincts.md` (341 dòng, 39.6 KB) · 43 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -43,5 +43,6 @@
 - [INSTINCT-036] A new tests/*/test_*.sh needs a line in tests/lib/test_durations.txt, and the gate only shows it when… — `sed -n '305,312p' .agents/instincts.md`
 - [INSTINCT-037] A MUST/CẤM regex lint cannot see obligations phrased without a keyword, so an on-demand split needs a… — `sed -n '313,320p' .agents/instincts.md`
 - [INSTINCT-038] A copy that keeps the source's macOS user flags (uchg) cannot be deleted, and git drops the worktree… — `sed -n '321,328p' .agents/instincts.md`
-- [INSTINCT-039] A gate shortcut that treats 'the folder is gone' as 'done' without proving the work reached trunk — `sed -n '329,333p' .agents/instincts.md`
+- [INSTINCT-039] A gate shortcut that treats 'the folder is gone' as 'done' without proving the work reached trunk — `sed -n '329,336p' .agents/instincts.md`
+- [INSTINCT-040] A FIFO at any agent-writable path a hook or gate opens hangs it, and a Stop hook killed at its timeout… — `sed -n '337,341p' .agents/instincts.md`
 

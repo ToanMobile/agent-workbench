@@ -114,12 +114,15 @@ G "$P" checkout -q main
 fin ../nope; rc=$?; [ "$rc" = 1 ] && grep -q "not a registered worktree" "$TMP/out" && ok "  … a path that is not a worktree: refused" || fail "  … not a worktree (rc=$rc): $(cat "$TMP/out")"
 fin; rc=$?; [ "$rc" != 0 ] && grep -q "usage" "$TMP/out" && ok "  … no argument: usage" || fail "  … usage missing"
 LOCKF="$(G "$TMP/am-i" rev-parse --absolute-git-dir)/devkit-automerge.lock"
-hold "$LOCKF"
-fin ../am-i; rc=$?; [ "$rc" = 1 ] && grep -q "another automatic merge" "$TMP/out" && ok "  … another live automatic merge of the same worktree: refused" || fail "  … live lock (rc=$rc): $(cat "$TMP/out")"
-release
-hold "$LOCKF"; kill -9 "$HOLD_PID"; wait "$HOLD_PID" 2>/dev/null; HOLD_PID=""   # the merge was killed: no clean-up ran
-echo i > "$TMP/am-i/i.txt"
-fin ../am-i; rc=$?; [ "$rc" = 0 ] && [ ! -d "$TMP/am-i" ] && ok "  … the lock of a merge that was killed is free at once" || fail "  … killed holder's lock (rc=$rc): $(cat "$TMP/out")"
+if hold "$LOCKF"; then   # a holder that never took the lock is a failure already (hold says so): the checks below would prove nothing
+  fin ../am-i; rc=$?; [ "$rc" = 1 ] && grep -q "another automatic merge" "$TMP/out" && ok "  … another live automatic merge of the same worktree: refused" || fail "  … live lock (rc=$rc): $(cat "$TMP/out")"
+  release
+fi
+if hold "$LOCKF"; then
+  kill -9 "$HOLD_PID"; wait "$HOLD_PID" 2>/dev/null; HOLD_PID=""   # the merge was killed: no clean-up ran
+  echo i > "$TMP/am-i/i.txt"
+  fin ../am-i; rc=$?; [ "$rc" = 0 ] && [ ! -d "$TMP/am-i" ] && ok "  … the lock of a merge that was killed is free at once" || fail "  … killed holder's lock (rc=$rc): $(cat "$TMP/out")"
+fi
 
 # 10: the machine form
 wt j; echo j > "$TMP/am-j/j.txt"
@@ -164,10 +167,12 @@ fin ../am-o; rc=$?
 [ "$rc" = 0 ] && [ ! -d "$TMP/am-o" ] && [ -f "$P/real.txt" ] && [ -z "$(G "$P" ls-files .agents/CHECKLIST.md)" ] && ok "15: untracked generated bookkeeping does not strand the removal, and is not carried" || fail "15: (rc=$rc): $(cat "$TMP/out")"
 
 # 10b: a second merge of the same worktree while one runs is "running", not an error
-wt p; echo p > "$TMP/am-p/p.txt"; hold "$(G "$TMP/am-p" rev-parse --absolute-git-dir)/devkit-automerge.lock"
-JP="$(cd "$P" && bash "$KIT" worktree automerge ../am-p 2>/dev/null | tail -1)"
-release
-python3 -c 'import json,sys;d=json.loads(sys.argv[1]);sys.exit(0 if d["status"]=="blocked" and d.get("running") is True else 1)' "$JP" && ok "10b: a live merge of the same worktree is reported as running (JSON running: true)" || fail "10b: $JP"
+wt p; echo p > "$TMP/am-p/p.txt"
+if hold "$(G "$TMP/am-p" rev-parse --absolute-git-dir)/devkit-automerge.lock"; then
+  JP="$(cd "$P" && bash "$KIT" worktree automerge ../am-p 2>/dev/null | tail -1)"
+  release
+  python3 -c 'import json,sys;d=json.loads(sys.argv[1]);sys.exit(0 if d["status"]=="blocked" and d.get("running") is True else 1)' "$JP" && ok "10b: a live merge of the same worktree is reported as running (JSON running: true)" || fail "10b: $JP"
+fi
 
 # round 2 #2: a worktree on a PUBLISHED branch (has a remote ref) is never merged automatically
 git init -q --bare "$TMP/origin.git" && G "$P" remote add origin "$TMP/origin.git" && G "$P" push -q origin main 2>/dev/null
