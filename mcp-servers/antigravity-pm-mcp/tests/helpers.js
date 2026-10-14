@@ -18,6 +18,15 @@ export const PNG_1PX = Buffer.from(
 // vao mot duong dan khong ton tai ngay khi nap helpers.
 const NO_GLOBAL_CONFIG = path.join(os.tmpdir(), 'agpm-test-khong-co-cau-hinh-chung', '.antigravity-pm.json');
 process.env.ANTIGRAVITY_PM_GLOBAL_CONFIG = NO_GLOBAL_CONFIG;
+// Test KHONG duoc chay agy THAT (agent Argon, --dangerously-skip-permissions, tren thu muc tam): tro vao file khong ton tai => AntigravityUnavailable
+// o buoc "goi agent", dung cho nhung test cu cho do. Test can agy gia thi tu dat lai (tests/agy-model.test.js). 14/10/2026: khi model mac dinh
+// doi sang Argon, bai-hoc-14-09 #3 da sinh 3 tien trinh agy that voi prompt TRIEN KHAI.
+// Duong dan tu mkdtemp (khong doan truoc duoc, /tmp dung chung khong cho ai dat san file thuc thi o do); so project cua IDE cung la thu muc tam rong,
+// de test khong doc ~/.gemini that (chinh sach EAGER/TURBO, project da dang ky).
+const NO_AGY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-test-no-agy-'));
+process.env.ANTIGRAVITY_PM_AGY = path.join(NO_AGY_DIR, 'agy');
+process.env.ANTIGRAVITY_PM_PROJECTS_DIR = path.join(NO_AGY_DIR, 'ide-projects');
+process.once('exit', () => fs.rmSync(NO_AGY_DIR, { recursive: true, force: true }));
 // Trang thai PM (task.json) nam o HOME: test khong duoc ghi vao ~/.antigravity-pm that.
 process.env.ANTIGRAVITY_PM_STATE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-state-home-'));
 const STATE_HOME = process.env.ANTIGRAVITY_PM_STATE_HOME;

@@ -23,7 +23,7 @@
 6. **Không mở nội dung hội thoại của người dùng.** CSDL hội thoại Antigravity chỉ được `stat` để đo động tĩnh.
    Muốn biết agent làm gì thì đọc `result.json` (hợp đồng) và `git diff`, không giải mã protobuf.
    **Ngoại lệ duy nhất (chủ dự án yêu cầu 14/09/2026):** `transcriptErrors()` đọc 64 KB cuối của
-   `~/.gemini/antigravity/brain/<id>/.system_generated/logs/transcript.jsonl` để đếm dòng `"type":"ERROR_MESSAGE"`
+   `~/.gemini/antigravity/brain/<id>/.system_generated/logs/transcript.jsonl` (hoặc `~/.gemini/antigravity-cli/brain/<id>/…` cho hội thoại của `agy`) để đếm dòng `"type":"ERROR_MESSAGE"`
    và lấy `created_at` — **không** trả về `content`. Lý do: "stream interrupted" là tín hiệu thật của agent chết
    giữa chừng mà `stallMinutes` (chỉ đếm im lặng) không bắt được.
 
@@ -42,7 +42,7 @@ Claude Code ──MCP stdio──▶ src/server.js ──▶ src/tools.js ─┬
 | --- | --- |
 | `src/discover.js` | Tìm địa chỉ + khoá phiên của language server đang chạy. Chỗ duy nhất chạm vào process table. |
 | `src/projects.js` | Giải đường dẫn project → project id của Antigravity. Chỗ duy nhất đọc `~/.gemini/config/projects/`. |
-| `src/agentapi.js` | Chỗ duy nhất gọi CLI `agentapi`. Đổi giao diện CLI ⇒ chỉ sửa ở đây. |
+| `src/agentapi.js` | Chỗ duy nhất gọi CLI `agentapi` **và** `agy` (model cụ thể). Đổi giao diện CLI ⇒ chỉ sửa ở đây. |
 | `src/tasks.js` | Máy trạng thái + `gate()`. Không I/O mạng, không gọi agent. |
 | `src/prompt.js` | Soạn prompt. **Kế hoạch do PM viết** — agent chỉ phản biện (`buildPlanCritiquePrompt`) rồi thực thi. Mọi ràng buộc gửi cho agent nằm ở đây, không rải rác trong tools. Sáu luật bắt buộc (cấm bịa, oracle đỏ→xanh, cấm sửa test cho xanh, đếm test thật, liệt kê nơi dùng, churn guard) là phần cứng của hợp đồng — sửa phải kèm test trong `tests/prompt-rules.test.js`. |
 | `src/policy.js` | Luật bắt buộc (`mustHave`): nhận diện file test (phải do agent khai), provider ảnh hợp lệ, oracle, file rác gốc repo, chồng lấn task song song, câu nhắc cho agent. |
@@ -84,6 +84,8 @@ npm run doctor -- <project>   # đường dây thật (cần Antigravity đang m
 
 ## 5. Ràng buộc bên ngoài (không sửa được từ repo này)
 
+- Chọn model: `agentapi new-conversation --model=` chỉ nhận `flash_lite|flash|pro` và server tự quyết model (14/10/2026: cả `pro` lẫn `flash` ra `gemini-3.8-flash-tiered`; tên model cụ thể bị từ chối `no available models found for tier`). Model cụ thể chỉ chọn được bằng CLI `agy --model` (`src/agentapi.js`): hội thoại của `agy` nằm ở `~/.gemini/antigravity-cli` (IDE không thấy), lượt chạy sống cùng tiến trình `agy` (thoát là dừng; resume không có `--model` thì chạy model mặc định), headless từ chối lệnh shell nếu thiếu allow rule nên PM chạy `--dangerously-skip-permissions` (cùng mức với `autoExecutionPolicy` EAGER/TURBO của IDE). Đo trên máy thật 14/10/2026.
+- Giới hạn đã chấp nhận của đường `agy` (review 14/10/2026): lời nhắc đi qua argv nên người dùng khác trên cùng máy đọc được qua `ps` suốt cả luot (đường `agentapi` vốn cũng vậy, chỉ ngắn hơn); `agy --print <giá trị>` nhận nguyên giá trị bắt đầu bằng `-` (Go `flag`, đọc từ chuỗi trong binary, chưa chạy thật); hai tiến trình PM trên cùng HOME dùng chung khóa file `agy-conversations.json.lock` (mồ côi > 10 giây là cũ); PM bị SIGKILL giữa lúc chờ `init` của `newConversation` thì agy mồ côi vì chưa có conversationId để ghi (SIGTERM thì dọn được). Đọc sổ để CHỌN ĐƯỜNG chịu lỗi (sổ hỏng không kéo sập đường IDE), còn ghi / đặt chỗ / mở luot mới thì nổ to.
 - `agentapi` chỉ có 3 lệnh: `new-conversation`, `send-message`, `get-conversation-metadata`. **Không có** lệnh
   liệt kê hội thoại và **không có** trạng thái "đang chạy / đã xong". Mọi thiết kế ở đây là hệ quả của hai giới hạn đó.
 - `new-conversation` **bắt buộc** có project id (`ANTIGRAVITY_PROJECT_ID`), nếu không server trả

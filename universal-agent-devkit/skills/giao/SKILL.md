@@ -11,6 +11,11 @@ Project mặc định là thư mục đang làm việc; mọi tool nhận tham s
 
 ---
 
+## 0. Cờ Mặc Định `giaoDefault` (bật/tắt /giao cho mọi prompt)
+- Khoá `giaoDefault` (true/false) trong `~/.antigravity-pm.json` (chung) hoặc `<project>/.antigravity-pm.json` (đè lên). `true`: hook prompt (`scripts/context/enrich_context.py`) gắn lệnh "GIAO MẶC ĐỊNH BẬT" vào mọi prompt: việc nào sẽ sửa file/code thì tự chạy skill này thay vì tự làm, kể cả việc nhỏ; câu hỏi, đọc, giải thích, không đổi file thì trả lời trực tiếp. Không có khoá = `false` như cũ.
+- Tắt: đổi thành `false` (một dòng, có hiệu lực từ prompt kế tiếp). Chỉ giá trị JSON boolean tính: file hỏng hay kiểu khác (`"yes"`) KHÔNG bật, và hook nói rõ lý do ở đầu ngữ cảnh.
+- Cờ này không chen vào dòng "Skill phù hợp" (chỉ hiện 5 skill, chen vào làm văng skill khác); lệnh nằm ở phần "Yêu cầu ngầm định".
+
 ## 1. Trước Khi Giao (Pre-flight Check)
 - Gọi `pm_doctor`: Kiểm tra Antigravity có đang chạy không, project đã đăng ký trong sổ dự án chưa, lệnh test và provider chụp ảnh đã khai chưa.
 - Cấu hình đọc 2 tầng: `~/.antigravity-pm.json` (chung toàn hệ thống) ➔ `<project>/.antigravity-pm.json` (đè lên theo từng dự án).

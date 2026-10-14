@@ -73,7 +73,7 @@ Object gộp theo khoá, mảng thì thay thế hẳn. Chi tiết: [docs/configu
 ```json
 {
   "projectName": "Geely EX2",
-  "defaultModel": "pro",
+  "defaultModel": "gemini-4-argon-high",
   "testCommand": "./scripts/test.sh",
   "auditCommands": ["./scripts/verify-docs.sh", "./scripts/verify-voice-intent.sh"],
   "rulesFiles": ["AGENTS.md", "CLAUDE.md", ".claude/VOICE-RULES.md"],

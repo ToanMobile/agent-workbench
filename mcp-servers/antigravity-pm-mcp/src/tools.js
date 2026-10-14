@@ -7,7 +7,7 @@ import {
   recordDispatch, markRework, accept, gate, freshness, contractPaths, addHistory, PHASES, TASK_TYPES,
   discardProofs, anhTrung, hashFile, ackWarning, locCanhBaoDaXem } from './tasks.js';
 import {
-  newConversation, sendMessage, getConversationMetadata, conversationProgress, transcriptErrors, MODELS,
+  newConversation, sendMessage, getConversationMetadata, conversationProgress, transcriptErrors, MODELS, isAgyModel, agyPath, agyTurnStatus, agyTurnStatusSafe, agyRegistryProblem, agyPermissionPolicy,
 } from './agentapi.js';
 import { discover, agentapiPath } from './discover.js';
 import { requireProjectId, resolveProject } from './projects.js';
@@ -100,6 +100,39 @@ function gateLines(g) {
 function taskLine(t) {
   const flag = t.phase === 'ACCEPTED' ? 'OK ' : '   ';
   return `${flag}${t.id} · ${t.phase}${t.round ? ` (vong ${t.round})` : ''} · ${t.title}`;
+}
+
+/** agyTurnStatus cho tool DOC (pm_status): khong doc duoc dau van tay / so dang ky thi in mot dong, KHONG lam mat ca bao cao. */
+function safeAgyTurn(L, conversationId, taskModel, quiet = false) {
+  const { status, error } = agyTurnStatusSafe(conversationId);
+  if (!error) return status;
+  // Task IDE (model la bac flash/pro): hoi thoai cua no KHONG bao gio la agy, nen so dang ky agy hong khong lien quan toi nudge cua no.
+  if (taskModel && !isAgyModel(taskModel)) return null;
+  if (!quiet) L.push(`Luot agy: KHONG biet (${error})`);
+  return { unknown: true };   // task agy: khong biet luot nao dang chay => nudge phai bo qua
+}
+
+/** Dong trang thai luot agy cua pm_status. */
+function agyTurnLine(t) {
+  if (!t.running) return 'Luot agy: DA KET THUC (tien trinh agy da thoat) — chua co result.json thi luot da chet hoac xong ma khong ghi ket qua: pm_message de lam tiep';
+  if (t.starting) return 'Luot agy: dang khoi dong — im lang khi build/test dai khong phai la treo';
+  return `Luot agy: DANG CHAY (pid ${t.pid}) — im lang khi build/test dai khong phai la treo`;
+}
+
+/** Ghi chu khi hoi thoai im lau qua stallMinutes. */
+function agyStallNote(t) {
+  if (!t) return ' — CO THE DANG TREO hoac dang doi ban bam Accept trong Antigravity';
+  if (!t.running) return '';
+  if (t.starting) return ' — PM dang mo luot moi (agy dang khoi dong)';
+  return ` — agy van chay (pid ${t.pid}); chi kill -- -${t.pid} neu qua lau va that su khong co dong tinh`;
+}
+
+/** Loi cua agy ma mot lan nhac khong the vao duoc: dang co luot chay / dang mo luot. Loi khac (mat agy, chinh sach quyen...) la loi that. */
+const isTurnBusy = (e) => e?.code === 'AGY_TURN_BUSY';
+
+/** Model agy khong can project id cua IDE (workspace = cwd): project chua tung mo trong IDE van giao duoc; bac agentapi van bat buoc. */
+function projectIdForModel(cfg, model) {
+  return isAgyModel(model) ? { id: null, name: '(agy)' } : requireProjectId(cfg);
 }
 
 async function ensureWorkspaceMatches(cfg, conversationId) {
@@ -201,6 +234,13 @@ export const TOOLS = [
         + ` · file chep vao worktree oracle: ${(cfg.oracle?.copyToWorktree || []).join(', ') || '(khong)'}`);
       L.push('');
       L.push(`agentapi: ${agentapiPath() || 'KHONG TIM THAY'}`);
+      if (isAgyModel(cfg.defaultModel)) {
+        const ap = agyPermissionPolicy(cfg.projectRoot);
+        L.push(`agy: ${agyPath() || 'KHONG TIM THAY'} · model mac dinh ${cfg.defaultModel}`);
+        const regProblem = agyRegistryProblem();
+        if (regProblem) L.push(`  SO DANG KY AGY HONG: ${regProblem}`);
+        L.push(`  agy --dangerously-skip-permissions: ${ap.ok ? 'DUOC' : 'KHONG DUOC — dispatch bi tu choi'} (chinh sach tu chay lenh: ${ap.policy || 'chua dat'} · ${ap.from})`);
+      }
       const proj = resolveProject(cfg.projectRoot);
       if (proj) {
         L.push(`Project trong Antigravity: ${proj.name} · id ${proj.id}${proj.match === 'parent' ? ' (khop qua thu muc cha)' : ''}`);
@@ -253,6 +293,57 @@ export const TOOLS = [
           L.push(`PING THAT BAI: ${e.message}`);
           if (e.hint) L.push(`  Goi y: ${e.hint}`);
           if (e.detail) L.push(`  Chi tiet: ${truncate(String(e.detail), 1200)}`);
+        }
+        if (isAgyModel(cfg.defaultModel)) {
+          // Model cu the di qua agy, khong qua agentapi: kiem rieng duong do, vong doi day du (mo -> chay het luot -> gui tiep -> chay het luot).
+          L.push('');
+          L.push(`--- ping agy: model ${cfg.defaultModel} (mo MOT luot agy that trong ${cfg.projectRoot}, roi gui them mot tin) ---`);
+          const waitTurn = async (id, label) => {
+            const t0 = Date.now();
+            let t = agyTurnStatus(id);
+            if (!t) { L.push(`${label}: hoi thoai ${id} KHONG co trong so dang ky agy`); return false; }
+            const limit = Number(process.env.ANTIGRAVITY_PM_PING_WAIT_MS) || 90000;
+            while (t.running && Date.now() - t0 < limit) { await new Promise((r) => setTimeout(r, Math.min(1000, limit))); t = agyTurnStatus(id); }
+            L.push(`${label}: ${t.running ? `CHUA XONG sau ${Math.round(limit / 1000)} s` : 'xong'} (${Math.round((Date.now() - t0) / 1000)} s)`);
+            return !t.running;
+          };
+          let created = null;   // ngoai try: khuc finally duoi dung agy cua ping DU loi o buoc nao (ps hong, so dang ky hong...)
+          const pingPids = new Set();   // pid agy cua CA HAI luot (luot 2 la tien trinh agy khac)
+          try {
+            created = await newConversation({
+              model: cfg.defaultModel, cwd: cfg.projectRoot, title: '[PM] ping agy',
+              prompt: 'Day la phep thu duong day tu Claude Code. Tra loi dung 1 tu: PONG. KHONG goi tool, KHONG doc file, KHONG sua file, KHONG chay lenh.',
+            });
+            const { conversationId } = created;
+            pingPids.add(created.parsed?.pid);
+            L.push(`Mo hoi thoai agy: OK — ${conversationId}`);
+            const md = await getConversationMetadata(conversationId);
+            L.push(`Workspace: ${md.workspace} · khop project: ${md.workspace && exists(md.workspace) && fs.realpathSync(md.workspace) === fs.realpathSync(cfg.projectRoot) ? 'CO' : 'KHONG'}`);
+            if (await waitTurn(conversationId, 'Luot 1')) {
+              const second = await sendMessage({ conversationId, content: 'Phep thu tin nhan tiep theo. Tra loi dung 1 tu: PONG2. Khong dung tool.' });
+              pingPids.add(second.parsed?.pid);
+              L.push('Gui tin tiep (agy --conversation --model): OK');
+              await waitTurn(conversationId, 'Luot 2');
+            }
+            const te = transcriptErrors(conversationId);
+            L.push(`Transcript: ${te.found ? `${te.errorCount} loi stream` : 'khong thay'} · dong tinh: ${conversationProgress(conversationId).lastActivityAt || 'chua thay'}`);
+          } catch (e) {
+            L.push(`PING AGY THAT BAI: ${e.message}`);
+            if (e.hint) L.push(`  Goi y: ${e.hint}`);
+            if (e.detail) L.push(`  Chi tiet: ${truncate(String(e.detail), 1200)}`);
+          } finally {
+            // Ping chi la phep thu: khong de agent skip-permissions chay khong giam sat. Pid nay do CHINH ping vua mo vai giay truoc (kill -0 khong can ps,
+            // nen van dung duoc khi ps hong); da thoat roi thi khong lam gi.
+            for (const pid of pingPids) {
+              if (!pid) continue;
+              let alive = false;
+              try { process.kill(pid, 0); alive = true; } catch { /* da thoat */ }
+              if (!alive) continue;
+              try { process.kill(-pid, 'SIGKILL'); L.push(`Ping tu don: da dung agy pid ${pid} (nhom tien trinh): luot van chay khi ping ket thuc.`); } catch (e2) {
+                L.push(`CANH BAO: khong dung duoc agy pid ${pid} (${e2.message}); dung no: kill -- -${pid}`);
+              }
+            }
+          }
         }
       }
       return L.join('\n');
@@ -386,32 +477,49 @@ export const TOOLS = [
       L.push(`Hoi thoai: ${task.conversationId || '(chua giao)'}${task.auditConversationId ? ` · audit: ${task.auditConversationId}` : ''}`);
       if (task.conversationId) {
         const prog = conversationProgress(task.conversationId);
+        const regProblem = agyRegistryProblem();
+        if (regProblem) L.push(`SO DANG KY AGY HONG (task agy: khong biet luot nao dang chay nen nudge bi bo qua; task IDE khong bi anh huong): ${regProblem}`);
+        const agyT = safeAgyTurn(L, task.conversationId, task.model, Boolean(regProblem));   // null = hoi thoai IDE; con lai: tien trinh agy cua luot hien tai
+        if (agyT && !agyT.unknown) L.push(agyTurnLine(agyT));
         let idle = null;
         if (prog.found) {
           idle = prog.idleMinutes;
           const stalled = prog.idleMinutes >= (cfg.stallMinutes || 12);
-          L.push(`Dong tinh cuoi cua agent: ${prog.lastActivityAt} (im ${prog.idleMinutes} phut)${stalled ? ' — CO THE DANG TREO hoac dang doi ban bam Accept trong Antigravity' : ''}`);
+          const stallNote = agyStallNote(agyT?.unknown ? null : agyT);
+          L.push(`Dong tinh cuoi cua agent: ${prog.lastActivityAt} (im ${prog.idleMinutes} phut)${stalled ? stallNote : ''}`);
           const te = transcriptErrors(task.conversationId);
           if (te.found && te.lastStepIsError) L.push(`STREAM BI NGAT: buoc cuoi trong transcript la ERROR_MESSAGE (${te.lastErrorAt}) — agent da chet giua chung, nudge/dispatch lai; ${te.errorCount} loi trong doan cuoi.`);
           else if (te.found && te.errorCount) L.push(`  (transcript co ${te.errorCount} ERROR_MESSAGE gan day, lan cuoi ${te.lastErrorAt} — agent da tu tiep tuc)`);
-          if (stalled && !args.nudge) L.push('  -> send-message danh thuc duoc (do 12/09/2026): goi lai pm_status nudge=true de nhac.');
+          if (stalled && !args.nudge && !agyT?.running && !agyT?.unknown) L.push('  -> send-message danh thuc duoc (do 12/09/2026): goi lai pm_status nudge=true de nhac.');
         } else {
           L.push('Chua thay CSDL hoi thoai — agent co the chua bat dau.');
         }
-        if (args.nudge === true) {
+        if (args.nudge === true && agyT?.unknown) {
+          L.push('Khong nhac duoc agent: khong biet trang thai luot agy (ps / so dang ky khong tra loi), khong dam gui chong luot.');
+        } else if (args.nudge === true) {
           // Bai hoc dem 13-14/09/2026: agent im 30-60 phut, chi tinh khi PM nhan. Nhac KHONG doi round, khong doi moc implementDispatchedAt.
           const msg = buildNudgeMessage(cfg, task, idle ?? '?');
           const promptFile = saveOutgoing(cfg, task, `prompt-nudge-${Date.now()}`, msg);
-          await sendMessage({ conversationId: task.conversationId, projectId: projectIdFor(cfg), content: msg });
-          recordDispatch(cfg, task, { kind: 'nudge', promptFile });
-          L.push(`Da nhac agent (nudge): ${promptFile}`);
+          try {
+            await sendMessage({ conversationId: task.conversationId, projectId: projectIdFor(cfg), content: msg });
+            recordDispatch(cfg, task, { kind: 'nudge', promptFile });
+            L.push(`Da nhac agent (nudge): ${promptFile}`);
+          } catch (e) {
+            if (!agyT || !isTurnBusy(e)) throw e;   // IDE va moi loi that cua agy (mat agy, chinh sach quyen...): no to nhu truoc. Chi "dang chay luot" thi pm_status khong duoc mat bao cao
+            L.push(`Khong nhac duoc agent: ${String(e.message || e).split('\n')[0]}`);
+          }
         }
       } else if (args.nudge === true && task.planReviewConversationId && task.phase === 'PLAN') {
         // Chua co hoi thoai lam viec nhung dang cho phan bien => nhac hoi thoai phan bien.
         const msg = `# ${task.id} — PM kiem tra: chua thay plan-review.json. Neu da phan bien xong: ghi file dung khuon roi dung. Neu dang doc: tiep tuc.`;
-        await sendMessage({ conversationId: task.planReviewConversationId, projectId: projectIdFor(cfg), content: msg });
-        recordDispatch(cfg, task, { kind: 'nudge', conversationId: task.planReviewConversationId });
-        L.push('Da nhac hoi thoai phan bien ke hoach (nudge).');
+        try {
+          await sendMessage({ conversationId: task.planReviewConversationId, projectId: projectIdFor(cfg), content: msg });
+          recordDispatch(cfg, task, { kind: 'nudge', conversationId: task.planReviewConversationId });
+          L.push('Da nhac hoi thoai phan bien ke hoach (nudge).');
+        } catch (e) {
+          if (!isTurnBusy(e)) throw e;
+          L.push(`Khong nhac duoc hoi thoai phan bien: ${String(e.message || e).split('\n')[0]}`);
+        }
       } else if (args.nudge === true) {
         L.push('Khong nhac duoc: task chua co hoi thoai lam viec.');
       }
@@ -500,9 +608,9 @@ export const TOOLS = [
         const prompt = buildPlanCritiquePrompt(cfg, task, { planHash, delta });
         const promptFile = saveOutgoing(cfg, task, `prompt-plan-review-r${task.round}-v${task.planVersion || 1}`, prompt);
         if (prompt.length > 20000) L.push(`CANH BAO: prompt ${Math.round(prompt.length / 1024)} KB — agent de chet context (Unity T0007: 3/6 vong treo). Rut plan hoac dung focus=delta.`);
-        const pid = requireProjectId(cfg);
+        const pid = projectIdForModel(cfg, args.model || task.model);
         const { conversationId } = await newConversation({
-          prompt, projectId: pid.id, model: args.model || task.model, title: `[PM] ${task.id} · PHAN BIEN KE HOACH · ${task.title}`,
+          prompt, projectId: pid.id, cwd: cfg.projectRoot, model: args.model || task.model, title: `[PM] ${task.id} · PHAN BIEN KE HOACH · ${task.title}`,
         });
         recordDispatch(cfg, task, {
           kind: 'plan_review', conversationId, model: args.model || task.model, promptFile,
@@ -545,9 +653,9 @@ export const TOOLS = [
         const moiMo = !task.conversationId;
         if (moiMo) {
           // Ke hoach do PM viet nen khong con hoi thoai lap ke hoach de nhan tin — mo hoi thoai lam viec o day.
-          const pidI = requireProjectId(cfg);
+          const pidI = projectIdForModel(cfg, args.model || task.model);
           const { conversationId } = await newConversation({
-            prompt: msg, projectId: pidI.id, model: args.model || task.model, title: `[PM] ${task.id} · TRIEN KHAI · ${task.title}`,
+            prompt: msg, projectId: pidI.id, cwd: cfg.projectRoot, model: args.model || task.model, title: `[PM] ${task.id} · TRIEN KHAI · ${task.title}`,
           });
           updateTask(cfg, task, (t) => { t.conversationId = conversationId; });
           const checkI = await ensureWorkspaceMatches(cfg, conversationId);
@@ -576,9 +684,9 @@ export const TOOLS = [
       if (kind === 'audit') {
         const prompt = buildAuditPrompt(cfg, task, args.message || '');
         const promptFile = saveOutgoing(cfg, task, `prompt-audit-r${task.round}`, prompt);
-        const pidA = requireProjectId(cfg);
+        const pidA = projectIdForModel(cfg, args.model || task.model);
         const { conversationId } = await newConversation({
-          prompt, projectId: pidA.id, model: args.model || task.model, title: `[PM] ${task.id} · AUDIT doc lap`,
+          prompt, projectId: pidA.id, cwd: cfg.projectRoot, model: args.model || task.model, title: `[PM] ${task.id} · AUDIT doc lap`,
         });
         updateTask(cfg, task, (t) => { t.auditConversationId = conversationId; });
         if (task.phase === 'IMPLEMENT') setPhase(cfg, task, 'AUDIT', 'pm', 'da giao audit doc lap');

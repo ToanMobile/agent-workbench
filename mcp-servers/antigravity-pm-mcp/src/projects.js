@@ -69,10 +69,16 @@ export function resolveProject(projectRoot) {
   const all = listProjects();
   const exact = all.find((p) => p.folders.some((f) => realOrSelf(f) === want));
   if (exact) return { ...exact, match: 'exact' };
-  const parent = all.find((p) => p.folders.some((f) => {
-    const r = realOrSelf(f);
-    return want.startsWith(`${r}${path.sep}`);
-  }));
+  // Nhieu project long nhau: project GAN NHAT (thu muc dang ky dai nhat) thang, khong phu thuoc thu tu readdir (14/10/2026: quyet dinh
+  // --dangerously-skip-permissions cua agy lay chinh sach cua project cha dau tien tim thay).
+  let parent = null;
+  let parentLen = -1;
+  for (const p of all) {
+    for (const f of p.folders) {
+      const r = realOrSelf(f);
+      if (want.startsWith(`${r}${path.sep}`) && r.length > parentLen) { parent = p; parentLen = r.length; }
+    }
+  }
   if (parent) return { ...parent, match: 'parent' };
   return null;
 }
