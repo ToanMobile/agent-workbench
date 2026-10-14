@@ -421,10 +421,10 @@ for sent in sentences:
 # An outcome claim is separate from a test-pass claim. This must be classified
 # before the cheap early exit below; otherwise plain "đã fix bug" bypasses the
 # entire outcome-evidence check when no new XML exists.
-# "đã fix gì" / "what was fixed" are interrogative — the acceptance-report headings proof_gate.sh
-# REPORT_ITEMS accepts — never a claim; a claim written after them is matched on its own (2026-09-29).
+# "đã fix gì" / "đã fix được gì" (the wording of core-rules 2.3) / "what was fixed" are interrogative — the acceptance-report
+# headings proof_gate.sh REPORT_ITEMS accepts — never a claim; a claim written after them is matched on its own (2026-09-29).
 OUTCOME = re.compile(
-    r"(đã\s+fix\b(?!\s+gì\b)|đã\s+sửa\s+xong|đã\s+(?:được\s+)?sửa\s+(?:xong\s+)?(?:bug|lỗi)"
+    r"(đã\s+fix\b(?!\s+gì\b|\s+được\s+gì\s*(?:[:?(]|$))|đã\s+sửa\s+xong|đã\s+(?:được\s+)?sửa\s+(?:xong\s+)?(?:bug|lỗi)"
     r"|(?:bug|lỗi)[^.\n]{0,32}đã\s+(?:được\s+)?sửa\b"
     r"|đã\s+khắc\s+phục|đã\s+xử\s+lý"
     r"|đã\s+giải\s+quyết(?:\s+xong)?|hết\s+bug"
