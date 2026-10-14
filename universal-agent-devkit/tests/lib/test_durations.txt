@@ -249,7 +249,6 @@
 10 tests/gates/test_review_gate_ocr.sh
 4 tests/verification/test_bug_secret_redaction.sh
 23 tests/gates/test_review_gate_ocr_full.sh
-1 tests/installer/test_ocr_review_helper.sh
 3 tests/worktree_git/test_worktree_gc.sh
 17 tests/worktree_git/test_worktree_limits.sh
 5 tests/gates/test_gate_project_removed_midrun.sh
