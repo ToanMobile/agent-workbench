@@ -239,10 +239,15 @@ def production_globs(project: Path) -> list:
     return [g for g in globs if isinstance(g, str) and g] if isinstance(globs, list) else []
 
 
+def declared(path: str, production: list) -> bool:
+    """Does a production_globs() entry name this path?"""
+    return any(fnmatch.fnmatch(path, g) for g in production)
+
+
 def is_test(path: str, linked, production: list) -> bool:
     """A test for the proof, which never changes one: a linked test of the bug whatever red_proof.json says, else a TEST_PATH
     that production_globs() does not declare."""
-    return path in linked or (bool(TEST_PATH.search(path)) and not any(fnmatch.fnmatch(path, g) for g in production))
+    return path in linked or (bool(TEST_PATH.search(path)) and not declared(path, production))
 
 
 def fix_commit_of(project: Path, item: dict) -> tuple:
@@ -652,9 +657,11 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
                 # conflicts over text that is no part of the fix.
                 files = git(project, "show", "--name-only", "--format=", fix_commit).stdout.split()
                 # Source code only (not data, binaries, tool output), and only what still exists:
-                # a file deleted since the fix has nothing left to take the fix out of.
+                # a file deleted since the fix has nothing left to take the fix out of. A file red_proof.json
+                # declares production is code whatever its extension (the .sh runner fix_commit_of accepts).
                 prod = [f for f in files if not is_test(f, tests, prod_globs) and not f.startswith(NOT_CODE)
-                        and f.endswith(SOURCE_EXT) and git(project, "cat-file", "-e", f"HEAD:{f}").returncode == 0]
+                        and (f.endswith(SOURCE_EXT) or declared(f, prod_globs))
+                        and git(project, "cat-file", "-e", f"HEAD:{f}").returncode == 0]
                 if not prod:
                     return {**base, "status": "INCONCLUSIVE", "mode": mode, "fix_commit": fix_commit,
                             "reason": f"commit {fix_commit} không đổi code sản xuất"}
