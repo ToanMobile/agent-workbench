@@ -93,6 +93,7 @@ clear
 priv="$TMP/shared-tmp"; mkdir -p "$priv"
 o6="$(env -u ANTIGRAVITY_PM_GLOBAL_CONFIG TMPDIR="$priv" bash -c '
   . "$1/tests/lib/clean_git_env.sh"
+  echo "PIN=${ANTIGRAVITY_PM_GLOBAL_CONFIG:-}"
   { mkdir -p "$(dirname "$ANTIGRAVITY_PM_GLOBAL_CONFIG")" && printf "{\"giaoDefault\": true}" > "$ANTIGRAVITY_PM_GLOBAL_CONFIG"; } 2>/dev/null \
     && echo "PLANTED $ANTIGRAVITY_PM_GLOBAL_CONFIG"
   hook() { printf "{\"prompt\":\"%s\",\"session_id\":\"s6-%s\"}" "$2" "$RANDOM$RANDOM" | bash "$3" 2>&1; }
@@ -101,6 +102,13 @@ o6="$(env -u ANTIGRAVITY_PM_GLOBAL_CONFIG TMPDIR="$priv" bash -c '
   echo "== CONTROL"; ANTIGRAVITY_PM_GLOBAL_CONFIG="$TMPDIR/control.json" hook "$@"' _ "$DEVKIT_DIR" "$P" "$HOOK")"
 lib6="$(printf '%s\n' "$o6" | sed -n '/^== LIB$/,/^== CONTROL$/p')"
 ctl6="$(printf '%s\n' "$o6" | sed -n '/^== CONTROL$/,$p')"
+# the lib must set the pin at all: unset, the child would plant nothing (mkdir -p ., > "" fails) and its hook would read the host's own
+# ~/.antigravity-pm.json, so the two checks below would pass on any host without one (principal-code-reviewer 14/10)
+pin6="$(printf '%s\n' "$o6" | sed -n 's/^PIN=//p' | head -1)"
+case "$pin6" in
+  /*) ok "6: the lib pins the user config to an absolute path ($pin6)" ;;
+  *) fail "6: the lib does not pin the user config (got '$pin6'): the checks below would pass on any host without ~/.antigravity-pm.json" ;;
+esac
 printf '%s' "$o6" | grep -q '^PLANTED ' && fail "6: a file could be planted where the lib points the user config: $(printf '%s' "$o6" | grep '^PLANTED ' | head -1)" \
   || ok "6: the lib's no-user-config path can hold no file (nobody can plant one)"
 printf '%s' "$lib6" | grep -q "GIAO MẶC ĐỊNH BẬT" && fail "  … and the planted giaoDefault=true steered the hook" || ok "  … so no planted giaoDefault=true reaches the hook"
