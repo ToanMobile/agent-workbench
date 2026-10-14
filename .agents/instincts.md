@@ -339,3 +339,19 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** A FIFO at any agent-writable path a hook or gate opens hangs it, and a Stop hook killed at its timeout lets the Stop through
 - **Nguyên nhân:** open(), a bash > / >> redirect and exec 9>> block on a FIFO; 14/10: full_pass.json, proof cache, test_run.lock, every hook's .claude/audit-gate/.gitignore and its own log hung post-fix-gate and 5 Stop hooks; the first fix covered the gate files but not the hooks' own logs (found only by a second clean-context review)
 - **Quy tắc phòng ngừa & Cách fix:** Open agent-writable state with O_NONBLOCK and require fstat S_ISREG (post-fix-gate _state_fd, proof_gate open_reg); in hooks drop FIFOs at the top of .claude/audit-gate/ BEFORE the .gitignore line and before any log/lock open; test by planting a FIFO at every path the hook opens, with a timeout, on HEAD first (RED)
+
+---
+
+### [INSTINCT-041] A worktree is adopted on proof of death, never on a stale heartbeat
+- **Ngày phát hiện:** 2026-10-15
+- **Hiện tượng lỗi:** A worktree is adopted on proof of death, never on a stale heartbeat
+- **Nguyên nhân:** worktree_merge_gate adopted (auto-commit, merge, REMOVE) the worktree of a session whose heartbeat was older than 600 s; a live session idle at its prompt or in one long tool call has no fresh heartbeat. get_active_sessions also DELETED the registry entry of a live-pid/stale-heartbeat session, and SessionEnd deletes it for ended ones, so 'no entry' means nothing either.
+- **Quy tắc phòng ngừa & Cách fix:** Adopt or reown only when every known pid is dead (record line 2, then the registry) or a pid-less record is older than 24 h; one helper (session_lock.info_alive) for every caller; a probe that calls get_active_sessions before the Stop belongs in the test (case 10b), not just a stale-heartbeat fixture.
+
+---
+
+### [INSTINCT-042] A helper worktree made with --no-init fails agent-kit health, and the Stop hook gates it at every Stop
+- **Ngày phát hiện:** 2026-10-15
+- **Hiện tượng lỗi:** A helper worktree made with --no-init fails agent-kit health, and the Stop hook gates it at every Stop
+- **Nguyên nhân:** agent-kit worktree add --no-init leaves no .claude/hooks, commands or @-imports, so REG-WB-CONFIG-01 is RED on its merged result; the merge-gate hook then re-ran a heavy gate on it at the end of EVERY turn (9+ times), loading the machine and making the real gate time out (REG-DK-ALL-01 780 s vs ~330 s) and fail.
+- **Quy tắc phòng ngừa & Cách fix:** Make helper worktrees WITH init; never leave an unmerged helper worktree standing across turns; land the integration worktree first, then remove the helpers (a tree identical to main is removable without --force). Wait for background gates inside the turn (a for-loop with sleep), not by ending turns.
