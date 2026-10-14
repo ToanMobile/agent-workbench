@@ -244,6 +244,10 @@
         "universal-agent-devkit/bin/tree_fp.py",
         "universal-agent-devkit/scripts/linters/assertion_lint.py",
         "universal-agent-devkit/bin/postfix-gate"
+      ],
+      "stale_since": "2026-10-14 20:27:50",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py"
       ]
     },
     "REG-DK-GATE-02": {
@@ -325,6 +329,10 @@
         "universal-agent-devkit/bin/tree_fp.py",
         "universal-agent-devkit/scripts/linters/assertion_lint.py",
         "universal-agent-devkit/bin/postfix-gate"
+      ],
+      "stale_since": "2026-10-14 20:27:50",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py"
       ]
     },
     "REG-DK-HOOK-01": {
@@ -403,6 +411,10 @@
       "command": "bash universal-agent-devkit/hooks/tests/hook_contract_test.sh",
       "watch_files": [
         "universal-agent-devkit/hooks/*"
+      ],
+      "stale_since": "2026-10-14 20:27:50",
+      "stale_files": [
+        "universal-agent-devkit/hooks/regression_gate.sh"
       ]
     },
     "REG-DK-HOOK-02": {
@@ -481,6 +493,10 @@
       "command": "bash universal-agent-devkit/tests/gates/test_proof_gate.sh",
       "watch_files": [
         "universal-agent-devkit/hooks/*"
+      ],
+      "stale_since": "2026-10-14 20:27:50",
+      "stale_files": [
+        "universal-agent-devkit/hooks/regression_gate.sh"
       ]
     },
     "REG-DK-HEALTH-01": {
@@ -637,6 +653,14 @@
       "command": "bash universal-agent-devkit/tests/run_impacted.sh",
       "watch_files": [
         "universal-agent-devkit/*"
+      ],
+      "stale_since": "2026-10-14 20:27:50",
+      "stale_files": [
+        "universal-agent-devkit/dashboard/checks.json",
+        "universal-agent-devkit/dashboard/collect_rows.py",
+        "universal-agent-devkit/dashboard/coverage-map.html",
+        "universal-agent-devkit/dashboard/coverage-map.page.html",
+        "universal-agent-devkit/dashboard/dash_shim.js"
       ]
     },
     "BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du": {
@@ -1179,6 +1203,10 @@
       "watch_files": [
         "universal-agent-devkit/bin/session_lock.py",
         "universal-agent-devkit/bin/post-fix-gate.py"
+      ],
+      "stale_since": "2026-10-14 20:27:50",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py"
       ]
     },
     "REG-DK-SANDBOX-01": {
@@ -1378,6 +1406,10 @@
       "component": "devkit-token-cost",
       "command": "bash universal-agent-devkit/tests/context_memory/test_token_cost_tracker.sh",
       "watch_files": [
+        "universal-agent-devkit/scripts/governance/token_cost_tracker.py"
+      ],
+      "stale_since": "2026-10-14 20:27:50",
+      "stale_files": [
         "universal-agent-devkit/scripts/governance/token_cost_tracker.py"
       ]
     },
@@ -3502,6 +3534,28 @@
       "linked_ts": 1791973810.996778,
       "runs_in_suite": [
         "universal-agent-devkit/tests/worktree_git/test_worktree_trunk_merge.sh"
+      ]
+    },
+    "BUG-20261014-budget-cut-forgets-passed-suites": {
+      "id": "BUG-20261014-budget-cut-forgets-passed-suites",
+      "kind": "bug",
+      "title": "A Stop run that spent GATE_TOTAL_BUDGET_S kept no suite results: the next Stop on the same content re-ran every suite from the start (Goods REG-GAME-02/03, 63 min in 72 h)",
+      "cause": null,
+      "component": "devkit-gate",
+      "created_at": "2026-10-14 20:27:50",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "Goods runs.jsonl 14/10: 4 hook runs on fingerprint 4c22b2f1, suites_wall_s 901-967 s each, REG-GAME-04 never started; mechanism: a partial (no --full) run never records suite results and the BUDGET branch skips the receipt write",
+      "linked_at": "2026-10-14 20:27:50",
+      "linked_ts": 1791984470.34867,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_gate_budget_resume.sh"
       ]
     }
   },
