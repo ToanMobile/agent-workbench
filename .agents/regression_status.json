@@ -103,6 +103,14 @@
         "mcp-servers/antigravity-pm-mcp/*.ts",
         "mcp-servers/antigravity-pm-mcp/*.tsx",
         "mcp-servers/antigravity-pm-mcp/*.vue"
+      ],
+      "stale_since": "2026-10-15 00:15:48",
+      "stale_files": [
+        "mcp-servers/antigravity-pm-mcp/src/agentapi.js",
+        "mcp-servers/antigravity-pm-mcp/src/tools.js",
+        "mcp-servers/antigravity-pm-mcp/src/util.js",
+        "mcp-servers/antigravity-pm-mcp/tests/agy-model.test.js",
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ]
     },
     "REG-AUTO-PLAY-STORE-MCP-01": {
@@ -170,16 +178,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-14 14:17:21",
-        "ts": 1791962241.174816,
-        "task": "session-d91dffdd-dd8",
-        "commit": "da7392e+dirty",
-        "duration": "94.90s",
+        "at": "2026-10-15 00:07:25",
+        "ts": 1791997645.809346,
+        "task": "session-9559b4fd-ae9",
+        "commit": "25a6113+dirty",
+        "duration": "165.95s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-01/20261014-141721.log",
+        "log": ".agents/evidence/REG-DK-GATE-01/20261015-000059.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-15 00:07:25",
+          "ts": 1791997645.809346,
+          "task": "session-9559b4fd-ae9",
+          "commit": "25a6113+dirty",
+          "duration": "165.95s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20261015-000059.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-14 14:17:21",
@@ -223,17 +242,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-01/20261014-115221.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 11:44:39",
-          "ts": 1791953079.202323,
-          "task": null,
-          "commit": "2ef7af2+dirty",
-          "duration": "249.03s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-01/20261014-113600.log",
-          "deleted": []
         }
       ],
       "title": "post-fix gate",
@@ -251,16 +259,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-14 14:17:21",
-        "ts": 1791962241.174824,
-        "task": "session-d91dffdd-dd8",
-        "commit": "da7392e+dirty",
-        "duration": "20.39s",
+        "at": "2026-10-15 00:07:25",
+        "ts": 1791997645.818642,
+        "task": "session-9559b4fd-ae9",
+        "commit": "25a6113+dirty",
+        "duration": "21.92s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-02/20261014-141606.log",
+        "log": ".agents/evidence/REG-DK-GATE-02/20261014-235835.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-15 00:07:25",
+          "ts": 1791997645.818642,
+          "task": "session-9559b4fd-ae9",
+          "commit": "25a6113+dirty",
+          "duration": "21.92s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20261014-235835.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-14 14:17:21",
@@ -304,17 +323,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-02/20261014-114655.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 11:44:39",
-          "ts": 1791953079.2023418,
-          "task": null,
-          "commit": "2ef7af2+dirty",
-          "duration": "30.75s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261014-113221.log",
-          "deleted": []
         }
       ],
       "title": "proof gate (tree_fp)",
@@ -332,16 +340,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-14 14:17:21",
-        "ts": 1791962241.174827,
-        "task": "session-d91dffdd-dd8",
-        "commit": "da7392e+dirty",
-        "duration": "53.34s",
+        "at": "2026-10-15 00:07:25",
+        "ts": 1791997645.81865,
+        "task": "session-9559b4fd-ae9",
+        "commit": "25a6113+dirty",
+        "duration": "72.36s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-01/20261014-141639.log",
+        "log": ".agents/evidence/REG-DK-HOOK-01/20261014-235925.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-15 00:07:25",
+          "ts": 1791997645.81865,
+          "task": "session-9559b4fd-ae9",
+          "commit": "25a6113+dirty",
+          "duration": "72.36s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261014-235925.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-14 14:17:21",
@@ -385,17 +404,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-01/20261014-114909.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 11:44:39",
-          "ts": 1791953079.202348,
-          "task": null,
-          "commit": "2ef7af2+dirty",
-          "duration": "141.50s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261014-113412.log",
-          "deleted": []
         }
       ],
       "title": "hook contract",
@@ -403,6 +411,12 @@
       "command": "bash universal-agent-devkit/hooks/tests/hook_contract_test.sh",
       "watch_files": [
         "universal-agent-devkit/hooks/*"
+      ],
+      "stale_since": "2026-10-15 00:15:48",
+      "stale_files": [
+        "universal-agent-devkit/hooks/shell_writes.py",
+        "universal-agent-devkit/hooks/testsourceset_gate.sh",
+        "universal-agent-devkit/hooks/worktree_merge_gate.sh"
       ]
     },
     "REG-DK-HOOK-02": {
@@ -410,16 +424,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-14 14:17:21",
-        "ts": 1791962241.1748302,
-        "task": "session-d91dffdd-dd8",
-        "commit": "da7392e+dirty",
-        "duration": "20.39s",
+        "at": "2026-10-15 00:07:25",
+        "ts": 1791997645.8186529,
+        "task": "session-9559b4fd-ae9",
+        "commit": "25a6113+dirty",
+        "duration": "21.92s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-02/20261014-141606.log",
+        "log": ".agents/evidence/REG-DK-GATE-02/20261014-235835.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-15 00:07:25",
+          "ts": 1791997645.8186529,
+          "task": "session-9559b4fd-ae9",
+          "commit": "25a6113+dirty",
+          "duration": "21.92s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20261014-235835.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-14 14:17:21",
@@ -463,17 +488,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-02/20261014-114655.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 11:44:39",
-          "ts": 1791953079.202357,
-          "task": null,
-          "commit": "2ef7af2+dirty",
-          "duration": "30.75s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261014-113221.log",
-          "deleted": []
         }
       ],
       "title": "proof gate",
@@ -481,6 +495,12 @@
       "command": "bash universal-agent-devkit/tests/gates/test_proof_gate.sh",
       "watch_files": [
         "universal-agent-devkit/hooks/*"
+      ],
+      "stale_since": "2026-10-15 00:15:48",
+      "stale_files": [
+        "universal-agent-devkit/hooks/shell_writes.py",
+        "universal-agent-devkit/hooks/testsourceset_gate.sh",
+        "universal-agent-devkit/hooks/worktree_merge_gate.sh"
       ]
     },
     "REG-DK-HEALTH-01": {
@@ -566,16 +586,38 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-14 17:25:34",
-        "ts": 1791973534.8860228,
-        "task": null,
-        "commit": "2f392ca+dirty",
-        "duration": "124.44s",
+        "at": "2026-10-15 00:07:25",
+        "ts": 1791997645.8186612,
+        "task": "session-9559b4fd-ae9",
+        "commit": "25a6113+dirty",
+        "duration": "551.46s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261014-172534.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261015-000725.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-15 00:07:25",
+          "ts": 1791997645.8186612,
+          "task": "session-9559b4fd-ae9",
+          "commit": "25a6113+dirty",
+          "duration": "551.46s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261015-000725.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-14 19:28:52",
+          "ts": 1791980932.54464,
+          "task": null,
+          "commit": "3d403e6+dirty",
+          "duration": "350.46s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261014-192851.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-14 17:25:34",
@@ -608,28 +650,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261014-142907.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 14:28:09",
-          "ts": 1791962889.001018,
-          "task": null,
-          "commit": "da7392e+dirty",
-          "duration": "13.52s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261014-142808.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 14:17:21",
-          "ts": 1791962241.174836,
-          "task": "session-d91dffdd-dd8",
-          "commit": "da7392e+dirty",
-          "duration": "35.93s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261014-141622.log",
-          "deleted": []
         }
       ],
       "title": "DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit",
@@ -637,6 +657,14 @@
       "command": "bash universal-agent-devkit/tests/run_impacted.sh",
       "watch_files": [
         "universal-agent-devkit/*"
+      ],
+      "stale_since": "2026-10-15 00:15:48",
+      "stale_files": [
+        "universal-agent-devkit/hooks/shell_writes.py",
+        "universal-agent-devkit/hooks/testsourceset_gate.sh",
+        "universal-agent-devkit/hooks/worktree_merge_gate.sh",
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/context_memory/test_giao_default.sh"
       ]
     },
     "BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du": {
@@ -683,16 +711,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-13 21:40:05",
-        "ts": 1791902405.853338,
-        "task": "session-d352c03b-d20",
-        "commit": "f178217+dirty",
-        "duration": "0.53s",
+        "at": "2026-10-15 00:07:25",
+        "ts": 1791997645.818665,
+        "task": "session-9559b4fd-ae9",
+        "commit": "25a6113+dirty",
+        "duration": "0.49s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-WB-CONFIG-01/20261013-214005.log",
+        "log": ".agents/evidence/REG-WB-CONFIG-01/20261015-000725.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-15 00:07:25",
+          "ts": 1791997645.818665,
+          "task": "session-9559b4fd-ae9",
+          "commit": "25a6113+dirty",
+          "duration": "0.49s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20261015-000725.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-13 21:40:05",
@@ -735,17 +774,6 @@
           "duration": "0.99s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-WB-CONFIG-01/20261013-204018.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 20:19:00",
-          "ts": 1791897540.522152,
-          "task": null,
-          "commit": "825b0a1+dirty",
-          "duration": "0.84s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-WB-CONFIG-01/20261013-201900.log",
           "deleted": []
         }
       ],
@@ -827,8 +855,8 @@
       "red_proof": {
         "at": "2026-10-09 18:01:07",
         "ts": 1791543667.210471,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_gate_friction.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -866,8 +894,8 @@
       "red_proof": {
         "at": "2026-10-09 17:55:24",
         "ts": 1791543324.794452,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_gate_friction.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -905,8 +933,8 @@
       "red_proof": {
         "at": "2026-10-09 17:38:20",
         "ts": 1791542300.4999292,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/verification/test_red_proof.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -944,8 +972,8 @@
       "red_proof": {
         "at": "2026-10-09 18:25:03",
         "ts": 1791545103.595975,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_gate_friction.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -1107,16 +1135,27 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-14 14:17:21",
-        "ts": 1791962241.1748328,
-        "task": "session-d91dffdd-dd8",
-        "commit": "da7392e+dirty",
-        "duration": "8.96s",
+        "at": "2026-10-15 00:07:25",
+        "ts": 1791997645.818657,
+        "task": "session-9559b4fd-ae9",
+        "commit": "25a6113+dirty",
+        "duration": "12.05s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-SESSION-01/20261014-141555.log",
+        "log": ".agents/evidence/REG-DK-SESSION-01/20261014-235825.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-15 00:07:25",
+          "ts": 1791997645.818657,
+          "task": "session-9559b4fd-ae9",
+          "commit": "25a6113+dirty",
+          "duration": "12.05s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-SESSION-01/20261014-235825.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-14 14:17:21",
@@ -1159,17 +1198,6 @@
           "duration": "64.69s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-SESSION-01/20261014-114709.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 11:44:39",
-          "ts": 1791953079.2023628,
-          "task": null,
-          "commit": "2ef7af2+dirty",
-          "duration": "30.84s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-SESSION-01/20261014-113221.log",
           "deleted": []
         }
       ],
@@ -3470,8 +3498,8 @@
       "red_proof": {
         "at": "2026-10-14 13:40:05",
         "ts": 1791960005.099575,
-        "status": "PROVEN",
-        "reason": "đỏ khi bỏ bản sửa, xanh khi có",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/context_memory/test_session_lock_file_writes.sh đã đổi sau lần chứng minh",
         "mode": "revert",
         "fix_commit": "7a1c6de9bb1f",
         "files": {
@@ -3503,13 +3531,532 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/worktree_git/test_worktree_trunk_merge.sh"
       ]
+    },
+    "BUG-20261014-goal-set-fix-het-toan-bo-roi-xoa-issues": {
+      "id": "BUG-20261014-goal-set-fix-het-toan-bo-roi-xoa-issues",
+      "kind": "bug",
+      "title": "Goal set: fix hết toàn bộ rồi xoá issues-bugs vs workflow-improvements.md luôn",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-14 19:09:28",
+      "task": null,
+      "tests": [],
+      "last": null,
+      "history": [],
+      "state": "reported",
+      "fixed": null,
+      "touched_at": "2026-10-14 19:09:28",
+      "sessions": [
+        "11cbd0c7-4c0b-43e4-a5d7-4b0b6578d36c"
+      ]
+    },
+    "BUG-20261014-budget-cut-forgets-passed-suites": {
+      "id": "BUG-20261014-budget-cut-forgets-passed-suites",
+      "kind": "bug",
+      "title": "A Stop run that spent GATE_TOTAL_BUDGET_S kept no suite results, so the next Stop on the same content ran every suite again",
+      "cause": null,
+      "component": "devkit-gate",
+      "created_at": "2026-10-14 23:01:37",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "Goods 72 h: 4 hook runs on one fingerprint, 901-967 s each, REG-GAME-04 never started; fixed a859959 (budget_pass.json)",
+      "linked_at": "2026-10-14 23:01:37",
+      "linked_ts": 1791993697.5497432,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_gate_budget_resume.sh"
+      ]
+    },
+    "BUG-20261014-proof-report-label-variants": {
+      "id": "BUG-20261014-proof-report-label-variants",
+      "kind": "bug",
+      "title": "proof_gate blocked a report that carried all four items under other labels (Nguy co moi, Da lam gi, Chan loi cu, Da fix duoc gi)",
+      "cause": null,
+      "component": "devkit-gate",
+      "created_at": "2026-10-14 23:01:37",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "stop_replay.py: 19 of 85 report-missing blocks over 7 days were false",
+      "linked_at": "2026-10-14 23:01:37",
+      "linked_ts": 1791993697.792769,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_proof_gate_report_labels.sh"
+      ]
+    },
+    "BUG-20261014-evidence-outcome-quoted-mention": {
+      "id": "BUG-20261014-evidence-outcome-quoted-mention",
+      "kind": "bug",
+      "title": "test_evidence_gate check 7 read a quoted mention of the phrase 'da fix' as an outcome claim",
+      "cause": null,
+      "component": "devkit-gate",
+      "created_at": "2026-10-14 23:01:38",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "low",
+      "evidence": "stop_replay.py: 2 of 8 quoted-mention blocks were false; a bare quote still blocks",
+      "linked_at": "2026-10-14 23:01:38",
+      "linked_ts": 1791993698.016602,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_evidence_outcome_mention.sh"
+      ]
+    },
+    "BUG-20261014-red-proof-runner-under-tests-read-as-test": {
+      "id": "BUG-20261014-red-proof-runner-under-tests-read-as-test",
+      "kind": "bug",
+      "title": "red_proof read a production runner under tests/ as a test, so the 09/10 audit rows could not be proven",
+      "cause": null,
+      "component": "devkit-gate",
+      "created_at": "2026-10-14 23:01:38",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "patch touched universal-agent-devkit/tests/run_impacted.sh, TEST_PATH matched it; fixed with a declared 'production' list in .agents/local/red_proof.json",
+      "linked_at": "2026-10-14 23:01:38",
+      "linked_ts": 1791993698.240289,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_red_proof.sh"
+      ]
+    },
+    "BUG-20261014-automerge-untracked-symlink": {
+      "id": "BUG-20261014-automerge-untracked-symlink",
+      "kind": "bug",
+      "title": "worktree automerge committed an untracked symlink and the fast-forward replaced main's ignored node_modules/ with it",
+      "cause": null,
+      "component": "devkit-worktree",
+      "created_at": "2026-10-15 00:15:48",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane A1 worktree.py: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 00:15:48",
+      "linked_ts": 1791998148.278162,
+      "runs_in_suite": [
+        ""
+      ]
+    },
+    "BUG-20261014-worktree-reflog-gone-folder": {
+      "id": "BUG-20261014-worktree-reflog-gone-folder",
+      "kind": "bug",
+      "title": "worktree inventory: a commit only the HEAD reflog names passes once the worktree folder is deleted (reflog read only while the folder exists)",
+      "cause": null,
+      "component": "devkit-worktree",
+      "created_at": "2026-10-15 00:15:48",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane A1 worktree.py: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 00:15:48",
+      "linked_ts": 1791998148.49981,
+      "runs_in_suite": [
+        ""
+      ]
+    },
+    "BUG-20261014-worktree-secret-carry": {
+      "id": "BUG-20261014-worktree-secret-carry",
+      "kind": "bug",
+      "title": "git-ignored secret files made only in a worktree (keystore, key.properties) were deleted with it by finish/automerge/gc",
+      "cause": null,
+      "component": "devkit-worktree",
+      "created_at": "2026-10-15 00:15:48",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane A1 worktree.py: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 00:15:48",
+      "linked_ts": 1791998148.7247932,
+      "runs_in_suite": [
+        ""
+      ]
+    },
+    "BUG-20261014-fifo-harness-canary-false-green": {
+      "id": "BUG-20261014-fifo-harness-canary-false-green",
+      "kind": "bug",
+      "title": "test_hook_gitignore_fifo canaries printed a pass when their child never started within the limit (nothing was tested)",
+      "cause": null,
+      "component": "devkit-tests",
+      "created_at": "2026-10-15 00:15:48",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane shell_writes/FIFO harness: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 00:15:48",
+      "linked_ts": 1791998148.9519591,
+      "runs_in_suite": [
+        ""
+      ]
+    },
+    "BUG-20261014-fifo-harness-cleanup-kill-gone": {
+      "id": "BUG-20261014-fifo-harness-cleanup-kill-gone",
+      "kind": "bug",
+      "title": "test_hook_gitignore_fifo crashed with ProcessLookupError when the leaked canary it cleans up had already ended, skipping every later hook check",
+      "cause": null,
+      "component": "devkit-tests",
+      "created_at": "2026-10-15 00:15:49",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane shell_writes/FIFO harness: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 00:15:49",
+      "linked_ts": 1791998149.177778,
+      "runs_in_suite": [
+        ""
+      ]
+    },
+    "BUG-20261014-fifo-harness-grandchild": {
+      "id": "BUG-20261014-fifo-harness-grandchild",
+      "kind": "bug",
+      "title": "test_hook_gitignore_fifo killed only the bash child on its timeout, a grandchild blocked on a FIFO outlived the case for ever",
+      "cause": null,
+      "component": "devkit-tests",
+      "created_at": "2026-10-15 00:15:49",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane shell_writes/FIFO harness: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 00:15:49",
+      "linked_ts": 1791998149.401827,
+      "runs_in_suite": [
+        ""
+      ]
+    },
+    "BUG-20261014-fifo-harness-killpg-eperm": {
+      "id": "BUG-20261014-fifo-harness-killpg-eperm",
+      "kind": "bug",
+      "title": "test_hook_gitignore_fifo crashed with PermissionError when killpg met a process group holding only zombies on macOS",
+      "cause": null,
+      "component": "devkit-tests",
+      "created_at": "2026-10-15 00:15:49",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane shell_writes/FIFO harness: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 00:15:49",
+      "linked_ts": 1791998149.637643,
+      "runs_in_suite": [
+        ""
+      ]
+    },
+    "BUG-20261014-python-isolation-heartbeat-age": {
+      "id": "BUG-20261014-python-isolation-heartbeat-age",
+      "kind": "bug",
+      "title": "test_hook_python_isolation compared the session_lock heartbeat age in whole seconds, so a run stalled past 1 s under load reported a false BYPASS of session_lock.sh",
+      "cause": null,
+      "component": "devkit-tests",
+      "created_at": "2026-10-15 00:15:49",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane shell_writes/FIFO harness: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 00:15:49",
+      "linked_ts": 1791998149.8791249,
+      "runs_in_suite": [
+        ""
+      ]
+    },
+    "BUG-20261014-shell-writes-env-split-escapes": {
+      "id": "BUG-20261014-shell-writes-env-split-escapes",
+      "kind": "bug",
+      "title": "shell_writes read env -S lines with shlex only, so the env escapes \\_ (word separator) and \\c (end of line) were misread: a write slipped through or a false block",
+      "cause": null,
+      "component": "devkit-hooks",
+      "created_at": "2026-10-15 00:15:50",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane shell_writes/FIFO harness: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 00:15:50",
+      "linked_ts": 1791998150.1037812,
+      "runs_in_suite": [
+        ""
+      ]
+    },
+    "BUG-20261014-shell-writes-env-split-sq-escape": {
+      "id": "BUG-20261014-shell-writes-env-split-sq-escape",
+      "kind": "bug",
+      "title": "shell_writes dropped an env -S line that shlex cannot parse (an escaped quote inside single quotes, which env honours), so its write was never judged",
+      "cause": null,
+      "component": "devkit-hooks",
+      "created_at": "2026-10-15 00:15:50",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane shell_writes/FIFO harness: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 00:15:50",
+      "linked_ts": 1791998150.330389,
+      "runs_in_suite": [
+        ""
+      ]
+    },
+    "BUG-20261014-shell-writes-env-split-string": {
+      "id": "BUG-20261014-shell-writes-env-split-string",
+      "kind": "bug",
+      "title": "shell_writes skipped the command line of env -S / --split-string as an option value, so its writes were never judged",
+      "cause": null,
+      "component": "devkit-hooks",
+      "created_at": "2026-10-15 00:15:50",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane shell_writes/FIFO harness: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 00:15:50",
+      "linked_ts": 1791998150.5665128,
+      "runs_in_suite": [
+        ""
+      ]
+    },
+    "BUG-20261014-shell-writes-git-c-tilde": {
+      "id": "BUG-20261014-shell-writes-git-c-tilde",
+      "kind": "bug",
+      "title": "shell_writes did not expand ~ in the -C directory of a repository write, so worktree_guard missed a commit into main and blocked one into the worktree",
+      "cause": null,
+      "component": "devkit-hooks",
+      "created_at": "2026-10-15 00:15:50",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane shell_writes/FIFO harness: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 00:15:50",
+      "linked_ts": 1791998150.803509,
+      "runs_in_suite": [
+        ""
+      ]
+    },
+    "BUG-20261014-testsourceset-lock-fifo-hang": {
+      "id": "BUG-20261014-testsourceset-lock-fifo-hang",
+      "kind": "bug",
+      "title": "testsourceset_gate hung on a FIFO planted at test_run.lock after its FIFO sweep (exec 9>> waits for a reader)",
+      "cause": null,
+      "component": "devkit-hooks",
+      "created_at": "2026-10-15 00:15:51",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane shell_writes/FIFO harness: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 00:15:51",
+      "linked_ts": 1791998151.039904,
+      "runs_in_suite": [
+        ""
+      ]
+    },
+    "BUG-20261014-agpm-global-config-guessable-tmp": {
+      "id": "BUG-20261014-agpm-global-config-guessable-tmp",
+      "kind": "bug",
+      "title": "ANTIGRAVITY_PM_GLOBAL_CONFIG test pin pointed at a guessable path in a shared TMPDIR (kit tests/lib/clean_git_env.sh, MCP tests/helpers.js): a file planted there with giaoDefault/testCommand steered every test",
+      "cause": null,
+      "component": "pm-mcp",
+      "created_at": "2026-10-15 00:15:51",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 00:15:51",
+      "linked_ts": 1791998151.277727,
+      "runs_in_suite": [
+        ""
+      ]
+    },
+    "BUG-20261014-pm-agy-init-compact-json-only": {
+      "id": "BUG-20261014-pm-agy-init-compact-json-only",
+      "kind": "bug",
+      "title": "agy init event was found by a compact-JSON substring only: a stream-json line with spaces after the colon made every agy dispatch fail or wait the 60 s init timeout",
+      "cause": null,
+      "component": "pm-mcp",
+      "created_at": "2026-10-15 00:15:51",
+      "task": null,
+      "tests": [],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)"
+    },
+    "BUG-20261014-pm-agy-lock-takeover-race": {
+      "id": "BUG-20261014-pm-agy-lock-takeover-race",
+      "kind": "bug",
+      "title": "agy registry lock: stale-lock takeover was delete-then-create, so two PMs that saw the same stale lock could both enter the critical section (the second deleted the first one's NEW lock) and overwrite agy-conversations.json",
+      "cause": null,
+      "component": "pm-mcp",
+      "created_at": "2026-10-15 00:15:51",
+      "task": null,
+      "tests": [],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)"
+    },
+    "BUG-20261014-pm-agy-prune-budget-breaks-loop": {
+      "id": "BUG-20261014-pm-agy-prune-budget-breaks-loop",
+      "kind": "bug",
+      "title": "agy registry prune: once 3 entries with a pid had been checked with ps the loop stopped, so older entries without a pid (no ps needed) were kept and the registry grew past 500",
+      "cause": null,
+      "component": "pm-mcp",
+      "created_at": "2026-10-15 00:15:51",
+      "task": null,
+      "tests": [],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)"
+    },
+    "BUG-20261014-pm-doctor-agy-only-default-model": {
+      "id": "BUG-20261014-pm-doctor-agy-only-default-model",
+      "kind": "bug",
+      "title": "pm_doctor printed the agy diagnostics (binary, broken registry, permission policy) only when defaultModel was an agy model, so a task that runs agy through its own model or pm_dispatch model got no explanation for a failed dispatch",
+      "cause": null,
+      "component": "pm-mcp",
+      "created_at": "2026-10-15 00:15:52",
+      "task": null,
+      "tests": [],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)"
+    },
+    "BUG-20261014-pm-ping-kills-reused-pid": {
+      "id": "BUG-20261014-pm-ping-kills-reused-pid",
+      "kind": "bug",
+      "title": "pm_doctor ping stopped its agy turns with kill(pid,0)+kill(-pid): up to 90 s later the pid may have exited and been reused, so it could SIGKILL a stranger's process group",
+      "cause": null,
+      "component": "pm-mcp",
+      "created_at": "2026-10-15 00:15:52",
+      "task": null,
+      "tests": [],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)"
+    },
+    "BUG-20261014-pm-status-agy-by-task-model": {
+      "id": "BUG-20261014-pm-status-agy-by-task-model",
+      "kind": "bug",
+      "title": "pm_status trusted task.model to tell an agy conversation from an IDE one: with ps broken a tier task whose conversation went through agy (pm_dispatch model=...) was nudged anyway and lost its whole report; the PLAN-phase nudge branch had no unknown-state check at all",
+      "cause": null,
+      "component": "pm-mcp",
+      "created_at": "2026-10-15 00:15:53",
+      "task": null,
+      "tests": [],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)"
+    },
+    "BUG-20261014-pm-tests-guessable-agy-path": {
+      "id": "BUG-20261014-pm-tests-guessable-agy-path",
+      "kind": "bug",
+      "title": "MCP tests that simulate a missing agy pointed ANTIGRAVITY_PM_AGY at a guessable path in the shared TMPDIR: an executable planted there would be run, in two tests with --dangerously-skip-permissions",
+      "cause": null,
+      "component": "pm-mcp",
+      "created_at": "2026-10-15 00:15:53",
+      "task": null,
+      "tests": [],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)"
     }
   },
   "meta": {
     "matrix_pending": false
   },
   "stats": {
-    "reported_total": 41,
-    "reported_dropped": 30
+    "reported_total": 45,
+    "reported_dropped": 33
   }
 }
