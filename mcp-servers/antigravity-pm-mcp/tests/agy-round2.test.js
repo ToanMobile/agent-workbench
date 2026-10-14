@@ -24,10 +24,12 @@ const i = a.indexOf('--conversation');
 const id = i >= 0 ? a[i + 1] : (process.env.FAKE_AGY_ID || 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
 fs.appendFileSync(process.env.FAKE_AGY_LOG, JSON.stringify({ args: a, cwd: process.cwd(), pid: process.pid }) + '\\n');
 if (process.env.FAKE_AGY_CORRUPT_REGISTRY) fs.writeFileSync(process.env.FAKE_AGY_CORRUPT_REGISTRY, '{"x":');   // so dang ky hong GIUA luc agy chay
-setTimeout(() => console.log(JSON.stringify({ event: 'init', conversation_id: id, init: { cwd: process.env.FAKE_AGY_INIT_CWD || process.cwd() } })), Number(process.env.FAKE_AGY_INIT_DELAY_MS || 0));
-setTimeout(() => console.log(JSON.stringify({ event: 'result', result: { conversation_id: id, status: 'SUCCESS' } })), Number((i >= 0 && process.env.FAKE_AGY_HOLD_RESUME_MS) || process.env.FAKE_AGY_HOLD_MS || 0) + Number(process.env.FAKE_AGY_INIT_DELAY_MS || 0));
+// FAKE_AGY_SPACED_JSON: dong stream-json co khoang trang sau ":" va "," ({"event": "init", ...}) thay vi JSON gon
+const out = (o) => console.log(process.env.FAKE_AGY_SPACED_JSON ? JSON.stringify(o).replace(/":/g, '": ').replace(/,"/g, ', "') : JSON.stringify(o));
+setTimeout(() => out({ event: 'init', conversation_id: id, init: { cwd: process.env.FAKE_AGY_INIT_CWD || process.cwd() } }), Number(process.env.FAKE_AGY_INIT_DELAY_MS || 0));
+setTimeout(() => out({ event: 'result', result: { conversation_id: id, status: 'SUCCESS' } }), Number((i >= 0 && process.env.FAKE_AGY_HOLD_RESUME_MS) || process.env.FAKE_AGY_HOLD_MS || 0) + Number(process.env.FAKE_AGY_INIT_DELAY_MS || 0));
 `;
-const KEYS = ['FAKE_AGY_HOLD_RESUME_MS', 'ANTIGRAVITY_PM_PING_WAIT_MS', 'FAKE_AGY_INIT_CWD', 'FAKE_AGY_CORRUPT_REGISTRY', 'ANTIGRAVITY_PM_PS', 'ANTIGRAVITY_LS_ADDRESS', 'ANTIGRAVITY_CSRF_TOKEN', 'ANTIGRAVITY_PM_AGY', 'FAKE_AGY_LOG', 'FAKE_AGY_ID', 'FAKE_AGY_HOLD_MS', 'FAKE_AGY_INIT_DELAY_MS', 'ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS', 'ANTIGRAVITY_PM_PROJECTS_DIR', 'HOME'];
+const KEYS = ['FAKE_AGY_SPACED_JSON', 'FAKE_AGY_HOLD_RESUME_MS', 'ANTIGRAVITY_PM_PING_WAIT_MS', 'FAKE_AGY_INIT_CWD', 'FAKE_AGY_CORRUPT_REGISTRY', 'ANTIGRAVITY_PM_PS', 'ANTIGRAVITY_LS_ADDRESS', 'ANTIGRAVITY_CSRF_TOKEN', 'ANTIGRAVITY_PM_AGY', 'FAKE_AGY_LOG', 'FAKE_AGY_ID', 'FAKE_AGY_HOLD_MS', 'FAKE_AGY_INIT_DELAY_MS', 'ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS', 'ANTIGRAVITY_PM_PROJECTS_DIR', 'HOME'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SRC = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../src/agentapi.js');
 
@@ -694,4 +696,11 @@ test('lay lai khoa cu: PM khac da lay lai TRUOC (khoa moi, tuoi) thi KHONG xoa k
   assert.match(res, /khoa so dang ky agy .* bi giu qua 3 s/, `PM nay vao doan gang trong khi PM A dang giu khoa: ${res}`);
   assert.equal(fake.calls().filter((c) => c.args.includes('--conversation')).length, 0, 'sinh agy trong khi PM A dang giu khoa');
   assert.deepEqual(fs.readdirSync(homeStateDir()).filter((n) => n.endsWith('.stale')), [], 'con sot file khoa doi ten');
+});
+
+test('su kien init cua agy in JSON co khoang trang ("event": "init"): van nhan ra, khong bao "khong in su kien init" (khong treo 60 s)', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'd5d5d5d5-2222-3333-4444-555555555555', FAKE_AGY_SPACED_JSON: '1' });
+  const r = await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
+  assert.equal(r.conversationId, 'd5d5d5d5-2222-3333-4444-555555555555');
+  assert.match(fs.readFileSync(r.parsed.out, 'utf8'), /"event": "init"/, 'agy gia khong in JSON co khoang trang: test khong kiem dieu no noi');
 });

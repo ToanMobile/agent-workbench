@@ -362,9 +362,11 @@ function agyStart(args, cwd, onSpawn) {
     const initEvent = () => {
       let text = '';
       try { text = fs.readFileSync(outFile, 'utf8'); } catch { return null; }
-      for (const line of text.split('\n')) {
-        if (!line.startsWith('{') || !line.includes('"event":"init"')) continue;
-        try { const j = JSON.parse(line); if (j.conversation_id) return j; } catch { /* dong dang ghi do */ }
+      for (const raw of text.split('\n')) {
+        // chuoi con chi de loc nhanh; quyet theo object da parse (JSON co khoang trang "event": "init" cung la init)
+        const line = raw.trim();
+        if (!line.startsWith('{') || !line.includes('init')) continue;
+        try { const j = JSON.parse(line); if (j?.event === 'init' && j.conversation_id) return j; } catch { /* dong dang ghi do */ }
       }
       return null;
     };
