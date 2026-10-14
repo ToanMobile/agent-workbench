@@ -441,7 +441,8 @@ def copy_unity_library(main, wt):
     that git ignores, so a new worktree had none and Unity re-imported everything (tens of minutes) - is cloned with `cp -Rc` (APFS
     clonefile: no data copied, ~0 disk until a file changes). clonefile keeps the BSD user flags, and a uchg file makes the worktree
     undeletable (INSTINCT-038), so the copy gets `chflags -R nouchg,nouappnd` (no symlink followed: -P is chflags -R's default); the
-    Editor's lock files are dropped from it. No clonefile here (not macOS, not APFS): nothing copied - a full copy would fill the disk.
+    Editor's lock files are dropped from it. No clonefile here (not macOS, not APFS, the worktree on another volume than the main checkout - `cp -c`
+    then silently copies every byte): nothing copied - a full copy would fill the disk.
     A Library git tracks, or one the worktree already has, is left alone. ponytail: an Editor writing the main Library while it is
     cloned can leave the copy mid-update (Unity then re-imports what it doubts); clone with the Editor closed if that is ever seen.
     Returns the cloned Library paths, relative."""
@@ -457,6 +458,10 @@ def copy_unity_library(main, wt):
             continue
         if git(main, "check-ignore", "-q", lib + "/", check=False).returncode != 0:
             continue   # tracked (or not ignored): git's business
+        if os.stat(src).st_dev != os.stat(wt).st_dev:   # another volume: `cp -c` does not fail there, it copies every byte (measured 14/10: 300 MB -> rc 0, 302 MB used)
+            print("• " + tr(f"không clone {lib}: worktree ở volume khác (cp -c sẽ chép từng byte, hàng GB): Unity sẽ import lại trong worktree",
+                            f"{lib} not cloned: the worktree is on another volume (cp -c would copy every byte, GBs): Unity re-imports it in the worktree"))
+            continue
         os.makedirs(os.path.dirname(dst) or wt, exist_ok=True)
         r = _run(["cp", "-Rc", src, dst], bounded=False)
         if r.returncode != 0:

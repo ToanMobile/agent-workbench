@@ -61,5 +61,32 @@ echo tracked > "$TMP/c/Library/T.asset" && echo untracked > "$TMP/c/Library/U.as
 (cd "$TMP/c" && python3 -I "$WT" add "$TMP/c-w" --no-init > "$TMP/out" 2>&1); rc=$?
 [ "$rc" = 0 ] && [ -f "$TMP/c-w/Library/T.asset" ] && [ ! -e "$TMP/c-w/Library/U.asset" ] && ok "a Library git tracks: left to git (nothing cloned over it)" || fail "tracked Library (rc $rc)"
 
+# 4 a worktree on ANOTHER volume (OCR 2, 14/10): `cp -Rc` does not fail there, it copies every byte (measured on this machine: 300 MB across two APFS
+#   volumes -> rc 0, 302 MB used; same volume 4 MB), i.e. GBs of Library inside a hook that has 300 s. Not cloned across volumes; same volume as before.
+#   The two volumes are simulated (the test machine may have one): os.stat reports another st_dev for everything under the worktree.
+unity d ""; mkdir -p "$TMP/d-w" "$TMP/d-x"
+python3 -I -c 'import contextlib, io, os, sys
+sys.path.insert(0, sys.argv[1] + "/scripts/git"); import worktree
+main, wt, same = sys.argv[2:5]
+real = os.stat
+def other_volume(p, *a, **k):
+    r = real(p, *a, **k)
+    if os.fspath(p).startswith(wt):
+        t = tuple(r)[:10]
+        return os.stat_result((t[0], t[1], t[2] + 1) + t[3:])
+    return r
+buf = io.StringIO(); os.stat = other_volume
+try:
+    with contextlib.redirect_stdout(buf):
+        got = worktree.copy_unity_library(main, wt)
+finally:
+    os.stat = real
+assert got == [] and not os.path.exists(os.path.join(wt, "Library")), f"cloned across volumes: {got}"
+assert "another volume" in buf.getvalue(), buf.getvalue()
+assert worktree.copy_unity_library(main, same) == ["Library"] and os.path.isfile(os.path.join(same, "Library", "ArtifactDB")), "the same volume no longer clones"' \
+  "$DEVKIT_DIR" "$TMP/d" "$TMP/d-w" "$TMP/d-x" > "$TMP/out" 2>&1 \
+  && ok "a worktree on another volume: the Library is not cloned (cp -c would copy every byte), the user is told; on the same volume it still is" \
+  || fail "cross-volume Library: $(tail -3 "$TMP/out" | tr '\n' ' ')"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_worktree_unity_library: PASS"; exit 0; } || { echo "test_worktree_unity_library: FAIL ($FAILS)"; exit 1; }
