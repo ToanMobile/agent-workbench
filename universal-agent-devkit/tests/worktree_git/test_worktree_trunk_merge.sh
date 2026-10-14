@@ -17,7 +17,7 @@ repo() {   # repo <name>: lib.sh greet(), app.sh calls it, check.sh = the matrix
   local p="$TMP/$1"; mkdir -p "$p/.agents" && G "$p" init -q -b main . && G "$p" config user.email t@t && G "$p" config user.name t   # the merges worktree.py makes need it
   printf 'greet() { echo ok; }\n' > "$p/lib.sh"
   printf '. ./lib.sh\ngreet\n' > "$p/app.sh"
-  printf '[ -n "${GATE_COUNT:-}" ] && echo run >> "$GATE_COUNT"\n[ -n "${DURING_GATE:-}" ] && bash "$DURING_GATE"\nfor f in app*.sh; do [ "$(bash "$f" 2>/dev/null)" = ok ] || { echo "FAIL $f"; exit 1; }; done\necho "all apps ok"\n' > "$p/check.sh"
+  printf '[ -n "${GATE_COUNT:-}" ] && echo run >> "$GATE_COUNT"\n[ -n "${FAIL_ONCE:-}" ] && [ ! -f "$FAIL_ONCE" ] && { : > "$FAIL_ONCE"; echo "✖ app2.sh (flaky first run)"; exit 1; }\n[ -n "${DURING_GATE:-}" ] && bash "$DURING_GATE"\nfor f in app*.sh; do [ "$(bash "$f" 2>/dev/null)" = ok ] || { echo "FAIL $f"; exit 1; }; done\necho "all apps ok"\n' > "$p/check.sh"
   printf '{"project":"t","rules":[{"component":"App","watch_files":["*.sh"],"mandatory_regression_tests":[{"id":"REG-APP-01","name":"every app prints ok","command":"bash check.sh"}]}]}\n' \
     > "$p/.agents/regression_matrix.active.json"
   printf '.agents/CHECKLIST.md\n.agents/regression_status.json\n.agents/evidence/\n.agents/regression_journal/\n.claude/\n' > "$p/.gitignore"
@@ -125,7 +125,7 @@ repo k; wtadd k w; newcaller k w; rename_on_main k; kb="$(G "$TMP/k" rev-parse H
 printf 'exec -a "%s/slow-sleep" sleep 30\n' "$TMP" > "$TMP/slow.sh"   # the sleeping process itself carries a unique name (a wrapper's command line may hold any fixed string)
 fin k w DURING_GATE="$TMP/slow.sh" WORKTREE_MERGE_GATE_TIMEOUT_S=4; rc=$?
 for _ in 1 2 3 4 5; do pgrep -f "$TMP/slow-sleep" >/dev/null 2>&1 || break; sleep 1; done   # the group may take a moment to go
-command -v pgrep >/dev/null || fail "pgrep missing: the orphan check below cannot run"
+command -v pgrep >/dev/null || echo "• pgrep missing: the orphan check below is skipped"
 [ "$rc" = 1 ] && [ "$(G "$TMP/k" rev-parse HEAD)" = "$kb" ] && grep -qE "không chạy xong|did not finish" "$TMP/out" && { ! command -v pgrep >/dev/null || ! pgrep -f "$TMP/slow-sleep" >/dev/null; } \
   && [ -z "$(G "$TMP/k-w" status --porcelain -- lib.sh app.sh app2.sh check.sh)" ] \
   && ok "a gate past WORKTREE_MERGE_GATE_TIMEOUT_S: refused, its suite stopped, no file left reverted" \
@@ -176,6 +176,29 @@ ub="$(G "$TMP/u" rev-parse HEAD)"; printf 'sleep 6\n' > "$TMP/slow2.sh"   # wide
 fin u w GATE_TOTAL_BUDGET_S=2 DURING_GATE="$TMP/slow2.sh"; rc=$?
 [ "$rc" = 1 ] && [ "$(G "$TMP/u" rev-parse HEAD)" = "$ub" ] && grep -q "GATE_TOTAL_BUDGET_S" "$TMP/out" && ok "a gate out of its time budget: refused, main unmoved" \
   || fail "budget-cut gate let the merge in (rc $rc): $(tail -2 "$TMP/out")"
+
+# 15 a flaky FAIL (failed, then passed on the gate's own retry) refuses this run but is never kept: the next run gates again and merges
+repo v; wtadd v w; newcaller v w; echo note > "$TMP/v/notes.txt" && G "$TMP/v" add notes.txt && G "$TMP/v" commit -qm "unrelated on main"
+fin v w FAIL_ONCE="$TMP/v.failed-once"; rc=$?
+[ "$rc" = 1 ] && grep -q "REG-APP-01" "$TMP/out" || fail "15 setup: the flaky run should be refused (rc $rc): $(tail -2 "$TMP/out")"
+: > "$TMP/v.count"
+fin v w GATE_COUNT="$TMP/v.count" FAIL_ONCE="$TMP/v.failed-once"; rc=$?
+[ "$rc" = 0 ] && [ -s "$TMP/v.count" ] && [ -f "$TMP/v/app2.sh" ] && ok "a flaky FAIL is not kept: the next run gates again and merges" \
+  || fail "a flaky FAIL was replayed (rc $rc, runs $(wc -l < "$TMP/v.count")): $(tail -2 "$TMP/out")"
+
+# 16 a gate whose last line is JSON but no usable result (`null`, `3`, a list, a test entry that is no object, tests that are no list: it
+#    died early, or something else printed last) is NO result: refused, in automerge's one JSON line, never a traceback (OCR 14/10:
+#    res.get / x.get on a non-object raised AttributeError, so the Stop hook got no JSON line). The kit is this one with a fake gate.
+FK="$TMP/kit"; mkdir -p "$FK/bin" "$FK/profiles" && ln -s "$DEVKIT_DIR/scripts" "$FK/scripts"
+printf 'import os\nif __name__ == "__main__":\n    print("some output")\n    print(os.environ.get("FAKE_GATE_LAST", "null"))\n' > "$FK/bin/post-fix-gate.py"
+repo x; wtadd x w; newcaller x w; xb="$(G "$TMP/x" rev-parse HEAD)"
+for last in null 3 '[]' '{"regression_tests": [null]}' '{"regression_tests": "FAIL"}'; do
+  (cd "$TMP/x" && FAKE_GATE_LAST="$last" python3 "$FK/scripts/git/worktree.py" automerge "$TMP/x-w" > "$TMP/out" 2> "$TMP/err"); rc=$?
+  python3 -c 'import json,sys; d = json.loads(sys.argv[1]); sys.exit(0 if isinstance(d, dict) and d.get("status") == "blocked" and any(s in d.get("message", "") for s in ("không trả kết quả", "gave no result")) else 1)' \
+      "$(tail -1 "$TMP/out")" 2>/dev/null && [ "$rc" = 1 ] && [ "$(G "$TMP/x" rev-parse HEAD)" = "$xb" ] && [ -d "$TMP/x-w" ] && ! grep -q Traceback "$TMP/err" \
+    && ok "a gate whose last line is $last: no result, refused in one JSON line, main unmoved" \
+    || fail "gate last line $last: rc $rc, out '$(tail -1 "$TMP/out" | cut -c1-160)', err '$(tail -1 "$TMP/err" | cut -c1-160)'"
+done
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_worktree_trunk_merge: PASS"; exit 0; } || { echo "test_worktree_trunk_merge: FAIL ($FAILS)"; exit 1; }

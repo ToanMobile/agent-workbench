@@ -44,14 +44,15 @@ python3 -I -c 'import sys,time; sys.path.insert(0, sys.argv[1]); import worktree
   "$DEVKIT_DIR/scripts/git" "$TMP/live.lock" "$TMP/held" &
 HOLDER=$!
 for _ in $(seq 1 100); do [ -f "$TMP/held" ] && break; sleep 0.05; done
+[ -f "$TMP/held" ] || fail "2 setup: the holder never took the lock (the checks below would prove nothing)"
 probe() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import worktree as w; print("none" if w._lock_file(sys.argv[2], wait=float(sys.argv[3])) is None else "got")' "$DEVKIT_DIR/scripts/git" "$TMP/live.lock" "$1"; }
 [ "$(probe 0)" = none ] && ok "a live holder: another taker gets None (wait 0)" || fail "the lock was taken while its holder lives"
 kill -9 "$HOLDER"; wait "$HOLDER" 2>/dev/null; HOLDER=""
 [ "$(probe 0)" = got ] && ok "  … the holder killed with no clean-up: the lock is free at once" || fail "a killed holder still holds the lock"
 
 # 3 no fcntl (Windows Python): the caller runs unlocked and says so, never a traceback (OCR 14/10; cmd_gc already does this)
-r="$(python3 -I -c 'import sys; sys.modules["fcntl"] = None; sys.path.insert(0, sys.argv[1]); import worktree as w; h = w._lock_file(sys.argv[2]); print("none" if h is None else "handle"); h.close()' "$DEVKIT_DIR/scripts/git" "$TMP/nofcntl.lock" 2>"$TMP/nofcntl.err")"
-[ "$r" = handle ] && grep -q "fcntl" "$TMP/nofcntl.err" && ok "no fcntl module: an unlocked handle, and it says why" || fail "no fcntl: '$r' $(tail -1 "$TMP/nofcntl.err")"
+r="$(python3 -I -c 'import sys; sys.modules["fcntl"] = None; sys.path.insert(0, sys.argv[1]); import worktree as w; h = w._lock_file(sys.argv[2]); print("none" if h is None else "handle"); h.close()' "$DEVKIT_DIR/scripts/git" "$TMP/case3.lock" 2>"$TMP/nofcntl.err")"   # a lock name without "fcntl": the grep below must match the reason
+[ "$r" = handle ] && grep -q "fcntl" "$TMP/nofcntl.err" && grep -qE "running unlocked|chạy không khoá" "$TMP/nofcntl.err" && ok "no fcntl module: an unlocked handle, and it says why" || fail "no fcntl: '$r' $(tail -1 "$TMP/nofcntl.err")"
 # … nor the POSIX-only open flags (Windows Python has no os.O_NONBLOCK / os.O_NOFOLLOW): still that handle, never an AttributeError
 r="$(python3 -I -c 'import os,sys; sys.modules["fcntl"] = None
 for f in ("O_NONBLOCK", "O_NOFOLLOW", "O_CLOEXEC"):

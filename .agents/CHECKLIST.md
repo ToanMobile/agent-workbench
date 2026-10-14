@@ -1,8 +1,8 @@
 # 🧪 Regression Checklist
 
-**An toàn 64% (56/88)** · ❌ 0 · 🔁 0 · 🚫 0 · 🟡 0 cần chạy lại · ⚠️ 2 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 2 chưa sửa · ⏳ 28 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 0 · ma trận chờ duyệt: không
+**An toàn 63% (56/89)** · ❌ 0 · 🔁 0 · 🚫 0 · 🟡 0 cần chạy lại · ⚠️ 2 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 2 chưa sửa · ⏳ 29 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 0 · ma trận chờ duyệt: không
 
-> Sinh tự động lúc 2026-10-14 17:25:35 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
+> Sinh tự động lúc 2026-10-14 17:30:11 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
 
 **Bug không có test hồi quy nào chặn tái phát: 2** (0 chưa có test · 2 có test nhưng gate không chạy)
 
@@ -99,7 +99,7 @@
 
 </details>
 
-## 📒 Sổ tay bug (76)
+## 📒 Sổ tay bug (77)
 
 | Trạng thái | Mã | Mô tả | Component | Test bảo vệ | Bằng chứng |
 |---|---|---|---|---|---|
@@ -172,6 +172,7 @@
 | ✅ PASS | BUG-20261013-relink-check-never-links-a-skill-the-dev | relink_check never links a skill the DevKit gained after the install | relink | REG-DK-ALL-01, universal-agent-devkit/tests/worktree_git/test_relink_skills.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-20261013-relink-check-never-links-a-skill-the-dev/20261013-072848.log) |
 | ⏳ chưa chứng minh ĐỎ | BUG-20261013-test-approval-from-foreign-records | post-fix-gate approved edited tests from records that are not the agent's approval (queue-operation, Antigravity USER_INPUT, other projects' logs, prose, substrings) | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_approval_content_hash.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261014-172534.log) |
 | ⏳ chưa chứng minh ĐỎ | BUG-20261013-worktree-gc-deletes-unique-work | worktree gc could delete unique work (unreachable blobs, ignored non-build files, a person's worktree, a live session's worktree) | - | REG-DK-ALL-01, universal-agent-devkit/tests/worktree_git/test_worktree_gc.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261014-172534.log) |
+| ⏳ chưa chạy | BUG-20261014-automerge-gate-result-not-object | automerge printed a traceback instead of its JSON line when the gate's last line was JSON but no object | devkit-worktree | REG-DK-ALL-01, universal-agent-devkit/tests/worktree_git/test_worktree_trunk_merge.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261014-172534.log) |
 | ⏳ chưa chứng minh ĐỎ | BUG-20261014-gate-recreates-removed-project | gate re-created a worktree folder removed while its suites ran (regression_status.json, INBOX, evidence, journal) | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_project_removed_midrun.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261014-172534.log) |
 | ⏳ chưa chứng minh ĐỎ | BUG-20261014-lock-file-stale-takeover-race | worktree.py _lock_file (automerge, MAIN_LOCK, worktree add) let two waiters take over a dead holder's O_EXCL lock file together, and gave up at once when the file vanished mid-read | - | REG-DK-ALL-01, universal-agent-devkit/tests/worktree_git/test_worktree_lock_helper.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261014-172534.log) |
 | ⏳ chưa chứng minh ĐỎ | BUG-20261014-ocr-endpoint-rejected-holds-stop | ocr-review failed hard when the OCR LLM endpoint rejected every request (API key over its usage limit), so review_gate held every session's Stop | - | REG-DK-ALL-01, universal-agent-devkit/tests/installer/test_ocr_review_helper.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261014-172534.log) |

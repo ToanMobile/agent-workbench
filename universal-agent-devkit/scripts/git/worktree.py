@@ -1575,6 +1575,11 @@ def _merge_gate(wt, base, matrix):
     try:
         res = json.loads((out.strip().splitlines() or [""])[-1])
     except ValueError:
+        res = None
+    tests = res.get("regression_tests", []) if isinstance(res, dict) else None
+    if not isinstance(tests, list) or not all(isinstance(x, dict) for x in tests):
+        # no JSON object on the last line, or its tests no list of objects (`null`, `3`, `[null]` parse too: the gate died early, or something
+        # else printed last) = no result, refused — never an AttributeError that leaves the Stop hook without its JSON line (OCR 14/10)
         return tr(f"gate không trả kết quả (exit {p.returncode}): ", f"the gate gave no result (exit {p.returncode}): ") + (err or out).strip()[-300:], False
     if res.get("busy"):
         return tr("một lần chạy test khác đang giữ khoá của worktree: chưa kiểm được, chạy lại sau",
@@ -1582,7 +1587,7 @@ def _merge_gate(wt, base, matrix):
     if res.get("budget_exhausted"):   # mandatory suites cut by GATE_TOTAL_BUDGET_S never ran: no pass (OCR 14/10)
         return tr("gate hết ngân sách thời gian (GATE_TOTAL_BUDGET_S) trước khi chạy hết test bắt buộc: chạy lại",
                   "the gate ran out of its time budget (GATE_TOTAL_BUDGET_S) before every mandatory test ran: run it again"), False
-    bad = [x for x in res.get("regression_tests") or [] if x.get("status") in ("FAIL", "TIMEOUT")]
+    bad = [x for x in tests if x.get("status") in ("FAIL", "TIMEOUT")]
     if bad:
         return (tr("test hồi quy ĐỎ trên kết quả gộp: ", "regression tests RED on the merged result: ")
                 + ", ".join(f"{x.get('id')} {x.get('status')}" for x in bad) + f" ({res.get('report', '')})",

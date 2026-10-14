@@ -3481,6 +3481,28 @@
         "log": ".agents/evidence/redproof-BUG-20261014-session-lock-let-cp-mv-rm-tee-sed-i-touc/20261014-134259.log",
         "patch": ".agents/local/red-patches/BUG-20261014-session-lock-let-cp-mv-rm-tee-sed-i-touc.patch"
       }
+    },
+    "BUG-20261014-automerge-gate-result-not-object": {
+      "id": "BUG-20261014-automerge-gate-result-not-object",
+      "kind": "bug",
+      "title": "automerge printed a traceback instead of its JSON line when the gate's last line was JSON but no object",
+      "cause": null,
+      "component": "devkit-worktree",
+      "created_at": "2026-10-14 17:30:10",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "OCR 14/10 1111bcd..7528cc9; test_worktree_trunk_merge case 16 RED 5/5 AttributeError before the fix",
+      "linked_at": "2026-10-14 17:30:10",
+      "linked_ts": 1791973810.996778,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/worktree_git/test_worktree_trunk_merge.sh"
+      ]
     }
   },
   "meta": {
