@@ -68,6 +68,21 @@ def _env_split(opt, words):
     return None
 
 
+def _env_line(line):
+    """`line` with env -S's own escapes that shlex does not know (measured on macOS env 14/10, GNU documents the same): an unquoted
+    `\\_` separates words and a double-quoted one is a space - a space does both under shlex; `\\c` ends the line. Other escapes keep
+    their character inside the word, as shlex reads them. An escaped backslash (`\\\\_`) is matched as a pair, so its `_` stays."""
+    parts, pos = [], 0
+    for m in re.finditer(r"\\(.)", line, re.S):
+        if m.group(1) in ("_", "c"):
+            parts.append(line[pos:m.start()])
+            if m.group(1) == "c":
+                return "".join(parts)
+            parts.append(" ")
+            pos = m.end()
+    return "".join(parts) + line[pos:]
+
+
 def _operands(base, words):
     """(operands, target directory or None) of a file command's words after the verb: options and their values dropped, an
     empty word dropped (`sed -i ''`), everything after `--` kept."""
@@ -151,7 +166,7 @@ def targets(cmd, here, depth=0):
                     split = _env_split(opt, words) if w == "env" else None
                     if split is not None:   # its words go first, in place: env options, VAR=, the command and its operands
                         try:
-                            words = shlex.split(split[0]) + split[1]
+                            words = shlex.split(_env_line(split[0])) + split[1]
                         except ValueError:   # env refuses a line with an unterminated quote: nothing runs
                             words = []
                     elif "=" in opt and (w, opt.split("=", 1)[0]) in PREFIX_CHDIR:

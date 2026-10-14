@@ -52,6 +52,9 @@ guard "$H" "$M" "env -i --split-string='rm src/a.kt'"; rc=$?
 [ "$rc" = 2 ] && ok "env -i --split-string='<rm …>' in the main checkout: blocked" || fail "env --split-string=<line> in main: rc $rc"
 guard "$H" "$W" "env -S 'rm src/a.kt'"; rc=$?
 [ "$rc" = 0 ] && ok "env -S '<rm …>' inside its own worktree: allowed" || fail "env -S in the worktree: rc $rc $(cat "$TMP/err")"
+# env -S's own escapes (OpenCodeReview 14/10, measured on macOS env): an unquoted \_ separates words, so this is `rm src/a.kt`
+guard "$H" "$M" "env -S 'rm\\_src/a.kt'"; rc=$?
+[ "$rc" = 2 ] && ok "env -S 'rm\\_src/a.kt' (\\_ separates) in the main checkout: blocked" || fail "env -S 'rm\\_…' in main: rc $rc"
 # `git -C ~/x …`: the shell expands ~ before git sees it, the scanner joined `~/x` to the cwd (OpenCodeReview 14/10, issues-bugs.md
 # A.4 (c)): a commit into the main checkout from the worktree went through, one into the worktree from the main checkout's cwd was
 # blocked. HOME = the fixture dir, so ~/main is the main checkout and ~/wt the worktree.

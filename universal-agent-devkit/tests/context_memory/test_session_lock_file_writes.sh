@@ -71,6 +71,9 @@ cases = [   # (want hits_top, label, command); every command runs with cwd = the
     (True, "env -iS 'rm -f' x.txt in it (cluster, operand after)", "env -iS 'rm -f' x.txt"),
     (True, "env --split-string=<rm> in it", "env --split-string='rm -f x.txt'"),
     (False, "env -S '<rm>' of an outside path", f"env -S 'rm {other}/x.txt'"),
+    # ... with env -S's own escapes (measured on macOS env): an unquoted \_ separates words, \c ends the line
+    (True, "env -S 'rm\\_x.txt' in it (\\_ separates)", "env -S 'rm\\_x.txt'"),
+    (False, "env -S 'rm <outside>\\c y.txt': env stops at \\c", f"env -S 'rm {other}/x\\c y.txt'"),
 ]
 fails = 0
 for want, label, cmd in cases:
