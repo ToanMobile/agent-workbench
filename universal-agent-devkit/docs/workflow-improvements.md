@@ -126,8 +126,42 @@ Thứ tự trong W1, mỗi bước có test ĐỎ trước:
 3. R5c *(14/10 xong, Đợt 39: `worktree add` chạy gc và cảnh báo dưới 10 GiB, không tạo dưới 3 GiB, tối đa 3 worktree mỗi repo, exit 4 khi từ chối; SessionStart cảnh báo đĩa thấp)*
 4. R4 *(14/10 xong, phiên d91dffdd: `ff27ebb` worktree liên kết, `dfdb7ff` main có `@{u}` — `run_impacted.sh` lấy file đã đổi bằng `git diff` từ merge-base, nên file giải conflict của merge commit được tính; `tests/verification/test_run_impacted_since.sh`)*
 5. R3 *(14/10 xong, Đợt 42: `finish`/`automerge` chạy gate trên kết quả gộp main vào worktree trước khi main đi tiếp, chỉ fast-forward khi main còn đúng commit đã gộp, tối đa 3 vòng, `--keep`; `WORKTREE_TRUNK_MODE=0` tắt)*
-6. Phase 0: đo thời gian tạo worktree (`agent-kit worktree add`), lần build đầu và dung lượng mỗi repo
-7. R1, R2, R7: bật ở workbench trước, rồi GeelyEx2, OfficeReader, cuối cùng hai repo Unity sau R6
+6. Phase 0: đo thời gian tạo worktree (`agent-kit worktree add`), lần build đầu và dung lượng mỗi repo *(14/10 đo một phần: Goods add 13,1 s / 89 MB
+   (chưa có `Library`), Neighbours 11,0 s / 144 MB, `remove` khoảng 1 s; GeelyEx2 và OfficeReader đang có phiên khác giữ nên chưa đo; workbench chưa đo vì
+   đủ 3 worktree. Lần build đầu chưa đo ở repo nào)*
+7. R1, R2, R7: bật ở workbench trước, rồi GeelyEx2, OfficeReader, cuối cùng hai repo Unity sau R6 *(CHƯA LÀM — bản v5 ở bảng trên hỏng, phải làm theo
+   v6 dưới đây)*
+
+**Trạng thái cuối phiên d352c03b (14/10 ~11:00) — phần còn lại, xử lý sau:**
+- **Đã commit ở main local, CHƯA push** (auto mode từ chối `git push origin main` hai lần; người dùng quyết, hoặc phiên d91dffdd push theo duyệt của người
+  dùng cho phiên đó): `7698e28` R5c + OCR hết hạn mức chuyển sang delegation, `1111bcd`, `6cc6c46` mọi khoá của `worktree.py` là `flock`, `d8faaa3` R3,
+  `53c1369`. Gate `--full` exit 0 trên từng commit; OCR theo dải `097c3f7..d8faaa3` không có nhận xét.
+- **Patch chưa commit:** `.agents/local/memory/patches/2026-10-14-r3-case15-flaky.patch` (ca 15 của `test_worktree_trunk_merge.sh`: FAIL chập chờn không
+  được lưu, mutant ĐỎ; sửa lỗi `pgrep` bị đếm hai lần). `git apply`, đặt thời lượng test đó khoảng 85 s trong `tests/lib/test_durations.txt`, rồi gate +
+  OCR + commit.
+- **Nguyên nhân gốc đo được (phiên agent-workbench-16):** ở mô hình cũ, phiên giữ main không gộp worktree của phiên khác. Một phiên giữ main trong một lượt dài
+  (17 giờ) làm worktree đã xong của phiên khác nằm chờ tới giới hạn 3, rồi chặn mọi phiên. R1/R2 (trunk mode) là cách sửa tận gốc.
+- **R1/R2/R7 — thiết kế v6** (review của agent Plan và tài liệu Claude Code, 14/10):
+  1. Sự thật đã kiểm trong tài liệu: `EnterWorktree(path)` ra ngoài `.claude/worktrees/` luôn hỏi người dùng (chỉ `bypassPermissions` bỏ được), nên
+     worktree của phiên đặt trong `.claude/worktrees/` (Claude tự tạo, một hook `WorktreeCreate` chạy `worktree.py add <path> --session=<sid>` để chép
+     cấu hình, cài DevKit, kiểm R5c). `CLAUDE_PROJECT_DIR` KHÔNG đổi sau `EnterWorktree`, chỉ `cwd` của input hook đổi.
+  2. Một hàm chung "project = worktree mà phiên đã vào" cho `regression_gate`, `proof_gate`, `test_evidence_gate`, `precode_gate`, `read_ledger`. Đây cũng là
+     lỗ đang có HÔM NAY với mọi phiên dùng `EnterWorktree` (gate kiểm main sạch và cho qua); đã nhờ phiên d91dffdd ghi vào `issues-bugs.md`.
+  3. `cmd_add`: ghi `session` và state tạm ngay sau `git worktree add`, trong `ADD_LOCK`; chặn ghi vào worktree chưa có state (một lần ghi trong khoảng
+     11 s cài đặt hiện bị coi là cài đặt và mất khi gỡ).
+  4. Stop: worktree của chính phiên (`session == sid`) xử lý riêng, trước phần owed/pending; gộp `--keep` chỉ khi sạch và `test_run.lock` rảnh; không bao
+     giờ bị nợ/giữ khi chủ còn sống (sống = pid, không dùng luật rảnh 600 s).
+  5. SessionEnd ghi worktree của phiên vào `owed` kèm chủ (bỏ qua lý do `clear`/`resume`, SessionStart nhận lại theo pid); phiên chết đột ngột thì Stop của
+     phiên sau nhận nuôi worktree có pid chủ đã chết.
+  6. Ở trunk mode, giới hạn là một worktree cho mỗi phiên còn sống (cộng ngưỡng đĩa), không phải 3.
+  7. Ở trunk mode, hook không ghi `regression_status.json`/`CHECKLIST.md` được track trong main (nếu không, fast-forward bị từ chối "commit or stash in
+     main"); bỏ "chạy post-fix-gate ở main" khỏi danh sách được phép của R2.
+  8. Hai điều kiện riêng: `trunk_mode(main)` bật theo repo (`git config devkit.trunkMode`, đọc thẳng `<common>/config`, lỗi = tắt) và công tắc gate R3
+     (bật trừ khi `WORKTREE_TRUNK_MODE=0`).
+  Làm R1/R2 trong một worktree, không làm ở main (hook chạy qua symlink ở mọi repo, INSTINCT-012). R2 cần `hooks/shell_writes.py` của phiên d91dffdd
+  (`targets(cmd, here, depth=0)`) đã vào main. Mỗi bước có test ĐỎ trước, principal-code-reviewer và OCR chạy song song.
+- **Còn mở nhỏ (low):** chưa có test cho nhánh `gated` (fast-forward lỗi tạm thời rồi lặp lại); ca 9 của test R3 khi máy không có `pgrep` (đã có trong patch).
+- **Chưa làm:** đưa R1/R2 sang GeelyEx2, OfficeReader, rồi Unity sau R6 (`cp -Rc Library`, gỡ cờ `uchg`, xoá file khoá của Unity).
 
 **Đã làm trong phiên này (13/10 ~18:15, chưa commit):** test hay đỏ ngẫu nhiên `test_worktree_merge_gate_owner.sh` §7 có cơ chế khác với mô tả ở
 `issues-bugs.md` A.2 #3:
