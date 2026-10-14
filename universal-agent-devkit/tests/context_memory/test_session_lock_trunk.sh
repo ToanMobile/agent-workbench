@@ -443,10 +443,14 @@ case("no pid anywhere, a fresh record", False)
 case("no pid anywhere, a 25 h old record", True, rec_age=25 * 3600)
 case("registry entry with no pid and a fresh heartbeat (the old 180 s rule would call it alive)", False, reg_pid=None)
 case("registry entry with no pid, a stale heartbeat, a fresh record: the heartbeat decides nothing", False, reg_pid=None, hb_age=3600)
-case("garbage pids (a bool, 1, 0) count as none", False, reg_pid=True)
-print("owner_gone path id:", sl.owner_gone(m, "../x", sw, m), sl.owner_gone(m, "", sw, m))
+case("a garbage registry pid (a bool) counts as none", False, reg_pid=True)
+case("a garbage registry pid (1) counts as none", False, reg_pid=1)
+case("a garbage registry pid (0) counts as none", False, reg_pid=0)
+for label, bad in (("a path-like session id", "../x"), ("an empty session id", "")):   # (OCR2 23) a real case: unknown reads alive, never dead
+    got = sl.owner_gone(m, bad, sw, m)
+    print(("✔ " if got == (False, "unknown") else "✖ ") + f"owner_gone for {label}: want (False, 'unknown'), got {got}")
 PY
-! grep -q "^✖" "$TMP/unit3" && [ "$(grep -c '^✔' "$TMP/unit3")" = 10 ] && ok "owner_gone: dead only on a dead pid or a 25 h old pid-less record; every unknown reads alive" \
+! grep -q "^✖" "$TMP/unit3" && [ "$(grep -c '^✔' "$TMP/unit3")" = 14 ] && ok "owner_gone: dead only on a dead pid or a 25 h old pid-less record; every unknown reads alive" \
   || { fail "owner_gone cases"; grep "✖\|Error\|assert" "$TMP/unit3" | head -8; }
 
 # 5 R7 and trunk mode off: the old rules, unchanged (main's lock taken by the first write)
