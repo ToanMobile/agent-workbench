@@ -820,6 +820,19 @@ test('trien khai mo hoi thoai Argon nhung workspace lech (strict): task bi chan 
   await assert.rejects(call('pm_dispatch', { project: dir, taskId, kind: 'implement', force: true, model: ARGON }), /workspace/);
   const task = loadTask(loadConfig(dir), taskId);
   assert.equal(task.state, 'blocked');
-  const opened = (task.dispatches || []).find((d) => d.kind === 'implement' && d.conversationId === task.conversationId);
+  const opened = (task.dispatches || []).find((d) => d.conversationId === task.conversationId && d.model);   // (the kind is 'open': only the model is recorded before the check)
   assert.equal(opened?.model, ARGON, `dispatch cua hoi thoai ${task.conversationId} khong ghi model that: ${JSON.stringify(task.dispatches)}`);
+});
+
+test('trien khai: workspace lech (strict) chi ghi model THAT cua hoi thoai; KHONG dat implementDispatchedAt (viec giao hong khong la viec dang chay: pm_verdict audit van tu choi)', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'dcdcdcdc-2222-3333-4444-555555555555', FAKE_AGY_INIT_CWD: '/nowhere/else', ANTIGRAVITY_LS_ADDRESS: '127.0.0.1:9', ANTIGRAVITY_CSRF_TOKEN: 'x' });
+  const dir = mkProject(t, { defaultModel: 'flash' });
+  const taskId = await newTask(dir);
+  await call('pm_plan', { project: dir, taskId, content: '# x\n1. lam\n2. test', files: ['src/a.js'] });
+  await assert.rejects(call('pm_dispatch', { project: dir, taskId, kind: 'implement', force: true, model: ARGON }), /workspace/);
+  const task = loadTask(loadConfig(dir), taskId);
+  assert.ok((task.dispatches || []).some((d) => d.conversationId === task.conversationId && d.model === ARGON), 'model that cua hoi thoai khong duoc ghi');
+  assert.equal(task.state, 'blocked');
+  assert.equal(task.implementDispatchedAt, undefined, 'viec giao hong: khong duoc co moc implementDispatchedAt');
+  await assert.rejects(call('pm_verdict', { project: dir, taskId, kind: 'audit', verdict: 'pass' }), /Chua giao trien khai/);
 });

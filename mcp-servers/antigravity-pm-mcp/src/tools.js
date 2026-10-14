@@ -675,10 +675,12 @@ export const TOOLS = [
           const { conversationId } = await newConversation({
             prompt: msg, projectId: pidI.id, cwd: cfg.projectRoot, model: args.model || task.model, title: `[PM] ${task.id} · TRIEN KHAI · ${task.title}`,
           });
-          // Recorded now, with the REAL model (args.model), before the workspace check: a check that fails (or throws) must not lose it,
-          // or conversationModel falls back to task.model and the agy conversation reads as an IDE-tier one.
-          recordDispatch(cfg, task, {
-            kind: 'implement', conversationId, model: args.model || task.model, promptFile, set: { conversationId, state: 'awaiting_agent' },
+          // The REAL model (args.model) is recorded now, before the workspace check, and ONLY the model (kind 'open'): a check that fails or
+          // throws must not lose it (conversationModel would fall back to task.model and the agy conversation read as an IDE-tier one), nor
+          // may it leave a dispatch stamp or state behind - those still belong to the recordDispatch below, after the check passed.
+          updateTask(cfg, task, (t) => {
+            t.conversationId = conversationId;
+            (t.dispatches = t.dispatches || []).push({ kind: 'open', conversationId, model: args.model || task.model, round: t.round, promptFile: null, at: nowIso() });
           });
           const checkI = await ensureWorkspaceMatches(cfg, conversationId);
           if (!checkI.ok && cfg.antigravity.workspaceCheck === 'strict') {
@@ -693,11 +695,11 @@ export const TOOLS = [
           await sendMessage({ conversationId: task.conversationId, projectId: projectIdFor(cfg), content: msg });
         }
         setPhase(cfg, task, 'IMPLEMENT', 'pm', 'plan da chot');
-        // A message into an existing conversation records task.model as before: conversationModel reads only the first record of a
-        // conversation (the one that opened it, recorded above).
-        if (!moiMo) {
-          recordDispatch(cfg, task, { kind: 'implement', conversationId: task.conversationId, promptFile, set: { state: 'awaiting_agent' } });
-        }
+        // Lan MO hoi thoai ghi model THAT (args.model); lan gui vao hoi thoai co san de recordDispatch ghi task.model nhu cu:
+        // conversationModel chi doc ban ghi dau tien cua hoi thoai (lan mo)
+        recordDispatch(cfg, task, {
+          kind: 'implement', conversationId: task.conversationId, ...(moiMo && { model: args.model || task.model }), promptFile, set: { state: 'awaiting_agent' },
+        });
         return [
           `Da giao TRIEN KHAI (${task.id})${moiMo ? ` — mo hoi thoai moi ${task.conversationId}` : ''}.`,
           ...guard.lines.map((l) => `CHU Y: ${l}`),
