@@ -77,7 +77,8 @@ elif gone:
     print("✔ harness: a hook whose grandchild blocks on a FIFO is reported HUNG, and its whole process group is gone")
 else:
     print("✖ harness: the canary's grandchild outlived the limit (left blocked for ever, holding the hook's pipes)"); fails += 1
-    os.kill(int(open(ready).read()), signal.SIGKILL)   # the leaked canary is this test's own: do not leave it behind
+    with contextlib.suppress(ProcessLookupError):   # it may have ended since the last probe: never a crash that skips the hooks
+        os.kill(int(open(ready).read()), signal.SIGKILL)   # the leaked canary is this test's own: do not leave it behind
 # ... and a hook that has ended while a DETACHED child (a session of its own) still holds its pipes: at the limit the group holds
 # only the hook's zombie, and macOS refuses killpg on such a group with EPERM (OpenCodeReview 14/10) - HUNG, never a crash.
 ready2 = os.path.join(c, "detached.ready")
