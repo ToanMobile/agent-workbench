@@ -43,7 +43,7 @@ grep -q "$W/src/a.py" "$W/.claude/audit-gate/read_ledger.tsv" 2>/dev/null && ! g
 ledger_read s2 "$M" "$M/src/a.py"
 grep -q "$M/src/a.py" "$M/.claude/audit-gate/read_ledger.tsv" 2>/dev/null && ok "  … a session without a record: main's ledger, as before" || fail "read_ledger without a record"
 ledger_read s9 "$W" "$W/src/a.py" a1   # a harness subagent runs in its worktree: its hook cwd is that worktree
-[ "$(grep -c "s9" "$W/.claude/audit-gate/read_ledger.tsv" 2>/dev/null)" -ge 1 ] && ok "  … a harness subagent in the worktree: the worktree's ledger" || fail "subagent meta not followed"
+grep -q "^s9"$'\t'"$W/src/a.py\$" "$W/.claude/audit-gate/read_ledger.tsv" 2>/dev/null && ok "  … a harness subagent in the worktree: the worktree's ledger" || fail "subagent meta not followed"   # (the session field, not any "s9" in a path: OCR2 15)
 s4="$(state "$(probe s1 "$M")")"
 [ "$s4" = none ] && ok "trunk mode off, the session in main: its record does not move the gates (main)" || fail "record followed from main without trunk mode: $s4"
 git -C "$M" config devkit.trunkMode true; s5="$(state "$(probe s1 "$M")")"; git -C "$M" config devkit.trunkMode false
@@ -51,7 +51,8 @@ git -C "$M" config devkit.trunkMode true; s5="$(state "$(probe s1 "$M")")"; git 
 mkdir -p "$TMP/lone" && cp "$DEVKIT_DIR/hooks/regression_gate.sh" "$TMP/lone/"   # a gate with no session_worktree.py beside it
 lone="$(python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"Stop","session_id":"s1","cwd":sys.argv[1],"transcript_path":sys.argv[2]}))' "$W" "$TP" \
   | CLAUDE_PROJECT_DIR="$M" REGRESSION_GATE_PROBE=1 bash "$TMP/lone/regression_gate.sh" 2>"$TMP/lone.err" | tail -1)"
-grep -q "could not be resolved" "$TMP/lone.err" && ok "a gate whose session_worktree.py is missing says so on stderr (never silent)" || fail "missing module was silent: $(head -c 200 "$TMP/lone.err")"
+grep -q "could not be resolved" "$TMP/lone.err" && [ "$(state "$lone")" = none ] && ok "a gate whose session_worktree.py is missing says so on stderr (never silent) and falls back to CLAUDE_PROJECT_DIR (main: none), although the record and cwd name the worktree" \
+  || fail "missing module (state '$(state "$lone")'): $(head -c 200 "$TMP/lone.err")"   # (the fallback result is asserted too: OCR2 12)
 printf '%s\n' "$TMP/other-wt" > "$M/.claude/audit-gate/session_worktree/s3"; s3="$(state "$(probe s3 "$TMP/other-wt")")"
 [ "$s3" = none ] && ok "a forged record naming another repo's worktree: main, as before" || fail "forged record followed: $s3"
 
