@@ -381,8 +381,9 @@ def gone_reflog(path):
         if wt is not None:
             mine = [p for p in paths if not os.path.exists(p)
                     and (os.path.realpath(p) in finished or os.path.realpath(p) in raw_owed or mentioned(p, os.path.realpath(p)))]
-            try:
-                rows = {os.path.realpath(r["path"]): r for r in wt.inventory(repo, only=mine + ([] if path in mine else [path]), budget=0)}
+            try:   # half of what is left of the alarm at most: the live worktrees' own inventory comes after (a spent budget reads "cannot say")
+                with wt._Budget(wt._alarm_left() / 2 or wt.INVENTORY_BUDGET_S):
+                    rows = {os.path.realpath(r["path"]): r for r in wt.inventory(repo, only=mine + ([] if path in mine else [path]), budget=0)}
             except (Exception, SystemExit):
                 rows = None
         gone_rows.append(rows)

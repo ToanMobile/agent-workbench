@@ -193,4 +193,37 @@ PATH="$TMP/shim:$PATH" stop A "$TRA"; rc=$?
   || fail "10: rc=$rc, git calls naming the foreign HEAD: $(wc -l < "$FOREIGN_LOG" | tr -d ' '): $(cat "$TMP/err")"
 G "$P" worktree prune
 
+# 11 (OpenCodeReview A1): the deleted-folder inventory runs first and inside the same 13 s alarm as the main inventory of the session's live
+# worktrees; with a stalled git it took everything up to alarm - 1.5 s, leaving the main inventory the 0.5 s floor and the alarm's silent
+# pass (os._exit(0)) the rest. It gets a share now (at most half of what is left). The shim stalls the first ref scan (the deleted-folder
+# inventory's: it runs first) and stamps the next git call of the hook: the gap is what that inventory took, measured against the alarm
+# that was left when it began (13 s from the hook's start), so a slow runner shifts both sides. WORKTREE_AUTO_MERGE=0: no merge to wait for.
+sleep 1.2
+cat > "$TMP/shim/git" <<'SH'
+#!/bin/sh
+if [ ! -e "$STALL_DIR/stalled" ]; then
+  case " $* " in *" for-each-ref "*) : > "$STALL_DIR/stalled"; exec sleep 100 ;; esac
+elif [ ! -e "$STALL_DIR/after" ]; then : > "$STALL_DIR/after"; fi
+exec "$REAL_GIT" "$@"
+SH
+chmod +x "$TMP/shim/git"
+W11G="$TMP/wt-gone11"; W11L="$TMP/wt-live11"; mention "$W11G"; mention "$W11L"
+G "$P" worktree add -q --detach "$W11G"; rm -rf "$W11G"
+G "$P" worktree add -q --detach "$W11L" && echo l > "$W11L/l.txt" && G "$W11L" add l.txt && G "$W11L" commit -qm live11   # unintegrated: the main inventory's
+STALL_DIR="$TMP/stall11"; mkdir -p "$STALL_DIR"; export STALL_DIR
+T0="$(python3 -c 'import time; print(time.time())')"
+PATH="$TMP/shim:$PATH" WORKTREE_AUTO_MERGE=0 stop A "$TRA"; rc=$?
+python3 -I -c 'import os, sys
+d, t0, rc = sys.argv[1], float(sys.argv[2]), int(sys.argv[3])
+try:
+    began, after = os.stat(d + "/stalled").st_mtime, os.stat(d + "/after").st_mtime
+except OSError as e:
+    print(f"the shim never saw both calls ({e})"); sys.exit(1)
+left, took = 13 - (began - t0), after - began
+print(f"it took {took:.1f} s of the {left:.1f} s left, rc {rc}")
+sys.exit(0 if took <= 0.7 * left and rc == 2 else 1)' "$STALL_DIR" "$T0" "$rc" > "$TMP/share11"
+[ $? = 0 ] && grep -q 'wt-live11.*ahead=1' "$TMP/err" && ok "11: a stalled deleted-folder inventory takes a share of the alarm, the main inventory keeps its time ($(cat "$TMP/share11"))" \
+  || fail "11: $(cat "$TMP/share11"): $(head -c 400 "$TMP/err")"
+G "$P" worktree prune
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_reflog_gone_folder: all passed" || { echo "❌ test_worktree_reflog_gone_folder: $FAILS failed"; exit 1; }
