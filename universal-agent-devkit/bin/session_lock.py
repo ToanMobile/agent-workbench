@@ -1076,7 +1076,7 @@ def trunk_write(tool, tool_input, cmd, cwd, main, sw, sid=""):
         return True
     here = cwd or main
     try:
-        found = _hook_module("shell_writes").targets(cmd, here)
+        found = _hook_module("shell_writes").targets(cmd, here, run_bodies=True)
     except Exception as e:  # noqa: BLE001 - the redirect rule below still applies
         print(f"session_lock: write scan failed: {e!r}", file=sys.stderr)
         found = None

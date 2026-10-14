@@ -61,6 +61,19 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (False, "a build run in main", m, B("npm test")),
     (False, "a redirect outside", m, B("grep -rn x . > /tmp/out.txt 2>/dev/null")),
     (False, "a read", m, B("git status --short && git log --oneline -3")),
+    # R3 review P2-4: the body of a heredoc fed to a shell is commands, fed to an interpreter a script (its literal file paths)
+    (True, "a bash heredoc whose body redirects into main", m, B("bash <<'EOF'\necho x > README.md\nEOF")),
+    (True, "a `sh -s` heredoc whose body copies into main", m, B("sh -s <<EOF\ncp /tmp/a b.txt\nEOF")),
+    (True, "a bash heredoc whose body cds to main from a worktree, then writes", w, B(f"bash <<'EOF'\ncd {m} && echo x > README.md\nEOF")),
+    (True, "a python heredoc opening a file of main for writing", m, B("python3 - <<EOF\nopen('README.md','w').write('x')\nEOF")),
+    (True, "a node heredoc writing a file of main", m, B("node - <<EOF\nrequire('fs').writeFileSync('README.md', 'x')\nEOF")),
+    (False, "a bash heredoc whose body redirects in the worktree", w, B("bash <<'EOF'\necho x > a.txt\nEOF")),
+    (False, "a bash heredoc whose body redirects to /tmp", m, B("bash <<'EOF'\necho x > /tmp/o.txt\nEOF")),
+    (False, "a bash heredoc whose body only reads", m, B("bash <<'EOF'\ngrep -rn x . | head -3\nEOF")),
+    (False, "a data heredoc (cat) whose body holds a `>`", m, B("cat <<EOF\na > b.txt\nEOF")),
+    (False, "a python heredoc writing to /tmp", m, B("python3 - <<EOF\nopen('/tmp/x.txt','w').write('x')\nEOF")),
+    (False, "a python heredoc that only reads", m, B("python3 - <<EOF\nprint(open('README.md').read())\nEOF")),
+    (False, "a python heredoc writing in the worktree", w, B("python3 - <<EOF\nopen('README.md','w').write('x')\nEOF")),
 ]
 bad = 0
 for want, label, cwd, (tool, ti, cmd) in cases:

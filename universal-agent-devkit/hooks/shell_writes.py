@@ -41,6 +41,17 @@ VALUE_OPTS = {"chmod": {"--reference"}, "cp": {"-S", "--suffix"}, "mv": {"-S", "
 TARGET_DIR = {"cp", "mv", "install", "ln"}   # `-t DIR` / `--target-directory=DIR`: every source goes into DIR
 # A chmod mode may start with `-` (`chmod -w f`, `chmod -x,u+r f`): the first such word is the mode, not an option (OpenCodeReview 14/10)
 CHMOD_MODE = re.compile(r"[0-7]{1,4}|[ugoa]*(?:[-+=][rwxXstugo]*)+(?:,[ugoa]*(?:[-+=][rwxXstugo]*)+)*")
+# A heredoc a shell reads is command lines (scanned like `bash -c '…'`); one an interpreter reads is a script: what it hands a file-writing call
+# as a LITERAL path (python open(p, 'w') / Path(p).write_text, node writeFile / appendFile / createWriteStream, php file_put_contents,
+# ruby File.write). ponytail: a computed path (os.path.join, an f-string, argv) is not seen; upgrade by running the script under a scanner.
+SHELLS = {"bash", "sh", "zsh"}
+_LIT = r"""\(\s*[rbRB]{0,2}(?P<q>['"])(?P<p>[^'"\n]+)(?P=q)"""
+SCRIPT_WRITES = (
+    re.compile(r"\bopen" + _LIT + r"""\s*,\s*(?:mode\s*=\s*)?[rbRB]{0,2}['"][wax]"""),
+    re.compile(r"\bPath" + _LIT + r"""\s*\)\s*\.\s*(?:write_text|write_bytes)\b"""),
+    re.compile(r"\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|file_put_contents)" + _LIT),
+    re.compile(r"\bFile\s*\.\s*(?:write|binwrite)" + _LIT),
+)
 
 
 def _cd(here, d):
@@ -77,14 +88,15 @@ def _exists(a, here):
     return os.path.exists(p if os.path.isabs(p) else os.path.join(here, p))
 
 
-def targets(cmd, here, depth=0):
+def targets(cmd, here, depth=0, run_bodies=False):
     """[(kind, target, directory it is relative to)] of the shell line `cmd` run in `here`, or None when it cannot be tokenised.
     kind: "redirect" (a > target; an escaped `\\>` reads as one too, so a caller with its own quote-aware redirect rule skips it),
     "file" (cp / install / rsync / ln / scp destination; mv / rm / touch / truncate / tee / mkdir / rmdir / chmod / unlink operands;
     dd of=; sed -i / perl -i operands that exist), "git" (a git write: its -C directory), "build" (a build
     tool or builder module: its working directory), "interp" (an interpreter's operands that exist). A target may hold $VAR or a
-    backtick: the caller decides. Heredoc bodies are data, never commands; `bash -c '…'` is scanned three levels deep."""
-    out, pos = [], 0
+    backtick: the caller decides. Heredoc bodies are data, never commands - unless run_bodies and the heredoc feeds a shell (its body is
+    scanned like `bash -c '…'`) or an interpreter (its script's literal write paths: "file"); `bash -c '…'` is scanned three levels deep."""
+    out, bodies, pos = [], [], 0
     while True:                               # heredoc bodies are data, not commands
         m = HEREDOC.search(cmd, pos)
         nl = cmd.find("\n", m.end()) if m else -1
@@ -93,6 +105,7 @@ def targets(cmd, here, depth=0):
             break
         e = re.compile(r"^[ \t]*" + re.escape(m.group(2)) + r"[ \t]*$", re.M).search(cmd, nl + 1)
         out.append(cmd[pos:nl + 1])
+        bodies.append(cmd[nl + 1:e.start() if e else len(cmd)])
         pos = e.end() if e else len(cmd)
     try:
         lex = shlex.shlex("".join(out), posix=True, punctuation_chars=";&|<>()\n")
@@ -110,13 +123,16 @@ def targets(cmd, here, depth=0):
             cur.append(tok)
     if cur:
         segs.append(cur)
-    found = []
+    found, nbody = [], 0
     for seg in segs:
-        words, redirs, i = [], [], 0
+        words, redirs, fed, i = [], [], [], 0
         while i < len(seg):
             tok = seg[i]
             if tok and set(tok) <= set("<>&|"):
                 nxt = seg[i + 1] if i + 1 < len(seg) else ""
+                if tok == "<<":   # the heredocs come in the order of their operators
+                    fed.append(bodies[nbody] if nbody < len(bodies) else "")
+                    nbody += 1
                 if ">" in tok and not tok.endswith("&") and nxt and nxt != "/dev/null" \
                         and not re.fullmatch(r"-|\d+", nxt):
                     redirs.append(nxt)
@@ -189,11 +205,17 @@ def targets(cmd, here, depth=0):
             module = next((words[k + 1] for k in range(1, len(words) - 1) if words[k] == "-m"), None)
             if code is not None:
                 if depth < 3:
-                    found += targets(code, wd, depth + 1) or []
+                    found += targets(code, wd, depth + 1, run_bodies) or []
             elif (module and module.split(".")[0] in MODULE_BUILDERS) or \
                     (not module and args and BUILDERS.match(os.path.basename(args[0]))):
                 hits.append(("build", wd))
             else:
                 hits += [("interp", a) for a in args[1:] if _exists(a, wd)]
+                if run_bodies and fed and (not args or "-s" in words[1:] or "-" in words[1:]):   # the script is on stdin, not a file
+                    for body in fed:
+                        if base not in SHELLS:
+                            hits += [("file", w.group("p")) for rx in SCRIPT_WRITES for w in rx.finditer(body)]
+                        elif depth < 3:
+                            found += targets(body, wd, depth + 1, run_bodies) or []
         found += [(kind, t, wd) for kind, t in hits]
     return found
