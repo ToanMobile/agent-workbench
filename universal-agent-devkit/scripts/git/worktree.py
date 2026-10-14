@@ -465,6 +465,8 @@ def copy_unity_library(main, wt):
         os.makedirs(os.path.dirname(dst) or wt, exist_ok=True)
         r = _run(["cp", "-Rc", src, dst], bounded=False)
         if r.returncode != 0:
+            if os.path.lexists(dst):   # what it cloned before failing keeps uchg: rmtree cannot delete it (and ignore_errors says nothing)
+                _run(["chflags", "-R", "nouchg,nouappnd", dst], bounded=False)
             shutil.rmtree(dst, ignore_errors=True)
             print("• " + tr(f"không clone được {lib} (clonefile không có ở đây?): Unity sẽ import lại trong worktree",
                             f"{lib} could not be cloned (no clonefile here?): Unity re-imports it in the worktree"))

@@ -88,5 +88,26 @@ assert worktree.copy_unity_library(main, same) == ["Library"] and os.path.isfile
   && ok "a worktree on another volume: the Library is not cloned (cp -c would copy every byte), the user is told; on the same volume it still is" \
   || fail "cross-volume Library: $(tail -3 "$TMP/out" | tr '\n' ' ')"
 
+# 5 cp -Rc fails AFTER it cloned files (ENOSPC, an interrupted copy; OCR2 13): what it cloned keeps its uchg flag, rmtree(ignore_errors) cannot delete
+#   such a file and says nothing, and the half Library left behind makes the worktree impossible to remove (INSTINCT-038). The copy's flags are
+#   cleared before the clean-up. The failure is injected after a real clone (the copy runs, then its result is replaced by rc 1): deterministic.
+unity e ""; mkdir -p "$TMP/e-w"
+python3 -I -c 'import contextlib, io, os, subprocess, sys
+sys.path.insert(0, sys.argv[1] + "/scripts/git"); import worktree
+main, wt = sys.argv[2:4]
+real = worktree._run
+def cp_fails_after_cloning(argv, *a, **k):
+    r = real(argv, *a, **k)
+    return subprocess.CompletedProcess(argv, 1, r.stdout, "injected: no space left") if argv[:2] == ["cp", "-Rc"] else r
+worktree._run = cp_fails_after_cloning
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    got = worktree.copy_unity_library(main, wt)
+assert got == [], f"a failed copy was reported as cloned: {got}"
+assert "could not be cloned" in buf.getvalue(), buf.getvalue()
+assert not os.path.lexists(os.path.join(wt, "Library")), "the half-cloned Library was left behind (uchg files survive the clean-up)"' "$DEVKIT_DIR" "$TMP/e" "$TMP/e-w" > "$TMP/out" 2>&1 \
+  && ok "cp -Rc fails after cloning: the copy's flags are cleared and the half Library is gone (the worktree stays removable)" \
+  || fail "failed copy left a half Library: $(tail -3 "$TMP/out" | tr '\n' ' ') $(ls "$TMP/e-w" 2>&1 | tr '\n' ' ')"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_worktree_unity_library: PASS"; exit 0; } || { echo "test_worktree_unity_library: FAIL ($FAILS)"; exit 1; }
