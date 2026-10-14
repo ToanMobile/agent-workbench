@@ -161,23 +161,42 @@ export function agyRegistryProblem() {
 const LOCK_STALE_MS = 20000;   // > ngan sach ps toi da duoi khoa (<= 5 lan x 1,5 s) de PM khac khong lay mat khoa dang giu that
 /**
  * Lay lai khoa cu (chu khoa da chet): DOI TEN no sang ten rieng (nguyen tu) roi xet CHINH file vua lay ra. Hai PM cung thay mot khoa cu:
- * PM sau co the lay trung khoa MOI cua PM truoc (no vua lay lai xong) => file trong tay con tuoi: tra lai cho cu (link: khong de len khoa
- * thu ba) roi cho nhu thuong. Truoc day xoa-roi-tao: PM sau xoa luon khoa moi, ca hai cung vao doan gang (OpenCodeReview 14/10).
+ * PM sau co the lay trung khoa MOI cua PM truoc (no vua lay lai xong) => file trong tay con tuoi: tra lai cho cu (putLockBack) roi cho
+ * nhu thuong. Truoc day xoa-roi-tao: PM sau xoa luon khoa moi, ca hai cung vao doan gang (OpenCodeReview 14/10).
  * true = da bo khoa cu, tao lai ngay; false = khong lay duoc / da tra lai: cho.
  */
-// ponytail: tra lai khong nguyen tu voi PM THU BA: giua rename va link, PM C tao duoc khoa (C va chu khoa cung vao doan gang), hoac chu khoa
-// xong viec dung luc do va khoa tra lai thanh mo coi (het han sau LOCK_STALE_MS). Can ba PM cung dung mot khoa cu trong vai micro giay;
-// nang cap thanh flock (Node khong co san) neu thay xay ra.
+// ponytail: tra lai khong nguyen tu voi PM THU BA: giua rename va link (hoac rename lai, tren he tep khong co hard link) PM C tao duoc khoa
+// (C va chu khoa cung vao doan gang), hoac chu khoa xong viec dung luc do va khoa tra lai thanh mo coi (het han sau LOCK_STALE_MS). Can ba
+// PM cung dung mot khoa cu trong vai micro giay; nang cap thanh flock (Node khong co san) neu thay xay ra.
 function takeStaleLock(lock, token) {
   const aside = `${lock}.${token}.stale`;
   try { fs.renameSync(lock, aside); } catch { return false; }   // vua duoc nha / PM khac vua lay di
   let fresh = true;   // khong xet duoc thi coi la tuoi: tra lai, khong bo khoa co the con nguoi giu
   try { fresh = Date.now() - fs.statSync(aside).mtimeMs <= LOCK_STALE_MS; } catch (e) { logStderr(`khoa so dang ky agy: khong xet duoc ${aside} (${e.message}): tra lai`); }
-  if (fresh) {
-    try { fs.linkSync(aside, lock); } catch (e) { logStderr(`khoa so dang ky agy: lay nham khoa con tuoi cua PM khac va khong tra lai duoc (${e.code || e.message})`); }
-  }
+  if (fresh) { putLockBack(aside, lock); return false; }
   fs.rmSync(aside, { force: true });
-  return !fresh;
+  return true;
+}
+
+/**
+ * Tra khoa con tuoi (da doi ten sang `aside`) ve cho cu; chi bo `aside` khi da tra duoc. link khong bao gio de len khoa cua PM thu ba
+ * (EEXIST). He tep khong co hard link (EPERM, ENOTSUP...): doi ten lai, duong dan khoa dang trong vi chinh ta vua doi ten no di
+ * (OpenCodeReview 14/10: truoc day link loi thi van xoa `aside` => khoa cua chu dang giu bi xoa). Khong tra duoc thi giu `aside` lam dau vet.
+ */
+function putLockBack(aside, lock) {
+  try {
+    fs.linkSync(aside, lock);
+  } catch (e) {
+    if (e.code === 'EEXIST') {
+      logStderr(`khoa so dang ky agy: lay nham khoa con tuoi cua PM khac va PM thu ba da tao khoa moi: giu ${aside}`);
+      return;
+    }
+    try { fs.renameSync(aside, lock); } catch (e2) {
+      logStderr(`khoa so dang ky agy: khong tra lai duoc khoa con tuoi cua PM khac (link ${e.code || e.message}, rename ${e2.code || e2.message}): giu ${aside}`);
+    }
+    return;
+  }
+  fs.rmSync(aside, { force: true });   // da link lai: `aside` chi con la ten phu
 }
 
 /** Khoa file ngan (open 'wx') quanh doc-sua-ghi so dang ky: hai tien trinh PM khong dat cho / ghi de len nhau. Khoa mo coi > 20 s la cu. */
