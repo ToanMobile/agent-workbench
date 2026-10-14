@@ -101,8 +101,10 @@ for f in "$DEVKIT_DIR"/hooks/*; do ln -s "$f" "$FK/hooks/"; done; rm -f "$FK/hoo
 for f in "$DEVKIT_DIR"/bin/*; do ln -s "$f" "$FK/bin/"; done; rm -f "$FK/bin/session_lock.py" && echo 'raise ImportError("broken on purpose")' > "$FK/bin/session_lock.py"
 repo h; wtadd "$TMP/h" s9 s9; commit_in "$TMP/h" s9 nine; record "$TMP/h" s9 s9
 python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"Stop","session_id":"s1","cwd":sys.argv[1],"transcript_path":sys.argv[2]}))' "$TMP/h" "$TMP/t1.jsonl" \
-  | CLAUDE_PROJECT_DIR="$TMP/h" bash "$FK/hooks/worktree_merge_gate.sh" >/dev/null 2>&1
-[ ! -f "$TMP/h/nine.txt" ] && [ -d "$TMP/h/.claude/worktrees/s9" ] && ok "session_lock not importable: no record adopted (liveness unknown), the worktree kept" || fail "adopted a record with liveness unknown"
+  | CLAUDE_PROJECT_DIR="$TMP/h" bash "$FK/hooks/worktree_merge_gate.sh" > "$TMP/out" 2> "$TMP/err"; rc=$?   # (a gate that crashed would also leave the worktree alone: rc and stderr are checked, OCR2 7)
+[ "$rc" = 0 ] && [ ! -s "$TMP/err" ] && [ ! -s "$TMP/out" ] && [ ! -f "$TMP/h/nine.txt" ] && [ -d "$TMP/h/.claude/worktrees/s9" ] \
+  && ok "session_lock not importable: no record adopted (liveness unknown), the worktree kept, the gate ran clean (rc 0, nothing on stderr or stdout)" \
+  || fail "session_lock not importable (rc $rc, merged: $( [ -f "$TMP/h/nine.txt" ] && echo yes || echo no)): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
 
 # 10 a LIVE session idle at its prompt (its pid answers, its heartbeat is 40 min old): liveness is the pid, never the heartbeat - its
 #    worktree is not adopted (merged and removed under it); once the pid is gone the same record is adopted (R3 review 14/10, P1-1)
