@@ -104,6 +104,11 @@
         "mcp-servers/antigravity-pm-mcp/*.ts",
         "mcp-servers/antigravity-pm-mcp/*.tsx",
         "mcp-servers/antigravity-pm-mcp/*.vue"
+      ],
+      "stale_since": "2026-10-14 08:16:59",
+      "stale_files": [
+        "mcp-servers/antigravity-pm-mcp/src/proof.js",
+        "mcp-servers/antigravity-pm-mcp/tests/proof.test.js"
       ]
     },
     "REG-AUTO-PLAY-STORE-MCP-01": {
@@ -246,6 +251,10 @@
         "universal-agent-devkit/bin/tree_fp.py",
         "universal-agent-devkit/scripts/linters/assertion_lint.py",
         "universal-agent-devkit/bin/postfix-gate"
+      ],
+      "stale_since": "2026-10-14 08:16:59",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py"
       ]
     },
     "REG-DK-GATE-02": {
@@ -328,6 +337,10 @@
         "universal-agent-devkit/bin/tree_fp.py",
         "universal-agent-devkit/scripts/linters/assertion_lint.py",
         "universal-agent-devkit/bin/postfix-gate"
+      ],
+      "stale_since": "2026-10-14 08:16:59",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py"
       ]
     },
     "REG-DK-HOOK-01": {
@@ -406,6 +419,13 @@
       "command": "bash universal-agent-devkit/hooks/tests/hook_contract_test.sh",
       "watch_files": [
         "universal-agent-devkit/hooks/*"
+      ],
+      "stale_since": "2026-10-14 08:16:59",
+      "stale_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/hooks/tests/hook_contract_test.sh",
+        "universal-agent-devkit/hooks/shell_writes.py",
+        "universal-agent-devkit/hooks/worktree_guard.sh"
       ]
     },
     "REG-DK-HOOK-02": {
@@ -484,6 +504,13 @@
       "command": "bash universal-agent-devkit/tests/gates/test_proof_gate.sh",
       "watch_files": [
         "universal-agent-devkit/hooks/*"
+      ],
+      "stale_since": "2026-10-14 08:16:59",
+      "stale_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/hooks/tests/hook_contract_test.sh",
+        "universal-agent-devkit/hooks/shell_writes.py",
+        "universal-agent-devkit/hooks/worktree_guard.sh"
       ]
     },
     "REG-DK-HEALTH-01": {
@@ -640,6 +667,14 @@
       "command": "bash universal-agent-devkit/tests/run_impacted.sh",
       "watch_files": [
         "universal-agent-devkit/*"
+      ],
+      "stale_since": "2026-10-14 08:16:59",
+      "stale_files": [
+        "universal-agent-devkit/AGENTS.md",
+        "universal-agent-devkit/CHANGELOG.md",
+        "universal-agent-devkit/bin/ocr-review",
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/hooks/tests/hook_contract_test.sh"
       ]
     },
     "BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du": {
@@ -1183,6 +1218,11 @@
       "watch_files": [
         "universal-agent-devkit/bin/session_lock.py",
         "universal-agent-devkit/bin/post-fix-gate.py"
+      ],
+      "stale_since": "2026-10-14 08:16:59",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/session_lock.py"
       ]
     },
     "REG-DK-SANDBOX-01": {
@@ -1382,6 +1422,10 @@
       "component": "devkit-token-cost",
       "command": "bash universal-agent-devkit/tests/context_memory/test_token_cost_tracker.sh",
       "watch_files": [
+        "universal-agent-devkit/scripts/governance/token_cost_tracker.py"
+      ],
+      "stale_since": "2026-10-14 08:16:59",
+      "stale_files": [
         "universal-agent-devkit/scripts/governance/token_cost_tracker.py"
       ]
     },
@@ -1837,8 +1881,8 @@
       "red_proof": {
         "at": "2026-10-09 22:08:47",
         "ts": 1791558527.419274,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_git_guard_shell_subst.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -1873,8 +1917,8 @@
       "red_proof": {
         "at": "2026-10-09 21:32:10",
         "ts": 1791556330.778254,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -1909,8 +1953,8 @@
       "red_proof": {
         "at": "2026-10-09 18:15:53",
         "ts": 1791544553.077399,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_review_timing_guard_big_payload.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -1967,8 +2011,8 @@
       "red_proof": {
         "at": "2026-10-09 21:07:54",
         "ts": 1791554874.346621,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -2003,8 +2047,8 @@
       "red_proof": {
         "at": "2026-10-09 21:08:45",
         "ts": 1791554925.009863,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -2039,8 +2083,8 @@
       "red_proof": {
         "at": "2026-10-09 21:11:02",
         "ts": 1791555062.796758,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_gate_js_describe_scope.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -2111,8 +2155,8 @@
       "red_proof": {
         "at": "2026-10-09 19:04:33",
         "ts": 1791547473.95009,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_churn_guard_fast_path.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -3408,6 +3452,27 @@
         "universal-agent-devkit/tests/gates/test_review_gate_ocr.sh"
       ],
       "state": "confirmed"
+    },
+    "BUG-20261014-session-lock-let-cp-mv-rm-tee-sed-i-touc": {
+      "id": "BUG-20261014-session-lock-let-cp-mv-rm-tee-sed-i-touc",
+      "kind": "bug",
+      "title": "session_lock let cp/mv/rm/tee/sed -i/touch into a held checkout through, and blocked reads naming the gate folder",
+      "cause": null,
+      "component": "devkit-hooks",
+      "created_at": "2026-10-14 08:16:59",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "evidence": "issues-bugs.md A.1 #3; 13/10 11:03",
+      "linked_at": "2026-10-14 08:16:59",
+      "linked_ts": 1791940619.528223,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/context_memory/test_session_lock_file_writes.sh"
+      ]
     }
   },
   "meta": {

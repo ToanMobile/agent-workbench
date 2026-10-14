@@ -161,9 +161,9 @@ fi
 
 # The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable python could not
 # start and a big Write into the main checkout passed (tests/gates/test_hook_large_payload.sh).
-WG_LOG="${LOG_DIR:+${LOG_DIR}/worktree_guard.log}" WG_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
+WG_LOG="${LOG_DIR:+${LOG_DIR}/worktree_guard.log}" WG_TS="$(date +%Y-%m-%dT%H:%M:%S)" WG_HOOKDIR="$(cd "$(dirname "$0")" && pwd)" \
 python3 -I <<'PY' 3<<<"${INPUT}"
-import json, os, re, shlex, sys
+import json, os, re, sys
 
 log = os.environ.get("WG_LOG", "/dev/null")
 ts = os.environ.get("WG_TS", "?")
@@ -421,136 +421,30 @@ if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
     if isinstance(fp, str) and fp and in_main(fp, cwd):
         hits.append(fp)
 elif tool == "Bash":
-    HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
-    DEST_LAST = {"cp", "install", "rsync", "ln", "scp"}
-    ALL_ARGS = {"mv", "rm", "touch", "truncate", "tee", "mkdir", "rmdir", "chmod", "unlink"}
-    GIT_WRITE = {"add", "am", "apply", "checkout", "cherry-pick", "clean", "commit", "merge", "mv", "pull",
-                 "rebase", "reset", "restore", "revert", "rm", "stash", "switch"}
-    STASH_READ = {"list", "show", "create"}          # `git stash <these>` leaves the tree and refs alone
-    # Build tools write build dirs / caches into the directory they run in, by construction.
-    BUILDERS = re.compile(r"^(?:npm|npx|yarn|pnpm|bun|make|gradle|\./gradlew|gradlew|mvn|cargo|go|pytest|jest|"
-                          r"vitest|dotnet|swift|flutter)$")
-    # Interpreters write only what their script says: judged by the operands after the script —
-    # unless the script is a build tool (`sh ./gradlew …`) or the module a builder / test runner
-    # / formatter (`python3 -m pytest`), which writes caches and build dirs where it runs.
-    INTERP = re.compile(r"^(?:python[\d.]*|node|deno|ruby|perl|php|bash|sh|zsh)$")
-    MODULE_BUILDERS = {"pytest", "unittest", "black", "ruff", "mypy", "pip", "build", "isort", "coverage",
-                       "tox", "nox", "setuptools", "pylint"}
-    PREFIX = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "time", "command",
-              "builtin", "exec", "nohup", "sudo", "env", "done", "fi"}
-
-    def exists(a, here):
-        p = os.path.expanduser(a)
-        return os.path.exists(p if os.path.isabs(p) else os.path.join(here, p))
-
-    def scan(cmd, here, depth=0):
-        """Write targets in M of a shell command run in `here`; None when it cannot be tokenised."""
-        out, pos = [], 0
-        while True:                               # heredoc bodies are data, not commands
-            m = HEREDOC.search(cmd, pos)
-            nl = cmd.find("\n", m.end()) if m else -1
-            if not m or nl < 0:
-                out.append(cmd[pos:])
-                break
-            e = re.compile(r"^[ \t]*" + re.escape(m.group(2)) + r"[ \t]*$", re.M).search(cmd, nl + 1)
-            out.append(cmd[pos:nl + 1])
-            pos = e.end() if e else len(cmd)
-        try:
-            lex = shlex.shlex("".join(out), posix=True, punctuation_chars=";&|<>()\n")
-            lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""
-            toks = list(lex)
-        except ValueError:
-            return None
-        segs, cur = [], []
-        for tok in toks:
-            if tok and set(tok) <= set(";&|()\n"):
-                if cur:
-                    segs.append(cur)
-                cur = []
-            else:
-                cur.append(tok)
-        if cur:
-            segs.append(cur)
-        found = []
-        for seg in segs:
-            words, redirs, i = [], [], 0
-            while i < len(seg):
-                tok = seg[i]
-                if tok and set(tok) <= set("<>&|"):
-                    nxt = seg[i + 1] if i + 1 < len(seg) else ""
-                    if ">" in tok and not tok.endswith("&") and nxt and nxt != "/dev/null" \
-                            and not re.fullmatch(r"-|\d+", nxt):
-                        redirs.append(nxt)
-                    i += 2
-                    continue
-                words.append(tok)
-                i += 1
-            while words and (words[0] in PREFIX or re.fullmatch(r"[A-Za-z_]\w*=.*", words[0])):
-                words = words[1:]
-            verb = words[0] if words else ""
-            args = [a for a in words[1:] if not a.startswith("-")]
-            targets = list(redirs)
-            if verb in ("cd", "pushd"):
-                if args and "$" not in args[0]:
-                    nd = os.path.expanduser(args[0])
-                    here = nd if os.path.isabs(nd) else os.path.join(here, nd)
-                elif not args:
-                    here = os.path.expanduser("~")
-                continue
-            base = os.path.basename(verb)
-            if base in DEST_LAST and args:
-                dest = args[-1]
-                if not (base in ("scp", "rsync") and re.match(r"[^/]*:", dest)):   # host:path is remote
-                    targets.append(dest)
-            elif base in ALL_ARGS:
-                targets += args
-            elif base == "dd":
-                targets += [a[3:] for a in args if a.startswith("of=")]
-            elif base == "sed" and any(re.fullmatch(r"-[A-Za-z]*i.*|--in-place.*", a) for a in words[1:]):
-                targets += [a for a in args if exists(a, here)]
-            elif base == "perl" and any(re.fullmatch(r"-[A-Za-z]*i.*", a) for a in words[1:]):
-                targets += [a for a in args if exists(a, here)]
-            elif base == "git":
-                gdir, sub, skip, rest = here, "", None, []
-                for k, a in enumerate(words[1:], 1):
-                    if skip:
-                        if skip == "-C":
-                            gdir = a if os.path.isabs(a) else os.path.join(gdir, a)
-                        skip = None
-                    elif a in ("-C", "-c", "--git-dir", "--work-tree"):
-                        skip = a
-                    elif not a.startswith("-"):
-                        sub, rest = a, words[k + 1:]
-                        break
-                if sub == "stash" and rest and rest[0] in STASH_READ:
-                    sub = ""
-                if sub in GIT_WRITE:
-                    targets.append(gdir)
-            elif BUILDERS.match(verb) or BUILDERS.match(base):
-                targets.append(here)
-            elif INTERP.match(base):
-                code = next((words[k + 1] for k in range(1, len(words) - 1)
-                             if base in ("bash", "sh", "zsh") and re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", words[k])), None)
-                module = next((words[k + 1] for k in range(1, len(words) - 1) if words[k] == "-m"), None)
-                if code is not None:
-                    if depth < 3:
-                        found += scan(code, here, depth + 1) or []
-                elif (module and module.split(".")[0] in MODULE_BUILDERS) or \
-                        (not module and args and BUILDERS.match(os.path.basename(args[0]))):
-                    targets.append(here)
-                else:
-                    targets += [a for a in args[1:] if exists(a, here)]
-            for t in targets:
-                if "$" in t or "`" in t:
-                    continue
-                if in_main(t, here):
-                    found.append(t if os.path.isabs(t) else f"{t} (in {here})")
-        return found
-
-    res = scan(str(inp.get("command", "")), cwd)
+    # The scanner is hooks/shell_writes.py, shared with bin/session_lock.py (issues-bugs.md A.1 #3, 14/10: one scanner, not two).
+    # Fail CLOSED when it cannot be had (OpenCodeReview 14/10): the inline scanner always ran, so a missing module must not turn
+    # the Bash check off without a word. ("" would also put the project's cwd on sys.path: a planted shell_writes.py.)
+    hookdir = os.environ.get("WG_HOOKDIR", "")
+    try:
+        if not os.path.isabs(hookdir):
+            raise ImportError("WG_HOOKDIR is not an absolute path")
+        sys.dont_write_bytecode = True
+        sys.path.append(os.path.dirname(os.path.realpath(os.path.join(hookdir, "worktree_guard.sh"))))   # after the stdlib
+        import shell_writes
+    except Exception as e:
+        logline(f"BLOCK shell_writes unavailable: {e!r}")
+        sys.stderr.write(f"⛔ WORKTREE GUARD: hooks/shell_writes.py could not be loaded next to this hook ({e}), so a Bash call\n"
+                         f"  cannot be checked for writes into the MAIN checkout {M}. Reinstall the DevKit (agent-kit init) or work\n"
+                         f"  with Edit/Write until then. Off: WORKTREE_GUARD=0.\n")
+        sys.exit(2)
+    res = shell_writes.targets(str(inp.get("command", "")), cwd)
     if res is None:
         sys.exit(0)                               # untokenisable: fail open
-    hits += res
+    for _kind, t, here in res:
+        if "$" in t or "`" in t:
+            continue
+        if in_main(t, here):
+            hits.append(t if os.path.isabs(t) else f"{t} (in {here})")
 
 if not hits:
     sys.exit(0)

@@ -71,7 +71,8 @@ class _Re:
 GIT_WRITE = _Re(
     r"(^|[\s;&|(/])git\s+(?P<opts>(?:(?:-C\s+(?:\"[^\"]*\"|'[^']*'|\S+)|-c\s+(?:[^\s\"']|\"[^\"]*\"|'[^']*')+|--(?:git-dir|work-tree)\s+\S+|--[\w-]+(?:=\S+)?|-[pP])\s+)*)"
     r"(commit|push|pull|add|rm|mv|reset|checkout|restore|switch|stash(?![ \t]+(?:list|show)(?![\w-]))|merge|rebase|cherry-pick|revert|am|apply|tag|clean)(?![\w-])")
-GATE = _Re(r"post-fix-gate(\.py)?\b|\bpostfix-gate\b|\bagent-kit\s+(?:worktree|wt)\s+(?:finish|automerge)\b|worktree\.py\s+(?:finish|automerge)\b")
+# (?!/): <git dir>/postfix-gate/ is the folder of its receipt and runs.jsonl, read by anyone (14/10: a `python3 -c` reading it was a gate run)
+GATE = _Re(r"post-fix-gate(\.py)?\b(?!/)|\bpostfix-gate\b(?!/)|\bagent-kit\s+(?:worktree|wt)\s+(?:finish|automerge)\b|worktree\.py\s+(?:finish|automerge)\b")
 # Commands that only READ: naming the gate to them (`grep -c post-fix-gate AGENTS.md`, `cat bin/post-fix-gate.py`) does not run it. echo / printf
 # stay out (`echo $(postfix-gate)` runs it) and so does sed / awk (`sed -i` writes); a substitution anywhere in the segment is never excused.
 # git reads only through its read verbs, named right after it: `git bisect run`, `git submodule foreach` and `git -c alias.x=!… x` run commands.
@@ -864,7 +865,7 @@ def write_hits_locked(cmd, top, cwd, sid=""):
     locked = os.path.realpath(top) if top else None
     cur = cwd or top
     pieces = _split_segments(cmd)   # segment, separator, segment, ...
-    seen, hits_top, foreign = False, False, None
+    seen, hits_top, foreign, named = False, False, None, False
     for i in range(0, len(pieces), 2):
         seg = pieces[i]
         sep = pieces[i + 1] if i + 1 < len(pieces) else ""
@@ -874,6 +875,7 @@ def write_hits_locked(cmd, top, cwd, sid=""):
             continue
         if DIR_CHANGE.search(seg):
             cur = None
+        named = named or bool(GIT_WRITE.search(seg) or GATE.search(seg))
         targets = [_git_target(cur, m.group("opts")) for m in GIT_WRITE.finditer(seg)]
         if _gate_run(seg):
             pd = PROJECT_DIR.search(seg)
@@ -887,8 +889,9 @@ def write_hits_locked(cmd, top, cwd, sid=""):
             lock = read_checkout_lock(tgdir)
             if foreign is None and not is_free_for(lock, sid, time.time()):
                 foreign = (tl, tgdir, lock)   # another repository, but a live session holds THAT one
-    # the regexes see a write the segment walk did not (e.g. an unterminated quote): judge it by the text, as before
-    if not seen:
+    # the regexes see a write the segment walk did not (e.g. an unterminated quote): judge it by the text, as before. Not when a segment
+    # showed it and was judged a read there (`cd X && grep … the gate's name`: the whole line starts with `cd`, no reader, 14/10).
+    if not seen and not named:
         stripped = _strip_heredocs(cmd)
         hits_top = bool(GIT_WRITE.search(stripped) or _gate_run(stripped))
     return hits_top, foreign
@@ -953,8 +956,37 @@ def allow_shared(argv, off=False):
     return 0
 
 
+def _file_write_hits(cmd, top, cwd):
+    """A file write of `cmd` lands in the locked checkout `top`: cp / install / rsync / ln destinations, mv / rm / touch / truncate /
+    tee / mkdir / rmdir / chmod / unlink operands, dd of=, sed -i / perl -i files, also inside `bash -c` (hooks/shell_writes.py, the
+    scanner hooks/worktree_guard.sh uses: issues-bugs.md A.1 #3, 13/10 11:03 a cp/mv into a held checkout went through). Not judged
+    here: a target behind $VAR or a backtick, an interpreter's or build tool's own writes (a read-only session runs `python3 x.py`).
+    ponytail: those stay open, and so do `xargs rm`, `find -delete`, `eval '…'`, a backtick, a heredoc fed to a shell and a cd inside a
+    subshell (review 14/10); tighten when one is seen landing. Scanner missing or line untokenisable: False (the other rules hold)."""
+    try:
+        hooks = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "hooks")
+        if hooks not in sys.path:
+            sys.path.append(hooks)   # after the stdlib
+        import shell_writes  # noqa: PLC0415 - only for a Bash call, from this file's own kit
+        found = shell_writes.targets(cmd, cwd or top)
+    except Exception as e:   # the git / gate / redirect rules still apply; say why this one could not
+        print(f"session_lock: file-write scan failed: {e!r}", file=sys.stderr)
+        return False
+    for kind, t, here in found or ():
+        if kind != "file" or "$" in t or "`" in t:
+            continue
+        p = os.path.expanduser(t)
+        try:
+            if _inside(os.path.realpath(p if os.path.isabs(p) else os.path.join(here or cwd or top, p)), top):
+                return True
+        except ValueError as e:   # a NUL in the path: no file can have it, and the hook must not crash (exit 1 lets the call through)
+            print(f"session_lock: target {t!r} skipped: {e}", file=sys.stderr)
+    return False
+
+
 def bash_collides(cmd, top, cwd=None, sid=""):
-    """(hits_top, foreign) - see write_hits_locked; a redirect into the locked checkout also counts as hits_top."""
+    """(hits_top, foreign) - see write_hits_locked; a redirect or a file write (_file_write_hits) into the locked checkout also counts
+    as hits_top."""
     hits_top, foreign = False, None
     if GIT_WRITE.search(cmd) or GATE.search(cmd):
         hits_top, foreign = write_hits_locked(cmd, top, cwd, sid)
@@ -968,6 +1000,8 @@ def bash_collides(cmd, top, cwd=None, sid=""):
             if not target.startswith("/") or (top and _inside(target, top)):
                 hits_top = True
                 break
+    if not hits_top and top and _file_write_hits(cmd, top, cwd):
+        hits_top = True
     return hits_top, foreign
 
 

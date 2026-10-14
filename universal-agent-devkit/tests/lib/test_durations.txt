@@ -252,3 +252,5 @@
 4 tests/gates/test_gate_project_removed_midrun.sh
 1 tests/gates/test_review_gate_bash_edit.sh
 1 tests/verification/test_run_impacted_all_hooks.sh
+1 tests/context_memory/test_session_lock_file_writes.sh
+1 tests/gates/test_worktree_guard_shell_writes.sh

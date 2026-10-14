@@ -548,9 +548,12 @@ _SA = []
 def _authorship():
     """bin/session_authorship.py of this kit (the hook's real folder's sibling), or None; tried once."""
     if not _SA:
+        hookdir = os.environ.get("CLAIM_HOOKDIR", "")
         try:
+            if not os.path.isabs(hookdir):   # "" would resolve from the cwd: the project's own files
+                raise ImportError("CLAIM_HOOKDIR is not an absolute path")
             sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(
-                os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "review_gate.sh")))), "bin"))   # after the stdlib
+                os.path.join(hookdir, "review_gate.sh")))), "bin"))   # after the stdlib
             import session_authorship
             _SA.append(session_authorship)
         except Exception as e:
