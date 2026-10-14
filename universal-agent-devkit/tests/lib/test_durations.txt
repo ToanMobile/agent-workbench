@@ -250,3 +250,5 @@
 1 tests/installer/test_ocr_review_helper.sh
 3 tests/worktree_git/test_worktree_gc.sh
 4 tests/gates/test_gate_project_removed_midrun.sh
+1 tests/gates/test_review_gate_bash_edit.sh
+1 tests/verification/test_run_impacted_all_hooks.sh

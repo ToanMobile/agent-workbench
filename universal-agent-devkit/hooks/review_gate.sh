@@ -12,7 +12,8 @@
 #
 # BLOCK (exit 2) when BOTH hold:
 #   • uncommitted code changes exist, AND
-#   • no supported review ran AFTER the last code Edit/Write this session —
+#   • no supported review ran AFTER the last code Edit/Write this session (or Bash
+#     command that names a code file changed after it started) —
 #     i.e. either none ran, or the last one ran before the latest code change
 #     (the "reviewed-then-kept-coding" hole).
 # Review = Agent/Task tool_use with subagent_type ∈ REVIEW_AGENTS, or a Skill
@@ -322,6 +323,22 @@ ocr_pending = {}   # tool_use id -> (transcript index, "helper" | "plain", comma
 ocr_reports = []   # (transcript index, report path) of OCR runs that named a report
 ocr_fallbacks = []   # (transcript index, spec, argv) of ocr-review runs that ASKED the LLM and fell back to delegation for want of an endpoint
 OCR_NOT_A_RUN = re.compile(r"(?:^|\s)(?:--help|-h|--version)(?:\s|$)")
+bash_runs = []   # [transcript index, start, end, command] of every Bash run with a timestamp: a code change made through it
+bash_open = {}   # tool_use id -> its bash_runs entry, until its result (end time) is read
+tool_times = []   # (transcript index, time) of every tool call with a timestamp: where a change made at a given time sits
+BASH_SLACK_S = 2.0
+BASH_OPEN_MAX_S = 2 * 3600.0   # session_authorship.OPEN_MAX_AGE_S: a background run's window
+# the result of a run that went on in the background (its end is unknown); `run_in_background` is checked on the call too
+BASH_BACKGROUND = re.compile(r"\s*Command (?:running in background|was moved to the background|did not complete within .{0,40}moved to the background)")
+
+
+def _rec_time(rec_):
+    """The record's timestamp ("2026-10-13T23:59:14.548Z") in epoch seconds, or None."""
+    import datetime
+    try:
+        return datetime.datetime.fromisoformat(str(rec_.get("timestamp")).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
 
 
 def _ocr_report_path(kind, cmd, txt):
@@ -433,6 +450,10 @@ if tp and os.path.exists(tp):
             if not isinstance(content, list):
                 continue
             for blk in content:
+                if isinstance(blk, dict) and blk.get("type") == "tool_result" and blk.get("tool_use_id") in bash_open:
+                    _run = bash_open.pop(blk.get("tool_use_id"))   # a run moved to the background ends when it ends: no end time
+                    if not BASH_BACKGROUND.match(_result_text(blk)):   # a result with no readable time: the run ended within seconds
+                        _run[2] = _rec_time(rec) or _run[1] + BASH_SLACK_S
                 if isinstance(blk, dict) and blk.get("type") == "tool_result" and blk.get("tool_use_id") in ocr_pending:
                     at, kind, ocmd = ocr_pending.pop(blk.get("tool_use_id"))
                     _rp = "" if blk.get("is_error") or _short_circuited(ocmd) else _ocr_report_path(kind, ocmd, _result_text(blk))
@@ -451,6 +472,9 @@ if tp and os.path.exists(tp):
                 idx += 1
                 name = blk.get("name", "")
                 inp = blk.get("input") or {}
+                _tt = _rec_time(rec)
+                if _tt is not None:
+                    tool_times.append((idx, _tt))
                 if name in ("Edit", "Write", "NotebookEdit"):
                     fp = inp.get("file_path") or inp.get("notebook_path") or ""
                     if isinstance(fp, str) and fp.endswith(CODE_EXTS):
@@ -467,6 +491,11 @@ if tp and os.path.exists(tp):
                     if sk in REVIEW_SKILLS:
                         last_review_idx = idx
                 elif name == "Bash":
+                    _bts = _tt
+                    if _bts is not None:
+                        bash_runs.append([idx, _bts, None, str(inp.get("command") or "")])
+                        if blk.get("id") and not inp.get("run_in_background"):   # in the background: no end time
+                            bash_open[blk.get("id")] = bash_runs[-1]
                     om = OCR_CMD.search(str(inp.get("command") or ""))
                     if om and blk.get("id"):
                         ocr_pending[blk.get("id")] = (idx, "helper" if om.group(1) == "ocr-review" else "plain",
@@ -476,6 +505,106 @@ if tp and os.path.exists(tp):
                     scr = inp.get("script", "") or ""
                     if wf in REVIEW_WORKFLOWS or "multi-lens-audit" in scr:
                         last_review_idx = idx
+
+# Code changed through Bash (a script, `sed -i`, a heredoc) never passes through Edit/Write (issue #13, 13/10: worktree.py rewritten
+# by Python only, no BLOCK). A diff file counts as edited at the latest Bash command that names it and was RUNNING when the file last
+# changed: its start to its result, 2 s of clock slack; a run in the background, up to 2 h. A deleted file has no time: it counts at the
+# latest command that names it as a write target (bin/session_authorship.py, the gate's own authorship rule); a `grep` naming it does
+# not. Not this session's edit: a command that ran before or after the change (a `cat`, then an IDE save or another session's edit).
+# ponytail: a command that changes code without naming the file (a glob, `xargs sed -i`, a fix script kept in a file, a formatter over
+# a folder) is still not seen; .claude/audit-gate/bash_write_ledger.tsv windows could tell those if they keep escaping review.
+_PATH_SPLIT = re.compile(r"[\s\"'`=:(<>|;&,]+")
+
+
+def _names(cmd, rel, base):
+    """`cmd` names the repo file `rel`: a word whose path is rel relative from some folder (`scripts/app.py`, `../scripts/app.py`,
+    the bare name), absolute into this repo, or behind a prefix that cannot be resolved ($VAR, {ROOT} of an f-string, ~), which may
+    also sit above the repo root. other/app.py, myapp.py, app.py.bak, ../other/scripts/app.py and /elsewhere/scripts/app.py do not
+    name scripts/app.py. One linear split (review 14/10: a backtracking regex took 120 s on a 72 KB heredoc, past the hook's budget)."""
+    full = os.path.realpath(os.path.join(repo_root, rel))
+    for tok in _PATH_SPLIT.split(cmd):
+        if not tok.endswith(base) or (len(tok) > len(base) and tok[-len(base) - 1] != "/"):
+            continue
+        parts = tok.split("/")
+        var = max([i for i, x in enumerate(parts) if "$" in x or "{" in x or x == "~"] or [-1])
+        if var >= 0:   # unresolvable prefix: rel, a part of it, or rel under some folder
+            tail = "/".join(parts[var + 1:])
+            if tail == rel or rel.endswith("/" + tail) or tail.endswith("/" + rel):
+                return True
+        elif tok.startswith("/"):
+            if os.path.realpath(tok) == full:
+                return True
+        else:          # relative from a folder this hook does not know: what follows the last `.` / `..` must be a part of rel
+            dots = max([i for i, x in enumerate(parts) if x in (".", "..")] or [-1])
+            tail = "/".join(parts[dots + 1:])
+            if tail == rel or rel.endswith("/" + tail):
+                return True
+    return False
+
+
+_SA = []
+
+
+def _authorship():
+    """bin/session_authorship.py of this kit (the hook's real folder's sibling), or None; tried once."""
+    if not _SA:
+        try:
+            sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(
+                os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "review_gate.sh")))), "bin"))   # after the stdlib
+            import session_authorship
+            _SA.append(session_authorship)
+        except Exception as e:
+            logline(f"[{ts}] session_authorship unavailable ({e!r}): a file deleted through Bash is not counted")
+            _SA.append(None)
+    return _SA[0]
+
+
+def _writes(cmd, rel):
+    """The Bash command `cmd` names repo file `rel` as a write target (session_authorship's rule); False when it cannot tell."""
+    sa = _authorship()
+    if sa is None:
+        return False
+    try:
+        return sa.names_path(sa.shell_named([cmd]), repo_root, rel)
+    except Exception as e:
+        logline(f"[{ts}] write rule failed on a command naming {rel}: {e!r} — not counted")
+        return False
+
+
+def _index_at(t):
+    """The last transcript index whose tool call started at or before time t (a run in the background can change a file after
+    later calls, a review among them: the change sits there, not at the run's own index)."""
+    best = -1
+    for i, tt in tool_times:
+        if tt <= t + BASH_SLACK_S:
+            best = max(best, i)
+    return best
+
+
+for _rel in (changed if bash_runs else ()):
+    try:
+        _mt = os.path.getmtime(os.path.join(repo_root, _rel))
+    except OSError:
+        _mt = None   # deleted (`rm`, `git rm`, the old side of a `mv`)
+    _base = os.path.basename(_rel)
+    for _bi, _bts, _bend, _bcmd in reversed(bash_runs):
+        if _base not in _bcmd:
+            continue
+        if _mt is not None:
+            _until = _bend if _bend is not None else _bts + BASH_OPEN_MAX_S
+            if not (_bts - BASH_SLACK_S <= _mt <= _until + BASH_SLACK_S) or not _names(_bcmd, _rel, _base):
+                continue
+            _at = max(_bi, _index_at(_mt)) if _bend is None else _bi
+        elif _writes(_bcmd, _rel):
+            _at = _bi
+        else:
+            continue
+        if _at > last_edit_idx:
+            last_edit_idx = _at
+        if _rel not in session_unreviewed:
+            logline(f"[{ts}] {_rel}: changed by Bash #{_bi}, which names it — edited this session (at #{_at})")
+        session_unreviewed.add(_rel)
+        break
 
 # An OCR report (or a delegation spec) counts only when it is newer than every file this session edited (one from before the last
 # edit is stale).
