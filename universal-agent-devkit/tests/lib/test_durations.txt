@@ -263,3 +263,4 @@
 20 tests/gates/test_hook_gitignore_fifo.sh
 2 tests/gates/test_proof_gate_report_labels.sh
 2 tests/gates/test_evidence_outcome_mention.sh
+2 tests/gates/test_stop_replay.sh
