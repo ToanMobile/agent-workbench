@@ -207,6 +207,16 @@ python3 -c 'import json,sys; print(json.dumps({"name":"fix/login","session_id":"
 python3 -c 'import json,sys; print(json.dumps({"name":"a//b","session_id":"x","cwd":sys.argv[1]}))' "$TMP/f" | (cd "$TMP/f" && bash "$TMP/lone/session_worktree.sh" worktree-create) > "$TMP/out2" 2> "$TMP/err2"; rc2=$?
 [ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$TMP/f/.claude/worktrees/fix-login" ] && [ -d "$TMP/f/.claude/worktrees/fix-login" ] && [ "$rc2" = 2 ] && [ ! -s "$TMP/out2" ] \
   && ok "  … a slash name there too (fix/login -> fix-login); an empty segment (a//b) refused" || fail "wrapper fallback slash name (rc $rc / $rc2): $(cat "$TMP/out") $(tail -2 "$TMP/err")"
+# 10b OCR2 18: the fallback must not need git 2.31 (`rev-parse --path-format=absolute`): on an older git it failed with a misleading "not in a git repo" and the
+#     EnterWorktree it replaces failed with it. A git shim that rejects that option, run from the repo root, a sub-folder and a linked worktree.
+mkdir -p "$TMP/oldgit"; printf '#!/bin/bash\ncase "$*" in *--path-format*) echo "error: unknown option path-format" >&2; exit 129;; esac\nexec "%s" "$@"\n' "$(command -v git)" > "$TMP/oldgit/git"; chmod +x "$TMP/oldgit/git"
+repo g; mkdir -p "$TMP/g/sub"; f0=$FAILS
+for pair in "s18a:$TMP/g" "s18b:$TMP/g/sub" "s18c:$TMP/g/.claude/worktrees/s18a"; do
+  nm="${pair%%:*}"; from="${pair#*:}"
+  python3 -c 'import json,sys; print(json.dumps({"name":sys.argv[1],"session_id":"x","cwd":sys.argv[2]}))' "$nm" "$from" | (cd "$from" && PATH="$TMP/oldgit:$PATH" bash "$TMP/lone/session_worktree.sh" worktree-create) > "$TMP/out" 2> "$TMP/err"; rc=$?
+  [ "$rc" = 0 ] && [ "$(tail -1 "$TMP/out")" = "$TMP/g/.claude/worktrees/$nm" ] && [ -d "$TMP/g/.claude/worktrees/$nm" ] || fail "no-kit create without --path-format, from $from (rc $rc): out=$(cat "$TMP/out") err=$(tail -2 "$TMP/err" | tr '\n' ' ')"
+done
+[ "$FAILS" = "$f0" ] && ok "  … on a git without --path-format=absolute (a shim): the same plain worktree, from the root, a sub-folder and a linked worktree"
 python3 -c 'import json,sys; print(json.dumps({"worktree_path":sys.argv[1]}))' "$TMP/f/.claude/worktrees/s10" | bash "$TMP/lone/session_worktree.sh" worktree-remove >/dev/null 2>&1; rc=$?
 [ "$rc" = 1 ] && [ -d "$TMP/f/.claude/worktrees/s10" ] && ok "  … worktree-remove it cannot judge: exit 1, the worktree kept" || fail "wrapper fallback remove (rc $rc)"
 

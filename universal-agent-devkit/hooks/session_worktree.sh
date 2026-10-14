@@ -30,7 +30,8 @@ case "${sub}" in
     case "${name}" in *..*|*//*|*/|*/[!A-Za-z0-9]*) echo "✖ worktree hook: not a worktree name: ${name}" >&2; exit 2 ;; esac
     name="${name//\//-}"
     # the repo is where Claude runs the hook (the session's directory): with no python3 there is no JSON decoder for an escaped cwd
-    common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || { echo "✖ worktree hook: not in a git repo: ${PWD}" >&2; exit 1; }
+    # (no --path-format=absolute: git 2.31; the path is relative to this directory or absolute, and the cd below runs here too)
+    common="$(git rev-parse --git-common-dir 2>/dev/null)" || { echo "✖ worktree hook: not in a git repo: ${PWD}" >&2; exit 1; }
     main="$(cd -P "${common}/.." 2>/dev/null && pwd -P)" || exit 1
     wt="${main}/.claude/worktrees/${name}"
     git -C "${main}" worktree add --detach "${wt}" HEAD >&2 || exit 1
