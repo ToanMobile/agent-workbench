@@ -53,11 +53,11 @@ Lưu ý khi đọc kết quả: trạng thái duyệt MCP gắn với từng th�
 
 ## 4. Dashboard coverage-map
 
-Nguồn: `universal-agent-devkit/dashboard/` (`collect_rows.py`, `coverage-map.page.html`, `dash_shim.js`, `render_smoke.js`, `checks.json`, `coverage-map.html`).
-Mở thẳng `coverage-map.html` trong trình duyệt. Bản artifact (riêng tư): https://claude.ai/artifact/9jipizCiyhWsTv6QL3goZE.
+Nguồn: `universal-agent-devkit/dashboard/` (`collect_rows.py`, `workflow-map.page.html`, `dash_shim.js`, `render_smoke.js`, `checks.json`, `workflow-map.html`).
+Mở thẳng `workflow-map.html` trong trình duyệt. Bản artifact (riêng tư): https://claude.ai/artifact/9jipizCiyhWsTv6QL3goZE.
 
 Còn lại:
-- Làm mới dữ liệu sau khi 3.1 và 3.2 vào `main`: `python3 universal-agent-devkit/dashboard/collect_rows.py` (ghi lại `checks.json` và `coverage-map.html`), commit, rồi tải `checks.json` lên artifact và cập nhật tài liệu `datasets/checks`.
+- Làm mới dữ liệu sau khi 3.1 và 3.2 vào `main`: `python3 universal-agent-devkit/dashboard/collect_rows.py` (ghi lại `checks.json` và `workflow-map.html`), commit, rồi tải `checks.json` lên artifact và cập nhật tài liệu `datasets/checks`.
 - Chạy `node universal-agent-devkit/dashboard/render_smoke.js` sau mỗi lần sửa trang (không cần trình duyệt).
 - Chưa bấm thử trong trình duyệt thật: giao diện mới chỉ được xem qua bản dựng tĩnh (Quick Look). Brave headless treo, Chrome không có trên máy.
 - Quy trình trên trang (8 công đoạn, thành phần của từng công đoạn) được định nghĩa tay trong `PHASES`/`FLOW` của `collect_rows.py`, dựa theo AGENTS.md ("Every prompt") và các hook Stop. Nhãn tiếng Việt cho hook và skill (`HOOK_VI`, `SKILL_VI`) tôi dịch từ tên, từ phần đầu file hook và từ thông báo hook, chưa đối chiếu từng file. Khi kit đổi hook, cập nhật các bảng này.
@@ -94,7 +94,7 @@ Các việc chưa làm hoặc chưa kiểm chứng tại thời điểm đóng p
 - Bật MCP trong `settings.local.json` ở Goods, Neighbours-From-Hell (mục 3.2 và 3.3).
 - `claude mcp list` sau khi các thay đổi vào nhánh chính (mục 3.4).
 - Push mọi repo (mục 3.5).
-- Làm mới `checks.json` và `coverage-map.html` rồi cập nhật artifact (mục 4).
-- Bấm thử `coverage-map.html` trong trình duyệt thật (mục 4).
+- Làm mới `checks.json` và `workflow-map.html` rồi cập nhật artifact (mục 4).
+- Bấm thử `workflow-map.html` trong trình duyệt thật (mục 4).
 - Hai quyết định ở mục 5 (hook chạy ocr; giới hạn 900 giây của gate).
 - Thư mục rỗng `/Volumes/Data/Toan/agent-workbench-dashboard` cần xóa tay (mục 6).

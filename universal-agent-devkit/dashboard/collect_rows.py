@@ -1,10 +1,11 @@
 """Read-only snapshot of how the DevKit is wired in each default repo (hooks, skills, MCP servers, tools).
 
 Writes, next to this file:
-  checks.json        one table, columns: repo, area, group, item, state, trigger, detail
-  coverage-map.html  the same table rendered by coverage-map.page.html, openable as a plain file
+  checks.json        one table, columns: repo, area, group, item, kind, state, trigger, detail
+                     (area="hook" rows also carry `order`: place in the kit template's chain, 1000 for a hook the kit does not declare)
+  workflow-map.html  the same table rendered by workflow-map.page.html, openable as a plain file
 usage: python3 collect_rows.py
-The Artifact dashboard uses checks.json and coverage-map.page.html directly (see README in the commit).
+The Artifact dashboard uses checks.json and workflow-map.page.html directly (see README in the commit).
 """
 import json
 import os
@@ -131,8 +132,8 @@ HOOK_VI = {
     "read_ledger.sh": "ghi file đã đọc, để sửa file phải đọc trước",
     "worktree_guard.sh": "chặn ghi nhầm vào checkout hoặc worktree không phải của phiên",
     "block-dangerous-git.sh": "chặn lệnh git nguy hiểm (--no-verify, force...)",
-    "bash_write_ledger.sh": "ghi lại các lệnh Bash có ghi file",
-    "churn_guard.sh": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì chặn",
+    "bash_write_ledger.sh": "ghi khung thời gian của mỗi lệnh Bash, để cổng Stop biết file nào do phiên này ghi",
+    "churn_guard.sh": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì cảnh báo (không chặn)",
     "comment_claim_guard.sh": "chú thích không được khẳng định điều chưa kiểm chứng",
     "hardware_safety_gate.sh": "chặn lệnh có thể làm hỏng thiết bị phần cứng",
     "regression_gate.sh": "checklist hồi quy phải xanh khi dừng",
@@ -191,9 +192,9 @@ ocr_ver = run(["ocr", "version"]).splitlines()[0] if shutil.which("ocr") else ""
 
 for name, path in REPOS.items():
     r = Path(path)
-    add = lambda area, group, item, state, trigger="", detail="", kind="": rows.append(
+    add = lambda area, group, item, state, trigger="", detail="", kind="", **extra: rows.append(
         {"repo": name, "area": area, "group": group, "item": item, "kind": kind, "state": state,
-         "trigger": trigger, "detail": detail})
+         "trigger": trigger, "detail": detail, **extra})
 
     prof = jload(r / ".agents/active-profile.json") or {}
     pid = prof.get("profile", "universal")
@@ -216,7 +217,9 @@ for name, path in REPOS.items():
             state = "local"
         else:
             state = "ok"
-        add("hook", ev, sc, state, mt or "any tool", hook_blurb(sc))
+        # order = place in the kit template's chain; a hook the kit does not declare gets 1000+ (the page lists it apart)
+        order = tmpl.index((ev, mt, sc)) if (ev, mt, sc) in tmpl else 1000
+        add("hook", ev, sc, state, mt or "any tool", hook_blurb(sc), order=order)
 
     # --- skills
     exclude = set(meta.get("exclude_skills", []))
@@ -337,11 +340,13 @@ for name, path in REPOS.items():
 
     # --- worktrees left behind
     for wt in run(["git", "worktree", "list"], cwd=path).splitlines()[1:]:
+        if Path(wt.split()[0]).resolve() == KIT.parent:  # the worktree this script runs in is not left behind
+            continue
         add("worktree", "unmerged?", wt.split()[0].rsplit("/", 1)[-1], "warn", "", wt.split()[0])
 
 STANDALONE_HEAD = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DevKit coverage map</title>
+<title>DevKit workflow map</title>
 <style>
 :root { --color-fg:#1f2328; --color-fg-muted:#59636e; --color-bg:#f6f8fa; --color-panel:#ffffff; --color-border-line:#d8dee4;
   --color-ok:#1a7f4b; --color-warn:#9a6700; --color-bad:#c62828; --cds-radius:8px; --cds-pad-lg:16px;
@@ -362,7 +367,7 @@ embedded = json.dumps(rows, ensure_ascii=False).replace("</", "<\\/")
 html = (STANDALONE_HEAD
         + '<script id="checks-data" type="application/json">' + embedded + "</script>\n"
         + "<script>\n" + (HERE / "dash_shim.js").read_text() + "</script>\n"
-        + (HERE / "coverage-map.page.html").read_text()
+        + (HERE / "workflow-map.page.html").read_text()
         + STANDALONE_TAIL)
-(HERE / "coverage-map.html").write_text(html)
-print(len(rows), "rows ->", HERE / "checks.json", "and", HERE / "coverage-map.html")
+(HERE / "workflow-map.html").write_text(html)
+print(len(rows), "rows ->", HERE / "checks.json", "and", HERE / "workflow-map.html")

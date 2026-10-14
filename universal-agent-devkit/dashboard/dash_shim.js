@@ -1,4 +1,4 @@
-// Minimal stand-in for the Artifact "Dashboard" runtime so coverage-map.page.html also opens as a plain file.
+// Minimal stand-in for the Artifact "Dashboard" runtime so workflow-map.page.html also opens as a plain file.
 // It implements only what the page uses: dash.data, dash.calc, dash.onData. Data comes from the
 // <script id="checks-data" type="application/json"> block that collect_rows.py embeds.
 (function () {

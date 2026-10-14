@@ -982,7 +982,7 @@ RESULT_FORMAT = 2   # 2 (2026-10-07): a Unity test suite may be re-used (DEVKIT_
 SUITE_RAN_AT = {}
 
 
-def cached_full_pass(project_dir, matrix_arg, fp=None):
+def cached_full_pass(project_dir, matrix_arg, fp=None, name=None):
     """The last full PASS when it still holds for this exact code (O1, 2026-09-28: GeelyEx2 ran
     16 full gates in one session, many on content that had already passed): same tree
     fingerprint, same RESULT_FORMAT, same matrix, tested within DEVKIT_GATE_CACHE_MAX_S (default
@@ -991,11 +991,14 @@ def cached_full_pass(project_dir, matrix_arg, fp=None):
     only: reuse_full_pass runs the untested ones again (2026-09-29, GeelyEx2). An UNVERIFIED run (exit 2, no suite
     failed: an edited test waits for review, a code file nothing covers) is kept the same way (2026-10-07).
     fp: the tree fingerprint the caller took a moment ago with nothing run since (A13, 2026-10-09: a --full run took it
-    three times); None takes it here."""
+    three times); None takes it here.
+    name: another record kept next to the receipt under the same keys (BUDGET_RECORD); None = the full-pass receipt itself."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
         path = tree_fp.receipt_path(project_dir)
+        if name:
+            path = os.path.join(os.path.dirname(path), name)
         with os.fdopen(_state_fd(path), encoding="utf-8") as f:
             r = json.load(f)
         max_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
@@ -1142,6 +1145,85 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
         os.replace(tmp, path)
     except OSError as e:
         log_err(f"full-pass receipt not written: {e}")
+
+
+# What a Stop run that spent GATE_TOTAL_BUDGET_S leaves for the next Stop on the same content (Goods, 2026-10-14: REG-GAME-02 +
+# REG-GAME-03 took 901-967 s of a 900 s budget, REG-GAME-04 never started, and the next four Stops on the same fingerprint ran
+# both again from the start: 63 min in 72 h). The Stop hook has no --full, so its run is "partial" and never records its own suite
+# results (write_full_pass_receipt is for a full run, and a budget cut left even a valid receipt alone on purpose). A record of its
+# own, next to the receipt and never in it: proof_gate and push_gate read only full_pass.json, so a budget run can never be a
+# handover PASS, and test_busy_keeps_receipt still sees full_pass.json byte for byte. cached_full_pass reads it under the same keys
+# (fingerprint, matrix, local state, format, age); reuse_full_pass applies the same per-suite rules (device suites, Unity age).
+# ponytail: only a run with no force_reason (the Stop hook; also a --full that was deferred for sibling sessions, which ends
+# exit 5 and writes no receipt) reads it, so an acceptance run never rests on a Stop run's results; allow a forced run to read it
+# (drop `force_reason` in reuse_full_pass) when the extra handover run is ever seen to cost more than that trust is worth.
+BUDGET_RECORD = "budget_pass.json"
+# the modes whose PASS means "the suite's FULL command passed on this content" (the same ones a full run's receipt records)
+BUDGET_RECORD_MODES = ("full", "cached", "covered", "skip-compile")
+
+
+def budget_untested_ids(tests):
+    """Ids of the suites a budget record must NOT offer as PASS: everything that did not pass its FULL command in this run
+    (BUDGET, UNTESTED, FAIL, TIMEOUT, a PASS of an impacted / package / module / resource run or of an unknown mode). The reader
+    (reuse_full_pass) runs these again, as it does the "untested" ids of an exit-4 receipt."""
+    return sorted({t.get("id") or "?" for t in tests or [] if t.get("command")
+                   and not (t.get("status") == "PASS" and t.get("mode") in BUDGET_RECORD_MODES)})
+
+
+def budget_record_path(project_dir):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import tree_fp  # noqa: PLC0415 - sibling module in bin/
+    except ImportError:
+        return None
+    rp = tree_fp.receipt_path(project_dir)
+    return os.path.join(os.path.dirname(rp), BUDGET_RECORD) if rp else None
+
+
+def drop_budget_record(project_dir):
+    """A suite FAILED or TIMED OUT on this content: an earlier record must not offer its older PASS again (never a FAIL item)."""
+    path = budget_record_path(project_dir)
+    try:
+        if path:
+            os.remove(path)
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        log_warn(tr(f"Không xoá được {BUDGET_RECORD}: {e}", f"Could not remove {BUDGET_RECORD}: {e}"))
+
+
+def write_budget_record(project_dir, matrix_arg, tests, tested_fp, tested_at=None):
+    """After a budget-cut run (exit 4, a suite did not start): the suites that passed their full command, for the next Stop.
+    tested_fp is the fingerprint taken BEFORE the suites ran (a Stop run takes none otherwise): code that changed while they ran was
+    not the code tested, so then nothing is written. Written atomically; read through _state_fd by cached_full_pass."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import tree_fp  # noqa: PLC0415 - sibling module in bin/
+    except ImportError:
+        return
+    path = budget_record_path(project_dir)
+    untested = budget_untested_ids(tests)
+    if not path or not tested_fp or not untested or not any(t.get("command") and t.get("id") not in untested for t in tests):
+        return
+    if tree_fp.tree_fingerprint(project_dir) != tested_fp:
+        log_warn(tr("Code đổi trong lúc chạy test — không ghi kết quả của lượt hết ngân sách (lần Stop sau chạy lại)",
+                    "Code changed while the suites ran — the budget run's results are not recorded (the next Stop runs them again)"))
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        data = {"time": time.time(), "exit": 4, "project": str(Path(project_dir).resolve()), "fingerprint": tested_fp,
+                "tested_at": tested_at or time.time(), "result_format": RESULT_FORMAT,
+                "gate_sha": _sha_file(__file__), "matrix_sha": _sha_file(find_matrix_path(matrix_arg)),
+                "local_sha": local_state_sha(project_dir), "untested": untested,
+                "tests": [{"id": t.get("id"), "status": t.get("status"), "log": t.get("log"),
+                           "duration": t.get("duration"), "ran_at": SUITE_RAN_AT.get(t.get("id"))}
+                          for t in tests if t.get("command")]}
+        fd, tmp = tempfile.mkstemp(prefix=".tmp_budget_pass.", dir=os.path.dirname(path))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)
+    except OSError as e:
+        log_err(f"budget record not written: {e}")
 
 
 def has_dir(rel_file: str, *names) -> bool:
@@ -4750,10 +4832,23 @@ def main():
     use_cache = run_tests and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0" \
         and any(t.get("command") for t in regression_tests)
     overlay_pre = capture_overlay_pre(args, matrix, project_dir, regression_tests) if run_tests else None   # BEFORE any suite runs
+    # GATE_TOTAL_BUDGET_S: seconds after which no NEW suite starts (a Stop hook has a hard timeout; 2026-10-02: a run of
+    # ~10 suites at 600 s each, no total cap, was cut silently at 27 min). Suites left are UNTESTED/BUDGET, never PASS.
+    # ponytail: a suite already running is not cut (its own --timeout bounds it). What the suites that finished proved is kept for
+    # the next Stop on the same content (BUDGET_RECORD, 2026-10-14, Goods: two Unity suites of 901-967 s ran again at every Stop).
+    # A resumed run that then completes does not update the record: the hook's pass_fp ends the cycle there, and a later
+    # non-forced run of this content runs the suites that were left once more; upgrade if that is ever seen to cost minutes.
+    try:
+        budget_s = float(os.environ.get("GATE_TOTAL_BUDGET_S") or 0)
+    except ValueError:
+        budget_s = 0.0
+    # The content this run tests, taken BEFORE the first reuse, the lock wait and the suites (a forced run already has it; a Stop run
+    # took none): a suite marked re-used below and a suite that runs both belong to it, and a budget record is written only when
+    # the tree is still this one afterwards. A13: the same value feeds the reuse, so it is not taken twice.
+    budget_fp = tested_fp or (tree_fp_of(project_dir) if budget_s > 0 and use_cache else None)
 
-    def reuse_full_pass(fp=None):
-        """Mark every reusable suite PASS from the last full PASS of this exact content; its receipt, or None."""
-        found = cached_full_pass(project_dir, args.matrix, fp)
+    def reuse_from(found, budget_run=False):
+        """Mark every reusable suite PASS from `found`, the receipt (or the budget record) of this exact content; it, or None."""
         prev = {x.get("id"): x for x in (found or {}).get("tests") or []}
         untested = set((found or {}).get("untested") or [])   # an exit-4 receipt: those run again
         try:
@@ -4783,8 +4878,20 @@ def main():
                       "log": prev[t["id"]].get("log"), "exit_code": 0,
                       "tested_at": float(found.get("tested_at") or 0),
                       "label": tr(f"PASS (dùng lại kết quả lúc {at}, cùng nội dung)", f"PASS (reused from {at}, same content)")})
-        print(f"    {CYAN}▶ {tr(f'dùng lại PASS đầy đủ lúc {at}: cùng nội dung, cùng cách đọc kết quả, cùng ma trận (--no-cache để chạy lại)', f'reusing the full PASS of {at}: same content, result format and matrix (--no-cache to re-run)')}{RESET}")
+        if budget_run:
+            print(f"    {CYAN}▶ {tr(f'dùng lại suite đã PASS trong lượt hết ngân sách lúc {at}: cùng nội dung, cùng cách đọc kết quả, cùng ma trận; suite chưa chạy thì chạy bây giờ (--no-cache để chạy lại hết)', f'reusing the suites that passed in the budget-cut run of {at}: same content, result format and matrix; the suites that did not run run now (--no-cache to re-run all)')}{RESET}")
+        else:
+            print(f"    {CYAN}▶ {tr(f'dùng lại PASS đầy đủ lúc {at}: cùng nội dung, cùng cách đọc kết quả, cùng ma trận (--no-cache để chạy lại)', f'reusing the full PASS of {at}: same content, result format and matrix (--no-cache to re-run)')}{RESET}")
         return found
+
+    def reuse_full_pass(fp=None):
+        """Mark every reusable suite PASS from the last full PASS of this exact content; its receipt, or None. A non-forced run
+        (the Stop hook) also reads the record a budget-cut run left (BUDGET_RECORD) when the receipt gives it nothing."""
+        for name in ((None,) if force_reason else (None, BUDGET_RECORD)):
+            found = reuse_from(cached_full_pass(project_dir, args.matrix, fp, name), name is not None)
+            if found:
+                return found
+        return None
 
     def receipt_stamp():
         sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -4797,9 +4904,9 @@ def main():
 
     stamp_before = receipt_stamp() if use_cache else None
     if use_cache:
-        # tested_fp was taken just above and nothing has run since: the same tree (A13). The re-check after the lock wait
-        # below takes a fresh one: the tree may have changed while this run waited.
-        cache = reuse_full_pass(tested_fp)
+        # budget_fp (= tested_fp for a forced run) was taken just above and nothing has run since: the same tree (A13). The
+        # re-check after the lock wait below takes a fresh one: the tree may have changed while this run waited.
+        cache = reuse_full_pass(budget_fp)
     to_run = [t for t in regression_tests if t.get("mode") != "cached"]
     lock_fh, lock_held = (acquire_test_run_lock(project_dir)
                           if run_tests and any(t.get("command") for t in to_run) else (None, True))
@@ -4815,15 +4922,7 @@ def main():
     # and the test scripts run so far go to DEVKIT_GATE_DONE so run_impacted.sh skips them.
     ran_cmds, done_scripts = {}, []
     _config_snaps = snapshot_local_configs(project_dir)
-    # GATE_TOTAL_BUDGET_S: seconds after which no NEW suite starts (a Stop hook has a hard timeout; 2026-10-02: a run of
-    # ~10 suites at 600 s each, no total cap, was cut silently at 27 min). Suites left are UNTESTED/BUDGET, never PASS.
-    # ponytail: a suite already running is not cut (its own --timeout bounds it), and nothing resumes where it stopped.
-    # Persist per-suite PASS keyed by tree_fp if a budget-cut run is ever the normal case.
-    try:
-        budget_s = float(os.environ.get("GATE_TOTAL_BUDGET_S") or 0)
-    except ValueError:
-        budget_s = 0.0
-    budget_start = time.monotonic()
+    budget_start = time.monotonic()   # budget_s: parsed above, with the fingerprint the budget record is bound to
     # Plan 1c (2026-10-07): suites the base-ref matrix marks "parallel_safe": true, next to each other in matrix order,
     # run side by side as one group: the DevKit's five independent suites took the SUM of their times. A suite without
     # the flag is a barrier: the group before it finishes first, so nothing runs next to it. Only mode "full" joins a
@@ -5327,6 +5426,13 @@ def main():
             write_full_pass_receipt(project_dir, exit_code, args.matrix, regression_tests,
                                     tested_at=float(cache.get("tested_at") or 0) if cache else None,
                                     tested_fp=tested_fp, untested=receipt_untested, partial=partial)
+        # The budget record (BUDGET_RECORD) is a file of its own, so the receipt above stays byte for byte whatever happens here:
+        # a suite that FAILED or TIMED OUT drops it (never a FAIL item), a budget cut writes what finished (never on another tree).
+        if run_tests and any(t.get("status") in ("FAIL", "TIMEOUT") for t in regression_tests):
+            drop_budget_record(project_dir)
+        elif budget_cut and budget_fp:
+            write_budget_record(project_dir, args.matrix, regression_tests, budget_fp,
+                                tested_at=float(cache.get("tested_at") or 0) if cache else None)
     finally:
         # Only now may another run take the test-run lock: it finds the receipt (or its settled absence), and the
         # checklist update below does not run under it. A BUSY run holds no lock (lock_fh is None); a kill before
