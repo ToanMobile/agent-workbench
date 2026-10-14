@@ -1247,8 +1247,42 @@ def _hook_module(name):
 TRUNK_STATUS_EXIT = 5   # `--status` on a trunk-mode main checkout (Antigravity and other agents without hooks read the code)
 # What may still run against a trunk-mode main checkout: the integrator (agent-kit worktree …, worktree.py …) and syncing main with origin
 # (fetch, push, a pull that only fast-forwards). The gate is not among them: it writes the tracked checklist there (v6 item 7).
-_TRUNK_ALLOWED = _Re(r"^\s*(?:\S*/)?agent-kit\s+(?:worktree|wt)\s|^\s*(?:python3?\s+(?:-I\s+)?)?\S*worktree\.py\s"
-                     r"|^\s*git(?:\s+-C\s+\S+)?\s+(?:fetch|push)\b|^\s*git(?:\s+-C\s+\S+)?\s+pull\s+(?:\S+\s+)*--ff-only\b")
+_TRUNK_ALLOWED = _Re(r"^\s*(?:\S*/)?agent-kit\s+(?:worktree|wt)\s|^\s*(?:python3?\s+(?:-I\s+)?)?\S*worktree\.py\s")
+_LOCAL_REMOTE = _Re(r"^(?:\.{1,2}(?:/|$)|/|~|file:)")   # a remote that is a path: `git fetch . x:main`, `git pull . branch` move THIS repo's refs
+
+
+def _git_verb(seg):
+    """(verb, its words) of a segment that is `git [options] <verb> ...`, else (None, [])."""
+    import shlex   # noqa: PLC0415 - only a segment that names git pays for it
+    try:
+        words = shlex.split(seg)
+    except ValueError:
+        return None, []
+    if not words or os.path.basename(words[0]) != "git":
+        return None, []
+    i = 1
+    while i < len(words) and words[i].startswith("-"):   # git's own options; some take the next word as their value
+        i += 2 if words[i] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path") else 1
+    return (words[i], words[i + 1:]) if i < len(words) else (None, [])
+
+
+def _updates_checked_out_branch(seg):
+    """`git fetch [-u | --update-head-ok] ...` (also through pull): the only way git lets a fetch move the branch a checkout stands on - main's own,
+    from any worktree: `git fetch . HEAD:main -u` moved main past the integrator's gate (OCR 9, 14/10). Without the flag git refuses."""
+    verb, args = _git_verb(seg)
+    return verb in ("fetch", "pull") and any(a == "--update-head-ok" or a.startswith("--update-head-ok=") or re.fullmatch(r"-[A-Za-z]*u[A-Za-z]*", a)
+                                              for a in args)
+
+
+def _trunk_sync(seg):
+    """The segment only syncs with a REMOTE, which main may still do: `git [-C dir] fetch|push ...` whose remote is no local path, and `git pull
+    --ff-only` with no remote or `origin` and no refspec that names a local ref (`pull --ff-only . branch` fast-forwards main onto any local
+    branch, past the integrator's gate; OCR 9, 14/10). ponytail: a remote CONFIGURED to a local path (`remote.origin.url = .`) is not looked up."""
+    verb, args = _git_verb(seg)
+    pos = [a for a in args if not a.startswith("-")]
+    if verb not in ("fetch", "push", "pull") or _updates_checked_out_branch(seg) or (pos and _LOCAL_REMOTE.match(pos[0])):
+        return False
+    return verb != "pull" or ("--ff-only" in args and pos[:1] in ([], ["origin"]) and not any(":" in a for a in pos[1:]))
 TRUNK_MSG = ("⛔ [DevKit] Trunk mode: main checkout {main} chỉ để GỘP — không phiên nào sửa ở đây (người dùng 14/10: mọi phiên làm trong "
              "worktree riêng, không ai giữ main). Gọi tool EnterWorktree (không tham số, hoặc name=<việc>): phiên có worktree riêng dưới "
              ".claude/worktrees/, DevKit tự dựng (chép cấu hình, cài DevKit); sửa, test, commit ở đó; hook Stop tự gộp vào main. Agent không "
@@ -1347,7 +1381,9 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
     # An allowed segment is excused only as a git write / gate run: its own redirects still count (OCR 14/10: `git fetch > src/a.py`,
     # `agent-kit worktree list > README.md` overwrote tracked files of main), so the redirect / file-write scan reads the ORIGINAL line
     pieces = _split_segments(_clean(cmd))
-    stripped = "".join(":" if i % 2 == 0 and _TRUNK_ALLOWED.search(p) else p for i, p in enumerate(pieces))
+    if any(i % 2 == 0 and _updates_checked_out_branch(p) for i, p in enumerate(pieces)):
+        return True
+    stripped = "".join(":" if i % 2 == 0 and (_TRUNK_ALLOWED.search(p) or _trunk_sync(p)) else p for i, p in enumerate(pieces))
     if (GIT_WRITE.search(stripped) or GATE.search(stripped)) and write_hits_locked(stripped, main, cwd, sid)[0]:
         return True
     here = cwd or main

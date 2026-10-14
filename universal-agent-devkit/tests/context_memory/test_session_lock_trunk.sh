@@ -98,6 +98,26 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (False, "cat <<EOF | python3 writing to /tmp", m, B("cat <<'EOF' | python3\nopen('/tmp/x.txt','w').write('x')\nEOF")),
     (False, "an apostrophe in a trailing comment after a read", m, B("git status # it's clean")),
     (False, "a redirect that only appears in a comment", m, B("git status # then echo x > README.md, don't")),
+    # OCR 9 (14/10): "syncing main with origin" is a remote sync only - no local path as the remote, no refspec that names a local ref, no -u
+    (True, "pull --ff-only of a local branch (remote `.`) in main", m, B("git pull --ff-only . feature")),
+    (True, "pull --ff-only with options after the remote, a local branch", m, B("git pull origin --ff-only feature:main")),
+    (True, "git -C main pull --ff-only . branch, run from a worktree", w, B(f"git -C {m} pull --ff-only . feature")),
+    (True, "pull --ff-only from a path remote in main", m, B("git pull --ff-only ../other main")),
+    (True, "fetch into main's own branch with --update-head-ok, remote `.`", m, B("git fetch . HEAD:main --update-head-ok")),
+    (True, "the same run from a worktree (it moves main's ref, whoever runs it)", w, B("git fetch . HEAD:main --update-head-ok")),
+    (True, "fetch origin x:main --update-head-ok", w, B("git fetch origin x:main --update-head-ok")),
+    (True, "fetch -u ., the short flag", w, B("git fetch -u . HEAD:main")),
+    (True, "fetch with a clustered short flag containing u", w, B("git fetch -pu origin x:main")),
+    (False, "pull --ff-only of a local branch in a worktree (it fast-forwards the worktree, not main)", w, B("git pull --ff-only . feature")),
+    (False, "fetch origin", m, B("git fetch origin")),
+    (False, "fetch origin main", m, B("git fetch origin main")),
+    (False, "fetch --all --prune", m, B("git fetch --all --prune")),
+    (False, "fetch into remote-tracking refs", m, B("git fetch origin main:refs/remotes/origin/main")),
+    (False, "fetch from a worktree without the flag (git itself refuses to touch a checked-out branch)", w, B("git fetch origin")),
+    (False, "pull --ff-only origin main", m, B("git pull --ff-only origin main")),
+    (False, "git -C main pull --ff-only (no remote)", w, B(f"git -C {m} pull --ff-only")),
+    (False, "push -u origin <branch>", m, B("git push -u origin feature")),
+    (False, "push origin HEAD:refs/heads/x", m, B("git push origin HEAD:refs/heads/x")),
 ]
 bad = 0
 for want, label, cwd, (tool, ti, cmd) in cases:
