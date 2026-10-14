@@ -704,3 +704,13 @@ test('su kien init cua agy in JSON co khoang trang ("event": "init"): van nhan r
   assert.equal(r.conversationId, 'd5d5d5d5-2222-3333-4444-555555555555');
   assert.match(fs.readFileSync(r.parsed.out, 'utf8'), /"event": "init"/, 'agy gia khong in JSON co khoang trang: test khong kiem dieu no noi');
 });
+
+test('pm_doctor in trang thai agy (binary, so dang ky hong) CA KHI model mac dinh la bac IDE: task van chay agy qua model cua task / pm_dispatch', async (t) => {
+  fakeAgy(t, { ANTIGRAVITY_LS_ADDRESS: '127.0.0.1:9', ANTIGRAVITY_CSRF_TOKEN: 'x' });
+  process.env.ANTIGRAVITY_PM_AGY = path.join(os.tmpdir(), 'agpm-khong-co-agy-r2', 'agy');   // agy vang mat tren may
+  fs.writeFileSync(registryFile(), '{"broken": ');
+  const dir = mkProject(t, { defaultModel: 'flash' });
+  const out = await call('pm_doctor', { project: dir });
+  assert.match(out.text, /agy: KHONG TIM THAY/, out.text);
+  assert.match(out.text, /SO DANG KY AGY HONG/, out.text);
+});

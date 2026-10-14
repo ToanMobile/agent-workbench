@@ -235,13 +235,13 @@ export const TOOLS = [
         + ` · file chep vao worktree oracle: ${(cfg.oracle?.copyToWorktree || []).join(', ') || '(khong)'}`);
       L.push('');
       L.push(`agentapi: ${agentapiPath() || 'KHONG TIM THAY'}`);
-      if (isAgyModel(cfg.defaultModel)) {
-        const ap = agyPermissionPolicy(cfg.projectRoot);
-        L.push(`agy: ${agyPath() || 'KHONG TIM THAY'} · model mac dinh ${cfg.defaultModel}`);
-        const regProblem = agyRegistryProblem();
-        if (regProblem) L.push(`  SO DANG KY AGY HONG: ${regProblem}`);
-        L.push(`  agy --dangerously-skip-permissions: ${ap.ok ? 'DUOC' : 'KHONG DUOC — dispatch bi tu choi'} (chinh sach tu chay lenh: ${ap.policy || 'chua dat'} · ${ap.from})`);
-      }
+      // agy in CA KHI model mac dinh la bac IDE: task van chay qua agy khi pm_task_create / pm_dispatch chon model cu the,
+      // va doctor phai giai thich duoc vi sao dispatch do loi (OpenCodeReview 14/10)
+      const ap = agyPermissionPolicy(cfg.projectRoot);
+      L.push(`agy: ${agyPath() || 'KHONG TIM THAY'} · model mac dinh ${cfg.defaultModel}${isAgyModel(cfg.defaultModel) ? '' : ' (bac IDE: agy chi chay khi task / pm_dispatch chon model cu the)'}`);
+      const regProblem = agyRegistryProblem();
+      if (regProblem) L.push(`  SO DANG KY AGY HONG: ${regProblem}`);
+      L.push(`  agy --dangerously-skip-permissions: ${ap.ok ? 'DUOC' : 'KHONG DUOC — dispatch qua agy bi tu choi'} (chinh sach tu chay lenh: ${ap.policy || 'chua dat'} · ${ap.from})`);
       const proj = resolveProject(cfg.projectRoot);
       if (proj) {
         L.push(`Project trong Antigravity: ${proj.name} · id ${proj.id}${proj.match === 'parent' ? ' (khop qua thu muc cha)' : ''}`);

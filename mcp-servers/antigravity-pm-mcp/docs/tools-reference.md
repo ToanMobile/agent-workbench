@@ -11,7 +11,7 @@ Mọi tool nhận `project` (mặc định: thư mục đang làm việc, hoặc
 | `project` | không | Gốc project |
 | `ping` | không | `true` ⇒ mở một hội thoại thử vô hại (tốn quota Antigravity) |
 
-In ra: cấu hình đang hiệu lực, `testCommand`, `auditCommands`, file luật sẽ nhét vào prompt, các provider ảnh, đường dẫn `agentapi`, kết nối language server, và danh sách 8 task gần nhất.
+In ra: cấu hình đang hiệu lực, `testCommand`, `auditCommands`, file luật sẽ nhét vào prompt, các provider ảnh, đường dẫn `agentapi`, kết nối language server, và danh sách 8 task gần nhất. Luôn in cả đường dẫn `agy`, sổ đăng ký agy hỏng (nếu có) và việc có được chạy `--dangerously-skip-permissions` không, kể cả khi `defaultModel` là bậc IDE: task vẫn đi qua `agy` khi `pm_task_create` / `pm_dispatch` chọn model cụ thể.
 
 `ping=true` còn kiểm: `new-conversation` trả về id, workspace của hội thoại có khớp project không, `send-message` có gửi được vào hội thoại cũ không.
 
