@@ -19,6 +19,7 @@
 | I.1 | Mục tiêu DevKit 100/100: việc còn lại (Đợt 31 OCR, Giai đoạn C, chiều 5 ngữ cảnh, giai đoạn D…) | `goal-100-2026-10-13.md` | Kiểm lại 13/10 17:00: việc 1 vẫn chưa commit, chưa có gate `--full` exit 0 trên main (lần exit 0 lúc 16:30 là của worktree `docsplit`) → I.0 W0; việc 2, 4: patch nháp vẫn áp sạch vào cây hiện tại → W3, W4; việc 5: đã có quyết định 12/10 → W4; việc 6, 7 → W4, W2; việc 9: xong |
 | I.2 | Plan C+D: không ai sửa trong main, một bộ gộp tuần tự | `trunk-integrator-no-shared-main.md` | Phần lười (D3 `merge=union`, race, dọn mồ côi, một worktree mỗi phiên) đưa vào I.0 W1; phần còn lại (C2, D1 nới khoá) để sau, xem I.0 "Để sau" |
 | I.3 | Đề xuất bắt các bug agent không thấy (P1–P10) | `catch-bugs-agents-cannot-see.md` | Đối chiếu 13/10 17:00 với code: P1, P3 (mẫu), P5, P8 xong; P2, P10 một phần; P4, P6, P7, P9 chưa làm (bảng ở đầu mục). Để sau I.0 |
+| I.4 | antigravity-pm-mcp qua `agy` (Argon): 7 góp ý OpenCodeReview còn mở + việc dở ngoài code | — | Mới 14/10 (người dùng: "7 góp ý đó đưa vào plan tôi update sau"). Chưa làm; mỗi mục cần test ĐỎ trước khi sửa |
 | II.A | DevKit chạy nhanh: nghiên cứu 04/10 và kế hoạch 3 đợt | `devkit-speed.md` | Đối chiếu 13/10 17:00 với code: phần lớn xong hoặc đã bỏ sau khi đo. Còn mở: đồng bộ ba danh sách loại trừ, `security_gate` tăng dần, `churn_guard` đọc đuôi, `local_state_sha` một lần mỗi lượt, `.sandboxes/` chưa được ignore. Bảng ở đầu mục |
 | II.B | Living Regression Checklist V3 | `regression-checklist-v3.md` | Phụ lục B: P0–P9 xong 24/09/2026; người dùng quyết không cài job đêm |
 | II.C | UI context injection Zero-Slop | `ui-context-injection-zero-slop.md` | Thực thi ngày 03/10/2026 (mục "Audit và thực thi"); hai điểm chờ người quyết: người dùng đã quyết 14/10 (squash theo essentials; gradient tím-xanh cấm trừ khi gọi đúng tên style) |
@@ -492,6 +493,29 @@ P5 + P6 + P7 + P8 (friction that cost the most time this session) → P9 + P10.
 No item here has been tried in this repo. P3's claim that Robolectric inserts zero insets is observed, not
 measured for every API level. The OfficeReader fixes referenced are commit `7ee3d230a` (selection) and an
 uncommitted working-tree change (pill, overlay stack).
+
+### I.4 antigravity-pm-mcp qua `agy` (Argon): việc còn mở *(OpenCodeReview 14/10/2026; người dùng: "7 góp ý đó đưa vào plan tôi update sau")*
+
+Đã vào main 14/10: `a2ebb5c` (PM chạy model cụ thể qua `agy --model`, mặc định `gemini-4-argon-high`), `0e6927d` (cờ `giaoDefault`), `df873e3` (sửa `node_modules`). Cách làm và số đo: `.agents/local/memory/claude-auto/pm-mcp-argon-via-agy.md`. Bảy góp ý dưới đây là phần còn lại của lượt OCR cuối trên dải đã commit (`--from 7528cc945edd`), sau 3 vòng reviewer ngữ cảnh sạch và 7 vòng OCR đã sửa phần còn lại. Mỗi mục: viết test ĐỎ trước, sửa, rồi chạy lại OCR trên diff cuối.
+
+| # | Mức | Nơi | Vấn đề | Hướng sửa |
+|---|---|---|---|---|
+| 1 | medium | `tests/lib/clean_git_env.sh:23` | `ANTIGRAVITY_PM_GLOBAL_CONFIG` trỏ vào `${TMPDIR:-/tmp}/agpm-test-no-global-config/.antigravity-pm.json`: đường dẫn đoán được trong `/tmp` dùng chung. Người khác (hoặc một lần chạy cũ) tạo file đó với `giaoDefault: true` thì mọi test source lib bị lái, đúng cái rò rỉ dòng này muốn chặn | Đường dẫn không thể tồn tại (vd dưới `/dev/null/`) |
+| 2 | medium | `src/config.js:27` | Mặc định `pro` → `gemini-4-argon-high` đổi hành vi mọi project không đặt `defaultModel`: máy thiếu `agy` thì dispatch lỗi; nơi IDE ở EAGER/TURBO thì task mới chạy headless với `--dangerously-skip-permissions` | Là quyết định của người dùng 14/10 (đã ghi CHANGELOG, đã đặt trong `~/.antigravity-pm.json`). Phương án nhẹ hơn: mặc định trong mã giữ `pro`, Argon đặt tường minh ở file cấu hình chung và ví dụ |
+| 3 | medium | `src/agentapi.js:170` | Lấy lại khoá cũ không nguyên tử: hai PM cùng `stat` thấy một khoá cũ, A xoá rồi tạo khoá mới, B xoá luôn khoá mới của A, cả hai vào đoạn găng và ghi đè `agy-conversations.json` (mất mục thì hội thoại agy rơi sang `agentapi`: "trajectory not found"). Chỉ xảy ra sau khi một PM chết giữa đoạn găng vài mili giây | `renameSync` khoá cũ sang tên duy nhất, chỉ thử lại nếu rename thành công; hoặc kiểm lại mtime / nội dung sau khi xoá |
+| 4 | low | `src/agentapi.js:343` | Phát hiện sự kiện `init` bằng chuỗi con `"event":"init"` (JSON gọn). Format đổi nhỏ (`"event": "init"`) thì mọi dispatch agy treo 60 giây rồi lỗi | Kiểm `j.event === 'init'` trên object đã parse; chuỗi con chỉ để lọc nhanh |
+| 5 | low | `src/tools.js:342` | Ping dừng nhóm tiến trình bằng `kill(pid, 0)` rồi `kill(-pid)`. Trong tối đa 90 giây pid có thể đã thoát và bị dùng lại: giết nhầm nhóm của tiến trình lạ | So với `pidTag` (ps lstart) lưu trong sổ khi có; chỉ rơi về `kill -0` khi `ps` hỏng |
+| 6 | low | `src/tools.js:237` | `pm_doctor` chỉ in chẩn đoán agy (binary, sổ hỏng, chính sách quyền) khi `defaultModel` là model agy. Task dùng agy qua `args.model` hoặc `task.model` mà mặc định là bậc IDE thì doctor không giải thích vì sao dispatch lỗi | Luôn in trạng thái binary `agy` và sổ hỏng, hoặc in khi có task dùng model agy |
+| 7 | medium | `src/tools.js:110` | `task.model` không cho biết chắc hội thoại đi qua agy: dispatch dùng `args.model \|\| task.model` và không cập nhật `task.model`, nên task `pro` vẫn có thể có hội thoại agy. Khi `ps` hỏng, `safeAgyTurn` trả `null` ("hội thoại IDE"), nudge không bị chặn, `sendMessage` vào `agySendMessage` ném lỗi không phải `AGY_TURN_BUSY`, và `pm_status` mất cả báo cáo | Quyết theo việc hội thoại có trong sổ không (sổ đọc được mà `ps` hỏng thì mục vẫn biết); hoặc lưu model thật lúc dispatch (`recordDispatch`) rồi kiểm cái đó |
+
+Cũng còn mở, đã biết từ các vòng review trước (chi tiết ở memory `pm-mcp-argon-via-agy`):
+- Ngân sách dọn sổ (`asked >= 3`) dừng cả vòng lặp: sau 3 mục có pid, các mục cũ không có pid vẫn bị giữ lại. Nên `continue` riêng cho mục cần `ps`, không `break`.
+- `agyNewConversation` không có `onSpawn` (chưa có conversationId trước sự kiện `init`): PM bị SIGKILL trong lúc chờ (tối đa 60 giây) thì agy chạy mồ côi với `--dangerously-skip-permissions`. Hướng: ghi một bản ghi chờ theo pid để PM sau tìm và dừng.
+- Lời nhắc đi qua argv: người dùng khác đọc được qua `ps` suốt cả lượt; Linux giới hạn 128 KB cho một đối số. Hướng: stdin hoặc file 0600 nếu `agy` hỗ trợ.
+- Đoạn "SIGKILL nhóm tiến trình, bỏ qua lỗi" lặp ở nhiều chỗ (`agentapi.js` ×3, `util.js`, `tools.js`): gom thành một helper.
+- `ps` đồng bộ dưới khoá chặn event loop của MCP server (đã chặn trên 5 × 1,5 giây); đáng đổi sang bất đồng bộ nếu thấy khựng.
+
+Việc ngoài code: `GeelyEx2/.antigravity-pm.json` và `Goods…/.antigravity-pm.json` vẫn đặt `defaultModel: flash` (file repo thắng file chung; repo khác có phiên đang chạy nên chưa đụng); các phiên Claude đang mở giữ mã MCP cũ và từ chối model Argon cho tới khi khởi động lại; hook `giaoDefault` chỉ gửi lệnh một lần mỗi phiên nên có thể mất sau `/compact`.
 
 ## Phần II — Đã làm (giữ để biết vì sao và cách đo)
 
