@@ -1944,7 +1944,13 @@ def _carry_secrets(main, items):
             continue
         made = False
         try:
-            os.makedirs(os.path.dirname(dst), mode=0o700, exist_ok=True)
+            cur = main
+            for part in rel.split("/")[:-1]:   # one by one: makedirs(mode=) applies it to the last folder only, its parents get 0777 & ~umask
+                cur = os.path.join(cur, part)
+                try:
+                    os.mkdir(cur, 0o700)
+                except FileExistsError:
+                    pass
             fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600)
             made = True
             with os.fdopen(fd, "wb") as fh:
@@ -2546,7 +2552,8 @@ def cmd_gc(cwd, args):
                 kept.append((top, _gc_why(unique)))
             continue
         if carry:   # A.1b #12: the secrets only this folder holds go to main first (--dry-run: only said)
-            notes[top] = tr(" (chép vào main trước: ", " (copied into main first: ") + ", ".join(rel for rel, _p in carry[:5]) + ")"
+            notes[top] = (tr(" (sẽ chép vào main trước: ", " (would copy into main first: ") if dry else tr(" (chép vào main trước: ", " (copied into main first: ")) \
+                + ", ".join(rel for rel, _p in carry[:5]) + ")"
             if not dry:
                 _copied, refused = _carry_secrets(main, carry)
                 if not refused:   # checked again: the copies are main's now, so nothing left may be unique

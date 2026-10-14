@@ -14,6 +14,7 @@
 #   6 control: a secret-like file under a rebuildable folder (node_modules/) and a symlink are not carried, the removal goes on
 #   7 gc: a leftover folder (admin dir gone) whose only unique file is a secret -> copied to main, the folder deleted; --dry-run copies nothing
 #   8 gc: a different file at that path in main -> the folder is kept, the reason names it, main's file intact
+#   11 a deep secret path: every folder the carry creates in main is 0700
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
 export DEVKIT_LANG=en WORKTREE_GC_MIN_AGE_S=0
@@ -103,6 +104,8 @@ new_main g7; O="$TMP/g7-orphan"; G "$P" worktree add -q --detach "$O" && rm -rf 
 mkdir -p "$O/keystore" && echo "ORPHAN-ONLY" > "$O/keystore/only.jks" && chmod 640 "$O/keystore/only.jks"
 (cd "$P" && python3 "$WTPY" gc --dry-run) > "$TMP/gc.out" 2>&1
 [ -d "$O" ] && [ ! -e "$P/keystore/only.jks" ] && ok "7: gc --dry-run deletes and copies nothing" || fail "7: dry-run touched something: $(cat "$TMP/gc.out")"
+grep -q "would copy into main first" "$TMP/gc.out" && ! grep -q "copied into main first" "$TMP/gc.out" \
+  && ok "  … and its report says would copy (a user must not delete the folder believing the key is already in main)" || fail "  … dry-run wording: $(cat "$TMP/gc.out")"
 (cd "$P" && python3 "$WTPY" gc --log="$TMP/gc.log") > "$TMP/gc.out" 2>&1
 [ "$(cat "$P/keystore/only.jks" 2>/dev/null)" = ORPHAN-ONLY ] && [ "$(mode "$P/keystore/only.jks" 2>/dev/null)" = 0o600 ] && clean_status \
   && ok "  … gc copies the secret into main (0600, ignored)" || fail "  … not in main: $(cat "$TMP/gc.out")"
@@ -140,5 +143,14 @@ mkdir -p "$O/node_modules/pkg/test" && echo '{"type":"x"}' > "$O/node_modules/pk
 [ ! -d "$O" ] && [ ! -e "$P/node_modules" ] && [ "$(cat "$P/fixtures/credentials-test.json")" = v2 ] \
   && ok "10: gc deletes an orphan whose only such files are a node_modules fixture and a committed fixture (nothing copied into main)" \
   || fail "10: kept or copied: $(cat "$TMP/gc.out")"
+
+# 11 (OpenCodeReview A1): the secret's path needs SEVERAL new folders in main (no android/ there): every folder the carry creates is 0700, not only the
+#     last one (os.makedirs applies its mode to the leaf; the parents got 0777 & ~umask, world-listable)
+new_main m11; W="$TMP/sc-k"; wt "$W"
+mkdir -p "$W/android/app/keystore" && echo "DEEP" > "$W/android/app/keystore/upload.jks"; echo k > "$W/k.txt"
+(umask 022; fin "$W"); rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$P/android/app/keystore/upload.jks" 2>/dev/null)" = DEEP ] && ok "11: a deep secret path is carried" || fail "11: (rc=$rc): $(cat "$TMP/out")"
+[ "$(mode "$P/android")" = 0o700 ] && [ "$(mode "$P/android/app")" = 0o700 ] && [ "$(mode "$P/android/app/keystore")" = 0o700 ] \
+  && ok "  … and every new folder on the way is 0700 (umask 022)" || fail "  … modes: android $(mode "$P/android" 2>&1) app $(mode "$P/android/app" 2>&1) keystore $(mode "$P/android/app/keystore" 2>&1)"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_secret_carry: all passed" || { echo "❌ test_worktree_secret_carry: $FAILS failed"; exit 1; }
