@@ -74,11 +74,15 @@ guard "$H" "$M" "env -S 'rm \$HOME/src/a.kt'"; rc=$?
 # The oracle is env itself: the operands targets() reads from `env -S 'rm LINE'` are the words this machine's env makes of LINE; a line env
 # refuses must come back as an "unparsed" hit (the callers' fail-closed kind), never as a cut-off word list. A line env EXPANDS (${VAR}) is
 # unparsed on purpose too: what the variable holds is not known here.
-python3 -I - "$DEVKIT_DIR/hooks" <<'PY' > "$TMP/diff.out"; rc=$?
+env_oracle() { python3 -I - "$DEVKIT_DIR/hooks" > "$TMP/diff.out" <<'PY'
 import shlex, subprocess, sys
 sys.dont_write_bytecode = True
 sys.path.append(sys.argv[1])
 import shell_writes as sw
+probe = subprocess.run(["env", "-S", "/usr/bin/printf x"], capture_output=True, text=True)
+if probe.returncode or probe.stdout != "x":   # no -S (or no /usr/bin/printf) here: no oracle, and a failure of every line would be this host's
+    print("SKIP env -S is not usable here")
+    sys.exit(3)
 PRINT = "/usr/bin/printf [%s] x "          # `x` first: a line of no words and one of an empty word print the same
 LINES = [r"a b", r"'a\c' b", r'"a\c" b', r"a\c b", r"'a\_b' c", r'"a\_b" c', r"a\_b c", r"a\_\_b", r"\_a b\_", r"'f\'g' h",
          r"'a\\b' c", r"'a\xb' c", r"a\xb c", r'"a\"b" c', r"a\'b c", r"'a'b c", r"'' c", r"'ab c", r'"ab c', "a\\", r'"a\tb" c',
@@ -100,8 +104,16 @@ for line in LINES:
     bad += not ok
 sys.exit(1 if bad else 0)
 PY
-[ "$rc" = 0 ] && ok "env -S line splitting: $(grep -c '^PASS' "$TMP/diff.out") lines read as this machine's env reads them" \
-  || { fail "env -S line splitting differs from env: $(grep -c '^FAIL' "$TMP/diff.out") line(s)"; grep '^FAIL' "$TMP/diff.out" | head -8; }
+}
+env_oracle; rc=$?
+if [ "$rc" = 3 ]; then echo "- skipped: this env has no -S, so there is nothing to compare the env -S line splitting with"
+elif [ "$rc" = 0 ]; then ok "env -S line splitting: $(grep -c '^PASS' "$TMP/diff.out") lines read as this machine's env reads them"
+else fail "env -S line splitting differs from env: $(grep -c '^FAIL' "$TMP/diff.out") line(s)"; grep '^FAIL' "$TMP/diff.out" | head -8; fi
+# on a host whose env has no -S (BusyBox / Alpine, coreutils < 8.30) every line would fail for the host's reason: the block says so and skips
+mkdir -p "$TMP/noS" && printf '#!/bin/sh\ncase "$1" in -S*) echo "env: invalid option -- S" >&2; exit 125;; esac\nexec /usr/bin/env "$@"\n' > "$TMP/noS/env" && chmod +x "$TMP/noS/env"
+PATH="$TMP/noS:$PATH" env_oracle; rc=$?
+[ "$rc" = 3 ] && ok "  … with an env that has no -S the oracle block is skipped (exit 3), not failed line by line" \
+  || fail "  … env without -S: rc $rc, $(grep -c '^FAIL' "$TMP/diff.out") FAIL line(s)"
 # `git -C ~/x …`: the shell expands ~ before git sees it, the scanner joined `~/x` to the cwd (OpenCodeReview 14/10, issues-bugs.md
 # A.4 (c)): a commit into the main checkout from the worktree went through, one into the worktree from the main checkout's cwd was
 # blocked. HOME = the fixture dir, so ~/main is the main checkout and ~/wt the worktree.
