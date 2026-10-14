@@ -4,6 +4,8 @@
 # killed by its timeout lets the Stop through (issues-bugs.md A.4, FIFO class; the subagent fix of post-fix-gate/proof_gate/push_gate,
 # 14/10, named these 15 hooks as left). Now `[ -e X ]`: anything already there is kept as it is.
 # Dynamic: each hook runs with a FIFO at that path and must end within 10 s. Static: no hook keeps the `-f` form.
+# Each hook runs in a process group of its own, killed whole on the timeout; a canary hook whose grandchild blocks on a FIFO checks
+# that first (OpenCodeReview 14/10: subprocess.run(timeout=) killed only the bash child and left the grandchild blocked for ever).
 # The fixture ignores .claude/audit-gate/ in the project's .gitignore, as all 5 repos do (checked 14/10): git itself opens every
 # .gitignore of a folder it walks, so a FIFO .gitignore in a folder git DOES walk hangs `git status` / `ls-files` - git's limit, not a
 # hook's write (the hooks bound their git calls; ponytail: guard it if a planted FIFO is ever seen in a tracked folder).
@@ -12,10 +14,63 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 python3 - "$DEVKIT_DIR" "$TMP" <<'PY'
-import glob, json, os, re, subprocess, sys
+import contextlib, fcntl, glob, json, os, re, signal, subprocess, sys, time
 
 dk, tmp = sys.argv[1:3]
 fails = 0
+
+
+def ends(argv, stdin, env, cwd, limit=10):
+    """True when the hook ended within `limit` s; False = HUNG. The hook runs in a process group of its own: on the timeout the
+    whole group is killed and its pipes are never read again (subprocess.run(timeout=) killed only the bash child, so a grandchild
+    blocked on a FIFO stayed blocked for ever, holding the pipes - and an interpreter that reads them after the kill hangs on it)."""
+    with subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=cwd,
+                          start_new_session=True) as proc:
+        try:
+            proc.communicate(stdin, timeout=limit)
+            return True
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):   # the group ended by itself right at the limit
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+            return False
+
+
+# The harness itself first (OpenCodeReview 14/10, issues-bugs.md A.4 (d)): a hook whose GRANDCHILD blocks on a FIFO must be reported
+# HUNG, and nothing of it may outlive the case. The grandchild holds a lock while it lives (no pid to reuse): free = it is gone.
+c = os.path.join(tmp, "canary")
+os.makedirs(c)
+lock, ready, fifo = (os.path.join(c, n) for n in ("held.lock", "ready", "fifo"))
+os.mkfifo(fifo)
+with open(os.path.join(c, "grandchild.py"), "w") as fh:
+    fh.write("import fcntl, os, sys\nlock, ready, fifo = sys.argv[1:4]\nheld = open(lock, 'a')\nfcntl.flock(held, fcntl.LOCK_EX)\n"
+             "with open(ready + '.tmp', 'w') as r:\n    r.write(str(os.getpid()))\nos.rename(ready + '.tmp', ready)\n"
+             "open(fifo, 'w')   # no reader: blocks for ever, as a hook's write-open of a planted FIFO\n")
+with open(os.path.join(c, "hook.sh"), "w") as fh:
+    fh.write('python3 "$@"\necho unreachable\n')
+hung = not ends(["bash", os.path.join(c, "hook.sh"), os.path.join(c, "grandchild.py"), lock, ready, fifo], b"",
+                {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}, c, limit=2)
+deadline = time.monotonic() + 10
+while not os.path.exists(ready) and time.monotonic() < deadline:   # a grandchild still starting when the limit came
+    time.sleep(0.02)
+gone = False
+with open(lock, "a") as fh:
+    while not gone:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            gone = True
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.02)
+if hung and gone:
+    print("✔ harness: a hook whose grandchild blocks on a FIFO is reported HUNG, and its whole process group is gone")
+else:
+    print(f"✖ harness: reported HUNG={hung}, grandchild gone={gone} (a grandchild left blocked for ever, holding the hook's pipes)")
+    fails += 1
+    if not gone and os.path.exists(ready):
+        os.kill(int(open(ready).read()), signal.SIGKILL)   # the leaked canary is this test's own: do not leave it behind
+
 hooks = sorted(h for h in glob.glob(os.path.join(dk, "hooks", "*.sh"))
                if '/.gitignore" ] || printf' in open(h, encoding="utf-8", errors="replace").read())
 if len(hooks) < 15:
@@ -39,10 +94,9 @@ for h in hooks:
                "tool_name": "Bash", "tool_input": {"command": "ls"}, "prompt": "hi"}
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["CLAUDE_PROJECT_DIR"] = p
-    try:
-        subprocess.run(["bash", h], input=json.dumps(payload).encode(), capture_output=True, env=env, cwd=p, timeout=10)
+    if ends(["bash", h], json.dumps(payload).encode(), env, p):
         print(f"✔ {name}: ends with FIFOs at .claude/audit-gate/ (.gitignore, its log, test_run.lock)")
-    except subprocess.TimeoutExpired:
+    else:
         print(f"✖ {name}: HUNG on a FIFO at .claude/audit-gate/ (killed after 10 s)"); fails += 1
         continue
     # a hook that wrote anything there must leave a REGULAR .gitignore in the same run: the sweep runs BEFORE the .gitignore line
@@ -60,11 +114,9 @@ subprocess.run(["git", "init", "-q", p], check=True)
 os.mkfifo(os.path.join(p, ".claude", "audit-gate", "worktree_guard.log"))
 env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 env.update(CLAUDE_PROJECT_DIR=p, WORKTREE_GUARD="0")
-try:
-    subprocess.run(["bash", os.path.join(dk, "hooks", "worktree_guard.sh")], input=b'{"tool_name":"Bash"}', capture_output=True,
-                   env=env, cwd=p, timeout=10)
+if ends(["bash", os.path.join(dk, "hooks", "worktree_guard.sh")], b'{"tool_name":"Bash"}', env, p):
     print("✔ worktree_guard.sh WORKTREE_GUARD=0: ends with a FIFO at its log")
-except subprocess.TimeoutExpired:
+else:
     print("✖ worktree_guard.sh WORKTREE_GUARD=0: HUNG on a FIFO at its log"); fails += 1
 sys.exit(1 if fails else 0)
 PY
