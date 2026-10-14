@@ -142,6 +142,16 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "matcher": "EnterWorktree|ExitWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/session_worktree.sh\" record",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [

@@ -2,7 +2,9 @@
 """worktree.py — one git worktree per parallel agent, set up like the main checkout.
 
 Usage (normally `agent-kit worktree …`, run inside the repo):
-  worktree.py add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory]
+  worktree.py add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory] [--session=ID]
+  worktree.py trunk [on|off|status]   trunk mode (W1 R1/R2/R7): main merge-only, one worktree per session (hook-create / hook-remove
+                                      are the WorktreeCreate / WorktreeRemove hooks it wires; payload JSON on stdin)
   worktree.py diff <path> [--with-checklist]   the worktree's own changes as a binary patch
   worktree.py finish <path>    merge its work into the main branch AUTOMATICALLY, then remove it (exit 0 done, 3 conflict, 1 blocked)
   worktree.py automerge <path> the same, one JSON line on stdout (what the Stop gate runs)
@@ -213,6 +215,15 @@ def _read_state(wt):
     return data
 
 
+def _write_state(wt, state):
+    """devkit-worktree.json, replaced in one step: a Stop hook of another session reads it while `add` is still setting the worktree up."""
+    path = os.path.join(git_dir(wt), STATE)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f, indent=1, sort_keys=True)
+    os.replace(tmp, path)
+
+
 def die(msg, code=2):
     sys.stderr.write(f"✖ worktree: {msg}\n")
     raise SystemExit(code)
@@ -420,6 +431,49 @@ def copy_build_inputs(main, wt):
     return [rel for rel in cands if rel in ignored and _copy(main, wt, rel)]
 
 
+# Where the Editor keeps its lock files in a Library (ArtifactDB-lock, SourceAssetDB-lock, DataStore/uds.lock, Search/<x>.index-lock): a copy
+# holding them makes Unity in the worktree see the project as open in another Editor. Only these folders: nothing deeper is touched.
+UNITY_LOCK_DIRS = ("", "DataStore", "Search")
+
+
+def copy_unity_library(main, wt):
+    """W1 R6: the Library of each Unity project of the main checkout (the root, or one level down: Neighbours keeps it in unity/) - GBs
+    that git ignores, so a new worktree had none and Unity re-imported everything (tens of minutes) - is cloned with `cp -Rc` (APFS
+    clonefile: no data copied, ~0 disk until a file changes). clonefile keeps the BSD user flags, and a uchg file makes the worktree
+    undeletable (INSTINCT-038), so the copy gets `chflags -R nouchg,nouappnd` (no symlink followed: -P is chflags -R's default); the
+    Editor's lock files are dropped from it. No clonefile here (not macOS, not APFS): nothing copied - a full copy would fill the disk.
+    A Library git tracks, or one the worktree already has, is left alone. ponytail: an Editor writing the main Library while it is
+    cloned can leave the copy mid-update (Unity then re-imports what it doubts); clone with the Editor closed if that is ever seen.
+    Returns the cloned Library paths, relative."""
+    if sys.platform != "darwin":
+        return []
+    cands = [""] + sorted(d for d in os.listdir(main) if not d.startswith(".") and os.path.isdir(os.path.join(main, d)))
+    out = []
+    for rel in cands:
+        lib = os.path.join(rel, "Library") if rel else "Library"
+        src, dst = os.path.join(main, lib), os.path.join(wt, lib)
+        if not os.path.isfile(os.path.join(main, rel, "ProjectSettings", "ProjectVersion.txt")) or not os.path.isdir(src) \
+                or os.path.lexists(dst) or os.path.islink(src):
+            continue
+        if git(main, "check-ignore", "-q", lib + "/", check=False).returncode != 0:
+            continue   # tracked (or not ignored): git's business
+        os.makedirs(os.path.dirname(dst) or wt, exist_ok=True)
+        r = _run(["cp", "-Rc", src, dst], bounded=False)
+        if r.returncode != 0:
+            shutil.rmtree(dst, ignore_errors=True)
+            print("• " + tr(f"không clone được {lib} (clonefile không có ở đây?): Unity sẽ import lại trong worktree",
+                            f"{lib} could not be cloned (no clonefile here?): Unity re-imports it in the worktree"))
+            continue
+        _run(["chflags", "-R", "nouchg,nouappnd", dst], bounded=False)
+        for sub in UNITY_LOCK_DIRS:
+            d = os.path.join(dst, sub)
+            for name in os.listdir(d) if os.path.isdir(d) else ():
+                if name.endswith(("-lock", ".lock")) and os.path.isfile(os.path.join(d, name)):
+                    os.unlink(os.path.join(d, name))
+        out.append(lib)
+    return out
+
+
 def share_main_memory(main, wt):
     """(only for `worktree add --share-memory`) Point the worktree's Claude auto-memory at the main checkout's: .claude/settings.local.json
     autoMemoryDirectory, which the installer (claude_memory.py) set to the worktree's own empty folder. A note an
@@ -552,8 +606,25 @@ def _live_worktrees(main):
             if not e["broken"] and os.path.isdir(e["path"]) and not os.path.basename(e["path"]).startswith("red-proof-")]
 
 
+def _trunk_mode(path):
+    """hooks/session_worktree.py trunk_mode(): `git config devkit.trunkMode true` and WORKTREE_TRUNK_MODE not 0 (W1 R1/R7 v6). Any
+    failure to tell: False, the old behaviour."""
+    hooks = os.path.join(DEVKIT, "hooks")
+    if hooks not in sys.path:
+        sys.path.append(hooks)   # after the stdlib: nothing in hooks/ may shadow it
+    try:
+        import session_worktree  # noqa: PLC0415 - only where trunk mode matters
+        return session_worktree.trunk_mode(path)
+    except Exception:  # noqa: BLE001 - a module that cannot be read means the old behaviour, never an add that dies
+        return False
+
+
+SESSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+PROVISIONAL_TTL_S = 900.0   # a set-up that has not finished in 15 min crashed: its provisional state is ignored (the worktree is adopted)
+
+
 def cmd_add(cwd, args):
-    base, profile, no_init, share_memory, pos = None, None, False, False, []
+    base, profile, no_init, share_memory, session, pos = None, None, False, False, None, []
     for a in args:
         if a.startswith("--base="):
             base = a.split("=", 1)[1]
@@ -563,12 +634,16 @@ def cmd_add(cwd, args):
             no_init = True
         elif a == "--share-memory":
             share_memory = True
+        elif a.startswith("--session="):   # the Claude session the worktree is for (the WorktreeCreate hook, W1 R1 v6)
+            session = a.split("=", 1)[1]
+            if not SESSION_RE.fullmatch(session):
+                die(tr(f"--session không hợp lệ: '{session}'", f"invalid --session: '{session}'"))
         elif a.startswith("-"):
-            die(tr(f"tuỳ chọn không hợp lệ '{a}'", f"unknown option '{a}'") + " (--base=REF, --profile=ID, --no-init, --share-memory)")
+            die(tr(f"tuỳ chọn không hợp lệ '{a}'", f"unknown option '{a}'") + " (--base=REF, --profile=ID, --no-init, --share-memory, --session=ID)")
         else:
             pos.append(a)
     if not 1 <= len(pos) <= 2:
-        die("usage: agent-kit worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory]")
+        die("usage: agent-kit worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory] [--session=ID]")
     wt = os.path.abspath(os.path.join(cwd, pos[0]))
     branch = pos[1] if len(pos) == 2 else None   # none named: DETACHED (one developer, one branch; the folder name is no branch name)
     main = main_checkout(cwd)
@@ -584,8 +659,12 @@ def cmd_add(cwd, args):
     if WORKTREE_MAX and lock is None:
         die(tr(f"một lệnh worktree add khác của repo này đã chạy quá {ADD_LOCK_WAIT_S / 60:g} phút; chạy lại sau",
                f"another worktree add in this repo has run for over {ADD_LOCK_WAIT_S / 60:g} minutes; run it again later"), 1)
+    # W1 R1 v6 item 6: in trunk mode every live session has its worktree (and its subagents theirs, as the harness always made them with
+    # no cap), so a session's own worktree takes no slot - the disk floor (_make_room) still applies. A fixed cap of 3 would leave the 4th
+    # session nowhere to write: main is merge-only there.
+    capped = WORKTREE_MAX and not (session and _trunk_mode(main))
     try:
-        live = _live_worktrees(main) if WORKTREE_MAX else []
+        live = _live_worktrees(main) if capped else []
         if len(live) >= WORKTREE_MAX > 0:   # never "finish someone else's": a clean worktree may be a live session's that has not edited yet
             die(tr(f"repo đã có {len(live)} worktree (tối đa {WORKTREE_MAX}): {', '.join(live)} — chỉ gộp và gỡ worktree do CHÍNH phiên "
                    "này tạo mà đã xong (`agent-kit worktree finish <path>`); worktree của phiên khác, kể cả đang sạch, thì để yên và "
@@ -599,13 +678,18 @@ def cmd_add(cwd, args):
             git(main, "worktree", "add", wt, branch, bounded=False)
         else:
             git(main, "worktree", "add", "-b", branch, wt, *([base] if base else []), bounded=False)
+        start = git(wt, "rev-parse", "HEAD").stdout.strip()
+        if session:   # W1 v6 item 3: the owner is known from the moment git registers the worktree, not ~10 s later when the set-up is done -
+            # until then another session's Stop could take a stateless new worktree for an orphan and merge or remove it under its owner
+            _write_state(wt, {"branch": branch, "base": start, "main": main, "baseline": {}, "fp": FP_VERSION, "session": session,
+                              "provisional": True, "at": time.time()})
     finally:
         if lock:
             lock.close()
-    start = git(wt, "rev-parse", "HEAD").stdout.strip()
 
     copied = copy_local_config(main, wt)
     inputs = copy_build_inputs(main, wt)
+    unity_libs = copy_unity_library(main, wt)   # W1 R6
     ran = install_args(main, wt, profile) if not no_init else None
     if ran:
         r = subprocess.run(ran, capture_output=True, text=True)
@@ -615,8 +699,9 @@ def cmd_add(cwd, args):
                    f"DevKit install in the worktree failed (exit {r.returncode}); the worktree stays at {wt}"), 1)
     shared = share_main_memory(main, wt) if share_memory and not no_init else False   # only when asked; before the snapshot: it is part of the setup
     state = {"branch": branch, "base": start, "main": main, "baseline": snapshot(wt), "fp": FP_VERSION}
-    with open(os.path.join(git_dir(wt), STATE), "w") as f:
-        json.dump(state, f, indent=1, sort_keys=True)
+    if session:
+        state["session"] = session
+    _write_state(wt, state)
 
     print(f"✔ worktree {wt}  ({tr('nhánh', 'branch') + ' ' + branch if branch else tr('tách rời (detached)', 'detached')} @ {start[:10]})")
     if shared:
@@ -631,6 +716,9 @@ def cmd_add(cwd, args):
         shown = ", ".join(inputs[:12]) + (f" (+{len(inputs) - 12})" if len(inputs) > 12 else "")
         print("  " + tr("đã chép input build (bị ignore, như red_proof): ",
                         "copied build inputs (git-ignored, as red_proof): ") + shown)
+    if unity_libs:
+        print("  " + tr("đã clone Library của Unity (clonefile, gỡ cờ uchg, bỏ file khoá): ", "Unity Library cloned (clonefile, uchg cleared, locks dropped): ")
+              + ", ".join(unity_libs))
     print("  " + (tr("đã cài DevKit như main checkout", "DevKit installed like the main checkout") if ran else
                   tr("không cài DevKit (main checkout không có, hoặc worktree đã có sẵn)",
                      "DevKit not installed (none in the main checkout, or the worktree has it already)")))
@@ -1746,6 +1834,11 @@ def _automerge_locked(cwd, main, wt, keep=False):
             return "blocked", tr(f"{wt}: file {STATE} có mặt nhưng không đọc được (hỏng? bị thay?): không tự gộp, không đụng gì",
                                  f"{wt}: the {STATE} file is there but unreadable (corrupt? replaced?): nothing is merged or touched"), {}
         state = _adopted_state(wt)
+    if state.get("provisional"):   # `add --session` is still copying config / installing the DevKit (W1 v6 item 3): what is there is no work yet
+        at = state.get("at")
+        if isinstance(at, (int, float)) and 0 <= time.time() - at < PROVISIONAL_TTL_S:
+            return "blocked", tr("worktree đang được dựng (worktree add chưa xong): chưa gộp", "the worktree is still being set up (worktree add has not finished): not merged yet"), {"running": True}
+        state = _adopted_state(wt)   # a set-up that never finished: judged like a worktree add did not make
     busy = _in_progress(wt)
     if busy == "merge":   # a conflict left open earlier: resolved and staged -> conclude it; still unmerged -> say so again
         unmerged = git(wt, "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
@@ -2169,12 +2262,184 @@ def cmd_gc(cwd, args):
     return 0
 
 
+WT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+HOOK_CMD = 'bash "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/session_worktree.sh" '
+TRUNK_HOOKS = {"WorktreeCreate": ("worktree-create", 300), "WorktreeRemove": ("worktree-remove", 120)}
+
+
+def _hook_payload():
+    try:
+        d = json.loads(sys.stdin.read() or "{}")
+    except (ValueError, RecursionError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def _registered(main, wt):
+    try:
+        return any(_same_path(e["path"], wt) for e in _worktree_entries(main) if not e["broken"])
+    except SystemExit:
+        return False
+
+
+def cmd_hook_create(cwd, args):
+    """Claude Code's WorktreeCreate hook in trunk mode (W1 R1 v6; wired by `worktree trunk on`). EnterWorktree, `claude --worktree` and a
+    subagent's isolation: "worktree" get their worktree from `add --session`: detached at HEAD under <main>/.claude/worktrees/<name> (where
+    Claude puts its own: EnterWorktree never asks the user there), local config copied, the DevKit installed, the owning session in its
+    state from the moment git registers it. Configuring this hook REPLACES Claude's own `git worktree add` (code.claude.com hooks docs),
+    so: the path is the LAST stdout line and everything else goes to stderr; a worktree of that name already registered is handed back
+    as it is; a refusal for room (the disk floor) fails the creation with exit 4 and says why; any other failure of the set-up still
+    hands back a plain detached worktree - no EnterWorktree and no isolated subagent is ever stranded by a DevKit fault."""
+    d = _hook_payload()
+    name, sid = str(d.get("name") or ""), str(d.get("session_id") or "")
+    if not WT_NAME_RE.fullmatch(name) or ".." in name:
+        print(f"✖ worktree hook: not a worktree name: {name!r}", file=sys.stderr)
+        return 2
+    here = d.get("cwd") if isinstance(d.get("cwd"), str) and os.path.isdir(d["cwd"]) else cwd
+    main = os.path.realpath(main_checkout(here))
+    wt = os.path.join(main, ".claude", "worktrees", name)
+    if os.path.isdir(wt) and _registered(main, wt):
+        print(wt)
+        return 0
+    rc = 1
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            rc = cmd_add(main, [wt] + ([f"--session={sid}"] if SESSION_RE.fullmatch(sid) else []))
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 1
+    if rc == NO_ROOM:
+        return NO_ROOM
+    if rc != 0:
+        if not os.path.lexists(wt):
+            r = git(main, "worktree", "add", "--detach", wt, check=False, bounded=False)
+            if r.returncode != 0:
+                print("✖ worktree hook: " + (r.stderr or r.stdout).strip()[-400:], file=sys.stderr)
+                return 1
+        elif not _registered(main, wt):
+            print(f"✖ worktree hook: {wt} exists and is not a worktree of this repo", file=sys.stderr)
+            return 1
+        try:   # whatever the set-up got to is set-up - but only OUR set-up: a create of the same name still running elsewhere keeps its
+            # provisional state and its owner (OCR 14/10: the second create of one name used to stamp its own final state over it)
+            try:
+                cur = _read_state(wt)
+            except (OSError, ValueError, SystemExit):
+                cur = None
+            if cur is None and not _has_state_file(wt) or (isinstance(cur, dict) and cur.get("provisional") and cur.get("session") == sid):
+                _write_state(wt, {"branch": None, "base": git(wt, "rev-parse", "HEAD").stdout.strip(), "main": main, "baseline": snapshot(wt),
+                                  "fp": FP_VERSION, **({"session": sid} if SESSION_RE.fullmatch(sid) else {})})
+        except (OSError, SystemExit) as e:
+            print(f"• worktree hook: state not written ({e})", file=sys.stderr)
+        print("⚠ worktree hook: " + tr("cài đặt DevKit vào worktree lỗi; trả về worktree trơn", "the DevKit set-up failed; a plain worktree is handed back"),
+              file=sys.stderr)
+    print(wt)
+    return 0
+
+
+def cmd_hook_remove(cwd, args):
+    """WorktreeRemove in trunk mode: Claude cleans up a worktree the hook made (ExitWorktree "remove", a finished isolated subagent).
+    `worktree remove` decides: it removes it only when nothing of its work would be lost, else it refuses - exit non-zero, the folder
+    stays, Claude keeps the worktree and the Stop hook merges it. A path that is not one of this repo's worktrees: refused, nothing removed."""
+    d = _hook_payload()
+    wt = d.get("worktree_path")
+    if not isinstance(wt, str) or not os.path.isabs(wt) or not os.path.isdir(wt):
+        print(f"✖ worktree hook: no such worktree: {wt!r}", file=sys.stderr)
+        return 1
+    try:
+        main = main_checkout(wt)
+    except SystemExit:
+        return 1
+    if _same_path(main, wt) or not _registered(main, wt):
+        print(f"✖ worktree hook: {wt} is not a linked worktree of this repo", file=sys.stderr)
+        return 1
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            return cmd_remove(main, [wt])
+    except SystemExit as e:
+        return e.code if isinstance(e.code, int) else 1
+
+
+def _load_local_settings(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        die(tr(f"{path} không đọc được ({e}): không sửa", f"{path} cannot be read ({e}): left untouched"), 1)
+    if not isinstance(data, dict) or not isinstance(data.get("hooks", {}), dict):
+        die(tr(f"{path} không phải object JSON có `hooks` là object: không sửa", f"{path} is not a JSON object with an object `hooks`: left untouched"), 1)
+    return data
+
+
+def _trunk_hooks_wired(data):
+    hooks = data.get("hooks") or {}
+    return all(any(HOOK_CMD + sub in str(h.get("command", "")) for m in hooks.get(ev) or [] if isinstance(m, dict)
+                   for h in m.get("hooks") or [] if isinstance(h, dict)) for ev, (sub, _t) in TRUNK_HOOKS.items())
+
+
+def cmd_trunk(cwd, args):
+    """`agent-kit worktree trunk on|off|status` - trunk mode for this repo (W1 R1/R2/R7 v6, docs/workflow-improvements.md I.0): `on` sets
+    `git config devkit.trunkMode true` and wires the WorktreeCreate / WorktreeRemove hooks into the main checkout's
+    .claude/settings.local.json (untracked, this machine only: Claude Code reads the main checkout's local file in its worktrees too);
+    `off` undoes both. New sessions pick it up. WORKTREE_TRUNK_MODE=0 in the environment turns it off everywhere without touching a repo."""
+    action = args[0] if args else "status"
+    if action not in ("on", "off", "status") or len(args) > 1:
+        die("usage: agent-kit worktree trunk [on|off|status]")
+    main = main_checkout(cwd)
+    local = os.path.join(main, ".claude", "settings.local.json")
+    data = _load_local_settings(local)
+    if action == "status":
+        on, wired = _trunk_mode(main), _trunk_hooks_wired(data)
+        print(f"trunk mode: {'on' if on else 'off'}" + (" (WORKTREE_TRUNK_MODE=0)" if os.environ.get("WORKTREE_TRUNK_MODE") == "0" else "")
+              + f"; WorktreeCreate/WorktreeRemove hooks {'wired' if wired else 'not wired'} in {local}")
+        return 0
+    hooks = data.setdefault("hooks", {})
+    for ev, (sub, timeout) in TRUNK_HOOKS.items():
+        kept = [m for m in hooks.get(ev) or [] if not (isinstance(m, dict) and any(
+            isinstance(h, dict) and HOOK_CMD + sub in str(h.get("command", "")) for h in m.get("hooks") or []))]
+        if action == "on":
+            kept.append({"hooks": [{"type": "command", "command": HOOK_CMD + sub, "timeout": timeout}]})
+        if kept:
+            hooks[ev] = kept
+        else:
+            hooks.pop(ev, None)
+    if not hooks:
+        data.pop("hooks", None)
+    os.makedirs(os.path.dirname(local), exist_ok=True)
+    tmp = f"{local}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp, local)
+    if action == "on":
+        link = os.path.join(main, ".claude", "hooks", "session_worktree.sh")
+        if not os.path.lexists(link):
+            os.makedirs(os.path.dirname(link), exist_ok=True)
+            os.symlink(os.path.join(DEVKIT, "hooks", "session_worktree.sh"), link)
+        if git(main, "check-ignore", "-q", ".claude/worktrees/x/", check=False).returncode != 0:   # the sessions' worktrees live there:
+            exclude = os.path.join(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip(), "info", "exclude")
+            os.makedirs(os.path.dirname(exclude), exist_ok=True)   # never untracked noise in main's status (local, not committed)
+            with open(exclude, "a", encoding="utf-8") as f:
+                f.write("\n/.claude/worktrees/\n")
+        git(main, "config", "devkit.trunkMode", "true")
+        print("✔ " + tr("trunk mode BẬT: main chỉ để gộp; mỗi phiên làm trong worktree riêng (EnterWorktree). Phiên mới mới thấy hook.",
+                        "trunk mode ON: main is merge-only; every session works in its own worktree (EnterWorktree). New sessions pick up the hooks."))
+    else:
+        git(main, "config", "--unset-all", "devkit.trunkMode", check=False)
+        print("✔ " + tr("trunk mode TẮT: như cũ", "trunk mode OFF: the old behaviour"))
+    return 0
+
+
 def main(argv):
     cwd = os.getcwd()
     set_lang(resolve_lang(None, cwd))
     if len(argv) < 2 or argv[1] in ("-h", "--help", "help"):
         print(__doc__.strip())
         return 0 if len(argv) >= 2 else 2
+    if argv[1] == "hook-create":   # Claude Code hooks: the repo comes from the payload, not from where the hook process runs
+        return cmd_hook_create(cwd, argv[2:])
+    if argv[1] == "hook-remove":
+        return cmd_hook_remove(cwd, argv[2:])
     if git(cwd, "rev-parse", "--git-dir", check=False).returncode != 0:
         die(tr("không ở trong git repository", "not inside a git repository"))
     action, rest = argv[1], argv[2:]
@@ -2194,9 +2459,11 @@ def main(argv):
         return cmd_heal(cwd, rest)
     if action == "gc":
         return cmd_gc(cwd, rest)
+    if action == "trunk":
+        return cmd_trunk(cwd, rest)
     if action == "list":
         return subprocess.run(["git", "-C", cwd, "worktree", "list"]).returncode
-    die(tr(f"lệnh không hợp lệ '{action}'", f"unknown action '{action}'") + " (add | diff | finish | remove | status | gc | list)")
+    die(tr(f"lệnh không hợp lệ '{action}'", f"unknown action '{action}'") + " (add | diff | finish | remove | status | gc | trunk | list)")
 
 
 if __name__ == "__main__":

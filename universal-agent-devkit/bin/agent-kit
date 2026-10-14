@@ -425,6 +425,11 @@ Commands:
                       Remove it once nothing of its work would be lost (uncommitted changes in the
                       main checkout; a named branch keeps its commits, a detached worktree's
                       commits must be brought back first)
+  worktree trunk [on|off|status]
+                      Trunk mode for this repo: main is merge-only, nobody holds it, every session works in
+                      its own worktree (EnterWorktree; the WorktreeCreate hook sets it up) and the Stop hook
+                      merges it. on/off: git config devkit.trunkMode + hooks in .claude/settings.local.json;
+                      WORKTREE_TRUNK_MODE=0 turns it off everywhere (the user's switch)
   index-memory [file] Line-numbered index of a large .agents/instincts.md (default: this project's;
                       the SessionStart hook also refreshes it automatically above 20 KB)
   completion [bash|zsh]

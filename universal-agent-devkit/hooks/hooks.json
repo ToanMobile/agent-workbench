@@ -131,6 +131,16 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "matcher": "EnterWorktree|ExitWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session_worktree.sh\" record",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [

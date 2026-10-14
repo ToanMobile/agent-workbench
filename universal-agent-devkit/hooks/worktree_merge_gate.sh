@@ -50,7 +50,7 @@ REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || 
 # The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable (Linux 128 KiB,
 # macOS ~1 MiB for args + env) python could not start and the gate passed (tests/gates/test_hook_large_payload.sh).
 WMG_REPO="${REPO_ROOT}" WMG_DEVKIT="${DEVKIT}" python3 -I <<'PY' 3<<<"${INPUT}"
-import datetime, glob, hashlib, json, os, re, shlex, signal, subprocess, sys, time
+import datetime, glob, hashlib, json, os, re, shlex, signal, stat, subprocess, sys, time
 
 def fail_open(*_):
     os._exit(0)   # not SystemExit: worktree.py catches that around git calls, and the alarm fires once
@@ -218,6 +218,46 @@ def session_alive(owner):
     except (Exception, SystemExit):
         return False
 
+# W1 R1 v6 (hooks/session_worktree.py): in trunk mode main is merge-only and nobody holds it; every session works in its own worktree.
+# The session's OWN worktree (the one it entered: its record) is merged into main at each Stop once its work is committed and no test run
+# holds it (automerge --keep: gated, main fast-forwards, the worktree stays) and never holds the Stop while the session lives; the record
+# of a session that is gone is adopted like any owed worktree (merged through the gate, then removed); a worktree another live session
+# owns (the `session` its state names from the moment git registered it) is not a bystander's. /clear and /resume keep a session in its
+# worktree under a new id: the dead id's record naming the worktree the session is in becomes its own (reown) before anything is adopted.
+sw_mod, trunk, own, trunk_gone = None, False, None, set()
+try:
+    if os.path.join(devkit, "hooks") not in sys.path:
+        sys.path.append(os.path.join(devkit, "hooks"))
+    import session_worktree as sw_mod
+    trunk = sw_mod.trunk_mode(repo)
+    sw_mod.reown(repo, sid, here, session_alive)
+    _recs = sw_mod.records(repo)
+    own = os.path.realpath(_recs[sid]) if sid in _recs else None
+    if trunk and session_lock is not None:   # liveness unknown (session_lock not importable): never adopt - it would remove a live peer's worktree
+        owed |= {os.path.realpath(p) for osid, p in _recs.items() if osid != sid and not session_alive(osid)}
+        for _osid in os.listdir(os.path.join(repo, sw_mod.RECORD_DIR)) if os.path.isdir(os.path.join(repo, sw_mod.RECORD_DIR)) else ():
+            _p = sw_mod.raw_record(repo, _osid) if _osid != sid and _osid not in _recs else None
+            if _p and not os.path.exists(_p) and sw_mod.registered(repo, _p) and not session_alive(_osid):
+                trunk_gone.add(os.path.realpath(_p))   # its folder was removed from outside, git still lists it: the vanished-folder rules hold on it
+except Exception:  # noqa: BLE001 - no trunk-mode knowledge: the rules below are the old ones
+    sw_mod, trunk, own, trunk_gone = None, False, None, set()
+
+def state_owner(admin):
+    """The session a worktree's devkit-worktree.json names (worktree add --session), read without hanging on a FIFO (INSTINCT-040)."""
+    try:
+        fd = os.open(os.path.join(admin, "devkit-worktree.json"), os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        o = json.loads(os.read(fd, 1_000_000).decode("utf-8", "replace")).get("session")
+        return o if isinstance(o, str) and o else None
+    except (OSError, ValueError, AttributeError):
+        return None
+    finally:
+        os.close(fd)
+
 def unknown_row(path, reason, kind):
     """A worktree the gate could not judge: it counts as holding work (held), listed with the reason. kind: gitdir | error."""
     return {"path": path, "branch": None, "detached": False, "dirty": None, "ahead": None, "reflog": None, "busy": None,
@@ -333,11 +373,13 @@ def gone_folder_reason(path):
     how = f"merge nhánh {branch}" if branch else f"git cherry-pick {sha[:10]}"
     return f"thư mục đã bị xoá nhưng commit {sha[:10]} chưa có trong main: đem về ({how})"
 
-raw_owed = {os.path.realpath(p) for p in (state.get("owed") or []) if isinstance(p, str)}   # owed before the live filter
+raw_owed = {os.path.realpath(p) for p in (state.get("owed") or []) if isinstance(p, str)} | trunk_gone   # owed before the live filter
 for path in paths:
     real = os.path.realpath(path)
     if real in running:
         continue
+    if trunk and own and real == own and real in live:
+        continue   # the session's own worktree: merged with --keep below, never held while the session lives
     if real not in live:
         # Registered, folder gone before this Stop (Antigravity T0035 round 4: it was skipped and dropped from the debt, and the Stop
         # passed with its commit not in main; tests/gates/test_worktree_merge_gate_vanished.sh cases 8-8d). Same owner rules as a live one.
@@ -365,6 +407,9 @@ for path in paths:
         if real in finished or real in owed or mentioned(path, real):
             pending.append(unknown_row(path, "cannot determine its git dir", "gitdir"))
         continue
+    st_owner = state_owner(admin)
+    if st_owner and st_owner != sid and real not in finished and (session_lock is None or session_alive(st_owner)):
+        continue   # another live session's worktree, its owner known from the moment git registered it (W1 v6 item 3)
     try:
         created = os.path.getmtime(os.path.join(admin, "commondir"))
     except OSError:
@@ -411,8 +456,8 @@ if vanished:
 am_done, am_running = [], []
 if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != "0":
     cand = [r for r in pending if not r.get("reason") and r.get("busy") in (None, "merge") and os.path.isdir(r["path"])]
-    main_free = session_lock is not None and session_lock.is_free_for(session_lock.read_lock(os.path.join(gdir, session_lock.LOCK)), sid, now,
-                                                                      idle_frees=False)   # an idle holder of main is still there
+    main_free = trunk or (session_lock is not None and session_lock.is_free_for(session_lock.read_lock(os.path.join(gdir, session_lock.LOCK)), sid, now,
+                                                                                idle_frees=False))   # an idle holder of main is still there; in trunk mode main has no holder
     if cand and not main_free:
         for r in cand:
             r["am"] = "main checkout đang do phiên khác giữ: phiên đó (hoặc phiên sau) sẽ tự gộp; phiên này không ghi vào main"
@@ -466,6 +511,61 @@ if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != 
                 r["am"] = str(res.get("message") or res.get("status"))
                 r["am_status"] = res.get("status")
 
+def merge_own(path):
+    """W1 R1 v6: the session's own worktree into main with `automerge --keep` (the R3 gate runs, main fast-forwards, the worktree stays)
+    when its work is committed and no test run holds it. A note for the session, never a hold: it is alive and goes on working there."""
+    head = git("rev-parse", "HEAD", cwd=path)
+    if not head:
+        return "không đọc được HEAD của worktree phiên " + path + ": chưa gộp"
+    try:
+        work = [p for p in wt.changes_since(path, wt.load_state(path)) if p not in wt.BOOKKEEPING]
+    except (Exception, SystemExit) as e:
+        return f"không đọc được worktree phiên {path} ({type(e).__name__}): chưa gộp"
+    if work:   # before the in-main test: after a --keep merge HEAD is in main and new edits would get no word (OCR 14/10)
+        return f"worktree phiên {path} còn {len(work)} file chưa commit ({', '.join(work[:3])}): commit xong thì lần dừng sau tự gộp vào main"
+    if in_main(head):
+        return ""
+    if session_lock is not None and session_lock.test_run_active({path}):
+        return f"một lần chạy test đang giữ worktree phiên {path}: lần dừng sau gộp"
+    out_path = os.path.join(gdir, "devkit-automerge-" + hashlib.sha1(path.encode()).hexdigest()[:10] + ".out")
+    try:
+        with open(out_path, "w", encoding="utf-8") as fh:
+            proc = subprocess.Popen([sys.executable, os.path.join(devkit, "scripts", "git", "worktree.py"), "automerge", path, "--keep"], cwd=repo,
+                                    stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        return "không chạy được tự gộp worktree phiên: " + str(e)[:120]
+    try:
+        own_wait = float(os.environ.get("WORKTREE_AUTO_MERGE_WAIT_S", "9"))
+    except ValueError:
+        own_wait = 9.0
+    deadline = time.time() + max(0.5, min(own_wait, signal.getitimer(signal.ITIMER_REAL)[0] - 1.5))
+    while proc.poll() is None and time.time() < deadline:
+        time.sleep(0.2)
+    if proc.poll() is None:
+        return f"… đang gộp worktree phiên vào main ở nền (kết quả: lần dừng sau; log {out_path})"
+    try:
+        with open(out_path, encoding="utf-8", errors="replace") as fh:
+            res = json.loads(next(l for l in reversed(fh.read().strip().splitlines()) if l.startswith("{")))
+    except (OSError, ValueError, StopIteration):
+        return "gộp worktree phiên không trả kết quả: xem " + out_path
+    if res.get("status") == "merged":
+        return "✔ đã gộp worktree phiên vào main (worktree giữ lại cho phiên): " + path
+    if res.get("status") == "nothing" or res.get("running"):
+        return ""
+    return "⚠ chưa gộp được worktree phiên vào main (" + str(res.get("message") or res.get("status"))[:400] + "): sửa trong worktree, lần dừng sau gộp lại"
+
+own_note = ""
+if trunk and own and own in live and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != "0":
+    try:
+        own_note = merge_own(own)
+    except (Exception, SystemExit) as e:   # a note, never a hold: the session is alive
+        own_note = f"gộp worktree phiên lỗi ({type(e).__name__}): lần dừng sau thử lại"
+if sw_mod is not None:
+    try:
+        sw_mod.prune_records(repo)   # records of worktrees merged and removed name nothing any more
+    except Exception as e:  # noqa: BLE001 - housekeeping only: never a reason to hold or fail the Stop
+        sys.stderr.write(f"worktree_merge_gate: session records not pruned ({type(e).__name__}: {e})\n")
+
 def save():
     try:
         os.makedirs(os.path.dirname(state_path), exist_ok=True)
@@ -482,6 +582,7 @@ if not pending:
     if set(state.get("owed") or []) != owed or am_done:
         save()   # removed worktrees leave the debt list
     notes = ["✔ đã tự gộp vào main và gỡ: " + p for p in am_done] + ["… đang tự gộp ở nền (kết quả: lần dừng sau; log trong git dir): " + p for p in am_running]
+    notes += [own_note] if own_note else []
     if notes:
         print(json.dumps({"systemMessage": "WORKTREE-MERGE GATE:\n" + "\n".join(notes)}, ensure_ascii=False))
     sys.exit(0)
@@ -549,7 +650,7 @@ if could_not_run:
                    "sau 3 lần giữ cổng vẫn cho qua.\n")
 sys.stderr.write(
     "⛔ WORKTREE-MERGE GATE: worktree phải được GỘP vào nhánh chính rồi XOÁ trước khi dừng — để lại là trunk thiếu code:\n"
-    + listing + "\n" + error_note +
+    + listing + "\n" + error_note + (own_note + "\n" if own_note else "") +
     how_to +
     "Làm tay nếu cần, từ main checkout:\n"
     "  agent-kit worktree diff <path> | git apply --3way" + merge_hint + "\n" + detached_note +

@@ -964,11 +964,7 @@ def _file_write_hits(cmd, top, cwd):
     ponytail: those stay open, and so do `xargs rm`, `find -delete`, `eval '…'`, a backtick, a heredoc fed to a shell and a cd inside a
     subshell (review 14/10); tighten when one is seen landing. Scanner missing or line untokenisable: False (the other rules hold)."""
     try:
-        hooks = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "hooks")
-        if hooks not in sys.path:
-            sys.path.append(hooks)   # after the stdlib
-        import shell_writes  # noqa: PLC0415 - only for a Bash call, from this file's own kit
-        found = shell_writes.targets(cmd, cwd or top)
+        found = _hook_module("shell_writes").targets(cmd, cwd or top)
     except Exception as e:   # the git / gate / redirect rules still apply; say why this one could not
         print(f"session_lock: file-write scan failed: {e!r}", file=sys.stderr)
         return False
@@ -981,6 +977,116 @@ def _file_write_hits(cmd, top, cwd):
                 return True
         except ValueError as e:   # a NUL in the path: no file can have it, and the hook must not crash (exit 1 lets the call through)
             print(f"session_lock: target {t!r} skipped: {e}", file=sys.stderr)
+    return False
+
+
+def _hook_module(name):
+    """A module of this file's own kit hooks/ (shell_writes, session_worktree), imported after the stdlib on the path."""
+    hooks = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "hooks")
+    if hooks not in sys.path:
+        sys.path.append(hooks)
+    return __import__(name)
+
+
+# ── W1 R1/R2 v6: trunk mode (docs/workflow-improvements.md I.0; hooks/session_worktree.py) ─────────────────────────────────────────
+# Opt-in per repo (`agent-kit worktree trunk on`): the main checkout is merge-only, nobody holds it, every session works in its own worktree.
+TRUNK_STATUS_EXIT = 5   # `--status` on a trunk-mode main checkout (Antigravity and other agents without hooks read the code)
+# What may still run against a trunk-mode main checkout: the integrator (agent-kit worktree …, worktree.py …) and syncing main with origin
+# (fetch, push, a pull that only fast-forwards). The gate is not among them: it writes the tracked checklist there (v6 item 7).
+_TRUNK_ALLOWED = _Re(r"^\s*(?:\S*/)?agent-kit\s+(?:worktree|wt)\s|^\s*(?:python3?\s+(?:-I\s+)?)?\S*worktree\.py\s"
+                     r"|^\s*git(?:\s+-C\s+\S+)?\s+(?:fetch|push)\b|^\s*git(?:\s+-C\s+\S+)?\s+pull\s+(?:\S+\s+)*--ff-only\b")
+TRUNK_MSG = ("⛔ [DevKit] Trunk mode: main checkout {main} chỉ để GỘP — không phiên nào sửa ở đây (người dùng 14/10: mọi phiên làm trong "
+             "worktree riêng, không ai giữ main). Gọi tool EnterWorktree (không tham số, hoặc name=<việc>): phiên có worktree riêng dưới "
+             ".claude/worktrees/, DevKit tự dựng (chép cấu hình, cài DevKit); sửa, test, commit ở đó; hook Stop tự gộp vào main. Agent không "
+             "có EnterWorktree (Antigravity, script): `agent-kit worktree add ../<repo>-<việc>`, xong `agent-kit worktree finish <đường dẫn>`. "
+             "Ở main chỉ được: `agent-kit worktree …`, `git fetch`, `git push`, `git pull --ff-only`, và state bị git ignore (memory, "
+             ".claude/audit-gate). Đích là biến ($X) thì không biết nó ở đâu: dùng đường dẫn thật. Tắt cho mọi repo: WORKTREE_TRUNK_MODE=0 "
+             "(công tắc của người dùng).")
+
+
+def _registered_alive(cwd, sid):
+    """Session `sid` is registered in this repo and still working: its pid alive and its heartbeat fresh (600 s with a pid, 180 s without)
+    - the rule hooks/worktree_merge_gate.sh uses before it adopts a worktree."""
+    try:
+        info = read_session(cwd, sid)
+        if not info:
+            return False
+        pid = info.get("pid")
+        if pid and not is_pid_alive(pid):
+            return False
+        return time.time() - _num(info.get("heartbeat")) <= (600.0 if pid else 180.0)
+    except Exception:  # noqa: BLE001 - unknown reads as not alive, as in the merge gate
+        return False
+
+
+def trunk_main(top):
+    """(main checkout, session_worktree module) when the repo holding `top` runs in trunk mode; (None, module or None) otherwise - also
+    when hooks/session_worktree.py cannot be imported (the old rules then, said on stderr)."""
+    try:
+        sw = _hook_module("session_worktree")
+    except Exception as e:  # noqa: BLE001 - an unreadable module must not turn the lock off; the old rules hold
+        print(f"session_lock: trunk mode unknown ({e!r}): the old rules apply", file=sys.stderr)
+        return None, None
+    main = sw.main_of(top) if top else None
+    return (main, sw) if main and sw.trunk_mode(main) else (None, sw)
+
+
+def _lands_in_main(path, main, sw):
+    """`path` is content of the main checkout ITSELF: inside it, no other checkout in between (a session worktree under .claude/worktrees/,
+    a submodule), and not ignored by git (agent memory, .claude/audit-gate and other local state are no merge-only content). A path with a
+    NUL (no file can have it) is no write: ValueError -> False."""
+    try:
+        if not _inside(path, main):
+            return False
+        t = sw.tree_of(path)
+    except ValueError:
+        return False
+    if t is not None and not _same_dir(t[0], main):
+        return False
+    import subprocess  # noqa: PLC0415 - only for a write into a trunk-mode main checkout
+    try:
+        r = subprocess.run(["git", "-C", main, "check-ignore", "-q", "--", os.path.realpath(path)], capture_output=True, timeout=5)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return True   # cannot tell: merge-only
+    return r.returncode != 0   # 0: git ignores it (and does not track it)
+
+
+def trunk_write(tool, tool_input, cmd, cwd, main, sw, sid=""):
+    """W1 R1 v6: this call writes into the trunk-mode main checkout `main` itself. Edit/Write: its file. Bash, after dropping the segments
+    _TRUNK_ALLOWED lets through (a `cd` before them still counts): a git write or gate run aimed at main (write_hits_locked: by the toplevel
+    of its target; one that cannot be told counts), or a redirect / file write (hooks/shell_writes.py, cd-aware) landing in it. Builds and
+    interpreters run in main are no writes here (their output is ignored build state). A line the scanner cannot tokenise: its redirects
+    are read without cd tracking."""
+    if tool in EDIT_TOOLS:
+        ti = tool_input if isinstance(tool_input, dict) else {}
+        path = ti.get("file_path") or ti.get("notebook_path") or ti.get("path")
+        if not isinstance(path, str) or not path:
+            return True
+        return _lands_in_main(path if os.path.isabs(path) else os.path.join(cwd or main, path), main, sw)
+    # An allowed segment is excused only as a git write / gate run: its own redirects still count (OCR 14/10: `git fetch > src/a.py`,
+    # `agent-kit worktree list > README.md` overwrote tracked files of main), so the redirect / file-write scan reads the ORIGINAL line
+    pieces = _split_segments(cmd)
+    stripped = "".join(":" if i % 2 == 0 and _TRUNK_ALLOWED.search(p) else p for i, p in enumerate(pieces))
+    if (GIT_WRITE.search(stripped) or GATE.search(stripped)) and write_hits_locked(stripped, main, cwd, sid)[0]:
+        return True
+    here = cwd or main
+    try:
+        found = _hook_module("shell_writes").targets(cmd, here)
+    except Exception as e:  # noqa: BLE001 - the redirect rule below still applies
+        print(f"session_lock: write scan failed: {e!r}", file=sys.stderr)
+        found = None
+    if found is None:
+        found = [("redirect", t, here) for t in _redirect_targets(cmd) if t and not t.startswith("&")]
+    for kind, t, wd in found:
+        if kind not in ("redirect", "file"):
+            continue
+        if "$" in t or "`" in t:   # where it lands cannot be told: where the command runs
+            if _lands_in_main(wd or here, main, sw):
+                return True
+            continue
+        p = os.path.expanduser(t)
+        if _lands_in_main(p if os.path.isabs(p) else os.path.join(wd or here, p), main, sw):
+            return True
     return False
 
 
@@ -1058,6 +1164,12 @@ def status(argv):
     if not gdir:
         print(f"session_lock: {target} không phải git checkout — không có khoá")
         return 0
+    trunk, _sw = trunk_main(top)
+    if trunk and _same_dir(top, trunk):   # W1 R2 v6: an agent without hooks (Antigravity) reads this code before it edits
+        print(f"session_lock: {top} ở trunk mode — main chỉ để GỘP, KHÔNG sửa ở đây (exit {TRUNK_STATUS_EXIT}). Làm trong worktree riêng: "
+              f"`agent-kit worktree add ../<repo>-<việc>`, sửa + test + commit ở đó, xong `agent-kit worktree finish <đường dẫn>` (gộp vào main "
+              f"qua gate, rồi xoá worktree). Không dừng lại hỏi.")
+        return TRUNK_STATUS_EXIT
     now = time.time()
     lock = read_checkout_lock(gdir)
     if is_free_for(lock, sid, now):
@@ -1165,6 +1277,15 @@ def main():
     if event == "SessionStart":
         spawn_scratch_cleanup("--prune", "--keep", sid)   # temp dirs of sessions dead for more than 24 h
         register_session(cwd, sid, agent="claude")
+        trunk, _sw = trunk_main(top)
+        main_top = _sw.main_of(top) if _sw is not None and top else None
+        if main_top:   # /clear, /resume: the same process under a new id, still in its worktree - its record follows it (W1 v6 item 5)
+            try:
+                _sw.reown(main_top, sid, cwd, lambda o: _registered_alive(cwd, o))
+            except Exception as e:  # noqa: BLE001 - a record that cannot be moved: the Stop hook tries again (worktree_merge_gate)
+                print(f"session_lock: worktree record not moved ({e!r})", file=sys.stderr)
+        if trunk and _same_dir(top, trunk):
+            return 0   # W1 R1 v6: a trunk-mode main checkout has no holder - nothing to take, nobody to wait for
         guard, why = _guard(gdir)
         now, lock = time.time(), read_checkout_lock(gdir)
         if guard is None:
@@ -1233,6 +1354,14 @@ def main():
                   f"TỰ làm trong worktree riêng (`agent-kit worktree add ../<repo>-<việc>`, người dùng đã duyệt sẵn; xong thì "
                   f"`agent-kit worktree finish <đường dẫn>`), hoặc chờ phiên kia xong lượt.", file=sys.stderr)
             return 2
+    trunk, sw = trunk_main(top)
+    if trunk:   # W1 R1 v6: main is merge-only - a write into it is refused whoever the session is, wherever it runs from
+        if trunk_write(tool, d.get("tool_input"), command, cwd, trunk, sw, sid):
+            print(TRUNK_MSG.format(main=trunk), file=sys.stderr)
+            log(gdir, f"{sid} trunk mode: chặn ghi vào main {trunk} ({tool})")
+            return 2
+        if _same_dir(top, trunk):
+            return 0   # nothing written into main: nothing to take (main has no holder in trunk mode)
 
     # D1: read, decide and take under the guard - two sessions starting their first write together used to both read "free"
     guard, why = _guard(gdir)

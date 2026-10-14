@@ -1437,6 +1437,14 @@ run_case "red <testsuites>-wrapped XML blocks a pass claim" test_evidence_gate.s
 rm -f "${INSTR_DIR}"/TEST-*.xml
 echo
 
+# ── session_worktree.sh — PostToolUse EnterWorktree|ExitWorktree (tests/gates/test_session_worktree.sh has the full cases) ──
+echo "session_worktree.sh"
+run_case "session worktree: malformed payload never blocks" session_worktree.sh 0 "not json at all"
+run_case "session worktree: an EnterWorktree outside any repo records nothing" session_worktree.sh 0 \
+  '{"session_id":"s-sw","hook_event_name":"PostToolUse","tool_name":"EnterWorktree","cwd":"/nonexistent","tool_response":{"worktreePath":"/nonexistent/wt"}}'
+run_case "session worktree: ExitWorktree never blocks" session_worktree.sh 0 \
+  '{"session_id":"s-sw","hook_event_name":"PostToolUse","tool_name":"ExitWorktree","cwd":"/nonexistent"}'
+
 # ── foreign_repo_gate.sh — Stop (tests/gates/test_foreign_repo_gate.sh has the full cases) ──
 echo "foreign_repo_gate.sh"
 run_case "foreign-repo gate: no transcript fails open" foreign_repo_gate.sh 0 \

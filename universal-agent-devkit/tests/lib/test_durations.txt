@@ -261,3 +261,9 @@
 1 tests/gates/test_worktree_guard_shell_writes.sh
 3 tests/gates/test_state_fifo_no_hang.sh
 20 tests/gates/test_hook_gitignore_fifo.sh
+2 tests/gates/test_session_worktree.sh
+4 tests/worktree_git/test_worktree_trunk_hooks.sh
+1 tests/context_memory/test_session_lock_trunk.sh
+2 tests/gates/test_gates_follow_session_worktree.sh
+5 tests/gates/test_worktree_merge_gate_trunk.sh
+2 tests/worktree_git/test_worktree_unity_library.sh
