@@ -219,6 +219,8 @@ import signal
 rec("PROC", name, "leader=%d" % (os.getpgrp() == os.getpid()),   # its own process group (what one kill reaches)
     "int=%s" % ("ignored" if signal.getsignal(signal.SIGINT) == signal.SIG_IGN else "default"),   # a background bash job starts with these two ignored
     "quit=%s" % ("ignored" if signal.getsignal(signal.SIGQUIT) == signal.SIG_IGN else "default"))
+if hasattr(signal, "SIGQUIT"):
+    signal.signal(signal.SIGQUIT, lambda *_: sys.exit(0))
 time.sleep(float(os.environ.get("STUB_SLEEP_" + name, "0.3")))
 sys.stdout.write("out-%s\n" % name); sys.stdout.flush()
 sys.stderr.write("err-%s\n" % name); sys.stderr.flush()
