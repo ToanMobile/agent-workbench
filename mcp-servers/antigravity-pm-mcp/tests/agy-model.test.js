@@ -12,7 +12,7 @@ import { TOOLS_BY_NAME } from '../src/tools.js';
 import { AntigravityUnavailable } from '../src/discover.js';
 import { homeStateDir } from '../src/util.js';
 import { DEFAULT_CONFIG } from '../src/config.js';
-import { cleanup } from './helpers.js';
+import { cleanup, NO_AGY } from './helpers.js';
 
 const FAKE = `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -89,7 +89,7 @@ test('model la: tu choi, khong am tham doi sang model khac', async (t) => {
 
 test('khong co agy: nem AntigravityUnavailable, KHONG roi ve flash', async (t) => {
   fakeAgy(t);
-  process.env.ANTIGRAVITY_PM_AGY = path.join(os.tmpdir(), 'agpm-khong-co', 'agy');
+  process.env.ANTIGRAVITY_PM_AGY = NO_AGY;
   await assert.rejects(newConversation({ prompt: 'x', model: ARGON, cwd: os.tmpdir() }), (e) => e instanceof AntigravityUnavailable);
 });
 

@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { loadConfig, DEFAULT_CONFIG, resolveProjectRoot } from '../src/config.js';
 import { createTask, contractPaths } from '../src/tasks.js';
 import {
@@ -60,6 +62,24 @@ test('commitPolicy sai thi tu ve forbid (mac dinh an toan)', () => {
   assert.equal(cfg.commitPolicy, 'forbid');
   assert.ok(cfg.warnings.some((w) => w.includes('commitPolicy')));
   cleanup(dir);
+});
+
+test('helpers.js: "khong co cau hinh chung" tro vao cho KHONG the co file, khong phai duong dan doan duoc trong /tmp dung chung (I.4 #1)', (t) => {
+  // Truoc day: os.tmpdir()/agpm-test-khong-co-cau-hinh-chung/.antigravity-pm.json. Nguoi khac (hoac lan chay cu) tao san file do
+  // (vd testCommand la) thi lai duoc moi test. Thu dat file trong TMPDIR RIENG (tien trinh con nap lai helpers.js), khong bao gio
+  // dat vao /tmp dung chung ma cac lan chay khac dang dung.
+  const priv = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-tmpdir-rieng-'));
+  t.after(() => cleanup(priv));
+  const helpers = new URL('./helpers.js', import.meta.url).href;
+  const p = execFileSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(helpers)}); console.log(process.env.ANTIGRAVITY_PM_GLOBAL_CONFIG);`],
+    { env: { ...process.env, TMPDIR: priv }, encoding: 'utf8' }).trim().split('\n').pop();
+  let planted = null;
+  try {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify({ testCommand: 'echo lenh-la' }));
+    planted = p;
+  } catch { /* khong tao duoc: dung y */ }
+  assert.equal(planted, null, `dat duoc cau hinh chung gia tai ${planted}: moi test nap helpers.js se bi lai`);
 });
 
 test('cau hinh chung o HOME lam mac dinh cho project chua khai', () => {

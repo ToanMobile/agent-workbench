@@ -19,5 +19,7 @@ unset _v
 # fixture siblings, and under 3 GiB refuse. tests/worktree_git/test_worktree_limits.sh sets these itself.
 export WORKTREE_DISK_WARN_GIB=0 WORKTREE_DISK_MIN_GIB=0 WORKTREE_MAX=0
 # The user's own ~/.antigravity-pm.json must not steer a test: `giaoDefault: true` there makes the prompt hook add the standing "GIAO MẶC ĐỊNH BẬT"
-# order to every prompt it sees (2026-10-14). A test that wants a flag sets this variable itself after sourcing.
-export ANTIGRAVITY_PM_GLOBAL_CONFIG="${TMPDIR:-/tmp}/agpm-test-no-global-config/.antigravity-pm.json"
+# order to every prompt it sees (2026-10-14). A test that wants a flag sets this variable itself after sourcing. The path can never hold
+# a file (/dev/null is no directory): the guessable ${TMPDIR:-/tmp}/agpm-test-no-global-config/… it replaces could be created in a shared
+# /tmp by another user or an old run, and then steered every test that sources this file (OpenCodeReview 14/10).
+export ANTIGRAVITY_PM_GLOBAL_CONFIG=/dev/null/agpm-test-no-global-config/.antigravity-pm.json

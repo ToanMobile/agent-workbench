@@ -85,4 +85,34 @@ printf '%s' "$(out)" | grep -q "GIAO MẶC ĐỊNH BẬT" && ok "3b: a valid pro
 clear; setg '{"giaoDefault": true}'
 [ -z "$(printf '{"prompt":"/giao tạo task mới","session_id":"t"}' | bash "$HOOK" 2>&1)" ] && ok "4: a slash command is still left alone" || fail "4: the hook answered a slash command"
 
+# 6: the "no user config" pin of tests/lib/clean_git_env.sh itself (OpenCodeReview 14/10, workflow-improvements I.4 #1). It was
+#    ${TMPDIR:-/tmp}/agpm-test-no-global-config/.antigravity-pm.json: a guessable path in a shared /tmp that another user, or an old run,
+#    could create with giaoDefault: true, and then every test that sources the lib was steered. The plant is tried in a PRIVATE TMPDIR
+#    (a child shell sources the lib again), never in the shared one other test runs use right now.
+clear
+priv="$TMP/shared-tmp"; mkdir -p "$priv"
+o6="$(env -u ANTIGRAVITY_PM_GLOBAL_CONFIG TMPDIR="$priv" bash -c '
+  . "$1/tests/lib/clean_git_env.sh"
+  echo "PIN=${ANTIGRAVITY_PM_GLOBAL_CONFIG:-}"
+  { mkdir -p "$(dirname "$ANTIGRAVITY_PM_GLOBAL_CONFIG")" && printf "{\"giaoDefault\": true}" > "$ANTIGRAVITY_PM_GLOBAL_CONFIG"; } 2>/dev/null \
+    && echo "PLANTED $ANTIGRAVITY_PM_GLOBAL_CONFIG"
+  hook() { printf "{\"prompt\":\"%s\",\"session_id\":\"s6-%s\"}" "$2" "$RANDOM$RANDOM" | bash "$3" 2>&1; }
+  echo "== LIB"; hook "$@"
+  printf "{\"giaoDefault\": true}" > "$TMPDIR/control.json"
+  echo "== CONTROL"; ANTIGRAVITY_PM_GLOBAL_CONFIG="$TMPDIR/control.json" hook "$@"' _ "$DEVKIT_DIR" "$P" "$HOOK")"
+lib6="$(printf '%s\n' "$o6" | sed -n '/^== LIB$/,/^== CONTROL$/p')"
+ctl6="$(printf '%s\n' "$o6" | sed -n '/^== CONTROL$/,$p')"
+# the lib must set the pin at all: unset, the child would plant nothing (mkdir -p ., > "" fails) and its hook would read the host's own
+# ~/.antigravity-pm.json, so the two checks below would pass on any host without one (principal-code-reviewer 14/10)
+pin6="$(printf '%s\n' "$o6" | sed -n 's/^PIN=//p' | head -1)"
+case "$pin6" in
+  /*) ok "6: the lib pins the user config to an absolute path ($pin6)" ;;
+  *) fail "6: the lib does not pin the user config (got '$pin6'): the checks below would pass on any host without ~/.antigravity-pm.json" ;;
+esac
+printf '%s' "$o6" | grep -q '^PLANTED ' && fail "6: a file could be planted where the lib points the user config: $(printf '%s' "$o6" | grep '^PLANTED ' | head -1)" \
+  || ok "6: the lib's no-user-config path can hold no file (nobody can plant one)"
+printf '%s' "$lib6" | grep -q "GIAO MẶC ĐỊNH BẬT" && fail "  … and the planted giaoDefault=true steered the hook" || ok "  … so no planted giaoDefault=true reaches the hook"
+printf '%s' "$ctl6" | grep -q "GIAO MẶC ĐỊNH BẬT" && ok "  … (control: the same child shell shows the order for a flag file it does own, so the check above is not empty)" \
+  || fail "  … control: the child shell shows no order even for its own giaoDefault=true file: the check above proves nothing ($ctl6)"
+
 [ "$FAILS" -eq 0 ] && echo "giaoDefault flag: all checks passed" || { echo "giaoDefault flag: $FAILS FAILED"; exit 1; }

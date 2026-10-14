@@ -13,7 +13,8 @@ import { resolveProject } from '../src/projects.js';
 import { updateTask, loadTask } from '../src/tasks.js';
 import { TOOLS_BY_NAME } from '../src/tools.js';
 import { homeStateDir } from '../src/util.js';
-import { tmpProject, tmpGlobalConfig, cleanup, writeFile } from './helpers.js';
+import * as util from '../src/util.js';
+import { tmpProject, tmpGlobalConfig, cleanup, writeFile, NO_AGY } from './helpers.js';
 
 const ARGON = 'gemini-4-argon-high';
 const FAKE = `#!/usr/bin/env node
@@ -23,10 +24,12 @@ const i = a.indexOf('--conversation');
 const id = i >= 0 ? a[i + 1] : (process.env.FAKE_AGY_ID || 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
 fs.appendFileSync(process.env.FAKE_AGY_LOG, JSON.stringify({ args: a, cwd: process.cwd(), pid: process.pid }) + '\\n');
 if (process.env.FAKE_AGY_CORRUPT_REGISTRY) fs.writeFileSync(process.env.FAKE_AGY_CORRUPT_REGISTRY, '{"x":');   // so dang ky hong GIUA luc agy chay
-setTimeout(() => console.log(JSON.stringify({ event: 'init', conversation_id: id, init: { cwd: process.env.FAKE_AGY_INIT_CWD || process.cwd() } })), Number(process.env.FAKE_AGY_INIT_DELAY_MS || 0));
-setTimeout(() => console.log(JSON.stringify({ event: 'result', result: { conversation_id: id, status: 'SUCCESS' } })), Number((i >= 0 && process.env.FAKE_AGY_HOLD_RESUME_MS) || process.env.FAKE_AGY_HOLD_MS || 0) + Number(process.env.FAKE_AGY_INIT_DELAY_MS || 0));
+// FAKE_AGY_SPACED_JSON: dong stream-json co khoang trang sau ":" va "," ({"event": "init", ...}) thay vi JSON gon
+const out = (o) => console.log(process.env.FAKE_AGY_SPACED_JSON ? JSON.stringify(o).replace(/":/g, '": ').replace(/,"/g, ', "') : JSON.stringify(o));
+setTimeout(() => out({ event: 'init', conversation_id: id, init: { cwd: process.env.FAKE_AGY_INIT_CWD || process.cwd() } }), Number(process.env.FAKE_AGY_INIT_DELAY_MS || 0));
+setTimeout(() => out({ event: 'result', result: { conversation_id: id, status: 'SUCCESS' } }), Number((i >= 0 && process.env.FAKE_AGY_HOLD_RESUME_MS) || process.env.FAKE_AGY_HOLD_MS || 0) + Number(process.env.FAKE_AGY_INIT_DELAY_MS || 0));
 `;
-const KEYS = ['FAKE_AGY_HOLD_RESUME_MS', 'ANTIGRAVITY_PM_PING_WAIT_MS', 'FAKE_AGY_INIT_CWD', 'FAKE_AGY_CORRUPT_REGISTRY', 'ANTIGRAVITY_PM_PS', 'ANTIGRAVITY_LS_ADDRESS', 'ANTIGRAVITY_CSRF_TOKEN', 'ANTIGRAVITY_PM_AGY', 'FAKE_AGY_LOG', 'FAKE_AGY_ID', 'FAKE_AGY_HOLD_MS', 'FAKE_AGY_INIT_DELAY_MS', 'ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS', 'ANTIGRAVITY_PM_PROJECTS_DIR', 'HOME'];
+const KEYS = ['FAKE_AGY_SPACED_JSON', 'FAKE_AGY_HOLD_RESUME_MS', 'ANTIGRAVITY_PM_PING_WAIT_MS', 'FAKE_AGY_INIT_CWD', 'FAKE_AGY_CORRUPT_REGISTRY', 'ANTIGRAVITY_PM_PS', 'ANTIGRAVITY_LS_ADDRESS', 'ANTIGRAVITY_CSRF_TOKEN', 'ANTIGRAVITY_PM_AGY', 'FAKE_AGY_LOG', 'FAKE_AGY_ID', 'FAKE_AGY_HOLD_MS', 'FAKE_AGY_INIT_DELAY_MS', 'ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS', 'ANTIGRAVITY_PM_PROJECTS_DIR', 'HOME'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SRC = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../src/agentapi.js');
 
@@ -272,7 +275,7 @@ test('loi that (khong phai "dang chay") khi nudge agy van NO to, kem goi y (khon
   const { conversationId } = await newConversation({ prompt: 'x', model: ARGON, cwd: dir });
   await sleep(900);
   setConversation(dir, taskId, conversationId);
-  process.env.ANTIGRAVITY_PM_AGY = path.join(os.tmpdir(), 'agpm-khong-co-agy', 'agy');   // agy bien mat giua chung
+  process.env.ANTIGRAVITY_PM_AGY = NO_AGY;   // agy bien mat giua chung
   await assert.rejects(call('pm_status', { project: dir, taskId, nudge: true }), /agy/);
 });
 
@@ -325,7 +328,7 @@ test('ghi so dang ky that bai SAU khi mo luot: dung agy vua mo (khong de agent c
 
 test('khong co agy: loi la AntigravityUnavailable BAT KE chinh sach quyen that cua may (kiem agy truoc, chot quyen sau)', async (t) => {
   fakeAgy(t);
-  process.env.ANTIGRAVITY_PM_AGY = path.join(os.tmpdir(), 'agpm-khong-co-agy-r2', 'agy');
+  process.env.ANTIGRAVITY_PM_AGY = NO_AGY;
   delete process.env.ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS;
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-r2-home-'));
   t.after(() => cleanup(home));
@@ -363,7 +366,7 @@ test('gui tin khi agy bien mat va chinh sach quyen khong dat: van la Antigravity
   fakeAgy(t, { FAKE_AGY_ID: 'c3c3c3c3-2222-3333-4444-555555555555' });
   const { conversationId } = await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
   await sleep(900);
-  process.env.ANTIGRAVITY_PM_AGY = path.join(os.tmpdir(), 'agpm-khong-co-agy-r2', 'agy');
+  process.env.ANTIGRAVITY_PM_AGY = NO_AGY;
   delete process.env.ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS;
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-r2-home-'));
   t.after(() => cleanup(home));
@@ -611,4 +614,190 @@ test('khoa so dang ky MO COI (cu hon han): duoc lay lai va gui tin di tiep', asy
   t.after(() => fs.rmSync(lock, { force: true }));
   await sendMessage({ conversationId, content: 'sau khi lay lai khoa cu' });
   assert.equal(fake.calls().filter((c) => c.args.includes('--conversation')).length, 1);
+});
+
+// ---------------------------------------------------------------- vong 5: OpenCodeReview 14/10 con mo (workflow-improvements I.4)
+
+test('killGroup (util.js): SIGKILL ca nhom tien trinh (con + chau), khong nem: loi duoc TRA VE cho noi goi', async (t) => {
+  assert.equal(typeof util.killGroup, 'function', 'thieu util.killGroup');
+  const leader = spawn('/bin/sh', ['-c', 'sleep 30 & sleep 30'], { detached: true, stdio: 'ignore' });
+  t.after(() => { try { process.kill(-leader.pid, 'SIGKILL'); } catch { /* da chet */ } });
+  await sleep(300);
+  assert.equal(util.killGroup(leader.pid), null);
+  await sleep(500);
+  assert.throws(() => process.kill(-leader.pid, 0), /ESRCH/, 'nhom van con tien trinh song (sleep chau)');
+  const orig = process.kill;
+  process.kill = () => { throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' }); };   // stub gia lap "nhom da het": pid 4242 duoi day chi di vao stub nay
+  let got;
+  try { got = util.killGroup(4242); } finally { process.kill = orig; }
+  assert.equal(got?.code, 'ESRCH');
+});
+
+test('test gia lap "khong co agy" khong tro ANTIGRAVITY_PM_AGY vao duong dan doan duoc trong /tmp dung chung (file dat san o do se bi chay voi skip-permissions)', () => {
+  const testsDir = path.dirname(new URL(import.meta.url).pathname);
+  const hits = [];
+  for (const f of fs.readdirSync(testsDir).filter((n) => n.endsWith('.js'))) {
+    fs.readFileSync(path.join(testsDir, f), 'utf8').split('\n').forEach((line, i) => {
+      if (/ANTIGRAVITY_PM_AGY\s*=\s*path\.join\(\s*os\.tmpdir\(\)/.test(line)) hits.push(`${f}:${i + 1}`);
+    });
+  }
+  assert.deepEqual(hits, [], `duong dan agy doan duoc: ${hits.join(', ')} (dung NO_AGY trong helpers.js)`);
+});
+
+test('"SIGKILL ca nhom tien trinh" chi con o MOT cho (util.killGroup), khong chep lai trong src/', () => {
+  const srcDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../src');
+  const hits = [];
+  for (const f of fs.readdirSync(srcDir).filter((n) => n.endsWith('.js'))) {
+    fs.readFileSync(path.join(srcDir, f), 'utf8').split('\n').forEach((line, i) => { if (/process\.kill\(\s*-/.test(line)) hits.push(`${f}:${i + 1}`); });
+  }
+  assert.equal(hits.length, 1, `process.kill(-...) o ${hits.length} cho: ${hits.join(', ')}`);
+  assert.match(hits[0], /^util\.js:/);
+});
+
+test('ping tu don: pid cua luot agy da thoat va bi tien trinh la dung lai thi KHONG giet nhom do (so dau van tay ps, khong chi kill -0)', async (t) => {
+  // Hai luot ping chay xong (giu 400 ms de ghi duoc dau van tay that), roi pid cua chung "song lai" o kill -0 (gia lap pid bi dung lai).
+  // Stub: kill(pid, 0) voi pid cua agy gia => "con song"; SIGKILL nhom toi cac pid do chi GHI LAI, khong bao gio gui that.
+  const fake = fakeAgy(t, { FAKE_AGY_ID: 'cececece-2222-3333-4444-555555555555', FAKE_AGY_HOLD_MS: '400', ANTIGRAVITY_LS_ADDRESS: '127.0.0.1:9', ANTIGRAVITY_CSRF_TOKEN: 'x' });
+  const dir = mkProject(t, { defaultModel: ARGON });
+  const orig = process.kill;
+  const groupKills = [];
+  process.kill = function stub(pid, sig) {
+    const agyPids = new Set(fake.calls().map((c) => c.pid));
+    if (!agyPids.has(Math.abs(pid))) return orig.call(process, pid, sig);
+    if (pid < 0) { groupKills.push(-pid); return true; }
+    return true;   // kill -0: "pid van song" (da bi tien trinh khac dung lai)
+  };
+  let out;
+  try { out = await call('pm_doctor', { project: dir, ping: true }); } finally { process.kill = orig; }
+  assert.match(out.text, /Luot 2: xong/, out.text);
+  assert.deepEqual(groupKills, [], `ping da SIGKILL nhom cua pid khong con la agy cua no: ${groupKills.join(', ')}\n${out.text}`);
+});
+
+/**
+ * Hai PM cung thay MOT khoa cu. Gia lap PM A lay lai xong (xoa khoa cu, tao khoa moi cua A) dung giua luc PM nay (B) danh gia "cu" va
+ * thao tac khong dao nguoc dau tien tren duong dan khoa (xoa / doi ten). B khong duoc xoa khoa cua A va vao doan gang cung luc.
+ * linkError: fs.linkSync nem ma loi nay (he tep khong co hard link).
+ */
+async function pmBAfterPmATakesOver(t, id, linkError = null) {
+  const fake = fakeAgy(t, { FAKE_AGY_ID: id });
+  const { conversationId } = await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
+  await sleep(900);
+  const lock = `${registryFile()}.lock`;
+  fs.writeFileSync(lock, 'pm-da-chet');
+  const old = new Date(Date.now() - 5 * 60000);
+  fs.utimesSync(lock, old, old);
+  t.after(() => fs.rmSync(lock, { force: true }));
+  const orig = { rmSync: fs.rmSync, renameSync: fs.renameSync, linkSync: fs.linkSync };
+  let injected = false;
+  const pmATakesOver = (p) => {
+    if (injected || p !== lock) return;
+    injected = true;
+    orig.rmSync.call(fs, lock, { force: true });
+    fs.writeFileSync(lock, 'pm-A', { flag: 'wx' });
+  };
+  fs.rmSync = function rmSync(p, ...rest) { pmATakesOver(p); return orig.rmSync.call(fs, p, ...rest); };
+  fs.renameSync = function renameSync(from, ...rest) { pmATakesOver(from); return orig.renameSync.call(fs, from, ...rest); };
+  if (linkError) fs.linkSync = () => { throw Object.assign(new Error(`link ${linkError}`), { code: linkError }); };
+  let res;
+  try {
+    res = await sendMessage({ conversationId, content: 'x' }).then(() => 'SENT', (e) => e.message);
+  } finally {
+    Object.assign(fs, orig);
+  }
+  assert.equal(injected, true, 'kich ban khong xay ra: PM nay khong dong vao khoa cu');
+  assert.equal(fs.existsSync(lock) ? fs.readFileSync(lock, 'utf8') : '(khoa da bi xoa)', 'pm-A', 'khoa MOI cua PM A bi xoa / thay');
+  assert.match(res, /khoa so dang ky agy .* bi giu qua 3 s/, `PM nay vao doan gang trong khi PM A dang giu khoa: ${res}`);
+  assert.equal(fake.calls().filter((c) => c.args.includes('--conversation')).length, 0, 'sinh agy trong khi PM A dang giu khoa');
+  assert.deepEqual(fs.readdirSync(homeStateDir()).filter((n) => n.endsWith('.stale')), [], 'con sot file khoa doi ten');
+}
+
+test('lay lai khoa cu: PM khac da lay lai TRUOC (khoa moi, tuoi) thi KHONG xoa khoa cua no, cho va bao "bi giu qua 3 s"', async (t) => {
+  await pmBAfterPmATakesOver(t, 'cfcfcfcf-2222-3333-4444-555555555555');
+});
+
+test('lay lai khoa cu tren he tep KHONG co hard link (link EPERM): khoa tuoi cua PM khac van duoc tra lai (doi ten lai), khong bi xoa', async (t) => {
+  await pmBAfterPmATakesOver(t, 'dbdbdbdb-2222-3333-4444-555555555555', 'EPERM');
+});
+
+test('su kien init cua agy in JSON co khoang trang ("event": "init"): van nhan ra, khong bao "khong in su kien init" (khong treo 60 s)', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'd5d5d5d5-2222-3333-4444-555555555555', FAKE_AGY_SPACED_JSON: '1' });
+  const r = await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
+  assert.equal(r.conversationId, 'd5d5d5d5-2222-3333-4444-555555555555');
+  assert.match(fs.readFileSync(r.parsed.out, 'utf8'), /"event": "init"/, 'agy gia khong in JSON co khoang trang: test khong kiem dieu no noi');
+});
+
+test('pm_doctor in trang thai agy (binary, so dang ky hong) CA KHI model mac dinh la bac IDE: task van chay agy qua model cua task / pm_dispatch', async (t) => {
+  fakeAgy(t, { ANTIGRAVITY_LS_ADDRESS: '127.0.0.1:9', ANTIGRAVITY_CSRF_TOKEN: 'x' });
+  process.env.ANTIGRAVITY_PM_AGY = NO_AGY;   // agy vang mat tren may
+  fs.writeFileSync(registryFile(), '{"broken": ');
+  const dir = mkProject(t, { defaultModel: 'flash' });
+  const out = await call('pm_doctor', { project: dir });
+  assert.match(out.text, /agy: KHONG TIM THAY/, out.text);
+  assert.match(out.text, /SO DANG KY AGY HONG/, out.text);
+});
+
+test('task bac IDE (flash) ma hoi thoai la agy (dispatch chon Argon), ps hong + nudge: so dang ky doc duoc => LA agy, KHONG biet luot, bo qua nudge, KHONG reject ca tool', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'd6d6d6d6-2222-3333-4444-555555555555', FAKE_AGY_HOLD_MS: '3000' });
+  const dir = mkProject(t, { defaultModel: 'flash' });
+  const taskId = await newTask(dir);   // task.model = flash
+  const { conversationId } = await newConversation({ prompt: 'x', model: ARGON, cwd: dir });   // nhu pm_dispatch ... model=Argon (task.model khong doi)
+  setConversation(dir, taskId, conversationId);
+  process.env.ANTIGRAVITY_PM_PS = '/nonexistent/ps';
+  const out = await call('pm_status', { project: dir, taskId, nudge: true });
+  assert.match(out.text, /Luot agy: KHONG biet/, out.text);
+  assert.match(out.text, /Khong nhac duoc agent/, out.text);
+});
+
+test('nhanh PLAN: hoi thoai phan bien la agy, ps hong + nudge: KHONG biet luot agy (noi MOT lan), bo qua nudge, KHONG reject ca tool', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'd8d8d8d8-2222-3333-4444-555555555555', FAKE_AGY_HOLD_MS: '3000' });
+  const dir = mkProject(t, { defaultModel: ARGON });
+  const taskId = await newTask(dir);   // phase PLAN, chua co hoi thoai lam viec
+  await call('pm_plan', { project: dir, taskId, content: '# x\n1. lam\n2. test', files: ['src/a.js'] });
+  await call('pm_dispatch', { project: dir, taskId, kind: 'plan_review' });
+  process.env.ANTIGRAVITY_PM_PS = '/nonexistent/ps';
+  const out = await call('pm_status', { project: dir, taskId, nudge: true });
+  assert.match(out.text, /Khong nhac duoc hoi thoai phan bien: khong biet trang thai luot agy/, out.text);
+  // ly do (ps hong) in MOT lan: dong trang thai plan-review.json da noi, nhanh nudge khong lap lai
+  assert.equal((out.text.match(/khong doc duoc dau van tay/g) || []).length, 1, out.text);
+});
+
+test('don so dang ky: het ngan sach ps (3 muc co pid) van don tiep cac muc cu KHONG can ps (khong dung ca vong)', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'd7d7d7d7-2222-3333-4444-555555555555' });
+  // 5 muc cu nhat "dang chay" = chinh tien trinh test nay (song, dau van tay dung): khong sinh tien trinh nao
+  const tag = execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(process.pid)], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } }).trim();
+  const reg = {};
+  for (let i = 0; i < 520; i++) reg[`c${i}`] = { model: ARGON, cwd: os.tmpdir(), at: new Date(2020, 0, 1, 0, 0, i).toISOString() };
+  for (let i = 0; i < 5; i++) Object.assign(reg[`c${i}`], { pid: process.pid, pidTag: tag });
+  fs.writeFileSync(registryFile(), JSON.stringify(reg));
+  const r = await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
+  const after = JSON.parse(fs.readFileSync(registryFile(), 'utf8'));
+  assert.equal(Object.keys(after).length, 500, `${Object.keys(after).length} muc sau khi don (phai 500): muc cu khong pid bi giu lai`);
+  for (let i = 0; i < 5; i++) assert.ok(after[`c${i}`], `muc dang chay c${i} bi don`);
+  assert.ok(after[r.conversationId]);
+});
+
+test('so dang ky hong + nudge, task bac IDE ma phan bien ke hoach giao model=Argon: model THAT cua hoi thoai (ghi luc dispatch) quyet, bo qua nudge, KHONG reject', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'd9d9d9d9-2222-3333-4444-555555555555', ANTIGRAVITY_LS_ADDRESS: '127.0.0.1:9', ANTIGRAVITY_CSRF_TOKEN: 'x' });
+  const dir = mkProject(t, { defaultModel: 'flash' });
+  const taskId = await newTask(dir);   // task.model = flash
+  await call('pm_plan', { project: dir, taskId, content: '# x\n1. lam\n2. test', files: ['src/a.js'] });
+  await call('pm_dispatch', { project: dir, taskId, kind: 'plan_review', model: ARGON });   // hoi thoai phan bien la agy, task.model khong doi
+  fs.writeFileSync(registryFile(), '{"broken": ');
+  const out = await call('pm_status', { project: dir, taskId, nudge: true });
+  assert.match(out.text, /Khong nhac duoc hoi thoai phan bien: khong biet trang thai luot agy/, out.text);
+  assert.equal((out.text.match(/agy-conversations\.json hong/g) || []).length, 1, `so dang ky hong phai noi MOT lan:\n${out.text}`);
+});
+
+test('so dang ky hong + nudge, task bac IDE ma trien khai giao model=Argon: dispatch ghi model THAT cua hoi thoai, bo qua nudge, KHONG reject', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'dadadada-2222-3333-4444-555555555555', ANTIGRAVITY_LS_ADDRESS: '127.0.0.1:9', ANTIGRAVITY_CSRF_TOKEN: 'x' });
+  const dir = mkProject(t, { defaultModel: 'flash' });
+  const taskId = await newTask(dir);
+  await call('pm_plan', { project: dir, taskId, content: '# x\n1. lam\n2. test', files: ['src/a.js'] });
+  await call('pm_dispatch', { project: dir, taskId, kind: 'implement', force: true, model: ARGON });   // mo hoi thoai lam viec bang agy
+  const cfg = loadConfig(dir);
+  const opened = loadTask(cfg, taskId).dispatches.find((d) => d.kind === 'implement');
+  assert.equal(opened.model, ARGON, 'dispatch implement mo hoi thoai bang Argon nhung ghi model khac');
+  fs.writeFileSync(registryFile(), '{"broken": ');
+  const out = await call('pm_status', { project: dir, taskId, nudge: true });
+  assert.match(out.text, /Khong nhac duoc agent: khong biet trang thai luot agy/, out.text);
 });
