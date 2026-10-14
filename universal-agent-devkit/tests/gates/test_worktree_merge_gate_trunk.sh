@@ -216,5 +216,24 @@ stop "$TMP/j" s1 "$TMP/j/.claude/worktrees/s1" "$TMP/t1.jsonl"; rc=$?; HOOK="$RE
   && ok "alarm budget nearly spent: the own merge is not started (a note, not merged), the Stop is decided before the alarm" \
   || fail "own merge started with the budget spent (rc $rc, merged: $( [ -f "$TMP/j/eleven.txt" ] && echo yes || echo no)): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
 
+# 12 the session's own worktree is dropped from `pending` and merged only when worktree.py imports and WORKTREE_AUTO_MERGE != 0: otherwise it was
+#    neither merged nor reported - committed work stayed out of trunk with the Stop passing in silence (OCR 7). Now a note names the command.
+repo q1; wtadd "$TMP/q1" s1 s1; commit_in "$TMP/q1" s1 twelve; record "$TMP/q1" s1 s1
+stop "$TMP/q1" s1 "$TMP/q1/.claude/worktrees/s1" "$TMP/t1.jsonl" WORKTREE_AUTO_MERGE=0; rc=$?
+[ "$rc" = 0 ] && [ ! -f "$TMP/q1/twelve.txt" ] && grep -q 'agent-kit worktree finish .*--keep' "$TMP/out" \
+  && ok "own worktree committed, WORKTREE_AUTO_MERGE=0: not merged, a note names agent-kit worktree finish --keep" \
+  || fail "auto-merge off, own commit not in main: no note (rc $rc): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
+repo q2; wtadd "$TMP/q2" s1 s1; record "$TMP/q2" s1 s1   # nothing committed: nothing owed, so no note at every Stop
+stop "$TMP/q2" s1 "$TMP/q2/.claude/worktrees/s1" "$TMP/t1.jsonl" WORKTREE_AUTO_MERGE=0; rc=$?
+[ "$rc" = 0 ] && [ ! -s "$TMP/out" ] && ok "  … nothing committed in it: no note" || fail "a note for a worktree with nothing to merge (rc $rc): out=$(head -c 300 "$TMP/out")"
+mkkit "$TMP/kit12"; rm -f "$TMP/kit12/scripts"; mkdir -p "$TMP/kit12/scripts/git"   # a kit whose worktree.py cannot be imported (its own copy of scripts/)
+for f in "$DEVKIT_DIR"/scripts/*; do [ "$(basename "$f")" = git ] || ln -s "$f" "$TMP/kit12/scripts/"; done
+for f in "$DEVKIT_DIR"/scripts/git/*; do ln -s "$f" "$TMP/kit12/scripts/git/"; done
+rm -f "$TMP/kit12/scripts/git/worktree.py" && echo 'raise ImportError("broken on purpose")' > "$TMP/kit12/scripts/git/worktree.py"
+repo q3; wtadd "$TMP/q3" s1 s1; commit_in "$TMP/q3" s1 twelve; record "$TMP/q3" s1 s1
+gate_in "$TMP/kit12" "$TMP/q3" s1 "$TMP/q3/.claude/worktrees/s1"; rc=$?
+[ "$rc" = 0 ] && [ ! -f "$TMP/q3/twelve.txt" ] && grep -q 'agent-kit worktree finish .*--keep' "$TMP/out" \
+  && ok "  … worktree.py not importable: the same note" || fail "worktree.py not importable, own commit not in main: no note (rc $rc): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_worktree_merge_gate_trunk: PASS"; exit 0; } || { echo "test_worktree_merge_gate_trunk: FAIL ($FAILS)"; exit 1; }

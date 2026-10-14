@@ -538,6 +538,9 @@ def merge_own(path):
     if signal.getitimer(signal.ITIMER_REAL)[0] < 4.0:   # the alarm passes the Stop silently (os._exit): a hold still to be decided below would go with it
         return f"gần hết thời gian của cổng: chưa gộp worktree phiên {path}, lần dừng sau gộp"
     head = git("rev-parse", "HEAD", cwd=path)
+    if wt is None or os.environ.get("WORKTREE_AUTO_MERGE", "1") == "0":   # the own worktree is not in `pending`: with no merge here nothing else would ever name it (OCR 7)
+        return (f"tự gộp đang tắt hoặc không dùng được: worktree phiên {path} còn commit chưa vào main, chạy `agent-kit worktree finish {shlex.quote(path)} --keep`"
+                if head and not in_main(head) else "")
     if not head:
         return "không đọc được HEAD của worktree phiên " + path + ": chưa gộp"
     try:
@@ -578,7 +581,7 @@ def merge_own(path):
     return "⚠ chưa gộp được worktree phiên vào main (" + str(res.get("message") or res.get("status"))[:400] + "): sửa trong worktree, lần dừng sau gộp lại"
 
 own_note = ""
-if trunk and own and own in live and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != "0":
+if trunk and own and own in live:
     try:
         own_note = merge_own(own)
     except (Exception, SystemExit) as e:   # a note, never a hold: the session is alive
