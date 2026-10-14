@@ -127,12 +127,15 @@ function readAgyRegistry() {
   if (!r || typeof r !== 'object' || Array.isArray(r)) throw bad('khong phai object');
   return r;
 }
-/** agyTurnStatus cho tool DOC: { status, error } (khong nem). error = ps / so dang ky khong tra loi duoc: "khong biet", khong phai "da xong". */
+/**
+ * agyTurnStatus cho tool DOC: { status, error, registryBroken } (khong nem). error = ps / so dang ky khong tra loi duoc: "khong biet",
+ * khong phai "da xong". So dang ky doc duoc ma van co error => loi tu ps tren MOT MUC CO TRONG SO: hoi thoai nay chac chan la agy.
+ */
 export function agyTurnStatusSafe(conversationId) {
   if (!conversationId) return { status: null, error: null };
   // So dang ky hong: khong biet hoi thoai nay la agy hay IDE => "khong biet" (nudge bo qua), khong phai "khong phai agy"
   const problem = agyRegistryProblem();
-  if (problem) return { status: null, error: problem.split('\n')[0] };
+  if (problem) return { status: null, error: problem.split('\n')[0], registryBroken: true };
   try { return { status: agyTurnStatus(conversationId), error: null }; } catch (e) { return { status: null, error: String(e.message || e).split('\n')[0] }; }
 }
 

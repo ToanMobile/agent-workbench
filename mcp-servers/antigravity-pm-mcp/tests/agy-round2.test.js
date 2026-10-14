@@ -714,3 +714,28 @@ test('pm_doctor in trang thai agy (binary, so dang ky hong) CA KHI model mac din
   assert.match(out.text, /agy: KHONG TIM THAY/, out.text);
   assert.match(out.text, /SO DANG KY AGY HONG/, out.text);
 });
+
+test('task bac IDE (flash) ma hoi thoai la agy (dispatch chon Argon), ps hong + nudge: so dang ky doc duoc => LA agy, KHONG biet luot, bo qua nudge, KHONG reject ca tool', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'd6d6d6d6-2222-3333-4444-555555555555', FAKE_AGY_HOLD_MS: '3000' });
+  const dir = mkProject(t, { defaultModel: 'flash' });
+  const taskId = await newTask(dir);   // task.model = flash
+  const { conversationId } = await newConversation({ prompt: 'x', model: ARGON, cwd: dir });   // nhu pm_dispatch ... model=Argon (task.model khong doi)
+  setConversation(dir, taskId, conversationId);
+  process.env.ANTIGRAVITY_PM_PS = '/nonexistent/ps';
+  const out = await call('pm_status', { project: dir, taskId, nudge: true });
+  assert.match(out.text, /Luot agy: KHONG biet/, out.text);
+  assert.match(out.text, /Khong nhac duoc agent/, out.text);
+});
+
+test('nhanh PLAN: hoi thoai phan bien la agy, ps hong + nudge: KHONG biet luot agy, bo qua nudge, KHONG reject ca tool', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'd8d8d8d8-2222-3333-4444-555555555555', FAKE_AGY_HOLD_MS: '3000' });
+  const dir = mkProject(t, { defaultModel: ARGON });
+  const taskId = await newTask(dir);   // phase PLAN, chua co hoi thoai lam viec
+  const { conversationId } = await newConversation({ prompt: 'x', model: ARGON, cwd: dir });
+  const cfg = loadConfig(dir);
+  updateTask(cfg, loadTask(cfg, taskId), (tk) => { tk.planReviewConversationId = conversationId; });
+  process.env.ANTIGRAVITY_PM_PS = '/nonexistent/ps';
+  const out = await call('pm_status', { project: dir, taskId, nudge: true });
+  assert.match(out.text, /Luot agy: KHONG biet/, out.text);
+  assert.match(out.text, /Khong nhac duoc hoi thoai phan bien/, out.text);
+});

@@ -105,10 +105,11 @@ function taskLine(t) {
 
 /** agyTurnStatus cho tool DOC (pm_status): khong doc duoc dau van tay / so dang ky thi in mot dong, KHONG lam mat ca bao cao. */
 function safeAgyTurn(L, conversationId, taskModel, quiet = false) {
-  const { status, error } = agyTurnStatusSafe(conversationId);
+  const { status, error, registryBroken } = agyTurnStatusSafe(conversationId);
   if (!error) return status;
-  // Task IDE (model la bac flash/pro): hoi thoai cua no KHONG bao gio la agy, nen so dang ky agy hong khong lien quan toi nudge cua no.
-  if (taskModel && !isAgyModel(taskModel)) return null;
+  // So dang ky doc duoc: loi la tu ps tren muc CO trong so => hoi thoai LA agy, bat ke task.model (pm_dispatch model=... khong doi task.model).
+  // Chi khi so hong moi phai doan theo model cua task: task IDE (bac flash/pro) thi so agy hong khong lien quan toi nudge cua no.
+  if (registryBroken && taskModel && !isAgyModel(taskModel)) return null;
   if (!quiet) L.push(`Luot agy: KHONG biet (${error})`);
   return { unknown: true };   // task agy: khong biet luot nao dang chay => nudge phai bo qua
 }
@@ -516,13 +517,17 @@ export const TOOLS = [
       } else if (args.nudge === true && task.planReviewConversationId && task.phase === 'PLAN') {
         // Chua co hoi thoai lam viec nhung dang cho phan bien => nhac hoi thoai phan bien.
         const msg = `# ${task.id} — PM kiem tra: chua thay plan-review.json. Neu da phan bien xong: ghi file dung khuon roi dung. Neu dang doc: tiep tuc.`;
-        try {
-          await sendMessage({ conversationId: task.planReviewConversationId, projectId: projectIdFor(cfg), content: msg });
-          recordDispatch(cfg, task, { kind: 'nudge', conversationId: task.planReviewConversationId });
-          L.push('Da nhac hoi thoai phan bien ke hoach (nudge).');
-        } catch (e) {
-          if (!isTurnBusy(e)) throw e;
-          L.push(`Khong nhac duoc hoi thoai phan bien: ${String(e.message || e).split('\n')[0]}`);
+        if (safeAgyTurn(L, task.planReviewConversationId, task.model)?.unknown) {
+          L.push('Khong nhac duoc hoi thoai phan bien: khong biet trang thai luot agy (ps / so dang ky khong tra loi), khong dam gui chong luot.');
+        } else {
+          try {
+            await sendMessage({ conversationId: task.planReviewConversationId, projectId: projectIdFor(cfg), content: msg });
+            recordDispatch(cfg, task, { kind: 'nudge', conversationId: task.planReviewConversationId });
+            L.push('Da nhac hoi thoai phan bien ke hoach (nudge).');
+          } catch (e) {
+            if (!isTurnBusy(e)) throw e;
+            L.push(`Khong nhac duoc hoi thoai phan bien: ${String(e.message || e).split('\n')[0]}`);
+          }
         }
       } else if (args.nudge === true) {
         L.push('Khong nhac duoc: task chua co hoi thoai lam viec.');
