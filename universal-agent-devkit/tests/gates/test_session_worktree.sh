@@ -70,10 +70,13 @@ rec ExitWorktree s1 "$M" ""
 #   a session id that is a path
 mkdir -p "$M/.claude/audit-gate/session_worktree"
 mkdir -p "$TMP/decoy" && printf 'gitdir: %s\n' "$(git -C "$W" rev-parse --absolute-git-dir)" > "$TMP/decoy/.git"   # a .git file copied from a real worktree
-f0=$FAILS; for bad in "$TMP/other-wt" "$TMP/plain" "$W/sub" "relative/path" "$TMP/decoy"; do
+f0=$FAILS; for bad in "$TMP/other-wt" "$TMP/plain" "$W/sub" "relative/path" "$TMP/decoy" "$M"; do
   printf '%s\n' "$bad" > "$M/.claude/audit-gate/session_worktree/s3"
   [ "$(proj s3)" = "$M" ] || fail "a record naming $bad moved the gates to $(proj s3)"
-done; [ "$FAILS" = "$f0" ] && ok "a record naming another repo's worktree / a plain folder / a sub-folder / a relative path / a decoy with a copied .git file: ignored"
+done; [ "$FAILS" = "$f0" ] && ok "a record naming another repo's worktree / a plain folder / a sub-folder / a relative path / a decoy with a copied .git file / the main checkout itself: ignored"
+ln -s "$W" "$TMP/link-to-w"; printf '%s\n' "$TMP/link-to-w" > "$M/.claude/audit-gate/session_worktree/s3"   # (OCR2 11) a symlink to a real worktree of this repo is no forgery
+[ "$(proj s3)" = "$W" ] && ok "  … a symlink to a real worktree of the repo resolves to that worktree (accepted)" || fail "a symlink to the real worktree: project = $(proj s3), want $W"
+rm -f "$M/.claude/audit-gate/session_worktree/s3" "$TMP/link-to-w"
 rec EnterWorktree s4 "$W" "$W"; git -C "$M" worktree add -q --detach "$M/.claude/worktrees/gone" HEAD
 printf '%s\n' "$M/.claude/worktrees/gone" > "$M/.claude/audit-gate/session_worktree/s4"; git -C "$M" worktree remove "$M/.claude/worktrees/gone"
 [ "$(proj s4)" = "$M" ] && ok "  … a worktree removed since: ignored" || fail "a removed worktree still moved the gates: $(proj s4)"
@@ -167,20 +170,24 @@ assert sw.write_record(m, "p6", w) and open(victim).read() == "keep", "write_rec
 # 8 INSTINCT-040: tree_of reads a folder's .git file and its admin dir's commondir; a FIFO planted at either must not hang every gate that asks
 #   which tree it is in (OCR 4). Run in a child with a timeout: a hang is a failure, not a stuck test.
 mkdir -p "$TMP/fifo-gdir" "$TMP/fifo-wt/sub"; mkfifo "$TMP/fifo-gdir/commondir"; printf 'gitdir: %s\n' "$TMP/fifo-gdir" > "$TMP/fifo-wt/.git"
-python3 -I -c 'import subprocess, sys
-for what in sys.argv[2:]:
+#   The child's exit code and what it printed are asserted too (OCR2 10): a traceback from a FIFO tree_of did not expect would not hang either.
+fifo_tree() {   # fifo_tree <expected stdout> <folder>...: every folder, in a bounded child, must exit 0 and print exactly that
+  python3 -I -c 'import subprocess, sys
+want = sys.argv[2]
+for what in sys.argv[3:]:
     try:
         r = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); import session_worktree as sw; print(sw.tree_of(sys.argv[2]))", sys.argv[1], what],
                            timeout=5, capture_output=True, text=True)
     except subprocess.TimeoutExpired:
-        print("HANG on " + what); sys.exit(1)' "$DEVKIT_DIR/hooks" "$TMP/fifo-wt" "$TMP/fifo-wt/sub" \
-  && ok "tree_of: a FIFO at <admin dir>/commondir does not hang it (read as a tree of its own, like a submodule)" || fail "tree_of hangs on a FIFO commondir"
+        print("HANG on " + what); sys.exit(1)
+    if r.returncode != 0 or r.stdout.strip() != want:
+        print("bad result on " + what + ": rc " + str(r.returncode) + " out=" + r.stdout.strip() + " err=" + r.stderr.strip()[-200:]); sys.exit(1)' "$DEVKIT_DIR/hooks" "$@"
+}
+fifo_tree "('$TMP/fifo-wt', False, '$TMP/fifo-gdir')" "$TMP/fifo-wt" "$TMP/fifo-wt/sub" > "$TMP/out" 2>&1 \
+  && ok "tree_of: a FIFO at <admin dir>/commondir does not hang it, and it reads the folder as a tree of its own (like a submodule)" || fail "tree_of with a FIFO commondir: $(cat "$TMP/out")"
 rm -f "$TMP/fifo-gdir/commondir" "$TMP/fifo-wt/.git"; mkfifo "$TMP/fifo-wt/.git.fifo" && mv "$TMP/fifo-wt/.git.fifo" "$TMP/fifo-wt/.git"
-python3 -I -c 'import subprocess, sys
-try:
-    subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); import session_worktree as sw; print(sw.tree_of(sys.argv[2]))", sys.argv[1], sys.argv[2]], timeout=5, capture_output=True)
-except subprocess.TimeoutExpired:
-    sys.exit(1)' "$DEVKIT_DIR/hooks" "$TMP/fifo-wt/sub" && ok "  … and a FIFO as the .git file itself" || fail "tree_of hangs on a FIFO .git"
+fifo_tree "None" "$TMP/fifo-wt/sub" "$TMP/fifo-wt" > "$TMP/out" 2>&1 \
+  && ok "  … and a FIFO as the .git file itself: no hang, no tree (None)" || fail "tree_of with a FIFO .git: $(cat "$TMP/out")"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_session_worktree: PASS"; exit 0; } || { echo "test_session_worktree: FAIL ($FAILS)"; exit 1; }
