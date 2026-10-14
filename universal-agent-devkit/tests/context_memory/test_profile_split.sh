@@ -3,7 +3,8 @@
 # imported by AGENTS.md) and an ON-DEMAND reference (.agents/context/profile-reference.md, never imported). Rubric dim 5
 # caps the bytes a session loads (AGENTS.md + profile-rules.md + rules-index.md) at 40 KB; the game and android profiles
 # alone were 21-23 KB. User decisions (12-13/10): no rule sentence is deleted, MUST/CẤM/BẮT BUỘC/bất biến lines stay
-# always-loaded, essentials are not trimmed. This test is the oracle for those promises.
+# always-loaded, essentials are not trimmed. This test is the oracle for those promises. automotive (ctx5, 14/10): every line
+# is an obligation, a car-safety line or the scope that says which apps they bind, so none is cut; B2 pins that by line.
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"
@@ -127,11 +128,32 @@ for p, (src, always, blocks) in split.items():
 # (the last three of each list came from the Antigravity audit of Dot 28: obligations phrased without MUST/CẤM that a regex cannot see)
 LOADED = {"game": ["Application.targetFrameRate", "OnApplicationPause", "Cấm tuyệt đối `new`", "Debounce", "transform.DOKill(true)"],
           "android": ["LazyColumn", "derivedStateOf", "PendingIntent.FLAG_IMMUTABLE", "fallbackToDestructiveMigration",
-                      "Không gửi PII vào analytics/Crashlytics", "Đổi ranh giới = hỏi trước"]}
+                      "Không gửi PII vào analytics/Crashlytics", "Đổi ranh giới = hỏi trước"],
+          # automotive: hardware/car safety — the user's list (13/10) plus the keyword-less obligations read by hand, and the scope
+          # line (it says the rules bind the companion phone app and the desktop ADB tool too)
+          "automotive": ["dm-verity", "abandonAudioFocus", "đọc trả `null` ⇒ KHÔNG ghi", "Im còn hơn làm sai", "CHƯA ĐO TRÊN XE",
+                         "≥3 lượt đạt", "SDK_INT <= 28", "giữ nguyên 100%", "không chạy khi xe đang lái", "Đừng đoán nguyên nhân crash",
+                         "không stream về máy tính", "Debounce phím vô lăng", "kiểm quyền file trước khi cài",
+                         "kiểm keep rules khi bật obfuscation", "đo đường đi thật", "xác nhận khi xe đang chạy",
+                         "app điện thoại đi kèm (companion), và tool desktop quản trị qua ADB"]}
 for p, needles in LOADED.items():
     loaded = cs.wanted(project(p))["profile-rules.md"]
     gone = [n for n in needles if n not in loaded]
     say(not gone, "%s: guardrails still loaded at session start %s" % (p, gone or ""))
+
+# B2. by LINE, not by keyword (ctx5; user 13/10 ~10:50: every MUST / CẤM / bất biến / car-safety line stays loaded; INSTINCT-037:
+# a keyword lint cannot see an obligation phrased without one). Every non-blank line of the source outside its markers is still
+# in the generated profile-rules.md, except the lines pinned here verbatim after a hand read. automotive pins none (14/10: its
+# only non-obligation text is the 2-line scope note, 73 B net, and the scope decides which apps the rules bind): wrapping any
+# automotive line in an on-demand block fails until someone reads it and pins it here.
+CUT_OK = {"automotive": []}
+for p, pinned in CUT_OK.items():
+    before = collections.Counter(l for l in split[p][0].split("\n") if l.strip() and not START.match(l) and l != END)
+    left = before - collections.Counter(cs.wanted(project(p))["profile-rules.md"].split("\n"))
+    extra, missing = left - collections.Counter(pinned), collections.Counter(pinned) - left
+    say(sum(before.values()) > 0 and not extra and not missing,
+        "%s: every line loaded before a split is still loaded, except the %d pinned line(s) %s"
+        % (p, len(pinned), ["cut: " + l[:70] for l in extra] + ["not cut: " + l[:70] for l in missing] or ""))
 
 # D. budgets of the always-loaded file, and profiles without markers unchanged
 # Measured 13/10 after the split (bytes incl. header and preamble): android 13497, game 14906. A ratchet, not a goal:

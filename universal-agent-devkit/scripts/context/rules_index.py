@@ -76,18 +76,18 @@ def build(project):
     if not files:
         return None
     out = [f"# Project rules — index {GENERATED_MARK}; do not edit)", "",
-           "Each line is a section of `.agents/local/rules/`. The bold lead of a numbered rule",
-           "is the rule itself. `L a–b` is its line range in the file named by the `##` heading",
-           "above it: open it with `sed -n 'a,bp' <that file>` from the project root before",
-           "working in that area. The prompt hook also names the sections that match a request.", ""]
+           "One line per section of `.agents/local/rules/`; the bold lead of a numbered rule is the rule itself.",
+           "`La-b` (`La`: one line) ends each line: its line range in the file of the `##` heading above. Open it",
+           "from the project root before working in that area: `sed -n 'a,bp' <file>`. The prompt hook names matches too.", ""]
     for f in files:
         rel = os.path.relpath(f, project)
-        out.append(f"## {os.path.basename(f)} — `{rel}`")
+        out.append(f"## `{rel}`")
         for start, end, level, title in sections(f):
-            indent = "  " * max(0, min(level, 3) - 1)
             # The path is in the ## heading: repeating it on each line made OfficeReader's index
-            # 17.7 KB, loaded at every session start (O5, 2026-09-28).
-            out.append(f"{indent}- {title} — L{start}–{end}")
+            # 17.7 KB, loaded at every session start (O5, 2026-09-28). Compact range, one space of indent
+            # per level (13/10, rubric dim 5: 9.9 KB); titles are kept as before (MAX_TITLE) — a bold lead is a rule.
+            indent = " " * max(0, min(level, 3) - 1)
+            out.append(f"{indent}- {title} " + (f"L{start}" if start == end else f"L{start}-{end}"))
         out.append("")
     return "\n".join(out) + "\n"
 
