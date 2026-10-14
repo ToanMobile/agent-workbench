@@ -334,9 +334,9 @@ def outcome_mention(sentence, match):
     nothing but the phrase (a quote that goes on with the object of the fix is a claim; an odd quote cannot shift the pairs under a
     claim), and the naming word right before that opening quote."""
     for x in QUOTED_SPAN.finditer(sentence):
-        if (x.start() < match.start() and match.end() < x.end() and not sentence[x.start() + 1:match.start()].strip()
+        if (match.start() == x.start() + 1 and match.end() < x.end()
                 and re.fullmatch(r"[\s.,;:!?…]*", sentence[match.end():x.end() - 1])
-                and not re.match(r"(?:bug|lỗi)\b", match.group(0), re.I)):   # that branch of OUTCOME carries the object: a claim
+                and not re.match(r"(?:bug|lỗi|issue|crash|error)\b", match.group(0), re.I)):   # these branches of OUTCOME carry the object
             return bool(OUTCOME_MENTION_WORD.search(sentence[:x.start()]) and not CONNECTIVE_WORDS.search(sentence[:x.start()]))
     return False
 
