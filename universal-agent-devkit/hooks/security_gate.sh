@@ -87,9 +87,26 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "🛑 security_gate: cần python3 để kiểm tra — chặn để an toàn. Cài python3 hoặc đặt SECURITY_GATE=0 để tắt gate." >&2
   exit 2
 fi
+# W1 v6 (hooks/session_worktree.py): a session that ENTERED a worktree (EnterWorktree: CLAUDE_PROJECT_DIR still names main) or a subagent
+# the harness started in one has its edits judged in that worktree, not in a clean main. The hook state above stays under main: the hooks that
+# write it (and the loop-guard files of this gate) look there.
+SG_TREE="${REPO_ROOT}"
+_SW_SID='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9][A-Za-z0-9._-]*)"'
+_SW_CWD='"cwd"[[:space:]]*:[[:space:]]*"[^"]*/\.claude/worktrees/'   # the cwd FIELD, not any text of the payload (a file read, a subagent)
+if { [[ ${INPUT} =~ ${_SW_CWD} ]] \
+     || { [[ ${INPUT} =~ ${_SW_SID} ]] && [ -f "${REPO_ROOT}/.claude/audit-gate/session_worktree/${BASH_REMATCH[1]}" ]; }; }; then
+  if _SW_ROOT="$(python3 -I -c 'import json,os,sys
+_d = os.path.dirname(os.path.realpath(sys.argv[1]))
+if os.path.isabs(_d): sys.path.append(_d)
+import session_worktree as s; print(s.project(json.loads(sys.stdin.read() or "{}")) or "")' "$0" <<<"${INPUT}" 2>/dev/null)"; then
+    [ -n "${_SW_ROOT}" ] && SG_TREE="${_SW_ROOT}"
+  else   # never silent: this gate then judges what CLAUDE_PROJECT_DIR names, possibly a clean main (OCR 14/10)
+    echo "⚠ DevKit $(basename "$0"): the session's worktree could not be resolved (hooks/session_worktree.py next to the real hook) - judging ${REPO_ROOT}" >&2
+  fi
+fi
 # The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable python could not
 # start and the gate passed (tests/gates/test_hook_large_payload.sh).
-SG_LOG="${LOG_DIR}/security_gate.log" SG_DIR="${LOG_DIR}" SG_REPO="${REPO_ROOT}" \
+SG_LOG="${LOG_DIR}/security_gate.log" SG_DIR="${LOG_DIR}" SG_REPO="${SG_TREE}" \
 SG_TS="$(date +%Y-%m-%dT%H:%M:%S)" SG_MAX="${SECURITY_GATE_MAX_ATTEMPTS:-3}" \
 python3 -I <<'PY' 3<<<"${INPUT}"
 import os, sys, json, re
@@ -169,6 +186,18 @@ def excluded(path):
         return True
     return p.startswith(".claude/") or "/.claude" in p
 
+_TREE = os.path.realpath(os.environ.get("SG_REPO", "") or ".")
+
+def in_tree(path):
+    """`path` as /<path in the judged tree> when it lies in it, else unchanged. A session worktree lives at <main>/.claude/worktrees/<n> (W1 trunk
+    mode): its absolute paths hold "/.claude/", which excluded() drops, so a path is judged by where it lies in the tree, not by its whole spelling."""
+    if not os.path.isabs(path):
+        return path
+    for p in (os.path.normpath(path), os.path.realpath(path)):
+        if p != _TREE and _under(p, _TREE):
+            return p[len(_TREE.rstrip("/")):]
+    return path
+
 # ── triggers: path shape, then text just written ────────────────────────────
 PATH_TRIGGERS = [
     (re.compile(r"AndroidManifest\.xml$", re.I),            "AndroidManifest"),
@@ -228,6 +257,7 @@ def _hits_in(path_texts, text_texts):
     hits = []
     for t in path_texts:
         for tok in re.findall(r"[^\s'\"<>|;&]+", t):
+            tok = in_tree(tok)
             if not excluded(tok):
                 for rx, label in PATH_TRIGGERS:
                     if rx.search(tok):
@@ -443,12 +473,12 @@ if tp and os.path.exists(tp):
                         continue
                     if name in ("Edit", "Write", "NotebookEdit"):
                         fp = inp.get("file_path") or inp.get("notebook_path") or ""
-                        if not isinstance(fp, str) or not fp or excluded(fp) or _scratch(fp):
+                        if not isinstance(fp, str) or not fp or excluded(in_tree(fp)) or _scratch(fp):
                             continue
                         text = inp.get("new_string") or inp.get("content") or ""
                         if not isinstance(text, str):
                             text = ""
-                        hits = triggers_for(fp, text)
+                        hits = triggers_for(in_tree(fp), text)
                         if hits:
                             flagged[fp] = (idx, sorted(set(hits)))
                     elif name == "Skill":

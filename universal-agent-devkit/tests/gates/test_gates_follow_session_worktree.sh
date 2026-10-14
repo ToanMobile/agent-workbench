@@ -55,5 +55,54 @@ grep -q "could not be resolved" "$TMP/lone.err" && ok "a gate whose session_work
 printf '%s\n' "$TMP/other-wt" > "$M/.claude/audit-gate/session_worktree/s3"; s3="$(state "$(probe s3 "$TMP/other-wt")")"
 [ "$s3" = none ] && ok "a forged record naming another repo's worktree: main, as before" || fail "forged record followed: $s3"
 
+# R3 review P2-3 (14/10): security_gate and testsourceset_gate still judged CLAUDE_PROJECT_DIR (a clean main). security_gate's excluded() also
+# drops every path holding "/.claude/", i.e. every file of a worktree under <main>/.claude/worktrees/<n>. Their state stays under main.
+for n in 11 12 13 14 21 22; do printf '%s\n' "$W" > "$M/.claude/audit-gate/session_worktree/s$n"; done
+mk_tp() {   # mk_tp <file> <tool> <input-json>: a one-call transcript, dated now
+  python3 -c 'import json,sys,datetime; ts=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"); print(json.dumps({"type":"assistant","timestamp":ts,"message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":sys.argv[2],"input":json.loads(sys.argv[3])}]}}))' "$@" > "$1"
+}
+stop_hook() {   # stop_hook <gate> <session> <cwd> <transcript>: rc of that Stop in the session's worktree; stderr in $TMP/gate.err
+  python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"Stop","session_id":sys.argv[1],"cwd":sys.argv[2],"transcript_path":sys.argv[3]}))' "$2" "$3" "$4" \
+    | CLAUDE_PROJECT_DIR="$M" bash "$DEVKIT_DIR/hooks/$1" >/dev/null 2>"$TMP/gate.err"
+}
+mk_tp "$TMP/sg1.jsonl" Write "{\"file_path\":\"$W/app/src/main/AndroidManifest.xml\",\"content\":\"<uses-permission android:name=\\\"x\\\"/>\"}"
+stop_hook security_gate.sh s11 "$W" "$TMP/sg1.jsonl"; rc=$?
+[ "$rc" = 2 ] && grep -q AndroidManifest "$TMP/gate.err" && ok "security_gate: a Write into the session's worktree (its path holds /.claude/) is judged, no review ran: blocks" \
+  || fail "security_gate Write in the worktree: rc=$rc $(head -c 200 "$TMP/gate.err")"
+mk_tp "$TMP/sg2.jsonl" Bash "{\"command\":\"sed -i s/a/b/ $W/app/src/main/AndroidManifest.xml\"}"
+stop_hook security_gate.sh s12 "$W" "$TMP/sg2.jsonl"; rc=$?
+[ "$rc" = 2 ] && ok "  … a shell write naming a worktree path: blocks" || fail "security_gate Bash in the worktree: rc=$rc $(head -c 200 "$TMP/gate.err")"
+mk_tp "$TMP/sg3.jsonl" Write "{\"file_path\":\"$W/.claude/hooks/x.sh\",\"content\":\"apiKey = 1\"}"
+stop_hook security_gate.sh s13 "$W" "$TMP/sg3.jsonl"; rc=$?
+[ "$rc" = 0 ] && ok "  … the worktree's OWN .claude/ stays out of scope" || fail "security_gate judged the worktree's .claude/: rc=$rc"
+mk_tp "$TMP/sg4.jsonl" Bash '{"command":"echo done"}'
+mkdir -p "$W/app"; : > "$W/app/google-services.json"   # after the transcript's first timestamp: only a shell command could have written it
+stop_hook security_gate.sh s14 "$W" "$TMP/sg4.jsonl"; rc=$?
+[ "$rc" = 2 ] && grep -q "google-services.json (git diff" "$TMP/gate.err" && ok "  … the git-diff source reads the worktree (a file only a shell command could have written)" \
+  || fail "security_gate git-diff source: rc=$rc $(head -c 200 "$TMP/gate.err")"
+rm -f "$W/app/google-services.json"
+[ -s "$M/.claude/audit-gate/security_gate.log" ] && [ ! -e "$W/.claude/audit-gate/security_gate.log" ] \
+  && ok "  … its log stays under main's .claude/audit-gate" || fail "security_gate log is not under main only"
+
+printf '#!/bin/sh\npwd >> "%s/compiled"\nexit 0\n' "$TMP" > "$W/gradlew"; chmod +x "$W/gradlew"
+mkdir -p "$W/app/src/main/java"; echo 'fun a() = 1' > "$W/app/src/main/java/Core.kt"; printf "plugins { id 'x' }\n" > "$W/app/build.gradle"
+git -C "$W" add -A && git -C "$W" commit -qm "a gradle module in the worktree only"
+echo 'fun a() = 2' > "$W/app/src/main/java/Core.kt"   # dirty in the worktree; main is clean and has no gradlew
+mk_tp "$TMP/ts1.jsonl" Write "{\"file_path\":\"$W/app/src/main/java/Core.kt\",\"content\":\"fun a() = 2\"}"
+stop_hook testsourceset_gate.sh s21 "$W" "$TMP/ts1.jsonl"; rc=$?
+[ "$rc" = 0 ] && [ "$(head -1 "$TMP/compiled" 2>/dev/null)" = "$W" ] && ok "testsourceset_gate: compiles the worktree's test source set (its dirty Kotlin), not a clean main's" \
+  || fail "testsourceset_gate in the worktree: rc=$rc compiled=$(head -1 "$TMP/compiled" 2>/dev/null)"
+grep -q "PASS" "$M/.claude/audit-gate/testsourceset_gate.log" 2>/dev/null && [ ! -e "$W/.claude/audit-gate/testsourceset_gate.log" ] \
+  && ok "  … its state stays under main's .claude/audit-gate" || fail "testsourceset_gate state is not under main only"
+[ -e "$W/.claude/audit-gate/test_run.lock" ] && ok "  … and it takes the lock of the tree it compiles (the one the regression gate holds there)" || fail "testsourceset_gate lock is not the worktree's"
+git -C "$W" add -A && git -C "$W" commit -qm "Core.kt"
+: > "$TMP/compiled"; echo 'fun b() = 1' > "$W/app/src/main/java/Core2.kt"; echo 'fun c() = 1' > "$W/app/src/main/java/Other.kt"; touch -t 202001010000 "$W/app/src/main/java/Other.kt"
+python3 -c 'import time; n=time.time(); print("s22\tstart\t%.3f\tw1\ns22\tend\t%.3f\tw1" % (n-30, n+30))' > "$M/.claude/audit-gate/bash_write_ledger.tsv"   # written by the hooks, under main
+mk_tp "$TMP/ts2.jsonl" Bash '{"command":"./codegen.sh"}'
+stop_hook testsourceset_gate.sh s22 "$W" "$TMP/ts2.jsonl"; rc=$?
+grep -q "SCOPE — 2 dirty file(s) → 1 written by this session: app/src/main/java/Core2.kt" "$M/.claude/audit-gate/testsourceset_gate.log" \
+  && ok "  … the Bash ledger the hooks write under main scopes the files the session wrote in the worktree" \
+  || fail "testsourceset_gate ledger scope: rc=$rc $(tail -2 "$M/.claude/audit-gate/testsourceset_gate.log" 2>/dev/null)"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_gates_follow_session_worktree: PASS"; exit 0; } || { echo "test_gates_follow_session_worktree: FAIL ($FAILS)"; exit 1; }

@@ -124,7 +124,24 @@ if [ "${TERMINAL}" = 1 ]; then
   exit 0
 fi
 
-cd "${REPO_ROOT}" 2>/dev/null || exit 0
+# W1 v6 (hooks/session_worktree.py): a session that ENTERED a worktree (EnterWorktree: CLAUDE_PROJECT_DIR still names main) or a subagent
+# the harness started in one has its Kotlin/Java judged in that worktree, not in a clean main. What the hooks keep (this gate's state above,
+# bash_write_ledger.tsv) stays under REPO_ROOT (main), where the hooks that write it look; only the compile lock is the tree's own.
+TREE_ROOT="${REPO_ROOT}"
+_SW_SID='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9][A-Za-z0-9._-]*)"'
+_SW_CWD='"cwd"[[:space:]]*:[[:space:]]*"[^"]*/\.claude/worktrees/'   # the cwd FIELD, not any text of the payload (a file read, a subagent)
+if [ "${HAVE_PY}" = 1 ] && { [[ ${INPUT} =~ ${_SW_CWD} ]] \
+     || { [[ ${INPUT} =~ ${_SW_SID} ]] && [ -f "${REPO_ROOT}/.claude/audit-gate/session_worktree/${BASH_REMATCH[1]}" ]; }; }; then
+  if _SW_ROOT="$(python3 -I -c 'import json,os,sys
+_d = os.path.dirname(os.path.realpath(sys.argv[1]))
+if os.path.isabs(_d): sys.path.append(_d)
+import session_worktree as s; print(s.project(json.loads(sys.stdin.read() or "{}")) or "")' "$0" <<<"${INPUT}" 2>/dev/null)"; then
+    [ -n "${_SW_ROOT}" ] && TREE_ROOT="${_SW_ROOT}"
+  else   # never silent: this gate then judges what CLAUDE_PROJECT_DIR names, possibly a clean main (OCR 14/10)
+    echo "⚠ DevKit $(basename "$0"): the session's worktree could not be resolved (hooks/session_worktree.py next to the real hook) - judging ${REPO_ROOT}" >&2
+  fi
+fi
+cd "${TREE_ROOT}" 2>/dev/null || exit 0
 # The Gradle wrapper is ./gradlew, or — in a monorepo whose Android/JVM app sits in
 # a subfolder — a gradlew further down. No wrapper anywhere: nothing to compile.
 if [ ! -x ./gradlew ] && [ -z "$(git ls-files -- '*/gradlew' 2>/dev/null | head -1)" ]; then
@@ -136,7 +153,7 @@ fi
 CHANGED="$( { git diff --name-only --diff-filter=ACMR 2>/dev/null
               git diff --cached --name-only --diff-filter=ACMR 2>/dev/null
               git ls-files --others --exclude-standard 2>/dev/null
-              [ -n "${HARNESS}" ] && python3 "${HARNESS}" since-files "${REPO_ROOT}" 2>/dev/null
+              [ -n "${HARNESS}" ] && python3 "${HARNESS}" since-files "${TREE_ROOT}" 2>/dev/null
             } | grep -E '\.(kt|java)$' | grep -v '/build/' | sort -u )"
 
 # Files an earlier stop of THIS session skipped as work in progress (below) and nothing compiled since: they are compiled with the next
@@ -211,7 +228,7 @@ done
 if [ "${HAVE_PY}" = 1 ] && [ -n "${INPUT}" ] && [ -n "${AUTHORSHIP_BIN}" ]; then
   # The payload goes to python on stdin, not in an env var (2026-10-09): past the OS limit for one variable python could
   # not start (tests/gates/test_hook_large_payload.sh).
-  SCOPED="$(printf '%s' "${INPUT}" | TS_CHANGED="${CHANGED}" TS_ROOT="${REPO_ROOT}" TS_BIN="${AUTHORSHIP_BIN}" python3 -I -c '
+  SCOPED="$(printf '%s' "${INPUT}" | TS_CHANGED="${CHANGED}" TS_ROOT="${TREE_ROOT}" TS_LEDGER_ROOT="${REPO_ROOT}" TS_BIN="${AUTHORSHIP_BIN}" python3 -I -c '
 import os, sys, json
 raw = sys.stdin.buffer.read().decode("utf-8", "replace")
 changed = [l for l in os.environ.get("TS_CHANGED", "").splitlines() if l.strip()]
@@ -245,7 +262,7 @@ def named_here(c):
     return sa.names_path(named, root, c) or (
         cwd != root and sa.names_path(named, cwd, os.path.relpath(os.path.join(root, c), cwd)))
 
-windows = sa.bash_windows(root)
+windows = sa.bash_windows(os.path.realpath(os.environ.get("TS_LEDGER_ROOT") or root))   # the ledger is written under main by the hooks
 my_sid = d.get("session_id") if isinstance(d.get("session_id"), str) else ""
 hit = []
 for c in changed:
@@ -290,7 +307,7 @@ fi
 # compiles again (audit 2026-09-29: a Stop blocked by another hook re-ran Gradle on the same content).
 TREE_FP=""; CACHED=""
 if [ -n "${HARNESS}" ]; then
-  TREE_FP="$(python3 "${HARNESS}" fingerprint "${REPO_ROOT}" 2>/dev/null || true)"
+  TREE_FP="$(python3 "${HARNESS}" fingerprint "${TREE_ROOT}" 2>/dev/null || true)"
   if [ -n "${TREE_FP}" ] && [ -n "${SCOPED}" ]; then
     SCOPE_ID="$(printf '%s' "${SCOPED}" | python3 -I -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:12])' 2>/dev/null)"
     # no scope id → no key: never let two file lists share one cached PASS
@@ -307,7 +324,12 @@ fi
 
 
 if [ "${CACHED}" != block ] && [ "${HAVE_PY}" = 1 ]; then
-  LOCK_FILE="${LOG_DIR}/test_run.lock"
+  LOCK_FILE="${TREE_ROOT}/.claude/audit-gate/test_run.lock"   # the tree's own: the regression and post-fix gates hold it while they test that tree
+  if [ "${TREE_ROOT}" != "${REPO_ROOT}" ]; then
+    mkdir -p "${TREE_ROOT}/.claude/audit-gate" 2>/dev/null || true
+    [ -e "${TREE_ROOT}/.claude/audit-gate/.gitignore" ] || printf '*\n' > "${TREE_ROOT}/.claude/audit-gate/.gitignore" 2>/dev/null || true
+    [ ! -p "${LOCK_FILE}" ] || rm -f -- "${LOCK_FILE}"   # a FIFO here (never ours) would block the open below
+  fi
   { exec 9>>"${LOCK_FILE}"; } 2>/dev/null || true
   if { >&9; } 2>/dev/null; then
     WAIT_LIMIT="${TESTSOURCESET_LOCK_WAIT_S:-20}"
@@ -333,7 +355,7 @@ while True:
 ' 2>/dev/null)"
     if [ "${LOCKED}" = "0" ]; then
       log "BUSY — lock held (waited ${WAIT_LIMIT}s)"
-      sysmsg "⚠ TEST-SOURCESET GATE UNTESTED — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau (${LOG_DIR}/test_run.lock); test source set CHƯA chạy, KHÔNG phải PASS."
+      sysmsg "⚠ TEST-SOURCESET GATE UNTESTED — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau (${LOCK_FILE}); test source set CHƯA chạy, KHÔNG phải PASS."
       { exec 9>&-; } 2>/dev/null || true
       exit 0
     fi
@@ -534,7 +556,7 @@ fi
 # Sending the reader to hunt for a changed parameter list then costs a full detour, and a gate that
 # misnames the cause actively pushes people to edit the wrong file. Measured 2026-08-25: an external
 # process merged a stale remote commit into trunk mid-session and this gate blamed signatures.
-UNMERGED="$(git -C "${REPO_ROOT}" diff --name-only --diff-filter=U 2>/dev/null || true)"
+UNMERGED="$(git -C "${TREE_ROOT}" diff --name-only --diff-filter=U 2>/dev/null || true)"
 
 log "BLOCK (attempt ${ATTEMPTS}) — ${TASKS_STR}"
 {
