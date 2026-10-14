@@ -27,7 +27,10 @@ wtadd() {   # wtadd <main> <name> <session>: a session worktree made like the Wo
   (cd "$1" && python3 -I "$WTPY" add "$1/.claude/worktrees/$2" --session="$3" --no-init >/dev/null 2>&1) || fail "setup: add $2"
 }
 commit_in() { echo "$3" > "$1/.claude/worktrees/$2/$3.txt" && G "$1/.claude/worktrees/$2" add "$3.txt" && G "$1/.claude/worktrees/$2" commit -qm "$3"; }
-record() { mkdir -p "$1/.claude/audit-gate/session_worktree" && printf '%s\n' "$1/.claude/worktrees/$3" > "$1/.claude/audit-gate/session_worktree/$2"; }
+record() {   # record <main> <session> <worktree name> [pid]: a session's record as the PostToolUse hook writes it (line 2: the claude pid)
+  mkdir -p "$1/.claude/audit-gate/session_worktree" && { printf '%s\n' "$1/.claude/worktrees/$3"; [ -z "${4:-}" ] || printf 'pid %s\n' "$4"; } > "$1/.claude/audit-gate/session_worktree/$2"
+}
+DEAD=2147483646   # a pid no process has
 transcript() {   # transcript <file> [path a Bash 'worktree add' named]: a session started a minute ago
   python3 -c 'import json,sys,time,datetime; f,p=sys.argv[1],sys.argv[2]
 ts=datetime.datetime.fromtimestamp(time.time()-60, datetime.timezone.utc).isoformat().replace("+00:00","Z")
@@ -59,7 +62,7 @@ stop "$TMP/b" s1 "$TMP/b/.claude/worktrees/s1" "$TMP/t1.jsonl"; rc=$?
 [ "$rc" = 0 ] && [ ! -f "$TMP/b/one.txt" ] && ok "trunk mode off: as before (the worktree the session is in is not merged by its Stop)" || fail "trunk off (rc $rc)"
 
 # 4 a gone session's record: adopted (merged, removed), record pruned
-repo c; wtadd "$TMP/c" s9 s9; commit_in "$TMP/c" s9 nine; record "$TMP/c" s9 s9
+repo c; wtadd "$TMP/c" s9 s9; commit_in "$TMP/c" s9 nine; record "$TMP/c" s9 s9 "$DEAD"
 stop "$TMP/c" s1 "$TMP/c" "$TMP/t1.jsonl"; rc=$?
 [ "$rc" = 0 ] && [ -f "$TMP/c/nine.txt" ] && [ ! -d "$TMP/c/.claude/worktrees/s9" ] && [ ! -e "$TMP/c/.claude/audit-gate/session_worktree/s9" ] \
   && ok "a gone session's worktree: adopted - merged into main, removed, its record pruned" || fail "adoption (rc $rc): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
@@ -72,9 +75,11 @@ stop "$TMP/d" s1 "$TMP/d" "$TMP/t5.jsonl"; rc=$?
 [ "$rc" = 0 ] && [ ! -f "$TMP/d/five.txt" ] && [ -d "$TMP/d/.claude/worktrees/s5" ] && ok "another live session's worktree: not merged, not removed, Stop not held" || fail "a live owner's worktree was taken or held on (rc $rc)"
 
 # 6 /clear: a dead id's record naming the worktree the session is in becomes the new id's; nothing adopted
-repo e; wtadd "$TMP/e" s0 s0; record "$TMP/e" s0 s0
+repo e; wtadd "$TMP/e" s0 s0; record "$TMP/e" s0 s0 $$   # the same claude process ($$) under the old id; the new id is registered by SessionStart with that pid
+python3 -I "$SL" --register --session s1b --pid $$ "$TMP/e" >/dev/null 2>&1
 stop "$TMP/e" s1b "$TMP/e/.claude/worktrees/s0" "$TMP/t1.jsonl"; rc=$?
-[ "$rc" = 0 ] && [ -d "$TMP/e/.claude/worktrees/s0" ] && [ "$(cat "$TMP/e/.claude/audit-gate/session_worktree/s1b" 2>/dev/null)" = "$TMP/e/.claude/worktrees/s0" ] \
+[ "$rc" = 0 ] && [ -d "$TMP/e/.claude/worktrees/s0" ] && [ "$(head -1 "$TMP/e/.claude/audit-gate/session_worktree/s1b" 2>/dev/null)" = "$TMP/e/.claude/worktrees/s0" ] \
+  && [ "$(sed -n 2p "$TMP/e/.claude/audit-gate/session_worktree/s1b" 2>/dev/null)" = "pid $$" ] \
   && [ ! -e "$TMP/e/.claude/audit-gate/session_worktree/s0" ] && ok "/clear: the record follows the session to its new id, the worktree is kept" || fail "reown (rc $rc): $(ls "$TMP/e/.claude/audit-gate/session_worktree" 2>&1)"
 
 # 7 a live other session's lock on main: no reason to skip the merge in trunk mode
@@ -85,7 +90,7 @@ stop "$TMP/f" s1 "$TMP/f/.claude/worktrees/s1" "$TMP/t1.jsonl"; rc=$?
 [ "$rc" = 0 ] && [ -f "$TMP/f/seven.txt" ] && ok "a lock on main from another live session: trunk mode merges anyway" || fail "main lock blocked the trunk merge (rc $rc): $(head -c 300 "$TMP/out")"
 
 # 8 a gone session's worktree whose folder was removed from outside while git still lists it, its commit not in main: held, record kept
-repo g; wtadd "$TMP/g" s8 s8; commit_in "$TMP/g" s8 eight; record "$TMP/g" s8 s8; rm -rf "$TMP/g/.claude/worktrees/s8"
+repo g; wtadd "$TMP/g" s8 s8; commit_in "$TMP/g" s8 eight; record "$TMP/g" s8 s8 "$DEAD"; rm -rf "$TMP/g/.claude/worktrees/s8"
 stop "$TMP/g" s1 "$TMP/g" "$TMP/t1.jsonl"; rc=$?
 [ "$rc" = 2 ] && [ -e "$TMP/g/.claude/audit-gate/session_worktree/s8" ] && ok "a gone session's worktree removed from outside, commit not in main: Stop held, its record kept" \
   || fail "vanished dead worktree (rc $rc, record $( [ -e "$TMP/g/.claude/audit-gate/session_worktree/s8" ] && echo kept || echo pruned)): $(head -c 300 "$TMP/err")"
@@ -112,6 +117,53 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["pid"]=2147483646
 stop "$TMP/i" s1 "$TMP/i" "$TMP/t1.jsonl"; rc=$?
 [ "$rc" = 0 ] && [ -f "$TMP/i/seven.txt" ] && [ ! -d "$TMP/i/.claude/worktrees/s7" ] \
   && ok "  … the same record once its pid is gone: adopted (merged, removed)" || fail "dead pid not adopted (rc $rc): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
+
+# 10a adoption needs PROOF of death (session_lock.owner_gone): a missing registry entry is not one (SessionEnd deletes the entry of every ended
+#     session, and a live session whose registration failed never had one) - the pid on the record is (OCR 13 / R1 review 14/10)
+repo n1; wtadd "$TMP/n1" s3 s3; commit_in "$TMP/n1" s3 three; record "$TMP/n1" s3 s3
+stop "$TMP/n1" s1 "$TMP/n1" "$TMP/t1.jsonl"; rc=$?
+[ "$rc" = 0 ] && [ ! -f "$TMP/n1/three.txt" ] && [ -d "$TMP/n1/.claude/worktrees/s3" ] && grep -q "left alone" "$TMP/err" \
+  && ok "no pid on the record, no registry entry, a fresh record: not adopted (nothing proves the owner gone), a note on stderr" \
+  || fail "adopted on a missing registry entry (rc $rc): out=$(head -c 200 "$TMP/out") err=$(head -c 200 "$TMP/err")"
+touch -t "$(date -v-25H +%Y%m%d%H%M 2>/dev/null || date -d '25 hours ago' +%Y%m%d%H%M)" "$TMP/n1/.claude/audit-gate/session_worktree/s3"
+stop "$TMP/n1" s1 "$TMP/n1" "$TMP/t1.jsonl"; rc=$?
+[ "$rc" = 0 ] && [ -f "$TMP/n1/three.txt" ] && [ ! -d "$TMP/n1/.claude/worktrees/s3" ] \
+  && ok "  … the same record 25 h old: adopted" || fail "an old pid-less record not adopted (rc $rc): out=$(head -c 200 "$TMP/out") err=$(head -c 200 "$TMP/err")"
+repo n2; wtadd "$TMP/n2" s3 s3; commit_in "$TMP/n2" s3 three; record "$TMP/n2" s3 s3 $$   # a live session with no registry entry: its record's pid answers
+stop "$TMP/n2" s1 "$TMP/n2" "$TMP/t1.jsonl"; rc=$?
+[ "$rc" = 0 ] && [ ! -f "$TMP/n2/three.txt" ] && [ -d "$TMP/n2/.claude/worktrees/s3" ] \
+  && ok "  … a live session with no registry entry (failed registration): its record's pid answers - not adopted" || fail "adopted a live unregistered session's worktree (rc $rc)"
+
+# 10a2 reown only where liveness is known and trunk mode is on (OCR 5): with session_lock not importable (it reads everyone as dead) or trunk mode
+#      off, the record of a session whose worktree the new session happens to stand in is not taken
+mkkit() {   # mkkit <dir>: a kit copy whose hooks / bin / scripts are the real ones, with its own copy of the gate (it finds its kit from its path)
+  mkdir -p "$1/hooks" "$1/bin" "$1/profiles" && ln -s "$DEVKIT_DIR/scripts" "$1/scripts"
+  for f in "$DEVKIT_DIR"/hooks/*; do ln -s "$f" "$1/hooks/"; done; rm -f "$1/hooks/worktree_merge_gate.sh" && cp "$HOOK" "$1/hooks/"
+  for f in "$DEVKIT_DIR"/bin/*; do ln -s "$f" "$1/bin/"; done
+}
+gate_in() {   # gate_in <kit> <main> <session> <cwd>: one Stop of that session through that kit's copy of the gate
+  python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"Stop","session_id":sys.argv[1],"cwd":sys.argv[2],"transcript_path":sys.argv[3]}))' "$3" "$4" "$TMP/t1.jsonl" \
+    | CLAUDE_PROJECT_DIR="$2" bash "$1/hooks/worktree_merge_gate.sh" > "$TMP/out" 2> "$TMP/err"
+}
+mkkit "$TMP/kit5"; rm -f "$TMP/kit5/bin/session_lock.py" && echo 'raise ImportError("broken on purpose")' > "$TMP/kit5/bin/session_lock.py"
+repo o1; wtadd "$TMP/o1" s0 s0; record "$TMP/o1" s0 s0 "$DEAD"
+gate_in "$TMP/kit5" "$TMP/o1" s1b "$TMP/o1/.claude/worktrees/s0"
+[ -e "$TMP/o1/.claude/audit-gate/session_worktree/s0" ] && [ ! -e "$TMP/o1/.claude/audit-gate/session_worktree/s1b" ] \
+  && ok "session_lock not importable: reown does not move another session's record to the session standing in its worktree" || fail "reown ran with liveness unknown: $(ls "$TMP/o1/.claude/audit-gate/session_worktree")"
+repo o2; G "$TMP/o2" config devkit.trunkMode false; wtadd "$TMP/o2" s0 s0; record "$TMP/o2" s0 s0 "$DEAD"
+stop "$TMP/o2" s1b "$TMP/o2/.claude/worktrees/s0" "$TMP/t1.jsonl"
+[ -e "$TMP/o2/.claude/audit-gate/session_worktree/s0" ] && [ ! -e "$TMP/o2/.claude/audit-gate/session_worktree/s1b" ] \
+  && ok "  … trunk mode off: the gate moves no record either" || fail "reown ran outside trunk mode: $(ls "$TMP/o2/.claude/audit-gate/session_worktree")"
+
+# 10a3 a failure inside the trunk block leaves the legacy rules a debt list untouched (OCR 6): the dead session's worktree was added to `owed`
+#      first, and when a later step raised, the legacy rules adopted and removed it. Here session_worktree.registered() raises.
+mkkit "$TMP/kit6"; rm -f "$TMP/kit6/hooks/session_worktree.py" && cp "$DEVKIT_DIR/hooks/session_worktree.py" "$TMP/kit6/hooks/"
+printf '\ndef registered(main, wt):\n    raise RuntimeError("boom")\n' >> "$TMP/kit6/hooks/session_worktree.py"
+repo p1; wtadd "$TMP/p1" s9 s9; commit_in "$TMP/p1" s9 nine; record "$TMP/p1" s9 s9 "$DEAD"
+wtadd "$TMP/p1" s8 s8; record "$TMP/p1" s8 s8 "$DEAD"; rm -rf "$TMP/p1/.claude/worktrees/s8"   # a second dead record whose folder is gone: registered() runs for it
+gate_in "$TMP/kit6" "$TMP/p1" s1 "$TMP/p1"; rc=$?
+[ ! -f "$TMP/p1/nine.txt" ] && [ -d "$TMP/p1/.claude/worktrees/s9" ] \
+  && ok "the trunk block fails half way: the dead session's worktree is not adopted by the legacy rules" || fail "legacy rules adopted a worktree after the trunk block failed (merged: $( [ -f "$TMP/p1/nine.txt" ] && echo yes || echo no)): err=$(head -c 200 "$TMP/err")"
 
 # 10b the same live idle session, after ANOTHER session's get_active_sessions ran (post-fix-gate --full, --check-last-active): that call used to
 #     DELETE the registry entry of a live pid with a heartbeat older than 600 s, and the next Stop adopted the worktree - committed the wip in it,

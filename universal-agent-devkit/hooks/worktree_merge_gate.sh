@@ -225,17 +225,37 @@ try:
         sys.path.append(os.path.join(devkit, "hooks"))
     import session_worktree as sw_mod
     trunk = sw_mod.trunk_mode(repo)
-    sw_mod.reown(repo, sid, here, session_alive)
+    # Taking a record or its worktree over destroys it (merge, then remove), so the owner must be PROVEN gone (session_lock.owner_gone: a pid
+    # that is dead - never a heartbeat, never a missing registry entry); without session_lock, or outside trunk mode, nothing is taken over.
+    known = trunk and session_lock is not None
+
+    def gone_owner(osid):
+        dead, why = session_lock.owner_gone(repo, osid, sw_mod, repo)
+        if not dead and why == "unknown":
+            sys.stderr.write(f"worktree_merge_gate: session {osid} left alone: no pid on its record, no registry entry, and the record is not a day old\n")
+        return dead
+    if known:
+        my_reg = session_lock.read_session(repo, sid) or {}   # /clear keeps the claude process: a record written under my pid is mine under its old id
+        sw_mod.reown(repo, sid, here, lambda o: not gone_owner(o), me=my_reg.get("pid") if isinstance(my_reg.get("pid"), int) else None)
     _recs = sw_mod.records(repo)
     own = os.path.realpath(_recs[sid]) if sid in _recs else None
-    if trunk and session_lock is not None:   # liveness unknown (session_lock not importable): never adopt - it would remove a live peer's worktree
-        owed |= {os.path.realpath(p) for osid, p in _recs.items() if osid != sid and not session_alive(osid)}
+    if known:
+        adopt, vanished_recs = {os.path.realpath(p) for osid, p in _recs.items() if osid != sid and gone_owner(osid)}, set()
         for _osid in os.listdir(os.path.join(repo, sw_mod.RECORD_DIR)) if os.path.isdir(os.path.join(repo, sw_mod.RECORD_DIR)) else ():
             _p = sw_mod.raw_record(repo, _osid) if _osid != sid and _osid not in _recs else None
-            if _p and not os.path.exists(_p) and sw_mod.registered(repo, _p) and not session_alive(_osid):
-                trunk_gone.add(os.path.realpath(_p))   # its folder was removed from outside, git still lists it: the vanished-folder rules hold on it
+            if _p and not os.path.exists(_p) and sw_mod.registered(repo, _p) and gone_owner(_osid):
+                vanished_recs.add(os.path.realpath(_p))   # its folder was removed from outside, git still lists it: the vanished-folder rules hold on it
+        owed |= adopt   # only once the whole block went through: a failure below leaves the legacy rules a debt list untouched
+        trunk_gone |= vanished_recs
 except Exception:  # noqa: BLE001 - no trunk-mode knowledge: the rules below are the old ones
     sw_mod, trunk, own, trunk_gone = None, False, None, set()
+
+def owner_may_live(osid):
+    """Another session owns the worktree and may still work in it: the old rules ask for a sign of life, trunk mode (where this gate merges and
+    removes) for proof of death - an owner with no pid and no registry entry is left alone."""
+    if session_lock is None:
+        return True
+    return not session_lock.owner_gone(repo, osid, sw_mod, repo)[0] if trunk else session_alive(osid)
 
 def state_owner(admin):
     """The session a worktree's devkit-worktree.json names (worktree add --session), read without hanging on a FIFO (INSTINCT-040)."""
@@ -403,7 +423,7 @@ for path in paths:
             pending.append(unknown_row(path, "cannot determine its git dir", "gitdir"))
         continue
     st_owner = state_owner(admin)
-    if st_owner and st_owner != sid and real not in finished and (session_lock is None or session_alive(st_owner)):
+    if st_owner and st_owner != sid and real not in finished and owner_may_live(st_owner):
         continue   # another live session's worktree, its owner known from the moment git registered it (W1 v6 item 3)
     try:
         created = os.path.getmtime(os.path.join(admin, "commondir"))

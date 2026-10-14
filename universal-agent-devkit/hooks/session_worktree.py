@@ -11,6 +11,8 @@ the hooks still run from it, while the hook input `cwd` is the worktree root. A 
 not the session's work (issues-bugs.md A.4). The worktree a session ENTERED is recorded by the PostToolUse hook on EnterWorktree /
 ExitWorktree (`record`), one small file per session under <main>/.claude/audit-gate/session_worktree/, and project() reads it: O(1),
 no transcript scan on the hot path. A subagent started in a worktree by the harness (isolation: "worktree") is told by its meta file.
+Line 2 of the record is `pid <n>`, the claude process it was written under: the merge gate adopts a dead session's worktree (merge, then
+remove) only on proof of death - that pid gone (bin/session_lock.py owner_gone) - and /clear keeps the process, so the record follows it.
 
 The record is agent-writable state (INSTINCT-027): it only chooses which tree a session's own Stop gates check, and it is honoured only
 for a registered linked worktree of the same repo. Nothing reaches main without the merge gate of `worktree finish` / `automerge` (W1 R3)
@@ -23,9 +25,11 @@ import os
 import re
 import stat
 import sys
+import time
 
 RECORD_DIR = os.path.join(".claude", "audit-gate", "session_worktree")
-_SID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+_SID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")   # first char alphanumeric: a dotted temp name (write_record) is never a session id
+_PID_LINE = re.compile(r"pid ([0-9]{1,10})")
 _TRUE = {"true", "yes", "on", "1"}
 
 
@@ -169,20 +173,57 @@ def raw_record(main, sid):
     return wt[0] if wt and os.path.isabs(wt[0]) else None
 
 
+def raw_pid(main, sid):
+    """The pid on line 2 of a session's record (`pid <n>`): the claude process the record was written under, None when there is none. Line 1 stays
+    the worktree path, so a reader that knows only the path still works."""
+    p = _record_path(main, sid)
+    lines = (_read_small(p) or "").splitlines()[1:2] if p else []
+    m = _PID_LINE.fullmatch(lines[0].strip()) if lines else None
+    return int(m.group(1)) if m and int(m.group(1)) > 1 else None
+
+
+def record_age(main, sid, now=None):
+    """Seconds since a session's record was last written, None when unreadable (a symlink or FIFO there counts as unreadable)."""
+    p = _record_path(main, sid)
+    try:
+        st = os.lstat(p) if p else None
+    except OSError:
+        return None
+    return (time.time() if now is None else now) - st.st_mtime if st and stat.S_ISREG(st.st_mode) else None
+
+
+def holder_pid():
+    """The claude process this hook runs under (bin/session_lock.holder_pid, which skips the short-lived sh of dash systems), None when that module
+    cannot be loaded: a record then carries no pid and is never taken over on a pid."""
+    try:
+        bindir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
+        if bindir not in sys.path:
+            sys.path.append(bindir)
+        import session_lock
+        return session_lock.holder_pid()
+    except Exception:  # noqa: BLE001 - no pid recorded is the safe side: the owner then reads as alive until the record is a day old
+        return None
+
+
 def read_record(main, sid):
     """The worktree session `sid` entered (EnterWorktree, not left with ExitWorktree), if it is still a registered linked worktree of this repo."""
     wt = raw_record(main, sid)
     return _same_repo_worktree(main, wt) if wt else None
 
 
-def write_record(main, sid, wt):
+def write_record(main, sid, wt, pid=None):
+    """Record that session `sid` works in worktree `wt`. pid: the claude process of that session (holder_pid), line 2 - what the merge gate
+    judges the owner dead by. Never the pid of the process writing here when that is a hook's child (the merge gate's python): it dies at once."""
     p = _record_path(main, sid)
     if not p or not _same_repo_worktree(main, wt):
         return False
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    tmp = f"{p}.{os.getpid()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(os.path.realpath(wt) + "\n")
+    tmp = os.path.join(os.path.dirname(p), f".{os.path.basename(p)}.{os.getpid()}.tmp")   # a leading "." never matches _SID: no reader takes it for a record
+    if os.path.lexists(tmp):
+        os.unlink(tmp)   # (a leftover of a killed hook with this pid, or a symlink planted there: never written through)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(os.path.realpath(wt) + "\n" + (f"pid {int(pid)}\n" if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 else ""))
     os.replace(tmp, p)
     return True
 
@@ -239,18 +280,23 @@ def prune_records(main):
             clear_record(main, sid)
 
 
-def reown(main, sid, here, is_alive):
+def reown(main, sid, here, is_alive, me=None):
     """/clear and /resume give the same Claude process a new session id while it stays in its worktree: the record of a session that is
     no longer alive, naming the worktree `here` lies in, becomes `sid`'s - else the next Stop would adopt (merge and remove) the worktree
     the session still works in, and the gates would check main again. A session that already has a record keeps it: its own worktree is
-    never swapped for a dead session's one it happens to stand in. Returns the worktree re-owned, or None."""
+    never swapped for a dead session's one it happens to stand in. me: the claude pid of the session asking - a record written under that
+    very process is this session's own under its old id (the old id's registry entry is gone, its pid is alive: it is no peer). The
+    record's pid is carried over. Returns the worktree re-owned, or None."""
     if not _record_path(main, sid) or not here or raw_record(main, sid):
         return None
     here = os.path.realpath(here)
     for osid, wt in records(main).items():
         rp = os.path.realpath(wt)
-        if osid != sid and (here == rp or here.startswith(rp + os.sep)) and not is_alive(osid):
-            if write_record(main, sid, rp):
+        if osid == sid or not (here == rp or here.startswith(rp + os.sep)):
+            continue
+        rec_pid = raw_pid(main, osid)
+        if not is_alive(osid) or (me and rec_pid == me):
+            if write_record(main, sid, rp, pid=rec_pid):
                 clear_record(main, osid)
                 return rp
     return None
@@ -288,7 +334,7 @@ def on_tool_use(payload, env=None):
     if tool == "EnterWorktree":
         wt = _entered_path(payload)
         t = tree_of(wt) if isinstance(wt, str) and wt else None
-        if t and t[1] and write_record(main, sid, t[0]):
+        if t and t[1] and write_record(main, sid, t[0], pid=holder_pid()):
             return "entered " + t[0]
         return ""
     if tool == "ExitWorktree":

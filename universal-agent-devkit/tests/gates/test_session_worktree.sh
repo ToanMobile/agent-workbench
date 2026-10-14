@@ -55,6 +55,8 @@ proj() {   # proj <session> [agent_id] [transcript]: what project() answers for 
 [ "$(proj s1)" = "$M" ] && ok "no record: project = CLAUDE_PROJECT_DIR (as before)" || fail "no record: $(proj s1)"
 rec EnterWorktree s1 "$W" "$W"
 [ "$(proj s1)" = "$W" ] && ok "after EnterWorktree: project = the session's worktree (gates check the work, not a clean main)" || fail "entered: $(proj s1)"
+[ "$(sed -n 2p "$M/.claude/audit-gate/session_worktree/s1")" = "pid $$" ] && ok "  … the record carries the pid of the process the hook ran under (its parent: here this shell), what the merge gate judges the owner dead by" \
+  || fail "record pid: '$(sed -n 2p "$M/.claude/audit-gate/session_worktree/s1")' (want pid $$)"
 [ "$(proj s2)" = "$M" ] && ok "  … another session is not moved by it" || fail "another session moved: $(proj s2)"
 git -C "$M" config devkit.trunkMode false
 [ "$(proj s1 "" "" "$W/sub")" = "$W" ] && [ "$(proj s1)" = "$M" ] && ok "  … trunk mode off: the record holds only while the session is in that worktree (in main: main - a record cannot steer a session working in main)" \
@@ -110,6 +112,40 @@ r="$(reown cur "$TMP/main-w2")"
 r="$(reown fresh "$TMP/main-w2")"
 [ "$r" = "$TMP/main-w2" ] && [ ! -e "$M/.claude/audit-gate/session_worktree/dead" ] && [ "$(cat "$M/.claude/audit-gate/session_worktree/fresh")" = "$TMP/main-w2" ] \
   && ok "  … a session with no record takes over the dead one's (the /clear case)" || fail "reown for a record-less session ('$r')"
+# the same process (/clear keeps the claude process, so the old id's pid answers): a record written under pid `me` is taken, one under another
+# live pid is not; the record's pid travels with it (OCR 13 / R1 review 14/10)
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import session_worktree as sw
+m, a, b = sys.argv[2:5]; assert sw.write_record(m, "mine", a, pid=4242) and sw.write_record(m, "peer", b, pid=4343)
+alive = lambda o: True   # both ids read alive: only the pid of the process asking can tell the same process from a peer
+assert sw.reown(m, "new1", b, alive, me=4242) is None and sw.raw_record(m, "new1") is None, "a record of another live pid was taken"
+assert sw.reown(m, "new2", a, alive, me=4242), "a record written under my own pid was not taken"
+assert sw.raw_pid(m, "new2") == 4242 and sw.raw_pid(m, "mine") is None, "the pid did not travel with the record"' "$DEVKIT_DIR/hooks" "$M" "$W" "$TMP/main-w2" \
+  && ok "  … reown with me=<pid>: the record written under that process is taken (pid carried over), another live pid's is not" || fail "reown me=pid"
+
+# 7 the record: a pid on line 2 (the claude process), a temp name no reader takes for a session, a planted symlink never written through
+python3 -I -c 'import os, sys; sys.path.insert(0, sys.argv[1]); import session_worktree as sw
+m, w = sys.argv[2:4]; rd = os.path.join(m, sw.RECORD_DIR)
+assert sw.write_record(m, "p1", w, pid=777) and sw.raw_record(m, "p1") == w and sw.raw_pid(m, "p1") == 777
+assert sw.write_record(m, "p2", w) and sw.raw_pid(m, "p2") is None, "a record without a pid reads none"
+for bad in (True, 1, 0, -5, "9", None): assert sw.write_record(m, "p3", w, pid=bad) and sw.raw_pid(m, "p3") is None, f"pid {bad!r} was recorded"
+open(os.path.join(rd, "p4"), "w").write(w + "\npid 12 extra\n"); assert sw.raw_pid(m, "p4") is None
+assert sw.record_age(m, "p1") is not None and sw.record_age(m, "nobody") is None
+# a write killed between the temp file and os.replace (the hook timeout): the leftover is no record
+real = os.replace
+def die(*a): raise KeyboardInterrupt
+os.replace = die
+try: sw.write_record(m, "p5", w, pid=1234)
+except KeyboardInterrupt: pass
+os.replace = real
+left = [n for n in os.listdir(rd) if n.endswith(".tmp")]
+assert left and not any(sw._SID.fullmatch(n) for n in left), f"a temp name matches _SID: {left}"
+assert "p5" not in sw.records(m) and not [n for n in sw.records(m) if n.endswith(".tmp")], "the temp file of a killed write is read as a session record"
+# a symlink planted at the temp path: replaced, never written through
+victim = os.path.join(os.path.dirname(rd), "victim.txt"); open(victim, "w").write("keep")
+os.symlink(victim, os.path.join(rd, f".p6.{os.getpid()}.tmp"))
+assert sw.write_record(m, "p6", w) and open(victim).read() == "keep", "write_record followed a symlink at its temp path"' "$DEVKIT_DIR/hooks" "$M" "$W" \
+  && ok "record: pid on line 2 (a flag, 0, a string, a bad line: none), a killed write leaves no session record, a planted symlink is not written through" \
+  || fail "record format / temp name"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_session_worktree: PASS"; exit 0; } || { echo "test_session_worktree: FAIL ($FAILS)"; exit 1; }

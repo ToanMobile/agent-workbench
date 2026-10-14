@@ -1094,7 +1094,7 @@ TRUNK_MSG = ("⛔ [DevKit] Trunk mode: main checkout {main} chỉ để GỘP �
 def info_alive(info, now=None):
     """A registry entry names a live session: its pid answers - a session idle at its prompt or inside one long tool call keeps no fresh
     heartbeat and is alive all the same, so adopting its worktree (merge, remove) on a heartbeat would take it from under a live session.
-    No pid recorded: the heartbeat, 180 s. The one rule hooks/worktree_merge_gate.sh and the trunk-mode reown share."""
+    No pid recorded: the heartbeat, 180 s. For the gate's legacy owner checks (session_alive); trunk adoption and reown use owner_gone."""
     if not info:
         return False
     pid = info.get("pid")
@@ -1103,12 +1103,27 @@ def info_alive(info, now=None):
     return (time.time() if now is None else now) - _num(info.get("heartbeat")) <= 180.0
 
 
-def _registered_alive(cwd, sid):
-    """Session `sid` is registered in this repo and still alive (info_alive) - the rule hooks/worktree_merge_gate.sh uses before it adopts a worktree."""
-    try:
-        return info_alive(read_session(cwd, sid))
-    except Exception:  # noqa: BLE001 - unknown reads as not alive, as in the merge gate
-        return False
+RECORD_NO_PID_TAKEOVER_S = 24 * 3600.0   # a worktree record with no pid anywhere is taken over only when it is this old
+
+
+def owner_gone(cwd, osid, sw, main):
+    """(dead, why): True only on a POSITIVE death signal of session `osid`, the owner of a worktree record - the one test for taking that
+    worktree over (hooks/worktree_merge_gate.sh adoption: merge, then remove) or its record (reown). Anything unknown reads as ALIVE
+    (why "alive" | "unknown"): the old default - unknown is dead - moved the debt to whoever asked, but adoption destroys a worktree.
+    Pids known: the one in the session's record (the claude process the EnterWorktree hook ran under) and the one of its registry entry;
+    dead when every one of them is gone. SessionEnd deletes the registry entry, so a gone session has none, and a live one whose
+    registration failed (or that started before this kit) never had one: the record's pid is what tells them apart. The registry
+    heartbeat decides nothing - a session idle at its prompt or inside one long tool call keeps none. No pid anywhere: a record older than
+    24 h (`sw` = hooks/session_worktree.py, `main` = the main checkout).
+    ponytail: a pid the OS has reused reads alive (never adopted, fails closed); upgrade to a start-time check if such a worktree is seen."""
+    if not osid or os.sep in osid:
+        return False, "unknown"
+    ok = lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 1   # noqa: E731 - a pid, not a flag or a bogus number
+    pids = [p for p in (sw.raw_pid(main, osid), (read_session(cwd, osid) or {}).get("pid")) if ok(p)]
+    if pids:
+        return (False, "alive") if any(is_pid_alive(p) for p in pids) else (True, "pid gone")
+    age = sw.record_age(main, osid)
+    return (True, "old record, no pid") if age is not None and age > RECORD_NO_PID_TAKEOVER_S else (False, "unknown")
 
 
 def trunk_main(top):
@@ -1373,7 +1388,7 @@ def main():
         main_top = _sw.main_of(top) if _sw is not None and top else None
         if main_top:   # /clear, /resume: the same process under a new id, still in its worktree - its record follows it (W1 v6 item 5)
             try:
-                _sw.reown(main_top, sid, cwd, lambda o: _registered_alive(cwd, o))
+                _sw.reown(main_top, sid, cwd, lambda o: not owner_gone(cwd, o, _sw, main_top)[0], me=holder_pid())
             except Exception as e:  # noqa: BLE001 - a record that cannot be moved: the Stop hook tries again (worktree_merge_gate)
                 print(f"session_lock: worktree record not moved ({e!r})", file=sys.stderr)
         if trunk and _same_dir(top, trunk):

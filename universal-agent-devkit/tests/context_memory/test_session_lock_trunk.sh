@@ -193,13 +193,57 @@ rm -f "$(git -C "$M" rev-parse --absolute-git-dir)/devkit-session.lock"
 [ "$s1" = 5 ] && grep -q "trunk mode" "$TMP/st" && [ "$s2" = 0 ] && ok "--status: main exit 5 (merge-only, says how), a worktree exit 0" || fail "--status: main $s1, worktree $s2"
 
 # 4b /clear or /resume: SessionStart under a new id, still in the worktree - the dead id's record follows the session (no gate checks main)
-RD="$M/.claude/audit-gate/session_worktree"; mkdir -p "$RD" && printf '%s\n' "$W" > "$RD/sess-old"
+RD="$M/.claude/audit-gate/session_worktree"; mkdir -p "$RD" && printf '%s\npid %s\n' "$W" "$$" > "$RD/sess-old"   # written under this very process (the hook's parent, $$): /clear keeps it
 python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"SessionStart","session_id":"sess-new","cwd":sys.argv[1]}))' "$W" | python3 -I "$SL" >/dev/null 2>&1
-[ "$(cat "$RD/sess-new" 2>/dev/null)" = "$W" ] && [ ! -e "$RD/sess-old" ] && ok "SessionStart after /clear in the worktree: the record moves to the new session id" \
+[ "$(head -1 "$RD/sess-new" 2>/dev/null)" = "$W" ] && [ "$(sed -n 2p "$RD/sess-new" 2>/dev/null)" = "pid $$" ] && [ ! -e "$RD/sess-old" ] && ok "SessionStart after /clear in the worktree: the record moves to the new session id" \
   || fail "reown at SessionStart: $(ls "$RD")"
 python3 -I "$SL" --register --session sess-live --pid $$ "$M" >/dev/null 2>&1; printf '%s\n' "$W2" > "$RD/sess-live"
 python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"SessionStart","session_id":"sess-x","cwd":sys.argv[1]}))' "$W2" | python3 -I "$SL" >/dev/null 2>&1
 [ -e "$RD/sess-live" ] && [ ! -e "$RD/sess-x" ] && ok "  … a LIVE session's record is never taken over" || fail "a live session's record moved: $(ls "$RD")"
+sleep 60 & PEER=$!   # a live process that is not this session's: a peer whose registry entry is missing (failed registration) but whose record's pid answers
+printf '%s\npid %s\n' "$W2" "$PEER" > "$RD/sess-peer"
+python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"SessionStart","session_id":"sess-y","cwd":sys.argv[1]}))' "$W2" | python3 -I "$SL" >/dev/null 2>&1
+[ -e "$RD/sess-peer" ] && [ ! -e "$RD/sess-y" ] && ok "  … nor the record of a peer with no registry entry whose record's pid answers" || fail "an unregistered live peer's record moved: $(ls "$RD")"
+kill "$PEER" 2>/dev/null; wait "$PEER" 2>/dev/null
+printf '%s\npid %s\n' "$W2" 2147483646 > "$RD/sess-peer"
+python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"SessionStart","session_id":"sess-y","cwd":sys.argv[1]}))' "$W2" | python3 -I "$SL" >/dev/null 2>&1
+[ -e "$RD/sess-y" ] && [ ! -e "$RD/sess-peer" ] && [ "$(sed -n 2p "$RD/sess-y")" = "pid 2147483646" ] && ok "  … a record whose process is gone is taken (/resume in a new process), its pid carried over" || fail "a dead record not re-owned: $(ls "$RD")"
+
+# 4c owner_gone: the one test for adopting a worktree / taking a record - proof of death or nothing (OCR 13, R1 review 14/10)
+python3 - "$DEVKIT_DIR" "$M" "$W" > "$TMP/unit3" 2>&1 <<'PY'
+import json, os, sys, time
+dk, m, w = sys.argv[1:4]
+sys.path.insert(0, dk + "/bin")
+import session_lock as sl
+sw = sl._hook_module("session_worktree")
+DEAD = 2147483646
+def case(label, want, rec_pid=None, reg_pid="none", hb_age=0, rec_age=0, sid="oc"):
+    for p in (os.path.join(m, sw.RECORD_DIR, sid), os.path.join(sl.sessions_dir(m)[0], sid + ".json")):
+        if os.path.lexists(p): os.unlink(p)
+    assert sw.write_record(m, sid, w, pid=rec_pid)
+    if rec_age:
+        t = time.time() - rec_age; os.utime(os.path.join(m, sw.RECORD_DIR, sid), (t, t))
+    if reg_pid != "none":
+        sl.register_session(m, sid, pid=reg_pid)
+        f = os.path.join(sl.sessions_dir(m)[0], sid + ".json"); d = json.load(open(f)); d["heartbeat"] = time.time() - hb_age
+        if reg_pid is None: d.pop("pid", None)
+        json.dump(d, open(f, "w"))
+    got = sl.owner_gone(m, sid, sw, m)
+    print(("✔ " if got[0] == want else "✖ ") + f"{label}: want dead={want}, got {got}")
+case("a pid on the record that answers", False, rec_pid=os.getpid())
+case("a pid on the record that is gone, no registry entry (an ended session)", True, rec_pid=DEAD)
+case("registry pid alive, heartbeat 40 min old (idle at the prompt)", False, reg_pid=os.getpid(), hb_age=2400)
+case("registry pid gone", True, reg_pid=DEAD)
+case("record pid gone but the registry pid answers", False, rec_pid=DEAD, reg_pid=os.getpid())
+case("no pid anywhere, a fresh record", False)
+case("no pid anywhere, a 25 h old record", True, rec_age=25 * 3600)
+case("registry entry with no pid and a fresh heartbeat (the old 180 s rule would call it alive)", False, reg_pid=None)
+case("registry entry with no pid, a stale heartbeat, a fresh record: the heartbeat decides nothing", False, reg_pid=None, hb_age=3600)
+case("garbage pids (a bool, 1, 0) count as none", False, reg_pid=True)
+print("owner_gone path id:", sl.owner_gone(m, "../x", sw, m), sl.owner_gone(m, "", sw, m))
+PY
+! grep -q "^✖" "$TMP/unit3" && [ "$(grep -c '^✔' "$TMP/unit3")" = 10 ] && ok "owner_gone: dead only on a dead pid or a 25 h old pid-less record; every unknown reads alive" \
+  || { fail "owner_gone cases"; grep "✖\|Error\|assert" "$TMP/unit3" | head -8; }
 
 # 5 R7 and trunk mode off: the old rules, unchanged (main's lock taken by the first write)
 hook PreToolUse "$M" Edit "{\"file_path\": \"$M/src/a.py\"}" WORKTREE_TRUNK_MODE=0; rc=$?
