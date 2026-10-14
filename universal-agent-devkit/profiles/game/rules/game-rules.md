@@ -27,7 +27,7 @@
 
 ## 3. Trải Nghiệm Người Dùng & Game Feel (UI/UX Production & Juice Engine)
 - **Game Feel & "Juice" Đa Giác Quan:**
-  - `Squash & Stretch:` Chạm nén $0.92\times$ Y ($0.08\text{s}$), buông bật nảy Overshoot $1.08\times$ với `Ease.OutBack` ($0.15\text{s}$). Luôn `transform.DOKill(true)` trước khi kích hoạt tween mới.
+  - `Squash & Stretch:` Chạm nén $0.92\times$ Y ($0.08\text{s}$) rồi về tư thế nhấn $0.95\times$ + lún 2–4 px khi còn giữ (uGUI #32, essentials), buông bật nảy Overshoot $1.08\times$ với `Ease.OutBack` ($0.15\text{s}$). Luôn `transform.DOKill(true)` trước khi kích hoạt tween mới.
 <!-- on-demand: §3 Game feel, juice, hạt, số nổi, kiến trúc uGUI Canvas -->
   - `Hit-Stop (Impact Freeze):` Dừng frame 3–5 frames ($50-80\text{ms}$) khi va chạm mạnh hoặc nổ combo tạo cảm giác lực có sức nặng.
   - `Trauma Camera Shake:` Rung chấn phi tuyến tính tính bằng $Trauma^2 \times \text{PerlinNoise}(t)$ với decay tuyến tính ($1.2/\text{s}$).
