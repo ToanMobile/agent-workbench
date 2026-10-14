@@ -775,12 +775,16 @@ if res.returncode == 4 and summary.get("busy"):
                       "(.claude/audit-gate/test_run.lock); test hồi quy CHƯA chạy, KHÔNG phải PASS."}, ensure_ascii=False))
     sys.exit(0)
 if res.returncode == 4 and summary.get("budget_exhausted"):
-    # Time budget spent: some suites did not start. Nothing to fix in the change and no verdict to remember: say it every
-    # time, cache nothing (the next stop runs again), do not advance verified_head.
+    # Time budget spent: some suites did not start. Nothing to fix in the change and no verdict to remember HERE: say it every
+    # time, store no state of this hook (no pass_fp / untested_fp / session result), do not advance verified_head. The GATE keeps
+    # what the suites that did finish proved (.git/postfix-gate/budget_pass.json, same keys as its receipt, never a PASS of the
+    # whole): the next stop on the SAME content re-uses those suites and spends its budget on the ones left (2026-10-14, Goods:
+    # two 900 s Unity suites ran again at every Stop and the third suite never started).
     left = [str(t.get("id") or "?") for t in summary.get("regression_tests", []) if t.get("label") == "BUDGET"]
     note("budget fp=%s left=%s" % (fp, ",".join(left)))
     print(json.dumps({"systemMessage": "Regression gate UNTESTED — hết ngân sách thời gian (%ss): %s chưa chạy — KHÔNG phải PASS; "
-                      "chạy `postfix-gate --run-tests --full` trước khi bàn giao. (REGRESSION_GATE_BUDGET_S)"
+                      "chạy `postfix-gate --run-tests --full` trước khi bàn giao. (REGRESSION_GATE_BUDGET_S) "
+                      "Suite đã PASS giữ lại cho lần Stop sau nếu code không đổi."
                       % (budget_s, ", ".join(left))}, ensure_ascii=False))
     sys.exit(0)
 if res.returncode == 4 and summary:
