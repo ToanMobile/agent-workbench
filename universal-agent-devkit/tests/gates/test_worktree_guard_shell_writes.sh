@@ -65,8 +65,15 @@ guard "$H" "$W" "env -S \"rm 'a\\c' $M/src/a.kt\""; rc=$?
 # \c inside "…" is an env error (nothing runs): a line the scanner cannot read as env does is never waved through - its operands are judged
 guard "$H" "$W" "env -S \"rm \\\"a\\c\\\" $M/src/a.kt\""; rc=$?
 [ "$rc" = 2 ] && ok "env -S 'rm \"a\\c\" <main>/src/a.kt' (env refuses it) from the worktree: blocked, not waved through" || fail "env -S with \\c in double quotes: rc $rc"
+# env -S expands ${VARNAME} outside single quotes (and refuses a bare $VARNAME): the word that comes out is not the text written, so a line with
+# one is never read as text (OpenCodeReview delta 14/10: `rm ${HOME}/…` stayed a relative operand, resolved in the worktree, and passed)
+guard "$H" "$M" "env -S 'rm \${HOME}/src/a.kt'"; rc=$?
+[ "$rc" = 2 ] && ok "env -S 'rm \${HOME}/src/a.kt' (expanded by env) in the main checkout: blocked as unparsed" || fail "env -S with \${HOME} in main: rc $rc"
+guard "$H" "$M" "env -S 'rm \$HOME/src/a.kt'"; rc=$?
+[ "$rc" = 2 ] && ok "env -S 'rm \$HOME/src/a.kt' (a bare \$: env refuses it) in the main checkout: blocked as unparsed" || fail "env -S with a bare \$HOME in main: rc $rc"
 # The oracle is env itself: the operands targets() reads from `env -S 'rm LINE'` are the words this machine's env makes of LINE; a line env
-# refuses must come back as an "unparsed" hit (the callers' fail-closed kind), never as a cut-off word list
+# refuses must come back as an "unparsed" hit (the callers' fail-closed kind), never as a cut-off word list. A line env EXPANDS (${VAR}) is
+# unparsed on purpose too: what the variable holds is not known here.
 python3 -I - "$DEVKIT_DIR/hooks" <<'PY' > "$TMP/diff.out"; rc=$?
 import shlex, subprocess, sys
 sys.dont_write_bytecode = True
@@ -75,14 +82,16 @@ import shell_writes as sw
 PRINT = "/usr/bin/printf [%s] x "          # `x` first: a line of no words and one of an empty word print the same
 LINES = [r"a b", r"'a\c' b", r'"a\c" b', r"a\c b", r"'a\_b' c", r'"a\_b" c', r"a\_b c", r"a\_\_b", r"\_a b\_", r"'f\'g' h",
          r"'a\\b' c", r"'a\xb' c", r"a\xb c", r'"a\"b" c', r"a\'b c", r"'a'b c", r"'' c", r"'ab c", r'"ab c', "a\\", r'"a\tb" c',
-         r"a\nb c", "a\tb", r"a\$b c", r"'a\c'\_b", r'"a b" "c d"']
+         r"a\nb c", "a\tb", r"a\$b c", r"'a\c'\_b", r'"a b" "c d"',
+         r"${HOME} b", r"${} b", r"$HOME b", r"'${HOME}' b", r'"${HOME}" b', r"\${HOME} b", r"a$ b", r'"a$" b', r"${HOME b", r"${NOPE_UNSET}x b"]
+EXPANDS = {r"${HOME} b", r'"${HOME}" b', r"${NOPE_UNSET}x b"}   # env accepts these and substitutes: the scanner must still call them unparsed
 bad = 0
 for line in LINES:
     real = subprocess.run(["env", "-S", PRINT + line], capture_output=True, text=True)
     got = sw.targets("env -S " + shlex.quote("rm " + line), "/w")
     unparsed = any(k == "unparsed" for k, _t, _h in got)
     ops = [t for k, t, _h in got if k == "file"]
-    if real.returncode:      # env refuses the line: nothing runs, any operand list is safe - but the scanner must say it could not read it
+    if real.returncode or line in EXPANDS:      # env refuses the line (nothing runs, any operand list is safe) or expands it: the scanner must say it could not read it
         ok, want = unparsed, "an unparsed hit"
     else:
         want = [w for w in real.stdout[1:-1].split("][")[1:] if w]    # (an empty word is no operand)

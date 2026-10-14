@@ -118,7 +118,8 @@ def _env_words(line):
     r"""The words env -S makes of `line`, by env's own quote rules (measured on macOS env 14/10), or None when env refuses the line or this
     cannot read it as env does. Inside '...' everything is literal but `\\` and `\'`. Inside "..." `\_` is a space and `\c` an error.
     Unquoted, `\_` separates words and `\c` ends the line. `\f \n \r \t \v` are control characters, `\\ \' \" \$ \#` themselves,
-    any other escape an error. `$` and `#` stay plain text (env's comment cuts the line there: judging more words is never open)."""
+    any other escape an error. An unescaped `$` outside '...' is None: env substitutes `${VAR}` and refuses a bare `$`. `#` stays plain text
+    (env's comment cuts the line there: judging more words is never open)."""
     words, cur, live, quote, i = [], [], False, None, 0
     while i < len(line):
         ch, i = line[i], i + 1
@@ -149,6 +150,8 @@ def _env_words(line):
                 return None
             cur.append(esc)
             live = True
+        elif ch == "$":   # outside '...' env substitutes ${VAR} (what the variable holds is not known here) and refuses a bare $
+            return None
         elif quote:
             if ch == quote:
                 quote = None
