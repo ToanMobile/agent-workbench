@@ -14,7 +14,7 @@ import { updateTask, loadTask } from '../src/tasks.js';
 import { TOOLS_BY_NAME } from '../src/tools.js';
 import { homeStateDir } from '../src/util.js';
 import * as util from '../src/util.js';
-import { tmpProject, tmpGlobalConfig, cleanup, writeFile } from './helpers.js';
+import { tmpProject, tmpGlobalConfig, cleanup, writeFile, NO_AGY } from './helpers.js';
 
 const ARGON = 'gemini-4-argon-high';
 const FAKE = `#!/usr/bin/env node
@@ -275,7 +275,7 @@ test('loi that (khong phai "dang chay") khi nudge agy van NO to, kem goi y (khon
   const { conversationId } = await newConversation({ prompt: 'x', model: ARGON, cwd: dir });
   await sleep(900);
   setConversation(dir, taskId, conversationId);
-  process.env.ANTIGRAVITY_PM_AGY = path.join(os.tmpdir(), 'agpm-khong-co-agy', 'agy');   // agy bien mat giua chung
+  process.env.ANTIGRAVITY_PM_AGY = NO_AGY;   // agy bien mat giua chung
   await assert.rejects(call('pm_status', { project: dir, taskId, nudge: true }), /agy/);
 });
 
@@ -328,7 +328,7 @@ test('ghi so dang ky that bai SAU khi mo luot: dung agy vua mo (khong de agent c
 
 test('khong co agy: loi la AntigravityUnavailable BAT KE chinh sach quyen that cua may (kiem agy truoc, chot quyen sau)', async (t) => {
   fakeAgy(t);
-  process.env.ANTIGRAVITY_PM_AGY = path.join(os.tmpdir(), 'agpm-khong-co-agy-r2', 'agy');
+  process.env.ANTIGRAVITY_PM_AGY = NO_AGY;
   delete process.env.ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS;
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-r2-home-'));
   t.after(() => cleanup(home));
@@ -366,7 +366,7 @@ test('gui tin khi agy bien mat va chinh sach quyen khong dat: van la Antigravity
   fakeAgy(t, { FAKE_AGY_ID: 'c3c3c3c3-2222-3333-4444-555555555555' });
   const { conversationId } = await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
   await sleep(900);
-  process.env.ANTIGRAVITY_PM_AGY = path.join(os.tmpdir(), 'agpm-khong-co-agy-r2', 'agy');
+  process.env.ANTIGRAVITY_PM_AGY = NO_AGY;
   delete process.env.ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS;
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-r2-home-'));
   t.after(() => cleanup(home));
@@ -633,6 +633,17 @@ test('killGroup (util.js): SIGKILL ca nhom tien trinh (con + chau), khong nem: l
   assert.equal(got?.code, 'ESRCH');
 });
 
+test('test gia lap "khong co agy" khong tro ANTIGRAVITY_PM_AGY vao duong dan doan duoc trong /tmp dung chung (file dat san o do se bi chay voi skip-permissions)', () => {
+  const testsDir = path.dirname(new URL(import.meta.url).pathname);
+  const hits = [];
+  for (const f of fs.readdirSync(testsDir).filter((n) => n.endsWith('.js'))) {
+    fs.readFileSync(path.join(testsDir, f), 'utf8').split('\n').forEach((line, i) => {
+      if (/ANTIGRAVITY_PM_AGY\s*=\s*path\.join\(\s*os\.tmpdir\(\)/.test(line)) hits.push(`${f}:${i + 1}`);
+    });
+  }
+  assert.deepEqual(hits, [], `duong dan agy doan duoc: ${hits.join(', ')} (dung NO_AGY trong helpers.js)`);
+});
+
 test('"SIGKILL ca nhom tien trinh" chi con o MOT cho (util.killGroup), khong chep lai trong src/', () => {
   const srcDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../src');
   const hits = [];
@@ -717,7 +728,7 @@ test('su kien init cua agy in JSON co khoang trang ("event": "init"): van nhan r
 
 test('pm_doctor in trang thai agy (binary, so dang ky hong) CA KHI model mac dinh la bac IDE: task van chay agy qua model cua task / pm_dispatch', async (t) => {
   fakeAgy(t, { ANTIGRAVITY_LS_ADDRESS: '127.0.0.1:9', ANTIGRAVITY_CSRF_TOKEN: 'x' });
-  process.env.ANTIGRAVITY_PM_AGY = path.join(os.tmpdir(), 'agpm-khong-co-agy-r2', 'agy');   // agy vang mat tren may
+  process.env.ANTIGRAVITY_PM_AGY = NO_AGY;   // agy vang mat tren may
   fs.writeFileSync(registryFile(), '{"broken": ');
   const dir = mkProject(t, { defaultModel: 'flash' });
   const out = await call('pm_doctor', { project: dir });
