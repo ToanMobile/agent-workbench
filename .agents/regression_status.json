@@ -576,7 +576,8 @@
         "duration": "584.68s",
         "exit_code": 0,
         "log": ".agents/evidence/REG-DK-ALL-01/20261014-104558.log",
-        "deleted": []
+        "deleted": [],
+        "reused_at": "2026-10-14 10:49:34"
       },
       "history": [
         {
