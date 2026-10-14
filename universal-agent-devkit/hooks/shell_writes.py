@@ -193,8 +193,8 @@ def targets(cmd, here, depth=0):
             gdir, sub, skip, rest = wd, "", None, []
             for k, a in enumerate(words[1:], 1):
                 if skip:
-                    if skip == "-C":
-                        gdir = a if os.path.isabs(a) else os.path.join(gdir, a)
+                    if skip == "-C":   # ~ expanded as the shell does (OpenCodeReview 14/10); a $VAR one stays for the caller
+                        gdir = os.path.join(gdir, os.path.expanduser(a))
                     skip = None
                 elif a in ("-C", "-c", "--git-dir", "--work-tree"):
                     skip = a

@@ -52,6 +52,13 @@ guard "$H" "$M" "env -i --split-string='rm src/a.kt'"; rc=$?
 [ "$rc" = 2 ] && ok "env -i --split-string='<rm …>' in the main checkout: blocked" || fail "env --split-string=<line> in main: rc $rc"
 guard "$H" "$W" "env -S 'rm src/a.kt'"; rc=$?
 [ "$rc" = 0 ] && ok "env -S '<rm …>' inside its own worktree: allowed" || fail "env -S in the worktree: rc $rc $(cat "$TMP/err")"
+# `git -C ~/x …`: the shell expands ~ before git sees it, the scanner joined `~/x` to the cwd (OpenCodeReview 14/10, issues-bugs.md
+# A.4 (c)): a commit into the main checkout from the worktree went through, one into the worktree from the main checkout's cwd was
+# blocked. HOME = the fixture dir, so ~/main is the main checkout and ~/wt the worktree.
+HOME="$TMP" guard "$H" "$W" "git -C ~/main commit -qm x"; rc=$?
+[ "$rc" = 2 ] && ok "git -C ~/<main> commit from the worktree: blocked" || fail "git -C ~/main commit from the worktree: rc $rc"
+HOME="$TMP" guard "$H" "$M" "git -C ~/wt commit -qm x"; rc=$?
+[ "$rc" = 0 ] && ok "git -C ~/<worktree> commit from the main checkout's cwd: allowed" || fail "git -C ~/wt commit from main's cwd: rc $rc $(cat "$TMP/err")"
 
 mkdir -p "$TMP/partial" && cp "$H" "$TMP/partial/worktree_guard.sh"   # a partial install: no shell_writes.py beside it
 guard "$TMP/partial/worktree_guard.sh" "$M" "cp /tmp/x src/b.kt"; rc=$?
