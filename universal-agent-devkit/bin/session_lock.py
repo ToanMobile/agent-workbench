@@ -636,10 +636,11 @@ def get_active_sessions(cwd=None, current_sid=None, stale_s=180.0):
             is_stale = (now - hb > stale_s)
 
         if is_stale:
-            try:
-                os.remove(file_path)
-            except OSError:
-                pass
+            if not (pid and alive):   # a live pid with a silent heartbeat (idle at its prompt, one long tool call) is out of the LIST only: its
+                try:                  # entry stays, it is what tells worktree_merge_gate the session is alive (R1 review 14/10: the file was deleted
+                    os.remove(file_path)   # here and the next Stop adopted - merged and removed - that session's worktree)
+                except OSError:
+                    pass
             continue
         if info.get("status") == "idle":
             continue   # finished its turn, waiting for the user (Notification idle_prompt): not a working sibling
@@ -731,10 +732,12 @@ def stale_after():
         return 600.0
 
 
-def is_free_for(lock, sid, now, idle_frees=True):
+def is_free_for(lock, sid, now, idle_frees=True, live_pid_holds=False):
     """True when `sid` may hold the checkout: no lock, its own lock, an idle holder, a dead process, or a stale one.
     idle_frees=False: an idle holder still counts as present (it is alive and may come back) — for callers that would
-    otherwise act ON that session's tree (worktree_merge_gate merging or removing it), not just write next to it."""
+    otherwise act ON that session's tree (worktree_merge_gate merging or removing it), not just write next to it.
+    live_pid_holds: those callers only - a holder whose pid answers is present whatever its heartbeat says (idle at its prompt or inside
+    one long tool call keeps none): merging and removing its worktree on a 10-minute-old heartbeat took it from under a live session."""
     if not lock or not lock.get("session_id"):
         return True
     if lock.get("session_id") == sid:
@@ -744,6 +747,8 @@ def is_free_for(lock, sid, now, idle_frees=True):
     lock_pid = lock.get("pid")
     if lock_pid and not is_pid_alive(lock_pid):
         return True
+    if live_pid_holds and lock_pid:
+        return False
     return now - _num(lock.get("heartbeat")) > stale_after()   # not a number: missing, i.e. stale (D6)
 
 

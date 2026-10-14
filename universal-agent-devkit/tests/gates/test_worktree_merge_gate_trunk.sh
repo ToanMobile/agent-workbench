@@ -113,6 +113,42 @@ stop "$TMP/i" s1 "$TMP/i" "$TMP/t1.jsonl"; rc=$?
 [ "$rc" = 0 ] && [ -f "$TMP/i/seven.txt" ] && [ ! -d "$TMP/i/.claude/worktrees/s7" ] \
   && ok "  … the same record once its pid is gone: adopted (merged, removed)" || fail "dead pid not adopted (rc $rc): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
 
+# 10b the same live idle session, after ANOTHER session's get_active_sessions ran (post-fix-gate --full, --check-last-active): that call used to
+#     DELETE the registry entry of a live pid with a heartbeat older than 600 s, and the next Stop adopted the worktree - committed the wip in it,
+#     merged it into main and removed it, under the live session (R1 review 14/10). The entry stays; the worktree stays.
+repo k; wtadd "$TMP/k" s7 s7; commit_in "$TMP/k" s7 seven; echo wip > "$TMP/k/.claude/worktrees/s7/wip.txt"; record "$TMP/k" s7 s7
+python3 -I "$SL" --register --session s7 --pid $$ "$TMP/k" >/dev/null 2>&1
+REG="$(G "$TMP/k" rev-parse --absolute-git-dir)/devkit-sessions/s7.json"
+python3 -c 'import json,sys,time; d=json.load(open(sys.argv[1])); d["heartbeat"]=time.time()-2400; json.dump(d,open(sys.argv[1],"w"))' "$REG"
+python3 -I "$SL" --check-last-active --session s1 "$TMP/k" >/dev/null 2>&1
+stop "$TMP/k" s1 "$TMP/k" "$TMP/t1.jsonl"; rc=$?
+[ -f "$REG" ] && [ "$rc" = 0 ] && [ -d "$TMP/k/.claude/worktrees/s7" ] && [ ! -f "$TMP/k/seven.txt" ] && [ ! -f "$TMP/k/wip.txt" ] \
+  && ok "a live idle session's registry entry survives another session's get_active_sessions: its worktree is not merged, committed or removed" \
+  || fail "live session's worktree taken after get_active_sessions (rc $rc, registry $( [ -f "$REG" ] && echo kept || echo DELETED), worktree $( [ -d "$TMP/k/.claude/worktrees/s7" ] && echo kept || echo REMOVED), wip in main: $( [ -f "$TMP/k/wip.txt" ] && echo yes || echo no))"
+# … and the second fence: a worktree lock whose pid answers is held by that session whatever its heartbeat says (the gate acts ON its tree)
+python3 -I -c 'import os,sys,time; sys.path.insert(0, sys.argv[1]); import session_lock as sl
+lk={"session_id":"x","pid":os.getpid(),"heartbeat":time.time()-2400}
+assert sl.is_free_for(lk,"me",time.time(),idle_frees=False), "default changed: a 40 min heartbeat no longer frees a live pid"
+assert not sl.is_free_for(lk,"me",time.time(),idle_frees=False,live_pid_holds=True), "a live pid was not held"
+assert sl.is_free_for(dict(lk,pid=2147483646),"me",time.time(),idle_frees=False,live_pid_holds=True), "a dead pid was not free"' "$DEVKIT_DIR/bin" \
+  && ok "  … is_free_for(live_pid_holds): a live pid holds with a 40 min heartbeat, a dead pid is free, the default is unchanged" || fail "is_free_for live_pid_holds"
+
+# 10c a test run holds the tree of an adoptable (dead) session's worktree: it is not merged and removed under the run (the candidate loop
+#     did not look at test_run.lock); not a hold either - the next Stop, once the run is over, adopts it
+repo l; wtadd "$TMP/l" s6 s6; commit_in "$TMP/l" s6 six; record "$TMP/l" s6 s6
+python3 -I "$SL" --register --session s6 --pid 2147483646 "$TMP/l" >/dev/null 2>&1
+mkdir -p "$TMP/l/.claude/worktrees/s6/.claude/audit-gate"; rm -f "$TMP/ready"
+python3 -c 'import fcntl,os,sys,time; fd=os.open(sys.argv[1],os.O_RDWR|os.O_CREAT,0o600); fcntl.flock(fd,fcntl.LOCK_EX); open(sys.argv[2],"w").close(); time.sleep(60)' \
+  "$TMP/l/.claude/worktrees/s6/.claude/audit-gate/test_run.lock" "$TMP/ready" & HOLDER=$!
+for _ in $(seq 1 50); do [ -e "$TMP/ready" ] && break; sleep 0.1; done
+stop "$TMP/l" s1 "$TMP/l" "$TMP/t1.jsonl"; rc=$?
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null
+[ "$rc" = 0 ] && [ ! -f "$TMP/l/six.txt" ] && [ -d "$TMP/l/.claude/worktrees/s6" ] \
+  && ok "a test run holds an adoptable worktree: not merged or removed under the run, the Stop not held" || fail "worktree adopted under a running test (rc $rc, merged: $( [ -f "$TMP/l/six.txt" ] && echo yes || echo no)): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
+stop "$TMP/l" s1 "$TMP/l" "$TMP/t1.jsonl"; rc=$?
+[ "$rc" = 0 ] && [ -f "$TMP/l/six.txt" ] && [ ! -d "$TMP/l/.claude/worktrees/s6" ] \
+  && ok "  … the run over: the next Stop adopts it (merged, removed)" || fail "not adopted after the run (rc $rc): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
+
 # 11 the gate's 13 s alarm passes the Stop SILENTLY (os._exit), so a hold still to be decided after merge_own went with it whenever merge_own was
 #    started with the budget nearly spent (R3 review 14/10, P3d). Under 4 s left the own merge is not started: a note, the next Stop merges. The
 #    kit copy below has a 4 s alarm, so merge_own always meets it with less than 4 s left; the real hook (case 1, 13 s alarm) still merges.

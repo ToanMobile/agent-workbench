@@ -385,7 +385,7 @@ for path in paths:
             continue   # another live session's worktree: not a bystander's to hold on or take over
         adm = gone_admin_dir(path)
         if adm and session_lock is not None and not session_lock.is_free_for(session_lock.read_lock(os.path.join(adm, session_lock.LOCK)),
-                                                                             sid, now, idle_frees=False):
+                                                                             sid, now, idle_frees=False, live_pid_holds=True):
             owed.add(real)
             continue
         why = gone_folder_reason(path)
@@ -418,7 +418,7 @@ for path in paths:
     elif owners.get(real) not in (None, sid) and session_alive(owners[real]):
         continue   # owed because ANOTHER session was held on it, and that session is still working: not a bystander's to merge or remove
     if session_lock is not None and not session_lock.is_free_for(session_lock.read_lock(os.path.join(admin, session_lock.LOCK)), sid, now,
-                                                                  idle_frees=False):
+                                                                  idle_frees=False, live_pid_holds=True):
         continue   # another live session works there (an idle one too: it is alive and may come back to it)
     if here == real or here.startswith(real + os.sep):
         owed.add(real)   # the session is in it right now (EnterWorktree, or a cd to look): owed, held once it leaves
@@ -448,9 +448,15 @@ if vanished:
         owed.discard(os.path.realpath(r["path"]))
         owners.pop(os.path.realpath(r["path"]), None)
 
-am_done, am_running = [], []
+am_done, am_running, am_testing = [], [], []
 if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != "0":
     cand = [r for r in pending if not r.get("reason") and r.get("busy") in (None, "merge") and os.path.isdir(r["path"])]
+    if session_lock is not None:
+        for r in [r for r in cand if session_lock.test_run_active({r["path"]})]:   # a run is testing that tree: a merge (and the removal after it) pulls its files away
+            cand.remove(r)
+            pending.remove(r)
+            owed.add(os.path.realpath(r["path"]))   # still owed: the next Stop merges it
+            am_testing.append(r["path"])
     main_free = trunk or (session_lock is not None and session_lock.is_free_for(session_lock.read_lock(os.path.join(gdir, session_lock.LOCK)), sid, now,
                                                                                 idle_frees=False))   # an idle holder of main is still there; in trunk mode main has no holder
     if cand and not main_free:
@@ -579,6 +585,7 @@ if not pending:
     if set(state.get("owed") or []) != owed or am_done:
         save()   # removed worktrees leave the debt list
     notes = ["✔ đã tự gộp vào main và gỡ: " + p for p in am_done] + ["… đang tự gộp ở nền (kết quả: lần dừng sau; log trong git dir): " + p for p in am_running]
+    notes += ["… một lần chạy test đang giữ worktree, chưa gộp (lần dừng sau gộp): " + p for p in am_testing]
     notes += [own_note] if own_note else []
     if notes:
         print(json.dumps({"systemMessage": "WORKTREE-MERGE GATE:\n" + "\n".join(notes)}, ensure_ascii=False))
