@@ -1,0 +1,920 @@
+<style>
+.dc { max-width: 74rem; margin-inline: auto; font-family: var(--font-anthropic-sans); color: var(--color-fg); line-height: 1.5; }
+.dc * { box-sizing: border-box; }
+.dc h1 { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); margin: 0 0 var(--cds-gap-sm); text-wrap: balance; }
+.dc h2 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); margin: 0 0 var(--cds-gap-xs); }
+.dc .take { margin: 0; max-width: 48rem; color: var(--color-fg-muted); }
+.dc section { margin-top: 2.5rem; }
+.dc .note { margin: 0 0 var(--cds-gap-md); max-width: 48rem; color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); }
+.dc .modes { display: flex; flex-wrap: wrap; gap: var(--cds-gap-sm) var(--cds-gap-xl); margin-top: var(--cds-gap-lg); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+.dc .modes span { display: inline-flex; align-items: baseline; gap: 0.4rem; }
+.dc .tag { display: inline-block; padding: 0.05rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-style: normal; border: 1px solid var(--color-border-line); color: var(--color-fg); white-space: nowrap; }
+.dc .tag.auto { background: color-mix(in srgb, var(--color-ok) 14%, transparent); border-color: transparent; color: var(--color-ok); }
+.dc .tag.hint { background: color-mix(in srgb, var(--color-fg-muted) 14%, transparent); border-color: transparent; }
+.dc .tag.agent { background: color-mix(in srgb, var(--color-warn) 18%, transparent); border-color: transparent; color: var(--color-warn); }
+
+.dc .scroll { overflow-x: auto; }
+.dc table { border-collapse: collapse; width: 100%; font-size: var(--cds-font-size-caption); }
+.dc th { text-align: left; font-weight: var(--cds-font-weight-medium); color: var(--color-fg-muted); padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--color-border-line); vertical-align: bottom; }
+.dc td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--color-border-line); vertical-align: top; }
+
+
+.dc .diagram-wrap { overflow-x: auto; }
+.dc svg.diagram { display: block; min-width: 62rem; width: 100%; height: auto; font-family: var(--font-anthropic-sans); }
+.dc svg.diagram text { fill: var(--color-fg); }
+.dc svg.diagram .muted { fill: var(--color-fg-muted); }
+.dc svg.diagram .node rect { fill: var(--color-panel); stroke: var(--color-border-line); stroke-width: 1.2; }
+.dc svg.diagram .node.bad rect { stroke: var(--color-bad); stroke-width: 1.8; }
+.dc svg.diagram .node.on rect { stroke: var(--color-fg); stroke-width: 2.4; }
+.dc svg.diagram .node { cursor: pointer; }
+.dc svg.diagram .node:focus { outline: none; }
+.dc svg.diagram .node:focus-visible rect { stroke: var(--color-fg); stroke-width: 2.4; }
+.dc svg.diagram .flowline { stroke: var(--color-fg-muted); stroke-width: 1.4; fill: none; }
+.dc svg.diagram .arrowhead { fill: var(--color-fg-muted); }
+.dc svg.diagram .loop { stroke: var(--color-bad); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+.dc svg.diagram .loophead { fill: var(--color-bad); }
+.dc svg.diagram .looptext { fill: var(--color-bad); }
+.dc svg.diagram .rowline { stroke: var(--color-border-line); stroke-width: 1; }
+.dc svg.diagram .sq { stroke-width: 1.4; }
+.dc svg.diagram .sq.okauto { fill: var(--color-ok); stroke: var(--color-ok); }
+.dc svg.diagram .sq.okhint { fill: var(--color-fg-muted); stroke: var(--color-fg-muted); }
+.dc svg.diagram .sq.okagent { fill: none; stroke: var(--color-warn); }
+.dc svg.diagram .sq.bad { fill: var(--color-bad); stroke: var(--color-bad); }
+.dc svg.diagram .sq.empty { fill: var(--color-warn); stroke: var(--color-warn); }
+.dc svg.diagram .sq.na { fill: none; stroke: var(--color-border-line); stroke-dasharray: 2 2; }
+.dc .key { display: flex; flex-wrap: wrap; gap: var(--cds-gap-sm) var(--cds-gap-lg); margin-top: var(--cds-gap-sm); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+.dc .key span { display: inline-flex; align-items: center; gap: 0.4rem; }
+.dc .key i { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 2px; border: 1.4px solid transparent; }
+.dc .key i.okauto { background: var(--color-ok); border-color: var(--color-ok); }
+.dc .key i.okhint { background: var(--color-fg-muted); border-color: var(--color-fg-muted); }
+.dc .key i.okagent { border-color: var(--color-warn); }
+.dc .key i.bad { background: var(--color-bad); border-color: var(--color-bad); }
+.dc .detail .name { font-weight: var(--cds-font-weight-medium); min-width: 17rem; }
+.dc .detail .name code { font-size: var(--cds-font-size-caption); overflow-wrap: anywhere; }
+.dc .detail .why { display: block; color: var(--color-fg-muted); font-weight: 400; max-width: 26rem; }
+.dc .detail td.st { min-width: 8.5rem; }
+.dc .st .v { display: block; white-space: nowrap; }
+.dc .st .v::before { content: '●'; margin-right: 0.35rem; }
+.dc .st.ok .v { color: var(--color-ok); }
+.dc .st.missing .v, .dc .st.broken .v { color: var(--color-bad); }
+.dc .st.off .v, .dc .st.empty .v { color: var(--color-warn); }
+.dc .st.na .v, .dc .st.excluded .v, .dc .st.none .v { color: var(--color-fg-muted); }
+.dc .st small { display: block; color: var(--color-fg-muted); }
+
+.dc ul.todo { list-style: none; margin: 0; padding: 0; }
+.dc ul.todo li { display: grid; grid-template-columns: 11rem 1fr; gap: var(--cds-gap-md); padding: 0.55rem 0; border-bottom: 1px solid var(--color-border-line); font-size: var(--cds-font-size-caption); }
+.dc ul.todo .who { font-weight: var(--cds-font-weight-medium); }
+.dc ul.todo .what small { display: block; color: var(--color-fg-muted); }
+.dc ul.wt { margin: 0; padding-left: 1.1rem; font-size: var(--cds-font-size-caption); }
+@media (max-width: 40rem) { .dc ul.todo li { grid-template-columns: 1fr; } }
+.dc .stepper { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cds-gap-sm); margin: 0 0 var(--cds-gap-sm); }
+.dc .stepper button { min-height: 44px; min-width: 44px; padding: 0 var(--cds-gap-lg); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius, 8px); background: var(--color-panel); color: var(--color-fg); font: inherit; cursor: pointer; }
+.dc .stepper button:disabled { color: var(--color-fg-muted); cursor: default; opacity: 0.55; }
+.dc .stepper button:focus-visible { outline: 2px solid var(--color-fg); outline-offset: 2px; }
+.dc .stepno { color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); }
+.dc .caption { min-height: 5.5rem; max-width: 64rem; margin: 0 0 var(--cds-gap-md); padding: var(--cds-gap-md) var(--cds-gap-lg); border-left: 3px solid var(--color-fg); background: var(--color-panel); }
+.dc .caption b { display: block; margin-bottom: 0.15rem; font-weight: var(--cds-font-weight-medium); }
+.dc svg.flow { min-width: 65rem; }
+.dc svg.flow .laneband { fill: color-mix(in srgb, var(--color-fg-muted) 7%, transparent); }
+.dc svg.flow .lane { font-size: 12px; font-weight: 500; }
+.dc svg.flow .lanesub { font-size: 10px; fill: var(--color-fg-muted); }
+.dc svg.flow .hnode { cursor: pointer; }
+.dc svg.flow .hnode:focus { outline: none; }
+.dc svg.flow .hnode:focus-visible rect.box { stroke: var(--color-fg); stroke-width: 2.4; }
+.dc svg.flow rect.box { fill: var(--color-panel); stroke: var(--color-border-line); stroke-width: 1.2; }
+.dc svg.flow .actor rect.box { stroke: var(--color-fg-muted); }
+.dc svg.flow .hnode.sel rect.box { stroke: var(--color-warn); stroke-width: 2.4; }
+.dc svg.flow .on rect.box { stroke: var(--color-fg); stroke-width: 2.4; }
+.dc svg.flow .edge { stroke: var(--color-fg-muted); stroke-width: 1.4; fill: none; }
+.dc svg.flow .edge.loop { stroke-dasharray: 5 4; }
+.dc svg.flow .reject, .dc svg.flow .rejbus { stroke: var(--color-bad); stroke-width: 1.4; fill: none; stroke-dasharray: 4 3; }
+.dc svg.flow .edge.on, .dc svg.flow .reject.on, .dc svg.flow .rejbus.on { stroke-width: 2.6; }
+.dc svg.flow.go .hnode, .dc svg.flow.go .actor, .dc svg.flow.go .edge, .dc svg.flow.go .reject, .dc svg.flow.go .rejbus { opacity: 0.4; }
+.dc svg.flow.go .on { opacity: 1; }
+@media (prefers-reduced-motion: no-preference) {
+  .dc svg.flow .edge.on, .dc svg.flow .reject.on, .dc svg.flow .rejbus.on { stroke-dasharray: 6 4; animation: dc-march 0.9s linear infinite; }
+}
+@keyframes dc-march { to { stroke-dashoffset: -10; } }
+.dc .key i.rej { border-color: var(--color-bad); border-style: dashed; height: 0; width: 1.1rem; border-width: 0 0 1.6px; border-radius: 0; }
+.dc .hookdetail { max-width: 52rem; margin-top: var(--cds-gap-md); }
+.dc .hookdetail table { max-width: 40rem; }
+.dc .branches { display: grid; gap: 1.75rem; }
+.dc .branch h3 { margin: 0; font-size: var(--cds-font-size-body); font-weight: var(--cds-font-weight-medium); }
+.dc .branch .note { margin: 0.15rem 0 var(--cds-gap-sm); }
+.dc ol.chain { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--cds-gap-sm) var(--cds-gap-lg); counter-reset: bs; }
+.dc ol.chain li { flex: 1 1 13rem; max-width: 17rem; position: relative; padding: 0 0 0 0.9rem; border-left: 2px solid var(--color-border-line); font-size: var(--cds-font-size-caption); counter-increment: bs; }
+.dc ol.chain li::before { content: counter(bs); position: absolute; left: -0.55rem; top: 0; width: 1.05rem; height: 1.05rem; border-radius: 999px; background: var(--color-bg, var(--color-panel)); border: 1px solid var(--color-border-line); font-size: 0.65rem; line-height: 1rem; text-align: center; color: var(--color-fg-muted); }
+.dc ol.chain .tag { display: block; width: fit-content; margin-bottom: 0.2rem; }
+.dc ul.local { list-style: none; margin: 0; padding: 0; font-size: var(--cds-font-size-caption); }
+.dc ul.local li { padding: 0.4rem 0; border-bottom: 1px solid var(--color-border-line); }
+.dc ul.local small { color: var(--color-fg-muted); }
+</style>
+
+<div class="dc">
+  <header>
+    <h1 id="dc-title">Quy trình DevKit đang chạy ở từng repo</h1>
+    <p class="take" id="dc-take">Đang đọc cấu hình các repo.</p>
+    <div class="modes">
+      <span><i class="tag auto">Tự động</i> hook hoặc git chạy và chặn, agent không né được</span>
+      <span><i class="tag hint">Gợi ý</i> được nhắc trong prompt, agent có thể bỏ qua</span>
+      <span><i class="tag agent">Tùy agent</i> chỉ chạy nếu agent tự chọn dùng</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Đường đi của một việc</h2>
+    <p class="note">Mỗi hàng là một sự kiện của Claude Code, xếp theo thứ tự thời gian. Hook cùng một sự kiện chạy song song nên được xếp thành dàn, không nối đuôi nhau. Mỗi nút có một chấm cho mỗi repo: xanh là đang có, đỏ là repo không khai báo hook này hoặc file hook bị hỏng. Bấm Sau để xem một việc đi qua từng bước, hoặc bấm một nút hook để xem chi tiết.</p>
+    <div class="stepper">
+      <button type="button" id="dc-prev">Trước</button>
+      <button type="button" id="dc-next">Sau</button>
+      <button type="button" id="dc-play">Chạy tự động</button>
+      <span class="stepno" id="dc-stepno"></span>
+    </div>
+    <div class="caption" id="dc-caption" aria-live="polite"></div>
+    <div class="diagram-wrap" data-source="checks">
+      <svg class="diagram flow" id="dc-flow" role="group" aria-label="Đường đi của một việc qua các sự kiện hook của Claude Code"></svg>
+    </div>
+    <div class="key">
+      <span><i class="okauto"></i>Hook đang có ở repo</span>
+      <span><i class="bad"></i>Thiếu, tắt hoặc hỏng</span>
+      <span><i class="rej"></i>Cổng chặn: lý do quay về agent</span>
+    </div>
+    <div class="hookdetail" id="dc-hookdetail"></div>
+  </section>
+
+  <section>
+    <h2>Ba nhánh rẽ khỏi đường chính</h2>
+    <p class="note">Những việc không phải hook nhưng làm đường đi đổi hướng. Nhãn cho biết ai làm: hook ép thì agent không né được, agent làm thì phải tự giác.</p>
+    <div class="branches" id="dc-branches"></div>
+  </section>
+
+  <section>
+    <h2>Hook riêng của từng repo</h2>
+    <p class="note">Hook có trong settings của repo nhưng không khớp hook nào của bộ kit (cùng sự kiện, matcher và script), nên không nằm trên sơ đồ đường đi.</p>
+    <ul class="local" id="dc-localhooks" data-source="checks"></ul>
+  </section>
+
+  <section>
+    <h2>Điểm phủ theo 8 công đoạn</h2>
+    <p class="note">Mũi tên đen là thứ tự công đoạn. Mũi tên đỏ nét đứt là vòng lặp: cổng Stop từ chối thì phải quay lại sửa. Dưới mỗi công đoạn, mỗi hàng là một repo và mỗi ô vuông là một thành phần của công đoạn đó. Bấm một công đoạn để xem tên từng ô bên dưới.</p>
+    <div class="diagram-wrap" data-source="flow_matrix phase_summary">
+      <svg class="diagram" id="dc-diagram" role="group" aria-label="Sơ đồ 8 công đoạn và trạng thái từng repo"></svg>
+    </div>
+    <div class="key">
+      <span><i class="okauto"></i>Tự động, đang có</span>
+      <span><i class="okhint"></i>Gợi ý trong prompt, đang có</span>
+      <span><i class="okagent"></i>Tùy agent, đang có</span>
+      <span><i class="bad"></i>Thiếu, tắt hoặc hỏng</span>
+    </div>
+  </section>
+
+  <section class="detail">
+    <h2 id="dc-dtitle">Chi tiết công đoạn</h2>
+    <p class="note" id="dc-dwhy"></p>
+    <div class="scroll" data-source="flow_matrix">
+      <table id="dc-detail"></table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Cần xử lý</h2>
+    <p class="note">Thành phần của quy trình đang thiếu, tắt hoặc trống ở từng repo.</p>
+    <ul class="todo" id="dc-todo" data-source="problems"></ul>
+  </section>
+
+  <section class="detail">
+    <h2>MCP server từng repo</h2>
+    <p class="note">"Không cần" nghĩa là repo đó không yêu cầu server này. Hiện yêu cầu: agent-workbench cần 3 server nền; GeelyEx2 thêm replicant-mcp; OfficeReader, Goods và Neighbours-From-Hell cần đủ 5. "Tắt" nghĩa là đã khai báo nhưng bị tắt hoặc chưa được bật trong settings.local.json.</p>
+    <div class="scroll" data-source="mcp_matrix">
+      <table id="dc-mcp"></table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Worktree còn sót</h2>
+    <p class="note">Mỗi worktree còn chứa việc chưa vào nhánh chính.</p>
+    <div data-source="checks" id="dc-wt"></div>
+  </section>
+</div>
+
+<script>
+const AUTO = ['hook tự chạy', 'git tự chạy', 'nạp vào phiên', 'chạy khi dừng'];
+const HINT = ['gợi ý trong prompt'];
+
+dash.calc('flow_matrix', {
+  inputs: ['checks'],
+  title: 'Thành phần theo công đoạn',
+  description: 'Mỗi thành phần của quy trình (hook, skill, luật, test, review) với trạng thái ở từng repo.',
+  fn: (checks) => {
+    const repos = [...new Set(checks.map((r) => r.repo))];
+    const m = new Map();
+    for (const r of checks) {
+      if (r.area !== 'flow') continue;
+      const key = r.group + '|' + r.item;
+      if (!m.has(key)) {
+        const o = { key, phase: r.group, item: r.item, kind: r.kind, trigger: r.trigger, why: '' };
+        for (const p of repos) { o[p] = 'none'; o[p + '#note'] = ''; }
+        m.set(key, o);
+      }
+      const o = m.get(key);
+      o[r.repo] = r.state;
+      o[r.repo + '#note'] = r.detail;
+      if (!o.why && r.detail && !/^\d/.test(r.detail)) o.why = r.detail;
+    }
+    return [...m.values()];
+  },
+});
+
+dash.calc('phase_summary', {
+  inputs: ['checks'],
+  title: 'Tóm tắt công đoạn theo repo',
+  description: 'Với mỗi repo và công đoạn: bao nhiêu thành phần chạy tự động, gợi ý, tùy agent, và bao nhiêu đang thiếu hoặc tắt.',
+  fn: (checks) => {
+    const auto = ['hook tự chạy', 'git tự chạy', 'nạp vào phiên', 'chạy khi dừng'];
+    const hint = ['gợi ý trong prompt'];
+    const skip = ['na', 'excluded', 'local', 'none'];
+    const bad = ['missing', 'off', 'broken'];
+    const map = new Map();
+    for (const r of checks) {
+      if (r.area !== 'flow' || skip.includes(r.state)) continue;
+      const key = r.repo + '|' + r.group;
+      if (!map.has(key)) map.set(key, { key, repo: r.repo, phase: r.group, auto: 0, hint: 0, agent: 0, bad: 0, empty: 0 });
+      const o = map.get(key);
+      if (auto.includes(r.trigger)) o.auto += 1; else if (hint.includes(r.trigger)) o.hint += 1; else o.agent += 1;
+      if (bad.includes(r.state)) o.bad += 1;
+      if (r.state === 'empty') o.empty += 1;
+    }
+    return [...map.values()];
+  },
+});
+
+dash.calc('problems', {
+  inputs: ['checks'],
+  title: 'Việc cần xử lý',
+  description: 'Các thành phần của quy trình và MCP bắt buộc đang thiếu, tắt, hỏng hoặc trống.',
+  fn: (checks) => {
+    const flag = ['missing', 'off', 'broken', 'empty'];
+    const seen = new Set();
+    const out = [];
+    for (const r of checks) {
+      if (!(r.area === 'flow' || (r.area === 'mcp' && r.group === 'required')) || !flag.includes(r.state)) continue;
+      const key = [r.repo, r.item].join('|');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ key, repo: r.repo, phase: r.area === 'flow' ? r.group : 'mcp', item: r.item, state: r.state, detail: r.detail });
+    }
+    return out;
+  },
+});
+
+dash.calc('mcp_matrix', {
+  inputs: ['checks'],
+  title: 'MCP server theo repo',
+  description: 'Mỗi MCP server với trạng thái ở từng repo.',
+  fn: (checks) => {
+    const repos = [...new Set(checks.map((r) => r.repo))];
+    const m = new Map();
+    for (const r of checks) {
+      if (r.area !== 'mcp') continue;
+      if (!m.has(r.item)) {
+        const o = { item: r.item, group: r.group };
+        for (const p of repos) { o[p] = 'none'; o[p + '#note'] = ''; }
+        m.set(r.item, o);
+      }
+      m.get(r.item)[r.repo] = r.state;
+      m.get(r.item)[r.repo + '#note'] = r.detail;
+      if (r.group === 'required') m.get(r.item).group = 'required';
+    }
+    return [...m.values()].sort((a, b) => ((a.group === 'required' ? 0 : 1) - (b.group === 'required' ? 0 : 1)) || a.item.localeCompare(b.item));
+  },
+});
+
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  };
+  const PHASES = [
+    ['p1', 'Nạp ngữ cảnh & luật', 'Mở phiên: nạp AGENTS.md, luật theo profile, luật riêng của repo và bài học cũ. Mỗi thư mục chỉ một phiên được ghi.'],
+    ['p2', 'Hiểu yêu cầu', 'Mỗi prompt được gắn loại việc, bẫy từng gặp và skill gợi ý trước khi agent bắt đầu làm.'],
+    ['p3', 'Trước khi sửa', 'Phải đọc file trước khi sửa. Không được ghi vào thư mục mà phiên khác đang giữ.'],
+    ['p4', 'Viết code', 'Chặn lệnh git nguy hiểm, sửa đi sửa lại một file khi chưa có bằng chứng mới, và chú thích khẳng định điều chưa kiểm.'],
+    ['p5', 'Test RED→GREEN', 'Test phải đỏ trước khi sửa và xanh sau đó. Ma trận hồi quy chạy khi phiên dừng.'],
+    ['p6', 'Review', 'Thay đổi code phải qua một lần review bằng ngữ cảnh mới trước khi được dừng. Đây là công đoạn mà ocr nằm.'],
+    ['p7', 'Nghiệm thu', 'Cổng post-fix phải exit 0. Repo có màn hình thì phải có ảnh chứng minh của lượt này.'],
+    ['p8', 'Chốt & giao', 'Kiểm câu báo cáo, bảo mật, repo khác và worktree; sau đó git hook chạy lúc commit và push.'],
+  ];
+  const STATE = { ok: 'Có', missing: 'Thiếu', off: 'Tắt', broken: 'Hỏng', empty: 'Trống', na: 'Không cần', local: 'Có (riêng repo)', excluded: 'Loại theo profile', none: '—' };
+  const PHASE_NAME = Object.fromEntries(PHASES.map((p) => [p[0], p[1]]));
+  const rowsOf = (id) => {
+    const d = dash.data(id);
+    return d.status === 'ok' ? d.data : null;
+  };
+  const modeOf = (trigger) => (AUTO.includes(trigger) ? 'auto' : HINT.includes(trigger) ? 'hint' : 'agent');
+  const MODE_LABEL = { auto: 'Tự động', hint: 'Gợi ý', agent: 'Tùy agent' };
+
+  let selected = null;
+  let refocusPhase = null;
+
+  function stateCell(row, repo) {
+    const s = row[repo] || 'none';
+    const td = el('td', 'st ' + s);
+    td.appendChild(el('span', 'v', STATE[s] || s));
+    const note = row[repo + '#note'];
+    if (note && note !== row.why) td.appendChild(el('small', '', note));
+    return td;
+  }
+
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const sv = (tag, attrs, text) => {
+    const n = document.createElementNS(SVGNS, tag);
+    Object.keys(attrs || {}).forEach((k) => n.setAttribute(k, attrs[k]));
+    if (text !== undefined) n.textContent = text;
+    return n;
+  };
+  const wrap = (text, max) => {
+    const out = [];
+    let line = '';
+    text.split(' ').forEach((w) => {
+      if (line && (line + ' ' + w).length > max) { out.push(line); line = w; } else { line = line ? line + ' ' + w : w; }
+    });
+    if (line) out.push(line);
+    return out;
+  };
+  const sqClass = (state, mode) => {
+    if (state === 'na' || state === 'excluded' || state === 'none') return 'na';
+    if (state === 'missing' || state === 'off' || state === 'broken') return 'bad';
+    if (state === 'empty') return 'empty';
+    return 'ok' + mode;
+  };
+
+  function drawDiagram(repos, flow, sums, evs) {
+    const svg = $('dc-diagram');
+    svg.replaceChildren();
+    const LEFT = 150, NW = 118, GAP = 16, NY = 62, NH = 86, ROW0 = 174, RH = 28, SQ = 10, SG = 2;
+    const W = LEFT + PHASES.length * NW + (PHASES.length - 1) * GAP + 14;
+    const H = ROW0 + repos.length * RH + 14;
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    const cx = (i) => LEFT + i * (NW + GAP) + NW / 2;
+
+    const defs = sv('defs');
+    const mk = (id, cls) => {
+      const m = sv('marker', { id, viewBox: '0 0 10 10', refX: '9', refY: '5', markerWidth: '7', markerHeight: '7', orient: 'auto-start-reverse' });
+      m.appendChild(sv('path', { d: 'M0,0 L10,5 L0,10 z', class: cls }));
+      return m;
+    };
+    defs.append(mk('dc-arrow', 'arrowhead'), mk('dc-loop', 'loophead'));
+    svg.appendChild(defs);
+
+    // loop: a Stop gate that refuses sends the work back to writing code (step 4)
+    const loop = sv('path', { class: 'loop', d: 'M' + cx(7) + ',' + NY + ' V30 H' + cx(3) + ' V' + (NY - 2), 'marker-end': 'url(#dc-loop)' });
+    svg.appendChild(loop);
+    svg.appendChild(sv('text', { x: (cx(3) + cx(7)) / 2, y: 22, 'text-anchor': 'middle', class: 'looptext', 'font-size': 11 }, 'Bất kỳ cổng Stop nào chặn → quay lại sửa code, chạy lại từ bước 5'));
+
+    PHASES.forEach(([id, name], i) => {
+      const x = LEFT + i * (NW + GAP);
+      if (i > 0) {
+        svg.appendChild(sv('line', { class: 'flowline', x1: x - GAP + 1, y1: NY + NH / 2, x2: x - 1, y2: NY + NH / 2, 'marker-end': 'url(#dc-arrow)' }));
+      }
+      const bad = sums.some((s) => s.phase === id && s.bad);
+      const g = sv('g', { class: 'node' + (id === selected ? ' on' : '') + (bad ? ' bad' : ''), tabindex: '0', role: 'button', 'aria-label': 'Bước ' + (i + 1) + ': ' + name });
+      g.appendChild(sv('title', {}, 'Bước ' + (i + 1) + ': ' + name + (bad ? ' — có thành phần thiếu hoặc tắt' : '') + (evs[id].length ? ' · ' + evs[id].join(', ') : '')));
+      g.appendChild(sv('rect', { x, y: NY, width: NW, height: NH, rx: 8 }));
+      g.appendChild(sv('text', { x: x + 10, y: NY + 18, class: 'muted', 'font-size': 11 }, 'Bước ' + (i + 1)));
+      wrap(name, 15).forEach((ln, k) => g.appendChild(sv('text', { x: x + 10, y: NY + 36 + k * 15, 'font-size': 13, 'font-weight': 500 }, ln)));
+      let evLines = wrap(evs[id].length ? evs[id].join(' · ') : 'agent tự làm', 17);
+      if (evLines.length > 2) evLines = [evs[id].length + ' sự kiện hook']; // too long to fit under the name: the tooltip lists them
+      evLines.forEach((ln, k) => g.appendChild(sv('text', { x: x + 10, y: NY + NH - 9 - (evLines.length - 1 - k) * 12, class: 'muted', 'font-size': 10 }, ln)));
+      const pick = () => { selected = id; refocusPhase = id; draw(); };
+      g.addEventListener('click', pick);
+      g.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      svg.appendChild(g);
+      if (refocusPhase === id) { refocusPhase = null; if (g.focus) g.focus(); }
+    });
+
+    const rank = { auto: 0, hint: 1, agent: 2 };
+    repos.forEach((repo, r) => {
+      const y = ROW0 + r * RH;
+      svg.appendChild(sv('line', { class: 'rowline', x1: 0, y1: y - 6, x2: W, y2: y - 6 }));
+      svg.appendChild(sv('text', { x: 0, y: y + 10, 'font-size': 12, 'font-weight': 500 }, repo));
+      PHASES.forEach(([id], i) => {
+        const comps = flow.filter((c) => c.phase === id).sort((a, b) => rank[modeOf(a.trigger)] - rank[modeOf(b.trigger)]);
+        comps.forEach((c, k) => {
+          const mode = modeOf(c.trigger);
+          const state = c[repo] || 'none';
+          const sq = sv('rect', { class: 'sq ' + sqClass(state, mode), x: LEFT + i * (NW + GAP) + 10 + k * (SQ + SG), y: y, width: SQ, height: SQ, rx: 2 });
+          sq.appendChild(sv('title', {}, repo + ' · ' + c.item + ' · ' + MODE_LABEL[mode] + ' · ' + (STATE[state] || state)));
+          svg.appendChild(sq);
+        });
+      });
+    });
+  }
+
+  function drawDetail(repos, flow) {
+    const meta = PHASES.find((p) => p[0] === selected);
+    $('dc-dtitle').textContent = 'Bước ' + (PHASES.indexOf(meta) + 1) + ': ' + meta[1];
+    $('dc-dwhy').textContent = meta[2];
+    const t = $('dc-detail');
+    t.replaceChildren();
+    const head = el('tr');
+    ['Thành phần', 'Chạy thế nào'].concat(repos).forEach((h) => head.appendChild(el('th', '', h)));
+    const thead = el('thead');
+    thead.appendChild(head);
+    const body = el('tbody');
+    const rank = { auto: 0, hint: 1, agent: 2 };
+    flow.filter((r) => r.phase === selected)
+      .sort((a, b) => rank[modeOf(a.trigger)] - rank[modeOf(b.trigger)])
+      .forEach((r) => {
+        const tr = el('tr');
+        const name = el('td', 'name');
+        name.appendChild(r.kind === 'hook' || r.kind === 'skill' || r.kind === 'git' ? el('code', '', r.item) : document.createTextNode(r.item));
+        name.appendChild(el('span', 'why', [r.kind, eventsOf(r.item), r.why].filter(Boolean).join(' · ')));
+        tr.appendChild(name);
+        const how = el('td');
+        const tag = el('span', 'tag ' + modeOf(r.trigger), MODE_LABEL[modeOf(r.trigger)]);
+        tag.title = r.trigger;
+        how.appendChild(tag);
+        tr.appendChild(how);
+        repos.forEach((repo) => tr.appendChild(stateCell(r, repo)));
+        body.appendChild(tr);
+      });
+    t.append(thead, body);
+  }
+
+  function drawTodo(items) {
+    const ul = $('dc-todo');
+    ul.replaceChildren();
+    if (!items.length) { ul.appendChild(el('li', '', 'Không có gì thiếu.')); return; }
+    items.forEach((p) => {
+      const li = el('li');
+      li.appendChild(el('span', 'who', p.repo));
+      const what = el('span', 'what');
+      what.appendChild(document.createTextNode(p.item + ' — ' + STATE[p.state]));
+      const where = p.phase === 'mcp' ? 'MCP server' : 'Bước ' + (PHASES.findIndex((x) => x[0] === p.phase) + 1) + ': ' + PHASE_NAME[p.phase];
+      what.appendChild(el('small', '', where + (p.detail ? ' · ' + p.detail : '')));
+      li.appendChild(what);
+      ul.appendChild(li);
+    });
+  }
+
+  function drawMcp(repos, mcps) {
+    const t = $('dc-mcp');
+    t.replaceChildren();
+    const head = el('tr');
+    ['Server'].concat(repos).forEach((h) => head.appendChild(el('th', '', h)));
+    const thead = el('thead');
+    thead.appendChild(head);
+    const body = el('tbody');
+    mcps.forEach((r) => {
+      const tr = el('tr');
+      const name = el('td', 'name');
+      name.appendChild(el('code', '', r.item));
+      if (r.group === 'required') name.appendChild(el('span', 'why', 'bạn yêu cầu ở ít nhất một repo'));
+      tr.appendChild(name);
+      repos.forEach((repo) => tr.appendChild(stateCell(r, repo)));
+      body.appendChild(tr);
+    });
+    t.append(thead, body);
+  }
+
+  function drawWorktrees(checks) {
+    const box = $('dc-wt');
+    box.replaceChildren();
+    const wts = checks.filter((r) => r.area === 'worktree');
+    if (!wts.length) { box.appendChild(el('p', 'note', 'Không còn worktree nào.')); return; }
+    const ul = el('ul', 'wt');
+    wts.forEach((w) => {
+      const li = el('li');
+      li.append(el('b', '', w.repo + ': '), el('code', '', w.detail));
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+  }
+
+  // ---- "Đường đi của một việc": one lane per Claude Code event; every node is a hook row of the kit's own chain ----
+  const EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'Notification', 'SessionEnd'];
+  const bankOf = (ev, mt) => {
+    if (ev !== 'PreToolUse' && ev !== 'PostToolUse') return '*';
+    if (/^mcp__/.test(mt)) return 'mcp';
+    if (mt === 'Bash') return 'bash';
+    if (mt === 'Read') return 'read';
+    if (/^(Edit|Write|MultiEdit|NotebookEdit)/.test(mt)) return 'edit';
+    return 'other';
+  };
+  const BANK_NAME = { bash: 'Lệnh Bash', edit: 'Sửa file (Edit, Write)', read: 'Đọc file (Read)', mcp: 'MCP replicant', other: 'Công cụ khác' };
+  const BANK_ORDER = ['bash', 'edit', 'read', 'mcp', 'other'];
+  const GIT_ORDER = ['git pre-commit', 'git commit-msg', 'git pre-push'];
+  const short = (s) => { const t = s.replace(/\.(sh|py)$/, ''); return t.length > 22 ? t.slice(0, 21) + '…' : t; };
+  const evRank = (e) => { const i = EVENTS.indexOf(e); return i < 0 ? 99 : i; };
+
+  // kit hooks (a row with order < 1000 is declared in the kit template) become nodes; a repo's own extra hooks are listed apart
+  function hookModel(checks, flow, repos) {
+    const why = {};
+    flow.filter((r) => r.kind === 'hook' && r.why).forEach((r) => { why[r.item] = r.why; });
+    const m = new Map();
+    checks.filter((r) => r.area === 'hook' && r.order < 1000).forEach((r) => {
+      const key = r.group + '|' + r.trigger + '|' + r.item;
+      if (!m.has(key)) m.set(key, { key, ev: r.group, mt: r.trigger, item: r.item, bank: bankOf(r.group, r.trigger), order: r.order, why: why[r.item] || r.detail || '', st: {} });
+      m.get(key).st[r.repo] = r.state;
+    });
+    const kit = [...m.values()].sort((a, b) => a.order - b.order || a.item.localeCompare(b.item));
+    const local = checks.filter((r) => r.area === 'hook' && r.order >= 1000)
+      .sort((a, b) => a.repo.localeCompare(b.repo) || evRank(a.group) - evRank(b.group) || a.item.localeCompare(b.item));
+    const git = flow.filter((r) => r.kind === 'git').map((r) => {
+      const h = { key: 'git|' + r.item, ev: 'git', mt: '', item: r.item, bank: '*', order: GIT_ORDER.indexOf(r.item) < 0 ? 99 : GIT_ORDER.indexOf(r.item), why: 'git chạy hook này lúc ' + r.item.replace('git ', '') + ', cả khi không có agent', st: {} };
+      return repos.reduce((o, repo) => { o.st[repo] = r[repo]; return o; }, h);
+    }).sort((a, b) => a.order - b.order);
+    return { kit, local, git };
+  }
+
+  // the events a component fires on, read from the hook rows instead of typed by hand
+  const eventsOfIn = (kit, item) => {
+    const pairs = [...new Set(kit.filter((h) => h.item === item).map((h) => h.ev + (h.mt && h.mt !== 'any tool' ? ' (' + h.mt + ')' : '')))];
+    const evs = [...new Set(kit.filter((h) => h.item === item).map((h) => h.ev))];
+    return (pairs.length <= 3 ? pairs : evs).join(', ');
+  };
+  let eventsOf = () => '';
+  const phaseEvents = (flow, kit) => {
+    const out = {};
+    PHASES.forEach(([id]) => {
+      const set = new Set();
+      flow.filter((c) => c.phase === id).forEach((c) => {
+        if (c.kind === 'hook') kit.filter((h) => h.item === c.item).forEach((h) => set.add(h.ev));
+        if (c.kind === 'git') set.add('git hook');
+      });
+      out[id] = EVENTS.concat(['git hook']).filter((e) => set.has(e));
+    });
+    return out;
+  };
+
+  const STEPS = [
+    { id: 'open', title: 'Mở phiên', tokens: ['ev:SessionStart'],
+      body: 'Claude Code mở phiên. session_context.sh nạp ngữ cảnh đầu phiên (profile, bài học, trạng thái checklist) và session_lock.sh giữ khoá thư mục: mỗi thư mục chỉ một phiên được ghi. Các hook của cùng một sự kiện chạy song song.' },
+    { id: 'prompt', title: 'Gõ yêu cầu', tokens: ['ev:UserPromptSubmit', 'e:prompt'],
+      body: 'prompt_context.sh gắn vào prompt loại việc, bẫy đã từng gặp và skill gợi ý. Prompt tả một bug được ghi thành dòng REPORTED trong checklist hồi quy.' },
+    { id: 'agent', title: 'Agent chọn việc kế tiếp', tokens: ['agent', 'e:agent'],
+      body: 'Agent đọc ngữ cảnh rồi chọn công cụ đầu tiên. Từ đây tới lúc agent định dừng là một vòng lặp: chọn công cụ, hook Pre, công cụ chạy, hook Post.' },
+    { id: 'read', title: 'Đọc file', tokens: ['tool', 'e:tool', 'e:post', 'ev:PostToolUse|read'],
+      body: 'Read không có hook Pre. Sau khi đọc, read_ledger.sh ghi file vào sổ đã đọc, để Edit hay Write sau đó biết file đã được đọc trước khi sửa.' },
+    { id: 'before-edit', title: 'Sắp sửa file', tokens: ['ev:PreToolUse|edit', 'e:pre', 'tool', 'e:tool'],
+      body: 'precode_gate.sh (cổng 5 ô chạy trước khi viết code), session_lock.sh và worktree_guard.sh chạy song song. Chỉ cần một hook trả exit 2 là Edit hoặc Write không chạy: agent nhận lý do rồi đổi cách.' },
+    { id: 'after-edit', title: 'Sau khi sửa', tokens: ['ev:PostToolUse|edit', 'e:post'],
+      body: 'churn_guard.sh cảnh báo khi một file bị sửa lần thứ ba mà chưa có bằng chứng mới: việc sửa đã xảy ra, đây là tín hiệu dừng lại suy nghĩ chứ không chặn. comment_claim_guard.sh soi chú thích khẳng định điều chưa kiểm chứng.' },
+    { id: 'bash', title: 'Chạy lệnh', tokens: ['ev:PreToolUse|bash', 'ev:PreToolUse|mcp', 'ev:PostToolUse|bash', 'e:pre', 'e:post', 'tool', 'e:tool'],
+      body: 'Trước lệnh Bash: block-dangerous-git.sh chặn git nguy hiểm (--no-verify, force), hardware_safety_gate.sh chặn lệnh có thể làm hỏng thiết bị, worktree_guard.sh chặn ghi nhầm vào checkout không phải của phiên, session_lock.sh giữ luật một thư mục một phiên. bash_write_ledger.sh ghi khung thời gian của mỗi lệnh Bash (lúc bắt đầu và lúc kết thúc) để cổng Stop biết file nào do phiên này ghi.' },
+    { id: 'selfwork', title: 'Việc agent phải tự làm', tokens: ['agent', 'e:loop'],
+      body: 'Phần này do agent tự làm, hook chỉ kiểm lại ở bước Stop: viết test RED rồi GREEN, review song song bằng principal-code-reviewer cùng ocr-review, chạy post-fix-gate --run-tests --full. Còn việc thì quay lại vòng lặp.' },
+    { id: 'stop', title: 'Agent định dừng', tokens: ['ev:Stop', 'e:stop'],
+      body: 'Mọi cổng Stop chạy cùng lúc; thứ tự khai báo chỉ để đọc, không phải thứ tự chạy. Mỗi cổng tự quyết thả hay chặn.' },
+    { id: 'reject', title: 'Có cổng chặn thì quay lại', tokens: ['reject', 'agent'],
+      body: 'Một cổng chặn (exit 2) là phiên không dừng được: lý do trả về agent, agent sửa rồi định dừng lại, quay về bước 3. Mỗi cổng có trần số lần chặn để không kẹt vòng lặp, ví dụ claim_check chỉ nhắc lại một lần rồi thả kèm cảnh báo.' },
+    { id: 'deliver', title: 'Giao hàng', tokens: ['reply', 'git', 'e:reply'],
+      body: 'Không cổng nào chặn thì câu trả lời tới người dùng. Commit chạy git pre-commit và commit-msg, push chạy pre-push. Các cổng git này chạy cả khi không có agent.' },
+    { id: 'end', title: 'Kết phiên', tokens: ['ev:Notification', 'ev:SessionEnd', 'e:end'],
+      body: 'Khi phiên im khoảng một phút, Notification (idle_prompt) đánh dấu khoá là rảnh để phiên khác được ghi. SessionEnd chạy session_lock.sh để nhả khoá của phiên.' },
+  ];
+
+  const BRANCHES = [
+    { title: 'Checkout đang do phiên khác giữ', when: 'session_lock.sh chặn ghi vào thư mục đó (AGENTS.md mục 7.1).', steps: [
+      ['hook', 'session_lock.sh chặn Edit, Write và lệnh git ghi: phiên này chỉ được đọc.'],
+      ['agent', 'agent-kit worktree add ../<repo>-<việc>: tạo worktree riêng, không dừng lại hỏi người dùng.'],
+      ['agent', 'Sửa và chạy post-fix-gate ngay trong worktree (đặt CLAUDE_PROJECT_DIR="$PWD", nếu không cổng sẽ kiểm checkout chính).'],
+      ['agent', 'agent-kit worktree finish: gộp main vào worktree, chạy cổng, fast-forward main rồi xoá worktree.'],
+      ['hook', 'worktree_merge_gate.sh giữ phiên lại (tối đa 3 lần) cho tới khi worktree đã gộp và xoá.'],
+    ] },
+    { title: 'Việc lớn: giao Antigravity', when: 'Chạm từ 2 module, 3 file, hơn 200 dòng hoặc luồng rủi ro (AGENTS.md mục 5.1; quy trình ở mục 8.2 và skill giao).', steps: [
+      ['agent', 'Leader (Claude) mở task và tự viết kế hoạch: pm_task_create, pm_plan.'],
+      ['antigravity', 'Antigravity phản biện kế hoạch, chỉ đọc: pm_dispatch plan_review.'],
+      ['antigravity', 'Antigravity viết mã sau khi kế hoạch được duyệt: pm_dispatch implement.'],
+      ['agent', 'Leader soi diff thật (pm_diff), audit và review; sai thì trả việc kèm findings (pm_rework).'],
+      ['agent', 'Leader tự chạy test (pm_run) và chụp ảnh nghiệm thu (pm_capture_proof).'],
+      ['agent', 'pm_accept chỉ đạt khi đủ: kế hoạch được duyệt, audit, review, test exit 0, ảnh.'],
+    ] },
+    { title: 'Review song song trước khi dừng', when: 'Có sửa code; review_gate.sh chặn Stop nếu thiếu.', steps: [
+      ['agent', 'Chạy cùng lúc principal-code-reviewer (nền) và ocr-review trên cùng một diff.'],
+      ['agent', 'Sửa theo cả hai báo cáo trong một lượt.'],
+      ['agent', 'Chạy ocr-review thêm một lần nếu lượt sửa đó đổi code.'],
+      ['hook', 'review_gate.sh chặn Stop (tối đa 3 lần) cho tới khi có review ngữ cảnh mới sau lần sửa cuối.'],
+    ] },
+  ];
+  const WHO = { hook: ['auto', 'Hook ép'], agent: ['agent', 'Agent làm'], antigravity: ['hint', 'Antigravity'] };
+
+  const FW = 1040, CHIP_X = 140, CHIP_W = 122, BODY_X = 284, NW = 138, NH = 44, GX = 6, GY = 10, LANE_GAP = 18;
+  let step = 0;
+  let touched = false;
+  let picked = null;
+  let refocus = null;
+  let timer = null;
+  let flowEls = [];
+
+  function paint() {
+    const on = new Set(STEPS[step].tokens);
+    STEPS[step].tokens.forEach((t) => { const m = /^ev:([^|]+)/.exec(t); if (m) on.add('chip:' + m[1]); }); // a lit bank also lights its Pre/Post chip
+    flowEls.forEach((f) => f.el.setAttribute('class', f.base + (f.tokens.some((t) => on.has(t)) ? ' on' : '')));
+  }
+  let captioned = false;
+  function showStep() {
+    captioned = true;
+    const s = STEPS[step];
+    const cap = $('dc-caption');
+    cap.setAttribute('data-step', s.id);
+    cap.replaceChildren(el('b', '', 'Bước ' + (step + 1) + ': ' + s.title), document.createTextNode(s.body));
+    $('dc-stepno').textContent = 'Bước ' + (step + 1) + '/' + STEPS.length;
+    $('dc-prev').disabled = step === 0;
+    $('dc-next').disabled = step === STEPS.length - 1;
+  }
+  const go = (n) => {
+    step = Math.max(0, Math.min(STEPS.length - 1, n));
+    touched = true;
+    $('dc-flow').setAttribute('class', 'diagram flow go');
+    paint();
+    showStep();
+  };
+  function stopTimer() {
+    if (timer) { clearInterval(timer); timer = null; }
+    $('dc-play').textContent = 'Chạy tự động';
+  }
+  const reducedMotion = () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function drawFlow(repos, model) {
+    const svg = $('dc-flow');
+    svg.replaceChildren();
+    flowEls = [];
+    svg.setAttribute('class', 'diagram flow' + (touched ? ' go' : ''));
+    const bg = sv('g');
+    const fg = sv('g');
+    const defs = sv('defs');
+    const mk = (id, cls) => {
+      // userSpaceOnUse: the head keeps its size when a lit edge gets a thicker stroke
+      const m = sv('marker', { id, viewBox: '0 0 10 10', refX: '9', refY: '5', markerWidth: '9', markerHeight: '9', markerUnits: 'userSpaceOnUse', orient: 'auto-start-reverse' });
+      m.appendChild(sv('path', { d: 'M0,0 L10,5 L0,10 z', class: cls }));
+      return m;
+    };
+    defs.append(mk('fl-arrow', 'arrowhead'), mk('fl-rej', 'loophead'));
+    svg.append(defs, bg, fg);
+
+    const reg = (node, base, tokens) => { node.setAttribute('class', base); flowEls.push({ el: node, base, tokens }); return node; };
+    const edge = (d, cls, tokens, marker) => fg.appendChild(reg(sv('path', { d, 'marker-end': 'url(#' + (marker || 'fl-arrow') + ')' }), cls, tokens));
+    const text = (x, y, s, cls, size) => fg.appendChild(sv('text', { x, y, class: cls || '', 'font-size': size || 11 }, s));
+    const per = (x0) => Math.max(1, Math.floor((FW - 6 - x0 + GX) / (NW + GX)));
+    const rowsFor = (n, p) => (n ? Math.ceil(n / p) * (NH + GY) - GY : 0);
+
+    const actor = (x, y, w, title, sub, tokens) => {
+      const g = reg(sv('g', { 'data-actor': title }), 'actor', tokens);
+      g.appendChild(sv('rect', { class: 'box', x, y, width: w, height: NH, rx: 8 }));
+      g.appendChild(sv('text', { x: x + 8, y: y + 18, 'font-size': 11.5, 'font-weight': 500 }, title));
+      if (sub) g.appendChild(sv('text', { x: x + 8, y: y + 33, class: 'muted', 'font-size': 10 }, sub));
+      fg.appendChild(g);
+      return g;
+    };
+    const hookNode = (h, x, y) => {
+      const tokens = h.ev === 'git' ? ['git'] : ['ev:' + h.ev, 'ev:' + h.ev + '|' + h.bank];
+      const g = reg(sv('g', { tabindex: '0', role: 'button', 'data-key': h.key, 'data-event': h.ev, 'data-hook': h.item, 'data-bank': h.bank, 'aria-label': h.ev + ' · ' + h.item }), 'hnode' + (picked === h.key ? ' sel' : ''), tokens);
+      g.appendChild(sv('title', {}, h.item + ' · ' + h.ev + (h.mt && h.mt !== 'any tool' ? ' · ' + h.mt : '') + (h.why ? '\n' + h.why : '')));
+      g.appendChild(sv('rect', { class: 'box', x, y, width: NW, height: NH, rx: 8 }));
+      g.appendChild(sv('text', { x: x + 8, y: y + 17, 'font-size': 11, 'font-weight': 500 }, short(h.item)));
+      const sqStep = Math.min(13, Math.floor((NW - 16) / Math.max(1, repos.length)));
+      repos.forEach((repo, i) => {
+        const st = h.st[repo] || 'none';
+        const sq = sv('rect', { class: 'sq ' + sqClass(st, 'auto'), x: x + 8 + i * sqStep, y: y + 27, width: Math.max(4, sqStep - 4), height: Math.max(4, sqStep - 4), rx: 2 });
+        sq.appendChild(sv('title', {}, repo + ' · ' + (STATE[st] || st)));
+        g.appendChild(sq);
+      });
+      const pick = () => { picked = h.key; refocus = h.key; draw(); };
+      g.addEventListener('click', pick);
+      g.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      fg.appendChild(g);
+      if (refocus === h.key) { refocus = null; if (g.focus) g.focus(); }
+    };
+    const place = (list, x0, y0) => {
+      const p = per(x0);
+      list.forEach((h, i) => hookNode(h, x0 + (i % p) * (NW + GX), y0 + Math.floor(i / p) * (NH + GY)));
+      return rowsFor(list.length, p);
+    };
+
+    let y = 6;
+    const laneStart = (title, sub) => {
+      const top = y;
+      let ty = top + 20;
+      wrap(title, 17).forEach((ln) => { text(4, ty, ln, 'lane', 12); ty += 14; });
+      wrap(sub, 21).forEach((ln) => { text(4, ty, ln, 'lanesub', 10); ty += 12; });
+      return top;
+    };
+    const laneEnd = (top, bottom) => {
+      const b = Math.max(bottom, top + 78);
+      bg.appendChild(sv('rect', { class: 'laneband', x: 0, y: top, width: FW, height: b - top, rx: 6 }));
+      y = b + LANE_GAP;
+      return b;
+    };
+    const hooksOf = (ev) => model.kit.filter((h) => h.ev === ev);
+
+    // 1. open
+    let top = laneStart('Mở phiên', 'SessionStart');
+    let bottom1 = laneEnd(top, top + 10 + place(hooksOf('SessionStart'), CHIP_X, top + 10) + 10);
+
+    // 2. prompt
+    top = laneStart('Gõ yêu cầu', 'UserPromptSubmit');
+    edge('M 201,' + bottom1 + ' V ' + top, 'edge', ['e:prompt']);
+    const h2 = place(hooksOf('UserPromptSubmit'), CHIP_X, top + 10);
+    text(CHIP_X + Math.min(hooksOf('UserPromptSubmit').length, per(CHIP_X)) * (NW + GX) + 8, top + 36, 'prompt đi tiếp tới agent, đã kèm ngữ cảnh', 'muted', 10.5);
+    const bottom2 = laneEnd(top, top + 10 + h2 + 10);
+
+    // 3. the tool loop
+    top = laneStart('Vòng lặp công cụ', 'lặp mỗi lần agent gọi một công cụ');
+    edge('M 201,' + bottom2 + ' V ' + (top + 10), 'edge', ['e:agent']);
+    const agentY = top + 10;
+    actor(CHIP_X, agentY, CHIP_W, 'Agent', 'chọn việc kế tiếp', ['agent']);
+    let cy = agentY + NH + 22;
+    const bankBlock = (ev) => {
+      BANK_ORDER.forEach((b) => {
+        const list = model.kit.filter((h) => h.ev === ev && h.bank === b);
+        if (!list.length) return;
+        text(BODY_X, cy + 10, BANK_NAME[b], 'muted', 10.5);
+        cy += 16 + place(list, BODY_X, cy + 16) + 10;
+      });
+    };
+    const preTop = cy;
+    bankBlock('PreToolUse');
+    actor(CHIP_X, preTop, CHIP_W, 'Trước khi chạy', 'PreToolUse', ['chip:PreToolUse']);
+    edge('M 201,' + (agentY + NH) + ' V ' + preTop, 'edge', ['e:pre']);
+    const toolY = Math.max(cy, preTop + NH) + 14;
+    edge('M 201,' + (preTop + NH) + ' V ' + toolY, 'edge', ['e:tool']);
+    actor(CHIP_X, toolY, CHIP_W, 'Công cụ chạy', 'Bash, Edit, Read, MCP', ['tool']);
+    text(BODY_X, toolY + 26, 'Hook Pre nào chặn (exit 2) thì công cụ không chạy: agent nhận lý do và đổi cách.', 'muted', 10.5);
+    cy = toolY + NH + 24;
+    const postTop = cy;
+    edge('M 201,' + (toolY + NH) + ' V ' + postTop, 'edge', ['e:post']);
+    bankBlock('PostToolUse');
+    actor(CHIP_X, postTop, CHIP_W, 'Sau khi chạy', 'PostToolUse', ['chip:PostToolUse']);
+    edge('M ' + CHIP_X + ',' + (postTop + NH / 2) + ' H 134 V ' + (agentY + 14) + ' H ' + CHIP_X, 'edge loop', ['e:loop']);
+    laneEnd(top, Math.max(cy, postTop + NH + 10));
+
+    // 4. the Stop gate bank: all gates fire together, any of them can send the work back
+    top = laneStart('Agent định dừng', 'Stop: dàn cổng chạy song song');
+    const stop = hooksOf('Stop');
+    const sp = per(CHIP_X);
+    const y0 = top + 28;
+    edge('M 262,' + (agentY + 22) + ' H 272 V ' + (top + 8), 'edge', ['e:stop']);
+    text(BODY_X + 6, top + 16, 'agent định dừng', 'muted', 10.5);
+    let lastBus = y0 - 6;
+    stop.forEach((h, i) => {
+      const x = CHIP_X + (i % sp) * (NW + GX);
+      const ny = y0 + Math.floor(i / sp) * (NH + GY);
+      hookNode(h, x, ny);
+      lastBus = ny - 6;
+      fg.appendChild(reg(sv('path', { d: 'M ' + (x + NW / 2) + ',' + ny + ' V ' + lastBus, 'data-gate': h.key }), 'reject', ['reject']));
+    });
+    const stopRows = Math.ceil(stop.length / sp);
+    for (let r = 0; r < stopRows; r += 1) {
+      const lastIdx = Math.min(stop.length, (r + 1) * sp) - 1;
+      const busY = y0 + r * (NH + GY) - 6;
+      fg.appendChild(reg(sv('path', { d: 'M ' + (CHIP_X + (lastIdx % sp) * (NW + GX) + NW / 2) + ',' + busY + ' H 124' }), 'rejbus', ['reject']));
+    }
+    fg.appendChild(reg(sv('path', { d: 'M 124,' + lastBus + ' V ' + (agentY + 30) + ' H ' + CHIP_X, 'marker-end': 'url(#fl-rej)' }), 'rejbus', ['reject']));
+    const bottom4 = laneEnd(top, y0 + rowsFor(stop.length, sp) + 10);
+
+    // 5. delivery
+    top = laneStart('Giao hàng', 'git hook');
+    edge('M 201,' + bottom4 + ' V ' + top, 'edge', ['e:reply']);
+    actor(CHIP_X, top + 10, CHIP_W, 'Trả lời người dùng', 'không cổng nào chặn', ['reply']);
+    edge('M 262,' + (top + 32) + ' H ' + (BODY_X - 2), 'edge', ['e:reply']);
+    const gh = place(model.git, BODY_X, top + 10);
+    text(BODY_X + Math.min(model.git.length, per(BODY_X)) * (NW + GX) + 8, top + 36, 'commit và push đều qua cổng git', 'muted', 10.5);
+    const bottom5 = laneEnd(top, top + 10 + Math.max(gh, NH) + 10);
+
+    // 6. end
+    top = laneStart('Kết phiên', 'Notification · SessionEnd');
+    edge('M 201,' + bottom5 + ' V ' + top, 'edge', ['e:end']);
+    const h6 = place(hooksOf('Notification').concat(hooksOf('SessionEnd')), CHIP_X, top + 10);
+    const bottom6 = laneEnd(top, top + 10 + h6 + 10);
+
+    // 7. any other event the kit template declares (PreCompact, SubagentStop...) so no kit hook is ever left out
+    const others = model.kit.filter((h) => EVENTS.indexOf(h.ev) < 0);
+    if (others.length) {
+      top = laneStart('Sự kiện khác', 'kit khai báo thêm');
+      edge('M 201,' + bottom6 + ' V ' + top, 'edge', ['e:end']);
+      laneEnd(top, top + 10 + place(others, CHIP_X, top + 10) + 10);
+    }
+
+    svg.setAttribute('viewBox', '0 0 ' + FW + ' ' + (y - LANE_GAP + 6));
+    paint();
+  }
+
+  function drawHookDetail(repos, model) {
+    const box = $('dc-hookdetail');
+    box.replaceChildren();
+    const h = model.kit.concat(model.git).find((x) => x.key === picked);
+    if (!h) { box.appendChild(el('p', 'note', 'Bấm một nút hook trên sơ đồ để xem hook đó chạy lúc nào và từng repo đang ở trạng thái nào.')); return; }
+    box.appendChild(el('h2', '', h.item));
+    box.appendChild(el('p', 'note', [h.ev === 'git' ? 'git hook' : h.ev + (h.mt && h.mt !== 'any tool' ? ' · ' + h.mt : ''), h.why].filter(Boolean).join(' · ')));
+    const row = { why: h.why };
+    repos.forEach((repo) => { row[repo] = h.st[repo] || 'none'; });
+    const t = el('table');
+    const tb = el('tbody');
+    repos.forEach((repo) => {
+      const tr = el('tr');
+      tr.appendChild(el('td', 'name', repo));
+      tr.appendChild(stateCell(row, repo));
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    box.appendChild(t);
+  }
+
+  function drawBranches() {
+    const box = $('dc-branches');
+    box.replaceChildren();
+    BRANCHES.forEach((b) => {
+      const card = el('div', 'branch');
+      card.appendChild(el('h3', '', b.title));
+      card.appendChild(el('p', 'note', b.when));
+      const ol = el('ol', 'chain');
+      b.steps.forEach(([who, what]) => {
+        const li = el('li', 'bstep');
+        li.appendChild(el('span', 'tag ' + WHO[who][0], WHO[who][1]));
+        li.appendChild(document.createTextNode(what));
+        ol.appendChild(li);
+      });
+      card.appendChild(ol);
+      box.appendChild(card);
+    });
+  }
+
+  const codeOf = (item) => {
+    const c = el('code', '', /\.(sh|py)$/.test(item) ? item : 'lệnh viết thẳng trong settings');
+    c.title = item;
+    return c;
+  };
+  function drawLocal(rowsLocal, kit) {
+    const ul = $('dc-localhooks');
+    ul.replaceChildren();
+    if (!rowsLocal.length) { ul.appendChild(el('li', '', 'Không repo nào có hook riêng.')); return; }
+    rowsLocal.forEach((r) => {
+      const li = el('li');
+      li.append(el('b', '', r.repo), document.createTextNode(' · ' + r.group + (r.trigger && r.trigger !== 'any tool' ? ' · ' + r.trigger : '') + ' · '), codeOf(r.item));
+      if (kit.some((h) => h.item === r.item && h.ev === r.group && h.st[r.repo] === 'missing')) li.appendChild(el('small', '', ' — cùng script với một hook của kit nhưng khác matcher, nên hook kit đó báo Thiếu ở repo này'));
+      else if (r.detail) li.appendChild(el('small', '', ' — ' + r.detail));
+      ul.appendChild(li);
+    });
+  }
+
+  $('dc-prev').addEventListener('click', () => { stopTimer(); go(step - 1); });
+  $('dc-next').addEventListener('click', () => { stopTimer(); go(step + 1); });
+  $('dc-play').addEventListener('click', () => {
+    if (timer) { stopTimer(); return; }
+    if (reducedMotion()) { go(step + 1); return; }
+    if (step === STEPS.length - 1) go(0);
+    $('dc-play').textContent = 'Dừng';
+    timer = setInterval(() => { if (step >= STEPS.length - 1) { stopTimer(); return; } go(step + 1); }, 2800);
+  });
+
+  function draw() {
+    const active = typeof document !== 'undefined' ? document.activeElement : null;
+    if (active && active.getAttribute && active.getAttribute('data-key')) refocus = active.getAttribute('data-key');
+    const checks = rowsOf('checks');
+    const flow = rowsOf('flow_matrix');
+    const sums = rowsOf('phase_summary');
+    const problems = rowsOf('problems');
+    const mcps = rowsOf('mcp_matrix');
+    if (!checks || !flow || !sums || !problems || !mcps) return;
+    const repos = [...new Set(checks.map((r) => r.repo))];
+    if (!selected) {
+      const firstBad = PHASES.find(([id]) => sums.some((s) => s.phase === id && s.bad));
+      selected = (firstBad || PHASES[5])[0];
+    }
+
+    const ocr = checks.find((r) => r.area === 'tool' && r.item === 'ocr');
+    const noHook = ocr && ocr.trigger.indexOf('không hook') === 0;
+    $('dc-take').textContent = 'Từ lúc nhận yêu cầu đến lúc giao, mỗi việc đi qua 8 công đoạn. Phần "tự động" luôn chạy; phần "tùy agent" chỉ chạy khi agent chọn dùng, nên dễ bị bỏ sót.'
+      + (noHook ? ' Ví dụ: ocr (Open Code Review) có ở cả 5 repo nhưng không hook nào chạy nó, nên review bằng ocr chỉ xảy ra khi agent tự gọi.' : '');
+
+    const model = hookModel(checks, flow, repos);
+    eventsOf = (item) => eventsOfIn(model.kit, item);
+    const hookRows = checks.filter((r) => r.area === 'hook');
+    if (hookRows.length && !hookRows.every((r) => Number.isFinite(r.order))) {
+      // checks.json from before the `order` column: lanes cannot tell kit hooks from a repo's own, so say so instead of guessing
+      const note = 'checks.json là bản cũ, chưa có cột order cho từng hook. Chạy lại python3 universal-agent-devkit/dashboard/collect_rows.py rồi nạp lại dữ liệu.';
+      $('dc-flow').replaceChildren();
+      flowEls = [];
+      $('dc-hookdetail').replaceChildren(el('p', 'note', note));
+      $('dc-localhooks').replaceChildren(el('li', '', note));
+    } else {
+      drawFlow(repos, model);
+      drawHookDetail(repos, model);
+      drawLocal(model.local, model.kit);
+    }
+    if (!captioned) showStep();
+    drawBranches();
+    drawDiagram(repos, flow, sums, phaseEvents(flow, model.kit));
+    drawDetail(repos, flow);
+    drawTodo(problems);
+    drawMcp(repos, mcps);
+    drawWorktrees(checks);
+  }
+
+  dash.onData(draw);
+})();
+</script>

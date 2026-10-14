@@ -17,7 +17,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "SessionStart hook: what the model must know before the first"
+  "detail": "SessionStart hook: what the model must know before the first",
+  "order": 0
  },
  {
   "repo": "agent-workbench",
@@ -27,7 +28,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 1
  },
  {
   "repo": "agent-workbench",
@@ -37,7 +39,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "UserPromptSubmit hook: the context-enricher step, done by the"
+  "detail": "UserPromptSubmit hook: the context-enricher step, done by the",
+  "order": 2
  },
  {
   "repo": "agent-workbench",
@@ -47,7 +50,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time",
+  "order": 6
  },
  {
   "repo": "agent-workbench",
@@ -57,7 +61,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse guard cho Bash tool."
+  "detail": "PreToolUse guard cho Bash tool.",
+  "order": 4
  },
  {
   "repo": "agent-workbench",
@@ -67,7 +72,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "mcp__replicant-mcp__.*",
-  "detail": "Physical Hardware & Embedded Device Brick Protection"
+  "detail": "Physical Hardware & Embedded Device Brick Protection",
+  "order": 8
  },
  {
   "repo": "agent-workbench",
@@ -77,7 +83,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "Physical Hardware & Embedded Device Brick Protection"
+  "detail": "Physical Hardware & Embedded Device Brick Protection",
+  "order": 5
  },
  {
   "repo": "agent-workbench",
@@ -87,7 +94,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write",
-  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written."
+  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written.",
+  "order": 9
  },
  {
   "repo": "agent-workbench",
@@ -97,7 +105,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|MultiEdit|NotebookEdit",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 10
  },
  {
   "repo": "agent-workbench",
@@ -107,17 +116,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
- },
- {
-  "repo": "agent-workbench",
-  "area": "hook",
-  "group": "PreToolUse",
-  "item": "worktree_guard.sh",
-  "kind": "",
-  "state": "ok",
-  "trigger": "Bash",
-  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 3
  },
  {
   "repo": "agent-workbench",
@@ -127,7 +127,19 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|MultiEdit|NotebookEdit",
-  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
+  "order": 11
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
+  "order": 7
  },
  {
   "repo": "agent-workbench",
@@ -137,7 +149,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time",
+  "order": 12
  },
  {
   "repo": "agent-workbench",
@@ -147,7 +160,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|NotebookEdit",
-  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard)."
+  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard).",
+  "order": 14
  },
  {
   "repo": "agent-workbench",
@@ -157,7 +171,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|NotebookEdit",
-  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc."
+  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc.",
+  "order": 15
  },
  {
   "repo": "agent-workbench",
@@ -167,7 +182,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Read",
-  "detail": "PostToolUse hook on Read. Records \"this session looked at"
+  "detail": "PostToolUse hook on Read. Records \"this session looked at",
+  "order": 13
  },
  {
   "repo": "agent-workbench",
@@ -177,7 +193,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5)."
+  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5).",
+  "order": 16
  },
  {
   "repo": "agent-workbench",
@@ -187,7 +204,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: the gates ran for the wrong project."
+  "detail": "Stop hook: the gates ran for the wrong project.",
+  "order": 23
  },
  {
   "repo": "agent-workbench",
@@ -197,7 +215,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: a reply that opens with XONG must carry the turn's"
+  "detail": "Stop hook: a reply that opens with XONG must carry the turn's",
+  "order": 22
  },
  {
   "repo": "agent-workbench",
@@ -207,7 +226,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: the living regression checklist must be green"
+  "detail": "Stop hook: the living regression checklist must be green",
+  "order": 19
  },
  {
   "repo": "agent-workbench",
@@ -217,7 +237,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted"
+  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted",
+  "order": 17
  },
  {
   "repo": "agent-workbench",
@@ -227,7 +248,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger)."
+  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger).",
+  "order": 21
  },
  {
   "repo": "agent-workbench",
@@ -237,7 +259,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`."
+  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`.",
+  "order": 20
  },
  {
   "repo": "agent-workbench",
@@ -247,7 +270,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: compile the TEST source set of every module"
+  "detail": "Stop hook: compile the TEST source set of every module",
+  "order": 18
  },
  {
   "repo": "agent-workbench",
@@ -257,7 +281,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: a worktree's work never reached trunk."
+  "detail": "Stop hook: a worktree's work never reached trunk.",
+  "order": 24
  },
  {
   "repo": "agent-workbench",
@@ -267,7 +292,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "idle_prompt",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 25
  },
  {
   "repo": "agent-workbench",
@@ -277,7 +303,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 26
  },
  {
   "repo": "agent-workbench",
@@ -378,6 +405,26 @@
   "state": "ok",
   "trigger": "prompt suggestion: enrich_context.py",
   "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "generate2dmedia",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "agent's own choice only",
+  "detail": "excluded by profile backend"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "generate2dsprite",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "agent's own choice only",
+  "detail": "excluded by profile backend"
  },
  {
   "repo": "agent-workbench",
@@ -553,6 +600,16 @@
   "repo": "agent-workbench",
   "area": "skill",
   "group": "kit skill",
+  "item": "video2dsprite",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "agent's own choice only",
+  "detail": "excluded by profile backend"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
   "item": "worktree-sandbox",
   "kind": "",
   "state": "ok",
@@ -605,9 +662,9 @@
   "group": "extra",
   "item": "play-store",
   "kind": "",
-  "state": "ok",
+  "state": "na",
   "trigger": "tool call",
-  "detail": "đã khai báo và bật"
+  "detail": "repo này không cần server này"
  },
  {
   "repo": "agent-workbench",
@@ -615,9 +672,9 @@
   "group": "extra",
   "item": "replicant-mcp",
   "kind": "",
-  "state": "ok",
+  "state": "na",
   "trigger": "tool call",
-  "detail": "đã khai báo và bật"
+  "detail": "repo này không cần server này"
  },
  {
   "repo": "agent-workbench",
@@ -626,8 +683,8 @@
   "item": "ocr",
   "kind": "",
   "state": "ok",
-  "trigger": "không hook nào chạy lệnh này",
-  "detail": "open-code-review v1.12.13 (fabbdb29) darwin/arm64 | runs in repo: yes"
+  "trigger": "hook chạy: review_gate.sh",
+  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "agent-workbench",
@@ -757,7 +814,7 @@
   "kind": "luật",
   "state": "ok",
   "trigger": "gợi ý trong prompt",
-  "detail": "38 bài học"
+  "detail": "40 bài học"
  },
  {
   "repo": "agent-workbench",
@@ -877,7 +934,7 @@
   "kind": "hook",
   "state": "ok",
   "trigger": "hook tự chạy",
-  "detail": "ghi lại các lệnh Bash có ghi file"
+  "detail": "ghi khung thời gian của mỗi lệnh Bash, để cổng Stop biết file nào do phiên này ghi"
  },
  {
   "repo": "agent-workbench",
@@ -887,7 +944,7 @@
   "kind": "hook",
   "state": "ok",
   "trigger": "hook tự chạy",
-  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì chặn"
+  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì cảnh báo (không chặn)"
  },
  {
   "repo": "agent-workbench",
@@ -1017,7 +1074,7 @@
   "kind": "công cụ",
   "state": "ok",
   "trigger": "agent tự chọn",
-  "detail": "không hook nào chạy ocr, chỉ chạy khi agent tự gọi"
+  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "agent-workbench",
@@ -1163,31 +1220,71 @@
   "repo": "agent-workbench",
   "area": "worktree",
   "group": "unmerged?",
-  "item": "agent-workbench-dot30b",
+  "item": "agent-workbench-w1trunk",
   "kind": "",
   "state": "warn",
   "trigger": "",
-  "detail": "/Volumes/Data/Toan/agent-workbench-dot30b"
+  "detail": "/Volumes/Data/Toan/agent-workbench-w1trunk"
  },
  {
   "repo": "agent-workbench",
   "area": "worktree",
   "group": "unmerged?",
-  "item": "agent-workbench-mcpfix",
+  "item": "agent-a0bbc17ee1c3b97f7",
   "kind": "",
   "state": "warn",
   "trigger": "",
-  "detail": "/Volumes/Data/Toan/agent-workbench-mcpfix"
+  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/agent-a0bbc17ee1c3b97f7"
  },
  {
   "repo": "agent-workbench",
   "area": "worktree",
   "group": "unmerged?",
-  "item": "agent-workbench-sprite-forge",
+  "item": "agent-a204c71438230f2af",
   "kind": "",
   "state": "warn",
   "trigger": "",
-  "detail": "/Volumes/Data/Toan/agent-workbench-sprite-forge"
+  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/agent-a204c71438230f2af"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "agent-a688bb68e82e9b9a2",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/agent-a688bb68e82e9b9a2"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "agent-a7a061704665f2cdd",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/agent-a7a061704665f2cdd"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "agent-aa3f350b6e679b047",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/agent-aa3f350b6e679b047"
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "agent-ab910bb5c27892b95",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/agent-ab910bb5c27892b95"
  },
  {
   "repo": "GeelyEx2",
@@ -1207,7 +1304,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "SessionStart hook: what the model must know before the first"
+  "detail": "SessionStart hook: what the model must know before the first",
+  "order": 0
  },
  {
   "repo": "GeelyEx2",
@@ -1217,7 +1315,8 @@
   "kind": "",
   "state": "missing",
   "trigger": "any tool",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 1
  },
  {
   "repo": "GeelyEx2",
@@ -1227,7 +1326,8 @@
   "kind": "",
   "state": "local",
   "trigger": "startup|resume",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 1000
  },
  {
   "repo": "GeelyEx2",
@@ -1237,7 +1337,8 @@
   "kind": "",
   "state": "local",
   "trigger": "startup|resume",
-  "detail": ""
+  "detail": "",
+  "order": 1000
  },
  {
   "repo": "GeelyEx2",
@@ -1247,7 +1348,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "UserPromptSubmit hook: the context-enricher step, done by the"
+  "detail": "UserPromptSubmit hook: the context-enricher step, done by the",
+  "order": 2
  },
  {
   "repo": "GeelyEx2",
@@ -1257,7 +1359,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time",
+  "order": 6
  },
  {
   "repo": "GeelyEx2",
@@ -1267,7 +1370,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse guard cho Bash tool."
+  "detail": "PreToolUse guard cho Bash tool.",
+  "order": 4
  },
  {
   "repo": "GeelyEx2",
@@ -1277,7 +1381,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "mcp__replicant-mcp__.*",
-  "detail": "Physical Hardware & Embedded Device Brick Protection"
+  "detail": "Physical Hardware & Embedded Device Brick Protection",
+  "order": 8
  },
  {
   "repo": "GeelyEx2",
@@ -1287,7 +1392,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "Physical Hardware & Embedded Device Brick Protection"
+  "detail": "Physical Hardware & Embedded Device Brick Protection",
+  "order": 5
  },
  {
   "repo": "GeelyEx2",
@@ -1297,7 +1403,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write",
-  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written."
+  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written.",
+  "order": 9
  },
  {
   "repo": "GeelyEx2",
@@ -1307,7 +1414,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|MultiEdit|NotebookEdit",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 10
  },
  {
   "repo": "GeelyEx2",
@@ -1317,17 +1425,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
- },
- {
-  "repo": "GeelyEx2",
-  "area": "hook",
-  "group": "PreToolUse",
-  "item": "worktree_guard.sh",
-  "kind": "",
-  "state": "ok",
-  "trigger": "Bash",
-  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 3
  },
  {
   "repo": "GeelyEx2",
@@ -1337,7 +1436,19 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|MultiEdit|NotebookEdit",
-  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
+  "order": 11
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
+  "order": 7
  },
  {
   "repo": "GeelyEx2",
@@ -1347,7 +1458,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time",
+  "order": 12
  },
  {
   "repo": "GeelyEx2",
@@ -1357,7 +1469,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|NotebookEdit",
-  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard)."
+  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard).",
+  "order": 14
  },
  {
   "repo": "GeelyEx2",
@@ -1367,7 +1480,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|NotebookEdit",
-  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc."
+  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc.",
+  "order": 15
  },
  {
   "repo": "GeelyEx2",
@@ -1377,7 +1491,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Read",
-  "detail": "PostToolUse hook on Read. Records \"this session looked at"
+  "detail": "PostToolUse hook on Read. Records \"this session looked at",
+  "order": 13
  },
  {
   "repo": "GeelyEx2",
@@ -1387,7 +1502,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5)."
+  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5).",
+  "order": 16
  },
  {
   "repo": "GeelyEx2",
@@ -1397,7 +1513,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: the gates ran for the wrong project."
+  "detail": "Stop hook: the gates ran for the wrong project.",
+  "order": 23
  },
  {
   "repo": "GeelyEx2",
@@ -1407,7 +1524,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: a reply that opens with XONG must carry the turn's"
+  "detail": "Stop hook: a reply that opens with XONG must carry the turn's",
+  "order": 22
  },
  {
   "repo": "GeelyEx2",
@@ -1417,7 +1535,8 @@
   "kind": "",
   "state": "local",
   "trigger": "any tool",
-  "detail": ""
+  "detail": "",
+  "order": 1000
  },
  {
   "repo": "GeelyEx2",
@@ -1427,7 +1546,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: the living regression checklist must be green"
+  "detail": "Stop hook: the living regression checklist must be green",
+  "order": 19
  },
  {
   "repo": "GeelyEx2",
@@ -1437,7 +1557,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted"
+  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted",
+  "order": 17
  },
  {
   "repo": "GeelyEx2",
@@ -1447,7 +1568,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger)."
+  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger).",
+  "order": 21
  },
  {
   "repo": "GeelyEx2",
@@ -1457,7 +1579,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`."
+  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`.",
+  "order": 20
  },
  {
   "repo": "GeelyEx2",
@@ -1467,7 +1590,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: compile the TEST source set of every module"
+  "detail": "Stop hook: compile the TEST source set of every module",
+  "order": 18
  },
  {
   "repo": "GeelyEx2",
@@ -1477,7 +1601,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: a worktree's work never reached trunk."
+  "detail": "Stop hook: a worktree's work never reached trunk.",
+  "order": 24
  },
  {
   "repo": "GeelyEx2",
@@ -1487,7 +1612,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "idle_prompt",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 25
  },
  {
   "repo": "GeelyEx2",
@@ -1497,7 +1623,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 26
  },
  {
   "repo": "GeelyEx2",
@@ -1598,6 +1725,26 @@
   "state": "ok",
   "trigger": "prompt suggestion: enrich_context.py",
   "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "generate2dmedia",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "agent's own choice only",
+  "detail": "excluded by profile automotive"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "generate2dsprite",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "agent's own choice only",
+  "detail": "excluded by profile automotive"
  },
  {
   "repo": "GeelyEx2",
@@ -1773,6 +1920,16 @@
   "repo": "GeelyEx2",
   "area": "skill",
   "group": "kit skill",
+  "item": "video2dsprite",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "agent's own choice only",
+  "detail": "excluded by profile automotive"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
   "item": "worktree-sandbox",
   "kind": "",
   "state": "ok",
@@ -1905,9 +2062,9 @@
   "group": "extra",
   "item": "play-store",
   "kind": "",
-  "state": "off",
+  "state": "na",
   "trigger": "tool call",
-  "detail": "đã khai báo nhưng chưa được bật"
+  "detail": "repo này không cần server này"
  },
  {
   "repo": "GeelyEx2",
@@ -1936,8 +2093,8 @@
   "item": "ocr",
   "kind": "",
   "state": "ok",
-  "trigger": "không hook nào chạy lệnh này",
-  "detail": "open-code-review v1.12.13 (fabbdb29) darwin/arm64 | runs in repo: yes"
+  "trigger": "hook chạy: review_gate.sh",
+  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "GeelyEx2",
@@ -2187,7 +2344,7 @@
   "kind": "hook",
   "state": "ok",
   "trigger": "hook tự chạy",
-  "detail": "ghi lại các lệnh Bash có ghi file"
+  "detail": "ghi khung thời gian của mỗi lệnh Bash, để cổng Stop biết file nào do phiên này ghi"
  },
  {
   "repo": "GeelyEx2",
@@ -2197,7 +2354,7 @@
   "kind": "hook",
   "state": "ok",
   "trigger": "hook tự chạy",
-  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì chặn"
+  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì cảnh báo (không chặn)"
  },
  {
   "repo": "GeelyEx2",
@@ -2327,7 +2484,7 @@
   "kind": "công cụ",
   "state": "ok",
   "trigger": "agent tự chọn",
-  "detail": "không hook nào chạy ocr, chỉ chạy khi agent tự gọi"
+  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "GeelyEx2",
@@ -2470,16 +2627,6 @@
   "detail": "ghi bàn giao khi kết thúc phiên"
  },
  {
-  "repo": "GeelyEx2",
-  "area": "worktree",
-  "group": "unmerged?",
-  "item": "GeelyEx2-mcpfix",
-  "kind": "",
-  "state": "warn",
-  "trigger": "",
-  "detail": "/Volumes/Data/Toan/GeelyEx2-mcpfix"
- },
- {
   "repo": "OfficeReader",
   "area": "profile",
   "group": "profile",
@@ -2497,7 +2644,8 @@
   "kind": "",
   "state": "local",
   "trigger": "any tool",
-  "detail": ""
+  "detail": "",
+  "order": 1000
  },
  {
   "repo": "OfficeReader",
@@ -2507,7 +2655,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "SessionStart hook: what the model must know before the first"
+  "detail": "SessionStart hook: what the model must know before the first",
+  "order": 0
  },
  {
   "repo": "OfficeReader",
@@ -2517,7 +2666,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 1
  },
  {
   "repo": "OfficeReader",
@@ -2527,7 +2677,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "UserPromptSubmit hook: the context-enricher step, done by the"
+  "detail": "UserPromptSubmit hook: the context-enricher step, done by the",
+  "order": 2
  },
  {
   "repo": "OfficeReader",
@@ -2537,7 +2688,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time",
+  "order": 6
  },
  {
   "repo": "OfficeReader",
@@ -2547,7 +2699,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse guard cho Bash tool."
+  "detail": "PreToolUse guard cho Bash tool.",
+  "order": 4
  },
  {
   "repo": "OfficeReader",
@@ -2557,7 +2710,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "mcp__replicant-mcp__.*",
-  "detail": "Physical Hardware & Embedded Device Brick Protection"
+  "detail": "Physical Hardware & Embedded Device Brick Protection",
+  "order": 8
  },
  {
   "repo": "OfficeReader",
@@ -2567,7 +2721,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "Physical Hardware & Embedded Device Brick Protection"
+  "detail": "Physical Hardware & Embedded Device Brick Protection",
+  "order": 5
  },
  {
   "repo": "OfficeReader",
@@ -2577,7 +2732,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write",
-  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written."
+  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written.",
+  "order": 9
  },
  {
   "repo": "OfficeReader",
@@ -2587,7 +2743,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|MultiEdit|NotebookEdit",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 10
  },
  {
   "repo": "OfficeReader",
@@ -2597,17 +2754,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
- },
- {
-  "repo": "OfficeReader",
-  "area": "hook",
-  "group": "PreToolUse",
-  "item": "worktree_guard.sh",
-  "kind": "",
-  "state": "ok",
-  "trigger": "Bash",
-  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 3
  },
  {
   "repo": "OfficeReader",
@@ -2617,7 +2765,19 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|MultiEdit|NotebookEdit",
-  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
+  "order": 11
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
+  "order": 7
  },
  {
   "repo": "OfficeReader",
@@ -2627,7 +2787,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time",
+  "order": 12
  },
  {
   "repo": "OfficeReader",
@@ -2637,7 +2798,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|NotebookEdit",
-  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard)."
+  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard).",
+  "order": 14
  },
  {
   "repo": "OfficeReader",
@@ -2647,7 +2809,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|NotebookEdit",
-  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc."
+  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc.",
+  "order": 15
  },
  {
   "repo": "OfficeReader",
@@ -2657,7 +2820,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Read",
-  "detail": "PostToolUse hook on Read. Records \"this session looked at"
+  "detail": "PostToolUse hook on Read. Records \"this session looked at",
+  "order": 13
  },
  {
   "repo": "OfficeReader",
@@ -2667,7 +2831,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5)."
+  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5).",
+  "order": 16
  },
  {
   "repo": "OfficeReader",
@@ -2677,7 +2842,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: the gates ran for the wrong project."
+  "detail": "Stop hook: the gates ran for the wrong project.",
+  "order": 23
  },
  {
   "repo": "OfficeReader",
@@ -2687,7 +2853,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: a reply that opens with XONG must carry the turn's"
+  "detail": "Stop hook: a reply that opens with XONG must carry the turn's",
+  "order": 22
  },
  {
   "repo": "OfficeReader",
@@ -2697,7 +2864,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: the living regression checklist must be green"
+  "detail": "Stop hook: the living regression checklist must be green",
+  "order": 19
  },
  {
   "repo": "OfficeReader",
@@ -2707,7 +2875,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted"
+  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted",
+  "order": 17
  },
  {
   "repo": "OfficeReader",
@@ -2717,7 +2886,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger)."
+  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger).",
+  "order": 21
  },
  {
   "repo": "OfficeReader",
@@ -2727,7 +2897,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`."
+  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`.",
+  "order": 20
  },
  {
   "repo": "OfficeReader",
@@ -2737,7 +2908,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: compile the TEST source set of every module"
+  "detail": "Stop hook: compile the TEST source set of every module",
+  "order": 18
  },
  {
   "repo": "OfficeReader",
@@ -2747,7 +2919,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: a worktree's work never reached trunk."
+  "detail": "Stop hook: a worktree's work never reached trunk.",
+  "order": 24
  },
  {
   "repo": "OfficeReader",
@@ -2757,7 +2930,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "idle_prompt",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 25
  },
  {
   "repo": "OfficeReader",
@@ -2767,7 +2941,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 26
  },
  {
   "repo": "OfficeReader",
@@ -2845,7 +3020,7 @@
   "group": "kit skill",
   "item": "devkit-audit",
   "kind": "",
-  "state": "missing",
+  "state": "ok",
   "trigger": "agent's own choice only",
   "detail": ""
  },
@@ -2868,6 +3043,26 @@
   "state": "ok",
   "trigger": "prompt suggestion: enrich_context.py",
   "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "generate2dmedia",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "agent's own choice only",
+  "detail": "excluded by profile android"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "generate2dsprite",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "agent's own choice only",
+  "detail": "excluded by profile android"
  },
  {
   "repo": "OfficeReader",
@@ -3043,6 +3238,16 @@
   "repo": "OfficeReader",
   "area": "skill",
   "group": "kit skill",
+  "item": "video2dsprite",
+  "kind": "",
+  "state": "excluded",
+  "trigger": "agent's own choice only",
+  "detail": "excluded by profile android"
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
   "item": "worktree-sandbox",
   "kind": "",
   "state": "ok",
@@ -3136,8 +3341,8 @@
   "item": "ocr",
   "kind": "",
   "state": "ok",
-  "trigger": "không hook nào chạy lệnh này",
-  "detail": "open-code-review v1.12.13 (fabbdb29) darwin/arm64 | runs in repo: yes"
+  "trigger": "hook chạy: review_gate.sh",
+  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "OfficeReader",
@@ -3267,7 +3472,7 @@
   "kind": "luật",
   "state": "ok",
   "trigger": "gợi ý trong prompt",
-  "detail": "161 bài học"
+  "detail": "164 bài học"
  },
  {
   "repo": "OfficeReader",
@@ -3387,7 +3592,7 @@
   "kind": "hook",
   "state": "ok",
   "trigger": "hook tự chạy",
-  "detail": "ghi lại các lệnh Bash có ghi file"
+  "detail": "ghi khung thời gian của mỗi lệnh Bash, để cổng Stop biết file nào do phiên này ghi"
  },
  {
   "repo": "OfficeReader",
@@ -3397,7 +3602,7 @@
   "kind": "hook",
   "state": "ok",
   "trigger": "hook tự chạy",
-  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì chặn"
+  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì cảnh báo (không chặn)"
  },
  {
   "repo": "OfficeReader",
@@ -3527,7 +3732,7 @@
   "kind": "công cụ",
   "state": "ok",
   "trigger": "agent tự chọn",
-  "detail": "không hook nào chạy ocr, chỉ chạy khi agent tự gọi"
+  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "OfficeReader",
@@ -3687,7 +3892,8 @@
   "kind": "",
   "state": "local",
   "trigger": "any tool",
-  "detail": ""
+  "detail": "",
+  "order": 1000
  },
  {
   "repo": "Goods",
@@ -3697,7 +3903,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "SessionStart hook: what the model must know before the first"
+  "detail": "SessionStart hook: what the model must know before the first",
+  "order": 0
  },
  {
   "repo": "Goods",
@@ -3707,7 +3914,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 1
  },
  {
   "repo": "Goods",
@@ -3717,7 +3925,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "UserPromptSubmit hook: the context-enricher step, done by the"
+  "detail": "UserPromptSubmit hook: the context-enricher step, done by the",
+  "order": 2
  },
  {
   "repo": "Goods",
@@ -3727,7 +3936,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time",
+  "order": 6
  },
  {
   "repo": "Goods",
@@ -3737,7 +3947,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse guard cho Bash tool."
+  "detail": "PreToolUse guard cho Bash tool.",
+  "order": 4
  },
  {
   "repo": "Goods",
@@ -3747,7 +3958,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "mcp__replicant-mcp__.*",
-  "detail": "Physical Hardware & Embedded Device Brick Protection"
+  "detail": "Physical Hardware & Embedded Device Brick Protection",
+  "order": 8
  },
  {
   "repo": "Goods",
@@ -3757,7 +3969,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "Physical Hardware & Embedded Device Brick Protection"
+  "detail": "Physical Hardware & Embedded Device Brick Protection",
+  "order": 5
  },
  {
   "repo": "Goods",
@@ -3767,7 +3980,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write",
-  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written."
+  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written.",
+  "order": 9
  },
  {
   "repo": "Goods",
@@ -3777,7 +3991,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|MultiEdit|NotebookEdit",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 10
  },
  {
   "repo": "Goods",
@@ -3787,7 +4002,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 3
  },
  {
   "repo": "Goods",
@@ -3797,17 +4013,8 @@
   "kind": "",
   "state": "local",
   "trigger": "Bash",
-  "detail": ""
- },
- {
-  "repo": "Goods",
-  "area": "hook",
-  "group": "PreToolUse",
-  "item": "worktree_guard.sh",
-  "kind": "",
-  "state": "ok",
-  "trigger": "Bash",
-  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+  "detail": "",
+  "order": 1000
  },
  {
   "repo": "Goods",
@@ -3817,7 +4024,19 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|MultiEdit|NotebookEdit",
-  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
+  "order": 11
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
+  "order": 7
  },
  {
   "repo": "Goods",
@@ -3827,7 +4046,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time",
+  "order": 12
  },
  {
   "repo": "Goods",
@@ -3837,7 +4057,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|NotebookEdit",
-  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard)."
+  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard).",
+  "order": 14
  },
  {
   "repo": "Goods",
@@ -3847,7 +4068,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|NotebookEdit",
-  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc."
+  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc.",
+  "order": 15
  },
  {
   "repo": "Goods",
@@ -3857,7 +4079,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Read",
-  "detail": "PostToolUse hook on Read. Records \"this session looked at"
+  "detail": "PostToolUse hook on Read. Records \"this session looked at",
+  "order": 13
  },
  {
   "repo": "Goods",
@@ -3867,7 +4090,8 @@
   "kind": "",
   "state": "local",
   "trigger": "Write|Edit",
-  "detail": ""
+  "detail": "",
+  "order": 1000
  },
  {
   "repo": "Goods",
@@ -3877,7 +4101,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5)."
+  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5).",
+  "order": 16
  },
  {
   "repo": "Goods",
@@ -3887,7 +4112,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: the gates ran for the wrong project."
+  "detail": "Stop hook: the gates ran for the wrong project.",
+  "order": 23
  },
  {
   "repo": "Goods",
@@ -3897,7 +4123,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: a reply that opens with XONG must carry the turn's"
+  "detail": "Stop hook: a reply that opens with XONG must carry the turn's",
+  "order": 22
  },
  {
   "repo": "Goods",
@@ -3907,7 +4134,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: the living regression checklist must be green"
+  "detail": "Stop hook: the living regression checklist must be green",
+  "order": 19
  },
  {
   "repo": "Goods",
@@ -3917,7 +4145,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted"
+  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted",
+  "order": 17
  },
  {
   "repo": "Goods",
@@ -3927,7 +4156,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger)."
+  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger).",
+  "order": 21
  },
  {
   "repo": "Goods",
@@ -3937,7 +4167,8 @@
   "kind": "",
   "state": "local",
   "trigger": "any tool",
-  "detail": ""
+  "detail": "",
+  "order": 1000
  },
  {
   "repo": "Goods",
@@ -3947,7 +4178,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`."
+  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`.",
+  "order": 20
  },
  {
   "repo": "Goods",
@@ -3957,7 +4189,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: compile the TEST source set of every module"
+  "detail": "Stop hook: compile the TEST source set of every module",
+  "order": 18
  },
  {
   "repo": "Goods",
@@ -3967,7 +4200,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: a worktree's work never reached trunk."
+  "detail": "Stop hook: a worktree's work never reached trunk.",
+  "order": 24
  },
  {
   "repo": "Goods",
@@ -3977,7 +4211,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "idle_prompt",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 25
  },
  {
   "repo": "Goods",
@@ -3987,7 +4222,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 26
  },
  {
   "repo": "Goods",
@@ -3997,7 +4233,8 @@
   "kind": "",
   "state": "local",
   "trigger": "any tool",
-  "detail": ""
+  "detail": "",
+  "order": 1000
  },
  {
   "repo": "Goods",
@@ -4007,7 +4244,8 @@
   "kind": "",
   "state": "local",
   "trigger": "any tool",
-  "detail": ""
+  "detail": "",
+  "order": 1000
  },
  {
   "repo": "Goods",
@@ -4107,6 +4345,26 @@
   "kind": "",
   "state": "ok",
   "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "generate2dmedia",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "generate2dsprite",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
   "detail": ""
  },
  {
@@ -4283,6 +4541,16 @@
   "repo": "Goods",
   "area": "skill",
   "group": "kit skill",
+  "item": "video2dsprite",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
   "item": "worktree-sandbox",
   "kind": "",
   "state": "ok",
@@ -4375,9 +4643,9 @@
   "group": "required",
   "item": "replicant-mcp",
   "kind": "",
-  "state": "missing",
+  "state": "off",
   "trigger": "tool call",
-  "detail": "chưa khai báo trong .mcp.json"
+  "detail": "đã khai báo nhưng bị tắt trong settings.local.json"
  },
  {
   "repo": "Goods",
@@ -4386,8 +4654,8 @@
   "item": "ocr",
   "kind": "",
   "state": "ok",
-  "trigger": "không hook nào chạy lệnh này",
-  "detail": "open-code-review v1.12.13 (fabbdb29) darwin/arm64 | runs in repo: yes"
+  "trigger": "hook chạy: review_gate.sh",
+  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "Goods",
@@ -4517,7 +4785,7 @@
   "kind": "luật",
   "state": "ok",
   "trigger": "gợi ý trong prompt",
-  "detail": "51 bài học"
+  "detail": "52 bài học"
  },
  {
   "repo": "Goods",
@@ -4637,7 +4905,7 @@
   "kind": "hook",
   "state": "ok",
   "trigger": "hook tự chạy",
-  "detail": "ghi lại các lệnh Bash có ghi file"
+  "detail": "ghi khung thời gian của mỗi lệnh Bash, để cổng Stop biết file nào do phiên này ghi"
  },
  {
   "repo": "Goods",
@@ -4647,7 +4915,7 @@
   "kind": "hook",
   "state": "ok",
   "trigger": "hook tự chạy",
-  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì chặn"
+  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì cảnh báo (không chặn)"
  },
  {
   "repo": "Goods",
@@ -4777,7 +5045,7 @@
   "kind": "công cụ",
   "state": "ok",
   "trigger": "agent tự chọn",
-  "detail": "không hook nào chạy ocr, chỉ chạy khi agent tự gọi"
+  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "Goods",
@@ -4920,16 +5188,6 @@
   "detail": "ghi bàn giao khi kết thúc phiên"
  },
  {
-  "repo": "Goods",
-  "area": "worktree",
-  "group": "unmerged?",
-  "item": "Goods-Triple-Shelf-Match-3D-mcp",
-  "kind": "",
-  "state": "warn",
-  "trigger": "",
-  "detail": "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D-mcp"
- },
- {
   "repo": "Neighbours-From-Hell",
   "area": "profile",
   "group": "profile",
@@ -4947,7 +5205,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "SessionStart hook: what the model must know before the first"
+  "detail": "SessionStart hook: what the model must know before the first",
+  "order": 0
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -4957,7 +5216,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 1
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -4967,7 +5227,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "UserPromptSubmit hook: the context-enricher step, done by the"
+  "detail": "UserPromptSubmit hook: the context-enricher step, done by the",
+  "order": 2
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -4977,7 +5238,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time",
+  "order": 6
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -4987,7 +5249,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse guard cho Bash tool."
+  "detail": "PreToolUse guard cho Bash tool.",
+  "order": 4
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -4997,7 +5260,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "mcp__replicant-mcp__.*",
-  "detail": "Physical Hardware & Embedded Device Brick Protection"
+  "detail": "Physical Hardware & Embedded Device Brick Protection",
+  "order": 8
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5007,7 +5271,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "Physical Hardware & Embedded Device Brick Protection"
+  "detail": "Physical Hardware & Embedded Device Brick Protection",
+  "order": 5
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5017,7 +5282,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write",
-  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written."
+  "detail": "PreToolUse hook: the only gate that runs BEFORE code is written.",
+  "order": 9
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5027,7 +5293,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|MultiEdit|NotebookEdit",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 10
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5037,17 +5304,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
- },
- {
-  "repo": "Neighbours-From-Hell",
-  "area": "hook",
-  "group": "PreToolUse",
-  "item": "worktree_guard.sh",
-  "kind": "",
-  "state": "ok",
-  "trigger": "Bash",
-  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 3
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5057,7 +5315,19 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|MultiEdit|NotebookEdit",
-  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent"
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
+  "order": 11
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Bash",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
+  "order": 7
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5067,7 +5337,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Bash",
-  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time"
+  "detail": "PreToolUse + PostToolUse hook on Bash. Records the time",
+  "order": 12
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5077,7 +5348,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|NotebookEdit",
-  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard)."
+  "detail": "PostToolUse hook: enforce CLAUDE.md 6.4b (churn guard).",
+  "order": 14
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5087,7 +5359,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|NotebookEdit",
-  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc."
+  "detail": "PostToolUse hook: apply Rule 5 to COMMENTS/KDoc.",
+  "order": 15
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5097,7 +5370,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "Read",
-  "detail": "PostToolUse hook on Read. Records \"this session looked at"
+  "detail": "PostToolUse hook on Read. Records \"this session looked at",
+  "order": 13
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5107,7 +5381,8 @@
   "kind": "",
   "state": "local",
   "trigger": "Edit|Write|NotebookEdit",
-  "detail": ""
+  "detail": "",
+  "order": 1000
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5117,7 +5392,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5)."
+  "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5).",
+  "order": 16
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5127,7 +5403,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: the gates ran for the wrong project."
+  "detail": "Stop hook: the gates ran for the wrong project.",
+  "order": 23
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5137,7 +5414,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: a reply that opens with XONG must carry the turn's"
+  "detail": "Stop hook: a reply that opens with XONG must carry the turn's",
+  "order": 22
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5147,7 +5425,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: the living regression checklist must be green"
+  "detail": "Stop hook: the living regression checklist must be green",
+  "order": 19
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5157,7 +5436,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted"
+  "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted",
+  "order": 17
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5167,7 +5447,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger)."
+  "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger).",
+  "order": 21
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5177,7 +5458,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`."
+  "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`.",
+  "order": 20
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5187,7 +5469,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: compile the TEST source set of every module"
+  "detail": "Stop hook: compile the TEST source set of every module",
+  "order": 18
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5197,7 +5480,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "Stop hook: a worktree's work never reached trunk."
+  "detail": "Stop hook: a worktree's work never reached trunk.",
+  "order": 24
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5207,7 +5491,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "idle_prompt",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 25
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5217,7 +5502,8 @@
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout."
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 26
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5317,6 +5603,26 @@
   "kind": "",
   "state": "ok",
   "trigger": "prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "generate2dmedia",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "generate2dsprite",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
   "detail": ""
  },
  {
@@ -5493,6 +5799,16 @@
   "repo": "Neighbours-From-Hell",
   "area": "skill",
   "group": "kit skill",
+  "item": "video2dsprite",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "Neighbours-From-Hell",
+  "area": "skill",
+  "group": "kit skill",
   "item": "worktree-sandbox",
   "kind": "",
   "state": "ok",
@@ -5566,8 +5882,8 @@
   "item": "ocr",
   "kind": "",
   "state": "ok",
-  "trigger": "không hook nào chạy lệnh này",
-  "detail": "open-code-review v1.12.13 (fabbdb29) darwin/arm64 | runs in repo: yes"
+  "trigger": "hook chạy: review_gate.sh",
+  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5817,7 +6133,7 @@
   "kind": "hook",
   "state": "ok",
   "trigger": "hook tự chạy",
-  "detail": "ghi lại các lệnh Bash có ghi file"
+  "detail": "ghi khung thời gian của mỗi lệnh Bash, để cổng Stop biết file nào do phiên này ghi"
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5827,7 +6143,7 @@
   "kind": "hook",
   "state": "ok",
   "trigger": "hook tự chạy",
-  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì chặn"
+  "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì cảnh báo (không chặn)"
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -5957,7 +6273,7 @@
   "kind": "công cụ",
   "state": "ok",
   "trigger": "agent tự chọn",
-  "detail": "không hook nào chạy ocr, chỉ chạy khi agent tự gọi"
+  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "Neighbours-From-Hell",
@@ -6098,15 +6414,5 @@
   "state": "ok",
   "trigger": "gợi ý trong prompt",
   "detail": "ghi bàn giao khi kết thúc phiên"
- },
- {
-  "repo": "Neighbours-From-Hell",
-  "area": "worktree",
-  "group": "unmerged?",
-  "item": "Neighbours-From-Hell-keystore",
-  "kind": "",
-  "state": "warn",
-  "trigger": "",
-  "detail": "/Volumes/Data/Toan/Game/Neighbours-From-Hell-keystore"
  }
 ]
