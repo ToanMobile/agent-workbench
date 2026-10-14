@@ -4,10 +4,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
+/**
+ * SIGKILL ca nhom tien trinh `pid` (tien trinh tach nhom + moi lenh con cua no). Cho DUY NHAT gui tin hieu nay. Khong nem:
+ * tra ve null khi da gui, hoac loi (ESRCH = nhom da het) de noi goi tu chon bo qua hay bao ra.
+ */
+export function killGroup(pid) {
+  try { process.kill(-pid, 'SIGKILL'); return null; } catch (e) { return e; }
+}
+
 // Nhom tien trinh con dang song (detached => khong tu chet theo server): server thoat thi don luon.
 const LIVE = new Set();
 function killLive() {
-  for (const pid of LIVE) { try { process.kill(-pid, 'SIGKILL'); } catch { /* da chet */ } }
+  for (const pid of LIVE) killGroup(pid);   // loi = nhom da het: khong con gi de don
   LIVE.clear();
 }
 process.once('exit', killLive);
@@ -75,9 +83,8 @@ export function run(cmd, args = [], opts = {}) {
       resolve({ ...r, truncated: bufs.out.cut || bufs.err.cut });
     };
     const killAll = () => {
-      try {
-        if (group && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL');
-      } catch {
+      // ca nhom truoc; khong co nhom hoac giet nhom loi thi giet rieng con
+      if (!(group && child.pid) || killGroup(child.pid)) {
         try { child.kill('SIGKILL'); } catch { /* da chet */ }
       }
       // Chau (neu thoat khoi nhom) van co the giu pipe: dong phia ta de khong treo.

@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
-import { run, redact, truncate, homeStateDir, readJsonIfExists, writeJsonAtomic, ensureDir, nowIso, trackChild, untrackChild, logStderr } from './util.js';
+import { run, redact, truncate, homeStateDir, readJsonIfExists, writeJsonAtomic, ensureDir, nowIso, trackChild, untrackChild, logStderr, killGroup } from './util.js';
 import { discover, forgetCache, AntigravityUnavailable, ENV_ADDRESS, ENV_TOKEN } from './discover.js';
 import { ENV_PROJECT_ID, resolveProject } from './projects.js';
 
@@ -318,7 +318,7 @@ function agyStart(args, cwd, onSpawn) {
   trackChild(child.pid);
   if (onSpawn && child.pid) {
     try { onSpawn(child); } catch (e) {
-      try { process.kill(-child.pid, 'SIGKILL'); } catch { /* da chet */ }
+      killGroup(child.pid);   // loi = nhom da het
       untrackChild(child.pid);
       throw e;
     }
@@ -352,23 +352,23 @@ function agyStart(args, cwd, onSpawn) {
     // Bat o day: dung agy vua mo, tu choi bang loi ro.
     const settle = (j) => {
       let r;
-      try { r = ready(j); } catch (e) { killGroup(); finish(reject, e); return; }
+      try { r = ready(j); } catch (e) { stopChild(); finish(reject, e); return; }
       finish(resolve, r);
     };
     const timer = setInterval(() => {
       const j = initEvent();
       if (j) { child.unref(); settle(j); }
     }, 150);
-    const killGroup = () => { if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* da chet */ } } };
+    const stopChild = () => { if (child.pid) killGroup(child.pid); };   // loi = nhom da het
     const limit = setTimeout(() => {
-      killGroup();
+      stopChild();
       finish(reject, new AgentApiError(`agy khong in su kien init sau ${AGY_INIT_WAIT_MS}ms`, tailOf()));
     }, AGY_INIT_WAIT_MS);
     child.once('error', (e) => finish(reject, new AgentApiError(`khong chay duoc agy: ${e.message}`)));
     child.once('exit', (code) => {
       const j = initEvent();   // chay xong qua nhanh: init da nam trong file
       if (j) settle(j);
-      else { killGroup(); finish(reject, new AgentApiError(`agy ket thuc (exit ${code}) ma khong in su kien init`, tailOf())); }   // don ca lenh con con sot
+      else { stopChild(); finish(reject, new AgentApiError(`agy ket thuc (exit ${code}) ma khong in su kien init`, tailOf())); }   // don ca lenh con con sot
     });
   });
 }
@@ -379,7 +379,7 @@ const agyArgs = (model, tail, skipPermissions) => [
 
 /** Dung luot agy vua mo ma KHONG ghi duoc so dang ky: khong de agent chay (skip-permissions) ma PM khong theo doi. */
 function stopUntracked(r, e) {
-  try { process.kill(-r.pid, 'SIGKILL'); } catch { /* da chet */ }
+  killGroup(r.pid);   // loi = nhom da het
   const err = new AgentApiError(`khong ghi duoc so dang ky agy sau khi mo luot (${e.message}): da dung agy pid ${r.pid} de khong de agent chay ma PM khong theo doi`);
   err.cause = e;
   return err;

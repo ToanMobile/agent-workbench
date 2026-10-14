@@ -27,7 +27,7 @@ import { soiThayDoi } from './lint-diff.js';
 import { gitSnapshot, changedFilesOf, baseCommitOf, gateCtx, dongBangCay, goWorktree } from './worktree.js';
 import { hashOf, deltaKeHoach, tinhTrangPhanBien, projectIdFor } from './plan-review.js';
 import { cacTaskDangChayKhac, canhBaoTruocKhiGiao } from './dispatch-guard.js';
-import { run, runShell, writeFileAtomic, ensureDir, exists, tail, truncate, nowIso, readJsonIfExists } from './util.js';
+import { run, runShell, writeFileAtomic, ensureDir, exists, tail, truncate, nowIso, readJsonIfExists, killGroup } from './util.js';
 
 // ---------------------------------------------------------------- kiem tra tham so
 
@@ -339,9 +339,9 @@ export const TOOLS = [
               let alive = false;
               try { process.kill(pid, 0); alive = true; } catch { /* da thoat */ }
               if (!alive) continue;
-              try { process.kill(-pid, 'SIGKILL'); L.push(`Ping tu don: da dung agy pid ${pid} (nhom tien trinh): luot van chay khi ping ket thuc.`); } catch (e2) {
-                L.push(`CANH BAO: khong dung duoc agy pid ${pid} (${e2.message}); dung no: kill -- -${pid}`);
-              }
+              const e2 = killGroup(pid);
+              L.push(e2 ? `CANH BAO: khong dung duoc agy pid ${pid} (${e2.message}); dung no: kill -- -${pid}`
+                : `Ping tu don: da dung agy pid ${pid} (nhom tien trinh): luot van chay khi ping ket thuc.`);
             }
           }
         }

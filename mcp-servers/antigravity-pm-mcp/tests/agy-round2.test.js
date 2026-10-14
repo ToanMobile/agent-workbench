@@ -13,6 +13,7 @@ import { resolveProject } from '../src/projects.js';
 import { updateTask, loadTask } from '../src/tasks.js';
 import { TOOLS_BY_NAME } from '../src/tools.js';
 import { homeStateDir } from '../src/util.js';
+import * as util from '../src/util.js';
 import { tmpProject, tmpGlobalConfig, cleanup, writeFile } from './helpers.js';
 
 const ARGON = 'gemini-4-argon-high';
@@ -611,4 +612,31 @@ test('khoa so dang ky MO COI (cu hon han): duoc lay lai va gui tin di tiep', asy
   t.after(() => fs.rmSync(lock, { force: true }));
   await sendMessage({ conversationId, content: 'sau khi lay lai khoa cu' });
   assert.equal(fake.calls().filter((c) => c.args.includes('--conversation')).length, 1);
+});
+
+// ---------------------------------------------------------------- vong 5: OpenCodeReview 14/10 con mo (workflow-improvements I.4)
+
+test('killGroup (util.js): SIGKILL ca nhom tien trinh (con + chau), khong nem: loi duoc TRA VE cho noi goi', async (t) => {
+  assert.equal(typeof util.killGroup, 'function', 'thieu util.killGroup');
+  const leader = spawn('/bin/sh', ['-c', 'sleep 30 & sleep 30'], { detached: true, stdio: 'ignore' });
+  t.after(() => { try { process.kill(-leader.pid, 'SIGKILL'); } catch { /* da chet */ } });
+  await sleep(300);
+  assert.equal(util.killGroup(leader.pid), null);
+  await sleep(500);
+  assert.throws(() => process.kill(-leader.pid, 0), /ESRCH/, 'nhom van con tien trinh song (sleep chau)');
+  const orig = process.kill;
+  process.kill = () => { throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' }); };   // stub gia lap "nhom da het": pid 4242 duoi day chi di vao stub nay
+  let got;
+  try { got = util.killGroup(4242); } finally { process.kill = orig; }
+  assert.equal(got?.code, 'ESRCH');
+});
+
+test('"SIGKILL ca nhom tien trinh" chi con o MOT cho (util.killGroup), khong chep lai trong src/', () => {
+  const srcDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../src');
+  const hits = [];
+  for (const f of fs.readdirSync(srcDir).filter((n) => n.endsWith('.js'))) {
+    fs.readFileSync(path.join(srcDir, f), 'utf8').split('\n').forEach((line, i) => { if (/process\.kill\(\s*-/.test(line)) hits.push(`${f}:${i + 1}`); });
+  }
+  assert.equal(hits.length, 1, `process.kill(-...) o ${hits.length} cho: ${hits.join(', ')}`);
+  assert.match(hits[0], /^util\.js:/);
 });
