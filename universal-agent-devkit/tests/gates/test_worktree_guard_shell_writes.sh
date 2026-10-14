@@ -58,6 +58,41 @@ guard "$H" "$M" "env -S 'rm\\_src/a.kt'"; rc=$?
 # ... and \' inside single quotes, which env honours and shlex cannot parse: the line's operands are still judged
 guard "$H" "$M" "env -S \"rm 'f\\'g' src/a.kt\""; rc=$?
 [ "$rc" = 2 ] && ok "env -S \"rm 'f\\'g' src/a.kt\" (\\' in single quotes) in the main checkout: blocked" || fail "env -S with \\' in main: rc $rc"
+# ... and env's quote rules (OpenCodeReview shell_writes 14/10): inside '…' a \c is literal, so env runs `rm 'a\c' <main>/src/a.kt`;
+# the scanner cut the line at that \c, never saw the main path, and the call went through from the worktree
+guard "$H" "$W" "env -S \"rm 'a\\c' $M/src/a.kt\""; rc=$?
+[ "$rc" = 2 ] && ok "env -S \"rm 'a\\c' <main>/src/a.kt\" (\\c literal in single quotes) from the worktree: blocked" || fail "env -S with \\c in single quotes: rc $rc"
+# \c inside "…" is an env error (nothing runs): a line the scanner cannot read as env does is never waved through - its operands are judged
+guard "$H" "$W" "env -S \"rm \\\"a\\c\\\" $M/src/a.kt\""; rc=$?
+[ "$rc" = 2 ] && ok "env -S 'rm \"a\\c\" <main>/src/a.kt' (env refuses it) from the worktree: blocked, not waved through" || fail "env -S with \\c in double quotes: rc $rc"
+# The oracle is env itself: the operands targets() reads from `env -S 'rm LINE'` are the words this machine's env makes of LINE; a line env
+# refuses must come back as an "unparsed" hit (the callers' fail-closed kind), never as a cut-off word list
+python3 -I - "$DEVKIT_DIR/hooks" <<'PY' > "$TMP/diff.out"; rc=$?
+import shlex, subprocess, sys
+sys.dont_write_bytecode = True
+sys.path.append(sys.argv[1])
+import shell_writes as sw
+PRINT = "/usr/bin/printf [%s] x "          # `x` first: a line of no words and one of an empty word print the same
+LINES = [r"a b", r"'a\c' b", r'"a\c" b', r"a\c b", r"'a\_b' c", r'"a\_b" c', r"a\_b c", r"a\_\_b", r"\_a b\_", r"'f\'g' h",
+         r"'a\\b' c", r"'a\xb' c", r"a\xb c", r'"a\"b" c', r"a\'b c", r"'a'b c", r"'' c", r"'ab c", r'"ab c', "a\\", r'"a\tb" c',
+         r"a\nb c", "a\tb", r"a\$b c", r"'a\c'\_b", r'"a b" "c d"']
+bad = 0
+for line in LINES:
+    real = subprocess.run(["env", "-S", PRINT + line], capture_output=True, text=True)
+    got = sw.targets("env -S " + shlex.quote("rm " + line), "/w")
+    unparsed = any(k == "unparsed" for k, _t, _h in got)
+    ops = [t for k, t, _h in got if k == "file"]
+    if real.returncode:      # env refuses the line: nothing runs, any operand list is safe - but the scanner must say it could not read it
+        ok, want = unparsed, "an unparsed hit"
+    else:
+        want = [w for w in real.stdout[1:-1].split("][")[1:] if w]    # (an empty word is no operand)
+        ok = not unparsed and ops == want
+    print(("PASS " if ok else "FAIL ") + repr(line) + ("" if ok else f": scanner gave {ops} unparsed={unparsed}, want {want}"))
+    bad += not ok
+sys.exit(1 if bad else 0)
+PY
+[ "$rc" = 0 ] && ok "env -S line splitting: $(grep -c '^PASS' "$TMP/diff.out") lines read as this machine's env reads them" \
+  || { fail "env -S line splitting differs from env: $(grep -c '^FAIL' "$TMP/diff.out") line(s)"; grep '^FAIL' "$TMP/diff.out" | head -8; }
 # `git -C ~/x …`: the shell expands ~ before git sees it, the scanner joined `~/x` to the cwd (OpenCodeReview 14/10, issues-bugs.md
 # A.4 (c)): a commit into the main checkout from the worktree went through, one into the worktree from the main checkout's cwd was
 # blocked. HOME = the fixture dir, so ~/main is the main checkout and ~/wt the worktree.

@@ -33,6 +33,7 @@ PREFIX_VALUE_OPTS = {"nice": {"-n"}, "env": {"-u", "-C", "-S", "--chdir", "--uns
 # ... and these move the directory the command runs in (OpenCodeReview 14/10: `env -C <main> rm f` judged f in the old cwd)
 PREFIX_CHDIR = {("env", "-C"), ("env", "--chdir"), ("sudo", "-D"), ("sudo", "--chdir")}
 ENV_SPLIT_SHORT = re.compile(r"-[0iv]*S(.*)", re.S)   # env -S, also after its flags (-iS); the rest of the word is the value
+ENV_CTRL = {"f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}   # env -S's own control-character escapes
 # Options whose next word is a VALUE, not a target (principal-code-reviewer 14/10: `chmod +x f`, `mkdir -m 755 d`, `touch -t STAMP f`,
 # `truncate -s 0 f`, `touch -r REF f` named the value as a write in the cwd). `--opt=value` carries its value itself.
 VALUE_OPTS = {"chmod": {"--reference"}, "cp": {"-S", "--suffix"}, "mv": {"-S", "--suffix"}, "ln": {"-S", "--suffix"},
@@ -113,19 +114,58 @@ def _env_split(opt, words):
     return None
 
 
-def _env_line(line):
-    """`line` with env -S's own escapes that shlex does not know (measured on macOS env 14/10, GNU documents the same): an unquoted
-    `\\_` separates words and a double-quoted one is a space - a space does both under shlex; `\\c` ends the line. Other escapes keep
-    their character inside the word, as shlex reads them. An escaped backslash (`\\\\_`) is matched as a pair, so its `_` stays."""
-    parts, pos = [], 0
-    for m in re.finditer(r"\\(.)", line, re.S):
-        if m.group(1) in ("_", "c"):
-            parts.append(line[pos:m.start()])
-            if m.group(1) == "c":
-                return "".join(parts)
-            parts.append(" ")
-            pos = m.end()
-    return "".join(parts) + line[pos:]
+def _env_words(line):
+    r"""The words env -S makes of `line`, by env's own quote rules (measured on macOS env 14/10), or None when env refuses the line or this
+    cannot read it as env does. Inside '...' everything is literal but `\\` and `\'`. Inside "..." `\_` is a space and `\c` an error.
+    Unquoted, `\_` separates words and `\c` ends the line. `\f \n \r \t \v` are control characters, `\\ \' \" \$ \#` themselves,
+    any other escape an error. `$` and `#` stay plain text (env's comment cuts the line there: judging more words is never open)."""
+    words, cur, live, quote, i = [], [], False, None, 0
+    while i < len(line):
+        ch, i = line[i], i + 1
+        if quote == "'":
+            if ch == "'":
+                quote = None
+            elif ch == "\\" and line[i:i + 1] in ("\\", "'"):
+                cur.append(line[i])
+                i += 1
+            else:
+                cur.append(ch)
+        elif ch == "\\":
+            esc, i = line[i:i + 1], i + 1
+            if esc == "c":
+                if quote:
+                    return None
+                break
+            if esc == "_" and not quote:
+                if live:
+                    words.append("".join(cur))
+                cur, live = [], False
+                continue
+            if esc == "_":
+                esc = " "
+            elif esc in ENV_CTRL:
+                esc = ENV_CTRL[esc]
+            elif not esc or esc not in "\\'\"$#":
+                return None
+            cur.append(esc)
+            live = True
+        elif quote:
+            if ch == quote:
+                quote = None
+            else:
+                cur.append(ch)
+        elif ch in "'\"":
+            quote, live = ch, True
+        elif ch in " \t\n\v\f\r":
+            if live:
+                words.append("".join(cur))
+            cur, live = [], False
+        else:
+            cur.append(ch)
+            live = True
+    if quote:
+        return None
+    return words + ["".join(cur)] if live else words
 
 
 def _operands(base, words):
@@ -227,11 +267,11 @@ def targets(cmd, here, depth=0, run_bodies=False):
                     opt, words = words[0], words[1:]
                     split = _env_split(opt, words) if w == "env" else None
                     if split is not None:   # its words go first, in place: env options, VAR=, the command and its operands
-                        line = _env_line(split[0])
-                        try:
-                            words = shlex.split(line) + split[1]
-                        except ValueError:   # \' / \\ inside single quotes (env reads them, shlex cannot) or a broken quote:
-                            words = line.split() + split[1]   # the operands are still judged (OpenCodeReview 14/10)
+                        got = _env_words(split[0])
+                        if got is None:   # env refuses it (or it cannot be read as env does): never waved through
+                            found.append(("unparsed", "", wd))
+                            got = split[0].split()   # ... and its operands are still judged, whole (OpenCodeReview 14/10)
+                        words = got + split[1]
                     elif "=" in opt and (w, opt.split("=", 1)[0]) in PREFIX_CHDIR:
                         wd = _cd(wd, opt.split("=", 1)[1])
                     elif opt in PREFIX_VALUE_OPTS[w] and words:
