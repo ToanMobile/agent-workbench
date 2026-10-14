@@ -2008,10 +2008,12 @@ def _commit_pending(wt, state):
                               f"automatically: {', '.join(secret[:6])}. Add them to .gitignore, move them out, or commit them yourself if meant; nothing was committed or merged"),
                 {"files": secret[:20]})
     links = [p for p in work if os.path.islink(os.path.join(wt, p))]
-    if links:   # (staged or not: `git add -A` would have staged one) a link HEAD already holds, retargeted, is ordinary work
-        in_head = set(git(wt, "ls-tree", "-r", "-z", "--name-only", "HEAD", "--", *links, check=False,
-                          env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).stdout.split("\0"))
-        new = [p for p in links if p not in in_head]
+    if links:   # (staged or not: `git add -A` would have staged one) a link HEAD already holds AS A LINK (mode 120000), retargeted, is ordinary work;
+        # a tracked regular file replaced by a link is not (main's config.json would become a link, to itself when it points at main's own copy)
+        held = {rec.partition("\t")[2] for rec in git(wt, "ls-tree", "-r", "-z", "HEAD", "--", *links, check=False,
+                                                       env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).stdout.split("\0")
+                if rec.partition("\t")[0].split()[:1] == ["120000"]}
+        new = [p for p in links if p not in held]
         if new:
             def shown(p):
                 try:
@@ -2019,10 +2021,10 @@ def _commit_pending(wt, state):
                 except OSError:
                     return p
             listing = ", ".join(shown(p) for p in new[:6])
-            return ("blocked", tr(f"{len(new)} symlink mới (HEAD chưa có) không bao giờ được tự commit: {listing}. Link tạo để mượn node_modules / cache build của main "
+            return ("blocked", tr(f"{len(new)} symlink mới (HEAD chưa giữ dưới dạng link) không bao giờ được tự commit: {listing}. Link tạo để mượn node_modules / cache build của main "
                                   "không phải là việc: xoá nó (hoặc ignore bằng mẫu KHÔNG có dấu / cuối: `node_modules/` chỉ khớp thư mục, không khớp link); nếu link "
                                   "đúng là một phần của repo thì tự `git add` + `git commit` nó trong worktree; chưa có gì bị commit hay gộp",
-                                  f"{len(new)} new symlink(s) (not in HEAD) are never committed automatically: {listing}. A link made to borrow main's node_modules / "
+                                  f"{len(new)} new symlink(s) (HEAD does not hold them as links) are never committed automatically: {listing}. A link made to borrow main's node_modules / "
                                   "build cache is not work: delete it (or ignore it with a pattern WITHOUT the trailing slash: `node_modules/` matches a directory, not a "
                                   "link); if the link belongs in the repository, `git add` + `git commit` it in the worktree yourself; nothing was committed or merged"),
                     {"files": new[:20]})

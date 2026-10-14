@@ -9,6 +9,7 @@
 #     moves, main's folder and its files intact, the reason names it (not "main kept moving", not "UNCOMMITTED edits")
 #   3 a tracked file that would overwrite main's git-ignored local file: refused the same way, main's file intact
 #   4 control: a committed link that replaces nothing merges as before; an untracked link git IGNORES is no work (no refusal)
+#   5 a tracked regular file replaced by a symlink is refused like a new link; a link HEAD holds as a link, retargeted, is ordinary work
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
 export DEVKIT_LANG=en
@@ -68,5 +69,23 @@ ln -s /tmp "$W/vendor-link"   # ignored by main's .gitignore (no trailing slash)
 fin "$W"; rc=$?
 [ "$rc" = 0 ] && [ -L "$P/a-link.txt" ] && [ ! -e "$P/vendor-link" ] && [ ! -d "$W" ] && main_intact \
   && ok "4: a committed link that replaces nothing merges; an ignored untracked link is left out" || fail "4: (rc=$rc): $(cat "$TMP/out")"
+
+# 5 (principal review A1): the rule looked at NAMES in HEAD, not at what they are: a tracked regular file the worktree replaced by a symlink
+#   (to main's own copy: the fast-forward would turn main's config.json into a link pointing at itself, ELOOP) went through as "a link HEAD
+#   already holds". Only a path HEAD holds AS A LINK (mode 120000) may be retargeted without a word.
+new_main m5; echo '{"k": 1}' > "$P/config.json"; ln -s a.txt "$P/cur"; G "$P" add config.json cur && G "$P" commit -qm "config and a tracked link"
+W="$TMP/wl-e"; wt "$W"; rm "$W/config.json" && ln -s "$P/config.json" "$W/config.json"
+H5="$(G "$P" rev-parse HEAD)"; WH5="$(G "$W" rev-parse HEAD)"
+fin "$W"; rc=$?
+[ "$rc" = 1 ] && grep -q "config.json" "$TMP/out" && grep -qi "link" "$TMP/out" && [ "$(G "$P" rev-parse HEAD)" = "$H5" ] && [ "$(G "$W" rev-parse HEAD)" = "$WH5" ] \
+  && [ -f "$P/config.json" ] && [ ! -L "$P/config.json" ] && [ "$(cat "$P/config.json")" = '{"k": 1}' ] \
+  && ok "5: a tracked file replaced by a symlink is refused like a new one: named, nothing committed or merged, main's config.json intact" \
+  || fail "5: (rc=$rc, main moved: $([ "$(G "$P" rev-parse HEAD)" = "$H5" ] && echo no || echo yes), main's config.json: $(ls -la "$P/config.json" 2>&1)): $(cat "$TMP/out")"
+if [ -d "$W" ]; then
+  rm "$W/config.json" && echo '{"k": 2}' > "$W/config.json" && ln -sfn b.txt "$W/cur"   # settled: a real edit, and a link HEAD holds as a link retargeted
+  fin "$W"; rc=$?
+  [ "$rc" = 0 ] && [ ! -L "$P/config.json" ] && [ "$(cat "$P/config.json")" = '{"k": 2}' ] && [ "$(readlink "$P/cur")" = b.txt ] && [ ! -d "$W" ] \
+    && ok "  … a real edit of it and a retargeted tracked link are ordinary work: merged, the worktree removed" || fail "  … after settling (rc=$rc): $(cat "$TMP/out")"
+fi
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_automerge_symlink: all passed" || { echo "❌ test_worktree_automerge_symlink: $FAILS failed"; exit 1; }
