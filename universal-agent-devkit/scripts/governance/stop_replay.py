@@ -434,7 +434,6 @@ _ITEM_WORDS = (r"\b(?:đã|what)\s+(?:was\s+)?(?:fix\w*|sửa|làm|thay\s+đổi
                r"\b(?:bug|lỗi|test|regress\w*)\b.{0,20}\b(?:cũ|old)\b|\breopen\w*",
                r"\b(?:nguy\s+cơ|rủi\s+ro|risk|bug|lỗi)\b.{0,20}\b(?:mới|new)\b|\bcollateral\b",
                r"\b(?:an\s+toàn|safety)\b")
-_NOT_ITEM_3 = re.compile(r"còn\s+lại|residual", re.I)   # "rủi ro CÒN LẠI" (residual risk) is another item
 
 
 def structured_report(reply):
@@ -451,7 +450,7 @@ def structured_report(reply):
             if n2 == want:
                 run.append(r2)
                 want += 1
-        if len(run) == 4 and all(re.search(_ITEM_WORDS[k], run[k], re.I) for k in range(4)) and not _NOT_ITEM_3.search(run[2]):
+        if len(run) == 4 and all(re.search(_ITEM_WORDS[k], run[k], re.I) for k in range(4)):
             return True
     return False
 
@@ -502,7 +501,8 @@ def quoted_outcome(reply, rx):
         a, e = quote_of(m)
         start = max(c for c in cuts if c <= m.start())
         named = (_NAMES_A_QUOTE.search(body[start:a]) and not body[a + 1:m.start()].strip()
-                 and re.fullmatch(r"[\s.,;:!?…]*", body[m.end():e - 1]))     # the quote holds the phrase and nothing else
+                 and re.fullmatch(r"[\s.,;:!?…]*", body[m.end():e - 1])     # the quote holds the phrase and nothing else
+                 and not re.match(r"(?:bug|lỗi)\b", m.group(0), re.I))      # (that branch of OUTCOME carries the object of the fix)
         return bool(named or _NEGATION_BEFORE.search(re.sub(r"[`\"“”]", "", body[start:m.start()])))
     if not found or any(quote_of(m) is None for m in found):
         return None
