@@ -46,8 +46,10 @@ CHMOD_MODE = re.compile(r"[0-7]{1,4}|[ugoa]*(?:[-+=][rwxXstugo]*)+(?:,[ugoa]*(?:
 # ruby File.write). ponytail: a computed path (os.path.join, an f-string, argv) is not seen; upgrade by running the script under a scanner.
 SHELLS = {"bash", "sh", "zsh"}
 _LIT = r"""\(\s*[rbRB]{0,2}(?P<q>['"])(?P<p>[^'"\n]+)(?P=q)"""
+_MODE = r"""(?:mode\s*=\s*)?[rbRB]{0,2}['"][rbtU]*[wax+]"""   # a write mode: w / a / x, or a `+` (r+, rb+); r / rb alone read
 SCRIPT_WRITES = (
-    re.compile(r"\bopen" + _LIT + r"""\s*,\s*(?:mode\s*=\s*)?[rbRB]{0,2}['"][wax]"""),
+    re.compile(r"\bopen" + _LIT + r"""\s*,\s*(?:\w+\s*=\s*[^,()]+,\s*)*""" + _MODE),   # (keyword arguments may come before mode=)
+    re.compile(r"\bPath" + _LIT + r"""\s*\)\s*\.\s*open\s*\(\s*""" + _MODE),
     re.compile(r"\bPath" + _LIT + r"""\s*\)\s*\.\s*(?:write_text|write_bytes)\b"""),
     re.compile(r"\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|file_put_contents)" + _LIT),
     re.compile(r"\bFile\s*\.\s*(?:write|binwrite)" + _LIT),

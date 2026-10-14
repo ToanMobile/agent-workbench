@@ -92,6 +92,16 @@ cases = [   # (want, label, cwd, (tool, input, command))
     # OCR2 2: `-s` means "script from stdin" for a shell only; python's -s is "no user site-packages", the heredoc is data for tool.py
     (False, "python3 -s tool.py fed a heredoc of data (no stdin script)", m, B("python3 -s tool.py <<EOF\nopen('README.md','w').write('x')\nEOF")),
     (True, "python3 -s - fed a python heredoc (stdin script)", m, B("python3 -s - <<EOF\nopen('README.md','w').write('x')\nEOF")),
+    # OCR2 3: literal-path writes the first pattern missed - a `+` mode, mode= after other keyword arguments, Path(...).open(mode)
+    (True, "python heredoc open('README.md', 'r+')", m, B("python3 - <<EOF\nopen('README.md', 'r+').write('x')\nEOF")),
+    (True, "python heredoc open('README.md','rb+')", m, B("python3 - <<EOF\nopen('README.md','rb+').write(b'x')\nEOF")),
+    (True, "python heredoc open('README.md', encoding='utf8', mode='w')", m, B("python3 - <<EOF\nopen('README.md', encoding='utf8', mode='w').write('x')\nEOF")),
+    (True, "python heredoc Path('README.md').open('w')", m, B("python3 - <<EOF\nfrom pathlib import Path\nPath('README.md').open('w').write('x')\nEOF")),
+    (True, "python heredoc Path('README.md').open(mode='a')", m, B("python3 - <<EOF\nfrom pathlib import Path\nPath('README.md').open(mode='a').write('x')\nEOF")),
+    (False, "python heredoc open('README.md', 'r') and 'rb'", m, B("python3 - <<EOF\nprint(open('README.md', 'r').read(), open('README.md','rb').read())\nEOF")),
+    (False, "python heredoc open('README.md', encoding='utf8') (a read)", m, B("python3 - <<EOF\nprint(open('README.md', encoding='utf8').read())\nEOF")),
+    (False, "python heredoc Path('README.md').open() and .open('r')", m, B("python3 - <<EOF\nfrom pathlib import Path\nPath('README.md').open().read(); Path('README.md').open('r').read()\nEOF")),
+    (False, "python heredoc open('README.md', 'r+') in the worktree", w, B("python3 - <<EOF\nopen('README.md', 'r+').write('x')\nEOF")),
     (False, "arithmetic << before a bash heredoc that only reads", m, B("echo $((1<<2)); bash <<EOF\ngrep -rn x . | head -3\nEOF")),
     (False, "arithmetic << before a bash heredoc writing in the worktree", w, B("echo $((1<<2)); bash <<EOF\necho x > a.txt\nEOF")),
     (True, "a git commit inside a substitution", m, B("echo $(git commit -qm x)")),
