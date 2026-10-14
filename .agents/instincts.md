@@ -331,3 +331,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** A gate shortcut that treats 'the folder is gone' as 'done' without proving the work reached trunk
 - **Nguyên nhân:** worktree_merge_gate dropped any worktree whose folder vanished (09/10 vanished filter) and the first race fix also passed a failed automerge when folder+registration were gone; an rm -rf (+prune) of unmerged commits then passed the Stop silently; the real flake was two automerge runs of one worktree overlapping
 - **Quy tắc phòng ngừa & Cách fix:** 'Gone' is never proof: pass a vanished/removed worktree only when its listed HEAD is an ancestor of main or its branch moved past it to a tip in main (work_in_main); every such shortcut gets a paired must-hold case (removed WITHOUT landing) next to the must-pass case
+
+---
+
+### [INSTINCT-040] A FIFO at any agent-writable path a hook or gate opens hangs it, and a Stop hook killed at its timeout lets the Stop through
+- **Ngày phát hiện:** 2026-10-14
+- **Hiện tượng lỗi:** A FIFO at any agent-writable path a hook or gate opens hangs it, and a Stop hook killed at its timeout lets the Stop through
+- **Nguyên nhân:** open(), a bash > / >> redirect and exec 9>> block on a FIFO; 14/10: full_pass.json, proof cache, test_run.lock, every hook's .claude/audit-gate/.gitignore and its own log hung post-fix-gate and 5 Stop hooks; the first fix covered the gate files but not the hooks' own logs (found only by a second clean-context review)
+- **Quy tắc phòng ngừa & Cách fix:** Open agent-writable state with O_NONBLOCK and require fstat S_ISREG (post-fix-gate _state_fd, proof_gate open_reg); in hooks drop FIFOs at the top of .claude/audit-gate/ BEFORE the .gitignore line and before any log/lock open; test by planting a FIFO at every path the hook opens, with a timeout, on HEAD first (RED)

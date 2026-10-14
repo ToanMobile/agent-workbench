@@ -14,7 +14,7 @@
 |---|---|---|---|
 | A.1b | File bí mật sinh ra trong worktree không về main: phần sửa chung cho `finish`/`gc` (việc 12) | review 13/10 tối | Ca Neighbours xong 13/10; phần chung là W1 của phiên d352c03b |
 | A.2 | Race `worktree_merge_gate`: lỗ con reflog đọc sau khi thư mục mất (#3) | `trunk-integrator-no-shared-main.md` §8.1 | W1 của phiên d352c03b |
-| A.4 | Tồn đọng còn lại từ plan / audit cũ | các plan II.A, II.C và audit B.1 | Kiểm lại 14/10 (phiên d91dffdd): 2 việc mở, 1 chờ chủ xe duyệt, 2 quyết định chính sách, 1 không kiểm được |
+| A.4 | Tồn đọng còn lại từ plan / audit cũ | các plan II.A, II.C và audit B.1 | Kiểm lại 14/10 (phiên d91dffdd): 4 việc mở, 1 đã duyệt chờ phiên giữ GeelyEx2 áp dụng, 1 không kiểm được |
 | B.1 | Audit DevKit 2026-10-09: kết quả | `audit-2026-10-09-followup.md` | Báo cáo đã đóng |
 
 ## Phần A — Đang mở
@@ -25,7 +25,7 @@ A.1 #10 thư mục mồ côi (`338b2ca` R5a + `d5ec03e`/`b0ff762` gc, của phi�
 A.1b #13 `review_gate` không thấy code sửa bằng Bash (`48aabca`);
 A.2 #2 gate chọn quá nhiều test: worktree tách rời tính từ merge-base (`ff27ebb`), checkout có upstream dùng `git diff @{u}...HEAD` (`dfdb7ff`), main có biên nhận `--full` exit 0 ghi `head`;
 A.3 worktree `-mcp` của Goods (7 đường dẫn nhiễu cất vào `stash@{0}` của Goods, gộp và push `5f43e73..58515a7`);
-A.4 regex `cwd` không đọc JSON thoát ở 15 hook (`88d1512`), 5 file `hooks/tests` mồ côi (`1223e12`), con trỏ `docs/plans/` ở 11 file (`64ed509`), FIFO trên state agent ghi được: 15 chỗ đọc/ghi của `post-fix-gate`/`proof_gate`/`push_gate` (`e44764b`) dòng `.gitignore` của 15 hook (`02865cc`), và FIFO ở log / khoá của hook ở cấp đầu `.claude/audit-gate/` bị dọn trước lần mở đầu tiên (commit kế tiếp; principal-code-reviewer bắt `review_gate.log` … còn treo). Giới hạn còn lại, ghi `ponytail` trong `tests/gates/test_hook_gitignore_fifo.sh`: git tự đọc một `.gitignore` là FIFO trong thư mục nó duyệt; khe đua sau `isfile`; thư mục con của `.claude/audit-gate/`; `scripts/testing/stale_rerun.py:115` mở `test_run.lock` thường (không phải hook Stop); `session_lock.test_run_active` coi FIFO là đang chạy test (có từ trước).
+A.4 regex `cwd` không đọc JSON thoát ở 15 hook (`88d1512`), 5 file `hooks/tests` mồ côi (`1223e12`), con trỏ `docs/plans/` ở 11 file (`64ed509`), hai quyết định chính sách của người dùng 14/10 (squash theo essentials: `unity-ugui.csv` #22 và `game-rules.md` §3 nay dừng ở tư thế nhấn 0.95 + lún; gradient tím-xanh: cấm, trừ khi người dùng gọi đúng tên style — ghi ở cột "Do Not Use For" của Aurora UI, Vaporwave, Gradient Mesh / Aurora Evolved trong `styles.csv`), FIFO trên state agent ghi được: 15 chỗ đọc/ghi của `post-fix-gate`/`proof_gate`/`push_gate` (`e44764b`) dòng `.gitignore` của 15 hook (`02865cc`), và FIFO ở log / khoá của hook ở cấp đầu `.claude/audit-gate/` bị dọn trước lần mở đầu tiên (commit kế tiếp; principal-code-reviewer bắt `review_gate.log` … còn treo). Giới hạn còn lại, ghi `ponytail` trong `tests/gates/test_hook_gitignore_fifo.sh`: git tự đọc một `.gitignore` là FIFO trong thư mục nó duyệt; khe đua sau `isfile`; thư mục con của `.claude/audit-gate/`; `scripts/testing/stale_rerun.py:115` mở `test_run.lock` thường (không phải hook Stop); `session_lock.test_run_active` coi FIFO là đang chạy test (có từ trước).
 
 ### A.1b Mới 13/10 tối (review ngữ cảnh sạch sau `cd0fb04`)
 
@@ -49,9 +49,10 @@ Mỗi hàng trích nguyên văn một đoạn ngắn từ nguồn ghi ở cột 
 - **Vẫn mở:**
   - Ba dòng bug của audit 09/10 trong `.agents/CHECKLIST.md` vẫn "⏳ chưa chứng minh ĐỎ". Cả ba chỉ link tới suite `REG-DK-ALL-01`, không link file test nào, nên `red_proof.py` trả "không biết file test nào". Hai dòng (`BUG-20261002-agent-kit-health…`, `BUG-20261009-run-impacted…`) có bản sửa trong `tests/run_impacted.sh`, mà `red_proof.py` (`TEST_PATH`) coi mọi file dưới `tests/` là test nên từ chối red-patch. Hướng: khai runner là code sản xuất trong `.agents/local/red_proof.json` (khoá mới, ví dụ `"production"`), `agent-kit bugs link` tới `test_run_impacted.sh` / `test_run_impacted_since.sh`, viết red-patch, rồi `red_proof.py --pending`. `BUG-20260929-audit-review…` là yêu cầu audit hiệu năng, không có test tất định (revert `a49bc13` xung đột): `agent-kit bugs drop` hoặc giữ là chuyện quyết định.
   - Nhận nuôi worktree (3): W1 R5b của phiên d352c03b.
-- **Chờ chủ xe duyệt:** gộp suite Gradle của Geely: `REG-SHARED-02` chạy đúng lệnh của `REG-PHONE-01` mà chưa có `covered_by: REG-PHONE-01` (`REG-SHARED-01` đã có `covered_by: REG-CAR-01`). Quy tắc chủ xe ở GeelyEx2: agent không tự sửa ma trận hồi quy (`265d25ce6` cũng đang chờ duyệt, chưa push).
+  - **Mới 14/10 (phiên d352c03b nhờ ghi, review thiết kế W1 R1/R2): phiên dùng EnterWorktree bị gate kiểm main, không kiểm worktree.** `CLAUDE_PROJECT_DIR` không đổi sau EnterWorktree (docs worktrees/hooks), nên `regression_gate`, `proof_gate`, `test_evidence_gate` và `precode_gate` kiểm main sạch và cho qua; `review_gate` theo cwd. Sửa: một hàm chung tìm project = worktree mà phiên đã vào.
+  - **Mới 14/10: hai test đo thời gian đỏ khi máy tải cao, cả trên kit của main.** `tests/context_memory/test_budgets.sh` (prompt hook 213–658 ms, ngưỡng 150) và `tests/gates/test_gate_binary_skip.sh` (ca 5: file nhị phân 25 MB thêm 4,2–5,8 s) đỏ ở MỌI lượt gate 09:55–10:31 khi load average 42–65 trên 12 nhân (Unity batchmode của Goods, Gradle của GeelyEx2/OfficeReader); chạy riêng trên kit của main cũng đỏ (222 ms; 4,2 s); A/B xen kẽ worktree/main không chênh hệ thống (215–506 / 278–320 ms). Hệ quả: không phiên nào ở workbench có gate exit 0 trong lúc đó (phiên d352c03b gặp cùng lỗi ở R3). Chưa nới test (là đổi cổng): hướng là đo theo CPU time của tiến trình thay vì đồng hồ tường, hoặc chạy hai test này khi tải 5 phút thấp (W2b cùng loại).
+- **Đã duyệt, chờ áp dụng:** gộp suite Gradle của Geely (người dùng duyệt 14/10 ~10:05 trong phiên d91dffdd; đã chuyển nguyên thay đổi cho phiên `geelyex2-b1` đang giữ GeelyEx2 và đang gom nhóm commit ma trận chờ chủ xe): `REG-SHARED-02` chạy đúng lệnh của `REG-PHONE-01` mà chưa có `covered_by: REG-PHONE-01` (`REG-SHARED-01` đã có `covered_by: REG-CAR-01`). Quy tắc chủ xe ở GeelyEx2: agent không tự sửa ma trận hồi quy (`265d25ce6` cũng đang chờ duyệt, chưa push).
 - **Không kiểm được:** Gemini qua alias. Đo 14/10: Gemini CLI 0.59 trên máy này không đăng nhập được nữa (`IneligibleTierError`, `UNSUPPORTED_CLIENT`: Google ngừng hỗ trợ client này cho gói Gemini Code Assist cá nhân, bảo chuyển sang Antigravity), nên không có phiên Gemini thật nào để thử. Phần Gemini của DevKit ở 4 repo cũng không chạy được tới khi đổi gói / đăng nhập.
-- **Là quyết định chính sách:** squash #22/#3; gradient tím-xanh.
 
 | Trích nguyên văn | Nguồn |
 |---|---|
@@ -61,8 +62,6 @@ Mỗi hàng trích nguyên văn một đoạn ngắn từ nguồn ghi ở cột 
 | "`BUG-20261009-run-impacted-recent-commits-in-sandbox` — chưa chạy" | Audit 09/10 (B.1), "Bước 4" |
 | "Lựa chọn "gộp 3 suite Gradle thành 1 lệnh" của người dùng **chưa thực hiện**" | Audit 09/10 (B.1), cùng mục |
 | "(3) worktree chưa từng vào danh sách "nợ" của một phiên đã kết thúc không bao giờ được phiên sau nhận nuôi (chỉ liệt kê ở SessionStart) — chưa đổi." | Audit 09/10 (B.1), cùng mục |
-| "**Cần chủ quy chuẩn xác nhận**: hàng #22 và #3 (có sẵn) vẫn mô tả squash giữ tới lúc nhả" | UI context injection (II.C), "Review ngữ cảnh sạch" #3 |
-| "**Để nguyên, cần người quyết**: hai bên mâu thuẫn về chính sách, không phải lỗi mã" | UI context injection (II.C), "Review ngữ cảnh sạch" #7 (cấm gradient tím-xanh) |
 
 ## Phần B — Báo cáo đã đóng
 

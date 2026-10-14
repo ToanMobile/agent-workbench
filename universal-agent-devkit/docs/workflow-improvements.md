@@ -21,7 +21,7 @@
 | I.3 | Đề xuất bắt các bug agent không thấy (P1–P10) | `catch-bugs-agents-cannot-see.md` | Đối chiếu 13/10 17:00 với code: P1, P3 (mẫu), P5, P8 xong; P2, P10 một phần; P4, P6, P7, P9 chưa làm (bảng ở đầu mục). Để sau I.0 |
 | II.A | DevKit chạy nhanh: nghiên cứu 04/10 và kế hoạch 3 đợt | `devkit-speed.md` | Đối chiếu 13/10 17:00 với code: phần lớn xong hoặc đã bỏ sau khi đo. Còn mở: đồng bộ ba danh sách loại trừ, `security_gate` tăng dần, `churn_guard` đọc đuôi, `local_state_sha` một lần mỗi lượt, `.sandboxes/` chưa được ignore. Bảng ở đầu mục |
 | II.B | Living Regression Checklist V3 | `regression-checklist-v3.md` | Phụ lục B: P0–P9 xong 24/09/2026; người dùng quyết không cài job đêm |
-| II.C | UI context injection Zero-Slop | `ui-context-injection-zero-slop.md` | Thực thi ngày 03/10/2026 (mục "Audit và thực thi"); hai điểm chờ người quyết nằm ở `issues-bugs.md` A.4 |
+| II.C | UI context injection Zero-Slop | `ui-context-injection-zero-slop.md` | Thực thi ngày 03/10/2026 (mục "Audit và thực thi"); hai điểm chờ người quyết: người dùng đã quyết 14/10 (squash theo essentials; gradient tím-xanh cấm trừ khi gọi đúng tên style) |
 
 ## Phần I — Đang mở / chờ duyệt
 
