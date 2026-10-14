@@ -410,11 +410,13 @@ Commands:
   worktree diff <path>
                       Its own changes as a patch, DevKit setup left out; bring them back
                       with: agent-kit worktree diff ../app-x | git apply --3way
-  worktree finish <path>
+  worktree finish <path> [--keep]
                       Merge its work into the main branch BY ITSELF and remove it (the Stop gate runs it
                       for you): uncommitted work is committed in the worktree, main is merged into the
-                      worktree (a conflict is resolved THERE, safely), main only fast-forwards, then the
-                      removal. Exit 0 done, 3 conflict (resolve in the worktree, run it again), 1 blocked.
+                      worktree (a conflict is resolved THERE, safely), the gate on the merged result, main
+                      only fast-forwards, then the removal (--keep: kept). Exit 0 done, 3 conflict (resolve
+                      in the worktree, run it again), 1 blocked. No gate when main has no regression matrix, or
+                      with WORKTREE_TRUNK_MODE=0 (the user's switch). automerge takes [--keep] too.
                       Works on worktrees EnterWorktree / a subagent made. automerge = same, one JSON line
   allow-shared [--minutes N] | off
                       The USER lets a second live session write in a checkout another session holds

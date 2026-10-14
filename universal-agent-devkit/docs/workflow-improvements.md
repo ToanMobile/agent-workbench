@@ -124,8 +124,8 @@ Thứ tự trong W1, mỗi bước có test ĐỎ trước:
 1. R5b gc (đĩa đang cạn). *(13/10 xong, Đợt 35: `agent-kit worktree gc`, chỉ dọn thư mục mà git không còn biết, chạy nền ở mỗi SessionStart, log `.claude/audit-gate/worktree_gc.log`; worktree còn đăng ký vẫn do `worktree_merge_gate` lo; qua 3 vòng principal-code-reviewer + OpenCodeReview)*
 2. R5a *(14/10 xong, Đợt 37: gate gặp thư mục project đã mất thì không ghi gì, kết luận CHƯA XÁC MINH)*
 3. R5c *(14/10 xong, Đợt 39: `worktree add` chạy gc và cảnh báo dưới 10 GiB, không tạo dưới 3 GiB, tối đa 3 worktree mỗi repo, exit 4 khi từ chối; SessionStart cảnh báo đĩa thấp)*
-4. R4
-5. R3
+4. R4 *(14/10 xong, phiên d91dffdd: `ff27ebb` worktree liên kết, `dfdb7ff` main có `@{u}` — `run_impacted.sh` lấy file đã đổi bằng `git diff` từ merge-base, nên file giải conflict của merge commit được tính; `tests/verification/test_run_impacted_since.sh`)*
+5. R3 *(14/10 xong, Đợt 42: `finish`/`automerge` chạy gate trên kết quả gộp main vào worktree trước khi main đi tiếp, chỉ fast-forward khi main còn đúng commit đã gộp, tối đa 3 vòng, `--keep`; `WORKTREE_TRUNK_MODE=0` tắt)*
 6. Phase 0: đo thời gian tạo worktree (`agent-kit worktree add`), lần build đầu và dung lượng mỗi repo
 7. R1, R2, R7: bật ở workbench trước, rồi GeelyEx2, OfficeReader, cuối cùng hai repo Unity sau R6
 

@@ -38,8 +38,9 @@ back with: agent-kit worktree diff <path> | git apply --3way
 
 finish / automerge (run from the main checkout; the Stop gate runs automerge by itself): the worktree's uncommitted work is
 committed IN the worktree; main is merged INTO the worktree (so a conflict is resolved there, in a folder nobody else touches);
-then the main branch only FAST-FORWARDS to the worktree's HEAD (`git merge --ff-only`: git itself refuses when main has
-uncommitted edits on a file the merge changes, and then nothing moved), then `remove`. A conflict leaves the merge open in the
+then — after the gate on what the worktree brings (_merge_gate, W1 R3) — the main branch only FAST-FORWARDS to the
+worktree's HEAD (`git merge --ff-only`: git itself refuses when main has uncommitted edits on a file the merge changes, and then
+nothing moved), then `remove` (`--keep`: not). Main moved meanwhile: merged in and gated again, at most MERGE_ROUNDS times. A conflict leaves the merge open in the
 worktree (exit 3, the files named): resolve them there, `git add`, and run it again (it concludes the merge). Works on worktrees
 `worktree add` did not make (EnterWorktree, a subagent's isolated worktree): see _adopted_state.
 
@@ -1519,6 +1520,83 @@ def _lock_automerge(wt):
 MAIN_LOCK = "devkit-automerge-main.lock"
 
 
+def _unlink_quiet(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+MERGE_ROUNDS = 3   # W1 R3: merges of main into the worktree per finish / automerge; main moving past that: refused, run it again
+MERGE_GATE_TIMEOUT_S = _env_seconds("WORKTREE_MERGE_GATE_TIMEOUT_S", 3600.0)
+MERGE_GATE_RESULT = "devkit-merge-gate.json"   # in the worktree's git dir: the last red verdict, for (worktree HEAD, main HEAD)
+MERGE_GATE_RESULT_TTL_S = _env_seconds("WORKTREE_MERGE_GATE_RESULT_TTL_S", 1200.0)   # a load-made FAIL must not stick: re-gated after this
+MATRIX_REL = os.path.join(".agents", "regression_matrix.active.json")
+
+
+def _gate_matrix(main):
+    """The regression matrix the merge gate uses: MAIN's, the side it protects — a worktree that dropped or weakened its own copy is still
+    gated with main's mandatory tests (OCR 14/10). "" = no gate: WORKTREE_TRUNK_MODE=0, or main has no matrix (no mandatory test protects
+    main yet; a matrix the worktree brings is new, so the gate would not trust it and would run nothing anyway). Asked BEFORE a kept
+    verdict is replayed: the opt-out must work after a refusal."""
+    if os.environ.get("WORKTREE_TRUNK_MODE", "1") == "0":
+        return ""
+    m = os.path.join(main, MATRIX_REL)
+    return m if os.path.isfile(m) else ""
+
+
+def _merge_gate(wt, base, matrix):
+    """W1 R3: the gate on what the worktree brings (`--diff base`, `base` = the main it merged) BEFORE main moves — a merge with no
+    textual conflict can still break (main renamed what a new caller in the worktree uses). (None, False): it passes, there is nothing
+    to audit (exit 3). Otherwise (reason, verdict): a regression test that FAILed (verdict True: the same commits get the same answer,
+    kept), or one that TIMED OUT, tests that could not run because another run holds the lock, or a gate that did not finish (verdict
+    False: often the machine's load, so tried again next time), refuse. What the session owes (an edited test to approve, an untested file) is its own gate's
+    business, and a suite that cannot run here (no device) never strands a merge. Past WORKTREE_MERGE_GATE_TIMEOUT_S the gate gets
+    SIGTERM (it stops its suites and puts back what it reverted), then SIGKILL; VACUITY_REVERT=0, so it reverts nothing here."""
+    gate = os.path.join(DEVKIT, "bin", "post-fix-gate.py")
+    try:
+        p = subprocess.Popen([sys.executable, gate, "--run-tests", "--brief", "--json", "--diff", base, "--matrix", matrix], cwd=wt,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                             env=dict(os.environ, CLAUDE_PROJECT_DIR=wt, VACUITY_REVERT="0"))
+    except OSError as e:
+        return tr(f"gate không chạy được ({e})", f"the gate did not start ({e})"), False
+    try:
+        out, err = p.communicate(timeout=MERGE_GATE_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        p.terminate()
+        try:
+            p.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.communicate()
+        return tr(f"gate không chạy xong trong {MERGE_GATE_TIMEOUT_S:g} s (WORKTREE_MERGE_GATE_TIMEOUT_S)",
+                  f"the gate did not finish within {MERGE_GATE_TIMEOUT_S:g} s (WORKTREE_MERGE_GATE_TIMEOUT_S)"), False
+    if p.returncode == 3:   # nothing to audit: the worktree brings nothing net (its work came back by hand, or was reverted)
+        return None, False
+    try:
+        res = json.loads((out.strip().splitlines() or [""])[-1])
+    except ValueError:
+        return tr(f"gate không trả kết quả (exit {p.returncode}): ", f"the gate gave no result (exit {p.returncode}): ") + (err or out).strip()[-300:], False
+    if res.get("busy"):
+        return tr("một lần chạy test khác đang giữ khoá của worktree: chưa kiểm được, chạy lại sau",
+                  "another test run holds the worktree's lock: nothing was checked, run it again later"), False
+    if res.get("budget_exhausted"):   # mandatory suites cut by GATE_TOTAL_BUDGET_S never ran: no pass (OCR 14/10)
+        return tr("gate hết ngân sách thời gian (GATE_TOTAL_BUDGET_S) trước khi chạy hết test bắt buộc: chạy lại",
+                  "the gate ran out of its time budget (GATE_TOTAL_BUDGET_S) before every mandatory test ran: run it again"), False
+    bad = [x for x in res.get("regression_tests") or [] if x.get("status") in ("FAIL", "TIMEOUT")]
+    if bad:
+        return (tr("test hồi quy ĐỎ trên kết quả gộp: ", "regression tests RED on the merged result: ")
+                + ", ".join(f"{x.get('id')} {x.get('status')}" for x in bad) + f" ({res.get('report', '')})",
+                any(x.get("status") == "FAIL" and not x.get("flaky") for x in bad))   # failed, then passed on a retry: not kept
+    return None, False
+
+
+def _gate_refusal(wt, why):
+    return "blocked", tr(f"gate trên những gì worktree mang vào main KHÔNG qua: {why}. Main không đổi; worktree giữ nguyên (cả commit gộp nếu có) — sửa "
+                         f"trong worktree rồi chạy lại `agent-kit worktree finish {shlex.quote(wt)}`",
+                         f"the gate on what the worktree brings into main did NOT pass: {why}. Main is unchanged; the worktree is kept as it is "
+                         f"(its merge commit too) - fix it there, then run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"gate": True}
+
+
 def _authored_status_changed(wt):
     """True when the worktree's regression_status.json differs from HEAD's in a row a PERSON made (the rows nothing regenerates)."""
     old = git(wt, "show", f"HEAD:{STATUS_FILE}", check=False)
@@ -1622,8 +1700,8 @@ def _conflict(wt, unmerged):
                            f"merge, fast-forwards main and removes the worktree)"), {"files": unmerged})
 
 
-def automerge(cwd, wt):
-    """Merge a worktree's work into the main branch and remove it. (status, message, extra); status: merged | nothing | conflict | blocked.
+def automerge(cwd, wt, keep=False):
+    """Merge a worktree's work into the main branch and remove it (`keep`: leave it in place, W1 R3). (status, message, extra); status: merged | nothing | conflict | blocked.
     Main's working tree is only ever touched by `git merge --ff-only`, so another session's uncommitted or staged files are safe."""
     main = main_checkout(cwd)
     if not _same_path(git(cwd, "rev-parse", "--show-toplevel").stdout.strip(), main):
@@ -1650,12 +1728,12 @@ def automerge(cwd, wt):
     if lock is None:
         return "blocked", tr("một lần tự gộp khác của worktree này đang chạy", "another automatic merge of this worktree is running"), {"running": True}
     try:
-        return _automerge_locked(cwd, main, wt)
+        return _automerge_locked(cwd, main, wt, keep)
     finally:
         lock.close()
 
 
-def _automerge_locked(cwd, main, wt):
+def _automerge_locked(cwd, main, wt, keep=False):
     try:
         state = _read_state(wt)
     except (OSError, ValueError, SystemExit):
@@ -1676,33 +1754,21 @@ def _automerge_locked(cwd, main, wt):
     refusal = _commit_pending(wt, state)
     if refusal:
         return refusal
-    # ONE integration of main at a time: a Stop with many subagent worktrees starts many merges at once, and two `merge --ff-only` racing on
-    # main's index left staged renames / deletions behind (review 2026-10-08); with the lock held from the first merge-in to the fast-forward the
-    # merges queue and main cannot move under one of them (only a person committing can, hence the retries)
-    mlock = _lock_file(os.path.join(git_dir(main), MAIN_LOCK), wait=180.0)
-    if mlock is None:
-        return "blocked", tr("một lần tự gộp khác giữ khoá main quá lâu: chạy lại", "another automatic merge held the main lock too long: run it again"), {"running": True}
-    status = None
-    try:
-        for _ in range(8):   # main may move (a person committing) between reading it and fast-forwarding it
-            main_head = git(main, "rev-parse", "HEAD").stdout.strip()
-            w_head = git(wt, "rev-parse", "HEAD").stdout.strip()
-            if _is_ancestor(main, w_head, main_head):
-                status = "nothing"   # everything the worktree has is already in main
-                break
-            if _is_ancestor(main, main_head, w_head):
-                r = git(main, "merge", "--ff-only", w_head, check=False, bounded=False)
-                if r.returncode == 0:
-                    status = "merged"
-                    break
-                err = r.stdout + r.stderr
-                if "overwritten" in err or "commit your changes or stash" in err:
-                    files = [l.strip() for l in err.splitlines() if l.startswith("\t")]
-                    return "blocked", tr(f"main có sửa đổi CHƯA commit trên file mà worktree cũng đổi (không gì bị đụng): {', '.join(files[:8]) or err.strip()[-200:]}. "
-                                         f"Commit hoặc cất chúng ở main rồi chạy lại `agent-kit worktree finish {shlex.quote(wt)}`",
-                                         f"main has UNCOMMITTED edits on files the worktree also changed (nothing was touched): {', '.join(files[:8]) or err.strip()[-200:]}. "
-                                         f"Commit or stash them in main, then run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"files": files}
-                continue
+    # W1 R3: main is merged INTO the worktree and what it brings gated (_merge_gate) with no lock held — a gate takes minutes; then,
+    # under MAIN_LOCK, main fast-forwards only if it is still the commit that was merged in. Main moved meanwhile (a person, another merge):
+    # merge it in and gate again, at most MERGE_ROUNDS times. Only ONE fast-forward of main at a time: two `merge --ff-only` racing on
+    # main's index left staged renames / deletions behind (review 2026-10-08).
+    status, merges, gated = None, 0, None
+    for _ in range(8):   # main may also move (a person committing) between reading it and fast-forwarding it
+        main_head = git(main, "rev-parse", "HEAD").stdout.strip()
+        w_head = git(wt, "rev-parse", "HEAD").stdout.strip()
+        if _is_ancestor(main, w_head, main_head):
+            status = "nothing"   # everything the worktree has is already in main
+            break
+        if not _is_ancestor(main, main_head, w_head):
+            if merges >= MERGE_ROUNDS:
+                return "blocked", tr(f"main đi tiếp {merges} lần trong lúc gộp và chạy gate: chạy lại", f"main moved on {merges} times while merging and gating: run it again"), {}
+            merges += 1
             r = git(wt, "merge", "--no-edit", "-m", f"Merge main into {os.path.basename(wt)} (DevKit auto-merge)", main_head, check=False, bounded=False)
             if r.returncode != 0:
                 unmerged = git(wt, "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
@@ -1710,10 +1776,69 @@ def _automerge_locked(cwd, main, wt):
                     return _conflict(wt, unmerged)
                 git(wt, "merge", "--abort", check=False, bounded=False)
                 return "blocked", tr("git merge thất bại: ", "git merge failed: ") + (r.stderr or r.stdout).strip()[-400:], {}
-    finally:
-        mlock.close()
+            w_head = git(wt, "rev-parse", "HEAD").stdout.strip()
+        # before EVERY fast-forward, not only after a merge-in: a refused merge run again, a conflict resolved by hand or a later commit
+        # has main in it already and would otherwise reach main unchecked (OCR 14/10). A red verdict for these very commits is given
+        # again at once: the Stop hook waits 9 s for a merge, so one re-gated on every Stop never reached the session (review 14/10)
+        key = {"worktree": w_head, "main": main_head}
+        rpath = os.path.join(git_dir(wt), MERGE_GATE_RESULT)
+        matrix = _gate_matrix(main)
+        try:
+            with open(rpath, encoding="utf-8") as fh:
+                last = json.load(fh)
+        except (OSError, ValueError):
+            last = {}
+        if matrix and isinstance(last, dict) and last.get("worktree") == w_head and last.get("main") == main_head and last.get("why") \
+                and isinstance(last.get("at"), (int, float)) and 0 <= time.time() - last["at"] < MERGE_GATE_RESULT_TTL_S:
+            return _gate_refusal(wt, str(last["why"]) + tr(" (kết quả lần trước: chưa đổi gì từ đó)", " (the last verdict: nothing changed since)"))
+        if gated == (w_head, main_head):
+            why, verdict = None, False   # this very pair passed a moment ago (a --ff-only that failed for a passing reason): no second run
+        else:
+            why, verdict = _merge_gate(wt, main_head, matrix) if matrix else (None, False)
+        # the gate tested the working tree, main gets the COMMIT: an edit made meanwhile (uncommitted) may have made it green — or red, so
+        # this is checked before any verdict is kept or acted on (OCR 14/10)
+        edited = [p for p in changes_since(wt, state) if p not in BOOKKEEPING]
+        if edited:
+            return "blocked", tr(f"worktree đổi trong lúc gate chạy (chưa commit: {', '.join(edited[:5])}): gate không kiểm đúng commit sẽ vào main. "
+                                 f"Chạy lại `agent-kit worktree finish {shlex.quote(wt)}`",
+                                 f"the worktree changed while the gate ran (uncommitted: {', '.join(edited[:5])}): the gate did not check the commit main "
+                                 f"would get. Run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"files": edited[:20]}
+        if why:
+            if verdict:
+                try:
+                    with open(rpath, "w", encoding="utf-8") as fh:
+                        json.dump(dict(key, why=why, at=time.time()), fh)
+                except OSError:
+                    pass   # only a cache: the next run gates again
+            return _gate_refusal(wt, why)
+        _unlink_quiet(rpath)
+        gated = (w_head, main_head)
+        if git(wt, "rev-parse", "HEAD").stdout.strip() != w_head:
+            continue   # the worktree moved while the gate ran (its session committed): gate what it is now
+        mlock = _lock_file(os.path.join(git_dir(main), MAIN_LOCK), wait=180.0)
+        if mlock is None:
+            return "blocked", tr("một lần tự gộp khác giữ khoá main quá lâu: chạy lại", "another automatic merge held the main lock too long: run it again"), {"running": True}
+        try:
+            if git(main, "rev-parse", "HEAD").stdout.strip() != main_head:
+                continue   # main moved while merging / gating: another round
+            r = git(main, "merge", "--ff-only", w_head, check=False, bounded=False)
+            if r.returncode == 0:
+                status = "merged"
+                break
+            err = r.stdout + r.stderr
+            if "overwritten" in err or "commit your changes or stash" in err:
+                files = [l.strip() for l in err.splitlines() if l.startswith("\t")]
+                return "blocked", tr(f"main có sửa đổi CHƯA commit trên file mà worktree cũng đổi (không gì bị đụng): {', '.join(files[:8]) or err.strip()[-200:]}. "
+                                     f"Commit hoặc cất chúng ở main rồi chạy lại `agent-kit worktree finish {shlex.quote(wt)}`",
+                                     f"main has UNCOMMITTED edits on files the worktree also changed (nothing was touched): {', '.join(files[:8]) or err.strip()[-200:]}. "
+                                     f"Commit or stash them in main, then run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"files": files}
+        finally:
+            mlock.close()
     if status is None:
         return "blocked", tr("main liên tục có commit mới trong lúc gộp: chạy lại", "main kept moving while merging: run it again"), {}
+    if keep:
+        return status, (tr("đã gộp vào main; worktree giữ lại (--keep)", "merged into main; the worktree is kept (--keep)") if status == "merged"
+                        else tr("không có gì chưa về main; worktree giữ lại (--keep)", "nothing that was not in main; the worktree is kept (--keep)")), {"kept": True}
     saved = []
     try:
         for rel in _unsaved_memory(wt, main):   # notes only the worktree's own (git-ignored) agent-memory folder holds: a removal would delete them
@@ -1752,15 +1877,16 @@ def _automerge_locked(cwd, main, wt):
 
 
 def _automerge_args(cwd, args, usage):
-    if len(args) != 1 or args[0].startswith("--"):
+    pos = [a for a in args if a != "--keep"]
+    if len(pos) != 1 or pos[0].startswith("--"):
         die(usage)
-    return os.path.abspath(os.path.join(cwd, args[0]))
+    return os.path.abspath(os.path.join(cwd, pos[0])), "--keep" in args
 
 
 def _run_automerge(cwd, args, usage):
-    wt = _automerge_args(cwd, args, usage)
+    wt, keep = _automerge_args(cwd, args, usage)
     try:
-        status, message, extra = automerge(cwd, wt)
+        status, message, extra = automerge(cwd, wt, keep)
     except SystemExit as e:
         status, message, extra = "blocked", str(e.code), {}
     except OSError as e:   # a lock path that is no regular file, an admin dir removed meanwhile: still the one JSON line the Stop hook reads
@@ -1769,13 +1895,13 @@ def _run_automerge(cwd, args, usage):
 
 
 def cmd_automerge(cwd, args):
-    wt, status, message, extra = _run_automerge(cwd, args, "usage: agent-kit worktree automerge <path>")
+    wt, status, message, extra = _run_automerge(cwd, args, "usage: agent-kit worktree automerge <path> [--keep]")
     print(json.dumps(dict(extra, status=status, message=message, path=wt), ensure_ascii=False))
     return {"merged": 0, "nothing": 0, "conflict": 3}.get(status, 1)
 
 
 def cmd_finish(cwd, args):
-    wt, status, message, extra = _run_automerge(cwd, args, "usage: agent-kit worktree finish <path>")
+    wt, status, message, extra = _run_automerge(cwd, args, "usage: agent-kit worktree finish <path> [--keep]")
     mark = {"merged": "✔", "nothing": "✔", "conflict": "⚠", "blocked": "✖"}[status]
     print(f"{mark} worktree {status}: {message}")
     return {"merged": 0, "nothing": 0, "conflict": 3}.get(status, 1)
