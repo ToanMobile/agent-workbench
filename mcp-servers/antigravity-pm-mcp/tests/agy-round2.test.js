@@ -754,3 +754,28 @@ test('don so dang ky: het ngan sach ps (3 muc co pid) van don tiep cac muc cu KH
   for (let i = 0; i < 5; i++) assert.ok(after[`c${i}`], `muc dang chay c${i} bi don`);
   assert.ok(after[r.conversationId]);
 });
+
+test('so dang ky hong + nudge, task bac IDE ma phan bien ke hoach giao model=Argon: model THAT cua hoi thoai (ghi luc dispatch) quyet, bo qua nudge, KHONG reject', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'd9d9d9d9-2222-3333-4444-555555555555', ANTIGRAVITY_LS_ADDRESS: '127.0.0.1:9', ANTIGRAVITY_CSRF_TOKEN: 'x' });
+  const dir = mkProject(t, { defaultModel: 'flash' });
+  const taskId = await newTask(dir);   // task.model = flash
+  await call('pm_plan', { project: dir, taskId, content: '# x\n1. lam\n2. test', files: ['src/a.js'] });
+  await call('pm_dispatch', { project: dir, taskId, kind: 'plan_review', model: ARGON });   // hoi thoai phan bien la agy, task.model khong doi
+  fs.writeFileSync(registryFile(), '{"broken": ');
+  const out = await call('pm_status', { project: dir, taskId, nudge: true });
+  assert.match(out.text, /Khong nhac duoc hoi thoai phan bien: khong biet trang thai luot agy/, out.text);
+});
+
+test('so dang ky hong + nudge, task bac IDE ma trien khai giao model=Argon: dispatch ghi model THAT cua hoi thoai, bo qua nudge, KHONG reject', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'dadadada-2222-3333-4444-555555555555', ANTIGRAVITY_LS_ADDRESS: '127.0.0.1:9', ANTIGRAVITY_CSRF_TOKEN: 'x' });
+  const dir = mkProject(t, { defaultModel: 'flash' });
+  const taskId = await newTask(dir);
+  await call('pm_plan', { project: dir, taskId, content: '# x\n1. lam\n2. test', files: ['src/a.js'] });
+  await call('pm_dispatch', { project: dir, taskId, kind: 'implement', force: true, model: ARGON });   // mo hoi thoai lam viec bang agy
+  const cfg = loadConfig(dir);
+  const opened = loadTask(cfg, taskId).dispatches.find((d) => d.kind === 'implement');
+  assert.equal(opened.model, ARGON, 'dispatch implement mo hoi thoai bang Argon nhung ghi model khac');
+  fs.writeFileSync(registryFile(), '{"broken": ');
+  const out = await call('pm_status', { project: dir, taskId, nudge: true });
+  assert.match(out.text, /Khong nhac duoc agent: khong biet trang thai luot agy/, out.text);
+});
