@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Regression test: time budgets of the hooks, on a checklist the size of the largest real one
-# (≈180 rows, a git repo with a few thousand files). Median of 5 runs, so one slow run on a busy
-# machine does not fail it:
+# (≈180 rows, a git repo with a few thousand files). Median of 5 runs of the CPU the hook spends (wall time capped at 5x):
 #   prompt hook (bug prompt → REPORTED row written)  ≤ 150 ms  (plan: 100 ms of our own work;
 #                                                               python start-up is ~40 ms of it)
 #   SessionStart (STALE, auto-close, counts)          ≤ 2 s
@@ -40,23 +39,34 @@ PY
 git add -A && git commit -qm init
 export CLAUDE_PROJECT_DIR="$P"
 
-median_ms() {  # median_ms <cmd…> (stdin from $STDIN_FILE)
+# CPU time, not wall time (user, 14/10): on a machine other sessions load to 40-318 (Unity, Gradle, an emulator) the wall time of
+# the prompt hook ran 153-658 ms and this test failed every gate, main's kit too, while the hook's own work had not changed. The
+# budget is the CPU the hook and its children spend (getrusage RUSAGE_CHILDREN), which load does not stretch; a hook that WAITS
+# (a sleep, a lock, the network) burns no CPU, so the wall time is still capped at 5x the budget.
+median_ms() {  # median_ms <cmd…> (stdin from $STDIN_FILE): "<median CPU ms> <median wall ms>"
   python3 - "$@" <<'PY'
-import os, statistics, subprocess, sys, time
-ts = []
+import os, resource, statistics, subprocess, sys, time
+cpu, wall = [], []
 for i in range(5):
     data = open(os.environ["STDIN_FILE"], "rb").read() if os.environ.get("STDIN_FILE") else b""
-    t = time.perf_counter(); subprocess.run(sys.argv[1:], input=data, capture_output=True); ts.append((time.perf_counter() - t) * 1000)
-print(int(statistics.median(ts)))
+    r0, t = resource.getrusage(resource.RUSAGE_CHILDREN), time.perf_counter()
+    subprocess.run(sys.argv[1:], input=data, capture_output=True)
+    wall.append((time.perf_counter() - t) * 1000)
+    r1 = resource.getrusage(resource.RUSAGE_CHILDREN)
+    cpu.append((r1.ru_utime + r1.ru_stime - r0.ru_utime - r0.ru_stime) * 1000)
+print(int(statistics.median(cpu)), int(statistics.median(wall)))
 PY
+}
+within() {  # within <label> <budget ms> "<cpu> <wall>"
+  set -- "$1" "$2" $3
+  if [ "$3" -le "$2" ] && [ "$4" -le $(( $2 * 5 )) ]; then ok "$1: ${3} ms CPU (≤ $2), ${4} ms wall (≤ $(( $2 * 5 )))"
+  else fail "$1: ${3} ms CPU (budget $2), ${4} ms wall (cap $(( $2 * 5 )))"; fi
 }
 
 python3 -c 'import json; print(json.dumps({"prompt": "App bị crash khi mở màn hình bản đồ lần thứ hai", "session_id": "b", "transcript_path": "/nonexistent/claude-tr.jsonl"}))' > "$TMP/prompt.json"
-ms="$(STDIN_FILE="$TMP/prompt.json" median_ms bash "$DEVKIT_DIR/hooks/prompt_context.sh")"
-[ "$ms" -le 150 ] && ok "prompt hook with bug capture: ${ms} ms (≤ 150)" || fail "prompt hook: ${ms} ms > 150"
+within "prompt hook with bug capture" 150 "$(STDIN_FILE="$TMP/prompt.json" median_ms bash "$DEVKIT_DIR/hooks/prompt_context.sh")"
 echo '{}' > "$TMP/empty.json"
-ms="$(STDIN_FILE="$TMP/empty.json" median_ms bash "$DEVKIT_DIR/hooks/session_context.sh")"
-[ "$ms" -le 2000 ] && ok "SessionStart with STALE check: ${ms} ms (≤ 2000)" || fail "SessionStart: ${ms} ms > 2000"
+within "SessionStart with STALE check" 2000 "$(STDIN_FILE="$TMP/empty.json" median_ms bash "$DEVKIT_DIR/hooks/session_context.sh")"
 python3 - "$P" <<'PY'
 import json, sys
 P = sys.argv[1]
@@ -71,7 +81,6 @@ open(f"{P}/tr.jsonl", "w").write("\n".join(lines) + "\n")
 json.dump({"session_id": "b", "transcript_path": f"{P}/tr.jsonl", "last_assistant_message": "Đã fix lỗi, test RED→GREEN."},
           open(f"{P}/stop.json", "w"))
 PY
-ms="$(LESSON_REMINDER=0 STDIN_FILE="$P/stop.json" median_ms bash "$DEVKIT_DIR/hooks/test_evidence_gate.sh")"
-[ "$ms" -le 5000 ] && ok "Stop evidence gate on a proven fix: ${ms} ms (≤ 5000)" || fail "Stop gate: ${ms} ms > 5000"
+within "Stop evidence gate on a proven fix" 5000 "$(LESSON_REMINDER=0 STDIN_FILE="$P/stop.json" median_ms bash "$DEVKIT_DIR/hooks/test_evidence_gate.sh")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_budgets: all passed" || { echo "❌ test_budgets: $FAILS failed"; exit 1; }

@@ -8,7 +8,7 @@
 #   2. a binary file (NUL in the first 8 KB) that contains a token-looking string is not rejected
 #   3. a binary file with a forbidden NAME (.jks) is still rejected
 #   4. a text file whose only NUL byte lies past the first 8 KB is still scanned (the window is the sniff, not the file)
-#   5. a 25 MB binary changes the gate's run time by under 3 s compared with no binary (it used to add ~5 s)
+#   5. a 25 MB binary changes the gate's CPU time by under 3 s compared with no binary (it used to add ~5 s)
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -49,15 +49,22 @@ python3 -c 'import sys; sys.stdout.buffer.write(b"// pad\n" * 2000 + sys.argv[1]
 run_gate
 [ "$RC" = 1 ] && ok "4: a NUL past the first 8 KB does not hide a token in a text file" || { bad "4: late NUL made the file look binary (exit $RC)"; printf '%s\n' "$OUT" | tail -8; }
 
+# CPU seconds of the gate and its children, not wall time (user, 14/10): scanning 25 MB is CPU work, while the wall time of a gate on a
+# machine other sessions load to 40-318 varied by more than 3 s on its own and failed this case on main's kit too.
+cpu_gate() {   # the CPU seconds one gate run spends
+  CLAUDE_PROJECT_DIR="$R" python3 -c 'import resource, subprocess, sys
+r0 = resource.getrusage(resource.RUSAGE_CHILDREN)
+subprocess.run(["python3", sys.argv[1], "--lang", "en", "--run-tests", "--allow-no-tests"], capture_output=True)
+r1 = resource.getrusage(resource.RUSAGE_CHILDREN)
+print(round(r1.ru_utime + r1.ru_stime - r0.ru_utime - r0.ru_stime, 2))' "$GATE"
+}
 python3 -c 'import os,sys; sys.stdout.buffer.write(b"\x00" + os.urandom(25 * 1024 * 1024))' > big.tflite
-s=$(python3 -c 'import time; print(time.time())'); run_gate; e=$(python3 -c 'import time; print(time.time())')
-with=$(python3 -c "print(round($e - $s, 1))")
+with=$(cpu_gate)
 make_repo
 echo "// edit" >> src/Core.kt
-s=$(python3 -c 'import time; print(time.time())'); run_gate; e=$(python3 -c 'import time; print(time.time())')
-without=$(python3 -c "print(round($e - $s, 1))")
-if python3 -c "import sys; sys.exit(0 if $with - $without < 3.0 else 1)"; then ok "5: a 25 MB binary adds ${with}s - ${without}s < 3 s to the gate"
-else bad "5: a 25 MB binary adds $with - $without s to the gate (it is still being scanned)"; fi
+without=$(cpu_gate)
+if python3 -c "import sys; sys.exit(0 if $with - $without < 3.0 else 1)"; then ok "5: a 25 MB binary adds ${with} - ${without} s CPU < 3 s to the gate"
+else bad "5: a 25 MB binary adds $with - $without s CPU to the gate (it is still being scanned)"; fi
 
 cd "$TMP" || exit 1
 if [ "$FAILS" -ne 0 ]; then echo "binary skip: $FAILS FAILED"; exit 1; fi
