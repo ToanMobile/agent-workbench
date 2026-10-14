@@ -155,6 +155,7 @@ with open(out, "w", encoding="utf-8") as f:
         f.write(json.dumps(r, ensure_ascii=False) + "\n")
 PY
 python3 "$TMP/make2.py" "$PD2/cccc.jsonl"
+BEFORE2="$(cat "$PD2"/*.jsonl | digest)"
 OUT="$(run --no-replay --hook test_evidence_gate --hook review_gate)"
 for want in 'test_evidence_gate +wrong +quoted-outcome-mention +2$' 'test_evidence_gate +unknown +quoted-outcome-bare +1$' 'test_evidence_gate +unknown +outcome-proof +1$' \
             'review_gate +correct +no-review-after-edit +1$'; do
@@ -178,7 +179,8 @@ PY
 
 # 4. read-only, and no sandbox folder left behind
 AFTER="$(cat "$PD"/*.jsonl | digest)"
-[ "$BEFORE" = "$AFTER" ] && ok "the transcripts are untouched" || fail "a transcript changed"
+AFTER2="$(cat "$PD2"/*.jsonl | digest)"
+[ "$BEFORE" = "$AFTER" ] && [ "$BEFORE2" = "$AFTER2" ] && ok "the transcripts are untouched (both projects, replays included)" || fail "a transcript changed"
 LEFT="$(ls "$TMPDIR" | grep -c 'stop-replay-' || true)"
 [ "$LEFT" = 0 ] && ok "no sandbox folder left in TMPDIR" || fail "$LEFT sandbox folder(s) left"
 
