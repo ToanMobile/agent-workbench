@@ -47,7 +47,7 @@ LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"
 # No project: the loop guard below has nowhere to count re-Stops, and a gate that cannot count could hold every Stop.
 [ -n "${LOG_DIR}" ] || exit 0
 mkdir -p "${LOG_DIR}"
-[ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+[ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
 LOG="${LOG_DIR}/claim_check.log"
 
 # All logic in python3 (the macOS system interpreter); emit the block message

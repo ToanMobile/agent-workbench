@@ -131,7 +131,7 @@ if [ -z "${DEVKIT_WORKTREE:-}" ]; then
         | grep -qE '"name":[[:space:]]*"EnterWorktree"[[:space:]]*,[[:space:]]*"input"' && linked=1
       if [ "${size}" -gt 0 ] && [ -n "${LOG_DIR}" ]; then
         [ -d "${LOG_DIR}/wg_scan" ] || mkdir -p "${LOG_DIR}/wg_scan" 2>/dev/null
-        [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null
+        [ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null
         printf '%s %s\n' "${size}" "${linked}" > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}" 2>/dev/null
       fi
     fi
@@ -158,7 +158,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 if [ -n "${LOG_DIR}" ]; then
   mkdir -p "${LOG_DIR}" 2>/dev/null
-  [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+  [ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
 fi
 
 # The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable python could not

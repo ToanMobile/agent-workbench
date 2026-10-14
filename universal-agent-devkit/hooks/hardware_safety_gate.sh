@@ -110,7 +110,7 @@ LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"
 REPO_ROOT="${REPO_ROOT:-$(pwd)}"
 if [ "${HARDWARE_SAFETY_GATE:-1}" = "0" ] || [ "${HARDWARE_OVERRIDE:-0}" = "1" ]; then
   if [ -n "${LOG_DIR}" ] && mkdir -p "${LOG_DIR}" 2>/dev/null; then
-    [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+    [ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
     echo "[$(date +%Y-%m-%dT%H:%M:%S)] HARDWARE_SAFETY_GATE=${HARDWARE_SAFETY_GATE:-1} HARDWARE_OVERRIDE=${HARDWARE_OVERRIDE:-0} — gate bypassed" \
       >> "${LOG_DIR}/hardware_safety_gate.log" 2>/dev/null
   fi

@@ -85,7 +85,7 @@ fi
 [ -n "${REPO_ROOT}" ] || exit 0
 LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
 [ -d "${LOG_DIR}" ] || mkdir -p "${LOG_DIR}" 2>/dev/null || exit 0
-[ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+[ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
 LEDGER="${LOG_DIR}/bash_write_ledger.tsv"
 
 # Timestamp with 3 decimals, plus the ledger size (for the trim) when perl is used.

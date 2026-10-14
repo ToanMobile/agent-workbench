@@ -68,7 +68,7 @@ if [ -z "${REPO_ROOT}" ]; then   # no project to guard, and nothing is written; 
 fi
 LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
 mkdir -p "${LOG_DIR}"
-[ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+[ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
 
 if [ "${SECURITY_GATE:-1}" = "0" ]; then
   echo "[$(date +%Y-%m-%dT%H:%M:%S)] SECURITY_GATE=0 — gate bypassed" >> "${LOG_DIR}/security_gate.log" 2>/dev/null

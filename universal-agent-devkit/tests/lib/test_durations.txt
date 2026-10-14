@@ -256,3 +256,4 @@
 1 tests/context_memory/test_session_lock_file_writes.sh
 1 tests/gates/test_worktree_guard_shell_writes.sh
 3 tests/gates/test_state_fifo_no_hang.sh
+20 tests/gates/test_hook_gitignore_fifo.sh

@@ -77,7 +77,7 @@ LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
 PROBE="${REGRESSION_GATE_PROBE:-0}"
 if [ "${PROBE}" != "1" ]; then  # the probe writes nothing
   mkdir -p "${LOG_DIR}" 2>/dev/null || exit 0
-  [ -f "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
+  [ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
 fi
 LOG="${LOG_DIR}/regression_gate.log"
 

@@ -293,8 +293,11 @@ def full_gate_problem():
     except ImportError:
         return "không tìm thấy bin/tree_fp.py của DevKit"
     rp = tree_fp.receipt_path(repo)
+    rec = None
     try:
-        rec = json.load(os.fdopen(open_reg(rp), encoding="utf-8")) if rp else None
+        if rp:
+            with os.fdopen(open_reg(rp), encoding="utf-8") as fh:
+                rec = json.load(fh)
     except (OSError, ValueError):
         rec = None
     if not rec:
