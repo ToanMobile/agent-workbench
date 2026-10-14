@@ -659,3 +659,39 @@ test('ping tu don: pid cua luot agy da thoat va bi tien trinh la dung lai thi KH
   assert.match(out.text, /Luot 2: xong/, out.text);
   assert.deepEqual(groupKills, [], `ping da SIGKILL nhom cua pid khong con la agy cua no: ${groupKills.join(', ')}\n${out.text}`);
 });
+
+test('lay lai khoa cu: PM khac da lay lai TRUOC (khoa moi, tuoi) thi KHONG xoa khoa cua no, cho va bao "bi giu qua 3 s"', async (t) => {
+  // Hai PM cung thay MOT khoa cu. Gia lap PM A lay lai xong (xoa khoa cu, tao khoa moi cua A) dung giua luc PM nay (B) danh gia "cu"
+  // va thao tac khong dao nguoc dau tien tren duong dan khoa (xoa / doi ten). B khong duoc xoa khoa cua A va vao doan gang cung luc.
+  const fake = fakeAgy(t, { FAKE_AGY_ID: 'cfcfcfcf-2222-3333-4444-555555555555' });
+  const { conversationId } = await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
+  await sleep(900);
+  const lock = `${registryFile()}.lock`;
+  fs.writeFileSync(lock, 'pm-da-chet');
+  const old = new Date(Date.now() - 5 * 60000);
+  fs.utimesSync(lock, old, old);
+  t.after(() => fs.rmSync(lock, { force: true }));
+  const origRm = fs.rmSync;
+  const origRename = fs.renameSync;
+  let injected = false;
+  const pmATakesOver = (p) => {
+    if (injected || p !== lock) return;
+    injected = true;
+    origRm.call(fs, lock, { force: true });
+    fs.writeFileSync(lock, 'pm-A', { flag: 'wx' });
+  };
+  fs.rmSync = function rmSync(p, ...rest) { pmATakesOver(p); return origRm.call(fs, p, ...rest); };
+  fs.renameSync = function renameSync(from, ...rest) { pmATakesOver(from); return origRename.call(fs, from, ...rest); };
+  let res;
+  try {
+    res = await sendMessage({ conversationId, content: 'x' }).then(() => 'SENT', (e) => e.message);
+  } finally {
+    fs.rmSync = origRm;
+    fs.renameSync = origRename;
+  }
+  assert.equal(injected, true, 'kich ban khong xay ra: PM nay khong dong vao khoa cu');
+  assert.equal(fs.existsSync(lock) ? fs.readFileSync(lock, 'utf8') : '(khoa da bi xoa)', 'pm-A', 'khoa MOI cua PM A bi xoa / thay');
+  assert.match(res, /khoa so dang ky agy .* bi giu qua 3 s/, `PM nay vao doan gang trong khi PM A dang giu khoa: ${res}`);
+  assert.equal(fake.calls().filter((c) => c.args.includes('--conversation')).length, 0, 'sinh agy trong khi PM A dang giu khoa');
+  assert.deepEqual(fs.readdirSync(homeStateDir()).filter((n) => n.endsWith('.stale')), [], 'con sot file khoa doi ten');
+});

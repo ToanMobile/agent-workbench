@@ -155,9 +155,28 @@ export function agyRegistryProblem() {
   try { readAgyRegistry(); return null; } catch (e) { return e.message; }
 }
 
-// ponytail: lay lai khoa cu (> 20 s, chu khoa da chet) la xoa-roi-tao: hai PM cung thay MOT khoa cu trong cung mot khoanh khac van co the
-// cung vao doan gang; nang cap thanh doi ten + the so huu neu thay xay ra (chi sau khi mot PM chet giua doan gang vai mili giay).
 const LOCK_STALE_MS = 20000;   // > ngan sach ps toi da duoi khoa (<= 5 lan x 1,5 s) de PM khac khong lay mat khoa dang giu that
+/**
+ * Lay lai khoa cu (chu khoa da chet): DOI TEN no sang ten rieng (nguyen tu) roi xet CHINH file vua lay ra. Hai PM cung thay mot khoa cu:
+ * PM sau co the lay trung khoa MOI cua PM truoc (no vua lay lai xong) => file trong tay con tuoi: tra lai cho cu (link: khong de len khoa
+ * thu ba) roi cho nhu thuong. Truoc day xoa-roi-tao: PM sau xoa luon khoa moi, ca hai cung vao doan gang (OpenCodeReview 14/10).
+ * true = da bo khoa cu, tao lai ngay; false = khong lay duoc / da tra lai: cho.
+ */
+// ponytail: tra lai khong nguyen tu voi PM THU BA: giua rename va link, PM C tao duoc khoa (C va chu khoa cung vao doan gang), hoac chu khoa
+// xong viec dung luc do va khoa tra lai thanh mo coi (het han sau LOCK_STALE_MS). Can ba PM cung dung mot khoa cu trong vai micro giay;
+// nang cap thanh flock (Node khong co san) neu thay xay ra.
+function takeStaleLock(lock, token) {
+  const aside = `${lock}.${token}.stale`;
+  try { fs.renameSync(lock, aside); } catch { return false; }   // vua duoc nha / PM khac vua lay di
+  let fresh = true;   // khong xet duoc thi coi la tuoi: tra lai, khong bo khoa co the con nguoi giu
+  try { fresh = Date.now() - fs.statSync(aside).mtimeMs <= LOCK_STALE_MS; } catch (e) { logStderr(`khoa so dang ky agy: khong xet duoc ${aside} (${e.message}): tra lai`); }
+  if (fresh) {
+    try { fs.linkSync(aside, lock); } catch (e) { logStderr(`khoa so dang ky agy: lay nham khoa con tuoi cua PM khac va khong tra lai duoc (${e.code || e.message})`); }
+  }
+  fs.rmSync(aside, { force: true });
+  return !fresh;
+}
+
 /** Khoa file ngan (open 'wx') quanh doc-sua-ghi so dang ky: hai tien trinh PM khong dat cho / ghi de len nhau. Khoa mo coi > 20 s la cu. */
 function withRegistryLock(fn) {
   const lock = `${agyRegistryFile()}.lock`;
@@ -167,7 +186,7 @@ function withRegistryLock(fn) {
     try { fs.writeFileSync(lock, token, { flag: 'wx', mode: 0o600 }); break; } catch (e) {
       if (e.code !== 'EEXIST') throw e;
       try {
-        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) { fs.rmSync(lock, { force: true }); continue; }
+        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS && takeStaleLock(lock, token)) continue;
       } catch { /* khoa vua duoc nha */ }
       if (Date.now() > deadline) throw new AgentApiError(`khoa so dang ky agy ${lock} bi giu qua 3 s`);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
