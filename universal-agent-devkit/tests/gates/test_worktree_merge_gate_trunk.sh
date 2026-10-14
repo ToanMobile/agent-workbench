@@ -203,12 +203,14 @@ stop "$TMP/l" s1 "$TMP/l" "$TMP/t1.jsonl"; rc=$?
 
 # 11 the gate's 13 s alarm passes the Stop SILENTLY (os._exit), so a hold still to be decided after merge_own went with it whenever merge_own was
 #    started with the budget nearly spent (R3 review 14/10, P3d). Under 4 s left the own merge is not started: a note, the next Stop merges. The
-#    kit copy below has a 4 s alarm, so merge_own always meets it with less than 4 s left; the real hook (case 1, 13 s alarm) still merges.
+#    kit copy below raises that 4 s threshold above the 13 s alarm, so merge_own always meets it with less than the threshold left, however fast the
+#    runner (a 4 s alarm could go off before merge_own was reached on a slow one: fail_open, no output, a false failure - OCR 8); the real hook
+#    (case 1: 13 s alarm, 4 s threshold) still merges.
 FK="$TMP/kit11"; mkdir -p "$FK/hooks" "$FK/bin" "$FK/profiles" && ln -s "$DEVKIT_DIR/scripts" "$FK/scripts"
 for f in "$DEVKIT_DIR"/hooks/*; do ln -s "$f" "$FK/hooks/"; done; rm -f "$FK/hooks/worktree_merge_gate.sh"
 for f in "$DEVKIT_DIR"/bin/*; do ln -s "$f" "$FK/bin/"; done
-sed 's/signal\.alarm(13)/signal.alarm(4)/' "$HOOK" > "$FK/hooks/worktree_merge_gate.sh"
-grep -q 'signal\.alarm(4)' "$FK/hooks/worktree_merge_gate.sh" || fail "setup: the alarm of the kit copy was not patched"
+sed 's/ITIMER_REAL)\[0\] < 4\.0:/ITIMER_REAL)[0] < 99.0:/' "$HOOK" > "$FK/hooks/worktree_merge_gate.sh"
+grep -q 'ITIMER_REAL)\[0\] < 99\.0:' "$FK/hooks/worktree_merge_gate.sh" || fail "setup: the threshold of the kit copy was not patched"
 repo j; wtadd "$TMP/j" s1 s1; commit_in "$TMP/j" s1 eleven; record "$TMP/j" s1 s1
 REAL_HOOK="$HOOK"; HOOK="$FK/hooks/worktree_merge_gate.sh"
 stop "$TMP/j" s1 "$TMP/j/.claude/worktrees/s1" "$TMP/t1.jsonl"; rc=$?; HOOK="$REAL_HOOK"
