@@ -14,9 +14,10 @@ export const PNG_1PX = Buffer.from(
   'base64',
 );
 
-// Test khong duoc dinh cau hinh chung that cua may dang chay: tro ANTIGRAVITY_PM_GLOBAL_CONFIG
-// vao mot duong dan khong ton tai ngay khi nap helpers.
-const NO_GLOBAL_CONFIG = path.join(os.tmpdir(), 'agpm-test-khong-co-cau-hinh-chung', '.antigravity-pm.json');
+// Test khong duoc dinh cau hinh chung that cua may dang chay: tro ANTIGRAVITY_PM_GLOBAL_CONFIG vao cho KHONG BAO GIO co file
+// (/dev/null khong phai thu muc) ngay khi nap helpers. Truoc day la os.tmpdir()/agpm-test-...: duong dan doan duoc trong /tmp dung chung,
+// nguoi khac (hoac lan chay cu) tao san file do (vd testCommand la) thi lai duoc moi test (OpenCodeReview 14/10).
+const NO_GLOBAL_CONFIG = '/dev/null/agpm-test-khong-co-cau-hinh-chung/.antigravity-pm.json';
 process.env.ANTIGRAVITY_PM_GLOBAL_CONFIG = NO_GLOBAL_CONFIG;
 // Test KHONG duoc chay agy THAT (agent Argon, --dangerously-skip-permissions, tren thu muc tam): tro vao file khong ton tai => AntigravityUnavailable
 // o buoc "goi agent", dung cho nhung test cu cho do. Test can agy gia thi tu dat lai (tests/agy-model.test.js). 14/10/2026: khi model mac dinh
