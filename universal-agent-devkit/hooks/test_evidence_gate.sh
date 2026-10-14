@@ -90,6 +90,7 @@ if [ -z "${REPO_ROOT}" ]; then
   case "${_PCWD}" in *\\*) _PCWD="$(python3 -I -c 'import json,sys; sys.stdout.buffer.write(json.loads("\"%s\"" % sys.argv[1]).encode())' "${_PCWD}" 2>/dev/null)" || _PCWD="." ;; esac
   REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
 fi
+BASE_ROOT="${REPO_ROOT}"   # bash_write_ledger.sh writes bash_write_ledger.tsv under it, whatever tree is judged below
 # W1 v6 (hooks/session_worktree.py): a session that ENTERED a worktree (EnterWorktree: CLAUDE_PROJECT_DIR still names main) or a subagent
 # the harness started in one is judged in that worktree, not in a clean main. Python only when the payload or a session record can need it.
 _SW_SID='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9][A-Za-z0-9._-]*)"'
@@ -124,7 +125,7 @@ fi
 # The payload goes to python on fd 3, not in an env var (2026-10-09): a reply past the OS limit for one variable could not
 # start python and the gate passed it unchecked (tests/gates/test_hook_large_payload.sh).
 TE_LOG="${LOG_DIR}/test_evidence_gate.log" TE_DIR="${LOG_DIR}" \
-TE_TS="$(date +%Y-%m-%dT%H:%M:%S)" TE_REPO="${REPO_ROOT}" TE_SELF="$0" \
+TE_TS="$(date +%Y-%m-%dT%H:%M:%S)" TE_REPO="${REPO_ROOT}" TE_BASE_REPO="${BASE_ROOT}" TE_SELF="$0" \
 python3 -I <<'PY' 3<<<"${INPUT}"
 import os, sys, json, re, glob, time, shlex, tempfile
 import xml.etree.ElementTree as ET
@@ -138,6 +139,7 @@ log    = os.environ.get("TE_LOG", "/dev/null")
 state_dir = os.environ.get("TE_DIR", "/tmp")
 ts     = os.environ.get("TE_TS", "?")
 repo   = os.environ.get("TE_REPO", ".")
+ledger_root = os.environ.get("TE_BASE_REPO") or repo   # where the hooks write bash_write_ledger.tsv: main when `repo` is a session's worktree
 
 def logline(s):
     try:
@@ -1165,7 +1167,7 @@ if tp and os.path.exists(tp):
 LEDGER_REL = os.path.join(".claude", "audit-gate", "bash_write_ledger.tsv")
 
 def _load_windows(path=None):
-    path = path or os.path.join(repo, LEDGER_REL)
+    path = path or os.path.join(ledger_root, LEDGER_REL)
     wins, opens = [], {}
     try:
         if not os.path.isfile(path):
@@ -1215,7 +1217,7 @@ def _authorship():
 # a window to this session (ran_in_my_window, own and foreign ledger) keeps the old rule.
 _SA = _authorship()
 try:
-    _WINDOWS_CUT = _SA.bash_windows(repo, _MY_SID) if _SA is not None and _MY_SID else _WINDOWS
+    _WINDOWS_CUT = _SA.bash_windows(ledger_root, _MY_SID) if _SA is not None and _MY_SID else _WINDOWS
 except Exception as e:   # a crash here would exit 1 and this hook then exits 0: fall back to the old rule instead
     logline(f"[{ts}] cut windows unavailable ({e!r}): the old rule decides")
     _WINDOWS_CUT = _WINDOWS
@@ -1248,7 +1250,7 @@ _FOREIGN_LEDGERS = {}
 def _foreign_windows(xml_path):
     """Windows of the ledger of the project holding xml_path (nearest ancestor with one); [] when
     there is none or it is this repo's own (already in _WINDOWS)."""
-    own = os.path.realpath(os.path.join(repo, LEDGER_REL))
+    own = os.path.realpath(os.path.join(ledger_root, LEDGER_REL))
     cur = os.path.dirname(os.path.abspath(xml_path))
     while True:
         cand = os.path.join(cur, LEDGER_REL)

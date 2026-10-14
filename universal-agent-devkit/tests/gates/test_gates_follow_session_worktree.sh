@@ -153,5 +153,42 @@ Gate exit 0
 [ "$rc" = 2 ] && grep -q "before-" "$TMP/gate.err" && ok "proof_gate: the turn class prompt_context wrote under main is read - a UI bug fix in the worktree owes its before-evidence" \
   || fail "proof_gate turn_class: rc=$rc (want 2, before-evidence asked) $(head -c 300 "$TMP/gate.err")"
 
+# OCR 11 / 15 (14/10): test_evidence_gate and post-fix-gate (through regression_gate) read bash_write_ledger.tsv under the tree they judge, but
+# bash_write_ledger.sh writes it under CLAUDE_PROJECT_DIR (main). A session in its worktree saw no window at all: another session's red XML
+# was counted as its failed fix (ANTI-LOOP), and an existing test it never touched blocked it. Fail closed, not a bypass. Both read the
+# ledger from main now, as precode_gate and testsourceset_gate already did.
+M2="$TMP/main2"; W2="$M2/.claude/worktrees/s61"
+mkdir -p "$M2/src/test" "$M2/.agents" && git -C "$M2" init -q -b main && git -C "$M2" config user.email t@t && git -C "$M2" config user.name t \
+  && printf '.claude/audit-gate/\n/.claude/worktrees/\n' > "$M2/.gitignore" && echo "fun ok() = 1" > "$M2/src/Core.kt" && echo "assert(true)" > "$M2/src/test/CoreTest.kt" \
+  && printf '%s\n' '{"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/*.kt","src/test/*.kt"],"mandatory_regression_tests":[{"id":"REG-X","name":"core","command":"true"}]}]}' \
+    > "$M2/.agents/regression_matrix.active.json" && git -C "$M2" add -A && git -C "$M2" commit -qm i
+git -C "$M2" worktree add -q --detach "$W2" HEAD
+mkdir -p "$M2/.claude/audit-gate/session_worktree"; for n in 61 62 63; do printf '%s\n' "$W2" > "$M2/.claude/audit-gate/session_worktree/s$n"; done
+ledger_main() {   # ledger_main <session> <start offset s> <end offset s> [<session> <start> <end>]...: Bash windows, written where bash_write_ledger.sh writes them (main)
+  python3 -I - "$M2/.claude/audit-gate/bash_write_ledger.tsv" "$@" <<'PY'
+import sys, time
+now, a = time.time(), sys.argv[2:]
+with open(sys.argv[1], "w") as fh:
+    for i in range(0, len(a), 3):
+        fh.write("%s\tstart\t%.3f\tw%d\n%s\tend\t%.3f\tw%d\n" % (a[i], now + float(a[i + 1]), i, a[i], now + float(a[i + 2]), i))
+PY
+}
+
+# 11: a red suite run inside ANOTHER session's window is not this session's failed fix; one inside its own window still is.
+XML="$W2/app/build/test-results/testDebugUnitTest/TEST-com.x.PaySuite.xml"; mkdir -p "$(dirname "$XML")"; : > "$W2/build.gradle"
+printf '<?xml version="1.0"?>\n<testsuite name="com.x.PaySuite" tests="1" failures="1" errors="0" skipped="0">\n<testcase classname="com.x.PaySuite" name="pays"><failure message="boom">x</failure></testcase>\n</testsuite>\n' > "$XML"
+python3 -I -c 'import os,sys,time; t=time.time()-30; os.utime(sys.argv[1], (t, t))' "$XML"
+evidence_hook() {   # evidence_hook <session>: rc of test_evidence_gate for that session's Stop in its worktree, one failed fix of the suite already counted
+  for d in "$W2" "$M2"; do mkdir -p "$d/.claude/audit-gate"; printf '{"last_run": 0.0, "streak": {"com.x.PaySuite#pays": 1}}\n' > "$d/.claude/audit-gate/failcycle_$1.json"; done
+  : > "$TMP/te.jsonl"
+  python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"Stop","session_id":sys.argv[1],"cwd":sys.argv[2],"transcript_path":sys.argv[3],"last_assistant_message":"PaySuite vẫn đỏ, tôi thử cách khác."}))' "$1" "$W2" "$TMP/te.jsonl" \
+    | CLAUDE_PROJECT_DIR="$M2" LESSON_REMINDER=0 BUG_LINK_REMINDER=0 RED_PROOF=0 bash "$DEVKIT_DIR/hooks/test_evidence_gate.sh" >/dev/null 2>"$TMP/gate.err"
+}
+ledger_main s-other -35 -25; evidence_hook s61; rc=$?
+[ "$rc" = 0 ] && ok "test_evidence_gate: a red XML in the worktree inside another session's window (main's ledger) is not this session's failed fix" \
+  || fail "test_evidence_gate ledger: another session's window, rc=$rc (want 0) $(head -c 300 "$TMP/gate.err")"
+ledger_main s62 -35 -25; evidence_hook s62; rc=$?
+[ "$rc" = 2 ] && ok "  … inside this session's own window it still counts (ANTI-LOOP)" || fail "test_evidence_gate own window: rc=$rc (want 2) $(head -c 300 "$TMP/gate.err")"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_gates_follow_session_worktree: PASS"; exit 0; } || { echo "test_gates_follow_session_worktree: FAIL ($FAILS)"; exit 1; }
