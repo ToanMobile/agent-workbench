@@ -308,11 +308,22 @@ fi
 
 if [ "${CACHED}" != block ] && [ "${HAVE_PY}" = 1 ]; then
   LOCK_FILE="${LOG_DIR}/test_run.lock"
-  { exec 9>>"${LOCK_FILE}"; } 2>/dev/null || true
+  # Read-write (`<>`), not `>>`: a write-only open of a FIFO waits for a reader for ever, and the sweep at the top cannot stop one
+  # planted after it (OpenCodeReview 14/10). A read-write open of a FIFO returns at once (Linux fifo(7), macOS bash 3.2 measured).
+  # The python below refuses anything but a regular file (post-fix-gate _state_fd's rule) and the compile then runs unlocked, as
+  # when the lock cannot be created: never BUSY, which would let the Stop through untested. test_testsourceset_gate_lock.sh case 9
+  { exec 9<>"${LOCK_FILE}"; } 2>/dev/null || true
   if { >&9; } 2>/dev/null; then
     WAIT_LIMIT="${TESTSOURCESET_LOCK_WAIT_S:-20}"
     LOCKED="$(TS_WAIT="${WAIT_LIMIT}" python3 -I -c '
-import sys, fcntl, time, os
+import sys, fcntl, time, os, stat
+try:
+    regular = stat.S_ISREG(os.fstat(9).st_mode)
+except OSError:
+    regular = False
+if not regular:
+    print("N")
+    sys.exit(0)
 try:
     end = time.monotonic() + float(os.environ.get("TS_WAIT", "20"))
 except ValueError:
@@ -331,7 +342,10 @@ while True:
         print("1")
         sys.exit(0)
 ' 2>/dev/null)"
-    if [ "${LOCKED}" = "0" ]; then
+    if [ "${LOCKED}" = "N" ]; then
+      log "LOCK — ${LOCK_FILE} is not a regular file: compiling unlocked"
+      { exec 9>&-; } 2>/dev/null || true
+    elif [ "${LOCKED}" = "0" ]; then
       log "BUSY — lock held (waited ${WAIT_LIMIT}s)"
       sysmsg "⚠ TEST-SOURCESET GATE UNTESTED — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau (${LOG_DIR}/test_run.lock); test source set CHƯA chạy, KHÔNG phải PASS."
       { exec 9>&-; } 2>/dev/null || true
