@@ -55,7 +55,8 @@ mkdir -p "$TMP/main-notes" && echo "my notes" > "$TMP/main-notes/todo.txt"
 mkdir -p "$TMP/main-empty/sub" "$TMP/main-links" && ln -s "$R" "$TMP/main-links/to-main"
 # 8 a full copy with its own .git DIRECTORY (a person's clone or backup): never ours
 mkdir -p "$TMP/main-backup" && cp -R "$R/.git" "$TMP/main-backup/.git" && cp "$R/app.txt" "$TMP/main-backup/"
-# 10 a new file under a build-folder name that git does NOT ignore here (out/): work, kept; and a secret named in another case: kept
+# 10 a new file under a build-folder name that git does NOT ignore here (out/): work, kept; and a secret named in another case, only
+#    the orphan has it: recognised as a secret, so (A.1b #12, tests/worktree_git/test_worktree_secret_carry.sh) copied into main, then deleted
 dangle main-orphan-outdir; mkdir -p "$TMP/main-orphan-outdir/out" && echo "not ignored" > "$TMP/main-orphan-outdir/out/new.txt"
 dangle main-orphan-casesecret; echo key > "$TMP/main-orphan-casesecret/Release.JKS"
 # --- review 4: each of these must be KEPT ---
@@ -117,13 +118,16 @@ for d in main-orphan-clean main-gate-orphan; do
 done
 for d in main-merged main-empty main-links main-ahead main-orphan-unique main-orphan-secret other-thing main-notes main-backup main-orphan-memory \
          main-orphan-detcommit main-orphan-staged main-orphan-trackedignored main-orphan-ignoreddata main-orphan-status \
-         main-review main-idle main-memnote main-regignored main-orphan-forcetracked main-orphan-outdir main-orphan-casesecret \
+         main-review main-idle main-memnote main-regignored main-orphan-forcetracked main-orphan-outdir \
          main-orphan-pm main-np main-orphan-cr main-gate-mixed main-orphan-sakey; do
   exists "$d" && ok "kept: $d" || fail "$d was deleted (it holds something unique or is not ours)"
 done
 grep -q "main-orphan-unique.*notes.md" "$TMP/gc.out" && ok "the kept orphan names its unique file" || fail "no reason for main-orphan-unique: $(cat "$TMP/gc.out")"
 grep -q "main-orphan-secret.*local.properties" "$TMP/gc.out" && ok "the kept orphan names its secret" || fail "no reason for main-orphan-secret: $(cat "$TMP/gc.out")"
-grep -q "main-orphan-casesecret.*Release.JKS" "$TMP/gc.out" && ok "  … whatever the case of its name" || fail "no reason for main-orphan-casesecret: $(cat "$TMP/gc.out")"
+! exists main-orphan-casesecret && [ "$(cat "$R/Release.JKS" 2>/dev/null)" = key ] && [ -z "$(G "$R" status --porcelain -- Release.JKS)" ] \
+  && grep -q "main-orphan-casesecret.*Release.JKS" "$TMP/gc.out" \
+  && ok "  … a secret whatever the case of its name (Release.JKS), only the orphan's: copied into main (ignored there), named, then the orphan deleted" \
+  || fail "main-orphan-casesecret: exists=$(exists main-orphan-casesecret && echo y || echo n) main has=$(cat "$R/Release.JKS" 2>&1): $(cat "$TMP/gc.out")"
 # a folder changed in the last WORKTREE_GC_MIN_AGE_S seconds may be a worktree add still being written: never touched
 dangle main-orphan-young; echo v1 > "$TMP/main-orphan-young/lib.txt"
 WORKTREE_GC_MIN_AGE_S=600 python3 "$WT" gc > "$TMP/gc3.out" 2>&1
