@@ -147,5 +147,23 @@ assert sw.write_record(m, "p6", w) and open(victim).read() == "keep", "write_rec
   && ok "record: pid on line 2 (a flag, 0, a string, a bad line: none), a killed write leaves no session record, a planted symlink is not written through" \
   || fail "record format / temp name"
 
+# 8 INSTINCT-040: tree_of reads a folder's .git file and its admin dir's commondir; a FIFO planted at either must not hang every gate that asks
+#   which tree it is in (OCR 4). Run in a child with a timeout: a hang is a failure, not a stuck test.
+mkdir -p "$TMP/fifo-gdir" "$TMP/fifo-wt/sub"; mkfifo "$TMP/fifo-gdir/commondir"; printf 'gitdir: %s\n' "$TMP/fifo-gdir" > "$TMP/fifo-wt/.git"
+python3 -I -c 'import subprocess, sys
+for what in sys.argv[2:]:
+    try:
+        r = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); import session_worktree as sw; print(sw.tree_of(sys.argv[2]))", sys.argv[1], what],
+                           timeout=5, capture_output=True, text=True)
+    except subprocess.TimeoutExpired:
+        print("HANG on " + what); sys.exit(1)' "$DEVKIT_DIR/hooks" "$TMP/fifo-wt" "$TMP/fifo-wt/sub" \
+  && ok "tree_of: a FIFO at <admin dir>/commondir does not hang it (read as a tree of its own, like a submodule)" || fail "tree_of hangs on a FIFO commondir"
+rm -f "$TMP/fifo-gdir/commondir" "$TMP/fifo-wt/.git"; mkfifo "$TMP/fifo-wt/.git.fifo" && mv "$TMP/fifo-wt/.git.fifo" "$TMP/fifo-wt/.git"
+python3 -I -c 'import subprocess, sys
+try:
+    subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); import session_worktree as sw; print(sw.tree_of(sys.argv[2]))", sys.argv[1], sys.argv[2]], timeout=5, capture_output=True)
+except subprocess.TimeoutExpired:
+    sys.exit(1)' "$DEVKIT_DIR/hooks" "$TMP/fifo-wt/sub" && ok "  … and a FIFO as the .git file itself" || fail "tree_of hangs on a FIFO .git"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_session_worktree: PASS"; exit 0; } || { echo "test_session_worktree: FAIL ($FAILS)"; exit 1; }

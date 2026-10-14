@@ -48,21 +48,16 @@ def tree_of(path):
         if os.path.isdir(dotgit):
             return cur, False, dotgit
         if os.path.isfile(dotgit):
-            try:
-                with open(dotgit, encoding="utf-8") as fh:
-                    line = fh.readline().strip()
-            except (OSError, UnicodeDecodeError):
-                return None
+            line = ((_read_small(dotgit) or "").splitlines() or [""])[0].strip()   # (never a plain open(): a FIFO there hangs every gate, INSTINCT-040)
             if not line.startswith("gitdir:"):
                 return None
             gdir = line[len("gitdir:"):].strip()
             gdir = os.path.realpath(gdir if os.path.isabs(gdir) else os.path.join(cur, gdir))
-            try:
-                with open(os.path.join(gdir, "commondir"), encoding="utf-8") as fh:
-                    common = fh.read().strip()
-                common = os.path.realpath(common if os.path.isabs(common) else os.path.join(gdir, common))
-            except (OSError, UnicodeDecodeError):
-                return cur, False, gdir   # a submodule (no commondir): its own tree
+            common = _read_small(os.path.join(gdir, "commondir"))
+            if common is None:
+                return cur, False, gdir   # a submodule (no commondir): its own tree - a FIFO or a symlink there reads the same
+            common = common.strip()
+            common = os.path.realpath(common if os.path.isabs(common) else os.path.join(gdir, common))
             return cur, True, common
         up = os.path.dirname(cur)
         if up == cur:
