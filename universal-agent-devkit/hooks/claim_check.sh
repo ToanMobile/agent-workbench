@@ -38,8 +38,9 @@ INPUT="$(cat)"
 # created /.claude/audit-gate/.
 REPO_ROOT="${CLAUDE_PROJECT_DIR:-}"
 if [ -z "${REPO_ROOT}" ]; then   # the regex costs ~10 ms on a 1 MB payload: only when it is needed
-  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+  RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'   # a JSON-escaped cwd too (é sent escaped, \", \\): tests/gates/test_hook_payload_cwd_escaped.sh
   [[ ${INPUT} =~ ${RX_CWD} ]] && _PCWD="${BASH_REMATCH[1]}" || _PCWD="."
+  case "${_PCWD}" in *\\*) _PCWD="$(python3 -I -c 'import json,sys; sys.stdout.buffer.write(json.loads("\"%s\"" % sys.argv[1]).encode())' "${_PCWD}" 2>/dev/null)" || _PCWD="." ;; esac
   REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
 fi
 LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"

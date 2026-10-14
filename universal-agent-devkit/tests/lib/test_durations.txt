@@ -184,6 +184,7 @@
 5 tests/context_memory/test_session_lock_robust.sh
 5 tests/gates/test_git_guard_shell_feed.sh
 5 tests/gates/test_hook_large_payload.sh
+5 tests/gates/test_hook_payload_cwd_escaped.sh
 4 tests/gates/test_push_gate_integrity.sh
 4 tests/gates/test_hardware_rm_containment.sh
 2 tests/gates/test_hook_log_dir.sh
