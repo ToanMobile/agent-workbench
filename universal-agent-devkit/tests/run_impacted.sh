@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs the DevKit tests that name a changed DevKit code file, every changed test script itself,
 # and the fast repo-consistency check. "Changed" = working tree vs HEAD, new files, and commits
-# not pushed yet (no upstream: the last 6 hours, or DEVKIT_IMPACTED_SINCE=<git date>; =0 none: a RED-proof sandbox), so committing
+# not pushed yet (no upstream: a linked worktree's commits since its merge-base with the main checkout, else the last 6 hours;
+# DEVKIT_IMPACTED_SINCE=<git date> sets that window; =0 none: a RED-proof sandbox), so committing
 # inside a turn does not leave the gate testing nothing. A helper under tests/ selects the tests that source it by name.
 # The full suite (`agent-kit test`) runs far longer than post-fix-gate's 900 s per command,
 # so a regression matrix that watches the DevKit (agent-workbench's) uses this instead.
@@ -36,6 +37,12 @@ if git rev-parse -q --verify '@{u}' >/dev/null 2>&1; then
   unpushed="$(git log '@{u}..HEAD' --name-only --relative --format= -- . 2>/dev/null)"
 elif [ "${DEVKIT_IMPACTED_SINCE:-}" = 0 ]; then
   unpushed=""   # a RED-proof sandbox (no upstream, a detached worktree): only the file it reverted is a change, not every commit of the last hours
+elif [ -z "${DEVKIT_IMPACTED_SINCE:-}" ] \
+  && [ "$(cd "$(git rev-parse --git-dir 2>/dev/null)" 2>/dev/null && pwd -P)" != "$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)" ] \
+  && base="$(git merge-base HEAD "$(git worktree list --porcelain 2>/dev/null | sed -n '1,/^$/s/^HEAD //p')" 2>/dev/null)" && [ -n "$base" ]; then
+  # a linked worktree (`agent-kit worktree add`, detached): what it holds that the main checkout's HEAD does not. The last 6 hours
+  # were other sessions' commits already in main (13/10: 157 tests instead of 11). A diff, not `git log`: that skips a merge's files.
+  unpushed="$(git diff --name-only --relative "$base" HEAD -- . 2>/dev/null)"
 else
   unpushed="$(git log --since="${DEVKIT_IMPACTED_SINCE:-6.hours}" --name-only --relative --format= -- . 2>/dev/null)"
 fi
