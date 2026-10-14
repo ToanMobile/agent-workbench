@@ -906,13 +906,17 @@ def _in_progress(wt):
     return None
 
 
-def _reflog_file_entries(wt):
+def _reflog_file_entries(wt, admin=None):
     """Entries in the worktree's own HEAD reflog FILE (0 when there is none: nothing to lose), or None when it cannot be read.
-    `git log -g` prints nothing and exits 0 for an unreadable or corrupt reflog: only the file shows the difference."""
-    r = git(wt, "rev-parse", "--git-path", "logs/HEAD", check=False)
-    path = r.stdout.strip()
-    if r.returncode != 0 or not path:
-        return None
+    `git log -g` prints nothing and exits 0 for an unreadable or corrupt reflog: only the file shows the difference. `admin`: the
+    worktree's admin dir (_admin_dir), read directly — its folder may be gone, so git cannot be asked there."""
+    if admin:
+        path = os.path.join(admin, "logs", "HEAD")
+    else:
+        r = git(wt, "rev-parse", "--git-path", "logs/HEAD", check=False)
+        path = r.stdout.strip()
+        if r.returncode != 0 or not path:
+            return None
     try:
         return sum(1 for line in _read_regular(os.path.join(wt, path)).split(b"\n") if line.strip())
     except FileNotFoundError:
@@ -932,7 +936,7 @@ def _is_ancestor(wt, a, b):
     return git(wt, "merge-base", "--is-ancestor", a, b, check=False).returncode == 0   # rc 1 (no) and any trouble: no
 
 
-def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False):
+def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False, admin=None):
     """Commits that nothing but this worktree's own HEAD reflog names (`checkout --detach HEAD~1`, `reset`, a commit made detached
     and then `checkout <branch>`): a removal deletes that reflog and the commit is gone at the next gc. [sha, ...] newest first,
     or None when git could not say (fail closed; an unreadable, irregular or corrupt reflog file is such a case). `refs`: the commit
@@ -940,11 +944,13 @@ def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False):
     squash, a commit whose files hold the same bytes in main, one that main (or the current HEAD) has as the same patch
     (cherry-picked, rebased), the commits of a chain whose whole patch is in main already (a squash brought back as one diff); for a
     worktree on a BRANCH (`attached`) also a commit the reflog of a local branch names (`reset --hard HEAD~1`, `commit --amend` on
-    the branch: the branch reflog survives the removal)."""
-    on_file = _reflog_file_entries(wt) if reflog_lines is False else reflog_lines   # BEFORE git reads that file: a FIFO there would block `git log -g`
+    the branch: the branch reflog survives the removal). `admin`: read the HEAD reflog from that admin dir (a worktree whose folder
+    is gone, A.2 #3); `wt` is then any checkout of the repository: every other check reads only the objects and refs all share."""
+    on_file = _reflog_file_entries(wt, admin) if reflog_lines is False else reflog_lines   # BEFORE git reads that file: a FIFO there would block `git log -g`
     if on_file is None:
         return None
-    r = git(wt, "log", "-g", "--format=%H%x09%gs", "HEAD", check=False)
+    log = ("log", "-g", "--format=%H%x09%gs", "HEAD")
+    r = _gd(admin, *log) if admin else git(wt, *log, check=False)
     if r.returncode != 0:
         return None
     entries = [(l.split("\t", 1) + [""])[:2] for l in r.stdout.splitlines() if l]
@@ -1000,6 +1006,48 @@ def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False):
 # ponytail (accepted, same as the base): the whole-patch rule above allows a chain that DELIBERATELY reverted itself (add V then delete V, edit then revert,
 # a binary added then deleted, `merge -s ours` of a side commit): its net patch is empty / already in main. Patch ids ignore whitespace and EOL. Upgrade
 # only if such a chain must keep the worktree: judge every commit's own diff against main as well.
+
+
+def _admin_dir(cwd, path):
+    """The admin dir (<common>/worktrees/<id>) git keeps for the registered worktree at `path` until a prune — also when its folder is
+    gone, so the reflog there can still be read (A.2 #3). Matched the way `git worktree list` derives a path from <id>/gitdir (absolute,
+    or relative to the admin dir: worktree.useRelativePaths). "" when git no longer lists `path` (pruned or removed: its reflog went with
+    it); None when it cannot be told (git fails, an unreadable gitdir file, two registrations claiming the path, a listed path not found)."""
+    r = git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir", check=False)
+    common = r.stdout.strip()
+    if r.returncode != 0 or not common:
+        return None
+    root = os.path.join(common, "worktrees")
+    try:
+        ids = os.listdir(root)
+    except FileNotFoundError:
+        ids = []
+    except OSError:
+        return None
+    found, unreadable = [], False
+    for i in ids:
+        adm = os.path.join(root, i)
+        try:
+            raw = _read_regular(os.path.join(adm, "gitdir"), 65536).decode("utf-8", "surrogateescape").rstrip()
+        except FileNotFoundError:
+            continue   # not a worktree's admin dir
+        except OSError:
+            unreadable = True
+            continue
+        p = raw[:-len("/.git")] if raw.endswith("/.git") else raw
+        if not os.path.isabs(p):
+            p = os.path.realpath(os.path.join(adm, p))
+        if p == path or os.path.realpath(p) == os.path.realpath(path):
+            found.append(adm)
+    if len(found) == 1:
+        return found[0]
+    if found or unreadable:
+        return None
+    try:
+        listed = any(not e["broken"] and _same_path(e["path"], path) for e in _worktree_entries(cwd))
+    except SystemExit:
+        return None
+    return None if listed else ""
 
 
 EXTRA_CHECK_BUDGET_S = 3.0   # the checks that can only CLEAR a worktree (patch ids, merge-tree) stop after this much time per inventory
@@ -1064,7 +1112,12 @@ def _inventory(cwd, only, budget):
             held_only = _count(cwd, stdin="\n".join(rev_in) + "\n")
         if head:   # also a worktree on a branch: it can detach, commit, and go back (the commit is then named by its reflog only)
             try:
-                reflog = _reflog_only(path, head, main_head, refs, attached=not e["detached"], reflog_lines=rl) if os.path.isdir(path) else []
+                reflog = _reflog_only(path, head, main_head, refs, attached=not e["detached"], reflog_lines=rl) if os.path.isdir(path) else None
+                if not os.path.isdir(path):
+                    # gone before (or while) its reflog was read: git keeps that reflog in the admin dir until a prune, so it is read
+                    # there (A.2 #3: [] here let a commit only the reflog names pass); unregistered meanwhile: the reflog went with it
+                    adm = _admin_dir(cwd, path)
+                    reflog = None if adm is None else [] if not adm else _reflog_only(cwd, head, main_head, refs, attached=not e["detached"], admin=adm)
             except Exception:  # noqa: BLE001 - cannot say: counts as holding commits no ref keeps
                 reflog = None
         try:

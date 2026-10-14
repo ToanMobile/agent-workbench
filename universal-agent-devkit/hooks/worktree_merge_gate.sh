@@ -307,12 +307,22 @@ def gone_admin_dir(path):
 
 def gone_folder_reason(path):
     """A registered worktree whose folder is gone (rm -rf from outside, no prune): '' when the HEAD `git worktree list` showed is in
-    main, or main holds the same patches (brought back with diff | git apply, cherry-picked, amended and merged); else why it is held,
-    naming the commit to bring back. A git error is "cannot say", which holds. Commits only its HEAD reflog named are not checked here
-    (the folder that reflog-only analysis needs is gone; see docs/issues-bugs.md A.2 #3)."""
+    main, or main holds the same patches (brought back with diff | git apply, cherry-picked, amended and merged), and no commit is named
+    only by its HEAD reflog (inventory() reads that reflog from the admin dir git keeps until a prune: docs/issues-bugs.md A.2 #3); else
+    why it is held, naming the commit to bring back. A git error, or worktree.py not importable, is "cannot say", which holds."""
     base = listed_heads.get(path) or listed_heads.get(os.path.realpath(path))
     if not base:
         return "thư mục đã bị xoá và git không còn biết HEAD của nó: không biết commit đã về main chưa"
+    try:
+        rows = wt.inventory(repo, only=path) if wt is not None else None
+    except (Exception, SystemExit):
+        rows = None
+    lost = rows[0].get("reflog") if rows else ([] if rows is not None else None)   # [] rows: no longer listed, its reflog went with it
+    if lost is None:
+        return "thư mục đã bị xoá và không đọc được reflog của nó: không biết còn commit nào chỉ reflog đó giữ"
+    if lost:
+        return (f"thư mục đã bị xoá nhưng {len(lost)} commit chỉ còn trong reflog của nó (không nhánh nào giữ, main chưa có), "
+                f"mới nhất {lost[0][:10]}: giữ bằng nhánh `git -C {shlex.quote(repo)} branch rescue/<tên> {lost[0][:10]}` rồi đem về")
     if in_main(base):
         return ""
     out = git("rev-list", "--cherry-pick", "--right-only", "--no-merges", "HEAD..." + base)
