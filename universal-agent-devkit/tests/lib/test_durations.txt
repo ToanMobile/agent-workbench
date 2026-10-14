@@ -250,7 +250,9 @@
 23 tests/gates/test_review_gate_ocr_full.sh
 1 tests/installer/test_ocr_review_helper.sh
 3 tests/worktree_git/test_worktree_gc.sh
-4 tests/gates/test_gate_project_removed_midrun.sh
+17 tests/worktree_git/test_worktree_limits.sh
+5 tests/gates/test_gate_project_removed_midrun.sh
+30 tests/worktree_git/test_worktree_lock_helper.sh
 1 tests/gates/test_review_gate_bash_edit.sh
 1 tests/verification/test_run_impacted_all_hooks.sh
 1 tests/context_memory/test_session_lock_file_writes.sh

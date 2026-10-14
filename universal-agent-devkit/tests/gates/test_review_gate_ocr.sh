@@ -149,6 +149,12 @@ ev agent t4 principal-code-reviewer
 stop s; rc=$?
 [ "$rc" = 0 ] && ok "  … no LLM endpoint (OCR fell back to its delegation spec) + an agent review after the edit: passes (rc 0)" \
   || fail "delegation fallback + agent review blocked (rc $rc)"
+: > "$TR"; ev edit t1 "$P/app.py"; ev bash t3 ".agents/devkit/bin/ocr-review --out $TMP/spec"
+ev result t3 ok $'ocr review could not use its LLM endpoint (LLM endpoint unusable: every request rejected, 0 tokens): You have reached your specified API usage limits; using OCR delegation mode (no LLM, no key)\nmode: delegate\nspec: '"$TMP/spec/ocr-spec.md"
+ev agent t4 principal-code-reviewer
+stop s2; rc=$?
+[ "$rc" = 0 ] && ok "  … an endpoint that rejects every request (usage limit): the same fallback + an agent review passes (rc 0)" \
+  || fail "unusable-endpoint fallback + agent review blocked (rc $rc)"
 : > "$TR"; ev bash t3 ".agents/devkit/bin/ocr-review --out $TMP/spec"
 ev result t3 ok $'ocr review needs an LLM endpoint (no valid LLM endpoint configured); using OCR delegation mode (no LLM, no key)\nmode: delegate\nspec: '"$TMP/spec/ocr-spec.md"
 ev edit t1 "$P/app.py"

@@ -123,7 +123,7 @@ Thứ tự trong W1, mỗi bước có test ĐỎ trước:
    Stop, kèm lý do. Phải xong trước gc, vì gc cũng xoá.
 1. R5b gc (đĩa đang cạn). *(13/10 xong, Đợt 35: `agent-kit worktree gc`, chỉ dọn thư mục mà git không còn biết, chạy nền ở mỗi SessionStart, log `.claude/audit-gate/worktree_gc.log`; worktree còn đăng ký vẫn do `worktree_merge_gate` lo; qua 3 vòng principal-code-reviewer + OpenCodeReview)*
 2. R5a *(14/10 xong, Đợt 37: gate gặp thư mục project đã mất thì không ghi gì, kết luận CHƯA XÁC MINH)*
-3. R5c
+3. R5c *(14/10 xong, Đợt 39: `worktree add` chạy gc và cảnh báo dưới 10 GiB, không tạo dưới 3 GiB, tối đa 3 worktree mỗi repo, exit 4 khi từ chối; SessionStart cảnh báo đĩa thấp)*
 4. R4
 5. R3
 6. Phase 0: đo thời gian tạo worktree (`agent-kit worktree add`), lần build đầu và dung lượng mỗi repo

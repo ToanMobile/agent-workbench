@@ -351,6 +351,16 @@ try:
 except Exception:
     pass  # branch hygiene is advice; it must never break session start
 
+try:   # W1 R5c: the disk the worktrees land on is low; worktree.py holds the numbers (the same lines `worktree add` applies)
+    sys.path.insert(0, os.path.dirname(os.environ.get("WT_SCRIPT") or ""))
+    import worktree as _wtd
+    _free = _wtd.free_gib(root)
+    if _free is not None and _free < max(_wtd.DISK_WARN_GIB, _wtd.DISK_MIN_GIB):
+        out.append(f"Đĩa còn {_free:.1f} GiB trống: xoá build/cache cũ; `agent-kit worktree add` chạy worktree gc trước khi tạo"
+                   + (f", dưới {_wtd.DISK_MIN_GIB:g} GiB thì không tạo worktree mới." if _wtd.DISK_MIN_GIB > 0 else "."))
+except Exception:
+    pass  # disk advice; it must never break session start
+
 stop_tests = ("test hồi quy theo ma trận" if state == "trusted"
               else "test hồi quy CHỈ khi ma trận được áp dụng và gate tin (hiện chưa — xem Trạng thái)")
 out.append("Gate chạy tự động: Bash chặn git nguy hiểm/--no-verify; Edit cần Read trước; khi dừng: " + stop_tests +

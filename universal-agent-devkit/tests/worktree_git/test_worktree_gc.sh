@@ -124,9 +124,6 @@ done
 grep -q "main-orphan-unique.*notes.md" "$TMP/gc.out" && ok "the kept orphan names its unique file" || fail "no reason for main-orphan-unique: $(cat "$TMP/gc.out")"
 grep -q "main-orphan-secret.*local.properties" "$TMP/gc.out" && ok "the kept orphan names its secret" || fail "no reason for main-orphan-secret: $(cat "$TMP/gc.out")"
 grep -q "main-orphan-casesecret.*Release.JKS" "$TMP/gc.out" && ok "  … whatever the case of its name" || fail "no reason for main-orphan-casesecret: $(cat "$TMP/gc.out")"
-# a pid this user may not signal (EPERM, pid 1) is a LIVE holder: the module's one _pid_alive (the automerge lock relies on it)
-(cd "$DEVKIT_DIR/scripts/git" && python3 -I -c 'import sys; sys.path.insert(0, "."); import worktree as w; sys.exit(0 if w._pid_alive(1) else 1)') \
-  && ok "_pid_alive: EPERM counts as alive" || fail "_pid_alive(1) reads as dead"
 # a folder changed in the last WORKTREE_GC_MIN_AGE_S seconds may be a worktree add still being written: never touched
 dangle main-orphan-young; echo v1 > "$TMP/main-orphan-young/lib.txt"
 WORKTREE_GC_MIN_AGE_S=600 python3 "$WT" gc > "$TMP/gc3.out" 2>&1

@@ -104,11 +104,6 @@
         "mcp-servers/antigravity-pm-mcp/*.ts",
         "mcp-servers/antigravity-pm-mcp/*.tsx",
         "mcp-servers/antigravity-pm-mcp/*.vue"
-      ],
-      "stale_since": "2026-10-14 08:16:59",
-      "stale_files": [
-        "mcp-servers/antigravity-pm-mcp/src/proof.js",
-        "mcp-servers/antigravity-pm-mcp/tests/proof.test.js"
       ]
     },
     "REG-AUTO-PLAY-STORE-MCP-01": {
@@ -251,10 +246,6 @@
         "universal-agent-devkit/bin/tree_fp.py",
         "universal-agent-devkit/scripts/linters/assertion_lint.py",
         "universal-agent-devkit/bin/postfix-gate"
-      ],
-      "stale_since": "2026-10-14 08:16:59",
-      "stale_files": [
-        "universal-agent-devkit/bin/post-fix-gate.py"
       ]
     },
     "REG-DK-GATE-02": {
@@ -337,10 +328,6 @@
         "universal-agent-devkit/bin/tree_fp.py",
         "universal-agent-devkit/scripts/linters/assertion_lint.py",
         "universal-agent-devkit/bin/postfix-gate"
-      ],
-      "stale_since": "2026-10-14 08:16:59",
-      "stale_files": [
-        "universal-agent-devkit/bin/post-fix-gate.py"
       ]
     },
     "REG-DK-HOOK-01": {
@@ -348,16 +335,49 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-14 01:03:17",
-        "ts": 1791914597.545089,
-        "task": null,
-        "commit": "338b2ca+dirty",
-        "duration": "57.48s",
+        "at": "2026-10-14 07:45:12",
+        "ts": 1791938712.283398,
+        "task": "session-d352c03b-d20",
+        "commit": "1111bcd+dirty",
+        "duration": "150.51s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-01/20261014-010316.log",
+        "log": ".agents/evidence/REG-DK-HOOK-01/20261014-073947.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-14 07:45:12",
+          "ts": 1791938712.283398,
+          "task": "session-d352c03b-d20",
+          "commit": "1111bcd+dirty",
+          "duration": "150.51s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261014-073947.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-14 07:30:15",
+          "ts": 1791937815.841233,
+          "task": null,
+          "commit": "097c3f7+dirty",
+          "duration": "74.06s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261014-072319.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-14 07:15:34",
+          "ts": 1791936934.113962,
+          "task": null,
+          "commit": "097c3f7+dirty",
+          "duration": "107.80s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261014-071040.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-14 01:03:17",
@@ -379,39 +399,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-01/20261014-005722.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 00:36:52",
-          "ts": 1791913012.9292212,
-          "task": null,
-          "commit": "a148b15+dirty",
-          "duration": "89.87s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261014-003515.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 00:11:47",
-          "ts": 1791911507.52497,
-          "task": null,
-          "commit": "b0ff762+dirty",
-          "duration": "123.39s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261014-000937.log",
-          "deleted": []
-        },
-        {
-          "status": "FAIL",
-          "at": "2026-10-13 23:40:54",
-          "ts": 1791909654.936775,
-          "task": null,
-          "commit": "b0ff762+dirty",
-          "duration": "151.45s",
-          "exit_code": 1,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261013-234010.log",
-          "deleted": []
         }
       ],
       "title": "hook contract",
@@ -419,13 +406,6 @@
       "command": "bash universal-agent-devkit/hooks/tests/hook_contract_test.sh",
       "watch_files": [
         "universal-agent-devkit/hooks/*"
-      ],
-      "stale_since": "2026-10-14 08:16:59",
-      "stale_files": [
-        "universal-agent-devkit/hooks/review_gate.sh",
-        "universal-agent-devkit/hooks/tests/hook_contract_test.sh",
-        "universal-agent-devkit/hooks/shell_writes.py",
-        "universal-agent-devkit/hooks/worktree_guard.sh"
       ]
     },
     "REG-DK-HOOK-02": {
@@ -433,16 +413,49 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-14 01:03:17",
-        "ts": 1791914597.554511,
-        "task": null,
-        "commit": "338b2ca+dirty",
-        "duration": "22.36s",
+        "at": "2026-10-14 07:45:12",
+        "ts": 1791938712.2919638,
+        "task": "session-d352c03b-d20",
+        "commit": "1111bcd+dirty",
+        "duration": "28.58s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-02/20261014-010241.log",
+        "log": ".agents/evidence/REG-DK-HOOK-02/20261014-073745.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-14 07:45:12",
+          "ts": 1791938712.2919638,
+          "task": "session-d352c03b-d20",
+          "commit": "1111bcd+dirty",
+          "duration": "28.58s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261014-073745.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-14 07:30:15",
+          "ts": 1791937815.857734,
+          "task": null,
+          "commit": "097c3f7+dirty",
+          "duration": "22.18s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261014-072227.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-14 07:15:34",
+          "ts": 1791936934.122348,
+          "task": null,
+          "commit": "097c3f7+dirty",
+          "duration": "22.66s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261014-070915.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-14 01:03:17",
@@ -464,39 +477,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-HOOK-02/20261014-005655.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 00:36:52",
-          "ts": 1791913012.929226,
-          "task": null,
-          "commit": "a148b15+dirty",
-          "duration": "25.87s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261014-003411.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 00:11:47",
-          "ts": 1791911507.533959,
-          "task": null,
-          "commit": "b0ff762+dirty",
-          "duration": "22.08s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-02/20261014-000756.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 23:40:54",
-          "ts": 1791909654.949586,
-          "task": null,
-          "commit": "b0ff762+dirty",
-          "duration": "23.14s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-02/20261013-233802.log",
-          "deleted": []
         }
       ],
       "title": "proof gate",
@@ -504,13 +484,6 @@
       "command": "bash universal-agent-devkit/tests/gates/test_proof_gate.sh",
       "watch_files": [
         "universal-agent-devkit/hooks/*"
-      ],
-      "stale_since": "2026-10-14 08:16:59",
-      "stale_files": [
-        "universal-agent-devkit/hooks/review_gate.sh",
-        "universal-agent-devkit/hooks/tests/hook_contract_test.sh",
-        "universal-agent-devkit/hooks/shell_writes.py",
-        "universal-agent-devkit/hooks/worktree_guard.sh"
       ]
     },
     "REG-DK-HEALTH-01": {
@@ -596,16 +569,60 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-14 01:03:17",
-        "ts": 1791914597.5545201,
+        "at": "2026-10-14 08:37:39",
+        "ts": 1791941859.5084789,
         "task": null,
-        "commit": "338b2ca+dirty",
-        "duration": "37.68s",
+        "commit": "1111bcd+dirty",
+        "duration": "470.38s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261014-010257.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261014-083738.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-14 08:37:39",
+          "ts": 1791941859.5084789,
+          "task": null,
+          "commit": "1111bcd+dirty",
+          "duration": "470.38s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261014-083738.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-14 07:45:12",
+          "ts": 1791938712.2919738,
+          "task": "session-d352c03b-d20",
+          "commit": "1111bcd+dirty",
+          "duration": "475.27s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261014-074512.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-14 07:30:15",
+          "ts": 1791937815.857749,
+          "task": null,
+          "commit": "097c3f7+dirty",
+          "duration": "489.65s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261014-073014.log",
+          "deleted": []
+        },
+        {
+          "status": "FAIL",
+          "at": "2026-10-14 07:15:34",
+          "ts": 1791936934.122354,
+          "task": null,
+          "commit": "097c3f7+dirty",
+          "duration": "401.42s",
+          "exit_code": 1,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261014-071534.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-14 01:03:17",
@@ -616,50 +633,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-ALL-01/20261014-010257.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 00:57:23",
-          "ts": 1791914243.293941,
-          "task": null,
-          "commit": "338b2ca+dirty",
-          "duration": "36.13s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261014-005711.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 00:36:52",
-          "ts": 1791913012.929234,
-          "task": null,
-          "commit": "a148b15+dirty",
-          "duration": "187.13s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261014-003652.log",
-          "deleted": []
-        },
-        {
-          "status": "FAIL",
-          "at": "2026-10-14 00:22:24",
-          "ts": 1791912144.52769,
-          "task": null,
-          "commit": "a148b15+dirty",
-          "duration": "265.36s",
-          "exit_code": 1,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261014-002224.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 00:11:47",
-          "ts": 1791911507.533964,
-          "task": null,
-          "commit": "b0ff762+dirty",
-          "duration": "252.88s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261014-001146.log",
-          "deleted": []
         }
       ],
       "title": "DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit",
@@ -667,14 +640,6 @@
       "command": "bash universal-agent-devkit/tests/run_impacted.sh",
       "watch_files": [
         "universal-agent-devkit/*"
-      ],
-      "stale_since": "2026-10-14 08:16:59",
-      "stale_files": [
-        "universal-agent-devkit/AGENTS.md",
-        "universal-agent-devkit/CHANGELOG.md",
-        "universal-agent-devkit/bin/ocr-review",
-        "universal-agent-devkit/hooks/review_gate.sh",
-        "universal-agent-devkit/hooks/tests/hook_contract_test.sh"
       ]
     },
     "BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du": {
@@ -1218,11 +1183,6 @@
       "watch_files": [
         "universal-agent-devkit/bin/session_lock.py",
         "universal-agent-devkit/bin/post-fix-gate.py"
-      ],
-      "stale_since": "2026-10-14 08:16:59",
-      "stale_files": [
-        "universal-agent-devkit/bin/post-fix-gate.py",
-        "universal-agent-devkit/bin/session_lock.py"
       ]
     },
     "REG-DK-SANDBOX-01": {
@@ -1422,10 +1382,6 @@
       "component": "devkit-token-cost",
       "command": "bash universal-agent-devkit/tests/context_memory/test_token_cost_tracker.sh",
       "watch_files": [
-        "universal-agent-devkit/scripts/governance/token_cost_tracker.py"
-      ],
-      "stale_since": "2026-10-14 08:16:59",
-      "stale_files": [
         "universal-agent-devkit/scripts/governance/token_cost_tracker.py"
       ]
     },
@@ -1664,8 +1620,8 @@
       "red_proof": {
         "at": "2026-10-08 23:45:10",
         "ts": 1791477910.249443,
-        "status": "PROVEN",
-        "reason": "đỏ khi bỏ bản sửa, xanh khi có",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/worktree_git/test_worktree_automerge.sh đã đổi sau lần chứng minh",
         "mode": "revert",
         "fix_commit": "68ccbd01480e",
         "files": {
@@ -1881,8 +1837,8 @@
       "red_proof": {
         "at": "2026-10-09 22:08:47",
         "ts": 1791558527.419274,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_git_guard_shell_subst.sh đã đổi sau lần chứng minh",
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -1917,8 +1873,8 @@
       "red_proof": {
         "at": "2026-10-09 21:32:10",
         "ts": 1791556330.778254,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh đã đổi sau lần chứng minh",
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -1953,8 +1909,8 @@
       "red_proof": {
         "at": "2026-10-09 18:15:53",
         "ts": 1791544553.077399,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_review_timing_guard_big_payload.sh đã đổi sau lần chứng minh",
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -2011,8 +1967,8 @@
       "red_proof": {
         "at": "2026-10-09 21:07:54",
         "ts": 1791554874.346621,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh đã đổi sau lần chứng minh",
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -2047,8 +2003,8 @@
       "red_proof": {
         "at": "2026-10-09 21:08:45",
         "ts": 1791554925.009863,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh đã đổi sau lần chứng minh",
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -2083,8 +2039,8 @@
       "red_proof": {
         "at": "2026-10-09 21:11:02",
         "ts": 1791555062.796758,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_gate_js_describe_scope.sh đã đổi sau lần chứng minh",
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -2155,8 +2111,8 @@
       "red_proof": {
         "at": "2026-10-09 19:04:33",
         "ts": 1791547473.95009,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_churn_guard_fast_path.sh đã đổi sau lần chứng minh",
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -3450,6 +3406,48 @@
       "linked_ts": 1791914613.5407429,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_review_gate_ocr.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261014-ocr-endpoint-rejected-holds-stop": {
+      "id": "BUG-20261014-ocr-endpoint-rejected-holds-stop",
+      "kind": "bug",
+      "title": "ocr-review failed hard when the OCR LLM endpoint rejected every request (API key over its usage limit), so review_gate held every session's Stop",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-14 07:08:41",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-14 07:08:42",
+      "linked_ts": 1791936522.715316,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/installer/test_ocr_review_helper.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261014-lock-file-stale-takeover-race": {
+      "id": "BUG-20261014-lock-file-stale-takeover-race",
+      "kind": "bug",
+      "title": "worktree.py _lock_file (automerge, MAIN_LOCK, worktree add) let two waiters take over a dead holder's O_EXCL lock file together, and gave up at once when the file vanished mid-read",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-14 08:03:46",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-14 08:03:47",
+      "linked_ts": 1791939827.472948,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/worktree_git/test_worktree_lock_helper.sh"
       ],
       "state": "confirmed"
     },
