@@ -31,7 +31,7 @@
 # At most 3 holds per session and pending set, then the Stop passes with a systemMessage (a merge
 # conflict that needs the user must never trap the session); the debt stays for the next session,
 # and session_context.sh names each unintegrated worktree at every start.
-# Fail-open after 13 s (the alarm below; the Stop timeout is 15 s) and whenever there is NOTHING to protect (no worktree this session is responsible for).
+# Fail-open after 13 s (the alarm below; the Stop timeout is 15 s; inside the session's own worktree merge it only ends that merge with a note, so a hold already decided survives it) and whenever there is NOTHING to protect (no worktree this session is responsible for).
 # An internal error while there IS something to protect HOLDS the Stop instead of passing it: inventory() raising, worktree.py or
 # session_lock.py not importable, or a responsible worktree whose git dir cannot be determined. Those holds go through the same
 # cap as every other (3 per session and pending set), so a persistent error never traps a session; after the cap the Stop passes
@@ -52,7 +52,14 @@ REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || 
 WMG_REPO="${REPO_ROOT}" WMG_DEVKIT="${DEVKIT}" python3 -I <<'PY' 3<<<"${INPUT}"
 import datetime, glob, hashlib, json, os, re, shlex, signal, stat, subprocess, sys, time
 
+class OwnBudget(BaseException):   # not Exception: nothing between the alarm and merge_own's caller may swallow it
+    pass
+
+own_guard = False   # True while merge_own runs
+
 def fail_open(*_):
+    if own_guard:
+        raise OwnBudget()   # unwinds merge_own into a note: the os._exit below would take a hold already decided with it
     os._exit(0)   # not SystemExit: worktree.py catches that around git calls, and the alarm fires once
 
 signal.signal(signal.SIGALRM, fail_open)
@@ -535,10 +542,11 @@ if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != 
 def merge_own(path):
     """W1 R1 v6: the session's own worktree into main with `automerge --keep` (the R3 gate runs, main fast-forwards, the worktree stays)
     when its work is committed and no test run holds it. A note for the session, never a hold: it is alive and goes on working there."""
-    if signal.getitimer(signal.ITIMER_REAL)[0] < 4.0:   # the alarm passes the Stop silently (os._exit): a hold still to be decided below would go with it
+    no_merge = wt is None or os.environ.get("WORKTREE_AUTO_MERGE", "1") == "0"   # the own worktree is not in `pending`: with no merge here nothing else would ever name it (OCR 7)
+    if not no_merge and signal.getitimer(signal.ITIMER_REAL)[0] < 4.0:   # a merge not started with the budget nearly spent (the alarm's note below covers one that is cut)
         return f"gần hết thời gian của cổng: chưa gộp worktree phiên {path}, lần dừng sau gộp"
     head = git("rev-parse", "HEAD", cwd=path)
-    if wt is None or os.environ.get("WORKTREE_AUTO_MERGE", "1") == "0":   # the own worktree is not in `pending`: with no merge here nothing else would ever name it (OCR 7)
+    if no_merge:   # starts nothing: needs none of the reserve above
         return (f"tự gộp đang tắt hoặc không dùng được: worktree phiên {path} còn commit chưa vào main, chạy `agent-kit worktree finish {shlex.quote(path)} --keep`"
                 if head and not in_main(head) else "")
     if not head:
@@ -582,10 +590,15 @@ def merge_own(path):
 
 own_note = ""
 if trunk and own and own in live:
+    own_guard = True
     try:
         own_note = merge_own(own)
+    except OwnBudget:   # the alarm went off inside: a merge already started goes on in the background
+        own_note = f"hết thời gian của cổng giữa lúc gộp worktree phiên {own}: kết quả ở lần dừng sau"
     except (Exception, SystemExit) as e:   # a note, never a hold: the session is alive
         own_note = f"gộp worktree phiên lỗi ({type(e).__name__}): lần dừng sau thử lại"
+    finally:
+        own_guard = False
 if sw_mod is not None:
     try:
         sw_mod.prune_records(repo)   # records of worktrees merged and removed name nothing any more

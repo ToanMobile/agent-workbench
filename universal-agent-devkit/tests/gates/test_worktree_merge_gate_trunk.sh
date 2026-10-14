@@ -235,5 +235,21 @@ gate_in "$TMP/kit12" "$TMP/q3" s1 "$TMP/q3/.claude/worktrees/s1"; rc=$?
 [ "$rc" = 0 ] && [ ! -f "$TMP/q3/twelve.txt" ] && grep -q 'agent-kit worktree finish .*--keep' "$TMP/out" \
   && ok "  … worktree.py not importable: the same note" || fail "worktree.py not importable, own commit not in main: no note (rc $rc): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
 
+# 13 the 13 s alarm going off INSIDE merge_own: its git calls (the HEAD read and the is-ancestor test, 5 s timeouts of their own) can outlast what is
+#    left, and the alarm's os._exit(0) then passes the Stop in silence although a hold is due (second review 14/10, R4b). The alarm now unwinds
+#    merge_own into a note and the hold survives. A git shim stalls exactly those two calls for 4 s each; the kit copy's alarm is 7 s, so it
+#    goes off during the second one (the entry check, 4 s left, still passes: the first call starts with about 6 s).
+FK="$TMP/kit13"; mkkit "$FK"; sed 's/signal\.alarm(13)/signal.alarm(7)/' "$HOOK" > "$FK/hooks/worktree_merge_gate.sh"
+grep -q 'signal\.alarm(7)' "$FK/hooks/worktree_merge_gate.sh" || fail "setup: the alarm of the kit copy was not patched"
+repo r1; wtadd "$TMP/r1" s1 s1; commit_in "$TMP/r1" s1 own; record "$TMP/r1" s1 s1
+wtadd "$TMP/r1" s8 s8; commit_in "$TMP/r1" s8 eight; record "$TMP/r1" s8 s8 "$DEAD"; rm -rf "$TMP/r1/.claude/worktrees/s8"   # a dead session's vanished worktree: a hold that needs no merge
+SHIM="$TMP/shim13"; mkdir -p "$SHIM"; OWNSHA="$(G "$TMP/r1/.claude/worktrees/s1" rev-parse HEAD)"
+printf '#!/bin/bash\ncase "$*" in\n  "-C %s rev-parse HEAD"|"-C %s merge-base --is-ancestor %s HEAD") sleep 4;;\nesac\nexec "%s" "$@"\n' \
+  "$TMP/r1/.claude/worktrees/s1" "$TMP/r1" "$OWNSHA" "$(command -v git)" > "$SHIM/git"; chmod +x "$SHIM/git"
+PATH="$SHIM:$PATH" gate_in "$FK" "$TMP/r1" s1 "$TMP/r1/.claude/worktrees/s1"; rc=$?
+[ "$rc" = 2 ] && grep -q "$TMP/r1/.claude/worktrees/s8" "$TMP/err" && grep -q "hết thời gian của cổng giữa lúc gộp" "$TMP/err" && [ ! -f "$TMP/r1/own.txt" ] \
+  && ok "the alarm goes off inside merge_own: the own merge gives up with a note, the hold that was due still holds (rc 2)" \
+  || fail "the alarm inside merge_own lost the hold (rc $rc, merged: $( [ -f "$TMP/r1/own.txt" ] && echo yes || echo no)): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_worktree_merge_gate_trunk: PASS"; exit 0; } || { echo "test_worktree_merge_gate_trunk: FAIL ($FAILS)"; exit 1; }
