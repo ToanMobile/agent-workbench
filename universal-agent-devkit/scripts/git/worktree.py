@@ -706,6 +706,9 @@ def cmd_add(cwd, args):
                    f"DevKit install in the worktree failed (exit {r.returncode}); the worktree stays at {wt}"), 1)
     shared = share_main_memory(main, wt) if share_memory and not no_init else False   # only when asked; before the snapshot: it is part of the setup
     state = {"branch": branch, "base": start, "main": main, "baseline": snapshot(wt), "fp": FP_VERSION}
+    stamps = _copy_stamps(wt, copied + inputs)
+    if stamps:   # what the carry-back must not mistake for a key made here (_ignored_secrets)
+        state["copied_sha"] = stamps
     if session:
         state["session"] = session
     _write_state(wt, state)
@@ -1879,7 +1882,38 @@ def _ignored_secrets(wt, limit=None):
                 continue   # gone meanwhile: nothing to carry
         if cut:
             break
+    for rel, stamp in _copied_at_add(wt).items():   # a copy `worktree add` made and nobody changed is main's, not a key made here
+        try:
+            if rel in found and _sha256_file(found[rel]) == stamp:
+                del found[rel]
+        except OSError:
+            continue   # unreadable: it stays a candidate (the carry refuses it by name)
     return sorted(found.items()), cut
+
+
+def _sha256_file(path):
+    return hashlib.sha256(_read_regular(path)).hexdigest()
+
+
+def _copy_stamps(wt, rels):
+    """{rel: sha256} of the secret-like files `worktree add` just copied into `wt` (state: copied_sha): only those the carry-back could meet."""
+    stamps = {}
+    for rel in rels:
+        try:
+            if _secret_like(rel):
+                stamps[rel] = _sha256_file(os.path.join(wt, rel))
+        except OSError:
+            continue   # no stamp: it is judged like a key made here, as before
+    return stamps
+
+
+def _copied_at_add(wt):
+    """The copied_sha `worktree add` recorded in the worktree's state; {} for a worktree without it (made before, adopted) or an unreadable state."""
+    try:
+        got = _read_state(wt).get("copied_sha")
+    except (OSError, ValueError, SystemExit):
+        return {}
+    return {k: v for k, v in got.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(got, dict) else {}
 
 
 def _same_bytes(src, dst):
@@ -2263,8 +2297,8 @@ def _automerge_locked(cwd, main, wt, keep=False):
                              f"files) - what it did not read may hold a key. If that folder is build output or a cache, delete it in the worktree, or raise "
                              f"WORKTREE_SECRET_SCAN_MAX (0: no limit), then run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"merged": True, "files": [cut]}
     if refused:
-        # ponytail: a config `worktree add` copied in and main changed since differs too, so it is refused like a key made here; record the
-        # copied files' fingerprints at `add` and drop an unchanged stale copy, if that refusal ever shows up in practice
+        # (a copy `worktree add` made and nobody changed is not here: _ignored_secrets drops it by the sha256 `add` recorded. ponytail: a worktree
+        # made before that record, or one whose copy the worktree edited while main changed it too, is refused like a key made here)
         listing = "; ".join(f"{rel} ({why})" for rel, why in refused[:6])
         return "blocked", tr(f"đã gộp vào main nhưng CHƯA gỡ worktree: {len(refused)} file bí mật bị git ignore chỉ worktree có, không đặt được vào main: {listing}. "
                              f"Không gì bị ghi đè. So hai bản, tự giữ bản cần dùng ở main, xoá bản trong worktree rồi chạy lại `agent-kit worktree finish {shlex.quote(wt)}`",

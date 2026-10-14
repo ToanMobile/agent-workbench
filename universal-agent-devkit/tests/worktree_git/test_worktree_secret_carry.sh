@@ -195,4 +195,33 @@ mkdir -p "$O/.agents/local/signing" && echo "ORPHAN-SIGN" > "$O/.agents/local/si
 [ ! -d "$O" ] && [ "$(cat "$P/.agents/local/signing/rel.jks" 2>/dev/null)" = ORPHAN-SIGN ] && ok "  … and gc carries the same file, then deletes the folder (it kept it as unique before)" \
   || fail "  … gc (exists=$([ -d "$O" ] && echo y || echo n)): $(cat "$TMP/gc.out")"
 
+# 14 (principal review A1): a config `worktree add` copied in is main's copy, not a key made in the worktree. Main deleting a revoked .env (or
+#     editing it) after the add must not bring the old bytes back / strand the worktree: `add` records a sha256 of each secret-like file it copied
+#     (state: copied_sha) and a file whose bytes still equal it is neither carried nor a blocker. A worktree without the field keeps the old rule.
+new_main m14 '.env
+*.jks'; echo "API_KEY=old-revoked" > "$P/.env"; W="$TMP/sc-o"; wt "$W"; echo o > "$W/o.txt"
+[ "$(cat "$W/.env" 2>/dev/null)" = "API_KEY=old-revoked" ] || fail "setup 14: worktree add did not copy main's .env in"
+rm "$P/.env"   # main revoked and deleted it after the add
+fin "$W"; rc=$?
+[ "$rc" = 0 ] && [ ! -d "$W" ] && [ ! -e "$P/.env" ] && ok "14: main deleted .env after the add: the stale copy is not carried back, the worktree is removed" \
+  || fail "14: (rc=$rc, exists=$([ -d "$W" ] && echo y || echo n), main's .env: $(cat "$P/.env" 2>&1)): $(cat "$TMP/out")"
+new_main m14b '.env
+*.jks'; echo "API_KEY=v1" > "$P/.env"; W="$TMP/sc-p"; wt "$W"; echo p > "$W/p.txt"
+echo "API_KEY=v2-rotated" > "$P/.env"   # main rotated it after the add: other bytes in main
+fin "$W"; rc=$?
+[ "$rc" = 0 ] && [ ! -d "$W" ] && [ "$(cat "$P/.env")" = "API_KEY=v2-rotated" ] && ok "  … main edited .env after the add: not refused as 'different', main's edit untouched, the worktree is removed" \
+  || fail "  … (rc=$rc, exists=$([ -d "$W" ] && echo y || echo n)): $(cat "$TMP/out")"
+new_main m14c '.env
+*.jks'; echo "API_KEY=v1" > "$P/.env"; W="$TMP/sc-q"; wt "$W"; echo q > "$W/q.txt"
+echo "API_KEY=made-in-the-worktree" > "$W/.env"; rm "$P/.env"   # the worktree changed it: its bytes no longer equal the copy, so it is a key made here
+fin "$W"; rc=$?
+[ "$rc" = 0 ] && [ ! -d "$W" ] && [ "$(cat "$P/.env" 2>/dev/null)" = "API_KEY=made-in-the-worktree" ] && ok "  … a .env the worktree CHANGED is still carried (control)" \
+  || fail "  … control (rc=$rc): $(cat "$TMP/out")"
+new_main m14d '.env
+*.jks'; echo "API_KEY=old-revoked" > "$P/.env"; W="$TMP/sc-r"; wt "$W"; echo r > "$W/r.txt"
+python3 -c 'import json,sys; f=sys.argv[1]; d=json.load(open(f)); d.pop("copied_sha", None); json.dump(d, open(f, "w"))' "$(G "$W" rev-parse --absolute-git-dir)/devkit-worktree.json"
+rm "$P/.env"
+fin "$W"; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$P/.env" 2>/dev/null)" = "API_KEY=old-revoked" ] && ok "  … a worktree whose state has no copied_sha keeps the old rule (carried back)" || fail "  … legacy state (rc=$rc): $(cat "$TMP/out")"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_secret_carry: all passed" || { echo "❌ test_worktree_secret_carry: $FAILS failed"; exit 1; }
