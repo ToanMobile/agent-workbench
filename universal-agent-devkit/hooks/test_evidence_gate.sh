@@ -334,7 +334,8 @@ def outcome_mention(sentence, match):
     claim), and the naming word right before that opening quote."""
     for x in QUOTED_SPAN.finditer(sentence):
         if (x.start() < match.start() and match.end() < x.end() and not sentence[x.start() + 1:match.start()].strip()
-                and re.fullmatch(r"[\s.,;:!?…]*", sentence[match.end():x.end() - 1])):
+                and re.fullmatch(r"[\s.,;:!?…]*", sentence[match.end():x.end() - 1])
+                and not re.match(r"(?:bug|lỗi)\b", match.group(0), re.I)):   # that branch of OUTCOME carries the object: a claim
             return bool(OUTCOME_MENTION_WORD.search(sentence[:x.start()]))
     return False
 
