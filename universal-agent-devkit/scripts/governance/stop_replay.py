@@ -501,9 +501,9 @@ def quoted_outcome(reply, rx):
     def framed(m):
         a, e = quote_of(m)
         start = max(c for c in cuts if c <= m.start())
-        named = (_NAMES_A_QUOTE.search(body[start:a]) and not _CONNECTIVE.search(body[start:a]) and not body[a + 1:m.start()].strip()
+        named = (_NAMES_A_QUOTE.search(body[start:a]) and not _CONNECTIVE.search(body[start:a]) and m.start() == a + 1
                  and re.fullmatch(r"[\s.,;:!?…]*", body[m.end():e - 1])     # the quote holds the phrase and nothing else
-                 and not re.match(r"(?:bug|lỗi)\b", m.group(0), re.I))      # (that branch of OUTCOME carries the object of the fix)
+                 and not re.match(r"(?:bug|lỗi|issue|crash|error)\b", m.group(0), re.I))   # (these branches of OUTCOME carry the object)
         return bool(named or _NEGATION_BEFORE.search(re.sub(r"[`\"“”]", "", body[start:m.start()])))
     if not found or any(quote_of(m) is None for m in found):
         return None
