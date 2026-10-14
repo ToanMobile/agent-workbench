@@ -69,10 +69,12 @@ for f in $changed; do
   done < tests/impact_map.txt
 done
 selected="$(printf '%s\n' $tests | sort -u)"
-# --all: every test. Finding none is an error — a glob that matches nothing must not pass.
+# --all: every test. Finding none is an error — a glob that matches nothing must not pass. hooks/tests/test_*.sh too (5 of them ran
+# nowhere, 13/10); its *_test.sh contract files are not: `agent-kit test` runs them itself before this pool.
 if [ "${1:-}" = "--all" ]; then
-  selected="$(ls tests/*/test_*.sh 2>/dev/null)"
+  selected="$(ls tests/*/test_*.sh 2>/dev/null)"   # checked alone: the hooks tests must not hide a suite that vanished
   [ -n "$selected" ] || { echo "run_impacted --all: no tests found under tests/*/test_*.sh" >&2; exit 2; }
+  selected="$selected $(ls hooks/tests/test_*.sh 2>/dev/null)"
 fi
 # post-fix-gate lists the test scripts it already ran in this gate (O2): not run twice.
 if [ -n "${DEVKIT_GATE_DONE:-}" ]; then
