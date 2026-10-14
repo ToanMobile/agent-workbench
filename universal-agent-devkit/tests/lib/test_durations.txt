@@ -270,3 +270,6 @@
 2 tests/gates/test_proof_gate_report_labels.sh
 2 tests/gates/test_evidence_outcome_mention.sh
 2 tests/gates/test_stop_replay.sh
+19 tests/gates/test_worktree_reflog_gone_folder.sh
+2 tests/worktree_git/test_worktree_automerge_symlink.sh
+9 tests/worktree_git/test_worktree_secret_carry.sh
