@@ -828,15 +828,182 @@ def _config_trunk_off(args):
     return len(pos) > 1 and pos[1].lower() not in _TRUNK_TRUE
 
 
+def _clean(cmd):
+    """cmd without the bodies of heredocs that feed data commands and without shell comments (a quote in a comment is no quote)."""
+    text = _strip_heredocs(cmd)
+    try:
+        return _hook_module("shell_writes").strip_comments(text)
+    except Exception as e:  # noqa: BLE001 - the text as it is: what the segment walk always read
+        print(f"session_lock: comment scan failed: {e!r}", file=sys.stderr)
+        return text
+
+
+def _matching_paren(text, start):
+    """Index of the `)` that closes the `(` at `start` (quotes and escapes skipped); len(text) when it never closes."""
+    depth, quote, i, n = 0, None, start, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\" and quote != "'" and i + 1 < n:
+            i += 2
+            continue
+        if quote:
+            quote = None if c == quote else quote
+        elif c in "\"'":
+            quote = c
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return n
+
+
+def _subst_bodies(text):
+    """The bodies of the `$( )`, backtick, `<( )` and `>( )` substitutions of `text`, outermost level only (callers recurse). None inside
+    single quotes; `$( )` and backticks inside double quotes run, `<( )` and `>( )` only outside quotes. One that never closes runs to the end."""
+    out, quote, i, n = [], None, 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\" and quote != "'" and i + 1 < n:
+            i += 2
+            continue
+        if quote == "'":
+            quote = None if c == "'" else quote
+        elif c in "\"'":
+            quote = c if quote is None else (None if quote == c else quote)
+        elif c == "`":
+            j = text.find("`", i + 1)
+            out.append(text[i + 1:n if j < 0 else j])
+            i = n if j < 0 else j
+        elif text[i + 1:i + 2] == "(" and (c == "$" or (c in "<>" and quote is None)):
+            j = _matching_paren(text, i + 1)
+            out.append(text[i + 2:j])
+            i = j
+        i += 1
+    return out
+
+
+_STDIN_SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+_STDIN_INTERP = _Re(r"^(?:python[\d.]*|node|deno|ruby|perl|php)$")
+
+
+def _cmd_words(seg):
+    """The words of one segment up to its first redirection, after assignments and launchers (env, sudo, nice ...) and their options."""
+    import shlex   # noqa: PLC0415 - only commands with a pipe, a here-string or a heredoc get here
+    try:
+        words = shlex.split(seg)
+    except ValueError:
+        words = seg.split()
+    words = [w.lstrip("({") for w in words]
+    for k, w in enumerate(words):
+        if re.match(r"\d*[<>&]", w):
+            words = words[:k]
+            break
+    k = 0
+    while k < len(words) and (re.fullmatch(r"[A-Za-z_]\w*=.*", words[k]) or os.path.basename(words[k]) in _PREFIX_RUN or words[k].startswith("-")
+                              or re.fullmatch(r"\d+(?:\.\d+)?[smhd]?", words[k])):
+        k += 1
+    return words[k:]
+
+
+def _stdin_reader(words):
+    """The program (basename) of `words` when it is a shell or an interpreter that reads its SCRIPT from stdin: no `-c` / `-e` code and no
+    script file (an operand `-` or `-s` means stdin), else None."""
+    if not words:
+        return None
+    prog = os.path.basename(words[0])
+    shell = prog in _STDIN_SHELLS
+    if not shell and not _STDIN_INTERP.match(prog):
+        return None
+    opts = [w for w in words[1:] if w.startswith("-") and w != "-"]
+    operands = [w for w in words[1:] if not w.startswith("-") or w == "-"]
+    if any(re.fullmatch(r"-[A-Za-z]*[ce][A-Za-z]*", o) for o in opts if not o.startswith("--")):
+        return None
+    return prog if not operands or operands == ["-"] or (shell and "-s" in opts) else None
+
+
+def _printf_text(args):
+    """What `printf FORMAT ARGS...` prints, approximately: escapes read, each %s / %b / %d replaced by the next argument (the format repeats
+    while arguments are left)."""
+    fmt = args[0].replace("\\n", "\n").replace("\\t", "\t") if args else ""
+    rest = args[1:]
+    holes = len(re.findall(r"%[-0-9.]*[sbdiq]", fmt))
+    if not holes:
+        return fmt + " ".join(rest)
+    out = []
+    for g in range(0, max(len(rest), 1), holes):
+        it = iter(rest[g:g + holes])
+        out.append(re.sub(r"%[-0-9.]*[sbdiq]", lambda _m: next(it, ""), fmt))
+    return "".join(out)
+
+
+def _stdin_scripts(cmd):
+    """Scripts a shell or an interpreter reads on STDIN that neither the segment walk nor the heredoc rules see: `echo|printf '…' | sh`,
+    `cat <<EOF … EOF | bash`, `bash <<< '…'`. Each comes back as the equivalent heredoc command (`bash -s <<'EOF' … EOF`), which those rules judge.
+    ponytail: a producer that is not echo / printf / a cat-heredoc (`cat file | sh`, `curl … | sh`) feeds a script no scan can read; upgrade by
+    refusing a pipe into a shell when its producer is unknown."""
+    import shlex   # noqa: PLC0415
+    out = []
+
+    def synth(prog, body):
+        out.append(f"{prog} -s <<'__DEVKIT_EOF__'\n{body}\n__DEVKIT_EOF__")
+    lines, i = cmd.split("\n"), 0
+    while i < len(lines):   # cat <<EOF ... EOF | bash: the body is the producer's text; `_strip_heredocs` drops it before anything else looks
+        m = _HEREDOC.search(lines[i])
+        i += 1
+        if not m:
+            continue
+        j = i
+        while j < len(lines) and lines[j].strip() != m.group(2):
+            j += 1
+        after = lines[i - 1][m.end():]
+        prog = _stdin_reader(_cmd_words(re.split(r"[|;&]", after.split("|", 1)[1])[0])) if "|" in after.replace("||", "") else None
+        if prog:
+            synth(prog, "\n".join(lines[i:j]))
+        i = j + 1
+    pieces = _split_segments(_clean(cmd))
+    for k in range(0, len(pieces), 2):
+        hs = re.search(r"<<<\s*(\"[^\"]*\"|'[^']*'|\S+)", pieces[k])
+        prog = _stdin_reader(_cmd_words(pieces[k])) if hs else None
+        if prog:   # bash <<< 'cmd'
+            try:
+                body = shlex.split(hs.group(1))[0]
+            except (ValueError, IndexError):
+                body = hs.group(1)
+            synth(prog, body)
+        if k + 2 < len(pieces) and pieces[k + 1] == "|" and _stdin_reader(_cmd_words(pieces[k + 2])):   # echo '…' | sh, printf … | bash
+            words = _cmd_words(pieces[k])
+            if words and os.path.basename(words[0]) in ("echo", "printf"):
+                args = [a for a in words[1:]]
+                if words[0] == "echo":
+                    while args and re.fullmatch(r"-[neE]+", args[0]):
+                        args = args[1:]
+                    synth(_stdin_reader(_cmd_words(pieces[k + 2])), " ".join(args))
+                else:
+                    synth(_stdin_reader(_cmd_words(pieces[k + 2])), _printf_text(args))
+    return out
+
+
+def _nested_scripts(cmd):
+    """Every script `cmd` runs that its own segments do not show: command substitutions and the scripts fed on stdin (_stdin_scripts). One
+    scan for is_trunk_off and trunk_write; each caller recurses into what this returns (three levels)."""
+    return _subst_bodies(_clean(cmd)) + _stdin_scripts(cmd)
+
+
 def is_trunk_off(cmd, depth=0):
     """True when a Bash command turns trunk mode off (see _TRUNK_TRUE above). Judged per segment as is_self_grant does: a quoted word is text,
     so a commit message or a grep that talks about the switch is fine; heredoc bodies fed to a shell are segments, `bash -c '...'` / eval are read.
-    ponytail: a script or one-liner that builds the key or the value from pieces, and xargs / find -exec, are not recognised; upgrade by
-    making the switch a file only the user's command can write (as the allow-shared flag is)."""
+    Substitutions ($( ), backticks, <( ), >( )) and scripts fed on stdin (echo / printf / cat-heredoc piped to a shell, a here-string) are read too
+    (_nested_scripts). ponytail: a script or one-liner that builds the key or the value from pieces (python -c), and xargs / find -exec, are not
+    recognised; upgrade by making the switch a file only the user's command can write (as the allow-shared flag is)."""
     if not re.search(r"trunk|-section", re.sub(r"[\"'\\]", "", cmd).lower()):   # (-section: git config --remove-section devkit)
         return False
     import shlex   # noqa: PLC0415 - only commands that mention the switch pay for it
-    for seg in _split_segments(cmd)[::2]:
+    if depth < 3 and any(is_trunk_off(body, depth + 1) for body in _nested_scripts(cmd)):   # $( ), backticks, <( ), echo '…' | sh, bash <<< '…'
+        return True
+    for seg in _split_segments(_clean(cmd))[::2]:
         try:
             words = shlex.split(seg)
         except ValueError:
@@ -1170,9 +1337,16 @@ def trunk_write(tool, tool_input, cmd, cwd, main, sw, sid=""):
         if not isinstance(path, str) or not path:
             return True
         return _lands_in_main(path if os.path.isabs(path) else os.path.join(cwd or main, path), main, sw)
+    return _bash_trunk_write(cmd, cwd, main, sw, sid, 0)
+
+
+def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
+    """trunk_write for one Bash script: what its segments write, then - three levels deep - the scripts it hides from them (_nested_scripts:
+    substitutions, echo / printf / cat-heredoc piped to a shell or interpreter, a here-string). A script that cannot be tokenised counts as a
+    write where it runs (hooks/shell_writes.py "unparsed"); after a cd the nested scripts run where that cd led, which is unknown: main's rules."""
     # An allowed segment is excused only as a git write / gate run: its own redirects still count (OCR 14/10: `git fetch > src/a.py`,
     # `agent-kit worktree list > README.md` overwrote tracked files of main), so the redirect / file-write scan reads the ORIGINAL line
-    pieces = _split_segments(cmd)
+    pieces = _split_segments(_clean(cmd))
     stripped = "".join(":" if i % 2 == 0 and _TRUNK_ALLOWED.search(p) else p for i, p in enumerate(pieces))
     if (GIT_WRITE.search(stripped) or GATE.search(stripped)) and write_hits_locked(stripped, main, cwd, sid)[0]:
         return True
@@ -1185,6 +1359,10 @@ def trunk_write(tool, tool_input, cmd, cwd, main, sw, sid=""):
     if found is None:
         found = [("redirect", t, here) for t in _redirect_targets(cmd) if t and not t.startswith("&")]
     for kind, t, wd in found:
+        if kind == "unparsed":
+            if _lands_in_main(wd or here, main, sw):
+                return True
+            continue
         if kind not in ("redirect", "file"):
             continue
         if "$" in t or "`" in t:   # where it lands cannot be told: where the command runs
@@ -1194,6 +1372,11 @@ def trunk_write(tool, tool_input, cmd, cwd, main, sw, sid=""):
         p = os.path.expanduser(t)
         if _lands_in_main(p if os.path.isabs(p) else os.path.join(wd or here, p), main, sw):
             return True
+    if depth < 3:
+        moved = bool(DIR_CHANGE.search(_clean(cmd)))
+        for body in _nested_scripts(cmd):
+            if _bash_trunk_write(body, None if moved else cwd, main, sw, sid, depth + 1):
+                return True
     return False
 
 

@@ -54,6 +54,38 @@ SCRIPT_WRITES = (
 )
 
 
+def strip_comments(text):
+    """`text` without its shell comments: a `#` that starts a word (after whitespace, `;`, `&`, `|`, `(` or at a line start), outside quotes, runs
+    to the end of its line. A quote inside a comment (`# don't`) is no quote: shlex read it as one and swallowed every line after it, so the
+    writes below it went unseen (INSTINCT-031). Quote- and backslash-aware over the whole text; `$#` and `${#x}` are no comments."""
+    out, quote, i, n = [], None, 0, len(text)
+    while i < n:
+        c = text[i]
+        if quote:
+            out.append(c)
+            if c == "\\" and quote == '"' and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c == "\\" and i + 1 < n:
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        elif c in "\"'":
+            quote = c
+            out.append(c)
+        elif c == "#" and (i == 0 or text[i - 1] in " \t\n;&|("):
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _cd(here, d):
     """The directory `d` names from `here`; a $VAR / backtick one is unknown: `here` stays (as for cd)."""
     if "$" in d or "`" in d:
@@ -88,6 +120,13 @@ def _exists(a, here):
     return os.path.exists(p if os.path.isabs(p) else os.path.join(here, p))
 
 
+def _nested(code, wd, depth, run_bodies):
+    """The targets of a script a shell runs (`bash -c`, a heredoc fed to a shell). One that cannot be tokenised, for a caller that runs bodies
+    (run_bodies: bin/session_lock.py trunk_write), is a write it cannot rule out: kind "unparsed", where the script runs - it used to count as none."""
+    got = targets(code, wd, depth, run_bodies)
+    return [("unparsed", "", wd)] if got is None and run_bodies else got or []
+
+
 def targets(cmd, here, depth=0, run_bodies=False):
     """[(kind, target, directory it is relative to)] of the shell line `cmd` run in `here`, or None when it cannot be tokenised.
     kind: "redirect" (a > target; an escaped `\\>` reads as one too, so a caller with its own quote-aware redirect rule skips it),
@@ -95,7 +134,8 @@ def targets(cmd, here, depth=0, run_bodies=False):
     dd of=; sed -i / perl -i operands that exist), "git" (a git write: its -C directory), "build" (a build
     tool or builder module: its working directory), "interp" (an interpreter's operands that exist). A target may hold $VAR or a
     backtick: the caller decides. Heredoc bodies are data, never commands - unless run_bodies and the heredoc feeds a shell (its body is
-    scanned like `bash -c '…'`) or an interpreter (its script's literal write paths: "file"); `bash -c '…'` is scanned three levels deep."""
+    scanned like `bash -c '…'`) or an interpreter (its script's literal write paths: "file"); `bash -c '…'` is scanned three levels deep.
+    A body run_bodies cannot tokenise comes back as ("unparsed", "", directory)."""
     out, bodies, pos = [], [], 0
     while True:                               # heredoc bodies are data, not commands
         m = HEREDOC.search(cmd, pos)
@@ -108,7 +148,7 @@ def targets(cmd, here, depth=0, run_bodies=False):
         bodies.append(cmd[nl + 1:e.start() if e else len(cmd)])
         pos = e.end() if e else len(cmd)
     try:
-        lex = shlex.shlex("".join(out), posix=True, punctuation_chars=";&|<>()\n")
+        lex = shlex.shlex(strip_comments("".join(out)), posix=True, punctuation_chars=";&|<>()\n")
         lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""
         toks = list(lex)
     except ValueError:
@@ -205,7 +245,7 @@ def targets(cmd, here, depth=0, run_bodies=False):
             module = next((words[k + 1] for k in range(1, len(words) - 1) if words[k] == "-m"), None)
             if code is not None:
                 if depth < 3:
-                    found += targets(code, wd, depth + 1, run_bodies) or []
+                    found += _nested(code, wd, depth + 1, run_bodies)
             elif (module and module.split(".")[0] in MODULE_BUILDERS) or \
                     (not module and args and BUILDERS.match(os.path.basename(args[0]))):
                 hits.append(("build", wd))
@@ -216,6 +256,6 @@ def targets(cmd, here, depth=0, run_bodies=False):
                         if base not in SHELLS:
                             hits += [("file", w.group("p")) for rx in SCRIPT_WRITES for w in rx.finditer(body)]
                         elif depth < 3:
-                            found += targets(body, wd, depth + 1, run_bodies) or []
+                            found += _nested(body, wd, depth + 1, run_bodies)
         found += [(kind, t, wd) for kind, t in hits]
     return found

@@ -74,6 +74,30 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (False, "a python heredoc writing to /tmp", m, B("python3 - <<EOF\nopen('/tmp/x.txt','w').write('x')\nEOF")),
     (False, "a python heredoc that only reads", m, B("python3 - <<EOF\nprint(open('README.md').read())\nEOF")),
     (False, "a python heredoc writing in the worktree", w, B("python3 - <<EOF\nopen('README.md','w').write('x')\nEOF")),
+    # principal review R2 (14/10) + OCR 12: a script fed to a shell / interpreter on stdin, a substitution, and a body that does not parse
+    (True, "echo '...' | sh redirecting into main", m, B("echo 'echo x > README.md' | sh")),
+    (True, "printf ... | bash redirecting into main", m, B("printf '%s\\n' 'echo x > README.md' | bash")),
+    (True, "cat <<EOF | bash whose body redirects into main", m, B("cat <<'EOF' | bash\necho x > README.md\nEOF")),
+    (True, "bash <<< '...' redirecting into main", m, B("bash <<< 'echo x > README.md'")),
+    (True, "cat <<EOF | python3 opening a file of main for writing", m, B("cat <<'EOF' | python3\nopen('README.md','w').write('x')\nEOF")),
+    (True, "cat <<EOF | bash with a body cd-ing to main from a worktree", w, B(f"cat <<'EOF' | bash\ncd {m} && echo x > README.md\nEOF")),
+    (True, "a bash heredoc with an apostrophe in a comment, then a redirect", m, B("bash <<'EOF'\n# don't worry\necho x > README.md\nEOF")),
+    (True, "a bash heredoc whose body cannot be tokenised (fail closed)", m, B("bash <<'EOF'\necho 'oops\nEOF")),
+    (True, "a git commit inside a substitution", m, B("echo $(git commit -qm x)")),
+    (True, "a redirect inside $( )", m, B("echo $(echo x > README.md)")),
+    (True, "a redirect inside backticks", m, B("echo `echo x > README.md`")),
+    (True, "a redirect inside <( )", m, B("cat <(echo x > README.md)")),
+    (True, "a redirect two substitutions deep", m, B("echo $(echo $(echo x > README.md))")),
+    (True, "a substitution inside bash -c", m, B("bash -c 'echo $(touch README.md)'")),
+    (False, "echo of the text of a redirect (no pipe)", m, B("echo 'echo x > README.md'")),
+    (False, "echo ... | sh redirecting in the worktree", w, B("echo 'echo x > a.txt' | sh")),
+    (False, "bash <<< '...' writing to /tmp", m, B("bash <<< 'echo x > /tmp/o.txt'")),
+    (False, "printf ... | bash that only reads", m, B("printf '%s\\n' 'git status' | bash")),
+    (False, "a commit message heredoc inside $( ) with a > in it (a commit in the worktree)", w, B("git commit -qm \"$(cat <<'EOF'\nfix: a > b, don't\nEOF\n)\"")),
+    (False, "a read substitution", m, B('echo "$(git status --short)" && echo "$(date)" > /tmp/o.txt')),
+    (False, "cat <<EOF | python3 writing to /tmp", m, B("cat <<'EOF' | python3\nopen('/tmp/x.txt','w').write('x')\nEOF")),
+    (False, "an apostrophe in a trailing comment after a read", m, B("git status # it's clean")),
+    (False, "a redirect that only appears in a comment", m, B("git status # then echo x > README.md, don't")),
 ]
 bad = 0
 for want, label, cwd, (tool, ti, cmd) in cases:
@@ -156,6 +180,29 @@ cases = [   # (want, command)
     (False, 'grep -rn "git config devkit.trunkMode false" docs'),
     (False, "cat <<EOF\nagent-kit worktree trunk off\nEOF"),
     (False, "git status --short"),
+    # OCR 12 + principal review R2 (14/10): the switch inside a substitution, or in a script fed to a shell on stdin
+    (True, "echo $(agent-kit worktree trunk off)"),
+    (True, "cat <(git config devkit.trunkMode false)"),
+    (True, "x=$(git config devkit.trunkMode false)"),
+    (True, "x=$(agent-kit worktree trunk off)"),
+    (True, "echo `agent-kit worktree trunk off`"),
+    (True, 'echo "$(git config devkit.trunkMode false)"'),
+    (True, "echo $(echo $(git config devkit.trunkMode false))"),
+    (True, "bash -c 'x=$(git config devkit.trunkMode false)'"),
+    (True, "echo 'git config devkit.trunkMode false' | sh"),
+    (True, "printf '%s\\n' 'agent-kit worktree trunk off' | bash"),
+    (True, "cat <<'EOF' | bash\nagent-kit worktree trunk off\nEOF"),
+    (True, "bash <<< 'git config devkit.trunkMode false'"),
+    (True, "bash <<'EOF'\n# don't worry\ngit config devkit.trunkMode false\nEOF"),
+    (True, "echo 'WORKTREE_TRUNK_MODE=0 git commit -qm x' | sh"),
+    (False, 'echo "$(git config --get devkit.trunkMode)"'),
+    (False, "x=$(git config devkit.trunkMode)"),
+    (False, "git commit -qm \"$(cat <<'EOF'\ndocs: agent-kit worktree trunk off\nEOF\n)\""),
+    (False, "echo 'agent-kit worktree trunk off' | grep -c off"),
+    (False, "echo 'agent-kit worktree trunk off' | tee /tmp/n.txt"),
+    (False, "echo 'agent-kit worktree trunk status' | sh"),
+    (False, "bash <<< 'git config --get devkit.trunkMode'"),
+    (False, "git status # don't run agent-kit worktree trunk off"),
 ]
 sw = sl._hook_module("session_worktree")
 cases += [(False, f"git config devkit.trunkMode {v}") for v in sorted(sw._TRUE)]   # git's own spellings of true: the kit's list, not a copy
@@ -178,6 +225,13 @@ hook PreToolUse "$W" Bash '{"command": "git config --get devkit.trunkMode"}'; r5
 [ "$r1" = 2 ] && [ "$r1m" = said ] && [ "$r2" = 2 ] && [ "$r3" = 2 ] && [ "$r4" = 0 ] && [ "$r5" = 0 ] \
   && ok "the hook: trunk off / devkit.trunkMode false / WORKTREE_TRUNK_MODE=0 refused with whose switch it is (exit 2); trunk on and a read pass" \
   || fail "user switches at the hook: off=$r1 ($r1m) config=$r2 env=$r3 on=$r4 read=$r5"
+hook PreToolUse "$W" Bash '{"command": "echo $(agent-kit worktree trunk off)"}'; r6=$?
+hook PreToolUse "$W" Bash '{"command": "echo '"'"'git config devkit.trunkMode false'"'"' | sh"}'; r7=$?
+hook PreToolUse "$W" Bash '{"command": "echo '"'"'echo x > README.md'"'"' | sh"}' ; r8=$?
+hook PreToolUse "$M" Bash '{"command": "echo '"'"'echo x > README.md'"'"' | sh"}' ; r9=$?
+[ "$r6" = 2 ] && [ "$r7" = 2 ] && [ "$r8" = 0 ] && [ "$r9" = 2 ] \
+  && ok "  … at the hook too: the switch inside a substitution or piped into a shell is refused; a piped write is judged where it runs (worktree 0, main 2)" \
+  || fail "nested scripts at the hook: subst=$r6 pipe=$r7 worktree-write=$r8 main-write=$r9"
 
 # 3 a lock on main left from before trunk mode (a live other session) changes nothing: writes refused by the trunk rule, the integrator passes
 python3 -c 'import json,os,sys,time; json.dump({"session_id":"old-holder","started":time.time(),"heartbeat":time.time(),"cwd":sys.argv[1],"pid":os.getppid()}, open(sys.argv[2],"w"))' \
