@@ -253,5 +253,29 @@ PATH="$SHIM:$PATH" gate_in "$FK" "$TMP/r1" s1 "$TMP/r1/.claude/worktrees/s1"; rc
   && ok "the alarm goes off inside merge_own: the own merge gives up with a note, the hold that was due still holds (rc 2)" \
   || fail "the alarm inside merge_own lost the hold (rc $rc, merged: $( [ -f "$TMP/r1/own.txt" ] && echo yes || echo no)): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
 
+# 14 the session owns a committed worktree AND owes another one that holds the Stop (OCR 14): the own merge still runs and its note is in the hold
+#    text on stderr. The other worktree (x, made by this session) conflicts with a later commit on main - one that merged cleanly would not hold -
+#    so the gate's automerge cannot land it. Then the two hold paths where the own merge does NOT run: its budget spent, auto-merge off.
+mkhold() {   # mkhold <name>: a main checkout with the own worktree s1 (committed) and x, whose commit conflicts with main's; x is named in $TMP/t14-<name>.jsonl
+  repo "$1"; wtadd "$TMP/$1" s1 s1; commit_in "$TMP/$1" s1 own; record "$TMP/$1" s1 s1
+  wtadd "$TMP/$1" x s1; echo wt > "$TMP/$1/.claude/worktrees/x/a.txt"; G "$TMP/$1/.claude/worktrees/x" commit -qam x
+  echo main > "$TMP/$1/a.txt"; G "$TMP/$1" commit -qam m; transcript "$TMP/t14-$1.jsonl" "$TMP/$1/.claude/worktrees/x"
+}
+mkhold u1
+stop "$TMP/u1" s1 "$TMP/u1/.claude/worktrees/s1" "$TMP/t14-u1.jsonl"; rc=$?
+[ "$rc" = 2 ] && [ -f "$TMP/u1/own.txt" ] && [ "$(cat "$TMP/u1/a.txt")" = main ] && grep -q "đã gộp worktree phiên vào main" "$TMP/err" && grep -q "worktrees/x" "$TMP/err" \
+  && ok "own worktree merged AND another held: rc 2, the own-merge note in the hold text, main got the own commit and not the conflicting one" \
+  || fail "own merge + another hold (rc $rc, own in main: $( [ -f "$TMP/u1/own.txt" ] && echo yes || echo no)): err=$(head -c 500 "$TMP/err")"
+mkhold u2; REAL_HOOK="$HOOK"; HOOK="$TMP/kit11/hooks/worktree_merge_gate.sh"   # kit11: the threshold above the alarm, so merge_own meets it with the budget spent
+stop "$TMP/u2" s1 "$TMP/u2/.claude/worktrees/s1" "$TMP/t14-u2.jsonl"; rc=$?; HOOK="$REAL_HOOK"
+[ "$rc" = 2 ] && [ ! -f "$TMP/u2/own.txt" ] && grep -q "hết thời gian" "$TMP/err" && grep -q "worktrees/x" "$TMP/err" \
+  && ok "  … the own merge skipped, its budget spent: still rc 2, the budget note in the hold text, main without the own commit" \
+  || fail "budget spent with another hold (rc $rc, own in main: $( [ -f "$TMP/u2/own.txt" ] && echo yes || echo no)): err=$(head -c 500 "$TMP/err")"
+mkhold u3
+stop "$TMP/u3" s1 "$TMP/u3/.claude/worktrees/s1" "$TMP/t14-u3.jsonl" WORKTREE_AUTO_MERGE=0; rc=$?
+[ "$rc" = 2 ] && [ ! -f "$TMP/u3/own.txt" ] && grep -qF "agent-kit worktree finish $TMP/u3/.claude/worktrees/s1 --keep" "$TMP/err" && grep -q "worktrees/x" "$TMP/err" \
+  && ok "  … WORKTREE_AUTO_MERGE=0: still rc 2, the note names agent-kit worktree finish --keep for the own worktree, main without the own commit" \
+  || fail "auto-merge off with another hold (rc $rc, own in main: $( [ -f "$TMP/u3/own.txt" ] && echo yes || echo no)): err=$(head -c 500 "$TMP/err")"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_worktree_merge_gate_trunk: PASS"; exit 0; } || { echo "test_worktree_merge_gate_trunk: FAIL ($FAILS)"; exit 1; }
