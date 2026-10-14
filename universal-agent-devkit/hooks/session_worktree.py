@@ -242,8 +242,9 @@ def prune_records(main):
 def reown(main, sid, here, is_alive):
     """/clear and /resume give the same Claude process a new session id while it stays in its worktree: the record of a session that is
     no longer alive, naming the worktree `here` lies in, becomes `sid`'s - else the next Stop would adopt (merge and remove) the worktree
-    the session still works in, and the gates would check main again. Returns the worktree re-owned, or None."""
-    if not _record_path(main, sid) or not here:
+    the session still works in, and the gates would check main again. A session that already has a record keeps it: its own worktree is
+    never swapped for a dead session's one it happens to stand in. Returns the worktree re-owned, or None."""
+    if not _record_path(main, sid) or not here or raw_record(main, sid):
         return None
     here = os.path.realpath(here)
     for osid, wt in records(main).items():

@@ -99,5 +99,19 @@ python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"Stop","session
   | CLAUDE_PROJECT_DIR="$TMP/h" bash "$FK/hooks/worktree_merge_gate.sh" >/dev/null 2>&1
 [ ! -f "$TMP/h/nine.txt" ] && [ -d "$TMP/h/.claude/worktrees/s9" ] && ok "session_lock not importable: no record adopted (liveness unknown), the worktree kept" || fail "adopted a record with liveness unknown"
 
+# 10 a LIVE session idle at its prompt (its pid answers, its heartbeat is 40 min old): liveness is the pid, never the heartbeat - its
+#    worktree is not adopted (merged and removed under it); once the pid is gone the same record is adopted (R3 review 14/10, P1-1)
+repo i; wtadd "$TMP/i" s7 s7; commit_in "$TMP/i" s7 seven; record "$TMP/i" s7 s7
+python3 -I "$SL" --register --session s7 --pid $$ "$TMP/i" >/dev/null 2>&1
+REG="$(G "$TMP/i" rev-parse --absolute-git-dir)/devkit-sessions/s7.json"
+python3 -c 'import json,sys,time; d=json.load(open(sys.argv[1])); d["heartbeat"]=time.time()-2400; json.dump(d,open(sys.argv[1],"w"))' "$REG"
+stop "$TMP/i" s1 "$TMP/i" "$TMP/t1.jsonl"; rc=$?
+[ "$rc" = 0 ] && [ ! -f "$TMP/i/seven.txt" ] && [ -d "$TMP/i/.claude/worktrees/s7" ] && [ -e "$TMP/i/.claude/audit-gate/session_worktree/s7" ] \
+  && ok "a live session idle for 40 min (pid answers): its worktree and record are left alone" || fail "adopted a live idle session's worktree (rc $rc): out=$(head -c 300 "$TMP/out")"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["pid"]=2147483646; json.dump(d,open(sys.argv[1],"w"))' "$REG"
+stop "$TMP/i" s1 "$TMP/i" "$TMP/t1.jsonl"; rc=$?
+[ "$rc" = 0 ] && [ -f "$TMP/i/seven.txt" ] && [ ! -d "$TMP/i/.claude/worktrees/s7" ] \
+  && ok "  … the same record once its pid is gone: adopted (merged, removed)" || fail "dead pid not adopted (rc $rc): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_worktree_merge_gate_trunk: PASS"; exit 0; } || { echo "test_worktree_merge_gate_trunk: FAIL ($FAILS)"; exit 1; }

@@ -202,19 +202,14 @@ here = os.path.realpath(str(d.get("cwd") or repo))
 now, pending, want = time.time(), [], []
 
 def session_alive(owner):
-    """True when session `owner` is registered here and still working (same staleness rules as session_lock.get_active_sessions).
-    Anything unknown reads as not alive: the debt then falls to the session asking, as it always did."""
+    """True when session `owner` is registered here and alive: its pid answers (session_lock.info_alive - a session idle at its prompt has
+    an old heartbeat and is alive all the same). Anything unknown reads as not alive: the debt then falls to the session asking, as it always did."""
     if session_lock is None or not owner or os.sep in owner:
         return False
     try:
         sdir, _top = session_lock.sessions_dir(repo)
         info = session_lock.read_lock(os.path.join(sdir, owner + ".json")) if sdir else None
-        if not info:
-            return False
-        pid = info.get("pid")
-        if pid and not session_lock.is_pid_alive(pid):
-            return False
-        return now - float(info.get("heartbeat") or 0) <= (600.0 if pid else 180.0)
+        return session_lock.info_alive(info, now)
     except (Exception, SystemExit):
         return False
 

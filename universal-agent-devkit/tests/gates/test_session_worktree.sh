@@ -96,5 +96,20 @@ python3 -c 'import json,sys; print(json.dumps({"session_id":"s6","agent_id":"x",
   | CLAUDE_PROJECT_DIR="$M" python3 -I "$SW" record 2>/dev/null
 [ ! -e "$M/.claude/audit-gate/session_worktree/s6" ] && ok "  … a subagent's EnterWorktree is not recorded as the session's" || fail "subagent EnterWorktree recorded for the session"
 
+# 6 reown (/clear, /resume): a session that already HAS a record keeps it - its own worktree is never swapped for a dead session's one it
+#   happens to stand in (R3 review 14/10, P1-2); a session with no record still takes over the dead one's
+reown() {   # reown <session> <here>: prints the worktree re-owned (empty: none)
+  python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import session_worktree as sw
+m, sid, here = sys.argv[2:5]; print(sw.reown(m, sid, here, lambda o: False) or "")' "$DEVKIT_DIR/hooks" "$M" "$1" "$2"
+}
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import session_worktree as sw
+m, a, b = sys.argv[2:5]; assert sw.write_record(m, "cur", a) and sw.write_record(m, "dead", b)' "$DEVKIT_DIR/hooks" "$M" "$W" "$TMP/main-w2"
+r="$(reown cur "$TMP/main-w2")"
+[ -z "$r" ] && [ "$(cat "$M/.claude/audit-gate/session_worktree/cur")" = "$W" ] && [ -e "$M/.claude/audit-gate/session_worktree/dead" ] \
+  && ok "reown: a session that has its own record keeps it (the dead one's record is not taken)" || fail "reown overwrote the session's own record (re-owned '$r', cur=$(cat "$M/.claude/audit-gate/session_worktree/cur"))"
+r="$(reown fresh "$TMP/main-w2")"
+[ "$r" = "$TMP/main-w2" ] && [ ! -e "$M/.claude/audit-gate/session_worktree/dead" ] && [ "$(cat "$M/.claude/audit-gate/session_worktree/fresh")" = "$TMP/main-w2" ] \
+  && ok "  … a session with no record takes over the dead one's (the /clear case)" || fail "reown for a record-less session ('$r')"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_session_worktree: PASS"; exit 0; } || { echo "test_session_worktree: FAIL ($FAILS)"; exit 1; }

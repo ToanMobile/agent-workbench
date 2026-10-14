@@ -1004,17 +1004,22 @@ TRUNK_MSG = ("⛔ [DevKit] Trunk mode: main checkout {main} chỉ để GỘP �
              "(công tắc của người dùng).")
 
 
+def info_alive(info, now=None):
+    """A registry entry names a live session: its pid answers - a session idle at its prompt or inside one long tool call keeps no fresh
+    heartbeat and is alive all the same, so adopting its worktree (merge, remove) on a heartbeat would take it from under a live session.
+    No pid recorded: the heartbeat, 180 s. The one rule hooks/worktree_merge_gate.sh and the trunk-mode reown share."""
+    if not info:
+        return False
+    pid = info.get("pid")
+    if pid:
+        return is_pid_alive(pid)
+    return (time.time() if now is None else now) - _num(info.get("heartbeat")) <= 180.0
+
+
 def _registered_alive(cwd, sid):
-    """Session `sid` is registered in this repo and still working: its pid alive and its heartbeat fresh (600 s with a pid, 180 s without)
-    - the rule hooks/worktree_merge_gate.sh uses before it adopts a worktree."""
+    """Session `sid` is registered in this repo and still alive (info_alive) - the rule hooks/worktree_merge_gate.sh uses before it adopts a worktree."""
     try:
-        info = read_session(cwd, sid)
-        if not info:
-            return False
-        pid = info.get("pid")
-        if pid and not is_pid_alive(pid):
-            return False
-        return time.time() - _num(info.get("heartbeat")) <= (600.0 if pid else 180.0)
+        return info_alive(read_session(cwd, sid))
     except Exception:  # noqa: BLE001 - unknown reads as not alive, as in the merge gate
         return False
 
