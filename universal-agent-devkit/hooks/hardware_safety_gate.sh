@@ -707,6 +707,8 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
                 return why
         if prog == "su" and not scripts:   # su [OPTIONS] USER COMMAND…: the words after the user (shell_norm.su_command)
             ran = shell_norm.su_command(rest)
+            if ran and ran[0] == "script":   # --command=STR / --session-command STR: a command line (string API), not a word list
+                return rm_problem(ran[1], cwds, depth + 1, remote)
             return rm_segment_problem(ran[1], cwds, env, depth + 1, None, remote) if ran else None
         return None
     dev = device_script(prog, rest)

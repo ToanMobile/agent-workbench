@@ -31,6 +31,8 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 FAILS=0
 ok()   { echo "✔ $1"; }
+# a hook that crashes fails closed (rc 2 and "lỗi nội bộ" on stderr): never the verdict a case waits for (review 15/10: su --command)
+crashed() { grep -q 'lỗi nội bộ' "$TMP/err"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 command -v python3 >/dev/null 2>&1 || { echo "skip: python3 missing"; exit 0; }
 unset HARDWARE_SAFETY_GATE HARDWARE_OVERRIDE DEVKIT_ALLOW_BRANCH CDPATH
@@ -50,7 +52,7 @@ check() {
   ( cd "$P" && CLAUDE_PROJECT_DIR="$P" XDG_CONFIG_HOME="$TMP/xdg" ADB_DENY_SERIALS= ADB_ALLOW_SERIALS= ANDROID_SERIAL= \
       bash "$h" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
   local rc=$? s="${c//$'\n'/ ⏎ }"
-  if [ "$rc" = "$want" ]; then ok "$hook rc $rc: ${s:0:110}"; else fail "$hook rc $rc (want $want): ${s:0:110} — $(head -c 160 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
+  if [ "$rc" = "$want" ] && ! crashed; then ok "$hook rc $rc: ${s:0:110}"; else fail "$hook rc $rc (want $want): ${s:0:110} — $(head -c 160 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
 }
 
 # check_mcp <want rc> <device command>: the same through replicant-mcp adb-shell (its command runs on the device)
@@ -61,7 +63,7 @@ check_mcp() {
   ( cd "$P" && CLAUDE_PROJECT_DIR="$P" XDG_CONFIG_HOME="$TMP/xdg" ADB_DENY_SERIALS= ADB_ALLOW_SERIALS= ANDROID_SERIAL= \
       bash "$HW" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
   local rc=$?
-  if [ "$rc" = "$want" ]; then ok "mcp rc $rc: $c"; else fail "mcp rc $rc (want $want): $c — $(head -c 160 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
+  if [ "$rc" = "$want" ] && ! crashed; then ok "mcp rc $rc: $c"; else fail "mcp rc $rc (want $want): $c — $(head -c 160 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
 }
 # check_deny <want rc> <command>: with the serial DENIED1 on the device denylist (only literal -s serials here: no adb call)
 check_deny() {
@@ -71,7 +73,7 @@ check_deny() {
   ( cd "$P" && CLAUDE_PROJECT_DIR="$P" XDG_CONFIG_HOME="$TMP/xdg" ADB_DENY_SERIALS=DENIED1 ADB_ALLOW_SERIALS= ANDROID_SERIAL= \
       bash "$HW" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
   local rc=$?
-  if [ "$rc" = "$want" ]; then ok "deny rc $rc: $c"; else fail "deny rc $rc (want $want): $c — $(head -c 160 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
+  if [ "$rc" = "$want" ] && ! crashed; then ok "deny rc $rc: $c"; else fail "deny rc $rc (want $want): $c — $(head -c 160 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
 }
 
 echo "── hw: brace expansion in a device path"
@@ -356,6 +358,23 @@ check 2 hw $'cat > Makefile <<\'EOF\'\nall:\n\trm -rf ~\nEOF\nmake'
 check 0 hw $'cat > notes.mk <<\'EOF\'\nall:\n\trm -rf ~\nEOF\nmake'
 check 2 hw $'cat <<\'EOF\' > a.txt && cat a.txt | sh\nrm -rf ~\nEOF'
 check 2 git $'mapfile -t L <<\'EOF\'\ngit reset --hard\nEOF\neval "${L[0]}"'
+
+echo "── hw: su --command / --session-command (review 15/10: a TypeError, the verdict was a crash, the rm walk never ran)"
+check 0 hw "su --command='rm -rf /tmp/build'"
+check 0 hw "su --command 'rm -rf /tmp/build'"
+check 0 hw "su root --session-command 'rm -rf /tmp/x'"
+check 0 hw "su -c 'rm -rf /tmp/build'"
+check 2 hw "su --command='rm -rf /'"
+check 2 hw "su --command 'rm -rf ~'"
+check 2 hw "su --session-command='rm -rf ~'"
+check 2 hw "su root --session-command 'rm -rf ~'"
+check 2 hw "su -c 'rm -rf ~'"
+check 2 hw "su -s /bin/sh root rm -rf ~"
+check 0 hw "su -s /bin/sh root rm -rf /tmp/x"
+check 2 hw 'su root rm -rf /system'
+check_deny 2 "su --command='adb -s DENIED1 reboot'"
+check_deny 2 "su root --session-command 'adb -s DENIED1 reboot'"
+check_deny 0 "su --command='adb -s OK1 reboot'"
 
 echo "── hw: ~ on a device, xargs -i, the device policy behind bash -lc / su -c"
 check 2 hw 'adb shell rm -rf ~'
