@@ -466,14 +466,22 @@ function reapOrphanAgy() {
     withRegistryLock(() => {
       const now = readAgyRegistry();
       let changed = false;
+      let asked = 0;   // ps duoi khoa: chan tren nhu putAgyEntry (khoa giu qua LOCK_STALE_MS thi PM khac lay mat)
       for (const [k, e, agyAlive] of orphans) {
         if (!samePending(now[k], e)) continue;   // da doi thanh muc that / da go / bi PM khac ghi lai duoi cung khoa (pid dung lai): agy nay co chu
         if (agyAlive) {
-          const err = killGroup(e.pid);
-          if (err && err.code !== 'ESRCH') { logStderr(`don agy mo coi: khong dung duoc agy pid ${e.pid} (${err.message}): giu muc ${k}`); continue; }
-          logStderr(`don agy mo coi: da dung agy pid ${e.pid} cua PM pid ${e.ownerPid} (PM da chet giua luc cho init)`);
+          // tu lan hoi ngoai khoa den day co the qua vai giay (cho khoa, ps cac muc truoc): pid co the da thoat va bi tien trinh la dung lai => hoi lai ngay truoc khi giet
+          if (asked >= 3) continue;   // het ngan sach ps: GIU muc, lan don sau lam tiep
+          asked += 1;
+          let same;
+          try { same = sameProcess(e.pid, e.pidTag); } catch (err) { logStderr(`don agy mo coi: giu muc ${k} (${err.message})`); continue; }
+          if (same) {
+            const err = killGroup(e.pid);
+            if (err && err.code !== 'ESRCH') { logStderr(`don agy mo coi: khong dung duoc agy pid ${e.pid} (${err.message}): giu muc ${k}`); continue; }
+            logStderr(`don agy mo coi: da dung agy pid ${e.pid} cua PM pid ${e.ownerPid} (PM da chet giua luc cho init)`);
+          }
         }
-        delete now[k];   // agy da thoat hoac vua bi dung
+        delete now[k];   // agy da thoat / pid dung lai (khong con la agy cua muc) / vua bi dung
         changed = true;
       }
       if (changed) writeJsonAtomic(agyRegistryFile(), now);

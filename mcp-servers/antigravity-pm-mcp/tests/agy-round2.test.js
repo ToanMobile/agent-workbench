@@ -1059,6 +1059,41 @@ test('go ban ghi cho khi muc do da vang (PM khac don mat roi): KHONG ghi lai so 
 /** Chay MOT lan ps gia vua viet (bo ket qua): lan exec dau cua mot file moi ghi co the vuot 1500 ms (timeout cua procTag) tren may tai cao, va test do vi ly do khong lien quan. */
 function warmPs(wrapper) { spawnSync(wrapper, ['-o', 'lstart=', '-p', String(process.pid)], { stdio: 'ignore' }); }
 
+// Giua lan hoi ps ngoai khoa va luc giet (duoi khoa, co the cho toi 3 s) pid co the da thoat va bi tien trinh la dung lai: hoi LAI ngay truoc khi giet.
+// ps gia tra loi that o lan hoi dau ve agy X (ngoai khoa), lan thu hai (duoi khoa) tra loi `secondAnswer`.
+for (const [name, secondAnswer, entryKept] of [
+  ['pid dung lai (dau van tay khac)', 'echo "Fri Oct 16 00:00:00 2026"', false],
+  ['ps loi', 'echo boom >&2; exit 2', true],
+]) {
+  test(`don agy mo coi: lan hoi lai duoi khoa (${name}) => khong giet nham${entryKept ? ', giu muc' : ', go muc'}`, async (t) => {
+    const fake = fakeAgy(t, { FAKE_AGY_ID: 'fb00fb00-2222-3333-4444-555555555555' });
+    const x = liveSleep(t);
+    const DEAD_PID = await deadPid();
+    fs.writeFileSync(registryFile(), JSON.stringify({ [`pending-${x.pid}`]: pendingEntry({ pid: x.pid, pidTag: x.tag, ownerPid: DEAD_PID, ownerTag: WRONG_TAG }) }));
+    const count = path.join(fake.dir, 'asked-about-x');
+    const wrapper = path.join(fake.dir, 'ps-second-answer.sh');
+    fs.writeFileSync(wrapper, `#!/bin/sh\nif [ "$4" = "${x.pid}" ]; then n=$(cat "${count}" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${count}"; if [ $n -ge 2 ]; then ${secondAnswer}; exit 0; fi; fi\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+    warmPs(wrapper);
+    process.env.ANTIGRAVITY_PM_PS = wrapper;
+    await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
+    await sleep(300);
+    assert.equal(alive(x.pid), true, `giet agy sau khi lan hoi lai duoi khoa tra loi "${name}"`);
+    assert.equal(Boolean(registryOf()[`pending-${x.pid}`]), entryKept, entryKept ? 'ps loi: muc phai o lai de lan don sau lam tiep' : 'agy khong con la agy cua muc: muc phai duoc go');
+    assert.equal(fs.readFileSync(count, 'utf8').trim(), '2', 'kich ban hong: ps phai duoc hoi ve agy X dung hai lan (ngoai khoa roi duoi khoa)');
+  });
+}
+
+test('don agy mo coi: so lan hoi ps DUOI khoa bi chan tren (3): 5 agy mo coi => chi 3 bi dung, 2 muc o lai cho lan don sau', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'fc00fc00-2222-3333-4444-555555555555' });
+  const DEAD_PID = await deadPid();
+  const orphans = [0, 1, 2, 3, 4].map(() => liveSleep(t));
+  fs.writeFileSync(registryFile(), JSON.stringify(Object.fromEntries(orphans.map((o) => [`pending-${o.pid}`, pendingEntry({ pid: o.pid, pidTag: o.tag, ownerPid: DEAD_PID, ownerTag: WRONG_TAG })]))));
+  await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
+  await sleep(500);
+  assert.equal(orphans.filter((o) => alive(o.pid)).length, 2, 'ps duoi khoa khong bi chan tren: ca 5 agy bi dung (khoa co the bi giu qua LOCK_STALE_MS)');
+  assert.equal(pendingKeys().length, 2, 'muc het ngan sach ps phai o lai');
+});
+
 // Khoa cua muc cho la `pending-<pid agy>`: pid bi dung lai thi mot PM SONG khac ghi muc cho MOI duoi CUNG khoa. Ban chup cua reaper (chu da chet) khong con dung.
 for (const [field, value] of [['pidTag', 'Fri Oct 16 00:00:00 2026'], ['ownerPid', process.pid], ['ownerTag', 'Fri Oct 16 00:00:00 2026']]) {
   test(`don agy mo coi: muc cho bi ghi lai duoi CUNG khoa (${field} khac) giua luc chup so va luc giet => khong giet (so voi muc da chup, khong chi pid)`, async (t) => {
