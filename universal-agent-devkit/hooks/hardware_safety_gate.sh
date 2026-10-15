@@ -102,7 +102,10 @@ fast_allow() { # $1 = trigger ERE
   case "$c" in ""|*[\$\`\*\?\[\]]*|*'\\'*|*'\u'*) return 1 ;; esac
   # Quotes only hide a word by splitting it (g'i't, "gi"t): dropped before the check, with the JSON escape marks (\" \n), so a
   # quoted argument no longer sends every grep -n "x" to python (2026-10-09, tests/gates/test_hook_fast_path_quotes.sh: ~55 ms a call).
-  c="${c//\\/}"; c="${c//\'/}"; c="${c//\"/}"
+  # ${c//\\/} is quadratic on macOS /bin/bash 3.2: a 20 KB multi-line command (a \n per line) took 14-18 s, the hook timeout is 10 s
+  # (tests/gates/test_hook_big_command_fast_path.sh). A long one goes through one linear tr; tr failing leaves the decision to the parser.
+  if (( ${#c} > 256 )); then c="$(printf '%s' "$c" | LC_ALL=C tr -d '\\\047\042')" || return 1
+  else c="${c//\\/}"; c="${c//\'/}"; c="${c//\"/}"; fi
   shopt -s nocasematch
   if [[ $c =~ $1 ]]; then shopt -u nocasematch; return 1; fi
   shopt -u nocasematch
@@ -151,7 +154,20 @@ def _fail_closed(etype, value, tb):
     finally:
         os._exit(2)
 sys.excepthook = _fail_closed
-import json, re, fnmatch, shlex, shutil, subprocess
+import json, re, fnmatch, shlex, shutil, subprocess, signal
+# Watchdog: the hook limit is 10 s (.claude/settings.json) and a hook killed there is no verdict. A command the parser cannot judge in 7 s
+# (a pattern word[^;&|\n]*rare re-scans the line for every word: 15 s for 60 KB of `dd dd dd …`) is refused with a reason. SIGALRM also
+# interrupts a regex search in the middle (checked on Python 3.9 and 3.14). tests/gates/test_hook_big_command_fast_path.sh
+def _too_slow(_sig, _frame):
+    try:
+        sys.stderr.write("🛑 [HARDWARE SAFETY GATE] lệnh quá lớn / quá phức tạp để phân tích trong thời hạn của hook (7 s của 10 s) — chặn để an toàn. "
+                         "Chia thành lệnh nhỏ hơn, hoặc ghi vào file rồi chạy file.\n")
+        sys.stderr.flush()
+    finally:
+        os._exit(2)
+if hasattr(signal, "setitimer"):
+    signal.signal(signal.SIGALRM, _too_slow)
+    signal.setitimer(signal.ITIMER_REAL, 7)
 
 def _fnm(name, pat):
     # Python 3.9 raises re.error for a reversed range ([z-a], the s[:-1] of a script); bash reads such a bracket as "no match"
@@ -321,16 +337,18 @@ def rm_hits(text):
     """rm with both recursive and force flags on a system partition or /."""
     for seg in re.split(r"[;&|\n]+", text):
         toks = seg.split()
+        # What the words AFTER each position hold (-r / -R / --recursive, -f / --force, a system-partition target), one pass from the
+        # right: the words after an rm used to be re-read for every rm, quadratic in a long script (50 KB of rm lines took > 10 s).
+        n = len(toks)
+        rec, force, sysop = [False] * (n + 1), [False] * (n + 1), [False] * (n + 1)
+        for i in range(n - 1, -1, -1):
+            a = toks[i]
+            short = a[1:] if a.startswith("-") and not a.startswith("--") else ""
+            rec[i] = rec[i + 1] or "r" in short or "R" in short or a == "--recursive"
+            force[i] = force[i + 1] or "f" in short or a == "--force"
+            sysop[i] = sysop[i + 1] or (not a.startswith("-") and _sys_target(a))
         for i, t in enumerate(toks):
-            if t.rsplit("/", 1)[-1].lower() != "rm":
-                continue
-            args = toks[i + 1:]
-            flags = "".join(a[1:] for a in args if a.startswith("-") and not a.startswith("--"))
-            longs = {a for a in args if a.startswith("--")}
-            rec = "r" in flags or "R" in flags or "--recursive" in longs
-            force = "f" in flags or "--force" in longs
-            targets = [a for a in args if not a.startswith("-")]
-            if rec and force and any(_sys_target(a) for a in targets):
+            if t.rsplit("/", 1)[-1].lower() == "rm" and rec[i + 1] and force[i + 1] and sysop[i + 1]:
                 return True
     return False
 
@@ -356,9 +374,13 @@ except ValueError:
 norm_strip = re.sub(r"[\\\x27\x22]", "", re.sub(r"\$(?=[\x27\x22])", "", CMD_LIVE))   # ANSI-C and locale quoting (dollar then a quote) lose the dollar too
 variants = [CMD_LIVE, norm_strip, norm]
 
+# A pattern of the shape word[^;&|\n]*rare re-scans the rest of the line for every word: quadratic on a long one-line variant (50 KB of rm
+# lines cost 1+ s here). It can only match where its rare part is, so it is tried on the variants that hold one (tests/gates/test_hook_big_command_fast_path.sh).
+RARE = {r"\brm\b[^;&|\n]*(?:MobileDevice/Provisioning|Library/Keychains)": ("mobiledevice/provisioning", "library/keychains")}
 label = None
 for pat, lab in PATTERNS:
-    if any(re.search(pat, v, re.I) for v in variants):
+    need = RARE.get(pat)
+    if any(re.search(pat, v, re.I) for v in variants if not need or any(x in v.lower() for x in need)):
         label = lab
         break
 if label is None and any(rm_hits(v) for v in variants):

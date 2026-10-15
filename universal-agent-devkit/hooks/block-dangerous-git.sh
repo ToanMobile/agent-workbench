@@ -68,7 +68,10 @@ fast_allow() { # $1 = trigger ERE
   case "$c" in ""|*[\$\`\*\?\[\]]*|*'\\'*|*'\u'*) return 1 ;; esac
   # Quotes only hide a word by splitting it (g'i't, "gi"t): dropped before the check, with the JSON escape marks (\" \n), so a
   # quoted argument no longer sends every grep -n "x" to python (2026-10-09, tests/gates/test_hook_fast_path_quotes.sh: ~55 ms a call).
-  c="${c//\\/}"; c="${c//\'/}"; c="${c//\"/}"
+  # ${c//\\/} is quadratic on macOS /bin/bash 3.2: a 20 KB multi-line command (a \n per line) took 14-18 s, the hook timeout is 10 s
+  # (tests/gates/test_hook_big_command_fast_path.sh). A long one goes through one linear tr; tr failing leaves the decision to the parser.
+  if (( ${#c} > 256 )); then c="$(printf '%s' "$c" | LC_ALL=C tr -d '\\\047\042')" || return 1
+  else c="${c//\\/}"; c="${c//\'/}"; c="${c//\"/}"; fi
   shopt -s nocasematch
   if [[ $c =~ $1 ]]; then shopt -u nocasematch; return 1; fi
   shopt -u nocasematch
@@ -98,7 +101,18 @@ def _fail_closed(etype, value, tb):
     finally:
         os._exit(2)
 sys.excepthook = _fail_closed
-import fnmatch, json, re, shlex, shutil, subprocess, time
+import fnmatch, json, re, shlex, shutil, subprocess, time, signal
+# Watchdog (same as the hardware gate, whose hook limit is 10 s): a command the parser cannot judge in 7 s is refused with a reason, never
+# left to a hook timeout, which is no verdict. SIGALRM also interrupts a regex search in the middle. tests/gates/test_hook_big_command_fast_path.sh
+def _too_slow(_sig, _frame):
+    try:
+        sys.stderr.write("BLOCKED: block-dangerous-git.sh: lệnh quá lớn / quá phức tạp để phân tích trong thời hạn (7 s) — chặn để an toàn. Chia thành lệnh nhỏ hơn, hoặc ghi vào file rồi chạy file.\n")
+        sys.stderr.flush()
+    finally:
+        os._exit(2)
+if hasattr(signal, "setitimer"):
+    signal.signal(signal.SIGALRM, _too_slow)
+    signal.setitimer(signal.ITIMER_REAL, 7)
 
 # hooks/shell_norm.py: the one reading of a command line that this guard and hardware_safety_gate.sh share (W3, 14/10): wrappers,
 # sh -c / su -c / ssh / adb shell, heredocs. Loaded from this hook own directory ($0, a linked install resolved), never from the
