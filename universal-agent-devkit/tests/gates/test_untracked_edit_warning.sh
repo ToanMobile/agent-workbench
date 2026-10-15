@@ -152,6 +152,15 @@ rawrun 100;  [ "$RC" = 2 ] && warned && ok "control: file_path within the first 
 rm -f "$R/.claude/audit-gate/untracked_edit.s13"   # the control's ledger line would hide the next run
 rawrun 9000; [ "$RC" = 0 ] && ! warned && ok "a file_path past the first 8 KiB is not judged: the scan is bounded to a prefix" || fail "prefix cap: rc=$RC (a 9 KB pad before tool_input must hide it)"
 
+# the slice and the update match run under LC_ALL=C (ASCII patterns: no UTF-8 decode of a big payload); a non-ASCII path must still be judged
+# whole, the warning must still name it, and the locale the hook was started with must be back for everything after (a UTF-8 shell here)
+printf 'b\n' > "$R/src/Vùng.kt"
+run s16 Edit "$R/src/Vùng.kt" '{"filePath":"x"}' LC_ALL=en_US.UTF-8
+[ "$RC" = 2 ] && grep -q 'Vùng.kt' "$TMP/err" && ok "a non-ASCII file name is judged and named whole (UTF-8 locale, slice under LC_ALL=C)" || fail "non-ASCII path: rc=$RC err=$(head -1 "$TMP/err")"
+printf 'b\n' > "$R/src/Vùng2.kt"
+run s16 Write "$R/src/Vùng2.kt" '{"type":"update","filePath":"x"}' LC_ALL=en_US.UTF-8
+[ "$RC" = 2 ] && grep -q 'Vùng2.kt' "$TMP/err" && ok "a Write 'update' over an untracked non-ASCII file still warns (the update match under LC_ALL=C)" || fail "non-ASCII Write update: rc=$RC"
+
 # d. the check looks at the git INDEX (ls-files), not at HEAD: say so (a file another session has staged passes silently although HEAD lacks it)
 printf 'b\n' > "$R/src/wording.kt"
 run s15 Edit "$R/src/wording.kt" '{"filePath":"x"}'

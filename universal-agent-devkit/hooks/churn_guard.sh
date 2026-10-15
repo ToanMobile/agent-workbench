@@ -66,9 +66,8 @@ fi
 #
 # Cost and safety (review of lane A11; this hook runs on every Edit/Write of every repo, so it stays fast, fail-open and never blocks):
 #   - the file_path, session_id and tool_name regexes read only the first 8 KiB of the payload (all three come before any content), so no
-#     regex walks a 20 MB payload (bash's own copy of the prefix still reads it: measured 0.7 s -> 0.4 s for this block on a 40 MB Edit);
-#     a file_path past that prefix is not judged. The one exception is the Write "update" check, whose key follows the content: it scans
-#     the whole payload, but only for a Write to an untracked file this session has not judged yet.
+#     regex walks a 20 MB payload; a file_path past that prefix is not judged. The one exception is the Write "update" check, whose key
+#     follows the content: it scans the whole payload, but only for a Write to an untracked file this session has not judged yet.
 #   - the session's ledger is read BEFORE any git process: a file judged earlier costs none; a ledger path that is a directory is skipped, logged.
 #   - the git calls take -c core.fsmonitor=false: `git ls-files` starts the repo's core.fsmonitor program, and the edited path may lie in any
 #     repo; a leaked GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE is dropped so the repo of the edited path is the one judged.
@@ -79,7 +78,11 @@ fi
 _UE_RC=0
 if [ "${UNTRACKED_EDIT_WARN:-1}" != "0" ] && [ -n "${LOG_DIR}" ] && command -v git >/dev/null 2>&1; then
   unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
-  _UE_HEAD="${INPUT:0:8192}"
+  # The two expressions that read the whole payload run under LC_ALL=C: their patterns are ASCII, and a byte-wise slice / match never
+  # decodes a 20 MB payload as UTF-8 (measured on 40 MB: the 8 KiB slice 0.43 s -> 0.08 s). The locale is put back right after each.
+  _UE_LC="${LC_ALL-}"; _UE_LCS="${LC_ALL+x}"
+  _ue_lc_restore() { if [ -n "${_UE_LCS}" ]; then LC_ALL="${_UE_LC}"; else unset LC_ALL; fi; }
+  LC_ALL=C; _UE_HEAD="${INPUT:0:8192}"; _ue_lc_restore
   _UE_RX_F='"(file_path|notebook_path)"[[:space:]]*:[[:space:]]*"(/[^"\\]*)"'   # absolute and escape-free, else not judged
   if [[ ${_UE_HEAD} =~ ${_UE_RX_F} ]]; then
     _UE_P="${BASH_REMATCH[2]}"; _UE_D="${_UE_P%/*}"; _UE_B="${_UE_P##*/}"; [ -n "${_UE_D}" ] || _UE_D="/"
@@ -100,7 +103,11 @@ if [ "${UNTRACKED_EDIT_WARN:-1}" != "0" ] && [ -n "${LOG_DIR}" ] && command -v g
       # unverified assumption: Claude Code writes `type` as the FIRST key of a Write tool_response; if that order changes this regex misses
       # "update" and an overwrite of an untracked file reads as a create (silent: fails safe; tests/gates/test_untracked_edit_warning.sh pins today's shape)
       _UE_RX_U='"tool_response"[[:space:]]*:[[:space:]]*\{[[:space:]]*"type"[[:space:]]*:[[:space:]]*"update"'
-      if [[ ${_UE_HEAD} =~ ${_UE_RX_N} ]] && ! [[ ${INPUT} =~ ${_UE_RX_U} ]]; then
+      _UE_OWN=0   # a Write whose answer is not "update" created the file: this session's own
+      if [[ ${_UE_HEAD} =~ ${_UE_RX_N} ]]; then
+        LC_ALL=C; [[ ${INPUT} =~ ${_UE_RX_U} ]] || _UE_OWN=1; _ue_lc_restore
+      fi
+      if [ "${_UE_OWN}" = 1 ]; then
         echo "[$(date +%Y-%m-%dT%H:%M:%S)] UNTRACKED ${_UE_P}: created by this session's Write — own file, no warning" >> "${LOG_DIR}/churn_guard.log" 2>/dev/null
       else
         echo "[$(date +%Y-%m-%dT%H:%M:%S)] WARN — UNTRACKED ${_UE_P}: edited, but the git index does not hold it" >> "${LOG_DIR}/churn_guard.log" 2>/dev/null
