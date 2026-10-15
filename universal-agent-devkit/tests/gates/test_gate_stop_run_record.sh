@@ -232,6 +232,43 @@ try:
         assert m.cached_full_pass(root, matrix, None, m.BUDGET_RECORD) is None, "an uncomputable %s matched a record that holds the same blank" % field
         tree_fp.tree_fingerprint, m.local_state_sha = real_fp, real_local
     open(path, "w").write(saved)
+    # a record whose times are not times (damaged, hand-written, a future clock) is no record: never an exception (that crashed the gate, and the
+    # Stop hook lets the Stop through when the gate crashes), never a match. NaN and Infinity are what json.dump writes for float("nan") / inf.
+    import time as _time
+    now = _time.time()
+    for label, value in (("a string", "abc"), ("a list", [1]), ("an object", {"a": 1}), ("NaN", float("nan")), ("Infinity", float("inf")),
+                         ("-Infinity", float("-inf")), ("null", None), ("a bool", True), ("a time in the future", now + 3600), ("a time past the age cap", now - 7 * 86400)):
+        broken = json.loads(saved)
+        broken["tested_at"] = value
+        open(path, "w").write(json.dumps(broken))
+        try:
+            got = m.cached_full_pass(root, matrix, None, m.BUDGET_RECORD)
+        except Exception as e:  # noqa: BLE001
+            raise AssertionError("tested_at %s raised %r" % (label, e))
+        assert got is None, "a record with tested_at %s was read" % label
+    for label, value in (("a string", "abc"), ("a list", [1]), ("NaN", float("nan"))):
+        broken = json.loads(saved)
+        broken["tests"][0]["ran_at"] = value
+        open(path, "w").write(json.dumps(broken))
+        try:
+            got = m.cached_full_pass(root, matrix, None, m.BUDGET_RECORD)
+        except Exception as e:  # noqa: BLE001
+            raise AssertionError("ran_at %s raised %r" % (label, e))
+        assert got is None, "a record with a suite ran_at of %s was read" % label
+    broken = json.loads(saved)
+    broken["tests"] = "not a list"
+    open(path, "w").write(json.dumps(broken))
+    assert m.cached_full_pass(root, matrix, None, m.BUDGET_RECORD) is None, "a record whose tests are not a list was read"
+    broken["tests"] = [1, 2]
+    open(path, "w").write(json.dumps(broken))
+    assert m.cached_full_pass(root, matrix, None, m.BUDGET_RECORD) is None, "a record whose tests are not objects was read"
+    open(path, "w").write(saved)
+    assert m.cached_full_pass(root, matrix, None, m.BUDGET_RECORD), "the control: the intact record, with an ordinary tested_at, is read"
+    just_now = json.loads(saved)
+    just_now["tested_at"] = _time.time() + 5   # a few seconds ahead is clock noise between two processes, not a forged future
+    open(path, "w").write(json.dumps(just_now))
+    assert m.cached_full_pass(root, matrix, None, m.BUDGET_RECORD), "the control: a tested_at a few seconds ahead of this clock is still read"
+    open(path, "w").write(saved)
     # the writer: no fingerprint taken before the suites, or no HEAD taken, writes nothing
     os.remove(path)
     tests = [{"id": "A", "status": "PASS", "mode": "full", "command": "x"}, {"id": "B", "status": "UNTESTED", "mode": "full", "command": "y"}]

@@ -45,6 +45,7 @@ import contextlib
 import fnmatch
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -1014,12 +1015,20 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None):
         max_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
     except (ImportError, OSError, ValueError, TypeError):
         return None
-    if not isinstance(r, dict) or not r.get("tests"):
+    if not isinstance(r, dict) or not isinstance(r.get("tests"), list) or not r["tests"]:
         return None
     if r.get("exit") not in (0, 2) and not (r.get("exit") == 4 and r.get("untested") and isinstance(r["untested"], list)):
         return None
-    if time.time() - float(r.get("tested_at") or 0) > max_s:
+    # A time that is not a time (damaged or hand-written record) is no record: this used to raise (float("abc")) outside any try, and the Stop hook
+    # lets the Stop through when the gate crashes; NaN / Infinity compared false against the age cap and were read. A time a minute ahead of this
+    # clock is a forged or broken one; a few seconds are noise between two processes.
+    def _time_ok(v):
+        return not isinstance(v, bool) and isinstance(v, (int, float)) and math.isfinite(v)
+    tested, now = r.get("tested_at"), time.time()
+    if not _time_ok(tested) or tested > now + 60 or now - tested > max_s:
         return None
+    if any(not isinstance(x, dict) or not (x.get("ran_at") is None or _time_ok(x.get("ran_at"))) for x in r["tests"]):
+        return None   # reuse_from reads every suite's ran_at as a number
     if r.get("result_format") != RESULT_FORMAT or r.get("matrix_sha") != _sha_file(find_matrix_path(matrix_arg)):
         return None
     if r.get("local_sha") in (None, "?"):
