@@ -261,3 +261,5 @@
 1 tests/gates/test_worktree_guard_shell_writes.sh
 3 tests/gates/test_state_fifo_no_hang.sh
 20 tests/gates/test_hook_gitignore_fifo.sh
+30 tests/gates/test_guard_shell_norm.sh
+30 tests/gates/test_guard_shell_norm_monotonic.sh

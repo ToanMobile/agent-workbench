@@ -568,6 +568,9 @@ pair 2 $'cat > hooks/post-checkout <<\'EOF\'\n@BODY@\nEOF\ngit checkout main'
 pair 2 $'cd .git/hooks && cat > pre-commit <<\'EOF\'\n@BODY@\nEOF\ngit commit -m x'
 pair 2 $'H=.git/hooks; cat > $H/pre-commit <<\'EOF\'\n@BODY@\nEOF\ngit commit -m x'
 pair 2 $'cat > pre-commit <<\'EOF\'\n@BODY@\nEOF\ngit commit -m x'
+echo "   a loop that ran the file on its previous round"
+pair 2 $'while true; do bash x.sh; cat > x.sh <<\'EOF\'\n@BODY@\nEOF\ndone'
+pair 2 $'for i in 1 2; do sh x.sh; cat > x.sh <<\'EOF\'\n@BODY@\nEOF\ndone'
 echo "   (d) a compound command piped into a shell: the | sh is on the line of the heredoc operator"
 pair 2 $'{ cat <<\'EOF\'; } | sh\n@BODY@\nEOF'
 pair 2 $'if true; then cat <<\'EOF\'; fi | sh\n@BODY@\nEOF'
