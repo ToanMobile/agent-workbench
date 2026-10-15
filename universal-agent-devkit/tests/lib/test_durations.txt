@@ -287,3 +287,4 @@
 9 tests/gates/test_gate_stop_record_inputs.sh
 100 tests/gates/test_gate_stop_reuse_race.sh
 2 tests/gates/test_regression_gate_stale_label.sh
+55 tests/gates/test_gate_readonly_receipt_race.sh

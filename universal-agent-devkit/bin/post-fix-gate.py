@@ -45,6 +45,7 @@ import contextlib
 import fnmatch
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -1107,7 +1108,7 @@ def head_and_dirty(project_dir):
 
 
 def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None, tested_fp=None,
-                            untested=None, partial=False):
+                            untested=None, partial=False, locked=True):
     """After a full regression run: drop the previous receipt, and on exit 0 record
     {time, fingerprint} of the audited code in .git/postfix-gate/full_pass.json (outside the
     tree). hooks/proof_gate.sh accepts an XONG only with a receipt from this turn whose
@@ -1120,7 +1121,9 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     covers) says nothing about the suites: it keeps them reusable the same way, as "exit": 2 (2026-10-07, OfficeReader and
     GeelyEx2: every --full after an exit 2 ran all the suites again). A FULL run records its own results; a PARTIAL run
     (the Stop hook: only a subset ran) turns the receipt of the same code from exit 0 to 2, so XONG and push are refused
-    as before while its suites stay reusable; a receipt of other code is dropped."""
+    as before while its suites stay reusable; a receipt of other code is dropped.
+    locked: the run holds test_run.lock (False: it waited and did not get it, or it never asked: it re-used and ran nothing). A run without the lock
+    may only DROP a receipt, never replace it (F1, see the partial branch)."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
@@ -1135,7 +1138,16 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
         try:
             kept = _load_state_json(path)
             same = isinstance(kept, dict) and kept.get("fingerprint") == (tested_fp or tree_fp.tree_fingerprint(project_dir))
-            if same and kept.get("exit") == 0:
+            if same and kept.get("exit") == 0 and not locked:
+                # F1: no load-then-replace without the lock. A forced run that holds it and FAILS a suite deletes this file; between this run's load
+                # and its replace that deletion would be undone, and the receipt would come back as exit 2 with the failing suite's PASS (which
+                # cached_full_pass accepts: the next --full re-used it and wrote an exit-0 receipt). Dropping the file cannot put a PASS back.
+                # Dropped, not left alone: this run's verdict (exit 2) contradicts an exit-0 receipt of the same content, and XONG / push read that
+                # file, so it must not stay exit 0 whether or not the lock was free (a locked run turns it down to exit 2 below).
+                # ponytail: the suites of that receipt are lost to the next --full (it runs them all); take the lock once without waiting here and
+                # turn the receipt down under it when that re-run is seen to cost more than the extra step is worth.
+                os.remove(path)
+            elif same and kept.get("exit") == 0:
                 kept.update({"exit": 2, "untested": []})
                 text = json.dumps(kept)   # BEFORE the temp file: a value json cannot write (nested too deep) raised here and left .tmp_full_pass.* behind
                 fd, tmp = tempfile.mkstemp(prefix=".tmp_full_pass.", dir=os.path.dirname(path))
@@ -3686,6 +3698,16 @@ def infra_failure(output) -> bool:
 TEST_RUN_LOCK = "test_run.lock"
 
 
+def _env_seconds(name, default):
+    """The environment variable `name` as a number of seconds; `default` when it is unset, not a number or not finite. NaN is no wait at all (min(45, nan)
+    is 45, the long wait, and a nan deadline never passes: the run waits for ever) and inf is the same for ever, so neither is read."""
+    try:
+        value = float(os.environ.get(name, default))
+    except ValueError:
+        return default
+    return value if math.isfinite(value) else default
+
+
 def acquire_test_run_lock(project_dir, cap=None):
     """(file handle, held) — the per-project test-run flock under .claude/audit-gate/. Waits at
     most TEST_RUN_LOCK_WAIT_S (default 900 from the CLI; hooks/regression_gate.sh passes 45 so
@@ -3703,10 +3725,7 @@ def acquire_test_run_lock(project_dir, cap=None):
     except OSError as e:
         log_warn(tr(f"Không tạo được khoá chạy test ({e}) — chạy không khoá", f"Cannot create the test-run lock ({e}) — running unlocked"))
         return None, True
-    try:
-        wait = float(os.environ.get("TEST_RUN_LOCK_WAIT_S", "900"))
-    except ValueError:
-        wait = 900.0
+    wait = _env_seconds("TEST_RUN_LOCK_WAIT_S", 900.0)
     if cap is not None:
         wait = min(wait, cap)
     deadline, said = time.monotonic() + wait, False
@@ -4465,8 +4484,16 @@ def _rotate_run_log(path):
             return
 
 
+def _gate_busy(run_tests, lock_held, read_only, regression_tests):
+    """Tests not run because another run interfered: it held test_run.lock past the wait, or it replaced / dropped the file a re-used PASS came from
+    (STALE). A read-only run (every suite re-used, no lock, nothing written) is no such case: its re-used PASS stands and it waited for nothing.
+    One formula for the --json summary (the Stop hook says "run again later" and caches nothing) and for the run log (hooks/stop_hook_times.py and
+    bin/gate_runs_report.py count a busy run as a lock wait)."""
+    return bool(run_tests and ((not lock_held and not read_only) or any(t.get("label") == "STALE" for t in regression_tests)))
+
+
 def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
-                  cache, run_tests, force_reason, no_test_only, project_dir, git_dir):
+                  cache, run_tests, force_reason, no_test_only, project_dir, git_dir, read_only=False):
     """Append the run log line (see above). Takes only values the gate already has and reads nothing; `no_test_only` is main()'s own
     `docs_only` (every changed file passes needs_no_test()), while the logged `docs_only` is stricter: every changed file, rename source
     included, is documentation by DOC_EXT / DOC_NAMES. Any error is dropped: the verdict and exit code are decided before this runs."""
@@ -4503,7 +4530,7 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             "exit": int(exit_code),
             "verdict": verdict,
             "deferred": bool(deferred_by),
-            "busy": bool(run_tests and not lock_held),
+            "busy": _gate_busy(run_tests, lock_held, read_only, regression_tests),
             "reused_full_pass": bool(cache),
             "n_changed": len(files),
             "n_docs": len(docs),
@@ -5098,15 +5125,13 @@ def main():
     # But it waits only DEVKIT_REUSE_LOCK_WAIT_S (default 3 s), not TEST_RUN_LOCK_WAIT_S (45 s through the Stop hook): it has no suite to run, and
     # before this check it needed no lock at all. Past that short wait it is READ-ONLY (read_only below): it judges from a stamp check and writes nothing.
     nothing_to_run = not any(t.get("command") for t in to_run)
-    try:
-        reuse_wait_s = float(os.environ.get("DEVKIT_REUSE_LOCK_WAIT_S", "3"))
-    except ValueError:
-        reuse_wait_s = 3.0
+    reuse_wait_s = _env_seconds("DEVKIT_REUSE_LOCK_WAIT_S", 3.0)
     lock_fh, lock_held = (acquire_test_run_lock(project_dir, cap=reuse_wait_s if nothing_to_run else None)
                           if run_tests and (reuse_src[0] or not nothing_to_run) else (None, True))
     # Read-only: every suite was re-used and the lock was not obtained within the short wait. The verdict is the stamp check alone (the file that vouched
     # for the PASS still stands, or still says PASS: exit as before; moved and no longer vouching: UNTESTED, exit 4) and nothing is written: no receipt,
-    # no Stop record, no PASS row in the checklist, so this run cannot put back a PASS that a FAIL took away. Why an exit 0 here is no false PASS: it is
+    # no Stop record, no PASS row in the checklist, and a receipt that this run's non-zero verdict contradicts is only DROPPED, never loaded and written
+    # back (write_full_pass_receipt locked=False): this run cannot put back a PASS that a FAIL took away. Why an exit 0 here is no false PASS: it is
     # given only while the persisted file still says PASS (the only writers of that file hold the lock this run does not have), and a FAIL that no one has
     # persisted yet is known to no one: the same as this run having finished just before that run started. What the Stop hook stores for exit 0 (pass_fp)
     # is keyed on the content, as for any PASS.
@@ -5624,6 +5649,12 @@ def main():
             verdict_text = tr(
                 f"CHƯA NGHIỆM THU (exit 5) — --full bị hoãn: phiên {', '.join(deferred_by)} còn hoạt động; CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU, không ghi receipt: chạy lại ở phiên cuối hoặc thêm --force-full",
                 f"NOT ACCEPTED (exit 5) — --full deferred: session {', '.join(deferred_by)} still active; NOT READY FOR ACCEPTANCE, no receipt written: re-run in the last session or add --force-full")
+    if read_only and exit_code == 0 and force_reason and not impacted_run and not deferred_by:
+        # a forced run that only read what it re-used wrote no receipt: the checks passed, the acceptance asked for did not happen (as --full deferred,
+        # but exit 0 as before: K6 pins it; the Stop hook never passes --full). XONG needs a receipt of this turn.
+        verdict_text, verdict_color = tr(
+            "PASS (chỉ đọc: một lượt chạy khác giữ khoá) — CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU: không ghi receipt; chạy lại --full khi khoá rảnh",
+            "PASS (read-only: another run holds the lock) — NOT READY FOR ACCEPTANCE: no receipt written; run --full again when the lock is free"), YELLOW
     print(f"  {BOLD}{tr('KẾT LUẬN CỔNG POST-FIX AUDIT:', 'POST-FIX AUDIT GATE VERDICT:')}{RESET} {verdict_color}{BOLD}{verdict_text}{RESET}")
     print(f"  • {tr('Test hồi quy đạt', 'Regression tests passed')}: {tests_passed}/{len(regression_tests)}" + (tr(" (chưa chạy)", " (not run)") if unverified else "")
           + (tr(f" — {len(impacted_run)} lệnh chỉ chạy test bị ảnh hưởng ({impacted_n} test), lệnh đầy đủ CHƯA chạy",
@@ -5652,14 +5683,15 @@ def main():
     partial = not force_reason or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)
     try:
         if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and (not partial or (exit_code != 0 and not receipt_untested)) \
-                and (not read_only or partial):   # read-only: only a Stop-style run, whose write can only turn an exit-0 receipt to exit 2 or drop it
+                and (not read_only or partial):   # read-only: only a Stop-style run, whose write can only drop an exit-0 receipt (locked=False below)
             # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
             # suites all passed (2026-09-29) — leaves the last full one as it is; a BUSY run (lock not held, nothing ran)
             # and a BUDGET run (a suite never started) leave it alone too: either used to delete even a valid one,
             # so a Stop whose lock wait or time budget ran out forced a new --full
             write_full_pass_receipt(project_dir, exit_code, args.matrix, regression_tests,
                                     tested_at=float(cache.get("tested_at") or 0) if cache else None,
-                                    tested_fp=tested_fp, untested=receipt_untested, partial=partial)
+                                    tested_fp=tested_fp, untested=receipt_untested, partial=partial,
+                                    locked=lock_fh is not None)   # the handle itself: (None, True) is also "nothing to re-use or run, no lock asked for"
         # The budget record (BUDGET_RECORD) is a file of its own, so the receipt above stays byte for byte whatever happens here:
         # a suite that FAILED or TIMED OUT drops it (never a FAIL item), a budget cut writes what finished (never on another tree).
         if run_tests and any(t.get("status") in ("FAIL", "TIMEOUT") for t in regression_tests):
@@ -5755,15 +5787,14 @@ def main():
     if args.json:
         print(json.dumps({
             "verdict": verdict_text, "exit_code": exit_code,
-            "accepted": exit_code == 0 and run_tests and not partial and not deferred_by and not impacted_run,   # a full run that passed
+            "accepted": exit_code == 0 and run_tests and not partial and not deferred_by and not impacted_run and not read_only,   # a full run that passed and wrote its receipt
             "files": modified_files,
             "unreadable": unreadable, "regression_tests": regression_tests,
             "matrix_problem": matrix_problem, "tests_touched": tests_touched,
             "tests_touched_other": tests_touched_other, "tests_approved": tests_approved,
-            # tests not run because another run interfered: it held test_run.lock, or it replaced / dropped the file a re-used PASS came from (STALE):
-            # the Stop hook says "run again later" and caches nothing, so the next Stop runs the suite for real (not a sticky "untested here").
-            # A read-only run (every suite re-used, no lock, nothing written) is no such case: its re-used PASS stands
-            "busy": run_tests and ((not lock_held and not read_only) or any(t.get("label") == "STALE" for t in regression_tests)),
+            # tests not run because another run interfered (_gate_busy): the Stop hook says "run again later" and caches nothing, so the next Stop
+            # runs the suite for real (not a sticky "untested here")
+            "busy": _gate_busy(run_tests, lock_held, read_only, regression_tests),
             "budget_exhausted": any(t.get("label") == "BUDGET" for t in regression_tests),   # GATE_TOTAL_BUDGET_S spent
             "test_mode": test_mode, "full_run_required": bool(impacted_run),
             "devkit_artifacts_skipped": len(devkit_artifacts), "device": device_state,
@@ -5789,7 +5820,7 @@ def main():
     # Last: the run log (data only, see _log_gate_run). Plain names only: nothing here can fail before the function's own guard.
     _lap("report")
     _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
-                  cache, run_tests, force_reason, docs_only, project_dir, git_dir)
+                  cache, run_tests, force_reason, docs_only, project_dir, git_dir, read_only=read_only)
     return exit_code
 
 

@@ -22,7 +22,10 @@
 #       rm): the second check turns the re-used PASS UNTESTED just the same, exit 4.
 #   K6  every suite is re-used and another run holds the lock past the SHORT wait (DEVKIT_REUSE_LOCK_WAIT_S, default 3 s, not the long 45 s): A judges
 #       from a stamp check and WRITES NOTHING (receipt "time" unchanged, no checklist PASS): stands / rewritten -> exit 0, removed / unvouched -> exit 4.
-#   K7  the same for a Stop-style run that ends exit 2: the partial writer still turns the exit-0 receipt to exit 2 (it only turns a PASS down).
+#   K7  the same for a Stop-style run that ends exit 2. With the lock (free) the partial writer turns the exit-0 receipt to exit 2 under it. WITHOUT the
+#       lock (held past the short wait) it must not load-and-replace the receipt: a forced run B that FAILED REG-1 and deleted it between that load and
+#       that replace would get it back as exit 2 with REG-1 PASS (F1; tests/gates/test_gate_readonly_receipt_race.sh pins the interleaving). It DROPS the
+#       receipt instead: fail closed, XONG and push are refused either way, only the reuse of its suites is lost.
 #   S   a record or receipt over 1 MiB is no record (json.load of a 6 MB integer took 126 s on Python 3.9): not re-used, and the partial writer drops it.
 #   T   write_full_pass_receipt serialises BEFORE it makes the temp file: `json.dump(kept, f)` (the old writer, a pure-Python generator under the recursion
 #       limit) raised on a field nested too deep AFTER mkstemp and left .tmp_full_pass.* behind. The row looks for depths that json.load reads and that old
@@ -354,8 +357,10 @@ k6() { # $1 label, $2 A (stop | full), $3 none | rewrite | remove | unvouch | fr
 for how in none rewrite remove unvouch; do k6 "K6/all-reused/full/$how" full "$how"; done
 k6 "K6/all-reused/stop/none" stop none; k6 "K6/all-reused/full/free" full free
 
-# K7: the same, but A (a Stop-style run) ends exit 2: the receipt of this content is exit 0 (a --full run with --allow-no-tests). Writing NOTHING must not
-# keep it exit 0: the partial writer only ever turns it to exit 2 (XONG and push are refused as before), it never writes a PASS, so it still runs.
+# K7: the same, but A (a Stop-style run) ends exit 2: the receipt of this content is exit 0 (a --full run with --allow-no-tests). Leaving it exit 0 would
+# let XONG and push stand on a receipt this run's verdict contradicts, so the receipt must not stay exit 0. With the lock (free) the partial writer turns
+# it to exit 2. Without the lock (held) nothing may be loaded and written back (a FAIL that landed in between would be undone): it is dropped. (Until the
+# second review of the lane this row expected 'exit=2 REG-1=PASS,REG-2=PASS' for the held case too, which is the false PASS of F1.)
 k7() { # $1 label, $2 held (the lock is held past the short wait) | free
   make_repo unwatched; run_gate -- --full --no-checklist --allow-no-tests; SEED_RC=$RC; SEED_STATE="$(state "$GD/full_pass.json")"; mark_runs
   if [ "$SEED_RC" = 0 ] && [ "$SEED_STATE" = "exit=0 REG-1=PASS,REG-2=PASS untested=" ]; then :
@@ -364,10 +369,11 @@ k7() { # $1 label, $2 held (the lock is held past the short wait) | free
   if [ "$2" = held ]; then hold_lock "$TMP/lock.release"; envs+=(RACE_RELEASE="$TMP/lock.release" RACE_RELEASE_AFTER=4); fi
   a_run stop acquire none "${envs[@]}"; snapshot
   touch "$TMP/lock.release"; [ -z "$HOLDER" ] || { wait "$HOLDER" 2>/dev/null; HOLDER=""; }
-  if [ "$A_RC" = 2 ] && [ "$A_S1" = 0 ] && [ "$A_S2" = 0 ] && [ "$A_RECEIPT" = "exit=2 REG-1=PASS,REG-2=PASS untested=" ] && [ "$A_TRACE" = 0 ]; then
-    ok "$1 ($2): a Stop-style run that re-used everything and ended exit 2 turned the exit-0 receipt to exit 2 (suites kept), not left it exit 0"
+  local want="exit=2 REG-1=PASS,REG-2=PASS untested="; [ "$2" = held ] && want="none"
+  if [ "$A_RC" = 2 ] && [ "$A_S1" = 0 ] && [ "$A_S2" = 0 ] && [ "$A_RECEIPT" = "$want" ] && [ "$A_TRACE" = 0 ]; then
+    ok "$1 ($2): a Stop-style run that re-used everything and ended exit 2 did not leave the exit-0 receipt: '$A_RECEIPT'$([ "$2" = held ] && echo ' (dropped: no lock, nothing is written back)' || echo ' (turned down under the lock, suites kept)')"
   else
-    bad "$1 ($2): A exit $A_RC (want 2), runs $A_S1/$A_S2 (want 0/0), receipt '$A_RECEIPT' (want 'exit=2 REG-1=PASS,REG-2=PASS untested=')"
+    bad "$1 ($2): A exit $A_RC (want 2), runs $A_S1/$A_S2 (want 0/0), receipt '$A_RECEIPT' (want '$want')"
   fi
 }
 k7 "K7/partial-downgrade" held; k7 "K7/partial-downgrade" free
