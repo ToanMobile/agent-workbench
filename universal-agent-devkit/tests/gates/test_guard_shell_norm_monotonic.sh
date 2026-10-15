@@ -46,7 +46,24 @@ def run(hook, cmd):
 
 
 GITD, RMD = "git reset --hard", "rm -rf ~"
-DANGEROUS = []   # (hook, command)
+DANGEROUS = []   # (hook, command, control)
+# A CONTROL is the same shape (wrapper, heredoc, pipe, hook file …) with the danger replaced by a harmless command: it must pass. A dangerous
+# row whose control is blocked too is VACUOUS: something else in the shape refused it (a push to a branch that does not exist, an unreadable
+# <(…)), so its rc 2 proves nothing about the reading under test (second review 15/10). Such a row fails the run until it is fixed.
+HARM = {"git": "git status", "hw": "ls"}
+TWIN = [("rm -rf $HOME", "ls $HOME"), ("rm -rf ", "ls "), ("git reset --hard", "git status"), ("'git','reset','--hard'", "'git','status'"),
+        ("'reset',\n  '--hard',", "'status',"), ("'reset', '--hard'", "'status'"), ("\"clean\", \"-fdx\"", "\"status\""),
+        ("['reset', '--hard']", "['status']"), ("reset --hard", "status"), ("git push \\\n--force origin main", "git status \\\n--short"),
+        (" remount", ""), ("of=/dev/sda", "of=/tmp/a.img"), ("fastboot \\\n -w", "fastboot \\\n devices")]
+
+
+def twin(cmd):
+    """cmd with its danger replaced by a harmless twin (the control of a row that is not built from a template)."""
+    out = cmd
+    for old, new in TWIN:
+        out = out.replace(old, new)
+    assert out != cmd, "no control for: " + cmd
+    return out
 
 # ── 1. plain commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
 PLAIN_GIT = ["git push --force origin main", "git push -f origin main", "git push --force-with-lease origin main", "git push origin +main",
@@ -68,7 +85,7 @@ PLAIN_HW = ["rm -rf ~", "rm -rf /", "rm -rf /system", "rm -rf .", "rm -rf *", "r
             "fastboot -w", "fastboot erase userdata", "fastboot oem unlock", "adb shell pm uninstall com.android.*", "adb disable-verity",
             "adb shell su -c 'rm -rf /system'", "npm publish", "terraform destroy -auto-approve", "kubectl delete ns x",
             "rsync -a --delete empty/ /", "npx rimraf ~", "adb shell dd if=/dev/zero of=/dev/block/sda"]
-DANGEROUS += [("git", c) for c in PLAIN_GIT] + [("hw", c) for c in PLAIN_HW]
+DANGEROUS += [("git", c, HARM["git"]) for c in PLAIN_GIT] + [("hw", c, HARM["hw"]) for c in PLAIN_HW]
 
 # ── 2. every wrapper / hand-over of a command line, applied to a few bases ──────────────────────────────────────────────────────────
 BASES = {"git": ["git push --force origin main", "git reset --hard HEAD~1", "git clean -fdx", "git checkout -- .", "git branch -D main",
@@ -94,20 +111,31 @@ WRAP = [
     "CONT",
 ]
 # process substitution of an echo is read as a script by neither guard (the old ones did not either): not part of the net
+# git, vacuous by design: the git guard refuses ANY shell that is fed by a group or a <(…) it cannot read ("shell chạy văn bản do lệnh khác sinh
+# ra"), whatever the text: the control with git status is blocked too. Those git rows say nothing about shell_norm, so they are not counted
+# (the hardware gate has no such rule: its rows of the same shapes stay and are the ones that test the heredoc reading).
 SKIP = {("hw", "bash <(echo '{c}')"), ("hw", "source <(echo '{c}')"), ("hw", ". <(echo '{c}')"),
-        ("git", "source <(echo '{c}')"), ("git", ". <(echo '{c}')")}
+        ("git", "source <(echo '{c}')"), ("git", ". <(echo '{c}')"),
+        ("git", "bash <(echo '{c}')"), ("git", "{ cat <<'EOF'; } | sh\n{c}\nEOF")}
+GIT_FEED_BLOCKS = {"{ cat <<'EOF'; } | sh\n@BODY@\nEOF", "if true; then cat <<'EOF'; fi | sh\n@BODY@\nEOF",
+                   "while true; do cat <<'EOF'; break; done | sh\n@BODY@\nEOF", "for i in 1; do cat <<'EOF'; done | bash\n@BODY@\nEOF",
+                   "{ cat <<'EOF'\n@BODY@\nEOF\n} | sh", "( cat <<'EOF'\n@BODY@\nEOF\n) | sh", "{ cat <<'EOF'; } | xargs -0 sh -c\n@BODY@\nEOF"}
 for hook, bases in BASES.items():
     for b in bases:
         for w in WRAP:
             if (hook, w) in SKIP:
                 continue
-            DANGEROUS.append((hook, b.replace(" ", " \\\n", 1) if w == "CONT" else w.replace("{c}", b)))
+            shape = lambda base: base.replace(" ", " \\\n", 1) if w == "CONT" else w.replace("{c}", base)
+            DANGEROUS.append((hook, shape(b), shape(HARM[hook])))
 MATRIX = len(DANGEROUS) - len(PLAIN_GIT) - len(PLAIN_HW)
 
 # ── 3. the strings of the review findings (each template through the git guard with a git danger and the hardware gate with an rm) ──
 def both(tpl):
-    DANGEROUS.append(("git", tpl.replace("@BODY@", GITD).replace("@CMD@", GITD)))
-    DANGEROUS.append(("hw", tpl.replace("@BODY@", RMD).replace("@CMD@", RMD)))
+    for hook, danger in (("git", GITD), ("hw", RMD)):
+        if hook == "git" and tpl in GIT_FEED_BLOCKS:   # vacuous by design, see SKIP above
+            continue
+        fill = lambda x: tpl.replace("@BODY@", x).replace("@CMD@", x)
+        DANGEROUS.append((hook, fill(danger), fill(HARM[hook])))
 
 
 FINDINGS = [
@@ -152,7 +180,7 @@ FINDINGS = [
 ]
 for tpl in FINDINGS:
     both(tpl)
-DANGEROUS += [
+TAIL = [
     # OCR 1: hardware gate, interpreter bodies that can start a process stay in the rm walk
     ("hw", "perl <<'EOF'\nmy $x = `rm -rf ~`;\nEOF"), ("hw", "ruby <<'EOF'\n%x(rm -rf ~)\nEOF"), ("hw", "ruby <<'EOF'\n`rm -rf $HOME`\nEOF"),
     ("hw", "perl <<'EOF'\nqx(rm -rf ~);\nEOF"), ("hw", "php <<'EOF'\n<?php `rm -rf ~`; ?>\nEOF"),
@@ -173,6 +201,7 @@ DANGEROUS += [
     # line continuations
     ("hw", "dd \\\nif=a.img of=/dev/sda bs=1m"), ("hw", "fastboot \\\n -w"), ("git", "git \\\nreset --hard"), ("git", "git push \\\n--force origin main"),
 ]
+DANGEROUS += [(hook, cmd, twin(cmd)) for hook, cmd in TAIL]
 
 HARMLESS = [
     "git log --grep=rm -3", "git log --grep=\"rm -rf\" --oneline", "echo \"git push --force\"", "echo 'git reset --hard'",
@@ -206,19 +235,30 @@ HARMLESS = [
 assert len(DANGEROUS) - MATRIX >= 80, len(DANGEROUS)
 assert len(HARMLESS) >= 25, len(HARMLESS)
 
-jobs = [("D", h, c) for h, c in DANGEROUS] + [("H", h, c) for c in HARMLESS for h in ("git", "hw")]
+CONTROLS = sorted({(h, ctl) for h, _c, ctl in DANGEROUS})
+jobs = ([("D", h, c) for h, c, _ctl in DANGEROUS] + [("H", h, c) for c in HARMLESS for h in ("git", "hw")]
+        + [("C", h, ctl) for h, ctl in CONTROLS])
 with cf.ThreadPoolExecutor(8) as ex:
     results = list(ex.map(lambda j: run(j[1], j[2]), jobs))
 fails = 0
+blocked_controls = set()
 for (kind, hook, cmd), (rc, err) in zip(jobs, results):
     crashed = "lỗi nội bộ" in err
     ok = (rc == 2 and not crashed) if kind == "D" else (rc == 0)
+    if kind == "C" and not ok:
+        blocked_controls.add((hook, cmd))
     if not ok:
         fails += 1
         want = "2" if kind == "D" else "0"
-        print(f"✖ {hook} rc {rc} (want {want}{', a crash is no verdict' if crashed else ''}): {cmd.replace(chr(10), ' ⏎ ')[:130]} — {err[:100].strip()!r}")
+        what = "CONTROL " if kind == "C" else ""
+        print(f"✖ {what}{hook} rc {rc} (want {want}{', a crash is no verdict' if crashed else ''}): {cmd.replace(chr(10), ' ⏎ ')[:130]} — {err[:100].strip()!r}")
+vacuous = [(h, c) for h, c, ctl in DANGEROUS if (h, ctl) in blocked_controls]
+for h, c in vacuous:
+    fails += 1
+    print(f"✖ VACUOUS (its control is blocked too): {h} {c.replace(chr(10), ' ⏎ ')[:120]}")
 print(f"{len(DANGEROUS)} dangerous ({len(PLAIN_GIT) + len(PLAIN_HW)} plain, {MATRIX} wrapped, {len(DANGEROUS) - MATRIX - len(PLAIN_GIT) - len(PLAIN_HW)} "
-      f"findings), {len(HARMLESS)} harmless x 2 hooks, {fails} failed")
+      f"findings) each with a control ({len(CONTROLS)} distinct, {len(blocked_controls)} blocked, {len(vacuous)} vacuous rows), "
+      f"{len(HARMLESS)} harmless x 2 hooks, {fails} failed")
 sys.exit(1 if fails else 0)
 PY
 rc=$?
