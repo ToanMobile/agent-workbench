@@ -387,6 +387,7 @@ test('PM khong doc duoc dau van tay (ps) cua agy vua mo: tu choi ro rang, KHONG 
   const log = path.join(fake.dir, 'ps-args.log');
   const wrapper = path.join(fake.dir, 'ps-broken-for-agy.sh');
   fs.writeFileSync(wrapper, `#!/bin/sh\necho "$@" >> "${log}"\nfor a in "$@"; do last=$a; done\nif [ "$last" = "${process.pid}" ]; then exec /bin/ps "$@"; fi\necho "ps: broken" >&2\nexit 2\n`, { mode: 0o755 });
+  warmPs(wrapper);
   process.env.ANTIGRAVITY_PM_PS = wrapper;
   await assert.rejects(newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) }), /dau van tay/);
   const asked = fs.readFileSync(log, 'utf8').split('\n').map((l) => /-p (\d+)/.exec(l)?.[1]).filter(Boolean).map(Number).filter((p) => p !== process.pid);
@@ -542,6 +543,8 @@ test('ping: loi giua chung sau khi mo luot (ps hong o vong cho) van DUNG agy cua
   const wrapper = path.join(fake.dir, 'ps-flaky.sh');
   // ps that works for the first 2 calls (agyStart's fingerprint + the first status), then fails: the wait loop throws after the agent is up
   fs.writeFileSync(wrapper, `#!/bin/sh\nn=$(cat "${counter}" 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > "${counter}"\nif [ $n -gt 2 ]; then echo boom >&2; exit 2; fi\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+  warmPs(wrapper);
+  fs.rmSync(counter, { force: true });   // la lan chay nhap: khong tinh vao so lan goi ps ma kich ban dem
   process.env.ANTIGRAVITY_PM_PS = wrapper;
   const dir = mkProject(t, { defaultModel: ARGON });
   const out = await call('pm_doctor', { project: dir, ping: true });
@@ -960,6 +963,7 @@ test('don agy mo coi: PM chu doi muc cho thanh muc THAT giua luc ta doc so va lu
   const wrapper = path.join(fake.dir, 'ps-convert.sh');
   const mark = path.join(fake.dir, 'converted');
   fs.writeFileSync(wrapper, `#!/bin/sh\nif [ "$4" = "${DEAD_PID}" ] && [ ! -e "${mark}" ]; then : > "${mark}"; REG="${registryFile()}" "${process.execPath}" "${convert}"; fi\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+  warmPs(wrapper);
   process.env.ANTIGRAVITY_PM_PS = wrapper;
   await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
   assert.ok(fs.existsSync(mark), 'kich ban hong: ps gia khong duoc hoi ve chu cua muc cho');
@@ -1029,6 +1033,8 @@ test('PM khong doc duoc dau van tay cua CHINH no (ps hong het): tu choi TRUOC kh
   const log = path.join(fake.dir, 'ps-args.log');
   const wrapper = path.join(fake.dir, 'ps-all-broken.sh');
   fs.writeFileSync(wrapper, `#!/bin/sh\necho "$@" >> "${log}"\necho "ps: broken" >&2\nexit 2\n`, { mode: 0o755 });
+  warmPs(wrapper);
+  fs.rmSync(log, { force: true });   // la lan chay nhap: khong phai lan hoi cua PM
   const probe = `import { newConversation } from ${JSON.stringify(SRC)}; console.log('PID ' + process.pid);
     newConversation({ prompt: 'x', model: ${JSON.stringify(ARGON)}, cwd: ${JSON.stringify(mkProject(t))} }).then(() => console.log('DONE'), (e) => console.log('REJECTED ' + e.message.slice(0, 120)));`;
   const out = execFileSync(process.execPath, ['--input-type=module', '-e', probe], { env: { ...process.env, ANTIGRAVITY_PM_PS: wrapper }, encoding: 'utf8' });
