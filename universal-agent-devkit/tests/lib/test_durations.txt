@@ -275,3 +275,4 @@
 9 tests/worktree_git/test_worktree_secret_carry.sh
 1 tests/verification/test_state_matrix_lens.sh
 1 tests/verification/test_android_selection_telemetry_rule.sh
+4 tests/verification/test_android_generic_traps.sh

@@ -133,6 +133,24 @@
 
 ---
 
+### [INSTINCT-AND-13] Vùng Chạm Chồng Nhau Chọn Theo Thứ Tự Duyệt, Không Theo Khoảng Cách Gần Nhất
+- **Hiện tượng lỗi:** Hai vùng chạm nằm trong bán kính bắt của nhau thì luôn thắng cùng một vùng, bất kể ngón tay chạm gần vùng nào. Ví dụ: chọn chữ trong PDF, handle cuối của một từ ngắn (~60 px) nằm trong bán kính 80 px của handle đầu; handle đầu được kiểm tra trước nên kéo handle cuối lại kéo handle đầu, và "Dịch" chỉ nhận 1–2 từ. Unit test xanh vì logic nằm trong `View` trên PDFium gốc, test dịch dùng engine giả và chuỗi cố định.
+- **Nguyên nhân gốc rễ:** Hit-test dạng `if (hit(a)) … else if (hit(b)) …` (hoặc `firstOrNull { it.contains(point) }`): vùng nào đứng trước trong danh sách thắng khi chồng nhau.
+- **Quy tắc bắt buộc:** Khi nhiều vùng cùng chứa điểm chạm, chọn vùng có khoảng cách tới điểm chạm xuống (down) nhỏ nhất (nearest-wins), hoà thì theo quy tắc phụ cố định (ví dụ vùng đang được chọn); tuyệt đối không dựa vào thứ tự kiểm tra. Cố định đích kéo từ lúc ACTION_DOWN tới ACTION_UP. Test: hai vùng gần hơn bán kính bắt, chạm sát vùng thứ hai ⇒ vùng thứ hai thắng; đảo thứ tự danh sách không đổi kết quả.
+- **Kiểm tra tự động:** `grep -rnE "firstOrNull \{[^}]*(contains|hit|isNear)" --include=*.kt .` và đọc từng chuỗi `if (hit…) … else if (hit…)` trong `onTouchEvent`/`pointerInput`; chỉ rõ cả thứ tự kiểm tra lẫn bán kính bắt trong test.
+- **Nguồn:** OfficeReader 07/10/2026 (đề xuất I.3 P10 của `docs/workflow-improvements.md`).
+
+---
+
+### [INSTINCT-AND-14] `windowInsetsPadding` Bên Trong Vùng Mà Scaffold Đã Đệm Inset Rồi
+- **Hiện tượng lỗi:** Nút/pill nổi ở đáy màn hình cao hơn đáy thật ~75 dp: bounds đo trên máy là 210 px thay vì 30 px. Robolectric Compose chạy với inset = 0 nên test xanh.
+- **Nguyên nhân gốc rễ:** Nội dung đã nhận `innerPadding` của `Scaffold` (đã gồm thanh điều hướng), rồi một con lại gọi `Modifier.windowInsetsPadding(WindowInsets.navigationBars)` / `navigationBarsPadding()` / `systemBarsPadding()` cho cùng cạnh: inset bị đệm hai lần.
+- **Quy tắc bắt buộc:** Một cạnh chỉ được đệm inset đúng một lần. Nội dung nằm dưới `innerPadding` thì dùng `innerPadding`, không thêm `windowInsetsPadding` cho cạnh đó; con nào tự xử lý inset thì cha phải `Modifier.consumeWindowInsets(innerPadding)` trước. Đo bằng bounds thật (`ui-query` / `dump-view-hierarchy.sh`) trên máy hoặc test dựng inset có chủ đích (`compose-overlap-invariants`), không suy từ code; ma trận trạng thái (cử chỉ / 3 nút × hướng) theo `android-rules.md` §15.
+- **Kiểm tra tự động:** `grep -rnE "windowInsetsPadding|navigationBarsPadding|systemBarsPadding|safeDrawingPadding" --include=*.kt .` rồi đối chiếu từng chỗ nằm trong content lambda của `Scaffold` có dùng `innerPadding`.
+- **Nguồn:** OfficeReader 07/10/2026 (đề xuất I.3 P10 của `docs/workflow-improvements.md`).
+
+---
+
 ## 2. Nhật Ký Bẫy Mã Nguồn Bổ Sung (Dành cho Dev / Agent thêm mới)
 
 <!--
