@@ -21,6 +21,21 @@
 #     directory in play too); an unresolvable $VAR / $(…) target is refused.
 #   • (2026-10-09) a recursive rm WITHOUT -f (rm -r, -R, --recursive: run without a terminal it does not ask) whose target
 #     is or holds the project root, the home folder, / or a system partition. Any other target stays allowed (rm -r src).
+#   • (2026-10-13, tests/gates/test_guard_shell_norm.sh) one reading of each command for every rm rule: wrapper option values
+#     (sudo -u X, timeout -s SIG N, env -u NAME), gtimeout, arch, a redirect before the command, -c inside a shell flag cluster
+#     (bash -lc); the command string of adb shell / exec-out, ssh host and su -c is walked as a command that runs on the far
+#     side, where only / and the system partitions count: brace expansion, //, /./ and .. resolved, cd followed (adb shell starts
+#     at /), find -delete / -exec rm, and a $VAR / `…` target refused when it starts the path or follows / or a system partition
+#     (also rm -r there without -f). rm without -r reached through find's recursion (find -exec rm {} +, find | xargs rm) is
+#     judged as rm -r; rsync --delete into /, home or the project root; rimraf (npx rimraf X) as rm -rf; fastboot -w; mount -o rw
+#     of /; dd of=$VAR; pm uninstall|disable of a package glob. Partitions added: /cache /system_root /product_services
+#     /mnt/vendor/persist /dev/block. Allowed now: npm publish --dry-run, terraform destroy -help, kubectl delete
+#     --dry-run=client|server, rm -rf "$PWD/build" ($PWD is the cwd).
+#   • (2026-10-14, workflow-improvements.md I.0 W3) that reading is hooks/shell_norm.py, shared with block-dangerous-git.sh. A
+#     heredoc body only a data reader gets (cat > notes.md <<'EOF', a commit message) is text: no rm walk, pattern or device
+#     check reads it (an unquoted body keeps its $(…) / `…`); a body a shell or an unknown reader gets is judged as before, an
+#     interpreter's program body still by the patterns. ~ as an rm target on a device is refused (its HOME is not known
+#     here); bash -lc / su -c scripts reach the device policy; xargs -i takes no separate value.
 #   • adb shell pm uninstall|disable(-user)|hide of a system package (android,
 #     com.android.*, com.google.android.*, vendor namespaces)
 #   • iOS signing & simulators: fastlane match nuke, security delete-keychain|
@@ -94,7 +109,8 @@ fast_allow() { # $1 = trigger ERE
   return 0
 }
 # delete: `find . -delete` removes a tree with no rm in it (2026-10-09, tests/gates/test_hardware_rm_containment.sh).
-fast_allow 'adb|fastboot|dd|mount|rm|delete|fastlane|security|xcrun|simctl|eval|flash|publish|vercel|netlify|firebase|prisma|db:|drop|truncate|flush|kubectl|terraform|tofu|pulumi|helm|docker|s3' && exit 0
+# rimraf / rsync: rm -rf and rsync --del(ete) spelled without rm or delete (2026-10-13, tests/gates/test_guard_shell_norm.sh).
+fast_allow 'adb|fastboot|dd|mount|rm|delete|rimraf|rsync|fastlane|security|xcrun|simctl|eval|flash|publish|vercel|netlify|firebase|prisma|db:|drop|truncate|flush|kubectl|terraform|tofu|pulumi|helm|docker|s3' && exit 0
 
 # The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
 # none); outside a git tree the rm guard measures from the process cwd as before, and nothing is logged
@@ -207,12 +223,34 @@ if MCP:
 CWD = data.get("cwd") if isinstance(data.get("cwd"), str) and os.path.isdir(data.get("cwd")) \
     else os.environ.get("REPO_ROOT", ".")
 
+# hooks/shell_norm.py: the one reading of a command line that this gate and block-dangerous-git.sh share (W3, 14/10): wrappers,
+# sh -c / su -c / ssh / adb shell, brace expansion, paths, heredocs. Loaded from this hook own directory ($0, a linked install
+# resolved), never from the project (python3 -I). Missing: the call is blocked, with the reason (fail closed).
+try:
+    _HOOK_DIR = os.path.dirname(os.path.realpath(sys.argv[1])) if len(sys.argv) > 1 else ""
+    if not os.path.isabs(_HOOK_DIR):
+        raise ImportError("hook path ($0) is not known")
+    sys.dont_write_bytecode = True
+    sys.path.append(_HOOK_DIR)   # after the stdlib
+    import shell_norm
+except Exception as e:
+    sys.stderr.write("🛑 [HARDWARE SAFETY GATE] không nạp được hooks/shell_norm.py cạnh hook (" + str(e)[:120] + ") — chặn để an "
+                     "toàn. Cài lại DevKit (agent-kit init); lệnh cần chạy ngay thì người dùng tự chạy qua prefix `!` (hoặc HARDWARE_OVERRIDE=1).\n")
+    sys.exit(2)
+# What the patterns, the device policy and the logcat rule read (14/10): the command without the heredoc bodies that only a
+# data reader gets (cat > notes.md, a commit message: text, never run). A body a shell, an interpreter or a reader not known
+# gets stays (python3 running npm publish is caught by its pattern). The rm walk cuts interpreter bodies too (rm_problem).
+_DOCS = shell_norm.heredocs(cmd) if "<<" in cmd else []
+CMD_LIVE = shell_norm.strip_heredocs(cmd, lambda h: h.kind == "data", _DOCS) if _DOCS else cmd
+
 # Options adb/fastboot accept before the subcommand (with or without a value).
 ADB_OPTS = r"(?:\s+(?:-[sHPtL]\s+\S+|-[adeU]|--\S+(?:\s+\S+)?))*"
 FB_OPTS = r"(?:\s+(?:-[sSciopn]\s+\S+|-w|-u|--\S+(?:=\S+)?))*"
 # first alternative: / or a system partition, then / whitespace end ; & |; second: a glob in the FIRST path component (/*, /data*,
 # /sys*, /s*, /dat?, /syste[m], /?ystem) can reach a system partition, while /sdcard/* and /tmp/x* cannot
-SYS_PARTS = r"/(?:system|system_ext|system_dlkm|vendor|vendor_dlkm|boot|product|odm|odm_dlkm|apex|metadata|data|persist|efs)?(?:/|\s|$|[;&|])|/[^/\s]*[*?\[][^/\s]*(?:/|\s|$|[;&|])"
+# (2026-10-13) cache, system_root, product_services, mnt/vendor/persist (calibration data) and dev/block (the raw partitions) added
+SYS_PARTS = (r"/(?:system|system_ext|system_dlkm|vendor|vendor_dlkm|boot|product|odm|odm_dlkm|apex|metadata|data|persist|efs"
+             r"|cache|system_root|product_services|mnt/vendor/persist|dev/block)?(?:/|\s|$|[;&|])|/[^/\s]*[*?\[][^/\s]*(?:/|\s|$|[;&|])")
 
 PATTERNS = [
     (r"\badb" + ADB_OPTS + r"\s+(?:remount|disable-verity|enable-verity)\b",
@@ -221,16 +259,24 @@ PATTERNS = [
      "mount phân vùng hệ thống ở chế độ rw"),
     (r"\bmount\b[^;&|\n]*/(?:system|vendor|product|odm)\b[^;&|\n]*\brw\b",
      "mount phân vùng hệ thống ở chế độ rw"),
+    # (2026-10-13) / itself: a system-as-root device mounts the system image at / (adb shell mount -o remount,rw /)
+    (r"\bmount\b[^;&|\n]*\brw\b[^;&|\n]*\s/(?:system_root)?(?=\s|$|[;&|\x22\x27])", "mount / (system-as-root) ở chế độ rw"),
+    (r"\bmount\b[^;&|\n]*\s/(?:system_root)?(?=\s|$|[;&|])[^;&|\n]*\brw\b", "mount / (system-as-root) ở chế độ rw"),
     (r"\bdd\b[^;&|\n]*\bof=/dev/", "dd ghi thẳng vào thiết bị khối /dev/…"),
+    # (2026-10-13) of= that the shell fills in at run time ($DISK, $(…), `…`): it may be a raw device
+    (r"\bdd\b[^;&|\n]*\bof=[\x22\x27]?(?:\$|\x60)", "dd ghi vào đích chưa biết lúc chạy ($VAR / lệnh con) — có thể là thiết bị khối"),
     (r"\bfastboot" + FB_OPTS + r"\s+(?:flash|flashall|erase|format|update)\b",
      "fastboot flash/erase/format (can thiệp bootloader thiết bị thật)"),
     (r"\bfastboot" + FB_OPTS + r"\s+(?:oem|flashing)\s+(?:unlock|lock)\b",
      "fastboot oem/flashing unlock (xoá sạch thiết bị)"),
+    # (2026-10-13) -w wipes userdata (and cache) wherever it stands: FB_OPTS skips it as an option before the verb. Not before a
+    # pipe: `grep "fastboot -w\|…"` with its backslash dropped (norm_strip) is a search pattern, not a wipe
+    (r"\bfastboot\b[^;&|\n]*\s-w(?=\s|$|[;&\x22\x27])", "fastboot -w (xoá userdata/cache của thiết bị)"),
     # Removing or disabling a system package (SystemUI, the launcher, GMS …) for the
-    # user can leave the device unable to boot to a usable screen.
+    # user can leave the device unable to boot to a usable screen. (2026-10-13) A package glob (com.ecarx.*) may name any of them.
     (r"\badb" + ADB_OPTS + r"\s+shell\s+(?:[^;&|\n]*\s)?pm\s+(?:uninstall|disable-user|disable|hide)\b[^;&|\n]*"
      r"\s(?:android|com\.android\.[\w.]+|com\.google\.android\.[\w.]+|com\.sec\.[\w.]+|com\.samsung\.[\w.]+"
-     r"|com\.qualcomm\.[\w.]+|com\.mediatek\.[\w.]+)(?=\s|$|[;&|])",
+     r"|com\.qualcomm\.[\w.]+|com\.mediatek\.[\w.]+|[\w.]*[*?][\w.*?]*)(?=\s|$|[;&|])",
      "gỡ/tắt app hệ thống Android (pm uninstall/disable) — thiết bị có thể không vào được màn hình"),
     # iOS signing identity and device fleet: not recoverable from the repo.
     (r"\bfastlane\b[^;&|\n]*\bmatch\s+nuke\b", "fastlane match nuke — thu hồi TOÀN BỘ chứng chỉ ký của team"),
@@ -239,7 +285,9 @@ PATTERNS = [
     (r"\bxcrun\s+simctl\s+(?:erase|delete)\s+all\b", "xcrun simctl erase/delete all — xoá sạch mọi simulator"),
     # Irreversible release / infrastructure / data operations (AGENTS.md §5.1 Gate 2 c):
     # the user runs them, via the `!` prefix, never the agent on its own.
-    (r"\b(?:npm|pnpm|yarn|bun)\s+(?:publish|unpublish)\b", "phát hành package lên registry (npm publish)"),
+    # (2026-10-13) --dry-run (bare or =true) uploads nothing; --dry-run=false is the real thing
+    (r"\b(?:npm|pnpm|yarn|bun)\s+(?:publish|unpublish)\b(?![^;&|\n]*\s--dry-run(?:=true)?(?=\s|$|[;&|]))",
+     "phát hành package lên registry (npm publish)"),
     (r"\b(?:vercel|netlify)\b[^;&|\n]*\s--prod\b", "deploy production (vercel/netlify --prod)"),
     (r"\bfirebase\s+deploy\b", "firebase deploy (lên production)"),
     (r"\bprisma\s+(?:migrate\s+reset|db\s+push\s+[^;&|\n]*--force-reset)\b", "prisma migrate reset — xoá sạch database"),
@@ -248,9 +296,12 @@ PATTERNS = [
      "DROP DATABASE/TABLE hoặc TRUNCATE qua CLI database"),
     (r"\bdropDatabase\s*\(|\bdb\.[\w$]+\.drop\s*\(", "MongoDB dropDatabase()/drop()"),
     (r"\bredis-cli\b[^;&|\n]*\bflush(?:all|db)\b", "redis-cli FLUSHALL/FLUSHDB — xoá toàn bộ dữ liệu Redis"),
-    (r"\bkubectl\b[^;&|\n]*\bdelete\b[^;&|\n]*(?:\s(?:namespace|namespaces|ns|pv|pvc|persistentvolumes?|persistentvolumeclaims?|crds?|customresourcedefinitions?|nodes?)\b|\s--all\b)",
+    # (2026-10-13) --dry-run (bare, =client or =server) deletes nothing; --dry-run=none deletes
+    (r"\bkubectl\b(?![^;&|\n]*\s--dry-run(?:=(?:client|server))?(?=\s|$|[;&|]))[^;&|\n]*\bdelete\b[^;&|\n]*(?:\s(?:namespace|namespaces|ns|pv|pvc|persistentvolumes?|persistentvolumeclaims?|crds?|customresourcedefinitions?|nodes?)\b|\s--all\b)",
      "kubectl delete namespace/volume/--all"),
-    (r"\b(?:terraform|tofu)\s+(?:destroy\b|apply\b[^;&|\n]*\s-destroy\b)|\bpulumi\s+destroy\b", "terraform/pulumi destroy — xoá hạ tầng"),
+    # (2026-10-13) terraform destroy -help / --help / -h prints the usage
+    (r"\b(?:terraform|tofu)\s+(?:destroy\b(?![^;&|\n]*\s-{1,2}h(?:elp)?(?=\s|$|[;&|]))|apply\b[^;&|\n]*\s-destroy\b)|\bpulumi\s+destroy\b",
+     "terraform/pulumi destroy — xoá hạ tầng"),
     (r"\bhelm\s+(?:uninstall|delete)\b", "helm uninstall — gỡ release khỏi cluster"),
     (r"\bdocker\b[^;&|\n]*(?:\bsystem\s+prune\b[^;&|\n]*--volumes|\bvolume\s+(?:rm|prune)\b|\bcompose\s+down\b[^;&|\n]*\s(?:-v|--volumes)\b)",
      "xoá docker volume (mất dữ liệu)"),
@@ -294,15 +345,15 @@ def unglob(tok):
                 return t
     return tok
 try:
-    norm = " ".join(unglob(t) for t in shlex.split(cmd, comments=False, posix=True))
+    norm = " ".join(unglob(t) for t in shlex.split(CMD_LIVE, comments=False, posix=True))
 except ValueError:
-    norm = cmd      # an unbalanced quote (a lone apostrophe in a comment is enough): the shell still runs the line
+    norm = CMD_LIVE      # an unbalanced quote (a lone apostrophe in a comment is enough): the shell still runs the line
 # Every quote and backslash character dropped, no tokenising. unglob() rewrites any ARGUMENT whose last path component holds a
 # glob (adb shell "rm -rf /system/*", rm -rf "/system/*" -> adb), which drops the rm and its target from norm; this variant keeps
 # them. It also survives an unbalanced quote, nested quotes (sh -c with quotes inside quotes), \rm and r""m, which shlex either
 # rejects or unwraps only one level.
-norm_strip = re.sub(r"[\\\x27\x22]", "", re.sub(r"\$(?=[\x27\x22])", "", cmd))   # ANSI-C and locale quoting (dollar then a quote) lose the dollar too
-variants = [cmd, norm_strip, norm]
+norm_strip = re.sub(r"[\\\x27\x22]", "", re.sub(r"\$(?=[\x27\x22])", "", CMD_LIVE))   # ANSI-C and locale quoting (dollar then a quote) lose the dollar too
+variants = [CMD_LIVE, norm_strip, norm]
 
 label = None
 for pat, lab in PATTERNS:
@@ -336,12 +387,23 @@ def git_tracks(p):
 
 HOME = os.path.realpath(os.path.expanduser("~"))
 SYS_PART_DIRS = {"/" + d for d in ("system", "vendor", "boot", "product", "odm", "data", "persist", "efs")}
+PWD_VAR = re.compile(r"\$(?:PWD\b|\{PWD\})")
 
 def rm_target_problem(t, cwds, env, forced=True):
     """Why removing target t recursively is refused, or None. Without -f (forced=False; 2026-10-09,
     tests/gates/test_hardware_rm_unforced.sh) only a target that is or holds the project root, the home folder, / or a
     system partition: rm -r with no terminal to ask on deletes all the same. A target it cannot resolve is not refused then."""
     orig = t
+    if PWD_VAR.search(t):   # $PWD is the directory the command runs in (2026-10-13: rm -rf "$PWD/build" was refused as unknown)
+        for cwd in cwds:
+            if cwd is None:
+                if forced:
+                    return f"{orig}: không biết thư mục hiện tại ($PWD sau cd tới $VAR / lệnh con / popd)"
+                continue
+            why = rm_target_problem(PWD_VAR.sub(lambda m: cwd, t), [cwd], env, forced)
+            if why:
+                return why
+        return None
     if t.startswith("~"):
         t = os.path.expanduser(t)
     t = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), t)
@@ -485,66 +547,179 @@ def find_narrowed(args, starts):
     return seq(0, False)[0]
 
 def feed_paths(feed):
-    """The paths a command piped into `xargs rm` names: find start points ([] when a name filter narrows them), the
-    words of a literal echo / printf; None when they cannot be read."""
+    """(paths, from find) of a command piped into `xargs rm`: find start points ([] when a name filter narrows them), the
+    words of a literal echo / printf; None when they cannot be read. from find: find recursed into the paths (2026-10-13)."""
     if not feed:
-        return None
+        return None, False
     i = 0
     while i < len(feed) and (re.match(r"^[A-Za-z_]\w*=", feed[i]) or os.path.basename(feed[i]) in RM_WRAPPERS):
         i += 1
     if i >= len(feed):
-        return None
+        return None, False
     prog, args = os.path.basename(feed[i]), [FIND_ESC.get(x, x) for x in feed[i + 1:]]
     if prog == "find":
         starts = find_starts(args)
-        return [] if find_narrowed(args, starts) else starts
+        return ([] if find_narrowed(args, starts) else starts), True
     if prog in ("echo", "printf") and not any(c in a for a in args for c in "$`("):
         words = re.split(r"(?:\s|\\[nt0])+", " ".join(a for a in args if not re.fullmatch(r"-[neE]+", a)))
-        return [w for w in words if w and "%" not in w]
-    return None
+        return [w for w in words if w and "%" not in w], False
+    return None, False
 
-def rm_segment_problem(toks, cwds, env, depth, feed=None):
-    """Problem of one simple command, or None. feed: the command piped into this one (`find . | xargs rm -rf`)."""
-    i, xargs, xargs_file, repl = 0, False, False, {"{}"}
+# ── One reading of a simple command for every rm rule (2026-10-13, tests/gates/test_guard_shell_norm.sh; the reading itself is
+# hooks/shell_norm.py since 14/10, shared with block-dangerous-git.sh) ───────────────────────────────────────────────────────
+# The aware reading is shell_norm.prefix_end (`sudo -u root rm`, `timeout -s KILL 5 rm`, `env -u HOME rm`, gtimeout, arch and a
+# redirect before the command hid the rm: the old reading stopped at the option value), with xargs as one more prefix (the command
+# it runs gets the paths). The reading before 2026-10-13 (every word after a wrapper that starts with - or is a number) is judged
+# as well, so the new reading only ever adds a verdict.
+
+def prefix_end(toks, aware):
+    """Index of the program word of toks for the aware reading or the one before 2026-10-13 (aware False)."""
+    i = 0
     while i < len(toks):
-        tk = toks[i]
+        if aware:
+            j = shell_norm.prefix_end(toks, i)
+            if j < len(toks) and os.path.basename(toks[j]) == "xargs":
+                i = j + 1 + shell_norm.xargs_command(toks[j + 1:])
+                continue
+            return j
+        tk, w = toks[i], os.path.basename(toks[i])
         if re.match(r"^[A-Za-z_]\w*=", tk):
-            k, v = tk.split("=", 1)
-            env[k] = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), v)
             i += 1
-        elif os.path.basename(tk) in RM_WRAPPERS:
-            w = os.path.basename(tk)
-            xargs = xargs or w == "xargs"
+        elif w in RM_WRAPPERS:
             i += 1
             while i < len(toks) and (toks[i].startswith("-") or re.match(r"^\d+\w?$", toks[i])):
-                if w == "xargs":
-                    o = toks[i]
-                    xargs_file = xargs_file or o == "-a" or o.startswith("--arg-file")
-                    if o in ("-I", "-J") and i + 1 < len(toks):
-                        repl.add(toks[i + 1])
-                    elif o[:2] in ("-I", "-J") and len(o) > 2:
-                        repl.add(o[2:])
-                    i += 2 if o in XARGS_OPTS_WITH_ARG else 1
-                else:
-                    i += 1
+                i += 2 if w == "xargs" and toks[i] in XARGS_OPTS_WITH_ARG else 1
         else:
             break
+    return min(i, len(toks))   # a redirect or wrapper word at the very end: no program
+
+def shell_scripts(rest):
+    """The scripts a shell (or su) runs with -c (shell_norm.shell_script: -c alone or in a flag cluster, bash -lc, sh -ec, options
+    after it); plus the word right after a lone -c, the reading before 2026-10-13."""
+    out = set()
+    if "-c" in rest and rest.index("-c") + 1 < len(rest):
+        out.add(rest[rest.index("-c") + 1])
+    script = shell_norm.shell_script(rest)
+    if script is not None:
+        out.add(script)
+    return out
+
+def device_script(prog, rest):
+    """(script, cwds it starts in, where) of a command that runs on another machine (shell_norm.far_command): adb shell /
+    exec-out ("device": its shell starts at /), ssh host ("ssh": the remote home, unknown). None otherwise."""
+    far = shell_norm.far_command(prog, rest)
+    if not far:
+        return None
+    return far[0], (["/"] if far[1] == "device" else [None]), far[1]
+
+braces = shell_norm.braces
+
+def remote_target_problem(t, cwds, env, where="device"):
+    """Why removing t recursively on a DEVICE / remote host is refused, or None. Only / and the system partitions count there
+    (_sys_target). The raw word and each brace expansion are judged; //, /./ and .. are resolved; a glob is judged as its
+    directory; a relative path starts at the far cwd (adb shell: /, then each cd; ssh: unknown, not judged). A target the far
+    shell fills in at run time ($VAR, `…`) is refused when it starts with it or when what stays fixed before it is / or inside a
+    system partition: $ANDROID_ROOT is /system. On a device ~ is such a target too (14/10): the HOME of the device shell is not
+    known here and may be / (ssh: the remote user home, no system partition)."""
+    t = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), t)
+    for x in [t] + braces(t):
+        if x.startswith("~"):
+            if where == "device":
+                return f"{t}: ~ trên thiết bị (HOME của shell thiết bị không biết trước, có thể là /) — có thể là / hoặc phân vùng hệ thống"
+            continue
+        if x[:1] in ("$", "`"):
+            return f"{t}: đường dẫn trên thiết bị chỉ biết lúc chạy, có thể là / hoặc phân vùng hệ thống"
+        for cwd in ([None] if x.startswith("/") else cwds):
+            if cwd is None and not x.startswith("/"):
+                continue
+            full = x if x.startswith("/") else cwd.rstrip("/") + "/" + x
+            if "$" in full or "`" in full:
+                p = shell_norm.norm_path(re.split(r"[$`]", full, 1)[0])
+                if _sys_target(p):
+                    return f"{t}: đường dẫn trên thiết bị chỉ biết lúc chạy, nằm trong {p} (gốc / phân vùng hệ thống)"
+                continue
+            p = shell_norm.norm_path(full)
+            if GLOB.search(p):
+                parts = p.split("/")
+                k = next(i for i, y in enumerate(parts) if GLOB.search(y))
+                p = "/".join(parts[:k]) or "/"
+            if _sys_target(p) or _sys_target(full):
+                return f"{t}: trên thiết bị là {p} (gốc / phân vùng hệ thống)"
+    return None
+
+def rimraf_args(prog, rest):
+    """The paths rimraf removes (rm -rf in a package: rimraf X, npx [-y] rimraf[@v] X, pnpm|yarn|npm|bun dlx|exec|x rimraf X,
+    yarn rimraf X), or None when the command is no rimraf."""
+    words, j = [prog] + rest, 0
+    if prog in ("npx", "bunx", "pnpx"):
+        j = 1
+    elif prog in ("pnpm", "yarn", "npm", "bun") and len(words) > 1 and words[1] in ("dlx", "exec", "x"):
+        j = 2
+    elif prog == "yarn":
+        j = 1
+    while 0 < j < len(words) and words[j].startswith("-"):
+        j += 2 if words[j] in ("-p", "--package") else 1
+    if j < len(words) and os.path.basename(words[j]).split("@")[0] == "rimraf":
+        return [a for a in words[j + 1:] if not a.startswith("-")]
+    return None
+
+def rm_segment_problem(toks, cwds, env, depth, feed=None, remote=False, implied=False):
+    """Problem of one simple command, or None. feed: the command piped into this one (`find . | xargs rm -rf`). remote: it runs on
+    a device or remote host (adb shell, ssh host): only / and system partitions count (remote_target_problem). implied: an rm
+    that find runs on everything under its start points (find -exec rm {} +), judged as rm -r. Both readings of the prefix are
+    judged (prefix_end)."""
+    for i in sorted({prefix_end(toks, True), prefix_end(toks, False)}):
+        why = rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied)
+        if why:
+            return why
+    return None
+
+def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
+    """rm_segment_problem for the program at toks[i]; toks[:i] is its prefix (NAME=VAL words for this command, xargs and its
+    options)."""
+    xargs, xargs_file, repl, k = False, False, {"{}"}, 0
+    while k < i:
+        tk = toks[k]
+        if re.match(r"^[A-Za-z_]\w*=", tk):
+            name, v = tk.split("=", 1)
+            env[name] = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), v)
+        elif os.path.basename(tk) == "xargs":
+            xargs = True
+            while k + 1 < i and (toks[k + 1].startswith("-") or re.match(r"^\d+\w?$", toks[k + 1])):
+                o = toks[k + 1]
+                xargs_file = xargs_file or o == "-a" or o.startswith("--arg-file")
+                if o in ("-I", "-J") and k + 2 < len(toks):
+                    repl.add(toks[k + 2])
+                elif o[:2] in ("-I", "-J") and len(o) > 2:
+                    repl.add(o[2:])
+                k += 2 if o in XARGS_OPTS_WITH_ARG else 1
+        k += 1
     if i >= len(toks):
         return None
     prog, rest = os.path.basename(toks[i]), toks[i + 1:]
     if GLOB.search(prog) and _fnm("rm", prog.lower()):
         prog = "rm"
-    if prog in ("bash", "sh", "zsh", "dash", "ksh") and "-c" in rest:
-        k = rest.index("-c")
-        return rm_problem(rest[k + 1], cwds, depth + 1) if k + 1 < len(rest) else None
+    if prog in shell_norm.SHELLS or prog == "su":
+        scripts = shell_scripts(rest)
+        for s in scripts:
+            why = rm_problem(s, cwds, depth + 1, remote)
+            if why:
+                return why
+        if prog == "su" and not scripts:   # su [OPTIONS] USER COMMAND…: the words after the user (shell_norm.su_command)
+            ran = shell_norm.su_command(rest)
+            return rm_segment_problem(ran[1], cwds, env, depth + 1, None, remote) if ran else None
+        return None
+    dev = device_script(prog, rest)
+    if dev:
+        return rm_problem(dev[0], dev[1], depth + 1, dev[2])
     if prog == "eval":
-        return rm_problem(" ".join(rest), cwds, depth + 1)
+        return rm_problem(" ".join(rest), cwds, depth + 1, remote)
     if prog == "find":
         rest = [FIND_ESC.get(x, x) for x in rest]
         starts = find_starts(rest)
         named = find_narrowed(rest, starts)
         if "-delete" in rest and not named:
-            why = rm_segment_problem(["rm", "-rf", "--"] + starts, cwds, env, depth + 1)
+            why = rm_segment_problem(["rm", "-rf", "--"] + starts, cwds, env, depth + 1, None, remote)
             if why:
                 return why + " (find -delete)"
         for j, a in enumerate(rest):
@@ -556,10 +731,22 @@ def rm_segment_problem(toks, cwds, env, depth, feed=None):
                     sub.append(x)
                 if not named:   # {} stands for everything under the start points
                     sub = [y for x in sub for y in (starts if x == "{}" else [x])]
-                why = rm_segment_problem(sub, cwds, env, depth + 1)
+                why = rm_segment_problem(sub, cwds, env, depth + 1, None, remote, not named)
                 if why:
                     return why
         return None
+    if not remote:
+        # rsync --delete / --del removes what the source lacks: judged like rm -r of the destination (2026-10-13)
+        if prog == "rsync" and any(a == "--del" or a.startswith("--delete") for a in rest):
+            ops = [a for a in rest if not a.startswith("-")]
+            if len(ops) >= 2 and not re.match(r"^[^/]*:", ops[-1]):   # host:path / rsync:// is another machine
+                why = rm_target_problem(ops[-1], cwds, env, False)
+                if why:
+                    return why + " (rsync --delete)"
+            return None
+        rim = rimraf_args(prog, rest)
+        if rim is not None:
+            return rm_segment_problem(["rm", "-rf", "--"] + rim, cwds, env, depth + 1)
     if prog.lower() != "rm":
         return None
     flags, targets, opts_done = "", [], False
@@ -573,18 +760,27 @@ def rm_segment_problem(toks, cwds, env, depth, feed=None):
             flags += a[1:]
         elif a not in repl and a != "":
             targets.append(a)
-    if not ("r" in flags or "R" in flags or "--recursive" in longs):
-        return None
-    force = "f" in flags or "--force" in longs
+    rec = "r" in flags or "R" in flags or "--recursive" in longs
+    force = rec and ("f" in flags or "--force" in longs)   # an rm that find makes recursive is judged as rm -r (no -f)
     if xargs:
-        fed = None if xargs_file else feed_paths(feed)
+        fed, from_find = (None, False) if xargs_file else feed_paths(feed)
+        if not rec and not from_find:
+            return None
         if fed is None and force:
             return "xargs rm: đường dẫn lấy từ lệnh trước, không đọc được (chỉ find / echo / printf literal được phân tích)"
         targets += fed or []
+    elif not rec and not implied:
+        return None
     for t in targets:
-        why = rm_target_problem(t, cwds, env, force)
-        if why:
-            return why
+        if remote:
+            why = remote_target_problem(t, cwds, env, remote)
+            if why:
+                return why
+            continue
+        for x in [t] + [b for b in braces(t) if b != t]:   # the raw word, then each brace expansion (rm -rf ~/{a,b})
+            why = rm_target_problem(x, cwds, env, force)
+            if why:
+                return why
     return None
 
 # find operators written escaped or quoted (\; \( \) and their quoted forms) are words of find, not shell separators
@@ -626,12 +822,17 @@ def drop_comments(text):
         out.append(c); i += 1
     return text if (q or brace or bt) else "".join(out)
 
-def rm_problem(text, cwds, depth=0):
+def rm_problem(text, cwds, depth=0, remote=""):
     """Walk the command like the shell: `cd` moves the cwd (after `&&` for sure; after
-    ; || | & both the old and the new directory stay possible), ( ) restores it."""
+    ; || | & both the old and the new directory stay possible), ( ) restores it. remote: the text runs on a device ("device")
+    or a remote host ("ssh") (2026-10-13): no host variable or ~ applies there. A heredoc body is walked only when a shell (or a
+    reader not known) gets it: the text of cat > f <<EOF, of a commit message or of a python program is no command (14/10,
+    shell_norm.heredocs; an unquoted body keeps its $(…) / `…`, which the shell runs)."""
     if depth > 5:
         return "lồng lệnh quá sâu để phân tích"
-    env = {"HOME": os.path.expanduser("~"), "TMPDIR": os.environ.get("TMPDIR") or "/tmp"}
+    if "<<" in text:
+        text = shell_norm.strip_heredocs(text, lambda h: h.kind in ("data", "interp", "interp_file"))
+    env = {} if remote else {"HOME": os.path.expanduser("~"), "TMPDIR": os.environ.get("TMPDIR") or "/tmp"}
     # `…` is $(…): the lexer splits "$" from "(", so a target built from one stays "$…"
     # (unresolvable, refused) while the inner command is walked as its own segment.
     text = re.sub(r"`([^`]*)`?", r"$(\1)", drop_comments(text).replace("\\\n", " ").replace("\n", " ; "))
@@ -665,22 +866,22 @@ def rm_problem(text, cwds, depth=0):
                 if head == "pushd" and "-n" in opts:
                     pass   # pushd -n only edits the directory stack: the shell stays where it is
                 elif (head == "popd" or arg is None or arg == "-" or re.fullmatch(r"[+-]\d+", arg) or "$" in arg or GLOB.search(arg)
-                      or (CDPATH_SET and not arg.startswith(("/", "~")))):
+                      or (CDPATH_SET and not arg.startswith(("/", "~"))) or (remote and arg.startswith("~"))):
                     # popd / bare pushd / cd - / pushd +N come back to a directory this walk never saw; with CDPATH a relative
-                    # name may resolve anywhere ("CDPATH=/opt cd data" enters /opt/data)
+                    # name may resolve anywhere ("CDPATH=/opt cd data" enters /opt/data); the far home is unknown
                     pending = [None]
                 else:
-                    arg = os.path.expanduser(arg)
+                    arg = arg if remote else os.path.expanduser(arg)
                     # c is None after `cd $VAR`: an absolute arg ignores it (join(None, arg) raised TypeError, rc 1, command ran)
                     pending = [os.path.normpath(os.path.join(c or "/", arg)) if c or os.path.isabs(arg) else None
                                for c in cwds]
             else:
-                why = rm_segment_problem(seg, cwds, env, depth, feed)
+                why = rm_segment_problem(seg, cwds, env, depth, feed, remote)
                 if why:
                     return why
             for tok_seg in seg:  # "$(…)" / `…` inside a quoted word runs too
                 if "(" in tok_seg and depth < 5:
-                    why = rm_problem(tok_seg.split("(", 1)[1].rstrip(")"), cwds, depth + 1)
+                    why = rm_problem(tok_seg.split("(", 1)[1].rstrip(")"), cwds, depth + 1, remote)
                     if why:
                         return why
         if pending is not None:
@@ -696,6 +897,9 @@ def rm_problem(text, cwds, depth=0):
 
 CDPATH_SET = bool(os.environ.get("CDPATH")) or "CDPATH" in cmd   # set in the environment or anywhere in the command
 rm_why = None if (label or MCP) else rm_problem(cmd, [CWD])
+if MCP and not label:   # (2026-10-13) the command of replicant adb-shell runs on the device: walked like adb shell "<command>"
+    _dev = inp.get("command") if tool == "mcp__replicant-mcp__adb-shell" and isinstance(inp, dict) else None
+    rm_why = rm_problem(_dev, ["/"], 0, "device") if isinstance(_dev, str) and _dev.strip() else None
 
 
 # ── Device policy: which serial may adb touch ─────────────────────────────────
@@ -742,6 +946,17 @@ def adb_calls(text):
             if k + 1 < len(toks):
                 yield from adb_calls(toks[k + 1])
             continue
+        # (14/10, W3) the script of a shell or su in any spelling (bash -lc, su -c, su USER CMD …): shell_norm
+        prog0 = os.path.basename(toks[i]) if i < len(toks) else ""
+        ran = (shell_norm.su_command(toks[i + 1:]) if prog0 == "su"
+               else ("script", shell_norm.shell_script(toks[i + 1:])) if prog0 in shell_norm.SHELLS else None)
+        if ran and ran[1]:
+            yield from adb_calls(ran[1] if ran[0] == "script" else " ".join(shlex.quote(w) for w in ran[1]))
+            continue
+        if i < len(toks) and os.path.basename(toks[i].lstrip("(")) not in ("adb", "adb.exe"):
+            j = prefix_end(toks, True)   # (2026-10-13) a wrapper option value before adb: sudo -u me adb -s X …
+            if j < len(toks) and os.path.basename(toks[j]) in ("adb", "adb.exe"):
+                i = j
         if i < len(toks):
             toks[i] = toks[i].lstrip("(")                # "(adb -s X shell ls)"
         if i >= len(toks) or os.path.basename(toks[i]) not in ("adb", "adb.exe"):
@@ -906,7 +1121,7 @@ if rm_why:
     sys.exit(2)
 
 if label is None:
-    dev = device_violation(cmd)
+    dev = device_violation(CMD_LIVE)
     if dev:
         sys.stderr.write("\n🛑 [HARDWARE SAFETY GATE REJECTED]\n")
         sys.stderr.write("Lệnh adb bị chặn vì chạm thiết bị ngoài chính sách thiết bị:\n")
@@ -925,7 +1140,7 @@ if label:
     sys.exit(2)
 
 if not MCP and active_profile() == "automotive":
-    lc = logcat_violation(cmd)
+    lc = logcat_violation(CMD_LIVE)
     if lc:
         sys.stderr.write("\n🛑 [HARDWARE SAFETY GATE REJECTED]\n")
         sys.stderr.write("Profile automotive: logcat chạy stream về máy tính bị chặn — ADB Wi-Fi tới xe rớt là log chết theo:\n")
@@ -937,7 +1152,7 @@ if not MCP and active_profile() == "automotive":
                          "  • hoặc adb logcat -d / -t <N> (đọc xong là thoát). Xem GeelyEx2 INSTINCT-099.\n")
         sys.exit(2)
 sys.exit(0)
-'
+' "$0"
 rc=$?
 case "${rc}" in 0|2) exit "${rc}" ;; esac
 echo "🛑 [HARDWARE SAFETY GATE] python không chạy được (rc ${rc}) — chặn để an toàn (người dùng tự chạy lệnh qua prefix ! hoặc HARDWARE_OVERRIDE=1)." >&2
