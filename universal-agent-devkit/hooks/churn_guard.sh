@@ -19,7 +19,7 @@
 # ALREADY happened (PostToolUse) — this is a stop-and-think signal, not a block.
 # It fires once per threshold crossing per file, not on every subsequent edit.
 #
-# ALSO (I.3 P6, below): warns once per file when the edited path is UNTRACKED (the git index does not hold it, so the edit cannot be
+# ALSO (the commit-closure check below): warns once per file when the edited path is UNTRACKED (the git index does not hold it, so the edit cannot be
 # committed alone). Same exit-2-means-tell-Claude channel; the edit has already happened, nothing is blocked.
 #
 # Escape hatch: CHURN_GUARD=0 (logged; also turns the untracked warning off). Fail-open on any internal error.
@@ -52,7 +52,7 @@ if [ "${CHURN_GUARD:-1}" = "0" ]; then
   exit 0
 fi
 
-# ── Commit closure at EDIT time (docs/workflow-improvements.md I.3 P6; tests/gates/test_untracked_edit_warning.sh) ──────────────────
+# ── Commit closure at EDIT time (tests/gates/test_untracked_edit_warning.sh) ──────────────────────────────────────────────────────
 # An edit that lands in an UNTRACKED file cannot be committed alone: the index (so HEAD) does not hold the file, so a commit of the edited paths (or a
 # `git archive HEAD` / CI checkout) lacks the code the edit depends on. OfficeReader 2026-10-07: the edit lived in an untracked file another
 # session's refactor had made, and nothing said so until a reviewer noticed. Lives here, not in a new hook file: this hook already judges every
@@ -112,7 +112,7 @@ if [ "${UNTRACKED_EDIT_WARN:-1}" != "0" ] && [ -n "${LOG_DIR}" ] && command -v g
       else
         echo "[$(date +%Y-%m-%dT%H:%M:%S)] WARN — UNTRACKED ${_UE_P}: edited, but the git index does not hold it" >> "${LOG_DIR}/churn_guard.log" 2>/dev/null
         printf '%s\n' \
-          "⚠️ COMMIT-CLOSURE (workflow-improvements I.3 P6): ${_UE_B} là file UNTRACKED — index git không có nó (HEAD cũng chưa), nên sửa này KHÔNG commit riêng được:" \
+          "⚠️ COMMIT-CLOSURE: ${_UE_B} là file UNTRACKED — index git không có nó (HEAD cũng chưa), nên sửa này KHÔNG commit riêng được:" \
           "   commit các path đã sửa (hoặc \`git archive HEAD\`, CI checkout) thiếu file này và code gọi tới nó sẽ không build." \
           "   Nếu là file của bạn: \`git add\` nó vào CÙNG commit với phần sửa. Nếu không phải bạn tạo (phiên/refactor khác để lại): hỏi chủ của nó," \
           "   hoặc sửa trên bản HEAD đang có. Kiểm đủ: \`git archive HEAD\` + chồng các path sắp commit lên rồi biên dịch (bản đầy đủ, chưa tự động)." \

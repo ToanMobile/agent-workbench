@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# docs/workflow-improvements.md I.3 P6 (commit closure at EDIT time): an edit that lands in an UNTRACKED file cannot be committed alone
+# Commit closure at EDIT time: an edit that lands in an UNTRACKED file cannot be committed alone
 # (HEAD does not hold the file), and nothing said so until a reviewer noticed (OfficeReader 07/10: the edit lived in an untracked file another
 # session's refactor made). hooks/churn_guard.sh (PostToolUse Edit|Write|NotebookEdit, no new hook file: the hook count is documented and
 # three registries must agree) now warns once per file per session, never blocks (the edit has happened), in bash + git only (no python).

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# docs/workflow-improvements.md I.3 P9: a feature that acts on a user-supplied selection (translate, copy, search, share) logs a SIZE BUCKET of
+# A feature that acts on a user-supplied selection (translate, copy, search, share) logs a SIZE BUCKET of
 # it, never the content. OfficeReader 07/10: PDF "Translate" got 1-2 words per request because the END selection handle lost a tie; no unit test
 # can show that, a bucket distribution on the dashboard can. android-rules.md section 12 already says "đường dẫn -> chỉ gửi loại/nhóm (... bucket
 # kích thước)" for paths; this pins the sibling rule for selections: the bucket scheme and one sample event name, in the on-demand block of

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-wiring_pin.py — wiring pins when logic is extracted from an Android View (docs/workflow-improvements.md I.3 P4).
+wiring_pin.py — wiring pins when logic is extracted from an Android View into an `internal object`.
 
 REGEX-BASED, not a Kotlin parser: it can miss a View whose header spans lines or builds its supertype through a typealias,
 and it reads one directory (the package) as "next to the View". Standard library only.

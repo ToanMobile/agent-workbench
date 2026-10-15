@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# docs/workflow-improvements.md I.3 P4: when logic is pulled out of an Android View into a new `internal object`, a test of the object alone
+# When logic is pulled out of an Android View into a new `internal object`, a test of the object alone
 # proves nothing about the View (reverting the View's call site leaves it green: the vacuity gate called such a test empty). scripts/linters/
 # wiring_pin.py scan finds that situation (new internal object next to a View file, no test names the View) and prints a source-text pin test
 # skeleton: the View still names the object, and no longer holds the old branch. `verify` evaluates THE GENERATED FILE'S OWN LITERALS

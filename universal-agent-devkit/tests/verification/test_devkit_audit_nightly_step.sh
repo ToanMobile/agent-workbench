@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pin test (W4b, workflow-improvements I.0): the daily /devkit-audit runs `nightly.py run <repo>` ONCE per repo whose checkout is free, and
+# Pin test (W4b): the daily /devkit-audit runs `nightly.py run <repo>` ONCE per repo whose checkout is free, and
 # never installs a nightly job (user, 2026-09-24: no LaunchAgent). The procedure text is the only place that says so, so this test pins it:
 #   - step 7 of "Pha 6" in references/procedure.md names `scripts/governance/nightly.py run <repo>`, the `session_lock.py --status`
 #     check right before each repo, exit 0 as the only go (exit 3 held, exit 5 merge-only trunk mode = skip), one repo at a time, in the
