@@ -31,8 +31,9 @@ memory đã re-verify. Chỉ review; không edit trừ khi request giao rõ vi�
 - Security/privacy: external input, permission, secret/PII, silent failure và telemetry.
 - UI: accessibility/design acceptance thật; metric/threshold phải có nguồn.
 - State matrix (diff đổi layout/overlay/inset/cử chỉ): test xanh và Robolectric (inset = 0) không thấy hình học
-  thật hay tổ hợp trạng thái. Lập bảng: loại tài liệu × orientation × kiểu điều hướng (cử chỉ / 3 nút) × thanh
-  ẩn/hiện × thanh chỉnh sửa × trình phát/overlay nổi × font scale 200% × RTL × display cutout; mỗi ô một dòng
+  thật hay tổ hợp trạng thái. Lập bảng theo các trục áp dụng cho thay đổi này: orientation × kiểu điều hướng
+  (cử chỉ / 3 nút) × font scale 200% × RTL × display cutout × trạng thái riêng của màn hình (chrome ẩn/hiện,
+  overlay nổi, loại nội dung hiển thị); mỗi ô một dòng
   kết quả. Ô hai vùng chạm/chrome giao nhau hoặc chiếm cùng cạnh = `overlaps`; ô chưa đọc/đo được từ code hay
   máy thật = `unchecked`. Bỏ trục không áp dụng, thêm trạng thái riêng của màn hình. Ô `overlaps` là finding,
   ô `unchecked` là residual nêu riêng. Danh sách ô Android cụ thể và helper `compose-overlap-invariants`:
