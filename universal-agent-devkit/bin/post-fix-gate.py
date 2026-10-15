@@ -4198,6 +4198,7 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
 # opened without following a link and without blocking (the directory is agent-writable: a FIFO, a link, a directory or a hard-linked
 # file at the path is skipped); a short write is finished, a torn line is ended with a newline.
 # No file name, absolute path, commit message or session id is recorded. Rotation: above RUN_LOG_MAX_BYTES the newest lines are kept.
+# `steps` (_lap, below): a fixed set of 12 phase names with seconds rounded to 0.1, ~200 bytes; the size cap below cuts `suites`, never them.
 # Retention (measured line sizes: 2 suites ~400 B, 12 suites ~760 B, 40 suites ~1.8 KB (cut to 3 KB)): RUN_LOG_KEEP_BYTES 1 MiB holds
 # ~2600 / ~1380 / ~580 runs, and a rotation (a rewrite of ~1 MiB) happens about every 650 / 350 / 150 runs.
 RUN_LOG_NAME = "runs.jsonl"
@@ -4207,6 +4208,39 @@ RUN_LOG_KEEP_LINES = 4000
 RUN_LOG_LINE_MAX = 3000
 RUN_LOG_STALE_TMP_S = 3600        # a rotation temp file older than this belongs to a dead run
 _MAIN_T0 = None                   # time.monotonic() at the start of main()
+# Per-phase seconds of the run, written as `steps` in the record (2026-10-15: runs.jsonl said how long a run took and how long its suites
+# ran, so the 28.6 % of OfficeReader's gate time outside the suites could not be attributed). _lap(name) charges the time since the previous
+# lap (main()'s start for the first) to `name`; the laps tile main() from its first line to the log call, so the steps add up to total_wall_s.
+# Phases: git (arguments, changed files), analysis (matrix, edited-test and author analysis), static (the static audits, layers 1-3 and
+# 5-8), select (rules and the impacted-test plan), cache (the reuse check), lock (the wait for test_run.lock), suites (the whole suite loop),
+# verdict, receipt, checklist, report. `vacuity` is NOT a phase: it is the seconds of the vacuity re-runs, which happen inside the suites
+# phase and after the command's own duration was stamped, so suites_wall_s (the sum of the durations) leaves them out; a flaky re-run, by
+# contrast, is inside the duration. With a parallel group the vacuity seconds of its members add up and can exceed the loop's wall time.
+_STEPS = {}
+_STEP_LAST = None
+_STEP_LOCK = threading.Lock()
+
+
+def _lap(name):
+    """Charge the seconds since the previous lap to `name`. Data only: it can never raise into the gate."""
+    global _STEP_LAST
+    try:
+        now = time.monotonic()
+        base = _STEP_LAST if _STEP_LAST is not None else _MAIN_T0
+        if base is not None:
+            with _STEP_LOCK:
+                _STEPS[name] = _STEPS.get(name, 0.0) + max(now - base, 0.0)
+        _STEP_LAST = now
+    except Exception:  # noqa: BLE001 - the numbers are data; the verdict never depends on them
+        return
+
+
+def _add_step(name, seconds):
+    try:
+        with _STEP_LOCK:
+            _STEPS[name] = _STEPS.get(name, 0.0) + max(float(seconds), 0.0)
+    except Exception:  # noqa: BLE001
+        return
 
 
 def _run_log_open_flags():
@@ -4386,6 +4420,10 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
         }
         if _MAIN_T0 is not None:
             rec["total_wall_s"] = round(time.monotonic() - _MAIN_T0, 2)
+        with _STEP_LOCK:   # seconds per phase (see _lap); a copy, so the record never changes after this line
+            steps = {k: round(v, 1) for k, v in _STEPS.items()}
+        if steps:
+            rec["steps"] = steps
         data = (json.dumps(rec, separators=(",", ":")) + "\n").encode("ascii")
         while len(data) > RUN_LOG_LINE_MAX and rec["suites"]:
             rec["suites"] = rec["suites"][:len(rec["suites"]) // 2]
@@ -4398,8 +4436,10 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
 
 
 def main():
-    global _MAIN_T0
+    global _MAIN_T0, _STEP_LAST
     _MAIN_T0 = time.monotonic()
+    _STEP_LAST = None
+    _STEPS.clear()   # one run, one set of steps (a test may call main() again in the same process)
     if threading.current_thread() is threading.main_thread():
         # SIGINT too (A9, 2026-10-09): its KeyboardInterrupt left the suites running; the handler dies by SIGINT like an
         # uncaught KeyboardInterrupt does, so the exit status is unchanged. An ignored signal (nohup, a background job's
@@ -4561,6 +4601,7 @@ def main():
             for dst, src in since_renames.items():
                 if dst not in _BASE_REF_FOR:
                     RENAME_SOURCES.setdefault(dst, src)
+    _lap("git")
     devkit_artifacts = [f for f in all_changed if is_devkit_artifact(f)]
     modified_files = [f for f in all_changed if f not in devkit_artifacts]
     state_files = secret_scan_state_files(devkit_artifacts)   # the secret scan only (A5)
@@ -4623,6 +4664,7 @@ def main():
     tests_touched, tests_touched_other = split_tests_by_author(tests_touched, args.session, args.transcript)
     tests_touched, tests_approved = split_user_approved(tests_touched, args.transcript, auto_approve=args.auto_approve_tests)
     run_tests = (args.run_tests or args.full or getattr(args, "force_full", False)) and not args.dry_run
+    _lap("analysis")
 
     print(f"\n{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}")
     print(f"{BOLD}{CYAN}      🛡️  POST-FIX AUDIT & TIA REGRESSION VERIFICATION GATE                          {RESET}")
@@ -4725,6 +4767,7 @@ def main():
     if device_state == "online":
         log_ok(tr("Device Enumeration: có thiết bị online qua 'adb devices -l'", "Device enumeration: device online via 'adb devices -l'"))
 
+    _lap("static")
     # Layer 4: TIA Regression Impact Analysis & Marked Checklist
     print(f"\n{BOLD}[4/8] {tr('(CHẶN với --run-tests) Test hồi quy TIA (Test Impact Analysis):', '(BLOCKING with --run-tests) TIA regression tests (Test Impact Analysis):')}{RESET}")
     rules = matrix.get("rules", [])
@@ -4818,6 +4861,7 @@ def main():
     else:
         print(f"  • {tr('Component liên đới', 'Impacted components')}: {DIM}{tr('không có (không file nào khớp watch_files)', 'none (no file matches watch_files)')}{RESET}\n")
 
+    _lap("select")
     selection_cache = {}
     unity_will_test = any(
         any(tok in (t.get("command") or "").lower() for tok in ("editmode", "playmode"))
@@ -4907,6 +4951,7 @@ def main():
         # budget_fp (= tested_fp for a forced run) was taken just above and nothing has run since: the same tree (A13). The
         # re-check after the lock wait below takes a fresh one: the tree may have changed while this run waited.
         cache = reuse_full_pass(budget_fp)
+    _lap("cache")
     to_run = [t for t in regression_tests if t.get("mode") != "cached"]
     lock_fh, lock_held = (acquire_test_run_lock(project_dir)
                           if run_tests and any(t.get("command") for t in to_run) else (None, True))
@@ -4918,6 +4963,7 @@ def main():
     if use_cache and cache is None and lock_held and receipt_stamp() not in (None, stamp_before):
         cache = reuse_full_pass()
         to_run = [t for t in regression_tests if t.get("mode") != "cached"]
+    _lap("lock")
     # One run per distinct command (O2, 2026-09-28): two rules naming one command share its result,
     # and the test scripts run so far go to DEVKIT_GATE_DONE so run_impacted.sh skips them.
     ran_cmds, done_scripts = {}, []
@@ -5019,7 +5065,10 @@ def main():
             t["label"] = f"PASS ({mode})"
         else:
             t["label"] = t["status"]
+        _v0 = time.monotonic()
         proved = vacuity_revert(project_dir, t, args.timeout)
+        if proved != "skip":
+            _add_step("vacuity", time.monotonic() - _v0)   # a re-run that happened: its seconds are outside the suite's duration
         if proved == "vacuous":
             t["status"] = "FAIL"
             t["label"] = "VACUOUS"
@@ -5163,6 +5212,7 @@ def main():
             t["output_tail"] = tr("Matrix không khai báo command cho test này", "The matrix declares no command for this test")
     drain()
     restore_local_configs(_config_snaps)
+    _lap("suites")
 
     checklist_markdown = []
     for t in regression_tests:
@@ -5279,6 +5329,7 @@ def main():
     else:
         log_warn(tr("OpenCodeReview CLI (`ocr`) chưa cài — lớp này bỏ qua", "OpenCodeReview CLI (`ocr`) not installed — skipped"))
 
+    _lap("static")
     # Final Summary Verdict
     static_ok = (hygiene_ok and anti_laziness_ok and deps_ok and perf_ok and resilience_ok
                  and logging_ok and hw_ok and assert_ok and proof_ok)
@@ -5416,6 +5467,7 @@ def main():
     print(f"  • {tr('Gate không xác minh: DESIGN.md/a11y, RED/GREEN, Immutable Guards, OpenCodeReview. Ảnh nghiệm thu không nằm trong exit code; agent vẫn phải gắn PNG của lượt này trước khi nói XONG, trừ khi thay đổi chắc chắn không lên màn hình (essentials bước 4).', 'The gate does not verify: DESIGN.md/a11y, RED/GREEN, immutable guards, OpenCodeReview. The proof image is outside the exit code; the agent still attaches a PNG from this turn before saying XONG unless the change surely cannot show on a screen (essentials step 4).')}")
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
+    _lap("verdict")
     partial = not force_reason or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)
     try:
         if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and (not partial or (exit_code != 0 and not receipt_untested)):
@@ -5439,6 +5491,7 @@ def main():
         # this line frees the lock with the process.
         if lock_fh:
             lock_fh.close()
+    _lap("receipt")
 
     if not args.no_checklist and not project_gone:
         # A LINKED worktree leaves the tracked checklist files alone (--checklist asks for the write): the verdict and
@@ -5452,6 +5505,8 @@ def main():
             print(f"  • {DIM}{tr('Regression checklist: không ghi trong worktree liên kết (thêm --checklist để ghi); kết quả chạy giữ trong state riêng của worktree', 'Regression checklist: not written in a linked worktree (add --checklist to write it); this run results are kept in the worktree own state')}{RESET}")
             if args.record_lesson and exit_code == 0:
                 print(f"  • {DIM}{tr('Bài học vào instincts.md; dòng bug KHÔNG ghi ở đây — thêm ở main checkout: agent-kit bugs add ...', 'The lesson goes to instincts.md; its bug row is NOT written here — add it in the main checkout: agent-kit bugs add ...')}{RESET}")
+
+    _lap("checklist")
 
     def box(ok):
         return "x" if ok else " "
@@ -5541,6 +5596,7 @@ def main():
             log_warn(tr("Không ghi bài học vào instincts.md vì gate chưa PASS.", "Lesson not recorded in instincts.md: the gate did not PASS."))
 
     # Last: the run log (data only, see _log_gate_run). Plain names only: nothing here can fail before the function's own guard.
+    _lap("report")
     _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
                   cache, run_tests, force_reason, docs_only, project_dir, git_dir)
     return exit_code
