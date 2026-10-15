@@ -883,8 +883,7 @@ test('PM bi SIGKILL luc cho init: agy mo coi bi PM ke tiep dung (ban ghi cho the
   process.env.FAKE_AGY_INIT_DELAY_MS = '0';
   process.env.FAKE_AGY_ID = 'e2e2e2e2-2222-3333-4444-555555555555';
   await newConversation({ prompt: 'y', model: ARGON, cwd: project });   // PM ke tiep
-  await sleep(400);
-  assert.equal(alive(orphan.pid), false, 'agy cua PM da chet van chay (khong ai theo doi)');
+  assert.ok(await waitUntil(() => !alive(orphan.pid), 5000), 'agy cua PM da chet van chay (khong ai theo doi)');
   assert.deepEqual(pendingKeys(), [], 'ban ghi cho cua agy mo coi con sot');
 });
 
