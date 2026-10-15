@@ -210,7 +210,8 @@ FINDINGS += [
     "cat > ~/.config/git/config <<'EOF'\n@BODY@\nEOF\ngit status", "cat > ~/.zshenv <<'EOF'\n@BODY@\nEOF\nzsh -c true",
     "cat > .pre-commit-config.yaml <<'EOF'\n@BODY@\nEOF\ngit commit --allow-empty -m x",
     "cat > ~/.config/git/config <<'EOF'\n@BODY@\nEOF", "cat > ~/.zshenv <<'EOF'\n@BODY@\nEOF", "cat > .pre-commit-config.yaml <<'EOF'\n@BODY@\nEOF",
-    "cat > run.sh <<'EOF'\n@BODY@\nEOF", "cat > Makefile <<'EOF'\n@BODY@\nEOF",
+    "cat > run.sh <<'EOF'\n@BODY@\nEOF", "cat > Makefile <<'EOF'\n@BODY@\nEOF", "cat > package.json <<'EOF'\n@BODY@\nEOF",
+    "cat > lefthook.yml <<'EOF'\n@BODY@\nEOF", "cat > .vscode/tasks.json <<'EOF'\n@BODY@\nEOF", "cat > docker-compose.yml <<'EOF'\n@BODY@\nEOF",
     # F3: the quoted $( ) is the value of an option that RUNS it (an alias, a pager, an editor, a monitor, a shell alias, python -c)
     "git -c core.pager=\"$(cat <<EOF\n@BODY@\nEOF\n)\" --paginate log", "git -c core.editor=\"$(cat <<EOF\n@BODY@\nEOF\n)\" config --edit",
     "git -c core.fsmonitor=\"$(cat <<EOF\n@BODY@\nEOF\n)\" status", "gh alias set --shell x \"$(cat <<EOF\n@BODY@\nEOF\n)\"",
@@ -258,6 +259,7 @@ TAIL += [("git", "python3 -c 'import subprocess; subprocess.run([\"git\"] + [\"r
          ("git", "node <<'EOF'\nconst r = /\\/\\//; require('child_process').execSync(\"git reset --hard\")\nEOF"),
          ("git", "perl - <<'EOF'\nqx#git reset --hard#;\nEOF"),
          # F8: a backslash-newline inside a word, env -iS, a shell fed by a process substitution
+         ("git", "echo $(true); git reset --ha\\\nrd"), ("git", "echo \"$(gi\\\nt reset --hard)\""),
          ("git", "gi\\\nt reset --hard"), ("git", "git res\\\net --hard"), ("git", "git reset --ha\\\nrd"), ("git", "git pu\\\nsh --force origin main"),
          ("hw", "adb remo\\\nunt"), ("hw", "fastboot fla\\\nsh boot x.img"), ("hw", "rm -r\\\nf /system"), ("hw", "rm -rf /sys\\\ntem"),
          ("hw", "dd if=a.img of=/de\\\nv/sda"), ("hw", "ad\\\nb remount"),
@@ -282,7 +284,7 @@ HARMLESS = [
     "git status", "git diff --stat", "git log --oneline | head -5", "git branch --show-current", "git show HEAD:README.md", "git checkout feat",
     "git clean -n", "git clean -fd --dry-run", "git rm -f --cached src/a.kt", "git fetch origin", "git pull --ff-only",
     "time -p git status", "sudo --user=root git status", "2>&1 git status", "env -P /usr/bin git status", "nohup git status",
-    "rm -rf build", "rm -rf \"$PWD/build\"", "rm -rf node_modules", "time -p rm -rf build", "sudo --user root rm -rf build", "2>&1 rm -rf build",
+    "rm -rf build", "rm -rf bu\\\nild", "rm -rf \"$PWD/build\"", "rm -rf node_modules", "time -p rm -rf build", "sudo --user root rm -rf build", "2>&1 rm -rf build",
     "su --command='rm -rf /tmp/build'", "su -c 'rm -rf /tmp/build'", "bash -lc 'rm -rf build'", "sudo -s 'rm -rf build'",
     "adb devices", "adb wait-for-device", "adb -s ABC shell ls /sdcard", "adb shell rm -rf /sdcard/Download/old",
     "adb wait-for-device shell ls /sdcard", "npm publish --dry-run", "dd if=/dev/zero of=/tmp/x.img bs=1m count=1", "rsync -a --delete src/ build/",
@@ -294,7 +296,17 @@ HARMLESS = [
 # ACCEPTED FALSE POSITIVES (policy of 15/10: fail closed, build less). Harmless commands the guards refuse because a heredoc body is cut only for
 # a known message option or the one file statement of a modeled command, and a program body is judged on its raw text. They are pinned BLOCKED
 # here so that nobody loosens them quietly: a change that lets one through must edit this list and say why.
+UNMODELED_BEFORE = ["echo ${x}", "echo $[1+2]", "(true)", "true &", "trap true EXIT", "echo `true`", "echo $'a'", "eval true", "source x",
+                    "if true; then true; fi", "echo a\\\nb", "diff <(true) <(true)"]
 ACCEPTED_FP = [
+    # a message argument is data, cut only in a command that is fully modeled: any unmodeled construct elsewhere keeps the body in the scan
+    *[(h, x + "\ngit commit -m \"$(cat <<'EOF'\n" + d + "\nEOF\n)\"") for x in UNMODELED_BEFORE for h, d in (("git", GITD), ("hw", RMD))],
+    # the quoted $( ) is the value of an option that is no message: only -m / --message and --body / --title / --notes are cut
+    ("git", "git merge -s \"$(cat <<'EOF'\ngit reset --hard\nEOF\n)\" x"), ("hw", "git merge -s \"$(cat <<'EOF'\nrm -rf ~\nEOF\n)\" x"),
+    ("git", "git commit --author \"$(cat <<'EOF'\ngit reset --hard\nEOF\n)\" -m x"), ("hw", "git commit --author \"$(cat <<'EOF'\nrm -rf ~\nEOF\n)\" -m x"),
+    ("git", "gh pr create --head \"$(cat <<'EOF'\ngit reset --hard\nEOF\n)\""), ("hw", "gh pr create --head \"$(cat <<'EOF'\nrm -rf ~\nEOF\n)\""),
+    ("git", "gh release create v1 --target \"$(cat <<'EOF'\ngit reset --hard\nEOF\n)\""), ("hw", "gh release create v1 --target \"$(cat <<'EOF'\nrm -rf ~\nEOF\n)\""),
+    ("git", "git -c user.name=x commit -m \"$(cat <<'EOF'\ngit reset --hard\nEOF\n)\""), ("hw", "git -c user.name=x commit -m \"$(cat <<'EOF'\nrm -rf ~\nEOF\n)\""),
     # refused by design whatever the text (a shell that runs a process substitution): like the git guard, the hardware gate cannot read it
     ("hw", "bash <(echo 'rm -rf /')"), ("hw", "bash < <(echo 'rm -rf /')"), ("hw", "sh -x <(echo 'adb remount')"), ("hw", "bash <(echo 'ls /')"),
     # a statement after the written file, a second heredoc, a heredoc to stdout, a reader that is not cat, a message of no known option

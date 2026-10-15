@@ -516,7 +516,7 @@ for cmd, want in [("cat > f.txt <<EOF\na $(rm -rf ~) b `ls`\nEOF", "cat > f.txt 
     bad += got != want
 # R1: a body is cut only when every construct outside the bodies is modeled (cut_ok); each of these makes the scanner untrustworthy
 STMT = "cat > f.txt <<'EOF'\nbody\nEOF"
-UNMODELED = ["echo ${x}", "echo ${x//<<EOF}", "echo $[1<<2]", "echo $((1<<2))", "(true)", "(true)#", "{ true; }", "if true; then true; fi",
+UNMODELED = ["echo ${x}", "echo $[1+2]", "echo ${x//<<EOF}", "echo $[1<<2]", "echo $((1<<2))", "(true)", "(true)#", "{ true; }", "if true; then true; fi",
              "for i in 1; do true; done", "while false; do true; done", "case x in x) true;; esac", "f() { true; }", "function f { true; }",
              "trap true EXIT", "eval true", "source x", ". x", "exec true", "true &", "diff <(true) <(true)", "tee >(cat)", "cat <<< x",
              "echo `true`", "echo \"`true`\"", "echo $'a'", "echo $\"a\"", "echo a\\\nb", "echo \\a", "echo \"${x}\"", "echo \"$((1))\"",
@@ -532,6 +532,13 @@ for x in MODELED:
     ok = bool(docs) and docs[-1].cut_ok
     print(("✔ " if ok else "✖ ") + f"cut_ok is True for modeled constructs: {x!r}")
     bad += not ok
+# the gate itself: a message argument is data, yet it is cut only in a command that is modeled (cut_ok)
+MSG = "git commit -m \"$(cat <<'EOF'\nbody\nEOF\n)\""
+for pre, want in (("echo x\n", "echo x\ngit commit -m \"$(cat <<'EOF'\n)\""), ("echo ${x}\n", "echo ${x}\n" + MSG), ("true &\n", "true &\n" + MSG),
+                  ("(true)\n", "(true)\n" + MSG), ("trap true EXIT\n", "trap true EXIT\n" + MSG)):
+    got = sn.strip_heredocs(pre + MSG, data)
+    print(("✔ " if got == want else "✖ ") + f"strip of a message argument after {pre.strip()!r}: {got!r}" + ("" if got == want else f" (want {want!r})"))
+    bad += got != want
 # a delimiter word that is not plain (escaped, decoded, expanded, punctuation, non-ASCII) is never cut either
 for w in ("\\EOF", "E\"\"OF", "'E'\"O\"F", "$EOF", "EOF.", "E-F", "\u00c9OF", "'EOF'x"):
     docs = sn.heredocs("cat > f.txt <<" + w + "\nbody\n" + (w.strip("'\"\\").replace("\"", "")) + "\n")

@@ -747,14 +747,13 @@ def _sk(s, i, depth, sub):
 
 
 def _modeled(text, docs):
-    """True when the text outside the heredoc bodies is made only of constructs the scanner models, and every heredoc word is plain
-    and terminated: only then is where the scanner puts a body where the shell puts it."""
+    """True when the text outside the heredoc bodies is made only of constructs the scanner models (a heredoc word that is not plain
+    fails the parse too): only then is where the scanner puts a body where the shell puts it."""
     if re.search(r"[\x00-\x08\x0b-\x1f\x7f]", text):
         return False
     out, pos = [], 0
     for h in sorted(docs, key=lambda d: d.op_start):
-        raw = text[h.op_start + 2:h.op_end].lstrip("-").strip(" \t")
-        if not h.terminated or h.body_start < pos or _DELIM.fullmatch(raw) is None:
+        if h.body_start < pos:
             return False
         out.append(text[pos:h.body_start])
         pos = h.end
@@ -781,11 +780,12 @@ def _text_target(t):
             and not HOOKDIR.search(t) and not HOOKNAME.search(t) and not t.startswith("-"))
 
 
-def _file_statement(text, h, ndocs):
+def _file_statement(text, h):
     """True when the heredoc is the ONE statement of the command: cat > F <<EOF (also >>, or the redirect after the word), tee F or
-    git commit -F -, optionally after `cd DIR &&` / `mkdir -p DIR &&`, with only blank lines and comments around it, and F is a text
+    git commit -F -, optionally after `cd DIR &&` / `mkdir -p DIR &&`, with only blank lines and comments around it (so no second
+    heredoc, no later statement), and F is a text
     file (TEXT_EXT) that is no hook, no config and no script."""
-    if ndocs != 1 or not h.terminated:
+    if not h.terminated:
         return False
     ls = text.rfind("\n", 0, h.op_start) + 1
     nl = text.find("\n", h.op_end)
@@ -847,7 +847,7 @@ def _source_target(text, h):
     return SOURCE_EXT.get(os.path.splitext(m.group(1) or m.group(2))[1].lower(), "") if m else ""
 
 
-def _classify(text, h, seps, pipes, cut, ndocs):
+def _classify(text, h, seps, pipes, cut):
     """Set h.reader and h.kind. The reader is the command the operator belongs to (the one just before it on its line, inside
     any $( … )) and the top-level command around it, with the stages of its pipeline. kind: "shell" a shell reads it (here or far),
     "interp" an interpreter reads it as its program, "source" it is written to a script (never cut), "data" it is a message or the one file statement (never run), else "other";
@@ -875,7 +875,7 @@ def _classify(text, h, seps, pipes, cut, ndocs):
         h.kind, h.reader = "interp", top
     elif inner in ("cat", "tee") and _source_target(text, h):               # cat > x.py <<EOF: a script, run by who knows
         h.kind, h.reader = "source", _source_target(text, h)
-    elif _message_arg(text, h) or _file_statement(text, h, ndocs):
+    elif _message_arg(text, h) or _file_statement(text, h):
         h.kind = "data"
     else:
         h.kind = "other"
@@ -896,7 +896,7 @@ def heredocs(text):
         if many:
             h.kind = "shell"
         else:
-            _classify(text, h, seps, pipes, cut, len(docs))
+            _classify(text, h, seps, pipes, cut)
     return docs
 
 
