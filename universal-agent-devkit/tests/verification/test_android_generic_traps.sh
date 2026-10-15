@@ -66,18 +66,21 @@ n="$(grep -cF -- "] $T13" "$P")"
 m="$(grep -c '\*\*promoted:\*\* android' "$Q" 2>/dev/null)"
 [ "$m" = 2 ] && ok "both queue entries are marked promoted to android" || fail "promoted markers: ${m:-0} (want 2)"
 
-# ── C. the id follows the file: a copy that already holds INSTINCT-006 and -007 (a real generic trap promoted earlier) gives 008 ──
+# ── C. the id follows the file: a copy that already holds two later numbered traps (the highest id + 10 and + 11, as if promoted earlier) gives the highest + 12 ──
 mkdir -p "$TMP/kit2/profiles/android" "$TMP/proj2/.agents/local"
 cp "$REAL" "$TMP/kit2/profiles/android/instincts.md"
 ln -s "$DEVKIT_DIR/scripts" "$TMP/kit2/scripts"; ln -s "$DEVKIT_DIR/templates" "$TMP/kit2/templates"
-for n in 906 907; do
-  printf '\n### [INSTINCT-%s] Already promoted trap %s\n- **Hiện tượng lỗi:** x\n- **Nguyên nhân gốc rễ:** y\n- **Quy tắc bắt buộc:** z\n- **Kiểm tra tự động:** w\n\n---\n' "$n" "$n" >> "$TMP/kit2/profiles/android/instincts.md"
+HIGH="$(sed -n -E 's/^### \[INSTINCT-([0-9]{3,})\].*/\1/p' "$TMP/kit2/profiles/android/instincts.md" | sort -n | tail -1)"; HIGH=$((10#${HIGH:-0}))
+for n in $((HIGH + 10)) $((HIGH + 11)); do
+  printf '\n### [INSTINCT-%03d] Already promoted trap %s\n- **Hiện tượng lỗi:** x\n- **Nguyên nhân gốc rễ:** y\n- **Quy tắc bắt buộc:** z\n- **Kiểm tra tự động:** w\n\n---\n' "$n" "$n" >> "$TMP/kit2/profiles/android/instincts.md"
 done
 printf '# Proj Instincts\n' > "$TMP/proj2/.agents/instincts.md"
 EXPECT2="$(next_numbered_id "$TMP/kit2/profiles/android/instincts.md")"
+WANT2="$(printf 'INSTINCT-%03d' $((HIGH + 12)))"
 CLAUDE_PROJECT_DIR="$TMP/proj2" "$REAL_KIT/bin/agent-kit" learn "A second generic android trap" --cause C --rule R --symptom S --generic >/dev/null 2>&1
-CLAUDE_PROJECT_DIR="$TMP/proj2" python3 -I "$REAL_KIT/bin/instincts.py" promote --from "$TMP/proj2" --profile android --kit "$TMP/kit2" >/dev/null 2>&1
-[ "$EXPECT2" = "INSTINCT-908" ] && grep -qE "^### \[$EXPECT2\] A second generic android trap" "$TMP/kit2/profiles/android/instincts.md" \
-  && ok "promote numbers after the highest id in the file ($EXPECT2 after 906 and 907), not from a fixed number" || fail "second promote: expected $EXPECT2, file has: $(grep -n 'A second generic' "$TMP/kit2/profiles/android/instincts.md")"
+CLAUDE_PROJECT_DIR="$TMP/proj2" python3 -I "$REAL_KIT/bin/instincts.py" promote --from "$TMP/proj2" --profile android --kit "$TMP/kit2" >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && ok "second promote exits 0" || fail "second promote exited $rc"
+[ "$EXPECT2" = "$WANT2" ] && grep -qE "^### \[$WANT2\] A second generic android trap" "$TMP/kit2/profiles/android/instincts.md" \
+  && ok "promote numbers after the highest id in the file ($WANT2 after $((HIGH + 10)) and $((HIGH + 11))), not from a fixed number" || fail "second promote: expected $WANT2 (helper says $EXPECT2), file has: $(grep -n 'A second generic' "$TMP/kit2/profiles/android/instincts.md")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_android_generic_traps: all passed" || { echo "❌ test_android_generic_traps: $FAILS failed"; exit 1; }
