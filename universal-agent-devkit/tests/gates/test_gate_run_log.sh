@@ -269,7 +269,7 @@ def check_fields(label, r, j=None):
             "n_changed", "n_docs", "docs_only", "no_test_only", "suites", "suites_wall_s", "total_wall_s",
             "force_full", "impacted_run")
     missing = [k for k in keys if k not in r]
-    extra = [k for k in r if k not in keys and k != "suites_cut"]
+    extra = [k for k in r if k not in keys and k not in ("suites_cut", "steps")]   # steps: seconds per phase, additive (tests/gates/test_gate_run_steps.sh pins its shape)
     chk(not missing and not extra and r.get("v") == 1, "%s: line has every field and no other (n_code is gone: it read the profile), v=1" % label,
         "missing %s extra %s in %s" % (missing, extra, r))
     chk(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d", str(r.get("ts"))) and abs(time.time() - r.get("epoch", 0)) < 600,

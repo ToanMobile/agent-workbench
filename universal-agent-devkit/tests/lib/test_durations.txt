@@ -283,3 +283,12 @@
 6 tests/gates/test_lane_plan.sh
 40 tests/verification/test_game_blender_default.sh
 10 tests/worktree_git/test_trunk_default.sh
+12 tests/gates/test_gate_run_steps.sh
+36 tests/gates/test_gate_stop_run_record.sh
+12 tests/gates/test_regression_gate_repeat_miss_log.sh
+35 tests/gates/test_gate_stop_record_race.sh
+9 tests/gates/test_gate_stop_record_inputs.sh
+100 tests/gates/test_gate_stop_reuse_race.sh
+2 tests/gates/test_regression_gate_stale_label.sh
+55 tests/gates/test_gate_readonly_receipt_race.sh
+3 tests/gates/test_tree_fp_checklist_temp.sh

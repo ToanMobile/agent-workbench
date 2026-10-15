@@ -9,8 +9,15 @@
 # run). After that the gate runs again, so the user's answer ("Duyệt") still clears the reminder. Never reused:
 # by another session (the gate result depends on the session and its transcript), for a different content
 # (also an edit inside an untracked file or a new commit), or when the reminder came with a BUSY suite.
+# This test counts SUITE runs to tell that the gate ran. Since 2026-10-15 a Stop-style gate run records the suites that passed (the gate's
+# budget_pass.json, tests/gates/test_gate_stop_run_record.sh) and the next run on the same content starts none of them, so the count is
+# no longer a proxy for "the gate ran": the gate cache is off here, and what the hook stores and when it runs the gate is judged as before.
+# What this switch hides: with the cache on, a suite that starts to fail on UNCHANGED content after an exit-2 reminder is not run again until the
+# record ages out (6 h) or the content changes (before: after the 300 s recheck), and REGRESSION_GATE_TOUCHED_RECHECK_S=0 runs the gate on every
+# Stop but no longer starts a suite that passed on the same content. The cases below that make a suite fail on unchanged content need the cache off.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
+export DEVKIT_GATE_CACHE=0
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$DEVKIT_DIR/hooks/regression_gate.sh"

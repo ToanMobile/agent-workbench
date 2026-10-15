@@ -17,7 +17,10 @@ suites can run side by side). A hook with a missing, negative, boolean, text or 
 is in no percentile. Measured 15/10 on the real transcripts: a hook that BLOCKS (exit 2) has no durationMs, only its message in hookErrors
 (OfficeReader: 245 regression_gate records without a duration, each with a hookErrors entry; the preventedContinuation flag is never
 set by a block), so the percentiles of a gate are those of its runs that did NOT block; the time of the blocking runs is in the gate
-section's by-verdict line (FAIL / UNTESTED). Read-only; stdlib only; Python 3.9. A missing or odd file is "no data", never a crash.
+section's by-verdict line (FAIL / UNTESTED). Records written since 2026-10-15 also carry `steps` (seconds per phase of the gate run: git, analysis,
+static, select, cache, lock, suites, verdict, receipt, checklist, report, and the vacuity re-runs inside suites): the gate section then prints their
+split too, over the runs that have them (an older record, or one whose steps are not finite seconds, only gives the suites / lock / other split).
+Read-only; stdlib only; Python 3.9. A missing or odd file is "no data", never a crash.
 """
 import argparse
 import calendar
@@ -136,6 +139,20 @@ def read_stops(dirs, since_epoch):
     return out
 
 
+def clean_steps(r):
+    """The record's `steps` (seconds per phase of the run, bin/post-fix-gate.py _lap) when it is a non-empty dict of short names and finite
+    seconds in 0..24 h, else None: a record with a broken value still counts as a run, it just gives no phase numbers."""
+    st = r.get("steps")
+    if not isinstance(st, dict) or not st:
+        return None
+    out = {}
+    for k, v in st.items():
+        if not isinstance(k, str) or not 0 < len(k) <= 20 or not grr.seconds_ok(v):
+            return None
+        out[k] = grr.num(v)
+    return out
+
+
 def gate_hook_runs(repo, since_epoch, now):
     """-> (summary dict or None, note). The runs.jsonl records of the Stop hook (source=hook) and where their wall time went."""
     path, _ident, problem = grr.log_file(repo)
@@ -147,7 +164,14 @@ def gate_hook_runs(repo, since_epoch, now):
         return None, "no runs.jsonl"
     recs = [r for r in data["recs"] if r["source"] == "hook"]
     walls, suite_s, lock_s, other_s, busy_runs, busy_verdict_runs, by_verdict = [], 0.0, 0.0, 0.0, 0, 0, {}
+    steps_total, steps_runs = {}, 0
     for r in recs:
+        st = clean_steps(r)
+        if st:   # vacuity re-runs happen inside the suites phase: counted apart, so the phases below add up (parallel members can overlap: capped)
+            steps_runs += 1
+            vac = min(st.get("vacuity", 0.0), st.get("suites", 0.0))
+            for k, v in st.items():
+                steps_total[k] = steps_total.get(k, 0.0) + (v - vac if k == "suites" else vac if k == "vacuity" else v)
         w = grr.wall(r)
         walls.append(w)
         by_verdict.setdefault(r["verdict"], []).append(w)
@@ -165,6 +189,7 @@ def gate_hook_runs(repo, since_epoch, now):
     return {"runs": len(recs), "busy_runs": busy_runs, "busy_verdict_runs": busy_verdict_runs, "wall_p50": st["p50"], "wall_p90": st["p90"], "wall_max": st["max"],
             "suite_s": round(suite_s, 3), "lock_wait_s": round(lock_s, 3), "other_s": round(other_s, 3),
             "suite_pct": pc(suite_s), "lock_wait_pct": pc(lock_s), "other_pct": pc(other_s),
+            "steps_runs": steps_runs, "steps": {k: round(v, 3) for k, v in sorted(steps_total.items())},
             "by_verdict": {v: dict(runs=len(w), wall_s=round(sum(w), 3), wall_p50=stats(w)["p50"], wall_p90=stats(w)["p90"], wall_max=stats(w)["max"])
                            for v, w in by_verdict.items()}}, None
 
@@ -224,6 +249,11 @@ def render(reports, since_days):
             out.append("      by verdict (runs, total minutes, p50 / p90 s): " + "; ".join(
                 "%s %d, %.1f min, %.0f / %.0f" % (v, d["runs"], d["wall_s"] / 60.0, d["wall_p50"], d["wall_p90"])
                 for v, d in sorted(g["by_verdict"].items(), key=lambda kv: -kv[1]["wall_s"])))
+            if g["steps_runs"]:
+                tot = sum(g["steps"].values())
+                out.append("      steps (%d of %d runs carry them; seconds and share; suites here exclude the vacuity re-runs): " % (g["steps_runs"], g["runs"])
+                           + ", ".join("%s %.0f s %.1f %%" % (k, v, 100.0 * v / tot if tot > 0 else 0.0)
+                                       for k, v in sorted(g["steps"].items(), key=lambda kv: (-kv[1], kv[0]))))
     return "\n".join(out)
 
 

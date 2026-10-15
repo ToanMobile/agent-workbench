@@ -41,6 +41,11 @@
 # is re-used by the SAME session for REGRESSION_GATE_TOUCHED_RECHECK_S seconds (default 300; 0 = run the
 # gate on every Stop) on the same content, without running the gate (OfficeReader 2026-10-08: 58 of 71
 # Stop runs, 31-37 s each); a BUSY suite, another session, other content or a new commit never re-use it.
+# REGRESSION_GATE_TOUCHED_RECHECK_S=0 runs the GATE on every Stop (the answer of the user and the verdict are judged again) but it does not start a
+# suite that already passed on the same content: the gate keeps the suites a Stop run passed (budget_pass.json, bin/post-fix-gate.py) and the next
+# run on identical inputs re-uses them, for DEVKIT_GATE_CACHE_MAX_S seconds (default 21600, i.e. 6 h). A suite that starts to fail on unchanged
+# content is therefore not seen until that record ages out or the content changes; only DEVKIT_GATE_CACHE=0 (the gate's own switch, not this hook's)
+# makes every run start every suite again.
 # Loop-guard: MAX_ATTEMPTS blocks per fingerprint, then the stop is allowed with a
 # visible warning (systemMessage) — a broken test can never trap the session.
 # Non-Claude agent or no usable Claude transcript ("degraded", hooks/devkit_harness.py:
@@ -449,9 +454,11 @@ tree_fp = devkit_harness.tree_fingerprint(repo) if degraded else fp
 # Claude session with its transcript: the last block of this session, keyed by fp (it carries the
 # unverified range) and the full tree fingerprint (a fix in an untracked file is new content).
 reuse_key = None
+_tree_part = ""   # the content half of reuse_key, kept apart so a miss can say which half moved (rparts below)
 if info is not None and not degraded and (data.get("session_id") or data.get("sessionId") or sid != "nosession"):
     try:
-        reuse_key = hashlib.sha256((fp + ":" + devkit_harness.tree_fingerprint(repo)).encode()).hexdigest()[:20]
+        _tree_part = devkit_harness.tree_fingerprint(repo)
+        reuse_key = hashlib.sha256((fp + ":" + _tree_part).encode()).hexdigest()[:20]
     except Exception as e:
         note("reuse key failed: %r" % e)
 repeat = state.get("repeat") if isinstance(state.get("repeat"), dict) else {}
@@ -468,7 +475,7 @@ def block(lines, cure, rc, reused=False, reusable=True, repeat_hit=False):
             # "at" is the time of the REAL run: a reuse keeps it, so the age limit counts from the run and not from the last Stop.
             prev = repeat.get(sid)
             at = prev.get("at") if reused and isinstance(prev, dict) and prev.get("key") == rkey else None
-            repeat[sid] = {"key": rkey, "lines": lines, "cure": cure, "rc": rc,
+            repeat[sid] = {"key": rkey, "lines": lines, "cure": cure, "rc": rc, "parts": rparts,
                            "at": at if isinstance(at, (int, float)) and not isinstance(at, bool) else time.time()}
         else:
             repeat.pop(sid, None)
@@ -643,10 +650,12 @@ def _stat_sig(*paths):
 # Key of the stored block (repeat): the content (reuse_key), the gitignored local config the suites read, and the hook
 # and the gate themselves. None (the local config could not be listed) stores and serves nothing, like skip_key.
 rkey = None
+rparts = {}   # a short hash of each part of the key (written next to the stored block): the log line of a miss names the parts that moved
 if reuse_key and _local_sha is not None:
     _self = os.environ.get("HOOK_SELF", "")
-    rkey = hashlib.sha256((reuse_key + ":" + _local_sha + ":" + _stat_sig(
-        gate, _self, os.path.join(os.path.dirname(_self), "devkit_harness.py") if _self else "")).encode()).hexdigest()[:20]
+    _sig = _stat_sig(gate, _self, os.path.join(os.path.dirname(_self), "devkit_harness.py") if _self else "")
+    rkey = hashlib.sha256((reuse_key + ":" + _local_sha + ":" + _sig).encode()).hexdigest()[:20]
+    rparts = {"fp": fp[:8], "tree": _tree_part[:8], "local": _local_sha[:8], "sig": hashlib.sha256(_sig.encode()).hexdigest()[:8]}
 try:
     _repeat_ttl = float(os.environ.get("REGRESSION_GATE_REPEAT_TTL_S", "1800"))
 except ValueError:
@@ -694,7 +703,10 @@ if _sk_fp is not None and state.get("untested_fp") == _sk_fp:
 # gate result of this session for this exact content is known, so a repeat Stop prints the stored
 # reminder and does not run the gate. 2026-10-08, OfficeReader (10 sessions in one checkout): 58 of 71
 # Stop gate runs in 17 h were this repeat, 31-37 s each. The gate runs again after
-# REGRESSION_GATE_TOUCHED_RECHECK_S (300 s, 0 = every stop), so the answer of the user still clears it.
+# REGRESSION_GATE_TOUCHED_RECHECK_S (300 s, 0 = every stop), so the answer of the user still clears it. Runs again = judges again
+# (static audits, edited tests, the answer of the user), nothing more: since 2026-10-15 it starts no suite that already passed on this content (the
+# budget_pass.json record of bin/post-fix-gate.py, DEVKIT_GATE_CACHE_MAX_S, default 21600 s = 6 h), so REGRESSION_GATE_TOUCHED_RECHECK_S=0 does not
+# re-check suites either; DEVKIT_GATE_CACHE=0 does.
 # Never reused: by another session, for other content or another commit range (the key holds fp, which
 # also names verified_head..HEAD, and the tree fingerprint), after a run that was not this outcome, or
 # when the reminder came with a BUSY suite. Limit: gitignored files the gate reads (proof images under
@@ -730,6 +742,12 @@ if isinstance(last, dict) and last.get("key") == rkey and isinstance(last.get("l
     # This session already blocked on exactly this content: the gate would say the same (a flaky
     # suite is no reason to re-run every Stop). Same reason, no run.
     block(last["lines"], last.get("cure") or [], last.get("rc", 1), reused=True, repeat_hit=True)
+if isinstance(last, dict) and last.get("key") != rkey and _repeat_fresh(last.get("at")):
+    # This session stored a block for the content before, it is still inside the TTL, and the key moved: the gate runs again below. Say which part of
+    # the key moved (a second session never lands here: its own entry is empty). Log only: no decision depends on it.
+    _old = last.get("parts") if isinstance(last.get("parts"), dict) else {}
+    note("repeat miss sid=%s differs=%s" % (sid[:8], ",".join(k for k in ("fp", "tree", "local", "sig") if _old.get(k) != rparts.get(k)) or "none") if _old
+         else "repeat miss sid=%s differs=unknown" % sid[:8])
 
 # --session/--transcript: an existing test edited by ANOTHER session (or a person) is a warning,
 # only the test edits of THIS session block (post-fix-gate split_tests_by_author).
@@ -788,6 +806,13 @@ if res.returncode == 4 and summary.get("busy"):
     # BUSY: another test run held the project lock, no test ran. Transient, not this machine
     # lacking a tool: say the real cause every time and cache nothing (the next stop runs it).
     note(f"busy fp={fp}")
+    suites = summary.get("regression_tests") or []
+    stale = [str(t.get("id") or "?") for t in suites if t.get("label") == "STALE"]
+    if stale and not any(t.get("label") == "BUSY" for t in suites):
+        # the "busy" flag is also set for a re-used PASS whose file another run replaced or deleted (STALE): the lock is not the reason then
+        print(json.dumps({"systemMessage": "Regression gate UNTESTED — một lượt chạy khác đã đổi/xoá kết quả PASS dùng lại của %s — chạy lại sau; "
+                          "test hồi quy đó CHƯA chạy lại, KHÔNG phải PASS." % ", ".join(stale)}, ensure_ascii=False))
+        sys.exit(0)
     print(json.dumps({"systemMessage": "Regression gate UNTESTED — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau "
                       "(.claude/audit-gate/test_run.lock); test hồi quy CHƯA chạy, KHÔNG phải PASS."}, ensure_ascii=False))
     sys.exit(0)
@@ -937,7 +962,8 @@ for t in busy:
     lines.append("  - %s %s: %s — chưa chạy (%s); KHÔNG phải PASS" % (
         t.get("id"), t.get("name"), t.get("label") or t.get("status"),
         "một lượt khác giữ khoá test, chạy lại sau" if t.get("label") == "BUSY"
-        else "hết ngân sách thời gian, chạy lại sau" if t.get("label") == "BUDGET" else "không chạy được trên máy này"))
+        else "hết ngân sách thời gian, chạy lại sau" if t.get("label") == "BUDGET"
+        else "một lượt khác đã đổi/xoá kết quả PASS dùng lại của nó, chạy lại sau" if t.get("label") == "STALE" else "không chạy được trên máy này"))
 for f in summary.get("findings", [])[:10]:
     # static findings (secrets, placeholders, dependencies …) with the exact place to fix
     lines.append("  - %s %s:%s: %s" % (f.get("category"), f.get("file"), f.get("line") or "?", f.get("message")))
@@ -976,8 +1002,9 @@ if res.returncode == 2 and touched and not failing and not problem and not uncov
     state["touched_fp"] = fp
     save_state()
 # An edited existing test is cleared by the answer of the user in the transcript, a BUSY or BUDGET item by the lock
-# going free or a new time budget — neither by the tree: such a block is never re-used. An item that cannot run on this
-# machine at all (UNTESTED, untested_exit) is permanent here and does not keep the FAIL block from being stored.
+# going free or a new time budget, a STALE one (the file its re-used PASS came from was replaced or deleted by a concurrent
+# run) by the next run, which runs it — none of them by the tree: such a block is never re-used. An item that cannot run on
+# this machine at all (UNTESTED, untested_exit) is permanent here and does not keep the FAIL block from being stored.
 block(lines, cure, res.returncode,
-      reusable=not touched and not any(t.get("label") in ("BUSY", "BUDGET") for t in busy))
+      reusable=not touched and not any(t.get("label") in ("BUSY", "BUDGET", "STALE") for t in busy))
 ' || exit $?
