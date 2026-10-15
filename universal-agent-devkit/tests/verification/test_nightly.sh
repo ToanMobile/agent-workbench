@@ -89,4 +89,38 @@ printf '%s\n' "$out" | grep -q '^one: ' && ! printf '%s\n' "$out" | grep -q '^go
 python3 "$NIGHTLY" run "$TMP/no-such-dir" >/dev/null 2>&1; rc=$?
 [ "$rc" = 2 ] && ok "run <path>: a path that is not a directory is refused (exit 2)" || fail "run <bad path>: exit $rc"
 
+# H1 (review of lane A13): a NAMED run leaves a checkout alone while a session holds it, idle at its prompt too: `session_lock.py
+# --status` calls an idle holder free, but that session takes the lock back at the next prompt and edits the tree the run is testing.
+# The lock is judged with the strictness of worktree_merge_gate (idle_frees=False, live_pid_holds=True); a dead pid is free.
+setlock() {  # setlock <repo> <idle|active|old|dead|none>
+  python3 - "$1" "$2" <<'PY'
+import json, os, sys, time
+repo, kind = sys.argv[1], sys.argv[2]; gdir = os.path.realpath(os.path.join(repo, ".git")); lock = os.path.join(gdir, "devkit-session.lock")
+if kind == "none":
+    sys.exit(os.path.exists(lock) and os.unlink(lock) or 0)
+now = time.time(); pid = 2147483646 if kind == "dead" else os.getppid()   # the parent of this helper (the test shell) is alive
+d = {"session_id": "other-session", "started": now - 3600, "heartbeat": now - (2400 if kind == "old" else 5), "cwd": repo, "pid": pid, "gitdir": gdir}
+if kind == "idle":
+    d["idle_since"] = now - 300
+json.dump(d, open(lock, "w"))
+PY
+}
+HELD="$TMP/held"; mk "$HELD" "true" 'grep -q 2 src/b.txt'; echo 3 > "$HELD/src/b.txt"        # breaks REG-B: it turns FAIL only if the run happens
+for kind in idle active old; do
+  setlock "$HELD" "$kind"
+  out="$(python3 "$NIGHTLY" run "$HELD" 2>&1)"; rc=$?
+  [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^held: skip: ' && [ "$(st "$HELD" REG-B)" = PASS ] \
+    && ok "run <path>: a $kind holder with a live pid keeps the checkout - skipped with 'skip: <reason>', nothing ran" || fail "run <path> held by a $kind session: rc=$rc $(st "$HELD" REG-B) $out"
+done
+setlock "$HELD" dead
+out="$(python3 "$NIGHTLY" run "$HELD" 2>&1)"
+[ "$(st "$HELD" REG-B)" = FAIL ] && ok "run <path>: a lock whose pid is dead is free - the run goes ahead" || fail "run <path> with a dead holder: $(st "$HELD" REG-B) $out"
+# a session that opens BETWEEN two suites: the run stops before the next suite (REG-A, the first, writes the lock when .arm exists)
+MID="$TMP/mid"; mk "$MID" "if [ -f .arm ]; then cp .lockfixture .git/devkit-session.lock; fi; true" 'grep -q 2 src/b.txt'; echo 3 > "$MID/src/b.txt"
+setlock "$MID" active; cp "$MID/.git/devkit-session.lock" "$MID/.lockfixture"; setlock "$MID" none; : > "$MID/.arm"
+out="$(python3 "$NIGHTLY" run "$MID" 2>&1)"
+[ -f "$MID/.git/devkit-session.lock" ] && [ "$(st "$MID" REG-B)" != FAIL ] && printf '%s\n' "$out" | grep -q 'skip: .*dừng trước REG-B' \
+  && ok "run <path>: a session that took the checkout after the first suite stops the run before the next one" || fail "run <path> lock taken mid-run: $(st "$MID" REG-B) $out"
+setlock "$HELD" none
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_nightly: all passed" || { echo "❌ test_nightly: $FAILS failed"; exit 1; }

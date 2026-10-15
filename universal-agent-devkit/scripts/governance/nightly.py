@@ -3,7 +3,8 @@
 nightly.py — the local nightly regression job (a macOS LaunchAgent; never a cloud agent:
 the cloud has no Unity Editor, Android SDK, device or local secrets).
 
-  nightly.py run [<project>...]       every registered project, now; or exactly the named ones (no list change, no weekly report)
+  nightly.py run [<project>...]       every registered project, now; or exactly the named ones (no list change, no weekly report;
+                                      a named project that a session holds - idle at its prompt too - prints `skip: <reason>`)
   nightly.py add|remove <project>     the project list (~/.config/agent-kit/nightly-projects)
   nightly.py install [--hour H] [--minute M]   daily LaunchAgent (default 02:17)
   nightly.py uninstall | status
@@ -42,6 +43,7 @@ for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
         sys.path.insert(0, _sub_path)
 sys.dont_write_bytecode = True
 import regression_checklist as rc  # noqa: E402
+import session_lock  # noqa: E402
 import stale_rerun  # noqa: E402
 
 LABEL = "com.universal-agent-devkit.nightly"
@@ -115,8 +117,26 @@ def human_touches(project: Path, since: float) -> int:
     return n
 
 
-def run_project(project: Path) -> tuple:
-    """(turned red: [(id, status)], message) for one project."""
+def checkout_busy(project: Path) -> str | None:
+    """Why a NAMED run leaves `project` alone: a session holds its checkout, idle at its prompt too. `session_lock.py --status` calls an
+    idle holder free, but that session takes the lock back at the user's next prompt and edits the tree this run is testing (and its Stop
+    gate then queues behind the suite's test_run.lock). Judged as worktree_merge_gate judges it: idle_frees=False, live_pid_holds=True.
+    ponytail: a session that opens after the last check (a suite is running) is not seen; the per-suite check is the ceiling."""
+    gdir, _top = session_lock.git_dir(str(project))
+    if not gdir:
+        return None
+    lock, now = session_lock.read_checkout_lock(gdir), time.time()
+    if session_lock.is_free_for(lock, "", now, idle_frees=False, live_pid_holds=True):
+        return None
+    return f"{session_lock.describe(lock, now)} đang giữ checkout"
+
+
+def run_project(project: Path, named: bool = False) -> tuple:
+    """(turned red: [(id, status)], message) for one project. `named`: the project was named on the command line, so a session that
+    holds its checkout is not run over (the unnamed run is the night's own LaunchAgent: nobody works then)."""
+    busy = checkout_busy(project) if named else None
+    if busy:
+        return [], f"{project.name}: skip: {busy}"
     if not (project / rc.STATUS_FILE).is_file() and not (project / ".agents" / "regression_matrix.active.json").is_file():
         return [], f"{project.name}: không có checklist/ma trận — bỏ qua"
     if rc.skip_bookkeeping(project):   # a LINKED worktree leaves the tracked checklist alone: a night's runs could not be recorded
@@ -134,21 +154,26 @@ def run_project(project: Path) -> tuple:
         timeout = float(os.environ.get("NIGHTLY_SUITE_TIMEOUT_S", "3600"))
     except ValueError:
         timeout = 3600.0
-    lines = []
+    lines, stopped = [], None
     for tid, it in sorted(data["items"].items()):
         if it.get("kind") != "test" or not it.get("command"):
             continue
+        stopped = checkout_busy(project) if named else None   # a session may have opened since the last suite
+        if stopped:
+            lines.append(f"skip: {stopped} - dừng trước {tid}")
+            break
         pats = list(it.get("watch_files", [])) + list(it.get("covers", []))
         lines.append(stale_rerun.run_one(project, tid, it["command"], pats, timeout, mode="nightly", retry=True))
-    _red_proof_script = DEVKIT / "scripts" / "testing" / "red_proof.py"
-    if not _red_proof_script.is_file():
-        _red_proof_script = DEVKIT / "scripts" / "red_proof.py"
-    subprocess.run([sys.executable, str(_red_proof_script), str(project), "--pending", "--heavy", "--wait"],
-                   capture_output=True, text=True)
-    with rc.locked(project):
-        data = rc.load(project)
-        rc.auto_close_reported(data)
-        rc.save(project, data)
+    if not stopped:   # (red_proof adds and removes worktrees in this repo's .git: not while a session is back)
+        _red_proof_script = DEVKIT / "scripts" / "testing" / "red_proof.py"
+        if not _red_proof_script.is_file():
+            _red_proof_script = DEVKIT / "scripts" / "red_proof.py"
+        subprocess.run([sys.executable, str(_red_proof_script), str(project), "--pending", "--heavy", "--wait"],
+                       capture_output=True, text=True)
+        with rc.locked(project):
+            data = rc.load(project)
+            rc.auto_close_reported(data)
+            rc.save(project, data)
     after = statuses(project)
     turned = [(i, s) for i, s in sorted(after.items()) if s in RED and before.get(i) not in RED]
     return turned, f"{project.name}: " + "; ".join(lines)
@@ -198,7 +223,7 @@ def cmd_run(paths: list | None = None) -> int:
     reds = []
     for p in projects:
         try:
-            turned, msg = run_project(Path(p))
+            turned, msg = run_project(Path(p), named=bool(paths))
         except OSError as e:   # a project gone mid-run (W1 R5a: save() refuses to re-create it): the others still run
             turned, msg = [], f"{Path(p).name}: {e}"
         print(msg)
