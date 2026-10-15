@@ -435,16 +435,117 @@ function stopUntracked(r, e) {
   return err;
 }
 
+// Hoi thoai MOI chua co conversationId luc spawn (id nam trong su kien init, toi da AGY_INIT_WAIT_MS sau): ngay sau spawn ghi muc `pending-<pid agy>`
+// kem dau van tay cua agy VA cua PM chu. PM bi SIGKILL (khong bat duoc, nhom agy da tach nen khong chet theo) giua luc cho init thi de lai muc nay;
+// PM ke tiep mo hoi thoai moi se don no (reapOrphanAgy). Xong luot: muc nay doi thanh muc that (cung mot lan ghi duoi khoa).
+const pendingKey = (pid) => `pending-${pid}`;
+
+/** Muc cho hien tai la CHINH muc da chup (khoa `pending-<pid>` chi noi len pid: pid dung lai thi PM khac ghi muc moi duoi cung khoa). */
+const samePending = (cur, snap) => Boolean(cur?.pending) && ['pid', 'pidTag', 'ownerPid', 'ownerTag'].every((f) => cur[f] === snap[f]);
+
+/**
+ * Dung agy mo coi: muc cho ma PM chu khong con la tien trinh do (pid + dau van tay ps) => agy cua no khong ai theo doi (chay --dangerously-skip-permissions).
+ * PM chu con song (dang cho init, toi 60 s): bo qua muc. ps hong hoac muc thieu dau van tay: giu muc, dung gi cung chua dung.
+ * Hai lan hoi ps (chu, agy) chay NGOAI khoa tren ban chup so; roi DUOI khoa doc lai va chi giet / go muc con la muc cho CUA CHINH agy do:
+ * PM chu da chet thi khong doi duoc muc nua, nhung no co the da doi muc cho thanh hoi thoai that giua luc ta chup so va luc ta hoi ps.
+ * Moi loi chi ghi stderr, luot dang mo van tiep tuc.
+ */
+function reapOrphanAgy() {
+  let reg;
+  try { reg = readAgyRegistry(); } catch (e) { logStderr(`don agy mo coi: bo qua (${e.message.split('\n')[0]})`); return; }
+  const orphans = [];   // [key, entry, agy con song?]
+  for (const [k, e] of Object.entries(reg)) {
+    if (!e?.pending || !(e.pid && e.pidTag && e.ownerPid && e.ownerTag)) continue;
+    try {
+      if (sameProcess(e.ownerPid, e.ownerTag)) continue;   // PM chu van song: dang cho init
+      orphans.push([k, e, sameProcess(e.pid, e.pidTag)]);
+    } catch (err) { logStderr(`don agy mo coi: giu muc ${k} (${err.message})`); }
+  }
+  if (!orphans.length) return;
+  try {
+    withRegistryLock(() => {
+      const now = readAgyRegistry();
+      let changed = false;
+      let asked = 0;   // ps duoi khoa: chan tren nhu putAgyEntry (khoa giu qua LOCK_STALE_MS thi PM khac lay mat)
+      for (const [k, e, agyAlive] of orphans) {
+        if (!samePending(now[k], e)) continue;   // da doi thanh muc that / da go / bi PM khac ghi lai duoi cung khoa (pid dung lai): agy nay co chu
+        if (agyAlive) {
+          // tu lan hoi ngoai khoa den day co the qua vai giay (cho khoa, ps cac muc truoc): pid co the da thoat va bi tien trinh la dung lai => hoi lai ngay truoc khi giet
+          if (asked >= 3) continue;   // het ngan sach ps: GIU muc, lan don sau lam tiep
+          asked += 1;
+          let same;
+          try { same = sameProcess(e.pid, e.pidTag); } catch (err) { logStderr(`don agy mo coi: giu muc ${k} (${err.message})`); continue; }
+          if (same) {
+            const err = killGroup(e.pid);
+            if (err && err.code !== 'ESRCH') { logStderr(`don agy mo coi: khong dung duoc agy pid ${e.pid} (${err.message}): giu muc ${k}`); continue; }
+            logStderr(`don agy mo coi: da dung agy pid ${e.pid} cua PM pid ${e.ownerPid} (PM da chet giua luc cho init)`);
+          }
+        }
+        delete now[k];   // agy da thoat / pid dung lai (khong con la agy cua muc) / vua bi dung
+        changed = true;
+      }
+      if (changed) writeJsonAtomic(agyRegistryFile(), now);
+    });
+  } catch (err) { logStderr(`don agy mo coi: khong don duoc (${err.message})`); }
+}
+
+/**
+ * Go cac muc cho CUA CHINH PM nay khoi so dang ky (duoi khoa; chu = pid + dau van tay, selfTag da nho nen khong them ps). Khoa `pending-<pid>` chi noi len
+ * pid agy: pid dung lai thi muc duoi khoa do co the la cua PM song khac (PM do chet truoc init se de lai agy khong ai theo doi). Chi ghi lai khi co muc bi go.
+ */
+function dropPending(keys) {
+  const me = selfTag();
+  withRegistryLock(() => {
+    const reg = readAgyRegistry();
+    const hit = keys.filter((k) => reg[k]?.ownerPid === process.pid && reg[k].ownerTag === me);   // `delete` tra true ca khi khoa vang: phai hoi truoc
+    if (!hit.length) return;
+    hit.forEach((k) => delete reg[k]);
+    writeJsonAtomic(agyRegistryFile(), reg);
+  });
+}
+
+/** dropPending cho duong loi: that bai (khoa bi giu, dia day...) chi ghi stderr, loi goc cua luot mo van duoc nem. */
+function dropPendingQuietly(key) {
+  if (!key) return;
+  try { dropPending([key]); } catch (e) { logStderr(`khong go duoc ban ghi cho ${key}: ${e.message}`); }
+}
+
 async function agyNewConversation({ prompt, model, cwd }) {
   requireAgy();
   if (!cwd) throw new AgentApiError(`model ${model} chay qua agy: can cwd (thu muc project), khong doan thu muc`);
   assertProjectDir(cwd);
   const root = fs.realpathSync(cwd);
   readAgyRegistry();   // hong thi nem loi NGAY, truoc khi sinh agent: sau khi spawn khong con cach nao theo doi no
-  const r = await agyStart(agyArgs(model, ['--print', String(prompt)], agyMaySkipPermissions(root)), root);
+  // ponytail: agy mo coi chi bi dung khi co lan mo hoi thoai agy ke tiep (cua PM nao cung duoc; PM chi gui tin thi khong don); nang cap: don them luc
+  // server khoi dong / trong pm_doctor. Cua so con lai: tu luc spawn den luc ban ghi cho duoc ghi (1 lan ps cua agy + khoa): thuong khoang chuc ms, xau nhat 1,5 s
+  // (timeout cua procTag) + 3 s (cho khoa); PM chet trong do thi agy khong co dau vet. Con cua agy (nhom) da thoat tu truoc thi khong bi dung; muc co pid vuot gioi han he dieu hanh (sua tay) duoc giu mai.
+  reapOrphanAgy();
+  // ps cua chinh PM tinh MOT lan, TRUOC spawn: hong (nem) hoac khong in gi (null: entryBusy / reaper khong nhan ra chu) thi tu choi, chua co agy nao chay
+  let ownerTag;
+  try { ownerTag = selfTag(); } catch (e) { throw new AgentApiError(`chua sinh agy nao: ${e.message}`); }
+  if (!ownerTag) throw new AgentApiError('chua sinh agy nao: khong doc duoc dau van tay cua chinh PM (ps khong tra ve gi)');
+  let pending = null;
+  let r;
   try {
-    saveAgyEntry(r.conversationId, { model, cwd: root, workspace: r.workspace, pid: r.pid, pidTag: r.pidTag, starting: false, out: r.out, at: nowIso() });
-  } catch (e) { throw stopUntracked(r, e); }
+    r = await agyStart(agyArgs(model, ['--print', String(prompt)], agyMaySkipPermissions(root)), root, (child) => {
+      saveAgyEntry(pendingKey(child.pid), { pending: true, model, cwd: root, pid: child.pid, pidTag: procTag(child.pid), ownerPid: process.pid, ownerTag, at: nowIso() });
+      pending = pendingKey(child.pid);
+    });
+  } catch (e) {
+    dropPendingQuietly(pending);   // agyStart da dung nhom agy: muc cho khong con y nghia
+    throw e;
+  }
+  try {
+    withRegistryLock(() => {
+      const reg = readAgyRegistry();
+      delete reg[pending];
+      putAgyEntry(reg, r.conversationId, { model, cwd: root, workspace: r.workspace, pid: r.pid, pidTag: r.pidTag, starting: false, out: r.out, at: nowIso() });
+    });
+  } catch (e) {
+    const err = stopUntracked(r, e);
+    dropPendingQuietly(pending);   // agy da bi dung: muc cho con lai se khong con ai go (PM chu van song nen reapOrphanAgy bo qua no)
+    throw err;
+  }
   return { conversationId: r.conversationId, raw: `agy pid ${r.pid}`, parsed: { pid: r.pid, pidTag: r.pidTag, out: r.out } };
 }
 
