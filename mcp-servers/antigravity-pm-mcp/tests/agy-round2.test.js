@@ -87,6 +87,7 @@ test('hai tien trinh PM gui cung luc vao mot hoi thoai: chi MOT agy (khoa file, 
   const project = mkProject(t);
   const { conversationId } = await newConversation({ prompt: 'x', model: ARGON, cwd: project });
   await sleep(900);
+  process.env.FAKE_AGY_HOLD_RESUME_MS = '4000';   // luot gui duoc song 4 s: PM den sau (ps cham luc may tai) van thay luot dang chay, khong phu thuoc do tre cua no
   const start = Date.now() + 1500;
   const probe = `import { sendMessage } from ${JSON.stringify(SRC)};
     const wait = ${start} - Date.now(); await new Promise((r) => setTimeout(r, Math.max(0, wait)));
