@@ -17,7 +17,15 @@ import sys
 
 EXCLUDE = (".claude/audit-gate", ".agents/regression_status.json", ".agents/regression_checklist.md",
            ".agents/CHECKLIST.md", ".agents/INBOX.md", ".agents/evidence", ".agents/archive", ".agents/instincts.md", "reports",
-           ".agents/local/memory/claude-auto")   # the agent's own notes: not code (memory/voice is, GeelyEx2 tests read it)
+           ".agents/local/memory/claude-auto",   # the agent's own notes: not code (memory/voice is, GeelyEx2 tests read it)
+           # the temp file of regression_checklist.save(): tempfile.mkstemp(dir=".agents", prefix=".regression_status.") = that prefix + exactly 8
+           # characters of [a-z0-9_], in .agents/ until os.replace. The gate releases test_run.lock before the save, so a run that wins the lock
+           # meanwhile fingerprinted a tree that holds it and refused the receipt of the run it waited for (tests/gates/test_tree_fp_checklist_temp.sh).
+           # A git pathspec (the throw-away index `rm --cached` below and in push_gate.py): nothing else matches it, and the plain-string tests on
+           # EXCLUDE (path == entry or startswith(entry + "/")) never do, which is harmless for a file that no commit holds.
+           # The other mkstemp prefixes of that module need no entry: ".tmp." is written inside .agents/regression_journal/ (its own .gitignore
+           # is "*") and ".worktree_checklist." inside the git dir.
+           ".agents/.regression_status." + "[a-z0-9_]" * 8)
 RECEIPT = "full_pass.json"
 
 
