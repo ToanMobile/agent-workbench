@@ -1203,6 +1203,26 @@ def budget_record_path(project_dir):
     return os.path.join(os.path.dirname(rp), BUDGET_RECORD) if rp else None
 
 
+def _result_file(project_dir, name):
+    """The file a run re-uses results from: the full-pass receipt (name None) or the record `name` beside it. None when it cannot be named."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import tree_fp  # noqa: PLC0415 - sibling module in bin/
+        rp = tree_fp.receipt_path(project_dir)
+    except (ImportError, OSError, TypeError):
+        return None
+    return (os.path.join(os.path.dirname(rp), name) if name else rp) if rp else None
+
+
+def _file_stamp(path):
+    """(mtime_ns, size) of a file, None when it is gone or cannot be read: stat only, nothing is opened (a FIFO there must not block)."""
+    try:
+        st = os.stat(path)
+    except (OSError, TypeError, ValueError):
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
 def drop_budget_record(project_dir):
     """A suite FAILED or TIMED OUT on this content: an earlier record must not offer its older PASS again (never a FAIL item)."""
     path = budget_record_path(project_dir)
@@ -4955,12 +4975,17 @@ def main():
             print(f"    {CYAN}▶ {tr(f'dùng lại PASS đầy đủ lúc {at}: cùng nội dung, cùng cách đọc kết quả, cùng ma trận (--no-cache để chạy lại)', f'reusing the full PASS of {at}: same content, result format and matrix (--no-cache to re-run)')}{RESET}")
         return found
 
+    reuse_src = [None]   # (file, its stamp taken BEFORE it was read) of the file that vouched for the suites this run re-used
+
     def reuse_full_pass(fp=None):
         """Mark every reusable suite PASS from the last full PASS of this exact content; its receipt, or None. A non-forced run
         (the Stop hook) also reads the record a budget-cut run left (BUDGET_RECORD) when the receipt gives it nothing."""
         for name in ((None,) if force_reason else (None, BUDGET_RECORD)):
+            src = _result_file(project_dir, name)
+            stamp = _file_stamp(src)   # before the read: a change after it shows as another stamp when the record is written
             found = reuse_from(cached_full_pass(project_dir, args.matrix, fp, name), name is not None)
             if found:
+                reuse_src[0] = (src, stamp)
                 return found
         return None
 
@@ -5509,8 +5534,14 @@ def main():
         # a suite that FAILED or TIMED OUT drops it (never a FAIL item), a budget cut writes what finished (never on another tree).
         if run_tests and any(t.get("status") in ("FAIL", "TIMEOUT") for t in regression_tests):
             drop_budget_record(project_dir)
-        elif run_tests and budget_fp and budget_head and not force_reason and not lock_busy and exit_code != 0:   # a PASS is the hook's pass_fp
-            write_budget_record(project_dir, args.matrix, regression_tests, budget_fp,
+        elif run_tests and budget_fp and budget_head and not force_reason and not lock_busy and exit_code != 0 and ran_cmds:
+            # a PASS is the hook's pass_fp; a run that started no suite has nothing of its own to record (and rewriting what it only read is how a
+            # PASS that a concurrent run had just replaced came back). The suites it re-used stand on the file that vouched for them: when that
+            # file changed or is gone (a forced run's FAIL drops it) they are not written back, they go in as untested and run again next time.
+            to_record = regression_tests
+            if reuse_src[0] and _file_stamp(reuse_src[0][0]) != reuse_src[0][1]:
+                to_record = [dict(t, status="UNTESTED") if t.get("mode") == "cached" else t for t in regression_tests]
+            write_budget_record(project_dir, args.matrix, to_record, budget_fp,
                                 tested_at=float(cache.get("tested_at") or 0) if cache else None, head=budget_head)
     finally:
         # Only now may another run take the test-run lock: it finds the receipt (or its settled absence), and the
