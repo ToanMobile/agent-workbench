@@ -493,6 +493,12 @@ for cmd, want in [("cat > f <<EOF\na $(rm -rf ~) b `ls`\nEOF\nls", "cat > f <<EO
     got = sn.strip_heredocs(cmd, data)
     print(("✔ " if got == want else "✖ ") + f"strip {cmd!r}: {got!r}" + ("" if got == want else f" (want {want!r})"))
     bad += got != want
+# the redirect the lexer splits (2> & 1): prefix_end skips the operator, the & and the descriptor (the hooks join the & first)
+pe = [sn.prefix_end(w) for w in (["2>", "&", "1", "git", "reset"], [">", "&", "2", "git"], ["3<", "&", "0", "git"], ["2>/dev/null", "git"],
+                                 ["sudo", "--user", "root", "git"], ["time", "-p", "git"], ["env", "-P", "/usr/bin", "git"])]
+ok = pe == [3, 3, 3, 1, 3, 2, 3]
+print(("✔ " if ok else "✖ ") + f"prefix_end of a lexer-split redirect and the new wrapper options: {pe}")
+bad += not ok
 # bounds (review 15/10): a brace bomb is judged as the worst target (/), past 24 heredocs nothing is cut, and both stay fast
 import time
 t0 = time.time()
@@ -591,6 +597,10 @@ pair 0 $'git commit -m "$(cat <<\'EOF\'\nmessage @BODY@\nEOF\n)"'
 pair 0 $'git add -A && git commit -m "$(cat <<\'EOF\'\nmessage @BODY@\nEOF\n)" && git status'
 pair 0 $'gh pr create --title t --body "$(cat <<\'EOF\'\nsummary @BODY@\nEOF\n)"'
 pair 0 $'echo "$(cat <<\'EOF\'\n@BODY@\nEOF\n)"'
+# a message argument is no written file: words like for / while / hooks/ in the title are prose (review 15/10, own pass)
+pair 0 $'gh pr create --title "support for the hooks/ dir while testing" --body "$(cat <<\'EOF\'\nsummary @BODY@\nEOF\n)"'
+pair 0 $'git commit -m "$(cat <<\'EOF\'\nfix for .git/hooks docs @BODY@\nEOF\n)"'
+pair 0 $'echo "for a while" && cat > notes.md <<\'EOF\'\n@BODY@\nEOF'
 pair 0 $'cat > a.md <<\'EOF\'\nprose\nEOF\ncat > b.md <<\'EOF\'\nmore prose @BODY@\nEOF\nls'
 
 echo "── heredoc: an ANSI-C / locale quoted delimiter (<<\$'EOF', <<\$\"EOF\") is the word EOF: bash drops the \$, so the lines after the"

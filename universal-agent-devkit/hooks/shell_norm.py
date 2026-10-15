@@ -590,11 +590,9 @@ FILE_TOOLS = DATA_READERS | {"chmod", "ls", "stat", "file", "cp", "mv", "rm", "t
 # Programs that run a file of a fixed name without naming it: their recipes are shell lines (make runs a Makefile).
 IMPLICIT_RUN = {"make": {"Makefile", "makefile", "GNUmakefile"}, "gmake": {"Makefile", "makefile", "GNUmakefile"},
                 "just": {"justfile", "Justfile", ".justfile"}}
-# Programs that copy, move, link or re-mode a file: whatever then runs the copy is out of sight, so a heredoc written to a file they
-# name is judged as a shell run (review 15/10: cat > x <<EOF … mv x y.sh && bash y.sh).
-MOVERS = {"cp", "mv", "ln", "install", "chmod", "rsync", "scp", "dd", "tar", "zip", "ditto"}
 # Programs that can neither run a file nor start another program: all that may follow a heredoc written to a file for its body to stay
-# data. Everything else (a shell, an interpreter, a path, a variable, make, npm …) keeps the body in the scan (policy 15/10: fail closed).
+# data. Everything else (a shell, an interpreter, a path, a variable, make, npm, and cp / mv / ln / install / chmod, which hide what
+# runs the copy) keeps the body in the scan (policy 15/10: fail closed; review: cat > x <<EOF … mv x y.sh && bash y.sh).
 INERT = {"cd", "pwd", "echo", "printf", "true", "false", ":", "test", "[", "[[", "ls", "stat", "file", "wc", "cat", "head", "tail",
          "grep", "egrep", "fgrep", "rg", "diff", "cmp", "nl", "tac", "cut", "column", "sort", "uniq", "tr", "jq", "yq", "md5", "md5sum",
          "shasum", "sha1sum", "sha256sum", "cksum", "base64", "realpath", "dirname", "basename", "readlink", "which", "rm", "touch",
@@ -610,6 +608,7 @@ HOOKNAME = re.compile(r"(?:^|/)(?:pre-commit|prepare-commit-msg|commit-msg|post-
                       r"pre-receive|post-receive|post-update|pre-auto-gc|post-rewrite|pre-merge-commit|applypatch-msg|pre-applypatch|"
                       r"post-applypatch|fsmonitor-watchman|reference-transaction|push-to-checkout|sendemail-validate)$")
 MAX_HEREDOCS = 24
+LOOP_BEFORE = re.compile(r"(?:^|[;&|(){\n]|\bdo\b|\bthen\b)\s*(?:while|until|for|select|function)\b")
 _LINE_SEP = re.compile(r"&&|\|\||;|\n")
 READ_OPTS_WITH_ARG ={"read": {"-d", "-p", "-t", "-u", "-n", "-N", "-i"}, "mapfile": {"-d", "-n", "-O", "-s", "-u", "-C", "-c"}}
 
@@ -665,8 +664,6 @@ def _written_file_use(text, seg, h):
             here = next((_program(_words(after[s:m.end()].lstrip("&")))[0] for s, e, _p, _w in stages if s <= m.start() <= e), "")
             progs = [p for _s, _e, p, _w in stages]
             if any(p in SHELL_RUNNERS for p in progs) or here == base:   # ... or the file is the command itself (./x.sh)
-                uses.setdefault("shell", here)
-            elif any(p in MOVERS for p in progs):   # copied, moved, linked or made executable: what runs the copy is not seen
                 uses.setdefault("shell", here)
             elif any(_interp(p) for p in progs):
                 uses.setdefault("interp", next(p for p in progs if _interp(p)))
@@ -727,13 +724,13 @@ def _inert(text, h, seg, near, cut, interp_ok=False):
     body is the program they read, judged by the caller). Doubt is false: the body stays in the scan (policy 15/10)."""
     nl = text.find("\n", h.op_end)
     own = text[h.op_end:nl if nl >= 0 else len(text)]   # the rest of the operator line (not the bodies of heredocs before this one)
-    names = _written_names(seg)
-    hook_ctx = bool(HOOKDIR.search(text[:h.body_start]) or any(HOOKNAME.search(n) or HOOKDIR.search(n) for n in names))
-    if hook_ctx or re.search(r"\b(?:while|until|for|function|select)\b", text[:h.op_start]):   # a loop may run the file before this write
-        return False
     if (h.in_dq and not own.strip() and text[h.end:].lstrip()[:1] in (")", "`")
             and not re.search(r">|\btee\b", near)):      # git commit -m "$(cat <<'EOF' … EOF\n)": the text is an argument
         return True
+    names = _written_names(seg)
+    hook_ctx = bool(HOOKDIR.search(text[:h.body_start]) or any(HOOKNAME.search(n) or HOOKDIR.search(n) for n in names))
+    if hook_ctx or LOOP_BEFORE.search(text[:h.op_start]):   # a loop may run the file on its next round, before this write
+        return False
     after = own + "\n" + _segment(text, h.end, len(text), cut)   # later heredocs: their bodies are input of their readers
     if re.search(r"\$\(|`|<\(|>\(", after):
         return False
