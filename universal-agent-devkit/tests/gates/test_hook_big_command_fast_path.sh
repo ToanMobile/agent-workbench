@@ -95,6 +95,10 @@ CASES = [
     ("git danger after many rm words", R + "\ngit reset --hard", 2, 0, False),
     ("git danger after a heredoc", "cat > notes.md <<'EOF'\n" + L + "\nEOF\ngit reset --hard", 2, 0, False),
     ("rm danger after a heredoc", "cat > notes.md <<'EOF'\n" + L + "\nEOF\nrm -rf ~", 0, 2, False),
+    # the scan of the old heredoc classifier re-read the whole text for every word that named the written file (12 s for 4000 words, 28 s for
+    # 8000: the hardware gate has 10) and for every blank line (1.4 s for 12000): the danger at the end must still be refused, at once
+    ("8000 words naming the written file, then danger", "cat > x <<EOF\nb\nEOF\n" + "x " * 8000 + "; adb remount; git reset --hard", 2, 2, False),
+    ("12000 blank lines, a heredoc, then danger", "git status\n" + "\n" * 12000 + "cat > x <<EOF\nb\nEOF\nadb remount; git reset --hard", 2, 2, False),
     ("rm -rf of build outputs, one git call each", B, 0, (0, 2), True),
     ("100 KB of dd lines", "\n".join("dd if=a of=b%d" % i for i in range(100000 // 18)), 0, (0, 2), True),
     ("200 KB of dd lines", BIG_DD, 0, (0, 2), True),
