@@ -41,6 +41,9 @@
 # is re-used by the SAME session for REGRESSION_GATE_TOUCHED_RECHECK_S seconds (default 300; 0 = run the
 # gate on every Stop) on the same content, without running the gate (OfficeReader 2026-10-08: 58 of 71
 # Stop runs, 31-37 s each); a BUSY suite, another session, other content or a new commit never re-use it.
+# 0 runs the GATE on every Stop (the answer of the user and the verdict are judged again); it no longer starts a suite that already passed on
+# the same content: the gate keeps the suites a Stop run passed (budget_pass.json, 6 h, bin/post-fix-gate.py) and the next run on identical inputs
+# re-uses them. A suite that starts to fail on unchanged content is therefore not seen until that record ages out; DEVKIT_GATE_CACHE=0 turns it off.
 # Loop-guard: MAX_ATTEMPTS blocks per fingerprint, then the stop is allowed with a
 # visible warning (systemMessage) — a broken test can never trap the session.
 # Non-Claude agent or no usable Claude transcript ("degraded", hooks/devkit_harness.py:
@@ -698,7 +701,9 @@ if _sk_fp is not None and state.get("untested_fp") == _sk_fp:
 # gate result of this session for this exact content is known, so a repeat Stop prints the stored
 # reminder and does not run the gate. 2026-10-08, OfficeReader (10 sessions in one checkout): 58 of 71
 # Stop gate runs in 17 h were this repeat, 31-37 s each. The gate runs again after
-# REGRESSION_GATE_TOUCHED_RECHECK_S (300 s, 0 = every stop), so the answer of the user still clears it.
+# REGRESSION_GATE_TOUCHED_RECHECK_S (300 s, 0 = every stop), so the answer of the user still clears it. Runs again = judges again
+# (static audits, edited tests, the answer of the user), nothing more: since 2026-10-15 it starts no suite that already passed on this content (the
+# budget_pass.json record of bin/post-fix-gate.py, 6 h), so RECHECK_S=0 does not re-check suites either.
 # Never reused: by another session, for other content or another commit range (the key holds fp, which
 # also names verified_head..HEAD, and the tree fingerprint), after a run that was not this outcome, or
 # when the reminder came with a BUSY suite. Limit: gitignored files the gate reads (proof images under
