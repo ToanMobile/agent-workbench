@@ -179,7 +179,7 @@ def load_lanes(path):
             if value is not None and not isinstance(value, str):   # null is "not given"; any other type is a typo that would skew the plan quietly
                 fail("%s of %s must be a string: %s" % (field, r["id"], _show(value)))
         kind, risk = kind or "", risk or ""
-        if "est_min" in r:
+        if r.get("est_min") is not None:   # null is "not given", like kind and risk
             est = _num(r["est_min"], "est_min of %s" % r["id"])
         else:
             if kind and hist is None:

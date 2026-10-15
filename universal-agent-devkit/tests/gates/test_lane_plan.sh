@@ -105,6 +105,8 @@ chk(d is not None and d["merge_order"] == ["Z", "A"], "merge order follows the e
 
 rc, d, err = plan_json("l3c.json", [{"id": "A", "est_min": 5, "kind": None, "risk": None}], 1)
 chk(d is not None, "null kind and null risk are the same as not given", err)
+rc, d, err = plan_json("l3d.json", [{"id": "A", "est_min": None}], 1)
+chk(d is not None and d["makespan_min"] == 30, "a null est_min is the same as not given (30 min)", "%s %s" % (d and d["makespan_min"], err))
 # a tie on path length and risk keeps the listed order (S: 10 + 10 behind it = 20 = Lg, and Lg is listed first although it is the longer lane)
 rc, d, err = plan_json("l3b.json", [{"id": "Lg", "est_min": 20}, {"id": "S", "est_min": 10}, {"id": "T", "est_min": 10, "deps": ["S"]}], 1)
 chk(d is not None and d["start_order"] == ["Lg", "S", "T"], "equal paths and equal risk: the listed order (Lg before S)", str(d and d["start_order"]))
