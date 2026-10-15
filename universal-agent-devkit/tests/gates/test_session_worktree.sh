@@ -21,20 +21,20 @@ done
 git -C "$M" worktree add -q --detach "$W" HEAD && git -C "$O" worktree add -q --detach "$TMP/other-wt" HEAD && git -C "$M" worktree add -q --detach "$TMP/main-w2" HEAD
 mkdir -p "$TMP/plain" "$W/sub"
 
-# 1 trunk mode: off by default, on with `git config devkit.trunkMode true` (seen from main AND from a linked worktree), off again with
+# 1 trunk mode: ON by default (user, 2026-10-15), on with `git config devkit.trunkMode true` too (seen from main AND from a linked worktree), off with
 #   WORKTREE_TRUNK_MODE=0, false, a garbage value or an unreadable config; git's own forms count (bare key, any case, a trailing comment)
 tm() { (cd "$1" && python3 -I "$SW" trunk-mode "$1" >/dev/null 2>&1); echo $?; }
-[ "$(tm "$M")" = 1 ] && ok "no devkit.trunkMode: off" || fail "trunk mode on with no config"
+[ "$(tm "$M")" = 0 ] && ok "no devkit.trunkMode: ON (the default)" || fail "trunk mode off with no config"
 git -C "$M" config devkit.trunkMode true
 [ "$(tm "$M")" = 0 ] && [ "$(tm "$W")" = 0 ] && ok "devkit.trunkMode true: on, from main and from its worktree" || fail "trunk mode not seen (main $(tm "$M"), worktree $(tm "$W"))"
 [ "$(WORKTREE_TRUNK_MODE=0 python3 -I "$SW" trunk-mode "$M" >/dev/null 2>&1; echo $?)" = 1 ] && ok "  … WORKTREE_TRUNK_MODE=0: off (R7)" || fail "WORKTREE_TRUNK_MODE=0 did not turn it off"
 f0=$FAILS; for v in false 0 no garbage; do
   git -C "$M" config devkit.trunkMode "$v"; [ "$(tm "$M")" = 1 ] || fail "devkit.trunkMode=$v read as on"
 done; [ "$FAILS" = "$f0" ] && ok "  … false / 0 / no / a garbage value: off"
-git -C "$M" config --unset-all devkit.trunkMode
+git -C "$M" config --unset-all devkit.trunkMode; git -C "$M" config devkit.trunkMode false   # unset would mean ON: start from false
 printf '[DevKit]\n\tTrunkMode = TRUE ; a trailing comment\n' >> "$M/.git/config"
 a="$(tm "$M")"; [ "$(git -C "$M" config --bool devkit.trunkMode)" = true ] || fail "fixture: git itself does not read the line as true"
-git -C "$M" config --unset-all devkit.trunkMode; printf '[devkit]\n\ttrunkmode\n' >> "$M/.git/config"
+git -C "$M" config --unset-all devkit.trunkMode; git -C "$M" config devkit.trunkMode false; printf '[devkit]\n\ttrunkmode\n' >> "$M/.git/config"
 b="$(tm "$M")"; [ "$(git -C "$M" config --bool devkit.trunkMode)" = true ] || fail "fixture: git itself does not read the bare key as true"
 [ "$a" = 0 ] && [ "$b" = 0 ] && ok "  … [DevKit] TrunkMode = TRUE ; comment, and a bare key: on, as git reads them" || fail "git's boolean forms not read ($a, $b)"
 git -C "$M" config --unset-all devkit.trunkMode; git -C "$M" config devkit.trunkMode true

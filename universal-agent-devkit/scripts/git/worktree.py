@@ -3,8 +3,9 @@
 
 Usage (normally `agent-kit worktree …`, run inside the repo):
   worktree.py add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory] [--session=ID]
-  worktree.py trunk [on|off|status]   trunk mode (W1 R1/R2/R7): main merge-only, one worktree per session (hook-create / hook-remove
-                                      are the WorktreeCreate / WorktreeRemove hooks it wires; payload JSON on stdin)
+  worktree.py trunk [on|off|wire|status]   trunk mode (W1 R1/R2/R7), ON by default: main merge-only, one worktree per session (hook-create /
+                                      hook-remove are the WorktreeCreate / WorktreeRemove hooks it wires; payload JSON on stdin). `off` writes
+                                      devkit.trunkMode=false into THIS repo's config: a global git config key is not read
   worktree.py diff <path> [--with-checklist]   the worktree's own changes as a binary patch
   worktree.py finish <path>    merge its work into the main branch AUTOMATICALLY, then remove it (exit 0 done, 3 conflict, 1 blocked)
   worktree.py automerge <path> the same, one JSON line on stdout (what the Stop gate runs)
@@ -614,8 +615,8 @@ def _live_worktrees(main):
 
 
 def _trunk_mode(path):
-    """hooks/session_worktree.py trunk_mode(): `git config devkit.trunkMode true` and WORKTREE_TRUNK_MODE not 0 (W1 R1/R7 v6). Any
-    failure to tell: False, the old behaviour."""
+    """hooks/session_worktree.py trunk_mode(): no `devkit.trunkMode` key (the default) or `true`, and WORKTREE_TRUNK_MODE not 0 (W1 R1/R7 v6).
+    Any failure to tell: False, the old behaviour."""
     hooks = os.path.join(DEVKIT, "hooks")
     if hooks not in sys.path:
         sys.path.append(hooks)   # after the stdlib: nothing in hooks/ may shadow it
@@ -2418,6 +2419,16 @@ def cmd_heal(cwd, args):
         done.append(".agents/devkit")
     if src:
         done += copy_local_config(src, wt) + copy_build_inputs(src, wt)
+    try:   # trunk mode is the default: wire its hooks once per machine (settings.local.json is untracked, a fresh clone has none)
+        main_co = main_checkout(cwd)
+        if _trunk_mode(main_co):
+            try:
+                _trunk_wire(main_co)   # silent: the SessionStart text is the same every time, and the message above is for host-made checkouts
+            except (SystemExit, OSError):   # (a settings.local.json that does not parse, an unreadable one, a failed git call or write) trunk is ON and the hooks stay unwired, so say it
+                print(tr("trunk mode BẬT nhưng hook WorktreeCreate/WorktreeRemove chưa đấu được: chạy `agent-kit worktree trunk wire` để xem lý do",
+                         "trunk mode is ON but the WorktreeCreate/WorktreeRemove hooks could not be wired: run `agent-kit worktree trunk wire` to see why"))
+    except (SystemExit, OSError):
+        pass   # a session must start whatever happens here
     if done:
         print(tr("checkout do host tạo: đã chuẩn bị như `agent-kit worktree add` — ",
                  "host-made checkout: set up like `agent-kit worktree add` — ") + ", ".join(done))
@@ -2670,7 +2681,7 @@ def _owner(wt):
 
 
 def cmd_hook_create(cwd, args):
-    """Claude Code's WorktreeCreate hook in trunk mode (W1 R1 v6; wired by `worktree trunk on`). EnterWorktree, `claude --worktree` and a
+    """Claude Code's WorktreeCreate hook in trunk mode (W1 R1 v6; wired by `worktree trunk wire`: init, every SessionStart, `trunk on`). EnterWorktree, `claude --worktree` and a
     subagent's isolation: "worktree" get their worktree from `add --session`: detached at HEAD under <main>/.claude/worktrees/<name> (where
     Claude puts its own: EnterWorktree never asks the user there), local config copied, the DevKit installed, the owning session in its
     state from the moment git registers it. Configuring this hook REPLACES Claude's own `git worktree add` (code.claude.com hooks docs),
@@ -2803,28 +2814,47 @@ def _trunk_hooks_wired(data):
                    for h in m.get("hooks") or [] if isinstance(h, dict)) for ev, (sub, _t) in TRUNK_HOOKS.items())
 
 
-def cmd_trunk(cwd, args):
-    """`agent-kit worktree trunk on|off|status` - trunk mode for this repo (W1 R1/R2/R7 v6, docs/workflow-improvements.md I.0): `on` sets
-    `git config devkit.trunkMode true` and wires the WorktreeCreate / WorktreeRemove hooks into the main checkout's
-    .claude/settings.local.json (untracked, this machine only: Claude Code reads the main checkout's local file in its worktrees too);
-    `off` undoes both. New sessions pick it up. WORKTREE_TRUNK_MODE=0 in the environment turns it off everywhere without touching a repo."""
-    action = args[0] if args else "status"
-    if action not in ("on", "off", "status") or len(args) > 1:
-        die("usage: agent-kit worktree trunk [on|off|status]")
-    main = main_checkout(cwd)
+def _trunk_install_files(main):
+    """The non-settings half of the wiring: the session_worktree.sh link and the worktrees folder out of git's sight. Idempotent."""
+    link = os.path.join(main, ".claude", "hooks", "session_worktree.sh")
+    if not os.path.exists(link):   # missing, or dangling (the DevKit moved since): make it again
+        if os.path.islink(link):
+            os.unlink(link)
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        os.symlink(os.path.join(DEVKIT, "hooks", "session_worktree.sh"), link)
+    for pattern, probe in (("/.claude/worktrees/", ".claude/worktrees/x/"), ("/.claude/settings.local.json", ".claude/settings.local.json"),
+                           ("/.claude/hooks/session_worktree.sh", ".claude/hooks/session_worktree.sh")):
+        if git(main, "check-ignore", "-q", "--no-index", probe, check=False).returncode != 0:   # the sessions' worktrees live there; Claude Code normally ignores the file; --no-index: a tracked path never reads as ignored, so each call added the line again
+            exclude = os.path.join(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip(), "info", "exclude")
+            os.makedirs(os.path.dirname(exclude), exist_ok=True)   # never untracked noise in main's status (local, not committed)
+            with open(exclude, "a", encoding="utf-8") as f:
+                f.write(f"\n{pattern}\n")
+
+
+def _trunk_wire(main):
+    """Trunk mode is the default, so its WorktreeCreate / WorktreeRemove hooks must exist on every machine: settings.local.json is untracked
+    and a fresh clone has none. Idempotent (nothing is written when both hooks and the link are there); raises SystemExit(1) on a settings file
+    that does not parse, which callers that must not fail (init, heal) catch: that file is never rewritten. Returns True when it wrote."""
     local = os.path.join(main, ".claude", "settings.local.json")
     data = _load_local_settings(local)
-    if action == "status":
-        on, wired = _trunk_mode(main), _trunk_hooks_wired(data)
-        print(f"trunk mode: {'on' if on else 'off'}" + (" (WORKTREE_TRUNK_MODE=0)" if os.environ.get("WORKTREE_TRUNK_MODE") == "0" else "")
-              + f"; WorktreeCreate/WorktreeRemove hooks {'wired' if wired else 'not wired'} in {local}")
-        return 0
+    link = os.path.join(main, ".claude", "hooks", "session_worktree.sh")
+    if _trunk_hooks_wired(data) and os.path.exists(link):
+        _trunk_install_files(main)   # idempotent: a repo wired by the earlier `trunk on` excluded only /.claude/worktrees/
+        return False
+    _trunk_install_files(main)   # first: the script the hooks call must exist before the hooks that call it (a WorktreeCreate hook REPLACES `git worktree add`)
+    _trunk_set_hooks(main, data, True)
+    return True
+
+
+def _trunk_set_hooks(main, data, on):
+    """Add (on) or remove (off) exactly the two trunk hooks in main's settings.local.json, everything else kept; atomic write."""
+    local = os.path.join(main, ".claude", "settings.local.json")
     hooks = data.setdefault("hooks", {})
-    for ev, (sub, timeout) in TRUNK_HOOKS.items():
+    for ev, (sub_cmd, timeout) in TRUNK_HOOKS.items():
         kept = [m for m in hooks.get(ev) or [] if not (isinstance(m, dict) and any(
-            isinstance(h, dict) and HOOK_CMD + sub in str(h.get("command", "")) for h in m.get("hooks") or []))]
-        if action == "on":
-            kept.append({"hooks": [{"type": "command", "command": HOOK_CMD + sub, "timeout": timeout}]})
+            isinstance(h, dict) and HOOK_CMD + sub_cmd in str(h.get("command", "")) for h in m.get("hooks") or []))]
+        if on:
+            kept.append({"hooks": [{"type": "command", "command": HOOK_CMD + sub_cmd, "timeout": timeout}]})
         if kept:
             hooks[ev] = kept
         else:
@@ -2837,22 +2867,57 @@ def cmd_trunk(cwd, args):
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
     os.replace(tmp, local)
-    if action == "on":
-        link = os.path.join(main, ".claude", "hooks", "session_worktree.sh")
-        if not os.path.lexists(link):
-            os.makedirs(os.path.dirname(link), exist_ok=True)
-            os.symlink(os.path.join(DEVKIT, "hooks", "session_worktree.sh"), link)
-        if git(main, "check-ignore", "-q", ".claude/worktrees/x/", check=False).returncode != 0:   # the sessions' worktrees live there:
-            exclude = os.path.join(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip(), "info", "exclude")
-            os.makedirs(os.path.dirname(exclude), exist_ok=True)   # never untracked noise in main's status (local, not committed)
-            with open(exclude, "a", encoding="utf-8") as f:
-                f.write("\n/.claude/worktrees/\n")
-        git(main, "config", "devkit.trunkMode", "true")
-        print("✔ " + tr("trunk mode BẬT: main chỉ để gộp; mỗi phiên làm trong worktree riêng (EnterWorktree). Phiên mới mới thấy hook.",
-                        "trunk mode ON: main is merge-only; every session works in its own worktree (EnterWorktree). New sessions pick up the hooks."))
-    else:
-        git(main, "config", "--unset-all", "devkit.trunkMode", check=False)
+
+
+def cmd_trunk(cwd, args):
+    """`agent-kit worktree trunk on|off|wire|status` - trunk mode for this repo (W1 R1/R2/R7 v6, docs/workflow-improvements.md I.0). It is the
+    DEFAULT (user, 2026-10-15: a repo with no `devkit.trunkMode` key is on). `on` sets `git config devkit.trunkMode true` and wires the
+    WorktreeCreate / WorktreeRemove hooks into the main checkout's .claude/settings.local.json (untracked, this machine only: Claude Code reads
+    the main checkout's local file in its worktrees too); `off` writes `false` (an unset key would mean ON) and unwires them; `wire` only wires
+    (init and every SessionStart do it for a repo that has not said `false`). New sessions pick it up. WORKTREE_TRUNK_MODE=0 in the
+    environment turns it off everywhere without touching a repo."""
+    action = args[0] if args else "status"
+    if action not in ("on", "off", "wire", "status") or len(args) > 1:
+        die("usage: agent-kit worktree trunk [on|off|wire|status]")
+    main = main_checkout(cwd)
+    local = os.path.join(main, ".claude", "settings.local.json")
+    if action == "wire":   # init and SessionStart: never fatal (a settings file that does not parse stays as it is), never touches a repo that said false
+        if _trunk_mode(main):
+            try:
+                _trunk_wire(main)
+            except (SystemExit, OSError) as e:
+                if not isinstance(e, SystemExit):   # `die` has already said why a settings file was left alone
+                    print(tr(f"trunk mode: không đấu được hook ({e}); {local} giữ nguyên", f"trunk mode: hooks not wired ({e}); {local} left as it is"))
+        return 0
+    if action == "off":   # the user's way out never depends on settings.local.json: the key goes first, unwiring the hooks is best effort
+        git(main, "config", "--replace-all", "devkit.trunkMode", "false")   # not --unset: with the default ON, an unset key means ON
+        try:
+            data = _load_local_settings(local)
+            if any(ev in (data.get("hooks") or {}) for ev in TRUNK_HOOKS):   # never wired: nothing to remove, and no `{}` file left in git status
+                _trunk_set_hooks(main, data, False)
+        except (SystemExit, OSError):   # `die` has said why a file that cannot be read was left alone; a failed write is no reason to fail the opt-out
+            print("✔ " + tr(f"trunk mode TẮT (devkit.trunkMode=false); hook trong {local} chưa gỡ được",
+                            f"trunk mode OFF (devkit.trunkMode=false); the hooks stay in {local}, which could not be changed"))
+            return 0
         print("✔ " + tr("trunk mode TẮT: như cũ", "trunk mode OFF: the old behaviour"))
+        return 0
+    data = _load_local_settings(local)
+    if action == "status":
+        on, wired = _trunk_mode(main), _trunk_hooks_wired(data)
+        print(f"trunk mode: {'on' if on else 'off'}" + (" (WORKTREE_TRUNK_MODE=0)" if os.environ.get("WORKTREE_TRUNK_MODE") == "0" else "")
+              + f"; WorktreeCreate/WorktreeRemove hooks {'wired' if wired else 'not wired'} in {local}")
+        return 0
+    try:
+        _trunk_install_files(main)   # first: the script the hooks call must exist before the hooks that call it (a WorktreeCreate hook REPLACES `git worktree add`)
+    except OSError as e:
+        die(tr(f"không tạo được link hay file ignore ({e}): hook chưa đấu", f"cannot make the link or the excludes ({e}): hooks not wired"), 1)
+    git(main, "config", "--replace-all", "devkit.trunkMode", "true")   # --replace-all: a config that holds the key twice makes a plain set exit 5; before the hooks, so a failed write never leaves hooks next to `false`
+    try:
+        _trunk_set_hooks(main, data, True)
+    except OSError as e:
+        die(tr(f"không ghi được {local} ({e}): hook chưa đấu", f"cannot write {local} ({e}): hooks not wired"), 1)
+    print("✔ " + tr("trunk mode BẬT: main chỉ để gộp; mỗi phiên làm trong worktree riêng (EnterWorktree). Phiên mới mới thấy hook.",
+                    "trunk mode ON: main is merge-only; every session works in its own worktree (EnterWorktree). New sessions pick up the hooks."))
     return 0
 
 
@@ -2867,6 +2932,8 @@ def main(argv):
     if argv[1] == "hook-remove":
         return cmd_hook_remove(cwd, argv[2:])
     if git(cwd, "rev-parse", "--git-dir", check=False).returncode != 0:
+        if argv[1:3] == ["trunk", "wire"]:
+            return 0   # init in a project that is not a git repo: nothing to wire, never an error
         die(tr("không ở trong git repository", "not inside a git repository"))
     action, rest = argv[1], argv[2:]
     if action == "add":

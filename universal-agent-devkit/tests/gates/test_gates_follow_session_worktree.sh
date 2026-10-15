@@ -15,6 +15,7 @@ FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); 
 M="$TMP/main"; W="$M/.claude/worktrees/s1"; O="$TMP/other"
 for r in "$M" "$O"; do
   mkdir -p "$r/src" && git -C "$r" init -q -b main && git -C "$r" config user.email t@t && git -C "$r" config user.name t \
+    && git -C "$r" config devkit.trunkMode false \
     && printf '.claude/audit-gate/\n/.claude/worktrees/\n' > "$r/.gitignore" && echo 'x = 1' > "$r/src/a.py" && git -C "$r" add -A && git -C "$r" commit -qm i
 done
 git -C "$M" worktree add -q --detach "$W" HEAD && git -C "$O" worktree add -q --detach "$TMP/other-wt" HEAD

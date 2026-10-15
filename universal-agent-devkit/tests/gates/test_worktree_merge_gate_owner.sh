@@ -13,6 +13,7 @@
 #   5. WORKTREE_AUTO_MERGE=0 restores the old hold, with ONE command per worktree (real path) instead of three steps
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
+export WORKTREE_TRUNK_MODE=0   # these cases test the one-checkout-one-session mode; trunk mode is the default since 2026-10-15 (tests/worktree_git/test_trunk_default.sh)
 export DEVKIT_LANG=en
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$DEVKIT_DIR/hooks/worktree_merge_gate.sh"; LOCKPY="$DEVKIT_DIR/bin/session_lock.py"

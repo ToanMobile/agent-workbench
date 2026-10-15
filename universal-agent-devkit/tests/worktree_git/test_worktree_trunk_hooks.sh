@@ -180,11 +180,11 @@ PY
 (cd "$TMP/d" && python3 -I "$WT" trunk status) | grep -qE "trunk mode: on; .* hooks wired in " && ok "  … status: on, wired" || fail "status after on"   # (anchored: "hooks not wired in" must not pass)
 (cd "$TMP/d" && python3 -I "$WT" trunk off >/dev/null 2>&1); rc=$?
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); h=d.get("hooks",{}); sys.exit(0 if "WorktreeCreate" not in h and "WorktreeRemove" not in h and h.get("Stop") and d.get("enableAllProjectMcpServers") else 1)' "$TMP/d/.claude/settings.local.json" \
-  && [ "$rc" = 0 ] && [ -z "$(G "$TMP/d" config devkit.trunkMode)" ] && ok "  … trunk off: both hooks and the git config gone, the rest kept" || fail "trunk off (rc $rc)"
+  && [ "$rc" = 0 ] && [ "$(G "$TMP/d" config devkit.trunkMode)" = false ] && ok "  … trunk off: both hooks gone, devkit.trunkMode=false (an unset key means ON), the rest kept" || fail "trunk off (rc $rc)"
 (cd "$TMP/d" && python3 -I "$WT" trunk status) | grep -qE "trunk mode: off; .* hooks not wired in " && ok "  … status: off, not wired" || fail "status after off"
 printf '{ "broken": ' > "$TMP/d/.claude/settings.local.json"; cp "$TMP/d/.claude/settings.local.json" "$TMP/broken.bak"
 (cd "$TMP/d" && python3 -I "$WT" trunk on >/dev/null 2>&1); rc=$?
-[ "$rc" != 0 ] && cmp -s "$TMP/d/.claude/settings.local.json" "$TMP/broken.bak" && [ -z "$(G "$TMP/d" config devkit.trunkMode)" ] \
+[ "$rc" != 0 ] && cmp -s "$TMP/d/.claude/settings.local.json" "$TMP/broken.bak" && [ "$(G "$TMP/d" config devkit.trunkMode)" = false ] \
   && ok "  … a settings.local.json that is not JSON: refused, not rewritten, trunk mode stays off" || fail "broken settings rewritten or trunk mode set (rc $rc)"
 
 # 9 automerge and a provisional state

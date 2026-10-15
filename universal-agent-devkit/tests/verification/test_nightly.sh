@@ -21,7 +21,7 @@ export NIGHTLY_LAUNCHCTL="true"
 
 mk() {  # mk <dir> <command-A> <command-B>
   local P="$1"; mkdir -p "$P/src" "$P/.agents"
-  ( cd "$P" && git init -q . && git config user.email t@t && git config user.name t
+  ( cd "$P" && git init -q . && git config user.email t@t && git config user.name t && git config devkit.trunkMode false
     echo 1 > src/a.txt; echo 1 > src/b.txt
     python3 -c 'import json,sys; json.dump({"adopted": True, "rules": [
       {"component": "A", "watch_files": ["src/a.txt"], "mandatory_regression_tests": [{"id": "REG-A", "name": "a", "command": sys.argv[1]}]},

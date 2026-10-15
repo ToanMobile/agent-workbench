@@ -165,6 +165,22 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   python3 "$_cm" "$TARGET_DIR" || true
 fi
 
+# 8b. Trunk mode is the default (user, 2026-10-15): wire its WorktreeCreate / WorktreeRemove hooks now (a no-op for a repo that said
+#     `devkit.trunkMode false`, for a non-git project and for a settings.local.json that does not parse). Repos installed earlier get
+#     the same at their next SessionStart (worktree.py heal).
+#     Only when TARGET_DIR is itself the main checkout of its repo (the top of its working tree, not a linked worktree): `trunk wire`
+#     wires the repo's MAIN checkout, so a project in a subfolder of a bigger repo, or a linked worktree, must not write into another
+#     folder (devkit_uninstall.py only cleans <project>/.claude). `wire` prints nothing when it succeeds, so what it does say stays visible.
+if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
+  _wt="$DEVKIT_ROOT/scripts/git/worktree.py"; [ -f "$_wt" ] || _wt="$DEVKIT_ROOT/scripts/worktree.py"
+  # `|| true`: this script runs under `set -e`, and a project that is not a git repo makes every one of these fail
+  _top="$(git -C "$TARGET_DIR" rev-parse --show-toplevel 2>/dev/null)" || true
+  _gd="$(git -C "$TARGET_DIR" rev-parse --absolute-git-dir 2>/dev/null)" || true
+  _cd="$(git -C "$TARGET_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || true
+  [ -f "$_wt" ] && [ -n "$_top" ] && [ "$_top" = "$(cd "$TARGET_DIR" && pwd -P)" ] && [ -n "$_gd" ] && [ "$_gd" = "$_cd" ] \
+    && (cd "$TARGET_DIR" && python3 "$_wt" trunk wire) || true
+fi
+
 # 9. Skills in .agents/skills: AGENTS.md names that folder for every agent, so a Claude-only
 #    install places them too (same helper as setup_gemini.sh).
 devkit_place_skills "$TARGET_DIR" "$MODE"

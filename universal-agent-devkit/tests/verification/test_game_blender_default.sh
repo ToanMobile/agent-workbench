@@ -9,6 +9,7 @@
 #
 # Sections: A real Blender (render_game_prop.py), B validate-assets.sh fixtures,
 # C capture_3d_proof.py with a failing Blender, D the rule/profile/council text.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -442,6 +443,34 @@ bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/nosurface.blend')
     python3 -I -c "import sys; sys.exit(0 if float('$FILL') >= 0.10 else 1)" \
       && ok "A34 a bevel-less curve and an edges-only mesh do not size the frame (fill $FILL)" \
       || fail "A34 geometry that renders as nothing shrank the cube to fill $FILL"
+  fi
+  # OCR round 20: two objects share ONE curve datablock, one with a Screw modifier (it renders faces), one plain (renders nothing). frame_blend_scene caches
+  # "renders a surface" per evaluated MESH only (instances of one mesh share it); a curve's answer belongs to its object, because each evaluated curve object
+  # owns its own Curve, so neither answer may decide the other's, whichever is visited first (a key shared by both, e.g. the original data, would)
+  OUT="$("$BLENDER" -b --python-expr "
+import sys
+sys.path.insert(0, r'$GAME/scripts')
+import bpy
+import render_game_prop as r
+for order in ('plain_first', 'screw_first'):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.mesh.primitive_cube_add(size=2)
+    bpy.ops.curve.primitive_nurbs_path_add()
+    first = bpy.context.active_object
+    second = bpy.data.objects.new('second', first.data)
+    bpy.context.scene.collection.objects.link(second)
+    plain, screw = (first, second) if order == 'plain_first' else (second, first)
+    plain.location = (200, 0, 0)
+    mod = screw.modifiers.new('S', 'SCREW')
+    mod.angle = 6.283
+    mod.steps = 8
+    centre, factor = r.frame_blend_scene()
+    print('SHARED_CURVE', order, round(factor, 2))
+" 2>&1)"
+  if [ "$(echo "$OUT" | grep -c '^SHARED_CURVE')" = 2 ] && [ -z "$(echo "$OUT" | grep '^SHARED_CURVE' | awk '$3 > 10 || $3 < 3')" ]; then   # the swept screw is ~6 units wide = 4.6; the cube alone would be 1.54 (screw dropped), the plain curve at x=200 would be 158
+    ok "A37 a plain curve and a Screw-modified one sharing a datablock do not decide each other's framing ($(echo "$OUT" | grep '^SHARED_CURVE' | tr '\n' ' '))"
+  else
+    fail "A37 shared curve datablock: the plain object (x=200) sized the frame or the case did not run: $(echo "$OUT" | grep -E '^SHARED_CURVE|Error' | tr '\n' ' ')"
   fi
   # F7: no `--` at all is a refusal, not a gold coin written next to the caller; a resolution Blender would round up is refused too
   mkdir -p "$TMP/nodash" && (cd "$TMP/nodash" && "$BLENDER" -b -P "$PROP" >/dev/null 2>&1; echo $? > "$TMP/nodash.rc")

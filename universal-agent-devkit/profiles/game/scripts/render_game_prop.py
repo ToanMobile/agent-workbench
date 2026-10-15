@@ -310,15 +310,26 @@ def _render_visible():
     return seen
 
 
-def _renders_surface(evaluated):
-    """False for geometry that renders as nothing: a curve without bevel or extrude, a mesh of edges only (it would still size the frame)."""
-    if evaluated.type not in ('MESH', 'CURVE', 'SURFACE', 'FONT', 'META'):
-        return True
+def _has_faces(evaluated):
     mesh = evaluated.to_mesh()
     try:
         return mesh is not None and len(mesh.polygons) > 0
     finally:
         evaluated.to_mesh_clear()
+
+
+def _renders_surface(evaluated, cache):
+    """False for geometry that renders as nothing: a curve without bevel or extrude, a mesh of edges only (it would still size the frame).
+    `cache` is keyed by the evaluated mesh: a scatter of 10^5 instances shares a few, and to_mesh() builds a temporary mesh each time.
+    Only meshes are cached: the answer for a curve, font or metaball belongs to its object (a metaball family polygonizes on its basis
+    object only, and linked duplicates share one datablock)."""
+    if evaluated.type not in ('MESH', 'CURVE', 'SURFACE', 'FONT', 'META'):
+        return True
+    if evaluated.type != 'MESH':
+        return _has_faces(evaluated)
+    if evaluated.data not in cache:
+        cache[evaluated.data] = _has_faces(evaluated)
+    return cache[evaluated.data]
 
 
 def frame_blend_scene():
@@ -331,11 +342,11 @@ def frame_blend_scene():
         if obj.type in ('LIGHT', 'CAMERA'):
             bpy.data.objects.remove(obj, do_unlink=True)
     visible = _render_visible()
-    points = []
+    points, surfaces = [], {}
     # ponytail: the viewport depsgraph skips an object that is disabled in viewports but enabled for render; add a render depsgraph when a source needs it
     for inst in bpy.context.evaluated_depsgraph_get().object_instances:   # real objects AND instances (collections, geometry nodes, particles)
         evaluated = inst.object
-        if evaluated.type not in GEOMETRY or not _renders_surface(evaluated):
+        if evaluated.type not in GEOMETRY or not _renders_surface(evaluated, surfaces):
             continue
         owner = inst.parent.original if inst.is_instance and inst.parent else evaluated.original   # an instance renders when its instancer does
         if owner in visible:

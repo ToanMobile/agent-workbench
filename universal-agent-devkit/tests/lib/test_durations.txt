@@ -281,3 +281,5 @@
 5 tests/verification/test_wiring_pin.sh
 2 tests/gates/test_stop_hook_times.sh
 6 tests/gates/test_lane_plan.sh
+40 tests/verification/test_game_blender_default.sh
+10 tests/worktree_git/test_trunk_default.sh

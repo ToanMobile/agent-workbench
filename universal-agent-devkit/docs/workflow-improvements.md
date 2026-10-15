@@ -162,7 +162,7 @@ Thứ tự trong W1, mỗi bước có test ĐỎ trước:
   Làm R1/R2 trong một worktree, không làm ở main (hook chạy qua symlink ở mọi repo, INSTINCT-012). R2 cần `hooks/shell_writes.py` của phiên d91dffdd
   (`targets(cmd, here, depth=0)`) đã vào main. Mỗi bước có test ĐỎ trước, principal-code-reviewer và OCR chạy song song.
 - **Còn mở nhỏ (low):** chưa có test cho nhánh `gated` (fast-forward lỗi tạm thời rồi lặp lại); ca 9 của test R3 khi máy không có `pgrep` (đã có trong patch).
-- **Chưa làm:** đưa R1/R2 sang GeelyEx2, OfficeReader, rồi Unity sau R6 (`cp -Rc Library`, gỡ cờ `uchg`, xoá file khoá của Unity).
+- **Đã làm (15/10):** trunk mode BẬT mặc định cho mọi repo và cho `agent-kit init` (người dùng: "mặc định là bật cho tất cả các repo cũng như devkit init"; R6 đã giao nên điều kiện cho repo Unity đã đủ): khoá `devkit.trunkMode` vắng = BẬT, `trunk off` ghi `false`, `trunk wire` + `heal` + `init` đấu hook. Hệ quả đã biết: job đêm (`nightly.py` `checkout_busy`) bỏ qua main ở trunk mode, nên chưa chạy cho tới khi nó biết chạy trong worktree.
 
 **Đã làm trong phiên này (13/10 ~18:15, chưa commit):** test hay đỏ ngẫu nhiên `test_worktree_merge_gate_owner.sh` §7 có cơ chế khác với mô tả ở
 `issues-bugs.md` A.2 #3:

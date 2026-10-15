@@ -153,7 +153,7 @@ check "top suite is A: 7 runs, FAIL x4 PASS x3"           "d['gate']['top_suites
 check "checklist header parsed: 93% 41/44, 3 waiting, 2 bugs without a guard" "d['checklist'] == {'safe_pct': 93, 'passed': 41, 'total': 44, 'waiting': 3, 'no_guard': 2}"
 check "context sizes: AGENTS.md + profile rules in bytes" "d['sizes']['agents_md'] == 9 and d['sizes']['profile_rules'] == 14"
 check "git: a branch name, nothing dirty, 3 untracked entries" "bool(d['git']['branch']) and d['git']['dirty'] == 0 and d['git']['untracked'] == 3"
-check "lock status is reported"                           "d['lock']['exit'] in (0, 3)"
+check "lock status is reported (0 free, 3 held, 5 trunk merge-only)" "d['lock']['exit'] in (0, 3, 5)"
 
 check "Stop events: 7 (sid, second) pairs although 22 log lines, 2 sessions" "d['stop']['events'] == 7 and d['stop']['sessions'] == 2"
 check "events per session: median 3.5, max 5"              "d['stop']['per_session'] == {'median': 3.5, 'max': 5}"

@@ -5,7 +5,7 @@
 # lives in (the .claude/hooks/ entry is a symlink).
 #   record           PostToolUse on EnterWorktree|ExitWorktree (every repo): remembers the worktree the session entered, so the gates
 #                    check that worktree and not the main checkout (CLAUDE_PROJECT_DIR stays main after EnterWorktree). Never blocks.
-#   worktree-create  WorktreeCreate (wired by `agent-kit worktree trunk on`): `worktree.py hook-create` prints the path on the last
+#   worktree-create  WorktreeCreate (wired by `agent-kit worktree trunk wire`): `worktree.py hook-create` prints the path on the last
 #                    stdout line. Configuring this hook REPLACES Claude's own `git worktree add`, so with no python3 or no kit here it
 #                    still makes a plain detached worktree at <main>/.claude/worktrees/<name> and prints it: an EnterWorktree or an
 #                    isolated subagent must never fail because of the DevKit.

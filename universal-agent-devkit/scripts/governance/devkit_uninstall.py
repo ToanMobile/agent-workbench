@@ -557,16 +557,34 @@ def main(argv):
     slocal = os.path.join(project, ".claude", "settings.local.json")
     sdata = load_json(slocal)
     ours = os.path.join(os.path.realpath(project), ".agents", "local", "memory", "claude-auto")
-    if isinstance(sdata, dict) and isinstance(sdata.get("autoMemoryDirectory"), str) \
-            and os.path.realpath(sdata["autoMemoryDirectory"]) == os.path.realpath(ours):
-        del sdata["autoMemoryDirectory"]
+    drop_mem = isinstance(sdata, dict) and isinstance(sdata.get("autoMemoryDirectory"), str) \
+        and os.path.realpath(sdata["autoMemoryDirectory"]) == os.path.realpath(ours)
+
+    def trunk_entry(m):   # a WorktreeCreate / WorktreeRemove entry `worktree trunk wire|on` put there (trunk mode is the default)
+        return isinstance(m, dict) and any(isinstance(h, dict) and ".claude/hooks/session_worktree.sh" in str(h.get("command", ""))
+                                           for h in m.get("hooks") or [])
+    shooks = sdata.get("hooks") if isinstance(sdata, dict) else None
+    drop_hooks = isinstance(shooks, dict) and any(trunk_entry(m) for ev in ("WorktreeCreate", "WorktreeRemove") for m in shooks.get(ev) or [])
+    if drop_mem or drop_hooks:
+        if drop_mem:
+            del sdata["autoMemoryDirectory"]
+        if drop_hooks:
+            for ev in ("WorktreeCreate", "WorktreeRemove"):
+                kept = [m for m in shooks.get(ev) or [] if not trunk_entry(m)]
+                if kept:
+                    shooks[ev] = kept
+                else:
+                    shooks.pop(ev, None)
+            if not shooks:
+                del sdata["hooks"]
         if plan.apply:
             if sdata:
                 write_atomic(slocal, json.dumps(sdata, indent=2, ensure_ascii=False) + "\n")
             else:
                 os.unlink(slocal)
         plan.say("đã sửa" if plan.apply else "sẽ sửa", "cleaned" if plan.apply else "would clean", slocal,
-                 tr(" (bỏ autoMemoryDirectory)", " (autoMemoryDirectory removed)"))
+                 tr(" (bỏ " + ", ".join(x for x, on in (("autoMemoryDirectory", drop_mem), ("hook trunk mode", drop_hooks)) if on) + ")",
+                    " (" + ", ".join(x for x, on in (("autoMemoryDirectory", drop_mem), ("trunk mode hooks", drop_hooks)) if on) + " removed)"))
         plan.removed += 1
 
     # A matrix generated from the project's test runner is recognised by regenerating it,

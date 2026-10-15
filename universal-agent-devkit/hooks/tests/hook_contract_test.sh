@@ -1462,7 +1462,7 @@ run_case "worktree-merge gate: no linked worktree passes" worktree_merge_gate.sh
 # ── session_lock.sh — SessionStart/PreToolUse/SessionEnd (tests/context_memory/test_session_lock.sh has the full cases) ──
 echo "session_lock.sh"
 SL_REPO="${SANDBOX}/sl-repo"
-mkdir -p "${SL_REPO}" && git -C "${SL_REPO}" init -q .
+mkdir -p "${SL_REPO}" && git -C "${SL_REPO}" init -q . && git -C "${SL_REPO}" config devkit.trunkMode false   # the old mode: trunk mode is the default
 run_case "session lock: holder's Edit allowed" session_lock.sh 0 \
   "{\"session_id\":\"s-sl-a\",\"hook_event_name\":\"PreToolUse\",\"cwd\":\"${SL_REPO}\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${SL_REPO}/a.kt\"}}"
 # The holder's hook ran in a $(…) subshell that is gone by now, so its recorded pid is dead and the

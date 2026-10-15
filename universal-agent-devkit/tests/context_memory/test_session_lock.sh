@@ -6,6 +6,7 @@
 # Edit/Write/MultiEdit/NotebookEdit and its git-write / post-fix-gate Bash calls are blocked, reads and builds pass.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
+export WORKTREE_TRUNK_MODE=0   # these cases test the one-checkout-one-session mode; trunk mode is the default since 2026-10-15 (tests/worktree_git/test_trunk_default.sh)
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$DEVKIT_DIR/hooks/session_lock.sh"
 export DEVKIT_SCRATCH_CLEANUP=0   # these cases run the real session hooks: never prune the real /tmp/claude-<uid> (review 2026-10-09)

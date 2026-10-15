@@ -13,6 +13,7 @@
 # bash 3.2 compatible wrapper; the checks are python3 (stdlib only).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
+export WORKTREE_TRUNK_MODE=0   # these cases test the one-checkout-one-session mode; trunk mode is the default since 2026-10-15 (tests/worktree_git/test_trunk_default.sh)
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="${SLT_KIT:-$DEVKIT_DIR}"
 export PYTHONDONTWRITEBYTECODE=1

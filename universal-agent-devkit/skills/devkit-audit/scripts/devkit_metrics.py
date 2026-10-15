@@ -99,7 +99,8 @@ def git_state(repo):
 
 
 def lock_state(repo):
-    """session_lock.py --status: exit 0 free, 3 held. From a subprocess it also reports the CALLER's own session as held (exit 3)."""
+    """session_lock.py --status: exit 0 free, 3 held, 5 trunk-mode main (merge-only, nobody holds it: the default since 2026-10-15). From a
+    subprocess it also reports the CALLER's own session as held (exit 3)."""
     script = os.path.join(KIT, "bin", "session_lock.py")
     try:
         r = subprocess.run([sys.executable, "-I", script, "--status"], cwd=repo, capture_output=True, text=True, timeout=20, errors="replace")

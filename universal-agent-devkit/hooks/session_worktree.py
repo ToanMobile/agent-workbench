@@ -1,6 +1,6 @@
 """The worktree a Claude Code session works in, and whether a repo runs in trunk mode (W1 R1/R2/R7, docs/workflow-improvements.md I.0, v6).
 
-Trunk mode, opt-in per repo (`git config devkit.trunkMode true`; WORKTREE_TRUNK_MODE=0 in the environment turns it off everywhere): the
+Trunk mode, ON by default (`git config devkit.trunkMode false` / `agent-kit worktree trunk off` opts a repo out; WORKTREE_TRUNK_MODE=0 in the environment turns it off everywhere): the
 main checkout is merge-only. Every session works in its own worktree under <main>/.claude/worktrees/ (the Claude Code tool EnterWorktree;
 the WorktreeCreate hook sets it up), and only `agent-kit worktree finish` / `automerge` moves main. Nobody holds main, so a finished
 worktree is merged whenever its session stops instead of waiting for the session that held main (root cause 14/10: a holder in a 17 h
@@ -75,8 +75,9 @@ def main_of(path):
     return os.path.dirname(t[2]) if os.path.basename(t[2]) == ".git" else None
 
 
-def _config_bool(config_path, section, key):
-    """[section] key from one git config file, as git reads a boolean (`key` alone = true); None when absent or unreadable. Section and
+def _config_bool(config_path, section, key, default=None):
+    """[section] key from one git config file, as git reads a boolean (`key` alone = true); `default` (None) when the file was read and has no
+    such key, None when it cannot be read. Section and
     key names are case-insensitive; subsections ([devkit "x"]) and include files are not read."""
     try:
         with open(config_path, encoding="utf-8", errors="replace") as fh:
@@ -102,12 +103,15 @@ def _config_bool(config_path, section, key):
         v = m.group(2)
         v = "true" if v is None else re.split(r"\s[#;]", v, maxsplit=1)[0].strip().strip('"').lower()
         value = v in _TRUE   # the last one wins, as in git
-    return value
+    return default if value is None else value
 
 
 def trunk_mode(path, env=None):
-    """True when the repo holding `path` runs in trunk mode: `devkit.trunkMode` true in its common config (git config devkit.trunkMode
-    true), and WORKTREE_TRUNK_MODE is not 0 (R7: the user's switch back to the old behaviour). Anything unreadable: False (old behaviour)."""
+    """True when the repo holding `path` runs in trunk mode. It is the DEFAULT (user, 2026-10-15): a repo with no `devkit.trunkMode` key is
+    on; `git config devkit.trunkMode false` (agent-kit worktree trunk off) turns it off, and so does WORKTREE_TRUNK_MODE=0 (R7: the user's
+    switch back to the old behaviour). A config git cannot read: False (old behaviour, never a guess). Only the repo's own `<common>/config`
+    counts (the file is read, no git process: a hook runs on every tool call): `git config --global devkit.trunkMode false` or a key in an
+    included file is NOT seen, so a missing key there still means ON."""
     env = os.environ if env is None else env
     if env.get("WORKTREE_TRUNK_MODE", "1") == "0":
         return False
@@ -115,7 +119,11 @@ def trunk_mode(path, env=None):
     if not t:
         return False
     common = t[2]
-    return bool(_config_bool(os.path.join(common, "config"), "devkit", "trunkmode"))
+    # no key = ON, but only for a normal repo (common dir `.git`, not core.bare): a bare repo or an odd layout has no checkout to merge into,
+    # and that includes `git clone --bare URL proj/.git`, whose parent `proj` is no checkout. A config that cannot be read gives None -> False
+    cfg = os.path.join(common, "config")
+    normal = os.path.basename(common) == ".git" and not _config_bool(cfg, "core", "bare")
+    return bool(_config_bool(cfg, "devkit", "trunkmode", default=normal))
 
 
 def _record_path(main, sid):

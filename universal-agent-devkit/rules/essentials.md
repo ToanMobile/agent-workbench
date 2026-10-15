@@ -91,8 +91,8 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   `agent-kit worktree add ../<repo>-<task>`, work, run the gate and commit in it, then `agent-kit worktree finish <path>`
   (fast-forwards the trunk and removes the worktree; the Stop hook finishes it too). Main still held when you are done →
   wait for the holder to idle (about a minute after its turn) and finish then. Only a task that session dispatched to you
-  (antigravity-pm, `/giao`: it is your PM and reviews your diff) is done in its checkout. Exit 5 = trunk mode (`agent-kit
-  worktree trunk on`): main is merge-only and nobody holds it — every session works in its own worktree (Claude Code: the
+  (antigravity-pm, `/giao`: it is your PM and reviews your diff) is done in its checkout. Exit 5 = trunk mode (the default;
+  `agent-kit worktree trunk off` turns it off): main is merge-only and nobody holds it — every session works in its own worktree (Claude Code: the
   tool EnterWorktree; others: `agent-kit worktree add`), and only `agent-kit worktree finish` moves main.
 - **Done means verified**: run the post-fix gate
   (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`, exit 0 only) and

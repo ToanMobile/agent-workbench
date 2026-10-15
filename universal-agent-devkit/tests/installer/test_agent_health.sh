@@ -80,8 +80,9 @@ printf '{"profile":"universal"}' > "$TMP/uni/.active-profile.json"
 printf '{"mcpServers":{"codebase-memory-mcp":{},"context7":{},"agentmemory":{}}}' > "$TMP/uni/.mcp.json"
 out="$(python3 "$HEALTH" -t "$TMP/uni" 2>&1 | strip)"
 echo "$out" | grep -q "Đủ MCP của profile \`universal\`" && ok "L-2: universal profile satisfied without unity/blender" || fail "L-2: universal profile still demands other MCPs"
-# the "DevKit:" and "Project:" ("Dự án:" in Vietnamese) lines print paths: a path that happens to contain "unity" or "blender" is no demand for those MCPs
-echo "$out" | grep -v -E "• (DevKit|Project|Dự án):" | grep -qiE "unity|blender" && fail "L-2: unity/blender demanded for universal profile" || ok "L-2: unity/blender not demanded for universal"
+# the output prints paths (DevKit, project, configured MCP files): one that happens to contain "unity" or "blender" is no demand for those MCPs
+_o="${out//"$DEVKIT_DIR"/}"; _o="${_o//"$TMP"/}"; [ -n "${HOME:-}" ] && _o="${_o//"$HOME"/}"   # fixed strings, longest path first: a path with | or . in it is no pattern
+echo "$_o" | grep -qiE "unity|blender" && fail "L-2: unity/blender demanded for universal profile" || ok "L-2: unity/blender not demanded for universal"
 mkdir -p "$TMP/game"
 printf '{"profile":"game"}' > "$TMP/game/.active-profile.json"
 printf '{"mcpServers":{"codebase-memory-mcp":{}}}' > "$TMP/game/.mcp.json"
