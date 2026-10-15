@@ -1026,6 +1026,8 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None):
         return None
     if name and (not r.get("head") or r.get("head") != _head_sha(project_dir)):
         return None   # a Stop record also names the HEAD it was taken at: a commit (the fingerprint does not see one) is a new state
+    if name and r.get("env") != _selection_env():
+        return None   # ... and the environment that selects what a "full" suite runs; a record without it (an older one) is not read
     # Both must match: the cheap one first (tree_fp 0.25 s, local_state_sha 0.7-6.4 s), so an edited tree never pays for it.
     fp = fp or tree_fp.tree_fingerprint(project_dir)
     if not fp or r.get("fingerprint") != fp:
@@ -1181,6 +1183,15 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
 # repeat of an impacted run still runs those suites (OfficeReader's exit-2 repeats are impacted runs); record the command run and the vacuity
 # base to cover them.
 BUDGET_RECORD = "budget_pass.json"
+# Environment that changes WHICH tests a suite of mode "full" starts without changing its command (tests/run_impacted.sh reads it: 0 = a RED-proof
+# sandbox, no commit counts as a change). The record names it and a run with another value does not read the record.
+# ponytail: one name; a suite whose selection also reads the upstream or the clock (run_impacted.sh: the last hours of commits) is judged by the
+# content and HEAD alone, so a window that moved with the clock only ever narrows; list more names here when a matrix suite reads another one.
+SELECTION_ENV = ("DEVKIT_IMPACTED_SINCE",)
+
+
+def _selection_env():
+    return {k: os.environ.get(k) for k in SELECTION_ENV}
 # the modes whose PASS means "the suite's FULL command passed on this content" (the same ones a full run's receipt records)
 BUDGET_RECORD_MODES = ("full", "cached", "covered", "skip-compile")
 
@@ -1258,11 +1269,12 @@ def write_budget_record(project_dir, matrix_arg, tests, tested_fp, tested_at=Non
         os.makedirs(os.path.dirname(path), exist_ok=True)
         # "exit" is only what cached_full_pass checks: 4 + a non-empty untested list, or 2 (every suite passed, the verdict was UNVERIFIED)
         data = {"time": time.time(), "exit": 4 if untested else 2, "project": str(Path(project_dir).resolve()), "fingerprint": tested_fp,
-                "tested_at": tested_at or time.time(), "result_format": RESULT_FORMAT, "head": head,
+                "tested_at": tested_at or time.time(), "result_format": RESULT_FORMAT, "head": head, "env": _selection_env(),
                 "gate_sha": _sha_file(__file__), "matrix_sha": _sha_file(find_matrix_path(matrix_arg)),
                 "local_sha": local_state_sha(project_dir), "untested": untested,
                 "tests": [{"id": t.get("id"), "status": t.get("status"), "log": t.get("log"),
-                           "duration": t.get("duration"), "ran_at": SUITE_RAN_AT.get(t.get("id"))}
+                           "duration": t.get("duration"), "ran_at": SUITE_RAN_AT.get(t.get("id")),
+                           "full_command": t.get("full_command") or t.get("command")}   # the matrix command, not the impacted one a run planned
                           for t in tests if t.get("command")]}
         fd, tmp = tempfile.mkstemp(prefix=".tmp_budget_pass.", dir=os.path.dirname(path))
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -4959,7 +4971,10 @@ def main():
 
         reusable = [t for t in regression_tests if t.get("command") and reusable_suite(t)
                     and t.get("id") not in untested]
-        if not (found and reusable and all(prev.get(t["id"], {}).get("status") == "PASS" for t in reusable)):
+        # a suite is matched by id AND, for the record, by the matrix command it passed under (a byte-equal matrix file under another --diff or
+        # --matrix can name another command for the same id); a record that names none is not read
+        if not (found and reusable and all(prev.get(t["id"], {}).get("status") == "PASS"
+                                           and (not budget_run or prev[t["id"]].get("full_command") == t["command"]) for t in reusable)):
             return None
         at = time.strftime("%H:%M", time.localtime(float(found.get("tested_at") or 0)))
         for t in reusable:
