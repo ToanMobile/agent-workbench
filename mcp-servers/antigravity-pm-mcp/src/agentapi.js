@@ -435,15 +435,69 @@ function stopUntracked(r, e) {
   return err;
 }
 
+// Hoi thoai MOI chua co conversationId luc spawn (id nam trong su kien init, toi da AGY_INIT_WAIT_MS sau): ngay sau spawn ghi muc `pending-<pid agy>`
+// kem dau van tay cua agy VA cua PM chu. PM bi SIGKILL (khong bat duoc, nhom agy da tach nen khong chet theo) giua luc cho init thi de lai muc nay;
+// PM ke tiep mo hoi thoai moi se don no (reapOrphanAgy). Xong luot: muc nay doi thanh muc that (cung mot lan ghi duoi khoa).
+const pendingKey = (pid) => `pending-${pid}`;
+
+/**
+ * Dung agy mo coi: muc cho ma PM chu khong con la tien trinh do (pid + dau van tay ps) => agy cua no khong ai theo doi (chay --dangerously-skip-permissions).
+ * PM chu con song (dang cho init, toi 60 s): bo qua muc. ps hong hoac muc thieu dau van tay: giu muc, dung gi cung chua dung.
+ * ps goi ngoai khoa, chi go muc duoi khoa. Moi loi chi ghi stderr, luot dang mo van tiep tuc.
+ */
+function reapOrphanAgy() {
+  let reg;
+  try { reg = readAgyRegistry(); } catch (e) { logStderr(`don agy mo coi: bo qua (${e.message.split('\n')[0]})`); return; }
+  const gone = [];
+  for (const [k, e] of Object.entries(reg)) {
+    if (!e?.pending || !(e.pid && e.pidTag && e.ownerPid && e.ownerTag)) continue;
+    try {
+      if (sameProcess(e.ownerPid, e.ownerTag)) continue;   // PM chu van song: dang cho init
+      if (sameProcess(e.pid, e.pidTag)) {
+        const err = killGroup(e.pid);
+        if (err && err.code !== 'ESRCH') { logStderr(`don agy mo coi: khong dung duoc agy pid ${e.pid} (${err.message}): giu muc ${k}`); continue; }
+        logStderr(`don agy mo coi: da dung agy pid ${e.pid} cua PM pid ${e.ownerPid} (PM da chet giua luc cho init)`);
+      }
+      gone.push(k);   // agy da thoat hoac vua bi dung
+    } catch (err) { logStderr(`don agy mo coi: giu muc ${k} (${err.message})`); }
+  }
+  if (!gone.length) return;
+  try { dropPending(gone); } catch (err) { logStderr(`don agy mo coi: khong go duoc ban ghi cho (${err.message})`); }
+}
+
+/** Go cac muc cho khoi so dang ky (duoi khoa). Chi ghi lai khi co muc bi go. */
+function dropPending(keys) {
+  withRegistryLock(() => {
+    const reg = readAgyRegistry();
+    if (keys.filter((k) => delete reg[k]).length) writeJsonAtomic(agyRegistryFile(), reg);
+  });
+}
+
 async function agyNewConversation({ prompt, model, cwd }) {
   requireAgy();
   if (!cwd) throw new AgentApiError(`model ${model} chay qua agy: can cwd (thu muc project), khong doan thu muc`);
   assertProjectDir(cwd);
   const root = fs.realpathSync(cwd);
   readAgyRegistry();   // hong thi nem loi NGAY, truoc khi sinh agent: sau khi spawn khong con cach nao theo doi no
-  const r = await agyStart(agyArgs(model, ['--print', String(prompt)], agyMaySkipPermissions(root)), root);
+  reapOrphanAgy();   // ponytail: agy mo coi chi bi dung khi co lan mo hoi thoai agy ke tiep (cua PM nao cung duoc); nang cap: don them luc server khoi dong / trong pm_doctor
+  let pending = null;
+  let r;
   try {
-    saveAgyEntry(r.conversationId, { model, cwd: root, workspace: r.workspace, pid: r.pid, pidTag: r.pidTag, starting: false, out: r.out, at: nowIso() });
+    r = await agyStart(agyArgs(model, ['--print', String(prompt)], agyMaySkipPermissions(root)), root, (child) => {
+      saveAgyEntry(pendingKey(child.pid), { pending: true, model, cwd: root, pid: child.pid, pidTag: procTag(child.pid), ownerPid: process.pid, ownerTag: selfTag(), at: nowIso() });
+      pending = pendingKey(child.pid);
+    });
+  } catch (e) {
+    // agyStart da dung nhom agy: muc cho khong con y nghia
+    if (pending) { try { dropPending([pending]); } catch (e2) { logStderr(`khong go duoc ban ghi cho ${pending}: ${e2.message}`); } }
+    throw e;
+  }
+  try {
+    withRegistryLock(() => {
+      const reg = readAgyRegistry();
+      delete reg[pending];
+      putAgyEntry(reg, r.conversationId, { model, cwd: root, workspace: r.workspace, pid: r.pid, pidTag: r.pidTag, starting: false, out: r.out, at: nowIso() });
+    });
   } catch (e) { throw stopUntracked(r, e); }
   return { conversationId: r.conversationId, raw: `agy pid ${r.pid}`, parsed: { pid: r.pid, pidTag: r.pidTag, out: r.out } };
 }
