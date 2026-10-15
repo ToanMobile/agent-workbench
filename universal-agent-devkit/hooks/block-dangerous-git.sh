@@ -695,6 +695,7 @@ def git_in_literals(code):
     return None
 
 def analyse_simple(tokens, depth):
+    tokens = shell_norm.inline_script(tokens)   # sudo -s STR, env -S STR: the command line a wrapper hides becomes words
     i = 0
     hooks_off = False
     allow_branch = ALLOW_BRANCH[0]
@@ -706,8 +707,8 @@ def analyse_simple(tokens, depth):
             assigns.update([tokens[i].split("=", 1)])
         i += 1
     while i < len(tokens):
-        if REDIRECT.match(tokens[i]):   # (2026-10-13) a redirect before the command: `2>/dev/null git reset --hard`
-            i += 2 if re.fullmatch(r"\d*(>>?|<|&>)", tokens[i]) else 1
+        if REDIRECT.match(tokens[i]):   # (2026-10-13) a redirect before the command: `2>/dev/null git reset --hard`, `2>&1 git …`
+            i += shell_norm.redirect_len(tokens, i)
             continue
         prog = tokens[i].rsplit("/", 1)[-1]
         if prog == "env":
@@ -730,7 +731,7 @@ def analyse_simple(tokens, depth):
                 allow_branch = allow_branch or tokens[i] == ALLOW_BRANCH_ENV
                 if "=" in tokens[i] and not tokens[i].startswith("-"):
                     assigns.update([tokens[i].split("=", 1)])
-                i += 2 if tokens[i] in ("-u", "-C", "-S") else 1
+                i += 2 if tokens[i] in ("-u", "-C", "-S", "-P") else 1
         elif prog in WRAPPERS:
             i = skip_wrapper(tokens, i, prog)
         elif tokens[i] in KEYWORDS:
@@ -1344,6 +1345,8 @@ def analyse(text, depth=0, stripped=False):
     data_groups = []   # one flag per open paren: NAME=( ... ) and (( ... )) hold data, so a substitution there is no command word
     feed = None   # after a pipe: the producer segment ([] = a ( … ) / { … } group, not one literal command)
     for tok in tokens + [";"]:
+        if shell_norm.join_fd_dup(segment, tok):   # 2>&1 git …: the & belongs to the redirect
+            continue
         if tok in SEPARATORS or set(tok) <= set(";&|\n()"):
             opens_data = tok.startswith("(") and bool(segment) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=", segment[-1]) is not None
             if segment:

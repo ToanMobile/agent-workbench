@@ -23,7 +23,8 @@ import shlex
 WRAPPERS = {
     "command": (set(), 0), "builtin": (set(), 0), "exec": ({"-a"}, 0), "nohup": (set(), 0),
     "time": (set(), 0), "caffeinate": ({"-t", "-w"}, 0), "setsid": (set(), 0), "unbuffer": (set(), 0),
-    "sudo": ({"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T"}, 0),
+    "sudo": ({"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T", "--user", "--group", "--host", "--prompt", "--close-from",
+              "--chdir", "--role", "--type", "--other-user", "--command-timeout"}, 0),
     "doas": ({"-u", "-C"}, 0),
     "nice": ({"-n"}, 0),
     "ionice": ({"-c", "-n", "-p"}, 0),
@@ -36,14 +37,14 @@ WRAPPERS = {
     "flock": ({"-w", "-E", "--timeout"}, 1),
 }
 # Shell reserved words that may stand before a command in the same simple-command slot (`if git …`, `! rm …`, `do rm …`).
-KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "!", "{", "}", "time"}
+KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "!", "{", "}"}   # time: a wrapper (time -p CMD)
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
 SHELL_OPTS_WITH_ARG = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
 SSH_OPTS_WITH_ARG = {"-p", "-i", "-l", "-o", "-F", "-J", "-L", "-R", "-D", "-b", "-c", "-E", "-e", "-I", "-m", "-O", "-Q", "-S",
                      "-W", "-w", "-B"}
 ADB_OPTS_WITH_ARG = {"-s", "-t", "-H", "-P", "-L", "--one-device"}
 REDIRECT = re.compile(r"^\d*(?:>>?|<|&>)")
-REDIRECT_ALONE = re.compile(r"\d*(?:>>?|<|&>)")   # fullmatch: the target is the next word
+REDIRECT_ALONE = re.compile(r"\d*(?:>>?&?|<&?|&>)")   # fullmatch: the target is the next word
 ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 
@@ -61,6 +62,27 @@ def skip_wrapper(tokens, i, prog):
     return i + npos
 
 
+def join_fd_dup(segment, tok):
+    """True, with the & joined onto segment[0], when tok is the & of a leading N>&M / >&N / N<&M: the lexer cuts it off as a command
+    separator, which made `2>&1 git reset --hard` a lone `2>` and a command starting with `1`. Only when segment is just that
+    operator: `git push origin main 2>&1` keeps its old reading."""
+    if tok == "&" and len(segment) == 1 and re.fullmatch(r"\d*(?:>>?|<)", segment[0]):
+        segment[0] += "&"
+        return True
+    return False
+
+
+def redirect_len(tokens, i):
+    """How many words the redirect at tokens[i] takes (0: none): the operator and its target, and for N>&M, >&N, N<&M the lexer
+    splits the & and the descriptor off the operator (`2>&1 git reset --hard` ran git unseen)."""
+    t = tokens[i]
+    if not REDIRECT.match(t):
+        return 0
+    if REDIRECT_ALONE.fullmatch(t):
+        return 3 if tokens[i + 1:i + 2] == ["&"] and i + 2 < len(tokens) else 2   # N>&M, >&file: the & and its target
+    return 1
+
+
 def prefix_end(tokens, i=0):
     """Index of the program word of a simple command: after NAME=VAL words, keywords, a redirect before the command
     (`2>/dev/null rm …`, `> out git …`), env with its options and assignments, and the wrappers. len(tokens) when there is none."""
@@ -69,16 +91,62 @@ def prefix_end(tokens, i=0):
         if t in KEYWORDS or ASSIGN.match(t):
             i += 1
         elif REDIRECT.match(t):
-            i += 2 if REDIRECT_ALONE.fullmatch(t) else 1
+            i += redirect_len(tokens, i)
         elif p == "env":
             i += 1
             while i < len(tokens) and (tokens[i].startswith("-") or "=" in tokens[i]):
-                i += 2 if tokens[i] in ("-u", "-C", "-S", "--unset", "--chdir") else 1
+                i += 2 if tokens[i] in ("-u", "-C", "-S", "-P", "--unset", "--chdir", "--split-string") else 1
         elif p in WRAPPERS:
             i = skip_wrapper(tokens, i, p)
         else:
             break
     return min(i, len(tokens))
+
+
+def inline_script(tokens):
+    """tokens with the command line a wrapper hides made into words: `sudo|doas -s|-i STR` (the shell they start runs STR) becomes
+    `sudo … sh -c STR`, and `env -S STR` (STR is split into the words env runs) is replaced by those words. tokens itself when
+    there is nothing to expand. Both guards call it first on every simple command (review 15/10: both read STR as a program name)."""
+    i, n = 0, len(tokens)
+    while i < n:
+        t, p = tokens[i], tokens[i].rsplit("/", 1)[-1]
+        if t in KEYWORDS or ASSIGN.match(t):
+            i += 1
+        elif REDIRECT.match(t):
+            i += max(1, redirect_len(tokens, i))
+        elif p == "env":
+            j = i + 1
+            while j < n and (tokens[j].startswith("-") or "=" in tokens[j]):
+                a = tokens[j]
+                val = (tokens[j + 1] if j + 1 < n else "") if a in ("-S", "--split-string") else (
+                    a[2:] if a.startswith("-S") and len(a) > 2 else a.split("=", 1)[1] if a.startswith("--split-string=") else None)
+                if val is not None:
+                    try:
+                        words = shlex.split(val)
+                    except ValueError:
+                        words = val.split()
+                    return inline_script(tokens[:j] + words + tokens[j + (2 if a in ("-S", "--split-string") else 1):])
+                j += 2 if a in ("-u", "-C", "-P", "--unset", "--chdir") else 1
+            i = j
+        elif p in WRAPPERS:
+            k = skip_wrapper(tokens, i, p)
+            if p in ("sudo", "doas") and k < n and _sudo_flags(tokens[i:k]):
+                return tokens[:k] + ["sh", "-c", " ".join(tokens[k:])]
+            i = k
+        else:
+            break
+    return tokens
+
+
+def _sudo_flags(words):
+    """True when words (sudo / doas and its options) ask for a shell: -s, -i, --shell, --login (alone or in a flag cluster)."""
+    values, j = WRAPPERS[os.path.basename(words[0])][0], 1
+    while j < len(words) and words[j].startswith("-") and words[j] != "--":
+        o = words[j].split("=", 1)[0]
+        if o in ("--shell", "--login") or (re.fullmatch(r"-[A-Za-z]*[si][A-Za-z]*", words[j]) and o not in values):
+            return True
+        j += 2 if (o in values and "=" not in words[j]) else 1
+    return False
 
 
 def shell_script(rest):
@@ -133,10 +201,12 @@ def far_command(prog, rest):
         j = 0
         while j < len(rest) and rest[j].startswith("-"):
             j += 2 if rest[j] in ADB_OPTS_WITH_ARG else 1
+        while j < len(rest) and re.fullmatch(r"wait-for-[\w-]+", rest[j]):   # adb wait-for-device shell CMD
+            j += 1
         if j < len(rest) and rest[j] in ("shell", "exec-out"):
             j += 1
-            while j < len(rest) and re.fullmatch(r"-[nTtx]+", rest[j]):
-                j += 1
+            while j < len(rest) and (re.fullmatch(r"-[nTtx]+", rest[j]) or rest[j] == "-e"):   # -e ESCAPE takes a value
+                j += 2 if rest[j] == "-e" else 1
             return (" ".join(rest[j:]), "device") if j < len(rest) else None
         return None
     if prog == "ssh":
@@ -167,9 +237,13 @@ def adb_shell(rest):
 BRACE = re.compile(r"(?<!\$)\{([^{}]*,[^{}]*)\}")
 
 
+BRACE_BOMB = "/"   # what a brace expansion past the cap is judged as: the worst target there is
+
+
 def braces(word, cap=64):
-    """The words a shell brace expansion makes of word (/{system,vendor} -> /system /vendor), at most cap; what is left past the
-    cap stays unexpanded. ${…} is a parameter, not a brace group."""
+    """The words a shell brace expansion makes of word (/{system,vendor} -> /system /vendor), at most cap. Past the cap the rest is
+    not expanded and the result ends with BRACE_BOMB: fail closed, a command that builds its target from 128 words is refused
+    (review 15/10: /{,x}{,x}{,x}{,x}{,x}{,x}{,x}system was allowed while 6 groups were refused). ${…} is a parameter, not a brace group."""
     out, todo = [], [word]
     while todo and len(out) + len(todo) <= cap:
         w = todo.pop()
@@ -178,7 +252,7 @@ def braces(word, cap=64):
             out.append(w)
             continue
         todo.extend(w[:m.start()] + alt + w[m.end():] for alt in m.group(1).split(","))
-    return out + todo
+    return out + [BRACE_BOMB] if todo else out
 
 
 def norm_path(p):
@@ -686,15 +760,7 @@ def _head_subst(words):
 
 def _sudo_shell(words):
     """True when words run sudo / doas with -s or -i (--shell, --login): the shell it starts reads stdin (a heredoc is its script)."""
-    for k, w in enumerate(words):
-        if os.path.basename(w) in ("sudo", "doas"):
-            values, j = WRAPPERS[os.path.basename(w)][0], k + 1
-            while j < len(words) and words[j].startswith("-") and words[j] != "--":
-                o = words[j].split("=", 1)[0]
-                if o in ("--shell", "--login") or (re.fullmatch(r"-[A-Za-z]*[si][A-Za-z]*", words[j]) and o not in values):
-                    return True
-                j += 2 if (o in values and "=" not in words[j]) else 1
-    return False
+    return any(os.path.basename(w) in ("sudo", "doas") and _sudo_flags(words[k:]) for k, w in enumerate(words))
 
 
 def _classify(text, h, seps, pipes, cut):

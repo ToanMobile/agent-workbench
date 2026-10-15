@@ -474,6 +474,21 @@ for cmd, want in [("cat > f <<EOF\na $(rm -rf ~) b `ls`\nEOF\nls", "cat > f <<EO
     got = sn.strip_heredocs(cmd, data)
     print(("✔ " if got == want else "✖ ") + f"strip {cmd!r}: {got!r}" + ("" if got == want else f" (want {want!r})"))
     bad += got != want
+# bounds (review 15/10): a brace bomb is judged as the worst target (/), past 24 heredocs nothing is cut, and both stay fast
+import time
+t0 = time.time()
+six, seven, bomb = sn.braces("/{,x}" * 6 + "system"), sn.braces("/{,x}" * 7 + "system"), sn.braces("/{,x}" * 14 + "system")
+dt = time.time() - t0
+ok = len(six) == 64 and "/" not in six and "/" in seven and "/" in bomb and len(bomb) <= 65 and dt < 1.0
+print(("✔ " if ok else "✖ ") + f"braces: 6 groups {len(six)} words, 7 groups bomb={'/' in seven}, 14 groups {len(bomb)} words in {dt:.2f}s")
+bad += not ok
+many = "".join("cat <<'E%d'\nx\nE%d\n" % (i, i) for i in range(120))
+t0 = time.time()
+docs = sn.heredocs(many)
+dt = time.time() - t0
+ok = len(docs) == 120 and all(h.kind == "shell" for h in docs) and dt < 1.0
+print(("✔ " if ok else "✖ ") + f"120 heredocs: all kept as shell, {dt:.2f}s (the scan was quadratic: 100 heredocs took 2.5 s)")
+bad += not ok
 sys.exit(1 if bad else 0)
 PY
 sn_rc=$?
@@ -495,7 +510,10 @@ done
 
 # pair <want rc> <template with @BODY@>: the template through the git guard with a git danger in the body and through the hardware gate with
 # an rm danger in it — each hook must reach the verdict by itself (review 15/10: a git row alone proves nothing about the hw gate)
-pair() { check "$1" git "${2//@BODY@/git reset --hard}"; check "$1" hw "${2//@BODY@/rm -rf ~}"; }
+pair() {
+  local g="${2//@BODY@/git reset --hard}" w="${2//@BODY@/rm -rf ~}"   # @BODY@: a heredoc body, @CMD@: the command itself
+  check "$1" git "${g//@CMD@/git reset --hard}"; check "$1" hw "${w//@CMD@/rm -rf ~}"
+}
 
 echo "── heredoc: a body written to a file is data only when nothing that can run the file follows (review 15/10, policy: fail closed)"
 echo "   (a) the file is renamed, copied or linked first"
@@ -569,6 +587,53 @@ check 0 git $'cat <<$\'EOF\'\nhi\nEOF\ngit status\n$EOF'
 check 0 hw $'cat > notes.md <<$\'EOF\'\nrm -rf ~\nEOF'
 # a delimiter that really is $EOF (the \$ is part of a quoted word): the body ends at that line
 check 2 git $'cat <<"$EOF"\nhi\n$EOF\ngit reset --hard\nEOF'
+
+echo "── shared tables (review 15/10): time -p, sudo long options, sudo -s / -i STR, env -P / -S, a leading N>&M redirect"
+pair 2 $'time -p @CMD@'
+pair 2 $'sudo --user=root @CMD@'
+pair 2 $'sudo --user root @CMD@'
+pair 2 $'sudo --chdir /tmp @CMD@'
+pair 2 $'sudo --group wheel @CMD@'
+pair 2 $'sudo --host h @CMD@'
+pair 2 $'sudo -u root -g wheel @CMD@'
+pair 2 $'sudo -s \'@CMD@\''
+pair 2 $'sudo -i \'@CMD@\''
+pair 2 $'sudo -u root -s \'@CMD@\''
+pair 2 $'doas -s \'@CMD@\''
+pair 2 $'env -P /usr/bin @CMD@'
+pair 2 $'env -S \'@CMD@\''
+pair 2 $'env -S"@CMD@"'
+pair 2 $'env -i -S \'FOO=1 @CMD@\''
+pair 2 $'2>&1 @CMD@'
+pair 2 $'>&2 @CMD@'
+pair 2 $'3<&0 @CMD@'
+pair 2 $'2>&1 sudo -u root @CMD@'
+check 0 git 'time -p git status'
+check 0 git 'sudo --user=root git status'
+check 0 git "sudo -s 'git status'"
+check 0 git 'env -P /usr/bin git status'
+check 0 git '2>&1 git status'
+check 0 git '>&2 git log -1'
+check 0 hw 'time -p rm -rf build'
+check 0 hw 'sudo --user root rm -rf build'
+check 0 hw "sudo -s 'rm -rf build'"
+check 0 hw 'env -P /usr/bin rm -rf build'
+check 0 hw '2>&1 rm -rf build'
+check 0 hw "env -S 'rm -rf build'"
+
+echo "── hw: the device policy sees a shell / su behind a wrapper option value (OCR 3), adb behind wait-for-device, adb shell -e"
+check_deny 2 'sudo -u me bash -lc "adb -s DENIED1 reboot"'
+check_deny 2 'timeout -s KILL 5 sh -c "adb -s DENIED1 reboot"'
+check_deny 2 'env -u X bash -c "adb -s DENIED1 reboot"'
+check_deny 2 "nice -n 5 bash -lc 'adb -s DENIED1 reboot'"
+check_deny 2 "sudo -u me su -c 'adb -s DENIED1 reboot'"
+check_deny 0 'sudo -u me bash -lc "adb -s OK1 reboot"'
+check 2 hw 'adb wait-for-device remount'
+check 2 hw 'adb wait-for-device shell rm -rf ~'
+check 2 hw 'adb shell -e ^ rm -rf ~'
+check 0 hw 'adb wait-for-device shell ls /sdcard'
+check 0 hw 'adb shell -e ^ ls /sdcard'
+check 2 git 'adb wait-for-device shell git reset --hard'
 
 echo "── never a crash: a redirect word at the very end of a command (the shadow replay of 7 days of real commands found an"
 echo "   IndexError in the first draft: 225 harmless commands refused fail-closed)"

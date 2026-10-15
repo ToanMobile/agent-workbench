@@ -244,7 +244,7 @@ _DOCS = shell_norm.heredocs(cmd) if "<<" in cmd else []
 CMD_LIVE = shell_norm.strip_heredocs(cmd, lambda h: h.kind == "data", _DOCS) if _DOCS else cmd
 
 # Options adb/fastboot accept before the subcommand (with or without a value).
-ADB_OPTS = r"(?:\s+(?:-[sHPtL]\s+\S+|-[adeU]|--\S+(?:\s+\S+)?))*"
+ADB_OPTS = r"(?:\s+(?:-[sHPtL]\s+\S+|-[adeU]|--\S+(?:\s+\S+)?|wait-for-[\w-]+))*"   # wait-for-device remount (15/10)
 FB_OPTS = r"(?:\s+(?:-[sSciopn]\s+\S+|-w|-u|--\S+(?:=\S+)?))*"
 # first alternative: / or a system partition, then / whitespace end ; & |; second: a glob in the FIRST path component (/*, /data*,
 # /sys*, /s*, /dat?, /syste[m], /?ystem) can reach a system partition, while /sdcard/* and /tmp/x* cannot
@@ -460,7 +460,7 @@ FIND_ARG1 = {"-printf", "-fprint", "-fprint0", "-fls", "-type", "-xtype", "-newe
              "-atime", "-ctime", "-mtime", "-amin", "-cmin", "-mmin", "-maxdepth", "-mindepth", "-inum", "-links", "-samefile", "-regextype",
              "-uid", "-gid", "-lname", "-ilname", "-fstype", "-context", "-xattrname", "-Bnewer", "-mnewer", "-Bmin", "-Btime", "-flags", "-used",
              "-files0-from"}   # primaries with ONE argument that is no operator, whatever it looks like
-XARGS_OPTS_WITH_ARG = {"-I", "-J", "-R", "-S", "-n", "-P", "-L", "-d", "-E", "-s", "-a", "-i"}
+XARGS_OPTS_WITH_ARG = {"-I", "-J", "-R", "-S", "-n", "-P", "-L", "-d", "-E", "-s", "-a"}   # -i: GNU, its value is glued (shell_norm too)
 
 def find_starts(args):
     """The start points of find: the operands before its expression (BSD -f PATH too); "." when there is none."""
@@ -667,7 +667,8 @@ def rm_segment_problem(toks, cwds, env, depth, feed=None, remote=False, implied=
     """Problem of one simple command, or None. feed: the command piped into this one (`find . | xargs rm -rf`). remote: it runs on
     a device or remote host (adb shell, ssh host): only / and system partitions count (remote_target_problem). implied: an rm
     that find runs on everything under its start points (find -exec rm {} +), judged as rm -r. Both readings of the prefix are
-    judged (prefix_end)."""
+    judged (prefix_end). sudo -s STR / env -S STR are words first (shell_norm.inline_script)."""
+    toks = shell_norm.inline_script(toks)
     for i in sorted({prefix_end(toks, True), prefix_end(toks, False)}):
         why = rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied)
         if why:
@@ -850,6 +851,8 @@ def rm_problem(text, cwds, depth=0, remote=""):
         toks = [x.strip("\"\x27") for x in re.split(r"\s+|([;&|()]+)", text) if x and x.strip()]
     stack, seg, pending, feed = [], [], None, None
     for tk in toks + [";"]:
+        if shell_norm.join_fd_dup(seg, tk):   # 2>&1 rm …: the & belongs to the redirect
+            continue
         if not set(tk) <= set(";&|()"):
             seg.append(tk)
             continue
@@ -935,6 +938,7 @@ def adb_calls(text):
             toks = shlex.split(seg)
         except ValueError:
             toks = seg.split()
+        toks = shell_norm.inline_script(toks)   # sudo -s STR, env -S STR
         env_serial = os.environ.get("ANDROID_SERIAL", "")
         # Only the word in command position (after VAR=… and sudo/env/timeout N …):
         # `grep adb notes.txt` is not an adb call.
@@ -944,6 +948,7 @@ def adb_calls(text):
             if toks[i].startswith("ANDROID_SERIAL="):
                 env_serial = toks[i].split("=", 1)[1]
             i += 1
+        i = max(i, prefix_end(toks, True))   # (15/10, OCR) a wrapper option VALUE before a shell / su: sudo -u me bash -lc "adb …"
         if i < len(toks) and os.path.basename(toks[i]) in ("bash", "sh", "zsh") and "-c" in toks[i:]:
             k = toks.index("-c", i)
             if k + 1 < len(toks):
@@ -970,6 +975,8 @@ def adb_calls(text):
                 opts += toks[j:j + 2]; j += 2
             else:
                 opts.append(toks[j]); j += 1
+        while j < len(toks) and re.fullmatch(r"wait-for-[\w-]+", toks[j]):   # adb wait-for-device remount
+            j += 1
         yield toks[i], opts, (toks[j] if j < len(toks) else ""), env_serial, toks[j + 1:]
 
 def sdk_adb():
