@@ -298,11 +298,32 @@ echo "── heredoc: a body nothing runs is data (main refused these)"
 check 0 git $'python3 - <<\'EOF\'\ndoc = """Run `git checkout -b feature` to start."""\nprint(doc)\nEOF'
 check 0 git $'python3 - <<\'EOF\'\ncases = ["git reset --hard", "x"]\nprint("a `b` c", len(cases))\nEOF'
 check 0 git $'cat > notes.md <<EOF\ngit reset --hard is never used here\nEOF'
-check 0 git $'python3 tool.py <<\'EOF\'\ngit reset --hard\nEOF'
+# (15/10, OCR) a program that is not a known pure data reader and gets a heredoc on stdin keeps its body in the scan: `python3 tool.py`
+# may run it (main's RUNS_INPUT did); this line used to expect 0 (the quoted body was cut as text)
+check 2 git $'python3 tool.py <<\'EOF\'\ngit reset --hard\nEOF'
+check 2 git $'python3 -m runner <<\'EOF\'\ngit reset --hard\nEOF'
+check 2 git $'node tool.js <<\'EOF\'\ngit reset --hard\nEOF'
+check 2 git $'ruby -e \'system(STDIN.read)\' <<\'EOF\'\ngit reset --hard\nEOF'
+check 2 git $'perl -ne \'system $_\' <<\'EOF\'\ngit reset --hard\nEOF'
+check 2 git $'ruby -ne \'system $_\' <<\'EOF\'\ngit reset --hard\nEOF'
+check 2 git $'perl -e \'system(<STDIN>)\' <<\'EOF\'\ngit reset --hard\nEOF'
+check 2 git $'node -e "require(\'child_process\').execSync(require(\'fs\').readFileSync(0,\'utf8\'))" <<\'EOF\'\ngit reset --hard\nEOF'
+check 2 git $'cat <<\'EOF\' | python3 -c \'import os,sys; os.system(sys.stdin.read())\'\ngit reset --hard\nEOF'
+check 0 git $'mystery-tool <<\'EOF\'\ngit status\nEOF'
 check 0 hw $'cat > notes.md <<\'EOF\'\nrm -rf ~\nEOF'
 check 0 hw $'cat > notes.md <<EOF\nrm -rf ~\nEOF'
 check 0 hw $'cat > notes.md <<\'EOF\'\nnever run adb remount\nEOF'
 check 0 hw $'git commit -q -F - <<\'EOF\'\nrm -rf ~ is refused now\nEOF'
+echo "── hw heredoc: a body an interpreter reads is source, but one that can start a process stays in the rm walk (15/10, OCR: perl/ruby/php"
+echo "   backticks, qx, %x went 2 -> 0)"
+check 2 hw $'perl <<\'EOF\'\nmy $x = `rm -rf ~`;\nEOF'
+check 2 hw $'ruby <<\'EOF\'\n%x(rm -rf ~)\nEOF'
+check 2 hw $'ruby <<\'EOF\'\n`rm -rf $HOME`\nEOF'
+check 2 hw $'perl <<\'EOF\'\nqx(rm -rf ~);\nEOF'
+check 2 hw $'php <<\'EOF\'\n<?php `rm -rf ~`; ?>\nEOF'
+check 2 hw $'cat > x.rb <<\'EOF\'\n`rm -rf ~`\nEOF\nruby x.rb'
+check 0 hw $'python3 - <<\'EOF\'\nprint("rm -rf ~ is dangerous")\nEOF'
+check 0 hw $'ruby <<\'EOF\'\nputs "rm -rf ~ is dangerous"\nEOF'
 echo "── heredoc: a body a shell runs, or a \$(…) in an unquoted body, is still judged"
 check 2 git $'bash <<\'EOF\'\ngit reset --hard\nEOF'
 check 2 git $'cat <<\'EOF\' | sh\ngit clean -fdx\nEOF'

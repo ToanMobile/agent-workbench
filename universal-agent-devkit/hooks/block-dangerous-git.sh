@@ -46,8 +46,8 @@
 #      hooks/shell_norm.py, shared with hardware_safety_gate.sh: wrappers, sh -c in any flag cluster, also `su -c` / `su USER CMD`,
 #      `adb shell CMD` and ssh options with a value (all analysed now), heredocs found outside quotes and comments only. A heredoc
 #      body is judged only for what runs: a body a shell gets stays shell lines, a body an interpreter reads as its program is
-#      checked like python -c, and the rest is text (a quoted python heredoc with a backtick in it was refused) except the
-#      $(…) / `…` of an unquoted body.
+#      checked like python -c, and a body only a pure data reader gets (cat > f, git commit -F -) is text (a quoted python heredoc
+#      with a backtick in it was refused) except the $(…) / `…` of an unquoted body; a body of a program not known stays judged.
 #   4. FAIL-CLOSED: if the command can't be tokenized, or contains `$(`/backticks
 #      whose output could become a command, the raw text is scanned with a broad
 #      regex instead. Missing python3, or an uncaught internal error in the parser, blocks.
@@ -1021,25 +1021,21 @@ SOLO_WORDS = re.compile(r"\bgit\b[^\n]*?\b(push|checkout|switch|branch|worktree)
 #     place and is judged as shell lines;
 #   - a body an interpreter runs as its program (an interpreter reading its program from a heredoc, cat <<X | node -) is source
 #     code: interp_body_danger below, then cut (14/10: a backtick in such a body sent the whole body to the $(…) scan and blocked it);
-#   - a QUOTED body of any other reader is literal text and is cut (a commit message quoting `git restore`, 2026-09-28);
+#   - a body of any other reader stays and is judged as shell lines, quoted or not (15/10, OCR: a program that is not a known pure
+#     data reader — python3 tool.py, node tool.js, ruby -e system(STDIN.read) — may run what it reads; the RUNS_INPUT of the old
+#     guard kept such a body too; NO single quote in this comment: the whole python source is one single-quoted bash string);
 #   - an UNQUOTED body is text too, except its $(…) / `…`, which the shell runs: a body a data-only reader takes (cat > f,
-#     git commit -F -) is cut and its substitutions stay; for a reader not known the body stays, as before 14/10.
+#     git commit -F -) is cut and its substitutions stay.
 # A heredoc with no delimiter line is never cut (fail closed).
 def heredoc_cut(h):
-    return h.kind in ("data", "interp", "interp_file") or (h.quoted and h.kind == "other")
+    return h.kind in ("data", "interp", "interp_file")
 
 # A heredoc an interpreter reads as its PROGRAM is source code, not shell lines (2026-10-13): the -c rule applies to it (RAW, then
 # the git words of its string literals), but only when the body can start a process — a body that merely holds git commands as
-# data (a table of test cases) stays allowed. In ruby, perl and php a backtick runs a command too.
-EXEC_SINK = re.compile(r"\bsubprocess\b|\bos\.(?:system|popen|exec\w*|spawn\w*)\b|\bPopen\b|\bcheck_(?:output|call)\b"
-                       r"|\bcreate_subprocess_\w+|\bpty\.spawn\b"
-                       r"|\bchild_process\b|\b(?:execSync|execFileSync|spawnSync|spawn|execa)\b|\bsystem\s*\(|\bexec\s*\("
-                       r"|\bshell_exec\b|\bpassthru\b|\bproc_open\b|\bpopen\s*\("
-                       r"|\bIO\.popen\b|\bOpen3\b|%x[({\[]|\bqx[({\[]")
-
+# data (a table of test cases) stays allowed (shell_norm.spawns; in ruby, perl and php a backtick runs a command too).
 def interp_body_danger(body, prog):
     """The reason the program an interpreter reads from a heredoc runs a dangerous git command, or None."""
-    if not (EXEC_SINK.search(body) or (re.match(r"(?:ruby|perl|php)", prog) and "`" in body)):
+    if not shell_norm.spawns(body, prog):
         return None
     hit = RAW.search(body)
     reason = f"{hit.group(1).split()[0]}" if hit else git_in_literals(body)

@@ -832,8 +832,9 @@ def rm_problem(text, cwds, depth=0, remote=""):
     shell_norm.heredocs; an unquoted body keeps its $(…) / `…`, which the shell runs)."""
     if depth > 5:
         return "lồng lệnh quá sâu để phân tích"
-    if "<<" in text:
-        text = shell_norm.strip_heredocs(text, lambda h: h.kind in ("data", "interp", "interp_file"))
+    if "<<" in text:   # an interpreter program that can start a process (backticks, qx, %x, system …) stays: its text is a command line
+        text = shell_norm.strip_heredocs(text, lambda h: h.kind == "data" or (
+            h.kind in ("interp", "interp_file") and not shell_norm.spawns(h.body(text), h.reader)))
     env = {} if remote else {"HOME": os.path.expanduser("~"), "TMPDIR": os.environ.get("TMPDIR") or "/tmp"}
     # `…` is $(…): the lexer splits "$" from "(", so a target built from one stays "$…"
     # (unresolvable, refused) while the inner command is walked as its own segment.

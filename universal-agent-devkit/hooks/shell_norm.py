@@ -204,6 +204,19 @@ INTERP_OPTS = {"python": ({"-W", "-X"}, {"-c", "-m"}),
                "perl": (set(), {"-e", "-E"}),
                "php": ({"-d", "-c"}, {"-r", "-f"})}
 RUNNERS = {"uv", "poetry", "pipenv", "pdm", "rye", "hatch"}               # `uv run [opts] python - <<EOF`
+# What lets an interpreter program start a process (a command line of its own). The body of a program that has none of these cannot
+# run a command; one that has any is still read as commands by the guards (a backtick in ruby / perl / php runs a command too).
+EXEC_SINK = re.compile(r"\bsubprocess\b|\bos\.(?:system|popen|exec\w*|spawn\w*)\b|\bPopen\b|\bcheck_(?:output|call)\b"
+                       r"|\bcreate_subprocess_\w+|\bpty\.spawn\b"
+                       r"|\bchild_process\b|\b(?:execSync|execFileSync|spawnSync|spawn|execa)\b|\bsystem\b|\bexec(?:[lv]\w*|file\w*)?\b"
+                       r"|\bpopen\w*\b|\bshell_exec\b|\bpassthru\b|\bproc_open\b|\bIO\.popen\b|\bOpen3\b|%x\W|\bqx\W"
+                       r"|\bopen\b[^\n]*\|", re.I)
+
+
+def spawns(body, prog):
+    """True when the program text body of interpreter prog can start a process."""
+    return bool(EXEC_SINK.search(body) or (re.match(r"(?:ruby|perl|php)", prog or "") and "`" in body))
+
 # The shell part of the line test block-dangerous-git.sh used before 14/10 (drop_literal_heredocs RUNS_INPUT, its interpreter
 # words left out): a body whose line matched it was judged as shell, and still is, so this reading is never looser than that one.
 LEGACY_SHELL_LINE = re.compile(r"(?:^|[\s|;&(/])(?:ba|z|da|k|fi)?sh\b|\b(?:ssh|eval|xargs|source)\b|(?:^|\s)\.\s")
