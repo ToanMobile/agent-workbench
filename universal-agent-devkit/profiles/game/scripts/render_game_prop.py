@@ -55,7 +55,7 @@ def parse_args():
     args = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     parser = argparse.ArgumentParser(prog="render_game_prop.py", allow_abbrev=False,
                                      description="Render one game asset (Blender 3D) to a transparent PNG.")
-    parser.add_argument("--output", default="rendered_prop.png")
+    parser.add_argument("--output", required=True)   # no default file: `-- ` with nothing after it must not write a coin next to the caller
     parser.add_argument("--prop", type=str.lower, choices=PROPS)
     parser.add_argument("--color", type=str.lower, choices=sorted(COLORS))
     parser.add_argument("--resolution", default=512, type=_positive_int)

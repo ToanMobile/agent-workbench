@@ -35,7 +35,7 @@ cd "$REPO_ROOT" 2>/dev/null || exit 0
 
 # The Unity project is at the repo root, or one level down in unity/ (Neighbours-From-Hell): U is its prefix as git and the agent write paths.
 U=""
-if [ ! -d Assets ] && [ -d unity/Assets ] && [ -d unity/ProjectSettings ]; then U="unity/"; fi
+if [ ! -d ProjectSettings ] && [ -d unity/Assets ] && [ -d unity/ProjectSettings ]; then U="unity/"; fi   # the root is the project only with ProjectSettings: a stray Assets/ there (render_game_prop.py --output Assets/... run from the root) must not switch the unity/ project off
 # Not a Unity project → nothing to check.
 [ -d "${U}Assets" ] && [ -d "${U}ProjectSettings" ] || exit 0
 
