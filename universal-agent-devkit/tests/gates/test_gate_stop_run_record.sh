@@ -180,6 +180,43 @@ run_gate COMMIT2=1; delta
 run_gate; delta; d="$D"
 [ "$d" = "1:1" ] && ok "A12: a commit made while the suites ran: the record names the HEAD they ran at, both suites run again (runs $d)" || bad "A12: runs $d (want 1:1)"
 
+# A13 a record or a receipt of a wrong shape (an id that is a list, untested entries that are lists) is no record, and never a crash: the Stop hook lets
+# the Stop through when the gate crashes (exit 1 with a traceback). Before, set([["REG-2"]]) and {["REG-1"]: ...} raised TypeError in reuse_from.
+two
+run_gate; delta                      # exit 2, the record names both suites
+tamper_json() { # $1 = file, $2 = python statements acting on the dict d
+  python3 -I -c 'import json,sys
+p = sys.argv[1]; d = json.load(open(p))
+exec(sys.argv[2])
+json.dump(d, open(p, "w"))' "$1" "$2"
+}
+tamper_json "$GD/budget_pass.json" 'd["untested"] = [["REG-2"]]'
+run_gate; delta; d="$D"
+if [ "$RC" = 2 ] && [ "$d" = "1:1" ] && ! printf '%s' "$OUT" | grep -q Traceback; then ok "A13a: a record whose untested entries are lists: no crash, nothing re-used, both suites run (exit $RC, runs $d)"
+else bad "A13a: exit $RC runs $d traceback=$(printf '%s' "$OUT" | grep -c Traceback) (want exit 2, 1:1, no traceback)"; printf '%s\n' "$OUT" | tail -4; fi
+run_gate; delta; d="$D"
+[ "$RC" = 2 ] && [ "$d" = "0:0" ] && ok "A13a control: the record that run wrote (the right shape) is re-used (runs $d)" || bad "A13a control: exit $RC runs $d (want exit 2, 0:0)"
+tamper_json "$GD/budget_pass.json" 'd["tests"][0]["id"] = ["REG-1"]'
+run_gate; delta; d="$D"
+if [ "$RC" = 2 ] && [ "$d" = "1:1" ] && ! printf '%s' "$OUT" | grep -q Traceback; then ok "A13b: a record with a suite id that is a list: no crash, both suites run (exit $RC, runs $d)"
+else bad "A13b: exit $RC runs $d traceback=$(printf '%s' "$OUT" | grep -c Traceback)"; printf '%s\n' "$OUT" | tail -4; fi
+two
+run_gate -- --full; delta            # a --full run writes the full-pass receipt (exit 2, every suite PASS)
+tamper_json "$GD/full_pass.json" 'd["untested"] = [["REG-2"]]'
+run_gate; delta; d="$D"
+if [ "$RC" = 2 ] && [ "$d" = "1:1" ] && ! printf '%s' "$OUT" | grep -q Traceback; then ok "A13c: a receipt whose untested entries are lists: no crash, both suites run (exit $RC, runs $d)"
+else bad "A13c: exit $RC runs $d traceback=$(printf '%s' "$OUT" | grep -c Traceback)"; printf '%s\n' "$OUT" | tail -4; fi
+two
+run_gate -- --full; delta
+tamper_json "$GD/full_pass.json" 'd["tests"][1]["id"] = {"a": 1}'
+run_gate; delta; d="$D"
+if [ "$RC" = 2 ] && [ "$d" = "1:1" ] && ! printf '%s' "$OUT" | grep -q Traceback; then ok "A13d: a receipt with a suite id that is an object: no crash, both suites run (exit $RC, runs $d)"
+else bad "A13d: exit $RC runs $d traceback=$(printf '%s' "$OUT" | grep -c Traceback)"; printf '%s\n' "$OUT" | tail -4; fi
+two
+run_gate -- --full; delta
+run_gate; delta; d="$D"
+[ "$RC" = 2 ] && [ "$d" = "0:0" ] && ok "A13 control: an intact receipt is re-used by a Stop-style run (runs $d)" || bad "A13 control: exit $RC runs $d (want exit 2, 0:0)"
+
 # A10 a key that cannot be computed: the unit under the gate (fingerprint, HEAD and local sha are what the record is keyed by)
 two
 run_gate; delta
@@ -255,6 +292,37 @@ try:
         except Exception as e:  # noqa: BLE001
             raise AssertionError("ran_at %s raised %r" % (label, e))
         assert got is None, "a record with a suite ran_at of %s was read" % label
+    # every id / command / untested entry has to be a string, status / log / duration a string or null: a list there is no record (TypeError in reuse_from
+    # otherwise), for the Stop record AND the full-pass receipt, which share this reader. Each source has the control of the right shape.
+    rpath = os.path.join(os.path.dirname(path), "full_pass.json")
+    def put(target, d):
+        open(target, "w").write(json.dumps(d))
+    shapes = (("untested is a list of lists", lambda d: d.__setitem__("untested", [["REG-2"]])),
+              ("untested is a string", lambda d: d.__setitem__("untested", "REG-2")),
+              ("untested holds a number", lambda d: d.__setitem__("untested", ["REG-2", 7])),
+              ("a suite id is a list", lambda d: d["tests"][0].__setitem__("id", ["REG-1"])),
+              ("a suite id is a number", lambda d: d["tests"][0].__setitem__("id", 7)),
+              ("a suite id is missing", lambda d: d["tests"][0].pop("id")),
+              ("full_command is a list", lambda d: d["tests"][0].__setitem__("full_command", ["sh"])),
+              ("status is a list", lambda d: d["tests"][0].__setitem__("status", ["PASS"])),
+              ("log is a list", lambda d: d["tests"][0].__setitem__("log", ["x"])),
+              ("duration is a list", lambda d: d["tests"][0].__setitem__("duration", ["1s"])))
+    for source, target, name in (("record", path, m.BUDGET_RECORD), ("receipt", rpath, None)):
+        put(target, json.loads(saved))
+        assert m.cached_full_pass(root, matrix, None, name), "the control: the intact %s is read" % source
+        for label, mutate in shapes:
+            d = json.loads(saved)
+            mutate(d)
+            put(target, d)
+            try:
+                got = m.cached_full_pass(root, matrix, None, name)
+            except Exception as e:  # noqa: BLE001
+                raise AssertionError("%s: %s raised %r" % (source, label, e))
+            assert got is None, "%s: %s was read" % (source, label)
+        put(target, json.loads(saved))
+        assert m.cached_full_pass(root, matrix, None, name), "the control: the intact %s is read again" % source
+    os.remove(rpath)
+    open(path, "w").write(saved)
     broken = json.loads(saved)
     broken["tests"] = "not a list"
     open(path, "w").write(json.dumps(broken))

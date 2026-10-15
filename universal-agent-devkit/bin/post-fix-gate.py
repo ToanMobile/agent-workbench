@@ -1029,6 +1029,14 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None):
         return None
     if any(not isinstance(x, dict) or not (x.get("ran_at") is None or _time_ok(x.get("ran_at"))) for x in r["tests"]):
         return None   # reuse_from reads every suite's ran_at as a number
+    # reuse_from also hashes every id and every untested entry (a list there raised TypeError, the gate crashed and the Stop hook lets the Stop
+    # through when the gate crashes) and prints / stores the other fields: a field of a wrong type is no record, for the receipt and the Stop record
+    def _str_or_none(v):
+        return v is None or isinstance(v, str)
+    if any(not isinstance(x.get("id"), str) or not all(_str_or_none(x.get(k)) for k in ("status", "log", "duration", "full_command")) for x in r["tests"]):
+        return None
+    if r.get("untested") is not None and not (isinstance(r["untested"], list) and all(isinstance(u, str) for u in r["untested"])):
+        return None
     if r.get("result_format") != RESULT_FORMAT or r.get("matrix_sha") != _sha_file(find_matrix_path(matrix_arg)):
         return None
     if r.get("local_sha") in (None, "?"):
