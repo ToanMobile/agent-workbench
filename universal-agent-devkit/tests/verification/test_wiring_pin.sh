@@ -79,9 +79,9 @@ KT
 [ "$rc" = 1 ] && ok "scan exits 1: a pin is needed" || fail "scan exit $rc (want 1): $(cat "$TMP/scan.err")"
 [ "${WP_SHOW:-0}" = 1 ] && cat "$TMP/scan.out"
 grep -q "SelectionRules" "$TMP/scan.out" && grep -q "SelectionView" "$TMP/scan.out" && ok "scan names the object and the View" || fail "scan output lacks the object / View: $(cat "$TMP/scan.out")"
-grep -q "SelectionRulesTest.kt" "$TMP/scan.out" && grep -q "tests that name SelectionView: none" "$TMP/scan.out" \
-  && ok "scan says the tests name only the object" || fail "scan does not report the object-only test"
-grep -q "save as: app/src/test/java/com/x/SelectionViewWiringPinTest.kt" "$TMP/scan.out" && ok "scan suggests the pin's path next to the module's tests" || fail "no save-as path"
+grep -q "SelectionRulesTest.kt" "$TMP/scan.out" && grep -q "tests that name both SelectionRules and SelectionView: none" "$TMP/scan.out" \
+  && ok "scan says the tests name only the object, none names the pair" || fail "scan does not report the object-only test"
+grep -q "save as: app/src/test/java/com/x/SelectionViewSelectionRulesWiringPinTest.kt" "$TMP/scan.out" && ok "scan suggests the pin's path next to the module's tests" || fail "no save-as path"
 grep -qiE "TODO|FIXME|Logic to check" "$TMP/scan.out" && fail "the skeleton carries a placeholder word" || ok "no placeholder word in the skeleton"
 PIN="$TMP/pin.kt"
 awk '/^----8<----$/{n++; next} n==1{print}' "$TMP/scan.out" > "$PIN"
@@ -95,9 +95,15 @@ open_b="$(grep -o '{' "$PIN" | wc -l | tr -d ' ')"; close_b="$(grep -o '}' "$PIN
 [ "$open_b" = "$close_b" ] && ok "pin braces balance" || fail "pin braces unbalanced ($open_b vs $close_b)"
 
 # 2. GREEN: saved next to the module's tests, verify holds on the refactored tree
-cp "$PIN" "$T/SelectionViewWiringPinTest.kt"
-( cd "$R/app" && python3 -I "$WP" verify src/test/java/com/x/SelectionViewWiringPinTest.kt > "$TMP/v1.out" 2>&1 ); rc=$?
+cp "$PIN" "$T/SelectionViewSelectionRulesWiringPinTest.kt"
+( cd "$R/app" && python3 -I "$WP" verify src/test/java/com/x/SelectionViewSelectionRulesWiringPinTest.kt > "$TMP/v1.out" 2>&1 ); rc=$?
 [ "$rc" = 0 ] && ok "verify GREEN: the View calls the object and the old branch is gone (exit 0)" || fail "verify exit $rc on the good tree: $(cat "$TMP/v1.out")"
+# the 'then:' line scan printed is a command that runs AS PRINTED from the repo root it names (the old hint put a repo-root path next to a
+# module-dir cwd: run from the module dir it said BROKEN on a correct pin, run from the root it held)
+HINT="$(sed -n 's/^  then: //p' "$TMP/scan.out" | head -1)"
+grep -q 'run that from the repo root' "$TMP/scan.out" && ok "scan says which directory the 'then:' command runs from" || fail "scan does not say where to run the 'then:' command: $(grep -n 'then' "$TMP/scan.out")"
+( cd "$R" && bash -c "$HINT" > "$TMP/hint.out" 2>&1 ); rc=$?
+[ -n "$HINT" ] && [ "$rc" = 0 ] && grep -q 'wiring pin holds' "$TMP/hint.out" && ok "the printed 'then:' command, run as printed from the repo root, says the pin holds" || fail "printed 'then:' command: rc=$rc hint='$HINT' $(cat "$TMP/hint.out")"
 
 # 3. once pinned, scan is quiet (a test now names the View)
 ( cd "$R" && python3 -I "$WP" scan > "$TMP/scan2.out" 2>&1 ); rc=$?
@@ -106,29 +112,36 @@ cp "$PIN" "$T/SelectionViewWiringPinTest.kt"
 # 4. RED: revert the View's call site (the base version comes back: old branch in, call out)
 cp "$V/SelectionView.kt" "$TMP/SelectionView.new.kt"
 cp "$TMP/SelectionView.old.kt" "$V/SelectionView.kt"
-( cd "$R/app" && python3 -I "$WP" verify src/test/java/com/x/SelectionViewWiringPinTest.kt > "$TMP/v2.out" 2>&1 ); rc=$?
+( cd "$R/app" && python3 -I "$WP" verify src/test/java/com/x/SelectionViewSelectionRulesWiringPinTest.kt > "$TMP/v2.out" 2>&1 ); rc=$?
 [ "$rc" = 1 ] && ok "verify RED: reverting the View's call site turns the pin red (exit 1)" || fail "verify exit $rc after the revert (want 1): $(cat "$TMP/v2.out")"
 grep -q "SelectionRules\." "$TMP/v2.out" && grep -q "old branch" "$TMP/v2.out" && ok "  … and says both: the call is gone and the old branch is back" || fail "verify output: $(cat "$TMP/v2.out")"
 # half revert: the call is still there but the old branch was pasted back
 { cat "$TMP/SelectionView.new.kt"; printf '    // val chosen = if (startDistance <= endDistance) START else END\n'; } > "$V/SelectionView.kt"
-( cd "$R/app" && python3 -I "$WP" verify src/test/java/com/x/SelectionViewWiringPinTest.kt > "$TMP/v3.out" 2>&1 ); rc=$?
+( cd "$R/app" && python3 -I "$WP" verify src/test/java/com/x/SelectionViewSelectionRulesWiringPinTest.kt > "$TMP/v3.out" 2>&1 ); rc=$?
 [ "$rc" = 1 ] && ok "verify RED: the old branch pasted back next to the call also fails" || fail "verify exit $rc for the half revert (want 1)"
 cp "$TMP/SelectionView.new.kt" "$V/SelectionView.kt"
 
 # 5. unwired: the object exists, no View names it, and the pin file is not there yet
-rm -f "$T/SelectionViewWiringPinTest.kt"
+rm -f "$T/SelectionViewSelectionRulesWiringPinTest.kt"
 cp "$TMP/SelectionView.old.kt" "$V/SelectionView.kt"
 ( cd "$R" && python3 -I "$WP" scan > "$TMP/scan3.out" 2>&1 ); rc=$?
 [ "$rc" = 1 ] && grep -q "UNWIRED" "$TMP/scan3.out" && ok "scan reports an object no View names as UNWIRED (exit 1)" || fail "unwired: exit $rc: $(cat "$TMP/scan3.out")"
 cp "$TMP/SelectionView.new.kt" "$V/SelectionView.kt"
 
-# 6. quiet cases: a test that names the View itself; a clean tree; no View next to the object
+# 6. a test that names the View AND the object covers the pair; a test that names only the View does not (review of lane A11: the View-only
+#    test, like the saved pin of ANOTHER object, said nothing about this object's wiring). A clean tree and a View-less object stay quiet.
 cat > "$T/SelectionViewTest.kt" <<'KT'
 package com.x
 class SelectionViewTest { fun t() { SelectionView(null!!) } }
 KT
 ( cd "$R" && python3 -I "$WP" scan > "$TMP/scan4.out" 2>&1 ); rc=$?
-[ "$rc" = 0 ] && ok "a test that names the View: nothing to pin (exit 0)" || fail "covered View: exit $rc: $(cat "$TMP/scan4.out")"
+[ "$rc" = 1 ] && grep -q 'PIN NEEDED' "$TMP/scan4.out" && ok "a test that names only the View does not cover the object's wiring: PIN NEEDED (exit 1)" || fail "View-only test: exit $rc: $(cat "$TMP/scan4.out")"
+cat > "$T/SelectionViewTest.kt" <<'KT'
+package com.x
+class SelectionViewTest { fun t() { SelectionView(null!!); SelectionRules.pick(1, 2) } }
+KT
+( cd "$R" && python3 -I "$WP" scan > "$TMP/scan4.out" 2>&1 ); rc=$?
+[ "$rc" = 0 ] && ok "a test that names both the View and the object: nothing to pin (exit 0)" || fail "covered pair: exit $rc: $(cat "$TMP/scan4.out")"
 rm -f "$T/SelectionViewTest.kt"
 mkdir -p "$R/lib/src/main/java/com/y"
 printf 'package com.y\n\ninternal object Helpers { fun f() = 1 }\n' > "$R/lib/src/main/java/com/y/Helpers.kt"
@@ -155,6 +168,11 @@ printf '%s\n' "$BLOCK" | grep -q 'wiring_pin.py scan' && printf '%s\n' "$BLOCK" 
 printf '%s\n' "$BLOCK" | grep 'wiring_pin' | grep -qE 'BẮT BUỘC|[Bb]ắt buộc|MUST|CẤM|[Cc]ấm|bất biến|Bất biến|Nghiêm cấm|Tuyệt đối' \
   && fail "the wiring-pin rule line uses a MUST-word (the on-demand split rejects it)" || ok "no MUST-word on the wiring-pin rule lines"
 grep -q 'wiring_pin.py' "$DEVKIT_DIR/scripts/linters/README.md" && ok "scripts/linters/README.md lists wiring_pin.py" || fail "scripts/linters/README.md does not list wiring_pin.py"
+# the rule says what scan now decides (review of lane A11): the pair, per-pair pins, the printed verify command, UNPINNABLE, comments are no call
+for pin in 'cả `View` lẫn object đó' 'từng cặp (View, object)' 'đúng lệnh `wiring_pin.py verify' 'từ gốc repo' 'UNPINNABLE' 'comment hay KDoc không tính' 'thoát 2'; do
+  printf '%s\n' "$BLOCK" | grep -qF -- "$pin" && ok "android-rules.md section 16 says: $pin" || fail "android-rules.md section 16 lacks: $pin"
+done
+grep -q 'UNPINNABLE' "$DEVKIT_DIR/scripts/linters/README.md" && grep -q 'cả `View` lẫn object' "$DEVKIT_DIR/scripts/linters/README.md" && ok "scripts/linters/README.md says the pair rule and UNPINNABLE" || fail "scripts/linters/README.md is out of date with scan"
 
 # ── review of lane A11: verify must not say "holds" for a pin it cannot fully read, or one that proves nothing ────────────────────────────
 # `verify` runs against a plain directory (no git): VR holds the View under test; the pins below are written by hand with known literals.
@@ -223,7 +241,7 @@ cp "$TMP/SelectionView.new.kt" "$VIEWF"; vrf "$TMP/empty.pin.kt"
 [ "$VRC" = 2 ] && grep -qi 'old-branch\|old branch' "$TMP/vrf.out" && ok "a pin with no old-branch assertion is refused (exit 2): it used to say holds" || fail "empty old-branch half: rc=$VRC (want 2) $(cat "$TMP/vrf.out")"
 
 # ── review of lane A11: scan must read every file the repo has, never hang, and never turn an error into "pin needed" ─────────────────────────
-mkfix() {  # mkfix <root> [old View file]: base commit = the View with its old branch; then the refactor, uncommitted: a new internal object, the View calls it
+mkfix() {  # mkfix <root> [old View file] [new View file]: base commit = the View with its old branch; then the refactor, uncommitted: a new internal object, the View calls it
   local r="$1" v="$1/app/src/main/java/com/x"
   mkdir -p "$v" "$r/app/src/test/java/com/x"
   git -C "$r" init -q . && git -C "$r" config user.email t@t && git -C "$r" config user.name t && git -C "$r" config commit.gpgsign false
@@ -231,7 +249,7 @@ mkfix() {  # mkfix <root> [old View file]: base commit = the View with its old b
   cp "${2:-$TMP/SelectionView.old.kt}" "$v/SelectionView.kt"
   git -C "$r" add -A && git -C "$r" commit -q -m base
   printf 'package com.x\n\ninternal object SelectionRules {\n    fun pick(startDistance: Int, endDistance: Int): Int = if (startDistance <= endDistance) 0 else 1\n}\n' > "$v/SelectionRules.kt"
-  cp "$TMP/SelectionView.new.kt" "$v/SelectionView.kt"
+  cp "${3:-$TMP/SelectionView.new.kt}" "$v/SelectionView.kt"
 }
 scanin() {  # scanin <root> [seconds]: scan with a wall-clock cap (no `timeout` on macOS); exit code in $SRC (124 = still running), output in $TMP/scan.o
   python3 -I - "$WP" "$1" "${2:-60}" > "$TMP/scan.o" 2>&1 <<'PY'
@@ -290,5 +308,95 @@ git -C "$F9" mv app/src/main/java/com/x/SelectionRules.kt app/src/main/java/com/
 # ... but an object ADDED to a renamed file still is
 printf '\ninternal object Another { fun g() = 2 }\n' >> "$F9/app/src/main/java/com/x/MovedRules.kt"; scanin "$F9"
 grep -q 'UNWIRED - internal object Another' "$TMP/scan.o" && ok "  … while a new object added to the renamed file is (UNWIRED: no View names it)" || fail "object added to a renamed file: rc=$SRC $(head -3 "$TMP/scan.o")"
+
+# ── review of lane A11: what scan decides ────────────────────────────────────────────────────────────────────────────────────────────────────
+pin_of() { awk '/^----8<----$/{n++; next} n==1{print}' "$TMP/scan.o"; }   # the first skeleton of the last scanin output
+save_of() { sed -n 's/^  save as: //p' "$TMP/scan.o" | head -1; }
+
+# D1. a pin names ONE (View, object) pair. The saved pin of the first object used to silence the View for ever, so a SECOND object extracted into
+#     the same View was never flagged; and the pin's file and class were named after the View alone, so a second pin would overwrite the first.
+F10="$TMP/f10"; mkfix "$F10"; scanin "$F10"; P1="$(save_of)"; pin_of > "$TMP/pin1.kt"; cp "$TMP/pin1.kt" "$F10/$P1"
+[ "$SRC" = 1 ] && printf '%s' "$P1" | grep -q 'SelectionViewSelectionRulesWiringPinTest.kt$' && grep -q '^class SelectionViewSelectionRulesWiringPinTest {$' "$TMP/pin1.kt" \
+  && ok "the pin's file and class are named after the View AND the object" || fail "pin naming: rc=$SRC save-as='$P1' $(grep -n '^class' "$TMP/pin1.kt")"
+scanin "$F10"; [ "$SRC" = 0 ] && ok "  … and once saved it silences that pair (exit 0)" || fail "after saving pin 1: rc=$SRC $(head -2 "$TMP/scan.o")"
+V10="$F10/app/src/main/java/com/x"
+printf 'package com.x\n\ninternal object SelectionGeometry {\n    fun area(w: Int, h: Int): Int = w * h\n}\n' > "$V10/SelectionGeometry.kt"
+awk '/^        return chosen/{print "        val area = SelectionGeometry.area(startDistance, endDistance)"; print "        return chosen + area"; next} {print}' "$V10/SelectionView.kt" > "$TMP/f10.view" && cp "$TMP/f10.view" "$V10/SelectionView.kt"
+scanin "$F10"; P2="$(save_of)"
+[ "$SRC" = 1 ] && grep -q 'PIN NEEDED - internal object SelectionGeometry' "$TMP/scan.o" && ok "a SECOND object extracted into the same View is flagged although a pin for the first one exists (exit 1)" || fail "second object: rc=$SRC (want 1) $(head -3 "$TMP/scan.o")"
+[ -n "$P2" ] && [ "$P2" != "$P1" ] && printf '%s' "$P2" | grep -q 'SelectionViewSelectionGeometryWiringPinTest.kt$' && ok "  … and its pin goes to a different file than the first pin ($P2)" || fail "second pin path '$P2' vs first '$P1'"
+pin_of > "$TMP/pin2.kt"; cp "$TMP/pin2.kt" "$F10/$P2"; scanin "$F10"
+[ "$SRC" = 0 ] && ok "  … and saving the second pin silences it (exit 0)" || fail "after saving pin 2: rc=$SRC $(head -2 "$TMP/scan.o")"
+
+# D2. an object declared in the SAME file as its View was never considered (siblings only)
+F11="$TMP/f11"; V11="$F11/app/src/main/java/com/x"; mkdir -p "$V11" "$F11/app/src/test/java/com/x"
+git -C "$F11" init -q . && git -C "$F11" config user.email t@t && git -C "$F11" config user.name t && git -C "$F11" config commit.gpgsign false
+printf 'plugins { id("com.android.application") }\n' > "$F11/app/build.gradle.kts"
+cat > "$V11/Combo.kt" <<'KT'
+package com.x
+
+import android.content.Context
+import android.view.View
+
+class ComboView(context: Context) : View(context) {
+    fun pick(startDistance: Int, endDistance: Int): Int {
+        val chosen = if (startDistance <= endDistance) 0 else 1
+        return chosen
+    }
+}
+KT
+git -C "$F11" add -A && git -C "$F11" commit -q -m base
+cat > "$V11/Combo.kt" <<'KT'
+package com.x
+
+import android.content.Context
+import android.view.View
+
+class ComboView(context: Context) : View(context) {
+    fun pick(startDistance: Int, endDistance: Int): Int {
+        val chosen = ComboRules.pick(startDistance, endDistance)
+        return chosen
+    }
+}
+
+internal object ComboRules {
+    fun pick(startDistance: Int, endDistance: Int): Int = if (startDistance <= endDistance) 0 else 1
+}
+KT
+scanin "$F11"
+[ "$SRC" = 1 ] && grep -q 'PIN NEEDED - internal object ComboRules' "$TMP/scan.o" && grep -q 'called by View ComboView' "$TMP/scan.o" && ok "an internal object declared in the same file as the View that calls it needs a pin (exit 1)" || fail "same-file object: rc=$SRC (want 1) $(head -3 "$TMP/scan.o")"
+pin_of > "$TMP/pin11.kt"; grep -q 'File("src/main/java/com/x/Combo.kt")' "$TMP/pin11.kt" && grep -q 'view.contains("ComboRules.")' "$TMP/pin11.kt" && ok "  … and the pin reads that same file" || fail "same-file pin: $(head -12 "$TMP/pin11.kt")"
+sed -i.bak 's/val chosen = ComboRules.pick(startDistance, endDistance)/val chosen = if (startDistance <= endDistance) 0 else 1/' "$V11/Combo.kt"; rm -f "$V11/Combo.kt.bak"
+scanin "$F11"
+[ "$SRC" = 1 ] && grep -q 'UNWIRED - internal object ComboRules' "$TMP/scan.o" && ok "  … and one the same-file View does not call is UNWIRED (the declaration is not a call)" || fail "same-file unwired: rc=$SRC $(head -3 "$TMP/scan.o")"
+
+# D3. a bodiless `data class` before a View was classified as the View itself: its 600-char head ran on to the real `: View(`
+F12="$TMP/f12"; V12="$F12/app/src/main/java/com/x"; mkdir -p "$V12"
+git -C "$F12" init -q . && git -C "$F12" config user.email t@t && git -C "$F12" config user.name t && git -C "$F12" config commit.gpgsign false
+printf 'plugins { id("com.android.application") }\n' > "$F12/app/build.gradle.kts"
+printf 'package com.x\n\nimport android.content.Context\nimport android.view.View\n\ndata class Marker(val a: Int)\n\nclass RealView(context: Context) : View(context) {\n    fun f() = 1\n}\n' > "$V12/Views.kt"
+git -C "$F12" add -A && git -C "$F12" commit -q -m base
+printf 'package com.x\n\nimport android.content.Context\nimport android.view.View\n\ndata class Marker(val a: Int)\n\nclass RealView(context: Context) : View(context) {\n    fun f() = SelectionRules.pick(1, 2)\n}\n' > "$V12/Views.kt"
+printf 'package com.x\n\ninternal object SelectionRules { fun pick(a: Int, b: Int) = if (a < b) a else b }\n' > "$V12/SelectionRules.kt"
+scanin "$F12"
+[ "$SRC" = 1 ] && grep -q 'called by View RealView' "$TMP/scan.o" && ! grep -q 'View Marker' "$TMP/scan.o" && ok "a bodiless data class before a View is not taken for the View (only RealView is named)" || fail "data class before a View: rc=$SRC $(grep -n 'View' "$TMP/scan.o" | head -4)"
+# a real View header that spans lines still is one
+printf 'package com.x\n\nimport android.content.Context\nimport android.view.View\n\nclass WrapView(\n    context: Context,\n)\n    : View(context) {\n    fun f() = SelectionRules.pick(1, 2)\n}\n' > "$V12/Wrap.kt"
+scanin "$F12"
+grep -q 'called by View WrapView' "$TMP/scan.o" && ok "  … while a View whose header spans several lines (constructor on its own lines, supertype on the next) is still found" || fail "multi-line View header: $(grep -n 'View' "$TMP/scan.o" | head -4)"
+
+# D4. an object named only in a comment or KDoc of the View is not wired (UNWIRED, not PIN NEEDED)
+F13="$TMP/f13"; mkfix "$F13"
+printf 'package com.x\n\nimport android.content.Context\nimport android.view.View\n\n/** Delegates to SelectionRules.pick, see the rules file. */\nclass SelectionView(context: Context) : View(context) {\n    // val chosen = SelectionRules.pick(startDistance, endDistance)\n    fun pick(startDistance: Int, endDistance: Int): Int = 0\n}\n' > "$F13/app/src/main/java/com/x/SelectionView.kt"
+scanin "$F13"
+[ "$SRC" = 1 ] && grep -q 'UNWIRED - internal object SelectionRules' "$TMP/scan.o" && ! grep -q 'PIN NEEDED' "$TMP/scan.o" && ok "an object a View names only in a KDoc / line comment is UNWIRED, not 'PIN NEEDED'" || fail "comment-only mention: rc=$SRC $(head -3 "$TMP/scan.o")"
+
+# D5. when no removed line qualifies as a marker the skeleton used to carry an EMPTY old-branch test (verify said holds): now UNPINNABLE, no skeleton
+OLDSHORT="$TMP/SelectionView.short.kt"; NEWSHORT="$TMP/SelectionView.shortnew.kt"
+printf 'package com.x\n\nimport android.content.Context\nimport android.view.View\n\nclass SelectionView(context: Context) : View(context) {\n    fun pick(a: Int, b: Int): Int {\n        val x = a\n        val y = b\n        return x\n    }\n}\n' > "$OLDSHORT"
+printf 'package com.x\n\nimport android.content.Context\nimport android.view.View\n\nclass SelectionView(context: Context) : View(context) {\n    fun pick(a: Int, b: Int): Int {\n        return SelectionRules.pick(a, b)\n    }\n}\n' > "$NEWSHORT"
+F14="$TMP/f14"; mkfix "$F14" "$OLDSHORT" "$NEWSHORT"; scanin "$F14"
+[ "$SRC" = 1 ] && grep -q 'UNPINNABLE' "$TMP/scan.o" && ! grep -q -- '----8<----' "$TMP/scan.o" && grep -q 'PIN NEEDED' "$TMP/scan.o" \
+  && ok "no removed line qualifies as a marker: UNPINNABLE (add the assertion by hand), no empty-bodied skeleton, still exit 1" || fail "unpinnable: rc=$SRC $(head -5 "$TMP/scan.o")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_wiring_pin: all passed" || { echo "❌ test_wiring_pin: $FAILS failed"; exit 1; }
