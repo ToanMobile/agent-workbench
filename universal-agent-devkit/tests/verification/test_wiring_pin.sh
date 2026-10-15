@@ -328,6 +328,15 @@ scanin "$F10"; P2="$(save_of)"
 pin_of > "$TMP/pin2.kt"; cp "$TMP/pin2.kt" "$F10/$P2"; scanin "$F10"
 [ "$SRC" = 0 ] && ok "  … and saving the second pin silences it (exit 0)" || fail "after saving pin 2: rc=$SRC $(head -2 "$TMP/scan.o")"
 
+# D1b. a COMMENT or KDoc in a test that names the View is no test of the wiring either (the same hole as a comment that "calls" the object)
+F15="$TMP/f15"; mkfix "$F15"
+printf 'package com.x\n\n// extracted from SelectionView\n/** SelectionView calls this object. */\nclass SelectionRulesTest { fun t() { SelectionRules.pick(1, 2) } }\n' > "$F15/app/src/test/java/com/x/SelectionRulesTest.kt"
+scanin "$F15"
+[ "$SRC" = 1 ] && grep -q 'PIN NEEDED - internal object SelectionRules' "$TMP/scan.o" && ok "a comment / KDoc naming the View in the object's own test does not count as a test of the pair (exit 1)" || fail "comment-only View mention in a test: rc=$SRC (want 1) $(head -2 "$TMP/scan.o")"
+printf 'package com.x\n\nclass SelectionRulesTest { fun t() { SelectionRules.pick(1, 2); println(SelectionView::class) } }\n' > "$F15/app/src/test/java/com/x/SelectionRulesTest.kt"
+scanin "$F15"
+[ "$SRC" = 0 ] && ok "  … while the same test naming the View in code does (exit 0)" || fail "code mention of the View in the object's test: rc=$SRC (want 0) $(head -2 "$TMP/scan.o")"
+
 # D2. an object declared in the SAME file as its View was never considered (siblings only)
 F11="$TMP/f11"; V11="$F11/app/src/main/java/com/x"; mkdir -p "$V11" "$F11/app/src/test/java/com/x"
 git -C "$F11" init -q . && git -C "$F11" config user.email t@t && git -C "$F11" config user.name t && git -C "$F11" config commit.gpgsign false

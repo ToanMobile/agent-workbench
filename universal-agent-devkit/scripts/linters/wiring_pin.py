@@ -243,7 +243,8 @@ def changed_files(top, base):
 
 def calls_object(view_text, obj, word, same_file):
     """True when the View's code (comments and KDoc stripped) names the object; in the object's own file its declaration is not a call.
-    ponytail: in that file the object's own body naming itself counts as a call."""
+    ponytail: in that file the object's own body naming itself counts as a call; upgrade when a same-file object that only mentions itself is
+    reported as called (strip the object's body from the text first)."""
     code = blank(view_text)
     if same_file:
         code = re.sub(r"internal[ \t]+object[ \t]+%s\b" % re.escape(obj), " ", code)
@@ -254,7 +255,8 @@ def scan(root, base):
     top = git(root, "rev-parse", "--show-toplevel").stdout.strip()
     changed, moved = changed_files(top, base)
     all_kt = sorted(set(names(git(top, "ls-files", "-z", "*.kt"))) | set(names(git(top, "ls-files", "-z", "--others", "--exclude-standard", "*.kt"))))
-    tests = [(f, read(os.path.join(top, f)) or "") for f in all_kt if f and TEST_PATH_RX.search(f)]
+    # a test names a class in code or in a string (a pin names its View in File("...") and its messages), not in a comment or KDoc
+    tests = [(f, blank(read(os.path.join(top, f)) or "")) for f in all_kt if f and TEST_PATH_RX.search(f)]
     found = 0
     for rel in changed:
         cur = read(os.path.join(top, rel))

@@ -121,7 +121,8 @@ def checkout_busy(project: Path) -> str | None:
     """Why a NAMED run leaves `project` alone: a session holds its checkout, idle at its prompt too. `session_lock.py --status` calls an
     idle holder free, but that session takes the lock back at the user's next prompt and edits the tree this run is testing (and its Stop
     gate then queues behind the suite's test_run.lock). Judged as worktree_merge_gate judges it: idle_frees=False, live_pid_holds=True.
-    ponytail: a session that opens after the last check (a suite is running) is not seen; the per-suite check is the ceiling."""
+    ponytail: a session that opens while a suite runs is seen only at the next check (the next suite, or red_proof); upgrade to a lock watcher
+    that stops the running suite when a session is seen editing during a night run."""
     gdir, _top = session_lock.git_dir(str(project))
     if not gdir:
         return None
