@@ -242,6 +242,7 @@ except Exception as e:
 # gets stays (python3 running npm publish is caught by its pattern). The rm walk cuts interpreter bodies too (rm_problem).
 _DOCS = shell_norm.heredocs(cmd) if "<<" in cmd else []
 CMD_LIVE = shell_norm.strip_heredocs(cmd, lambda h: h.kind == "data", _DOCS) if _DOCS else cmd
+CMD_LIVE = CMD_LIVE.replace("\\\n", " ")   # a backslash-newline continues the line: the words on both sides are one command (15/10)
 
 # Options adb/fastboot accept before the subcommand (with or without a value).
 ADB_OPTS = r"(?:\s+(?:-[sHPtL]\s+\S+|-[adeU]|--\S+(?:\s+\S+)?|wait-for-[\w-]+))*"   # wait-for-device remount (15/10)

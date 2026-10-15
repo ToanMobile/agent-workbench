@@ -199,6 +199,13 @@ check 2 hw 'dd if=a.img of=$(diskutil list | tail -1)'
 check 0 hw 'dd if=/dev/zero of=/tmp/x.img bs=1m count=1'
 check 0 hw 'dd if=a.img of=out/$NAME.img'
 
+echo "── hw: a backslash-newline continuation splits no pattern (15/10, adversarial pass: it hid dd of=/dev/…)"
+check 2 hw $'dd \\\nif=a.img of=/dev/sda bs=1m'
+check 2 hw $'dd if=a.img \\\n  of=/dev/sda bs=1m'
+check 2 hw $'adb \\\n  remount'
+check 2 hw $'fastboot \\\n -w'
+check 0 hw $'dd \\\nif=/dev/zero of=/tmp/x.img bs=1m count=1'
+
 echo "── hw: pm uninstall / disable of a package glob"
 check 2 hw 'adb shell pm uninstall com.ecarx.*'
 check 2 hw 'adb shell "pm disable-user com.android.*"'
