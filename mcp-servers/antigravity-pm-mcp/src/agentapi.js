@@ -443,26 +443,39 @@ const pendingKey = (pid) => `pending-${pid}`;
 /**
  * Dung agy mo coi: muc cho ma PM chu khong con la tien trinh do (pid + dau van tay ps) => agy cua no khong ai theo doi (chay --dangerously-skip-permissions).
  * PM chu con song (dang cho init, toi 60 s): bo qua muc. ps hong hoac muc thieu dau van tay: giu muc, dung gi cung chua dung.
- * ps goi ngoai khoa, chi go muc duoi khoa. Moi loi chi ghi stderr, luot dang mo van tiep tuc.
+ * Hai lan hoi ps (chu, agy) chay NGOAI khoa tren ban chup so; roi DUOI khoa doc lai va chi giet / go muc con la muc cho CUA CHINH agy do:
+ * PM chu da chet thi khong doi duoc muc nua, nhung no co the da doi muc cho thanh hoi thoai that giua luc ta chup so va luc ta hoi ps.
+ * Moi loi chi ghi stderr, luot dang mo van tiep tuc.
  */
 function reapOrphanAgy() {
   let reg;
   try { reg = readAgyRegistry(); } catch (e) { logStderr(`don agy mo coi: bo qua (${e.message.split('\n')[0]})`); return; }
-  const gone = [];
+  const orphans = [];   // [key, entry, agy con song?]
   for (const [k, e] of Object.entries(reg)) {
     if (!e?.pending || !(e.pid && e.pidTag && e.ownerPid && e.ownerTag)) continue;
     try {
       if (sameProcess(e.ownerPid, e.ownerTag)) continue;   // PM chu van song: dang cho init
-      if (sameProcess(e.pid, e.pidTag)) {
-        const err = killGroup(e.pid);
-        if (err && err.code !== 'ESRCH') { logStderr(`don agy mo coi: khong dung duoc agy pid ${e.pid} (${err.message}): giu muc ${k}`); continue; }
-        logStderr(`don agy mo coi: da dung agy pid ${e.pid} cua PM pid ${e.ownerPid} (PM da chet giua luc cho init)`);
-      }
-      gone.push(k);   // agy da thoat hoac vua bi dung
+      orphans.push([k, e, sameProcess(e.pid, e.pidTag)]);
     } catch (err) { logStderr(`don agy mo coi: giu muc ${k} (${err.message})`); }
   }
-  if (!gone.length) return;
-  try { dropPending(gone); } catch (err) { logStderr(`don agy mo coi: khong go duoc ban ghi cho (${err.message})`); }
+  if (!orphans.length) return;
+  try {
+    withRegistryLock(() => {
+      const now = readAgyRegistry();
+      let changed = false;
+      for (const [k, e, agyAlive] of orphans) {
+        if (!(now[k]?.pending && now[k].pid === e.pid)) continue;   // da doi thanh muc that / da go: agy nay co chu
+        if (agyAlive) {
+          const err = killGroup(e.pid);
+          if (err && err.code !== 'ESRCH') { logStderr(`don agy mo coi: khong dung duoc agy pid ${e.pid} (${err.message}): giu muc ${k}`); continue; }
+          logStderr(`don agy mo coi: da dung agy pid ${e.pid} cua PM pid ${e.ownerPid} (PM da chet giua luc cho init)`);
+        }
+        delete now[k];   // agy da thoat hoac vua bi dung
+        changed = true;
+      }
+      if (changed) writeJsonAtomic(agyRegistryFile(), now);
+    });
+  } catch (err) { logStderr(`don agy mo coi: khong don duoc (${err.message})`); }
 }
 
 /** Go cac muc cho khoi so dang ky (duoi khoa). Chi ghi lai khi co muc bi go. */

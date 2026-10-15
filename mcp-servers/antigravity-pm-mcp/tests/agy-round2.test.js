@@ -924,3 +924,43 @@ test('ps hong luc don agy mo coi: khong biet chu con song hay chet => KHONG dung
   assert.equal(alive(sl.pid), true, 'ps hong ma van dung tien trinh');
   assert.ok(registryOf()[`pending-${sl.pid}`], 'ps hong ma van go ban ghi cho');
 });
+
+/** Mot "agy" gia: `sleep 60` tach nhom (nhu agy that), tu dung o cuoi test. Tra ve { pid, tag } (tag = dau van tay ps that). */
+function liveSleep(t) {
+  const sl = spawn('sleep', ['60'], { stdio: 'ignore', detached: true });
+  sl.unref();
+  t.after(() => { try { process.kill(-sl.pid, 'SIGKILL'); } catch { /* da chet */ } });
+  const tag = execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(sl.pid)], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } }).trim();
+  return { pid: sl.pid, tag };
+}
+/** Pid cua mot tien trinh THAT da thoat va da duoc thu (ps tra "da chet": exit 1, khong in gi; pid vuot gioi han thi macOS ps bao loi, khong phai "da chet"). */
+async function deadPid() {
+  const c = spawn('/usr/bin/true', [], { stdio: 'ignore' });
+  await new Promise((resolve) => c.on('exit', resolve));
+  return c.pid;
+}
+const WRONG_TAG = 'Thu Jan  1 00:00:00 2015';
+const pendingEntry = (extra) => ({ pending: true, model: ARGON, cwd: os.tmpdir(), at: new Date().toISOString(), ...extra });
+
+test('don agy mo coi: PM chu doi muc cho thanh muc THAT giua luc ta doc so va luc ta giet => agy da co chu, KHONG bi giet (doc lai duoi khoa)', async (t) => {
+  // PM B chup so (pending-X, chu A da chet), roi A doi pending-X thanh hoi thoai that cua no (agy X van la agy cua A), roi B moi hoi ps
+  // ve chu (chet) va ve agy (dung tien trinh) => truoc day B giet agy X du so dang ky dang theo doi no. ps gia chay buoc "A doi" o lan hoi dau tien ve chu.
+  const fake = fakeAgy(t, { FAKE_AGY_ID: 'f1f1f1f1-2222-3333-4444-555555555555' });
+  const x = liveSleep(t);
+  const DEAD_PID = await deadPid();
+  const LEGIT = 'f2f2f2f2-2222-3333-4444-555555555555';
+  fs.writeFileSync(registryFile(), JSON.stringify({ [`pending-${x.pid}`]: pendingEntry({ pid: x.pid, pidTag: x.tag, ownerPid: DEAD_PID, ownerTag: WRONG_TAG }) }));
+  const convert = path.join(fake.dir, 'convert.cjs');
+  fs.writeFileSync(convert, `const fs = require('node:fs'); const f = process.env.REG; const r = JSON.parse(fs.readFileSync(f, 'utf8'));
+    delete r['pending-${x.pid}']; r['${LEGIT}'] = { model: '${ARGON}', cwd: process.env.TMPDIR || '/tmp', pid: ${x.pid}, pidTag: ${JSON.stringify(x.tag)}, starting: false, at: new Date().toISOString() };
+    fs.writeFileSync(f, JSON.stringify(r));\n`);
+  const wrapper = path.join(fake.dir, 'ps-convert.sh');
+  const mark = path.join(fake.dir, 'converted');
+  fs.writeFileSync(wrapper, `#!/bin/sh\nif [ "$4" = "${DEAD_PID}" ] && [ ! -e "${mark}" ]; then : > "${mark}"; REG="${registryFile()}" "${process.execPath}" "${convert}"; fi\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+  process.env.ANTIGRAVITY_PM_PS = wrapper;
+  await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
+  assert.ok(fs.existsSync(mark), 'kich ban hong: ps gia khong duoc hoi ve chu cua muc cho');
+  await sleep(300);
+  assert.equal(registryOf()[LEGIT]?.pid, x.pid, 'so dang ky phai dang theo doi agy X');
+  assert.equal(alive(x.pid), true, 'agy X da bi giet du so dang ky dang theo doi no (doc so khong duoi khoa)');
+});
