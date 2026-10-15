@@ -169,7 +169,7 @@ printf '%s\n' "$BLOCK" | grep 'wiring_pin' | grep -qE 'BẮT BUỘC|[Bb]ắt bu�
   && fail "the wiring-pin rule line uses a MUST-word (the on-demand split rejects it)" || ok "no MUST-word on the wiring-pin rule lines"
 grep -q 'wiring_pin.py' "$DEVKIT_DIR/scripts/linters/README.md" && ok "scripts/linters/README.md lists wiring_pin.py" || fail "scripts/linters/README.md does not list wiring_pin.py"
 # the rule says what scan now decides (review of lane A11): the pair, per-pair pins, the printed verify command, UNPINNABLE, comments are no call
-for pin in 'cả `View` lẫn object đó' 'từng cặp (View, object)' 'đúng lệnh `wiring_pin.py verify' 'từ gốc repo' 'UNPINNABLE' 'comment hay KDoc không tính' 'thoát 2'; do
+for pin in 'cả `View` lẫn object đó' 'từng cặp (View, object)' 'đúng lệnh `wiring_pin.py verify' 'từ gốc repo' 'UNPINNABLE' 'comment, KDoc hay chuỗi ký tự không tính' 'thoát 2'; do
   printf '%s\n' "$BLOCK" | grep -qF -- "$pin" && ok "android-rules.md section 16 says: $pin" || fail "android-rules.md section 16 lacks: $pin"
 done
 grep -q 'UNPINNABLE' "$DEVKIT_DIR/scripts/linters/README.md" && grep -q 'cả `View` lẫn object' "$DEVKIT_DIR/scripts/linters/README.md" && ok "scripts/linters/README.md says the pair rule and UNPINNABLE" || fail "scripts/linters/README.md is out of date with scan"
@@ -240,6 +240,47 @@ vrf "$TMP/wrapped.pin.kt"
 cp "$TMP/SelectionView.new.kt" "$VIEWF"; vrf "$TMP/empty.pin.kt"
 [ "$VRC" = 2 ] && grep -qi 'old-branch\|old branch' "$TMP/vrf.out" && ok "a pin with no old-branch assertion is refused (exit 2): it used to say holds" || fail "empty old-branch half: rc=$VRC (want 2) $(cat "$TMP/vrf.out")"
 
+# V5. the formatter shape with a trailing comma INSIDE view.contains( ... ) too (ktlint puts one after a wrapped last argument)
+{ pin_head InnerCommaPinTest
+  printf '    @Test\n    fun viewStillCalls() {\n        assertTrue(\n            "SelectionView must call SelectionRules",\n            view.contains(\n                "SelectionRules.",\n            ),\n        )\n    }\n\n'
+  printf '    @Test\n    fun viewNoLongerHoldsTheOldBranch() {\n        assertFalse("old branch is back", view.contains("%s"))\n    }\n}\n' "$OLDBR"; } > "$TMP/innercomma.pin.kt"
+cp "$TMP/SelectionView.new.kt" "$VIEWF"; vrf "$TMP/innercomma.pin.kt"
+[ "$VRC" = 0 ] && ok "a trailing comma inside view.contains( ... ) is read: good View holds" || fail "inner trailing comma on the good View: rc=$VRC (want 0) $(cat "$TMP/vrf.out")"
+cp "$TMP/SelectionView.nocall.kt" "$VIEWF"; vrf "$TMP/innercomma.pin.kt"
+[ "$VRC" = 1 ] && ok "  … and it turns RED when the call is gone" || fail "inner trailing comma, call reverted: rc=$VRC (want 1) $(cat "$TMP/vrf.out")"
+
+# V6. a decoy: an assertion-shaped text inside a raw string of the pin is not an assertion. With ONE real call verify cannot read next to it, the
+#     counts matched (decoy read, real one skipped) and verify said holds; the decoy no longer counts, so the counts differ: exit 2.
+{ pin_head DecoyPinTest
+  printf '    private val decoy = """assertTrue("m", view.contains("SelectionRules."))"""\n\n'
+  printf '    @Test\n    fun viewStillCalls() {\n        assertTrue("m", cond && view.contains("Missing."))\n    }\n\n'
+  printf '    @Test\n    fun viewNoLongerHoldsTheOldBranch() {\n        assertFalse("old", view.contains("%s"))\n    }\n}\n' "$OLDBR"; } > "$TMP/decoy.pin.kt"
+cp "$TMP/SelectionView.new.kt" "$VIEWF"; vrf "$TMP/decoy.pin.kt"
+[ "$VRC" = 2 ] && ok "an assertion-shaped raw string in the pin is a decoy, not an assertion: the unreadable real one still fails closed (exit 2)" || fail "decoy raw string: rc=$VRC (want 2) $(cat "$TMP/vrf.out")"
+
+# V7. a call named only in a STRING literal (a log message or tag) is not a call either; the price is that a call inside a "${...}" template
+#     reads as gone (BROKEN, fail closed)
+{ cat <<'KT'
+package com.x
+
+import android.content.Context
+import android.view.View
+import android.util.Log
+
+class SelectionView(context: Context) : View(context) {
+    fun pick(startDistance: Int, endDistance: Int): Int {
+        Log.d("sel", "SelectionRules.pick was replaced")
+        return 0
+    }
+}
+KT
+} > "$VIEWF"
+vrf "$TMP/wrapped.pin.kt"
+[ "$VRC" = 1 ] && grep -q 'SelectionRules\.' "$TMP/vrf.out" && ok "a call named only inside a string literal does not satisfy the call assertion (exit 1)" || fail "string-only call: rc=$VRC (want 1) $(cat "$TMP/vrf.out")"
+sed 's/Log.d("sel", "SelectionRules.pick was replaced")/Log.d("sel", "${SelectionRules.pick(1, 2)}")/' "$VIEWF" > "$TMP/tmpl.view" && cp "$TMP/tmpl.view" "$VIEWF"
+vrf "$TMP/wrapped.pin.kt"
+[ "$VRC" = 1 ] && ok "  … and a call inside a \${...} template reads as gone too (BROKEN: the stated, fail-closed price)" || fail "template call: rc=$VRC (want 1: documented fail-closed)"
+
 # ── review of lane A11: scan must read every file the repo has, never hang, and never turn an error into "pin needed" ─────────────────────────
 mkfix() {  # mkfix <root> [old View file] [new View file]: base commit = the View with its old branch; then the refactor, uncommitted: a new internal object, the View calls it
   local r="$1" v="$1/app/src/main/java/com/x"
@@ -272,10 +313,12 @@ awk '{print} /fun pick/{print "        val label = \"caf\351 au lait\""}' "$TMP/
 F5="$TMP/f5"; mkfix "$F5" "$LATIN"; scanin "$F5"
 [ "$SRC" = 1 ] && ! grep -q 'Traceback' "$TMP/scan.o" && grep -q 'PIN NEEDED' "$TMP/scan.o" && ok "a Latin-1 byte in a removed View line: scan still reports PIN NEEDED, no traceback" || fail "latin-1 byte: rc=$SRC $(head -3 "$TMP/scan.o")"
 # any other unexpected error is exit 2 with a message, not a traceback with exit 1
-python3 -I - "$DEVKIT_DIR/scripts/linters" > "$TMP/boom.out" 2>&1 <<'PY'
-import sys
-sys.path.insert(0, sys.argv[1])
-import wiring_pin as w
+# (the script under test is loaded from $WP, so a mutant handed in through WP_SCRIPT is the one that runs)
+python3 -I - "$WP" > "$TMP/boom.out" 2>&1 <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("wiring_pin_under_test", sys.argv[1])
+w = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(w)
 def boom(*a, **k):
     raise RuntimeError("boom")
 w.scan = boom
@@ -399,6 +442,10 @@ F13="$TMP/f13"; mkfix "$F13"
 printf 'package com.x\n\nimport android.content.Context\nimport android.view.View\n\n/** Delegates to SelectionRules.pick, see the rules file. */\nclass SelectionView(context: Context) : View(context) {\n    // val chosen = SelectionRules.pick(startDistance, endDistance)\n    fun pick(startDistance: Int, endDistance: Int): Int = 0\n}\n' > "$F13/app/src/main/java/com/x/SelectionView.kt"
 scanin "$F13"
 [ "$SRC" = 1 ] && grep -q 'UNWIRED - internal object SelectionRules' "$TMP/scan.o" && ! grep -q 'PIN NEEDED' "$TMP/scan.o" && ok "an object a View names only in a KDoc / line comment is UNWIRED, not 'PIN NEEDED'" || fail "comment-only mention: rc=$SRC $(head -3 "$TMP/scan.o")"
+# ... and the same for a name that only a string literal (a log message) carries
+printf 'package com.x\n\nimport android.content.Context\nimport android.view.View\nimport android.util.Log\n\nclass SelectionView(context: Context) : View(context) {\n    fun pick(startDistance: Int, endDistance: Int): Int {\n        Log.d("sel", "SelectionRules.pick was replaced")\n        return 0\n    }\n}\n' > "$F13/app/src/main/java/com/x/SelectionView.kt"
+scanin "$F13"
+[ "$SRC" = 1 ] && grep -q 'UNWIRED - internal object SelectionRules' "$TMP/scan.o" && ! grep -q 'PIN NEEDED' "$TMP/scan.o" && ok "an object a View names only inside a string literal is UNWIRED too" || fail "string-only mention: rc=$SRC $(head -3 "$TMP/scan.o")"
 
 # D5. when no removed line qualifies as a marker the skeleton used to carry an EMPTY old-branch test (verify said holds): now UNPINNABLE, no skeleton
 OLDSHORT="$TMP/SelectionView.short.kt"; NEWSHORT="$TMP/SelectionView.shortnew.kt"
