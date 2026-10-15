@@ -276,3 +276,4 @@
 1 tests/verification/test_state_matrix_lens.sh
 1 tests/verification/test_android_selection_telemetry_rule.sh
 4 tests/verification/test_android_generic_traps.sh
+3 tests/gates/test_untracked_edit_warning.sh
