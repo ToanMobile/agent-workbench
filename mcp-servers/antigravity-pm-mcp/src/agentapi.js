@@ -501,12 +501,16 @@ async function agyNewConversation({ prompt, model, cwd }) {
   assertProjectDir(cwd);
   const root = fs.realpathSync(cwd);
   readAgyRegistry();   // hong thi nem loi NGAY, truoc khi sinh agent: sau khi spawn khong con cach nao theo doi no
-  reapOrphanAgy();   // ponytail: agy mo coi chi bi dung khi co lan mo hoi thoai agy ke tiep (cua PM nao cung duoc); nang cap: don them luc server khoi dong / trong pm_doctor
+  // ponytail: agy mo coi chi bi dung khi co lan mo hoi thoai agy ke tiep (cua PM nao cung duoc; PM chi gui tin thi khong don); nang cap: don them luc
+  // server khoi dong / trong pm_doctor. Cua so con lai: tu luc spawn den luc ban ghi cho duoc ghi (1 lan ps cua agy + khoa) khoang chuc ms; PM chet trong do
+  // thi agy khong co dau vet. Con cua agy (nhom) da thoat tu truoc thi khong bi dung; muc co pid vuot gioi han he dieu hanh (sua tay) duoc giu mai.
+  reapOrphanAgy();
+  const ownerTag = selfTag();   // ps cua chinh PM tinh MOT lan, TRUOC spawn (hong thi tu choi, chua co agy nao chay)
   let pending = null;
   let r;
   try {
     r = await agyStart(agyArgs(model, ['--print', String(prompt)], agyMaySkipPermissions(root)), root, (child) => {
-      saveAgyEntry(pendingKey(child.pid), { pending: true, model, cwd: root, pid: child.pid, pidTag: procTag(child.pid), ownerPid: process.pid, ownerTag: selfTag(), at: nowIso() });
+      saveAgyEntry(pendingKey(child.pid), { pending: true, model, cwd: root, pid: child.pid, pidTag: procTag(child.pid), ownerPid: process.pid, ownerTag, at: nowIso() });
       pending = pendingKey(child.pid);
     });
   } catch (e) {

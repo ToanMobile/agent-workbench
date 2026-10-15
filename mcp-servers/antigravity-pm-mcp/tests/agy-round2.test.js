@@ -1022,6 +1022,23 @@ test('ghi muc THAT that bai sau init (ENOSPC): agy bi dung VA ban ghi cho cua no
   assert.ok(await waitUntil(() => !alive(agy.pid), 5000), 'agy van song sau khi khong ghi duoc muc that');
 });
 
+test('PM khong doc duoc dau van tay cua CHINH no (ps hong het): tu choi TRUOC khi sinh agy, ps khong bao gio duoc hoi ve mot agy', async (t) => {
+  // selfTag() tinh MOT lan, truoc spawn: cua so tu luc spawn den luc ghi ban ghi cho chi con mot lan ps (dau van tay agy) + khoa, khong con ps cua chinh PM.
+  // PM la tien trinh moi (selfTag chua duoc nho): ps gia ghi moi doi so; neu agy duoc sinh thi doi so dau tien la pid cua agy, khong phai cua PM.
+  const fake = fakeAgy(t, { FAKE_AGY_ID: 'f7f7f7f7-2222-3333-4444-555555555555', FAKE_AGY_HOLD_MS: '20000' });
+  const log = path.join(fake.dir, 'ps-args.log');
+  const wrapper = path.join(fake.dir, 'ps-all-broken.sh');
+  fs.writeFileSync(wrapper, `#!/bin/sh\necho "$@" >> "${log}"\necho "ps: broken" >&2\nexit 2\n`, { mode: 0o755 });
+  const probe = `import { newConversation } from ${JSON.stringify(SRC)}; console.log('PID ' + process.pid);
+    newConversation({ prompt: 'x', model: ${JSON.stringify(ARGON)}, cwd: ${JSON.stringify(mkProject(t))} }).then(() => console.log('DONE'), (e) => console.log('REJECTED ' + e.message.slice(0, 120)));`;
+  const out = execFileSync(process.execPath, ['--input-type=module', '-e', probe], { env: { ...process.env, ANTIGRAVITY_PM_PS: wrapper }, encoding: 'utf8' });
+  const pmPid = Number(/PID (\d+)/.exec(out)?.[1]);
+  assert.match(out, /REJECTED .*dau van tay/, out);
+  const asked = fs.readFileSync(log, 'utf8').split('\n').map((l) => /-p (\d+)/.exec(l)?.[1]).filter(Boolean).map(Number);
+  assert.ok(asked.length > 0 && asked.every((p) => p === pmPid), `ps bi hoi ve pid khac PM (${pmPid}): ${asked}: agy da duoc sinh truoc khi PM biet dau van tay cua chinh no`);
+  assert.deepEqual(fake.calls(), [], 'agy da duoc sinh');
+});
+
 test('go ban ghi cho khi muc do da vang (PM khac don mat roi): KHONG ghi lai so dang ky', async (t) => {
   fakeAgy(t);
   const slowFail = path.join(path.dirname(process.env.ANTIGRAVITY_PM_AGY), 'agy-slow-fail');
