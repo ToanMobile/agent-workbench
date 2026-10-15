@@ -1005,3 +1005,20 @@ test('don agy mo coi: chu la tien trinh con song nhung DAU VAN TAY KHAC (pid chu
   assert.equal(alive(reusedOwner.pid), true, 'giet nham tien trinh dang giu pid cua PM chu cu');
   assert.deepEqual(pendingKeys(), []);
 });
+
+test('ghi muc THAT that bai sau init (ENOSPC): agy bi dung VA ban ghi cho cua no bi go, khong sot lai ca phien PM', async (t) => {
+  const fake = fakeAgy(t, { FAKE_AGY_ID: 'f6f6f6f6-2222-3333-4444-555555555555', FAKE_AGY_HOLD_MS: '20000' });
+  const orig = fs.renameSync;
+  let writes = 0;   // ghi so dang ky lan 1 = ban ghi cho (onSpawn), lan 2 = thay bang muc that (that bai), lan 3 = go ban ghi cho
+  fs.renameSync = function renameSync(from, to, ...rest) {
+    if (to === registryFile() && (writes += 1) === 2) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+    return orig.call(fs, from, to, ...rest);
+  };
+  try {
+    await assert.rejects(newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) }), /da dung agy pid \d+/);
+  } finally { fs.renameSync = orig; }
+  const [agy] = fake.calls();
+  t.after(() => { try { process.kill(-agy.pid, 'SIGKILL'); } catch { /* da chet */ } });
+  assert.deepEqual(pendingKeys(), [], `ban ghi cho cua agy da bi dung con sot (${writes} lan ghi so dang ky)`);
+  assert.ok(await waitUntil(() => !alive(agy.pid), 5000), 'agy van song sau khi khong ghi duoc muc that');
+});

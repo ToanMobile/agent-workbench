@@ -486,6 +486,12 @@ function dropPending(keys) {
   });
 }
 
+/** dropPending cho duong loi: that bai (khoa bi giu, dia day...) chi ghi stderr, loi goc cua luot mo van duoc nem. */
+function dropPendingQuietly(key) {
+  if (!key) return;
+  try { dropPending([key]); } catch (e) { logStderr(`khong go duoc ban ghi cho ${key}: ${e.message}`); }
+}
+
 async function agyNewConversation({ prompt, model, cwd }) {
   requireAgy();
   if (!cwd) throw new AgentApiError(`model ${model} chay qua agy: can cwd (thu muc project), khong doan thu muc`);
@@ -501,8 +507,7 @@ async function agyNewConversation({ prompt, model, cwd }) {
       pending = pendingKey(child.pid);
     });
   } catch (e) {
-    // agyStart da dung nhom agy: muc cho khong con y nghia
-    if (pending) { try { dropPending([pending]); } catch (e2) { logStderr(`khong go duoc ban ghi cho ${pending}: ${e2.message}`); } }
+    dropPendingQuietly(pending);   // agyStart da dung nhom agy: muc cho khong con y nghia
     throw e;
   }
   try {
@@ -511,7 +516,11 @@ async function agyNewConversation({ prompt, model, cwd }) {
       delete reg[pending];
       putAgyEntry(reg, r.conversationId, { model, cwd: root, workspace: r.workspace, pid: r.pid, pidTag: r.pidTag, starting: false, out: r.out, at: nowIso() });
     });
-  } catch (e) { throw stopUntracked(r, e); }
+  } catch (e) {
+    const err = stopUntracked(r, e);
+    dropPendingQuietly(pending);   // agy da bi dung: muc cho con lai se khong con ai go (PM chu van song nen reapOrphanAgy bo qua no)
+    throw err;
+  }
   return { conversationId: r.conversationId, raw: `agy pid ${r.pid}`, parsed: { pid: r.pid, pidTag: r.pidTag, out: r.out } };
 }
 
