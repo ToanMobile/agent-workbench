@@ -440,8 +440,19 @@ CASES = [
     ("cat <<EOF\nno end", [("EOF", D, False)]),
     ("adb shell <<'EOF'\nls\nEOF", [("EOF", S, True)]),
     ("cat <<-EOF\n\tx\n\tEOF", [("EOF", D, True)]),
-    ("cat <<$'EOF'\nhi\nEOF\nls\n$EOF", [("EOF", D, True)]),
-    ("cat <<$\"EOF\"\nhi\nEOF\nls\n$EOF", [("EOF", D, True)]),
+    ("cat <<$'EOF'\nhi\nEOF\nls", [("EOF", D, True)]),
+    ("cat <<$\"EOF\"\nhi\nEOF\nls", [("EOF", D, True)]),
+    ("cat <<$'EOF'\nhi\nEOF\n$EOF", [("EOF", S, True)]),   # a line $EOF after the real end is a command word: doubt, not data
+    ("sudo -s <<'EOF'\nls\nEOF", [("EOF", S, True)]),       # the shell sudo -s starts reads the heredoc
+    ("sudo -u root -i <<'EOF'\nls\nEOF", [("EOF", S, True)]),
+    ("sudo -u root cat <<'EOF'\nls\nEOF", [("EOF", D, True)]),
+    ("git -c alias.x='!sh' x <<'EOF'\nls\nEOF", [("EOF", S, True)]),   # the alias runs sh on stdin
+    ("$(cat <<'EOF'\nls\nEOF\n)", [("EOF", S, True)]),      # the output is split into the command
+    ("echo \"$(cat <<'EOF'\nls\nEOF\n)\"", [("EOF", D, True)]),
+    ("cat > x <<'EOF'\nls\nEOF\nmv x y.sh", [("EOF", S, True)]),
+    ("cat > .git/hooks/pre-commit <<'EOF'\nls\nEOF", [("EOF", S, True)]),   # a hook: never data, whatever follows
+    ("cat > notes.md <<'EOF'\nls\nEOF\nwc -l notes.md; git add notes.md", [("EOF", D, True)]),
+    ("cat > notes.md <<'EOF'\nls\nEOF\nbash run.sh", [("EOF", S, True)]),   # something that can run a file follows: doubt
     ("cat <<-$'EOF'\n\thi\n\tEOF\nls", [("EOF", D, True)]),
     ("cat <<$'E\\x4fF'\nhi\nEOF\nls", [("EOF", D, True)]),
     ("cat <<\"$EOF\"\nhi\n$EOF\nls", [("$EOF", D, True)]),
@@ -481,6 +492,69 @@ for pair in "hardware_safety_gate.sh|rm -rf ~" "block-dangerous-git.sh|git reset
   if [ "$rc" = 2 ] && grep -q "shell_norm.py" "$TMP/err"; then ok "$h without shell_norm.py beside it: rc 2, names the module"
   else fail "$h without shell_norm.py beside it: rc $rc — $(head -c 200 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
 done
+
+# pair <want rc> <template with @BODY@>: the template through the git guard with a git danger in the body and through the hardware gate with
+# an rm danger in it — each hook must reach the verdict by itself (review 15/10: a git row alone proves nothing about the hw gate)
+pair() { check "$1" git "${2//@BODY@/git reset --hard}"; check "$1" hw "${2//@BODY@/rm -rf ~}"; }
+
+echo "── heredoc: a body written to a file is data only when nothing that can run the file follows (review 15/10, policy: fail closed)"
+echo "   (a) the file is renamed, copied or linked first"
+pair 2 $'cat > x <<EOF\n@BODY@\nEOF\nmv x y.sh && bash y.sh'
+pair 2 $'cat > x <<\'EOF\'\n@BODY@\nEOF\nmv x y.sh && bash y.sh'
+pair 2 $'cat > x <<\'EOF\'\n@BODY@\nEOF\ncp x y.sh; sh y.sh'
+pair 2 $'cat > a.sh <<\'EOF\'\n@BODY@\nEOF\ncp a.sh b.sh; bash b.sh'
+pair 2 $'cat > a.sh <<\'EOF\'\n@BODY@\nEOF\nmv a.sh b.sh && sh b.sh'
+pair 2 $'cat > x <<\'EOF\'\n@BODY@\nEOF\nln -s x y.sh; sh y.sh'
+pair 2 $'cat > x <<\'EOF\'\n@BODY@\nEOF\ninstall -m755 x /tmp/y; /tmp/y'
+echo "   (b) the file is named by a variable, a glob, a loop or a redirect the name match does not read"
+pair 2 $'cat > "$F" <<EOF\n@BODY@\nEOF\nsh "${F}"'
+pair 2 $'cat > ${F} <<\'EOF\'\n@BODY@\nEOF\nbash ${F}'
+pair 2 $'F=a.sh; cat > $F <<\'EOF\'\n@BODY@\nEOF\nbash a.sh'
+pair 2 $'cat > x.sh <<\'EOF\'\n@BODY@\nEOF\nF=x.sh; bash $F'
+pair 2 $'cat > x.sh <<\'EOF\'\n@BODY@\nEOF\nbash x.s?'
+pair 2 $'cat > x.sh <<\'EOF\'\n@BODY@\nEOF\nbash ./*.sh'
+pair 2 $'cat > x.sh <<\'EOF\'\n@BODY@\nEOF\nfor f in *.sh; do bash $f; done'
+pair 2 $'cat > x.sh <<\'EOF\'\n@BODY@\nEOF\nbash $(ls *.sh)'
+pair 2 $'cat 1>a.sh <<\'EOF\'\n@BODY@\nEOF\nbash a.sh'
+pair 2 $'cat &> a.sh <<\'EOF\'\n@BODY@\nEOF\nbash a.sh'
+echo "   (c) a git hook, then a git command that runs it"
+pair 2 $'cat > .git/hooks/pre-commit <<EOF\n@BODY@\nEOF\ngit commit -m x'
+pair 2 $'cat > .git/hooks/pre-commit <<\'EOF\'\n@BODY@\nEOF\ngit commit -m x'
+pair 2 $'cat > .githooks/pre-push <<\'EOF\'\n@BODY@\nEOF\ngit push origin main'
+pair 2 $'cat > hooks/post-checkout <<\'EOF\'\n@BODY@\nEOF\ngit checkout main'
+pair 2 $'cd .git/hooks && cat > pre-commit <<\'EOF\'\n@BODY@\nEOF\ngit commit -m x'
+pair 2 $'H=.git/hooks; cat > $H/pre-commit <<\'EOF\'\n@BODY@\nEOF\ngit commit -m x'
+pair 2 $'cat > pre-commit <<\'EOF\'\n@BODY@\nEOF\ngit commit -m x'
+echo "   (d) a compound command piped into a shell: the | sh is on the line of the heredoc operator"
+pair 2 $'{ cat <<\'EOF\'; } | sh\n@BODY@\nEOF'
+pair 2 $'if true; then cat <<\'EOF\'; fi | sh\n@BODY@\nEOF'
+pair 2 $'while true; do cat <<\'EOF\'; break; done | sh\n@BODY@\nEOF'
+pair 2 $'for i in 1; do cat <<\'EOF\'; done | bash\n@BODY@\nEOF'
+pair 2 $'{ cat <<\'EOF\'\n@BODY@\nEOF\n} | sh'
+pair 2 $'( cat <<\'EOF\'\n@BODY@\nEOF\n) | sh'
+pair 2 $'{ cat <<\'EOF\'; } | xargs -0 sh -c\n@BODY@\nEOF'
+pair 2 $'$(cat <<\'EOF\'\n@BODY@\nEOF\n)'
+echo "   (e) the reader is a shell in disguise: sudo -s / -i read stdin, a git alias can be !sh"
+pair 2 $'sudo -s <<\'EOF\'\n@BODY@\nEOF'
+pair 2 $'sudo -i <<\'EOF\'\n@BODY@\nEOF'
+pair 2 $'sudo -u root -s <<\'EOF\'\n@BODY@\nEOF'
+pair 2 $'sudo --shell <<\'EOF\'\n@BODY@\nEOF'
+check 2 git $'git -c alias.x=\'!sh\' x <<\'EOF\'\ngit reset --hard\nEOF'
+check 0 git $'sudo -u root cat <<\'EOF\'\ngit reset --hard\nEOF'
+echo "   the intentional false-positive fixes: text nothing runs stays data"
+pair 0 $'cat > notes.md <<\'EOF\'\n@BODY@\nEOF'
+pair 0 $'cat <<\'EOF\' > notes.md\n@BODY@\nEOF'
+pair 0 $'cat > notes.md <<\'EOF\'\n@BODY@\nEOF\nwc -l notes.md'
+pair 0 $'cat > notes.md <<\'EOF\'\n@BODY@\nEOF\ncat notes.md; ls -la notes.md'
+pair 0 $'cat > notes.md <<\'EOF\'\n@BODY@\nEOF\n# written'
+pair 0 $'cat > notes.md <<\'EOF\' 2>/dev/null\n@BODY@\nEOF\n'
+pair 0 $'cat > notes.md <<\'EOF\'\n@BODY@\nEOF\ngit add notes.md && git commit -m x'
+pair 0 $'git commit -F - <<\'EOF\'\nmessage @BODY@\nEOF'
+pair 0 $'git commit -m "$(cat <<\'EOF\'\nmessage @BODY@\nEOF\n)"'
+pair 0 $'git add -A && git commit -m "$(cat <<\'EOF\'\nmessage @BODY@\nEOF\n)" && git status'
+pair 0 $'gh pr create --title t --body "$(cat <<\'EOF\'\nsummary @BODY@\nEOF\n)"'
+pair 0 $'echo "$(cat <<\'EOF\'\n@BODY@\nEOF\n)"'
+pair 0 $'cat > a.md <<\'EOF\'\nprose\nEOF\ncat > b.md <<\'EOF\'\nmore prose @BODY@\nEOF\nls'
 
 echo "── heredoc: an ANSI-C / locale quoted delimiter (<<\$'EOF', <<\$\"EOF\") is the word EOF: bash drops the \$, so the lines after the"
 echo "   real EOF line are commands (review 15/10: the \$ was kept, the body ran on to a line \$EOF and hid them)"
