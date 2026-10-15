@@ -6,16 +6,49 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-15 00:24:01",
-        "ts": 1791998641.1278982,
+        "at": "2026-10-15 09:27:41",
+        "ts": 1792031261.401877,
         "task": "session-9559b4fd-ae9",
-        "commit": "06aea84+dirty",
-        "duration": "46.67s",
+        "commit": "8c95206+dirty",
+        "duration": "65.56s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261015-001740.log",
+        "log": ".agents/evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261015-092404.log",
         "deleted": []
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-15 09:27:41",
+          "ts": 1792031261.401877,
+          "task": "session-9559b4fd-ae9",
+          "commit": "8c95206+dirty",
+          "duration": "65.56s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261015-092404.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-15 09:05:39",
+          "ts": 1792029939.653318,
+          "task": "session-9559b4fd-ae9",
+          "commit": "fff9162+dirty",
+          "duration": "74.16s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261015-090126.log",
+          "deleted": []
+        },
+        {
+          "status": "PASS",
+          "at": "2026-10-15 06:38:27",
+          "ts": 1792021107.424795,
+          "task": null,
+          "commit": "d86e883+dirty",
+          "duration": "49.15s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261015-063312.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-15 00:24:01",
@@ -36,39 +69,6 @@
           "duration": "35.93s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261014-141546.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 14:13:07",
-          "ts": 1791961987.4287958,
-          "task": null,
-          "commit": "da7392e+dirty",
-          "duration": "34.49s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261014-140618.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 12:06:40",
-          "ts": 1791954400.617942,
-          "task": "session-d91dffdd-dd8",
-          "commit": "2ef7af2+dirty",
-          "duration": "11.12s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261014-115640.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 11:56:05",
-          "ts": 1791953765.263519,
-          "task": "session-d91dffdd-dd8",
-          "commit": "2ef7af2+dirty",
-          "duration": "14.11s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261014-114604.log",
           "deleted": []
         }
       ],
@@ -170,16 +170,28 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-15 00:24:01",
-        "ts": 1791998641.14297,
-        "task": "session-9559b4fd-ae9",
-        "commit": "06aea84+dirty",
-        "duration": "120.63s",
+        "at": "2026-10-15 06:38:27",
+        "ts": 1792021107.431425,
+        "task": null,
+        "commit": "d86e883+dirty",
+        "duration": "91.21s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-01/20261015-001941.log",
-        "deleted": []
+        "log": ".agents/evidence/REG-DK-GATE-01/20261015-063443.log",
+        "deleted": [],
+        "reused_at": "2026-10-15 06:40:16"
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-15 06:38:27",
+          "ts": 1792021107.431425,
+          "task": null,
+          "commit": "d86e883+dirty",
+          "duration": "91.21s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-01/20261015-063443.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-15 00:24:01",
@@ -223,17 +235,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-01/20261014-140809.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 12:06:40",
-          "ts": 1791954400.629716,
-          "task": "session-d91dffdd-dd8",
-          "commit": "2ef7af2+dirty",
-          "duration": "194.00s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-01/20261014-115954.log",
-          "deleted": []
         }
       ],
       "title": "post-fix gate",
@@ -251,16 +252,28 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-15 00:24:01",
-        "ts": 1791998641.142984,
-        "task": "session-9559b4fd-ae9",
-        "commit": "06aea84+dirty",
-        "duration": "22.70s",
+        "at": "2026-10-15 06:38:27",
+        "ts": 1792021107.4314308,
+        "task": null,
+        "commit": "d86e883+dirty",
+        "duration": "21.28s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-02/20261015-001803.log",
-        "deleted": []
+        "log": ".agents/evidence/REG-DK-GATE-02/20261015-063333.log",
+        "deleted": [],
+        "reused_at": "2026-10-15 06:40:16"
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-15 06:38:27",
+          "ts": 1792021107.4314308,
+          "task": null,
+          "commit": "d86e883+dirty",
+          "duration": "21.28s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-GATE-02/20261015-063333.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-15 00:24:01",
@@ -304,17 +317,6 @@
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-GATE-02/20261014-140642.log",
           "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 12:06:40",
-          "ts": 1791954400.6297238,
-          "task": "session-d91dffdd-dd8",
-          "commit": "2ef7af2+dirty",
-          "duration": "26.32s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261014-115706.log",
-          "deleted": []
         }
       ],
       "title": "proof gate (tree_fp)",
@@ -332,69 +334,69 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-15 00:24:01",
-        "ts": 1791998641.1429892,
+        "at": "2026-10-15 09:57:31",
+        "ts": 1792033051.842229,
         "task": "session-9559b4fd-ae9",
-        "commit": "06aea84+dirty",
-        "duration": "69.71s",
+        "commit": "d043400+dirty",
+        "duration": "82.26s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-HOOK-01/20261015-001850.log",
+        "log": ".agents/evidence/REG-DK-HOOK-01/20261015-095429.log",
         "deleted": []
       },
       "history": [
         {
           "status": "PASS",
-          "at": "2026-10-15 00:24:01",
-          "ts": 1791998641.1429892,
+          "at": "2026-10-15 09:57:31",
+          "ts": 1792033051.842229,
           "task": "session-9559b4fd-ae9",
-          "commit": "06aea84+dirty",
-          "duration": "69.71s",
+          "commit": "d043400+dirty",
+          "duration": "82.26s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261015-001850.log",
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261015-095429.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-15 00:07:25",
-          "ts": 1791997645.81865,
+          "at": "2026-10-15 09:27:41",
+          "ts": 1792031261.41085,
           "task": "session-9559b4fd-ae9",
-          "commit": "25a6113+dirty",
-          "duration": "72.36s",
+          "commit": "8c95206+dirty",
+          "duration": "67.06s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261014-235925.log",
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261015-092511.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-14 14:17:21",
-          "ts": 1791962241.174827,
-          "task": "session-d91dffdd-dd8",
-          "commit": "da7392e+dirty",
-          "duration": "53.34s",
+          "at": "2026-10-15 09:05:39",
+          "ts": 1792029939.6623738,
+          "task": "session-9559b4fd-ae9",
+          "commit": "fff9162+dirty",
+          "duration": "93.41s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261014-141639.log",
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261015-090300.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-14 14:13:07",
-          "ts": 1791961987.43932,
-          "task": null,
-          "commit": "da7392e+dirty",
-          "duration": "73.09s",
+          "at": "2026-10-15 07:52:51",
+          "ts": 1792025571.058052,
+          "task": "session-9559b4fd-ae9",
+          "commit": "99bb35c+dirty",
+          "duration": "61.23s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261014-140731.log",
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261015-075023.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-14 12:06:40",
-          "ts": 1791954400.62973,
-          "task": "session-d91dffdd-dd8",
-          "commit": "2ef7af2+dirty",
-          "duration": "116.85s",
+          "at": "2026-10-15 07:47:04",
+          "ts": 1792025224.7359428,
+          "task": "session-9559b4fd-ae9",
+          "commit": "a0f190e+dirty",
+          "duration": "76.74s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-HOOK-01/20261014-115837.log",
+          "log": ".agents/evidence/REG-DK-HOOK-01/20261015-074426.log",
           "deleted": []
         }
       ],
@@ -410,69 +412,69 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-15 00:24:01",
-        "ts": 1791998641.1429949,
+        "at": "2026-10-15 09:57:31",
+        "ts": 1792033051.850986,
         "task": "session-9559b4fd-ae9",
-        "commit": "06aea84+dirty",
-        "duration": "22.70s",
+        "commit": "d043400+dirty",
+        "duration": "23.13s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-GATE-02/20261015-001803.log",
+        "log": ".agents/evidence/REG-DK-HOOK-02/20261015-095330.log",
         "deleted": []
       },
       "history": [
         {
           "status": "PASS",
-          "at": "2026-10-15 00:24:01",
-          "ts": 1791998641.1429949,
+          "at": "2026-10-15 09:57:31",
+          "ts": 1792033051.850986,
           "task": "session-9559b4fd-ae9",
-          "commit": "06aea84+dirty",
-          "duration": "22.70s",
+          "commit": "d043400+dirty",
+          "duration": "23.13s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261015-001803.log",
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261015-095330.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-15 00:07:25",
-          "ts": 1791997645.8186529,
+          "at": "2026-10-15 09:27:41",
+          "ts": 1792031261.410857,
           "task": "session-9559b4fd-ae9",
-          "commit": "25a6113+dirty",
-          "duration": "21.92s",
+          "commit": "8c95206+dirty",
+          "duration": "21.97s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261014-235835.log",
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261015-092426.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-14 14:17:21",
-          "ts": 1791962241.1748302,
-          "task": "session-d91dffdd-dd8",
-          "commit": "da7392e+dirty",
-          "duration": "20.39s",
+          "at": "2026-10-15 09:05:39",
+          "ts": 1792029939.66238,
+          "task": "session-9559b4fd-ae9",
+          "commit": "fff9162+dirty",
+          "duration": "23.07s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261014-141606.log",
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261015-090150.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-14 14:13:07",
-          "ts": 1791961987.439322,
-          "task": null,
-          "commit": "da7392e+dirty",
-          "duration": "23.76s",
+          "at": "2026-10-15 07:52:51",
+          "ts": 1792025571.067096,
+          "task": "session-9559b4fd-ae9",
+          "commit": "99bb35c+dirty",
+          "duration": "21.67s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261014-140642.log",
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261015-074944.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-14 12:06:40",
-          "ts": 1791954400.629733,
-          "task": "session-d91dffdd-dd8",
-          "commit": "2ef7af2+dirty",
-          "duration": "26.32s",
+          "at": "2026-10-15 07:47:04",
+          "ts": 1792025224.743039,
+          "task": "session-9559b4fd-ae9",
+          "commit": "a0f190e+dirty",
+          "duration": "22.67s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-GATE-02/20261014-115706.log",
+          "log": ".agents/evidence/REG-DK-HOOK-02/20261015-074332.log",
           "deleted": []
         }
       ],
@@ -566,69 +568,69 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-15 00:24:01",
-        "ts": 1791998641.143009,
+        "at": "2026-10-15 09:57:31",
+        "ts": 1792033051.8509939,
         "task": "session-9559b4fd-ae9",
-        "commit": "06aea84+dirty",
-        "duration": "380.02s",
+        "commit": "d043400+dirty",
+        "duration": "264.77s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-ALL-01/20261015-002400.log",
+        "log": ".agents/evidence/REG-DK-ALL-01/20261015-095731.log",
         "deleted": []
       },
       "history": [
         {
           "status": "PASS",
-          "at": "2026-10-15 00:24:01",
-          "ts": 1791998641.143009,
+          "at": "2026-10-15 09:57:31",
+          "ts": 1792033051.8509939,
           "task": "session-9559b4fd-ae9",
-          "commit": "06aea84+dirty",
-          "duration": "380.02s",
+          "commit": "d043400+dirty",
+          "duration": "264.77s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261015-002400.log",
+          "log": ".agents/evidence/REG-DK-ALL-01/20261015-095731.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-15 00:07:25",
-          "ts": 1791997645.8186612,
+          "at": "2026-10-15 09:27:41",
+          "ts": 1792031261.41086,
           "task": "session-9559b4fd-ae9",
-          "commit": "25a6113+dirty",
-          "duration": "551.46s",
+          "commit": "8c95206+dirty",
+          "duration": "216.93s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261015-000725.log",
+          "log": ".agents/evidence/REG-DK-ALL-01/20261015-092741.log",
+          "deleted": []
+        },
+        {
+          "status": "FAIL",
+          "at": "2026-10-15 09:05:39",
+          "ts": 1792029939.662383,
+          "task": "session-9559b4fd-ae9",
+          "commit": "fff9162+dirty",
+          "duration": "252.59s",
+          "exit_code": 1,
+          "log": ".agents/evidence/REG-DK-ALL-01/20261015-090539.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-14 19:28:52",
-          "ts": 1791980932.54464,
-          "task": null,
-          "commit": "3d403e6+dirty",
-          "duration": "350.46s",
+          "at": "2026-10-15 07:52:51",
+          "ts": 1792025571.067105,
+          "task": "session-9559b4fd-ae9",
+          "commit": "99bb35c+dirty",
+          "duration": "208.50s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261014-192851.log",
+          "log": ".agents/evidence/REG-DK-ALL-01/20261015-075251.log",
           "deleted": []
         },
         {
           "status": "PASS",
-          "at": "2026-10-14 17:25:34",
-          "ts": 1791973534.8860228,
-          "task": null,
-          "commit": "2f392ca+dirty",
-          "duration": "124.44s",
+          "at": "2026-10-15 07:47:04",
+          "ts": 1792025224.7430441,
+          "task": "session-9559b4fd-ae9",
+          "commit": "a0f190e+dirty",
+          "duration": "235.26s",
           "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261014-172534.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 14:31:03",
-          "ts": 1791963063.99631,
-          "task": null,
-          "commit": "0f2ec12+dirty",
-          "duration": "41.77s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-ALL-01/20261014-143103.log",
+          "log": ".agents/evidence/REG-DK-ALL-01/20261015-074704.log",
           "deleted": []
         }
       ],
@@ -683,16 +685,28 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-15 00:24:01",
-        "ts": 1791998641.143019,
-        "task": "session-9559b4fd-ae9",
-        "commit": "06aea84+dirty",
-        "duration": "0.59s",
+        "at": "2026-10-15 06:38:27",
+        "ts": 1792021107.431447,
+        "task": null,
+        "commit": "d86e883+dirty",
+        "duration": "0.34s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-WB-CONFIG-01/20261015-002401.log",
-        "deleted": []
+        "log": ".agents/evidence/REG-WB-CONFIG-01/20261015-063827.log",
+        "deleted": [],
+        "reused_at": "2026-10-15 06:40:16"
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-15 06:38:27",
+          "ts": 1792021107.431447,
+          "task": null,
+          "commit": "d86e883+dirty",
+          "duration": "0.34s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-WB-CONFIG-01/20261015-063827.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-15 00:24:01",
@@ -735,17 +749,6 @@
           "duration": "0.40s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-WB-CONFIG-01/20261013-210843.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-13 20:47:42",
-          "ts": 1791899262.815229,
-          "task": null,
-          "commit": "825b0a1+dirty",
-          "duration": "0.86s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-WB-CONFIG-01/20261013-204741.log",
           "deleted": []
         }
       ],
@@ -1107,16 +1110,28 @@
       "kind": "test",
       "last": {
         "status": "PASS",
-        "at": "2026-10-15 00:24:01",
-        "ts": 1791998641.143001,
-        "task": "session-9559b4fd-ae9",
-        "commit": "06aea84+dirty",
-        "duration": "12.83s",
+        "at": "2026-10-15 06:38:27",
+        "ts": 1792021107.431438,
+        "task": null,
+        "commit": "d86e883+dirty",
+        "duration": "10.69s",
         "exit_code": 0,
-        "log": ".agents/evidence/REG-DK-SESSION-01/20261015-001753.log",
-        "deleted": []
+        "log": ".agents/evidence/REG-DK-SESSION-01/20261015-063322.log",
+        "deleted": [],
+        "reused_at": "2026-10-15 06:40:16"
       },
       "history": [
+        {
+          "status": "PASS",
+          "at": "2026-10-15 06:38:27",
+          "ts": 1792021107.431438,
+          "task": null,
+          "commit": "d86e883+dirty",
+          "duration": "10.69s",
+          "exit_code": 0,
+          "log": ".agents/evidence/REG-DK-SESSION-01/20261015-063322.log",
+          "deleted": []
+        },
         {
           "status": "PASS",
           "at": "2026-10-15 00:24:01",
@@ -1159,17 +1174,6 @@
           "duration": "14.53s",
           "exit_code": 0,
           "log": ".agents/evidence/REG-DK-SESSION-01/20261014-140633.log",
-          "deleted": []
-        },
-        {
-          "status": "PASS",
-          "at": "2026-10-14 12:06:40",
-          "ts": 1791954400.629736,
-          "task": "session-d91dffdd-dd8",
-          "commit": "2ef7af2+dirty",
-          "duration": "21.81s",
-          "exit_code": 0,
-          "log": ".agents/evidence/REG-DK-SESSION-01/20261014-115702.log",
           "deleted": []
         }
       ],
@@ -3926,12 +3930,20 @@
       "component": "pm-mcp",
       "created_at": "2026-10-15 00:15:51",
       "task": null,
-      "tests": [],
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
       "last": null,
       "history": [],
       "fixed": true,
       "severity": "medium",
-      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)"
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 09:52:52",
+      "linked_ts": 1792032772.272386,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
     },
     "BUG-20261014-pm-agy-lock-takeover-race": {
       "id": "BUG-20261014-pm-agy-lock-takeover-race",
@@ -3941,12 +3953,20 @@
       "component": "pm-mcp",
       "created_at": "2026-10-15 00:15:51",
       "task": null,
-      "tests": [],
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
       "last": null,
       "history": [],
       "fixed": true,
       "severity": "medium",
-      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)"
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 09:52:52",
+      "linked_ts": 1792032772.563499,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
     },
     "BUG-20261014-pm-agy-prune-budget-breaks-loop": {
       "id": "BUG-20261014-pm-agy-prune-budget-breaks-loop",
@@ -3956,12 +3976,20 @@
       "component": "pm-mcp",
       "created_at": "2026-10-15 00:15:51",
       "task": null,
-      "tests": [],
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
       "last": null,
       "history": [],
       "fixed": true,
       "severity": "medium",
-      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)"
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 09:52:52",
+      "linked_ts": 1792032772.854002,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
     },
     "BUG-20261014-pm-doctor-agy-only-default-model": {
       "id": "BUG-20261014-pm-doctor-agy-only-default-model",
@@ -3971,12 +3999,20 @@
       "component": "pm-mcp",
       "created_at": "2026-10-15 00:15:52",
       "task": null,
-      "tests": [],
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
       "last": null,
       "history": [],
       "fixed": true,
       "severity": "medium",
-      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)"
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 09:52:53",
+      "linked_ts": 1792032773.175544,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
     },
     "BUG-20261014-pm-ping-kills-reused-pid": {
       "id": "BUG-20261014-pm-ping-kills-reused-pid",
@@ -3986,12 +4022,20 @@
       "component": "pm-mcp",
       "created_at": "2026-10-15 00:15:52",
       "task": null,
-      "tests": [],
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
       "last": null,
       "history": [],
       "fixed": true,
       "severity": "medium",
-      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)"
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 09:52:53",
+      "linked_ts": 1792032773.471638,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
     },
     "BUG-20261014-pm-status-agy-by-task-model": {
       "id": "BUG-20261014-pm-status-agy-by-task-model",
@@ -4001,12 +4045,20 @@
       "component": "pm-mcp",
       "created_at": "2026-10-15 00:15:53",
       "task": null,
-      "tests": [],
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
       "last": null,
       "history": [],
       "fixed": true,
       "severity": "medium",
-      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)"
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 09:52:53",
+      "linked_ts": 1792032773.767936,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
     },
     "BUG-20261014-pm-tests-guessable-agy-path": {
       "id": "BUG-20261014-pm-tests-guessable-agy-path",
@@ -4016,12 +4068,482 @@
       "component": "pm-mcp",
       "created_at": "2026-10-15 00:15:53",
       "task": null,
-      "tests": [],
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
       "last": null,
       "history": [],
       "fixed": true,
       "severity": "medium",
-      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)"
+      "evidence": "lane A4 pm-mcp: registered by the lane agent in its own worktree, re-registered in main (severity set by the lead: medium)",
+      "linked_at": "2026-10-15 09:52:54",
+      "linked_ts": 1792032774.074771,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-android-rules-reach": {
+      "id": "BUG-20261015-android-rules-reach",
+      "kind": "bug",
+      "title": "android rules: selection-size and wiring-pin sections unreachable from the prompts that need them; PII half-rule in an on-demand block; ambiguous bucket spec",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:35",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:35",
+      "linked_ts": 1792032755.390708,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/context_memory/test_profile_split.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-churn-guard-p6": {
+      "id": "BUG-20261015-churn-guard-p6",
+      "kind": "bug",
+      "title": "churn_guard untracked-edit warning starts repo-owned code, repeats process spawns on re-edit, walks huge payloads",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:35",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:36",
+      "linked_ts": 1792032756.0568058,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_untracked_edit_warning.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-generic-traps-id": {
+      "id": "BUG-20261015-generic-traps-id",
+      "kind": "bug",
+      "title": "android generic-traps test hard-codes the promoted instinct id and exports a DEVKIT_ROOT agent-kit overwrites",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:36",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:36",
+      "linked_ts": 1792032756.80627,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_android_generic_traps.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-generic-traps-round2": {
+      "id": "BUG-20261015-generic-traps-round2",
+      "kind": "bug",
+      "title": "android generic-traps test: stale comment, literal id 908 coupled to the real file, promote exit code unchecked in section C",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:37",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:37",
+      "linked_ts": 1792032757.517442,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_android_generic_traps.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-lens-pin": {
+      "id": "BUG-20261015-lens-pin",
+      "kind": "bug",
+      "title": "state-matrix lens pin could not fail (token anywhere in the file) and the kit lens named document-viewer axes",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:37",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:38",
+      "linked_ts": 1792032758.2439349,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_state_matrix_lens.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-nightly-idle-holder": {
+      "id": "BUG-20261015-nightly-idle-holder",
+      "kind": "bug",
+      "title": "nightly named run ignores an idle session that holds the checkout",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:38",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:38",
+      "linked_ts": 1792032758.982398,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_nightly.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-nightly-round2": {
+      "id": "BUG-20261015-nightly-round2",
+      "kind": "bug",
+      "title": "nightly named run: unreadable git dir and trunk-mode main went ahead, one repo ran twice under two letter cases, ~user raised",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:39",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:39",
+      "linked_ts": 1792032759.682724,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_nightly.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-nightly-run-paths": {
+      "id": "BUG-20261015-nightly-run-paths",
+      "kind": "bug",
+      "title": "nightly run accepts an empty path, runs one repo twice and passes a non-project folder",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:40",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:40",
+      "linked_ts": 1792032760.413395,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_nightly.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-rule-titles-noise": {
+      "id": "BUG-20261015-rule-titles-noise",
+      "kind": "bug",
+      "title": "android rules section titles stuffed with common words pointed ordinary prompts at section 12 or 16",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:40",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:41",
+      "linked_ts": 1792032761.064127,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/context_memory/test_profile_split.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-wiring-pin-detect": {
+      "id": "BUG-20261015-wiring-pin-detect",
+      "kind": "bug",
+      "title": "wiring_pin scan: pin name per View only, View-only test silences, same-file object ignored, data class taken for a View, comment counted as a call, empty-bodied pin, unrunnable verify hint",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:41",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:41",
+      "linked_ts": 1792032761.6887958,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_wiring_pin.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-wiring-pin-round2": {
+      "id": "BUG-20261015-wiring-pin-round2",
+      "kind": "bug",
+      "title": "wiring_pin verify misreads an inner trailing comma, counts a raw-string decoy, accepts a string-literal mention as a call",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:42",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:42",
+      "linked_ts": 1792032762.396945,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_wiring_pin.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-wiring-pin-scan": {
+      "id": "BUG-20261015-wiring-pin-scan",
+      "kind": "bug",
+      "title": "wiring_pin scan skips non-ASCII paths, hangs on a FIFO, tracebacks on a Latin-1 byte, flags renamed files as new",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:42",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:43",
+      "linked_ts": 1792032763.127999,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_wiring_pin.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-wiring-pin-verify": {
+      "id": "BUG-20261015-wiring-pin-verify",
+      "kind": "bug",
+      "title": "wiring_pin verify says holds for a wrapped or unreadable assertion, a comment-only call, an empty pin, a path outside root",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:43",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:44",
+      "linked_ts": 1792032764.047105,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_wiring_pin.sh"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-agy-orphan-sigkill": {
+      "id": "BUG-20261015-agy-orphan-sigkill",
+      "kind": "bug",
+      "title": "pm-mcp: agy opened by newConversation is orphaned when the PM is SIGKILLed while waiting for init (no pending record by pid)",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:44",
+      "task": null,
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:45",
+      "linked_ts": 1792032765.506738,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-agy-reaper-stale-snapshot-kill": {
+      "id": "BUG-20261015-agy-reaper-stale-snapshot-kill",
+      "kind": "bug",
+      "title": "pm-mcp: orphan reaper killed from a stale registry snapshot, so an agy a PM had just registered could be killed",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:46",
+      "task": null,
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:46",
+      "linked_ts": 1792032766.931632,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-agy-pending-leak-final-write": {
+      "id": "BUG-20261015-agy-pending-leak-final-write",
+      "kind": "bug",
+      "title": "pm-mcp: a failed real-entry write after agy init left a pending-<pid> record in the registry",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:47",
+      "task": null,
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:48",
+      "linked_ts": 1792032768.012536,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-agy-droppending-always-writes": {
+      "id": "BUG-20261015-agy-droppending-always-writes",
+      "kind": "bug",
+      "title": "pm-mcp: dropPending rewrote the registry even when it removed nothing (delete returns true for absent keys)",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:48",
+      "task": null,
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:48",
+      "linked_ts": 1792032768.8320189,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-agy-selftag-after-spawn": {
+      "id": "BUG-20261015-agy-selftag-after-spawn",
+      "kind": "bug",
+      "title": "pm-mcp: the PM read its own ps fingerprint after spawning agy, widening the untracked window",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:49",
+      "task": null,
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:49",
+      "linked_ts": 1792032769.4860759,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-agy-reaper-same-key-kill": {
+      "id": "BUG-20261015-agy-reaper-same-key-kill",
+      "kind": "bug",
+      "title": "pm-mcp: reaper re-check compared only the pid under a pid-keyed entry, so a rewritten pending entry (pid reuse) was killed",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:49",
+      "task": null,
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:50",
+      "linked_ts": 1792032770.144896,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-agy-reaper-recheck-before-kill": {
+      "id": "BUG-20261015-agy-reaper-recheck-before-kill",
+      "kind": "bug",
+      "title": "pm-mcp: reaper identity check ran outside the lock, long before the kill under the lock",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:50",
+      "task": null,
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:50",
+      "linked_ts": 1792032770.789614,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-agy-droppending-foreign-entry": {
+      "id": "BUG-20261015-agy-droppending-foreign-entry",
+      "kind": "bug",
+      "title": "pm-mcp: dropPending deleted by key only and could remove another live PM's pending entry",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:51",
+      "task": null,
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:51",
+      "linked_ts": 1792032771.3865511,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
+    },
+    "BUG-20261015-agy-null-selftag-accepted": {
+      "id": "BUG-20261015-agy-null-selftag-accepted",
+      "kind": "bug",
+      "title": "pm-mcp: a null own fingerprint was accepted, leaving an entry that is never reaped",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-15 09:52:51",
+      "task": null,
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "linked_at": "2026-10-15 09:52:51",
+      "linked_ts": 1792032771.981596,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
+      ],
+      "state": "confirmed"
     }
   },
   "meta": {

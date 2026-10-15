@@ -355,3 +355,33 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** A helper worktree made with --no-init fails agent-kit health, and the Stop hook gates it at every Stop
 - **Nguyên nhân:** agent-kit worktree add --no-init leaves no .claude/hooks, commands or @-imports, so REG-WB-CONFIG-01 is RED on its merged result; the merge-gate hook then re-ran a heavy gate on it at the end of EVERY turn (9+ times), loading the machine and making the real gate time out (REG-DK-ALL-01 780 s vs ~330 s) and fail.
 - **Quy tắc phòng ngừa & Cách fix:** Make helper worktrees WITH init; never leave an unmerged helper worktree standing across turns; land the integration worktree first, then remove the helpers (a tree identical to main is removable without --force). Wait for background gates inside the turn (a for-loop with sleep), not by ending turns.
+
+---
+
+### [INSTINCT-043] A test that disables the global git config relies on git's auto-detected identity, which needs a hostname with a domain: on a host named Mac a gate's own git merge fails with 'Committer identity unknown'
+- **Ngày phát hiện:** 2026-10-15
+- **Hiện tượng lỗi:** A test that disables the global git config relies on git's auto-detected identity, which needs a hostname with a domain: on a host named Mac a gate's own git merge fails with 'Committer identity unknown'
+- **Nguyên nhân:** git builds an identity from user + hostname only when the hostname has a dot. tests/gates/test_worktree_merge_gate_trunk.sh sets GIT_CONFIG_GLOBAL=/dev/null and its fixture repos had no user.name/user.email, so the hook's own merge commit (main into a worktree) had none. macOS renames the host with the network (Alexs-MacBook-Pro.local -> Mac), so a green test went red twice with no code change (15/10).
+- **Quy tắc phòng ngừa & Cách fix:** Give every fixture repo user.name and user.email in ITS config (worktrees share it); never count on auto-detect. When a test with GIT_CONFIG_GLOBAL=/dev/null fails with 'Committer identity unknown', it is this trap, not the code under test.
+- **Lệnh kiểm tra:** `GIT_CONFIG_GLOBAL=/dev/null git var GIT_COMMITTER_IDENT`
+- **Nguồn:** session 9559b4fd, Stop-hook regression gate REG-DK-ALL-01
+
+---
+
+### [INSTINCT-044] bash 3.2 ${var//x/} is quadratic and a PreToolUse guard killed at its timeout gives no verdict: a big command can pass both command guards just by being slow
+- **Ngày phát hiện:** 2026-10-15
+- **Hiện tượng lỗi:** bash 3.2 ${var//x/} is quadratic and a PreToolUse guard killed at its timeout gives no verdict: a big command can pass both command guards just by being slow
+- **Nguyên nhân:** On macOS /bin/bash 3.2.57 the replacement ${c//\\/} in fast_allow of block-dangerous-git.sh and hardware_safety_gate.sh is O(n^2) on multi-line input: a 20 KB command took 14-18 s, the hardware gate's hook timeout is 10 s (the git guard sets none), and a hook that times out is no verdict (INSTINCT-040 records the same for a Stop hook). Pre-existing, found by a reviewer's timing probe (15/10).
+- **Quy tắc phòng ngừa & Cách fix:** Bound every guard by input size: a linear tool (tr -d) above ~256 characters, a SIGALRM watchdog that REFUSES with a reason before the hook timeout, and a test with 20 KB and 200 KB commands including a dangerous line hidden after 20 KB of harmless text that must still be blocked.
+- **Lệnh kiểm tra:** `time a 20 KB multi-line command through the hook under /bin/bash 3.2 (tool-call JSON on stdin)`
+- **Nguồn:** session 9559b4fd, principal-code-reviewer timing probe of the shell_norm lane
+
+---
+
+### [INSTINCT-045] A guard that cuts heredoc bodies as data with a scanner that is not the shell hides live commands: three review rounds kept finding new fail-open forms
+- **Ngày phát hiện:** 2026-10-15
+- **Hiện tượng lỗi:** A guard that cuts heredoc bodies as data with a scanner that is not the shell hides live commands: three review rounds kept finding new fail-open forms
+- **Nguyên nhân:** shell_norm.py decided which heredoc bodies are data with its own lexer. Wherever the lexer disagrees with the shell the body is cut but RUNS: ${x//&lt;&lt;EOF}, $[1&lt;&lt;EOF], (true)#&lt;&lt;EOF, $'\\eOF' delimiters, a quoted $( ) argument of git -c alias.x, a runner registered before the write (trap, git config core.fsmonitor, git bisect run). Each fix closed one form and the next review found another; 1440 monotonic rows did not contain these shapes (15/10).
+- **Quy tắc phòng ngừa & Cách fix:** Cut a body only under a structural precondition: the whole command uses only constructs the scanner models, the delimiter is a plain word, and the body is the last statement or the value of a known message option of a known consumer; any doubt keeps the text in the scan (fail closed). Every guard change needs a monotonic corpus (old blocks implies new blocks) with a harmless control per row, mutation-checked, before any review.
+- **Lệnh kiểm tra:** `bash universal-agent-devkit/tests/gates/test_guard_shell_norm_monotonic.sh (on the lane branch until it is merged)`
+- **Nguồn:** session 9559b4fd, OCR + principal review of lane aa3f350b (guard shell_norm)

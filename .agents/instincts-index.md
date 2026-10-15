@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (357 dòng, 41.5 KB) · 45 mục
+> **Tệp gốc:** `.agents/instincts.md` (387 dòng, 45.7 KB) · 48 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -46,5 +46,8 @@
 - [INSTINCT-039] A gate shortcut that treats 'the folder is gone' as 'done' without proving the work reached trunk — `sed -n '329,336p' .agents/instincts.md`
 - [INSTINCT-040] A FIFO at any agent-writable path a hook or gate opens hangs it, and a Stop hook killed at its timeout… — `sed -n '337,344p' .agents/instincts.md`
 - [INSTINCT-041] A worktree is adopted on proof of death, never on a stale heartbeat — `sed -n '345,352p' .agents/instincts.md`
-- [INSTINCT-042] A helper worktree made with --no-init fails agent-kit health, and the Stop hook gates it at every Stop — `sed -n '353,357p' .agents/instincts.md`
+- [INSTINCT-042] A helper worktree made with --no-init fails agent-kit health, and the Stop hook gates it at every Stop — `sed -n '353,360p' .agents/instincts.md`
+- [INSTINCT-043] A test that disables the global git config relies on git's auto-detected identity, which needs a… — `sed -n '361,370p' .agents/instincts.md`
+- [INSTINCT-044] bash 3.2 ${var//x/} is quadratic and a PreToolUse guard killed at its timeout gives no verdict: a big… — `sed -n '371,380p' .agents/instincts.md`
+- [INSTINCT-045] A guard that cuts heredoc bodies as data with a scanner that is not the shell hides live commands… — `sed -n '381,387p' .agents/instincts.md`
 
