@@ -103,6 +103,8 @@ chk(d is not None and d["start_order"] == ["D", "F", "E"], "the lane with a chai
 rc, d, err = plan_json("l2d.json", [{"id": "Z", "est_min": 10}, {"id": "A", "est_min": 60}], 2)
 chk(d is not None and d["merge_order"] == ["Z", "A"], "merge order follows the end times (Z ends at 10, A at 60)", str(d and d["merge_order"]))
 
+rc, d, err = plan_json("l3c.json", [{"id": "A", "est_min": 5, "kind": None, "risk": None}], 1)
+chk(d is not None, "null kind and null risk are the same as not given", err)
 # a tie on path length and risk keeps the listed order (S: 10 + 10 behind it = 20 = Lg, and Lg is listed first although it is the longer lane)
 rc, d, err = plan_json("l3b.json", [{"id": "Lg", "est_min": 20}, {"id": "S", "est_min": 10}, {"id": "T", "est_min": 10, "deps": ["S"]}], 1)
 chk(d is not None and d["start_order"] == ["Lg", "S", "T"], "equal paths and equal risk: the listed order (Lg before S)", str(d and d["start_order"]))
@@ -266,6 +268,8 @@ bad2 = (
     ("file path .", [{"id": "A", "files": ["."]}], "files"),
     ("file path outside the repo", [{"id": "A", "files": ["../x.sh"]}], "files"),
     ("a lane that is a list", [[1, 2]], "id"),
+    ("kind that is a number", [{"id": "A", "kind": 5}], "kind"),
+    ("risk that is a bool", [{"id": "A", "risk": True}], "risk"),
 )
 for name, lanes, word in bad2:
     rc, out, err = run(["plan", lanes_file("bad2.json", lanes), "--slots", "2"])

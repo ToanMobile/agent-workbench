@@ -174,16 +174,18 @@ def load_lanes(path):
         files = sorted(set(os.path.normpath(f.strip()) for f in files))
         if any(os.path.isabs(f) or f == os.curdir or f == os.pardir or f.startswith(os.pardir + "/") for f in files):
             fail("files of %s must be paths from the repo root (no absolute path, no ., no ..)" % r["id"])
-        kind = r.get("kind") if isinstance(r.get("kind"), str) else ""
+        kind, risk = r.get("kind", ""), r.get("risk", "")
+        for field, value in (("kind", kind), ("risk", risk)):
+            if value is not None and not isinstance(value, str):   # null is "not given"; any other type is a typo that would skew the plan quietly
+                fail("%s of %s must be a string: %s" % (field, r["id"], _show(value)))
+        kind, risk = kind or "", risk or ""
         if "est_min" in r:
             est = _num(r["est_min"], "est_min of %s" % r["id"])
         else:
             if kind and hist is None:
                 hist = read_history()
             est = median(hist[kind]) if kind and kind in hist else DEFAULT_EST
-        risk = r.get("risk")
-        lanes[r["id"]] = {"id": r["id"], "est": est, "deps": sorted(set(deps)), "files": files,
-                          "high": isinstance(risk, str) and risk.lower() == "high"}
+        lanes[r["id"]] = {"id": r["id"], "est": est, "deps": sorted(set(deps)), "files": files, "high": risk.lower() == "high"}
     for l in lanes.values():
         for d in l["deps"]:
             if d not in lanes:
