@@ -273,3 +273,4 @@
 19 tests/gates/test_worktree_reflog_gone_folder.sh
 2 tests/worktree_git/test_worktree_automerge_symlink.sh
 9 tests/worktree_git/test_worktree_secret_carry.sh
+1 tests/verification/test_devkit_audit_nightly_step.sh

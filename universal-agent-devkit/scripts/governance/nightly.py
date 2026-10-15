@@ -3,7 +3,7 @@
 nightly.py — the local nightly regression job (a macOS LaunchAgent; never a cloud agent:
 the cloud has no Unity Editor, Android SDK, device or local secrets).
 
-  nightly.py run                      every registered project, now
+  nightly.py run [<project>...]       every registered project, now; or exactly the named ones (no list change, no weekly report)
   nightly.py add|remove <project>     the project list (~/.config/agent-kit/nightly-projects)
   nightly.py install [--hour H] [--minute M]   daily LaunchAgent (default 02:17)
   nightly.py uninstall | status
@@ -190,8 +190,11 @@ def weekly(projects: list) -> str | None:
     return ("Báo cáo tuần — " + " | ".join(parts)) if parts else None
 
 
-def cmd_run() -> int:
-    projects = load_projects()
+def cmd_run(paths: list | None = None) -> int:
+    """Every registered project, or exactly `paths` (the daily /devkit-audit runs one repo at a time, only those whose
+    checkout is free). A named run leaves the project list alone and sends no weekly report: its 7-day slot would go to
+    whichever repo came first, with a one-repo line."""
+    projects = [str(Path(p).expanduser().resolve()) for p in paths] if paths else load_projects()
     reds = []
     for p in projects:
         try:
@@ -202,7 +205,7 @@ def cmd_run() -> int:
         reds += [f"{Path(p).name} {i} {s}" for i, s in turned]
     if reds:
         notify(f"{len(reds)} mục chuyển sang đỏ: " + ", ".join(reds[:6]) + (" …" if len(reds) > 6 else ""))
-    report = weekly(projects)
+    report = None if paths else weekly(projects)
     if report:
         notify(report)
         print(report)
@@ -262,7 +265,11 @@ def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     cmd = args[0] if args else "status"
     if cmd == "run":
-        return cmd_run()
+        bad = [p for p in args[1:] if not Path(p).expanduser().is_dir()]
+        if bad:
+            print(f"nightly.py run: not a directory: {', '.join(bad)}", file=sys.stderr)
+            return 2
+        return cmd_run(args[1:])
     if cmd in ("add", "remove"):
         if len(args) < 2:
             print(f"nightly.py {cmd} <project>", file=sys.stderr)
@@ -287,7 +294,7 @@ def main(argv=None) -> int:
         return 0
     if cmd == "status":
         return cmd_status()
-    print("nightly.py run | add <project> | remove <project> | install [--hour H] [--minute M] | uninstall | status",
+    print("nightly.py run [<project>...] | add <project> | remove <project> | install [--hour H] [--minute M] | uninstall | status",
           file=sys.stderr)
     return 2
 

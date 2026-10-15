@@ -76,4 +76,17 @@ python3 "$NIGHTLY" status 2>&1 | grep -q "02:17" && ok "status shows the schedul
 python3 "$NIGHTLY" uninstall >/dev/null 2>&1; [ ! -f "$PL" ] && ok "uninstall removes it" || fail "uninstall"
 python3 "$NIGHTLY" remove "$FLK" >/dev/null; [ "$(grep -c . "$HOME/.config/agent-kit/nightly-projects")" = 2 ] && ok "remove drops a project" || fail "remove"
 
+# W4b: `run <project>…` runs exactly the named projects (the daily /devkit-audit calls it once per repo whose checkout is free):
+# not the registry, no registry change, and no weekly report (its 7-day slot would go to whichever repo came first).
+ONE="$TMP/one"; mk "$ONE" "true" 'grep -q 2 src/b.txt'; echo 3 > "$ONE/src/b.txt"        # breaks REG-B
+REG_BEFORE="$(cat "$HOME/.config/agent-kit/nightly-projects")"
+rm -f "$HOME/.config/agent-kit/nightly-state.json"; : > "$NOTES"
+out="$(python3 "$NIGHTLY" run "$ONE" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(st "$ONE" REG-B)" = FAIL ] && ok "run <path>: runs that project although it is not registered" || fail "run <path>: rc=$rc $(st "$ONE" REG-B) $out"
+printf '%s\n' "$out" | grep -q '^one: ' && ! printf '%s\n' "$out" | grep -q '^good: ' && ok "run <path>: only the named project runs, the registered ones do not" || fail "run <path> output: $out"
+[ "$(cat "$HOME/.config/agent-kit/nightly-projects")" = "$REG_BEFORE" ] && ok "run <path>: the project list is untouched" || fail "run <path> changed the list"
+[ ! -f "$HOME/.config/agent-kit/nightly-state.json" ] && ! grep -q "tuần" "$NOTES" && ok "run <path>: no weekly report, its 7-day slot stays free" || fail "run <path> weekly: $(cat "$NOTES")"
+python3 "$NIGHTLY" run "$TMP/no-such-dir" >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && ok "run <path>: a path that is not a directory is refused (exit 2)" || fail "run <bad path>: exit $rc"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_nightly: all passed" || { echo "❌ test_nightly: $FAILS failed"; exit 1; }

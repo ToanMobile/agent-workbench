@@ -236,7 +236,7 @@ case "$CMD" in
     python3 "$(find_script governance memory_stats.py)" "$@"
     ;;
   nightly)
-    # nightly run | add [path] | remove [path] | install [--hour H] [--minute M] | uninstall | status
+    # nightly run [path…] | add [path] | remove [path] | install [--hour H] [--minute M] | uninstall | status
     shift || true
     case "${1:-status}" in
       add|remove) python3 "$(find_script governance nightly.py)" "$1" "${2:-${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}}" ;;
@@ -375,7 +375,8 @@ Commands:
                       the project's Claude transcripts through the current prompt hook (read-only):
                       % that get a trap / a project rule, traps never shown, and how often a trap
                       the hook printed was then opened (live log: .claude/audit-gate/surfaced.jsonl)
-  nightly add [path] | remove [path] | install [--hour H] [--minute M] | uninstall | status | run
+  nightly add [path] | remove [path] | install [--hour H] [--minute M] | uninstall | status | run [path…]
+                      (run <path>: only that project, no list change, no weekly report)
                       Local nightly job (macOS LaunchAgent, default 02:17): every suite of each
                       added project for real (Gradle/Unity too), FAIL re-run once (FLAKY), pending
                       RED-proofs; a notification only when a row turns red; weekly one-line report
