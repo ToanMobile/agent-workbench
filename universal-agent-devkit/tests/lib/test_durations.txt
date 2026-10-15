@@ -52,7 +52,7 @@
 7 tests/verification/test_agent_bridge.sh
 6 tests/gates/test_worktree_merge_gate.sh
 6 tests/worktree_git/test_relink.sh
-6 tests/verification/test_nightly.sh
+12 tests/verification/test_nightly.sh
 5 tests/verification/test_regression_checklist.sh
 5 tests/verification/test_matrix_detect.sh
 5 tests/verification/test_run_impacted.sh
@@ -277,6 +277,6 @@
 1 tests/verification/test_state_matrix_lens.sh
 1 tests/verification/test_android_selection_telemetry_rule.sh
 4 tests/verification/test_android_generic_traps.sh
-3 tests/gates/test_untracked_edit_warning.sh
+4 tests/gates/test_untracked_edit_warning.sh
 4 tests/verification/test_wiring_pin.sh
 2 tests/gates/test_stop_hook_times.sh
