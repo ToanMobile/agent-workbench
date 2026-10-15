@@ -267,6 +267,14 @@ for sec, prompt in (("§16", "Extract logic from a View into an internal object,
                     ("§12", "Log how many words the user selected when pressing Translate"),
                     ("§12", "Ghi log số từ người dùng đã chọn khi bấm Dịch")):
     say(("  - " + sec + " ") in hook(android_root, prompt), "rule_context names %s for the prompt %r" % (sec, prompt))
+# ... and the trigger words must stay specific: the matcher is a bag of words (two title words, one 8+ letter title word, or one title word plus
+# two body words), so a title stuffed with copy / search / share / translate / logic / object pointed ordinary prompts at the wrong section.
+# These must name neither section (they named §12 or §16 before the titles were narrowed).
+for prompt in ("fix the search bar crash on the home screen", "translate the app strings to Japanese", "copy selected text to clipboard crashes",
+               "selected text handles are wrong in the PDF viewer", "move the logic from the ViewModel into a use case object",
+               "translate button layout is broken on tablets", "internal storage path for exported files", "chọn văn bản trong PDF bị lệch handle"):
+    out_g = hook(android_root, prompt)
+    say("  - §12 " not in out_g and "  - §16 " not in out_g, "rule_context names neither §12 nor §16 for the ordinary prompt %r" % prompt)
 say(hook(os.path.join(TMP, "no-such-project"), "fix the Room migration crash after the schema export change") == "",
     "rule_context is silent without profile-reference.md and rules-index.md")
 PY
