@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { newConversation, sendMessage, getConversationMetadata, agyTurnStatus } from '../src/agentapi.js';
 import { AntigravityUnavailable } from '../src/discover.js';
 import { loadConfig } from '../src/config.js';
@@ -1055,3 +1055,31 @@ test('go ban ghi cho khi muc do da vang (PM khac don mat roi): KHONG ghi lai so 
   assert.match(String(err?.message), /init/, 'luot mo phai that bai vi agy thoat khong co init');
   assert.equal(rewrites, 0, 'go mot muc khong con trong so dang ky ma van ghi lai ca file');
 });
+
+/** Chay MOT lan ps gia vua viet (bo ket qua): lan exec dau cua mot file moi ghi co the vuot 1500 ms (timeout cua procTag) tren may tai cao, va test do vi ly do khong lien quan. */
+function warmPs(wrapper) { spawnSync(wrapper, ['-o', 'lstart=', '-p', String(process.pid)], { stdio: 'ignore' }); }
+
+// Khoa cua muc cho la `pending-<pid agy>`: pid bi dung lai thi mot PM SONG khac ghi muc cho MOI duoi CUNG khoa. Ban chup cua reaper (chu da chet) khong con dung.
+for (const [field, value] of [['pidTag', 'Fri Oct 16 00:00:00 2026'], ['ownerPid', process.pid], ['ownerTag', 'Fri Oct 16 00:00:00 2026']]) {
+  test(`don agy mo coi: muc cho bi ghi lai duoi CUNG khoa (${field} khac) giua luc chup so va luc giet => khong giet (so voi muc da chup, khong chi pid)`, async (t) => {
+    const fake = fakeAgy(t, { FAKE_AGY_ID: 'fa00fa00-2222-3333-4444-555555555555' });
+    const x = liveSleep(t);
+    const DEAD_PID = await deadPid();
+    const snap = pendingEntry({ pid: x.pid, pidTag: x.tag, ownerPid: DEAD_PID, ownerTag: WRONG_TAG });
+    fs.writeFileSync(registryFile(), JSON.stringify({ [`pending-${x.pid}`]: snap }));
+    const replace = path.join(fake.dir, 'replace.cjs');
+    fs.writeFileSync(replace, `const fs = require('node:fs'); const f = process.env.REG; const r = JSON.parse(fs.readFileSync(f, 'utf8'));
+      r['pending-${x.pid}'] = { ...r['pending-${x.pid}'], ${JSON.stringify(field)}: ${JSON.stringify(value)}, at: new Date().toISOString() };
+      fs.writeFileSync(f, JSON.stringify(r));\n`);
+    const wrapper = path.join(fake.dir, 'ps-replace.sh');
+    const mark = path.join(fake.dir, 'replaced');
+    fs.writeFileSync(wrapper, `#!/bin/sh\nif [ "$4" = "${DEAD_PID}" ] && [ ! -e "${mark}" ]; then : > "${mark}"; REG="${registryFile()}" "${process.execPath}" "${replace}"; fi\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+    warmPs(wrapper);
+    process.env.ANTIGRAVITY_PM_PS = wrapper;
+    await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
+    assert.ok(fs.existsSync(mark), 'kich ban hong: ps gia khong duoc hoi ve chu cua muc cho');
+    await sleep(300);
+    assert.equal(alive(x.pid), true, `reaper giet agy ma muc cho (cung khoa, ${field} khac) da thuoc ve PM khac`);
+    assert.equal(registryOf()[`pending-${x.pid}`]?.[field], value, 'muc cho moi cua PM kia bi go / ghi de');
+  });
+}

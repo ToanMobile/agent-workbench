@@ -440,6 +440,9 @@ function stopUntracked(r, e) {
 // PM ke tiep mo hoi thoai moi se don no (reapOrphanAgy). Xong luot: muc nay doi thanh muc that (cung mot lan ghi duoi khoa).
 const pendingKey = (pid) => `pending-${pid}`;
 
+/** Muc cho hien tai la CHINH muc da chup (khoa `pending-<pid>` chi noi len pid: pid dung lai thi PM khac ghi muc moi duoi cung khoa). */
+const samePending = (cur, snap) => Boolean(cur?.pending) && ['pid', 'pidTag', 'ownerPid', 'ownerTag'].every((f) => cur[f] === snap[f]);
+
 /**
  * Dung agy mo coi: muc cho ma PM chu khong con la tien trinh do (pid + dau van tay ps) => agy cua no khong ai theo doi (chay --dangerously-skip-permissions).
  * PM chu con song (dang cho init, toi 60 s): bo qua muc. ps hong hoac muc thieu dau van tay: giu muc, dung gi cung chua dung.
@@ -464,7 +467,7 @@ function reapOrphanAgy() {
       const now = readAgyRegistry();
       let changed = false;
       for (const [k, e, agyAlive] of orphans) {
-        if (!(now[k]?.pending && now[k].pid === e.pid)) continue;   // da doi thanh muc that / da go: agy nay co chu
+        if (!samePending(now[k], e)) continue;   // da doi thanh muc that / da go / bi PM khac ghi lai duoi cung khoa (pid dung lai): agy nay co chu
         if (agyAlive) {
           const err = killGroup(e.pid);
           if (err && err.code !== 'ESRCH') { logStderr(`don agy mo coi: khong dung duoc agy pid ${e.pid} (${err.message}): giu muc ${k}`); continue; }
