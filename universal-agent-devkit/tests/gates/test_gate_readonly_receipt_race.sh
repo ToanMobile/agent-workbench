@@ -19,6 +19,8 @@
 #   V   a read-only run that exits 0 wrote no receipt, so it is not an acceptance: --json says "accepted": false and the verdict says so; the control
 #       (the lock is free) is accepted. The run log (runs.jsonl) says busy=false for it (it is no lock wait), busy=true for a run that ended BUSY and for
 #       a run whose re-used PASS went STALE: the same formula as the --json summary.
+#   F   a FORCED read-only run that ends exit != 0 (--full, an unwatched file: exit 2) must not leave the exit-0 receipt of the same content standing
+#       either: it writes nothing new and only drops it; the control (exit 0) leaves the receipt it re-used untouched.
 #   N   DEVKIT_REUSE_LOCK_WAIT_S and TEST_RUN_LOCK_WAIT_S that are not finite numbers (nan, inf) fall back to their defaults, as an unparsable value
 #       does: min(45, nan) is 45 (the long wait for a run that has nothing to run) and a nan deadline never expires (the run waits for ever).
 #         row 1  every suite re-used, the lock held, TEST_RUN_LOCK_WAIT_S=nan: the run goes read-only after the short wait (it hung until killed)
@@ -316,6 +318,36 @@ if [ "$s_seed" = 0 ] && [ "$s_rc" = 4 ] && grep -q '"busy": true' "$TMP/a.out" &
 else
   bad "V/log/stale: seed rc=$s_seed (want 0), A exit $s_rc (want 4), json busy true lines $(grep -c '"busy": true' "$TMP/a.out"), run log '$s_log' (want 'true UNTESTED')"
 fi
+
+# F: a FORCED read-only run (--full, every suite re-used, the lock held past the short wait) that ends exit != 0 must not leave the exit-0 receipt of the
+# same content standing either (a guard that let only Stop-style runs through left it exit 0, so XONG and push stood on a receipt the run contradicts).
+# It writes nothing new (no os.replace onto the receipt: a lock-less replace that carries a re-used PASS could put a PASS back) and only DROPS it.
+f_forced() { # $1 label, $2 exit2 (an unwatched file: the verdict is exit 2) | exit0 (control: the verdict is exit 0, the receipt is the PASS it re-used)
+  if [ "$2" = exit2 ]; then make_repo unwatched; else make_repo; fi
+  seed_pass; seed_ok "$1" || return
+  local t0 t1 a_rc a_state a_repl; t0="$(rtime)"; rm -f "$TMP/replaces"
+  hold_lock "$TMP/lock.release"
+  a_run full DEVKIT_REUSE_LOCK_WAIT_S=1 TEST_RUN_LOCK_WAIT_S=10 PW_REPLACES="$TMP/replaces"
+  release_lock
+  a_rc="$(cat "$TMP/a.rc")"; a_state="$(state "$GD/full_pass.json")"; t1="$(rtime)"
+  a_repl=$([ -f "$TMP/replaces" ] && wc -l < "$TMP/replaces" | tr -d ' ' || echo 0)
+  if ! grep -q 'wrote nothing' "$TMP/a.out"; then bad "$1: setup went wrong: A was not read-only (no 'wrote nothing' line)"; tail -5 "$TMP/a.out"; return; fi
+  if [ "$2" = exit2 ]; then
+    if [ "$a_rc" = 2 ] && [ "$a_state" = none ] && [ "$a_repl" = 0 ] && grep -q '"accepted": false' "$TMP/a.out" && ! grep -q Traceback "$TMP/a.out"; then
+      ok "$1: a forced read-only run ended exit 2: the exit-0 receipt is dropped (not left standing, nothing written), accepted: false"
+    else
+      bad "$1: A exit $a_rc (want 2), receipt after A '$a_state' (want none), os.replace onto it $a_repl (want 0), accepted:false lines $(grep -c '"accepted": false' "$TMP/a.out") (want 1)"
+    fi
+  else
+    if [ "$a_rc" = 0 ] && [ "$a_state" = "exit=0 REG-1=PASS,REG-2=PASS untested=" ] && [ "$t1" = "$t0" ] && [ "$a_repl" = 0 ]; then
+      ok "$1 control: a forced read-only run that ended exit 0 left the receipt it re-used byte for byte (time unchanged, nothing written)"
+    else
+      bad "$1 control: A exit $a_rc (want 0), receipt after A '$a_state', time $t0 -> $t1 (want unchanged), os.replace onto it $a_repl (want 0)"
+    fi
+  fi
+}
+f_forced "F/forced/read-only/exit2" exit2
+f_forced "F/forced/read-only/exit0" exit0
 
 # N: values that are not finite numbers
 # row 1: every suite re-used, the lock held for ever (until the test lets go), TEST_RUN_LOCK_WAIT_S=nan: read-only after the short wait

@@ -806,6 +806,13 @@ if res.returncode == 4 and summary.get("busy"):
     # BUSY: another test run held the project lock, no test ran. Transient, not this machine
     # lacking a tool: say the real cause every time and cache nothing (the next stop runs it).
     note(f"busy fp={fp}")
+    suites = summary.get("regression_tests") or []
+    stale = [str(t.get("id") or "?") for t in suites if t.get("label") == "STALE"]
+    if stale and not any(t.get("label") == "BUSY" for t in suites):
+        # the "busy" flag is also set for a re-used PASS whose file another run replaced or deleted (STALE): the lock is not the reason then
+        print(json.dumps({"systemMessage": "Regression gate UNTESTED — một lượt chạy khác đã đổi/xoá kết quả PASS dùng lại của %s — chạy lại sau; "
+                          "test hồi quy đó CHƯA chạy lại, KHÔNG phải PASS." % ", ".join(stale)}, ensure_ascii=False))
+        sys.exit(0)
     print(json.dumps({"systemMessage": "Regression gate UNTESTED — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau "
                       "(.claude/audit-gate/test_run.lock); test hồi quy CHƯA chạy, KHÔNG phải PASS."}, ensure_ascii=False))
     sys.exit(0)

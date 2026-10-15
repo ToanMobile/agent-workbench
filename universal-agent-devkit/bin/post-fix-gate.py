@@ -5683,14 +5683,18 @@ def main():
     partial = not force_reason or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)
     try:
         if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and (not partial or (exit_code != 0 and not receipt_untested)) \
-                and (not read_only or partial):   # read-only: only a Stop-style run, whose write can only drop an exit-0 receipt (locked=False below)
+                and (not read_only or partial or exit_code != 0):
             # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
             # suites all passed (2026-09-29) — leaves the last full one as it is; a BUSY run (lock not held, nothing ran)
             # and a BUDGET run (a suite never started) leave it alone too: either used to delete even a valid one,
-            # so a Stop whose lock wait or time budget ran out forced a new --full
+            # so a Stop whose lock wait or time budget ran out forced a new --full.
+            # A READ-ONLY run (no lock, every suite re-used) writes nothing new, forced or not: with exit 0 it leaves the receipt it re-used alone;
+            # with another exit code it is handed to the writer as PARTIAL and unlocked, which only ever DROPS an exit-0 receipt (never replaces
+            # it: a lock-less replace that carries a re-used PASS could put back a PASS a FAIL took away), so a verdict that contradicts the
+            # receipt never leaves it standing for XONG and push, whether the run was a Stop or --full.
             write_full_pass_receipt(project_dir, exit_code, args.matrix, regression_tests,
                                     tested_at=float(cache.get("tested_at") or 0) if cache else None,
-                                    tested_fp=tested_fp, untested=receipt_untested, partial=partial,
+                                    tested_fp=tested_fp, untested=receipt_untested, partial=partial or read_only,
                                     locked=lock_fh is not None)   # the handle itself: (None, True) is also "nothing to re-use or run, no lock asked for"
         # The budget record (BUDGET_RECORD) is a file of its own, so the receipt above stays byte for byte whatever happens here:
         # a suite that FAILED or TIMED OUT drops it (never a FAIL item), a budget cut writes what finished (never on another tree).

@@ -101,10 +101,16 @@ stopx c-one X=1
 
 # R8: the key also holds a stat signature of the hook, the gate and devkit_harness.py (an edited or reinstalled kit is a new key). The same content, the same
 # session, through a COPY of the kit (the same bytes, other files and mtimes) moves only that part. The log is the hook's, in the same project.
-KIT_COPY="$TMP/kit2"; cp -R "$(dirname "$(dirname "$HOOK")")" "$KIT_COPY" 2>/dev/null || fail "R8: cannot copy the kit"
-HOOK="$KIT_COPY/hooks/regression_gate.sh"
-stopx c-one X=1
-[ "$(lastmiss)" = "repeat miss sid=c-one differs=sig" ] && ok "R8: the same content through a copy of the kit: differs=sig" || fail "R8: last='$(lastmiss)'"
+# Only hooks/ and bin/ are copied (the hook finds the gate next to itself, as test_regression_gate_stale_label.sh relies on); a copy that fails fails the row
+# and the row stops there (it must not run the original kit's hook and judge that).
+KIT_SRC="$(dirname "$(dirname "$HOOK")")"; KIT_COPY="$TMP/kit2"
+if mkdir -p "$KIT_COPY" && cp -R "$KIT_SRC/hooks" "$KIT_COPY/hooks" && cp -R "$KIT_SRC/bin" "$KIT_COPY/bin"; then
+  HOOK="$KIT_COPY/hooks/regression_gate.sh"
+  stopx c-one X=1
+  [ "$(lastmiss)" = "repeat miss sid=c-one differs=sig" ] && ok "R8: the same content through a copy of the kit: differs=sig" || fail "R8: last='$(lastmiss)'"
+else
+  fail "R8: cannot copy hooks/ and bin/ of $KIT_SRC to $KIT_COPY"
+fi
 
 cd "$TMP" || exit 1
 if [ "$FAILS" -ne 0 ]; then echo "regression gate repeat miss log: $FAILS FAILED"; exit 1; fi

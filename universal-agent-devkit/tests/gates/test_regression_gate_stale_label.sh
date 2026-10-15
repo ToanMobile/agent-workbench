@@ -7,6 +7,8 @@
 #   S1 label STALE: the block says the other run changed or deleted the PASS it re-used (not "cannot run on this machine") and the next Stop on the same
 #      content runs the gate again (the block is not re-used)
 #   S2 control, an UNTESTED suite with a label the hook does not name: the old wording and the block IS re-used (the gate does not run again)
+#   S3 the gate ends exit 4 with "busy": true and ONLY a STALE suite: the BUSY branch must name the replaced/deleted PASS, not "another run holds the lock"
+#   S4 control, the same with a BUSY suite: the lock wording
 # bash 3.2 compatible; STALELABEL_KIT=<kit dir> tests another copy of the kit (a mutant must go red).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
@@ -27,6 +29,11 @@ KIT="$TMP/kit"; mkdir -p "$KIT" && cp -R "$SRC_KIT/hooks" "$KIT/hooks" && cp -R 
 cat > "$KIT/bin/post-fix-gate.py" <<'PY'
 import json, os, sys
 open(os.environ["FAKE_RUNS"], "a").write("x")
+if os.environ.get("FAKE_BUSY"):   # exit 4 with the "busy" flag and ONE suite of the chosen label (a Stop whose only trouble is another run)
+    print("fake gate")
+    print(json.dumps({"verdict": "UNTESTED", "exit_code": 4, "busy": True, "findings": [], "tests_touched": [], "checklist": "c", "report": "r",
+                      "regression_tests": [{"id": "REG-S", "name": "reused", "status": "UNTESTED", "label": os.environ["FAKE_LABEL"], "command": "true", "output_tail": "x"}]}))
+    sys.exit(4)
 print("fake gate")
 print(json.dumps({"verdict": "REJECT", "exit_code": 1, "findings": [], "tests_touched": [], "checklist": "c", "report": "r",
                   "regression_tests": [
@@ -74,6 +81,28 @@ fi
 stopx s-other UNTESTED
 if [ "$(runs)" = "$r3" ]; then ok "S2 control: the next Stop on the same content re-uses that block (the gate did not run again)"
 else fail "S2 control: the gate ran again ($r3 -> $(runs)): a block without a STALE suite should have been re-used"; fi
+
+# S3 / S4: the gate ends exit 4 with "busy": true (another run interfered, no suite of this run failed): the hook's BUSY branch said "another run holds
+# test_run.lock" whatever the reason. A suite that is only STALE (the file its re-used PASS came from was replaced or deleted by a concurrent run) is not
+# about the lock: it says so, with the wording of the exit 1/2 path. A BUSY suite keeps the lock wording. Nothing is cached either way (no block is stored).
+stopb() { # $1 = session id, $2 = the label of the one UNTESTED suite
+  printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "$1" "$TMP/claude.jsonl" \
+    | env FAKE_BUSY=1 FAKE_LABEL="$2" CLAUDE_PROJECT_DIR="$R" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"
+  RC=$?
+}
+echo "fun ok() = 4" > src/Core.kt
+stopb s-busy-stale STALE
+if [ "$RC" = 0 ] && grep -q "đã đổi/xoá kết quả PASS dùng lại" "$TMP/out" && grep -q "REG-S" "$TMP/out" && ! grep -q "đang giữ khoá" "$TMP/out"; then
+  ok "S3: exit 4 + busy with only a STALE suite: the message names the changed/deleted PASS and the suite, not the lock"
+else
+  fail "S3: rc=$RC out='$(head -c 500 "$TMP/out")' err='$(head -c 200 "$TMP/err")'"
+fi
+stopb s-busy-lock BUSY
+if [ "$RC" = 0 ] && grep -q "đang giữ khoá" "$TMP/out" && ! grep -q "đã đổi/xoá kết quả PASS dùng lại" "$TMP/out"; then
+  ok "S4 control: exit 4 + busy with a BUSY suite keeps the lock message"
+else
+  fail "S4 control: rc=$RC out='$(head -c 500 "$TMP/out")' err='$(head -c 200 "$TMP/err")'"
+fi
 
 cd "$TMP" || exit 1
 if [ "$FAILS" -ne 0 ]; then echo "regression gate stale label: $FAILS FAILED"; exit 1; fi

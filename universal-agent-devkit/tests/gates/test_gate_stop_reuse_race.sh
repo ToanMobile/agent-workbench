@@ -21,7 +21,7 @@
 #   K3  the file changes AFTER the first check (under the lock, once the suites ran), before the verdict (a writer that took no lock, a person's
 #       rm): the second check turns the re-used PASS UNTESTED just the same, exit 4.
 #   K6  every suite is re-used and another run holds the lock past the SHORT wait (DEVKIT_REUSE_LOCK_WAIT_S, default 3 s, not the long 45 s): A judges
-#       from a stamp check and WRITES NOTHING (receipt "time" unchanged, no checklist PASS): stands / rewritten -> exit 0, removed / unvouched -> exit 4.
+#       from a stamp check and WRITES NOTHING (receipt "time" unchanged, no checklist PASS): stands / rewritten -> exit 0, removed / unvouched -> exit 4 (and the receipt is dropped, never replaced).
 #   K7  the same for a Stop-style run that ends exit 2. With the lock (free) the partial writer turns the exit-0 receipt to exit 2 under it. WITHOUT the
 #       lock (held past the short wait) it must not load-and-replace the receipt: a forced run B that FAILED REG-1 and deleted it between that load and
 #       that replace would get it back as exit 2 with REG-1 PASS (F1; tests/gates/test_gate_readonly_receipt_race.sh pins the interleaving). It DROPS the
@@ -339,7 +339,9 @@ k6() { # $1 label, $2 A (stop | full), $3 none | rewrite | remove | unvouch | fr
         bad "$1: A exit $A_RC (want 0), runs $A_S1/$A_S2 (want 0/0), receipt time $t0 -> $t1 (want unchanged), checklist '$A_STATUS1'/'$A_STATUS2' (not PASS), receipt '$A_RECEIPT', 'wrote nothing' lines: $(grep -c 'wrote nothing' "$TMP/a.out")"
       fi ;;
     remove|unvouch)
-      local want_receipt="none"; [ "$3" = unvouch ] && want_receipt="exit=4 REG-1=UNTESTED,REG-2=PASS untested=REG-1"
+      # a lock-less run whose verdict is not exit 0 only DROPS the receipt, a forced one as well as a Stop-style one (third review of the lane): it used to
+      # leave the file another run had put there (for 'unvouch': exit 4, REG-2 PASS), which is what a run with the lock would have judged for itself
+      local want_receipt="none"
       if [ "$A_RC" = 4 ] && [ "$A_S1" = 0 ] && [ "$A_S2" = 0 ] && [ "$A_RECEIPT" = "$want_receipt" ] && [ "$A_STATUS1" != PASS ] \
          && grep -q "no longer stands" "$TMP/a.out" && grep -q '"busy": true' "$TMP/a.out" && [ "$A_TRACE" = 0 ]; then
         ok "$1: the lock held past the short wait and the file was changed ($3): not exit 0 (4), nothing written, receipt '$A_RECEIPT'"
