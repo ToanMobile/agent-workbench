@@ -1171,10 +1171,13 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
 # ponytail: only a run with no force_reason (the Stop hook; also a --full that was deferred for sibling sessions, which ends
 # exit 5 and writes no receipt) reads it, so an acceptance run never rests on a Stop run's results; allow a forced run to read it
 # (drop `force_reason` in reuse_full_pass) when the extra handover run is ever seen to cost more than that trust is worth.
-# 2026-10-15: every such run that ended without a FAIL writes it, not only a budget cut: a Stop that ends exit 2 (an edited test waits for a
-# person) or exit 4 (a suite cannot run here) used to record nothing, so after the hook's 300 s reminder window, or in another session, every
-# suite ran again on the same content (Neighbours 13/10: 243 s to print the same reminder). The record also names the HEAD it was taken at
-# (the fingerprint is blind to a commit of the same content): a record without one, or of another HEAD, is never read. A FAIL still drops it.
+# 2026-10-15: not only a budget cut writes it: a Stop that ends exit 2 (an edited test waits for a person) or exit 4 (a suite cannot run here)
+# used to record nothing, so after the hook's 300 s reminder window, or in another session, every suite ran again on the same content
+# (Neighbours 13/10: 243 s to print the same reminder). It is written by a run that has no force_reason, ended with an exit code other than 0, had
+# no FAIL / TIMEOUT suite, started at least one suite itself, and took a tree fingerprint and a HEAD before its suites: that needs the cache on
+# (not --no-cache, not DEVKIT_GATE_CACHE=0) and a time budget (GATE_TOTAL_BUDGET_S > 0: the Stop hook passes one, REGRESSION_GATE_BUDGET_S=0 takes
+# it away, and a CLI run without the variable records nothing). The record also names the HEAD it was taken at (the fingerprint is blind to a
+# commit of the same content) and the selection environment: a record without them, or of another HEAD, is never read. A FAIL still drops it.
 # ponytail: a run with a FAILED suite records nothing, so a repeat of such a run re-runs the suites that passed in it; upgrade when the
 # FAIL-then-same-content repeat is seen to cost more than the "a FAIL leaves nothing to re-use" rule is worth.
 # ponytail: a record is read for up to DEVKIT_GATE_CACHE_MAX_S (6 h, as the receipt), so a suite that starts to fail on UNCHANGED content (a flaky

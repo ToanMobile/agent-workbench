@@ -6,10 +6,13 @@
 # another session. Measured on the real logs (Neighbours 13/10: one such re-run of a Unity suite took 243 s and printed the same reminder; runs since
 # 12/10 20:32 whose suites an exact memo would have skipped, impacted-mode runs left out because they are not recorded: Neighbours 4.0 min,
 # GeelyEx2 0.3 min in 2.6 days; OfficeReader's one repeat, 568 s on 13/10, was an impacted run and is NOT covered).
-# Now every non-forced run that ended without a FAIL records the suites that PASSED their FULL command, and the next non-forced run on identical
-# inputs starts none of them. The record is read under the keys of a receipt (tree fingerprint, matrix, local-config sha, result format, age,
-# no device suite) AND the HEAD it was taken at. An impacted-mode PASS is never recorded (the full command did not pass), and a record is read for up
-# to 6 h like a receipt: a suite that starts to fail on unchanged content stays unseen until the record ages out or the content changes.
+# Now a run that has no --full, ended with an exit code other than 0, had no FAIL, started a suite itself and had a time budget and the cache on
+# (the Stop hook has both; a CLI run without GATE_TOTAL_BUDGET_S, REGRESSION_GATE_BUDGET_S=0 and DEVKIT_GATE_CACHE=0 record nothing) records the
+# suites that PASSED their FULL command, and the next non-forced run on identical inputs starts none of them. The record is read under the keys of
+# a receipt (tree fingerprint, matrix, local-config sha, result format, age, no device suite) AND the HEAD it was taken at AND the selection
+# environment (tests/gates/test_gate_stop_record_inputs.sh); tests/gates/test_gate_stop_record_race.sh pins that a run never writes back what a
+# concurrent run replaced. An impacted-mode PASS is never recorded (the full command did not pass), and a record is read for up to 6 h like a
+# receipt: a suite that starts to fail on unchanged content stays unseen until the record ages out or the content changes.
 #   A  gate level, real git repos, a Stop-style run (GATE_TOTAL_BUDGET_S set, no --full):
 #      A1 same content twice (exit 2: an existing test was edited): run 2 starts no suite, still exit 2, says it re-used them
 #      A2 one source byte changed: every suite runs again               A3 the edited test edited again: every suite runs again
