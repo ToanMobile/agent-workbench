@@ -16,7 +16,12 @@
 <!-- /on-demand -->
 
 ## 2. Mỹ Thuật Kỹ Thuật, 3D Assets & Shaders (Technical Art & Rendering)
-- **Pipeline 3D-to-2D Baked Sprites (Chống Phèn):** CẤM DÙNG 2D phẳng hoặc khối primitive thô cho coin, gem, rương, cúp. Dựng 3D beveled trong Blender (`bpy`) với ánh sáng Studio 3 điểm (Key Light ấm 45°, Fill Light lạnh 50%, Rim Light gắt nổi viền + AO), render headless ra PNG 512×512 alpha trong suốt, đóng gói vào SpriteAtlas (đẹp nổi khối 3D nhưng nhẹ DrawCall như 2D).
+- **Blender 3D là nguồn duy nhất của MỌI asset hình ảnh (vật phẩm, nhân vật, môi trường, UI, icon, nền), không có 2D mặc định:** CẤM 2D phẳng, SVG, ảnh AI 2D, ảnh stock 2D, primitive thô. Dựng 3D beveled trong Blender (`bpy`), đèn Studio 3 điểm (Key ấm 45°, Fill lạnh 50%, Rim gắt + AO). Nguồn `.blend` hoặc script `bpy` ở `Art/Source/`, NGOÀI `Assets/`; vào Unity bằng FBX/glTF, hoặc PNG 512×512 alpha từ `render_game_prop.py` (`--prop` hay `--blend`) chỉ khi cần Texture2D (uGUI, SpriteAtlas).
+<!-- on-demand: §2 Blender 3D là nguồn duy nhất: dạng giao, asset AI/ngoài, MCP -->
+- **Hai dạng giao, không có dạng thứ ba:** (M) FBX/glTF cho vật thể trong scene: apply transform, Y-up, 1 unit = 1m, ngân sách tris theo loại, LOD từ 5.000 tris. (T) PNG alpha render từ Blender khi Unity chỉ nhận Texture2D; nút và panel 9-slice là tấm bevel dựng trong Blender rồi render.
+- **Asset 3D do AI sinh (Hunyuan3D, Rodin, Tripo qua blender-mcp) và asset ngoài:** chỉ nhận mesh 3D (glTF/FBX) có giấy phép; retopo và qua ngân sách polycount trong Blender trước khi vào `Assets/`; ghi nguồn và giấy phép vào `docs/third-party-licenses.md`.
+- **Blender MCP:** ghim phiên bản, `DISABLE_TELEMETRY=true`, `BLENDER_MCP_SAFE_MODE=1`, lưu `.blend` trước khi chạy; audit chỉ dùng tool đọc (`get_scene_info`, `look`). Ba skill 2D `generate2dmedia`, `generate2dsprite`, `video2dsprite` đã bị loại khỏi profile game.
+<!-- /on-demand -->
 - **Tiêu chuẩn Mesh 3D:** Quad topology sạch, cấm non-manifold/đảo normal; freeze scale/rotation trước khi export (Unity Y-up, 1 unit = 1m); asset $\ge 5\,000$ tris bắt buộc có LOD0/LOD1/LOD2.
 - **Shader & VFX Mobile URP:**
   - SRP Batcher: Mọi custom shader bắt buộc đóng gói uniforms vào CBUFFER `UnityPerMaterial`.

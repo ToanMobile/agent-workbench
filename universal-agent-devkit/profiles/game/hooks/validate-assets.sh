@@ -17,8 +17,11 @@
 # Rules checked:
 #   R1 no docs / scratch inside Assets/: *.md *.markdown *.rst *.tmp *.bak *.orig *.rej
 #      *.log notes.txt, Assets/Temp/**, Assets/InitTestScene*.unity (left by a crashed
-#      PlayMode test run). Third-party folders (Assets/Plugins/**, **/Documentation~/**)
-#      are exempt. Scan mode flags only new files (untracked/added), not tracked ones.
+#      PlayMode test run). Blender 3D is the only asset source (game-rules.md §2): the
+#      Blender source (*.blend *.blend1..99 *.blend@, kept in Art/Source/ outside Assets/) and
+#      2D sources (*.svg *.psd *.psb *.ai *.aseprite *.ase *.xcf *.kra) are rogue too.
+#      Third-party folders (Assets/Plugins/**, Assets/TextMesh Pro/**, Assets/Samples/**,
+#      **/Documentation~/**) are exempt. Scan mode flags only new files (untracked/added), not tracked ones.
 #   R2 (scan) a deleted .meta whose asset still exists → GUID will be regenerated.
 #   R3 (scan) a deleted asset whose .meta is still on disk → orphan .meta.
 #   Advisory (scan, exit unaffected): a new asset file without its .meta yet — let the
@@ -35,22 +38,27 @@ cd "$REPO_ROOT" 2>/dev/null || exit 0
 
 is_rogue() {  # $1 = repo-relative path
   case "$1" in
-    Assets/Plugins/*|*/Documentation~/*) return 1 ;;
+    Assets/Plugins/*|"Assets/TextMesh Pro/"*|Assets/Samples/*|*/Documentation~/*) return 1 ;;
     Assets/Temp/*|Assets/Temp|Assets/Temp.meta) return 0 ;;
     Assets/InitTestScene*.unity|Assets/InitTestScene*.unity.meta) return 0 ;;
   esac
   case "$1" in
     Assets/*)
-      case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+      local lc
+      lc="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+      case "$lc" in
         *.md|*.markdown|*.rst|*.tmp|*.bak|*.orig|*.rej|*.log|*/notes.txt|\
         *.md.meta|*.markdown.meta|*.rst.meta|*.tmp.meta|*.bak.meta|*.orig.meta|*.rej.meta|*.log.meta|*/notes.txt.meta)
           return 0 ;;
+      esac
+      case "${lc%.meta}" in
+        *.blend|*.blend[0-9]|*.blend[0-9][0-9]|*.blend@|*.svg|*.psd|*.psb|*.ai|*.aseprite|*.ase|*.xcf|*.kra) return 0 ;;
       esac ;;
   esac
   return 1
 }
 
-HINT="Unity sẽ import file này thành TextAsset kèm .meta mới (nhiễu GUID, xung đột git, lọt vào build). Chuyển tài liệu sang docs/ (hoặc design/, production/), file tạm ra ngoài repo."
+HINT="Unity import mọi thứ trong Assets/: .md/.txt thành TextAsset kèm .meta mới (nhiễu GUID, xung đột git, lọt vào build), .blend khiến Unity gọi Blender mỗi lần import. Tài liệu chuyển sang docs/ (hoặc design/, production/), file tạm ra ngoài repo. Blender 3D là nguồn duy nhất của asset: giữ .blend ở Art/Source/ (ngoài Assets/), không đưa nguồn 2D (.svg/.psd/...) vào; chỉ vào Assets/ FBX/glTF hoặc PNG do Blender render."
 
 # ---------- hook mode ----------
 INPUT=""
@@ -81,12 +89,16 @@ advisory=""
 while IFS= read -r -d '' entry; do
   st="${entry:0:2}"
   path="${entry:3}"
-  case "$st" in R*|C*) IFS= read -r -d '' _orig || true ;; esac
+  _orig=""
+  case "$st" in *[RC]*) IFS= read -r -d '' _orig || true ;; esac   # a rename/copy on EITHER side carries its source path
   case "$path" in Assets/*) ;; *) continue ;; esac
   case "$st" in
-    "??"|A?|?A)
+    "??"|A?|?A|R?|?R|C?|?C)
+      # a rename/copy is judged by its NEW path. Only a RENAME of a file that was already rogue and keeps its kind (same extension) is
+      # grandfathered: git mv Art/Source/hero.blend Assets/..., hero.fbx -> hero.blend and notes.md -> hero.blend are all caught
+      case "$st" in *C*) ;; *R*) case "$_orig" in Assets/*) is_rogue "$_orig" && o="${_orig%.meta}" && n="${path%.meta}" && [ "$(printf '%s' "${o##*.}" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "${n##*.}" | tr '[:upper:]' '[:lower:]')" ] && continue ;; esac ;; esac
       if is_rogue "$path"; then
-        echo "❌ R1 file tài liệu/tạm trong Assets/: $path" >&2; fail=1; r1=1
+        echo "❌ R1 file không thuộc Assets/ (tài liệu, tạm, nguồn .blend/2D): $path" >&2; fail=1; r1=1
       elif [ -f "$path" ] && [ "${path%.meta}" = "$path" ] && [ ! -e "$path.meta" ]; then
         advisory="$advisory\n  - $path (chưa có .meta — mở Editor để import rồi commit cả hai)"
       fi ;;

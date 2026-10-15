@@ -6,7 +6,7 @@ acceptance gate (reports/proof-<stamp>.png, >= 8KB, valid PNG header, non-blank)
 
 Usage:
     python3 scripts/capture_3d_proof.py --prop coin
-    python3 scripts/capture_3d_proof.py --blend Assets/Art/Models/hero.blend
+    python3 scripts/capture_3d_proof.py --blend Art/Source/hero.blend
     python3 scripts/capture_3d_proof.py --image Assets/Art/Sprites/UI/coin_gold.png
 """
 
@@ -33,7 +33,7 @@ def is_valid_png(path: Path) -> bool:
     return True
 
 
-def render_blender_prop(output_path: Path, prop: str, color: str = "gold", resolution: int = 512) -> bool:
+def render_blender_prop(output_path: Path, prop: str, color: str = "gold", resolution: int = 512, blend: str = "") -> bool:
     blender_bin = shutil.which("blender")
     if not blender_bin:
         # Check standard macOS locations
@@ -52,60 +52,34 @@ def render_blender_prop(output_path: Path, prop: str, color: str = "gold", resol
 
     if blender_bin and prop_script.is_file():
         cmd = [
-            blender_bin, "-b", "-P", str(prop_script), "--",
+            blender_bin, "--disable-autoexec", "-b", "-P", str(prop_script), "--",   # a source may come from the web (AI asset): never run its scripts
             "--output", str(output_path),
-            "--prop", prop,
-            "--color", color,
             "--resolution", str(resolution),
         ]
+        # a source replaces the built-in prop: --prop/--color would be dropped, so the script refuses them together
+        cmd += ["--blend", blend] if blend else ["--prop", prop, "--color", color]
+        output_path.unlink(missing_ok=True)   # a PNG left by an earlier run must never pass for this run's proof
         try:
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             if res.returncode == 0 and is_valid_png(output_path):
                 return True
-        except (subprocess.TimeoutExpired, OSError):
-            pass
+            print("Blender exit %s: %s" % (res.returncode, (res.stderr or res.stdout).strip()[-400:]), file=sys.stderr)
+        except (subprocess.TimeoutExpired, OSError) as err:
+            print("Blender run failed: %s" % err, file=sys.stderr)
+    else:
+        print("Blender or render_game_prop.py not found", file=sys.stderr)
 
-    # Fallback: Generate a high-quality stylized 3D placeholder PNG with PIL if Blender binary is missing
-    try:
-        from PIL import Image, ImageDraw, ImageFilter
-        img = Image.new("RGBA", (resolution, resolution), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        cx, cy, r = resolution // 2, resolution // 2, resolution // 3
-        # Outer bevel / shadow
-        draw.ellipse([cx - r - 8, cy - r - 4, cx + r + 8, cy + r + 12], fill=(40, 25, 5, 180))
-        # Gold gradient rim
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 200, 35, 255), outline=(190, 130, 15, 255), width=8)
-        # Inner coin face
-        inner_r = r - 16
-        draw.ellipse([cx - inner_r, cy - inner_r, cx + inner_r, cy + inner_r], fill=(255, 225, 75, 255), outline=(215, 160, 25, 255), width=4)
-        # Star / relief icon in center
-        draw.polygon([
-            (cx, cy - inner_r + 20),
-            (cx + 15, cy - 10),
-            (cx + inner_r - 20, cy - 10),
-            (cx + 25, cy + 12),
-            (cx + 40, cy + inner_r - 25),
-            (cx, cy + 30),
-            (cx - 40, cy + inner_r - 25),
-            (cx - 25, cy + 12),
-            (cx - inner_r + 20, cy - 10),
-            (cx - 15, cy - 10)
-        ], fill=(255, 245, 160, 255), outline=(200, 140, 20, 255))
-        # Specular highlight streak
-        draw.arc([cx - inner_r + 8, cy - inner_r + 8, cx + inner_r - 8, cy + inner_r - 8], start=200, end=300, fill=(255, 255, 255, 230), width=6)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        img.save(str(output_path), "PNG")
-        return is_valid_png(output_path)
-    except ImportError:
-        return False
+    # No drawn stand-in: Blender 3D is the only source of a game asset or of its proof.
+    return False
 
 
 def main():
     parser = argparse.ArgumentParser(description="Capture 3D visual proof for Blender/Unity.")
     parser.add_argument("--project", default=".", help="Project directory")
     parser.add_argument("--output", help="Explicit output PNG path")
-    parser.add_argument("--prop", default="coin", choices=["coin", "gem", "chest", "trophy", "potion"], help="Prop type")
-    parser.add_argument("--color", default="gold", help="Material color")
+    parser.add_argument("--prop", choices=["coin", "gem", "chest", "trophy", "potion"], help="Prop type (default coin; not with --blend)")
+    parser.add_argument("--color", help="Material color (default gold; not with --blend)")
+    parser.add_argument("--blend", help="Render this .blend source instead of a built-in prop")
     parser.add_argument("--image", help="Existing rendered 3D asset image to copy as proof")
     args = parser.parse_args()
 
@@ -116,14 +90,24 @@ def main():
     stamp = time.strftime("%Y%m%d-%H%M%S")
     dest = Path(args.output) if args.output else (reports_dir / f"proof-{stamp}.png")
 
-    if args.image and Path(args.image).is_file():
+    if args.image is not None:   # an explicit image is the proof or nothing: never a default asset rendered in its place
         src = Path(args.image)
         if is_valid_png(src):
             shutil.copyfile(src, dest)
             print(f"{dest} 3d-asset")
             sys.exit(0)
+        print(f"Error: --image {src} is missing or not a valid PNG (>= {MIN_BYTES} bytes); no stand-in is rendered", file=sys.stderr)
+        sys.exit(1)
+    blend = args.blend
+    if blend is not None and not blend:
+        parser.error("--blend is empty")
+    if blend and (args.prop or args.color):   # the wrapper cannot tell a typed value from a default, so the defaults live here
+        parser.error("--prop and --color describe a built-in prop; they do not apply to --blend")
+    prop, color = args.prop or "coin", args.color or "gold"
+    if blend and not os.path.isabs(blend):
+        blend = str(project / blend)   # relative to --project, not to wherever the tool runs
 
-    success = render_blender_prop(dest, args.prop, args.color)
+    success = render_blender_prop(dest, prop, color, blend=blend or "")
     if success and dest.is_file():
         print(f"{dest} blender-3d")
         sys.exit(0)

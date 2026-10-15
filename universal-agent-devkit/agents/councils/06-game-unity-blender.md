@@ -27,6 +27,8 @@ Hội đồng kiểm soát hiệu năng Game 3D, kiến trúc Unity 6, rò rỉ 
 4. **Agent 6.4 — Blender 3D Mesh Topology & Non-Manifold Inspector:**
    - Kiểm tra mô hình 3D qua Blender MCP: phát hiện non-manifold edges, flipped normals, n-gons.
    - Thẩm định ngân sách đa giác (Polycount budget) theo từng loại tài nguyên (Hero character, Environment, Props).
+   - Chỉ dùng tool đọc của Blender MCP (`get_scene_info`, `look`); không chạy `execute_blender_code` khi audit (Python tùy ý, socket không xác thực).
+   - Blender 3D là nguồn duy nhất của asset: mọi file ảnh/model mới trong `Assets/` phải có nguồn `.blend` hoặc script `bpy` ở `Art/Source/`, hoặc do `render_game_prop.py --prop <tên>` của profile render ra (script đó là nguồn), hoặc là asset 3D ngoài có dòng trong `docs/third-party-licenses.md`; thiếu nguồn thì từ chối.
 
 5. **Agent 6.5 — Texture & Asset Memory Budget Guardian:**
    - Xác thực kích thước texture tuân thủ lũy thừa của 2 (Power of Two — POT: 512, 1024, 2048) phục vụ nén GPU (ASTC/DXT).

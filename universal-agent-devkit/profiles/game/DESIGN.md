@@ -64,8 +64,8 @@ Tuân thủ hệ số bội của $4\text{px} / 4\text{dp}$:
 
 ## 5. Quy Chuẩn Đồ Họa & Iconography
 
-- Định dạng icon chuẩn: Vector SVG (Web) hoặc Vector Drawable (Android XML / Compose Icons).
-- Độ dày viền icon (Stroke): Đều đặn $1.5\text{dp}$ hoặc $2.0\text{dp}$ trong toàn bộ ứng dụng.
+- Icon là mesh 3D beveled dựng trong Blender, hoặc PNG alpha render từ chính scene Blender đó; không dùng SVG hay Vector Drawable.
+- Độ dày bevel icon: dùng chung một bán kính bevel cho mọi icon trong toàn bộ game.
 - Bán kính bo góc (Corner Radius):
   - Nút bấm nhỏ / Chip: $8\text{dp}$.
   - Thẻ (Card) / Sheet: $16\text{dp}$.
@@ -113,10 +113,10 @@ Tuân thủ hệ số bội của $4\text{px} / 4\text{dp}$:
 5. **Game Feel & Squash & Stretch:**
    - Nút bấm nén $0.92\times$ trục Y khi chạm, nảy $1.08\times$ overshoot `Ease.OutBack` khi buông.
    - Camera Shake dùng Trauma decay ($Trauma^2 \times \text{PerlinNoise}$).
-6. **Props 3D Baked Sprites:**
-   - Dùng Blender render 3D studio lighting ra PNG 512×512 alpha trong suốt cho coin, gem, rương, cúp; không dùng icon emoji hoặc ảnh phẳng thô sơ.
-7. **Asset Standards (kho asset mẫu & icon; chỉ áp dụng cho profile game):**
-   - Kenney: `kenney.nl/support` nêu asset là CC0 (dùng thương mại, không cần ghi công), nhưng đọc file license của từng pack trước khi dùng. Lucide: giấy phép ISC (giữ thông báo bản quyền), SVG; README không nói cách dùng trong Unity nên rasterize thành sprite rồi gom vào SpriteAtlas.
-   - Nút và panel kéo giãn luôn là sprite 9-slice có viền (border) đặt đúng trong Sprite Editor; kiểm tra bằng Game View ở 1080×1920 và một tỉ lệ khác, không để texture méo hoặc vỡ viền.
+6. **Mọi asset dựng 3D trong Blender (render PNG chỉ khi cần Texture2D):**
+   - Vật phẩm, nhân vật, môi trường, UI, icon và nền đều dựng 3D trong Blender với studio lighting; render PNG 512×512 alpha trong suốt chỉ khi Unity cần Texture2D (uGUI, SpriteAtlas). Không dùng icon emoji, SVG, ảnh phẳng, ảnh AI 2D hay ảnh stock 2D.
+7. **Asset Standards (kho asset mẫu 3D; chỉ áp dụng cho profile game):**
+   - Kenney (chỉ gói 3D): `kenney.nl/support` nêu asset là CC0 (dùng thương mại, không cần ghi công), nhưng đọc file license của từng pack trước khi dùng; nhập vào Blender để chuẩn hóa scale, pivot, LOD rồi mới export. Không dùng Lucide/SVG hay pack sprite 2D.
+   - Nút và panel kéo giãn là sprite 9-slice có viền (border), tấm bevel dựng trong Blender rồi render; đặt border đúng trong Sprite Editor, kiểm tra bằng Game View ở 1080×1920 và một tỉ lệ khác, không để texture méo hoặc vỡ viền.
    - Mỗi asset ngoài ghi nguồn và giấy phép vào sổ `docs/third-party-licenses.md` ngoài `Assets/` (luật không có tài liệu trong `Assets/`, `game-rules.md` §6); không đưa asset thiếu giấy phép vào build.
 

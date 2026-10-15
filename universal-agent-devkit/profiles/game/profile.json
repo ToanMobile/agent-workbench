@@ -11,7 +11,7 @@
     "unity",
     "blender"
   ],
-  "external_mcps_note": "Unity/Blender MCP servers are not shipped in mcp/; install and register them yourself. They are not checked by agent-kit health.",
+  "external_mcps_note": "Unity/Blender MCP servers are not shipped in mcp/; install and register them yourself. They are not checked by agent-kit health. blender-mcp runs arbitrary Python inside Blender over an unauthenticated localhost socket and sends anonymous telemetry by default: pin the version (uvx blender-mcp==<ver>), set DISABLE_TELEMETRY=true and BLENDER_MCP_SAFE_MODE=1, save the .blend first, and let audit agents use read-only tools (get_scene_info, look), never execute_blender_code.",
   "active_councils": [
     "06-game-unity-blender.md",
     "02-architecture-blast-radius.md",
@@ -28,7 +28,10 @@
     "android-real-device-qa",
     "compose-recomp-audit",
     "deploy",
-    "taste-mobile-app"
+    "generate2dmedia",
+    "generate2dsprite",
+    "taste-mobile-app",
+    "video2dsprite"
   ],
   "exclude_agents": [
     "android-principal-architect"

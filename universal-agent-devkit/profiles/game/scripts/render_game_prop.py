@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
-"""render_game_prop.py — Headless Blender Script for Juicy 3D Game UI Assets & Baked Sprites.
+"""render_game_prop.py — Headless Blender script: renders one game asset to a transparent PNG.
 
-Generates polished, high-resolution transparent 3D sprites (coins, gems, chests, trophies)
-using 3-point studio lighting and PBR materials, exported directly into Unity Assets/ folder.
+Blender 3D is the only source of a game asset. This script turns one into a PNG for the Unity places that need a
+Texture2D (uGUI, SpriteAtlas), with 3-point studio lighting, either a built-in prop or any .blend source:
 
-Usage:
-    blender -b -P render_game_prop.py -- --output Assets/Art/Sprites/UI/coin_gold.png --prop coin --color gold
-    blender -b -P render_game_prop.py -- --output Assets/Art/Sprites/UI/gem_ruby.png --prop gem --color ruby
+    --prop coin|gem|chest|trophy|potion   built-in props
+    --blend <file.blend>                  render that source instead: its own lights and cameras are replaced by the studio rig,
+                                          what renders (collection and geometry-node instances included) is measured and the
+                                          studio rig is placed and sized to it (the source is not moved), its scripts never run (use_scripts=False), its render border and compositor are ignored; its world (HDRI, colour) stays, only its lights go
+Every unknown or bad argument exits 2 and writes nothing (never a silent default).
+
+Usage (--disable-autoexec: a source may come from the web):
+    blender --disable-autoexec -b -P render_game_prop.py -- --output Assets/Art/Sprites/UI/coin_gold.png --prop coin --color gold
+    blender --disable-autoexec -b -P render_game_prop.py -- --output Assets/Art/Sprites/UI/gem_ruby.png --prop gem --color ruby
+    blender --disable-autoexec -b -P render_game_prop.py -- --output Assets/Art/Sprites/UI/hero.png --blend Art/Source/hero.blend
 """
 
+import argparse
 import sys
 import os
 import math
+import traceback
 
 try:
     import bpy
@@ -21,42 +30,43 @@ except ImportError:
     sys.exit(1)
 
 
+PROPS = ("coin", "gem", "chest", "trophy", "potion")
+SAMPLES = 32   # the most samples a --blend source may render with (it may come with 4096)
+
+COLORS = {   # RGBA
+    "gold": (1.0, 0.78, 0.15, 1.0),
+    "ruby": (0.95, 0.1, 0.2, 1.0),
+    "emerald": (0.1, 0.85, 0.35, 1.0),
+    "sapphire": (0.15, 0.45, 0.95, 1.0),
+    "amethyst": (0.7, 0.2, 0.9, 1.0),
+    "silver": (0.85, 0.88, 0.92, 1.0),
+    "bronze": (0.75, 0.45, 0.2, 1.0),
+}
+
+
+def _positive_int(text):
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return value
+
+
 def parse_args():
-    raw_args = sys.argv
-    if "--" in raw_args:
-        args = raw_args[raw_args.index("--") + 1:]
-    else:
-        args = []
-
-    params = {
-        "output": "rendered_prop.png",
-        "prop": "coin",
-        "color": "gold",
-        "resolution": 512,
-        "angle": "iso",
-        "samples": 32,
-    }
-
-    i = 0
-    while i < len(args):
-        if args[i] == "--output" and i + 1 < len(args):
-            params["output"] = args[i + 1]
-            i += 2
-        elif args[i] == "--prop" and i + 1 < len(args):
-            params["prop"] = args[i + 1].lower()
-            i += 2
-        elif args[i] == "--color" and i + 1 < len(args):
-            params["color"] = args[i + 1].lower()
-            i += 2
-        elif args[i] == "--resolution" and i + 1 < len(args):
-            params["resolution"] = int(args[i + 1])
-            i += 2
-        elif args[i] == "--angle" and i + 1 < len(args):
-            params["angle"] = args[i + 1].lower()
-            i += 2
-        else:
-            i += 1
-    return params
+    args = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    parser = argparse.ArgumentParser(prog="render_game_prop.py", allow_abbrev=False,
+                                     description="Render one game asset (Blender 3D) to a transparent PNG.")
+    parser.add_argument("--output", default="rendered_prop.png")
+    parser.add_argument("--prop", type=str.lower, choices=PROPS)
+    parser.add_argument("--color", type=str.lower, choices=sorted(COLORS))
+    parser.add_argument("--resolution", default=512, type=_positive_int)
+    parser.add_argument("--angle", default="iso", type=str.lower, choices=("iso", "front", "side"))
+    parser.add_argument("--blend")
+    ns = parser.parse_args(args)   # a bad option exits 2 through SystemExit, past main()'s except Exception
+    if ns.blend is not None and (ns.prop or ns.color):
+        parser.error("--prop and --color describe a built-in prop; they do not apply to --blend")
+    ns.prop = ns.prop or "coin"
+    ns.color = ns.color or "gold"
+    return vars(ns)
 
 
 def clean_scene():
@@ -78,18 +88,21 @@ def create_pbr_material(name, base_color, metallic=0.9, roughness=0.2):
     return mat
 
 
-def build_prop(prop_type, color_name):
-    # Colors (RGBA)
-    color_map = {
-        "gold": (1.0, 0.78, 0.15, 1.0),
-        "ruby": (0.95, 0.1, 0.2, 1.0),
-        "emerald": (0.1, 0.85, 0.35, 1.0),
-        "sapphire": (0.15, 0.45, 0.95, 1.0),
-        "amethyst": (0.7, 0.2, 0.9, 1.0),
-        "silver": (0.85, 0.88, 0.92, 1.0),
-        "bronze": (0.75, 0.45, 0.2, 1.0),
-    }
-    base_color = color_map.get(color_name, (1.0, 0.78, 0.15, 1.0))
+def _join(parts, name):
+    bpy.ops.object.select_all(action='DESELECT')
+    for part in parts:
+        part.select_set(True)
+    bpy.context.view_layer.objects.active = parts[0]
+    bpy.ops.object.join()
+    joined = bpy.context.active_object
+    joined.name = name
+    return joined
+
+
+def build_prop(prop_type, color_name="gold"):
+    if color_name not in COLORS:
+        raise ValueError("unknown color %r (known: %s)" % (color_name, ", ".join(sorted(COLORS))))
+    base_color = COLORS[color_name]
 
     if prop_type == "coin":
         # Beveled cylinder coin with star/star relief
@@ -139,14 +152,45 @@ def build_prop(prop_type, color_name):
         bev.segments = 2
         return chest
 
-    else:
-        # Default sphere token
-        bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, segments=32, ring_count=24)
-        token = bpy.context.active_object
-        mat = create_pbr_material("Mat_Token", base_color, metallic=0.8, roughness=0.2)
-        token.data.materials.append(mat)
+    elif prop_type == "trophy":
+        # Cup on a stem and a foot
+        mat = create_pbr_material("Mat_Trophy", base_color, metallic=0.95, roughness=0.2)
+        parts = []
+        for add, kw in (
+            (bpy.ops.mesh.primitive_cone_add, dict(vertices=32, radius1=0.35, radius2=0.75, depth=0.9, location=(0, 0, 0.45))),
+            (bpy.ops.mesh.primitive_cylinder_add, dict(vertices=24, radius=0.12, depth=0.5, location=(0, 0, -0.25))),
+            (bpy.ops.mesh.primitive_cylinder_add, dict(vertices=32, radius=0.5, depth=0.14, location=(0, 0, -0.57))),
+        ):
+            add(**kw)
+            part = bpy.context.active_object
+            part.data.materials.append(mat)
+            parts.append(part)
+        trophy = _join(parts, "GameProp_Trophy")
+        bev = trophy.modifiers.new(name="Bevel", type='BEVEL')
+        bev.width = 0.03
+        bev.segments = 2
         bpy.ops.object.shade_smooth()
-        return token
+        return trophy
+
+    elif prop_type == "potion":
+        # Round flask, neck and cork
+        glass = create_pbr_material("Mat_Potion", base_color, metallic=0.1, roughness=0.05)
+        cork = create_pbr_material("Mat_Cork", (0.45, 0.28, 0.12, 1.0), metallic=0.0, roughness=0.8)
+        parts = []
+        for add, kw, mat in (
+            (bpy.ops.mesh.primitive_uv_sphere_add, dict(radius=0.7, segments=32, ring_count=24, location=(0, 0, -0.2)), glass),
+            (bpy.ops.mesh.primitive_cylinder_add, dict(vertices=24, radius=0.2, depth=0.6, location=(0, 0, 0.55)), glass),
+            (bpy.ops.mesh.primitive_cylinder_add, dict(vertices=24, radius=0.26, depth=0.18, location=(0, 0, 0.94)), cork),
+        ):
+            add(**kw)
+            part = bpy.context.active_object
+            part.data.materials.append(mat)
+            parts.append(part)
+        potion = _join(parts, "GameProp_Potion")
+        bpy.ops.object.shade_smooth()
+        return potion
+
+    raise ValueError("unknown prop %r (known: %s; or --blend <file>)" % (prop_type, ", ".join(PROPS)))
 
 
 def setup_lighting():
@@ -176,6 +220,7 @@ def setup_lighting():
     rim.data.spot_size = math.radians(60)
     rim.data.color = (1.0, 1.0, 1.0)
     rim.rotation_euler = (math.radians(-120), 0, 0)
+    return [key, fill, rim]
 
 
 def setup_camera(angle):
@@ -197,13 +242,21 @@ def setup_camera(angle):
     else:
         cam.location = (3.0, -3.0, 3.0)
         cam.rotation_euler = (math.radians(50), 0, math.radians(45))
+    return cam
 
 
-def configure_render(output_path, resolution, samples):
+def configure_render(output_path, resolution):
     scene = bpy.context.scene
     scene.render.resolution_x = resolution
     scene.render.resolution_y = resolution
     scene.render.resolution_percentage = 100
+
+    # The output is this scene's 3D only: a source's own render border, compositor and sequencer must not crop or replace it,
+    # and the file is written exactly where --output says (Blender would append .png to a name without an extension)
+    scene.render.use_border = False
+    scene.render.use_compositing = False
+    scene.render.use_sequencer = False
+    scene.render.use_file_extension = False
 
     # Transparent background for UI sprite
     scene.render.film_transparent = True
@@ -217,18 +270,111 @@ def configure_render(output_path, resolution, samples):
     scene.render.filepath = abs_out
 
 
-def main():
+def cap_samples(limit):
+    """A source saved with 4096 samples would outlast any caller's timeout: never render with more than `limit`."""
+    scene = bpy.context.scene
+    for view_layer in scene.view_layers:   # Cycles lets a view layer override the scene's sample count
+        if view_layer.samples:
+            view_layer.samples = min(view_layer.samples, limit)
+    if scene.render.engine == 'CYCLES':
+        scene.cycles.samples = min(scene.cycles.samples, limit)
+    elif hasattr(scene.eevee, "taa_render_samples"):
+        scene.eevee.taa_render_samples = min(scene.eevee.taa_render_samples, limit)
+
+
+GEOMETRY = ('MESH', 'CURVE', 'SURFACE', 'FONT', 'META', 'GPENCIL', 'GREASEPENCIL', 'CURVES', 'POINTCLOUD', 'VOLUME')
+
+
+def _render_visible():
+    """The scene objects that render: not hidden themselves, in a collection that is neither excluded from the view layer nor
+    hidden for render through itself or a parent (an object linked into several collections renders when ONE of them does)."""
+    seen = set()
+
+    def walk(layer_collection):
+        if layer_collection.exclude or layer_collection.collection.hide_render:
+            return
+        seen.update(obj for obj in layer_collection.collection.objects if not obj.hide_render)
+        for child in layer_collection.children:
+            walk(child)
+
+    walk(bpy.context.view_layer.layer_collection)
+    return seen
+
+
+def frame_blend_scene():
+    """Replace the source's own lights and cameras and measure what renders. Returns (centre, factor) for fit_rig: the rig is built
+    for content of 1.3 units, so a source `factor` times larger gets the rig `factor` times larger. The source itself is never moved,
+    scaled or re-parented (instances, hidden parents, constraints and animation then need no special care)."""
+    from mathutils import Vector
+    scene = bpy.context.scene
+    for obj in list(scene.objects):
+        if obj.type in ('LIGHT', 'CAMERA'):
+            bpy.data.objects.remove(obj, do_unlink=True)
+    visible = _render_visible()
+    points = []
+    # ponytail: the viewport depsgraph skips an object that is disabled in viewports but enabled for render; add a render depsgraph when a source needs it
+    for inst in bpy.context.evaluated_depsgraph_get().object_instances:   # real objects AND instances (collections, geometry nodes, particles)
+        evaluated = inst.object
+        if evaluated.type not in GEOMETRY:
+            continue
+        owner = inst.parent.original if inst.is_instance and inst.parent else evaluated.original   # an instance renders when its instancer does
+        if owner in visible:
+            points.extend(inst.matrix_world @ Vector(corner) for corner in evaluated.bound_box)
+    if not points:
+        raise ValueError("--blend file has nothing that renders (no mesh, curve, text or instance with geometry)")
+    low = Vector((min(p.x for p in points), min(p.y for p in points), min(p.z for p in points)))
+    high = Vector((max(p.x for p in points), max(p.y for p in points), max(p.z for p in points)))
+    # The iso camera looks 0.385 above the rig's origin: content of 1.3 units keeps the top of even a cube inside the ortho 3.2 frame.
+    return (low + high) * 0.5, (max(high.x - low.x, high.y - low.y, high.z - low.z) or 1.0) / 1.3
+
+
+def fit_rig(rig, centre, factor):
+    """Put the studio rig (the lights and camera just created, never found by name: a source may own an object called Key_Light)
+    at the content's centre, `factor` times larger."""
+    for obj in rig:
+        obj.location = centre + obj.location * factor
+        if obj.type == 'LIGHT':
+            obj.data.energy *= factor ** 2   # the same exposure at `factor` times the distance
+            if obj.data.type == 'AREA':
+                obj.data.size *= factor
+        else:
+            obj.data.ortho_scale *= factor
+            obj.data.clip_start *= factor
+            obj.data.clip_end *= factor
+
+
+def _run():
     params = parse_args()
-    clean_scene()
-    build_prop(params["prop"], params["color"])
-    setup_lighting()
-    setup_camera(params["angle"])
-    configure_render(params["output"], params["resolution"], params["samples"])
+    fit = None
+    if params["blend"] is not None:
+        if not os.path.isfile(params["blend"]):
+            raise ValueError("--blend file not found: %s" % params["blend"])
+        bpy.ops.wm.open_mainfile(filepath=os.path.abspath(params["blend"]), use_scripts=False)   # a source may come from the web
+        fit = frame_blend_scene()
+        cap_samples(SAMPLES)
+        view_layer = bpy.context.view_layer   # the studio rig goes into the scene's own collection, never a hidden or excluded one
+        view_layer.active_layer_collection = view_layer.layer_collection
+    else:
+        clean_scene()
+        build_prop(params["prop"], params["color"])
+    rig = setup_lighting() + [setup_camera(params["angle"])]
+    if fit:
+        fit_rig(rig, *fit)
+    configure_render(params["output"], params["resolution"])
 
     # Render
     bpy.ops.render.render(write_still=True)
     abs_path = os.path.abspath(params["output"])
     print(f"[BLENDER_RENDER_SUCCESS] Exported 3D Asset Sprite: {abs_path} ({params['resolution']}x{params['resolution']})")
+
+
+def main():
+    try:
+        _run()
+    except Exception as err:   # Blender exits 0 on an uncaught Python error, and capture_3d_proof.py reads the exit code
+        print("[BLENDER_RENDER_ERROR] %s: %s" % (type(err).__name__, err), file=sys.stderr)
+        traceback.print_exc()
+        sys.exit(2)
 
 
 if __name__ == "__main__":

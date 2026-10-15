@@ -114,14 +114,21 @@ miss=""; for s in android-real-device-qa compose-recomp-audit deploy; do [ -e "$
 [ ! -e "$A/.agents/skills/unity-gc-audit" ] && ok "android: game-only skill unity-gc-audit not installed (apps never get game skills)" || fail "android: unity-gc-audit leaked into an app profile"
 [ -e "$A/.claude/commands/deploy.md" ] && ok "android: /deploy command installed" || fail "android: /deploy missing"
 
-# Agent Sprite Forge (vendored, MIT): game-only 2D art skills.
+# Agent Sprite Forge (vendored, MIT): 2D art skills. Neither android nor game installs them (game: Blender 3D is the only asset source, 15/10).
 SPRITE_FORGE="generate2dmedia generate2dsprite video2dsprite"
-leak=""; for s in $SPRITE_FORGE; do [ -e "$A/.agents/skills/$s" ] && leak="$leak $s"; done
-[ -z "$leak" ] && ok "android: no Sprite Forge skills (game-only)" || fail "android: Sprite Forge leaked:$leak"
+leak=""; for s in $SPRITE_FORGE; do { [ -e "$A/.agents/skills/$s" ] || [ -L "$A/.agents/skills/$s" ]; } && leak="$leak $s"; done
+[ -z "$leak" ] && ok "android: no Sprite Forge skills" || fail "android: Sprite Forge leaked:$leak"
 G="$(newproj game_sf package.json '{}')"
 install_q -t "$G" -a claude,gemini -p game
-miss=""; for s in $SPRITE_FORGE; do [ -f "$G/.agents/skills/$s/SKILL.md" ] || miss="$miss $s"; done
-[ -z "$miss" ] && ok "game: every Sprite Forge skill installed" || fail "game: Sprite Forge missing:$miss"
+[ -e "$G/.agents/skills/unity-gc-audit" ] && ok "game: the install ran (unity-gc-audit is there)" || fail "game: the install produced no unity-gc-audit, the absence check below proves nothing"
+leak=""; for s in $SPRITE_FORGE; do { [ -e "$G/.agents/skills/$s" ] || [ -L "$G/.agents/skills/$s" ]; } && leak="$leak $s"; done
+[ -z "$leak" ] && ok "game: no Sprite Forge skills (Blender 3D is the only asset source)" || fail "game: Sprite Forge installed:$leak"
+# a project installed before 15/10 still has the three skills linked: the next install of the profile removes them
+planted=""; for s in $SPRITE_FORGE; do ln -s "$DEVKIT_DIR/skills/$s" "$G/.agents/skills/$s" 2>/dev/null && [ -L "$G/.agents/skills/$s" ] && planted="$planted $s"; done
+[ "$planted" = " $SPRITE_FORGE" ] && ok "game: the three stale Sprite Forge links were planted" || fail "game: could not plant the stale links (planted:$planted), the re-install check below proves nothing"
+install_q -t "$G" -a claude,gemini -p game
+leak=""; for s in $SPRITE_FORGE; do { [ -e "$G/.agents/skills/$s" ] || [ -L "$G/.agents/skills/$s" ]; } && leak="$leak $s"; done
+[ -z "$leak" ] && ok "game: re-installing over a project that already had the Sprite Forge skills removes them" || fail "game: re-install left Sprite Forge skills:$leak"
 # DevKit billing rule (vendor patch 2, 13/10 security review): upstream says a configured API key is the owner's consent to spend, with
 # no per-call question; under the DevKit billing needs the user's go-ahead. No vendored text may keep that claim, and generate2dmedia
 # names the approval step (dry run, estimate, yes, then a budget cap).
