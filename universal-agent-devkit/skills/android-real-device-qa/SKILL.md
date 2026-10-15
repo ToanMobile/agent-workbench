@@ -88,6 +88,11 @@ Tạo báo cáo kiểm thử độc lập, nhúng Base64 screenshot thực tế 
 python3 "$QA"/generate_report_html.py --output report.html --package <pkg>
 ```
 
+### 6. State Matrix Trước Khi Gọi Layout/Overlay "Xong"
+Bug hình học và bug tổ hợp trạng thái lọt qua test xanh (Robolectric chạy inset = 0) và chỉ lộ trên máy thật. Khi đổi layout/overlay/inset/cử chỉ, lập state matrix: loại tài liệu × orientation × điều hướng (cử chỉ / 3 nút) × thanh ẩn/hiện × thanh chỉnh sửa × trình phát nổi × font scale 200% × RTL × display cutout, mỗi ô một dòng kết quả.
+- Đo ô bằng `dump-view-hierarchy.sh` (bounds theo test tag / resource-id) hoặc ảnh chụp máy thật, không suy từ code. Hai vùng chạm/chrome giao nhau, hoặc một vùng nằm dưới thanh hệ thống = `overlaps`; ô chưa đo = `unchecked` (báo là chưa kiểm, không báo là sạch).
+- Bỏ trục không áp dụng, thêm trạng thái riêng của màn hình. Test JVM giữ lại cho các ô đã chốt: helper `compose-overlap-invariants` và danh sách ô Android ở rules của profile android (`android-rules.md`, "Kiểm chứng bất biến chồng lấn/Insets").
+
 ---
 
 ## 🤖 Quy Trình Kích Hoạt Tự Động (Autonomous Execution)

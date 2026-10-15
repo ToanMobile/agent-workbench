@@ -19,7 +19,10 @@
 # ALREADY happened (PostToolUse) — this is a stop-and-think signal, not a block.
 # It fires once per threshold crossing per file, not on every subsequent edit.
 #
-# Escape hatch: CHURN_GUARD=0 (logged). Fail-open on any internal error.
+# ALSO (I.3 P6, below): warns once per file when the edited path is UNTRACKED (HEAD does not hold it, so the edit cannot be
+# committed alone). Same exit-2-means-tell-Claude channel; the edit has already happened, nothing is blocked.
+#
+# Escape hatch: CHURN_GUARD=0 (logged; also turns the untracked warning off). Fail-open on any internal error.
 # bash 3.2 compatible.
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
@@ -49,10 +52,55 @@ if [ "${CHURN_GUARD:-1}" = "0" ]; then
   exit 0
 fi
 
+# ── Commit closure at EDIT time (docs/workflow-improvements.md I.3 P6; tests/gates/test_untracked_edit_warning.sh) ──────────────────
+# An edit that lands in an UNTRACKED file cannot be committed alone: HEAD does not hold the file, so a commit of the edited paths (or a
+# `git archive HEAD` / CI checkout) lacks the code the edit depends on. OfficeReader 2026-10-07: the edit lived in an untracked file another
+# session's refactor had made, and nothing said so until a reviewer noticed. Lives here, not in a new hook file: this hook already judges every
+# file type on every Edit/Write/NotebookEdit, and a new hook would change the documented hook count and need three registries.
+# WARN only (PostToolUse: the edit has happened), once per file per session (a ledger in LOG_DIR keyed by session id); a file THIS session
+# created with Write is its own and stays quiet (Write answers type "create"; an answer with no type is read as create, which fails safe).
+# Bash + git only (no python: tests/gates/test_churn_guard_fast_path.sh). Off: UNTRACKED_EDIT_WARN=0 (CHURN_GUARD=0 turns both off).
+# The warning is printed here and turns this hook's exit into 2 (_UE_RC); the churn check below still runs, so both messages can appear.
+# ponytail: warns on the fact only; the full version builds `git archive HEAD` plus an overlay of the paths to be committed and compiles that;
+# upgrade when a commit made around an untracked edit still breaks a clean checkout.
+_UE_RC=0
+if [ "${UNTRACKED_EDIT_WARN:-1}" != "0" ] && [ -n "${LOG_DIR}" ] && command -v git >/dev/null 2>&1; then
+  _UE_RX_F='"(file_path|notebook_path)"[[:space:]]*:[[:space:]]*"(/[^"\\]*)"'   # absolute and escape-free, else not judged
+  if [[ ${INPUT} =~ ${_UE_RX_F} ]]; then
+    _UE_P="${BASH_REMATCH[2]}"; _UE_D="${_UE_P%/*}"; _UE_B="${_UE_P##*/}"; [ -n "${_UE_D}" ] || _UE_D="/"
+    # tracked → nothing to say (index lookup only: the common case costs one cheap git call); untracked and not ignored → the check below
+    if [ -n "${_UE_B}" ] && [ -d "${_UE_D}" ] \
+       && ! git -C "${_UE_D}" ls-files --error-unmatch -- ":(literal)${_UE_B}" >/dev/null 2>&1 \
+       && [ -n "$(git -C "${_UE_D}" ls-files --others --exclude-standard -- ":(literal)${_UE_B}" 2>/dev/null)" ]; then
+      _UE_RX_S='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9_-]+)"'
+      [[ ${INPUT} =~ ${_UE_RX_S} ]] && _UE_SID="${BASH_REMATCH[1]}" || _UE_SID="nosid"
+      _UE_L="${LOG_DIR}/untracked_edit.${_UE_SID}"
+      if ! grep -qxF -- "${_UE_P}" "${_UE_L}" 2>/dev/null; then
+        [ -e "${_UE_L}" ] || find "${LOG_DIR}" -maxdepth 1 -name 'untracked_edit.*' -mtime +2 -exec rm -f {} + 2>/dev/null   # a ledger is one session's: old ones go
+        printf '%s\n' "${_UE_P}" >> "${_UE_L}" 2>/dev/null
+        _UE_RX_N='"tool_name"[[:space:]]*:[[:space:]]*"Write"'
+        _UE_RX_U='"tool_response"[[:space:]]*:[[:space:]]*\{[[:space:]]*"type"[[:space:]]*:[[:space:]]*"update"'
+        if [[ ${INPUT} =~ ${_UE_RX_N} ]] && ! [[ ${INPUT} =~ ${_UE_RX_U} ]]; then
+          echo "[$(date +%Y-%m-%dT%H:%M:%S)] UNTRACKED ${_UE_P}: created by this session's Write — own file, no warning" >> "${LOG_DIR}/churn_guard.log" 2>/dev/null
+        else
+          echo "[$(date +%Y-%m-%dT%H:%M:%S)] WARN — UNTRACKED ${_UE_P}: edited, but HEAD does not hold it" >> "${LOG_DIR}/churn_guard.log" 2>/dev/null
+          printf '%s\n' \
+            "⚠️ COMMIT-CLOSURE (workflow-improvements I.3 P6): ${_UE_B} là file UNTRACKED — HEAD không có nó, nên sửa này KHÔNG commit riêng được:" \
+            "   commit các path đã sửa (hoặc \`git archive HEAD\`, CI checkout) thiếu file này và code gọi tới nó sẽ không build." \
+            "   Nếu là file của bạn: \`git add\` nó vào CÙNG commit với phần sửa. Nếu không phải bạn tạo (phiên/refactor khác để lại): hỏi chủ của nó," \
+            "   hoặc sửa trên bản HEAD đang có. Kiểm đủ: \`git archive HEAD\` + chồng các path sắp commit lên rồi biên dịch (bản đầy đủ, chưa tự động)." \
+            "   Cảnh báo một lần cho mỗi file mỗi phiên; không chặn. Tắt: UNTRACKED_EDIT_WARN=0." >&2
+          _UE_RC=2
+        fi
+      fi
+    fi
+  fi
+fi
+
 # QA K-4: without python3 this gate cannot run — say so instead of passing silently.
 if ! command -v python3 >/dev/null 2>&1; then
   echo "⚠ churn_guard: python3 không có — gate này KHÔNG chạy, kết quả không được kiểm." >&2
-  exit 0
+  exit "${_UE_RC}"
 fi
 # Fast path (2026-10-09, decision-neutral; tests/gates/test_churn_guard_fast_path.sh): python warns only when the transcript holds
 # exactly N landed edits of this file NAME since the last evidence call (N = CHURN_GUARD_MAX, 3 by default). Every landed edit is a
@@ -72,7 +120,7 @@ if [ "${#INPUT}" -lt 131072 ]; then
       case "${_CG_C}" in ''|*[!0-9]*) ;; *)
         if [ "${_CG_C}" -lt "${_CG_N}" ]; then
           [ -n "${LOG_DIR}" ] && echo "[$(date +%Y-%m-%dT%H:%M:%S)] ${_CG_B}: ${_CG_C}/${_CG_N} lines naming it — pass (fast path)" >> "${LOG_DIR}/churn_guard.log" 2>/dev/null
-          exit 0
+          exit "${_UE_RC}"
         fi ;; esac
     fi
   fi
@@ -218,4 +266,4 @@ sys.exit(2)
 PY
 rc=$?
 [ "${rc}" -eq 2 ] && exit 2
-exit 0
+exit "${_UE_RC}"

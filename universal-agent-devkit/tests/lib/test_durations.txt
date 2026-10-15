@@ -274,3 +274,8 @@
 2 tests/worktree_git/test_worktree_automerge_symlink.sh
 9 tests/worktree_git/test_worktree_secret_carry.sh
 1 tests/verification/test_devkit_audit_nightly_step.sh
+1 tests/verification/test_state_matrix_lens.sh
+1 tests/verification/test_android_selection_telemetry_rule.sh
+4 tests/verification/test_android_generic_traps.sh
+3 tests/gates/test_untracked_edit_warning.sh
+4 tests/verification/test_wiring_pin.sh

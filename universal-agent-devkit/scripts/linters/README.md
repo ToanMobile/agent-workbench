@@ -6,3 +6,4 @@ Bộ công cụ phân tích tĩnh AST và kiểm tra chất lượng mã nguồn
 - `hardware_source_lint.py`: Kiểm tra các mẫu mã nguồn tương tác phần cứng, CAN bus, ngoại vi.
 - `lint_compose_stability.py`: Kiểm tra tính ổn định recomposition trong Jetpack Compose.
 - `lint_unity_gc.py`: Phát hiện GC allocation trong vòng lặp game (`Update`, `FixedUpdate`, Coroutines).
+- `wiring_pin.py`: Android — `scan` tìm `internal object` mới trích ra cạnh một `View` mà không test nào nhắc tới `View` đó và in pin test source-text (View còn gọi object, không còn nhánh cũ); `verify` đọc lại pin đã sinh và chấm nó trên source View (regex, không phải parser Kotlin; không cần kotlinc).

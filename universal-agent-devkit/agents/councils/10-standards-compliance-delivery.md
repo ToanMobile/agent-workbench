@@ -23,6 +23,7 @@ Hội đồng thẩm định tiêu chuẩn tuân thủ, độ tin cậy của lu
 3. **Agent 10.3 — Accessibility & UX Visual Safety Sentinel:**
    - Kiểm tra kích thước vùng chạm tối thiểu $\ge 48\times 48\text{dp}$ trên thiết bị di động và $\ge 44\times 44\text{px}$ trên web.
    - Thẩm định độ tương phản màu sắc văn bản (WCAG 2.1 AA: tỉ lệ tối thiểu 4.5:1) và gắn nhãn trợ năng (`contentDescription`/`aria-label`) cho các icon tương tác.
+   - Trạng thái trợ năng của một thay đổi giao diện nằm trong state matrix: font scale 200% × RTL × display cutout × orientation × kiểu điều hướng (cử chỉ / 3 nút), mỗi ô một dòng kết quả; ô vùng chạm bị đè hoặc dưới 48dp = `overlaps`, ô chưa kiểm = `unchecked`. Quy trình đầy đủ: `agents/principal-code-reviewer.md`.
 
 4. **Agent 10.4 — Offline Resilience & Fault Tolerance Validator:**
    - Kiểm thử hành vi ứng dụng khi mất kết nối mạng hoàn toàn (Airplane Mode / Network Down).

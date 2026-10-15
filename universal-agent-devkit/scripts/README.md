@@ -26,6 +26,7 @@ scripts/
 - [`hardware_source_lint.py`](linters/hardware_source_lint.py): Kiểm tra các mẫu mã nguồn tương tác phần cứng, CAN bus, ngoại vi.
 - [`lint_compose_stability.py`](linters/lint_compose_stability.py): Kiểm tra tính ổn định recomposition trong Jetpack Compose.
 - [`lint_unity_gc.py`](linters/lint_unity_gc.py): Phát hiện GC allocation trong vòng lặp game (`Update`, `FixedUpdate`, Coroutines).
+- [`wiring_pin.py`](linters/wiring_pin.py): Android — pin test source-text khi logic được trích ra khỏi `View` vào `internal object` (`scan` sinh, `verify` chấm).
 
 ## 3. `testing/` — Kiểm thử & Nghiệm thu
 - [`capture_3d_proof.py`](testing/capture_3d_proof.py): Chụp ảnh nghiệm thu mô hình 3D Blender / baked sprites.
