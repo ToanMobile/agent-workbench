@@ -601,11 +601,9 @@ HOOKDIR = re.compile(r"(?:^|[/\s'\"=])\.git(?:/|\b)|(?:^|[/\s'\"=])\.?(?:githook
 HOOKNAME = re.compile(r"(?:^|/)(?:pre-commit|prepare-commit-msg|commit-msg|post-commit|pre-rebase|post-checkout|post-merge|pre-push|"
                       r"pre-receive|post-receive|post-update|pre-auto-gc|post-rewrite|pre-merge-commit|applypatch-msg|pre-applypatch|"
                       r"post-applypatch|fsmonitor-watchman|reference-transaction|push-to-checkout|sendemail-validate)$")
-# Only a file that is text for people (never run, never read as configuration by a tool of the project) is a data target; a path
-# with no extension, a script, a shell startup file, ~/.config/git/config, a Makefile … are not in the list.
-TEXT_EXT = {".md", ".markdown", ".txt", ".rst", ".csv", ".tsv", ".log", ".json", ".yaml", ".yml", ".toml", ".xml", ".html", ".diff", ".patch", ".sql"}
-NOT_TEXT = {"package.json", "composer.json", "tasks.json", "launch.json", ".pre-commit-config.yaml", ".pre-commit-config.yml",
-            "lefthook.yml", "lefthook.yaml", "docker-compose.yml", "docker-compose.yaml", ".gitlab-ci.yml", "pubspec.yaml", "Pipfile"}
+# Only a file that is PROSE for people is a data target: nothing a tool executes or reads as configuration (json, yaml, toml, xml, sql,
+# patch, Taskfile, settings, CI files …), no path without an extension, no script, no shell startup file, no Makefile, no hook.
+TEXT_EXT = {".md", ".markdown", ".txt", ".rst"}
 _DELIM = re.compile(r"""(?:'[A-Za-z0-9_]+'|"[A-Za-z0-9_]+"|[A-Za-z0-9_]+)""")
 _SK_BAD = frozenset(("if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac", "function", "select",
                      "coproc", "trap", "eval", "source", "exec", "{", "}"))
@@ -773,17 +771,17 @@ _STMT = [re.compile(p) for p in (
 _PREFIX = re.compile(r"(?:(?:cd|mkdir\s+-p)\s+%s\s*&&\s*)*" % _PATHW)
 
 
-def _text_target(t):
+def _text_target(t, prefix=""):
+    """t: the file written; prefix: the `cd DIR &&` / `mkdir -p DIR &&` before the statement (a prose file in a hooks dir is no data either)."""
     base = t.rsplit("/", 1)[-1]
-    return (os.path.splitext(base)[1].lower() in TEXT_EXT and base not in NOT_TEXT
-            and not HOOKDIR.search(t) and not HOOKNAME.search(t) and not t.startswith("-"))
+    return (os.path.splitext(base)[1].lower() in TEXT_EXT and not base.startswith(".")   # a dotfile is a setting of something, never prose
+            and not HOOKDIR.search(prefix + " " + t) and not HOOKNAME.search(t) and not t.startswith("-"))
 
 
 def _file_statement(text, h):
     """True when the heredoc is the ONE statement of the command: cat > F <<EOF (also >>, or the redirect after the word), tee F or
     git commit -F -, optionally after `cd DIR &&` / `mkdir -p DIR &&`, with only blank lines and comments around it (so no second
-    heredoc, no later statement), and F is a text
-    file (TEXT_EXT) that is no hook, no config and no script."""
+    heredoc, no later statement), and F is a prose file (TEXT_EXT) outside any hooks dir."""
     if not h.terminated:
         return False
     ls = text.rfind("\n", 0, h.op_start) + 1
@@ -792,11 +790,12 @@ def _file_statement(text, h):
     around = text[:ls].splitlines() + text[h.end:].splitlines()
     if any(x.strip() and not x.strip().startswith("#") for x in around):
         return False
-    rest = line[_PREFIX.match(line).end():].strip()
+    pre = _PREFIX.match(line).end()
+    rest = line[pre:].strip()
     for rx in _STMT:
         m = rx.fullmatch(rest)
         if m:
-            return "t" not in rx.groupindex or _text_target(m.group("t"))
+            return "t" not in rx.groupindex or _text_target(m.group("t"), line[:pre])
     return False
 
 

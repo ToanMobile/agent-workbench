@@ -225,9 +225,22 @@ FINDINGS += [
     "cat > n.md <<EOF\n$(@BODY@)\nEOF", "cat > n.md <<EOF\n`@BODY@`\nEOF", "cat > n.md <<-EOF\n\t$(echo \")\" ; @BODY@)\n\tEOF",
     "cat <<EOF > n.md\n$(echo \")\" ; @BODY@)\nEOF", "tee n.md <<EOF\n$(echo \")\" ; @BODY@)\nEOF",
     "git commit -F - <<EOF\n$(echo \")\" ; @BODY@)\nEOF", "git commit -F - <<EOF\n`@BODY@`\nEOF", "python3 - <<EOF\n$(echo \")\" ; @BODY@)\nEOF",
+    # ── N2: a file a tool executes or reads as configuration is no prose: not a data target whatever its extension
+    "cat > Taskfile.yml <<'EOF'\n@BODY@\nEOF", "cat > pyproject.toml <<'EOF'\n@BODY@\nEOF", "cat > .cargo/config.toml <<'EOF'\n@BODY@\nEOF",
+    "cat > pom.xml <<'EOF'\n@BODY@\nEOF", "cat > .lintstagedrc.json <<'EOF'\n@BODY@\nEOF", "cat > .claude/settings.json <<'EOF'\n@BODY@\nEOF",
+    "cat > .mcp.json <<'EOF'\n@BODY@\nEOF", "cat > .github/workflows/ci.yml <<'EOF'\n@BODY@\nEOF", "cat > .gitlab-ci.yml <<'EOF'\n@BODY@\nEOF",
+    "cat > ansible.yml <<'EOF'\n@BODY@\nEOF", "cat > n.sql <<'EOF'\n@BODY@\nEOF", "cat > fix.patch <<'EOF'\n@BODY@\nEOF",
+    "cat > n.json <<'EOF'\n@BODY@\nEOF", "cat > n.yaml <<'EOF'\n@BODY@\nEOF", "cat > n.toml <<'EOF'\n@BODY@\nEOF", "cat > n.xml <<'EOF'\n@BODY@\nEOF",
+    "cat > n.csv <<'EOF'\n@BODY@\nEOF", "cat > n.log <<'EOF'\n@BODY@\nEOF", "tee -a n.json <<'EOF'\n@BODY@\nEOF",
+    "cat > ~/.zshenv.md <<'EOF'\n@BODY@\nEOF",
 ]
 for tpl in FINDINGS:
     both(tpl)
+# the same shapes with the danger inside a JSON / YAML value (the hardware gate reads the text for adb remount whatever surrounds it)
+for tpl in ('{"hooks": "@ADB@"}', "run: @ADB@", '{"command": "@ADB@"}'):
+    for tgt in (".claude/settings.json", "~/.claude/settings.json", ".mcp.json", ".vscode/settings.json", ".github/workflows/ci.yml"):
+        DANGEROUS.append(("hw", "cat > " + tgt + " <<'EOF'\n" + tpl.replace("@ADB@", "adb remount") + "\nEOF",
+                          "cat > " + tgt + " <<'EOF'\n" + tpl.replace("@ADB@", "adb devices") + "\nEOF"))
 for tpl in (
     "git -c alias.x=\"$(cat <<EOF\n!@BODY@\nEOF\n)\" x", "git config alias.x \"$(cat <<EOF\n!@BODY@\nEOF\n)\" && git x",
     "git bisect run python3 -c \"$(cat <<'EOF'\nimport os\nos.system('@BODY@')\nEOF\n)\"",
