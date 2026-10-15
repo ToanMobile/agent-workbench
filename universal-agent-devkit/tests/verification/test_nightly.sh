@@ -122,6 +122,33 @@ out="$(python3 "$NIGHTLY" run "$MID" 2>&1)"
 [ -f "$MID/.git/devkit-session.lock" ] && [ "$(st "$MID" REG-B)" != FAIL ] && printf '%s\n' "$out" | grep -q 'skip: .*dừng trước REG-B' \
   && ok "run <path>: a session that took the checkout after the first suite stops the run before the next one" || fail "run <path> lock taken mid-run: $(st "$MID" REG-B) $out"
 setlock "$HELD" none
+# ... and one that opens during the LAST suite: there is no next suite to stop before, but red_proof (git worktree add/remove in that repo's
+# .git) still follows. run_project is driven in-process with subprocess.run recording the red_proof call (a control with no session: it runs once).
+LAST="$TMP/last"; mk "$LAST" "true" "if [ -f .arm ]; then cp .lockfixture .git/devkit-session.lock; fi; true"
+setlock "$LAST" active; cp "$LAST/.git/devkit-session.lock" "$LAST/.lockfixture"; setlock "$LAST" none
+CTRL="$TMP/ctrl"; mk "$CTRL" "true" "true"
+rp_calls() {  # rp_calls <project>: how many times red_proof.py was started by a named run_project, and its message
+  python3 -I - "$DEVKIT_DIR" "$1" <<'PY'
+import subprocess, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1] + "/scripts/governance")
+import nightly
+calls, real = [], subprocess.run
+def fake(argv, *a, **k):
+    if any("red_proof.py" in str(x) for x in argv):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    return real(argv, *a, **k)
+subprocess.run = fake
+_turned, msg = nightly.run_project(Path(sys.argv[2]), named=True)
+print(len(calls), msg)
+PY
+}
+out="$(rp_calls "$CTRL")"
+[ "${out%% *}" = 1 ] && ok "control: a free project's run starts red_proof once" || fail "control red_proof count: $out"
+: > "$LAST/.arm"
+out="$(rp_calls "$LAST")"
+[ "${out%% *}" = 0 ] && printf '%s' "$out" | grep -q 'skip: ' && ok "a session that opens during the last suite: red_proof is not started, said so" || fail "lock armed by the last suite: $out"
 
 # M1 (review of lane A13): the paths a named run is given are checked before anything runs.
 #  - "" (Path("") is the cwd: the audit's own workbench) and blank paths are refused (exit 2); the cwd here is an empty scratch dir, so a run

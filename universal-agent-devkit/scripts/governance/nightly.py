@@ -164,7 +164,11 @@ def run_project(project: Path, named: bool = False) -> tuple:
             break
         pats = list(it.get("watch_files", [])) + list(it.get("covers", []))
         lines.append(stale_rerun.run_one(project, tid, it["command"], pats, timeout, mode="nightly", retry=True))
-    if not stopped:   # (red_proof adds and removes worktrees in this repo's .git: not while a session is back)
+    if named and not stopped:   # a session may have opened during the LAST suite, and red_proof adds and removes worktrees in this repo's .git
+        stopped = checkout_busy(project)
+        if stopped:
+            lines.append(f"skip: {stopped} - red_proof không chạy")
+    if not stopped:
         _red_proof_script = DEVKIT / "scripts" / "testing" / "red_proof.py"
         if not _red_proof_script.is_file():
             _red_proof_script = DEVKIT / "scripts" / "red_proof.py"
