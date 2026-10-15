@@ -968,3 +968,40 @@ test('don agy mo coi: PM chu doi muc cho thanh muc THAT giua luc ta doc so va lu
   assert.equal(registryOf()[LEGIT]?.pid, x.pid, 'so dang ky phai dang theo doi agy X');
   assert.equal(alive(x.pid), true, 'agy X da bi giet du so dang ky dang theo doi no (doc so khong duoi khoa)');
 });
+
+// ---------------------------------------------------------------- vong 6: moi cua chan cua reapOrphanAgy co mot test do khi go cua chan
+
+test('don agy mo coi: pid con song nhung DAU VAN TAY KHAC (pid bi tien trinh la dung lai) thi KHONG giet no, chi go muc cho', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'f3f3f3f3-2222-3333-4444-555555555555' });
+  const stranger = liveSleep(t);
+  fs.writeFileSync(registryFile(), JSON.stringify({
+    [`pending-${stranger.pid}`]: pendingEntry({ pid: stranger.pid, pidTag: WRONG_TAG, ownerPid: await deadPid(), ownerTag: WRONG_TAG }),
+  }));
+  await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
+  await sleep(300);   // giet la dong bo, nhung tien trinh bi giet con can thoi gian de duoc thu
+  assert.equal(alive(stranger.pid), true, 'giet tien trinh la chi vi trung pid (dau van tay khong khop)');
+  assert.deepEqual(pendingKeys(), [], 'muc cho cua agy da chet / bi dung lai pid phai duoc go');
+});
+
+test('don agy mo coi: muc cho THIEU dau van tay cua chu (khong biet chu la ai) thi GIU muc va KHONG giet', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'f4f4f4f4-2222-3333-4444-555555555555' });
+  const agy = liveSleep(t);
+  fs.writeFileSync(registryFile(), JSON.stringify({ [`pending-${agy.pid}`]: pendingEntry({ pid: agy.pid, pidTag: agy.tag, ownerPid: process.pid }) }));   // khong co ownerTag
+  await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
+  await sleep(300);
+  assert.equal(alive(agy.pid), true, 'giet agy cua mot chu khong xac dinh duoc');
+  assert.ok(registryOf()[`pending-${agy.pid}`], 'muc thieu dau van tay bi go');
+});
+
+test('don agy mo coi: chu la tien trinh con song nhung DAU VAN TAY KHAC (pid chu bi dung lai) van la chu da chet: agy bi dung (khong chi kill -0 chu)', async (t) => {
+  fakeAgy(t, { FAKE_AGY_ID: 'f5f5f5f5-2222-3333-4444-555555555555' });
+  const reusedOwner = liveSleep(t);   // pid cua PM chu cu, nay la mot tien trinh khac
+  const orphan = liveSleep(t);
+  fs.writeFileSync(registryFile(), JSON.stringify({
+    [`pending-${orphan.pid}`]: pendingEntry({ pid: orphan.pid, pidTag: orphan.tag, ownerPid: reusedOwner.pid, ownerTag: WRONG_TAG }),
+  }));
+  await newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) });
+  assert.ok(await waitUntil(() => !alive(orphan.pid), 5000), 'agy mo coi con song vi pid cua PM chu da chet dang bi tien trinh la dung lai (chi kiem kill -0)');
+  assert.equal(alive(reusedOwner.pid), true, 'giet nham tien trinh dang giu pid cua PM chu cu');
+  assert.deepEqual(pendingKeys(), []);
+});
