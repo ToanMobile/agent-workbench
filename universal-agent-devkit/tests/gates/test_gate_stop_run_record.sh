@@ -323,6 +323,28 @@ try:
         assert m.cached_full_pass(root, matrix, None, name), "the control: the intact %s is read again" % source
     os.remove(rpath)
     open(path, "w").write(saved)
+    # the stamp that tells a run whether the file that vouched for its re-used suites is still the one it read: mtime_ns, size, inode and ctime_ns
+    # (mtime and size can be put back by a rewrite; a file moved over it has another inode and ctime). The unit under the gate: each part is pinned.
+    st = os.stat(path)
+    assert m._file_stamp(path) == (st.st_mtime_ns, st.st_size, st.st_ino, st.st_ctime_ns), "the stamp is (mtime_ns, size, inode, ctime_ns)"
+    assert m._file_stamp(path + ".gone") is None, "a file that is gone has no stamp"
+    before = m._file_stamp(path)
+    moved = path + ".moved"
+    with open(moved, "wb") as f:
+        f.write(open(path, "rb").read())
+    os.utime(moved, ns=(st.st_atime_ns, st.st_mtime_ns))
+    os.replace(moved, path)
+    after = m._file_stamp(path)
+    assert after[0] == before[0] and after[1] == before[1], "setup: same mtime_ns and same size after the move"
+    assert after != before, "a file moved over the old one (same size, same mtime_ns, another inode) has another stamp"
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+    st2 = os.stat(path)
+    with open(path, "r+b") as f:
+        f.write(open(path, "rb").read())
+    os.utime(path, ns=(st2.st_atime_ns, st2.st_mtime_ns))
+    again = m._file_stamp(path)
+    assert again[:3] == after[:3] and again != after, "an in-place rewrite with mtime put back (same size, mtime_ns, inode) has another stamp: ctime"
+    open(path, "w").write(saved)
     broken = json.loads(saved)
     broken["tests"] = "not a list"
     open(path, "w").write(json.dumps(broken))

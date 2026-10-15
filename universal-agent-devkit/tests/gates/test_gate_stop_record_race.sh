@@ -192,8 +192,9 @@ control() {
   fi
 }
 
-# F1: the file changes while A waits for the lock. The stamp holds (mtime_ns, size, inode, ctime_ns): each change below moves exactly the part named.
-for how in remove grow touch; do check "F1/record/$how" record lock "$how"; done
+# F1: the file changes while A waits for the lock. The stamp holds (mtime_ns, size, inode, ctime_ns): rewrite keeps size, mtime and inode (only ctime moves),
+# rename keeps size and mtime_ns (inode and ctime move), grow moves size, touch moves mtime.
+for how in remove grow touch rewrite rename; do check "F1/record/$how" record lock "$how"; done
 control "F1/record/control" record lock
 # the receipt is the other source of re-used suites, with the same race
 # (only remove: a receipt that is merely touched is still a valid PASS of an earlier --full run, and C re-uses it by design)
@@ -204,6 +205,8 @@ for src in record receipt; do
   check "F1/$src/read-remove" "$src" read remove
   control "F1/$src/read-control" "$src" read
 done
+# the same change by rename while A reads: only the record (a renamed receipt with the same bytes is still a valid PASS, and C re-uses it by design)
+check "F1/record/read-rename" record read rename
 
 # a run that took no lock and started no suite writes nothing: not even the same record again. An unwatched changed source file makes the
 # verdict exit 2 (UNVERIFIED) with every suite PASS, so run 2 re-uses both suites and has nothing left to run.

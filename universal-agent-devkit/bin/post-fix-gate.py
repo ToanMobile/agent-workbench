@@ -1246,12 +1246,13 @@ def _result_file(project_dir, name):
 
 
 def _file_stamp(path):
-    """(mtime_ns, size) of a file, None when it is gone or cannot be read: stat only, nothing is opened (a FIFO there must not block)."""
+    """(mtime_ns, size, inode, ctime_ns) of a file, None when it is gone or cannot be read: stat only, nothing is opened (a FIFO there must not
+    block). mtime and size can be put back by a rewrite; a file moved over it has another inode and ctime, an in-place rewrite another ctime."""
     try:
         st = os.stat(path)
     except (OSError, TypeError, ValueError):
         return None
-    return (st.st_mtime_ns, st.st_size)
+    return (st.st_mtime_ns, st.st_size, st.st_ino, st.st_ctime_ns)
 
 
 def drop_budget_record(project_dir):
