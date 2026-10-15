@@ -13,6 +13,7 @@ quotes …). What decides it lives here, once; each guard keeps its own verdict 
     as what it is (heredocs, strip_heredocs).
 Standard library only. Loaded by the guards from their own directory (python3 -I keeps the project off sys.path).
 """
+import codecs
 import os
 import posixpath
 import re
@@ -233,6 +234,21 @@ def _heredoc_word(text, i):
     out, quoted, n = [], False, len(text)
     while i < n and text[i] not in " \t\n;&|()<>":
         c = text[i]
+        if c == "$" and text[i + 1:i + 2] in ("\x27", "\x22"):   # <<$'EOF' / <<$"EOF": the word is EOF, bash drops the $
+            if text[i + 1] == "\x27":                             # $'…': backslash escapes (bash decodes $'E\x4fF' to EOF)
+                k = i + 2
+                while k < n and text[k] != "\x27" and text[k] != "\n":
+                    k += 2 if text[k] == "\\" else 1
+                if k >= n or text[k] != "\x27":
+                    return i, "", quoted
+                try:
+                    out.append(codecs.decode(text[i + 2:k].encode("utf-8"), "unicode_escape") if "\\" in text[i + 2:k] else text[i + 2:k])
+                except ValueError:                                # an escape we cannot read: no heredoc here, the lines are judged
+                    return i, "", quoted
+                quoted, i = True, k + 1
+                continue
+            i += 1
+            continue                                              # $"…": the next pass reads "…" as a plain quoted word
         if c in "\x27\x22":
             k = text.find(c, i + 1)
             if k < 0 or "\n" in text[i:k]:

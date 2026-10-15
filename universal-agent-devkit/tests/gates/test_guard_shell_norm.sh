@@ -400,6 +400,11 @@ CASES = [
     ("cat <<EOF\nno end", [("EOF", D, False)]),
     ("adb shell <<'EOF'\nls\nEOF", [("EOF", S, True)]),
     ("cat <<-EOF\n\tx\n\tEOF", [("EOF", D, True)]),
+    ("cat <<$'EOF'\nhi\nEOF\nls\n$EOF", [("EOF", D, True)]),
+    ("cat <<$\"EOF\"\nhi\nEOF\nls\n$EOF", [("EOF", D, True)]),
+    ("cat <<-$'EOF'\n\thi\n\tEOF\nls", [("EOF", D, True)]),
+    ("cat <<$'E\\x4fF'\nhi\nEOF\nls", [("EOF", D, True)]),
+    ("cat <<\"$EOF\"\nhi\n$EOF\nls", [("$EOF", D, True)]),
     ("read -r X <<'EOF'\nx\nEOF", [("EOF", O, True)]),
     ("ssh h <<'EOF'\nls\nEOF", [("EOF", S, True)]),
     ("X=$(python3 - <<'EOF'\nprint(1)\nEOF\n)", [("EOF", I, True)]),
@@ -436,6 +441,20 @@ for pair in "hardware_safety_gate.sh|rm -rf ~" "block-dangerous-git.sh|git reset
   if [ "$rc" = 2 ] && grep -q "shell_norm.py" "$TMP/err"; then ok "$h without shell_norm.py beside it: rc 2, names the module"
   else fail "$h without shell_norm.py beside it: rc $rc — $(head -c 200 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
 done
+
+echo "── heredoc: an ANSI-C / locale quoted delimiter (<<\$'EOF', <<\$\"EOF\") is the word EOF: bash drops the \$, so the lines after the"
+echo "   real EOF line are commands (review 15/10: the \$ was kept, the body ran on to a line \$EOF and hid them)"
+check 2 git $'cat <<$\'EOF\'\nhi\nEOF\ngit reset --hard\n$EOF'
+check 2 git $'cat <<$"EOF"\nhi\nEOF\ngit reset --hard\n$EOF'
+check 2 git $'cat <<-$\'EOF\'\n\thi\n\tEOF\ngit reset --hard\n$EOF'
+check 2 git $'cat <<$\'E\\x4fF\'\nhi\nEOF\ngit reset --hard\n$EOF'
+check 2 hw $'cat <<$\'EOF\'\nhi\nEOF\nrm -rf ~\n$EOF'
+check 2 hw $'cat <<$"EOF"\nhi\nEOF\nrm -rf ~\n$EOF'
+check 2 hw $'cat <<-$\'EOF\'\n\thi\n\tEOF\nrm -rf ~\n$EOF'
+check 0 git $'cat <<$\'EOF\'\nhi\nEOF\ngit status\n$EOF'
+check 0 hw $'cat > notes.md <<$\'EOF\'\nrm -rf ~\nEOF'
+# a delimiter that really is $EOF (the \$ is part of a quoted word): the body ends at that line
+check 2 git $'cat <<"$EOF"\nhi\n$EOF\ngit reset --hard\nEOF'
 
 echo "── never a crash: a redirect word at the very end of a command (the shadow replay of 7 days of real commands found an"
 echo "   IndexError in the first draft: 225 harmless commands refused fail-closed)"
