@@ -284,7 +284,7 @@ EXEC_SINK = re.compile(r"\bsubprocess\b|\bos\.(?:system|popen|exec\w*|spawn\w*)\
                        r"|\bcreate_subprocess_\w+|\bpty\.spawn\b"
                        r"|\bchild_process\b|\b(?:execSync|execFileSync|spawnSync|spawn|execa)\b|\bsystem\b|\bexec(?:[lv]\w*|file\w*)?\b"
                        r"|\bpopen\w*\b|\bshell_exec\b|\bpassthru\b|\bproc_open\b|\bIO\.popen\b|\bOpen3\b|%x\W|\bqx\W"
-                       r"|\bopen\b[^\n]*\|", re.I)
+                       r"|\bopen\b[^\n]*\||\bsh\.\w+\s*\(|\bfrom\s+sh\s+import\b|\bplumbum\b|\bpexpect\b|\bdelegator\b", re.I)
 
 
 def spawns(body, prog):

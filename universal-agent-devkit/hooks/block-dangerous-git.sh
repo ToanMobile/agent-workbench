@@ -679,20 +679,56 @@ def git_in_literals(code):
     ([\x27git\x27,\x27push\x27,\x27--force\x27] or \x27git reset --har HEAD\x27). The word after `git` and its
     global options is the subcommand; the words after it go through danger_in_git (abbreviations
     included). Only danger_in_git: a literal that merely names a new branch is not blocked."""
-    words = []
-    for m in STR_LITERAL.finditer(code):
-        words += next((g for g in m.groups() if g is not None), "").split()
-    for k, w in enumerate(words):
-        if w.rsplit("/", 1)[-1].lower() != "git":
-            continue
-        j = k + 1
-        while j < len(words) and words[j].startswith("-"):
-            j += 2 if (words[j] in GIT_OPTS_WITH_ARG and "=" not in words[j]) else 1
-        if j < len(words):
-            reason = danger_in_git(words[j], words[j + 1:])
-            if reason:
-                return reason
+    for group in literal_groups(code):
+        words = []
+        for m in group:
+            words += next((g for g in m.groups() if g is not None), "").split()
+        first = group[0].start()
+        if re.search(r"\bgit\s*\(\s*$", code[max(0, first - 24):first]):   # sh.git(reset, --hard): the call is git
+            words.insert(0, "git")
+        for k, w in enumerate(words):
+            if w.rsplit("/", 1)[-1].lower() != "git":
+                continue
+            j = k + 1
+            while j < len(words) and words[j].startswith("-"):
+                j += 2 if (words[j] in GIT_OPTS_WITH_ARG and "=" not in words[j]) else 1
+            if j < len(words):
+                reason = danger_in_git(words[j], words[j + 1:])
+                if reason:
+                    return reason
     return None
+
+def literal_groups(code):
+    """The string literals of code in groups, one per call: a group ends when the bracket that holds it closes, or, outside any
+    bracket, at the end of the line / statement. The words of one group are the arguments of the git named in it; literals of two
+    calls are not (15/10, OCR: subprocess.run([git, checkout, main]) then subprocess.run([rm, -f, t]) read as checkout --force)."""
+    groups, cur, depth, base, pos = [], [], 0, 0, 0
+    for m in STR_LITERAL.finditer(code):
+        low, gap = depth, code[pos:m.start()]
+        for ch in gap:
+            depth += ch in "([{"
+            if ch in ")]}":
+                depth -= 1
+                low = min(low, depth)
+        if cur and (low < base or (base == 0 and re.search(r"[;\n]", gap))):
+            groups.append(cur)
+            cur = []
+        if not cur:
+            base = depth
+        cur.append(m)
+        pos = m.end()
+    return groups + [cur] if cur else groups
+
+HASH_COMMENT = re.compile(STR_LITERAL.pattern + r"|(\#[^\n]*)")
+SLASH_COMMENT = re.compile(STR_LITERAL.pattern + r"|(//[^\n]*|/\*[\s\S]*?\*/)")
+
+def strip_comments(code, prog):
+    """code of interpreter prog without its comments (a string literal keeps its # and //): a comment is not run. # for python,
+    ruby, perl and php, // and /* */ for node (and php); the line structure stays."""
+    rx = SLASH_COMMENT if re.match(r"(?:node|deno|bun|php)", prog) else HASH_COMMENT
+    if prog.startswith("php"):
+        code = HASH_COMMENT.sub(lambda m: m.group(0) if m.group(4) is None else "", code)
+    return rx.sub(lambda m: m.group(0) if m.group(4) is None else "", code)
 
 def analyse_simple(tokens, depth):
     tokens = shell_norm.inline_script(tokens)   # sudo -s STR, env -S STR: the command line a wrapper hides becomes words
@@ -1038,6 +1074,7 @@ def interp_body_danger(body, prog):
     """The reason the program an interpreter reads from a heredoc runs a dangerous git command, or None."""
     if not shell_norm.spawns(body, prog):
         return None
+    body = strip_comments(body, prog)
     hit = RAW.search(body)
     reason = f"{hit.group(1).split()[0]}" if hit else git_in_literals(body)
     return f"{reason} (chương trình {prog} đọc từ heredoc)" if reason else None

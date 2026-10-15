@@ -221,6 +221,18 @@ check 2 git $'node - <<\'EOF\'\nrequire(\'child_process\').execSync(\'git reset 
 check 2 git $'cat <<\'EOF\' | python3 -\nimport os\nos.system("git clean -fdx")\nEOF'
 check 0 git $'python3 - <<\'EOF\'\ncases = ["git reset --hard", "git push --force"]\nprint(len(cases))\nEOF'
 check 0 git $'python3 - <<\'EOF\'\nimport subprocess\nsubprocess.run([\'git\', \'status\'])\nEOF'
+# (15/10, OCR) comments are not code, and the literals of one call are not the arguments of the git of another
+check 0 git $'python3 - <<\'EOF\'\nimport subprocess\n# never run: git reset --hard\nsubprocess.run([\'git\',\'status\'])\nEOF'
+check 0 git $'python3 - <<\'EOF\'\nimport subprocess\nsubprocess.run([\'git\',\'checkout\',\'main\'])\nsubprocess.run([\'rm\',\'-f\',\'t\'])\nEOF'
+check 0 git $'node - <<\'EOF\'\nconst {spawn} = require(\'child_process\');\n// git reset --hard is dangerous\nspawn(\'git\', [\'status\']);\nEOF'
+check 2 git $'python3 - <<\'EOF\'\nimport subprocess\nsubprocess.run([\'git\',\'status\'])\nsubprocess.run([\'git\',\'reset\',\'--hard\'])\nEOF'
+check 2 git $'python3 - <<\'EOF\'\nimport subprocess\nsubprocess.run([\n  \'git\', \'reset\',\n  \'--hard\',\n])\nEOF'
+check 2 git $'python3 - <<\'EOF\'\n# note\nimport os\nos.system("git reset --hard # x")\nEOF'
+check 2 git $'node - <<\'EOF\'\nconst {spawn} = require(\'child_process\');\nspawn(\'git\', [\'reset\', \'--hard\']);\nEOF'
+check 2 git $'ruby <<\'EOF\'\nsystem "git reset --hard"\nEOF'
+check 2 git $'ruby <<\'EOF\'\nexec \'git\', \'reset\', \'--hard\'\nEOF'
+check 2 git $'python3 - <<\'EOF\'\nimport sh\nsh.git(\'reset\', \'--hard\')\nEOF'
+check 2 git $'perl <<\'EOF\'\nsystem("git", "clean", "-fdx");\nEOF'
 check 2 git $'uv run python - <<EOF\nimport subprocess\nsubprocess.run([\'git\', \'reset\', \'--hard\'])\nEOF'
 check 0 git $'poetry run python - <<\'EOF\'\nimport subprocess\nsubprocess.run([\'git\', \'status\'])\nEOF'
 
