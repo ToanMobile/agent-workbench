@@ -276,9 +276,12 @@ open(tpa, "w").write("".join(json.dumps(r) + "\n" for r in a))
 open(tpb, "w").write("".join(json.dumps(r) + "\n" for r in b))
 PY
 }
-hookstop() { # $1 = session id, $2 = transcript
-  printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "$1" "$2" | CLAUDE_PROJECT_DIR="$H" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"
+hookstop() { # $1 = session id, $2 = transcript, then NAME=value words for the hook's environment
+  local sid="$1" tp="$2"; shift 2
+  printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "$sid" "$tp" | env "$@" CLAUDE_PROJECT_DIR="$H" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"
 }
+LOGH="$H/.claude/audit-gate/regression_gate.log"
+real_runs() { grep -c 'tests-touched reminder fp=[0-9a-f]*$' "$LOGH" 2>/dev/null | tr -d ' '; }   # a gate run that ended in the reminder (a reuse says "(reused, no run)")
 STATE="$H/.claude/audit-gate/regression_gate.state.json"
 age_reminder() { python3 -I -c 'import json,sys,time
 p = sys.argv[1]; d = json.load(open(p)); d["touched"]["s-a"]["at"] = time.time() - float(sys.argv[2]); json.dump(d, open(p, "w"))' "$STATE" "$1"; }
@@ -293,6 +296,27 @@ if [ "$rc" = 0 ] && [ "$d" = "0:0" ] && grep -q "OtherTest.kt" "$TMP/out"; then 
 else bad "B2: rc=$rc runs=$d (want 0 and 0:0) out='$(head -c 250 "$TMP/out")' err='$(head -3 "$TMP/err")'"; fi
 hookstop s-b "$TMP/sB.jsonl"; rc=$?; delta; d="$D"
 [ "$d" = "0:0" ] && ok "B3: another session on the same content starts no suite either (runs $d)" || bad "B3: session B ran suites: $d (want 0:0)"
+# B5 the two documented consequences of the record, each with a control that behaves the other way. A suite that starts to fail on UNCHANGED content
+# after an exit-2 reminder is not started again while the record stands; with the gate cache off it is, and the failure is reported.
+age_reminder 400
+hookstop s-a "$TMP/sA.jsonl" FAIL1=1; rc=$?; delta; d="$D"
+if [ "$rc" = 0 ] && [ "$d" = "0:0" ] && grep -q "OtherTest.kt" "$TMP/out" && ! cat "$TMP/out" "$TMP/err" | grep -q "FAIL"; then
+  ok "B5: REG-1 would fail now but the content did not change: the record stands, no suite starts (runs $d), only the reminder is printed"
+else bad "B5: rc=$rc runs=$d out='$(head -c 200 "$TMP/out")' err='$(head -c 200 "$TMP/err")'"; fi
+# B6 REGRESSION_GATE_TOUCHED_RECHECK_S=0 runs the gate on every Stop but starts no suite that already passed on this content
+before=$(real_runs)
+hookstop s-a "$TMP/sA.jsonl" REGRESSION_GATE_TOUCHED_RECHECK_S=0; rc=$?; delta; d="$D"
+if [ "$rc" = 0 ] && [ "$d" = "0:0" ] && [ "$(real_runs)" -gt "$before" ]; then
+  ok "B6: RECHECK_S=0: the gate ran again (a real run in the log) and started no suite (runs $d)"
+else bad "B6: rc=$rc runs=$d real gate runs $before -> $(real_runs) (want a new real run and 0:0)"; fi
+# the controls: the gate cache off brings back the old behaviour of both
+age_reminder 400
+hookstop s-a "$TMP/sA.jsonl" FAIL1=1 DEVKIT_GATE_CACHE=0; delta; d="$D"
+if [ "$d" = "1:1" ] && cat "$TMP/out" "$TMP/err" | grep -q "FAIL"; then
+  ok "B5 control: DEVKIT_GATE_CACHE=0: the suites start (runs $d) and the failure is reported"
+else bad "B5 control: runs=$d out='$(head -c 200 "$TMP/out")' err='$(head -c 200 "$TMP/err")' (want 1:1 and a FAIL line)"; fi
+hookstop s-a "$TMP/sA.jsonl" REGRESSION_GATE_TOUCHED_RECHECK_S=0 DEVKIT_GATE_CACHE=0; delta; d="$D"
+[ "$d" = "1:1" ] && ok "B6 control: RECHECK_S=0 with the gate cache off starts the suites again (runs $d)" || bad "B6 control: runs=$d (want 1:1)"
 echo "// one more byte" >> "$H/app/src/main/kotlin/pkg/Lonely.kt"
 hookstop s-b "$TMP/sB.jsonl"; delta; d="$D"
 [ "$d" = "1:1" ] && ok "B4: a changed source byte starts both suites (runs $d)" || bad "B4: runs $d (want 1:1)"
