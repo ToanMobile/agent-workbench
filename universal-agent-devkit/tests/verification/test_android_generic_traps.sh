@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# docs/workflow-improvements.md I.3 P10: two traps that are not project-specific must live in the android profile's instincts.md, in that
+# Two traps that are not project-specific must live in the android profile's instincts.md, in that
 # file's own entry format (### [INSTINCT-AND-NN] ...): (1) overlapping touch targets are decided nearest-wins, never first-in-list;
 # (2) no windowInsetsPadding inside an area the Scaffold already padded. And the upstream path (`agent-kit learn --generic` -> upstream-queue.md
 # -> `instincts.py promote`) must reach that very file: proven here on a COPY of the real profile file in a temp kit (the real file, the project's
-# .agents/instincts.md and its upstream queue are never written).
+# .agents/instincts.md and its upstream queue are never written). The id a promoted trap gets is the next number after the highest numbered
+# INSTINCT-NNN in the file (instincts.py next_id), so the expected id is computed from the copy, never written down: a real generic trap
+# promoted later must not break this test. Isolation: the project is CLAUDE_PROJECT_DIR and the kit is promote's --kit (agent-kit sets its own
+# DEVKIT_ROOT, so exporting one changes nothing).
 # bash 3.2 compatible.
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -42,7 +45,10 @@ cp "$REAL" "$TMP/kit/profiles/android/instincts.md"
 ln -s "$DEVKIT_DIR/scripts" "$TMP/kit/scripts"; ln -s "$DEVKIT_DIR/templates" "$TMP/kit/templates"
 printf '# Proj Instincts\n' > "$TMP/proj/.agents/instincts.md"
 export CLAUDE_PROJECT_DIR="$TMP/proj"
-REAL_KIT="$DEVKIT_DIR"; export DEVKIT_ROOT="$TMP/kit"
+REAL_KIT="$DEVKIT_DIR"
+# the next numbered id promote must give: highest INSTINCT-NNN in the copy + 1 (computed here, before promote runs)
+next_numbered_id() { local last; last="$(sed -n -E 's/^### \[INSTINCT-([0-9]{3,})\].*/\1/p' "$1" | sort -n | tail -1)"; printf 'INSTINCT-%03d' $((10#${last:-0} + 1)); }
+EXPECT="$(next_numbered_id "$TMP/kit/profiles/android/instincts.md")"
 
 T13="$(printf '%s\n' "$E13" | head -1 | sed -E 's/^### \[[^]]*\] //')"
 "$REAL_KIT/bin/agent-kit" learn "A brand new generic android trap" --cause C --rule R --symptom S --generic >/dev/null 2>&1
@@ -53,11 +59,25 @@ grep -q 'A brand new generic android trap' "$Q" 2>/dev/null && ok "agent-kit lea
 python3 -I "$REAL_KIT/bin/instincts.py" promote --from "$TMP/proj" --profile android --kit "$TMP/kit" >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && ok "promote --profile android exits 0" || fail "promote exited $rc"
 P="$TMP/kit/profiles/android/instincts.md"
-grep -qE '^### \[INSTINCT-006\] A brand new generic android trap' "$P" \
-  && ok "the new trap landed in profiles/android/instincts.md with the next numbered id (006; the AND-NN family is left alone)" || fail "the new trap is not in the profile file as INSTINCT-006"
+grep -qE "^### \[$EXPECT\] A brand new generic android trap" "$P" \
+  && ok "the new trap landed in profiles/android/instincts.md with the next numbered id ($EXPECT; the AND-NN family is left alone)" || fail "the new trap is not in the profile file as $EXPECT"
 n="$(grep -cF -- "] $T13" "$P")"
 [ -n "$T13" ] && [ "$n" = 1 ] && ok "queueing AND-13's own title does not duplicate it (promote only marks it)" || fail "AND-13's title appears $n times after promote (want 1)"
 m="$(grep -c '\*\*promoted:\*\* android' "$Q" 2>/dev/null)"
 [ "$m" = 2 ] && ok "both queue entries are marked promoted to android" || fail "promoted markers: ${m:-0} (want 2)"
+
+# ── C. the id follows the file: a copy that already holds INSTINCT-006 and -007 (a real generic trap promoted earlier) gives 008 ──
+mkdir -p "$TMP/kit2/profiles/android" "$TMP/proj2/.agents/local"
+cp "$REAL" "$TMP/kit2/profiles/android/instincts.md"
+ln -s "$DEVKIT_DIR/scripts" "$TMP/kit2/scripts"; ln -s "$DEVKIT_DIR/templates" "$TMP/kit2/templates"
+for n in 906 907; do
+  printf '\n### [INSTINCT-%s] Already promoted trap %s\n- **Hiện tượng lỗi:** x\n- **Nguyên nhân gốc rễ:** y\n- **Quy tắc bắt buộc:** z\n- **Kiểm tra tự động:** w\n\n---\n' "$n" "$n" >> "$TMP/kit2/profiles/android/instincts.md"
+done
+printf '# Proj Instincts\n' > "$TMP/proj2/.agents/instincts.md"
+EXPECT2="$(next_numbered_id "$TMP/kit2/profiles/android/instincts.md")"
+CLAUDE_PROJECT_DIR="$TMP/proj2" "$REAL_KIT/bin/agent-kit" learn "A second generic android trap" --cause C --rule R --symptom S --generic >/dev/null 2>&1
+CLAUDE_PROJECT_DIR="$TMP/proj2" python3 -I "$REAL_KIT/bin/instincts.py" promote --from "$TMP/proj2" --profile android --kit "$TMP/kit2" >/dev/null 2>&1
+[ "$EXPECT2" = "INSTINCT-908" ] && grep -qE "^### \[$EXPECT2\] A second generic android trap" "$TMP/kit2/profiles/android/instincts.md" \
+  && ok "promote numbers after the highest id in the file ($EXPECT2 after 906 and 907), not from a fixed number" || fail "second promote: expected $EXPECT2, file has: $(grep -n 'A second generic' "$TMP/kit2/profiles/android/instincts.md")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_android_generic_traps: all passed" || { echo "❌ test_android_generic_traps: $FAILS failed"; exit 1; }

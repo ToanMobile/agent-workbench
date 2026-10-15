@@ -3,7 +3,8 @@
 nightly.py — the local nightly regression job (a macOS LaunchAgent; never a cloud agent:
 the cloud has no Unity Editor, Android SDK, device or local secrets).
 
-  nightly.py run [<project>...]       every registered project, now; or exactly the named ones (no list change, no weekly report)
+  nightly.py run [<project>...]       every registered project, now; or exactly the named ones (no list change, no weekly report;
+                                      a named project that a session holds - idle at its prompt too - prints `skip: <reason>`)
   nightly.py add|remove <project>     the project list (~/.config/agent-kit/nightly-projects)
   nightly.py install [--hour H] [--minute M]   daily LaunchAgent (default 02:17)
   nightly.py uninstall | status
@@ -42,6 +43,7 @@ for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
         sys.path.insert(0, _sub_path)
 sys.dont_write_bytecode = True
 import regression_checklist as rc  # noqa: E402
+import session_lock  # noqa: E402
 import stale_rerun  # noqa: E402
 
 LABEL = "com.universal-agent-devkit.nightly"
@@ -115,8 +117,27 @@ def human_touches(project: Path, since: float) -> int:
     return n
 
 
-def run_project(project: Path) -> tuple:
-    """(turned red: [(id, status)], message) for one project."""
+def checkout_busy(project: Path) -> str | None:
+    """Why a NAMED run leaves `project` alone: a session holds its checkout, idle at its prompt too. `session_lock.py --status` calls an
+    idle holder free, but that session takes the lock back at the user's next prompt and edits the tree this run is testing (and its Stop
+    gate then queues behind the suite's test_run.lock). Judged as worktree_merge_gate judges it: idle_frees=False, live_pid_holds=True.
+    ponytail: a session that opens while a suite runs is seen only at the next check (the next suite, or red_proof); upgrade to a lock watcher
+    that stops the running suite when a session is seen editing during a night run."""
+    gdir, _top = session_lock.git_dir(str(project))
+    if not gdir:
+        return None
+    lock, now = session_lock.read_checkout_lock(gdir), time.time()
+    if session_lock.is_free_for(lock, "", now, idle_frees=False, live_pid_holds=True):
+        return None
+    return f"{session_lock.describe(lock, now)} đang giữ checkout"
+
+
+def run_project(project: Path, named: bool = False) -> tuple:
+    """(turned red: [(id, status)], message) for one project. `named`: the project was named on the command line, so a session that
+    holds its checkout is not run over (the unnamed run is the night's own LaunchAgent: nobody works then)."""
+    busy = checkout_busy(project) if named else None
+    if busy:
+        return [], f"{project.name}: skip: {busy}"
     if not (project / rc.STATUS_FILE).is_file() and not (project / ".agents" / "regression_matrix.active.json").is_file():
         return [], f"{project.name}: không có checklist/ma trận — bỏ qua"
     if rc.skip_bookkeeping(project):   # a LINKED worktree leaves the tracked checklist alone: a night's runs could not be recorded
@@ -134,21 +155,30 @@ def run_project(project: Path) -> tuple:
         timeout = float(os.environ.get("NIGHTLY_SUITE_TIMEOUT_S", "3600"))
     except ValueError:
         timeout = 3600.0
-    lines = []
+    lines, stopped = [], None
     for tid, it in sorted(data["items"].items()):
         if it.get("kind") != "test" or not it.get("command"):
             continue
+        stopped = checkout_busy(project) if named else None   # a session may have opened since the last suite
+        if stopped:
+            lines.append(f"skip: {stopped} - dừng trước {tid}")
+            break
         pats = list(it.get("watch_files", [])) + list(it.get("covers", []))
         lines.append(stale_rerun.run_one(project, tid, it["command"], pats, timeout, mode="nightly", retry=True))
-    _red_proof_script = DEVKIT / "scripts" / "testing" / "red_proof.py"
-    if not _red_proof_script.is_file():
-        _red_proof_script = DEVKIT / "scripts" / "red_proof.py"
-    subprocess.run([sys.executable, str(_red_proof_script), str(project), "--pending", "--heavy", "--wait"],
-                   capture_output=True, text=True)
-    with rc.locked(project):
-        data = rc.load(project)
-        rc.auto_close_reported(data)
-        rc.save(project, data)
+    if named and not stopped:   # a session may have opened during the LAST suite, and red_proof adds and removes worktrees in this repo's .git
+        stopped = checkout_busy(project)
+        if stopped:
+            lines.append(f"skip: {stopped} - red_proof không chạy")
+    if not stopped:
+        _red_proof_script = DEVKIT / "scripts" / "testing" / "red_proof.py"
+        if not _red_proof_script.is_file():
+            _red_proof_script = DEVKIT / "scripts" / "red_proof.py"
+        subprocess.run([sys.executable, str(_red_proof_script), str(project), "--pending", "--heavy", "--wait"],
+                       capture_output=True, text=True)
+        with rc.locked(project):
+            data = rc.load(project)
+            rc.auto_close_reported(data)
+            rc.save(project, data)
     after = statuses(project)
     turned = [(i, s) for i, s in sorted(after.items()) if s in RED and before.get(i) not in RED]
     return turned, f"{project.name}: " + "; ".join(lines)
@@ -190,15 +220,31 @@ def weekly(projects: list) -> str | None:
     return ("Báo cáo tuần — " + " | ".join(parts)) if parts else None
 
 
+def path_problem(raw: str) -> str | None:
+    """Why a path named on the command line is no project to run, else None. Path("") is the cwd (the audit's own workbench), so an empty
+    path is refused before it is resolved; a directory without .agents/ or that is not a git root (the 12/10 OfficeReader outer folder)
+    would only say "bỏ qua" with exit 0, which hides the mistake."""
+    if not raw.strip():
+        return "empty path"
+    p = Path(raw).expanduser()
+    if not p.is_dir():
+        return "not a directory"
+    if not (p / ".agents").is_dir():
+        return "no .agents/ - not a DevKit project"
+    if not os.path.lexists(p / ".git"):
+        return "not a git root - is it the folder around the repository?"
+    return None
+
+
 def cmd_run(paths: list | None = None) -> int:
     """Every registered project, or exactly `paths` (the daily /devkit-audit runs one repo at a time, only those whose
     checkout is free). A named run leaves the project list alone and sends no weekly report: its 7-day slot would go to
     whichever repo came first, with a one-repo line."""
-    projects = [str(Path(p).expanduser().resolve()) for p in paths] if paths else load_projects()
+    projects = list(dict.fromkeys(str(Path(p).expanduser().resolve()) for p in paths)) if paths else load_projects()   # one repo, one run
     reds = []
     for p in projects:
         try:
-            turned, msg = run_project(Path(p))
+            turned, msg = run_project(Path(p), named=bool(paths))
         except OSError as e:   # a project gone mid-run (W1 R5a: save() refuses to re-create it): the others still run
             turned, msg = [], f"{Path(p).name}: {e}"
         print(msg)
@@ -265,9 +311,13 @@ def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     cmd = args[0] if args else "status"
     if cmd == "run":
-        bad = [p for p in args[1:] if not Path(p).expanduser().is_dir()]
-        if bad:
-            print(f"nightly.py run: not a directory: {', '.join(bad)}", file=sys.stderr)
+        bad = []
+        for p in args[1:]:
+            why = path_problem(p)
+            if why:
+                bad.append(f"{p!r} ({why})")
+        if bad:   # all or nothing: one bad path means nothing runs
+            print(f"nightly.py run: not a DevKit project to run: {', '.join(bad)}", file=sys.stderr)
             return 2
         return cmd_run(args[1:])
     if cmd in ("add", "remove"):

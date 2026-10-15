@@ -89,4 +89,93 @@ printf '%s\n' "$out" | grep -q '^one: ' && ! printf '%s\n' "$out" | grep -q '^go
 python3 "$NIGHTLY" run "$TMP/no-such-dir" >/dev/null 2>&1; rc=$?
 [ "$rc" = 2 ] && ok "run <path>: a path that is not a directory is refused (exit 2)" || fail "run <bad path>: exit $rc"
 
+# H1 (review of lane A13): a NAMED run leaves a checkout alone while a session holds it, idle at its prompt too: `session_lock.py
+# --status` calls an idle holder free, but that session takes the lock back at the next prompt and edits the tree the run is testing.
+# The lock is judged with the strictness of worktree_merge_gate (idle_frees=False, live_pid_holds=True); a dead pid is free.
+setlock() {  # setlock <repo> <idle|active|old|dead|none>
+  python3 - "$1" "$2" <<'PY'
+import json, os, sys, time
+repo, kind = sys.argv[1], sys.argv[2]; gdir = os.path.realpath(os.path.join(repo, ".git")); lock = os.path.join(gdir, "devkit-session.lock")
+if kind == "none":
+    sys.exit(os.path.exists(lock) and os.unlink(lock) or 0)
+now = time.time(); pid = 2147483646 if kind == "dead" else os.getppid()   # the parent of this helper (the test shell) is alive
+d = {"session_id": "other-session", "started": now - 3600, "heartbeat": now - (2400 if kind == "old" else 5), "cwd": repo, "pid": pid, "gitdir": gdir}
+if kind == "idle":
+    d["idle_since"] = now - 300
+json.dump(d, open(lock, "w"))
+PY
+}
+HELD="$TMP/held"; mk "$HELD" "true" 'grep -q 2 src/b.txt'; echo 3 > "$HELD/src/b.txt"        # breaks REG-B: it turns FAIL only if the run happens
+for kind in idle active old; do
+  setlock "$HELD" "$kind"
+  out="$(python3 "$NIGHTLY" run "$HELD" 2>&1)"; rc=$?
+  [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^held: skip: ' && [ "$(st "$HELD" REG-B)" = PASS ] \
+    && ok "run <path>: a $kind holder with a live pid keeps the checkout - skipped with 'skip: <reason>', nothing ran" || fail "run <path> held by a $kind session: rc=$rc $(st "$HELD" REG-B) $out"
+done
+setlock "$HELD" dead
+out="$(python3 "$NIGHTLY" run "$HELD" 2>&1)"
+[ "$(st "$HELD" REG-B)" = FAIL ] && ok "run <path>: a lock whose pid is dead is free - the run goes ahead" || fail "run <path> with a dead holder: $(st "$HELD" REG-B) $out"
+# a session that opens BETWEEN two suites: the run stops before the next suite (REG-A, the first, writes the lock when .arm exists)
+MID="$TMP/mid"; mk "$MID" "if [ -f .arm ]; then cp .lockfixture .git/devkit-session.lock; fi; true" 'grep -q 2 src/b.txt'; echo 3 > "$MID/src/b.txt"
+setlock "$MID" active; cp "$MID/.git/devkit-session.lock" "$MID/.lockfixture"; setlock "$MID" none; : > "$MID/.arm"
+out="$(python3 "$NIGHTLY" run "$MID" 2>&1)"
+[ -f "$MID/.git/devkit-session.lock" ] && [ "$(st "$MID" REG-B)" != FAIL ] && printf '%s\n' "$out" | grep -q 'skip: .*dừng trước REG-B' \
+  && ok "run <path>: a session that took the checkout after the first suite stops the run before the next one" || fail "run <path> lock taken mid-run: $(st "$MID" REG-B) $out"
+setlock "$HELD" none
+# ... and one that opens during the LAST suite: there is no next suite to stop before, but red_proof (git worktree add/remove in that repo's
+# .git) still follows. run_project is driven in-process with subprocess.run recording the red_proof call (a control with no session: it runs once).
+LAST="$TMP/last"; mk "$LAST" "true" "if [ -f .arm ]; then cp .lockfixture .git/devkit-session.lock; fi; true"
+setlock "$LAST" active; cp "$LAST/.git/devkit-session.lock" "$LAST/.lockfixture"; setlock "$LAST" none
+CTRL="$TMP/ctrl"; mk "$CTRL" "true" "true"
+rp_calls() {  # rp_calls <project>: how many times red_proof.py was started by a named run_project, and its message
+  python3 -I - "$DEVKIT_DIR" "$1" <<'PY'
+import subprocess, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1] + "/scripts/governance")
+import nightly
+calls, real = [], subprocess.run
+def fake(argv, *a, **k):
+    if any("red_proof.py" in str(x) for x in argv):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    return real(argv, *a, **k)
+subprocess.run = fake
+_turned, msg = nightly.run_project(Path(sys.argv[2]), named=True)
+print(len(calls), msg)
+PY
+}
+out="$(rp_calls "$CTRL")"
+[ "${out%% *}" = 1 ] && ok "control: a free project's run starts red_proof once" || fail "control red_proof count: $out"
+: > "$LAST/.arm"
+out="$(rp_calls "$LAST")"
+[ "${out%% *}" = 0 ] && printf '%s' "$out" | grep -q 'skip: ' && ok "a session that opens during the last suite: red_proof is not started, said so" || fail "lock armed by the last suite: $out"
+
+# M1 (review of lane A13): the paths a named run is given are checked before anything runs.
+#  - "" (Path("") is the cwd: the audit's own workbench) and blank paths are refused (exit 2); the cwd here is an empty scratch dir, so a run
+#    that wrongly accepted "" would only say "bỏ qua" and exit 0
+#  - one repo never runs twice (a trailing slash, a symlink, the same path twice)
+#  - a directory that is no DevKit project (no .agents/, or not a git root: the 12/10 OfficeReader outer-folder mistake) given EXPLICITLY is
+#    exit 2 with the reason, nothing runs; a bare `run` keeps skipping such a registered project with exit 0 (the LaunchAgent passes only `run`)
+CWD0="$TMP/cwd0"; mkdir -p "$CWD0"
+for blank in "" "   "; do
+  out="$(cd "$CWD0" && python3 "$NIGHTLY" run "$blank" 2>&1)"; rc=$?
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -qi 'empty' && ok "run '$blank': an empty or blank path is refused (exit 2) and said so" || fail "run '$blank': rc=$rc $out"
+done
+out="$(cd "$CWD0" && python3 "$NIGHTLY" run "$ONE" "" 2>&1)"; rc=$?
+[ "$rc" = 2 ] && ! printf '%s\n' "$out" | grep -q '^one: ' && ok "run <good> '': one bad path refuses the whole run, the good one does not run first" || fail "run <good> '': rc=$rc $out"
+DUP="$TMP/dup"; mk "$DUP" "true" "true"; ln -s "$DUP" "$TMP/dup-link"
+out="$(python3 "$NIGHTLY" run "$DUP" "$DUP/" "$TMP/dup-link" "$TMP/../$(basename "$TMP")/dup" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(printf '%s\n' "$out" | grep -c '^dup: ')" = 1 ] && ok "run <p> <p>/ <symlink to p>: one repo runs once" || fail "run duplicates: rc=$rc $out"
+PLAIN="$TMP/plain"; mkdir -p "$PLAIN"                                    # no .agents/, no git
+NOAG="$TMP/noag"; mkdir -p "$NOAG" && git init -q "$NOAG"                # a git root without .agents/
+OUTER="$TMP/outer"; mkdir -p "$OUTER/.agents" "$OUTER/inner"; git init -q "$OUTER/inner"   # .agents/ but not a git root
+for bad in "$PLAIN" "$NOAG" "$OUTER"; do
+  out="$(python3 "$NIGHTLY" run "$ONE" "$bad" 2>&1)"; rc=$?
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -q "$(basename "$bad")" && ! printf '%s\n' "$out" | grep -q '^one: ' \
+    && ok "run <good> $(basename "$bad"): an explicit path that is no DevKit git root is exit 2 with its name, nothing runs" || fail "run <good> $bad: rc=$rc $out"
+done
+HOME2="$TMP/home2"; mkdir -p "$HOME2"; HOME="$HOME2" python3 "$NIGHTLY" add "$PLAIN" >/dev/null
+out="$(HOME="$HOME2" python3 "$NIGHTLY" run 2>&1)"; rc=$?
+[ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^plain: .*bỏ qua' && ok "bare run: a registered project that is no DevKit project is still skipped with exit 0 (the LaunchAgent's call is unchanged)" || fail "bare run with a plain registered dir: rc=$rc $out"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_nightly: all passed" || { echo "❌ test_nightly: $FAILS failed"; exit 1; }

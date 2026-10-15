@@ -138,7 +138,7 @@
 - **Nguyên nhân gốc rễ:** Hit-test dạng `if (hit(a)) … else if (hit(b)) …` (hoặc `firstOrNull { it.contains(point) }`): vùng nào đứng trước trong danh sách thắng khi chồng nhau.
 - **Quy tắc bắt buộc:** Khi nhiều vùng cùng chứa điểm chạm, chọn vùng có khoảng cách tới điểm chạm xuống (down) nhỏ nhất (nearest-wins), hoà thì theo quy tắc phụ cố định (ví dụ vùng đang được chọn); tuyệt đối không dựa vào thứ tự kiểm tra. Cố định đích kéo từ lúc ACTION_DOWN tới ACTION_UP. Test: hai vùng gần hơn bán kính bắt, chạm sát vùng thứ hai ⇒ vùng thứ hai thắng; đảo thứ tự danh sách không đổi kết quả.
 - **Kiểm tra tự động:** `grep -rnE "firstOrNull \{[^}]*(contains|hit|isNear)" --include=*.kt .` và đọc từng chuỗi `if (hit…) … else if (hit…)` trong `onTouchEvent`/`pointerInput`; chỉ rõ cả thứ tự kiểm tra lẫn bán kính bắt trong test.
-- **Nguồn:** OfficeReader 07/10/2026 (đề xuất I.3 P10 của `docs/workflow-improvements.md`).
+- **Nguồn:** OfficeReader 07/10/2026 (bẫy không riêng một dự án nên được đưa lên profile android, để mọi app Android nhận nó).
 
 ---
 
@@ -147,7 +147,7 @@
 - **Nguyên nhân gốc rễ:** Nội dung đã nhận `innerPadding` của `Scaffold` (đã gồm thanh điều hướng), rồi một con lại gọi `Modifier.windowInsetsPadding(WindowInsets.navigationBars)` / `navigationBarsPadding()` / `systemBarsPadding()` cho cùng cạnh: inset bị đệm hai lần.
 - **Quy tắc bắt buộc:** Một cạnh chỉ được đệm inset đúng một lần. Nội dung nằm dưới `innerPadding` thì dùng `innerPadding`, không thêm `windowInsetsPadding` cho cạnh đó; con nào tự xử lý inset thì cha phải `Modifier.consumeWindowInsets(innerPadding)` trước. Đo bằng bounds thật (`ui-query` / `dump-view-hierarchy.sh`) trên máy hoặc test dựng inset có chủ đích (`compose-overlap-invariants`), không suy từ code; ma trận trạng thái (cử chỉ / 3 nút × hướng) theo `android-rules.md` §15.
 - **Kiểm tra tự động:** `grep -rnE "windowInsetsPadding|navigationBarsPadding|systemBarsPadding|safeDrawingPadding" --include=*.kt .` rồi đối chiếu từng chỗ nằm trong content lambda của `Scaffold` có dùng `innerPadding`.
-- **Nguồn:** OfficeReader 07/10/2026 (đề xuất I.3 P10 của `docs/workflow-improvements.md`).
+- **Nguồn:** OfficeReader 07/10/2026 (bẫy không riêng một dự án nên được đưa lên profile android, để mọi app Android nhận nó).
 
 ---
 

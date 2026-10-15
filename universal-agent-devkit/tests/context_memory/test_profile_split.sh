@@ -128,7 +128,9 @@ for p, (src, always, blocks) in split.items():
 # (the last three of each list came from the Antigravity audit of Dot 28: obligations phrased without MUST/CẤM that a regex cannot see)
 LOADED = {"game": ["Application.targetFrameRate", "OnApplicationPause", "Cấm tuyệt đối `new`", "Debounce", "transform.DOKill(true)"],
           "android": ["LazyColumn", "derivedStateOf", "PendingIntent.FLAG_IMMUTABLE", "fallbackToDestructiveMigration",
-                      "Không gửi PII vào analytics/Crashlytics", "Đổi ranh giới = hỏi trước"],
+                      "Không gửi PII vào analytics/Crashlytics", "Đổi ranh giới = hỏi trước",
+                      # review of lane A11: an obligation with no MUST-word that sat inside an on-demand block (INSTINCT-037) - by line, verbatim
+                      "chỉ gửi kích thước, không bao giờ gửi nội dung hay độ dài chính xác"],
           # automotive: hardware/car safety — the user's list (13/10) plus the keyword-less obligations read by hand, and the scope
           # line (it says the rules bind the companion phone app and the desktop ADB tool too)
           "automotive": ["dm-verity", "abandonAudioFocus", "đọc trả `null` ⇒ KHÔNG ghi", "Im còn hơn làm sai", "CHƯA ĐO TRÊN XE",
@@ -255,6 +257,16 @@ android_root = os.path.join(TMP, "hook-android")
 out = hook(android_root, "fix SAF crash khi mở file từ content uri")
 say("§9 SAF" in out and "Analytics" not in out, "rule_context: a SAF prompt gets §9 and not the Crashlytics section (one title word + a crash prefix is not enough)")
 say(hook(android_root, "rename the button label on the home screen please") == "", "rule_context is silent when no reference section matches")
+
+# G. (review of lane A11) a rule that sits in an on-demand block is read only when the prompt that needs it NAMES it. Two rules of that lane
+# were unreachable: "extract logic from a View into an internal object" (section 16: the wiring pin) named sections 5 and 10 and never 16, and
+# "log how many words the user selected when pressing Translate" (section 12: size bucket, never content) named nothing. Real rule_context.py,
+# real generated profile-reference.md, English and Vietnamese. The section number is read from the printed title ("  - §16 ...").
+for sec, prompt in (("§16", "Extract logic from a View into an internal object, add a unit test"),
+                    ("§16", "Trích logic ra khỏi View vào internal object, thêm unit test"),
+                    ("§12", "Log how many words the user selected when pressing Translate"),
+                    ("§12", "Ghi log số từ người dùng đã chọn khi bấm Dịch")):
+    say(("  - " + sec + " ") in hook(android_root, prompt), "rule_context names %s for the prompt %r" % (sec, prompt))
 say(hook(os.path.join(TMP, "no-such-project"), "fix the Room migration crash after the schema export change") == "",
     "rule_context is silent without profile-reference.md and rules-index.md")
 PY
