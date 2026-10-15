@@ -232,7 +232,11 @@ FINDINGS += [
     "cat > ansible.yml <<'EOF'\n@BODY@\nEOF", "cat > n.sql <<'EOF'\n@BODY@\nEOF", "cat > fix.patch <<'EOF'\n@BODY@\nEOF",
     "cat > n.json <<'EOF'\n@BODY@\nEOF", "cat > n.yaml <<'EOF'\n@BODY@\nEOF", "cat > n.toml <<'EOF'\n@BODY@\nEOF", "cat > n.xml <<'EOF'\n@BODY@\nEOF",
     "cat > n.csv <<'EOF'\n@BODY@\nEOF", "cat > n.log <<'EOF'\n@BODY@\nEOF", "tee -a n.json <<'EOF'\n@BODY@\nEOF",
-    "cat > ~/.zshenv.md <<'EOF'\n@BODY@\nEOF",
+    # a prose file inside a hooks dir (or after cd into one) is no data target either: the rule is independent of the extension
+    "cd .git/hooks && cat > n.md <<'EOF'\n@BODY@\nEOF", "cd .git && cat > hooks.md <<'EOF'\n@BODY@\nEOF", "mkdir -p .git/hooks && cat > .git/hooks/n.md <<'EOF'\n@BODY@\nEOF",
+    "cat > hooks/README.md <<'EOF'\n@BODY@\nEOF", "cat > .githooks/x.md <<'EOF'\n@BODY@\nEOF", "cat > .husky/readme.md <<'EOF'\n@BODY@\nEOF",
+    "cat > .claude/hooks/x.md <<'EOF'\n@BODY@\nEOF", "cat > hooks/hooks.json <<'EOF'\n@BODY@\nEOF", "cat > .husky/config.json <<'EOF'\n@BODY@\nEOF",
+    "cat > .githooks/x.yml <<'EOF'\n@BODY@\nEOF", "cat > ~/.zshenv.md <<'EOF'\n@BODY@\nEOF",
 ]
 for tpl in FINDINGS:
     both(tpl)
@@ -280,7 +284,7 @@ TAIL += [("git", "python3 -c 'import subprocess; subprocess.run([\"git\"] + [\"r
          ("git", "node <<'EOF'\nconst r = /\\/\\//; require('child_process').execSync(\"git reset --hard\")\nEOF"),
          ("git", "perl - <<'EOF'\nqx#git reset --hard#;\nEOF"),
          # F8: a backslash-newline inside a word, env -iS, a shell fed by a process substitution
-         ("git", "echo $(true); git reset --ha\\\nrd"), ("git", "echo \"$(gi\\\nt reset --hard)\""),
+         ("git", "echo $(true); git reset --ha\\\nrd"), ("git", "strace gi\\\nt reset --hard $(true)"), ("git", "echo \"$(gi\\\nt reset --hard)\""),
          ("git", "gi\\\nt reset --hard"), ("git", "git res\\\net --hard"), ("git", "git reset --ha\\\nrd"), ("git", "git pu\\\nsh --force origin main"),
          ("hw", "adb remo\\\nunt"), ("hw", "fastboot fla\\\nsh boot x.img"), ("hw", "rm -r\\\nf /system"), ("hw", "rm -rf /sys\\\ntem"),
          ("hw", "dd if=a.img of=/de\\\nv/sda"), ("hw", "ad\\\nb remount"),

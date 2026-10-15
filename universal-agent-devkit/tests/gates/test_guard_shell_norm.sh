@@ -466,6 +466,8 @@ CASES = [
     ("cat > .claude/settings.json <<'EOF'\nls\nEOF", [("EOF", O, True)]),
     ("cat > pyproject.toml <<'EOF'\nls\nEOF", [("EOF", O, True)]),
     ("cat > n.yaml <<'EOF'\nls\nEOF", [("EOF", O, True)]),
+    ("cat > hooks/README.md <<'EOF'\nls\nEOF", [("EOF", O, True)]),
+    ("cd .git/hooks && cat > n.md <<'EOF'\nls\nEOF", [("EOF", O, True)]),
     ("cat > .notes.md <<'EOF'\nls\nEOF", [("EOF", O, True)]),
     ("cat > docs/notes.rst <<'EOF'\nls\nEOF", [("EOF", D, True)]),
     ("cat > notes.txt <<'EOF'\nls\nEOF", [("EOF", D, True)]),
