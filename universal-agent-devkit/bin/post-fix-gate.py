@@ -1013,8 +1013,8 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None):
         with os.fdopen(_state_fd(path), encoding="utf-8") as f:
             r = json.load(f)
         max_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
-    except (ImportError, OSError, ValueError, TypeError):
-        return None
+    except (ImportError, OSError, ValueError, TypeError, OverflowError, RecursionError):
+        return None   # RecursionError: a forged file nested deeper than json.load can read (it is a RuntimeError, not a ValueError)
     if not isinstance(r, dict) or not isinstance(r.get("tests"), list) or not r["tests"]:
         return None
     if r.get("exit") not in (0, 2) and not (r.get("exit") == 4 and r.get("untested") and isinstance(r["untested"], list)):
@@ -1023,7 +1023,11 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None):
     # lets the Stop through when the gate crashes; NaN / Infinity compared false against the age cap and were read. A time a minute ahead of this
     # clock is a forged or broken one; a few seconds are noise between two processes.
     def _time_ok(v):
-        return not isinstance(v, bool) and isinstance(v, (int, float)) and math.isfinite(v)
+        # bounded first, so a 401-digit integer (float() and math.isfinite() raise OverflowError on it) is just "not a time"; the bound is far past any epoch
+        try:
+            return not isinstance(v, bool) and isinstance(v, (int, float)) and -1e15 < v < 1e15 and math.isfinite(v)
+        except (OverflowError, ValueError, TypeError):
+            return False
     tested, now = r.get("tested_at"), time.time()
     if not _time_ok(tested) or tested > now + 60 or now - tested > max_s:
         return None
@@ -1129,7 +1133,7 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
                 os.replace(tmp, path)
             elif not same:
                 os.remove(path)
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError, OverflowError):   # a forged receipt nested deeper than json can read: dropped, as an unreadable one is
             try:
                 os.remove(path)
             except OSError:

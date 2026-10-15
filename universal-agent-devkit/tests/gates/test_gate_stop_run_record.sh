@@ -74,7 +74,7 @@ run_gate() {
   while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
   [ "${1:-}" = "--" ] && shift
   flags=("$@")
-  OUT="$(CLAUDE_PROJECT_DIR="$R" env GATE_TOTAL_BUDGET_S=900 ${envs[@]+"${envs[@]}"} python3 "$GATE" --matrix "${MATRIX:-$R/matrix.json}" --lang en --run-tests ${flags[@]+"${flags[@]}"} 2>&1)"; RC=$?
+  OUT="$(CLAUDE_PROJECT_DIR="$R" env GATE_TOTAL_BUDGET_S=900 ${envs[@]+"${envs[@]}"} "${PYGATE:-python3}" "$GATE" --matrix "${MATRIX:-$R/matrix.json}" --lang en --run-tests ${flags[@]+"${flags[@]}"} 2>&1)"; RC=$?
 }
 runs() { if [ -f "$MARK/$1" ]; then wc -l < "$MARK/$1" | tr -d ' '; else echo 0; fi; }
 counts() { echo "$(runs s1):$(runs s2)"; }
@@ -217,6 +217,48 @@ run_gate -- --full; delta
 run_gate; delta; d="$D"
 [ "$RC" = 2 ] && [ "$d" = "0:0" ] && ok "A13 control: an intact receipt is re-used by a Stop-style run (runs $d)" || bad "A13 control: exit $RC runs $d (want exit 2, 0:0)"
 
+# A14 a record or a receipt that is FORGED to break the reader: a time that is a 401-digit integer (float() / math.isfinite() raise OverflowError on
+# it, on every Python) and a field nested a million arrays deep (json.load raises RecursionError, which is not a ValueError). Both used to end the
+# gate with a traceback and exit 1, and the Stop hook lets the Stop through when the gate crashes. Now: no record, every suite runs, no traceback.
+# Run under the default python3 and under /usr/bin/python3 (3.9.6 on macOS) when it is there: its json module has its own recursion limit.
+forge() { # $1 = file, $2 = what: bigtested | bigranat | deep
+  python3 -I -c 'import json,sys
+p, what = sys.argv[1], sys.argv[2]
+text = open(p).read()
+if what == "deep":
+    text = text.rstrip()[:-1] + ",\"x\":" + "[" * 1000000 + "]" * 1000000 + "}"
+else:
+    d = json.loads(text)
+    if what == "bigtested":
+        d["tested_at"] = int("9" * 401)
+    else:
+        d["tests"][0]["ran_at"] = int("9" * 401)
+    text = json.dumps(d)
+open(p, "w").write(text)' "$1" "$2"
+}
+for PYGATE in python3 /usr/bin/python3; do
+  [ "$PYGATE" = python3 ] || [ -x "$PYGATE" ] || continue
+  pyv="$("$PYGATE" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)"
+  for what in bigtested bigranat deep; do
+    two; run_gate; delta                       # the record (exit 2, both suites PASS)
+    forge "$GD/budget_pass.json" "$what"
+    run_gate; delta; d="$D"
+    if [ "$RC" = 2 ] && [ "$d" = "1:1" ] && ! printf '%s' "$OUT" | grep -q Traceback; then ok "A14/$pyv/record/$what: forged record: no crash, nothing re-used, both suites run (exit $RC, runs $d)"
+    else bad "A14/$pyv/record/$what: exit $RC runs $d traceback=$(printf '%s' "$OUT" | grep -c Traceback) (want exit 2, 1:1, no traceback)"; printf '%s\n' "$OUT" | grep -E 'Error' | tail -2; fi
+    run_gate; delta; d="$D"
+    [ "$RC" = 2 ] && [ "$d" = "0:0" ] && ok "A14/$pyv/record/$what control: the record that run wrote is re-used (runs $d)" || bad "A14/$pyv/record/$what control: exit $RC runs $d (want exit 2, 0:0)"
+    two; run_gate -- --full; delta             # the receipt (exit 2, both suites PASS)
+    forge "$GD/full_pass.json" "$what"
+    run_gate; delta; d="$D"
+    if [ "$RC" = 2 ] && [ "$d" = "1:1" ] && ! printf '%s' "$OUT" | grep -q Traceback; then ok "A14/$pyv/receipt/$what: forged receipt: no crash, nothing re-used, both suites run (exit $RC, runs $d)"
+    else bad "A14/$pyv/receipt/$what: exit $RC runs $d traceback=$(printf '%s' "$OUT" | grep -c Traceback) (want exit 2, 1:1, no traceback)"; printf '%s\n' "$OUT" | grep -E 'Error' | tail -2; fi
+  done
+  two; run_gate -- --full; delta
+  run_gate; delta; d="$D"
+  [ "$RC" = 2 ] && [ "$d" = "0:0" ] && ok "A14/$pyv control: an intact receipt is re-used by a Stop-style run (runs $d)" || bad "A14/$pyv control: exit $RC runs $d (want exit 2, 0:0)"
+done
+PYGATE=python3
+
 # A10 a key that cannot be computed: the unit under the gate (fingerprint, HEAD and local sha are what the record is keyed by)
 two
 run_gate; delta
@@ -344,6 +386,31 @@ try:
     os.utime(path, ns=(st2.st_atime_ns, st2.st_mtime_ns))
     again = m._file_stamp(path)
     assert again[:3] == after[:3] and again != after, "an in-place rewrite with mtime put back (same size, mtime_ns, inode) has another stamp: ctime"
+    open(path, "w").write(saved)
+    # forged numbers and depth: nothing may raise, for either source. A 401-digit integer is accepted by json on every Python and breaks float() and
+    # math.isfinite(); a million nested arrays is refused by json.load with RecursionError (not a ValueError) on every Python.
+    for source, target, name in (("record", path, m.BUDGET_RECORD), ("receipt", rpath, None)):
+        for label, mutate in (("tested_at is a 401-digit integer", lambda d: d.__setitem__("tested_at", int("9" * 401))),
+                              ("tested_at is minus a 401-digit integer", lambda d: d.__setitem__("tested_at", -int("9" * 401))),
+                              ("a suite ran_at is a 401-digit integer", lambda d: d["tests"][0].__setitem__("ran_at", int("9" * 401)))):
+            d = json.loads(saved)
+            mutate(d)
+            put(target, d)
+            try:
+                got = m.cached_full_pass(root, matrix, None, name)
+            except Exception as e:  # noqa: BLE001
+                raise AssertionError("%s: %s raised %r" % (source, label, e))
+            assert got is None, "%s: %s was read" % (source, label)
+        put(target, json.loads(saved))
+        open(target, "w").write(saved.rstrip()[:-1] + ',"x":' + "[" * 1000000 + "]" * 1000000 + "}")
+        try:
+            got = m.cached_full_pass(root, matrix, None, name)
+        except Exception as e:  # noqa: BLE001
+            raise AssertionError("%s: a field nested a million arrays deep raised %r" % (source, e))
+        assert got is None, "%s: a record with a field nested a million arrays deep was read" % source
+        put(target, json.loads(saved))
+        assert m.cached_full_pass(root, matrix, None, name), "the control: the intact %s is read after the forged ones" % source
+    os.remove(rpath)
     open(path, "w").write(saved)
     broken = json.loads(saved)
     broken["tests"] = "not a list"
