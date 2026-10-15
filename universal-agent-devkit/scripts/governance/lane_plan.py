@@ -3,7 +3,7 @@
 
   lane_plan.py plan <lanes.json> [--slots N] [--json]   the order to start the lanes, with a simulated timeline
   lane_plan.py slots [--jobs-per-lane J] [--quiet]      how many lanes this machine can run at once right now
-  lane_plan.py record <id> <minutes> [--kind K]         remember how long a finished lane really took
+  lane_plan.py record <id> <minutes> --kind K           remember how long a finished lane really took (lanes of that kind)
 
 lanes.json is a list of {"id": "A11", "est_min": 40, "kind": "rules-text", "deps": ["A10"], "risk": "high", "files": ["hooks/x.sh"]};
 only "id" is required. A missing est_min is the median of the recorded lanes of the same kind (30 when the lane has no kind or
@@ -231,7 +231,7 @@ def simulate(lanes, n, key):
             rows.append({"id": l["id"], "start": t, "end": t + l["est"]})
         running.sort()
         t = running[0][0]
-        while running and running[0][0] <= t:
+        while running and running[0][0] <= t + 1e-9:   # a tolerance: 0.1 + 0.2 and 0.3 end together
             done[running.pop(0)[1]] = t
     return rows, max(r["end"] for r in rows)
 
@@ -346,7 +346,9 @@ def main(argv):
     if cmd == "record":
         kind = opt(args, "--kind", "")
         if len(args) != 2:
-            fail("record takes <id> <minutes>")
+            fail("record takes <id> <minutes> --kind K")
+        if not kind:
+            fail("record needs --kind K: a lane without a kind never takes an estimate from the history")
         record(args[0], args[1], kind)
         return 0
     fail("unknown command %s (plan | slots | record)" % cmd)

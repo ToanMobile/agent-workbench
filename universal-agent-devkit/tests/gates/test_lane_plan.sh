@@ -111,6 +111,14 @@ chk(d is not None and d["makespan_min"] == 30, "a null est_min is the same as no
 rc, d, err = plan_json("l3b.json", [{"id": "Lg", "est_min": 20}, {"id": "S", "est_min": 10}, {"id": "T", "est_min": 10, "deps": ["S"]}], 1)
 chk(d is not None and d["start_order"] == ["Lg", "S", "T"], "equal paths and equal risk: the listed order (Lg before S)", str(d and d["start_order"]))
 
+# lanes that end at the same moment, written as sums of fractions (0.1 + 0.2 is 0.30000000000000004, not 0.3), still end together
+frac = [{"id": "P", "est_min": 0.1}, {"id": "Q", "est_min": 0.2, "deps": ["P"]}, {"id": "R", "est_min": 0.3},
+        {"id": "X", "est_min": 10, "deps": ["Q", "R"]}, {"id": "X2", "est_min": 10, "deps": ["Q", "R"]}, {"id": "L", "est_min": 5}]
+rc, d, err = plan_json("l9k.json", frac, 2)
+rows = dict((r["id"], r) for r in d["rows"]) if d else {}
+chk(d is not None and rows["X"]["start"] < 1 and rows["X2"]["start"] < 1 and rows["L"]["start"] >= 10,
+    "fractions that sum to the same end time end together: X and X2 (waiting for Q and R) start before the short L", str(d and d["rows"]))
+
 # 3. a risky lane wins a tie on path length
 tie = [{"id": "L", "est_min": 20}, {"id": "H", "est_min": 20, "risk": "high"}]
 rc, d, err = plan_json("l3.json", tie, 1)
@@ -180,9 +188,11 @@ if d:
     chk(est["X"] == 7, "an explicit estimate is kept", str(est))
 else:
     chk(False, "plan with history runs", err)
-rc, out, err = run(["record", "z", "abc"])
+rc, out, err = run(["record", "z", "5"], LANE_PLAN_HISTORY=os.path.join(TMP, "nokind.jsonl"))
+chk(rc == 2 and "--kind" in err and not os.path.exists(os.path.join(TMP, "nokind.jsonl")), "record without --kind is refused and writes nothing (it could never be used as an estimate)", "%s %r" % (rc, err[-200:]))
+rc, out, err = run(["record", "z", "abc", "--kind", "k"])
 chk(rc == 2, "record refuses a non-numeric duration", "%s %r" % (rc, err))
-rc, out, err = run(["record", "z", "-3"])
+rc, out, err = run(["record", "z", "-3", "--kind", "k"])
 chk(rc == 2, "record refuses a negative duration", "%s %r" % (rc, err))
 
 # 7. overlapping files: warned, except the files every lane touches
@@ -308,11 +318,11 @@ rc, out, err = run(["plan", lanes_file("nok.json", [{"id": "A"}]), "--slots", "1
 chk(rc == 0, "a lane with neither estimate nor kind does not read the history at all (30 min, a broken history file does not matter)", "rc=%s %r" % (rc, err[-200:]))
 rc, out, err = run(["plan", lanes_file("k.json", [{"id": "A", "kind": "x"}]), "--slots", "1"], LANE_PLAN_HISTORY=os.path.join(TMP, "histdir"))
 chk(rc == 2 and "history" in err and "Traceback" not in err, "a lane that needs the history and finds a directory: refused with the reason", "rc=%s %r" % (rc, err[-200:]))
-rc, out, err = run(["record", "z", "5"], LANE_PLAN_HISTORY=os.path.join(TMP, "histdir"))
+rc, out, err = run(["record", "z", "5", "--kind", "k"], LANE_PLAN_HISTORY=os.path.join(TMP, "histdir"))
 chk(rc == 2 and "Traceback" not in err, "record to a directory is refused with the reason", "rc=%s %r" % (rc, err[-200:]))
 FIFO = os.path.join(TMP, "fifo.jsonl")
 os.mkfifo(FIFO)
-for args, name in ((["plan", lanes_file("k.json", [{"id": "A", "kind": "x"}]), "--slots", "1"], "plan"), (["record", "z", "5"], "record")):
+for args, name in ((["plan", lanes_file("k.json", [{"id": "A", "kind": "x"}]), "--slots", "1"], "plan"), (["record", "z", "5", "--kind", "k"], "record")):
     try:
         rc, out, err = run(args, LANE_PLAN_HISTORY=FIFO)
         chk(rc == 2 and "Traceback" not in err, "a FIFO as the history file: %s is refused at once, not hung" % name, "rc=%s %r" % (rc, err[-200:]))
@@ -322,11 +332,11 @@ TARGET = os.path.join(TMP, "precious.txt")
 with open(TARGET, "w") as fh:
     fh.write("precious\n")
 os.symlink(TARGET, os.path.join(TMP, "link.jsonl"))
-rc, out, err = run(["record", "z", "5"], LANE_PLAN_HISTORY=os.path.join(TMP, "link.jsonl"))
+rc, out, err = run(["record", "z", "5", "--kind", "k"], LANE_PLAN_HISTORY=os.path.join(TMP, "link.jsonl"))
 chk(rc == 2 and "Traceback" not in err and open(TARGET).read() == "precious\n", "a link at the history path is refused, the file behind it is not written", "rc=%s %r" % (rc, err[-200:]))
 rc, out, err = run(["plan", lanes_file("k.json", [{"id": "A", "kind": "x"}]), "--slots", "1"], LANE_PLAN_HISTORY=os.path.join(TMP, "link.jsonl"))
 chk(rc == 2 and "Traceback" not in err, "a link at the history path is not read either", "rc=%s %r" % (rc, err[-200:]))
-rc, out, err = run(["record", "z", "7"], LANE_PLAN_HISTORY="bare.jsonl")
+rc, out, err = run(["record", "z", "7", "--kind", "k"], LANE_PLAN_HISTORY="bare.jsonl")
 chk(rc == 0 and os.path.isfile(os.path.join(TMP, "bare.jsonl")), "a bare file name as the history file is created in the current directory", "rc=%s %r" % (rc, err[-200:]))
 
 # 12. overlaps: paths are compared as paths, the union-merged files are recognised wherever the kit sits
@@ -408,7 +418,7 @@ if ok:
         "with a git that prints --path-format back (older than 2.31) the history still goes into the git dir, nothing is created in the worktree", "%s %r %s" % (r.returncode, r.stderr[-200:], os.listdir(WT)))
     NOGIT = os.path.join(TMP, "nogit")
     os.mkdir(NOGIT)
-    r = subprocess.run([PY, SCRIPT, "record", "lane2", "3"], capture_output=True, text=True, env=NOH, cwd=NOGIT, timeout=60)
+    r = subprocess.run([PY, SCRIPT, "record", "lane2", "3", "--kind", "k"], capture_output=True, text=True, env=NOH, cwd=NOGIT, timeout=60)
     chk(r.returncode == 2 and "git" in r.stderr and os.listdir(NOGIT) == [], "outside a git repository record refuses and creates nothing", "%s %r %s" % (r.returncode, r.stderr[-200:], os.listdir(NOGIT)))
     r = subprocess.run([PY, SCRIPT, "plan", lanes_file("l13n.json", [{"id": "K", "kind": "gitk"}]), "--slots", "1", "--json"], capture_output=True, text=True, env=NOH, cwd=NOGIT, timeout=60)
     chk(r.returncode == 0 and json.loads(r.stdout)["rows"][0]["end"] == 30.0, "outside a git repository a plan goes on without history (30 min)", "%s %r" % (r.returncode, r.stderr[-200:]))
