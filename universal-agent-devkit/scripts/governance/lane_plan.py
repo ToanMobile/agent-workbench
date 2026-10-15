@@ -78,21 +78,21 @@ def slots(jobs_per_lane=JOBS_PER_LANE):
 
 
 def history_path():
+    """The history file; None outside a git repository when LANE_PLAN_HISTORY is not set (a plan then goes on without history)."""
     if os.environ.get("LANE_PLAN_HISTORY"):
         return os.environ["LANE_PLAN_HISTORY"]
     try:
-        r = subprocess.run(["git", "rev-parse", "--git-common-dir"], capture_output=True, text=True, timeout=10)
-        common = r.stdout.strip() if r.returncode == 0 else ""
+        r = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True, timeout=10)
+        common = r.stdout.rstrip("\n") if r.returncode == 0 else ""   # not strip(): a git dir may end in a space
     except (OSError, subprocess.SubprocessError):
         common = ""
-    if not common:
-        fail("not in a git repository: name the history file with LANE_PLAN_HISTORY")
-    return os.path.join(os.path.abspath(os.path.join(os.getcwd(), common)), "devkit", "lane_times.jsonl")
+    return os.path.join(common, "devkit", "lane_times.jsonl") if common else None
 
 
 def _open_regular(path, flags):
-    """open(2) that never waits for a peer and refuses anything but a regular file (a FIFO at this path would hang the open: INSTINCT-040)."""
-    fd = os.open(path, flags | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    """open(2) that never waits for a peer, never follows a link and refuses anything but a regular file (a FIFO at this path would hang
+    the open: INSTINCT-040; a link planted there would turn the append into a write to another file)."""
+    fd = os.open(path, flags | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise OSError(errno.EINVAL, "not a regular file", path)
@@ -106,6 +106,8 @@ def read_history():
     """{kind: [minutes]} - one bad line (not JSON, not UTF-8, a wrong shape, a huge number) is skipped, never fatal."""
     out = {}
     path = history_path()
+    if path is None:
+        return out
     try:
         fd = _open_regular(path, os.O_RDONLY)
     except FileNotFoundError:
@@ -134,10 +136,6 @@ def median(xs):
     return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2.0
 
 
-def _norm(path):
-    return os.path.normpath(path)
-
-
 def _shared(path):
     return any(path == s or path.endswith("/" + s) for s in SHARED)
 
@@ -151,7 +149,7 @@ def load_lanes(path):
     if not isinstance(raw, list) or not raw:
         fail("%s must hold a non-empty list of lanes" % path)
     hist = None   # read only when a lane needs it: a broken history file never blocks a plan whose lanes all carry an estimate
-    lanes, seen = {}, []
+    lanes = {}
     for r in raw:
         if not isinstance(r, dict) or not isinstance(r.get("id"), str) or not r["id"]:
             fail("every lane needs a non-empty string id: %s" % _show(r))
@@ -163,6 +161,9 @@ def load_lanes(path):
             fail("deps of %s must be a list of ids" % r["id"])
         if not isinstance(files, list) or not all(isinstance(f, str) and f.strip() for f in files):
             fail("files of %s must be a list of non-empty paths" % r["id"])
+        files = sorted(set(os.path.normpath(f.strip()) for f in files))
+        if any(os.path.isabs(f) or f == os.curdir or f == os.pardir or f.startswith(os.pardir + "/") for f in files):
+            fail("files of %s must be paths from the repo root (no absolute path, no ., no ..)" % r["id"])
         kind = r.get("kind") if isinstance(r.get("kind"), str) else ""
         if "est_min" in r:
             est = _num(r["est_min"], "est_min of %s" % r["id"])
@@ -173,12 +174,12 @@ def load_lanes(path):
         risk = r.get("risk")
         lanes[r["id"]] = {"id": r["id"], "est": est, "deps": sorted(set(deps)), "files": files,
                           "high": isinstance(risk, str) and risk.lower() == "high"}
-        seen.append(r["id"])
     for l in lanes.values():
         for d in l["deps"]:
             if d not in lanes:
                 fail("lane %s waits for unknown lane %s" % (l["id"], d))
     # longest path from each lane to the end of the batch, in topological order (no recursion: a long chain must not hit the limit)
+    seen = list(lanes)
     succ = dict((i, []) for i in seen)
     waiting = {}
     for i in seen:
@@ -224,29 +225,32 @@ def simulate(lanes, n, key):
 
 
 def overlaps_of(lanes):
-    """{path: [lane ids]} for lanes that edit the same file or one inside a folder another names; the union-merged files are left out."""
-    owned = []
+    """{path: [lane ids]}: a path that more than one lane edits, or that sits inside a folder another lane names (the folder's owners count
+    for the path); the union-merged files are left out. One dict lookup per path and parent folder: linear in the files."""
+    owners = {}
     for l in lanes:
-        for f in sorted(set(_norm(f) for f in l["files"])):
+        for f in l["files"]:
             if not _shared(f):
-                owned.append((f, l["id"]))
+                owners.setdefault(f, []).append(l["id"])
+    rank = dict((l["id"], i) for i, l in enumerate(lanes))
     out = {}
-    for a in range(len(owned)):
-        for b in range(a + 1, len(owned)):
-            (fa, ia), (fb, ib) = owned[a], owned[b]
-            if ia != ib and (fa == fb or fa.startswith(fb + "/") or fb.startswith(fa + "/")):
-                ids = out.setdefault(fa if len(fa) <= len(fb) else fb, [])
-                for i in (ia, ib):
-                    if i not in ids:
-                        ids.append(i)
+    for f, ids in owners.items():
+        who = set(ids)
+        parent = f
+        while "/" in parent:
+            parent = parent.rsplit("/", 1)[0]
+            who.update(owners.get(parent, ()))
+        if len(who) > 1:
+            out[f] = sorted(who, key=rank.get)
     return out
 
 
 def plan(path, n_slots, as_json):
     lanes = load_lanes(path)
-    n = n_slots if n_slots else slots()[0]
+    reading = None if n_slots else slots()   # read ONCE: the load moves between two calls and the printed reading must be the one that set n
+    n = n_slots if n_slots else reading[0]
     pos = dict((l["id"], i) for i, l in enumerate(lanes))
-    rows, span = simulate(lanes, n, key=lambda l: (-l["tail"], not l["high"], -l["est"]))
+    rows, span = simulate(lanes, n, key=lambda l: (-l["tail"], not l["high"]))   # a tie on both: the listed order (sort is stable)
     naive_rows, naive = simulate(lanes, n, key=lambda l: pos[l["id"]])
     order = "critical-path"
     if naive < span:   # the longest-path rule is a heuristic: when the listed order ends sooner, use it and say so
@@ -257,11 +261,10 @@ def plan(path, n_slots, as_json):
         print(json.dumps({"slots": n, "order": order, "start_order": [r["id"] for r in rows], "rows": rows, "makespan_min": span,
                           "input_order_makespan_min": naive, "merge_order": merge_order, "overlaps": overlaps}, indent=1))
         return
-    print("slots %d (machine now: %s)" % (n, "%d cores, load %.1f" % slots()[1:] if not n_slots else "set by --slots"))
+    print("slots %d (machine now: %s)" % (n, "set by --slots" if reading is None else "%d cores, load %.1f" % reading[1:]))
     print("%-24s %8s %8s %8s" % ("start order", "start", "end", "est"))
-    est = dict((l["id"], l["est"]) for l in lanes)
     for r in rows:
-        print("%-24s %7.0fm %7.0fm %7.0fm" % (r["id"], r["start"], r["end"], est[r["id"]]))
+        print("%-24s %7.0fm %7.0fm %7.0fm" % (r["id"], r["start"], r["end"], r["end"] - r["start"]))
     print("batch ends after %.0f min; the same lanes in input order: %.0f min" % (span, naive))
     if order == "input":
         print("the listed order ends sooner than the longest-path rule here: start the lanes in the order they are listed")
@@ -274,6 +277,8 @@ def plan(path, n_slots, as_json):
 def record(lane_id, minutes, kind):
     m = _num(minutes, "minutes")
     p = history_path()
+    if p is None:
+        fail("not in a git repository: name the history file with LANE_PLAN_HISTORY")
     line = (json.dumps({"id": lane_id, "kind": kind, "minutes": m, "at": int(time.time())}) + "\n").encode("utf-8")
     try:
         os.makedirs(os.path.dirname(os.path.abspath(p)), exist_ok=True)
