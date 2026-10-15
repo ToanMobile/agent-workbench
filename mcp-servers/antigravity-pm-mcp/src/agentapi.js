@@ -482,7 +482,10 @@ function reapOrphanAgy() {
 function dropPending(keys) {
   withRegistryLock(() => {
     const reg = readAgyRegistry();
-    if (keys.filter((k) => delete reg[k]).length) writeJsonAtomic(agyRegistryFile(), reg);
+    const hit = keys.filter((k) => k in reg);   // `delete` tra true ca khi khoa vang: phai hoi truoc
+    if (!hit.length) return;
+    hit.forEach((k) => delete reg[k]);
+    writeJsonAtomic(agyRegistryFile(), reg);
   });
 }
 

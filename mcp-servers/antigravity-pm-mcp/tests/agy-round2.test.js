@@ -1022,3 +1022,20 @@ test('ghi muc THAT that bai sau init (ENOSPC): agy bi dung VA ban ghi cho cua no
   assert.deepEqual(pendingKeys(), [], `ban ghi cho cua agy da bi dung con sot (${writes} lan ghi so dang ky)`);
   assert.ok(await waitUntil(() => !alive(agy.pid), 5000), 'agy van song sau khi khong ghi duoc muc that');
 });
+
+test('go ban ghi cho khi muc do da vang (PM khac don mat roi): KHONG ghi lai so dang ky', async (t) => {
+  fakeAgy(t);
+  const slowFail = path.join(path.dirname(process.env.ANTIGRAVITY_PM_AGY), 'agy-slow-fail');
+  fs.writeFileSync(slowFail, '#!/bin/sh\nsleep 1\nexit 3\n', { mode: 0o755 });   // thoat khong co init sau 1 s
+  process.env.ANTIGRAVITY_PM_AGY = slowFail;
+  const opening = newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) }).then(() => null, (e) => e);
+  assert.ok(await waitUntil(() => pendingKeys().length > 0, 5000), 'PM phai ghi ban ghi cho ngay sau spawn');
+  fs.writeFileSync(registryFile(), JSON.stringify({ khac: { model: ARGON, cwd: os.tmpdir(), at: new Date().toISOString() } }));   // PM khac da don muc cho
+  const orig = fs.renameSync;
+  let rewrites = 0;
+  fs.renameSync = function renameSync(from, to, ...rest) { if (to === registryFile()) rewrites += 1; return orig.call(fs, from, to, ...rest); };
+  let err;
+  try { err = await opening; } finally { fs.renameSync = orig; }
+  assert.match(String(err?.message), /init/, 'luot mo phai that bai vi agy thoat khong co init');
+  assert.equal(rewrites, 0, 'go mot muc khong con trong so dang ky ma van ghi lai ca file');
+});
