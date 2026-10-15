@@ -44,10 +44,8 @@
 #      before git are skipped like the other wrappers. Allowed now: `git clean` with -n / --dry-run, `git rm -f --cached`.
 #   3f. (2026-10-14, workflow-improvements.md I.0 W3, tests/gates/test_guard_shell_norm.sh) the reading of a command line is
 #      hooks/shell_norm.py, shared with hardware_safety_gate.sh: wrappers, sh -c in any flag cluster, also `su -c` / `su USER CMD`,
-#      `adb shell CMD` and ssh options with a value (all analysed now), heredocs found outside quotes and comments only. A heredoc
-#      body is judged only for what runs: a body a shell gets stays shell lines, a body an interpreter reads as its program is
-#      checked like python -c, and a body only a pure data reader gets (cat > f, git commit -F -) is text (a quoted python heredoc
-#      with a backtick in it was refused) except the $(…) / `…` of an unquoted body; a body of a program not known stays judged.
+#      `adb shell CMD` and ssh options with a value (all analysed now). Heredocs (policy of 15/10): a body is cut only for a known
+#      message option or the one statement of a fully modeled command; every other body stays in the scan (see heredoc_cut below).
 #   4. FAIL-CLOSED: if the command can't be tokenized, or contains `$(`/backticks
 #      whose output could become a command, the raw text is scanned with a broad
 #      regex instead. Missing python3, or an uncaught internal error in the parser, blocks.
@@ -693,56 +691,20 @@ def git_in_literals(code):
     ([\x27git\x27,\x27push\x27,\x27--force\x27] or \x27git reset --har HEAD\x27). The word after `git` and its
     global options is the subcommand; the words after it go through danger_in_git (abbreviations
     included). Only danger_in_git: a literal that merely names a new branch is not blocked."""
-    for group in literal_groups(code):
-        words = []
-        for m in group:
-            words += next((g for g in m.groups() if g is not None), "").split()
-        first = group[0].start()
-        if re.search(r"\bgit\s*\(\s*$", code[max(0, first - 24):first]):   # sh.git(reset, --hard): the call is git
-            words.insert(0, "git")
-        for k, w in enumerate(words):
-            if w.rsplit("/", 1)[-1].lower() != "git":
-                continue
-            j = k + 1
-            while j < len(words) and words[j].startswith("-"):
-                j += 2 if (words[j] in GIT_OPTS_WITH_ARG and "=" not in words[j]) else 1
-            if j < len(words):
-                reason = danger_in_git(words[j], words[j + 1:])
-                if reason:
-                    return reason
-    return None
-
-def literal_groups(code):
-    """The string literals of code in groups, one per call: a group ends when the bracket that holds it closes, or, outside any
-    bracket, at the end of the line / statement. The words of one group are the arguments of the git named in it; literals of two
-    calls are not (15/10, OCR: subprocess.run([git, checkout, main]) then subprocess.run([rm, -f, t]) read as checkout --force)."""
-    groups, cur, depth, base, pos = [], [], 0, 0, 0
+    words = []
     for m in STR_LITERAL.finditer(code):
-        low, gap = depth, code[pos:m.start()]
-        for ch in gap:
-            depth += ch in "([{"
-            if ch in ")]}":
-                depth -= 1
-                low = min(low, depth)
-        if cur and (low < base or (base == 0 and re.search(r"[;\n]", gap))):
-            groups.append(cur)
-            cur = []
-        if not cur:
-            base = depth
-        cur.append(m)
-        pos = m.end()
-    return groups + [cur] if cur else groups
-
-HASH_COMMENT = re.compile(STR_LITERAL.pattern + r"|(\#[^\n]*)")
-SLASH_COMMENT = re.compile(STR_LITERAL.pattern + r"|(//[^\n]*|/\*[\s\S]*?\*/)")
-
-def strip_comments(code, prog):
-    """code of interpreter prog without its comments (a string literal keeps its # and //): a comment is not run. # for python,
-    ruby, perl and php, // and /* */ for node (and php); the line structure stays."""
-    rx = SLASH_COMMENT if re.match(r"(?:node|deno|bun|php)", prog) else HASH_COMMENT
-    if prog.startswith("php"):
-        code = HASH_COMMENT.sub(lambda m: m.group(0) if m.group(4) is None else "", code)
-    return rx.sub(lambda m: m.group(0) if m.group(4) is None else "", code)
+        words += next((g for g in m.groups() if g is not None), "").split()
+    for k, w in enumerate(words):
+        if w.rsplit("/", 1)[-1].lower() != "git":
+            continue
+        j = k + 1
+        while j < len(words) and words[j].startswith("-"):
+            j += 2 if (words[j] in GIT_OPTS_WITH_ARG and "=" not in words[j]) else 1
+        if j < len(words):
+            reason = danger_in_git(words[j], words[j + 1:])
+            if reason:
+                return reason
+    return None
 
 def analyse_simple(tokens, depth):
     tokens = shell_norm.inline_script(tokens)   # sudo -s STR, env -S STR: the command line a wrapper hides becomes words
@@ -1065,21 +1027,14 @@ def strip_subst(text, inners=None, outs=None):
 
 SOLO_WORDS = re.compile(r"\bgit\b[^\n]*?\b(push|checkout|switch|branch|worktree)\b")
 
-# Heredocs (2026-10-14, W3): shell_norm.heredocs finds them outside quotes and comments, as the shell does (a <<\x27EOF\x27 inside a
-# quoted string or a comment cut the lines after it until a line EOF: they were never judged). What the shell runs is judged as
-# commands, nothing else:
-#   - a body a shell runs (bash <<X, cat <<X | sh, ssh host <<X, eval "$(cat <<X …)", cat > x.sh <<X … then bash x.sh) stays in
-#     place and is judged as shell lines;
-#   - a body an interpreter runs as its program (an interpreter reading its program from a heredoc, cat <<X | node -) is source
-#     code: interp_body_danger below, then cut (14/10: a backtick in such a body sent the whole body to the $(…) scan and blocked it);
-#   - a body of any other reader stays and is judged as shell lines, quoted or not (15/10, OCR: a program that is not a known pure
-#     data reader — python3 tool.py, node tool.js, ruby -e system(STDIN.read) — may run what it reads; the RUNS_INPUT of the old
-#     guard kept such a body too; NO single quote in this comment: the whole python source is one single-quoted bash string);
-#   - an UNQUOTED body is text too, except its $(…) / `…`, which the shell runs: a body a data-only reader takes (cat > f,
-#     git commit -F -) is cut and its substitutions stay.
-# A heredoc with no delimiter line is never cut (fail closed).
+# Heredocs (2026-10-14, W3; policy of 15/10 after three review rounds): shell_norm.heredocs finds them. A body is cut only when the whole
+# command is made of constructs shell_norm models (cut_ok) AND it is the message of a known option (git commit -m, gh pr create --body …)
+# or the one statement of the command (cat > notes.md <<EOF, git commit -F -); every other body stays and is judged as shell lines, quoted
+# or not. A body an interpreter reads as its program (python3 - <<EOF, cat <<EOF | node -) is judged as source first (interp_body_danger
+# below, on the raw text), then cut when cut_ok. An unquoted body that is cut leaves its $(…) / `…`, which the shell runs.
+# A heredoc with no delimiter line is never cut (fail closed). NO single quote in this comment: the python source is one bash string.
 def heredoc_cut(h):
-    return h.kind in ("data", "interp", "interp_file")
+    return h.kind in ("data", "interp")
 
 # A heredoc an interpreter reads as its PROGRAM is source code, not shell lines (2026-10-13): the -c rule applies to it (RAW, then
 # the git words of its string literals), but only when the body can start a process — a body that merely holds git commands as
@@ -1088,7 +1043,6 @@ def interp_body_danger(body, prog):
     """The reason the program an interpreter reads from a heredoc runs a dangerous git command, or None."""
     if not shell_norm.spawns(body, prog):
         return None
-    body = strip_comments(body, prog)
     hit = RAW.search(body)
     reason = f"{hit.group(1).split()[0]}" if hit else git_in_literals(body)
     return f"{reason} (chương trình {prog} đọc từ heredoc)" if reason else None
@@ -1351,14 +1305,14 @@ def analyse(text, depth=0, stripped=False):
     if not stripped and "<<" in text:   # every level: a bash -c / eval string holds heredocs of its own
         docs = shell_norm.heredocs(text)
         for h in docs:
-            if h.kind in ("interp", "interp_file") and h.terminated:   # a program read from it, or from the file it wrote
+            if h.kind in ("interp", "source") and h.terminated:   # a program an interpreter reads, or a script written to a file
                 reason = interp_body_danger(h.body(text), h.reader)
                 if reason:
                     return reason
         text = shell_norm.strip_heredocs(text, heredoc_cut, docs)
     live = outside_single_quotes(text)
     if not stripped and ("`" in live or "$(" in live or "<(" in live or ">(" in live):
-        flat = text.replace("\\\n", " ").replace("\n", " ; ")
+        flat = text.replace("\\\n", "").replace("\n", " ; ")
         m = RAW.search(flat)
         if m:
             return f"{m.group(1).split()[0]} (trong lệnh có $(...)/backtick)"
@@ -1381,7 +1335,7 @@ def analyse(text, depth=0, stripped=False):
             SOLO_HIT.append("lệnh có $( hoặc backtick không đóng, không kiểm được push/nhánh trong đó; tách lệnh git ra riêng")
             return SOLO_HIT[-1]
         return None
-    text = drop_comments(text).replace("\\\n", " ").replace("\n", " ; ")
+    text = drop_comments(text).replace("\\\n", "").replace("\n", " ; ")
     try:
         lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
         lex.whitespace = " \t\r"

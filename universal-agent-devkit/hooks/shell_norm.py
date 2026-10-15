@@ -8,12 +8,12 @@ quotes …). What decides it lives here, once; each guard keeps its own verdict 
   - the command text another program runs: sh/bash -c (also inside a flag cluster: -lc, -ec), su -c / su USER CMD, ssh host CMD,
     adb shell|exec-out CMD (shell_script, su_command, far_command);
   - brace expansion and path normalisation of a target (braces, norm_path);
-  - heredocs, found the way the shell finds them (outside quotes and comments): a QUOTED body is data the shell never reads as
-    commands, an unquoted body is data too except its $(…) / `…`, and a body that a shell or an interpreter reads is handed back
-    as what it is (heredocs, strip_heredocs).
+  - heredocs, found the way the shell finds them (outside quotes and comments), each with the reader it goes to. A body is cut
+    (strip_heredocs) only when the whole command is made of constructs this file models (_modeled) AND the body is the message of a
+    known option or the one file statement of the command (_message_arg, _file_statement); everything else stays in the scan, as
+    the old hardware gate always did (policy of 15/10, after three review rounds found holes in a scanner that is not the shell).
 Standard library only. Loaded by the guards from their own directory (python3 -I keeps the project off sys.path).
 """
-import codecs
 import os
 import posixpath
 import re
@@ -83,6 +83,25 @@ def redirect_len(tokens, i):
     return 1
 
 
+def env_option(tokens, j):
+    """(how many words the env option tokens[j] takes, the STRING of an -S / --split-string option or None). -u -C -P -S and the long
+    --unset --chdir --split-string take a value, glued or the next word, alone or as the last letter of a flag cluster: `env -iS STR`
+    ran STR unseen (review 15/10)."""
+    a = tokens[j]
+    if a.startswith("--"):
+        name, eq, val = a.partition("=")
+        if name in ("--unset", "--chdir", "--split-string"):
+            v = val if eq else (tokens[j + 1] if j + 1 < len(tokens) else "")
+            return (1 if eq else 2), (v if name == "--split-string" else None)
+        return 1, None
+    for k, ch in enumerate(a[1:], 1):
+        if ch in "uCPS":
+            glued = a[k + 1:]
+            v = glued or (tokens[j + 1] if j + 1 < len(tokens) else "")
+            return (1 if glued else 2), (v if ch == "S" else None)
+    return 1, None
+
+
 def prefix_end(tokens, i=0):
     """Index of the program word of a simple command: after NAME=VAL words, keywords, a redirect before the command
     (`2>/dev/null rm …`, `> out git …`), env with its options and assignments, and the wrappers. len(tokens) when there is none."""
@@ -95,7 +114,7 @@ def prefix_end(tokens, i=0):
         elif p == "env":
             i += 1
             while i < len(tokens) and (tokens[i].startswith("-") or "=" in tokens[i]):
-                i += 2 if tokens[i] in ("-u", "-C", "-S", "-P", "--unset", "--chdir", "--split-string") else 1
+                i += env_option(tokens, i)[0] if tokens[i].startswith("-") else 1
         elif p in WRAPPERS:
             i = skip_wrapper(tokens, i, p)
         else:
@@ -117,16 +136,14 @@ def inline_script(tokens):
         elif p == "env":
             j = i + 1
             while j < n and (tokens[j].startswith("-") or "=" in tokens[j]):
-                a = tokens[j]
-                val = (tokens[j + 1] if j + 1 < n else "") if a in ("-S", "--split-string") else (
-                    a[2:] if a.startswith("-S") and len(a) > 2 else a.split("=", 1)[1] if a.startswith("--split-string=") else None)
+                took, val = env_option(tokens, j) if tokens[j].startswith("-") else (1, None)
                 if val is not None:
                     try:
                         words = shlex.split(val)
                     except ValueError:
                         words = val.split()
-                    return inline_script(tokens[:j] + words + tokens[j + (2 if a in ("-S", "--split-string") else 1):])
-                j += 2 if a in ("-u", "-C", "-P", "--unset", "--chdir") else 1
+                    return inline_script(tokens[:j] + words + tokens[j + took:])
+                j += took
             i = j
         elif p in WRAPPERS:
             k = skip_wrapper(tokens, i, p)
@@ -284,34 +301,31 @@ EXEC_SINK = re.compile(r"\bsubprocess\b|\bos\.(?:system|popen|exec\w*|spawn\w*)\
                        r"|\bcreate_subprocess_\w+|\bpty\.spawn\b"
                        r"|\bchild_process\b|\b(?:execSync|execFileSync|spawnSync|spawn|execa)\b|\bsystem\b|\bexec(?:[lv]\w*|file\w*)?\b"
                        r"|\bpopen\w*\b|\bshell_exec\b|\bpassthru\b|\bproc_open\b|\bIO\.popen\b|\bOpen3\b|%x\W|\bqx\W"
-                       r"|\bopen\b[^\n]*\||\bsh\.\w+\s*\(|\bfrom\s+sh\s+import\b|\bplumbum\b|\bpexpect\b|\bdelegator\b", re.I)
+                       r"|\bopen\b[^\n]*\||\bsh\.\w+\s*\(|\bfrom\s+sh\s+import\b|\bplumbum\b|\bpexpect\b|\bdelegator\b"
+                       r"|\bposix_spawnp?\b|\breadpipe\b|\bsyscall\b|\bget(?:status)?output\b|\bpcntl_exec\b|\bspawn_sync\b", re.I)
 
 
 def spawns(body, prog):
     """True when the program text body of interpreter prog can start a process."""
     return bool(EXEC_SINK.search(body) or (re.match(r"(?:ruby|perl|php)", prog or "") and "`" in body))
 
-# The shell part of the line test block-dangerous-git.sh used before 14/10 (drop_literal_heredocs RUNS_INPUT, its interpreter
-# words left out): a body whose line matched it was judged as shell, and still is, so this reading is never looser than that one.
-LEGACY_SHELL_LINE = re.compile(r"(?:^|[\s|;&(/])(?:ba|z|da|k|fi)?sh\b|\b(?:ssh|eval|xargs|source)\b|(?:^|\s)\.\s")
-
 
 class Heredoc:
     """One heredoc. op_start / op_end: the << operator and its word; body_start / body_end: the body; end: just past its
     delimiter line. quoted: a quote or backslash in the word (the shell expands nothing in the body). terminated: a delimiter
     line was found. depth: nesting of $( … ) / ( … ) / `…` at the operator. reader: the program the body (or the text it becomes)
-    goes to. kind: "shell" (a shell runs it, here or on another machine, also from the file a data reader wrote it to: cat > x.sh
-    <<EOF … bash x.sh), "interp" (an interpreter reads it as its program), "interp_file" (written to a file an interpreter then
-    runs), "data" (a pure data reader and nothing that follows can run the body: see _inert; a doubt is "shell") or "other" (a
-    reader not known: neither). in_dq: the operator sits in a double-quoted $( … ) / `…` (a message argument)."""
+    goes to. kind: "shell" (a shell reads it, here or far), "interp" (an interpreter reads it as its program), "data" (the message
+    of a known option or the one file statement of the command, never run: _message_arg, _file_statement) or "other" (anything
+    else). cut_ok: the whole command is modeled (_modeled): only then may a body be cut (strip_heredocs). in_dq: the operator
+    sits in a double-quoted $( … )."""
     __slots__ = ("op_start", "op_end", "delim", "quoted", "strip_tabs", "depth", "body_start", "body_end", "end",
-                 "terminated", "reader", "kind", "in_dq")
+                 "terminated", "reader", "kind", "in_dq", "cut_ok")
 
     def __init__(self, op_start, op_end, delim, quoted, strip_tabs, depth):
         self.op_start, self.op_end, self.delim, self.quoted = op_start, op_end, delim, quoted
         self.strip_tabs, self.depth = strip_tabs, depth
         self.body_start = self.body_end = self.end = op_end
-        self.terminated, self.reader, self.kind, self.in_dq = False, "", "other", False
+        self.terminated, self.reader, self.kind, self.in_dq, self.cut_ok = False, "", "other", False, False
 
     def body(self, text):
         return text[self.body_start:self.body_end]
@@ -322,21 +336,8 @@ def _heredoc_word(text, i):
     out, quoted, n = [], False, len(text)
     while i < n and text[i] not in " \t\n;&|()<>":
         c = text[i]
-        if c == "$" and text[i + 1:i + 2] in ("\x27", "\x22"):   # <<$'EOF' / <<$"EOF": the word is EOF, bash drops the $
-            if text[i + 1] == "\x27":                             # $'…': backslash escapes (bash decodes $'E\x4fF' to EOF)
-                k = i + 2
-                while k < n and text[k] != "\x27" and text[k] != "\n":
-                    k += 2 if text[k] == "\\" else 1
-                if k >= n or text[k] != "\x27":
-                    return i, "", quoted
-                try:
-                    out.append(codecs.decode(text[i + 2:k].encode("utf-8"), "unicode_escape") if "\\" in text[i + 2:k] else text[i + 2:k])
-                except ValueError:                                # an escape we cannot read: no heredoc here, the lines are judged
-                    return i, "", quoted
-                quoted, i = True, k + 1
-                continue
-            i += 1
-            continue                                              # $"…": the next pass reads "…" as a plain quoted word
+        if c == "$" and text[i + 1:i + 2] in ("\x27", "\x22"):   # <<$'EOF' / <<$"EOF": bash and zsh read them differently: no heredoc
+            return i, "", quoted                                    # here, the lines after it are judged as commands (not decoded)
         if c in "\x27\x22":
             k = text.find(c, i + 1)
             if k < 0 or "\n" in text[i:k]:
@@ -584,248 +585,318 @@ def _segment(text, start, end, cut):
     return "\n".join(parts)
 
 
-# Programs that only look at a file they are given (a written heredoc named by them is not run).
-FILE_TOOLS = DATA_READERS | {"chmod", "ls", "stat", "file", "cp", "mv", "rm", "touch", "ln", "mkdir", "open", "less", "more",
-                             "code", "vim", "nano", "wc", "test", "["}
-# Programs that run a file of a fixed name without naming it: their recipes are shell lines (make runs a Makefile).
-IMPLICIT_RUN = {"make": {"Makefile", "makefile", "GNUmakefile"}, "gmake": {"Makefile", "makefile", "GNUmakefile"},
-                "just": {"justfile", "Justfile", ".justfile"}}
-# Programs that can neither run a file nor start another program: all that may follow a heredoc written to a file for its body to stay
-# data. Everything else (a shell, an interpreter, a path, a variable, make, npm, and cp / mv / ln / install / chmod, which hide what
-# runs the copy) keeps the body in the scan (policy 15/10: fail closed; review: cat > x <<EOF … mv x y.sh && bash y.sh).
-INERT = {"cd", "pwd", "echo", "printf", "true", "false", ":", "test", "[", "[[", "ls", "stat", "file", "wc", "cat", "head", "tail",
-         "grep", "egrep", "fgrep", "rg", "diff", "cmp", "nl", "tac", "cut", "column", "sort", "uniq", "tr", "jq", "yq", "md5", "md5sum",
-         "shasum", "sha1sum", "sha256sum", "cksum", "base64", "realpath", "dirname", "basename", "readlink", "which", "rm", "touch",
-         "mkdir", "sleep", "date", "set", "unset", "exit", "pbcopy"}
-# git subcommands that run a hook (or a program named in config) of the repo: after a heredoc written to a hook dir they run the body
-GIT_RUNS_HOOKS = {"commit", "merge", "rebase", "checkout", "switch", "push", "pull", "am", "cherry-pick", "revert", "reset", "gc",
-                  "maintenance", "stash", "clone", "fetch", "worktree", "bisect", "restore", "apply"}
-GIT_READS = {"add", "status", "diff", "log", "show", "ls-files", "rev-parse", "branch", "remote", "describe", "blame", "grep", "rm",
-             "mv", "ls-tree", "cat-file", "shortlog", "reflog", "config", "rev-list", "diff-tree", "show-ref", "init", "tag"}
-# A path in a git hook dir or a git / shell config file, or a git hook by name: writing it is writing code something later runs.
+# ── What may be cut (policy of 15/10, after three review rounds: the lane cut heredoc bodies with a scanner that is not the shell) ──
+# A body is cut (strip_heredocs) only when BOTH hold:
+#   1. the whole command is made of constructs this file models, outside the bodies (_modeled): plain words, '…' and "…" quotes,
+#      $( … ), redirections, ; && || | and newlines, and a heredoc word that is plain. A ${ … }, $[ … ], $(( … )), a backtick, $'…', a
+#      subshell or group, a keyword, trap / eval / source / exec, a background &, <( … ), <<<, a backslash or a stray # means no
+#      heredoc found here can be trusted: nothing is cut and the body stays in the scan, as the old hardware gate always did;
+#   2. the body is data by one of two shapes and no other: the message of a known option (_message_arg: git commit -m "$(cat <<'EOF'
+#      … EOF\n)", gh pr create --body …) or the one statement of the command (_file_statement: cat > notes.md <<'EOF' … EOF, tee,
+#      git commit -F -) with nothing after it. What follows a written file is NOT tracked any more: a file written and then run,
+#      moved, hooked or read by a program set up before the write was a hole on every round.
+MAX_HEREDOCS = 24
+# A path in a git hook dir or a git config file, or a git hook by name: writing it is writing code something later runs.
 HOOKDIR = re.compile(r"(?:^|[/\s'\"=])\.git(?:/|\b)|(?:^|[/\s'\"=])\.?(?:githooks|husky|hooks)(?:/|[\s'\"`)]|$)|\.gitconfig|\.gitattributes")
 HOOKNAME = re.compile(r"(?:^|/)(?:pre-commit|prepare-commit-msg|commit-msg|post-commit|pre-rebase|post-checkout|post-merge|pre-push|"
                       r"pre-receive|post-receive|post-update|pre-auto-gc|post-rewrite|pre-merge-commit|applypatch-msg|pre-applypatch|"
                       r"post-applypatch|fsmonitor-watchman|reference-transaction|push-to-checkout|sendemail-validate)$")
-MAX_HEREDOCS = 24
-LOOP_BEFORE = re.compile(r"(?:^|[;&|(){\n]|\bdo\b|\bthen\b)\s*(?:while|until|for|select|function)\b")
-_LINE_SEP = re.compile(r"&&|\|\||;|\n")
-READ_OPTS_WITH_ARG ={"read": {"-d", "-p", "-t", "-u", "-n", "-N", "-i"}, "mapfile": {"-d", "-n", "-O", "-s", "-u", "-C", "-c"}}
+# Only a file that is text for people (never run, never read as configuration by a tool of the project) is a data target; a path
+# with no extension, a script, a shell startup file, ~/.config/git/config, a Makefile … are not in the list.
+TEXT_EXT = {".md", ".markdown", ".txt", ".rst", ".csv", ".tsv", ".log", ".json", ".yaml", ".yml", ".toml", ".xml", ".html", ".diff", ".patch", ".sql"}
+NOT_TEXT = {"package.json", "composer.json", "tasks.json", "launch.json", ".pre-commit-config.yaml", ".pre-commit-config.yml",
+            "lefthook.yml", "lefthook.yaml", "docker-compose.yml", "docker-compose.yaml", ".gitlab-ci.yml", "pubspec.yaml", "Pipfile"}
+_DELIM = re.compile(r"""(?:'[A-Za-z0-9_]+'|"[A-Za-z0-9_]+"|[A-Za-z0-9_]+)""")
+_SK_BAD = frozenset(("if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac", "function", "select",
+                     "coproc", "trap", "eval", "source", "exec", "{", "}"))
+_SK_KEEP = frozenset(WRAPPERS) | {"env", "command", "builtin", "!"}
 
 
-def _after(text, h):
-    """The command text after the operator, its body cut out: the rest of its own line (cat > a <<EOF && bash a) and what
-    follows the delimiter line."""
-    return text[h.op_end:h.body_start] + text[h.end:]
-
-
-def _commands(after):
-    """[(start, end, [(stage start, stage end, program, words)])] of each command line of after, split at ; && || newline, its
-    pipeline split at |."""
-    out, pos = [], 0
-    for s in list(_LINE_SEP.finditer(after)) + [None]:
-        end = s.start() if s else len(after)
-        stages, q = [], pos
-        for piece in after[pos:end].split("|"):
-            stages.append((q, q + len(piece)) + _program(_words(piece.lstrip("&"))))
-            q += len(piece) + 1
-        out.append((pos, end, stages))
-        pos = s.end() if s else end
-    return out
-
-
-def _written_names(seg):
-    """The files a command line writes with a redirect (> F, >> F, >| F, 1> F — not 2> / <) or tee F, quotes removed."""
-    names = {m.group(1).strip("\x22\x27") for m in re.finditer(r"(?<![<&])(?<![02-9])>>?\|?[ \t]*([^\s;&|<>()]+)", seg)}
-    words = _words(seg)
-    for k, w in enumerate(words):
-        if os.path.basename(w) == "tee":
-            names.update(x for x in words[k + 1:] if not x.startswith("-") and not set(x) <= set(";&|()"))
-            break
-    return names
-
-
-def _written_file_use(text, seg, h):
-    """(use, program) of the file the reader writes the body to (> F, >> F, tee F) in the text after the body: use "shell" (a
-    shell runs it, it is run as a command — bash x.sh, ./x.sh, source x.sh — or make runs it as its Makefile), "interp" (an
-    interpreter runs it: python3 x.py; program: that interpreter), "data" (only file tools name it), "other" (a program not
-    known names it) or None (the reader writes no file, or no later command names it). Each use is judged by the whole
-    pipeline of its command."""
-    names = _written_names(seg)
-    after, uses = _after(text, h), {}
-    bases = {os.path.basename(x.rstrip("/")) for x in names - {"/dev/null", "-"}} - {""}
-    cmds = _commands(after) if bases else []
-    for base in bases:
-        for _a, _b, stages in cmds:
-            if any(base in IMPLICIT_RUN.get(p, ()) for _s, _e, p, _w in stages):
-                uses.setdefault("shell", "make")
-        for m in re.finditer(r"(?<![\w.-])" + re.escape(base) + r"(?![\w-])", after):
-            stages = next((st for a, b, st in cmds if a <= m.start() <= b), [])
-            here = next((_program(_words(after[s:m.end()].lstrip("&")))[0] for s, e, _p, _w in stages if s <= m.start() <= e), "")
-            progs = [p for _s, _e, p, _w in stages]
-            if any(p in SHELL_RUNNERS for p in progs) or here == base:   # ... or the file is the command itself (./x.sh)
-                uses.setdefault("shell", here)
-            elif any(_interp(p) for p in progs):
-                uses.setdefault("interp", next(p for p in progs if _interp(p)))
-            elif all(p in FILE_TOOLS for p in progs if p):
-                uses.setdefault("data", "")
+def _sk_dq(s, i, depth):
+    """Index just past the closing " of a double-quoted string that starts after s[i - 1], or -1 when it holds anything not modeled."""
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c == "\x22":
+            return i + 1
+        if c == "\\":
+            if s[i + 1:i + 2] == "\n":
+                return -1
+            i += 2
+        elif c == "`":
+            return -1
+        elif c == "$":
+            nxt = s[i + 1:i + 2]
+            if nxt == "(":
+                if s[i + 2:i + 3] == "(":
+                    return -1
+                i = _sk(s, i + 2, depth + 1, True)
+                if i < 0:
+                    return -1
+            elif nxt in ("{", "["):
+                return -1
             else:
-                uses.setdefault("other", "")
-    use = next((u for u in ("shell", "other", "interp", "data") if u in uses), None)
-    return use, uses.get(use, "")
+                i += 1
+        else:
+            i += 1
+    return -1
 
 
-def _assigned_vars(stages, seg):
-    """Variable names this command fills from the heredoc: read [-opts] NAME…, mapfile / readarray NAME, NAME=$(…)."""
-    names = set()
-    for p, r in stages:
-        if p in ("read", "mapfile", "readarray"):
-            k = 0
-            while k < len(r):
-                a = r[k]
-                if a == "-a" and k + 1 < len(r):
-                    names.add(r[k + 1])
-                    k += 2
-                elif a in READ_OPTS_WITH_ARG["read" if p == "read" else "mapfile"]:
-                    k += 2
-                elif a.startswith("-") or a.startswith("<") or REDIRECT.match(a):
-                    k += 1
-                else:
-                    names.add(a)
-                    k += 1
-    names.update(re.findall(r"(?:^|[\s;&|(])(?:export\s+|local\s+|declare\s+(?:-\w+\s+)?|readonly\s+)?([A-Za-z_]\w*)=[\x22\x27]?(?:\$\(|`)", seg))
-    return {n for n in names if re.fullmatch(r"[A-Za-z_]\w*", n)}
+def _sk(s, i, depth, sub):
+    """Parse s[i:] as a command list made only of modeled constructs: the index just past it (past the ) of a $( … ) when sub), or -1."""
+    if depth > 12:
+        return -1
+    n, word, cmdpos, target = len(s), [], True, False
 
-
-def _var_run_later(text, h, names):
-    """True when a later shell runner (eval, bash -c, source …) takes one of these variables: the body runs as commands."""
-    if not names:
-        return False
-    rx, after = re.compile(r"\$\{?(?:" + "|".join(map(re.escape, sorted(names))) + r")\b"), _after(text, h)
-    return any(rx.search(after[a:b]) and any(p in SHELL_RUNNERS for _s, _e, p, _w in st) for a, b, st in _commands(after))
-
-
-def _git_inert(words, hook_ctx):
-    """True when the git command (the words after git) cannot run the body of a heredoc written to a file: no -c / alias, a
-    subcommand known, and one that runs hooks only when nothing says the file is a hook."""
-    if any(w in ("-c", "--config-env", "--exec-path") or w.startswith(("alias.", "--exec-path=", "--config-env=")) for w in words):
-        return False
-    k = 0
-    while k < len(words) and words[k].startswith("-"):
-        k += 2 if words[k] == "-C" else 1
-    sub = words[k] if k < len(words) else ""
-    return sub in GIT_READS or (sub in GIT_RUNS_HOOKS and not hook_ctx)
-
-
-def _inert(text, h, seg, near, cut, interp_ok=False):
-    """True when nothing can run the body of the heredoc h, a pure data reader's: it is the message of a quoted $( … ) argument,
-    or everything after it, on its own line and below, is a command that cannot run a file (INERT, a git command that runs no hook
-    of this one). A body written to a hook dir (or a git hook by name) is never inert. interp_ok: interpreters may follow too (the
-    body is the program they read, judged by the caller). Doubt is false: the body stays in the scan (policy 15/10)."""
-    nl = text.find("\n", h.op_end)
-    own = text[h.op_end:nl if nl >= 0 else len(text)]   # the rest of the operator line (not the bodies of heredocs before this one)
-    if (h.in_dq and not own.strip() and text[h.end:].lstrip()[:1] in (")", "`")
-            and not re.search(r">|\btee\b", near)):      # git commit -m "$(cat <<'EOF' … EOF\n)": the text is an argument
-        return True
-    names = _written_names(seg)
-    hook_ctx = bool(HOOKDIR.search(text[:h.body_start]) or any(HOOKNAME.search(n) or HOOKDIR.search(n) for n in names))
-    if hook_ctx or LOOP_BEFORE.search(text[:h.op_start]):   # a loop may run the file on its next round, before this write
-        return False
-    after = own + "\n" + _segment(text, h.end, len(text), cut)   # later heredocs: their bodies are input of their readers
-    if re.search(r"\$\(|`|<\(|>\(", after):
-        return False
-    literal = not any(re.search(r"[$`*?\[]", n) for n in names)
-    bases = {os.path.basename(n) for n in names}
-    for _a, _b, stages in _commands(after):
-        for _s, _e, p, w in stages:
-            if p.strip(")}\x22\x27") == "" or p.startswith("#") or p in INERT or (interp_ok and _interp(p)):
-                continue
-            if p == "git" and _git_inert(w, not literal):
-                continue
-            if p in IMPLICIT_RUN and literal and not (bases & IMPLICIT_RUN[p]) and not any(os.path.basename(x) in bases for x in w):
-                continue   # make / just run their own file, not the one written (notes.mk) — unless it is named (make -f notes.mk)
+    def flush():
+        nonlocal word, cmdpos, target
+        if not word:
+            return True
+        w = "".join(word)
+        word = []
+        if target:
+            target = False
+            return True
+        if w in _SK_BAD or (w == "." and cmdpos):
             return False
-    return True
+        cmdpos = cmdpos and (w in _SK_KEEP or ASSIGN.match(w) is not None)
+        return True
+
+    while i < n:
+        c = s[i]
+        if c in " \t":
+            if not flush():
+                return -1
+            i += 1
+        elif c == "\n":
+            if not flush():
+                return -1
+            cmdpos, i = True, i + 1
+        elif c == "#" and not word:        # a comment: it ends at the newline, which stays
+            k = s.find("\n", i)
+            i = n if k < 0 else k
+        elif c == "\\" or c == "`" or c == "(":
+            return -1
+        elif c == "'":
+            k = s.find("'", i + 1)
+            if k < 0:
+                return -1
+            word.append("q")
+            i = k + 1
+        elif c == "\x22":
+            i = _sk_dq(s, i + 1, depth)
+            if i < 0:
+                return -1
+            word.append("q")
+        elif c == "$":
+            nxt = s[i + 1:i + 2]
+            if nxt == "(":
+                if s[i + 2:i + 3] == "(":
+                    return -1
+                i = _sk(s, i + 2, depth + 1, True)
+                if i < 0:
+                    return -1
+                word.append("q")
+            elif nxt in ("{", "[", "\x27", "\x22"):
+                return -1
+            else:
+                word.append("v")
+                i += 1
+        elif c == ")":
+            return i + 1 if sub and flush() else -1
+        elif c in "<>":
+            if s.startswith(("<<<", "<(", ">("), i):
+                return -1
+            if word and "".join(word).isdigit():
+                word = []                  # a descriptor: 2>&1
+            elif not flush():
+                return -1
+            if s.startswith("<<", i):
+                j = i + 2 + (s[i + 2:i + 3] == "-")
+                while j < n and s[j] in " \t":
+                    j += 1
+                m = _DELIM.match(s, j)
+                if not m or (m.end() < n and s[m.end()] not in " \t\n;|&)<>"):
+                    return -1
+                i = m.end()
+            else:
+                i += 1
+                if s[i:i + 1] in (">", "&", "|") and c == ">" or s[i:i + 1] in ("&", ">") and c == "<":
+                    i += 1
+                target = True
+        elif c == "&":
+            if s.startswith("&&", i):
+                if not flush():
+                    return -1
+                cmdpos, i = True, i + 2
+            elif s.startswith("&>", i):
+                if not flush():
+                    return -1
+                i += 3 if s.startswith("&>>", i) else 2
+                target = True
+            else:
+                return -1                  # a background &
+        elif c == "|" or c == ";":
+            if s.startswith(";;", i) or not flush():
+                return -1
+            cmdpos, i = True, i + (2 if s.startswith(("||", "|&"), i) else 1)
+        else:
+            word.append(c)
+            i += 1
+    return -1 if sub or not flush() else n
 
 
-def _head_subst(words):
-    """True when the command word of words is a command substitution ($(…) / `…`): its output is split into the command."""
-    k = prefix_end(words)
-    return k < len(words) and (words[k] == "`" or words[k].startswith("`") or words[k] == "$" and words[k + 1:k + 2] == ["("]
-                               or words[k].startswith("$("))
+def _modeled(text, docs):
+    """True when the text outside the heredoc bodies is made only of constructs the scanner models, and every heredoc word is plain
+    and terminated: only then is where the scanner puts a body where the shell puts it."""
+    if re.search(r"[\x00-\x08\x0b-\x1f\x7f]", text):
+        return False
+    out, pos = [], 0
+    for h in sorted(docs, key=lambda d: d.op_start):
+        raw = text[h.op_start + 2:h.op_end].lstrip("-").strip(" \t")
+        if not h.terminated or h.body_start < pos or _DELIM.fullmatch(raw) is None:
+            return False
+        out.append(text[pos:h.body_start])
+        pos = h.end
+    out.append(text[pos:])
+    s = "".join(out)
+    return _sk(s, 0, 0, False) == len(s)
 
 
-def _sudo_shell(words):
-    """True when words run sudo / doas with -s or -i (--shell, --login): the shell it starts reads stdin (a heredoc is its script)."""
-    return any(os.path.basename(w) in ("sudo", "doas") and _sudo_flags(words[k:]) for k, w in enumerate(words))
+_PATHW = r"[A-Za-z0-9_./~+@-]+"
+_DELIMW = _DELIM.pattern
+_STMT = [re.compile(p) for p in (
+    r"cat\s*>>?\s*(?P<t>%s)\s*<<-?\s*%s(?:\s+2>/dev/null)?" % (_PATHW, _DELIMW),
+    r"cat\s*<<-?\s*%s\s*>>?\s*(?P<t>%s)(?:\s+2>/dev/null)?" % (_DELIMW, _PATHW),
+    r"tee\s+(?:-a\s+)?(?P<t>%s)\s*<<-?\s*%s" % (_PATHW, _DELIMW),
+    r"git\s+commit(?:\s+(?:-q|-s|-a|-v|--quiet|--signoff|--all|--verbose|--allow-empty|--amend|--no-edit))*"
+    r"\s+(?:-F\s*-|--file=-|--file\s+-)(?:\s+(?:-q|-s|-a|-v|--quiet|--signoff|--all|--verbose|--allow-empty|--amend|--no-edit))*"
+    r"\s*<<-?\s*%s" % _DELIMW)]
+_PREFIX = re.compile(r"(?:(?:cd|mkdir\s+-p)\s+%s\s*&&\s*)*" % _PATHW)
 
 
-def _classify(text, h, seps, pipes, cut):
+def _text_target(t):
+    base = t.rsplit("/", 1)[-1]
+    return (os.path.splitext(base)[1].lower() in TEXT_EXT and base not in NOT_TEXT
+            and not HOOKDIR.search(t) and not HOOKNAME.search(t) and not t.startswith("-"))
+
+
+def _file_statement(text, h, ndocs):
+    """True when the heredoc is the ONE statement of the command: cat > F <<EOF (also >>, or the redirect after the word), tee F or
+    git commit -F -, optionally after `cd DIR &&` / `mkdir -p DIR &&`, with only blank lines and comments around it, and F is a text
+    file (TEXT_EXT) that is no hook, no config and no script."""
+    if ndocs != 1 or not h.terminated:
+        return False
+    ls = text.rfind("\n", 0, h.op_start) + 1
+    nl = text.find("\n", h.op_end)
+    line = text[ls:nl if nl >= 0 else len(text)].strip()
+    around = text[:ls].splitlines() + text[h.end:].splitlines()
+    if any(x.strip() and not x.strip().startswith("#") for x in around):
+        return False
+    rest = line[_PREFIX.match(line).end():].strip()
+    for rx in _STMT:
+        m = rx.fullmatch(rest)
+        if m:
+            return "t" not in rx.groupindex or _text_target(m.group("t"))
+    return False
+
+
+_MSG = {("git", "commit"): ("-m", "--message"), ("git", "tag"): ("-m", "--message"), ("git", "merge"): ("-m", "--message"),
+        ("git", "notes"): ("-m", "--message"),
+        ("gh", "pr"): ("-b", "--body", "-t", "--title"), ("gh", "issue"): ("-b", "--body", "-t", "--title"),
+        ("gh", "release"): ("-n", "--notes", "-t", "--title")}
+_MSG_SUB = {"pr": ("create", "comment", "edit", "review"), "issue": ("create", "comment", "edit"), "release": ("create",),
+            "notes": ("add", "append")}
+
+
+def _message_arg(text, h):
+    """True when the heredoc is `"$(cat <<'EOF' … EOF\\n)"` as the VALUE of the message option of a known command: git commit | tag |
+    merge | notes add -m / --message, gh pr | issue create | comment | edit | review -b / --body / -t / --title, gh release create
+    -n / --notes / -t / --title. cat is the only reader and the delimiter is quoted; never for -c, config, alias, -e, bisect run …"""
+    if not (h.in_dq and h.quoted and h.terminated):
+        return False
+    k = text.rfind("\x22$(", 0, h.op_start)
+    nl = text.find("\n", h.op_end)
+    if (k < 0 or text[k + 3:h.op_start].strip() != "cat" or text[h.op_end:nl if nl >= 0 else len(text)].strip()
+            or not re.match(r"\s*\)\x22", text[h.end:])):
+        return False
+    words = _words(re.split(r"&&|\|\||[;|\n]", text[:k])[-1])
+    prog, rest = _program(words)
+    if prog not in ("git", "gh") or not rest:
+        return False
+    opt = rest[-1][:-1] if rest[-1].startswith("--") and rest[-1].endswith("=") else rest[-1]
+    pos = [a for a in rest[:-1] if not a.startswith("-")]
+    if any(a in ("-c", "--config-env") for a in rest[:-1]) or not pos or (prog, pos[0]) not in _MSG:
+        return False
+    opts = _MSG[(prog, pos[0])]
+    if opt not in opts and not (prog == "git" and pos[0] != "notes" and re.fullmatch(r"-[A-Za-z]*m", opt)):
+        return False
+    return prog == "git" and pos[0] != "notes" or (len(pos) > 1 and pos[1] in _MSG_SUB[pos[0]])
+
+
+SOURCE_EXT = {".py": "python3", ".js": "node", ".mjs": "node", ".cjs": "node", ".rb": "ruby", ".pl": "perl", ".php": "php"}
+
+
+def _source_target(text, h):
+    """The interpreter of the script a cat / tee heredoc writes (cat > x.py <<EOF → python3), from the extension of the file; "" else.
+    Such a body is judged as source by the git guard whatever follows, and never cut: it may be run by anything."""
+    ls = text.rfind("\n", 0, h.op_start) + 1
+    nl = text.find("\n", h.op_end)
+    line = text[ls:nl if nl >= 0 else len(text)]
+    m = re.search(r">>?\s*(%s)|\btee\s+(?:-a\s+)?(%s)" % (_PATHW, _PATHW), line)
+    return SOURCE_EXT.get(os.path.splitext(m.group(1) or m.group(2))[1].lower(), "") if m else ""
+
+
+def _classify(text, h, seps, pipes, cut, ndocs):
     """Set h.reader and h.kind. The reader is the command the operator belongs to (the one just before it on its line, inside
-    any $( … )) and the top-level command around it, with the stages of its pipeline."""
+    any $( … )) and the top-level command around it, with the stages of its pipeline. kind: "shell" a shell reads it (here or far),
+    "interp" an interpreter reads it as its program, "source" it is written to a script (never cut), "data" it is a message or the one file statement (never run), else "other";
+    only "data" and "interp" are ever cut, and only when the command is modeled (h.cut_ok)."""
     start = max((e for s, e in seps if e <= h.op_start), default=0)
     end = min((s for s, e in seps if s >= h.op_end), default=len(text))
-    seg = _segment(text, start, end, cut)
-    stages, heads, pos, mine = [], [], start, 0
+    stages, pos, mine = [], start, 0
     for p in [p for p in pipes if start <= p < end] + [end]:
         if pos <= h.op_start < p:
             mine = len(stages)
-        heads.append(_words(_segment(text, pos, p, cut).lstrip("&")))
-        stages.append(_program(heads[-1]))
+        stages.append(_program(_words(_segment(text, pos, p, cut).lstrip("&"))))
         pos = p + 1
     line_start = text.rfind("\n", 0, h.op_start) + 1
     near = re.split(r"&&|\|\||[;|(]|\$\(|`", text[line_start:h.op_start])[-1]
-    inner_words = _words(near)
-    inner, inner_rest = _program(inner_words)
+    inner, inner_rest = _program(_words(near))
     top, top_rest = stages[mine]
     h.reader = inner or top
-    if LEGACY_SHELL_LINE.search(seg) or any(
-            p in SHELL_RUNNERS or (p in ("adb", "adb.exe") and adb_shell(r)) for p, r in stages + [(inner, inner_rest)]) \
-            or any(_sudo_shell(w) for w in heads + [inner_words]):   # sudo -s / -i: the shell it starts reads the heredoc
+    if any(p in SHELL_RUNNERS or (p in ("adb", "adb.exe") and adb_shell(r)) for p, r in stages + [(inner, inner_rest)]):
         h.kind = "shell"
-        return
-    if _head_subst(heads[mine]) or (inner in ("git", "gh") and re.search(r"\balias\.\w", seg)):
-        h.kind = "shell"        # $(cat <<EOF …) as the command word is split and run; git -c alias.x=!sh x <<EOF: the alias reads it
-        return
-    if _var_run_later(text, h, _assigned_vars(stages + [(inner, inner_rest)], seg)):   # read X <<EOF … then eval "$X"
-        h.kind = "shell"
-        return
-    if _interp(inner) and _program_on_stdin(inner, inner_rest):          # python3 - <<EOF, also inside $( … )
+    elif _interp(inner) and _program_on_stdin(inner, inner_rest):          # python3 - <<EOF, also inside $( … )
         h.kind, h.reader = "interp", inner
-        return
-    for p, r in stages[mine + 1:]:                                          # cat <<EOF | python3 -
-        if _interp(p) and _program_on_stdin(p, r):
-            h.kind, h.reader = "interp", p
-            return
-    if h.depth and _interp(top) and _program_inline(top, top_rest):         # python3 -c "$(cat <<EOF …)"
+    elif any(_interp(p) and _program_on_stdin(p, r) for p, r in stages[mine + 1:]):   # cat <<EOF | python3 -
+        h.kind, h.reader = "interp", next(p for p, r in stages[mine + 1:] if _interp(p) and _program_on_stdin(p, r))
+    elif h.depth and _interp(top) and _program_inline(top, top_rest):      # python3 -c "$(cat <<EOF …)"
         h.kind, h.reader = "interp", top
-        return
-    if inner in DATA_READERS and top in DATA_READERS and all(p in DATA_READERS for p, _ in stages[mine + 1:]):
-        # cat > x.sh <<EOF … then bash x.sh: what runs the file decides (interp_file: an interpreter program in a file)
-        use, prog = _written_file_use(text, seg, h)
-        if use == "other":
-            h.kind = "other"
-        elif use in ("shell", "interp"):
-            h.kind = "shell" if use == "shell" or not _inert(text, h, seg, near, cut, True) else "interp_file"
-            h.reader = prog if h.kind == "interp_file" else h.reader
-        else:   # nothing names the file (or only file tools do): data only when nothing that follows can run it either
-            h.kind = "data" if _inert(text, h, seg, near, cut) else "shell"
-        return
-    h.kind = "other"
+    elif inner in ("cat", "tee") and _source_target(text, h):               # cat > x.py <<EOF: a script, run by who knows
+        h.kind, h.reader = "source", _source_target(text, h)
+    elif _message_arg(text, h) or _file_statement(text, h, ndocs):
+        h.kind = "data"
+    else:
+        h.kind = "other"
 
 
 def heredocs(text):
     """[Heredoc] of a command line, in order, each with its reader and kind. The shell's rules: `<<` / `<<-` (not `<<<`) outside
     quotes, comments and arithmetic starts one; a quote or backslash in its word makes the body literal; the body starts after
     the end of the line that holds the operator (several heredocs on one line follow each other) and ends at a line that is
-    exactly the word (leading tabs dropped for <<-). Inside $( … ) and backticks the same holds."""
+    exactly the word (leading tabs dropped for <<-). Inside $( … ) and backticks the same holds. h.cut_ok: the command is modeled
+    (_modeled) and has at most MAX_HEREDOCS heredocs: no body of a command that is not is ever cut."""
     docs, seps, pipes = _scan(text)
     cut = sorted((h.body_start, h.end) for h in docs if h.end > h.body_start)
+    many = len(docs) > MAX_HEREDOCS   # each heredoc is classified against the whole text: past the bound nothing is cut
+    ok = bool(docs) and not many and _modeled(text, docs)
     for h in docs:
-        if len(docs) > MAX_HEREDOCS:   # each heredoc is classified against the whole text: no cut past the bound (fail closed)
+        h.cut_ok = ok
+        if many:
             h.kind = "shell"
         else:
-            _classify(text, h, seps, pipes, cut)
+            _classify(text, h, seps, pipes, cut, len(docs))
     return docs
 
 
@@ -865,7 +936,7 @@ def strip_heredocs(text, drop, docs=None):
     docs = heredocs(text) if docs is None else docs
     out, pos = [], 0
     for h in docs:
-        if not h.terminated or h.body_start < pos or not drop(h):
+        if not h.terminated or not h.cut_ok or h.body_start < pos or not drop(h):
             continue
         out.append(text[pos:h.body_start])
         if not h.quoted:

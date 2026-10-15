@@ -32,9 +32,10 @@
 #     /mnt/vendor/persist /dev/block. Allowed now: npm publish --dry-run, terraform destroy -help, kubectl delete
 #     --dry-run=client|server, rm -rf "$PWD/build" ($PWD is the cwd).
 #   • (2026-10-14, workflow-improvements.md I.0 W3) that reading is hooks/shell_norm.py, shared with block-dangerous-git.sh. A
-#     heredoc body only a data reader gets (cat > notes.md <<'EOF', a commit message) is text: no rm walk, pattern or device
-#     check reads it (an unquoted body keeps its $(…) / `…`); a body a shell or an unknown reader gets is judged as before, an
-#     interpreter's program body still by the patterns. ~ as an rm target on a device is refused (its HOME is not known
+#     heredoc body is cut (no rm walk, pattern or device check reads it) only when the whole command is made of constructs
+#     shell_norm models AND the body is the message of a known option (git commit -m, gh pr create --body, each with a quoted $(cat
+#     <<'EOF' …)) or the one statement of the command (cat > notes.md <<'EOF', git commit -F -); an unquoted body keeps its $(…) / `…`;
+#     every other body stays, as before 14/10 (policy of 15/10). ~ as an rm target on a device is refused (its HOME is not known
 #     here); bash -lc / su -c scripts reach the device policy; xargs -i takes no separate value.
 #   • adb shell pm uninstall|disable(-user)|hide of a system package (android,
 #     com.android.*, com.google.android.*, vendor namespaces)
@@ -113,7 +114,8 @@ fast_allow() { # $1 = trigger ERE
 }
 # delete: `find . -delete` removes a tree with no rm in it (2026-10-09, tests/gates/test_hardware_rm_containment.sh).
 # rimraf / rsync: rm -rf and rsync --del(ete) spelled without rm or delete (2026-10-13, tests/gates/test_guard_shell_norm.sh).
-fast_allow 'adb|fastboot|dd|mount|rm|delete|rimraf|rsync|fastlane|security|xcrun|simctl|eval|flash|publish|vercel|netlify|firebase|prisma|db:|drop|truncate|flush|kubectl|terraform|tofu|pulumi|helm|docker|s3' && exit 0
+# <( : a shell that runs a process substitution (bash <(…)) is refused by the parser whatever it says, like the git guard does (15/10)
+fast_allow 'adb|fastboot|dd|mount|rm|delete|rimraf|rsync|fastlane|security|xcrun|simctl|eval|flash|publish|vercel|netlify|firebase|prisma|db:|drop|truncate|flush|kubectl|terraform|tofu|pulumi|helm|docker|s3|<[(]' && exit 0
 
 # The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
 # none); outside a git tree the rm guard measures from the process cwd as before, and nothing is logged
@@ -253,12 +255,12 @@ except Exception as e:
     sys.stderr.write("🛑 [HARDWARE SAFETY GATE] không nạp được hooks/shell_norm.py cạnh hook (" + str(e)[:120] + ") — chặn để an "
                      "toàn. Cài lại DevKit (agent-kit init); lệnh cần chạy ngay thì người dùng tự chạy qua prefix `!` (hoặc HARDWARE_OVERRIDE=1).\n")
     sys.exit(2)
-# What the patterns, the device policy and the logcat rule read (14/10): the command without the heredoc bodies that only a
-# data reader gets (cat > notes.md, a commit message: text, never run). A body a shell, an interpreter or a reader not known
-# gets stays (python3 running npm publish is caught by its pattern). The rm walk cuts interpreter bodies too (rm_problem).
+# What the patterns, the device policy and the logcat rule read: the command without the heredoc bodies that are data by the policy of
+# 15/10 (the message of a known option, the one file statement of a modeled command: shell_norm). Every other body stays. The rm walk
+# also cuts the program body of an interpreter that cannot start a process (rm_problem).
 _DOCS = shell_norm.heredocs(cmd) if "<<" in cmd else []
 CMD_LIVE = shell_norm.strip_heredocs(cmd, lambda h: h.kind == "data", _DOCS) if _DOCS else cmd
-CMD_LIVE = CMD_LIVE.replace("\\\n", " ")   # a backslash-newline continues the line: the words on both sides are one command (15/10)
+CMD_LIVE = CMD_LIVE.replace("\\\n", "")   # a backslash-newline continues the line: the words on both sides are one command (15/10)
 
 # Options adb/fastboot accept before the subcommand (with or without a value).
 ADB_OPTS = r"(?:\s+(?:-[sHPtL]\s+\S+|-[adeU]|--\S+(?:\s+\S+)?|wait-for-[\w-]+))*"   # wait-for-device remount (15/10)
@@ -323,6 +325,9 @@ PATTERNS = [
     (r"\bdocker\b[^;&|\n]*(?:\bsystem\s+prune\b[^;&|\n]*--volumes|\bvolume\s+(?:rm|prune)\b|\bcompose\s+down\b[^;&|\n]*\s(?:-v|--volumes)\b)",
      "xoá docker volume (mất dữ liệu)"),
     (r"\baws\s+s3\s+(?:rm\b[^;&|\n]*--recursive|rb\b[^;&|\n]*--force)", "aws s3 rm --recursive / rb --force"),
+    # a shell that runs the text a process substitution makes (bash <(echo …), bash < <(…)): the text cannot be read here, and the git guard
+    # refuses it too (15/10, review: bash <(echo rm -rf /) was allowed by this gate)
+    (r"(?:^|[\s;&|(])(?:ba|z|da|k)?sh(?:\s+-\S+)*\s+(?:<\s*)?<\(", "shell chạy văn bản do process substitution sinh ra (bash <(…)): cổng không đọc được nội dung"),
 ]
 
 # /data/local/tmp is adb scratch space (pushed APKs, logcat dumps): clearing it cannot brick a device (user, 2026-10-12: allow).
@@ -851,18 +856,18 @@ def drop_comments(text):
 def rm_problem(text, cwds, depth=0, remote=""):
     """Walk the command like the shell: `cd` moves the cwd (after `&&` for sure; after
     ; || | & both the old and the new directory stay possible), ( ) restores it. remote: the text runs on a device ("device")
-    or a remote host ("ssh") (2026-10-13): no host variable or ~ applies there. A heredoc body is walked only when a shell (or a
-    reader not known) gets it: the text of cat > f <<EOF, of a commit message or of a python program is no command (14/10,
-    shell_norm.heredocs; an unquoted body keeps its $(…) / `…`, which the shell runs)."""
+    or a remote host ("ssh") (2026-10-13): no host variable or ~ applies there. A heredoc body is cut only for a message of a
+    known option, the one file statement of a modeled command, or an interpreter program that cannot start a process (shell_norm.heredocs,
+    policy of 15/10); an unquoted body keeps its $(…) / `…`, which the shell runs."""
     if depth > 5:
         return "lồng lệnh quá sâu để phân tích"
     if "<<" in text:   # an interpreter program that can start a process (backticks, qx, %x, system …) stays: its text is a command line
         text = shell_norm.strip_heredocs(text, lambda h: h.kind == "data" or (
-            h.kind in ("interp", "interp_file") and not shell_norm.spawns(h.body(text), h.reader)))
+            h.kind == "interp" and not shell_norm.spawns(h.body(text), h.reader)))
     env = {} if remote else {"HOME": os.path.expanduser("~"), "TMPDIR": os.environ.get("TMPDIR") or "/tmp"}
     # `…` is $(…): the lexer splits "$" from "(", so a target built from one stays "$…"
     # (unresolvable, refused) while the inner command is walked as its own segment.
-    text = re.sub(r"`([^`]*)`?", r"$(\1)", drop_comments(text).replace("\\\n", " ").replace("\n", " ; "))
+    text = re.sub(r"`([^`]*)`?", r"$(\1)", drop_comments(text).replace("\\\n", "").replace("\n", " ; "))
     text = FIND_OP.sub(lambda m: (m.group(1) or "") + FIND_OP_WORD[m.group(2) or m.group(3) or m.group(4)], text)
     try:
         lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
