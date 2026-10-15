@@ -77,15 +77,25 @@ def slots(jobs_per_lane=JOBS_PER_LANE):
     return max(1, min(MAX_SLOTS, int(free // max(1, jobs_per_lane)))), cores, load
 
 
+def _git_common_dir():
+    """The absolute git common dir of the current directory, or None. `--path-format` is git 2.31+: an older git prints the unknown option
+    back and exits 0, so its answer is accepted only as one absolute line, else the plain flag is used and made absolute here."""
+    for flags in (["--path-format=absolute", "--git-common-dir"], ["--git-common-dir"]):
+        try:
+            r = subprocess.run(["git", "rev-parse"] + flags, capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        out = r.stdout.rstrip("\n")   # not strip(): a git dir may end in a space
+        if r.returncode == 0 and out and "\n" not in out and (os.path.isabs(out) or len(flags) == 1):
+            return os.path.abspath(os.path.join(os.getcwd(), out))
+    return None
+
+
 def history_path():
     """The history file; None outside a git repository when LANE_PLAN_HISTORY is not set (a plan then goes on without history)."""
     if os.environ.get("LANE_PLAN_HISTORY"):
         return os.environ["LANE_PLAN_HISTORY"]
-    try:
-        r = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True, timeout=10)
-        common = r.stdout.rstrip("\n") if r.returncode == 0 else ""   # not strip(): a git dir may end in a space
-    except (OSError, subprocess.SubprocessError):
-        common = ""
+    common = _git_common_dir()
     return os.path.join(common, "devkit", "lane_times.jsonl") if common else None
 
 

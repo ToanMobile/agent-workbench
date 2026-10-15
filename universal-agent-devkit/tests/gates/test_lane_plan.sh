@@ -279,7 +279,7 @@ for flag, value in (("--slots", "9" * 400), ("--slots", "True")):
     chk(rc == 2 and "Traceback" not in err, "%s %s... is refused" % (flag, value[:6]), "rc=%s %r" % (rc, err[-200:]))
 for args in (["slots", "--jobs-per-lane", "0"], ["slots", "--jobs-per-lane", "0.5"], ["slots", "--bogus"]):
     rc, out, err = run(args, LANE_PLAN_CORES="16", LANE_PLAN_LOAD="0")
-    chk(rc == 2 and "Traceback" not in err, "refused: agent-kit lanes " + " ".join(args), "rc=%s %r %r" % (rc, out, err))
+    chk(rc == 2 and "Traceback" not in err, "refused: lane_plan.py " + " ".join(args), "rc=%s %r %r" % (rc, out, err))
 rc, out, err = run(["slots", "--quiet", "--jobs-per-lane", "1"], LANE_PLAN_CORES="64", LANE_PLAN_LOAD="0")
 chk(rc == 0 and out.strip() == "4", "slots: never more than 4 lanes, even with --jobs-per-lane 1 on 64 idle cores", "%r %r" % (out, err))
 
@@ -386,6 +386,20 @@ if ok:
     r = subprocess.run([PY, SCRIPT, "plan", lanes_file("l13.json", [{"id": "G", "kind": "gitk"}]), "--slots", "1", "--json"], capture_output=True, text=True, env=NOH, cwd=REPO, timeout=60)
     est = json.loads(r.stdout)["rows"][0] if r.returncode == 0 else {}
     chk(est.get("end") == 12, "plan run from the main checkout reads what a worktree recorded", "%s %r" % (r.returncode, r.stderr[-200:]))
+    # a git older than 2.31 prints the unknown --path-format option back and exits 0: the history must still land in the git dir
+    REALGIT = shutil.which("git")
+    OLDBIN = os.path.join(TMP, "oldgit")
+    os.mkdir(OLDBIN)
+    with open(os.path.join(OLDBIN, "git"), "w") as fh:
+        fh.write('#!/bin/sh\nif [ "$1" = rev-parse ] && [ "$2" = "--path-format=absolute" ]; then\n  echo "--path-format=absolute"; shift 2; exec "%s" rev-parse "$@"\nfi\nexec "%s" "$@"\n' % (REALGIT, REALGIT))
+    os.chmod(os.path.join(OLDBIN, "git"), 0o755)
+    subprocess.run([os.path.join(OLDBIN, "git"), "--version"], capture_output=True, timeout=60)   # the first exec of a fresh wrapper can be slow
+    OLDENV = dict(NOH, PATH=OLDBIN + os.pathsep + NOH.get("PATH", os.defpath))
+    r = subprocess.run([PY, SCRIPT, "record", "lane9", "9", "--kind", "oldgit"], capture_output=True, text=True, env=OLDENV, cwd=WT, timeout=60)
+    with open(common) as fh:
+        recorded = fh.read()
+    chk(r.returncode == 0 and '"lane9"' in recorded and os.listdir(WT) == [".git"],
+        "with a git that prints --path-format back (older than 2.31) the history still goes into the git dir, nothing is created in the worktree", "%s %r %s" % (r.returncode, r.stderr[-200:], os.listdir(WT)))
     NOGIT = os.path.join(TMP, "nogit")
     os.mkdir(NOGIT)
     r = subprocess.run([PY, SCRIPT, "record", "lane2", "3"], capture_output=True, text=True, env=NOH, cwd=NOGIT, timeout=60)
