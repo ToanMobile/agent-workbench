@@ -380,16 +380,20 @@ test('loi "dang chay luot" mang ma AGY_TURN_BUSY (tool khong do bang cau chu tie
   await assert.rejects(sendMessage({ conversationId, content: 'nhac' }), (e) => e.code === 'AGY_TURN_BUSY');
 });
 
-test('PM khong doc duoc dau van tay (ps) luc mo hoi thoai moi: tu choi ro rang, KHONG sap server, agy vua mo bi dung', async (t) => {
+test('PM khong doc duoc dau van tay (ps) cua agy vua mo: tu choi ro rang, KHONG sap server, agy vua mo bi dung', async (t) => {
   const fake = fakeAgy(t, { FAKE_AGY_ID: 'd2d2d2d2-2222-3333-4444-555555555555', FAKE_AGY_HOLD_MS: '20000' });
-  process.env.ANTIGRAVITY_PM_PS = '/nonexistent/ps';
+  // ps gia: ghi doi so vao file; hoi ve chinh PM thi tra loi that, moi pid khac (agy vua mo) thi bao loi ra stderr + exit 2
+  // (exit 1 khong in gi doc la "tien trinh da chet" va bo qua duong nay). agy bi dung ngay sau spawn co the chua kip ghi log cua no => pid lay tu doi so ps.
+  const log = path.join(fake.dir, 'ps-args.log');
+  const wrapper = path.join(fake.dir, 'ps-broken-for-agy.sh');
+  fs.writeFileSync(wrapper, `#!/bin/sh\necho "$@" >> "${log}"\nfor a in "$@"; do last=$a; done\nif [ "$last" = "${process.pid}" ]; then exec /bin/ps "$@"; fi\necho "ps: broken" >&2\nexit 2\n`, { mode: 0o755 });
+  process.env.ANTIGRAVITY_PM_PS = wrapper;
   await assert.rejects(newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) }), /dau van tay/);
-  // ghi ban ghi cho (dau van tay cua agy + cua PM) nem NGAY sau spawn: agy bi SIGKILL co the chua kip chay den dong ghi log => khi do khong co gi song de kiem
-  const [c] = fake.calls();
-  if (!c) return;
-  t.after(() => { try { process.kill(c.pid, 'SIGKILL'); } catch { /* da chet */ } });
-  await sleep(500);
-  assert.throws(() => process.kill(c.pid, 0), /ESRCH/, 'agy van song khi PM khong theo doi duoc no');
+  const asked = fs.readFileSync(log, 'utf8').split('\n').map((l) => /-p (\d+)/.exec(l)?.[1]).filter(Boolean).map(Number).filter((p) => p !== process.pid);
+  const pid = asked[0];
+  assert.ok(pid > 1 && pid !== process.pid, `ps khong duoc hoi ve agy vua mo: ${fs.readFileSync(log, 'utf8')}`);
+  t.after(() => { try { process.kill(-pid, 'SIGKILL'); } catch { /* da chet */ } });
+  assert.ok(await waitUntil(() => !alive(pid), 5000), `agy pid ${pid} van song khi PM khong theo doi duoc no`);
 });
 
 test('cho giu "starting" qua han (PM nha cho that bai, PM van song): khong chan gui tin mai mai', async (t) => {
