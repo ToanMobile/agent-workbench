@@ -280,3 +280,4 @@
 4 tests/gates/test_untracked_edit_warning.sh
 5 tests/verification/test_wiring_pin.sh
 2 tests/gates/test_stop_hook_times.sh
+1 tests/gates/test_lane_plan.sh
