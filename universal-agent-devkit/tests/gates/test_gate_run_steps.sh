@@ -148,7 +148,10 @@ if good_steps(steps):
     tw = r.get("total_wall_s", 0)
     chk(abs(phases - tw) <= 1.0, "S1: the phases add up to the run's wall time (%.1f s of %.1f s)" % (phases, tw),
         "phases %.2f vs total_wall_s %.2f: %r" % (phases, tw, steps))
-    chk(all(k in steps for k in ("static", "suites", "checklist", "report")), "S1: the phases every --run-tests run passes through are all there", repr(sorted(steps)))
+    # every phase a --run-tests run passes through is named, whatever it cost: a lap that is missing hides its seconds in the next one (the lock wait
+    # lands in `suites`, so the sum above still adds up: only the presence of the key shows it)
+    chk(all(k in steps for k in ("git", "analysis", "static", "select", "cache", "lock", "suites", "verdict", "receipt", "checklist", "report")),
+        "S1: all 11 phases every --run-tests run passes through are there, even at 0.0 s", repr(sorted(steps)))
     # bounds that hold on a slow machine: the nap is a floor for the suites step, and the run's other phases are not charged with it
     chk(steps.get("suites", 0) >= 2.9 and steps.get("suites", 0) <= tw, "S2: the suites step holds the suite's own seconds (%.1f s, the suite sleeps 3 s)" % steps.get("suites", 0), repr(steps))
     chk(steps.get("static", 99) < steps.get("suites", 0), "S2: the nap is not charged to `static` (static %.1f s, suites %.1f s)" % (steps.get("static", 0), steps.get("suites", 0)), repr(steps))
@@ -165,6 +168,45 @@ steps = r.get("steps") or {}
 chk(good_steps(steps) and steps.get("git", 0) >= 0.5, "S2b: a slow `git status` while the changed files are listed is charged to the git step (%.1f s)" % steps.get("git", 0), "rc=%s %r" % (rc, steps))
 chk(good_steps(steps) and abs(sum(v for k, v in steps.items() if k != "vacuity") - r.get("total_wall_s", 0)) <= 1.0,
     "S2b: and the phases still add up to the run's wall time", repr(r))
+
+# S2c: layers 1-3 are `static` too (the lap that ends them is not the one before the verdict): a slow `adb devices -l`, which layer 3 runs for a
+# change that touches an android path, is static seconds, not the select phase's
+slow_adb = os.path.join(TMP, "bin-adb")
+put(os.path.join(slow_adb, "adb"), "#!/bin/sh\nsleep 1\nexit 0\n", 0o755)
+root = make_plain("slowadb", [("REG-FAST", "true")])
+put(os.path.join(root, "src", "android_notes.txt"), "a changed file with an android path: layer 3 asks adb\n")
+rc, out = run_gate(root, env={"PATH": slow_adb + os.pathsep + os.environ.get("PATH", "")})
+r = (records(root) or [{}])[-1]
+steps = r.get("steps") or {}
+chk(good_steps(steps) and steps.get("static", 0) >= 0.9 and steps.get("select", 99) < 0.9,
+    "S2c: a slow `adb devices -l` in layer 3 is static seconds (static %.1f s, select %.1f s)" % (steps.get("static", 0), steps.get("select", 0)), "rc=%s %r" % (rc, steps))
+
+# S2d: layers 5-8 are `static` too, not the verdict's: a test-only launcher makes the layer 5 audit slow (1 s) and runs the gate's own main()
+launcher = os.path.join(TMP, "launcher_slow5.py")
+put(launcher, """import importlib.util, sys, time
+gate = sys.argv[1]
+sys.argv = [gate] + sys.argv[2:]
+spec = importlib.util.spec_from_file_location("pfg_slow5", gate)
+m = importlib.util.module_from_spec(spec)
+sys.modules["pfg_slow5"] = m
+spec.loader.exec_module(m)
+real = m.run_performance_audit
+def slow(*a, **k):
+    time.sleep(1.0)
+    return real(*a, **k)
+m.run_performance_audit = slow
+sys.exit(m.main())
+""")
+root = make_plain("slow5", [("REG-FAST", "true")])
+e = dict(os.environ)
+e.update({"CLAUDE_PROJECT_DIR": root, "FLAKY_RETRY": "0", "VACUITY_REVERT": "0"})
+p = subprocess.run([PY, launcher, GATE, "--matrix", os.path.join(root, "matrix.json"), "--lang", "en", "--run-tests"], cwd=root, env=e,
+                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=240)
+r = (records(root) or [{}])[-1]
+steps = r.get("steps") or {}
+chk(good_steps(steps) and steps.get("static", 0) >= 0.9 and steps.get("verdict", 99) < 0.9,
+    "S2d: a slow layer 5 audit is static seconds (static %.1f s, verdict %.1f s)" % (steps.get("static", 0), steps.get("verdict", 0)),
+    "rc=%s %r out=%s" % (p.returncode, steps, p.stdout.decode("utf-8", "replace")[-300:]))
 
 # S3: vacuity
 root = make_vacuity("vac", "1")
