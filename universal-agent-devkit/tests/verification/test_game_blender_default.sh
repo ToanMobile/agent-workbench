@@ -479,6 +479,13 @@ for order in ('plain_first', 'screw_first'):
   else
     fail "A35 no --: exit=$(cat "$TMP/nodash.rc"), rendered_prop.png=$([ -e "$TMP/nodash/rendered_prop.png" ] && echo WRITTEN || echo none)"
   fi
+  rm -f "$TMP/nodash/rendered_prop.png"
+  (cd "$TMP/nodash" && "$BLENDER" -b -P "$PROP" -- >/dev/null 2>&1; echo $? > "$TMP/emptyargs.rc")
+  if [ "$(cat "$TMP/emptyargs.rc")" = "2" ] && [ ! -e "$TMP/nodash/rendered_prop.png" ]; then
+    ok "A35b -- with no arguments after it: exit 2, no default coin written next to the caller (--output is required)"
+  else
+    fail "A35b empty arguments: exit=$(cat "$TMP/emptyargs.rc"), rendered_prop.png=$([ -e "$TMP/nodash/rendered_prop.png" ] && echo WRITTEN || echo none)"
+  fi
   "$BLENDER" -b -P "$PROP" -- --output "$TMP/tiny-res.png" --resolution 2 >/dev/null 2>&1
   RC=$?
   [ "$RC" -eq 2 ] && [ ! -e "$TMP/tiny-res.png" ] && ok "A36 --resolution 2 (Blender would make a 4x4) is refused" || fail "A36 --resolution 2: exit=$RC, PNG=$([ -e "$TMP/tiny-res.png" ] && echo yes || echo no)"
@@ -772,6 +779,13 @@ done
 touch "$UR/unity/Assets/Art/new.blend"
 CLAUDE_PROJECT_DIR="$UR" bash "$VALIDATE" </dev/null >/dev/null 2>&1; RC=$?
 [ "$RC" = "1" ] && ok "B unity/ scan flags a new .blend in unity/Assets" || fail "B unity/ scan lets a new .blend through (exit $RC)"
+# a stray Assets/ at the repo root (render_game_prop.py --output Assets/... run from there makes one) must not turn the guard off
+mkdir -p "$UR/Assets"
+RCV="$(printf '{"tool_input":{"file_path":"%s/unity/Assets/Art/hero.blend"}}' "$UR" | CLAUDE_PROJECT_DIR="$UR" bash "$VALIDATE" >/dev/null 2>&1; echo $?)"
+[ "$RCV" = "2" ] && ok "B a stray Assets/ at the repo root does not switch the unity/ hook off" || fail "B stray root Assets/: the unity/ hook lets hero.blend through (exit $RCV)"
+CLAUDE_PROJECT_DIR="$UR" bash "$VALIDATE" </dev/null >/dev/null 2>&1; RC=$?
+[ "$RC" = "1" ] && ok "  … nor the scan" || fail "  … a stray root Assets/ switched the scan off (exit $RC)"
+rmdir "$UR/Assets"
 
 # ---------- C. capture_3d_proof.py never draws a 2D proof ----------
 mkdir -p "$TMP/fakebin" "$TMP/proj"
