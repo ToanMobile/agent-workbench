@@ -243,6 +243,11 @@ case "$CMD" in
       *) python3 "$(find_script governance nightly.py)" "$@" ;;
     esac
     ;;
+  lanes)
+    # lanes plan <lanes.json> [--slots N] [--json] | slots [--jobs-per-lane J] [--quiet] | record <id> <minutes> --kind K
+    shift || true
+    python3 "$(find_script governance lane_plan.py)" "$@"
+    ;;
   learn)
     # learn "<title>" [--cause TEXT] [--rule TEXT] [--check CMD] [--file PATH] [--generic] [--force] [--dry-run]
     shift || true
@@ -380,6 +385,10 @@ Commands:
                       Local nightly job (macOS LaunchAgent, default 02:17): every suite of each
                       added project for real (Gradle/Unity too), FAIL re-run once (FLAKY), pending
                       RED-proofs; a notification only when a row turns red; weekly one-line report
+  lanes plan <lanes.json> [--slots N] [--json] | slots [--jobs-per-lane J] [--quiet] | record <id> <minutes> --kind K
+                      Order parallel agent lanes so the batch ends first: the ready lane with the longest
+                      path to the end starts first, slots = free CPU / 4 (1..4), merge order, overlapping
+                      files, one gate at the end; record keeps real lane durations as future estimates
   bugs import <table> [--dry-run]
                       Past bugs into the regression checklist (.agents/CHECKLIST.md):
                       bug_id | title | severity | fixed? | module | test_id_or_NONE | evidence
