@@ -1031,7 +1031,7 @@ SOLO_WORDS = re.compile(r"\bgit\b[^\n]*?\b(push|checkout|switch|branch|worktree)
 # command is made of constructs shell_norm models (cut_ok) AND it is the message of a known option (git commit -m, gh pr create --body …)
 # or the one statement of the command (cat > notes.md <<EOF, git commit -F -); every other body stays and is judged as shell lines, quoted
 # or not. A body an interpreter reads as its program (python3 - <<EOF, cat <<EOF | node -) is judged as source first (interp_body_danger
-# below, on the raw text), then cut when cut_ok. An unquoted body that is cut leaves its $(…) / `…`, which the shell runs.
+# below, on the raw text), then cut when cut_ok. An unquoted body that holds a $ or a backtick is never cut (the shell runs its $( ) at once).
 # A heredoc with no delimiter line is never cut (fail closed). NO single quote in this comment: the python source is one bash string.
 def heredoc_cut(h):
     return h.kind in ("data", "interp")

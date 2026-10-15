@@ -508,8 +508,13 @@ for cmd, want in CASES:
     print(("✔ " if got == want else "✖ ") + f"kinds {shown}: {got}" + ("" if got == want else f" (want {want})"))
     bad += got != want
 data = lambda h: h.kind == D
-for cmd, want in [("cat > f.txt <<EOF\na $(rm -rf ~) b `ls`\nEOF", "cat > f.txt <<EOF\n$(rm -rf ~)\n`ls`\n"),
-                  ("cat > f.txt <<'EOF'\na $(rm -rf ~) b\nEOF", "cat > f.txt <<'EOF'\n"),
+# an unquoted body that holds a $ or a backtick is never cut (review 15/10: the extraction of its $( ) paired parentheses without regard to
+# quotes, comments or case, and dropped the rest of the body from the scan); the others are cut as before
+for cmd, want in [("cat > f.txt <<EOF\na $(rm -rf ~) b `ls`\nEOF", "cat > f.txt <<EOF\na $(rm -rf ~) b `ls`\nEOF"),
+                  ("cat > f.txt <<EOF\n$(echo \")\" ; rm -rf ~)\nEOF", "cat > f.txt <<EOF\n$(echo \")\" ; rm -rf ~)\nEOF"),
+                  ("cat > f.txt <<EOF\na $x b\nEOF", "cat > f.txt <<EOF\na $x b\nEOF"),
+                  ("cat > f.txt <<EOF\nplain text\nEOF", "cat > f.txt <<EOF\n"),
+                  ("cat > f.txt <<'EOF'\na $(echo \")\" ; rm -rf ~) `x`\nEOF", "cat > f.txt <<'EOF'\n"),
                   ("cat <<EOF\nno end", "cat <<EOF\nno end")]:
     got = sn.strip_heredocs(cmd, data)
     print(("✔ " if got == want else "✖ ") + f"strip {cmd!r}: {got!r}" + ("" if got == want else f" (want {want!r})"))

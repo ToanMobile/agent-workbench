@@ -218,6 +218,14 @@ FINDINGS += [
     "git -c core.sshCommand=\"$(cat <<'EOF'\n@BODY@\nEOF\n)\" ls-remote ssh://h/r",
     "echo \"$(cat <<EOF\n@BODY@\nEOF\n)\" > .git/hooks/pre-commit", "echo \"$(cat <<EOF\n@BODY@\nEOF\n)\" | sh",
 ]
+FINDINGS += [
+    "cat > n.md <<EOF\n$(echo \")\" ; @BODY@)\nEOF", "cat > n.md <<EOF\n$(echo ')' ; @BODY@)\nEOF", "cat > n.md <<EOF\n$(echo x # )\n@BODY@\n)\nEOF",
+    "cat > n.md <<EOF\n$(case x in x) @BODY@;; esac)\nEOF", "cat > n.md <<EOF\ntext `echo \\`; @BODY@` more\nEOF",
+    "cat > n.md <<EOF\n$(( $(@BODY@) ))\nEOF", "cat > n.md <<EOF\n${x:-$(@BODY@)}\nEOF", "cat > n.md <<EOF\n$(echo \"(\" ; @BODY@)\nEOF",
+    "cat > n.md <<EOF\n$(@BODY@)\nEOF", "cat > n.md <<EOF\n`@BODY@`\nEOF", "cat > n.md <<-EOF\n\t$(echo \")\" ; @BODY@)\n\tEOF",
+    "cat <<EOF > n.md\n$(echo \")\" ; @BODY@)\nEOF", "tee n.md <<EOF\n$(echo \")\" ; @BODY@)\nEOF",
+    "git commit -F - <<EOF\n$(echo \")\" ; @BODY@)\nEOF", "git commit -F - <<EOF\n`@BODY@`\nEOF", "python3 - <<EOF\n$(echo \")\" ; @BODY@)\nEOF",
+]
 for tpl in FINDINGS:
     both(tpl)
 for tpl in (
@@ -299,6 +307,10 @@ HARMLESS = [
 UNMODELED_BEFORE = ["echo ${x}", "echo $[1+2]", "(true)", "true &", "trap true EXIT", "echo `true`", "echo $'a'", "eval true", "source x",
                     "if true; then true; fi", "echo a\\\nb", "diff <(true) <(true)"]
 ACCEPTED_FP = [
+    # an unquoted body is never cut when it holds a $ or a backtick (the shell runs its $( ) at once, and we do not pair the parentheses)
+    ("git", "cat > notes.md <<EOF\n# Notes for $(date +%F)\nNever run git reset --hard\nEOF"), ("hw", "cat > notes.md <<EOF\n# Notes for $(date +%F)\nrm -rf ~\nEOF"),
+    ("git", "git commit -F - <<EOF\nmessage $USER\ngit reset --hard\nEOF"), ("hw", "git commit -F - <<EOF\nmessage $USER\nrm -rf ~\nEOF"),
+    ("git", "cat > notes.md <<EOF\nuse `date`\ngit reset --hard\nEOF"),
     # a message argument is data, cut only in a command that is fully modeled: any unmodeled construct elsewhere keeps the body in the scan
     *[(h, x + "\ngit commit -m \"$(cat <<'EOF'\n" + d + "\nEOF\n)\"") for x in UNMODELED_BEFORE for h, d in (("git", GITD), ("hw", RMD))],
     # the quoted $( ) is the value of an option that is no message: only -m / --message and --body / --title / --notes are cut

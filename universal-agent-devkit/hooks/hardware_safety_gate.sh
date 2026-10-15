@@ -34,7 +34,7 @@
 #   • (2026-10-14, workflow-improvements.md I.0 W3) that reading is hooks/shell_norm.py, shared with block-dangerous-git.sh. A
 #     heredoc body is cut (no rm walk, pattern or device check reads it) only when the whole command is made of constructs
 #     shell_norm models AND the body is the message of a known option (git commit -m, gh pr create --body, each with a quoted $(cat
-#     <<'EOF' …)) or the one statement of the command (cat > notes.md <<'EOF', git commit -F -); an unquoted body keeps its $(…) / `…`;
+#     <<'EOF' …)) or the one statement of the command (cat > notes.md <<'EOF', git commit -F -); an unquoted body with a $ or a backtick is never cut;
 #     every other body stays, as before 14/10 (policy of 15/10). ~ as an rm target on a device is refused (its HOME is not known
 #     here); bash -lc / su -c scripts reach the device policy; xargs -i takes no separate value.
 #   • adb shell pm uninstall|disable(-user)|hide of a system package (android,
@@ -858,7 +858,7 @@ def rm_problem(text, cwds, depth=0, remote=""):
     ; || | & both the old and the new directory stay possible), ( ) restores it. remote: the text runs on a device ("device")
     or a remote host ("ssh") (2026-10-13): no host variable or ~ applies there. A heredoc body is cut only for a message of a
     known option, the one file statement of a modeled command, or an interpreter program that cannot start a process (shell_norm.heredocs,
-    policy of 15/10); an unquoted body keeps its $(…) / `…`, which the shell runs."""
+    policy of 15/10); an unquoted body with a $ or a backtick is never cut (the shell runs its $( ))."""
     if depth > 5:
         return "lồng lệnh quá sâu để phân tích"
     if "<<" in text:   # an interpreter program that can start a process (backticks, qx, %x, system …) stays: its text is a command line

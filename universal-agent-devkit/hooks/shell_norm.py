@@ -899,47 +899,17 @@ def heredocs(text):
     return docs
 
 
-def expansions(body):
-    """The command substitutions the shell runs in an UNQUOTED heredoc body: each $( … ) and `…`, whole, in order (\\$ and
-    \\` are literal)."""
-    out, i, n = [], 0, len(body)
-    while i < n:
-        c = body[i]
-        if c == "\\":
-            i += 2
-        elif c == "$" and body.startswith("(", i + 1):
-            depth, j = 1, i + 2
-            while j < n and depth:
-                if body[j] == "\\":
-                    j += 2
-                    continue
-                depth += {"(": 1, ")": -1}.get(body[j], 0)
-                j += 1
-            out.append(body[i:j])
-            i = j
-        elif c == "`":
-            j = i + 1
-            while j < n and body[j] != "`":
-                j += 2 if body[j] == "\\" else 1
-            out.append(body[i:j + 1])
-            i = j + 1
-        else:
-            i += 1
-    return out
-
-
 def strip_heredocs(text, drop, docs=None):
-    """text with the body and delimiter line of each heredoc h with drop(h) true cut out. An unquoted body that is cut leaves
-    its command substitutions in its place, one per line: the shell runs them whatever reads the body. A heredoc with no
-    delimiter line is never cut (the rest of the text stays commands to judge: fail closed)."""
+    """text with the body and delimiter line of each heredoc h with drop(h) true cut out. Never cut (the text stays commands to
+    judge: fail closed): a heredoc with no delimiter line, one of a command that is not modeled, and an UNQUOTED one whose body holds a $
+    or a backtick, since the shell runs its $( … ) / `…` whatever reads the body and we do not pair parentheses ourselves (review 15/10:
+    a ")" in a string, a # comment or a case pattern cut the extraction short and dropped the rest of the body from the scan)."""
     docs = heredocs(text) if docs is None else docs
     out, pos = [], 0
     for h in docs:
-        if not h.terminated or not h.cut_ok or h.body_start < pos or not drop(h):
+        if not h.terminated or not h.cut_ok or h.body_start < pos or not drop(h) or (not h.quoted and re.search(r"[$`]", h.body(text))):
             continue
         out.append(text[pos:h.body_start])
-        if not h.quoted:
-            out.extend(e + "\n" for e in expansions(h.body(text)))
         pos = h.end
     out.append(text[pos:])
     return "".join(out)
