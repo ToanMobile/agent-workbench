@@ -22,6 +22,9 @@ REAL_PY="$(command -v python3)" || { echo "skip: python3 missing"; exit 0; }
 mkdir -p "$TMP/bin" "$TMP/repo" "$TMP/outside"
 printf '#!/bin/sh\necho start >> "%s/py.log"\nexec "%s" "$@"\n' "$TMP" "$REAL_PY" > "$TMP/bin/python3"
 chmod +x "$TMP/bin/python3"
+REAL_GIT="$(command -v git)"   # a git shim in the hook's PATH counts the git processes it starts ($TMP/git.log, one line each)
+printf '#!/bin/sh\necho "$*" >> "%s/git.log"\nexec "%s" "$@"\n' "$TMP" "$REAL_GIT" > "$TMP/bin/git"
+chmod +x "$TMP/bin/git"
 R="$TMP/repo"
 git -C "$R" init -q . && git -C "$R" config user.email t@t && git -C "$R" config user.name t && git -C "$R" config commit.gpgsign false
 mkdir -p "$R/src" "$R/sub dir"
@@ -39,7 +42,7 @@ printf 'b\n' > "$TMP/outside/x.kt"            # no repo
 run() {
   local sid="$1" tool="$2" fp="$3" resp="$4" key=file_path; shift 4
   [ "$tool" = NotebookEdit ] && key=notebook_path
-  : > "$TMP/py.log"
+  : > "$TMP/py.log"; : > "$TMP/git.log"
   printf '{"session_id":"%s","transcript_path":"%s","cwd":"%s","hook_event_name":"PostToolUse","tool_name":"%s","tool_input":{"%s":"%s","old_string":"a","new_string":"b"},"tool_response":%s}' \
     "$sid" "${UE_TRANSCRIPT:-$TMP/t.jsonl}" "$R" "$tool" "$key" "$fp" "$resp" > "$TMP/in.json"
   ( cd "$R" && env PATH="$TMP/bin:$PATH" CLAUDE_PROJECT_DIR="$R" "$@" bash "$HOOK" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
@@ -109,6 +112,57 @@ run s9 Edit "$R/src/off.kt" '{"filePath":"x"}' UNTRACKED_EDIT_WARN=0
 [ "$RC" = 0 ] && ! warned && ok "UNTRACKED_EDIT_WARN=0: silent" || fail "off switch: rc=$RC"
 run s9 Edit "$R/src/off.kt" '{"filePath":"x"}' CHURN_GUARD=0
 [ "$RC" = 0 ] && ! warned && ok "CHURN_GUARD=0 (the hook's own switch): silent" || fail "CHURN_GUARD=0: rc=$RC"
+
+# ── review of lane A11 (this hook runs on EVERY Edit/Write of every repo: fast, fail-open, never blocking) ───────────────────────────
+# a. its git calls run no command taken from the repo they look at: `git ls-files` starts the repo's core.fsmonitor program (verified with
+#    git 2.55), and the edited path may lie in ANY repo. The fixture's fsmonitor writes a marker; the untracked file is still found.
+FS="$TMP/fsrepo"; mkdir -p "$FS"
+git -C "$FS" init -q . && git -C "$FS" config user.email t@t && git -C "$FS" config user.name t && git -C "$FS" config commit.gpgsign false
+printf 'a\n' > "$FS/t.kt"; git -C "$FS" add -A && git -C "$FS" commit -q -m init; printf 'b\n' > "$FS/new.kt"
+printf '#!/bin/sh\necho "ran $*" >> "%s/fsm.marker"\nprintf "\\0"\n' "$TMP" > "$TMP/fsm.sh"; chmod +x "$TMP/fsm.sh"
+git -C "$FS" config core.fsmonitor "$TMP/fsm.sh"
+rm -f "$TMP/fsm.marker"
+run s11 Edit "$FS/new.kt" '{"filePath":"x"}'
+[ "$RC" = 2 ] && warned && [ ! -s "$TMP/fsm.marker" ] && ok "a repo's core.fsmonitor program is not started by the hook's git calls (and its untracked file is still found)" \
+  || fail "fsmonitor: rc=$RC warned=$(warned && echo yes || echo no) marker=$(cat "$TMP/fsm.marker" 2>/dev/null | head -2)"
+# e. a GIT_DIR leaked into the hook's environment must not turn every tracked edit into a warning: the repo of the edited path is judged
+run s11 Edit "$R/src/tracked.kt" '{"filePath":"x"}' GIT_DIR="$FS/.git"
+[ "$RC" = 0 ] && ! warned && ok "a leaked GIT_DIR does not make a tracked file look untracked" || fail "GIT_DIR leak: rc=$RC err=$(cat "$TMP/err")"
+
+# b. a file already in this session's ledger costs no git process at all (the ledger is read BEFORE the git calls)
+printf 'b\n' > "$R/src/ledger1.kt"
+run s12 Edit "$R/src/ledger1.kt" '{"filePath":"x"}'
+G1="$(grep -c . "$TMP/git.log")"
+[ "$RC" = 2 ] && [ "$G1" -ge 1 ] || fail "ledger fixture: first edit rc=$RC git calls=$G1"
+run s12 Edit "$R/src/ledger1.kt" '{"filePath":"x"}'
+[ "$RC" = 0 ] && ! warned && [ ! -s "$TMP/git.log" ] && ok "re-editing a file the ledger already holds: silent and 0 git processes (first edit: $G1)" \
+  || fail "ledger first: rc=$RC git calls=$(grep -c . "$TMP/git.log") ($(head -2 "$TMP/git.log" | tr '\n' ';'))"
+
+# c. the P6 regexes read the first 8 KiB of the payload only (session_id, tool_name and tool_input.file_path all precede any content), so a
+#    20 MB Write costs no more than a small one; a file_path past that prefix is not judged (fail-open). Control: the same payload with a
+#    short pad IS judged.
+printf 'b\n' > "$R/src/far.kt"
+rawrun() {  # rawrun <pad bytes>: stderr in $TMP/err, rc in $RC
+  local pad; pad="$(head -c "$1" /dev/zero | tr '\0' x)"
+  printf '{"session_id":"s13","transcript_path":"%s","cwd":"%s","pad":"%s","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"%s/src/far.kt","old_string":"a","new_string":"b"},"tool_response":{"filePath":"x"}}' \
+    "$TMP/t.jsonl" "$R" "$pad" "$R" > "$TMP/raw.json"
+  ( cd "$R" && env PATH="$TMP/bin:$PATH" CLAUDE_PROJECT_DIR="$R" bash "$HOOK" < "$TMP/raw.json" > /dev/null 2> "$TMP/err" ); RC=$?
+}
+rawrun 100;  [ "$RC" = 2 ] && warned && ok "control: file_path within the first 8 KiB of the payload is judged" || fail "control for the prefix cap: rc=$RC"
+rm -f "$R/.claude/audit-gate/untracked_edit.s13"   # the control's ledger line would hide the next run
+rawrun 9000; [ "$RC" = 0 ] && ! warned && ok "a file_path past the first 8 KiB is not judged: the scan is bounded to a prefix" || fail "prefix cap: rc=$RC (a 9 KB pad before tool_input must hide it)"
+
+# d. the check looks at the git INDEX (ls-files), not at HEAD: say so (a file another session has staged passes silently although HEAD lacks it)
+printf 'b\n' > "$R/src/wording.kt"
+run s15 Edit "$R/src/wording.kt" '{"filePath":"x"}'
+grep -q "index" "$TMP/err" && ok "the warning says it is the git index that lacks the file" || fail "warning text does not mention the index: $(cat "$TMP/err")"
+
+# e. a ledger path that is a directory must not make the warning appear on every edit (fail-open: silent, and logged)
+printf 'b\n' > "$R/src/dirledger.kt"; mkdir -p "$R/.claude/audit-gate/untracked_edit.s14"
+run s14 Edit "$R/src/dirledger.kt" '{"filePath":"x"}'; RC1=$RC
+run s14 Edit "$R/src/dirledger.kt" '{"filePath":"x"}'
+[ "$RC1" = 0 ] && [ "$RC" = 0 ] && ! warned && ok "a directory in place of the ledger file: no warning on any edit (fail-open)" || fail "ledger is a directory: rc=$RC1/$RC"
+rmdir "$R/.claude/audit-gate/untracked_edit.s14"
 
 # 10. the ledger stays inside .claude/audit-gate (gitignored there), never in the tree being judged
 [ -z "$(git -C "$R" status --porcelain --untracked-files=all | grep -v 'src/\|sub dir/\|build.log' )" ] \
