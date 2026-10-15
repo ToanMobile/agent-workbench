@@ -279,3 +279,4 @@
 4 tests/verification/test_android_generic_traps.sh
 3 tests/gates/test_untracked_edit_warning.sh
 4 tests/verification/test_wiring_pin.sh
+2 tests/gates/test_stop_hook_times.sh

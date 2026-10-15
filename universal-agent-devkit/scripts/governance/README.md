@@ -19,5 +19,6 @@ Nhóm công cụ quản trị vòng đời, đồng bộ cấu hình và quản 
 - `profile_skills.py`: Lọc và xác thực danh sách skill hợp lệ theo profile.
 - `relink_check.py`: Tự động phục hồi các symlink bị mất sau git checkout/merge.
 - `stop_replay.py`: Phát lại các lần Stop hook CHẶN trên transcript thật (7 ngày): lần chặn nào đúng, nhầm, đã sửa từ trước hay chưa thể kết luận; bảng theo hook và repo, ví dụ đã che bí mật. Chỉ đọc, `--help` để xem tuỳ chọn.
+- `stop_hook_times.py`: Thời gian thật của từng hook ở mỗi lần Stop, từng repo (Stops, p50 / p90 / max giây), hook chậm nhất mỗi Stop, và phần thời gian của lượt chạy cổng ở Stop dành cho suite / chờ khoá / việc khác, chia theo verdict. Lấy từ bản ghi `stop_hook_summary` trong transcript và `runs.jsonl`. Chỉ đọc, `--help` để xem tuỳ chọn.
 - `sync_commands.sh`: Đồng bộ hóa slash commands và aliases.
 - `token_cost_tracker.py`: Giám sát và theo dõi chi phí token theo phiên làm việc.
