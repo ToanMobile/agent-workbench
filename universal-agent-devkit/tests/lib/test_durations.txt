@@ -283,5 +283,5 @@
 12 tests/gates/test_gate_run_steps.sh
 36 tests/gates/test_gate_stop_run_record.sh
 12 tests/gates/test_regression_gate_repeat_miss_log.sh
-10 tests/gates/test_gate_stop_record_race.sh
+25 tests/gates/test_gate_stop_record_race.sh
 9 tests/gates/test_gate_stop_record_inputs.sh

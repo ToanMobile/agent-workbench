@@ -81,55 +81,129 @@ PY
   local i=0; while [ ! -f "$TMP/lock.held" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i + 1)); done
 }
 
-# race <what happens to the record while A waits: none | remove | grow | touch>
+# What can happen to the file that supplied the re-used suites (python, shared by this script and the launcher below, so each change is one thing):
+#   remove  gone (a forced run's FAIL drops it)            grow    one byte longer, mtime put back (size differs)
+#   touch   mtime 5 s later, same bytes                     rewrite same bytes written in place, mtime put back (only ctime differs)
+#   rename  same bytes in a new file moved over it, mtime put back (new inode; size and mtime_ns the same)
+cat > "$TMP/change.py" <<'PY'
+import os, sys
+
+def apply(how, p):
+    if how == "none" or not os.path.exists(p):
+        return
+    st = os.stat(p)
+    if how == "remove":
+        os.remove(p)
+    elif how == "grow":
+        with open(p, "a") as f:
+            f.write(" ")
+        os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))
+    elif how == "touch":
+        os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
+    elif how == "rewrite":
+        data = open(p, "rb").read()
+        with open(p, "r+b") as f:
+            f.write(data)
+        os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))
+    elif how == "rename":
+        tmp = p + ".moved"
+        with open(tmp, "wb") as f:
+            f.write(open(p, "rb").read())
+        os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
+        os.replace(tmp, p)
+
+if __name__ == "__main__":
+    apply(sys.argv[1], sys.argv[2])
+PY
+# A launcher around the gate's own main(): the FIRST local_state_sha call, which cached_full_pass makes AFTER it has read the file and before it
+# returns (the 0.7-6.4 s window), changes the supplying file. A stamp taken after the read cannot see that change.
+cat > "$TMP/launcher_read.py" <<'PY'
+import importlib.util, os, sys
+gate = sys.argv[1]
+sys.argv = [gate] + sys.argv[2:]
+sys.path.insert(0, os.environ["RACE_DIR"])
+import change
+spec = importlib.util.spec_from_file_location("pfg_race", gate)
+m = importlib.util.module_from_spec(spec)
+sys.modules["pfg_race"] = m
+spec.loader.exec_module(m)
+real, fired = m.local_state_sha, []
+def hooked(d):
+    if not fired:
+        fired.append(1)
+        change.apply(os.environ["RACE_HOW"], os.environ["RACE_FILE"])
+    return real(d)
+m.local_state_sha = hooked
+sys.exit(m.main())
+PY
+src_file() { if [ "$1" = receipt ]; then echo "$GD/full_pass.json"; else echo "$GD/budget_pass.json"; fi; }
+src_tests() { python3 -I -c 'import json,sys
+try:
+    d = json.load(open(sys.argv[1])); print(",".join("%s=%s" % (t["id"], t["status"]) for t in d["tests"]), "untested=" + ",".join(d.get("untested") or []))
+except OSError: print("none")' "$1"; }
+
+# race <source of the re-used suites: record | receipt> <when it changes: lock = while A waits for the lock, read = while A is still reading it> <how: none | remove | ...>
 race() {
   make_repo
-  run_gate EXIT2=2; local seed_rc=$RC; local seed_rec; seed_rec="$(rec_tests)"
-  hold_lock "$TMP/lock.release"
+  if [ "$1" = receipt ]; then run_gate EXIT2=2 -- --full; else run_gate EXIT2=2; fi
+  SEED_RC=$RC; SEED_REC="$(src_tests "$(src_file "$1")")"
   rm -f "$TMP/a.out" "$TMP/a.rc"
-  ( CLAUDE_PROJECT_DIR="$R" env GATE_TOTAL_BUDGET_S=900 EXIT2=0 python3 "$GATE" --matrix "$R/matrix.json" --lang en --run-tests > "$TMP/a.out" 2>&1; echo $? > "$TMP/a.rc" ) &
-  local apid=$! i=0
-  while ! grep -q "waiting for it" "$TMP/a.out" 2>/dev/null && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
-  local waiting=no; grep -q "waiting for it" "$TMP/a.out" 2>/dev/null && waiting=yes
-  local reused=no; grep -q "reusing the suites that passed" "$TMP/a.out" 2>/dev/null && reused=yes
-  case "$1" in
-    remove) rm -f "$GD/budget_pass.json" ;;
-    grow)   python3 -I -c 'import os,sys
-p = sys.argv[1]; st = os.stat(p)
-with open(p, "a") as f: f.write(" ")
-os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))' "$GD/budget_pass.json" ;;
-    touch)  python3 -I -c 'import os,sys
-p = sys.argv[1]; st = os.stat(p)
-os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))' "$GD/budget_pass.json" ;;
-  esac
-  touch "$TMP/lock.release"; wait "$HOLDER" 2>/dev/null; wait "$apid" 2>/dev/null
-  A_RC="$(cat "$TMP/a.rc" 2>/dev/null)"; A_WAIT="$waiting"; A_REUSED="$reused"; SEED_RC="$seed_rc"; SEED_REC="$seed_rec"
+  if [ "$2" = lock ]; then
+    hold_lock "$TMP/lock.release"
+    ( CLAUDE_PROJECT_DIR="$R" env GATE_TOTAL_BUDGET_S=900 EXIT2=0 python3 "$GATE" --matrix "$R/matrix.json" --lang en --run-tests > "$TMP/a.out" 2>&1; echo $? > "$TMP/a.rc" ) &
+    local apid=$! i=0
+    while ! grep -q "waiting for it" "$TMP/a.out" 2>/dev/null && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+    A_WAIT=no; grep -q "waiting for it" "$TMP/a.out" 2>/dev/null && A_WAIT=yes
+    python3 -I "$TMP/change.py" "$3" "$(src_file "$1")"
+    touch "$TMP/lock.release"; wait "$HOLDER" 2>/dev/null; wait "$apid" 2>/dev/null
+  else
+    A_WAIT=yes   # no lock is involved: the change happens inside A's own read
+    CLAUDE_PROJECT_DIR="$R" env GATE_TOTAL_BUDGET_S=900 EXIT2=0 RACE_DIR="$TMP" RACE_HOW="$3" RACE_FILE="$(src_file "$1")" \
+      python3 "$TMP/launcher_read.py" "$GATE" --matrix "$R/matrix.json" --lang en --run-tests > "$TMP/a.out" 2>&1; echo $? > "$TMP/a.rc"
+  fi
+  A_RC="$(cat "$TMP/a.rc" 2>/dev/null)"
+  A_REUSED=no; grep -q "reusing the" "$TMP/a.out" 2>/dev/null && A_REUSED=yes
   local before; before="$(runs s1)"
-  if [ "$1" = none ]; then run_gate EXIT2=0; else run_gate EXIT2=0 FAIL1=1; fi
+  if [ "$3" = none ]; then run_gate EXIT2=0; else run_gate EXIT2=0 FAIL1=1; fi
   C_RC="$RC"; C_S1=$(( $(runs s1) - before ))
 }
 
-for how in remove grow touch; do
-  race "$how"
+# check <label> <source> <trigger> <how>: A re-used REG-1, the supplying file changed, A must not write it back, C must run REG-1 and see it fail
+check() {
+  race "$2" "$3" "$4"
   if [ "$SEED_RC" = 2 ] && [ "$SEED_REC" = "REG-1=PASS,REG-2=UNTESTED untested=REG-2" ] && [ "$A_WAIT" = yes ] && [ "$A_REUSED" = yes ] && [ "$A_RC" = 2 ]; then
-    ok "F1/$how: the seed recorded REG-1 PASS; A re-used it, waited for the lock and ended exit 2 (REG-2 ran and passed)"
+    ok "$1: the seed ($2) held REG-1 PASS; A re-used it and ended exit 2 (REG-2 ran and passed)"
   else
-    bad "F1/$how: setup went wrong: seed rc=$SEED_RC record='$SEED_REC' A waited=$A_WAIT re-used=$A_REUSED A rc=$A_RC"; printf '%s\n' "$(tail -5 "$TMP/a.out" 2>/dev/null)"
+    bad "$1: setup went wrong: seed rc=$SEED_RC $2='$SEED_REC' A waited=$A_WAIT re-used=$A_REUSED A rc=$A_RC"; printf '%s\n' "$(tail -5 "$TMP/a.out" 2>/dev/null)"
   fi
   if [ "$C_S1" = 1 ] && [ "$C_RC" = 1 ]; then
-    ok "F1/$how: the record changed while A waited: A wrote no re-used PASS back, so C RAN REG-1 and saw it fail (exit 1)"
+    ok "$1: the $2 changed ($4, $3): A wrote no re-used PASS back, so C RAN REG-1 and saw it fail (exit 1)"
   else
-    bad "F1/$how: REG-1 ran $C_S1 times in C, exit $C_RC (want 1 and 1: a PASS that a concurrent run just replaced was written back)"; printf 'record: %s\n' "$(rec_tests)"
+    bad "$1: REG-1 ran $C_S1 times in C, exit $C_RC (want 1 and 1: a PASS that a concurrent run just replaced was written back)"; printf 'record: %s\n' "$(src_tests "$GD/budget_pass.json")"
   fi
-done
+}
+# the control of each shape: the same flow, nothing changes the file: A's record stands and C re-uses everything
+control() {
+  race "$2" "$3" none
+  if [ "$A_RC" = 2 ] && [ "$A_WAIT" = yes ] && [ "$A_REUSED" = yes ] && [ "$C_S1" = 0 ] && [ "$C_RC" = 2 ]; then
+    ok "$1: nothing touched the $2 ($3): A's record stands and C re-used everything (0 runs of REG-1, exit 2)"
+  else
+    bad "$1: A rc=$A_RC waited=$A_WAIT re-used=$A_REUSED; C ran REG-1 $C_S1 times, exit $C_RC (want 0 runs, exit 2)"; printf 'record: %s\n' "$(src_tests "$GD/budget_pass.json")"
+  fi
+}
 
-# the control with the same shape: nobody touches the record while A waits
-race none
-if [ "$A_RC" = 2 ] && [ "$A_WAIT" = yes ] && [ "$A_REUSED" = yes ] && [ "$C_S1" = 0 ] && [ "$C_RC" = 2 ]; then
-  ok "F1/control: nothing touched the record while A waited: A's record stands and C re-used everything (0 runs of REG-1, exit 2)"
-else
-  bad "F1/control: A rc=$A_RC waited=$A_WAIT re-used=$A_REUSED; C ran REG-1 $C_S1 times, exit $C_RC (want 0 runs, exit 2)"; printf 'record: %s\n' "$(rec_tests)"
-fi
+# F1: the file changes while A waits for the lock. The stamp holds (mtime_ns, size, inode, ctime_ns): each change below moves exactly the part named.
+for how in remove grow touch; do check "F1/record/$how" record lock "$how"; done
+control "F1/record/control" record lock
+# the receipt is the other source of re-used suites, with the same race
+# (only remove: a receipt that is merely touched is still a valid PASS of an earlier --full run, and C re-uses it by design)
+check "F1/receipt/remove" receipt lock remove
+control "F1/receipt/control" receipt lock
+# n5: the file changes DURING A's read of it (after it was loaded, before the read returns). The stamp has to be taken before the read.
+for src in record receipt; do
+  check "F1/$src/read-remove" "$src" read remove
+  control "F1/$src/read-control" "$src" read
+done
 
 # a run that took no lock and started no suite writes nothing: not even the same record again. An unwatched changed source file makes the
 # verdict exit 2 (UNVERIFIED) with every suite PASS, so run 2 re-uses both suites and has nothing left to run.
