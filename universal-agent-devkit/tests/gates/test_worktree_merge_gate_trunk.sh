@@ -21,7 +21,9 @@ FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); 
 G() { git -C "$1" -c user.email=t@t -c user.name=t "${@:2}"; }
 repo() {   # repo <name>: a main checkout in trunk mode
   local m="$TMP/$1"; mkdir -p "$m" && G "$m" init -q -b main && printf '.claude/audit-gate/\n/.claude/worktrees/\n' > "$m/.gitignore" \
-    && echo a > "$m/a.txt" && G "$m" add -A && G "$m" commit -qm i && G "$m" config devkit.trunkMode true
+    && echo a > "$m/a.txt" && G "$m" add -A && G "$m" commit -qm i && G "$m" config devkit.trunkMode true \
+    && G "$m" config user.name t && G "$m" config user.email t@t   # the gate's own `git merge` (main into a worktree) makes a merge commit: with GIT_CONFIG_GLOBAL=/dev/null it
+  # needs an identity of its own; git's auto-detect only works while the hostname has a domain (a host named `Mac` gave "Committer identity unknown", 15/10), so never rely on it
 }
 wtadd() {   # wtadd <main> <name> <session>: a session worktree made like the WorktreeCreate hook makes it
   (cd "$1" && python3 -I "$WTPY" add "$1/.claude/worktrees/$2" --session="$3" --no-init >/dev/null 2>&1) || fail "setup: add $2"
