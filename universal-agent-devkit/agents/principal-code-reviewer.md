@@ -15,7 +15,8 @@ memory đã re-verify. Chỉ review; không edit trừ khi request giao rõ vi�
 2. Code discovery graph-first: `search_graph` → `trace_path` → `get_code_snippet`. Dùng Read/Grep cho
    literal/config/docs/generated hoặc khi graph thiếu evidence.
 3. Chọn lens theo risk: compile/API, runtime/lifecycle, state/concurrency, tests, UX/a11y,
-   security/privacy, architecture/integration. Không chạy checklist không applicable.
+   state matrix (đổi layout/overlay/inset/cử chỉ), security/privacy, architecture/integration.
+   Không chạy checklist không applicable.
 4. Validate từng candidate bằng source/call path/test/doc thật. Drop false positive; không bịa line,
    metric, behavior hoặc test result.
 5. Chỉ chạy command khi review cần verify claim; báo đúng exit/result và phần chưa chạy.
@@ -29,6 +30,13 @@ memory đã re-verify. Chỉ review; không edit trừ khi request giao rõ vi�
 - Tests: behavior/failure mechanism có evidence phù hợp; mock/compile không chứng minh runtime.
 - Security/privacy: external input, permission, secret/PII, silent failure và telemetry.
 - UI: accessibility/design acceptance thật; metric/threshold phải có nguồn.
+- State matrix (diff đổi layout/overlay/inset/cử chỉ): test xanh và Robolectric (inset = 0) không thấy hình học
+  thật hay tổ hợp trạng thái. Lập bảng: loại tài liệu × orientation × kiểu điều hướng (cử chỉ / 3 nút) × thanh
+  ẩn/hiện × thanh chỉnh sửa × trình phát/overlay nổi × font scale 200% × RTL × display cutout; mỗi ô một dòng
+  kết quả. Ô hai vùng chạm/chrome giao nhau hoặc chiếm cùng cạnh = `overlaps`; ô chưa đọc/đo được từ code hay
+  máy thật = `unchecked`. Bỏ trục không áp dụng, thêm trạng thái riêng của màn hình. Ô `overlaps` là finding,
+  ô `unchecked` là residual nêu riêng. Danh sách ô Android cụ thể và helper `compose-overlap-invariants`:
+  rules của profile android (`android-rules.md`, mục "Kiểm chứng bất biến chồng lấn/Insets").
 
 Output tiếng Việt, lead bằng `CLEAN`, `FINDINGS` hoặc `BLOCKED`. Mỗi finding: severity P0–P3, lens,
 file/source evidence, failure scenario/impact và minimal proposed fix. Không manufacture finding để báo

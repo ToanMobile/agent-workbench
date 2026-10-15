@@ -31,3 +31,4 @@ Hội đồng thẩm định cô lập luồng dùng chung và các hệ thống
 5. **Agent 1.5 — Multi-Window & Responsive Boundary Validator:**
    - Xác thực giao diện hoạt động toàn vẹn trên màn hình chia đôi (Split-screen), Multi-window, Compact mode và màn hình xe hơi IVI tỉ lệ lạ (8:3, 16:10, 21:9).
    - Đảm bảo layout không tràn khung, không mất nội dung khi resize động.
+   - Diff đổi layout/overlay/inset/cử chỉ: bắt buộc state matrix — loại tài liệu × orientation × kiểu điều hướng (cử chỉ / 3 nút) × thanh ẩn/hiện × thanh chỉnh sửa × trình phát nổi × font scale 200% × RTL × display cutout, mỗi ô một dòng kết quả. Ô hai vùng chạm/chrome giao nhau = `overlaps`; ô chưa đo = `unchecked` (cả hai là finding hoặc residual, không được im lặng). Ô Android cụ thể: rules của profile android (`android-rules.md`, "Kiểm chứng bất biến chồng lấn/Insets").
