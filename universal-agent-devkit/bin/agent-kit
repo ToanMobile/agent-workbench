@@ -387,8 +387,8 @@ Commands:
                       RED-proofs; a notification only when a row turns red; weekly one-line report
   lanes plan <lanes.json> [--slots N] [--json] | slots [--jobs-per-lane J] [--quiet] | record <id> <minutes> [--kind K]
                       Order parallel agent lanes so the batch ends first: the ready lane with the longest
-                      path to the end starts first, slots = free CPU / 4 (1..6), merge order, overlapping
-                      files, one gate at the end; `record` keeps real lane durations as future estimates
+                      path to the end starts first, slots = free CPU / 4 (1..4), merge order, overlapping
+                      files, one gate at the end; record keeps real lane durations as future estimates
   bugs import <table> [--dry-run]
                       Past bugs into the regression checklist (.agents/CHECKLIST.md):
                       bug_id | title | severity | fixed? | module | test_id_or_NONE | evidence

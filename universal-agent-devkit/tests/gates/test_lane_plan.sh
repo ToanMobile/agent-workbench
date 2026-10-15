@@ -5,7 +5,7 @@
 #     a lane never starts before its dependencies end, the merge order is the order they end, two lanes that edit the same file are
 #     warned about while the files every lane touches (impact_map, test_durations, checklist) are not, `plan` writes nothing;
 #   * a missing estimate is the median of the recorded lanes of that kind (junk history lines skipped), 30 without history;
-#   * `slots`: free CPU / jobs per lane, never below 1, never above 6;
+#   * `slots`: free CPU / jobs per lane, never below 1, never above 4;
 #   * bad input (unknown dependency, cycle, duplicate id, negative or non-numeric estimate, --slots 0) exits 2 and says why.
 #   LP_KIT=<devkit dir>   test another copy of the kit (one without the script: RED; a mutant: must go red)
 #   LP_PY=<python>        interpreter (default python3; try /usr/bin/python3 = 3.9)
@@ -44,6 +44,8 @@ def chk(cond, good, why=""):
 HIST = os.path.join(TMP, "hist", "lane_times.jsonl")
 BASE_ENV = dict((k, v) for k, v in os.environ.items() if not k.startswith("LANE_PLAN_"))
 BASE_ENV["LANE_PLAN_HISTORY"] = HIST
+BASE_ENV["LANE_PLAN_CORES"] = "16"   # the machine reading is pinned: a plan without --slots must not depend on the host
+BASE_ENV["LANE_PLAN_LOAD"] = "0"
 
 
 def run(args, **env):
@@ -110,7 +112,7 @@ chk(d is not None and d["start_order"] == ["H", "L"], "equal paths: the high-ris
 for env, want, why in (
     ({"LANE_PLAN_CORES": "8", "LANE_PLAN_LOAD": "30"}, 1, "overloaded machine still gets one slot"),
     ({"LANE_PLAN_CORES": "16", "LANE_PLAN_LOAD": "2"}, 3, "16 cores, load 2: 14 free / 4 = 3"),
-    ({"LANE_PLAN_CORES": "64", "LANE_PLAN_LOAD": "0"}, 6, "never more than 6 lanes"),
+    ({"LANE_PLAN_CORES": "64", "LANE_PLAN_LOAD": "0"}, 4, "never more than 4 lanes"),
     ({"LANE_PLAN_CORES": "8", "LANE_PLAN_LOAD": "7.5"}, 1, "half a core free: one slot"),
 ):
     rc, out, err = run(["slots", "--quiet"], **env)
@@ -197,6 +199,171 @@ chk("batch ends after 10 min" in out and "merge order" in out and "ONE full gate
 rc2, d2, err2 = plan_json("l7b.json", [{"id": "G1", "files": ["tests/impact_map.txt"]}, {"id": "G2", "files": ["tests/impact_map.txt"]}], 2)
 chk(d2 is not None and d2["overlaps"] == {}, "only shared files in common: no overlap", str(d2 and d2["overlaps"]))
 
+# 9. the schedule itself (review of 15/10: found by reading the code AND by Antigravity; each row below has a mutant that turns it red)
+def peak(rows):
+    return max(sum(1 for q in rows if q["start"] <= r["start"] < q["end"]) for r in rows)
+
+
+# two lanes that end at the same moment are BOTH done before the next start is chosen: L3 (path 30) must not wait for the lone L1 (15)
+simul = [{"id": "L0", "est_min": 40}, {"id": "L1", "est_min": 15}, {"id": "L2", "est_min": 40},
+         {"id": "L3", "est_min": 20, "deps": ["L0", "L2"]}, {"id": "L4", "est_min": 10, "deps": ["L2"]},
+         {"id": "L5", "est_min": 10, "deps": ["L3", "L4"]}]
+rc, d, err = plan_json("l9a.json", simul, 2)
+if d:
+    rows = dict((r["id"], r) for r in d["rows"])
+    chk(d["makespan_min"] == 70 and rows["L3"]["start"] == 40 and rows["L1"]["start"] >= 50,
+        "lanes ending together: L3 starts at 40 before the lone L1, the batch ends after 70 min (75 when one of them is handled at a time)", str(d["rows"]))
+    chk(peak(d["rows"]) <= 2, "never more lanes at once than slots (2)", str(d["rows"]))
+else:
+    chk(False, "plan with lanes that end together runs", err)
+for n in (1, 3):
+    rc, d, err = plan_json("l9a%d.json" % n, simul, n)
+    chk(d is not None and peak(d["rows"]) <= n, "never more lanes at once than slots (%d)" % n, str(d and d["rows"]))
+# a lane with two dependencies waits for the LONGER one
+rc, d, err = plan_json("l9b.json", [{"id": "A", "est_min": 10}, {"id": "B", "est_min": 30}, {"id": "J", "est_min": 5, "deps": ["A", "B"]}], 4)
+chk(d is not None and dict((r["id"], r) for r in d["rows"])["J"]["start"] >= 30, "a lane with two dependencies starts after the longer one (30)", str(d and d["rows"]))
+# the path behind a lane is the LONGEST chain after it (not the sum, not the shortest): X (10) has two lanes waiting for it
+rc, d, err = plan_json("l9c.json", [{"id": "W", "est_min": 40}, {"id": "X", "est_min": 10}, {"id": "Y", "est_min": 20, "deps": ["X"]}, {"id": "Z", "est_min": 20, "deps": ["X"]}], 1)
+chk(d is not None and d["start_order"][0] == "W", "paths: X + max(20, 20) = 30 is shorter than W = 40, so W starts first (a sum would put X first)", str(d and d["start_order"]))
+rc, d, err = plan_json("l9d.json", [{"id": "W", "est_min": 45}, {"id": "X", "est_min": 10}, {"id": "Y", "est_min": 5, "deps": ["X"]}, {"id": "Z", "est_min": 40, "deps": ["X"]}], 1)
+chk(d is not None and d["start_order"][0] == "X", "paths: X + max(5, 40) = 50 is longer than W = 45, so X starts first (the shortest chain would put W first)", str(d and d["start_order"]))
+# risk: only high wins a tie, in any case
+rc, d, err = plan_json("l9e.json", [{"id": "L", "est_min": 20}, {"id": "M", "est_min": 20, "risk": "medium"}], 1)
+chk(d is not None and d["start_order"] == ["L", "M"], "equal paths: medium risk is not high (listed order stays)", str(d and d["start_order"]))
+rc, d, err = plan_json("l9f.json", [{"id": "L", "est_min": 20}, {"id": "H", "est_min": 20, "risk": "HIGH"}], 1)
+chk(d is not None and d["start_order"] == ["H", "L"], "risk HIGH counts as high", str(d and d["start_order"]))
+# the longest-path rule is a heuristic: when the listed order ends sooner the plan uses it and says so
+lst = [{"id": "L1", "est_min": 45}, {"id": "L0", "est_min": 10}, {"id": "L2", "est_min": 60}, {"id": "L3", "est_min": 30, "deps": ["L0"]}]
+rc, d, err = plan_json("l9g.json", lst, 2)
+chk(d is not None and d["makespan_min"] == 75 and d["start_order"][0] == "L1" and d.get("order") == "input",
+    "the listed order (75 min) beats the longest-path rule (85): the plan uses it", str(d))
+rc, out, err = run(["plan", lanes_file("l9g.json", lst), "--slots", "2"])
+chk("the listed order ends sooner" in out and "batch ends after 75 min" in out, "the text form says the listed order is used", out)
+rc, d, err = plan_json("l9h.json", small_first, 2)
+chk(d is not None and d.get("order") == "critical-path", "when the longest-path rule is as good or better it stays", str(d and d.get("order")))
+# lanes that end together merge in the order they started: a lane never merges before the lane it waited for
+rc, d, err = plan_json("l9i.json", [{"id": "B", "est_min": 0}, {"id": "A", "est_min": 0, "deps": ["B"]}], 2)
+chk(d is not None and d["merge_order"] == ["B", "A"], "merge order: B before the A that waited for it, although A sorts first", str(d and d["merge_order"]))
+# a long chain listed root first (a recursion per lane would hit the interpreter limit on 3.9)
+chain_big = [{"id": "C%d" % i, "est_min": 1, "deps": (["C%d" % (i - 1)] if i else [])} for i in range(1200)]
+rc, d, err = plan_json("l9j.json", chain_big, 1)
+chk(d is not None and d["makespan_min"] == 1200, "a chain of 1200 lanes plans (no recursion limit, on either Python)", "%s %s" % (rc, err[-200:]))
+
+# 10. input that must be refused with exit 2 and a reason, never a traceback
+bad2 = (
+    ("estimate true", [{"id": "A", "est_min": True}], "est_min"),
+    ("estimate of 400 digits", [{"id": "A", "est_min": int("9" * 400)}], "est_min"),
+    ("estimate 1e308", [{"id": "A", "est_min": 1e308}], "est_min"),
+    ("empty file path", [{"id": "A", "files": [""]}], "files"),
+    ("a lane that is a list", [[1, 2]], "id"),
+)
+for name, lanes, word in bad2:
+    rc, out, err = run(["plan", lanes_file("bad2.json", lanes), "--slots", "2"])
+    chk(rc == 2 and word in err and "Traceback" not in err, "bad input is refused: " + name, "rc=%s err=%r" % (rc, err[-200:]))
+with open(os.path.join(TMP, "deep.json"), "w") as fh:
+    fh.write("[" * 100000 + "]" * 100000)
+rc, out, err = run(["plan", os.path.join(TMP, "deep.json")])
+chk(rc == 2 and "Traceback" not in err, "JSON nested 100000 deep is refused, not a RecursionError", "rc=%s %r" % (rc, err[-200:]))
+for flag, value in (("--slots", "9" * 400), ("--slots", "True")):
+    rc, out, err = run(["plan", lanes_file("ok.json", [{"id": "A"}]), flag, value])
+    chk(rc == 2 and "Traceback" not in err, "%s %s... is refused" % (flag, value[:6]), "rc=%s %r" % (rc, err[-200:]))
+for args in (["slots", "--jobs-per-lane", "0"], ["slots", "--jobs-per-lane", "0.5"], ["slots", "--bogus"]):
+    rc, out, err = run(args, LANE_PLAN_CORES="16", LANE_PLAN_LOAD="0")
+    chk(rc == 2 and "Traceback" not in err, "refused: agent-kit lanes " + " ".join(args), "rc=%s %r %r" % (rc, out, err))
+rc, out, err = run(["slots", "--quiet", "--jobs-per-lane", "1"], LANE_PLAN_CORES="64", LANE_PLAN_LOAD="0")
+chk(rc == 0 and out.strip() == "4", "slots: never more than 4 lanes, even with --jobs-per-lane 1 on 64 idle cores", "%r %r" % (out, err))
+
+# 11. history: a bad line is skipped, an odd file is refused or ignored, never a hang or a traceback
+H2 = os.path.join(TMP, "h2.jsonl")
+with open(H2, "wb") as fh:
+    fh.write(b"\xff\xfe not utf-8\n" + json.dumps({"kind": "u8", "minutes": 10}).encode() + b"\n"
+             + b'{"kind": "u8", "minutes": ' + b"9" * 400 + b"}\n" + b"[" * 100000 + b"\n"
+             + json.dumps({"kind": "u8", "minutes": True}).encode() + b"\n" + json.dumps({"kind": "u8", "minutes": 30}).encode() + b"\n"
+             + json.dumps({"kind": "", "minutes": 240}).encode() + b"\n" + json.dumps({"minutes": 300}).encode() + b"\n")
+kinds = lanes_file("l11.json", [{"id": "K", "kind": "u8"}, {"id": "N"}])
+r = subprocess.run([PY, SCRIPT, "plan", kinds, "--slots", "2", "--json"], capture_output=True, text=True, timeout=60, cwd=TMP, env=dict(BASE_ENV, LANE_PLAN_HISTORY=H2))
+est = dict((x["id"], x["end"] - x["start"]) for x in json.loads(r.stdout)["rows"]) if r.returncode == 0 else {}
+chk(est.get("K") == 20, "history: bytes that are not UTF-8, a 400-digit number, a 100000-deep line and a bool are skipped; the even median of 10 and 30 is 20", "%s %s %r" % (r.returncode, est, r.stderr[-200:]))
+chk(est.get("N") == 30, "history: a lane without a kind is not given the median of the rows recorded without a kind (30, not 240/300)", str(est))
+os.mkdir(os.path.join(TMP, "histdir"))
+rc, out, err = run(["plan", lanes_file("ok.json", [{"id": "A", "est_min": 5}]), "--slots", "1"], LANE_PLAN_HISTORY=os.path.join(TMP, "histdir"))
+chk(rc == 0, "a history path that is a directory does not matter when every lane has an estimate", "rc=%s %r" % (rc, err[-200:]))
+rc, out, err = run(["plan", lanes_file("nok.json", [{"id": "A"}]), "--slots", "1"], LANE_PLAN_HISTORY=os.path.join(TMP, "histdir"))
+chk(rc == 0, "a lane with neither estimate nor kind does not read the history at all (30 min, a broken history file does not matter)", "rc=%s %r" % (rc, err[-200:]))
+rc, out, err = run(["plan", lanes_file("k.json", [{"id": "A", "kind": "x"}]), "--slots", "1"], LANE_PLAN_HISTORY=os.path.join(TMP, "histdir"))
+chk(rc == 2 and "history" in err and "Traceback" not in err, "a lane that needs the history and finds a directory: refused with the reason", "rc=%s %r" % (rc, err[-200:]))
+rc, out, err = run(["record", "z", "5"], LANE_PLAN_HISTORY=os.path.join(TMP, "histdir"))
+chk(rc == 2 and "Traceback" not in err, "record to a directory is refused with the reason", "rc=%s %r" % (rc, err[-200:]))
+FIFO = os.path.join(TMP, "fifo.jsonl")
+os.mkfifo(FIFO)
+for args, name in ((["plan", lanes_file("k.json", [{"id": "A", "kind": "x"}]), "--slots", "1"], "plan"), (["record", "z", "5"], "record")):
+    try:
+        rc, out, err = run(args, LANE_PLAN_HISTORY=FIFO)
+        chk(rc == 2 and "Traceback" not in err, "a FIFO as the history file: %s is refused at once, not hung" % name, "rc=%s %r" % (rc, err[-200:]))
+    except subprocess.TimeoutExpired:
+        chk(False, "a FIFO as the history file: %s is refused at once, not hung" % name, "it hung")
+rc, out, err = run(["record", "z", "7"], LANE_PLAN_HISTORY="bare.jsonl")
+chk(rc == 0 and os.path.isfile(os.path.join(TMP, "bare.jsonl")), "a bare file name as the history file is created in the current directory", "rc=%s %r" % (rc, err[-200:]))
+
+# 12. overlaps: paths are compared as paths, the union-merged files are recognised wherever the kit sits
+def overlaps_of(name, lanes):
+    rc, d, err = plan_json(name, lanes, 4)
+    return d["overlaps"] if d else err
+
+
+kit = "universal-agent-devkit/"
+shared = overlaps_of("l12a.json", [
+    {"id": "P1", "files": [kit + "tests/lib/test_durations.txt", kit + "tests/impact_map.txt", ".agents/CHECKLIST.md", ".agents/regression_status.json"]},
+    {"id": "P2", "files": [kit + "tests/lib/test_durations.txt", kit + "tests/impact_map.txt", ".agents/CHECKLIST.md", ".agents/regression_status.json"]}])
+chk(shared == {}, "the union-merged files are not warned about, with the kit folder in front or not (each of the four, in two lanes)", str(shared))
+chk(overlaps_of("l12b.json", [{"id": "Q1", "files": ["xtests/impact_map.txt"]}, {"id": "Q2", "files": ["xtests/impact_map.txt"]}]) == {"xtests/impact_map.txt": ["Q1", "Q2"]},
+    "control: xtests/impact_map.txt is not tests/impact_map.txt (the match is on a path boundary)")
+chk(overlaps_of("l12c.json", [{"id": "R1", "files": ["./hooks/a.sh"]}, {"id": "R2", "files": ["hooks/a.sh"]}]) == {"hooks/a.sh": ["R1", "R2"]},
+    "./hooks/a.sh and hooks/a.sh are one file")
+chk(overlaps_of("l12d.json", [{"id": "R1", "files": ["hooks/"]}, {"id": "R2", "files": ["hooks/a.sh"]}]) == {"hooks": ["R1", "R2"]},
+    "a folder and a file inside it overlap")
+chk(overlaps_of("l12e.json", [{"id": "R1", "files": ["hooks/a.sh", "hooks/a.sh"]}, {"id": "R2", "files": ["hooks/b.sh"]}]) == {},
+    "a lane that lists a file twice does not overlap with itself; hooks/a.sh and hooks/b.sh are different files")
+chk(overlaps_of("l12e2.json", [{"id": "R1", "files": ["hooks/", "hooks/a.sh"]}, {"id": "R2", "files": ["tests/b.sh"]}]) == {},
+    "a lane that names a folder and a file inside it does not overlap with itself")
+chk(overlaps_of("l12f.json", [{"id": "R1", "files": ["hooks/a.sh"]}, {"id": "R2", "files": ["hooks/ab.sh", "tests/a.sh"]}]) == {},
+    "controls: hooks/ab.sh is not inside hooks/a.sh, tests/a.sh is not hooks/a.sh")
+chk(overlaps_of("l12g.json", [{"id": "S1", "files": ["a.sh", "b.sh"]}, {"id": "S2", "files": ["c.sh", "b.sh"]}]) == {"b.sh": ["S1", "S2"]},
+    "an overlap on the second file of a lane is found")
+chk(overlaps_of("l12h.json", [{"id": "S1", "files": ["a.sh"]}, {"id": "S2", "files": ["a.sh"]}, {"id": "S3", "files": ["a.sh"]}]) == {"a.sh": ["S1", "S2", "S3"]},
+    "three lanes on one file are named in the listed order")
+
+# 13. the default history file lives in the git common dir: shared by every worktree, never tracked, never swept into a merge
+import shutil
+REPO, WT = os.path.join(TMP, "repo"), os.path.join(TMP, "wt")
+GITENV = dict((k, v) for k, v in os.environ.items() if not k.startswith("GIT_"))
+GIT = ["git", "-c", "user.name=lane", "-c", "user.email=lane@example.invalid", "-c", "commit.gpgsign=false"]
+
+
+def git(*args, **kw):
+    return subprocess.run(GIT + list(args), capture_output=True, text=True, env=GITENV, timeout=60, **kw)
+
+
+os.mkdir(REPO)
+ok = git("init", "-q", cwd=REPO).returncode == 0 and git("commit", "-q", "--allow-empty", "-m", "x", cwd=REPO).returncode == 0 \
+    and git("worktree", "add", "-q", "--detach", WT, cwd=REPO).returncode == 0
+chk(ok, "a scratch repo with a linked worktree for the history location test")
+if ok:
+    NOH = dict((k, v) for k, v in BASE_ENV.items() if k != "LANE_PLAN_HISTORY")
+    r = subprocess.run([PY, SCRIPT, "record", "lane1", "12", "--kind", "gitk"], capture_output=True, text=True, env=NOH, cwd=WT, timeout=60)
+    common = os.path.join(REPO, ".git", "devkit", "lane_times.jsonl")
+    chk(r.returncode == 0 and os.path.isfile(common), "record from a linked worktree writes into the main repo's git dir", "%s %r %s" % (r.returncode, r.stderr, os.listdir(WT)))
+    chk(not os.path.exists(os.path.join(WT, ".agents")) and git("status", "--porcelain", cwd=WT).stdout == "" and git("status", "--porcelain", cwd=REPO).stdout == "",
+        "the history is no untracked file in the worktree nor in the main checkout (nothing for an auto-merge to sweep in)",
+        "%r %r" % (git("status", "--porcelain", cwd=WT).stdout, git("status", "--porcelain", cwd=REPO).stdout))
+    r = subprocess.run([PY, SCRIPT, "plan", lanes_file("l13.json", [{"id": "G", "kind": "gitk"}]), "--slots", "1", "--json"], capture_output=True, text=True, env=NOH, cwd=REPO, timeout=60)
+    est = json.loads(r.stdout)["rows"][0] if r.returncode == 0 else {}
+    chk(est.get("end") == 12, "plan run from the main checkout reads what a worktree recorded", "%s %r" % (r.returncode, r.stderr[-200:]))
+    NOGIT = os.path.join(TMP, "nogit")
+    os.mkdir(NOGIT)
+    r = subprocess.run([PY, SCRIPT, "record", "lane2", "3"], capture_output=True, text=True, env=NOH, cwd=NOGIT, timeout=60)
+    chk(r.returncode == 2 and "git" in r.stderr and os.listdir(NOGIT) == [], "outside a git repository record refuses and creates nothing", "%s %r %s" % (r.returncode, r.stderr[-200:], os.listdir(NOGIT)))
+
 # 8. the CLI wiring: `agent-kit lanes ...` reaches the script (a kit copy without bin/agent-kit, as the mutant runs use, skips this)
 AK = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT))), "bin", "agent-kit")
 if os.path.isfile(AK):
@@ -209,6 +376,9 @@ if os.path.isfile(AK):
     chk(r.returncode == 2, "agent-kit lanes keeps the script's exit code 2 on bad input", "%s %r" % (r.returncode, r.stderr))
     r = subprocess.run(["bash", AK, "help"], capture_output=True, text=True, env=e, cwd=TMP, timeout=60)
     chk("lanes plan <lanes.json>" in (r.stdout + r.stderr), "agent-kit help lists lanes", (r.stdout + r.stderr)[:200])
+    chk(r.stderr == "", "agent-kit help prints nothing on stderr (no backtick of the lanes text runs in the unquoted heredoc)", r.stderr[:200])
+    r = subprocess.run(["bash", "-c", 'eval "$("$0" completion bash)" || exit 3; COMP_WORDS=(agent-kit lanes ""); COMP_CWORD=2; _agent_kit; printf "%s\\n" "${COMPREPLY[@]}" | LC_ALL=C sort | tr "\\n" " "', AK], capture_output=True, text=True, env=e, cwd=TMP, timeout=60)
+    chk(r.stdout == "plan record slots ", "agent-kit completion offers the three lanes sub-actions", "%r %r" % (r.stdout, r.stderr[:200]))
 
 sys.exit(1 if fails else 0)
 PY

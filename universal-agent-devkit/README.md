@@ -555,7 +555,7 @@ Standardized under the `SKILL.md` format (YAML frontmatter + Progressive Disclos
 |---|---|---|
 | **`context-enricher`** | `/enrich` | Gateway 5-dimensional context enrichment (5D Dossier) for all terse user prompts. |
 | **`giao`** | `/giao` | Dual-Agent Orchestration: Leader PM (Claude) ↔ Worker (Antigravity), task packet allocation and receipt audit. |
-| **`parallel-lanes`** | — | Parallel agent lanes: critical-path lane first, lane count capped by free CPU (`agent-kit lanes plan|slots|record`), pre-briefed traps, one worktree per lane, risk-tiered review that never skips a round, one full gate per batch. |
+| **`parallel-lanes`** | — | Parallel agent lanes: critical-path lane first, lane count capped by free CPU (`agent-kit lanes plan\|slots\|record`), pre-briefed traps, one worktree per lane, risk-tiered review that never skips a round, one full gate per batch. |
 | **`codebase-memory`** | `/graph`, `/codebase-memory` | **SSOT Knowledge Graph:** AST structural navigation, inbound/outbound call-chain tracing, Cypher queries, and Read/Grep fallback. |
 | **`incremental-implementation`** | `/step` | Breaks complex features into incremental surgical steps with continuous verification. |
 | **`deprecation-migration`** | `/deprecate` | Safe 3-phase API deprecation, consumer caller migration, and legacy code retirement. |

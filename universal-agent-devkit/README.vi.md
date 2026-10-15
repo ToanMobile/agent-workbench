@@ -554,7 +554,7 @@ Kho 33 kỹ năng chuẩn hóa theo định dạng `SKILL.md` (YAML frontmatter 
 |---|---|---|
 | **`context-enricher`** | `/enrich` | Gateway tự động làm giàu ngữ cảnh 5 chiều (5D Dossier) cho mọi prompt ngắn gọn của User. |
 | **`giao`** | `/giao` | Điều phối Dual-Agent: Leader PM (Claude) ↔ Worker (Antigravity), giao việc và nghiệm thu task packet. |
-| **`parallel-lanes`** | — | Nhiều lane/agent song song: lane đường găng chạy trước, số lane theo CPU còn trống (`agent-kit lanes plan|slots|record`), brief sẵn các bẫy lặp lại, mỗi lane một worktree, review theo rủi ro không bỏ vòng nào, một gate full cho cả đợt. |
+| **`parallel-lanes`** | — | Nhiều lane/agent song song: lane đường găng chạy trước, số lane theo CPU còn trống (`agent-kit lanes plan\|slots\|record`), brief sẵn các bẫy lặp lại, mỗi lane một worktree, review theo rủi ro không bỏ vòng nào, một gate full cho cả đợt. |
 | **`codebase-memory`** | `/graph`, `/codebase-memory` | **SSOT Đồ Thị Tri Thức:** Khám phá cấu trúc code, trace inbound/outbound callers, Cypher query, fallback Read/Grep. |
 | **`incremental-implementation`** | `/step` | Chia nhỏ feature lớn thành các bước phẫu thuật tăng dần, kiểm chứng liên tục từng bước. |
 | **`deprecation-migration`** | `/deprecate` | Sunset API cũ, di chuyển callers và dọn dẹp mã nguồn lỗi thời an toàn. |

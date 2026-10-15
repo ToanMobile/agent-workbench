@@ -22,7 +22,7 @@ _agent_kit() {
   COMPREPLY=()
 
   if [ "${COMP_CWORD}" -eq 1 ]; then
-    words="init install-global profile health gate githooks bugs checklist req nightly memory-stats learn promote clean matrix worktree allow-shared
+    words="init install-global profile health gate githooks bugs checklist req nightly lanes memory-stats learn promote clean matrix worktree allow-shared
            index-memory test sync list commands list-old restore-old uninstall completion help"
     COMPREPLY=( $(compgen -W "${words}" -- "${cur}") )
     return 0
@@ -78,6 +78,9 @@ _agent_kit() {
     nightly)
       [ "${COMP_CWORD}" -eq 2 ] && COMPREPLY=( $(compgen -W "add remove install uninstall status run" -- "${cur}") ) \
         || COMPREPLY=( $(compgen -d -- "${cur}") ) ;;
+    lanes)
+      [ "${COMP_CWORD}" -eq 2 ] && COMPREPLY=( $(compgen -W "plan slots record" -- "${cur}") ) \
+        || COMPREPLY=( $(compgen -f -- "${cur}") ) ;;
     req|reqs)
       [ "${COMP_CWORD}" -eq 2 ] && COMPREPLY=( $(compgen -W "add link drop" -- "${cur}") ) \
         || COMPREPLY=( $(compgen -f -- "${cur}") ) ;;
