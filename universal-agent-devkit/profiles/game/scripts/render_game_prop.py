@@ -46,8 +46,8 @@ COLORS = {   # RGBA
 
 def _positive_int(text):
     value = int(text)
-    if value < 1:
-        raise argparse.ArgumentTypeError("must be >= 1")
+    if value < 4:
+        raise argparse.ArgumentTypeError("must be >= 4 (Blender rounds anything smaller up to 4)")
     return value
 
 
@@ -61,6 +61,8 @@ def parse_args():
     parser.add_argument("--resolution", default=512, type=_positive_int)
     parser.add_argument("--angle", default="iso", type=str.lower, choices=("iso", "front", "side"))
     parser.add_argument("--blend")
+    if "--" not in sys.argv:
+        parser.error("arguments go after `--`: blender -b -P render_game_prop.py -- --output <png> [--prop <name> | --blend <file>]")
     ns = parser.parse_args(args)   # a bad option exits 2 through SystemExit, past main()'s except Exception
     if ns.blend is not None and (ns.prop or ns.color):
         parser.error("--prop and --color describe a built-in prop; they do not apply to --blend")
@@ -257,6 +259,13 @@ def configure_render(output_path, resolution):
     scene.render.use_compositing = False
     scene.render.use_sequencer = False
     scene.render.use_file_extension = False
+    scene.render.use_multiview = False   # a stereo source would write stereo_L.png and stereo_R.png and never --output
+    scene.render.pixel_aspect_x = scene.render.pixel_aspect_y = 1.0   # a pixel aspect of 2 crops the sprite
+    for name in dir(scene.render):   # a stamp prints the source's absolute path (a user name) over the sprite and into the PNG
+        if name.startswith("use_stamp") and isinstance(getattr(scene.render, name), bool):
+            setattr(scene.render, name, False)
+    if hasattr(scene.render.image_settings, "media_type"):   # Blender 5: a source whose output is video or multilayer EXR rejects 'PNG'
+        scene.render.image_settings.media_type = 'IMAGE'
 
     # Transparent background for UI sprite
     scene.render.film_transparent = True
@@ -301,6 +310,17 @@ def _render_visible():
     return seen
 
 
+def _renders_surface(evaluated):
+    """False for geometry that renders as nothing: a curve without bevel or extrude, a mesh of edges only (it would still size the frame)."""
+    if evaluated.type not in ('MESH', 'CURVE', 'SURFACE', 'FONT', 'META'):
+        return True
+    mesh = evaluated.to_mesh()
+    try:
+        return mesh is not None and len(mesh.polygons) > 0
+    finally:
+        evaluated.to_mesh_clear()
+
+
 def frame_blend_scene():
     """Replace the source's own lights and cameras and measure what renders. Returns (centre, factor) for fit_rig: the rig is built
     for content of 1.3 units, so a source `factor` times larger gets the rig `factor` times larger. The source itself is never moved,
@@ -315,7 +335,7 @@ def frame_blend_scene():
     # ponytail: the viewport depsgraph skips an object that is disabled in viewports but enabled for render; add a render depsgraph when a source needs it
     for inst in bpy.context.evaluated_depsgraph_get().object_instances:   # real objects AND instances (collections, geometry nodes, particles)
         evaluated = inst.object
-        if evaluated.type not in GEOMETRY:
+        if evaluated.type not in GEOMETRY or not _renders_surface(evaluated):
             continue
         owner = inst.parent.original if inst.is_instance and inst.parent else evaluated.original   # an instance renders when its instancer does
         if owner in visible:
@@ -343,6 +363,18 @@ def fit_rig(rig, centre, factor):
             obj.data.clip_end *= factor
 
 
+def _refuse_blank(path):
+    """A fully transparent PNG is a render of nothing (everything hidden from the camera, the wrong layer): never a result, never a proof."""
+    image = bpy.data.images.load(path)
+    try:
+        blank = max(image.pixels[3::4], default=0.0) <= 0.0
+    finally:
+        bpy.data.images.remove(image)
+    if blank:
+        os.remove(path)
+        raise RuntimeError("the render is fully transparent (nothing reached the camera): %s removed" % path)
+
+
 def _run():
     params = parse_args()
     fit = None
@@ -365,6 +397,9 @@ def _run():
     # Render
     bpy.ops.render.render(write_still=True)
     abs_path = os.path.abspath(params["output"])
+    if not os.path.isfile(abs_path):   # Blender can finish without writing the file it was asked for (a stereo or video source did)
+        raise RuntimeError("the render finished but %s was not written" % abs_path)
+    _refuse_blank(abs_path)
     print(f"[BLENDER_RENDER_SUCCESS] Exported 3D Asset Sprite: {abs_path} ({params['resolution']}x{params['resolution']})")
 
 

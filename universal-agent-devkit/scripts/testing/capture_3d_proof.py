@@ -90,6 +90,10 @@ def main():
     stamp = time.strftime("%Y%m%d-%H%M%S")
     dest = Path(args.output) if args.output else (reports_dir / f"proof-{stamp}.png")
 
+    if args.image is not None and (args.blend is not None or args.prop or args.color):
+        parser.error("--image is the proof itself; --blend, --prop and --color do not apply to it")
+    if args.color is not None and not args.color:
+        parser.error("--color is empty")
     if args.image is not None:   # an explicit image is the proof or nothing: never a default asset rendered in its place
         src = Path(args.image)
         if is_valid_png(src):

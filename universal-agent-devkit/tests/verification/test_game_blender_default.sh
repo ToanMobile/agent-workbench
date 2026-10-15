@@ -36,6 +36,19 @@ box = im.getchannel('A').getbbox()
 print('inside' if box and box[0] > 0 and box[1] > 0 and box[2] < w and box[3] < h else 'cropped %s' % (box,))" "$1"
 }
 
+fill_of() {  # $1 = PNG: the fraction of opaque pixels, e.g. 0.29
+  python3 -I -c "
+import sys
+from PIL import Image
+a = Image.open(sys.argv[1]).convert('RGBA').getchannel('A')
+print('%.2f' % (a.point(lambda v: 255 if v else 0).histogram()[255] / float(a.size[0] * a.size[1])))" "$1"
+}
+need_png() {  # need_png <label> <png>: 0 when PIL is there AND the fixture rendered; no PIL = SKIP, no PNG = FAIL (never a quiet skip)
+  if ! python3 -I -c "import PIL" 2>/dev/null; then skip "$1 no PIL, the PNG is not measured"; return 1; fi
+  if [ ! -s "$2" ]; then fail "$1 the fixture did not render (a regression of the render step would hide behind a skip)"; return 1; fi
+  return 0
+}
+
 # ---------- A. render_game_prop.py (real Blender) ----------
 if [ -z "$BLENDER" ]; then
   skip "A: no Blender on this machine, render_game_prop.py not exercised"
@@ -195,10 +208,10 @@ bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/hinst.blend')
   elif [ "$RC" -ne 0 ] || [ ! -s "$TMP/hinst.png" ]; then
     fail "A14 a source with a hidden instance did not render: exit=$RC"
   else
-    FRAME="$(frame_of "$TMP/hinst.png")"
-    [ "$FRAME" = "inside" ] \
-      && ok "A14 an instance hidden through its collection is not measured (a 500-unit-away instance does not shrink the frame)" \
-      || fail "A14 the hidden instance sized or cropped the frame: $FRAME"
+    FRAME="$(frame_of "$TMP/hinst.png")"; FILL="$(fill_of "$TMP/hinst.png")"
+    [ "$FRAME" = "inside" ] && python3 -I -c "import sys; sys.exit(0 if float('$FILL') >= 0.10 else 1)" \
+      && ok "A14 an instance hidden through its collection is not measured (a 500-unit-away instance does not shrink the cube, fill $FILL)" \
+      || fail "A14 the hidden instance sized or cropped the frame: $FRAME, the visible cube fills $FILL"
   fi
   # an object linked into a visible AND a hidden collection still renders; a hidden PARENT collection hides its children
   "$BLENDER" -b --python-expr "
@@ -215,13 +228,11 @@ bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/twocol.blend')
 " >/dev/null 2>&1
   [ -s "$TMP/twocol.blend" ] || fail "A18 setup: twocol.blend was not built"
   "$BLENDER" -b -P "$PROP" -- --blend "$TMP/twocol.blend" --output "$TMP/twocol.png" >/dev/null 2>&1
-  if python3 -I -c "import PIL" 2>/dev/null && [ -s "$TMP/twocol.png" ]; then
+  if need_png "A18" "$TMP/twocol.png"; then
     FRAME="$(frame_of "$TMP/twocol.png")"
     [ "$FRAME" = "inside" ] \
       && ok "A18 an object in a visible and a hidden collection still sizes the frame" \
       || fail "A18 the 10-unit cube (also in a hidden collection) was dropped from the measure: $FRAME"
-  else
-    skip "A18 no PIL or the fixture did not render"
   fi
   "$BLENDER" -b --python-expr "
 import bpy
@@ -241,7 +252,7 @@ bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/nested.blend')
 " >/dev/null 2>&1
   [ -s "$TMP/nested.blend" ] || fail "A19 setup: nested.blend was not built"
   "$BLENDER" -b -P "$PROP" -- --blend "$TMP/nested.blend" --output "$TMP/nested.png" >/dev/null 2>&1
-  if python3 -I -c "import PIL" 2>/dev/null && [ -s "$TMP/nested.png" ]; then
+  if need_png "A19" "$TMP/nested.png"; then
     FILL="$(python3 -I -c "
 from PIL import Image
 a = Image.open('$TMP/nested.png').convert('RGBA').getchannel('A')
@@ -249,8 +260,6 @@ print('%.2f' % (a.point(lambda v: 255 if v else 0).histogram()[255] / float(a.si
     python3 -I -c "import sys; sys.exit(0 if float('$FILL') >= 0.10 else 1)" \
       && ok "A19 a child of a hidden PARENT collection is not measured (fill $FILL)" \
       || fail "A19 a cube inside a hidden parent collection sized the frame, the visible cube fills only $FILL"
-  else
-    skip "A19 no PIL or the fixture did not render"
   fi
   # a collection instance takes its geometry from a scene collection that is excluded from the view layer: that source must not be scaled by the framing as well
   "$BLENDER" -b --python-expr "
@@ -269,7 +278,7 @@ bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/srcinst.blend')
 " >/dev/null 2>&1
   [ -s "$TMP/srcinst.blend" ] || fail "A24 setup: srcinst.blend was not built"
   "$BLENDER" -b -P "$PROP" -- --blend "$TMP/srcinst.blend" --output "$TMP/srcinst.png" >/dev/null 2>&1
-  if python3 -I -c "import PIL" 2>/dev/null && [ -s "$TMP/srcinst.png" ]; then
+  if need_png "A24" "$TMP/srcinst.png"; then
     FILL="$(python3 -I -c "
 from PIL import Image
 a = Image.open('$TMP/srcinst.png').convert('RGBA').getchannel('A')
@@ -277,8 +286,6 @@ print('%.2f' % (a.point(lambda v: 255 if v else 0).histogram()[255] / float(a.si
     python3 -I -c "import sys; sys.exit(0 if float('$FILL') >= 0.20 else 1)" \
       && ok "A24 an instance of an excluded scene collection is framed once (fill $FILL)" \
       || fail "A24 the instance's source collection was scaled by the framing too, the cube fills only $FILL"
-  else
-    skip "A24 no PIL or the fixture did not render"
   fi
   "$BLENDER" -b --python-expr "
 import bpy
@@ -303,7 +310,7 @@ bpy.ops.mesh.primitive_cube_add(size=2, location=(6, 0, 0))
 bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/realtwo.blend')
 " >/dev/null 2>&1
   "$BLENDER" -b -P "$PROP" -- --blend "$TMP/realtwo.blend" --output "$TMP/realtwo.png" >/dev/null 2>&1
-  if python3 -I -c "import PIL" 2>/dev/null && [ -s "$TMP/visinst.png" ] && [ -s "$TMP/realtwo.png" ]; then
+  if need_png "A28" "$TMP/visinst.png" && need_png "A28" "$TMP/realtwo.png"; then
     DIFF="$(python3 -I -c "
 from PIL import Image, ImageChops
 a = Image.open('$TMP/visinst.png').convert('RGBA').getchannel('A')
@@ -313,8 +320,6 @@ print('%.3f' % (d / float(a.size[0] * a.size[1])))")"
     python3 -I -c "import sys; sys.exit(0 if float('$DIFF') <= 0.01 else 1)" \
       && ok "A28 an instance of a visible collection renders like the same layout built from real cubes (mask difference $DIFF)" \
       || fail "A28 the instance of a visible collection is framed differently from real cubes (mask difference $DIFF)"
-  else
-    skip "A28 no PIL or a fixture did not render"
   fi
   "$BLENDER" -b --python-expr "
 import bpy
@@ -324,7 +329,7 @@ bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/tiny.blend')
 " >/dev/null 2>&1
   [ -s "$TMP/tiny.blend" ] || fail "A29 setup: tiny.blend was not built"
   "$BLENDER" -b -P "$PROP" -- --blend "$TMP/tiny.blend" --output "$TMP/tiny.png" >/dev/null 2>&1
-  if python3 -I -c "import PIL" 2>/dev/null && [ -s "$TMP/tiny.png" ]; then
+  if need_png "A29" "$TMP/tiny.png"; then
     FILL="$(python3 -I -c "
 from PIL import Image
 a = Image.open('$TMP/tiny.png').convert('RGBA').getchannel('A')
@@ -332,8 +337,6 @@ print('%.2f' % (a.point(lambda v: 255 if v else 0).histogram()[255] / float(a.si
     python3 -I -c "import sys; sys.exit(0 if float('$FILL') >= 0.10 else 1)" \
       && ok "A29 a 0.01-unit source is not clipped by the camera (fill $FILL)" \
       || fail "A29 a tiny source renders empty or clipped (fill $FILL): the camera sits inside its clip_start"
-  else
-    skip "A29 no PIL or the fixture did not render"
   fi
   "$BLENDER" -b --python-expr "
 import bpy
@@ -355,6 +358,101 @@ bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/names.blend')
     FRAME="$(frame_of "$TMP/names.png")"
     [ "$FRAME" = "inside" ] && ok "A30 source objects named like the studio rig are left alone and framed" || fail "A30 the rig was fitted to the wrong objects: $FRAME"
   fi
+  # F1: the source's active view layer is the one measured; Blender used to write the FIRST one: a transparent PNG, exit 0, "blender-3d"
+  "$BLENDER" -b --python-expr "
+import bpy
+bpy.ops.wm.read_factory_settings(use_empty=True)
+scene = bpy.context.scene
+bpy.ops.mesh.primitive_cube_add(size=2)
+second = scene.view_layers.new('Second')
+scene.view_layers[0].layer_collection.exclude = True
+bpy.context.window_manager.windows[0].view_layer = second
+bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/twolayers.blend')
+" >/dev/null 2>&1
+  [ -s "$TMP/twolayers.blend" ] || fail "A31 setup: twolayers.blend was not built"
+  "$BLENDER" -b -P "$PROP" -- --blend "$TMP/twolayers.blend" --output "$TMP/twolayers.png" >/dev/null 2>&1
+  RC=$?
+  if [ "$RC" -eq 0 ] && need_png "A31" "$TMP/twolayers.png"; then
+    FILL="$(fill_of "$TMP/twolayers.png")"
+    python3 -I -c "import sys; sys.exit(0 if float('$FILL') >= 0.10 else 1)" \
+      && ok "A31 a source saved on its second view layer renders that layer (fill $FILL)" \
+      || fail "A31 a source on its second view layer rendered a blank frame (fill $FILL) and said SUCCESS"
+  elif [ "$RC" -ne 0 ]; then
+    fail "A31 two-view-layer source: exit=$RC"
+  fi
+  # F1 sink: something is measured but nothing reaches the camera: a blank PNG is no result and no proof
+  "$BLENDER" -b --python-expr "
+import bpy
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.mesh.primitive_cube_add(size=2)
+bpy.context.active_object.visible_camera = False
+bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/nocam.blend')
+" >/dev/null 2>&1
+  [ -s "$TMP/nocam.blend" ] || fail "A32 setup: nocam.blend was not built"
+  rm -f "$TMP/nocam.png"
+  "$BLENDER" -b -P "$PROP" -- --blend "$TMP/nocam.blend" --output "$TMP/nocam.png" >/dev/null 2>&1
+  RC=$?
+  if [ "$RC" -eq 2 ] && [ ! -e "$TMP/nocam.png" ]; then
+    ok "A32 a render that comes out fully transparent exits 2 and leaves no PNG"
+  else
+    fail "A32 blank render: exit=$RC, PNG=$([ -e "$TMP/nocam.png" ] && echo kept || echo none)"
+  fi
+  # F2 F4 F6: the source's own output settings (stereo, video, stamp, pixel aspect) must not decide what --output gets
+  "$BLENDER" -b --python-expr "
+import bpy
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.mesh.primitive_cube_add(size=2)
+r = bpy.context.scene.render
+r.use_multiview = True
+r.views_format = 'STEREO_3D'
+if hasattr(r.image_settings, 'media_type'):
+    r.image_settings.media_type = 'VIDEO'
+r.image_settings.file_format = 'FFMPEG'
+r.pixel_aspect_x = 2.0
+r.use_stamp = True
+bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/outsettings.blend')
+" >/dev/null 2>&1
+  [ -s "$TMP/outsettings.blend" ] || fail "A33 setup: outsettings.blend was not built"
+  "$BLENDER" -b -P "$PROP" -- --blend "$TMP/outsettings.blend" --output "$TMP/outsettings.png" >/dev/null 2>&1
+  RC=$?
+  if [ "$RC" -eq 0 ] && need_png "A33" "$TMP/outsettings.png"; then
+    FRAME="$(frame_of "$TMP/outsettings.png")"
+    LEAK="$(python3 -I -c "import sys; print('leak' if b'.blend' in open(sys.argv[1], 'rb').read() else 'clean')" "$TMP/outsettings.png")"
+    [ "$FRAME" = "inside" ] && [ "$LEAK" = "clean" ] \
+      && ok "A33 stereo + video output + pixel aspect 2 + stamp in the source: a plain PNG at --output, framed, no source path inside" \
+      || fail "A33 the source's output settings leaked: frame=$FRAME, source path in the PNG=$LEAK"
+  else
+    fail "A33 source with stereo/video/stamp output: exit=$RC, PNG=$([ -s "$TMP/outsettings.png" ] && echo yes || echo no) (one stereo_L.png/stereo_R.png pair, or a TypeError on 'PNG')"
+  fi
+  # F5: geometry that renders as nothing (a curve without bevel, a mesh of edges) must not size the frame
+  "$BLENDER" -b --python-expr "
+import bpy
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.mesh.primitive_cube_add(size=2)
+bpy.ops.curve.primitive_bezier_curve_add(location=(50, 0, 0))
+mesh = bpy.data.meshes.new('edges')
+mesh.from_pydata([(0, 0, 0), (60, 0, 0)], [(0, 1)], [])
+bpy.context.scene.collection.objects.link(bpy.data.objects.new('edges', mesh))
+bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/nosurface.blend')
+" >/dev/null 2>&1
+  [ -s "$TMP/nosurface.blend" ] || fail "A34 setup: nosurface.blend was not built"
+  "$BLENDER" -b -P "$PROP" -- --blend "$TMP/nosurface.blend" --output "$TMP/nosurface.png" >/dev/null 2>&1
+  if need_png "A34" "$TMP/nosurface.png"; then
+    FILL="$(fill_of "$TMP/nosurface.png")"
+    python3 -I -c "import sys; sys.exit(0 if float('$FILL') >= 0.10 else 1)" \
+      && ok "A34 a bevel-less curve and an edges-only mesh do not size the frame (fill $FILL)" \
+      || fail "A34 geometry that renders as nothing shrank the cube to fill $FILL"
+  fi
+  # F7: no `--` at all is a refusal, not a gold coin written next to the caller; a resolution Blender would round up is refused too
+  mkdir -p "$TMP/nodash" && (cd "$TMP/nodash" && "$BLENDER" -b -P "$PROP" >/dev/null 2>&1; echo $? > "$TMP/nodash.rc")
+  if [ "$(cat "$TMP/nodash.rc")" = "2" ] && [ ! -e "$TMP/nodash/rendered_prop.png" ]; then
+    ok "A35 no -- separator: exit 2 and nothing written next to the caller"
+  else
+    fail "A35 no --: exit=$(cat "$TMP/nodash.rc"), rendered_prop.png=$([ -e "$TMP/nodash/rendered_prop.png" ] && echo WRITTEN || echo none)"
+  fi
+  "$BLENDER" -b -P "$PROP" -- --output "$TMP/tiny-res.png" --resolution 2 >/dev/null 2>&1
+  RC=$?
+  [ "$RC" -eq 2 ] && [ ! -e "$TMP/tiny-res.png" ] && ok "A36 --resolution 2 (Blender would make a 4x4) is refused" || fail "A36 --resolution 2: exit=$RC, PNG=$([ -e "$TMP/tiny-res.png" ] && echo yes || echo no)"
   "$BLENDER" -b --python-expr "
 import bpy
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -368,7 +466,7 @@ bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/hidparent.blend')
 " >/dev/null 2>&1
   [ -s "$TMP/hidparent.blend" ] || fail "A25 setup: hidparent.blend was not built"
   "$BLENDER" -b -P "$PROP" -- --blend "$TMP/hidparent.blend" --output "$TMP/hidparent.png" >/dev/null 2>&1
-  if python3 -I -c "import PIL" 2>/dev/null && [ -s "$TMP/hidparent.png" ]; then
+  if need_png "A25" "$TMP/hidparent.png"; then
     FILL="$(python3 -I -c "
 from PIL import Image
 a = Image.open('$TMP/hidparent.png').convert('RGBA').getchannel('A')
@@ -376,8 +474,6 @@ print('%.2f' % (a.point(lambda v: 255 if v else 0).histogram()[255] / float(a.si
     python3 -I -c "import sys; sys.exit(0 if float('$FILL') >= 0.20 else 1)" \
       && ok "A25 a visible cube under a render-hidden parent is centred with the rest (fill $FILL)" \
       || fail "A25 the cube under a hidden parent kept its place outside the frame (fill $FILL)"
-  else
-    skip "A25 no PIL or the fixture did not render"
   fi
   # the source's own render settings must not leak into the output: border/crop, and a file name without extension
   "$BLENDER" -b --python-expr "
@@ -633,6 +729,21 @@ git -C "$ROOT" mv Assets/Docs/Old.PSD Assets/Docs/new2.psd
 CLAUDE_PROJECT_DIR="$ROOT" bash "$VALIDATE" </dev/null >/dev/null 2>&1; RC=$?
 [ "$RC" = "0" ] && ok "B scan treats Old.PSD -> new2.psd as the same kind (extension case ignored)" || fail "B scan flags a grandfathered rename because of the extension case (exit $RC)"
 
+# a Unity project one level down (Neighbours-From-Hell keeps it in unity/): the same rules, the paths seen from the repo root
+UR="$TMP/unitysub"; mkdir -p "$UR/unity/Assets/Art" "$UR/unity/ProjectSettings" "$UR/Art/Source"
+git -C "$UR" init -q 2>/dev/null
+for f in unity/Assets/Art/hero.blend unity/Assets/UI/icon.svg unity/Assets/Art/coin.blend2; do
+  RCV="$(printf '{"tool_input":{"file_path":"%s/%s"}}' "$UR" "$f" | CLAUDE_PROJECT_DIR="$UR" bash "$VALIDATE" >/dev/null 2>&1; echo $?)"
+  [ "$RCV" = "2" ] && ok "B unity/ hook blocks $f" || fail "B unity/ hook lets $f into the Unity project (exit $RCV)"
+done
+for f in Art/Source/hero.blend unity/Assets/Plugins/Vendor/logo.psd unity/Assets/Art/Sprites/coin.png; do
+  RCV="$(printf '{"tool_input":{"file_path":"%s/%s"}}' "$UR" "$f" | CLAUDE_PROJECT_DIR="$UR" bash "$VALIDATE" >/dev/null 2>&1; echo $?)"
+  [ "$RCV" = "0" ] && ok "B unity/ hook allows $f" || fail "B unity/ hook wrongly blocks $f (exit $RCV)"
+done
+touch "$UR/unity/Assets/Art/new.blend"
+CLAUDE_PROJECT_DIR="$UR" bash "$VALIDATE" </dev/null >/dev/null 2>&1; RC=$?
+[ "$RC" = "1" ] && ok "B unity/ scan flags a new .blend in unity/Assets" || fail "B unity/ scan lets a new .blend through (exit $RC)"
+
 # ---------- C. capture_3d_proof.py never draws a 2D proof ----------
 mkdir -p "$TMP/fakebin" "$TMP/proj"
 for stub_exit in 1 0; do
@@ -674,6 +785,25 @@ for empty in --blend --image; do
     ok "C an empty $empty is refused (exit $RC) and no stand-in is rendered"
   else
     fail "C empty $empty: exit=$RC, Blender ran=$([ -e "$TMP/fake.ran" ] && echo YES || echo no), PNG=$([ -e "$TMP/proj/e.png" ] && echo yes || echo no)"
+  fi
+done
+rm -f "$TMP/fake.ran" "$TMP/proj/ec.png"
+PATH="$TMP/fakebin:$PATH" python3 -I "$PROOF" --project "$TMP/proj" --output "$TMP/proj/ec.png" --color "" >/dev/null 2>&1
+RC=$?
+if [ "$RC" -ne 0 ] && [ ! -e "$TMP/fake.ran" ] && [ ! -e "$TMP/proj/ec.png" ]; then
+  ok "C an empty --color is refused (exit $RC), not turned into gold"
+else
+  fail "C empty --color: exit=$RC, Blender ran=$([ -e "$TMP/fake.ran" ] && echo YES || echo no), proof=$([ -e "$TMP/proj/ec.png" ] && echo written || echo none)"
+fi
+for combo in "--image $TMP/proj/x.png --blend Art/Source/hero.blend" "--image $TMP/proj/x.png --prop chest"; do
+  rm -f "$TMP/fake.ran" "$TMP/proj/amb.png"; python3 -I -c "open('$TMP/proj/x.png', 'wb').write(b'\x89PNG\r\n\x1a\n' + bytes(9000))"   # a valid-looking proof image
+  # shellcheck disable=SC2086
+  PATH="$TMP/fakebin:$PATH" python3 -I "$PROOF" --project "$TMP/proj" --output "$TMP/proj/amb.png" $combo >/dev/null 2>&1
+  RC=$?
+  if [ "$RC" -ne 0 ] && [ ! -e "$TMP/fake.ran" ] && [ ! -e "$TMP/proj/amb.png" ]; then
+    ok "C '$combo' is refused (exit $RC), nothing rendered or copied"
+  else
+    fail "C '$combo': exit=$RC, Blender ran=$([ -e "$TMP/fake.ran" ] && echo YES || echo no), proof=$([ -e "$TMP/proj/amb.png" ] && echo written || echo none)"
   fi
 done
 rm -f "$TMP/proj/img.png"

@@ -33,8 +33,11 @@ set -uo pipefail
 REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 cd "$REPO_ROOT" 2>/dev/null || exit 0
 
+# The Unity project is at the repo root, or one level down in unity/ (Neighbours-From-Hell): U is its prefix as git and the agent write paths.
+U=""
+if [ ! -d Assets ] && [ -d unity/Assets ] && [ -d unity/ProjectSettings ]; then U="unity/"; fi
 # Not a Unity project → nothing to check.
-[ -d "Assets" ] && [ -d "ProjectSettings" ] || exit 0
+[ -d "${U}Assets" ] && [ -d "${U}ProjectSettings" ] || exit 0
 
 is_rogue() {  # $1 = repo-relative path
   case "$1" in
@@ -75,6 +78,7 @@ if [ -n "$FILE_PATH" ]; then
     /*) REL="$(python3 -I -c 'import os,sys; print(os.path.relpath(os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])))' "$FILE_PATH" "$REPO_ROOT" 2>/dev/null)" ;;
     *) REL="$FILE_PATH" ;;
   esac
+  case "$REL" in "$U"*) REL="${REL#"$U"}" ;; *) exit 0 ;; esac   # only the Unity project's own files are judged, by their path inside it
   if is_rogue "$REL"; then
     echo "❌ [UNITY ASSET HYGIENE] $REL nằm trong Assets/. $HINT" >&2
     exit 2
@@ -91,13 +95,14 @@ while IFS= read -r -d '' entry; do
   path="${entry:3}"
   _orig=""
   case "$st" in *[RC]*) IFS= read -r -d '' _orig || true ;; esac   # a rename/copy on EITHER side carries its source path
-  case "$path" in Assets/*) ;; *) continue ;; esac
+  case "$path" in "${U}Assets/"*) ;; *) continue ;; esac
+  rel="${path#"$U"}"
   case "$st" in
     "??"|A?|?A|R?|?R|C?|?C)
       # a rename/copy is judged by its NEW path. Only a RENAME of a file that was already rogue and keeps its kind (same extension) is
       # grandfathered: git mv Art/Source/hero.blend Assets/..., hero.fbx -> hero.blend and notes.md -> hero.blend are all caught
-      case "$st" in *C*) ;; *R*) case "$_orig" in Assets/*) is_rogue "$_orig" && o="${_orig%.meta}" && n="${path%.meta}" && [ "$(printf '%s' "${o##*.}" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "${n##*.}" | tr '[:upper:]' '[:lower:]')" ] && continue ;; esac ;; esac
-      if is_rogue "$path"; then
+      case "$st" in *C*) ;; *R*) case "$_orig" in "${U}Assets/"*) is_rogue "${_orig#"$U"}" && o="${_orig%.meta}" && n="${path%.meta}" && [ "$(printf '%s' "${o##*.}" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "${n##*.}" | tr '[:upper:]' '[:lower:]')" ] && continue ;; esac ;; esac
+      if is_rogue "$rel"; then
         echo "❌ R1 file không thuộc Assets/ (tài liệu, tạm, nguồn .blend/2D): $path" >&2; fail=1; r1=1
       elif [ -f "$path" ] && [ "${path%.meta}" = "$path" ] && [ ! -e "$path.meta" ]; then
         advisory="$advisory\n  - $path (chưa có .meta — mở Editor để import rồi commit cả hai)"
@@ -112,7 +117,7 @@ while IFS= read -r -d '' entry; do
         echo "❌ R3 đã xoá $path nhưng $path.meta vẫn còn — xoá/di chuyển asset phải đi kèm .meta của nó." >&2; fail=1
       fi ;;
   esac
-done < <(git status --porcelain=v1 -z -uall -- Assets 2>/dev/null)
+done < <(git status --porcelain=v1 -z -uall -- "${U}Assets" 2>/dev/null)
 
 if [ -n "$advisory" ]; then
   printf '⚠️  Asset mới chưa có .meta:%b\n' "$advisory" >&2
