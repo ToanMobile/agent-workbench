@@ -449,9 +449,11 @@ tree_fp = devkit_harness.tree_fingerprint(repo) if degraded else fp
 # Claude session with its transcript: the last block of this session, keyed by fp (it carries the
 # unverified range) and the full tree fingerprint (a fix in an untracked file is new content).
 reuse_key = None
+_tree_part = ""   # the content half of reuse_key, kept apart so a miss can say which half moved (rparts below)
 if info is not None and not degraded and (data.get("session_id") or data.get("sessionId") or sid != "nosession"):
     try:
-        reuse_key = hashlib.sha256((fp + ":" + devkit_harness.tree_fingerprint(repo)).encode()).hexdigest()[:20]
+        _tree_part = devkit_harness.tree_fingerprint(repo)
+        reuse_key = hashlib.sha256((fp + ":" + _tree_part).encode()).hexdigest()[:20]
     except Exception as e:
         note("reuse key failed: %r" % e)
 repeat = state.get("repeat") if isinstance(state.get("repeat"), dict) else {}
@@ -468,7 +470,7 @@ def block(lines, cure, rc, reused=False, reusable=True, repeat_hit=False):
             # "at" is the time of the REAL run: a reuse keeps it, so the age limit counts from the run and not from the last Stop.
             prev = repeat.get(sid)
             at = prev.get("at") if reused and isinstance(prev, dict) and prev.get("key") == rkey else None
-            repeat[sid] = {"key": rkey, "lines": lines, "cure": cure, "rc": rc,
+            repeat[sid] = {"key": rkey, "lines": lines, "cure": cure, "rc": rc, "parts": rparts,
                            "at": at if isinstance(at, (int, float)) and not isinstance(at, bool) else time.time()}
         else:
             repeat.pop(sid, None)
@@ -643,10 +645,12 @@ def _stat_sig(*paths):
 # Key of the stored block (repeat): the content (reuse_key), the gitignored local config the suites read, and the hook
 # and the gate themselves. None (the local config could not be listed) stores and serves nothing, like skip_key.
 rkey = None
+rparts = {}   # a short hash of each part of the key (written next to the stored block): the log line of a miss names the parts that moved
 if reuse_key and _local_sha is not None:
     _self = os.environ.get("HOOK_SELF", "")
-    rkey = hashlib.sha256((reuse_key + ":" + _local_sha + ":" + _stat_sig(
-        gate, _self, os.path.join(os.path.dirname(_self), "devkit_harness.py") if _self else "")).encode()).hexdigest()[:20]
+    _sig = _stat_sig(gate, _self, os.path.join(os.path.dirname(_self), "devkit_harness.py") if _self else "")
+    rkey = hashlib.sha256((reuse_key + ":" + _local_sha + ":" + _sig).encode()).hexdigest()[:20]
+    rparts = {"fp": fp[:8], "tree": _tree_part[:8], "local": _local_sha[:8], "sig": hashlib.sha256(_sig.encode()).hexdigest()[:8]}
 try:
     _repeat_ttl = float(os.environ.get("REGRESSION_GATE_REPEAT_TTL_S", "1800"))
 except ValueError:
@@ -730,6 +734,12 @@ if isinstance(last, dict) and last.get("key") == rkey and isinstance(last.get("l
     # This session already blocked on exactly this content: the gate would say the same (a flaky
     # suite is no reason to re-run every Stop). Same reason, no run.
     block(last["lines"], last.get("cure") or [], last.get("rc", 1), reused=True, repeat_hit=True)
+if isinstance(last, dict) and last.get("key") != rkey and _repeat_fresh(last.get("at")):
+    # This session stored a block for the content before, it is still inside the TTL, and the key moved: the gate runs again below. Say which part of
+    # the key moved (a second session never lands here: its own entry is empty). Log only: no decision depends on it.
+    _old = last.get("parts") if isinstance(last.get("parts"), dict) else {}
+    note("repeat miss sid=%s differs=%s" % (sid[:8], ",".join(k for k in ("fp", "tree", "local", "sig") if _old.get(k) != rparts.get(k)) or "none") if _old
+         else "repeat miss sid=%s differs=unknown" % sid[:8])
 
 # --session/--transcript: an existing test edited by ANOTHER session (or a person) is a warning,
 # only the test edits of THIS session block (post-fix-gate split_tests_by_author).
