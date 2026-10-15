@@ -11,7 +11,9 @@
 #   R1 a hit writes no miss line                              R2 an untracked file rewritten under the same name: differs=tree
 #   R3 a changed ignored local config file: differs=local     R4 a changed tracked file: differs=fp,tree
 #   R5 another session on the same content: no miss line      R6 a stored block past the TTL: no miss line   R7 an entry stored by the old hook (no parts): differs=unknown
-# bash 3.2 compatible; REPEATMISS_KIT=<kit dir> tests another copy of the kit (a mutant must go red).
+#   R8 the same content through a copy of the kit (the hook and the gate files are part of the key: another stat signature): differs=sig
+# The gate's own result cache is off here (DEVKIT_GATE_CACHE=0, as in test_regression_gate_reminder_throttle.sh): the suite fails on unchanged content, and a
+# cache that re-used suites would hide it. bash 3.2 compatible; REPEATMISS_KIT=<kit dir> tests another copy of the kit (a mutant must go red).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -23,7 +25,7 @@ trap 'rm -rf "$TMP"' EXIT
 FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
-export FLAKY_RETRY=0 VACUITY_REVERT=0
+export FLAKY_RETRY=0 VACUITY_REVERT=0 DEVKIT_GATE_CACHE=0
 unset REGRESSION_GATE_REPEAT_TTL_S
 
 printf '%s\n' '{"type":"user","message":{"role":"user","content":"fix it"},"uuid":"u1","sessionId":"c-r"}' > "$TMP/claude.jsonl"
@@ -96,6 +98,13 @@ d = json.load(open(sys.argv[1])); e = d["repeat"]["c-one"]; e.pop("parts", None)
 echo "scratch v5" > scratch.txt
 stopx c-one X=1
 [ "$(lastmiss)" = "repeat miss sid=c-one differs=unknown" ] && ok "R7: a stored block without parts (older hook): the miss line says differs=unknown" || fail "R7: last='$(lastmiss)'"
+
+# R8: the key also holds a stat signature of the hook, the gate and devkit_harness.py (an edited or reinstalled kit is a new key). The same content, the same
+# session, through a COPY of the kit (the same bytes, other files and mtimes) moves only that part. The log is the hook's, in the same project.
+KIT_COPY="$TMP/kit2"; cp -R "$(dirname "$(dirname "$HOOK")")" "$KIT_COPY" 2>/dev/null || fail "R8: cannot copy the kit"
+HOOK="$KIT_COPY/hooks/regression_gate.sh"
+stopx c-one X=1
+[ "$(lastmiss)" = "repeat miss sid=c-one differs=sig" ] && ok "R8: the same content through a copy of the kit: differs=sig" || fail "R8: last='$(lastmiss)'"
 
 cd "$TMP" || exit 1
 if [ "$FAILS" -ne 0 ]; then echo "regression gate repeat miss log: $FAILS FAILED"; exit 1; fi

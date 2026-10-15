@@ -285,4 +285,5 @@
 12 tests/gates/test_regression_gate_repeat_miss_log.sh
 35 tests/gates/test_gate_stop_record_race.sh
 9 tests/gates/test_gate_stop_record_inputs.sh
-45 tests/gates/test_gate_stop_reuse_race.sh
+100 tests/gates/test_gate_stop_reuse_race.sh
+2 tests/gates/test_regression_gate_stale_label.sh

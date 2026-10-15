@@ -23,7 +23,8 @@ GATE="$KIT/bin/post-fix-gate.py"
 TMP="$(mktemp -d)"
 case "$TMP" in /?*) [ -d "$TMP" ] || TMP="" ;; *) TMP="" ;; esac
 if [ -z "$TMP" ]; then echo "✖ no temp dir (mktemp failed): nothing was run" >&2; exit 1; fi
-trap 'rm -rf "$TMP"' EXIT
+HOLDER=""   # the stub that holds test_run.lock (hold_lock): it polls up to 90 s, so an early exit must kill it, not only remove $TMP
+trap '[ -n "$HOLDER" ] && kill "$HOLDER" 2>/dev/null; rm -rf "$TMP"' EXIT
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -81,34 +82,44 @@ PY
   local i=0; while [ ! -f "$TMP/lock.held" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i + 1)); done
 }
 
-# What can happen to the file that supplied the re-used suites (python, shared by this script and the launcher below, so each change is one thing):
+# What can happen to the file that supplied the re-used suites (python, shared by this script and the launcher below, so each change is one thing).
+# A run that finds the stamp of that file moved looks at what is on disk NOW (round 2): a file that still says PASS for the suites it re-used keeps them
+# ("-same": the same bytes, another inode / ctime / mtime / size by whitespace: another run PASSED and wrote the same result), a file that does not does not.
+# The plain variants therefore change the CONTENT too: REG-1 "PASS" -> "FAIL", the same length, so that rewrite and rename still keep size and mtime_ns and
+# only the stamp's inode and ctime can tell (what this test pinned before: each part of the stamp is a mutant that must go red).
 #   remove  gone (a forced run's FAIL drops it)            grow    one byte longer, mtime put back (size differs)
-#   touch   mtime 5 s later, same bytes                     rewrite same bytes written in place, mtime put back (only ctime differs)
-#   rename  same bytes in a new file moved over it, mtime put back (new inode; size and mtime_ns the same)
+#   touch   mtime 5 s later                                  rewrite written in place, mtime put back (only ctime differs)
+#   rename  written to a new file moved over it, mtime put back (new inode; size and mtime_ns the same)
 cat > "$TMP/change.py" <<'PY'
 import os, sys
 
 def apply(how, p):
     if how == "none" or not os.path.exists(p):
         return
+    same = how.endswith("-same")
+    how = how[:-5] if same else how
     st = os.stat(p)
+    data = open(p, "rb").read()
+    if not same:
+        data = data.replace(b'"status": "PASS"', b'"status": "FAIL"', 1)   # the first suite of the file is REG-1; same length
     if how == "remove":
         os.remove(p)
     elif how == "grow":
-        with open(p, "a") as f:
-            f.write(" ")
+        with open(p, "wb") as f:
+            f.write(data + b" ")
         os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))
     elif how == "touch":
+        with open(p, "r+b") as f:
+            f.write(data)
         os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
     elif how == "rewrite":
-        data = open(p, "rb").read()
         with open(p, "r+b") as f:
             f.write(data)
         os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))
     elif how == "rename":
         tmp = p + ".moved"
         with open(tmp, "wb") as f:
-            f.write(open(p, "rb").read())
+            f.write(data)
         os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
         os.replace(tmp, p)
 
@@ -155,7 +166,7 @@ race() {
     while ! grep -q "waiting for it" "$TMP/a.out" 2>/dev/null && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
     A_WAIT=no; grep -q "waiting for it" "$TMP/a.out" 2>/dev/null && A_WAIT=yes
     python3 -I "$TMP/change.py" "$3" "$(src_file "$1")"
-    touch "$TMP/lock.release"; wait "$HOLDER" 2>/dev/null; wait "$apid" 2>/dev/null
+    touch "$TMP/lock.release"; wait "$HOLDER" 2>/dev/null; HOLDER=""; wait "$apid" 2>/dev/null
   else
     A_WAIT=yes   # no lock is involved: the change happens inside A's own read
     CLAUDE_PROJECT_DIR="$R" env GATE_TOTAL_BUDGET_S=900 EXIT2=0 RACE_DIR="$TMP" RACE_HOW="$3" RACE_FILE="$(src_file "$1")" \
@@ -182,6 +193,16 @@ check() {
     bad "$1: REG-1 ran $C_S1 times in C, exit $C_RC (want 1 and 1: a PASS that a concurrent run just replaced was written back)"; printf 'record: %s\n' "$(src_tests "$GD/budget_pass.json")"
   fi
 }
+# stands <label> <source> <trigger> <how>-same: another run PASSED and wrote the same result (another inode / ctime / mtime / size): the file still says PASS for
+# REG-1, so A keeps it (no false STALE: exit 2 as before) and its record keeps REG-1 PASS, which C re-uses (0 runs, exit 2)
+stands() {
+  race "$2" "$3" "$4"
+  if [ "$SEED_RC" = 2 ] && [ "$SEED_REC" = "REG-1=PASS,REG-2=UNTESTED untested=REG-2" ] && [ "$A_WAIT" = yes ] && [ "$A_REUSED" = yes ] && [ "$A_RC" = 2 ] && [ "$C_S1" = 0 ] && [ "$C_RC" = 2 ]; then
+    ok "$1: the $2 was replaced by the same result ($4, $3): A kept its PASS (exit 2), its record kept REG-1 PASS and C re-used it (0 runs, exit 2)"
+  else
+    bad "$1: seed rc=$SEED_RC '$SEED_REC' A waited=$A_WAIT re-used=$A_REUSED rc=$A_RC; C ran REG-1 $C_S1 times, exit $C_RC (want rc 2, 0 runs, exit 2)"; printf 'record: %s\n' "$(src_tests "$GD/budget_pass.json")"
+  fi
+}
 # the control of each shape: the same flow, nothing changes the file: A's record stands and C re-uses everything
 control() {
   race "$2" "$3" none
@@ -195,6 +216,7 @@ control() {
 # F1: the file changes while A waits for the lock. The stamp holds (mtime_ns, size, inode, ctime_ns): rewrite keeps size, mtime and inode (only ctime moves),
 # rename keeps size and mtime_ns (inode and ctime move), grow moves size, touch moves mtime.
 for how in remove grow touch rewrite rename; do check "F1/record/$how" record lock "$how"; done
+for how in grow-same touch-same rewrite-same rename-same; do stands "F1/record/$how" record lock "$how"; done
 control "F1/record/control" record lock
 # the receipt is the other source of re-used suites, with the same race
 # (only remove: a receipt that is merely touched is still a valid PASS of an earlier --full run, and C re-uses it by design)
@@ -207,6 +229,7 @@ for src in record receipt; do
 done
 # the same change by rename while A reads: only the record (a renamed receipt with the same bytes is still a valid PASS, and C re-uses it by design)
 check "F1/record/read-rename" record read rename
+stands "F1/record/read-rename-same" record read rename-same
 
 # a run that took no lock and started no suite writes nothing: not even the same record again. An unwatched changed source file makes the
 # verdict exit 2 (UNVERIFIED) with every suite PASS, so run 2 re-uses both suites and has nothing left to run.

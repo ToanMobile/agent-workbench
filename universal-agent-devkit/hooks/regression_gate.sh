@@ -41,9 +41,11 @@
 # is re-used by the SAME session for REGRESSION_GATE_TOUCHED_RECHECK_S seconds (default 300; 0 = run the
 # gate on every Stop) on the same content, without running the gate (OfficeReader 2026-10-08: 58 of 71
 # Stop runs, 31-37 s each); a BUSY suite, another session, other content or a new commit never re-use it.
-# 0 runs the GATE on every Stop (the answer of the user and the verdict are judged again); it no longer starts a suite that already passed on
-# the same content: the gate keeps the suites a Stop run passed (budget_pass.json, 6 h, bin/post-fix-gate.py) and the next run on identical inputs
-# re-uses them. A suite that starts to fail on unchanged content is therefore not seen until that record ages out; DEVKIT_GATE_CACHE=0 turns it off.
+# REGRESSION_GATE_TOUCHED_RECHECK_S=0 runs the GATE on every Stop (the answer of the user and the verdict are judged again) but it does not start a
+# suite that already passed on the same content: the gate keeps the suites a Stop run passed (budget_pass.json, bin/post-fix-gate.py) and the next
+# run on identical inputs re-uses them, for DEVKIT_GATE_CACHE_MAX_S seconds (default 21600, i.e. 6 h). A suite that starts to fail on unchanged
+# content is therefore not seen until that record ages out or the content changes; only DEVKIT_GATE_CACHE=0 (the gate's own switch, not this hook's)
+# makes every run start every suite again.
 # Loop-guard: MAX_ATTEMPTS blocks per fingerprint, then the stop is allowed with a
 # visible warning (systemMessage) — a broken test can never trap the session.
 # Non-Claude agent or no usable Claude transcript ("degraded", hooks/devkit_harness.py:
@@ -703,7 +705,8 @@ if _sk_fp is not None and state.get("untested_fp") == _sk_fp:
 # Stop gate runs in 17 h were this repeat, 31-37 s each. The gate runs again after
 # REGRESSION_GATE_TOUCHED_RECHECK_S (300 s, 0 = every stop), so the answer of the user still clears it. Runs again = judges again
 # (static audits, edited tests, the answer of the user), nothing more: since 2026-10-15 it starts no suite that already passed on this content (the
-# budget_pass.json record of bin/post-fix-gate.py, 6 h), so RECHECK_S=0 does not re-check suites either.
+# budget_pass.json record of bin/post-fix-gate.py, DEVKIT_GATE_CACHE_MAX_S, default 21600 s = 6 h), so REGRESSION_GATE_TOUCHED_RECHECK_S=0 does not
+# re-check suites either; DEVKIT_GATE_CACHE=0 does.
 # Never reused: by another session, for other content or another commit range (the key holds fp, which
 # also names verified_head..HEAD, and the tree fingerprint), after a run that was not this outcome, or
 # when the reminder came with a BUSY suite. Limit: gitignored files the gate reads (proof images under
@@ -952,7 +955,8 @@ for t in busy:
     lines.append("  - %s %s: %s — chưa chạy (%s); KHÔNG phải PASS" % (
         t.get("id"), t.get("name"), t.get("label") or t.get("status"),
         "một lượt khác giữ khoá test, chạy lại sau" if t.get("label") == "BUSY"
-        else "hết ngân sách thời gian, chạy lại sau" if t.get("label") == "BUDGET" else "không chạy được trên máy này"))
+        else "hết ngân sách thời gian, chạy lại sau" if t.get("label") == "BUDGET"
+        else "một lượt khác đã đổi/xoá kết quả PASS dùng lại của nó, chạy lại sau" if t.get("label") == "STALE" else "không chạy được trên máy này"))
 for f in summary.get("findings", [])[:10]:
     # static findings (secrets, placeholders, dependencies …) with the exact place to fix
     lines.append("  - %s %s:%s: %s" % (f.get("category"), f.get("file"), f.get("line") or "?", f.get("message")))
@@ -991,8 +995,9 @@ if res.returncode == 2 and touched and not failing and not problem and not uncov
     state["touched_fp"] = fp
     save_state()
 # An edited existing test is cleared by the answer of the user in the transcript, a BUSY or BUDGET item by the lock
-# going free or a new time budget — neither by the tree: such a block is never re-used. An item that cannot run on this
-# machine at all (UNTESTED, untested_exit) is permanent here and does not keep the FAIL block from being stored.
+# going free or a new time budget, a STALE one (the file its re-used PASS came from was replaced or deleted by a concurrent
+# run) by the next run, which runs it — none of them by the tree: such a block is never re-used. An item that cannot run on
+# this machine at all (UNTESTED, untested_exit) is permanent here and does not keep the FAIL block from being stored.
 block(lines, cure, res.returncode,
-      reusable=not touched and not any(t.get("label") in ("BUSY", "BUDGET") for t in busy))
+      reusable=not touched and not any(t.get("label") in ("BUSY", "BUDGET", "STALE") for t in busy))
 ' || exit $?

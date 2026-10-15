@@ -6,21 +6,27 @@
 # "REG-1 PASS (reused)", wrote REG-1=PASS into the checklist and, as a --full run, wrote full_pass.json exit 0. hooks/regression_gate.sh stores pass_fp on
 # exit 0 and skips the gate at every later Stop on that content, so a false PASS stuck. tests/gates/test_gate_stop_record_race.sh did not see it: it adds a
 # changed file no rule watches, which makes every verdict exit 2 whatever the suites say.
-# Here NO such file exists: A must not end exit 0 on a PASS it only read. What it re-used is UNTESTED once the file that vouched for it moved (the
-# same fail-closed answer the Stop record already gave on write): exit 4, REG-1 is not recorded PASS anywhere, no receipt exit 0, and the Stop hook is
-# told "busy" (4 + busy: it says so and caches nothing, so the next Stop runs REG-1 for real). A does not run REG-1 itself (tests/gates/
-# test_gate_stop_record_race.sh pins that C is the one to run it); FAIL1=1 only makes a design that would re-run it show up as exit 1.
+# Here NO such file exists: A must not end exit 0 on a PASS it only read. A run that finds the stamp of the file it read MOVED looks at what is on disk
+# NOW (cached_full_pass, the same keys): a suite that file still says PASS for keeps its PASS (another run PASSED and wrote the same bytes again: another
+# inode and ctime, nothing failed: a false STALE made the lane's own parallel --full gate flake), a suite it does not vouch for (gone, UNTESTED, listed in
+# `untested`, another full_command) is UNTESTED, never PASS (the same fail-closed answer the Stop record already gave on write): exit 4, not recorded PASS
+# anywhere, no receipt exit 0, and the Stop hook is told "busy" (4 + busy: it says so and caches nothing, so the next Stop runs it for real). A does not
+# run the suite itself (tests/gates/test_gate_stop_record_race.sh pins that C is the one to run it); FAIL1=1 only makes a design that would re-run it
+# show up as exit 1.
 #   K1  the file changes while A waits for the lock (a stub holds it, as the forced run B): record (exit-4 Stop seed), budget (a budget-cut Stop seed),
-#       receipt (--full seed) read by --full and by a Stop-style run: A ends exit 4, REG-1 is not run and not recorded PASS, REG-2 runs.
-#       Control of each: B does not touch the file: A re-uses REG-1 (0 runs), exit 0, the receipt is written as before.
-#   K2  EVERY suite is re-used, so A has nothing to run and took NO lock: the file vanishes while A reads it. A takes the lock for the check-and-write
-#       pair now, finds the stamp moved and ends exit 4. Control: untouched, A re-uses both (0 runs), exit 0, receipt written.
+#       receipt (--full seed) read by --full and by a Stop-style run. remove / unvouch / idonly / cmd: A ends exit 4, REG-1 is not run and not recorded PASS,
+#       REG-2 runs. rewrite and none (controls): A re-used REG-1 (0 runs), exit 0, the receipt is written as before.
+#   K2  EVERY suite is re-used, so A has nothing to run: the file vanishes while A reads it. A ends exit 4 and NEITHER re-used suite is PASS in the receipt
+#       or the checklist (a run that downgraded only the first wrote REG-2=PASS back); rewrite and none: exit 0.
 #   K3  the file changes AFTER the first check (under the lock, once the suites ran), before the verdict (a writer that took no lock, a person's
 #       rm): the second check turns the re-used PASS UNTESTED just the same, exit 4.
-#   K5  every suite is re-used and another run holds the lock past TEST_RUN_LOCK_WAIT_S: the re-used PASS cannot be checked, so exit 4 (BUSY) and the
-#       receipt is not rewritten (before: exit 0 and a rewrite with no lock).
+#   K6  every suite is re-used and another run holds the lock past the SHORT wait (DEVKIT_REUSE_LOCK_WAIT_S, default 3 s, not the long 45 s): A judges
+#       from a stamp check and WRITES NOTHING (receipt "time" unchanged, no checklist PASS): stands / rewritten -> exit 0, removed / unvouched -> exit 4.
+#   K7  the same for a Stop-style run that ends exit 2: the partial writer still turns the exit-0 receipt to exit 2 (it only turns a PASS down).
 #   S   a record or receipt over 1 MiB is no record (json.load of a 6 MB integer took 126 s on Python 3.9): not re-used, and the partial writer drops it.
-#   T   write_full_pass_receipt serialises BEFORE it makes the temp file: a field json cannot dump (nested too deep) left .tmp_full_pass.* behind.
+#   T   write_full_pass_receipt serialises BEFORE it makes the temp file: `json.dump(kept, f)` (the old writer, a pure-Python generator under the recursion
+#       limit) raised on a field nested too deep AFTER mkstemp and left .tmp_full_pass.* behind. The row looks for depths that json.load reads and that old
+#       writer refuses; the new writer (json.dumps, the C encoder) may well write them back on 3.14, so what is pinned is: no temp file, no exception.
 # The seeds run with --no-checklist, so a REG-1 row in .agents/regression_status.json can only come from run A.
 # bash 3.2 and Python 3.9 compatible; every gate run is under a hard timeout (tlimit.py kills the whole group); REUSERACE_KIT=<kit dir> tests another
 # copy of the kit (a mutant must go red); PYGATE=/usr/bin/python3 runs the gate under another Python.
@@ -95,10 +101,11 @@ stamp() { python3 -I -c 'import os,sys
 try:
     st = os.stat(sys.argv[1]); print(st.st_ino, st.st_mtime_ns, st.st_size)
 except OSError: print("none")' "$1"; }
-status1() { python3 -I -c 'import json,sys
+status_of() { python3 -I -c 'import json,sys
 try:
-    print(((json.load(open(sys.argv[1]))["items"].get("REG-1") or {}).get("last") or {}).get("status") or "none")
-except (OSError, ValueError, KeyError): print("none")' "$R/.agents/regression_status.json"; }
+    print(((json.load(open(sys.argv[1]))["items"].get(sys.argv[2]) or {}).get("last") or {}).get("status") or "none")
+except (OSError, ValueError, KeyError): print("none")' "$R/.agents/regression_status.json" "$1"; }
+status1() { status_of REG-1; }
 seed() { # $1 = record (Stop, REG-2 exits its untested_exit: exit 4) | budget (Stop cut by the time budget) | receipt (--full, exit 4) | pass (--full, exit 0)
   case "$1" in
     record)  run_gate GATE_TOTAL_BUDGET_S=900 EXIT2=2 -- --no-checklist ;;
@@ -128,39 +135,77 @@ PY
   HOLDER=$!
   local i=0; while [ ! -f "$TMP/lock.held" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i + 1)); done
 }
+# What another run can do to the file that vouched for the re-used suites (python, shared by this script and the launcher below):
+#   remove   a forced run FAILED the suite: write_full_pass_receipt exit 1 / drop_budget_record delete the file
+#   rewrite  a forced run PASSED and wrote the same bytes again (tmp + os.replace, as the gate's own writers do): another inode and ctime, nothing failed
+#   unvouch  another run replaced the file by one that does NOT vouch for REG-1 (REG-1 UNTESTED): valid, same keys, no PASS for it
+#   idonly   ... one that still has REG-1 PASS but lists it in `untested` (so a reader runs it again)
+#   cmd      ... a Stop record whose REG-1 passed another command (full_command): the PASS is not for the command this run would have started
+cat > "$TMP/change.py" <<'PY'
+import json, os, sys
+
+def apply(how, files):
+    for p in files:
+        if how == "none" or not os.path.exists(p):
+            continue
+        if how == "remove":
+            os.remove(p)
+        elif how == "rewrite":
+            with open(p + ".tmp", "wb") as f:
+                f.write(open(p, "rb").read())
+            os.replace(p + ".tmp", p)
+        elif how in ("unvouch", "idonly", "cmd"):
+            d = json.load(open(p))
+            for t in d["tests"]:
+                if t["id"] == "REG-1" and how == "unvouch":
+                    t["status"] = "UNTESTED"
+                if t["id"] == "REG-1" and how == "cmd":
+                    t["full_command"] = "sh tests/other.sh"
+            if how != "cmd":
+                d["untested"] = sorted(set(d.get("untested") or []) | {"REG-1"})
+                d["exit"] = 4
+            with open(p + ".tmp", "w") as f:
+                f.write(json.dumps(d))
+            os.replace(p + ".tmp", p)
+
+if __name__ == "__main__":
+    apply(sys.argv[1], sys.argv[2:])
+PY
+change_state() { python3 -I "$TMP/change.py" "$1" "$GD/full_pass.json" "$GD/budget_pass.json"; }   # $1 = remove | rewrite | unvouch
 # A launcher around the gate's own main(): the first call of one function of the gate removes the files that hold the re-used results (what a forced
 # run's FAIL does: write_full_pass_receipt exit 1 and drop_budget_record), or does nothing (RACE_HOW=none: the control, the same code path).
 #   read      local_state_sha: cached_full_pass calls it AFTER it loaded the file, before it returns: the change is inside A's own read
 #   verdict   run_performance_audit: after the suites, before the verdict (static layers): a writer that holds no lock
+#   acquire   acquire_test_run_lock: before A asks for the lock (A read the file BEFORE, so the change is while it waits); with RACE_RELEASE_AFTER=N a timer
+#             lets the lock stub go N s after that call, so a run that waits LONGER than its short wait gets the lock and a run that gives up does not
 cat > "$TMP/launcher.py" <<'PY'
-import importlib.util, os, sys
+import importlib.util, os, sys, threading
+sys.path.insert(0, os.environ["RACE_DIR"])
+import change
 gate = sys.argv[1]
 sys.argv = [gate] + sys.argv[2:]
 spec = importlib.util.spec_from_file_location("pfg_race", gate)
 m = importlib.util.module_from_spec(spec)
 sys.modules["pfg_race"] = m
 spec.loader.exec_module(m)
-name = {"read": "local_state_sha", "verdict": "run_performance_audit"}[os.environ["RACE_AT"]]
+name = {"read": "local_state_sha", "verdict": "run_performance_audit", "acquire": "acquire_test_run_lock"}[os.environ["RACE_AT"]]
 real, fired = getattr(m, name), []
 def hooked(*a, **k):
     if not fired:
         fired.append(1)
-        if os.environ["RACE_HOW"] == "remove":
-            for f in os.environ["RACE_FILES"].split(":"):
-                try:
-                    os.remove(f)
-                except FileNotFoundError:
-                    pass
+        change.apply(os.environ["RACE_HOW"], os.environ["RACE_FILES"].split(":"))
+        if os.environ.get("RACE_RELEASE_AFTER"):
+            threading.Timer(float(os.environ["RACE_RELEASE_AFTER"]), lambda: open(os.environ["RACE_RELEASE"], "w").close()).start()
     return real(*a, **k)
 setattr(m, name, hooked)
 sys.exit(m.main())
 PY
-a_run() { # $1 = stop | full, $2 = hook (none | read | verdict), $3 = remove | none (the launcher), then NAME=value words; output $TMP/a.out, exit $TMP/a.rc
+a_run() { # $1 = stop | full, $2 = hook (none | read | verdict | acquire), $3 = remove | rewrite | unvouch | none (the launcher), then NAME=value words; output $TMP/a.out, exit $TMP/a.rc
   local mode="$1" hook="$2" how="$3"; shift 3
   local envs=(FAIL1=1 EXIT2=0) flags=(--json) runner=("$GATE")   # --json: its "busy" is what the Stop hook reads (4 + busy = say it, cache nothing)
   if [ "$mode" = stop ]; then envs+=(GATE_TOTAL_BUDGET_S=900); else flags+=(--full); fi
   if [ "$hook" != none ]; then
-    envs+=(RACE_AT="$hook" RACE_HOW="$how" "RACE_FILES=$GD/full_pass.json:$GD/budget_pass.json"); runner=("$TMP/launcher.py" "$GATE")
+    envs+=(RACE_AT="$hook" RACE_HOW="$how" RACE_DIR="$TMP" "RACE_FILES=$GD/full_pass.json:$GD/budget_pass.json"); runner=("$TMP/launcher.py" "$GATE")
   fi
   tl 240 env CLAUDE_PROJECT_DIR="$R" "${envs[@]}" "$@" "$PY" "${runner[@]}" --matrix "$R/matrix.json" --lang en --run-tests ${flags[@]+"${flags[@]}"} > "$TMP/a.out" 2>&1
   echo $? > "$TMP/a.rc"
@@ -168,14 +213,15 @@ a_run() { # $1 = stop | full, $2 = hook (none | read | verdict), $3 = remove | n
 snapshot() { # what A left behind, in the variables the checks read
   A_RC="$(cat "$TMP/a.rc" 2>/dev/null)"; A_S1=$(( $(runs s1) - B1 )); A_S2=$(( $(runs s2) - B2 ))
   A_REUSED=no; grep -q "reusing the" "$TMP/a.out" 2>/dev/null && A_REUSED=yes
-  A_TRACE=$(grep -c Traceback "$TMP/a.out" 2>/dev/null); A_STATUS1="$(status1)"
+  A_TRACE=$(grep -c Traceback "$TMP/a.out" 2>/dev/null); A_STATUS1="$(status1)"; A_STATUS2="$(status_of REG-2)"
   A_RECEIPT="$(state "$GD/full_pass.json")"; A_RECORD="$(state "$GD/budget_pass.json")"
 }
 mark_runs() { B1=$(runs s1); B2=$(runs s2); }
 not_exit0() { case "$1" in exit=0*) return 1 ;; *) return 0 ;; esac; }
 reg1_ticked() { grep REG-1 "$TMP/a.out" | grep -q '\[x\]'; }   # the suite table shows REG-1 as a PASS ([x])
+reg_ticked() { grep -E 'REG-[12]' "$TMP/a.out" | grep -q '\[x\]'; }   # ... or either suite (K2 re-used both: the table must tick neither)
 
-# K1: the file changes while A waits for the lock. $1 label, $2 seed, $3 A (stop|full), $4 remove|none
+# K1: the file changes while A waits for the lock. $1 label, $2 seed, $3 A (stop|full), $4 remove | unvouch (A must not stand on it) | rewrite | none (it stands)
 k1() {
   make_repo; seed "$2"; mark_runs
   if [ "$SEED_RC" = 4 ] && [ "$SEED_STATE" = "exit=4 REG-1=PASS,REG-2=UNTESTED untested=REG-2" ]; then :
@@ -185,14 +231,14 @@ k1() {
   local apid=$! i=0
   while ! grep -q "waiting for it" "$TMP/a.out" 2>/dev/null && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done
   A_WAIT=no; grep -q "waiting for it" "$TMP/a.out" 2>/dev/null && A_WAIT=yes
-  [ "$4" = remove ] && rm -f "$GD/full_pass.json" "$GD/budget_pass.json"
+  [ "$4" = none ] || change_state "$4"
   touch "$TMP/lock.release"; wait "$HOLDER" 2>/dev/null; HOLDER=""; wait "$apid" 2>/dev/null
   snapshot
   if [ "$A_WAIT" != yes ] || [ "$A_REUSED" != yes ]; then bad "$1: setup went wrong: A waited=$A_WAIT re-used=$A_REUSED"; printf '%s\n' "$(tail -5 "$TMP/a.out")"; return; fi
-  if [ "$4" = remove ]; then
+  if [ "$4" != rewrite ] && [ "$4" != none ]; then
     if [ "$A_RC" = 4 ] && [ "$A_S1" = 0 ] && [ "$A_S2" = 1 ] && [ "$A_STATUS1" != PASS ] && not_exit0 "$A_RECEIPT" && not_exit0 "$A_RECORD" \
        && grep -q "no longer stands" "$TMP/a.out" && grep -q '"busy": true' "$TMP/a.out" && ! reg1_ticked && [ "$A_TRACE" = 0 ]; then
-      ok "$1: the $2 was removed while A waited: the re-used REG-1 is UNTESTED, exit 4 (not 0), checklist REG-1 '$A_STATUS1' (not PASS), no receipt or record exit 0"
+      ok "$1: the $2 was changed ($4) while A waited: the re-used REG-1 is UNTESTED, exit 4 (not 0), checklist REG-1 '$A_STATUS1' (not PASS), no receipt or record exit 0"
     else
       bad "$1: A exit $A_RC (want 4), REG-1/REG-2 ran $A_S1/$A_S2 (want 0/1), checklist REG-1 '$A_STATUS1' (not PASS), receipt '$A_RECEIPT' record '$A_RECORD' (none with exit=0), tracebacks $A_TRACE"
     fi
@@ -200,42 +246,48 @@ k1() {
     local want_receipt=yes; [ "$3" = full ] || want_receipt=no
     if [ "$A_RC" = 0 ] && [ "$A_S1" = 0 ] && [ "$A_S2" = 1 ] && [ "$A_STATUS1" = PASS ] \
        && grep -q '"busy": false' "$TMP/a.out" && { [ "$want_receipt" = no ] || [ "$A_RECEIPT" = "exit=0 REG-1=PASS,REG-2=PASS untested=" ]; }; then
-      ok "$1 control: nothing touched the $2: A re-used REG-1 (0 runs), ran REG-2, exit 0, checklist REG-1 PASS$([ "$want_receipt" = yes ] && echo ', receipt exit 0 written')"
+      ok "$1 control ($4): the $2 still stands: A re-used REG-1 (0 runs), ran REG-2, exit 0, checklist REG-1 PASS$([ "$want_receipt" = yes ] && echo ', receipt exit 0 written')"
     else
-      bad "$1 control: A exit $A_RC (want 0), REG-1/REG-2 ran $A_S1/$A_S2 (want 0/1), checklist '$A_STATUS1' (want PASS), receipt '$A_RECEIPT'"
+      bad "$1 control ($4): A exit $A_RC (want 0), REG-1/REG-2 ran $A_S1/$A_S2 (want 0/1), checklist '$A_STATUS1' (want PASS), receipt '$A_RECEIPT', busy/stale text in the output: $(grep -c 'no longer stands' "$TMP/a.out")"
     fi
   fi
 }
-k1 "K1/record/stop"   record  stop remove;  k1 "K1/record/stop"   record  stop none
-k1 "K1/budget/stop"   budget  stop remove;  k1 "K1/budget/stop"   budget  stop none
-k1 "K1/receipt/full"  receipt full remove;  k1 "K1/receipt/full"  receipt full none
-k1 "K1/receipt/stop"  receipt stop remove;  k1 "K1/receipt/stop"  receipt stop none
+# rewrite = the file replaced by another run that PASSED and wrote the same bytes (another inode and ctime): nothing failed, A must keep its PASS
+# unvouch / idonly / cmd = replaced by a valid file that does not vouch for REG-1: A must not (the re-check is "does the CURRENT file still say PASS for this", not "is there a file")
+for row in "record stop" "budget stop" "receipt full" "receipt stop"; do
+  set -- $row
+  for how in remove unvouch rewrite none; do k1 "K1/$1/$2" "$1" "$2" "$how"; done
+done
+# a record that still says PASS but names REG-1 in `untested`, and one whose REG-1 passed another command: not what this run re-used
+k1 "K1/record/stop" record stop idonly; k1 "K1/receipt/full" receipt full idonly; k1 "K1/record/stop" record stop cmd; k1 "K1/budget/stop" budget stop cmd
 
 # K2: every suite is re-used, A runs nothing and (before) took no lock. The file vanishes inside A's read of it.
-k2() { # $1 label, $2 A (stop|full), $3 remove|none
+k2() { # $1 label, $2 A (stop|full), $3 remove | rewrite | none
   make_repo; seed pass; mark_runs
   if [ "$SEED_RC" = 0 ] && [ "$SEED_STATE" = "exit=0 REG-1=PASS,REG-2=PASS untested=" ]; then :
   else bad "$1: setup went wrong: seed rc=$SEED_RC state='$SEED_STATE'"; fi
   a_run "$2" read "$3"; snapshot
   if [ "$A_REUSED" != yes ]; then bad "$1: setup went wrong: A re-used nothing"; printf '%s\n' "$(tail -5 "$TMP/a.out")"; return; fi
   if [ "$3" = remove ]; then
-    if [ "$A_RC" = 4 ] && [ "$A_S1" = 0 ] && [ "$A_S2" = 0 ] && [ "$A_STATUS1" != PASS ] && not_exit0 "$A_RECEIPT" && grep -q "no longer stands" "$TMP/a.out" && grep -q '"busy": true' "$TMP/a.out" && ! reg1_ticked && [ "$A_TRACE" = 0 ]; then
-      ok "$1: the receipt vanished while A (every suite re-used) read it: nothing re-used stands, exit 4 (not 0), checklist REG-1 '$A_STATUS1' (not PASS), no receipt exit 0"
+    # EVERY re-used suite goes: neither the receipt nor the checklist may hold a PASS for REG-1 OR REG-2 (a run that downgrades only the first re-used
+    # suite wrote exit=4 REG-1=UNTESTED,REG-2=PASS back: the F1 hole for the second suite)
+    if [ "$A_RC" = 4 ] && [ "$A_S1" = 0 ] && [ "$A_S2" = 0 ] && [ "$A_STATUS1" != PASS ] && [ "$A_STATUS2" != PASS ] && not_exit0 "$A_RECEIPT" \
+       && ! printf '%s' "$A_RECEIPT$A_RECORD" | grep -q '=PASS' && grep -q "no longer stands" "$TMP/a.out" && grep -q '"busy": true' "$TMP/a.out" && ! reg_ticked && [ "$A_TRACE" = 0 ]; then
+      ok "$1: the receipt vanished while A (every suite re-used) read it: nothing re-used stands, exit 4 (not 0), checklist REG-1 '$A_STATUS1' REG-2 '$A_STATUS2' (not PASS), no PASS in the receipt '$A_RECEIPT'"
     else
-      bad "$1: A exit $A_RC (want 4), runs $A_S1/$A_S2 (want 0/0), checklist '$A_STATUS1' (not PASS), receipt '$A_RECEIPT' (not exit 0), tracebacks $A_TRACE"
+      bad "$1: A exit $A_RC (want 4), runs $A_S1/$A_S2 (want 0/0), checklist '$A_STATUS1'/'$A_STATUS2' (not PASS), receipt '$A_RECEIPT' record '$A_RECORD' (no =PASS, not exit 0), tracebacks $A_TRACE"
     fi
   else
     local want_receipt=yes; [ "$2" = full ] || want_receipt=no
     if [ "$A_RC" = 0 ] && [ "$A_S1" = 0 ] && [ "$A_S2" = 0 ] && [ "$A_STATUS1" = PASS ] \
        && { [ "$want_receipt" = no ] || [ "$A_RECEIPT" = "exit=0 REG-1=PASS,REG-2=PASS untested=" ]; }; then
-      ok "$1 control: untouched: A re-used both suites (0 runs), exit 0, checklist REG-1 PASS$([ "$want_receipt" = yes ] && echo ', receipt exit 0 written')"
+      ok "$1 control ($3): the receipt stands: A re-used both suites (0 runs), exit 0, checklist REG-1 PASS$([ "$want_receipt" = yes ] && echo ', receipt exit 0 written')"
     else
-      bad "$1 control: A exit $A_RC (want 0), runs $A_S1/$A_S2 (want 0/0), checklist '$A_STATUS1' (want PASS), receipt '$A_RECEIPT'"
+      bad "$1 control ($3): A exit $A_RC (want 0), runs $A_S1/$A_S2 (want 0/0), checklist '$A_STATUS1' (want PASS), receipt '$A_RECEIPT'"
     fi
   fi
 }
-k2 "K2/all-reused/full" full remove; k2 "K2/all-reused/full" full none
-k2 "K2/all-reused/stop" stop remove; k2 "K2/all-reused/stop" stop none
+for how in remove rewrite none; do k2 "K2/all-reused/full" full "$how"; k2 "K2/all-reused/stop" stop "$how"; done
 
 # K3: the file changes after the check under the lock and before the verdict (a writer that holds no lock)
 k3() { # $1 label, $2 remove|none
@@ -254,18 +306,71 @@ k3() { # $1 label, $2 remove|none
 }
 k3 "K3/verdict" remove; k3 "K3/verdict" none
 
-# K5: every suite re-used, another run holds the lock past the wait: nothing can be checked, nothing is written, not a PASS
-make_repo; seed pass; mark_runs
-before="$(stamp "$GD/full_pass.json")"
-hold_lock "$TMP/lock.release"
-a_run full none none TEST_RUN_LOCK_WAIT_S=2; snapshot
-touch "$TMP/lock.release"; wait "$HOLDER" 2>/dev/null; HOLDER=""
-after="$(stamp "$GD/full_pass.json")"
-if [ "$A_RC" = 4 ] && [ "$A_S1" = 0 ] && [ "$A_S2" = 0 ] && [ "$before" = "$after" ] && [ "$A_TRACE" = 0 ]; then
-  ok "K5/busy: every suite re-used, the lock held past the wait: exit 4 (BUSY, not PASS), no suite run, the receipt file untouched"
-else
-  bad "K5/busy: A exit $A_RC (want 4), runs $A_S1/$A_S2 (want 0/0), receipt stamp '$before' -> '$after' (want unchanged), tracebacks $A_TRACE"
-fi
+# K6: every suite re-used and another run holds the lock past the SHORT wait (DEVKIT_REUSE_LOCK_WAIT_S, default 3 s): nothing is left to run, so A does
+# not wait for the long one (TEST_RUN_LOCK_WAIT_S: 45 s through the Stop hook). It judges from a stamp check and WRITES NOTHING: no receipt rewrite, no
+# record, no PASS row in the checklist. Why that cannot be a false PASS: A says PASS only while the file that vouched for the suites still stands (or
+# still says PASS after another run rewrote it), the only writers of that file hold the lock, and A writes nothing, so it cannot put a PASS back that a
+# FAIL took away; a FAIL that no one has written yet is not known to anyone (the same as A having run just before that run started).
+# The stub lets go 4 s after A's first ask for the lock (a timer in the launcher): a run that waited the long 10 s would get the lock then and write
+# the receipt ("time" moves), a run that gave up after 1 s does not. $3: none (it stands) | rewrite (another run PASSED, same bytes) | remove | unvouch.
+rtime() { python3 -I -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1])).get("time"))
+except (OSError, ValueError): print("none")' "$GD/full_pass.json"; }
+k6() { # $1 label, $2 A (stop | full), $3 none | rewrite | remove | unvouch | free (no stub: the lock is there: A writes as before)
+  make_repo; seed pass; mark_runs; local t0; t0="$(rtime)"
+  if [ "$SEED_RC" = 0 ] && [ "$SEED_STATE" = "exit=0 REG-1=PASS,REG-2=PASS untested=" ]; then :
+  else bad "$1: setup went wrong: seed rc=$SEED_RC state='$SEED_STATE'"; fi
+  local how="$3" envs=(DEVKIT_REUSE_LOCK_WAIT_S=1 TEST_RUN_LOCK_WAIT_S=10)
+  if [ "$3" = free ]; then how=none; else hold_lock "$TMP/lock.release"; envs+=(RACE_RELEASE="$TMP/lock.release" RACE_RELEASE_AFTER=4); fi
+  a_run "$2" acquire "$how" "${envs[@]}"; snapshot
+  touch "$TMP/lock.release"; [ -z "$HOLDER" ] || { wait "$HOLDER" 2>/dev/null; HOLDER=""; }
+  local t1; t1="$(rtime)"
+  if [ "$A_REUSED" != yes ]; then bad "$1: setup went wrong: A re-used nothing"; printf '%s\n' "$(tail -5 "$TMP/a.out")"; return; fi
+  case "$3" in
+    none|rewrite)
+      if [ "$A_RC" = 0 ] && [ "$A_S1" = 0 ] && [ "$A_S2" = 0 ] && [ "$t1" = "$t0" ] && [ "$A_STATUS1" != PASS ] && [ "$A_STATUS2" != PASS ] \
+         && [ "$A_RECEIPT" = "exit=0 REG-1=PASS,REG-2=PASS untested=" ] && grep -q "wrote nothing" "$TMP/a.out" && grep -q '"busy": false' "$TMP/a.out" && [ "$A_TRACE" = 0 ]; then
+        ok "$1: the lock held past the short wait, the file $([ "$3" = rewrite ] && echo 'rewritten with the same bytes ')stands: exit 0, nothing written (receipt time unchanged, checklist REG-1 '$A_STATUS1' REG-2 '$A_STATUS2')"
+      else
+        bad "$1: A exit $A_RC (want 0), runs $A_S1/$A_S2 (want 0/0), receipt time $t0 -> $t1 (want unchanged), checklist '$A_STATUS1'/'$A_STATUS2' (not PASS), receipt '$A_RECEIPT', 'wrote nothing' lines: $(grep -c 'wrote nothing' "$TMP/a.out")"
+      fi ;;
+    remove|unvouch)
+      local want_receipt="none"; [ "$3" = unvouch ] && want_receipt="exit=4 REG-1=UNTESTED,REG-2=PASS untested=REG-1"
+      if [ "$A_RC" = 4 ] && [ "$A_S1" = 0 ] && [ "$A_S2" = 0 ] && [ "$A_RECEIPT" = "$want_receipt" ] && [ "$A_STATUS1" != PASS ] \
+         && grep -q "no longer stands" "$TMP/a.out" && grep -q '"busy": true' "$TMP/a.out" && [ "$A_TRACE" = 0 ]; then
+        ok "$1: the lock held past the short wait and the file was changed ($3): not exit 0 (4), nothing written, receipt '$A_RECEIPT'"
+      else
+        bad "$1: A exit $A_RC (want 4), runs $A_S1/$A_S2 (want 0/0), receipt '$A_RECEIPT' (want '$want_receipt'), checklist '$A_STATUS1' (not PASS), tracebacks $A_TRACE"
+      fi ;;
+    free)
+      if [ "$A_RC" = 0 ] && [ "$A_RECEIPT" = "exit=0 REG-1=PASS,REG-2=PASS untested=" ] && { [ "$2" = stop ] || [ "$t1" != "$t0" ]; }; then
+        ok "$1 control: the lock is free: A takes it, re-uses both suites and $([ "$2" = full ] && echo 'writes the receipt again (time moved)' || echo 'ends exit 0')"
+      else
+        bad "$1 control: A exit $A_RC (want 0), receipt time $t0 -> $t1 (want it moved for --full), receipt '$A_RECEIPT'"
+      fi ;;
+  esac
+}
+for how in none rewrite remove unvouch; do k6 "K6/all-reused/full/$how" full "$how"; done
+k6 "K6/all-reused/stop/none" stop none; k6 "K6/all-reused/full/free" full free
+
+# K7: the same, but A (a Stop-style run) ends exit 2: the receipt of this content is exit 0 (a --full run with --allow-no-tests). Writing NOTHING must not
+# keep it exit 0: the partial writer only ever turns it to exit 2 (XONG and push are refused as before), it never writes a PASS, so it still runs.
+k7() { # $1 label, $2 held (the lock is held past the short wait) | free
+  make_repo unwatched; run_gate -- --full --no-checklist --allow-no-tests; SEED_RC=$RC; SEED_STATE="$(state "$GD/full_pass.json")"; mark_runs
+  if [ "$SEED_RC" = 0 ] && [ "$SEED_STATE" = "exit=0 REG-1=PASS,REG-2=PASS untested=" ]; then :
+  else bad "$1: setup went wrong: seed rc=$SEED_RC state='$SEED_STATE'"; fi
+  local envs=(DEVKIT_REUSE_LOCK_WAIT_S=1 TEST_RUN_LOCK_WAIT_S=10)
+  if [ "$2" = held ]; then hold_lock "$TMP/lock.release"; envs+=(RACE_RELEASE="$TMP/lock.release" RACE_RELEASE_AFTER=4); fi
+  a_run stop acquire none "${envs[@]}"; snapshot
+  touch "$TMP/lock.release"; [ -z "$HOLDER" ] || { wait "$HOLDER" 2>/dev/null; HOLDER=""; }
+  if [ "$A_RC" = 2 ] && [ "$A_S1" = 0 ] && [ "$A_S2" = 0 ] && [ "$A_RECEIPT" = "exit=2 REG-1=PASS,REG-2=PASS untested=" ] && [ "$A_TRACE" = 0 ]; then
+    ok "$1 ($2): a Stop-style run that re-used everything and ended exit 2 turned the exit-0 receipt to exit 2 (suites kept), not left it exit 0"
+  else
+    bad "$1 ($2): A exit $A_RC (want 2), runs $A_S1/$A_S2 (want 0/0), receipt '$A_RECEIPT' (want 'exit=2 REG-1=PASS,REG-2=PASS untested=')"
+  fi
+}
+k7 "K7/partial-downgrade" held; k7 "K7/partial-downgrade" free
 
 # S: a record or receipt over 1 MiB is no record
 pad() { python3 -I -c 'import json,sys
@@ -293,8 +398,8 @@ for n in 100000 1100000; do
   fi
 done
 
-# T: write_full_pass_receipt serialises before it makes the temp file. The receipt of the same content carries a field json.load reads and the
-# serialiser of the day cannot write back (nested deep: the depth where that happens depends on the Python, so it is looked for)
+# T: write_full_pass_receipt serialises before it makes the temp file. The receipt of the same content carries a field nested so deep that json.load
+# reads it and `json.dump(kept, f)` (the old writer) refuses it (the depth where that happens depends on the Python, so it is looked for)
 make_repo unwatched; run_gate -- --full --no-checklist; seed_rc=$RC
 T_OUT="$("$PY" -I - "$GATE" "$R" "$GD" <<'PY' 2>&1
 import importlib.util, io, json, os, sys
@@ -317,7 +422,7 @@ for depth in (900, 950, 980, 990, 995, 1000, 1500, 3000, 20000, 100000):
     try:
         kept = json.loads(text)
         json.dump(kept, io.StringIO())
-        continue            # this depth is read and written back by the serialiser of the day: not the case looked for
+        continue            # json.dump (the old writer) writes this depth back too: not the case looked for
     except RecursionError:
         pass
     try:
@@ -344,7 +449,7 @@ T_LEFT="$(printf '%s\n' "$T_OUT" | grep -c 'leftover=[1-9]')"
 T_EXC="$(printf '%s\n' "$T_OUT" | grep -c 'result=EXC')"
 T_PYV="$(printf '%s\n' "$T_OUT" | sed -n 's/^pyver=//p')"
 if [ "$seed_rc" = 2 ] && [ "${T_FOUND:-0}" -ge 1 ] && [ "$T_LEFT" = 0 ] && [ "$T_EXC" = 0 ]; then
-  ok "T/receipt: $T_FOUND receipt(s) the reader loads and the serialiser cannot write back: no .tmp_full_pass.* left, no exception"
+  ok "T/receipt: $T_FOUND receipt(s) json.load reads and the old json.dump writer refuses: write_full_pass_receipt leaves no .tmp_full_pass.* and raises nothing"
 elif [ "$seed_rc" = 2 ] && [ "${T_FOUND:-0}" = 0 ] && [ -n "$T_PYV" ] && [ "$T_LEFT" = 0 ] && [ "$T_EXC" = 0 ] && ! printf '%s' "$T_OUT" | grep -q Traceback; then
   # Python 3.9 (measured): json.load and json.dump hit the recursion limit at the SAME depth (995 of 1000 here), so no receipt exists that is read and
   # not written back: nothing to leak. The row has its teeth on a Python whose C json decoder does not count Python frames (3.14).
