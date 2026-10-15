@@ -45,7 +45,6 @@ import contextlib
 import fnmatch
 import hashlib
 import json
-import math
 import os
 import re
 import shlex
@@ -869,6 +868,21 @@ def _state_fd(path, mode="r"):
     return fd
 
 
+# A record or receipt is a few KB: its biggest field is "dirty", the changed files (a name and a sha each). A file past the cap is no record.
+# ponytail: a tree with more than ~10k changed files has a receipt over the cap: it is not re-used and the partial writer drops it; raise the cap when seen.
+STATE_JSON_MAX = 1 << 20
+
+
+def _load_state_json(path):
+    """json of the gate record / receipt at path; ValueError when it is over STATE_JSON_MAX. json.load of one huge integer is quadratic on
+    Python < 3.11 (6 MB took 126 s on 3.9.6) and the file is one anyone can write; the size is read from the open fd, not from a second stat."""
+    with os.fdopen(_state_fd(path), encoding="utf-8") as f:
+        size = os.fstat(f.fileno()).st_size
+        if size > STATE_JSON_MAX:
+            raise ValueError(f"{path}: {size} bytes, over {STATE_JSON_MAX}")
+        return json.load(f)
+
+
 # A suite that talks to a device, an emulator or an engine is never reused: its outcome depends
 # on state no fingerprint holds (Antigravity review of O1, 2026-09-28). One exception, decided by the user on 2026-10-07
 # (Goods: ~30 % of the gate was Unity runs on content that had already passed; a real Unity run was measured NOT to change
@@ -1010,8 +1024,7 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None):
         path = tree_fp.receipt_path(project_dir)
         if name:
             path = os.path.join(os.path.dirname(path), name)
-        with os.fdopen(_state_fd(path), encoding="utf-8") as f:
-            r = json.load(f)
+        r = _load_state_json(path)
         max_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
     except (ImportError, OSError, ValueError, TypeError, OverflowError, RecursionError):
         return None   # RecursionError: a forged file nested deeper than json.load can read (it is a RuntimeError, not a ValueError)
@@ -1023,11 +1036,9 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None):
     # lets the Stop through when the gate crashes; NaN / Infinity compared false against the age cap and were read. A time a minute ahead of this
     # clock is a forged or broken one; a few seconds are noise between two processes.
     def _time_ok(v):
-        # bounded first, so a 401-digit integer (float() and math.isfinite() raise OverflowError on it) is just "not a time"; the bound is far past any epoch
-        try:
-            return not isinstance(v, bool) and isinstance(v, (int, float)) and -1e15 < v < 1e15 and math.isfinite(v)
-        except (OverflowError, ValueError, TypeError):
-            return False
+        # a comparison of an int or a float with a float never raises (a 401-digit integer is compared exactly), and NaN / inf fail the bound: no
+        # float() and no isfinite(), which raise OverflowError on that integer; the bound is far past any epoch
+        return not isinstance(v, bool) and isinstance(v, (int, float)) and -1e15 < v < 1e15
     tested, now = r.get("tested_at"), time.time()
     if not _time_ok(tested) or tested > now + 60 or now - tested > max_s:
         return None
@@ -1122,14 +1133,14 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
         t.get("status") not in ("PASS", "UNTESTED", "BUSY") for t in (tests or []) if t.get("command"))
     if partial and unverified_ok:
         try:
-            with os.fdopen(_state_fd(path), encoding="utf-8") as f:
-                kept = json.load(f)
+            kept = _load_state_json(path)
             same = isinstance(kept, dict) and kept.get("fingerprint") == (tested_fp or tree_fp.tree_fingerprint(project_dir))
             if same and kept.get("exit") == 0:
                 kept.update({"exit": 2, "untested": []})
+                text = json.dumps(kept)   # BEFORE the temp file: a value json cannot write (nested too deep) raised here and left .tmp_full_pass.* behind
                 fd, tmp = tempfile.mkstemp(prefix=".tmp_full_pass.", dir=os.path.dirname(path))
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump(kept, f)
+                    f.write(text)
                 os.replace(tmp, path)
             elif not same:
                 os.remove(path)
@@ -1174,9 +1185,10 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
             # suite PASS, so without the ids one such suite would cancel the whole reuse
             data["untested"] = sorted(untested or ({t.get("id") or "?" for t in (tests or []) if t.get("command") and t.get("status") == "UNTESTED"}
                                                    if exit_code == 2 else []))
+        text = json.dumps(data)   # before the temp file, as above
         fd, tmp = tempfile.mkstemp(prefix=".tmp_full_pass.", dir=os.path.dirname(path))
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f)
+            f.write(text)
         os.replace(tmp, path)
     except OSError as e:
         log_err(f"full-pass receipt not written: {e}")
@@ -5029,6 +5041,24 @@ def main():
                 return found
         return None
 
+    def reuse_stale():
+        """True when the file that vouched for the suites this run re-used is gone, or is another file than the one it read: a forced run that FAILED
+        a suite drops it, another run replaces it. What was re-used is then no PASS this run may stand on (F1: a FAIL is never turned back into a PASS
+        by a stale reader or writer). Asked under test_run.lock after the suites ran, and again right before the verdict; stat only."""
+        return bool(reuse_src[0]) and _file_stamp(reuse_src[0][0]) != reuse_src[0][1]
+
+    def stale_to_untested(label):
+        """A re-used PASS that cannot be stood on (its file moved, or there is no lock to check it under) is UNTESTED, never PASS; the number turned.
+        Every later reader (verdict, receipt, Stop record, checklist) reads the suites' status, so this is the one place that decides it."""
+        n = 0
+        for t in regression_tests:
+            if t.get("mode") == "cached" and t.get("status") == "PASS":
+                n += 1
+                t.update({"status": "UNTESTED", "label": label, "output_tail": tr(
+                    "PASS dùng lại không còn đứng vững: file đã xác nhận nó đã đổi/biến mất, hoặc không có khoá để kiểm tra lại — chạy lại gate",
+                    "The re-used PASS no longer stands: the file that vouched for it changed or is gone, or there was no lock to check it under — run the gate again")})
+        return n
+
     def receipt_stamp():
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         try:
@@ -5045,8 +5075,11 @@ def main():
         cache = reuse_full_pass(budget_fp)
     _lap("cache")
     to_run = [t for t in regression_tests if t.get("mode") != "cached"]
+    # A run that re-used a suite takes the lock even when it has nothing left to run: the check that what it re-used still stands and the writes
+    # that follow it are one step under the lock (a forced run that FAILS the suite deletes the file holding the PASS while it holds this lock).
+    # ponytail: an all-re-used run now waits (TEST_RUN_LOCK_WAIT_S) for a run that holds the lock, and ends BUSY past it; it used to need no lock.
     lock_fh, lock_held = (acquire_test_run_lock(project_dir)
-                          if run_tests and any(t.get("command") for t in to_run) else (None, True))
+                          if run_tests and (reuse_src[0] or any(t.get("command") for t in to_run)) else (None, True))
     # Another run (a second session, or a gate still running in the background) may have recorded a
     # full PASS of this same content since the check above — while we waited for its lock, or just
     # before we reached the lock: re-use it instead of running every suite again (audit 2026-09-29).
@@ -5305,6 +5338,13 @@ def main():
     drain()
     restore_local_configs(_config_snaps)
     _lap("suites")
+    # What this run RE-USED is judged here, under the lock and before anything is printed or decided from it. The file it read (BEFORE the lock) may
+    # have been replaced or dropped while it waited, e.g. by a forced run that FAILED the suite (F1): its PASS is UNTESTED then, not a PASS. Without
+    # the lock (BUSY: the wait ran out) there is no way to check it: UNTESTED the same.
+    why = "BUSY" if not lock_held else "STALE" if reuse_stale() else None
+    if why and stale_to_untested(why):
+        log_warn(tr("PASS dùng lại không kiểm tra lại được (file nguồn đã đổi/biến mất lúc chờ khoá, hoặc không có khoá) — thành UNTESTED",
+                    "A re-used PASS could not be checked again (its source file changed or went away while the lock was awaited, or there was no lock) — it turns UNTESTED"))
 
     checklist_markdown = []
     for t in regression_tests:
@@ -5422,6 +5462,9 @@ def main():
         log_warn(tr("OpenCodeReview CLI (`ocr`) chưa cài — lớp này bỏ qua", "OpenCodeReview CLI (`ocr`) not installed — skipped"))
 
     _lap("static")
+    if reuse_stale() and stale_to_untested("STALE"):   # the last look before the verdict: a writer that holds no lock (the check above found the file as read)
+        log_warn(tr("File kết quả dùng lại đã đổi/biến mất trước kết luận — PASS dùng lại thành UNTESTED",
+                    "The file the re-used results came from changed or went away before the verdict — the re-used PASS turns UNTESTED"))
     # Final Summary Verdict
     static_ok = (hygiene_ok and anti_laziness_ok and deps_ok and perf_ok and resilience_ok
                  and logging_ok and hw_ok and assert_ok and proof_ok)
@@ -5512,8 +5555,13 @@ def main():
         # summary "busy"): a full run records it in the receipt so its PASS suites are reused.
         receipt_untested = sorted({t["id"] or "?" for t in regression_tests if t["status"] == "UNTESTED"}) if lock_held else None
         names = ", ".join(t["id"] or "?" for t in tests_untested)
-        verdict_text, verdict_color, exit_code = tr(f"UNTESTED — {names} không chạy được trên máy này (thiếu công cụ/thiết bị); KHÔNG phải PASS",
-                                                    f"UNTESTED — {names} cannot run on this machine (missing tool/device); NOT a PASS"), YELLOW, 4
+        stale_names = ", ".join(t["id"] or "?" for t in tests_untested if t.get("label") == "STALE")
+        verdict_text, verdict_color, exit_code = (
+            tr(f"UNTESTED — PASS dùng lại của {stale_names} không còn đứng vững (file đã xác nhận nó đã đổi/biến mất trong lúc gate chạy): chạy lại gate; KHÔNG phải PASS",
+               f"UNTESTED — the re-used PASS of {stale_names} no longer stands (the file that vouched for it changed or went away while the gate ran): run the gate again; NOT a PASS")
+            if stale_names else
+            tr(f"UNTESTED — {names} không chạy được trên máy này (thiếu công cụ/thiết bị); KHÔNG phải PASS",
+               f"UNTESTED — {names} cannot run on this machine (missing tool/device); NOT a PASS")), YELLOW, 4
     elif impacted_run:
         # Exit 0 like any PASS (the Stop hook lets the turn end), but never worded as the
         # handover verdict: tests outside the selection did not run.
@@ -5577,11 +5625,9 @@ def main():
         elif run_tests and budget_fp and budget_head and not force_reason and not lock_busy and exit_code != 0 and ran_cmds:
             # a PASS is the hook's pass_fp; a run that started no suite has nothing of its own to record (and rewriting what it only read is how a
             # PASS that a concurrent run had just replaced came back). The suites it re-used stand on the file that vouched for them: when that
-            # file changed or is gone (a forced run's FAIL drops it) they are not written back, they go in as untested and run again next time.
-            to_record = regression_tests
-            if reuse_src[0] and _file_stamp(reuse_src[0][0]) != reuse_src[0][1]:
-                to_record = [dict(t, status="UNTESTED") if t.get("mode") == "cached" else t for t in regression_tests]
-            write_budget_record(project_dir, args.matrix, to_record, budget_fp,
+            # file changed or is gone (a forced run's FAIL drops it) they are UNTESTED by now (stale_to_untested, under the lock, right before the
+            # verdict): they go in as untested and run again next time.
+            write_budget_record(project_dir, args.matrix, regression_tests, budget_fp,
                                 tested_at=float(cache.get("tested_at") or 0) if cache else None, head=budget_head)
     finally:
         # Only now may another run take the test-run lock: it finds the receipt (or its settled absence), and the
@@ -5670,7 +5716,9 @@ def main():
             "unreadable": unreadable, "regression_tests": regression_tests,
             "matrix_problem": matrix_problem, "tests_touched": tests_touched,
             "tests_touched_other": tests_touched_other, "tests_approved": tests_approved,
-            "busy": run_tests and not lock_held,   # another run held test_run.lock: tests not run
+            # tests not run because another run interfered: it held test_run.lock, or it replaced / dropped the file a re-used PASS came from (STALE):
+            # the Stop hook says "run again later" and caches nothing, so the next Stop runs the suite for real (not a sticky "untested here")
+            "busy": run_tests and (not lock_held or any(t.get("label") == "STALE" for t in regression_tests)),
             "budget_exhausted": any(t.get("label") == "BUDGET" for t in regression_tests),   # GATE_TOTAL_BUDGET_S spent
             "test_mode": test_mode, "full_run_required": bool(impacted_run),
             "devkit_artifacts_skipped": len(devkit_artifacts), "device": device_state,
