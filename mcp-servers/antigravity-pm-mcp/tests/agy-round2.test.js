@@ -1056,6 +1056,32 @@ test('go ban ghi cho khi muc do da vang (PM khac don mat roi): KHONG ghi lai so 
   assert.equal(rewrites, 0, 'go mot muc khong con trong so dang ky ma van ghi lai ca file');
 });
 
+// pid agy duoc dung lai: muc duoi `pending-<pid>` gio co chu KHAC. Moi truong hop chu "khong phai toi" phai de nguyen (go theo khoa, hoac chi theo mot nua cua cap chu, la bug).
+const NOT_ME = [
+  ['chu la PM song khac', (other) => ({ ownerPid: other.pid, ownerTag: other.tag })],
+  ['cung pid PM nhung PM cu da chet (dau van tay khac)', () => ({ ownerPid: process.pid, ownerTag: WRONG_TAG })],
+  ['PM khac nhung cung giay khoi dong voi PM nay (dau van tay trung)', (other, myTag) => ({ ownerPid: other.pid, ownerTag: myTag })],
+];
+for (const [name, owner] of NOT_ME) {
+  test(`go ban ghi cho khi luot mo that bai: CHI go muc cua chinh PM nay (${name}: de nguyen)`, async (t) => {
+    fakeAgy(t);
+    const slowFail = path.join(path.dirname(process.env.ANTIGRAVITY_PM_AGY), 'agy-slow-fail');
+    fs.writeFileSync(slowFail, '#!/bin/sh\nsleep 1\nexit 3\n', { mode: 0o755 });   // thoat khong co init sau 1 s
+    process.env.ANTIGRAVITY_PM_AGY = slowFail;
+    const other = liveSleep(t);
+    const myTag = execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(process.pid)], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } }).trim();
+    const opening = newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) }).then(() => null, (e) => e);
+    assert.ok(await waitUntil(() => pendingKeys().length > 0, 5000), 'PM phai ghi ban ghi cho ngay sau spawn');
+    const [key] = pendingKeys();
+    const foreign = pendingEntry({ pid: Number(key.slice('pending-'.length)), pidTag: WRONG_TAG, ...owner(other, myTag) });
+    fs.writeFileSync(registryFile(), JSON.stringify({ [key]: foreign }));
+    const err = await opening;
+    assert.match(String(err?.message), /init/, 'luot mo phai that bai vi agy thoat khong co init');
+    const kept = registryOf()[key];
+    assert.deepEqual([kept?.ownerPid, kept?.ownerTag], [foreign.ownerPid, foreign.ownerTag], 'go nham muc cho cua chu khac (chu do chet truoc init se de lai agy khong ai theo doi)');
+  });
+}
+
 /** Chay MOT lan ps gia vua viet (bo ket qua): lan exec dau cua mot file moi ghi co the vuot 1500 ms (timeout cua procTag) tren may tai cao, va test do vi ly do khong lien quan. */
 function warmPs(wrapper) { spawnSync(wrapper, ['-o', 'lstart=', '-p', String(process.pid)], { stdio: 'ignore' }); }
 

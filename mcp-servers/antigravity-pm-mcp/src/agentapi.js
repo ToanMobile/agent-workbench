@@ -489,11 +489,15 @@ function reapOrphanAgy() {
   } catch (err) { logStderr(`don agy mo coi: khong don duoc (${err.message})`); }
 }
 
-/** Go cac muc cho khoi so dang ky (duoi khoa). Chi ghi lai khi co muc bi go. */
+/**
+ * Go cac muc cho CUA CHINH PM nay khoi so dang ky (duoi khoa; chu = pid + dau van tay, selfTag da nho nen khong them ps). Khoa `pending-<pid>` chi noi len
+ * pid agy: pid dung lai thi muc duoi khoa do co the la cua PM song khac (PM do chet truoc init se de lai agy khong ai theo doi). Chi ghi lai khi co muc bi go.
+ */
 function dropPending(keys) {
+  const me = selfTag();
   withRegistryLock(() => {
     const reg = readAgyRegistry();
-    const hit = keys.filter((k) => k in reg);   // `delete` tra true ca khi khoa vang: phai hoi truoc
+    const hit = keys.filter((k) => reg[k]?.ownerPid === process.pid && reg[k].ownerTag === me);   // `delete` tra true ca khi khoa vang: phai hoi truoc
     if (!hit.length) return;
     hit.forEach((k) => delete reg[k]);
     writeJsonAtomic(agyRegistryFile(), reg);
