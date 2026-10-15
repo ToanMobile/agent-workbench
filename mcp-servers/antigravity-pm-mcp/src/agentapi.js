@@ -517,10 +517,13 @@ async function agyNewConversation({ prompt, model, cwd }) {
   const root = fs.realpathSync(cwd);
   readAgyRegistry();   // hong thi nem loi NGAY, truoc khi sinh agent: sau khi spawn khong con cach nao theo doi no
   // ponytail: agy mo coi chi bi dung khi co lan mo hoi thoai agy ke tiep (cua PM nao cung duoc; PM chi gui tin thi khong don); nang cap: don them luc
-  // server khoi dong / trong pm_doctor. Cua so con lai: tu luc spawn den luc ban ghi cho duoc ghi (1 lan ps cua agy + khoa) khoang chuc ms; PM chet trong do
-  // thi agy khong co dau vet. Con cua agy (nhom) da thoat tu truoc thi khong bi dung; muc co pid vuot gioi han he dieu hanh (sua tay) duoc giu mai.
+  // server khoi dong / trong pm_doctor. Cua so con lai: tu luc spawn den luc ban ghi cho duoc ghi (1 lan ps cua agy + khoa): thuong khoang chuc ms, xau nhat 1,5 s
+  // (timeout cua procTag) + 3 s (cho khoa); PM chet trong do thi agy khong co dau vet. Con cua agy (nhom) da thoat tu truoc thi khong bi dung; muc co pid vuot gioi han he dieu hanh (sua tay) duoc giu mai.
   reapOrphanAgy();
-  const ownerTag = selfTag();   // ps cua chinh PM tinh MOT lan, TRUOC spawn (hong thi tu choi, chua co agy nao chay)
+  // ps cua chinh PM tinh MOT lan, TRUOC spawn: hong (nem) hoac khong in gi (null: entryBusy / reaper khong nhan ra chu) thi tu choi, chua co agy nao chay
+  let ownerTag;
+  try { ownerTag = selfTag(); } catch (e) { throw new AgentApiError(`chua sinh agy nao: ${e.message}`); }
+  if (!ownerTag) throw new AgentApiError('chua sinh agy nao: khong doc duoc dau van tay cua chinh PM (ps khong tra ve gi)');
   let pending = null;
   let r;
   try {
