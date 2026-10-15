@@ -156,4 +156,70 @@ printf '%s\n' "$BLOCK" | grep 'wiring_pin' | grep -qE 'BẮT BUỘC|[Bb]ắt bu�
   && fail "the wiring-pin rule line uses a MUST-word (the on-demand split rejects it)" || ok "no MUST-word on the wiring-pin rule lines"
 grep -q 'wiring_pin.py' "$DEVKIT_DIR/scripts/linters/README.md" && ok "scripts/linters/README.md lists wiring_pin.py" || fail "scripts/linters/README.md does not list wiring_pin.py"
 
+# ── review of lane A11: verify must not say "holds" for a pin it cannot fully read, or one that proves nothing ────────────────────────────
+# `verify` runs against a plain directory (no git): VR holds the View under test; the pins below are written by hand with known literals.
+VR="$TMP/vroot"; mkdir -p "$VR/src/main/java/com/x"; VIEWF="$VR/src/main/java/com/x/SelectionView.kt"
+vrf() { python3 -I "$WP" verify "$1" --root "${2:-$VR}" > "$TMP/vrf.out" 2>&1; VRC=$?; }
+pin_head() { printf 'package com.x\n\nimport java.io.File\nimport org.junit.Assert.assertFalse\nimport org.junit.Assert.assertTrue\nimport org.junit.Test\n\nclass %s {\n    private val view = File("%s").readText()\n\n' "$1" "${2:-src/main/java/com/x/SelectionView.kt}"; }
+OLDBR='val chosen = if (startDistance <= endDistance) START else END'
+cp "$TMP/SelectionView.new.kt" "$VIEWF"
+# a View whose call site was reverted WITHOUT the old branch coming back: only the call assertion can catch it
+sed 's/SelectionRules\./Other./' "$TMP/SelectionView.new.kt" > "$TMP/SelectionView.nocall.kt"
+
+# V1. a formatter (ktlint / Spotless) wrapped the call assertion and added a trailing comma: it used to be dropped silently, so the pin said
+#     "holds" for a View that no longer calls the object. Now it is read (and the plain old-branch assertion is still read).
+{ pin_head WrappedPinTest
+  printf '    @Test\n    fun viewStillCallsSelectionRules() {\n        assertTrue(\n            "SelectionView must call SelectionRules",\n            view.contains("SelectionRules."),\n        )\n    }\n\n'
+  printf '    @Test\n    fun viewNoLongerHoldsTheOldBranch() {\n        assertFalse("old branch is back in SelectionView: %s", view.contains("%s"))\n    }\n}\n' "$OLDBR" "$OLDBR"; } > "$TMP/wrapped.pin.kt"
+vrf "$TMP/wrapped.pin.kt"
+[ "$VRC" = 0 ] && ok "a formatter-wrapped call assertion (trailing comma, line breaks) is read: good View holds" || fail "wrapped pin on the good View: rc=$VRC $(cat "$TMP/vrf.out")"
+cp "$TMP/SelectionView.nocall.kt" "$VIEWF"; vrf "$TMP/wrapped.pin.kt"
+[ "$VRC" = 1 ] && grep -q 'SelectionRules\.' "$TMP/vrf.out" && ok "  … and it turns RED when the View no longer calls the object (it used to be dropped: exit 0)" || fail "wrapped pin, call reverted: rc=$VRC (want 1) $(cat "$TMP/vrf.out")"
+# a shape verify cannot evaluate (the pin has more view.contains( calls than assertions it reads): fail closed, exit 2
+{ pin_head OddPinTest
+  printf '    @Test\n    fun viewStillCalls() {\n        assertTrue("m", view.contains("SelectionRules.") || view.contains("Other."))\n    }\n\n'
+  printf '    @Test\n    fun viewNoLongerHoldsTheOldBranch() {\n        assertFalse("old", view.contains("%s"))\n    }\n}\n' "$OLDBR"; } > "$TMP/odd.pin.kt"
+cp "$TMP/SelectionView.nocall.kt" "$VIEWF"; vrf "$TMP/odd.pin.kt"
+[ "$VRC" = 2 ] && grep -qi 'view.contains' "$TMP/vrf.out" && ok "a pin with a view.contains( it cannot read as an assertion: exit 2, fail closed (the call is gone, yet it must not say holds)" || fail "unreadable assertion shape: rc=$VRC $(cat "$TMP/vrf.out")"
+# the count is of CODE: a marker (a removed View line) that itself contains view.contains(...) inside a string or a comment does not trip it
+{ pin_head QuotePinTest
+  printf '    // note: assertFalse("x", view.contains("never evaluated"))\n    @Test\n    fun viewStillCalls() {\n        assertTrue("m", view.contains("SelectionRules."))\n    }\n\n'
+  printf '    @Test\n    fun viewNoLongerHoldsTheOldBranch() {\n        assertFalse("old branch is back: val ok = view.contains(\\"zzz\\")", view.contains("val ok = view.contains(\\"zzz\\")"))\n    }\n}\n'; } > "$TMP/quote.pin.kt"
+cp "$TMP/SelectionView.new.kt" "$VIEWF"; vrf "$TMP/quote.pin.kt"
+[ "$VRC" = 0 ] && ok "view.contains( inside a string literal or a comment of the pin is not counted as an assertion (good View holds)" || fail "view.contains( in a string/comment: rc=$VRC $(cat "$TMP/vrf.out")"
+
+# V2. the File("...") path of a pin is confined to --root: a ../ path used to be read and "hold"
+printf 'SelectionRules.\n' > "$TMP/outside.txt"
+{ pin_head EscapePinTest "../../outside.txt"
+  printf '    @Test\n    fun viewStillCalls() {\n        assertTrue("m", view.contains("SelectionRules."))\n    }\n\n'
+  printf '    @Test\n    fun viewNoLongerHoldsTheOldBranch() {\n        assertFalse("old", view.contains("%s"))\n    }\n}\n' "$OLDBR"; } > "$TMP/escape.pin.kt"
+mkdir -p "$TMP/sub1/sub2"; vrf "$TMP/escape.pin.kt" "$TMP/sub1/sub2"
+[ "$VRC" = 2 ] && grep -qi 'outside' "$TMP/vrf.out" && ok "a pin whose File(...) path leaves --root is refused (exit 2); it used to read the outside file and hold" || fail "escaping path: rc=$VRC (want 2) $(cat "$TMP/vrf.out")"
+sed 's#File("[^"]*")#File("/etc/hosts")#' "$TMP/escape.pin.kt" > "$TMP/abs.pin.kt"; vrf "$TMP/abs.pin.kt"
+[ "$VRC" = 2 ] && ok "an absolute File(...) path is refused too (exit 2)" || fail "absolute path: rc=$VRC (want 2)"
+
+# V3. a call that exists only in a comment or KDoc is not a call (the old-branch assertions stay on the raw text: step 4 pastes it as a comment)
+{ cat <<'KT'
+package com.x
+
+import android.content.Context
+import android.view.View
+
+/** Delegates to SelectionRules.pick (see the rules file). */
+class SelectionView(context: Context) : View(context) {
+    // val chosen = SelectionRules.pick(startDistance, endDistance)
+    fun pick(startDistance: Int, endDistance: Int): Int = 0
+}
+KT
+} > "$VIEWF"
+vrf "$TMP/wrapped.pin.kt"
+[ "$VRC" = 1 ] && grep -q 'SelectionRules\.' "$TMP/vrf.out" && ok "a call mentioned only in a KDoc / line comment does not satisfy the call assertion (exit 1)" || fail "comment-only call: rc=$VRC (want 1) $(cat "$TMP/vrf.out")"
+
+# V4. a pin whose old-branch half is EMPTY (an older scan emitted it when no removed line qualified) proves nothing: not a complete pin
+{ pin_head EmptyPinTest
+  printf '    @Test\n    fun viewStillCalls() {\n        assertTrue("m", view.contains("SelectionRules."))\n    }\n\n'
+  printf '    @Test\n    fun viewNoLongerHoldsTheOldBranch() {\n        // no removed line qualified as a marker\n    }\n}\n'; } > "$TMP/empty.pin.kt"
+cp "$TMP/SelectionView.new.kt" "$VIEWF"; vrf "$TMP/empty.pin.kt"
+[ "$VRC" = 2 ] && grep -qi 'old-branch\|old branch' "$TMP/vrf.out" && ok "a pin with no old-branch assertion is refused (exit 2): it used to say holds" || fail "empty old-branch half: rc=$VRC (want 2) $(cat "$TMP/vrf.out")"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_wiring_pin: all passed" || { echo "❌ test_wiring_pin: $FAILS failed"; exit 1; }
