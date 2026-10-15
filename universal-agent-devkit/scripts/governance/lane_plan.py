@@ -230,9 +230,12 @@ def simulate(lanes, n, key):
             running.append((t + l["est"], l["id"]))
             rows.append({"id": l["id"], "start": t, "end": t + l["est"]})
         running.sort()
-        t = running[0][0]
-        while running and running[0][0] <= t + 1e-9:   # a tolerance: 0.1 + 0.2 and 0.3 end together
-            done[running.pop(0)[1]] = t
+        group = [running.pop(0)]
+        while running and running[0][0] <= group[0][0] + 1e-9:   # a tolerance: 0.1 + 0.2 and 0.3 end together
+            group.append(running.pop(0))
+        t = max(end for end, _ in group)   # the latest of them: a lane that waited for them never starts before one of them ends
+        for _, i in group:
+            done[i] = t
     return rows, max(r["end"] for r in rows)
 
 
@@ -265,7 +268,7 @@ def plan(path, n_slots, as_json):
     rows, span = simulate(lanes, n, key=lambda l: (-l["tail"], not l["high"]))   # a tie on both: the listed order (sort is stable)
     naive_rows, naive = simulate(lanes, n, key=lambda l: pos[l["id"]])
     order = "critical-path"
-    if naive < span:   # the longest-path rule is a heuristic: when the listed order ends sooner, use it and say so
+    if naive < span - 1e-9:   # the longest-path rule is a heuristic: when the listed order ends sooner, use it and say so
         rows, span, order = naive_rows, naive, "input"
     overlaps = overlaps_of(lanes)
     merge_order = [r["id"] for r in sorted(rows, key=lambda r: r["end"])]   # stable: lanes that end together keep their start order

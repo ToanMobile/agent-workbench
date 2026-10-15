@@ -118,6 +118,8 @@ rc, d, err = plan_json("l9k.json", frac, 2)
 rows = dict((r["id"], r) for r in d["rows"]) if d else {}
 chk(d is not None and rows["X"]["start"] < 1 and rows["X2"]["start"] < 1 and rows["L"]["start"] >= 10,
     "fractions that sum to the same end time end together: X and X2 (waiting for Q and R) start before the short L", str(d and d["rows"]))
+chk(d is not None and rows["X"]["start"] >= max(rows["Q"]["end"], rows["R"]["end"]) and rows["X2"]["start"] >= max(rows["Q"]["end"], rows["R"]["end"]),
+    "and X starts no earlier than the later of Q and R ends (not a float ULP before it)", str(d and d["rows"]))
 
 # 3. a risky lane wins a tie on path length
 tie = [{"id": "L", "est_min": 20}, {"id": "H", "est_min": 20, "risk": "high"}]
@@ -412,8 +414,7 @@ if ok:
     subprocess.run([os.path.join(OLDBIN, "git"), "--version"], capture_output=True, timeout=60)   # the first exec of a fresh wrapper can be slow
     OLDENV = dict(NOH, PATH=OLDBIN + os.pathsep + NOH.get("PATH", os.defpath))
     r = subprocess.run([PY, SCRIPT, "record", "lane9", "9", "--kind", "oldgit"], capture_output=True, text=True, env=OLDENV, cwd=WT, timeout=60)
-    with open(common) as fh:
-        recorded = fh.read()
+    recorded = open(common).read() if os.path.isfile(common) else ""   # a failed record above must show as a ✖, not stop the script here
     chk(r.returncode == 0 and '"lane9"' in recorded and os.listdir(WT) == [".git"],
         "with a git that prints --path-format back (older than 2.31) the history still goes into the git dir, nothing is created in the worktree", "%s %r %s" % (r.returncode, r.stderr[-200:], os.listdir(WT)))
     NOGIT = os.path.join(TMP, "nogit")
