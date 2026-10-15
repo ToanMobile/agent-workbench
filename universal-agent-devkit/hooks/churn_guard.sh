@@ -84,13 +84,19 @@ if [ "${UNTRACKED_EDIT_WARN:-1}" != "0" ] && [ -n "${LOG_DIR}" ] && command -v g
   _ue_lc_restore() { if [ -n "${_UE_LCS}" ]; then LC_ALL="${_UE_LC}"; else unset LC_ALL; fi; }
   LC_ALL=C; _UE_HEAD="${INPUT:0:8192}"; _ue_lc_restore
   _UE_RX_F='"(file_path|notebook_path)"[[:space:]]*:[[:space:]]*"(/[^"\\]*)"'   # absolute and escape-free, else not judged
+  _UE_P=""
   if [[ ${_UE_HEAD} =~ ${_UE_RX_F} ]]; then
-    _UE_P="${BASH_REMATCH[2]}"; _UE_D="${_UE_P%/*}"; _UE_B="${_UE_P##*/}"; [ -n "${_UE_D}" ] || _UE_D="/"
+    _UE_P="${BASH_REMATCH[2]}"
+  elif [[ ${_UE_HEAD} == *'"tool_input"'* ]]; then   # content ahead of the path inside tool_input pushed it past the prefix: ONE full match, under LC_ALL=C
+    LC_ALL=C; if [[ ${INPUT} =~ ${_UE_RX_F} ]]; then _UE_P="${BASH_REMATCH[2]}"; fi; _ue_lc_restore
+  fi
+  if [ -n "${_UE_P}" ]; then
+    _UE_D="${_UE_P%/*}"; _UE_B="${_UE_P##*/}"; [ -n "${_UE_D}" ] || _UE_D="/"
     _UE_RX_S='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9_-]+)"'
     [[ ${_UE_HEAD} =~ ${_UE_RX_S} ]] && _UE_SID="${BASH_REMATCH[1]}" || _UE_SID="nosid"
     _UE_L="${LOG_DIR}/untracked_edit.${_UE_SID}"
     if [ -d "${_UE_L}" ]; then
-      echo "[$(date +%Y-%m-%dT%H:%M:%S)] ${_UE_L} is a directory, not a ledger — untracked-edit check skipped (fail-open)" >> "${LOG_DIR}/churn_guard.log" 2>/dev/null
+      { echo "[$(date +%Y-%m-%dT%H:%M:%S)] ${_UE_L} is a directory, not a ledger — untracked-edit check skipped (fail-open)" >> "${LOG_DIR}/churn_guard.log"; } 2>/dev/null   # {…} 2>/dev/null: the shell's own "Permission denied" for a failed >> would escape a 2>/dev/null written after the redirect
     elif [ -s "${_UE_L}" ] && grep -qxF -- "${_UE_P}" "${_UE_L}" 2>/dev/null; then
       :   # judged earlier this session (warned, or created by this session's Write): no git process
     # tracked → nothing to say (index lookup only: the common case costs one cheap git call); untracked and not ignored → the check below
@@ -98,7 +104,7 @@ if [ "${UNTRACKED_EDIT_WARN:-1}" != "0" ] && [ -n "${LOG_DIR}" ] && command -v g
        && ! git -c core.fsmonitor=false -C "${_UE_D}" ls-files --error-unmatch -- ":(literal)${_UE_B}" >/dev/null 2>&1 \
        && [ -n "$(git -c core.fsmonitor=false -C "${_UE_D}" ls-files --others --exclude-standard -- ":(literal)${_UE_B}" 2>/dev/null)" ]; then
       [ -e "${_UE_L}" ] || find "${LOG_DIR}" -maxdepth 1 -name 'untracked_edit.*' -mtime +2 -exec rm -f {} + 2>/dev/null   # a ledger is one session's: old ones go
-      printf '%s\n' "${_UE_P}" >> "${_UE_L}" 2>/dev/null
+      { printf '%s\n' "${_UE_P}" >> "${_UE_L}"; } 2>/dev/null
       _UE_RX_N='"tool_name"[[:space:]]*:[[:space:]]*"Write"'
       # unverified assumption: Claude Code writes `type` as the FIRST key of a Write tool_response; if that order changes this regex misses
       # "update" and an overwrite of an untracked file reads as a create (silent: fails safe; tests/gates/test_untracked_edit_warning.sh pins today's shape)
@@ -108,9 +114,9 @@ if [ "${UNTRACKED_EDIT_WARN:-1}" != "0" ] && [ -n "${LOG_DIR}" ] && command -v g
         LC_ALL=C; [[ ${INPUT} =~ ${_UE_RX_U} ]] || _UE_OWN=1; _ue_lc_restore
       fi
       if [ "${_UE_OWN}" = 1 ]; then
-        echo "[$(date +%Y-%m-%dT%H:%M:%S)] UNTRACKED ${_UE_P}: created by this session's Write — own file, no warning" >> "${LOG_DIR}/churn_guard.log" 2>/dev/null
+        { echo "[$(date +%Y-%m-%dT%H:%M:%S)] UNTRACKED ${_UE_P}: created by this session's Write — own file, no warning" >> "${LOG_DIR}/churn_guard.log"; } 2>/dev/null
       else
-        echo "[$(date +%Y-%m-%dT%H:%M:%S)] WARN — UNTRACKED ${_UE_P}: edited, but the git index does not hold it" >> "${LOG_DIR}/churn_guard.log" 2>/dev/null
+        { echo "[$(date +%Y-%m-%dT%H:%M:%S)] WARN — UNTRACKED ${_UE_P}: edited, but the git index does not hold it" >> "${LOG_DIR}/churn_guard.log"; } 2>/dev/null
         printf '%s\n' \
           "⚠️ COMMIT-CLOSURE: ${_UE_B} là file UNTRACKED — index git không có nó (HEAD cũng chưa), nên sửa này KHÔNG commit riêng được:" \
           "   commit các path đã sửa (hoặc \`git archive HEAD\`, CI checkout) thiếu file này và code gọi tới nó sẽ không build." \

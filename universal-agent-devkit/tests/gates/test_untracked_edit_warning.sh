@@ -22,8 +22,9 @@ REAL_PY="$(command -v python3)" || { echo "skip: python3 missing"; exit 0; }
 mkdir -p "$TMP/bin" "$TMP/repo" "$TMP/outside"
 printf '#!/bin/sh\necho start >> "%s/py.log"\nexec "%s" "$@"\n' "$TMP" "$REAL_PY" > "$TMP/bin/python3"
 chmod +x "$TMP/bin/python3"
-REAL_GIT="$(command -v git)"   # a git shim in the hook's PATH counts the git processes it starts ($TMP/git.log, one line each)
-printf '#!/bin/sh\necho "$*" >> "%s/git.log"\nexec "%s" "$@"\n' "$TMP" "$REAL_GIT" > "$TMP/bin/git"
+REAL_GIT="$(command -v git)"   # a git shim in the hook's PATH counts the git processes it starts ($TMP/git.log, one line each) and records the
+                               # LC_ALL each one was started with ($TMP/lcall.log): the hook must hand its children the locale it was given
+printf '#!/bin/sh\necho "$*" >> "%s/git.log"\necho "${LC_ALL-<unset>}" >> "%s/lcall.log"\nexec "%s" "$@"\n' "$TMP" "$TMP" "$REAL_GIT" > "$TMP/bin/git"
 chmod +x "$TMP/bin/git"
 R="$TMP/repo"
 git -C "$R" init -q . && git -C "$R" config user.email t@t && git -C "$R" config user.name t && git -C "$R" config commit.gpgsign false
@@ -42,7 +43,7 @@ printf 'b\n' > "$TMP/outside/x.kt"            # no repo
 run() {
   local sid="$1" tool="$2" fp="$3" resp="$4" key=file_path; shift 4
   [ "$tool" = NotebookEdit ] && key=notebook_path
-  : > "$TMP/py.log"; : > "$TMP/git.log"
+  : > "$TMP/py.log"; : > "$TMP/git.log"; : > "$TMP/lcall.log"
   printf '{"session_id":"%s","transcript_path":"%s","cwd":"%s","hook_event_name":"PostToolUse","tool_name":"%s","tool_input":{"%s":"%s","old_string":"a","new_string":"b"},"tool_response":%s}' \
     "$sid" "${UE_TRANSCRIPT:-$TMP/t.jsonl}" "$R" "$tool" "$key" "$fp" "$resp" > "$TMP/in.json"
   ( cd "$R" && env PATH="$TMP/bin:$PATH" CLAUDE_PROJECT_DIR="$R" "$@" bash "$HOOK" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
@@ -152,14 +153,34 @@ rawrun 100;  [ "$RC" = 2 ] && warned && ok "control: file_path within the first 
 rm -f "$R/.claude/audit-gate/untracked_edit.s13"   # the control's ledger line would hide the next run
 rawrun 9000; [ "$RC" = 0 ] && ! warned && ok "a file_path past the first 8 KiB is not judged: the scan is bounded to a prefix" || fail "prefix cap: rc=$RC (a 9 KB pad before tool_input must hide it)"
 
+# c2. content before file_path inside tool_input (a tool whose arguments come in another order): the prefix holds "tool_input" but no path, so the
+#     hook makes ONE full match (it used to judge nothing and the old hook warned). The decoy above (the pad BEFORE "tool_input") stays unjudged.
+printf 'b\n' > "$R/src/late.kt"
+LATE="$(head -c 20000 /dev/zero | tr '\0' x)"
+printf '{"session_id":"s17","transcript_path":"%s","cwd":"%s","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"old_string":"%s","file_path":"%s/src/late.kt","new_string":"b"},"tool_response":{"filePath":"x"}}' \
+  "$TMP/t.jsonl" "$R" "$LATE" "$R" > "$TMP/late.json"
+( cd "$R" && env PATH="$TMP/bin:$PATH" CLAUDE_PROJECT_DIR="$R" bash "$HOOK" < "$TMP/late.json" > /dev/null 2> "$TMP/err" ); RC=$?
+[ "$RC" = 2 ] && grep -q 'late.kt' "$TMP/err" && ok "a file_path after 20 KB of tool_input content is still judged (one full match when the prefix holds tool_input but no path)" || fail "late file_path: rc=$RC (want 2) $(head -1 "$TMP/err")"
+
 # the slice and the update match run under LC_ALL=C (ASCII patterns: no UTF-8 decode of a big payload); a non-ASCII path must still be judged
 # whole, the warning must still name it, and the locale the hook was started with must be back for everything after (a UTF-8 shell here)
-printf 'b\n' > "$R/src/Vùng.kt"
-run s16 Edit "$R/src/Vùng.kt" '{"filePath":"x"}' LC_ALL=en_US.UTF-8
-[ "$RC" = 2 ] && grep -q 'Vùng.kt' "$TMP/err" && ok "a non-ASCII file name is judged and named whole (UTF-8 locale, slice under LC_ALL=C)" || fail "non-ASCII path: rc=$RC err=$(head -1 "$TMP/err")"
-printf 'b\n' > "$R/src/Vùng2.kt"
-run s16 Write "$R/src/Vùng2.kt" '{"type":"update","filePath":"x"}' LC_ALL=en_US.UTF-8
-[ "$RC" = 2 ] && grep -q 'Vùng2.kt' "$TMP/err" && ok "a Write 'update' over an untracked non-ASCII file still warns (the update match under LC_ALL=C)" || fail "non-ASCII Write update: rc=$RC"
+if locale -a 2>/dev/null | grep -qiE '^en_US\.UTF-?8$'; then
+  printf 'b\n' > "$R/src/Vùng.kt"
+  run s16 Edit "$R/src/Vùng.kt" '{"filePath":"x"}' LC_ALL=en_US.UTF-8
+  [ "$RC" = 2 ] && grep -q 'Vùng.kt' "$TMP/err" && ok "a non-ASCII file name is judged and named whole (UTF-8 locale, slice under LC_ALL=C)" || fail "non-ASCII path: rc=$RC err=$(head -1 "$TMP/err")"
+  # the children the hook starts afterwards see the ORIGINAL locale, not the C the slice ran under (a restore that does nothing leaves C behind)
+  [ -s "$TMP/lcall.log" ] && [ "$(sort -u "$TMP/lcall.log")" = "en_US.UTF-8" ] && ok "the locale is restored: git ran under LC_ALL=en_US.UTF-8, as the hook was started" || fail "LC_ALL seen by git after the slice: $(sort -u "$TMP/lcall.log" | tr '\n' ' ') (want en_US.UTF-8)"
+  printf 'b\n' > "$R/src/Vùng2.kt"
+  run s16 Write "$R/src/Vùng2.kt" '{"type":"update","filePath":"x"}' LC_ALL=en_US.UTF-8
+  [ "$RC" = 2 ] && grep -q 'Vùng2.kt' "$TMP/err" && ok "a Write 'update' over an untracked non-ASCII file still warns (the update match under LC_ALL=C)" || fail "non-ASCII Write update: rc=$RC"
+  [ "$(sort -u "$TMP/lcall.log")" = "en_US.UTF-8" ] && ok "  … and the locale is back after the update match too" || fail "LC_ALL after the update match: $(sort -u "$TMP/lcall.log" | tr '\n' ' ')"
+else
+  echo "- skipped: the en_US.UTF-8 locale is not installed, so the locale-restore and non-ASCII cases cannot be exercised here"
+fi
+# a hook started WITHOUT LC_ALL (or with whatever this shell has) leaves its children exactly that
+printf 'b\n' > "$R/src/lcdefault.kt"
+run s19 Edit "$R/src/lcdefault.kt" '{"filePath":"x"}'
+[ -s "$TMP/lcall.log" ] && [ "$(sort -u "$TMP/lcall.log")" = "${LC_ALL-<unset>}" ] && ok "LC_ALL as this shell has it (${LC_ALL-<unset>}) reaches the hook's children unchanged" || fail "default LC_ALL seen by git: $(sort -u "$TMP/lcall.log" | tr '\n' ' ') (want ${LC_ALL-<unset>})"
 
 # d. the check looks at the git INDEX (ls-files), not at HEAD: say so (a file another session has staged passes silently although HEAD lacks it)
 printf 'b\n' > "$R/src/wording.kt"
@@ -172,6 +193,17 @@ run s14 Edit "$R/src/dirledger.kt" '{"filePath":"x"}'; RC1=$RC
 run s14 Edit "$R/src/dirledger.kt" '{"filePath":"x"}'
 [ "$RC1" = 0 ] && [ "$RC" = 0 ] && ! warned && ok "a directory in place of the ledger file: no warning on any edit (fail-open)" || fail "ledger is a directory: rc=$RC1/$RC"
 rmdir "$R/.claude/audit-gate/untracked_edit.s14"
+
+# f. an unwritable ledger: the hook's own redirection errors must not reach Claude (for a failed `>> file` the shell prints "Permission denied"
+#    before a 2>/dev/null written after it takes effect). The warning itself still comes (the file is judged untracked; nothing could record it).
+if [ "$(id -u)" != 0 ]; then
+  printf 'b\n' > "$R/src/rolock.kt"; printf '%s\n' "$R/src/other.kt" > "$R/.claude/audit-gate/untracked_edit.s20"; chmod 444 "$R/.claude/audit-gate/untracked_edit.s20"
+  run s20 Edit "$R/src/rolock.kt" '{"filePath":"x"}'
+  [ "$RC" = 2 ] && warned && ! grep -qi 'permission denied' "$TMP/err" && ok "an unwritable ledger: the warning comes and no shell error text reaches the agent" || fail "unwritable ledger: rc=$RC err=$(grep -i 'denied' "$TMP/err" | head -1)"
+  chmod 644 "$R/.claude/audit-gate/untracked_edit.s20"
+else
+  echo "- skipped: running as root, a read-only file does not refuse the write"
+fi
 
 # 10. the ledger stays inside .claude/audit-gate (gitignored there), never in the tree being judged
 [ -z "$(git -C "$R" status --porcelain --untracked-files=all | grep -v 'src/\|sub dir/\|build.log' )" ] \
