@@ -215,11 +215,27 @@ def weekly(projects: list) -> str | None:
     return ("Báo cáo tuần — " + " | ".join(parts)) if parts else None
 
 
+def path_problem(raw: str) -> str | None:
+    """Why a path named on the command line is no project to run, else None. Path("") is the cwd (the audit's own workbench), so an empty
+    path is refused before it is resolved; a directory without .agents/ or that is not a git root (the 12/10 OfficeReader outer folder)
+    would only say "bỏ qua" with exit 0, which hides the mistake."""
+    if not raw.strip():
+        return "empty path"
+    p = Path(raw).expanduser()
+    if not p.is_dir():
+        return "not a directory"
+    if not (p / ".agents").is_dir():
+        return "no .agents/ - not a DevKit project"
+    if not os.path.lexists(p / ".git"):
+        return "not a git root - is it the folder around the repository?"
+    return None
+
+
 def cmd_run(paths: list | None = None) -> int:
     """Every registered project, or exactly `paths` (the daily /devkit-audit runs one repo at a time, only those whose
     checkout is free). A named run leaves the project list alone and sends no weekly report: its 7-day slot would go to
     whichever repo came first, with a one-repo line."""
-    projects = [str(Path(p).expanduser().resolve()) for p in paths] if paths else load_projects()
+    projects = list(dict.fromkeys(str(Path(p).expanduser().resolve()) for p in paths)) if paths else load_projects()   # one repo, one run
     reds = []
     for p in projects:
         try:
@@ -290,9 +306,13 @@ def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     cmd = args[0] if args else "status"
     if cmd == "run":
-        bad = [p for p in args[1:] if not Path(p).expanduser().is_dir()]
-        if bad:
-            print(f"nightly.py run: not a directory: {', '.join(bad)}", file=sys.stderr)
+        bad = []
+        for p in args[1:]:
+            why = path_problem(p)
+            if why:
+                bad.append(f"{p!r} ({why})")
+        if bad:   # all or nothing: one bad path means nothing runs
+            print(f"nightly.py run: not a DevKit project to run: {', '.join(bad)}", file=sys.stderr)
             return 2
         return cmd_run(args[1:])
     if cmd in ("add", "remove"):

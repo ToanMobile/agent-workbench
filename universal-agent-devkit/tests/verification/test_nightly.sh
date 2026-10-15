@@ -123,4 +123,32 @@ out="$(python3 "$NIGHTLY" run "$MID" 2>&1)"
   && ok "run <path>: a session that took the checkout after the first suite stops the run before the next one" || fail "run <path> lock taken mid-run: $(st "$MID" REG-B) $out"
 setlock "$HELD" none
 
+# M1 (review of lane A13): the paths a named run is given are checked before anything runs.
+#  - "" (Path("") is the cwd: the audit's own workbench) and blank paths are refused (exit 2); the cwd here is an empty scratch dir, so a run
+#    that wrongly accepted "" would only say "bỏ qua" and exit 0
+#  - one repo never runs twice (a trailing slash, a symlink, the same path twice)
+#  - a directory that is no DevKit project (no .agents/, or not a git root: the 12/10 OfficeReader outer-folder mistake) given EXPLICITLY is
+#    exit 2 with the reason, nothing runs; a bare `run` keeps skipping such a registered project with exit 0 (the LaunchAgent passes only `run`)
+CWD0="$TMP/cwd0"; mkdir -p "$CWD0"
+for blank in "" "   "; do
+  out="$(cd "$CWD0" && python3 "$NIGHTLY" run "$blank" 2>&1)"; rc=$?
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -qi 'empty' && ok "run '$blank': an empty or blank path is refused (exit 2) and said so" || fail "run '$blank': rc=$rc $out"
+done
+out="$(cd "$CWD0" && python3 "$NIGHTLY" run "$ONE" "" 2>&1)"; rc=$?
+[ "$rc" = 2 ] && ! printf '%s\n' "$out" | grep -q '^one: ' && ok "run <good> '': one bad path refuses the whole run, the good one does not run first" || fail "run <good> '': rc=$rc $out"
+DUP="$TMP/dup"; mk "$DUP" "true" "true"; ln -s "$DUP" "$TMP/dup-link"
+out="$(python3 "$NIGHTLY" run "$DUP" "$DUP/" "$TMP/dup-link" "$TMP/../$(basename "$TMP")/dup" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(printf '%s\n' "$out" | grep -c '^dup: ')" = 1 ] && ok "run <p> <p>/ <symlink to p>: one repo runs once" || fail "run duplicates: rc=$rc $out"
+PLAIN="$TMP/plain"; mkdir -p "$PLAIN"                                    # no .agents/, no git
+NOAG="$TMP/noag"; mkdir -p "$NOAG" && git init -q "$NOAG"                # a git root without .agents/
+OUTER="$TMP/outer"; mkdir -p "$OUTER/.agents" "$OUTER/inner"; git init -q "$OUTER/inner"   # .agents/ but not a git root
+for bad in "$PLAIN" "$NOAG" "$OUTER"; do
+  out="$(python3 "$NIGHTLY" run "$ONE" "$bad" 2>&1)"; rc=$?
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -q "$(basename "$bad")" && ! printf '%s\n' "$out" | grep -q '^one: ' \
+    && ok "run <good> $(basename "$bad"): an explicit path that is no DevKit git root is exit 2 with its name, nothing runs" || fail "run <good> $bad: rc=$rc $out"
+done
+HOME2="$TMP/home2"; mkdir -p "$HOME2"; HOME="$HOME2" python3 "$NIGHTLY" add "$PLAIN" >/dev/null
+out="$(HOME="$HOME2" python3 "$NIGHTLY" run 2>&1)"; rc=$?
+[ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^plain: .*bỏ qua' && ok "bare run: a registered project that is no DevKit project is still skipped with exit 0 (the LaunchAgent's call is unchanged)" || fail "bare run with a plain registered dir: rc=$rc $out"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_nightly: all passed" || { echo "❌ test_nightly: $FAILS failed"; exit 1; }
