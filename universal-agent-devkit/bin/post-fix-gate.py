@@ -1171,10 +1171,15 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
 # (drop `force_reason` in reuse_full_pass) when the extra handover run is ever seen to cost more than that trust is worth.
 # 2026-10-15: every such run that ended without a FAIL writes it, not only a budget cut: a Stop that ends exit 2 (an edited test waits for a
 # person) or exit 4 (a suite cannot run here) used to record nothing, so after the hook's 300 s reminder window, or in another session, every
-# suite ran again on the same content (OfficeReader 13/10: 568 s to print the same reminder). The record also names the HEAD it was taken at
+# suite ran again on the same content (Neighbours 13/10: 243 s to print the same reminder). The record also names the HEAD it was taken at
 # (the fingerprint is blind to a commit of the same content): a record without one, or of another HEAD, is never read. A FAIL still drops it.
 # ponytail: a run with a FAILED suite records nothing, so a repeat of such a run re-runs the suites that passed in it; upgrade when the
 # FAIL-then-same-content repeat is seen to cost more than the "a FAIL leaves nothing to re-use" rule is worth.
+# ponytail: a record is read for up to DEVKIT_GATE_CACHE_MAX_S (6 h, as the receipt), so a suite that starts to fail on UNCHANGED content (a flaky
+# test, a service that went away) stays unseen that long after an exit-2 reminder, where the hook's 300 s recheck used to run it again; give the
+# record its own, shorter cap when such a miss is seen. An impacted-mode PASS (a suite run on the selected tests only) is never recorded, so a
+# repeat of an impacted run still runs those suites (OfficeReader's exit-2 repeats are impacted runs); record the command run and the vacuity
+# base to cover them.
 BUDGET_RECORD = "budget_pass.json"
 # the modes whose PASS means "the suite's FULL command passed on this content" (the same ones a full run's receipt records)
 BUDGET_RECORD_MODES = ("full", "cached", "covered", "skip-compile")

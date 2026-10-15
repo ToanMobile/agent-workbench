@@ -3,11 +3,13 @@
 # results: the full-pass receipt is written by a full run only, and the budget record (.git/postfix-gate/budget_pass.json) only by a run whose time
 # budget cut a suite. So a Stop run that ended exit 2 (an edited existing test waits for a person) or exit 4 (a suite cannot run on this machine)
 # left nothing, and every later Stop on the SAME content ran every suite again: after the 300 s window of the hook's "tests-touched" reminder, or in
-# another session. Measured on the real logs (OfficeReader 13/10: one such re-run of REG-OR-APP/L10N/CORE/FEATURE took 568 s and printed the same
-# reminder; 10/10-14/10, same content run again: OfficeReader 4.1 min, Neighbours 4.0 min, GeelyEx2 1.2 min of suites in 3 days).
+# another session. Measured on the real logs (Neighbours 13/10: one such re-run of a Unity suite took 243 s and printed the same reminder; runs since
+# 12/10 20:32 whose suites an exact memo would have skipped, impacted-mode runs left out because they are not recorded: Neighbours 4.0 min,
+# GeelyEx2 0.3 min in 2.6 days; OfficeReader's one repeat, 568 s on 13/10, was an impacted run and is NOT covered).
 # Now every non-forced run that ended without a FAIL records the suites that PASSED their FULL command, and the next non-forced run on identical
 # inputs starts none of them. The record is read under the keys of a receipt (tree fingerprint, matrix, local-config sha, result format, age,
-# no device suite) AND the HEAD it was taken at.
+# no device suite) AND the HEAD it was taken at. An impacted-mode PASS is never recorded (the full command did not pass), and a record is read for up
+# to 6 h like a receipt: a suite that starts to fail on unchanged content stays unseen until the record ages out or the content changes.
 #   A  gate level, real git repos, a Stop-style run (GATE_TOTAL_BUDGET_S set, no --full):
 #      A1 same content twice (exit 2: an existing test was edited): run 2 starts no suite, still exit 2, says it re-used them
 #      A2 one source byte changed: every suite runs again               A3 the edited test edited again: every suite runs again

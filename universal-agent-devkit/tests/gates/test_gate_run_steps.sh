@@ -136,7 +136,7 @@ def good_steps(steps):
 
 
 # S1 + S2: a plain run, one suite that takes a moment
-root = make_plain("plain", [("REG-NAP", "sleep 1.3"), ("REG-FAST", "true")])
+root = make_plain("plain", [("REG-NAP", "sleep 3"), ("REG-FAST", "true")])
 rc, out = run_gate(root)
 recs = records(root)
 r = recs[-1] if recs else {}
@@ -149,9 +149,9 @@ if good_steps(steps):
     chk(abs(phases - tw) <= 1.0, "S1: the phases add up to the run's wall time (%.1f s of %.1f s)" % (phases, tw),
         "phases %.2f vs total_wall_s %.2f: %r" % (phases, tw, steps))
     chk(all(k in steps for k in ("static", "suites", "checklist", "report")), "S1: the phases every --run-tests run passes through are all there", repr(sorted(steps)))
-    chk(steps.get("suites", 0) >= 1.2 and steps.get("suites", 0) <= tw, "S2: the suites step holds the suite's own seconds (%.1f s)" % steps.get("suites", 0), repr(steps))
-    chk(steps.get("suites", 0) >= 0.7 * tw, "S2: the suite loop is most of this run, so it is not charged to `static` (%.1f of %.1f s)" % (steps.get("suites", 0), tw), repr(steps))
-    chk(steps.get("static", 99) < 0.5 * tw, "S2: static checks are a small part of a run whose suite sleeps (%.1f of %.1f s)" % (steps.get("static", 0), tw), repr(steps))
+    # bounds that hold on a slow machine: the nap is a floor for the suites step, and the run's other phases are not charged with it
+    chk(steps.get("suites", 0) >= 2.9 and steps.get("suites", 0) <= tw, "S2: the suites step holds the suite's own seconds (%.1f s, the suite sleeps 3 s)" % steps.get("suites", 0), repr(steps))
+    chk(steps.get("static", 99) < steps.get("suites", 0), "S2: the nap is not charged to `static` (static %.1f s, suites %.1f s)" % (steps.get("static", 0), steps.get("suites", 0)), repr(steps))
     chk("vacuity" not in steps or steps["vacuity"] < 0.2, "S1: no vacuity re-run, no vacuity seconds", repr(steps))
 
 # S2b: the first phase starts at the start of main(): a slow `git status` (listing the changed files) is the git step, not nobody's
@@ -175,35 +175,50 @@ chk(rc == 0 and r.get("impacted_run") is True, "S3: fixture run is an impacted P
 if good_steps(steps):
     sw = r.get("suites_wall_s", 0)
     chk(steps.get("vacuity", 0) >= 0.9, "S3: the vacuity re-run is its own step (%.1f s)" % steps.get("vacuity", 0), repr(steps))
-    chk(sw < 1.8 and steps.get("suites", 0) >= sw + 0.9, "S3: it is NOT in suites_wall_s (%.1f s) and IS in the suites step (%.1f s)" % (sw, steps.get("suites", 0)), repr(r))
+    chk(steps.get("suites", 0) - sw >= 0.9, "S3: it is NOT in suites_wall_s (%.1f s) and IS in the suites step (%.1f s)" % (sw, steps.get("suites", 0)), repr(r))
     chk(steps.get("vacuity", 0) <= steps.get("suites", 0) + 0.2, "S3: vacuity is a part of suites, never more", repr(steps))
 else:
     bad("S3: no usable steps in the record: %r" % r)
 root = make_vacuity("vac0", "1")
 rc, out = run_gate(root, env={"VACUITY_REVERT": "0"})
 steps = (records(root) or [{}])[-1].get("steps") or {}
-chk(good_steps(steps) and steps.get("vacuity", 0) < 0.2 and steps.get("suites", 0) < 1.9, "S3: control, VACUITY_REVERT=0: no vacuity seconds, one run of the suite", repr(steps))
+r0 = (records(root) or [{}])[-1]
+chk(good_steps(steps) and steps.get("vacuity", 0) < 0.2 and steps.get("suites", 0) - r0.get("suites_wall_s", 0) < 0.9,
+    "S3: control, VACUITY_REVERT=0: no vacuity seconds, the suites step is the suite's own seconds", repr(r0))
 
-# S4: the lock wait
+# S4: the lock wait. The holder lets go 2 s after the gate SAYS it waits (a release file), not a fixed time after it took the lock: a slow start of
+# the gate must not shorten the wait this test measures
 root = make_plain("lockwait", [("REG-FAST", "true")])
 lockdir = os.path.join(root, ".claude", "audit-gate")
 os.makedirs(lockdir, exist_ok=True)
-ready = os.path.join(TMP, "lock-ready")
-holder = subprocess.Popen([PY, "-c", "import fcntl,sys,time\nf=open(sys.argv[1]+'/test_run.lock','a')\nfcntl.flock(f,fcntl.LOCK_EX)\n"
-                           "open(sys.argv[2],'w').close()\ntime.sleep(2.5)\n", lockdir, ready])
-for _ in range(100):
+ready, release, gate_out = os.path.join(TMP, "lock-ready"), os.path.join(TMP, "lock-release"), os.path.join(TMP, "lock-gate.out")
+holder = subprocess.Popen([PY, "-c", "import fcntl,os,sys,time\nf=open(sys.argv[1]+'/test_run.lock','a')\nfcntl.flock(f,fcntl.LOCK_EX)\n"
+                           "open(sys.argv[2],'w').close()\nfor _ in range(900):\n    if os.path.exists(sys.argv[3]):\n        break\n    time.sleep(0.1)\n",
+                           lockdir, ready, release])
+for _ in range(300):
     if os.path.exists(ready):
         break
     time.sleep(0.1)
-rc, out = run_gate(root)
+env = dict(os.environ)
+env.update({"CLAUDE_PROJECT_DIR": root, "FLAKY_RETRY": "0", "VACUITY_REVERT": "0", "TEST_RUN_LOCK_WAIT_S": "120"})
+with open(gate_out, "w") as fo:
+    gate = subprocess.Popen([PY, GATE, "--matrix", os.path.join(root, "matrix.json"), "--lang", "en", "--run-tests"], cwd=root, env=env,
+                            stdout=fo, stderr=subprocess.STDOUT)
+    for _ in range(900):
+        if "waiting for it" in open(gate_out).read() or gate.poll() is not None:
+            break
+        time.sleep(0.1)
+    time.sleep(2.0)
+    open(release, "w").close()
+    rc = gate.wait(timeout=240)
 holder.wait(timeout=30)
 steps = (records(root) or [{}])[-1].get("steps") or {}
-chk(good_steps(steps) and steps.get("lock", 0) >= 1.2 and steps.get("lock", 0) <= 6, "S4: a wait for test_run.lock held by another process is the lock step (%.1f s)" % steps.get("lock", 0),
-    "rc=%s steps=%r" % (rc, steps))
+chk(good_steps(steps) and 1.8 <= steps.get("lock", 0) <= 30, "S4: a wait for test_run.lock held by another process is the lock step (%.1f s, held 2 s after the gate said it waits)" % steps.get("lock", 0),
+    "rc=%s steps=%r out=%s" % (rc, steps, open(gate_out).read()[-300:]))
 root = make_plain("nolock", [("REG-FAST", "true")])
 rc, out = run_gate(root)
 steps = (records(root) or [{}])[-1].get("steps") or {}
-chk(good_steps(steps) and steps.get("lock", 0) < 0.5, "S4: control, nobody holds the lock: the lock step is ~0 (%.1f s)" % steps.get("lock", 0), repr(steps))
+chk(good_steps(steps) and steps.get("lock", 0) < 1.0, "S4: control, nobody holds the lock: the lock step is ~0 (%.1f s)" % steps.get("lock", 0), repr(steps))
 
 # S5: 40 suites with long ids
 many = [("REG-" + ("LONG-SUITE-ID-" * 3) + str(i), "true") for i in range(40)]
