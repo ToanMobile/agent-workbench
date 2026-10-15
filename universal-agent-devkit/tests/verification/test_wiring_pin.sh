@@ -222,4 +222,73 @@ vrf "$TMP/wrapped.pin.kt"
 cp "$TMP/SelectionView.new.kt" "$VIEWF"; vrf "$TMP/empty.pin.kt"
 [ "$VRC" = 2 ] && grep -qi 'old-branch\|old branch' "$TMP/vrf.out" && ok "a pin with no old-branch assertion is refused (exit 2): it used to say holds" || fail "empty old-branch half: rc=$VRC (want 2) $(cat "$TMP/vrf.out")"
 
+# ── review of lane A11: scan must read every file the repo has, never hang, and never turn an error into "pin needed" ─────────────────────────
+mkfix() {  # mkfix <root> [old View file]: base commit = the View with its old branch; then the refactor, uncommitted: a new internal object, the View calls it
+  local r="$1" v="$1/app/src/main/java/com/x"
+  mkdir -p "$v" "$r/app/src/test/java/com/x"
+  git -C "$r" init -q . && git -C "$r" config user.email t@t && git -C "$r" config user.name t && git -C "$r" config commit.gpgsign false
+  printf 'plugins { id("com.android.application") }\n' > "$r/app/build.gradle.kts"
+  cp "${2:-$TMP/SelectionView.old.kt}" "$v/SelectionView.kt"
+  git -C "$r" add -A && git -C "$r" commit -q -m base
+  printf 'package com.x\n\ninternal object SelectionRules {\n    fun pick(startDistance: Int, endDistance: Int): Int = if (startDistance <= endDistance) 0 else 1\n}\n' > "$v/SelectionRules.kt"
+  cp "$TMP/SelectionView.new.kt" "$v/SelectionView.kt"
+}
+scanin() {  # scanin <root> [seconds]: scan with a wall-clock cap (no `timeout` on macOS); exit code in $SRC (124 = still running), output in $TMP/scan.o
+  python3 -I - "$WP" "$1" "${2:-60}" > "$TMP/scan.o" 2>&1 <<'PY'
+import subprocess, sys
+wp, root, secs = sys.argv[1], sys.argv[2], float(sys.argv[3])
+try:
+    r = subprocess.run([sys.executable, "-I", wp, "scan"], cwd=root, capture_output=True, text=True, errors="replace", timeout=secs)
+    sys.stdout.write(r.stdout + r.stderr)
+    sys.exit(r.returncode)
+except subprocess.TimeoutExpired:
+    print("TIMEOUT")
+    sys.exit(124)
+PY
+  SRC=$?
+}
+
+# S1. a byte that is not UTF-8 in a removed line (a Latin-1 file) made scan raise: a traceback exits 1, which means "pin needed"
+LATIN="$TMP/SelectionView.latin.kt"
+awk '{print} /fun pick/{print "        val label = \"caf\351 au lait\""}' "$TMP/SelectionView.old.kt" > "$LATIN"
+F5="$TMP/f5"; mkfix "$F5" "$LATIN"; scanin "$F5"
+[ "$SRC" = 1 ] && ! grep -q 'Traceback' "$TMP/scan.o" && grep -q 'PIN NEEDED' "$TMP/scan.o" && ok "a Latin-1 byte in a removed View line: scan still reports PIN NEEDED, no traceback" || fail "latin-1 byte: rc=$SRC $(head -3 "$TMP/scan.o")"
+# any other unexpected error is exit 2 with a message, not a traceback with exit 1
+python3 -I - "$DEVKIT_DIR/scripts/linters" > "$TMP/boom.out" 2>&1 <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import wiring_pin as w
+def boom(*a, **k):
+    raise RuntimeError("boom")
+w.scan = boom
+sys.exit(w.main(["scan"]))
+PY
+rc=$?
+[ "$rc" = 2 ] && grep -qi 'internal error' "$TMP/boom.out" && ! grep -q 'Traceback' "$TMP/boom.out" && ok "an unexpected exception is exit 2 with 'internal error', never exit 1 (= pin needed)" || fail "unexpected exception: rc=$rc $(head -3 "$TMP/boom.out")"
+
+# S2. git C-quotes non-ASCII paths ("SelectionRulesV\303\271ng.kt"): the file was silently skipped, scan said exit 0
+F6="$TMP/f6"; mkfix "$F6"; mv "$F6/app/src/main/java/com/x/SelectionRules.kt" "$F6/app/src/main/java/com/x/SelectionRulesVùng.kt"; scanin "$F6"
+[ "$SRC" = 1 ] && grep -q 'PIN NEEDED' "$TMP/scan.o" && ok "an untracked object file with a non-ASCII name is scanned (exit 1)" || fail "non-ASCII untracked file: rc=$SRC (want 1) $(head -3 "$TMP/scan.o")"
+F7="$TMP/f7"; mkdir -p "$F7/app/src/main/java/com/x"
+git -C "$F7" init -q . && git -C "$F7" config user.email t@t && git -C "$F7" config user.name t && git -C "$F7" config commit.gpgsign false
+printf 'plugins { id("com.android.application") }\n' > "$F7/app/build.gradle.kts"
+cp "$TMP/SelectionView.old.kt" "$F7/app/src/main/java/com/x/SelectionView.kt"
+printf 'package com.x\n\ninternal object Existing { fun f() = 1 }\n' > "$F7/app/src/main/java/com/x/RulesVùng.kt"
+git -C "$F7" add -A && git -C "$F7" commit -q -m base
+printf 'package com.x\n\ninternal object Existing { fun f() = 1 }\n\ninternal object SelectionRules {\n    fun pick(a: Int, b: Int): Int = if (a <= b) 0 else 1\n}\n' > "$F7/app/src/main/java/com/x/RulesVùng.kt"
+cp "$TMP/SelectionView.new.kt" "$F7/app/src/main/java/com/x/SelectionView.kt"; scanin "$F7"
+[ "$SRC" = 1 ] && grep -q 'PIN NEEDED - internal object SelectionRules' "$TMP/scan.o" && ok "a tracked, modified file with a non-ASCII name that gained an internal object is scanned (exit 1)" || fail "non-ASCII tracked file: rc=$SRC (want 1) $(head -3 "$TMP/scan.o")"
+
+# S3. a FIFO named *.kt (nothing of ours: INSTINCT-040) made scan block in open() forever; anything that is not a regular file is skipped
+F8="$TMP/f8"; mkfix "$F8"; mkfifo "$F8/app/src/main/java/com/x/Hang.kt" "$F8/app/src/test/java/com/x/HangTest.kt"; scanin "$F8" 20
+[ "$SRC" = 1 ] && grep -q 'PIN NEEDED' "$TMP/scan.o" && ok "a FIFO named *.kt next to the object does not hang scan (it still reports PIN NEEDED)" || fail "FIFO: rc=$SRC (124 = hung) $(head -3 "$TMP/scan.o")"
+
+# S4. a file that was only RENAMED (git mv) is not a new object: git shows the new name, base has no such path, so every object in it counted as new
+F9="$TMP/f9"; mkfix "$F9"; git -C "$F9" add -A && git -C "$F9" commit -q -m "refactor, wired, no test names the View"
+git -C "$F9" mv app/src/main/java/com/x/SelectionRules.kt app/src/main/java/com/x/MovedRules.kt; scanin "$F9"
+[ "$SRC" = 0 ] && ok "a committed object whose file was only renamed (git mv) is not reported as new (exit 0)" || fail "renamed file: rc=$SRC (want 0) $(head -3 "$TMP/scan.o")"
+# ... but an object ADDED to a renamed file still is
+printf '\ninternal object Another { fun g() = 2 }\n' >> "$F9/app/src/main/java/com/x/MovedRules.kt"; scanin "$F9"
+grep -q 'UNWIRED - internal object Another' "$TMP/scan.o" && ok "  … while a new object added to the renamed file is (UNWIRED: no View names it)" || fail "object added to a renamed file: rc=$SRC $(head -3 "$TMP/scan.o")"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_wiring_pin: all passed" || { echo "❌ test_wiring_pin: $FAILS failed"; exit 1; }
