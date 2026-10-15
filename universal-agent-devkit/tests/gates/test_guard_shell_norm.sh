@@ -661,6 +661,9 @@ pair 0 $'cat > notes.md <<\'EOF\' 2>/dev/null\n@BODY@\nEOF\n'
 # accepted false positive (policy 15/10)
 pair 2 $'cat > notes.md <<\'EOF\'\n@BODY@\nEOF\ngit add notes.md && git commit -m x'
 pair 0 $'git commit -F - <<\'EOF\'\nmessage @BODY@\nEOF'
+pair 0 $'git commit -q -F - -- a.kt <<\'MSG\'\nfix: `grep x` was blocked; @BODY@\nMSG'   # tests/gates/test_gate_friction.sh asks for this one
+pair 0 $'git commit --allow-empty --file=- <<EOF\nmessage @BODY@\nEOF'
+pair 2 $'git commit -m x -F - $(echo a) <<\'EOF\'\n@BODY@\nEOF'   # an expansion in the arguments: not a plain statement
 pair 0 $'git commit -m "$(cat <<\'EOF\'\nmessage @BODY@\nEOF\n)"'
 pair 0 $'git add -A && git commit -m "$(cat <<\'EOF\'\nmessage @BODY@\nEOF\n)" && git status'
 pair 0 $'gh pr create --title t --body "$(cat <<\'EOF\'\nsummary @BODY@\nEOF\n)"'

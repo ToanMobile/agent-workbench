@@ -763,14 +763,13 @@ def _modeled(text, docs):
 
 
 _PATHW = r"[A-Za-z0-9_./~+@-]+"
+_ARGW = r"[A-Za-z0-9_./=:@+,-]+"   # a plain word: an option of git commit or a path after --, nothing the shell expands or quotes
 _DELIMW = _DELIM.pattern
 _STMT = [re.compile(p) for p in (
     r"cat\s*>>?\s*(?P<t>%s)\s*<<-?\s*%s(?:\s+2>/dev/null)?" % (_PATHW, _DELIMW),
     r"cat\s*<<-?\s*%s\s*>>?\s*(?P<t>%s)(?:\s+2>/dev/null)?" % (_DELIMW, _PATHW),
     r"tee\s+(?:-a\s+)?(?P<t>%s)\s*<<-?\s*%s" % (_PATHW, _DELIMW),
-    r"git\s+commit(?:\s+(?:-q|-s|-a|-v|--quiet|--signoff|--all|--verbose|--allow-empty|--amend|--no-edit))*"
-    r"\s+(?:-F\s*-|--file=-|--file\s+-)(?:\s+(?:-q|-s|-a|-v|--quiet|--signoff|--all|--verbose|--allow-empty|--amend|--no-edit))*"
-    r"\s*<<-?\s*%s" % _DELIMW)]
+    r"git\s+commit(?:\s+%s)*?\s+(?:-F\s*-|--file=-|--file\s+-)(?:\s+%s)*\s*<<-?\s*%s" % (_ARGW, _ARGW, _DELIMW))]
 _PREFIX = re.compile(r"(?:(?:cd|mkdir\s+-p)\s+%s\s*&&\s*)*" % _PATHW)
 
 
