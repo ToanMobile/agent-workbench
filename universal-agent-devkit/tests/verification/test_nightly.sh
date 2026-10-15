@@ -178,4 +178,33 @@ HOME2="$TMP/home2"; mkdir -p "$HOME2"; HOME="$HOME2" python3 "$NIGHTLY" add "$PL
 out="$(HOME="$HOME2" python3 "$NIGHTLY" run 2>&1)"; rc=$?
 [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^plain: .*bỏ qua' && ok "bare run: a registered project that is no DevKit project is still skipped with exit 0 (the LaunchAgent's call is unchanged)" || fail "bare run with a plain registered dir: rc=$rc $out"
 
+# The bare run is the LaunchAgent's call and ignores sessions (nobody works at night): a registered project whose checkout an idle session holds
+# is still RUN. (A bare run made `named` would skip it: this is the pin that turns red.)
+LOCKED="$TMP/locked"; mk "$LOCKED" "true" 'grep -q 2 src/b.txt'; echo 3 > "$LOCKED/src/b.txt"     # breaks REG-B: it turns FAIL only if the run happens
+setlock "$LOCKED" idle
+HOME3="$TMP/home3"; mkdir -p "$HOME3"; HOME="$HOME3" python3 "$NIGHTLY" add "$LOCKED" >/dev/null
+out="$(HOME="$HOME3" python3 "$NIGHTLY" run 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(st "$LOCKED" REG-B)" = FAIL ] && ! printf '%s\n' "$out" | grep -q 'skip:' && ok "bare run: a registered project an idle session holds is still run (the LaunchAgent path ignores sessions)" || fail "bare run on a locked project: rc=$rc $(st "$LOCKED" REG-B) $out"
+
+# Review round 2: what a NAMED run must also refuse or skip
+# (a) a .git that is a file pointing at a git dir that is gone: git_dir gives nothing, and the run used to go ahead
+BROKEN="$TMP/brokengit"; mkdir -p "$BROKEN/.agents"; printf 'gitdir: %s/no-such-gitdir\n' "$TMP" > "$BROKEN/.git"
+out="$(python3 "$NIGHTLY" run "$BROKEN" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^brokengit: skip: .*git dir' && ok "run <path>: a .git that points at a missing git dir is skipped with a reason, not run" || fail "broken .git pointer: rc=$rc $out"
+# (b) a trunk-mode main checkout holds no lock, yet it is merge-only: skipped
+TRK="$TMP/trunk"; mk "$TRK" "true" 'grep -q 2 src/b.txt'; echo 3 > "$TRK/src/b.txt"; git -C "$TRK" config devkit.trunkMode true
+out="$(python3 "$NIGHTLY" run "$TRK" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^trunk: skip: trunk mode' && [ "$(st "$TRK" REG-B)" = PASS ] && ok "run <path>: a trunk-mode main checkout (merge-only, never locked) is skipped, nothing ran" || fail "trunk-mode main: rc=$rc $(st "$TRK" REG-B) $out"
+# (c) one repo spelled two ways by a case-insensitive filesystem (APFS) runs once: identity is (device, inode), not the resolved string
+CI="$TMP/CaseRepo"; mk "$CI" "true" "true"
+if [ -d "$TMP/caserepo" ]; then
+  out="$(python3 "$NIGHTLY" run "$CI" "$TMP/caserepo" 2>&1)"; rc=$?
+  [ "$rc" = 0 ] && [ "$(printf '%s\n' "$out" | grep -ci '^caserepo: ')" = 1 ] && ok "run <p> <P>: one repo spelled in two letter cases runs once (identity by inode)" || fail "case-spelled duplicate: rc=$rc $out"
+else
+  echo "- skipped: this filesystem is case-sensitive, the case-spelled duplicate cannot arise here"
+fi
+# (d) ~user of a user that does not exist: Path.expanduser raises RuntimeError; that is exit 2 with the path named, not a traceback
+out="$(python3 "$NIGHTLY" run '~nosuchuser_zz9/x' 2>&1)"; rc=$?
+[ "$rc" = 2 ] && printf '%s\n' "$out" | grep -q 'nosuchuser_zz9' && ! printf '%s\n' "$out" | grep -q 'Traceback' && ok "run ~nosuchuser/x: exit 2 naming the path, no traceback" || fail "unknown ~user: rc=$rc $out"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_nightly: all passed" || { echo "❌ test_nightly: $FAILS failed"; exit 1; }

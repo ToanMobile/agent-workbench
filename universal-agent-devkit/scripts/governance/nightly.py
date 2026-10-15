@@ -123,9 +123,12 @@ def checkout_busy(project: Path) -> str | None:
     gate then queues behind the suite's test_run.lock). Judged as worktree_merge_gate judges it: idle_frees=False, live_pid_holds=True.
     ponytail: a session that opens while a suite runs is seen only at the next check (the next suite, or red_proof); upgrade to a lock watcher
     that stops the running suite when a session is seen editing during a night run."""
-    gdir, _top = session_lock.git_dir(str(project))
-    if not gdir:
-        return None
+    gdir, top = session_lock.git_dir(str(project))
+    if not gdir:   # the path was checked to hold a .git: one git cannot read (a pointer to a gitdir that is gone) is no go-ahead
+        return "không đọc được git dir"
+    trunk, _sw = session_lock.trunk_main(top)
+    if trunk and session_lock._same_dir(top, trunk):   # a trunk-mode main is never locked and takes merges only: no run writes its checklist
+        return "trunk mode: main chỉ nhận merge"
     lock, now = session_lock.read_checkout_lock(gdir), time.time()
     if session_lock.is_free_for(lock, "", now, idle_frees=False, live_pid_holds=True):
         return None
@@ -226,7 +229,10 @@ def path_problem(raw: str) -> str | None:
     would only say "bỏ qua" with exit 0, which hides the mistake."""
     if not raw.strip():
         return "empty path"
-    p = Path(raw).expanduser()
+    try:
+        p = Path(raw).expanduser()
+    except RuntimeError:   # ~user of a user that does not exist
+        return "cannot expand ~ (no such user or no home directory)"
     if not p.is_dir():
         return "not a directory"
     if not (p / ".agents").is_dir():
@@ -236,11 +242,28 @@ def path_problem(raw: str) -> str | None:
     return None
 
 
+def unique_projects(paths: list) -> list:
+    """The named paths, resolved, one entry per directory. Identity is (device, inode): a case-insensitive filesystem (APFS) spells one repo
+    several ways that resolve() keeps apart, and `run .../r1 .../R1` ran it twice."""
+    seen, out = set(), []
+    for p in paths:
+        q = Path(p).expanduser().resolve()
+        try:
+            st = os.stat(q)
+            key = (st.st_dev, st.st_ino)
+        except OSError:
+            key = str(q)
+        if key not in seen:
+            seen.add(key)
+            out.append(str(q))
+    return out
+
+
 def cmd_run(paths: list | None = None) -> int:
     """Every registered project, or exactly `paths` (the daily /devkit-audit runs one repo at a time, only those whose
     checkout is free). A named run leaves the project list alone and sends no weekly report: its 7-day slot would go to
     whichever repo came first, with a one-repo line."""
-    projects = list(dict.fromkeys(str(Path(p).expanduser().resolve()) for p in paths)) if paths else load_projects()   # one repo, one run
+    projects = unique_projects(paths) if paths else load_projects()   # one repo, one run
     reds = []
     for p in projects:
         try:
