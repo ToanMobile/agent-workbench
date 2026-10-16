@@ -47,28 +47,28 @@ gated_worktree_commit() {   # edit code in the worktree, run the full gate there
   echo "fun ok() = $1" > "$W/src/Core.kt"
   CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief > "$TMP/gate.out" 2>&1 \
     || bad "setup: gate --full in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
-  git -C "$W" commit -qam "task work $1"
+  git -C "$W" commit -qam "task work $1" || bad "setup: commit of the gated work failed"
 }
 
 newrepo
 gated_worktree_commit 2
-git -C "$R" merge -q --ff-only task
+git -C "$R" merge -q --ff-only task || bad "L1 setup: merge failed"
 expect "L1: worktree gated, merged ff into main: the push from main is covered" 0 "covered by the gate receipt of the linked worktree"
 
-echo "fun ok() = 3" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated on main"
+echo "fun ok() = 3" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated on main" || bad "L2 setup: commit failed"
 expect "L2: an ungated commit on main after the merge is refused" 2
 
 newrepo
 gated_worktree_commit 2
-git -C "$W" commit -q --amend -m "reworded"; echo "fun ok() = 9" > "$W/src/Core.kt"; git -C "$W" commit -qam "changed after gate"
-git -C "$R" merge -q --ff-only task
+git -C "$W" commit -q --amend -m "reworded" && echo "fun ok() = 9" > "$W/src/Core.kt" && git -C "$W" commit -qam "changed after gate" \
+  && git -C "$R" merge -q --ff-only task || bad "L3 setup: amend / commit / merge failed"
 expect "L3: code changed in the worktree after its gate: refused" 2
 
 newrepo
-echo "fun ok() = 2" > "$W/src/Core.kt"; git -C "$W" commit -qam "task work 2"
+echo "fun ok() = 2" > "$W/src/Core.kt"; git -C "$W" commit -qam "task work 2" || bad "L3b setup: commit failed"
 CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief --diff main > "$TMP/gate.out" 2>&1 || bad "L3b setup: gate --full failed: $(tail -3 "$TMP/gate.out")"
-git -C "$W" reset -q --soft HEAD~1 && echo "# notes" > "$W/NOTES.md" && git -C "$W" add NOTES.md && git -C "$W" commit -qm "rewritten after gate"
-git -C "$R" merge -q --ff-only task
+git -C "$W" reset -q --soft HEAD~1 && echo "# notes" > "$W/NOTES.md" && git -C "$W" add NOTES.md && git -C "$W" commit -qm "rewritten after gate" \
+  && git -C "$R" merge -q --ff-only task || bad "L3b setup: rewrite / merge failed"
 expect "L3b: the gated commit rewritten after the gate (receipt head not in the pushed history): refused" 2
 
 newrepo
@@ -78,17 +78,18 @@ python3 - "$RW" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1])); r["fingerprint"] = "0123456789abcdef01234567"; json.dump(r, open(sys.argv[1], "w"))
 PY
-git -C "$R" merge -q --ff-only task
+[ $? = 0 ] || bad "L4 setup: forging the receipt failed"
+git -C "$R" merge -q --ff-only task || bad "L4 setup: merge failed"
 expect "L4: a forged worktree receipt (invented fingerprint): refused" 2
 
 # A linked worktree with no receipt must never vouch for main: its own early "nothing to check" answers are not coverage.
 newrepo
-echo "fun ok() = 4" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated on main"; rm -rf "$W"
+echo "fun ok() = 4" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated on main" && rm -rf "$W" || bad "L5 setup: commit failed"
 expect "L5: a linked worktree whose folder is gone (prunable) does not cover an ungated push" 2
 
 newrepo
-git -C "$W" rm -q .agents/regression_matrix.active.json && git -C "$W" commit -qm "no matrix on this branch"
-echo "fun ok() = 5" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated on main"
+git -C "$W" rm -q .agents/regression_matrix.active.json && git -C "$W" commit -qm "no matrix on this branch" || bad "L6 setup: removing the matrix failed"
+echo "fun ok() = 5" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated on main" || bad "L6 setup: commit failed"
 expect "L6: a linked worktree without a regression matrix does not cover an ungated push" 2
 
 newrepo
@@ -97,23 +98,23 @@ gated_worktree_commit 2
 [ -d "$W" ] && bad "L7 setup: worktree finish left the worktree in place: $(tail -3 "$TMP/finish.out")"
 expect "L7: worktree gated, then merged and removed by worktree finish: the push from main is covered" 0 "covered"
 
-echo "fun ok() = 6" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated on main"
+echo "fun ok() = 6" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated on main" || bad "L8 setup: commit failed"
 expect "L8: an ungated commit on main after worktree finish is refused" 2
 
 # the next task: main keeps the (now stale) receipt the first finish carried; a new worktree gated and merged by hand still covers
 newrepo
 gated_worktree_commit 2
 (cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) || bad "L9 setup: worktree finish failed: $(tail -3 "$TMP/finish.out")"
-git -C "$R" worktree add -q -b task2 "$W" main
+git -C "$R" worktree add -q -b task2 "$W" main || bad "L9 setup: worktree add failed"
 gated_worktree_commit 7
-git -C "$R" merge -q --ff-only task2
+git -C "$R" merge -q --ff-only task2 || bad "L9 setup: merge failed"
 expect "L9: main holds a stale valid receipt, a linked worktree's receipt covers the new head: the push is covered" 0 \
   "covered by the gate receipt of the linked worktree"
 
 # a worktree at main's HEAD that passed the gate only thanks to UNCOMMITTED work: main's HEAD itself was never tested
 newrepo
-echo "fun ok() = 4" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated on main"
-git -C "$W" merge -q --ff-only main
+echo "fun ok() = 4" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated on main" && git -C "$W" merge -q --ff-only main \
+  || bad "L10 setup: commit / merge failed"
 echo "fun ok() = 2" > "$W/src/Core.kt"
 CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief > "$TMP/gate.out" 2>&1 || bad "L10 setup: gate --full failed: $(tail -3 "$TMP/gate.out")"
 expect "L10: a worktree at main's HEAD gated on uncommitted work does not cover main's untested HEAD" 2
@@ -128,9 +129,8 @@ expect "L11: merged with automerge --keep, then removed: the push from main is c
 
 # a tag push: a linked worktree's own remote view ("already on the remote") is no receipt
 newrepo
-echo "fun ok() = 8" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated, unpushed"; git -C "$R" tag v8
-git -C "$R" config extensions.worktreeConfig true
-git -C "$W" config --worktree "url.$R.insteadOf" "$TMP/origin.git"
+echo "fun ok() = 8" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated, unpushed" && git -C "$R" tag v8 && git -C "$R" config extensions.worktreeConfig true \
+  && git -C "$W" config --worktree "url.$R.insteadOf" "$TMP/origin.git" || bad "L12 setup: commit / tag / worktree config failed"
 OUT="$(python3 "$PG" "$R" v8 --tag-remote origin 2>&1)"; RC=$?
 [ "$RC" = 2 ] && ! printf '%s' "$OUT" | grep -qF "không kiểm được biên nhận gate" \
   && ok "L12: a tag of an ungated commit is not covered by a linked worktree's remote view (exit $RC)" \
