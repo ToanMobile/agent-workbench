@@ -66,7 +66,7 @@
 # named or run through a $VAR (`for t in …; do bash "$K/tests/gates/$t.sh"`, `$py tests/…/test-x.py`)
 # counts like a literal path; the DevKit gate `post-fix-gate.py --run-tests|--full` counts when ITS
 # verdict is PASS with N/N suites, N ≥ 1 (a green like any runner: a test file written this session still
-# needs a RED seen before it; never a RED→GREEN pair for check 7).
+# needs a RED seen before it; for check 7 it is the GREEN half of the pair, the RED half is still a real runner run).
 # Unity counts too: unity-batch.sh editmode|playmode, scripts/unity-test.sh, the Editor
 # with -runTests, or mcp__antigravity-pm__pm_run kind=test (`exit=N`). Their NUnit 3
 # XML (Logs/agent-kit/tests_*.xml) is read like TEST-*.xml: `<test-run failed="N">`,
@@ -659,7 +659,7 @@ MATRIX_CMDS = _matrix_commands()
 # the rules name ("only exit 0 counts"). It prints no TEST-*.xml and its tool_result is often a grep of the log, so the verdict is read
 # from ITS text: every verdict line PASS and every "N/M suites" line N == M ≥ 1 (a PASS that ran 0 suites proves nothing). Its result is
 # "gate-green": a green for check 2 and for the RED-check of a test file written this session (so a green gate with no RED before it is
-# still blocked there), never a RED→GREEN pair for check 7 (a gate has no RED of its own here).
+# still blocked there), and the GREEN half of check 7's pair (issue #4); a gate has no RED of its own here, so the RED half is a real runner run.
 GATE_RUN_RX = re.compile(r"(?:\bpython\S*\s+(?:-\S+\s+)*|(?<![\w\"'./-])(?=\.?/))\S*post-fix-gate\.py\b[^\n|;&]*?(?:--run-tests|--full|--force-full)\b")
 GATE_VERDICT_RX = re.compile(r"(?:KẾT LUẬN CỔNG POST-FIX AUDIT|POST-FIX AUDIT GATE VERDICT)\s*:\s*(\S+)")
 GATE_COUNT_RX = re.compile(r"(?:Test hồi quy đạt|Regression tests passed)\s*:\s*([1-9]\d*)\s*/\s*([1-9]\d*)\b")
@@ -879,7 +879,7 @@ RUNNER_FAIL_RX = re.compile(
 PM_RUN_EXIT_RX = re.compile(r"^exit=(-?\d+|null)", re.M)
 
 def runner_state(is_error, txt, pm_run=False, command=""):
-    """"red", "green", "gate-green" (the DevKit gate: not a check-7 pair), or None (not a verdict) for one runner tool_result."""
+    """"red", "green", "gate-green" (the DevKit gate: a green for checks 2 and 7, not for auto_link), or None (not a verdict) for one runner tool_result."""
     if command and _command_invokes_gate(command):
         clean = ANSI_RX.sub("", txt)
         verdicts, counts = GATE_VERDICT_RX.findall(clean), GATE_COUNT_RX.findall(clean)
@@ -947,6 +947,10 @@ script_pending = {}       # test file path -> LIFO of (old, new) edits not yet u
 script_idx_before = {}    # test file path -> [script_test_idx before each edit]
 last_src_edit_idx = -1
 last_scratch_src_idx = -1   # the last source file written in a temp dir: the fallback marker of CHECK 7 when no source edit is in the project
+# Chỉ CHECK 7 dùng (issue #4): hai marker trên nhưng bỏ qua file test, để sửa file test sau cặp RED→GREEN không làm mất cặp.
+# Check 2 vẫn dùng last_src_edit_idx: claim "test pass" vẫn cần một lần chạy sau lần sửa file test cuối.
+last_fix_edit_idx = -1
+last_scratch_fix_idx = -1
 edit_log = []             # (transcript position, file path) of every Edit/Write/NotebookEdit
 no_id_tool_indices = []
 test_edit_idx = {}       # simple class name -> transcript position of its last edit
@@ -1113,11 +1117,15 @@ if tp and os.path.exists(tp):
                     if isinstance(fp, str) and fp and _is_scratch(fp):
                         if fp.endswith(SRC_EXT):
                             last_scratch_src_idx = blk_idx
+                            if not is_test_path(fp):
+                                last_scratch_fix_idx = blk_idx
                         continue
                     if isinstance(fp, str) and fp:
                         edit_log.append((blk_idx, fp))
-                    if isinstance(fp, str) and fp.endswith(SRC_EXT) and not is_test_path(fp):
+                    if isinstance(fp, str) and fp.endswith(SRC_EXT):
                         last_src_edit_idx = blk_idx
+                        if not is_test_path(fp):
+                            last_fix_edit_idx = blk_idx
                     if isinstance(fp, str) and (SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp)) \
                             and not fp.endswith((".kt", ".java")):
                         # Same mutate/restore rule as the JVM branch below: an Edit that is the
@@ -1722,7 +1730,13 @@ if outcome_claimed:
     def paired_red_green():
         # The marker is the last source edit in the project; a session whose every source edit lay in a temp dir (a fix made in a stage copy
         # and installed after) is judged by the last of those, as before the temp-dir rule.
-        marker = last_src_edit_idx if last_src_edit_idx >= 0 else last_scratch_src_idx
+        # Issue #4: trong tầng đó (project, hay thư mục tạm khi project không có lần sửa source nào), marker là lần sửa source cuối
+        # KHÔNG phải file test: sửa file test sau cặp RED→GREEN không làm mất cặp, và một lần ĐỎ chỉ xuất hiện sau bản sửa không được
+        # tính. Tầng chỉ có sửa file test (test flaky, conftest) xét theo lần sửa đó như trước. Không xét thư mục tạm trước project:
+        # một file probe .py trong scratchpad sẽ chiếm marker.
+        tier = ((last_fix_edit_idx, last_src_edit_idx) if last_src_edit_idx >= 0
+                else (last_scratch_fix_idx, last_scratch_src_idx))
+        marker = next((m for m in tier if m >= 0), -1)
         if marker < 0:
             return False
         # Only a test RUNNER's own result counts as red: `cat` of an old TEST-*.xml
