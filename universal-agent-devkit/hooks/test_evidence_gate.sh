@@ -936,6 +936,10 @@ bugs_touched = set()
 SCRIPT_TEST_RX = re.compile(
     r"(\.(test|spec)\.(m|c)?[jt]sx?$|(^|/)test_[^/]*\.py$|_test\.(py|go|dart)$|Tests?\.swift$|_spec\.rb$)")
 SCRIPT_TEST_DIR_RX = re.compile(r"(^|/)(tests?|__tests__|spec)/[^/]+\.(py|[jt]sx?|mjs|cjs|rb|swift|dart|rs)$")
+def is_test_path(fp):
+    return bool(SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp)
+                or "/src/test/" in fp or "/src/androidTest/" in fp or re.search(r"/Tests?/.*\.cs$|Tests?\.cs$", fp))
+
 TEST_FILE_IN_OUTPUT = re.compile(
     r"[\w./-]+\.(test|spec)\.(m|c)?[jt]sx?\b|\btest_\w+\.py\b|\b\w+_test\.(go|py|dart)\b|\b\w+Tests?\.swift\b")
 script_test_idx = {}      # test file path -> transcript position of its last edit
@@ -1112,7 +1116,7 @@ if tp and os.path.exists(tp):
                         continue
                     if isinstance(fp, str) and fp:
                         edit_log.append((blk_idx, fp))
-                    if isinstance(fp, str) and fp.endswith(SRC_EXT):
+                    if isinstance(fp, str) and fp.endswith(SRC_EXT) and not is_test_path(fp):
                         last_src_edit_idx = blk_idx
                     if isinstance(fp, str) and (SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp)) \
                             and not fp.endswith((".kt", ".java")):
@@ -1725,7 +1729,7 @@ if outcome_claimed:
         # prints the same failure markup and must not stand in for a real run.
         red = any(r[1] < marker and r[5] == "red"
                   for r in runner_results)
-        green = any(r[1] > marker and r[5] == "green"
+        green = any(r[1] > marker and r[5] in ("green", "gate-green")
                     for r in runner_results)
         return red and green
 
@@ -1817,10 +1821,6 @@ def bug_link_reminder():
 #   exactly one test file written/edited this session, a runner RED naming that test after
 #   it was written and BEFORE the first source edit, a GREEN run after the last source edit.
 #   Anything ambiguous → no link (the reminder below asks instead). AUTO_LINK=0 off.
-def is_test_path(fp):
-    return bool(SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp)
-                or "/src/test/" in fp or "/src/androidTest/" in fp or re.search(r"/Tests?/.*\.cs$|Tests?\.cs$", fp))
-
 _linked_wt = []          # [bool]: this repo is a LINKED worktree (its tracked checklist files are not written)
 
 def linked_worktree():
