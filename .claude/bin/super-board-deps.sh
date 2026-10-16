@@ -60,6 +60,9 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Lệnh đọc ở đây (kể cả của super-board-approval.py ở cuối pipeline) đều cố định, do board chạy trong sweep Blocked:
+# gh đổi flag hay GitHub trả thiếu dữ liệu là lỗi của script/sự cố, nên STRICT để vẫn halt kèm lý do (như card.sh).
+export SB_GITHUB_READ_STRICT=1
 REPO=""; LIMIT="200"; ONLY=""; FROM=""
 while [ $# -gt 0 ]; do
   case "$1" in

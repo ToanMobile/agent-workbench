@@ -32,6 +32,8 @@
 
 set -euo pipefail
 SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
+# Lệnh đọc cố định của runner (fields, project, state, quota) đặt SB_GITHUB_READ_STRICT=1 cho TỪNG lệnh: gõ sai ở đây là lỗi
+# của script nên vẫn halt board. Không export: worker thừa hưởng nó thì một lệnh gõ sai của agent lại halt cả board.
 gh_checkpoint() { python3 "$SB_GITHUB_READ" --check || exit $?; }
 gh_write_once() {
   gh_checkpoint
@@ -147,7 +149,7 @@ STATUS_OPTIONS_JSON=""
 resolve_status_field() {
   [ -n "$STATUS_FIELD_ID" ] && return 0
   local payload
-  payload=$(python3 "$SB_GITHUB_READ" --kind fields -- project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json) || return $?
+  payload=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind fields -- project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json) || return $?
   STATUS_FIELD_ID=$(echo "$payload" | jq -r '.fields[] | select(.name == "Status") | .id')
   STATUS_OPTIONS_JSON=$(echo "$payload" | jq -c '.fields[] | select(.name == "Status") | .options')
   [ -n "$STATUS_FIELD_ID" ] && [ "$STATUS_FIELD_ID" != "null" ]
@@ -180,7 +182,7 @@ PROJECT_NODE_ID=""
 project_node_id() {
   if [ -z "$PROJECT_NODE_ID" ]; then
     local payload
-    payload=$(python3 "$SB_GITHUB_READ" --kind project -- project view "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json) || return $?
+    payload=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind project -- project view "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json) || return $?
     PROJECT_NODE_ID=$(echo "$payload" | jq -r .id)
   fi
   echo "$PROJECT_NODE_ID"
@@ -190,7 +192,7 @@ issue_is_open() {
   # $1 = issue number. Returns 0 when OPEN, 1 when CLOSED.
   # Unreadable is distinct from both OPEN and CLOSED: exit 79 halts the run.
   local state
-  state=$(python3 "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || return 79
+  state=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || return 79
   [ "$state" != "CLOSED" ]
 }
 
@@ -268,8 +270,95 @@ issue_locked() {
   if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
     return 0
   fi
+  [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log"
   rm -f "$lock"
   return 1
+}
+
+# ── Xoay account của worker (pool: $HOME/.claude/bin/super-board-account-pool.sh, lệnh `ccswitch`).
+# Pool chỉ biết account hết limit qua usage-<acct>.json, file mà status line của phiên tương tác ghi; worker
+# `claude -p` không có status line. Nên runner tự ghi khi worker chết vì hết limit (16/10: cả 5 runner giao mãi cho
+# finos đã hết session limit trong khi còn 5 account khác).
+SB_ACCOUNT_POOL="${SB_ACCOUNT_POOL:-$HOME/.claude/bin/super-board-account-pool.sh}"
+SB_ACCOUNT_STATE_DIR="${SB_STATE_DIR:-$HOME/.claude/super-board}"
+POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
+
+note_worker_limit() {
+  # $1 = log của worker vừa chết. Hết limit (thông báo ở 3 dòng cuối của lần giao CUỐI) thì ghi account trong dòng
+  # `account_pool:` của lần giao đó là 100 % tới giờ reset (không đọc được giờ thì 1 giờ), đúng dạng usage-<acct>.json
+  # mà pool đọc. Chỉ ghi file của account đó, không ghi usage.json chung (file chung kéo theo `switch` credential
+  # toàn cục của người dùng). Lỗi ở đây không bao giờ chặn runner.
+  [ -f "$1" ] || return 0
+  local out
+  out=$(python3 - "$1" "$SB_ACCOUNT_STATE_DIR" <<'PY' 2>/dev/null
+import datetime, json, os, re, sys, time
+log, state = sys.argv[1], sys.argv[2]
+section = open(log, errors='replace').read().rsplit('=== dispatch ', 1)[-1]
+acct = re.search(r'^account_pool: engine=\S+ account=([A-Za-z0-9_.-]+)', section, re.M)
+tail = '\n'.join([l for l in section.splitlines() if l.strip()][-3:])
+# Claude Code: "You've hit your session limit · resets 10:50pm (Asia/Saigon)" (đo 16/10). Ba mẫu sau là mã quota của
+# Gemini/xAI, chưa đo trên agy/grok thật.
+hit = re.search(r"hit your (?:\w+ )?limit|usage limit reached|RESOURCE_EXHAUSTED|quota exceeded|rate limit exceeded", tail, re.I)
+if not acct or not hit:
+    sys.exit(0)
+now = int(time.time())
+resets = now + 3600
+m = re.search(r'resets (?:([A-Z][a-z]{2}) (\d{1,2}),? (?:at )?)?(\d{1,2})(?::(\d{2}))?\s*([ap]m)(?:\s*\(([^)]+)\))?', tail, re.I)
+if m:
+    try:
+        from zoneinfo import ZoneInfo
+        base = datetime.datetime.now(ZoneInfo(m[6]) if m[6] else None)
+        t = base.replace(hour=int(m[3]) % 12 + (12 if m[5].lower() == 'pm' else 0), minute=int(m[4] or 0), second=0, microsecond=0)
+        if m[1]:
+            t = t.replace(month=datetime.datetime.strptime(m[1], '%b').month, day=int(m[2]))
+            if t.timestamp() <= now:
+                t = t.replace(year=t.year + 1)
+        elif t.timestamp() <= now:
+            t += datetime.timedelta(days=1)
+        resets = int(t.timestamp())
+    except (ValueError, KeyError, ImportError) as error:
+        print(f'reset time unreadable ({error}); pausing 1h', file=sys.stderr)
+os.makedirs(state, exist_ok=True)
+path = os.path.join(state, f'usage-{acct[1]}.json')
+tmp = f'{path}.{os.getpid()}'
+with open(tmp, 'w') as f:
+    json.dump({'recorded_at': now, 'source': 'super-board-run worker log',
+               'rate_limits': {'five_hour': {'used_percentage': 100, 'resets_at': resets}}}, f)
+os.replace(tmp, path)
+print(acct[1], time.strftime('%H:%M', time.localtime(resets)))
+PY
+) || { log "⚠ could not read worker log $1 for an account limit"; return 0; }
+  [ -z "$out" ] || log "account ${out% *} hit its limit — paused until ${out#* }; next dispatch takes the pool's next account"
+  return 0
+}
+
+account_paused() {
+  # 0 khi usage-<acct>.json có cửa sổ ≥ 95 % (ngưỡng mặc định của pool) chưa tới giờ reset.
+  local f="$SB_ACCOUNT_STATE_DIR/usage-$1.json"
+  [ -f "$f" ] || return 1
+  jq -e --argjson now "$(date +%s)" \
+    '[.rate_limits[]? | select((.used_percentage // 0) >= 95 and (.resets_at // 0) > $now)] | length > 0' "$f" >/dev/null 2>&1
+}
+
+resolve_worker_account() {
+  # Đặt POOL_ENGINE/POOL_ACCT/POOL_CFG cho worker kế tiếp. Pool tự xoay finos -> finos_team -> max theo usage; hết cả 3
+  # thì theo lựa chọn của người dùng (16/10): Antigravity Ultra -> Antigravity Pro -> Grok, bỏ account đang bị ghi là
+  # hết. Trả 1 (POOL_RESETS = giờ reset sớm nhất nếu pool biết) khi mọi account đều hết: không giao.
+  POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
+  [ -x "$SB_ACCOUNT_POOL" ] || return 0
+  local ag="" grok="" json
+  if ! account_paused antigravity; then ag=1; elif ! account_paused antigravity_pro; then ag=pro; fi
+  account_paused grok || grok=1
+  json=$(SB_FALLBACK_ANTIGRAVITY="$ag" SB_FALLBACK_GROK="$grok" "$SB_ACCOUNT_POOL" resolve "$PWD" 2>/dev/null) || true
+  [ -n "$json" ] || { log "⚠ account pool printed nothing; worker uses the default claude account"; return 0; }
+  if [ "$(printf '%s' "$json" | jq -r '.state // "ok"' 2>/dev/null)" = "pause" ]; then
+    POOL_RESETS=$(printf '%s' "$json" | jq -r '.resets_at // empty | tonumber | strftime("%H:%M UTC")' 2>/dev/null || true)
+    return 1
+  fi
+  POOL_ENGINE=$(printf '%s' "$json" | jq -r '.engine // "claude"' 2>/dev/null || echo claude)
+  POOL_ACCT=$(printf '%s' "$json" | jq -r '.account // empty' 2>/dev/null || true)
+  POOL_CFG=$(printf '%s' "$json" | jq -r '.config_dir // empty' 2>/dev/null || true)
+  return 0
 }
 
 lane_idle() {
@@ -280,7 +369,7 @@ lane_idle() {
 gh_rate_guard() {
   # Sleep until rate limit resets if GraphQL remaining < 200.
   local payload remaining reset now wait
-  payload=$(python3 "$SB_GITHUB_READ" --kind quota -- api rate_limit) || return $?
+  payload=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind quota -- api rate_limit) || return $?
   # REST misreports the GraphQL bucket; super-board-gh-guard.sh → sb_gh_quota_merge.
   payload=$(. "$(dirname "$SB_GITHUB_READ")/super-board-gh-guard.sh" && sb_gh_quota_merge "$payload")
   remaining=$(echo "$payload" | jq -r '.resources.graphql.remaining // 5000')
@@ -337,6 +426,12 @@ dispatch_lane() {
     log "skills-readiness: halt before claim lane=${lane} issue=#${issue}; ${skills_report}"
     exit "$skills_rc"
   fi
+  # Chọn account TRƯỚC khi nhận thẻ: hết cả 6 account thì không nhận, không giao (trước đây rơi về `claude` mặc định
+  # trên account đã hết, worker chết sau ~30 s và runner giao lại mãi).
+  if ! resolve_worker_account; then
+    log "skip dispatch lane=${lane} issue=#${issue} — every worker account is at its limit${POOL_RESETS:+ (earliest reset ${POOL_RESETS})}"
+    return 0
+  fi
   if ! try_claim_assignee "$issue"; then
     return 0
   fi
@@ -360,16 +455,9 @@ dispatch_lane() {
   } >> "$worker_log"
   ln -sf "$PWD/$worker_log" "docs/super-board/current-worker.log" 2>/dev/null || true
   gh_checkpoint
-  local pool_json="" pool_engine="claude" pool_acct="" pool_cfg=""
-  if [ -x "$HOME/.claude/bin/super-board-account-pool.sh" ]; then
-    pool_json="$("$HOME/.claude/bin/super-board-account-pool.sh" resolve "$PWD" 2>/dev/null || true)"
-    if [ -n "$pool_json" ]; then
-      pool_engine="$(echo "$pool_json" | jq -r '.engine // "claude"')"
-      pool_acct="$(echo "$pool_json" | jq -r '.account // empty')"
-      pool_cfg="$(echo "$pool_json" | jq -r '.config_dir // empty')"
-      [ -n "$pool_acct" ] && printf 'account_pool: engine=%s account=%s config_dir=%s\n' "$pool_engine" "$pool_acct" "$pool_cfg" >> "$worker_log"
-    fi
-  fi
+  local pool_engine="$POOL_ENGINE" pool_acct="$POOL_ACCT" pool_cfg="$POOL_CFG"
+  # note_worker_limit đọc dòng này để biết account nào hết limit.
+  [ -n "$pool_acct" ] && printf 'account_pool: engine=%s account=%s config_dir=%s\n' "$pool_engine" "$pool_acct" "$pool_cfg" >> "$worker_log"
   export DEVKIT_ALLOW_BRANCH=1 WORKTREE_MERGE_GATE=0 DEVKIT_LANG="${DEVKIT_LANG:-vi}"
   unset POSTFIX_GATE_FORCE_FULL
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
@@ -526,6 +614,18 @@ dispatch_paused() {
   [ "${RUNAWAY_PAUSE_UNTIL:-0}" -gt "$(date +%s)" ]
 }
 
+PAUSED_READ_EVERY=3
+paused_tick() {
+  # Một tick trong khoảng hoãn sau RUNAWAY. Không giao được gì nên tick thường không đọc GraphQL, nhưng cứ
+  # PAUSED_READ_EVERY tick thì đọc board một lần và quét zombie trên dữ liệu mới: chỉ quét trên cache cũ (37aec8a
+  # bỏ hẳn lần đọc) thì worker có thẻ đã sang cột khác trong lúc hoãn giữ lane tới hết hạn chót.
+  PAUSED_TICKS=$(( ${PAUSED_TICKS:-0} + 1 ))
+  [ $(( PAUSED_TICKS % PAUSED_READ_EVERY )) -eq 0 ] || return 0
+  gh_rate_guard
+  fetch_project_items
+  sweep_lane_zombies
+}
+
 reap_finished_locks() {
   # Sweep inflight/ for dead PIDs; remove locks AND sweep stale assignees so the
   # next dispatch can re-claim the card if the worker crashed without releasing.
@@ -541,6 +641,7 @@ reap_finished_locks() {
     case "$issue" in *[!0-9]*|'') continue ;; esac
     read_lock "$issue"
     if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
+      [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log"
       gh_checkpoint
       if [ -n "$BOT_LOGIN" ]; then
         gh_checkpoint
@@ -556,11 +657,22 @@ reap_finished_locks() {
   done
 }
 
+pid_started_after() {
+  # 0 khi tiến trình $1 khởi động muộn hơn thời điểm $2 (STARTED của lock, ISO UTC) quá 5 s. Worker ghi lock ngay sau
+  # khi khởi tạo (giờ khởi động trùng STARTED tới từng giây, đo 16/10), nên PID tái dùng luôn khởi động muộn hơn.
+  # Không đo được (ps lỗi, STARTED trống hoặc sai dạng) thì trả 1: không gỡ gì.
+  local age
+  age=$(ps -o etime= -p "$1" 2>/dev/null | awk -F'[-:]' 'NF >= 2 { t = $NF + 60 * $(NF-1); if (NF >= 3) t += 3600 * $(NF-2); if (NF >= 4) t += 86400 * $(NF-3); print t }') || return 1
+  [ -n "$age" ] && [ -n "${2:-}" ] || return 1
+  python3 -c 'import calendar, sys, time
+sys.exit(0 if time.time() - int(sys.argv[2]) > calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")) + 5 else 1)' "$2" "$age" 2>/dev/null
+}
+
 adopt_live_locks() {
   # Lúc khởi động: worker do lần chạy trước khởi tạo (nohup) vẫn sống sau khi runner cũ chết. Đưa từng worker
   # còn sống về lại lane của nó, nếu không lần chạy này thấy lane rảnh và khởi thêm worker thứ hai bên cạnh.
   # Lock chết đã được dọn trước đó.
-  local lock issue
+  local lock issue cmdline
   for lock in "$INFLIGHT_DIR"/*; do
     [ -f "$lock" ] || continue
     issue=$(basename "$lock")
@@ -568,7 +680,27 @@ adopt_live_locks() {
     read_lock "$issue"
     { [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; } || continue
     # Sau khi khởi động lại máy, PID có thể thuộc tiến trình bất kỳ; dòng lệnh của worker luôn mang prompt của lane.
-    case "$(ps -ww -o command= -p "$PID" 2>/dev/null)" in *"issue #${issue} for super-board run"*) ;; *) continue ;; esac
+    # ps lỗi hoặc không in gì: không xác minh được, nên không nhận lại và cũng không gỡ lock (có thể là worker thật).
+    cmdline=$(ps -ww -o command= -p "$PID" 2>/dev/null || true)
+    [ -n "$cmdline" ] || continue
+    # PID tái dùng: worker của lock đã chết, nên gỡ lock + assignee như reap_finished_locks (để nguyên thì
+    # issue_locked thấy PID sống và bỏ qua thẻ mãi). Tiến trình lạ đó không bao giờ bị gửi tín hiệu.
+    case "$cmdline" in
+      *"issue #${issue} for super-board run"*) ;;
+      *)
+        # Dòng lệnh không khớp chưa đủ: chỉ gỡ khi tiến trình khởi động sau STARTED của lock (chắc chắn PID tái
+        # dùng); nếu không, có thể là worker thật đã đổi tiêu đề tiến trình, giữ lock như trước.
+        pid_started_after "$PID" "$STARTED" || continue
+        gh_checkpoint
+        if [ -n "$BOT_LOGIN" ]; then
+          gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+        fi
+        gh_checkpoint
+        rm -f "$lock"
+        REAP_COUNT=$((REAP_COUNT + 1))
+        log "reaped lock on #${issue}: pid=${PID} is alive but no super-board worker (recycled PID)${BOT_LOGIN:+; swept assignee}"
+        continue ;;
+    esac
     case "$LANE" in
       build)  BUILD_PID="$PID";  BUILD_ISSUE="$issue" ;;
       qa)     QA_PID="$PID";     QA_ISSUE="$issue" ;;
@@ -635,7 +767,8 @@ reclaim_stranded_building() {
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] || continue
     issue_locked "$issue" && continue
-    branch=$(git ls-remote --heads origin "issue-${issue}-*" 2>/dev/null | head -1 | sed 's#.*refs/heads/##')
+    # Chỉ để ghi vào comment: ls-remote lỗi (mạng, không có remote) dưới pipefail không được giết runner.
+    branch=$(git ls-remote --heads origin "issue-${issue}-*" 2>/dev/null | head -1 | sed 's#.*refs/heads/##') || branch=""
     wt=".claude/worktrees/issue-${issue}-build"
     if [ -d "$wt" ]; then
       wt_branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
@@ -665,6 +798,20 @@ $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "$BOT_LOGIN" '
     | select(((.content.assignees // []) - [$bot]) | length == 0)
     | [(.content.number | tostring), (.id // "")] | @tsv')
 EOF
+}
+
+startup_reconcile() {
+  # Lúc khởi động, theo thứ tự: dọn lock chết, nhận lại worker còn sống (lock PID tái dùng bị gỡ ở đây), rồi mới trả
+  # thẻ Building bị bỏ rơi về Ready. Đảo lại thì reclaim thấy lock PID tái dùng còn "sống" và bỏ qua thẻ, rồi adopt
+  # gỡ lock: thẻ nằm Building suốt lần chạy. Worker được nhận lại vẫn giữ lock, nên reclaim vẫn bỏ qua thẻ của nó.
+  reap_finished_locks
+  BUILD_PID=""; BUILD_ISSUE=""
+  QA_PID=""; QA_ISSUE=""
+  REVIEW_PID=""; REVIEW_ISSUE=""
+  adopt_live_locks
+  gh_rate_guard
+  fetch_project_items
+  reclaim_stranded_building; fetch_project_items
 }
 
 sweep_blocked_cards() {
@@ -793,13 +940,9 @@ fi
 check_legacy_worktrees
 cleanup_stale_worktrees
 
-# Reap any leftover stale locks from a previous crashed run.
-reap_finished_locks
+startup_reconcile
 
 # ───────────────────────────── main loop ─────────────────────────────
-gh_rate_guard
-fetch_project_items
-reclaim_stranded_building; fetch_project_items
 INITIAL_READY=$(column_count "Ready")
 log "initial Ready count: $INITIAL_READY"
 
@@ -807,10 +950,6 @@ log "initial Ready count: $INITIAL_READY"
 PREV_DONE_SIG=$(done_signature)
 INITIAL_DONE_SIG="$PREV_DONE_SIG"
 NO_PROGRESS_CYCLE_COUNT=0
-BUILD_PID=""; BUILD_ISSUE=""
-QA_PID=""; QA_ISSUE=""
-REVIEW_PID=""; REVIEW_ISSUE=""
-adopt_live_locks
 
 while true; do
   python3 "$(dirname "$SB_GITHUB_READ")/super-board-verification-ready.py" --config "$CONFIG_PATH"
@@ -843,16 +982,20 @@ while true; do
   [ "$QA_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
   [ "$REVIEW_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
 
+  # Đang hoãn sau RUNAWAY: không giao được gì nên chỉ đọc board thưa (paused_tick). Kiểm trước nhánh cap-reached:
+  # runaway thường xảy ra khi cả 3 lane đều bận, và lúc đó vẫn phải quét zombie trên dữ liệu mới.
+  if dispatch_paused; then
+    paused_tick
+    log "tick — runaway pause ($(( RUNAWAY_PAUSE_UNTIL - $(date +%s) ))s left) — board read every ${PAUSED_READ_EVERY} ticks, sleeping ${TICK_SECONDS}s"
+    sleep "$TICK_SECONDS"
+    continue
+  fi
+  PAUSED_TICKS=0
+
   # ── Cheap-tick path: workers at cap → skip GraphQL fetch entirely.
   #    The board can't change in a way that helps us until a lane frees up.
   if [ "$ACTIVE_WORKERS" -ge "$MAX_WORKERS" ]; then
     log "tick — cap reached (${ACTIVE_WORKERS}/${MAX_WORKERS} busy) — skipping GraphQL fetch, sleeping ${TICK_SECONDS}s"
-    sleep "$TICK_SECONDS"
-    continue
-  fi
-  # Đang hoãn sau RUNAWAY: không giao được gì nên không đọc GraphQL; dọn lock và quét zombie ở trên vẫn chạy.
-  if dispatch_paused; then
-    log "tick — runaway pause ($(( RUNAWAY_PAUSE_UNTIL - $(date +%s) ))s left) — skipping GraphQL fetch, sleeping ${TICK_SECONDS}s"
     sleep "$TICK_SECONDS"
     continue
   fi

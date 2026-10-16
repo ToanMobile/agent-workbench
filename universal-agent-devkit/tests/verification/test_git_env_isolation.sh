@@ -19,6 +19,12 @@ left="$(env GIT_INDEX_FILE=/x GIT_DIR=/x GIT_WORK_TREE=/x GIT_PREFIX=x GIT_COMMO
   GIT_CONFIG_KEY_0=k GIT_CONFIG_VALUE_0=v KEEP_ME=1 bash -c '. "$1"; env | grep -E "^(GIT_(INDEX_FILE|DIR|WORK_TREE|PREFIX|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|AUTHOR_[A-Z]+|COMMITTER_[A-Z]+|CONFIG_[A-Z_0-9]+)|KEEP_ME)=" | cut -d= -f1' _ "$LIB")"
 [ "$left" = "KEEP_ME" ] && ok "the library clears every GIT_* variable a hook run hands on and keeps the rest" || fail "survivors after sourcing: $(printf '%s' "$left" | tr '\n' ' ')"
 
+# 1b. output language is pinned, not inherited: tests assert Vietnamese tr() messages and the DevKit default is now en.
+# 2026-10-16: with `${DEVKIT_LANG:-vi}` a caller's DEVKIT_LANG=en (user shell, a board runner, a merge-gate verify) reached
+# every suite and test_multi_session_gate.sh went red ("impacted verdict missing"). A test that wants en sets it after sourcing.
+lang="$(env DEVKIT_LANG=en bash -c '. "$1"; printf %s "$DEVKIT_LANG"' _ "$LIB")"
+[ "$lang" = vi ] && ok "the library pins DEVKIT_LANG=vi even when the caller exports en" || fail "caller's DEVKIT_LANG leaked through: '$lang' (want vi)"
+
 # 2. ratchet: every test that runs git in scratch repos sources the library before its first git command — also one that
 # reaches git through install.sh / agent-kit init|githooks|worktree (they run `git -C "$TARGET" …` themselves).
 # ponytail: a test that unpacks a ready-made repo and then runs only `git commit` escapes this pattern; add the verb
