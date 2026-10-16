@@ -1,0 +1,29 @@
+# G8: đếm file source (SRC_EXT) mà is_test_path() của test_evidence_gate.sh nhận là "file test" nhưng KHÔNG nằm trong
+# thư mục test quen thuộc — tức file production check 7 (bản PR #33) sẽ bỏ qua khi tìm lần sửa source cuối.
+import os, re, subprocess, sys
+
+SRC_EXT = (".kt", ".kts", ".java", ".swift", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py",
+           ".go", ".rs", ".dart", ".cs", ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm")
+SCRIPT_TEST_RX = re.compile(
+    r"(\.(test|spec)\.(m|c)?[jt]sx?$|(^|/)test_[^/]*\.py$|_test\.(py|go|dart)$|Tests?\.swift$|_spec\.rb$)")
+SCRIPT_TEST_DIR_RX = re.compile(r"(^|/)(tests?|__tests__|spec)/[^/]+\.(py|[jt]sx?|mjs|cjs|rb|swift|dart|rs)$")
+
+
+def is_test_path(fp):
+    return bool(SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp)
+                or "/src/test/" in fp or "/src/androidTest/" in fp or re.search(r"/Tests?/.*\.cs$|Tests?\.cs$", fp))
+
+
+TEST_DIR = re.compile(r"(^|/)(tests?|__tests__|spec|specs|testing|src/test|src/androidTest|[A-Za-z]*Tests?)/", re.I)
+for repo in sys.argv[1:]:
+    try:
+        files = subprocess.run(["git", "-C", repo, "ls-files"], capture_output=True, text=True, timeout=60).stdout.splitlines()
+    except Exception as e:  # repo không đọc được: ghi rõ, không nuốt lỗi
+        print("%s: không đọc được (%s)" % (repo, e))
+        continue
+    src = [f for f in files if f.endswith(SRC_EXT)]
+    hits = [f for f in src if is_test_path("/" + f)]
+    outside = [f for f in hits if not TEST_DIR.search("/" + f)]
+    print("%s: %d file source, %d is_test_path, %d ngoài thư mục test" % (repo, len(src), len(hits), len(outside)))
+    for f in outside[:15]:
+        print("    " + f)

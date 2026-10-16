@@ -1,0 +1,86 @@
+# Dò ca biên của check 7 / check 2 (QA issue #4): cùng cách dựng transcript như test_evidence_check7_pair.sh,
+# thêm bước Write, file test lồng thư mục, file Kotlin src/test, lệnh git commit, gate FAIL.
+import json, os, shutil, subprocess, sys, tempfile
+
+KIT = sys.argv[1]
+GATE = os.path.join(KIT, "hooks", "test_evidence_gate.sh")
+TMP = tempfile.mkdtemp()
+CLEAN = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "CLAUDE_"))}
+n = 0
+FILES = {"src/app.py": "def f():\n    return 1\n", "tests/test_foo.py": "def test_a():\n    assert 1\n",
+         "tests/unit/conftest.py": "X = 1\n", "app/src/test/java/FooTest.kt": "class FooTest\n",
+         "src/test_utils.py": "def g():\n    return 1\n"}
+EDITS = {"edit": ("Edit", "src/app.py", "return 1", "return 2"),
+         "edit_test": ("Edit", "tests/test_foo.py", "assert 1", "assert 2"),
+         "write_test": ("Write", "tests/test_foo.py", None, "def test_a():\n    assert 3\n"),
+         "edit_nested_helper": ("Edit", "tests/unit/conftest.py", "X = 1", "X = 2"),
+         "edit_kt_test": ("Edit", "app/src/test/java/FooTest.kt", "class FooTest", "class FooTest {}"),
+         "edit_prod_named_test": ("Edit", "src/test_utils.py", "return 1", "return 2")}
+
+
+def project():
+    global n
+    n += 1
+    p = os.path.join(TMP, "p%d" % n)
+    os.makedirs(os.path.join(p, ".claude", "audit-gate"))
+    for rel, body in FILES.items():
+        os.makedirs(os.path.dirname(os.path.join(p, rel)), exist_ok=True)
+        open(os.path.join(p, rel), "w").write(body)
+    return p
+
+
+def transcript(p, steps):
+    lines = []
+    for i, st in enumerate(steps):
+        uid = "tu%d" % i
+        if st[0] == "bash":
+            use = {"type": "tool_use", "id": uid, "name": "Bash", "input": {"command": st[1]}}
+            res = {"type": "tool_result", "tool_use_id": uid, "content": st[2], "is_error": bool(st[3]) if len(st) > 3 else False}
+        else:
+            tool, path, old, new = EDITS[st[0]]
+            inp = {"file_path": os.path.join(p, path)}
+            inp.update({"content": new} if tool == "Write" else {"old_string": old, "new_string": new})
+            use = {"type": "tool_use", "id": uid, "name": tool, "input": inp}
+            res = {"type": "tool_result", "tool_use_id": uid, "content": "ok"}
+        lines.append(json.dumps({"message": {"content": [use]}}))
+        lines.append(json.dumps({"message": {"content": [res]}}))
+    path = os.path.join(p, "tr.jsonl")
+    open(path, "w").write("\n".join(lines) + "\n")
+    return path
+
+
+def run(steps, msg="Đã fix lỗi X."):
+    p = project()
+    payload = json.dumps({"session_id": "qa4-" + os.path.basename(p), "transcript_path": transcript(p, steps), "last_assistant_message": msg})
+    env = dict(CLEAN, CLAUDE_PROJECT_DIR=p, LESSON_REMINDER="0", AUTO_LINK="0")
+    r = subprocess.run(["bash", GATE], input=payload, capture_output=True, text=True, env=env)
+    tag = "CHECK 7" if "CHECK 7" in r.stderr else ("TEST-EVIDENCE" if "TEST-EVIDENCE" in r.stderr else "")
+    return r.returncode, tag
+
+
+GATE_CMD = 'python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief'
+G_PASS = "  KẾT LUẬN CỔNG POST-FIX AUDIT: PASS — ĐỦ ĐIỀU KIỆN NGHIỆM THU & BÀN GIAO\n  • Test hồi quy đạt: 6/6\nGATE EXIT=0"
+G_FAIL = "  KẾT LUẬN CỔNG POST-FIX AUDIT: FAIL — CHƯA ĐỦ ĐIỀU KIỆN\n  • Test hồi quy đạt: 5/6\nGATE EXIT=2"
+G_PASS00 = "  KẾT LUẬN CỔNG POST-FIX AUDIT: PASS — ĐỦ ĐIỀU KIỆN\n  • Test hồi quy đạt: 0/0"
+RED = ["bash", "pytest tests/test_foo.py", "FAILED tests/test_foo.py::test_a - assert 2\n1 failed", True]
+GREEN = ["bash", "pytest tests/test_foo.py", "1 passed"]
+COMMIT = ["bash", "git add tests/test_foo.py && git commit -m '🧪 [test] ghim test_foo' -- tests/test_foo.py",
+          "[issue-4 1a2b3c4] 🧪 [test] ghim test_foo\n 1 file changed, 1 insertion(+)"]
+E = ["edit"]
+CASES = [
+    ("G1 AC2 commit: RED, fix, GREEN, git commit of the test file", [RED, E, GREEN, COMMIT], "Đã fix lỗi X."),
+    ("G1b AC2 edit+commit: RED, fix, GREEN, test edit, git commit", [RED, E, GREEN, ["edit_test"], COMMIT], "Đã fix lỗi X."),
+    ("G1c commit + 'test pass' (check 2): fix, GREEN, git commit", [E, GREEN, COMMIT], "Tất cả 1/1 test pass."),
+    ("G2 gate FAIL is no RED: gate FAIL, fix, gate PASS", [["bash", GATE_CMD, G_FAIL, True], E, ["bash", GATE_CMD, G_PASS]], "Đã fix lỗi X."),
+    ("G3 gate PASS 0/0 as GREEN half: RED, fix, gate 0/0", [RED, E, ["bash", GATE_CMD, G_PASS00]], "Đã fix lỗi X."),
+    ("G4 gate FAIL as GREEN half: RED, fix, gate FAIL", [RED, E, ["bash", GATE_CMD, G_FAIL, True]], "Đã fix lỗi X."),
+    ("G5 Write (not Edit) of the test file after GREEN", [RED, E, GREEN, ["write_test"]], "Đã fix lỗi X."),
+    ("G6 Kotlin src/test edit after GREEN", [RED, E, GREEN, ["edit_kt_test"]], "Đã fix lỗi X."),
+    ("G7 nested tests/unit/conftest.py edit after GREEN", [RED, E, GREEN, ["edit_nested_helper"]], "Đã fix lỗi X."),
+    ("G8 PRODUCTION src/test_utils.py edit after GREEN", [RED, E, GREEN, ["edit_prod_named_test"]], "Đã fix lỗi X."),
+    ("G9 RED, fix, GREEN, test edit, RED again (no run after)", [RED, E, GREEN, ["edit_test"], RED], "Đã fix lỗi X."),
+]
+for name, steps, msg in CASES:
+    rc, tag = run(steps, msg)
+    print("%-62s exit=%d %s" % (name, rc, tag))
+shutil.rmtree(TMP, ignore_errors=True)
