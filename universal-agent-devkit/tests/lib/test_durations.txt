@@ -187,6 +187,7 @@
 5 tests/gates/test_hook_large_payload.sh
 5 tests/gates/test_hook_payload_cwd_escaped.sh
 4 tests/gates/test_push_gate_integrity.sh
+56 tests/gates/test_push_gate_linked_worktree.sh
 4 tests/gates/test_hardware_rm_containment.sh
 2 tests/gates/test_hook_log_dir.sh
 2 tests/worktree_git/test_relink_alias.sh

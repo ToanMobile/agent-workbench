@@ -220,13 +220,16 @@ def blobs(top, rev, paths):
     return {p: e[1] for p, e in entries(top, rev, paths).items()}
 
 
-def untestable_only(top, project, paths):
+def untestable_only(top, project, paths, rules_dir=None):
     """True when every path (repo-relative) is a file post-fix-gate's needs_no_test() says needs no
     test (docs, agent state, the agents' harness config) AND no rule of the project's active matrix
     watches it. The gate's own classifier and matcher are used — never a second rule (INSTINCT-015).
     2026-09-29 (Goods): a commit of .claude/settings.json alone could not be pushed without a full
-    gate, which REJECTed unrelated WIP in the working tree. Any doubt → False (a receipt is needed)."""
+    gate, which REJECTed unrelated WIP in the working tree. Any doubt → False (a receipt is needed).
+    rules_dir: where the matrix and the checklist (`covers` links) are read from, default `project`; issue #5: the receipt
+    of a linked worktree is judged by main's matrix and checklist, never by the worktree's own."""
     import importlib.util  # noqa: PLC0415
+    rules_dir = rules_dir or project
     prefix = os.path.relpath(project, top).replace(os.sep, "/")
     prefix = "" if prefix == "." else prefix + "/"
     rel = [p[len(prefix):] if p.startswith(prefix) else None for p in paths
@@ -238,10 +241,10 @@ def untestable_only(top, project, paths):
             "post_fix_gate", os.path.join(os.path.dirname(os.path.abspath(__file__)), "post-fix-gate.py"))
         pfg = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(pfg)
-        with open(os.path.join(project, MATRIX), encoding="utf-8") as f:
+        with open(os.path.join(rules_dir, MATRIX), encoding="utf-8") as f:
             rules = json.load(f).get("rules") or []
         # the gate's own "watched" rule: watch_files + files linked to a rule's tests (INSTINCT-015)
-        pfg.get_project_dir = lambda: pathlib.Path(project)
+        pfg.get_project_dir = lambda: pathlib.Path(rules_dir)
         covers = pfg.checklist_covers()
         pats = [w for r in rules if isinstance(r, dict) for w in pfg.rule_watch(r, covers)]
         return all(pfg.needs_no_test(p) and not any(pfg.match_pattern(p, w) for w in pats) for p in rel)
@@ -511,7 +514,8 @@ def check(cwd, rev="HEAD", tag_remote=None, linked=False):
         return ok, reason
     # Trunk mode (issue #5): gate chạy trong linked worktree và ghi biên nhận dưới git dir của worktree đó; main chỉ nhận merge nên
     # biên nhận của main (không có, hoặc cũ: bản `worktree finish` chép về lần trước) không phủ code sắp push. Biên nhận của từng
-    # linked worktree được xét y hệt biên nhận của main.
+    # linked worktree được xét theo cùng luật như của main, trừ một điểm: file nào "không cần test" do MA TRẬN VÀ CHECKLIST CỦA MAIN
+    # quyết (xem `rules_dir` trong _own_check), worktree không tự miễn test cho mình.
     # ponytail: một lần gate --full FAIL mới hơn ở worktree anh em trên cùng nội dung không thu hồi biên nhận PASS cũ hơn (dòng
     # runs.jsonl không ghi fingerprint để gắn FAIL với nội dung); nâng cấp: ghi fingerprint vào runs.jsonl và từ chối biên nhận có
     # dòng full non-PASS mới hơn cùng fingerprint, khi thấy một suite flaky được push qua đường này.
@@ -602,7 +606,15 @@ def _own_check(cwd, rev, tag_remote, linked):
         changed += [p for p in dirty if kept(p) and p not in seen]
     now, then = blobs(top, rev, changed), blobs(top, head, changed)
     bad = [p for p in changed if now.get(p) != (dirty[p] if p in dirty else then.get(p))]
-    if bad and untestable_only(top, project, bad):
+    rules_dir = None
+    if linked:
+        # "không cần test" là quyết định của main (ma trận + liên kết covers trong checklist của main), không phải của worktree:
+        # worktree tự phân loại bằng checklist/ma trận của chính nó thì miễn được file main đang theo dõi (README.md→REG-1, ca L18).
+        # Không tìm được main hay ma trận của main thì untestable_only trả False: cần biên nhận phủ cả file đó.
+        rc, listing = git(top, "worktree", "list", "--porcelain")
+        main_top = listing.split("\n", 1)[0][9:] if rc == 0 and listing.startswith("worktree ") else ""
+        rules_dir = os.path.normpath(os.path.join(main_top, os.path.relpath(project, top))) if main_top else os.devnull
+    if bad and untestable_only(top, project, bad, rules_dir):
         return True, "files changed since the gate need no test (docs / agent config), none watched by the matrix"
     if bad:
         return False, (f"{len(bad)} file sắp push khác bản gate đã test (sửa/commit sau lần gate PASS): "

@@ -205,5 +205,17 @@ PY
 [ $? = 0 ] || bad "L17 setup: turning the receipt down to exit 2 failed"
 expect "L17: a linked worktree receipt of the pushed content with exit 2 (UNVERIFIED / partial): refused" 2
 
+# A linked worktree must not exempt a file from the test with ITS OWN matrix / checklist: main's checklist links README.md to REG-1
+# (`covers`, git-ignored, per checkout: the worktree never saw the link). README.md committed on main after the merge is then watched
+# by the matrix, so it needs a test, and the worktree receipt (its head older than that commit) must not call it "docs only".
+newrepo
+gated_worktree_commit 2
+git -C "$R" merge -q --ff-only task || bad "L18 setup: merge failed"
+echo "# readme" > "$R/README.md"; git -C "$R" add README.md && git -C "$R" commit -qm "readme (ungated)" || bad "L18 setup: readme commit failed"
+expect "L18 control: no link, README.md needs no test: the worktree receipt covers the push" 0 "covered by the gate receipt of the linked worktree"
+printf '%s' '{"items": {"REG-1": {"kind": "test", "covers": ["README.md"]}}}' > "$R/.agents/regression_status.json" \
+  || bad "L18 setup: writing the covers link failed"
+expect "L18: main links README.md to REG-1 and README.md changed after the worktree gate: the worktree cannot exempt it" 2 "chưa có biên nhận gate --full"
+
 [ "$FAILS" = 0 ] && echo "ALL OK" && exit 0
 echo "$FAILS FAILED"; exit 1
