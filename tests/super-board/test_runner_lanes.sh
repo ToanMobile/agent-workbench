@@ -160,6 +160,13 @@ export STUB_PLAN='{"cards":[],"sweep":[{"number":32,"title":"b","clearedBy":[7]}
 sweep_blocked_cards >/dev/null 2>&1
 grep -qx "move PVTI_32 Ready" "$TMP/writes" && ok "re-blocked on a different blocker: swept again once it closes" \
   || fail "card #32 re-blocked on a different blocker stays Blocked for the rest of the daemon's life"
+#     Cùng bộ blocker viết khác thứ tự / lặp lại vẫn là cùng một bộ: không sweep lần nữa.
+: > "$TMP/writes"; SWEPT_CARDS=""
+export STUB_PLAN='{"cards":[],"sweep":[{"number":34,"title":"d","clearedBy":[7,9]}],"flag":[]}' STUB_PLAN_RC=0
+items 34 Blocked '["bug"]'; sweep_blocked_cards >/dev/null 2>&1; : > "$TMP/writes"
+export STUB_PLAN='{"cards":[],"sweep":[{"number":34,"title":"d","clearedBy":[9,7,7]}],"flag":[]}' STUB_PLAN_RC=0
+sweep_blocked_cards >/dev/null 2>&1
+grep -q "PVTI_34" "$TMP/writes" && fail "same blockers in another order swept again (ping-pong)" || ok "same blocker set in another order is the same key"
 
 # ── 2h. thẻ bị kéo tay sang Blocked, không có blocker nào (clearedBy rỗng): không có gì vừa đóng, giữ nguyên.
 : > "$TMP/writes"; SWEPT_CARDS=""

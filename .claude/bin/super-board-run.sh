@@ -712,7 +712,7 @@ Next: ${next} (next tick)" >/dev/null 2>&1 || true
     log "↩ unblocked #${issue}: Blocked → Ready (cleared by ${cleared})"
     moved=0
   done <<EOF
-$(printf '%s' "$plan" | jq -r '.sweep[]? | [(.number | tostring), ((.clearedBy // []) | map("#" + tostring) | join(", "))] | @tsv' 2>/dev/null)
+$(printf '%s' "$plan" | jq -r '.sweep[]? | [(.number | tostring), ((.clearedBy // []) | unique | map("#" + tostring) | join(", "))] | @tsv' 2>/dev/null)
 EOF
   return "$moved"
 }
