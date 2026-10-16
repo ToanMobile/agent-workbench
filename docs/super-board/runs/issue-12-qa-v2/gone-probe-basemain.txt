@@ -1,0 +1,22 @@
+== biến thể A: commit c5b39de4408e (HEAD tách rời của gone_sb), thư mục gone_sb đã bị rm -rf
+admin dir còn: yes · reflog admin nêu commit: 1
+== cleanup --name gone_sb (không --force)
+  | 🧹 Dọn dẹp sandbox 'gone_sb'...
+  |    ✓ Đã gỡ bỏ gone_sb và xoá nhánh sandbox/gone_sb.
+  | ✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+admin dir sau cleanup: PRUNED
+nhánh sandbox/gone_sb: deleted
+ref/reflog nào còn giữ commit: refs=[] reflog=0
+fsck --unreachable (gc sẽ xoá): 1
+
+== biến thể B: commit 52ef853d827a (HEAD tách rời của gone_sb), thư mục gone_sb đã bị rm -rf
+admin dir còn: yes · reflog admin nêu commit: 1
+== cleanup --name other_sb (không --force)
+  | 🧹 Dọn dẹp sandbox 'other_sb'...
+  |    ✓ Đã gỡ bỏ other_sb và xoá nhánh sandbox/other_sb.
+  | ✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+admin dir sau cleanup: PRUNED
+nhánh sandbox/gone_sb: kept
+ref/reflog nào còn giữ commit: refs=[] reflog=0
+fsck --unreachable (gc sẽ xoá): 1
+

@@ -1,0 +1,15 @@
+# Gate full trên cây QA v2 (head 2dedd2c + 3 test QA + thư mục bằng chứng này)
+Lệnh: CLAUDE_PROJECT_DIR=$WT python3 universal-agent-devkit/bin/post-fix-gate.py --run-tests --full --force-full --brief --auto-approve-tests --timeout 3600
+
+## Lần 1 — exit 0, 8/8 suite
+- [x] REG-DK-ALL-01: DevKit tests that name a changed file + repo consistency -> PASS (11.90s)
+- [x] REG-DK-GATE-01: post-fix gate -> PASS (123.57s)
+- [x] REG-DK-GATE-02: proof gate (tree_fp) -> PASS (22.33s)
+- [x] REG-DK-HOOK-01: hook contract -> PASS (72.68s)
+- [x] REG-DK-HOOK-02: proof gate -> PASS (cùng lệnh với REG-DK-GATE-02)
+- [x] REG-DK-SESSION-01: session lock + multi-session gate verdict -> PASS (13.49s)
+- [x] REG-DK-SANDBOX-01: worktree sandbox cleanup keeps unmerged work unless --force (gồm 3 test QA v2) -> PASS (11.71s)
+- [x] REG-DK-COST-01: token cost tracker -> PASS (0.30s)
+Lớp tĩnh (bí mật, lười biếng, dependency, hiệu năng, nuốt lỗi, log): đạt.
+
+Lần 1 không ghi biên nhận PASS vì file bằng chứng được thêm trong lúc chạy; lần 2 chạy trên đúng cây được commit (kết quả ở comment [qa] trên PR #37).

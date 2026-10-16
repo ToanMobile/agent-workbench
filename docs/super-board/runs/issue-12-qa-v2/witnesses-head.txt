@@ -1,0 +1,60 @@
+RESULT m3_reflog_garbage dir=y br=y sha=ok ::    ⚠ 'x': không đọc được reflog HEAD của sandbox (hoặc repo có ref hỏng: chạy `git fsck`), không biết còn commit chưa merge không — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).|
+RESULT m3_reflog_unreadable dir=y br=y sha=LOST ::    ⚠ 'x': không đọc được reflog HEAD của sandbox (hoặc repo có ref hỏng: chạy `git fsck`), không biết còn commit chưa merge không — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).|
+RESULT m4_import_missing dir=y br=y sha=ok ::    ⚠ 'x': không đọc được reflog HEAD của sandbox, không biết còn commit chưa merge không: No module named 'worktree' — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).|
+RESULT m4_import_missing_cleanSandbox dir=y br=y sha=- ::    ⚠ 'clean': không đọc được reflog HEAD của sandbox, không biết còn commit chưa merge không: No module named 'worktree' — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).|
+RESULT m5_unborn_main_folder_gone dir=n br=y sha=ok ::    ⚠ 'x': không đếm được commit chưa merge của nhánh sandbox/x (rc=128: fatal: ambiguous argument 'refs/heads/empty..sandbox/x': unknown revision or path not in the working tree.|
+RESULT m5_unborn_main_folder_present dir=y br=y sha=ok ::    ⚠ 'x': không đếm được commit chưa merge của nhánh sandbox/x (rc=128: fatal: ambiguous argument 'refs/heads/empty..sandbox/x': unknown revision or path not in the working tree.|
+RESULT m6_sandbox_orphan_head dir=y br=y sha=ok ::    ⚠ 'x': không đọc được HEAD của sandbox, không biết còn commit chưa merge không: fatal: Needed a single revision — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).|
+RESULT ma_clean_others_reflog_only dir=y br=y sha=ok ::    ✓ Đã gỡ bỏ win và xoá nhánh sandbox/win.|   ⚠ 'loser': reflog HEAD của sandbox giữ 1 commit chưa merge mà không nhánh nào giữ (vd. 759d11e852e6) — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).|🎉 Đã merge và dọn sandbox thắng cuộc.
+RESULT ma_all_ahead dir=y br=y sha=ok ::    ⚠ 'ahead': nhánh sandbox/ahead giữ 1 commit chưa merge — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).|   ✓ Đã gỡ bỏ okk và xoá nhánh sandbox/okk.|
+RESULT ma_all_ahead_okk dir=n br=n sha=- ::    ⚠ 'ahead': nhánh sandbox/ahead giữ 1 commit chưa merge — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).|   ✓ Đã gỡ bỏ okk và xoá nhánh sandbox/okk.|
+RESULT mb_clean_winner_message dir=n br=n sha=- ::    ✓ Đã gỡ bỏ x và xoá nhánh sandbox/x.|🎉 Đã merge và dọn sandbox thắng cuộc. Sandbox khác (nếu có) được giữ nguyên.|
+RESULT md_side_branch dir=n br=n sha=ok ::    ✓ Đã gỡ bỏ x và xoá nhánh sandbox/x.|
+RESULT mf_head_symref_tag dir=y br=y sha=ok ::    ⚠ 'x': checkout chính đang ở HEAD tách rời, không biết commit của sandbox đã vào nhánh chính chưa — coi như còn commit chưa merge — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).|
+RESULT dl_a_folder_gone dir=n br=n sha=LOST ::    ✓ Đã gỡ bỏ x và xoá nhánh sandbox/x.|
+RESULT dl_a2_folder_gone_detached dir=n br=n sha=LOST ::    ✓ Đã gỡ bỏ x và xoá nhánh sandbox/x.|
+RESULT dl_b_refused_still_prunes dir=n br=y sha=LOST ::    ⚠ 'x': nhánh sandbox/x giữ 1 commit chưa merge — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).|
+RESULT dl_b2_other_cleanup_prunes dir=n br=y sha=LOST ::    ✓ Đã gỡ bỏ y và xoá nhánh sandbox/y.|
+RESULT or_amend_merge dir=n br=n sha=- ::    ✓ Đã gỡ bỏ x và xoá nhánh sandbox/x.|🎉 Đã merge và dọn sandbox thắng cuộc. Sandbox khác (nếu có) được giữ nguyên.|
+RESULT or_manual_ff_merge dir=n br=n sha=- ::    ✓ Đã gỡ bỏ x và xoá nhánh sandbox/x.|
+RESULT or_manual_noff_merge dir=n br=n sha=- ::    ✓ Đã gỡ bỏ x và xoá nhánh sandbox/x.|
+RESULT or_detach_noop dir=n br=n sha=- ::    ✓ Đã gỡ bỏ x và xoá nhánh sandbox/x.|
+usage: git cherry-pick [--edit] [-n] [-m <parent-number>] [-s] [-x] [--ff]
+                       [-S[<keyid>]] <commit>...
+   or: git cherry-pick (--continue | --skip | --abort | --quit)
+
+    --quit                end revert or cherry-pick sequence
+    --continue            resume revert or cherry-pick sequence
+    --abort               cancel revert or cherry-pick sequence
+    --skip                skip current commit and continue
+    --[no-]cleanup <mode> how to strip spaces and #comments from message
+    -n, --no-commit       don't automatically commit
+    --commit              opposite of --no-commit
+    -e, --[no-]edit       edit the commit message
+    -s, --[no-]signoff    add a Signed-off-by trailer
+    -m, --[no-]mainline <parent-number>
+                          select mainline parent
+    --[no-]rerere-autoupdate
+                          update the index with reused conflict resolution if possible
+    --[no-]strategy <strategy>
+                          merge strategy
+    -X, --[no-]strategy-option <option>
+                          option for merge strategy
+    -S, --[no-]gpg-sign[=<key-id>]
+                          GPG sign commit
+    -x                    append commit name
+    --[no-]ff             allow fast-forward
+    --[no-]allow-empty    preserve initially empty commits
+    --[no-]allow-empty-message
+                          allow commits with empty messages
+    --[no-]keep-redundant-commits
+                          deprecated: use --empty=keep instead
+    --empty (stop|drop|keep)
+                          how to handle commits that become empty
+
+RESULT or_detached_cherrypicked dir=y br=y sha=- ::    ⚠ 'x': reflog HEAD của sandbox giữ 1 commit chưa merge mà không nhánh nào giữ (vd. 5c101932cd82) — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).|⚠ Đã merge sandbox/x nhưng chưa dọn sandbox 'x' (xem lý do phía trên); tự kiểm rồi `c
+RESULT or_reset_soft_recommit dir=y br=y sha=- ::    ⚠ 'x': reflog HEAD của sandbox giữ 1 commit chưa merge mà không nhánh nào giữ (vd. c527b97004e2) — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).|⚠ Đã merge sandbox/x nhưng chưa dọn sandbox 'x' (xem lý do phía trên); tự kiểm rồi `c
+RESULT or_base_unmerged_feat dir=y br=y sha=- ::    ⚠ 'x': nhánh sandbox/x giữ 1 commit chưa merge — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).|
+RESULT or_merge_winner_detached_main dir=y br=y sha=- ::    ⚠ 'x': checkout chính đang ở HEAD tách rời, không biết commit của sandbox đã vào nhánh chính chưa — coi như còn commit chưa merge — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).|⚠ Đã merge sandbox/x nhưng chưa dọn sandbox 'x' (xem
+RESULT or_all_skips_detached dir=y br=y sha=- :: 
+RESULT or_tag_shadows_branch dir=n br=y sha=ok ::    ⚠ đã gỡ x nhưng chưa xoá được nhánh sandbox/x: error: the branch 'sandbox/x' is not fully merged|

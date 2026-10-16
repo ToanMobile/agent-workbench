@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# QA #12 v2 probe GONE: thư mục sandbox bị xoá tay (rm -rf) khi commit của nó chỉ HEAD/reflog của sandbox giữ (nhánh đã merge).
+# Biến thể A: `cleanup --name gone_sb` chính nó. Biến thể B: `cleanup --name other_sb` (sandbox khác, sạch) — prune toàn repo ở cuối.
+# Usage: gone_probe.sh <path to worktree_sandbox.py>
+SCRIPT="$1"
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+for variant in A B; do
+  P="$T/repo-$variant"; mkdir -p "$P" && cd "$P" || exit 2
+  git init -q -b main . && git config user.email t@t && git config user.name t
+  echo hi > README.md && git add README.md && git commit -qm init
+  python3 "$SCRIPT" create gone_sb >/dev/null 2>&1
+  python3 "$SCRIPT" create other_sb >/dev/null 2>&1
+  ( cd .sandboxes/gone_sb && git checkout -q --detach && echo g > g.txt && git add g.txt && git commit -qm "feat: gone detached" \
+    && git rev-parse HEAD > "$T/sha-$variant" )
+  SHA=$(cat "$T/sha-$variant")
+  rm -rf .sandboxes/gone_sb
+  echo "== biến thể $variant: commit ${SHA:0:12} (HEAD tách rời của gone_sb), thư mục gone_sb đã bị rm -rf"
+  echo "admin dir còn: $([ -d .git/worktrees/gone_sb ] && echo yes || echo no) · reflog admin nêu commit: $(grep -c "$SHA" .git/worktrees/gone_sb/logs/HEAD 2>/dev/null || echo 0)"
+  if [ "$variant" = A ]; then target=gone_sb; else target=other_sb; fi
+  echo "== cleanup --name $target (không --force)"; python3 "$SCRIPT" cleanup --name "$target" 2>&1 | sed 's/^/  | /'
+  echo "admin dir sau cleanup: $([ -d .git/worktrees/gone_sb ] && echo KEPT || echo PRUNED)"
+  echo "nhánh sandbox/gone_sb: $(git rev-parse -q --verify refs/heads/sandbox/gone_sb >/dev/null && echo kept || echo deleted)"
+  echo "ref/reflog nào còn giữ commit: refs=[$(git for-each-ref --contains "$SHA" --format='%(refname)' 2>/dev/null | tr '\n' ' ')] reflog=$(git reflog --all 2>/dev/null | grep -c "${SHA:0:7}")"
+  echo "fsck --unreachable (gc sẽ xoá): $(git fsck --unreachable 2>/dev/null | grep -c "$SHA")"
+  echo
+done

@@ -1,0 +1,60 @@
+### f2-probe-base6185
+== create f2_sb
+create rc=0
+f2 commit made in the sandbox: 6140e1b75719
+sandbox/f2_sb ahead of main: 0 · sandbox HEAD ahead of main: 0
+f2 merged into main? no
+== cleanup --name f2_sb (no --force)
+  | 🧹 Dọn dẹp sandbox 'f2_sb'...
+  |    ✓ Đã gỡ bỏ f2_sb và xoá nhánh sandbox/f2_sb.
+  | ✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+== after cleanup
+folder: DELETED
+branch: deleted
+refs containing the f2 commit: []
+reflog entries naming it: 0
+fsck: f2 commit unreachable (git gc will drop it): 1
+
+### f2-probe-head
+== create f2_sb
+create rc=0
+f2 commit made in the sandbox: 9d9d1f227a06
+sandbox/f2_sb ahead of main: 0 · sandbox HEAD ahead of main: 0
+f2 merged into main? no
+== cleanup --name f2_sb (no --force)
+  | 🧹 Dọn dẹp sandbox 'f2_sb'...
+  |    ⚠ 'f2_sb': reflog HEAD của sandbox giữ 1 commit chưa merge mà không nhánh nào giữ (vd. 9d9d1f227a06) — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).
+  | ✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+== after cleanup
+folder: KEPT
+branch: kept
+refs containing the f2 commit: []
+reflog entries naming it: 2
+fsck: f2 commit unreachable (git gc will drop it): 1
+
+### sw6-probe-base6185
+create rc=0
+sandbox commit: edfa4dd2568e · in main? no
+main checkout HEAD: detached at sandbox/sb
+== cleanup --name sb (no --force)
+  | 🧹 Dọn dẹp sandbox 'sb'...
+  |    ✓ Đã gỡ bỏ sb và xoá nhánh sandbox/sb.
+  | ✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+folder: DELETED
+branch: deleted
+after 'git checkout main' — refs containing the commit: []
+commit in main? no · unreachable without reflogs: 1
+
+### sw6-probe-head
+create rc=0
+sandbox commit: 2fff1d5b1013 · in main? no
+main checkout HEAD: detached at sandbox/sb
+== cleanup --name sb (no --force)
+  | 🧹 Dọn dẹp sandbox 'sb'...
+  |    ⚠ 'sb': checkout chính đang ở HEAD tách rời, không biết commit của sandbox đã vào nhánh chính chưa — coi như còn commit chưa merge — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).
+  | ✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+folder: KEPT
+branch: kept
+after 'git checkout main' — refs containing the commit: [refs/heads/sandbox/sb ]
+commit in main? no · unreachable without reflogs: 0
+

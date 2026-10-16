@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# witness.sh <worktree_sandbox.py> [scenario ...]: each scenario in a fresh scratch repo; prints one RESULT line per scenario.
+# RESULT fields: dir=<sandbox folder kept y/n> br=<branch kept y/n> sha=<the at-risk commit reachable from any ref/reflog: ok|LOST|-> + the cleanup/merge output (first reason line)
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+export GIT_CONFIG_NOSYSTEM=1
+SCRIPT="$1"; shift
+BASE="$(mktemp -d)"; trap 'chmod -R u+rwx "$BASE" 2>/dev/null; rm -rf "$BASE"' EXIT
+G() { git -C "$1" -c user.email=t@t -c user.name=t "${@:2}"; }
+mkrepo() {   # mkrepo <dir>: the same shape as tests/worktree_git/test_worktree_sandbox.sh
+  P="$1"; mkdir -p "$P"; git init -q -b main "$P"
+  echo "hello world" > "$P/README.md"; printf '.env\nlocal.properties\n' > "$P/.worktreeinclude"; echo "SECRET_KEY=1" > "$P/.env"
+  G "$P" add README.md .worktreeinclude; G "$P" commit -qm init
+}
+SB() { (cd "$P" && python3 "$SCRIPT" "$@" 2>&1); }   # the script resolves the repo from its cwd
+pre() { echo "PRE $1 sha=$(reach "$2")"; }   # reachability BEFORE the cleanup, after the out-of-band folder removal
+reach() { [ -z "$1" ] && { echo -; return; };G "$P" rev-list --all --reflog 2>/dev/null | grep -q "^$1" && echo ok || echo LOST; }
+report() {   # report <scenario> <sandbox> <sha> <output>
+  local d=n b=n; [ -d "$P/.sandboxes/$2" ] && d=y; G "$P" rev-parse --verify -q "refs/heads/sandbox/$2" >/dev/null && b=y
+  echo "RESULT $1 dir=$d br=$b sha=$(reach "$3") :: $(printf '%s\n' "$4" | grep -E '⚠|✖|🎉|✓|Error|Traceback|rror' | head -3 | tr '\n' '|' | cut -c1-260)"
+}
+f2shape() {   # f2shape <sb>: a commit made on the sandbox's detached HEAD, then back on its (merged) branch; echoes the commit
+  SB create "$1" >/dev/null; local s="$P/.sandboxes/$1"
+  G "$s" checkout -q --detach; echo "$1" > "$s/$1.txt"; G "$s" add "$1.txt"; G "$s" commit -qm "feat: $1 detached"
+  local sha; sha=$(G "$s" rev-parse HEAD); G "$s" checkout -q "sandbox/$1"; echo "$sha"
+}
+
+run() {
+  local sc="$1"; P="$BASE/$sc"; mkrepo "$P"; local sha="" out=""
+  case "$sc" in
+  # --- fail-closed branches (mutant witnesses) ---
+  m3_reflog_garbage)   # reflog line git cannot parse: _reflog_only -> None
+    sha=$(f2shape x); echo "garbage line" >> "$(G "$P/.sandboxes/x" rev-parse --path-format=absolute --git-path logs/HEAD)"
+    out=$(SB cleanup --name x); report "$sc" x "$sha" "$out" ;;
+  m3_reflog_unreadable)   # chmod 000 on the sandbox HEAD reflog
+    sha=$(f2shape x); local lg; lg="$(G "$P/.sandboxes/x" rev-parse --path-format=absolute --git-path logs/HEAD)"; chmod 000 "$lg"
+    out=$(SB cleanup --name x); [ -e "$lg" ] && chmod 644 "$lg"; report "$sc" x "$sha" "$out" ;;
+  m4_import_missing)   # the script deployed WITHOUT worktree.py beside it (commands/sandbox.md names scripts/worktree_sandbox.py)
+    mkdir -p "$BASE/alone"; cp "$SCRIPT" "$BASE/alone/worktree_sandbox.py"; local keep="$SCRIPT"; SCRIPT="$BASE/alone/worktree_sandbox.py"
+    sha=$(f2shape x); out=$(SB cleanup --name x); report "$sc" x "$sha" "$out"
+    SB create clean >/dev/null; out=$(SB cleanup --name clean); report "${sc}_cleanSandbox" clean "" "$out"
+    SCRIPT="$keep" ;;
+  m5_unborn_main_folder_gone)   # main checkout on an unborn branch, sandbox folder gone, branch ahead
+    SB create x >/dev/null; echo a > "$P/.sandboxes/x/a.txt"; G "$P/.sandboxes/x" add a.txt; G "$P/.sandboxes/x" commit -qm a
+    sha=$(G "$P" rev-parse sandbox/x); rm -rf "$P/.sandboxes/x"; G "$P" switch -q --orphan empty
+    out=$(SB cleanup --name x); report "$sc" x "$sha" "$out" ;;
+  m5_unborn_main_folder_present)
+    sha=$(f2shape x); G "$P" switch -q --orphan empty
+    out=$(SB cleanup --name x); report "$sc" x "$sha" "$out" ;;
+  m6_sandbox_orphan_head)   # sandbox switched to an unborn branch: rev-parse HEAD fails, status is clean
+    sha=$(f2shape x); G "$P/.sandboxes/x" switch -q --orphan tmp
+    out=$(SB cleanup --name x); report "$sc" x "$sha" "$out" ;;
+  ma_clean_others_reflog_only)   # loser holds a reflog-only commit; winner merged with --clean-others
+    sha=$(f2shape loser); SB create win >/dev/null; echo w > "$P/.sandboxes/win/w.txt"; G "$P/.sandboxes/win" add w.txt; G "$P/.sandboxes/win" commit -qm w
+    out=$(SB merge-winner win --clean-others); report "$sc" loser "$sha" "$out" ;;
+  ma_all_ahead)   # cleanup --all with one merged-clean, one ahead sandbox
+    SB create okk >/dev/null; SB create ahead >/dev/null; echo a > "$P/.sandboxes/ahead/a.txt"; G "$P/.sandboxes/ahead" add a.txt; G "$P/.sandboxes/ahead" commit -qm a
+    sha=$(G "$P" rev-parse sandbox/ahead); out=$(SB cleanup --all); report "$sc" ahead "$sha" "$out"; report "${sc}_okk" okk "" "$out" ;;
+  mb_clean_winner_message)
+    SB create x >/dev/null; echo a > "$P/.sandboxes/x/a.txt"; G "$P/.sandboxes/x" add a.txt; G "$P/.sandboxes/x" commit -qm a
+    out=$(SB merge-winner x); report "$sc" x "" "$out" ;;
+  md_side_branch)   # sandbox made a side branch (still exists) and came back: nothing is lost
+    SB create x >/dev/null; local s="$P/.sandboxes/x"; G "$s" checkout -qb side; echo s > "$s/s.txt"; G "$s" add s.txt; G "$s" commit -qm side
+    sha=$(G "$s" rev-parse HEAD); G "$s" checkout -q sandbox/x; out=$(SB cleanup --name x); report "$sc" x "$sha" "$out" ;;
+  mf_head_symref_tag)   # main HEAD a symref to a tag (exotic)
+    sha=$(f2shape x); G "$P" tag v1; G "$P" symbolic-ref HEAD refs/tags/v1 2>&1 | head -1
+    out=$(SB cleanup --name x); report "$sc" x "$sha" "$out" ;;
+  # --- data-loss probes on head ---
+  dl_a_folder_gone)   # detached commit, folder removed by hand, then cleanup
+    sha=$(f2shape x); rm -rf "$P/.sandboxes/x"; pre "$sc" "$sha"; out=$(SB cleanup --name x); report "$sc" x "$sha" "$out" ;;
+  dl_a2_folder_gone_detached)   # same, HEAD still detached at the commit
+    SB create x >/dev/null; local s="$P/.sandboxes/x"; G "$s" checkout -q --detach; echo d > "$s/d.txt"; G "$s" add d.txt; G "$s" commit -qm d
+    sha=$(G "$s" rev-parse HEAD); rm -rf "$s"; pre "$sc" "$sha"; out=$(SB cleanup --name x); report "$sc" x "$sha" "$out" ;;
+  dl_b_refused_still_prunes)   # branch ahead (refused) + folder gone + detached commit only in its admin reflog
+    SB create x >/dev/null; local s="$P/.sandboxes/x"; echo a > "$s/a.txt"; G "$s" add a.txt; G "$s" commit -qm a
+    G "$s" checkout -q --detach; echo d > "$s/d.txt"; G "$s" add d.txt; G "$s" commit -qm d; sha=$(G "$s" rev-parse HEAD); G "$s" checkout -q sandbox/x
+    rm -rf "$s"; pre "$sc" "$sha"; out=$(SB cleanup --name x); report "$sc" x "$sha" "$out" ;;
+  dl_b2_other_cleanup_prunes)   # cleaning an UNRELATED sandbox prunes x's admin dir
+    sha=$(f2shape x); rm -rf "$P/.sandboxes/x"; SB create y >/dev/null; pre "$sc" "$sha"; out=$(SB cleanup --name y); report "$sc" x "$sha" "$out" ;;
+  # --- over-refusal probes on head (each should clean) ---
+  or_amend_merge)
+    SB create x >/dev/null; local s="$P/.sandboxes/x"; echo a > "$s/a.txt"; G "$s" add a.txt; G "$s" commit -qm a; echo b >> "$s/a.txt"; G "$s" commit -qam "a2" --amend
+    out=$(SB merge-winner x); report "$sc" x "" "$out" ;;
+  or_manual_ff_merge)
+    SB create x >/dev/null; local s="$P/.sandboxes/x"; echo a > "$s/a.txt"; G "$s" add a.txt; G "$s" commit -qm a
+    G "$P" merge -q --ff-only sandbox/x; out=$(SB cleanup --name x); report "$sc" x "" "$out" ;;
+  or_manual_noff_merge)
+    SB create x >/dev/null; local s="$P/.sandboxes/x"; echo a > "$s/a.txt"; G "$s" add a.txt; G "$s" commit -qm a
+    echo m > "$P/m.txt"; G "$P" add m.txt; G "$P" commit -qm m; G "$P" merge -q --no-edit sandbox/x; out=$(SB cleanup --name x); report "$sc" x "" "$out" ;;
+  or_detach_noop)   # checkout --detach and back, no commit
+    SB create x >/dev/null; G "$P/.sandboxes/x" checkout -q --detach; G "$P/.sandboxes/x" checkout -q sandbox/x
+    out=$(SB cleanup --name x); report "$sc" x "" "$out" ;;
+  or_detached_cherrypicked)   # detached commit brought onto the branch with cherry-pick, then merge-winner
+    sha=$(f2shape x); G "$P/.sandboxes/x" cherry-pick "$sha" >/dev/null; out=$(SB merge-winner x); report "$sc" x "" "$out" ;;
+  or_reset_soft_recommit)   # by design: the first version stays only in the reflog
+    SB create x >/dev/null; local s="$P/.sandboxes/x"; echo a > "$s/a.txt"; G "$s" add a.txt; G "$s" commit -qm a; G "$s" reset -q --soft HEAD~1
+    echo b >> "$s/a.txt"; G "$s" add a.txt; G "$s" commit -qm "a again"; out=$(SB merge-winner x); report "$sc" x "" "$out" ;;
+  or_base_unmerged_feat)   # create --base feat (feat not in main), no work: feat still holds every commit
+    G "$P" branch feat; G "$P" checkout -q feat; echo f > "$P/f.txt"; G "$P" add f.txt; G "$P" commit -qm f; G "$P" checkout -q main
+    SB create x --base feat >/dev/null; out=$(SB cleanup --name x); report "$sc" x "" "$out" ;;
+  or_merge_winner_detached_main)
+    SB create x >/dev/null; local s="$P/.sandboxes/x"; echo a > "$s/a.txt"; G "$s" add a.txt; G "$s" commit -qm a; G "$P" checkout -q --detach
+    out=$(SB merge-winner x); report "$sc" x "" "$out" ;;
+  or_all_skips_detached)   # cleanup --all and a sandbox on a detached HEAD (merged, clean)
+    SB create x >/dev/null; G "$P/.sandboxes/x" checkout -q --detach; out=$(SB cleanup --all); report "$sc" x "" "$out" ;;
+  or_tag_shadows_branch)   # a tag named like the branch, branch ahead, folder gone
+    SB create x >/dev/null; local s="$P/.sandboxes/x"; echo a > "$s/a.txt"; G "$s" add a.txt; G "$s" commit -qm a; sha=$(G "$P" rev-parse sandbox/x)
+    G "$P" tag sandbox/x main; rm -rf "$s"; out=$(SB cleanup --name x); report "$sc" x "$sha" "$out" ;;
+  *) echo "unknown scenario $sc" ;;
+  esac
+}
+
+ALL="m3_reflog_garbage m3_reflog_unreadable m4_import_missing m5_unborn_main_folder_gone m5_unborn_main_folder_present m6_sandbox_orphan_head
+ma_clean_others_reflog_only ma_all_ahead mb_clean_winner_message md_side_branch mf_head_symref_tag
+dl_a_folder_gone dl_a2_folder_gone_detached dl_b_refused_still_prunes dl_b2_other_cleanup_prunes
+or_amend_merge or_manual_ff_merge or_manual_noff_merge or_detach_noop or_detached_cherrypicked or_reset_soft_recommit or_base_unmerged_feat
+or_merge_winner_detached_main or_all_skips_detached or_tag_shadows_branch"
+for sc in ${*:-$ALL}; do run "$sc"; done

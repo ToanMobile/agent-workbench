@@ -205,6 +205,41 @@ if [ ! -d "$P/.sandboxes/dirty_sb" ] && [ ! -d "$P/.sandboxes/ahead_sb" ] && [ !
 else
   fail "--force did not remove the sandboxes and branch"
 fi
+# issue #12 QA v2: merge-winner --clean-others chạy cleanup --all lên sandbox thua; sandbox thua có commit chỉ reflog HEAD của nó giữ (dạng F2) phải được giữ
+python3 "$SCRIPT" create mwl_lose >/dev/null 2>&1
+python3 "$SCRIPT" create mwl_win >/dev/null 2>&1
+( cd "$P/.sandboxes/mwl_lose" && git checkout -q --detach && echo l > lose.txt && git add lose.txt && git commit -q -m "feat: loser detached" \
+  && git checkout -q sandbox/mwl_lose )
+( cd "$P/.sandboxes/mwl_win" && echo w > win.txt && git add win.txt && git commit -q -m "feat: win" )
+MWL_OUT=$(python3 "$SCRIPT" merge-winner mwl_win --clean-others 2>&1)
+if [ -d "$P/.sandboxes/mwl_lose" ] && git -C "$P" rev-parse --verify -q "sandbox/mwl_lose" >/dev/null && echo "$MWL_OUT" | grep -q "chưa merge"; then
+  ok "merge-winner --clean-others keeps a losing sandbox whose reflog-only commit is unmerged"
+else
+  fail "merge-winner --clean-others lost a losing sandbox's reflog-only commit: $MWL_OUT"
+fi
+# reflog HEAD của sandbox có dòng git không đọc được: không biết commit nào chỉ nó giữ → giữ (fail closed), không hiểu thành "sạch"
+python3 "$SCRIPT" create rlg_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/rlg_sb" && git checkout -q --detach && echo g > rlg.txt && git add rlg.txt && git commit -q -m "feat: rlg detached" \
+  && git checkout -q sandbox/rlg_sb && echo "not a reflog line" >> "$(git rev-parse --git-dir)/logs/HEAD" )
+RLG_OUT=$(python3 "$SCRIPT" cleanup --name rlg_sb 2>&1)
+if [ -d "$P/.sandboxes/rlg_sb" ] && echo "$RLG_OUT" | grep -q "không đọc được reflog HEAD"; then
+  ok "cleanup keeps a sandbox whose HEAD reflog cannot be read"
+else
+  fail "cleanup treated an unreadable sandbox reflog as clean: $RLG_OUT"
+fi
+# HEAD của sandbox không đọc được (nhánh orphan chưa có commit): không biết commit nào chỉ reflog giữ → giữ
+python3 "$SCRIPT" create unb_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/unb_sb" && git checkout -q --detach && echo u > unb.txt && git add unb.txt && git commit -q -m "feat: unb detached" \
+  && git checkout -q sandbox/unb_sb && git switch -q --orphan unb_unborn )
+UNB_OUT=$(python3 "$SCRIPT" cleanup --name unb_sb 2>&1)
+if [ -d "$P/.sandboxes/unb_sb" ] && echo "$UNB_OUT" | grep -q "không đọc được HEAD của sandbox"; then
+  ok "cleanup keeps a sandbox whose HEAD cannot be read"
+else
+  fail "cleanup treated a sandbox with an unreadable HEAD as clean: $UNB_OUT"
+fi
+python3 "$SCRIPT" cleanup --name mwl_lose --force >/dev/null 2>&1
+python3 "$SCRIPT" cleanup --name rlg_sb --force >/dev/null 2>&1
+python3 "$SCRIPT" cleanup --name unb_sb --force >/dev/null 2>&1
 
 # Test 7: a new file that was never `git add`ed is work too (not a disposable leftover)
 python3 "$SCRIPT" create untracked_sb >/dev/null 2>&1

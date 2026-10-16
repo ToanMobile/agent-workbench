@@ -1,0 +1,32 @@
+✔ worktree_sandbox.py --help returns exit 0
+✔ Sandbox directory created successfully
+✔ .worktreeinclude files copied via CoW
+✔ .sandbox-env.sh envelope generated
+✔ Sandbox listed in active sandboxes
+✔ Sandbox cleaned up and removed cleanly
+✔ Winner commit merged into main branch
+✔ Winner sandbox automatically deleted after merge
+✔ Winner branch automatically deleted
+✔ merge-winner keeps the other sandboxes by default
+✔ --clean-others removes the losing sandboxes on request
+✔ .worktreeinclude '.' / './' lines are ignored
+✔ cleanup keeps a sandbox that has uncommitted changes
+✔ cleanup keeps the branch that holds unmerged commits
+✔ cleanup refuses a sandbox with unmerged commits: folder kept, warning printed
+✔ cleanup refuses a sandbox whose detached HEAD holds an unmerged commit
+✔ cleanup keeps a sandbox whose reflog-only commit is unmerged
+✔ cleanup keeps a sandbox whose reset-away commit only reflogs name
+✔ cleanup judges 'merged' by the main branch, not a detached main checkout
+✔ merge-winner says the winner was merged but kept, never 'cleaned'
+✔ --force removes the sandbox and the unmerged branch on explicit request
+✔ merge-winner --clean-others keeps a losing sandbox whose reflog-only commit is unmerged
+✔ cleanup keeps a sandbox whose HEAD reflog cannot be read
+✔ cleanup keeps a sandbox whose HEAD cannot be read
+✔ cleanup keeps a sandbox holding a new untracked file
+✔ merge-winner refuses a sandbox holding an untracked new file
+✔   … and the file is still there
+✔ cleanup keeps a sandbox whose git status cannot be read
+mv: rename $TMP/broken_sb_admin to $TMP/mock-repo/.git/worktrees/broken_sb: No such file or directory
+✔ cleanup keeps a new file inside an included directory
+✔ a sandbox holding only unchanged copies of included files is cleaned up
+ALL TESTS PASSED

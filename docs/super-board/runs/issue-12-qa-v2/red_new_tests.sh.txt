@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# QA #12 v2: chứng minh 3 test mới có thể ĐỎ — chạy test_worktree_sandbox.sh (bản của QA) trên bản copy head có từng đột biến, và trên code origin/main.
+# Usage: red_new_tests.sh <worktree> <scratch qa12 dir>
+W="$1"; S="$2"
+MUT="$S/agent/probes/mutate.py"
+TEST_REL=universal-agent-devkit/tests/worktree_git/test_worktree_sandbox.sh
+for m in M3 M6 Ma; do
+  C="$S/mut-$m"; rm -rf "$C"; mkdir -p "$C"
+  git -C "$W" archive HEAD universal-agent-devkit/scripts universal-agent-devkit/tests universal-agent-devkit/profiles | tar -x -C "$C"
+  cp "$W/$TEST_REL" "$C/$TEST_REL"
+  python3 "$MUT" "$C" "$m" || { echo "mutant $m not applied"; continue; }
+  out=$(bash "$C/$TEST_REL" 2>&1); rc=$?
+  echo "== mutant $m: rc=$rc"
+  echo "$out" | grep -E "^✖" | cut -c1-160
+  rm -rf "$C"
+done
+cp "$W/$TEST_REL" "$S/basemain/$TEST_REL"
+out=$(bash "$S/basemain/$TEST_REL" 2>&1); rc=$?
+echo "== origin/main (code gốc): rc=$rc"
+echo "$out" | grep -E "^✖" | cut -c1-160

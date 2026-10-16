@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""mutate.py <copy_root> <mutant_id>: apply ONE mutant to <copy_root>/universal-agent-devkit/scripts/git/worktree_sandbox.py.
+Each replacement must match exactly once (a silent no-match would look like a survivor)."""
+import sys
+from pathlib import Path
+
+T = "universal-agent-devkit/scripts/git/worktree_sandbox.py"
+
+MUTANTS = {
+    # M1: judge "merged" against main checkout's HEAD; no detached-main refusal
+    "M1": [
+        ('    if base.returncode != 0 or not base_ref.startswith("refs/heads/"):\n        return "checkout chính đang ở HEAD tách rời',
+         '    base_ref = "HEAD"\n    if False:\n        return "checkout chính đang ở HEAD tách rời'),
+    ],
+    "M2": [("sorted(set(refs)), attached=False)", "sorted(set(refs)), attached=True)")],
+    "M3": [('        if lost is None:\n            return "không đọc được reflog HEAD',
+            '        if False:\n            return "không đọc được reflog HEAD')],
+    "M4": [('            return f"không đọc được reflog HEAD của sandbox, không biết còn commit chưa merge không: {e}"',
+            '            return None')],
+    "M5": [('            return f"không đếm được commit chưa merge của {label}',
+            '            continue\n            return f"không đếm được commit chưa merge của {label}')],
+    "M6": [('            return f"không đọc được HEAD của sandbox, không biết còn commit chưa merge không: {head.stderr.strip()}"',
+            '            return None')],
+    "M7": [("    winner_kept = bool(cleanup_sandbox(name=name))", "    cleanup_sandbox(name=name); winner_kept = False")],
+    "M8": [('        revs.append(("HEAD của sandbox", head_sha))\n', '')],
+    # extra mutants
+    "Ma": [("        unmerged = None if force else sandbox_unmerged_commits(", "        unmerged = None if (force or cleanup_all) else sandbox_unmerged_commits(")],
+    "Mb": [("        done.append(t)\n", "")],
+    "Mc": [("    if head_sha:\n        try:", "    if False:\n        try:")],   # drop the whole reflog check
+    "Md": [('"--format=%(objectname)", "refs/heads", "refs/remotes", "refs/tags"]', '"--format=%(objectname)", "refs/remotes", "refs/tags"]')],  # over-refusal probe
+    "Me": [("        if count != \"0\":\n            return f\"{label} giữ", "        if False:\n            return f\"{label} giữ")],  # drop ahead count
+    "Mf": [('    if base.returncode != 0 or not base_ref.startswith("refs/heads/"):', '    if base.returncode != 0:')],  # drop refs/heads/ prefix check
+    "Mg": [("    if s_path.exists():\n        head = run_cmd(", "    if False:\n        head = run_cmd(")],  # never read sandbox HEAD
+}
+
+
+def main():
+    root, mid = Path(sys.argv[1]), sys.argv[2]
+    f = root / T
+    src = f.read_text(encoding="utf-8")
+    for old, new in MUTANTS[mid]:
+        n = src.count(old)
+        if n != 1:
+            sys.exit(f"mutant {mid}: pattern matched {n} times: {old[:60]!r}")
+        src = src.replace(old, new)
+    f.write_text(src, encoding="utf-8")
+    print(f"applied {mid}")
+
+
+if __name__ == "__main__":
+    main()
