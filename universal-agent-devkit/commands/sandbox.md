@@ -11,17 +11,17 @@ Sử dụng lệnh này để tạo và điều phối các môi trường song 
 
 ```bash
 # 1. Tạo sandbox
-python3 universal-agent-devkit/scripts/worktree_sandbox.py create <tên>
+python3 universal-agent-devkit/scripts/git/worktree_sandbox.py create <tên>
 
 # 2. Xem danh sách
-python3 universal-agent-devkit/scripts/worktree_sandbox.py list
+python3 universal-agent-devkit/scripts/git/worktree_sandbox.py list
 
 # 3. So sánh 2 phương án
-python3 universal-agent-devkit/scripts/worktree_sandbox.py compare <a > <b>
+python3 universal-agent-devkit/scripts/git/worktree_sandbox.py compare <a > <b>
 
 # 4. Merge giải pháp tốt nhất & TỰ ĐỘNG DỌN SẠCH RÁC
-python3 universal-agent-devkit/scripts/worktree_sandbox.py merge-winner <tên>
+python3 universal-agent-devkit/scripts/git/worktree_sandbox.py merge-winner <tên>
 
 # 5. Dọn dẹp thủ công
-python3 universal-agent-devkit/scripts/worktree_sandbox.py cleanup --all
+python3 universal-agent-devkit/scripts/git/worktree_sandbox.py cleanup --all
 ```

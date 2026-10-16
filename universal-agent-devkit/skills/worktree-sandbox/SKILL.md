@@ -12,19 +12,19 @@ Kỹ năng điều phối môi trường phân nhánh song song cho nhiều AI A
 ### 1. Dòng lệnh CLI trực tiếp:
 ```bash
 # Tạo sandbox thử nghiệm
-python3 universal-agent-devkit/scripts/worktree_sandbox.py create <name> [--base <branch>] [--port-offset 10]
+python3 universal-agent-devkit/scripts/git/worktree_sandbox.py create <name> [--base <branch>] [--port-offset 10]
 
 # Liệt kê danh sách sandboxes đang chạy
-python3 universal-agent-devkit/scripts/worktree_sandbox.py list
+python3 universal-agent-devkit/scripts/git/worktree_sandbox.py list
 
 # So sánh diff giữa 2 sandboxes (A/B testing)
-python3 universal-agent-devkit/scripts/worktree_sandbox.py compare <name_a> <name_b>
+python3 universal-agent-devkit/scripts/git/worktree_sandbox.py compare <name_a> <name_b>
 
 # Merge giải pháp thắng cuộc và TỰ ĐỘNG DỌN DẸP SẠCH TOÀN BỘ RÁC
-python3 universal-agent-devkit/scripts/worktree_sandbox.py merge-winner <name> [--squash]
+python3 universal-agent-devkit/scripts/git/worktree_sandbox.py merge-winner <name> [--squash]
 
 # Dọn dẹp thủ công toàn bộ bất kỳ lúc nào
-python3 universal-agent-devkit/scripts/worktree_sandbox.py cleanup --all
+python3 universal-agent-devkit/scripts/git/worktree_sandbox.py cleanup --all
 ```
 
 ### 2. Quy trình Trọng tài Tự động (Tournament Protocol):
