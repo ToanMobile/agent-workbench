@@ -245,6 +245,11 @@
         "universal-agent-devkit/bin/tree_fp.py",
         "universal-agent-devkit/scripts/linters/assertion_lint.py",
         "universal-agent-devkit/bin/postfix-gate"
+      ],
+      "stale_since": "2026-10-16 07:26:33",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/tree_fp.py"
       ]
     },
     "REG-DK-GATE-02": {
@@ -327,6 +332,11 @@
         "universal-agent-devkit/bin/tree_fp.py",
         "universal-agent-devkit/scripts/linters/assertion_lint.py",
         "universal-agent-devkit/bin/postfix-gate"
+      ],
+      "stale_since": "2026-10-16 07:26:33",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/tree_fp.py"
       ]
     },
     "REG-DK-HOOK-01": {
@@ -405,6 +415,14 @@
       "command": "bash universal-agent-devkit/hooks/tests/hook_contract_test.sh",
       "watch_files": [
         "universal-agent-devkit/hooks/*"
+      ],
+      "stale_since": "2026-10-16 07:26:33",
+      "stale_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/hooks/session_worktree.py",
+        "universal-agent-devkit/hooks/session_worktree.sh"
       ]
     },
     "REG-DK-HOOK-02": {
@@ -483,6 +501,14 @@
       "command": "bash universal-agent-devkit/tests/gates/test_proof_gate.sh",
       "watch_files": [
         "universal-agent-devkit/hooks/*"
+      ],
+      "stale_since": "2026-10-16 07:26:33",
+      "stale_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/hooks/session_worktree.py",
+        "universal-agent-devkit/hooks/session_worktree.sh"
       ]
     },
     "REG-DK-HEALTH-01": {
@@ -639,6 +665,14 @@
       "command": "bash universal-agent-devkit/tests/run_impacted.sh",
       "watch_files": [
         "universal-agent-devkit/*"
+      ],
+      "stale_since": "2026-10-16 07:26:33",
+      "stale_files": [
+        "universal-agent-devkit/.claude-plugin/plugin.json",
+        "universal-agent-devkit/AGENTS.md",
+        "universal-agent-devkit/CHANGELOG.md",
+        "universal-agent-devkit/README.md",
+        "universal-agent-devkit/README.vi.md"
       ]
     },
     "BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du": {
@@ -759,6 +793,10 @@
         ".claude/settings.json",
         ".mcp.json",
         "mcp_config.json",
+        "AGENTS.md"
+      ],
+      "stale_since": "2026-10-16 07:26:33",
+      "stale_files": [
         "AGENTS.md"
       ]
     },
@@ -1183,6 +1221,11 @@
       "watch_files": [
         "universal-agent-devkit/bin/session_lock.py",
         "universal-agent-devkit/bin/post-fix-gate.py"
+      ],
+      "stale_since": "2026-10-16 07:26:33",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/session_lock.py"
       ]
     },
     "REG-DK-SANDBOX-01": {
@@ -1383,6 +1426,10 @@
       "command": "bash universal-agent-devkit/tests/context_memory/test_token_cost_tracker.sh",
       "watch_files": [
         "universal-agent-devkit/scripts/governance/token_cost_tracker.py"
+      ],
+      "stale_since": "2026-10-16 07:26:33",
+      "stale_files": [
+        "universal-agent-devkit/scripts/governance/token_cost_tracker.py"
       ]
     },
     "BUG-20261002-proof-gate-reinit-same-profile": {
@@ -1408,8 +1455,8 @@
       "red_proof": {
         "at": "2026-10-09 17:01:35",
         "ts": 1791540095.7422879,
-        "status": "PROVEN",
-        "reason": "đỏ khi bỏ bản sửa, xanh khi có",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_proof_gate.sh đã đổi sau lần chứng minh",
         "mode": "revert",
         "fix_commit": "0d30b5c",
         "files": {
@@ -1657,8 +1704,8 @@
       "red_proof": {
         "at": "2026-10-09 20:33:28",
         "ts": 1791552808.794166,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/context_memory/test_session_lock.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -1693,8 +1740,8 @@
       "red_proof": {
         "at": "2026-10-09 20:32:19",
         "ts": 1791552739.2442508,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/context_memory/test_session_lock.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -1765,8 +1812,8 @@
       "red_proof": {
         "at": "2026-10-09 20:28:17",
         "ts": 1791552497.3749871,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/context_memory/test_session_lock.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -2806,8 +2853,8 @@
       "red_proof": {
         "at": "2026-10-12 21:04:39",
         "ts": 1791813879.959284,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/context_memory/test_session_lock_worktree_hint.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -4544,6 +4591,72 @@
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
       "state": "confirmed"
+    },
+    "BUG-20261014-heredoc-data-false-block": {
+      "id": "BUG-20261014-heredoc-data-false-block",
+      "kind": "bug",
+      "title": "command guards read heredoc data as commands: block-dangerous-git refused a quoted python heredoc whose body held a backtick, hardware_safety_gate walked cat-to-file heredoc bodies as rm commands",
+      "cause": null,
+      "component": "devkit-guard",
+      "created_at": "2026-10-16 07:26:33",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "medium",
+      "evidence": "main hooks: python heredoc with a backtick in its docstring gave rc 2 (checkout -b), a cat-to-notes.md heredoc holding rm -rf ~ gave hw rc 2; tests/gates/test_guard_shell_norm.sh RED on main hooks, GREEN with hooks/shell_norm.py",
+      "linked_at": "2026-10-16 07:26:33",
+      "linked_ts": 1792110393.780591,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_guard_shell_norm.sh"
+      ]
+    },
+    "BUG-20261014-guard-shell-norm-fail-open": {
+      "id": "BUG-20261014-guard-shell-norm-fail-open",
+      "kind": "bug",
+      "title": "command guards let through commands hidden behind su -c, adb shell, ssh option values, bash -lc, wrapper option values, a heredoc operator inside quotes or a comment, and device-side rm forms (braces, dot-dot paths, cd then rm, find -delete, tilde)",
+      "cause": null,
+      "component": "devkit-guard",
+      "created_at": "2026-10-16 07:26:34",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "high",
+      "evidence": "main hooks: su -c and adb shell around a hard reset gave git rc 0, ssh -E log host CMD gave rc 0, an echo of a quoted heredoc operator cut the next line unjudged (rc 0), adb shell rm -rf on braces or a tilde gave hw rc 0; tests/gates/test_guard_shell_norm.sh RED on main hooks (112 fails), GREEN with hooks/shell_norm.py",
+      "linked_at": "2026-10-16 07:26:34",
+      "linked_ts": 1792110394.014142,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_guard_shell_norm.sh"
+      ]
+    },
+    "BUG-20261016-proof-gate-recursion-fail-open": {
+      "id": "BUG-20261016-proof-gate-recursion-fail-open",
+      "kind": "bug",
+      "title": "proof_gate: a deeply nested receipt or state file crashes the hook with RecursionError and XONG passes (python exit 1 becomes wrapper exit 0)",
+      "cause": null,
+      "component": "devkit-gate",
+      "created_at": "2026-10-16 11:01:36",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "high",
+      "evidence": "tests/gates/test_proof_gate.sh group nested: 2 rows RED on the old hook (nested full_pass.json gave rc 0 with a Traceback, nested proof_gate.state gave rc 0 instead of the block), GREEN with RecursionError caught in the three json.load places; python 3.14 and 3.9.6",
+      "linked_at": "2026-10-16 11:01:36",
+      "linked_ts": 1792123296.910506,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_proof_gate.sh"
+      ]
     }
   },
   "meta": {
