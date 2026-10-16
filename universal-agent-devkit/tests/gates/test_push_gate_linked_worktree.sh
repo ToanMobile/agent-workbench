@@ -12,7 +12,9 @@
 #  L9 a stale receipt carried into main earlier does not hide a covering worktree. L10 a worktree gated on UNCOMMITTED work at main's
 #     HEAD does not cover that HEAD. L11 `automerge --keep` (the Stop hook) then `worktree remove` keeps the push covered. L12 a
 #     worktree's own remote view is no receipt for a tag push. L13 a carried receipt naming another project's run is refused.
-#     L14 a linked worktree whose check raises does not stop the others from covering the push.
+#     L14 a linked worktree whose check raises does not stop the others from covering the push. L15 a receipt carried into main is
+#     judged by the linked rules (gated on uncommitted work that main later reverted: refused). L16 a linked worktree with no receipt
+#     does not vouch through its own upstream ("@{u}..rev is docs only").
 # Every refusal must be a verdict, never "không kiểm được biên nhận gate" (a crash also exits 2).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -169,6 +171,24 @@ PY
 )"
 case "$WHY" in "True covered by the gate receipt of the linked worktree"*) ok "L14: a linked worktree whose check raises is skipped, the next one covers the push" ;;
   *) bad "L14: a raising linked worktree broke the fallback: $(printf '%s' "$WHY" | tail -3)" ;; esac
+
+# a receipt carried into main is judged by the linked rules too: its gate passed on UNCOMMITTED work that `worktree finish` committed;
+# main then reverts that work, so the pushed tree (back to the base) is not the tested one even though head..rev changes nothing
+newrepo
+echo "fun ok() = 2" > "$W/src/Core.kt"
+CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief > "$TMP/gate.out" 2>&1 || bad "L15 setup: gate --full failed: $(tail -3 "$TMP/gate.out")"
+(cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) || bad "L15 setup: worktree finish failed: $(tail -3 "$TMP/finish.out")"
+grep -qF "carried_from" "$(git -C "$R" rev-parse --absolute-git-dir)/postfix-gate/full_pass.json" 2>/dev/null \
+  || bad "L15 setup: finish carried no receipt into main: $(tail -3 "$TMP/finish.out")"
+echo "fun ok() = 1" > "$R/src/Core.kt"; git -C "$R" commit -qam "revert the gated work on main" || bad "L15 setup: commit failed"
+expect "L15: a carried receipt gated on uncommitted work, that work reverted on main: refused" 2 "khác bản gate đã test"
+
+# a linked worktree with NO receipt whose upstream already holds main's ungated code: its own "@{u}..rev is docs only" answer is no receipt
+newrepo
+echo "fun ok() = 5" > "$W/src/Core.kt"; git -C "$W" commit -qam "ungated code" && git -C "$W" push -q -u origin task 2>/dev/null \
+  && git -C "$R" merge -q --ff-only task && echo "# notes" > "$R/NOTES.md" && git -C "$R" add NOTES.md && git -C "$R" commit -qm "docs" \
+  || bad "L16 setup: commit / push / merge failed"
+expect "L16: a linked worktree without a receipt, its upstream holding main's ungated code, does not cover the push" 2
 
 [ "$FAILS" = 0 ] && echo "ALL OK" && exit 0
 echo "$FAILS FAILED"; exit 1

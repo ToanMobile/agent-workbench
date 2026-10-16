@@ -512,6 +512,9 @@ def check(cwd, rev="HEAD", tag_remote=None, linked=False):
     # Trunk mode (issue #5): gate chạy trong linked worktree và ghi biên nhận dưới git dir của worktree đó; main chỉ nhận merge nên
     # biên nhận của main (không có, hoặc cũ: bản `worktree finish` chép về lần trước) không phủ code sắp push. Biên nhận của từng
     # linked worktree được xét y hệt biên nhận của main.
+    # ponytail: một lần gate --full FAIL mới hơn ở worktree anh em trên cùng nội dung không thu hồi biên nhận PASS cũ hơn (dòng
+    # runs.jsonl không ghi fingerprint để gắn FAIL với nội dung); nâng cấp: ghi fingerprint vào runs.jsonl và từ chối biên nhận có
+    # dòng full non-PASS mới hơn cùng fingerprint, khi thấy một suite flaky được push qua đường này.
     top = toplevel(cwd)[0]
     rc, sha = git(top, "rev-parse", "--verify", "-q", rev + "^{commit}") if top else (1, "")
     skipped = []
@@ -591,9 +594,10 @@ def _own_check(cwd, rev, tag_remote, linked):
         return p and not any(p == prefix + e or p.startswith(prefix + e + "/") for e in tree_fp.EXCLUDE)
     changed = [p for p in out.split("\0") if kept(p)]
     dirty = receipt.get("dirty") or {}
-    if linked:
+    if linked or receipt.get("carried_from"):
         # biên nhận ghi blob của từng file dirty lúc gate chạy: so cả các file đó với rev, kể cả khi head..rev không đổi chúng
-        # (worktree ở HEAD của main có gate PASS nhờ sửa CHƯA commit thì không phủ HEAD của main; ca L10 của test)
+        # (worktree ở HEAD của main có gate PASS nhờ sửa CHƯA commit thì không phủ HEAD của main; ca L10 của test). Biên nhận
+        # `worktree finish` chép sang main cũng vậy: sửa chưa commit đó được finish commit rồi main đảo lại thì head..rev rỗng (ca L15)
         seen = set(changed)
         changed += [p for p in dirty if kept(p) and p not in seen]
     now, then = blobs(top, rev, changed), blobs(top, head, changed)
