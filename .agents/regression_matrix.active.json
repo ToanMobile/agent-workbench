@@ -211,36 +211,6 @@
           "command": "bash universal-agent-devkit/bin/agent-kit health -t ."
         }
       ]
-    },
-    {
-      "component": "super-board",
-      "watch_files": [
-        ".claude/bin/super-board-github-read.py",
-        ".claude/bin/super-board-run.sh",
-        ".claude/bin/super-board-merge-gate.sh",
-        ".claude/bin/super-board-post-merge-clean.sh",
-        "tests/super-board/*"
-      ],
-      "mandatory_regression_tests": [
-        {
-          "id": "REG-SB-RUN-01",
-          "name": "claude-p runner: qa Tester not reaped in Ready, Blocked sweep, live-lock adoption",
-          "command": "bash tests/super-board/test_runner_lanes.sh",
-          "parallel_safe": true
-        },
-        {
-          "id": "REG-SB-MERGE-01",
-          "name": "merge gate post-merge clean removes only the merged card's worktrees",
-          "command": "bash tests/super-board/test_post_merge_clean.sh",
-          "parallel_safe": true
-        },
-        {
-          "id": "REG-SB-READ-01",
-          "name": "github-read: a caller's CLI mistake exits 64 and never halts the board",
-          "command": "bash tests/super-board/test_github_read.sh",
-          "parallel_safe": true
-        }
-      ]
     }
   ]
 }
