@@ -283,9 +283,11 @@ def merged_into(repo_root: Path) -> Tuple[Optional[str], str]:
     """(ref, tên) mà commit của sandbox phải nằm trong mới tính là đã merge; (None, lý do) khi không biết (fail closed).
     - Checkout chạy lệnh đang ở nhánh: nhánh đó (nhánh merge-winner merge vào).
     - Linked worktree tách rời (worktree phiên, trunk mode mặc định): HEAD của nó — git gc giữ HEAD mọi worktree, `worktree finish` /
-      automerge gộp HEAD đó về main, commit rời HEAD còn trong reflog mà `worktree remove` canh (review R1).
-    - Checkout chính tách rời: nhánh trunk (origin/HEAD, rồi main / master / trunk), không theo HEAD — `checkout --detach sandbox/<x>`
-      để xem thì HEAD chứa commit mà trunk chưa có, `git checkout main` là mất (QA SW6)."""
+      automerge gộp HEAD đó về main, commit rời HEAD còn trong reflog mà `worktree remove` canh (review R1). Trade-off: worktree đó
+      `checkout --detach sandbox/<x>` để xem thì sandbox cũng được dọn (cùng hình dạng với merge-winner fast-forward, không phân biệt
+      được trừ khi tin subject reflog — agent ghi được); commit vẫn nằm trên HEAD của worktree đó, được gộp về main như mọi việc của nó.
+    - Checkout chính tách rời: nhánh trunk (origin/HEAD, rồi main / master / trunk) phải có bản local, không theo HEAD —
+      `checkout --detach sandbox/<x>` để xem thì HEAD chứa commit mà trunk chưa có, `git checkout main` là mất (QA SW6)."""
     head = run_cmd(["git", "symbolic-ref", "-q", "HEAD"], cwd=repo_root, check=False)
     ref = head.stdout.strip()
     if head.returncode == 0 and ref.startswith("refs/heads/"):
@@ -302,10 +304,12 @@ def merged_into(repo_root: Path) -> Tuple[Optional[str], str]:
         return None, f"checkout chính đang ở HEAD tách rời, không xác định được nhánh trunk: {e}"
     if not trunk:
         return None, "checkout chính đang ở HEAD tách rời và không có nhánh trunk (origin/HEAD, main, master, trunk)"
+    if run_cmd(["git", "show-ref", "--verify", "-q", f"refs/heads/{trunk}"], cwd=repo_root, check=False).returncode != 0:
+        return None, f"checkout chính đang ở HEAD tách rời và nhánh trunk {trunk} (origin/HEAD) không có bản local"
     return f"refs/heads/{trunk}", f"nhánh {trunk}"
 
 
-def sandbox_unmerged_commits(s_path: Path, repo_root: Path, branch_name: str) -> Optional[str]:
+def sandbox_unmerged_commits(s_path: Path, repo_root: Path, branch_name: str, branch_sha: Optional[str]) -> Optional[str]:
     """Vì sao chưa được xoá sandbox: nhánh của nó, HEAD riêng của nó, hoặc commit chỉ reflog HEAD của nó còn nêu tên, có commit mà
     `merged_into` (nhánh checkout đang đứng / HEAD của linked worktree tách rời / trunk khi checkout chính tách rời) chưa có; None khi không còn.
     - HEAD riêng và reflog HEAD của sandbox được đếm vì commit làm trên HEAD tách rời rồi quay lại nhánh, hay bị `reset --hard` bỏ đi, chỉ
@@ -316,8 +320,8 @@ def sandbox_unmerged_commits(s_path: Path, repo_root: Path, branch_name: str) ->
     if not base_ref:
         return f"{base_name} — coi như còn commit chưa merge (chuyển checkout về nhánh rồi chạy lại)"
     revs = []
-    if run_cmd(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch_name}"], cwd=repo_root, check=False).returncode == 0:
-        revs.append((f"nhánh {branch_name}", branch_name))
+    if branch_sha:   # đúng SHA mà cleanup sẽ xoá (compare-and-delete), không đọc lại tên nhánh
+        revs.append((f"nhánh {branch_name}", branch_sha))
     head_sha = None
     if s_path.exists():
         head = run_cmd(["git", "rev-parse", "--verify", "HEAD"], cwd=s_path, check=False)
@@ -370,13 +374,15 @@ def cleanup_sandbox(name: Optional[str] = None, cleanup_all: bool = False, force
     for t in targets:
         s_path = sandboxes_dir / t
         branch_name = f"sandbox/{t}"
+        tip = run_cmd(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch_name}^{{commit}}"], cwd=repo_root, check=False)
+        branch_sha = tip.stdout.strip() if tip.returncode == 0 else None
         print(f"🧹 Dọn dẹp sandbox '{t}'...")
         if s_path.exists():
             unsaved = sandbox_unsaved_work(s_path, repo_root)
             if unsaved and not force:
                 print(f"   ⚠ '{t}' còn việc chưa commit hoặc không đọc được trạng thái — giữ nguyên (thêm --force để xoá hẳn):\n{unsaved}")
                 continue
-        unmerged = None if force else sandbox_unmerged_commits(s_path, repo_root, branch_name)
+        unmerged = None if force else sandbox_unmerged_commits(s_path, repo_root, branch_name, branch_sha)
         if unmerged:
             print(f"   ⚠ '{t}': {unmerged} — giữ nguyên sandbox và nhánh (merge trước, hoặc thêm --force để xoá hẳn).")
             continue
@@ -388,10 +394,22 @@ def cleanup_sandbox(name: Optional[str] = None, cleanup_all: bool = False, force
                 print(f"   ✖ không xoá được {s_path}: {e} — giữ nguyên.")
                 continue
         run_cmd(["git", "worktree", "prune"], cwd=repo_root, check=False)
-        # -D: sandbox_unmerged_commits ở trên đã kiểm theo merged_into; `-d` xét HEAD, lệch base khi checkout chính tách rời
-        # ở commit khác trunk → thư mục đã xoá mà nhánh còn (OCR)
-        res = run_cmd(["git", "branch", "-D", branch_name], cwd=repo_root, check=False)
-        if res.returncode != 0 and "not found" not in (res.stderr or ""):
+        if force:
+            res = run_cmd(["git", "branch", "-D", branch_name], cwd=repo_root, check=False)
+        elif branch_sha:
+            # Xoá đúng SHA đã kiểm theo merged_into: `-d` xét HEAD, lệch mốc khi checkout chính tách rời sau trunk (OCR); `-D` xoá luôn
+            # commit agent khác vừa thêm vào nhánh sau bước kiểm (review) — nhánh đã đổi thì update-ref từ chối, nhánh được giữ.
+            # update-ref không tự từ chối nhánh worktree khác đang checkout như `branch -d/-D`: kiểm trước, kẻo HEAD đó thành unborn (OCR).
+            wl = run_cmd(["git", "worktree", "list", "--porcelain"], cwd=repo_root, check=False)
+            if wl.returncode != 0 or f"branch refs/heads/{branch_name}" in wl.stdout.splitlines():
+                print(f"   ⚠ đã gỡ {t} nhưng giữ nhánh {branch_name}: một worktree khác đang checkout nó (hoặc không đọc được danh sách worktree).")
+                continue
+            res = run_cmd(["git", "update-ref", "-d", f"refs/heads/{branch_name}", branch_sha], cwd=repo_root, check=False)
+            if res.returncode == 0:
+                run_cmd(["git", "config", "--remove-section", f"branch.{branch_name}"], cwd=repo_root, check=False)   # upstream, nếu có
+        else:
+            res = None   # không có nhánh: chỉ có thư mục
+        if res is not None and res.returncode != 0 and "not found" not in (res.stderr or ""):
             print(f"   ⚠ đã gỡ {t} nhưng chưa xoá được nhánh {branch_name}: {(res.stderr or '').strip()}")
             continue
         print(f"   ✓ Đã gỡ bỏ {t} và xoá nhánh {branch_name}.")
@@ -432,6 +450,14 @@ def merge_winner(name: str, squash: bool = False, clean_others: bool = False) ->
         )
 
     branch_name = f"sandbox/{name}"
+
+    # Merge vào đúng mốc cleanup sẽ xét (merged_into): checkout chính tách rời thì merge chỉ nằm trên HEAD tách rời (`git checkout main`
+    # là bỏ rơi), cleanup giữ sandbox rồi gợi ý --force → từ chối trước khi đổi gì (review rebuild 2).
+    base_ref, base_name = merged_into(repo_root)
+    head_ref = run_cmd(["git", "symbolic-ref", "-q", "HEAD"], cwd=repo_root, check=False).stdout.strip()
+    if base_ref not in ("HEAD", head_ref):
+        why = base_name if not base_ref else f"checkout chính đang ở HEAD tách rời, merge sẽ chỉ nằm trên HEAD đó, không vào {base_name}"
+        raise RuntimeError(f"Không merge sandbox '{name}': {why}. Chuyển checkout về nhánh (`git checkout <nhánh>`) rồi chạy lại.")
 
     # 2. Merge vào main repo
     print(f"🔄 [1/3] Đang tiến hành merge branch '{branch_name}' vào nhánh chính...")

@@ -19,7 +19,7 @@ fi
 # Test 2: Lifecycle in a mock repo
 P="$TMP/mock-repo"
 mkdir -p "$P" && cd "$P"
-git init -q . && git config user.email t@t && git config user.name t
+git init -q -b main . && git config user.email t@t && git config user.name t   # -b: các ca checkout tách rời cần nhánh trunk
 echo "hello world" > README.md
 echo -e ".env\nlocal.properties" > .worktreeinclude
 echo "SECRET_KEY=12345" > .env
@@ -208,6 +208,69 @@ if [ ! -d "$P/.sandboxes/r1_old" ] && ! git -C "$P" rev-parse --verify -q "sandb
 else
   fail "cleanup from a main checkout detached behind trunk left a half-cleaned sandbox: $R1O_OUT"
 fi
+# review rebuild 2: merge-winner từ checkout chính tách rời chỉ merge vào HEAD tách rời (`git checkout main` là bỏ rơi) → từ chối
+# trước khi đổi gì: HEAD không nhích, sandbox + nhánh giữ nguyên
+python3 "$SCRIPT" create r1_mwd >/dev/null 2>&1
+( cd "$P/.sandboxes/r1_mwd" && echo m > mwd.txt && git add mwd.txt && git commit -q -m "feat: mwd" )
+git -C "$P" checkout -q --detach
+MWD_BEFORE=$(git -C "$P" rev-parse HEAD)
+if MWD_OUT=$(python3 "$SCRIPT" merge-winner r1_mwd 2>&1); then MWD_RC=0; else MWD_RC=1; fi
+MWD_AFTER=$(git -C "$P" rev-parse HEAD)
+git -C "$P" checkout -q "$MAIN_BR"
+if [ "$MWD_RC" -ne 0 ] && [ "$MWD_BEFORE" = "$MWD_AFTER" ] && [ -d "$P/.sandboxes/r1_mwd" ] \
+   && git -C "$P" rev-parse --verify -q "sandbox/r1_mwd" >/dev/null && echo "$MWD_OUT" | grep -q "HEAD tách rời"; then
+  ok "merge-winner refuses to merge into a detached main checkout"
+else
+  fail "merge-winner merged into a detached main checkout (rc=$MWD_RC): $MWD_OUT"
+fi
+python3 "$SCRIPT" cleanup --name r1_mwd --force >/dev/null 2>&1
+# review rebuild 2: origin/HEAD trỏ nhánh trunk không có bản local → giữ (fail closed) và nói rõ vì sao
+git -C "$P" update-ref refs/remotes/origin/develop HEAD
+git -C "$P" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+python3 "$SCRIPT" create r1_dev >/dev/null 2>&1
+git -C "$P" checkout -q --detach
+DEV_OUT=$(python3 "$SCRIPT" cleanup --name r1_dev 2>&1)
+git -C "$P" checkout -q "$MAIN_BR"
+git -C "$P" symbolic-ref --delete refs/remotes/origin/HEAD
+git -C "$P" update-ref -d refs/remotes/origin/develop
+if [ -d "$P/.sandboxes/r1_dev" ] && echo "$DEV_OUT" | grep -q "develop.*không có bản local"; then
+  ok "cleanup keeps a sandbox when origin/HEAD names a trunk with no local branch, and says why"
+else
+  fail "cleanup misjudged a trunk with no local branch: $DEV_OUT"
+fi
+python3 "$SCRIPT" cleanup --name r1_dev --force >/dev/null 2>&1
+# review rebuild 2 P1: agent khác commit vào nhánh sandbox SAU bước kiểm, trước khi xoá nhánh → nhánh phải được giữ (xoá đúng SHA đã kiểm)
+python3 "$SCRIPT" create race_sb >/dev/null 2>&1
+RACE_OUT=$(python3 - "$DEVKIT_DIR/scripts/git" "$P/.sandboxes/race_sb" 2>&1 <<'PYEOF'
+import subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import worktree_sandbox as w
+orig = w.sandbox_unmerged_commits
+def racy(*a, **k):
+    r = orig(*a, **k)
+    subprocess.run(["git", "-C", sys.argv[2], "commit", "-q", "--allow-empty", "-m", "race"], check=True)
+    return r
+w.sandbox_unmerged_commits = racy
+w.cleanup_sandbox(name="race_sb")
+PYEOF
+)
+if git -C "$P" rev-parse --verify -q "sandbox/race_sb" >/dev/null && [ "$(git -C "$P" log -1 --format=%s sandbox/race_sb 2>/dev/null)" = "race" ]; then
+  ok "cleanup keeps the branch when a commit lands on it after the merge check"
+else
+  fail "cleanup deleted a branch that gained a commit after the merge check: $RACE_OUT"
+fi
+git -C "$P" branch -q -D sandbox/race_sb 2>/dev/null
+# OCR rebuild 2: một worktree khác đang checkout nhánh sandbox (attached) → không xoá nhánh dưới chân nó (HEAD thành unborn)
+python3 "$SCRIPT" create co_sb >/dev/null 2>&1
+git -C "$P" worktree add -q -f "$TMP/co-wt" sandbox/co_sb
+CO_OUT=$(python3 "$SCRIPT" cleanup --name co_sb 2>&1)
+if git -C "$P" rev-parse --verify -q "sandbox/co_sb" >/dev/null && git -C "$TMP/co-wt" rev-parse --verify -q HEAD >/dev/null; then
+  ok "cleanup keeps a sandbox branch another worktree has checked out"
+else
+  fail "cleanup deleted a branch another worktree had checked out: $CO_OUT"
+fi
+git -C "$P" worktree remove --force "$TMP/co-wt"
+git -C "$P" branch -q -D sandbox/co_sb 2>/dev/null
 # merge-winner merge được nhánh nhưng cleanup giữ sandbox (commit chỉ reflog còn giữ): không được báo "đã dọn" sau cảnh báo
 python3 "$SCRIPT" create mw_sb >/dev/null 2>&1
 ( cd "$P/.sandboxes/mw_sb" && echo x > mw.txt && git add mw.txt && git commit -q -m "feat: mw" && git checkout -q --detach \
@@ -342,12 +405,25 @@ fi
 python3 "$SCRIPT" create r1_ahead >/dev/null 2>&1
 ( cd "$W/.sandboxes/r1_ahead" && echo a > r1a.txt && git add r1a.txt && git commit -q -m "feat: r1 unmerged" )
 R1A_OUT=$(python3 "$SCRIPT" cleanup --name r1_ahead 2>&1)
-if [ -f "$W/.sandboxes/r1_ahead/r1a.txt" ] && git -C "$W" rev-parse --verify -q "sandbox/r1_ahead" >/dev/null && echo "$R1A_OUT" | grep -q "chưa merge"; then
+if [ -f "$W/.sandboxes/r1_ahead/r1a.txt" ] && git -C "$W" rev-parse --verify -q "sandbox/r1_ahead" >/dev/null \
+   && echo "$R1A_OUT" | grep -q "chưa merge vào HEAD của worktree này"; then
   ok "cleanup from a detached linked worktree still keeps a sandbox with unmerged commits"
 else
   fail "cleanup from a detached linked worktree lost unmerged commits: $R1A_OUT"
 fi
 python3 "$SCRIPT" cleanup --name r1_ahead --force >/dev/null 2>&1
+# Trade-off có chủ ý (review rebuild 2): linked worktree `checkout --detach sandbox/<x>` để xem thì sandbox được dọn — cùng hình
+# dạng với merge-winner fast-forward ở trên, không phân biệt được — nhưng commit vẫn nằm trên HEAD của worktree đó (không mất lúc dọn)
+python3 "$SCRIPT" create r1_view >/dev/null 2>&1
+( cd "$W/.sandboxes/r1_view" && echo v > r1v.txt && git add r1v.txt && git commit -q -m "feat: r1 view" )
+R1V_SHA=$(git -C "$W" rev-parse "sandbox/r1_view")
+git -C "$W" checkout -q --detach "sandbox/r1_view"
+python3 "$SCRIPT" cleanup --name r1_view >/dev/null 2>&1
+if [ ! -d "$W/.sandboxes/r1_view" ] && git -C "$W" merge-base --is-ancestor "$R1V_SHA" HEAD; then
+  ok "a detached linked worktree viewing a sandbox: sandbox cleaned, its commits stay on that worktree's HEAD"
+else
+  fail "linked-worktree view trade-off changed (sandbox kept, or its commits left HEAD) — update the docstring of merged_into"
+fi
 cd "$P"
 git -C "$P" worktree remove --force "$W"
 
