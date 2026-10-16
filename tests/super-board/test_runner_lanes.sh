@@ -163,11 +163,18 @@ sweep_blocked_cards >/dev/null 2>&1
 grep -q "PVTI_33" "$TMP/writes" && fail "card #33 with no blocker moved to Ready" || ok "card with an empty clearedBy stays Blocked"
 
 # ── 2g. runaway ở chế độ daemon: vẫn báo và vẫn có giới hạn (tạm dừng), không bao giờ reset im lặng.
-: > "$TMP/log"; TICK_SECONDS=0; NO_PROGRESS_CYCLES=3; NO_PROGRESS_CYCLE_COUNT=3
+#     Tạm dừng là một hạn chót, không phải sleep: vòng giám sát (thu hồi lock, zombie) vẫn chạy mỗi tick.
+: > "$TMP/log"; TICK_SECONDS=30; NO_PROGRESS_CYCLES=3; NO_PROGRESS_CYCLE_COUNT=3; RUNAWAY_PAUSE_UNTIL=0
+t0=$(date +%s)
 SB_DAEMON=1 runaway_action >/dev/null 2>&1; rc=$?
-[ "$rc" -eq 0 ] && grep -q "RUNAWAY" "$TMP/log" && [ "$NO_PROGRESS_CYCLE_COUNT" -eq 0 ] \
-  && ok "daemon runaway: logged, paused, counter reset, run goes on" \
-  || fail "daemon runaway: rc=$rc count=$NO_PROGRESS_CYCLE_COUNT log=$(cat "$TMP/log")"
+took=$(( $(date +%s) - t0 ))
+[ "$rc" -eq 0 ] && grep -q "RUNAWAY" "$TMP/log" && [ "$NO_PROGRESS_CYCLE_COUNT" -eq 0 ] && [ "$took" -lt 5 ] \
+  && ok "daemon runaway: logged, counter reset, returns at once (no blocking sleep)" \
+  || fail "daemon runaway: rc=$rc count=$NO_PROGRESS_CYCLE_COUNT took=${took}s log=$(cat "$TMP/log")"
+dispatch_paused && ok "daemon runaway: new dispatch paused until the deadline" || fail "daemon runaway: dispatch not paused"
+RUNAWAY_PAUSE_UNTIL=1
+dispatch_paused && fail "dispatch still paused after the deadline" || ok "dispatch resumes after the deadline"
+TICK_SECONDS=0
 : > "$TMP/log"
 SB_DAEMON=0 runaway_action >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && grep -q "RUNAWAY" "$TMP/log" && ok "non-daemon runaway: halts" || fail "non-daemon runaway: rc=$rc (want 1)"

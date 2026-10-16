@@ -65,6 +65,25 @@ bash "$CLEAN" "$R" issue-9-late "$MERGED9" >/dev/null 2>&1
   || fail "worktree with uncommitted edits removed (edit lost)"
 git -C "$R" rev-parse --verify -q refs/heads/issue-9-late >/dev/null && ok "branch with commits after the merged head kept" \
   || fail "branch with commits after the merged head deleted (commit lost)"
+[ ! -d "$W/issue-9-build" ] && ok "clean Builder worktree removed while its ahead branch is kept" \
+  || fail "clean Builder worktree of card 9 kept"
+
+# Thẻ 12: Tester commit trên HEAD detached (repro chưa push), worktree sạch; Builder còn sửa dở trên nhánh đã merge.
+git -C "$R" branch issue-12-y
+MERGED12="$(git -C "$R" rev-parse issue-12-y)"
+git -C "$R" worktree add -q "$W/issue-12-build" issue-12-y
+git -C "$R" worktree add -q --detach "$W/issue-12-qa" main
+echo repro > "$W/issue-12-qa/t"; git -C "$W/issue-12-qa" add t; git -C "$W/issue-12-qa" commit -qm repro
+echo wip > "$W/issue-12-build/a"
+bash "$CLEAN" "$R" issue-12-y "$MERGED12" >/dev/null 2>&1
+[ -d "$W/issue-12-qa" ] && ok "qa worktree with a commit outside the merge kept" || fail "qa worktree with an unpushed detached commit removed (commit only in reflog)"
+[ -d "$W/issue-12-build" ] && ok "dirty Builder worktree on the merged branch kept" || fail "dirty Builder worktree on the merged branch removed"
+git -C "$R" rev-parse --verify -q refs/heads/issue-12-y >/dev/null && ok "branch still checked out by a kept worktree stays" || fail "branch of a kept worktree deleted"
+
+# Không có SHA đã merge (đối số 3 trống): không biết nhánh có gì ngoài merge, nên giữ nhánh.
+git -C "$R" branch issue-13-z
+bash "$CLEAN" "$R" issue-13-z >/dev/null 2>&1
+git -C "$R" rev-parse --verify -q refs/heads/issue-13-z >/dev/null && ok "no merged SHA given: branch kept" || fail "no merged SHA given: branch deleted"
 
 # Chạy từ trong worktree qa của thẻ vừa merge: thư mục đó là cwd của lệnh gọi nên được giữ.
 git -C "$R" branch issue-11-x

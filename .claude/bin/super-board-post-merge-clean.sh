@@ -28,6 +28,12 @@ for wt in "$REPO_PATH/.claude/worktrees"/issue-"$N"-*; do
     echo "kept $wt: uncommitted edits" >&2
     continue
   fi
+  # Commit trên HEAD detached mà không nhánh/remote nào chứa (vd repro Tester chưa push) sẽ chỉ còn trong reflog.
+  head=$(git -C "$wt" rev-parse --verify -q HEAD 2>/dev/null || true)
+  if [ -z "$head" ] || [ -z "$(git -C "$REPO_PATH" for-each-ref --count=1 --contains "$head" refs/heads refs/remotes 2>/dev/null)" ]; then
+    echo "kept $wt: HEAD ${head:-<unknown>} is on no branch or remote" >&2
+    continue
+  fi
   git -C "$REPO_PATH" worktree remove "$wt" 2>/dev/null || echo "kept $wt: git worktree remove failed" >&2
 done
 tip=$(git -C "$REPO_PATH" rev-parse --verify -q "refs/heads/$HEAD_REF" 2>/dev/null || true)

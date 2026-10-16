@@ -508,12 +508,18 @@ runaway_action() {
     log "⚠ RUNAWAY (daemon): no card reached Done in ${NO_PROGRESS_CYCLES} dispatch cycles — no new dispatch for $((TICK_SECONDS * 10))s"
     runaway_summary
     NO_PROGRESS_CYCLE_COUNT=0
-    sleep $((TICK_SECONDS * 10))
+    # Hạn chót chứ không sleep: thu hồi lock và quét zombie vẫn chạy mỗi tick, chỉ việc giao mới bị hoãn.
+    RUNAWAY_PAUSE_UNTIL=$(( $(date +%s) + TICK_SECONDS * 10 ))
     return 0
   fi
   log "🛑 halt — RUNAWAY: no card reached Done in ${NO_PROGRESS_CYCLES} dispatch cycles"
   runaway_summary
   return 1
+}
+
+dispatch_paused() {
+  # 0 khi daemon đang trong khoảng hoãn giao việc sau RUNAWAY (runaway_action đặt hạn chót).
+  [ "${RUNAWAY_PAUSE_UNTIL:-0}" -gt "$(date +%s)" ]
 }
 
 reap_finished_locks() {
@@ -887,7 +893,7 @@ while true; do
 
   # ACTIVE_WORKERS already computed at top of loop (free pre-check).
   can_dispatch() {
-    [ "$ACTIVE_WORKERS" -lt "$MAX_WORKERS" ]
+    [ "$ACTIVE_WORKERS" -lt "$MAX_WORKERS" ] && ! dispatch_paused
   }
 
   if can_dispatch && [ "$REVIEW" -gt 0 ] && [ "$REVIEW_IDLE" -eq 1 ]; then
