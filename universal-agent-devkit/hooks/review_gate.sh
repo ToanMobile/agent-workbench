@@ -47,6 +47,21 @@ if [ -z "${REPO_ROOT}" ]; then   # the regex costs ~10 ms on a 1 MB payload: onl
   case "${_PCWD}" in *\\*) _PCWD="$(python3 -I -c 'import json,sys; sys.stdout.buffer.write(json.loads("\"%s\"" % sys.argv[1]).encode())' "${_PCWD}" 2>/dev/null)" || _PCWD="." ;; esac
   REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
 fi
+# W1 v6 (hooks/session_worktree.py): a session that ENTERED a worktree (EnterWorktree: CLAUDE_PROJECT_DIR still names main) or a subagent
+# the harness started in one is judged in that worktree, not in a clean main. Python only when the payload or a session record can need it.
+_SW_SID='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9][A-Za-z0-9._-]*)"'
+_SW_CWD='"cwd"[[:space:]]*:[[:space:]]*"[^"]*/\.claude/worktrees/'   # the cwd FIELD, not any text of the payload (a file read, a subagent)
+if [ -n "${REPO_ROOT}" ] && { [[ ${INPUT} =~ ${_SW_CWD} ]] \
+     || { [[ ${INPUT} =~ ${_SW_SID} ]] && [ -f "${REPO_ROOT}/.claude/audit-gate/session_worktree/${BASH_REMATCH[1]}" ]; }; }; then
+  if _SW_ROOT="$(python3 -I -c 'import json,os,sys
+_d = os.path.dirname(os.path.realpath(sys.argv[1]))
+if os.path.isabs(_d): sys.path.append(_d)
+import session_worktree as s; print(s.project(json.loads(sys.stdin.read() or "{}")) or "")' "$0" <<<"${INPUT}" 2>/dev/null)"; then
+    [ -n "${_SW_ROOT}" ] && REPO_ROOT="${_SW_ROOT}"
+  else   # never silent: this gate then judges what CLAUDE_PROJECT_DIR names, possibly a clean main (OCR 14/10)
+    echo "⚠ DevKit $(basename "$0"): the session's worktree could not be resolved (hooks/session_worktree.py next to the real hook) - judging ${REPO_ROOT}" >&2
+  fi
+fi
 LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"
 # No project: the loop guard below has nowhere to count re-Stops, and a gate that cannot count could hold every Stop.
 [ -n "${LOG_DIR}" ] || exit 0
@@ -128,7 +143,7 @@ for _hd in (os.environ.get("CLAIM_HOOKDIR", ""),
             sys.path.insert(0, _hd)
             sys.dont_write_bytecode = True
             import devkit_harness
-            if devkit_harness.work_in_progress(d):
+            if devkit_harness.work_in_progress(d, status_optional=True):
                 logline(f"[{ts}] skip: work in progress — review at the handover turn")
                 sys.exit(0)
         except SystemExit:
@@ -329,7 +344,7 @@ bash_runs = []   # [transcript index, start, end, command] of every Bash run wit
 bash_open = {}   # tool_use id -> its bash_runs entry, until its result (end time) is read
 tool_times = []   # (transcript index, time) of every tool call with a timestamp: where a change made at a given time sits
 BASH_SLACK_S = 2.0
-BASH_OPEN_MAX_S = 2 * 3600.0   # session_authorship.OPEN_MAX_AGE_S: a background run's window
+BASH_OPEN_MAX_S = 300.0   # a run with no result line (background, failed, interrupted): its window; 2 h let a `git diff <file>` own another session's save (issue #2)
 # the result of a run that went on in the background (its end is unknown); `run_in_background` is checked on the call too
 BASH_BACKGROUND = re.compile(r"\s*Command (?:running in background|was moved to the background|did not complete within .{0,40}moved to the background)")
 
@@ -577,6 +592,37 @@ def _writes(cmd, rel):
         return False
 
 
+_READ_ONLY = frozenset(("grep", "rg", "cat", "head", "tail", "ls", "wc", "diff", "stat", "file", "less", "nl", "sed", "find"))
+_GIT_READ = frozenset(("diff", "status", "log", "show", "blame", "ls-files", "grep", "rev-parse", "cat-file", "ls-tree", "shortlog"))
+_REDIRECT = re.compile(r"(?<![0-9&])>|>>")
+
+
+def _read_only(cmd):
+    """Every segment of `cmd` only reads (`git diff f`, `grep f`, `cat f | head`, `dotnet test`) and nothing is redirected: naming a file
+    there is no edit of it (issue #2: 43 auto-releases). A heredoc body, an interpreter or any word not listed makes it not read-only."""
+    sa = _authorship()
+    if sa is None or _REDIRECT.search(re.sub(r"\d?>&\d|&>|\d?>\s*/dev/null", " ", sa.QUOTED_RE.sub(" ", cmd))):
+        return False
+    segs = [x for x in sa.SEGMENT_SPLIT_RE.split(cmd) if x.strip()]
+    for seg in segs:
+        words = seg[sa.LEAD_RE.match(seg).end():].split()
+        if not words or sa._segment_writes(seg):
+            return False
+        c = os.path.basename(words[0])
+        if c == "git":
+            rest = words[1:]
+            while rest and rest[0].startswith("-"):
+                rest = rest[2:] if rest[0] in ("-C", "-c") else rest[1:]
+            if not rest or rest[0] not in _GIT_READ:
+                return False
+        elif c == "dotnet":
+            if len(words) < 2 or words[1] not in ("test", "build"):
+                return False
+        elif c not in _READ_ONLY:
+            return False
+    return bool(segs)
+
+
 def _index_at(t):
     """The last transcript index whose tool call started at or before time t (a run in the background can change a file after
     later calls, a review among them: the change sits there, not at the run's own index)."""
@@ -598,7 +644,7 @@ for _rel in (changed if bash_runs else ()):
             continue
         if _mt is not None:
             _until = _bend if _bend is not None else _bts + BASH_OPEN_MAX_S
-            if not (_bts - BASH_SLACK_S <= _mt <= _until + BASH_SLACK_S) or not _names(_bcmd, _rel, _base):
+            if not (_bts - BASH_SLACK_S <= _mt <= _until + BASH_SLACK_S) or not _names(_bcmd, _rel, _base) or _read_only(_bcmd):
                 continue
             _at = max(_bi, _index_at(_mt)) if _bend is None else _bi
         elif _writes(_bcmd, _rel):
