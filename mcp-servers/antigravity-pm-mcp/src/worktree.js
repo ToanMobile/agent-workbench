@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { freshness, hopNhatFileThayDoi } from './tasks.js';
-import { mustHaveOf, fileRacGocRepo, cungFile, matchesAny } from './policy.js';
+import { mustHaveOf, fileRacGocRepo, cungFile, matchesAny, commitCuaTask } from './policy.js';
 import { chepVaoWorktree } from './oracle.js';
 import { soiThayDoi } from './lint-diff.js';
 import { run } from './util.js';
@@ -91,18 +91,20 @@ export async function baseCommitOf(cfg, task) {
 /** Bang chung do tu git + mtime cho gate(): file thay doi, file chua track, thoi diem sua file cuoi (null = khong do duoc). */
 export async function gateCtx(cfg, task) {
   const snap = await gitSnapshot(cfg);
-  // #22: agent tu `git commit` thi snap.wt rong => soi lint, moc sua file cuoi va commitPolicy phai do tren
-  // cay lam viec HOP file da commit ke tu commit goc, khong chi snap.wt.
+  // #22: agent tu `git commit` thi snap.wt rong => soi lint, moc sua file cuoi va commitPolicy phai do ca file DA COMMIT
+  // ke tu commit goc, khong chi snap.wt. Soi lint + moc sua file cuoi chi lay phan da commit QUY DUOC cho task
+  // (files_changed / scopeFiles): commit cua phien khac tren cay dung chung khong bat task nay chay lai test / chan oan.
   const committedFiles = snap.ok ? await committedFilesOf(cfg, task) : undefined;
   const changedFiles = committedFiles && hopNhatFileThayDoi(snap.wt, committedFiles);
-  const soi = changedFiles ? soiThayDoi(cfg.projectRoot, changedFiles, await baseCommitOf(cfg, task)) : { warnings: [], blockers: [] };
+  const fileSoi = committedFiles && hopNhatFileThayDoi(snap.wt, commitCuaTask(task, committedFiles, freshness(cfg, task).result?.files_changed));
+  const soi = fileSoi ? soiThayDoi(cfg.projectRoot, fileSoi, await baseCommitOf(cfg, task)) : { warnings: [], blockers: [] };
   // Thu tu thoi gian chi do tren FILE CUA TASK (agent khai files_changed ∪ file test trong cay) — chu du an chot 14/09/2026:
   // cay GeelyEx2 co phien khac sua song song, do ca cay thi moi lan ho sua gi la phai chay lai test 3 phut.
   return {
     changedFiles,
     committedFiles: snap.ok ? await commitSauGiao(cfg, task, committedFiles) : undefined,
     untrackedFiles: snap.untracked,
-    lastChangeAt: changedFiles ? lastChangeAtOf(cfg, fileCuaTask(cfg, task, changedFiles)) : null,
+    lastChangeAt: fileSoi ? lastChangeAtOf(cfg, fileCuaTask(cfg, task, fileSoi)) : null,
     lintBlockers: soi.blockers,
     lintWarnings: soi.warnings,
   };

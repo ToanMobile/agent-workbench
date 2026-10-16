@@ -264,7 +264,17 @@ export function fileCamDungTheoTask(task, changedFiles, claimed) {
 export function commitTheoTask(cfg, task, committedFiles, claimed) {
   if (cfg?.commitPolicy !== 'forbid') return { chan: [], canhBao: [] };
   if (!Array.isArray(committedFiles)) return { unknown: true, chan: [], canhBao: [] };
-  return chiaTheoTask(task, committedFiles.map(chuanHoaDuongDan).filter(Boolean), claimed);
+  return chiaTheoTask(task, committedFiles.map(chuanHoaDuongDan).filter(Boolean), khaiCommit(claimed));
+}
+
+/** File DA COMMIT quy duoc cho task (de soi lint, moc sua file cuoi) — cung luat quy voi commitTheoTask. */
+export function commitCuaTask(task, committedFiles, claimed) {
+  return chiaTheoTask(task, committedFiles.map(chuanHoaDuongDan).filter(Boolean), khaiCommit(claimed)).chan;
+}
+
+/** Khai files_changed rong = khong quy duoc gi (giong chua khai): agent khai [] khong duoc bien commit cua no thanh "cua nguoi khac". */
+function khaiCommit(claimed) {
+  return Array.isArray(claimed) && claimed.length ? claimed : undefined;
 }
 
 /** Chia file: chan = quy duoc cho task (claimed / scopeFiles), canhBao = con lai. Chua co gi de quy => tinh het cho task. */
