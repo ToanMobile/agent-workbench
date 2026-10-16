@@ -257,17 +257,17 @@ export function fileCamDungTheoTask(task, changedFiles, claimed) {
 }
 
 /**
- * #22: commitPolicy=forbid ma file cua task (files_changed / scopeFiles) da nam trong commit ke tu commit goc => agent tu
- * `git commit` trai luat => CHAN. Commit chi cham file khac (phien khac / auto-commit tren cay dung chung, xem 19/09 o tren)
- * => canh bao. committedFiles khong phai mang = khong doc duoc git => unknown (cong bao CHUA XAC MINH).
+ * #22: commitPolicy=forbid => MOI commit sau moc giao trien khai deu CHAN. Khong quy theo files_changed: agent commit file
+ * khong khai la lach duoc. Commit cua phien khac / PM giua chung cung chan (PM doi chieu git log, tao task moi).
+ * committedFiles khong phai mang = khong doc duoc git => unknown (cong bao CHUA XAC MINH).
  */
-export function commitTheoTask(cfg, task, committedFiles, claimed) {
-  if (cfg?.commitPolicy !== 'forbid') return { chan: [], canhBao: [] };
-  if (!Array.isArray(committedFiles)) return { unknown: true, chan: [], canhBao: [] };
-  return chiaTheoTask(task, committedFiles.map(chuanHoaDuongDan).filter(Boolean), khaiCommit(claimed));
+export function commitTheoTask(cfg, committedFiles) {
+  if (cfg?.commitPolicy !== 'forbid') return { chan: [] };
+  if (!Array.isArray(committedFiles)) return { unknown: true, chan: [] };
+  return { chan: committedFiles.map(chuanHoaDuongDan).filter(Boolean) };
 }
 
-/** File DA COMMIT quy duoc cho task (de soi lint, moc sua file cuoi) — cung luat quy voi commitTheoTask. */
+/** File DA COMMIT quy duoc cho task (claimed / scopeFiles) — de soi lint, moc sua file cuoi; commit phien khac khong tinh. */
 export function commitCuaTask(task, committedFiles, claimed) {
   return chiaTheoTask(task, committedFiles.map(chuanHoaDuongDan).filter(Boolean), khaiCommit(claimed)).chan;
 }

@@ -668,12 +668,12 @@ export function gate(cfg, task, ctx = {}) {
   // Khong co khoa committedFiles = goi truc tiep, khong xet (giong lastChangeAt). Task da ACCEPTED: commit sau do la
   // cua PM (forbid = PM tu commit) — accept() xet cong TRUOC khi doi phase nen khong lot.
   if ('committedFiles' in ctx && task.phase !== 'ACCEPTED') {
-    const cm = commitTheoTask(cfg, task, ctx.committedFiles, claimed);
+    const cm = commitTheoTask(cfg, ctx.committedFiles);
     const goc = `${String(task.implementBaseCommit || task.baseCommit || 'commit goc').slice(0, 8)}..HEAD`;
-    const ds = (ls) => `${ls.slice(0, 20).join(', ')}${ls.length > 20 ? ` … (+${ls.length - 20})` : ''}`;
     if (cm.unknown) missing.push(`CHUA XAC MINH duoc file da commit ${goc} (git loi, hoac moc bi mat sau rebase/gc) — commitPolicy=forbid can biet agent co tu commit khong`);
-    if (cm.chan.length) missing.push(`commitPolicy=forbid nhung file cua task da nam trong commit ${goc} (agent tu git commit?): ${ds(cm.chan)} — PM doi chieu git log ${goc}, khong nghiem thu`);
-    if (cm.canhBao.length) warnings.push(`commitPolicy=forbid: commit ${goc} cham file NGOAI pham vi task (phien khac / auto-commit?): ${ds(cm.canhBao)} — PM doi chieu git log`);
+    if (cm.chan.length) {
+      missing.push(`commitPolicy=forbid nhung co commit ${goc} (agent tu git commit? phien khac / PM commit giua chung?): ${cm.chan.slice(0, 20).join(', ')}${cm.chan.length > 20 ? ` … (+${cm.chan.length - 20})` : ''} — PM doi chieu git log ${goc}; khong phai cua agent thi tao task moi tu HEAD hien tai`);
+    }
   }
 
   // DE XUAT 1c: dinh nghia SQL trung (create table x2) => CHAN; tang dong / khoi lap => canh bao.
