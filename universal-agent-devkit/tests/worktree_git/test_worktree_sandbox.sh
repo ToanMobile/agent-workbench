@@ -130,15 +130,32 @@ else
 fi
 python3 "$SCRIPT" create ahead_sb >/dev/null 2>&1
 ( cd "$P/.sandboxes/ahead_sb" && echo x > ahead.txt && git add ahead.txt && git commit -q -m "feat: unmerged" )
-python3 "$SCRIPT" cleanup --name ahead_sb >/dev/null 2>&1
+AHEAD_OUT=$(python3 "$SCRIPT" cleanup --name ahead_sb 2>&1)
 if git -C "$P" rev-parse --verify -q "sandbox/ahead_sb" >/dev/null; then
   ok "cleanup keeps the branch that holds unmerged commits"
 else
   fail "cleanup deleted a branch with unmerged commits without --force"
 fi
+# issue #12: the FOLDER of a sandbox with unmerged commits is kept too (refused before rmtree), and the user is told why
+if [ -f "$P/.sandboxes/ahead_sb/ahead.txt" ] && echo "$AHEAD_OUT" | grep -q "chưa merge"; then
+  ok "cleanup refuses a sandbox with unmerged commits: folder kept, warning printed"
+else
+  fail "cleanup deleted the folder of a sandbox with unmerged commits: $AHEAD_OUT"
+fi
+# a commit on the sandbox's own detached HEAD (its branch is merged): only that worktree's reflog names it, so it is unmerged work too
+python3 "$SCRIPT" create det_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/det_sb" && git checkout -q --detach && echo d > det.txt && git add det.txt && git commit -q -m "feat: detached" )
+DET_OUT=$(python3 "$SCRIPT" cleanup --name det_sb 2>&1)
+if [ -f "$P/.sandboxes/det_sb/det.txt" ] && echo "$DET_OUT" | grep -q "chưa merge"; then
+  ok "cleanup refuses a sandbox whose detached HEAD holds an unmerged commit"
+else
+  fail "cleanup deleted a sandbox whose detached HEAD held an unmerged commit: $DET_OUT"
+fi
 python3 "$SCRIPT" cleanup --name dirty_sb --force >/dev/null 2>&1
 python3 "$SCRIPT" cleanup --name ahead_sb --force >/dev/null 2>&1
-if [ ! -d "$P/.sandboxes/dirty_sb" ] && [ ! -d "$P/.sandboxes/ahead_sb" ] && ! git -C "$P" rev-parse --verify -q "sandbox/ahead_sb" >/dev/null; then
+python3 "$SCRIPT" cleanup --name det_sb --force >/dev/null 2>&1
+if [ ! -d "$P/.sandboxes/dirty_sb" ] && [ ! -d "$P/.sandboxes/ahead_sb" ] && [ ! -d "$P/.sandboxes/det_sb" ] \
+   && ! git -C "$P" rev-parse --verify -q "sandbox/ahead_sb" >/dev/null; then
   ok "--force removes the sandbox and the unmerged branch on explicit request"
 else
   fail "--force did not remove the sandboxes and branch"

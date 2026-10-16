@@ -2463,10 +2463,13 @@ _REACHABLE = {}
 
 
 def _reachable_blobs(main):
-    """(blob ids, paths) some ref still holds (`rev-list --objects --all`): a blob merely present in the object DB may belong to a commit no
-    ref names any more (a detached commit, a staged file of a worktree whose admin dir is gone) and `git gc` would drop it; a path a kept
-    tree holds is tracked somewhere (a branch force-adds build/keep.txt), so an edit of it is never a build output. None = cannot say.
-    ponytail: rev-list names a blob once, under the first path it meets; a tracked path whose every version is also stored elsewhere can
+    """((blob id, path) pairs, paths) some ref still holds (`rev-list --objects --all`): a blob merely present in the object DB may belong
+    to a commit no ref names any more (a detached commit, a staged file of a worktree whose admin dir is gone) and `git gc` would drop it.
+    A file is a committed version only when a kept tree holds its bytes AT ITS PATH: the same bytes under another path (a copy, an empty
+    __init__.py, old code restored under a new name) are a new file, uncommitted work (issue #12). A path a kept tree holds is tracked
+    somewhere (a branch force-adds build/keep.txt), so an edit of it is never a build output. None = cannot say.
+    ponytail: rev-list names a blob once, under the first path it meets; a blob committed at several paths pairs with one only, so a file
+    at the others reads as unique and is KEPT (never a false delete), and a tracked path whose every version is also stored elsewhere can
     be missed, so an ignored edit of it under a build folder reads as rebuildable. Upgrade to `ls-tree -r` of each ref if that ever bites."""
     if main not in _REACHABLE:
         r = git(main, "rev-list", "--objects", "--all", "--filter=object:type=blob", check=False, inp=b"")   # bytes: a path need not be UTF-8
@@ -2474,7 +2477,8 @@ def _reachable_blobs(main):
             _REACHABLE[main] = None
         else:
             pairs = [ln.split(" ", 1) for ln in r.stdout.decode("utf-8", "surrogateescape").splitlines() if ln.strip()]
-            _REACHABLE[main] = ({x[0] for x in pairs}, {x[1] for x in pairs if len(x) == 2})
+            pairs = [x for x in pairs if len(x) == 2]   # a blob a ref names directly has no path: no file version
+            _REACHABLE[main] = ({(x[0], x[1]) for x in pairs}, {x[1] for x in pairs})
     return _REACHABLE[main]
 
 
@@ -2534,12 +2538,12 @@ def _gc_unique(main, top, dangling, carry=None):
         shas = hashes.stdout.split()
         if reachable is None or hashes.returncode != 0 or len(shas) != len(later) or ignored.returncode not in (0, 1):
             return [("*", tr("git không kiểm được nội dung", "git could not check the content"))]
-        blobs, tracked = reachable
+        versions, tracked = reachable
         build = set(ignored.stdout.splitlines())
         for (rel, _p), sha in zip(later, shas):
             rebuildable = rel in build and rel not in tracked and any(part in GC_BUILD_DIRS for part in rel.split("/")[:-1])
-            if sha not in blobs and not rebuildable:
-                unique.append((rel, tr("nội dung không có trong commit nào còn giữ", "content no kept commit holds")))
+            if (sha, rel) not in versions and not rebuildable:
+                unique.append((rel, tr("nội dung không có trong commit nào còn giữ ở đường dẫn này", "content no kept commit holds at this path")))
     return unique
 
 
