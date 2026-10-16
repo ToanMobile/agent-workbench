@@ -144,7 +144,7 @@ n2="$(wc -l < "$TMP/plan.calls" 2>/dev/null | tr -d ' ')"
 #        cửa sổ 8 comment cuối của planner); thẻ đã sweep một lần trong lần chạy này không bị sweep lại.
 : > "$TMP/writes"; rm -f "$TMP/plan.calls"; SWEPT_CARDS=""
 PROJECT_ITEMS_JSON='{"items":[
- {"id":"PVTI_31","status":"Blocked","labels":["bug","needs-you"],"content":{"type":"Issue","number":31,"assignees":["sb-bot"]}},
+ {"id":"PVTI_31","status":"Blocked","labels":["bug","needs-you"],"content":{"type":"Issue","number":31,"assignees":[]}},
  {"id":"PVTI_32","status":"Blocked","labels":["qa"],"content":{"type":"Issue","number":32,"assignees":[]}}]}'
 export STUB_PLAN='{"cards":[],"sweep":[{"number":31,"title":"a","clearedBy":[5]},{"number":32,"title":"b","clearedBy":[6]}],"flag":[]}' STUB_PLAN_RC=0
 sweep_blocked_cards >/dev/null 2>&1
