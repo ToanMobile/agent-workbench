@@ -514,10 +514,17 @@ def check(cwd, rev="HEAD", tag_remote=None, linked=False):
     # linked worktree được xét y hệt biên nhận của main.
     top = toplevel(cwd)[0]
     rc, sha = git(top, "rev-parse", "--verify", "-q", rev + "^{commit}") if top else (1, "")
+    skipped = []
     for wt in linked_worktrees(top) if rc == 0 else []:
-        # tag_remote=None: cách worktree nhìn remote (config riêng của worktree) không phải biên nhận; main đã tự hỏi remote rồi
-        if _own_check(wt, sha.strip(), None, linked=True)[0]:
+        try:   # tag_remote=None: cách worktree nhìn remote (config riêng của worktree) không phải biên nhận; main đã tự hỏi remote rồi
+            covered = _own_check(wt, sha.strip(), None, linked=True)[0]
+        except (subprocess.SubprocessError, RuntimeError, OSError) as e:   # worktree hỏng dở: không phủ, nhưng không chặn các worktree khác
+            skipped.append(f"{wt} ({e})")
+            continue
+        if covered:
             return True, f"covered by the gate receipt of the linked worktree {wt}"
+    if skipped:
+        reason += "; không xét được biên nhận của linked worktree: " + ", ".join(skipped[:3])
     return ok, reason
 
 
