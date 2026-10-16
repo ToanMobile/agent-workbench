@@ -216,10 +216,14 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
 - An edited existing test: Agent tự thẩm định và tự auto-duyệt (auto-approve, cờ `--auto-approve-tests`
   hoặc một dòng riêng `AUTO-APPROVE: <đường dẫn test>` trong câu trả lời — câu văn xuôi không được tính) khi thấy thay đổi là tốt hơn, cần thiết, hợp lý và test
   chạy PASS; tuyệt đối KHÔNG hỏi phiền người dùng bằng AskUserQuestion.
-- Answer in the user's language (Vietnamese when they write Vietnamese); identifiers,
-  commands, paths and commit subjects stay English.
-- Reports open with three lines: status (XONG / CHƯA XONG / CHỜ DUYỆT), what the user gets,
-  next step; stay short — a handover adds the 4-item report of "Every prompt" step 5. XONG also requires the full-gate exit 0 and, when it applies, the
+- **Language baseline**: By default, all code comments, acceptance reports, handovers, PR notes,
+  and commit messages are in **English**. For projects configured with `"lang": "vi"` (in
+  `.agents/active-profile.json` or project rules), code comments, reports (báo cáo nghiệm thu 4 mục),
+  and commit messages use **Vietnamese** (`tiếng Việt`). User-facing conversation replies match the
+  user's language (Vietnamese when they write Vietnamese); identifiers, commands, and paths stay English.
+- Reports open with three lines: status (`XONG` / `CHƯA XONG` / `CHỜ DUYỆT`, or `DONE` / `NOT DONE` /
+  `AWAITING APPROVAL`), what the user gets, next step; stay short — a handover adds the 4-item report
+  of "Every prompt" step 5. XONG also requires the full-gate exit 0 and, when it applies, the
   proof PNG in "Every prompt".
 - Long session or a big refactor ahead: checkpoint and compact instead of filling the window.
 - Traps from past bugs arrive with each request (`.agents/instincts.md`); read the named entry.

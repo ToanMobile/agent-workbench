@@ -316,6 +316,9 @@ def read(args, kind='json', meta=None, recovering=False):
             if permanent_error(diagnostic):
                 halt('GitHub rejected a required read (query, authentication, or permission error); fix it before restarting', attempt, operation)
             if result.returncode:
+                # Lỗi cú pháp của người gọi (thông báo của gh 2.100): báo exit 64 kèm dạng đúng, không halt cả board.
+                if re.search(r'cannot specify|specify only one of|unknown (?:shorthand )?flag|accepts (?:at most |between )?\d+ arg|requires at least \d+ arg', result.stderr, re.I) and kind in FORMS and not os.environ.get('SB_GITHUB_READ_STRICT'):
+                    raise ValueError(f'caller CLI flag error ({diagnostic.strip().splitlines()[0]}); this call failed, the run continues. Valid form: --kind {kind} -- {FORMS[kind]}')
                 shape_only = False
                 status = re.search(r'HTTP [0-9]{3}', result.stderr)
                 last = 'GitHub required read failed' + (f' ({status[0]})' if status else '')

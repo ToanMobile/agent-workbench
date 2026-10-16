@@ -45,9 +45,9 @@ Skills live in `skills/` (source of truth); `.agents/skills/` and `commands/` li
 
 ## 3. Role & Language
 
-- **Default Communication Language:** User-facing replies are in the **user's language** (Vietnamese when they write Vietnamese, English otherwise), concise, and evidence-backed — the same rule as `rules/essentials.md` "Working style".
-- **Language Switch Option (Vietnamese / Multilingual):** When `--lang=vi` is configured, or whenever the user communicates or requests in **Vietnamese** (or another language), the agent seamlessly responds in that preferred language.
-- Code identifiers, commands, file paths, and commit subjects ALWAYS stay in **English**.
+- **Default Communication & Artifact Language:** By default, all code comments, acceptance reports, progress reports, handovers, documentation, PR notes, and commit messages are in **English**. User-facing replies are in the **user's language** (Vietnamese when they write Vietnamese, English otherwise), concise, and evidence-backed.
+- **Project Language Configuration (Vietnamese):** When a project configures `"lang": "vi"` in `.agents/active-profile.json` or project rules, code comments, reports (4-item acceptance report, handovers), and commit messages use **Vietnamese** (`tiếng Việt`).
+- Code identifiers, commands, and file paths ALWAYS stay in **English**.
 - **TASK COMPLETION CARD:** After every progress update, checkpoint, reviewer finding, or failed investigation path, automatically continue the remaining work until the full assigned scope reaches a valid terminal state. Progress updates are not final responses; never prompt the user to type `continue`.
 
 ---

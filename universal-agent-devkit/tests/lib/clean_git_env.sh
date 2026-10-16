@@ -10,7 +10,8 @@
 # bash 3.2 compatible; sourced, so it must not set options or exit.
 for _v in GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
           GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE \
-          GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT; do
+          GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT \
+          POSTFIX_GATE_FORCE_FULL POSTFIX_GATE_FULL WORKTREE_MERGE_GATE DEVKIT_ALLOW_BRANCH; do
   unset "$_v"
 done
 for _v in $(env | grep -E '^GIT_CONFIG_(KEY|VALUE)_[0-9]+=' | cut -d= -f1); do unset "$_v"; done
@@ -23,3 +24,4 @@ export WORKTREE_DISK_WARN_GIB=0 WORKTREE_DISK_MIN_GIB=0 WORKTREE_MAX=0
 # a file (/dev/null is no directory): the guessable ${TMPDIR:-/tmp}/agpm-test-no-global-config/… it replaces could be created in a shared
 # /tmp by another user or an old run, and then steered every test that sources this file (OpenCodeReview 14/10).
 export ANTIGRAVITY_PM_GLOBAL_CONFIG=/dev/null/agpm-test-no-global-config/.antigravity-pm.json
+export DEVKIT_LANG="${DEVKIT_LANG:-vi}"
