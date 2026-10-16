@@ -18,6 +18,7 @@ Every template in this pack points here. Change the format here first, then the 
 - DON'T repeat a changed-file list in status comments. Explain each file in its own PR
   review comment, using "Author notes" below.
 - DON'T restate the ticket. DON'T narrate ("I have successfully…").
+- **Language policy (`lang: vi`):** For repositories with `"lang": "vi"`, all ticket prose, PR bodies, review notes, and lane status comments must be in **Vietnamese** (`tiếng Việt`). Machine header keys (`Did:`, `✅ Done:`, `❌ Not done:`, `Next:`) are preserved for script parsing, with their content written in Vietnamese. Identifiers/symbols remain English.
 
 ## 1 · Commit
 

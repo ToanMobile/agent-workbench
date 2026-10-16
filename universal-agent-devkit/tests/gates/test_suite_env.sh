@@ -49,4 +49,14 @@ for v in PATH HOME DEVKIT_PROBE_KEEP; do
   printf '%s\n' "$kept" | grep -qx "$v" && ok "suite_env keeps $v" || fail "suite_env lost $v"
 done
 
+# The caller's own gate switches are for THIS gate run, not for the suites it starts (2026-10-16: the super-board
+# runner exports DEVKIT_ALLOW_BRANCH=1 to its workers, so REG-DK-HOOK-01 saw "checkout -b blocked want=2 got=0"; a
+# worker's POSTFIX_GATE_FORCE_FULL=1 turned test_busy_keeps_receipt's partial-run controls into full runs; both reds
+# made every merge-gate verify exit 2 and parked reviewed cards in Blocked).
+switches="$(probe DEVKIT_ALLOW_BRANCH=1 WORKTREE_MERGE_GATE=0 POSTFIX_GATE_FORCE_FULL=1 POSTFIX_GATE_FULL=1 DEVKIT_PROBE_KEEP=1)"
+printf '%s\n' "$switches" | grep -qx DEVKIT_PROBE_KEEP || { echo "✖ switch probe returned no environment"; exit 1; }
+for v in DEVKIT_ALLOW_BRANCH WORKTREE_MERGE_GATE POSTFIX_GATE_FORCE_FULL POSTFIX_GATE_FULL; do
+  printf '%s\n' "$switches" | grep -qx "$v" && fail "suite_env keeps $v (the caller's gate switch)" || ok "suite_env drops $v"
+done
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_suite_env: all passed" || { echo "❌ test_suite_env: $FAILS failed"; exit 1; }

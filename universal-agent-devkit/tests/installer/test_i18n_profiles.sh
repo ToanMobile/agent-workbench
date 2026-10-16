@@ -51,8 +51,10 @@ python3 "$CFG" --status -t "$P" >"$TMP/out" 2>&1
 no_vi "agent-config reuses the saved language (no --lang, no DEVKIT_LANG)" "$TMP/out"
 DEVKIT_LANG=en python3 "$CFG" -p universal -t "$TMP/cfg_en" >"$TMP/out" 2>&1
 no_vi "DEVKIT_LANG=en agent-config output is English" "$TMP/out"
-python3 "$CFG" -p universal -t "$TMP/cfg_vi" >"$TMP/out" 2>&1
-has_vi "$TMP/out" >/dev/null && ok "default language stays Vietnamese" || fail "default language is no longer vi"
+python3 "$CFG" -p universal -t "$TMP/cfg_en" >"$TMP/out" 2>&1
+no_vi "default language without config is English" "$TMP/out"
+python3 "$CFG" -p universal -t "$TMP/cfg_vi" --lang vi >"$TMP/out" 2>&1
+has_vi "$TMP/out" >/dev/null && ok "--lang vi produces Vietnamese output" || fail "--lang vi does not output vi"
 python3 "$CFG" -p universal -t "$TMP/cfg_vi" --lang en >"$TMP/out" 2>&1
 no_vi "--lang beats the saved language" "$TMP/out"
 

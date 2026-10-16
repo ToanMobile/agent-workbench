@@ -34,6 +34,7 @@ tmp/
 .claude/audit-gate/
 .agents/context/
 .agents/devkit
+.agents/hooks/
 .agents/regression_matrix.generated.json
 .devkit_backups.log
 .devkit-files
@@ -60,4 +61,5 @@ reports/
 .claude/super-board/inflight/
 .claude/super-board/migrations/
 .claude/super-board/upgrade.json
+.claude/super-board/last-merge-verify-pr-*.log
 .claude/settings.json.bak-*

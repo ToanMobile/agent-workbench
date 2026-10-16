@@ -4,7 +4,7 @@ Language resolution (first match wins) — shared with scripts/i18n.sh:
   1. --lang on the command line
   2. $DEVKIT_LANG
   3. "lang" saved in <project>/.agents/active-profile.json
-  4. "vi" (default)
+  4. "en" (default)
 
 Messages live next to the code as `tr(vi, en)` pairs so a message and its
 translation can never drift apart. Hooks (hooks/*.sh) are not covered.
@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 
 SUPPORTED = ("en", "vi")
-DEFAULT_LANG = "vi"
+DEFAULT_LANG = "en"
 
 # Vietnamese letters with diacritics (used by tests: EN output must contain none).
 VI_CHARS = re.compile(
