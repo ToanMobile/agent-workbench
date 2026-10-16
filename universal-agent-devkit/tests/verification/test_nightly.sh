@@ -191,10 +191,16 @@ out="$(HOME="$HOME3" python3 "$NIGHTLY" run 2>&1)"; rc=$?
 BROKEN="$TMP/brokengit"; mkdir -p "$BROKEN/.agents"; printf 'gitdir: %s/no-such-gitdir\n' "$TMP" > "$BROKEN/.git"
 out="$(python3 "$NIGHTLY" run "$BROKEN" 2>&1)"; rc=$?
 [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^brokengit: skip: .*git dir' && ok "run <path>: a .git that points at a missing git dir is skipped with a reason, not run" || fail "broken .git pointer: rc=$rc $out"
-# (b) a trunk-mode main checkout holds no lock: free, not busy
-TRK="$TMP/trunk"; mk "$TRK" "true" 'grep -q 2 src/b.txt'; echo 3 > "$TRK/src/b.txt"; git -C "$TRK" config devkit.trunkMode true
+# (b) a trunk-mode main checkout holds no lock, yet it takes merges only: the suites run in a worktree of their own, finished afterwards;
+# the run never writes into main (a skip here deadlocked the night, a run here wrote main's checklist)
+TRK="$TMP/trunk"; mk "$TRK" "true" 'grep -q 2 src/b.txt'; echo 3 > "$TRK/src/b.txt"; git -C "$TRK" commit -qam break; git -C "$TRK" config devkit.trunkMode true
+head_before="$(git -C "$TRK" rev-parse HEAD)"; : > "$NOTES"
 out="$(python3 "$NIGHTLY" run "$TRK" 2>&1)"; rc=$?
-[ "$rc" = 0 ] && ! printf '%s\n' "$out" | grep -q 'skip: trunk mode' && [ "$(st "$TRK" REG-B)" = FAIL ] && ok "run <path>: a trunk-mode main checkout holds no lock, so it is free: the suites run (a skip here deadlocked the night)" || fail "trunk-mode main: rc=$rc $(st "$TRK" REG-B) $out"
+[ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^trunk: REG-A: PASS.*REG-B: FAIL' && ! printf '%s\n' "$out" | grep -q 'skip: ' \
+  && grep -q 'trunk REG-B FAIL' "$NOTES" && [ -z "$(git -C "$TRK" status --porcelain)" ] && [ "$(git -C "$TRK" rev-parse HEAD)" = "$head_before" ] \
+  && [ "$(git -C "$TRK" worktree list | wc -l | tr -d ' ')" = 1 ] \
+  && ok "run <path>: a trunk-mode main runs in its own worktree: suites ran, the red row is notified, main stays clean and unmoved, the worktree is gone" \
+  || fail "trunk-mode main: rc=$rc status=[$(git -C "$TRK" status --porcelain)] wts=$(git -C "$TRK" worktree list | wc -l) notes=[$(cat "$NOTES")] $out"
 # (b2) main trunk mode mà có phiên sống đang giữ lock vẫn bị bỏ qua: trunk chỉ bỏ lý do "merge-only", không bỏ kiểm tra lock
 TRKH="$TMP/trunkheld"; mk "$TRKH" "true" 'grep -q 2 src/b.txt'; echo 3 > "$TRKH/src/b.txt"; git -C "$TRKH" config devkit.trunkMode true
 setlock "$TRKH" active

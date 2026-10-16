@@ -28,8 +28,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -132,12 +134,50 @@ def checkout_busy(project: Path) -> str | None:
     return f"{session_lock.describe(lock, now)} đang giữ checkout"
 
 
+def is_trunk_main(project: Path) -> bool:
+    """`project` is the main checkout of a trunk-mode repo: it takes merges only, so no run may write its checklist there."""
+    _gdir, top = session_lock.git_dir(str(project))
+    trunk, _sw = session_lock.trunk_main(top)
+    return bool(trunk and session_lock._same_dir(top, trunk))
+
+
+def run_in_worktree(project: Path, named: bool) -> tuple:
+    """Trunk-mode main (AGENTS.md §7.1) takes merges only: run in a detached worktree of its own, then `worktree finish` it, so the run
+    writes nothing into main. What the run records in the worktree's checklist is bookkeeping, which `finish` leaves out by design (two
+    worktrees that each rewrote it conflict) and which dies with the worktree; the run's product is the red notification, the printed
+    result and whatever red_proof commits. A refused finish leaves the worktree for the Stop hook to adopt.
+    ponytail: the evidence logs (.agents/evidence, git-ignored) die with the worktree; copy them into main's when someone reads them."""
+    worktree_py = DEVKIT / "scripts" / "git" / "worktree.py"
+    holder = Path(tempfile.mkdtemp(prefix="nightly-wt-"))
+    wt = holder / project.name   # same folder name: the messages keep the project's name
+    add = subprocess.run([sys.executable, str(worktree_py), "add", str(wt), "--no-init"], cwd=project, capture_output=True, text=True)
+    if add.returncode != 0:
+        shutil.rmtree(holder, ignore_errors=True)
+        return [], f"{project.name}: không tạo được worktree cho trunk mode ({add.stderr.strip() or add.stdout.strip()}) — bỏ qua"
+    prev = os.environ.get("DEVKIT_WORKTREE_CHECKLIST")
+    os.environ["DEVKIT_WORKTREE_CHECKLIST"] = "1"   # this worktree exists to record the checklist: rc.skip_bookkeeping must not skip it
+    try:
+        turned, msg = run_project(wt, named)
+    finally:
+        if prev is None:
+            os.environ.pop("DEVKIT_WORKTREE_CHECKLIST", None)
+        else:
+            os.environ["DEVKIT_WORKTREE_CHECKLIST"] = prev
+    fin = subprocess.run([sys.executable, str(worktree_py), "finish", str(wt)], cwd=project, capture_output=True, text=True)
+    if fin.returncode == 0:
+        shutil.rmtree(holder, ignore_errors=True)   # finish removed the worktree; only our empty holder is left
+        return turned, msg
+    return turned, f"{msg}; kết quả CHƯA về main ({fin.stdout.strip() or fin.stderr.strip()}), worktree giữ ở {wt}"
+
+
 def run_project(project: Path, named: bool = False) -> tuple:
     """(turned red: [(id, status)], message) for one project. `named`: the project was named on the command line, so a session that
     holds its checkout is not run over (the unnamed run is the night's own LaunchAgent: nobody works then)."""
     busy = checkout_busy(project) if named else None
     if busy:
         return [], f"{project.name}: skip: {busy}"
+    if is_trunk_main(project):
+        return run_in_worktree(project, named)
     if not (project / rc.STATUS_FILE).is_file() and not (project / ".agents" / "regression_matrix.active.json").is_file():
         return [], f"{project.name}: không có checklist/ma trận — bỏ qua"
     if rc.skip_bookkeeping(project):   # a LINKED worktree leaves the tracked checklist alone: a night's runs could not be recorded
