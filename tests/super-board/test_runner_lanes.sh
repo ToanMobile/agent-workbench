@@ -36,6 +36,7 @@ SH
 chmod +x "$TMP/bin/super-board-wave-plan.sh"
 export STUB_DIR="$TMP"
 
+unset SB_GITHUB_READ_STRICT   # merge gate export biến này cho verify của nó; test không thừa hưởng
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e   # runner đặt -euo pipefail; các kiểm tra bên dưới tự xét lỗi
 SB_GITHUB_READ="$TMP/bin/super-board-github-read.py"
@@ -143,7 +144,7 @@ n2="$(wc -l < "$TMP/plan.calls" 2>/dev/null | tr -d ' ')"
 #        cửa sổ 8 comment cuối của planner); thẻ đã sweep một lần trong lần chạy này không bị sweep lại.
 : > "$TMP/writes"; rm -f "$TMP/plan.calls"; SWEPT_CARDS=""
 PROJECT_ITEMS_JSON='{"items":[
- {"id":"PVTI_31","status":"Blocked","labels":["bug","needs-you"],"content":{"type":"Issue","number":31,"assignees":[]}},
+ {"id":"PVTI_31","status":"Blocked","labels":["bug","needs-you"],"content":{"type":"Issue","number":31,"assignees":["sb-bot"]}},
  {"id":"PVTI_32","status":"Blocked","labels":["qa"],"content":{"type":"Issue","number":32,"assignees":[]}}]}'
 export STUB_PLAN='{"cards":[],"sweep":[{"number":31,"title":"a","clearedBy":[5]},{"number":32,"title":"b","clearedBy":[6]}],"flag":[]}' STUB_PLAN_RC=0
 sweep_blocked_cards >/dev/null 2>&1
@@ -207,16 +208,133 @@ printf 'PID=%s\nLANE=build\nSTARTED=2026-10-16T00:00:00Z\n' "$live" > "$INFLIGHT
 printf 'PID=999999\nLANE=qa\nSTARTED=2026-10-16T00:00:00Z\n' > "$INFLIGHT_DIR/22"
 printf 'PID=%s\nLANE=review\nSTARTED=2026-10-16T00:00:00Z\n' "$recycled" > "$INFLIGHT_DIR/24"
 sleep 0.2 2>/dev/null || sleep 1
+: > "$TMP/writes"; BOT_LOGIN="sb-bot"
 adopt_live_locks >/dev/null 2>&1
+BOT_LOGIN=""
 [ "$BUILD_PID" = "$live" ] && [ "$BUILD_ISSUE" = 21 ] && ok "live build lock adopted into the build lane" \
   || fail "live build lock not adopted (BUILD_PID='$BUILD_PID' BUILD_ISSUE='$BUILD_ISSUE')"
 [ -z "$QA_PID" ] && ok "dead qa lock not adopted" || fail "dead qa lock adopted (QA_PID='$QA_PID')"
 [ -z "$REVIEW_PID" ] && ok "live PID that is no super-board worker not adopted" \
   || fail "recycled PID $recycled adopted into the review lane (the watchdog could later kill -9 it)"
+#    PID tái dùng còn sống: issue_locked thấy kill -0 thành công và bỏ qua thẻ #24 mãi (tới khi tiến trình lạ đó
+#    tự chết). Lock và assignee phải được gỡ để thẻ được giao lại; tiến trình lạ thì không bao giờ bị đụng tới.
+[ ! -e "$INFLIGHT_DIR/24" ] && ok "recycled-PID lock removed" || fail "recycled-PID lock kept: card #24 skipped as 'already locked' forever"
+grep -qx "gh issue edit 24 --remove-assignee sb-bot" "$TMP/writes" 2>/dev/null && ok "recycled-PID card's bot assignee removed" \
+  || fail "recycled-PID card's assignee not removed (writes: $(cat "$TMP/writes" 2>/dev/null))"
+issue_locked 24 && fail "issue_locked 24 still true: the card is never dispatched again" || ok "card #24 is dispatchable again"
+alive "$recycled" && ok "the unrelated process behind the recycled PID is not signalled" || fail "the unrelated process $recycled was killed"
+[ -e "$INFLIGHT_DIR/21" ] && ok "adopted worker's lock kept" || fail "adopted worker's lock removed"
+#    `ps` lỗi hoặc không in gì (lỗi thoáng qua, quyền) cho một PID sống: không xác minh được, nên không nhận lại và
+#    cũng KHÔNG gỡ lock (gỡ thì thẻ của một worker thật có thể bị giao cho worker thứ hai).
+worker; unknown=$W
+printf 'PID=%s\nLANE=qa\nSTARTED=2026-10-16T00:00:00Z\n' "$unknown" > "$INFLIGHT_DIR/25"
+: > "$TMP/writes"; BOT_LOGIN="sb-bot"
+ps() { case "$*" in *command=*) ;; *) command ps "$@" ;; esac; }   # chỉ `-o command=` trả rỗng
+adopt_live_locks >/dev/null 2>&1
+unset -f ps; BOT_LOGIN=""
+[ -e "$INFLIGHT_DIR/25" ] && [ -e "$INFLIGHT_DIR/21" ] && ! grep -q "gh issue edit 2[15] " "$TMP/writes" 2>/dev/null \
+  && ok "ps printed nothing for a live PID: lock and assignee kept (cannot verify, do not reap)" \
+  || fail "ps printed nothing: lock reaped anyway (25=$([ -e "$INFLIGHT_DIR/25" ] && echo kept || echo gone) 21=$([ -e "$INFLIGHT_DIR/21" ] && echo kept || echo gone) writes: $(cat "$TMP/writes"))"
+#    Dòng lệnh không khớp nhưng tiến trình KHÔNG khởi động sau STARTED của lock (worker ghi lock ngay sau khi khởi
+#    tạo, nên PID tái dùng luôn khởi động muộn hơn): có thể là worker thật đã đổi tiêu đề tiến trình. Không gỡ.
+worker; retitled=$W
+future=$(python3 -c 'import time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600)))')
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$retitled" "$future" > "$INFLIGHT_DIR/26"
+: > "$TMP/writes"; BOT_LOGIN="sb-bot"
+adopt_live_locks >/dev/null 2>&1
+BOT_LOGIN=""
+[ -e "$INFLIGHT_DIR/26" ] && ! grep -q "gh issue edit 26 " "$TMP/writes" 2>/dev/null \
+  && ok "non-matching command line, process not started after the lock: kept (maybe a retitled live worker)" \
+  || fail "lock 26 reaped on the command line alone (a live worker whose title changed gets a second worker)"
+#    Parser etime nằm trên đường an toàn (sai tuổi thì lock của worker thật có thể bị gỡ): nhánh hh:mm:ss và
+#    dd-hh:mm:ss của tiến trình chạy lâu (ca reboot thật), và STARTED trống/sai dạng phải trả 1 (không gỡ).
+iso_in() { python3 -c 'import sys, time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + int(sys.argv[1]))))' "$1"; }
+ps() { case "$*" in *etime=*) echo "  $FAKE_ETIME" ;; *) command ps "$@" ;; esac; }
+for case_ in "1-02:03:04=93784" "02:03:04=7384"; do
+  FAKE_ETIME=${case_%=*}; secs=${case_#*=}
+  pid_started_after $$ "$(iso_in $(( -secs - 60 )))"; before=$?   # lock ghi 60 s TRƯỚC khi tiến trình khởi động
+  pid_started_after $$ "$(iso_in $(( -secs + 60 )))"; after=$?    # lock ghi 60 s SAU: không phải PID tái dùng
+  [ "$before" -eq 0 ] && [ "$after" -eq 1 ] && ok "etime '$FAKE_ETIME' read as ${secs}s (recycled vs not decided right)" \
+    || fail "etime '$FAKE_ETIME' (${secs}s): started-after=$before (want 0), started-before=$after (want 1)"
+done
+unset -f ps
+pid_started_after $$ ""; e1=$?; pid_started_after $$ garbage; e2=$?
+[ "$e1" -eq 1 ] && [ "$e2" -eq 1 ] && ok "missing or malformed STARTED: never treated as a recycled PID" \
+  || fail "STARTED '' -> $e1, 'garbage' -> $e2 (want 1 and 1: unknown must not reap)"
 # Dừng khẩn chỉ kill worker do CHÍNH lần chạy này tạo (hợp đồng của halt_cleanup); worker nhận lại giữ được việc dở.
 worker; QA_PID=$W; QA_ISSUE=23
 own="$(own_lane_pids 2>/dev/null)"
 case " $own " in *" $live "*) fail "halt would kill the adopted worker $live (own_lane_pids: '$own')" ;; *) ok "halt spares the adopted worker" ;; esac
 case " $own " in *" $QA_PID "*) ok "halt still stops a worker this run launched" ;; *) fail "halt would not stop this run's worker $QA_PID (own_lane_pids: '$own')" ;; esac
+
+# ── 3b. lệnh đọc cố định của chính runner (quota) gõ sai, vd gh nâng cấp đổi tên flag: vẫn halt board (79 + file
+#    halt) như trước. github-read trả 64 cho lỗi cú pháp của worker ở mọi kind; runner không export
+#    SB_GITHUB_READ_STRICT (worker sẽ thừa hưởng), nên đặt nó cho từng lệnh đọc của mình.
+mkdir -p "$TMP/ghbin"
+printf '#!/usr/bin/env bash\necho "unknown flag: --renamed" >&2\nexit 1\n' > "$TMP/ghbin/gh"; chmod +x "$TMP/ghbin/gh"
+( SB_GITHUB_READ="$ROOT/.claude/bin/super-board-github-read.py"
+  export PATH="$TMP/ghbin:$PATH" SB_GITHUB_HALT_FILE="$TMP/runner-halt.json" SB_GITHUB_RETRY_DELAY=0
+  unset SB_GITHUB_READ_STRICT
+  gh_rate_guard ) >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 79 ] && [ -e "$TMP/runner-halt.json" ] && ok "runner's own quota read with a broken flag: board halted (79), as before" \
+  || fail "runner's own quota read with a broken flag: rc=$rc halt=$([ -e "$TMP/runner-halt.json" ] && echo yes || echo no) (want 79 + halt)"
+( SB_GITHUB_READ="$ROOT/.claude/bin/super-board-github-read.py"
+  export PATH="$TMP/ghbin:$PATH" SB_GITHUB_HALT_FILE="$TMP/runner-halt2.json" SB_GITHUB_RETRY_DELAY=0
+  unset SB_GITHUB_READ_STRICT
+  issue_is_open 7 ) >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 79 ] && [ -e "$TMP/runner-halt2.json" ] && ok "runner's own issue-state read with a broken flag: halt file written (79)" \
+  || fail "runner's own issue-state read with a broken flag: rc=$rc halt=$([ -e "$TMP/runner-halt2.json" ] && echo yes || echo no) (exit 79 without a halt file: a restart fails again without the reason)"
+#    Worker thừa hưởng môi trường của runner: STRICT chỉ được đặt theo từng lệnh, không bao giờ export. Lib mode không
+#    tới phần chính của script, nên kiểm thêm nguồn: không dòng export/declare -x nào mang biến này.
+[ -z "${SB_GITHUB_READ_STRICT:-}" ] && ! export -p | grep -q SB_GITHUB_READ_STRICT \
+  && ! grep -qE '^[[:space:]]*(export|declare -x)[[:space:]].*SB_GITHUB_READ_STRICT' "$RUNNER" \
+  && ok "runner never exports SB_GITHUB_READ_STRICT (per-call prefix only; workers do not inherit it)" \
+  || fail "SB_GITHUB_READ_STRICT exported by the runner: every worker's mistyped read would halt the board again"
+
+# ── 3c. khởi động sau reboot: Builder chết, thẻ ở Building, PID trong lock bị tiến trình khác dùng lại. Lock đó phải
+#    được gỡ TRƯỚC bước trả thẻ Building bị bỏ rơi về Ready; nếu không reclaim thấy "lock sống", bỏ qua thẻ, rồi adopt
+#    mới gỡ lock: thẻ nằm Building suốt lần chạy (không lane nào lấy từ Building).
+reset_lanes; rm -f "$INFLIGHT_DIR"/*
+worker; rec30=$W
+printf 'PID=%s\nLANE=build\nSTARTED=2026-10-16T00:00:00Z\n' "$rec30" > "$INFLIGHT_DIR/30"
+gh_rate_guard() { :; }
+fetch_project_items() {
+  PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_30","status":"Building","labels":["bug"],"content":{"type":"Issue","number":30,"assignees":["sb-bot"]}}]}'
+}
+: > "$TMP/writes"
+( cd "$TMP" && BOT_LOGIN="sb-bot" && startup_reconcile ) >/dev/null 2>&1   # cd: reclaim gọi git ls-remote origin
+grep -qx "move PVTI_30 Ready" "$TMP/writes" && [ ! -e "$INFLIGHT_DIR/30" ] && alive "$rec30" \
+  && ok "startup: recycled-PID Building card reclaimed to Ready in the same run" \
+  || fail "startup: recycled-PID Building card not moved to Ready (lock=$([ -e "$INFLIGHT_DIR/30" ] && echo kept || echo gone) writes: $(tr '\n' ';' < "$TMP/writes"))"
+
+# ── 3d. runner thật chạy dưới set -euo pipefail: `git ls-remote origin` lỗi (mạng chập chờn, không có remote) lúc trả
+#    thẻ Building bị bỏ rơi về Ready không được giết cả runner trước khi kịp chuyển thẻ (audit T0041).
+reset_lanes; rm -f "$INFLIGHT_DIR"/*
+fetch_project_items() {
+  PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_31","status":"Building","labels":["bug"],"content":{"type":"Issue","number":31,"assignees":["sb-bot"]}}]}'
+}
+: > "$TMP/writes"
+( set -euo pipefail; cd "$TMP"; BOT_LOGIN="sb-bot"; fetch_project_items; reclaim_stranded_building ) >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -qx "move PVTI_31 Ready" "$TMP/writes" \
+  && ok "set -e: a failing git ls-remote does not kill the runner; stranded card still reclaimed" \
+  || fail "set -e: reclaim died (rc=$rc) on a failing git ls-remote; writes: $(tr '\n' ';' < "$TMP/writes")"
+
+# ── 4. đang hoãn sau RUNAWAY: tick thường không đọc GraphQL, nhưng cứ 3 tick đọc board một lần và quét zombie
+#    trên dữ liệu MỚI. Trước đây cả khoảng hoãn chỉ quét trên cache cũ: worker có thẻ đã sang Done trong lúc hoãn
+#    giữ lane tới hết hạn chót.
+FETCHES=0
+fetch_project_items() { FETCHES=$((FETCHES + 1)); items 41 Done '["bug"]'; }   # board thật: thẻ đã về Done
+gh_rate_guard() { :; }
+reset_lanes; worker; BUILD_PID=$W; BUILD_ISSUE=41; z41=$W
+items 41 Building '["bug"]'      # cache cũ: thẻ còn ở Building nên chưa phải zombie
+RUNAWAY_PAUSE_UNTIL=$(( $(date +%s) + 600 )); PAUSED_TICKS=0
+paused_tick >/dev/null 2>&1; paused_tick >/dev/null 2>&1
+[ "$FETCHES" -eq 0 ] && alive "$z41" && ok "paused ticks 1-2: no board read" || fail "paused ticks 1-2: fetches=$FETCHES (want 0)"
+paused_tick >/dev/null 2>&1
+[ "$FETCHES" -eq 1 ] && [ -z "$BUILD_PID" ] && ! alive "$z41" && ok "paused tick 3: board read, zombie on the fresh board reaped" \
+  || fail "paused tick 3: fetches=$FETCHES BUILD_PID='$BUILD_PID' (zombie whose card reached Done keeps its lane through the pause)"
+paused_tick >/dev/null 2>&1; paused_tick >/dev/null 2>&1; paused_tick >/dev/null 2>&1
+[ "$FETCHES" -eq 2 ] && ok "pause reads the board sparsely: 2 reads in 6 ticks" || fail "6 paused ticks made $FETCHES reads (want 2)"
+RUNAWAY_PAUSE_UNTIL=0
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_runner_lanes: all passed" || { echo "❌ test_runner_lanes: $FAILS failed"; exit 1; }
