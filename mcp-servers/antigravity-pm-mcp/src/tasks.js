@@ -484,6 +484,9 @@ export function recordDispatch(cfg, task, rec) {
     t.dispatches = t.dispatches || [];
     // Moc nay la mot phan cua cong nghiem thu: bang chung phai co SAU khi giao trien khai.
     if (rec.kind === 'implement' || rec.kind === 'rework') t.implementDispatchedAt = nowIso();
+    // #22: moc commit cho commitPolicy=forbid = HEAD luc giao trien khai LAN DAU (rec.headCommit chup TRUOC khi gui prompt).
+    // Rework khong doi moc: commit cua agent o vong truoc van phai bi chan.
+    if (rec.kind === 'implement' && !t.implementBaseCommit) t.implementBaseCommit = rec.headCommit ?? headCommitOf(cfg.projectRoot);
     t.dispatches.push({
       kind: rec.kind,
       conversationId: rec.conversationId || t.conversationId,
@@ -661,7 +664,7 @@ export function gate(cfg, task, ctx = {}) {
   // cua PM (forbid = PM tu commit) — accept() xet cong TRUOC khi doi phase nen khong lot.
   if ('committedFiles' in ctx && task.phase !== 'ACCEPTED') {
     const cm = commitTheoTask(cfg, task, ctx.committedFiles, claimed);
-    const goc = `${String(task.baseCommit || 'commit goc').slice(0, 8)}..HEAD`;
+    const goc = `${String(task.implementBaseCommit || task.baseCommit || 'commit goc').slice(0, 8)}..HEAD`;
     const ds = (ls) => `${ls.slice(0, 20).join(', ')}${ls.length > 20 ? ` … (+${ls.length - 20})` : ''}`;
     if (cm.unknown) missing.push('CHUA XAC MINH duoc file da commit ke tu commit goc (khong doc duoc git) — commitPolicy=forbid can biet agent co tu commit khong');
     if (cm.chan.length) missing.push(`commitPolicy=forbid nhung file cua task da nam trong commit ${goc} (agent tu git commit?): ${ds(cm.chan)} — PM doi chieu git log ${goc}, khong nghiem thu`);

@@ -33,8 +33,23 @@ export async function changedFilesOf(cfg, task) {
 export async function committedFilesOf(cfg, task) {
   const base = await baseCommitOf(cfg, task);
   if (!base) return task?.baseCommit ? undefined : [];
-  const d = await run('git', ['--no-pager', 'diff', '--name-only', `${base}..HEAD`], { cwd: cfg.projectRoot, timeoutMs: 60000 });
-  return d.code === 0 ? d.stdout.split('\n').map((l) => l.trim()).filter(Boolean) : undefined;
+  return fileDaCommitTu(cfg, base);
+}
+
+/**
+ * File thay doi trong base..HEAD. -z: ten tieng Viet / dau cach khong bi quote (core.quotePath); --no-renames: rename lo ca
+ * ten CU (git mv file CAM). Bo thu muc trang thai nhu gitSnapshot. undefined = git loi / output bi cat.
+ */
+async function fileDaCommitTu(cfg, base) {
+  const d = await run('git', ['--no-pager', 'diff', '--name-only', '-z', '--no-renames', `${base}..HEAD`], { cwd: cfg.projectRoot, timeoutMs: 60000, maxBytes: 16_000_000 });
+  if (d.code !== 0 || d.truncated) return undefined;
+  const stateDir = thuMucTrangThai(cfg);
+  return d.stdout.split('\0').filter((f) => f && !f.startsWith(stateDir));
+}
+
+/** Thu muc trang thai cua chinh tool (task.json tu ghi moi lan record) — khong phai thay doi cua agent. */
+function thuMucTrangThai(cfg) {
+  return `${String(cfg.stateDir || '.antigravity-pm').replace(/^\.\//, '').replace(/\/+$/, '')}/`;
 }
 
 /** Anh chup `git status`: wt = moi file thay doi, untracked = file chua track. ok=false khi khong doc duoc git. */
@@ -45,8 +60,7 @@ export async function gitSnapshot(cfg) {
   if (r.code !== 0) return { ok: false, wt: undefined, untracked: [], raw: r.stdout || '' };
   // Output bi cat (giu duoi) => dong dau co the la nua duong dan: CHUA XAC MINH thay vi doan.
   if (r.truncated) return { ok: false, wt: undefined, untracked: [], raw: '', reason: 'git status qua lon (bi cat)' };
-  // Thu muc trang thai cua chinh tool (task.json tu ghi moi lan record) khong phai thay doi cua agent.
-  const stateDir = `${String(cfg.stateDir || '.antigravity-pm').replace(/^\.\//, '').replace(/\/+$/, '')}/`;
+  const stateDir = thuMucTrangThai(cfg);
   const cuaAgent = (f) => f && !f.startsWith(stateDir);
   const fields = r.stdout.split('\0');
   const wt = [];
@@ -86,12 +100,22 @@ export async function gateCtx(cfg, task) {
   // cay GeelyEx2 co phien khac sua song song, do ca cay thi moi lan ho sua gi la phai chay lai test 3 phut.
   return {
     changedFiles,
-    committedFiles,
+    committedFiles: snap.ok ? await commitSauGiao(cfg, task, committedFiles) : undefined,
     untrackedFiles: snap.untracked,
     lastChangeAt: changedFiles ? lastChangeAtOf(cfg, fileCuaTask(cfg, task, changedFiles)) : null,
     lintBlockers: soi.blockers,
     lintWarnings: soi.warnings,
   };
+}
+
+/**
+ * File da commit cho luat commitPolicy=forbid: tu moc giao trien khai LAN DAU (task.implementBaseCommit) — commit cuu ho
+ * PM lam truoc khi giao (dispatch-guard khuyen) khong phai cua agent. Task giao truoc khi co moc => tu commit goc.
+ */
+async function commitSauGiao(cfg, task, tuCommitGoc) {
+  const moc = task?.implementBaseCommit;
+  if (!moc) return tuCommitGoc;
+  return SHA_RE.test(String(moc)) ? fileDaCommitTu(cfg, moc) : undefined;
 }
 
 /** Worktree dong bang = HEAD + diff cay lam viec + file moi (tru thu muc trang thai va file rac). */
