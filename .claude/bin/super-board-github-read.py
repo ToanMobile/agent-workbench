@@ -5,10 +5,15 @@ A logical read gets three total attempts. Success resets its own sequence; other
 reads cannot reset it. Permanent query/auth errors stop on the first attempt.
 The halt file is shared through the main checkout, including linked worktrees.
 Only an explicit new run clears it with --resume after preserving the old reason.
-Mutations never enter this retry helper. For the agent-facing kinds in FORMS, a
-payload that fails its shape on every attempt is the caller's malformed read, not
-an outage: that call exits 64 with the valid form and the run keeps going. Scripts
-whose commands are fixed set SB_GITHUB_READ_STRICT=1 to keep halting on it.
+Mutations never enter this retry helper. A gh CLI syntax error (wrong flag or
+argument count) is the caller's mistake for every kind: that call exits 64 and the
+run keeps going. A payload that fails its shape on every attempt is also the
+caller's malformed read, not an outage: exit 64 (with the valid form for the
+agent-facing kinds in FORMS). What the board itself runs with fixed commands (the runner's own
+reads, super-board-card.sh, the merge gate, preflight, super-board-deps.sh) sets
+SB_GITHUB_READ_STRICT=1 to keep halting on both; the runner sets it per call, never
+exported, so its workers do not inherit it. Helper scripts an agent runs keep the
+default: a broken one fails that call, not the whole board.
 """
 from __future__ import annotations
 
@@ -316,9 +321,11 @@ def read(args, kind='json', meta=None, recovering=False):
             if permanent_error(diagnostic):
                 halt('GitHub rejected a required read (query, authentication, or permission error); fix it before restarting', attempt, operation)
             if result.returncode:
-                # Lỗi cú pháp của người gọi (thông báo của gh 2.100): báo exit 64 kèm dạng đúng, không halt cả board.
-                if re.search(r'cannot specify|specify only one of|unknown (?:shorthand )?flag|accepts (?:at most |between )?\d+ arg|requires at least \d+ arg', result.stderr, re.I) and kind in FORMS and not os.environ.get('SB_GITHUB_READ_STRICT'):
-                    raise ValueError(f'caller CLI flag error ({diagnostic.strip().splitlines()[0]}); this call failed, the run continues. Valid form: --kind {kind} -- {FORMS[kind]}')
+                # Lỗi cú pháp của người gọi (thông báo của gh 2.100, cobra): báo exit 64, không halt cả board. Áp dụng
+                # cho MỌI kind; gợi ý dạng đúng chỉ khi kind có mẫu trong FORMS.
+                if re.search(r'cannot specify|specify only one of|unknown (?:shorthand )?flag|accepts (?:at most |between \d+ and )?\d+ arg|requires at least \d+ arg', result.stderr, re.I) and not os.environ.get('SB_GITHUB_READ_STRICT'):
+                    hint = f' Valid form: --kind {kind} -- {FORMS[kind]}' if kind in FORMS else ''
+                    raise ValueError(f'caller CLI flag error ({diagnostic.strip().splitlines()[0]}); this call failed, the run continues.{hint}')
                 shape_only = False
                 status = re.search(r'HTTP [0-9]{3}', result.stderr)
                 last = 'GitHub required read failed' + (f' ({status[0]})' if status else '')
@@ -337,8 +344,11 @@ def read(args, kind='json', meta=None, recovering=False):
         if attempt < 3:
             print(f'[github-read] {last}; retry {attempt + 1}/3', file=sys.stderr)
             time.sleep(max(0, delay) * attempt)
-    if shape_only and kind in FORMS and not os.environ.get('SB_GITHUB_READ_STRICT'):
-        raise ValueError(f'{last}; this call failed, the run continues. Valid form: --kind {kind} -- {FORMS[kind]}')
+    # Payload sai dạng ở cả 3 lần với lệnh của agent là lỗi đọc của người gọi cho MỌI kind (OfficeReader 16/10: quota
+    # đọc kèm --jq in chuỗi đã halt cả board); lệnh cố định của board đặt STRICT nên vẫn halt.
+    if shape_only and not os.environ.get('SB_GITHUB_READ_STRICT'):
+        hint = f' Valid form: --kind {kind} -- {FORMS[kind]}' if kind in FORMS else ''
+        raise ValueError(f'{last}; this call failed, the run continues.{hint}')
     halt(f'{last}; stopped after 3 failed attempts', 3, operation)
 
 

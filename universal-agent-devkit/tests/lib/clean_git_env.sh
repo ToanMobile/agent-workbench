@@ -24,4 +24,7 @@ export WORKTREE_DISK_WARN_GIB=0 WORKTREE_DISK_MIN_GIB=0 WORKTREE_MAX=0
 # a file (/dev/null is no directory): the guessable ${TMPDIR:-/tmp}/agpm-test-no-global-config/… it replaces could be created in a shared
 # /tmp by another user or an old run, and then steered every test that sources this file (OpenCodeReview 14/10).
 export ANTIGRAVITY_PM_GLOBAL_CONFIG=/dev/null/agpm-test-no-global-config/.antigravity-pm.json
-export DEVKIT_LANG="${DEVKIT_LANG:-vi}"
+# Tests assert Vietnamese tr() messages while the DevKit default is en (4a344d6): pin the language, never inherit it. A caller's
+# DEVKIT_LANG=en (user shell, a super-board runner or merge-gate verify) turned test_multi_session_gate.sh red (2026-10-16).
+# A test that wants en sets it itself after sourcing (none sets it before).
+export DEVKIT_LANG=vi
