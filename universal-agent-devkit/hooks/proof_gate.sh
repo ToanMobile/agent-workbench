@@ -329,7 +329,7 @@ def full_gate_problem():
         if rp:
             with os.fdopen(open_reg(rp), encoding="utf-8") as fh:
                 rec = json.load(fh)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):   # RecursionError: a deeply nested file; no receipt, never a crash (python exit 1 became wrapper exit 0)
         rec = None
     if not rec:
         return "chưa có exit 0 trên code hiện tại"
@@ -425,7 +425,7 @@ if xong and need_image and os.environ.get("PROOF_BEFORE", "1") != "0":
             if not isinstance(raw_intents, list) or not all(isinstance(x, str) for x in raw_intents):
                 raise ValueError("intents not string list")
             tc_intents = set(raw_intents)
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             tc_ts = 0
             tc_intents = set()
         
@@ -475,7 +475,7 @@ state = {}
 try:
     with os.fdopen(open_reg(state_path), encoding="utf-8") as fh:
         state = json.load(fh)
-except (OSError, ValueError):
+except (OSError, ValueError, RecursionError):
     state = {}
 # per turn: a release never switches the gate off for later turns. No turn start (peer-only session, no transcript):
 # one budget per hour, not one constant key (`session@0`) spent once and then letting every later XONG through.

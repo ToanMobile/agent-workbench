@@ -470,10 +470,38 @@ Gate exit 4 · ảnh $P"; rc=$?
 
 }
 
+grp_nested() {   # a deeply nested receipt / turn-class / state file is no crash that lets XONG through
+# json.load raises RecursionError on such a file (python 3.14 from about 10**6 levels, 3.9 from 10**5): that is no OSError or ValueError, the embedded
+# python died with exit 1 and the wrapper turns that into exit 0, so XONG passed unchecked. The hook reads three agent-writable files in three places:
+# the full-gate receipt, turn_class_<session>.json and proof_gate.state. Each is nested here and the verdict must be what it is with no such file.
+python3 -c 'import sys; n = 2000000; sys.stdout.write("[" * n + "]" * n)' > "$TMP/nested.json"
+GD="$(git -C "$REPO" rev-parse --absolute-git-dir)"; AG="$REPO/.claude/audit-gate"; mkdir -p "$AG"
+reset; turn_start; gate_full; g=$?
+cp "$TMP/nested.json" "$GD/postfix-gate/full_pass.json"
+P="reports/proof-$(date +%Y%m%d-%H%M%S).png"; png "$REPO/$P" 20000
+stop "XONG
+Đã sửa lỗi X.
+Gate exit 0 · ảnh $P"; rc=$?
+[ "$g" = 0 ] && [ "$rc" = 2 ] && grep -q "chưa có exit 0" "$TMP/err" \
+  && ok "a deeply nested receipt is no receipt: XONG blocked, not passed by a crash" \
+  || fail "nested receipt (gate=$g rc=$rc err=$(head -3 "$TMP/err" | tr '\n' ' '))"
+# (the third read, turn_class_<session>.json, has the same one-word fix but no row here: the fixture never reaches it with a verdict that differs, a row
+# for it passed before the fix too and proved nothing)
+# the per-turn block-budget state nested: a block stays a block
+reset; turn_start
+cp "$TMP/nested.json" "$AG/proof_gate.state"
+stop "XONG
+Đã sửa lỗi X.
+Gate exit 0"; rc=$?
+[ "$rc" = 2 ] && grep -q "proof-" "$TMP/err" \
+  && ok "a deeply nested proof_gate.state: the block is still a block" \
+  || fail "nested proof_gate.state (rc=$rc err=$(head -3 "$TMP/err" | tr '\n' ' '))"
+}
+
 # Run the groups at the same time (job control on only for these launches: every group is its own process group, which `cleanup`
 # stops whole). A group body sets short variables (g, rc, P, i ...), so the loop variable is `grp`, which none of them uses. A group
 # that dies before its end leaves no fails file: that is a failure, never a silent pass.
-GROUPS_IN_ORDER="receipt gate_exit_png image_scope waiver commit_keeps ir_py1 redated future ir_py2 objects handover push_fail loop_notif untested"
+GROUPS_IN_ORDER="receipt gate_exit_png image_scope waiver commit_keeps ir_py1 redated future ir_py2 objects handover push_fail loop_notif untested nested"
 set -m
 for grp in $GROUPS_IN_ORDER; do
   ( TMP="$ROOT/$grp"; mkdir -p "$TMP"; mkrepo; "grp_$grp"; echo "$FAILS" > "$ROOT/fails.$grp" ) >"$ROOT/out.$grp" 2>&1 </dev/null &
