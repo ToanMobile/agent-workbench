@@ -34,7 +34,7 @@ In Codex the skill is not a slash command: it is `$super-board <verb>`, found in
 | Anything about Blocked exits, 🙋 needs you, or dropping a card | `references/block-template.md` |
 | Optional learning after a successfully completed run | `references/calibration.md` (external installed skill; bounded receipt; explicit existing-skill edit paths) |
 | Config structure questions | `references/config-schema.json` |
-| Worker gh-call discipline / rate-limit recovery | `references/rate-limit-etiquette.md` (+ `scripts/super-board-gh-guard.sh`) |
+| Worker gh-call discipline / rate-limit recovery | `references/rate-limit-etiquette.md` (+ `.claude/bin/super-board-gh-guard.sh`) |
 
 ## Orchestrator vs worker — the cardinal rule
 
