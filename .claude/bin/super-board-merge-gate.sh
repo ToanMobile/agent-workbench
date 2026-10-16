@@ -286,6 +286,8 @@ elif [ -f "$REPO_PATH/.agents/devkit/bin/install.sh" ]; then
   bash "$REPO_PATH/.agents/devkit/bin/install.sh" -t "$SCRATCH" -a claude -y >/dev/null 2>&1 || true
   git -C "$SCRATCH" checkout -q -- . 2>/dev/null || true
 fi
+# Config cục bộ bị git ignore (google-services.json, local.properties…) để build trong SCRATCH không đỏ vì môi trường.
+bash "$HERE/super-board-scratch-config.sh" "$REPO_PATH" "$SCRATCH" || true
 
 for cmd in "${VERIFY[@]}"; do
   if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
