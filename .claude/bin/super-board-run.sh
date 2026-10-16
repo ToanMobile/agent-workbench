@@ -347,6 +347,9 @@ dispatch_lane() {
     *) log "unknown lane: $lane"; return 1 ;;
   esac
   prompt="First operation: run .claude/bin/super-board-skills-ready.py --root '$PWD' --host claude --cards - --lane '$lane' --hydrate with $card as stdin. Halt on exit 10 before worktree creation or lifecycle writes; preserve claims and approval evidence. Load resolved paths and only declared fallbacks; recheck conditionals with --require before activation. $prompt"
+  if [ -f "$REPO_ROOT/.agents/active-profile.json" ] && grep -q '"lang": "vi"' "$REPO_ROOT/.agents/active-profile.json" 2>/dev/null; then
+    prompt="$prompt Language policy: This repository uses Vietnamese ('lang': 'vi'). Write all PR descriptions, problem/solution/AC explanations, status comments, and review notes in Vietnamese (Tiếng Việt); identifiers/symbols remain English."
+  fi
   # Worker output goes to a per-worker log, not /dev/null (issue #13). Redirect at the
   # `claude` invocation itself — no wrapping subshell, no `exec` — so the wire to the
   # file survives and `$!` names the worker process rather than a bash stub.
