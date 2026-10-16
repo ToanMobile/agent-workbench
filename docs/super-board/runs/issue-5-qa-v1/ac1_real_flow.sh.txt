@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# QA probe issue #5 AC1: real trunk-mode flow with a symlink-mode DevKit install (the WorktreeCreate hook's `worktree add --session`).
+# usage: ac1_real_flow.sh <devkit dir>
+. "$1/tests/lib/clean_git_env.sh"
+set -u
+DEVKIT_DIR="$(cd "$1" && pwd)"; export DEVKIT_LANG=en
+GATE="$DEVKIT_DIR/bin/post-fix-gate.py"; PG="$DEVKIT_DIR/bin/push_gate.py"; WTPY="$DEVKIT_DIR/scripts/git/worktree.py"; HOOK="$DEVKIT_DIR/hooks/block-dangerous-git.sh"
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+R="$TMP/repo"; W="$R/.claude/worktrees/s1"
+mkdir -p "$R/src" "$R/.agents" && cd "$R" || exit 1
+git init -q -b main . && git config user.email t@t && git config user.name t && git config commit.gpgsign false
+echo "fun ok() = 1" > src/Core.kt
+cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],
+ "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"true"}]}]}
+JSON
+printf '**/.claude/settings.local.json\n**/.claude/worktrees/\n' >> .git/info/exclude   # as the real repo: global ignore + info/exclude
+git add -A && git commit -qm init
+git init -q --bare "$TMP/origin.git" && git remote add origin "$TMP/origin.git" && git push -q -u origin HEAD 2>/dev/null
+echo "== install DevKit (symlink mode) into main"
+bash "$DEVKIT_DIR/bin/install.sh" --target="$R" --domain=auto --mode=symlink -y --no-githooks -p backend -a claude > "$TMP/install.out" 2>&1; echo "install exit=$?"
+git status --porcelain | head -20; echo "(untracked/modified after install: $(git status --porcelain | wc -l))"
+git add -A && git commit -qm "install devkit" && git push -q origin main 2>/dev/null; echo "commit install exit=$?"
+echo "== worktree add --session (what the WorktreeCreate hook runs)"
+python3 "$WTPY" add "$W" --session=11111111-2222-3333-4444-555555555555 > "$TMP/add.out" 2>&1; echo "add exit=$?"; tail -4 "$TMP/add.out"
+echo "untracked in the worktree after add: $(git -C "$W" status --porcelain | wc -l)"; git -C "$W" status --porcelain | head -8
+echo "== work + commit + gate --full in the worktree"
+echo "fun ok() = 2" > "$W/src/Core.kt"
+if [ "${MODE:-dirty}" = dirty ]; then   # gate the edited tree, then commit (the Builder test's flow)
+  (cd "$W" && CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief > "$TMP/gate.out" 2>&1); GRC=$?
+  git -C "$W" commit -qam "task work"; echo "commit exit=$?"
+else                                    # commit, then gate the commits against main
+  git -C "$W" commit -qam "task work"; echo "commit exit=$?"
+  (cd "$W" && CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief --diff main > "$TMP/gate.out" 2>&1); GRC=$?
+fi
+echo "gate ($MODE) exit=$GRC"; tail -3 "$TMP/gate.out"; [ "$GRC" = 0 ] || tail -40 "$(git -C "$W" rev-parse --absolute-git-dir)/postfix-gate/last_output.log"
+RW="$(git -C "$W" rev-parse --absolute-git-dir)/postfix-gate/full_pass.json"
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); d=r.get("dirty") or {}; print("receipt exit", r.get("exit"), "dirty entries", len(d), sorted(d)[:8])' "$RW"
+echo "== worktree finish from main"
+(cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1); echo "finish exit=$?"; tail -3 "$TMP/finish.out"
+[ -d "$W" ] && echo "worktree still there" || echo "worktree removed"
+echo "main HEAD: $(git -C "$R" log --oneline -1)"
+echo "== push_gate CLI from main"
+python3 "$PG" "$R"; echo "push_gate exit=$?"
+echo "== hook: the agent's push command (cwd = main)"
+python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"git push origin main"},"cwd":sys.argv[1]}))' "$R" \
+  | CLAUDE_PROJECT_DIR="$R" bash "$HOOK" > "$TMP/hook.out" 2>&1; echo "hook exit=$?"; head -c 600 "$TMP/hook.out"; echo

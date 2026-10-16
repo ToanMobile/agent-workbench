@@ -14,7 +14,8 @@
 #     worktree's own remote view is no receipt for a tag push. L13 a carried receipt naming another project's run is refused.
 #     L14 a linked worktree whose check raises does not stop the others from covering the push. L15 a receipt carried into main is
 #     judged by the linked rules (gated on uncommitted work that main later reverted: refused). L16 a linked worktree with no receipt
-#     does not vouch through its own upstream ("@{u}..rev is docs only").
+#     does not vouch through its own upstream ("@{u}..rev is docs only"). L17 a linked worktree whose receipt of the pushed content is
+#     not an exit 0 (the exit 2 the gate keeps for an UNVERIFIED or partial run, same fingerprint and head) does not cover the push.
 # Every refusal must be a verdict, never "không kiểm được biên nhận gate" (a crash also exits 2).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -189,6 +190,20 @@ echo "fun ok() = 5" > "$W/src/Core.kt"; git -C "$W" commit -qam "ungated code" &
   && git -C "$R" merge -q --ff-only task && echo "# notes" > "$R/NOTES.md" && git -C "$R" add NOTES.md && git -C "$R" commit -qm "docs" \
   || bad "L16 setup: commit / push / merge failed"
 expect "L16: a linked worktree without a receipt, its upstream holding main's ungated code, does not cover the push" 2
+
+# a receipt of exactly the pushed content whose verdict is not exit 0: write_full_pass_receipt keeps the PASS receipt as "exit": 2 for an
+# UNVERIFIED run (an edited test awaiting review) or a partial run of the same code; only "exit": 0 covers a push (QA issue #5, surviving
+# mutant: without `receipt.get("exit") != 0` in _own_check every push_gate test stayed green)
+newrepo
+gated_worktree_commit 2
+git -C "$R" merge -q --ff-only task || bad "L17 setup: merge failed"
+expect "L17 control: the exit-0 receipt covers the push" 0 "covered by the gate receipt of the linked worktree"
+python3 - "$(git -C "$W" rev-parse --absolute-git-dir)/postfix-gate/full_pass.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1])); assert r.get("exit") == 0, r.get("exit"); r["exit"] = 2; json.dump(r, open(sys.argv[1], "w"))
+PY
+[ $? = 0 ] || bad "L17 setup: turning the receipt down to exit 2 failed"
+expect "L17: a linked worktree receipt of the pushed content with exit 2 (UNVERIFIED / partial): refused" 2
 
 [ "$FAILS" = 0 ] && echo "ALL OK" && exit 0
 echo "$FAILS FAILED"; exit 1
