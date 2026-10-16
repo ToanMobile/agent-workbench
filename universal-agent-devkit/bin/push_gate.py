@@ -504,7 +504,23 @@ def linked_worktrees(top):
 
 
 def check(cwd, rev="HEAD", tag_remote=None, linked=False):
-    """(ok, reason). linked=True: judging a linked worktree's own receipt, no further fallback."""
+    """(ok, reason). linked=True: chỉ xét biên nhận của chính worktree đó, không dự phòng tiếp."""
+    ok, reason = _own_check(cwd, rev, tag_remote, linked)
+    if ok or linked:
+        return ok, reason
+    # Trunk mode (issue #5): gate chạy trong linked worktree và ghi biên nhận dưới git dir của worktree đó; main chỉ nhận merge nên
+    # biên nhận của main (không có, hoặc cũ: bản `worktree finish` chép về lần trước) không phủ code sắp push. Biên nhận của từng
+    # linked worktree được xét y hệt biên nhận của main.
+    top = toplevel(cwd)[0]
+    rc, sha = git(top, "rev-parse", "--verify", "-q", rev + "^{commit}") if top else (1, "")
+    for wt in linked_worktrees(top) if rc == 0 else []:
+        if _own_check(wt, sha.strip(), tag_remote, linked=True)[0]:
+            return True, f"covered by the gate receipt of the linked worktree {wt}"
+    return ok, reason
+
+
+def _own_check(cwd, rev, tag_remote, linked):
+    """(ok, reason) theo biên nhận của chính checkout `cwd`; linked=True: không lối tắt nào ngoài một biên nhận thật."""
     top, why = toplevel(cwd)
     if why:
         return False, f"repository without a work tree here ({why}): cannot find the gate receipt"
@@ -535,12 +551,6 @@ def check(cwd, rev="HEAD", tag_remote=None, linked=False):
     if receipt is None or problem or receipt.get("exit") != 0 or not receipt.get("head"):
         if linked:
             return False, "no usable receipt in this linked worktree"
-        # Trunk mode (issue #5): gate chạy trong linked worktree và ghi biên nhận dưới git dir của worktree đó; main chỉ nhận
-        # merge nên push từ main không thấy biên nhận nào. Biên nhận của linked worktree được xét y hệt biên nhận của main.
-        rc, sha = git(top, "rev-parse", "--verify", "-q", rev + "^{commit}")
-        for wt in linked_worktrees(top) if rc == 0 else []:
-            if check(wt, sha.strip(), tag_remote, linked=True)[0]:
-                return True, f"covered by the gate receipt of the linked worktree {wt}"
         ok, why_not = approved(top, "@{u}.." + rev)
         if ok:
             return True, why_not

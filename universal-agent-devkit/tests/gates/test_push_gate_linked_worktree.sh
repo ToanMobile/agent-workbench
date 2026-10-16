@@ -37,7 +37,8 @@ JSON
 }
 gated_worktree_commit() {   # edit code in the worktree, run the full gate there, commit
   echo "fun ok() = $1" > "$W/src/Core.kt"
-  CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief >/dev/null 2>&1
+  CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief > "$TMP/gate.out" 2>&1 \
+    || bad "setup: gate --full in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
   git -C "$W" commit -qam "task work $1"
 }
 
@@ -83,6 +84,15 @@ expect "L7: worktree gated, then merged and removed by worktree finish: the push
 
 echo "fun ok() = 6" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated on main"
 expect "L8: an ungated commit on main after worktree finish is refused" 2
+
+# the next task: main keeps the (now stale) receipt the first finish carried; a new worktree gated and merged by hand still covers
+newrepo
+gated_worktree_commit 2
+(cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) || bad "L9 setup: worktree finish failed: $(tail -3 "$TMP/finish.out")"
+git -C "$R" worktree add -q -b task2 "$W" main
+gated_worktree_commit 7
+git -C "$R" merge -q --ff-only task2
+expect "L9: main holds a stale valid receipt, a linked worktree's receipt covers the new head: the push is covered" 0
 
 [ "$FAILS" = 0 ] && echo "ALL OK" && exit 0
 echo "$FAILS FAILED"; exit 1
