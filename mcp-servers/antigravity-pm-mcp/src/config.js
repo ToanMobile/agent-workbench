@@ -239,7 +239,8 @@ function widenGradleTestCommand(root, testCommand) {
 // Cac khoa quyet dinh cong nghiem thu va lenh PM TU CHAY. `.antigravity-pm.json` nam trong repo => agent sua duoc
 // (doi testCommand thanh `true`, proof.require=0, stateDir="src" de an thay doi khoi pm_diff, provider shell chay
 // lenh tuy y). Vi the chup lai luc TAO TASK vao task.json (HOME) va task do chi dung ban chup (re-audit 23/09).
-export const GATE_KEYS = ['stateDir', 'testCommand', 'testStages', 'auditCommands', 'runTimeoutMs', 'proof', 'mustHave', 'oracle', 'testEvidence'];
+// commitPolicy (#22): agent doi sang "allow" roi tu commit thi cong khong con chan.
+export const GATE_KEYS = ['stateDir', 'testCommand', 'testStages', 'auditCommands', 'runTimeoutMs', 'proof', 'mustHave', 'oracle', 'testEvidence', 'commitPolicy'];
 
 function pickGate(cfg) {
   const out = {};

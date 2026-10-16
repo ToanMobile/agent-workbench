@@ -22,13 +22,19 @@ export const SHA_RE = /^[0-9a-f]{7,40}$/;
 export async function changedFilesOf(cfg, task) {
   const snap = await gitSnapshot(cfg);
   if (!snap.ok) return undefined;
+  const committed = await committedFilesOf(cfg, task);
+  return committed && hopNhatFileThayDoi(snap.wt, committed);
+}
+
+/**
+ * File DA COMMIT ke tu commit goc cua task (base..HEAD). Khong co commit goc (task cu / khong phai git) => [].
+ * undefined = CHUA XAC MINH: baseCommit sai khuon (bi sua tay?) hoac `git diff` loi — khong lui ve "chua commit gi".
+ */
+export async function committedFilesOf(cfg, task) {
   const base = await baseCommitOf(cfg, task);
-  // baseCommit co nhung sai khuon (bi sua tay?) => CHUA XAC MINH, khong lui ve "chi cay lam viec".
-  if (!base && task?.baseCommit) return undefined;
-  if (!base) return hopNhatFileThayDoi(snap.wt, []);
+  if (!base) return task?.baseCommit ? undefined : [];
   const d = await run('git', ['--no-pager', 'diff', '--name-only', `${base}..HEAD`], { cwd: cfg.projectRoot, timeoutMs: 60000 });
-  const committed = d.code === 0 ? d.stdout.split('\n').map((l) => l.trim()).filter(Boolean) : [];
-  return hopNhatFileThayDoi(snap.wt, committed);
+  return d.code === 0 ? d.stdout.split('\n').map((l) => l.trim()).filter(Boolean) : undefined;
 }
 
 /** Anh chup `git status`: wt = moi file thay doi, untracked = file chua track. ok=false khi khong doc duoc git. */
@@ -71,14 +77,18 @@ export async function baseCommitOf(cfg, task) {
 /** Bang chung do tu git + mtime cho gate(): file thay doi, file chua track, thoi diem sua file cuoi (null = khong do duoc). */
 export async function gateCtx(cfg, task) {
   const snap = await gitSnapshot(cfg);
-  const changedFiles = await changedFilesOf(cfg, task);
-  const soi = snap.ok ? soiThayDoi(cfg.projectRoot, snap.wt, await baseCommitOf(cfg, task)) : { warnings: [], blockers: [] };
+  // #22: agent tu `git commit` thi snap.wt rong => soi lint, moc sua file cuoi va commitPolicy phai do tren
+  // cay lam viec HOP file da commit ke tu commit goc, khong chi snap.wt.
+  const committedFiles = snap.ok ? await committedFilesOf(cfg, task) : undefined;
+  const changedFiles = committedFiles && hopNhatFileThayDoi(snap.wt, committedFiles);
+  const soi = changedFiles ? soiThayDoi(cfg.projectRoot, changedFiles, await baseCommitOf(cfg, task)) : { warnings: [], blockers: [] };
   // Thu tu thoi gian chi do tren FILE CUA TASK (agent khai files_changed ∪ file test trong cay) — chu du an chot 14/09/2026:
   // cay GeelyEx2 co phien khac sua song song, do ca cay thi moi lan ho sua gi la phai chay lai test 3 phut.
   return {
     changedFiles,
+    committedFiles,
     untrackedFiles: snap.untracked,
-    lastChangeAt: snap.ok ? lastChangeAtOf(cfg, fileCuaTask(cfg, task, snap.wt)) : null,
+    lastChangeAt: changedFiles ? lastChangeAtOf(cfg, fileCuaTask(cfg, task, changedFiles)) : null,
     lintBlockers: soi.blockers,
     lintWarnings: soi.warnings,
   };

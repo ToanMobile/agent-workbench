@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
 import { ensureDir, writeJsonAtomic, readJsonIfExists, nowIso, slug, exists } from './util.js';
 import {
   checkTestChange, checkProofProvider, checkOracle, fileRacGocRepo, mustHaveOf, PROOF_KINDS, kiemKhuonResult, doiChieuKhaiTest,
-  fileCamDungTheoTask,
+  fileCamDungTheoTask, commitTheoTask,
 } from './policy.js';
 import { createHash } from 'node:crypto';
 import { gateSnapshot } from './config.js';
@@ -655,6 +655,18 @@ export function gate(cfg, task, ctx = {}) {
   const cam = fileCamDungTheoTask(task, ctx.changedFiles, claimed);
   if (cam.chan.length) missing.push(`Dung vao file plan CAM sua: ${cam.chan.join(', ')} — hoan tac phan do (sua tay), khong nghiem thu`);
   if (cam.canhBao.length) warnings.push(`File CAM dang thay doi trong cay nhung task KHONG khai (phien khac / auto-commit?): ${cam.canhBao.slice(0, 20).join(', ')}${cam.canhBao.length > 20 ? ` … (+${cam.canhBao.length - 20})` : ''} — PM doi chieu pm_diff`);
+
+  // #22: commitPolicy=forbid — agent tu `git commit` thi git status sach; do bang file DA COMMIT ke tu commit goc.
+  // Khong co khoa committedFiles = goi truc tiep, khong xet (giong lastChangeAt). Task da ACCEPTED: commit sau do la
+  // cua PM (forbid = PM tu commit) — accept() xet cong TRUOC khi doi phase nen khong lot.
+  if ('committedFiles' in ctx && task.phase !== 'ACCEPTED') {
+    const cm = commitTheoTask(cfg, task, ctx.committedFiles, claimed);
+    const goc = `${String(task.baseCommit || 'commit goc').slice(0, 8)}..HEAD`;
+    const ds = (ls) => `${ls.slice(0, 20).join(', ')}${ls.length > 20 ? ` … (+${ls.length - 20})` : ''}`;
+    if (cm.unknown) missing.push('CHUA XAC MINH duoc file da commit ke tu commit goc (khong doc duoc git) — commitPolicy=forbid can biet agent co tu commit khong');
+    if (cm.chan.length) missing.push(`commitPolicy=forbid nhung file cua task da nam trong commit ${goc} (agent tu git commit?): ${ds(cm.chan)} — PM doi chieu git log ${goc}, khong nghiem thu`);
+    if (cm.canhBao.length) warnings.push(`commitPolicy=forbid: commit ${goc} cham file NGOAI pham vi task (phien khac / auto-commit?): ${ds(cm.canhBao)} — PM doi chieu git log`);
+  }
 
   // DE XUAT 1c: dinh nghia SQL trung (create table x2) => CHAN; tang dong / khoi lap => canh bao.
   for (const b of ctx.lintBlockers || []) missing.push(`Nhan doi noi dung: ${b}`);

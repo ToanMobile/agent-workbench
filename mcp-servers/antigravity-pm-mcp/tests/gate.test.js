@@ -3,10 +3,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { loadConfig } from '../src/config.js';
+import { execFileSync } from 'node:child_process';
+import { loadConfig, withGateSnapshot } from '../src/config.js';
 import {
   createTask, recordVerdict, recordRun, recordProof, recordDispatch, markRework, gate, accept, contractPaths, loadTask,
+  updateTask,
 } from '../src/tasks.js';
+import { gateCtx } from '../src/worktree.js';
 import { tmpProject, cleanup, writeFile, sampleTaskArgs, PNG_1PX, tick } from './helpers.js';
 
 // Luat bat buoc: thay doi phai kem file test. Moi test "phai dat" deu phai dua ctx nay vao.
@@ -225,5 +228,191 @@ test('agent trien khai THAT sau khi duoc giao thi nghiem thu duoc', () => {
 
   const g = gate(cfg, task, CO_FILE_TEST);
   assert.equal(g.ok, true, g.missing.join(' | '));
+  cleanup(dir);
+});
+
+// ---------------------------------------------------------------- #22 file DA COMMIT ke tu commit goc
+// Worker tu `git commit` => `git status` sach (cay lam viec rong). Cong phai do ca file da commit ke tu baseCommit:
+// commitPolicy=forbid chan commit cua task, soi lint va moc "sua file lan cuoi" khong duoc mu voi file da commit.
+
+function gitRepo(config = {}, files = {}) {
+  const dir = tmpProject({ testCommand: 'echo ok', ...config });
+  const git = (...a) => execFileSync('git', a, { cwd: dir, stdio: 'pipe' });
+  git('init', '-q');
+  git('config', 'user.email', 'test@example.com');
+  git('config', 'user.name', 'Test');
+  writeFile(path.join(dir, '.gitignore'), '.antigravity-pm/\n');
+  for (const [f, c] of Object.entries(files)) writeFile(path.join(dir, f), c);
+  git('add', '-A');
+  git('commit', '-qm', 'init');
+  return dir;
+}
+
+/** Sua file roi commit (vai worker trai luat, hoac phien khac dung chung cay). */
+function suaVaCommit(dir, files, msg = 'agent tu commit') {
+  for (const [f, c] of Object.entries(files)) writeFile(path.join(dir, f), c);
+  execFileSync('git', ['add', '-A'], { cwd: dir, stdio: 'pipe' });
+  execFileSync('git', ['commit', '-qm', msg], { cwd: dir, stdio: 'pipe' });
+}
+
+function khaiResult(cfg, task, filesChanged) {
+  writeFile(contractPaths(cfg, task).result, JSON.stringify({ phase: 'IMPLEMENT', summary: 'da lam', files_changed: filesChanged }));
+}
+
+const SUA_KINH = { 'src/Kinh.kt': 'class Kinh { fun ha() = 1 }\n', 'src/test/KinhTest.kt': 'class KinhTest\n' };
+
+test('#22 AC1: worker tu git commit khi commitPolicy=forbid => cong CHAN du git status sach', async () => {
+  const dir = gitRepo({}, { 'src/Kinh.kt': 'class Kinh\n' });
+  const cfg = loadConfig(dir);
+  const task = createTask(cfg, sampleTaskArgs());
+  khaiResult(cfg, task, Object.keys(SUA_KINH));
+  suaVaCommit(dir, SUA_KINH);
+  const ctx = await gateCtx(cfg, loadTask(cfg, task.id));
+  const g = gate(cfg, loadTask(cfg, task.id), ctx);
+  const chan = g.missing.find((m) => m.includes('commitPolicy=forbid'));
+  assert.ok(chan, g.missing.join('\n'));
+  assert.ok(chan.includes('src/Kinh.kt') && chan.includes('src/test/KinhTest.kt'), chan);
+  cleanup(dir);
+});
+
+test('#22 AC1: commitPolicy=allow thi commit cua task KHONG bi chan vi commit', async () => {
+  const dir = gitRepo({ commitPolicy: 'allow' }, { 'src/Kinh.kt': 'class Kinh\n' });
+  const cfg = loadConfig(dir);
+  const task = createTask(cfg, sampleTaskArgs());
+  khaiResult(cfg, task, Object.keys(SUA_KINH));
+  suaVaCommit(dir, SUA_KINH);
+  const g = gate(cfg, loadTask(cfg, task.id), await gateCtx(cfg, loadTask(cfg, task.id)));
+  assert.ok(!g.missing.some((m) => m.includes('commitPolicy')), g.missing.join('\n'));
+  cleanup(dir);
+});
+
+test('#22 AC1: agent doi commitPolicy=allow trong .antigravity-pm.json SAU khi tao task => van CHAN (ban chup luc tao)', async () => {
+  const dir = gitRepo({}, { 'src/Kinh.kt': 'class Kinh\n' });
+  const task = createTask(loadConfig(dir), sampleTaskArgs());
+  writeFile(path.join(dir, '.antigravity-pm.json'), JSON.stringify({ testCommand: 'echo ok', commitPolicy: 'allow' }));
+  const cfg = withGateSnapshot(loadConfig(dir), loadTask(loadConfig(dir), task.id));
+  khaiResult(cfg, task, Object.keys(SUA_KINH));
+  suaVaCommit(dir, SUA_KINH);
+  const g = gate(cfg, loadTask(cfg, task.id), await gateCtx(cfg, loadTask(cfg, task.id)));
+  assert.ok(g.missing.some((m) => m.includes('commitPolicy=forbid') && m.includes('src/Kinh.kt')), g.missing.join('\n'));
+  // Task cu (ban chup chua co commitPolicy) khong bi bao "cau hinh cong da doi" chi vi them khoa moi.
+  const cu = { ...loadTask(cfg, task.id) };
+  delete cu.gateConfig.commitPolicy;
+  assert.equal(withGateSnapshot(loadConfig(dir), cu).gateConfigDrift, false);
+  cleanup(dir);
+});
+
+test('#22 AC1: cay dung chung — phien khac commit file NGOAI pham vi task => chi CANH BAO, khong chan', async () => {
+  const dir = gitRepo({}, { 'src/Kinh.kt': 'class Kinh\n', 'docs/khac.md': 'a\n' });
+  const cfg = loadConfig(dir);
+  const task = createTask(cfg, sampleTaskArgs());
+  suaVaCommit(dir, { 'docs/khac.md': 'b\n' }, 'phien khac auto-commit');
+  // Worker lam dung luat: sua nhung KHONG commit.
+  for (const [f, c] of Object.entries(SUA_KINH)) writeFile(path.join(dir, f), c);
+  khaiResult(cfg, task, Object.keys(SUA_KINH));
+  const g = gate(cfg, loadTask(cfg, task.id), await gateCtx(cfg, loadTask(cfg, task.id)));
+  assert.ok(!g.missing.some((m) => m.includes('commitPolicy')), g.missing.join('\n'));
+  assert.ok(g.warnings.some((w) => w.includes('commitPolicy=forbid') && w.includes('docs/khac.md')), g.warnings.join('\n'));
+  cleanup(dir);
+});
+
+test('#22 AC2: sua file forbiddenPaths — commit hay khong commit deu bi CHAN', async () => {
+  for (const commit of [false, true]) {
+    const dir = gitRepo({ commitPolicy: 'allow' }, { 'src/Kinh.kt': 'class Kinh\n', 'gradle/libs.versions.toml': 'a=1\n' });
+    const cfg = loadConfig(dir);
+    const task = updateTask(cfg, createTask(cfg, sampleTaskArgs()), (t) => { t.forbiddenPaths = ['gradle/libs.versions.toml']; });
+    const sua = { ...SUA_KINH, 'gradle/libs.versions.toml': 'a=2\n' };
+    khaiResult(cfg, task, Object.keys(sua));
+    if (commit) suaVaCommit(dir, sua);
+    else for (const [f, c] of Object.entries(sua)) writeFile(path.join(dir, f), c);
+    const g = gate(cfg, loadTask(cfg, task.id), await gateCtx(cfg, loadTask(cfg, task.id)));
+    assert.ok(g.missing.some((m) => m.includes('CAM sua') && m.includes('gradle/libs.versions.toml')), `commit=${commit}: ${g.missing.join('\n')}`);
+    cleanup(dir);
+  }
+});
+
+test('#22 soi lint tren file DA COMMIT: SQL create table trung bi CHAN, guard bi xoa bi CANH BAO', async () => {
+  const dir = gitRepo({ commitPolicy: 'allow' }, { 'src/Kinh.kt': 'fun ha(ok: Boolean) {\n  if (!ok) return\n  chay()\n}\n' });
+  const cfg = loadConfig(dir);
+  const task = createTask(cfg, sampleTaskArgs());
+  const sua = {
+    'db/schema.sql': 'create table xe (id int);\ncreate table xe (id int);\n',
+    'src/Kinh.kt': 'fun ha(ok: Boolean) {\n  chay()\n}\n',
+    'src/test/KinhTest.kt': 'class KinhTest\n',
+  };
+  khaiResult(cfg, task, Object.keys(sua));
+  suaVaCommit(dir, sua);
+  const ctx = await gateCtx(cfg, loadTask(cfg, task.id));
+  assert.ok(ctx.lintBlockers.some((b) => b.includes('db/schema.sql') && b.includes('create table trung')), JSON.stringify(ctx.lintBlockers));
+  assert.ok(ctx.lintWarnings.some((w) => w.key === 'guard-xoa:src/Kinh.kt'), ctx.lintWarnings.map((w) => w.key).join(', '));
+  assert.ok(gate(cfg, loadTask(cfg, task.id), ctx).missing.some((m) => m.startsWith('Nhan doi noi dung') && m.includes('db/schema.sql')));
+  cleanup(dir);
+});
+
+/** Agent sua SUA_KINH (KHONG commit) + du bang chung PM (plan, audit, review, test xanh sau bao cao, anh). Tra ve ctx da do. */
+async function duBangChung(dir, cfg, task) {
+  const p = contractPaths(cfg, task);
+  writeFile(p.plan, '# Ke hoach');
+  recordVerdict(cfg, task, { kind: 'plan', verdict: 'pass' });
+  recordDispatch(cfg, task, { kind: 'implement', conversationId: 'c-test' });
+  tick();
+  for (const [f, c] of Object.entries(SUA_KINH)) writeFile(path.join(dir, f), c);
+  khaiResult(cfg, task, Object.keys(SUA_KINH));
+  tick();
+  recordVerdict(cfg, task, { kind: 'audit', verdict: 'pass' });
+  recordVerdict(cfg, task, { kind: 'review', verdict: 'pass' });
+  recordRun(cfg, task, { kind: 'test', command: 'echo ok', exitCode: 0, durationMs: 5, evidence: EV_OK, startedAt: new Date().toISOString() });
+  const img = writeFile(path.join(p.proofDir, 'shot.png'), PNG_1PX);
+  recordProof(cfg, task, { label: 'anh', provider: 'adb', file: img, bytes: PNG_1PX.length });
+  return gateCtx(cfg, loadTask(cfg, task.id));
+}
+
+test('#22 thu tu thoi gian: agent sua + commit file SAU lan test xanh => cong CHAN (test chua chay tren code moi nhat)', async () => {
+  const dir = gitRepo({ commitPolicy: 'allow' }, { 'src/Kinh.kt': 'class Kinh\n' });
+  const cfg = loadConfig(dir);
+  const task = createTask(cfg, sampleTaskArgs());
+  // Truoc khi agent len lut sua: du bang chung.
+  const ctx0 = await duBangChung(dir, cfg, task);
+  const truoc = gate(cfg, loadTask(cfg, task.id), ctx0);
+  assert.equal(truoc.ok, true, truoc.missing.join(' | '));
+  // Agent sua code SAU lan test xanh roi commit => git status sach.
+  tick(20);
+  suaVaCommit(dir, { 'src/Kinh.kt': 'class Kinh { fun ha() = 2 }\n' });
+  const ctx = await gateCtx(cfg, loadTask(cfg, task.id));
+  assert.ok(ctx.lastChangeAt >= fs.statSync(path.join(dir, 'src/Kinh.kt')).mtimeMs, `lastChangeAt=${ctx.lastChangeAt}`);
+  const sau = gate(cfg, loadTask(cfg, task.id), ctx);
+  assert.ok(sau.missing.some((m) => m.includes('chay TRUOC')), sau.missing.join('\n'));
+  cleanup(dir);
+});
+
+test('#22 baseCommit dung khuon nhung git khong doc duoc (commit da mat) => CHUA XAC MINH, khong coi la "chua commit gi"', async () => {
+  const dir = gitRepo({}, { 'src/Kinh.kt': 'class Kinh\n' });
+  const cfg = loadConfig(dir);
+  const task = updateTask(cfg, createTask(cfg, sampleTaskArgs()), (t) => { t.baseCommit = 'deadbeef'.repeat(5); });
+  for (const [f, c] of Object.entries(SUA_KINH)) writeFile(path.join(dir, f), c);
+  khaiResult(cfg, task, Object.keys(SUA_KINH));
+  const ctx = await gateCtx(cfg, loadTask(cfg, task.id));
+  assert.equal(ctx.committedFiles, undefined);
+  assert.equal(ctx.changedFiles, undefined, 'git diff loi khong duoc lui ve "chi cay lam viec"');
+  const g = gate(cfg, loadTask(cfg, task.id), ctx);
+  assert.ok(g.missing.some((m) => m.startsWith('CHUA XAC MINH duoc file da commit')), g.missing.join('\n'));
+  cleanup(dir);
+});
+
+test('#22 commitPolicy=forbid: nghiem thu xong PM tu commit => gate cua task DA ACCEPTED khong bao chan vi commit', async () => {
+  const dir = gitRepo({}, { 'src/Kinh.kt': 'class Kinh\n' });
+  const cfg = loadConfig(dir);
+  const task = createTask(cfg, sampleTaskArgs());
+  const ctx = await duBangChung(dir, cfg, task);
+  assert.equal(gate(cfg, loadTask(cfg, task.id), ctx).ok, true);
+  accept(cfg, loadTask(cfg, task.id), ctx);
+  suaVaCommit(dir, {}, 'PM commit sau nghiem thu');
+  const g = gate(cfg, loadTask(cfg, task.id), await gateCtx(cfg, loadTask(cfg, task.id)));
+  assert.ok(!g.missing.some((m) => m.includes('commitPolicy')), g.missing.join('\n'));
+  // Chua ACCEPTED ma da co commit cua task => van CHAN (dieu kien phase khong mo cua cho agent).
+  const t2 = createTask(cfg, sampleTaskArgs({ title: 'task 2' }));
+  khaiResult(cfg, t2, ['src/Kinh.kt']);
+  suaVaCommit(dir, { 'src/Kinh.kt': 'class Kinh { fun ha() = 3 }\n' });
+  assert.ok(gate(cfg, loadTask(cfg, t2.id), await gateCtx(cfg, loadTask(cfg, t2.id))).missing.some((m) => m.includes('commitPolicy=forbid')));
   cleanup(dir);
 });

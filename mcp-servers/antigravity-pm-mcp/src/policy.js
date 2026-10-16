@@ -253,14 +253,27 @@ export function fileCamDung(task, changedFiles) {
  */
 export function fileCamDungTheoTask(task, changedFiles, claimed) {
   if (!Array.isArray(changedFiles)) return { chan: [], canhBao: [] };
-  const tatCa = fileCamDung(task, changedFiles);
+  return chiaTheoTask(task, fileCamDung(task, changedFiles), claimed);
+}
+
+/**
+ * #22: commitPolicy=forbid ma file cua task (files_changed / scopeFiles) da nam trong commit ke tu commit goc => agent tu
+ * `git commit` trai luat => CHAN. Commit chi cham file khac (phien khac / auto-commit tren cay dung chung, xem 19/09 o tren)
+ * => canh bao. committedFiles khong phai mang = khong doc duoc git => unknown (cong bao CHUA XAC MINH).
+ */
+export function commitTheoTask(cfg, task, committedFiles, claimed) {
+  if (cfg?.commitPolicy !== 'forbid') return { chan: [], canhBao: [] };
+  if (!Array.isArray(committedFiles)) return { unknown: true, chan: [], canhBao: [] };
+  return chiaTheoTask(task, committedFiles.map(chuanHoaDuongDan).filter(Boolean), claimed);
+}
+
+/** Chia file: chan = quy duoc cho task (claimed / scopeFiles), canhBao = con lai. Chua co gi de quy => tinh het cho task. */
+function chiaTheoTask(task, files, claimed) {
   const scope = Array.isArray(task?.scopeFiles) ? task.scopeFiles.map(chuanHoaDuongDan).filter(Boolean) : [];
-  if (!Array.isArray(claimed) && scope.length === 0) return { chan: tatCa, canhBao: [] };
+  if (!Array.isArray(claimed) && scope.length === 0) return { chan: files, canhBao: [] };
   const khai = Array.isArray(claimed) ? claimed : [];
   const cuaTask = (f) => khai.some((c) => cungFile(f, c)) || scope.some((s) => thuocThuMuc(f, s.replace(/\/+$/, '')));
-  const chan = tatCa.filter(cuaTask);
-  const canhBao = tatCa.filter((f) => !cuaTask(f));
-  return { chan, canhBao };
+  return { chan: files.filter(cuaTask), canhBao: files.filter((f) => !cuaTask(f)) };
 }
 
 /** LUAT 5: file rac agent de lai o GOC repo (chi xet muc chua track, khong co "/"). */
