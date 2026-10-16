@@ -471,6 +471,8 @@ record_cycle_progress() {
   # Returns 0 = keep running, 1 = halt (runaway).
   # $1 = the current done signature (injected so tests need no board).
   local cur="$1"
+  # Đang hoãn giao việc sau RUNAWAY: không giao gì thì không tính là một chu kỳ không tiến triển.
+  dispatch_paused && return 0
   if [ "$cur" != "$PREV_DONE_SIG" ]; then
     LANDED_COUNT=$((LANDED_COUNT + 1))
     NO_PROGRESS_CYCLE_COUNT=0
@@ -841,6 +843,12 @@ while true; do
   #    The board can't change in a way that helps us until a lane frees up.
   if [ "$ACTIVE_WORKERS" -ge "$MAX_WORKERS" ]; then
     log "tick — cap reached (${ACTIVE_WORKERS}/${MAX_WORKERS} busy) — skipping GraphQL fetch, sleeping ${TICK_SECONDS}s"
+    sleep "$TICK_SECONDS"
+    continue
+  fi
+  # Đang hoãn sau RUNAWAY: không giao được gì nên không đọc GraphQL; dọn lock và quét zombie ở trên vẫn chạy.
+  if dispatch_paused; then
+    log "tick — runaway pause ($(( RUNAWAY_PAUSE_UNTIL - $(date +%s) ))s left) — skipping GraphQL fetch, sleeping ${TICK_SECONDS}s"
     sleep "$TICK_SECONDS"
     continue
   fi

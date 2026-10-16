@@ -172,6 +172,11 @@ took=$(( $(date +%s) - t0 ))
   && ok "daemon runaway: logged, counter reset, returns at once (no blocking sleep)" \
   || fail "daemon runaway: rc=$rc count=$NO_PROGRESS_CYCLE_COUNT took=${took}s log=$(cat "$TMP/log")"
 dispatch_paused && ok "daemon runaway: new dispatch paused until the deadline" || fail "daemon runaway: dispatch not paused"
+#     Tick trong lúc tạm dừng không được đếm là "không tiến triển", nếu không hạn chót bị gia hạn mãi.
+PREV_DONE_SIG="x"; NO_PROGRESS_CYCLES=6; NO_PROGRESS_CYCLE_COUNT=0
+for _ in 1 2 3 4 5 6 7; do record_cycle_progress "x" || break; done
+[ "$NO_PROGRESS_CYCLE_COUNT" -eq 0 ] && ok "paused ticks do not count toward the next runaway" \
+  || fail "paused ticks counted: NO_PROGRESS_CYCLE_COUNT=$NO_PROGRESS_CYCLE_COUNT (the pause would extend forever)"
 RUNAWAY_PAUSE_UNTIL=1
 dispatch_paused && fail "dispatch still paused after the deadline" || ok "dispatch resumes after the deadline"
 TICK_SECONDS=0
