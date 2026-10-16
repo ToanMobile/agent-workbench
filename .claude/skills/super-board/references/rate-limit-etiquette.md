@@ -50,7 +50,7 @@ The rules that follow from it:
 ## 1. Source the guard at worker start
 
 ```bash
-source scripts/super-board-gh-guard.sh
+source .claude/bin/super-board-gh-guard.sh
 sb_gh_budget_init 150      # per-worker soft cap on gh calls
 sb_gh_guard_check 200      # sleep if GraphQL remaining < 200
 sb_gh_guard_summary        # log starting quota for the run manifest

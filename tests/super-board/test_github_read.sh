@@ -17,6 +17,7 @@ mkdir -p "$TMP/bin"
 # gh giả: thông báo lỗi đúng như gh 2.100.0 in ra (đo 2026-10-16).
 cat > "$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
+echo "$*" >> "$GH_CALLS"
 case " $* " in
   *" --comments "*" --json "*|*" --json "*" --comments "*) echo 'specify only one of `--comments` or `--json`' >&2; exit 1 ;;
   *" pr view 1 2 3 "*) echo 'accepts between 1 and 2 arg(s), received 3' >&2; exit 1 ;;
@@ -24,11 +25,12 @@ case " $* " in
   *" --bogus "*) echo 'unknown flag: --bogus' >&2; exit 1 ;;
   *" issue view "*) echo '{"number":5,"title":"t","body":"b"}' ;;
   *" api rate_limit --jq "*) echo 'graphql=4979/5000 rest=4999/5000' ;;
+  *" api rate_limit "*) echo '{"resources":{}}' ;;
   *) echo 'unexpected' >&2; exit 1 ;;
 esac
 SH
 chmod +x "$TMP/bin/gh"
-export PATH="$TMP/bin:$PATH" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0
+export PATH="$TMP/bin:$PATH" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 GH_CALLS="$TMP/calls"
 unset SB_GITHUB_READ_STRICT
 
 run() { python3 "$READ" "$@" >"$TMP/out" 2>"$TMP/err"; echo $?; }
@@ -69,17 +71,37 @@ rm -f "$TMP/halt.json"
 
 # 2026-10-16 20:45 OfficeReader: một worker đọc quota bằng `--kind quota -- api rate_limit --jq "graphql=…"` (in chuỗi, không
 # phải JSON). Payload sai dạng ở cả 3 lần thử là lỗi đọc của người gọi với MỌI kind, không chỉ kind trong FORMS: exit 64,
-# không halt cả board, không bịa gợi ý "Valid form" cho kind không có mẫu.
-rc=$(run --kind quota -- api rate_limit --jq '"graphql=\(.resources.graphql.remaining)"')
+# không halt cả board, không bịa gợi ý "Valid form" cho kind không có mẫu. (quota + --jq nay bị chặn trước khi gọi gh,
+# xem ca 17/10 bên dưới; ca này dùng kind object để vẫn phủ nhánh payload sai dạng chung.)
+rc=$(run --kind object -- api rate_limit --jq '"graphql=\(.resources.graphql.remaining)"')
 [ "$rc" = 64 ] && [ ! -e "$TMP/halt.json" ] && ! grep -q 'Valid form' "$TMP/err" \
-  && ok "malformed read on a kind outside FORMS (quota + --jq string): exit 64, board not halted" \
-  || fail "quota read with --jq string: rc=$rc halt=$([ -e "$TMP/halt.json" ] && echo yes || echo no) ($(tail -1 "$TMP/err"))"
+  && ok "malformed read on a kind outside FORMS (object + --jq string): exit 64, board not halted" \
+  || fail "object read with --jq string: rc=$rc halt=$([ -e "$TMP/halt.json" ] && echo yes || echo no) ($(tail -1 "$TMP/err"))"
 rm -f "$TMP/halt.json"
 # Lệnh cố định của runner (STRICT) mà nhận payload sai dạng thì vẫn halt: có thể là GitHub trả thiếu dữ liệu thật.
-rc=$(SB_GITHUB_READ_STRICT=1 run --kind quota -- api rate_limit --jq '"graphql=\(.resources.graphql.remaining)"')
+rc=$(SB_GITHUB_READ_STRICT=1 run --kind quota -- api rate_limit)
 [ "$rc" = 79 ] && [ -e "$TMP/halt.json" ] && ok "SB_GITHUB_READ_STRICT=1: a malformed payload still halts (fixed commands)" \
   || fail "SB_GITHUB_READ_STRICT=1 malformed payload: rc=$rc (want 79 + halt file)"
 rm -f "$TMP/halt.json"
+
+# 2026-10-17 00:22 OfficeReader: worker QA #84 tự viết dòng gh-quota-on-exit bằng `--kind quota api rate_limit --jq "…"`
+# (không có `--`). kind quota cần JSON rate_limit thô, nên --jq/-q/--template là lỗi của người gọi biết trước khi gọi gh:
+# từ chối ngay (exit 64, 0 lần gọi gh, không retry, không halt, kể cả STRICT — halt chỉ để --resume phát lại lệnh hỏng),
+# và chỉ đường sb_gh_guard_summary.
+for form in "api rate_limit --jq \"graphql=\\(.resources.graphql.remaining)\"" "-- api rate_limit -q .resources" \
+            "-- api rate_limit --template {{.resources}}" "-- api rate_limit --jq=.resources.core"; do
+  for strict in "" 1; do
+    : > "$TMP/calls"
+    eval "set -- $form"
+    rc=$(SB_GITHUB_READ_STRICT=$strict run --kind quota "$@")
+    [ "$rc" = 64 ] && [ ! -e "$TMP/halt.json" ] && [ ! -s "$TMP/calls" ] && ! grep -q 'retry 2/3' "$TMP/err" \
+      && grep -q 'sb_gh_guard_summary' "$TMP/err" \
+      && ok "quota + output filter rejected before any gh call (strict=${strict:-0}): $form" \
+      || fail "quota + output filter (strict=${strict:-0}) $form: rc=$rc gh_calls=$(wc -l <"$TMP/calls" | tr -d ' ') halt=$([ -e "$TMP/halt.json" ] && echo yes || echo no) ($(tail -1 "$TMP/err"))"
+    rm -f "$TMP/halt.json"
+  done
+done
+unset SB_GITHUB_READ_STRICT
 
 # deps.sh chuyển graph sang super-board-approval.py, script này đọc GitHub qua module github-read (kind comments/approval/
 # permission) cũng bằng lệnh cố định: STRICT phải tới được nó, nếu không sự cố GitHub thật bị nuốt thành "approval evidence
