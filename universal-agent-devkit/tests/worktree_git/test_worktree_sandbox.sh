@@ -19,7 +19,7 @@ fi
 # Test 2: Lifecycle in a mock repo
 P="$TMP/mock-repo"
 mkdir -p "$P" && cd "$P"
-git init -q -b main . && git config user.email t@t && git config user.name t   # -b: các ca checkout tách rời cần nhánh trunk
+git init -q . && git symbolic-ref HEAD refs/heads/main && git config user.email t@t && git config user.name t   # nhánh tên main cố định: các ca checkout tách rời cần nhánh trunk
 echo "hello world" > README.md
 echo -e ".env\nlocal.properties" > .worktreeinclude
 echo "SECRET_KEY=12345" > .env
@@ -251,10 +251,11 @@ def racy(*a, **k):
     subprocess.run(["git", "-C", sys.argv[2], "commit", "-q", "--allow-empty", "-m", "race"], check=True)
     return r
 w.sandbox_unmerged_commits = racy
-w.cleanup_sandbox(name="race_sb")
+print("kept:", w.cleanup_sandbox(name="race_sb"))
 PYEOF
 )
-if git -C "$P" rev-parse --verify -q "sandbox/race_sb" >/dev/null && [ "$(git -C "$P" log -1 --format=%s sandbox/race_sb 2>/dev/null)" = "race" ]; then
+if git -C "$P" rev-parse --verify -q "sandbox/race_sb" >/dev/null && [ "$(git -C "$P" log -1 --format=%s sandbox/race_sb 2>/dev/null)" = "race" ] \
+   && echo "$RACE_OUT" | grep -q "kept: \['race_sb'\]" && ! echo "$RACE_OUT" | grep -q "✅"; then
   ok "cleanup keeps the branch when a commit lands on it after the merge check"
 else
   fail "cleanup deleted a branch that gained a commit after the merge check: $RACE_OUT"
@@ -531,11 +532,11 @@ python3 "$SCRIPT" create r1_view >/dev/null 2>&1
 ( cd "$W/.sandboxes/r1_view" && echo v > r1v.txt && git add r1v.txt && git commit -q -m "feat: r1 view" )
 R1V_SHA=$(git -C "$W" rev-parse "sandbox/r1_view")
 git -C "$W" checkout -q --detach "sandbox/r1_view"
-python3 "$SCRIPT" cleanup --name r1_view >/dev/null 2>&1
+R1V_OUT=$(python3 "$SCRIPT" cleanup --name r1_view 2>&1)
 if [ ! -d "$W/.sandboxes/r1_view" ] && git -C "$W" merge-base --is-ancestor "$R1V_SHA" HEAD; then
   ok "a detached linked worktree viewing a sandbox: sandbox cleaned, its commits stay on that worktree's HEAD"
 else
-  fail "linked-worktree view trade-off changed (sandbox kept, or its commits left HEAD) — update the docstring of merged_into"
+  fail "linked-worktree view trade-off changed (sandbox kept, or its commits left HEAD) — update the docstring of merged_into: $R1V_OUT"
 fi
 cd "$P"
 git -C "$P" worktree remove --force "$W"
