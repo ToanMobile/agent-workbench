@@ -431,7 +431,8 @@ def run_log_has(rp, receipt):
         return False
     finally:
         os.close(fd)
-    t, name = float(receipt["time"]), os.path.basename(str(receipt["project"]))[:64]
+    # carried_from: biên nhận mà `worktree finish` chép từ worktree sang main (issue #5): dòng log mang tên project gốc của worktree
+    t, name = float(receipt["time"]), os.path.basename(str(receipt.get("carried_from") or receipt["project"]))[:64]
     for line in reversed(raw.splitlines()):
         try:
             rec = json.loads(line)
@@ -508,7 +509,8 @@ def check(cwd, rev="HEAD", tag_remote=None, linked=False):
     if why:
         return False, f"repository without a work tree here ({why}): cannot find the gate receipt"
     if top is None:
-        return True, "not a git repo"
+        # worktree đã mất thư mục (prunable) không phải "không có repo": nó không bảo lãnh được gì cho main
+        return (False, "linked worktree has no work tree") if linked else (True, "not a git repo")
     if tag_remote and on_remote_only(top, rev, tag_remote):
         return True, "a tag of commits the remote already has: nothing new is pushed"
     rp = tree_fp.receipt_path(top)
@@ -525,15 +527,16 @@ def check(cwd, rev="HEAD", tag_remote=None, linked=False):
     project = receipt.get("project") if receipt and _inside(receipt.get("project"), top) else top
     homes = [d for d in (project, top, os.path.abspath(cwd)) if os.path.isfile(os.path.join(d, MATRIX))]
     if not homes:
-        return True, "no regression matrix"
+        # main có ma trận (nếu không thì main đã trả True); worktree không ma trận chưa chạy test hồi quy nào để bảo lãnh
+        return (False, "no regression matrix in this linked worktree") if linked else (True, "no regression matrix")
     problem = None
     if receipt is not None and receipt.get("exit") == 0 and receipt.get("head"):
         problem = receipt_problem(top, rp, receipt, rev)
     if receipt is None or problem or receipt.get("exit") != 0 or not receipt.get("head"):
         if linked:
             return False, "no usable receipt in this linked worktree"
-        # Trunk mode (issue #5): the gate ran in a linked worktree and wrote its receipt under that worktree's git dir; main is
-        # merge-only, so the push from main finds none. The receipt of a linked worktree is judged exactly like main's own.
+        # Trunk mode (issue #5): gate chạy trong linked worktree và ghi biên nhận dưới git dir của worktree đó; main chỉ nhận
+        # merge nên push từ main không thấy biên nhận nào. Biên nhận của linked worktree được xét y hệt biên nhận của main.
         rc, sha = git(top, "rev-parse", "--verify", "-q", rev + "^{commit}")
         for wt in linked_worktrees(top) if rc == 0 else []:
             if check(wt, sha.strip(), tag_remote, linked=True)[0]:

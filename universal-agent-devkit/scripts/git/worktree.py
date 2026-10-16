@@ -2114,6 +2114,35 @@ def _conflict(wt, unmerged):
                            f"merge, fast-forwards main and removes the worktree)"), {"files": unmerged})
 
 
+def _carry_gate_receipt(main, wt):
+    """Issue #5 (trunk mode): biên nhận gate --full của worktree nằm dưới git dir riêng của nó và mất khi gỡ worktree, còn main chỉ nhận
+    merge nên `git push` từ main không còn biên nhận nào. Biên nhận nào bin/push_gate.py xác nhận phủ HEAD mới của main (cùng luật như
+    biên nhận của main) thì chép sang git dir của main: `project` trỏ về main, `carried_from` giữ project gốc để push_gate khớp dòng
+    runs.jsonl của lần gate đó (runs.jsonl ở common dir, sống qua việc gỡ worktree). True khi đã chép."""
+    bin_dir = os.path.join(DEVKIT, "bin")
+    if bin_dir not in sys.path:
+        sys.path.insert(0, bin_dir)
+    import push_gate  # noqa: PLC0415 - module anh em trong bin/, chỉ nạp khi gỡ worktree
+    import tree_fp  # noqa: PLC0415
+    head = git(main, "rev-parse", "HEAD").stdout.strip()
+    if not push_gate.check(wt, head, linked=True)[0]:
+        return False
+    receipt = json.loads(_read_regular(tree_fp.receipt_path(wt), 4_000_000).decode("utf-8"))
+    rel = os.path.relpath(os.path.realpath(receipt["project"]), os.path.realpath(wt))
+    receipt = dict(receipt, project=os.path.normpath(os.path.join(main, rel)), carried_from=receipt["project"])
+    dst = tree_fp.receipt_path(main)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst), prefix=".full_pass.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(receipt, fh)
+        os.replace(tmp, dst)   # thay cả một symlink đặt sẵn ở dst, không ghi theo nó
+    except BaseException:
+        _unlink_quiet(tmp)
+        raise
+    return True
+
+
 def automerge(cwd, wt, keep=False):
     """Merge a worktree's work into the main branch and remove it (`keep`: leave it in place, W1 R3). (status, message, extra); status: merged | nothing | conflict | blocked.
     Main's working tree is only ever touched by `git merge --ff-only`, so another session's uncommitted or staged files are safe."""
@@ -2306,6 +2335,11 @@ def _automerge_locked(cwd, main, wt, keep=False):
                              f"merged into main but the worktree is NOT removed: {len(refused)} git-ignored secret file(s) only the worktree holds cannot be put in main: "
                              f"{listing}. Nothing was overwritten. Compare the two copies, keep the one you need in main yourself, delete the worktree's copy, then "
                              f"run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"merged": True, "files": [rel for rel, _why in refused][:20]}
+    try:   # issue #5: biên nhận gate của worktree đi theo thư mục khi gỡ; chép sang main trước (không chép được: push từ main đòi gate lại)
+        receipt_note = tr(" (biên nhận gate --full đã chép sang main)", " (gate --full receipt copied into main)") if _carry_gate_receipt(main, wt) else ""
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError, SystemExit) as e:
+        receipt_note = tr(f" (không chép được biên nhận gate sang main: {e}; push từ main cần chạy gate lại)",
+                          f" (the gate receipt could not be copied into main: {e}; a push from main needs the gate again)")
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         try:
@@ -2330,6 +2364,7 @@ def _automerge_locked(cwd, main, wt, keep=False):
     note = (tr(f" ({len(saved)} memory note đã chép sang main: {', '.join(saved[:5])})", f" ({len(saved)} memory note(s) copied into main: {', '.join(saved[:5])})") if saved else "")
     note += (tr(f" ({len(carried)} file bí mật bị git ignore đã chép sang main, ở đó vẫn bị ignore: {', '.join(carried[:5])})",
                 f" ({len(carried)} git-ignored secret file(s) copied into main, ignored there too: {', '.join(carried[:5])})") if carried else "")
+    note += receipt_note
     return status, (tr("đã gộp vào main và gỡ worktree", "merged into main and the worktree is removed") if status == "merged"
                     else tr("không có gì chưa về main; đã gỡ worktree", "nothing that was not in main; the worktree is removed")) + note, {"memory_saved": saved, "secrets_saved": carried}
 
