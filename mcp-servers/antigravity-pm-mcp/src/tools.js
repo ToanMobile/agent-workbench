@@ -5,7 +5,7 @@ import { loadConfig, existingRulesFiles, CONFIG_NAME, withGateSnapshot } from '.
 import {
   createTask, loadTask, listTasks, save, updateTask, setPhase, recordVerdict, recordRun, recordProof,
   recordDispatch, markRework, accept, gate, freshness, contractPaths, addHistory, PHASES, TASK_TYPES,
-  discardProofs, anhTrung, hashFile, ackWarning, locCanhBaoDaXem, headCommitOf } from './tasks.js';
+  discardProofs, anhTrung, hashFile, ackWarning, locCanhBaoDaXem, ghiMocGiao } from './tasks.js';
 import {
   newConversation, sendMessage, getConversationMetadata, conversationProgress, transcriptErrors, MODELS, isAgyModel, agyPath, agyTurnStatus, agyTurnStatusSafe, agyRegistryProblem, agyPermissionPolicy,
   sameProcess,
@@ -668,8 +668,8 @@ export const TOOLS = [
         const msg = buildImplementMessage(cfg, task, args.notes || '');
         const promptFile = saveOutgoing(cfg, task, `prompt-implement-r${task.round}`, msg);
         if (msg.length > 20000) guard.lines.push(`prompt ${Math.round(msg.length / 1024)} KB — agent de chet context; rut plan (promptPlanMaxBytes) hoac tach task.`);
-        // #22: HEAD TRUOC khi agent nhan prompt = moc commit cho commitPolicy=forbid (recordDispatch ghi o lan giao dau).
-        const headTruocGiao = headCommitOf(cfg.projectRoot);
+        // #22: ghi moc commit cho commitPolicy=forbid TRUOC khi agent nhan prompt (lan giao dau; giao loi roi giao lai van giu moc).
+        ghiMocGiao(cfg, task);
         const moiMo = !task.conversationId;
         if (moiMo) {
           // Ke hoach do PM viet nen khong con hoi thoai lap ke hoach de nhan tin — mo hoi thoai lam viec o day.
@@ -700,7 +700,7 @@ export const TOOLS = [
         // Lan MO hoi thoai ghi model THAT (args.model); lan gui vao hoi thoai co san de recordDispatch ghi task.model nhu cu:
         // conversationModel chi doc ban ghi dau tien cua hoi thoai (lan mo)
         recordDispatch(cfg, task, {
-          kind: 'implement', conversationId: task.conversationId, ...(moiMo && { model: args.model || task.model }), promptFile, headCommit: headTruocGiao, set: { state: 'awaiting_agent' },
+          kind: 'implement', conversationId: task.conversationId, ...(moiMo && { model: args.model || task.model }), promptFile, set: { state: 'awaiting_agent' },
         });
         return [
           `Da giao TRIEN KHAI (${task.id})${moiMo ? ` — mo hoi thoai moi ${task.conversationId}` : ''}.`,

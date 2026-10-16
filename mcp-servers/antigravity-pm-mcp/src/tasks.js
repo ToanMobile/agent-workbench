@@ -475,6 +475,19 @@ export function recordProof(cfg, task, rec) {
   });
 }
 
+/**
+ * #22: moc commit cho commitPolicy=forbid = HEAD TRUOC lan giao trien khai DAU (null = khong chup duoc => gate lui ve commit
+ * goc, KHONG lay HEAD sau khi agent da nhan prompt). Da co moc / task giao truoc ban nay => giu nguyen (giao loi roi giao lai,
+ * rework khong doi moc). pm_dispatch goi ghiMocGiao TRUOC khi gui prompt; recordDispatch goi lai cho duong goi truc tiep.
+ */
+function datMocGiao(t, head) {
+  if (!('implementBaseCommit' in t) && !(t.dispatches || []).some((d) => d.kind === 'implement')) t.implementBaseCommit = head();
+}
+
+export function ghiMocGiao(cfg, task) {
+  return updateTask(cfg, task, (t) => datMocGiao(t, () => headCommitOf(cfg.projectRoot)));
+}
+
 /** Ghi nhan 1 lan giao viec / nhac viec cho agent. */
 /** rec.set: cac truong gan cung luc (conversationId, state...) — ap tren ban moi nhat, khong ghi de ca object cu. */
 export function recordDispatch(cfg, task, rec) {
@@ -484,12 +497,7 @@ export function recordDispatch(cfg, task, rec) {
     t.dispatches = t.dispatches || [];
     // Moc nay la mot phan cua cong nghiem thu: bang chung phai co SAU khi giao trien khai.
     if (rec.kind === 'implement' || rec.kind === 'rework') t.implementDispatchedAt = nowIso();
-    // #22: moc commit cho commitPolicy=forbid = HEAD luc giao trien khai LAN DAU (rec.headCommit chup TRUOC khi gui prompt;
-    // null = khong chup duoc => giu null, gate lui ve commit goc, KHONG lay HEAD sau khi agent da nhan prompt).
-    // Chi dat o lan implement dau tien: rework / giao lai / task giao truoc ban nay khong doi moc.
-    if (rec.kind === 'implement' && !t.dispatches.some((d) => d.kind === 'implement')) {
-      t.implementBaseCommit = 'headCommit' in rec ? rec.headCommit : headCommitOf(cfg.projectRoot);
-    }
+    if (rec.kind === 'implement') datMocGiao(t, () => ('headCommit' in rec ? rec.headCommit : headCommitOf(cfg.projectRoot)));
     t.dispatches.push({
       kind: rec.kind,
       conversationId: rec.conversationId || t.conversationId,

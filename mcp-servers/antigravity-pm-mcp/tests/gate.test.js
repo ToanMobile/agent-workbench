@@ -439,6 +439,15 @@ test('#22 moc giao: khong chup duoc HEAD truoc khi giao => lui ve commit goc (kh
   recordDispatch(cfg, loadTask(cfg, t2.id), { kind: 'implement', conversationId: 'c-test' });
   const g2 = gate(cfg, loadTask(cfg, t2.id), await gateCtx(cfg, loadTask(cfg, t2.id)));
   assert.ok(g2.missing.some((m) => m.includes('commitPolicy=forbid') && m.includes('src/Kinh.kt')), g2.missing.join('\n'));
+  // (c) moc da ghi TRUOC khi gui, lan giao loi (khong recordDispatch), agent commit, giao lai: recordDispatch khong ghi de moc.
+  const t3 = createTask(cfg, sampleTaskArgs({ title: 'giao loi' }));
+  const head0 = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  updateTask(cfg, loadTask(cfg, t3.id), (t) => { t.implementBaseCommit = head0; });
+  khaiResult(cfg, t3, ['src/Kinh.kt']);
+  suaVaCommit(dir, { 'src/Kinh.kt': 'class Kinh { fun ha() = 8 }\n' });
+  const head1 = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  recordDispatch(cfg, loadTask(cfg, t3.id), { kind: 'implement', conversationId: 'c-test', headCommit: head1 });
+  assert.equal(loadTask(cfg, t3.id).implementBaseCommit, head0);
   cleanup(dir);
 });
 
