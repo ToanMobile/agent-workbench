@@ -2,15 +2,49 @@
 
 > **Kiến trúc Nhà máy Phần mềm Tự hành 24/7 cho 5 Repositories:** Kết hợp bộ não kỷ luật của **Agent-Workbench (Universal Agent DevKit)**, dây chuyền tự động hóa **Super-Board**, và hệ thống chạy ngầm bền bỉ **TUIOS Daemon** trên Visual Studio Code.
 
-## ⚡ 3 Câu Lệnh Khởi Chạy & Khôi Phục Nhanh (Quick Start)
+## ⚡ Các Câu Lệnh Khởi Chạy & Khôi Phục Nhanh (Quick Start)
 
-1. **Mở Web Terminal xem 5 Repo từ xa trên điện thoại (`10 giây — Zero-Config — Cloudflare Quick Tunnel`):**
+1. **Khởi động Super-Board Runner chạy ngầm tự động 24/7 (Agent Workbench & 5 Repos):**
+   ```bash
+   /Volumes/Data/Toan/agent-workbench/start-runner.sh
+   # Hoặc khởi động đồng thời cả 5 repositories:
+   /Volumes/Data/Toan/agent-workbench/start-all-runners.sh start
+   # (Hoặc lệnh toàn cục: super-board-all start)
+   ```
+   *(Tự động quét cột Ready trên GitHub Projects, tự giao việc cho Agent code, chạy test gate và merge vào main sang Done mà không cần gõ lệnh).*
+
+2. **Dừng an toàn & kiểm tra trạng thái Super-Board Runner (Stop & Status):**
+   ```bash
+   # Dừng an toàn repo hiện tại (agent-workbench):
+   /Volumes/Data/Toan/agent-workbench/stop-runner.sh
+
+   # Hoặc dừng đồng thời cả 5 repositories:
+   /Volumes/Data/Toan/agent-workbench/stop-all-runners.sh
+   # (Hoặc lệnh toàn cục: super-board-all stop)
+
+   # Kiểm tra trạng thái hoạt động cả 5 repositories:
+   /Volumes/Data/Toan/agent-workbench/start-all-runners.sh status
+   # (Hoặc lệnh toàn cục: super-board-all status)
+   ```
+   *(Dừng an toàn: giải phóng worker, gỡ nhãn in-flight trên GitHub Project board và dọn dẹp lock files sạch sẽ).*
+
+3. **Mở giao diện TUIOS trực tiếp trên máy tính xem 5 Repo:**
+   ```bash
+   tuios attach factory
+   # Hoặc chỉ đơn giản:
+   tuios attach
+   ```
+   - **Thoát ra ẩn đi (Detach)** mà không tắt tiến trình ngầm: Bấm tổ hợp `Ctrl + B` rồi bấm `d`.
+   - **Chuyển qua lại giữa 5 cửa sổ repo:** Bấm `Ctrl + B` rồi bấm số từ `1` đến `5`.
+   - **Kiểm tra danh sách session đang chạy:** `tuios ls`.
+
+4. **Mở Web Terminal xem 5 Repo từ xa trên điện thoại (`10 giây — Zero-Config — Cloudflare Quick Tunnel`):**
    ```bash
    tuios-web
    ```
    *(Khởi động Cloudflare Quick Tunnel mã hóa SSL và in link `https://*.trycloudflare.com` để mở xem ngay trên Safari/Chrome của điện thoại mà không cần cài app hay mua domain).*
 
-2. **Khi cài lại máy Mac mới hoặc muốn tự động apply toàn bộ cấu hình 6 tài khoản/model/GUI chỉ với 1 lệnh:**
+5. **Khi cài lại máy Mac mới hoặc muốn tự động apply toàn bộ cấu hình 6 tài khoản/model/GUI chỉ với 1 lệnh:**
    ```bash
    awk '/^# === BOOTSTRAP_START ===$/,/^# === BOOTSTRAP_END ===$/' \
      universal-agent-devkit/docs/init_board/tuios-superboard-integration-plan.md \
@@ -19,7 +53,7 @@
      && ~/.claude/bin/setup-autonomous-factory.sh
    ```
 
-3. **Kiểm tra sức khỏe 9 tầng bất kỳ lúc nào trên máy hiện tại (`9/9 PASS`):**
+6. **Kiểm tra sức khỏe 9 tầng bất kỳ lúc nào trên máy hiện tại (`9/9 PASS`):**
    ```bash
    ~/.claude/bin/setup-autonomous-factory.sh --verify
    ```

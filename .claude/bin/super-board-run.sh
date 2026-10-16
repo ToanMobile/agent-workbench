@@ -41,6 +41,13 @@ gh_write_once() {
   }
 }
 
+# Auto-resolve repository root if called from outside
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+if [ -d "$REPO_ROOT/.claude/super-board" ]; then
+  cd "$REPO_ROOT"
+fi
+
 # ───────────────────────────── args + paths ─────────────────────────────
 # SB_LIB_ONLY=1 sources this file for its helpers only (gate tests). Config discovery,
 # preconditions and the run loop are all skipped; the caller supplies whatever vars it needs.

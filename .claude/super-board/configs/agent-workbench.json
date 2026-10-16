@@ -2,7 +2,7 @@
   "version": 1,
   "description": "agent-workbench build board",
   "project": { "owner": "ToanMobile", "title": "Agent Workbench", "number": 1 },
-  "worker_backend": "workflow",
+  "worker_backend": "claude-p",
   "model_tier": "medium",
   "target": { "type": "repo", "url": null },
   "repo": { "path": ".", "remote": "https://github.com/ToanMobile/agent-workbench" },

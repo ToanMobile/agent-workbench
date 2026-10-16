@@ -34,6 +34,13 @@
 
 set -euo pipefail
 
+# Auto-resolve repository root if called from outside
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+if [ -d "$REPO_ROOT/.claude/super-board" ]; then
+  cd "$REPO_ROOT"
+fi
+
 # ───────────────────────────── args + paths ─────────────────────────────
 CONFIG_SLUG="${1:-}"
 if [ -z "$CONFIG_SLUG" ]; then
