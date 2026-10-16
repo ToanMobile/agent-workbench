@@ -270,8 +270,95 @@ issue_locked() {
   if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
     return 0
   fi
+  [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log"
   rm -f "$lock"
   return 1
+}
+
+# ── Xoay account của worker (pool: $HOME/.claude/bin/super-board-account-pool.sh, lệnh `ccswitch`).
+# Pool chỉ biết account hết limit qua usage-<acct>.json, file mà status line của phiên tương tác ghi; worker
+# `claude -p` không có status line. Nên runner tự ghi khi worker chết vì hết limit (16/10: cả 5 runner giao mãi cho
+# finos đã hết session limit trong khi còn 5 account khác).
+SB_ACCOUNT_POOL="${SB_ACCOUNT_POOL:-$HOME/.claude/bin/super-board-account-pool.sh}"
+SB_ACCOUNT_STATE_DIR="${SB_STATE_DIR:-$HOME/.claude/super-board}"
+POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
+
+note_worker_limit() {
+  # $1 = log của worker vừa chết. Hết limit (thông báo ở 3 dòng cuối của lần giao CUỐI) thì ghi account trong dòng
+  # `account_pool:` của lần giao đó là 100 % tới giờ reset (không đọc được giờ thì 1 giờ), đúng dạng usage-<acct>.json
+  # mà pool đọc. Chỉ ghi file của account đó, không ghi usage.json chung (file chung kéo theo `switch` credential
+  # toàn cục của người dùng). Lỗi ở đây không bao giờ chặn runner.
+  [ -f "$1" ] || return 0
+  local out
+  out=$(python3 - "$1" "$SB_ACCOUNT_STATE_DIR" <<'PY' 2>/dev/null
+import datetime, json, os, re, sys, time
+log, state = sys.argv[1], sys.argv[2]
+section = open(log, errors='replace').read().rsplit('=== dispatch ', 1)[-1]
+acct = re.search(r'^account_pool: engine=\S+ account=([A-Za-z0-9_.-]+)', section, re.M)
+tail = '\n'.join([l for l in section.splitlines() if l.strip()][-3:])
+# Claude Code: "You've hit your session limit · resets 10:50pm (Asia/Saigon)" (đo 16/10). Ba mẫu sau là mã quota của
+# Gemini/xAI, chưa đo trên agy/grok thật.
+hit = re.search(r"hit your (?:\w+ )?limit|usage limit reached|RESOURCE_EXHAUSTED|quota exceeded|rate limit exceeded", tail, re.I)
+if not acct or not hit:
+    sys.exit(0)
+now = int(time.time())
+resets = now + 3600
+m = re.search(r'resets (?:([A-Z][a-z]{2}) (\d{1,2}),? (?:at )?)?(\d{1,2})(?::(\d{2}))?\s*([ap]m)(?:\s*\(([^)]+)\))?', tail, re.I)
+if m:
+    try:
+        from zoneinfo import ZoneInfo
+        base = datetime.datetime.now(ZoneInfo(m[6]) if m[6] else None)
+        t = base.replace(hour=int(m[3]) % 12 + (12 if m[5].lower() == 'pm' else 0), minute=int(m[4] or 0), second=0, microsecond=0)
+        if m[1]:
+            t = t.replace(month=datetime.datetime.strptime(m[1], '%b').month, day=int(m[2]))
+            if t.timestamp() <= now:
+                t = t.replace(year=t.year + 1)
+        elif t.timestamp() <= now:
+            t += datetime.timedelta(days=1)
+        resets = int(t.timestamp())
+    except (ValueError, KeyError, ImportError) as error:
+        print(f'reset time unreadable ({error}); pausing 1h', file=sys.stderr)
+os.makedirs(state, exist_ok=True)
+path = os.path.join(state, f'usage-{acct[1]}.json')
+tmp = f'{path}.{os.getpid()}'
+with open(tmp, 'w') as f:
+    json.dump({'recorded_at': now, 'source': 'super-board-run worker log',
+               'rate_limits': {'five_hour': {'used_percentage': 100, 'resets_at': resets}}}, f)
+os.replace(tmp, path)
+print(acct[1], time.strftime('%H:%M', time.localtime(resets)))
+PY
+) || { log "⚠ could not read worker log $1 for an account limit"; return 0; }
+  [ -z "$out" ] || log "account ${out% *} hit its limit — paused until ${out#* }; next dispatch takes the pool's next account"
+  return 0
+}
+
+account_paused() {
+  # 0 khi usage-<acct>.json có cửa sổ ≥ 95 % (ngưỡng mặc định của pool) chưa tới giờ reset.
+  local f="$SB_ACCOUNT_STATE_DIR/usage-$1.json"
+  [ -f "$f" ] || return 1
+  jq -e --argjson now "$(date +%s)" \
+    '[.rate_limits[]? | select((.used_percentage // 0) >= 95 and (.resets_at // 0) > $now)] | length > 0' "$f" >/dev/null 2>&1
+}
+
+resolve_worker_account() {
+  # Đặt POOL_ENGINE/POOL_ACCT/POOL_CFG cho worker kế tiếp. Pool tự xoay finos -> finos_team -> max theo usage; hết cả 3
+  # thì theo lựa chọn của người dùng (16/10): Antigravity Ultra -> Antigravity Pro -> Grok, bỏ account đang bị ghi là
+  # hết. Trả 1 (POOL_RESETS = giờ reset sớm nhất nếu pool biết) khi mọi account đều hết: không giao.
+  POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
+  [ -x "$SB_ACCOUNT_POOL" ] || return 0
+  local ag="" grok="" json
+  if ! account_paused antigravity; then ag=1; elif ! account_paused antigravity_pro; then ag=pro; fi
+  account_paused grok || grok=1
+  json=$(SB_FALLBACK_ANTIGRAVITY="$ag" SB_FALLBACK_GROK="$grok" "$SB_ACCOUNT_POOL" resolve "$PWD" 2>/dev/null) || true
+  [ -n "$json" ] || { log "⚠ account pool printed nothing; worker uses the default claude account"; return 0; }
+  if [ "$(printf '%s' "$json" | jq -r '.state // "ok"' 2>/dev/null)" = "pause" ]; then
+    POOL_RESETS=$(printf '%s' "$json" | jq -r '.resets_at // empty | tonumber | strftime("%H:%M UTC")' 2>/dev/null || true)
+    return 1
+  fi
+  POOL_ENGINE=$(printf '%s' "$json" | jq -r '.engine // "claude"' 2>/dev/null || echo claude)
+  POOL_ACCT=$(printf '%s' "$json" | jq -r '.account // empty' 2>/dev/null || true)
+  POOL_CFG=$(printf '%s' "$json" | jq -r '.config_dir // empty' 2>/dev/null || true)
+  return 0
 }
 
 lane_idle() {
@@ -339,6 +426,12 @@ dispatch_lane() {
     log "skills-readiness: halt before claim lane=${lane} issue=#${issue}; ${skills_report}"
     exit "$skills_rc"
   fi
+  # Chọn account TRƯỚC khi nhận thẻ: hết cả 6 account thì không nhận, không giao (trước đây rơi về `claude` mặc định
+  # trên account đã hết, worker chết sau ~30 s và runner giao lại mãi).
+  if ! resolve_worker_account; then
+    log "skip dispatch lane=${lane} issue=#${issue} — every worker account is at its limit${POOL_RESETS:+ (earliest reset ${POOL_RESETS})}"
+    return 0
+  fi
   if ! try_claim_assignee "$issue"; then
     return 0
   fi
@@ -362,16 +455,9 @@ dispatch_lane() {
   } >> "$worker_log"
   ln -sf "$PWD/$worker_log" "docs/super-board/current-worker.log" 2>/dev/null || true
   gh_checkpoint
-  local pool_json="" pool_engine="claude" pool_acct="" pool_cfg=""
-  if [ -x "$HOME/.claude/bin/super-board-account-pool.sh" ]; then
-    pool_json="$("$HOME/.claude/bin/super-board-account-pool.sh" resolve "$PWD" 2>/dev/null || true)"
-    if [ -n "$pool_json" ]; then
-      pool_engine="$(echo "$pool_json" | jq -r '.engine // "claude"')"
-      pool_acct="$(echo "$pool_json" | jq -r '.account // empty')"
-      pool_cfg="$(echo "$pool_json" | jq -r '.config_dir // empty')"
-      [ -n "$pool_acct" ] && printf 'account_pool: engine=%s account=%s config_dir=%s\n' "$pool_engine" "$pool_acct" "$pool_cfg" >> "$worker_log"
-    fi
-  fi
+  local pool_engine="$POOL_ENGINE" pool_acct="$POOL_ACCT" pool_cfg="$POOL_CFG"
+  # note_worker_limit đọc dòng này để biết account nào hết limit.
+  [ -n "$pool_acct" ] && printf 'account_pool: engine=%s account=%s config_dir=%s\n' "$pool_engine" "$pool_acct" "$pool_cfg" >> "$worker_log"
   export DEVKIT_ALLOW_BRANCH=1 WORKTREE_MERGE_GATE=0 DEVKIT_LANG="${DEVKIT_LANG:-vi}"
   unset POSTFIX_GATE_FORCE_FULL
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
@@ -555,6 +641,7 @@ reap_finished_locks() {
     case "$issue" in *[!0-9]*|'') continue ;; esac
     read_lock "$issue"
     if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
+      [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log"
       gh_checkpoint
       if [ -n "$BOT_LOGIN" ]; then
         gh_checkpoint
