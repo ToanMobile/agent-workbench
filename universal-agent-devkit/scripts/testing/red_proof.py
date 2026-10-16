@@ -670,10 +670,10 @@ def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy:
                 if not prod:
                     return {**base, "status": "INCONCLUSIVE", "mode": mode, "fix_commit": fix_commit,
                             "reason": f"commit {fix_commit} không đổi code sản xuất"}
-                patch = git(project, "diff", "--binary", f"{fix_commit}^", fix_commit, "--", *prod).stdout
-                fix_added = diff_lines(patch, "+")
+                rev_diff = git(project, "diff", "--binary", f"{fix_commit}^", fix_commit, "--", *prod).stdout
+                fix_added = diff_lines(rev_diff, "+")
                 pf = red_box / ".red_proof.patch"
-                pf.write_text(patch, encoding="utf-8")
+                pf.write_text(rev_diff, encoding="utf-8")
                 r = subprocess.run(["git", "apply", "-3", "-R", "--whitespace=nowarn", pf.name], cwd=str(red_box),
                                    capture_output=True, text=True)
                 pf.unlink()

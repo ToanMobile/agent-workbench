@@ -126,9 +126,6 @@ def checkout_busy(project: Path) -> str | None:
     gdir, top = session_lock.git_dir(str(project))
     if not gdir:   # the path was checked to hold a .git: one git cannot read (a pointer to a gitdir that is gone) is no go-ahead
         return "không đọc được git dir"
-    trunk, _sw = session_lock.trunk_main(top)
-    if trunk and session_lock._same_dir(top, trunk):   # a trunk-mode main is never locked and takes merges only: no run writes its checklist
-        return "trunk mode: main chỉ nhận merge"
     lock, now = session_lock.read_checkout_lock(gdir), time.time()
     if session_lock.is_free_for(lock, "", now, idle_frees=False, live_pid_holds=True):
         return None

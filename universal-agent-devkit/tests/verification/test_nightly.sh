@@ -191,10 +191,10 @@ out="$(HOME="$HOME3" python3 "$NIGHTLY" run 2>&1)"; rc=$?
 BROKEN="$TMP/brokengit"; mkdir -p "$BROKEN/.agents"; printf 'gitdir: %s/no-such-gitdir\n' "$TMP" > "$BROKEN/.git"
 out="$(python3 "$NIGHTLY" run "$BROKEN" 2>&1)"; rc=$?
 [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^brokengit: skip: .*git dir' && ok "run <path>: a .git that points at a missing git dir is skipped with a reason, not run" || fail "broken .git pointer: rc=$rc $out"
-# (b) a trunk-mode main checkout holds no lock, yet it is merge-only: skipped
+# (b) a trunk-mode main checkout holds no lock: free, not busy
 TRK="$TMP/trunk"; mk "$TRK" "true" 'grep -q 2 src/b.txt'; echo 3 > "$TRK/src/b.txt"; git -C "$TRK" config devkit.trunkMode true
 out="$(python3 "$NIGHTLY" run "$TRK" 2>&1)"; rc=$?
-[ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^trunk: skip: trunk mode' && [ "$(st "$TRK" REG-B)" = PASS ] && ok "run <path>: a trunk-mode main checkout (merge-only, never locked) is skipped, nothing ran" || fail "trunk-mode main: rc=$rc $(st "$TRK" REG-B) $out"
+[ "$rc" = 0 ] && ! printf '%s\n' "$out" | grep -q 'skip: trunk mode' && [ "$(st "$TRK" REG-B)" = FAIL ] && ok "run <path>: a trunk-mode main checkout holds no lock, so it is free: the suites run (a skip here deadlocked the night)" || fail "trunk-mode main: rc=$rc $(st "$TRK" REG-B) $out"
 # (c) one repo spelled two ways by a case-insensitive filesystem (APFS) runs once: identity is (device, inode), not the resolved string
 CI="$TMP/CaseRepo"; mk "$CI" "true" "true"
 if [ -d "$TMP/caserepo" ]; then
