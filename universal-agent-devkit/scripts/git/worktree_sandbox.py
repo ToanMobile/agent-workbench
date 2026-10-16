@@ -271,30 +271,56 @@ def sandbox_unsaved_work(s_path: Path, repo_root: Path) -> Optional[str]:
 
 
 def sandbox_unmerged_commits(s_path: Path, repo_root: Path, branch_name: str) -> Optional[str]:
-    """Vì sao chưa được xoá sandbox: nhánh của nó, hoặc HEAD riêng của nó, còn commit mà HEAD của checkout chính chưa có; None khi không còn.
-    HEAD riêng được đếm vì commit trên HEAD tách rời chỉ reflog của worktree giữ, và `git worktree prune` xoá reflog đó theo thư mục.
+    """Vì sao chưa được xoá sandbox: nhánh của nó, HEAD riêng của nó, hoặc commit chỉ reflog HEAD của nó còn nêu tên, có commit mà NHÁNH
+    checkout chính đang đứng chưa có; None khi không còn.
+    - "Đã merge" xét theo nhánh đó (nhánh merge-winner merge vào), không theo HEAD: checkout chính tách rời (vd. `checkout --detach
+      sandbox/<x>` để xem) thì HEAD chứa commit mà nhánh chính chưa có → không biết, giữ lại (QA SW6). `branch -d` sau đó cũng xét HEAD = nhánh này.
+    - HEAD riêng và reflog HEAD của sandbox được đếm vì commit làm trên HEAD tách rời rồi quay lại nhánh, hay bị `reset --hard` bỏ đi, chỉ
+      reflog đó còn giữ; `git worktree prune` xoá reflog theo thư mục, `branch -d` xoá reflog của nhánh (QA F2: `worktree._reflog_only`
+      với attached=False, vì reflog nhánh sandbox không sống sót qua cleanup).
     Fail closed: git không đọc/đếm được thì coi như còn việc, không bao giờ hiểu thành 0 (issue #12)."""
+    base = run_cmd(["git", "symbolic-ref", "-q", "HEAD"], cwd=repo_root, check=False)
+    base_ref = base.stdout.strip()
+    if base.returncode != 0 or not base_ref.startswith("refs/heads/"):
+        return "checkout chính đang ở HEAD tách rời, không biết commit của sandbox đã vào nhánh chính chưa — coi như còn commit chưa merge"
     revs = []
     if run_cmd(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch_name}"], cwd=repo_root, check=False).returncode == 0:
         revs.append((f"nhánh {branch_name}", branch_name))
+    head_sha = None
     if s_path.exists():
         head = run_cmd(["git", "rev-parse", "--verify", "HEAD"], cwd=s_path, check=False)
         if head.returncode != 0:
             return f"không đọc được HEAD của sandbox, không biết còn commit chưa merge không: {head.stderr.strip()}"
-        revs.append(("HEAD của sandbox", head.stdout.strip()))
+        head_sha = head.stdout.strip()
+        revs.append(("HEAD của sandbox", head_sha))
     for label, rev in revs:
-        proc = run_cmd(["git", "rev-list", "--count", f"HEAD..{rev}"], cwd=repo_root, check=False)
+        proc = run_cmd(["git", "rev-list", "--count", f"{base_ref}..{rev}"], cwd=repo_root, check=False)
         count = proc.stdout.strip()
         if proc.returncode != 0 or not count.isdigit():
             return f"không đếm được commit chưa merge của {label} (rc={proc.returncode}: {proc.stderr.strip()})"
         if count != "0":
             return f"{label} giữ {count} commit chưa merge"
+    if head_sha:
+        try:
+            here = str(Path(__file__).resolve().parent)   # worktree.py nằm cạnh file này (scripts/git/)
+            if here not in sys.path:
+                sys.path.insert(0, here)
+            import worktree  # noqa: PLC0415
+            base_tip = run_cmd(["git", "rev-parse", "--verify", f"{base_ref}^{{commit}}"], cwd=repo_root).stdout.strip()
+            refs = run_cmd(["git", "for-each-ref", "--format=%(objectname)", "refs/heads", "refs/remotes", "refs/tags"], cwd=repo_root).stdout.split()
+            lost = worktree._reflog_only(str(s_path), head_sha, base_tip, sorted(set(refs)), attached=False)
+        except (Exception, SystemExit) as e:  # noqa: BLE001 - worktree.git(check=True) raises SystemExit
+            return f"không đọc được reflog HEAD của sandbox, không biết còn commit chưa merge không: {e}"
+        if lost is None:
+            return "không đọc được reflog HEAD của sandbox (hoặc repo có ref hỏng: chạy `git fsck`), không biết còn commit chưa merge không"
+        if lost:
+            return f"reflog HEAD của sandbox giữ {len(lost)} commit chưa merge mà không nhánh nào giữ (vd. {lost[0][:12]})"
     return None
 
 
-def cleanup_sandbox(name: Optional[str] = None, cleanup_all: bool = False, force: bool = False) -> None:
+def cleanup_sandbox(name: Optional[str] = None, cleanup_all: bool = False, force: bool = False) -> List[str]:
     """Dọn dẹp worktree an toàn. Sandbox còn file chưa commit, hoặc nhánh / HEAD của nó còn commit chưa merge, được GIỮ NGUYÊN cả thư mục
-    lẫn nhánh trừ khi force=True: cả hai đều được kiểm TRƯỚC khi xoá thư mục."""
+    lẫn nhánh trừ khi force=True: cả hai đều được kiểm TRƯỚC khi xoá thư mục. Trả về tên các sandbox chưa dọn xong (đã in lý do)."""
     if name and not re.match(r"^[a-zA-Z0-9_-]+$", name):
         raise ValueError(f"Tên sandbox không hợp lệ: '{name}'. Chỉ chấp nhận chữ cái, số, gạch dưới và gạch ngang.")
 
@@ -309,8 +335,9 @@ def cleanup_sandbox(name: Optional[str] = None, cleanup_all: bool = False, force
         targets.append(name)
     else:
         print("Cần chỉ định tên sandbox hoặc cờ --all")
-        return
+        return []
 
+    done = []
     for t in targets:
         s_path = sandboxes_dir / t
         branch_name = f"sandbox/{t}"
@@ -337,9 +364,11 @@ def cleanup_sandbox(name: Optional[str] = None, cleanup_all: bool = False, force
             print(f"   ⚠ đã gỡ {t} nhưng chưa xoá được nhánh {branch_name}: {(res.stderr or '').strip()}")
             continue
         print(f"   ✓ Đã gỡ bỏ {t} và xoá nhánh {branch_name}.")
+        done.append(t)
 
     run_cmd(["git", "worktree", "prune"], cwd=repo_root, check=False)
     print("✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.")
+    return [t for t in targets if t not in done]
 
 
 def merge_winner(name: str, squash: bool = False, clean_others: bool = False) -> None:
@@ -383,7 +412,7 @@ def merge_winner(name: str, squash: bool = False, clean_others: bool = False) ->
 
     # 3. TỰ ĐỘNG DỌN DẸP TOÀN BỘ (AUTO CLEANUP)
     print("🧹 [3/3] Kích hoạt cơ chế tự động dọn dẹp (Auto-Clear) để chống rác Git...")
-    cleanup_sandbox(name=name)
+    winner_kept = bool(cleanup_sandbox(name=name))
 
     if clean_others:
         remaining = list_sandboxes()
@@ -395,6 +424,9 @@ def merge_winner(name: str, squash: bool = False, clean_others: bool = False) ->
         # A squash merge leaves the change staged (not committed) and creates no ancestry, so the
         # sandbox and its branch still look unmerged and are kept.
         print(f"⚠ Squash: thay đổi mới ở trạng thái staged. Commit nó rồi chạy `cleanup --name {name} --force` để xoá sandbox và nhánh {branch_name}.")
+    elif winner_kept:
+        # cleanup vừa từ chối (lý do in ở dòng ⚠ phía trên): merge xong không có nghĩa là đã dọn
+        print(f"⚠ Đã merge {branch_name} nhưng chưa dọn sandbox '{name}' (xem lý do phía trên); tự kiểm rồi `cleanup --name {name} --force` nếu muốn xoá hẳn.")
     else:
         print("🎉 Đã merge và dọn sandbox thắng cuộc. Sandbox khác (nếu có) được giữ nguyên.")
 

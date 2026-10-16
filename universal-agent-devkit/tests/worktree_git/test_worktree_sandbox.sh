@@ -151,11 +151,56 @@ if [ -f "$P/.sandboxes/det_sb/det.txt" ] && echo "$DET_OUT" | grep -q "chưa mer
 else
   fail "cleanup deleted a sandbox whose detached HEAD held an unmerged commit: $DET_OUT"
 fi
+# issue #12 QA F2: commit trên HEAD tách rời rồi quay lại nhánh sandbox (đã merge): chỉ reflog HEAD của sandbox còn giữ commit đó
+python3 "$SCRIPT" create f2_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/f2_sb" && git checkout -q --detach && echo f2 > f2.txt && git add f2.txt && git commit -q -m "feat: f2" && git checkout -q sandbox/f2_sb )
+F2_OUT=$(python3 "$SCRIPT" cleanup --name f2_sb 2>&1)
+if [ -d "$P/.sandboxes/f2_sb" ] && git -C "$P" rev-parse --verify -q "sandbox/f2_sb" >/dev/null && echo "$F2_OUT" | grep -q "chưa merge"; then
+  ok "cleanup keeps a sandbox whose reflog-only commit is unmerged"
+else
+  fail "cleanup lost a reflog-only commit: $F2_OUT"
+fi
+# commit trên nhánh sandbox rồi `reset --hard HEAD~1`: reflog của nhánh không cứu được vì cleanup xoá luôn nhánh đó
+python3 "$SCRIPT" create reset_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/reset_sb" && echo r > r.txt && git add r.txt && git commit -q -m "feat: reset away" && git reset -q --hard HEAD~1 )
+RESET_OUT=$(python3 "$SCRIPT" cleanup --name reset_sb 2>&1)
+if [ -d "$P/.sandboxes/reset_sb" ] && echo "$RESET_OUT" | grep -q "chưa merge"; then
+  ok "cleanup keeps a sandbox whose reset-away commit only reflogs name"
+else
+  fail "cleanup lost a commit named only by the reflogs it deletes: $RESET_OUT"
+fi
+# issue #12 QA SW6: checkout chính tách rời ở đúng nhánh sandbox: HEAD của nó chứa commit, nhưng nhánh chính thì chưa
+MAIN_BR=$(git -C "$P" symbolic-ref --short HEAD)
+python3 "$SCRIPT" create sw6_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/sw6_sb" && echo s > s.txt && git add s.txt && git commit -q -m "feat: sw6" )
+git -C "$P" checkout -q --detach sandbox/sw6_sb
+SW6_OUT=$(python3 "$SCRIPT" cleanup --name sw6_sb 2>&1)
+git -C "$P" checkout -q "$MAIN_BR"
+if [ -d "$P/.sandboxes/sw6_sb" ] && git -C "$P" rev-parse --verify -q "sandbox/sw6_sb" >/dev/null && echo "$SW6_OUT" | grep -q "chưa merge"; then
+  ok "cleanup judges 'merged' by the main branch, not a detached main checkout"
+else
+  fail "cleanup deleted a sandbox merged only into a detached main checkout: $SW6_OUT"
+fi
+# merge-winner merge được nhánh nhưng cleanup giữ sandbox (commit chỉ reflog còn giữ): không được báo "đã dọn" sau cảnh báo
+python3 "$SCRIPT" create mw_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/mw_sb" && echo x > mw.txt && git add mw.txt && git commit -q -m "feat: mw" && git checkout -q --detach \
+  && echo y > mwy.txt && git add mwy.txt && git commit -q -m "feat: mw detached" && git checkout -q sandbox/mw_sb )
+MW_OUT=$(python3 "$SCRIPT" merge-winner mw_sb 2>&1)
+if [ -d "$P/.sandboxes/mw_sb" ] && echo "$MW_OUT" | grep -q "chưa dọn" && ! echo "$MW_OUT" | grep -q "🎉"; then
+  ok "merge-winner says the winner was merged but kept, never 'cleaned'"
+else
+  fail "merge-winner claimed a kept winner sandbox was cleaned: $MW_OUT"
+fi
 python3 "$SCRIPT" cleanup --name dirty_sb --force >/dev/null 2>&1
 python3 "$SCRIPT" cleanup --name ahead_sb --force >/dev/null 2>&1
 python3 "$SCRIPT" cleanup --name det_sb --force >/dev/null 2>&1
+python3 "$SCRIPT" cleanup --name f2_sb --force >/dev/null 2>&1
+python3 "$SCRIPT" cleanup --name reset_sb --force >/dev/null 2>&1
+python3 "$SCRIPT" cleanup --name sw6_sb --force >/dev/null 2>&1
+python3 "$SCRIPT" cleanup --name mw_sb --force >/dev/null 2>&1
 if [ ! -d "$P/.sandboxes/dirty_sb" ] && [ ! -d "$P/.sandboxes/ahead_sb" ] && [ ! -d "$P/.sandboxes/det_sb" ] \
-   && ! git -C "$P" rev-parse --verify -q "sandbox/ahead_sb" >/dev/null; then
+   && [ ! -d "$P/.sandboxes/f2_sb" ] && [ ! -d "$P/.sandboxes/reset_sb" ] && [ ! -d "$P/.sandboxes/sw6_sb" ] && [ ! -d "$P/.sandboxes/mw_sb" ] \
+   && ! git -C "$P" rev-parse --verify -q "sandbox/ahead_sb" >/dev/null && ! git -C "$P" rev-parse --verify -q "sandbox/sw6_sb" >/dev/null; then
   ok "--force removes the sandbox and the unmerged branch on explicit request"
 else
   fail "--force did not remove the sandboxes and branch"
