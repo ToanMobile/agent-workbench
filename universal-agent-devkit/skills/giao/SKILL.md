@@ -42,6 +42,8 @@ Thiếu thành phần nào thì hỏi ngắn gọn người dùng, không tự s
    - Nếu kế hoạch vững chắc: `pm_verdict kind=plan verdict=pass`.
 5. **Giao Triển Khai (`pm_dispatch kind=implement`):** Mở hội thoại làm việc cho Antigravity với toàn văn kế hoạch đã chốt.
 6. **Kiểm Tra Thực Tế (`pm_diff`):** Soi git diff thực tế. `result.json` của agent chỉ là lời khai; diff mới là sự thật.
+   - **Blind-First:** Đọc `definitionOfDone` + `pm_diff` và đặt giả thuyết lỗi *trước khi* đọc `result.json` để tránh bị lời khai của Worker dẫn dắt.
+   - **Review Remembers & Taste Never Blocks:** Khi duyệt vòng `pm_rework`, chấm từng lỗi vòng trước (`fixed` `file:line` | `not fixed`) trước khi soi mới; không dùng góp ý gu/cấu trúc (`Over-engineering`) làm lý do duy nhất để đánh rớt diff đã đúng và PASS test.
    - Có thể mở mắt thứ hai: `pm_dispatch kind=audit` để hội thoại audit độc lập chỉ đọc soi xét.
 7. **Phán Quyết & Nghiệm Thu:**
    - `pm_verdict kind=audit` ➔ `pm_verdict kind=review`.

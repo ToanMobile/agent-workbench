@@ -67,3 +67,12 @@ Khi `ocr review` được gọi trong dự án ô tô / hệ sinh thái phức t
    - Xóa hoặc nới lỏng Guard Conditions (`Build.VERSION.SDK_INT <= 28`, `FlymeAuto`).
    - Rò rỉ thông tin nhạy cảm, token, credentials.
 2. **Sửa lỗi theo gợi ý:** Nếu OCR đưa ra `suggested_diff`, kiểm tra lại call-sites trước khi áp dụng.
+
+---
+
+## 4. Ba Nguyên Tắc Phản Biện Chống Mù Quáng (Adversarial Review Discipline)
+
+Khi Host Agent hoặc Reviewer độc lập thẩm định diff (Mode 2 hoặc hậu kiểm OCR):
+1. **Blind-First Pass (Chống hiệu ứng mỏ neo):** Đọc Acceptance Criteria + `git diff` thô và tự đặt 2–4 giả thuyết lỗi (*điều gì sẽ vỡ với dữ liệu thực hoặc caller hiện hữu?*) **TRƯỚC KHI** đọc bản tóm tắt hay `result.json` của người viết code. Lời khai của Builder là mệnh đề cần kiểm chứng, không phải khung dẫn dắt.
+2. **Review Remembers (`R1, R2...` — Không dời cột gôn):** Ở vòng review lại (rework), bước đầu tiên bắt buộc là chấm trạng thái từng finding của vòng trước (`fixed` kèm `file:line` | `not fixed` | `no longer applies`) rồi mới tìm lỗi mới.
+3. **Không chặn code đúng chỉ vì gu (Taste Never Blocks):** Góp ý về cấu trúc/độ sâu module (`Over-engineering` / `Deepening opportunity`) chỉ xếp mức `Should fix` hoặc tách task — **không bao giờ dùng làm lý do duy nhất để BLOCK một bản diff chạy đúng, an toàn và đã PASS test**.

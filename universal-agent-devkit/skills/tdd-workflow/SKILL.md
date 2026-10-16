@@ -61,6 +61,8 @@ seam, trace blast radius và review architecture tương xứng.
 - Dùng DAMP, tên condition→action→outcome, state/cleanup độc lập.
 - Không `Thread.sleep`; dùng virtual time, idling resource hoặc deterministic signal.
 - Threshold chỉ lấy từ repo/User; thiếu threshold thì map acceptance/failure mechanism tới evidence.
+- **Surviving Mutant Guard (First-run Green):** Với test *mới* viết cho nhánh/feature mới mà chạy lần đầu đã PASS (`First-run Green`), bắt buộc thử làm hỏng dòng production được bảo vệ 1 lần (đảo `>` thành `>=`, đổi hằng số hoặc tạm bỏ guard), chạy test thấy **RED**, rồi hoàn nguyên ngay để thấy **GREEN** (không bao giờ commit bản mutate). Một test chưa từng thấy RED thì chưa chứng minh được nó bắt được bug.
+- **Chống Tautology Test:** Cấm viết test chỉ assert trên giá trị trả về của chính mock do test dựng lên, hoặc tính `expected` bằng cách gọi/lặp lại công thức của hàm đang test.
 - Mỗi flow kiểm đủ 5 kết quả khi liên quan: phản hồi, trạng thái lưu, lời gọi ra ngoài, thông điệp queue, tín hiệu quan sát. Test không dùng sleep cố định, đồng hồ/mạng thật hay dữ liệu chung; phải đúng khi đảo thứ tự và chạy song song. Chi tiết cho dự án JS/TS/Node (profile web, backend Node; không dùng cho Android, iOS, automotive, game): `references/testing-practices.md`.
 
 ## Terminal

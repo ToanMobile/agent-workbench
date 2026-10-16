@@ -29,6 +29,9 @@ thiếu một vế. Không có safe pre-run → `BLOCKED`.
 | ktlint/detekt sạch | Task tương ứng cho scope đụng exit 0 |
 | Regression fix | Executed pre-edit RED + post-edit GREEN của cùng PAIRED EXECUTABLE ORACLE |
 | Runtime/UI/lifecycle bug fixed | Device/instrumented/repro + logcat/oracle quan sát được |
+| UI / Route / Screen hoạt động | Render phần tử dữ liệu/empty-state thật (không chỉ shell/spinner rỗng) + `0` `console.error`/`pageerror`/uncaught exception + `0` request nền `5xx`/`401`/`403` |
+| Async / Queue / Upload / eSign hoàn tất | Đợi job/queue về trạng thái kết thúc (`terminal state`) và xác nhận bản ghi/file đích đã lưu bền vững — không tính riêng UI Toast hoặc HTTP 200 ban đầu |
+| Tối ưu hiệu năng / bộ nhớ (Perf win) | Đo xen kẽ `AB, BA` $\ge 5$ cặp sau warmup trên cùng dữ liệu; so sánh median và range. Nếu `range > 20% median` hoặc hai dải chồng lấp thì báo `inconclusive` — cấm kết luận từ 1 lần chạy đơn lẻ |
 | Security/release safe | Relevant release/config/runtime gate, không chỉ debug compile |
 | Agent khác hoàn tất | Đọc diff/file thật và tự chạy verification phù hợp |
 
