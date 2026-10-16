@@ -391,7 +391,7 @@ dispatch_lane() {
   printf 'PID=%s\nLANE=%s\nSTARTED=%s\n' "$pid" "$lane" "$(date -u +%FT%TZ)" > "$INFLIGHT_DIR/$issue"
   case "$lane" in
     build) BUILD_PID="$pid"; BUILD_ISSUE="$issue" ;;
-    qa) QA_PID="$pid"; QA_ISSUE="$issue"; QA_DISPATCHED_AT=$(date +%s) ;;
+    qa) QA_PID="$pid"; QA_ISSUE="$issue" ;;
     review) REVIEW_PID="$pid"; REVIEW_ISSUE="$issue" ;;
   esac
   log "dispatch lane=${lane} issue=#${issue} pid=${pid} claim=${BOT_LOGIN:-local-only}"
@@ -425,14 +425,11 @@ check_lane_zombie() {
   # Khi thẻ của Tester này chưa từng thấy ở QA thì Ready không phải dấu hiệu zombie; sau đó Ready là đường
   # fail của Tester và giải phóng lane như cũ. QA_SEEN_IN_QA giữ PID đã thấy, nên Tester mới trên cùng thẻ
   # bắt đầu sạch.
-  # Ân hạn có trần SB_QA_READY_GRACE_S (mặc định 900 s) tính từ lúc giao: Tester treo trước bước chuyển đầu tiên,
-  # hoặc đi QA→Ready giữa hai lần đọc board, không giữ lane QA mãi.
+  # ponytail: Tester treo trước bước chuyển đầu tiên giữ lane QA tới khi được thu hồi tay; thêm trần ân hạn
+  # tính theo thời điểm đọc board (không theo đồng hồ, cache có thể cũ ở tick cap-reached) nếu việc này xảy ra.
   if [ "$lane" = qa ]; then
     if [ "$cur" = QA ]; then QA_SEEN_IN_QA="$pid"
-    elif [ "${QA_SEEN_IN_QA:-}" != "$pid" ] \
-         && [ $(( $(date +%s) - ${QA_DISPATCHED_AT:-$(date +%s)} )) -lt "${SB_QA_READY_GRACE_S:-900}" ]; then
-      expected="$expected Ready"
-    fi
+    elif [ "${QA_SEEN_IN_QA:-}" != "$pid" ]; then expected="$expected Ready"; fi
   fi
   for col in $expected; do
     [ "$cur" = "$col" ] && found=1
@@ -574,7 +571,7 @@ adopt_live_locks() {
     case "$(ps -ww -o command= -p "$PID" 2>/dev/null)" in *"issue #${issue} for super-board run"*) ;; *) continue ;; esac
     case "$LANE" in
       build)  BUILD_PID="$PID";  BUILD_ISSUE="$issue" ;;
-      qa)     QA_PID="$PID";     QA_ISSUE="$issue"; QA_DISPATCHED_AT=$(date +%s) ;;
+      qa)     QA_PID="$PID";     QA_ISSUE="$issue" ;;
       review) REVIEW_PID="$PID"; REVIEW_ISSUE="$issue" ;;
       *) continue ;;
     esac

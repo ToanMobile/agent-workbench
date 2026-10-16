@@ -82,14 +82,6 @@ reset_lanes; worker; QA_PID=$W; QA_ISSUE=10
 items 10 Ready '["qa"]'; sweep_lane_zombies
 alive "$QA_PID" && ok "re-dispatched Tester on a Ready card: kept" || fail "re-dispatched Tester on a Ready card: killed by the previous Tester's state"
 
-# ── 1f. ân hạn Ready có trần: Tester giao từ quá SB_QA_READY_GRACE_S mà thẻ vẫn ở Ready (treo trước bước chuyển
-#        đầu tiên, hoặc đã QA→Ready giữa hai lần đọc board) thì bị thu hồi, không giữ lane QA mãi.
-reset_lanes; worker; QA_PID=$W; QA_ISSUE=14; QA_DISPATCHED_AT=$(( $(date +%s) - 1000 )); SB_QA_READY_GRACE_S=900
-items 14 Ready '["qa"]'; sweep_lane_zombies
-[ -z "$QA_PID" ] && ok "Tester past the Ready grace with its card still in Ready: reaped" \
-  || fail "Tester past the Ready grace kept forever (QA lane never frees)"
-QA_DISPATCHED_AT=""
-
 # ── 1e. lane build không đổi: thẻ bị chuyển sang Blocked thì giải phóng lane.
 reset_lanes; worker; BUILD_PID=$W; BUILD_ISSUE=11
 items 11 Blocked '["bug"]'; sweep_lane_zombies
