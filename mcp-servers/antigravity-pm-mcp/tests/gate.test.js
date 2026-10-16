@@ -334,14 +334,15 @@ test('#22 soi lint tren file DA COMMIT: SQL create table trung bi CHAN, guard bi
   cleanup(dir);
 });
 
-/** Agent sua SUA_KINH (KHONG commit) + du bang chung PM (plan, audit, review, test xanh sau bao cao, anh). Tra ve ctx da do. */
-async function duBangChung(dir, cfg, task) {
+/** Agent sua SUA_KINH (KHONG commit) + lam() them + du bang chung PM (plan, audit, review, test xanh sau bao cao, anh). Tra ve ctx da do. */
+async function duBangChung(dir, cfg, task, lam = () => {}) {
   const p = contractPaths(cfg, task);
   writeFile(p.plan, '# Ke hoach');
   recordVerdict(cfg, task, { kind: 'plan', verdict: 'pass' });
   recordDispatch(cfg, task, { kind: 'implement', conversationId: 'c-test' });
   tick();
   for (const [f, c] of Object.entries(SUA_KINH)) writeFile(path.join(dir, f), c);
+  lam();
   khaiResult(cfg, task, Object.keys(SUA_KINH));
   tick();
   recordVerdict(cfg, task, { kind: 'audit', verdict: 'pass' });
@@ -351,6 +352,49 @@ async function duBangChung(dir, cfg, task) {
   recordProof(cfg, task, { label: 'anh', provider: 'adb', file: img, bytes: PNG_1PX.length });
   return gateCtx(cfg, loadTask(cfg, task.id));
 }
+
+// #22 AC2 (QA v1): file CAM doi SAU luc giao trien khai => CHINH luat forbiddenPaths CHAN, du task khong khai, moi commitPolicy.
+const TOML = 'gradle/libs.versions.toml';
+const LAM_CAM = {
+  sua: (dir) => writeFile(path.join(dir, TOML), 'a=2\n'),
+  'git mv': (dir) => execFileSync('git', ['mv', TOML, 'gradle/x.toml'], { cwd: dir, stdio: 'pipe' }),
+};
+const camRepo = (config = {}) => gitRepo(config, { 'src/Kinh.kt': 'class Kinh\n', [TOML]: 'a=1\n' });
+const datCam = (cfg) => updateTask(cfg, createTask(cfg, sampleTaskArgs()), (t) => { t.forbiddenPaths = [TOML]; });
+const chanCam = (g) => g.missing.some((m) => m.includes('CAM sua') && m.includes(TOML));
+
+test('#22 AC2: file CAM doi sau luc giao, KHONG khai (sua / git mv) x forbid/allow x commit/khong => luat forbiddenPaths CHAN, accept tu choi', async () => {
+  for (const commitPolicy of ['forbid', 'allow']) for (const commit of [false, true]) for (const [cach, lam] of Object.entries(LAM_CAM)) {
+    const ten = `${commitPolicy} commit=${commit} ${cach}`;
+    const dir = camRepo({ commitPolicy });
+    const cfg = loadConfig(dir);
+    const task = datCam(cfg);
+    const ctx = await duBangChung(dir, cfg, task, () => { lam(dir); if (commit) suaVaCommit(dir, {}); });
+    assert.ok(chanCam(gate(cfg, loadTask(cfg, task.id), ctx)), `${ten}: ${gate(cfg, loadTask(cfg, task.id), ctx).missing.join('\n')}`);
+    assert.throws(() => accept(cfg, loadTask(cfg, task.id), ctx), /CAM sua/, ten);
+    cleanup(dir);
+  }
+});
+
+test('#22 AC2: file CAM da ban TRUOC luc giao => agent khong dong toi chi CANH BAO; agent sua tiep sau luc giao => CHAN', async () => {
+  for (const suaTiep of [false, true]) {
+    const dir = camRepo();
+    const cfg = loadConfig(dir);
+    const task = datCam(cfg);
+    writeFile(path.join(dir, TOML), 'a=phien-khac\n');
+    const ctx = await duBangChung(dir, cfg, task, () => suaTiep && writeFile(path.join(dir, TOML), 'a=agent\n'));
+    const g = gate(cfg, loadTask(cfg, task.id), ctx);
+    if (suaTiep) assert.ok(chanCam(g), g.missing.join('\n'));
+    else {
+      assert.ok(g.ok && g.warnings.some((w) => w.includes('File CAM') && w.includes(TOML)), `${g.missing.join(' | ')} || ${g.warnings.join(' | ')}`);
+      // Da nghiem thu: file CAM doi sau do (PM / phien khac) khong lam task ACCEPTED bao CHUA DAT.
+      accept(cfg, loadTask(cfg, task.id), ctx);
+      writeFile(path.join(dir, TOML), 'a=sau-nghiem-thu\n');
+      assert.ok(!chanCam(gate(cfg, loadTask(cfg, task.id), await gateCtx(cfg, loadTask(cfg, task.id)))));
+    }
+    cleanup(dir);
+  }
+});
 
 test('#22 thu tu thoi gian: agent sua + commit file SAU lan test xanh => cong CHAN (test chua chay tren code moi nhat)', async () => {
   const dir = gitRepo({ commitPolicy: 'allow' }, { 'src/Kinh.kt': 'class Kinh\n' });

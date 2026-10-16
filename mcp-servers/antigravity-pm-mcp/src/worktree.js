@@ -4,8 +4,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { freshness, hopNhatFileThayDoi } from './tasks.js';
-import { mustHaveOf, fileRacGocRepo, cungFile, matchesAny, commitCuaTask } from './policy.js';
+import { freshness, hopNhatFileThayDoi, hashFile } from './tasks.js';
+import { mustHaveOf, fileRacGocRepo, cungFile, matchesAny, commitCuaTask, fileCamDung } from './policy.js';
 import { chepVaoWorktree } from './oracle.js';
 import { soiThayDoi } from './lint-diff.js';
 import { run } from './util.js';
@@ -65,17 +65,19 @@ export async function gitSnapshot(cfg) {
   const fields = r.stdout.split('\0');
   const wt = [];
   const untracked = [];
+  const renamedFrom = [];
   for (let i = 0; i < fields.length; i += 1) {
     const e = fields[i];
     if (e.length < 4) continue;
     const xy = e.slice(0, 2);
     const file = e.slice(3);
     if (xy.includes('R') || xy.includes('C')) i += 1; // truong ke tiep la ten CU — giu ten moi
+    if (xy.includes('R') && cuaAgent(fields[i])) renamedFrom.push(fields[i]); // #22: ten CU rieng, chi de soi file CAM (git mv)
     if (!cuaAgent(file)) continue;
     wt.push(file);
     if (xy === '??') untracked.push(file);
   }
-  return { ok: true, wt, untracked, raw: r.stdout.replaceAll('\0', '\n') };
+  return { ok: true, wt, untracked, renamedFrom, raw: r.stdout.replaceAll('\0', '\n') };
 }
 
 /** Commit goc cua task: task.baseCommit, hoac (task cu) commit cuoi cung truoc createdAt. */
@@ -98,11 +100,14 @@ export async function gateCtx(cfg, task) {
   const changedFiles = committedFiles && hopNhatFileThayDoi(snap.wt, committedFiles);
   const fileSoi = committedFiles && hopNhatFileThayDoi(snap.wt, commitCuaTask(task, committedFiles, freshness(cfg, task).result?.files_changed));
   const soi = fileSoi ? soiThayDoi(cfg.projectRoot, fileSoi, await baseCommitOf(cfg, task)) : { warnings: [], blockers: [] };
+  const sauGiao = snap.ok ? await commitSauGiao(cfg, task, committedFiles) : undefined;
   // Thu tu thoi gian chi do tren FILE CUA TASK (agent khai files_changed ∪ file test trong cay) — chu du an chot 14/09/2026:
   // cay GeelyEx2 co phien khac sua song song, do ca cay thi moi lan ho sua gi la phai chay lai test 3 phut.
   return {
     changedFiles,
-    committedFiles: snap.ok ? await commitSauGiao(cfg, task, committedFiles) : undefined,
+    committedFiles: sauGiao,
+    // #22 AC2: file CAM doi SAU luc giao (cay + ten cu rename + commit tu moc giao). Task giao truoc ban nay (khong co anh chup) => khong xet.
+    camSauGiao: snap.ok && task && 'baselineDirty' in task ? camDoiSauGiao(cfg, task, [...snap.wt, ...snap.renamedFrom, ...(sauGiao ?? committedFiles ?? [])]) : undefined,
     untrackedFiles: snap.untracked,
     lastChangeAt: fileSoi ? lastChangeAtOf(cfg, fileCuaTask(cfg, task, fileSoi)) : null,
     lintBlockers: soi.blockers,
@@ -118,6 +123,12 @@ async function commitSauGiao(cfg, task, tuCommitGoc) {
   const moc = task?.implementBaseCommit;
   if (!moc) return tuCommitGoc;
   return SHA_RE.test(String(moc)) ? fileDaCommitTu(cfg, moc) : undefined;
+}
+
+/** File CAM khong co trong anh chup luc giao (task.baselineDirty), hoac noi dung da khac luc chup. Anh chup null => tinh het. */
+function camDoiSauGiao(cfg, task, files) {
+  const goc = task.baselineDirty || {};
+  return fileCamDung(task, files).filter((f) => !Object.hasOwn(goc, f) || hashFile(path.resolve(cfg.projectRoot, f)) !== goc[f]);
 }
 
 /** Worktree dong bang = HEAD + diff cay lam viec + file moi (tru thu muc trang thai va file rac). */

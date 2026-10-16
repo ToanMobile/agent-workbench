@@ -239,9 +239,11 @@ export function kiemKhuonPlanReview(review) {
 
 /** DE XUAT 4 (Unity T0014: sua ItemState.cs la file plan CAM dung): file thay doi cham vao forbiddenPaths cua task. */
 export function fileCamDung(task, changedFiles) {
-  const cam = (Array.isArray(task?.forbiddenPaths) ? task.forbiddenPaths : []).map(chuanHoaDuongDan).filter(Boolean);
+  // #22: so o dang NFC (PM go NFD, git tra NFC) nhung tra ten git dua — lastChangeAtOf/soiThayDoi stat dung ten do.
+  const cam = (Array.isArray(task?.forbiddenPaths) ? task.forbiddenPaths : []).map((c) => chuanHoaDuongDan(c).normalize('NFC')).filter(Boolean);
   if (!cam.length || !Array.isArray(changedFiles)) return [];
-  return changedFiles.map(chuanHoaDuongDan).filter((f) => cam.some((c) => f === c || f.startsWith(`${c}/`) || matchesAny(f, [c])));
+  const trung = (f) => cam.some((c) => f === c || f.startsWith(`${c}/`) || matchesAny(f, [c]));
+  return changedFiles.map(chuanHoaDuongDan).filter((f) => trung(f.normalize('NFC')));
 }
 
 /**
