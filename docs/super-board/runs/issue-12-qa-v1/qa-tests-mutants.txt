@@ -1,0 +1,31 @@
+### head 15ed99f + QA tests
+✔ a new path holding bytes committed elsewhere is named as unique work (issue #12)
+✔ a tracked path given another file's bytes is named as unique work (issue #12)
+✔ a new empty file whose blob kept commits hold only at other paths is kept and named (issue #12)
+✔ a copy of a file whose own path history is asked in the same call is kept and named (issue #12)
+✅ test_worktree_gc: all passed
+exit=0
+
+### mutant G2
+mutant G2 applied
+✖ main-orphan-movedcopy deleted or unnamed: ✔ gc: đã xoá $TMP/main-orphan-locked
+❌ test_worktree_gc: 1 failed
+
+### mutant G5
+mutant G5 applied
+✖ main-orphan-trackedcopy was deleted (it holds something unique or is not ours)
+✖ no reason for main-orphan-trackedcopy: ✔ gc: đã xoá $TMP/main-gate-orphan
+✖ main-orphan-moved stranded (rc=0): ✔ gc: đã xoá $TMP/main-orphan-locked
+❌ test_worktree_gc: 3 failed
+
+### base origin/main worktree.py
+✖ main-orphan-copy was deleted (it holds something unique or is not ours)
+✖ main-orphan-oldblob was deleted (it holds something unique or is not ours)
+✖ main-orphan-trackedcopy was deleted (it holds something unique or is not ours)
+✖ no reason for main-orphan-copy/oldblob: ✔ gc: đã xoá $TMP/main-gate-orphan
+✖ no reason for main-orphan-trackedcopy: ✔ gc: đã xoá $TMP/main-gate-orphan
+✖ main-orphan-empty deleted or unnamed: ✔ gc: đã xoá $TMP/main-orphan-empty
+✖ main-orphan-movedcopy deleted or unnamed: ✔ gc: đã xoá $TMP/main-orphan-empty
+❌ test_worktree_gc: 7 failed
+
+### restored: 0 changed lines in worktree.py vs HEAD

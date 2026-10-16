@@ -1,0 +1,15 @@
+== create f2_sb
+create rc=0
+f2 commit made in the sandbox: bc1e8f163d40
+sandbox/f2_sb ahead of main: 0 · sandbox HEAD ahead of main: 0
+f2 merged into main? no
+== cleanup --name f2_sb (no --force)
+  | 🧹 Dọn dẹp sandbox 'f2_sb'...
+  |    ✓ Đã gỡ bỏ f2_sb và xoá nhánh sandbox/f2_sb.
+  | ✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+== after cleanup
+folder: DELETED
+branch: deleted
+refs containing the f2 commit: []
+reflog entries naming it: 0
+fsck: f2 commit unreachable (git gc will drop it): 1

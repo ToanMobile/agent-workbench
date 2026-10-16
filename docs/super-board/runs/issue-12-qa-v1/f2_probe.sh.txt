@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# QA #12 probe F2: sandbox commit made on a detached HEAD, then the sandbox switches back to its (merged) branch; does `cleanup` keep it?
+# Usage: f2_probe.sh <path to worktree_sandbox.py>
+SCRIPT="$1"
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+P="$T/mock-repo"; mkdir -p "$P" && cd "$P" || exit 2
+git init -q -b main . && git config user.email t@t && git config user.name t
+echo hi > README.md && git add README.md && git commit -qm init
+echo "== create f2_sb"; python3 "$SCRIPT" create f2_sb >/dev/null 2>&1; echo "create rc=$?"
+( cd .sandboxes/f2_sb && git checkout -q --detach && echo f2 > f2.txt && git add f2.txt && git commit -qm "feat: f2 detached" \
+  && git rev-parse HEAD > "$T/sha" && git checkout -q sandbox/f2_sb 2>/dev/null )
+SHA=$(cat "$T/sha"); echo "f2 commit made in the sandbox: ${SHA:0:12}"
+echo "sandbox/f2_sb ahead of main: $(git rev-list --count main..sandbox/f2_sb) · sandbox HEAD ahead of main: $(git -C .sandboxes/f2_sb rev-list --count main..HEAD)"
+echo "f2 merged into main? $(git merge-base --is-ancestor "$SHA" main && echo yes || echo no)"
+echo "== cleanup --name f2_sb (no --force)"; python3 "$SCRIPT" cleanup --name f2_sb 2>&1 | sed 's/^/  | /'
+echo "== after cleanup"
+[ -d .sandboxes/f2_sb ] && echo "folder: KEPT" || echo "folder: DELETED"
+git rev-parse -q --verify refs/heads/sandbox/f2_sb >/dev/null && echo "branch: kept" || echo "branch: deleted"
+echo "refs containing the f2 commit: [$(git for-each-ref --contains "$SHA" --format='%(refname)' 2>/dev/null | tr '\n' ' ')]"
+echo "reflog entries naming it: $(git reflog --all 2>/dev/null | grep -c "${SHA:0:7}")"
+echo "fsck: f2 commit unreachable (git gc will drop it): $(git fsck --unreachable --no-reflogs 2>/dev/null | grep -c "$SHA")"

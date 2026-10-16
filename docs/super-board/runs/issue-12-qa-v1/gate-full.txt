@@ -1,0 +1,16 @@
+  KẾT LUẬN CỔNG POST-FIX AUDIT: PASS — ĐỦ ĐIỀU KIỆN NGHIỆM THU & BÀN GIAO
+  • Test hồi quy đạt: 1/1
+  • Lớp tĩnh (bí mật, lười biếng, dependency, hiệu năng, nuốt lỗi, log): đạt
+  • Test đã có bị sửa — agent tự duyệt (--auto-approve-tests / auto-duyệt), KHÔNG phải người dùng; file không đổi sau đó: universal-agent-devkit/tests/worktree_git/test_worktree_gc.sh
+  • Gate không xác minh: DESIGN.md/a11y, RED/GREEN, Immutable Guards, OpenCodeReview. Ảnh nghiệm thu không nằm trong exit code; agent vẫn phải gắn PNG của lượt này trước khi nói XONG, trừ khi thay đổi chắc chắn không lên màn hình (essentials bước 4).
+══════════════════════════════════════════════════════════════════════════════════════
+
+  • Regression checklist: không ghi trong worktree liên kết (thêm --checklist để ghi); kết quả chạy giữ trong state riêng của worktree
+  Báo cáo: $REPO/.git/worktrees/issue-12-qa/postfix-gate/last_report.md
+  (đầy đủ: $REPO/.git/worktrees/issue-12-qa/postfix-gate/last_output.log — last_output.log)
+GATE EXIT=0
+
+### Lần gate full đầu (head 15ed99f + ca main-orphan-empty), cùng lệnh, exit 0 — 8/8 suite:
+- REG-DK-ALL-01 PASS (326.25s) — gồm tests/worktree_git/test_worktree_gc.sh
+- REG-DK-GATE-01 PASS (206.42s) · REG-DK-GATE-02 PASS (25.83s) · REG-DK-HOOK-01 PASS (87.07s) · REG-DK-HOOK-02 PASS
+- REG-DK-SESSION-01 PASS (17.82s) · REG-DK-SANDBOX-01 PASS (7.92s) · REG-DK-COST-01 PASS (0.51s)

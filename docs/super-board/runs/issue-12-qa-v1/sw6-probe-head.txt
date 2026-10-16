@@ -1,0 +1,11 @@
+create rc=0
+sandbox commit: 68bfe71940a2 · in main? no
+main checkout HEAD: detached at sandbox/sb
+== cleanup --name sb (no --force)
+  | 🧹 Dọn dẹp sandbox 'sb'...
+  |    ✓ Đã gỡ bỏ sb và xoá nhánh sandbox/sb.
+  | ✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+folder: DELETED
+branch: deleted
+after 'git checkout main' — refs containing the commit: []
+commit in main? no · unreachable without reflogs: 1

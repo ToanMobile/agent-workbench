@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# QA #12 probe SW6: the main checkout sits detached on the sandbox branch's tip (to look at it) when `cleanup` runs. The sandbox's commit
+# is not in main, yet "merged" is judged against the main checkout's HEAD. Usage: sw6_probe.sh <path to worktree_sandbox.py>
+SCRIPT="$1"
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+P="$T/mock-repo"; mkdir -p "$P" && cd "$P" || exit 2
+git init -q -b main . && git config user.email t@t && git config user.name t
+echo hi > README.md && git add README.md && git commit -qm init
+python3 "$SCRIPT" create sb >/dev/null 2>&1; echo "create rc=$?"
+( cd .sandboxes/sb && echo s > s.txt && git add s.txt && git commit -qm "feat: sandbox work" && git rev-parse HEAD > "$T/sha" )
+SHA=$(cat "$T/sha"); echo "sandbox commit: ${SHA:0:12} · in main? $(git merge-base --is-ancestor "$SHA" main && echo yes || echo no)"
+git checkout -q --detach sandbox/sb; echo "main checkout HEAD: detached at sandbox/sb"
+echo "== cleanup --name sb (no --force)"; python3 "$SCRIPT" cleanup --name sb 2>&1 | sed 's/^/  | /'
+[ -d .sandboxes/sb ] && echo "folder: KEPT" || echo "folder: DELETED"
+git rev-parse -q --verify refs/heads/sandbox/sb >/dev/null && echo "branch: kept" || echo "branch: deleted"
+git checkout -q main
+echo "after 'git checkout main' — refs containing the commit: [$(git for-each-ref --contains "$SHA" --format='%(refname)' | tr '\n' ' ')]"
+echo "commit in main? $(git merge-base --is-ancestor "$SHA" main && echo yes || echo no) · unreachable without reflogs: $(git fsck --unreachable --no-reflogs 2>/dev/null | grep -c "$SHA")"

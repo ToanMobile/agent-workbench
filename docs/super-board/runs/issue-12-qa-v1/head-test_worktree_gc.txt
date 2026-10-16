@@ -1,0 +1,47 @@
+✔ gc --dry-run exits 0
+✔ --dry-run lists what it would delete and deletes nothing
+✔ gc exits 0
+✔ deleted: main-orphan-clean
+✔ deleted: main-gate-orphan
+✔ kept: main-merged
+✔ kept: main-empty
+✔ kept: main-links
+✔ kept: main-ahead
+✔ kept: main-orphan-unique
+✔ kept: main-orphan-secret
+✔ kept: other-thing
+✔ kept: main-notes
+✔ kept: main-backup
+✔ kept: main-orphan-memory
+✔ kept: main-orphan-detcommit
+✔ kept: main-orphan-staged
+✔ kept: main-orphan-trackedignored
+✔ kept: main-orphan-ignoreddata
+✔ kept: main-orphan-status
+✔ kept: main-review
+✔ kept: main-idle
+✔ kept: main-memnote
+✔ kept: main-regignored
+✔ kept: main-orphan-forcetracked
+✔ kept: main-orphan-outdir
+✔ kept: main-orphan-pm
+✔ kept: main-np
+✔ kept: main-orphan-cr
+✔ kept: main-gate-mixed
+✔ kept: main-orphan-sakey
+✔ kept: main-orphan-copy
+✔ kept: main-orphan-oldblob
+✔ the kept orphan names its unique file
+✔ the kept orphan names its secret
+✔ a new path holding bytes committed elsewhere is named as unique work (issue #12)
+✔   … a secret whatever the case of its name (Release.JKS), only the orphan's: copied into main (ignored there), named, then the orphan deleted
+✔ a folder younger than the age guard is left alone
+✔ --log records what it deleted, stamped
+✔   … and a run that deletes nothing adds nothing
+✔ an unreadable .git and a non-UTF-8 path in a ref: the sweep goes on, and records what it deleted
+✔ a second gc while one runs: silent no-op
+✔ main's own local config is untouched
+✔ a registered worktree stays registered: not gc's
+✔ a clean old checkout whose files main later moved or emptied elsewhere is deleted
+✅ test_worktree_gc: all passed
+bash universal-agent-devkit/tests/worktree_git/test_worktree_gc.sh  2.34s user 1.89s system 85% cpu 4.929 total

@@ -1,0 +1,63 @@
+✔ gc --dry-run exits 0
+✔ --dry-run lists what it would delete and deletes nothing
+✔ gc exits 0
+✔ deleted: main-orphan-clean
+✔ deleted: main-gate-orphan
+✔ kept: main-merged
+✔ kept: main-empty
+✔ kept: main-links
+✔ kept: main-ahead
+✔ kept: main-orphan-unique
+✔ kept: main-orphan-secret
+✔ kept: other-thing
+✔ kept: main-notes
+✔ kept: main-backup
+✔ kept: main-orphan-memory
+✔ kept: main-orphan-detcommit
+✔ kept: main-orphan-staged
+✔ kept: main-orphan-trackedignored
+✔ kept: main-orphan-ignoreddata
+✔ kept: main-orphan-status
+✔ kept: main-review
+✔ kept: main-idle
+✔ kept: main-memnote
+✔ kept: main-regignored
+✔ kept: main-orphan-forcetracked
+✔ kept: main-orphan-outdir
+✔ kept: main-orphan-pm
+✔ kept: main-np
+✔ kept: main-orphan-cr
+✔ kept: main-gate-mixed
+✔ kept: main-orphan-sakey
+✖ main-orphan-copy was deleted (it holds something unique or is not ours)
+✖ main-orphan-oldblob was deleted (it holds something unique or is not ours)
+✔ the kept orphan names its unique file
+✔ the kept orphan names its secret
+✖ no reason for main-orphan-copy/oldblob: ✔ gc: đã xoá $TMP/main-gate-orphan
+✔ gc: đã xoá $TMP/main-orphan-casesecret (chép vào main trước: Release.JKS)
+✔ gc: đã xoá $TMP/main-orphan-clean
+✔ gc: đã xoá $TMP/main-orphan-copy
+✔ gc: đã xoá $TMP/main-orphan-oldblob
+• gc: giữ $TMP/main-orphan-cr: lib.txt\r (tên có ký tự xuống dòng)
+• gc: giữ $TMP/main-orphan-detcommit: work.txt (nội dung không có trong commit nào còn giữ)
+• gc: giữ $TMP/main-orphan-forcetracked: build/keep.txt (nội dung không có trong commit nào còn giữ)
+• gc: giữ $TMP/main-orphan-ignoreddata: data.sqlite (nội dung không có trong commit nào còn giữ); .agents/local/handoff.md (nội dung không có trong commit nào còn giữ); .idea/workspace.xml (nội dung không có trong commit nào còn giữ)
+• gc: giữ $TMP/main-orphan-memory: .agents/local/memory/claude-auto/n.md (ghi chú memory không có ở main)
+• gc: giữ $TMP/main-orphan-outdir: out/new.txt (nội dung không có trong commit nào còn giữ)
+• gc: giữ $TMP/main-orphan-pm: .antigravity-pm/tasks/T1/plan.md (nội dung không có trong commit nào còn giữ)
+• gc: giữ $TMP/main-orphan-sakey: build/service-account.json (file bí mật chỉ có ở đây: chép về main trước)
+• gc: giữ $TMP/main-orphan-secret: local.properties (file bí mật KHÁC bản ở main: không ghi đè)
+• gc: giữ $TMP/main-orphan-staged: st.txt (nội dung không có trong commit nào còn giữ)
+• gc: giữ $TMP/main-orphan-status: .agents/regression_status.json (nội dung không có trong commit nào còn giữ)
+• gc: giữ $TMP/main-orphan-trackedignored: config/app.json (nội dung không có trong commit nào còn giữ)
+• gc: giữ $TMP/main-orphan-unique: notes.md (nội dung không có trong commit nào còn giữ)
+✔   … a secret whatever the case of its name (Release.JKS), only the orphan's: copied into main (ignored there), named, then the orphan deleted
+✔ a folder younger than the age guard is left alone
+✔ --log records what it deleted, stamped
+✔   … and a run that deletes nothing adds nothing
+✔ an unreadable .git and a non-UTF-8 path in a ref: the sweep goes on, and records what it deleted
+✔ a second gc while one runs: silent no-op
+✔ main's own local config is untouched
+✔ a registered worktree stays registered: not gc's
+✔ a clean old checkout whose files main later moved or emptied elsewhere is deleted
+❌ test_worktree_gc: 3 failed

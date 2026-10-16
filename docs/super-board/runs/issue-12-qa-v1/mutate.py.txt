@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""QA #12: apply ONE named mutant to worktree.py in place (exactly one match, else exit 3). Restore with `git show HEAD:<path> > <path>`."""
+import sys
+
+PATH = "universal-agent-devkit/scripts/git/worktree.py"
+ORIG = "if (sha, rel) not in versions and (sha, rel) not in more and not rebuildable:"
+MUTANTS = {
+    # G2: the path-history answer is checked by blob only, not by (blob, path)
+    "G2": "if (sha, rel) not in versions and sha not in {s for s, _p in more} and not rebuildable:",
+    # G5: "committed" = the blob exists anywhere and the path is tracked somewhere (the pair is not checked)
+    "G5": "if not (sha in blobs and rel in tracked) and not rebuildable:",
+}
+name = sys.argv[1]
+src = open(PATH, encoding="utf-8").read()
+if src.count(ORIG) != 1:
+    sys.exit(3)
+open(PATH, "w", encoding="utf-8").write(src.replace(ORIG, MUTANTS[name]))
+print(f"mutant {name} applied")
