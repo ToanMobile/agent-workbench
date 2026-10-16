@@ -24,30 +24,35 @@ REPOS = [
         "slug": "agent-workbench",
         "name": "Agent Workbench (#1)",
         "dir": "/Volumes/Data/Toan/agent-workbench",
+        "tuios_window": "agent-workbench",
         "url": "https://github.com/users/ToanMobile/projects/1/views/2"
     },
     {
         "slug": "officereader",
         "name": "OfficeReader (#2)",
         "dir": "/Volumes/Data/Toan/OfficeReader/OfficeReader",
+        "tuios_window": "OfficeReader",
         "url": "https://github.com/users/ToanMobile/projects/2/views/2"
     },
     {
         "slug": "goods-triple-shelf-match-3d",
         "name": "Goods 3D (#3)",
         "dir": "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D",
+        "tuios_window": "Goods-Triple",
         "url": "https://github.com/users/ToanMobile/projects/3/views/2"
     },
     {
         "slug": "geelyex2",
         "name": "GeelyEx2 (#4)",
         "dir": "/Volumes/Data/Toan/GeelyEx2",
+        "tuios_window": "GeelyEx2",
         "url": "https://github.com/users/ToanMobile/projects/4/views/2"
     },
     {
         "slug": "neighbours-from-hell",
         "name": "Neighbours From Hell (#5)",
         "dir": "/Volumes/Data/Toan/Game/Neighbours-From-Hell",
+        "tuios_window": "Neighbours",
         "url": "https://github.com/users/ToanMobile/projects/5/views/2"
     },
 ]
@@ -57,6 +62,15 @@ def get_running_pids(slug):
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     return [p.strip() for p in r.stdout.strip().splitlines() if p.strip()]
 
+def attach_tuios_log(tuios_win, rdir):
+    tuios_bin = "/Users/alex/.local/bin/tuios"
+    monitor_py = "/Volumes/Data/Toan/agent-workbench/universal-agent-devkit/scripts/governance/super_board_monitor.py"
+    if not os.path.isfile(tuios_bin):
+        return
+    subprocess.run([tuios_bin, "send-keys", "-s", "factory", "-w", tuios_win, "ctrl+c"], capture_output=True)
+    mon_cmd = f"python3 '{monitor_py}' '{rdir}'\n"
+    subprocess.run([tuios_bin, "send-text", "-s", "factory", "-w", tuios_win, mon_cmd], capture_output=True)
+
 def start_all():
     print("=================================================================")
     print("  🚀 KHỞI ĐỘNG ĐỒNG THỜI 5 SUPER-BOARD RUNNERS (TỰ HÀNH 24/7)")
@@ -65,14 +79,10 @@ def start_all():
         rdir = repo["dir"]
         slug = repo["slug"]
         name = repo["name"]
+        tuios_win = repo["tuios_window"]
         
         if not os.path.isdir(rdir):
             print(f"⚠️  Bỏ qua {name}: không tìm thấy thư mục {rdir}")
-            continue
-
-        pids = get_running_pids(slug)
-        if pids:
-            print(f"✅ {name:<30} : Đang chạy sẵn (PID: {', '.join(pids)})")
             continue
 
         # Đảm bảo thư mục log tồn tại
@@ -80,12 +90,23 @@ def start_all():
         os.makedirs(os.path.join(rdir, "docs", "super-board", "inflight"), exist_ok=True)
 
         log_path = os.path.join(rdir, "docs", "super-board", "runner.log")
+        worker_log_path = os.path.join(rdir, "docs", "super-board", "current-worker.log")
+        Path(log_path).touch(exist_ok=True)
+        Path(worker_log_path).touch(exist_ok=True)
+
+        pids = get_running_pids(slug)
+        if pids:
+            attach_tuios_log(tuios_win, rdir)
+            print(f"✅ {name:<30} : Đang chạy sẵn (PID: {', '.join(pids)})")
+            continue
+
         run_script = os.path.join(rdir, ".claude", "bin", "super-board-run.sh")
         if not os.path.isfile(run_script):
             run_script = "/Volumes/Data/Toan/agent-workbench/.claude/bin/super-board-run.sh"
 
-        cmd = f"cd '{rdir}' && nohup '{run_script}' {slug} > '{log_path}' 2>&1 &"
+        cmd = f"cd '{rdir}' && SB_DAEMON=1 nohup '{run_script}' {slug} > '{log_path}' 2>&1 &"
         subprocess.run(cmd, shell=True)
+        attach_tuios_log(tuios_win, rdir)
         
         # Lấy PID mới khởi động
         new_pids = get_running_pids(slug)
@@ -93,7 +114,7 @@ def start_all():
         print(f"🚀 {name:<30} : Đã khởi động ngầm (PID: {pid_str})")
         print(f"   Log: {log_path}")
 
-    print("\n🎉 Toàn bộ 5 Runners đã được kích hoạt!")
+    print("\n🎉 Toàn bộ 5 Runners đã được kích hoạt & hiển thị trên TUIOS (tuios attach factory)!")
     print("💡 Bây giờ bạn vào BẤT KỲ Project Board nào kéo thẻ sang Ready là máy tự động làm!")
 
 def stop_all():

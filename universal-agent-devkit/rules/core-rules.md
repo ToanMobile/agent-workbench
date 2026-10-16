@@ -22,6 +22,9 @@ Thứ tự: Làm & Chạy test cục bộ → Self Review (Diff + DEMO/LIVE) →
      2. **Đã chặn đứng bug cũ nào (Zero Reopened Bugs):** Danh sách các rào chắn bất biến lịch sử (`immutable_guards`) và test hồi quy được chạy lại đạt `[x] PASS`.
      3. **Nguy cơ bug mới nào đã triệt tiêu (Zero Collateral Damage):** Kết quả rà soát điểm gọi ngược (inbound callers) và module liên đới, xác nhận không có tác dụng phụ.
      4. **Trạng thái an toàn mã nguồn:** Kết quả quét bí mật/token (SẠCH), chống code lười biếng (0 placeholder), và phân tích tĩnh Alibaba OCR (0 leak).
+   - **Quy chuẩn ngôn ngữ báo cáo, bàn giao & comment:**
+     - **Mặc định:** Comment mã nguồn (code comments), báo cáo nghiệm thu 4 mục, bàn giao, PR reviews, và commit messages mặc định viết bằng **Tiếng Anh (English)**.
+     - **Dự án cấu hình `"lang": "vi"`:** Toàn bộ comment mã nguồn, báo cáo nghiệm thu 4 mục (Đã fix gì, Chặn bug cũ, Nguy cơ bug mới, An toàn mã nguồn), bàn giao, và commit messages viết bằng **Tiếng Việt**. Tên biến/hàm/class và đường dẫn giữ Tiếng Anh.
    - Kèm **Biên Bản Phản Biện Song Phương Claude ↔ Antigravity (CHỈ BẮT BUỘC VỚI TASK LỚN):**
      - Với task lớn (≥2 modules, ≥3 files, >200 LOC net diff hoặc luồng rủi ro cao):
        - **Điểm số đánh giá chất lượng (Thang 100):** Claude Score: X/100 · Antigravity Score: Y/100 · Điểm đồng thuận: Z/100 (ngưỡng nghiệm thu $\ge 95/100$, không có tiêu chuẩn nào $< 90$).
@@ -32,6 +35,7 @@ Thứ tự: Làm & Chạy test cục bộ → Self Review (Diff + DEMO/LIVE) →
    - Báo cáo thiếu bằng chứng hoặc thiếu các mục trên bị coi là CHƯA ĐỦ ĐIỀU KIỆN nghiệm thu.
 4. **Commit & Bàn giao:**
    - Commit bằng ngôn ngữ rõ ràng, tiền tố conventional: `feat:`, `fix:`, `test:`, `chore:`, `docs:`.
+   - Mặc định: commit subject và body viết bằng tiếng Anh. Khi dự án cấu hình `"lang": "vi"`, commit subject và body viết bằng tiếng Việt.
    - Báo cáo kết quả kiểm thử kèm ảnh nghiệm thu thành công đầy đủ cho Tech Lead / Reviewer.
 5. **Hoàn tất tự động (Task Completion Card):** quy tắc gốc ở `AGENTS.md` §3 (TASK COMPLETION CARD) — tự tiếp tục tới trạng thái kết thúc hợp lệ, không bao giờ bắt người dùng gõ `continue` hay `làm tiếp`.
 
@@ -55,7 +59,7 @@ Thứ tự: Làm & Chạy test cục bộ → Self Review (Diff + DEMO/LIVE) →
 
 ## 5. Quy chuẩn Chống Lười Biếng (Anti-Laziness & Integrity)
 - **Nghiêm cấm Code Placeholder lười biếng:** Tuyệt đối KHÔNG ĐƯỢC sinh code chứa các đoạn comment lười biếng như `// ... existing code ...`, `/* keep remaining code */`, `# TODO: implement rest` làm mất mát logic nguyên bản của người dùng.
-- **Thay thế nguyên khối liền mạch:** Mọi chỉnh sửa mã nguồn phải bảo toàn tính toàn vẹn của các import, docstring, comment và hàm liên quan.
+- **Thay thế nguyên khối liền mạch:** Mọi chỉnh sửa mã nguồn phải bảo toàn tính toàn vẹn của các import, docstring, comment và hàm liên quan. Comment code viết bằng tiếng Anh theo mặc định, hoặc tiếng Việt nếu dự án cấu hình `"lang": "vi"`.
 - **Bảo toàn tính tương thích ngược (Backward Compatibility):** Không tự ý phá vỡ interface/chữ ký hàm công khai đang có khi chưa kiểm tra toàn bộ điểm gọi (caller blast radius).
 
 ## 6. Quy chuẩn Giao diện & Trải nghiệm Tiếp cận (UI/UX & a11y Gate)
@@ -123,7 +127,7 @@ Mọi dòng mã sinh ra hoặc sửa đổi BẮT BUỘC phải tuân thủ 5 ng
 ## 13. Kỷ luật Giao tiếp Ngắn gọn & Báo cáo B10 (Plain-Language B10 Discipline)
 1. **Quy tắc 3 dòng mở đầu:**
    - Mọi báo cáo tiến độ/kết quả bàn giao BẮT BUỘC mở đầu bằng 3 dòng súc tích:
-     - **Dòng 1 — Trạng thái một từ:** `XONG` / `CHƯA XONG` / `CHỜ DUYỆT`.
+     - **Dòng 1 — Trạng thái một từ:** `XONG` / `CHƯA XONG` / `CHỜ DUYỆT` (hoặc `DONE` / `NOT DONE` / `AWAITING APPROVAL` nếu dùng tiếng Anh).
      - **Dòng 2 — Kết quả người dùng nhận được:** Mô tả giá trị thực tế bằng ngôn ngữ đời thường, ngắn gọn.
      - **Dòng 3 — Bước tiếp theo:** Hành động kế tiếp cần thực hiện.
 2. **Giới hạn độ dài & Tránh rối mắt:**

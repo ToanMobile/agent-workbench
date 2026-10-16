@@ -278,6 +278,15 @@ if ! git -C "$SCRATCH" merge "origin/${BASE}" --no-edit --quiet 2>/dev/null; the
   exit 5
 fi
 
+# Populate git-ignored DevKit symlinks so post-fix-gate / REG-WB-CONFIG-01 succeed in SCRATCH
+if [ -f "$REPO_PATH/universal-agent-devkit/bin/install.sh" ]; then
+  bash "$REPO_PATH/universal-agent-devkit/bin/install.sh" -t "$SCRATCH" -a claude -y >/dev/null 2>&1 || true
+  git -C "$SCRATCH" checkout -q -- AGENTS.md .claude/settings.json 2>/dev/null || true
+elif [ -f "$REPO_PATH/.agents/devkit/bin/install.sh" ]; then
+  bash "$REPO_PATH/.agents/devkit/bin/install.sh" -t "$SCRATCH" -a claude -y >/dev/null 2>&1 || true
+  git -C "$SCRATCH" checkout -q -- AGENTS.md .claude/settings.json 2>/dev/null || true
+fi
+
 for cmd in "${VERIFY[@]}"; do
   say "verify: ${cmd}"
   if ! ( cd "$SCRATCH" && eval "$cmd" ) >"$SCRATCH/.verify.log" 2>&1; then

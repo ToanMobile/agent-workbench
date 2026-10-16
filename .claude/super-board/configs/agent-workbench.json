@@ -25,11 +25,12 @@
     "checks": {},
     "human_steps": []
   },
-  "no_progress_cycles": 6,
+  "tick_seconds": 30,
+  "no_progress_cycles": 60,
   "truth_gate": "non-trivial",
   "truth_threshold": 70,
   "verify_commands": [
-    "python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief"
+    "python3 universal-agent-devkit/bin/post-fix-gate.py --run-tests --full --brief --auto-approve-tests"
   ],
   "collect": { "sources": ["github", "prs", "architecture"], "window_days": 14 },
   "notifications": { "channel": "session", "chat_id": null, "bot_identity": "ToanMobile" }

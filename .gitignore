@@ -34,6 +34,7 @@ tmp/
 .claude/audit-gate/
 .agents/context/
 .agents/devkit
+.agents/hooks/
 .agents/regression_matrix.generated.json
 .devkit_backups.log
 .devkit-files
