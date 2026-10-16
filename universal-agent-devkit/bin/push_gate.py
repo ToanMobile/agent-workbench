@@ -494,8 +494,16 @@ def receipt_problem(top, rp, receipt, rev="HEAD"):
     return None
 
 
-def check(cwd, rev="HEAD", tag_remote=None):
-    """(ok, reason)."""
+def linked_worktrees(top):
+    """Work trees of the repository other than top (`git worktree list --porcelain`); [] when git cannot say."""
+    rc, out = git(top, "worktree", "list", "--porcelain")
+    if rc != 0:
+        return []
+    return [ln[9:] for ln in out.splitlines() if ln.startswith("worktree ") and os.path.realpath(ln[9:]) != os.path.realpath(top)]
+
+
+def check(cwd, rev="HEAD", tag_remote=None, linked=False):
+    """(ok, reason). linked=True: judging a linked worktree's own receipt, no further fallback."""
     top, why = toplevel(cwd)
     if why:
         return False, f"repository without a work tree here ({why}): cannot find the gate receipt"
@@ -522,6 +530,14 @@ def check(cwd, rev="HEAD", tag_remote=None):
     if receipt is not None and receipt.get("exit") == 0 and receipt.get("head"):
         problem = receipt_problem(top, rp, receipt, rev)
     if receipt is None or problem or receipt.get("exit") != 0 or not receipt.get("head"):
+        if linked:
+            return False, "no usable receipt in this linked worktree"
+        # Trunk mode (issue #5): the gate ran in a linked worktree and wrote its receipt under that worktree's git dir; main is
+        # merge-only, so the push from main finds none. The receipt of a linked worktree is judged exactly like main's own.
+        rc, sha = git(top, "rev-parse", "--verify", "-q", rev + "^{commit}")
+        for wt in linked_worktrees(top) if rc == 0 else []:
+            if check(wt, sha.strip(), tag_remote, linked=True)[0]:
+                return True, f"covered by the gate receipt of the linked worktree {wt}"
         ok, why_not = approved(top, "@{u}.." + rev)
         if ok:
             return True, why_not
