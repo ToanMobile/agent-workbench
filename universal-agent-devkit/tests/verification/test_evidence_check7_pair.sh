@@ -89,6 +89,10 @@ case("RED runner, fix, then the gate PASS: the pair holds", [RED, E, ["bash", GA
 case("RED, fix, GREEN, then a test file is edited: the pair holds", [RED, E, GREEN, TE], 0)
 case("RED, fix, gate PASS, then a test file is edited: the pair holds", [RED, E, ["bash", GATE_CMD, G_PASS], TE], 0)
 case("temp dir: RED, fix, GREEN, then a test file is edited: the pair holds", [RED, SE, GREEN, STE], 0)
+# AC2 nói "sửa hoặc commit": lệnh git commit file test vừa sửa cũng không làm mất cặp (QA vòng 2)
+COMMIT = ["bash", "git commit -m '🧪 [test] ghim test_foo' -- tests/test_foo.py",
+          "[issue-4 1a2b3c4] 🧪 [test] ghim test_foo\n 1 file changed, 1 insertion(+)"]
+case("RED, fix, GREEN, then a test file is edited and committed: the pair holds", [RED, E, GREEN, TE, COMMIT], 0)
 # fix chỉ sửa file test (test flaky, conftest) được xét theo lần sửa đó, như trên main
 case("RED, only a test file is edited, GREEN: the pair holds", [RED, TE, GREEN], 0)
 # một file .py probe trong scratchpad không chiếm marker khi project có lần sửa (project xét trước thư mục tạm)

@@ -1,0 +1,24 @@
+### kit head e5cb84e
+G1 AC2 commit: RED, fix, GREEN, git commit of the test file    exit=0 
+G1b AC2 edit+commit: RED, fix, GREEN, test edit, git commit    exit=0 
+G1c commit + 'test pass' (check 2): fix, GREEN, git commit     exit=0 
+G2 gate FAIL is no RED: gate FAIL, fix, gate PASS              exit=2 CHECK 7
+G3 gate PASS 0/0 as GREEN half: RED, fix, gate 0/0             exit=2 CHECK 7
+G4 gate FAIL as GREEN half: RED, fix, gate FAIL                exit=2 CHECK 7
+G5 Write (not Edit) of the test file after GREEN               exit=0 
+G6 Kotlin src/test edit after GREEN                            exit=0 
+G7 nested tests/unit/conftest.py edit after GREEN              exit=2 CHECK 7
+G8 PRODUCTION src/test_utils.py edit after GREEN               exit=0 
+G9 RED, fix, GREEN, test edit, RED again (no run after)        exit=0 
+### kit origin/main 22f5c75
+G1 AC2 commit: RED, fix, GREEN, git commit of the test file    exit=0 
+G1b AC2 edit+commit: RED, fix, GREEN, test edit, git commit    exit=2 CHECK 7
+G1c commit + 'test pass' (check 2): fix, GREEN, git commit     exit=0 
+G2 gate FAIL is no RED: gate FAIL, fix, gate PASS              exit=2 CHECK 7
+G3 gate PASS 0/0 as GREEN half: RED, fix, gate 0/0             exit=2 CHECK 7
+G4 gate FAIL as GREEN half: RED, fix, gate FAIL                exit=2 CHECK 7
+G5 Write (not Edit) of the test file after GREEN               exit=2 CHECK 7
+G6 Kotlin src/test edit after GREEN                            exit=2 CHECK 7
+G7 nested tests/unit/conftest.py edit after GREEN              exit=2 CHECK 7
+G8 PRODUCTION src/test_utils.py edit after GREEN               exit=2 CHECK 7
+G9 RED, fix, GREEN, test edit, RED again (no run after)        exit=2 CHECK 7

@@ -1,0 +1,11 @@
+$ CLAUDE_PROJECT_DIR=<worktree issue-4-qa> python3 universal-agent-devkit/bin/post-fix-gate.py --run-tests --full --force-full --brief --auto-approve-tests --diff origin/main --timeout 3600
+  KẾT LUẬN CỔNG POST-FIX AUDIT: PASS — ĐỦ ĐIỀU KIỆN NGHIỆM THU & BÀN GIAO
+  • Test hồi quy đạt: 7/7
+  • Lớp tĩnh (bí mật, lười biếng, dependency, hiệu năng, nuốt lỗi, log): đạt
+  • Gate không xác minh: DESIGN.md/a11y, RED/GREEN, Immutable Guards, OpenCodeReview. Ảnh nghiệm thu không nằm trong exit code; agent vẫn phải gắn PNG của lượt này trước khi nói XONG, trừ khi thay đổi chắc chắn không lên màn hình (essentials bước 4).
+══════════════════════════════════════════════════════════════════════════════════════
+
+  • Regression checklist: không ghi trong worktree liên kết (thêm --checklist để ghi); kết quả chạy giữ trong state riêng của worktree
+  Báo cáo: /Volumes/Data/Toan/agent-workbench/.git/worktrees/issue-4-qa/postfix-gate/last_report.md
+  (đầy đủ: /Volumes/Data/Toan/agent-workbench/.git/worktrees/issue-4-qa/postfix-gate/last_output.log — last_output.log)
+GATE EXIT=0

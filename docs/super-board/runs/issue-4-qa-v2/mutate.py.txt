@@ -1,0 +1,32 @@
+# Chạy test cặp trên từng bản đột biến của hook (bản sao trong scratch, không đụng worktree).
+import os, shutil, subprocess, sys
+WT = sys.argv[1]; OUT = sys.argv[2]; TEST = sys.argv[3]
+SRC = os.path.join(WT, "universal-agent-devkit")
+HOOK = "hooks/test_evidence_gate.sh"
+MUTANTS = {
+  "M1-check7-green-only": ('r[1] > marker and r[5] in ("green", "gate-green")', 'r[1] > marker and r[5] == "green"'),
+  "M2-fix-marker-counts-test-files": ("                        if not is_test_path(fp):\n                            last_fix_edit_idx = blk_idx",
+                                      "                        last_fix_edit_idx = blk_idx"),
+  "M3-scratch-fix-marker-counts-test-files": ("                            if not is_test_path(fp):\n                                last_scratch_fix_idx = blk_idx",
+                                              "                            last_scratch_fix_idx = blk_idx"),
+  "M4-check2-uses-fix-marker": ('if r[1] > last_src_edit_idx and r[5] in ("green", "gate-green")]',
+                                'if r[1] > last_fix_edit_idx and r[5] in ("green", "gate-green")]'),
+  "M5-no-test-only-fallback": ("marker = next((m for m in tier if m >= 0), -1)", "marker = tier[0]"),
+}
+only = sys.argv[4:] or list(MUTANTS)
+for name in only:
+    old, new = MUTANTS[name]
+    kit = os.path.join(OUT, name, "universal-agent-devkit")
+    shutil.rmtree(os.path.join(OUT, name), ignore_errors=True)
+    shutil.copytree(SRC, kit, symlinks=True, ignore=shutil.ignore_patterns("tests"))
+    shutil.copytree(os.path.join(SRC, "tests", "lib"), os.path.join(kit, "tests", "lib"))
+    p = os.path.join(kit, HOOK)
+    t = open(p).read()
+    assert t.count(old) == 1, (name, t.count(old))
+    open(p, "w").write(t.replace(old, new))
+    r = subprocess.run(["bash", TEST], env=dict(os.environ, EG_KIT=kit), capture_output=True, text=True)
+    bad = [l for l in r.stdout.splitlines() if l.startswith("✖")]
+    print("== %s: exit %d, %d case(s) red" % (name, r.returncode, len(bad)))
+    for l in bad:
+        print("   " + l[:150])
+    shutil.rmtree(os.path.join(OUT, name), ignore_errors=True)
