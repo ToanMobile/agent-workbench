@@ -264,13 +264,126 @@ git -C "$P" branch -q -D sandbox/race_sb 2>/dev/null
 python3 "$SCRIPT" create co_sb >/dev/null 2>&1
 git -C "$P" worktree add -q -f "$TMP/co-wt" sandbox/co_sb
 CO_OUT=$(python3 "$SCRIPT" cleanup --name co_sb 2>&1)
-if git -C "$P" rev-parse --verify -q "sandbox/co_sb" >/dev/null && git -C "$TMP/co-wt" rev-parse --verify -q HEAD >/dev/null; then
+if git -C "$P" rev-parse --verify -q "sandbox/co_sb" >/dev/null && git -C "$TMP/co-wt" rev-parse --verify -q HEAD >/dev/null \
+   && [ -d "$P/.sandboxes/co_sb" ]; then   # từ chối TRƯỚC rmtree: không để thư mục mất mà nhánh còn (review)
   ok "cleanup keeps a sandbox branch another worktree has checked out"
 else
   fail "cleanup deleted a branch another worktree had checked out: $CO_OUT"
 fi
 git -C "$P" worktree remove --force "$TMP/co-wt"
-git -C "$P" branch -q -D sandbox/co_sb 2>/dev/null
+python3 "$SCRIPT" cleanup --name co_sb --force >/dev/null 2>&1
+# review: checkout chạy lệnh đứng trên chính nhánh sandbox → mốc "đã merge" là chính nhánh đó, phép kiểm luôn đúng → giữ, trước rmtree
+python3 "$SCRIPT" create self_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/self_sb" && echo s > self.txt && git add self.txt && git commit -q -m "feat: self" )
+git -C "$P" checkout -q --ignore-other-worktrees sandbox/self_sb
+SELF_OUT=$(python3 "$SCRIPT" cleanup --name self_sb 2>&1)
+git -C "$P" checkout -q "$MAIN_BR"
+if [ -f "$P/.sandboxes/self_sb/self.txt" ] && git -C "$P" rev-parse --verify -q "sandbox/self_sb" >/dev/null && echo "$SELF_OUT" | grep -q "chính nhánh sandbox/self_sb"; then
+  ok "cleanup refuses when the checkout running it stands on the sandbox branch itself"
+else
+  fail "cleanup judged a sandbox against its own branch: $SELF_OUT"
+fi
+python3 "$SCRIPT" cleanup --name self_sb --force >/dev/null 2>&1
+# review: refs/heads/sandbox/<x> là symref trỏ main → xoá đúng symref, không xoá main qua nó
+MAIN_SHA=$(git -C "$P" rev-parse "refs/heads/$MAIN_BR")
+git -C "$P" symbolic-ref refs/heads/sandbox/sym_sb "refs/heads/$MAIN_BR"
+SYM_OUT=$(python3 "$SCRIPT" cleanup --name sym_sb 2>&1)
+if git -C "$P" show-ref --verify -q "refs/heads/$MAIN_BR" && ! git -C "$P" show-ref --verify -q "refs/heads/sandbox/sym_sb" \
+   && ! git -C "$P" symbolic-ref -q refs/heads/sandbox/sym_sb >/dev/null 2>&1; then
+  ok "cleanup deletes a symref sandbox branch itself, never the branch it points to"
+else
+  fail "cleanup followed a sandbox symref (main gone?): $SYM_OUT"
+fi
+git -C "$P" show-ref --verify -q "refs/heads/$MAIN_BR" || git -C "$P" update-ref "refs/heads/$MAIN_BR" "$MAIN_SHA"   # lỗi thì dựng lại main cho các ca sau
+# review: nhánh sandbox bị xoá đồng thời giữa bước kiểm và bước xoá → đã sạch, không liệt kê "chưa dọn"
+python3 "$SCRIPT" create gone_sb >/dev/null 2>&1
+GONE_OUT=$(python3 - "$DEVKIT_DIR/scripts/git" "$P" 2>&1 <<'PYEOF'
+import subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import worktree_sandbox as w
+orig = w.sandbox_unmerged_commits
+def gone(*a, **k):
+    r = orig(*a, **k)
+    subprocess.run(["git", "-C", sys.argv[2], "update-ref", "-d", "refs/heads/sandbox/gone_sb"], check=True)
+    return r
+w.sandbox_unmerged_commits = gone
+w.cleanup_sandbox(name="gone_sb")
+PYEOF
+)
+if [ ! -d "$P/.sandboxes/gone_sb" ] && echo "$GONE_OUT" | grep -q "✅" && ! echo "$GONE_OUT" | grep -q "chưa dọn"; then
+  ok "cleanup counts a sandbox whose branch vanished meanwhile as cleaned"
+else
+  fail "cleanup listed a sandbox whose branch is already gone as not cleaned: $GONE_OUT"
+fi
+# review: git không trả lời được nhánh còn hay mất sau khi xoá lỗi (rev-parse rc 128) → giữ trong danh sách, không báo ✓
+python3 "$SCRIPT" create err_sb >/dev/null 2>&1
+ERR_OUT=$(python3 - "$DEVKIT_DIR/scripts/git" 2>&1 <<'PYEOF'
+import subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import worktree_sandbox as w
+orig = w.run_cmd
+def broken(cmd, *a, **k):
+    if cmd[:2] == ["git", "update-ref"]:
+        return subprocess.CompletedProcess(cmd, 1, "", "fatal: simulated")
+    if cmd[:2] == ["git", "rev-parse"] and cmd[-1] == "refs/heads/sandbox/err_sb":
+        return subprocess.CompletedProcess(cmd, 128, "", "fatal: simulated")
+    return orig(cmd, *a, **k)
+w.run_cmd = broken
+print("kept:", w.cleanup_sandbox(name="err_sb"))
+PYEOF
+)
+if echo "$ERR_OUT" | grep -q "kept: \['err_sb'\]"; then
+  ok "cleanup keeps a sandbox in the not-cleaned list when git cannot say whether its branch survived"
+else
+  fail "cleanup read a git error as 'branch gone': $ERR_OUT"
+fi
+python3 "$SCRIPT" cleanup --name err_sb --force >/dev/null 2>&1
+# review: đăng ký worktree của chính sandbox bị `git worktree lock` → từ chối trước rmtree (như `git worktree remove`), không để đăng ký ma + ✅
+python3 "$SCRIPT" create lock_sb >/dev/null 2>&1
+git -C "$P" worktree lock "$P/.sandboxes/lock_sb"
+LOCK_OUT=$(python3 "$SCRIPT" cleanup --name lock_sb 2>&1)
+if [ -d "$P/.sandboxes/lock_sb" ] && git -C "$P" rev-parse --verify -q "sandbox/lock_sb" >/dev/null && echo "$LOCK_OUT" | grep -q "khoá"; then
+  ok "cleanup refuses a sandbox whose worktree registration is locked"
+else
+  fail "cleanup removed a locked sandbox registration's folder/branch: $LOCK_OUT"
+fi
+git -C "$P" worktree unlock "$P/.sandboxes/lock_sb"
+python3 "$SCRIPT" cleanup --name lock_sb --force >/dev/null 2>&1
+# OCR: cùng ca khoá nhưng nhánh sandbox đã mất (sandbox đứng HEAD tách rời) → vẫn từ chối, không cần nhánh mới kiểm khoá
+python3 "$SCRIPT" create lock_nb >/dev/null 2>&1
+git -C "$P/.sandboxes/lock_nb" checkout -q --detach
+git -C "$P" branch -q -D sandbox/lock_nb
+git -C "$P" worktree lock "$P/.sandboxes/lock_nb"
+LNB_OUT=$(python3 "$SCRIPT" cleanup --name lock_nb 2>&1)
+if [ -d "$P/.sandboxes/lock_nb" ] && echo "$LNB_OUT" | grep -q "khoá"; then
+  ok "cleanup refuses a locked sandbox registration even when its branch is gone"
+else
+  fail "cleanup removed a locked sandbox whose branch was gone: $LNB_OUT"
+fi
+git -C "$P" worktree unlock "$P/.sandboxes/lock_nb"
+python3 "$SCRIPT" cleanup --name lock_nb --force >/dev/null 2>&1
+# review: worktree khác từng checkout nhánh sandbox nhưng thư mục đã mất (prunable) → không chặn dọn
+python3 "$SCRIPT" create prn_sb >/dev/null 2>&1
+git -C "$P" worktree add -q -f "$TMP/prn-wt" sandbox/prn_sb
+rm -rf "$TMP/prn-wt"
+PRN_OUT=$(python3 "$SCRIPT" cleanup --name prn_sb 2>&1)
+if [ ! -d "$P/.sandboxes/prn_sb" ] && ! git -C "$P" rev-parse --verify -q "sandbox/prn_sb" >/dev/null; then
+  ok "a prunable registration whose folder is gone does not block cleanup"
+else
+  fail "a prunable registration blocked cleanup: $PRN_OUT"
+fi
+# review: merge-winner khi checkout đứng trên chính nhánh sandbox → merge vào chính nó, không vào nhánh chính → từ chối
+python3 "$SCRIPT" create g_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/g_sb" && echo g > g.txt && git add g.txt && git commit -q -m "feat: g" )
+git -C "$P" checkout -q --ignore-other-worktrees sandbox/g_sb
+if G_OUT=$(python3 "$SCRIPT" merge-winner g_sb 2>&1); then G_RC=0; else G_RC=1; fi
+git -C "$P" checkout -q "$MAIN_BR"
+if [ "$G_RC" -ne 0 ] && echo "$G_OUT" | grep -q "chính nhánh sandbox/g_sb" && [ -d "$P/.sandboxes/g_sb" ]; then
+  ok "merge-winner refuses when the checkout stands on the sandbox branch itself"
+else
+  fail "merge-winner merged a sandbox into its own branch (rc=$G_RC): $G_OUT"
+fi
+python3 "$SCRIPT" cleanup --name g_sb --force >/dev/null 2>&1
 # merge-winner merge được nhánh nhưng cleanup giữ sandbox (commit chỉ reflog còn giữ): không được báo "đã dọn" sau cảnh báo
 python3 "$SCRIPT" create mw_sb >/dev/null 2>&1
 ( cd "$P/.sandboxes/mw_sb" && echo x > mw.txt && git add mw.txt && git commit -q -m "feat: mw" && git checkout -q --detach \
