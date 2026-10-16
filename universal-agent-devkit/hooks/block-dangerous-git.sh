@@ -980,9 +980,10 @@ def subst_end(text, i):
     return None if depth else j
 
 def strip_subst(text, inners=None, outs=None):
-    """Each $(...), <(...), >(...) and backtick span becomes one SUBST word; single-quoted text and
-    comments stay literal. None when a span is not closed. The text inside each span (a command
-    the shell runs) is appended to inners, and that of each unquoted >(...) to outs too."""
+    """Each $(...), <(...), >(...) and backtick span becomes one SUBST word; single-quoted text stays
+    literal. None when a span is not closed. The text inside each span (a command the shell runs) is
+    appended to inners, and that of each unquoted >(...) to outs too. It reads a text whose comments
+    are already gone (drop_comments, 15/10 r6): a # here is data."""
     out, i, n, dq = [], 0, len(text), False
     while i < n:
         c = text[i]
@@ -999,9 +1000,6 @@ def strip_subst(text, inners=None, outs=None):
             dq = not dq
             out.append(c)
             i += 1
-        elif c == "#" and not dq and (i == 0 or text[i - 1] in " \t\n;&|("):
-            k = text.find("\n", i)
-            i = n if k < 0 else k
         elif c in "$<>" and text.startswith("(", i + 1):
             j = subst_end(text, i)
             if j is None:
@@ -1075,12 +1073,17 @@ def outside_single_quotes(text):
 def drop_comments(text):
     """The text without its shell comments: a # that begins a word, outside quotes, up to the end of its line. A # inside a word
     (a#b, $#, an escaped space before it, the ) that ends a substitution), inside ${ } or inside backticks is data, as in bash.
-    Quotes, ${ or a backtick still open at the end: the text whole (fail closed). 2026-10-10: shlex dropped everything after any #,
+    Quotes, ${ or a backtick still open at the end: from where the first of them opened the text stays whole (fail closed), the comments before it
+    are dropped (15/10 r6: the whole text kept its comments, and the apostrophe of one paired with a later real quote in the scanners after this).
+    2026-10-10: shlex dropped everything after any #,
     so a command after a comment line or after a#b was never judged; the first fix still read an escaped space, a CR, a ) and a
     # inside ${ } or backticks as a word start (independent review)."""
     out, i, n, q, brace, bt, esc = [], 0, len(text), None, 0, False, False
+    base = (0, 0)   # (chunks of out, index in text) where the last stretch with nothing open began
     while i < n:
         c = text[i]
+        if q is None and not (brace or bt):
+            base = (len(out), i)
         prev_esc, esc = esc, False
         if q is None:
             if c == "\\" and i + 1 < n:
@@ -1103,7 +1106,7 @@ def drop_comments(text):
             if c == q[-1]:
                 q = None
         out.append(c); i += 1
-    return text if (q or brace or bt) else "".join(out)
+    return "".join(out[:base[0]]) + text[base[1]:] if (q or brace or bt) else "".join(out)
 
 # ── Text fed to a shell on stdin (2026-10-09, tests/gates/test_git_guard_shell_feed.sh) ──────────────────────────────
 # `echo STR | bash`, `bash <<< STR`, `… | xargs sh -c`: the shell runs what it reads, so it is analysed like a -c string when
@@ -1298,10 +1301,13 @@ def crude_words(line):
     shell separators kept as words of their own. It cannot fail, so a quote left open by prose never turns a rule off."""
     return re.findall(r"[;&|()]+|[^\s;&|()]+", re.sub(r"[\\\x27\x22]", "", line))
 
-def scan_words(pre, depth):
+def scan_words(pre, depth, opened=False):
     """The verdict of one reading of a command text (shell_norm.readings): its words, segment by segment (analyse_simple), and the text a literal producer
-    feeds to a shell (judge_feed)."""
+    feeds to a shell (judge_feed). opened: a heredoc body that stays in the scan had a line with a quote it does not close (shell_norm.scan_text, 15/10 r6):
+    the text is read as one that does not parse, whatever the lexer would make of it."""
     try:
+        if opened:
+            raise ValueError("a body line with an open quote")
         tokens = shell_norm.lex_words(pre)
     except ValueError:
         # an unbalanced quote or a trailing backslash (a prose body that stays in the scan: dont, 5" screen): RAW first, then each line alone and
@@ -1367,7 +1373,7 @@ def analyse_free(text, depth):
     finally:
         IN_C_SCRIPT[0] = saved
 
-def analyse(text, depth=0, stripped=False):
+def analyse(text, depth=0, stripped=False, opened=False):
     if depth > 5:
         return "lồng lệnh quá sâu để phân tích"
     if not stripped and "<<" in text:   # every level: a bash -c / eval string holds heredocs of its own
@@ -1377,8 +1383,14 @@ def analyse(text, depth=0, stripped=False):
                 reason = interp_body_danger(h.body(text), h.reader, h.captured)
                 if reason:
                     return reason
-        text = shell_norm.strip_heredocs(text, lambda h: heredoc_cut(h, text), docs)
-    live = outside_single_quotes(text)
+        # a body that stays is not quote-scoped (15/10 r6): the quote characters of its lines that do not close them are dropped before every quote scanner below
+        # (outside_single_quotes, strip_subst, drop_comments, the lexer), or they pair with a quote of another body and hide the command between them
+        text, opened = shell_norm.scan_text(text, lambda h: heredoc_cut(h, text), docs)
+    # Comments are gone before the two quote scanners below (15/10 r6, marker runs): an apostrophe in a comment paired with a later quote and hid a "$( )" between
+    # them, and a # after a backslash-newline or inside ${ } read as a comment dropped the command substitution after it. drop_comments is the one model of what a
+    # comment is (escape, ${ }, backticks); strip_subst has none of its own any more.
+    nc = text if stripped else drop_comments(text)
+    live = outside_single_quotes(nc) + outside_single_quotes(text)   # a substitution in either reading enters the branch (RAW reads the text as typed: a pinned false positive)
     if not stripped and ("`" in live or "$(" in live or "<(" in live or ">(" in live):
         for flat in shell_norm.readings(text):   # joined, and as typed: a backslash-newline inside single quotes is literal there (15/10 r5)
             m = RAW.search(flat.replace("\n", " ; "))
@@ -1387,7 +1399,7 @@ def analyse(text, depth=0, stripped=False):
         # 2026-09-28: the command inside $(...)/backticks gets the same parser as a top-level one
         # (the raw regex above knows no abbreviation: `echo $(git reset --har HEAD~1)` passed).
         inners, outs = [], []
-        plain = strip_subst(text, inners, outs)
+        plain = strip_subst(nc, inners, outs)
         if plain is not None:
             if any(out_subst_shell(o) for o in outs):
                 PENDING_FEED.append(UNREADABLE_OSUBST)
@@ -1398,7 +1410,7 @@ def analyse(text, depth=0, stripped=False):
                 CUR_DIR[0] = here
                 if reason:
                     return reason
-            return analyse(plain, depth + 1, True)
+            return analyse(plain, depth + 1, True, opened)
         if SOLO_WORDS.search(text):  # an unclosed $( / backtick hides the rest: fail closed
             SOLO_HIT.append("lệnh có $( hoặc backtick không đóng, không kiểm được push/nhánh trong đó; tách lệnh git ra riêng")
             return SOLO_HIT[-1]
@@ -1409,7 +1421,7 @@ def analyse(text, depth=0, stripped=False):
     start_dir = first_dir = CUR_DIR[0]
     for n, pre in enumerate(shell_norm.readings(drop_comments(text))):
         CUR_DIR[0] = start_dir if n else CUR_DIR[0]
-        reason = scan_words(pre, depth)
+        reason = scan_words(pre, depth, opened)
         if reason:
             return reason
         first_dir = CUR_DIR[0] if n == 0 else first_dir

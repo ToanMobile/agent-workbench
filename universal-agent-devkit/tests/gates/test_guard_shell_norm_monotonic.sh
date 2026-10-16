@@ -419,6 +419,72 @@ for tpl in ("deno run -A - <<'EOF'\nawait new Deno.Command('sh', {args: ['-c', '
 DANGEROUS += [("hw", "echo don't\nrm -rf ~", "echo don't\nls"), ("hw", "echo \"a\nrm -rf ~", "echo \"a\nls"), ("git", "echo don't\ngit reset --hard", "echo don't\ngit status"),
               ("hw", "cd src &&\nrm -rf ~", "cd src &&\nls"), ("git", "echo 'git reset --hard' |\nsh", "echo 'git status' |\nsh")]
 
+# 15/10 r6, independent verification of 76899f4 (each template ran its harmless marker twin under /bin/bash 3.2 and zsh 5.9: the command between / after the
+# bodies RAN while a guard answered 0). P0-1: a quote character in two heredoc bodies that stay in the scan paired across the command between them in every quote
+# scanner (the lexer, the comment dropper, the single-quote and $( ) strippers of the git guard). P0-2: the join of a backslash-newline inside the single
+# quotes of a -c script moved the terminator of its quoted heredoc.
+R6_APOS = "it's"
+R6_READERS = ["cat <<EOF", "cat <<'EOF'", "cat > n.md <<'EOF'", "git commit -F - <<'EOF'", "grep x <<'EOF'", ": <<'EOF'", "tee n.md <<EOF", "echo a <<EOF"]
+for r in R6_READERS:
+    for b in (R6_APOS, "don't", "say \"hi", "the 5\" screen"):
+        both_hooks(r + "\n" + b + "\nEOF\n@CMD@\n" + r + "\n" + b + "\nEOF")
+both_hooks("cat > n.md <<'EOF'\n" + R6_APOS + "\nEOF\n@CMD@\ncat > m.md <<'EOF'\n" + R6_APOS + "\nEOF")
+both_hooks("echo $'\\''\n@CMD@\ncat <<EOF\n" + R6_APOS + "\nEOF")
+both_hooks("echo $'it\\'s'\n@CMD@\ncat <<EOF\n" + R6_APOS + "\nEOF")
+for pre, post in (("ls && ", " && ls"), ("( ", " )"), ("if true; then ", "; fi"), ("env ", ""), ("$(", ")"), ("echo $(", ")"), ("echo `", "`"), ("x=\"$(", ")\""), ("echo \"$(", ")\"")):
+    both_hooks("cat <<EOF\n" + R6_APOS + "\nEOF\n" + pre + "@CMD@" + post + "\ncat <<EOF\n" + R6_APOS + "\nEOF")
+for pre, post in (("x=$(", "\n)"), ("echo `", "\n`"), ("echo \"$(", "\n)\"")):
+    both_hooks(pre + "cat <<'EOF'\n" + R6_APOS + "\nEOF\n@CMD@\ncat <<'EOF'\n" + R6_APOS + "\nEOF" + post)
+for w in R5_WRAPS:
+    for sc in ("cat <<EOF\n" + R6_APOS + "\nEOF\n@CMD@\ncat <<EOF\n" + R6_APOS + "\nEOF", "git commit -F - <<'EOF'\n" + R6_APOS + "\nEOF\n@CMD@\ngit commit -F - <<'EOF'\n" + R6_APOS + "\nEOF"):
+        if not w.startswith("sudo"):   # sudo has no effect in a marker run (a stub): same text as the others
+            both_hooks(w % shlex.quote(sc), hooks_of(w))
+for extra in ("git checkout -b newb", "git worktree add ../w"):   # rules the raw regex of the git guard does not read
+    for tpl in ("cat <<EOF\n" + R6_APOS + "\nEOF\n" + extra + "\ncat <<EOF\n" + R6_APOS + "\nEOF", "git commit -F - <<'EOF'\n" + R6_APOS + "\nEOF\n" + extra + "\ngit commit -F - <<'EOF'\n" + R6_APOS + "\nEOF"):
+        DANGEROUS.append(("git", tpl, tpl.replace(extra, "git status")))
+# the scanners that run before the lexer: a # inside a string after a body with a quote, a $( ) between two bodies, a quote in a body inside "$( )"
+for q in ("'", "\""):
+    both_hooks("cat <<EOF\n" + R6_APOS + "\nEOF\necho " + q + "a # b" + q + "; @CMD@")
+    both_hooks("cat <<'EOF'\n" + R6_APOS + "\nEOF\necho " + q + "a # b" + q + "; @CMD@")
+both_hooks("cat <<EOF\nsay \"hi\nEOF\necho \"a # b\"; @CMD@")
+both_hooks("echo \"$(cat <<EOF\nsay \"hi\nEOF\n)\" \"a # b\"; @CMD@")
+both_hooks("echo \"$(cat <<EOF\n" + R6_APOS + "\nEOF\n)\" 'a # b'; @CMD@")
+both_hooks("cat <<EOF\nsay \"hi\nEOF\necho '$(' \"$(@CMD@)\"\ncat <<EOF\nsay \"hi\nEOF")
+# the scanners of the git guard that read comments and quotes (marker fuzz, OLD too): an apostrophe in a comment paired with a later quote and hid a "$( )" between them, a #
+# after a backslash-newline or inside ${ } was read as a comment and dropped the substitution after it
+for sub in ("\"$(@CMD@)\"", "$(@CMD@)", "`@CMD@`", "x=\"$(@CMD@)\"", "echo \"a\" \"$(@CMD@)\""):
+    for tpl in ("${: #}" + sub, "echo ${x:-a # b} " + sub, "a" + BSL + "\n#" + sub, "echo a " + BSL + "\n#x\n" + sub.replace("\"", ""), "echo a" + BSL + "\n# b; " + sub,
+                "# it's a comment\n" + sub + "\n# it's a comment", "echo hi # it's\n" + sub + "\necho hi # it's", "#'\n" + sub + "\n'", "echo a # \"\n" + sub + "\n# \""):
+        both_hooks(tpl)
+for tpl in ("bash -c %s" % shlex.quote("#'\n\"$(@CMD@)\"\n'"), "eval %s" % shlex.quote("${: #}\"$(@CMD@)\"")):
+    both_hooks(tpl)
+# the lexer of the hardware gate pairs the quotes of a "$( )" that holds quotes of its own, and what the shell runs inside it ended up inside a word (review P1-3)
+for tpl in ("echo \"$(echo \"a b\"; @CMD@)\"", "echo \"$(echo \"a\" ; @CMD@)\"", "echo \"$(echo \"a\" && @CMD@)\"", "echo \"$(echo \"a\"\n@CMD@\n)\"", "echo \"x$(echo \"a b\"; @CMD@)y\"",
+            "x=\"$(echo \"a b\"; @CMD@)\"", "echo \"`echo \\\"a b\\\"; @CMD@`\"", "echo \"$(echo \"$(echo \"a b\"; @CMD@)\")\"", "git commit -m \"$(echo \"a b\"; @CMD@)\"",
+            "echo \"$(echo \"a b\" | cat; @CMD@) $(echo \"b\")\"", "echo \"$(printf \"%s\" \"a b\"; @CMD@)\"", "echo \"$(\" \";if true; then @CMD@; fi)\"", "echo \"$(\" \"\nif true; then @CMD@; fi)\"",
+            "echo \"$(echo \"a b\"; echo \"c d\"; @CMD@)\"", "for i in \"$(echo \"a b\"; @CMD@)\"; do :; done", "cat <<EOF\n$(echo \"a b\"; @CMD@)\nEOF",
+            "echo \"a\"; echo \"$(echo \"a b\"; @CMD@)\" >/dev/null"):
+    both_hooks(tpl)
+# P0-2
+R6_INNERS = ["cat > n.md <<\"EOF\"\nx" + BSL + "\nEOF\n@CMD@\nEOF", "cat > n.md <<\"EOF\"\nhello\nx" + BSL + "\nEOF\n@CMD@", "cat > n.md <<\"EOF\"\nhello\nx" + BSL * 3 + "\nEOF\n@CMD@\nEOF",
+             "cat > n.md <<\"EOF\"\nx" + BSL + "\nEOF\nEOF \n@CMD@ ;\nEOF", "git commit -F - <<\"EOF\"\nx" + BSL + "\nEOF\n@CMD@\nEOF", "tee n.md <<\"EOF\"\nx" + BSL + "\nEOF\n@CMD@\nEOF",
+             "python3 - <<\"EOF\"\nx = 1" + BSL + "\nEOF\n@CMD@\nEOF", "node - <<\"EOF\"\nx" + BSL + "\nEOF\n@CMD@\nEOF", "cat <<\"EOF\"\nx" + BSL + "\nEOF\n@CMD@\nEOF",
+             "cat > n.md <<\"EOF\"\n" + BSL + "\nEOF\n@CMD@\nEOF", "cat > n.md <<\"EOF\"\nhi" + BSL + "\n" + BSL + "\nEOF\n@CMD@\nEOF", "cat > n.md <<\"EOF\" # c\nx" + BSL + "\nEOF\n@CMD@\nEOF",
+             "cat > n.md <<" + BSL + "EOF\nx" + BSL + "\nEOF\n@CMD@\nEOF", "cat > n.md <<E" + BSL + "OF\nx" + BSL + "\nEOF\n@CMD@\nEOF", "true; cat > n.md <<\"EOF\"\nx" + BSL + "\nEOF\n@CMD@\nEOF"]
+R6_SQ_WRAPS = ["bash -c %s", "sh -c %s", "zsh -c %s", "eval %s", "env bash -c %s", "bash -lc %s", "nohup sh -c %s", "time bash -c %s", "x=$(bash -c %s)", "echo $(bash -c %s)"]
+for sc in R6_INNERS:
+    both_hooks(sc)   # typed at top level, no outer quotes: a quoted heredoc body is not joined by the shell either
+    for w in R6_SQ_WRAPS:
+        both_hooks(w % shlex.quote(sc))
+    both_hooks("cat <<EOF\n" + R6_APOS + "\nEOF\nbash -c " + shlex.quote(sc))   # the quote of the script must not pair with the one of a body before it
+# what the model of the outer quotes must get right before the script: a quote inside "…", an ANSI-C string, a "$( )" around the script or before it
+for tpl in ("echo \"it's\"\nbash -c %s", "echo $'\\''\nbash -c %s", "echo \"$(bash -c %s)\"", "echo \"a $(echo \"b\" ; bash -c %s)\"", "echo \"$(echo x)\" ; bash -c %s",
+            "echo \"x\" 'y' ; eval %s"):
+    both_hooks(tpl % shlex.quote(R6_INNERS[0]))
+# the operator of python3 -c "$(cat <<'EOF' …)" is no end of line when cat prints into a shell or a file that is run: the body is a command, never a program
+for tail in (" | sh", " > s.sh", " | tee s.sh"):
+    both_hooks("python3 -c \"$(cat <<'EOF'" + tail + "\n@CMD@\nEOF\n)\"; sh s.sh")
+
 HARMLESS = [
     "git log --grep=rm -3", "git log --grep=\"rm -rf\" --oneline", "echo \"git push --force\"", "echo 'git reset --hard'",
     "grep -r 'rm -rf' src", "grep -rn \"git reset --hard\" README.md", "git commit -m \"docs: mention git reset --hard and rm -rf in README\"",
@@ -461,6 +527,13 @@ HARMLESS = [
     "python3 - <<'EOF'\nprint('git reset --hard is dangerous')\nEOF", "python3 - <<'EOF' 2>/dev/null\nprint(1)\nEOF", "python3 - <<'EOF'\nprint('rm -rf ~ is dangerous')\nEOF",
     "node - <<'EOF'\nconsole.log(`git reset --hard is dangerous`)\nEOF", "node - <<'EOF'\nconsole.log(`rm -rf ~ is dangerous`)\nEOF",
     "bash -c 'true # c\ngit status'", "bash -c 'true # c\\\ngit status'", "bash -c 'true # c\\\nls'", "ssh host 'true # c\\\nls'",
+    # 15/10 r6: a body line that closes its own quotes is read as typed (a ; inside them is no separator); only the lines that do not close them lose their quote characters
+    "cat <<'EOF'\nsay \"ok; git reset --hard\"\nEOF", "cat <<'EOF'\nsay \"ok; rm -rf ~\"\nEOF", "cat <<EOF\nsay \"ok; git reset --hard\"\nEOF",
+    "git status\ncat <<'EOF'\nsay 'a; rm -rf ~' and \"b; git reset --hard\"\nEOF", "cat <<'EOF'\nthe 5\" screen\nEOF\necho \"a # b\"; git status",
+    "cat <<EOF\nit's\nEOF\nls\ncat <<EOF\nit's\nEOF",
+    # 15/10 r6: quotes inside "$( )", comments with a quote or a $( ), a # inside ${ } or after a backslash-newline: nothing dangerous in them
+    "echo \"$(echo \"a b\"; ls)\"", "echo \"$(date +\"%F\")\"", "git commit -m \"$(git log -1 --format=\"%s\")\"", "echo ${x:-a # b} \"$(git status)\"",
+    "echo a # it's $(git status)\necho \"$(git status)\" # it's", "echo a \\\n# b $(git status)",
 ]
 # ACCEPTED FALSE POSITIVES (policy of 15/10: fail closed, build less). Harmless commands the guards refuse because a heredoc body is cut only for
 # a known message option or the one file statement of a modeled command, and a program body is judged on its raw text. They are pinned BLOCKED
@@ -508,6 +581,9 @@ ACCEPTED_FP = [
     # a prose body with an open quote stays in the scan and the text no longer parses: the raw regex reads it first, so danger text in the prose is
     # refused (15/10 r4: it was the ONLY check then; now every rule runs line by line after it)
     ("git", "git status && cat <<'EOF'\ndon't run git reset --hard\nEOF"),
+    # 15/10 r6: the operator of python3 -c "$(cat <<'EOF' …)" followed by ; or && (no pipe, no redirect): the output of cat is still the program, yet the guards
+    # judge the body as lines of a command source instead of cutting it as a program (_code_operand: tail). Pinned so that a change that cuts it says why
+    *[(h, "python3 -c \"$(cat <<'EOF'" + t + "\n" + d + "\nEOF\n)\"") for t in (" ; echo x", " && echo x", " || echo x") for h, d in (("git", GITD), ("hw", RMD))],
     # 15/10 r5: the text is read joined AND as typed (a backslash-newline inside single quotes is literal for the outer shell, so a comment that ends in a
     # backslash ends at the newline there). Inside DOUBLE quotes the outer shell removes it and the comment swallows the next word: harmless, but the
     # as-typed reading cannot tell, and is blocked

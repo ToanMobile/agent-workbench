@@ -839,12 +839,17 @@ FIND_OP_WORD = {";": " __ESC_SEMI__ ", "(": " __ESC_LP__ ", ")": " __ESC_RP__ "}
 def drop_comments(text):
     """The text without its shell comments: a # that begins a word, outside quotes, up to the end of its line. A # inside a word
     (a#b, $#, an escaped space before it, the ) that ends a substitution), inside ${ } or inside backticks is data, as in bash.
-    Quotes, ${ or a backtick still open at the end: the text whole (fail closed). 2026-10-10: shlex dropped everything after any #,
+    Quotes, ${ or a backtick still open at the end: from where the first of them opened the text stays whole (fail closed), the comments before it
+    are dropped (15/10 r6: the whole text kept its comments, and the apostrophe of one paired with a later real quote in the scanners after this).
+    2026-10-10: shlex dropped everything after any #,
     so a command after a comment line or after a#b was never judged; the first fix still read an escaped space, a CR, a ) and a
     # inside ${ } or backticks as a word start (independent review)."""
     out, i, n, q, brace, bt, esc = [], 0, len(text), None, 0, False, False
+    base = (0, 0)   # (chunks of out, index in text) where the last stretch with nothing open began
     while i < n:
         c = text[i]
+        if q is None and not (brace or bt):
+            base = (len(out), i)
         prev_esc, esc = esc, False
         if q is None:
             if c == "\\" and i + 1 < n:
@@ -867,7 +872,7 @@ def drop_comments(text):
             if c == q[-1]:
                 q = None
         out.append(c); i += 1
-    return text if (q or brace or bt) else "".join(out)
+    return "".join(out[:base[0]]) + text[base[1]:] if (q or brace or bt) else "".join(out)
 
 def rm_problem(text, cwds, depth=0, remote=""):
     """Walk the command like the shell: `cd` moves the cwd (after `&&` for sure; after
@@ -879,7 +884,9 @@ def rm_problem(text, cwds, depth=0, remote=""):
     if depth > 5:
         return "lồng lệnh quá sâu để phân tích"
     if "<<" in text:   # an interpreter program that can start a process (backticks, qx, %x, system …) stays: its text is a command line
-        text = shell_norm.strip_heredocs(text, lambda h: h.kind == "data" or shell_norm.program_cut(h, text))
+        # a body that stays is not quote-scoped (15/10 r6): the quote characters of its lines that do not close them are dropped, or they pair with a quote of another
+        # body and hide the command between them from drop_comments and the lexer
+        text, _open = shell_norm.scan_text(text, lambda h: h.kind == "data" or shell_norm.program_cut(h, text))
     env = {} if remote else {"HOME": os.path.expanduser("~"), "TMPDIR": os.environ.get("TMPDIR") or "/tmp"}
     for reading in shell_norm.readings(drop_comments(text)):
         why = rm_walk(reading, cwds, depth, remote, env)
@@ -896,6 +903,8 @@ def rm_walk(text, cwds, depth, remote, env):
     text = re.sub(r"`([^`]*)`?", r"$(\1)", text)
     text = FIND_OP.sub(lambda m: (m.group(1) or "") + FIND_OP_WORD[m.group(2) or m.group(3) or m.group(4)], text)
     try:
+        if shell_norm.dq_nested_quote(text):   # "$(echo "a b"; rm -rf ~)": the lexer pairs the quotes across the substitution (15/10 r6): read it as text that does not parse
+            raise ValueError("a double quote inside a command substitution inside double quotes")
         toks = shell_norm.lex_words(text)
     except ValueError:   # a quote left open: split at blanks, a newline is a separator of its own (it is no blank here)
         toks = [x.strip("\"\x27") for x in re.split(r"\s+|([;&|()]+)", text.replace("\n", " ; ")) if x and x.strip()]

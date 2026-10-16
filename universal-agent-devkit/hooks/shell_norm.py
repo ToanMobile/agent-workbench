@@ -385,6 +385,37 @@ def lex_words(text):
     return list(lex)
 
 
+def dq_nested_quote(text):
+    """True when a double-quoted string of text holds a $( … ) that holds a double quote of its own ("$(echo "a b"; rm -rf ~)"): the lexer pairs the quotes across the
+    substitution, and what the shell runs inside it ends up inside a word. The caller reads such a text as one that does not parse (15/10 r6, review P1-3). Only
+    double quotes: a single quote inside "…" is data to the lexer as well. The parentheses are counted without regard to strings: where that is wrong the text is
+    flagged or not, never mis-read."""
+    i, n, dq = 0, len(text), False
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+        elif c == "\x27" and not dq:
+            k = text.find("\x27", i + 1)
+            i = n if k < 0 else k + 1
+        elif c == "$" and dq and text.startswith("(", i + 1):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                d = text[j]
+                if d == "\x22":
+                    return True
+                if d == "\\":
+                    j += 2
+                    continue
+                depth += (d == "(") - (d == ")")
+                j += 1
+            i = j
+        else:
+            dq = not dq if c == "\x22" else dq
+            i += 1
+    return False
+
+
 _CONTINUATION = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")
 
 
@@ -412,7 +443,66 @@ def readings(text):
     in is another model of the shell, two readings are not. The price, pinned in the tests: a comment ending in a backslash inside DOUBLE quotes (the outer
     shell removes it there and nothing runs) is refused all the same."""
     joined = join_continuations(text)
-    return [joined, _CONTINUATION.sub(r"\1\n", text)] if joined != text and _comment_continuation(text) else [joined]
+    if joined == text:
+        return [joined]
+    out = [joined]
+    kept = _join_outside_single_quotes(text)   # 15/10 r6: the join of the outer text also joined inside the single quotes of a -c script and moved its quoted terminator
+    if kept != joined:
+        out.append(kept)
+    if _comment_continuation(text):
+        out.append(_CONTINUATION.sub(r"\1\n", text))
+    return out
+
+
+_QUOTE_OR_ESCAPE = re.compile(r"[\\'\x22$)]")
+
+
+def _join_outside_single_quotes(text):
+    """text with the backslash-newlines joined as the OUTER shell joins them: not inside single quotes or $'…' (literal there: the script a -c script gets is
+    its own, the inner shell joins it itself, and not inside a quoted heredoc body of that script: x\\<newline>EOF is no terminator there), yes outside quotes
+    and inside "…" (a $( ) inside "…" is a context of its own again). Read in addition to the text joined everywhere, never instead: where this model of the
+    shell is wrong the other reading still holds what the old one held."""
+    out, i, n, stack = [], 0, len(text), []   # stack: "dq" inside "…", "sub" inside $( )
+    while i < n:
+        m = _QUOTE_OR_ESCAPE.search(text, i)
+        if not m:
+            out.append(text[i:])
+            break
+        k, c = m.start(), m.group()
+        out.append(text[i:k])
+        dq = bool(stack) and stack[-1] == "dq"
+        i = k + 1
+        if c == "\\":
+            if text[k + 1:k + 2] != "\n":
+                out.append(text[k:k + 2])
+            i = k + 2
+        elif c == "\x27" and not dq:   # single quotes: literal up to the next one
+            e = text.find("\x27", k + 1)
+            e = n - 1 if e < 0 else e
+            out.append(text[k:e + 1])
+            i = e + 1
+        elif c == "$" and text.startswith("\x27", k + 1) and not dq:   # $'…': backslash escapes inside, a continuation among them stays
+            e = k + 2
+            while e < n and text[e] != "\x27":
+                e += 2 if text[e] == "\\" else 1
+            out.append(text[k:e + 1])
+            i = e + 1
+        elif c == "\x22":
+            if dq:
+                stack.pop()
+            else:
+                stack.append("dq")
+            out.append(c)
+        elif c == "$" and text.startswith("(", k + 1):
+            stack.append("sub")
+            out.append("$(")
+            i = k + 2
+        elif c == ")" and stack and stack[-1] == "sub":
+            stack.pop()
+            out.append(c)
+        else:
+            out.append(c)
+    return "".join(out)
 
 
 def _find_end(text, pos, h, join):
@@ -1025,12 +1115,52 @@ def strip_heredocs(text, drop, docs=None):
     judge: fail closed): a heredoc with no delimiter line, one of a command that is not modeled, and an UNQUOTED one whose body holds a $
     or a backtick, since the shell runs its $( … ) / `…` whatever reads the body and we do not pair parentheses ourselves (review 15/10:
     a ")" in a string, a # comment or a case pattern cut the extraction short and dropped the rest of the body from the scan)."""
+    return _strip(text, drop, docs, False)[0]
+
+
+def scan_text(text, drop, docs=None):
+    """(text, open_quote): the text the guards scan. strip_heredocs, and every body that stays in the scan is not quote-scoped (15/10 r6): the quote characters ' and
+    " of each line of it that does not close its own quotes are removed (_plain_body), so that no quote scanner after this (the lexer, the comment dropper, the
+    single-quote and $( ) strippers of the git guard) pairs one with a quote of another body, or of the command around it, and loses what lies between them.
+    open_quote: some line was so changed; the git guard then reads the text as it reads one that does not parse (RAW first, then line by line)."""
+    return _strip(text, drop, docs, True)
+
+
+def _closes(line):
+    """True when every quote character of line is closed on it, as the lexer reads it (a line over 4000 characters is not lexed: it counts as open)."""
+    if len(line) > 4000:
+        return False
+    try:
+        lex_words(line)
+    except ValueError:
+        return False
+    return True
+
+
+def _plain_body(body):
+    """(body, changed): body without the quote characters ' and " of each line whose quotes do not close on it. A line that holds no quote, or closes them, is kept."""
+    lines = body.split("\n")
+    changed = False
+    for i, line in enumerate(lines):
+        if ("'" in line or '"' in line) and not _closes(line):
+            lines[i], changed = line.replace("'", "").replace('"', ""), True
+    return "\n".join(lines), changed
+
+
+def _strip(text, drop, docs, plain):
     docs = heredocs(text) if docs is None else docs
-    out, pos = [], 0
+    out, pos, opened = [], 0, False
     for h in docs:
-        if not h.terminated or not h.cut_ok or h.body_start < pos or not drop(h) or (not h.quoted and re.search(r"[$`]", h.body(text))):
+        if h.body_start < pos:
             continue
-        out.append(text[pos:h.body_start])
-        pos = h.end
+        if h.terminated and h.cut_ok and drop(h) and (h.quoted or not re.search(r"[$`]", h.body(text))):
+            out.append(text[pos:h.body_start])
+            pos = h.end
+        elif plain and h.body_end > h.body_start:
+            body, changed = _plain_body(h.body(text))
+            if changed:
+                out.append(text[pos:h.body_start])
+                out.append(body)
+                pos, opened = h.body_end, True
     out.append(text[pos:])
-    return "".join(out)
+    return "".join(out), opened
