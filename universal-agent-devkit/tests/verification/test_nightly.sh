@@ -195,6 +195,12 @@ out="$(python3 "$NIGHTLY" run "$BROKEN" 2>&1)"; rc=$?
 TRK="$TMP/trunk"; mk "$TRK" "true" 'grep -q 2 src/b.txt'; echo 3 > "$TRK/src/b.txt"; git -C "$TRK" config devkit.trunkMode true
 out="$(python3 "$NIGHTLY" run "$TRK" 2>&1)"; rc=$?
 [ "$rc" = 0 ] && ! printf '%s\n' "$out" | grep -q 'skip: trunk mode' && [ "$(st "$TRK" REG-B)" = FAIL ] && ok "run <path>: a trunk-mode main checkout holds no lock, so it is free: the suites run (a skip here deadlocked the night)" || fail "trunk-mode main: rc=$rc $(st "$TRK" REG-B) $out"
+# (b2) main trunk mode mà có phiên sống đang giữ lock vẫn bị bỏ qua: trunk chỉ bỏ lý do "merge-only", không bỏ kiểm tra lock
+TRKH="$TMP/trunkheld"; mk "$TRKH" "true" 'grep -q 2 src/b.txt'; echo 3 > "$TRKH/src/b.txt"; git -C "$TRKH" config devkit.trunkMode true
+setlock "$TRKH" active
+out="$(python3 "$NIGHTLY" run "$TRKH" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^trunkheld: skip: ' && [ "$(st "$TRKH" REG-B)" = PASS ] && ok "run <path>: a trunk-mode main a live session holds is still skipped - trunk mode never bypasses the lock check" || fail "trunk-mode main held by a live session: rc=$rc $(st "$TRKH" REG-B) $out"
+setlock "$TRKH" none
 # (c) one repo spelled two ways by a case-insensitive filesystem (APFS) runs once: identity is (device, inode), not the resolved string
 CI="$TMP/CaseRepo"; mk "$CI" "true" "true"
 if [ -d "$TMP/caserepo" ]; then
