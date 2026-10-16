@@ -498,8 +498,8 @@ rv_wip="$(rv14 "CHƯA XONG — còn sửa")"; rv_x="$(rv14 "XONG")"
 [ "$rv_wip" = 0 ] && [ "$rv_x" = 2 ] && ok "review_gate: progress reply not held, XONG still needs the fresh-context review" \
   || fail "review_gate: wip=$rv_wip xong=$rv_x"
 rv_none="$(rv14 "Đang chờ Antigravity phản biện kế hoạch.")"
-[ "$rv_none" = 2 ] && ok "review_gate: a reply with no status line is still held (only the regression gate skips it)" \
-  || fail "review_gate loosened for a no-status reply (rc=$rv_none)"
+[ "$rv_none" = 0 ] && ok "review_gate: a reply with no status line is work in progress, not held (issue #2, same rule as the regression gate)" \
+  || fail "review_gate held a no-status reply (rc=$rv_none)"
 
 echo
 [ "$FAILS" -eq 0 ] && echo "test_gate_friction: all checks passed" || echo "test_gate_friction: $FAILS failed"
