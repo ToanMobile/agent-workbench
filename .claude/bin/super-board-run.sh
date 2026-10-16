@@ -681,12 +681,14 @@ sweep_blocked_cards() {
     log "⚠ blocked sweep skipped: wave planner exit ${rc}; retrying in ${SWEEP_RETRY_SECONDS}s"
     return 2
   fi
-  local next
+  local next key
   while IFS=$'\t' read -r issue cleared; do
     # Không có blocker nào (thẻ bị kéo tay sang Blocked, body ghi None): không có gì vừa đóng, để người quyết.
     [ -n "$issue" ] && [ -n "$cleared" ] || continue
-    # Mỗi thẻ một lần mỗi lần chạy: thẻ bị park lại sau khi đã sweep là việc người cần xem, không phải vòng lặp.
-    case " ${SWEPT_CARDS:-} " in *" $issue "*) log "blocked sweep: #${issue} already swept this run — left Blocked"; continue ;; esac
+    # Mỗi (thẻ, bộ blocker) một lần mỗi lần chạy: bị park lại với CÙNG blocker là việc người cần xem, không phải
+    # vòng lặp; bị chặn bởi blocker KHÁC (daemon chạy nhiều ngày) thì vẫn được sweep khi blocker mới đóng.
+    key="${issue}:$(printf '%s' "$cleared" | tr -d ' #')"
+    case " ${SWEPT_CARDS:-} " in *" $key "*) log "blocked sweep: #${issue} already swept this run for ${cleared} — left Blocked"; continue ;; esac
     # `needs-you` là quyết định của người, kể cả khi planner thả thẻ (planner chỉ đọc 8 comment cuối).
     if echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$issue" '[.items[] | select(.content.number == $n)
          | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index("needs-you")' >/dev/null 2>&1; then
@@ -699,7 +701,7 @@ sweep_blocked_cards() {
       log "⚠ blocked sweep: could not move #${issue} to Ready"
       continue
     fi
-    SWEPT_CARDS="${SWEPT_CARDS:-} $issue"
+    SWEPT_CARDS="${SWEPT_CARDS:-} $key"
     next=builder; [ "$(card_lane "$issue")" = qa ] && next=tester
     # Định dạng comment: writing-standard.md § 4.
     gh_checkpoint

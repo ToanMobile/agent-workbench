@@ -154,6 +154,12 @@ grep -A3 "^gh issue comment 32 " "$TMP/writes" | grep -q "Next: tester" && ok "q
 : > "$TMP/writes"
 sweep_blocked_cards >/dev/null 2>&1   # #32 bị park lại và planner lại thả nó
 grep -q "PVTI_32" "$TMP/writes" && fail "card #32 swept twice in one run (Blocked<->Ready ping-pong)" || ok "a card is swept at most once per run"
+#     Bị chặn lại bởi blocker KHÁC (daemon chạy nhiều ngày): blocker mới đóng thì vẫn phải được sweep.
+: > "$TMP/writes"
+export STUB_PLAN='{"cards":[],"sweep":[{"number":32,"title":"b","clearedBy":[7]}],"flag":[]}' STUB_PLAN_RC=0
+sweep_blocked_cards >/dev/null 2>&1
+grep -qx "move PVTI_32 Ready" "$TMP/writes" && ok "re-blocked on a different blocker: swept again once it closes" \
+  || fail "card #32 re-blocked on a different blocker stays Blocked for the rest of the daemon's life"
 
 # ── 2h. thẻ bị kéo tay sang Blocked, không có blocker nào (clearedBy rỗng): không có gì vừa đóng, giữ nguyên.
 : > "$TMP/writes"; SWEPT_CARDS=""
