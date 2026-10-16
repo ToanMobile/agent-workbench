@@ -374,10 +374,21 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
   # Dọn sau merge: fast-forward nhánh base local và xoá worktree + nhánh local của CHÍNH thẻ vừa merge
   # (không bao giờ của thẻ khác), để không phải dọn tay. worktree_merge_gate.state là sổ nợ worktree toàn repo
   # của hook DevKit: hook tự dọn sổ đó, gate này không bao giờ xoá.
-  git -C "$REPO_PATH" fetch origin "$BASE" --quiet 2>/dev/null || true
-  # Chỉ khi checkout đang ở $BASE: nếu không, ff-only sẽ đẩy nhánh nào đang được checkout.
-  if [ "$(git -C "$REPO_PATH" symbolic-ref --quiet --short HEAD 2>/dev/null)" = "$BASE" ]; then
-    git -C "$REPO_PATH" merge --ff-only "origin/$BASE" >/dev/null 2>&1 || true
+  # repo.path là "." và Reviewer chạy gate từ worktree issue-<N>-review của nó (HEAD detached): ff phải nhắm main
+  # checkout (dòng đầu `git worktree list`), như super-board-post-merge-clean.sh, không phải worktree review.
+  MAIN_PATH=$(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p') || true
+  [ -n "$MAIN_PATH" ] || MAIN_PATH="$REPO_PATH"
+  # Fetch hỏng, bị bỏ qua hay git từ chối ff thì báo kèm lý do của git: base local cũ phải lộ ra, merge vẫn thành công.
+  if ! fetch_err=$(git -C "$MAIN_PATH" fetch origin "$BASE" --quiet 2>&1 >/dev/null); then
+    say "warning: fetch origin ${BASE} failed in ${MAIN_PATH}; local base may be stale: $(printf '%s' "$fetch_err" | tr '\n\t' '  ' | cut -c1-300)"
+  fi
+  # Chỉ khi main checkout đang ở $BASE: nếu không, ff-only sẽ đẩy nhánh nào đang được checkout.
+  if [ "$(git -C "$MAIN_PATH" symbolic-ref --quiet --short HEAD 2>/dev/null)" = "$BASE" ]; then
+    if ! ff_err=$(git -C "$MAIN_PATH" merge --ff-only "origin/$BASE" 2>&1 >/dev/null); then
+      say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-300)"
+    fi
+  else
+    say "note: ${BASE} in ${MAIN_PATH} not fast-forwarded (main checkout is not on ${BASE})"
   fi
   bash "$HERE/super-board-post-merge-clean.sh" "$REPO_PATH" "$HEAD_REF" "$HEAD_SHA" >&2 || true
   if [ -f "$REPO_PATH/.claude/hooks/cleanup-wt.py" ]; then
