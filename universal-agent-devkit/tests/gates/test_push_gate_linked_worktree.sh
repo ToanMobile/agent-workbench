@@ -94,5 +94,30 @@ gated_worktree_commit 7
 git -C "$R" merge -q --ff-only task2
 expect "L9: main holds a stale valid receipt, a linked worktree's receipt covers the new head: the push is covered" 0
 
+# a worktree at main's HEAD that passed the gate only thanks to UNCOMMITTED work: main's HEAD itself was never tested
+newrepo
+echo "fun ok() = 4" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated on main"
+git -C "$W" merge -q --ff-only main
+echo "fun ok() = 2" > "$W/src/Core.kt"
+CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief > "$TMP/gate.out" 2>&1 || bad "L10 setup: gate --full failed: $(tail -3 "$TMP/gate.out")"
+expect "L10: a worktree at main's HEAD gated on uncommitted work does not cover main's untested HEAD" 2
+
+# the Stop hook's path: `automerge --keep` merges and keeps the worktree, a later `worktree remove` takes its git dir with it
+newrepo
+gated_worktree_commit 2
+(cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" automerge "$W" --keep > "$TMP/finish.out" 2>&1) || bad "L11 setup: automerge --keep failed: $(tail -3 "$TMP/finish.out")"
+(cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" remove "$W" > "$TMP/remove.out" 2>&1) || bad "L11 setup: worktree remove failed: $(tail -3 "$TMP/remove.out")"
+[ -d "$W" ] && bad "L11 setup: the worktree is still there"
+expect "L11: merged with automerge --keep, then removed: the push from main is covered" 0
+
+# a tag push: a linked worktree's own remote view ("already on the remote") is no receipt
+newrepo
+echo "fun ok() = 8" > "$R/src/Core.kt"; git -C "$R" commit -qam "ungated, unpushed"; git -C "$R" tag v8
+git -C "$R" config extensions.worktreeConfig true
+git -C "$W" config --worktree "url.$R.insteadOf" "$TMP/origin.git"
+OUT="$(python3 "$PG" "$R" v8 --tag-remote origin 2>&1)"; RC=$?
+[ "$RC" = 2 ] && ok "L12: a tag of an ungated commit is not covered by a linked worktree's remote view (exit $RC)" \
+  || bad "L12: tag push through a linked worktree's remote view: exit $RC, expected 2 — $(printf '%s' "$OUT" | head -c 300)"
+
 [ "$FAILS" = 0 ] && echo "ALL OK" && exit 0
 echo "$FAILS FAILED"; exit 1

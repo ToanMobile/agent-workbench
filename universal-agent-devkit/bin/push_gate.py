@@ -455,7 +455,8 @@ def receipt_problem(top, rp, receipt, rev="HEAD"):
     fingerprint equal to that of head+dirty rebuilt from git, and the run-log line of that run present; else what is wrong.
     Audit 2026-10-09: a hand-written {"exit": 0, "head": "<HEAD>"} let any push through.
     ponytail: the receipt and runs.jsonl are files this user can write: a forger who rebuilds the fingerprint the way
-    tree_fp.py does and appends a run-log line still passes; upgrade to a receipt signed with a key the agent cannot read
+    tree_fp.py does and appends a run-log line still passes - or, since issue #5, sets `carried_from` to any worktree's name and
+    `time` next to a real full PASS line of that worktree, no line appended; upgrade to a receipt signed with a key the agent cannot read
     (the user's keychain / ssh-agent) if a forged receipt is ever seen."""
     def number(v):
         return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf")
@@ -514,7 +515,8 @@ def check(cwd, rev="HEAD", tag_remote=None, linked=False):
     top = toplevel(cwd)[0]
     rc, sha = git(top, "rev-parse", "--verify", "-q", rev + "^{commit}") if top else (1, "")
     for wt in linked_worktrees(top) if rc == 0 else []:
-        if _own_check(wt, sha.strip(), tag_remote, linked=True)[0]:
+        # tag_remote=None: cách worktree nhìn remote (config riêng của worktree) không phải biên nhận; main đã tự hỏi remote rồi
+        if _own_check(wt, sha.strip(), None, linked=True)[0]:
             return True, f"covered by the gate receipt of the linked worktree {wt}"
     return ok, reason
 
@@ -578,9 +580,15 @@ def _own_check(cwd, rev, tag_remote, linked):
         raise RuntimeError("git diff failed")
     prefix = os.path.relpath(project, top).replace(os.sep, "/")
     prefix = "" if prefix == "." else prefix + "/"
-    changed = [p for p in out.split("\0") if p
-               and not any(p == prefix + e or p.startswith(prefix + e + "/") for e in tree_fp.EXCLUDE)]
+    def kept(p):
+        return p and not any(p == prefix + e or p.startswith(prefix + e + "/") for e in tree_fp.EXCLUDE)
+    changed = [p for p in out.split("\0") if kept(p)]
     dirty = receipt.get("dirty") or {}
+    if linked:
+        # biên nhận ghi blob của từng file dirty lúc gate chạy: so cả các file đó với rev, kể cả khi head..rev không đổi chúng
+        # (worktree ở HEAD của main có gate PASS nhờ sửa CHƯA commit thì không phủ HEAD của main; ca L10 của test)
+        seen = set(changed)
+        changed += [p for p in dirty if kept(p) and p not in seen]
     now, then = blobs(top, rev, changed), blobs(top, head, changed)
     bad = [p for p in changed if now.get(p) != (dirty[p] if p in dirty else then.get(p))]
     if bad and untestable_only(top, project, bad):
