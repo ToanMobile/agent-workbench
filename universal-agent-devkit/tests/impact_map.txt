@@ -19,3 +19,5 @@ scripts/git/worktree.py            tests/gates/test_worktree_merge_gate.sh tests
 profiles/*/rules/*-rules.md   tests/context_memory/test_profile_split.sh tests/context_memory/test_injection_block.sh
 # stop_hook_times.py imports gate_runs_report (log_file, read_runs, wall: the runs.jsonl reader) and its test never names that file.
 scripts/governance/gate_runs_report.py   tests/gates/test_stop_hook_times.sh
+# 14/10 (W3): hooks/shell_norm.py is the command reading of block-dangerous-git.sh and hardware_safety_gate.sh; their tests run it without naming it.
+hooks/shell_norm.py   tests/gates/test_hardware_rm_containment.sh tests/gates/test_hardware_rm_unforced.sh tests/gates/test_hardware_unglob_quoted.sh tests/gates/test_hardware_find_match_all.sh tests/gates/test_hardware_find_not_or.sh tests/gates/test_hardware_data_local_tmp.sh tests/gates/test_git_guard_shell_feed.sh tests/gates/test_git_guard_shell_subst.sh tests/gates/test_git_guard_process_subst.sh tests/gates/test_guard_comment_not_swallowing.sh hooks/tests/test_git_guard_bypass.sh hooks/tests/test_git_guard_nested.sh tests/gates/test_hook_python_isolation.sh hooks/tests/hook_contract_test.sh

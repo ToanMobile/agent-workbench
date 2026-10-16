@@ -292,3 +292,6 @@
 2 tests/gates/test_regression_gate_stale_label.sh
 55 tests/gates/test_gate_readonly_receipt_race.sh
 3 tests/gates/test_tree_fp_checklist_temp.sh
+30 tests/gates/test_guard_shell_norm.sh
+30 tests/gates/test_guard_shell_norm_monotonic.sh
+10 tests/gates/test_hook_big_command_fast_path.sh

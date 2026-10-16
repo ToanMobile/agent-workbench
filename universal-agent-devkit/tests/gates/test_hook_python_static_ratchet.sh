@@ -30,8 +30,6 @@ FILES = sorted(glob.glob(os.path.join(KIT, "hooks", "*.sh")) + glob.glob(os.path
 
 # (file, text of the line, kind, reason): lines a rule matches that are NOT a hole. kind: "launch" | "path"
 ALLOW = [
-    ("hooks/block-dangerous-git.sh", "python3 - <<…)", "launch",
-     "text of a docstring inside the python body (it explains which shell lines the parser treats as feeding an interpreter), not a launch"),
     ("hooks/comment_claim_guard.sh", "CCG_HOOKDIR", "path", "CCG_HOOKDIR is set by the wrapper to $(cd dirname && pwd): absolute, never empty"),
     ("hooks/review_gate.sh", "CLAIM_HOOKDIR", "path", "CLAIM_HOOKDIR is set by the wrapper to $(cd dirname && pwd): absolute, never empty"),
     ("hooks/session_context.sh", "WT_SCRIPT", "path", "WT_SCRIPT is set by the wrapper to <kit>/scripts/git/worktree.py: never empty"),

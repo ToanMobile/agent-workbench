@@ -127,6 +127,8 @@ for name, (text, cmd) in injections.items():
         continue
     copy = os.path.join(TMP, "hsg_injected.sh")
     open(copy, "w", encoding="utf-8").write(text)
+    if os.path.isfile(os.path.join(os.path.dirname(HOOK), "shell_norm.py")):   # the reading it loads from its own directory (W3)
+        shutil.copy(os.path.join(os.path.dirname(HOOK), "shell_norm.py"), TMP)
     rc, err = run(copy, cmd)
     lines = [l for l in err.splitlines() if l.strip()]
     check("fail closed on %s: rc 2" % name, rc == 2, "rc=%s (1 = the command would have run) %s" % (rc, err.strip()[:160]))

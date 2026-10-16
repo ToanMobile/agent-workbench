@@ -37,6 +37,15 @@
 #      git args; git config from the environment (GIT_CONFIG_PARAMETERS, GIT_CONFIG_KEY_n/VALUE_n,
 #      GIT_CONFIG_GLOBAL/SYSTEM other than /dev/null; prefix, env or export) and include.path /
 #      includeIf.* (an external config file) are blocked.
+#   3e. (2026-10-13, tests/gates/test_guard_shell_norm.sh) also blocked: `git checkout <path>` / `<tree-ish> <path>` without --
+#      (one operand that names no commit but an existing path or a glob), an interpreter reading a heredoc whose body can start
+#      a process (subprocess, os.system, child_process …) and runs a dangerous git command, `git submodule foreach CMD` (CMD is
+#      judged), a forced fetch into a local branch (fetch -f / +src:dst), `git pull --rebase|-r`; arch, gtimeout and a redirect
+#      before git are skipped like the other wrappers. Allowed now: `git clean` with -n / --dry-run, `git rm -f --cached`.
+#   3f. (2026-10-14, workflow-improvements.md I.0 W3, tests/gates/test_guard_shell_norm.sh) the reading of a command line is
+#      hooks/shell_norm.py, shared with hardware_safety_gate.sh: wrappers, sh -c in any flag cluster, also `su -c` / `su USER CMD`,
+#      `adb shell CMD` and ssh options with a value (all analysed now). Heredocs (policy of 15/10): a body is cut only for a known
+#      message option or the one statement of a fully modeled command; every other body stays in the scan (see heredoc_cut below).
 #   4. FAIL-CLOSED: if the command can't be tokenized, or contains `$(`/backticks
 #      whose output could become a command, the raw text is scanned with a broad
 #      regex instead. Missing python3, or an uncaught internal error in the parser, blocks.
@@ -57,7 +66,10 @@ fast_allow() { # $1 = trigger ERE
   case "$c" in ""|*[\$\`\*\?\[\]]*|*'\\'*|*'\u'*) return 1 ;; esac
   # Quotes only hide a word by splitting it (g'i't, "gi"t): dropped before the check, with the JSON escape marks (\" \n), so a
   # quoted argument no longer sends every grep -n "x" to python (2026-10-09, tests/gates/test_hook_fast_path_quotes.sh: ~55 ms a call).
-  c="${c//\\/}"; c="${c//\'/}"; c="${c//\"/}"
+  # ${c//\\/} is quadratic on macOS /bin/bash 3.2: a 20 KB multi-line command (a \n per line) took 14-18 s, the hook timeout is 10 s
+  # (tests/gates/test_hook_big_command_fast_path.sh). A long one goes through one linear tr; tr failing leaves the decision to the parser.
+  if (( ${#c} > 256 )); then c="$(printf '%s' "$c" | LC_ALL=C tr -d '\\\047\042')" || return 1
+  else c="${c//\\/}"; c="${c//\'/}"; c="${c//\"/}"; fi
   shopt -s nocasematch
   if [[ $c =~ $1 ]]; then shopt -u nocasematch; return 1; fi
   shopt -u nocasematch
@@ -87,7 +99,33 @@ def _fail_closed(etype, value, tb):
     finally:
         os._exit(2)
 sys.excepthook = _fail_closed
-import fnmatch, json, re, shlex, shutil, subprocess, time
+import fnmatch, json, re, shlex, shutil, subprocess, time, signal
+# Watchdog (same as the hardware gate, whose hook limit is 10 s): a command the parser cannot judge in 7 s is refused with a reason, never
+# left to a hook timeout, which is no verdict. SIGALRM also interrupts a regex search in the middle. tests/gates/test_hook_big_command_fast_path.sh
+def _too_slow(_sig, _frame):
+    try:
+        sys.stderr.write("BLOCKED: block-dangerous-git.sh: lệnh quá lớn / quá phức tạp để phân tích trong thời hạn (7 s) — chặn để an toàn. Chia thành lệnh nhỏ hơn, hoặc ghi vào file rồi chạy file.\n")
+        sys.stderr.flush()
+    finally:
+        os._exit(2)
+if hasattr(signal, "setitimer"):
+    signal.signal(signal.SIGALRM, _too_slow)
+    signal.setitimer(signal.ITIMER_REAL, 7)
+
+# hooks/shell_norm.py: the one reading of a command line that this guard and hardware_safety_gate.sh share (W3, 14/10): wrappers,
+# sh -c / su -c / ssh / adb shell, heredocs. Loaded from this hook own directory ($0, a linked install resolved), never from the
+# project (python3 -I). Missing: every command that reaches this parser is blocked, with the reason (fail closed).
+try:
+    _HOOK_DIR = os.path.dirname(os.path.realpath(sys.argv[1])) if len(sys.argv) > 1 else ""
+    if not os.path.isabs(_HOOK_DIR):
+        raise ImportError("hook path ($0) is not known")
+    sys.dont_write_bytecode = True
+    sys.path.append(_HOOK_DIR)   # after the stdlib
+    import shell_norm
+except Exception as e:
+    sys.stderr.write("BLOCKED: block-dangerous-git.sh: không nạp được hooks/shell_norm.py cạnh hook (" + str(e)[:120] + ") — chặn để an "
+                     "toàn. Cài lại DevKit (agent-kit init); lệnh cần chạy ngay thì người dùng gõ qua prefix \"!\".\n")
+    sys.exit(2)
 
 def _fnm(name, pat):
     # Python 3.9 raises re.error for a reversed range ([z-a], the s[:-1] of a script); bash reads such a bracket as "no match"
@@ -110,26 +148,15 @@ if not isinstance(cmd, str) or not cmd.strip():
 SEPARATORS = {";", "&&", "||", "|", "&", "\n", ";;", "|&", "(", ")", "{", "}", "((", "))"}
 # Shell reserved words that may precede a command in the same simple-command slot
 # (`if git reset --hard; then …`, `! git …`, `do git …`). Skipped, not analysed.
-KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "!", "{", "}", "time"}
-# wrapper -> (options that take a separate value, number of positional args before the command)
-WRAPPERS = {
-    "command": (set(), 0), "builtin": (set(), 0), "exec": ({"-a"}, 0), "nohup": (set(), 0),
-    "time": (set(), 0), "caffeinate": ({"-t", "-w"}, 0), "setsid": (set(), 0), "unbuffer": (set(), 0),
-    "sudo": ({"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T"}, 0),
-    "doas": ({"-u", "-C"}, 0),
-    "nice": ({"-n"}, 0),
-    "ionice": ({"-c", "-n", "-p"}, 0),
-    "stdbuf": ({"-i", "-o", "-e"}, 0),
-    "timeout": ({"-s", "-k", "--signal", "--kill-after"}, 1),
-    "chrt": (set(), 1),
-    "taskset": (set(), 1),
-    "flock": ({"-w", "-E", "--timeout"}, 1),
-}
+KEYWORDS = shell_norm.KEYWORDS
+# wrapper -> (options that take a separate value, number of positional args before the command): the shared table
+# (gtimeout and arch since 2026-10-13)
+WRAPPERS = shell_norm.WRAPPERS
 INTERPRETERS = {"python", "python2", "python3", "node", "perl", "ruby", "php", "deno", "bun"}
 # awk runs commands with system() and `print … | "sh"`: the string literals of its program are checked (2026-10-09).
 AWKS = {"awk", "gawk", "mawk", "nawk"}
-SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
-SHELL_OPTS_WITH_ARG = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
+SHELLS = shell_norm.SHELLS
+SHELL_OPTS_WITH_ARG = shell_norm.SHELL_OPTS_WITH_ARG
 GIT_OPTS_WITH_ARG = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix", "--config-env"}
 
 def short_flags(args):
@@ -145,6 +172,8 @@ def short_flags(args):
 # options sharing the longest prefix with them (from `git <sub> --git-completion-helper-all`) —
 # a prefix of a safe one is ambiguous to git too, so it is left alone.
 ABBREV = {
+    "pull": ("--rebase", "--recurse-submodules --refmap"),
+    "fetch": ("--force", "--filter"),
     "reset": ("--hard --merge --keep", "--mixed"),
     "clean": ("--force", ""),
     "branch": ("--delete --force", "--format"),
@@ -225,6 +254,21 @@ def config_write_danger(args):
         return None
     return config_danger(pos[0], pos[1]) if len(pos) >= 2 else None
 
+def clean_dry_run(args):
+    """git clean -n / --dry-run: a short cluster letter n before any e (-e takes its pattern, glued or as the next word)."""
+    for a in args:
+        if a == "--":
+            break
+        if a == "--dry-run":
+            return True
+        if a.startswith("-") and not a.startswith("--"):
+            for ch in a[1:]:
+                if ch == "e":
+                    break
+                if ch == "n":
+                    return True
+    return False
+
 def danger_in_git(sub, args):
     args = expand_abbrev(sub, args)
     long_ = set(a.split("=", 1)[0] for a in args if a.startswith("--"))
@@ -232,7 +276,9 @@ def danger_in_git(sub, args):
     pos = [a for a in args if not a.startswith("-")]
     if sub == "reset" and long_ & {"--hard", "--merge", "--keep"}:
         return "reset --hard/--merge/--keep vứt thay đổi"
-    if sub == "clean" and ("f" in short or "--force" in long_):
+    # (2026-10-13) -n / --dry-run only lists what would go, also next to -f; (14/10, OCR) the letters after a glued -e are its
+    # pattern, not flags: git clean -fdx -enode_modules deletes
+    if sub == "clean" and ("f" in short or "--force" in long_) and not clean_dry_run(args):
         return "clean --force xoá file chưa track"
     if sub == "branch" and ("D" in short or (("d" in short or "--delete" in long_) and ("f" in short or "--force" in long_))):
         return "branch -D xoá branch chưa merge"
@@ -249,10 +295,36 @@ def danger_in_git(sub, args):
         staged_only = ("--staged" in long_ or "S" in short) and not ("--worktree" in long_ or "W" in short)
         if not staged_only:
             return "restore vứt thay đổi working tree"
-    if sub == "rm" and ("f" in short or "--force" in long_):
+    # (2026-10-13) --cached removes from the index only: the working-tree file stays (like restore --staged)
+    if sub == "rm" and ("f" in short or "--force" in long_) and "--cached" not in long_:
         return "rm --force xoá file kèm thay đổi chưa commit"
     if sub == "rebase" and not long_ & {"--abort", "--continue", "--skip", "--quit", "--show-current-patch", "--edit-todo"}:
         return "rebase viết lại lịch sử branch"
+    if sub == "pull":   # (2026-10-13) pull --rebase / -r is a rebase; the last of --rebase[=x] / --no-rebase / -r wins
+        rebase = False
+        for a in args:
+            if a == "--":
+                break
+            if a == "--no-rebase":
+                rebase = False
+            elif a == "--rebase" or a.startswith("--rebase="):
+                rebase = a.partition("=")[2].lower() not in ("false", "no", "off", "0")
+            elif a.startswith("-") and not a.startswith("--"):
+                for ch in a[1:]:
+                    if ch in "sXjoS":   # an option whose value follows glued on (-Xours, -j4): no more flags in this word
+                        break
+                    rebase = rebase or ch == "r"
+        if rebase:
+            return "pull --rebase viết lại lịch sử branch (như rebase; dùng git pull --no-rebase hoặc --ff-only)"
+    if sub == "fetch":   # (2026-10-13) a forced (--force / +src:dst) fetch INTO a local branch drops its unpushed commits
+        forced = "f" in short or "--force" in long_
+        for a in pos:
+            if ":" not in a or "://" in a or "@" in a.split(":", 1)[0]:
+                continue   # no refspec, or a URL / user@host:path remote
+            dst = a.split(":", 1)[1]
+            dst = dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst
+            if (forced or a.startswith("+")) and dst and not dst.startswith("refs/"):
+                return f"fetch --force / +refspec {a} ghi đè nhánh local, mất commit chưa push"
     if sub == "push":
         if "f" in short or "d" in short or long_ & {"--force", "--force-with-lease", "--force-if-includes", "--delete", "--mirror", "--prune"}:
             return "push --force/--delete/--mirror ghi đè hoặc xoá trên remote"
@@ -289,17 +361,7 @@ def danger_in_git(sub, args):
         return "worktree remove --force mất thay đổi"
     return None
 
-def skip_wrapper(tokens, i, prog):
-    opts_arg, npos = WRAPPERS[prog]
-    i += 1
-    while i < len(tokens) and tokens[i].startswith("-") and tokens[i] != "--":
-        opt = tokens[i].split("=", 1)[0]
-        i += 2 if (opt in opts_arg and "=" not in tokens[i]) else 1
-    if i < len(tokens) and tokens[i] == "--":
-        i += 1
-    if prog == "nice" and i < len(tokens) and re.match(r"^-?\d+$", tokens[i]):
-        i += 1
-    return i + npos
+skip_wrapper = shell_norm.skip_wrapper
 
 def git_danger_from_alias(val):
     """`git -c alias.x=VAL x`: VAL is either `!shell cmd` or git args."""
@@ -402,7 +464,7 @@ def solo_git(gdir, *args):
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
 
-REDIRECT = re.compile(r"^\d*(>>?|<|&>)")
+REDIRECT = shell_norm.REDIRECT
 
 def drop_redirects(args):
     """`2>/dev/null`, `> out.txt`: shell redirections are not git arguments."""
@@ -645,6 +707,7 @@ def git_in_literals(code):
     return None
 
 def analyse_simple(tokens, depth):
+    tokens = shell_norm.inline_script(tokens)   # sudo -s STR, env -S STR: the command line a wrapper hides becomes words
     i = 0
     hooks_off = False
     allow_branch = ALLOW_BRANCH[0]
@@ -656,6 +719,9 @@ def analyse_simple(tokens, depth):
             assigns.update([tokens[i].split("=", 1)])
         i += 1
     while i < len(tokens):
+        if REDIRECT.match(tokens[i]):   # (2026-10-13) a redirect before the command: `2>/dev/null git reset --hard`, `2>&1 git …`
+            i += shell_norm.redirect_len(tokens, i)
+            continue
         prog = tokens[i].rsplit("/", 1)[-1]
         if prog == "env":
             i += 1
@@ -677,7 +743,7 @@ def analyse_simple(tokens, depth):
                 allow_branch = allow_branch or tokens[i] == ALLOW_BRANCH_ENV
                 if "=" in tokens[i] and not tokens[i].startswith("-"):
                     assigns.update([tokens[i].split("=", 1)])
-                i += 2 if tokens[i] in ("-u", "-C", "-S") else 1
+                i += 2 if tokens[i] in ("-u", "-C", "-S", "-P") else 1
         elif prog in WRAPPERS:
             i = skip_wrapper(tokens, i, prog)
         elif tokens[i] in KEYWORDS:
@@ -739,24 +805,32 @@ def analyse_simple(tokens, depth):
                 if reason:
                     return reason
         return None
+    if prog == "su":
+        # (2026-10-14, W3) su -c STR runs STR like bash -c; the Android form su [OPTS] USER CMD… runs CMD (shell_norm.su_command)
+        ran = shell_norm.su_command(rest)
+        if ran and ran[0] == "argv":
+            return analyse_simple(ran[1], depth + 1)
+        if ran:
+            IN_C_SCRIPT[0] += 1
+            try:
+                return analyse(ran[1], depth + 1)
+            finally:
+                IN_C_SCRIPT[0] -= 1
+        return None
     if prog in SHELLS or prog == "eval":
         if prog == "eval":
             return analyse_free(" ".join(rest), depth + 1)
-        for j, a in enumerate(rest):
-            if a == "-c" or (a.startswith("-") and not a.startswith("--") and "c" in a[1:]):
-                # Options may follow -c: the command is the first operand (`bash -c -- STR`, `bash -c -e STR`; 2026-10-09
-                # the `--` was analysed instead of STR).
-                k = j + 1
-                while k < len(rest) and rest[k] != "--" and len(rest[k]) > 1 and rest[k][0] in "-+":
-                    k += 2 if rest[k] in SHELL_OPTS_WITH_ARG else 1
-                k += 1 if k < len(rest) and rest[k] == "--" else 0
-                if k >= len(rest):
-                    return None
-                IN_C_SCRIPT[0] += 1   # inside the script: a command word made by a command substitution is refused (analyse_simple)
-                try:
-                    return analyse(rest[k], depth + 1)
-                finally:
-                    IN_C_SCRIPT[0] -= 1
+        # -c alone or in a flag cluster (bash -lc); options may follow -c: the command is the first operand (`bash -c -- STR`,
+        # `bash -c -e STR`; 2026-10-09 the `--` was analysed instead of STR). shell_norm.shell_script
+        if any(a == "-c" or (a.startswith("-") and not a.startswith("--") and "c" in a[1:]) for a in rest):
+            script = shell_norm.shell_script(rest)
+            if script is None:
+                return None
+            IN_C_SCRIPT[0] += 1   # inside the script: a command word made by a command substitution is refused (analyse_simple)
+            try:
+                return analyse(script, depth + 1)
+            finally:
+                IN_C_SCRIPT[0] -= 1
         for j, a in enumerate(rest):
             if a.startswith("<<<"):   # bash <<< STR: the here-string is the script
                 here = a[3:] if len(a) > 3 else (rest[j + 1] if j + 1 < len(rest) else "")
@@ -767,16 +841,17 @@ def analyse_simple(tokens, depth):
         if proc_subst_script(rest):
             PENDING_FEED.append(UNREADABLE_PSUBST)
         return None
-    if prog == "ssh":
-        j = 0
-        while j < len(rest) and rest[j].startswith("-"):
-            j += 2 if rest[j] in ("-p", "-i", "-l", "-o", "-F", "-J", "-L", "-R", "-D") else 1
-        return analyse_free(" ".join(rest[j + 1:]), depth + 1) if j + 1 < len(rest) else None
+    far = shell_norm.far_command(prog, rest)   # ssh HOST CMD, and (2026-10-14, W3) adb shell|exec-out CMD on a device
+    if far:
+        here = CUR_DIR[0]
+        if far[1] == "device":
+            CUR_DIR[0] = None   # the device directory: not known here
+        try:
+            return analyse_free(far[0], depth + 1)
+        finally:
+            CUR_DIR[0] = here
     if prog == "xargs":
-        j = 0
-        while j < len(rest) and rest[j].startswith("-"):
-            j += 2 if rest[j] in ("-I", "-n", "-P", "-L", "-d", "-E", "-s") else 1
-        return analyse_simple(rest[j:], depth + 1)
+        return analyse_simple(rest[shell_norm.xargs_command(rest):], depth + 1)
     if prog != "git":
         return None
     j = 0
@@ -811,15 +886,52 @@ def analyse_simple(tokens, depth):
         return None
     if hooks_off and rest[j] in ("commit", "merge", "am", "cherry-pick", "revert"):
         return "DEVKIT_PRECOMMIT=0 tắt pre-commit hook (kiểm secret/chất lượng)"
-    return danger_in_git(rest[j], rest[j + 1:]) or solo_branch_rule(rest[j], rest[j + 1:], gdir, allow_branch)
+    if rest[j] == "submodule" and "foreach" in rest[j + 1:]:
+        # (2026-10-13) foreach runs its command in every submodule: judged like a command line of its own
+        k = rest.index("foreach", j + 1) + 1
+        while k < len(rest) and rest[k].startswith("-"):
+            k += 1
+        here = CUR_DIR[0]
+        CUR_DIR[0] = None   # each submodule directory: not known here
+        try:
+            reason = analyse_free(" ".join(rest[k:]), depth + 1) if k < len(rest) else None
+        finally:
+            CUR_DIR[0] = here
+        if reason:
+            return f"{reason} (trong git submodule foreach)"
+    return (danger_in_git(rest[j], rest[j + 1:]) or solo_branch_rule(rest[j], rest[j + 1:], gdir, allow_branch)
+            or (checkout_path_rule(rest[j + 1:], gdir) if rest[j] == "checkout" else None))
+
+def checkout_path_rule(args, gdir):
+    """(2026-10-13) `git checkout <path>` and `git checkout <tree-ish> <path>…` without -- overwrite working-tree files like
+    `checkout -- <path>`. Two operands or more are always <tree-ish> <paths>; one operand is a branch switch when it names a
+    commit (rev-parse in gdir), a path when it does not and is an existing file or directory or a glob. A new or tracked branch
+    (-b -B -t --orphan --track) and --patch are judged elsewhere. gdir unknown (cd $X): one operand is not judged."""
+    args = drop_redirects(args)
+    if "--" in args:
+        return None   # danger_in_git refuses checkout -- <path>
+    short, long_ = short_flags(args), set(a.split("=", 1)[0] for a in args if a.startswith("--"))
+    if short & {"b", "B", "t", "p"} or long_ & {"--orphan", "--track", "--patch"}:
+        return None
+    if "--pathspec-from-file" in long_:
+        return "checkout --pathspec-from-file ghi đè file working tree"
+    pos = [a for a in args if not a.startswith("-")]
+    if len(pos) >= 2:
+        return f"checkout {pos[0]} {pos[1]}: <tree-ish> <path> ghi đè file working tree (như checkout -- <path>)"
+    if len(pos) == 1 and gdir:
+        if solo_git(gdir, "rev-parse", "--verify", "-q", pos[0] + "^{commit}") == 0:
+            return None
+        if re.search(r"[*?\[]", pos[0]) or os.path.lexists(os.path.join(gdir, os.path.expanduser(pos[0]))):
+            return f"checkout {pos[0]}: là đường dẫn, ghi đè file working tree (như checkout -- <path>)"
+    return None
 
 RAW = re.compile(
     r"\bgit\b[^;&|\n]*?\s(reset\s+[^;&|\n]*--(hard|merge|keep)"
-    r"|clean\s+[^;&|\n]*(-[A-Za-z]*f|--force)"
+    r"|clean\b(?![^;&|\n]*\s(?:-(?:(?!e)[A-Za-z])*n|--dry-run))\s+[^;&|\n]*(-[A-Za-z]*f|--force)"
     r"|branch\s+[^;&|\n]*-D"
     r"|(checkout|switch)\s+[^;&|\n]*(\s-[A-Za-z]*f\b|--force|--discard-changes|\s--(\s|$)|\s\.(\s|$))"
     r"|restore\b(?![^;&|\n]*(--staged|\s-S\b))"
-    r"|rm\s+[^;&|\n]*(-[A-Za-z]*f\b|--force)|rebase\b(?!\s+--(abort|continue|skip|quit))"
+    r"|rm\b(?![^;&|\n]*\s--cached\b)\s+[^;&|\n]*(-[A-Za-z]*f\b|--force)|rebase\b(?!\s+--(abort|continue|skip|quit))"
     r"|switch\s+[^;&|\n]*-C\b|checkout\s+[^;&|\n]*-B\b"
     r"|push\s+[^;&|\n]*(\s-[A-Za-z]*[fd]\b|--force|--delete|--mirror|--prune|\s[+:][^\s])"
     r"|stash\s+(drop|clear)|reflog\s+(expire|delete)|gc\s+[^;&|\n]*--prune|update-ref\s+[^;&|\n]*-d\b"
@@ -915,36 +1027,25 @@ def strip_subst(text, inners=None, outs=None):
 
 SOLO_WORDS = re.compile(r"\bgit\b[^\n]*?\b(push|checkout|switch|branch|worktree)\b")
 
-HEREDOC_Q = re.compile(r"<<-?[ \t]*(?:\x27(\w+)\x27|\x22(\w+)\x22|\\(\w+))")
-RUNS_INPUT = re.compile(r"(?:^|[\s|;&(/])(?:ba|z|da|k|fi)?sh\b|\b(?:python\d?(?:\.\d+)?|node|ruby|perl|php|ssh|eval|xargs|source)\b|(?:^|\s)\.\s")
+# Heredocs (2026-10-14, W3; policy of 15/10 after three review rounds): shell_norm.heredocs finds them. A body is cut only when the whole
+# command is made of constructs shell_norm models (cut_ok) AND it is the message of a known option (git commit -m, gh pr create --body …)
+# or the one statement of the command (cat > notes.md <<EOF, git commit -F -); every other body stays and is judged as shell lines, quoted
+# or not. A body an interpreter reads as its program (python3 - <<EOF, cat <<EOF | node -) is judged as source first (interp_body_danger
+# below, on the raw text), then cut when cut_ok. An unquoted body that holds a $ or a backtick is never cut (the shell runs its $( ) at once).
+# A heredoc with no delimiter line is never cut (fail closed). NO single quote in this comment: the python source is one bash string.
+def heredoc_cut(h):
+    return h.kind in ("data", "interp")
 
-def drop_literal_heredocs(text):
-    """Remove the body of a QUOTED heredoc (<<\x27X\x27, <<"X", <<\\X) that nothing executes: it is
-    literal text — a commit message quoting `git restore` was blocked (2026-09-28). Kept when the
-    line feeds it to a shell or interpreter (bash <<\x27X\x27, cat <<\x27X\x27 | sh, python3 - <<…) and for
-    an unquoted <<X, whose $(…) the shell runs. No terminator: kept whole (fail closed)."""
-    lines = text.split("\n")
-    out, i = [], 0
-    while i < len(lines):
-        line = lines[i]
-        out.append(line)
-        i += 1
-        m = HEREDOC_Q.search(line)
-        if not m:
-            continue
-        # The command that reads the heredoc: its own segment of the line (pipes included).
-        a = max(line.rfind(x, 0, m.start()) for x in (";", "&&", "||"))
-        ends = [k for k in (line.find(x, m.end()) for x in (";", "&&", "||")) if k >= 0]
-        if RUNS_INPUT.search(line[a + 1 if a >= 0 else 0:min(ends) if ends else len(line)]):
-            continue
-        word = next(g for g in m.groups() if g)
-        end = next((k for k in range(i, len(lines)) if lines[k].strip("\t") == word), None)
-        if end is None:
-            out.extend(lines[i:])
-            break
-        out.append(lines[end])
-        i = end + 1
-    return "\n".join(out)
+# A heredoc an interpreter reads as its PROGRAM is source code, not shell lines (2026-10-13): the -c rule applies to it (RAW, then
+# the git words of its string literals), but only when the body can start a process — a body that merely holds git commands as
+# data (a table of test cases) stays allowed (shell_norm.spawns; in ruby, perl and php a backtick runs a command too).
+def interp_body_danger(body, prog):
+    """The reason the program an interpreter reads from a heredoc runs a dangerous git command, or None."""
+    if not shell_norm.spawns(body, prog):
+        return None
+    hit = RAW.search(body)
+    reason = f"{hit.group(1).split()[0]}" if hit else git_in_literals(body)
+    return f"{reason} (chương trình {prog} đọc từ heredoc)" if reason else None
 
 def outside_single_quotes(text):
     """The text with single-quoted spans removed: a backtick or $( there is literal, never run
@@ -1048,21 +1149,8 @@ def printf_text(args):
     return "".join(out)
 
 def prog_index(seg):
-    """Index of the program word of a simple command: after NAME=…, keywords, env (and its options) and wrappers."""
-    i = 0
-    while i < len(seg):
-        t, p = seg[i], seg[i].rsplit("/", 1)[-1]
-        if t in KEYWORDS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t):
-            i += 1
-        elif p == "env":
-            i += 1
-            while i < len(seg) and (seg[i].startswith("-") or "=" in seg[i]):
-                i += 2 if seg[i] in ("-u", "-C", "-S") else 1
-        elif p in WRAPPERS:
-            i = skip_wrapper(seg, i, p)
-        else:
-            break
-    return i
+    """Index of the program word of a simple command: after NAME=…, keywords, a redirect, env (and its options) and wrappers."""
+    return shell_norm.prefix_end(seg)
 
 def reads_script(seg):
     """A shell that runs what arrives on its stdin (no -c, no script operand, or -s / a lone -, stdin not redirected), or
@@ -1214,11 +1302,17 @@ def analyse_free(text, depth):
 def analyse(text, depth=0, stripped=False):
     if depth > 5:
         return "lồng lệnh quá sâu để phân tích"
-    if depth == 0:
-        text = drop_literal_heredocs(text)
+    if not stripped and "<<" in text:   # every level: a bash -c / eval string holds heredocs of its own
+        docs = shell_norm.heredocs(text)
+        for h in docs:
+            if h.kind in ("interp", "source") and h.terminated:   # a program an interpreter reads, or a script written to a file
+                reason = interp_body_danger(h.body(text), h.reader)
+                if reason:
+                    return reason
+        text = shell_norm.strip_heredocs(text, heredoc_cut, docs)
     live = outside_single_quotes(text)
     if not stripped and ("`" in live or "$(" in live or "<(" in live or ">(" in live):
-        flat = text.replace("\\\n", " ").replace("\n", " ; ")
+        flat = text.replace("\\\n", "").replace("\n", " ; ")
         m = RAW.search(flat)
         if m:
             return f"{m.group(1).split()[0]} (trong lệnh có $(...)/backtick)"
@@ -1241,7 +1335,7 @@ def analyse(text, depth=0, stripped=False):
             SOLO_HIT.append("lệnh có $( hoặc backtick không đóng, không kiểm được push/nhánh trong đó; tách lệnh git ra riêng")
             return SOLO_HIT[-1]
         return None
-    text = drop_comments(text).replace("\\\n", " ").replace("\n", " ; ")
+    text = drop_comments(text).replace("\\\n", "").replace("\n", " ; ")
     try:
         lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
         lex.whitespace = " \t\r"
@@ -1256,6 +1350,8 @@ def analyse(text, depth=0, stripped=False):
     data_groups = []   # one flag per open paren: NAME=( ... ) and (( ... )) hold data, so a substitution there is no command word
     feed = None   # after a pipe: the producer segment ([] = a ( … ) / { … } group, not one literal command)
     for tok in tokens + [";"]:
+        if shell_norm.join_fd_dup(segment, tok):   # 2>&1 git …: the & belongs to the redirect
+            continue
         if tok in SEPARATORS or set(tok) <= set(";&|\n()"):
             opens_data = tok.startswith("(") and bool(segment) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=", segment[-1]) is not None
             if segment:
