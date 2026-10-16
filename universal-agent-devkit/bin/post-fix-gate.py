@@ -4145,7 +4145,8 @@ def suite_env():
             "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
             "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
             "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",  # `git -c k=v commit` reaches the hook as GIT_CONFIG_PARAMETERS
-            "DEVKIT_LEDGER_ROOT"}  # regression_gate's hint for THIS run: a gate a suite starts on a scratch repo reads that repo's own ledger
+            "DEVKIT_LEDGER_ROOT",  # regression_gate's hint for THIS run: a gate a suite starts on a scratch repo reads that repo's own ledger
+            "POSTFIX_GATE_FORCE_FULL", "WORKTREE_MERGE_GATE", "DEVKIT_ALLOW_BRANCH"}
     return {k: v for k, v in os.environ.items()
             if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
 

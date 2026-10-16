@@ -291,6 +291,8 @@ def validate(text, kind, meta=None):
 
 
 def read(args, kind='json', meta=None, recovering=False):
+    if len(args) >= 2 and args[0] in ('issue', 'pr') and args[1] == 'view' and '--json' in args and '--comments' in args:
+        args = [a for a in args if a != '--comments']
     if not read_only(args):
         raise ValueError('retry helper accepts read-only GitHub commands only')
     if not recovering:
@@ -316,6 +318,8 @@ def read(args, kind='json', meta=None, recovering=False):
             if permanent_error(diagnostic):
                 halt('GitHub rejected a required read (query, authentication, or permission error); fix it before restarting', attempt, operation)
             if result.returncode:
+                if re.search(r'cannot specify|unknown (?:shorthand )?flag|accepts \d+ arg', diagnostic, re.I) and kind in FORMS and not os.environ.get('SB_GITHUB_READ_STRICT'):
+                    raise ValueError(f'caller CLI flag error ({diagnostic.strip().splitlines()[0]}); this call failed, the run continues. Valid form: --kind {kind} -- {FORMS[kind]}')
                 shape_only = False
                 status = re.search(r'HTTP [0-9]{3}', result.stderr)
                 last = 'GitHub required read failed' + (f' ({status[0]})' if status else '')

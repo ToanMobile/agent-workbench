@@ -281,18 +281,28 @@ fi
 # Populate git-ignored DevKit symlinks so post-fix-gate / REG-WB-CONFIG-01 succeed in SCRATCH
 if [ -f "$REPO_PATH/universal-agent-devkit/bin/install.sh" ]; then
   bash "$REPO_PATH/universal-agent-devkit/bin/install.sh" -t "$SCRATCH" -a claude -y >/dev/null 2>&1 || true
-  git -C "$SCRATCH" checkout -q -- AGENTS.md .claude/settings.json 2>/dev/null || true
+  git -C "$SCRATCH" checkout -q -- . 2>/dev/null || true
 elif [ -f "$REPO_PATH/.agents/devkit/bin/install.sh" ]; then
   bash "$REPO_PATH/.agents/devkit/bin/install.sh" -t "$SCRATCH" -a claude -y >/dev/null 2>&1 || true
-  git -C "$SCRATCH" checkout -q -- AGENTS.md .claude/settings.json 2>/dev/null || true
+  git -C "$SCRATCH" checkout -q -- . 2>/dev/null || true
 fi
 
 for cmd in "${VERIFY[@]}"; do
+  if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
+    [[ "$cmd" == *"--diff"* ]] || cmd="$cmd --diff origin/${BASE}"
+    [[ "$cmd" == *"--force-full"* ]] || cmd="$cmd --force-full"
+    # Không bao giờ tự thêm --auto-approve-tests ở đây: duyệt test bị sửa là quyết định của từng board (config của nó).
+  fi
   say "verify: ${cmd}"
-  if ! ( cd "$SCRATCH" && eval "$cmd" ) >"$SCRATCH/.verify.log" 2>&1; then
+  if ! ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$cmd" ) >"$SCRATCH/.verify.log" 2>&1; then
     say "FAILED: ${cmd}"
-    tail -30 "$SCRATCH/.verify.log" >&2
-    say "the branch is stale against ${BASE} — send it back to Build for a rebase pass"
+    WT_LOG="$(git -C "$SCRATCH" rev-parse --absolute-git-dir 2>/dev/null)/postfix-gate/last_output.log"
+    if [ -f "$WT_LOG" ]; then
+      cat "$WT_LOG" >>"$SCRATCH/.verify.log" 2>/dev/null || true
+    fi
+    cp "$SCRATCH/.verify.log" "$REPO_PATH/.claude/super-board/last-merge-verify-pr-${PR}.log" 2>/dev/null || true
+    tail -60 "$SCRATCH/.verify.log" >&2
+    say "the branch is stale against ${BASE} — send it back to Build for a rebase pass (log saved to .claude/super-board/last-merge-verify-pr-${PR}.log)"
     exit 2
   fi
 done
@@ -359,9 +369,15 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
      ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
      --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2; then
   say "merged ${HEAD_SHA}"
-  # Post-merge tidy-up: drop worktrees and local branches the merge just made
-  # redundant. Optional (only when the cleanup-wt hook is installed), local-only, and it
-  # can never fail the merge that already happened.
+  # Dọn sau merge: fast-forward nhánh base local và xoá worktree + nhánh local của CHÍNH thẻ vừa merge
+  # (không bao giờ của thẻ khác), để không phải dọn tay. worktree_merge_gate.state là sổ nợ worktree toàn repo
+  # của hook DevKit: hook tự dọn sổ đó, gate này không bao giờ xoá.
+  git -C "$REPO_PATH" fetch origin "$BASE" --quiet 2>/dev/null || true
+  # Chỉ khi checkout đang ở $BASE: nếu không, ff-only sẽ đẩy nhánh nào đang được checkout.
+  if [ "$(git -C "$REPO_PATH" symbolic-ref --quiet --short HEAD 2>/dev/null)" = "$BASE" ]; then
+    git -C "$REPO_PATH" merge --ff-only "origin/$BASE" >/dev/null 2>&1 || true
+  fi
+  bash "$HERE/super-board-post-merge-clean.sh" "$REPO_PATH" "$HEAD_REF" "$HEAD_SHA" >&2 || true
   if [ -f "$REPO_PATH/.claude/hooks/cleanup-wt.py" ]; then
     ( cd "$REPO_PATH" && python3 .claude/hooks/cleanup-wt.py --post-merge --base "$BASE" </dev/null ) >&2 || true
   fi

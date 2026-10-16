@@ -385,3 +385,11 @@ Mẫu ghi nhận:
 - **Quy tắc phòng ngừa & Cách fix:** Cut a body only under a structural precondition: the whole command uses only constructs the scanner models, the delimiter is a plain word, and the body is the last statement or the value of a known message option of a known consumer; any doubt keeps the text in the scan (fail closed). Every guard change needs a monotonic corpus (old blocks implies new blocks) with a harmless control per row, mutation-checked, before any review.
 - **Lệnh kiểm tra:** `bash universal-agent-devkit/tests/gates/test_guard_shell_norm_monotonic.sh (on the lane branch until it is merged)`
 - **Nguồn:** session 9559b4fd, OCR + principal review of lane aa3f350b (guard shell_norm)
+
+---
+
+### [INSTINCT-046] Công tắc môi trường của runner/worker lọt vào suite test của gate
+- **Ngày phát hiện:** 2026-10-16
+- **Hiện tượng lỗi:** Công tắc môi trường của runner/worker lọt vào suite test của gate
+- **Nguyên nhân:** super-board-run.sh export DEVKIT_ALLOW_BRANCH=1 cho worker, worker tự đặt POSTFIX_GATE_FORCE_FULL=1; suite_env() của post-fix-gate giữ nguyên chúng nên REG-DK-HOOK-01 (checkout -b want=2 got=0) và test_busy_keeps_receipt đỏ trong merge-gate verify, thẻ đã review bị đẩy sang Blocked
+- **Quy tắc phòng ngừa & Cách fix:** Biến là công tắc của MỘT lần chạy gate/hook (DEVKIT_ALLOW_BRANCH, POSTFIX_GATE_FORCE_FULL, WORKTREE_MERGE_GATE…) phải nằm trong danh sách drop của suite_env() và unset trong tests/lib/clean_git_env.sh; thêm công tắc mới thì thêm vào cả hai và vào test_suite_env.sh

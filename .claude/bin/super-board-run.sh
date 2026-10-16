@@ -370,7 +370,8 @@ dispatch_lane() {
       [ -n "$pool_acct" ] && printf 'account_pool: engine=%s account=%s config_dir=%s\n' "$pool_engine" "$pool_acct" "$pool_cfg" >> "$worker_log"
     fi
   fi
-  export DEVKIT_ALLOW_BRANCH=1
+  export DEVKIT_ALLOW_BRANCH=1 WORKTREE_MERGE_GATE=0 DEVKIT_LANG="${DEVKIT_LANG:-vi}"
+  unset POSTFIX_GATE_FORCE_FULL
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
     nohup "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ "$pool_engine" = "grok" ] && [ -x "$HOME/.grok/bin/grok" ]; then
@@ -420,6 +421,14 @@ check_lane_zombie() {
   local cur found=0 col
   cur=$(issue_status "$issue")
   [ -z "$cur" ] && return 0                # not in cache (closed/deleted/race) → don't kill
+  # Thẻ `qa` được giao từ Ready và Tester tự chuyển Ready → QA sau khi khởi động (run.md, Tester lượt đầu).
+  # Khi thẻ của Tester này chưa từng thấy ở QA thì Ready không phải dấu hiệu zombie; sau đó Ready là đường
+  # fail của Tester và giải phóng lane như cũ. QA_SEEN_IN_QA giữ PID đã thấy, nên Tester mới trên cùng thẻ
+  # bắt đầu sạch.
+  if [ "$lane" = qa ]; then
+    if [ "$cur" = QA ]; then QA_SEEN_IN_QA="$pid"
+    elif [ "${QA_SEEN_IN_QA:-}" != "$pid" ]; then expected="$expected Ready"; fi
+  fi
   for col in $expected; do
     [ "$cur" = "$col" ] && found=1
   done
@@ -491,6 +500,22 @@ runaway_summary() {
   log "   → inspect worker logs in ${WORKER_LOG_DIR}/"
 }
 
+runaway_action() {
+  # Cổng "có thẻ về Done" đã bật (issue #8). Lần chạy một lượt thì dừng (trả 1). Daemon (SB_DAEMON=1,
+  # super_board_all.py start) giữ board chạy nhưng vẫn có giới hạn: báo runaway, không giao worker mới trong
+  # 10 tick (worker đang chạy vẫn tiếp tục), rồi đếm lại (trả 0).
+  if [ "${SB_DAEMON:-0}" = "1" ]; then
+    log "⚠ RUNAWAY (daemon): no card reached Done in ${NO_PROGRESS_CYCLES} dispatch cycles — no new dispatch for $((TICK_SECONDS * 10))s"
+    runaway_summary
+    NO_PROGRESS_CYCLE_COUNT=0
+    sleep $((TICK_SECONDS * 10))
+    return 0
+  fi
+  log "🛑 halt — RUNAWAY: no card reached Done in ${NO_PROGRESS_CYCLES} dispatch cycles"
+  runaway_summary
+  return 1
+}
+
 reap_finished_locks() {
   # Sweep inflight/ for dead PIDs; remove locks AND sweep stale assignees so the
   # next dispatch can re-claim the card if the worker crashed without releasing.
@@ -518,6 +543,41 @@ reap_finished_locks() {
       rm -f "$lock"
       REAP_COUNT=$((REAP_COUNT + 1))
     fi
+  done
+}
+
+adopt_live_locks() {
+  # Lúc khởi động: worker do lần chạy trước khởi tạo (nohup) vẫn sống sau khi runner cũ chết. Đưa từng worker
+  # còn sống về lại lane của nó, nếu không lần chạy này thấy lane rảnh và khởi thêm worker thứ hai bên cạnh.
+  # Lock chết đã được dọn trước đó.
+  local lock issue
+  for lock in "$INFLIGHT_DIR"/*; do
+    [ -f "$lock" ] || continue
+    issue=$(basename "$lock")
+    case "$issue" in *[!0-9]*|'') continue ;; esac
+    read_lock "$issue"
+    { [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; } || continue
+    # Sau khi khởi động lại máy, PID có thể thuộc tiến trình bất kỳ; dòng lệnh của worker luôn mang prompt của lane.
+    case "$(ps -ww -o command= -p "$PID" 2>/dev/null)" in *"issue #${issue} for super-board run"*) ;; *) continue ;; esac
+    case "$LANE" in
+      build)  BUILD_PID="$PID";  BUILD_ISSUE="$issue" ;;
+      qa)     QA_PID="$PID";     QA_ISSUE="$issue" ;;
+      review) REVIEW_PID="$PID"; REVIEW_ISSUE="$issue" ;;
+      *) continue ;;
+    esac
+    ADOPTED_PIDS="${ADOPTED_PIDS:-} $PID"
+    log "adopted live ${LANE} worker on #${issue} (pid=${PID}) from the previous run"
+  done
+}
+
+own_lane_pids() {
+  # PID trong các lane do chính lần chạy này khởi tạo (không phải nhận lại): khi dừng khẩn chỉ kill các PID này
+  # (hợp đồng của halt_cleanup).
+  local pid
+  for pid in "${BUILD_PID:-}" "${QA_PID:-}" "${REVIEW_PID:-}"; do
+    [ -n "$pid" ] || continue
+    case " ${ADOPTED_PIDS:-} " in *" $pid "*) continue ;; esac
+    echo "$pid"
   done
 }
 
@@ -597,6 +657,71 @@ $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "$BOT_LOGIN" '
 EOF
 }
 
+sweep_blocked_cards() {
+  # Thẻ Blocked có mọi blocker trên dòng `blocked-by:` đã đóng thì về lại Ready: danh sách `sweep` của wave
+  # planner, đúng luật backend workflow áp giữa các wave. Thẻ chờ người (`blocked-by: -`) không bao giờ có
+  # trong đó. Trả 0 khi có thẻ được chuyển (caller đọc lại board), 1 khi không có, 2 khi planner lỗi.
+  local items_file plan rc=0 moved=1 issue item_id cleared
+  items_file=$(mktemp "${TMPDIR:-/tmp}/sb-items.XXXXXX")
+  printf '%s' "$PROJECT_ITEMS_JSON" > "$items_file"
+  plan=$("$(dirname "$SB_GITHUB_READ")/super-board-wave-plan.sh" --config "$CONFIG_PATH" --items "$items_file" 2>>"$RUN_MANIFEST") || rc=$?
+  rm -f "$items_file"
+  if [ "$rc" -ne 0 ]; then
+    gh_checkpoint
+    log "⚠ blocked sweep skipped: wave planner exit ${rc}; retrying in ${SWEEP_RETRY_SECONDS}s"
+    return 2
+  fi
+  local next
+  while IFS=$'\t' read -r issue cleared; do
+    # Không có blocker nào (thẻ bị kéo tay sang Blocked, body ghi None): không có gì vừa đóng, để người quyết.
+    [ -n "$issue" ] && [ -n "$cleared" ] || continue
+    # Mỗi thẻ một lần mỗi lần chạy: thẻ bị park lại sau khi đã sweep là việc người cần xem, không phải vòng lặp.
+    case " ${SWEPT_CARDS:-} " in *" $issue "*) log "blocked sweep: #${issue} already swept this run — left Blocked"; continue ;; esac
+    # `needs-you` là quyết định của người, kể cả khi planner thả thẻ (planner chỉ đọc 8 comment cuối).
+    if echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$issue" '[.items[] | select(.content.number == $n)
+         | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index("needs-you")' >/dev/null 2>&1; then
+      continue
+    fi
+    item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty')
+    [ -n "$item_id" ] || continue
+    if ! set_card_status "$item_id" "Ready"; then
+      gh_checkpoint
+      log "⚠ blocked sweep: could not move #${issue} to Ready"
+      continue
+    fi
+    SWEPT_CARDS="${SWEPT_CARDS:-} $issue"
+    next=builder; [ "$(card_lane "$issue")" = qa ] && next=tester
+    # Định dạng comment: writing-standard.md § 4.
+    gh_checkpoint
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Ready · blockers closed
+Did: every blocker on the last blocked-by line is closed (${cleared})
+✅ Done: card moved Blocked → Ready
+Next: ${next} (next tick)" >/dev/null 2>&1 || true
+    log "↩ unblocked #${issue}: Blocked → Ready (cleared by ${cleared})"
+    moved=0
+  done <<EOF
+$(printf '%s' "$plan" | jq -r '.sweep[]? | [(.number | tostring), ((.clearedBy // []) | map("#" + tostring) | join(", "))] | @tsv' 2>/dev/null)
+EOF
+  return "$moved"
+}
+
+SWEEP_RETRY_SECONDS=300
+maybe_sweep_blocked() {
+  # Blocker chỉ được gỡ khi có thẻ về Done, nên planner (một lần đọc GraphQL các issue mở để dựng đồ thị phụ
+  # thuộc) chạy lúc khởi động và mỗi khi tập Done đổi, không chạy mỗi tick. Planner lỗi (rate limit, mạng) được
+  # thử lại sau SWEEP_RETRY_SECONDS, không phải đợi tới lần có thẻ về Done kế tiếp.
+  # ponytail: blocker đóng ngoài board (tập Done không đổi) phải chờ lần về Done sau; sweep theo sự kiện issue nếu việc này gây kẹt.
+  local sig rc=0
+  sig=$(done_signature)
+  if [ "$sig" = "${SWEEP_DONE_SIG-<none>}" ]; then
+    [ "${SWEEP_RETRY_AT:-0}" -gt 0 ] && [ "$(date +%s)" -ge "$SWEEP_RETRY_AT" ] || return 1
+  fi
+  SWEEP_DONE_SIG="$sig"; SWEEP_RETRY_AT=0
+  sweep_blocked_cards || rc=$?
+  [ "$rc" -ne 2 ] || SWEEP_RETRY_AT=$(( $(date +%s) + SWEEP_RETRY_SECONDS ))
+  return "$rc"
+}
+
 # ───────────────────────── run counters (shared state) ─────────────────────────
 DISPATCH_COUNT=0
 REAP_COUNT=0
@@ -614,8 +739,8 @@ fi
 halt_cleanup() {
   local rc=$?
   if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ] || ! python3 "$SB_GITHUB_READ" --check >/dev/null 2>&1; then
-    for pid in "${BUILD_PID:-}" "${QA_PID:-}" "${REVIEW_PID:-}"; do
-      [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null || true
+    for pid in $(own_lane_pids); do
+      kill -TERM "$pid" 2>/dev/null || true
     done
   fi
 }
@@ -673,6 +798,7 @@ NO_PROGRESS_CYCLE_COUNT=0
 BUILD_PID=""; BUILD_ISSUE=""
 QA_PID=""; QA_ISSUE=""
 REVIEW_PID=""; REVIEW_ISSUE=""
+adopt_live_locks
 
 while true; do
   python3 "$(dirname "$SB_GITHUB_READ")/super-board-verification-ready.py" --config "$CONFIG_PATH"
@@ -727,6 +853,9 @@ while true; do
   [ "$BUILD_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
   [ "$QA_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
   [ "$REVIEW_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
+
+  # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
+  if maybe_sweep_blocked; then fetch_project_items; fi
 
   READY=$(column_count "Ready")
   BUILDING=0
@@ -795,9 +924,7 @@ while true; do
   #    exists to catch is a pipeline that is 100% busy and lands nothing, and the old
   #    `AND no lane active` clause made that case unhaltable (293 ticks, 0 merges).
   if ! record_cycle_progress "$(done_signature)"; then
-    log "🛑 halt — RUNAWAY: no card reached Done in ${NO_PROGRESS_CYCLES} dispatch cycles"
-    runaway_summary
-    break
+    runaway_action || break
   fi
 
   # ── Hard dispatch ceiling. Bounds worst-case spend even if the board keeps
