@@ -99,6 +99,22 @@ CASES = [
     # 8000: the hardware gate has 10) and for every blank line (1.4 s for 12000): the danger at the end must still be refused, at once
     ("8000 words naming the written file, then danger", "cat > x <<EOF\nb\nEOF\n" + "x " * 8000 + "; adb remount; git reset --hard", 2, 2, False),
     ("12000 blank lines, a heredoc, then danger", "git status\n" + "\n" * 12000 + "cat > x <<EOF\nb\nEOF\nadb remount; git reset --hard", 2, 2, False),
+    # 15/10 r4: the continuation join, the comment variants and the open-quote fallback must stay linear too (a danger after 20 KB is still found)
+    ("2500 continuation lines", "echo a \\\n" * 2500 + "b", 0, 0, False),
+    ("git danger after 2500 continuation lines", "echo a \\\n" * 2500 + "b\ngit reset --hard", 2, 0, False),
+    ("rm danger after 2500 continuation lines", "echo a \\\n" * 2500 + "b\nrm -rf ~", 0, 2, False),
+    ("adb remount after 5000 comment lines that end in a backslash", "#c\\\n" * 5000 + "adb remount", 0, 2, False),
+    ("git danger after a 20 KB body with an open quote", "git status\ncat <<'EOF'\n" + L + "\ndon't\nEOF\ngit push -f origin main", 2, 0, False),
+    ("git branch rule before a 20 KB body with an open quote", "git checkout -b x && cat <<'EOF'\n" + L + "\ndon't\nEOF", 2, 0, False),
+    ("1999 lines that each hold one quote", "\n".join("echo don't %d" % i for i in range(1999)), 0, 0, False),
+    ("git danger after 1999 lines that each hold one quote", "\n".join("echo don't %d" % i for i in range(1999)) + "\ngit push -f origin main", 2, 0, False),
+    ("20 KB unterminated heredoc, then nothing", "python3 - <<'EOF'\n" + L, 0, 0, False),
+    ("20 KB unterminated heredoc with the danger inside", "python3 - <<'EOF'\n" + L + "\ngit reset --hard", 2, 0, False),
+    # 15/10 r5: the second reading of a comment that ends in a backslash (the script keeps its line breaks), and a quoted script is read as typed
+    ("git danger in a quoted script after 2500 comment lines that end in a backslash", "bash -c '" + "true # c\\\n" * 2500 + "git reset --hard'", 2, 0, False),
+    ("rm danger in a quoted script after 2500 comment lines that end in a backslash", "bash -c '" + "true # c\\\n" * 2500 + "rm -rf ~'", 0, 2, False),
+    ("git danger in a quoted script after 800 interpreter heredocs", "bash -c '" + "python3 - <<EOF\nx\nEOF\n" * 800 + "git reset --hard'", 2, 0, False),
+    ("rm danger in a quoted script after 800 interpreter heredocs", "bash -c '" + "python3 - <<EOF\nx\nEOF\n" * 800 + "rm -rf ~'", 0, 2, False),
     ("rm -rf of build outputs, one git call each", B, 0, (0, 2), True),
     ("100 KB of dd lines", "\n".join("dd if=a of=b%d" % i for i in range(100000 // 18)), 0, (0, 2), True),
     ("200 KB of dd lines", BIG_DD, 0, (0, 2), True),

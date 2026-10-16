@@ -1033,15 +1033,19 @@ SOLO_WORDS = re.compile(r"\bgit\b[^\n]*?\b(push|checkout|switch|branch|worktree)
 # or not. A body an interpreter reads as its program (python3 - <<EOF, cat <<EOF | node -) is judged as source first (interp_body_danger
 # below, on the raw text), then cut when cut_ok. An unquoted body that holds a $ or a backtick is never cut (the shell runs its $( ) at once).
 # A heredoc with no delimiter line is never cut (fail closed). NO single quote in this comment: the python source is one bash string.
-def heredoc_cut(h):
-    return h.kind in ("data", "interp")
+# A program that can start a process is never cut (15/10 r4): ruby, perl and php run a backtick as a command, and the branch, worktree and hooks-off
+# rules read it like any other line; interp_body_danger below judges only RAW and the git words of its literals. Nor is a program whose OUTPUT is
+# taken (15/10 r5: $( ), a redirect, a pipe): the shell runs what it prints (shell_norm.program_cut).
+def heredoc_cut(h, text):
+    return h.kind == "data" or shell_norm.program_cut(h, text)
 
 # A heredoc an interpreter reads as its PROGRAM is source code, not shell lines (2026-10-13): the -c rule applies to it (RAW, then
 # the git words of its string literals), but only when the body can start a process — a body that merely holds git commands as
-# data (a table of test cases) stays allowed (shell_norm.spawns; in ruby, perl and php a backtick runs a command too).
-def interp_body_danger(body, prog):
+# data (a table of test cases) stays allowed (shell_norm.spawns; in ruby, perl and php a backtick runs a command too) — or when its output is
+# captured (h.captured, 15/10 r5): a program that only prints the command line a shell then runs is a command source too.
+def interp_body_danger(body, prog, captured=False):
     """The reason the program an interpreter reads from a heredoc runs a dangerous git command, or None."""
-    if not shell_norm.spawns(body, prog):
+    if not (captured or shell_norm.spawns(body, prog)):
         return None
     hit = RAW.search(body)
     reason = f"{hit.group(1).split()[0]}" if hit else git_in_literals(body)
@@ -1289,62 +1293,29 @@ def judge_feed(producer, depth):
             return reason
     return None
 
-def analyse_free(text, depth):
-    """analyse() of text that is not the script of the enclosing bash -c itself (an eval operand, an ssh or watch command, the body of an
-    arithmetic expansion): a command substitution there is ordinary, only the script own command word is judged."""
-    saved = IN_C_SCRIPT[0]
-    IN_C_SCRIPT[0] = 0
-    try:
-        return analyse(text, depth)
-    finally:
-        IN_C_SCRIPT[0] = saved
+def crude_words(line):
+    """The words of a line that lex_words cannot read: quotes and backslashes dropped (as the hardware gate reads a text it cannot parse), the
+    shell separators kept as words of their own. It cannot fail, so a quote left open by prose never turns a rule off."""
+    return re.findall(r"[;&|()]+|[^\s;&|()]+", re.sub(r"[\\\x27\x22]", "", line))
 
-def analyse(text, depth=0, stripped=False):
-    if depth > 5:
-        return "lồng lệnh quá sâu để phân tích"
-    if not stripped and "<<" in text:   # every level: a bash -c / eval string holds heredocs of its own
-        docs = shell_norm.heredocs(text)
-        for h in docs:
-            if h.kind in ("interp", "source") and h.terminated:   # a program an interpreter reads, or a script written to a file
-                reason = interp_body_danger(h.body(text), h.reader)
-                if reason:
-                    return reason
-        text = shell_norm.strip_heredocs(text, heredoc_cut, docs)
-    live = outside_single_quotes(text)
-    if not stripped and ("`" in live or "$(" in live or "<(" in live or ">(" in live):
-        flat = text.replace("\\\n", "").replace("\n", " ; ")
-        m = RAW.search(flat)
-        if m:
-            return f"{m.group(1).split()[0]} (trong lệnh có $(...)/backtick)"
-        # 2026-09-28: the command inside $(...)/backticks gets the same parser as a top-level one
-        # (the raw regex above knows no abbreviation: `echo $(git reset --har HEAD~1)` passed).
-        inners, outs = [], []
-        plain = strip_subst(text, inners, outs)
-        if plain is not None:
-            if any(out_subst_shell(o) for o in outs):
-                PENDING_FEED.append(UNREADABLE_OSUBST)
-            for inner in inners:
-                here = CUR_DIR[0]   # a cd inside $(...) runs in a subshell
-                arith = inner.startswith("(") and subst_end("$" + inner, 0) == len(inner) + 1   # only $(( … )) is data: its first paren closes at the very end
-                reason = (analyse_free if arith else analyse)(inner, depth + 1)   # $((:); $(cmd)) is a subshell, a plain $( … ) runs in the -c shell
-                CUR_DIR[0] = here
-                if reason:
-                    return reason
-            return analyse(plain, depth + 1, True)
-        if SOLO_WORDS.search(text):  # an unclosed $( / backtick hides the rest: fail closed
-            SOLO_HIT.append("lệnh có $( hoặc backtick không đóng, không kiểm được push/nhánh trong đó; tách lệnh git ra riêng")
-            return SOLO_HIT[-1]
-        return None
-    text = drop_comments(text).replace("\\\n", "").replace("\n", " ; ")
+def scan_words(pre, depth):
+    """The verdict of one reading of a command text (shell_norm.readings): its words, segment by segment (analyse_simple), and the text a literal producer
+    feeds to a shell (judge_feed)."""
     try:
-        lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
-        lex.whitespace = " \t\r"
-        lex.whitespace_split = True
-        lex.commenters = ""   # real comments are gone (drop_comments); a # left inside a word is data
-        tokens = list(lex)
+        tokens = shell_norm.lex_words(pre)
     except ValueError:
-        m = RAW.search(text)
-        return f"{m.group(1).split()[0]} (lệnh không phân tích được)" if m else None
+        # an unbalanced quote or a trailing backslash (a prose body that stays in the scan: dont, 5" screen): RAW first, then each line alone and
+        # a line that still does not parse word by word with its quotes dropped. Every rule stays on; it used to be RAW only (15/10 r4)
+        m = RAW.search(pre.replace("\n", " ; "))
+        if m:
+            return f"{m.group(1).split()[0]} (lệnh không phân tích được)"
+        tokens = []
+        for line in pre.split("\n"):
+            try:
+                tokens += shell_norm.lex_words(line)
+            except ValueError:
+                tokens += crude_words(line)
+            tokens.append(";")
     segment = []
     dirs = []
     data_groups = []   # one flag per open paren: NAME=( ... ) and (( ... )) hold data, so a substitution there is no command word
@@ -1384,6 +1355,65 @@ def analyse(text, depth=0, stripped=False):
                         CUR_DIR[0] = dirs.pop()
         else:
             segment.append(tok)
+    return None
+
+def analyse_free(text, depth):
+    """analyse() of text that is not the script of the enclosing bash -c itself (an eval operand, an ssh or watch command, the body of an
+    arithmetic expansion): a command substitution there is ordinary, only the script own command word is judged."""
+    saved = IN_C_SCRIPT[0]
+    IN_C_SCRIPT[0] = 0
+    try:
+        return analyse(text, depth)
+    finally:
+        IN_C_SCRIPT[0] = saved
+
+def analyse(text, depth=0, stripped=False):
+    if depth > 5:
+        return "lồng lệnh quá sâu để phân tích"
+    if not stripped and "<<" in text:   # every level: a bash -c / eval string holds heredocs of its own
+        docs = shell_norm.heredocs(text)
+        for h in docs:
+            if h.kind in ("interp", "source"):   # a program an interpreter reads, or a script written to a file (no delimiter line: the rest of the text, 15/10 r4)
+                reason = interp_body_danger(h.body(text), h.reader, h.captured)
+                if reason:
+                    return reason
+        text = shell_norm.strip_heredocs(text, lambda h: heredoc_cut(h, text), docs)
+    live = outside_single_quotes(text)
+    if not stripped and ("`" in live or "$(" in live or "<(" in live or ">(" in live):
+        for flat in shell_norm.readings(text):   # joined, and as typed: a backslash-newline inside single quotes is literal there (15/10 r5)
+            m = RAW.search(flat.replace("\n", " ; "))
+            if m:
+                return f"{m.group(1).split()[0]} (trong lệnh có $(...)/backtick)"
+        # 2026-09-28: the command inside $(...)/backticks gets the same parser as a top-level one
+        # (the raw regex above knows no abbreviation: `echo $(git reset --har HEAD~1)` passed).
+        inners, outs = [], []
+        plain = strip_subst(text, inners, outs)
+        if plain is not None:
+            if any(out_subst_shell(o) for o in outs):
+                PENDING_FEED.append(UNREADABLE_OSUBST)
+            for inner in inners:
+                here = CUR_DIR[0]   # a cd inside $(...) runs in a subshell
+                arith = inner.startswith("(") and subst_end("$" + inner, 0) == len(inner) + 1   # only $(( … )) is data: its first paren closes at the very end
+                reason = (analyse_free if arith else analyse)(inner, depth + 1)   # $((:); $(cmd)) is a subshell, a plain $( … ) runs in the -c shell
+                CUR_DIR[0] = here
+                if reason:
+                    return reason
+            return analyse(plain, depth + 1, True)
+        if SOLO_WORDS.search(text):  # an unclosed $( / backtick hides the rest: fail closed
+            SOLO_HIT.append("lệnh có $( hoặc backtick không đóng, không kiểm được push/nhánh trong đó; tách lệnh git ra riêng")
+            return SOLO_HIT[-1]
+        # no return here (15/10 r4): an unclosed span (a lone backtick or $( in a prose body that stays in the scan) used to END the analysis, which
+        # turned off every rule that RAW and SOLO_WORDS lack (DEVKIT_PRECOMMIT=0 git commit …). The text goes on to the word-by-word reading below.
+    # Each reading of the text (shell_norm.readings) is read from where the command started; the verdicts are added: blocked when ANY blocks. The state a
+    # reader leaves behind (the directory after a cd) is the first reading, as before the second one existed.
+    start_dir = first_dir = CUR_DIR[0]
+    for n, pre in enumerate(shell_norm.readings(drop_comments(text))):
+        CUR_DIR[0] = start_dir if n else CUR_DIR[0]
+        reason = scan_words(pre, depth)
+        if reason:
+            return reason
+        first_dir = CUR_DIR[0] if n == 0 else first_dir
+    CUR_DIR[0] = first_dir
     return None
 
 # Only a cd BEFORE the last restore can move the paths it resolves (GeelyEx2 2026-09-27:

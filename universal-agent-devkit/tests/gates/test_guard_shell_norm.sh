@@ -21,6 +21,10 @@
 #  hardware: ~ as a device rm target (the device shell HOME is not known), xargs -i (GNU: no separate value), the script of
 #    bash -lc / su -c for the device policy.
 #  shell_norm.py itself: the heredoc reader kinds, and the fail-closed import (a hook copied without the module blocks).
+# 15/10 r5 (independent verification of the r4 tree, every dangerous row ran its harmless marker twin under /bin/bash 3.2 and zsh): the guards no longer
+#  rewrite the newlines of the text (a quoted script keeps its heredoc terminators), a comment that ends in a backslash is read joined AND as typed, an
+#  interpreter program whose output a $( ), a redirect or a pipe takes is never cut, and zx / Bun / dax / Deno count as programs that start a process.
+#  The last section of the file ("r5") holds those rows; its accepted false positives are pinned blocked.
 # Only the hooks run here — never the commands.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -432,6 +436,7 @@ echo "── shell_norm.py: heredoc reader kinds, and the hooks fail closed with
 SN_DIR="$(cd "$(dirname "$HW")" && pwd)"
 python3 -I - "$SN_DIR" > "$TMP/sn.txt" 2>&1 <<'PY'
 import sys
+import time
 sys.dont_write_bytecode = True
 sys.path.append(sys.argv[1])
 import shell_norm as sn
@@ -508,6 +513,52 @@ CASES = [
     ("cat <<-$'EOF'\n\thi\n\tEOF\nls", []),
     ("cat <<$'E\\x4fF'\nhi\nEOF\nls", []),
     ("cat <<\"$EOF\"\nhi\n$EOF\nls", [("$EOF", O, True)]),
+    # 15/10 r4 P0-A: an unquoted body joins its continuation lines like the shell, so E\<nl>OF IS the delimiter (the next lines are commands, no
+    # statement); a quoted body at top level joins nothing; x\<nl>EOF is xEOF, the body goes on; an escaped backslash joins nothing
+    ("cat > n.md <<EOF\nhi\nE\\\nOF\nls\nEOF\n", [("EOF", O, True)]),
+    ("cat > n.md <<EOF\nhi\nE\\\nOF\n", [("EOF", D, True)]),
+    ("cat > n.md <<EOF\nhi\nEO\\\nF\n", [("EOF", D, True)]),
+    ("cat > n.md <<'EOF'\nhi\nE\\\nOF\nls\nEOF\n", [("EOF", D, True)]),
+    ("cat > n.md <<EOF\nhi\nx\\\nEOF\nls\nEOF\n", [("EOF", D, True)]),
+    ("cat > n.md <<EOF\nhi\nE\\\\\nOF\nEOF\n", [("EOF", D, True)]),
+    ("cat > n.md <<-EOF\n\thi\n\tE\\\nOF\nls\n", [("EOF", O, True)]),
+    ("python3 - <<EOF\nx\nE\\\nOF\nls\nEOF\n", [("EOF", I, True)]),
+    ("cat <<EOF\nx\nE\\", [("EOF", O, False)]),
+    # a continuation that ends a line at the very end of the text joins nothing
+    ("cat <<EOF\nx\\\n", [("EOF", O, False)]),
+    # 15/10 r4 P0-D: the sinks after the operator (inside $( ) too) and sudo -s / -i / --shell with no command: a shell reads the heredoc
+    ("python3 -c \"pass\" \"$(cat <<'EOF' | sh\nx\nEOF\n)\"", [("EOF", S, True)]),
+    ("x=$(cat <<'EOF' | bash\nx\nEOF\n)", [("EOF", S, True)]),
+    ("x=$(cat <<'EOF' | python3 -\nx\nEOF\n)", [("EOF", I, True)]),
+    ("x=$(cat <<'EOF' \\\n| sh\nx\nEOF\n)", [("EOF", S, True)]),
+    ("x=$(cat <<'EOF' | wc -l\nx\nEOF\n)", [("EOF", O, True)]),
+    ("node -e \"x\" \"$(cat <<'EOF'\nx\nEOF\n)\"", [("EOF", O, True)]),
+    ("python3 -c \"pass\" \"$(cat <<'EOF'\nx\nEOF\n)\"", [("EOF", O, True)]),
+    ("python3 -c \"$(cat <<'EOF'\nx\nEOF\n)\"", [("EOF", I, True)]),
+    ("python3 -c \"$(cat <<'EOF' | sh\nx\nEOF\n)\"", [("EOF", S, True)]),
+    ("python3 -c \"$(cat <<'EOF'\nx\nEOF\n); ls\"", [("EOF", I, True)]),
+    ("sudo -s <<'EOF' | python3 -\nx\nEOF", [("EOF", S, True)]),
+    ("sudo -i <<'EOF' | python3 -\nx\nEOF", [("EOF", S, True)]),
+    ("doas -s <<'EOF' | python3 -\nx\nEOF", [("EOF", S, True)]),
+    ("sudo -u root -s <<'EOF' | python3 -\nx\nEOF", [("EOF", S, True)]),
+    ("sudo --shell <<'EOF'\nx\nEOF", [("EOF", S, True)]),
+    ("sudo -s <<'EOF' | cat\nx\nEOF", [("EOF", S, True)]),
+    ("sudo -u root <<'EOF'\nx\nEOF", [("EOF", O, True)]),
+    # 15/10 r4 P3: not prose for a note file
+    ("cat > CLAUDE.md <<'EOF'\nls\nEOF", [("EOF", O, True)]),
+    ("cat > AGENTS.md <<'EOF'\nls\nEOF", [("EOF", O, True)]),
+    ("cat > docs/agents.md <<'EOF'\nls\nEOF", [("EOF", O, True)]),
+    ("cat > CMakeLists.txt <<'EOF'\nls\nEOF", [("EOF", O, True)]),
+    ("cat > requirements.txt <<'EOF'\nls\nEOF", [("EOF", O, True)]),
+    ("cat > dev-requirements.txt <<'EOF'\nls\nEOF", [("EOF", O, True)]),
+    ("cat > .claude/commands/x.md <<'EOF'\nls\nEOF", [("EOF", O, True)]),
+    ("cat > .agents/notes.md <<'EOF'\nls\nEOF", [("EOF", O, True)]),
+    ("cd .claude && cat > x.md <<'EOF'\nls\nEOF", [("EOF", O, True)]),
+    ("cat > /etc/n.md <<'EOF'\nls\nEOF", [("EOF", O, True)]),
+    ("cat > ~root/n.md <<'EOF'\nls\nEOF", [("EOF", O, True)]),
+    ("cat > ../n.md <<'EOF'\nls\nEOF", [("EOF", O, True)]),
+    ("cat > docs/guide.md <<'EOF'\nls\nEOF", [("EOF", D, True)]),
+    ("cat > docs/claude-notes.md <<'EOF'\nls\nEOF", [("EOF", D, True)]),
 ]
 bad = 0
 for cmd, want in CASES:
@@ -589,6 +640,79 @@ docs = sn.heredocs(many)
 ok = len(docs) == 120 and all(h.kind == "shell" and not h.cut_ok for h in docs)   # past MAX_HEREDOCS none is classified or cut
 print(("✔ " if ok else "✖ ") + f"120 heredocs: none classified, none cut (the classification was quadratic: 100 heredocs took 2.5 s)")
 bad += not ok
+# 15/10 r4 P1: a backslash-newline is a continuation only when the backslash is not itself escaped (an odd run before the newline)
+for got, want in [(sn.join_continuations("a\\\nb"), "ab"), (sn.join_continuations("a\\\\\nb"), "a\\\\\nb"), (sn.join_continuations("a\\\\\\\nb"), "a\\\\b"),
+                  (sn.join_continuations("a\\\\\\\\\nb"), "a\\\\\\\\\nb"), (sn.join_continuations("a\\\n\\\nb"), "ab"), (sn.join_continuations("a\nb\\\n"), "a\nb"),
+                  (sn.join_continuations("\\\\\\\\\\\n"), "\\\\\\\\"), (sn.join_continuations("plain"), "plain"), (sn.join_continuations("x\\\\ \\\ny"), "x\\\\ y")]:
+    print(("✔ " if got == want else "✖ ") + f"join_continuations: {got!r}" + ("" if got == want else f" (want {want!r})"))
+    bad += got != want
+# 15/10 r5: the one lexer of both guards: a newline outside quotes is a word of its own (merged with the separators around it), a newline inside quotes
+# stays in its word as typed (the old " ;<nl>" rewrite changed the newlines of a quoted script too)
+for text, want in [("a b\nc", ["a", "b", "\n", "c"]), ("'a\nb' c", ["a\nb", "c"]), ('"x\ny"', ["x\ny"]), ("a &&\nb", ["a", "&&\n", "b"]), ("a |\nb", ["a", "|\n", "b"]), ("a;\n\nb", ["a", ";\n\n", "b"]),
+                   ("python3 - <<EOF\nEOF\nx", ["python3", "-", "<<EOF", "\n", "EOF", "\n", "x"]), ("sh -c 'a\nEOF\nb'", ["sh", "-c", "a\nEOF\nb"])]:
+    got = sn.lex_words(text)
+    print(("✔ " if got == want else "✖ ") + f"lex_words {text!r}: {got!r}" + ("" if got == want else f" (want {want!r})"))
+    bad += got != want
+try:
+    sn.lex_words("echo 'x")
+    print("✖ lex_words of an open quote must raise ValueError")
+    bad += 1
+except ValueError:
+    print("✔ lex_words of an open quote raises ValueError")
+# readings: the joined text, and a second one (every continuation kept as a newline) only when a COMMENT ends in a backslash
+for text, want in [("echo a\\\nb", ["echo ab"]), ("# c\\\nb", ["# cb", "# c\nb"]), ("true # c\\\n\\\nb", ["true # cb", "true # c\n\nb"]), ("rm -rf bu\\\nild", ["rm -rf build"]),
+                   ("plain", ["plain"]), ("echo a\\\\\nb # c", ["echo a\\\\\nb # c"]), ("echo a\\\\\\\ngit status", ["echo a\\\\git status"]),
+                   ("echo \"a # b\" \\\nc", ["echo \"a # b\" c", "echo \"a # b\" \nc"])]:
+    got = sn.readings(text)
+    print(("✔ " if got == want else "✖ ") + f"readings {text!r}: {got!r}" + ("" if got == want else f" (want {want!r})"))
+    bad += got != want
+# captured: the output of an interpreter program is taken by a $( ), a redirect, a pipe or a group; program_cut cuts only a program nothing takes that cannot spawn
+for cmd, want in [("python3 - <<'EOF'\nprint(1)\nEOF", False), ("python3 - <<'EOF' 2>/dev/null\nprint(1)\nEOF", True), ("python3 - <<'EOF' > s.sh\nprint(1)\nEOF\nsh s.sh", True),
+                  ("python3 - <<'EOF' | tee s.sh\nprint(1)\nEOF", True), ("x=$(python3 - <<'EOF'\nprint(1)\nEOF\n)", True), ("`python3 - <<'EOF'\nprint(1)\nEOF\n`", True),
+                  ("{ python3 - <<'EOF'\nprint(1)\nEOF\n} > s.sh", True), ("(python3 - <<'EOF'\nprint(1)\nEOF\n)", True),
+                  ("python3 -c \"$(cat <<'EOF'\nprint(1)\nEOF\n)\"", False),
+                  ("python3 -c \"$(cat <<'EOF'\nprint(1)\nEOF\n)\" > s.sh", True), ("python3 -c \"$(cat <<'EOF'\nprint(1)\nEOF\n)\" | tee s.sh", True),
+                  ("x=$(python3 -c \"$(cat <<'EOF'\nprint(1)\nEOF\n)\")", True), ("cat <<'EOF' | python3 -\nprint(1)\nEOF", False),
+                  ("cat <<'EOF' | python3 - > s.sh\nprint(1)\nEOF", True), ("cat <<'EOF' | python3 - | tee s.sh\nprint(1)\nEOF", True),
+                  ("deno run -A - <<'EOF'\nprint(1)\nEOF", False)]:
+    docs = sn.heredocs(cmd)
+    ok = len(docs) == 1 and docs[0].kind == "interp" and docs[0].captured == want and sn.program_cut(docs[0], cmd) == (not want)
+    print(("✔ " if ok else "✖ ") + f"captured {want} (program_cut {not want}) for {cmd[:60]!r}: {[(d.kind, d.captured) for d in docs]}")
+    bad += not ok
+for body, prog, want in [("await $`ls`", "node", True), ("import {$} from 'zx'", "node", True), ("await Bun.$`ls`", "bun", True), ("await $ `ls`", "node", True), ("import {$} from 'zx'", "node", True), ("import {$} from 'zx'\n$.sync`ls`", "node", True),
+                         ("import $ from 'https://deno.land/x/dax/mod.ts'", "deno", True), ("import {$} from 'bun'", "bun", False), ("new Deno.Command('ls')", "deno", True), ("Deno.run({cmd: ['ls']})", "deno", True),
+                         ("console.log(`plain ${1}`)", "node", False), ("const s = `a`", "node", False), ("Deno.readTextFileSync('x')", "deno", False)]:
+    got = sn.spawns(body, prog)
+    print(("✔ " if got == want else "✖ ") + f"spawns({body!r}, {prog}) is {got}")
+    bad += got != want
+t_big = ("echo a \\\n" * 20000) + "b"
+t0 = time.perf_counter()
+ok = sn.join_continuations(t_big).count("\n") == 0 and time.perf_counter() - t0 < 1
+print(("✔ " if ok else "✖ ") + "join_continuations: 20000 continuation lines in under 1 s")
+bad += not ok
+# 15/10 r4 P0-A: where bash 3.2 and zsh disagree about the delimiter line (a quoted heredoc inside $( ) or backticks: bash 3.2 removes the
+# continuations first) no heredoc of the command is cut; where they agree, the body is cut as before
+AMB = "git commit -m \"$(cat <<'EOF'\nx\nE\\\nOF\nrm -rf /\nEOF\n)\""
+# (command, cut_ok of its heredoc, ambiguous)
+for cmd, want, amb in [(AMB, False, True), (AMB.replace("E\\\nOF", "EOF"), True, False), (AMB.replace("\"$(", "\"$(echo a; "), False, True),
+                       ("x=`cat <<'EOF'\nx\nE\\\nOF\nrm -rf /\nEOF\n`", False, True), ("x=$(cat <<'EOF'\nx\nE\\\nOF\nrm -rf /\nEOF\n)", False, True),
+                       ("( cat <<'EOF'\nx\nE\\\nOF\nrm -rf /\nEOF\n)", False, False), ("cat > n.md <<'EOF'\nx\nE\\\nOF\nrm -rf /\nEOF\n", True, False),
+                       ("cat > n.md <<EOF\nx\nE\\\nOF\nEOF\n", True, False)]:
+    docs = sn.heredocs(cmd)
+    got = [(h.cut_ok, h.ambiguous) for h in docs]
+    ok = bool(docs) and got[0] == (want, amb)
+    print(("✔ " if ok else "✖ ") + f"cut_ok / ambiguous {(want, amb)} for {cmd[:50]!r}: {got}")
+    bad += not ok
+    if amb and "E\\\nOF" in cmd:   # an ambiguous heredoc ends at the EARLIER of the two readings: the joined delimiter, so the rest of the text is commands
+        ok = docs[0].body(cmd) == "x\n" and docs[0].terminated
+        print(("✔ " if ok else "✖ ") + f"ambiguous heredoc ends at the joined delimiter: {docs[0].body(cmd)!r}")
+        bad += not ok
+# the unterminated interpreter heredoc is never cut, whatever drop says (the mutant that cut it let the program through)
+for cmd in ("python3 - <<'EOF'\ngit reset --hard", "python3 - <<'EOF'\nimport os\nos.system('x')", "cat > n.md <<'EOF'\nls"):
+    got = sn.strip_heredocs(cmd, lambda h: True)
+    ok = got == cmd
+    print(("✔ " if ok else "✖ ") + f"strip of an unterminated heredoc keeps the text: {cmd[:40]!r}")
+    bad += not ok
 sys.exit(1 if bad else 0)
 PY
 sn_rc=$?
@@ -756,5 +880,306 @@ echo "── never a crash: a redirect word at the very end of a command (the sh
 echo "   IndexError in the first draft: 225 harmless commands refused fail-closed)"
 check 0 hw 'git grep -n -o -i -E ".{60}(<|dưới) ?1 ?% ?CPU.{20}" | head'
 check 0 hw 'grep -E "(>|<)?x" notes.txt'
+
+# ── 15/10 r4, independent verification of 4f1e4b0: every dangerous row below ran its marker twin (a harmless `echo RAN > m1.txt`) under
+# /bin/bash 3.2.57 and zsh 5.9 and the marker RAN, unless the line says the shells differ; each has a control of the same shape that must pass.
+echo "── P0-A: a backslash-newline in a heredoc body hides the terminator from the scanner, not from the shell (E\\<nl>OF is EOF in bash and"
+echo "   zsh: the next line RUNS). An unquoted body joins its continuation lines like the shell; where bash 3.2 and zsh differ nothing is cut"
+pair 2 $'cat > n.md <<EOF\nhello\nE\\\nOF\n@BODY@\nEOF\n'
+pair 2 $'git commit -F - <<EOF\nhello\nE\\\nOF\n@BODY@\nEOF\n'
+pair 2 $'tee n.md <<EOF\nhello\nE\\\nOF\n@BODY@\nEOF\n'
+pair 2 $'python3 - <<EOF\nx = 1\nE\\\nOF\n@BODY@\nEOF\n'
+pair 2 $'cat > n.md <<-EOF\n\thello\n\tE\\\nOF\n@BODY@\nEOF\n'
+pair 2 $'cat > n.md <<EOF \nhello\nE\\\nOF\n@BODY@\nEOF\n'
+pair 2 $'cat > n.md <<EOF\nhello\nEO\\\nF\n@BODY@\nEOF\n'
+pair 2 $'cat > n.md <<EOF\nhello\nE\\\nO\\\nF\n@BODY@\nEOF\n'
+pair 2 $'git commit -m "$(cat <<EOF\nx\nE\\\nOF\n@BODY@\nEOF\n)"'
+echo "   a quoted heredoc inside \$( ) or backticks: bash 3.2 (backticks: zsh too) removes the continuations before it reads the body"
+pair 2 $'git commit -m "$(cat <<\'EOF\'\nx\nE\\\nOF\n@BODY@\nEOF\n)"'
+pair 2 $'x=$(cat <<\'EOF\'\nx\nE\\\nOF\n@BODY@\nEOF\n)'
+pair 2 $'x=`cat <<\'EOF\'\nx\nE\\\nOF\n@BODY@\nEOF\n`'
+pair 2 $'echo "$(python3 - <<\'EOF\'\nx\nE\\\nOF\n@BODY@\nEOF\n)"'
+echo "   controls: a harmless line after the joined terminator, a quoted heredoc at top level (the shell joins nothing), a continuation that"
+echo "   swallows the real terminator (the body goes on to the next EOF), a backslash pair (an escaped backslash joins nothing)"
+check 0 hw $'cat > n.md <<EOF\nhello\nE\\\nOF\nls\nEOF\n'
+check 0 git $'cat > n.md <<EOF\nhello\nE\\\nOF\ngit status\nEOF\n'
+check 0 git $'git commit -m "$(cat <<\'EOF\'\nx\nE\\\nOF\ngit status\nEOF\n)"'
+check 0 hw $'git commit -m "$(cat <<\'EOF\'\nx\nE\\\nOF\nls\nEOF\n)"'
+check 0 hw $'x=$(cat <<\'EOF\'\nx\nE\\\nOF\nls\nEOF\n)'
+check 0 hw $'x=`cat <<\'EOF\'\nx\nE\\\nOF\nls\nEOF\n`'
+check 0 git $'x=$(cat <<\'EOF\'\nx\nE\\\nOF\ngit status\nEOF\n)'
+pair 0 $'cat > n.md <<\'EOF\'\nhello\nE\\\nOF\n@BODY@\nEOF\n'
+pair 0 $'cat > n.md <<EOF\nhello\nx\\\nEOF\n@BODY@\nEOF\n'
+pair 0 $'cat > n.md <<EOF\nhello\nE\\\\\nOF\n@BODY@\nEOF\n'
+echo "   an escaped backslash joins nothing at the terminator either: x\\\\<nl>EOF ends the body, the next line RUNS"
+pair 2 $'cat > n.md <<EOF\nhi\nx\\\\\nEOF\n@BODY@\nEOF\n'
+pair 2 $'git commit -F - <<EOF\nhi\nx\\\\\\\\\nEOF\n@BODY@\nEOF\n'
+pair 0 $'cat > n.md <<EOF\nhi\nx\\\\\\\nEOF\n@BODY@\nEOF\n'
+
+echo "── P0-B (hardware gate): a comment ends at the newline even after a backslash; joining the two lines glued its last character to the next"
+echo "   word (#cadb), so no \\badb matched. Every pattern and the device policy also read the text as typed"
+for p in 'adb remount' 'adb disable-verity' 'adb shell pm uninstall com.android.systemui' 'adb shell mount -o remount,rw /system' 'fastboot erase userdata' \
+         'fastboot flash boot x.img' 'fastboot oem unlock' 'dd if=a.img of=/dev/sda' 'rm -rf ~' 'npm publish' 'terraform destroy -auto-approve' \
+         'kubectl delete ns x' 'helm uninstall x' 'firebase deploy' 'docker volume rm x' 'aws s3 rm s3://b --recursive' 'redis-cli flushall' \
+         'prisma migrate reset' 'security delete-keychain x' 'xcrun simctl erase all' 'fastlane match nuke'; do
+  check 2 hw "#c"$'\\\n'"$p"
+  check 2 hw "echo hi #c"$'\\\n'"$p"
+done
+check 2 hw $'ls\n#c\\\nadb remount'
+check 2 hw $'true; #c\\\nadb remount'
+check 2 hw $'#c\\\n\\\nadb remount'
+check 2 hw $'#c\\\nadb remount && ls'
+check 2 hw $'echo $(true)\n#c\\\nadb remount'
+check 2 git $'#c\\\ngit reset --hard'
+check 2 git $'echo $(true)\n#c\\\ngit reset --hard'
+check_deny 2 $'#c\\\nadb -s DENIED1 reboot'
+check_deny 0 $'#c\\\nadb -s OK1 reboot'
+# the automotive logcat rule (an adb logcat that streams to this computer) reads the text as typed too
+PA="$TMP/work/auto"; mkdir -p "$PA/.agents"; printf '{"profile":"automotive"}\n' > "$PA/.agents/active-profile.json"
+check_auto() {   # check_auto <want rc> <command>: the hardware gate in a project whose profile is automotive
+  local want="$1" c="$2"
+  python3 -I -c 'import json,sys; print(json.dumps({"session_id":"s","transcript_path":"","cwd":sys.argv[2],"hook_event_name":"PreToolUse",
+    "tool_name":"Bash","tool_input":{"command":sys.argv[1],"description":"d"}}))' "$c" "$PA" > "$TMP/in.json"
+  ( cd "$PA" && CLAUDE_PROJECT_DIR="$PA" XDG_CONFIG_HOME="$TMP/xdg" ADB_DENY_SERIALS= ADB_ALLOW_SERIALS= ANDROID_SERIAL= \
+      bash "$HW" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
+  local rc=$?
+  if [ "$rc" = "$want" ] && ! crashed; then ok "auto rc $rc: ${c//$'\n'/ ⏎ }"; else fail "auto rc $rc (want $want): ${c//$'\n'/ ⏎ } — $(head -c 160 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
+}
+check_auto 2 'adb logcat'
+check_auto 0 'adb logcat -d'
+check_auto 2 $'#c\\\nadb logcat'
+check_auto 0 $'#c\\\nadb logcat -d'
+check 0 hw $'#c\\\nls'
+check 0 hw $'echo hi #c\\\nls'
+check 0 git $'#c\\\ngit status'
+
+echo "── P0-C (git guard): a quote, a backtick or a \$( left open by a prose body that stays in the scan must not turn off the rules the raw"
+echo "   regex lacks (it misses a single space between the subcommand and its option, and has no branch, worktree or hooks-off rule)"
+for d in 'git push -f origin main' 'git checkout . ' 'git switch -c newb' 'git checkout -f main' 'git branch -f main HEAD~1' 'git branch -M main' \
+         'git checkout -b newb' 'git branch newb' 'git worktree add ../x' 'git push origin HEAD:refs/heads/other' 'DEVKIT_PRECOMMIT=0 git commit -m x' \
+         'git reset --hard' 'git clean -fd' 'git rebase main'; do
+  for b in "don't" "star's" 'say "hi' 'the 5" screen' 'use `foo' 'use $(foo' 'foo\'; do
+    check 2 git "$d && cat <<'EOF'"$'\n'"$b"$'\nEOF'
+  done
+done
+for b in "don't" "star's" 'say "hi' 'the 5" screen' 'use `foo' 'use $(foo'; do
+  check 0 git "git status && cat <<'EOF'"$'\n'"$b"$'\nEOF'
+  check 0 hw "ls && cat <<'EOF'"$'\n'"$b"$'\nEOF'
+done
+echo "   a danger on a line whose OWN quote stays open (the whole text no longer parses): read word by word with the quotes dropped, never skipped"
+check 2 git "git push -f origin main 'x"
+check 2 git "git commit --no-verify -m don't"
+check 2 git 'git push -f origin main \'
+check 2 git $'echo ok\ngit worktree add ../x "y'
+check 0 git "git status 'x"
+check 0 git "git commit -m don't"
+check 0 git 'git status \'
+check 0 git $'echo ok\ngit status "y'
+check 2 git $'cd /tmp && git switch -c chore/x && git add -A && git commit -q -F - <<\'EOF\'\nfix: the user\'s file\nEOF'
+check 0 git $'cd /tmp && git status && git add -A && git commit -q -F - <<\'EOF\'\nfix: the user\'s file\nEOF'
+
+echo "── P0-D (1): a sink after the heredoc operator inside \$( ) is invisible to a scanner that only records depth-0 pipes; and the body of"
+echo "   python3 -c \"pass\" \"\$(cat <<EOF …)\" is an ARGUMENT of the program, not its code"
+pair 2 $'python3 -c "pass" "$(cat <<\'EOF\' | sh\n@BODY@\nEOF\n)"'
+pair 2 $'node -e "require(\'child_process\').execSync(process.argv[1])" "$(cat <<\'EOF\'\n@BODY@\nEOF\n)"'
+pair 2 $'python3 -c "$(cat <<\'EOF\' | sh\n@BODY@\nEOF\n)"'
+pair 2 $'x=$(cat <<\'EOF\' | bash\n@BODY@\nEOF\n)'
+pair 2 $'python3 -c "$(cat <<\'EOF\' \\\n| sh\n@BODY@\nEOF\n)"'
+echo "   the program operand of -c is code only when cat prints it and the operator ends its line (a grep, or a pipe after it, may change it)"
+pair 2 $'python3 -c "$(grep x <<\'EOF\'\n@BODY@\nEOF\n)"'
+pair 2 $'python3 -c "$(cat <<\'EOF\' | tee /tmp/x\n@BODY@\nEOF\n)"'
+check 0 git $'python3 -c "$(grep x <<\'EOF\'\nhello\nEOF\n)"'
+check 0 hw $'python3 -c "$(cat <<\'EOF\' | tee /tmp/x\nhello\nEOF\n)"'
+echo "   (2) sudo -s / -i / --shell with no command words is a shell that reads its stdin: the reader of the heredoc"
+pair 2 $'sudo -s <<\'EOF\' | python3 -\n@BODY@\nEOF'
+pair 2 $'sudo -i <<\'EOF\' | python3 -\n@BODY@\nEOF'
+pair 2 $'doas -s <<\'EOF\' | python3 -\n@BODY@\nEOF'
+pair 2 $'sudo -u root -s <<\'EOF\' | python3 -\n@BODY@\nEOF'
+pair 2 $'sudo -s <<\'EOF\' | cat\n@BODY@\nEOF'
+echo "   (3) an interpreter program that can start a process is never cut: ruby / perl backticks run branch, worktree and hooks-off commands too"
+check 2 git $'ruby <<\'EOF\'\n`git checkout -b newbranch`\nEOF'
+check 2 git $'ruby <<\'EOF\'\n`git worktree add ../x`\nEOF'
+check 2 git $'ruby <<\'EOF\'\n`DEVKIT_PRECOMMIT=0 git commit -m x`\nEOF'
+check 2 git $'perl <<\'EOF\'\n`git checkout -b newbranch`\nEOF'
+check 2 git $'perl <<\'EOF\'\n`git worktree add ../x`\nEOF'
+check 2 git $'perl <<\'EOF\'\n`DEVKIT_PRECOMMIT=0 git commit -m x`\nEOF'
+check 2 git $'ruby <<\'EOF\'\n`git reset --hard`\nEOF'
+check 0 git $'ruby <<\'EOF\'\nputs `git status`\nEOF'
+check 0 git $'perl <<\'EOF\'\nprint `git status`;\nEOF'
+echo "   (P2) an interpreter heredoc with no delimiter line is judged as the program it is (the check skipped it)"
+check 2 git $'python3 - <<\'EOF\'\nimport os\nos.system(\'git reset --hard\')'
+check 2 git $'python3 - <<\'EOF\'\ngit reset --hard'
+check 0 git $'python3 - <<\'EOF\'\nprint(1)'
+echo "   controls: the program operand of -c, a body that only mentions the danger, sudo -s with a command, a reader that is no shell"
+check 0 git $'python3 -c "$(cat <<\'EOF\'\nprint(1)\nEOF\n)"'
+check 0 git $'python3 -c "$(cat <<\'EOF\'\ncases = [\'git reset --hard\']\nprint(len(cases))\nEOF\n)"'
+check 0 hw $'python3 -c "$(cat <<\'EOF\'\nprint(\'rm -rf ~ is dangerous\')\nEOF\n)"'
+check 0 git $'python3 -c "pass" "$(cat <<\'EOF\' | wc -l\nhello\nEOF\n)"'
+check 0 hw $'python3 -c "pass" "$(cat <<\'EOF\'\nhello\nEOF\n)"'
+check 0 git $'sudo -s git status <<\'EOF\'\nhello\nEOF'
+
+echo "── P1: an escaped backslash before the newline joins nothing (echo a\\\\<nl>git reset --hard: the next line RUNS); an odd run still joins"
+pair 2 $'echo a\\\\\n@BODY@'
+pair 2 $'echo a\\\\\\\\\n@BODY@'
+check 0 git $'echo a\\\\\ngit status'
+check 0 hw $'echo a\\\\\nls'
+check 0 hw $'echo mount \\\\\nrw /system \'x'   # echo mount \ and a command rw /system (an open quote keeps shlex from flattening the lines): glued it would read as mount … rw … /system
+# ACCEPTED false positive, pinned BLOCKED (15/10 r5, old 5fd5fd9 and every later version alike): without the open quote the hardware gate also reads the text as
+# shlex words (readings: norm), which turns the real newline into a blank, so `mount … rw … /system` is matched across two commands. Not a hole, not this
+# lane to change (a pattern reading of its own): the row above is the join-parity control, this one says what the gate does with the plain shape.
+check 2 hw $'echo mount \\\\\nrw /system'
+check 0 git $'echo $(true)\ngit reset \\\\\n--hard'   # git reset \ (a pathspec) and a command --hard: no hard reset; the raw regex must not join them either
+check 2 git $'gi\\\nt reset --hard'
+check 2 hw $'ad\\\nb remount'
+check 0 git $'echo a\\\\\\\ngit reset --hard'   # three backslashes: an escaped backslash and a continuation, the next line is part of the echo
+check 0 hw $'echo a\\\\\\\nrm -rf ~'   # the second reading (shell_norm.readings) is for a COMMENT that ends in a backslash only: this one has none
+check 0 git $'echo a\\\\\\\ngit status'
+check 2 hw $'echo ok\\\\\n\\\nrm -rf ~'
+
+echo "── P1b (both guards, OLD too, found by the marker fuzz): a # comment inside a multi-line quoted script ends at ITS newline; the guards flattened"
+echo "   every newline to ' ; ' before they lexed, so the comment swallowed the later lines of a bash -c / eval / \$( ) script that RUNS"
+pair 2 $'echo "$(\n# c\n@CMD@\n)"'
+pair 2 $'echo "$(true # c\n@CMD@\n)"'
+pair 2 $'sh -c "\n# c\n@CMD@\n"'
+pair 2 $'bash -c \'true # c\n@CMD@\''
+pair 2 $'bash -lc \'true # c\n@CMD@\''
+pair 2 $'eval "true # c\n@CMD@"'
+pair 2 $'bash -c "bash -c \'true # c\n@CMD@\'"'
+pair 2 $'echo "$(cat <<\'EOF\' | sh\nx\nEOF #\n@BODY@\nEOF\n)"'
+check 0 git $'sh -c "\n# c\ngit status\n"'
+check 0 hw $'sh -c "\n# c\nls\n"'
+check 0 git $'bash -c \'true # c\ngit status\''
+check 0 hw $'bash -c \'true # c\nrm -rf build\''
+check 0 hw $'echo "a # b\nrm -rf ~"'
+check 0 git $'echo "a # b\ngit reset --hard"'
+
+echo "── P2: git -c alias.x=!CMD x runs CMD through a shell: the hardware gate reads the alias as the git guard does"
+check 2 hw "git -c alias.x='!rm -rf ~' x"
+check 2 hw "git -c alias.x='!rm -rf /system' x"
+check 2 hw "git -c alias.x='!adb remount' x"
+check 2 hw "git -calias.x='!rm -rf ~' x"
+check 0 hw "git -c alias.x='!ls' x"
+check 0 hw "git -c alias.x='!rm -rf build' x"
+check 0 hw "git -c alias.x=status x"
+check 0 hw "git -c user.name=x commit -m y"
+
+echo "── P3: a prose-only data target is a note file inside the project: not CLAUDE.md / AGENTS.md (an agent reads them as instructions), nothing"
+echo "   under .claude/ .agents/ .gemini/ .cursor/, no build or dependency list, no absolute, ~ or .. path"
+for t in CLAUDE.md AGENTS.md GEMINI.md CMakeLists.txt requirements.txt requirements-dev.txt .claude/commands/x.md .agents/notes.md .gemini/x.md /etc/n.md ~root/n.md '~/n.md' ../n.md a/../../n.md; do
+  pair 2 "cat > $t <<'EOF'"$'\n@BODY@\nEOF'
+done
+pair 0 $'cat > docs/guide.md <<\'EOF\'\n@BODY@\nEOF'
+pair 0 $'cat > notes.txt <<\'EOF\'\n@BODY@\nEOF'
+pair 0 $'cat > docs/CHANGELOG.md <<\'EOF\'\n@BODY@\nEOF'
+
+echo "── r5 (independent verification of the r4 tree; every dangerous row below ran its harmless marker twin under /bin/bash 3.2 and zsh): the"
+echo "   newline of the OUTER text is not rewritten, so a quoted script reaches the second pass as typed, and a backslash-newline inside"
+echo "   single quotes is literal there (P0-1, P1-c); an interpreter that cannot spawn still prints what a shell runs (P1-a); zx / Bun / Deno start"
+echo "   a process without a word of the old sink list (P1-b)"
+# rows_from_py <<'PY' … PY: the generator prints NUL separated triples (want rc, guard, command), each one is a check
+r5_rows() {
+  local want hook cmd
+  while IFS= read -r -d '' -u 3 want && IFS= read -r -d '' -u 3 hook && IFS= read -r -d '' -u 3 cmd; do check "$want" "$hook" "$cmd"; done 3< <(python3 -I -c "$1")
+}
+R5_COMMON='
+import shlex, sys
+BS = "\\"
+PAY = {"git": "git reset --hard", "hw": "rm -rf ~"}
+CTL = {"git": "git status", "hw": "ls"}
+def emit(want, hook, cmd):
+    sys.stdout.write("%s\0%s\0%s\0" % (want, hook, cmd))
+def both(tpl, hooks=("git", "hw"), want="2"):
+    for h in hooks:
+        emit(want, h, tpl.replace("@CMD@", PAY[h]))
+        emit("0", h, tpl.replace("@CMD@", CTL[h]))
+WRAPS = ["bash -c %s", "sh -c %s", "bash -lc %s", "eval %s", "ssh host %s", "zsh -c %s", "env bash -c %s", "sudo bash -c %s", "nohup sh -c %s"]
+# ssh runs the script on another machine: the hardware gate does not refuse rm -rf ~ there (the remote home), for every version: git guard only
+HOOKS_OF = lambda w: ("git",) if w.startswith("ssh") else ("git", "hw")
+'
+echo "   P0-1: a heredoc terminator in a quoted script, whatever wraps the script (the 2nd EOF is the real command's neighbour, not a terminator)"
+r5_rows "$R5_COMMON"'
+SCRIPTS = ["python3 - <<EOF\nx = 1\nEOF\n@CMD@\nEOF", "python3 - <<EOF\nx = 1\nEOF\n@CMD@\ncat > n.md <<EOF\nhi\nEOF",
+           "python3 - <<EOF\nprint(1)\nEOF\n@CMD@\npython3 - <<EOF\nprint(2)\nEOF", "node - <<EOF\nconsole.log(1)\nEOF\n@CMD@\nEOF",
+           "python3 - <<\x27EOF\x27\nx = 1\nEOF\n@CMD@\nEOF", "python3 - <<-EOF\nx\nEOF\n@CMD@\nEOF\n\tEOF",
+           "python3 - <<EOF\nx = 1\nEOF\n@CMD@\npython3 - <<EOT\nprint(2)\nEOT", "cat > n.md <<EOF\nhi\nEOF\n@CMD@\nEOF"]
+for sc in SCRIPTS:
+    for w in WRAPS:
+        both(w % shlex.quote(sc), hooks=HOOKS_OF(w))
+    both("bash -c \"" + sc.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$") + "\"")
+    both("x=$(" + sc + "\n)")
+    both("echo \"$(" + sc + "\n)\"")
+'
+echo "   P0-1 (hardware gate, newline is a separator of its own lexer): the fallback for text that does not parse, and the cwd walk across &&<nl>"
+check 2 hw $'ls\nrm -rf ~'
+check 2 hw $'echo don\'t\nrm -rf ~'
+check 2 hw $'echo "a\nrm -rf ~'
+check 2 hw $'echo don\'t\nadb remount'
+check 0 hw $'echo don\'t\nls'
+check 0 hw $'echo "a\nls'
+check 2 git $'echo don\'t\ngit reset --hard'
+check 0 git $'echo don\'t\ngit status'
+check 0 hw $'cd src/sub &&\nrm -rf data'   # the && before the newline still means the cd ran: data is level 3, not the project\'s own top-level data
+check 2 hw $'cd src/sub &&\nrm -rf ~'
+check 2 git $'echo \'git reset --hard\' |\nsh'   # a pipe before the newline continues the pipeline: sh reads what echo prints
+check 0 git $'echo \'git status\' |\nsh'
+echo "   P1-c: a backslash-newline inside SINGLE quotes is literal for the outer shell: the script it hands over holds a comment that ENDS at the newline"
+r5_rows "$R5_COMMON"'
+for w in WRAPS:
+    for sc in ("true # c" + BS + "\n@CMD@", "# c" + BS + "\n@CMD@", "ls\n# c" + BS + "\n@CMD@", "echo hi # c" + BS + "\n@CMD@", "true # c" + BS + "\n" + BS + "\n@CMD@"):
+        both(w % shlex.quote(sc), hooks=HOOKS_OF(w))
+both("bash -c " + shlex.quote("bash -c " + shlex.quote("true # c" + BS + "\n@CMD@")))
+both("echo \"$(true # c" + BS + "\n@CMD@\n)\"")
+'
+check 0 git $'cd src && git push origin feat:feat # c\\\nls'   # the second reading starts where the command started (the cd of the first one is not counted twice: src/src does not exist)
+check 0 git $'cd src && git status # c\\\nls'
+echo "   ACCEPTED false positive of the as-typed reading, pinned BLOCKED: inside DOUBLE quotes the outer shell removes the backslash-newline, so the comment"
+echo "   below swallows the next word and nothing runs; the as-typed reading cannot tell (it is the price of reading both ways instead of modelling quotes)"
+r5_rows "$R5_COMMON"'
+for w in ("bash -c", "sh -c", "eval"):
+    for h in ("git", "hw"):
+        emit("2", h, w + " \"true # c" + BS + "\n" + PAY[h] + "\"")
+        emit("0", h, w + " \"true # c" + BS + "\n" + CTL[h] + "\"")
+'
+echo "   P1-a: an interpreter that cannot start a process still PRINTS, and the shell runs what is printed ($( ), a file that is run, a pipe into tee)"
+r5_rows "$R5_COMMON"'
+PR = "print(\x27@CMD@\x27)"
+for tpl in ("$(python3 - <<\x27EOF\x27\n%s\nEOF\n)", "x=$(python3 - <<\x27EOF\x27\n%s\nEOF\n); $x", "$(python3 - <<\x27EOF\x27\n%s\nEOF\n) arg",
+            "for c in $(python3 - <<\x27EOF\x27\n%s\nEOF\n); do $c; done", "`python3 - <<\x27EOF\x27\n%s\nEOF\n`", "x=`python3 - <<\x27EOF\x27\n%s\nEOF\n`; $x",
+            "python3 -c \"$(cat <<\x27EOF\x27\n%s\nEOF\n)\" > s.sh; sh s.sh", "python3 -c \"$(cat <<\x27EOF\x27\n%s\nEOF\n)\" >> s.sh; sh s.sh",
+            "python3 -c \"$(cat <<\x27EOF\x27\n%s\nEOF\n)\" | tee s.sh; sh s.sh", "python3 - <<\x27EOF\x27 > s.sh\n%s\nEOF\nsh s.sh",
+            "python3 - <<\x27EOF\x27 >> s.sh\n%s\nEOF\nsh s.sh", "python3 - <<\x27EOF\x27 | tee s.sh\n%s\nEOF\nsh s.sh", "python3 > s.sh <<\x27EOF\x27\n%s\nEOF\nsh s.sh",
+            "cat <<\x27EOF\x27 | python3 - > s.sh\n%s\nEOF\nsh s.sh", "{ python3 - <<\x27EOF\x27\n%s\nEOF\n} > s.sh; sh s.sh", "$(python3 <<\x27EOF\x27\n%s\nEOF\n)"):
+    both(tpl % PR, hooks=("git",))
+for tpl in ("python3 - <<\x27EOF\x27 > s.sh\n@CMD@\nEOF\nsh s.sh", "x=$(python3 - <<\x27EOF\x27\n@CMD@\nEOF\n)", "python3 - <<\x27EOF\x27 | tee s.sh\n@CMD@\nEOF",
+            "{ python3 - <<\x27EOF\x27\n@CMD@\nEOF\n} > s.sh; sh s.sh"):   # the same with the danger as a bare line of the body: an uncut body is judged by BOTH guards
+    both(tpl)
+both("$(node -e \"$(cat <<\x27EOF\x27\nconsole.log(\x27@CMD@\x27)\nEOF\n)\")", hooks=("git",))
+both("$(python3 -c \"$(cat <<\x27EOF\x27\n%s\nEOF\n)\")" % PR, hooks=("git",))
+both("$(ruby <<\x27EOF\x27\nputs \x27@CMD@\x27\nEOF\n)", hooks=("git",))
+both("$(perl <<\x27EOF\x27\nprint \x27@CMD@\x27;\nEOF\n)", hooks=("git",))
+both("$(node - <<\x27EOF\x27\nconsole.log(\x27@CMD@\x27)\nEOF\n)", hooks=("git",))
+'
+echo "   P1-a controls: nothing captures the output of the program (a bare run, the program operand of -c, stderr only) and the body only mentions the danger"
+check 0 git $'python3 - <<\'EOF\'\ncases = [\'git reset --hard\']\nprint(len(cases))\nEOF'
+check 0 git $'python3 -c "$(cat <<\'EOF\'\ncases = [\'git reset --hard\']\nprint(len(cases))\nEOF\n)"'
+check 0 hw $'python3 - <<\'EOF\'\ncases = [\'rm -rf ~\']\nprint(len(cases))\nEOF'
+check 0 git $'python3 - <<\'EOF\'\nprint(\'git reset --hard is dangerous\')\nEOF'
+check 0 hw $'python3 - <<\'EOF\'\nprint(\'rm -rf ~ is dangerous\')\nEOF'
+echo "   P1-b: zx / Bun / dax start a process with a tagged template, Deno with Deno.Command / Deno.run (the sink list had none of them)"
+r5_rows "$R5_COMMON"'
+for tpl in ("node - <<\x27EOF\x27\nimport {$} from \x27zx\x27\nawait $`@CMD@`\nEOF", "node - <<\x27EOF\x27\nconst {$} = require(\x27zx\x27);\n$`@CMD@`\nEOF",
+            "node - <<\x27EOF\x27\nimport \x27zx/globals\x27\nawait $`@CMD@`\nEOF", "node - <<\x27EOF\x27\nimport {$} from \x27zx\x27\nawait $.sync`@CMD@`\nEOF",
+            "node - <<\x27EOF\x27\nimport {$} from \x27zx\x27\nawait $({quiet: true})`@CMD@`\nEOF", "node - <<\x27EOF\x27\nawait $`@CMD@`\nEOF",
+            "bun - <<\x27EOF\x27\nimport {$} from \x27bun\x27\nawait $`@CMD@`\nEOF", "bun - <<\x27EOF\x27\nawait Bun.$`@CMD@`\nEOF",
+            "deno run -A - <<\x27EOF\x27\nimport $ from \x27https://deno.land/x/dax/mod.ts\x27\nawait $`@CMD@`\nEOF"):
+    both(tpl)
+for tpl in ("deno run -A - <<\x27EOF\x27\nawait new Deno.Command(\x27sh\x27, {args: [\x27-c\x27, \x27@CMD@\x27]}).output()\nEOF",
+            "deno run -A - <<\x27EOF\x27\nconst p = Deno.run({cmd: [\x27sh\x27, \x27-c\x27, \x27@CMD@\x27]})\nEOF"):
+    both(tpl, hooks=("git",))   # the hardware gate does not read the string literals of a program (documented limit, same for every version)
+'
+echo "   P1-b controls: a node body with a template literal and a body that only mentions a danger are still data"
+check 0 git $'node - <<\'EOF\'\nconsole.log(`git reset --hard is dangerous`)\nEOF'
+check 0 hw $'node - <<\'EOF\'\nconsole.log(`rm -rf ~ is dangerous`)\nEOF'
+check 0 git $'node - <<\'EOF\'\nconst s = `plain ${1 + 1}`;\nconsole.log(s)\nEOF'
 
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }

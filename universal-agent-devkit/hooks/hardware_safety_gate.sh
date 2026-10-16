@@ -259,8 +259,12 @@ except Exception as e:
 # 15/10 (the message of a known option, the one file statement of a modeled command: shell_norm). Every other body stays. The rm walk
 # also cuts the program body of an interpreter that cannot start a process (rm_problem).
 _DOCS = shell_norm.heredocs(cmd) if "<<" in cmd else []
-CMD_LIVE = shell_norm.strip_heredocs(cmd, lambda h: h.kind == "data", _DOCS) if _DOCS else cmd
-CMD_LIVE = CMD_LIVE.replace("\\\n", "")   # a backslash-newline continues the line: the words on both sides are one command (15/10)
+CMD_NOJOIN = shell_norm.strip_heredocs(cmd, lambda h: h.kind == "data", _DOCS) if _DOCS else cmd
+# A backslash-newline continues the line: the words on both sides are one command (15/10) — except in a comment, which ends at the newline whatever
+# precedes it (#c\<nl>adb remount RUNS: the join glued the c to adb, 15/10 r4), and an escaped backslash joins nothing (shell_norm.join_continuations).
+# So every check reads the text joined AND as typed: TEXTS.
+CMD_LIVE = shell_norm.join_continuations(CMD_NOJOIN)
+TEXTS = [CMD_LIVE] + ([CMD_NOJOIN] if CMD_NOJOIN != CMD_LIVE else [])
 
 # Options adb/fastboot accept before the subcommand (with or without a value).
 ADB_OPTS = r"(?:\s+(?:-[sHPtL]\s+\S+|-[adeU]|--\S+(?:\s+\S+)?|wait-for-[\w-]+))*"   # wait-for-device remount (15/10)
@@ -368,16 +372,19 @@ def unglob(tok):
             if _fnm(t, base.lower()):
                 return t
     return tok
-try:
-    norm = " ".join(unglob(t) for t in shlex.split(CMD_LIVE, comments=False, posix=True))
-except ValueError:
-    norm = CMD_LIVE      # an unbalanced quote (a lone apostrophe in a comment is enough): the shell still runs the line
-# Every quote and backslash character dropped, no tokenising. unglob() rewrites any ARGUMENT whose last path component holds a
-# glob (adb shell "rm -rf /system/*", rm -rf "/system/*" -> adb), which drops the rm and its target from norm; this variant keeps
-# them. It also survives an unbalanced quote, nested quotes (sh -c with quotes inside quotes), \rm and r""m, which shlex either
-# rejects or unwraps only one level.
-norm_strip = re.sub(r"[\\\x27\x22]", "", re.sub(r"\$(?=[\x27\x22])", "", CMD_LIVE))   # ANSI-C and locale quoting (dollar then a quote) lose the dollar too
-variants = [CMD_LIVE, norm_strip, norm]
+def readings(text):
+    """text, text with every quote and backslash character dropped, and text as shlex words (a globbed program name resolved)."""
+    try:
+        norm = " ".join(unglob(t) for t in shlex.split(text, comments=False, posix=True))
+    except ValueError:
+        norm = text      # an unbalanced quote (a lone apostrophe in a comment is enough): the shell still runs the line
+    # Every quote and backslash character dropped, no tokenising. unglob() rewrites any ARGUMENT whose last path component holds a
+    # glob (adb shell "rm -rf /system/*", rm -rf "/system/*" -> adb), which drops the rm and its target from norm; this variant keeps
+    # them. It also survives an unbalanced quote, nested quotes (sh -c with quotes inside quotes), \rm and r""m, which shlex either
+    # rejects or unwraps only one level.
+    norm_strip = re.sub(r"[\\\x27\x22]", "", re.sub(r"\$(?=[\x27\x22])", "", text))   # ANSI-C and locale quoting (dollar then a quote) lose the dollar too
+    return [text, norm_strip, norm]
+variants = [v for t in TEXTS for v in readings(t)]
 
 # A pattern of the shape word[^;&|\n]*rare re-scans the rest of the line for every word: quadratic on a long one-line variant (50 KB of rm
 # lines cost 1+ s here). It can only match where its rare part is, so it is tried on the variants that hold one (tests/gates/test_hook_big_command_fast_path.sh).
@@ -728,6 +735,15 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
     prog, rest = os.path.basename(toks[i]), toks[i + 1:]
     if GLOB.search(prog) and _fnm("rm", prog.lower()):
         prog = "rm"
+    if prog == "git":   # git -c alias.x=!CMD x runs CMD through a shell (15/10 r4: git -c alias.x=!rm -rf ~ x was allowed; the git guard reads it)
+        for j, a in enumerate(rest):
+            spec = rest[j + 1] if a == "-c" and j + 1 < len(rest) else a[2:] if a.startswith("-c") else ""
+            key, _eq, val = spec.partition("=")
+            if key.lower().startswith("alias.") and val.startswith("!"):
+                why = rm_problem(val[1:], cwds, depth + 1, remote)
+                if why:
+                    return why
+        return None
     if prog in shell_norm.SHELLS or prog == "su":
         scripts = shell_scripts(rest)
         for s in scripts:
@@ -857,31 +873,37 @@ def rm_problem(text, cwds, depth=0, remote=""):
     """Walk the command like the shell: `cd` moves the cwd (after `&&` for sure; after
     ; || | & both the old and the new directory stay possible), ( ) restores it. remote: the text runs on a device ("device")
     or a remote host ("ssh") (2026-10-13): no host variable or ~ applies there. A heredoc body is cut only for a message of a
-    known option, the one file statement of a modeled command, or an interpreter program that cannot start a process (shell_norm.heredocs,
-    policy of 15/10); an unquoted body with a $ or a backtick is never cut (the shell runs its $( ))."""
+    known option, the one file statement of a modeled command, or an interpreter program that cannot start a process and whose output nothing
+    takes (shell_norm.heredocs, policy of 15/10); an unquoted body with a $ or a backtick is never cut (the shell runs its $( )).
+    The text is walked once per reading (shell_norm.readings: continuations joined, and as typed): blocked when either reading is."""
     if depth > 5:
         return "lồng lệnh quá sâu để phân tích"
     if "<<" in text:   # an interpreter program that can start a process (backticks, qx, %x, system …) stays: its text is a command line
-        text = shell_norm.strip_heredocs(text, lambda h: h.kind == "data" or (
-            h.kind == "interp" and not shell_norm.spawns(h.body(text), h.reader)))
+        text = shell_norm.strip_heredocs(text, lambda h: h.kind == "data" or shell_norm.program_cut(h, text))
     env = {} if remote else {"HOME": os.path.expanduser("~"), "TMPDIR": os.environ.get("TMPDIR") or "/tmp"}
+    for reading in shell_norm.readings(drop_comments(text)):
+        why = rm_walk(reading, cwds, depth, remote, env)
+        if why:
+            return why
+    return None
+
+SEP_CHARS = set(";&|()\n")   # the characters of a separator word of shell_norm.lex_words (a newline is one)
+
+def rm_walk(text, cwds, depth, remote, env):
+    """rm_problem of one reading of the text (comments already cut, continuations already decided)."""
     # `…` is $(…): the lexer splits "$" from "(", so a target built from one stays "$…"
     # (unresolvable, refused) while the inner command is walked as its own segment.
-    text = re.sub(r"`([^`]*)`?", r"$(\1)", drop_comments(text).replace("\\\n", "").replace("\n", " ; "))
+    text = re.sub(r"`([^`]*)`?", r"$(\1)", text)
     text = FIND_OP.sub(lambda m: (m.group(1) or "") + FIND_OP_WORD[m.group(2) or m.group(3) or m.group(4)], text)
     try:
-        lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
-        lex.whitespace = " \t\r"
-        lex.whitespace_split = True
-        lex.commenters = ""   # real comments are gone (drop_comments); a # left inside a word is data
-        toks = list(lex)
-    except ValueError:
-        toks = [x.strip("\"\x27") for x in re.split(r"\s+|([;&|()]+)", text) if x and x.strip()]
+        toks = shell_norm.lex_words(text)
+    except ValueError:   # a quote left open: split at blanks, a newline is a separator of its own (it is no blank here)
+        toks = [x.strip("\"\x27") for x in re.split(r"\s+|([;&|()]+)", text.replace("\n", " ; ")) if x and x.strip()]
     stack, seg, pending, feed = [], [], None, None
     for tk in toks + [";"]:
         if shell_norm.join_fd_dup(seg, tk):   # 2>&1 rm …: the & belongs to the redirect
             continue
-        if not set(tk) <= set(";&|()"):
+        if not set(tk) <= SEP_CHARS:
             seg.append(tk)
             continue
         if seg:
@@ -919,7 +941,7 @@ def rm_problem(text, cwds, depth=0, remote=""):
                     if why:
                         return why
         if pending is not None:
-            cwds = list(dict.fromkeys(pending if tk == "&&" else cwds + pending))
+            cwds = list(dict.fromkeys(pending if tk.strip("\n") == "&&" else cwds + pending))   # && then a newline is still &&
             pending = None
         if "(" in tk:
             stack.append(cwds)
@@ -1159,7 +1181,7 @@ if rm_why:
     sys.exit(2)
 
 if label is None:
-    dev = device_violation(CMD_LIVE)
+    dev = next(filter(None, (device_violation(t) for t in TEXTS)), None)
     if dev:
         sys.stderr.write("\n🛑 [HARDWARE SAFETY GATE REJECTED]\n")
         sys.stderr.write("Lệnh adb bị chặn vì chạm thiết bị ngoài chính sách thiết bị:\n")
@@ -1178,7 +1200,7 @@ if label:
     sys.exit(2)
 
 if not MCP and active_profile() == "automotive":
-    lc = logcat_violation(CMD_LIVE)
+    lc = next(filter(None, (logcat_violation(t) for t in TEXTS)), None)
     if lc:
         sys.stderr.write("\n🛑 [HARDWARE SAFETY GATE REJECTED]\n")
         sys.stderr.write("Profile automotive: logcat chạy stream về máy tính bị chặn — ADB Wi-Fi tới xe rớt là log chết theo:\n")

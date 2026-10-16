@@ -12,6 +12,14 @@ quotes …). What decides it lives here, once; each guard keeps its own verdict 
     (strip_heredocs) only when the whole command is made of constructs this file models (_modeled) AND the body is the message of a
     known option or the one file statement of the command (_message_arg, _file_statement); everything else stays in the scan, as
     the old hardware gate always did (policy of 15/10, after three review rounds found holes in a scanner that is not the shell).
+    A body ends at the delimiter line the shell finds (15/10 r4, marker runs under bash 3.2 and zsh): an unquoted one joins its
+    backslash-newline lines first, so E\\<newline>OF IS the delimiter; where the shells disagree (a quoted heredoc inside $( ) or
+    backticks) nothing of the command is cut. join_continuations: a backslash-newline joins only when its backslash is not escaped.
+  - one lexer (lex_words, 15/10 r5): a newline outside quotes is a separator word of its own and a newline inside quotes stays as typed, so a
+    quoted script (bash -c '…') reaches the second pass exactly as the shell hands it over; the guards no longer rewrite newlines. A text is
+    judged once per reading (readings): continuations joined, and, when a comment ends in a backslash, with the continuations kept as newlines.
+  - an interpreter program is cut from the scan only when it cannot start a process (spawns) AND nothing takes its output (Heredoc.captured,
+    program_cut): the shell runs what a program prints in a $( ), a redirect or a pipe.
 Standard library only. Loaded by the guards from their own directory (python3 -I keeps the project off sys.path).
 """
 import os
@@ -302,12 +310,21 @@ EXEC_SINK = re.compile(r"\bsubprocess\b|\bos\.(?:system|popen|exec\w*|spawn\w*)\
                        r"|\bchild_process\b|\b(?:execSync|execFileSync|spawnSync|spawn|execa)\b|\bsystem\b|\bexec(?:[lv]\w*|file\w*)?\b"
                        r"|\bpopen\w*\b|\bshell_exec\b|\bpassthru\b|\bproc_open\b|\bIO\.popen\b|\bOpen3\b|%x\W|\bqx\W"
                        r"|\bopen\b[^\n]*\||\bsh\.\w+\s*\(|\bfrom\s+sh\s+import\b|\bplumbum\b|\bpexpect\b|\bdelegator\b"
-                       r"|\bposix_spawnp?\b|\breadpipe\b|\bsyscall\b|\bget(?:status)?output\b|\bpcntl_exec\b|\bspawn_sync\b", re.I)
+                       r"|\bposix_spawnp?\b|\breadpipe\b|\bsyscall\b|\bget(?:status)?output\b|\bpcntl_exec\b|\bspawn_sync\b"
+                       # 15/10 r5: JavaScript runtimes that start a process with a TAGGED TEMPLATE ($`cmd`: zx, Bun shell, dax: the tag itself, or the module name for the call forms
+                       # $.sync`…` and $({…})`…`) or a Deno call (Deno.Command, Deno.run)
+                       r"|\$\s*`|\bzx\b|\bdax\b|\bDeno\.(?:Command|run)\b", re.I)
 
 
 def spawns(body, prog):
     """True when the program text body of interpreter prog can start a process."""
     return bool(EXEC_SINK.search(body) or (re.match(r"(?:ruby|perl|php)", prog or "") and "`" in body))
+
+
+def program_cut(h, text):
+    """True when the body of the interpreter heredoc h (h.kind == "interp") is only a program's data and may be cut from the scan: it cannot start a process
+    (spawns) AND nothing takes its output (h.captured: the shell runs what a program prints in $( ), a redirect or a pipe, 15/10 r5). One predicate for both guards."""
+    return h.kind == "interp" and not h.captured and not spawns(h.body(text), h.reader)
 
 
 class Heredoc:
@@ -316,16 +333,20 @@ class Heredoc:
     line was found. depth: nesting of $( … ) / ( … ) / `…` at the operator. reader: the program the body (or the text it becomes)
     goes to. kind: "shell" (a shell reads it, here or far), "interp" (an interpreter reads it as its program), "data" (the message
     of a known option or the one file statement of the command, never run: _message_arg, _file_statement) or "other" (anything
-    else). cut_ok: the whole command is modeled (_modeled): only then may a body be cut (strip_heredocs). in_dq: the operator
-    sits in a double-quoted $( … )."""
+    else). cut_ok: the whole command is modeled (_modeled) and no heredoc of it is ambiguous: only then may a body be cut
+    (strip_heredocs). in_dq: the operator sits in a double-quoted $( … ). in_subst: it sits in a $( … ) or in backticks. ambiguous:
+    the shells read its delimiter line differently (_read_bodies): a quoted body in a $( … ) or backticks, where bash 3.2 removes a
+    backslash-newline first and zsh does not. captured (kind "interp" only): something takes what the program prints, a $( ) / backtick / group around it, a
+    redirect or a pipe after it (_classify): the shell may run the output."""
     __slots__ = ("op_start", "op_end", "delim", "quoted", "strip_tabs", "depth", "body_start", "body_end", "end",
-                 "terminated", "reader", "kind", "in_dq", "cut_ok")
+                 "terminated", "reader", "kind", "in_dq", "cut_ok", "in_subst", "ambiguous", "captured")
 
     def __init__(self, op_start, op_end, delim, quoted, strip_tabs, depth):
         self.op_start, self.op_end, self.delim, self.quoted = op_start, op_end, delim, quoted
         self.strip_tabs, self.depth = strip_tabs, depth
         self.body_start = self.body_end = self.end = op_end
         self.terminated, self.reader, self.kind, self.in_dq, self.cut_ok = False, "", "other", False, False
+        self.in_subst = self.ambiguous = self.captured = False
 
     def body(self, text):
         return text[self.body_start:self.body_end]
@@ -353,26 +374,82 @@ def _heredoc_word(text, i):
     return i, "".join(out), quoted
 
 
+def lex_words(text):
+    """The words of a command line as the guards read them, the ONE lexer of both: quotes removed, and ; & | ( ) and a NEWLINE outside quotes words of their
+    own (a run of them is one word: &&, ;;, |<nl>), so a newline is a command separator by itself. A newline INSIDE quotes stays in its word exactly as typed.
+    ValueError on an unbalanced quote or a trailing backslash. 15/10 r5: both guards used to rewrite every newline of the text to " ;<nl>" before they lexed
+    it. That also rewrote the newlines of a quoted script (bash -c '…', eval, ssh host '…'), so a heredoc terminator of that script read "EOF ;" and a later
+    line equal to the delimiter swallowed the real command (the verdict of the script differed from the verdict of the same text typed at top level)."""
+    lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()\n")
+    lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""   # real comments are cut by the guards (drop_comments); a # left in a word is data
+    return list(lex)
+
+
+_CONTINUATION = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")
+
+
+def join_continuations(text):
+    """text with every line continuation removed: a backslash-newline whose backslash is not itself escaped, so an ODD run of
+    backslashes before the newline (a\\\\<newline> is an escaped backslash and a real newline: bash and zsh agree, and both guards joined
+    it, which hid the next line, 15/10 r4 review). One regex pass, linear."""
+    return _CONTINUATION.sub(r"\1", text) if "\\\n" in text else text
+
+
+def _comment_continuation(text):
+    """True when a line of text that holds a # ends in a continuation: a comment, or something that looks like one, that ends in a backslash."""
+    for m in _CONTINUATION.finditer(text):
+        if "#" in text[text.rfind("\n", 0, m.start()) + 1:m.start()]:
+            return True
+    return False
+
+
+def readings(text):
+    """The texts a guard lexes, each judged and the verdicts added (blocked when ANY blocks): text with its continuations joined (what the shell does with
+    them), and, only when a COMMENT ends in a backslash (_comment_continuation), text with each continuation kept as the plain newline it is. A comment ends
+    at its newline whatever precedes it, and inside SINGLE quotes a backslash-newline is literal for the outer shell: the script it hands to bash -c / eval /
+    ssh is `true # c\\<nl>` and a dangerous line, whose next line RUNS, and the joined reading glued it to the comment (15/10 r5, OLD too). That is the only
+    place the two differ: a continuation is the inner shell's own to join, and only a comment makes it stay a line break. Which quotes a continuation sits
+    in is another model of the shell, two readings are not. The price, pinned in the tests: a comment ending in a backslash inside DOUBLE quotes (the outer
+    shell removes it there and nothing runs) is refused all the same."""
+    joined = join_continuations(text)
+    return [joined, _CONTINUATION.sub(r"\1\n", text)] if joined != text and _comment_continuation(text) else [joined]
+
+
+def _find_end(text, pos, h, join):
+    """(body_end, end, terminated) of heredoc h whose body starts at text[pos]: the first line equal to the delimiter (tabs dropped for
+    <<-). join: the shell removes a backslash-newline before it compares, so a delimiter split by one (E\\<newline>OF) is the delimiter
+    and a line ended by an odd run of backslashes takes the next line (x\\<newline>EOF is xEOF). No delimiter line: the rest of the text."""
+    n = len(text)
+    while pos < n:
+        eol = text.find("\n", pos)
+        line = text[pos:] if eol < 0 else text[pos:eol]
+        nxt = n if eol < 0 else eol + 1
+        while join and eol >= 0 and (len(line) - len(line.rstrip("\\"))) % 2:
+            eol = text.find("\n", nxt)
+            line = line[:-1] + (text[nxt:] if eol < 0 else text[nxt:eol])
+            nxt = n if eol < 0 else eol + 1
+        if (line.lstrip("\t") if h.strip_tabs else line).rstrip("\r") == h.delim:
+            return pos, nxt, True
+        pos = nxt
+    return n, n, False
+
+
 def _read_bodies(text, nl, pending):
     """Fill in the bodies of the heredocs of the line that ends at the newline text[nl], in order; the index just past the
-    last delimiter line. A heredoc with no delimiter line takes the rest of the text (terminated stays False)."""
+    last delimiter line. A heredoc with no delimiter line takes the rest of the text (terminated stays False).
+    Where the delimiter line is: an unquoted body joins its continuation lines first (bash and zsh, marker runs of 15/10 r4: E\\<newline>OF
+    ends it), a quoted one at top level joins nothing, and a quoted one inside $( … ) or backticks is read both ways (bash 3.2 removes
+    the continuations of a $( … ), zsh and bash 5 do not; backticks: both do): the earlier end is taken and the heredoc is ambiguous,
+    which keeps every body of the command in the scan (heredocs)."""
     pos = nl + 1
     for h in pending:
         h.body_start = pos
-        while True:
-            if pos >= len(text):
-                h.body_end = h.end = len(text)
-                return len(text)
-            eol = text.find("\n", pos)
-            line = text[pos:] if eol < 0 else text[pos:eol]
-            if (line.lstrip("\t") if h.strip_tabs else line).rstrip("\r") == h.delim:
-                h.body_end, h.terminated = pos, True
-                pos = h.end = len(text) if eol < 0 else eol + 1
-                break
-            if eol < 0:
-                h.body_end = h.end = len(text)
-                return len(text)
-            pos = eol + 1
+        reads = [_find_end(text, pos, h, not h.quoted)]
+        if h.quoted and h.in_subst:
+            reads.append(_find_end(text, pos, h, True))
+        h.ambiguous = len(set(reads)) > 1
+        h.body_end, h.end, h.terminated = min(reads, key=lambda r: (r[1], not r[2]))
+        pos = h.end
     return pos
 
 
@@ -478,6 +555,7 @@ def _scan(text):
             if word:
                 h = Heredoc(i, end, word, quoted, strip, len(frames) - 1)
                 h.in_dq = len(frames) > 1 and frames[-2] == "dq" and frames[-1] in ("cmd$", "cmd`")
+                h.in_subst = "cmd$" in frames or "cmd`" in frames
                 docs.append(h)
                 pending.append(h)
                 i, word_start = end, False
@@ -534,7 +612,10 @@ def _program(words):
         while k < len(words) and words[k].startswith("-"):
             k += 1
     if k >= len(words):
-        return "", []
+        # sudo -s / -i / --shell (doas -s) with no command word starts a shell that reads its stdin: inline_script needs a word to turn
+        # into `sh -c STR`, so one is lent here and the answer is "sh" only when that is what came out (15/10 r4: it was "", a reader that is no shell)
+        lent = inline_script(list(words) + ["_"])
+        return ("sh", []) if lent[-3:-1] == ["sh", "-c"] else ("", [])
     return os.path.basename(words[k].lstrip("(`")), words[k + 1:]
 
 
@@ -550,7 +631,7 @@ def _program_on_stdin(prog, rest):
     """True when interpreter prog (rest: its words) takes its program from stdin: no inline program, module or script file
     operand, or the operand is `-`."""
     values, inline = INTERP_OPTS[_interp(prog)]
-    k = 0
+    k = 1 if prog in ("deno", "bun") and rest[:1] == ["run"] else 0   # deno run -A - <<EOF: run is the subcommand, the program comes from stdin
     while k < len(rest):
         a = rest[k]
         if a in inline or a.split("=", 1)[0] in inline:
@@ -567,10 +648,15 @@ def _program_on_stdin(prog, rest):
     return True
 
 
-def _program_inline(prog, rest):
-    """True when interpreter prog has an inline program (python -c STR, node -e STR …)."""
-    values, inline = INTERP_OPTS[_interp(prog)]
-    return any(a in inline and a not in ("-m", "-f") for a in rest)
+def _code_operand(inner, top, top_rest, tail):
+    """True when the heredoc is `$(cat <<EOF … EOF\\n)` as the word right after the inline-code option of an interpreter (python3 -c "$(cat
+    <<'EOF' …)"): what cat prints IS the program, nothing else reads it, and the operator ends its line (no pipe or redirect after it). The
+    body of `python3 -c "pass" "$(cat <<EOF …)"` is a later ARGUMENT: the program may run it (node -e "…execSync(process.argv[1])", 15/10 r4)."""
+    if inner != "cat" or tail.strip() or not _interp(top):
+        return False
+    inline = INTERP_OPTS[_interp(top)][1]
+    k = next((j for j, a in enumerate(top_rest) if a in inline and a not in ("-m", "-f")), -1)
+    return 0 <= k < len(top_rest) - 1 and top_rest[k + 1].startswith("$(")
 
 
 def _segment(text, start, end, cut):
@@ -604,6 +690,10 @@ HOOKNAME = re.compile(r"(?:^|/)(?:pre-commit|prepare-commit-msg|commit-msg|post-
 # Only a file that is PROSE for people is a data target: nothing a tool executes or reads as configuration (json, yaml, toml, xml, sql,
 # patch, Taskfile, settings, CI files …), no path without an extension, no script, no shell startup file, no Makefile, no hook.
 TEXT_EXT = {".md", ".markdown", ".txt", ".rst"}
+# Not prose for people even with a prose extension (15/10 r4): the instruction files an agent reads (CLAUDE.md, AGENTS.md, GEMINI.md), the build and
+# dependency lists a tool reads (CMakeLists.txt, requirements*.txt, constraints*.txt), and anything in a folder an agent or its host reads as config.
+NOT_PROSE_NAME = re.compile(r"(?:claude|agents|gemini)\.md|cmakelists\.txt|(?:.*[-_.])?(?:requirements|constraints)(?:[-_.].*)?\.txt", re.I)
+AGENT_DIR = re.compile(r"(?:^|[/\s'\"=])\.(?:claude|agents|gemini|codex|cursor|github)(?:/|[\s'\"`)]|$)", re.I)
 _DELIM = re.compile(r"""(?:'[A-Za-z0-9_]+'|"[A-Za-z0-9_]+"|[A-Za-z0-9_]+)""")
 _SK_BAD = frozenset(("if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac", "function", "select",
                      "coproc", "trap", "eval", "source", "exec", "{", "}"))
@@ -775,7 +865,9 @@ def _text_target(t, prefix=""):
     """t: the file written; prefix: the `cd DIR &&` / `mkdir -p DIR &&` before the statement (a prose file in a hooks dir is no data either)."""
     base = t.rsplit("/", 1)[-1]
     return (os.path.splitext(base)[1].lower() in TEXT_EXT and not base.startswith(".")   # a dotfile is a setting of something, never prose
-            and not HOOKDIR.search(prefix + " " + t) and not HOOKNAME.search(t) and not t.startswith("-"))
+            and not HOOKDIR.search(prefix + " " + t) and not HOOKNAME.search(t) and not t.startswith("-")
+            and not NOT_PROSE_NAME.fullmatch(base) and not AGENT_DIR.search(prefix + " " + t)
+            and not t.startswith(("/", "~")) and ".." not in t.split("/"))   # a note file inside the project: no absolute, ~ or .. target
 
 
 def _file_statement(text, h):
@@ -845,7 +937,21 @@ def _source_target(text, h):
     return SOURCE_EXT.get(os.path.splitext(m.group(1) or m.group(2))[1].lower(), "") if m else ""
 
 
-def _classify(text, h, seps, pipes, cut):
+def _eol(text, i):
+    """Index of the first newline at or after i that no backslash escapes (a line continues past one that is), else len(text)."""
+    while True:
+        nl = text.find("\n", i)
+        if nl < 0:
+            return len(text)
+        k = nl
+        while k > 0 and text[k - 1] == "\\":
+            k -= 1
+        if (nl - k) % 2 == 0:
+            return nl
+        i = nl + 1
+
+
+def _classify(text, h, seps, pipes, cut, outside):
     """Set h.reader and h.kind. The reader is the command the operator belongs to (the one just before it on its line, inside
     any $( … )) and the top-level command around it, with the stages of its pipeline. kind: "shell" a shell reads it (here or far),
     "interp" an interpreter reads it as its program, "source" it is written to a script (never cut), "data" it is a message or the one file statement (never run), else "other";
@@ -863,14 +969,29 @@ def _classify(text, h, seps, pipes, cut):
     inner, inner_rest = _program(_words(near))
     top, top_rest = stages[mine]
     h.reader = inner or top
-    if any(p in SHELL_RUNNERS or (p in ("adb", "adb.exe") and adb_shell(r)) for p, r in stages + [(inner, inner_rest)]):
+    # The stages after a pipe on the operator line, at any depth: `pipes` holds the depth-0 pipes only, so `$(cat <<'EOF' | sh` showed no sink
+    # and the body was cut as an interpreter program (15/10 r4). Any piece after the first | counts, quotes ignored: more is judged, never less.
+    tail = text[h.op_end:_eol(text, h.op_end)]
+    later = [_program(_words(x)) for x in re.split(r"[|;&)`]+", tail.split("|", 1)[1])] if "|" in tail else []
+    # What takes the output of an interpreter program (15/10 r5): a program that cannot start a process still PRINTS, and the shell runs what is printed when it
+    # is captured ($(python3 - <<EOF …), a redirect to a file that is run, a pipe into tee, a { … } > f group). Such a program is judged as a command source and
+    # never cut. Textual and wide on purpose, no model of which command a redirect belongs to: any frame around the program ($( ), backticks, ( ), <( ); `own`
+    # are the ones that belong to the heredoc itself: python3 -c "$(cat <<EOF …)" has the $( and the quote), or a > or a | anywhere in the command outside the
+    # bodies (`feed`: the one pipe that feeds an interpreter from cat <<EOF | python3 - is no capture).
+    def taken(own, feed):
+        return h.depth > own or ">" in outside or outside.count("|") > feed
+
+    if any(p in SHELL_RUNNERS or (p in ("adb", "adb.exe") and adb_shell(r)) for p, r in stages + [(inner, inner_rest)] + later):
         h.kind = "shell"
     elif _interp(inner) and _program_on_stdin(inner, inner_rest):          # python3 - <<EOF, also inside $( … )
         h.kind, h.reader = "interp", inner
-    elif any(_interp(p) and _program_on_stdin(p, r) for p, r in stages[mine + 1:]):   # cat <<EOF | python3 -
-        h.kind, h.reader = "interp", next(p for p, r in stages[mine + 1:] if _interp(p) and _program_on_stdin(p, r))
-    elif h.depth and _interp(top) and _program_inline(top, top_rest):      # python3 -c "$(cat <<EOF …)"
+        h.captured = taken(0, 0)
+    elif any(_interp(p) and _program_on_stdin(p, r) for p, r in stages[mine + 1:] + later):   # cat <<EOF | python3 -
+        h.kind, h.reader = "interp", next(p for p, r in stages[mine + 1:] + later if _interp(p) and _program_on_stdin(p, r))
+        h.captured = taken(0, 1)
+    elif h.depth and _code_operand(inner, top, top_rest, tail):             # python3 -c "$(cat <<EOF …)"
         h.kind, h.reader = "interp", top
+        h.captured = taken(2 if h.in_dq else 1, 0)
     elif inner in ("cat", "tee") and _source_target(text, h):               # cat > x.py <<EOF: a script, run by who knows
         h.kind, h.reader = "source", _source_target(text, h)
     elif _message_arg(text, h) or _file_statement(text, h):
@@ -888,13 +1009,14 @@ def heredocs(text):
     docs, seps, pipes = _scan(text)
     cut = sorted((h.body_start, h.end) for h in docs if h.end > h.body_start)
     many = len(docs) > MAX_HEREDOCS   # each heredoc is classified against the whole text: past the bound nothing is cut
-    ok = bool(docs) and not many and _modeled(text, docs)
+    ok = bool(docs) and not many and not any(h.ambiguous for h in docs) and _modeled(text, docs)   # ambiguous: where a body ends is not known
+    outside = _segment(text, 0, len(text), cut) if docs and not many else ""   # the command without any body (what _classify reads for a capture)
     for h in docs:
         h.cut_ok = ok
         if many:
             h.kind = "shell"
         else:
-            _classify(text, h, seps, pipes, cut)
+            _classify(text, h, seps, pipes, cut, outside)
     return docs
 
 
