@@ -2463,23 +2463,42 @@ _REACHABLE = {}
 
 
 def _reachable_blobs(main):
-    """((blob id, path) pairs, paths) some ref still holds (`rev-list --objects --all`): a blob merely present in the object DB may belong
-    to a commit no ref names any more (a detached commit, a staged file of a worktree whose admin dir is gone) and `git gc` would drop it.
-    A file is a committed version only when a kept tree holds its bytes AT ITS PATH: the same bytes under another path (a copy, an empty
-    __init__.py, old code restored under a new name) are a new file, uncommitted work (issue #12). A path a kept tree holds is tracked
-    somewhere (a branch force-adds build/keep.txt), so an edit of it is never a build output. None = cannot say.
-    ponytail: rev-list names a blob once, under the first path it meets; a blob committed at several paths pairs with one only, so a file
-    at the others reads as unique and is KEPT (never a false delete), and a tracked path whose every version is also stored elsewhere can
-    be missed, so an ignored edit of it under a build folder reads as rebuildable. Upgrade to `ls-tree -r` of each ref if that ever bites."""
+    """((blob id, path) pairs, paths, blob ids) some ref still holds (`rev-list --objects --all`): a blob merely present in the object DB
+    may belong to a commit no ref names any more (a detached commit, a staged file of a worktree whose admin dir is gone) and `git gc`
+    would drop it. A file is a committed version only when a kept tree holds its bytes AT ITS PATH: the same bytes under another path (a
+    copy, an empty __init__.py, old code restored under a new name) are a new file, uncommitted work (issue #12). rev-list names a blob
+    once, under the newest path it meets, so a pair it misses for a blob it does hold is asked of that path's history (_path_versions).
+    A path a kept tree holds is tracked somewhere (a branch force-adds build/keep.txt), so an edit of it is never a build output.
+    None = cannot say. ponytail: for the same reason a tracked path whose every version is also stored elsewhere can be missed, so an
+    ignored edit of it under a build folder reads as rebuildable; upgrade to `ls-tree -r` of each ref tip if that ever bites."""
     if main not in _REACHABLE:
         r = git(main, "rev-list", "--objects", "--all", "--filter=object:type=blob", check=False, inp=b"")   # bytes: a path need not be UTF-8
         if r.returncode != 0:
             _REACHABLE[main] = None
-        else:
-            pairs = [ln.split(" ", 1) for ln in r.stdout.decode("utf-8", "surrogateescape").splitlines() if ln.strip()]
-            pairs = [x for x in pairs if len(x) == 2]   # a blob a ref names directly has no path: no file version
-            _REACHABLE[main] = ({(x[0], x[1]) for x in pairs}, {x[1] for x in pairs})
+        else:   # a blob a ref names directly has no path: no file version
+            pairs = [x for x in (ln.split(" ", 1) for ln in r.stdout.decode("utf-8", "surrogateescape").splitlines()) if len(x) == 2]
+            _REACHABLE[main] = ({(x[0], x[1]) for x in pairs}, {x[1] for x in pairs}, {x[0] for x in pairs})
     return _REACHABLE[main]
+
+
+def _path_versions(main, rels):
+    """{(blob id, path)} every version of `rels` some ref's history holds (`log --all --raw`, the paths literal, on stdin: no argv limit),
+    for the files rev-list paired with another path. None = cannot say.
+    ponytail: a version only a merge commit introduced (a conflict resolution) is not listed, so that file reads as unique and is KEPT;
+    add `--diff-merges=separate` if that ever strands a leftover."""
+    r = git(main, "--literal-pathspecs", "log", "--all", "--root", "--no-renames", "--raw", "--no-abbrev", "-z", "--format=", "--stdin",
+            check=False, inp=("--\n" + "\n".join(rels) + "\n").encode("utf-8", "surrogateescape"))
+    if r.returncode != 0:
+        return None
+    toks = r.stdout.decode("utf-8", "surrogateescape").split("\0")
+    out = set()
+    for i in range(0, len(toks) - 1, 2):   # `:<mode> <mode> <old> <new> <status>`, then the path; a trailing "" closes the list
+        meta, path = toks[i].lstrip("\n"), toks[i + 1]
+        f = meta[1:].split()
+        if not meta.startswith(":") or len(f) != 5:
+            return None
+        out.update((sha, path) for sha in f[2:4] if sha.strip("0"))
+    return out
 
 
 def _gc_unique(main, top, dangling, carry=None):
@@ -2538,11 +2557,15 @@ def _gc_unique(main, top, dangling, carry=None):
         shas = hashes.stdout.split()
         if reachable is None or hashes.returncode != 0 or len(shas) != len(later) or ignored.returncode not in (0, 1):
             return [("*", tr("git không kiểm được nội dung", "git could not check the content"))]
-        versions, tracked = reachable
+        versions, tracked, blobs = reachable
         build = set(ignored.stdout.splitlines())
+        missed = sorted({rel for (rel, _p), sha in zip(later, shas) if (sha, rel) not in versions and sha in blobs})
+        more = _path_versions(main, missed) if missed else set()   # rev-list named those blobs under another path: ask these paths' history
+        if more is None:
+            return [("*", tr("git không kiểm được nội dung", "git could not check the content"))]
         for (rel, _p), sha in zip(later, shas):
             rebuildable = rel in build and rel not in tracked and any(part in GC_BUILD_DIRS for part in rel.split("/")[:-1])
-            if (sha, rel) not in versions and not rebuildable:
+            if (sha, rel) not in versions and (sha, rel) not in more and not rebuildable:
                 unique.append((rel, tr("nội dung không có trong commit nào còn giữ ở đường dẫn này", "content no kept commit holds at this path")))
     return unique
 

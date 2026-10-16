@@ -350,7 +350,8 @@ def merge_winner(name: str, squash: bool = False, clean_others: bool = False) ->
     3. Thực hiện merge từ sandbox branch vào main branch.
     4. Ngay khi merge thành công:
        - TỰ ĐỘNG dọn dẹp sandbox thắng cuộc: gỡ worktree, xóa folder, xóa branch.
-       - Chỉ khi có cờ --clean-others mới dọn các sandbox khác (mặc định GIỮ NGUYÊN: chúng có thể còn việc chưa merge).
+       - Chỉ khi có cờ --clean-others mới dọn các sandbox khác (mặc định GIỮ NGUYÊN: chúng có thể còn việc chưa merge); kể cả khi đó,
+         sandbox còn việc chưa commit hoặc commit chưa merge vẫn được giữ (xoá hẳn: `cleanup --name <x> --force` sau khi tự kiểm).
        - Chạy git worktree prune để dọn dẹp sạch sẽ 100% trong .git/worktrees/.
     """
     repo_root = get_repo_root()
@@ -424,7 +425,7 @@ def main():
     p_merge = subparsers.add_parser("merge-winner", help="Merge sandbox thắng cuộc vào main và TỰ ĐỘNG DỌN DẸP SẠCH SẼ")
     p_merge.add_argument("name", help="Tên sandbox thắng cuộc cần merge")
     p_merge.add_argument("--squash", action="store_true", help="Merge dạng squash commit")
-    p_merge.add_argument("--clean-others", action="store_true", help="Dọn luôn các sandbox khác sau khi merge (mặc định giữ nguyên)")
+    p_merge.add_argument("--clean-others", action="store_true", help="Dọn luôn các sandbox khác sau khi merge (mặc định giữ nguyên; sandbox còn việc chưa commit / commit chưa merge vẫn được giữ)")
     p_merge.add_argument("--keep-others", action="store_true", help=argparse.SUPPRESS)  # cũ: giữ nguyên là mặc định, cờ này không còn tác dụng
 
     # Cleanup

@@ -168,4 +168,14 @@ kill "$LOCKER" 2>/dev/null; wait "$LOCKER" 2>/dev/null
 [ "$rc" = 0 ] && [ ! -s "$TMP/gc4.out" ] && exists main-orphan-locked && ok "a second gc while one runs: silent no-op" || fail "second gc rc=$rc: $(cat "$TMP/gc4.out")"
 [ -f "$R/local.properties" ] && [ "$(cat "$R/local.properties")" = "sdk.dir=/same" ] && ok "main's own local config is untouched" || fail "main's local.properties changed"
 G "$R" worktree list --porcelain | grep -q "main-merged" && ok "a registered worktree stays registered: not gc's" || fail "gc unregistered main-merged"
+# issue #12 review F1: a clean checkout of an OLD commit after main moved a file (git mv) and an empty file now lives elsewhere: rev-list
+# names each blob once, under its newest path, so the (blob, path) pair is missed there; the history of the orphan's own paths holds
+# both versions, so the leftover is deleted, not stranded
+mkdir -p "$R/pkg" && echo "moved later" > "$R/mv-src.txt" && : > "$R/pkg/__init__.py" && G "$R" add mv-src.txt pkg/__init__.py && G "$R" commit -qm "add"
+dangle main-orphan-moved
+mkdir -p "$R/other" && : > "$R/other/__init__.py" && G "$R" mv mv-src.txt mv-dst.txt && G "$R" rm -q pkg/__init__.py && G "$R" add other/__init__.py \
+  && G "$R" commit -qm "move, drop, add elsewhere"
+python3 "$WT" gc > "$TMP/gc7.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && ! exists main-orphan-moved && ok "a clean old checkout whose files main later moved or emptied elsewhere is deleted" \
+  || fail "main-orphan-moved stranded (rc=$rc): $(cat "$TMP/gc7.out")"
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_gc: all passed" || { echo "❌ test_worktree_gc: $FAILS failed"; exit 1; }
