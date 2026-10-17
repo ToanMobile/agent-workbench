@@ -433,6 +433,25 @@ def copy_build_inputs(main, wt):
     return [rel for rel in cands if rel in ignored and _copy(main, wt, rel)]
 
 
+def copy_meta_assets(main, wt):
+    """K2 (Goods 17/10, Unity): `<file>.meta` được track nhưng chính file đó bị git ignore (`*.dll.mdb`): worktree mới chỉ có file
+    track nên thiếu nó, Unity xoá `.meta` mồ côi (kèm sinh `.vscode/`, `*.slnx`) và `finish` thấy worktree "đổi" rồi có thể commit
+    rác đó vào main. Chép từ main đúng những file đó (_copy: chỉ file thường, chỉ khi worktree chưa có và cũng ignore nó, nên không
+    bao giờ commit được). Tên file đọc dạng bytes: một tên không phải UTF-8 không làm `add` chết.
+    ponytail: chỉ file, không chép thư mục bị ignore có `.meta` được track (chưa gặp); chép từng byte, thêm clonefile khi gặp file lớn."""
+    r = _git_bytes(main, "ls-files", "-z", "--", "*.meta")
+    if r.returncode != 0:
+        return []
+    cands = [m[:-5] for m in r.stdout.decode("utf-8", "surrogateescape").split("\0")
+             if m.endswith(".meta") and len(m) > 5 and os.path.isfile(os.path.join(main, m[:-5])) and not os.path.lexists(os.path.join(wt, m[:-5]))]
+    if not cands:
+        return []
+    # "./": một tên bắt đầu bằng ':' không bị đọc thành pathspec magic (như _carry_secrets)
+    r = _git_bytes(main, "check-ignore", "-z", "--stdin", inp="".join("./" + p + "\0" for p in cands).encode("utf-8", "surrogateescape"))
+    ignored = {p[2:] for p in r.stdout.decode("utf-8", "surrogateescape").split("\0") if p} if r.returncode in (0, 1) else set()
+    return [rel for rel in cands if rel in ignored and _copy(main, wt, rel)]
+
+
 # Where the Editor keeps its lock files in a Library (ArtifactDB-lock, SourceAssetDB-lock, DataStore/uds.lock, Search/<x>.index-lock): a copy
 # holding them makes Unity in the worktree see the project as open in another Editor. Only these folders: nothing deeper is touched.
 UNITY_LOCK_DIRS = ("", "DataStore", "Search")
@@ -698,6 +717,7 @@ def cmd_add(cwd, args):
 
     copied = copy_local_config(main, wt)
     inputs = copy_build_inputs(main, wt)
+    metas = copy_meta_assets(main, wt)   # K2: trước snapshot, nên là một phần của bước dựng
     unity_libs = copy_unity_library(main, wt)   # W1 R6
     ran = install_args(main, wt, profile) if not no_init else None
     if ran:
@@ -708,7 +728,7 @@ def cmd_add(cwd, args):
                    f"DevKit install in the worktree failed (exit {r.returncode}); the worktree stays at {wt}"), 1)
     shared = share_main_memory(main, wt) if share_memory and not no_init else False   # only when asked; before the snapshot: it is part of the setup
     state = {"branch": branch, "base": start, "main": main, "baseline": snapshot(wt), "fp": FP_VERSION}
-    stamps = _copy_stamps(wt, copied + inputs)
+    stamps = _copy_stamps(wt, copied + inputs + metas)
     if stamps:   # what the carry-back must not mistake for a key made here (_ignored_secrets)
         state["copied_sha"] = stamps
     if session:
@@ -728,6 +748,9 @@ def cmd_add(cwd, args):
         shown = ", ".join(inputs[:12]) + (f" (+{len(inputs) - 12})" if len(inputs) > 12 else "")
         print("  " + tr("đã chép input build (bị ignore, như red_proof): ",
                         "copied build inputs (git-ignored, as red_proof): ") + shown)
+    if metas:
+        shown = ", ".join(metas[:12]) + (f" (+{len(metas) - 12})" if len(metas) > 12 else "")
+        print("  " + tr("đã chép file bị ignore có .meta được track (Unity): ", "copied git-ignored files whose .meta is tracked (Unity): ") + shown)
     if unity_libs:
         print("  " + tr("đã clone Library của Unity (clonefile, gỡ cờ uchg, bỏ file khoá): ", "Unity Library cloned (clonefile, uchg cleared, locks dropped): ")
               + ", ".join(unity_libs))
@@ -2114,13 +2137,14 @@ def _refusal_text(out, limit=1200):
 
 
 def _conflict(wt, unmerged):
+    # K6 (17/10): lời khuyên dùng `cd <wt> && git ...`, không `git -C <wt>`: harness của Claude chặn `git -C` với đường dẫn tính lúc chạy
     return ("conflict", tr(f"xung đột khi gộp main vào worktree ở {len(unmerged)} file: {', '.join(unmerged[:8])}. Sửa NGAY trong {wt} (đây là thư mục riêng, an toàn): "
-                           f"bỏ dấu <<<<<<< ======= >>>>>>> giữ đúng ý cả hai bên, `git -C {shlex.quote(wt)} add <file>`; xong chạy lại "
-                           f"`agent-kit worktree finish {shlex.quote(wt)}` (nó tự kết thúc merge, fast-forward main và gỡ worktree)",
+                           f"bỏ dấu <<<<<<< ======= >>>>>>> giữ đúng ý cả hai bên, `cd {shlex.quote(wt)} && git add <file> && git commit --no-edit`; xong chạy lại "
+                           f"`agent-kit worktree finish {shlex.quote(wt)}` (nó fast-forward main và gỡ worktree)",
                            f"conflict merging main into the worktree in {len(unmerged)} file(s): {', '.join(unmerged[:8])}. Resolve it NOW in {wt} "
                            f"(a folder of its own, so it is safe): remove the <<<<<<< ======= >>>>>>> markers keeping what both sides meant, "
-                           f"`git -C {shlex.quote(wt)} add <file>`; then run `agent-kit worktree finish {shlex.quote(wt)}` again (it concludes the "
-                           f"merge, fast-forwards main and removes the worktree)"), {"files": unmerged})
+                           f"`cd {shlex.quote(wt)} && git add <file> && git commit --no-edit`; then run `agent-kit worktree finish {shlex.quote(wt)}` again "
+                           f"(it fast-forwards main and removes the worktree)"), {"files": unmerged})
 
 
 def _carry_gate_receipt(main, wt):
@@ -2231,8 +2255,13 @@ def automerge(cwd, wt, keep=False):
     Main's working tree is only ever touched by `git merge --ff-only`, so another session's uncommitted or staged files are safe (its index
     only for paths whose uncommitted copy is identical to what the merge brings: _stage_identical_overlap)."""
     main = main_checkout(cwd)
-    if not _same_path(git(cwd, "rev-parse", "--show-toplevel").stdout.strip(), main):
-        return "blocked", tr(f"chạy từ MAIN checkout ({main})", f"run it from the MAIN checkout ({main})"), {}
+    top = git(cwd, "rev-parse", "--show-toplevel").stdout.strip()
+    if not _same_path(top, main):
+        # K4 (17/10): agent trong worktree gọi `finish` ngay tại đó. cwd là một worktree đã đăng ký của cùng repo: làm việc từ main
+        # checkout thay vì từ chối (cmd_remove ở cuối phải chạy từ main, không từ thư mục sắp bị gỡ). Chỗ khác: vẫn từ chối như cũ.
+        if not any(_same_path(e["path"], top) for e in _worktree_entries(cwd)[1:] if not e["broken"]):
+            return "blocked", tr(f"chạy từ MAIN checkout ({main})", f"run it from the MAIN checkout ({main})"), {}
+        cwd = main
     if not any(_same_path(e["path"], wt) for e in _worktree_entries(cwd)[1:] if not e["broken"]):
         return "blocked", tr(f"{wt} không phải worktree đã đăng ký của repo này", f"{wt} is not a registered worktree of this repository"), {}
     if not os.path.isdir(wt):
@@ -2548,7 +2577,7 @@ def cmd_heal(cwd, args):
         os.symlink(os.path.realpath(target), link)
         done.append(".agents/devkit")
     if src:
-        done += copy_local_config(src, wt) + copy_build_inputs(src, wt)
+        done += copy_local_config(src, wt) + copy_build_inputs(src, wt) + copy_meta_assets(src, wt)
     try:   # trunk mode is the default: wire its hooks once per machine (settings.local.json is untracked, a fresh clone has none)
         main_co = main_checkout(cwd)
         if _trunk_mode(main_co):
