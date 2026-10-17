@@ -412,20 +412,25 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
         # git < 2.38 không có merge-tree --write-tree: rơi về so cây hai nhánh.
         if [ -z "$merged_tree" ] && git -C "$MAIN_PATH" diff --quiet "origin/$BASE" "$local_tip" 2>/dev/null; then merged_tree="$origin_tree"; fi
         # `reset --keep` cũng đặt lại INDEX về commit đích: file phiên khác đã stage (khác HEAD) sẽ rơi khỏi index (thành untracked).
-        # Index khác HEAD thì không dời, chỉ cảnh báo.
-        if [ -n "$local_tip" ] && [ -n "$origin_tree" ] && [ "$merged_tree" = "$origin_tree" ] \
-           && ! git -C "$MAIN_PATH" diff --cached --quiet 2>/dev/null \
-           && [ "$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null)" = "$local_tip" ]; then
-          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; another session has staged changes there (a reset would drop them from the index), left alone: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)"
-        elif [ -n "$local_tip" ] && [ -n "$origin_tree" ] && [ "$merged_tree" = "$origin_tree" ] \
-           && [ "$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null)" = "$local_tip" ]; then
-          if reset_err=$(git -C "$MAIN_PATH" reset --keep "origin/$BASE" 2>&1 >/dev/null); then
-            say "note: ${BASE} in ${MAIN_PATH} could not fast-forward (the squash rewrote the PR's commits) but held nothing origin lacks; moved to origin/${BASE}"
-          else
-            say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-300) | reset to origin/${BASE} refused too: $(printf '%s' "$reset_err" | tr '\n\t' '  ' | cut -c1-200)"
-          fi
+        # Index khác HEAD (rc 1) hoặc không đọc được (rc khác, vd index.lock) thì không dời, chỉ cảnh báo đúng lý do.
+        can_move=0
+        [ -n "$local_tip" ] && [ -n "$origin_tree" ] && [ "$merged_tree" = "$origin_tree" ] && can_move=1
+        idx_rc=0; git -C "$MAIN_PATH" diff --cached --quiet 2>/dev/null || idx_rc=$?
+        ff_why=$(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)
+        if [ "$can_move" != 1 ]; then
+          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: ${ff_why}"
+        elif [ "$idx_rc" -eq 1 ]; then
+          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; another session has staged changes there (a reset would drop them from the index), left alone: ${ff_why}"
+        elif [ "$idx_rc" -ne 0 ]; then
+          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; its index could not be read (exit ${idx_rc}), left alone: ${ff_why}"
+        elif [ "$(git -C "$MAIN_PATH" symbolic-ref --quiet --short HEAD 2>/dev/null)" != "$BASE" ] \
+             || [ "$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null)" != "$local_tip" ]; then
+          # `reset` dời nhánh ĐANG được checkout: một phiên khác đổi nhánh/commit giữa chừng thì không đụng.
+          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; the checkout changed while it was being checked, left alone: ${ff_why}"
+        elif reset_err=$(git -C "$MAIN_PATH" reset --keep "origin/$BASE" 2>&1 >/dev/null); then
+          say "note: ${BASE} in ${MAIN_PATH} could not fast-forward (the squash rewrote the PR's commits) but held nothing origin lacks; moved to origin/${BASE}"
         else
-          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-300)"
+          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: ${ff_why} | reset to origin/${BASE} refused too: $(printf '%s' "$reset_err" | tr '\n\t' '  ' | cut -c1-200)"
         fi
       fi
     fi

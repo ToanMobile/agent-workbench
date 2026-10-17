@@ -53,7 +53,7 @@ JSON
 # thư mục bị loại (runs-tool/) và dòng xoá.
 cat > "$TMP/hidden-code.json" <<'JSON'
 {"labels":[],"body":"","files":[
-{"path":"docs/super-board/runs/issue-9-qa/helper.py","additions":450,"deletions":0}]}
+{"path":"docs/super-board/runs/issue-9-qa/helper.py","additions":400,"deletions":50}]}
 JSON
 [ "$(size_verdict "$TMP/hidden-code.json")" = size ] \
   && ok "executable code under docs/super-board/runs/ still counts toward the cap" \
@@ -65,6 +65,16 @@ JSON
 [ "$(size_verdict "$TMP/lookalike.json")" = size ] \
   && ok "a path that only looks like the evidence folder (runs-tool/) still counts" \
   || fail "docs/super-board/runs-tool/ was treated as evidence"
+
+# Manifest của lần chạy nằm thẳng dưới runs/ (không thư mục con), có cả dòng xoá: vẫn là bằng chứng, không tính.
+cat > "$TMP/manifest.json" <<'JSON'
+{"labels":[],"body":"","files":[
+{"path":"docs/super-board/runs/2026-10-16-agent-workbench.md","additions":300,"deletions":200},
+{"path":"app/a.sh","additions":10,"deletions":0}]}
+JSON
+[ "$(size_verdict "$TMP/manifest.json")" = ok ] \
+  && ok "a run manifest directly under docs/super-board/runs/ (additions and deletions) is evidence, not counted" \
+  || fail "the run manifest at the top of docs/super-board/runs/ was counted toward the cap"
 
 # Biên của trần: đúng 400 dòng tính được thì qua, 401 thì chờ người; dòng xoá cũng tính.
 cat > "$TMP/cap400.json" <<'JSON'

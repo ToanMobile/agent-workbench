@@ -28,6 +28,8 @@ printf '.claude/\n' > "$R/.gitignore"
 echo a > "$R/a"; git -C "$R" add .gitignore a; git -C "$R" commit -qm init
 git -C "$R" remote add origin "$O"
 git -C "$R" push -q origin main
+# gh giả dựng cây squash bằng `merge-tree --write-tree` (git >= 2.38): git cũ hơn thì bỏ qua cả file, có thông báo.
+git -C "$R" merge-tree --write-tree HEAD HEAD >/dev/null 2>&1 || { echo "skip: git < 2.38 has no merge-tree --write-tree"; exit 0; }
 
 # gh giả: `pr merge` mô phỏng SQUASH: origin/main nhận một commit mới cùng tree với head, cha là origin/main.
 mkdir -p "$TMP/bin"
@@ -79,7 +81,31 @@ gate 7; rc=$?
 [ "$(git -C "$R" rev-list --merges --count origin/main..main)" = 0 ] && ok "1: no merge commit made on main (AGENTS §7.1: main only fast-forwards)" || fail "1: a merge commit on main"
 [ "$(cat "$R/dirty.txt" 2>/dev/null)" = wip ] && ok "1: another session's uncommitted file kept" || fail "1: uncommitted file lost"
 ! grep -q "local base is stale" "$TMP/gate7.log" && ok "1: no stale-base warning" || fail "1: warning although main was synced: $(grep stale "$TMP/gate7.log")"
+grep -q "moved to origin/main" "$TMP/gate7.log" && ok "1: the note says main was moved to origin/main" || fail "1: no 'moved to origin/main' note"
 rm -f "$R/dirty.txt"
+
+# ── 1c. như 1 nhưng phiên khác SỬA (chưa stage) một file đã theo dõi mà squash không đổi: `reset --keep` giữ nguyên sửa đổi đó.
+branch 14 i fourteen; land 14
+echo "tracked edit" >> "$R/a"
+gate 14; rc=$?
+[ "$rc" -eq 0 ] && ok "1c: the PR still merged (exit 0)" || fail "1c: gate exit $rc: $(tail -5 "$TMP/gate14.log")"
+[ "$(git -C "$R" rev-parse main)" = "$(git -C "$R" rev-parse origin/main)" ] && grep -q "tracked edit" "$R/a" \
+  && ok "1c: main caught up and another session's unstaged edit of a tracked file is kept" \
+  || fail "1c: main $(git -C "$R" rev-parse --short main) vs origin $(git -C "$R" rev-parse --short origin/main), a: $(tail -1 "$R/a")"
+git -C "$R" checkout -q -- a
+
+# ── 1d. origin nhận thêm một commit đổi CHÍNH file `a` mà phiên khác đang sửa dở: `reset --keep` từ chối, main để nguyên + cảnh báo.
+branch 15 j fifteen; land 15
+git -C "$R" checkout -q -b unrelated-a origin/main; echo "origin change" >> "$R/a"; git -C "$R" commit -qam "origin edits a"
+git -C "$R" push -q origin unrelated-a:refs/heads/main; git -C "$R" checkout -q main; git -C "$R" fetch -q origin
+echo "my wip" >> "$R/a"
+BEFORE1D=$(git -C "$R" rev-parse main)
+gate 15; rc=$?
+[ "$rc" -eq 0 ] && ok "1d: the PR still merged (exit 0)" || fail "1d: gate exit $rc: $(tail -5 "$TMP/gate15.log")"
+[ "$(git -C "$R" rev-parse main)" = "$BEFORE1D" ] && grep -q "my wip" "$R/a" && ok "1d: main not moved and the unfinished edit is intact" \
+  || fail "1d: main moved or the edit was lost: $(tail -2 "$R/a" | tr '\n' ';')"
+grep -q "refused too" "$TMP/gate15.log" && ok "1d: the warning says the reset was refused" || fail "1d: no 'refused too' warning: $(grep warning "$TMP/gate15.log" | cut -c1-200)"
+git -C "$R" checkout -q -- a; git -C "$R" fetch -q origin; git -C "$R" reset -q --hard origin/main
 
 # ── 1b. như 1 nhưng phiên khác đã STAGE một file trong main: `reset --keep` đặt lại cả index (file rơi thành untracked, OCR 17/10),
 #    nên gate không dời, để nguyên main + file đã stage, và cảnh báo.
