@@ -66,6 +66,7 @@ import importlib.util
 import io
 import json
 import os
+import random
 import re
 import shlex
 import shutil
@@ -2298,7 +2299,7 @@ def _automerge_locked(cwd, main, wt, keep=False):
             break
         if not _is_ancestor(main, main_head, w_head):
             if merges >= MERGE_ROUNDS:
-                return "blocked", tr(f"main đi tiếp {merges} lần trong lúc gộp và chạy gate: chạy lại", f"main moved on {merges} times while merging and gating: run it again"), {}
+                return "blocked", tr(f"main đi tiếp {merges} lần trong lúc gộp và chạy gate: chạy lại", f"main moved on {merges} times while merging and gating: run it again"), {"moved": True}
             merges += 1
             with _test_run_lock(wt) as free:   # the merge rewrites the tree: not while a test run reads it (the next Stop merges)
                 if not free:
@@ -2478,8 +2479,17 @@ def cmd_automerge(cwd, args):
     return {"merged": 0, "nothing": 0, "conflict": 3}.get(status, 1)
 
 
+FINISH_RETRIES = int(_env_limit("WORKTREE_FINISH_RETRIES", 4))   # 17/10: many sessions finishing at once keep moving main; 0 = no retry
+
+
 def cmd_finish(cwd, args):
-    wt, status, message, extra = _run_automerge(cwd, args, "usage: agent-kit worktree finish <path> [--keep]")
+    usage = "usage: agent-kit worktree finish <path> [--keep]"
+    wt, status, message, extra = _run_automerge(cwd, args, usage)
+    for _ in range(FINISH_RETRIES):   # "main moved on" is no failure of this worktree: wait a jittered moment, merge again
+        if not (status == "blocked" and extra.get("moved")):
+            break
+        time.sleep(random.uniform(0.5, 1.5) * _env_limit("WORKTREE_FINISH_RETRY_WAIT_S", 3.0))
+        wt, status, message, extra = _run_automerge(cwd, args, usage)
     mark = {"merged": "✔", "nothing": "✔", "conflict": "⚠", "blocked": "✖"}[status]
     print(f"{mark} worktree {status}: {message}")
     return {"merged": 0, "nothing": 0, "conflict": 3}.get(status, 1)
