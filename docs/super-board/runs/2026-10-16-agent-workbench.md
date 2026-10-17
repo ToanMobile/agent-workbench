@@ -1598,3 +1598,185 @@
 [06:27:09] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
 [06:27:42] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
 [06:28:15] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:28:48] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:29:21] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:29:21] ⚠ RUNAWAY (daemon): no card reached Done in 60 dispatch cycles — no new dispatch for 300s
+[06:29:21]    dispatches=19 reaps=9 cards-landed-this-run=1
+[06:29:21]    most re-dispatched issues (count issue):
+[06:29:21]      6 12
+[06:29:21]      3 5
+[06:29:21]      3 4
+[06:29:21]      3 3
+[06:29:21]      3 22
+[06:29:21]    → inspect worker logs in docs/super-board/runs/2026-10-16-agent-workbench-workers/
+[06:29:51] tick — runaway pause (270s left) — board read every 3 ticks, sleeping 30s
+[06:30:21] tick — runaway pause (240s left) — board read every 3 ticks, sleeping 30s
+[06:30:54] tick — runaway pause (207s left) — board read every 3 ticks, sleeping 30s
+[06:31:24] tick — runaway pause (177s left) — board read every 3 ticks, sleeping 30s
+[06:31:54] tick — runaway pause (147s left) — board read every 3 ticks, sleeping 30s
+[06:32:26] tick — runaway pause (115s left) — board read every 3 ticks, sleeping 30s
+[06:32:57] tick — runaway pause (84s left) — board read every 3 ticks, sleeping 30s
+[06:33:27] tick — runaway pause (54s left) — board read every 3 ticks, sleeping 30s
+[06:33:59] tick — runaway pause (22s left) — board read every 3 ticks, sleeping 30s
+[06:34:33] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:35:06] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:35:39] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:36:12] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:36:45] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:37:19] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:37:52] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:38:25] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:38:58] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:39:32] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:40:07] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:40:42] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:41:18] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:41:54] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:42:30] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:43:06] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:43:42] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:44:18] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:44:54] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:45:28] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:46:04] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:46:38] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:47:14] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:47:49] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:48:24] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:48:57] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:49:31] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:50:04] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:50:38] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:51:12] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:51:47] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:52:23] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:52:59] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:53:34] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:54:08] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:54:42] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:55:16] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:55:49] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:56:22] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:56:55] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:57:29] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:58:03] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:58:37] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:59:11] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[06:59:45] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:00:19] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:00:52] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:01:28] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:02:04] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:02:39] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:03:14] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:03:48] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:04:21] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:04:56] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:05:29] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:06:03] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:06:35] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:07:08] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:07:40] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:08:13] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:08:13] ⚠ RUNAWAY (daemon): no card reached Done in 60 dispatch cycles — no new dispatch for 300s
+[07:08:13]    dispatches=19 reaps=9 cards-landed-this-run=1
+[07:08:13]    most re-dispatched issues (count issue):
+[07:08:13]      6 12
+[07:08:13]      3 5
+[07:08:13]      3 4
+[07:08:13]      3 3
+[07:08:13]      3 22
+[07:08:13]    → inspect worker logs in docs/super-board/runs/2026-10-16-agent-workbench-workers/
+[07:08:44] tick — runaway pause (269s left) — board read every 3 ticks, sleeping 30s
+[07:09:14] tick — runaway pause (239s left) — board read every 3 ticks, sleeping 30s
+[07:09:49] tick — runaway pause (204s left) — board read every 3 ticks, sleeping 30s
+[07:10:19] tick — runaway pause (174s left) — board read every 3 ticks, sleeping 30s
+[07:10:50] tick — runaway pause (143s left) — board read every 3 ticks, sleeping 30s
+[07:11:23] tick — runaway pause (110s left) — board read every 3 ticks, sleeping 30s
+[07:11:54] tick — runaway pause (79s left) — board read every 3 ticks, sleeping 30s
+[07:12:25] tick — runaway pause (48s left) — board read every 3 ticks, sleeping 30s
+[07:13:00] tick — runaway pause (13s left) — board read every 3 ticks, sleeping 30s
+[07:13:35] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:14:10] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:14:44] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:15:18] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:15:53] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:16:28] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:17:04] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:17:38] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:18:13] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:18:48] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:19:25] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:20:01] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:20:38] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:21:14] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:21:49] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:22:25] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:23:00] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:23:35] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:24:09] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:24:43] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:25:17] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:25:53] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:26:29] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:27:04] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:27:38] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:28:12] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:28:46] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:29:20] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:29:55] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:30:30] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:31:04] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:31:38] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:32:13] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:32:47] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:33:21] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:33:54] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:34:26] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:34:59] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:35:33] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:36:07] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:36:40] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:37:14] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:37:47] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:38:20] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:38:53] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:39:25] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:39:58] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:40:30] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:41:03] tick — Ready=0 Building=2 QA=0 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:41:35] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:42:08] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:42:40] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=0(#22) q_idle=1(#_) r_idle=1(#_)
+[07:43:13] reaped stale lock + swept assignee on #22 (pid=38291)
+[07:43:15] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=1(#22) q_idle=1(#_) r_idle=1(#_)
+[07:43:22] dispatch lane=qa issue=#22 pid=70784 claim=ToanMobile
+[07:43:55] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=1(#22) q_idle=0(#22) r_idle=1(#_)
+[07:44:30] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=1(#22) q_idle=0(#22) r_idle=1(#_)
+[07:45:05] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=1(#22) q_idle=0(#22) r_idle=1(#_)
+[07:45:40] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=1(#22) q_idle=0(#22) r_idle=1(#_)
+[07:46:16] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=1(#22) q_idle=0(#22) r_idle=1(#_)
+[07:46:50] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=1(#22) q_idle=0(#22) r_idle=1(#_)
+[07:47:25] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=1(#22) q_idle=0(#22) r_idle=1(#_)
+[07:47:25] ⚠ RUNAWAY (daemon): no card reached Done in 60 dispatch cycles — no new dispatch for 300s
+[07:47:25]    dispatches=20 reaps=10 cards-landed-this-run=1
+[07:47:25]    most re-dispatched issues (count issue):
+[07:47:25]      6 12
+[07:47:25]      4 22
+[07:47:25]      3 5
+[07:47:25]      3 4
+[07:47:25]      3 3
+[07:47:25]    → inspect worker logs in docs/super-board/runs/2026-10-16-agent-workbench-workers/
+[07:47:56] tick — runaway pause (269s left) — board read every 3 ticks, sleeping 30s
+[07:48:26] tick — runaway pause (239s left) — board read every 3 ticks, sleeping 30s
+[07:48:59] tick — runaway pause (206s left) — board read every 3 ticks, sleeping 30s
+[07:49:29] tick — runaway pause (176s left) — board read every 3 ticks, sleeping 30s
+[07:50:00] tick — runaway pause (145s left) — board read every 3 ticks, sleeping 30s
+[07:50:33] tick — runaway pause (112s left) — board read every 3 ticks, sleeping 30s
+[07:51:03] tick — runaway pause (82s left) — board read every 3 ticks, sleeping 30s
+[07:51:33] tick — runaway pause (52s left) — board read every 3 ticks, sleeping 30s
+[07:52:06] tick — runaway pause (19s left) — board read every 3 ticks, sleeping 30s
+[07:52:41] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=1(#22) q_idle=0(#22) r_idle=1(#_)
+[07:53:16] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=1(#22) q_idle=0(#22) r_idle=1(#_)
+[07:53:53] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=1(#22) q_idle=0(#22) r_idle=1(#_)
+[07:54:31] tick — Ready=0 Building=1 QA=1 Review=0 Blocked=4 lanes: b_idle=1(#22) q_idle=0(#22) r_idle=1(#_)
