@@ -1,0 +1,27 @@
+/Volumes/Data/Toan/agent-workbench/.claude/worktrees/issue-4-qa: 263 file source, 66 is_test_path, 2 ngoài thư mục test
+    universal-agent-devkit/workflows/fix-evidence-driver.test.mjs
+    universal-agent-devkit/workflows/multi-lens-audit.test.mjs
+/Volumes/Data/Toan/GeelyEx2: 1593 file source, 600 is_test_path, 19 ngoài thư mục test
+    PCConnect/config_test.go
+    PCConnect/conflict_pkg_test.go
+    PCConnect/download_test.go
+    PCConnect/extractzip_ten_file_test.go
+    PCConnect/license_status_khong_ghi_test.go
+    PCConnect/main_test.go
+    PCConnect/networkscan_test.go
+    PCConnect/pip_test.go
+    PCConnect/quickinstall_remote_test.go
+    PCConnect/quickinstall_sync_mot_lan_test.go
+    PCConnect/safety_loi_lot_0930_test.go
+    PCConnect/safety_nhom_lenh_test.go
+    PCConnect/safety_test.go
+    PCConnect/select_device_bo_chon_test.go
+    PCConnect/shutdown_gate_test.go
+/Volumes/Data/Toan/OfficeReader/OfficeReader: 4242 file source, 1035 is_test_path, 5 ngoài thư mục test
+    .agents/local/workflows/fix-evidence-driver.test.mjs
+    .agents/local/workflows/multi-lens-audit.test.mjs
+    scripts/qa/ocr/run_6words_test.py
+    scripts/qa/ocr/test_6words_clean.py
+    scripts/qa/ocr/test_multiple_words.py
+/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D: 347 file source, 197 is_test_path, 0 ngoài thư mục test
+/Volumes/Data/Toan/Game/Neighbours-From-Hell: 178 file source, 68 is_test_path, 0 ngoài thư mục test
