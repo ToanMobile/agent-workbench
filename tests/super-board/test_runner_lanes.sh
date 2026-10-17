@@ -337,4 +337,43 @@ paused_tick >/dev/null 2>&1; paused_tick >/dev/null 2>&1; paused_tick >/dev/null
 [ "$FETCHES" -eq 2 ] && ok "pause reads the board sparsely: 2 reads in 6 ticks" || fail "6 paused ticks made $FETCHES reads (want 2)"
 RUNAWAY_PAUSE_UNTIL=0
 
+# ── 5. chặn worker mồ côi lúc khởi động (2026-10-16): mẫu cũ `pgrep -f 'claude -p .*super-board run'` không khớp
+#    dòng lệnh thật (`claude --dangerously-skip-permissions -p …`, agy/grok cũng vậy) và không giới hạn theo repo:
+#    21:52 nó khớp một tiến trình khác nên runner OfficeReader và Goods từ chối khởi động. Worker còn sống có lock
+#    đã được adopt_live_locks nhận lại, nên chỉ worker CỦA REPO NÀY mà không có lock mới chặn. Bảng tiến trình giả
+#    lập theo đúng dạng `ps -ww -A -o pid=,command=` đo ngày 16/10.
+R="/Volumes/X/Repo"
+wl() {   # wl <pid> <argv0 + cờ> <root> <issue>: một dòng worker đúng dạng prompt của dispatch_lane
+  printf "%s %s -p First operation: run .claude/bin/super-board-skills-ready.py --root '%s' --host claude --cards - --lane 'build' --hydrate with [] as stdin. Run super-build on issue #%s for super-board run. Config: x.\n" "$1" "$2" "$3" "$4"
+}
+{
+  wl 4101 "claude --dangerously-skip-permissions" "$R" 5             # repo này, có lock
+  wl 4102 "claude --dangerously-skip-permissions" "$R" 6             # repo này, KHÔNG lock
+  wl 4103 "claude --dangerously-skip-permissions" "/Volumes/X/Other" 7   # repo khác
+  wl 4104 "claude --dangerously-skip-permissions" "$R-2" 8           # repo khác có tên bắt đầu bằng tên repo này
+  wl 4105 "/Users/u/.local/bin/agy --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions" "$R" 9
+  wl 4106 "/Users/u/.grok/bin/grok -m grok-4.7" "$R" 10
+  echo "4107 /bin/zsh -c grep -c \"claude -p --root '$R' for super-board run\" runner.log"   # shell chẩn đoán, không phải worker
+  echo "4108 bash $R/.claude/bin/super-board-run.sh repo"
+} > "$TMP/ps.txt"
+ps() { case "$*" in *command=*) cat "$TMP/ps.txt" ;; *) command ps "$@" ;; esac; }
+pgrep() {   # pgrep -f <mẫu> trên bảng giả
+  local pat=""; while [ $# -gt 0 ]; do [ "$1" = "-f" ] && { shift; pat="$1"; }; shift; done
+  grep -E -- "$pat" "$TMP/ps.txt" | awk '{print $1}'
+}
+rm -f "$INFLIGHT_DIR"/*
+printf 'PID=4101\nLANE=build\nSTARTED=2026-10-16T00:00:00Z\n' > "$INFLIGHT_DIR/5"
+orph=" $(startup_orphan_workers "$R" 2>/dev/null | tr '\n' ' ') "
+case "$orph" in *" 4102 "*) ok "unlocked worker of this repo blocks start" ;; *) fail "unlocked worker 4102 of this repo not detected (got:$orph)" ;; esac
+case "$orph" in *" 4101 "*) fail "worker with a lock blocks start (got:$orph): adopt_live_locks already takes it back" ;; *) ok "worker with a lock does not block" ;; esac
+case "$orph" in *" 4103 "*|*" 4104 "*) fail "another repo's worker blocks start (got:$orph)" ;; *) ok "other repos' workers (incl. a name-prefix repo) do not block" ;; esac
+case "$orph" in *" 4105 "*) case "$orph" in *" 4106 "*) ok "unlocked agy and grok workers of this repo block" ;; *) fail "grok worker 4106 not detected (got:$orph)" ;; esac ;; *) fail "agy worker 4105 not detected (got:$orph)" ;; esac
+case "$orph" in *" 4107 "*|*" 4108 "*) fail "non-worker process blocks start (got:$orph)" ;; *) ok "a shell or the runner whose args name this repo does not block" ;; esac
+#    Không có worker nào: runner chạy với set -euo pipefail, grep không khớp không được làm chết lúc khởi động.
+: > "$TMP/ps.txt"
+(set -euo pipefail; o=$(startup_orphan_workers "$R"); [ -z "$o" ]) && ok "no workers: empty result, survives set -euo pipefail" \
+  || fail "no workers: startup_orphan_workers fails or prints something under set -euo pipefail"
+unset -f ps pgrep
+rm -f "$INFLIGHT_DIR"/*
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_runner_lanes: all passed" || { echo "❌ test_runner_lanes: $FAILS failed"; exit 1; }
