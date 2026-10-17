@@ -183,5 +183,32 @@ add_wt wt-o
 b=$(runs); out="$(run_gate "$TMP/wt-o")"; rc=$?
 check "14. dòng run-log đầu tiên sau biên nhận là REUSED: không cho mượn, chạy suite" 0 1 no "$b" "$rc" "$out"
 
+# 15. Mượn từ biên nhận của một WORKTREE (đúng kịch bản merge gate: worktree của agent PASS, scratch mới mượn), không phải main checkout.
+wipe_receipts
+add_wt wt-p
+b=$(runs); out="$(run_gate "$TMP/wt-p" --no-cache)"; rc=$?
+check "15. tiền đề: wt-p PASS thật" 0 1 no "$b" "$rc" "$out"
+add_wt wt-q
+b=$(runs); out="$(run_gate "$TMP/wt-q")"; rc=$?
+check "15. worktree mới mượn PASS của worktree anh em" 0 0 yes "$b" "$rc" "$out"
+printf '%s\n' "$out" | grep -qF "($SIB_MSG: $COMMON/worktrees/wt-p/postfix-gate/full_pass.json)" \
+  && echo "✔ 15. output nêu đúng biên nhận của wt-p" || fail "15. output không nêu biên nhận của wt-p"
+
+# 16. Lượt bị kill / crash trước khi ghi dòng run-log (review 17/10, P3-b): thư mục có test_run.lock (gate tạo nó trước khi chạy suite)
+#     mà không có dòng log nào → vẫn tính là đã từng chạy gate, không mượn.
+wipe_receipts; cp "$LEND" "$MAIN_RECEIPT"
+add_wt wt-r
+mkdir -p "$TMP/wt-r/.claude/audit-gate" && : > "$TMP/wt-r/.claude/audit-gate/test_run.lock"
+b=$(runs); out="$(run_gate "$TMP/wt-r")"; rc=$?
+check "16. thư mục có test_run.lock (lượt trước bị kill): không mượn, chạy suite" 0 1 no "$b" "$rc" "$out"
+
+# 17. Một dòng runs.jsonl lồng quá sâu (RecursionError khi json.loads, review 17/10 P2) không được làm gate crash: dòng đó bị bỏ qua.
+#     Để CUỐI: file run-log dùng chung cho mọi ca sau nó.
+wipe_receipts; cp "$LEND" "$MAIN_RECEIPT"
+python3 -c 'import sys; open(sys.argv[1], "a").write("[" * 200000 + "]" * 200000 + "\n")' "$COMMON/postfix-gate/runs.jsonl"
+add_wt wt-s
+b=$(runs); out="$(run_gate "$TMP/wt-s")"; rc=$?
+check "17. dòng run-log lồng quá sâu: gate không crash, vẫn mượn PASS" 0 0 yes "$b" "$rc" "$out"
+
 [ "$FAILS" = 0 ] && { echo "PASS test_gate_sibling_receipt"; exit 0; }
 echo "FAIL test_gate_sibling_receipt ($FAILS)"; exit 1
