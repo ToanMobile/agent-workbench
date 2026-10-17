@@ -395,21 +395,25 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
       # Không bao giờ `merge --abort` (nó huỷ cả merge và phần xung đột đã giải tay của người khác).
       main_gd=$(git -C "$MAIN_PATH" rev-parse --absolute-git-dir 2>/dev/null) || main_gd=""
       busy=""
-      for st in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer BISECT_LOG; do
+      for st in MERGE_HEAD SQUASH_MSG CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer BISECT_LOG; do
         [ -n "$main_gd" ] && [ -e "$main_gd/$st" ] && busy="${busy:+$busy, }$st"
       done
       if [ -z "$main_gd" ] || [ -n "$busy" ]; then
         say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; ${busy:-its git dir is unreadable} in progress there, left alone: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)"
       else
+        # Chốt đầu nhánh một lần: mọi so sánh dùng đúng commit này, và chỉ dời nếu ngay trước khi dời đầu nhánh vẫn là nó (một phiên
+        # khác commit/ff vào base giữa chừng thì để nguyên, tránh bỏ rơi commit vừa vào).
+        local_tip=$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null) || local_tip=""
         origin_tree=$(git -C "$MAIN_PATH" rev-parse "origin/$BASE^{tree}" 2>/dev/null) || origin_tree=""
-        merged_tree=$(git -C "$MAIN_PATH" merge-tree --write-tree "origin/$BASE" "$BASE" 2>/dev/null) || merged_tree=""
+        merged_tree=$(git -C "$MAIN_PATH" merge-tree --write-tree "origin/$BASE" "$local_tip" 2>/dev/null) || merged_tree=""
         # git < 2.38 không có merge-tree --write-tree: rơi về so cây hai nhánh.
-        if [ -z "$merged_tree" ] && git -C "$MAIN_PATH" diff --quiet "origin/$BASE" "$BASE" 2>/dev/null; then merged_tree="$origin_tree"; fi
-        if [ -n "$origin_tree" ] && [ "$merged_tree" = "$origin_tree" ]; then
+        if [ -z "$merged_tree" ] && git -C "$MAIN_PATH" diff --quiet "origin/$BASE" "$local_tip" 2>/dev/null; then merged_tree="$origin_tree"; fi
+        if [ -n "$local_tip" ] && [ -n "$origin_tree" ] && [ "$merged_tree" = "$origin_tree" ] \
+           && [ "$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null)" = "$local_tip" ]; then
           if reset_err=$(git -C "$MAIN_PATH" reset --keep "origin/$BASE" 2>&1 >/dev/null); then
             say "note: ${BASE} in ${MAIN_PATH} could not fast-forward (the squash rewrote the PR's commits) but held nothing origin lacks; moved to origin/${BASE}"
           else
-            say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; reset to origin/${BASE} refused, local base is stale: $(printf '%s' "$reset_err" | tr '\n\t' '  ' | cut -c1-300)"
+            say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-300) | reset to origin/${BASE} refused too: $(printf '%s' "$reset_err" | tr '\n\t' '  ' | cut -c1-200)"
           fi
         else
           say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-300)"

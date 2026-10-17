@@ -336,7 +336,8 @@ def _kit_link(wt, main, rel):
             inside = True
     if not inside:
         return False
-    return git(wt, "ls-files", "--error-unmatch", "--", rel, check=False, env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).returncode != 0
+    # only rc 1 ("did not match any file known to git") proves it untracked: a timeout (124) or a git failure (128) is "cannot say" = work
+    return git(wt, "ls-files", "--error-unmatch", "--", rel, check=False, env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).returncode == 1
 
 
 def status_paths(wt):

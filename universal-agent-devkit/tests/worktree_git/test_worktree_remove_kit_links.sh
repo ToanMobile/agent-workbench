@@ -62,4 +62,25 @@ bash "$KIT" worktree finish "../rk-e" >"$TMP/rk-e.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && [ ! -d "$TMP/rk-e" ] && ok "finish: only kit links uncommitted -> not refused as 'new symlink', worktree merged and removed" \
   || { fail "finish with kit links only (rc=$rc)"; cat "$TMP/rk-e.out"; }
 
+# "Cannot say = refuse" (review 17/10): when `git ls-files` itself fails or times out (rc 124 / 128), a path must NOT read as untracked
+# setup, or a tracked file replaced by a kit link would be hidden and the worktree removed. Only rc 1 (not in the index) is "untracked".
+wt h; kit_links "$TMP/rk-h"
+UNIT="$(KIT_ROOT="$DEVKIT_DIR" WT="$TMP/rk-h" MAIN="$R" python3 - <<'PY'
+import importlib.util, os, types
+spec = importlib.util.spec_from_file_location("wtmod", os.path.join(os.environ["KIT_ROOT"], "scripts/git/worktree.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+wt, main, rel = os.environ["WT"], os.environ["MAIN"], ".agents/hooks/gate.sh"
+real = m.git
+out = {}
+for rc in (1, 0, 124, 128):
+    m.git = lambda *a, _rc=rc, **k: types.SimpleNamespace(returncode=_rc, stdout="", stderr="")
+    out[rc] = m._kit_link(wt, main, rel)
+m.git = real
+print(" ".join(f"{rc}={out[rc]}" for rc in sorted(out)))
+PY
+)"
+[ "$UNIT" = "0=False 1=True 124=False 128=False" ] \
+  && ok "_kit_link: only 'not in the index' (rc 1) reads as setup; a failing or timed-out git is treated as work" \
+  || fail "_kit_link fail-open on a git error (got: $UNIT)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_remove_kit_links: all passed" || { echo "❌ test_worktree_remove_kit_links: $FAILS failed"; exit 1; }
