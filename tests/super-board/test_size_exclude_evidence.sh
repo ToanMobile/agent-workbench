@@ -15,7 +15,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 : > "$TMP/empty.diff"
 
 size_verdict() {  # $1 = meta json; in ra "size" nếu chính sách đòi người duyệt vì cỡ PR, ngược lại "ok"
-  python3 "$POLICY" --config "$CONFIG" --meta "$1" --diff "$TMP/empty.diff" 2>/dev/null \
+  python3 "$POLICY" --config "$CONFIG" --meta "$1" --diff "$TMP/empty.diff" \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print("size" if any(h.get("category")=="size" for h in d["human"]) else "ok")'
 }
 
@@ -48,5 +48,33 @@ JSON
 [ "$(size_verdict "$TMP/lock.json")" = ok ] \
   && ok "default exclusions (lockfiles) kept after size_exclude was set" \
   || fail "lockfile lines counted: size_exclude replaced the defaults without re-listing them"
+
+# Chỉ loại ĐỊNH DẠNG bằng chứng: code đặt dưới docs/super-board/runs/ vẫn phải tính vào trần (OCR 17/10), kể cả file trông giống
+# thư mục bị loại (runs-tool/) và dòng xoá.
+cat > "$TMP/hidden-code.json" <<'JSON'
+{"labels":[],"body":"","files":[
+{"path":"docs/super-board/runs/issue-9-qa/helper.py","additions":450,"deletions":0}]}
+JSON
+[ "$(size_verdict "$TMP/hidden-code.json")" = size ] \
+  && ok "executable code under docs/super-board/runs/ still counts toward the cap" \
+  || fail "450 lines of .py under docs/super-board/runs/ were skipped: the cap can be dodged"
+cat > "$TMP/lookalike.json" <<'JSON'
+{"labels":[],"body":"","files":[
+{"path":"docs/super-board/runs-tool/notes.md","additions":450,"deletions":0}]}
+JSON
+[ "$(size_verdict "$TMP/lookalike.json")" = size ] \
+  && ok "a path that only looks like the evidence folder (runs-tool/) still counts" \
+  || fail "docs/super-board/runs-tool/ was treated as evidence"
+
+# Biên của trần: đúng 400 dòng tính được thì qua, 401 thì chờ người; dòng xoá cũng tính.
+cat > "$TMP/cap400.json" <<'JSON'
+{"labels":[],"body":"","files":[{"path":"app/a.sh","additions":300,"deletions":100}]}
+JSON
+cat > "$TMP/cap401.json" <<'JSON'
+{"labels":[],"body":"","files":[{"path":"app/a.sh","additions":300,"deletions":101}]}
+JSON
+[ "$(size_verdict "$TMP/cap400.json")" = ok ] && [ "$(size_verdict "$TMP/cap401.json")" = size ] \
+  && ok "the cap is exact: 400 changed lines (additions + deletions) pass, 401 wait for a human" \
+  || fail "cap boundary wrong (400 -> $(size_verdict "$TMP/cap400.json"), 401 -> $(size_verdict "$TMP/cap401.json"))"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_size_exclude_evidence: all passed" || { echo "❌ test_size_exclude_evidence: $FAILS failed"; exit 1; }

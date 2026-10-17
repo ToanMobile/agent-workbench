@@ -386,18 +386,34 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
   if [ "$(git -C "$MAIN_PATH" symbolic-ref --quiet --short HEAD 2>/dev/null)" = "$BASE" ]; then
     if ! ff_err=$(git -C "$MAIN_PATH" merge --ff-only "origin/$BASE" 2>&1 >/dev/null); then
       # `--squash` ghi lại các commit của PR thành MỘT commit mới trên origin, còn trunk mode đã đưa chính các commit đó vào base
-      # local: hai bên lệch nhau mãi và ff không bao giờ được. Khi CÂY của hai bên giống hệt (base local không giữ việc nào mà
-      # origin chưa có), chỉ cần dời nhánh về origin/<base>: `reset --keep` giữ nguyên sửa chưa commit, không tạo merge commit
-      # (luật AGENTS §7.1: main chỉ ff) và tự từ chối nếu chạm file đang sửa. Base local còn commit riêng chưa đẩy (việc của
-      # phiên khác), hoặc main đang dở một merge/rebase của phiên khác: để nguyên, vẫn báo cảnh báo. Không bao giờ `merge --abort`
-      # (nó huỷ cả merge và phần xung đột đã giải tay của người khác).
-      if [ -e "$(git -C "$MAIN_PATH" rev-parse --git-path MERGE_HEAD 2>/dev/null)" ]; then
-        say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; a merge is in progress there, left alone: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)"
-      elif git -C "$MAIN_PATH" diff --quiet "origin/$BASE" "$BASE" 2>/dev/null \
-           && git -C "$MAIN_PATH" reset --keep "origin/$BASE" >/dev/null 2>&1; then
-        say "note: ${BASE} in ${MAIN_PATH} could not fast-forward (the squash rewrote the PR's commits) but held the same tree; moved to origin/${BASE}"
+      # local: hai bên lệch nhau mãi và ff không bao giờ được. Khi gộp base local vào origin/<base> KHÔNG thêm gì (cây gộp = cây
+      # origin: base local không giữ việc nào mà origin chưa có, kể cả khi origin còn nhận PR khác trước đó), chỉ cần dời nhánh về
+      # origin/<base>: `reset --keep` giữ nguyên sửa chưa commit, không tạo merge commit (luật AGENTS §7.1: main chỉ ff) và tự từ
+      # chối nếu chạm file đang sửa. Base local còn commit riêng chưa đẩy (việc của phiên khác), hoặc main đang dở merge /
+      # cherry-pick / revert / rebase / am / bisect của phiên khác: để nguyên, vẫn báo cảnh báo (`reset --keep` xoá cả CHERRY_PICK_HEAD,
+      # REVERT_HEAD). Đường dẫn trạng thái lấy từ git dir TUYỆT ĐỐI của main (gate thường chạy từ worktree liên kết, cwd khác main).
+      # Không bao giờ `merge --abort` (nó huỷ cả merge và phần xung đột đã giải tay của người khác).
+      main_gd=$(git -C "$MAIN_PATH" rev-parse --absolute-git-dir 2>/dev/null) || main_gd=""
+      busy=""
+      for st in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer BISECT_LOG; do
+        [ -n "$main_gd" ] && [ -e "$main_gd/$st" ] && busy="${busy:+$busy, }$st"
+      done
+      if [ -z "$main_gd" ] || [ -n "$busy" ]; then
+        say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; ${busy:-its git dir is unreadable} in progress there, left alone: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)"
       else
-        say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-300)"
+        origin_tree=$(git -C "$MAIN_PATH" rev-parse "origin/$BASE^{tree}" 2>/dev/null) || origin_tree=""
+        merged_tree=$(git -C "$MAIN_PATH" merge-tree --write-tree "origin/$BASE" "$BASE" 2>/dev/null) || merged_tree=""
+        # git < 2.38 không có merge-tree --write-tree: rơi về so cây hai nhánh.
+        if [ -z "$merged_tree" ] && git -C "$MAIN_PATH" diff --quiet "origin/$BASE" "$BASE" 2>/dev/null; then merged_tree="$origin_tree"; fi
+        if [ -n "$origin_tree" ] && [ "$merged_tree" = "$origin_tree" ]; then
+          if reset_err=$(git -C "$MAIN_PATH" reset --keep "origin/$BASE" 2>&1 >/dev/null); then
+            say "note: ${BASE} in ${MAIN_PATH} could not fast-forward (the squash rewrote the PR's commits) but held nothing origin lacks; moved to origin/${BASE}"
+          else
+            say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; reset to origin/${BASE} refused, local base is stale: $(printf '%s' "$reset_err" | tr '\n\t' '  ' | cut -c1-300)"
+          fi
+        else
+          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-300)"
+        fi
       fi
     fi
   else

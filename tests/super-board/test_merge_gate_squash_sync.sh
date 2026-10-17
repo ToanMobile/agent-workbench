@@ -41,7 +41,7 @@ case " $* " in
   *" pr view "*"labels,files"*) cat "$FAKE_DIR/pr$n.meta" ;;
   *" pr diff "*) cat "$FAKE_DIR/pr$n.diff" ;;
   *" pr merge "*) git -C "$FAKE_REPO" fetch -q origin main \
-                    && tree=$(git -C "$FAKE_REPO" rev-parse "$head^{tree}") \
+                    && tree=$(git -C "$FAKE_REPO" merge-tree --write-tree origin/main "$head") \
                     && sq=$(git -C "$FAKE_REPO" commit-tree "$tree" -p origin/main -m "squash #$n") \
                     && git -C "$FAKE_REPO" push -q origin "$sq:refs/heads/main" && echo "merged #$n" ;;
   *) echo "fake gh: unexpected $*" >&2; exit 1 ;;
@@ -65,7 +65,9 @@ branch() {
   git -C "$R" checkout -q main
 }
 land() { git -C "$R" merge -q --ff-only "issue-$1-x"; }   # trunk mode: worktree finish đã ff các commit của PR vào main local
-gate() { ( cd "$R" && bash "$GATE" --config "$CFG" --pr "$1" --expect-head "$(cat "$TMP/pr$1.head")" ) >"$TMP/gate$1.log" 2>&1; }
+# Reviewer chạy gate từ worktree liên kết của nó (cwd khác main checkout, repo.path "."): mọi ca chạy từ đó.
+git -C "$R" worktree add -q --detach "$TMP/lw" main
+gate() { ( cd "$TMP/lw" && bash "$GATE" --config "$CFG" --pr "$1" --expect-head "$(cat "$TMP/pr$1.head")" ) >"$TMP/gate$1.log" 2>&1; }
 
 # ── 1. main local chỉ giữ commit của PR: sau squash cây giống hệt origin/main.
 branch 7 b seven; land 7
@@ -103,6 +105,46 @@ gate 9; rc=$?
 [ -e "$R/.git/MERGE_HEAD" ] && [ "$(cat "$R/a")" = "RESOLVED BY HAND" ] && ok "3: the other session's merge and its hand resolution survive" \
   || fail "3: gate destroyed the merge in progress (MERGE_HEAD: $([ -e "$R/.git/MERGE_HEAD" ] && echo kept || echo gone), a: $(cat "$R/a"))"
 [ "$(git -C "$R" rev-parse main)" = "$BEFORE3" ] && ok "3: main not moved" || fail "3: main moved"
-grep -q "merge is in progress" "$TMP/gate9.log" && ok "3: the warning says a merge is in progress" || fail "3: no warning about the merge in progress"
+grep -q "MERGE_HEAD in progress" "$TMP/gate9.log" && ok "3: the warning says a merge is in progress" || fail "3: no warning about the merge in progress"
+
+# ── 3b. main = commit del PR + một merge --no-commit KHÔNG xung đột của phiên khác: cây HEAD vẫn bằng origin sau squash, nên
+#    `reset --keep` sẽ chạy và xoá MERGE_HEAD nếu gate không nhận ra merge đang dở (gate chạy từ worktree liên kết: cwd khác main).
+git -C "$R" merge -q --abort >/dev/null 2>&1; git -C "$R" fetch -q origin; git -C "$R" reset -q --hard origin/main
+branch 12 g twelve; land 12
+git -C "$R" checkout -q -b side-x origin/main; echo s > "$R/s"; git -C "$R" add s; git -C "$R" commit -qm "side"; git -C "$R" checkout -q main
+git -C "$R" merge --no-commit --no-ff side-x >/dev/null 2>&1
+[ -e "$R/.git/MERGE_HEAD" ] || fail "3b: fixture: no clean merge in progress"
+BEFORE3B=$(git -C "$R" rev-parse main)
+gate 12; rc=$?
+[ "$rc" -eq 0 ] && ok "3b: the PR still merged (exit 0)" || fail "3b: gate exit $rc: $(tail -5 "$TMP/gate12.log")"
+[ -e "$R/.git/MERGE_HEAD" ] && [ -f "$R/s" ] && [ "$(git -C "$R" rev-parse main)" = "$BEFORE3B" ] && ok "3b: a clean --no-commit merge of another session survives the gate run from a linked worktree" \
+  || fail "3b: gate destroyed the merge in progress (MERGE_HEAD: $([ -e "$R/.git/MERGE_HEAD" ] && echo kept || echo gone), s: $([ -f "$R/s" ] && echo kept || echo gone))"
+git -C "$R" merge --abort >/dev/null 2>&1
+
+# ── 4. main đang dở cherry-pick (CHERRY_PICK_HEAD): `reset --keep` sẽ xoá nó, nên gate không được đụng.
+git -C "$R" merge --abort >/dev/null 2>&1; git -C "$R" reset -q --hard "$BEFORE3"; git -C "$R" fetch -q origin
+git -C "$R" reset -q --hard origin/main
+branch 10 e ten
+git -C "$R" checkout -q -b pick-x origin/main; echo picked > "$R/a"; git -C "$R" commit -qam "pick a"; git -C "$R" checkout -q main
+echo mainv2 > "$R/a"; git -C "$R" commit -qam "main a v2"
+git -C "$R" cherry-pick pick-x >/dev/null 2>&1
+[ -e "$R/.git/CHERRY_PICK_HEAD" ] || fail "4: fixture: no cherry-pick in progress"
+BEFORE4=$(git -C "$R" rev-parse main)
+gate 10; rc=$?
+[ "$rc" -eq 0 ] && ok "4: the PR still merged (exit 0)" || fail "4: gate exit $rc: $(tail -5 "$TMP/gate10.log")"
+[ -e "$R/.git/CHERRY_PICK_HEAD" ] && [ "$(git -C "$R" rev-parse main)" = "$BEFORE4" ] && ok "4: the other session's cherry-pick in progress survives, main not moved" \
+  || fail "4: gate destroyed the cherry-pick in progress (CHERRY_PICK_HEAD: $([ -e "$R/.git/CHERRY_PICK_HEAD" ] && echo kept || echo gone))"
+grep -q "CHERRY_PICK_HEAD" "$TMP/gate10.log" && ok "4: the warning names the cherry-pick" || fail "4: no warning naming CHERRY_PICK_HEAD"
+git -C "$R" cherry-pick --abort >/dev/null 2>&1; git -C "$R" reset -q --hard origin/main
+
+# ── 5. origin nhận thêm một commit KHÁC (PR khác) trước khi squash: base local chỉ giữ commit của PR này, vẫn phải bắt kịp.
+branch 11 f eleven; land 11
+git -C "$R" checkout -q -b unrelated origin/main; echo u > "$R/u"; git -C "$R" add u; git -C "$R" commit -qm "unrelated PR"
+git -C "$R" push -q origin unrelated:refs/heads/main; git -C "$R" checkout -q main; git -C "$R" fetch -q origin
+gate 11; rc=$?
+[ "$rc" -eq 0 ] && ok "5: the PR still merged (exit 0)" || fail "5: gate exit $rc: $(tail -5 "$TMP/gate11.log")"
+[ "$(git -C "$R" rev-parse main)" = "$(git -C "$R" rev-parse origin/main)" ] && ok "5: origin got another PR first: main still caught up with origin/main" \
+  || fail "5: main $(git -C "$R" rev-parse --short main) != origin/main $(git -C "$R" rev-parse --short origin/main)"
+[ -f "$R/u" ] && [ -f "$R/f" ] && ok "5: both the other PR's file and this PR's file are in main" || fail "5: tree lost a file"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_gate_squash_sync: all passed" || { echo "❌ test_merge_gate_squash_sync: $FAILS failed"; exit 1; }
