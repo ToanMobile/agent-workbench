@@ -217,5 +217,43 @@ printf '%s' '{"items": {"REG-1": {"kind": "test", "covers": ["README.md"]}}}' > 
   || bad "L18 setup: writing the covers link failed"
 expect "L18: main links README.md to REG-1 and README.md changed after the worktree gate: the worktree cannot exempt it" 2 "chưa có biên nhận gate --full"
 
+# L19: the exemption needs BOTH sides to agree. The worktree's own checklist links NOTES.md to REG-1 (a stricter rule main does not
+# have: git-ignored, per checkout), main's has no such link: NOTES.md changed on main after the worktree gate is not "docs only".
+newrepo
+gated_worktree_commit 2
+printf '%s' '{"items": {"REG-1": {"kind": "test", "covers": ["NOTES.md"]}}}' > "$W/.agents/regression_status.json" || bad "L19 setup: writing the worktree link failed"
+git -C "$R" merge -q --ff-only task || bad "L19 setup: merge failed"
+echo "# notes" > "$R/NOTES.md"; git -C "$R" add NOTES.md && git -C "$R" commit -qm "notes (ungated)" || bad "L19 setup: notes commit failed"
+expect "L19: a rule only the worktree's checklist has (NOTES.md→REG-1) also keeps NOTES.md from being exempted: refused" 2 "chưa có biên nhận gate --full"
+
+# L20: the work tree of main cannot be located (`git worktree list` fails): fail closed, the worktree receipt exempts nothing
+newrepo
+gated_worktree_commit 2
+git -C "$R" merge -q --ff-only task || bad "L20 setup: merge failed"
+echo "# readme" > "$R/README.md"; git -C "$R" add README.md && git -C "$R" commit -qm "readme (ungated)" || bad "L20 setup: readme commit failed"
+expect "L20 control: main matrix found, README.md docs only: the worktree receipt covers the push" 0 "covered by the gate receipt of the linked worktree"
+WHY="$(python3 - "$DEVKIT_DIR/bin" "$R" <<'PY' 2>&1
+import sys
+sys.path.insert(0, sys.argv[1])
+import push_gate
+real_git, real_own, state = push_gate.git, push_gate._own_check, {"linked": False}
+def git(top, *args, **kw):
+    if state["linked"] and args[:2] == ("worktree", "list"):
+        return 1, ""
+    return real_git(top, *args, **kw)
+def own(cwd, rev, tag_remote, linked):
+    state["linked"] = bool(linked)
+    try:
+        return real_own(cwd, rev, tag_remote, linked)
+    finally:
+        state["linked"] = False
+push_gate.git, push_gate._own_check = git, own
+print(*push_gate.check(sys.argv[2]))
+PY
+)"
+WHY="$(printf '%s' "$WHY" | tail -1)"   # the line before is the warning untestable_only prints on stderr
+case "$WHY" in "False "*) ok "L20: the work tree of main not found: fail closed, the receipt exempts nothing" ;;
+  *) bad "L20: expected a refusal when main cannot be located, got: $(printf '%s' "$WHY" | tail -2)" ;; esac
+
 [ "$FAILS" = 0 ] && echo "ALL OK" && exit 0
 echo "$FAILS FAILED"; exit 1

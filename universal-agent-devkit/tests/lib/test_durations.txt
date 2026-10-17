@@ -265,6 +265,7 @@
 2 tests/gates/test_session_worktree.sh
 14 tests/worktree_git/test_worktree_trunk_hooks.sh
 1 tests/context_memory/test_session_lock_trunk.sh
+1 tests/context_memory/test_session_lock_trunk_wrappers.sh
 2 tests/gates/test_gates_follow_session_worktree.sh
 5 tests/gates/test_worktree_merge_gate_trunk.sh
 2 tests/worktree_git/test_worktree_unity_library.sh

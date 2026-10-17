@@ -614,7 +614,8 @@ def _own_check(cwd, rev, tag_remote, linked):
         rc, listing = git(top, "worktree", "list", "--porcelain")
         main_top = listing.split("\n", 1)[0][9:] if rc == 0 and listing.startswith("worktree ") else ""
         rules_dir = os.path.normpath(os.path.join(main_top, os.path.relpath(project, top))) if main_top else os.devnull
-    if bad and untestable_only(top, project, bad, rules_dir):
+    # linked: main quyết, và quy tắc chặt hơn mà riêng worktree có (liên kết covers git-ignored của nó) cũng giữ file lại (ca L19)
+    if bad and untestable_only(top, project, bad, rules_dir) and (not linked or untestable_only(top, project, bad)):
         return True, "files changed since the gate need no test (docs / agent config), none watched by the matrix"
     if bad:
         return False, (f"{len(bad)} file sắp push khác bản gate đã test (sửa/commit sau lần gate PASS): "
