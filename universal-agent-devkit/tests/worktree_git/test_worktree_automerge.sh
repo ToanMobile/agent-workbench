@@ -11,7 +11,7 @@
 #   5 conflict: exit 3, main untouched, markers in the worktree; resolving it and running again finishes the job
 #   6 main has uncommitted edits on a file the worktree changed: nothing moves, exit 1; after the edit is committed it goes through
 #   7 a worktree git made on its own (no devkit state, with harness files)   8 a refused pre-commit hook   9 refusals: busy, detached main,
-#   wrong place, not a worktree, a live lock    10 the JSON line of `automerge`
+#   not a worktree, a live lock (from inside the worktree: no refusal since K4)    10 the JSON line of `automerge`
 # Independent review 2026-10-08 (each was a real defect of the first version):
 #   11 work under .claude/ in an adopted worktree is WORK (agent memory, agent definitions), never "setup"   12 an unreadable state file
 #   is refused, not adopted   13 the main checkout on another branch (release/...): refused   14 a secret-looking local file is never
@@ -110,7 +110,9 @@ fin ../am-i; rc=$?; [ "$rc" = 1 ] && [ -d "$TMP/am-i" ] && grep -q "bisect" "$TM
 rm -f "$(G "$TMP/am-i" rev-parse --absolute-git-dir)/BISECT_LOG"
 G "$P" checkout -q --detach; fin ../am-i; rc=$?; [ "$rc" = 1 ] && grep -q "detached HEAD" "$TMP/out" && ok "  … main on a detached HEAD: refused" || fail "  … detached main (rc=$rc): $(cat "$TMP/out")"
 G "$P" checkout -q main
-(cd "$TMP/am-i" && bash "$KIT" worktree finish . >"$TMP/out" 2>&1); rc=$?; [ "$rc" = 1 ] && grep -q "MAIN checkout" "$TMP/out" && [ -d "$TMP/am-i" ] && ok "  … from inside the worktree: refused" || fail "  … inside (rc=$rc): $(cat "$TMP/out")"
+# K4 (17/10): từ trong worktree không còn bị từ chối, finish tự dùng main checkout (--keep: am-i còn cần cho các ca khoá bên dưới;
+# ca gộp và gỡ thật: tests/worktree_git/test_worktree_finish_inside.sh)
+(cd "$TMP/am-i" && bash "$KIT" worktree finish . --keep >"$TMP/out" 2>&1); rc=$?; [ "$rc" = 0 ] && ! grep -q "MAIN checkout" "$TMP/out" && [ -d "$TMP/am-i" ] && ok "  … from inside the worktree: runs from the main checkout by itself (--keep: kept)" || fail "  … inside (rc=$rc): $(cat "$TMP/out")"
 fin ../nope; rc=$?; [ "$rc" = 1 ] && grep -q "not a registered worktree" "$TMP/out" && ok "  … a path that is not a worktree: refused" || fail "  … not a worktree (rc=$rc): $(cat "$TMP/out")"
 fin; rc=$?; [ "$rc" != 0 ] && grep -q "usage" "$TMP/out" && ok "  … no argument: usage" || fail "  … usage missing"
 LOCKF="$(G "$TMP/am-i" rev-parse --absolute-git-dir)/devkit-automerge.lock"
