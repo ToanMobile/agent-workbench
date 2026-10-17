@@ -19,7 +19,7 @@ untracked in the worktree after add:        0
 == work + commit + gate --full in the worktree
 commit exit=0
 gate (dirty) exit=0
-  • [2mRegression checklist: not written in a linked worktree (add --checklist to write it); this run results are kept in the worktree own state[0m
+  • Regression checklist: not written in a linked worktree (add --checklist to write it); this run results are kept in the worktree own state
   Report: $TMP/repo/.git/worktrees/s1/postfix-gate/last_report.md
   (full output: $TMP/repo/.git/worktrees/s1/postfix-gate/last_output.log — last_output.log)
 receipt exit 0 dirty entries 1 ['src/Core.kt']
