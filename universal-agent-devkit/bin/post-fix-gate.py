@@ -1068,12 +1068,12 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None, path=None):
         # ponytail: một PASS đã từng là exit 2 rồi được dùng lại thành exit 0 (log REUSED) không cho mượn — merge gate chạy đủ như cũ;
         # nới khi đo thấy ca này chiếm phần lớn lượt chạy của merge gate.
         # carried_from: bản chép `worktree finish` đưa sang main — cũng là bản chép, không cho mượn
-        if r.get("exit") != 0 or r.get("carried_from") or not isinstance(r.get("time"), (int, float)) or not isinstance(r.get("project"), str):
+        if r.get("exit") != 0 or r.get("carried_from") or not isinstance(r.get("project"), str):
             return None
         # Lượt chạy suite thật ghi tested_at ngay lúc ghi biên nhận; lượt dùng lại (một phần hay toàn bộ) giữ tested_at của biên nhận cũ
         # (write_full_pass_receipt tested_at=cache["tested_at"]). Run-log chỉ có epoch làm tròn giây: một PASS thật cùng giây không phân biệt được.
         # "time" lấy trước "tested_at" vài µs trong cùng dict: hiệu hơi âm. _time_ok trước: số nguyên 400 chữ số trừ float là OverflowError.
-        if not _time_ok(r["time"]) or not (-1 <= r["time"] - tested < 5):
+        if not _time_ok(r.get("time")) or not (-1 <= r["time"] - tested < 5):
             return None
     if name and (not r.get("head") or r.get("head") != _head_sha(project_dir)):
         return None   # a Stop record also names the HEAD it was taken at: a commit (the fingerprint does not see one) is a new state
@@ -1112,7 +1112,7 @@ def _run_log_records(logdir):
     for line in raw.splitlines():
         try:
             rec = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):   # RecursionError: một dòng lồng quá sâu (file ai cũng ghi được) — bỏ qua, không crash gate
             continue
         if isinstance(rec, dict) and isinstance(rec.get("epoch"), int) and not isinstance(rec.get("epoch"), bool):
             out.append(rec)
@@ -1122,8 +1122,13 @@ def _run_log_records(logdir):
 def _ever_gated(project_dir):
     """True khi run-log của repo đã có dòng của thư mục này, hoặc không đọc được run-log (review 17/10, P1): mọi lượt exit ≠ 0 xoá biên nhận
     của chính nó, nên "chưa có biên nhận" không có nghĩa "chưa từng chạy" — một thư mục vừa FAIL không được mượn PASS của anh em. Scratch
-    của merge gate (`mktemp -d`, tên mới) chưa có dòng nào.
-    ponytail: dòng cũ bị xoay vòng khỏi 4 MiB cuối của runs.jsonl thì quên; giữ danh sách thư mục đã chạy riêng nếu gặp."""
+    của merge gate (`mktemp -d`, tên mới) chưa có dòng nào. Lượt bị kill / crash trước khi ghi dòng log (dòng log ghi ở cuối main()) vẫn để
+    lại .claude/audit-gate/test_run.lock (acquire_test_run_lock tạo trước khi chạy suite): có file đó cũng là đã từng chạy (review 17/10).
+    File đó còn do testsourceset_gate.sh, worktree.py (_test_run_lock) và stale_rerun.py tạo (OCR 17/10): một worktree của agent có thể
+    bị coi là đã chạy dù chưa — hướng an toàn (chạy suite). Scratch của merge gate không có công cụ nào trong số đó chạy trước gate.
+    ponytail: dòng cũ bị xoay vòng khỏi runs.jsonl (RUN_LOG_MAX_BYTES / RUN_LOG_KEEP_*) thì quên; giữ danh sách thư mục đã chạy riêng nếu gặp."""
+    if os.path.lexists(os.path.join(str(project_dir), ".claude", "audit-gate", "test_run.lock")):
+        return True
     try:
         gd = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--absolute-git-dir"], capture_output=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
@@ -5197,7 +5202,7 @@ def main():
             print(f"    {CYAN}▶ {tr(f'dùng lại PASS đầy đủ lúc {at}: cùng nội dung, cùng cách đọc kết quả, cùng ma trận (--no-cache để chạy lại)', f'reusing the full PASS of {at}: same content, result format and matrix (--no-cache to re-run)')}{RESET}")
         return found
 
-    reuse_src = [None]   # (file, its stamp taken BEFORE it was read, its record name: None = the receipt) of the file that vouched for the suites this run re-used
+    reuse_src = [None]   # (file, its stamp taken BEFORE it was read, its record name: None = the receipt, biên nhận của worktree anh em?) of the file that vouched for the suites this run re-used
 
     def reuse_full_pass(fp=None):
         """Mark every reusable suite PASS from the last full PASS of this exact content; its receipt, or None. A non-forced run
@@ -5210,7 +5215,7 @@ def main():
             stamp = _file_stamp(src)   # before the read: a change after it shows as another stamp when the record is written
             found = reuse_from(cached_full_pass(project_dir, args.matrix, fp, name), name is not None)
             if found:
-                reuse_src[0] = (src, stamp, name)
+                reuse_src[0] = (src, stamp, name, False)
                 return found
         if not force_reason:
             return None
@@ -5227,7 +5232,7 @@ def main():
             found = reuse_from(cached_full_pass(project_dir, args.matrix, fp, None, path))
             if found:
                 print(f"    {DIM}{tr(f'(biên nhận của worktree anh em: {path})', f'(sibling worktree receipt: {path})')}{RESET}")
-                reuse_src[0] = (path, stamp, None)
+                reuse_src[0] = (path, stamp, None, True)
                 return found
         return None
 
@@ -5242,15 +5247,14 @@ def main():
         under test_run.lock after the suites ran, and again right before the verdict; stat only while nothing moved."""
         if not reuse_src[0]:
             return []
-        src, stamp, name = reuse_src[0]
+        src, stamp, name, sibling = reuse_src[0]
         now = _file_stamp(src)   # before the read, as at the first one
         if now == stamp:
             return []
-        # src là biên nhận đã dùng: của chính git dir hoặc của worktree anh em (đọc lại đúng file đó, không phải biên nhận của mình)
-        sib = None if name or src == _result_file(project_dir, None) else src   # biên nhận của mình: không áp luật của anh em
-        found = cached_full_pass(project_dir, args.matrix, budget_fp, name, sib) if now else None
+        # biên nhận của worktree anh em: đọc lại đúng file đó với luật của anh em; biên nhận của mình: như cũ (path None)
+        found = cached_full_pass(project_dir, args.matrix, budget_fp, name, src if sibling else None) if now else None
         if found:
-            reuse_src[0] = (src, now, name)
+            reuse_src[0] = (src, now, name, sibling)
         prev = {x.get("id"): x for x in (found or {}).get("tests") or []}
         untested = set((found or {}).get("untested") or [])
         return [t for t in reused_pass() if not (found and t["id"] not in untested and prev.get(t["id"], {}).get("status") == "PASS"
