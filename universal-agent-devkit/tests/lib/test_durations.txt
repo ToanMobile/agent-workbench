@@ -168,6 +168,7 @@
 5 tests/gates/test_session_lock_target_repo.sh
 4 tests/gates/test_push_gate_recovery_hint.sh
 22 tests/worktree_git/test_worktree_automerge.sh
+24 tests/worktree_git/test_worktree_finish_identical_dirty.sh
 39 tests/gates/test_worktree_merge_gate_owner.sh
 # 2026-10-09: 4 tests that were missing (an unlisted test starts first; test_run_impacted_order was red), each alone on a 4-core Linux container
 4 tests/context_memory/test_scratch_cleanup.sh
