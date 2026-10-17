@@ -45,4 +45,21 @@ rm_wt c; rc=$?
   && ok "remove: a link that does not point into main's kit folder is not setup -> refused" \
   || { fail "foreign link (rc=$rc)"; cat "$TMP/rk-c.out"; }
 
+# A TRACKED file the user replaced by a link into the kit is a type change, not install state: never silently dropped (review 17/10).
+wt d; rm -f "$TMP/rk-d/f.txt"; ln -s "$R/universal-agent-devkit/hooks/gate.sh" "$TMP/rk-d/f.txt"
+rm_wt d; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/rk-d" ] && grep -q "f.txt" "$TMP/rk-d.out" \
+  && ok "remove: a tracked file replaced by a kit link is still work -> refused" \
+  || { fail "tracked file replaced by a kit link (rc=$rc)"; cat "$TMP/rk-d.out"; }
+
+# Same rule everywhere (changes_since): `diff` carries no machine-specific link into main, `finish` (the Stop hook's automerge)
+# neither stops on "a new symlink" nor leaves the worktree behind.
+wt e; kit_links "$TMP/rk-e"
+bash "$KIT" worktree diff "../rk-e" >"$TMP/rk-e.diff" 2>&1
+! grep -q "120000" "$TMP/rk-e.diff" && ! grep -q "universal-agent-devkit/hooks" "$TMP/rk-e.diff" \
+  && ok "diff: kit links are left out of the patch" || { fail "diff carries a kit link"; cat "$TMP/rk-e.diff"; }
+bash "$KIT" worktree finish "../rk-e" >"$TMP/rk-e.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ ! -d "$TMP/rk-e" ] && ok "finish: only kit links uncommitted -> not refused as 'new symlink', worktree merged and removed" \
+  || { fail "finish with kit links only (rc=$rc)"; cat "$TMP/rk-e.out"; }
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_remove_kit_links: all passed" || { echo "❌ test_worktree_remove_kit_links: $FAILS failed"; exit 1; }

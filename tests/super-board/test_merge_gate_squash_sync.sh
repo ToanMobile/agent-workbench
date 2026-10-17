@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Test hồi quy cho bước đồng bộ base local sau merge của .claude/bin/super-board-merge-gate.sh, chạy offline với `gh` giả.
 # 2026-10-17: gate merge bằng `gh pr merge --squash`, còn trunk mode đã đưa chính các commit của PR vào main local
-# (worktree finish) và phiên khác còn đẩy thêm commit local: sau squash origin/main có một commit MỚI (cùng nội dung,
-# khác sha), main local và origin/main lệch nhau, `merge --ff-only` thất bại mãi ("local base is stale") và người dùng
-# phải đồng bộ tay sau mỗi PR. Khi ff không được, gate phải merge origin/<base> vào main checkout (như
-# `git pull --no-rebase` của luật push) mà KHÔNG làm mất commit local; xung đột hoặc sửa chưa commit chồng lên thì
-# để nguyên main (không để lại MERGE_HEAD) và vẫn báo cảnh báo.
+# (worktree finish): sau squash origin/main có một commit MỚI (cùng nội dung, khác sha), main local và origin/main lệch
+# nhau, `merge --ff-only` thất bại mãi ("local base is stale") và người dùng phải đồng bộ tay sau mỗi PR.
+#   1 base local chỉ giữ commit của PR (cây giống origin sau squash): dời về origin/<base> bằng `reset --keep` (không merge
+#     commit: luật "main chỉ ff"), không còn cảnh báo
+#   2 base local còn commit riêng chưa đẩy (việc của phiên khác): để nguyên đúng sha, vẫn cảnh báo, không mất commit
+#   3 main đang dở một merge của phiên khác với phần xung đột đã giải tay + stage: gate không đụng (MERGE_HEAD và phần giải
+#     tay còn nguyên; review 17/10: `merge --abort` vô điều kiện huỷ cả chúng)
 # Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -51,8 +53,8 @@ export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0
 CFG="$TMP/cfg.json"
 echo '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["true"]}' > "$CFG"
 
-# card <N> <file> <content>: nhánh issue-<N>-x có một commit ghi <file>, đã push; main local ff tới đó (như worktree finish).
-card() {
+# branch <N> <file> <content>: nhánh issue-<N>-x có một commit ghi <file>, đã push, gh giả biết nó. main local chưa đổi.
+branch() {
   git -C "$R" fetch -q origin
   git -C "$R" checkout -q -b "issue-$1-x" origin/main
   printf '%s\n' "$3" > "$R/$2"; git -C "$R" add "$2"; git -C "$R" commit -qm "card $1"
@@ -61,32 +63,46 @@ card() {
   git -C "$R" diff "origin/main" "issue-$1-x" > "$TMP/pr$1.diff"
   printf '{"files":[{"path":"%s"}],"labels":[],"body":"","additions":1,"deletions":0,"changedFiles":1}' "$2" > "$TMP/pr$1.meta"
   git -C "$R" checkout -q main
-  git -C "$R" merge -q --ff-only "issue-$1-x"
 }
+land() { git -C "$R" merge -q --ff-only "issue-$1-x"; }   # trunk mode: worktree finish đã ff các commit của PR vào main local
+gate() { ( cd "$R" && bash "$GATE" --config "$CFG" --pr "$1" --expect-head "$(cat "$TMP/pr$1.head")" ) >"$TMP/gate$1.log" 2>&1; }
 
-# ── 1. main local = commit của PR + một commit local khác (phiên khác); squash làm hai bên lệch nhau.
-card 7 b seven
+# ── 1. main local chỉ giữ commit của PR: sau squash cây giống hệt origin/main.
+branch 7 b seven; land 7
+echo wip > "$R/dirty.txt"                       # sửa chưa commit của phiên khác (file không bị đụng)
+gate 7; rc=$?
+[ "$rc" -eq 0 ] && ok "1: gate squash merge succeeded (exit 0)" || fail "1: gate exit $rc: $(tail -5 "$TMP/gate7.log")"
+[ "$(git -C "$R" rev-parse main)" = "$(git -C "$R" rev-parse origin/main)" ] && ok "1: main local moved to origin/main (same tree, no merge commit)" \
+  || fail "1: main $(git -C "$R" rev-parse --short main) != origin/main $(git -C "$R" rev-parse --short origin/main)"
+[ "$(git -C "$R" rev-list --merges --count origin/main..main)" = 0 ] && ok "1: no merge commit made on main (AGENTS §7.1: main only fast-forwards)" || fail "1: a merge commit on main"
+[ "$(cat "$R/dirty.txt" 2>/dev/null)" = wip ] && ok "1: another session's uncommitted file kept" || fail "1: uncommitted file lost"
+! grep -q "local base is stale" "$TMP/gate7.log" && ok "1: no stale-base warning" || fail "1: warning although main was synced: $(grep stale "$TMP/gate7.log")"
+rm -f "$R/dirty.txt"
+
+# ── 2. main local = commit del PR + một commit riêng chưa đẩy: không được mất, để nguyên và cảnh báo.
+branch 8 c eight; land 8
 echo local > "$R/l"; git -C "$R" add l; git -C "$R" commit -qm "local only"
-LOCAL_BEFORE=$(git -C "$R" rev-parse main); H7=$(cat "$TMP/pr7.head")
-( cd "$R" && bash "$GATE" --config "$CFG" --pr 7 --expect-head "$H7" ) >"$TMP/gate7.log" 2>&1; rc=$?
-[ "$rc" -eq 0 ] && ok "gate: squash merge succeeded (exit 0)" || fail "gate exit $rc: $(tail -5 "$TMP/gate7.log")"
-git -C "$R" merge-base --is-ancestor origin/main main && ok "main local now contains origin/main (squash commit)" \
-  || fail "main local does not contain origin/main: still diverged ($(git -C "$R" rev-list --left-right --count main...origin/main | tr '\t' ' '))"
-git -C "$R" merge-base --is-ancestor "$LOCAL_BEFORE" main && ok "no local commit lost: the old main tip is still in main" \
-  || fail "the old local main tip $LOCAL_BEFORE is gone from main"
-[ -f "$R/l" ] && [ -f "$R/b" ] && ok "tree has the PR's file and the local-only file" || fail "tree lost a file (l: $([ -f "$R/l" ] && echo y || echo n), b: $([ -f "$R/b" ] && echo y || echo n))"
-! grep -q "local base is stale" "$TMP/gate7.log" && ok "no stale-base warning once main is synced" || fail "stale-base warning although the merge synced main: $(grep 'stale' "$TMP/gate7.log")"
-[ ! -e "$R/.git/MERGE_HEAD" ] && ok "no merge left open" || fail "MERGE_HEAD left in the main checkout"
+BEFORE2=$(git -C "$R" rev-parse main)
+gate 8; rc=$?
+[ "$rc" -eq 0 ] && ok "2: the PR still merged (exit 0)" || fail "2: gate exit $rc: $(tail -5 "$TMP/gate8.log")"
+[ "$(git -C "$R" rev-parse main)" = "$BEFORE2" ] && ok "2: local-only commit kept: main left exactly where it was" || fail "2: main moved from $BEFORE2"
+grep -q "local base is stale" "$TMP/gate8.log" && ok "2: the stale-base warning is printed" || fail "2: no warning, the stale base is hidden"
+[ ! -e "$R/.git/MERGE_HEAD" ] && ok "2: no merge state left" || fail "2: MERGE_HEAD left"
+git -C "$R" reset -q --hard "$BEFORE2"; git -C "$R" fetch -q origin
 
-# ── 2. un conflict: main local sửa cùng file khác nội dung → để nguyên main, không để MERGE_HEAD, vẫn cảnh báo.
-card 8 c eight
-echo different > "$R/c"; git -C "$R" add c; git -C "$R" commit -qm "local edit of c"
-BEFORE2=$(git -C "$R" rev-parse main); H8=$(cat "$TMP/pr8.head")
-( cd "$R" && bash "$GATE" --config "$CFG" --pr 8 --expect-head "$H8" ) >"$TMP/gate8.log" 2>&1; rc=$?
-[ "$rc" -eq 0 ] && ok "conflicting local edit: the PR still merged (exit 0)" || fail "gate exit $rc: $(tail -5 "$TMP/gate8.log")"
-[ "$(git -C "$R" rev-parse main)" = "$BEFORE2" ] && ok "conflict: main left exactly where it was" || fail "conflict moved main from $BEFORE2"
-[ ! -e "$R/.git/MERGE_HEAD" ] && [ -z "$(git -C "$R" status --porcelain --untracked-files=no)" ] && ok "conflict: no MERGE_HEAD and a clean tree" \
-  || fail "conflict left merge state or dirt: $(git -C "$R" status --porcelain | head -3)"
-grep -q "local base is stale" "$TMP/gate8.log" && ok "conflict: the stale-base warning is still printed" || fail "conflict: no warning, the stale base is hidden"
+# ── 3. main đang dở merge của phiên khác, xung đột đã giải tay và stage.
+branch 9 d nine
+git -C "$R" checkout -q -b other-x origin/main; echo theirs > "$R/a"; git -C "$R" commit -qam "other a"; git -C "$R" checkout -q main
+echo mine > "$R/a"; git -C "$R" commit -qam "main a"
+git -C "$R" merge other-x >/dev/null 2>&1                 # conflict on a: merge left open
+echo "RESOLVED BY HAND" > "$R/a"; git -C "$R" add a
+[ -e "$R/.git/MERGE_HEAD" ] || fail "3: fixture: no merge in progress"
+BEFORE3=$(git -C "$R" rev-parse main)
+gate 9; rc=$?
+[ "$rc" -eq 0 ] && ok "3: the PR still merged (exit 0)" || fail "3: gate exit $rc: $(tail -5 "$TMP/gate9.log")"
+[ -e "$R/.git/MERGE_HEAD" ] && [ "$(cat "$R/a")" = "RESOLVED BY HAND" ] && ok "3: the other session's merge and its hand resolution survive" \
+  || fail "3: gate destroyed the merge in progress (MERGE_HEAD: $([ -e "$R/.git/MERGE_HEAD" ] && echo kept || echo gone), a: $(cat "$R/a"))"
+[ "$(git -C "$R" rev-parse main)" = "$BEFORE3" ] && ok "3: main not moved" || fail "3: main moved"
+grep -q "merge is in progress" "$TMP/gate9.log" && ok "3: the warning says a merge is in progress" || fail "3: no warning about the merge in progress"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_gate_squash_sync: all passed" || { echo "❌ test_merge_gate_squash_sync: $FAILS failed"; exit 1; }

@@ -320,18 +320,23 @@ def _same_in_main(wt, main, rel):
 
 
 def _kit_link(wt, main, rel):
-    """True when `rel` is a symlink the DevKit installer or `heal` made: it points into the main checkout's own kit folder
-    (universal-agent-devkit/ or .agents/devkit/). That is install state, never work, and main has no such path (no .agents/hooks
-    there), so _same_in_main can never vouch for it and `remove` kept the worktree for the user to delete (agent-workbench 2026-10-17)."""
+    """True when `rel` is an UNTRACKED symlink the DevKit installer or `heal` made: it points into the main checkout's own kit folder
+    (universal-agent-devkit/ or .agents/devkit/). That is install state, never work. `heal` adds such a link later than the setup
+    snapshot (a kit update brings a new hook) and main may lack that one, so neither the baseline nor _same_in_main vouched for it:
+    `remove` kept the worktree and `finish` refused "a new symlink" for the user to clean by hand (agent-workbench 2026-10-17). A
+    TRACKED path the user replaced by such a link (a type change) is still work: only an untracked one counts as setup."""
     path = os.path.join(wt, rel)
     if not os.path.islink(path):
         return False
     target = os.path.realpath(path)
+    inside = False
     for kit in ("universal-agent-devkit", os.path.join(".agents", "devkit")):
         root = os.path.realpath(os.path.join(main, kit))
         if target == root or target.startswith(root + os.sep):
-            return True
-    return False
+            inside = True
+    if not inside:
+        return False
+    return git(wt, "ls-files", "--error-unmatch", "--", rel, check=False, env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).returncode != 0
 
 
 def status_paths(wt):
@@ -401,8 +406,12 @@ def changes_since(wt, state):
     """Uncommitted paths whose content differs from the recorded setup. A state written before the executable bit was part of
     the fingerprint (no "fp" marker) holds "F:<sha>" for every file: for those, the bit is not compared."""
     base, exact = state["baseline"], state.get("fp") == FP_VERSION
-    return sorted(p for p, fp in snapshot(wt).items()
-                  if base.get(p) != fp and (exact or not (fp.startswith("F:") and fp.endswith(":x")) or base.get(p) != fp[:-2]))
+    moved = [p for p, fp in snapshot(wt).items()
+             if base.get(p) != fp and (exact or not (fp.startswith("F:") and fp.endswith(":x")) or base.get(p) != fp[:-2])]
+    if not any(os.path.islink(os.path.join(wt, p)) for p in moved):
+        return sorted(moved)
+    main = main_checkout(wt)   # one place for diff / status / inventory / finish / remove: DevKit's own links into main's kit are not work
+    return sorted(p for p in moved if not _kit_link(wt, main, p))
 
 
 def _copy(main, wt, rel):
@@ -1505,7 +1514,7 @@ def _iter_blockers(cwd, wt, shown, budget):
         hidden = None
     # Commits stay on the branch. Uncommitted work is safe once the main checkout
     # holds the same bytes (and executable bit) at the same path (a deleted file: missing in both).
-    lost = [p for p in dict.fromkeys(changed + (hidden or [])) if not _same_in_main(wt, main, p) and not _kit_link(wt, main, p)]
+    lost = [p for p in dict.fromkeys(changed + (hidden or [])) if not _same_in_main(wt, main, p)]
     if lost or hidden is None:
         detail = [f"    {p}" + ("   (git hides it: skip-worktree / assume-unchanged)" if p in (hidden or ()) else "") for p in lost[:20]]
         if hidden is None:
