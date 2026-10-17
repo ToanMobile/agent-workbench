@@ -3692,6 +3692,12 @@ def infra_failure(output) -> bool:
     return bool(INFRA_FAILURE_RE.search(output or ""))
 
 
+# Bộ lọc `--tests '*<tên file>*'` của narrow_fallback không khớp test nào (file sửa không có test cùng tên):
+# Gradle thoát khác 0 mà không test nào chạy — đó không phải test đỏ (GeelyEx2 17/10: một dòng KDoc ở ThemePrefs.kt
+# thành REG-CAR-01 FAIL). Chỉ thông báo của bộ lọc include của Gradle, không phải mọi kiểu "0 test".
+NARROW_NO_TESTS_RE = re.compile(r"No tests found for given includes")
+
+
 # One suite run at a time per project tree, across every DevKit runner (this gate from the Stop
 # hook or the CLI, scripts/stale_rerun.py, scripts/nightly.py through it). red_proof.py runs in
 # its own temp worktrees and keeps its job slots (red_proof.lock). Twin: scripts/stale_rerun.py.
@@ -5202,6 +5208,19 @@ def main():
         # (gradle daemons, test workers), not just the shell. Commands come from the matrix at the base
         # ref (load_active_matrix), so the audited change cannot rewrite them.
         code, out, timed_out = run_in_group(cmd, str(project_dir), env, args.timeout)
+        full_cmd = t.get("full_command") or ""
+        if (not timed_out and code != 0 and mode in ("package", "module") and full_cmd
+                and full_cmd.strip() != cmd.strip() and NARROW_NO_TESTS_RE.search(out or "")):
+            # Bước narrow không chạy test nào: chạy lại lệnh FULL một lần và chấm theo nó (full đỏ thì vẫn FAIL).
+            # ponytail: ran_cmds vẫn khoá theo lệnh narrow, một suite khác cùng lệnh full sẽ chạy lại (chậm hơn, không kém kiểm); gom khoá khi việc này hay xảy ra.
+            reason = tr(f"bộ lọc narrow không khớp test nào ({cmd}) — chạy lại lệnh đầy đủ",
+                        f"the narrow filter matched no test ({cmd}) — re-running the full command")
+            print(f"    {CYAN}▶ {t['id']}: {tr('chế độ FULL', 'mode FULL')} — {reason}{RESET}")
+            cmd, mode = full_cmd, "full"
+            t.update({"command": cmd, "mode": mode, "mode_reason": reason})
+            narrow_out = out or ""
+            code, out, timed_out = run_in_group(cmd, str(project_dir), env, args.timeout)
+            out = narrow_out + f"\n# --- narrow không khớp test nào, chạy lại lệnh đầy đủ — exit {code} ---\n" + (out or "")
         if not timed_out:
             t["status"] = "PASS" if code == 0 else "FAIL"
             # The command's own "cannot run here" code (unity-batch.sh: 2 = no Editor):
