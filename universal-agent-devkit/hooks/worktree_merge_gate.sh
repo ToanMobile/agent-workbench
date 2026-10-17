@@ -93,6 +93,29 @@ if not gdir or not common or os.path.realpath(gdir) != os.path.realpath(common):
 # else's: the user's, Codex's, a parallel session's); subagent worktrees reported back in a completion
 # (<worktreePath>) versus still running (only in subagents/*.meta.json — never pull those in).
 start, finished, mentions, enter_ids = None, set(), [], set()
+# K10 (17/10, đo thật: a07752b, 8c5a407): subagent còn sống hay đã xong được đọc từ CHUỖI sự kiện của nó trong transcript, sự kiện sau
+# thắng: thông báo XONG thật -> xong; thông báo tạm (con dừng lượt nhưng còn việc nền của chính nó: "is waiting on its own background
+# work", cũng mang <status>completed</status> và <worktreePath>) -> còn chạy; SendMessage gọi con dậy -> còn chạy. Trước đây thông báo tạm
+# bị tính là xong, Stop của phiên cha commit việc dở của con thành wip(agent-…), fast-forward main và gỡ worktree dưới chân con.
+# Thông báo xong của harness đến dưới dạng attachment queued_command (không phải tin nhắn user), nên đọc cả nó.
+# ponytail: dựa vào câu chữ thông báo của harness (17/10); harness đổi câu thì thông báo tạm lại bị tính là xong (lỗi cũ quay lại),
+# test tests/gates/test_worktree_merge_gate_subagent_live.sh giữ câu chữ đó. Con chết mà không có thông báo xong thì phiên cha không bao
+# giờ tự gộp worktree của nó (như con chỉ có meta), session_context vẫn nêu worktree đó. Không quét tiến trình theo cwd (lsof chậm, vượt
+# alarm 13 s); một lần chạy test đang giữ worktree đã có session_lock.test_run_active.
+sub_events, task_wt = [], {}   # [(final | interim, path) | (resume, agent id)] theo thứ tự transcript; task-id -> worktreePath
+INTERIM = re.compile(r"waiting on its own background work|background work of its own still running|has not reported yet")
+WP = r"<worktreePath>([^<]+)</worktreePath>"
+
+def note_text(tx):
+    """<worktreePath> trong lời phía USER: mỗi khối <task-notification> là xong hoặc tạm (INTERIM); thẻ ngoài khối nào là xong (như cũ)."""
+    for b in re.findall(r"<task-notification>.*?</task-notification>", tx, re.S):
+        tid = re.search(r"<task-id>([^<]+)</task-id>", b)
+        for p in re.findall(WP, b):
+            if tid:
+                task_wt[tid.group(1).strip()] = p.strip()
+            sub_events.append(("interim" if INTERIM.search(b) else "final", p.strip()))
+    for p in re.findall(WP, re.sub(r"<task-notification>.*?</task-notification>", "", tx, flags=re.S)):
+        sub_events.append(("final", p.strip()))
 
 def added_paths(cmd):
     """Path arguments of every 'worktree add' in a shell command, absolute (relative ones from the repo)."""
@@ -123,11 +146,16 @@ with open(tp, encoding="utf-8", errors="replace") as f:
                 start = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
             except (ValueError, TypeError, AttributeError):
                 pass
-        if "orktree" not in raw:
+        if "orktree" not in raw and "SendMessage" not in raw:
             continue
         try:
             e = json.loads(raw)
         except ValueError:
+            continue
+        if e.get("type") == "attachment":   # K10: thông báo của harness xếp hàng (queued_command), cũng là lời phía user
+            att = e.get("attachment") if isinstance(e.get("attachment"), dict) else {}
+            if att.get("type") == "queued_command" and isinstance(att.get("prompt"), str):
+                note_text(att["prompt"])
             continue
         content = (e.get("message") or {}).get("content") or []
         if e.get("type") == "user":
@@ -135,7 +163,7 @@ with open(tp, encoding="utf-8", errors="replace") as f:
             # same tag in a tool's output is data the agent read, not a worktree the session made (and the gate now merges what it owns)
             for tx in [content] if isinstance(content, str) else [c if isinstance(c, str) else c.get("text", "") for c in content
                                                                  if isinstance(c, str) or (isinstance(c, dict) and c.get("type") == "text")]:
-                finished.update(m.strip() for m in re.findall(r"<worktreePath>([^<]+)</worktreePath>", str(tx)))
+                note_text(str(tx))
             # Tool OUTPUT (a 'git worktree list') names everyone's worktrees; only EnterWorktree's own result counts.
             for c in content if isinstance(content, list) else []:
                 if isinstance(c, dict) and c.get("type") == "tool_result" and c.get("tool_use_id") in enter_ids:
@@ -154,12 +182,14 @@ with open(tp, encoding="utf-8", errors="replace") as f:
                     mentions.append(os.path.normpath(os.path.join(repo, where)))
             elif c.get("name") == "Bash" and "worktree add" in str(inp.get("command") or ""):
                 mentions.extend(added_paths(str(inp.get("command"))))
+            elif c.get("name") == "SendMessage" and isinstance(inp.get("to"), str):
+                sub_events.append(("resume", inp["to"].strip()))   # K10: gọi một subagent dậy: nó lại đang chạy
 mentions = "\n".join(mentions)
 
 def mentioned(path, real):
     forms = {path, real, real[len("/private"):] if real.startswith("/private/") else real}
     return any(re.search(re.escape(f) + r"(?![\w.-])", mentions) for f in forms)   # whole path: wt-ne is not wt-new
-meta_paths = set()
+meta_paths, agent_wt = set(), {}
 for meta in glob.glob(os.path.join(os.path.splitext(tp)[0], "subagents", "*.meta.json")):
     try:
         with open(meta, encoding="utf-8") as mf:
@@ -168,8 +198,17 @@ for meta in glob.glob(os.path.join(os.path.splitext(tp)[0], "subagents", "*.meta
         continue
     if isinstance(wp, str) and wp:
         meta_paths.add(os.path.realpath(wp))
-finished = {os.path.realpath(p) for p in finished}
-running = meta_paths - finished
+        name = os.path.basename(meta)[:-len(".meta.json")]
+        agent_wt[name[len("agent-"):] if name.startswith("agent-") else name] = wp   # agent-<id>.meta.json: id là `to` của SendMessage
+sub_state = {}   # K10: worktree -> trạng thái theo sự kiện sau cùng của subagent đó
+for kind, key in sub_events:
+    if kind == "resume":
+        key = agent_wt.get(key) or task_wt.get(key)
+        if not key:
+            continue   # SendMessage tới tên không ánh xạ được về worktree nào (ponytail: `to` theo tên agent chưa được đọc)
+    sub_state[os.path.realpath(key)] = "finished" if kind == "final" else "running"
+finished = {p for p, s in sub_state.items() if s == "finished"}
+running = (meta_paths | {p for p, s in sub_state.items() if s == "running"}) - finished
 
 sys.path[:0] = [os.path.join(devkit, "scripts", "git"), os.path.join(devkit, "scripts", "governance"), os.path.join(devkit, "scripts"), os.path.join(devkit, "bin")]
 # An import that fails is not a reason to pass before we know whether there is anything to protect: responsibility is computed first,
@@ -698,9 +737,12 @@ if not save():
 conflicts = [r for r in pending if r.get("am_status") == "conflict"]
 finish_cmds = "".join(f"  agent-kit worktree finish {shlex.quote(r['path'])}\n" for r in pending if r["unintegrated"] and not r.get("reason"))
 if conflicts:
+    # 17/10: không khuyên `git -C <worktree>`: harness của Claude chặn `git -C` với đường dẫn tính lúc chạy; cùng dạng với worktree.py _conflict
+    resolve = "; ".join(f"`cd {shlex.quote(r['path'])} && git add <file> && git commit --no-edit` rồi `agent-kit worktree finish {shlex.quote(r['path'])}`"
+                        for r in conflicts)
     how_to = ("XUNG ĐỘT khi tự gộp: sửa NGAY trong worktree (thư mục riêng, không ảnh hưởng ai): bỏ dấu <<<<<<< ======= >>>>>>> giữ đúng ý cả hai bên, "
-              "`git -C <worktree> add <file>`. Rồi dừng lại: cổng tự kết thúc merge, fast-forward main và gỡ worktree. Không cần chạy lệnh nào khác "
-              "(muốn chạy ngay: lệnh dưới đây).\n" + finish_cmds)
+              + resolve + " (finish fast-forward main và gỡ worktree; chỉ dừng lại thì lần dừng sau cổng tự làm việc đó).\n"
+              "Lệnh gộp từng worktree, từ main checkout:\n" + finish_cmds)
 elif finish_cmds:
     how_to = "Tự gộp chưa chạy/không xong (lý do ở trên). Chạy lại bằng một lệnh, từ main checkout:\n" + finish_cmds
 else:

@@ -3,7 +3,7 @@
 # another script slips through. Add a line when a regression shows such a gap; test_impact_map.sh keeps it honest.)
 # <glob, relative to the kit; * also matches />   <test> [<test> ...]
 scripts/context/enrich_context.py   hooks/tests/test_prompt_dedupe.sh hooks/tests/hook_contract_test.sh tests/verification/test_bug_capture.sh tests/context_memory/test_giao_default.sh
-bin/post-fix-gate.py               tests/gates/test_gate_friction.sh
+bin/post-fix-gate.py               tests/gates/test_gate_friction.sh tests/gates/test_gate_narrow_no_tests_found.sh
 skills/ui-ux-pro-max/*             tests/verification/test_ui_ux_pro_max_data.sh
 # 2026-10-05: bin/install.sh runs adapters/setup_*.sh and sources scripts/git/backup_conflict.sh, and no test names either: a change to an
 # adapter selected repo consistency only, one to backup_conflict.sh missed the four install tests that catch a mutation of it.
@@ -15,7 +15,7 @@ scripts/git/backup_conflict.sh     tests/installer/test_install_idempotency.sh t
 # The commit-msg hook body: no test names it, test_commit_hygiene commits through it (turning its rule off turns that test red).
 scripts/git/git-commit-msg.sh      tests/worktree_git/test_commit_hygiene.sh
 # worktree.py is the shared rule of `worktree remove`, `status`, `diff` and the Stop hook worktree_merge_gate.sh: those tests run it without naming it.
-scripts/git/worktree.py            tests/gates/test_worktree_merge_gate.sh tests/context_memory/test_session_context.sh tests/worktree_git/test_worktree_remove_safety.sh tests/worktree_git/test_worktree_remove_kit_links.sh tests/worktree_git/test_worktree_immutable_copy.sh tests/worktree_git/test_worktree_automerge.sh tests/worktree_git/test_worktree_finish_identical_dirty.sh tests/worktree_git/test_worktree_remove_branch.sh
+scripts/git/worktree.py            tests/gates/test_worktree_merge_gate.sh tests/context_memory/test_session_context.sh tests/worktree_git/test_worktree_remove_safety.sh tests/worktree_git/test_worktree_immutable_copy.sh tests/worktree_git/test_worktree_automerge.sh tests/worktree_git/test_worktree_finish_identical_dirty.sh tests/worktree_git/test_worktree_remove_branch.sh tests/worktree_git/test_worktree_finish_inside.sh tests/worktree_git/test_worktree_conflict_advice.sh tests/worktree_git/test_worktree_meta_ignored.sh tests/worktree_git/test_worktree_merge_regate.sh tests/worktree_git/test_worktree_merge_gate_lock.sh tests/worktree_git/test_worktree_remove_kit_links.sh
 profiles/*/rules/*-rules.md   tests/context_memory/test_profile_split.sh tests/context_memory/test_injection_block.sh
 # stop_hook_times.py imports gate_runs_report (log_file, read_runs, wall: the runs.jsonl reader) and its test never names that file.
 scripts/governance/gate_runs_report.py   tests/gates/test_stop_hook_times.sh
@@ -23,3 +23,7 @@ scripts/governance/gate_runs_report.py   tests/gates/test_stop_hook_times.sh
 hooks/shell_norm.py   tests/gates/test_hardware_rm_containment.sh tests/gates/test_hardware_rm_unforced.sh tests/gates/test_hardware_unglob_quoted.sh tests/gates/test_hardware_find_match_all.sh tests/gates/test_hardware_find_not_or.sh tests/gates/test_hardware_data_local_tmp.sh tests/gates/test_git_guard_shell_feed.sh tests/gates/test_git_guard_shell_subst.sh tests/gates/test_git_guard_process_subst.sh tests/gates/test_guard_comment_not_swallowing.sh hooks/tests/test_git_guard_bypass.sh hooks/tests/test_git_guard_nested.sh tests/gates/test_hook_python_isolation.sh hooks/tests/hook_contract_test.sh
 # 17/10: lớp bọc nohup / time / bash -c và sed chỉ đọc ở trunk mode (bin/session_lock.py _trunk_unwrap, _gate_run).
 bin/session_lock.py   tests/context_memory/test_session_lock_trunk_wrappers.sh
+# 17/10: hooks/worktree_merge_gate.sh: lời khuyên khi xung đột (không git -C) và worktree của subagent còn sống (K10).
+hooks/worktree_merge_gate.sh   tests/gates/test_worktree_merge_gate_conflict_advice.sh tests/gates/test_worktree_merge_gate_subagent_live.sh
+# 17/10 (K7): khối .gitignore mà bin/install.sh viết lại ở mỗi lần cài / mỗi worktree mới (phải giữ `.agents/hooks/`).
+bin/install.sh   tests/installer/test_gitignore_keeps_agents_hooks.sh
