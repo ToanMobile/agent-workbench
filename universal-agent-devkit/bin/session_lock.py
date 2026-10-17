@@ -77,7 +77,7 @@ GATE = _Re(r"post-fix-gate(\.py)?\b(?!/)|\bpostfix-gate\b(?!/)|\bagent-kit\s+(?:
 # stay out (`echo $(postfix-gate)` runs it) and so does awk; sed đọc khi không có -i (_gate_run); a substitution anywhere in the segment is never excused.
 # git reads only through its read verbs, named right after it: `git bisect run`, `git submodule foreach` and `git -c alias.x=!… x` run commands.
 _GATE_READERS = frozenset(("grep", "egrep", "fgrep", "rg", "ag", "cat", "bat", "less", "more", "head", "tail", "wc", "nl", "file", "stat", "ls",
-                           "diff", "cmp"))
+                           "diff", "cmp", "pgrep", "pidof"))   # pgrep/pidof chỉ tìm tiến trình (K9 17/10: `pgrep -fl post-fix-gate` ở main bị chặn)
 _GIT_READ_VERBS = frozenset(("log", "show", "diff", "grep", "blame", "status", "ls-files", "rev-parse", "rev-list", "cat-file", "describe", "shortlog"))
 _GATE_PREFIX = frozenset(("env", "time", "nohup", "command", "exec", "builtin", "sudo", "nice"))
 
@@ -96,8 +96,12 @@ def _gate_run(seg):
         if w in _GATE_PREFIX or ("=" in w and w.split("=", 1)[0].isidentifier()):
             continue
         head = os.path.basename(w)
-        if head == "git":
-            return not (k + 1 < len(words) and words[k + 1] in _GIT_READ_VERBS)
+        if head == "git":   # K9 17/10: bỏ qua `-C <dir>`, `--no-pager`, `-P` trước verb (`git -C $w log -- …/post-fix-gate.py` là đọc); -c và
+            j = k + 1       # option khác vẫn tính là chạy (`-c core.pager=…` chạy được lệnh)
+            while j < len(words) and words[j] in ("-C", "--no-pager", "-P"):
+                j += 2 if words[j] == "-C" else 1
+            verb, nxt = (words[j] if j < len(words) else ""), (words[j + 1] if j + 1 < len(words) else "")
+            return not (verb in _GIT_READ_VERBS or (verb == "branch" and nxt in ("--list", "-l")) or (verb == "worktree" and nxt == "list"))
         if head == "sed":   # sed không có -i chỉ đọc (17/10: `sed -n 3260,3300p …/post-fix-gate.py` ở main bị coi là chạy gate); mẫu -i như hooks/shell_writes.py
             return any(re.fullmatch(r"-[A-Za-z]*i.*|--in-place.*", a) for a in words[k + 1:])
         return head not in _GATE_READERS
