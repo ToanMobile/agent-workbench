@@ -393,3 +393,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Công tắc môi trường của runner/worker lọt vào suite test của gate
 - **Nguyên nhân:** super-board-run.sh export DEVKIT_ALLOW_BRANCH=1 cho worker, worker tự đặt POSTFIX_GATE_FORCE_FULL=1; suite_env() của post-fix-gate giữ nguyên chúng nên REG-DK-HOOK-01 (checkout -b want=2 got=0) và test_busy_keeps_receipt đỏ trong merge-gate verify, thẻ đã review bị đẩy sang Blocked
 - **Quy tắc phòng ngừa & Cách fix:** Biến là công tắc của MỘT lần chạy gate/hook (DEVKIT_ALLOW_BRANCH, POSTFIX_GATE_FORCE_FULL, WORKTREE_MERGE_GATE…) phải nằm trong danh sách drop của suite_env() và unset trong tests/lib/clean_git_env.sh; thêm công tắc mới thì thêm vào cả hai và vào test_suite_env.sh
+
+---
+
+### [INSTINCT-047] Squash merge làm main local lệch origin, và symlink kit chặn gỡ worktree
+- **Ngày phát hiện:** 2026-10-17
+- **Hiện tượng lỗi:** Squash merge làm main local lệch origin, và symlink kit chặn gỡ worktree
+- **Nguyên nhân:** merge gate dùng gh pr merge --squash nên origin có commit mới cùng nội dung khác sha, trong khi trunk mode đã đưa chính các commit PR vào main local: ff-only thất bại mãi và mỗi PR người dùng phải đồng bộ tay; agent-kit heal/init tạo symlink .agents/hooks/* trỏ vào kit của main nên worktree remove thấy 'thay đổi main chưa có' và giữ worktree
+- **Quy tắc phòng ngừa & Cách fix:** sau squash, base local chỉ dời về origin/<base> bằng `reset --keep` khi CÂY hai bên giống hệt; còn commit riêng chưa đẩy hoặc main đang dở merge thì để nguyên và cảnh báo. KHÔNG merge non-ff trong main (luật main chỉ ff) và KHÔNG `merge --abort` vô điều kiện (nó huỷ merge + phần giải tay của phiên khác). Symlink UNTRACKED trỏ vào universal-agent-devkit/ hoặc .agents/devkit/ của main là trạng thái cài, bỏ ở `changes_since` (một chỗ cho diff/status/finish/remove); file đã theo dõi bị thay bằng link vẫn là việc. Test: tests/super-board/test_merge_gate_squash_sync.sh, universal-agent-devkit/tests/worktree_git/test_worktree_remove_kit_links.sh

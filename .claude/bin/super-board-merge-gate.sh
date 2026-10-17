@@ -385,7 +385,54 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
   # Chỉ khi main checkout đang ở $BASE: nếu không, ff-only sẽ đẩy nhánh nào đang được checkout.
   if [ "$(git -C "$MAIN_PATH" symbolic-ref --quiet --short HEAD 2>/dev/null)" = "$BASE" ]; then
     if ! ff_err=$(git -C "$MAIN_PATH" merge --ff-only "origin/$BASE" 2>&1 >/dev/null); then
-      say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-300)"
+      # `--squash` ghi lại các commit của PR thành MỘT commit mới trên origin, còn trunk mode đã đưa chính các commit đó vào base
+      # local: hai bên lệch nhau mãi và ff không bao giờ được. Khi gộp base local vào origin/<base> KHÔNG thêm gì (cây gộp = cây
+      # origin: base local không giữ việc nào mà origin chưa có, kể cả khi origin còn nhận PR khác trước đó), chỉ cần dời nhánh về
+      # origin/<base>: `reset --keep` giữ nguyên sửa chưa commit, không tạo merge commit (luật AGENTS §7.1: main chỉ ff) và tự từ
+      # chối nếu chạm file đang sửa. Base local còn commit riêng chưa đẩy (việc của phiên khác), hoặc main đang dở merge /
+      # cherry-pick / revert / rebase / am / bisect của phiên khác: để nguyên, vẫn báo cảnh báo (`reset --keep` xoá cả CHERRY_PICK_HEAD,
+      # REVERT_HEAD). Đường dẫn trạng thái lấy từ git dir TUYỆT ĐỐI của main (gate thường chạy từ worktree liên kết, cwd khác main).
+      # Không bao giờ `merge --abort` (nó huỷ cả merge và phần xung đột đã giải tay của người khác).
+      main_gd=$(git -C "$MAIN_PATH" rev-parse --absolute-git-dir 2>/dev/null) || main_gd=""
+      busy=""
+      for st in MERGE_HEAD SQUASH_MSG CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer BISECT_LOG; do
+        [ -n "$main_gd" ] && [ -e "$main_gd/$st" ] && busy="${busy:+$busy, }$st"
+      done
+      if [ -z "$main_gd" ]; then
+        say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; its git dir could not be read, left alone: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)"
+      elif [ -n "$busy" ]; then
+        say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; ${busy} in progress there, left alone: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)"
+      else
+        # Chốt đầu nhánh một lần: mọi so sánh dùng đúng commit này, và chỉ dời nếu ngay trước khi dời đầu nhánh vẫn là nó (một phiên
+        # khác commit/ff vào base trước đó thì để nguyên). Còn một khe vài mili-giây giữa kiểm lại và `reset` mà git không có phép
+        # so-và-đổi nguyên tử cho trường hợp này: commit lọt vào khe đó vẫn nằm trong reflog.
+        local_tip=$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null) || local_tip=""
+        origin_tree=$(git -C "$MAIN_PATH" rev-parse "origin/$BASE^{tree}" 2>/dev/null) || origin_tree=""
+        merged_tree=$(git -C "$MAIN_PATH" merge-tree --write-tree "origin/$BASE" "$local_tip" 2>/dev/null) || merged_tree=""
+        # git < 2.38 không có merge-tree --write-tree: rơi về so cây hai nhánh.
+        if [ -z "$merged_tree" ] && git -C "$MAIN_PATH" diff --quiet "origin/$BASE" "$local_tip" 2>/dev/null; then merged_tree="$origin_tree"; fi
+        # `reset --keep` cũng đặt lại INDEX về commit đích: file phiên khác đã stage (khác HEAD) sẽ rơi khỏi index (thành untracked).
+        # Index khác HEAD (rc 1) hoặc không đọc được (rc khác, vd index.lock) thì không dời, chỉ cảnh báo đúng lý do.
+        can_move=0
+        [ -n "$local_tip" ] && [ -n "$origin_tree" ] && [ "$merged_tree" = "$origin_tree" ] && can_move=1
+        idx_rc=0; git -C "$MAIN_PATH" diff --cached --quiet 2>/dev/null || idx_rc=$?
+        ff_why=$(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)
+        if [ "$can_move" != 1 ]; then
+          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: ${ff_why}"
+        elif [ "$idx_rc" -eq 1 ]; then
+          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; another session has staged changes there (a reset would drop them from the index), left alone: ${ff_why}"
+        elif [ "$idx_rc" -ne 0 ]; then
+          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; its index could not be read (exit ${idx_rc}), left alone: ${ff_why}"
+        elif [ "$(git -C "$MAIN_PATH" symbolic-ref --quiet --short HEAD 2>/dev/null)" != "$BASE" ] \
+             || [ "$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null)" != "$local_tip" ]; then
+          # `reset` dời nhánh ĐANG được checkout: một phiên khác đổi nhánh/commit giữa chừng thì không đụng.
+          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; the checkout changed while it was being checked, left alone: ${ff_why}"
+        elif reset_err=$(git -C "$MAIN_PATH" reset --keep "origin/$BASE" 2>&1 >/dev/null); then
+          say "note: ${BASE} in ${MAIN_PATH} could not fast-forward (the squash rewrote the PR's commits) but held nothing origin lacks; moved to origin/${BASE}"
+        else
+          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: ${ff_why} | reset to origin/${BASE} refused too: $(printf '%s' "$reset_err" | tr '\n\t' '  ' | cut -c1-200)"
+        fi
+      fi
     fi
   else
     say "note: ${BASE} in ${MAIN_PATH} not fast-forwarded (main checkout is not on ${BASE})"
