@@ -35,6 +35,14 @@ test('chua co result.json (claimed undefined) va chua khai scopeFiles => giu cac
   assert.deepEqual(r.canhBao, []);
 });
 
+test('#22 forbiddenPaths va ten git khac dang Unicode (NFD/NFC, ca hai chieu) => van CHAN (tra ten git dua, khong doi ten)', () => {
+  const ten = 'src/Kính.kt';
+  for (const [cam, git] of [['NFD', 'NFC'], ['NFC', 'NFD']]) {
+    const r = fileCamDungTheoTask({ forbiddenPaths: [ten.normalize(cam)] }, [ten.normalize(git)], undefined);
+    assert.deepEqual(r.chan, [ten.normalize(git)], `cam ${cam}, git ${git}`);
+  }
+});
+
 test('changedFiles khong do duoc => khong chan, khong canh bao', () => {
   const r = fileCamDungTheoTask(task, undefined, []);
   assert.deepEqual(r, { chan: [], canhBao: [] });

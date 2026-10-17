@@ -298,6 +298,14 @@ def validate(text, kind, meta=None):
 def read(args, kind='json', meta=None, recovering=False):
     if not read_only(args):
         raise ValueError('retry helper accepts read-only GitHub commands only')
+    # kind quota kiểm JSON rate_limit thô; --jq/--template in thứ khác nên lần nào cũng hỏng. Lỗi của người gọi biết trước
+    # khi gọi gh (OfficeReader 17/10 00:22: worker QA tự viết dòng gh-quota-on-exit): exit 64 ngay, không retry, không
+    # halt kể cả STRICT, để file halt không lưu một lệnh mà --resume phát lại lần nào cũng hỏng.
+    if kind == 'quota' and any(a in ('--jq', '-q', '--template', '-t') or a.startswith(('--jq=', '--template=', '-q', '-t'))
+                               for a in args):
+        raise ValueError('kind quota validates the raw `api rate_limit` JSON, so --jq/--template cannot pass; this call '
+                         'failed, the run continues. For the gh-quota-on-exit line run sb_gh_guard_summary '
+                         '(source .claude/bin/super-board-gh-guard.sh); for the payload use --kind quota -- api rate_limit')
     if not recovering:
         check_halt()
     operation = {'args': args, 'kind': kind, 'meta': meta}

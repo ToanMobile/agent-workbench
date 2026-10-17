@@ -5,7 +5,7 @@ import { loadConfig, existingRulesFiles, CONFIG_NAME, withGateSnapshot } from '.
 import {
   createTask, loadTask, listTasks, save, updateTask, setPhase, recordVerdict, recordRun, recordProof,
   recordDispatch, markRework, accept, gate, freshness, contractPaths, addHistory, PHASES, TASK_TYPES,
-  discardProofs, anhTrung, hashFile, ackWarning, locCanhBaoDaXem } from './tasks.js';
+  discardProofs, anhTrung, hashFile, ackWarning, locCanhBaoDaXem, ghiMocGiao, chupThemCam } from './tasks.js';
 import {
   newConversation, sendMessage, getConversationMetadata, conversationProgress, transcriptErrors, MODELS, isAgyModel, agyPath, agyTurnStatus, agyTurnStatusSafe, agyRegistryProblem, agyPermissionPolicy,
   sameProcess,
@@ -449,6 +449,8 @@ export const TOOLS = [
       if (Array.isArray(args.forbidden)) task.forbiddenPaths = args.forbidden.map(String).map((f) => f.trim()).filter(Boolean);
       addHistory(task, 'pm', lai ? 'plan_rewritten' : 'plan_written', args.notes || '');
       save(cfg, task);
+      // #22: duong CAM them sau luc giao trien khai => chup them (trong khoa task, tren ban moi nhat) de doi SAU luc nay bi CHAN.
+      if (Array.isArray(args.forbidden)) updateTask(cfg, task, (t) => chupThemCam(cfg.projectRoot, t));
       const nhac = kiemTraKeHoach(body);
       const chongLan = kiemChongLan(cfg, { id: task.id, files: task.scopeFiles || [] }, cacTaskDangChayKhac(cfg, task));
 
@@ -668,6 +670,8 @@ export const TOOLS = [
         const msg = buildImplementMessage(cfg, task, args.notes || '');
         const promptFile = saveOutgoing(cfg, task, `prompt-implement-r${task.round}`, msg);
         if (msg.length > 20000) guard.lines.push(`prompt ${Math.round(msg.length / 1024)} KB — agent de chet context; rut plan (promptPlanMaxBytes) hoac tach task.`);
+        // #22: ghi moc commit cho commitPolicy=forbid TRUOC khi agent nhan prompt (lan giao dau; giao loi roi giao lai van giu moc).
+        ghiMocGiao(cfg, task);
         const moiMo = !task.conversationId;
         if (moiMo) {
           // Ke hoach do PM viet nen khong con hoi thoai lap ke hoach de nhan tin — mo hoi thoai lam viec o day.
