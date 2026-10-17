@@ -385,7 +385,16 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
   # Chỉ khi main checkout đang ở $BASE: nếu không, ff-only sẽ đẩy nhánh nào đang được checkout.
   if [ "$(git -C "$MAIN_PATH" symbolic-ref --quiet --short HEAD 2>/dev/null)" = "$BASE" ]; then
     if ! ff_err=$(git -C "$MAIN_PATH" merge --ff-only "origin/$BASE" 2>&1 >/dev/null); then
-      say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-300)"
+      # `--squash` ghi lại các commit của PR thành MỘT commit mới trên origin, còn trunk mode đã đưa chính các commit đó (và commit
+      # local của phiên khác) vào base local: hai bên lệch nhau mãi và ff không bao giờ được. Merge origin/<base> vào base local
+      # (như `git pull --no-rebase` của luật push): không mất commit local nào. Xung đột hoặc sửa chưa commit chồng lên thì git từ
+      # chối/dừng: bỏ merge, để nguyên base local, vẫn báo cảnh báo.
+      if git -C "$MAIN_PATH" merge --no-edit "origin/$BASE" >/dev/null 2>&1; then
+        say "note: ${BASE} in ${MAIN_PATH} could not fast-forward (the squash rewrote the PR's commits); merged origin/${BASE} into it"
+      else
+        git -C "$MAIN_PATH" merge --abort >/dev/null 2>&1 || true
+        say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-300)"
+      fi
     fi
   else
     say "note: ${BASE} in ${MAIN_PATH} not fast-forwarded (main checkout is not on ${BASE})"

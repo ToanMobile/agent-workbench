@@ -319,6 +319,21 @@ def _same_in_main(wt, main, rel):
     return fp == fingerprint(os.path.join(main, rel))
 
 
+def _kit_link(wt, main, rel):
+    """True when `rel` is a symlink the DevKit installer or `heal` made: it points into the main checkout's own kit folder
+    (universal-agent-devkit/ or .agents/devkit/). That is install state, never work, and main has no such path (no .agents/hooks
+    there), so _same_in_main can never vouch for it and `remove` kept the worktree for the user to delete (agent-workbench 2026-10-17)."""
+    path = os.path.join(wt, rel)
+    if not os.path.islink(path):
+        return False
+    target = os.path.realpath(path)
+    for kit in ("universal-agent-devkit", os.path.join(".agents", "devkit")):
+        root = os.path.realpath(os.path.join(main, kit))
+        if target == root or target.startswith(root + os.sep):
+            return True
+    return False
+
+
 def status_paths(wt):
     """Every path `git status` reports (untracked files one by one, renames both sides)."""
     if _reflog_file_entries(wt) is None:   # a detached `git status` reads the HEAD reflog: a FIFO planted there would block it
@@ -1490,7 +1505,7 @@ def _iter_blockers(cwd, wt, shown, budget):
         hidden = None
     # Commits stay on the branch. Uncommitted work is safe once the main checkout
     # holds the same bytes (and executable bit) at the same path (a deleted file: missing in both).
-    lost = [p for p in dict.fromkeys(changed + (hidden or [])) if not _same_in_main(wt, main, p)]
+    lost = [p for p in dict.fromkeys(changed + (hidden or [])) if not _same_in_main(wt, main, p) and not _kit_link(wt, main, p)]
     if lost or hidden is None:
         detail = [f"    {p}" + ("   (git hides it: skip-worktree / assume-unchanged)" if p in (hidden or ()) else "") for p in lost[:20]]
         if hidden is None:
