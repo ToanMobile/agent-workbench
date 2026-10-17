@@ -62,4 +62,10 @@ reports/
 .claude/super-board/migrations/
 .claude/super-board/upgrade.json
 .claude/super-board/last-merge-verify-pr-*.log
+# log chạy board do runner ghi liên tục (người dùng 17/10: không commit)
+.claude/super-board/run-restart.log
+.claude/super-board/github-halt-*.json
+docs/super-board/runner.log
+docs/super-board/current-worker.log
+docs/super-board/runs/*-workers/
 .claude/settings.json.bak-*
