@@ -1760,6 +1760,12 @@ def _unlink_quiet(path):
 
 MERGE_ROUNDS = 3   # W1 R3: merges of main into the worktree per finish / automerge; main moving past that: refused, run it again
 MERGE_GATE_TIMEOUT_S = _env_seconds("WORKTREE_MERGE_GATE_TIMEOUT_S", 3600.0)
+# K8 (17/10, Unity: 6 finish cùng lúc, 6 gate song song, tải 100–187 trên 12 nhân, test timeout thành FAIL): gate gộp của CÙNG một repo chạy lần
+# lượt — flock trong git dir của main, giữ từ ngay trước gate đầu tiên tới sau fast-forward, nên người chờ thấy main đã đi tiếp, gộp nó vào rồi gate
+# một lần. Chờ tối đa WORKTREE_MERGE_GATE_LOCK_WAIT_S một lần cho mỗi automerge; đã giữ khoá thì mỗi gate vẫn có đủ WORKTREE_MERGE_GATE_TIMEOUT_S.
+# Trần mỗi lần automerge: LOCK_WAIT + MERGE_ROUNDS × TIMEOUT (+ 180 s khoá main); hết chờ = "running" (không "moved": finish không tự chạy lại).
+MERGE_GATE_LOCK = "devkit-merge-gate.lock"
+MERGE_GATE_LOCK_WAIT_S = _env_seconds("WORKTREE_MERGE_GATE_LOCK_WAIT_S", MERGE_GATE_TIMEOUT_S)
 MERGE_GATE_RESULT = "devkit-merge-gate.json"   # in the worktree's git dir: the last red verdict, for (worktree HEAD, main HEAD)
 MERGE_GATE_RESULT_TTL_S = _env_seconds("WORKTREE_MERGE_GATE_RESULT_TTL_S", 1200.0)   # a load-made FAIL must not stick: re-gated after this
 MATRIX_REL = os.path.join(".agents", "regression_matrix.active.json")
@@ -2284,13 +2290,17 @@ def automerge(cwd, wt, keep=False):
     lock = _lock_automerge(wt)
     if lock is None:
         return "blocked", tr("một lần tự gộp khác của worktree này đang chạy", "another automatic merge of this worktree is running"), {"running": True}
+    held = []   # K8: khoá gate gộp của repo nếu _automerge_locked đã lấy; nhả ở đây khi nó trả về giữa vòng gộp
     try:
-        return _automerge_locked(cwd, main, wt, keep)
+        return _automerge_locked(cwd, main, wt, keep, held)
     finally:
+        for h in held:
+            h.close()
         lock.close()
 
 
-def _automerge_locked(cwd, main, wt, keep=False):
+def _automerge_locked(cwd, main, wt, keep=False, held=None):
+    held = [] if held is None else held
     try:
         state = _read_state(wt)
     except (OSError, ValueError, SystemExit):
@@ -2316,11 +2326,12 @@ def _automerge_locked(cwd, main, wt, keep=False):
     refusal = _commit_pending(wt, state)
     if refusal:
         return refusal
-    # W1 R3: main is merged INTO the worktree and what it brings gated (_merge_gate) with no lock held — a gate takes minutes; then,
+    # W1 R3: main is merged INTO the worktree and what it brings gated (_merge_gate) under the repo's merge-gate lock only (K8: one gate at a
+    # time per repo, MERGE_GATE_LOCK) — a gate takes minutes; then,
     # under MAIN_LOCK, main fast-forwards only if it is still the commit that was merged in. Main moved meanwhile (a person, another merge):
     # merge it in and gate again, at most MERGE_ROUNDS times. Only ONE fast-forward of main at a time: two `merge --ff-only` racing on
     # main's index left staged renames / deletions behind (review 2026-10-08).
-    status, merges, gated = None, 0, None
+    status, merges, gated, tried_lock = None, 0, None, False
     for _ in range(8):   # main may also move (a person committing) between reading it and fast-forwarding it
         main_head = git(main, "rev-parse", "HEAD").stdout.strip()
         w_head = git(wt, "rev-parse", "HEAD").stdout.strip()
@@ -2368,6 +2379,22 @@ def _automerge_locked(cwd, main, wt, keep=False):
             # ponytail: suite chỉ theo dõi file của worktree nhưng phụ thuộc file main vừa đổi (watch_files thiếu) không được chạy lại ở vòng
             # này — cùng trần với cách gate chọn test theo watch_files; gate lại toàn bộ khi gặp một lần lọt như thế hoặc watch_files được
             # biết là phủ thiếu phụ thuộc.
+            if matrix and not tried_lock:   # K8: một gate gộp mỗi repo một lúc (MERGE_GATE_LOCK), giữ tới sau fast-forward
+                tried_lock = True
+                try:
+                    glock = _lock_file(os.path.join(git_dir(main), MERGE_GATE_LOCK), wait=MERGE_GATE_LOCK_WAIT_S,
+                                       waiting=tr("đang chờ gate gộp của một lần finish khác trong repo này (chạy lần lượt)",
+                                                  "waiting for another finish's merge gate in this repository (one at a time)"))
+                except OSError as e:   # một FIFO cài sẵn, git dir không ghi được: không khoá, như _test_run_lock
+                    print("• " + tr(f"không khoá được {MERGE_GATE_LOCK} ({e}); gate không khoá", f"cannot lock {MERGE_GATE_LOCK} ({e}); gating unlocked"), file=sys.stderr)
+                    glock = False
+                if glock is None:
+                    return "blocked", tr(f"một lần finish khác giữ gate gộp của repo quá {MERGE_GATE_LOCK_WAIT_S:g} s (WORKTREE_MERGE_GATE_LOCK_WAIT_S): chạy lại sau",
+                                         f"another finish held the repository's merge gate over {MERGE_GATE_LOCK_WAIT_S:g} s (WORKTREE_MERGE_GATE_LOCK_WAIT_S): run it again later"), {"running": True}
+                if glock:
+                    held.append(glock)
+                if git(main, "rev-parse", "HEAD").stdout.strip() != main_head:
+                    continue   # main đi tiếp trong lúc chờ: gộp nó vào khi đang giữ khoá, rồi gate một lần
             narrow = merged_in and gated is not None and gated[0] == w_before and _is_ancestor(main, gated[1], main_head)
             why, verdict = _merge_gate(wt, gated[0] if narrow else main_head, matrix) if matrix else (None, False)
         # the gate tested the working tree, main gets the COMMIT: an edit made meanwhile (uncommitted) may have made it green — or red, so
@@ -2426,6 +2453,8 @@ def _automerge_locked(cwd, main, wt, keep=False):
                                      f"Commit or stash them in main, then run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"files": files}
         finally:
             mlock.close()
+    for h in held:   # K8: main đã fast-forward (hoặc không còn gì để gộp): nhả gate gộp cho lần finish đang chờ
+        h.close()
     if status is None:
         return "blocked", tr("main liên tục có commit mới trong lúc gộp: chạy lại", "main kept moving while merging: run it again"), {}
     receipt_note = _carry_gate_receipt(main, wt)   # issue #5: trước cả nhánh --keep, vì worktree có thể bị gỡ sau đó mà không qua đây
