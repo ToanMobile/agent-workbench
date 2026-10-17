@@ -74,7 +74,7 @@ GIT_WRITE = _Re(
 # (?!/): <git dir>/postfix-gate/ is the folder of its receipt and runs.jsonl, read by anyone (14/10: a `python3 -c` reading it was a gate run)
 GATE = _Re(r"post-fix-gate(\.py)?\b(?!/)|\bpostfix-gate\b(?!/)|\bagent-kit\s+(?:worktree|wt)\s+(?:finish|automerge)\b|worktree\.py\s+(?:finish|automerge)\b")
 # Commands that only READ: naming the gate to them (`grep -c post-fix-gate AGENTS.md`, `cat bin/post-fix-gate.py`) does not run it. echo / printf
-# stay out (`echo $(postfix-gate)` runs it) and so does sed / awk (`sed -i` writes); a substitution anywhere in the segment is never excused.
+# stay out (`echo $(postfix-gate)` runs it) and so does awk; sed đọc khi không có -i (_gate_run); a substitution anywhere in the segment is never excused.
 # git reads only through its read verbs, named right after it: `git bisect run`, `git submodule foreach` and `git -c alias.x=!… x` run commands.
 _GATE_READERS = frozenset(("grep", "egrep", "fgrep", "rg", "ag", "cat", "bat", "less", "more", "head", "tail", "wc", "nl", "file", "stat", "ls",
                            "diff", "cmp"))
@@ -98,6 +98,8 @@ def _gate_run(seg):
         head = os.path.basename(w)
         if head == "git":
             return not (k + 1 < len(words) and words[k + 1] in _GIT_READ_VERBS)
+        if head == "sed":   # sed không có -i chỉ đọc (17/10: `sed -n 3260,3300p …/post-fix-gate.py` ở main bị coi là chạy gate); mẫu -i như hooks/shell_writes.py
+            return any(re.fullmatch(r"-[A-Za-z]*i.*|--in-place.*", a) for a in words[k + 1:])
         return head not in _GATE_READERS
     return True
 SEPARATOR = _Re(r"(&&|\|\||[;|&\n])")
@@ -1401,6 +1403,39 @@ def _trunk_sync(seg):
     if verb not in ("fetch", "push", "pull") or _updates_checked_out_branch(seg) or (pos and _LOCAL_REMOTE.match(pos[0])):
         return False
     return verb != "pull" or ("--ff-only" in args and pos[:1] in ([], ["origin"]) and not any(":" in a for a in pos[1:]))
+
+
+_TRUNK_WRAP = _Re(r"^\s*(?:nohup|time(?:\s+-p)?)\s+")
+_TRUNK_REDIR = _Re(r"\d*>>?|&>>?|\d*>>?\S+|&>>?\S+|\d*>&\d+")
+
+
+def _trunk_unwrap(seg):
+    """Lệnh bên trong của `nohup …`, `time [-p] …` và `bash|sh|zsh -c '<một lệnh>'` (tối đa 3 lớp), để _TRUNK_ALLOWED / _trunk_sync /
+    _updates_checked_out_branch xét nó theo đúng luật cũ (17/10, GeelyEx2 + Goods: `nohup agent-kit worktree finish … &` để chạy nền một lần
+    finish 5–10 phút bị chặn). Không gỡ được thì trả nguyên segment: kịch bản `-c` nhiều lệnh, có substitution ($( ), backtick, <( ), >( ) — trong
+    nháy đơn _subst_bodies không thấy), heredoc, hay chữ nào sau kịch bản không phải redirect. Redirect của lớp bọc vẫn được quét trên dòng gốc."""
+    import shlex   # noqa: PLC0415
+    for _ in range(3):
+        m = _TRUNK_WRAP.match(seg)
+        if m:
+            seg = seg[m.end():]
+            continue
+        try:
+            words = shlex.split(seg)
+        except ValueError:
+            return seg
+        if len(words) < 3 or os.path.basename(words[0]) not in ("bash", "sh", "zsh") or words[1] != "-c":
+            return seg
+        rest, k = words[3:], 0
+        while k < len(rest):   # sau kịch bản chỉ được là redirect (`> /tmp/x.log 2>&1`)
+            if not _TRUNK_REDIR.fullmatch(rest[k]):
+                return seg
+            k += 2 if re.fullmatch(r"\d*>>?|&>>?", rest[k]) else 1
+        body = words[2]
+        if "$(" in body or "`" in body or "<(" in body or ">(" in body or "<<" in body or len(_split_segments(_clean(body))) != 1:
+            return seg
+        seg = body
+    return seg
 TRUNK_MSG = ("⛔ [DevKit] Trunk mode: main checkout {main} chỉ để GỘP — không phiên nào sửa ở đây (người dùng 14/10: mọi phiên làm trong "
              "worktree riêng, không ai giữ main). Gọi tool EnterWorktree (không tham số, hoặc name=<việc>): phiên có worktree riêng dưới "
              ".claude/worktrees/, DevKit tự dựng (chép cấu hình, cài DevKit); sửa, test, commit ở đó; hook Stop tự gộp vào main. Agent không "
@@ -1499,9 +1534,10 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
     # An allowed segment is excused only as a git write / gate run: its own redirects still count (OCR 14/10: `git fetch > src/a.py`,
     # `agent-kit worktree list > README.md` overwrote tracked files of main), so the redirect / file-write scan reads the ORIGINAL line
     pieces = _split_segments(_clean(cmd))
-    if any(i % 2 == 0 and _updates_checked_out_branch(p) for i, p in enumerate(pieces)):
+    inner = [_trunk_unwrap(p) if i % 2 == 0 else p for i, p in enumerate(pieces)]   # nohup / time / bash -c '<một lệnh>' gỡ ra (17/10)
+    if any(i % 2 == 0 and _updates_checked_out_branch(p) for i, p in enumerate(inner)):
         return True
-    stripped = "".join(":" if i % 2 == 0 and (_TRUNK_ALLOWED.search(p) or _trunk_sync(p)) else p for i, p in enumerate(pieces))
+    stripped = "".join(":" if i % 2 == 0 and (_TRUNK_ALLOWED.search(q) or _trunk_sync(q)) else p for i, (p, q) in enumerate(zip(pieces, inner)))
     if (GIT_WRITE.search(stripped) or GATE.search(stripped)) and write_hits_locked(stripped, main, cwd, sid)[0]:
         return True
     here = cwd or main

@@ -92,7 +92,7 @@ fin e w DURING_GATE="$TMP/move-once.sh"; rc=$?
 repo f; wtadd f w; newcaller f w; echo note > "$TMP/f/notes.txt" && G "$TMP/f" add notes.txt && G "$TMP/f" commit -qm "unrelated on main"
 printf 'n=$(cat "%s/n" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "%s/n"; echo $n > "%s/f/moved$n.sh"; git -C "%s/f" -c user.email=t@t -c user.name=t add "moved$n.sh"; git -C "%s/f" -c user.email=t@t -c user.name=t commit -qm "main moves again"\n' \
   "$TMP" "$TMP" "$TMP" "$TMP" "$TMP" > "$TMP/move-always.sh"
-fin f w DURING_GATE="$TMP/move-always.sh"; rc=$?
+fin f w DURING_GATE="$TMP/move-always.sh" WORKTREE_FINISH_RETRIES=0; rc=$?   # finish's own retry (test_worktree_finish_retry.sh) off: this case counts one round set
 [ "$rc" = 1 ] && [ ! -f "$TMP/f/app2.sh" ] && [ "$(cat "$TMP/n" 2>/dev/null)" = 3 ] && [ -d "$TMP/f-w" ] && grep -qE "đi tiếp 3 lần|moved on 3 times" "$TMP/out" \
   && ok "main moves during every gate: refused after 3 rounds (3 gate runs), nothing of the worktree in main" || fail "always moving: rc=$rc runs=$(cat "$TMP/n" 2>/dev/null) $(tail -3 "$TMP/out")"
 
