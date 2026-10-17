@@ -1777,7 +1777,8 @@ def _gate_matrix(main):
 
 
 def _merge_gate(wt, base, matrix):
-    """W1 R3: the gate on what the worktree brings (`--diff base`, `base` = the main it merged) BEFORE main moves — a merge with no
+    """W1 R3: the gate on what the worktree brings (`--diff base`, `base` = the main it merged; K8: or the worktree HEAD that passed a
+    round ago, so only what main brought since is gated) BEFORE main moves — a merge with no
     textual conflict can still break (main renamed what a new caller in the worktree uses). (None, False): it passes, there is nothing
     to audit (exit 3). Otherwise (reason, verdict): a regression test that FAILed (verdict True: the same commits get the same answer,
     kept), or one that TIMED OUT, tests that could not run because another run holds the lock, or a gate that did not finish (verdict
@@ -2326,6 +2327,7 @@ def _automerge_locked(cwd, main, wt, keep=False):
         if _is_ancestor(main, w_head, main_head):
             status = "nothing"   # everything the worktree has is already in main
             break
+        w_before, merged_in = w_head, False   # K8: HEAD worktree trước khi gộp main ở vòng này
         if not _is_ancestor(main, main_head, w_head):
             if merges >= MERGE_ROUNDS:
                 return "blocked", tr(f"main đi tiếp {merges} lần trong lúc gộp và chạy gate: chạy lại", f"main moved on {merges} times while merging and gating: run it again"), {"moved": True}
@@ -2341,7 +2343,7 @@ def _automerge_locked(cwd, main, wt, keep=False):
                     return _conflict(wt, unmerged)
                 git(wt, "merge", "--abort", check=False, bounded=False)
                 return "blocked", tr("git merge thất bại: ", "git merge failed: ") + (r.stderr or r.stdout).strip()[-400:], {}
-            w_head = git(wt, "rev-parse", "HEAD").stdout.strip()
+            w_head, merged_in = git(wt, "rev-parse", "HEAD").stdout.strip(), True
         # before EVERY fast-forward, not only after a merge-in: a refused merge run again, a conflict resolved by hand or a later commit
         # has main in it already and would otherwise reach main unchecked (OCR 14/10). A red verdict for these very commits is given
         # again at once: the Stop hook waits 9 s for a merge, so one re-gated on every Stop never reached the session (review 14/10)
@@ -2359,7 +2361,15 @@ def _automerge_locked(cwd, main, wt, keep=False):
         if gated == (w_head, main_head):
             why, verdict = None, False   # this very pair passed a moment ago (a --ff-only that failed for a passing reason): no second run
         else:
-            why, verdict = _merge_gate(wt, main_head, matrix) if matrix else (None, False)
+            # K8 (17/10, Unity: gate 1–6 phút, chạy lại bị cắt ở 900 s): cặp (HEAD worktree, main cũ) vừa PASS ở vòng trước, và từ đó worktree
+            # chỉ nhận đúng commit gộp main mới của vòng này => chỉ gate phần main mới mang vào (`--diff <HEAD đã PASS>`): post-fix-gate chỉ chạy
+            # lại suite có watch_files khớp file main mới đổi, trên cây đã gộp. KHÔNG bỏ gate chỉ vì file main đổi không giao với file worktree
+            # đổi: main đổi tên một hàm (lib.sh) mà một nơi gọi mới của worktree (app2.sh) dùng là đúng ca W1 R3 chặn, và suite theo dõi cả hai.
+            # ponytail: suite chỉ theo dõi file của worktree nhưng phụ thuộc file main vừa đổi (watch_files thiếu) không được chạy lại ở vòng
+            # này — cùng trần với cách gate chọn test theo watch_files; gate lại toàn bộ khi gặp một lần lọt như thế hoặc watch_files được
+            # biết là phủ thiếu phụ thuộc.
+            narrow = merged_in and gated is not None and gated[0] == w_before and _is_ancestor(main, gated[1], main_head)
+            why, verdict = _merge_gate(wt, gated[0] if narrow else main_head, matrix) if matrix else (None, False)
         # the gate tested the working tree, main gets the COMMIT: an edit made meanwhile (uncommitted) may have made it green — or red, so
         # this is checked before any verdict is kept or acted on (OCR 14/10)
         edited = [p for p in changes_since(wt, state) if p not in BOOKKEEPING]
