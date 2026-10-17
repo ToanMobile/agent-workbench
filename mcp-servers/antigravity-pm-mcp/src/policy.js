@@ -239,9 +239,11 @@ export function kiemKhuonPlanReview(review) {
 
 /** DE XUAT 4 (Unity T0014: sua ItemState.cs la file plan CAM dung): file thay doi cham vao forbiddenPaths cua task. */
 export function fileCamDung(task, changedFiles) {
-  const cam = (Array.isArray(task?.forbiddenPaths) ? task.forbiddenPaths : []).map(chuanHoaDuongDan).filter(Boolean);
+  // #22: so o dang NFC (PM go NFD, git tra NFC) nhung tra ten git dua — lastChangeAtOf/soiThayDoi stat dung ten do.
+  const cam = (Array.isArray(task?.forbiddenPaths) ? task.forbiddenPaths : []).map((c) => chuanHoaDuongDan(c).normalize('NFC')).filter(Boolean);
   if (!cam.length || !Array.isArray(changedFiles)) return [];
-  return changedFiles.map(chuanHoaDuongDan).filter((f) => cam.some((c) => f === c || f.startsWith(`${c}/`) || matchesAny(f, [c])));
+  const trung = (f) => cam.some((c) => f === c || f.startsWith(`${c}/`) || matchesAny(f, [c]));
+  return changedFiles.map(chuanHoaDuongDan).filter((f) => trung(f.normalize('NFC')));
 }
 
 /**
@@ -253,14 +255,37 @@ export function fileCamDung(task, changedFiles) {
  */
 export function fileCamDungTheoTask(task, changedFiles, claimed) {
   if (!Array.isArray(changedFiles)) return { chan: [], canhBao: [] };
-  const tatCa = fileCamDung(task, changedFiles);
+  return chiaTheoTask(task, fileCamDung(task, changedFiles), claimed);
+}
+
+/**
+ * #22: commitPolicy=forbid => MOI commit sau moc giao trien khai deu CHAN. Khong quy theo files_changed: agent commit file
+ * khong khai la lach duoc. Commit cua phien khac / PM giua chung cung chan (PM doi chieu git log, tao task moi).
+ * committedFiles khong phai mang = khong doc duoc git => unknown (cong bao CHUA XAC MINH).
+ */
+export function commitTheoTask(cfg, committedFiles) {
+  if (cfg?.commitPolicy !== 'forbid') return { chan: [] };
+  if (!Array.isArray(committedFiles)) return { unknown: true, chan: [] };
+  return { chan: committedFiles.map(chuanHoaDuongDan).filter(Boolean) };
+}
+
+/** File DA COMMIT quy duoc cho task (claimed / scopeFiles) — de soi lint, moc sua file cuoi; commit phien khac khong tinh. */
+export function commitCuaTask(task, committedFiles, claimed) {
+  return chiaTheoTask(task, committedFiles.map(chuanHoaDuongDan).filter(Boolean), khaiCommit(claimed)).chan;
+}
+
+/** Khai files_changed rong = khong quy duoc gi (giong chua khai): agent khai [] khong duoc bien commit cua no thanh "cua nguoi khac". */
+function khaiCommit(claimed) {
+  return Array.isArray(claimed) && claimed.length ? claimed : undefined;
+}
+
+/** Chia file: chan = quy duoc cho task (claimed / scopeFiles), canhBao = con lai. Chua co gi de quy => tinh het cho task. */
+function chiaTheoTask(task, files, claimed) {
   const scope = Array.isArray(task?.scopeFiles) ? task.scopeFiles.map(chuanHoaDuongDan).filter(Boolean) : [];
-  if (!Array.isArray(claimed) && scope.length === 0) return { chan: tatCa, canhBao: [] };
+  if (!Array.isArray(claimed) && scope.length === 0) return { chan: files, canhBao: [] };
   const khai = Array.isArray(claimed) ? claimed : [];
   const cuaTask = (f) => khai.some((c) => cungFile(f, c)) || scope.some((s) => thuocThuMuc(f, s.replace(/\/+$/, '')));
-  const chan = tatCa.filter(cuaTask);
-  const canhBao = tatCa.filter((f) => !cuaTask(f));
-  return { chan, canhBao };
+  return { chan: files.filter(cuaTask), canhBao: files.filter((f) => !cuaTask(f)) };
 }
 
 /** LUAT 5: file rac agent de lai o GOC repo (chi xet muc chua track, khong co "/"). */
