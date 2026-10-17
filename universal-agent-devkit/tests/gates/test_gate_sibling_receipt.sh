@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# Test hồi quy: bin/post-fix-gate.py dùng lại PASS đầy đủ của một worktree ANH EM (cùng repo) khi nội dung trùng byte.
+# 17/10 (agent-workbench): merge gate super-board chạy gate --full --force-full trong một scratch `git worktree add` (git dir
+# mới, không có biên nhận) nên chạy lại mọi suite dù worktree của agent vừa PASS đúng cây đó: 19 lần/ngày, 154 phút, 0 lần dùng lại.
+# Biên nhận anh em chỉ được dùng khi qua ĐÚNG các kiểm tra của cached_full_pass (nội dung, tuổi, ma trận, trạng thái cục bộ), cộng:
+# exit 0, không carried_from, và runs.jsonl có dòng của đúng lần chạy đó với verdict PASS (suite thật sự chạy, không phải REUSED).
+# Chỉ lượt --full cưỡng bức trong git dir CHƯA có biên nhận của chính nó mới tìm anh em; chỉ file thường (không symlink).
+# Mỗi ca dùng worktree mới (git dir mới); số lần suite chạy đo bằng hiệu trước/sau, không phải số tuyệt đối.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
+set -u
+unset DEVKIT_GATE_CACHE_MAX_S DEVKIT_GATE_CACHE   # môi trường của người chạy không được đổi kết quả (OCR 17/10)
+
+DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+FAILS=0
+GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
+COUNT="$TMP/runs.txt"
+SIB_MSG="biên nhận của worktree anh em"   # DEVKIT_LANG=vi (clean_git_env.sh)
+
+R="$TMP/repo"
+mkdir -p "$R/src" && cd "$R" || exit 1
+git init -q -b main . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt
+cat > matrix.json <<JSON
+{"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
+ "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"echo run >> '$COUNT'; test ! -f .hong"}]}]}
+JSON
+printf '.hong\n' > .gitignore   # .hong (bị ignore, ngoài fingerprint): suite FAIL ở đúng thư mục có nó
+git add -A && git commit -qm init
+echo "fun ok() = 2" > src/Core.kt
+git commit -qam change
+
+# gate ở thư mục $1, như merge gate gọi: --full --force-full --diff <base>
+run_gate() { local d="$1"; shift; ( cd "$d" && CLAUDE_PROJECT_DIR="$d" python3 "$GATE" --matrix "$d/matrix.json" --run-tests --full --force-full --diff HEAD~1 "$@" 2>&1 ); }
+# gate kiểu Stop hook: không --full, không --force-full (không CI nào ép full)
+run_plain() { local d="$1"; shift; ( cd "$d" && env -u CI CLAUDE_PROJECT_DIR="$d" python3 "$GATE" --matrix "$d/matrix.json" --run-tests --diff HEAD~1 "$@" 2>&1 ); }
+runs() { [ -f "$COUNT" ] && wc -l < "$COUNT" | tr -d ' ' || echo 0; }
+add_wt() { git -C "$R" worktree add -q --detach "$TMP/$1" HEAD || { echo "✖ setup: worktree add $1"; exit 1; }; }
+receipt_of() { echo "$(git -C "$1" rev-parse --absolute-git-dir)/postfix-gate/full_pass.json"; }
+fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+check() {   # check <tên> <exit mong đợi> <số lần suite chạy THÊM mong đợi> <nhắc biên nhận anh em: yes|no> <runs trước> <exit thật> <output>
+  local delta=$(( $(runs) - $5 )) sib=no
+  printf '%s\n' "$7" | grep -qF "$SIB_MSG" && sib=yes
+  if [ "$6" = "$2" ] && [ "$delta" = "$3" ] && [ "$sib" = "$4" ]; then echo "✔ $1"
+  else echo "✖ $1 (exit $6, mong $2; suite chạy thêm $delta lần, mong $3; nhắc anh em $sib, mong $4)"; printf '%s\n' "$7" | tail -12; FAILS=$((FAILS + 1)); fi
+}
+# xoá mọi biên nhận full-pass của repo (main checkout + mọi worktree): ca sau chỉ còn đúng biên nhận nó tự đặt
+wipe_receipts() { rm -f "$COMMON/postfix-gate/full_pass.json" "$COMMON"/worktrees/*/postfix-gate/full_pass.json; }
+
+b=$(runs); out="$(run_gate "$R")"; rc=$?
+check "setup: --full ở main checkout PASS, suite chạy" 0 1 no "$b" "$rc" "$out"
+COMMON="$(git -C "$R" rev-parse --path-format=absolute --git-common-dir)"
+MAIN_RECEIPT="$COMMON/postfix-gate/full_pass.json"
+LEND="$TMP/lendable.json"   # bản chép biên nhận cho mượn được (lần chạy PASS thật, dòng run-log "repo" PASS): dùng cho ca 7, 8, đối chứng
+cp "$MAIN_RECEIPT" "$LEND" || { echo "✖ setup: main checkout không ghi biên nhận"; exit 1; }
+
+# 1. Worktree mới (git dir mới, chưa có biên nhận), --full cưỡng bức, đúng nội dung: dùng lại PASS của main checkout, suite không chạy.
+add_wt wt-b
+b=$(runs); out="$(run_gate "$TMP/wt-b")"; rc=$?
+check "1. worktree anh em cùng nội dung dùng lại PASS của main checkout" 0 0 yes "$b" "$rc" "$out"
+printf '%s\n' "$out" | grep -qF "($SIB_MSG: $MAIN_RECEIPT)" && echo "✔ 1. output nêu đúng đường dẫn biên nhận của main checkout" \
+  || fail "1. output không nêu đường dẫn biên nhận của main checkout ($MAIN_RECEIPT)"
+
+# 2. Không có dây chuyền: biên nhận của main checkout mất; biên nhận còn lại duy nhất là của wt-b, ghi bởi một lượt DÙNG LẠI (run-log
+#    REUSED, không phải PASS) → không được cho mượn tiếp → worktree mới phải chạy suite.
+[ -f "$(receipt_of "$TMP/wt-b")" ] && echo "✔ 2. tiền đề: lượt dùng lại ở wt-b ghi biên nhận của chính nó" \
+  || fail "2. tiền đề: wt-b không có biên nhận (ca dây chuyền vô nghĩa)"
+grep -q '"project":"wt-b".*"verdict":"REUSED"' "$COMMON/postfix-gate/runs.jsonl" && echo "✔ 2. tiền đề: run-log ghi lượt của wt-b là REUSED" \
+  || fail "2. tiền đề: run-log không có dòng REUSED của wt-b"
+rm -f "$MAIN_RECEIPT"
+add_wt wt-c
+b=$(runs); out="$(run_gate "$TMP/wt-c")"; rc=$?
+check "2. biên nhận anh em từ lượt REUSED không được cho mượn: chạy suite" 0 1 no "$b" "$rc" "$out"
+
+# 9. Mỗi lượt chạy ghi biên nhận của chính git dir (push_gate/proof_gate chỉ đọc biên nhận của chính nó, tree_fp.receipt_path).
+[ -f "$(receipt_of "$TMP/wt-c")" ] && echo "✔ 9. lần chạy ghi biên nhận của chính git dir" || fail "9. lần chạy không ghi biên nhận của chính git dir"
+
+# 10. Biên nhận của CHÍNH git dir không qua các luật riêng của anh em (exit 0, dòng run-log PASS): wt-b chạy lại đúng nội dung đó dùng
+#     lại biên nhận của nó dù run-log ghi lượt đó là REUSED (review 17/10: `sibling` tính trước khi path bị gán biên nhận của mình).
+b=$(runs); out="$(run_gate "$TMP/wt-b")"; rc=$?
+check "10. biên nhận của chính git dir (từ lượt REUSED) vẫn được dùng lại như cũ" 0 0 no "$b" "$rc" "$out"
+
+# 3. Nội dung khác (một file sửa) → không khớp biên nhận nào (wt-c vừa PASS thật, cho mượn được) → chạy suite.
+add_wt wt-d
+echo "fun ok() = 3" > "$TMP/wt-d/src/Core.kt"
+b=$(runs); out="$(run_gate "$TMP/wt-d")"; rc=$?
+check "3. nội dung khác: chạy lại suite" 0 1 no "$b" "$rc" "$out"
+
+# 4. Biên nhận anh em quá tuổi (DEVKIT_GATE_CACHE_MAX_S=0) → chạy suite.
+add_wt wt-e
+b=$(runs); out="$(DEVKIT_GATE_CACHE_MAX_S=0 run_gate "$TMP/wt-e")"; rc=$?
+check "4. biên nhận anh em quá tuổi: chạy lại suite" 0 1 no "$b" "$rc" "$out"
+
+# 5. Lượt KHÔNG cưỡng bức (kiểu Stop hook: --run-tests, không --full/--force-full) ở worktree mới, có biên nhận anh em cho mượn được
+#    (wt-c, wt-e): không tìm anh em — chọn suite theo thay đổi (REG-1 canh src/Core.kt, --diff HEAD~1 đổi nó) và chạy như cũ.
+add_wt wt-f
+b=$(runs); out="$(run_plain "$TMP/wt-f")"; rc=$?
+check "5. lượt không cưỡng bức không dùng biên nhận anh em" 0 1 no "$b" "$rc" "$out"
+
+# 6. Git dir đã có biên nhận của chính nó (không khớp nội dung) → không tìm anh em → chạy suite. wt-g chưa từng chạy gate (không dòng
+#    run-log: _ever_gated không chặn) và có biên nhận anh em cho mượn được — chỉ chốt "đã có biên nhận riêng" giữ nó lại (OCR 17/10).
+wipe_receipts; cp "$LEND" "$MAIN_RECEIPT"
+add_wt wt-g
+mkdir -p "$(dirname "$(receipt_of "$TMP/wt-g")")"
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); r["fingerprint"]="khong-khop"; json.dump(r, open(sys.argv[2], "w"))' \
+  "$LEND" "$(receipt_of "$TMP/wt-g")" || fail "6. setup: không ghi được biên nhận riêng của wt-g"
+b=$(runs); out="$(run_gate "$TMP/wt-g")"; rc=$?
+check "6. có biên nhận của chính git dir: không tìm anh em, chạy suite" 0 1 no "$b" "$rc" "$out"
+
+# 7. Biên nhận giả: bản chép biên nhận cho mượn được, đổi "project" sang tên không có dòng run-log nào → không cho mượn.
+#    Không còn biên nhận nào khác trong repo.
+wipe_receipts
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); r["project"]="/khong-ton-tai/khong-co-dong-log"; json.dump(r, open(sys.argv[2], "w"))' \
+  "$LEND" "$MAIN_RECEIPT" || fail "7. setup: không ghi được biên nhận giả"
+add_wt wt-h
+b=$(runs); out="$(run_gate "$TMP/wt-h")"; rc=$?
+check "7. biên nhận anh em không có dòng PASS trong run-log: chạy suite" 0 1 no "$b" "$rc" "$out"
+
+# 8. Biên nhận anh em là symlink trỏ tới một biên nhận cho mượn được → bỏ qua (chỉ file thường).
+wipe_receipts
+ln -s "$LEND" "$MAIN_RECEIPT" || fail "8. setup: không tạo được symlink"
+add_wt wt-i
+b=$(runs); out="$(run_gate "$TMP/wt-i")"; rc=$?
+check "8. biên nhận anh em là symlink: bỏ qua, chạy suite" 0 1 no "$b" "$rc" "$out"
+
+# Đối chứng cho 7 và 8: đúng bản chép đó, là file thường, đúng "project" → được cho mượn (7, 8 đỏ chỉ vì run-log / symlink).
+wipe_receipts
+cp "$LEND" "$MAIN_RECEIPT"
+add_wt wt-j
+b=$(runs); out="$(run_gate "$TMP/wt-j")"; rc=$?
+check "đối chứng: bản chép là file thường, có dòng PASS → dùng lại" 0 0 yes "$b" "$rc" "$out"
+
+# 11. Thư mục ĐÃ TỪNG chạy gate không mượn (review 17/10, P1): mọi lượt exit ≠ 0 xoá biên nhận của chính nó, nên "không có biên
+#     nhận" không có nghĩa "chưa từng chạy". wt-k FAIL thật (suite hỏng ở đúng thư mục này), rồi --full lại khi suite VẪN hỏng: phải chạy
+#     suite và FAIL, không lấy PASS của main checkout. Ở scratch của merge gate (mktemp -d, tên mới) không có dòng run-log nào.
+wipe_receipts; cp "$LEND" "$MAIN_RECEIPT"
+add_wt wt-k
+touch "$TMP/wt-k/.hong"
+b=$(runs); out="$(FLAKY_RETRY=0 run_gate "$TMP/wt-k" --no-cache)"; rc=$?   # FLAKY_RETRY=0: số lần chạy không phụ thuộc chính sách chạy lại
+check "11. tiền đề: wt-k FAIL thật (suite hỏng ở thư mục này)" 1 1 no "$b" "$rc" "$out"
+[ -f "$(receipt_of "$TMP/wt-k")" ] && fail "11. tiền đề: lượt FAIL không xoá biên nhận của wt-k"
+b=$(runs); out="$(FLAKY_RETRY=0 run_gate "$TMP/wt-k")"; rc=$?
+check "11. thư mục đã từng chạy gate (FAIL) không mượn PASS của anh em: chạy suite, FAIL" 1 1 no "$b" "$rc" "$out"
+
+# 12. Biên nhận anh em exit 2 (UNVERIFIED) hoặc là bản chép `worktree finish` (carried_from) → không cho mượn.
+for kind in exit2 carried; do
+  wipe_receipts
+  python3 -c 'import json,sys; r=json.load(open(sys.argv[1]))
+if sys.argv[3] == "exit2": r.update({"exit": 2, "untested": []})
+else: r["carried_from"] = r["project"]
+json.dump(r, open(sys.argv[2], "w"))' "$LEND" "$MAIN_RECEIPT" "$kind" || fail "12. setup $kind"
+  add_wt "wt-m-$kind"
+  b=$(runs); out="$(run_gate "$TMP/wt-m-$kind")"; rc=$?
+  check "12. biên nhận anh em $kind: không cho mượn, chạy suite" 0 1 no "$b" "$rc" "$out"
+done
+
+# 13. Biên nhận có tested_at cũ hơn time (lượt đã dùng lại, một phần hay toàn bộ, giữ tested_at của biên nhận gốc) → không cho mượn.
+#     Giờ ghi đặt ngay trước dòng PASS của setup (luật run-log qua được), tested_at sớm hơn 60 s: chỉ luật tested_at chặn.
+wipe_receipts
+python3 -c 'import json,sys
+recs=[json.loads(l) for l in open(sys.argv[3]) if l.strip()]
+e=[x["epoch"] for x in recs if x.get("project")=="repo" and x.get("verdict")=="PASS"][0]
+r=json.load(open(sys.argv[1])); r["time"]=e-0.5; r["tested_at"]=e-60.5; json.dump(r, open(sys.argv[2], "w"))' \
+  "$LEND" "$MAIN_RECEIPT" "$COMMON/postfix-gate/runs.jsonl" || fail "13. setup"
+add_wt wt-n
+b=$(runs); out="$(run_gate "$TMP/wt-n")"; rc=$?
+check "13. biên nhận time − tested_at = 60 s (lượt dùng lại): không cho mượn, chạy suite" 0 1 no "$b" "$rc" "$out"
+
+# 14. Dòng run-log ĐẦU TIÊN của project sau thời điểm ghi biên nhận phải là PASS: main checkout chạy lại (dùng lại biên nhận của nó →
+#     dòng "repo" REUSED); một biên nhận đặt giờ ngay trước dòng đó không được bảo lãnh bởi dòng PASS cũ hơn của setup.
+wipe_receipts; cp "$LEND" "$MAIN_RECEIPT"
+b=$(runs); out="$(run_gate "$R")"; rc=$?
+check "14. tiền đề: main checkout dùng lại biên nhận của nó (dòng run-log REUSED)" 0 0 no "$b" "$rc" "$out"
+b=$(runs); out="$(run_gate "$R" --no-cache)"; rc=$?   # rồi một dòng PASS "repo" SAU dòng REUSED: chỉ luật "dòng đầu tiên" chặn
+check "14. tiền đề: main checkout chạy lại thật (dòng run-log PASS sau REUSED)" 0 1 no "$b" "$rc" "$out"
+python3 -c 'import json,sys
+recs=[json.loads(l) for l in open(sys.argv[3]) if l.strip()]
+e=[x["epoch"] for x in recs if x.get("project")=="repo" and x.get("verdict")=="REUSED"][-1]
+r=json.load(open(sys.argv[1])); r["time"]=r["tested_at"]=e-0.5; json.dump(r, open(sys.argv[2], "w"))' \
+  "$LEND" "$MAIN_RECEIPT" "$COMMON/postfix-gate/runs.jsonl" || fail "14. setup"
+add_wt wt-o
+b=$(runs); out="$(run_gate "$TMP/wt-o")"; rc=$?
+check "14. dòng run-log đầu tiên sau biên nhận là REUSED: không cho mượn, chạy suite" 0 1 no "$b" "$rc" "$out"
+
+[ "$FAILS" = 0 ] && { echo "PASS test_gate_sibling_receipt"; exit 0; }
+echo "FAIL test_gate_sibling_receipt ($FAILS)"; exit 1

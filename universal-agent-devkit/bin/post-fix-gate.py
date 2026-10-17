@@ -51,6 +51,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import sys
@@ -1008,7 +1009,7 @@ def _head_sha(project_dir):
     return out if res.returncode == 0 and re.fullmatch(r"[0-9a-f]{40,64}", out) else None
 
 
-def cached_full_pass(project_dir, matrix_arg, fp=None, name=None):
+def cached_full_pass(project_dir, matrix_arg, fp=None, name=None, path=None):
     """The last full PASS when it still holds for this exact code (O1, 2026-09-28: GeelyEx2 ran
     16 full gates in one session, many on content that had already passed): same tree
     fingerprint, same RESULT_FORMAT, same matrix, tested within DEVKIT_GATE_CACHE_MAX_S (default
@@ -1018,11 +1019,14 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None):
     failed: an edited test waits for review, a code file nothing covers) is kept the same way (2026-10-07).
     fp: the tree fingerprint the caller took a moment ago with nothing run since (A13, 2026-10-09: a --full run took it
     three times); None takes it here.
-    name: another record kept next to the receipt under the same keys (BUDGET_RECORD); None = the full-pass receipt itself."""
+    name: another record kept next to the receipt under the same keys (BUDGET_RECORD); None = the full-pass receipt itself.
+    path: đọc biên nhận ở file này thay cho biên nhận của chính git dir (biên nhận của worktree anh em, sibling_receipts); mọi kiểm
+    tra bên dưới vẫn so với project_dir."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    sibling = bool(path) and name is None   # trước khi path bị gán biên nhận của chính git dir bên dưới
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
-        path = tree_fp.receipt_path(project_dir)
+        path = path or tree_fp.receipt_path(project_dir)
         if name:
             path = os.path.join(os.path.dirname(path), name)
         r = _load_state_json(path)
@@ -1057,6 +1061,20 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None):
         return None
     if r.get("local_sha") in (None, "?"):
         return None
+    if sibling:
+        # Biên nhận của worktree anh em (review 17/10): exit 0, và dòng run-log của chính lượt đã ghi nó phải là full với verdict PASS —
+        # suite THẬT SỰ chạy (_sibling_logged_pass). Lượt đã dùng lại (của mình hay của anh em) log REUSED nên không cho mượn
+        # tiếp: không có dây chuyền mà một FAIL sau đó của worktree gốc (chỉ xoá file của nó) không chặn được.
+        # ponytail: một PASS đã từng là exit 2 rồi được dùng lại thành exit 0 (log REUSED) không cho mượn — merge gate chạy đủ như cũ;
+        # nới khi đo thấy ca này chiếm phần lớn lượt chạy của merge gate.
+        # carried_from: bản chép `worktree finish` đưa sang main — cũng là bản chép, không cho mượn
+        if r.get("exit") != 0 or r.get("carried_from") or not isinstance(r.get("time"), (int, float)) or not isinstance(r.get("project"), str):
+            return None
+        # Lượt chạy suite thật ghi tested_at ngay lúc ghi biên nhận; lượt dùng lại (một phần hay toàn bộ) giữ tested_at của biên nhận cũ
+        # (write_full_pass_receipt tested_at=cache["tested_at"]). Run-log chỉ có epoch làm tròn giây: một PASS thật cùng giây không phân biệt được.
+        # "time" lấy trước "tested_at" vài µs trong cùng dict: hiệu hơi âm. _time_ok trước: số nguyên 400 chữ số trừ float là OverflowError.
+        if not _time_ok(r["time"]) or not (-1 <= r["time"] - tested < 5):
+            return None
     if name and (not r.get("head") or r.get("head") != _head_sha(project_dir)):
         return None   # a Stop record also names the HEAD it was taken at: a commit (the fingerprint does not see one) is a new state
     if name and r.get("env") != _selection_env():
@@ -1065,7 +1083,109 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None):
     fp = fp or tree_fp.tree_fingerprint(project_dir)
     if not fp or r.get("fingerprint") != fp:
         return None
+    if sibling and not _sibling_logged_pass(path, r):   # sau phép so fingerprint (rẻ): chỉ biên nhận đúng nội dung mới đọc run-log
+        return None
     return r if r.get("local_sha") == local_state_sha(project_dir) else None
+
+
+SIBLING_RECEIPTS_MAX = 32
+
+
+def _run_log_records(logdir):
+    """Các dòng của <logdir>/runs.jsonl (4 MiB cuối) theo thứ tự ghi, chỉ dict có "epoch" là int; None khi không đọc được (không có file,
+    không phải file thường, lỗi đọc): người gọi coi None là "không biết" và không mượn."""
+    try:
+        fd = os.open(os.path.join(logdir, RUN_LOG_NAME), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        n = min(st.st_size, 4 << 20)
+        raw = os.pread(fd, n, st.st_size - n)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    out = []
+    for line in raw.splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and isinstance(rec.get("epoch"), int) and not isinstance(rec.get("epoch"), bool):
+            out.append(rec)
+    return out
+
+
+def _ever_gated(project_dir):
+    """True khi run-log của repo đã có dòng của thư mục này, hoặc không đọc được run-log (review 17/10, P1): mọi lượt exit ≠ 0 xoá biên nhận
+    của chính nó, nên "chưa có biên nhận" không có nghĩa "chưa từng chạy" — một thư mục vừa FAIL không được mượn PASS của anh em. Scratch
+    của merge gate (`mktemp -d`, tên mới) chưa có dòng nào.
+    ponytail: dòng cũ bị xoay vòng khỏi 4 MiB cuối của runs.jsonl thì quên; giữ danh sách thư mục đã chạy riêng nếu gặp."""
+    try:
+        gd = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--absolute-git-dir"], capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    recs = _run_log_records(_run_log_dir(os.fsdecode(gd.stdout.strip()))) if gd.returncode == 0 else None
+    name = os.path.basename(str(project_dir))[:64]
+    return recs is None or any(rec.get("project") == name for rec in recs)
+
+
+def _sibling_logged_pass(path, r):
+    """True khi dòng run-log ĐẦU TIÊN của project biên nhận r ghi sau thời điểm ghi biên nhận (trong 900 s) là chính lượt đã ghi nó
+    (_log_gate_run chạy ngay sau write_full_pass_receipt) và là full / exit 0 / verdict PASS: suite thật sự chạy. Không chỉ "có một dòng
+    PASS gần đó" (OCR 17/10: một PASS thật trên nội dung khác ít phút trước sẽ bảo lãnh cho biên nhận của một lượt REUSED). Lỗi đọc = False.
+    ponytail: hai worktree cùng basename ở hai thư mục cha ghi chung tên project trong run-log; thêm fingerprint vào dòng log nếu gặp."""
+    try:
+        t, name = float(r["time"]), os.path.basename(str(r["project"]))[:64]
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+    for rec in _run_log_records(_run_log_dir(os.path.dirname(os.path.dirname(path)))) or ():   # path = <git dir>/postfix-gate/full_pass.json
+        epoch = rec.get("epoch")   # theo thứ tự ghi: dòng đầu tiên của project này từ lúc ghi biên nhận
+        if rec.get("project") != name or epoch < int(t):
+            continue
+        return (epoch <= t + 900 and rec.get("mode") == "full" and rec.get("exit") == 0 and not isinstance(rec.get("exit"), bool)
+                and rec.get("verdict") == "PASS")
+    return False
+
+
+def sibling_receipts(project_dir):
+    """Biên nhận full-pass của main checkout và các worktree KHÁC của cùng repo, mới nhất trước (tối đa SIBLING_RECEIPTS_MAX).
+    17/10 (agent-workbench): merge gate super-board chạy gate trong một scratch `git worktree add` — git dir mới, không có biên nhận —
+    nên chạy lại mọi suite dù worktree của agent vừa PASS đúng nội dung đó (19 lần/ngày, 154 phút, 0 lần dùng lại). Biên nhận anh em do
+    cùng gate ghi vào cùng .git; cached_full_pass vẫn kiểm đủ nội dung, tuổi, ma trận, trạng thái cục bộ trước khi dùng. [] khi git
+    không trả lời."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import tree_fp  # noqa: PLC0415 - sibling module in bin/
+        own = tree_fp.receipt_path(project_dir)
+        res = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                             capture_output=True, timeout=30)
+    except (ImportError, OSError, subprocess.SubprocessError):
+        return []
+    common = os.fsdecode(res.stdout.strip())
+    if res.returncode != 0 or not common:
+        return []
+    dirs = [common]
+    try:
+        with os.scandir(os.path.join(common, "worktrees")) as it:
+            dirs += [e.path for e in it if e.is_dir(follow_symlinks=False)]
+    except OSError:
+        pass
+    found = []
+    for d in dirs:
+        p = os.path.join(d, "postfix-gate", tree_fp.RECEIPT)
+        if own and os.path.realpath(p) == os.path.realpath(own):
+            continue
+        try:
+            st = os.lstat(p)
+        except OSError:
+            continue
+        if stat.S_ISREG(st.st_mode):   # chỉ file thường: symlink / FIFO không phải biên nhận gate ghi (INSTINCT-040)
+            found.append((st.st_mtime_ns, p))
+    return [p for _, p in sorted(found, reverse=True)[:SIBLING_RECEIPTS_MAX]]
 
 
 # Modes that ran a subset of a suite's command, or nothing: never a full PASS — no PASS row in
@@ -5081,13 +5201,33 @@ def main():
 
     def reuse_full_pass(fp=None):
         """Mark every reusable suite PASS from the last full PASS of this exact content; its receipt, or None. A non-forced run
-        (the Stop hook) also reads the record a budget-cut run left (BUDGET_RECORD) when the receipt gives it nothing."""
+        (the Stop hook) also reads the record a budget-cut run left (BUDGET_RECORD) when the receipt gives it nothing. Cuối cùng: biên
+        nhận full-pass của worktree anh em cùng repo (sibling_receipts), cùng các kiểm tra — scratch của merge gate có git dir mới.
+        Chỉ cho lượt --full cưỡng bức trong một git dir CHƯA từng có biên nhận (scratch của merge gate, worktree mới): Stop hook, main
+        checkout và worktree đã có biên nhận giữ đúng hành vi cũ; thư mục đã từng chạy gate (có dòng run-log) cũng không mượn."""
         for name in ((None,) if force_reason else (None, BUDGET_RECORD)):
             src = _result_file(project_dir, name)
             stamp = _file_stamp(src)   # before the read: a change after it shows as another stamp when the record is written
             found = reuse_from(cached_full_pass(project_dir, args.matrix, fp, name), name is not None)
             if found:
                 reuse_src[0] = (src, stamp, name)
+                return found
+        if not force_reason:
+            return None
+        own = _result_file(project_dir, None)
+        if not own or _file_stamp(own) is not None or _ever_gated(project_dir):
+            return None
+        # ponytail: biên nhận anh em được ghi/xoá dưới test_run.lock CỦA worktree kia, không phải khoá lượt này giữ (F1): anh em FAIL sau lần
+        # stale_reused cuối mà trước khi lượt này ghi biên nhận thì lượt này vẫn exit 0 — cùng loại cửa sổ read-only đã ghi bên dưới; khoá
+        # cả lock của worktree anh em (LOCK_NB) khi gặp một ca như vậy.
+        siblings = sibling_receipts(project_dir)
+        fp = (fp or tree_fp_of(project_dir)) if siblings else fp   # một lần cho mọi biên nhận anh em, không phải mỗi file một lần
+        for path in siblings:
+            stamp = _file_stamp(path)
+            found = reuse_from(cached_full_pass(project_dir, args.matrix, fp, None, path))
+            if found:
+                print(f"    {DIM}{tr(f'(biên nhận của worktree anh em: {path})', f'(sibling worktree receipt: {path})')}{RESET}")
+                reuse_src[0] = (path, stamp, None)
                 return found
         return None
 
@@ -5106,7 +5246,9 @@ def main():
         now = _file_stamp(src)   # before the read, as at the first one
         if now == stamp:
             return []
-        found = cached_full_pass(project_dir, args.matrix, budget_fp, name) if now else None
+        # src là biên nhận đã dùng: của chính git dir hoặc của worktree anh em (đọc lại đúng file đó, không phải biên nhận của mình)
+        sib = None if name or src == _result_file(project_dir, None) else src   # biên nhận của mình: không áp luật của anh em
+        found = cached_full_pass(project_dir, args.matrix, budget_fp, name, sib) if now else None
         if found:
             reuse_src[0] = (src, now, name)
         prev = {x.get("id"): x for x in (found or {}).get("tests") or []}
