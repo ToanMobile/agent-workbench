@@ -1625,8 +1625,16 @@ def cmd_remove(cwd, args):
         die(tr(f"{wt} KHÔNG xoá hết được (git đã gỡ đăng ký nên không ai còn thấy nó): {names}. Người dùng: `{_by_hand(wt)}`",
                f"{wt} could NOT be deleted completely (git has dropped its registration, so no guard lists it any more): {names}. The user runs `{_by_hand(wt)}`"), 1)
     branch = state.get("branch")
+    # Người dùng 17/10: branch cũ phải tự đi cùng worktree. Chỉ khi nó đã nằm trọn trong HEAD của main và chưa publish (không ref
+    # remote / upstream: remote là của người dùng); `branch -d` tự từ chối branch chưa gộp, nên không commit nào mất.
+    gone = bool(branch) and branch != _trunk_branch(main) \
+        and _is_ancestor(main, f"refs/heads/{branch}", git(main, "rev-parse", "HEAD").stdout.strip()) \
+        and not git(main, "for-each-ref", "--format=%(refname)", f"refs/remotes/*/{branch}", check=False).stdout.strip() \
+        and not git(main, "config", "--get", f"branch.{branch}.remote", check=False).stdout.strip() \
+        and git(main, "branch", "-d", "--", branch, check=False).returncode == 0
     print(f"✔ {tr('đã gỡ', 'removed')} {wt}" + (f"; {tr('nhánh', 'branch')} {branch} "
-          + tr("giữ lại (xoá khi đã merge: git branch -d ", "kept (delete once merged: git branch -d ") + branch + ")" if branch else ""))
+          + (tr("đã gộp vào main nên đã xoá", "was merged into main and is deleted") if gone
+             else tr("giữ lại (xoá khi đã merge: git branch -d ", "kept (delete once merged: git branch -d ") + branch + ")") if branch else ""))
     if notes:
         shown = ", ".join(notes[:5]) + (f" (+{len(notes) - 5})" if len(notes) > 5 else "")
         print("⚠ " + tr(f"{len(notes)} memory note(s) lưu trong thư mục claude-auto RIÊNG của worktree (không có trong claude-auto của main) đã đi theo worktree: {shown}. "
