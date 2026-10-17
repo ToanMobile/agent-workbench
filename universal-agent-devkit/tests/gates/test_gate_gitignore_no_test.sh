@@ -35,5 +35,16 @@ mk c; printf '.env\n.agents/hooks/\n' > .gitignore; echo "fun lib() = 2" > lib/X
 expect c ".gitignore + code no rule covers still stops" 2
 mk d; echo "b" > lib/gitignore_rules.kt
 expect d "a source file whose name contains gitignore still needs a test" 2
+# 17/10 (lần đưa merge gate be67be1 vào 4 repo): `.claude/bin/super-board-*` là bản chép script super-board của agent-workbench,
+# test của chúng ở agent-workbench (tests/super-board/), không chương trình nào của dự án đọc. Script khác dưới .claude/bin vẫn cần test.
+mk e; mkdir -p .claude/bin; echo "echo merge" > .claude/bin/super-board-merge-gate.sh
+expect e "a deployed .claude/bin/super-board-* script only" 0
+mk f; mkdir -p .claude/bin; echo "echo tool" > .claude/bin/release.sh
+expect f "another .claude/bin script still needs a test" 2
+# Miễn không tắt test: repo có rule theo dõi script đó (agent-workbench: super-board-runner) vẫn chạy test, đỏ thì chặn.
+mk g; printf '{"project":"t","rules":[{"component":"SB","watch_files":[".claude/bin/super-board-*"],"mandatory_regression_tests":[{"id":"REG-SB","name":"sb","command":"false"}]}]}\n' \
+  > .agents/regression_matrix.active.json; git add -A && git commit -qm matrix
+mkdir -p .claude/bin; echo "echo merge" > .claude/bin/super-board-merge-gate.sh
+expect g "a watched super-board script with a failing suite still fails" 1
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_gitignore_no_test: all passed" || { echo "❌ test_gate_gitignore_no_test: $FAILS failed"; exit 1; }
