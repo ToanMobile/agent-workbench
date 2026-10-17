@@ -401,3 +401,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Squash merge làm main local lệch origin, và symlink kit chặn gỡ worktree
 - **Nguyên nhân:** merge gate dùng gh pr merge --squash nên origin có commit mới cùng nội dung khác sha, trong khi trunk mode đã đưa chính các commit PR vào main local: ff-only thất bại mãi và mỗi PR người dùng phải đồng bộ tay; agent-kit heal/init tạo symlink .agents/hooks/* trỏ vào kit của main nên worktree remove thấy 'thay đổi main chưa có' và giữ worktree
 - **Quy tắc phòng ngừa & Cách fix:** sau squash, base local chỉ dời về origin/<base> bằng `reset --keep` khi CÂY hai bên giống hệt; còn commit riêng chưa đẩy hoặc main đang dở merge thì để nguyên và cảnh báo. KHÔNG merge non-ff trong main (luật main chỉ ff) và KHÔNG `merge --abort` vô điều kiện (nó huỷ merge + phần giải tay của phiên khác). Symlink UNTRACKED trỏ vào universal-agent-devkit/ hoặc .agents/devkit/ của main là trạng thái cài, bỏ ở `changes_since` (một chỗ cho diff/status/finish/remove); file đã theo dõi bị thay bằng link vẫn là việc. Test: tests/super-board/test_merge_gate_squash_sync.sh, universal-agent-devkit/tests/worktree_git/test_worktree_remove_kit_links.sh
+
+---
+
+### [INSTINCT-048] Hook Stop của phiên cha tự gộp worktree của agent con đang chạy
+- **Ngày phát hiện:** 2026-10-17
+- **Hiện tượng lỗi:** Hook Stop của phiên cha tự gộp worktree của agent con đang chạy
+- **Nguyên nhân:** worktree_merge_gate.sh xem mọi worktree agent-* do phiên sở hữu là đã xong, nên gộp cả việc dở của subagent nền (K10, 17/10: wip a07752b)
+- **Quy tắc phòng ngừa & Cách fix:** Trước khi automerge, xét thông báo harness cuối cùng của subagent (đang chờ việc nền / chưa báo / SendMessage = còn sống) và bỏ qua; chỉ gộp khi có bằng chứng nó đã dừng
