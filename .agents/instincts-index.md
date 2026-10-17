@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (395 dòng, 46.6 KB) · 49 mục
+> **Tệp gốc:** `.agents/instincts.md` (411 dòng, 48.7 KB) · 51 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -50,5 +50,7 @@
 - [INSTINCT-043] A test that disables the global git config relies on git's auto-detected identity, which needs a… — `sed -n '361,370p' .agents/instincts.md`
 - [INSTINCT-044] bash 3.2 ${var//x/} is quadratic and a PreToolUse guard killed at its timeout gives no verdict: a big… — `sed -n '371,380p' .agents/instincts.md`
 - [INSTINCT-045] A guard that cuts heredoc bodies as data with a scanner that is not the shell hides live commands… — `sed -n '381,390p' .agents/instincts.md`
-- [INSTINCT-046] Công tắc môi trường của runner/worker lọt vào suite test của gate — `sed -n '391,395p' .agents/instincts.md`
+- [INSTINCT-046] Công tắc môi trường của runner/worker lọt vào suite test của gate — `sed -n '391,398p' .agents/instincts.md`
+- [INSTINCT-047] Squash merge làm main local lệch origin, và symlink kit chặn gỡ worktree — `sed -n '399,406p' .agents/instincts.md`
+- [INSTINCT-048] Hook Stop của phiên cha tự gộp worktree của agent con đang chạy — `sed -n '407,411p' .agents/instincts.md`
 
