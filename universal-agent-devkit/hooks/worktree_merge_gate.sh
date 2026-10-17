@@ -698,9 +698,12 @@ if not save():
 conflicts = [r for r in pending if r.get("am_status") == "conflict"]
 finish_cmds = "".join(f"  agent-kit worktree finish {shlex.quote(r['path'])}\n" for r in pending if r["unintegrated"] and not r.get("reason"))
 if conflicts:
+    # 17/10: không khuyên `git -C <worktree>`: harness của Claude chặn `git -C` với đường dẫn tính lúc chạy; cùng dạng với worktree.py _conflict
+    resolve = "; ".join(f"`cd {shlex.quote(r['path'])} && git add <file> && git commit --no-edit` rồi `agent-kit worktree finish {shlex.quote(r['path'])}`"
+                        for r in conflicts)
     how_to = ("XUNG ĐỘT khi tự gộp: sửa NGAY trong worktree (thư mục riêng, không ảnh hưởng ai): bỏ dấu <<<<<<< ======= >>>>>>> giữ đúng ý cả hai bên, "
-              "`git -C <worktree> add <file>`. Rồi dừng lại: cổng tự kết thúc merge, fast-forward main và gỡ worktree. Không cần chạy lệnh nào khác "
-              "(muốn chạy ngay: lệnh dưới đây).\n" + finish_cmds)
+              + resolve + " (finish fast-forward main và gỡ worktree; chỉ dừng lại thì lần dừng sau cổng tự làm việc đó).\n"
+              "Lệnh gộp từng worktree, từ main checkout:\n" + finish_cmds)
 elif finish_cmds:
     how_to = "Tự gộp chưa chạy/không xong (lý do ở trên). Chạy lại bằng một lệnh, từ main checkout:\n" + finish_cmds
 else:

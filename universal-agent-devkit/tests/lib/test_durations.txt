@@ -306,3 +306,4 @@
 3 tests/worktree_git/test_worktree_finish_inside.sh
 3 tests/worktree_git/test_worktree_conflict_advice.sh
 2 tests/worktree_git/test_worktree_meta_ignored.sh
+4 tests/gates/test_worktree_merge_gate_conflict_advice.sh
