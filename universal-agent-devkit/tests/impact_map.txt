@@ -23,3 +23,7 @@ scripts/governance/gate_runs_report.py   tests/gates/test_stop_hook_times.sh
 hooks/shell_norm.py   tests/gates/test_hardware_rm_containment.sh tests/gates/test_hardware_rm_unforced.sh tests/gates/test_hardware_unglob_quoted.sh tests/gates/test_hardware_find_match_all.sh tests/gates/test_hardware_find_not_or.sh tests/gates/test_hardware_data_local_tmp.sh tests/gates/test_git_guard_shell_feed.sh tests/gates/test_git_guard_shell_subst.sh tests/gates/test_git_guard_process_subst.sh tests/gates/test_guard_comment_not_swallowing.sh hooks/tests/test_git_guard_bypass.sh hooks/tests/test_git_guard_nested.sh tests/gates/test_hook_python_isolation.sh hooks/tests/hook_contract_test.sh
 # 17/10: lớp bọc nohup / time / bash -c và sed chỉ đọc ở trunk mode (bin/session_lock.py _trunk_unwrap, _gate_run).
 bin/session_lock.py   tests/context_memory/test_session_lock_trunk_wrappers.sh
+# 17/10: hooks/worktree_merge_gate.sh: lời khuyên khi xung đột (không git -C) và worktree của subagent còn sống (K10).
+hooks/worktree_merge_gate.sh   tests/gates/test_worktree_merge_gate_conflict_advice.sh tests/gates/test_worktree_merge_gate_subagent_live.sh
+# 17/10 (K7): khối .gitignore mà bin/install.sh viết lại ở mỗi lần cài / mỗi worktree mới (phải giữ `.agents/hooks/`).
+bin/install.sh   tests/installer/test_gitignore_keeps_agents_hooks.sh

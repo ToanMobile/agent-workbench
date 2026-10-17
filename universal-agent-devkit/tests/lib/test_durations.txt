@@ -38,6 +38,7 @@
 1 tests/installer/test_ocr_review_helper.sh
 13 tests/gates/test_gate_friction.sh
 13 tests/gates/test_proof_capture.sh
+13 tests/installer/test_gitignore_keeps_agents_hooks.sh
 12 tests/verification/test_bug_capture.sh
 11 tests/verification/test_impacted_tests.sh
 10 tests/verification/test_flaky.sh
@@ -266,6 +267,7 @@
 14 tests/worktree_git/test_worktree_trunk_hooks.sh
 1 tests/context_memory/test_session_lock_trunk.sh
 1 tests/context_memory/test_session_lock_trunk_wrappers.sh
+1 tests/context_memory/test_session_lock_trunk_reads.sh
 2 tests/gates/test_gates_follow_session_worktree.sh
 5 tests/gates/test_worktree_merge_gate_trunk.sh
 2 tests/worktree_git/test_worktree_unity_library.sh
@@ -309,3 +311,5 @@
 2 tests/worktree_git/test_worktree_meta_ignored.sh
 3 tests/worktree_git/test_worktree_merge_regate.sh
 11 tests/worktree_git/test_worktree_merge_gate_lock.sh
+4 tests/gates/test_worktree_merge_gate_conflict_advice.sh
+6 tests/gates/test_worktree_merge_gate_subagent_live.sh
