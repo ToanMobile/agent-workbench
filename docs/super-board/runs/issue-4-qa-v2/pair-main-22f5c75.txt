@@ -1,0 +1,21 @@
+✔ control: RED, fix, GREEN
+✖ RED runner, fix, then the gate PASS: the pair holds  — want exit 0, got 2: ⛔ CHECK 7 (fix có tác dụng thật): claim OUTCOME ('đã fix'/'hết bug') nhưng phiên này không có bằng chứng: cần một lần chạy test ĐỎ trước lần sửa code cuối và XANH sau đó (paired RED→GREEN), hoặc kết q
+✖ RED, fix, GREEN, then a test file is edited: the pair holds  — want exit 0, got 2: ⛔ CHECK 7 (fix có tác dụng thật): claim OUTCOME ('đã fix'/'hết bug') nhưng phiên này không có bằng chứng: cần một lần chạy test ĐỎ trước lần sửa code cuối và XANH sau đó (paired RED→GREEN), hoặc kết q
+✖ RED, fix, gate PASS, then a test file is edited: the pair holds  — want exit 0, got 2: ⛔ CHECK 7 (fix có tác dụng thật): claim OUTCOME ('đã fix'/'hết bug') nhưng phiên này không có bằng chứng: cần một lần chạy test ĐỎ trước lần sửa code cuối và XANH sau đó (paired RED→GREEN), hoặc kết q
+✖ temp dir: RED, fix, GREEN, then a test file is edited: the pair holds  — want exit 0, got 2: ⛔ CHECK 7 (fix có tác dụng thật): claim OUTCOME ('đã fix'/'hết bug') nhưng phiên này không có bằng chứng: cần một lần chạy test ĐỎ trước lần sửa code cuối và XANH sau đó (paired RED→GREEN), hoặc kết q
+✖ RED, fix, GREEN, then a test file is edited and committed: the pair holds  — want exit 0, got 2: ⛔ CHECK 7 (fix có tác dụng thật): claim OUTCOME ('đã fix'/'hết bug') nhưng phiên này không có bằng chứng: cần một lần chạy test ĐỎ trước lần sửa code cuối và XANH sau đó (paired RED→GREEN), hoặc kết q
+✔ RED, only a test file is edited, GREEN: the pair holds
+✔ scratch probe, RED, only a test file is edited, GREEN: the pair holds
+✔ RED, only a test file is edited, GREEN, then a scratch probe: the pair holds
+✔ no RED at all: blocked
+✔ RED, fix, GREEN, then a SOURCE edit: blocked
+✔ temp dir: RED, fix, GREEN, then a SOURCE edit: blocked
+✔ the gate PASS ran BEFORE the fix: blocked
+✖ fix, test broken for a RED, test restored, GREEN: blocked  — want exit 2 + 'CHECK 7', got 0: 
+✖ fix, then RED, then only a test edit, GREEN: blocked  — want exit 2 + 'CHECK 7', got 0: 
+✔ scratch edit, GREEN, then only a PROJECT test edit: blocked
+✔ check 2: fix, GREEN, test edit, then 'test pass' with no new run: blocked
+✔ check 2: RED, fix, GREEN, test edit, then 'test pass' with no new run: blocked
+✔ check 2: test edit, RED, fix, GREEN, then 'test pass': allowed
+
+test_evidence_check7_pair: 7 FAILED

@@ -1,0 +1,34 @@
+# AC1 ở biên thật: nửa XANH là stdout THẬT của post-fix-gate.py (lần chạy QA v2, exit 0), không phải chuỗi viết tay.
+# Phiên dựng sẵn: [pytest ĐỎ, Edit src/app.py, Bash <lệnh gate thật> -> stdout thật] + "Đã fix lỗi X."
+import json, os, shutil, subprocess, sys, tempfile
+
+KIT, GATE_OUT = sys.argv[1], sys.argv[2]
+GATE_CMD = ("python3 universal-agent-devkit/bin/post-fix-gate.py --run-tests --full --force-full --brief "
+            "--auto-approve-tests --diff origin/main --timeout 3600")
+out = open(GATE_OUT).read()
+out = out.rsplit("GATE EXIT=", 1)[0]          # dòng do QA tự nối thêm sau lệnh, không phải output của gate
+TMP = tempfile.mkdtemp()
+p = os.path.join(TMP, "p")
+os.makedirs(os.path.join(p, ".claude", "audit-gate"))
+os.makedirs(os.path.join(p, "src"))
+os.makedirs(os.path.join(p, "tests"))
+open(os.path.join(p, "src", "app.py"), "w").write("def f():\n    return 1\n")
+open(os.path.join(p, "tests", "test_foo.py"), "w").write("def test_a():\n    assert 1\n")
+steps = [
+    ({"name": "Bash", "input": {"command": "pytest tests/test_foo.py"}}, "FAILED tests/test_foo.py::test_a - assert 2\n1 failed", True),
+    ({"name": "Edit", "input": {"file_path": os.path.join(p, "src", "app.py"), "old_string": "return 1", "new_string": "return 2"}}, "ok", False),
+    ({"name": "Bash", "input": {"command": GATE_CMD}}, out, False),
+]
+lines = []
+for i, (use, res, err) in enumerate(steps):
+    uid = "tu%d" % i
+    lines.append(json.dumps({"message": {"content": [dict(type="tool_use", id=uid, **use)]}}))
+    lines.append(json.dumps({"message": {"content": [{"type": "tool_result", "tool_use_id": uid, "content": res, "is_error": err}]}}))
+tr = os.path.join(p, "tr.jsonl")
+open(tr, "w").write("\n".join(lines) + "\n")
+env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "CLAUDE_"))}
+env.update(CLAUDE_PROJECT_DIR=p, LESSON_REMINDER="0", AUTO_LINK="0")
+payload = json.dumps({"session_id": "qa4-ac1-real", "transcript_path": tr, "last_assistant_message": "Đã fix lỗi X."})
+r = subprocess.run(["bash", os.path.join(KIT, "hooks", "test_evidence_gate.sh")], input=payload, capture_output=True, text=True, env=env)
+print("kit=%s exit=%d %s" % (KIT, r.returncode, "CHECK 7" if "CHECK 7" in r.stderr else ""))
+shutil.rmtree(TMP, ignore_errors=True)

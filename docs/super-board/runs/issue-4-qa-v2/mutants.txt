@@ -1,0 +1,18 @@
+== M1-check7-green-only: exit 1, 2 case(s) red
+   ✖ RED runner, fix, then the gate PASS: the pair holds  — want exit 0, got 2: ⛔ CHECK 7 (fix có tác dụng thật): claim OUTCOME ('đã fix'/'hết bug') nhưn
+   ✖ RED, fix, gate PASS, then a test file is edited: the pair holds  — want exit 0, got 2: ⛔ CHECK 7 (fix có tác dụng thật): claim OUTCOME ('đã fix'/'hế
+== M2-fix-marker-counts-test-files: exit 1, 5 case(s) red
+   ✖ RED, fix, GREEN, then a test file is edited: the pair holds  — want exit 0, got 2: ⛔ CHECK 7 (fix có tác dụng thật): claim OUTCOME ('đã fix'/'hết bu
+   ✖ RED, fix, gate PASS, then a test file is edited: the pair holds  — want exit 0, got 2: ⛔ CHECK 7 (fix có tác dụng thật): claim OUTCOME ('đã fix'/'hế
+   ✖ RED, fix, GREEN, then a test file is edited and committed: the pair holds  — want exit 0, got 2: ⛔ CHECK 7 (fix có tác dụng thật): claim OUTCOME ('đ
+   ✖ fix, test broken for a RED, test restored, GREEN: blocked  — want exit 2 + 'CHECK 7', got 0: 
+   ✖ fix, then RED, then only a test edit, GREEN: blocked  — want exit 2 + 'CHECK 7', got 0: 
+== M3-scratch-fix-marker-counts-test-files: exit 1, 1 case(s) red
+   ✖ temp dir: RED, fix, GREEN, then a test file is edited: the pair holds  — want exit 0, got 2: ⛔ CHECK 7 (fix có tác dụng thật): claim OUTCOME ('đã fi
+== M4-check2-uses-fix-marker: exit 1, 2 case(s) red
+   ✖ check 2: fix, GREEN, test edit, then 'test pass' with no new run: blocked  — want exit 2 + 'TEST-EVIDENCE', got 0: 
+   ✖ check 2: RED, fix, GREEN, test edit, then 'test pass' with no new run: blocked  — want exit 2 + 'TEST-EVIDENCE', got 0: 
+== M5-no-test-only-fallback: exit 1, 3 case(s) red
+   ✖ RED, only a test file is edited, GREEN: the pair holds  — want exit 0, got 2: ⛔ CHECK 7 (fix có tác dụng thật): claim OUTCOME ('đã fix'/'hết bug') n
+   ✖ scratch probe, RED, only a test file is edited, GREEN: the pair holds  — want exit 0, got 2: ⛔ CHECK 7 (fix có tác dụng thật): claim OUTCOME ('đã fi
+   ✖ RED, only a test file is edited, GREEN, then a scratch probe: the pair holds  — want exit 0, got 2: ⛔ CHECK 7 (fix có tác dụng thật): claim OUTCOME 
