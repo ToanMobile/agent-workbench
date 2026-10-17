@@ -1845,6 +1845,10 @@ def get_modified_files(diff_ref: str = None) -> list:
     return sorted(files)
 
 
+# The bookkeeping this gate writes itself (regression checklist, inbox).
+GATE_STATE_FILES = (".agents/regression_status.json", ".agents/regression_checklist.md", ".agents/CHECKLIST.md", ".agents/INBOX.md")
+
+
 def is_devkit_artifact(rel_file: str) -> bool:
     """Links the devkit installer places (hooks, commands, skills, rules, AGENTS.md…) and
     hook state are not the user's change: they are not scanned and not "unreadable"."""
@@ -1852,8 +1856,7 @@ def is_devkit_artifact(rel_file: str) -> bool:
     if clean.startswith(".claude/audit-gate/"):
         return True
     # The regression checklist is written by this gate itself — never audit our own output.
-    if clean in (".agents/regression_status.json", ".agents/regression_checklist.md",
-                 ".agents/CHECKLIST.md", ".agents/INBOX.md") \
+    if clean in GATE_STATE_FILES \
             or clean.startswith((".agents/evidence/", ".agents/archive/", ".agents/context/")):
         return True
     full = resolve_path(rel_file)
@@ -4740,6 +4743,12 @@ def main():
     _lap("git")
     devkit_artifacts = [f for f in all_changed if is_devkit_artifact(f)]
     modified_files = [f for f in all_changed if f not in devkit_artifacts]
+    # 17/10: một commit chỉ đổi sổ trạng thái của gate, kiểm bằng --diff tường minh (merge gate của super-board), từng là exit 3 "không có
+    # gì để kiểm" nên PR không bao giờ gộp được. Có --diff thì sổ đó được kiểm như file thường (quét tĩnh kể cả secret, needs_no_test);
+    # cây sạch không --diff vẫn exit 3.
+    if args.diff and not modified_files and not STAGED:
+        own = [f for f in devkit_artifacts if f.replace("\\", "/") in GATE_STATE_FILES and not resolve_path(f).is_symlink()]
+        modified_files, devkit_artifacts = own, [f for f in devkit_artifacts if f not in own]
     state_files = secret_scan_state_files(devkit_artifacts)   # the secret scan only (A5)
     if args.commit_msg:
         return run_commit_msg_check(args.commit_msg, modified_files)
@@ -5574,7 +5583,9 @@ def main():
     test_mode = ("none" if not run_tests or not regression_tests
                  else "impacted" if impacted_run else "full")
     # Documentation and agent state cannot break a test, so they need none (code without a test still does).
-    docs_only = bool(modified_files) and all(needs_no_test(f) for f in modified_files)
+    # Sổ trạng thái của gate chỉ vào modified_files khi --diff chỉ có nó (xem trên): không cần test. Không đưa vào needs_no_test: push_gate
+    # dùng hàm đó để bỏ qua gate, mà chính gate mới là nơi quét secret cho sổ này.
+    docs_only = bool(modified_files) and all(needs_no_test(f) or f.replace("\\", "/") in GATE_STATE_FILES for f in modified_files)
     no_coverage = (not rules or not impacted_tests) and not args.allow_no_tests and not docs_only
     # Every changed source file must be re-testable later; one no rule watches would
     # silently fall out of the regression checklist.
