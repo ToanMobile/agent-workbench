@@ -27,7 +27,8 @@
       "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*",
       "**/*.min.js", "**/*.min.css", "**/*.map", "**/*.pb.go", "**/*_pb2.py",
       "**/__snapshots__/**", "**/*.snap",
-      "docs/super-board/runs/**"
+      "docs/super-board/runs/**/*.md", "docs/super-board/runs/**/*.log", "docs/super-board/runs/**/*.txt",
+      "docs/super-board/runs/**/*.png", "docs/super-board/runs/**/*.jpg", "docs/super-board/runs/**/*.jpeg", "docs/super-board/runs/**/*.webp"
     ]
   },
   "migrations": {
