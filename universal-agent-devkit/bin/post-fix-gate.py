@@ -2528,6 +2528,8 @@ def needs_no_test(rel_file: str) -> bool:
     """Documentation or agent state: nothing a regression test could catch."""
     clean = rel_file.replace("\\", "/")
     return (clean.lower().endswith(DOC_EXT) or Path(clean).name in DOC_NAMES
+            # Chỉ git đọc `.gitignore` (17/10: PR K7 của 4 repo kẹt ở merge gate vì "không có test khớp"); rule nào theo dõi nó vẫn giữ test.
+            or Path(clean).name == ".gitignore"
             or clean in AGENT_STATE_FILES or clean.startswith((".agents/local/memory/", ".agents/local/red-patches/"))   # red_proof's bug-back patches: data of the proof tool
             or re.fullmatch(r"reports/proof-[^/]+\.png", clean) is not None
             # What the project's tooling writes under reports/ (Goods: its PlayMode screen tour saves
