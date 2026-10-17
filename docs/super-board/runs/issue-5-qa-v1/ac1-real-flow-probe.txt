@@ -1,0 +1,74 @@
+######## MODE=dirty
+== install DevKit (symlink mode) into main
+install exit=0
+?? .agents/active-profile.json
+?? .agents/instincts.md
+?? .claude/
+?? .gitignore
+?? .mcp.json
+?? AGENTS.md
+?? DESIGN.md
+(untracked/modified after install:        7)
+commit install exit=0
+== worktree add --session (what the WorktreeCreate hook runs)
+add exit=0
+  DevKit installed like the main checkout
+  Next: cd $TMP/repo/.claude/worktrees/s1
+  Accept: CLAUDE_PROJECT_DIR="$PWD" postfix-gate --run-tests
+  Bring back: agent-kit worktree diff $TMP/repo/.claude/worktrees/s1 | git apply --3way
+untracked in the worktree after add:        0
+== work + commit + gate --full in the worktree
+commit exit=0
+gate (dirty) exit=0
+  • Regression checklist: not written in a linked worktree (add --checklist to write it); this run results are kept in the worktree own state
+  Report: $TMP/repo/.git/worktrees/s1/postfix-gate/last_report.md
+  (full output: $TMP/repo/.git/worktrees/s1/postfix-gate/last_output.log — last_output.log)
+receipt exit 0 dirty entries 1 ['src/Core.kt']
+== worktree finish from main
+finish exit=0
+✔ worktree merged: merged into main and the worktree is removed (gate --full receipt copied into main)
+worktree removed
+main HEAD: 6195c6a task work
+== push_gate CLI from main
+push_gate exit=0
+== hook: the agent's push command (cwd = main)
+hook exit=0
+
+probe(dirty) exit=0
+######## MODE=diff
+== install DevKit (symlink mode) into main
+install exit=0
+?? .agents/active-profile.json
+?? .agents/instincts.md
+?? .claude/
+?? .gitignore
+?? .mcp.json
+?? AGENTS.md
+?? DESIGN.md
+(untracked/modified after install:        7)
+commit install exit=0
+== worktree add --session (what the WorktreeCreate hook runs)
+add exit=0
+  DevKit installed like the main checkout
+  Next: cd $TMP/repo/.claude/worktrees/s1
+  Accept: CLAUDE_PROJECT_DIR="$PWD" postfix-gate --run-tests
+  Bring back: agent-kit worktree diff $TMP/repo/.claude/worktrees/s1 | git apply --3way
+untracked in the worktree after add:        0
+== work + commit + gate --full in the worktree
+commit exit=0
+gate (diff) exit=0
+  • Regression checklist: not written in a linked worktree (add --checklist to write it); this run results are kept in the worktree own state
+  Report: $TMP/repo/.git/worktrees/s1/postfix-gate/last_report.md
+  (full output: $TMP/repo/.git/worktrees/s1/postfix-gate/last_output.log — last_output.log)
+receipt exit 0 dirty entries 0 []
+== worktree finish from main
+finish exit=0
+✔ worktree merged: merged into main and the worktree is removed (gate --full receipt copied into main)
+worktree removed
+main HEAD: c0086ae task work
+== push_gate CLI from main
+push_gate exit=0
+== hook: the agent's push command (cwd = main)
+hook exit=0
+
+probe(diff) exit=0

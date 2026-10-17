@@ -1,0 +1,9 @@
+CLAUDE_PROJECT_DIR=<worktree issue-5-qa> python3 universal-agent-devkit/bin/post-fix-gate.py --run-tests --full --force-full --brief --auto-approve-tests
+→ exit 0: PASS — ĐỦ ĐIỀU KIỆN NGHIỆM THU & BÀN GIAO · test hồi quy 5/5 · lớp tĩnh (bí mật, placeholder, dependency, hiệu năng, nuốt lỗi, log) đạt
+Test đã có bị sửa (thêm L17), agent tự duyệt bằng --auto-approve-tests: universal-agent-devkit/tests/gates/test_push_gate_linked_worktree.sh
+- [x] REG-DK-ALL-01 (devkit-all): DevKit tests that name a changed file + repo consistency -> PASS (30.24s)
+- [x] REG-DK-GATE-01 (devkit-gate): post-fix gate -> PASS (102.92s)
+- [x] REG-DK-GATE-02 (devkit-gate): proof gate (tree_fp) -> PASS (21.35s)
+- [x] REG-DK-SESSION-01 (devkit-session-lock): session lock + multi-session gate verdict -> PASS (10.90s)
+- [x] REG-DK-COST-01 (devkit-token-cost): token cost tracker -> PASS (0.46s)
+Ngoài gate: 37 test DevKit nhắc tới push_gate / worktree.py chạy riêng trên cùng tree: 37/37 exit 0 (sibling-tests.txt)

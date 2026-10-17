@@ -1,0 +1,11 @@
+push_gate.py on the real main checkout (9 work trees, main has no receipt: worst case, every linked worktree is checked)
+run 1 branch exit=2 0.58s
+run 1 base exit=2 0.16s
+run 2 branch exit=2 0.56s
+run 2 base exit=2 0.15s
+run 3 branch exit=2 0.56s
+run 3 base exit=2 0.15s
+run 4 branch exit=2 0.55s
+run 4 base exit=2 0.15s
+run 5 branch exit=2 0.55s
+run 5 base exit=2 0.15s

@@ -1,0 +1,16 @@
+### 1) branch, unmutated: L17 green
+✔ L17 control: the exit-0 receipt covers the push (exit 0)
+✔ L17: a linked worktree receipt of the pushed content with exit 2 (UNVERIFIED / partial): refused (exit 2)
+ALL OK
+exit=0
+### 2) mutant M1: drop receipt.get("exit") != 0 in _own_check
+mutant applied to universal-agent-devkit/bin/push_gate.py
+✖ L17: a linked worktree receipt of the pushed content with exit 2 (UNVERIFIED / partial): refused: exit 0, expected 2 —  | covered by the gate receipt of the linked worktree $TMP/wt
+1 FAILED
+exit=1
+restored universal-agent-devkit/bin/push_gate.py
+### 3) restored: push_gate.py unchanged vs HEAD: yes
+✔ L17 control: the exit-0 receipt covers the push (exit 0)
+✔ L17: a linked worktree receipt of the pushed content with exit 2 (UNVERIFIED / partial): refused (exit 2)
+ALL OK
+exit=0

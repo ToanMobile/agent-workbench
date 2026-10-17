@@ -2114,6 +2114,41 @@ def _conflict(wt, unmerged):
                            f"merge, fast-forwards main and removes the worktree)"), {"files": unmerged})
 
 
+def _carry_gate_receipt(main, wt):
+    """Issue #5 (trunk mode): biên nhận gate --full của worktree nằm dưới git dir riêng của nó và mất khi gỡ worktree, còn main chỉ nhận
+    merge nên `git push` từ main không còn biên nhận nào. Biên nhận nào bin/push_gate.py xác nhận phủ HEAD mới của main (cùng luật như
+    biên nhận của main) thì chép sang git dir của main: `project` trỏ về main, `carried_from` giữ project gốc để push_gate khớp dòng
+    runs.jsonl của lần gate đó (runs.jsonl ở common dir, sống qua việc gỡ worktree). Gọi sau mỗi lần main fast-forward (cả `--keep`
+    của hook Stop: worktree có thể bị gỡ sau đó bằng `worktree remove` / WorktreeRemove). Trả câu ghi chú cho thông báo, luôn nói đã
+    chép hay chưa; lỗi nào cũng chỉ thành ghi chú (fail-closed: không chép thì push từ main bị chặn tới khi gate lại)."""
+    try:
+        bin_dir = os.path.join(DEVKIT, "bin")
+        if bin_dir not in sys.path:
+            sys.path.insert(0, bin_dir)
+        import push_gate  # noqa: PLC0415 - module anh em trong bin/, chỉ nạp khi gộp xong
+        head = git(main, "rev-parse", "HEAD").stdout.strip()
+        if not push_gate.check(wt, head, linked=True)[0]:
+            return tr(" (không có biên nhận gate --full nào của worktree phủ HEAD mới của main: push từ main cần chạy gate lại)",
+                      " (no gate --full receipt of the worktree covers main's new HEAD: a push from main needs the gate again)")
+        receipt = json.loads(_read_regular(push_gate.tree_fp.receipt_path(wt), 4_000_000).decode("utf-8"))
+        rel = os.path.relpath(os.path.realpath(receipt["project"]), os.path.realpath(wt))
+        receipt = dict(receipt, project=os.path.normpath(os.path.join(main, rel)), carried_from=receipt["project"])
+        dst = push_gate.tree_fp.receipt_path(main)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst), prefix=".full_pass.")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(receipt, fh)
+            os.replace(tmp, dst)   # thay cả một symlink đặt sẵn ở dst, không ghi theo nó
+        except BaseException:
+            _unlink_quiet(tmp)
+            raise
+    except (Exception, SystemExit) as e:   # kit cài dở (ImportError), biên nhận hỏng, lỗi ghi: báo trong thông báo, không chặn việc gộp
+        return tr(f" (không chép được biên nhận gate sang main: {type(e).__name__}: {e}; push từ main cần chạy gate lại)",
+                  f" (the gate receipt could not be copied into main: {type(e).__name__}: {e}; a push from main needs the gate again)")
+    return tr(" (biên nhận gate --full đã chép sang main)", " (gate --full receipt copied into main)")
+
+
 IDENTICAL_OVERLAP_MAX = 500   # ponytail: kiểm từng đường dẫn trùng một lần hash-object; quá số này thì từ chối như cũ, nâng khi có repo cần
 
 
@@ -2345,9 +2380,10 @@ def _automerge_locked(cwd, main, wt, keep=False):
             mlock.close()
     if status is None:
         return "blocked", tr("main liên tục có commit mới trong lúc gộp: chạy lại", "main kept moving while merging: run it again"), {}
+    receipt_note = _carry_gate_receipt(main, wt)   # issue #5: trước cả nhánh --keep, vì worktree có thể bị gỡ sau đó mà không qua đây
     if keep:
         return status, (tr("đã gộp vào main; worktree giữ lại (--keep)", "merged into main; the worktree is kept (--keep)") if status == "merged"
-                        else tr("không có gì chưa về main; worktree giữ lại (--keep)", "nothing that was not in main; the worktree is kept (--keep)")), {"kept": True}
+                        else tr("không có gì chưa về main; worktree giữ lại (--keep)", "nothing that was not in main; the worktree is kept (--keep)")) + receipt_note, {"kept": True}
     saved = []
     try:
         for rel in _unsaved_memory(wt, main):   # notes only the worktree's own (git-ignored) agent-memory folder holds: a removal would delete them
@@ -2405,6 +2441,7 @@ def _automerge_locked(cwd, main, wt, keep=False):
     note = (tr(f" ({len(saved)} memory note đã chép sang main: {', '.join(saved[:5])})", f" ({len(saved)} memory note(s) copied into main: {', '.join(saved[:5])})") if saved else "")
     note += (tr(f" ({len(carried)} file bí mật bị git ignore đã chép sang main, ở đó vẫn bị ignore: {', '.join(carried[:5])})",
                 f" ({len(carried)} git-ignored secret file(s) copied into main, ignored there too: {', '.join(carried[:5])})") if carried else "")
+    note += receipt_note
     return status, (tr("đã gộp vào main và gỡ worktree", "merged into main and the worktree is removed") if status == "merged"
                     else tr("không có gì chưa về main; đã gỡ worktree", "nothing that was not in main; the worktree is removed")) + note, {"memory_saved": saved, "secrets_saved": carried}
 
