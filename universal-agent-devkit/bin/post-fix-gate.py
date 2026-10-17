@@ -1063,8 +1063,8 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None, path=None):
         return None
     if sibling:
         # Biên nhận của worktree anh em (review 17/10): exit 0, và dòng run-log của chính lượt đã ghi nó phải là full với verdict PASS —
-        # suite THẬT SỰ chạy (_sibling_logged_pass). Lượt đã dùng lại (của mình hay của anh em) log REUSED nên không cho mượn
-        # tiếp: không có dây chuyền mà một FAIL sau đó của worktree gốc (chỉ xoá file của nó) không chặn được.
+        # suite THẬT SỰ chạy, reused_full_pass False (_sibling_logged_pass). Lượt đã dùng lại (của mình hay của anh em, toàn bộ hay một
+        # phần) không cho mượn tiếp: không có dây chuyền mà một FAIL sau đó của worktree gốc (chỉ xoá file của nó) không chặn được.
         # ponytail: một PASS đã từng là exit 2 rồi được dùng lại thành exit 0 (log REUSED) không cho mượn — merge gate chạy đủ như cũ;
         # nới khi đo thấy ca này chiếm phần lớn lượt chạy của merge gate.
         # carried_from: bản chép `worktree finish` đưa sang main — cũng là bản chép, không cho mượn
@@ -1152,7 +1152,8 @@ def _sibling_logged_pass(path, r):
         if rec.get("project") != name or epoch < int(t):
             continue
         return (epoch <= t + 900 and rec.get("mode") == "full" and rec.get("exit") == 0 and not isinstance(rec.get("exit"), bool)
-                and rec.get("verdict") == "PASS")
+                and rec.get("verdict") == "PASS" and rec.get("reused_full_pass") is False)   # lượt dùng lại một phần cũng log PASS
+                # (một suite chạy thật) nhưng mang PASS mượn: không cho mượn tiếp (review + OCR 17/10). Dòng không có field: không mượn.
     return False
 
 
@@ -5162,8 +5163,11 @@ def main():
     budget_fp = tested_fp or (tree_fp_of(project_dir) if budget_s > 0 and use_cache else None)
     budget_head = _head_sha(project_dir) if budget_fp and not force_reason else None   # the HEAD of the same moment: a Stop record names both
 
-    def reuse_from(found, budget_run=False):
-        """Mark every reusable suite PASS from `found`, the receipt (or the budget record) of this exact content; it, or None."""
+    def reuse_from(found, budget_run=False, partial=False):
+        """Mark every reusable suite PASS from `found`, the receipt (or the budget record) of this exact content; it, or None.
+        partial (biên nhận của worktree anh em): suite mà biên nhận KHÔNG có thì chạy thật, không huỷ cả lần dùng lại — merge gate #56
+        (17/10): scratch không có overlay checklist của worktree nên chạy thêm một suite STALE nhẹ, và vì biên nhận thiếu đúng suite đó
+        mà cả 4 suite nặng chạy lại. Suite biên nhận CÓ thì vẫn phải PASS."""
         prev = {x.get("id"): x for x in (found or {}).get("tests") or []}
         untested = set((found or {}).get("untested") or [])   # an exit-4 receipt: those run again
         try:
@@ -5182,7 +5186,7 @@ def main():
                         and 0 <= time.time() - ran_at(t) <= unity_max_s)
 
         reusable = [t for t in regression_tests if t.get("command") and reusable_suite(t)
-                    and t.get("id") not in untested]
+                    and t.get("id") not in untested and (not partial or t.get("id") in prev)]
         # a suite is matched by id AND, for the record, by the matrix command it passed under (a byte-equal matrix file under another --diff or
         # --matrix can name another command for the same id); a record that names none is not read
         if not (found and reusable and all(prev.get(t["id"], {}).get("status") == "PASS"
@@ -5198,6 +5202,9 @@ def main():
                       "label": tr(f"PASS (dùng lại kết quả lúc {at}, cùng nội dung)", f"PASS (reused from {at}, same content)")})
         if budget_run:
             print(f"    {CYAN}▶ {tr(f'dùng lại suite đã PASS trong lượt kiểu Stop trước lúc {at}: cùng nội dung, cùng HEAD, cùng cách đọc kết quả, cùng ma trận; suite chưa chạy thì chạy bây giờ (--no-cache để chạy lại hết)', f'reusing the suites that passed in the earlier Stop-style run of {at}: same content, HEAD, result format and matrix; the suites that did not run run now (--no-cache to re-run all)')}{RESET}")
+        elif partial and len(reusable) < sum(1 for t in regression_tests if t.get("command")):
+            n_run = sum(1 for t in regression_tests if t.get("command")) - len(reusable)
+            print(f"    {CYAN}▶ {tr(f'dùng lại {len(reusable)} suite đã PASS lúc {at} (cùng nội dung, cùng ma trận); chạy thật {n_run} suite còn lại', f'reusing {len(reusable)} suite(s) that passed at {at} (same content, same matrix); running the other {n_run} suite(s)')}{RESET}")
         else:
             print(f"    {CYAN}▶ {tr(f'dùng lại PASS đầy đủ lúc {at}: cùng nội dung, cùng cách đọc kết quả, cùng ma trận (--no-cache để chạy lại)', f'reusing the full PASS of {at}: same content, result format and matrix (--no-cache to re-run)')}{RESET}")
         return found
@@ -5229,7 +5236,7 @@ def main():
         fp = (fp or tree_fp_of(project_dir)) if siblings else fp   # một lần cho mọi biên nhận anh em, không phải mỗi file một lần
         for path in siblings:
             stamp = _file_stamp(path)
-            found = reuse_from(cached_full_pass(project_dir, args.matrix, fp, None, path))
+            found = reuse_from(cached_full_pass(project_dir, args.matrix, fp, None, path), partial=True)
             if found:
                 print(f"    {DIM}{tr(f'(biên nhận của worktree anh em: {path})', f'(sibling worktree receipt: {path})')}{RESET}")
                 reuse_src[0] = (path, stamp, None, True)
