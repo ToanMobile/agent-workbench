@@ -301,3 +301,4 @@
 1 tests/gates/test_review_claim_follow_worktree.sh
 5 tests/gates/test_review_gate_readonly_wip.sh
 6 tests/worktree_git/test_worktree_remove_branch.sh
+20 tests/worktree_git/test_worktree_finish_retry.sh
