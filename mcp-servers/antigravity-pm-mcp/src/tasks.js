@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
 import { ensureDir, writeJsonAtomic, readJsonIfExists, nowIso, slug, exists } from './util.js';
 import {
   checkTestChange, checkProofProvider, checkOracle, fileRacGocRepo, mustHaveOf, PROOF_KINDS, kiemKhuonResult, doiChieuKhaiTest,
-  fileCamDungTheoTask,
+  fileCamDungTheoTask, commitTheoTask, fileCamDung, chuanHoaDuongDan,
 } from './policy.js';
 import { createHash } from 'node:crypto';
 import { gateSnapshot } from './config.js';
@@ -475,6 +475,74 @@ export function recordProof(cfg, task, rec) {
   });
 }
 
+/**
+ * #22: moc commit cho commitPolicy=forbid = HEAD TRUOC lan giao trien khai DAU (null = khong chup duoc => gate lui ve commit
+ * goc, KHONG lay HEAD sau khi agent da nhan prompt). Da co moc / task giao truoc ban nay => giu nguyen (giao loi roi giao lai,
+ * rework khong doi moc). pm_dispatch goi ghiMocGiao TRUOC khi gui prompt; recordDispatch goi lai cho duong goi truc tiep.
+ */
+function datMocGiao(t, head, root) {
+  if (!('implementBaseCommit' in t) && !(t.dispatches || []).some((d) => d.kind === 'implement')) chupMoc(t, root, head());
+}
+
+/**
+ * Moc giao: HEAD (commitPolicy) + van tay file CAM dang ban (#22 AC2: file CAM doi SAU moc => gate CHAN du task khong khai).
+ * baselineForbidden: cac duong CAM da co anh chup (pm_plan them duong moi thi chupThemCam chup them). Git loi => anh rong (chat hon).
+ */
+function chupMoc(t, root, head) {
+  t.implementBaseCommit = head;
+  t.baselineForbidden = [...(t.forbiddenPaths || [])];
+  t.baselineDirty = camDangBan(root, t);
+}
+
+/**
+ * #22 AC2: { file CAM dang ban: sha256 | null (da xoa) } — --no-renames de ten CU cua `git mv` cung vao. Git loi => {} + ghi lich
+ * su: fail-closed, khong chup lai sau (chup muon se nuot thay doi agent lam trong luc do). ponytail: git status dong bo trong khoa
+ * task (cho khoa 5 s), 1 lan/task khi co forbiddenPaths — do 17/10: GeelyEx2 13.866 file ~0,3 s, timeout 3 s. Cay cham hon thi
+ * chuyen sang gitSnapshot async truoc khoa.
+ */
+function camDangBan(root, t, cam = t.forbiddenPaths || []) {
+  if (!cam.length) return {};
+  let out;
+  try {
+    out = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 16_000_000, timeout: 3000 });
+  } catch (e) {
+    // Ghi ly do de PM biet vi sao file CAM ban tu truoc van bi chan (khong co anh chup => tinh la doi sau luc giao).
+    addHistory(t, 'system', 'baseline_failed', String(e?.message || e).slice(0, 400));
+    return {};
+  }
+  const ban = out.split('\0').filter((e) => e.length > 3).map((e) => e.slice(3));
+  return Object.fromEntries(fileCamDung({ forbiddenPaths: cam }, ban).map((f) => [f, hashFile(path.resolve(root, f))]));
+}
+
+/**
+ * #22: pm_plan doi forbiddenPaths SAU luc giao => chup them file thuoc duong CAM MOI (doi truoc luc them / luc da go CAM la hop le,
+ * doi sau => CHAN). File thuoc duong van CAM tu truoc giu anh chup cu — chup lai se nuot thay doi agent da lam. Task chua co anh
+ * chup (giao truoc ban nay / chua giao) hoac khong doi gi => false (updateTask khong ghi). Git loi => anh rong cho duong moi
+ * (fail-closed nhu chupMoc).
+ */
+export function chupThemCam(root, t) {
+  if (!Array.isArray(t.baselineForbidden)) return false;
+  const khoa = (c) => chuanHoaDuongDan(c).normalize('NFC');
+  const hienTai = new Set((t.forbiddenPaths || []).map(khoa));
+  const cu = t.baselineForbidden.filter((c) => hienTai.has(khoa(c)));
+  const daCo = new Set(cu.map(khoa));
+  const moi = (t.forbiddenPaths || []).filter((c) => !daCo.has(khoa(c)));
+  if (!moi.length && cu.length === t.baselineForbidden.length) return false;
+  const anh = camDangBan(root, t, moi);
+  const goc = t.baselineDirty || {};
+  const chiMoi = (f) => !fileCamDung({ forbiddenPaths: cu }, [f]).length;
+  // Muc cu cua duong vua CAM lai (ban luc giao, roi hoan tac khi duoc phep) da cu => chup lai tu dau cho rieng duong moi.
+  for (const f of fileCamDung({ forbiddenPaths: moi }, Object.keys(goc))) if (chiMoi(f)) delete goc[f];
+  for (const [f, h] of Object.entries(anh)) if (chiMoi(f)) goc[f] = h;
+  t.baselineDirty = goc;
+  t.baselineForbidden = [...cu, ...moi];
+  return undefined;
+}
+
+export function ghiMocGiao(cfg, task) {
+  return updateTask(cfg, task, (t) => datMocGiao(t, () => headCommitOf(cfg.projectRoot), cfg.projectRoot));
+}
+
 /** Ghi nhan 1 lan giao viec / nhac viec cho agent. */
 /** rec.set: cac truong gan cung luc (conversationId, state...) — ap tren ban moi nhat, khong ghi de ca object cu. */
 export function recordDispatch(cfg, task, rec) {
@@ -484,6 +552,7 @@ export function recordDispatch(cfg, task, rec) {
     t.dispatches = t.dispatches || [];
     // Moc nay la mot phan cua cong nghiem thu: bang chung phai co SAU khi giao trien khai.
     if (rec.kind === 'implement' || rec.kind === 'rework') t.implementDispatchedAt = nowIso();
+    if (rec.kind === 'implement') datMocGiao(t, () => ('headCommit' in rec ? rec.headCommit : headCommitOf(cfg.projectRoot)), cfg.projectRoot);
     t.dispatches.push({
       kind: rec.kind,
       conversationId: rec.conversationId || t.conversationId,
@@ -515,6 +584,8 @@ export function markRework(cfg, task, feedback, findings = []) {
     // Huy bang chung thuoc ban code da bi sua. Giu nguyen lich su de truy nguoc.
     delete t.verdicts?.audit;
     delete t.verdicts?.review;
+    // #22: mo lai task DA ACCEPTED — commit tu luc nghiem thu la cua PM (forbid = PM tu commit) => moc commit = HEAD bay gio.
+    if (t.phase === 'ACCEPTED') chupMoc(t, cfg.projectRoot, headCommitOf(cfg.projectRoot));
     t.phase = 'IMPLEMENT';
     t.state = 'awaiting_agent';
     addHistory(t, 'pm', 'rework', String(feedback).slice(0, 4000));
@@ -652,9 +723,25 @@ export function gate(cfg, task, ctx = {}) {
 
   // DE XUAT 4 (Unity): cham file plan CAM dung => CHAN cung, khong ban.
   // 19/09: chi CHAN file quy duoc cho task nay (files_changed / scopeFiles); file cam cua phien khac => canh bao.
+  // #22 AC2: + file CAM doi SAU luc giao (gateCtx so voi anh chup baselineDirty) => CHAN du khong khai. Task da ACCEPTED khong
+  // xet phan nay (thay doi sau nghiem thu la cua PM / phien khac, giong commitPolicy).
   const cam = fileCamDungTheoTask(task, ctx.changedFiles, claimed);
-  if (cam.chan.length) missing.push(`Dung vao file plan CAM sua: ${cam.chan.join(', ')} — hoan tac phan do (sua tay), khong nghiem thu`);
-  if (cam.canhBao.length) warnings.push(`File CAM dang thay doi trong cay nhung task KHONG khai (phien khac / auto-commit?): ${cam.canhBao.slice(0, 20).join(', ')}${cam.canhBao.length > 20 ? ` … (+${cam.canhBao.length - 20})` : ''} — PM doi chieu pm_diff`);
+  const chanCam = new Set([...cam.chan, ...(task.phase === 'ACCEPTED' ? [] : ctx.camSauGiao || [])]);
+  const canhBaoCam = cam.canhBao.filter((f) => !chanCam.has(f));
+  if (chanCam.size) missing.push(`Dung vao file plan CAM sua: ${[...chanCam].join(', ')} — hoan tac phan do (sua tay), khong nghiem thu`);
+  if (canhBaoCam.length) warnings.push(`File CAM dang thay doi trong cay nhung task KHONG khai (phien khac / auto-commit?): ${canhBaoCam.slice(0, 20).join(', ')}${canhBaoCam.length > 20 ? ` … (+${canhBaoCam.length - 20})` : ''} — PM doi chieu pm_diff`);
+
+  // #22: commitPolicy=forbid — agent tu `git commit` thi git status sach; do bang file DA COMMIT ke tu commit goc.
+  // Khong co khoa committedFiles = goi truc tiep, khong xet (giong lastChangeAt). Task da ACCEPTED: commit sau do la
+  // cua PM (forbid = PM tu commit) — accept() xet cong TRUOC khi doi phase nen khong lot.
+  if ('committedFiles' in ctx && task.phase !== 'ACCEPTED') {
+    const cm = commitTheoTask(cfg, ctx.committedFiles);
+    const goc = `${String(task.implementBaseCommit || task.baseCommit || 'commit goc').slice(0, 8)}..HEAD`;
+    if (cm.unknown) missing.push(`CHUA XAC MINH duoc file da commit ${goc} (git loi, hoac moc bi mat sau rebase/gc) — commitPolicy=forbid can biet agent co tu commit khong`);
+    if (cm.chan.length) {
+      missing.push(`commitPolicy=forbid nhung co commit ${goc} (agent tu git commit? phien khac / PM commit giua chung?): ${cm.chan.slice(0, 20).join(', ')}${cm.chan.length > 20 ? ` … (+${cm.chan.length - 20})` : ''} — PM doi chieu git log ${goc}; khong phai cua agent thi tao task moi tu HEAD hien tai`);
+    }
+  }
 
   // DE XUAT 1c: dinh nghia SQL trung (create table x2) => CHAN; tang dong / khoi lap => canh bao.
   for (const b of ctx.lintBlockers || []) missing.push(`Nhan doi noi dung: ${b}`);
