@@ -212,6 +212,7 @@ full "$W" >/dev/null; full "$W" >/dev/null
 
 # ── nightly.py ───────────────────────────────────────────────────────────────────────────────────────────────────────
 pair c4
+git -C "$P" config devkit.trunkMode false   # the control is the classic main checkout: a trunk-mode main runs in a worktree of its own (test_nightly.sh)
 s_w="$(sig "$W")"
 python3 "$NIGHTLY" add "$P" >/dev/null 2>&1; python3 "$NIGHTLY" add "$W" >/dev/null 2>&1
 python3 "$NIGHTLY" run > "$TMP/nightly.out" 2>&1

@@ -1,0 +1,42 @@
+✔ setup: suites PASS
+✔ add: project list without duplicates
+✔ a suite broken since its PASS → FAIL recorded by the nightly run
+✔ heavy suite (Gradle) runs at night
+✔ nightly runs keep evidence logs
+✔ notification when a row turns red (project + suite)
+✔ all green → no red notification
+✔ red then green on re-run → FLAKY + notified
+✔ first run writes the weekly one-line report
+✔ still red next night → no repeat
+✔ weekly report once per 7 days
+✔ untrusted matrix → project skipped, said so
+✔ install writes the LaunchAgent (daily 02:17)
+✔ status shows the schedule and projects
+✔ uninstall removes it
+✔ remove drops a project
+✔ run <path>: runs that project although it is not registered
+✔ run <path>: only the named project runs, the registered ones do not
+✔ run <path>: the project list is untouched
+✔ run <path>: no weekly report, its 7-day slot stays free
+✔ run <path>: a path that is not a directory is refused (exit 2)
+✔ run <path>: a idle holder with a live pid keeps the checkout - skipped with 'skip: <reason>', nothing ran
+✔ run <path>: a active holder with a live pid keeps the checkout - skipped with 'skip: <reason>', nothing ran
+✔ run <path>: a old holder with a live pid keeps the checkout - skipped with 'skip: <reason>', nothing ran
+✔ run <path>: a lock whose pid is dead is free - the run goes ahead
+✔ run <path>: a session that took the checkout after the first suite stops the run before the next one
+✔ control: a free project's run starts red_proof once
+✔ a session that opens during the last suite: red_proof is not started, said so
+✔ run '': an empty or blank path is refused (exit 2) and said so
+✔ run '   ': an empty or blank path is refused (exit 2) and said so
+✔ run <good> '': one bad path refuses the whole run, the good one does not run first
+✔ run <p> <p>/ <symlink to p>: one repo runs once
+✔ run <good> plain: an explicit path that is no DevKit git root is exit 2 with its name, nothing runs
+✔ run <good> noag: an explicit path that is no DevKit git root is exit 2 with its name, nothing runs
+✔ run <good> outer: an explicit path that is no DevKit git root is exit 2 with its name, nothing runs
+✔ bare run: a registered project that is no DevKit project is still skipped with exit 0 (the LaunchAgent's call is unchanged)
+✔ bare run: a registered project an idle session holds is still run (the LaunchAgent path ignores sessions)
+✔ run <path>: a .git that points at a missing git dir is skipped with a reason, not run
+✔ run <path>: a trunk-mode main checkout holds no lock, so it is free: the suites run (a skip here deadlocked the night)
+✔ run <p> <P>: one repo spelled in two letter cases runs once (identity by inode)
+✔ run ~nosuchuser/x: exit 2 naming the path, no traceback
+✅ test_nightly: all passed

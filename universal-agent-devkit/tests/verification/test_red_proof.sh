@@ -119,6 +119,9 @@ python3 "$PROOF" "$P" --bug "$B3" --wait >/dev/null 2>&1
 [ "$(proof "$B3")" = PROVEN ] && ok "fix committed with its test → that commit is reverted → PROVEN (a wrong guess is INCONCLUSIVE, below)" || fail "committed: $(proof "$B3")"
 python3 "$PROOF" "$P" --bug "$B3" --fix-commit "$FIX" --wait >/dev/null 2>&1
 [ "$(proof "$B3")" = PROVEN ] && ok "--fix-commit: revert the fix in the sandbox → RED, HEAD → GREEN → PROVEN" || fail "revert: $(proof "$B3")"
+# revert mode keeps no patch path: the diff text built for the revert must not leak into the record's "patch" field
+PATCHFLD="$(python3 -c "import json;print(json.load(open('$P/.agents/regression_status.json'))['items']['$B3'].get('red_proof',{}).get('patch') or '')")"
+[ -z "$PATCHFLD" ] && ok "revert mode: red_proof record carries no patch field (the diff text stays local)" || fail "revert mode leaked a patch field: $(printf '%s' "$PATCHFLD" | head -c 80)"
 
 # ── fix + test committed together, another session's file uncommitted (agent-workbench
 #    2026-09-28): session mode took that file as "the fix", ran RED on HEAD (which has the fix)
