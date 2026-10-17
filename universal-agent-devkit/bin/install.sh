@@ -572,6 +572,9 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   fi
 
   # Keep local install state and *_old backups out of the project's commits.
+  # merge_markdown.py thay CẢ khối universal-agent-devkit:start/end bằng heredoc dưới đây: dòng nào repo tự thêm vào khối sẽ mất ở
+  # lần cài sau. `.agents/hooks/` (link cầu nối của bước 5c) phải nằm ở đây, đúng vị trí sau `.agents/devkit` (K7, 17/10: thiếu nó
+  # thì mỗi worktree mới có ` M .gitignore` và 7 link .agents/hooks/* chặn finish; tests/installer/test_gitignore_keeps_agents_hooks.sh).
   if [ -e "$TARGET_DIR/.git" ] || [ -f "$TARGET_DIR/.gitignore" ]; then
     GI_BLOCK="$(mktemp "${TMPDIR:-/tmp}/devkit-gitignore.XXXXXX")"
     cat > "$GI_BLOCK" <<'GI_EOF'
@@ -579,6 +582,7 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
 .claude/audit-gate/
 .agents/context/
 .agents/devkit
+.agents/hooks/
 .agents/regression_matrix.generated.json
 .devkit_backups.log
 .devkit-files
