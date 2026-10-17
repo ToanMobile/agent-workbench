@@ -4,7 +4,9 @@
 # song song (worktree do app tạo đều có branch riêng) branch cũ ứ lại và người dùng phải xoá tay.
 #   - branch đã gộp hết vào main và chưa publish: bị xoá cùng worktree
 #   - branch còn commit chưa có trong main: giữ (không mất commit nào)
-#   - branch đã publish (có upstream): giữ (remote là của người dùng)
+#   - branch đã publish (remote còn ref của nó): giữ (remote là của người dùng)
+#   - branch gộp bằng PR squash (17/10, PR #46: nội dung đã ở main nhưng commit không phải tổ tiên) và remote đã xoá nhánh: xoá
+#   - worktree dựng detached rồi mới `git switch -c` (state không ghi branch): branch vẫn được xét
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 export DEVKIT_LANG=en
@@ -35,13 +37,35 @@ bash "$KIT" worktree remove ../rb-y >"$TMP/y.out" 2>&1; rc=$?
 has_branch feat/y && ok "branch with commits not in main is kept (rc=$rc)" \
   || { fail "unmerged branch was deleted: its commit is lost"; cat "$TMP/y.out"; }
 
-# 3. branch đã gộp nhưng đã publish (có upstream): giữ
+# 3. branch đã gộp nhưng đã publish (remote còn ref của nó): giữ
+B="$TMP/remote.git"; git init -q --bare "$B"; G "$R" remote add origin "$B"
 bash "$KIT" worktree add ../rb-z feat/z >/dev/null 2>&1 || fail "add rb-z"
 echo z > "$TMP/rb-z/z.txt"; G "$TMP/rb-z" add -A && G "$TMP/rb-z" commit -qm z
 G "$R" merge -q --ff-only feat/z
-G "$R" config branch.feat/z.remote origin; G "$R" config branch.feat/z.merge refs/heads/feat/z
+G "$R" push -q -u origin feat/z 2>/dev/null
 bash "$KIT" worktree remove ../rb-z >"$TMP/z.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && has_branch feat/z && ok "merged but published branch is kept" \
   || { fail "published branch deleted or remove failed (rc=$rc)"; cat "$TMP/z.out"; }
+
+# 4. PR squash: commit của branch không phải tổ tiên của main, nhưng main đã có đúng nội dung; remote đã xoá nhánh (prune)
+#    nên upstream còn cấu hình mà ref đã mất. Worktree dựng detached, branch tạo sau bằng `switch -c` như luồng PR.
+bash "$KIT" worktree add ../rb-s >/dev/null 2>&1 || fail "add rb-s"
+DEVKIT_ALLOW_BRANCH=1 G "$TMP/rb-s" switch -q -c feat/s
+echo s > "$TMP/rb-s/s.txt"; G "$TMP/rb-s" add -A && G "$TMP/rb-s" commit -qm s
+G "$TMP/rb-s" push -q -u origin feat/s 2>/dev/null
+echo s > "$R/s.txt"; G "$R" add s.txt && G "$R" commit -qm "s (squash)"
+git --git-dir="$B" update-ref -d refs/heads/feat/s; G "$R" fetch -q --prune origin
+bash "$KIT" worktree remove ../rb-s >"$TMP/s.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ ! -d "$TMP/rb-s" ] && ! has_branch feat/s \
+  && ok "squash-merged branch whose remote is gone is deleted with its worktree" \
+  || { fail "squash-merged branch left behind (rc=$rc, branch $(has_branch feat/s && echo kept || echo gone))"; cat "$TMP/s.out"; }
+
+# 5. như 4 nhưng main CHƯA có nội dung đó: giữ, không mất commit
+bash "$KIT" worktree add ../rb-u >/dev/null 2>&1 || fail "add rb-u"
+DEVKIT_ALLOW_BRANCH=1 G "$TMP/rb-u" switch -q -c feat/u
+echo u > "$TMP/rb-u/u.txt"; G "$TMP/rb-u" add -A && G "$TMP/rb-u" commit -qm u
+bash "$KIT" worktree remove ../rb-u >"$TMP/u.out" 2>&1; rc=$?
+has_branch feat/u && ok "unmerged switched branch is kept (rc=$rc)" \
+  || { fail "unmerged branch created by switch -c was deleted: its commit is lost"; cat "$TMP/u.out"; }
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_remove_branch: all passed" || { echo "❌ test_worktree_remove_branch: $FAILS failed"; exit 1; }
