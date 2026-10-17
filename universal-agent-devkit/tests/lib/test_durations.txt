@@ -68,6 +68,7 @@
 3 tests/worktree_git/test_githooks.sh
 3 tests/installer/test_quick_install.sh
 3 tests/gates/test_gate_nontest_docs.sh
+3 tests/gates/test_gate_gitignore_no_test.sh
 3 hooks/tests/test_prompt_dedupe.sh
 3 tests/context_memory/test_budgets.sh
 4 tests/context_memory/test_giao_default.sh
