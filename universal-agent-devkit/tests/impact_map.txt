@@ -24,4 +24,4 @@ hooks/shell_norm.py   tests/gates/test_hardware_rm_containment.sh tests/gates/te
 # 17/10: lớp bọc nohup / time / bash -c và sed chỉ đọc ở trunk mode (bin/session_lock.py _trunk_unwrap, _gate_run).
 bin/session_lock.py   tests/context_memory/test_session_lock_trunk_wrappers.sh
 # 17/10: hooks/worktree_merge_gate.sh: lời khuyên khi xung đột (không git -C) và worktree của subagent còn sống (K10).
-hooks/worktree_merge_gate.sh   tests/gates/test_worktree_merge_gate_conflict_advice.sh
+hooks/worktree_merge_gate.sh   tests/gates/test_worktree_merge_gate_conflict_advice.sh tests/gates/test_worktree_merge_gate_subagent_live.sh
