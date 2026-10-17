@@ -1,0 +1,25 @@
+✖ L1: worktree gated, merged ff into main: the push from main is covered: exit 2, expected 0 with "covered by the gate receipt of the linked worktree" — chưa có biên nhận gate --full exit 0 (có head) cho code sắp push — chạy `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief` (exit 0) trên đúng code sẽ push, commit, rồi push lại | chưa có biên nhận gate --full exit 0 (có head) cho code sắp push
+✔ L2: an ungated commit on main after the merge is refused (exit 2)
+✔ L3: code changed in the worktree after its gate: refused (exit 2)
+✔ L3b: the gated commit rewritten after the gate (receipt head not in the pushed history): refused (exit 2)
+✔ L4: a forged worktree receipt (invented fingerprint): refused (exit 2)
+✔ L5: a linked worktree whose folder is gone (prunable) does not cover an ungated push (exit 2)
+✔ L6: a linked worktree without a regression matrix does not cover an ungated push (exit 2)
+✖ L7: worktree gated, then merged and removed by worktree finish: the push from main is covered: exit 2, expected 0 with "covered" — chưa có biên nhận gate --full exit 0 (có head) cho code sắp push — chạy `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief` (exit 0) trên đúng code sẽ push, commit, rồi push lại | chưa có biên nhận gate --full exit 0 (có head) cho code sắp push
+✔ L8: an ungated commit on main after worktree finish is refused (exit 2)
+✖ L9: main holds a stale valid receipt, a linked worktree's receipt covers the new head: the push is covered: exit 2, expected 0 with "covered by the gate receipt of the linked worktree" — chưa có biên nhận gate --full exit 0 (có head) cho code sắp push — chạy `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief` (exit 0) trên đúng code sẽ push, commit, rồi push lại | chưa có biên nhận gate --full exit 0 (có head) cho code sắp push
+✔ L10: a worktree at main's HEAD gated on uncommitted work does not cover main's untested HEAD (exit 2)
+✖ L11: merged with automerge --keep, then removed: the push from main is covered: exit 2, expected 0 with "covered" — chưa có biên nhận gate --full exit 0 (có head) cho code sắp push — chạy `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief` (exit 0) trên đúng code sẽ push, commit, rồi push lại | chưa có biên nhận gate --full exit 0 (có head) cho code sắp push
+✔ L12: a tag of an ungated commit is not covered by a linked worktree's remote view (exit 2)
+Traceback (most recent call last):
+  File "<stdin>", line 2, in <module>
+FileNotFoundError: [Errno 2] No such file or directory: '$TMP/repo/.git/postfix-gate/full_pass.json'
+✖ L13 setup: main holds no carried receipt
+✖ L13: a carried receipt whose carried_from names another project's run: refused: exit 2, expected 2 with "runs.jsonl" — chưa có biên nhận gate --full exit 0 (có head) cho code sắp push — chạy `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief` (exit 0) trên đúng code sẽ push, commit, rồi push lại | chưa có biên nhận gate --full exit 0 (có head) cho code sắp push
+✖ L14: a raising linked worktree broke the fallback: Traceback (most recent call last):
+  File "<stdin>", line 4, in <module>
+AttributeError: module 'push_gate' has no attribute '_own_check'
+✖ L15 setup: finish carried no receipt into main: ✔ worktree merged: đã gộp vào main và gỡ worktree
+✖ L15: a carried receipt gated on uncommitted work, that work reverted on main: refused: exit 2, expected 2 with "khác bản gate đã test" — chưa có biên nhận gate --full exit 0 (có head) cho code sắp push — chạy `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief` (exit 0) trên đúng code sẽ push, commit, rồi push lại | chưa có biên nhận gate --full exit 0 (có head) cho code sắp push
+✔ L16: a linked worktree without a receipt, its upstream holding main's ungated code, does not cover the push (exit 2)
+9 FAILED

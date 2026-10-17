@@ -220,13 +220,16 @@ def blobs(top, rev, paths):
     return {p: e[1] for p, e in entries(top, rev, paths).items()}
 
 
-def untestable_only(top, project, paths):
+def untestable_only(top, project, paths, rules_dir=None):
     """True when every path (repo-relative) is a file post-fix-gate's needs_no_test() says needs no
     test (docs, agent state, the agents' harness config) AND no rule of the project's active matrix
     watches it. The gate's own classifier and matcher are used — never a second rule (INSTINCT-015).
     2026-09-29 (Goods): a commit of .claude/settings.json alone could not be pushed without a full
-    gate, which REJECTed unrelated WIP in the working tree. Any doubt → False (a receipt is needed)."""
+    gate, which REJECTed unrelated WIP in the working tree. Any doubt → False (a receipt is needed).
+    rules_dir: where the matrix and the checklist (`covers` links) are read from, default `project`; issue #5: the receipt
+    of a linked worktree is judged by main's matrix and checklist, never by the worktree's own."""
     import importlib.util  # noqa: PLC0415
+    rules_dir = rules_dir or project
     prefix = os.path.relpath(project, top).replace(os.sep, "/")
     prefix = "" if prefix == "." else prefix + "/"
     rel = [p[len(prefix):] if p.startswith(prefix) else None for p in paths
@@ -238,10 +241,10 @@ def untestable_only(top, project, paths):
             "post_fix_gate", os.path.join(os.path.dirname(os.path.abspath(__file__)), "post-fix-gate.py"))
         pfg = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(pfg)
-        with open(os.path.join(project, MATRIX), encoding="utf-8") as f:
+        with open(os.path.join(rules_dir, MATRIX), encoding="utf-8") as f:
             rules = json.load(f).get("rules") or []
         # the gate's own "watched" rule: watch_files + files linked to a rule's tests (INSTINCT-015)
-        pfg.get_project_dir = lambda: pathlib.Path(project)
+        pfg.get_project_dir = lambda: pathlib.Path(rules_dir)
         covers = pfg.checklist_covers()
         pats = [w for r in rules if isinstance(r, dict) for w in pfg.rule_watch(r, covers)]
         return all(pfg.needs_no_test(p) and not any(pfg.match_pattern(p, w) for w in pats) for p in rel)
@@ -431,7 +434,8 @@ def run_log_has(rp, receipt):
         return False
     finally:
         os.close(fd)
-    t, name = float(receipt["time"]), os.path.basename(str(receipt["project"]))[:64]
+    # carried_from: biên nhận mà `worktree finish` chép từ worktree sang main (issue #5): dòng log mang tên project gốc của worktree
+    t, name = float(receipt["time"]), os.path.basename(str(receipt.get("carried_from") or receipt["project"]))[:64]
     for line in reversed(raw.splitlines()):
         try:
             rec = json.loads(line)
@@ -454,7 +458,8 @@ def receipt_problem(top, rp, receipt, rev="HEAD"):
     fingerprint equal to that of head+dirty rebuilt from git, and the run-log line of that run present; else what is wrong.
     Audit 2026-10-09: a hand-written {"exit": 0, "head": "<HEAD>"} let any push through.
     ponytail: the receipt and runs.jsonl are files this user can write: a forger who rebuilds the fingerprint the way
-    tree_fp.py does and appends a run-log line still passes; upgrade to a receipt signed with a key the agent cannot read
+    tree_fp.py does and appends a run-log line still passes - or, since issue #5, sets `carried_from` to any worktree's name and
+    `time` next to a real full PASS line of that worktree, no line appended; upgrade to a receipt signed with a key the agent cannot read
     (the user's keychain / ssh-agent) if a forged receipt is ever seen."""
     def number(v):
         return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf")
@@ -494,13 +499,50 @@ def receipt_problem(top, rp, receipt, rev="HEAD"):
     return None
 
 
-def check(cwd, rev="HEAD", tag_remote=None):
-    """(ok, reason)."""
+def linked_worktrees(top):
+    """Work trees of the repository other than top (`git worktree list --porcelain`); [] when git cannot say."""
+    rc, out = git(top, "worktree", "list", "--porcelain")
+    if rc != 0:
+        return []
+    return [ln[9:] for ln in out.splitlines() if ln.startswith("worktree ") and os.path.realpath(ln[9:]) != os.path.realpath(top)]
+
+
+def check(cwd, rev="HEAD", tag_remote=None, linked=False):
+    """(ok, reason). linked=True: chỉ xét biên nhận của chính worktree đó, không dự phòng tiếp."""
+    ok, reason = _own_check(cwd, rev, tag_remote, linked)
+    if ok or linked:
+        return ok, reason
+    # Trunk mode (issue #5): gate chạy trong linked worktree và ghi biên nhận dưới git dir của worktree đó; main chỉ nhận merge nên
+    # biên nhận của main (không có, hoặc cũ: bản `worktree finish` chép về lần trước) không phủ code sắp push. Biên nhận của từng
+    # linked worktree được xét theo cùng luật như của main, trừ một điểm: file nào "không cần test" do MA TRẬN VÀ CHECKLIST CỦA MAIN
+    # quyết (xem `rules_dir` trong _own_check), worktree không tự miễn test cho mình.
+    # ponytail: một lần gate --full FAIL mới hơn ở worktree anh em trên cùng nội dung không thu hồi biên nhận PASS cũ hơn (dòng
+    # runs.jsonl không ghi fingerprint để gắn FAIL với nội dung); nâng cấp: ghi fingerprint vào runs.jsonl và từ chối biên nhận có
+    # dòng full non-PASS mới hơn cùng fingerprint, khi thấy một suite flaky được push qua đường này.
+    top = toplevel(cwd)[0]
+    rc, sha = git(top, "rev-parse", "--verify", "-q", rev + "^{commit}") if top else (1, "")
+    skipped = []
+    for wt in linked_worktrees(top) if rc == 0 else []:
+        try:   # tag_remote=None: cách worktree nhìn remote (config riêng của worktree) không phải biên nhận; main đã tự hỏi remote rồi
+            covered = _own_check(wt, sha.strip(), None, linked=True)[0]
+        except (subprocess.SubprocessError, RuntimeError, OSError) as e:   # worktree hỏng dở: không phủ, nhưng không chặn các worktree khác
+            skipped.append(f"{wt} ({e})")
+            continue
+        if covered:
+            return True, f"covered by the gate receipt of the linked worktree {wt}"
+    if skipped:
+        reason += "; không xét được biên nhận của linked worktree: " + ", ".join(skipped[:3])
+    return ok, reason
+
+
+def _own_check(cwd, rev, tag_remote, linked):
+    """(ok, reason) theo biên nhận của chính checkout `cwd`; linked=True: không lối tắt nào ngoài một biên nhận thật."""
     top, why = toplevel(cwd)
     if why:
         return False, f"repository without a work tree here ({why}): cannot find the gate receipt"
     if top is None:
-        return True, "not a git repo"
+        # worktree đã mất thư mục (prunable) không phải "không có repo": nó không bảo lãnh được gì cho main
+        return (False, "linked worktree has no work tree") if linked else (True, "not a git repo")
     if tag_remote and on_remote_only(top, rev, tag_remote):
         return True, "a tag of commits the remote already has: nothing new is pushed"
     rp = tree_fp.receipt_path(top)
@@ -517,11 +559,14 @@ def check(cwd, rev="HEAD", tag_remote=None):
     project = receipt.get("project") if receipt and _inside(receipt.get("project"), top) else top
     homes = [d for d in (project, top, os.path.abspath(cwd)) if os.path.isfile(os.path.join(d, MATRIX))]
     if not homes:
-        return True, "no regression matrix"
+        # main có ma trận (nếu không thì main đã trả True); worktree không ma trận chưa chạy test hồi quy nào để bảo lãnh
+        return (False, "no regression matrix in this linked worktree") if linked else (True, "no regression matrix")
     problem = None
     if receipt is not None and receipt.get("exit") == 0 and receipt.get("head"):
         problem = receipt_problem(top, rp, receipt, rev)
     if receipt is None or problem or receipt.get("exit") != 0 or not receipt.get("head"):
+        if linked:
+            return False, "no usable receipt in this linked worktree"
         ok, why_not = approved(top, "@{u}.." + rev)
         if ok:
             return True, why_not
@@ -549,12 +594,28 @@ def check(cwd, rev="HEAD", tag_remote=None):
         raise RuntimeError("git diff failed")
     prefix = os.path.relpath(project, top).replace(os.sep, "/")
     prefix = "" if prefix == "." else prefix + "/"
-    changed = [p for p in out.split("\0") if p
-               and not any(p == prefix + e or p.startswith(prefix + e + "/") for e in tree_fp.EXCLUDE)]
+    def kept(p):
+        return p and not any(p == prefix + e or p.startswith(prefix + e + "/") for e in tree_fp.EXCLUDE)
+    changed = [p for p in out.split("\0") if kept(p)]
     dirty = receipt.get("dirty") or {}
+    if linked or receipt.get("carried_from"):
+        # biên nhận ghi blob của từng file dirty lúc gate chạy: so cả các file đó với rev, kể cả khi head..rev không đổi chúng
+        # (worktree ở HEAD của main có gate PASS nhờ sửa CHƯA commit thì không phủ HEAD của main; ca L10 của test). Biên nhận
+        # `worktree finish` chép sang main cũng vậy: sửa chưa commit đó được finish commit rồi main đảo lại thì head..rev rỗng (ca L15)
+        seen = set(changed)
+        changed += [p for p in dirty if kept(p) and p not in seen]
     now, then = blobs(top, rev, changed), blobs(top, head, changed)
     bad = [p for p in changed if now.get(p) != (dirty[p] if p in dirty else then.get(p))]
-    if bad and untestable_only(top, project, bad):
+    rules_dir = None
+    if linked:
+        # "không cần test" là quyết định của main (ma trận + liên kết covers trong checklist của main), không phải của worktree:
+        # worktree tự phân loại bằng checklist/ma trận của chính nó thì miễn được file main đang theo dõi (README.md→REG-1, ca L18).
+        # Không tìm được main hay ma trận của main thì untestable_only trả False: cần biên nhận phủ cả file đó.
+        rc, listing = git(top, "worktree", "list", "--porcelain")
+        main_top = listing.split("\n", 1)[0][9:] if rc == 0 and listing.startswith("worktree ") else ""
+        rules_dir = os.path.normpath(os.path.join(main_top, os.path.relpath(project, top))) if main_top else os.devnull
+    # linked: main quyết, và quy tắc chặt hơn mà riêng worktree có (liên kết covers git-ignored của nó) cũng giữ file lại (ca L19)
+    if bad and untestable_only(top, project, bad, rules_dir) and (not linked or untestable_only(top, project, bad)):
         return True, "files changed since the gate need no test (docs / agent config), none watched by the matrix"
     if bad:
         return False, (f"{len(bad)} file sắp push khác bản gate đã test (sửa/commit sau lần gate PASS): "

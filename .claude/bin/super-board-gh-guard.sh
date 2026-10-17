@@ -10,7 +10,7 @@
 # "0 remaining".
 #
 # Usage from a worker:
-#   source scripts/super-board-gh-guard.sh
+#   source .claude/bin/super-board-gh-guard.sh
 #   sb_gh_guard_check 200     # sleep until reset if GraphQL remaining < 200
 #   sb_gh_budget_spend 5      # decrement worker-local call budget; halt if 0
 #   sb_gh_guard_summary       # log remaining quota; safe to call frequently

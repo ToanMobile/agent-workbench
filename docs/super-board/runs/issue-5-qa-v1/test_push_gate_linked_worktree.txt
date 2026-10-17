@@ -1,0 +1,21 @@
+✔ L1: worktree gated, merged ff into main: the push from main is covered (exit 0)
+✔ L2: an ungated commit on main after the merge is refused (exit 2)
+✔ L3: code changed in the worktree after its gate: refused (exit 2)
+✔ L3b: the gated commit rewritten after the gate (receipt head not in the pushed history): refused (exit 2)
+✔ L4: a forged worktree receipt (invented fingerprint): refused (exit 2)
+✔ L5: a linked worktree whose folder is gone (prunable) does not cover an ungated push (exit 2)
+✔ L6: a linked worktree without a regression matrix does not cover an ungated push (exit 2)
+✔ L7: worktree gated, then merged and removed by worktree finish: the push from main is covered (exit 0)
+✔ L8: an ungated commit on main after worktree finish is refused (exit 2)
+✔ L9: main holds a stale valid receipt, a linked worktree's receipt covers the new head: the push is covered (exit 0)
+✔ L10: a worktree at main's HEAD gated on uncommitted work does not cover main's untested HEAD (exit 2)
+✔ L11: merged with automerge --keep, then removed: the push from main is covered (exit 0)
+✔ L12: a tag of an ungated commit is not covered by a linked worktree's remote view (exit 2)
+✔ L13: a carried receipt whose carried_from names another project's run: refused (exit 2)
+✔ L14: a linked worktree whose check raises is skipped, the next one covers the push
+✔ L15: a carried receipt gated on uncommitted work, that work reverted on main: refused (exit 2)
+✔ L16: a linked worktree without a receipt, its upstream holding main's ungated code, does not cover the push (exit 2)
+✔ L17 control: the exit-0 receipt covers the push (exit 0)
+✔ L17: a linked worktree receipt of the pushed content with exit 2 (UNVERIFIED / partial): refused (exit 2)
+ALL OK
+bash universal-agent-devkit/tests/gates/test_push_gate_linked_worktree.sh  12.37s user 12.07s system 85% cpu 28.513 total

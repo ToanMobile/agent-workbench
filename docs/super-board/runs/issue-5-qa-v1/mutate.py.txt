@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""QA mutation helper: mutate.py apply <file> <backup> <old> <new> | restore <file> <backup>.
+apply: copies <file> to <backup>, replaces the single occurrence of <old> with <new> (fails if not exactly one).
+restore: copies <backup> back over <file> and checks the bytes match."""
+import shutil
+import sys
+
+verb, path, backup = sys.argv[1], sys.argv[2], sys.argv[3]
+if verb == "apply":
+    old, new = sys.argv[4], sys.argv[5]
+    src = open(path, encoding="utf-8").read()
+    if src.count(old) != 1:
+        sys.exit(f"mutate: expected exactly one occurrence, found {src.count(old)}")
+    shutil.copy2(path, backup)
+    open(path, "w", encoding="utf-8").write(src.replace(old, new))
+    print(f"mutant applied to {path}")
+elif verb == "restore":
+    shutil.copy2(backup, path)
+    if open(path, "rb").read() != open(backup, "rb").read():
+        sys.exit("mutate: restore mismatch")
+    print(f"restored {path}")
+else:
+    sys.exit("usage: mutate.py apply|restore <file> <backup> [old new]")

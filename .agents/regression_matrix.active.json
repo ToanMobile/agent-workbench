@@ -211,6 +211,24 @@
           "command": "bash universal-agent-devkit/bin/agent-kit health -t ."
         }
       ]
+    },
+    {
+      "component": "super-board-runner",
+      "watch_files": [
+        ".claude/bin/super-board-*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-GITHUB-READ-01",
+          "name": "super-board github-read helper",
+          "command": "bash tests/super-board/test_github_read.sh"
+        },
+        {
+          "id": "REG-SB-RUNNER-LANES-01",
+          "name": "super-board runner lanes",
+          "command": "bash tests/super-board/test_runner_lanes.sh"
+        }
+      ]
     }
   ]
 }

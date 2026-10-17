@@ -2145,9 +2145,113 @@ def _conflict(wt, unmerged):
                            f"merge, fast-forwards main and removes the worktree)"), {"files": unmerged})
 
 
+def _carry_gate_receipt(main, wt):
+    """Issue #5 (trunk mode): biên nhận gate --full của worktree nằm dưới git dir riêng của nó và mất khi gỡ worktree, còn main chỉ nhận
+    merge nên `git push` từ main không còn biên nhận nào. Biên nhận nào bin/push_gate.py xác nhận phủ HEAD mới của main (cùng luật như
+    biên nhận của main) thì chép sang git dir của main: `project` trỏ về main, `carried_from` giữ project gốc để push_gate khớp dòng
+    runs.jsonl của lần gate đó (runs.jsonl ở common dir, sống qua việc gỡ worktree). Gọi sau mỗi lần main fast-forward (cả `--keep`
+    của hook Stop: worktree có thể bị gỡ sau đó bằng `worktree remove` / WorktreeRemove). Trả câu ghi chú cho thông báo, luôn nói đã
+    chép hay chưa; lỗi nào cũng chỉ thành ghi chú (fail-closed: không chép thì push từ main bị chặn tới khi gate lại)."""
+    try:
+        bin_dir = os.path.join(DEVKIT, "bin")
+        if bin_dir not in sys.path:
+            sys.path.insert(0, bin_dir)
+        import push_gate  # noqa: PLC0415 - module anh em trong bin/, chỉ nạp khi gộp xong
+        head = git(main, "rev-parse", "HEAD").stdout.strip()
+        if not push_gate.check(wt, head, linked=True)[0]:
+            return tr(" (không có biên nhận gate --full nào của worktree phủ HEAD mới của main: push từ main cần chạy gate lại)",
+                      " (no gate --full receipt of the worktree covers main's new HEAD: a push from main needs the gate again)")
+        receipt = json.loads(_read_regular(push_gate.tree_fp.receipt_path(wt), 4_000_000).decode("utf-8"))
+        rel = os.path.relpath(os.path.realpath(receipt["project"]), os.path.realpath(wt))
+        receipt = dict(receipt, project=os.path.normpath(os.path.join(main, rel)), carried_from=receipt["project"])
+        dst = push_gate.tree_fp.receipt_path(main)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst), prefix=".full_pass.")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(receipt, fh)
+            os.replace(tmp, dst)   # thay cả một symlink đặt sẵn ở dst, không ghi theo nó
+        except BaseException:
+            _unlink_quiet(tmp)
+            raise
+    except (Exception, SystemExit) as e:   # kit cài dở (ImportError), biên nhận hỏng, lỗi ghi: báo trong thông báo, không chặn việc gộp
+        return tr(f" (không chép được biên nhận gate sang main: {type(e).__name__}: {e}; push từ main cần chạy gate lại)",
+                  f" (the gate receipt could not be copied into main: {type(e).__name__}: {e}; a push from main needs the gate again)")
+    return tr(" (biên nhận gate --full đã chép sang main)", " (gate --full receipt copied into main)")
+
+
+IDENTICAL_OVERLAP_MAX = 500   # ponytail: kiểm từng đường dẫn trùng một lần hash-object; quá số này thì từ chối như cũ, nâng khi có repo cần
+
+
+def _stage_identical_overlap(main, main_head, w_head):
+    """17/10: main giữ CHƯA commit đúng nội dung mà commit của worktree mang về (bản triển khai chép thẳng vào main) thì `merge --ff-only`
+    từ chối dù không mất gì, và trunk mode cấm agent tự stage ở main: không ai gộp được. Stage đúng các đường dẫn trùng khi MỌI đường dẫn
+    đều: index ở main còn bằng HEAD, là file thường (không link, không thư mục), mode và byte giống hệt blob commit mang về; file chưa track
+    chỉ khi git không ignore nó. Một đường dẫn sai là không stage gì: git từ chối như trước. Trả về danh sách đã stage ([] nếu không)."""
+    r = git(main, "diff", "--no-renames", "--name-status", "-z", main_head, w_head, check=False)
+    if r.returncode:
+        return []
+    parts = [p for p in r.stdout.split("\0") if p]
+    changes = dict(zip(parts[1::2], parts[0::2]))   # đường dẫn -> A/M/D/T
+    if not changes:
+        return []
+    dirty = git(main, "diff", "--name-only", "-z", check=False)
+    cached = git(main, "diff", "--cached", "--name-only", "-z", check=False)
+    # chỉ file commit thêm vào mà main đang có sẵn trên đĩa mới cần hỏi git (commit thêm hàng nghìn file thì argv không phình)
+    added = [p for p, s in changes.items() if s == "A" and os.path.lexists(os.path.join(main, p))]
+    if len(added) > IDENTICAL_OVERLAP_MAX:
+        return []
+    untracked = git(main, "ls-files", "--others", "--exclude-standard", "-z", "--", *(":(literal)" + p for p in added), check=False) if added else None
+    if dirty.returncode or cached.returncode or (untracked is not None and untracked.returncode):
+        return []
+    dirty_set, cached_set = set(dirty.stdout.split("\0")) - {""}, set(cached.stdout.split("\0")) - {""}
+    untracked_set = set(untracked.stdout.split("\0")) - {""} if untracked is not None else set()
+    # file commit thêm vào: chỉ khi CHƯA track (một entry `git add -N` của phiên khác hiện trong `git diff`, không trong --cached)
+    overlap = [p for p in changes if (p in untracked_set if changes[p] == "A" else p in dirty_set)]
+    if not overlap or len(overlap) > IDENTICAL_OVERLAP_MAX or any(p in cached_set or changes[p] not in ("A", "M") for p in overlap):
+        return []
+    tree = git(main, "ls-tree", "-z", w_head, "--", *(":(literal)" + p for p in overlap), check=False)
+    if tree.returncode:
+        return []
+    want = {}
+    for line in (l for l in tree.stdout.split("\0") if l):
+        meta, _, path = line.partition("\t")
+        mode, kind, oid = meta.split()
+        want[path] = (mode, oid)
+    for p in overlap:
+        mode, oid = want.get(p, (None, None))
+        if mode not in ("100644", "100755"):   # link, submodule: không tự xử lý (A.4)
+            return []
+        full = os.path.join(main, p)
+        try:
+            st = os.lstat(full)   # lstat: link trỏ tới file thường không được tính là file thường
+            if not stat.S_ISREG(st.st_mode) or ("100755" if st.st_mode & 0o100 else "100644") != mode:
+                return []
+            data = _read_regular(full)   # không treo trên FIFO (INSTINCT-040)
+        except OSError:
+            return []
+        h = git(main, "hash-object", "--no-filters", "--stdin", inp=data, check=False)
+        if h.returncode or h.stdout.decode("ascii", "replace").strip() != oid:
+            return []
+    specs = [":(literal)" + p for p in overlap]
+    if git(main, "add", "--", *specs, check=False, bounded=False).returncode == 0:
+        staged = git(main, "ls-files", "-s", "-z", "--", *specs, check=False)
+        got = {}
+        for line in (l for l in staged.stdout.split("\0") if l):
+            meta, _, path = line.partition("\t")
+            m, o, _stage = meta.split()
+            got[path] = (m, o)
+        if staged.returncode == 0 and all(got.get(p) == want[p] for p in overlap):
+            return overlap
+    # main đổi giữa lúc kiểm và lúc add (phiên khác ghi): trả index về HEAD, đúng trạng thái trước đó (index bằng HEAD là điều kiện ở trên)
+    git(main, "reset", "-q", "--", *specs, check=False, bounded=False)
+    return []
+
+
 def automerge(cwd, wt, keep=False):
     """Merge a worktree's work into the main branch and remove it (`keep`: leave it in place, W1 R3). (status, message, extra); status: merged | nothing | conflict | blocked.
-    Main's working tree is only ever touched by `git merge --ff-only`, so another session's uncommitted or staged files are safe."""
+    Main's working tree is only ever touched by `git merge --ff-only`, so another session's uncommitted or staged files are safe (its index
+    only for paths whose uncommitted copy is identical to what the merge brings: _stage_identical_overlap)."""
     main = main_checkout(cwd)
     if not _same_path(git(cwd, "rev-parse", "--show-toplevel").stdout.strip(), main):
         return "blocked", tr(f"chạy từ MAIN checkout ({main})", f"run it from the MAIN checkout ({main})"), {}
@@ -2277,10 +2381,16 @@ def _automerge_locked(cwd, main, wt, keep=False):
                 continue   # main moved while merging / gating: another round
             # --no-overwrite-ignore: git's default overwrites IGNORED files and folders of main with what the merge brings (A.4: a committed
             # link replaced main's real node_modules/); git checks every path before it writes one, so a refusal leaves main as it was
+            try:
+                staged = _stage_identical_overlap(main, main_head, w_head)
+            except ValueError:   # tên file không phải UTF-8 (git chạy ở text mode, lỗi trước mọi `git add`): không tự stage, git từ chối như cũ
+                staged = []
             r = git(main, "merge", "--ff-only", "--no-overwrite-ignore", w_head, check=False, bounded=False)
             if r.returncode == 0:
                 status = "merged"
                 break
+            if staged:   # ff vẫn hỏng vì lý do khác: trả index các đường dẫn vừa stage về HEAD như trước
+                git(main, "reset", "-q", "--", *(":(literal)" + p for p in staged), check=False, bounded=False)
             err = r.stdout + r.stderr
             files = [l.strip() for l in err.splitlines() if l.startswith("\t")]
             if "untracked working tree files would be" in err or "would lose untracked files" in err:
@@ -2301,9 +2411,10 @@ def _automerge_locked(cwd, main, wt, keep=False):
             mlock.close()
     if status is None:
         return "blocked", tr("main liên tục có commit mới trong lúc gộp: chạy lại", "main kept moving while merging: run it again"), {}
+    receipt_note = _carry_gate_receipt(main, wt)   # issue #5: trước cả nhánh --keep, vì worktree có thể bị gỡ sau đó mà không qua đây
     if keep:
         return status, (tr("đã gộp vào main; worktree giữ lại (--keep)", "merged into main; the worktree is kept (--keep)") if status == "merged"
-                        else tr("không có gì chưa về main; worktree giữ lại (--keep)", "nothing that was not in main; the worktree is kept (--keep)")), {"kept": True}
+                        else tr("không có gì chưa về main; worktree giữ lại (--keep)", "nothing that was not in main; the worktree is kept (--keep)")) + receipt_note, {"kept": True}
     saved = []
     try:
         for rel in _unsaved_memory(wt, main):   # notes only the worktree's own (git-ignored) agent-memory folder holds: a removal would delete them
@@ -2361,6 +2472,7 @@ def _automerge_locked(cwd, main, wt, keep=False):
     note = (tr(f" ({len(saved)} memory note đã chép sang main: {', '.join(saved[:5])})", f" ({len(saved)} memory note(s) copied into main: {', '.join(saved[:5])})") if saved else "")
     note += (tr(f" ({len(carried)} file bí mật bị git ignore đã chép sang main, ở đó vẫn bị ignore: {', '.join(carried[:5])})",
                 f" ({len(carried)} git-ignored secret file(s) copied into main, ignored there too: {', '.join(carried[:5])})") if carried else "")
+    note += receipt_note
     return status, (tr("đã gộp vào main và gỡ worktree", "merged into main and the worktree is removed") if status == "merged"
                     else tr("không có gì chưa về main; đã gỡ worktree", "nothing that was not in main; the worktree is removed")) + note, {"memory_saved": saved, "secrets_saved": carried}
 
