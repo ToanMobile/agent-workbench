@@ -38,6 +38,7 @@
 1 tests/installer/test_ocr_review_helper.sh
 13 tests/gates/test_gate_friction.sh
 13 tests/gates/test_proof_capture.sh
+13 tests/installer/test_gitignore_keeps_agents_hooks.sh
 12 tests/verification/test_bug_capture.sh
 11 tests/verification/test_impacted_tests.sh
 10 tests/verification/test_flaky.sh
