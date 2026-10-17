@@ -65,6 +65,10 @@ RUN_DATE=$(date +%Y-%m-%d)
 RUN_MANIFEST="docs/super-board/runs/${RUN_DATE}-${CONFIG_SLUG}.md"
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
+# Dùng lại bộ lọc worker theo repo của runner (startup_orphan_workers). Source TRƯỚC các helper bên dưới để
+# log/read_lock/kill_pid của stop đè bản của runner; INFLIGHT_DIR đã đặt nên `:=` của runner giữ nguyên.
+[ ! -f "$SCRIPT_DIR/super-board-run.sh" ] || SB_LIB_ONLY=1 . "$SCRIPT_DIR/super-board-run.sh"
+
 # ───────────────────────────── helpers ─────────────────────────────
 log() {
   printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"
@@ -153,6 +157,48 @@ kill_pid() {
   fi
 }
 
+own_dispatcher_pids() {
+  # $1 = thư mục repo, $2 = slug. In PID runner `bash|sh <repo>/.claude/bin/super-board-run.sh <slug>` của CHÍNH
+  # repo và slug này. 17/10 07:54 `pgrep -f 'super-board-run\.sh'` khớp runner (và shell nohup bọc ngoài) của cả 5
+  # board nên stop một board tắt cả 5. Đường dẫn script so nguyên token (repo `X-2` không khớp `X`); argv[0] phải là
+  # bash/sh và script là tham số đầu tiên không phải cờ (shell `sh -c "cd … && nohup …"` bọc ngoài và shell chẩn
+  # đoán có token đầu là cd/grep nên bị loại). Đường dẫn tương đối thì xác minh cwd bằng lsof; không đọc được cwd
+  # thì không dừng (báo ra stderr).
+  local root="$1" slug="$2" phys pid exe rest script arg i cwd
+  local -a toks
+  phys=$(cd "$root" && pwd -P)
+  while read -r pid exe rest; do
+    [ -n "$pid" ] && [ "$pid" != "$$" ] && [ -n "$rest" ] || continue
+    case "${exe##*/}" in bash|sh) ;; *) continue ;; esac
+    read -r -a toks <<< "$rest"
+    i=0; script=""
+    while [ "$i" -lt "${#toks[@]}" ]; do
+      case "${toks[$i]}" in -*) i=$((i + 1)) ;; *) script="${toks[$i]}"; break ;; esac
+    done
+    [ -n "$script" ] || continue
+    script=${script#[\'\"]}; script=${script%[\'\"]}
+    [ "${script##*/}" = "super-board-run.sh" ] || continue
+    arg="${toks[$((i + 1))]:-}"
+    if [ -z "$arg" ]; then
+      [ "$(cat .claude/super-board/active 2>/dev/null)" = "$slug" ] || continue   # runner không đối số đọc `active`
+    elif [ "$arg" != "$slug" ]; then
+      continue
+    fi
+    case "$script" in
+      /*) [ "$script" = "$root/.claude/bin/super-board-run.sh" ] || [ "$script" = "$phys/.claude/bin/super-board-run.sh" ] || continue ;;
+      *)
+        cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1 || true)
+        if [ -z "$cwd" ]; then
+          log "  ⚠ runner pid=${pid} chạy bằng đường dẫn tương đối, không đọc được cwd: không dừng (kiểm tra: ps -ww -o command= -p ${pid})" >&2
+          continue
+        fi
+        cwd="${cwd%/}/${script#./}"
+        [ "$cwd" = "$root/.claude/bin/super-board-run.sh" ] || [ "$cwd" = "$phys/.claude/bin/super-board-run.sh" ] || continue ;;
+    esac
+    echo "$pid"
+  done < <(ps -ww -A -o pid= -o command= 2>/dev/null || true)
+}
+
 # ───────────────────────────── main ─────────────────────────────
 echo "════════════════════════════════════════════════════════"
 echo "  super-board stop · ${CONFIG_SLUG}"
@@ -171,8 +217,16 @@ if [ -d "$INFLIGHT_DIR" ]; then
   done
 fi
 
-DISPATCHER_PIDS=$(pgrep -f 'super-board-run\.sh' 2>/dev/null || true)
-ORPHAN_WORKERS=$(pgrep -f 'claude -p .*super-board' 2>/dev/null || true)
+# Chỉ runner và worker của repo này (worker có lock đã nằm trong WORKERS ở trên).
+DISPATCHER_PIDS=$(own_dispatcher_pids "$PWD" "$CONFIG_SLUG" | tr '\n' ' ')
+DISPATCHER_PIDS=${DISPATCHER_PIDS% }
+ORPHAN_WORKERS=""
+if declare -F startup_orphan_workers >/dev/null; then
+  ORPHAN_WORKERS=$(startup_orphan_workers "$PWD" | tr '\n' ' ')
+  ORPHAN_WORKERS=${ORPHAN_WORKERS% }
+else
+  log "⚠ super-board-run.sh thiếu startup_orphan_workers: không quét worker mồ côi (cài runner cùng bản với stop)"
+fi
 CODEX_WAVE_MARKER=".claude/super-board/codex-wave.pid"
 CODEX_WAVE_PID=""
 if [ -f "$CODEX_WAVE_MARKER" ]; then
