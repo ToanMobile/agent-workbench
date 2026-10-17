@@ -16,6 +16,7 @@ trap 'rm -rf "$TMP"' EXIT
 FAILS=0
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 COUNT="$TMP/runs.txt"
+COUNT2="$TMP/runs2.txt"   # REG-2: suite thứ hai, chỉ ca 18 đếm nó
 SIB_MSG="biên nhận của worktree anh em"   # DEVKIT_LANG=vi (clean_git_env.sh)
 
 R="$TMP/repo"
@@ -24,7 +25,8 @@ git init -q -b main . && git config user.email t@t && git config user.name t
 echo "fun ok() = 1" > src/Core.kt
 cat > matrix.json <<JSON
 {"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
- "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"echo run >> '$COUNT'; test ! -f .hong"}]}]}
+ "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"echo run >> '$COUNT'; test ! -f .hong"},
+                               {"id":"REG-2","name":"core2","command":"echo run >> '$COUNT2'"}]}]}
 JSON
 printf '.hong\n' > .gitignore   # .hong (bị ignore, ngoài fingerprint): suite FAIL ở đúng thư mục có nó
 git add -A && git commit -qm init
@@ -201,6 +203,41 @@ add_wt wt-r
 mkdir -p "$TMP/wt-r/.claude/audit-gate" && : > "$TMP/wt-r/.claude/audit-gate/test_run.lock"
 b=$(runs); out="$(run_gate "$TMP/wt-r")"; rc=$?
 check "16. thư mục có test_run.lock (lượt trước bị kill): không mượn, chạy suite" 0 1 no "$b" "$rc" "$out"
+
+# 18. Biên nhận anh em THIẾU một suite mà lượt này phải chạy (17/10, merge gate #56: scratch không có overlay checklist của worktree nên
+#     chạy thêm suite STALE REG-DK-COST-01, biên nhận không có nó, cả 4 suite nặng chạy lại): dùng lại suite biên nhận đã PASS, chạy thật
+#     suite thiếu.
+runs2() { [ -f "$COUNT2" ] && wc -l < "$COUNT2" | tr -d ' ' || echo 0; }
+wipe_receipts
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); r["tests"]=[t for t in r["tests"] if t["id"]!="REG-2"]; json.dump(r, open(sys.argv[2], "w"))' \
+  "$LEND" "$MAIN_RECEIPT" || fail "18. setup"
+add_wt wt-t
+b=$(runs); b2=$(runs2); out="$(run_gate "$TMP/wt-t")"; rc=$?
+check "18. biên nhận anh em thiếu REG-2: dùng lại REG-1 (không chạy)" 0 0 yes "$b" "$rc" "$out"
+[ "$(( $(runs2) - b2 ))" = 1 ] && echo "✔ 18. suite thiếu (REG-2) chạy thật" || fail "18. suite thiếu REG-2 không chạy đúng 1 lần ($(( $(runs2) - b2 )))"
+printf '%s\n' "$out" | grep -qF "chạy thật 1 suite" && echo "✔ 18. output nói rõ chỉ dùng lại một phần" || fail "18. output không nói suite nào chạy thật"
+
+# 18b. Biên nhận của lượt mượn MỘT PHẦN (run-log PASS vì REG-2 chạy, nhưng reused_full_pass) không cho mượn tiếp (review + OCR 17/10):
+#      REG-1 trong đó là PASS mượn. tested_at đặt = time − 1 s (lượt mượn nhanh, review đo 3,77 s): luật tested_at qua được, chỉ luật
+#      reused_full_pass của dòng run-log chặn.
+python3 -c 'import json,sys; p=sys.argv[1]; r=json.load(open(p)); r["tested_at"]=r["time"]-1; json.dump(r, open(p, "w"))' "$(receipt_of "$TMP/wt-t")" \
+  || fail "18b. setup: không sửa được tested_at của wt-t"
+rm -f "$MAIN_RECEIPT"   # chỉ còn biên nhận của wt-t
+add_wt wt-u
+b=$(runs); b2=$(runs2); out="$(run_gate "$TMP/wt-u")"; rc=$?
+check "18b. biên nhận của lượt mượn một phần không cho mượn tiếp: REG-1 chạy" 0 1 no "$b" "$rc" "$out"
+[ "$(( $(runs2) - b2 ))" = 1 ] && echo "✔ 18b. REG-2 chạy" || fail "18b. REG-2 không chạy đúng 1 lần"
+
+# 18c. Suite CÓ trong biên nhận anh em mà không PASS (UNTESTED) → huỷ cả lần dùng lại, mọi suite chạy.
+wipe_receipts
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1]))
+for t in r["tests"]:
+    if t["id"] == "REG-2": t["status"] = "UNTESTED"
+json.dump(r, open(sys.argv[2], "w"))' "$LEND" "$MAIN_RECEIPT" || fail "18c. setup"
+add_wt wt-v
+b=$(runs); b2=$(runs2); out="$(run_gate "$TMP/wt-v")"; rc=$?
+check "18c. suite có trong biên nhận anh em mà không PASS: REG-1 chạy" 0 1 no "$b" "$rc" "$out"
+[ "$(( $(runs2) - b2 ))" = 1 ] && echo "✔ 18c. REG-2 chạy" || fail "18c. REG-2 không chạy đúng 1 lần"
 
 # 17. Một dòng runs.jsonl lồng quá sâu (RecursionError khi json.loads, review 17/10 P2) không được làm gate crash: dòng đó bị bỏ qua.
 #     Để CUỐI: file run-log dùng chung cho mọi ca sau nó.
