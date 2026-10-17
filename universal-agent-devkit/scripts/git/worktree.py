@@ -1661,7 +1661,10 @@ def cmd_remove(cwd, args):
         die(tr(f"không kiểm tra được {wt} (tên file không phải UTF-8: {e}) — không gỡ", f"cannot check {wt} (a file name that is not UTF-8: {e}) - nothing removed"), 1)
     state = load_state(wt)
     main = main_checkout(cwd)
-    wt = next((e["path"] for e in _worktree_entries(main) if _same_path(e["path"], wt)), wt)   # git's own spelling: a link to the worktree is not the folder
+    entry = next((e for e in _worktree_entries(main) if _same_path(e["path"], wt)), None)
+    wt = entry["path"] if entry else wt   # git's own spelling: a link to the worktree is not the folder
+    # Worktree dựng detached rồi `git switch -c` (luồng PR): state không ghi branch, git vẫn biết nó đang ở branch nào.
+    branch = state.get("branch") or (entry or {}).get("branch")
     # Verified above: nothing but the recorded setup and ignored files is left, so
     # --force here drops no work (plain `remove` refuses any untracked file).
     try:
@@ -1679,14 +1682,11 @@ def cmd_remove(cwd, args):
         names = ", ".join((left or stuck)[:5]) or r.stderr.strip()[-200:]
         die(tr(f"{wt} KHÔNG xoá hết được (git đã gỡ đăng ký nên không ai còn thấy nó): {names}. Người dùng: `{_by_hand(wt)}`",
                f"{wt} could NOT be deleted completely (git has dropped its registration, so no guard lists it any more): {names}. The user runs `{_by_hand(wt)}`"), 1)
-    branch = state.get("branch")
-    # Người dùng 17/10: branch cũ phải tự đi cùng worktree. Chỉ khi nó đã nằm trọn trong HEAD của main và chưa publish (không ref
-    # remote / upstream: remote là của người dùng); `branch -d` tự từ chối branch chưa gộp, nên không commit nào mất.
+    # Người dùng 17/10: branch cũ phải tự đi cùng worktree. Chỉ khi remote không còn ref của nó (chưa publish, hoặc remote đã xoá
+    # sau khi PR gộp: remote là của người dùng) và nội dung của nó đã nằm trọn trong HEAD của main.
     gone = bool(branch) and branch != _trunk_branch(main) \
-        and _is_ancestor(main, f"refs/heads/{branch}", git(main, "rev-parse", "HEAD").stdout.strip()) \
         and not git(main, "for-each-ref", "--format=%(refname)", f"refs/remotes/*/{branch}", check=False).stdout.strip() \
-        and not git(main, "config", "--get", f"branch.{branch}.remote", check=False).stdout.strip() \
-        and git(main, "branch", "-d", "--", branch, check=False).returncode == 0
+        and _branch_in_main(main, branch)
     print(f"✔ {tr('đã gỡ', 'removed')} {wt}" + (f"; {tr('nhánh', 'branch')} {branch} "
           + (tr("đã gộp vào main nên đã xoá", "was merged into main and is deleted") if gone
              else tr("giữ lại (xoá khi đã merge: git branch -d ", "kept (delete once merged: git branch -d ") + branch + ")") if branch else ""))
@@ -1697,6 +1697,23 @@ def cmd_remove(cwd, args):
                         f"{len(notes)} memory note(s) saved in the worktree's OWN claude-auto folder (not in the main checkout's) went with it: {shown}. "
                         f"Next time: copy them into {os.path.join(main, MEMORY_REL)} BEFORE removing, or create the worktree with --share-memory."), file=sys.stderr)
     return 0
+
+
+def _branch_in_main(main, branch):
+    """Xoá `branch` khi mọi thứ của nó đã có trong HEAD của main; True khi đã xoá. Gộp thường (tổ tiên): `branch -d`, git tự từ
+    chối nếu sai. Gộp bằng PR squash (commit không phải tổ tiên): chỉ khi gộp thử branch vào main (merge-tree, không đụng cây làm
+    việc) ra đúng cây của main, tức branch không mang thêm gì; xung đột hay khác một byte là giữ."""
+    head = git(main, "rev-parse", "HEAD", check=False).stdout.strip()
+    ref = f"refs/heads/{branch}"
+    if not head:
+        return False
+    if _is_ancestor(main, ref, head):
+        return git(main, "branch", "-d", "--", branch, check=False).returncode == 0
+    merged = git(main, "merge-tree", "--write-tree", head, ref, check=False)
+    tree = git(main, "rev-parse", f"{head}^{{tree}}", check=False).stdout.strip()
+    if merged.returncode != 0 or not tree or merged.stdout.split("\n", 1)[0].strip() != tree:
+        return False
+    return git(main, "branch", "-D", "--", branch, check=False).returncode == 0
 
 
 AUTOMERGE_LOCK = "devkit-automerge.lock"
