@@ -16,7 +16,20 @@
     "runs_dir": "docs/super-board/runs"
   },
   "human_approves_merge": false,
-  "merge_policy": { "default": "auto", "auto_max_lines": 400, "allow_auto_on_production": false },
+  "merge_policy": {
+    "default": "auto",
+    "auto_max_lines": 400,
+    "allow_auto_on_production": false,
+    "size_exclude": [
+      "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/bun.lockb", "**/bun.lock",
+      "**/npm-shrinkwrap.json", "**/Cargo.lock", "**/poetry.lock", "**/uv.lock", "**/Pipfile.lock",
+      "**/Gemfile.lock", "**/composer.lock", "**/go.sum", "**/Podfile.lock", "**/pubspec.lock",
+      "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*",
+      "**/*.min.js", "**/*.min.css", "**/*.map", "**/*.pb.go", "**/*_pb2.py",
+      "**/__snapshots__/**", "**/*.snap",
+      "docs/super-board/runs/**"
+    ]
+  },
   "migrations": {
     "globs": ["supabase/migrations/**", "prisma/migrations/**", "drizzle/**", "**/migrations/*.sql", "db/migrate/**", "alembic/versions/**"],
     "allowed_envs": ["test", "staging"],
