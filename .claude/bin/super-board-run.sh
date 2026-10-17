@@ -723,6 +723,30 @@ own_lane_pids() {
   done
 }
 
+startup_orphan_workers() {
+  # $1 = thư mục repo (đúng giá trị dispatch_lane đưa vào `--root '…'` của prompt). In PID của worker super-board
+  # (claude/agy/grok) thuộc CHÍNH repo này mà không lock nào trong inflight/ trỏ tới: worker có lock đã được
+  # adopt_live_locks nhận lại. So chuỗi cố định kèm dấu nháy đóng (repo `X-2` không khớp repo `X`), và argv[0] phải
+  # là claude/agy/grok để shell chẩn đoán có chuỗi đó trong tham số không bị tính (21:52 ngày 16/10).
+  local root="$1" locked=" " lock issue pid cmd exe
+  for lock in "$INFLIGHT_DIR"/*; do
+    [ -f "$lock" ] || continue
+    issue=$(basename "$lock")
+    case "$issue" in *[!0-9]*|'') continue ;; esac
+    read_lock "$issue" || continue
+    [ -n "$PID" ] && locked="${locked}${PID} "
+  done
+  # ps lỗi thì không có dòng nào: không chặn khởi động (adopt_live_locks vẫn chạy sau đó).
+  while read -r pid cmd; do
+    [ -n "$pid" ] && [ "$pid" != "$$" ] || continue
+    case "$cmd" in *"--root '${root}'"*"for super-board run"*) ;; *) continue ;; esac
+    exe=${cmd%% *}
+    case "${exe##*/}" in claude|agy|grok) ;; *) continue ;; esac
+    case "$locked" in *" $pid "*) continue ;; esac
+    echo "$pid"
+  done < <(ps -ww -A -o pid= -o command= 2>/dev/null || true)
+}
+
 check_legacy_worktrees() {
   # Never strand a previous run's edits by silently switching its folder.
   local wt
@@ -909,13 +933,11 @@ gh_checkpoint
 # ───────────────────────────── preconditions ─────────────────────────────
 log "super-board run started — config=${CONFIG_SLUG} base=${BASE_BRANCH} tick=${TICK_SECONDS}s max_workers=${MAX_WORKERS} no_progress_cycles=${NO_PROGRESS_CYCLES} max_dispatches=${MAX_DISPATCHES}"
 
-# Orphan-worker guard. `|| true` defends against pipefail when pgrep finds nothing.
-ORPHANS=$(pgrep -f 'claude -p .*super-board run' 2>/dev/null | grep -v "^$$\$" | wc -l | tr -d ' ' || true)
-ORPHANS=${ORPHANS:-0}
-if [ "$ORPHANS" -gt 0 ]; then
-  log "🛑 refusing to start: ${ORPHANS} super-board claude workers already running."
-  log "    Stop them first: pkill -f 'claude -p .*super-board run'"
-  log "    Then re-run: $0 $CONFIG_SLUG"
+# Chặn worker mồ côi: worker của repo này còn sống mà không có lock thì lần chạy này không biết nó đang giữ thẻ nào.
+ORPHAN_PIDS=$(startup_orphan_workers "$PWD" | tr '\n' ' ')
+if [ -n "${ORPHAN_PIDS// /}" ]; then
+  log "🛑 refusing to start: super-board workers of this repo are running without an inflight lock: pid ${ORPHAN_PIDS}"
+  log "    Check each one (ps -ww -o command= -p <pid>), stop it with kill -TERM <pid>, then re-run: $0 $CONFIG_SLUG"
   exit 73
 fi
 
