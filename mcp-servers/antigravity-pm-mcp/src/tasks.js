@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
 import { ensureDir, writeJsonAtomic, readJsonIfExists, nowIso, slug, exists } from './util.js';
 import {
   checkTestChange, checkProofProvider, checkOracle, fileRacGocRepo, mustHaveOf, PROOF_KINDS, kiemKhuonResult, doiChieuKhaiTest,
-  fileCamDungTheoTask, commitTheoTask, fileCamDung,
+  fileCamDungTheoTask, commitTheoTask, fileCamDung, chuanHoaDuongDan,
 } from './policy.js';
 import { createHash } from 'node:crypto';
 import { gateSnapshot } from './config.js';
@@ -484,27 +484,59 @@ function datMocGiao(t, head, root) {
   if (!('implementBaseCommit' in t) && !(t.dispatches || []).some((d) => d.kind === 'implement')) chupMoc(t, root, head());
 }
 
-/** Moc giao: HEAD (commitPolicy) + van tay file CAM dang ban (#22 AC2: file CAM doi SAU moc => gate CHAN du task khong khai). */
+/**
+ * Moc giao: HEAD (commitPolicy) + van tay file CAM dang ban (#22 AC2: file CAM doi SAU moc => gate CHAN du task khong khai).
+ * baselineForbidden: cac duong CAM da co anh chup (pm_plan them duong moi thi chupThemCam chup them). Git loi => anh rong (chat hon).
+ */
 function chupMoc(t, root, head) {
   t.implementBaseCommit = head;
+  t.baselineForbidden = [...(t.forbiddenPaths || [])];
   t.baselineDirty = camDangBan(root, t);
 }
 
 /**
- * #22 AC2: { file CAM dang ban: sha256 | null (da xoa) } — --no-renames de ten CU cua `git mv` cung vao. Git loi => {} (chat hon:
- * moi file CAM dang doi tinh la doi SAU luc giao). ponytail: git status dong bo, 1 lan/task khi co forbiddenPaths; cay rat lon
- * lam MCP dung vai giay thi chuyen sang gitSnapshot async trong pm_dispatch.
+ * #22 AC2: { file CAM dang ban: sha256 | null (da xoa) } — --no-renames de ten CU cua `git mv` cung vao. Git loi => {} + ghi lich
+ * su: fail-closed, khong chup lai sau (chup muon se nuot thay doi agent lam trong luc do). ponytail: git status dong bo trong khoa
+ * task (cho khoa 5 s), 1 lan/task khi co forbiddenPaths — do 17/10: GeelyEx2 13.866 file ~0,3 s, timeout 3 s. Cay cham hon thi
+ * chuyen sang gitSnapshot async truoc khoa.
  */
-function camDangBan(root, t) {
-  if (!(t.forbiddenPaths || []).length) return {};
+function camDangBan(root, t, cam = t.forbiddenPaths || []) {
+  if (!cam.length) return {};
   let out;
   try {
-    out = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 16_000_000 });
-  } catch {
-    return {}; // git loi / qua lon: anh chup rong => fail-closed, khong coi file nao la "ban tu truoc"
+    out = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 16_000_000, timeout: 3000 });
+  } catch (e) {
+    // Ghi ly do de PM biet vi sao file CAM ban tu truoc van bi chan (khong co anh chup => tinh la doi sau luc giao).
+    addHistory(t, 'system', 'baseline_failed', String(e?.message || e).slice(0, 400));
+    return {};
   }
   const ban = out.split('\0').filter((e) => e.length > 3).map((e) => e.slice(3));
-  return Object.fromEntries(fileCamDung(t, ban).map((f) => [f, hashFile(path.resolve(root, f))]));
+  return Object.fromEntries(fileCamDung({ forbiddenPaths: cam }, ban).map((f) => [f, hashFile(path.resolve(root, f))]));
+}
+
+/**
+ * #22: pm_plan doi forbiddenPaths SAU luc giao => chup them file thuoc duong CAM MOI (doi truoc luc them / luc da go CAM la hop le,
+ * doi sau => CHAN). File thuoc duong van CAM tu truoc giu anh chup cu — chup lai se nuot thay doi agent da lam. Task chua co anh
+ * chup (giao truoc ban nay / chua giao) hoac khong doi gi => false (updateTask khong ghi). Git loi => anh rong cho duong moi
+ * (fail-closed nhu chupMoc).
+ */
+export function chupThemCam(root, t) {
+  if (!Array.isArray(t.baselineForbidden)) return false;
+  const khoa = (c) => chuanHoaDuongDan(c).normalize('NFC');
+  const hienTai = new Set((t.forbiddenPaths || []).map(khoa));
+  const cu = t.baselineForbidden.filter((c) => hienTai.has(khoa(c)));
+  const daCo = new Set(cu.map(khoa));
+  const moi = (t.forbiddenPaths || []).filter((c) => !daCo.has(khoa(c)));
+  if (!moi.length && cu.length === t.baselineForbidden.length) return false;
+  const anh = camDangBan(root, t, moi);
+  const goc = t.baselineDirty || {};
+  const chiMoi = (f) => !fileCamDung({ forbiddenPaths: cu }, [f]).length;
+  // Muc cu cua duong vua CAM lai (ban luc giao, roi hoan tac khi duoc phep) da cu => chup lai tu dau cho rieng duong moi.
+  for (const f of fileCamDung({ forbiddenPaths: moi }, Object.keys(goc))) if (chiMoi(f)) delete goc[f];
+  for (const [f, h] of Object.entries(anh)) if (chiMoi(f)) goc[f] = h;
+  t.baselineDirty = goc;
+  t.baselineForbidden = [...cu, ...moi];
+  return undefined;
 }
 
 export function ghiMocGiao(cfg, task) {

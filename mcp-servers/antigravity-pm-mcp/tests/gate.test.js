@@ -10,6 +10,7 @@ import {
   updateTask,
 } from '../src/tasks.js';
 import { gateCtx } from '../src/worktree.js';
+import { TOOLS_BY_NAME } from '../src/tools.js';
 import { tmpProject, cleanup, writeFile, sampleTaskArgs, PNG_1PX, tick } from './helpers.js';
 
 // Luat bat buoc: thay doi phai kem file test. Moi test "phai dat" deu phai dua ctx nay vao.
@@ -342,7 +343,7 @@ async function duBangChung(dir, cfg, task, lam = () => {}) {
   recordDispatch(cfg, task, { kind: 'implement', conversationId: 'c-test' });
   tick();
   for (const [f, c] of Object.entries(SUA_KINH)) writeFile(path.join(dir, f), c);
-  lam();
+  await lam();
   khaiResult(cfg, task, Object.keys(SUA_KINH));
   tick();
   recordVerdict(cfg, task, { kind: 'audit', verdict: 'pass' });
@@ -376,17 +377,37 @@ test('#22 AC2: file CAM doi sau luc giao, KHONG khai (sua / git mv) x forbid/all
   }
 });
 
-test('#22 AC2: file CAM da ban TRUOC luc giao => agent khong dong toi chi CANH BAO; agent sua tiep sau luc giao => CHAN', async () => {
-  for (const suaTiep of [false, true]) {
+test('#22 AC2: file CAM da ban TRUOC luc giao: khong dong toi / chi bi CAM sau luc giao => CANH BAO; sua tiep / hoan tac ve HEAD => CHAN', async () => {
+  // [forbiddenPaths luc giao, TOML ban truoc luc giao?, cac buoc sau luc giao (chuoi = agent ghi TOML, mang = PM pm_plan forbidden),
+  // ket qua chan | canh bao | qua]. Duong CAM them SAU luc giao: doi truoc luc them la hop le, doi SAU luc them => CHAN; file da CAM
+  // tu luc giao thi them duong moi khong xoa duoc dau vet; go CAM roi them lai thi doi trong luc duoc phep la hop le.
+  const CA = {
+    'khong dong': [[TOML], true, [], 'canh bao'],
+    'cam sau giao': [[], true, [[TOML]], 'canh bao'],
+    'cam sau giao roi sua': [[], true, [[TOML], 'a=agent\n'], 'chan'],
+    'sua tiep': [[TOML], true, ['a=agent\n'], 'chan'],
+    'hoan tac ve HEAD': [[TOML], true, ['a=1\n'], 'chan'],
+    'sua file sach roi them thu muc cam': [[TOML], false, ['a=agent\n', [TOML, 'gradle/']], 'chan'],
+    'go cam, sua, cam lai': [[TOML], true, [[], 'a=agent\n', [TOML]], 'canh bao'],
+    'go cam, hoan tac ve HEAD, cam lai': [[TOML], true, [[], 'a=1\n', [TOML]], 'qua'],
+  };
+  for (const [ca, [giao, banTruoc, buoc, kq]] of Object.entries(CA)) {
     const dir = camRepo();
     const cfg = loadConfig(dir);
-    const task = datCam(cfg);
-    writeFile(path.join(dir, TOML), 'a=phien-khac\n');
-    const ctx = await duBangChung(dir, cfg, task, () => suaTiep && writeFile(path.join(dir, TOML), 'a=agent\n'));
+    const task = updateTask(cfg, createTask(cfg, sampleTaskArgs()), (t) => { t.forbiddenPaths = giao; });
+    if (banTruoc) writeFile(path.join(dir, TOML), 'a=phien-khac\n');
+    const ctx = await duBangChung(dir, cfg, task, async () => {
+      for (const b of buoc) {
+        if (typeof b === 'string') { writeFile(path.join(dir, TOML), b); continue; }
+        await TOOLS_BY_NAME.get('pm_plan').handler({ project: dir, taskId: task.id, content: '# Ke hoach v2', forbidden: b });
+        recordVerdict(cfg, loadTask(cfg, task.id), { kind: 'plan', verdict: 'pass' });
+      }
+    });
     const g = gate(cfg, loadTask(cfg, task.id), ctx);
-    if (suaTiep) assert.ok(chanCam(g), g.missing.join('\n'));
-    else {
-      assert.ok(g.ok && g.warnings.some((w) => w.includes('File CAM') && w.includes(TOML)), `${g.missing.join(' | ')} || ${g.warnings.join(' | ')}`);
+    const canhBao = g.warnings.some((w) => w.includes('File CAM') && w.includes(TOML));
+    if (kq === 'chan') assert.ok(chanCam(g), `${ca}: ${g.missing.join('\n')}`);
+    else assert.ok(g.ok && canhBao === (kq === 'canh bao'), `${ca}: ${g.missing.join(' | ')} || ${g.warnings.join(' | ')}`);
+    if (ca === 'khong dong') {
       // Da nghiem thu: file CAM doi sau do (PM / phien khac) khong lam task ACCEPTED bao CHUA DAT.
       accept(cfg, loadTask(cfg, task.id), ctx);
       writeFile(path.join(dir, TOML), 'a=sau-nghiem-thu\n');

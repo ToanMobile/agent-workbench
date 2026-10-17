@@ -125,10 +125,14 @@ async function commitSauGiao(cfg, task, tuCommitGoc) {
   return SHA_RE.test(String(moc)) ? fileDaCommitTu(cfg, moc) : undefined;
 }
 
-/** File CAM khong co trong anh chup luc giao (task.baselineDirty), hoac noi dung da khac luc chup. Anh chup null => tinh het. */
+/**
+ * File CAM khong co trong anh chup luc giao (task.baselineDirty; pm_plan them duong cam thi chup them) hoac noi dung da khac —
+ * xet ca khoa anh chup: file ban luc giao bi hoan tac ve HEAD / xoa thi roi khoi git status. Anh chup null => tinh het.
+ */
 function camDoiSauGiao(cfg, task, files) {
   const goc = task.baselineDirty || {};
-  return fileCamDung(task, files).filter((f) => !Object.hasOwn(goc, f) || hashFile(path.resolve(cfg.projectRoot, f)) !== goc[f]);
+  return [...new Set(fileCamDung(task, [...files, ...Object.keys(goc)]))]
+    .filter((f) => !Object.hasOwn(goc, f) || hashFile(path.resolve(cfg.projectRoot, f)) !== goc[f]);
 }
 
 /** Worktree dong bang = HEAD + diff cay lam viec + file moi (tru thu muc trang thai va file rac). */
