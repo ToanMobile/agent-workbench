@@ -81,6 +81,19 @@ gate 7; rc=$?
 ! grep -q "local base is stale" "$TMP/gate7.log" && ok "1: no stale-base warning" || fail "1: warning although main was synced: $(grep stale "$TMP/gate7.log")"
 rm -f "$R/dirty.txt"
 
+# ── 1b. như 1 nhưng phiên khác đã STAGE một file trong main: `reset --keep` đặt lại cả index (file rơi thành untracked, OCR 17/10),
+#    nên gate không dời, để nguyên main + file đã stage, và cảnh báo.
+branch 13 h thirteen; land 13
+echo staged > "$R/staged.txt"; git -C "$R" add staged.txt
+BEFORE1B=$(git -C "$R" rev-parse main)
+gate 13; rc=$?
+[ "$rc" -eq 0 ] && ok "1b: the PR still merged (exit 0)" || fail "1b: gate exit $rc: $(tail -5 "$TMP/gate13.log")"
+git -C "$R" diff --cached --name-only | grep -qx staged.txt && [ "$(git -C "$R" rev-parse main)" = "$BEFORE1B" ] \
+  && ok "1b: another session's staged file survives in the index, main not moved" \
+  || fail "1b: staged file dropped or main moved: $(git -C "$R" status --short | tr '\n' ';')"
+grep -q "staged changes" "$TMP/gate13.log" && ok "1b: the warning says why main was left alone" || fail "1b: no warning about the staged changes"
+git -C "$R" rm -q --cached -f staged.txt >/dev/null 2>&1; rm -f "$R/staged.txt"; git -C "$R" fetch -q origin; git -C "$R" reset -q --hard origin/main
+
 # ── 2. main local = commit del PR + một commit riêng chưa đẩy: không được mất, để nguyên và cảnh báo.
 branch 8 c eight; land 8
 echo local > "$R/l"; git -C "$R" add l; git -C "$R" commit -qm "local only"

@@ -336,8 +336,14 @@ def _kit_link(wt, main, rel):
             inside = True
     if not inside:
         return False
-    # only rc 1 ("did not match any file known to git") proves it untracked: a timeout (124) or a git failure (128) is "cannot say" = work
-    return git(wt, "ls-files", "--error-unmatch", "--", rel, check=False, env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).returncode == 1
+    # Untracked means in NEITHER the index nor HEAD (`git rm f` then a link at f: gone from the index, still a type change from HEAD).
+    # Only rc 1 of ls-files ("did not match any file known to git") and an empty, successful ls-tree prove it: a timeout (124) or a
+    # git failure (128) is "cannot say" = work.
+    lit = dict(os.environ, GIT_LITERAL_PATHSPECS="1")
+    if git(wt, "ls-files", "--error-unmatch", "--", rel, check=False, env=lit).returncode != 1:
+        return False
+    head = git(wt, "ls-tree", "-z", "HEAD", "--", rel, check=False, env=lit)
+    return head.returncode == 0 and not head.stdout
 
 
 def status_paths(wt):

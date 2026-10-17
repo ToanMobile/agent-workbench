@@ -398,17 +398,26 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
       for st in MERGE_HEAD SQUASH_MSG CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer BISECT_LOG; do
         [ -n "$main_gd" ] && [ -e "$main_gd/$st" ] && busy="${busy:+$busy, }$st"
       done
-      if [ -z "$main_gd" ] || [ -n "$busy" ]; then
-        say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; ${busy:-its git dir is unreadable} in progress there, left alone: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)"
+      if [ -z "$main_gd" ]; then
+        say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; its git dir could not be read, left alone: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)"
+      elif [ -n "$busy" ]; then
+        say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; ${busy} in progress there, left alone: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)"
       else
         # Chốt đầu nhánh một lần: mọi so sánh dùng đúng commit này, và chỉ dời nếu ngay trước khi dời đầu nhánh vẫn là nó (một phiên
-        # khác commit/ff vào base giữa chừng thì để nguyên, tránh bỏ rơi commit vừa vào).
+        # khác commit/ff vào base trước đó thì để nguyên). Còn một khe vài mili-giây giữa kiểm lại và `reset` mà git không có phép
+        # so-và-đổi nguyên tử cho trường hợp này: commit lọt vào khe đó vẫn nằm trong reflog.
         local_tip=$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null) || local_tip=""
         origin_tree=$(git -C "$MAIN_PATH" rev-parse "origin/$BASE^{tree}" 2>/dev/null) || origin_tree=""
         merged_tree=$(git -C "$MAIN_PATH" merge-tree --write-tree "origin/$BASE" "$local_tip" 2>/dev/null) || merged_tree=""
         # git < 2.38 không có merge-tree --write-tree: rơi về so cây hai nhánh.
         if [ -z "$merged_tree" ] && git -C "$MAIN_PATH" diff --quiet "origin/$BASE" "$local_tip" 2>/dev/null; then merged_tree="$origin_tree"; fi
+        # `reset --keep` cũng đặt lại INDEX về commit đích: file phiên khác đã stage (khác HEAD) sẽ rơi khỏi index (thành untracked).
+        # Index khác HEAD thì không dời, chỉ cảnh báo.
         if [ -n "$local_tip" ] && [ -n "$origin_tree" ] && [ "$merged_tree" = "$origin_tree" ] \
+           && ! git -C "$MAIN_PATH" diff --cached --quiet 2>/dev/null \
+           && [ "$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null)" = "$local_tip" ]; then
+          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; another session has staged changes there (a reset would drop them from the index), left alone: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)"
+        elif [ -n "$local_tip" ] && [ -n "$origin_tree" ] && [ "$merged_tree" = "$origin_tree" ] \
            && [ "$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null)" = "$local_tip" ]; then
           if reset_err=$(git -C "$MAIN_PATH" reset --keep "origin/$BASE" 2>&1 >/dev/null); then
             say "note: ${BASE} in ${MAIN_PATH} could not fast-forward (the squash rewrote the PR's commits) but held nothing origin lacks; moved to origin/${BASE}"

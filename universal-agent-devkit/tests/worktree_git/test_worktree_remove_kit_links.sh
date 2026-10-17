@@ -52,6 +52,14 @@ rm_wt d; rc=$?
   && ok "remove: a tracked file replaced by a kit link is still work -> refused" \
   || { fail "tracked file replaced by a kit link (rc=$rc)"; cat "$TMP/rk-d.out"; }
 
+# Same, when the deletion of the tracked file was STAGED first (`git rm`, then a link at the same path): the path is no longer in the
+# index but HEAD still holds it, so it is a type change, never setup (OCR 17/10).
+wt i; G "$TMP/rk-i" rm -q f.txt; ln -s "$R/universal-agent-devkit/hooks/gate.sh" "$TMP/rk-i/f.txt"
+rm_wt i; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/rk-i" ] && grep -q "f.txt" "$TMP/rk-i.out" \
+  && ok "remove: a tracked file deleted in the index and replaced by a kit link is still work -> refused" \
+  || { fail "git rm + kit link at the same path (rc=$rc)"; cat "$TMP/rk-i.out"; }
+
 # Same rule everywhere (changes_since): `diff` carries no machine-specific link into main, `finish` (the Stop hook's automerge)
 # neither stops on "a new symlink" nor leaves the worktree behind.
 wt e; kit_links "$TMP/rk-e"
@@ -73,7 +81,8 @@ wt, main, rel = os.environ["WT"], os.environ["MAIN"], ".agents/hooks/gate.sh"
 real = m.git
 out = {}
 for rc in (1, 0, 124, 128):
-    m.git = lambda *a, _rc=rc, **k: types.SimpleNamespace(returncode=_rc, stdout="", stderr="")
+    # ls-files answers with the rc of the case; ls-tree (HEAD holds nothing at the path) answers rc 0 with no output
+    m.git = lambda *a, _rc=rc, **k: types.SimpleNamespace(returncode=(_rc if "ls-files" in a else 0), stdout="", stderr="")
     out[rc] = m._kit_link(wt, main, rel)
 m.git = real
 print(" ".join(f"{rc}={out[rc]}" for rc in sorted(out)))
