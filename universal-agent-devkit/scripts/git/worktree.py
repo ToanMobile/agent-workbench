@@ -746,18 +746,19 @@ def _drop_dead_kept_lock(main, wt):
 
 
 def _ancestor_pids():
-    """pid của tiến trình này và mọi tổ tiên của nó (hỏi `ps`: macOS không có /proc). `ps` lỗi: chỉ những pid đã biết (không bao giờ thêm
-    pid lạ, nên khoá của phiên khác không bao giờ bị coi là của mình)."""
+    """pid của tiến trình này và các tổ tiên của nó, DỪNG ở tiến trình `claude` gần nhất (tiến trình của phiên, pid mà hook ghi vào khoá
+    devkit-kept): phía trên nó là tiến trình mọi phiên dùng chung (app Claude, terminal, launchd), một khoá mang pid đó không được thành
+    "của mình" với mọi phiên. Hỏi `ps` (macOS không có /proc); `ps` lỗi: chỉ những pid đã biết, không bao giờ thêm pid lạ."""
     pids, pid = {os.getpid()}, os.getppid()
     for _ in range(64):
         if pid <= 1 or pid in pids:
             break
         pids.add(pid)
-        r = _run(["ps", "-o", "ppid=", "-p", str(pid)])
-        out = r.stdout.strip() if r.returncode == 0 else ""
-        if not out.isdigit():
+        r = _run(["ps", "-o", "ppid=,comm=", "-p", str(pid)])
+        ppid, _sp, comm = (r.stdout.strip() if r.returncode == 0 else "").partition(" ")
+        if os.path.basename(comm.strip()) == "claude" or not ppid.isdigit():
             break
-        pid = int(out)
+        pid = int(ppid)
     return pids
 
 

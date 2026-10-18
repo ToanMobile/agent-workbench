@@ -92,6 +92,26 @@ REF=$(G "$R" for-each-ref --format='%(refname)' 'refs/devkit/discarded/w-own-*' 
   && ok "b1 discard of the caller's own worktree keeps everything in $REF" \
   || { fail "b1 own-session discard (rc=$rc, ref='$REF')"; cat "$TMP/b1.out"; }
 
+# b2. khoá mang pid của tiến trình NẰM TRÊN `claude` (app Claude, terminal: mọi phiên dùng chung) không phải "của mình".
+#     Chỉ chạy được khi test chạy dưới một phiên Claude Code; ngoài đó không có tầng chung để thử.
+p=$$; ABOVE=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  line=$(ps -o ppid=,comm= -p "$p" 2>/dev/null) || break
+  pp=$(echo "$line" | awk '{print $1}'); cm=$(echo "$line" | cut -d' ' -f2- | sed 's/^ *//')
+  if [ "$(basename "$cm")" = claude ]; then ABOVE="$pp"; break; fi
+  [ -z "$pp" ] || [ "$pp" -le 1 ] && break; p="$pp"
+done
+if [ -n "$ABOVE" ] && [ "$ABOVE" -gt 1 ]; then
+  mk w-shared; echo mine > "$TMP/w-shared/a.txt"
+  G "$R" worktree lock --reason "devkit-kept session=other pid=$ABOVE" "$TMP/w-shared"
+  bash "$KIT" worktree discard ../w-shared >"$TMP/b2.out" 2>&1; rc=$?
+  [ "$rc" != 0 ] && [ "$(cat "$TMP/w-shared/a.txt" 2>/dev/null)" = mine ] \
+    && ok "b2 a lock naming a process above claude (shared by every session) is not the caller's own (rc=$rc)" \
+    || { fail "b2 discard took a worktree locked by a shared ancestor (rc=$rc)"; cat "$TMP/b2.out"; }
+else
+  echo "• b2 skipped: not running under a Claude Code session"
+fi
+
 # --- remove: khoá devkit-kept của chính phiên gọi ---------------------------------------------------------------------------
 mk w-keep; G "$R" worktree lock --reason "devkit-kept session=me pid=$$" "$TMP/w-keep"
 bash "$KIT" worktree remove ../w-keep >"$TMP/k1.out" 2>&1; rc=$?
