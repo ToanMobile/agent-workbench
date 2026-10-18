@@ -158,7 +158,7 @@ if rel.startswith(".."):
     rel = target
 
 # Creating a genuinely new file: nothing exists to have read.
-if not os.path.exists(path):
+if not os.path.exists(target):
     logline(f"[{ts}] {base}: file mới — pass")
     # The session writes the whole file, so its later edits are not blind: note it in the read
     # ledger (OfficeReader 2026-09-28: Grok created a .kt, and its next edit of it was blocked
