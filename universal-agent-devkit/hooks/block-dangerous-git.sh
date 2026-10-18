@@ -573,8 +573,77 @@ def push_gate_rule(vals, gdir, forced=False, all_branches=False, all_tags=False,
     if RETARGETED[0]:
         # --git-dir / --work-tree / GIT_DIR make gdir the wrong repository: the receipt checked is not the one pushed from
         return "push với --git-dir/--work-tree/GIT_DIR: hook không biết repo nào gửi đi — đẩy riêng và dùng git -C <thư mục>"
-    revs = []   # (rev, is a plain tag push) per refspec (one push may name several); none → HEAD
+    # 18/10 (người dùng): đích là nhánh PR thì push_gate.py không đòi biên nhận --full (merge gate chạy --full một lần trước khi gộp
+    # vào trunk); hook truyền `--dst <remote> <nhánh>` chỉ khi biết chắc đích, mọi nghi ngờ → không truyền → luật biên nhận cũ.
+    to = repo_opt or (vals[0] if vals else default_push_remote(gdir))   # cùng remote như `remote` bên dưới
+    # Config hook đọc lúc này phải là config git dùng lúc push: lối tắt chỉ cho MỘT lệnh git push trơn (cho phép `cd <đường dẫn> &&`
+    # phía trước) — không gán biến (HOME=, GIT_CONFIG_*), không ; & | < > $ ` ( ) quote, \ hay `=` (--repo=, -c k=v): không gì trong cùng
+    # lệnh đổi được config hay đích (review 18/10: `.git/con` + hai dấu nháy + `fig`, `HOME=… git push`, `-c push.default=upstream` đều lọt cách dò chữ).
+    # Ngoài ra luật cũ khi: `-c`, --follow-tags / push.followTags (tag đi kèm), --repo kèm remote vị trí, remote.<remote>.push/.mirror.
+    # [ \t], không \s: xuống dòng là dấu tách lệnh (OCR 18/10: `git config …\ngit push` thành "một lệnh"). \x27 \x22: nháy (file bọc nháy đơn)
+    plain = re.sub(r"^[ \t]*cd[ \t]+[^\s;&|<>$`()\x27\x22\\]+[ \t]*&&[ \t]*", "", cmd).strip(" \t")
+    mapped = (re.fullmatch(r"git([ \t]+[^\s;&|<>$`()\x27\x22\\=]+)+", plain) is None or re.search(r"(?<!\S)-c(?!\S)", plain) is not None
+              or re.search(r"(?<!\S)--fol", plain) is not None or bool(repo_opt and vals)
+              or bool(solo_out(gdir, "config", "--get-all", f"remote.{to}.push"))
+              or (solo_git(gdir, "config", "--get", f"remote.{to}.mirror") != 1      # có khoá (yes/on/1/khoá trần) hay đọc lỗi
+                  and solo_out(gdir, "config", "--bool", "--get", f"remote.{to}.mirror") != "false")
+              or solo_out(gdir, "config", "--bool", "--get", "push.followTags") == "true")
+    # push.default upstream/tracking ánh xạ cả `git push origin <nhánh>` sang branch.<b>.merge (có thể là main): chỉ simple/current
+    implicit_ok = (solo_out(gdir, "config", "--get", "push.default") or "simple") in ("simple", "current")
+
+    def src_branch(src):
+        """True khi src là một nhánh local (HEAD trỏ vào nhánh, hoặc refs/heads/<tên> có thật) và không trùng tên tag local."""
+        if src == "HEAD":
+            return solo_out(gdir, "symbolic-ref", "-q", "HEAD").startswith("refs/heads/")
+        name = src[len("refs/heads/"):] if src.startswith("refs/heads/") else src
+        return (solo_git(gdir, "show-ref", "--verify", "--quiet", "refs/heads/" + name) == 0
+                and (src.startswith("refs/heads/") or solo_git(gdir, "show-ref", "--verify", "--quiet", "refs/tags/" + name) == 1))
+
+    def remote_short_is_branch(dst):
+        """Đích ngắn `a:b`: git ghi vào ref tên b mà REMOTE đã có (refs/tags/b chưa fetch về cũng vậy), chưa có thì theo namespace
+        của nguồn (OCR 18/10: `v4:feat/x` tạo refs/tags/feat/x). True chỉ khi remote không có ref nào khác refs/heads/b khớp tên b;
+        không hỏi được remote → False."""
+        try:
+            r = subprocess.run(["git", "-C", gdir, "ls-remote", "--refs", to, dst], stdin=subprocess.DEVNULL, capture_output=True,
+                               text=True, timeout=10, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return False
+        if r.returncode != 0:
+            return False
+        names = {ln.split("\t", 1)[1] for ln in r.stdout.splitlines() if "\t" in ln}
+        dwim = {dst, "refs/" + dst, "refs/tags/" + dst, "refs/heads/" + dst, "refs/remotes/" + dst, f"refs/remotes/{dst}/HEAD"}
+        return (names & dwim) <= {"refs/heads/" + dst}
+
+    def push_dst(spec, src):
+        """`a:b` → b (refs/heads/b → b; ref khác refs/heads/, b trùng tên tag local hay trên remote, nguồn không phải nhánh → None);
+        không có `:` (chỉ push.default simple/current): `HEAD` → nhánh hiện tại, `<nhánh local>` → chính nó; `mapped` → None."""
+        spec = spec.lstrip("+")
+        if mapped:
+            return None
+        if ":" in spec:
+            dst = spec.split(":", 1)[1]
+            if dst.startswith("refs/heads/"):
+                return dst[len("refs/heads/"):] or None
+            if (not dst or dst.startswith("refs/") or solo_git(gdir, "show-ref", "--verify", "--quiet", "refs/tags/" + dst) != 1
+                    or not src_branch(src) or not remote_short_is_branch(dst)):
+                return None
+            return dst
+        if not implicit_ok:
+            return None
+        if src == "HEAD":
+            return solo_out(gdir, "symbolic-ref", "--short", "-q", "HEAD") or None
+        if not src_branch(src):
+            return None
+        return src[len("refs/heads/"):] if src.startswith("refs/heads/") else src
+
+    def default_push_dst():
+        """Push không refspec: push.default simple/current → nhánh hiện tại; upstream, matching, …, detached, `mapped` → None."""
+        cur = solo_out(gdir, "symbolic-ref", "--short", "-q", "HEAD")
+        return cur if cur and implicit_ok and not mapped else None
+
+    revs = []   # (rev, is a plain tag push, destination branch or None) per refspec (one push may name several); none → HEAD
     unresolved = False
+    specs_named = bool(vals if repo_opt else vals[1:])
     for spec in (vals if repo_opt else vals[1:]):
         s = spec.lstrip("+").split(":", 1)[0]
         if not s:
@@ -594,19 +663,21 @@ def push_gate_rule(vals, gdir, forced=False, all_branches=False, all_tags=False,
             unresolved = True   # a name nobody here can resolve (a $b, a $(…) placeholder, a typo): what git sends is unknown,
             continue            # so no tag shortcut anywhere (review round 2: v1 plus an unknown name sent main ungated)
         is_tag = plain_tag_spec(spec, gdir, forced)
-        revs.append(("refs/tags/" + tag_name(spec) if is_tag else s, is_tag))   # the full ref: never a pseudoref
+        revs.append(("refs/tags/" + tag_name(spec) if is_tag else s, is_tag,   # the full ref: never a pseudoref
+                     None if is_tag else push_dst(spec, s)))
     if unresolved:
-        revs = [(r, False) for r, _ in revs]
+        revs = [(r, False, None) for r, _, _ in revs]   # một tên không ai giải được: không biết nó đi đâu → mọi refspec theo luật cũ
     # --repo=<name> names it; otherwise the first positional; otherwise the default remote git would use
     remote = repo_opt or (vals[0] if vals else default_push_remote(gdir))
     sweeps = ([["--all-branches", remote]] if all_branches else []) + ([["--all-tags", remote]] if all_tags else [])
     if not revs and not sweeps:
-        revs = [("HEAD", False)]
+        revs = [("HEAD", False, None if (unresolved or specs_named) else default_push_dst())]
     here = os.path.dirname(os.path.realpath(sys.argv[1])) if len(sys.argv) > 1 else ""
     tool = os.path.join(os.path.dirname(here), "bin", "push_gate.py")
     if not gdir or not os.path.isdir(gdir) or not os.path.isfile(tool):
         return "push: không kiểm được biên nhận gate (thư mục repo hoặc bin/push_gate.py không xác định)"
-    jobs = [[rev] + (["--tag-remote", remote] if is_tag else []) for rev, is_tag in revs] + sweeps
+    jobs = [[rev] + (["--tag-remote", remote] if is_tag else []) + (["--dst", remote, dst] if dst else [])
+            for rev, is_tag, dst in revs] + sweeps
     for job in jobs:
         try:
             r = subprocess.run([sys.executable, tool, gdir] + job, stdin=subprocess.DEVNULL,

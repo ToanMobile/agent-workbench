@@ -62,21 +62,22 @@ expect "--all with a commit made after the gate" "git push --all origin" 2
 expect "a plain branch push is still checked the same way" "git push origin main" 2
 
 # ── found by the clean-context review (2026-10-04): each of these bypassed the first version ─────────────────
-# Fixture of the review: main is covered by the gate receipt, the ungated work lives on a branch (side) and a tag (v4).
+# Fixture of the review: main is covered by the gate receipt, the ungated work lives on a branch (release/side) and a tag (v4).
+# 18/10: nhánh đó phải là trunk (release/*): nhánh PR thường nay push được không cần biên nhận (test_push_gate_pr_branch.sh).
 git reset -q --hard HEAD~1                                # drop "after the gate": main = the gated commit again
-git checkout -q -b side && echo "fun ok() = 5" > src/Core.kt && git commit -qam c5 && git tag v4 HEAD && git checkout -q main
+git checkout -q -b release/side && echo "fun ok() = 5" > src/Core.kt && git commit -qam c5 && git tag v4 HEAD && git checkout -q main
 expect "baseline: main alone is covered, so a push of main passes" "git push origin main" 0
-expect "baseline: the ungated branch alone is blocked" "git push origin side" 2
+expect "baseline: the ungated branch alone is blocked" "git push origin release/side" 2
 expect "abbreviated --tag" "git push --tag origin" 2
 expect "abbreviated --ta" "git push --ta" 2
 expect "abbreviated --al" "git push --al origin" 2
 expect "abbreviated --branch" "git push --branch origin" 2
 expect "abbreviated --b" "git push --b origin" 2
 expect "refspec refs/tags/* sends v4" "git push origin 'refs/tags/*'" 2
-expect "refspec refs/heads/* sends side" "git push origin 'refs/heads/*'" 2
+expect "refspec refs/heads/* sends release/side" "git push origin 'refs/heads/*'" 2
 expect "refspec refs/tags/*:refs/tags/*" "git push origin 'refs/tags/*:refs/tags/*'" 2
-expect "a tree pushed as a tag" "git push origin 'side^{tree}:refs/tags/t'" 2
-HCWD="$TMP/repo/.git" expect "cwd inside .git (rev-parse --show-toplevel fails there): the ungated branch" "git push origin side" 2
+expect "a tree pushed as a tag" "git push origin 'release/side^{tree}:refs/tags/t'" 2
+HCWD="$TMP/repo/.git" expect "cwd inside .git (rev-parse --show-toplevel fails there): the ungated branch" "git push origin release/side" 2
 HCWD="$TMP/repo/.git" expect "cwd inside .git: --tags" "git push --tags origin" 2
 expect "remote.<n>.push with a glob" "git config remote.origin.push 'refs/heads/*'" 2
 expect "-c remote.<n>.push with a glob" "git -c remote.origin.push='refs/tags/*' push origin" 2
@@ -93,7 +94,7 @@ expect "--git-dir=<other> with a plain branch push of the covered main" "git --g
 expect "GIT_DIR=<other> with a plain branch push of the covered main" "GIT_DIR=$TMP/other/.git git push origin main" 2
 expect "a commit message that merely MENTIONS --git-dir is not a retarget" "git commit -qm 'document --git-dir' --allow-empty" 0
 # round 2 of the review: holes in the fixes themselves
-expect "an unresolvable name next to a tag must not leave the tag shortcut on" 'b=side; git push origin v1 "$b"' 2
+expect "an unresolvable name next to a tag must not leave the tag shortcut on" 'b=release/side; git push origin v1 "$b"' 2
 git remote add no "$TMP/fake.git"
 expect "abbreviated --recurse <mode> must not be read as the remote" "git push --recurse no origin v4" 2
 expect "abbreviated --recurse with --tags" "git push --tags --recurse no origin" 2
@@ -105,12 +106,12 @@ expect "git config remote.<n>.pushurl" "git config remote.origin.pushurl $TMP/re
 expect "-c url.<base>.pushInsteadOf" "git -c url.$TMP/remote.git.pushInsteadOf=$TMP/repo push origin v4" 2
 expect "-c remote.pushDefault" "git -c remote.pushDefault=origin push --tags" 2
 expect "-c branch.<b>.pushRemote" "git -c branch.main.pushRemote=origin push --tags" 2
-expect "-c remote.<n>.push with a plain (non-glob) refspec" "git -c remote.origin.push=refs/heads/side push origin" 2
+expect "-c remote.<n>.push with a plain (non-glob) refspec" "git -c remote.origin.push=refs/heads/release/side push origin" 2
 expect "git config remote.<n>.push with a tag refspec" "git config remote.origin.push refs/tags/v4" 2
 expect "a dry run uploads nothing: never blocked" "git push --dry-run --tags origin" 0
-expect "-n is a dry run too" "git push -n origin side" 0
+expect "-n is a dry run too" "git push -n origin release/side" 0
 git remote remove no
-git tag -d v4 >/dev/null; git branch -q -D side
+git tag -d v4 >/dev/null; git branch -q -D release/side
 git config --unset remote.pu.pushurl; git remote remove pu; git remote remove check
 sha="$(git rev-parse 'v1^{commit}')"
 for i in $(seq 1 2500); do echo "create refs/tags/p$i $sha"; done | git update-ref --stdin
