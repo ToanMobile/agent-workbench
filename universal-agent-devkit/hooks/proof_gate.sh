@@ -11,7 +11,11 @@
 #     exit 0, newer than the turn's user message, whose fingerprint (bin/tree_fp.py) still
 #     matches the code — an edit after the gate run voids it (trunk mode, 17/10: a receipt `worktree finish` carried into main for
 #     main's HEAD, of a clean tree, still holds when the only differing files are dirty in main and named by no editing tool call of
-#     this session: other sessions' / the board runner's files, foreign_dirty_only);
+#     this session: other sessions' / the board runner's files, foreign_dirty_only); trunk mode, 18/10: without such a receipt the turn
+#     still passes on (a) a --full exit 0 receipt a worktree of the repo wrote this turn, still matching that worktree, for the same tree
+#     as the judged HEAD, or (b) the output of a super-board-merge-gate.sh call this turn ("verified green" + "merged <H>") when git
+#     attests it: the real origin (ls-remote) holds a squash of H committed this turn and the judged tree stands at H or holds it with
+#     nothing origin lacks (merged_evidence; tests/gates/test_proof_gate_merged_trunk.sh);
 #   - the reply names at least one reports/proof-<yyyyMMdd-HHmmss>.png that
 #   - exists under the project,
 #   - starts with the PNG signature,
@@ -100,6 +104,14 @@ state_path = os.path.join(log_dir, "proof_gate.state")
 min_bytes = int(os.environ.get("PROOF_MIN_BYTES", "8192"))
 max_blocks = int(os.environ.get("PROOF_GATE_MAX_BLOCKS", "2"))
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
+HOOK_T0 = time.monotonic()
+# Hạn chót của phần kiểm tốn thời gian (mạng, git): hook có "timeout": 15 trong settings, và Claude Code giết hook quá hạn = Stop lọt.
+try:   # một giá trị hỏng không được làm python chết (= wrapper exit 0 = Stop lọt); nan / inf / quá 12 s cũng không vô hiệu được hạn chót
+    HOOK_BUDGET_S = float(os.environ.get("PROOF_GATE_BUDGET_S", "9"))
+except ValueError:
+    HOOK_BUDGET_S = 9.0
+HOOK_BUDGET_S = 9.0 if not math.isfinite(HOOK_BUDGET_S) else min(max(HOOK_BUDGET_S, 0.0), 12.0)
+left = lambda: HOOK_T0 + HOOK_BUDGET_S - time.monotonic()
 
 def open_reg(path, flags=os.O_RDONLY):
     """fd of the REGULAR file at path, never waited on: a FIFO an agent planted at a state file blocked open() until the hook's
@@ -380,8 +392,6 @@ def foreign_dirty_only(rec, tree_fp):
     đường dẫn bẩn (khác rỗng) khi biên nhận vẫn phủ code của phiên này: lượt này có lượt bắt đầu thật (không phải mốc dự phòng 1 h), biên
     nhận chép từ worktree, `head` = HEAD của repo, `dirty` rỗng (đã gate đúng HEAD), và mọi file repo khác HEAD (ngoài EXCLUDE) đều chưa
     từng xuất hiện trong một tool_use không chỉ đọc của phiên (kể cả subagent). Không thì None = chặn như cũ."""
-    import subprocess
-    from session_authorship import read_only_tool   # bin/ (PROOF_BIN, đã vào sys.path): cùng danh sách công cụ chỉ đọc với các hook khác
     if start is None or not isinstance(rec.get("carried_from"), str) or not rec["carried_from"]:
         return None
     import session_worktree   # hooks/ (đã vào sys.path cùng devkit_harness); thiếu thì ImportError -> chặn như cũ
@@ -393,20 +403,32 @@ def foreign_dirty_only(rec, tree_fp):
     excluded = lambda p: any(p == ex or p.startswith(ex + "/") for ex in tree_fp.EXCLUDE)
     if any(not excluded(p) for p in dirty):
         return None
-    git = lambda *a: subprocess.run(["git", "-C", repo, *a], capture_output=True, timeout=10)
+    state = dirty_state(repo, tree_fp)
+    if state is None or state[0] != head or not state[1] or not untouched_by_session(state[1]):
+        return None
+    return state[1]
+
+def dirty_state(root, tree_fp, t=10):
+    """(HEAD, các đường dẫn khác HEAD hoặc chưa track, ngoài tree_fp.EXCLUDE, đã sắp xếp) của cây git ở root; None khi git lỗi."""
+    import subprocess
+    excluded = lambda p: any(p == ex or p.startswith(ex + "/") for ex in tree_fp.EXCLUDE)
+    git = lambda *a: subprocess.run(["git", "-C", root, *a], capture_output=True, timeout=t)
     try:
         now_head = git("rev-parse", "HEAD")
         changed = git("diff", "--name-only", "--relative", "--no-renames", "-z", "HEAD")   # một rename: cả đường dẫn cũ lẫn mới
         untracked = git("ls-files", "-o", "--exclude-standard", "-z")
     except (OSError, subprocess.SubprocessError) as e:
-        log("foreign-dirty check failed: %r" % e)
+        log("dirty check failed in %s: %r" % (root, e))
         return None
-    if any(r.returncode for r in (now_head, changed, untracked)) or now_head.stdout.decode().strip() != head:
+    if any(r.returncode for r in (now_head, changed, untracked)):
         return None
-    paths = sorted({p for p in (changed.stdout + untracked.stdout).decode("utf-8", "surrogateescape").split("\0")
-                    if p and not excluded(p)})
-    if not paths:
-        return None
+    return now_head.stdout.decode().strip(), sorted({p for p in (changed.stdout + untracked.stdout).decode("utf-8", "surrogateescape").split("\0")
+                                                     if p and not excluded(p)})
+
+def untouched_by_session(paths):
+    """True khi không tool_use không chỉ đọc nào của phiên (kể cả subagent) nhắc tới một trong `paths` (tương đối với repo đang xét);
+    False khi có, hoặc khi một transcript không đọc được (không chứng minh được gì)."""
+    from session_authorship import read_only_tool   # bin/ (PROOF_BIN, đã vào sys.path): cùng danh sách công cụ chỉ đọc với các hook khác
     root = os.path.realpath(repo)
     targets = {os.path.join(root, p) for p in paths} | {os.path.realpath(os.path.join(root, p)) for p in paths}   # cả hai phía qua realpath: file bẩn là symlink
     tp = d.get("transcript_path") or ""
@@ -422,8 +444,8 @@ def foreign_dirty_only(rec, tree_fp):
                     try:
                         e = json.loads(raw)
                     except (ValueError, RecursionError):   # dòng có tool_use mà không đọc được: có thể là một lần sửa, chặn
-                        log("foreign-dirty check: unreadable tool_use line in %s" % t)
-                        return None
+                        log("session-touch check: unreadable tool_use line in %s" % t)
+                        return False
                     msg = e.get("message") if isinstance(e, dict) else None
                     for c in (msg.get("content") if isinstance(msg, dict) else None) or []:
                         if not isinstance(c, dict) or c.get("type") != "tool_use" or read_only_tool(c.get("name")):
@@ -432,17 +454,252 @@ def foreign_dirty_only(rec, tree_fp):
                         files = [args[k] for k in ("file_path", "notebook_path", "TargetFile") if isinstance(args.get(k), str)]
                         if files:   # công cụ sửa file: so đường dẫn thật, file cùng tên trong worktree riêng không tính
                             if any(os.path.realpath(x if os.path.isabs(x) else os.path.join(root, x)) in targets for x in files):
-                                return None
+                                return False
                         else:       # lệnh shell và mọi công cụ khác: nhắc tên file là coi như đã đụng (thừa thì chặn, như cũ)
                             text = json.dumps(args, ensure_ascii=False)
                             if any(p in text or json.dumps(p, ensure_ascii=False)[1:-1] in text for p in paths):   # cả dạng JSON escape (", \)
-                                return None
+                                return False
         except OSError as e:   # transcript nào (chính hay subagent) không đọc được: không chứng minh được gì, chặn như cũ
-            log("foreign-dirty check: transcript unreadable %s: %r" % (t, e))
+            log("session-touch check: transcript unreadable %s: %r" % (t, e))
+            return False
+    return True
+
+MERGE_GATE_SKEW_S = 120   # đồng hồ GitHub (giờ commit squash) lệch máy này
+# Lệnh Bash LÀ lệnh gọi merge gate: tuỳ chọn `cd <dir> &&` và `bash`, đường dẫn tới script, các đối số trơn, tuỳ chọn `2>&1` và `| tail -N`
+# (tail chỉ cắt bớt, không viết được dòng nào). Không `;`, `&`, `|` khác, `#`, `$`, backtick, ngoặc, quote: một `echo …; # super-board-…`
+# không còn là lệnh merge gate (OCR + principal review 18/10). Nhóm: 1 thư mục của `cd`, 2 đường dẫn script, 3 các đối số.
+_W = r"""[^\s;&|<>$`#()'"\\]"""
+MERGE_GATE_CALL = re.compile(r"\s*(?:cd\s+(%s+)\s*&&\s*)?(?:bash\s+)?(%s*/super-board-merge-gate\.sh)((?:\s+%s+)*)\s*(?:2>&1\s*)?"
+                             r"(?:\|\s*tail(?:\s+-n)?\s+-?\d+\s*)?" % (_W, _W, _W))
+GATE_SCRIPT = ".claude/bin/super-board-merge-gate.sh"
+# Một `git push` chỉ được coi là đẩy nhánh PR khi đích chắc chắn là một nhánh tên khác main / master / trunk / HEAD; mọi push khác (trần,
+# `HEAD`, biến, `<sha>:main`, `git stash push` cũng vậy: thừa thì chặn, fail-closed) coi như có thể đã đẩy thẳng lên trunk.
+SAFE_PUSH = re.compile(r"\s*(?:cd\s+\S+\s*)?(?:git\s+(?:-C\s+\S+\s+)?push\s+(?:(?:-u|--set-upstream|-q|--quiet)\s+)*origin\s+"
+                       r"(?!(?:HEAD:)?(?:refs/heads/)?(?:main|master|trunk|HEAD)\s*$)(?:HEAD:)?[\w./-]+)?\s*")
+# origin của super-board là GitHub (merge gate gộp bằng `gh pr merge`): https / ssh / scp tới github.com, không gì khác (một sshd ở localhost
+# hay host lạ phục vụ repo giả cũng là "mạng").
+GITHUB_URL = re.compile(r"(?:https://(?:[^@/\s]+@)?github\.com/|ssh://(?:[^@/\s]+@)?github\.com(?::\d+)?/|[\w.-]+@github\.com:)[\w./-]+")
+
+def merged_evidence():
+    """Trunk mode (18/10, 5 phiên: GeelyEx2 #63, OfficeReader #149, Goods #40, NFH #49, kit #67): việc gộp qua super-board-merge-gate.sh
+    (gate --full xanh trong scratch của nó) bị chặn mãi, vì cây được xét (main sau khi worktree bị dọn) không có biên nhận --full của lượt
+    và trunk mode cấm chạy gate ở main. Mô tả bằng chứng khi lượt này có một trong hai, None thì chặn như cũ:
+      (a) biên nhận --full exit 0 của một worktree của repo, ghi trong lượt, vẫn khớp dấu vân tay của worktree đó, worktree sạch và cây HEAD
+          của nó = cây HEAD của repo xét;
+      (b) kết quả của một lệnh merge gate trong lượt ("[merge-gate #N] verified green …" và "[merge-gate #N] merged <H>"), mà git chứng
+          thực: origin THẬT (`ls-remote`, không phải refs/remotes agent ghi được, INSTINCT-027) có trên nhánh mặc định một commit S ghi
+          trong lượt là squash của H (cây S = merge-tree S^1 H), và repo xét đứng ở H hoặc chứa S mà không có gì ngoài origin.
+    Cả hai: repo xét sạch, hoặc (chỉ main) chỉ bẩn file mà phiên này không đụng (untouched_by_session)."""
+    import subprocess
+    import session_worktree   # hooks/ (đã vào sys.path cùng devkit_harness); thiếu thì ImportError -> chặn như cũ
+    import tree_fp
+    if start is None or not session_worktree.trunk_mode(repo):
+        return None
+    if left() <= 1:
+        log("merged-evidence check: no time left")
+        return None
+    tree = session_worktree.tree_of(repo)
+    state = dirty_state(repo, tree_fp, t=max(0.5, min(10, left() / 3)))   # ba lệnh git, mỗi lệnh một phần ba
+    if not tree or state is None:
+        return None
+    head, paths = state
+    if paths and (tree[1] or not untouched_by_session(paths)):   # worktree bẩn = việc của chính phiên, chưa gộp
+        return None
+    # mỗi lệnh git chỉ được phần còn lại của hạn chót (TimeoutExpired -> except ở chỗ gọi -> chặn như cũ)
+    # refs/replace và info/grafts (agent ghi được, INSTINCT-027) thay được commit mà log / rev-parse / merge-base đọc: tắt cả hai
+    genv = dict(os.environ, GIT_NO_REPLACE_OBJECTS="1", GIT_GRAFT_FILE=os.devnull)
+    git = lambda *a, cwd=repo, t=None: subprocess.run(["git", "-C", cwd, *a], capture_output=True, env=genv,
+                                                      timeout=t or max(0.5, min(10, left())))
+    out = lambda r: r.stdout.decode("utf-8", "replace").strip() if r.returncode == 0 else None
+    main = session_worktree.main_of(repo) or repo
+
+    def gate_script_ok(cwd, cd, path):
+        """Lệnh gọi đúng script merge gate của repo: đường dẫn (tính từ thư mục `cd`, không có thì từ cwd THẬT của lệnh ghi trong transcript:
+        cwd của shell giữ qua các lệnh, một `cd /tmp/x` ở lệnh trước đổi script được chạy) trỏ tới .claude/bin/super-board-merge-gate.sh
+        của repo xét hay của main, file đó được track và không đổi so với HEAD của cây đó."""
+        base = cd if cd and os.path.isabs(cd) else (os.path.join(cwd, cd) if cd and isinstance(cwd, str) else cwd)
+        if not os.path.isabs(path) and not (isinstance(base, str) and os.path.isabs(base)):
+            return False
+        for c in [path if os.path.isabs(path) else os.path.join(base, path)]:
+            for top in {repo, main}:
+                if (os.path.realpath(c) == os.path.realpath(os.path.join(top, GATE_SCRIPT))
+                        and git("ls-files", "--error-unmatch", "--", GATE_SCRIPT, cwd=top).returncode == 0
+                        and git("diff", "--quiet", "HEAD", "--", GATE_SCRIPT, cwd=top).returncode == 0):
+                    return True
+        return False
+    want = out(git("rev-parse", head + "^{tree}"))
+    if not want:
+        return None
+    # (a) biên nhận của worktree anh em (cùng .git, như bin/post-fix-gate.py cached_full_pass mượn)
+    for rp in sorted(glob.glob(os.path.join(tree[2], "worktrees", "*", "postfix-gate", "full_pass.json"))):
+        if left() <= 3:   # mỗi biên nhận một lần tính dấu vân tay (không cắt giữa chừng được): repo lớn, nhiều worktree
+            log("worktree-receipt check: out of time")
             return None
-    return paths
+        try:
+            with os.fdopen(open_reg(rp), encoding="utf-8") as fh:
+                rec = json.loads(fh.read(1 << 20))
+        except (OSError, ValueError, RecursionError):
+            continue
+        if not isinstance(rec, dict) or rec.get("exit") != 0 or rec.get("carried_from") or not isinstance(rec.get("project"), str):
+            continue
+        rtime, tested = rec.get("time"), rec.get("tested_at")
+        if isinstance(rtime, bool) or not isinstance(rtime, (int, float)) or not (start <= rtime <= time.time() + 60):
+            continue
+        # suite chạy thật trong lần đó (lần dùng lại giữ tested_at cũ: không mượn lại một PASS đã mượn, như cached_full_pass)
+        if isinstance(tested, bool) or not isinstance(tested, (int, float)) or not (-1 <= rtime - tested < 5):
+            continue
+        proj = rec["project"]
+        gd = out(git("rev-parse", "--absolute-git-dir", cwd=proj))
+        if not gd or os.path.realpath(gd) != os.path.realpath(os.path.dirname(os.path.dirname(rp))):   # biên nhận đúng của worktree đó
+            continue
+        wst = dirty_state(proj, tree_fp, t=max(0.5, min(10, left() / 3)))
+        if (not wst or wst[1] or rec.get("head") != wst[0] or not rec.get("fingerprint") or rec.get("fingerprint") != tree_fp.tree_fingerprint(proj)
+                or out(git("rev-parse", wst[0] + "^{tree}")) != want):
+            continue
+        return "worktree-receipt %s head=%s" % (proj, wst[0][:12])
+    # (b) bản ghi merge gate của lượt: chỉ kết quả (không lỗi) của một lệnh Bash LÀ lệnh gọi super-board-merge-gate.sh (MERGE_GATE_CALL),
+    # `--pr N` / `--expect-head` khớp "#N" / "merged <H>", script là bản track không đổi của repo (gate_script_ok), ghi sau lời nhắc người dùng.
+    # ponytail: bản ghi trong transcript gắn với phiên chỉ qua lệnh của nó; một phiên chép dòng "merged
+    # <H>" của PR phiên KHÁC gộp trong cùng lượt vẫn qua (git chỉ chứng thực H đã gộp qua origin trong lượt, không phải ai gộp, không phải
+    # gate đã chạy). Nâng cấp khi merge gate ghi biên nhận theo session id vào git common dir.
+    # ponytail: origin là URL trong .git/config (agent ghi được): một fork GitHub của chính agent có commit squash dựng sẵn, hay ~/.ssh/config
+    # trỏ github.com về máy khác, vẫn qua. Cả hai cần dựng repo / máy chủ riêng, không phải một lệnh echo. Nâng cấp: ghim owner/repo từ một
+    # nguồn đã track (config board) và host key GitHub đi kèm DevKit.
+    # ponytail: script sửa tạm cho in hai dòng rồi hoàn lại trước Stop, hay một PR sửa chính script rồi gộp (HEAD mới chứa bản sửa), vẫn qua
+    # (gate_script_ok chỉ thấy bản lúc Stop); ghi thẳng lên trunk bằng lệnh không có chữ merge / push (gh api …/contents, MCP
+    # create_or_update_file) không bị other_merge bắt. Origin https riêng tư: ls-remote không có credential helper -> chặn (fail-closed;
+    # các repo board dùng ssh). Merge gate kết thúc ở nhánh "merge response was lost" / "already merged" không in "merged <H>" -> chặn.
+    # Nâng cấp cùng biên nhận theo session id ở trên.
+    calls, merged, other_merge, pushes = {}, [], False, []
+    tp = d.get("transcript_path") or ""
+    for t in [tp] + sorted(glob.glob(os.path.join(os.path.splitext(tp)[0], "subagents", "*.jsonl"))):   # subagent của phiên cũng gộp được
+        try:
+            with os.fdopen(open_reg(t), encoding="utf-8", errors="replace") as f:
+                for raw in f:
+                    if "merge" not in raw and "push" not in raw:   # lệnh merge gate, kết quả của nó, gh … merge, git push … main
+                        continue
+                    if left() <= 0:
+                        log("merge-gate check: out of time reading the transcript")
+                        return None
+                    try:
+                        e = json.loads(raw)
+                        if datetime.datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")).timestamp() < start:
+                            continue
+                    except (ValueError, AttributeError, TypeError, RecursionError):
+                        continue
+                    msg = e.get("message") if isinstance(e, dict) else None
+                    for c in (msg.get("content") if isinstance(msg, dict) else None) or []:
+                        if not isinstance(c, dict):
+                            continue
+                        if e.get("type") == "assistant" and c.get("type") == "tool_use" and c.get("name") == "Bash":
+                            cmd = (c.get("input") or {}).get("command", "")
+                            m = MERGE_GATE_CALL.fullmatch(cmd) if isinstance(cmd, str) and not re.search(r"[\r\n]", cmd) else None
+                            args = m.group(3).split() if m else []
+                            pr = args[args.index("--pr") + 1] if "--pr" in args[:-1] else ""
+                            want_head = args[args.index("--expect-head") + 1] if "--expect-head" in args[:-1] else ""
+                            if m and pr.isdigit() and re.fullmatch(r"[0-9a-f]{7,40}", want_head) and gate_script_ok(e.get("cwd"), m.group(1), m.group(2)):
+                                calls[c.get("id")] = (pr, want_head)
+                            else:
+                                segs = [seg for seg in re.split(r"[;&|\n]+", str(cmd)) if re.search(r"\bpush\b", seg)]
+                                pushes += segs
+                                if re.search(r"\bgh\b[^\n]*\bmerge\b|/pulls/\d+/merge\b", str(cmd)) or any(   # gộp thẳng (gh), không qua merge gate
+                                        not SAFE_PUSH.fullmatch(seg) for seg in segs):
+                                    other_merge = True
+                        elif (e.get("type") == "assistant" and c.get("type") == "tool_use"
+                              and re.search(r"merge|push", str(c.get("name") or ""), re.I)):   # công cụ khác (MCP GitHub: merge_pull_request, push_files)
+                            other_merge = True
+                        elif c.get("type") == "tool_result" and c.get("tool_use_id") in calls and not c.get("is_error"):
+                            pr, want_head = calls[c["tool_use_id"]]
+                            body = c.get("content")
+                            if isinstance(body, list):
+                                body = "\n".join(x.get("text", "") for x in body if isinstance(x, dict))
+                            body = str(body or "")
+                            for sha in re.findall(r"^\[merge-gate #%s\] merged ([0-9a-f]{40})\s*$" % pr, body, re.M):
+                                if sha.startswith(want_head) and re.search(r"^\[merge-gate #%s\] verified green against " % pr, body, re.M):
+                                    merged.append((pr, sha))
+        except OSError as e:   # transcript nào (chính hay subagent) không đọc được: không chứng minh được gì
+            log("merge-gate check: transcript unreadable %s: %r" % (t, e))
+            return None
+    if other_merge:   # lượt gộp / đẩy thẳng ngoài merge gate: bản ghi merge gate không phủ được việc đó (OCR 18/10)
+        log("merge-gate check: this turn also merged or pushed outside the merge gate")
+        return None
+    if not merged:
+        return None
+    # origin THẬT: URL sau insteadOf (`--get-url`) phải là GitHub (GITHUB_URL), không phải đường dẫn hay file: / ext:: / fd:: (`git config
+    # remote.origin.url .` biến ls-remote thành đọc chính repo này, principal review 18/10). ls-remote chạy NGOÀI repo, không đọc config
+    # nào agent ghi được (repo / global / system: core.sshCommand, http.proxy, sslVerify, insteadOf đều có thể dựng một origin giả, OCR
+    # 18/10), ssh ép BatchMode, git chỉ được dùng https / ssh. PROOF_GATE_ALLOW_LOCAL_ORIGIN=1 (môi trường của hook, như PROOF_GATE=0;
+    # test dùng origin cục bộ) nhận cả đường dẫn.
+    local_ok = os.environ.get("PROOF_GATE_ALLOW_LOCAL_ORIGIN") == "1"
+    url = out(git("ls-remote", "--get-url", "origin")) or ""
+    if local_ok and url and not GITHUB_URL.fullmatch(url) and "://" not in url and "::" not in url:
+        url = os.path.normpath(os.path.join(repo, url))
+    elif not GITHUB_URL.fullmatch(url):
+        log("merge-gate check: origin is not a GitHub remote (%r)" % re.sub(r"//[^@/\s]*@", "//***@", url)[:80])   # token trong URL
+        return None
+    budget = min(5.0, left() - 1)   # mạng chậm / ssh chờ: quá hạn chót của hook = Claude Code giết hook = Stop lọt
+    if budget < 1:
+        log("merge-gate check: no time left for ls-remote")
+        return None
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(GIT_TERMINAL_PROMPT="0", GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+               GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=4")
+    proto = ["-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always"] \
+        + (["-c", "protocol.file.allow=always"] if local_ok else [])
+    p = subprocess.Popen(["git", *proto, "ls-remote", "--symref", url, "HEAD"], cwd="/", stdin=subprocess.DEVNULL,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, start_new_session=True)
+    try:
+        so, se = p.communicate(timeout=budget)
+    except subprocess.TimeoutExpired:   # cả nhóm tiến trình (ssh con giữ ống thì communicate chờ mãi)
+        os.killpg(p.pid, 9)
+        p.communicate()
+        log("merge-gate check: ls-remote timed out after %.1fs" % budget)
+        return None
+    tip = re.search(r"^([0-9a-f]{40})\tHEAD$", so.decode("utf-8", "replace"), re.M) if p.returncode == 0 else None
+    if not tip or git("cat-file", "-e", tip.group(1) + "^{commit}").returncode:
+        log("merge-gate check: origin HEAD unreadable (%s)" % (re.sub(r"//[^@/\s]*@", "//***@", se.decode("utf-8", "replace").strip())[:120]
+                                                               or "no HEAD line"))
+        return None
+    tip = tip.group(1)
+    trunk = re.search(r"^ref: refs/heads/(\S+)\tHEAD$", so.decode("utf-8", "replace"), re.M)
+    if trunk and any(re.search(r"[\s:/]%s\s*$" % re.escape(trunk.group(1)), seg) for seg in pushes):   # nhánh mặc định tên khác main/master/trunk
+        log("merge-gate check: this turn pushed to origin's default branch %s" % trunk.group(1))
+        return None
+    hist = out(git("log", "--first-parent", "-n", "200", "--format=%H %ct %P", tip)) or ""
+    landed = [(c[0], c[2]) for c in (l.split() for l in hist.splitlines())
+              if len(c) == 3 and c[1].isdigit() and int(c[1]) >= start - MERGE_GATE_SKEW_S]   # một cha (squash), ghi trong lượt
+    trees = {}
+    for pr, h in reversed(merged):
+        if git("cat-file", "-e", h + "^{commit}").returncode:   # head của PR chưa từng fetch về đây: thử bản ghi kế tiếp
+            continue
+        for s, parent in landed:
+            if left() <= 0:
+                log("merge-gate check: out of time")
+                return None
+            r = git("merge-tree", "--write-tree", parent, h)
+            if r.returncode not in (0, 1):   # 1 = xung đột (không phải squash này); khác = git cũ (< 2.38) hay lỗi: nói ra, không im lặng
+                log("merge-gate check: merge-tree failed (%s)" % r.stderr.decode("utf-8", "replace").strip()[:120])
+                return None
+            if s not in trees:
+                trees[s] = out(git("rev-parse", s + "^{tree}"))
+            if r.returncode or not r.stdout.split() or r.stdout.split()[0].decode() != trees[s]:
+                continue
+            # đứng ở H / S; hoặc main đã đi tiếp theo origin (PR phiên khác gộp sau S; lượt này không tự gộp thẳng PR nào, xem other_merge)
+            if head in (h, s) or (git("merge-base", "--is-ancestor", s, head).returncode == 0
+                                  and git("merge-base", "--is-ancestor", head, tip).returncode == 0):
+                return "merge-gate pr=%s head=%s squash=%s" % (pr, h[:12], s[:12])
+    return None
 
 gate_problem = full_gate_problem() if xong else None
+if gate_problem:
+    try:
+        alt = merged_evidence()
+    except Exception as e:   # python chết = wrapper exit 0 = XONG lọt; lỗi ở đây = chặn như cũ
+        log("merged-evidence check crashed: %r" % e)
+        alt = None
+    if alt:
+        log("pass-gate session=%s %s (receipt: %s)" % (session, alt, gate_problem))
+        gate_problem = None
 need_image, scope = xong, "unknown" if xong else "push turn: report only"
 if xong:
     try:
