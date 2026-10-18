@@ -23,7 +23,8 @@ HERE_PWD=$(pwd -P)
 # Không có python3: đường git như cũ (OCR 18/10).
 KIT_WT=""
 # Kit đi cùng script trước (đã review cùng nó), bản của repo sau — như sync_identical của merge gate.
-command -v python3 >/dev/null 2>&1 && for c in "$(cd "$(dirname "$0")/../.." && pwd)/universal-agent-devkit" "$REPO_PATH/.agents/devkit" "$REPO_PATH/universal-agent-devkit"; do
+HERE_UP=$(cd "$(dirname "$0")/../.." && pwd)
+command -v python3 >/dev/null 2>&1 && for c in "$HERE_UP/universal-agent-devkit" "$HERE_UP/.agents/devkit" "$REPO_PATH/universal-agent-devkit" "$REPO_PATH/.agents/devkit"; do
   # thử chạy một lần (`list` chỉ đọc): kit có mà không chạy được (cú pháp, python quá cũ) thì đường git như cũ, không giữ mọi thứ lại
   if [ -f "$c/scripts/git/worktree.py" ] && (cd "$REPO_PATH" && python3 "$c/scripts/git/worktree.py" list >/dev/null 2>&1); then
     KIT_WT="$c/scripts/git/worktree.py"; break
@@ -42,6 +43,7 @@ remove_wt() {
       echo "kept $1: agent-kit worktree remove refused: $( { printf '%s\n' "$out" | grep -m1 '✖' || printf '%s\n' "$out" | head -1; } | cut -c1-300)" >&2
       return 0
     fi
+    [ -e "$1" ] || { echo "removed $1 (agent-kit exited $rc after removing it: $(printf '%s\n' "$out" | tail -1 | cut -c1-200))" >&2; return 0; }
   fi
   git -C "$REPO_PATH" worktree remove "$1" 2>/dev/null || echo "kept $1: git worktree remove failed" >&2
 }
