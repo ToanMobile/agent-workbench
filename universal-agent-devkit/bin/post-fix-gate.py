@@ -958,9 +958,8 @@ def local_regen(before, after):
     """Paths of local state the suites rewrote, created or deleted (local_state_files before vs after them): build OUTPUTS, whose
     bytes say nothing about what was tested. GeelyEx2 #62 (18/10): the Test task rebuilds the overlay launcher-whitelist.apk that
     red_proof.json declares a build input, with other bytes each run, so a merge-gate scratch (APK copied from main) never matched
-    the worktree's receipt. No snapshot before (no suite ran in this run): [].
-    ponytail: a file the suites rewrite only on some runs (Gradle up-to-date) stays in local_sha on the others; the scratch then runs
-    the suites as before (never a wrong reuse); keep a per-repo list of generated inputs if that is ever measured to cost minutes."""
+    the worktree's receipt. No snapshot before (no suite ran in this run): []. A run whose build left such a file alone (Gradle
+    up-to-date) still leaves it out through known_generated."""
     if before is None:
         return []
     return regen_allowed(rel for rel in set(before) | set(after) if before.get(rel) != after.get(rel))
@@ -982,6 +981,70 @@ def regen_allowed(paths):
 
 # local_state_files taken right before this run's first suite (None: no suite ran); read by write_full_pass_receipt.
 LOCAL_STATE_BEFORE = None
+GENERATED_NAME, GENERATED_MAX = "local_generated.json", 256   # in <git-common-dir>/postfix-gate: one list for every checkout of the repo
+
+
+def _generated_path(receipt):
+    """<git-common-dir>/postfix-gate/local_generated.json for receipt <git dir>/postfix-gate/full_pass.json; None outside git (the receipt is
+    then under <project>/.agents/: no sibling worktree to lend to, and no file is written into the project)."""
+    git_dir = os.path.dirname(os.path.dirname(receipt))
+    return None if os.path.basename(git_dir) == ".agents" else os.path.join(_run_log_dir(git_dir), GENERATED_NAME)
+
+
+GENERATED_TRUST = 2   # real runs that must each have seen a path rewritten before it is left out (not one edit made during one run)
+
+
+def _generated_counts(receipt):
+    """{path: real runs that saw its suites rewrite it}, oldest first; {} when none or unreadable."""
+    path = _generated_path(receipt)
+    if not path:
+        return {}
+    try:
+        data = _load_state_json(path)
+    except (OSError, ValueError, RecursionError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {p: n for p, n in data.items() if isinstance(n, int) and not isinstance(n, bool)}
+
+
+def known_generated(receipt):
+    """Paths that GENERATED_TRUST real runs in checkouts of this repo saw their suites rewrite (local_regen), so that a later run whose build
+    left them alone still leaves them out of local_sha. GeelyEx2 #65 (18/10): Gradle was up-to-date, the worktree's overlay APK was still the
+    one an earlier run had built, the scratch had main's, this run's local_regen was empty and REG-CAR-01 ran again. A path seen once (a
+    person or a tool editing a build input during one run) is not trusted.
+    ponytail: a trusted path stays left out for every branch and checkout of the repo (no decay; the GENERATED_MAX newest kept); add a
+    last-seen time and expire it when a build output turns back into a real input."""
+    return [p for p, n in _generated_counts(receipt).items() if n >= GENERATED_TRUST]
+
+
+def remember_generated(receipt, paths):
+    """Count one more real run for each of paths (moved to the end: newest), keep the GENERATED_MAX newest, write atomically. Two runs at
+    once can lose one's count: it is counted again at its next real run."""
+    counts = _generated_counts(receipt)
+    for p in paths:
+        counts[p] = counts.pop(p, 0) + 1
+    keep = list(counts)[-GENERATED_MAX:]
+    if len(keep) < len(counts):
+        log_warn(f"{GENERATED_NAME}: {len(counts) - len(keep)} oldest path(s) dropped (cap {GENERATED_MAX})")
+        counts = {p: counts[p] for p in keep}
+    target = _generated_path(receipt)
+    if not target:
+        return
+    tmp = None
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".tmp_generated.", dir=os.path.dirname(target))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(counts, f)
+        os.replace(tmp, target)
+    except OSError as e:
+        log_warn(f"{GENERATED_NAME}: {e}")
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError as e2:
+                log_warn(f"{GENERATED_NAME}: {e2}")
 
 
 def snapshot_local_configs(project_dir):
@@ -1362,8 +1425,15 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
         head, dirty = head_and_dirty(project_dir)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
-            now_files = local_state_files(project_dir) if LOCAL_STATE_BEFORE is not None else None
-            regen = local_regen(LOCAL_STATE_BEFORE, now_files)
+            known = known_generated(path)
+            now_files = local_state_files(project_dir) if LOCAL_STATE_BEFORE is not None or known else None
+            seen = local_regen(LOCAL_STATE_BEFORE, now_files)
+            # only a file rewritten IN PLACE is a build output to remember: one the suites created (made once when missing: a key, a
+            # prebuilt) is a real input from then on (review 18/10, P2); it still stays out of THIS receipt (seen)
+            rewritten = [p for p in seen if p in LOCAL_STATE_BEFORE and p in now_files]
+            if rewritten:
+                remember_generated(path, rewritten)
+            regen = regen_allowed(set(seen) | set(known))
         except Exception as e:   # no list of rewritten files: local_sha below covers every file, as before
             log_warn(f"local_state_files: {e}")
             now_files, regen = None, []
