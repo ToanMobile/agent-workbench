@@ -52,7 +52,7 @@ CFG="$TMP/cfg.json"
 echo '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo verify-said-no; false"]}' > "$CFG"
 
 ( cd "$WT" && bash "$GATE" --config "$CFG" --pr 5 --expect-head "$H" ) >"$TMP/gate.log" 2>&1; rc=$?
-[ "$rc" -eq 2 ] && ok "red verify: merge gate exit 2" || fail "gate exit $rc (want 2): $(tail -5 "$TMP/gate.log")"
+[ "$rc" -eq 11 ] && ok "red verify, branch not behind base: merge gate exit 11" || fail "gate exit $rc (want 11): $(tail -5 "$TMP/gate.log")"
 [ ! -e "$WT/.claude/super-board/last-merge-verify-pr-5.log" ] && [ -z "$(git -C "$WT" status --porcelain)" ] \
   && ok "no log file left in the worktree it ran from (status clean, worktree remove not blocked)" \
   || fail "log written into the worktree: $(git -C "$WT" status --porcelain | head -3)"
@@ -61,11 +61,11 @@ CD="$(cd "$R" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"   # như gat
 grep -q "verify-said-no" "$CD/super-board/last-merge-verify-pr-5.log" 2>/dev/null && grep -qF "$CD/super-board/last-merge-verify-pr-5.log" "$TMP/gate.log" \
   && ok "the log is kept in the git common dir and the message names that path" || fail "log not in $CD/super-board: $(grep 'log saved' "$TMP/gate.log")"
 
-# Không ghi được log (một FILE tên super-board chiếm chỗ thư mục): vẫn exit 2 đúng lý do, nói "(not saved)", không chết giữa chừng (set -e)
+# Không ghi được log (một FILE tên super-board chiếm chỗ thư mục): vẫn exit 11 đúng lý do, nói "(not saved)", không chết giữa chừng (set -e)
 rm -rf "$CD/super-board" && : > "$CD/super-board"
 ( cd "$WT" && bash "$GATE" --config "$CFG" --pr 5 --expect-head "$H" ) >"$TMP/gate2.log" 2>&1; rc=$?
-[ "$rc" -eq 2 ] && grep -q "log saved to (not saved)" "$TMP/gate2.log" && grep -q "verify-said-no" "$TMP/gate2.log" \
-  && ok "log cannot be written: still exit 2, the verify output on stderr, '(not saved)' said" || fail "unwritable log dir (rc $rc): $(tail -3 "$TMP/gate2.log")"
+[ "$rc" -eq 11 ] && grep -q "log saved to (not saved)" "$TMP/gate2.log" && grep -q "verify-said-no" "$TMP/gate2.log" \
+  && ok "log cannot be written: still exit 11, the verify output on stderr, '(not saved)' said" || fail "unwritable log dir (rc $rc): $(tail -3 "$TMP/gate2.log")"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_verify_log_outside: PASS"; exit 0; } || { echo "test_merge_gate_verify_log_outside: FAIL ($FAILS)"; exit 1; }
