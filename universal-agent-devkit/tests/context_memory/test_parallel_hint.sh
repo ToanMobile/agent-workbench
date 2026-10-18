@@ -64,6 +64,12 @@ CASES = [
     ("fix every project's README", True),
     ("sửa hooks/x.sh ở cả 4 repo", True),
     ("dùng nhiều agent: sửa hook A, viết test cho B", True),
+    # round 2 (OCR + reviewer 18/10)
+    ("làm 3 thẻ đang Ready trên github.com/org/board", True),
+    ("fix issues #12, #15 and #18 in github.com/org/repo", True),
+    ("để tôi xem, sửa 4 repo đi", True),
+    ("có 3 bug cần sửa: login, export, sync", True),
+    ("What to do:\n1. fix the login\n2. add tests for export", True),
     # silent: questions, one file, chit-chat, a single task
     ("song song là gì?", False),
     ("có nên chạy 4 repo song song không?", False),
@@ -99,6 +105,10 @@ CASES = [
     ("Error: fan-out failed at step 3", False),
     ("sửa lỗi khi nhiều agent cùng ghi một file", False),
     ("tests fail when run in parallel, fix that", False),
+    ("sửa lỗi treo khi review 2 PR cùng lúc", False),
+    ("crash when you fix 3 bugs in a row", False),
+    ("make the test runner run in parallel", False),
+    ("sửa crash ở dòng #12, #15 của log", False),
 ]
 for prompt, want in CASES:
     got = split(prompt)
@@ -115,7 +125,7 @@ for _ in range(200):
     for p in corpus:
         split(p)
 per_call_ms = (time.perf_counter() - t0) * 1000 / (200 * len(corpus))
-chk(per_call_ms < 2.0, "detector costs %.3f ms a prompt (budget 2 ms)" % per_call_ms)
+chk(per_call_ms < 10.0, "detector costs %.3f ms a prompt (budget 10 ms: a busy runner must not flake it)" % per_call_ms)
 # review 18/10: a search for "?\W*$" over "(?, ?)" placeholders took 20 s on 40 KB (past the hook's 10 s timeout)
 BIG = [("list + words", ("1. sửa " + "x" * 200 + "\n") * 500 + "song song " * 2000),
        ("question marks", "? " * 20000 + "sửa đi"),

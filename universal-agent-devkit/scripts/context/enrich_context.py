@@ -981,20 +981,23 @@ SPLIT_REPOS_RE = re.compile(
     r"(?:repos?|repositor(?:y|ies)|dự án|projects?)|(?:tất cả|mọi)\s+(?:các\s+)?(?:repos?|dự án)"
     r"|(?:all|every|each)\s+(?:the\s+)?(?:repos?|repositories|projects?))(?!\w)")
 SPLIT_EXPLICIT_RE = re.compile(
-    r"(?<!\w)(?:nhiều (?:agent|phiên|lane)|(?:many|several|multiple) agents|in parallel|"
+    r"(?<!\w)(?:nhiều (?:agent|phiên|lane)|(?:many|several|multiple) agents|"
+    r"(?:these|them|those|both|everything|all of (?:them|these))\s+in parallel|in parallel\s*:|"
     r"song song\s*(?::|giúp|hộ|cho nhanh|cho tôi|đi|nhé|nha|luôn)|fan[- ]?out (?:the |these )?(?:work|tasks|agents|lanes)|"
     r"chia (?:ra |thành )?(?:nhiều )?(?:agent|lane|phiên))(?!\w)")
 SPLIT_COUNT_RE = re.compile(
     r"(?<!\w)(?:sửa|fix|làm|xử lý|giải quyết|review|đóng|close|handle|resolve|triage|merge|gộp|kiểm tra|check|test|viết test cho)\s+"
     r"(?:(?:hết|cả|tất cả|nốt|luôn|the|all)\s+)?" + _COUNT +
-    r"\s+(?:issues?|thẻ|cards?|tickets?|bugs?|lỗi|việc|tasks?|lanes?|prs?|pull requests?)(?!\w)")
+    r"\s+(?:issues?|thẻ|cards?|tickets?|bugs?|lỗi|việc|tasks?|lanes?|prs?|pull requests?)(?!\w)"
+    r"|(?<!\w)" + _COUNT + r"\s+(?:issues?|thẻ|cards?|tickets?|bugs?|lỗi|việc|tasks?|prs?)\s+cần\s+(?:sửa|fix|làm|xử lý)(?!\w)")
 SPLIT_REFS_RE = re.compile(r"(?<!\w)(?:issues?|thẻ|cards?|tickets?|prs?|bugs?)\s+#?\d+(?:\s*(?:,|và|and|&)\s*#?\d+)+"
                            r"|(?<!\w)#\d+(?:\s*(?:,|và|and|&)\s*#\d+)+")
 SPLIT_ITEM_RE = re.compile(r"(?:^|\n)[ \t]*(?:\(?\d{1,2}[.)]|[-*•])[ \t]+" + _ACT + r"(?!\w)(?![ \t]+\d)"
                            r"|(?<!\S)\([1-9]\)[ \t]+" + _ACT + r"(?!\w)")
-TOPIC_RE = re.compile(r"(?<!\w)(?:khi|lúc|nếu|để|when|if|while)\s+(?:\S+\s+){0,3}\Z")
+TOPIC_RE = re.compile(r"(?<!\w)(?:(?:khi|lúc|nếu|để|when|if|while)\s+(?:[^\s,.;:!?]+\s+){0,3}|(?:dòng|line|lines|row|rows|bước|step)\s+)\Z")
 REPRO_RE = re.compile(r"(?<!\w)(?:steps to reproduce|repro(?:duce)? steps|các bước tái hiện|bước tái hiện|cách tái hiện)(?!\w)")
 FENCE_RE = re.compile(r"```.*?(?:```|\Z)", re.S)
+HOST_RE = re.compile(r"[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/")   # github.com/…, gitlab.example.org/…
 # Questions are judged on the first and the last words only: a search for "?\W*$" over a pasted text full of "(?, ?)"
 # placeholders was quadratic (review 18/10: 20 s for 40 KB, past the hook's timeout).
 QUESTION_START_RE = re.compile(r"\W*(?:tại sao|vì sao|sao(?! chép| lưu)|có nên|có phải|liệu|giải thích|why|what|how|is|are|"
@@ -1014,21 +1017,22 @@ def parallel_split(prompt):
     """Why this request can be split across agents ("4 repo", "danh sách 3 việc", "nhiều agent"…), or "" when it cannot."""
     norm = normalize(prompt).strip()
     if len(norm) < 8 or norm.startswith("/") or harness_prompt(prompt) \
-            or QUESTION_START_RE.match(norm) or QUESTION_END_RE.search(norm[-80:]):
+            or (QUESTION_START_RE.match(norm) and not norm.split("\n", 1)[0].rstrip().endswith(":")) \
+            or QUESTION_END_RE.search(norm[-80:]):
         return ""
     text = FENCE_RE.sub(" ", norm)
     reason = _ask(SPLIT_REPOS_RE, text)   # one file in several repos is still one lane per repo
     if reason:
         return reason
-    paths = {p.rstrip(":,.;)") for p in PATHLIKE_RE.findall(text) if "://" not in p}   # a link is no file of the repo
+    paths = {p.rstrip(":,.;)") for p in PATHLIKE_RE.findall(text) if "://" not in p and not HOST_RE.match(p)}   # a link is no file
     if len(paths) == 1:   # edits inside one file are one lane
         return ""
     reason = _ask(SPLIT_EXPLICIT_RE, text)
     if reason:
         return reason
-    m = SPLIT_COUNT_RE.search(text) or SPLIT_REFS_RE.search(text)
-    if m:
-        return m.group(0)
+    reason = _ask(SPLIT_COUNT_RE, text) or _ask(SPLIT_REFS_RE, text)
+    if reason:
+        return reason
     items = 0 if REPRO_RE.search(text) else len(SPLIT_ITEM_RE.findall(text))
     return "danh sách %d việc" % items if items >= 2 else ""
 
