@@ -167,6 +167,15 @@ MERGED19="$(git -C "$R" rev-parse issue-19-cr)"
 git -C "$R" worktree add -q "$W/issue-19-build" issue-19-cr
 bash "$TMP/sb/.claude/bin/clean.sh" "$R" issue-19-cr "$MERGED19" >/dev/null 2>"$TMP/k9.err"
 [ ! -d "$W/issue-19-build" ] && ok "k9 a kit that crashes in remove falls back to plain git" || { fail "k9 kit crash kept a clean worktree"; cat "$TMP/k9.err"; }
+# k11. (OCR 18/10) kit từ chối bằng exit 2 kèm dòng ✖ (die(): git lỗi khi dò bí mật, state không đọc được…): vẫn là từ chối, giữ
+printf 'import sys\nif sys.argv[1:2] != ["list"]:\n    print("\\u2716 worktree: cannot list ignored files", file=sys.stderr); sys.exit(2)\n' > "$R/.agents/devkit/scripts/git/worktree.py"
+git -C "$R" branch issue-21-r2
+MERGED21="$(git -C "$R" rev-parse issue-21-r2)"
+git -C "$R" worktree add -q "$W/issue-21-build" issue-21-r2
+bash "$TMP/sb/.claude/bin/clean.sh" "$R" issue-21-r2 "$MERGED21" >/dev/null 2>"$TMP/k11.err"
+[ -d "$W/issue-21-build" ] && grep -q "issue-21-build: agent-kit worktree remove refused: ✖ worktree: cannot list" "$TMP/k11.err" \
+  && ok "k11 a kit refusal with exit 2 and a ✖ line keeps the worktree, no git fallback" \
+  || { fail "k11 kit exit-2 refusal fell through to git"; cat "$TMP/k11.err"; }
 rm -rf "$R/.agents"
 # k10. (OCR 18/10) hợp đồng chính: kit TỪ CHỐI có lý do (exit 1 kèm ✖) thì giữ worktree, KHÔNG rơi về `git worktree remove` — git trần
 #      xoá im lặng file bị ignore chỉ worktree có (khoá, .env). Worktree sạch theo `git status`, chỉ giữ một .env bị ignore mà main không có.

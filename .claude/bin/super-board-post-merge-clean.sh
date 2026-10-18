@@ -36,10 +36,9 @@ remove_wt() {
     # thành công: in lại lời kit (nhánh đã xoá, commit cất ở refs/devkit/discarded 30 ngày, ⚠ memory note đi theo worktree) — OCR 18/10
     out=$(cd "$REPO_PATH" && python3 "$KIT_WT" remove "$1" 2>&1) && { printf '%s\n' "$out" >&2; return 0; }
     rc=$?
-    # 1 kèm dòng ✖ = có việc sẽ mất (sửa dở, commit chỉ reflog giữ, bí mật bị ignore…): giữ, git trần không thấy hết những thứ đó.
-    # Khác (2: dùng sai / state không đọc được; kit chết giữa chừng, traceback cũng exit 1): đường git như cũ — git vẫn từ chối worktree
-    # bẩn hay bị khoá (OCR 18/10).
-    if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -q '✖'; then
+    # Có dòng ✖ (exit 1, hay 2 của die(): có việc sẽ mất, git lỗi khi dò bí mật, state không đọc được…) = kit TỪ CHỐI: giữ, git trần không
+    # thấy hết những thứ đó. Không có dòng ✖ (kit chết giữa chừng: traceback): đường git như cũ — git vẫn từ chối worktree bẩn hay bị khoá.
+    if printf '%s\n' "$out" | grep -q '✖'; then
       echo "kept $1: agent-kit worktree remove refused: $( { printf '%s\n' "$out" | grep -m1 '✖' || printf '%s\n' "$out" | head -1; } | cut -c1-300)" >&2
       return 0
     fi
