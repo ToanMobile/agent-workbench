@@ -22,7 +22,9 @@ Audits the working-tree changes after a bug fix:
 
 Only the 6 static checks and the regression run (--run-tests) decide the verdict; the
 other sections are reminders. Regression commands are read from the base ref, so the
-audited change cannot rewrite them.
+audited change cannot rewrite them. One exception: a change that only ADDS rules to the
+matrix (every base rule unchanged, new test ids, no covered_by) runs its own matrix, and
+is trusted only when every added test passes in that same run.
 
 --staged (the git pre-commit hook): the 6 static checks only, on the STAGED content —
 no regression run, device probe or report. A clean result is exit 2 (tests not run),
@@ -1583,6 +1585,69 @@ def load_active_matrix(matrix_path: str = None, base_ref: str = "HEAD"):
         return matrix, tr(f"regression matrix `{rel}` bị sửa so với {base_ref} trong thay đổi đang audit — gate chạy lệnh của bản {base_ref}, cần người review",
                           f"regression matrix `{rel}` was modified relative to {base_ref} in the audited change — the gate runs the {base_ref} commands; needs human review")
     return matrix, None
+
+
+def matrix_additions(base, current):
+    """Id các test mà ma trận `current` THÊM so với `base`, hoặc None khi đó không phải thay đổi chỉ-thêm (GeelyEx2 PR #60, 18/10: một PR
+    chỉ thêm REG-HOOK-01 bị exit 2 "cần người review", pre-push và merge gate dừng). Chỉ-thêm: khoá top-level ngoài "rules" giữ nguyên; rule
+    cũ còn đủ, đúng thứ tự, bằng từng giá trị; mỗi rule mới có ít nhất một test, mỗi test mới có id chưa từng có ở base (một id chung
+    dòng trạng thái với suite cũ), không trùng nhau, có lệnh, và không covered_by (test mới phải tự chạy). Thứ khác: None."""
+    if not isinstance(base, dict) or not isinstance(current, dict):
+        return None
+    if {k: v for k, v in base.items() if k != "rules"} != {k: v for k, v in current.items() if k != "rules"}:
+        return None
+    old, new = base.get("rules", []), current.get("rules", [])
+    if not isinstance(old, list) or not isinstance(new, list):
+        return None
+    i, added_rules = 0, []
+    for rule in new:   # rule cũ là dãy con của rule mới: khớp tham lam là đủ (phần dư là rule thêm)
+        if i < len(old) and rule == old[i]:
+            i += 1
+        else:
+            added_rules.append(rule)
+    if i != len(old) or not added_rules:
+        return None
+    base_ids = {t.get("id") for r in old if isinstance(r, dict)
+                for t in (r.get("mandatory_regression_tests") or []) if isinstance(t, dict)}
+    added = []
+    for rule in added_rules:
+        tests = rule.get("mandatory_regression_tests") if isinstance(rule, dict) else None
+        if not isinstance(tests, list) or not tests:
+            return None
+        for t in tests:
+            if not (isinstance(t, dict) and isinstance(t.get("id"), str) and t["id"].strip()
+                    and isinstance(t.get("command"), str) and t["command"].strip() and "covered_by" not in t):
+                return None
+            if t["id"] in base_ids or t["id"] in added:
+                return None
+            added.append(t["id"])
+    return added
+
+
+def trust_additive_matrix(matrix, problem, matrix_path, base_ref: str):
+    """(matrix, problem, added ids). Ma trận bị sửa so với base_ref mà chỉ THÊM rule (matrix_additions) thì gate chạy ma trận của thay đổi và
+    không còn là việc của người review — với điều kiện mọi test thêm chạy XANH trong chính lượt này (main ép chạy chúng và kiểm lại trước
+    kết luận). Mọi trường hợp khác giữ nguyên (matrix, problem) của load_active_matrix."""
+    if not problem or not matrix:
+        return matrix, problem, []
+    path = find_matrix_path(matrix_path)
+    try:
+        rel = path.resolve().relative_to(get_repo_root()).as_posix()
+        current = path.read_bytes()
+    except (AttributeError, OSError, ValueError):
+        return matrix, problem, []
+    res = subprocess.run(["git", "-C", str(get_repo_root()), "show", f"{base_ref}:{rel}"], capture_output=True)
+    if res.returncode != 0 or current == res.stdout:
+        return matrix, problem, []
+    try:
+        base = json.loads(res.stdout.decode("utf-8", errors="replace"))
+        cur = json.loads(current.decode("utf-8", errors="replace"))
+    except ValueError:
+        return matrix, problem, []
+    added = matrix_additions(base, cur)
+    if not added or base != matrix:
+        return matrix, problem, []
+    return cur, None, added
 
 
 def matrix_id_conflicts(matrix) -> dict:
@@ -4881,6 +4946,7 @@ def main():
     if STAGED:
         return run_staged_audit(args, modified_files, devkit_artifacts)
     matrix, matrix_problem = load_active_matrix(args.matrix, base_ref)
+    matrix, matrix_problem, matrix_added = trust_additive_matrix(matrix, matrix_problem, args.matrix, base_ref)
     matrix, matrix_problem = follow_matrix_renames(matrix, matrix_problem, args.matrix, base_ref)
     for _sid, _cmds in matrix_id_conflicts(matrix).items():
         # log_err, not log_warn: --brief keeps only ✖ lines, so a ⚠ here would never reach the agent that runs the standard command
@@ -5071,6 +5137,21 @@ def main():
         for guard in rule.get("immutable_guards", []):
             immutable_guards_protected.append((comp_name, guard))
     impacted_tests = list(regression_tests)   # what the change itself needs (coverage verdicts)
+    if run_tests and matrix_added:
+        # Ma trận chỉ-thêm được tin với điều kiện test thêm chạy XANH ở đây: chạy cả khi không file nào khớp watch_files của rule mới.
+        have = {t["id"] for t in regression_tests}
+        for rule in rules:
+            for test in rule.get("mandatory_regression_tests", []):
+                if test.get("id") in matrix_added and test["id"] not in have:
+                    have.add(test["id"])
+                    regression_tests.append({
+                        "component": rule.get("component", "UnknownComponent"), "id": test["id"],
+                        "name": test.get("name"), "command": test.get("command"),
+                        "impacted_command": test.get("impacted_command"), "files": [],
+                        "untested_exit": test.get("untested_exit"), "status": "NOT_RUN", "duration": "-",
+                        "parallel_safe": test.get("parallel_safe") is True, "covered_by": None})
+        print(f"  • {tr('Ma trận chỉ THÊM rule so với', 'The matrix only ADDS rules relative to')} {base_ref}: "
+              f"{tr('chạy test mới', 'running the new tests')} {', '.join(matrix_added[:10])}{' …' if len(matrix_added) > 10 else ''}")
     project_dir = get_project_dir()
     force_reason = force_full_reason(args)
     # Acceptance was asked for (--full), not a Stop-hook style check: if it is deferred
@@ -5731,6 +5812,13 @@ def main():
                  + ", ".join(t["id"] or "?" for t in stale_skipped))
     tests_ok = tests_passed + len(tests_untested) + len(stale_skipped) == len(regression_tests)
     unverified = bool(regression_tests) and not run_tests
+    added_not_green = [i for i in matrix_added if not any(t.get("id") == i and t["status"] == "PASS" for t in regression_tests)]
+    if added_not_green and not matrix_problem:
+        matrix_problem = tr(f"regression matrix chỉ thêm rule so với {base_ref} nhưng test mới chưa chạy XANH trong lượt này "
+                            f"({', '.join(added_not_green[:5])}) — gate chỉ tin ma trận chỉ-thêm khi mọi test mới PASS; chạy lại với --run-tests",
+                            f"the regression matrix only adds rules relative to {base_ref} but the new tests did not pass in this run "
+                            f"({', '.join(added_not_green[:5])}) — an add-only matrix is trusted only when every new test passes; re-run with --run-tests")
+        log_err(matrix_problem)
     impacted_run = [t for t in regression_tests if t.get("mode") == "impacted"]
     impacted_n = sum(t.get("impacted_count", 0) for t in impacted_run)
     test_mode = ("none" if not run_tests or not regression_tests
