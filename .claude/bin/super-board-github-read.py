@@ -317,6 +317,11 @@ def read(args, kind='json', meta=None, recovering=False):
             check_halt()
         try:
             result = subprocess.run(['gh', *args], capture_output=True, text=True, timeout=30)
+            # gh refuses to print a diff holding terminal escape sequences (ANSI colour in a committed QA log). That is data in
+            # the PR, not a failed read: ask again with the flag it names. Any other failure keeps the retry/halt path.
+            if (result.returncode and args[:2] == ['pr', 'diff'] and '--allow-escape-sequences' not in args
+                    and 'terminal escape sequences' in result.stderr):
+                result = subprocess.run(['gh', *args, '--allow-escape-sequences'], capture_output=True, text=True, timeout=30)
             diagnostic = result.stderr
             if result.returncode:
                 diagnostic += result.stdout
