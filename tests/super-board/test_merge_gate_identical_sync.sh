@@ -203,13 +203,13 @@ git -C "$R" checkout -q -b other-35 origin/main; printf '%s\n' "origin a 35" > "
 git -C "$R" add a rcfg/x; git -C "$R" commit -qm "origin edits a, adds rcfg/x"
 git -C "$R" push -q origin other-35:refs/heads/main; git -C "$R" checkout -q main; git -C "$R" fetch -q origin
 printf '%s\n' "origin a 35" > "$R/a"; echo MINE > "$R/rcfg"; printf 'rcfg\n' >> "$R/.git/info/exclude"
-git -C "$R" diff --name-only main origin/main | grep -qx rcfg/x && git -C "$R" status --porcelain --ignored | grep -qx '!! rcfg' \
-  || fail "8 reset path: fixture: origin does not add rcfg/x or main's rcfg is not an ignored file"
 BEFORE35=$(git -C "$R" rev-parse main)
-gate 35
-[ "$(git -C "$R" rev-parse main)" = "$BEFORE35" ] && [ "$(cat "$R/rcfg" 2>/dev/null)" = MINE ] && [ -z "$(git -C "$R" diff --cached --name-only)" ] \
-  && ok "8 reset path: main not moved, the private ignored file intact, nothing staged" \
-  || fail "8 reset path: main moved or the private file changed: $(ls -la "$R/rcfg" 2>&1 | tail -1) | $(grep -E 'note|warning' "$TMP/gate35.log" | cut -c1-160)"
+if git -C "$R" diff --name-only main origin/main | grep -qx rcfg/x && git -C "$R" status --porcelain --ignored | grep -qx '!! rcfg'; then
+  gate 35
+  [ "$(git -C "$R" rev-parse main)" = "$BEFORE35" ] && [ "$(cat "$R/rcfg" 2>/dev/null)" = MINE ] && [ -z "$(git -C "$R" diff --cached --name-only)" ] \
+    && ok "8 reset path: main not moved, the private ignored file intact, nothing staged" \
+    || fail "8 reset path: main moved or the private file changed: $(ls -la "$R/rcfg" 2>&1 | tail -1) | $(grep -E 'note|warning' "$TMP/gate35.log" | cut -c1-160)"
+else fail "8 reset path: fixture: origin does not add rcfg/x or main's rcfg is not an ignored file (case not run)"; fi
 rm -rf "${R:?}/rcfg"; resync
 
 # 8 NFD: như "8 reset path" nhưng origin thêm `café.local` với tên dạng NFD trong tree (review 18/10), còn main giữ file riêng bị ignore
@@ -231,6 +231,61 @@ gate 36
   && ok "8 NFD name vs NFC ignored file: main not moved, the private file intact" \
   || fail "8 NFD name vs NFC ignored file: main moved or the private file changed: $(cat "$R/$NFC" 2>&1) | $(grep -E 'note|warning' "$TMP/gate36.log" | cut -c1-160)"
 git -C "$R" config --unset core.precomposeunicode; rm -f "$R/$NFC" "$R/$NFD"; resync
+
+# ── 9. main SẠCH (không bản dở): lần ff ĐẦU TIÊN của gate cũng không được đè file riêng bị ignore mà PR thêm vào (audit 18/10: trước đây
+#    chỉ đường stage có chốt; `merge --ff-only` mặc định ghi đè file ignore).
+git -C "$R" fetch -q origin
+git -C "$R" checkout -q -b issue-41-x origin/main
+printf '%s\n' '{"from":"origin"}' > "$R/l41.json"; git -C "$R" add -f l41.json; git -C "$R" commit -qm "card 41"; git -C "$R" push -q origin issue-41-x
+git -C "$R" rev-parse issue-41-x > "$TMP/pr41.head"; meta 41; git -C "$R" checkout -q main
+printf 'l41.json\n' >> "$R/.git/info/exclude"; printf '%s\n' '{"secret":"MINE"}' > "$R/l41.json"
+BEFORE41=$(git -C "$R" rev-parse main)
+gate 41
+[ "$(cat "$R/l41.json")" = '{"secret":"MINE"}' ] && [ "$(git -C "$R" rev-parse main)" = "$BEFORE41" ] \
+  && ok "9: clean main, first ff: the private ignored file intact, main not moved" \
+  || fail "9: clean main, first ff overwrote the private ignored file or moved main: $(cat "$R/l41.json")"
+grep -q "git-ignored local file or link is in the way" "$TMP/gate41.log" && ok "9: the warning names the ignored-file collision (exit 4)" \
+  || fail "9: no ignored-file collision warning: $(grep -E 'note|warning' "$TMP/gate41.log" | cut -c1-200)"
+rm -f "$R/l41.json"; resync
+
+# ── 10. base lệch sau squash, main SẠCH: lần `reset --keep` thường cũng không được đè file riêng bị ignore mà origin thêm vào.
+branch 42 b3 "pr42 b3"; git -C "$R" merge -q --ff-only issue-42-x
+git -C "$R" checkout -q -b other-42 origin/main; printf '%s\n' '{"from":"origin"}' > "$R/l42.json"; git -C "$R" add -f l42.json
+git -C "$R" commit -qm "origin adds l42.json"; git -C "$R" push -q origin other-42:refs/heads/main; git -C "$R" checkout -q main; git -C "$R" fetch -q origin
+printf 'l42.json\n' >> "$R/.git/info/exclude"; printf '%s\n' '{"secret":"MINE"}' > "$R/l42.json"
+BEFORE42=$(git -C "$R" rev-parse main)
+gate 42
+[ "$(cat "$R/l42.json")" = '{"secret":"MINE"}' ] && [ "$(git -C "$R" rev-parse main)" = "$BEFORE42" ] \
+  && ok "10: diverged clean main, plain reset: the private ignored file intact, main not moved" \
+  || fail "10: plain reset overwrote the private ignored file or moved main: $(cat "$R/l42.json")"
+grep -q "git-ignored local file or link is in the way" "$TMP/gate42.log" && ok "10: the warning names the ignored-file collision (exit 4)" \
+  || fail "10: no ignored-file collision warning: $(grep -E 'note|warning' "$TMP/gate42.log" | cut -c1-200)"
+rm -f "$R/l42.json"; resync
+
+# ── 11. base lệch, `a` dở trùng byte origin (đường stage + reset), cộng một entry `git add -N` của phiên khác: reset --keep sẽ làm rơi
+#    entry đó khỏi index (diff --cached không thấy nó) — gate không được dời main, entry còn nguyên. Chốt bắt nó là `idx_rc` bên bash
+#    (`diff --cached --ita-visible-in-index`); chốt `keep` trong python chỉ là lớp phòng thủ cho cuộc đua sau bước đó, ca này không chạm tới.
+branch 43 b4 "pr43 b4"; git -C "$R" merge -q --ff-only issue-43-x
+git -C "$R" checkout -q -b other-43 origin/main; printf '%s\n' "origin a 43" > "$R/a"; git -C "$R" commit -qam "origin edits a"
+git -C "$R" push -q origin other-43:refs/heads/main; git -C "$R" checkout -q main; git -C "$R" fetch -q origin
+printf '%s\n' "origin a 43" > "$R/a"; echo "intent" > "$R/ita43"; git -C "$R" add -N ita43
+BEFORE43=$(git -C "$R" rev-parse main)
+gate 43
+git -C "$R" ls-files --error-unmatch ita43 >/dev/null 2>&1 && [ "$(git -C "$R" rev-parse main)" = "$BEFORE43" ] \
+  && ok "11: another session's intent-to-add entry survives, main not moved" \
+  || fail "11: intent-to-add entry dropped or main moved: $(git -C "$R" status --porcelain | tr '\n' ';')"
+grep -q "another session has staged changes" "$TMP/gate43.log" && ok "11: the warning names the staged/intent-to-add entry" \
+  || fail "11: no warning about the staged entry: $(grep -E 'note|warning' "$TMP/gate43.log" | cut -c1-200)"
+git -C "$R" rm -q --cached ita43 >/dev/null 2>&1; rm -f "$R/ita43"; resync
+
+# ── 12. gate chạy từ chỗ KHÔNG có DevKit cạnh nó (worktree Reviewer của OfficeReader không có .agents/devkit; review 18/10): lần đồng bộ
+#    squash bình thường (main chỉ giữ commit của PR, sạch) vẫn phải `reset --keep` về origin — chốt va chạm file ignore không cần DevKit.
+mkdir -p "$TMP/nodk/.claude"; cp -R "$ROOT/.claude/bin" "$TMP/nodk/.claude/bin"
+branch 44 b5 "pr44 b5"; git -C "$R" merge -q --ff-only issue-44-x
+( cd "$TMP/lw" && bash "$TMP/nodk/.claude/bin/super-board-merge-gate.sh" --config "$CFG" --pr 44 --expect-head "$(cat "$TMP/pr44.head")" ) >"$TMP/gate44.log" 2>&1
+synced 44 && grep -q "moved to origin/main" "$TMP/gate44.log" && ok "12: no DevKit next to the gate: the plain squash sync still moves main" \
+  || fail "12: no DevKit next to the gate: main not synced: $(grep -E 'note|warning' "$TMP/gate44.log" | cut -c1-200)"
+resync
 if [ "$(git -C "$R" config --get core.ignorecase)" = true ]; then
   ignored_case 33 Local2.json local2.json file "case-only variant on a case-insensitive disk"
 else echo "skip 8 case-variant: core.ignorecase is not true"; fi
