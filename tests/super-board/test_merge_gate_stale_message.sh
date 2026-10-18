@@ -69,7 +69,7 @@ CFG_C="$TMP/cfg-color.json"
 echo '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["printf \"  \\033[1mKẾT LUẬN:\\033[0m \\033[91mREJECT màu\\033[0m\\n\"; exit 2"]}' > "$CFG_C"
 ( cd "$WT" && bash "$GATE" --config "$CFG_C" --pr 5 --expect-head "$H" ) >"$TMP/gate1b.log" 2>&1; rc=$?
 ESC=$(printf '\033')
-V1B=$(verdict "$TMP/gate1b.log" | grep "verify failed (exit 2)")
+V1B=$(verdict "$TMP/gate1b.log" | grep "verify failed (exit 2")
 case "$V1B" in
   *"$ESC"*) fail "ANSI codes left in the gate message: $V1B" ;;
   *"KẾT LUẬN: REJECT màu"*) ok "coloured KẾT LUẬN line is quoted without ANSI codes" ;;
@@ -80,14 +80,14 @@ esac
 CFG_N="$TMP/cfg-noverdict.json"
 echo '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo boom; exit 1"]}' > "$CFG_N"
 ( cd "$WT" && bash "$GATE" --config "$CFG_N" --pr 5 --expect-head "$H" ) >"$TMP/gate1c.log" 2>&1; rc=$?
-[ "$rc" -eq 2 ] && ! grep -qi "stale" "$TMP/gate1c.log" && verdict "$TMP/gate1c.log" | grep -q "verify failed (exit 1).*no KẾT LUẬN/VERDICT line" \
+[ "$rc" -eq 2 ] && ! grep -qi "stale" "$TMP/gate1c.log" && verdict "$TMP/gate1c.log" | grep -q "verify failed (exit 1: no KẾT LUẬN/VERDICT line" \
   && ok "no verdict line: says so with the exit code, not stale" || fail "no-verdict case (rc $rc): $(verdict "$TMP/gate1c.log" | tail -3)"
 
 # Ca 2: main tiến thêm 1 commit (không xung đột) → nhánh chậm hơn base → vẫn nói stale.
 git -C "$R" checkout -q main; echo c > "$R/c"; git -C "$R" add c; git -C "$R" commit -qm main-moves; git -C "$R" push -q origin main
 ( cd "$WT" && bash "$GATE" --config "$CFG" --pr 5 --expect-head "$H" ) >"$TMP/gate2.log" 2>&1; rc=$?
-[ "$rc" -eq 2 ] && grep -q "stale against main" "$TMP/gate2.log" \
-  && ok "behind-base branch, red verify: still says stale (exit 2)" || fail "behind branch (rc $rc): $(grep merge-gate "$TMP/gate2.log" | tail -3)"
+[ "$rc" -eq 2 ] && grep "stale against main" "$TMP/gate2.log" | grep -q "verify exit 3: KẾT LUẬN: FAIL — không có test hồi quy nào khớp" \
+  && ok "behind-base branch, red verify: still says stale (exit 2), with the real verify reason" || fail "behind branch (rc $rc): $(grep merge-gate "$TMP/gate2.log" | tail -3)"
 
 # Ca 3 (OCR 18/10): merge trong SCRATCH là fast-forward lên đỉnh base là một merge commit có cha thứ hai chính là head của PR. Nhánh vẫn
 # chậm hơn base 2 commit → phải nói stale (suy base từ HEAD^2 sau merge sẽ ra chính head → đếm 0 → sai).

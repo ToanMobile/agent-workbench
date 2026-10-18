@@ -323,15 +323,19 @@ for cmd in "${VERIFY[@]}"; do
     { [ -n "$VLOG" ] && mkdir -p "$VLOG_DIR/super-board" && cp "$VERIFY_LOG" "$VLOG"; } 2>/dev/null || VLOG="(not saved)"
     tail -60 "$VERIFY_LOG" >&2
     # 18/10: chỉ nói "stale" khi nhánh thật sự chậm hơn base. 17/10 câu này in cho MỌI verify đỏ và dẫn ba phiên đi rebase vô ích
-    # (lý do thật là post-fix-gate exit 2). Không đếm được (rev-list hỏng) thì coi như không stale và nêu lý do thật.
-    BEHIND=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
-    if [ "${BEHIND:-0}" -gt 0 ] 2>/dev/null; then
-      say "the branch is stale against ${BASE} (${BEHIND} commit(s) behind) — send it back to Build for a rebase pass (log saved to ${VLOG})"
+    # (lý do thật là post-fix-gate exit 2). Không đếm được (rev-list hỏng) thì nói rõ là không biết, không khẳng định "not behind".
+    # Bỏ mã màu ANSI (byte ESC thật: sed BSD không hiểu \x1b); LC_ALL=C để sed macOS không đòi UTF-8 hợp lệ. Lý do thật luôn được in, kể cả
+    # khi nhánh chậm hơn base: chậm hơn không chứng minh đó là nguyên nhân (OCR 18/10).
+    VERDICT=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$VERIFY_LOG" | grep -a -E "KẾT LUẬN|VERDICT" | tail -1 \
+      | LC_ALL=C sed 's/^[[:space:]]*//' | clip 300 || true)
+    WHY="exit ${VRC}: ${VERDICT:-no KẾT LUẬN/VERDICT line, see the log tail above}"
+    BEHIND=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null) || BEHIND=unknown
+    if [ "$BEHIND" = unknown ]; then
+      say "verify failed (${WHY}); could not tell whether the branch is behind ${BASE} (log saved to ${VLOG})"
+    elif [ "$BEHIND" -gt 0 ]; then
+      say "the branch is stale against ${BASE} (${BEHIND} commit(s) behind) — send it back to Build for a rebase pass (verify ${WHY}; log saved to ${VLOG})"
     else
-      # Bỏ mã màu ANSI (byte ESC thật: sed BSD không hiểu \x1b); LC_ALL=C để sed macOS không đòi UTF-8 hợp lệ.
-      VERDICT=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$VERIFY_LOG" | grep -a -E "KẾT LUẬN|VERDICT" | tail -1 \
-        | LC_ALL=C sed 's/^[[:space:]]*//' | clip 300 || true)
-      say "verify failed (exit ${VRC}) on a branch not behind ${BASE}: ${VERDICT:-no KẾT LUẬN/VERDICT line, see the log tail above} (log saved to ${VLOG})"
+      say "verify failed (${WHY}) on a branch not behind ${BASE} (log saved to ${VLOG})"
     fi
     exit 2
   fi
