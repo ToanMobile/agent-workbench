@@ -2,7 +2,8 @@
 # `agent-kit worktree gc` (W1 step 1, docs/workflow-improvements.md I.0 R5b; 2026-10-13: 8 orphan GeelyEx2-* folders, 1.25 GB, were
 # left for the user because hardware_safety_gate rightly blocks an agent's `rm -rf` outside the project). gc deletes a folder only when
 # every file in it is provably not unique: a symlink, noise (.DS_Store), DevKit bookkeeping, the same bytes as main's file at that path,
-# a blob the repo already holds (a committed version), or an ignored build output that is not a secret. Candidates: registered
+# the blob a kept commit holds AT THAT PATH (a committed version of that file), or an ignored build output that is not a secret
+# (issue #12: a new path holding bytes committed elsewhere is work, not a committed version). Candidates: registered
 # worktrees already integrated, `<repo>-*` siblings whose `.git` pointer dangles into THIS repo, and `<repo>-*` siblings with no `.git`
 # that hold bookkeeping only. A secret that exists only there, a unique file, a live session's worktree, or work not in main: kept,
 # named in one line. --dry-run deletes nothing.
@@ -43,6 +44,12 @@ echo png > "$TMP/main-orphan-clean/build/out/ảnh.png"   # a non-ASCII build ou
 chflags uchg "$TMP/main-orphan-clean/app.txt" 2>/dev/null   # a locked copy (INSTINCT-038) must not strand it
 # 4 a dangling orphan with a file never committed: kept
 dangle main-orphan-unique; echo "work only here" > "$TMP/main-orphan-unique/notes.md"
+# 4b issue #12: a NEW path whose bytes some ref holds at ANOTHER path is uncommitted work too, kept: a copy of app.txt (a current
+#    blob), and lib.txt's old "v1" under a new name (an old blob)
+dangle main-orphan-copy; cp "$R/app.txt" "$TMP/main-orphan-copy/copy.txt"
+dangle main-orphan-oldblob; mkdir -p "$TMP/main-orphan-oldblob/notes" && echo v1 > "$TMP/main-orphan-oldblob/notes/old.txt"
+# 4c issue #12 (QA): an uncommitted edit of a TRACKED path that gives it another file's bytes (lib.txt := app.txt): work, kept
+dangle main-orphan-trackedcopy; cp "$R/app.txt" "$TMP/main-orphan-trackedcopy/lib.txt"
 # 5 no .git at all, bookkeeping only (what a gate wrote after its worktree was removed): deleted
 mkdir -p "$TMP/main-gate-orphan/.claude/audit-gate" "$TMP/main-gate-orphan/.agents/evidence/REG-1" "$TMP/main-gate-orphan/.agents/regression_journal" "$TMP/main-gate-orphan/__pycache__"
 : > "$TMP/main-gate-orphan/.claude/audit-gate/test_run.lock"; echo log > "$TMP/main-gate-orphan/.agents/evidence/REG-1/a.log"
@@ -119,11 +126,15 @@ done
 for d in main-merged main-empty main-links main-ahead main-orphan-unique main-orphan-secret other-thing main-notes main-backup main-orphan-memory \
          main-orphan-detcommit main-orphan-staged main-orphan-trackedignored main-orphan-ignoreddata main-orphan-status \
          main-review main-idle main-memnote main-regignored main-orphan-forcetracked main-orphan-outdir \
-         main-orphan-pm main-np main-orphan-cr main-gate-mixed main-orphan-sakey; do
+         main-orphan-pm main-np main-orphan-cr main-gate-mixed main-orphan-sakey main-orphan-copy main-orphan-oldblob main-orphan-trackedcopy; do
   exists "$d" && ok "kept: $d" || fail "$d was deleted (it holds something unique or is not ours)"
 done
 grep -q "main-orphan-unique.*notes.md" "$TMP/gc.out" && ok "the kept orphan names its unique file" || fail "no reason for main-orphan-unique: $(cat "$TMP/gc.out")"
 grep -q "main-orphan-secret.*local.properties" "$TMP/gc.out" && ok "the kept orphan names its secret" || fail "no reason for main-orphan-secret: $(cat "$TMP/gc.out")"
+grep -q "main-orphan-copy.*copy.txt" "$TMP/gc.out" && grep -q "main-orphan-oldblob.*notes/old.txt" "$TMP/gc.out" \
+  && ok "a new path holding bytes committed elsewhere is named as unique work (issue #12)" || fail "no reason for main-orphan-copy/oldblob: $(cat "$TMP/gc.out")"
+grep -q "main-orphan-trackedcopy.*lib.txt" "$TMP/gc.out" && ok "a tracked path given another file's bytes is named as unique work (issue #12)" \
+  || fail "no reason for main-orphan-trackedcopy: $(cat "$TMP/gc.out")"
 ! exists main-orphan-casesecret && [ "$(cat "$R/Release.JKS" 2>/dev/null)" = key ] && [ -z "$(G "$R" status --porcelain -- Release.JKS)" ] \
   && grep -q "main-orphan-casesecret.*Release.JKS" "$TMP/gc.out" \
   && ok "  … a secret whatever the case of its name (Release.JKS), only the orphan's: copied into main (ignored there), named, then the orphan deleted" \
@@ -145,7 +156,7 @@ python3 "$WT" gc --log="$TMP/gc.log" >/dev/null 2>&1
 mkdir -p "$TMP/main-a-badgit" && printf 'gitdir: \377\376\n' > "$TMP/main-a-badgit/.git"
 blob=$(echo w | G "$R" hash-object -w --stdin); tree=$(printf '100644 blob %s\t\377.txt\n' "$blob" | G "$R" mktree)
 G "$R" update-ref refs/heads/weird "$(G "$R" commit-tree "$tree" -m weird)"
-dangle main-z-after; echo v1 > "$TMP/main-z-after/lib.txt"; echo "v1" > "$TMP/main-z-after/old.txt"
+dangle main-z-after; echo v1 > "$TMP/main-z-after/lib.txt"
 python3 "$WT" gc --log="$TMP/gc6.log" > "$TMP/gc6.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && ! exists main-z-after && exists main-a-badgit && grep -q "main-z-after" "$TMP/gc6.log" 2>/dev/null \
   && ok "an unreadable .git and a non-UTF-8 path in a ref: the sweep goes on, and records what it deleted" \
@@ -161,4 +172,25 @@ kill "$LOCKER" 2>/dev/null; wait "$LOCKER" 2>/dev/null
 [ "$rc" = 0 ] && [ ! -s "$TMP/gc4.out" ] && exists main-orphan-locked && ok "a second gc while one runs: silent no-op" || fail "second gc rc=$rc: $(cat "$TMP/gc4.out")"
 [ -f "$R/local.properties" ] && [ "$(cat "$R/local.properties")" = "sdk.dir=/same" ] && ok "main's own local config is untouched" || fail "main's local.properties changed"
 G "$R" worktree list --porcelain | grep -q "main-merged" && ok "a registered worktree stays registered: not gc's" || fail "gc unregistered main-merged"
+# issue #12 review F1: a clean checkout of an OLD commit after main moved a file (git mv) and an empty file now lives elsewhere: rev-list
+# names each blob once, under its newest path, so the (blob, path) pair is missed there; the history of the orphan's own paths holds
+# both versions, so the leftover is deleted, not stranded
+mkdir -p "$R/pkg" && echo "moved later" > "$R/mv-src.txt" && : > "$R/pkg/__init__.py" && G "$R" add mv-src.txt pkg/__init__.py && G "$R" commit -qm "add"
+dangle main-orphan-moved
+# issue #12 (QA): the same old checkout plus a COPY of the file main later moves: its history is asked in the same call, yet the
+# copy's own path never held those bytes, so the copy is work and the folder is kept
+dangle main-orphan-movedcopy; cp "$TMP/main-orphan-movedcopy/mv-src.txt" "$TMP/main-orphan-movedcopy/mv-copy.txt"
+mkdir -p "$R/other" && : > "$R/other/__init__.py" && G "$R" mv mv-src.txt mv-dst.txt && G "$R" rm -q pkg/__init__.py && G "$R" add other/__init__.py \
+  && G "$R" commit -qm "move, drop, add elsewhere"
+# issue #12 Context a (QA): a NEW empty file (newpkg/__init__.py) while kept commits hold the empty blob at other paths: uncommitted work, kept
+dangle main-orphan-empty; mkdir -p "$TMP/main-orphan-empty/newpkg" && : > "$TMP/main-orphan-empty/newpkg/__init__.py"
+python3 "$WT" gc > "$TMP/gc7.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && ! exists main-orphan-moved && ok "a clean old checkout whose files main later moved or emptied elsewhere is deleted" \
+  || fail "main-orphan-moved stranded (rc=$rc): $(cat "$TMP/gc7.out")"
+exists main-orphan-empty && grep -q "main-orphan-empty.*newpkg/__init__.py" "$TMP/gc7.out" \
+  && ok "a new empty file whose blob kept commits hold only at other paths is kept and named (issue #12)" \
+  || fail "main-orphan-empty deleted or unnamed: $(cat "$TMP/gc7.out")"
+exists main-orphan-movedcopy && grep -q "main-orphan-movedcopy.*mv-copy.txt" "$TMP/gc7.out" \
+  && ok "a copy of a file whose own path history is asked in the same call is kept and named (issue #12)" \
+  || fail "main-orphan-movedcopy deleted or unnamed: $(cat "$TMP/gc7.out")"
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_gc: all passed" || { echo "❌ test_worktree_gc: $FAILS failed"; exit 1; }

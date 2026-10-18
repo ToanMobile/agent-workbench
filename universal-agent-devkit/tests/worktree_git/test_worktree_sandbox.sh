@@ -19,7 +19,7 @@ fi
 # Test 2: Lifecycle in a mock repo
 P="$TMP/mock-repo"
 mkdir -p "$P" && cd "$P"
-git init -q . && git config user.email t@t && git config user.name t
+git init -q . && git symbolic-ref HEAD refs/heads/main && git config user.email t@t && git config user.name t   # nhánh tên main cố định: các ca checkout tách rời cần nhánh trunk
 echo "hello world" > README.md
 echo -e ".env\nlocal.properties" > .worktreeinclude
 echo "SECRET_KEY=12345" > .env
@@ -130,19 +130,320 @@ else
 fi
 python3 "$SCRIPT" create ahead_sb >/dev/null 2>&1
 ( cd "$P/.sandboxes/ahead_sb" && echo x > ahead.txt && git add ahead.txt && git commit -q -m "feat: unmerged" )
-python3 "$SCRIPT" cleanup --name ahead_sb >/dev/null 2>&1
+AHEAD_OUT=$(python3 "$SCRIPT" cleanup --name ahead_sb 2>&1)
 if git -C "$P" rev-parse --verify -q "sandbox/ahead_sb" >/dev/null; then
   ok "cleanup keeps the branch that holds unmerged commits"
 else
   fail "cleanup deleted a branch with unmerged commits without --force"
 fi
+# issue #12: the FOLDER of a sandbox with unmerged commits is kept too (refused before rmtree), and the user is told why
+if [ -f "$P/.sandboxes/ahead_sb/ahead.txt" ] && echo "$AHEAD_OUT" | grep -q "chưa merge"; then
+  ok "cleanup refuses a sandbox with unmerged commits: folder kept, warning printed"
+else
+  fail "cleanup deleted the folder of a sandbox with unmerged commits: $AHEAD_OUT"
+fi
+# issue #12 review R2: cleanup vừa từ chối thì không được chốt "✅ Đã dọn dẹp hoàn tất", phải nêu tên sandbox chưa dọn
+if ! echo "$AHEAD_OUT" | grep -q "✅" && echo "$AHEAD_OUT" | grep -q "chưa dọn.*ahead_sb"; then
+  ok "cleanup that refused a sandbox names it as not cleaned, never 'done'"
+else
+  fail "cleanup claimed it was done after refusing a sandbox: $AHEAD_OUT"
+fi
+# a commit on the sandbox's own detached HEAD (its branch is merged): only that worktree's reflog names it, so it is unmerged work too
+python3 "$SCRIPT" create det_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/det_sb" && git checkout -q --detach && echo d > det.txt && git add det.txt && git commit -q -m "feat: detached" )
+DET_OUT=$(python3 "$SCRIPT" cleanup --name det_sb 2>&1)
+if [ -f "$P/.sandboxes/det_sb/det.txt" ] && echo "$DET_OUT" | grep -q "chưa merge"; then
+  ok "cleanup refuses a sandbox whose detached HEAD holds an unmerged commit"
+else
+  fail "cleanup deleted a sandbox whose detached HEAD held an unmerged commit: $DET_OUT"
+fi
+# issue #12 QA F2: commit trên HEAD tách rời rồi quay lại nhánh sandbox (đã merge): chỉ reflog HEAD của sandbox còn giữ commit đó
+python3 "$SCRIPT" create f2_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/f2_sb" && git checkout -q --detach && echo f2 > f2.txt && git add f2.txt && git commit -q -m "feat: f2" && git checkout -q sandbox/f2_sb )
+F2_OUT=$(python3 "$SCRIPT" cleanup --name f2_sb 2>&1)
+if [ -d "$P/.sandboxes/f2_sb" ] && git -C "$P" rev-parse --verify -q "sandbox/f2_sb" >/dev/null && echo "$F2_OUT" | grep -q "chưa merge"; then
+  ok "cleanup keeps a sandbox whose reflog-only commit is unmerged"
+else
+  fail "cleanup lost a reflog-only commit: $F2_OUT"
+fi
+# commit trên nhánh sandbox rồi `reset --hard HEAD~1`: reflog của nhánh không cứu được vì cleanup xoá luôn nhánh đó
+python3 "$SCRIPT" create reset_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/reset_sb" && echo r > r.txt && git add r.txt && git commit -q -m "feat: reset away" && git reset -q --hard HEAD~1 )
+RESET_OUT=$(python3 "$SCRIPT" cleanup --name reset_sb 2>&1)
+if [ -d "$P/.sandboxes/reset_sb" ] && echo "$RESET_OUT" | grep -q "chưa merge"; then
+  ok "cleanup keeps a sandbox whose reset-away commit only reflogs name"
+else
+  fail "cleanup lost a commit named only by the reflogs it deletes: $RESET_OUT"
+fi
+# issue #12 QA SW6: checkout chính tách rời ở đúng nhánh sandbox: HEAD của nó chứa commit, nhưng nhánh chính thì chưa
+MAIN_BR=$(git -C "$P" symbolic-ref --short HEAD)
+python3 "$SCRIPT" create sw6_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/sw6_sb" && echo s > s.txt && git add s.txt && git commit -q -m "feat: sw6" )
+git -C "$P" checkout -q --detach sandbox/sw6_sb
+SW6_OUT=$(python3 "$SCRIPT" cleanup --name sw6_sb 2>&1)
+git -C "$P" checkout -q "$MAIN_BR"
+if [ -d "$P/.sandboxes/sw6_sb" ] && git -C "$P" rev-parse --verify -q "sandbox/sw6_sb" >/dev/null && echo "$SW6_OUT" | grep -q "chưa merge"; then
+  ok "cleanup judges 'merged' by the main branch, not a detached main checkout"
+else
+  fail "cleanup deleted a sandbox merged only into a detached main checkout: $SW6_OUT"
+fi
+# issue #12 review R1: checkout chính tách rời (`git checkout --detach`, witness của reviewer): "đã merge" xét theo nhánh trunk,
+# sandbox chưa đụng vẫn dọn được (SW6 ở trên vẫn giữ: commit của nó chưa vào trunk)
+git -C "$P" checkout -q --detach
+python3 "$SCRIPT" create r1_main >/dev/null 2>&1
+R1M_OUT=$(python3 "$SCRIPT" cleanup --name r1_main 2>&1)
+git -C "$P" checkout -q "$MAIN_BR"
+if [ ! -d "$P/.sandboxes/r1_main" ] && ! git -C "$P" rev-parse --verify -q "sandbox/r1_main" >/dev/null; then
+  ok "cleanup from a detached main checkout removes an untouched sandbox"
+else
+  fail "cleanup from a detached main checkout kept an untouched sandbox: $R1M_OUT"
+fi
+# OCR: checkout chính tách rời ở commit CŨ hơn trunk: sandbox chưa đụng (tạo từ trunk) dọn cả thư mục lẫn nhánh, không nửa vời
+python3 "$SCRIPT" create r1_old >/dev/null 2>&1
+git -C "$P" checkout -q --detach HEAD~1
+R1O_OUT=$(python3 "$SCRIPT" cleanup --name r1_old 2>&1)
+git -C "$P" checkout -q "$MAIN_BR"
+if [ ! -d "$P/.sandboxes/r1_old" ] && ! git -C "$P" rev-parse --verify -q "sandbox/r1_old" >/dev/null && echo "$R1O_OUT" | grep -q "✅"; then
+  ok "cleanup from a main checkout detached behind trunk removes folder and branch together"
+else
+  fail "cleanup from a main checkout detached behind trunk left a half-cleaned sandbox: $R1O_OUT"
+fi
+# review rebuild 2: merge-winner từ checkout chính tách rời chỉ merge vào HEAD tách rời (`git checkout main` là bỏ rơi) → từ chối
+# trước khi đổi gì: HEAD không nhích, sandbox + nhánh giữ nguyên
+python3 "$SCRIPT" create r1_mwd >/dev/null 2>&1
+( cd "$P/.sandboxes/r1_mwd" && echo m > mwd.txt && git add mwd.txt && git commit -q -m "feat: mwd" )
+git -C "$P" checkout -q --detach
+MWD_BEFORE=$(git -C "$P" rev-parse HEAD)
+if MWD_OUT=$(python3 "$SCRIPT" merge-winner r1_mwd 2>&1); then MWD_RC=0; else MWD_RC=1; fi
+MWD_AFTER=$(git -C "$P" rev-parse HEAD)
+git -C "$P" checkout -q "$MAIN_BR"
+if [ "$MWD_RC" -ne 0 ] && [ "$MWD_BEFORE" = "$MWD_AFTER" ] && [ -d "$P/.sandboxes/r1_mwd" ] \
+   && git -C "$P" rev-parse --verify -q "sandbox/r1_mwd" >/dev/null && echo "$MWD_OUT" | grep -q "HEAD tách rời"; then
+  ok "merge-winner refuses to merge into a detached main checkout"
+else
+  fail "merge-winner merged into a detached main checkout (rc=$MWD_RC): $MWD_OUT"
+fi
+python3 "$SCRIPT" cleanup --name r1_mwd --force >/dev/null 2>&1
+# review rebuild 2: origin/HEAD trỏ nhánh trunk không có bản local → giữ (fail closed) và nói rõ vì sao
+git -C "$P" update-ref refs/remotes/origin/develop HEAD
+git -C "$P" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+python3 "$SCRIPT" create r1_dev >/dev/null 2>&1
+git -C "$P" checkout -q --detach
+DEV_OUT=$(python3 "$SCRIPT" cleanup --name r1_dev 2>&1)
+git -C "$P" checkout -q "$MAIN_BR"
+git -C "$P" symbolic-ref --delete refs/remotes/origin/HEAD
+git -C "$P" update-ref -d refs/remotes/origin/develop
+if [ -d "$P/.sandboxes/r1_dev" ] && echo "$DEV_OUT" | grep -q "develop.*không có bản local"; then
+  ok "cleanup keeps a sandbox when origin/HEAD names a trunk with no local branch, and says why"
+else
+  fail "cleanup misjudged a trunk with no local branch: $DEV_OUT"
+fi
+python3 "$SCRIPT" cleanup --name r1_dev --force >/dev/null 2>&1
+# review rebuild 2 P1: agent khác commit vào nhánh sandbox SAU bước kiểm, trước khi xoá nhánh → nhánh phải được giữ (xoá đúng SHA đã kiểm)
+python3 "$SCRIPT" create race_sb >/dev/null 2>&1
+RACE_OUT=$(python3 - "$DEVKIT_DIR/scripts/git" "$P/.sandboxes/race_sb" 2>&1 <<'PYEOF'
+import subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import worktree_sandbox as w
+orig = w.sandbox_unmerged_commits
+def racy(*a, **k):
+    r = orig(*a, **k)
+    subprocess.run(["git", "-C", sys.argv[2], "commit", "-q", "--allow-empty", "-m", "race"], check=True)
+    return r
+w.sandbox_unmerged_commits = racy
+print("kept:", w.cleanup_sandbox(name="race_sb"))
+PYEOF
+)
+if git -C "$P" rev-parse --verify -q "sandbox/race_sb" >/dev/null && [ "$(git -C "$P" log -1 --format=%s sandbox/race_sb 2>/dev/null)" = "race" ] \
+   && echo "$RACE_OUT" | grep -q "kept: \['race_sb'\]" && ! echo "$RACE_OUT" | grep -q "✅"; then
+  ok "cleanup keeps the branch when a commit lands on it after the merge check"
+else
+  fail "cleanup deleted a branch that gained a commit after the merge check: $RACE_OUT"
+fi
+git -C "$P" branch -q -D sandbox/race_sb 2>/dev/null
+# OCR rebuild 2: một worktree khác đang checkout nhánh sandbox (attached) → không xoá nhánh dưới chân nó (HEAD thành unborn)
+python3 "$SCRIPT" create co_sb >/dev/null 2>&1
+git -C "$P" worktree add -q -f "$TMP/co-wt" sandbox/co_sb
+CO_OUT=$(python3 "$SCRIPT" cleanup --name co_sb 2>&1)
+if git -C "$P" rev-parse --verify -q "sandbox/co_sb" >/dev/null && git -C "$TMP/co-wt" rev-parse --verify -q HEAD >/dev/null \
+   && [ -d "$P/.sandboxes/co_sb" ]; then   # từ chối TRƯỚC rmtree: không để thư mục mất mà nhánh còn (review)
+  ok "cleanup keeps a sandbox branch another worktree has checked out"
+else
+  fail "cleanup deleted a branch another worktree had checked out: $CO_OUT"
+fi
+git -C "$P" worktree remove --force "$TMP/co-wt"
+python3 "$SCRIPT" cleanup --name co_sb --force >/dev/null 2>&1
+# review: checkout chạy lệnh đứng trên chính nhánh sandbox → mốc "đã merge" là chính nhánh đó, phép kiểm luôn đúng → giữ, trước rmtree
+python3 "$SCRIPT" create self_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/self_sb" && echo s > self.txt && git add self.txt && git commit -q -m "feat: self" )
+git -C "$P" checkout -q --ignore-other-worktrees sandbox/self_sb
+SELF_OUT=$(python3 "$SCRIPT" cleanup --name self_sb 2>&1)
+git -C "$P" checkout -q "$MAIN_BR"
+if [ -f "$P/.sandboxes/self_sb/self.txt" ] && git -C "$P" rev-parse --verify -q "sandbox/self_sb" >/dev/null && echo "$SELF_OUT" | grep -q "chính nhánh sandbox/self_sb"; then
+  ok "cleanup refuses when the checkout running it stands on the sandbox branch itself"
+else
+  fail "cleanup judged a sandbox against its own branch: $SELF_OUT"
+fi
+python3 "$SCRIPT" cleanup --name self_sb --force >/dev/null 2>&1
+# review: refs/heads/sandbox/<x> là symref trỏ main → xoá đúng symref, không xoá main qua nó
+MAIN_SHA=$(git -C "$P" rev-parse "refs/heads/$MAIN_BR")
+git -C "$P" symbolic-ref refs/heads/sandbox/sym_sb "refs/heads/$MAIN_BR"
+SYM_OUT=$(python3 "$SCRIPT" cleanup --name sym_sb 2>&1)
+if git -C "$P" show-ref --verify -q "refs/heads/$MAIN_BR" && ! git -C "$P" show-ref --verify -q "refs/heads/sandbox/sym_sb" \
+   && ! git -C "$P" symbolic-ref -q refs/heads/sandbox/sym_sb >/dev/null 2>&1; then
+  ok "cleanup deletes a symref sandbox branch itself, never the branch it points to"
+else
+  fail "cleanup followed a sandbox symref (main gone?): $SYM_OUT"
+fi
+git -C "$P" show-ref --verify -q "refs/heads/$MAIN_BR" || git -C "$P" update-ref "refs/heads/$MAIN_BR" "$MAIN_SHA"   # lỗi thì dựng lại main cho các ca sau
+# review: nhánh sandbox bị xoá đồng thời giữa bước kiểm và bước xoá → đã sạch, không liệt kê "chưa dọn"
+python3 "$SCRIPT" create gone_sb >/dev/null 2>&1
+GONE_OUT=$(python3 - "$DEVKIT_DIR/scripts/git" "$P" 2>&1 <<'PYEOF'
+import subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import worktree_sandbox as w
+orig = w.sandbox_unmerged_commits
+def gone(*a, **k):
+    r = orig(*a, **k)
+    subprocess.run(["git", "-C", sys.argv[2], "update-ref", "-d", "refs/heads/sandbox/gone_sb"], check=True)
+    return r
+w.sandbox_unmerged_commits = gone
+w.cleanup_sandbox(name="gone_sb")
+PYEOF
+)
+if [ ! -d "$P/.sandboxes/gone_sb" ] && echo "$GONE_OUT" | grep -q "✅" && ! echo "$GONE_OUT" | grep -q "chưa dọn"; then
+  ok "cleanup counts a sandbox whose branch vanished meanwhile as cleaned"
+else
+  fail "cleanup listed a sandbox whose branch is already gone as not cleaned: $GONE_OUT"
+fi
+# review: git không trả lời được nhánh còn hay mất sau khi xoá lỗi (rev-parse rc 128) → giữ trong danh sách, không báo ✓
+python3 "$SCRIPT" create err_sb >/dev/null 2>&1
+ERR_OUT=$(python3 - "$DEVKIT_DIR/scripts/git" 2>&1 <<'PYEOF'
+import subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import worktree_sandbox as w
+orig = w.run_cmd
+def broken(cmd, *a, **k):
+    if cmd[:2] == ["git", "update-ref"]:
+        return subprocess.CompletedProcess(cmd, 1, "", "fatal: simulated")
+    if cmd[:2] == ["git", "rev-parse"] and cmd[-1] == "refs/heads/sandbox/err_sb":
+        return subprocess.CompletedProcess(cmd, 128, "", "fatal: simulated")
+    return orig(cmd, *a, **k)
+w.run_cmd = broken
+print("kept:", w.cleanup_sandbox(name="err_sb"))
+PYEOF
+)
+if echo "$ERR_OUT" | grep -q "kept: \['err_sb'\]"; then
+  ok "cleanup keeps a sandbox in the not-cleaned list when git cannot say whether its branch survived"
+else
+  fail "cleanup read a git error as 'branch gone': $ERR_OUT"
+fi
+python3 "$SCRIPT" cleanup --name err_sb --force >/dev/null 2>&1
+# review: đăng ký worktree của chính sandbox bị `git worktree lock` → từ chối trước rmtree (như `git worktree remove`), không để đăng ký ma + ✅
+python3 "$SCRIPT" create lock_sb >/dev/null 2>&1
+git -C "$P" worktree lock "$P/.sandboxes/lock_sb"
+LOCK_OUT=$(python3 "$SCRIPT" cleanup --name lock_sb 2>&1)
+if [ -d "$P/.sandboxes/lock_sb" ] && git -C "$P" rev-parse --verify -q "sandbox/lock_sb" >/dev/null && echo "$LOCK_OUT" | grep -q "khoá"; then
+  ok "cleanup refuses a sandbox whose worktree registration is locked"
+else
+  fail "cleanup removed a locked sandbox registration's folder/branch: $LOCK_OUT"
+fi
+git -C "$P" worktree unlock "$P/.sandboxes/lock_sb"
+python3 "$SCRIPT" cleanup --name lock_sb --force >/dev/null 2>&1
+# OCR: cùng ca khoá nhưng nhánh sandbox đã mất (sandbox đứng HEAD tách rời) → vẫn từ chối, không cần nhánh mới kiểm khoá
+python3 "$SCRIPT" create lock_nb >/dev/null 2>&1
+git -C "$P/.sandboxes/lock_nb" checkout -q --detach
+git -C "$P" branch -q -D sandbox/lock_nb
+git -C "$P" worktree lock "$P/.sandboxes/lock_nb"
+LNB_OUT=$(python3 "$SCRIPT" cleanup --name lock_nb 2>&1)
+if [ -d "$P/.sandboxes/lock_nb" ] && echo "$LNB_OUT" | grep -q "khoá"; then
+  ok "cleanup refuses a locked sandbox registration even when its branch is gone"
+else
+  fail "cleanup removed a locked sandbox whose branch was gone: $LNB_OUT"
+fi
+git -C "$P" worktree unlock "$P/.sandboxes/lock_nb"
+python3 "$SCRIPT" cleanup --name lock_nb --force >/dev/null 2>&1
+# review: worktree khác từng checkout nhánh sandbox nhưng thư mục đã mất (prunable) → không chặn dọn
+python3 "$SCRIPT" create prn_sb >/dev/null 2>&1
+git -C "$P" worktree add -q -f "$TMP/prn-wt" sandbox/prn_sb
+rm -rf "$TMP/prn-wt"
+PRN_OUT=$(python3 "$SCRIPT" cleanup --name prn_sb 2>&1)
+if [ ! -d "$P/.sandboxes/prn_sb" ] && ! git -C "$P" rev-parse --verify -q "sandbox/prn_sb" >/dev/null; then
+  ok "a prunable registration whose folder is gone does not block cleanup"
+else
+  fail "a prunable registration blocked cleanup: $PRN_OUT"
+fi
+# review: merge-winner khi checkout đứng trên chính nhánh sandbox → merge vào chính nó, không vào nhánh chính → từ chối
+python3 "$SCRIPT" create g_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/g_sb" && echo g > g.txt && git add g.txt && git commit -q -m "feat: g" )
+git -C "$P" checkout -q --ignore-other-worktrees sandbox/g_sb
+if G_OUT=$(python3 "$SCRIPT" merge-winner g_sb 2>&1); then G_RC=0; else G_RC=1; fi
+git -C "$P" checkout -q "$MAIN_BR"
+if [ "$G_RC" -ne 0 ] && echo "$G_OUT" | grep -q "chính nhánh sandbox/g_sb" && [ -d "$P/.sandboxes/g_sb" ]; then
+  ok "merge-winner refuses when the checkout stands on the sandbox branch itself"
+else
+  fail "merge-winner merged a sandbox into its own branch (rc=$G_RC): $G_OUT"
+fi
+python3 "$SCRIPT" cleanup --name g_sb --force >/dev/null 2>&1
+# merge-winner merge được nhánh nhưng cleanup giữ sandbox (commit chỉ reflog còn giữ): không được báo "đã dọn" sau cảnh báo
+python3 "$SCRIPT" create mw_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/mw_sb" && echo x > mw.txt && git add mw.txt && git commit -q -m "feat: mw" && git checkout -q --detach \
+  && echo y > mwy.txt && git add mwy.txt && git commit -q -m "feat: mw detached" && git checkout -q sandbox/mw_sb )
+MW_OUT=$(python3 "$SCRIPT" merge-winner mw_sb 2>&1)
+if [ -d "$P/.sandboxes/mw_sb" ] && echo "$MW_OUT" | grep -q "chưa dọn" && ! echo "$MW_OUT" | grep -q "🎉"; then
+  ok "merge-winner says the winner was merged but kept, never 'cleaned'"
+else
+  fail "merge-winner claimed a kept winner sandbox was cleaned: $MW_OUT"
+fi
 python3 "$SCRIPT" cleanup --name dirty_sb --force >/dev/null 2>&1
 python3 "$SCRIPT" cleanup --name ahead_sb --force >/dev/null 2>&1
-if [ ! -d "$P/.sandboxes/dirty_sb" ] && [ ! -d "$P/.sandboxes/ahead_sb" ] && ! git -C "$P" rev-parse --verify -q "sandbox/ahead_sb" >/dev/null; then
+python3 "$SCRIPT" cleanup --name det_sb --force >/dev/null 2>&1
+python3 "$SCRIPT" cleanup --name f2_sb --force >/dev/null 2>&1
+python3 "$SCRIPT" cleanup --name reset_sb --force >/dev/null 2>&1
+python3 "$SCRIPT" cleanup --name sw6_sb --force >/dev/null 2>&1
+python3 "$SCRIPT" cleanup --name mw_sb --force >/dev/null 2>&1
+if [ ! -d "$P/.sandboxes/dirty_sb" ] && [ ! -d "$P/.sandboxes/ahead_sb" ] && [ ! -d "$P/.sandboxes/det_sb" ] \
+   && [ ! -d "$P/.sandboxes/f2_sb" ] && [ ! -d "$P/.sandboxes/reset_sb" ] && [ ! -d "$P/.sandboxes/sw6_sb" ] && [ ! -d "$P/.sandboxes/mw_sb" ] \
+   && ! git -C "$P" rev-parse --verify -q "sandbox/ahead_sb" >/dev/null && ! git -C "$P" rev-parse --verify -q "sandbox/sw6_sb" >/dev/null; then
   ok "--force removes the sandbox and the unmerged branch on explicit request"
 else
   fail "--force did not remove the sandboxes and branch"
 fi
+# issue #12 QA v2: merge-winner --clean-others chạy cleanup --all lên sandbox thua; sandbox thua có commit chỉ reflog HEAD của nó giữ (dạng F2) phải được giữ
+python3 "$SCRIPT" create mwl_lose >/dev/null 2>&1
+python3 "$SCRIPT" create mwl_win >/dev/null 2>&1
+( cd "$P/.sandboxes/mwl_lose" && git checkout -q --detach && echo l > lose.txt && git add lose.txt && git commit -q -m "feat: loser detached" \
+  && git checkout -q sandbox/mwl_lose )
+( cd "$P/.sandboxes/mwl_win" && echo w > win.txt && git add win.txt && git commit -q -m "feat: win" )
+MWL_OUT=$(python3 "$SCRIPT" merge-winner mwl_win --clean-others 2>&1)
+if [ -d "$P/.sandboxes/mwl_lose" ] && git -C "$P" rev-parse --verify -q "sandbox/mwl_lose" >/dev/null && echo "$MWL_OUT" | grep -q "chưa merge"; then
+  ok "merge-winner --clean-others keeps a losing sandbox whose reflog-only commit is unmerged"
+else
+  fail "merge-winner --clean-others lost a losing sandbox's reflog-only commit: $MWL_OUT"
+fi
+# reflog HEAD của sandbox có dòng git không đọc được: không biết commit nào chỉ nó giữ → giữ (fail closed), không hiểu thành "sạch"
+python3 "$SCRIPT" create rlg_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/rlg_sb" && git checkout -q --detach && echo g > rlg.txt && git add rlg.txt && git commit -q -m "feat: rlg detached" \
+  && git checkout -q sandbox/rlg_sb && echo "not a reflog line" >> "$(git rev-parse --git-dir)/logs/HEAD" )
+RLG_OUT=$(python3 "$SCRIPT" cleanup --name rlg_sb 2>&1)
+if [ -d "$P/.sandboxes/rlg_sb" ] && echo "$RLG_OUT" | grep -q "không đọc được reflog HEAD"; then
+  ok "cleanup keeps a sandbox whose HEAD reflog cannot be read"
+else
+  fail "cleanup treated an unreadable sandbox reflog as clean: $RLG_OUT"
+fi
+# HEAD của sandbox không đọc được (nhánh orphan chưa có commit): không biết commit nào chỉ reflog giữ → giữ
+python3 "$SCRIPT" create unb_sb >/dev/null 2>&1
+( cd "$P/.sandboxes/unb_sb" && git checkout -q --detach && echo u > unb.txt && git add unb.txt && git commit -q -m "feat: unb detached" \
+  && git checkout -q sandbox/unb_sb && git switch -q --orphan unb_unborn )
+UNB_OUT=$(python3 "$SCRIPT" cleanup --name unb_sb 2>&1)
+if [ -d "$P/.sandboxes/unb_sb" ] && echo "$UNB_OUT" | grep -q "không đọc được HEAD của sandbox"; then
+  ok "cleanup keeps a sandbox whose HEAD cannot be read"
+else
+  fail "cleanup treated a sandbox with an unreadable HEAD as clean: $UNB_OUT"
+fi
+python3 "$SCRIPT" cleanup --name mwl_lose --force >/dev/null 2>&1
+python3 "$SCRIPT" cleanup --name rlg_sb --force >/dev/null 2>&1
+python3 "$SCRIPT" cleanup --name unb_sb --force >/dev/null 2>&1
 
 # Test 7: a new file that was never `git add`ed is work too (not a disposable leftover)
 python3 "$SCRIPT" create untracked_sb >/dev/null 2>&1
@@ -193,6 +494,52 @@ if [ ! -d "$P/.sandboxes/dir_sb" ]; then
 else
   fail "a sandbox with only unchanged included copies was kept"
 fi
+
+# Test 10 (issue #12 review R1): chạy từ linked worktree tách rời (worktree phiên, trunk mode): "đã merge" xét theo HEAD của
+# worktree đó (GC root, được gộp về main) — sandbox chưa đụng được dọn, merge-winner dọn + 🎉, commit chưa merge vẫn giữ
+W="$TMP/session-wt"
+git -C "$P" worktree add -q --detach "$W" HEAD
+cd "$W"
+python3 "$SCRIPT" create r1_clean >/dev/null 2>&1
+R1C_OUT=$(python3 "$SCRIPT" cleanup --name r1_clean 2>&1)
+if [ ! -d "$W/.sandboxes/r1_clean" ] && ! git -C "$W" rev-parse --verify -q "sandbox/r1_clean" >/dev/null && echo "$R1C_OUT" | grep -q "✅"; then
+  ok "cleanup from a detached linked worktree removes an untouched sandbox"
+else
+  fail "cleanup from a detached linked worktree kept an untouched sandbox: $R1C_OUT"
+fi
+python3 "$SCRIPT" create r1_win >/dev/null 2>&1
+( cd "$W/.sandboxes/r1_win" && echo w > r1w.txt && git add r1w.txt && git commit -q -m "feat: r1 win" )
+R1W_OUT=$(python3 "$SCRIPT" merge-winner r1_win 2>&1)
+if [ -f "$W/r1w.txt" ] && [ ! -d "$W/.sandboxes/r1_win" ] && ! git -C "$W" rev-parse --verify -q "sandbox/r1_win" >/dev/null \
+   && echo "$R1W_OUT" | grep -q "🎉"; then
+  ok "merge-winner from a detached linked worktree merges, cleans the winner and says so"
+else
+  fail "merge-winner from a detached linked worktree did not clean the winner: $R1W_OUT"
+fi
+python3 "$SCRIPT" create r1_ahead >/dev/null 2>&1
+( cd "$W/.sandboxes/r1_ahead" && echo a > r1a.txt && git add r1a.txt && git commit -q -m "feat: r1 unmerged" )
+R1A_OUT=$(python3 "$SCRIPT" cleanup --name r1_ahead 2>&1)
+if [ -f "$W/.sandboxes/r1_ahead/r1a.txt" ] && git -C "$W" rev-parse --verify -q "sandbox/r1_ahead" >/dev/null \
+   && echo "$R1A_OUT" | grep -q "chưa merge vào HEAD của worktree này"; then
+  ok "cleanup from a detached linked worktree still keeps a sandbox with unmerged commits"
+else
+  fail "cleanup from a detached linked worktree lost unmerged commits: $R1A_OUT"
+fi
+python3 "$SCRIPT" cleanup --name r1_ahead --force >/dev/null 2>&1
+# Trade-off có chủ ý (review rebuild 2): linked worktree `checkout --detach sandbox/<x>` để xem thì sandbox được dọn — cùng hình
+# dạng với merge-winner fast-forward ở trên, không phân biệt được — nhưng commit vẫn nằm trên HEAD của worktree đó (không mất lúc dọn)
+python3 "$SCRIPT" create r1_view >/dev/null 2>&1
+( cd "$W/.sandboxes/r1_view" && echo v > r1v.txt && git add r1v.txt && git commit -q -m "feat: r1 view" )
+R1V_SHA=$(git -C "$W" rev-parse "sandbox/r1_view")
+git -C "$W" checkout -q --detach "sandbox/r1_view"
+R1V_OUT=$(python3 "$SCRIPT" cleanup --name r1_view 2>&1)
+if [ ! -d "$W/.sandboxes/r1_view" ] && git -C "$W" merge-base --is-ancestor "$R1V_SHA" HEAD; then
+  ok "a detached linked worktree viewing a sandbox: sandbox cleaned, its commits stay on that worktree's HEAD"
+else
+  fail "linked-worktree view trade-off changed (sandbox kept, or its commits left HEAD) — update the docstring of merged_into: $R1V_OUT"
+fi
+cd "$P"
+git -C "$P" worktree remove --force "$W"
 
 if [ $FAILS -gt 0 ]; then
   echo "FAILED: $FAILS errors"
