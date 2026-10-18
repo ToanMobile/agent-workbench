@@ -228,7 +228,9 @@ b=$(runs); b2=$(runs2); out="$(run_gate "$TMP/wt-u")"; rc=$?
 check "18b. biên nhận của lượt mượn một phần không cho mượn tiếp: REG-1 chạy" 0 1 no "$b" "$rc" "$out"
 [ "$(( $(runs2) - b2 ))" = 1 ] && echo "✔ 18b. REG-2 chạy" || fail "18b. REG-2 không chạy đúng 1 lần"
 
-# 18c. Suite CÓ trong biên nhận anh em mà không PASS (UNTESTED) → huỷ cả lần dùng lại, mọi suite chạy.
+# 18c. Suite UNTESTED trong biên nhận anh em exit 0 (suite STALE không chạy được trên máy đó: kết luận không tính nó — GeelyEx2 REG-WEB-01,
+#      18/10 #64: mọi phép so khớp mà REG-CAR-01 vẫn chạy lại 120 s) → chạy lại đúng suite đó, như danh sách "untested" của biên nhận exit 4;
+#      suite PASS vẫn dùng lại.
 wipe_receipts
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1]))
 for t in r["tests"]:
@@ -236,8 +238,19 @@ for t in r["tests"]:
 json.dump(r, open(sys.argv[2], "w"))' "$LEND" "$MAIN_RECEIPT" || fail "18c. setup"
 add_wt wt-v
 b=$(runs); b2=$(runs2); out="$(run_gate "$TMP/wt-v")"; rc=$?
-check "18c. suite có trong biên nhận anh em mà không PASS: REG-1 chạy" 0 1 no "$b" "$rc" "$out"
-[ "$(( $(runs2) - b2 ))" = 1 ] && echo "✔ 18c. REG-2 chạy" || fail "18c. REG-2 không chạy đúng 1 lần"
+check "18c. suite UNTESTED trong biên nhận anh em: REG-1 dùng lại" 0 0 yes "$b" "$rc" "$out"
+[ "$(( $(runs2) - b2 ))" = 1 ] && echo "✔ 18c. REG-2 (UNTESTED) chạy lại" || fail "18c. REG-2 không chạy đúng 1 lần"
+
+# 18d. Suite có trong biên nhận mà ở trạng thái khác PASS/UNTESTED (FAIL) → huỷ cả lần dùng lại, mọi suite chạy (như trước).
+wipe_receipts
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1]))
+for t in r["tests"]:
+    if t["id"] == "REG-2": t["status"] = "FAIL"
+json.dump(r, open(sys.argv[2], "w"))' "$LEND" "$MAIN_RECEIPT" || fail "18d. setup"
+add_wt wt-w
+b=$(runs); b2=$(runs2); out="$(run_gate "$TMP/wt-w")"; rc=$?
+check "18d. suite FAIL trong biên nhận anh em: REG-1 chạy" 0 1 no "$b" "$rc" "$out"
+[ "$(( $(runs2) - b2 ))" = 1 ] && echo "✔ 18d. REG-2 chạy" || fail "18d. REG-2 không chạy đúng 1 lần"
 
 # 17. Một dòng runs.jsonl lồng quá sâu (RecursionError khi json.loads, review 17/10 P2) không được làm gate crash: dòng đó bị bỏ qua.
 #     Để CUỐI: file run-log dùng chung cho mọi ca sau nó.

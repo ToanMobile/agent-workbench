@@ -5309,9 +5309,12 @@ def main():
         """Mark every reusable suite PASS from `found`, the receipt (or the budget record) of this exact content; it, or None.
         partial (biên nhận của worktree anh em): suite mà biên nhận KHÔNG có thì chạy thật, không huỷ cả lần dùng lại — merge gate #56
         (17/10): scratch không có overlay checklist của worktree nên chạy thêm một suite STALE nhẹ, và vì biên nhận thiếu đúng suite đó
-        mà cả 4 suite nặng chạy lại. Suite biên nhận CÓ thì vẫn phải PASS."""
+        mà cả 4 suite nặng chạy lại. Suite biên nhận CÓ thì vẫn phải PASS, trừ UNTESTED: chạy lại đúng suite đó."""
         prev = {x.get("id"): x for x in (found or {}).get("tests") or []}
-        untested = set((found or {}).get("untested") or [])   # an exit-4 receipt: those run again
+        # those run again: the "untested" ids of an exit-4 receipt, and any suite the receipt holds as UNTESTED — an exit-0 one keeps a STALE
+        # suite that could not run on that machine (stale_skipped, outside the verdict): GeelyEx2 #64 (18/10), REG-WEB-01 UNTESTED cancelled
+        # the whole reuse and REG-CAR-01 ran again. It vouches for nothing either way; the suites it holds as PASS still stand.
+        untested = set((found or {}).get("untested") or []) | {i for i, x in prev.items() if x.get("status") == "UNTESTED"}
         try:
             unity_max_s = float(os.environ.get("DEVKIT_UNITY_REUSE_MAX_S", "3600"))
         except ValueError:
