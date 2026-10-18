@@ -6,7 +6,7 @@
 # (run.md) rồi tự xoá; worktree đang chứa cwd của lệnh này cũng được giữ.
 # Không bao giờ đụng thẻ khác: ngày 2026-10-16 bản đầu khớp mọi issue-*-qa / issue-*-review và xoá --force
 # thư mục mà worker của thẻ khác đang dùng. Không mất gì ngoài phần đã merge: worktree còn sửa dở được giữ,
-# nhánh chỉ bị xoá khi đầu nhánh vẫn đúng <merged-sha>.
+# nhánh chỉ bị xoá khi đầu nhánh vẫn đúng <merged-sha> (đường DevKit: luật của kit, xem remove_wt bên dưới).
 # Làm hết sức có thể: không bao giờ làm hỏng lần merge đã xảy ra.
 set -u
 HEAD_REF="${2:?merged head ref}"; MERGED_SHA="${3:-}"
@@ -18,8 +18,8 @@ HERE_PWD=$(pwd -P)
 # 18/10 (NFH PR #38, #45, Geely PR #59): phiên rời worktree của PR bằng ExitWorktree "keep" (khoá devkit-kept) rồi tự chạy merge gate;
 # `git worktree remove` trần từ chối worktree bị khoá và phiên phải unlock tay. Có DevKit thì gỡ bằng `worktree.py remove`: nó mở khoá
 # devkit-kept của chính phiên gọi hoặc của pid đã chết (khoá của phiên khác còn sống thì git vẫn từ chối) và giữ luật không-mất-việc.
-# Nó cũng xoá nhánh của worktree theo luật của kit (nội dung đã trong trunk, không còn ref remote; commit chỉ nhánh giữ được cất vào
-# refs/devkit/discarded 30 ngày) — chặt như chốt MERGED_SHA dưới: nhánh có commit sau lần merge thì nội dung chưa trong trunk, vẫn giữ.
+# Nó cũng xoá nhánh của worktree theo luật của kit, KHÔNG theo chốt MERGED_SHA dưới: nội dung đã trong trunk hoặc origin/<trunk> (tổ
+# tiên, hay gộp thử ra đúng cây của trunk) và không còn ref remote; mọi commit chỉ nhánh giữ được cất vào refs/devkit/discarded 30 ngày.
 # Không có python3: đường git như cũ (OCR 18/10).
 KIT_WT=""
 # Kit đi cùng script trước (đã review cùng nó), bản của repo sau — như sync_identical của merge gate.
@@ -32,11 +32,13 @@ done
 remove_wt() {
   local out rc=2
   if [ -n "$KIT_WT" ]; then
-    out=$(cd "$REPO_PATH" && python3 "$KIT_WT" remove "$1" 2>&1) && return 0
+    # thành công: in lại lời kit (nhánh đã xoá, commit cất ở refs/devkit/discarded 30 ngày, ⚠ memory note đi theo worktree) — OCR 18/10
+    out=$(cd "$REPO_PATH" && python3 "$KIT_WT" remove "$1" 2>&1) && { printf '%s\n' "$out" >&2; return 0; }
     rc=$?
-    # 1 = có việc sẽ mất (sửa dở, commit chỉ reflog giữ, bí mật bị ignore…): giữ, git trần không thấy hết những thứ đó.
-    # Khác (2: dùng sai / state không đọc được, kit cũ hơn): đường git như cũ — git vẫn từ chối worktree bẩn hay bị khoá (OCR 18/10).
-    if [ "$rc" -eq 1 ]; then
+    # 1 kèm dòng ✖ = có việc sẽ mất (sửa dở, commit chỉ reflog giữ, bí mật bị ignore…): giữ, git trần không thấy hết những thứ đó.
+    # Khác (2: dùng sai / state không đọc được; kit chết giữa chừng, traceback cũng exit 1): đường git như cũ — git vẫn từ chối worktree
+    # bẩn hay bị khoá (OCR 18/10).
+    if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -q '✖'; then
       echo "kept $1: agent-kit worktree remove refused: $( { printf '%s\n' "$out" | grep -m1 '✖' || printf '%s\n' "$out" | head -1; } | cut -c1-300)" >&2
       return 0
     fi

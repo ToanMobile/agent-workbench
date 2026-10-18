@@ -159,6 +159,14 @@ bash "$TMP/sb/.claude/bin/clean.sh" "$R" issue-17-bk "$MERGED17" >/dev/null 2>"$
 [ ! -d "$W/issue-17-build" ] && [ -d "$W/issue-17-qa" ] && grep -q "/issue-17-qa: git worktree remove failed" "$TMP/k6.err" \
   && ok "k6 a DevKit that cannot start falls back to plain git: the clean worktree is removed, the locked one kept" \
   || { fail "k6 broken DevKit fallback"; cat "$TMP/k6.err"; }
+# k9. (OCR 18/10) kit chạy được `list` nhưng chết giữa `remove` (traceback, exit 1 không có dòng ✖): không phải lời từ chối có lý do —
+#     đường git như cũ, worktree sạch vẫn gỡ
+printf 'import sys\nif sys.argv[1:2] != ["list"]:\n    raise RuntimeError("boom")\n' > "$R/.agents/devkit/scripts/git/worktree.py"
+git -C "$R" branch issue-19-cr
+MERGED19="$(git -C "$R" rev-parse issue-19-cr)"
+git -C "$R" worktree add -q "$W/issue-19-build" issue-19-cr
+bash "$TMP/sb/.claude/bin/clean.sh" "$R" issue-19-cr "$MERGED19" >/dev/null 2>"$TMP/k9.err"
+[ ! -d "$W/issue-19-build" ] && ok "k9 a kit that crashes in remove falls back to plain git" || { fail "k9 kit crash kept a clean worktree"; cat "$TMP/k9.err"; }
 rm -rf "$R/.agents"
 # k7. (OCR 18/10) nhánh PR thường không có worktree nào của phiên: nhánh local cùng tên ở đúng commit đã merge là của người dùng — giữ
 git -C "$R" branch feat-userown
