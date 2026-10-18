@@ -479,10 +479,20 @@ rc, d, err = plan_json("l14e.json", [{"id": "U", "est_min": 10, "files": ["tests
 chk(d is not None and d["makespan_min"] == 10 and d.get("serialized") == [], "lanes that share only union-merged files still run together", str(d and d["rows"]))
 # the text form says what it did and what the agent can do instead
 rc, out, err = run(["plan", lanes_file("l14f.json", [{"id": "A", "est_min": 10, "files": ["hooks/a.sh"]}, {"id": "B", "est_min": 10, "files": ["hooks/a.sh"]}]), "--slots", "2"])
-chk(rc == 0 and "B starts after A ends (both edit hooks/a.sh)" in out and "one lane" in out, "the text form names the serialized pair and the merge option", out)
+chk(rc == 0 and "B starts after A is merged, from the merged trunk (both edit hooks/a.sh)" in out and "one lane" in out, "the text form names the serialized pair and the merge option", out)
 # the tail (critical path) counts the added wait: P (5) with Q (50) waiting on its file must start before a lone R (40) on one slot
 rc, d, err = plan_json("l14g.json", [{"id": "R", "est_min": 40}, {"id": "P", "est_min": 5, "files": ["k.sh"]}, {"id": "Q", "est_min": 50, "files": ["k.sh"]}], 2)
 chk(d is not None and d["start_order"][0] == "P", "a lane another lane waits on for a file starts first (path 5 + 50)", str(d and d["start_order"]))
+
+# the lane that can start earlier edits first (OCR 18/10): D is free at once, C waits for A then B, so D goes first and nobody waits (15 min)
+rc, d, err = plan_json("l14h.json", [{"id": "A", "est_min": 5}, {"id": "B", "est_min": 5, "deps": ["A"]}, {"id": "C", "est_min": 5, "deps": ["B"], "files": ["x.sh"]},
+                                     {"id": "D", "est_min": 5, "files": ["x.sh"]}], 2)
+chk(d is not None and d["makespan_min"] == 15 and d.get("serialized") == [{"id": "C", "after": "D", "files": ["x.sh"]}],
+    "the editor that can start first takes the file first (15 min, C after D)", str(d and (d["makespan_min"], d.get("serialized"))))
+# a lane that already waits for the other editor through a chain of deps gets no extra wait (no noise in the SERIAL lines)
+rc, d, err = plan_json("l14i.json", [{"id": "A", "est_min": 5, "files": ["x.sh"]}, {"id": "B", "est_min": 5, "deps": ["A"]},
+                                     {"id": "C", "est_min": 5, "deps": ["B"], "files": ["x.sh"]}], 2)
+chk(d is not None and d.get("serialized") == [] and d["makespan_min"] == 15, "a wait already implied by a chain of deps is not added again", str(d and d.get("serialized")))
 
 # 8. the CLI wiring: `agent-kit lanes ...` reaches the script (a kit copy without bin/agent-kit, as the mutant runs use, skips this)
 AK = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT))), "bin", "agent-kit")

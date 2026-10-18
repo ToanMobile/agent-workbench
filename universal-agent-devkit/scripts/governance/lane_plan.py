@@ -9,7 +9,8 @@ lanes.json is a list of {"id": "A11", "est_min": 40, "kind": "rules-text", "deps
 only "id" is required. A missing est_min is the median of the recorded lanes of the same kind (30 when the lane has no kind or
 there is no history). Keep lanes.json outside the repo: a file left in a worktree is swept into the merge. Two lanes whose "files"
 share a path (a folder counts for every file in it; the union-merged files in SHARED do not) never run at the same time: the later one in
-dependency-then-listed order waits for the earlier one ("serialized" in --json, a SERIAL line in the text).
+the order of their deps waits for the earlier one and starts from the trunk once that one is merged ("serialized" in --json, a
+SERIAL line in the text).
 
 Why: lanes that start in input order leave the long one for last (the 15/10 batch: the riskiest lane started after the small ones and
 was the critical path for five hours) and every lane runs its own test suites, so seven agents at once pushed the load to 37 on a
@@ -216,22 +217,40 @@ def load_lanes(path):
         done = set(order)
         fail("dependency cycle through %s" % ", ".join(i for i in seen if i not in done))
     # lanes that edit one file never run at the same time (18/10: several agents on one file, every later merge conflicted): each one
-    # waits for the previous editor in this topological order, so an added wait always points forward and never closes a cycle
+    # waits for the previous editor, the one that can start earlier (its deps' chain) first, then the topological order. That key
+    # orders every dependency edge too (a lane starts no earlier than its deps), so an added wait always points forward: no cycle.
     rank = dict((i, n) for n, i in enumerate(order))
-    for f, ids in overlaps_of([lanes[i] for i in seen]).items():
-        ids = sorted(ids, key=rank.get)
+    head = {}
+    for i in order:
+        head[i] = max([head[d] + lanes[d]["est"] for d in lanes[i]["deps"]] or [0.0])
+    for f, ids in sorted(overlaps_of([lanes[i] for i in seen]).items()):
+        ids = sorted(ids, key=lambda i: (head[i], rank[i]))
         for a, b in zip(ids, ids[1:]):
             waits = lanes[b]["file_waits"]
-            if a in lanes[b]["deps"] and a not in waits:   # b already waits for a by its own deps
-                continue
             if a not in waits:
+                if _reaches(lanes, b, a):   # b already waits for a through its deps
+                    continue
                 lanes[b]["deps"].append(a)
                 succ[a].append(b)
             waits.setdefault(a, []).append(f)
-    for i in reversed(order):
+    for i in sorted(order, key=lambda i: (head[i], rank[i]), reverse=True):   # the key every edge follows, added ones too
         after = [lanes[j]["tail"] for j in succ[i]]
         lanes[i]["tail"] = lanes[i]["est"] + (max(after) if after else 0.0)
     return [lanes[i] for i in seen]
+
+
+def _reaches(lanes, src, dst):
+    """True when lane src waits for lane dst through its deps, directly or along a chain (iterative: a long chain must not recurse)."""
+    stack, seen = [src], set()
+    while stack:
+        i = stack.pop()
+        for d in lanes[i]["deps"]:
+            if d == dst:
+                return True
+            if d not in seen:
+                seen.add(d)
+                stack.append(d)
+    return False
 
 
 def simulate(lanes, n, key):
@@ -308,7 +327,8 @@ def plan(path, n_slots, as_json):
     for f, ids in sorted(overlaps.items()):
         print("WARNING %s is edited by %s: they never run at the same time" % (f, ", ".join(ids)))
     for s in serialized:
-        print("SERIAL %s starts after %s ends (both edit %s); when that file is the main work of both, make them one lane"
+        print("SERIAL %s starts after %s is merged, from the merged trunk (both edit %s): open its worktree only then; when that "
+              "file is the main work of both, make them one lane"
               % (s["id"], s["after"], ", ".join(s["files"])))
     print("then ONE full gate on the merged result: python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --diff origin/<branch>")
 

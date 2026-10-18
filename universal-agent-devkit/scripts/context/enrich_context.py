@@ -968,48 +968,69 @@ def antigravity_collab_hint(prompt, dossier, project_root):
 
 
 # A request several agents can share (18/10: the user had to ask "tạo nhiều agent chạy cho nhanh" again and again; the
-# leading agent split late or never). Regexes only, on the normalized prompt: several repos, several issues / cards /
-# tasks, "song song" / "nhiều agent", a numbered list, a bulleted list of actions. A question, a request whose list
-# names one file only, chit-chat and agent prompts stay silent (INSTINCT-026: no always-on block in this hook).
-_COUNT = r"(?:[2-9]|[1-9]\d+|hai|ba|bốn|năm|sáu|bảy|tám|chín|mười|two|three|four|five|six|several|multiple)"
+# leading agent split late or never). Regexes only, on the normalized prompt: several repos, an action on several issues /
+# cards / tasks, a list of issue numbers, an explicit ask ("nhiều agent", "song song giúp", "in parallel"), two or more
+# listed items that each start with an action. A question, a request that names one file, steps to reproduce, text inside
+# ``` fences, chit-chat and agent prompts stay silent (INSTINCT-026: no always-on block in this hook). A word only counts
+# as an ask when no "khi / để / when / if …" in front makes it the topic ("sửa lỗi khi nhiều agent cùng ghi").
+_COUNT = r"(?:[2-9]|[1-9]\d+|hai|ba|bốn|năm|sáu|bảy|tám|chín|mười|two|three|four|five|six|several|multiple|many|nhiều)"
+_ACT = (r"(?:sửa|thêm|viết|tạo|cập nhật|xóa|đổi|bỏ|chuyển|làm|chạy|kiểm tra|review|đọc|audit|dọn|tách|gộp|đồng bộ|nâng cấp|"
+        r"fix|add|update|write|create|remove|delete|refactor|implement|migrate|port|run|deploy|merge|sync|bump|rename|check|test)")
+SPLIT_REPOS_RE = re.compile(
+    r"(?<!\w)(?:(?:[2-9]|[1-9]\d+|hai|ba|bốn|năm|sáu|bảy|tám|chín|mười|two|three|four|five|six|several|multiple)\s+"
+    r"(?:repos?|repositor(?:y|ies)|dự án|projects?)|(?:tất cả|mọi)\s+(?:các\s+)?(?:repos?|dự án)"
+    r"|(?:all|every|each)\s+(?:the\s+)?(?:repos?|repositories|projects?))(?!\w)")
 SPLIT_EXPLICIT_RE = re.compile(
-    r"(?<!\w)(?:song song|in parallel|parallel(?:ly|ize)?|nhiều (?:agent|phiên|lane)|multi[- ]?agents?|"
-    r"(?:many|several) agents|fan[- ]?out|chia (?:ra )?(?:nhiều |thành nhiều )?(?:agent|lane|phiên))(?!\w)"
-    r"|(?<!\w)(?:" + _COUNT + r"\s+(?:repos?|repositor(?:y|ies)|dự án|projects?)|(?:tất cả|mọi)\s+(?:các\s+)?(?:repos?|dự án)"
-    r"|(?:all|every|each)\s+(?:the\s+)?(?:repos?|repositories|projects))(?!\w)")
+    r"(?<!\w)(?:nhiều (?:agent|phiên|lane)|(?:many|several|multiple) agents|in parallel|"
+    r"song song\s*(?::|giúp|hộ|cho nhanh|cho tôi|đi|nhé|nha|luôn)|fan[- ]?out (?:the |these )?(?:work|tasks|agents|lanes)|"
+    r"chia (?:ra |thành )?(?:nhiều )?(?:agent|lane|phiên))(?!\w)")
 SPLIT_COUNT_RE = re.compile(
-    r"(?<!\w)(?:" + _COUNT + r"\s+(?:issues?|thẻ|cards?|tickets?|bugs?|lỗi|việc|tasks?|lanes?|prs?|pull requests?)"
-    r"|(?:nhiều|các|những)\s+(?:issue|thẻ|card|ticket|task|việc|pr)s?)(?!\w)")
-SPLIT_NUMBERED_RE = re.compile(r"(?:^|\n)[ \t]*\(?(\d{1,2})[.)][ \t]+\S|(?<!\S)\(?([1-9])\)[ \t]+\S")
-SPLIT_ACTION_BULLET_RE = re.compile(
-    r"(?m)^[ \t]*[-*•][ \t]+(?:sửa|thêm|viết|tạo|cập nhật|xóa|đổi|bỏ|chuyển|làm|chạy|fix|add|update|write|create|remove|"
-    r"refactor|implement|migrate|port|run)(?!\w)")
-QUESTION_RE = re.compile(
-    r"\?\W*\Z|\A\W*(?:tại sao|vì sao|sao|có nên|có phải|liệu|giải thích|why|what|how|is|are|does|should|explain)(?!\w)"
-    r"|(?<!\w)(?:không|chưa|thế nào|ra sao|là gì|được không|nhỉ|hả)\W*\Z")
+    r"(?<!\w)(?:sửa|fix|làm|xử lý|giải quyết|review|đóng|close|handle|resolve|triage|merge|gộp|kiểm tra|check|test|viết test cho)\s+"
+    r"(?:(?:hết|cả|tất cả|nốt|luôn|the|all)\s+)?" + _COUNT +
+    r"\s+(?:issues?|thẻ|cards?|tickets?|bugs?|lỗi|việc|tasks?|lanes?|prs?|pull requests?)(?!\w)")
+SPLIT_REFS_RE = re.compile(r"(?<!\w)(?:issues?|thẻ|cards?|tickets?|prs?|bugs?)\s+#?\d+(?:\s*(?:,|và|and|&)\s*#?\d+)+"
+                           r"|(?<!\w)#\d+(?:\s*(?:,|và|and|&)\s*#\d+)+")
+SPLIT_ITEM_RE = re.compile(r"(?:^|\n)[ \t]*(?:\(?\d{1,2}[.)]|[-*•])[ \t]+" + _ACT + r"(?!\w)(?![ \t]+\d)"
+                           r"|(?<!\S)\([1-9]\)[ \t]+" + _ACT + r"(?!\w)")
+TOPIC_RE = re.compile(r"(?<!\w)(?:khi|lúc|nếu|để|when|if|while)\s+(?:\S+\s+){0,3}\Z")
+REPRO_RE = re.compile(r"(?<!\w)(?:steps to reproduce|repro(?:duce)? steps|các bước tái hiện|bước tái hiện|cách tái hiện)(?!\w)")
+FENCE_RE = re.compile(r"```.*?(?:```|\Z)", re.S)
+# Questions are judged on the first and the last words only: a search for "?\W*$" over a pasted text full of "(?, ?)"
+# placeholders was quadratic (review 18/10: 20 s for 40 KB, past the hook's timeout).
+QUESTION_START_RE = re.compile(r"\W*(?:tại sao|vì sao|sao(?! chép| lưu)|có nên|có phải|liệu|giải thích|why|what|how|is|are|"
+                               r"does|should|explain)(?!\w)")
+QUESTION_END_RE = re.compile(r"\?\W*\Z|(?<!\w)(?:không|chưa|thế nào|ra sao|là gì|được không|nhỉ|hả)\W*\Z")
+
+
+def _ask(regex, text):
+    """The first match of regex that is an ask, not the topic of the request."""
+    for m in regex.finditer(text):
+        if not TOPIC_RE.search(text[max(0, m.start() - 40):m.start()]):
+            return m.group(0)
+    return ""
 
 
 def parallel_split(prompt):
-    """Why this request can be split across agents ("4 repo", "danh sách 3 việc", "song song"…), or "" when it cannot."""
+    """Why this request can be split across agents ("4 repo", "danh sách 3 việc", "nhiều agent"…), or "" when it cannot."""
     norm = normalize(prompt).strip()
-    if len(norm) < 8 or norm.startswith("/") or QUESTION_RE.search(norm) or harness_prompt(prompt):
+    if len(norm) < 8 or norm.startswith("/") or harness_prompt(prompt) \
+            or QUESTION_START_RE.match(norm) or QUESTION_END_RE.search(norm[-80:]):
         return ""
-    m = SPLIT_EXPLICIT_RE.search(norm)
+    text = FENCE_RE.sub(" ", norm)
+    reason = _ask(SPLIT_REPOS_RE, text)   # one file in several repos is still one lane per repo
+    if reason:
+        return reason
+    paths = {p.rstrip(":,.;)") for p in PATHLIKE_RE.findall(text) if "://" not in p}   # a link is no file of the repo
+    if len(paths) == 1:   # edits inside one file are one lane
+        return ""
+    reason = _ask(SPLIT_EXPLICIT_RE, text)
+    if reason:
+        return reason
+    m = SPLIT_COUNT_RE.search(text) or SPLIT_REFS_RE.search(text)
     if m:
         return m.group(0)
-    paths = {p.rstrip(":,.;)") for p in PATHLIKE_RE.findall(norm)}
-    if len(paths) == 1:   # a list of edits inside one file is one lane
-        return ""
-    m = SPLIT_COUNT_RE.search(norm)
-    if m:
-        return m.group(0)
-    numbers = {int(a or b) for a, b in SPLIT_NUMBERED_RE.findall(norm)}
-    if {1, 2} <= numbers:
-        return "danh sách %d việc" % len(numbers)
-    bullets = len(SPLIT_ACTION_BULLET_RE.findall(norm))
-    if bullets >= 2:
-        return "danh sách %d việc" % bullets
-    return ""
+    items = 0 if REPRO_RE.search(text) else len(SPLIT_ITEM_RE.findall(text))
+    return "danh sách %d việc" % items if items >= 2 else ""
 
 
 def parallel_hint(prompt):

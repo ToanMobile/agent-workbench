@@ -56,12 +56,21 @@ CASES = [
     ("Làm giúp:\n1. Thêm cờ --json cho lanes slots\n2. Sửa lỗi timeout trong merge gate\n3. Cập nhật README", True),
     ("làm hai việc: (1) thêm log cho worktree finish (2) sửa help của agent-kit", True),
     ("Việc hôm nay:\n- sửa hooks/review_gate.sh cho khỏi chặn nhầm\n- thêm test cho scripts/governance/lane_plan.py", True),
+    ("sao chép hooks mới sang 3 repo", True),
+    ("sao lưu config của tất cả repo", True),
+    ("làm 3 thẻ đang Ready trên https://github.com/org/board", True),
+    ("fix issues #12, #15 and #18", True),
+    ("làm thẻ 41, 42, 43 trên board", True),
+    ("fix every project's README", True),
+    ("sửa hooks/x.sh ở cả 4 repo", True),
+    ("dùng nhiều agent: sửa hook A, viết test cho B", True),
     # silent: questions, one file, chit-chat, a single task
     ("song song là gì?", False),
     ("có nên chạy 4 repo song song không?", False),
     ("chạy song song cho 4 repo luôn được chứ?", False),
     ("tại sao lanes plan lại chậm như vậy", False),
     ("giải thích giúp 2 repo này khác nhau thế nào", False),
+    ("giải thích giúp cách 4 repo dùng chung một bản kit", False),
     ("4 repo đã đồng bộ kit chưa", False),
     ("sửa lỗi typo trong README.md", False),
     ("sửa hooks/proof_gate.sh:\n1. đổi regex của XONG\n2. thêm log khi chặn", False),
@@ -75,6 +84,21 @@ CASES = [
     ("Bước tiếp:\n1. chạy lại gate cho worktree này", False),
     ("- sửa lời chào cho thân thiện hơn", False),
     ("sửa 1 lỗi ở màn login", False),
+    # review 18/10: a list, a plural or a word that is the topic of the request, not a split
+    ("Steps to reproduce:\n1. run the app\n2. update the profile name\n3. it crashes. Fix it.", False),
+    ("commit các việc còn lại rồi push", False),
+    ("merge các PR đã duyệt", False),
+    ("đọc các issue và tóm tắt cho tôi", False),
+    ("thêm nút xoá, hiện 3 lỗi đỏ trong log", False),
+    ("add retry with 3 tasks max in the queue", False),
+    ("xem log:\n- run 1 failed\n- run 2 passed", False),
+    ("dán log:\n```\n1. fix A\n2. fix B\n```\nlỗi gì đây", False),
+    ("sửa lỗi multi-agent bị treo trong hooks/session_lock.sh", False),
+    ("fix parallel test flakiness in test_merge_gate.sh", False),
+    ("tối ưu để test chạy song song", False),
+    ("Error: fan-out failed at step 3", False),
+    ("sửa lỗi khi nhiều agent cùng ghi một file", False),
+    ("tests fail when run in parallel, fix that", False),
 ]
 for prompt, want in CASES:
     got = split(prompt)
@@ -92,11 +116,16 @@ for _ in range(200):
         split(p)
 per_call_ms = (time.perf_counter() - t0) * 1000 / (200 * len(corpus))
 chk(per_call_ms < 2.0, "detector costs %.3f ms a prompt (budget 2 ms)" % per_call_ms)
-big = ("1. " + "x" * 200 + "\n") * 500 + "song song " * 2000
-t0 = time.perf_counter()
-split(big)
-big_ms = (time.perf_counter() - t0) * 1000
-chk(big_ms < 100, "a 120 KB prompt is judged in %.1f ms (budget 100 ms)" % big_ms)
+# review 18/10: a search for "?\W*$" over "(?, ?)" placeholders took 20 s on 40 KB (past the hook's 10 s timeout)
+BIG = [("list + words", ("1. sửa " + "x" * 200 + "\n") * 500 + "song song " * 2000),
+       ("question marks", "? " * 20000 + "sửa đi"),
+       ("SQL placeholders", "INSERT INTO t VALUES " + "(?, ?), " * 3000 + "(1, 2) sửa giúp"),
+       ("unclosed fences", "```\n" * 5000 + "sửa đi")]
+for name, big in BIG:
+    t0 = time.perf_counter()
+    split(big)
+    big_ms = (time.perf_counter() - t0) * 1000
+    chk(big_ms < 300, "a %d KB prompt (%s) is judged in %.1f ms (budget 300 ms: linear, not quadratic)" % (len(big) // 1000, name, big_ms))
 
 # end to end through the hook: the line for a split request, nothing more for chit-chat or a question
 HOOK = os.path.join(KIT, "hooks", "prompt_context.sh")
