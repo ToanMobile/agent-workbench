@@ -19,6 +19,7 @@ Bảo vệ tính toàn vẹn của cổng kiểm thử sau khi sửa code, bằn
 - `test_postfix_gate.sh`: Kiểm thử 8 tầng kiểm soát của `post-fix-gate.py` (exit 0/1/2/3).
 - `test_proof_gate.sh`: Kiểm thử cổng chặn ảnh nghiệm thu và hash cây mã nguồn (`tree_fp.py`).
 - `test_proof_capture.sh` & `test_proof_capture_screen.sh`: Tự động khởi động emulator/AVD và chụp ảnh màn hình nghiệm thu.
+- `test_unity_proof.sh`: `bin/unity-proof.sh` chụp ảnh nghiệm thu Unity ở batchmode (không `-nographics`), kill khi treo.
 - `test_repeat_proof.sh`: Chống gian lận tái sử dụng ảnh chụp cũ hoặc trùng byte sha256.
 - `test_push_gate.sh` & `test_push_gate_hook.sh`: Cổng chặn lệnh `git push` khi chưa chạy full test gate.
 - `test_regression_gate_hook.sh`: Hook kiểm tra ma trận hồi quy trước khi kết thúc lượt làm việc.
