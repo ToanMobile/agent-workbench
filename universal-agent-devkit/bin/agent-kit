@@ -435,6 +435,15 @@ Commands:
                       Remove it once nothing of its work would be lost (uncommitted changes in the
                       main checkout; a named branch keeps its commits, a detached worktree's
                       commits must be brought back first)
+  worktree discard <path>
+                      Remove one `remove` refuses, only when it holds nothing but deleted files and
+                      untracked IDE junk, or it is the caller's own (ExitWorktree keep); everything is
+                      kept in refs/devkit/discarded/* for 30 days (worktree gc drops them)
+  worktree restore <commit> -- <path>...
+                      git checkout <commit> -- <path> for paths with no uncommitted change
+  worktree prune-branch <branch>
+                      git branch -D for a branch the trunk holds (ancestor or squash) or whose PR merged
+                      at its very tip
   worktree trunk [on|off|status]
                       Trunk mode for this repo: main is merge-only, nobody holds it, every session works in
                       its own worktree (EnterWorktree; the WorktreeCreate hook sets it up) and the Stop hook

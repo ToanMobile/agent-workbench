@@ -257,6 +257,13 @@ under `e2e/paths/` enforces:
 
 If any of those fire → cell is `[b]` → bug filed.
 
+**DevKit repo** (it has `.agents/devkit/bin/post-fix-gate.py`): a QA pass also needs, on the branch
+head QA tested, `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief` at exit 0
+and, when app/UI source changed on a profile with a screen, a fresh
+`python3 .agents/devkit/bin/proof-capture.py` PNG. This holds when `/super-qa` runs on its own, outside
+the board's worker preamble. Paste the gate's last line and the PNG into the `[qa] [report]`; any other
+exit is not green.
+
 Per-spec forensics captured by `e2e/lib/report-fixture.ts`:
 
 | Artifact | Path |

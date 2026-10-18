@@ -76,6 +76,10 @@ If the input is ambiguous, default to reviewing the current branch against its u
      - calendar days use `date`, not `timestamptz`;
      - structured `AppError({ error_code, context })`;
      - jsonb writes are Zod-validated.
+   - **DevKit repo** (it has `.agents/devkit/bin/post-fix-gate.py`): the reviewed head needs a
+     `post-fix-gate.py --run-tests --full --brief` exit 0 on that exact SHA — QA's report, or rerun it
+     yourself — and an `.agents/devkit/bin/ocr-review` pass on the diff. Missing either is a
+     **Verification miss**, also when `/super-review` runs on its own, outside the board.
 
 3. **Classify findings** — every finding gets a **class** (what kind of problem) and a
    **severity** (does it block). Class:

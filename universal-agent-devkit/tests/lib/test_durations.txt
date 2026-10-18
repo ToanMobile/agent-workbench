@@ -309,6 +309,7 @@
 1 tests/gates/test_review_claim_follow_worktree.sh
 5 tests/gates/test_review_gate_readonly_wip.sh
 6 tests/worktree_git/test_worktree_remove_branch.sh
+9 tests/worktree_git/test_worktree_discard.sh
 20 tests/worktree_git/test_worktree_finish_retry.sh
 11 tests/gates/test_gate_narrow_no_tests_found.sh
 3 tests/worktree_git/test_worktree_finish_inside.sh

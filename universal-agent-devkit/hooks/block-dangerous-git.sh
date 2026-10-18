@@ -1446,8 +1446,15 @@ if reason and reason in SOLO_HIT:
           "-> TỰ chạy `agent-kit worktree add ../<repo>-<việc>` (không phải git worktree add), xong `agent-kit worktree finish <đường dẫn>`.", file=sys.stderr)
     sys.exit(2)
 if reason:
+    # K2/K4 (18/10): ba lệnh kit tự chứng minh không mất gì rồi mới làm đúng việc này; dạng git trần vẫn bị chặn ở đây
+    kit = ("agent-kit worktree prune-branch <nhánh> (chỉ xoá khi trunk đã có nó hoặc PR đã MERGED đúng tip)" if reason.startswith("branch -D")
+           else "agent-kit worktree discard <đường dẫn> (chỉ còn file đã xoá / rác IDE, hoặc worktree của chính phiên; cất vào refs/devkit/discarded)"
+           if reason.startswith("worktree remove --force")
+           else "agent-kit worktree restore <commit> -- <path> (chỉ path không có thay đổi chưa commit)"
+           if reason.startswith(("checkout", "restore")) and "working tree" in reason else None)
     print(f"BLOCKED: {cmd!r} — {reason}. User đã chặn thao tác git khó revert này. "
-          "Nếu thực sự cần, User sẽ tự chạy qua prefix \"!\".", file=sys.stderr)
+          + (f"Không mất gì thì dùng `{kit}`; còn không: " if kit else "")
+          + "Nếu thực sự cần, User sẽ tự chạy qua prefix \"!\".", file=sys.stderr)
     sys.exit(2)
 sys.exit(0)
 ' "$0"
