@@ -112,10 +112,28 @@ export async function callTelegramApi(botToken, method, body = null) {
 }
 
 /**
+ * Lay danh sach tin nhan moi tu Telegram; neu gap loi 409 Conflict do Webhook cu dang bat,
+ * tu dong go deleteWebhook (giu nguyen pending updates) roi thu lai.
+ */
+export async function fetchUpdatesSafely(botToken, offset = 0, apiCaller = callTelegramApi) {
+  const method = `getUpdates?offset=${offset}&timeout=1`;
+  try {
+    return await apiCaller(botToken, method);
+  } catch (err) {
+    if (/409|webhook/i.test(String(err?.message || ''))) {
+      logStructured('info', 'telegram_auto_delete_webhook', { reason: 'conflict_409_detected' });
+      await apiCaller(botToken, 'deleteWebhook', { drop_pending_updates: false });
+      return await apiCaller(botToken, method);
+    }
+    throw err;
+  }
+}
+
+/**
  * Tu dong tim chat_id tu tin nhan gan nhat nguoi dung gui cho Bot (/start).
  */
-export async function discoverChatId(botToken) {
-  const updates = await callTelegramApi(botToken, 'getUpdates');
+export async function discoverChatId(botToken, apiCaller = callTelegramApi) {
+  const updates = await fetchUpdatesSafely(botToken, 0, apiCaller);
   if (!Array.isArray(updates) || updates.length === 0) return '';
   for (let i = updates.length - 1; i >= 0; i -= 1) {
     const chatId = updates[i]?.message?.chat?.id || updates[i]?.edited_message?.chat?.id;

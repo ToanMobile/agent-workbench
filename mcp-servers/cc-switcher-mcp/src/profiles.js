@@ -183,8 +183,18 @@ function syncToCcSwitchApp(stateDir, profile) {
   const dbFile = ccSwitchDbPath(dir);
   if (fs.existsSync(dbFile) && /^[a-z0-9_]+$/i.test(profile.id)) {
     try {
-      const sql = `UPDATE providers SET is_current = CASE WHEN id = '${profile.id}' THEN 1 ELSE 0 END WHERE app_type = 'claude';`;
-      execFileSync('sqlite3', [dbFile, sql], { timeout: 3000, stdio: 'ignore' });
+      execFileSync(
+        'sqlite3',
+        [
+          '-cmd',
+          'PRAGMA busy_timeout = 2000;',
+          '-cmd',
+          `.param set :pid ${profile.id}`,
+          dbFile,
+          "UPDATE providers SET is_current = CASE WHEN id = :pid THEN 1 ELSE 0 END WHERE app_type = 'claude';",
+        ],
+        { timeout: 3000, stdio: 'ignore' },
+      );
     } catch (err) {
       logStructured('warn', 'sqlite_sync_skipped', { error: err?.message });
     }
@@ -200,7 +210,12 @@ function readUsageStatsFromDb(stateDir) {
   try {
     const out = execFileSync(
       'sqlite3',
-      [dbFile, 'SELECT COALESCE(SUM(request_count),0), COALESCE(ROUND(SUM(total_cost_usd),2),0) FROM usage_daily_rollups;'],
+      [
+        '-cmd',
+        'PRAGMA busy_timeout = 2000;',
+        dbFile,
+        'SELECT COALESCE(SUM(request_count),0), COALESCE(ROUND(SUM(total_cost_usd),2),0) FROM usage_daily_rollups;',
+      ],
       { encoding: 'utf8', timeout: 3000 },
     ).trim();
     const [reqs, cost] = out.split('|');
@@ -275,19 +290,22 @@ export function switchProfile(opts = {}) {
     }
   }
 
+  const changed = profile.id !== currentProfile.id;
   state.activeProfileId = profile.id;
-  if (profile.vendor === 'anthropic') {
+  if (profile.vendor === 'anthropic' && (changed || !state.lastClaudeSwitchAtMs)) {
     state.lastClaudeSwitchAtMs = nowMs;
   }
   if (frozenUntilMs <= nowMs) {
     delete state.frozenUntil[profile.id];
   }
-  state.switchHistory.push({
-    from: currentProfile.id,
-    to: profile.id,
-    reason,
-    at: new Date(nowMs).toISOString(),
-  });
+  if (changed) {
+    state.switchHistory.push({
+      from: currentProfile.id,
+      to: profile.id,
+      reason,
+      at: new Date(nowMs).toISOString(),
+    });
+  }
 
   saveSwitcherState(stateDir, state);
   syncToCcSwitchApp(stateDir, profile);

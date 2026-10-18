@@ -5,7 +5,9 @@ import { resolveStateDir, logStructured, maskSecret } from './errors.js';
 import { rotateNextProfile } from './profiles.js';
 import {
   loadTelegramConfig,
+  saveTelegramConfig,
   callTelegramApi,
+  fetchUpdatesSafely,
   sendTelegramNotification,
   handleTelegramCommand,
 } from './telegram.js';
@@ -28,8 +30,85 @@ export function detectRateLimitInLogChunk(chunk) {
 }
 
 /**
+ * Bo doc duoi file log co nho dem goi dau (rolling tail overlap 256 byte) va cat an toan ranh gioi UTF-8.
+ */
+export function createLogTailReader(logFile) {
+  let lastLogSize = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0;
+  let carryOver = '';
+
+  return {
+    readNewChunk() {
+      if (!fs.existsSync(logFile)) return '';
+      const stat = fs.statSync(logFile);
+      if (stat.size < lastLogSize) {
+        lastLogSize = 0;
+        carryOver = '';
+      }
+      if (stat.size <= lastLogSize) return '';
+
+      const delta = stat.size - lastLogSize;
+      const readLen = Math.min(delta, 65536);
+      const fd = fs.openSync(logFile, 'r');
+      let buf = Buffer.alloc(readLen);
+      try {
+        fs.readSync(fd, buf, 0, readLen, stat.size - readLen);
+      } finally {
+        fs.closeSync(fd);
+      }
+      lastLogSize = stat.size;
+
+      // Bo cac byte tiep noi UTF-8 (10xxxxxx) o dau neu phai cat bot do delta > 65536
+      if (delta > 65536) {
+        let i = 0;
+        while (i < buf.length && i < 4 && (buf[i] & 0xc0) === 0x80) i += 1;
+        buf = buf.subarray(i);
+      }
+
+      const freshText = buf.toString('utf8');
+      const combined = `${carryOver}${freshText}`;
+      carryOver = combined.slice(-256);
+      return combined;
+    },
+  };
+}
+
+/**
+ * Xu ly danh sach updates tu Telegram, tu dong bind va luu chatId khi nhan tin nhan dau tien.
+ */
+export async function processIncomingTelegramUpdates(updates, opts = {}) {
+  const { stateDir, currentOffset = 0, apiCaller = callTelegramApi } = opts;
+  let nextOffset = currentOffset;
+  if (!Array.isArray(updates) || updates.length === 0) return nextOffset;
+
+  let cfg = loadTelegramConfig(stateDir);
+  for (const u of updates) {
+    nextOffset = Math.max(nextOffset, (u.update_id || 0) + 1);
+    const msg = u.message || u.edited_message;
+    const text = msg?.text;
+    const fromChatId = String(msg?.chat?.id || '');
+    if (!text || !fromChatId) continue;
+
+    // Neu chua co chatId trong telegram.env, tu dong luu chatId cua chu nhan ngay tin nhan dau tien
+    if (!cfg.chatId) {
+      saveTelegramConfig(stateDir, { chatId: fromChatId });
+      cfg = loadTelegramConfig(stateDir);
+      logStructured('info', 'telegram_chat_id_bound', { chatId: fromChatId });
+    } else if (String(cfg.chatId) !== fromChatId) {
+      continue;
+    }
+
+    const reply = await handleTelegramCommand(text, { stateDir });
+    await apiCaller(cfg.botToken, 'sendMessage', {
+      chat_id: fromChatId,
+      text: reply,
+    });
+  }
+  return nextOffset;
+}
+
+/**
  * Khoi dong Daemon giam sat log + Long-Polling Telegram Bot.
- * Dam bao giai phong toan bo timer/watcher khi nhan SIGTERM/SIGINT.
+ * Su dung co khoa inFlight chong chong cheo tick va giai phong toan bo timer khi nhan SIGTERM/SIGINT.
  */
 export async function startSwitcherDaemon(opts = {}) {
   const stateDir = resolveStateDir(opts.stateDir);
@@ -37,50 +116,36 @@ export async function startSwitcherDaemon(opts = {}) {
   const pollIntervalMs = opts.pollIntervalMs || 4000;
 
   let stopped = false;
-  let lastLogSize = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0;
+  let inFlight = false;
   let lastAutoRotateAtMs = 0;
   let telegramUpdateOffset = 0;
+  const logReader = createLogTailReader(logFile);
 
   logStructured('info', 'daemon_started', { stateDir, logFile, pollIntervalMs });
 
   const checkLogStep = async () => {
-    if (stopped || !fs.existsSync(logFile)) return;
+    if (stopped) return;
     try {
-      const stat = fs.statSync(logFile);
-      if (stat.size < lastLogSize) {
-        lastLogSize = 0;
-      }
-      if (stat.size > lastLogSize) {
-        const readLen = Math.min(stat.size - lastLogSize, 65536);
-        const fd = fs.openSync(logFile, 'r');
-        const buf = Buffer.alloc(readLen);
-        try {
-          fs.readSync(fd, buf, 0, readLen, stat.size - readLen);
-        } finally {
-          fs.closeSync(fd);
-        }
-        lastLogSize = stat.size;
-        const chunk = buf.toString('utf8');
-        const nowMs = Date.now();
-        // Chong spam trigger lien tuc trong 30s
-        if (detectRateLimitInLogChunk(chunk) && nowMs - lastAutoRotateAtMs > 30_000) {
-          lastAutoRotateAtMs = nowMs;
-          const rotated = rotateNextProfile({
-            stateDir,
-            nowMs,
-            markCurrentLimited: true,
-            reason: 'log_detected_429',
-          });
-          const msg = [
-            '🚨 [AUTO-SWITCHER] PHÁT HIỆN CHẠM HẠN MỨC 429',
-            `❄️ Đã đóng băng 5h: ${rotated.previousProfile.name}`,
-            `▶️ Đã chuyển sang: ${rotated.activeProfile.name}`,
-            rotated.requiredWaitSec > 0
-              ? `⏳ Khuyến nghị nghỉ an toàn: ${Math.ceil(rotated.requiredWaitSec / 60)} phút`
-              : '✅ Sẵn sàng tiếp tục code an toàn (0 nguy cơ ban).',
-          ].join('\n');
-          await sendTelegramNotification(msg, { stateDir });
-        }
+      const chunk = logReader.readNewChunk();
+      if (!chunk) return;
+      const nowMs = Date.now();
+      if (detectRateLimitInLogChunk(chunk) && nowMs - lastAutoRotateAtMs > 30_000) {
+        lastAutoRotateAtMs = nowMs;
+        const rotated = rotateNextProfile({
+          stateDir,
+          nowMs,
+          markCurrentLimited: true,
+          reason: 'log_detected_429',
+        });
+        const msg = [
+          '🚨 [AUTO-SWITCHER] PHÁT HIỆN CHẠM HẠN MỨC 429',
+          `❄️ Đã đóng băng 5h: ${rotated.previousProfile.name}`,
+          `▶️ Đã chuyển sang: ${rotated.activeProfile.name}`,
+          rotated.requiredWaitSec > 0
+            ? `⏳ Khuyến nghị nghỉ an toàn: ${Math.ceil(rotated.requiredWaitSec / 60)} phút`
+            : '✅ Sẵn sàng tiếp tục code an toàn (0 nguy cơ ban).',
+        ].join('\n');
+        await sendTelegramNotification(msg, { stateDir });
       }
     } catch (err) {
       logStructured('warn', 'daemon_log_check_error', { error: err?.message });
@@ -92,25 +157,11 @@ export async function startSwitcherDaemon(opts = {}) {
     const cfg = loadTelegramConfig(stateDir);
     if (!cfg.botToken) return;
     try {
-      const updates = await callTelegramApi(
-        cfg.botToken,
-        `getUpdates?offset=${telegramUpdateOffset}&timeout=1`,
-      );
-      if (!Array.isArray(updates)) return;
-      for (const u of updates) {
-        telegramUpdateOffset = Math.max(telegramUpdateOffset, (u.update_id || 0) + 1);
-        const msg = u.message || u.edited_message;
-        const text = msg?.text;
-        const fromChatId = String(msg?.chat?.id || '');
-        if (!text || !fromChatId) continue;
-        // Chi cho phep chatId da dang ky (hoac tu dong nhan neu chua dat chatId)
-        if (cfg.chatId && String(cfg.chatId) !== fromChatId) continue;
-        const reply = await handleTelegramCommand(text, { stateDir });
-        await callTelegramApi(cfg.botToken, 'sendMessage', {
-          chat_id: fromChatId,
-          text: reply,
-        });
-      }
+      const updates = await fetchUpdatesSafely(cfg.botToken, telegramUpdateOffset);
+      telegramUpdateOffset = await processIncomingTelegramUpdates(updates, {
+        stateDir,
+        currentOffset: telegramUpdateOffset,
+      });
     } catch (err) {
       logStructured('warn', 'daemon_telegram_poll_error', {
         error: maskSecret(err?.message, [cfg.botToken]),
@@ -119,8 +170,14 @@ export async function startSwitcherDaemon(opts = {}) {
   };
 
   const timer = setInterval(async () => {
-    await checkLogStep();
-    await pollTelegramStep();
+    if (stopped || inFlight) return;
+    inFlight = true;
+    try {
+      await checkLogStep();
+      await pollTelegramStep();
+    } finally {
+      inFlight = false;
+    }
   }, pollIntervalMs);
 
   const stop = () => {
