@@ -22,20 +22,26 @@ HERE_PWD=$(pwd -P)
 # refs/devkit/discarded 30 ngày) — chặt như chốt MERGED_SHA dưới: nhánh có commit sau lần merge thì nội dung chưa trong trunk, vẫn giữ.
 # Không có python3: đường git như cũ (OCR 18/10).
 KIT_WT=""
-command -v python3 >/dev/null 2>&1 && for c in "$REPO_PATH/.agents/devkit" "$REPO_PATH/universal-agent-devkit" "$(cd "$(dirname "$0")/../.." && pwd)/universal-agent-devkit"; do
+# Kit đi cùng script trước (đã review cùng nó), bản của repo sau — như sync_identical của merge gate.
+command -v python3 >/dev/null 2>&1 && for c in "$(cd "$(dirname "$0")/../.." && pwd)/universal-agent-devkit" "$REPO_PATH/.agents/devkit" "$REPO_PATH/universal-agent-devkit"; do
   # thử chạy một lần (`list` chỉ đọc): kit có mà không chạy được (cú pháp, python quá cũ) thì đường git như cũ, không giữ mọi thứ lại
   if [ -f "$c/scripts/git/worktree.py" ] && (cd "$REPO_PATH" && python3 "$c/scripts/git/worktree.py" list >/dev/null 2>&1); then
     KIT_WT="$c/scripts/git/worktree.py"; break
   fi
 done
 remove_wt() {
-  local out
+  local out rc=2
   if [ -n "$KIT_WT" ]; then
-    out=$(cd "$REPO_PATH" && python3 "$KIT_WT" remove "$1" 2>&1) \
-      || echo "kept $1: agent-kit worktree remove refused: $( { printf '%s\n' "$out" | grep -m1 '✖' || printf '%s\n' "$out" | head -1; } | cut -c1-300)" >&2
-  else
-    git -C "$REPO_PATH" worktree remove "$1" 2>/dev/null || echo "kept $1: git worktree remove failed" >&2
+    out=$(cd "$REPO_PATH" && python3 "$KIT_WT" remove "$1" 2>&1) && return 0
+    rc=$?
+    # 1 = có việc sẽ mất (sửa dở, commit chỉ reflog giữ, bí mật bị ignore…): giữ, git trần không thấy hết những thứ đó.
+    # Khác (2: dùng sai / state không đọc được, kit cũ hơn): đường git như cũ — git vẫn từ chối worktree bẩn hay bị khoá (OCR 18/10).
+    if [ "$rc" -eq 1 ]; then
+      echo "kept $1: agent-kit worktree remove refused: $( { printf '%s\n' "$out" | grep -m1 '✖' || printf '%s\n' "$out" | head -1; } | cut -c1-300)" >&2
+      return 0
+    fi
   fi
+  git -C "$REPO_PATH" worktree remove "$1" 2>/dev/null || echo "kept $1: git worktree remove failed" >&2
 }
 CANDS=()
 if [ -n "$N" ]; then
@@ -50,6 +56,8 @@ else
         case "$cur" in "$REPO_PATH/.claude/worktrees/"*) CANDS+=("$cur") ;; esac ;;
     esac
   done < <(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null)
+  # không worktree nào của phiên: nhánh local cùng tên là của người dùng, không đụng (như trước: nhánh thường chưa bao giờ bị xoá, OCR 18/10)
+  [ "${#CANDS[@]}" -gt 0 ] || exit 0
 fi
 for wt in ${CANDS[@]+"${CANDS[@]}"}; do
   [ -d "$wt" ] || continue

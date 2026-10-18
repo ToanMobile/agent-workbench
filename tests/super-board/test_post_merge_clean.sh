@@ -147,13 +147,32 @@ PATH="$NOPY" bash "$CLEAN" "$R" issue-16-np "$MERGED16" >/dev/null 2>"$TMP/k5.er
   && ok "k5 without python3: plain git removes the unlocked worktree and keeps the locked one, saying why" \
   || { fail "k5 no-python3 fallback"; cat "$TMP/k5.err"; }
 # k6. (OCR 18/10) DevKit của repo có mặt nhưng không chạy được (cú pháp hỏng / python quá cũ): đường git như cũ, worktree sạch vẫn gỡ
+#     Chạy BẢN CHÉP của script ở thư mục tạm: không còn kit nào cạnh nó, chỉ còn kit hỏng của repo (OCR: không thì kit của repo này đỡ thay)
 mkdir -p "$R/.agents/devkit/scripts/git" && printf 'def broken(:\n' > "$R/.agents/devkit/scripts/git/worktree.py"
+mkdir -p "$TMP/sb/.claude/bin" && cp "$CLEAN" "$TMP/sb/.claude/bin/clean.sh"
 git -C "$R" branch issue-17-bk
 MERGED17="$(git -C "$R" rev-parse issue-17-bk)"
 git -C "$R" worktree add -q "$W/issue-17-build" issue-17-bk
-bash "$CLEAN" "$R" issue-17-bk "$MERGED17" >/dev/null 2>"$TMP/k6.err"
-[ ! -d "$W/issue-17-build" ] && ok "k6 a DevKit that cannot start falls back to plain git: the clean worktree is removed" \
-  || { fail "k6 broken DevKit kept a clean worktree"; cat "$TMP/k6.err"; }
+git -C "$R" worktree add -q --detach "$W/issue-17-qa" main
+git -C "$R" worktree lock --reason "devkit-kept session=me pid=$$" "$W/issue-17-qa"
+bash "$TMP/sb/.claude/bin/clean.sh" "$R" issue-17-bk "$MERGED17" >/dev/null 2>"$TMP/k6.err"
+[ ! -d "$W/issue-17-build" ] && [ -d "$W/issue-17-qa" ] && grep -q "/issue-17-qa: git worktree remove failed" "$TMP/k6.err" \
+  && ok "k6 a DevKit that cannot start falls back to plain git: the clean worktree is removed, the locked one kept" \
+  || { fail "k6 broken DevKit fallback"; cat "$TMP/k6.err"; }
 rm -rf "$R/.agents"
+# k7. (OCR 18/10) nhánh PR thường không có worktree nào của phiên: nhánh local cùng tên ở đúng commit đã merge là của người dùng — giữ
+git -C "$R" branch feat-userown
+MERGEDU="$(git -C "$R" rev-parse feat-userown)"
+bash "$CLEAN" "$R" feat-userown "$MERGEDU" >/dev/null 2>&1
+git -C "$R" rev-parse --verify -q refs/heads/feat-userown >/dev/null && ok "k7 a non-card branch with no session worktree is not deleted" \
+  || fail "k7 a non-card branch with no session worktree deleted"
+# k8. khoá devkit-kept của một pid đã chết: mở khoá và gỡ
+sleep 0 & DEAD=$!; wait "$DEAD" 2>/dev/null
+git -C "$R" branch issue-18-d
+MERGED18="$(git -C "$R" rev-parse issue-18-d)"
+git -C "$R" worktree add -q "$W/issue-18-build" issue-18-d
+git -C "$R" worktree lock --reason "devkit-kept session=gone pid=$DEAD" "$W/issue-18-build"
+bash "$CLEAN" "$R" issue-18-d "$MERGED18" >/dev/null 2>&1
+[ ! -d "$W/issue-18-build" ] && ok "k8 a worktree kept by a dead session's lock is removed" || fail "k8 dead session's kept worktree kept"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_post_merge_clean: all passed" || { echo "❌ test_post_merge_clean: $FAILS failed"; exit 1; }
