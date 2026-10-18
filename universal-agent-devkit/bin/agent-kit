@@ -436,7 +436,7 @@ Commands:
                       main checkout; a named branch keeps its commits, a detached worktree's
                       commits must be brought back first)
   worktree discard <path>
-                      Remove one `remove` refuses, only when it holds nothing but deleted files and
+                      Remove one that remove refuses, only when it holds nothing but deleted files and
                       untracked IDE junk, its HEAD is in the trunk and no live session holds it; a
                       fallback copy goes to refs/devkit/discarded/* for 30 days (worktree gc drops them)
   worktree restore <commit> -- <path>...
