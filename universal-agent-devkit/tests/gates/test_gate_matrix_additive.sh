@@ -64,8 +64,9 @@ rm -f "$TMP/add/ran_t2"
   || fail "--run-tests (không --full) -> exit $RC, ran_t2=$([ -f "$TMP/add/ran_t2" ] && echo có || echo không): $(tail_out)"
 
 # 1c. Không --run-tests: test mới không chạy -> ma trận chỉ-thêm KHÔNG được tin (exit 2 + lý do), không bao giờ 0
+rm -f "$TMP/add/ran_t2"
 ( cd "$TMP/add" && CLAUDE_PROJECT_DIR="$TMP/add" python3 "$GATE" --lang en --no-cache --diff "$BASE" ) >"$TMP/out" 2>&1; RC=$?
-[ "$RC" = 2 ] && grep -q 'did not pass in this run' "$TMP/out" && ok "không --run-tests -> exit 2, nêu test mới chưa XANH" \
+[ "$RC" = 2 ] && [ ! -f "$TMP/add/ran_t2" ] && grep -q 'did not pass in this run' "$TMP/out" && ok "không --run-tests -> exit 2, nêu test mới chưa XANH" \
   || fail "không --run-tests -> exit $RC (cần 2 + 'did not pass in this run'): $(tail_out)"
 
 # 2. Rule mới chèn ở ĐẦU (review 18/10, P1): nó chạy trước suite base và tác dụng phụ đi vào suite base — chỉ nhận rule thêm ở đuôi.
@@ -91,10 +92,10 @@ S="$TMP/stale"; mkdir -p "$S/src" "$S/tests" "$S/.agents"
   printf '{"project": "t", "rules": [{"component": "A", "watch_files": ["src/a.py", "tests/*"], "mandatory_regression_tests": [{"id": "REG-A", "command": "sh tests/t1.sh"}]}, {"component": "C", "watch_files": ["src/c.py"], "mandatory_regression_tests": [{"id": "REG-C", "command": "sh tests/c.sh"}]}]}\n' > .agents/regression_matrix.active.json
   git add -A && git commit -qm init
   echo ok2 > src/c.py; echo 2 > src/a.py
-  CLAUDE_PROJECT_DIR="$S" python3 "$GATE" --lang en --run-tests --full --force-full --no-cache >/dev/null 2>&1
+  CLAUDE_PROJECT_DIR="$S" python3 "$GATE" --lang en --run-tests --full --force-full --no-cache >"$TMP/stale_setup.log" 2>&1
   git add -A && git commit -qm ran && sleep 1.1
   echo bad > src/c.py && git commit -qam "c đổi, REG-C đỏ khi chạy lại" && sleep 1.1
-  CLAUDE_PROJECT_DIR="$S" python3 "$DEVKIT_DIR/bin/regression_checklist.py" --project "$S" render >/dev/null 2>&1 )
+  CLAUDE_PROJECT_DIR="$S" python3 "$DEVKIT_DIR/bin/regression_checklist.py" --project "$S" render >>"$TMP/stale_setup.log" 2>&1 )
 BASE="$(git -C "$S" rev-parse HEAD)"
 ( cd "$S" && printf '#!/bin/sh\nprintf "exit 0\\n" > tests/c.sh\n' > tests/t2.sh
   python3 -c "
@@ -106,7 +107,7 @@ gate "$S"
 if grep -q 'Re-running the checklist STALE suites.*REG-C' "$TMP/out"; then
   [ "$RC" = 1 ] && ok "test thêm chạy sau suite STALE của base -> REG-C vẫn đỏ, REJECT" \
     || fail "test thêm vô hiệu suite STALE của base -> exit $RC (cần 1): $(tail_out)"
-else fail "setup: REG-C không STALE nên không được chạy lại: $(tail_out)"; fi
+else fail "setup: REG-C không STALE nên không được chạy lại: $(tail_out) | setup: $(tail -5 "$TMP/stale_setup.log" | tr '\n' ' ')"; fi
 
 # 2b. Test thêm không đẩy script vào DEVKIT_GATE_DONE (run_impacted.sh bỏ qua script đã chạy): B1 `true # sh tests/t3.sh` (tên chỉ
 # nằm trong comment) từng làm runner của B2 bỏ qua t3.sh đỏ -> exit 0.
