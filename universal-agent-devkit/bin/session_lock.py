@@ -1538,7 +1538,13 @@ _VAR_USE = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)
 def _expand_static_vars(target, cmd):
     """`target` with every $VAR / ${VAR} replaced by the literal value `cmd` itself assigns (`VAR=/path`, `export VAR=/path`); None when it
     still holds a variable the line does not assign, a $( ) or a backtick - where such a path lands cannot be told. The last assignment wins."""
-    values = {m.group(1): m.group(2).strip("\"'") for m in _VAR_ASSIGN.finditer(cmd)}
+    values = {}
+    for m in _VAR_ASSIGN.finditer(cmd):
+        # `B=$M`, `B="$M"`, `B=$M/x`: the value pattern stops at the `$` and matches "" - the variable is unknown, not empty
+        if m.end() < len(cmd) and cmd[m.end()] not in " \t\r\n;&|()":
+            values.pop(m.group(1), None)
+        else:
+            values[m.group(1)] = m.group(2).strip("\"'")
     unknown = False
 
     def sub(m):
