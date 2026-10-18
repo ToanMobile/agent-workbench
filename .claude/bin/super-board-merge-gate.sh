@@ -302,7 +302,9 @@ for cmd in "${VERIFY[@]}"; do
     # Không bao giờ tự thêm --auto-approve-tests ở đây: duyệt test bị sửa là quyết định của từng board (config của nó).
   fi
   say "verify: ${cmd}"
-  if ! ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$cmd" ) >"$VERIFY_LOG" 2>&1; then
+  VRC=0
+  ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$cmd" ) >"$VERIFY_LOG" 2>&1 || VRC=$?
+  if [ "$VRC" -ne 0 ]; then
     say "FAILED: ${cmd}"
     WT_LOG="$(git -C "$SCRATCH" rev-parse --absolute-git-dir 2>/dev/null)/postfix-gate/last_output.log"
     if [ -f "$WT_LOG" ]; then
@@ -316,7 +318,17 @@ for cmd in "${VERIFY[@]}"; do
     VLOG="${VLOG_DIR:+$VLOG_DIR/super-board/last-merge-verify-pr-${PR}.log}"
     { [ -n "$VLOG" ] && mkdir -p "$VLOG_DIR/super-board" && cp "$VERIFY_LOG" "$VLOG"; } 2>/dev/null || VLOG="(not saved)"
     tail -60 "$VERIFY_LOG" >&2
-    say "the branch is stale against ${BASE} — send it back to Build for a rebase pass (log saved to ${VLOG})"
+    # 18/10: chỉ nói "stale" khi nhánh thật sự chậm hơn base. 17/10 câu này in cho MỌI verify đỏ và dẫn ba phiên đi rebase vô ích
+    # (lý do thật là post-fix-gate exit 2). Không đếm được (rev-list hỏng) thì coi như không stale và nêu lý do thật.
+    BEHIND=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..origin/${BASE}" 2>/dev/null || echo 0)
+    if [ "${BEHIND:-0}" -gt 0 ] 2>/dev/null; then
+      say "the branch is stale against ${BASE} (${BEHIND} commit(s) behind) — send it back to Build for a rebase pass (log saved to ${VLOG})"
+    else
+      # Bỏ mã màu ANSI (byte ESC thật: sed BSD không hiểu \x1b); LC_ALL=C để sed macOS không đòi UTF-8 hợp lệ.
+      VERDICT=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$VERIFY_LOG" | grep -a -E "KẾT LUẬN|VERDICT" | tail -1 \
+        | LC_ALL=C sed 's/^[[:space:]]*//' || true)
+      say "verify failed (exit ${VRC}) on a branch not behind ${BASE}: ${VERDICT:-no KẾT LUẬN/VERDICT line, see the log tail above} (log saved to ${VLOG})"
+    fi
     exit 2
   fi
 done
