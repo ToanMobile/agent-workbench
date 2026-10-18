@@ -3431,8 +3431,9 @@ def _gc_unique(main, top, dangling, carry=None):
     lacks, outside a _carry_skip_dirs() folder, goes there as (rel, path) instead of counting as unique: cmd_gc copies it into main first
     (A.1b #12)."""
     files, links = [], []
-    # #40: tuổi xét mọi file / link / thư mục mà vòng duyệt này đi qua (không thêm một lượt duyệt), không chỉ gốc + .git như _gc_young
-    young = lambda q: GC_MIN_AGE_S > 0 and _gc_young(q)  # noqa: E731
+    # #40: với orphan (`.git` trỏ treo), tuổi xét mọi file / link / thư mục mà vòng duyệt này đi qua (không thêm một lượt duyệt), không
+    # chỉ gốc + .git như _gc_young. Thư mục không `.git` chỉ chứa sổ sách DevKit giữ luật cũ (gốc): gate ghi sổ sách vào đó bất cứ lúc nào
+    young = lambda q: dangling and GC_MIN_AGE_S > 0 and _gc_young(q)  # noqa: E731
     for dirpath, dirs, names in os.walk(top):
         linked = [d for d in dirs if os.path.islink(os.path.join(dirpath, d))]
         dirs[:] = [d for d in dirs if d not in linked]   # a link is never followed (.agents/devkit, a link to main)
