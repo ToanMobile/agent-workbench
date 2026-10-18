@@ -18,8 +18,11 @@ HERE_PWD=$(pwd -P)
 # 18/10 (NFH PR #38, #45, Geely PR #59): phiên rời worktree của PR bằng ExitWorktree "keep" (khoá devkit-kept) rồi tự chạy merge gate;
 # `git worktree remove` trần từ chối worktree bị khoá và phiên phải unlock tay. Có DevKit thì gỡ bằng `worktree.py remove`: nó mở khoá
 # devkit-kept của chính phiên gọi hoặc của pid đã chết (khoá của phiên khác còn sống thì git vẫn từ chối) và giữ luật không-mất-việc.
+# Nó cũng xoá nhánh của worktree theo luật của kit (nội dung đã trong trunk, không còn ref remote; commit chỉ nhánh giữ được cất vào
+# refs/devkit/discarded 30 ngày) — chặt như chốt MERGED_SHA dưới: nhánh có commit sau lần merge thì nội dung chưa trong trunk, vẫn giữ.
+# Không có python3: đường git như cũ (OCR 18/10).
 KIT_WT=""
-for c in "$REPO_PATH/.agents/devkit" "$REPO_PATH/universal-agent-devkit" "$(cd "$(dirname "$0")/../.." && pwd)/universal-agent-devkit"; do
+command -v python3 >/dev/null 2>&1 && for c in "$REPO_PATH/.agents/devkit" "$REPO_PATH/universal-agent-devkit" "$(cd "$(dirname "$0")/../.." && pwd)/universal-agent-devkit"; do
   if [ -f "$c/scripts/git/worktree.py" ]; then KIT_WT="$c/scripts/git/worktree.py"; break; fi
 done
 remove_wt() {
@@ -40,7 +43,8 @@ else
   while IFS= read -r line; do
     case "$line" in
       "worktree "*) cur="${line#worktree }" ;;
-      "branch refs/heads/$HEAD_REF") [ -n "$cur" ] && [ "$cur" != "$REPO_PATH" ] && CANDS+=("$cur") ;;
+      "branch refs/heads/$HEAD_REF")   # chỉ worktree do phiên dựng (.claude/worktrees/<tên>); worktree người tự dựng nơi khác: để yên (OCR 18/10)
+        case "$cur" in "$REPO_PATH/.claude/worktrees/"*) CANDS+=("$cur") ;; esac ;;
     esac
   done < <(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null)
 fi

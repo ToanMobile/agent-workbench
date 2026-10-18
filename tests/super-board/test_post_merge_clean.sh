@@ -13,7 +13,8 @@ ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-postmerge-test.XXXXXX")"
-trap 'rm -rf "$TMP"' EXIT
+SL=""
+trap '[ -n "$SL" ] && kill "$SL" 2>/dev/null; rm -rf "$TMP"' EXIT
 R="$TMP/repo"; W="$R/.claude/worktrees"
 git init -q -b main "$R"
 git -C "$R" config user.email t@example.invalid; git -C "$R" config user.name t
@@ -125,5 +126,12 @@ git -C "$R" worktree lock --reason "devkit-kept session=other pid=$SL" "$W/issue
 bash "$CLEAN" "$R" issue-15-o "$MERGED15" >/dev/null 2>&1
 [ -d "$W/issue-15-build" ] && ok "k3 worktree another live session keeps is left alone" || fail "k3 worktree another live session keeps REMOVED"
 kill "$SL" 2>/dev/null
+# k4. (OCR 18/10) worktree người dùng tự dựng NGOÀI .claude/worktrees ở đúng nhánh PR thường vừa merge: không phải của phiên, giữ
+git -C "$R" branch feat-hand
+MERGEDH="$(git -C "$R" rev-parse feat-hand)"
+git -C "$R" worktree add -q "$TMP/repo-feat-hand" feat-hand
+bash "$CLEAN" "$R" feat-hand "$MERGEDH" >/dev/null 2>&1
+[ -d "$TMP/repo-feat-hand" ] && ok "k4 a hand-made worktree outside .claude/worktrees on the merged branch is left alone" \
+  || fail "k4 a hand-made worktree outside .claude/worktrees REMOVED"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_post_merge_clean: all passed" || { echo "❌ test_post_merge_clean: $FAILS failed"; exit 1; }
