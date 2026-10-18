@@ -218,7 +218,7 @@ rc, out, err = run(["plan", l7, "--slots", "3"])
 chk(snapshot() == before, "plan writes nothing (no file created, none changed, history included)")
 chk(rc == 0 and "WARNING hooks/a.sh is edited by G1, G2" in out, "two lanes on one file: warned", out)
 chk("WARNING tests/" not in out and "WARNING .agents/" not in out, "the union-merged files are not warned about", out)
-chk("batch ends after 10 min" in out and "merge order" in out and "ONE full gate" in out, "the text form carries the makespan, the merge order and the one-gate line", out)
+chk("batch ends after 20 min" in out and "merge order" in out and "ONE full gate" in out, "the text form carries the makespan (G2 waits for G1: both edit hooks/a.sh), the merge order and the one-gate line", out)
 rc2, d2, err2 = plan_json("l7b.json", [{"id": "G1", "files": ["tests/impact_map.txt"]}, {"id": "G2", "files": ["tests/impact_map.txt"]}], 2)
 chk(d2 is not None and d2["overlaps"] == {}, "only shared files in common: no overlap", str(d2 and d2["overlaps"]))
 
@@ -445,6 +445,45 @@ with contextlib.redirect_stdout(buf):
     lp.plan(lanes_file("l13r.json", [{"id": "A", "est_min": 5}]), None, False)
 chk("slots 3 (machine now: 16 cores, load 2.0)" in buf.getvalue(), "the reading printed is the one that set the slot count", buf.getvalue())
 
+# 14. lanes that edit one file never run at the same time (18/10: several agents edited one file and the merges conflicted): the later
+# lane in dependency-then-listed order waits for the earlier one; the files every lane touches stay parallel
+rc, d, err = plan_json("l14a.json", [{"id": "A", "est_min": 10, "files": ["hooks/a.sh"]}, {"id": "B", "est_min": 10, "files": ["hooks/a.sh"]},
+                                     {"id": "C", "est_min": 10, "files": ["hooks/c.sh"]}], 3)
+if d:
+    rows = dict((r["id"], r) for r in d["rows"])
+    chk(rows["B"]["start"] >= rows["A"]["end"], "B waits for A: both edit hooks/a.sh", str(d["rows"]))
+    chk(rows["C"]["start"] == 0, "C (its own file) still starts at once", str(d["rows"]))
+    chk(d["makespan_min"] == 20, "two lanes on one file take 20 min, not 10", str(d["makespan_min"]))
+    chk(d.get("serialized") == [{"id": "B", "after": "A", "files": ["hooks/a.sh"]}], "the JSON names the added wait and the file behind it", str(d.get("serialized")))
+    chk(d["overlaps"] == {"hooks/a.sh": ["A", "B"]}, "the overlaps key keeps its shape", str(d["overlaps"]))
+else:
+    chk(False, "plan with two lanes on one file runs", err)
+# three lanes on one file form a chain, not three waits on the first (B and C would still run together)
+rc, d, err = plan_json("l14b.json", [{"id": "A", "est_min": 5, "files": ["x.py"]}, {"id": "B", "est_min": 5, "files": ["x.py"]},
+                                     {"id": "C", "est_min": 5, "files": ["x.py"]}], 4)
+if d:
+    rows = dict((r["id"], r) for r in d["rows"])
+    chk(rows["B"]["start"] >= rows["A"]["end"] and rows["C"]["start"] >= rows["B"]["end"] and d["makespan_min"] == 15,
+        "three lanes on one file run as a chain (15 min)", str(d["rows"]))
+else:
+    chk(False, "plan with three lanes on one file runs", err)
+# a folder and a file inside it: serialized as well
+rc, d, err = plan_json("l14c.json", [{"id": "F", "est_min": 10, "files": ["hooks"]}, {"id": "G", "est_min": 10, "files": ["hooks/sub/a.sh"]}], 2)
+chk(d is not None and d["makespan_min"] == 20, "a lane on a folder and a lane on a file inside it never run together", str(d and d["rows"]))
+# the order follows the explicit deps, so the added wait never makes a cycle: Y is listed first but waits for X
+rc, d, err = plan_json("l14d.json", [{"id": "Y", "est_min": 10, "deps": ["X"], "files": ["s.sh"]}, {"id": "X", "est_min": 10, "files": ["s.sh"]}], 2)
+chk(rc == 0 and d is not None and d["makespan_min"] == 20 and d.get("serialized") == [],
+    "a shared file between lanes already in a dependency chain adds no wait and no cycle", "%s %s %s" % (rc, err, d and d.get("serialized")))
+# only the union-merged files in common: no wait
+rc, d, err = plan_json("l14e.json", [{"id": "U", "est_min": 10, "files": ["tests/impact_map.txt"]}, {"id": "V", "est_min": 10, "files": ["tests/impact_map.txt"]}], 2)
+chk(d is not None and d["makespan_min"] == 10 and d.get("serialized") == [], "lanes that share only union-merged files still run together", str(d and d["rows"]))
+# the text form says what it did and what the agent can do instead
+rc, out, err = run(["plan", lanes_file("l14f.json", [{"id": "A", "est_min": 10, "files": ["hooks/a.sh"]}, {"id": "B", "est_min": 10, "files": ["hooks/a.sh"]}]), "--slots", "2"])
+chk(rc == 0 and "B starts after A ends (both edit hooks/a.sh)" in out and "one lane" in out, "the text form names the serialized pair and the merge option", out)
+# the tail (critical path) counts the added wait: P (5) with Q (50) waiting on its file must start before a lone R (40) on one slot
+rc, d, err = plan_json("l14g.json", [{"id": "R", "est_min": 40}, {"id": "P", "est_min": 5, "files": ["k.sh"]}, {"id": "Q", "est_min": 50, "files": ["k.sh"]}], 2)
+chk(d is not None and d["start_order"][0] == "P", "a lane another lane waits on for a file starts first (path 5 + 50)", str(d and d["start_order"]))
+
 # 8. the CLI wiring: `agent-kit lanes ...` reaches the script (a kit copy without bin/agent-kit, as the mutant runs use, skips this)
 AK = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT))), "bin", "agent-kit")
 if os.path.isfile(AK):
@@ -452,7 +491,7 @@ if os.path.isfile(AK):
     r = subprocess.run(["bash", AK, "lanes", "slots", "--quiet"], capture_output=True, text=True, env=e, cwd=TMP, timeout=60)
     chk(r.returncode == 0 and r.stdout.strip() == "3", "agent-kit lanes slots reaches the script", "%s %r %r" % (r.returncode, r.stdout, r.stderr))
     r = subprocess.run(["bash", AK, "lanes", "plan", l7, "--slots", "3"], capture_output=True, text=True, env=e, cwd=TMP, timeout=60)
-    chk(r.returncode == 0 and "batch ends after 10 min" in r.stdout, "agent-kit lanes plan reaches the script", "%s %r %r" % (r.returncode, r.stdout, r.stderr))
+    chk(r.returncode == 0 and "batch ends after 20 min" in r.stdout, "agent-kit lanes plan reaches the script", "%s %r %r" % (r.returncode, r.stdout, r.stderr))
     r = subprocess.run(["bash", AK, "lanes", "plan", os.path.join(TMP, "nope.json")], capture_output=True, text=True, env=e, cwd=TMP, timeout=60)
     chk(r.returncode == 2, "agent-kit lanes keeps the script's exit code 2 on bad input", "%s %r" % (r.returncode, r.stderr))
     r = subprocess.run(["bash", AK, "help"], capture_output=True, text=True, env=e, cwd=TMP, timeout=60)

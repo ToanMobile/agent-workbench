@@ -967,6 +967,64 @@ def antigravity_collab_hint(prompt, dossier, project_root):
             "trước khi nghiệm thu XONG (Task đơn giản: agent được gọi tự làm từ A-Z, không cần 2-agent review).")
 
 
+# A request several agents can share (18/10: the user had to ask "tạo nhiều agent chạy cho nhanh" again and again; the
+# leading agent split late or never). Regexes only, on the normalized prompt: several repos, several issues / cards /
+# tasks, "song song" / "nhiều agent", a numbered list, a bulleted list of actions. A question, a request whose list
+# names one file only, chit-chat and agent prompts stay silent (INSTINCT-026: no always-on block in this hook).
+_COUNT = r"(?:[2-9]|[1-9]\d+|hai|ba|bốn|năm|sáu|bảy|tám|chín|mười|two|three|four|five|six|several|multiple)"
+SPLIT_EXPLICIT_RE = re.compile(
+    r"(?<!\w)(?:song song|in parallel|parallel(?:ly|ize)?|nhiều (?:agent|phiên|lane)|multi[- ]?agents?|"
+    r"(?:many|several) agents|fan[- ]?out|chia (?:ra )?(?:nhiều |thành nhiều )?(?:agent|lane|phiên))(?!\w)"
+    r"|(?<!\w)(?:" + _COUNT + r"\s+(?:repos?|repositor(?:y|ies)|dự án|projects?)|(?:tất cả|mọi)\s+(?:các\s+)?(?:repos?|dự án)"
+    r"|(?:all|every|each)\s+(?:the\s+)?(?:repos?|repositories|projects))(?!\w)")
+SPLIT_COUNT_RE = re.compile(
+    r"(?<!\w)(?:" + _COUNT + r"\s+(?:issues?|thẻ|cards?|tickets?|bugs?|lỗi|việc|tasks?|lanes?|prs?|pull requests?)"
+    r"|(?:nhiều|các|những)\s+(?:issue|thẻ|card|ticket|task|việc|pr)s?)(?!\w)")
+SPLIT_NUMBERED_RE = re.compile(r"(?:^|\n)[ \t]*\(?(\d{1,2})[.)][ \t]+\S|(?<!\S)\(?([1-9])\)[ \t]+\S")
+SPLIT_ACTION_BULLET_RE = re.compile(
+    r"(?m)^[ \t]*[-*•][ \t]+(?:sửa|thêm|viết|tạo|cập nhật|xóa|đổi|bỏ|chuyển|làm|chạy|fix|add|update|write|create|remove|"
+    r"refactor|implement|migrate|port|run)(?!\w)")
+QUESTION_RE = re.compile(
+    r"\?\W*\Z|\A\W*(?:tại sao|vì sao|sao|có nên|có phải|liệu|giải thích|why|what|how|is|are|does|should|explain)(?!\w)"
+    r"|(?<!\w)(?:không|chưa|thế nào|ra sao|là gì|được không|nhỉ|hả)\W*\Z")
+
+
+def parallel_split(prompt):
+    """Why this request can be split across agents ("4 repo", "danh sách 3 việc", "song song"…), or "" when it cannot."""
+    norm = normalize(prompt).strip()
+    if len(norm) < 8 or norm.startswith("/") or QUESTION_RE.search(norm) or harness_prompt(prompt):
+        return ""
+    m = SPLIT_EXPLICIT_RE.search(norm)
+    if m:
+        return m.group(0)
+    paths = {p.rstrip(":,.;)") for p in PATHLIKE_RE.findall(norm)}
+    if len(paths) == 1:   # a list of edits inside one file is one lane
+        return ""
+    m = SPLIT_COUNT_RE.search(norm)
+    if m:
+        return m.group(0)
+    numbers = {int(a or b) for a, b in SPLIT_NUMBERED_RE.findall(norm)}
+    if {1, 2} <= numbers:
+        return "danh sách %d việc" % len(numbers)
+    bullets = len(SPLIT_ACTION_BULLET_RE.findall(norm))
+    if bullets >= 2:
+        return "danh sách %d việc" % bullets
+    return ""
+
+
+def parallel_hint(prompt):
+    reason = parallel_split(prompt)
+    if not reason:
+        return ""
+    return (f"- Song song ({reason}): việc này chia được cho nhiều agent, chia ngay ở lượt này, đừng đợi người dùng nhắc. "
+            "Tách thành các phần KHÔNG đụng chung file; ghi lanes.json ngoài repo (id, files, deps, est_min) rồi chạy "
+            "`agent-kit lanes plan lanes.json` (lane trùng file bị xếp nối tiếp; gộp chúng khi file đó là phần chính); mở mọi "
+            "lane chạy được trong MỘT tin nhắn: cùng repo thì Agent tool `isolation: \"worktree\"`, repo khác thì một phiên riêng "
+            "(Claude Desktop chỉ mở phiên ở repo khác trong lượt có lời người dùng: mở ngay lượt này), phần chỉ đọc thì Agent "
+            "song song không worktree. Cả đợt: một lượt principal-code-reviewer + ocr-review song song, một gate `--full` sau "
+            "khi gộp. Chỉ một việc, một file, hoặc bạn đang là một lane được giao: làm luôn, không tách.")
+
+
 def req_hint(prompt, dossier, project_root):
     if "BUG_FIX" in dossier["detected_intents"] or not _checklist_on(project_root) \
             or not FEATURE_RE.search(normalize(prompt)):
@@ -1171,7 +1229,7 @@ if __name__ == "__main__":
         if is_hook:
             log_surfaced(project_dir, session_id, prompt_input, shown_refs(res))
             write_turn_class(project_dir, session_id, res)
-            extra = [l for l in (antigravity_collab_hint(prompt_input, res, project_dir),
+            extra = [l for l in (antigravity_collab_hint(prompt_input, res, project_dir), parallel_hint(prompt_input),
                                  capture_bug(prompt_input, res, project_dir, session_id, hook_payload),
                                  req_hint(prompt_input, res, project_dir), watch_inbox(project_dir),
                                  command_words(prompt_input, project_dir),
