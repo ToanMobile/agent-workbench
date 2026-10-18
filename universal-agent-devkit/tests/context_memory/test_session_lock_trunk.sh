@@ -48,6 +48,10 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (True, "worktree: redirect inside backticks-built path (fail closed)", w, B('echo evil > `pwd`/../x')),
     (False, "worktree: VAR assigned outside main, redirect to \"$VAR/f\"", w, B('OUT=/tmp/o; echo x > "$OUT/f"')),
     (False, "worktree: VAR assigned to a relative file, redirect to $VAR", w, B('OUT=a.txt; echo x > $OUT')),
+    # issue #13 QA gap (High): a variable assigned from another variable reads as the empty string, so "$B/f" looked like "/f"
+    (True, "worktree: B=$M chained from MAIN, redirect to \"$B/f\"", w, B(f'M={m}; B=$M; echo evil > "$B/README.md"')),
+    (True, "worktree: B=\"$M\" chained and quoted, redirect to \"$B/f\"", w, B(f'M={m}; B="$M"; echo evil > "$B/README.md"')),
+    (True, "worktree: B=$M/x chained with a suffix, redirect to \"$B/../f\"", w, B(f'M={m}; B=$M/x; echo evil > "$B/../README.md"')),
     (True, "an allowed segment does not excuse the next", m, B(f"agent-kit worktree finish {w} && echo x > a.txt")),
     (True, "cp into main from a worktree", w, B(f"cp /tmp/a {m}/b.txt")),
     (True, "cd to main from a worktree, then rm", w, B(f"cd {m} && rm -f README.md")),
