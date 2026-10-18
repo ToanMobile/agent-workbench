@@ -469,7 +469,7 @@ MERGE_GATE_CALL = re.compile(r"\s*(?:cd\s+(%s+)\s*&&\s*)?(?:bash\s+)?(%s*/super-
                              r"(?:\|\s*tail(?:\s+-n)?\s+-?\d+\s*)?" % (_W, _W, _W))
 GATE_SCRIPT = ".claude/bin/super-board-merge-gate.sh"
 # Một `git push` chỉ được coi là đẩy nhánh PR khi đích chắc chắn là một nhánh tên khác main / master / trunk / HEAD; mọi push khác (trần,
-# `HEAD`, biến, `<sha>:main`, `git stash push` cũng vậy: thừa thì chỉ mất phần nới S ⊑ HEAD ⊑ origin) coi như có thể đã đẩy thẳng lên trunk.
+# `HEAD`, biến, `<sha>:main`, `git stash push` cũng vậy: thừa thì chặn, fail-closed) coi như có thể đã đẩy thẳng lên trunk.
 SAFE_PUSH = re.compile(r"\s*(?:cd\s+\S+\s*)?(?:git\s+(?:-C\s+\S+\s+)?push\s+(?:(?:-u|--set-upstream|-q|--quiet)\s+)*origin\s+"
                        r"(?!(?:HEAD:)?(?:refs/heads/)?(?:main|master|trunk|HEAD)\s*$)(?:HEAD:)?[\w./-]+)?\s*")
 # origin của super-board là GitHub (merge gate gộp bằng `gh pr merge`): https / ssh / scp tới github.com, không gì khác (một sshd ở localhost
@@ -558,46 +558,57 @@ def merged_evidence():
     # ponytail: origin là URL trong .git/config (agent ghi được): một fork GitHub của chính agent có commit squash dựng sẵn, hay ~/.ssh/config
     # trỏ github.com về máy khác, vẫn qua. Cả hai cần dựng repo / máy chủ riêng, không phải một lệnh echo. Nâng cấp: ghim owner/repo từ một
     # nguồn đã track (config board) và host key GitHub đi kèm DevKit.
+    # ponytail: script sửa tạm cho in hai dòng rồi hoàn lại trước Stop vẫn qua (gate_script_ok chỉ thấy bản lúc Stop), khi lượt cũng gộp được
+    # PR bằng đường không bắt được ở đây (alias git, biến). Nâng cấp cùng biên nhận theo session id ở trên.
     calls, merged, other_merge = {}, [], False
-    try:
-        with os.fdopen(open_reg(d.get("transcript_path") or ""), encoding="utf-8", errors="replace") as f:
-            for raw in f:
-                if "merge" not in raw and "push" not in raw:   # lệnh merge gate, kết quả của nó, gh … merge, git push … main
-                    continue
-                if left() <= 0:
-                    log("merge-gate check: out of time reading the transcript")
-                    return None
-                try:
-                    e = json.loads(raw)
-                    if datetime.datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")).timestamp() < start:
+    tp = d.get("transcript_path") or ""
+    for t in [tp] + sorted(glob.glob(os.path.join(os.path.splitext(tp)[0], "subagents", "*.jsonl"))):   # subagent của phiên cũng gộp được
+        try:
+            with os.fdopen(open_reg(t), encoding="utf-8", errors="replace") as f:
+                for raw in f:
+                    if "merge" not in raw and "push" not in raw:   # lệnh merge gate, kết quả của nó, gh … merge, git push … main
                         continue
-                except (ValueError, AttributeError, TypeError, RecursionError):
-                    continue
-                msg = e.get("message") if isinstance(e, dict) else None
-                for c in (msg.get("content") if isinstance(msg, dict) else None) or []:
-                    if not isinstance(c, dict):
+                    if left() <= 0:
+                        log("merge-gate check: out of time reading the transcript")
+                        return None
+                    try:
+                        e = json.loads(raw)
+                        if datetime.datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")).timestamp() < start:
+                            continue
+                    except (ValueError, AttributeError, TypeError, RecursionError):
                         continue
-                    if e.get("type") == "assistant" and c.get("type") == "tool_use" and c.get("name") == "Bash":
-                        cmd = (c.get("input") or {}).get("command", "")
-                        m = MERGE_GATE_CALL.fullmatch(cmd) if isinstance(cmd, str) and not re.search(r"[\r\n]", cmd) else None
-                        args = m.group(3).split() if m else []
-                        pr = args[args.index("--pr") + 1] if "--pr" in args[:-1] else ""
-                        want_head = args[args.index("--expect-head") + 1] if "--expect-head" in args[:-1] else ""
-                        if m and pr.isdigit() and re.fullmatch(r"[0-9a-f]{7,40}", want_head) and gate_script_ok(e.get("cwd"), m.group(1), m.group(2)):
-                            calls[c.get("id")] = (pr, want_head)
-                        elif re.search(r"\bgh\b[^\n]*\bmerge\b|/pulls/\d+/merge\b", str(cmd)) or any(   # gộp thẳng (gh), không qua merge gate
-                                not SAFE_PUSH.fullmatch(seg) for seg in re.split(r"[;&|\n]+", str(cmd)) if re.search(r"\bpush\b", seg)):
+                    msg = e.get("message") if isinstance(e, dict) else None
+                    for c in (msg.get("content") if isinstance(msg, dict) else None) or []:
+                        if not isinstance(c, dict):
+                            continue
+                        if e.get("type") == "assistant" and c.get("type") == "tool_use" and c.get("name") == "Bash":
+                            cmd = (c.get("input") or {}).get("command", "")
+                            m = MERGE_GATE_CALL.fullmatch(cmd) if isinstance(cmd, str) and not re.search(r"[\r\n]", cmd) else None
+                            args = m.group(3).split() if m else []
+                            pr = args[args.index("--pr") + 1] if "--pr" in args[:-1] else ""
+                            want_head = args[args.index("--expect-head") + 1] if "--expect-head" in args[:-1] else ""
+                            if m and pr.isdigit() and re.fullmatch(r"[0-9a-f]{7,40}", want_head) and gate_script_ok(e.get("cwd"), m.group(1), m.group(2)):
+                                calls[c.get("id")] = (pr, want_head)
+                            elif re.search(r"\bgh\b[^\n]*\bmerge\b|/pulls/\d+/merge\b", str(cmd)) or any(   # gộp thẳng (gh), không qua merge gate
+                                    not SAFE_PUSH.fullmatch(seg) for seg in re.split(r"[;&|\n]+", str(cmd)) if re.search(r"\bpush\b", seg)):
+                                other_merge = True
+                        elif (e.get("type") == "assistant" and c.get("type") == "tool_use"
+                              and re.search(r"merge|push", str(c.get("name") or ""), re.I)):   # công cụ khác (MCP GitHub: merge_pull_request, push_files)
                             other_merge = True
-                    elif c.get("type") == "tool_result" and c.get("tool_use_id") in calls and not c.get("is_error"):
-                        pr, want_head = calls[c["tool_use_id"]]
-                        body = c.get("content")
-                        if isinstance(body, list):
-                            body = "\n".join(x.get("text", "") for x in body if isinstance(x, dict))
-                        body = str(body or "")
-                        for sha in re.findall(r"^\[merge-gate #%s\] merged ([0-9a-f]{40})\s*$" % pr, body, re.M):
-                            if sha.startswith(want_head) and re.search(r"^\[merge-gate #%s\] verified green against " % pr, body, re.M):
-                                merged.append((pr, sha))
-    except OSError:
+                        elif c.get("type") == "tool_result" and c.get("tool_use_id") in calls and not c.get("is_error"):
+                            pr, want_head = calls[c["tool_use_id"]]
+                            body = c.get("content")
+                            if isinstance(body, list):
+                                body = "\n".join(x.get("text", "") for x in body if isinstance(x, dict))
+                            body = str(body or "")
+                            for sha in re.findall(r"^\[merge-gate #%s\] merged ([0-9a-f]{40})\s*$" % pr, body, re.M):
+                                if sha.startswith(want_head) and re.search(r"^\[merge-gate #%s\] verified green against " % pr, body, re.M):
+                                    merged.append((pr, sha))
+        except OSError as e:   # transcript nào (chính hay subagent) không đọc được: không chứng minh được gì
+            log("merge-gate check: transcript unreadable %s: %r" % (t, e))
+            return None
+    if other_merge:   # lượt gộp / đẩy thẳng ngoài merge gate: bản ghi merge gate không phủ được việc đó (OCR 18/10)
+        log("merge-gate check: this turn also merged or pushed outside the merge gate")
         return None
     if not merged:
         return None
@@ -655,8 +666,8 @@ def merged_evidence():
                 trees[s] = out(git("rev-parse", s + "^{tree}"))
             if r.returncode or not r.stdout.split() or r.stdout.split()[0].decode() != trees[s]:
                 continue
-            # đứng ở H / S; hoặc main đã đi tiếp theo origin (PR phiên khác gộp sau S) khi lượt này không tự gộp thẳng PR nào
-            if head in (h, s) or (not other_merge and git("merge-base", "--is-ancestor", s, head).returncode == 0
+            # đứng ở H / S; hoặc main đã đi tiếp theo origin (PR phiên khác gộp sau S; lượt này không tự gộp thẳng PR nào, xem other_merge)
+            if head in (h, s) or (git("merge-base", "--is-ancestor", s, head).returncode == 0
                                   and git("merge-base", "--is-ancestor", head, tip).returncode == 0):
                 return "merge-gate pr=%s head=%s squash=%s" % (pr, h[:12], s[:12])
     return None

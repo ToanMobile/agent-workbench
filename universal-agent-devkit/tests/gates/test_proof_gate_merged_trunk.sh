@@ -17,6 +17,12 @@ GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 TMP="$(mktemp -d)" || exit 1
 trap 'rm -rf "$TMP"' EXIT
 FAILS=0
+# git merge-tree --write-tree (hook) cần git >= 2.38; init -b cần 2.28. Thiếu là lỗi môi trường, nói rõ (không phải hook sai).
+GV=$(git version | sed -E 's/^git version ([0-9]+)\.([0-9]+).*/\1 \2/')
+set -- $GV
+if [ "${1:-0}" -lt 2 ] || { [ "${1:-0}" -eq 2 ] && [ "${2:-0}" -lt 38 ]; }; then
+  echo "✖ environment: git >= 2.38 needed (git merge-tree --write-tree), have $(git version)"; exit 1
+fi
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
@@ -223,7 +229,8 @@ stop "$WT"; rc=$?
 turn_start; H=$(new_pr 41) && land 41 && tool Bash "$(GATE_CMD 41 "$H")" "$(GATE_OUT 41 "$H")" || fail "N15 setup"; BUDGET=0 stop; rc=$?
 blocked "$rc" && ok "N15 no time budget left: blocked" || fail "N15 accepted without budget ($(why $rc))"
 # N3j. Lệnh trước đã `cd` sang thư mục có script giả cùng tên; lệnh merge gate dùng đường dẫn tương đối (cwd thật của lệnh): chặn.
-turn_start; H=$(new_pr 42) && land 42 && mkdir -p "$TMP/x/.claude/bin" && CWD="$TMP/x" tool Bash "$(GATE_CMD 42 "$H")" "$(GATE_OUT 42 "$H")" || fail "N3j setup"; stop; rc=$?
+turn_start; H=$(new_pr 42) && land 42 && mkdir -p "$TMP/x/.claude/bin" && printf '#!/bin/sh\necho forged\n' > "$TMP/x/.claude/bin/super-board-merge-gate.sh" \
+  && chmod +x "$TMP/x/.claude/bin/super-board-merge-gate.sh" && CWD="$TMP/x" tool Bash "$(GATE_CMD 42 "$H")" "$(GATE_OUT 42 "$H")" || fail "N3j setup"; stop; rc=$?
 blocked "$rc" && ok "N3j relative call from a cwd outside the repo: blocked" || fail "N3j call from foreign cwd accepted ($(why $rc))"
 # N11b. Bật origin cục bộ (biến test) nhưng origin là ext:: (chạy lệnh tuỳ ý): vẫn chặn.
 turn_start; H=$(new_pr 43) && land 43 && tool Bash "$(GATE_CMD 43 "$H")" "$(GATE_OUT 43 "$H")" && git -C "$REPO" config remote.origin.url "ext::sh -c true" \
@@ -237,6 +244,34 @@ turn_start; H=$(new_pr 44) && git -C "$REPO" fetch -q origin && T=$(git -C "$REP
   && tool Bash "$(GATE_CMD 44 "$H")" "$(GATE_OUT 44 "$H")" || fail "N16 setup"; stop; rc=$?
 git -C "$REPO" replace -d "$T" >/dev/null || { fail "restore after N16"; exit 1; }
 blocked "$rc" && ok "N16 fake squash grafted onto origin's tip via refs/replace: blocked" || fail "N16 refs/replace forgery accepted ($(why $rc))"
+# N13e. Main đứng đúng ở S (không cần phần nới) nhưng lượt này còn gộp / đẩy thẳng ngoài merge gate: chặn, mỗi dạng một lần.
+n=45
+for cmd in "gh pr merge 99 --squash" "git push origin main" "git push -f origin main" "git push origin +HEAD:main" "git push origin pr-x:main" \
+           "git -C /r push origin main" "git push origin feature main" "gh api -X PUT repos/o/r/pulls/25/merge"; do
+  turn_start; H=$(new_pr $n) && land $n && tool Bash "$(GATE_CMD $n "$H")" "$(GATE_OUT $n "$H")" \
+    && tool Bash "$(python3 -c 'import json,sys; print(json.dumps({"command": sys.argv[1]}))' "$cmd")" "ok" || fail "N13e setup ($cmd)"; stop; rc=$?
+  blocked "$rc" && ok "N13e '$cmd' this turn, main at S: blocked" || fail "N13e '$cmd' accepted ($(why $rc))"
+  n=$((n + 1))
+done
+# N13g. Gộp thẳng qua một công cụ MCP (không phải Bash): chặn.
+turn_start; H=$(new_pr 60) && land 60 && tool Bash "$(GATE_CMD 60 "$H")" "$(GATE_OUT 60 "$H")" \
+  && tool mcp__github__merge_pull_request '{"pullNumber": 61}' "merged" || fail "N13g setup"; stop; rc=$?
+blocked "$rc" && ok "N13g MCP merge_pull_request this turn: blocked" || fail "N13g MCP merge accepted ($(why $rc))"
+# N13h. Subagent của phiên gộp thẳng (transcript subagents/*.jsonl): chặn.
+SUB="${TR%.jsonl}/subagents"
+turn_start; H=$(new_pr 62) && land 62 && tool Bash "$(GATE_CMD 62 "$H")" "$(GATE_OUT 62 "$H")" && mkdir -p "$SUB" \
+  && tool Bash '{"command": "gh pr merge 63 --squash"}' "ok" && tail -2 "$TR" > "$SUB/agent-a1.jsonl" \
+  && python3 - "$TR" <<'PY' || fail "N13h setup"
+import sys
+p = sys.argv[1]; lines = open(p).read().splitlines(True); open(p, "w").writelines(lines[:-2])   # chỉ subagent giữ lần gộp thẳng
+PY
+stop; rc=$?; rm -rf "${TR%.jsonl}"
+blocked "$rc" && ok "N13h a subagent merged directly: blocked" || fail "N13h subagent merge accepted ($(why $rc))"
+# N7c. File của phiên ở main tạo qua Bash (nhánh so chữ của untouched_by_session): chặn.
+turn_start; H=$(new_pr 64) && land 64 && tool Bash "$(GATE_CMD 64 "$H")" "$(GATE_OUT 64 "$H")" \
+  && mkdir -p "$REPO/docs" && echo "x" > "$REPO/docs/own.md" && tool Bash '{"command": "echo x > docs/own.md"}' "" || fail "N7c setup"; stop; rc=$?
+rm -f "$REPO/docs/own.md"
+blocked "$rc" && ok "N7c main dirty with a file this session wrote via Bash: blocked" || fail "N7c Bash-written own file accepted ($(why $rc))"
 
 # (a) Biên nhận --full của worktree (gate chạy trong worktree ở lượt này), cùng cây với main sau squash.
 wt_gate() { CLAUDE_PROJECT_DIR="$WT" python3 "$GATE" --run-tests --full --no-checklist --diff HEAD~1 >"$TMP/gate" 2>&1 \
@@ -268,6 +303,9 @@ turn_start; new_pr 33 >/dev/null && wt_gate && land 33 && receipt_set 'exit=1' |
 blocked "$rc" && ok "A6 worktree receipt of a red gate: blocked" || fail "A6 red receipt accepted ($(why $rc))"
 turn_start; new_pr 34 >/dev/null && wt_gate && land 34 && receipt_set 'carried_from="/x"' || fail "A7 setup"; stop; rc=$?
 blocked "$rc" && ok "A7 carried worktree receipt: blocked" || fail "A7 carried receipt accepted ($(why $rc))"
+# A8. Biên nhận trong git dir của worktree nhưng "project" trỏ sang main (cùng nội dung): không phải biên nhận của worktree đó, chặn.
+turn_start; new_pr 65 >/dev/null && wt_gate && land 65 && receipt_set "project=\"$REPO\"" || fail "A8 setup"; stop; rc=$?
+blocked "$rc" && ok "A8 worktree receipt naming another project: blocked" || fail "A8 mismatched receipt accepted ($(why $rc))"
 rm -f "$WT_RECEIPT"
 
 if [ "$FAILS" -ne 0 ]; then echo "proof gate merged trunk: $FAILS FAILED"; exit 1; fi
