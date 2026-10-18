@@ -75,6 +75,12 @@ bash "$KIT" worktree discard ../w-other >"$TMP/a7.out" 2>&1; rc=$?
 [ "$rc" != 0 ] && [ -e "$TMP/w-other" ] && ok "a7 discard refuses a worktree another live session keeps (rc=$rc)" \
   || { fail "a7 discard took another live session's worktree (rc=$rc)"; cat "$TMP/a7.out"; }
 
+# a9. (OCR r2) file mới đã stage rồi xoá khỏi đĩa (`AD`): nội dung chỉ còn trong index — không phải "file đã xoá", từ chối
+mk w-ad; echo staged > "$TMP/w-ad/new.txt"; G "$TMP/w-ad" add new.txt; rm "$TMP/w-ad/new.txt"
+bash "$KIT" worktree discard ../w-ad >"$TMP/a9.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && [ -e "$TMP/w-ad" ] && ok "a9 discard refuses a staged file deleted from disk (AD) (rc=$rc)" \
+  || { fail "a9 discard dropped a blob only the index held (rc=$rc)"; cat "$TMP/a9.out"; }
+
 # a8. main checkout: từ chối
 bash "$KIT" worktree discard "$R" >"$TMP/a8.out" 2>&1; rc=$?
 [ "$rc" != 0 ] && [ -f "$R/a.txt" ] && ok "a8 discard refuses the main checkout (rc=$rc)" || { fail "a8 discard on main (rc=$rc)"; cat "$TMP/a8.out"; }
@@ -91,6 +97,21 @@ REF=$(G "$R" for-each-ref --format='%(refname)' 'refs/devkit/discarded/w-own-*' 
   && [ "$(G "$R" show "$REF:f.txt" 2>/dev/null)" = f ] \
   && ok "b1 discard of the caller's own worktree keeps everything in $REF" \
   || { fail "b1 own-session discard (rc=$rc, ref='$REF')"; cat "$TMP/b1.out"; }
+
+# b3. (OCR r2) worktree của chính phiên: file ignore nhưng đã `add -f` vào index, và commit CHỈ reflog còn giữ (sau reset --hard),
+#     đều phải nằm trong bản cất
+mk w-own2; printf 'ignored.log\n' > "$TMP/w-own2/.gitignore"; G "$TMP/w-own2" add .gitignore && G "$TMP/w-own2" commit -qm gi
+echo forced > "$TMP/w-own2/ignored.log"; G "$TMP/w-own2" add -f ignored.log
+echo lone > "$TMP/w-own2/lone.txt"; G "$TMP/w-own2" add lone.txt && G "$TMP/w-own2" commit -qm lone
+LONE=$(G "$TMP/w-own2" rev-parse HEAD); G "$TMP/w-own2" reset -q --soft HEAD~1; G "$TMP/w-own2" reset -q HEAD -- lone.txt; rm -f "$TMP/w-own2/lone.txt"
+G "$TMP/w-own2" add -f ignored.log
+G "$R" worktree lock --reason "devkit-kept session=me pid=$$" "$TMP/w-own2"
+bash "$KIT" worktree discard ../w-own2 >"$TMP/b3.out" 2>&1; rc=$?
+REF3=$(G "$R" for-each-ref --format='%(refname)' 'refs/devkit/discarded/w-own2-*' | head -1)
+[ "$rc" = 0 ] && [ -n "$REF3" ] && [ "$(G "$R" show "$REF3:ignored.log" 2>/dev/null)" = forced ] \
+  && G "$R" rev-list --parents -n 1 "$REF3" | grep -q "$LONE" \
+  && ok "b3 own discard keeps a force-added ignored file and a reflog-only commit in $REF3" \
+  || { fail "b3 own discard backup (rc=$rc, ref='$REF3')"; cat "$TMP/b3.out"; }
 
 # b2. khoá mang pid của tiến trình NẰM TRÊN `claude` (app Claude, terminal: mọi phiên dùng chung) không phải "của mình".
 #     Chỉ chạy được khi test chạy dưới một phiên Claude Code; ngoài đó không có tầng chung để thử.
@@ -135,6 +156,11 @@ mkdir -p "$TMP/w-rs/d"; echo u > "$TMP/w-rs/d/untracked.txt"
 ( cd "$TMP/w-rs" && bash "$KIT" worktree restore "$OLD" -- d ) >"$TMP/r3.out" 2>&1; rc=$?
 [ "$rc" != 0 ] && [ -f "$TMP/w-rs/d/untracked.txt" ] && ok "r3 restore refuses a path holding an untracked file (rc=$rc)" \
   || { fail "r3 restore over an untracked file (rc=$rc)"; cat "$TMP/r3.out"; }
+# r6. (OCR r2) thay đổi đã stage, file trên đĩa trả về đúng HEAD: index vẫn giữ bản stage — từ chối
+rm -rf "$TMP/w-rs/d/untracked.txt"; echo staged > "$TMP/w-rs/b.txt"; G "$TMP/w-rs" add b.txt; printf 'b\n' > "$TMP/w-rs/b.txt"
+( cd "$TMP/w-rs" && bash "$KIT" worktree restore "$OLD" -- b.txt ) >"$TMP/r6.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && [ "$(G "$TMP/w-rs" show :b.txt)" = staged ] && ok "r6 restore refuses a path whose index holds a staged change (rc=$rc)" \
+  || { fail "r6 restore overwrote a staged change (rc=$rc)"; cat "$TMP/r6.out"; }
 ( cd "$R" && bash "$KIT" worktree restore "$OLD" -- a.txt ) >"$TMP/r4.out" 2>&1; rc=$?
 [ "$rc" != 0 ] && [ "$(cat "$R/a.txt")" = a2 ] && ok "r4 restore refuses the trunk-mode main checkout (rc=$rc)" \
   || { fail "r4 restore wrote main (rc=$rc)"; cat "$TMP/r4.out"; }
@@ -196,6 +222,12 @@ guard() {   # guard <lệnh> <chuỗi phải có trong lời chặn>
 guard "git branch -D feat/x" "agent-kit worktree prune-branch"
 guard "git worktree remove --force ../w" "agent-kit worktree discard"
 guard "git checkout $OLD -- a.txt" "agent-kit worktree restore"
-guard "git checkout -- a.txt" "agent-kit worktree restore"
+# (OCR r2) `checkout -- <path>` chỉ đáng chặn khi path có thay đổi chưa commit, mà restore luôn từ chối ca đó: không chỉ sang nó
+guard "git checkout -- a.txt" "BLOCKED"
+grep -qF "agent-kit worktree restore" "$TMP/guard.err" && fail "guard: 'git checkout -- a.txt' points at restore, which always refuses it" \
+  || ok "guard: 'git checkout -- a.txt' does not point at restore"
+# (OCR r2) khoá devkit-kept là bằng chứng "chính phiên" của discard/remove: chỉ hook ExitWorktree keep đặt nó, không bao giờ bằng tay
+guard "git worktree lock --reason \"devkit-kept session=x pid=1234\" ../w" "devkit-kept"
+guard "git -C ../w worktree lock --reason=devkit-kept\\ session=x\\ pid=1 ." "devkit-kept"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_discard: all passed" || { echo "❌ test_worktree_discard: $FAILS failed"; exit 1; }

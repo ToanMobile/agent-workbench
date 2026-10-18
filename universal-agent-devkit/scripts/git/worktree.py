@@ -1880,8 +1880,8 @@ def _discard_leftovers(wt):
                    f"{wt}: the files git hides (skip-worktree / assume-unchanged) could not be listed")]
     left = []
     for p in dict.fromkeys(changes_since(wt, state) + hidden):
-        if p not in hidden and not os.path.lexists(os.path.join(wt, p)):
-            continue   # đã xoá: HEAD (hoặc setup) vẫn giữ bản của nó
+        if p not in hidden and not os.path.lexists(os.path.join(wt, p)) and _index_is_head(wt, p):
+            continue   # đã xoá và index không giữ bản nào khác HEAD (` D`, `D `): HEAD (hoặc setup) vẫn giữ bản của nó
         if p not in hidden and IDE_JUNK_RE.fullmatch(p) and git(wt, "cat-file", "-e", f"HEAD:{p}", check=False).returncode != 0:
             continue   # rác IDE chưa từng được track
         left.append(p)
@@ -1891,26 +1891,47 @@ def _discard_leftovers(wt):
             + ", ".join(left[:10]) + (f" (+{len(left) - 10})" if len(left) > 10 else "")]
 
 
+def _index_is_head(wt, p):
+    """True khi index không giữ gì của `p` ngoài bản HEAD: không có mục nào (đã stage xoá), hoặc đúng mode + blob của HEAD. Một file đã stage
+    rồi xoá khỏi đĩa (`AD`, `MD`, OCR 18/10) chỉ còn trong index: False. Lỗi git: False (không nói được = còn)."""
+    idx = git(wt, "--literal-pathspecs", "ls-files", "-s", "-z", "--", p, check=False)
+    head = git(wt, "--literal-pathspecs", "ls-tree", "-z", "HEAD", "--", p, check=False)
+    if idx.returncode or head.returncode:
+        return False
+    entries = [e for e in idx.stdout.split("\0") if e]
+    if not entries:
+        return True
+    if len(entries) != 1:   # (một mục conflict có nhiều stage: còn việc)
+        return False
+    mode, sha, _stage = entries[0].split("\t", 1)[0].split(" ")
+    tree = [e for e in head.stdout.split("\0") if e]
+    return len(tree) == 1 and tree[0].split("\t", 1)[0].split(" ") == [mode, "blob", sha]
+
+
 def _discard_backup(main, wt):
-    """Cất mọi thứ của `wt` vào một ref sống DISCARD_KEEP_DAYS ngày (worktree gc dọn): cây làm việc (file chưa track trừ file ignore) trong
-    một index tạm, commit với HEAD và các commit CHỈ reflog của worktree còn giữ làm cha. Trả tên ref."""
+    """Cất mọi thứ của `wt` vào một ref sống DISCARD_KEEP_DAYS ngày (worktree gc dọn): cây làm việc trong một index tạm chép từ index THẬT
+    (file `add -f` dù bị ignore, file đã stage rồi xoá khỏi đĩa vẫn có; rồi `add -A`: file chưa track trừ file ignore), commit với HEAD và
+    MỌI commit chỉ reflog của worktree còn giữ làm cha (không giới hạn: một commit bỏ sót là mất sau git gc, OCR 18/10). Git lỗi ở bất kỳ
+    bước nào: SystemExit, không gỡ gì. Trả tên ref."""
     head = git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip()
+    real_index = git(wt, "rev-parse", "--path-format=absolute", "--git-path", "index").stdout.strip()
     tmpd = tempfile.mkdtemp(prefix="devkit-discard-")
     env = {**os.environ, "GIT_INDEX_FILE": os.path.join(tmpd, "index")}   # chỉ cho các lệnh dưới: index thật của worktree không bị đụng
     for k, v in (("GIT_AUTHOR_NAME", "DevKit"), ("GIT_AUTHOR_EMAIL", "devkit@localhost"),
                  ("GIT_COMMITTER_NAME", "DevKit"), ("GIT_COMMITTER_EMAIL", "devkit@localhost")):
         env.setdefault(k, v)   # máy không có danh tính git (INSTINCT-043): commit-tree vẫn chạy
     try:
-        if head:
+        if os.path.isfile(real_index):
+            shutil.copyfile(real_index, env["GIT_INDEX_FILE"])   # một bản chép: index thật chỉ được đọc
+        elif head:
             git(wt, "read-tree", head, env=env, bounded=False)
         git(wt, "add", "-A", "--", ".", env=env, bounded=False)
         tree = git(wt, "write-tree", env=env).stdout.strip()
     finally:
         shutil.rmtree(tmpd, ignore_errors=True)
-    seen = list(dict.fromkeys(git(wt, "log", "-g", "-n", "200", "--format=%H", "HEAD", check=False).stdout.split()))
-    # ponytail: chỉ 200 mục reflog gần nhất và 30 commit cha, đủ cho worktree của một phiên; nâng khi gặp worktree sống lâu hơn thế
-    lone = set(git(wt, "rev-list", *seen, "--not", "--all", check=False).stdout.split()) if seen else set()
-    parents = ([head] if head else []) + [c for c in seen if c in lone and c != head][:30]
+    seen = list(dict.fromkeys(git(wt, "log", "-g", "--format=%H", "HEAD").stdout.split()))   # (không có reflog: rỗng, rc 0)
+    lone = set(git(wt, "rev-list", *seen, "--not", "--all").stdout.split()) if seen else set()
+    parents = ([head] if head else []) + [c for c in seen if c in lone and c != head]
     sha = git(wt, "commit-tree", tree, *[a for p in parents for a in ("-p", p)], "-m", f"devkit discard {wt}", env=env).stdout.strip()
     name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(wt.rstrip(os.sep)))[:80] or "worktree"
     ref = f"{DISCARD_REF}{name}-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
@@ -1981,9 +2002,11 @@ def cmd_restore(cwd, args):
         die(tr(f"không phải commit: {rev}", f"not a commit: {rev}"))
     lit, bad = ("--literal-pathspecs",), []
     for p in paths:
-        d = git(cwd, *lit, "diff", "--quiet", "HEAD", "--", p, check=False)
-        if d.returncode:
-            bad.append(f"{p}: " + (tr("có thay đổi chưa commit", "has uncommitted changes") if d.returncode == 1 else (d.stderr or "").strip()[-200:]))
+        for d in (git(cwd, *lit, "diff", "--quiet", "HEAD", "--", p, check=False),               # cây làm việc so với HEAD
+                  git(cwd, *lit, "diff", "--cached", "--quiet", "HEAD", "--", p, check=False)):  # index so với HEAD (stage rồi trả file về, OCR 18/10)
+            if d.returncode:
+                bad.append(f"{p}: " + (tr("có thay đổi chưa commit", "has uncommitted changes") if d.returncode == 1 else (d.stderr or "").strip()[-200:]))
+                break
     others = git(cwd, *lit, "ls-files", "-z", "--others", "--exclude-standard", "--", *paths, check=False)
     ignored = git(cwd, *lit, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", *paths, check=False)
     tracked = git(cwd, *lit, "ls-tree", "-r", "-z", "--name-only", sha, "--", *paths, check=False)

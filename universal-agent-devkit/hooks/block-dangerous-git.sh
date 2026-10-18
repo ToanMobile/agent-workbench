@@ -359,6 +359,9 @@ def danger_in_git(sub, args):
             prev = a
     if sub == "worktree" and pos[:1] == ["remove"] and ("f" in short or "--force" in long_):
         return "worktree remove --force mất thay đổi"
+    if sub == "worktree" and pos[:1] == ["lock"] and any("devkit-kept" in a for a in args):
+        # discard/remove tin khoá này là bằng chứng "worktree của chính phiên" (OCR 18/10): chỉ hook ExitWorktree keep được đặt nó
+        return "worktree lock devkit-kept giả khoá của phiên (chỉ hook ExitWorktree keep đặt khoá này)"
     return None
 
 skip_wrapper = shell_norm.skip_wrapper
@@ -1451,7 +1454,8 @@ if reason:
            else "agent-kit worktree discard <đường dẫn> (chỉ còn file đã xoá / rác IDE, hoặc worktree của chính phiên; cất vào refs/devkit/discarded)"
            if reason.startswith("worktree remove --force")
            else "agent-kit worktree restore <commit> -- <path> (chỉ path không có thay đổi chưa commit)"
-           if reason.startswith(("checkout", "restore")) and "working tree" in reason else None)
+           if reason.startswith("checkout") and ("<tree-ish>" in reason or re.search(r"\bcheckout\s+[^-\s]\S*\s+--(\s|$)", cmd))
+           else None)   # (checkout -- <path> không kèm commit chỉ đáng chặn khi path bẩn: restore luôn từ chối ca đó)
     print(f"BLOCKED: {cmd!r} — {reason}. User đã chặn thao tác git khó revert này. "
           + (f"Không mất gì thì dùng `{kit}`; còn không: " if kit else "")
           + "Nếu thực sự cần, User sẽ tự chạy qua prefix \"!\".", file=sys.stderr)
