@@ -1591,7 +1591,9 @@ def matrix_additions(base, current):
     """Id các test mà ma trận `current` THÊM so với `base`, hoặc None khi đó không phải thay đổi chỉ-thêm (GeelyEx2 PR #60, 18/10: một PR
     chỉ thêm REG-HOOK-01 bị exit 2 "cần người review", pre-push và merge gate dừng). Chỉ-thêm: khoá top-level ngoài "rules" giữ nguyên; rule
     cũ còn đủ, đúng thứ tự, bằng từng giá trị; mỗi rule mới có ít nhất một test, mỗi test mới có id chưa từng có ở base (một id chung
-    dòng trạng thái với suite cũ), không trùng nhau, có lệnh, và không covered_by (test mới phải tự chạy). Thứ khác: None."""
+    dòng trạng thái với suite cũ), không trùng nhau, có lệnh, và không covered_by (test mới phải tự chạy). Thứ khác: None.
+    ponytail: gate không chấm chất lượng lệnh test mới — rule mới `watch_files: ["**"]` với lệnh `true` vẫn XANH và làm file chưa có test
+    thành "được phủ" (như một file test rỗng dưới suite cũ đã làm được); thêm kiểm tra lệnh no-op khi thấy một ca như vậy trong PR thật."""
     if not isinstance(base, dict) or not isinstance(current, dict):
         return None
     if {k: v for k, v in base.items() if k != "rules"} != {k: v for k, v in current.items() if k != "rules"}:

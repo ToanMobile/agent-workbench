@@ -59,6 +59,11 @@ rm -f "$TMP/add/ran_t2"
 [ "$RC" = 0 ] && [ -f "$TMP/add/ran_t2" ] && ok "--run-tests (không --full): test mới chạy, exit 0" \
   || fail "--run-tests (không --full) -> exit $RC, ran_t2=$([ -f "$TMP/add/ran_t2" ] && echo có || echo không): $(tail_out)"
 
+# 1c. Không --run-tests: test mới không chạy -> ma trận chỉ-thêm KHÔNG được tin (exit 2 + lý do), không bao giờ 0
+( cd "$TMP/add" && CLAUDE_PROJECT_DIR="$TMP/add" python3 "$GATE" --lang en --no-cache --diff "$BASE" ) >"$TMP/out" 2>&1; RC=$?
+[ "$RC" = 2 ] && grep -q 'did not pass in this run' "$TMP/out" && ok "không --run-tests -> exit 2, nêu test mới chưa XANH" \
+  || fail "không --run-tests -> exit $RC (cần 2 + 'did not pass in this run'): $(tail_out)"
+
 # 2. Thêm rule ở đầu danh sách (rule cũ giữ nguyên thứ tự) cũng là chỉ thêm
 mk "$TMP/front" 'm["rules"].insert(0, B)'; gate "$TMP/front"
 [ "$RC" = 0 ] && ok "rule mới chèn ở đầu -> exit 0" || fail "rule mới chèn ở đầu -> exit $RC (cần 0): $(tail_out)"
