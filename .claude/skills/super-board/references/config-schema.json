@@ -249,7 +249,8 @@
   // is right now. Run by super-board-merge-gate.sh from the root of a scratch
   // worktree that already has the current base merged in, inside the merge lock,
   // immediately before the squash-merge. Any non-zero exit sends the card back
-  // to Build for a rebase pass; it never Blocks.
+  // to Build and never Blocks: a rebase pass when the branch is behind the base
+  // (gate exit 2), a plain rebuild to fix the red check when it is not (exit 11).
   //
   // Not optional in practice. GitHub's `mergeable: CLEAN` only answers "does the
   // text conflict" — it says nothing about whether the result compiles. On

@@ -2,6 +2,8 @@
 # 18/10: merge gate in "the branch is stale against main — send it back to Build for a rebase pass" cho MỌI verify đỏ, kể cả khi nhánh
 # chậm hơn main 0 commit. 17/10 câu này làm ba phiên repo đi rebase vô ích (lý do thật: post-fix-gate exit 2). Luật: chỉ nói "stale"
 # khi `git rev-list --count <head>..origin/<base>` > 0; nếu không, in dòng KẾT LUẬN cuối của log verify và mã thoát của lệnh verify.
+# 18/10 (sau PR #70): hai ca còn chung exit 2 nên lane vẫn đẩy nhánh đã cập nhật đi rebase. Luật: chậm hơn base → exit 2 (rebase pass);
+# không chậm hơn base → exit 11 (về Build sửa verify đỏ, không rebase).
 # Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -56,7 +58,7 @@ verdict() { grep "merge-gate" "$1" | grep -v "\] verify: " | grep -v "\] FAILED:
 
 # Ca 1: nhánh không chậm hơn main (0 commit) → không được nói stale; phải nêu KẾT LUẬN cuối và mã thoát.
 ( cd "$WT" && bash "$GATE" --config "$CFG" --pr 5 --expect-head "$H" ) >"$TMP/gate1.log" 2>&1; rc=$?
-[ "$rc" -eq 2 ] && ok "up-to-date branch, red verify: exit 2" || fail "gate exit $rc (want 2): $(tail -5 "$TMP/gate1.log")"
+[ "$rc" -eq 11 ] && ok "up-to-date branch, red verify: exit 11 (not the rebase-pass exit 2)" || fail "gate exit $rc (want 11): $(tail -5 "$TMP/gate1.log")"
 grep -qi "stale" "$TMP/gate1.log" \
   && fail "up-to-date branch is called stale: $(grep -i stale "$TMP/gate1.log")" || ok "up-to-date branch: no 'stale' message"
 verdict "$TMP/gate1.log" | grep -q "KẾT LUẬN: FAIL — không có test hồi quy nào khớp" \
@@ -70,6 +72,7 @@ echo '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["
 ( cd "$WT" && bash "$GATE" --config "$CFG_C" --pr 5 --expect-head "$H" ) >"$TMP/gate1b.log" 2>&1; rc=$?
 ESC=$(printf '\033')
 V1B=$(verdict "$TMP/gate1b.log" | grep "verify failed (exit 2")
+[ "$rc" -eq 11 ] && ok "coloured verdict, up-to-date branch: exit 11" || fail "coloured verdict: gate exit $rc (want 11)"
 case "$V1B" in
   *"$ESC"*) fail "ANSI codes left in the gate message: $V1B" ;;
   *"KẾT LUẬN: REJECT màu"*) ok "coloured KẾT LUẬN line is quoted without ANSI codes" ;;
@@ -80,7 +83,7 @@ esac
 CFG_N="$TMP/cfg-noverdict.json"
 echo '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo boom; exit 1"]}' > "$CFG_N"
 ( cd "$WT" && bash "$GATE" --config "$CFG_N" --pr 5 --expect-head "$H" ) >"$TMP/gate1c.log" 2>&1; rc=$?
-[ "$rc" -eq 2 ] && ! grep -qi "stale" "$TMP/gate1c.log" && verdict "$TMP/gate1c.log" | grep -q "verify failed (exit 1: no KẾT LUẬN/VERDICT line" \
+[ "$rc" -eq 11 ] && ! grep -qi "stale" "$TMP/gate1c.log" && verdict "$TMP/gate1c.log" | grep -q "verify failed (exit 1: no KẾT LUẬN/VERDICT line" \
   && ok "no verdict line: says so with the exit code, not stale" || fail "no-verdict case (rc $rc): $(verdict "$TMP/gate1c.log" | tail -3)"
 
 # Ca 2: main tiến thêm 1 commit (không xung đột) → nhánh chậm hơn base → vẫn nói stale.
