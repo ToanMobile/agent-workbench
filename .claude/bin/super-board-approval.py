@@ -15,6 +15,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 
 _reader_spec = importlib.util.spec_from_file_location("github_read", Path(__file__).with_name("super-board-github-read.py"))
 github_read = importlib.util.module_from_spec(_reader_spec)
@@ -188,6 +189,28 @@ class GitHub:
             raise ValueError("unreadable PR head")
         return head, issues
 
+    def policy_cleared(self, number, config):
+        """True when the CURRENT merge policy no longer asks a human about PR `number`.
+
+        A card parked by an old `human-gate:` stays Blocked until someone types `done`; when the policy changed
+        since (cap removed, category dropped), nobody should have to. Same reads and same classifier as the merge
+        gate; only an empty `human` and `needs_you` counts. Anything unreadable stays "needs a human".
+        """
+        meta = github_read.read(["pr", "view", str(number), "--repo", self.repo, "--json",
+                                 "labels,files,additions,deletions,changedFiles,body"], "metadata")[1]
+        diff = github_read.read(["pr", "diff", str(number), "--repo", self.repo], "diff", meta)[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = {"meta": Path(tmp) / "meta.json", "diff": Path(tmp) / "pr.diff"}
+            paths["meta"].write_text(json.dumps(meta))
+            paths["diff"].write_text(diff)
+            run = subprocess.run([sys.executable, str(Path(__file__).with_name("super-board-merge-policy.py")),
+                                  "--config", config, "--meta", str(paths["meta"]), "--diff", str(paths["diff"])],
+                                 capture_output=True, text=True, timeout=60)
+        if run.returncode != 0:
+            return False
+        plan = json.loads(run.stdout)
+        return not plan.get("human") and not plan.get("needs_you")
+
     def check(self, number, head=None, scope=None, issue=None):
         current_head, issues = self.pr(number)
         if issue is not None and issue not in issues:
@@ -211,6 +234,7 @@ def main():
     ap.add_argument("--plan", help="JSON plan from merge-policy")
     ap.add_argument("--request", action="store_true", help="print a pinned request; no network or writes")
     ap.add_argument("--deps", action="store_true", help="enrich the dependency graph on stdin")
+    ap.add_argument("--config", help="with --deps: re-run the merge policy; a card whose policy no longer asks a human is cleared")
     args = ap.parse_args()
     if args.request:
         if not args.pr or not args.head or not SHA.fullmatch(args.head) or not args.plan:
@@ -236,6 +260,10 @@ def main():
                 entry["needsYouDone"] = result["approved"]
                 entry["approvalRefresh"] = result.get("headChanged", False)
                 entry["approvalWhy"] = result["why"]
+                if (args.config and not result["approved"] and not entry["approvalRefresh"]
+                        and github.policy_cleared(request["pr"], args.config)):
+                    entry["needsYouDone"] = True
+                    entry["approvalWhy"] = "policy cleared: the current merge policy no longer asks for a human"
             except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
                 entry["approvalWhy"] = "approval evidence could not be verified"
         print(json.dumps(graph))
