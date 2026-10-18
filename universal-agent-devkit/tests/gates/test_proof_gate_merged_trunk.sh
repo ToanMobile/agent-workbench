@@ -278,6 +278,14 @@ turn_start; H=$(new_pr 66) && land 66 && git -C "$GH" push -q origin main:develo
   && tool Bash '{"command": "git push origin develop"}' "ok" && git -C "$REPO" fetch -q origin || fail "N13i setup"; stop; rc=$?
 git -C "$ORIGIN" symbolic-ref HEAD refs/heads/main || { fail "restore after N13i"; exit 1; }
 blocked "$rc" && ok "N13i push to a default branch named develop: blocked" || fail "N13i push to develop accepted ($(why $rc))"
+# N15b. PROOF_GATE_BUDGET_S hỏng (không phải số / nan): hook không chết (chết = wrapper exit 0 = Stop lọt), chạy với hạn chót mặc định.
+n=70
+for b in abc nan; do
+  turn_start; H=$(new_pr $n) && land $n && tool Bash "$(GATE_CMD $n "$H")" "$(GATE_OUT $n "$H")" || fail "N15b setup ($b)"; BUDGET=$b stop; rc=$?
+  [ "$rc" = 0 ] && grep -q "merge-gate pr=$n" "$REPO/.claude/audit-gate/proof_gate.log" \
+    && ok "N15b PROOF_GATE_BUDGET_S=$b: default budget, merged turn allowed" || fail "N15b budget=$b mishandled ($(why $rc))"
+  n=$((n + 1))
+done
 
 # (a) Biên nhận --full của worktree (gate chạy trong worktree ở lượt này), cùng cây với main sau squash.
 wt_gate() { CLAUDE_PROJECT_DIR="$WT" python3 "$GATE" --run-tests --full --no-checklist --diff HEAD~1 >"$TMP/gate" 2>&1 \

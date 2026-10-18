@@ -106,7 +106,11 @@ max_blocks = int(os.environ.get("PROOF_GATE_MAX_BLOCKS", "2"))
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
 HOOK_T0 = time.monotonic()
 # Hạn chót của phần kiểm tốn thời gian (mạng, git): hook có "timeout": 15 trong settings, và Claude Code giết hook quá hạn = Stop lọt.
-HOOK_BUDGET_S = float(os.environ.get("PROOF_GATE_BUDGET_S", "9"))
+try:   # một giá trị hỏng không được làm python chết (= wrapper exit 0 = Stop lọt); nan / inf / quá 12 s cũng không vô hiệu được hạn chót
+    HOOK_BUDGET_S = float(os.environ.get("PROOF_GATE_BUDGET_S", "9"))
+except ValueError:
+    HOOK_BUDGET_S = 9.0
+HOOK_BUDGET_S = 9.0 if not math.isfinite(HOOK_BUDGET_S) else min(max(HOOK_BUDGET_S, 0.0), 12.0)
 left = lambda: HOOK_T0 + HOOK_BUDGET_S - time.monotonic()
 
 def open_reg(path, flags=os.O_RDONLY):
@@ -561,8 +565,11 @@ def merged_evidence():
     # ponytail: origin là URL trong .git/config (agent ghi được): một fork GitHub của chính agent có commit squash dựng sẵn, hay ~/.ssh/config
     # trỏ github.com về máy khác, vẫn qua. Cả hai cần dựng repo / máy chủ riêng, không phải một lệnh echo. Nâng cấp: ghim owner/repo từ một
     # nguồn đã track (config board) và host key GitHub đi kèm DevKit.
-    # ponytail: script sửa tạm cho in hai dòng rồi hoàn lại trước Stop vẫn qua (gate_script_ok chỉ thấy bản lúc Stop), khi lượt cũng gộp được
-    # PR bằng đường không bắt được ở đây (alias git, biến). Nâng cấp cùng biên nhận theo session id ở trên.
+    # ponytail: script sửa tạm cho in hai dòng rồi hoàn lại trước Stop, hay một PR sửa chính script rồi gộp (HEAD mới chứa bản sửa), vẫn qua
+    # (gate_script_ok chỉ thấy bản lúc Stop); ghi thẳng lên trunk bằng lệnh không có chữ merge / push (gh api …/contents, MCP
+    # create_or_update_file) không bị other_merge bắt. Origin https riêng tư: ls-remote không có credential helper -> chặn (fail-closed;
+    # các repo board dùng ssh). Merge gate kết thúc ở nhánh "merge response was lost" / "already merged" không in "merged <H>" -> chặn.
+    # Nâng cấp cùng biên nhận theo session id ở trên.
     calls, merged, other_merge, pushes = {}, [], False, []
     tp = d.get("transcript_path") or ""
     for t in [tp] + sorted(glob.glob(os.path.join(os.path.splitext(tp)[0], "subagents", "*.jsonl"))):   # subagent của phiên cũng gộp được
@@ -628,7 +635,7 @@ def merged_evidence():
     if local_ok and url and not GITHUB_URL.fullmatch(url) and "://" not in url and "::" not in url:
         url = os.path.normpath(os.path.join(repo, url))
     elif not GITHUB_URL.fullmatch(url):
-        log("merge-gate check: origin is not a GitHub remote (%r)" % url[:80])
+        log("merge-gate check: origin is not a GitHub remote (%r)" % re.sub(r"//[^@/\s]*@", "//***@", url)[:80])   # token trong URL
         return None
     budget = min(5.0, left() - 1)   # mạng chậm / ssh chờ: quá hạn chót của hook = Claude Code giết hook = Stop lọt
     if budget < 1:
@@ -650,7 +657,8 @@ def merged_evidence():
         return None
     tip = re.search(r"^([0-9a-f]{40})\tHEAD$", so.decode("utf-8", "replace"), re.M) if p.returncode == 0 else None
     if not tip or git("cat-file", "-e", tip.group(1) + "^{commit}").returncode:
-        log("merge-gate check: origin HEAD unreadable (%s)" % (se.decode("utf-8", "replace").strip()[:120] or "no HEAD line"))
+        log("merge-gate check: origin HEAD unreadable (%s)" % (re.sub(r"//[^@/\s]*@", "//***@", se.decode("utf-8", "replace").strip())[:120]
+                                                               or "no HEAD line"))
         return None
     tip = tip.group(1)
     trunk = re.search(r"^ref: refs/heads/(\S+)\tHEAD$", so.decode("utf-8", "replace"), re.M)
