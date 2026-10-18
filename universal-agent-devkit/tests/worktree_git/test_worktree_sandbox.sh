@@ -621,6 +621,63 @@ if ! git -C "$P" symbolic-ref -q refs/heads/sandbox/dsym_sb >/dev/null 2>&1 && e
 else
   fail "cleanup left a dangling sandbox symref: $DS2_OUT"
 fi
+# issue #12 (review): file bị git ignore không hiện ở `git status`: file .worktreeinclude hay file bí mật khác bản ở main là bản duy nhất
+printf 'app.db\n*.jks\n' >> "$CD/info/exclude"
+echo "main db" > "$P/app.db"
+cp "$P/.worktreeinclude" "$TMP/worktreeinclude.bak" && printf 'app.db\n' >> "$P/.worktreeinclude"
+python3 "$SCRIPT" create db_sb >/dev/null 2>&1; echo "changed in sandbox" > "$P/.sandboxes/db_sb/app.db"
+python3 "$SCRIPT" create jks_sb >/dev/null 2>&1; echo "key" > "$P/.sandboxes/jks_sb/release.jks"
+python3 "$SCRIPT" create db_ok >/dev/null 2>&1   # app.db chép từ main, không đổi: dọn được
+DB_OUT=$(python3 "$SCRIPT" cleanup --name db_sb 2>&1); JKS_OUT=$(python3 "$SCRIPT" cleanup --name jks_sb 2>&1)
+OK_OUT=$(python3 "$SCRIPT" cleanup --name db_ok 2>&1)
+if grep -q "changed in sandbox" "$P/.sandboxes/db_sb/app.db" 2>/dev/null && echo "$DB_OUT" | grep -q "app.db"; then
+  ok "cleanup keeps a sandbox whose ignored .worktreeinclude file differs from main's, and names it"
+else
+  fail "cleanup deleted an ignored include file that differed from main: $DB_OUT"
+fi
+if [ -f "$P/.sandboxes/jks_sb/release.jks" ] && echo "$JKS_OUT" | grep -q "release.jks"; then
+  ok "cleanup keeps a sandbox holding an ignored secret only it has, and names it"
+else
+  fail "cleanup deleted an ignored secret only the sandbox had: $JKS_OUT"
+fi
+[ ! -d "$P/.sandboxes/db_ok" ] && echo "$OK_OUT" | grep -q "✓" && ok "  … an unchanged ignored include copy is still cleaned" \
+  || fail "cleanup kept a sandbox whose ignored include file equals main's: $OK_OUT"
+for s in db_sb jks_sb; do python3 "$SCRIPT" cleanup --name "$s" --force >/dev/null 2>&1; done
+cp "$TMP/worktreeinclude.bak" "$P/.worktreeinclude"; rm -f "$P/app.db"
+# issue #12 (review): agent khác ghi file / commit tách rời trong sandbox TRONG LÚC cleanup chạy các phép kiểm chậm → kiểm lại ngay trước
+# rmtree, sandbox được giữ. Seam: bọc sandbox_unmerged_commits để mô phỏng thao tác chen giữa
+race_cleanup() {   # race_cleanup <sandbox> <python thao tác trên p = thư mục sandbox>
+  (cd "$P" && python3 - "$SCRIPT" "$1" "$2" <<'PY' 2>&1
+import importlib.util, pathlib, subprocess, sys
+spec = importlib.util.spec_from_file_location("wsb", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+orig = m.sandbox_unmerged_commits
+def slow(s_path, *a, **k):
+    r = orig(s_path, *a, **k)
+    p = pathlib.Path(s_path)
+    exec(sys.argv[3], {"p": p, "subprocess": subprocess})
+    return r
+m.sandbox_unmerged_commits = slow
+m.cleanup_sandbox(name=sys.argv[2])
+PY
+  )
+}
+python3 "$SCRIPT" create rf_sb >/dev/null 2>&1
+RF_OUT=$(race_cleanup rf_sb '(p / "late.txt").write_text("written during the check\n")')
+if [ -f "$P/.sandboxes/rf_sb/late.txt" ] && echo "$RF_OUT" | grep -q "chưa dọn.*rf_sb"; then
+  ok "a file written in the sandbox while cleanup checks is kept (re-checked right before rmtree)"
+else
+  fail "cleanup deleted a file written during its checks: $RF_OUT"
+fi
+python3 "$SCRIPT" create rc_sb >/dev/null 2>&1
+RC_OUT=$(race_cleanup rc_sb 'g = lambda *a: subprocess.run(["git", *a], cwd=p, check=True, capture_output=True)
+g("checkout", "-q", "--detach"); (p / "late.txt").write_text("c\n"); g("add", "late.txt"); g("commit", "-qm", "late detached"); g("checkout", "-q", "sandbox/rc_sb")')
+RC_SHA=$(git -C "$P/.sandboxes/rc_sb" rev-parse 'HEAD@{1}' 2>/dev/null)
+if [ -d "$P/.sandboxes/rc_sb" ] && [ -n "$RC_SHA" ] && echo "$RC_OUT" | grep -q "chưa dọn.*rc_sb"; then
+  ok "a detached commit made in the sandbox while cleanup checks is kept (HEAD reflog re-checked)"
+else
+  fail "cleanup lost a commit made during its checks: $RC_OUT"
+fi
+for s in rf_sb rc_sb; do python3 "$SCRIPT" cleanup --name "$s" --force >/dev/null 2>&1; done
 
 if [ $FAILS -gt 0 ]; then
   echo "FAILED: $FAILS errors"

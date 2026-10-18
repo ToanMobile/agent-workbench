@@ -39,4 +39,4 @@ python3 universal-agent-devkit/scripts/git/worktree_sandbox.py cleanup --all
    - Dùng `worktree_sandbox.py compare fix-approach-a fix-approach-b` để đối chiếu diff.
 4. **Merge & Tự động Tiêu hủy**:
    - Chạy `worktree_sandbox.py merge-winner fix-approach-a`
-   - Hệ thống tự động merge code vào nhánh chính, tự động gỡ bỏ worktree `fix-approach-a`, và prune `.git/worktrees/`. Sandbox khác (`fix-approach-b`) được GIỮ NGUYÊN; thêm `--clean-others` khi chắc chắn muốn xoá luôn các sandbox thua cuộc. Sandbox thua còn việc chưa commit hoặc commit chưa merge vẫn được GIỮ (kèm cảnh báo); tự kiểm rồi mới xoá hẳn bằng `cleanup --name <x> --force`.
+   - Hệ thống tự động merge code vào nhánh chính, tự động gỡ bỏ worktree `fix-approach-a` (chỉ đúng đăng ký của nó trong `.git/worktrees/`; không bao giờ `git worktree prune` toàn repo — nó xoá reflog của worktree khác đã mất thư mục). Sandbox khác (`fix-approach-b`) được GIỮ NGUYÊN; thêm `--clean-others` khi chắc chắn muốn xoá luôn các sandbox thua cuộc. Sandbox thua còn việc chưa commit hoặc commit chưa merge vẫn được GIỮ (kèm cảnh báo); tự kiểm rồi mới xoá hẳn bằng `cleanup --name <x> --force`.

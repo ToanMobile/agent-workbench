@@ -267,6 +267,23 @@ def sandbox_unsaved_work(s_path: Path, repo_root: Path) -> Optional[str]:
                                             and filecmp.cmp(src, dst, shallow=False)):
                 continue
         left.append(line)
+    # Review #12: file bị git ignore không hiện ở `status` trên, rmtree xoá mất bản duy nhất. Theo luật `worktree remove` / gc: file bí
+    # mật bị ignore (`_ignored_secrets`, bỏ qua thư mục build/dependency) và file .worktreeinclude bị ignore là việc riêng khi khác bản ở
+    # main; file ignore khác (build output, cache) vẫn bỏ được như trước.
+    try:
+        secrets, cut = _worktree_module()._ignored_secrets(str(s_path))
+        inc = run_cmd(["git", "--literal-pathspecs", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", *included],
+                      cwd=s_path, check=False) if included else None
+    except (Exception, SystemExit) as e:  # noqa: BLE001 - worktree.git(check=True) raises SystemExit
+        return f"  (không liệt kê được file bị ignore của sandbox: {e})"
+    if inc is not None and inc.returncode != 0:
+        return f"  (git ls-files --ignored lỗi rc={inc.returncode}: {inc.stderr.strip()})"
+    if cut:
+        left.append(f"!! {cut} (thư mục bị ignore quá lớn, chưa đọc hết)")
+    for rel in sorted({r for r, _p in secrets} | set(filter(None, (inc.stdout if inc else "").split("\0")))):
+        src, dst = Path(repo_root) / rel, Path(s_path) / rel
+        if not (src.is_file() and not src.is_symlink() and dst.is_file() and not dst.is_symlink() and filecmp.cmp(src, dst, shallow=False)):
+            left.append(f"!! {rel} (bị ignore, khác bản ở main hoặc main không có)")
     return "\n".join(left) or None
 
 
@@ -370,6 +387,18 @@ def sandbox_unmerged_commits(s_path: Path, repo_root: Path, branch_name: str, br
     return None
 
 
+def _head_reflog(s_path: Path) -> Optional[bytes]:
+    """Nội dung file reflog HEAD của sandbox (đọc thẳng file: không cần HEAD còn trỏ commit — nhánh bị xoá giữa chừng thì HEAD
+    unborn mà file vẫn đọc được); None khi thư mục / file không còn hoặc không đọc được (so bằng nhau vẫn đúng)."""
+    if not s_path.exists():
+        return None
+    r = run_cmd(["git", "rev-parse", "--path-format=absolute", "--git-path", "logs/HEAD"], cwd=s_path, check=False)
+    try:
+        return Path(r.stdout.strip()).read_bytes() if r.returncode == 0 else None
+    except OSError:
+        return None
+
+
 def _unregister(s_path: Path, repo_root: Path, force: bool) -> Optional[str]:
     """Gỡ đúng đăng ký worktree của sandbox (thư mục đã xoá: `git worktree remove` khi thư mục mất chỉ gỡ đăng ký). Không bao giờ
     `git worktree prune` toàn repo: nó xoá cả admin dir (reflog HEAD) của sandbox / worktree KHÁC đã mất thư mục, kể cả cái vừa bị từ
@@ -425,6 +454,7 @@ def cleanup_sandbox(name: Optional[str] = None, cleanup_all: bool = False, force
         tip = run_cmd(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch_name}^{{commit}}"], cwd=repo_root, check=False)
         branch_sha = tip.stdout.strip() if tip.returncode == 0 else None
         print(f"🧹 Dọn dẹp sandbox '{t}'...")
+        reflog = _head_reflog(s_path)   # mốc để phát hiện commit / checkout chen vào trong lúc kiểm (review #12)
         if s_path.exists():
             unsaved = sandbox_unsaved_work(s_path, repo_root)
             if unsaved and not force:
@@ -457,8 +487,18 @@ def cleanup_sandbox(name: Optional[str] = None, cleanup_all: bool = False, force
             if blocked:
                 print(f"   ⚠ '{t}': {blocked} — giữ nguyên sandbox và nhánh.")
                 continue
+        if s_path.exists() and not force:
+            # Review #12: các phép kiểm trên chậm (reflog, cherry, worktree list): kiểm lại ngay trước rmtree, để file / commit một agent
+            # khác vừa thêm trong lúc đó không bị xoá theo thư mục
+            # (nhánh vừa bị xoá thì HEAD unborn và `status` liệt kê mọi file là "A": bỏ phép kiểm file, reflog HEAD vẫn kiểm)
+            head_ok = run_cmd(["git", "rev-parse", "-q", "--verify", "HEAD"], cwd=s_path, check=False).returncode == 0
+            late = (sandbox_unsaved_work(s_path, repo_root) if head_ok else None) \
+                or (None if _head_reflog(s_path) == reflog else "HEAD / reflog HEAD vừa đổi")
+            if late:
+                print(f"   ⚠ '{t}' vừa đổi trong lúc kiểm — giữ nguyên sandbox và nhánh:\n{late}")
+                continue
         if s_path.exists():
-            # Only the recorded setup files and ignored files (or an explicit --force) are deleted here.
+            # Only the recorded setup files and disposable ignored files (or an explicit --force) are deleted here.
             try:
                 shutil.rmtree(s_path)
             except OSError as e:
