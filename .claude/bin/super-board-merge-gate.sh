@@ -69,7 +69,11 @@
 #
 # Exit codes, all meaningful to the caller:
 #   0  merged
-#   2  verification failed — branch needs a rebase pass, NOT a Blocked card
+#   2  verification failed on a branch BEHIND the base (or the gate could not
+#      count it) — needs a rebase pass, NOT a Blocked card
+#   11 verification failed on a branch NOT behind the base — rebasing changes
+#      nothing: back to Build to fix the failing verify (the gate quotes its
+#      last KẾT LUẬN/VERDICT line), NOT a rebase pass, NOT a Blocked card
 #   3  PR is closed without a merge; no merge attempted
 #   4  could not take the lock within the timeout
 #   5  the base could not be merged in (real conflict) — needs a rebase pass
@@ -273,11 +277,15 @@ if [ -n "$HUMAN" ] && [ "$APPROVED" != true ]; then
 fi
 
 git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet
+# Chốt commit base một lần, merge đúng commit đó: verify đỏ thì đếm "chậm hơn base" theo chính nó. Đọc lại origin/<base> sau vài phút
+# verify có thể đã bị phiên khác fetch đi; suy từ HEAD^2 thì sai khi merge là fast-forward lên một merge commit (OCR 18/10).
+BASE_SHA=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || {
+  say "cannot resolve origin/${BASE} after fetch"; exit 5; }
 
 git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {
   say "could not create a scratch worktree for ${HEAD_REF}@${HEAD_SHA}"; exit 5; }
 
-if ! git -C "$SCRATCH" merge "origin/${BASE}" --no-edit --quiet 2>/dev/null; then
+if ! git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>/dev/null; then
   CONFLICTS=$(git -C "$SCRATCH" diff --name-only --diff-filter=U | tr '\n' ' ')
   say "the base does not merge in cleanly — conflicts: ${CONFLICTS}"
   say "this is a rebase pass for the Builder lane, not a Blocked card"
@@ -302,7 +310,9 @@ for cmd in "${VERIFY[@]}"; do
     # Không bao giờ tự thêm --auto-approve-tests ở đây: duyệt test bị sửa là quyết định của từng board (config của nó).
   fi
   say "verify: ${cmd}"
-  if ! ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$cmd" ) >"$VERIFY_LOG" 2>&1; then
+  VRC=0
+  ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$cmd" ) >"$VERIFY_LOG" 2>&1 || VRC=$?
+  if [ "$VRC" -ne 0 ]; then
     say "FAILED: ${cmd}"
     WT_LOG="$(git -C "$SCRATCH" rev-parse --absolute-git-dir 2>/dev/null)/postfix-gate/last_output.log"
     if [ -f "$WT_LOG" ]; then
@@ -316,7 +326,24 @@ for cmd in "${VERIFY[@]}"; do
     VLOG="${VLOG_DIR:+$VLOG_DIR/super-board/last-merge-verify-pr-${PR}.log}"
     { [ -n "$VLOG" ] && mkdir -p "$VLOG_DIR/super-board" && cp "$VERIFY_LOG" "$VLOG"; } 2>/dev/null || VLOG="(not saved)"
     tail -60 "$VERIFY_LOG" >&2
-    say "the branch is stale against ${BASE} — send it back to Build for a rebase pass (log saved to ${VLOG})"
+    # 18/10: chỉ nói "stale" khi nhánh thật sự chậm hơn base. 17/10 câu này in cho MỌI verify đỏ và dẫn ba phiên đi rebase vô ích
+    # (lý do thật là post-fix-gate exit 2). Không đếm được (rev-list hỏng) thì nói rõ là không biết, không khẳng định "not behind".
+    # Bỏ mã màu ANSI (byte ESC thật: sed BSD không hiểu \x1b); LC_ALL=C để sed macOS không đòi UTF-8 hợp lệ. Lý do thật luôn được in, kể cả
+    # khi nhánh chậm hơn base: chậm hơn không chứng minh đó là nguyên nhân (OCR 18/10).
+    VERDICT=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$VERIFY_LOG" | grep -a -E "KẾT LUẬN|VERDICT" | tail -1 \
+      | LC_ALL=C sed 's/^[[:space:]]*//' | clip 300 || true)
+    WHY="exit ${VRC}: ${VERDICT:-no KẾT LUẬN/VERDICT line, see the log tail above}"
+    BEHIND=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null) || BEHIND=unknown
+    if [ "$BEHIND" = unknown ]; then
+      say "verify failed (${WHY}); could not tell whether the branch is behind ${BASE} (log saved to ${VLOG})"
+    elif [ "$BEHIND" -gt 0 ]; then
+      say "the branch is stale against ${BASE} (${BEHIND} commit(s) behind) — send it back to Build for a rebase pass (verify ${WHY}; log saved to ${VLOG})"
+    else
+      say "verify failed (${WHY}) on a branch not behind ${BASE} (log saved to ${VLOG})"
+      # Mã riêng: lane định tuyến theo mã thoát, exit 2 (rebase pass) cho nhánh đã cập nhật là một vòng rebase vô ích.
+      # Không đếm được (unknown) vẫn exit 2 như hợp đồng cũ: rebase thừa rẻ hơn bỏ sót một nhánh thật sự cũ.
+      exit 11
+    fi
     exit 2
   fi
 done

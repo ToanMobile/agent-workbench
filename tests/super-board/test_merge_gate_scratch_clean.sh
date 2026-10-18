@@ -59,7 +59,7 @@ mkdir -p "$TMP/tt"
 ( cd "$WT" && TMPDIR="$TMP/tt" bash "$GATE" --config "$CFG" --pr 5 --expect-head "$H" ) >"$TMP/gate.log" 2>&1; rc=$?
 ! grep -q "SCRATCH-DIRTY" "$TMP/gate.log" && grep -q "second-verify-ran" "$TMP/gate.log" \
   && ok "lệnh verify thấy cây scratch sạch (log không nằm trong cây)" || fail "cây scratch bẩn khi verify chạy: $(grep -m1 SCRATCH-DIRTY "$TMP/gate.log")"
-[ "$rc" -eq 2 ] && ok "verify đỏ ở lệnh 2: exit 2" || fail "gate exit $rc (want 2): $(tail -5 "$TMP/gate.log")"
+[ "$rc" -eq 11 ] && ok "verify đỏ ở lệnh 2 (nhánh không chậm hơn base): exit 11" || fail "gate exit $rc (want 11): $(tail -5 "$TMP/gate.log")"
 left=$(ls -A "$TMP/tt")
 [ -z "$left" ] && ok "không để lại file tạm nào (scratch, meta, diff, log)" || fail "còn file tạm: $left"
 

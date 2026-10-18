@@ -967,6 +967,93 @@ def antigravity_collab_hint(prompt, dossier, project_root):
             "trước khi nghiệm thu XONG (Task đơn giản: agent được gọi tự làm từ A-Z, không cần 2-agent review).")
 
 
+# A request several agents can share (18/10: the user had to ask "tạo nhiều agent chạy cho nhanh" again and again; the
+# leading agent split late or never). Regexes only, on the normalized prompt: several repos, an action on several issues /
+# cards / tasks, a list of issue numbers, an explicit ask ("nhiều agent", "song song giúp", "in parallel"), two or more
+# listed items that each start with an action. A question, a request that names one file, steps to reproduce, text inside
+# ``` fences, chit-chat and agent prompts stay silent (INSTINCT-026: no always-on block in this hook). A word only counts
+# as an ask when no "khi / để / when / if …" in front makes it the topic ("sửa lỗi khi nhiều agent cùng ghi").
+_COUNT = r"(?:[2-9]|[1-9]\d+|hai|ba|bốn|năm|sáu|bảy|tám|chín|mười|two|three|four|five|six|several|multiple|many|nhiều)"
+_ACT = (r"(?:sửa|thêm|viết|tạo|cập nhật|xóa|đổi|bỏ|chuyển|làm|chạy|kiểm tra|review|đọc|audit|dọn|tách|gộp|đồng bộ|nâng cấp|"
+        r"fix|add|update|write|create|remove|delete|refactor|implement|migrate|port|run|deploy|merge|sync|bump|rename|check|test)")
+SPLIT_REPOS_RE = re.compile(
+    r"(?<!\w)(?:(?:[2-9]|[1-9]\d+|hai|ba|bốn|năm|sáu|bảy|tám|chín|mười|two|three|four|five|six|several|multiple)\s+"
+    r"(?:repos?|repositor(?:y|ies)|dự án|projects?)|(?:tất cả|mọi)\s+(?:các\s+)?(?:repos?|dự án)"
+    r"|(?:all|every|each)\s+(?:the\s+)?(?:repos?|repositories|projects?))(?!\w)")
+SPLIT_EXPLICIT_RE = re.compile(
+    r"(?<!\w)(?:nhiều (?:agent|phiên|lane)|(?:many|several|multiple) agents|"
+    r"(?:these|them|those|both|everything|all of (?:them|these))\s+in parallel|in parallel\s*:|"
+    r"song song\s*(?::|giúp|hộ|cho nhanh|cho tôi|đi|nhé|nha|luôn)|fan[- ]?out (?:the |these )?(?:work|tasks|agents|lanes)|"
+    r"chia (?:ra |thành )?(?:nhiều )?(?:agent|lane|phiên))(?!\w)")
+SPLIT_COUNT_RE = re.compile(
+    r"(?<!\w)(?:sửa|fix|làm|xử lý|giải quyết|review|đóng|close|handle|resolve|triage|merge|gộp|kiểm tra|check|test|viết test cho)\s+"
+    r"(?:(?:hết|cả|tất cả|nốt|luôn|the|all)\s+)?" + _COUNT +
+    r"\s+(?:issues?|thẻ|cards?|tickets?|bugs?|lỗi|việc|tasks?|lanes?|prs?|pull requests?)(?!\w)"
+    r"|(?<!\w)" + _COUNT + r"\s+(?:issues?|thẻ|cards?|tickets?|bugs?|lỗi|việc|tasks?|prs?)\s+cần\s+(?:sửa|fix|làm|xử lý)(?!\w)")
+SPLIT_REFS_RE = re.compile(r"(?<!\w)(?:issues?|thẻ|cards?|tickets?|prs?|bugs?)\s+#?\d+(?:\s*(?:,|và|and|&)\s*#?\d+)+"
+                           r"|(?<!\w)#\d+(?:\s*(?:,|và|and|&)\s*#\d+)+")
+SPLIT_ITEM_RE = re.compile(r"(?:^|\n)[ \t]*(?:\(?\d{1,2}[.)]|[-*•])[ \t]+" + _ACT + r"(?!\w)(?![ \t]+\d)"
+                           r"|(?<!\S)\([1-9]\)[ \t]+" + _ACT + r"(?!\w)")
+TOPIC_RE = re.compile(r"(?<!\w)(?:(?:khi|lúc|nếu|để|when|if|while)\s+(?:[^\s,.;:!?]+\s+){0,3}|(?:dòng|line|lines|row|rows|bước|step)\s+)\Z")
+REPRO_RE = re.compile(r"(?<!\w)(?:steps to reproduce|repro(?:duce)? steps|các bước tái hiện|bước tái hiện|cách tái hiện)(?!\w)")
+FENCE_RE = re.compile(r"```.*?(?:```|\Z)", re.S)
+HOST_RE = re.compile(r"[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/")   # github.com/…, gitlab.example.org/…
+# Questions are judged on the first and the last words only: a search for "?\W*$" over a pasted text full of "(?, ?)"
+# placeholders was quadratic (review 18/10: 20 s for 40 KB, past the hook's timeout).
+QUESTION_START_RE = re.compile(r"\W*(?:tại sao|vì sao|sao(?! chép| lưu)|có nên|có phải|liệu|giải thích|why|what|how|is|are|"
+                               r"does|should|explain)(?!\w)")
+QUESTION_END_RE = re.compile(r"\?\W*\Z|(?<!\w)(?:không|chưa|thế nào|ra sao|là gì|được không|nhỉ|hả)\W*\Z")
+
+
+def _ask(regex, text):
+    """The first match of regex that is an ask, not the topic of the request."""
+    for m in regex.finditer(text):
+        if not TOPIC_RE.search(text[max(0, m.start() - 40):m.start()]):
+            return m.group(0)
+    return ""
+
+
+def parallel_split(prompt):
+    """Why this request can be split across agents ("4 repo", "danh sách 3 việc", "nhiều agent"…), or "" when it cannot."""
+    norm = normalize(prompt).strip()
+    if len(norm) < 8 or norm.startswith("/") or harness_prompt(prompt) \
+            or (QUESTION_START_RE.match(norm) and not norm.split("\n", 1)[0].rstrip().endswith(":")) \
+            or QUESTION_END_RE.search(norm[-80:]):
+        return ""
+    text = FENCE_RE.sub(" ", norm)
+    reason = _ask(SPLIT_REPOS_RE, text)   # one file in several repos is still one lane per repo
+    if reason:
+        return reason
+    paths = {p.rstrip(":,.;)") for p in PATHLIKE_RE.findall(text) if "://" not in p and not HOST_RE.match(p)}   # a link is no file
+    paths = {p for p in paths if re.search(r"\w", p)}   # nor a lone "...", "." or "/"
+    if len(paths) == 1:   # edits inside one file are one lane
+        return ""
+    reason = _ask(SPLIT_EXPLICIT_RE, text)
+    if reason:
+        return reason
+    reason = _ask(SPLIT_COUNT_RE, text) or _ask(SPLIT_REFS_RE, text)
+    if reason:
+        return reason
+    items = 0 if REPRO_RE.search(text) else len(SPLIT_ITEM_RE.findall(text))
+    return "danh sách %d việc" % items if items >= 2 else ""
+
+
+def parallel_hint(prompt):
+    reason = parallel_split(prompt)
+    if not reason:
+        return ""
+    return (f"- Song song ({reason}): việc này chia được cho nhiều agent, chia ngay ở lượt này, đừng đợi người dùng nhắc. "
+            "Tách thành các phần KHÔNG đụng chung file; ghi lanes.json ngoài repo (id, files, deps, est_min) rồi chạy "
+            "`agent-kit lanes plan lanes.json` (lane trùng file bị xếp nối tiếp; gộp chúng khi file đó là phần chính); mở mọi "
+            "lane chạy được trong MỘT tin nhắn: cùng repo thì Agent tool `isolation: \"worktree\"`, repo khác thì một phiên riêng "
+            "(Claude Desktop chỉ mở phiên ở repo khác trong lượt có lời người dùng: mở ngay lượt này), phần chỉ đọc thì Agent "
+            "song song không worktree. Cả đợt: một lượt principal-code-reviewer + ocr-review song song, một gate `--full` sau "
+            "khi gộp. Lỗi mới tìm thấy giữa chừng: cực quan trọng (mất dữ liệu hay commit, main hỏng hoặc lệch origin, "
+            "merge/push hỏng làm luồng tự động dừng, lỗ bảo mật, gate báo xanh sai) thì làm ngay; còn lại (chậm, thêm bước tay, "
+            "thông báo sai, tối ưu) không sửa, tạo thẻ Backlog bằng skill `createTask` và ghi số issue vào báo cáo cuối. "
+            "Chỉ một việc, một file, hoặc bạn đang là một lane được giao: làm luôn, không tách.")
+
+
 def req_hint(prompt, dossier, project_root):
     if "BUG_FIX" in dossier["detected_intents"] or not _checklist_on(project_root) \
             or not FEATURE_RE.search(normalize(prompt)):
@@ -1094,8 +1181,9 @@ def dedupe_session(text, project_dir, session_id, payload):
     sent = set(st.get("sent") or [])
     lines = text.split("\n")
     if st.get("last") == h(text):
-        # The bug-fix RED→GREEN rule stays on every bug prompt, even an unchanged one.
-        out = "\n".join([SAME_AS_BEFORE] + [l for l in lines if l.startswith("- Bắt buộc: ")])
+        # The bug-fix RED→GREEN rule stays on every bug prompt, even an unchanged one; so does the parallel-split line
+        # (a user who asks again for the same split must get it again).
+        out = "\n".join([SAME_AS_BEFORE] + [l for l in lines if l.startswith(("- Bắt buộc: ", "- Song song "))])
     else:
         out = "\n".join(l for l in lines if not (l.startswith(ONCE_PER_SESSION) and h(l) in sent))
     sent.update(h(l) for l in lines if l.startswith(ONCE_PER_SESSION))
@@ -1171,7 +1259,7 @@ if __name__ == "__main__":
         if is_hook:
             log_surfaced(project_dir, session_id, prompt_input, shown_refs(res))
             write_turn_class(project_dir, session_id, res)
-            extra = [l for l in (antigravity_collab_hint(prompt_input, res, project_dir),
+            extra = [l for l in (antigravity_collab_hint(prompt_input, res, project_dir), parallel_hint(prompt_input),
                                  capture_bug(prompt_input, res, project_dir, session_id, hook_payload),
                                  req_hint(prompt_input, res, project_dir), watch_inbox(project_dir),
                                  command_words(prompt_input, project_dir),

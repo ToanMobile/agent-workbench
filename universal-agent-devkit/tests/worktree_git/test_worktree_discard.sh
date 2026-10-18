@@ -391,6 +391,53 @@ mkdir -p "$TMP/w-s6/.agents"; echo 'not json' > "$TMP/w-s6/.agents/regression_st
 [ "$rc" != 0 ] && [ "$(G "$TMP/w-s6" rev-parse HEAD)" = "$Q6" ] && [ -e "$TMP/w-s6" ] \
   && ok "s6 a published branch with a person's regression_status.json edit is not synced away or committed to (rc=$rc)" \
   || { fail "s6 published branch with an authored status edit (rc=$rc)"; cat "$TMP/s6.out"; }
+# s7–s9 (agent-workbench 18/10): main local giữ commit GỐC của một PR khác (#70: 06bb714..7897399) mà GitHub squash từ một head SAU đó
+#     (99114f1 sửa tiếp cùng file): gộp main vào origin xung đột nên luật "không thêm gì" từ chối mãi, main lệch, repo symlink kit vào
+#     main (GeelyEx2) không nhận PR mới. Commit thừa nằm trong danh sách commit của một PR MERGED vào trunk mà merge commit đã có trên
+#     origin/<trunk> (gh) thì coi là đã tích hợp: main reset --keep về origin. Thiếu một commit, hay merge commit chưa có trên origin: từ chối.
+G "$R3" pull -q --ff-only origin main 2>/dev/null
+( cd "$R3" && bash "$KIT" worktree add ../w-s7 ) >/dev/null 2>&1 || fail "add w-s7"
+echo s7 > "$TMP/w-s7/s7.txt"; G "$TMP/w-s7" add s7.txt && G "$TMP/w-s7" commit -qm s7
+echo x1 > "$R3/x.txt"; G "$R3" add x.txt && G "$R3" commit -qm x1; X1=$(G "$R3" rev-parse HEAD)
+echo x2 > "$R3/x.txt"; G "$R3" commit -qam x2; X2=$(G "$R3" rev-parse HEAD)
+squash x.txt x3; XSQ=$(G "$R3" rev-parse origin/main)   # PR gộp từ head sau x2 (x3): nội dung khác main
+squash s7.txt s7
+X3=3333333333333333333333333333333333333333
+FAKE7="$TMP/fakegh7"; mkdir -p "$FAKE7"
+gh7() {   # gh7 <oid merge commit> <oid commit…>: một PR #70 MERGED vào $BASE7 (fork: $FORK7); chỉ trả lời câu tìm PR theo SHA, ghi lại lệnh
+  local commits; commits=$(printf '{"oid":"%s"},' "${@:2}"); commits="[${commits%,}]"
+  printf '#!/bin/sh\necho "$*" >> "%s"\ncase " $* " in *" pr list "*" --search "*) echo %s;; *) echo "[]";; esac\n' "$FAKE7/args" \
+    "'[{\"number\":70,\"headRefOid\":\"$X3\",\"baseRefName\":\"$BASE7\",\"isCrossRepository\":$FORK7,\"mergeCommit\":{\"oid\":\"$1\"},\"commits\":$commits}]'" > "$FAKE7/gh"
+  chmod +x "$FAKE7/gh"; : > "$FAKE7/args"
+}
+BASE7=main; FORK7=false
+# s8. PR không chứa x2 (một commit riêng chưa đẩy của main): từ chối, main giữ nguyên
+gh7 "$XSQ" "$X1" "$X3"
+( cd "$R3" && PATH="$FAKE7:$PATH" bash "$KIT" worktree finish ../w-s7 ) >"$TMP/s8.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && [ "$(G "$R3" rev-parse main)" = "$X2" ] && [ -e "$TMP/w-s7" ] \
+  && ok "s8 finish refuses when one of main's extra commits belongs to no merged PR (rc=$rc)" \
+  || { fail "s8 main synced away a commit no merged PR holds (rc=$rc)"; cat "$TMP/s8.out"; }
+# s9. merge commit của PR chưa có trên origin/main local (fetch cũ): từ chối, main giữ nguyên
+gh7 4444444444444444444444444444444444444444 "$X1" "$X2" "$X3"
+( cd "$R3" && PATH="$FAKE7:$PATH" bash "$KIT" worktree finish ../w-s7 ) >"$TMP/s9.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && [ "$(G "$R3" rev-parse main)" = "$X2" ] && [ -e "$TMP/w-s7" ] \
+  && ok "s9 finish refuses when the merged PR's merge commit is not on the local origin/main (rc=$rc)" \
+  || { fail "s9 main synced to an origin that lacks the PR's merge commit (rc=$rc)"; cat "$TMP/s9.out"; }
+# s10–s12 (review 18/10): PR gộp vào nhánh khác trunk, PR từ fork, gh thoát khác 0 (dù in JSON) — đều từ chối, main giữ nguyên
+for c in "s10 dev false PR merged into another branch" "s11 main true PR from a fork" "s12 main false gh fails"; do
+  set -- $c; id=$1; BASE7=$2; FORK7=$3; gh7 "$XSQ" "$X1" "$X2" "$X3"; BASE7=main; FORK7=false
+  [ "$id" = s12 ] && sed -i.bak 's/esac$/esac; exit 1/' "$FAKE7/gh"   # in đúng câu trả lời của s7 nhưng thoát 1: không tin
+  ( cd "$R3" && PATH="$FAKE7:$PATH" bash "$KIT" worktree finish ../w-s7 ) >"$TMP/$id.out" 2>&1; rc=$?
+  [ "$rc" != 0 ] && [ "$(G "$R3" rev-parse main)" = "$X2" ] && [ -e "$TMP/w-s7" ] && ok "$id finish refuses: ${c#* * * } (rc=$rc)" \
+    || { fail "$id main synced on an untrusted PR answer (rc=$rc)"; cat "$TMP/$id.out"; }
+done
+# s7. mọi commit thừa của main nằm trong PR #70 đã merge, merge commit có trên origin: main về đúng origin/main, worktree gỡ
+gh7 "$XSQ" "$X1" "$X2" "$X3"
+( cd "$R3" && PATH="$FAKE7:$PATH" bash "$KIT" worktree finish ../w-s7 ) >"$TMP/s7.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ "$(G "$R3" rev-parse main)" = "$(G "$R3" rev-parse origin/main)" ] && [ "$(cat "$R3/x.txt")" = x3 ] && [ ! -e "$TMP/w-s7" ] \
+  && grep -q -- "--search $X2 " "$FAKE7/args" && grep -q -- "--base main " "$FAKE7/args" \
+  && ok "s7 finish resets main to origin/main when its extra commits are the pre-squash commits of a merged PR" \
+  || { fail "s7 finish with main holding a squash-merged PR's own commits (rc=$rc)"; cat "$TMP/s7.out"; G "$R3" log --oneline -4 main; }
 
 # --- guard: dạng git trần vẫn bị chặn, và lời chặn chỉ sang đúng lệnh kit ---------------------------------------------------------
 HOOK="$DEVKIT_DIR/hooks/block-dangerous-git.sh"

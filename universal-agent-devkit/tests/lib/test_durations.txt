@@ -326,3 +326,4 @@
 11 tests/worktree_git/test_worktree_merge_gate_lock.sh
 4 tests/gates/test_worktree_merge_gate_conflict_advice.sh
 6 tests/gates/test_worktree_merge_gate_subagent_live.sh
+1 tests/context_memory/test_parallel_hint.sh
