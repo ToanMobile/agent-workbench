@@ -18,6 +18,7 @@ export const DEFAULT_PROFILES = [
   {
     index: 1,
     id: 'finos',
+    shortLabel: '1. FinOS (5x)',
     name: '1. FinOS — toan.huynh@finos.asia (5x Team)',
     vendor: 'anthropic',
     appType: 'claude',
@@ -28,6 +29,7 @@ export const DEFAULT_PROFILES = [
   {
     index: 2,
     id: 'finos_team',
+    shortLabel: '2. FinOS Team',
     name: '2. FinOS Team — linhnt@finos.asia (5x Team)',
     vendor: 'anthropic',
     appType: 'claude',
@@ -38,6 +40,7 @@ export const DEFAULT_PROFILES = [
   {
     index: 3,
     id: 'max',
+    shortLabel: '3. Claude Max',
     name: '3. Personal 5x Max — toan.huynh@finos.asia',
     vendor: 'anthropic',
     appType: 'claude',
@@ -48,6 +51,7 @@ export const DEFAULT_PROFILES = [
   {
     index: 4,
     id: 'antigravity',
+    shortLabel: '4. AGY Ultra',
     name: '4. Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Argon High)',
     vendor: 'google',
     appType: 'gemini',
@@ -58,6 +62,7 @@ export const DEFAULT_PROFILES = [
   {
     index: 5,
     id: 'antigravity_pro',
+    shortLabel: '5. AGY Pro',
     name: '5. Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Argon High)',
     vendor: 'google',
     appType: 'gemini',
@@ -68,6 +73,7 @@ export const DEFAULT_PROFILES = [
   {
     index: 6,
     id: 'grok',
+    shortLabel: '6. Grok 4.7',
     name: '6. Grok CLI — grok-4.7 (xhigh)',
     vendor: 'xai',
     appType: 'grokbuild',
@@ -144,6 +150,17 @@ export function updateAntiBanPolicy(stateDir, partialPolicy = {}) {
     state.policy.preferCrossVendorOnCooldown = partialPolicy.preferCrossVendorOnCooldown;
   }
   return saveSwitcherState(stateDir, state).policy;
+}
+
+/**
+ * Xoa toan bo trang thai dong bang 429 va bo dem Cooldown 15 phut (khi nguoi dung bam Mo khoa tren UI).
+ */
+export function resetLocks(stateDir) {
+  const state = loadSwitcherState(stateDir);
+  state.frozenUntil = {};
+  state.lastClaudeSwitchAtMs = 0;
+  state.lastClaudeRateLimitAtMs = 0;
+  return saveSwitcherState(stateDir, state);
 }
 
 /**

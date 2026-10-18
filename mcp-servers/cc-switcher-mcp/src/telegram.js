@@ -13,6 +13,8 @@ import {
   switchProfile,
   rotateNextProfile,
   updateAntiBanPolicy,
+  resetLocks,
+  resolveProfile,
 } from './profiles.js';
 
 export { maskSecret };
@@ -112,7 +114,7 @@ export async function callTelegramApi(botToken, method, body = null) {
 }
 
 /**
- * Lay danh sach tin nhan moi tu Telegram; neu gap loi 409 Conflict do Webhook cu dang bat,
+ * Lay danh sach tin nhan & callback_query moi tu Telegram; neu gap loi 409 Conflict do Webhook cu dang bat,
  * tu dong go deleteWebhook (giu nguyen pending updates) roi thu lai.
  */
 export async function fetchUpdatesSafely(botToken, offset = 0, apiCaller = callTelegramApi) {
@@ -130,20 +132,279 @@ export async function fetchUpdatesSafely(botToken, offset = 0, apiCaller = callT
 }
 
 /**
- * Tu dong tim chat_id tu tin nhan gan nhat nguoi dung gui cho Bot (/start).
+ * Tu dong tim chat_id tu tin nhan hoac nut bam gan nhat nguoi dung gui cho Bot.
  */
 export async function discoverChatId(botToken, apiCaller = callTelegramApi) {
   const updates = await fetchUpdatesSafely(botToken, 0, apiCaller);
   if (!Array.isArray(updates) || updates.length === 0) return '';
   for (let i = updates.length - 1; i >= 0; i -= 1) {
-    const chatId = updates[i]?.message?.chat?.id || updates[i]?.edited_message?.chat?.id;
+    const chatId =
+      updates[i]?.message?.chat?.id ||
+      updates[i]?.edited_message?.chat?.id ||
+      updates[i]?.callback_query?.message?.chat?.id ||
+      updates[i]?.callback_query?.from?.id;
     if (chatId) return String(chatId);
   }
   return '';
 }
 
 /**
- * Gui tin nhan thong bao ve dien thoai qua Telegram (khong lam sap luong chinh neu loi mang).
+ * Tao ban phim co dinh duoi day man hinh Telegram (Persistent Reply Keyboard)
+ * giup nguoi dung mo bang dieu khien hoac xoay vong 1 cham ma khong can go lenh.
+ */
+export function buildReplyKeyboardMarkup() {
+  return {
+    resize_keyboard: true,
+    is_persistent: true,
+    keyboard: [
+      [{ text: '🎛 Bảng điều khiển' }, { text: '🔄 Xoay vòng an toàn' }],
+      [{ text: '🚨 Báo kịch 429 (Đổi ngay)' }, { text: '🔓 Mở khóa 429 / Cooldown' }],
+    ],
+  };
+}
+
+/**
+ * Dang ky nut Menu xanh (☰ Menu) va danh sach phim tat tren giao dien Telegram.
+ */
+export async function ensureTelegramBotMenu(botToken, apiCaller = callTelegramApi) {
+  if (!botToken) return false;
+  try {
+    await apiCaller(botToken, 'setMyCommands', {
+      commands: [
+        { command: 'status', description: '🎛 Mở bảng điều khiển nút bấm (6 tài khoản)' },
+        { command: 'menu', description: '⌨️ Ghim thanh phím tắt nhanh ở đáy màn hình' },
+        { command: 'rotate', description: '🔄 Xoay vòng sang tài khoản an toàn kế tiếp' },
+        { command: 'limit', description: '🚨 Báo kịch 429 (Đóng băng 5h & đổi ngay)' },
+        { command: 'unfreeze', description: '🔓 Mở khóa toàn bộ 429 & xóa Cooldown' },
+      ],
+    });
+    await apiCaller(botToken, 'setChatMenuButton', {
+      menu_button: { type: 'commands' },
+    });
+    return true;
+  } catch (err) {
+    logStructured('warn', 'telegram_menu_setup_failed', { error: maskSecret(err?.message, [botToken]) });
+    return false;
+  }
+}
+
+function formatDurationHuman(totalSec) {
+  if (!totalSec || totalSec <= 0) return '0s (Sẵn sàng)';
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return m > 0 ? `${m}p ${s}s` : `${s}s`;
+}
+
+/**
+ * Dinh dang bao cao trang thai gon dep, hien dai cho tin nhan Telegram tren dien thoai.
+ */
+export function formatStatusForTelegram(report, opts = {}) {
+  const { bannerNote = '' } = opts;
+  const cooldownBadge =
+    report.claudeCooldownRemainSec > 0
+      ? `⏳ Đang nghỉ chống ban: còn ${formatDurationHuman(report.claudeCooldownRemainSec)}`
+      : '🟢 Sẵn sàng chuyển ngay (0s)';
+
+  const lines = [];
+  if (bannerNote) {
+    lines.push(bannerNote);
+    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━');
+  }
+
+  lines.push('🎛 CC SWITCHER — BẢNG ĐIỀU KHIỂN 6 PROFILE');
+  lines.push(`▶️ Đang dùng: ${report.activeProfile.name}`);
+  lines.push(`🛡 Anti-Ban Guard: ${cooldownBadge}`);
+  lines.push(
+    `⚙️ Cấu hình: Nghỉ ${Math.round(report.policy.claudeSwitchCooldownSec / 60)}p giữa Claude · Đóng băng 429: ${Math.round(report.policy.rateLimitFreezeSec / 3600)}h`,
+  );
+  lines.push(`💰 Chi phí ghi nhận: $${report.usage.totalCostUsd} (${report.usage.totalRequests} requests)`);
+  lines.push('━━━━━━━━━━━━━━━━━━━━━━━━');
+  lines.push('📋 TRẠNG THÁI 6 TÀI KHOẢN (Chạm nút bên dưới để đổi):');
+
+  for (const p of report.profiles) {
+    const icon = p.isActive ? '🟢' : p.isFrozen ? '❄️' : '⚪️';
+    const stateLabel = p.isActive
+      ? 'ĐANG DÙNG ✓'
+      : p.isFrozen
+        ? `ĐÓNG BĂNG (${p.freezeRemainMin}p)`
+        : 'Sẵn sàng';
+    lines.push(`${icon} [${p.index}] ${p.name} — ${stateLabel}`);
+  }
+
+  lines.push('');
+  lines.push('👇 Chạm trực tiếp vào nút tài khoản bên dưới để chuyển ngay (không cần gõ lệnh):');
+  return lines.join('\n');
+}
+
+/**
+ * Xay dung Bang dieu khien tuong tac (Text + Inline Keyboard 6 profile + Cac nut thao tac nhanh).
+ */
+export function buildTelegramDashboard(report, opts = {}) {
+  const { bannerNote = '', forcePromptTargetId = '' } = opts;
+  const text = formatStatusForTelegram(report, { bannerNote });
+
+  const inlineKeyboard = [];
+
+  // Neu nguoi dung vua cham vao 1 profile Claude dang vuong Cooldown 15p -> hien nut Ep chuyen 1 cham o hang dau
+  if (forcePromptTargetId) {
+    const targetProf = report.profiles.find((p) => p.id === forcePromptTargetId);
+    const shortName = targetProf?.shortLabel || forcePromptTargetId;
+    inlineKeyboard.push([
+      {
+        text: `⚡ ÉP CHUYỂN NGAY sang ${shortName} (Bỏ qua chờ)`,
+        callback_data: `fsw:${forcePromptTargetId}`,
+      },
+    ]);
+  }
+
+  // 3 hang x 2 cot cho 6 profile (gon dep tren man hinh dien thoai, khong bi cat chu)
+  for (let i = 0; i < report.profiles.length; i += 2) {
+    const row = report.profiles.slice(i, i + 2).map((p) => {
+      const labelBase = p.shortLabel || `${p.index}. ${p.id}`;
+      let btnText = `⚪️ ${labelBase}`;
+      if (p.isActive) {
+        btnText = `🟢 ${labelBase} ✓`;
+      } else if (p.isFrozen) {
+        btnText = `❄️ ${labelBase} (${p.freezeRemainMin}p)`;
+      }
+      return {
+        text: btnText,
+        callback_data: `sw:${p.id}`,
+      };
+    });
+    inlineKeyboard.push(row);
+  }
+
+  // Hang thao tac thong minh: Xoay vong ke tiep & Bao kich 429
+  inlineKeyboard.push([
+    { text: '🔄 Xoay vòng kế tiếp', callback_data: 'act:rotate' },
+    { text: '🚨 Báo kịch 429 (Đổi ngay)', callback_data: 'act:limit' },
+  ]);
+
+  // Hang mo khoa dong bang & lam moi trang thai
+  inlineKeyboard.push([
+    { text: '🔓 Mở khóa 429 & Cooldown', callback_data: 'act:unfreeze_all' },
+    { text: '🔃 Làm mới', callback_data: 'act:refresh' },
+  ]);
+
+  // Hang chon nhanh muc Cooldown chong ban (15p / 5p / 0p)
+  const currentCdMin = Math.round((report.policy?.claudeSwitchCooldownSec ?? 900) / 60);
+  inlineKeyboard.push([
+    { text: `${currentCdMin === 15 ? '✅' : '🛡'} Nghỉ 15p`, callback_data: 'cd:15' },
+    { text: `${currentCdMin === 5 ? '✅' : '🛡'} Nghỉ 5p`, callback_data: 'cd:5' },
+    { text: `${currentCdMin === 0 ? '✅' : '🛡'} Tắt chờ (0p)`, callback_data: 'cd:0' },
+  ]);
+
+  return {
+    text,
+    reply_markup: {
+      inline_keyboard: inlineKeyboard,
+    },
+  };
+}
+
+/**
+ * Xu ly su kien khi nguoi dung cham vao nut tren Inline Keyboard (callback_query).
+ */
+export async function handleTelegramCallback(callbackQuery, opts = {}) {
+  const { stateDir, nowMs = Date.now() } = opts;
+  const data = String(callbackQuery?.data || '').trim();
+
+  if (data.startsWith('sw:') || data.startsWith('fsw:')) {
+    const force = data.startsWith('fsw:');
+    const targetId = data.slice(force ? 4 : 3);
+    try {
+      const res = switchProfile({
+        stateDir,
+        target: targetId,
+        nowMs,
+        enforceCooldown: !force,
+        reason: force ? 'telegram_ui_force_switch' : 'telegram_ui_switch',
+      });
+      const report = getStatusReport({ stateDir, nowMs });
+      const bannerNote = `✅ ĐÃ CHUYỂN SANG: ${res.activeProfile.name}`;
+      return {
+        toastText: `✅ Đã chuyển sang ${res.activeProfile.shortLabel || res.activeProfile.name}`,
+        showAlert: false,
+        dashboard: buildTelegramDashboard(report, { bannerNote }),
+      };
+    } catch (err) {
+      const report = getStatusReport({ stateDir, nowMs });
+      const targetProf = resolveProfile(targetId);
+      const bannerNote = [
+        `⛔️ CHƯA CHUYỂN: ${err.message}`,
+        `👉 Nếu muốn bỏ qua thời gian chờ để đổi ngay sang "${targetProf.shortLabel || targetProf.name}", hãy bấm nút [⚡ ÉP CHUYỂN NGAY] bên dưới.`,
+      ].join('\n');
+      return {
+        toastText: `⏳ Đang trong thời gian nghỉ chống ban! Bấm nút "⚡ ÉP CHUYỂN NGAY" nếu muốn đổi luôn.`,
+        showAlert: true,
+        dashboard: buildTelegramDashboard(report, {
+          bannerNote,
+          forcePromptTargetId: targetProf.id,
+        }),
+      };
+    }
+  }
+
+  if (data === 'act:rotate' || data === 'act:limit') {
+    const markLimited = data === 'act:limit';
+    const res = rotateNextProfile({
+      stateDir,
+      nowMs,
+      markCurrentLimited: markLimited,
+      reason: markLimited ? 'telegram_ui_limit_429' : 'telegram_ui_rotate',
+    });
+    const report = getStatusReport({ stateDir, nowMs });
+    const bannerNote = markLimited
+      ? `🚨 Đã đóng băng 5h [${res.previousProfile.shortLabel || res.previousProfile.id}] & chuyển sang: ${res.activeProfile.name}`
+      : `🔄 Đã xoay vòng sang: ${res.activeProfile.name}`;
+    return {
+      toastText: markLimited
+        ? `🚨 Đã khóa 5h tài khoản cũ & đổi sang ${res.activeProfile.shortLabel || res.activeProfile.name}`
+        : `🔄 Đã xoay sang ${res.activeProfile.shortLabel || res.activeProfile.name}`,
+      showAlert: false,
+      dashboard: buildTelegramDashboard(report, { bannerNote }),
+    };
+  }
+
+  if (data === 'act:unfreeze_all') {
+    resetLocks(stateDir);
+    const report = getStatusReport({ stateDir, nowMs });
+    return {
+      toastText: '🔓 Đã xóa toàn bộ đóng băng 429 & đặt lại Cooldown về 0s!',
+      showAlert: false,
+      dashboard: buildTelegramDashboard(report, {
+        bannerNote: '🔓 ĐÃ MỞ KHÓA TOÀN BỘ 6 TÀI KHOẢN & XÓA COOLDOWN',
+      }),
+    };
+  }
+
+  if (data.startsWith('cd:')) {
+    const minutes = Number(data.slice(3));
+    if (Number.isFinite(minutes) && minutes >= 0 && minutes <= 1440) {
+      updateAntiBanPolicy(stateDir, { claudeSwitchCooldownSec: Math.round(minutes * 60) });
+    }
+    const report = getStatusReport({ stateDir, nowMs });
+    return {
+      toastText: `🛡 Đã đặt thời gian nghỉ chống ban: ${minutes} phút`,
+      showAlert: false,
+      dashboard: buildTelegramDashboard(report, {
+        bannerNote: `🛡 ĐÃ CẬP NHẬT COOLDOWN CHỐNG BAN: ${minutes} PHÚT`,
+      }),
+    };
+  }
+
+  // Mac dinh: act:refresh hoac callback bat ky -> lam moi bang dieu khien
+  const report = getStatusReport({ stateDir, nowMs });
+  return {
+    toastText: '🔃 Đã cập nhật trạng thái mới nhất!',
+    showAlert: false,
+    dashboard: buildTelegramDashboard(report),
+  };
+}
+
+/**
+ * Gui tin nhan thong bao ve dien thoai qua Telegram kem bang nut bam tuong tac.
  */
 export async function sendTelegramNotification(text, opts = {}) {
   const cfg = loadTelegramConfig(opts.stateDir);
@@ -151,9 +412,12 @@ export async function sendTelegramNotification(text, opts = {}) {
     return { sent: false, reason: 'missing_token_or_chat_id' };
   }
   try {
+    const report = getStatusReport({ stateDir: opts.stateDir });
+    const dash = buildTelegramDashboard(report);
     await callTelegramApi(cfg.botToken, 'sendMessage', {
       chat_id: cfg.chatId,
       text,
+      reply_markup: opts.reply_markup || dash.reply_markup,
     });
     return { sent: true };
   } catch (err) {
@@ -163,40 +427,34 @@ export async function sendTelegramNotification(text, opts = {}) {
 }
 
 /**
- * Dinh dang bao cao trang thai gon dep cho tin nhan Telegram tren dien thoai.
- */
-export function formatStatusForTelegram(report) {
-  const lines = [
-    '📡 CC SWITCHER — TRẠNG THÁI 6 PROFILE',
-    `▶️ Đang chạy: ${report.activeProfile.name}`,
-    `⏱ Cooldown Claude còn lại: ${report.claudeCooldownRemainSec}s`,
-    `🛡 Chính sách nghỉ: ${Math.round(report.policy.claudeSwitchCooldownSec / 60)} phút (Claude) | Đông băng 429: ${Math.round(report.policy.rateLimitFreezeSec / 3600)}h`,
-    `💰 Tổng chi phí ghi nhận: $${report.usage.totalCostUsd} (${report.usage.totalRequests} requests)`,
-    '',
-    '📋 Danh sách tài khoản:',
-  ];
-
-  for (const p of report.profiles) {
-    const icon = p.isActive ? '🟢' : (p.isFrozen ? '❄️' : '⚪️');
-    lines.push(`${icon} [${p.index}] ${p.id}: ${p.status} — ${p.name}`);
-  }
-
-  lines.push('');
-  lines.push('💡 Lệnh điều khiển từ điện thoại:');
-  lines.push('/status — Xem trạng thái & token');
-  lines.push('/switch <1..6> — Đổi sang profile chỉ định');
-  lines.push('/rotate — Tự động chuyển sang profile an toàn kế tiếp');
-  lines.push('/limit — Báo tài khoản hiện tại dính 429 (đóng băng 5h + xoay vòng)');
-  lines.push('/cooldown <phút> — Đặt thời gian nghỉ chống ban (VD: /cooldown 15)');
-  return lines.join('\n');
-}
-
-/**
- * Xu ly lenh van ban nhan tu Telegram (/status, /switch, /rotate, /limit, /cooldown, /help).
+ * Xu ly lenh van ban hoac nut bam Reply Keyboard nhan tu Telegram.
  */
 export async function handleTelegramCommand(rawText, opts = {}) {
   const { stateDir, nowMs = Date.now() } = opts;
   const text = String(rawText || '').trim();
+
+  // Anh xa cac nut tren Reply Keyboard hoac so 1..6 thanh lenh tuong ung
+  if (text === '🎛 Bảng điều khiển' || text === '/menu') {
+    const report = getStatusReport({ stateDir, nowMs });
+    return formatStatusForTelegram(report);
+  }
+  if (text === '🔄 Xoay vòng an toàn') {
+    return handleTelegramCommand('/rotate', { stateDir, nowMs });
+  }
+  if (text === '🚨 Báo kịch 429 (Đổi ngay)') {
+    return handleTelegramCommand('/limit', { stateDir, nowMs });
+  }
+  if (text === '🔓 Mở khóa 429 / Cooldown' || text === '/unfreeze') {
+    resetLocks(stateDir);
+    const report = getStatusReport({ stateDir, nowMs });
+    return formatStatusForTelegram(report, {
+      bannerNote: '🔓 ĐÃ MỞ KHÓA TOÀN BỘ 6 TÀI KHOẢN & XÓA COOLDOWN',
+    });
+  }
+  if (/^[1-6]$/.test(text)) {
+    return handleTelegramCommand(`/switch ${text}`, { stateDir, nowMs });
+  }
+
   const [cmdRaw, ...args] = text.split(/\s+/);
   const cmd = cmdRaw.toLowerCase().split('@')[0];
 
@@ -208,7 +466,7 @@ export async function handleTelegramCommand(rawText, opts = {}) {
   if (cmd === '/switch') {
     const target = args[0];
     if (!target) {
-      return '⚠️ Vui lòng nhập số 1..6 hoặc ID. Ví dụ: /switch 2 hoặc /switch antigravity';
+      return '⚠️ Vui lòng chạm trực tiếp vào nút tài khoản bên dưới hoặc nhập /switch <1..6>.';
     }
     const force = args.includes('--force');
     try {
@@ -226,7 +484,7 @@ export async function handleTelegramCommand(rawText, opts = {}) {
         `• Chống ban: CLAUDE_DISABLE_TELEMETRY=${res.env.CLAUDE_DISABLE_TELEMETRY}`,
       ].join('\n');
     } catch (err) {
-      return `⛔️ ${err.message}\n(Gõ "/switch ${target} --force" nếu muốn bỏ qua thời gian chờ)`;
+      return `⛔️ ${err.message}\n(Chạm nút trên bảng điều khiển để chọn Ép chuyển hoặc gõ "/switch ${target} --force")`;
     }
   }
 
@@ -251,7 +509,7 @@ export async function handleTelegramCommand(rawText, opts = {}) {
   if (cmd === '/cooldown') {
     const minutes = Number(args[0]);
     if (!Number.isFinite(minutes) || minutes < 0 || minutes > 1440) {
-      return '⚠️ Vui lòng nhập số phút hợp lệ (0 - 1440). Ví dụ: /cooldown 15';
+      return '⚠️ Vui lòng chọn nút Cooldown bên dưới hoặc nhập số phút hợp lệ (0 - 1440).';
     }
     const policy = updateAntiBanPolicy(stateDir, {
       claudeSwitchCooldownSec: Math.round(minutes * 60),
@@ -259,5 +517,9 @@ export async function handleTelegramCommand(rawText, opts = {}) {
     return `🛡 Đã cập nhật thời gian nghỉ chống ban giữa các tài khoản Claude: ${minutes} phút (${policy.claudeSwitchCooldownSec}s).`;
   }
 
-  return '❓ Lệnh không hợp lệ. Gõ /status để xem danh sách lệnh điều khiển.';
+  // Bat ky tin nhan nao khac cung tra ve bang dieu khien de nguoi dung bam nut chon luon
+  const report = getStatusReport({ stateDir, nowMs });
+  return formatStatusForTelegram(report, {
+    bannerNote: '💡 Chạm trực tiếp vào các nút bên dưới để chuyển tài khoản:',
+  });
 }

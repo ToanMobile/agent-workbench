@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveStateDir, logStructured, maskSecret } from './errors.js';
-import { rotateNextProfile } from './profiles.js';
+import { rotateNextProfile, getStatusReport } from './profiles.js';
 import {
   loadTelegramConfig,
   saveTelegramConfig,
@@ -10,6 +10,10 @@ import {
   fetchUpdatesSafely,
   sendTelegramNotification,
   handleTelegramCommand,
+  handleTelegramCallback,
+  buildTelegramDashboard,
+  buildReplyKeyboardMarkup,
+  ensureTelegramBotMenu,
 } from './telegram.js';
 
 const RATE_LIMIT_PATTERNS = [
@@ -73,7 +77,8 @@ export function createLogTailReader(logFile) {
 }
 
 /**
- * Xu ly danh sach updates tu Telegram, tu dong bind va luu chatId khi nhan tin nhan dau tien.
+ * Xu ly danh sach updates tu Telegram (tin nhan van ban, nut Reply Keyboard, va nut Inline Callback Query).
+ * Tu dong bind va luu chatId khi nhan tuong tac dau tien.
  */
 export async function processIncomingTelegramUpdates(updates, opts = {}) {
   const { stateDir, currentOffset = 0, apiCaller = callTelegramApi } = opts;
@@ -83,13 +88,63 @@ export async function processIncomingTelegramUpdates(updates, opts = {}) {
   let cfg = loadTelegramConfig(stateDir);
   for (const u of updates) {
     nextOffset = Math.max(nextOffset, (u.update_id || 0) + 1);
+
+    // 1. Xu ly khi nguoi dung cham nut tren Inline Keyboard (callback_query)
+    if (u.callback_query) {
+      const cbq = u.callback_query;
+      const fromChatId = String(cbq.message?.chat?.id || cbq.from?.id || '');
+      if (!fromChatId) continue;
+
+      if (!cfg.chatId) {
+        saveTelegramConfig(stateDir, { chatId: fromChatId });
+        cfg = loadTelegramConfig(stateDir);
+        logStructured('info', 'telegram_chat_id_bound', { chatId: fromChatId });
+      } else if (String(cfg.chatId) !== fromChatId) {
+        continue;
+      }
+
+      const cbResult = await handleTelegramCallback(cbq, { stateDir });
+      try {
+        await apiCaller(cfg.botToken, 'answerCallbackQuery', {
+          callback_query_id: cbq.id,
+          text: cbResult.toastText,
+          show_alert: Boolean(cbResult.showAlert),
+        });
+      } catch (err) {
+        logStructured('warn', 'telegram_answer_cbq_failed', { error: err?.message });
+      }
+
+      const msgId = cbq.message?.message_id;
+      if (msgId && cbResult.dashboard) {
+        try {
+          await apiCaller(cfg.botToken, 'editMessageText', {
+            chat_id: fromChatId,
+            message_id: msgId,
+            text: cbResult.dashboard.text,
+            reply_markup: cbResult.dashboard.reply_markup,
+          });
+        } catch (err) {
+          // Bo qua neu noi dung khong thay doi ("message is not modified")
+          if (!/not modified/i.test(String(err?.message || ''))) {
+            await apiCaller(cfg.botToken, 'sendMessage', {
+              chat_id: fromChatId,
+              text: cbResult.dashboard.text,
+              reply_markup: cbResult.dashboard.reply_markup,
+            });
+          }
+        }
+      }
+      continue;
+    }
+
+    // 2. Xu ly khi nguoi dung gui tin nhan hoac cham nut tren Persistent Reply Keyboard
     const msg = u.message || u.edited_message;
     const text = msg?.text;
     const fromChatId = String(msg?.chat?.id || '');
     if (!text || !fromChatId) continue;
 
-    // Neu chua co chatId trong telegram.env, tu dong luu chatId cua chu nhan ngay tin nhan dau tien
-    if (!cfg.chatId) {
+    const isFirstBind = !cfg.chatId;
+    if (isFirstBind) {
       saveTelegramConfig(stateDir, { chatId: fromChatId });
       cfg = loadTelegramConfig(stateDir);
       logStructured('info', 'telegram_chat_id_bound', { chatId: fromChatId });
@@ -97,10 +152,26 @@ export async function processIncomingTelegramUpdates(updates, opts = {}) {
       continue;
     }
 
+    const trimmed = text.trim();
+    // Neu la /start hoac /menu -> ghim thanh phim tat nhanh o day man hinh truoc khi hien Bang dieu khien Inline
+    if (trimmed === '/start' || trimmed === '/menu') {
+      try {
+        await apiCaller(cfg.botToken, 'sendMessage', {
+          chat_id: fromChatId,
+          text: '⌨️ Đã ghim thanh phím tắt nhanh ở đáy màn hình. Bạn có thể chạm trực tiếp vào các nút bên dưới bất kỳ lúc nào:',
+          reply_markup: buildReplyKeyboardMarkup(),
+        });
+      } catch (err) {
+        logStructured('warn', 'telegram_reply_kb_failed', { error: err?.message });
+      }
+    }
+
     const reply = await handleTelegramCommand(text, { stateDir });
+    const dash = buildTelegramDashboard(getStatusReport({ stateDir }));
     await apiCaller(cfg.botToken, 'sendMessage', {
       chat_id: fromChatId,
       text: reply,
+      reply_markup: dash.reply_markup,
     });
   }
   return nextOffset;
@@ -122,6 +193,11 @@ export async function startSwitcherDaemon(opts = {}) {
   const logReader = createLogTailReader(logFile);
 
   logStructured('info', 'daemon_started', { stateDir, logFile, pollIntervalMs });
+
+  const initCfg = loadTelegramConfig(stateDir);
+  if (initCfg.botToken) {
+    void ensureTelegramBotMenu(initCfg.botToken);
+  }
 
   const checkLogStep = async () => {
     if (stopped) return;
