@@ -11,7 +11,11 @@
 #     exit 0, newer than the turn's user message, whose fingerprint (bin/tree_fp.py) still
 #     matches the code — an edit after the gate run voids it (trunk mode, 17/10: a receipt `worktree finish` carried into main for
 #     main's HEAD, of a clean tree, still holds when the only differing files are dirty in main and named by no editing tool call of
-#     this session: other sessions' / the board runner's files, foreign_dirty_only);
+#     this session: other sessions' / the board runner's files, foreign_dirty_only); trunk mode, 18/10: without such a receipt the turn
+#     still passes on (a) a --full exit 0 receipt a worktree of the repo wrote this turn, still matching that worktree, for the same tree
+#     as the judged HEAD, or (b) the output of a super-board-merge-gate.sh call this turn ("verified green" + "merged <H>") when git
+#     attests it: the real origin (ls-remote) holds a squash of H committed this turn and the judged tree stands at H or holds it with
+#     nothing origin lacks (merged_evidence; tests/gates/test_proof_gate_merged_trunk.sh);
 #   - the reply names at least one reports/proof-<yyyyMMdd-HHmmss>.png that
 #   - exists under the project,
 #   - starts with the PNG signature,
@@ -380,8 +384,6 @@ def foreign_dirty_only(rec, tree_fp):
     đường dẫn bẩn (khác rỗng) khi biên nhận vẫn phủ code của phiên này: lượt này có lượt bắt đầu thật (không phải mốc dự phòng 1 h), biên
     nhận chép từ worktree, `head` = HEAD của repo, `dirty` rỗng (đã gate đúng HEAD), và mọi file repo khác HEAD (ngoài EXCLUDE) đều chưa
     từng xuất hiện trong một tool_use không chỉ đọc của phiên (kể cả subagent). Không thì None = chặn như cũ."""
-    import subprocess
-    from session_authorship import read_only_tool   # bin/ (PROOF_BIN, đã vào sys.path): cùng danh sách công cụ chỉ đọc với các hook khác
     if start is None or not isinstance(rec.get("carried_from"), str) or not rec["carried_from"]:
         return None
     import session_worktree   # hooks/ (đã vào sys.path cùng devkit_harness); thiếu thì ImportError -> chặn như cũ
@@ -393,20 +395,32 @@ def foreign_dirty_only(rec, tree_fp):
     excluded = lambda p: any(p == ex or p.startswith(ex + "/") for ex in tree_fp.EXCLUDE)
     if any(not excluded(p) for p in dirty):
         return None
-    git = lambda *a: subprocess.run(["git", "-C", repo, *a], capture_output=True, timeout=10)
+    state = dirty_state(repo, tree_fp)
+    if state is None or state[0] != head or not state[1] or not untouched_by_session(state[1]):
+        return None
+    return state[1]
+
+def dirty_state(root, tree_fp):
+    """(HEAD, các đường dẫn khác HEAD hoặc chưa track, ngoài tree_fp.EXCLUDE, đã sắp xếp) của cây git ở root; None khi git lỗi."""
+    import subprocess
+    excluded = lambda p: any(p == ex or p.startswith(ex + "/") for ex in tree_fp.EXCLUDE)
+    git = lambda *a: subprocess.run(["git", "-C", root, *a], capture_output=True, timeout=10)
     try:
         now_head = git("rev-parse", "HEAD")
         changed = git("diff", "--name-only", "--relative", "--no-renames", "-z", "HEAD")   # một rename: cả đường dẫn cũ lẫn mới
         untracked = git("ls-files", "-o", "--exclude-standard", "-z")
     except (OSError, subprocess.SubprocessError) as e:
-        log("foreign-dirty check failed: %r" % e)
+        log("dirty check failed in %s: %r" % (root, e))
         return None
-    if any(r.returncode for r in (now_head, changed, untracked)) or now_head.stdout.decode().strip() != head:
+    if any(r.returncode for r in (now_head, changed, untracked)):
         return None
-    paths = sorted({p for p in (changed.stdout + untracked.stdout).decode("utf-8", "surrogateescape").split("\0")
-                    if p and not excluded(p)})
-    if not paths:
-        return None
+    return now_head.stdout.decode().strip(), sorted({p for p in (changed.stdout + untracked.stdout).decode("utf-8", "surrogateescape").split("\0")
+                                                     if p and not excluded(p)})
+
+def untouched_by_session(paths):
+    """True khi không tool_use không chỉ đọc nào của phiên (kể cả subagent) nhắc tới một trong `paths` (tương đối với repo đang xét);
+    False khi có, hoặc khi một transcript không đọc được (không chứng minh được gì)."""
+    from session_authorship import read_only_tool   # bin/ (PROOF_BIN, đã vào sys.path): cùng danh sách công cụ chỉ đọc với các hook khác
     root = os.path.realpath(repo)
     targets = {os.path.join(root, p) for p in paths} | {os.path.realpath(os.path.join(root, p)) for p in paths}   # cả hai phía qua realpath: file bẩn là symlink
     tp = d.get("transcript_path") or ""
@@ -423,7 +437,7 @@ def foreign_dirty_only(rec, tree_fp):
                         e = json.loads(raw)
                     except (ValueError, RecursionError):   # dòng có tool_use mà không đọc được: có thể là một lần sửa, chặn
                         log("foreign-dirty check: unreadable tool_use line in %s" % t)
-                        return None
+                        return False
                     msg = e.get("message") if isinstance(e, dict) else None
                     for c in (msg.get("content") if isinstance(msg, dict) else None) or []:
                         if not isinstance(c, dict) or c.get("type") != "tool_use" or read_only_tool(c.get("name")):
@@ -432,17 +446,130 @@ def foreign_dirty_only(rec, tree_fp):
                         files = [args[k] for k in ("file_path", "notebook_path", "TargetFile") if isinstance(args.get(k), str)]
                         if files:   # công cụ sửa file: so đường dẫn thật, file cùng tên trong worktree riêng không tính
                             if any(os.path.realpath(x if os.path.isabs(x) else os.path.join(root, x)) in targets for x in files):
-                                return None
+                                return False
                         else:       # lệnh shell và mọi công cụ khác: nhắc tên file là coi như đã đụng (thừa thì chặn, như cũ)
                             text = json.dumps(args, ensure_ascii=False)
                             if any(p in text or json.dumps(p, ensure_ascii=False)[1:-1] in text for p in paths):   # cả dạng JSON escape (", \)
-                                return None
+                                return False
         except OSError as e:   # transcript nào (chính hay subagent) không đọc được: không chứng minh được gì, chặn như cũ
             log("foreign-dirty check: transcript unreadable %s: %r" % (t, e))
-            return None
-    return paths
+            return False
+    return True
+
+MERGE_GATE_SKEW_S = 120   # đồng hồ GitHub (giờ commit squash) lệch máy này
+
+def merged_evidence():
+    """Trunk mode (18/10, 5 phiên: GeelyEx2 #63, OfficeReader #149, Goods #40, NFH #49, kit #67): việc gộp qua super-board-merge-gate.sh
+    (gate --full xanh trong scratch của nó) bị chặn mãi, vì cây được xét (main sau khi worktree bị dọn) không có biên nhận --full của lượt
+    và trunk mode cấm chạy gate ở main. Mô tả bằng chứng khi lượt này có một trong hai, None thì chặn như cũ:
+      (a) biên nhận --full exit 0 của một worktree của repo, ghi trong lượt, vẫn khớp dấu vân tay của worktree đó, worktree sạch và cây HEAD
+          của nó = cây HEAD của repo xét;
+      (b) kết quả của một lệnh merge gate trong lượt ("[merge-gate #N] verified green …" và "[merge-gate #N] merged <H>"), mà git chứng
+          thực: origin THẬT (`ls-remote`, không phải refs/remotes agent ghi được, INSTINCT-027) có trên nhánh mặc định một commit S ghi
+          trong lượt là squash của H (cây S = merge-tree S^1 H), và repo xét đứng ở H hoặc chứa S mà không có gì ngoài origin.
+    Cả hai: repo xét sạch, hoặc (chỉ main) chỉ bẩn file mà phiên này không đụng (untouched_by_session)."""
+    import subprocess
+    import session_worktree   # hooks/ (đã vào sys.path cùng devkit_harness); thiếu thì ImportError -> chặn như cũ
+    import tree_fp
+    if start is None or not session_worktree.trunk_mode(repo):
+        return None
+    tree = session_worktree.tree_of(repo)
+    state = dirty_state(repo, tree_fp)
+    if not tree or state is None:
+        return None
+    head, paths = state
+    if paths and (tree[1] or not untouched_by_session(paths)):   # worktree bẩn = việc của chính phiên, chưa gộp
+        return None
+    git = lambda *a, cwd=repo, t=10: subprocess.run(["git", "-C", cwd, *a], capture_output=True, timeout=t)
+    out = lambda r: r.stdout.decode("utf-8", "replace").strip() if r.returncode == 0 else None
+    want = out(git("rev-parse", head + "^{tree}"))
+    if not want:
+        return None
+    # (a) biên nhận của worktree anh em (cùng .git, như bin/post-fix-gate.py cached_full_pass mượn)
+    for rp in sorted(glob.glob(os.path.join(tree[2], "worktrees", "*", "postfix-gate", "full_pass.json"))):
+        try:
+            with os.fdopen(open_reg(rp), encoding="utf-8") as fh:
+                rec = json.loads(fh.read(1 << 20))
+        except (OSError, ValueError, RecursionError):
+            continue
+        if not isinstance(rec, dict) or rec.get("exit") != 0 or rec.get("carried_from") or not isinstance(rec.get("project"), str):
+            continue
+        rtime = rec.get("time")
+        if isinstance(rtime, bool) or not isinstance(rtime, (int, float)) or not (start <= rtime <= time.time() + 60):
+            continue
+        proj = rec["project"]
+        gd = out(git("rev-parse", "--absolute-git-dir", cwd=proj))
+        if not gd or os.path.realpath(gd) != os.path.realpath(os.path.dirname(os.path.dirname(rp))):   # biên nhận đúng của worktree đó
+            continue
+        wst = dirty_state(proj, tree_fp)
+        if (not wst or wst[1] or not rec.get("fingerprint") or rec.get("fingerprint") != tree_fp.tree_fingerprint(proj)
+                or out(git("rev-parse", wst[0] + "^{tree}")) != want):
+            continue
+        return "worktree-receipt %s head=%s" % (proj, wst[0][:12])
+    # (b) bản ghi merge gate của lượt: chỉ kết quả của chính lệnh gọi super-board-merge-gate.sh, ghi sau lời nhắc người dùng
+    # ponytail: bản ghi trong transcript gắn với phiên chỉ qua lệnh của nó; một phiên chép dòng "merged <H>" của PR phiên KHÁC gộp trong
+    # cùng lượt vẫn qua (git chỉ chứng thực H đã gộp qua origin trong lượt, không phải ai gộp). Nâng cấp khi merge gate ghi biên nhận theo
+    # session id vào git common dir.
+    calls, merged = set(), []
+    try:
+        with os.fdopen(open_reg(d.get("transcript_path") or ""), encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                if "merge-gate" not in raw:
+                    continue
+                try:
+                    e = json.loads(raw)
+                    if datetime.datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")).timestamp() < start:
+                        continue
+                except (ValueError, AttributeError, TypeError, RecursionError):
+                    continue
+                msg = e.get("message") if isinstance(e, dict) else None
+                for c in (msg.get("content") if isinstance(msg, dict) else None) or []:
+                    if not isinstance(c, dict):
+                        continue
+                    if (e.get("type") == "assistant" and c.get("type") == "tool_use" and c.get("name") == "Bash"
+                            and "super-board-merge-gate.sh" in str((c.get("input") or {}).get("command", ""))):
+                        calls.add(c.get("id"))
+                    elif c.get("type") == "tool_result" and c.get("tool_use_id") in calls:
+                        body = c.get("content")
+                        if isinstance(body, list):
+                            body = "\n".join(x.get("text", "") for x in body if isinstance(x, dict))
+                        body = str(body or "")
+                        for pr, sha in re.findall(r"^\[merge-gate #(\d+)\] merged ([0-9a-f]{40})\s*$", body, re.M):
+                            if re.search(r"^\[merge-gate #%s\] verified green against " % pr, body, re.M):
+                                merged.append((pr, sha))
+    except OSError:
+        return None
+    if not merged:
+        return None
+    ls = git("ls-remote", "--symref", "origin", "HEAD", t=15)   # mạng: chỉ ở nhánh hiếm này (XONG, thiếu biên nhận, có bản ghi merge gate)
+    tip = re.search(r"^([0-9a-f]{40})\tHEAD$", out(ls) or "", re.M)
+    if not tip or git("cat-file", "-e", tip.group(1) + "^{commit}").returncode:
+        log("merge-gate check: origin HEAD unreadable (%s)" % (ls.stderr.decode("utf-8", "replace").strip()[:120] or "no HEAD line"))
+        return None
+    tip = tip.group(1)
+    hist = out(git("log", "--first-parent", "-n", "200", "--format=%H %ct %P", tip)) or ""
+    landed = [(c[0], c[2]) for c in (l.split() for l in hist.splitlines())
+              if len(c) == 3 and c[1].isdigit() and int(c[1]) >= start - MERGE_GATE_SKEW_S]   # một cha (squash), ghi trong lượt
+    for pr, h in reversed(merged):
+        for s, parent in landed:
+            mt = out(git("merge-tree", "--write-tree", parent, h))
+            if not mt or mt.split()[0] != out(git("rev-parse", s + "^{tree}")):
+                continue
+            if head == h or (git("merge-base", "--is-ancestor", s, head).returncode == 0
+                             and git("merge-base", "--is-ancestor", head, tip).returncode == 0):
+                return "merge-gate pr=%s head=%s squash=%s" % (pr, h[:12], s[:12])
+    return None
 
 gate_problem = full_gate_problem() if xong else None
+if gate_problem:
+    try:
+        alt = merged_evidence()
+    except Exception as e:   # python chết = wrapper exit 0 = XONG lọt; lỗi ở đây = chặn như cũ
+        log("merged-evidence check crashed: %r" % e)
+        alt = None
+    if alt:
+        log("pass-gate session=%s %s (receipt: %s)" % (session, alt, gate_problem))
+        gate_problem = None
 need_image, scope = xong, "unknown" if xong else "push turn: report only"
 if xong:
     try:
