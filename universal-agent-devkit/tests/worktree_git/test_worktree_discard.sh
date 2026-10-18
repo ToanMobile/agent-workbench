@@ -75,6 +75,18 @@ bash "$KIT" worktree discard ../w-owned >"$TMP/a12.out" 2>&1; rc=$?
 [ "$rc" != 0 ] && [ -e "$TMP/w-owned" ] && ok "a12 discard refuses a worktree whose owner session is alive (rc=$rc)" \
   || { fail "a12 discard took a live session's worktree (rc=$rc)"; cat "$TMP/a12.out"; }
 rm -f "$R/.git/devkit-sessions/other-live.json"
+# a12b. (review 18/10) phiên chủ không có pid ở đâu cả (chưa đăng ký) và worktree mới dựng: không chứng minh được nó đã dừng — từ chối
+bash "$KIT" worktree add ../w-unk --session=other-unknown >/dev/null 2>&1 || fail "add w-unk"
+rm -f "$TMP/w-unk/b.txt"
+bash "$KIT" worktree discard ../w-unk >"$TMP/a12b.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && [ -e "$TMP/w-unk" ] && ok "a12b discard refuses a young worktree whose owner cannot be proven gone (rc=$rc)" \
+  || { fail "a12b discard took a worktree of an owner not proven gone (rc=$rc)"; cat "$TMP/a12b.out"; }
+# a12c. (review 18/10) khoá checkout của một phiên đang rảnh ở prompt (idle_since) vẫn là phiên sống — từ chối
+mk w-idle; rm -f "$TMP/w-idle/b.txt"; GD=$(G "$TMP/w-idle" rev-parse --absolute-git-dir)
+printf '{"session_id":"idle-one","pid":%s,"heartbeat":%s,"idle_since":%s,"gitdir":"%s"}\n' "$SLEEPER" "$(date +%s)" "$(date +%s)" "$GD" > "$GD/devkit-session.lock"
+bash "$KIT" worktree discard ../w-idle >"$TMP/a12c.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && [ -e "$TMP/w-idle" ] && ok "a12c discard refuses a worktree whose checkout lock holder is idle but alive (rc=$rc)" \
+  || { fail "a12c discard took an idle live session's worktree (rc=$rc)"; cat "$TMP/a12c.out"; }
 
 # a3. file sửa chưa commit: từ chối, file còn nguyên
 mk w-mod; echo mine > "$TMP/w-mod/a.txt"
@@ -344,6 +356,41 @@ printf '#!/bin/sh\necho %s\n' "'[{\"number\":11,\"headRefOid\":\"$TIPM\",\"baseR
 [ "$rc" != 0 ] && G "$R3" show-ref --verify --quiet refs/heads/r-moved && [ -n "$(G "$R3" ls-remote origin refs/heads/r-moved)" ] \
   && ok "p11 prune-branch --remote keeps both when the origin branch moved past the merged PR (rc=$rc)" \
   || { fail "p11 prune-branch --remote deleted a branch that moved on (rc=$rc)"; cat "$TMP/p11.out"; }
+# p12. (OCR 18/10) `git push --delete` bị từ chối (mạng, quyền, lease): không xoá gì, cả nhánh local
+G "$R3" branch r-fail "$L3"; G "$R3" push -q origin r-fail 2>/dev/null; TIPF=$(G "$R3" rev-parse r-fail)
+printf '#!/bin/sh\necho %s\n' "'[{\"number\":12,\"headRefOid\":\"$TIPF\",\"baseRefName\":\"main\",\"isCrossRepository\":false}]'" > "$FAKE/gh"
+printf '#!/bin/sh\ncase " $* " in *" push "*) echo "fatal: shim refuses push" >&2; exit 1;; esac\nexec %s "$@"\n' "$REALGIT" > "$SHIM/git"
+( cd "$R3" && PATH="$SHIM:$FAKE:$PATH" bash "$KIT" worktree prune-branch --remote r-fail ) >"$TMP/p12.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && G "$R3" show-ref --verify --quiet refs/heads/r-fail && [ -n "$(G "$R3" ls-remote origin refs/heads/r-fail)" ] \
+  && ok "p12 prune-branch --remote deletes nothing when the push is refused (rc=$rc)" \
+  || { fail "p12 prune-branch --remote lost the local branch on a refused push (rc=$rc)"; cat "$TMP/p12.out"; }
+# s5–s4 (OCR 18/10): nhánh `reset --keep` của việc đồng bộ. Commit riêng L3 của main nay cũng đã squash lên origin (l.txt): gộp main vào
+# origin không thêm gì. s5: index của main có file phiên khác đã stage — reset sẽ làm nó rơi: từ chối, main giữ nguyên
+squash l.txt l
+echo st > "$R3/st.txt"; G "$R3" add st.txt
+( cd "$R3" && bash "$KIT" worktree finish ../w-s3 ) >"$TMP/s5.out" 2>&1; rc=$?
+G "$R3" diff --cached --quiet HEAD -- st.txt; s5=$?   # 1 = st.txt vẫn đang stage
+[ "$rc" != 0 ] && [ "$(G "$R3" rev-parse main)" = "$L3" ] && [ "$s5" = 1 ] && ok "s5 the reset --keep sync refuses while main's index holds a staged file (rc=$rc)" \
+  || { fail "s5 sync with a staged file in main (rc=$rc)"; cat "$TMP/s5.out"; }
+G "$R3" rm -q --cached st.txt; rm -f "$R3/st.txt"
+# s4. index sạch, một sửa CHƯA commit ở main trên file origin không đổi: reset --keep dời main về origin, giữ nguyên bản sửa; worktree gỡ
+echo dirty > "$R3/base.txt"
+( cd "$R3" && bash "$KIT" worktree finish ../w-s3 ) >"$TMP/s4.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ "$(G "$R3" rev-parse main)" = "$(G "$R3" rev-parse origin/main)" ] && [ "$(cat "$R3/base.txt")" = dirty ] && [ ! -e "$TMP/w-s3" ] \
+  && ! G "$R3" merge-base --is-ancestor "$S3ORIG" main \
+  && ok "s4 a main whose own commits origin holds by content moves to origin/main by reset --keep, keeping an uncommitted edit" \
+  || { fail "s4 reset --keep sync (rc=$rc)"; cat "$TMP/s4.out"; G "$R3" log --oneline -4 main; }
+G "$R3" checkout -q -- base.txt 2>/dev/null
+# s6. (OCR 18/10) nhánh đã publish, PR đã squash, nhưng worktree có regression_status.json do NGƯỜI sửa (việc thật): không coi là "chỉ còn
+#     đồng bộ" — vẫn từ chối như mọi nhánh đã publish, không commit gì lên nhánh đó
+( cd "$R3" && bash "$KIT" worktree add ../w-s6 feat/q ) >/dev/null 2>&1 || fail "add w-s6"
+echo q > "$TMP/w-s6/q6.txt"; G "$TMP/w-s6" add q6.txt && G "$TMP/w-s6" commit -qm q6 && G "$TMP/w-s6" push -q -u origin feat/q 2>/dev/null
+Q6=$(G "$TMP/w-s6" rev-parse HEAD); squash q6.txt q
+mkdir -p "$TMP/w-s6/.agents"; echo 'not json' > "$TMP/w-s6/.agents/regression_status.json"
+( cd "$R3" && bash "$KIT" worktree finish ../w-s6 ) >"$TMP/s6.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && [ "$(G "$TMP/w-s6" rev-parse HEAD)" = "$Q6" ] && [ -e "$TMP/w-s6" ] \
+  && ok "s6 a published branch with a person's regression_status.json edit is not synced away or committed to (rc=$rc)" \
+  || { fail "s6 published branch with an authored status edit (rc=$rc)"; cat "$TMP/s6.out"; }
 
 # --- guard: dạng git trần vẫn bị chặn, và lời chặn chỉ sang đúng lệnh kit ---------------------------------------------------------
 HOOK="$DEVKIT_DIR/hooks/block-dangerous-git.sh"

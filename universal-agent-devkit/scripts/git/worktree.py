@@ -1819,7 +1819,8 @@ def _branch_in_main(main, branch):
     if not tip or not _content_in_trunk(main, f"refs/heads/{branch}"):
         return False, ""
     ok, kept = _delete_branch(main, branch, tip)
-    return ok, (tr(f"; commit chỉ nhánh giữ đã cất ở {kept}", f"; commits only the branch held are kept in {kept}") if ok and kept else "")
+    return ok, (tr(f"; commit chỉ nhánh giữ đã cất ở {kept} ({DISCARD_KEEP_DAYS} ngày)", f"; commits only the branch held are kept in {kept} ({DISCARD_KEEP_DAYS} days)")
+                if ok and kept else "")
 
 
 def _devkit_env(**extra):
@@ -1906,16 +1907,8 @@ def _content_in_trunk(main, ref):
     trunk = _trunk_branch(main)
     if not trunk:
         return False
-    for tip in (f"refs/heads/{trunk}", f"refs/remotes/origin/{trunk}"):
-        tree = git(main, "rev-parse", "-q", "--verify", f"{tip}^{{tree}}", check=False).stdout.strip()
-        if not tree:
-            continue
-        if _is_ancestor(main, ref, tip):
-            return True
-        merged = git(main, "merge-tree", "--write-tree", tip, ref, check=False)
-        if merged.returncode == 0 and merged.stdout.split("\n", 1)[0].strip() == tree:
-            return True
-    return False
+    return any(_is_ancestor(main, ref, tip) or _merges_to(main, tip, ref) for tip in (f"refs/heads/{trunk}", f"refs/remotes/origin/{trunk}")
+               if git(main, "rev-parse", "-q", "--verify", f"{tip}^{{commit}}", check=False).returncode == 0)
 
 
 def _merged_pr_at(main, branch, tip):
@@ -2087,9 +2080,13 @@ def _live_holder(main, wt):
             dead, why = session_lock.owner_gone(main, owner, session_worktree, main)
             if (not dead and why == "alive") or session_lock.info_alive(session_lock.read_session(main, owner)):
                 return tr(f"phiên chủ {owner} (state của worktree) còn sống", f"its owner session {owner} (the worktree's state) is alive")
+            # không pid nào nói được (owner_gone "unknown" = coi là SỐNG, review 18/10): chỉ khi state đã quá 24 h, như việc nhận nuôi worktree
+            if not dead and time.time() - os.lstat(os.path.join(git_dir(wt), STATE)).st_mtime < session_lock.RECORD_NO_PID_TAKEOVER_S:
+                return tr(f"phiên chủ {owner} (state của worktree) chưa chứng minh được đã dừng (không pid nào, state chưa quá 24 h)",
+                          f"its owner session {owner} (the worktree's state) is not proven gone (no pid anywhere, the state is under 24 h old)")
         lock = session_lock.read_checkout_lock(git_dir(wt))
         pid = (lock or {}).get("pid")
-        if isinstance(pid, int) and pid > 1 and session_lock.is_pid_alive(pid) and not lock.get("idle_since"):
+        if isinstance(pid, int) and pid > 1 and session_lock.is_pid_alive(pid):   # (idle ở prompt vẫn là phiên sống, review 18/10)
             return tr(f"phiên {lock.get('session_id', '?')} giữ khoá checkout của nó (pid {pid} còn sống)",
                       f"session {lock.get('session_id', '?')} holds its checkout lock (pid {pid} is alive)")
     except Exception as e:  # noqa: BLE001 - cannot tell who holds it: never removed
@@ -2210,18 +2207,20 @@ def cmd_prune_branch(cwd, args):
         elif not tip:
             die(tr(f"không có nhánh {name}, cả local lẫn trên origin", f"no branch {name}, neither local nor on origin"))
     done = []
+    if rtip:   # remote TRƯỚC: lệnh push bị từ chối (lease lệch, mạng, quyền) thì nhánh local vẫn còn nguyên (OCR 18/10)
+        r = git(main, "push", f"--force-with-lease={ref}:{rtip}", "origin", "--delete", ref, check=False, bounded=False)
+        if r.returncode:
+            die(tr(f"origin/{name}: git push --delete bị từ chối, không xoá gì: ", f"origin/{name}: git push --delete refused, nothing deleted: ")
+                + (r.stderr or "").strip()[-300:], 1)
+        done.append(f"origin/{name} ({rtip[:12]}) " + tr(f"PR #{rpr} đã MERGED đúng tip này", f"PR #{rpr} merged at this tip"))
     if tip:
         ok, kept = _delete_branch(main, name, tip)
         if not ok:
-            die(f"{name}: {kept}", 1)
+            die(f"{name}: {kept}" + (tr(" (nhánh trên origin đã xoá)", " (the origin branch is deleted)") if done else ""), 1)
         done.append(f"{name} ({tip[:12]}) " + (tr(f"PR #{pr} đã MERGED đúng tip này", f"PR #{pr} merged at this tip") if pr is not None
                                                else tr("đã nằm trong trunk", "is in the trunk"))
-                    + (tr(f"; commit chỉ nhánh giữ đã cất ở {kept}", f"; commits only the branch held are kept in {kept}") if kept else ""))
-    if rtip:
-        r = git(main, "push", f"--force-with-lease={ref}:{rtip}", "origin", "--delete", ref, check=False, bounded=False)
-        if r.returncode:
-            die(tr(f"origin/{name}: git push --delete bị từ chối: ", f"origin/{name}: git push --delete refused: ") + (r.stderr or "").strip()[-300:], 1)
-        done.append(f"origin/{name} ({rtip[:12]}) " + tr(f"PR #{rpr} đã MERGED đúng tip này", f"PR #{rpr} merged at this tip"))
+                    + (tr(f"; commit chỉ nhánh giữ đã cất ở {kept} ({DISCARD_KEEP_DAYS} ngày)",
+                          f"; commits only the branch held are kept in {kept} ({DISCARD_KEEP_DAYS} days)") if kept else ""))
     print("✔ prune-branch: " + "; ".join(done) + tr(", đã xoá", ", deleted"))
     return 0
 
@@ -2843,7 +2842,8 @@ def _published_squashed(main, wt):
         if _has_state_file(wt):
             return False
         state = _adopted_state(wt)
-    if [p for p in changes_since(wt, state) if p not in BOOKKEEPING]:
+    # cùng luật với _commit_pending: regression_status.json do NGƯỜI sửa là việc thật (nó sẽ bị commit lên nhánh đã publish, OCR 18/10)
+    if [p for p in changes_since(wt, state) if p not in BOOKKEEPING or (p == STATUS_FILE and _authored_status_changed(wt))]:
         return False
     return bool(_squashed_on_origin(main, git(wt, "rev-parse", "HEAD", check=False).stdout.strip()))
 
@@ -3000,6 +3000,11 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
         if _is_ancestor(main, w_head, main_head) or (squashed and _adds_nothing_to_main(main, main_head, w_head)):
             status = "nothing"   # everything the worktree has is already in main (squashed: as the squash commit, never its own commits)
             break
+        if squashed:   # main đã về origin mà hai phép kiểm (merge-tree tự chọn base / một merge-base) vẫn bất đồng: không bao giờ gộp commit gốc của PR (review 18/10)
+            return "blocked", tr("PR của worktree đã gộp vào origin và main đã đồng bộ về đó, nhưng worktree vẫn còn mang thêm thay đổi: không tự gộp "
+                                 "commit gốc của PR vào main — đem phần còn lại về bằng PR mới",
+                                 "the worktree's PR is merged on origin and main is synced to it, yet the worktree still adds changes: the PR's own "
+                                 "commits are not merged into main automatically - bring the rest back in a new PR"), {}
         w_before, merged_in = w_head, False   # K8: HEAD worktree trước khi gộp main ở vòng này
         if not _is_ancestor(main, main_head, w_head):
             if merges >= MERGE_ROUNDS:
@@ -3512,7 +3517,9 @@ def cmd_gc(cwd, args):
     for ref in git(main, "for-each-ref", "--format=%(refname)", DISCARD_REF, check=False).stdout.split():
         m = DISCARD_REF_DATE_RE.fullmatch(ref)   # bản cất của `worktree discard` quá DISCARD_KEEP_DAYS ngày; tên không có ngày thì để yên
         if m and m.group(1) < oldest and (dry or git(main, "update-ref", "-d", ref, check=False).returncode == 0):
-            deleted.append(ref)
+            deleted.append(ref)   # (cả bản cất branch-<nhánh>-* của prune-branch / remove: lời báo của chúng nói rõ DISCARD_KEEP_DAYS ngày)
+            if log and not dry:   # vào sổ gc như thư mục đã xoá (OCR 18/10)
+                _gc_log(log, (["== " + time.strftime("%Y-%m-%d %H:%M:%S")] if len(deleted) == 1 else []) + ["✔ gc: " + tr("đã xoá ", "deleted ") + ref])
     for p in deleted:
         print(("• gc (dry-run): " + tr("sẽ xoá ", "would delete ") if dry else "✔ gc: " + tr("đã xoá ", "deleted ")) + p + notes.get(p, ""))
     for p, why in kept:
