@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # `agent-kit worktree gc` (W1 step 1, docs/workflow-improvements.md I.0 R5b; 2026-10-13: 8 orphan GeelyEx2-* folders, 1.25 GB, were
 # left for the user because hardware_safety_gate rightly blocks an agent's `rm -rf` outside the project). gc deletes a folder only when
-# every file in it is provably not unique: a symlink, noise (.DS_Store), DevKit bookkeeping, the same bytes as main's file at that path,
+# every file in it is provably not unique: a symlink main has too (same path, same target) or a DevKit kit link (issue #12 / #40: any
+# other symlink is work), noise (.DS_Store), DevKit bookkeeping, the same bytes as main's file at that path,
 # the blob a kept commit holds AT THAT PATH (a committed version of that file), or an ignored build output that is not a secret
 # (issue #12: a new path holding bytes committed elsewhere is work, not a committed version). Candidates: registered
 # worktrees already integrated, `<repo>-*` siblings whose `.git` pointer dangles into THIS repo, and `<repo>-*` siblings with no `.git`
@@ -35,12 +36,14 @@ dangle() {   # dangle <name>: a worktree whose admin dir is gone, so its .git po
 mkdir -p "$TMP/main-merged/build" && echo bin > "$TMP/main-merged/build/out.bin"   # an ignored build output does not keep it
 # 2 a registered worktree with a commit main lacks: kept
 G "$R" worktree add -q --detach "$TMP/main-ahead" && echo x > "$TMP/main-ahead/x.txt" && G "$TMP/main-ahead" add x.txt && G "$TMP/main-ahead" commit -qm x
-# 3 a dangling orphan: only committed content (an old blob), main's identical local config, a build output, noise, a link: deleted
+# 3 a dangling orphan: only committed content (an old blob), main's identical local config, a build output, noise, a DevKit kit
+#   link (into main's universal-agent-devkit/: install state, issue #12 / #40): deleted
 dangle main-orphan-clean
 echo v1 > "$TMP/main-orphan-clean/lib.txt"; cp "$R/local.properties" "$TMP/main-orphan-clean/"
 mkdir -p "$TMP/main-orphan-clean/build/out" && echo bin > "$TMP/main-orphan-clean/build/out/app.bin"
 echo png > "$TMP/main-orphan-clean/build/out/ảnh.png"   # a non-ASCII build output: git quotes such names unless core.quotePath=false
-: > "$TMP/main-orphan-clean/.DS_Store"; ln -s "$R" "$TMP/main-orphan-clean/link-to-main"
+mkdir -p "$R/universal-agent-devkit/skills/x"   # thư mục rỗng: git không thấy, main không bẩn
+: > "$TMP/main-orphan-clean/.DS_Store"; ln -s "$R/universal-agent-devkit/skills/x" "$TMP/main-orphan-clean/kit-skill-x"
 chflags uchg "$TMP/main-orphan-clean/app.txt" 2>/dev/null   # a locked copy (INSTINCT-038) must not strand it
 # 4 a dangling orphan with a file never committed: kept
 dangle main-orphan-unique; echo "work only here" > "$TMP/main-orphan-unique/notes.md"
@@ -193,4 +196,36 @@ exists main-orphan-empty && grep -q "main-orphan-empty.*newpkg/__init__.py" "$TM
 exists main-orphan-movedcopy && grep -q "main-orphan-movedcopy.*mv-copy.txt" "$TMP/gc7.out" \
   && ok "a copy of a file whose own path history is asked in the same call is kept and named (issue #12)" \
   || fail "main-orphan-movedcopy deleted or unnamed: $(cat "$TMP/gc7.out")"
+# issue #12 (#40): symlink trong orphan là việc riêng — trừ khi main có symlink cùng đường dẫn + cùng đích, hoặc là link kit DevKit
+# tự cài (trỏ vào universal-agent-devkit/ / .agents/devkit/ của main); không đi theo link
+ln -s /opt/tool "$R/tool-link"   # symlink chưa track của main
+dangle main-orphan-newlink; mkdir -p "$TMP/main-orphan-newlink/src" && ln -s /x "$TMP/main-orphan-newlink/src/newlink"
+mkdir -p "$TMP/elsewhere-dir"; dangle main-orphan-dirlink; ln -s "$TMP/elsewhere-dir" "$TMP/main-orphan-dirlink/dirlink"
+dangle main-orphan-samelink; ln -s /opt/tool "$TMP/main-orphan-samelink/tool-link"
+dangle main-orphan-otherlink; ln -s /opt/other "$TMP/main-orphan-otherlink/tool-link"   # cùng đường dẫn, KHÁC đích
+dangle main-orphan-kitlink; mkdir -p "$TMP/main-orphan-kitlink/.agents/skills" \
+  && ln -s "$R/universal-agent-devkit/skills/x" "$TMP/main-orphan-kitlink/.agents/skills/x" \
+  && ln -s ../../universal-agent-devkit "$TMP/main-orphan-kitlink/.agents/devkit-rel"   # link tương đối, realpath ra ngoài main: việc riêng
+python3 "$WT" gc > "$TMP/gc8.out" 2>&1; rc=$?
+exists main-orphan-newlink && grep -q "main-orphan-newlink.*src/newlink" "$TMP/gc8.out" \
+  && ok "an orphan with a new symlink main lacks is kept and names the link (#40)" || fail "main-orphan-newlink deleted or unnamed: $(cat "$TMP/gc8.out")"
+exists main-orphan-dirlink && grep -q "main-orphan-dirlink.*dirlink" "$TMP/gc8.out" \
+  && ok "an orphan with a new symlink to a directory is kept and names it, the link not followed (#40)" || fail "main-orphan-dirlink: $(cat "$TMP/gc8.out")"
+exists main-orphan-otherlink && grep -q "main-orphan-otherlink.*tool-link" "$TMP/gc8.out" \
+  && ok "a symlink at main's path but with another target is kept (#40)" || fail "main-orphan-otherlink: $(cat "$TMP/gc8.out")"
+[ "$rc" = 0 ] && ! exists main-orphan-samelink && ok "an orphan whose symlink equals main's (same path, same target) is deleted (#40)" \
+  || fail "main-orphan-samelink stranded (rc=$rc): $(cat "$TMP/gc8.out")"
+exists main-orphan-kitlink && grep -q "main-orphan-kitlink.*devkit-rel" "$TMP/gc8.out" && ! grep -q "main-orphan-kitlink.*skills/x" "$TMP/gc8.out" \
+  && ok "a kit link into main's kit is install state, a link resolving outside it is work (#40)" || fail "main-orphan-kitlink: $(cat "$TMP/gc8.out")"
+[ -d "$TMP/elsewhere-dir" ] && [ -L "$R/tool-link" ] && ok "gc never followed a link into what it points to" || fail "a link target was deleted"
+# issue #12 (#40): tuổi xét mọi file/thư mục vòng duyệt đi qua, không chỉ thư mục gốc + .git: file trong thư mục con vừa ghi lại → giữ
+dangle main-orphan-young; dangle main-orphan-old
+find "$TMP/main-orphan-young" "$TMP/main-orphan-old" -exec touch -h -t 202601010000 {} +
+touch "$TMP/main-orphan-young/config/app.json"   # ghi lại (cùng nội dung): mtime mới, thư mục gốc + .git + config/ vẫn cũ
+WORKTREE_GC_MIN_AGE_S=600 python3 "$WT" gc > "$TMP/gc9.out" 2>&1; rc=$?
+exists main-orphan-young && grep -q "main-orphan-young.*config/app.json" "$TMP/gc9.out" \
+  && ok "an orphan with a subfolder file written within WORKTREE_GC_MIN_AGE_S is kept and named, root and .git old (#40)" \
+  || fail "main-orphan-young deleted or unnamed: $(cat "$TMP/gc9.out")"
+[ "$rc" = 0 ] && ! exists main-orphan-old && ok "  … the same orphan with every file old is deleted (the age check keeps only what is new)" \
+  || fail "main-orphan-old stranded (rc=$rc): $(cat "$TMP/gc9.out")"
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_gc: all passed" || { echo "❌ test_worktree_gc: $FAILS failed"; exit 1; }

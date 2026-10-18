@@ -329,6 +329,16 @@ def _same_in_main(wt, main, rel):
     return fp == fingerprint(os.path.join(main, rel))
 
 
+def _into_kit(main, path):
+    """True khi `path` (đi theo mọi link) nằm trong thư mục kit của main: universal-agent-devkit/ hoặc .agents/devkit/."""
+    target = os.path.realpath(path)
+    for kit in ("universal-agent-devkit", os.path.join(".agents", "devkit")):
+        root = os.path.realpath(os.path.join(main, kit))
+        if target == root or target.startswith(root + os.sep):
+            return True
+    return False
+
+
 def _kit_link(wt, main, rel):
     """True when `rel` is an UNTRACKED symlink the DevKit installer or `heal` made: it points into the main checkout's own kit folder
     (universal-agent-devkit/ or .agents/devkit/). That is install state, never work. `heal` adds such a link later than the setup
@@ -336,15 +346,7 @@ def _kit_link(wt, main, rel):
     `remove` kept the worktree and `finish` refused "a new symlink" for the user to clean by hand (agent-workbench 2026-10-17). A
     TRACKED path the user replaced by such a link (a type change) is still work: only an untracked one counts as setup."""
     path = os.path.join(wt, rel)
-    if not os.path.islink(path):
-        return False
-    target = os.path.realpath(path)
-    inside = False
-    for kit in ("universal-agent-devkit", os.path.join(".agents", "devkit")):
-        root = os.path.realpath(os.path.join(main, kit))
-        if target == root or target.startswith(root + os.sep):
-            inside = True
-    if not inside:
+    if not os.path.islink(path) or not _into_kit(main, path):
         return False
     # Untracked means in NEITHER the index nor HEAD (`git rm f` then a link at f: gone from the index, still a type change from HEAD).
     # Only rc 1 of ls-files ("did not match any file known to git") and an empty, successful ls-tree prove it: a timeout (124) or a
@@ -3409,31 +3411,55 @@ def _path_versions(main, rels):
     return out
 
 
+def _gc_link_known(main, rel, p):
+    """#40: True khi symlink `p` (đường dẫn `rel` trong orphan) không phải việc riêng: main có symlink cùng đường dẫn + cùng đích
+    (`readlink` bằng nhau), hoặc nó trỏ vào thư mục kit của main (trạng thái cài DevKit mà `worktree add` / heal tạo, như _kit_link).
+    Không đi theo link khi so; đọc lỗi = việc riêng (giữ)."""
+    try:
+        mine = os.path.join(main, rel)
+        if os.path.islink(mine) and os.readlink(mine) == os.readlink(p):
+            return True
+        return _into_kit(main, p)
+    except OSError:
+        return False
+
+
 def _gc_unique(main, top, dangling, carry=None):
     """[(rel, why)] of the files in `top` that may be the only copy of something; [] when every file is provably not unique. With no
     `.git` pointer (`dangling` False) the folder must hold DevKit bookkeeping and nothing but it and noise: anything else (an empty
     folder or one of links only too) means it is not a leftover. `carry` (a list): a secret (GC_SECRETS, and _secret_like) that main
     lacks, outside a _carry_skip_dirs() folder, goes there as (rel, path) instead of counting as unique: cmd_gc copies it into main first
     (A.1b #12)."""
-    files = []
+    files, links = [], []
+    # #40: tuổi xét mọi file / link / thư mục mà vòng duyệt này đi qua (không thêm một lượt duyệt), không chỉ gốc + .git như _gc_young
+    young = lambda q: GC_MIN_AGE_S > 0 and _gc_young(q)  # noqa: E731
     for dirpath, dirs, names in os.walk(top):
-        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(dirpath, d))]   # a link is never followed (.agents/devkit, a link to main)
+        linked = [d for d in dirs if os.path.islink(os.path.join(dirpath, d))]
+        dirs[:] = [d for d in dirs if d not in linked]   # a link is never followed (.agents/devkit, a link to main)
+        drel_here = os.path.relpath(dirpath, top).replace(os.sep, "/") + "/"
+        if drel_here != "./" and "/__pycache__/" not in "/" + drel_here and not drel_here.startswith(GC_BOOKKEEPING_DIRS) and young(dirpath):
+            return [(drel_here, tr("vừa đổi, chưa đủ WORKTREE_GC_MIN_AGE_S", "changed within WORKTREE_GC_MIN_AGE_S"))]
         for d in dirs if not dangling else ():   # a folder outside the bookkeeping (even an empty one) is a person's
             drel = os.path.relpath(os.path.join(dirpath, d), top).replace(os.sep, "/") + "/"
             if d != "__pycache__" and not any(b.startswith(drel) or drel.startswith(b) for b in GC_BOOKKEEPING_DIRS):
                 return [(drel, tr("không phải sổ sách DevKit", "not DevKit bookkeeping"))]
-        for n in names:
+        for n in names + linked:
             p = os.path.join(dirpath, n)
             rel = os.path.relpath(p, top).replace(os.sep, "/")
-            if rel == ".git" or os.path.islink(p) or n in GC_NOISE or "/__pycache__/" in "/" + rel or rel in GC_VIEWS \
-                    or rel.startswith(GC_BOOKKEEPING_DIRS):
+            if rel == ".git" or n in GC_NOISE or "/__pycache__/" in "/" + rel or rel in GC_VIEWS or rel.startswith(GC_BOOKKEEPING_DIRS):
+                continue
+            if young(p):
+                return [(rel, tr("vừa đổi, chưa đủ WORKTREE_GC_MIN_AGE_S", "changed within WORKTREE_GC_MIN_AGE_S"))]
+            if os.path.islink(p):
+                if dangling and not _gc_link_known(main, rel, p):   # #40: một symlink mới là việc riêng, mất im lặng khi xoá
+                    links.append((rel, tr("symlink main không có (cùng đường dẫn + cùng đích)", "a symlink main lacks (same path, same target)")))
                 continue
             if not dangling:
                 return [(rel, tr("không phải sổ sách DevKit", "not DevKit bookkeeping"))]
             files.append((rel, p))
     if not dangling and not any(os.path.isdir(os.path.join(top, d)) for d in GC_BOOKKEEPING_DIRS):
         return [("*", tr("không có sổ sách DevKit", "no DevKit bookkeeping"))]
-    unique, later = [], []
+    unique, later = links, []
     for rel, p in files:
         mine = os.path.join(main, rel)
         try:
