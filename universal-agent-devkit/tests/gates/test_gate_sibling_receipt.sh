@@ -269,7 +269,7 @@ git init -q -b main . && git config user.email t@t && git config user.name t
 echo "fun ok() = 1" > src/Core.kt
 cat > matrix.json <<JSON
 {"project":"t2","rules":[{"component":"Core","watch_files":["src/Core.kt"],
- "mandatory_regression_tests":[{"id":"REG-G","name":"gen","command":"echo run >> '$COUNT'; head -c 32 /dev/urandom > gen/overlay.bin"}]}]}
+ "mandatory_regression_tests":[{"id":"REG-G","name":"gen","command":"echo run >> '$COUNT'; [ -f gen/created.bin ] || echo once > gen/created.bin; [ -n \"\${GEN_UPTODATE:-}\" ] || head -c 32 /dev/urandom > gen/overlay.bin"}]}]}
 JSON
 printf '{"copy": ["gen/**"]}\n' > .agents/local/red_proof.json
 printf 'gen/\nLibrary/\nlocal.properties\n' > .gitignore
@@ -314,6 +314,44 @@ rm -f "$COMMON2"/worktrees/*/postfix-gate/full_pass.json; cp "$TMP/wt2a.json" "$
 add_wt2 wt2-y
 b=$(runs); out="$(gate2 "$TMP/wt2-y")"; rc=$?
 check "22. đối chứng: đúng biên nhận đó với local_regen gốc → mượn" 0 0 yes "$b" "$rc" "$out"
+
+# 19c. Lượt sau mà build KHÔNG ghi lại file đó (Gradle up-to-date: GEN_UPTODATE) vẫn bỏ nó khỏi local_sha: GeelyEx2 #65 (18/10) — APK của
+#      worktree còn là bản lượt trước đã ghi, scratch chép bản của main, local_regen của lượt này rỗng nên REG-CAR-01 chạy lại. File mà suite
+#      từng ghi lại ở bất kỳ checkout nào của repo được nhớ ở git common dir.
+GEN_JSON="$(git -C "$R2" rev-parse --path-format=absolute --git-common-dir)/postfix-gate/local_generated.json"
+python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("gen/overlay.bin", 0) >= 2 else 1)' "$GEN_JSON" \
+  && echo "✔ 19c. tiền đề: các lượt thật trước (19, 22) đã thấy suite ghi lại gen/overlay.bin ≥ 2 lần" || fail "19c. tiền đề: local_generated.json chưa đếm gen/overlay.bin ≥ 2"
+add_wt2 wt2-g
+printf 'built-by-an-earlier-run' > "$TMP/wt2-g/gen/overlay.bin"
+b=$(runs); out="$(GEN_UPTODATE=1 gate2 "$TMP/wt2-g" --no-cache)"; rc=$?
+check "19c. tiền đề: wt2-g PASS thật, lần này suite không ghi lại gen/overlay.bin" 0 1 no "$b" "$rc" "$out"
+rm -f "$(git -C "$R2" rev-parse --path-format=absolute --git-common-dir)"/worktrees/wt2-[!g]*/postfix-gate/full_pass.json   # chỉ còn biên nhận của wt2-g
+add_wt2 wt2-h
+b=$(runs); out="$(gate2 "$TMP/wt2-h")"; rc=$?
+check "19c. file suite từng ghi lại vẫn không so ở lượt build không ghi lại nó: mượn PASS" 0 0 yes "$b" "$rc" "$out"
+
+# 19d. File chỉ MỘT lượt thật thấy bị ghi lại (người/tool sửa trong lúc suite chạy) chưa được tin: vẫn so — khác thì không mượn.
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["gen/keep.bin"]=1; json.dump(d, open(sys.argv[1], "w"))' "$GEN_JSON" || fail "19d. setup"
+add_wt2 wt2-i
+b=$(runs); out="$(GEN_UPTODATE=1 gate2 "$TMP/wt2-i" --no-cache)"; rc=$?
+check "19d. tiền đề: wt2-i PASS thật" 0 1 no "$b" "$rc" "$out"
+rm -f "$(git -C "$R2" rev-parse --path-format=absolute --git-common-dir)"/worktrees/wt2-[!i]*/postfix-gate/full_pass.json   # chỉ còn biên nhận của wt2-i
+add_wt2 wt2-j
+printf other > "$TMP/wt2-j/gen/keep.bin"
+b=$(runs); out="$(gate2 "$TMP/wt2-j")"; rc=$?
+check "19d. file mới thấy bị ghi lại 1 lần vẫn được so: khác thì không mượn" 0 1 no "$b" "$rc" "$out"
+
+# 19e. File suite TẠO khi thiếu (khoá/prebuilt sinh một lần) không được nhớ là output dù nhiều lượt tạo nó (review 18/10, P2): lượt có sẵn file
+#      đó (không tạo, không ghi lại) vẫn so nó — bản sửa tay khác thì không mượn.
+add_wt2 wt2-k
+printf once > "$TMP/wt2-k/gen/created.bin"
+b=$(runs); out="$(GEN_UPTODATE=1 gate2 "$TMP/wt2-k" --no-cache)"; rc=$?
+check "19e. tiền đề: wt2-k PASS thật, gen/created.bin có sẵn" 0 1 no "$b" "$rc" "$out"
+rm -f "$(git -C "$R2" rev-parse --path-format=absolute --git-common-dir)"/worktrees/wt2-[!k]*/postfix-gate/full_pass.json   # chỉ còn biên nhận của wt2-k
+add_wt2 wt2-l
+printf hand-edited > "$TMP/wt2-l/gen/created.bin"
+b=$(runs); out="$(gate2 "$TMP/wt2-l")"; rc=$?
+check "19e. file suite chỉ tạo khi thiếu vẫn được so: khác thì không mượn" 0 1 no "$b" "$rc" "$out"
 
 # 20. Config cục bộ nằm trong cache build (Unity Library/Bee/**/Gradle/local.properties, chỉ worktree có vì clone unity/Library) → vẫn mượn.
 rm -f "$(git -C "$R2" rev-parse --path-format=absolute --git-common-dir)"/worktrees/*/postfix-gate/full_pass.json

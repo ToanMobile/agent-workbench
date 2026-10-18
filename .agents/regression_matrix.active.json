@@ -229,6 +229,19 @@
           "command": "bash tests/super-board/test_runner_lanes.sh"
         }
       ]
+    },
+    {
+      "component": "super-board-merge-gate",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-STALE-01",
+          "name": "merge gate says stale only when the branch is behind base",
+          "command": "bash tests/super-board/test_merge_gate_stale_message.sh"
+        }
+      ]
     }
   ]
 }
