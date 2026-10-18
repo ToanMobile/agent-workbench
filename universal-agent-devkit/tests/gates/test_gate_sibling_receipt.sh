@@ -247,5 +247,99 @@ add_wt wt-s
 b=$(runs); out="$(run_gate "$TMP/wt-s")"; rc=$?
 check "17. dòng run-log lồng quá sâu: gate không crash, vẫn mượn PASS" 0 0 yes "$b" "$rc" "$out"
 
+# 19-20. Trạng thái cục bộ (local_state_sha) của scratch phải bằng của worktree khi cây trùng (18/10, đo ở GeelyEx2 #62 và Neighbours #48:
+#        tree_fp trùng, local_sha khác, suite nặng chạy lại). Repo riêng R2: suite của nó GHI LẠI một build input (như task Test của
+#        CarConnect build lại launcher-whitelist.apk, khai trong red_proof.json "copy"), mỗi lượt ra byte khác.
+R2="$TMP/repo2"
+mkdir -p "$R2/src" "$R2/.agents/local" && cd "$R2" || exit 1
+git init -q -b main . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt
+cat > matrix.json <<JSON
+{"project":"t2","rules":[{"component":"Core","watch_files":["src/Core.kt"],
+ "mandatory_regression_tests":[{"id":"REG-G","name":"gen","command":"echo run >> '$COUNT'; head -c 32 /dev/urandom > gen/overlay.bin"}]}]}
+JSON
+printf '{"copy": ["gen/**"]}\n' > .agents/local/red_proof.json
+printf 'gen/\nLibrary/\nlocal.properties\n' > .gitignore
+git add -A && git commit -qm init
+echo "fun ok() = 2" > src/Core.kt
+git commit -qam change
+add_wt2() {   # như worktree add / scratch-config: build input chép từ main checkout (nội dung "main")
+  git -C "$R2" worktree add -q --detach "$TMP/$1" HEAD || { echo "✖ setup: worktree add $1"; exit 1; }
+  mkdir -p "$TMP/$1/gen" && printf main > "$TMP/$1/gen/overlay.bin" && printf keep > "$TMP/$1/gen/keep.bin"
+}
+gate2() { local d="$1"; shift; ( cd "$d" && CLAUDE_PROJECT_DIR="$d" python3 "$GATE" --matrix "$d/matrix.json" --run-tests --full --force-full --diff HEAD~1 "$@" 2>&1 ); }
+
+# 19. Build input do chính suite ghi lại: worktree PASS thật (overlay.bin đổi trong lượt), scratch có bản chép từ main → vẫn mượn.
+add_wt2 wt2-a
+b=$(runs); out="$(gate2 "$TMP/wt2-a" --no-cache)"; rc=$?
+check "19. tiền đề: wt2-a PASS thật, suite ghi lại gen/overlay.bin" 0 1 no "$b" "$rc" "$out"
+add_wt2 wt2-b
+b=$(runs); out="$(gate2 "$TMP/wt2-b")"; rc=$?
+check "19. build input suite tự ghi lại không chặn việc mượn PASS của worktree anh em" 0 0 yes "$b" "$rc" "$out"
+
+# 19b. Đối chứng: build input suite KHÔNG ghi lại mà khác nhau (gen/keep.bin) → không mượn, chạy suite.
+add_wt2 wt2-c
+printf other > "$TMP/wt2-c/gen/keep.bin"
+b=$(runs); out="$(gate2 "$TMP/wt2-c")"; rc=$?
+check "19b. build input khác mà suite không ghi lại: không mượn, chạy suite" 0 1 no "$b" "$rc" "$out"
+
+# 22. local_regen sai kiểu trong biên nhận anh em → không đọc biên nhận, gate không crash. Biên nhận gốc là của wt2-a (ca 19: chính nó cho mượn
+#     được, local_regen = [gen/overlay.bin]); một dict cùng khoá (lặp ra đúng tên đó) bị chặn chỉ bởi phép kiểm kiểu.
+COMMON2="$(git -C "$R2" rev-parse --path-format=absolute --git-common-dir)"
+WT2A_RECEIPT="$COMMON2/worktrees/wt2-a/postfix-gate/full_pass.json"
+cp "$WT2A_RECEIPT" "$TMP/wt2a.json" || fail "22. setup: wt2-a không có biên nhận"
+for bad in 5 '{"gen/overlay.bin": 1}'; do
+  rm -f "$COMMON2"/worktrees/*/postfix-gate/full_pass.json   # chỉ còn biên nhận giả
+  python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); r["local_regen"]=json.loads(sys.argv[3]); json.dump(r, open(sys.argv[2], "w"))' \
+    "$TMP/wt2a.json" "$WT2A_RECEIPT" "$bad" || fail "22. setup $bad"
+  n=$(( ${n22:-0} + 1 )); n22=$n
+  add_wt2 "wt2-x$n"
+  b=$(runs); out="$(gate2 "$TMP/wt2-x$n")"; rc=$?
+  check "22. local_regen=$bad: không mượn, chạy suite" 0 1 no "$b" "$rc" "$out"
+done
+rm -f "$COMMON2"/worktrees/*/postfix-gate/full_pass.json; cp "$TMP/wt2a.json" "$WT2A_RECEIPT"
+add_wt2 wt2-y
+b=$(runs); out="$(gate2 "$TMP/wt2-y")"; rc=$?
+check "22. đối chứng: đúng biên nhận đó với local_regen gốc → mượn" 0 0 yes "$b" "$rc" "$out"
+
+# 20. Config cục bộ nằm trong cache build (Unity Library/Bee/**/Gradle/local.properties, chỉ worktree có vì clone unity/Library) → vẫn mượn.
+rm -f "$(git -C "$R2" rev-parse --path-format=absolute --git-common-dir)"/worktrees/*/postfix-gate/full_pass.json
+add_wt2 wt2-d
+mkdir -p "$TMP/wt2-d/Library/Bee/Gradle" && echo "sdk.dir=/x" > "$TMP/wt2-d/Library/Bee/Gradle/local.properties"
+b=$(runs); out="$(gate2 "$TMP/wt2-d" --no-cache)"; rc=$?
+check "20. tiền đề: wt2-d (có Library/**/local.properties) PASS thật" 0 1 no "$b" "$rc" "$out"
+add_wt2 wt2-e
+b=$(runs); out="$(gate2 "$TMP/wt2-e")"; rc=$?
+check "20. local.properties trong Library/ (cache build) không chặn việc mượn" 0 0 yes "$b" "$rc" "$out"
+
+# 20b. Đối chứng: local.properties THẬT ở gốc khác nhau → không mượn, chạy suite.
+add_wt2 wt2-f
+echo "sdk.dir=/khac" > "$TMP/wt2-f/local.properties"
+b=$(runs); out="$(gate2 "$TMP/wt2-f")"; rc=$?
+check "20b. local.properties ở gốc khác: không mượn, chạy suite" 0 1 no "$b" "$rc" "$out"
+
+# 21. Config THẬT mà suite sửa tại chỗ (Flutter / Android Studio giữ sdk.dir, ghi lại khoá khác) không bao giờ vào local_regen (review 18/10, P1):
+#     scratch có sdk.dir khác thì không mượn, chạy suite — và suite FAIL đúng như ở đó.
+R3="$TMP/repo3"
+mkdir -p "$R3/src" && cd "$R3" || exit 1
+git init -q -b main . && git config user.email t@t && git config user.name t
+echo "fun ok() = 1" > src/Core.kt
+cat > matrix.json <<JSON
+{"project":"t3","rules":[{"component":"Core","watch_files":["src/Core.kt"],
+ "mandatory_regression_tests":[{"id":"REG-L","name":"lp","command":"echo run >> '$COUNT'; grep -q 'sdk.dir=/good' sub/local.properties && echo flutter.x=\$\$ >> sub/local.properties"}]}]}
+JSON
+printf 'sub/local.properties\n' > .gitignore
+git add -A && git commit -qm init
+echo "fun ok() = 2" > src/Core.kt
+git commit -qam change
+add_wt3() { git -C "$R3" worktree add -q --detach "$TMP/$1" HEAD || { echo "✖ setup: worktree add $1"; exit 1; }
+            mkdir -p "$TMP/$1/sub" && echo "sdk.dir=$2" > "$TMP/$1/sub/local.properties"; }
+add_wt3 wt3-a /good
+b=$(runs); out="$(gate2 "$TMP/wt3-a" --no-cache)"; rc=$?
+check "21. tiền đề: wt3-a PASS thật, suite sửa sub/local.properties tại chỗ" 0 1 no "$b" "$rc" "$out"
+add_wt3 wt3-b /WRONG
+b=$(runs); out="$(FLAKY_RETRY=0 gate2 "$TMP/wt3-b")"; rc=$?
+check "21. config thật bị suite sửa tại chỗ vẫn được so: sdk.dir khác thì không mượn, suite chạy và FAIL" 1 1 no "$b" "$rc" "$out"
+
 [ "$FAILS" = 0 ] && { echo "PASS test_gate_sibling_receipt"; exit 0; }
 echo "FAIL test_gate_sibling_receipt ($FAILS)"; exit 1
