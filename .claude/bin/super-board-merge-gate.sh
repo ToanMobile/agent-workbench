@@ -166,6 +166,9 @@ LOCK_DIR="${REPO_PATH}/.claude/super-board/inflight/merge.lock"
 mkdir -p "$(dirname "$LOCK_DIR")"
 
 say() { echo "[merge-gate #${PR}] $*" >&2; }
+# clip <n>: stdin gộp về một dòng, giữ tối đa n KÝ TỰ. INSTINCT-173: dưới locale C `cut -c` cắt theo byte và làm vỡ ký tự tiếng Việt
+# (văn bản không còn UTF-8, github-read từ chối). Byte không phải UTF-8 trong lỗi của git thành U+FFFD, không bao giờ vỡ giữa ký tự.
+clip() { tr '\n\t' '  ' | python3 -I -c 'import sys; sys.stdout.buffer.write(sys.stdin.buffer.read().decode("utf-8", "replace")[:int(sys.argv[1])].encode("utf-8"))' "$1"; }
 
 # ---- the mutex -------------------------------------------------------------
 # mkdir is atomic: it succeeds for exactly one caller and fails for the rest.
@@ -302,9 +305,15 @@ for cmd in "${VERIFY[@]}"; do
     if [ -f "$WT_LOG" ]; then
       cat "$WT_LOG" >>"$SCRATCH/.verify.log" 2>/dev/null || true
     fi
-    cp "$SCRATCH/.verify.log" "$REPO_PATH/.claude/super-board/last-merge-verify-pr-${PR}.log" 2>/dev/null || true
+    # 18/10 (GeelyEx2 #48): log nằm trong git common dir, không trong REPO_PATH ("." thường là một worktree: file chưa track ở đó chặn
+    # `worktree remove` ở repo không ignore mẫu này).
+    # `|| true`: dưới set -e, một rev-parse hỏng làm script dừng trước exit 2. Đường dẫn tuyệt đối lấy bằng cd + pwd thay cho --path-format
+    # (OCR 18/10: git cũ hơn 2.31 không biết cờ này; universal-agent-devkit/scripts/governance/lane_plan.py cũng chạy lại không có nó).
+    VLOG_DIR="$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P || true)"
+    VLOG="${VLOG_DIR:+$VLOG_DIR/super-board/last-merge-verify-pr-${PR}.log}"
+    { [ -n "$VLOG" ] && mkdir -p "$VLOG_DIR/super-board" && cp "$SCRATCH/.verify.log" "$VLOG"; } 2>/dev/null || VLOG="(not saved)"
     tail -60 "$SCRATCH/.verify.log" >&2
-    say "the branch is stale against ${BASE} — send it back to Build for a rebase pass (log saved to .claude/super-board/last-merge-verify-pr-${PR}.log)"
+    say "the branch is stale against ${BASE} — send it back to Build for a rebase pass (log saved to ${VLOG})"
     exit 2
   fi
 done
@@ -380,7 +389,7 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
   [ -n "$MAIN_PATH" ] || MAIN_PATH="$REPO_PATH"
   # Fetch hỏng, bị bỏ qua hay git từ chối ff thì báo kèm lý do của git: base local cũ phải lộ ra, merge vẫn thành công.
   if ! fetch_err=$(git -C "$MAIN_PATH" fetch origin "$BASE" --quiet 2>&1 >/dev/null); then
-    say "warning: fetch origin ${BASE} failed in ${MAIN_PATH}; local base may be stale: $(printf '%s' "$fetch_err" | tr '\n\t' '  ' | cut -c1-300)"
+    say "warning: fetch origin ${BASE} failed in ${MAIN_PATH}; local base may be stale: $(printf '%s' "$fetch_err" | clip 300)"
   fi
   # K13 (OfficeReader PR #143, 18/10): main giữ bản CHƯA commit (file dở, hoặc file chưa track) trùng byte + mode với origin/<base> thì
   # ff / `reset --keep` từ chối dù không gì mất, và main kẹt sau origin. sync_identical <ff|reset>: dùng đúng luật của DevKit
@@ -486,9 +495,9 @@ PY
         [ -n "$main_gd" ] && [ -e "$main_gd/$st" ] && busy="${busy:+$busy, }$st"
       done
       if [ -z "$main_gd" ]; then
-        say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; its git dir could not be read, left alone: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)"
+        say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; its git dir could not be read, left alone: $(printf '%s' "$ff_err" | clip 200)"
       elif [ -n "$busy" ]; then
-        say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; ${busy} in progress there, left alone: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)"
+        say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; ${busy} in progress there, left alone: $(printf '%s' "$ff_err" | clip 200)"
       elif ident_ff=0 && ff_tip=$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null) \
            && git -C "$MAIN_PATH" merge-base --is-ancestor "$ff_tip" "$TARGET_SHA" 2>/dev/null \
            && ident_ff=1 && n_ident=$(sync_identical ff "$ff_tip"); then   # chỉ khi ff được về nguyên tắc (base local là tổ tiên origin)
@@ -508,7 +517,7 @@ PY
         [ -n "$local_tip" ] && [ -n "$origin_tree" ] && [ "$merged_tree" = "$origin_tree" ] && can_move=1
         # --ita-visible-in-index: một entry `git add -N` của phiên khác cũng là index khác HEAD (reset --keep làm nó rơi; audit 18/10)
         idx_rc=0; git -C "$MAIN_PATH" diff --cached --quiet --ita-visible-in-index 2>/dev/null || idx_rc=$?
-        ff_why=$(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)
+        ff_why=$(printf '%s' "$ff_err" | clip 200) || ff_why="(git error not readable)"   # merge đã xong: set -e không được dừng ở đây
         if [ "$can_move" != 1 ]; then
           say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: ${ff_why}"
         elif [ "$idx_rc" -eq 1 ]; then
@@ -532,7 +541,7 @@ PY
         elif [ "$ident_ff" != 1 ] && n_ident=$(sync_identical reset "$local_tip"); then   # đường ff đã thử đúng các đường dẫn đó
           say "note: ${BASE} in ${MAIN_PATH} moved to origin/${BASE} after staging ${n_ident} uncommitted path(s) identical to it (nothing lost)"
         else
-          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: ${ff_why} | reset to origin/${BASE} refused too: $(printf '%s' "$reset_err" | tr '\n\t' '  ' | cut -c1-200)"
+          say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: ${ff_why} | reset to origin/${BASE} refused too: $(printf '%s' "$reset_err" | clip 200)"
         fi
       fi
     fi

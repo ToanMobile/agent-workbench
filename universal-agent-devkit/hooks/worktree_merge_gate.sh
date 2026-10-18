@@ -468,6 +468,7 @@ def gone_folder_reason(path):
     return f"thư mục đã bị xoá nhưng commit {sha[:10]} chưa có trong main: đem về ({how})"
 
 raw_owed = {os.path.realpath(p) for p in (state.get("owed") or []) if isinstance(p, str)} | trunk_gone   # owed before the live filter
+pr_notes = []   # K1: worktree của board / nhánh đã publish bị bỏ khỏi nợ mà còn việc chưa lên remote: chỉ báo
 for path in paths:
     real = os.path.realpath(path)
     if real in running:
@@ -512,6 +513,13 @@ for path in paths:
                  and mentioned(path, real))
     if real not in finished and real not in owed and not made_here:
         continue   # not made, named or owed by this session: not its work
+    if real not in finished and not made_here and st_owner != sid and wt is not None and (wt.board_worktree(path) or wt.published_branch(path)):
+        owed.discard(real)   # K1 (18/10): worktree của super-board / nhánh đã publish mà phiên này không tạo, không được giao: gộp qua PR, không bao
+        owners.pop(real, None)   # giờ tự gộp được ("đã PUBLISH … gộp bằng tay"), nên không phải nợ của phiên đến sau (từng giữ Stop 3/3 mọi phiên ở main)
+        if wt.unpushed_or_dirty(path):   # không giữ Stop, nhưng không bỏ im lặng việc chưa lên remote (OCR 18/10)
+            pr_notes.append(f"⚠ {path}: worktree của board / nhánh đã publish còn commit chưa push hoặc file chưa commit — phiên này không gộp nó "
+                            "(đi qua PR); worker của nó hoặc người dùng đưa lên")
+        continue
     if real in finished or made_here:
         owners[real] = sid   # this session made or named it: its debt
     elif owners.get(real) not in (None, sid) and session_alive(owners[real]):
@@ -547,7 +555,7 @@ if vanished:
         owed.discard(os.path.realpath(r["path"]))
         owners.pop(os.path.realpath(r["path"]), None)
 
-am_done, am_running, am_testing = [], [], []
+am_done, am_kept, am_running, am_testing = [], [], [], []
 if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != "0":
     cand = [r for r in pending if not r.get("reason") and r.get("busy") in (None, "merge") and os.path.isdir(r["path"])]
     if session_lock is not None:
@@ -603,7 +611,7 @@ if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != 
             # landed(): the previous Stop's background merge landed this worktree and removed it while this run read it, so this run
             # died on the missing folder (tests/gates/test_worktree_merge_gate_vanished.sh, cases 2 and 3): done, not a hold
             if res.get("status") in ("merged", "nothing") or landed(r):
-                am_done.append(r["path"])
+                (am_kept if res.get("kept") else am_done).append(r["path"])   # K11: kept = ExitWorktree keep của phiên còn sống, không gỡ
                 pending.remove(r)
                 owed.discard(real_path)
                 owners.pop(real_path, None)
@@ -689,11 +697,11 @@ def save():
     except OSError:
         return False
 
-testing_notes = ["… một lần chạy test đang giữ worktree, chưa gộp (lần dừng sau gộp): " + p for p in am_testing] + ([own_note] if own_note else [])
+testing_notes = ["… một lần chạy test đang giữ worktree, chưa gộp (lần dừng sau gộp): " + p for p in am_testing] + ([own_note] if own_note else []) + pr_notes
 if not pending:
-    if set(state.get("owed") or []) != owed or am_done:
+    if set(state.get("owed") or []) != owed or am_done or am_kept:
         save()   # removed worktrees leave the debt list
-    notes = ["✔ đã tự gộp vào main và gỡ: " + p for p in am_done] + ["… đang tự gộp ở nền (kết quả: lần dừng sau; log trong git dir): " + p for p in am_running]
+    notes = ["✔ đã tự gộp vào main và gỡ: " + p for p in am_done] + ["✔ đã tự gộp vào main, worktree giữ lại (ExitWorktree keep): " + p for p in am_kept] + ["… đang tự gộp ở nền (kết quả: lần dừng sau; log trong git dir): " + p for p in am_running]
     notes += testing_notes
     if notes:
         print(json.dumps({"systemMessage": "WORKTREE-MERGE GATE:\n" + "\n".join(notes)}, ensure_ascii=False))
@@ -766,7 +774,7 @@ if could_not_run:
                    "sau 3 lần giữ cổng vẫn cho qua.\n")
 sys.stderr.write(
     "⛔ WORKTREE-MERGE GATE: worktree phải được GỘP vào nhánh chính rồi XOÁ trước khi dừng — để lại là trunk thiếu code:\n"
-    + listing + "\n" + error_note + (own_note + "\n" if own_note else "") +
+    + listing + "\n" + error_note + (own_note + "\n" if own_note else "") + "".join(n + "\n" for n in pr_notes) +
     how_to +
     "Làm tay nếu cần, từ main checkout:\n"
     "  agent-kit worktree diff <path> | git apply --3way" + merge_hint + "\n" + detached_note +

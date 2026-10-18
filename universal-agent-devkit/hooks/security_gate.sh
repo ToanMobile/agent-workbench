@@ -447,6 +447,21 @@ last_review_idx = -1
 last_bash_idx = -1
 first_ts = None
 flagged = {}          # path -> (idx, [labels])
+edits = []            # (key, idx, labels, tool_use id): flagged only once the scan knows the call RAN
+refused = set()       # K3 (18/10): tool_use id whose tool_result says it never ran (a PreToolUse hook, the permission system, the harness)
+reviews, bashes = [], []   # (idx, tool_use id): a review or Bash call that never ran neither covers an edit nor dates one (OCR 18/10)
+# Anchored at the start: a command's own output cannot start a result (a failed one begins "Exit code N"). "Permission to use" may span
+# lines (a heredoc command is quoted in it). A user rejection / Esc is NOT in it: the call may have run in part (OCR 18/10): an edit.
+NOT_RUN_RX = re.compile(r"(PreToolUse:\S+ hook error|Permission to use \S[\s\S]*? has been denied"
+                        r"|Permission for this action was denied by the Claude Code auto mode classifier"
+                        r"|This session is isolated in the worktree [^\n]* Refusing to run it)")
+errored = set()       # every tool_use id whose result is an error: a REVIEW that errored never finished (Unknown skill, denied, cut) -> covers nothing
+def _result_text(c):
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "\n".join(str(x.get("text", "")) for x in c if isinstance(x, dict))
+    return ""
 if tp and os.path.exists(tp):
     try:
         with open(tp) as fh:
@@ -464,6 +479,11 @@ if tp and os.path.exists(tp):
                 if not isinstance(content, list):
                     continue
                 for blk in content:
+                    if isinstance(blk, dict) and blk.get("type") == "tool_result" and blk.get("is_error") is True:
+                        errored.add(blk.get("tool_use_id"))
+                        if NOT_RUN_RX.match(_result_text(blk.get("content"))):
+                            refused.add(blk.get("tool_use_id"))
+                        continue
                     if not isinstance(blk, dict) or blk.get("type") != "tool_use":
                         continue
                     idx += 1
@@ -480,23 +500,29 @@ if tp and os.path.exists(tp):
                             text = ""
                         hits = triggers_for(in_tree(fp), text)
                         if hits:
-                            flagged[fp] = (idx, sorted(set(hits)))
+                            edits.append((fp, idx, sorted(set(hits)), blk.get("id")))
                     elif name == "Skill":
                         sk = str(inp.get("skill", "") or inp.get("command", "")).lstrip("/")
                         if sk in REVIEW_SKILLS:
-                            last_review_idx = idx
+                            reviews.append((idx, blk.get("id")))
                     elif name in ("Agent", "Task"):
                         if REVIEW_AGENTS_RX.search(str(inp.get("subagent_type", ""))):
-                            last_review_idx = idx
+                            reviews.append((idx, blk.get("id")))
                     elif name == "SlashCommand":
                         if REVIEW_SLASH_RX.search(str(inp.get("command", ""))):
-                            last_review_idx = idx
+                            reviews.append((idx, blk.get("id")))
                     elif name == "Bash":
-                        last_bash_idx = idx
+                        bashes.append((idx, blk.get("id")))
                         cmd = str(inp.get("command", ""))
                         hits = shell_hits(cmd)
                         if hits:
-                            flagged[f"(Bash) {cmd[:80]}"] = (idx, hits)
+                            edits.append((f"(Bash) {cmd[:80]}", idx, hits, blk.get("id")))
+        for key, i, hits, tid in edits:   # in transcript order: a later edit of the same path that ran still wins
+            if tid is None or tid not in refused:
+                flagged[key] = (i, hits)
+        last_review_idx = max([i for i, tid in reviews if tid is None or tid not in errored], default=-1)
+        # the git-diff source stays on whenever any Bash call exists (a subagent or MCP tool can write too); only its date skips refused calls
+        last_bash_idx = max([i for i, tid in bashes if tid is None or tid not in refused], default=max([i for i, _t in bashes], default=-1))
     except Exception as e:
         logline(f"[{ts}] transcript scan fail: {e!r} — fail-open")
         sys.exit(0)

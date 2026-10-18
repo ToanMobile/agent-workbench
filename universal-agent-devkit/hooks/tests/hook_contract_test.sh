@@ -1614,9 +1614,10 @@ run_case "testsourceset: Grok turn end, broken src/test → block" testsourceset
 run_case "regression_gate: Grok turn end, failing suite → block" regression_gate.sh 2 "${GK_TURN}" \
   CLAUDE_PROJECT_DIR="${GK_PROJ}" GROK_HOOK_EVENT=stop
 # `reason` switches nothing off outside Grok (Claude sends none; a future one must not).
+# (WORKTREE_TRUNK_MODE=0: phiên Claude sửa thẳng main; ở trunk mode Stop tại main không gate, K12 18/10 — test_regression_gate_trunk_main.sh)
 run_case "non-Grok Stop with a reason is still gated" regression_gate.sh 2 \
   "{\"session_id\":\"gk3\",\"transcript_path\":\"${CLAUDE_TR}\",\"reason\":\"shutdown\"}" \
-  CLAUDE_PROJECT_DIR="${GK_PROJ}"
+  CLAUDE_PROJECT_DIR="${GK_PROJ}" WORKTREE_TRUNK_MODE=0
 rm -rf "${GK_PROJ}"
 echo
 

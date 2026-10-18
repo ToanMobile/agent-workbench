@@ -12,6 +12,7 @@
 # bash 3.2 compatible; STALELABEL_KIT=<kit dir> tests another copy of the kit (a mutant must go red).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
+export WORKTREE_TRUNK_MODE=0   # K12 (18/10): các ca ở đây là phiên sửa thẳng main (không trunk mode); ở trunk mode Stop tại main không gate (test_regression_gate_trunk_main.sh)
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SRC_KIT="${STALELABEL_KIT:-$DEVKIT_DIR}"
 TMP="$(mktemp -d)"

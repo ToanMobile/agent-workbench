@@ -29,6 +29,7 @@
 # bash 3.2 and Python 3.9 compatible; STOPREC_KIT=<kit dir> tests another copy of the kit (a mutant must go red).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
+export WORKTREE_TRUNK_MODE=0   # K12 (18/10): các ca ở đây là phiên sửa thẳng main (không trunk mode); ở trunk mode Stop tại main không gate (test_regression_gate_trunk_main.sh)
 unset DEVKIT_GATE_CACHE DEVKIT_GATE_CACHE_MAX_S DEVKIT_UNITY_REUSE_MAX_S REGRESSION_GATE_BUDGET_S GATE_TOTAL_BUDGET_S REGRESSION_GATE_TOUCHED_RECHECK_S
 export VACUITY_REVERT=0 FLAKY_RETRY=0
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

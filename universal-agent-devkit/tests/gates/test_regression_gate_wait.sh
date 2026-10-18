@@ -9,6 +9,7 @@
 # whole file runs in about 15 s.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
+export WORKTREE_TRUNK_MODE=0   # K12 (18/10): các ca ở đây là phiên sửa thẳng main (không trunk mode); ở trunk mode Stop tại main không gate (test_regression_gate_trunk_main.sh)
 
 WAIT_DEFAULT_S=45      # the hook's default lock wait (hooks/regression_gate.sh)
 MARGIN_S=15            # process start-up, the gate's own work, one 0.5 s poll, and 10 tests running at once

@@ -263,6 +263,8 @@ def _worktree_entries(cwd):
             cur["branch"] = t[len("branch refs/heads/"):]
         elif t == "detached":
             cur["detached"] = True
+        elif t == "locked" or t.startswith("locked "):
+            cur["locked"] = t[len("locked "):]   # K11: lý do khoá ("" khi không có), đọc bởi kept_lock
         elif not z and t.split(" ", 1)[0] not in ("branch", "bare", "locked", "prunable"):
             cur["broken"] = True
     if cur is not None:
@@ -660,9 +662,82 @@ def _make_room(main, wt):
 
 def _live_worktrees(main):
     """The linked worktrees that hold a slot: registered with a folder on disk. A red_proof sandbox (red-proof-*, removed by the run that
-    made it) and a registration whose folder is gone (prunable) take none."""
+    made it), a super-board worktree (K7: board_worktree) and a registration whose folder is gone (prunable) take none."""
     return [e["path"] for e in _worktree_entries(main)[1:]
-            if not e["broken"] and os.path.isdir(e["path"]) and not os.path.basename(e["path"]).startswith("red-proof-")]
+            if not e["broken"] and os.path.isdir(e["path"]) and not os.path.basename(e["path"]).startswith("red-proof-")
+            and not board_worktree(e["path"], e["branch"] or "")]
+
+
+BOARD_WT_RE = re.compile(r"issue-[0-9]+(-(build|qa|review))?")
+
+
+def board_worktree(path, branch=None):
+    """K1/K7 (18/10): worktree của super-board — `.claude/worktrees/issue-<N>[-build|-qa|-review]` (hoặc `.worktrees/issue-<N>` kiểu cũ),
+    đúng mẫu tên mà super-board-run.sh quét, VÀ đang ở một nhánh có tên (board luôn dùng `issue-<N>-<slug>` / `loop/issue-N`; một
+    EnterWorktree(name="issue-42") của phiên thường là detached nên vẫn là nợ, review 18/10). Runner và lane của board quản lý nó và gộp
+    qua PR + merge gate: không phải nợ của phiên khác (không tự gộp vào main local, không giữ Stop), không chiếm chỗ WORKTREE_MAX.
+    branch None: đọc từ git."""
+    if branch is None:
+        branch = git(path, "symbolic-ref", "-q", "--short", "HEAD", check=False).stdout.strip() if os.path.isdir(path) else ""
+    if not branch:
+        return False
+    p = os.path.normpath(path)
+    parent, grand = os.path.basename(os.path.dirname(p)), os.path.basename(os.path.dirname(os.path.dirname(p)))
+    return (parent == ".worktrees" or (parent == "worktrees" and grand == ".claude")) and bool(BOARD_WT_RE.fullmatch(os.path.basename(p)))
+
+
+def published_branch(wt):
+    """Tên nhánh của worktree khi nó đã PUBLISH (có ref remote cùng tên hoặc upstream); '' khi detached / chưa publish. automerge không bao
+    giờ tự gộp nhánh như vậy (gộp bằng PR), nên nó cũng không thành nợ của phiên khác (K1)."""
+    b = git(wt, "symbolic-ref", "-q", "--short", "HEAD", check=False).stdout.strip()
+    if b and (git(wt, "for-each-ref", "--format=%(refname)", f"refs/remotes/*/{b}", check=False).stdout.strip()
+              or git(wt, "config", "--get", f"branch.{b}.remote", check=False).stdout.strip()):
+        return b
+    return ""
+
+
+def unpushed_or_dirty(wt):
+    """True khi worktree còn commit không ref remote nào giữ, hoặc file chưa commit (chưa track tính, bị ignore thì không); lỗi git: True
+    (không nói được = coi là còn việc). Chỉ để báo, không chặn (K1, OCR 18/10)."""
+    ahead = git(wt, "rev-list", "-1", "HEAD", "--not", "--remotes", check=False)
+    dirty = git(wt, "status", "--porcelain", check=False)
+    return bool(ahead.returncode or dirty.returncode or ahead.stdout.strip() or dirty.stdout.strip())
+
+
+KEPT_LOCK_RE = re.compile(r"devkit-kept session=([A-Za-z0-9][A-Za-z0-9._-]{0,127}) pid=([0-9]{1,10})")
+
+
+def kept_lock(main, wt):
+    """K11 (18/10): khoá `git worktree lock` mà hooks/session_worktree.py đặt khi phiên rời worktree bằng ExitWorktree "keep" — (session, pid,
+    còn sống?) hoặc None. Còn sống: pid tiến trình claude của phiên đó trả lời (os.kill 0); không đủ quyền / lỗi khác thì coi là sống (giữ lại)."""
+    try:
+        entries = _worktree_entries(main)
+    except SystemExit:
+        return None
+    for e in entries[1:]:
+        if not e["broken"] and _same_path(e["path"], wt):
+            m = KEPT_LOCK_RE.fullmatch(e.get("locked") or "")
+            if not m:
+                return None
+            pid = int(m.group(2))
+            if pid <= 1:   # pid 0/1 không bao giờ là phiên (os.kill(0) báo nhóm tiến trình của chính mình, pid 1 PermissionError): khoá vô hiệu
+                return m.group(1), pid, False
+            try:
+                os.kill(pid, 0)
+                alive = True
+            except ProcessLookupError:
+                alive = False
+            except (OSError, OverflowError):   # PermissionError: tiến trình của người khác vẫn sống; còn lại: không biết = giữ
+                alive = True
+            return m.group(1), pid, alive
+    return None
+
+
+def _drop_dead_kept_lock(main, wt):
+    """Khoá devkit-kept của một pid đã chết không giữ gì nữa: mở khoá để `worktree remove` gỡ được (luật không-mất-việc của remove vẫn áp dụng)."""
+    k = kept_lock(main, wt)
+    if k and not k[2]:
+        git(main, "worktree", "unlock", wt, check=False)
 
 
 def _trunk_mode(path):
@@ -1671,6 +1746,7 @@ def cmd_remove(cwd, args):
         notes = _unsaved_memory(wt, main)   # read BEFORE the folder goes
     except Exception:  # noqa: BLE001 - a warning only: never in the way of the removal
         notes = []
+    _drop_dead_kept_lock(main, wt)   # K11: khoá ExitWorktree keep của phiên đã chết; khoá của phiên còn sống thì git từ chối (cần -f -f)
     r = git(main, "worktree", "remove", "--force", wt, check=False, bounded=False)
     if r.returncode != 0 and any(_same_path(e["path"], wt) for e in _worktree_entries(main)):
         raise SystemExit(f"✖ worktree: git worktree remove: {r.stderr.strip()}")   # refused before it deleted anything: still registered, flags untouched, retry works
@@ -2330,9 +2406,8 @@ def automerge(cwd, wt, keep=False):
                              f"Chuyển về '{trunk}' rồi chạy lại",
                              f"the main checkout is on branch '{branch}', not on the trunk '{trunk}': nothing is merged into another branch (release/hotfix ...). "
                              f"Switch back to '{trunk}' and run it again"), {}
-    wt_branch = git(wt, "symbolic-ref", "-q", "--short", "HEAD", check=False).stdout.strip()
-    if wt_branch and (git(wt, "for-each-ref", "--format=%(refname)", f"refs/remotes/*/{wt_branch}", check=False).stdout.strip()
-                      or git(wt, "config", "--get", f"branch.{wt_branch}.remote", check=False).stdout.strip()):
+    wt_branch = published_branch(wt)
+    if wt_branch:
         return "blocked", tr(f"worktree đang ở nhánh '{wt_branch}' đã PUBLISH (có nhánh remote / upstream): không tự commit thêm hay gộp nó vào main — gộp bằng tay (merge/PR)",
                              f"the worktree is on branch '{wt_branch}', which is PUBLISHED (a remote ref / upstream exists): nothing is committed to it or merged from it automatically - merge it by hand (merge / PR)"), {}
     lock = _lock_automerge(wt)
@@ -2509,6 +2584,12 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
     if keep:
         return status, (tr("đã gộp vào main; worktree giữ lại (--keep)", "merged into main; the worktree is kept (--keep)") if status == "merged"
                         else tr("không có gì chưa về main; worktree giữ lại (--keep)", "nothing that was not in main; the worktree is kept (--keep)")) + receipt_note, {"kept": True}
+    kept = kept_lock(main, wt)
+    if kept and kept[2]:   # K11 (18/10): phiên rời worktree bằng ExitWorktree "keep" và còn sống: gộp thì được, gỡ thì không
+        head = (tr("đã gộp vào main", "merged into main") if status == "merged"
+                else tr("không có gì chưa về main", "nothing that was not in main"))
+        return status, head + tr(f"; worktree giữ lại (ExitWorktree keep của phiên {kept[0]} còn sống)",
+                                 f"; the worktree is kept (ExitWorktree keep by session {kept[0]}, still alive)") + receipt_note, {"kept": True}
     saved = []
     try:
         for rel in _unsaved_memory(wt, main):   # notes only the worktree's own (git-ignored) agent-memory folder holds: a removal would delete them
