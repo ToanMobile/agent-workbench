@@ -16,6 +16,7 @@ import {
   resetLocks,
   resolveProfile,
   syncLiveQuotas,
+  balanceRepoAccounts,
 } from './profiles.js';
 
 export { maskSecret };
@@ -258,8 +259,17 @@ export function formatStatusForTelegram(report, opts = {}) {
     }
   }
 
+  if (Array.isArray(report.repoAssignments) && report.repoAssignments.length > 0) {
+    const finosRepos = report.repoAssignments.filter((r) => r.account === 'finos').map((r) => r.name);
+    const teamRepos = report.repoAssignments.filter((r) => r.account === 'finos_team').map((r) => r.name);
+    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━');
+    lines.push(`📂 PHÂN BỔ 6 REPO (${finosRepos.length} FinOS · ${teamRepos.length} FinOS Team — Cô lập chống ban):`);
+    lines.push(`• [1. FinOS]: ${finosRepos.join(', ') || 'Trống'}`);
+    lines.push(`• [2. FinOS Team]: ${teamRepos.join(', ') || 'Trống'}`);
+  }
+
   lines.push('');
-  lines.push('👇 Chạm trực tiếp vào nút bên dưới để đổi tài khoản ngay:');
+  lines.push('👇 Chạm trực tiếp vào nút bên dưới để đổi tài khoản hoặc cân bằng 6 Repo:');
   return lines.join('\n');
 }
 
@@ -312,6 +322,12 @@ export function buildTelegramDashboard(report, opts = {}) {
     { text: '🚨 Báo kịch 429 (Đổi ngay)', callback_data: 'act:limit' },
   ]);
 
+  // Hang can bang 6 Repo: Chia deu 3/3 hoac Dao nhom 3/3
+  inlineKeyboard.push([
+    { text: '⚖️ Chia đều 6 Repo (3/3)', callback_data: 'act:balance_repos' },
+    { text: '🔀 Đảo nhóm 3/3 Repo', callback_data: 'act:swap_repos' },
+  ]);
+
   // Hang mo khoa dong bang & lam moi % Quota
   inlineKeyboard.push([
     { text: '🔓 Mở khóa 429 & Cooldown', callback_data: 'act:unfreeze_all' },
@@ -344,10 +360,26 @@ async function maybeSyncLiveQuotas(stateDir, nowMs, forceRefresh = false) {
  * Xu ly su kien khi nguoi dung cham vao nut tren Inline Keyboard (callback_query).
  */
 export async function handleTelegramCallback(callbackQuery, opts = {}) {
-  const { stateDir, nowMs = Date.now() } = opts;
+  const { stateDir, nowMs = Date.now(), repos } = opts;
   const data = String(callbackQuery?.data || '').trim();
 
   await maybeSyncLiveQuotas(stateDir, nowMs, data === 'act:refresh');
+
+  if (data === 'act:balance_repos' || data === 'act:swap_repos') {
+    const mode = data === 'act:swap_repos' ? 'swap' : 'even';
+    balanceRepoAccounts({ repos, mode });
+    const report = getStatusReport({ stateDir, nowMs, repos });
+    const bannerNote = mode === 'swap'
+      ? '🔀 ĐÃ ĐẢO NHÓM 3/3 REPO GIỮA FINOS ↔ FINOS TEAM'
+      : '⚖️ ĐÃ CHIA ĐỀU 6 REPO (3 FINOS · 3 FINOS TEAM)';
+    return {
+      toastText: mode === 'swap'
+        ? '🔀 Đã đảo nhóm 3/3 Repo giữa FinOS & FinOS Team!'
+        : '⚖️ Đã chia đều 3 Repo FinOS & 3 Repo FinOS Team!',
+      showAlert: false,
+      dashboard: buildTelegramDashboard(report, { bannerNote }),
+    };
+  }
 
   if (data.startsWith('sw:') || data.startsWith('fsw:')) {
     const force = data.startsWith('fsw:');
@@ -360,7 +392,7 @@ export async function handleTelegramCallback(callbackQuery, opts = {}) {
         enforceCooldown: !force,
         reason: force ? 'telegram_ui_force_switch' : 'telegram_ui_switch',
       });
-      const report = getStatusReport({ stateDir, nowMs });
+      const report = getStatusReport({ stateDir, nowMs, repos });
       const bannerNote = `✅ ĐÃ CHUYỂN SANG: ${res.activeProfile.name}`;
       return {
         toastText: `✅ Đã chuyển sang ${res.activeProfile.shortLabel || res.activeProfile.name}`,
@@ -368,7 +400,7 @@ export async function handleTelegramCallback(callbackQuery, opts = {}) {
         dashboard: buildTelegramDashboard(report, { bannerNote }),
       };
     } catch (err) {
-      const report = getStatusReport({ stateDir, nowMs });
+      const report = getStatusReport({ stateDir, nowMs, repos });
       const targetProf = resolveProfile(targetId);
       const bannerNote = [
         `⛔️ CHƯA CHUYỂN: ${err.message}`,
@@ -393,7 +425,7 @@ export async function handleTelegramCallback(callbackQuery, opts = {}) {
       markCurrentLimited: markLimited,
       reason: markLimited ? 'telegram_ui_limit_429' : 'telegram_ui_rotate',
     });
-    const report = getStatusReport({ stateDir, nowMs });
+    const report = getStatusReport({ stateDir, nowMs, repos });
     const bannerNote = markLimited
       ? `🚨 Đã đóng băng 5h [${res.previousProfile.shortLabel || res.previousProfile.id}] & chuyển sang: ${res.activeProfile.name}`
       : `🔄 Đã xoay vòng sang: ${res.activeProfile.name}`;
@@ -408,7 +440,7 @@ export async function handleTelegramCallback(callbackQuery, opts = {}) {
 
   if (data === 'act:unfreeze_all') {
     resetLocks(stateDir);
-    const report = getStatusReport({ stateDir, nowMs });
+    const report = getStatusReport({ stateDir, nowMs, repos });
     return {
       toastText: '🔓 Đã xóa toàn bộ đóng băng 429 & đặt lại Cooldown về 0s!',
       showAlert: false,
@@ -423,7 +455,7 @@ export async function handleTelegramCallback(callbackQuery, opts = {}) {
     if (Number.isFinite(minutes) && minutes >= 0 && minutes <= 1440) {
       updateAntiBanPolicy(stateDir, { claudeSwitchCooldownSec: Math.round(minutes * 60) });
     }
-    const report = getStatusReport({ stateDir, nowMs });
+    const report = getStatusReport({ stateDir, nowMs, repos });
     return {
       toastText: `🛡 Đã đặt thời gian nghỉ chống ban: ${minutes} phút`,
       showAlert: false,
@@ -434,7 +466,7 @@ export async function handleTelegramCallback(callbackQuery, opts = {}) {
   }
 
   // Mac dinh: act:refresh hoac callback bat ky -> lam moi bang dieu khien va % quota
-  const report = getStatusReport({ stateDir, nowMs });
+  const report = getStatusReport({ stateDir, nowMs, repos });
   return {
     toastText: '🔃 Đã cập nhật % Quota & trạng thái mới nhất!',
     showAlert: false,

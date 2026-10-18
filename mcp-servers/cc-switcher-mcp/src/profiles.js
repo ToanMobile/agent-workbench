@@ -606,12 +606,131 @@ export async function syncLiveQuotas(opts = {}) {
 }
 
 /**
- * Tong hop bao cao trang thai 6 profile kem % Quota con lai, thanh tien trinh va gio mo khoa chinh xac.
+ * Danh sach 6 Repo mac dinh tren may Mac, chia deu 3 repo -> finos va 3 repo -> finos_team
+ * giup co lap 100% session theo tung du an va nhan doi bang thong (5x + 5x = 10x) ma khong bi ban.
+ */
+export const DEFAULT_REPOS = [
+  {
+    name: 'agent-workbench',
+    path: '/Volumes/Data/Toan/agent-workbench',
+    defaultAccount: 'finos',
+  },
+  {
+    name: 'OfficeReader',
+    path: '/Volumes/Data/Toan/OfficeReader/OfficeReader',
+    defaultAccount: 'finos',
+  },
+  {
+    name: 'Neighbours-From-Hell',
+    path: '/Volumes/Data/Toan/Game/Neighbours-From-Hell',
+    defaultAccount: 'finos',
+  },
+  {
+    name: 'GeelyEx2',
+    path: '/Volumes/Data/Toan/GeelyEx2',
+    defaultAccount: 'finos_team',
+  },
+  {
+    name: 'Goods-Triple-Shelf-Match-3D',
+    path: '/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D',
+    defaultAccount: 'finos_team',
+  },
+  {
+    name: 'Humans-vs.-UFOs',
+    path: '/Volumes/Data/Toan/Game/Humans-vs.-UFOs',
+    defaultAccount: 'finos_team',
+  },
+];
+
+/**
+ * Doc danh sach phan bo tai khoan (.claude/settings.local.json -> account) cua 6 repo.
+ */
+export function getRepoAssignments(opts = {}) {
+  const repos = Array.isArray(opts.repos) && opts.repos.length > 0 ? opts.repos : DEFAULT_REPOS;
+  return repos.map((r, idx) => {
+    const settingsPath = path.join(r.path, '.claude', 'settings.local.json');
+    let account = '';
+    let exists = false;
+    try {
+      if (fs.existsSync(settingsPath)) {
+        exists = true;
+        const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+        if (typeof parsed.account === 'string') {
+          account = parsed.account.trim();
+        }
+      }
+    } catch (err) {
+      logStructured('warn', 'read_repo_settings_failed', { repo: r.name, error: err?.message });
+    }
+    const fallbackAccount = r.defaultAccount || (idx < Math.ceil(repos.length / 2) ? 'finos' : 'finos_team');
+    return {
+      name: r.name,
+      path: r.path,
+      account: account || fallbackAccount,
+      pinnedInFile: Boolean(account),
+      exists,
+    };
+  });
+}
+
+/**
+ * Tu dong chia deu hoac dao nhom 3 repo -> finos, 3 repo -> finos_team trong .claude/settings.local.json,
+ * giu nguyen 100% cac khoa cau hinh hien co (autoMemoryDirectory, hooks, permissions...).
+ */
+export function balanceRepoAccounts(opts = {}) {
+  const repos = Array.isArray(opts.repos) && opts.repos.length > 0 ? opts.repos : DEFAULT_REPOS;
+  const mode = opts.mode || 'even'; // 'even' | 'swap' | 'all_finos' | 'all_finos_team'
+  const half = Math.ceil(repos.length / 2);
+
+  const results = [];
+  repos.forEach((r, idx) => {
+    if (!fs.existsSync(r.path)) return;
+    const claudeDir = path.join(r.path, '.claude');
+    const settingsPath = path.join(claudeDir, 'settings.local.json');
+    let existing = {};
+    try {
+      if (fs.existsSync(settingsPath)) {
+        existing = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      }
+    } catch (err) {
+      logStructured('warn', 'parse_existing_settings_failed', { repo: r.name, error: err?.message });
+    }
+
+    let nextAccount = r.defaultAccount || (idx < half ? 'finos' : 'finos_team');
+    if (mode === 'swap') {
+      const currentAcc = existing.account || nextAccount;
+      nextAccount = currentAcc === 'finos' ? 'finos_team' : 'finos';
+    } else if (mode === 'all_finos') {
+      nextAccount = 'finos';
+    } else if (mode === 'all_finos_team') {
+      nextAccount = 'finos_team';
+    }
+
+    const updated = {
+      ...existing,
+      account: nextAccount,
+    };
+    writeJsonAtomic(settingsPath, updated);
+    results.push({
+      name: r.name,
+      path: r.path,
+      account: nextAccount,
+      settingsPath,
+    });
+  });
+
+  logStructured('info', 'repo_accounts_balanced', { mode, count: results.length });
+  return results;
+}
+
+/**
+ * Tong hop bao cao trang thai 6 profile kem % Quota con lai, thanh tien trinh, gio mo khoa va phan bo 6 repo.
  */
 export function getStatusReport(opts = {}) {
-  const { stateDir, nowMs = Date.now() } = opts;
+  const { stateDir, nowMs = Date.now(), repos } = opts;
   const state = loadSwitcherState(stateDir);
   const usage = readUsageStatsFromDb(stateDir);
+  const repoAssignments = getRepoAssignments({ repos });
 
   const lastClaudeEvent = Math.max(state.lastClaudeSwitchAtMs || 0, state.lastClaudeRateLimitAtMs || 0);
   const claudeCooldownMs = (state.policy.claudeSwitchCooldownSec ?? 900) * 1000;
@@ -666,6 +785,8 @@ export function getStatusReport(opts = {}) {
     policy: state.policy,
     usage,
     profiles,
+    repoAssignments,
     recentSwitches: state.switchHistory.slice(-5),
   };
 }
+

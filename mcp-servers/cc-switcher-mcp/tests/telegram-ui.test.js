@@ -10,6 +10,8 @@ import {
   reportRateLimit,
   resetLocks,
   syncLiveQuotas,
+  balanceRepoAccounts,
+  getRepoAssignments,
 } from '../src/profiles.js';
 import {
   saveTelegramConfig,
@@ -253,6 +255,63 @@ test('Telegram UI 5: syncLiveQuotas hien thi % quota con lai, thanh tien trinh v
     assert.match(btnFinos.text, /0%/);
     assert.match(btnFinos.text, /00:00/);
     assert.match(btnTeam.text, /54%/);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('Telegram UI 6: balanceRepoAccounts chia deu 3 repo finos va 3 repo finos_team, giu nguyen cau hinh cu va ho tro dao nhom tren Telegram', async () => {
+  const tmp = createTempDir();
+  try {
+    const repoNames = [
+      'agent-workbench',
+      'OfficeReader',
+      'Neighbours-From-Hell',
+      'GeelyEx2',
+      'Goods-Triple-Shelf-Match-3D',
+      'Humans-vs.-UFOs',
+    ];
+    const repos = repoNames.map((name, idx) => {
+      const repoPath = path.join(tmp.dir, name);
+      fs.mkdirSync(path.join(repoPath, '.claude'), { recursive: true });
+      fs.writeFileSync(
+        path.join(repoPath, '.claude', 'settings.local.json'),
+        JSON.stringify({ autoMemoryDirectory: `/tmp/mem-${idx}`, hooks: { Stop: [] } }, null, 2),
+      );
+      return {
+        name,
+        path: repoPath,
+        defaultAccount: idx < 3 ? 'finos' : 'finos_team',
+      };
+    });
+
+    // Chia deu 3 repo finos, 3 repo finos_team
+    const assigned = balanceRepoAccounts({ repos, mode: 'even' });
+    assert.equal(assigned.filter((r) => r.account === 'finos').length, 3);
+    assert.equal(assigned.filter((r) => r.account === 'finos_team').length, 3);
+
+    // Dam bao giu nguyen autoMemoryDirectory va hooks trong settings.local.json
+    const firstFile = JSON.parse(
+      fs.readFileSync(path.join(repos[0].path, '.claude', 'settings.local.json'), 'utf8'),
+    );
+    assert.equal(firstFile.account, 'finos');
+    assert.equal(firstFile.autoMemoryDirectory, '/tmp/mem-0');
+    assert.ok(firstFile.hooks);
+
+    // Dao nhom (swap): 3 repo finos <-> 3 repo finos_team
+    const swapped = balanceRepoAccounts({ repos, mode: 'swap' });
+    assert.equal(swapped[0].account, 'finos_team');
+    assert.equal(swapped[3].account, 'finos');
+
+    const currentMap = getRepoAssignments({ repos });
+    assert.equal(currentMap.length, 6);
+
+    const report = getStatusReport({ stateDir: tmp.dir, repos });
+    const dash = buildTelegramDashboard(report);
+    assert.match(dash.text, /PHÂN BỔ 6 REPO/);
+    const allButtons = dash.reply_markup.inline_keyboard.flat();
+    assert.ok(allButtons.some((b) => b.callback_data === 'act:balance_repos'));
+    assert.ok(allButtons.some((b) => b.callback_data === 'act:swap_repos'));
   } finally {
     tmp.cleanup();
   }
