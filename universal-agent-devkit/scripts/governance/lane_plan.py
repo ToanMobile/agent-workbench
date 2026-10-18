@@ -7,7 +7,10 @@
 
 lanes.json is a list of {"id": "A11", "est_min": 40, "kind": "rules-text", "deps": ["A10"], "risk": "high", "files": ["hooks/x.sh"]};
 only "id" is required. A missing est_min is the median of the recorded lanes of the same kind (30 when the lane has no kind or
-there is no history). Keep lanes.json outside the repo: a file left in a worktree is swept into the merge.
+there is no history). Keep lanes.json outside the repo: a file left in a worktree is swept into the merge. Two lanes whose "files"
+share a path (a folder counts for every file in it; the union-merged files in SHARED do not) never run at the same time: the later one in
+the order of their deps waits for the earlier one and starts from the trunk once that one is merged ("serialized" in --json, a
+SERIAL line in the text).
 
 Why: lanes that start in input order leave the long one for last (the 15/10 batch: the riskiest lane started after the small ones and
 was the critical path for five hours) and every lane runs its own test suites, so seven agents at once pushed the load to 37 on a
@@ -20,6 +23,7 @@ LANE_PLAN_CORES / LANE_PLAN_LOAD override the machine reading, LANE_PLAN_HISTORY
 only, 3.9 compatible.
 """
 import errno
+import heapq
 import json
 import math
 import os
@@ -185,7 +189,8 @@ def load_lanes(path):
             if kind and hist is None:
                 hist = read_history()
             est = median(hist[kind]) if kind and kind in hist else DEFAULT_EST
-        lanes[r["id"]] = {"id": r["id"], "est": est, "deps": sorted(set(deps)), "files": files, "high": risk.lower() == "high"}
+        lanes[r["id"]] = {"id": r["id"], "est": est, "deps": sorted(set(deps)), "files": files, "high": risk.lower() == "high",
+                          "file_waits": {}}
     for l in lanes.values():
         for d in l["deps"]:
             if d not in lanes:
@@ -198,21 +203,54 @@ def load_lanes(path):
         waiting[i] = len(lanes[i]["deps"])
         for d in lanes[i]["deps"]:
             succ[d].append(i)
-    order, free = [], [i for i in seen if waiting[i] == 0]
+    pos = dict((i, n) for n, i in enumerate(seen))
+    order, free = [], [(pos[i], i) for i in seen if waiting[i] == 0]   # among ready lanes the listed one first: the file owner below
+    heapq.heapify(free)
     while free:
-        i = free.pop()
+        i = heapq.heappop(free)[1]
         order.append(i)
         for j in succ[i]:
             waiting[j] -= 1
             if waiting[j] == 0:
-                free.append(j)
+                heapq.heappush(free, (pos[j], j))
     if len(order) != len(seen):
         done = set(order)
         fail("dependency cycle through %s" % ", ".join(i for i in seen if i not in done))
-    for i in reversed(order):
+    # lanes that edit one file never run at the same time (18/10: several agents on one file, every later merge conflicted): each one
+    # waits for the previous editor, the one that can start earlier (its deps' chain) first, then the topological order. That key
+    # orders every dependency edge too (a lane starts no earlier than its deps), so an added wait always points forward: no cycle.
+    rank = dict((i, n) for n, i in enumerate(order))
+    head = {}
+    for i in order:
+        head[i] = max([head[d] + lanes[d]["est"] for d in lanes[i]["deps"]] or [0.0])
+    for f, ids in sorted(overlaps_of([lanes[i] for i in seen]).items()):
+        ids = sorted(ids, key=lambda i: (head[i], rank[i]))
+        for a, b in zip(ids, ids[1:]):
+            waits = lanes[b]["file_waits"]
+            if a not in waits:
+                if _reaches(lanes, b, a):   # b already waits for a through its deps
+                    continue
+                lanes[b]["deps"].append(a)
+                succ[a].append(b)
+            waits.setdefault(a, []).append(f)
+    for i in sorted(order, key=lambda i: (head[i], rank[i]), reverse=True):   # the key every edge follows, added ones too
         after = [lanes[j]["tail"] for j in succ[i]]
         lanes[i]["tail"] = lanes[i]["est"] + (max(after) if after else 0.0)
     return [lanes[i] for i in seen]
+
+
+def _reaches(lanes, src, dst):
+    """True when lane src waits for lane dst through its deps, directly or along a chain (iterative: a long chain must not recurse)."""
+    stack, seen = [src], set()
+    while stack:
+        i = stack.pop()
+        for d in lanes[i]["deps"]:
+            if d == dst:
+                return True
+            if d not in seen:
+                seen.add(d)
+                stack.append(d)
+    return False
 
 
 def simulate(lanes, n, key):
@@ -271,10 +309,12 @@ def plan(path, n_slots, as_json):
     if naive < span - 1e-9:   # the longest-path rule is a heuristic: when the listed order ends sooner, use it and say so
         rows, span, order = naive_rows, naive, "input"
     overlaps = overlaps_of(lanes)
+    serialized = [{"id": l["id"], "after": a, "files": sorted(fs)} for l in lanes for a, fs in sorted(l["file_waits"].items(), key=lambda kv: pos[kv[0]])]
     merge_order = [r["id"] for r in sorted(rows, key=lambda r: r["end"])]   # stable: lanes that end together keep their start order
     if as_json:
         print(json.dumps({"slots": n, "order": order, "start_order": [r["id"] for r in rows], "rows": rows, "makespan_min": span,
-                          "input_order_makespan_min": naive, "merge_order": merge_order, "overlaps": overlaps}, indent=1))
+                          "input_order_makespan_min": naive, "merge_order": merge_order, "overlaps": overlaps,
+                          "serialized": serialized}, indent=1))
         return
     print("slots %d (machine now: %s)" % (n, "set by --slots" if reading is None else "%d cores, load %.1f" % reading[1:]))
     print("%-24s %8s %8s %8s" % ("start order", "start", "end", "est"))
@@ -285,7 +325,11 @@ def plan(path, n_slots, as_json):
         print("the listed order ends sooner than the longest-path rule here: start the lanes in the order they are listed")
     print("merge order (earliest finished first): %s" % " ".join(merge_order))
     for f, ids in sorted(overlaps.items()):
-        print("WARNING %s is edited by %s: the later merge conflicts, keep one owner" % (f, ", ".join(ids)))
+        print("WARNING %s is edited by %s: they never run at the same time" % (f, ", ".join(ids)))
+    for s in serialized:
+        print("SERIAL %s starts after %s is merged, from the merged trunk (both edit %s): open its worktree only then; when that "
+              "file is the main work of both, make them one lane"
+              % (s["id"], s["after"], ", ".join(s["files"])))
     print("then ONE full gate on the merged result: python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --diff origin/<branch>")
 
 

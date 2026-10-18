@@ -358,6 +358,8 @@ two complete builds. In order, no shortcuts:
    leave the card in **Review** with a `[reviewer]` comment naming both shas.
    The gate owns the merge decision (config `merge_policy`, `migrations`):
    - **Exit 9 — verification-readiness.** Halt the run; preserve card, approval, claims, and worktree. Configure `verify_commands` with the owning project's real checks and restart explicitly. No bounce to Build, rebase retry, approval request, or bare merge.
+   - **Exit 2 / 5 — stale branch or real conflict.** Rebase pass (run.md → "The rebase pass").
+   - **Exit 11 — verify red, branch NOT behind the base.** A rebase changes nothing: open a `[builder]` thread quoting the gate's "verify failed (exit N: …)" line, move Review → Ready with `loop:rebuild-N`.
    - **Exit 7 — a human merges.** `merge_policy` matched (money / auth / schema label,
      path or added-line keyword; a diff over `auto_max_lines`, default 400 — "big PR — please
      review"; `default: "human"`). `schema` means destructive only (DROP / TRUNCATE / RENAME);

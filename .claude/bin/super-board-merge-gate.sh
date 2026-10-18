@@ -69,7 +69,11 @@
 #
 # Exit codes, all meaningful to the caller:
 #   0  merged
-#   2  verification failed — branch needs a rebase pass, NOT a Blocked card
+#   2  verification failed on a branch BEHIND the base (or the gate could not
+#      count it) — needs a rebase pass, NOT a Blocked card
+#   11 verification failed on a branch NOT behind the base — rebasing changes
+#      nothing: back to Build to fix the failing verify (the gate quotes its
+#      last KẾT LUẬN/VERDICT line), NOT a rebase pass, NOT a Blocked card
 #   3  PR is closed without a merge; no merge attempted
 #   4  could not take the lock within the timeout
 #   5  the base could not be merged in (real conflict) — needs a rebase pass
@@ -336,6 +340,9 @@ for cmd in "${VERIFY[@]}"; do
       say "the branch is stale against ${BASE} (${BEHIND} commit(s) behind) — send it back to Build for a rebase pass (verify ${WHY}; log saved to ${VLOG})"
     else
       say "verify failed (${WHY}) on a branch not behind ${BASE} (log saved to ${VLOG})"
+      # Mã riêng: lane định tuyến theo mã thoát, exit 2 (rebase pass) cho nhánh đã cập nhật là một vòng rebase vô ích.
+      # Không đếm được (unknown) vẫn exit 2 như hợp đồng cũ: rebase thừa rẻ hơn bỏ sót một nhánh thật sự cũ.
+      exit 11
     fi
     exit 2
   fi
