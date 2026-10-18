@@ -15,6 +15,7 @@ import {
   updateAntiBanPolicy,
   resetLocks,
   resolveProfile,
+  syncLiveQuotas,
 } from './profiles.js';
 
 export { maskSecret };
@@ -195,8 +196,14 @@ function formatDurationHuman(totalSec) {
   return m > 0 ? `${m}p ${s}s` : `${s}s`;
 }
 
+function renderProgressBar(remainingPct) {
+  const pct = Math.max(0, Math.min(100, Number(remainingPct) || 0));
+  const filled = Math.round(pct / 10);
+  return `[${'█'.repeat(filled)}${'░'.repeat(10 - filled)}]`;
+}
+
 /**
- * Dinh dang bao cao trang thai gon dep, hien dai cho tin nhan Telegram tren dien thoai.
+ * Dinh dang bao cao trang thai gon dep, hien dai kem % Quota con lai va gio mo khoa cho Telegram.
  */
 export function formatStatusForTelegram(report, opts = {}) {
   const { bannerNote = '' } = opts;
@@ -211,33 +218,53 @@ export function formatStatusForTelegram(report, opts = {}) {
     lines.push('━━━━━━━━━━━━━━━━━━━━━━━━');
   }
 
-  lines.push('🎛 CC SWITCHER — BẢNG ĐIỀU KHIỂN 6 PROFILE');
-  lines.push(`▶️ Đang dùng: ${report.activeProfile.name}`);
+  const activePct = report.activeProfile.remainingPct ?? 100;
+  const activeReset = report.activeProfile.resetTimeFormatted
+    ? ` · Reset ${report.activeProfile.resetTimeFormatted}`
+    : '';
+
+  lines.push('🎛 CC SWITCHER — BẢNG ĐIỀU KHIỂN & QUOTA THỰC TẾ');
+  lines.push(`▶️ Đang dùng: ${report.activeProfile.name} (Còn ${activePct}%${activeReset})`);
   lines.push(`🛡 Anti-Ban Guard: ${cooldownBadge}`);
   lines.push(
     `⚙️ Cấu hình: Nghỉ ${Math.round(report.policy.claudeSwitchCooldownSec / 60)}p giữa Claude · Đóng băng 429: ${Math.round(report.policy.rateLimitFreezeSec / 3600)}h`,
   );
   lines.push(`💰 Chi phí ghi nhận: $${report.usage.totalCostUsd} (${report.usage.totalRequests} requests)`);
   lines.push('━━━━━━━━━━━━━━━━━━━━━━━━');
-  lines.push('📋 TRẠNG THÁI 6 TÀI KHOẢN (Chạm nút bên dưới để đổi):');
+  lines.push('📊 CHI TIẾT QUOTA & GIỜ MỞ KHÓA 6 TÀI KHOẢN:');
 
   for (const p of report.profiles) {
-    const icon = p.isActive ? '🟢' : p.isFrozen ? '❄️' : '⚪️';
-    const stateLabel = p.isActive
-      ? 'ĐANG DÙNG ✓'
-      : p.isFrozen
-        ? `ĐÓNG BĂNG (${p.freezeRemainMin}p)`
-        : 'Sẵn sàng';
-    lines.push(`${icon} [${p.index}] ${p.name} — ${stateLabel}`);
+    const pct = p.remainingPct ?? (p.isFrozen ? 0 : 100);
+    const used = p.usedPct ?? (100 - pct);
+    const bar = renderProgressBar(pct);
+
+    if (p.isFrozen || pct <= 0) {
+      const unlockStr = p.resetTimeFormatted
+        ? `Mở lại lúc ${p.resetTimeFormatted} (còn ${p.resetRemainHuman || `${p.freezeRemainMin}p`})`
+        : `Mở lại sau ${p.freezeRemainMin}p`;
+      lines.push(`🔴 [${p.index}] ${p.name}${p.isActive ? ' — ĐANG DÙNG ⚠️' : ''}`);
+      lines.push(`   └ ⛔️ HẾT QUOTA (Còn 0%) ${bar} · ⏰ ${unlockStr}`);
+    } else {
+      const icon = p.isActive ? '🟢' : '⚪️';
+      const activeTag = p.isActive ? ' — ĐANG DÙNG ✓' : '';
+      const resetNote = p.resetTimeFormatted
+        ? ` · ⏰ Reset 5h: ${p.resetTimeFormatted} (còn ${p.resetRemainHuman})`
+        : '';
+      const weekNote = typeof p.weeklyRemainingPct === 'number'
+        ? ` · Tuần: ${p.weeklyRemainingPct}%`
+        : '';
+      lines.push(`${icon} [${p.index}] ${p.name}${activeTag}`);
+      lines.push(`   └ 🔋 Còn ${pct}% ${bar} (Đã dùng ${used}%)${resetNote}${weekNote}`);
+    }
   }
 
   lines.push('');
-  lines.push('👇 Chạm trực tiếp vào nút tài khoản bên dưới để chuyển ngay (không cần gõ lệnh):');
+  lines.push('👇 Chạm trực tiếp vào nút bên dưới để đổi tài khoản ngay:');
   return lines.join('\n');
 }
 
 /**
- * Xay dung Bang dieu khien tuong tac (Text + Inline Keyboard 6 profile + Cac nut thao tac nhanh).
+ * Xay dung Bang dieu khien tuong tac (Text + Inline Keyboard 6 profile hien % va gio mo + Cac nut thao tac nhanh).
  */
 export function buildTelegramDashboard(report, opts = {}) {
   const { bannerNote = '', forcePromptTargetId = '' } = opts;
@@ -257,16 +284,20 @@ export function buildTelegramDashboard(report, opts = {}) {
     ]);
   }
 
-  // 3 hang x 2 cot cho 6 profile (gon dep tren man hinh dien thoai, khong bi cat chu)
+  // 3 hang x 2 cot cho 6 profile (hien ro % con lai hoac gio mo khoa ngay tren nhan nut!)
   for (let i = 0; i < report.profiles.length; i += 2) {
     const row = report.profiles.slice(i, i + 2).map((p) => {
       const labelBase = p.shortLabel || `${p.index}. ${p.id}`;
-      let btnText = `⚪️ ${labelBase}`;
-      if (p.isActive) {
-        btnText = `🟢 ${labelBase} ✓`;
-      } else if (p.isFrozen) {
-        btnText = `❄️ ${labelBase} (${p.freezeRemainMin}p)`;
+      const pct = p.remainingPct ?? (p.isFrozen ? 0 : 100);
+      let btnText = `⚪️ ${labelBase} · ${pct}%`;
+
+      if (p.isFrozen || pct <= 0) {
+        const unlockClock = p.resetTimeFormatted || `${p.freezeRemainMin}p`;
+        btnText = `🔴 ${labelBase} · 0% (Mở ${unlockClock})`;
+      } else if (p.isActive) {
+        btnText = `🟢 ${labelBase} · ${pct}% ✓`;
       }
+
       return {
         text: btnText,
         callback_data: `sw:${p.id}`,
@@ -281,10 +312,10 @@ export function buildTelegramDashboard(report, opts = {}) {
     { text: '🚨 Báo kịch 429 (Đổi ngay)', callback_data: 'act:limit' },
   ]);
 
-  // Hang mo khoa dong bang & lam moi trang thai
+  // Hang mo khoa dong bang & lam moi % Quota
   inlineKeyboard.push([
     { text: '🔓 Mở khóa 429 & Cooldown', callback_data: 'act:unfreeze_all' },
-    { text: '🔃 Làm mới', callback_data: 'act:refresh' },
+    { text: '🔃 Làm mới % Quota', callback_data: 'act:refresh' },
   ]);
 
   // Hang chon nhanh muc Cooldown chong ban (15p / 5p / 0p)
@@ -303,12 +334,20 @@ export function buildTelegramDashboard(report, opts = {}) {
   };
 }
 
+async function maybeSyncLiveQuotas(stateDir, nowMs, forceRefresh = false) {
+  if (resolveStateDir(stateDir) === resolveStateDir()) {
+    await syncLiveQuotas({ stateDir, nowMs, forceRefresh });
+  }
+}
+
 /**
  * Xu ly su kien khi nguoi dung cham vao nut tren Inline Keyboard (callback_query).
  */
 export async function handleTelegramCallback(callbackQuery, opts = {}) {
   const { stateDir, nowMs = Date.now() } = opts;
   const data = String(callbackQuery?.data || '').trim();
+
+  await maybeSyncLiveQuotas(stateDir, nowMs, data === 'act:refresh');
 
   if (data.startsWith('sw:') || data.startsWith('fsw:')) {
     const force = data.startsWith('fsw:');
@@ -336,7 +375,7 @@ export async function handleTelegramCallback(callbackQuery, opts = {}) {
         `👉 Nếu muốn bỏ qua thời gian chờ để đổi ngay sang "${targetProf.shortLabel || targetProf.name}", hãy bấm nút [⚡ ÉP CHUYỂN NGAY] bên dưới.`,
       ].join('\n');
       return {
-        toastText: `⏳ Đang trong thời gian nghỉ chống ban! Bấm nút "⚡ ÉP CHUYỂN NGAY" nếu muốn đổi luôn.`,
+        toastText: `⏳ Đang khóa/chờ chống ban! Bấm nút "⚡ ÉP CHUYỂN NGAY" nếu muốn đổi luôn.`,
         showAlert: true,
         dashboard: buildTelegramDashboard(report, {
           bannerNote,
@@ -394,10 +433,10 @@ export async function handleTelegramCallback(callbackQuery, opts = {}) {
     };
   }
 
-  // Mac dinh: act:refresh hoac callback bat ky -> lam moi bang dieu khien
+  // Mac dinh: act:refresh hoac callback bat ky -> lam moi bang dieu khien va % quota
   const report = getStatusReport({ stateDir, nowMs });
   return {
-    toastText: '🔃 Đã cập nhật trạng thái mới nhất!',
+    toastText: '🔃 Đã cập nhật % Quota & trạng thái mới nhất!',
     showAlert: false,
     dashboard: buildTelegramDashboard(report),
   };
@@ -432,6 +471,8 @@ export async function sendTelegramNotification(text, opts = {}) {
 export async function handleTelegramCommand(rawText, opts = {}) {
   const { stateDir, nowMs = Date.now() } = opts;
   const text = String(rawText || '').trim();
+
+  await maybeSyncLiveQuotas(stateDir, nowMs, text === '/status' || text === '🎛 Bảng điều khiển');
 
   // Anh xa cac nut tren Reply Keyboard hoac so 1..6 thanh lenh tuong ung
   if (text === '🎛 Bảng điều khiển' || text === '/menu') {

@@ -9,6 +9,7 @@ import {
   loadSwitcherState,
   reportRateLimit,
   resetLocks,
+  syncLiveQuotas,
 } from '../src/profiles.js';
 import {
   saveTelegramConfig,
@@ -182,6 +183,76 @@ test('Telegram UI 4: getStatusReport doc chinh xac totalRequests va totalCostUsd
     const report = getStatusReport({ stateDir: tmp.dir });
     assert.equal(report.usage.totalRequests, 200);
     assert.equal(report.usage.totalCostUsd, 19.75);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('Telegram UI 5: syncLiveQuotas hien thi % quota con lai, thanh tien trinh va gio mo khoa chinh xac tren nut bam Telegram', async () => {
+  const tmp = createTempDir();
+  try {
+    const nowMs = Date.parse('2026-10-18T16:25:00.000Z'); // 23:25 VN
+    const fakeFetcher = async (profile) => {
+      if (profile.id === 'finos') {
+        return {
+          remainingPct: 0,
+          usedPct: 100,
+          resetAtMs: Date.parse('2026-10-18T17:00:00.000Z'), // 00:00 VN (con 35p)
+          weeklyRemainingPct: 100,
+          source: 'anthropic_oauth',
+        };
+      }
+      if (profile.id === 'finos_team') {
+        return {
+          remainingPct: 54,
+          usedPct: 46,
+          resetAtMs: Date.parse('2026-10-18T19:50:00.000Z'), // 02:50 VN (con 3h 25p)
+          weeklyRemainingPct: 100,
+          source: 'anthropic_oauth',
+        };
+      }
+      if (profile.id === 'max') {
+        return {
+          remainingPct: 0,
+          usedPct: 100,
+          resetAtMs: Date.parse('2026-10-18T17:19:00.000Z'), // 00:19 VN (con 54p)
+          isRateLimited: true,
+          source: 'anthropic_429_header',
+        };
+      }
+      return null;
+    };
+
+    await syncLiveQuotas({ stateDir: tmp.dir, nowMs, forceRefresh: true, quotaFetcher: fakeFetcher });
+    const report = getStatusReport({ stateDir: tmp.dir, nowMs });
+
+    const pFinos = report.profiles.find((p) => p.id === 'finos');
+    const pTeam = report.profiles.find((p) => p.id === 'finos_team');
+    const pMax = report.profiles.find((p) => p.id === 'max');
+
+    assert.equal(pFinos.remainingPct, 0);
+    assert.equal(pFinos.isFrozen, true);
+    assert.equal(pFinos.resetTimeFormatted, '00:00');
+    assert.equal(pTeam.remainingPct, 54);
+    assert.equal(pTeam.isFrozen, false);
+    assert.equal(pTeam.resetTimeFormatted, '02:50');
+    assert.equal(pMax.remainingPct, 0);
+    assert.equal(pMax.isFrozen, true);
+
+    const dash = buildTelegramDashboard(report);
+    // Kiem tra noi dung tin nhan hien ro % con lai, thanh tien trinh va gio mo khoa
+    assert.match(dash.text, /Còn 54%/);
+    assert.match(dash.text, /00:00/);
+    assert.match(dash.text, /02:50/);
+    assert.match(dash.text, /00:19/);
+
+    // Kiem tra nut bam Inline Keyboard hien % va gio mo khoa ngay tren nhan nut
+    const buttons = dash.reply_markup.inline_keyboard.flat();
+    const btnFinos = buttons.find((b) => b.callback_data === 'sw:finos');
+    const btnTeam = buttons.find((b) => b.callback_data === 'sw:finos_team');
+    assert.match(btnFinos.text, /0%/);
+    assert.match(btnFinos.text, /00:00/);
+    assert.match(btnTeam.text, /54%/);
   } finally {
     tmp.cleanup();
   }

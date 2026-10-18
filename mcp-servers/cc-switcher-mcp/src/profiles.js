@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
   AppError,
@@ -18,7 +19,7 @@ export const DEFAULT_PROFILES = [
   {
     index: 1,
     id: 'finos',
-    shortLabel: '1. FinOS (5x)',
+    shortLabel: '1. FinOS',
     name: '1. FinOS — toan.huynh@finos.asia (5x Team)',
     vendor: 'anthropic',
     appType: 'claude',
@@ -118,6 +119,8 @@ export function loadSwitcherState(stateDir) {
     lastClaudeSwitchAtMs: existing?.lastClaudeSwitchAtMs || 0,
     lastClaudeRateLimitAtMs: existing?.lastClaudeRateLimitAtMs || 0,
     frozenUntil: existing?.frozenUntil || {},
+    quotaCache: existing?.quotaCache || {},
+    quotaFetchedAtMs: existing?.quotaFetchedAtMs || 0,
     switchHistory: Array.isArray(existing?.switchHistory) ? existing.switchHistory.slice(-50) : [],
     policy: {
       ...DEFAULT_POLICY,
@@ -160,6 +163,13 @@ export function resetLocks(stateDir) {
   state.frozenUntil = {};
   state.lastClaudeSwitchAtMs = 0;
   state.lastClaudeRateLimitAtMs = 0;
+  if (state.quotaCache && typeof state.quotaCache === 'object') {
+    for (const k of Object.keys(state.quotaCache)) {
+      if (state.quotaCache[k]?.isRateLimited) {
+        delete state.quotaCache[k];
+      }
+    }
+  }
   return saveSwitcherState(stateDir, state);
 }
 
@@ -457,8 +467,146 @@ export function reportRateLimit(opts = {}) {
   };
 }
 
+export function formatLocalTimeHHMM(tsMs) {
+  if (!tsMs || tsMs <= 0) return '';
+  return new Intl.DateTimeFormat('vi-VN', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(tsMs));
+}
+
+export function formatRemainDuration(remainMs) {
+  if (!remainMs || remainMs <= 0) return '0p';
+  const totalMin = Math.max(1, Math.ceil(remainMs / 60000));
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}p`;
+  if (h > 0) return `${h}h`;
+  return `${m}p`;
+}
+
 /**
- * Tong hop bao cao trang thai 6 profile kem thong ke token/chi phi.
+ * Truy van truc tiep % Quota 5h & 7d va gio mo khoa tu Anthropic OAuth Usage API qua Keychain cua tung profile.
+ */
+export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now()) {
+  if (profile.vendor !== 'anthropic' || !profile.configDir) return null;
+  const hash = crypto.createHash('sha256').update(profile.configDir).digest('hex').slice(0, 8);
+  const svc = `Claude Code-credentials-${hash}`;
+
+  let token = '';
+  try {
+    const raw = execFileSync('security', ['find-generic-password', '-s', svc, '-w'], {
+      encoding: 'utf8',
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    token = JSON.parse(raw)?.claudeAiOauth?.accessToken || '';
+  } catch (err) {
+    logStructured('warn', 'keychain_quota_read_skipped', { profileId: profile.id, error: err?.message });
+    return null;
+  }
+  if (!token) return null;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'anthropic-beta': 'oauth-2025-04-20',
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (res.status === 200) {
+      const body = await res.json().catch(() => ({}));
+      const usedPct = Math.min(100, Math.max(0, Math.round(Number(body?.five_hour?.utilization ?? 0))));
+      const remainingPct = Math.max(0, 100 - usedPct);
+      const resetAtMs = body?.five_hour?.resets_at ? Date.parse(body.five_hour.resets_at) : 0;
+      const weeklyUsed = Number(
+        body?.seven_day?.utilization ??
+          body?.limits?.find((l) => l.group === 'weekly')?.percent ??
+          0,
+      );
+      const weeklyRemainingPct = Math.max(0, 100 - Math.round(weeklyUsed));
+      return {
+        remainingPct,
+        usedPct,
+        resetAtMs: Number.isFinite(resetAtMs) ? resetAtMs : 0,
+        weeklyRemainingPct,
+        isRateLimited: remainingPct <= 0,
+        source: 'anthropic_oauth',
+        updatedAtMs: nowMs,
+      };
+    }
+
+    if (res.status === 429) {
+      const retryAfterSec = Number(res.headers.get('retry-after')) || 0;
+      const resetAtMs = retryAfterSec > 0 ? nowMs + retryAfterSec * 1000 : nowMs + 3600 * 1000;
+      return {
+        remainingPct: 0,
+        usedPct: 100,
+        resetAtMs,
+        weeklyRemainingPct: null,
+        isRateLimited: true,
+        source: 'anthropic_429_header',
+        updatedAtMs: nowMs,
+      };
+    }
+  } catch (err) {
+    logStructured('warn', 'anthropic_quota_fetch_failed', { profileId: profile.id, error: err?.message });
+  }
+  return null;
+}
+
+/**
+ * Dong bo % Quota thuc te cua cac tai khoan vao switcher-state.json va tu dong cap nhat moc mo khoa (frozenUntil).
+ */
+export async function syncLiveQuotas(opts = {}) {
+  const {
+    stateDir,
+    nowMs = Date.now(),
+    forceRefresh = false,
+    ttlMs = 45_000,
+    quotaFetcher = fetchAnthropicProfileQuotaLive,
+  } = opts;
+
+  const state = loadSwitcherState(stateDir);
+  if (!forceRefresh && state.quotaFetchedAtMs && nowMs - state.quotaFetchedAtMs < ttlMs) {
+    return state.quotaCache;
+  }
+
+  let updated = false;
+  for (const p of DEFAULT_PROFILES) {
+    try {
+      const q = await quotaFetcher(p, nowMs);
+      if (q && typeof q.remainingPct === 'number') {
+        state.quotaCache[p.id] = {
+          ...q,
+          updatedAtMs: nowMs,
+        };
+        if (q.remainingPct <= 0 && q.resetAtMs > nowMs) {
+          state.frozenUntil[p.id] = q.resetAtMs;
+        } else if (q.remainingPct > 0 && state.frozenUntil[p.id]) {
+          delete state.frozenUntil[p.id];
+        }
+        updated = true;
+      }
+    } catch (err) {
+      logStructured('warn', 'sync_profile_quota_error', { profileId: p.id, error: err?.message });
+    }
+  }
+
+  if (updated) {
+    state.quotaFetchedAtMs = nowMs;
+    saveSwitcherState(stateDir, state);
+  }
+  return state.quotaCache;
+}
+
+/**
+ * Tong hop bao cao trang thai 6 profile kem % Quota con lai, thanh tien trinh va gio mo khoa chinh xac.
  */
 export function getStatusReport(opts = {}) {
   const { stateDir, nowMs = Date.now() } = opts;
@@ -472,15 +620,42 @@ export function getStatusReport(opts = {}) {
     : 0;
 
   const profiles = DEFAULT_PROFILES.map((p) => {
-    const frozenUntilMs = state.frozenUntil[p.id] || 0;
-    const isFrozen = frozenUntilMs > nowMs;
-    const freezeRemainMin = isFrozen ? Math.ceil((frozenUntilMs - nowMs) / 60000) : 0;
+    const cachedQuota = state.quotaCache?.[p.id] || null;
+    const rawFrozenMs = state.frozenUntil[p.id] || 0;
+    const quotaResetMs = cachedQuota?.resetAtMs || 0;
+    const effectiveResetMs = rawFrozenMs > nowMs ? rawFrozenMs : (quotaResetMs > nowMs ? quotaResetMs : 0);
+
+    const isQuotaZero = cachedQuota && typeof cachedQuota.remainingPct === 'number' && cachedQuota.remainingPct <= 0 && effectiveResetMs > nowMs;
+    const isFrozen = rawFrozenMs > nowMs || Boolean(isQuotaZero);
+    const freezeRemainMin = isFrozen ? Math.max(1, Math.ceil((effectiveResetMs - nowMs) / 60000)) : 0;
+
+    let remainingPct = 100;
+    if (isFrozen) {
+      remainingPct = 0;
+    } else if (cachedQuota && typeof cachedQuota.remainingPct === 'number') {
+      // Neu cua so 5h truoc da qua gio reset -> tu dong hoi phuc 100%
+      remainingPct = quotaResetMs > 0 && quotaResetMs <= nowMs ? 100 : cachedQuota.remainingPct;
+    }
+    const usedPct = Math.max(0, 100 - remainingPct);
+    const resetTimeFormatted = effectiveResetMs > nowMs ? formatLocalTimeHHMM(effectiveResetMs) : '';
+    const resetRemainHuman = effectiveResetMs > nowMs ? formatRemainDuration(effectiveResetMs - nowMs) : '';
+
     return {
       ...p,
       isActive: p.id === state.activeProfileId,
-      status: isFrozen ? `FROZEN (${freezeRemainMin}m left)` : (p.id === state.activeProfileId ? 'ACTIVE' : 'READY'),
+      status: isFrozen
+        ? `LIMIT 0% (Mở ${resetTimeFormatted || `${freezeRemainMin}p`})`
+        : p.id === state.activeProfileId
+          ? `ACTIVE (${remainingPct}%)`
+          : `READY (${remainingPct}%)`,
       isFrozen,
       freezeRemainMin,
+      remainingPct,
+      usedPct,
+      weeklyRemainingPct: cachedQuota?.weeklyRemainingPct ?? null,
+      resetAtMs: effectiveResetMs,
+      resetTimeFormatted,
+      resetRemainHuman,
     };
   });
 
