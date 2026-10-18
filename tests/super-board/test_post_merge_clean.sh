@@ -168,6 +168,17 @@ git -C "$R" worktree add -q "$W/issue-19-build" issue-19-cr
 bash "$TMP/sb/.claude/bin/clean.sh" "$R" issue-19-cr "$MERGED19" >/dev/null 2>"$TMP/k9.err"
 [ ! -d "$W/issue-19-build" ] && ok "k9 a kit that crashes in remove falls back to plain git" || { fail "k9 kit crash kept a clean worktree"; cat "$TMP/k9.err"; }
 rm -rf "$R/.agents"
+# k10. (OCR 18/10) hợp đồng chính: kit TỪ CHỐI có lý do (exit 1 kèm ✖) thì giữ worktree, KHÔNG rơi về `git worktree remove` — git trần
+#      xoá im lặng file bị ignore chỉ worktree có (khoá, .env). Worktree sạch theo `git status`, chỉ giữ một .env bị ignore mà main không có.
+echo ".env" >> "$R/.git/info/exclude"
+git -C "$R" branch issue-20-sec
+MERGED20="$(git -C "$R" rev-parse issue-20-sec)"
+git -C "$R" worktree add -q "$W/issue-20-build" issue-20-sec
+echo "TOKEN=only-here" > "$W/issue-20-build/.env"
+bash "$CLEAN" "$R" issue-20-sec "$MERGED20" >/dev/null 2>"$TMP/k10.err"
+[ -f "$W/issue-20-build/.env" ] && grep -q "issue-20-build: agent-kit worktree remove refused" "$TMP/k10.err" \
+  && ok "k10 a kit refusal (an ignored secret only the worktree holds) keeps the worktree, no git fallback" \
+  || { fail "k10 kit refusal fell through to git: the ignored secret is gone"; cat "$TMP/k10.err"; }
 # k7. (OCR 18/10) nhánh PR thường không có worktree nào của phiên: nhánh local cùng tên ở đúng commit đã merge là của người dùng — giữ
 git -C "$R" branch feat-userown
 MERGEDU="$(git -C "$R" rev-parse feat-userown)"
