@@ -242,6 +242,20 @@
           "command": "bash tests/super-board/test_merge_gate_stale_message.sh"
         }
       ]
+    },
+    {
+      "component": "mcp-servers/cc-switcher-mcp",
+      "watch_files": [
+        "mcp-servers/cc-switcher-mcp/*.js",
+        "mcp-servers/cc-switcher-mcp/*.json"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-AUTO-CC-SWITCHER-MCP-01",
+          "name": "cc-switcher-mcp: package.json test script",
+          "command": "cd mcp-servers/cc-switcher-mcp && npm test"
+        }
+      ]
     }
   ]
 }
