@@ -417,3 +417,12 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Gỡ một lần git từ chối có thể lộ ra việc ghi đè file bị ignore
 - **Nguyên nhân:** merge --ff-only và reset --keep mặc định ghi đè file bị git ignore ở đường dẫn target thêm; một file dở chặn ff đã vô tình giữ file đó, nên stage bản trùng byte rồi thử lại (K13) làm mất cấu hình cục bộ
 - **Quy tắc phòng ngừa & Cách fix:** Mọi đường thử lại ff/reset trong merge gate: --no-overwrite-ignore cho ff, chốt va chạm file ignore (trùng/cha/con, casefold, NFC) trước reset --keep; kiểm index bằng --ita-visible-in-index; test cả trường hợp main sạch
+
+---
+
+### [INSTINCT-050] Gate tin lệnh do chính thay đổi thêm vào: lệnh đó chạy trước suite base thì vô hiệu được suite base
+- **Ngày phát hiện:** 2026-10-18
+- **Hiện tượng lỗi:** PR chỉ THÊM rule vào ma trận hồi quy, test của rule mới XANH, gate exit 0 dù suite base phải ĐỎ
+- **Nguyên nhân:** post-fix-gate tin ma trận chỉ-thêm (PR #63) và chạy test thêm theo thứ tự rule: rule chèn đầu chạy trước suite base, ghi đè script base, hoặc đẩy script vào DEVKIT_GATE_DONE / ran_cmds / đích covered_by để runner base bỏ qua (universal-agent-devkit/bin/post-fix-gate.py)
+- **Quy tắc phòng ngừa & Cách fix:** Lệnh do thay đổi đưa vào chỉ chạy SAU mọi suite base và STALE, tuần tự, không ghi vào trạng thái dùng chung (DEVKIT_GATE_DONE, ran_cmds), không lấp id/covered_by của base; chỉ PASS đã thực chạy mới tính
+- **Lệnh kiểm tra:** `bash universal-agent-devkit/tests/gates/test_gate_matrix_additive.sh`
