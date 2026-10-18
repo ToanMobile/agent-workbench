@@ -273,19 +273,20 @@ if [ -n "$HUMAN" ] && [ "$APPROVED" != true ]; then
 fi
 
 git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet
+# Chốt commit base một lần, merge đúng commit đó: verify đỏ thì đếm "chậm hơn base" theo chính nó. Đọc lại origin/<base> sau vài phút
+# verify có thể đã bị phiên khác fetch đi; suy từ HEAD^2 thì sai khi merge là fast-forward lên một merge commit (OCR 18/10).
+BASE_SHA=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || {
+  say "cannot resolve origin/${BASE} after fetch"; exit 5; }
 
 git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {
   say "could not create a scratch worktree for ${HEAD_REF}@${HEAD_SHA}"; exit 5; }
 
-if ! git -C "$SCRATCH" merge "origin/${BASE}" --no-edit --quiet 2>/dev/null; then
+if ! git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>/dev/null; then
   CONFLICTS=$(git -C "$SCRATCH" diff --name-only --diff-filter=U | tr '\n' ' ')
   say "the base does not merge in cleanly — conflicts: ${CONFLICTS}"
   say "this is a rebase pass for the Builder lane, not a Blocked card"
   exit 5
 fi
-# Commit base thật sự đã merge vào SCRATCH (merge commit: HEAD^2; fast-forward hoặc đã chứa sẵn: HEAD). Dùng để đếm "chậm hơn base"
-# khi verify đỏ: đọc lại origin/<base> sau vài phút verify có thể đã bị phiên khác fetch đi (OCR 18/10).
-BASE_SHA=$(git -C "$SCRATCH" rev-parse -q --verify 'HEAD^2' 2>/dev/null || git -C "$SCRATCH" rev-parse HEAD)
 
 # Populate git-ignored DevKit symlinks so post-fix-gate / REG-WB-CONFIG-01 succeed in SCRATCH
 if [ -f "$REPO_PATH/universal-agent-devkit/bin/install.sh" ]; then
@@ -329,7 +330,7 @@ for cmd in "${VERIFY[@]}"; do
     else
       # Bỏ mã màu ANSI (byte ESC thật: sed BSD không hiểu \x1b); LC_ALL=C để sed macOS không đòi UTF-8 hợp lệ.
       VERDICT=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$VERIFY_LOG" | grep -a -E "KẾT LUẬN|VERDICT" | tail -1 \
-        | LC_ALL=C sed 's/^[[:space:]]*//' || true)
+        | LC_ALL=C sed 's/^[[:space:]]*//' | clip 300 || true)
       say "verify failed (exit ${VRC}) on a branch not behind ${BASE}: ${VERDICT:-no KẾT LUẬN/VERDICT line, see the log tail above} (log saved to ${VLOG})"
     fi
     exit 2

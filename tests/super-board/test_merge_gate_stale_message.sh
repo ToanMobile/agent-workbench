@@ -89,5 +89,19 @@ git -C "$R" checkout -q main; echo c > "$R/c"; git -C "$R" add c; git -C "$R" co
 [ "$rc" -eq 2 ] && grep -q "stale against main" "$TMP/gate2.log" \
   && ok "behind-base branch, red verify: still says stale (exit 2)" || fail "behind branch (rc $rc): $(grep merge-gate "$TMP/gate2.log" | tail -3)"
 
+# Ca 3 (OCR 18/10): merge trong SCRATCH là fast-forward lên đỉnh base là một merge commit có cha thứ hai chính là head của PR. Nhánh vẫn
+# chậm hơn base 2 commit → phải nói stale (suy base từ HEAD^2 sau merge sẽ ra chính head → đếm 0 → sai).
+git -C "$R" branch -q --no-track issue-6-x main
+git -C "$R" checkout -q issue-6-x; echo d > "$R/d"; git -C "$R" add d; git -C "$R" commit -qm card6; git -C "$R" push -q origin issue-6-x
+H6=$(git -C "$R" rev-parse issue-6-x)
+git -C "$R" checkout -q main; echo e > "$R/e"; git -C "$R" add e; git -C "$R" commit -qm main-e
+git -C "$R" merge -q --no-ff --no-edit issue-6-x; git -C "$R" push -q origin main
+git -C "$R" diff "$H6~1" "$H6" > "$TMP/pr6.diff"
+printf '{"files":[{"path":"d"}],"labels":[],"body":"","additions":1,"deletions":0,"changedFiles":1}' > "$TMP/pr6.meta"
+echo "$H6" > "$TMP/pr6.head"
+( cd "$WT" && bash "$GATE" --config "$CFG" --pr 6 --expect-head "$H6" ) >"$TMP/gate3.log" 2>&1; rc=$?
+[ "$rc" -eq 2 ] && grep -q "stale against main (2 commit(s) behind)" "$TMP/gate3.log" \
+  && ok "fast-forward onto a merge-commit base tip: still says stale, 2 behind" || fail "ff onto merge tip (rc $rc): $(grep merge-gate "$TMP/gate3.log" | tail -3)"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_stale_message: PASS"; exit 0; } || { echo "test_merge_gate_stale_message: FAIL ($FAILS)"; exit 1; }
