@@ -409,3 +409,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Hook Stop của phiên cha tự gộp worktree của agent con đang chạy
 - **Nguyên nhân:** worktree_merge_gate.sh xem mọi worktree agent-* do phiên sở hữu là đã xong, nên gộp cả việc dở của subagent nền (K10, 17/10: wip a07752b)
 - **Quy tắc phòng ngừa & Cách fix:** Trước khi automerge, xét thông báo harness cuối cùng của subagent (đang chờ việc nền / chưa báo / SendMessage = còn sống) và bỏ qua; chỉ gộp khi có bằng chứng nó đã dừng
+
+---
+
+### [INSTINCT-049] Gỡ một lần git từ chối có thể lộ ra việc ghi đè file bị ignore
+- **Ngày phát hiện:** 2026-10-18
+- **Hiện tượng lỗi:** Gỡ một lần git từ chối có thể lộ ra việc ghi đè file bị ignore
+- **Nguyên nhân:** merge --ff-only và reset --keep mặc định ghi đè file bị git ignore ở đường dẫn target thêm; một file dở chặn ff đã vô tình giữ file đó, nên stage bản trùng byte rồi thử lại (K13) làm mất cấu hình cục bộ
+- **Quy tắc phòng ngừa & Cách fix:** Mọi đường thử lại ff/reset trong merge gate: --no-overwrite-ignore cho ff, chốt va chạm file ignore (trùng/cha/con, casefold, NFC) trước reset --keep; kiểm index bằng --ita-visible-in-index; test cả trường hợp main sạch
