@@ -314,6 +314,7 @@
 2 tests/gates/test_security_gate_refused_call.sh
 8 tests/gates/test_worktree_merge_gate_board_kept.sh
 1 tests/verification/test_checklist_no_timestamp_churn.sh
+16 tests/gates/test_gate_matrix_additive.sh
 20 tests/worktree_git/test_worktree_finish_retry.sh
 11 tests/gates/test_gate_narrow_no_tests_found.sh
 3 tests/worktree_git/test_worktree_finish_inside.sh
