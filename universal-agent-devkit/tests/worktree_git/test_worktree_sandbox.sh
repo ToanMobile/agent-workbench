@@ -541,6 +541,87 @@ fi
 cd "$P"
 git -C "$P" worktree remove --force "$W"
 
+# issue #12 (#38): thư mục sandbox bị xoá tay khi commit của nó chỉ còn reflog HEAD trong admin dir giữ — cleanup không bao giờ
+# `git worktree prune` toàn repo: chỉ gỡ đúng đăng ký của sandbox vừa kiểm
+CD="$(git -C "$P" rev-parse --path-format=absolute --git-common-dir)"
+python3 "$SCRIPT" create gx >/dev/null 2>&1   # biến thể B: commit trên HEAD tách rời rồi quay lại nhánh (đã merge): chỉ reflog giữ
+( cd "$P/.sandboxes/gx" && git checkout -q --detach && echo g > g.txt && git add g.txt && git commit -q -m "feat: gx detached" \
+  && git checkout -q sandbox/gx )
+python3 "$SCRIPT" create gd >/dev/null 2>&1   # biến thể A: còn đứng HEAD tách rời ở commit chưa merge
+( cd "$P/.sandboxes/gd" && git checkout -q --detach && echo d > d.txt && git add d.txt && git commit -q -m "feat: gd detached" )
+python3 "$SCRIPT" create ge >/dev/null 2>&1   # biến thể e: nhánh còn commit chưa merge (cleanup từ chối) + commit chỉ reflog giữ
+( cd "$P/.sandboxes/ge" && echo e > e.txt && git add e.txt && git commit -q -m "feat: ge branch" && git checkout -q --detach \
+  && echo e2 > e2.txt && git add e2.txt && git commit -q -m "feat: ge detached" && git checkout -q sandbox/ge )
+rm -rf "$P/.sandboxes/gx" "$P/.sandboxes/gd" "$P/.sandboxes/ge"
+python3 "$SCRIPT" create gy >/dev/null 2>&1
+GY_OUT=$(python3 "$SCRIPT" cleanup --name gy 2>&1)
+if [ ! -d "$P/.sandboxes/gy" ] && [ -d "$CD/worktrees/gx" ] && [ -d "$CD/worktrees/gd" ] && [ -d "$CD/worktrees/ge" ]; then
+  ok "cleanup of another sandbox keeps the admin dirs of sandboxes whose folder is gone (#38)"
+else
+  fail "cleanup --name gy pruned other sandboxes' admin dirs: $GY_OUT"
+fi
+for s in gx gd; do
+  S_OUT=$(python3 "$SCRIPT" cleanup --name "$s" 2>&1)
+  if [ -d "$CD/worktrees/$s" ] && echo "$S_OUT" | grep -q "chưa merge" && echo "$S_OUT" | grep -q "chưa dọn.*$s"; then
+    ok "cleanup keeps a folder-gone sandbox whose admin reflog/HEAD holds an unmerged commit, and says so ($s, #38)"
+  else
+    fail "cleanup lost the admin dir of folder-gone sandbox $s or did not warn: $S_OUT"
+  fi
+done
+git -C "$P" rev-parse --verify -q refs/heads/sandbox/gx >/dev/null && ok "  … and keeps its branch" || fail "cleanup deleted sandbox/gx"
+GE_OUT=$(python3 "$SCRIPT" cleanup --name ge 2>&1)
+if [ -d "$CD/worktrees/ge" ] && git -C "$P" rev-parse --verify -q refs/heads/sandbox/ge >/dev/null && echo "$GE_OUT" | grep -q "chưa merge"; then
+  ok "a refused sandbox is never pruned afterwards: its admin reflog survives (#38)"
+else
+  fail "cleanup refused ge then pruned its admin dir: $GE_OUT"
+fi
+python3 "$SCRIPT" create gz >/dev/null 2>&1; rm -rf "$P/.sandboxes/gz"   # thư mục mất, không còn gì chưa merge: dọn cả đăng ký lẫn nhánh
+GZ_OUT=$(python3 "$SCRIPT" cleanup --name gz 2>&1)
+if [ ! -d "$CD/worktrees/gz" ] && ! git -C "$P" rev-parse --verify -q refs/heads/sandbox/gz >/dev/null && echo "$GZ_OUT" | grep -q "✓"; then
+  ok "cleanup of a clean folder-gone sandbox removes its own registration and branch"
+else
+  fail "cleanup left a clean folder-gone sandbox registered: $GZ_OUT"
+fi
+for s in gx gd ge; do python3 "$SCRIPT" cleanup --name "$s" --force >/dev/null 2>&1; done
+if [ ! -d "$CD/worktrees/gx" ] && [ ! -d "$CD/worktrees/gd" ] && [ ! -d "$CD/worktrees/ge" ]; then
+  ok "cleanup --force removes a folder-gone sandbox's own registration"
+else
+  fail "cleanup --force left a folder-gone sandbox registered"
+fi
+# issue #12 (#41): một worktree khác đăng ký LỒNG trong sandbox dưới đường dẫn bị ignore — git status của sandbox không thấy nó
+echo ".nest-wt/" >> "$CD/info/exclude"
+python3 "$SCRIPT" create nest_sb >/dev/null 2>&1
+git -C "$P" worktree add -q --detach "$P/.sandboxes/nest_sb/.nest-wt/inner" HEAD
+echo "work in inner" >> "$P/.sandboxes/nest_sb/.nest-wt/inner/README.md"
+NEST_OUT=$(python3 "$SCRIPT" cleanup --name nest_sb 2>&1)
+if grep -q "work in inner" "$P/.sandboxes/nest_sb/.nest-wt/inner/README.md" 2>/dev/null && echo "$NEST_OUT" | grep -q "inner" \
+   && echo "$NEST_OUT" | grep -q "chưa dọn.*nest_sb"; then
+  ok "cleanup keeps a sandbox holding a registered nested worktree (under an ignored path) and names it (#41)"
+else
+  fail "cleanup deleted a nested worktree's uncommitted work: $NEST_OUT"
+fi
+git -C "$P" worktree remove --force "$P/.sandboxes/nest_sb/.nest-wt/inner" 2>/dev/null
+python3 "$SCRIPT" cleanup --name nest_sb --force >/dev/null 2>&1
+# issue #12 (#41): nhánh sandbox là symref treo (đích đã mất): xoá lỗi thì nằm trong "chưa dọn", không in "xoá nhánh"
+git -C "$P" symbolic-ref refs/heads/sandbox/dsym_sb refs/heads/no-such-target
+if [ -d "$CD/refs/heads/sandbox" ]; then
+  : > "$CD/refs/heads/sandbox/dsym_sb.lock"   # khoá ref: xoá symref sẽ lỗi
+  DS_OUT=$(python3 "$SCRIPT" cleanup --name dsym_sb 2>&1)
+  if git -C "$P" symbolic-ref -q refs/heads/sandbox/dsym_sb >/dev/null && ! echo "$DS_OUT" | grep -q "✓" \
+     && echo "$DS_OUT" | grep -q "chưa dọn.*dsym_sb"; then
+    ok "a dangling sandbox symref that cannot be deleted is listed as not cleaned, never '✓ … xoá nhánh' (#41)"
+  else
+    fail "cleanup claimed it deleted a dangling symref it could not delete: $DS_OUT"
+  fi
+  rm -f "$CD/refs/heads/sandbox/dsym_sb.lock"
+fi
+DS2_OUT=$(python3 "$SCRIPT" cleanup --name dsym_sb 2>&1)
+if ! git -C "$P" symbolic-ref -q refs/heads/sandbox/dsym_sb >/dev/null 2>&1 && echo "$DS2_OUT" | grep -q "✓"; then
+  ok "a dangling sandbox symref is deleted itself (its target untouched) and then reported done (#41)"
+else
+  fail "cleanup left a dangling sandbox symref: $DS2_OUT"
+fi
+
 if [ $FAILS -gt 0 ]; then
   echo "FAILED: $FAILS errors"
   exit 1
