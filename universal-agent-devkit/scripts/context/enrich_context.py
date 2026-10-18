@@ -1048,7 +1048,10 @@ def parallel_hint(prompt):
             "lane chạy được trong MỘT tin nhắn: cùng repo thì Agent tool `isolation: \"worktree\"`, repo khác thì một phiên riêng "
             "(Claude Desktop chỉ mở phiên ở repo khác trong lượt có lời người dùng: mở ngay lượt này), phần chỉ đọc thì Agent "
             "song song không worktree. Cả đợt: một lượt principal-code-reviewer + ocr-review song song, một gate `--full` sau "
-            "khi gộp. Chỉ một việc, một file, hoặc bạn đang là một lane được giao: làm luôn, không tách.")
+            "khi gộp. Lỗi mới tìm thấy giữa chừng: cực quan trọng (mất dữ liệu hay commit, main hỏng hoặc lệch origin, "
+            "merge/push hỏng làm luồng tự động dừng, lỗ bảo mật, gate báo xanh sai) thì làm ngay; còn lại (chậm, thêm bước tay, "
+            "thông báo sai, tối ưu) không sửa, tạo thẻ Backlog bằng skill `createTask` và ghi số issue vào báo cáo cuối. "
+            "Chỉ một việc, một file, hoặc bạn đang là một lane được giao: làm luôn, không tách.")
 
 
 def req_hint(prompt, dossier, project_root):

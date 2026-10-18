@@ -137,7 +137,8 @@ for name, big in BIG:
     t0 = time.perf_counter()
     split(big)
     big_ms = (time.perf_counter() - t0) * 1000
-    chk(big_ms < 300, "a %d KB prompt (%s) is judged in %.1f ms (budget 300 ms: linear, not quadratic)" % (len(big) // 1000, name, big_ms))
+    # 2 s: idle ~15 ms, 220-245 ms at load 145 (18/10), the quadratic search 3.7-18 s: the budget still catches it on a busy runner
+    chk(big_ms < 2000, "a %d KB prompt (%s) is judged in %.1f ms (budget 2 s: linear, not quadratic)" % (len(big) // 1000, name, big_ms))
 
 # end to end through the hook: the line for a split request, nothing more for chit-chat or a question
 HOOK = os.path.join(KIT, "hooks", "prompt_context.sh")
@@ -156,6 +157,10 @@ rc, out, _ = hook("sửa bug proof_gate ở 4 repo GeelyEx2, OfficeReader, Goods
 chk(rc == 0 and "- Song song" in out and "lanes plan" in out and 'isolation: "worktree"' in out and "--full" in out,
     "hook: a split request gets the parallel line (lanes plan, worktree isolation, one --full)", out)
 chk("phiên riêng" in out and "lane" in out, "hook: the line names a separate session for another repo and the no-refan rule for a lane", out)
+# the triage rule (user 18/10: "nào cực quan trọng thì làm còn ko quan trọng thì đưa vô backlog xử lý sau"): a new defect found mid-batch is
+# fixed now only when it is critical, anything else becomes a Backlog card through createTask
+chk("cực quan trọng" in out and "mất dữ liệu" in out and "gate báo xanh sai" in out and "createTask" in out and "Backlog" in out,
+    "hook: the line carries the triage rule (critical now, the rest a Backlog card via createTask)", out)
 rc, out, _ = hook("cảm ơn, làm tốt lắm")
 chk(rc == 0 and out == "", "hook: chit-chat stays silent", repr(out))
 rc, out, _ = hook("có nên chạy 4 repo song song không?")
