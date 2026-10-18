@@ -96,4 +96,34 @@ git -C "$R" worktree add -q --detach "$W/issue-11-qa" main
 bash "$CLEAN" "$R" feature-x "$MERGED" >/dev/null 2>&1
 [ -d "$W/issue-8-qa" ] && ok "non-card head ref: nothing removed" || fail "non-card head ref removed a worktree"
 
+# 18/10 (NFH PR #38, #45, Geely PR #59): phiên rời worktree của PR bằng ExitWorktree "keep" (khoá devkit-kept với pid của phiên) rồi tự
+# chạy merge gate. `git worktree remove` trần từ chối worktree bị khoá, nên phiên phải unlock tay. Bước dọn dùng `agent-kit worktree remove`
+# (tự mở khoá của chính phiên hoặc của pid đã chết, luật không-mất-việc giữ nguyên).
+# k1. thẻ: issue-14-build khoá keep bởi chính tiến trình gọi (pid của shell test là tổ tiên của bước dọn)
+git -C "$R" branch issue-14-k
+MERGED14="$(git -C "$R" rev-parse issue-14-k)"
+git -C "$R" worktree add -q "$W/issue-14-build" issue-14-k
+git -C "$R" worktree lock --reason "devkit-kept session=me pid=$$" "$W/issue-14-build"
+bash "$CLEAN" "$R" issue-14-k "$MERGED14" >/dev/null 2>&1
+[ ! -d "$W/issue-14-build" ] && ok "k1 card worktree locked by the caller's own ExitWorktree keep is removed" \
+  || fail "k1 card worktree locked by the caller's own keep kept (the session has to unlock by hand)"
+# k2. nhánh PR thường (không dạng issue-<N>-…): worktree của phiên ở đúng nhánh vừa merge, khoá keep của chính phiên
+git -C "$R" branch feat-own
+MERGEDF="$(git -C "$R" rev-parse feat-own)"
+git -C "$R" worktree add -q "$W/feat-own" feat-own
+git -C "$R" worktree lock --reason "devkit-kept session=me pid=$$" "$W/feat-own"
+bash "$CLEAN" "$R" feat-own "$MERGEDF" >/dev/null 2>&1
+[ ! -d "$W/feat-own" ] && ok "k2 the session's own worktree on a merged non-card branch is removed" \
+  || fail "k2 the session's own worktree on a merged non-card branch kept"
+git -C "$R" rev-parse --verify -q refs/heads/feat-own >/dev/null && fail "k2 merged non-card branch kept" || ok "k2 merged non-card branch deleted"
+# k3. khoá keep của một phiên KHÁC còn sống: giữ (không bao giờ gỡ worktree từ dưới chân phiên khác)
+sleep 300 & SL=$!
+git -C "$R" branch issue-15-o
+MERGED15="$(git -C "$R" rev-parse issue-15-o)"
+git -C "$R" worktree add -q "$W/issue-15-build" issue-15-o
+git -C "$R" worktree lock --reason "devkit-kept session=other pid=$SL" "$W/issue-15-build"
+bash "$CLEAN" "$R" issue-15-o "$MERGED15" >/dev/null 2>&1
+[ -d "$W/issue-15-build" ] && ok "k3 worktree another live session keeps is left alone" || fail "k3 worktree another live session keeps REMOVED"
+kill "$SL" 2>/dev/null
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_post_merge_clean: all passed" || { echo "❌ test_post_merge_clean: $FAILS failed"; exit 1; }

@@ -14,9 +14,37 @@ HEAD_REF="${2:?merged head ref}"; MERGED_SHA="${3:-}"
 REPO_PATH=$(git -C "${1:?repo path}" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
 [ -n "$REPO_PATH" ] || exit 0
 N=$(printf '%s' "$HEAD_REF" | sed -nE 's#^issue-([0-9]+)-.*#\1#p')
-[ -n "$N" ] || exit 0   # không phải nhánh của thẻ: không có gì ở đây để xoá
 HERE_PWD=$(pwd -P)
-for wt in "$REPO_PATH/.claude/worktrees"/issue-"$N"-*; do
+# 18/10 (NFH PR #38, #45, Geely PR #59): phiên rời worktree của PR bằng ExitWorktree "keep" (khoá devkit-kept) rồi tự chạy merge gate;
+# `git worktree remove` trần từ chối worktree bị khoá và phiên phải unlock tay. Có DevKit thì gỡ bằng `worktree.py remove`: nó mở khoá
+# devkit-kept của chính phiên gọi hoặc của pid đã chết (khoá của phiên khác còn sống thì git vẫn từ chối) và giữ luật không-mất-việc.
+KIT_WT=""
+for c in "$REPO_PATH/.agents/devkit" "$REPO_PATH/universal-agent-devkit" "$(cd "$(dirname "$0")/../.." && pwd)/universal-agent-devkit"; do
+  if [ -f "$c/scripts/git/worktree.py" ]; then KIT_WT="$c/scripts/git/worktree.py"; break; fi
+done
+remove_wt() {
+  local out
+  if [ -n "$KIT_WT" ]; then
+    out=$(cd "$REPO_PATH" && python3 "$KIT_WT" remove "$1" 2>&1) \
+      || echo "kept $1: agent-kit worktree remove refused: $(printf '%s' "$out" | tail -1 | cut -c1-300)" >&2
+  else
+    git -C "$REPO_PATH" worktree remove "$1" 2>/dev/null || echo "kept $1: git worktree remove failed" >&2
+  fi
+}
+CANDS=()
+if [ -n "$N" ]; then
+  for wt in "$REPO_PATH/.claude/worktrees"/issue-"$N"-*; do CANDS+=("$wt"); done
+else
+  # Nhánh PR thường (không phải của thẻ): chỉ worktree đang ở ĐÚNG nhánh vừa merge (của phiên đã mở PR), không bao giờ main checkout
+  cur=""
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*) cur="${line#worktree }" ;;
+      "branch refs/heads/$HEAD_REF") [ -n "$cur" ] && [ "$cur" != "$REPO_PATH" ] && CANDS+=("$cur") ;;
+    esac
+  done < <(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null)
+fi
+for wt in ${CANDS[@]+"${CANDS[@]}"}; do
   [ -d "$wt" ] || continue
   case "$HERE_PWD/" in "$(cd "$wt" && pwd -P)"/*) continue ;; esac
   case "${wt##*/}" in
@@ -34,7 +62,7 @@ for wt in "$REPO_PATH/.claude/worktrees"/issue-"$N"-*; do
     echo "kept $wt: HEAD ${head:-<unknown>} is on no branch or remote" >&2
     continue
   fi
-  git -C "$REPO_PATH" worktree remove "$wt" 2>/dev/null || echo "kept $wt: git worktree remove failed" >&2
+  remove_wt "$wt"
 done
 tip=$(git -C "$REPO_PATH" rev-parse --verify -q "refs/heads/$HEAD_REF" 2>/dev/null || true)
 if [ -n "$tip" ] && [ -n "$MERGED_SHA" ] && [ "$tip" = "$MERGED_SHA" ]; then
