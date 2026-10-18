@@ -1590,8 +1590,10 @@ def load_active_matrix(matrix_path: str = None, base_ref: str = "HEAD"):
 def matrix_additions(base, current):
     """Id các test mà ma trận `current` THÊM so với `base`, hoặc None khi đó không phải thay đổi chỉ-thêm (GeelyEx2 PR #60, 18/10: một PR
     chỉ thêm REG-HOOK-01 bị exit 2 "cần người review", pre-push và merge gate dừng). Chỉ-thêm: khoá top-level ngoài "rules" giữ nguyên; rule
-    cũ còn đủ, đúng thứ tự, bằng từng giá trị; mỗi rule mới có ít nhất một test, mỗi test mới có id chưa từng có ở base (một id chung
-    dòng trạng thái với suite cũ), không trùng nhau, có lệnh, và không covered_by (test mới phải tự chạy). Thứ khác: None.
+    cũ còn nguyên ở ĐẦU danh sách, bằng từng giá trị, rule mới chỉ nối ở đuôi (review 18/10: rule chèn đầu chạy trước suite base và tác
+    dụng phụ của nó vô hiệu được suite base); mỗi rule mới có ít nhất một test, mỗi test mới có id chưa có ở base — kể cả đích covered_by
+    của test base (id thêm "lấp" đích treo thì suite base bị đánh COVERED) —, không trùng nhau, có lệnh, và không covered_by (test mới
+    phải tự chạy). Thứ khác: None.
     ponytail: gate không chấm chất lượng lệnh test mới — rule mới `watch_files: ["**"]` với lệnh `true` vẫn XANH và làm file chưa có test
     thành "được phủ" (như một file test rỗng dưới suite cũ đã làm được); thêm kiểm tra lệnh no-op khi thấy một ca như vậy trong PR thật."""
     if not isinstance(base, dict) or not isinstance(current, dict):
@@ -1601,16 +1603,11 @@ def matrix_additions(base, current):
     old, new = base.get("rules", []), current.get("rules", [])
     if not isinstance(old, list) or not isinstance(new, list):
         return None
-    i, added_rules = 0, []
-    for rule in new:   # rule cũ là dãy con của rule mới: khớp tham lam là đủ (phần dư là rule thêm)
-        if i < len(old) and rule == old[i]:
-            i += 1
-        else:
-            added_rules.append(rule)
-    if i != len(old) or not added_rules:
+    added_rules = new[len(old):]
+    if new[:len(old)] != old or not added_rules:
         return None
-    base_ids = {t.get("id") for r in old if isinstance(r, dict)
-                for t in (r.get("mandatory_regression_tests") or []) if isinstance(t, dict)}
+    base_ids = {t.get(k) for r in old if isinstance(r, dict)
+                for t in (r.get("mandatory_regression_tests") or []) if isinstance(t, dict) for k in ("id", "covered_by")}
     added = []
     for rule in added_rules:
         tests = rule.get("mandatory_regression_tests") if isinstance(rule, dict) else None
@@ -4947,8 +4944,8 @@ def main():
         return run_commit_msg_check(args.commit_msg, modified_files)
     if STAGED:
         return run_staged_audit(args, modified_files, devkit_artifacts)
-    matrix, matrix_problem = load_active_matrix(args.matrix, base_ref)
-    matrix, matrix_problem, matrix_added = trust_additive_matrix(matrix, matrix_problem, args.matrix, base_ref)
+    base_matrix, base_problem = load_active_matrix(args.matrix, base_ref)
+    matrix, matrix_problem, matrix_added = trust_additive_matrix(base_matrix, base_problem, args.matrix, base_ref)
     matrix, matrix_problem = follow_matrix_renames(matrix, matrix_problem, args.matrix, base_ref)
     for _sid, _cmds in matrix_id_conflicts(matrix).items():
         # log_err, not log_warn: --brief keeps only ✖ lines, so a ⚠ here would never reach the agent that runs the standard command
@@ -5139,21 +5136,6 @@ def main():
         for guard in rule.get("immutable_guards", []):
             immutable_guards_protected.append((comp_name, guard))
     impacted_tests = list(regression_tests)   # what the change itself needs (coverage verdicts)
-    if run_tests and matrix_added:
-        # Ma trận chỉ-thêm được tin với điều kiện test thêm chạy XANH ở đây: chạy cả khi không file nào khớp watch_files của rule mới.
-        have = {t["id"] for t in regression_tests}
-        for rule in rules:
-            for test in rule.get("mandatory_regression_tests", []):
-                if test.get("id") in matrix_added and test["id"] not in have:
-                    have.add(test["id"])
-                    regression_tests.append({
-                        "component": rule.get("component", "UnknownComponent"), "id": test["id"],
-                        "name": test.get("name"), "command": test.get("command"),
-                        "impacted_command": test.get("impacted_command"), "files": [],
-                        "untested_exit": test.get("untested_exit"), "status": "NOT_RUN", "duration": "-",
-                        "parallel_safe": test.get("parallel_safe") is True, "covered_by": None})
-        print(f"  • {tr('Ma trận chỉ THÊM rule so với', 'The matrix only ADDS rules relative to')} {base_ref}: "
-              f"{tr('chạy test mới', 'running the new tests')} {', '.join(matrix_added[:10])}{' …' if len(matrix_added) > 10 else ''}")
     project_dir = get_project_dir()
     force_reason = force_full_reason(args)
     # Acceptance was asked for (--full), not a Stop-hook style check: if it is deferred
@@ -5203,6 +5185,27 @@ def main():
         if reran:
             print(f"  • {tr('Chạy lại suite STALE của checklist (--full)', 'Re-running the checklist STALE suites (--full)')}: "
                   f"{', '.join(reran[:10])}{' …' if len(reran) > 10 else ''}")
+
+    if run_tests and matrix_added:
+        # Ma trận chỉ-thêm được tin với điều kiện test thêm chạy XANH ở đây: chạy cả khi không file nào khớp watch_files của rule mới, và
+        # chạy SAU mọi suite base và STALE, tuần tự (review 18/10: tác dụng phụ của lệnh thêm không được đi vào suite base).
+        added_set = set(matrix_added)
+        tail = [t for t in regression_tests if t.get("id") in added_set]
+        have = {t["id"] for t in tail}
+        for rule in rules:
+            for test in rule.get("mandatory_regression_tests", []):
+                if test.get("id") in added_set and test["id"] not in have:
+                    have.add(test["id"])
+                    tail.append({
+                        "component": rule.get("component", "UnknownComponent"), "id": test["id"],
+                        "name": test.get("name"), "command": test.get("command"),
+                        "impacted_command": test.get("impacted_command"), "files": [],
+                        "untested_exit": test.get("untested_exit"), "status": "NOT_RUN", "duration": "-", "covered_by": None})
+        for t in tail:
+            t.update({"parallel_safe": False, "matrix_added": True})
+        regression_tests[:] = [t for t in regression_tests if t.get("id") not in added_set] + tail
+        print(f"  • {tr('Ma trận chỉ THÊM rule so với', 'The matrix only ADDS rules relative to')} {base_ref}: "
+              f"{tr('chạy test mới sau cùng', 'running the new tests last')} {', '.join(matrix_added[:10])}{' …' if len(matrix_added) > 10 else ''}")
 
     print(f"  • {tr('Dự án kích hoạt', 'Project')}: {CYAN}{matrix.get('project') or active_profile_name()}{RESET}")
     if matrix_problem:
@@ -5658,7 +5661,8 @@ def main():
                 os.environ["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
             run_suite(t, cmd, mode, suite_env())
             ran_cmds[key] = t
-            note_ran(cmd)
+            if not t.get("matrix_added"):   # lệnh của ma trận chỉ-thêm không được bảo runner bỏ qua script nào
+                note_ran(cmd)
         elif run_tests:
             t["status"] = "FAIL"
             t["output_tail"] = tr("Matrix không khai báo command cho test này", "The matrix declares no command for this test")
@@ -5814,7 +5818,10 @@ def main():
                  + ", ".join(t["id"] or "?" for t in stale_skipped))
     tests_ok = tests_passed + len(tests_untested) + len(stale_skipped) == len(regression_tests)
     unverified = bool(regression_tests) and not run_tests
-    added_not_green = [i for i in matrix_added if not any(t.get("id") == i and t["status"] == "PASS" for t in regression_tests)]
+    # PASS mà không chạy gì (RESOURCE, SKIP compile, COVERED) không phải XANH; BUSY/BUDGET là kết luận exit 4 của chính chúng
+    added_not_green = [i for i in matrix_added if not any(
+        t.get("id") == i and ((t["status"] == "PASS" and t.get("mode") not in ("resource", "skip-compile", "covered"))
+                              or t.get("label") in ("BUSY", "BUDGET")) for t in regression_tests)]
     if added_not_green and not matrix_problem:
         matrix_problem = tr(f"regression matrix chỉ thêm rule so với {base_ref} nhưng test mới chưa chạy XANH trong lượt này "
                             f"({', '.join(added_not_green[:5])}) — gate chỉ tin ma trận chỉ-thêm khi mọi test mới PASS; chạy lại với --run-tests",
@@ -6000,15 +6007,21 @@ def main():
 
     # a read-only run holds no lock: a re-used PASS is not written into the checklist (it would overwrite the FAIL of a run that finished meanwhile)
     checklist_tests = [dict(t, status="UNTESTED") if t.get("mode") == "cached" else t for t in regression_tests] if read_only else regression_tests
+    cl_matrix, cl_rules = matrix, rules
+    if matrix_added and exit_code != 0:
+        # ma trận chỉ-thêm chưa đứng vững trong lượt này: sổ checklist theo ma trận base, không đồng bộ rule chưa được tin
+        cl_matrix = follow_matrix_renames(base_matrix, base_problem, args.matrix, base_ref)[0]
+        cl_rules = cl_matrix.get("rules", [])
+        checklist_tests = [t for t in checklist_tests if not t.get("matrix_added")]
     if not args.no_checklist and not project_gone:
         # A LINKED worktree leaves the tracked checklist files alone (--checklist asks for the write): the verdict and
         # exit code above are already decided and do not depend on it. A --record-lesson still writes its lesson
         # (instincts.md, which `worktree diff` carries) but not the bug row: that file is left out of the patch.
         if args.checklist or not skip_bookkeeping(project_dir):
             update_regression_checklist(
-                args, matrix, rules, modified_files, checklist_tests, run_tests, exit_code)
+                args, cl_matrix, cl_rules, modified_files, checklist_tests, run_tests, exit_code)
         else:
-            record_worktree_results(args, matrix, modified_files, checklist_tests, run_tests, overlay_pre)
+            record_worktree_results(args, cl_matrix, modified_files, checklist_tests, run_tests, overlay_pre)
             print(f"  • {DIM}{tr('Regression checklist: không ghi trong worktree liên kết (thêm --checklist để ghi); kết quả chạy giữ trong state riêng của worktree', 'Regression checklist: not written in a linked worktree (add --checklist to write it); this run results are kept in the worktree own state')}{RESET}")
             if args.record_lesson and exit_code == 0:
                 print(f"  • {DIM}{tr('Bài học vào instincts.md; dòng bug KHÔNG ghi ở đây — thêm ở main checkout: agent-kit bugs add ...', 'The lesson goes to instincts.md; its bug row is NOT written here — add it in the main checkout: agent-kit bugs add ...')}{RESET}")

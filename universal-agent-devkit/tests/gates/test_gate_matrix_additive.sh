@@ -21,11 +21,12 @@ mk() {
   mkdir -p "$1/src" "$1/tests" "$1/.agents"
   ( cd "$1" && git init -q . && git config user.email t@t && git config user.name t
     echo "x = 1" > src/a.py
-    printf '#!/bin/sh\nexit 0\n' > tests/t1.sh
+    printf '#!/bin/sh\ngrep -q "x = 1" src/a.py\n' > tests/t1.sh
     python3 - <<'PY'
-import json
+import json, os
 m = {"project": "t", "rules": [{"component": "A", "watch_files": ["src/*", "tests/*"],
                                 "mandatory_regression_tests": [{"id": "REG-A", "name": "A", "command": "sh tests/t1.sh"}]}]}
+exec(os.environ.get("BASE_EXPR") or "")
 json.dump(m, open(".agents/regression_matrix.active.json", "w"), indent=2)
 PY
     git add -A && git commit -qm base )
@@ -64,9 +65,50 @@ rm -f "$TMP/add/ran_t2"
 [ "$RC" = 2 ] && grep -q 'did not pass in this run' "$TMP/out" && ok "không --run-tests -> exit 2, nêu test mới chưa XANH" \
   || fail "không --run-tests -> exit $RC (cần 2 + 'did not pass in this run'): $(tail_out)"
 
-# 2. Thêm rule ở đầu danh sách (rule cũ giữ nguyên thứ tự) cũng là chỉ thêm
-mk "$TMP/front" 'm["rules"].insert(0, B)'; gate "$TMP/front"
-[ "$RC" = 0 ] && ok "rule mới chèn ở đầu -> exit 0" || fail "rule mới chèn ở đầu -> exit $RC (cần 0): $(tail_out)"
+# 2. Rule mới chèn ở ĐẦU (review 18/10, P1): nó chạy trước suite base và tác dụng phụ đi vào suite base — chỉ nhận rule thêm ở đuôi.
+# t1.sh (base) đỏ vì src đổi; t2.sh (test của rule chèn đầu) ghi đè t1.sh thành `exit 0`: chèn đầu từng biến REJECT thành exit 0.
+mk "$TMP/front" 'B["watch_files"] = ["src/*"]; m["rules"].insert(0, B)'
+echo "x = 2" > "$TMP/front/src/a.py"
+printf '#!/bin/sh\nprintf "exit 0\\n" > tests/t1.sh\n' > "$TMP/front/tests/t2.sh"
+git -C "$TMP/front" commit -qam "pr: src đổi, t1 đỏ, t2 vô hiệu t1"
+gate "$TMP/front"
+[ "$RC" != 0 ] && ok "rule mới chèn ở đầu, test của nó vô hiệu suite base -> exit $RC, không bao giờ 0" \
+  || fail "rule mới chèn ở đầu vô hiệu được suite base -> exit 0: $(tail_out)"
+
+# 2a. Test thêm chạy SAU suite STALE của base (--full chạy lại suite STALE): REG-C đỏ vì src/c.py đã đổi sau lần PASS; test của rule
+# thêm ghi đè tests/c.sh thành `exit 0` — chạy trước suite STALE thì REJECT thành exit 0.
+S="$TMP/stale"; mkdir -p "$S/src" "$S/tests" "$S/.agents"
+( cd "$S" && git init -q . && git config user.email t@t && git config user.name t
+  echo ok > src/c.py; echo 1 > src/a.py
+  printf '#!/bin/sh\nexit 0\n' > tests/t1.sh; printf '#!/bin/sh\ngrep -q ok src/c.py\n' > tests/c.sh
+  printf '{"project": "t", "rules": [{"component": "A", "watch_files": ["src/a.py", "tests/*"], "mandatory_regression_tests": [{"id": "REG-A", "command": "sh tests/t1.sh"}]}, {"component": "C", "watch_files": ["src/c.py"], "mandatory_regression_tests": [{"id": "REG-C", "command": "sh tests/c.sh"}]}]}\n' > .agents/regression_matrix.active.json
+  git add -A && git commit -qm init
+  echo ok2 > src/c.py; echo 2 > src/a.py
+  CLAUDE_PROJECT_DIR="$S" python3 "$GATE" --lang en --run-tests --full --force-full --no-cache >/dev/null 2>&1
+  git add -A && git commit -qm ran && sleep 1.1
+  echo bad > src/c.py && git commit -qam "c đổi, REG-C đỏ khi chạy lại" && sleep 1.1
+  python3 "$DEVKIT_DIR/bin/regression_checklist.py" render >/dev/null 2>&1 )
+BASE="$(git -C "$S" rev-parse HEAD)"
+( cd "$S" && printf '#!/bin/sh\nprintf "exit 0\\n" > tests/c.sh\n' > tests/t2.sh
+  python3 -c "
+import json; p='.agents/regression_matrix.active.json'; m=json.load(open(p))
+m['rules'].append({'component': 'B', 'watch_files': ['hooks/*'], 'mandatory_regression_tests': [{'id': 'REG-B', 'command': 'sh tests/t2.sh'}]})
+json.dump(m, open(p, 'w'), indent=2)"
+  git add -A && git commit -qm "pr: thêm rule B" )
+gate "$S"
+if grep -q 'REG-C' "$TMP/out"; then
+  [ "$RC" = 1 ] && ok "test thêm chạy sau suite STALE của base -> REG-C vẫn đỏ, REJECT" \
+    || fail "test thêm vô hiệu suite STALE của base -> exit $RC (cần 1): $(tail_out)"
+else fail "setup: REG-C không STALE nên không được chạy lại: $(tail_out)"; fi
+
+# 2b. Test thêm không đẩy script vào DEVKIT_GATE_DONE (run_impacted.sh bỏ qua script đã chạy): B1 `true # sh tests/t3.sh` (tên chỉ
+# nằm trong comment) từng làm runner của B2 bỏ qua t3.sh đỏ -> exit 0.
+mk "$TMP/done" 'm["rules"].append({"component": "B", "watch_files": ["hooks/*"], "mandatory_regression_tests": [{"id": "REG-B1", "command": "true # sh tests/t3.sh"}, {"id": "REG-B2", "command": "sh tests/r.sh"}]})'
+printf '#!/bin/sh\nexit 1\n' > "$TMP/done/tests/t3.sh"
+printf '#!/bin/sh\nf="$(pwd -P)/tests/t3.sh"\nprintf "%%s\\n" "$DEVKIT_GATE_DONE" | grep -qxF "$f" && exit 0\nsh tests/t3.sh\n' > "$TMP/done/tests/r.sh"
+git -C "$TMP/done" add -A && git -C "$TMP/done" commit -qm "pr: t3 đỏ, r.sh bỏ qua script đã chạy"
+gate "$TMP/done"
+[ "$RC" = 1 ] && ok "test thêm không ẩn được test thêm khác qua DEVKIT_GATE_DONE -> REJECT" || fail "DEVKIT_GATE_DONE ẩn được t3.sh đỏ -> exit $RC (cần 1): $(tail_out)"
 
 # 3. Test mới ĐỎ: REJECT, không bao giờ 0
 T2_EXIT=1 mk "$TMP/red" 'm["rules"].append(B)'; gate "$TMP/red"
@@ -89,8 +131,27 @@ expect_untrusted "đổi khoá top-level + thêm rule" 'm["project"] = "khac"; m
 expect_untrusted "thêm rule có test + rule không test (rule rỗng làm file 'được phủ')" \
   'm["rules"].append(B); m["rules"].append({"component": "C", "watch_files": ["**"], "mandatory_regression_tests": []})'
 
+# 4b. covered_by treo ở base (REG-A covered_by REG-Z, không suite nào tên REG-Z): id thêm không được "lấp" đích đó
+BASE_EXPR='m["rules"][0]["mandatory_regression_tests"][0]["covered_by"] = "REG-Z"' \
+  mk "$TMP/cov" 'B["mandatory_regression_tests"][0]["id"] = "REG-Z"; m["rules"].append(B)'; gate "$TMP/cov"
+[ "$RC" = 2 ] && grep -q 'was modified relative to' "$TMP/out" && ok "id thêm trùng đích covered_by treo ở base -> exit 2" \
+  || fail "id thêm lấp covered_by treo ở base -> exit $RC (cần 2): $(tail_out)"
+
+# 4c. Test thêm được đánh PASS mà không chạy (SKIP compile cạnh suite EditMode) không phải XANH
+BASE_EXPR='m["rules"][0]["mandatory_regression_tests"][0]["command"] = "sh tests/t1.sh editmode"' \
+  mk "$TMP/skc" 'B["mandatory_regression_tests"][0]["command"] = "sh tests/t2.sh compile"; m["rules"].append(B)'; gate "$TMP/skc"
+[ "$RC" = 2 ] && [ ! -f "$TMP/skc/ran_t2" ] && ok "test thêm SKIP compile (không chạy) -> exit 2" \
+  || fail "test thêm SKIP compile -> exit $RC, ran_t2=$([ -f "$TMP/skc/ran_t2" ] && echo có || echo không) (cần 2, không chạy): $(tail_out)"
+
+# 4d. Hết ngân sách giờ trước khi test thêm chạy: UNTESTED/BUDGET (exit 4) như mọi suite, không phải "ma trận không tin được"
+mk "$TMP/bud" 'm["rules"].append(B)'
+( cd "$TMP/bud" && GATE_TOTAL_BUDGET_S=0.000001 CLAUDE_PROJECT_DIR="$TMP/bud" python3 "$GATE" --lang en --run-tests --full --force-full --no-cache --diff "$BASE" ) >"$TMP/out" 2>&1; RC=$?
+[ "$RC" = 4 ] && ok "hết ngân sách giờ -> exit 4 (BUDGET)" || fail "hết ngân sách giờ -> exit $RC (cần 4): $(tail_out)"
+
 # 12. Test mới không chạy được trên máy (untested_exit): không phải XANH -> không tin ma trận (exit 2), không phải 0
 T2_EXIT=7 mk "$TMP/unt" 'B["mandatory_regression_tests"][0]["untested_exit"] = 7; m["rules"].append(B)'; gate "$TMP/unt"
 [ "$RC" = 2 ] && ok "test mới UNTESTED -> exit 2" || fail "test mới UNTESTED -> exit $RC (cần 2): $(tail_out)"
+grep -q 'REG-B' "$TMP/unt/.agents/CHECKLIST.md" && fail "ma trận chỉ-thêm KHÔNG được tin vẫn ghi REG-B vào checklist" \
+  || ok "ma trận không được tin: checklist theo ma trận base (không có REG-B)"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_matrix_additive: all passed" || { echo "❌ test_gate_matrix_additive: $FAILS failed"; exit 1; }
