@@ -468,6 +468,19 @@ def resolve(project: Path, adb: str, emulator: str | None, connect_timeout: floa
     return plan
 
 
+def emulator_cmd(emulator: str, avd: str, port: int) -> list:
+    """Emulator launch command. Headless by default (screencap needs no window); PROOF_WINDOW=1 shows it."""
+    cmd = [emulator, "-avd", avd, "-port", str(port), "-no-boot-anim"]
+    window = os.environ.get("PROOF_WINDOW", "").strip().lower() in ("1", "true", "yes", "on")
+    if not window:
+        cmd.append("-no-window")
+    if avd == "CarConnect":  # keeps its own gpu/audio flags: -no-audio would clash with -allow-host-audio
+        cmd.extend(["-writable-system", "-gpu", "auto", "-allow-host-audio"])
+    elif not window:
+        cmd.extend(["-no-audio", "-gpu", "swiftshader_indirect"])
+    return cmd
+
+
 def boot_avd(adb: str, emulator: str, avd: str, devices: list, port: int, boot_timeout: float, denied=()) -> str:
     for dev in devices:
         if dev["state"] != "device" or not dev["serial"].startswith("emulator-"):
@@ -478,9 +491,7 @@ def boot_avd(adb: str, emulator: str, avd: str, devices: list, port: int, boot_t
             print("AVD %s da mo tai %s" % (avd, dev["serial"]), file=sys.stderr)
             return dev["serial"]
     serial = "emulator-%d" % port
-    cmd = [emulator, "-avd", avd, "-port", str(port), "-no-boot-anim"]
-    if avd == "CarConnect":
-        cmd.extend(["-writable-system", "-gpu", "auto", "-allow-host-audio"])
+    cmd = emulator_cmd(emulator, avd, port)
     subprocess.Popen(
         cmd,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
