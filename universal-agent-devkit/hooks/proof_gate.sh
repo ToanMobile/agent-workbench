@@ -495,7 +495,7 @@ def merged_evidence():
         log("merged-evidence check: no time left")
         return None
     tree = session_worktree.tree_of(repo)
-    state = dirty_state(repo, tree_fp, t=max(0.5, min(10, left())))
+    state = dirty_state(repo, tree_fp, t=max(0.5, min(10, left() / 3)))   # ba lệnh git, mỗi lệnh một phần ba
     if not tree or state is None:
         return None
     head, paths = state
@@ -538,15 +538,18 @@ def merged_evidence():
             continue
         if not isinstance(rec, dict) or rec.get("exit") != 0 or rec.get("carried_from") or not isinstance(rec.get("project"), str):
             continue
-        rtime = rec.get("time")
+        rtime, tested = rec.get("time"), rec.get("tested_at")
         if isinstance(rtime, bool) or not isinstance(rtime, (int, float)) or not (start <= rtime <= time.time() + 60):
+            continue
+        # suite chạy thật trong lần đó (lần dùng lại giữ tested_at cũ: không mượn lại một PASS đã mượn, như cached_full_pass)
+        if isinstance(tested, bool) or not isinstance(tested, (int, float)) or not (-1 <= rtime - tested < 5):
             continue
         proj = rec["project"]
         gd = out(git("rev-parse", "--absolute-git-dir", cwd=proj))
         if not gd or os.path.realpath(gd) != os.path.realpath(os.path.dirname(os.path.dirname(rp))):   # biên nhận đúng của worktree đó
             continue
-        wst = dirty_state(proj, tree_fp, t=max(0.5, min(10, left())))
-        if (not wst or wst[1] or not rec.get("fingerprint") or rec.get("fingerprint") != tree_fp.tree_fingerprint(proj)
+        wst = dirty_state(proj, tree_fp, t=max(0.5, min(10, left() / 3)))
+        if (not wst or wst[1] or rec.get("head") != wst[0] or not rec.get("fingerprint") or rec.get("fingerprint") != tree_fp.tree_fingerprint(proj)
                 or out(git("rev-parse", wst[0] + "^{tree}")) != want):
             continue
         return "worktree-receipt %s head=%s" % (proj, wst[0][:12])
@@ -560,7 +563,7 @@ def merged_evidence():
     # nguồn đã track (config board) và host key GitHub đi kèm DevKit.
     # ponytail: script sửa tạm cho in hai dòng rồi hoàn lại trước Stop vẫn qua (gate_script_ok chỉ thấy bản lúc Stop), khi lượt cũng gộp được
     # PR bằng đường không bắt được ở đây (alias git, biến). Nâng cấp cùng biên nhận theo session id ở trên.
-    calls, merged, other_merge = {}, [], False
+    calls, merged, other_merge, pushes = {}, [], False, []
     tp = d.get("transcript_path") or ""
     for t in [tp] + sorted(glob.glob(os.path.join(os.path.splitext(tp)[0], "subagents", "*.jsonl"))):   # subagent của phiên cũng gộp được
         try:
@@ -589,9 +592,12 @@ def merged_evidence():
                             want_head = args[args.index("--expect-head") + 1] if "--expect-head" in args[:-1] else ""
                             if m and pr.isdigit() and re.fullmatch(r"[0-9a-f]{7,40}", want_head) and gate_script_ok(e.get("cwd"), m.group(1), m.group(2)):
                                 calls[c.get("id")] = (pr, want_head)
-                            elif re.search(r"\bgh\b[^\n]*\bmerge\b|/pulls/\d+/merge\b", str(cmd)) or any(   # gộp thẳng (gh), không qua merge gate
-                                    not SAFE_PUSH.fullmatch(seg) for seg in re.split(r"[;&|\n]+", str(cmd)) if re.search(r"\bpush\b", seg)):
-                                other_merge = True
+                            else:
+                                segs = [seg for seg in re.split(r"[;&|\n]+", str(cmd)) if re.search(r"\bpush\b", seg)]
+                                pushes += segs
+                                if re.search(r"\bgh\b[^\n]*\bmerge\b|/pulls/\d+/merge\b", str(cmd)) or any(   # gộp thẳng (gh), không qua merge gate
+                                        not SAFE_PUSH.fullmatch(seg) for seg in segs):
+                                    other_merge = True
                         elif (e.get("type") == "assistant" and c.get("type") == "tool_use"
                               and re.search(r"merge|push", str(c.get("name") or ""), re.I)):   # công cụ khác (MCP GitHub: merge_pull_request, push_files)
                             other_merge = True
@@ -647,6 +653,10 @@ def merged_evidence():
         log("merge-gate check: origin HEAD unreadable (%s)" % (se.decode("utf-8", "replace").strip()[:120] or "no HEAD line"))
         return None
     tip = tip.group(1)
+    trunk = re.search(r"^ref: refs/heads/(\S+)\tHEAD$", so.decode("utf-8", "replace"), re.M)
+    if trunk and any(re.search(r"[\s:/]%s\s*$" % re.escape(trunk.group(1)), seg) for seg in pushes):   # nhánh mặc định tên khác main/master/trunk
+        log("merge-gate check: this turn pushed to origin's default branch %s" % trunk.group(1))
+        return None
     hist = out(git("log", "--first-parent", "-n", "200", "--format=%H %ct %P", tip)) or ""
     landed = [(c[0], c[2]) for c in (l.split() for l in hist.splitlines())
               if len(c) == 3 and c[1].isdigit() and int(c[1]) >= start - MERGE_GATE_SKEW_S]   # một cha (squash), ghi trong lượt

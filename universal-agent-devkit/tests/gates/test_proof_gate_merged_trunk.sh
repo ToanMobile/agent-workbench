@@ -86,7 +86,7 @@ blocked() { [ "$1" = 2 ] && grep -q "Cổng:" "$TMP/err"; }
 why() { echo "rc=$1 err=$(head -3 "$TMP/err" | tr '\n' ' ')"; }
 
 # P1. Ca thật: merge gate chạy trong lượt, origin có squash của H, main = squash đó, không biên nhận nào: cho qua.
-turn_start; rm -f "$RECEIPT"; H=$(new_pr 1) && land 1 && tool Bash "$(GATE_CMD 1 "$H")" "$(GATE_OUT 1 "$H")"
+turn_start; rm -f "$RECEIPT"; H=$(new_pr 1) && land 1 && tool Bash "$(GATE_CMD 1 "$H")" "$(GATE_OUT 1 "$H")" || fail "P1 setup"
 rm -f "$REPO/.claude/audit-gate/proof_gate.log"; stop; rc=$?
 [ "$rc" = 0 ] && ok "P1 merge gate merged H this turn, main holds its squash: XONG allowed" || fail "P1 merged turn blocked ($(why $rc))"
 grep -q "merge-gate pr=1" "$REPO/.claude/audit-gate/proof_gate.log" 2>/dev/null \
@@ -272,6 +272,12 @@ turn_start; H=$(new_pr 64) && land 64 && tool Bash "$(GATE_CMD 64 "$H")" "$(GATE
   && mkdir -p "$REPO/docs" && echo "x" > "$REPO/docs/own.md" && tool Bash '{"command": "echo x > docs/own.md"}' "" || fail "N7c setup"; stop; rc=$?
 rm -f "$REPO/docs/own.md"
 blocked "$rc" && ok "N7c main dirty with a file this session wrote via Bash: blocked" || fail "N7c Bash-written own file accepted ($(why $rc))"
+# N13i. Nhánh mặc định của origin tên khác (develop): lệnh đẩy thẳng lên nó (trông như nhánh PR) vẫn bị chặn.
+git -C "$ORIGIN" symbolic-ref HEAD refs/heads/develop && git -C "$REPO" push -q origin "refs/remotes/origin/main:refs/heads/develop" || fail "N13i setup (develop)"
+turn_start; H=$(new_pr 66) && land 66 && git -C "$GH" push -q origin main:develop && tool Bash "$(GATE_CMD 66 "$H")" "$(GATE_OUT 66 "$H")" \
+  && tool Bash '{"command": "git push origin develop"}' "ok" && git -C "$REPO" fetch -q origin || fail "N13i setup"; stop; rc=$?
+git -C "$ORIGIN" symbolic-ref HEAD refs/heads/main || { fail "restore after N13i"; exit 1; }
+blocked "$rc" && ok "N13i push to a default branch named develop: blocked" || fail "N13i push to develop accepted ($(why $rc))"
 
 # (a) Biên nhận --full của worktree (gate chạy trong worktree ở lượt này), cùng cây với main sau squash.
 wt_gate() { CLAUDE_PROJECT_DIR="$WT" python3 "$GATE" --run-tests --full --no-checklist --diff HEAD~1 >"$TMP/gate" 2>&1 \
@@ -306,6 +312,9 @@ blocked "$rc" && ok "A7 carried worktree receipt: blocked" || fail "A7 carried r
 # A8. Biên nhận trong git dir của worktree nhưng "project" trỏ sang main (cùng nội dung): không phải biên nhận của worktree đó, chặn.
 turn_start; new_pr 65 >/dev/null && wt_gate && land 65 && receipt_set "project=\"$REPO\"" || fail "A8 setup"; stop; rc=$?
 blocked "$rc" && ok "A8 worktree receipt naming another project: blocked" || fail "A8 mismatched receipt accepted ($(why $rc))"
+# A9. Biên nhận của một lần DÙNG LẠI (tested_at cũ, không chạy suite): chặn.
+turn_start; new_pr 67 >/dev/null && wt_gate && land 67 && receipt_set "tested_at=$(( $(date +%s) - 600 ))" || fail "A9 setup"; stop; rc=$?
+blocked "$rc" && ok "A9 receipt of a reused run (old tested_at): blocked" || fail "A9 reused receipt accepted ($(why $rc))"
 rm -f "$WT_RECEIPT"
 
 if [ "$FAILS" -ne 0 ]; then echo "proof gate merged trunk: $FAILS FAILED"; exit 1; fi
