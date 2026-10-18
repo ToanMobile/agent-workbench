@@ -45,11 +45,11 @@ print(json.dumps({"type":"user","timestamp":t,"message":{"role":"user","content"
 tool() { python3 -c 'import datetime,json,sys
 t=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 n=sum(1 for _ in open(sys.argv[4]))
-print(json.dumps({"type":"assistant","timestamp":t,"message":{"role":"assistant","content":[
+print(json.dumps({"type":"assistant","timestamp":t,"cwd":sys.argv[6],"message":{"role":"assistant","content":[
   {"type":"tool_use","id":"tu%d" % n,"name":sys.argv[1],"input":json.loads(sys.argv[2])}]}}))
 if sys.argv[3]:
     print(json.dumps({"type":"user","timestamp":t,"message":{"role":"user","content":[
-      {"type":"tool_result","tool_use_id":"tu%d" % n,"content":sys.argv[3],"is_error":sys.argv[5] == "err"}]}}))' "$1" "$2" "${3:-}" "$TR" "${4:-}" >> "$TR.new" && cat "$TR.new" >> "$TR" && rm -f "$TR.new"; }
+      {"type":"tool_result","tool_use_id":"tu%d" % n,"content":sys.argv[3],"is_error":sys.argv[5] == "err"}]}}))' "$1" "$2" "${3:-}" "$TR" "${4:-}" "${CWD:-$REPO}" >> "$TR.new" && cat "$TR.new" >> "$TR" && rm -f "$TR.new"; }
 GATE_CMD() { printf '{"command": ".claude/bin/super-board-merge-gate.sh --config .claude/super-board/configs/t.json --pr %s --expect-head %s"}' "$1" "$2"; }
 GATE_OUT() { printf '[merge-gate #%s] lock taken; verifying against main as it is now\n[merge-gate #%s] verify: python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief --diff origin/main --force-full\n[merge-gate #%s] verified green against main (1 command(s))\n✓ Squashed and merged pull request #%s\n[merge-gate #%s] merged %s\n' "$1" "$1" "$1" "$1" "$1" "$2"; }
 
@@ -222,6 +222,21 @@ stop "$WT"; rc=$?
 # N15. Hết hạn chót (PROOF_GATE_BUDGET_S=0): không kiểm gì tốn thời gian, chặn (hook bị giết = Stop lọt, nên hết giờ là chặn).
 turn_start; H=$(new_pr 41) && land 41 && tool Bash "$(GATE_CMD 41 "$H")" "$(GATE_OUT 41 "$H")" || fail "N15 setup"; BUDGET=0 stop; rc=$?
 blocked "$rc" && ok "N15 no time budget left: blocked" || fail "N15 accepted without budget ($(why $rc))"
+# N3j. Lệnh trước đã `cd` sang thư mục có script giả cùng tên; lệnh merge gate dùng đường dẫn tương đối (cwd thật của lệnh): chặn.
+turn_start; H=$(new_pr 42) && land 42 && mkdir -p "$TMP/x/.claude/bin" && CWD="$TMP/x" tool Bash "$(GATE_CMD 42 "$H")" "$(GATE_OUT 42 "$H")" || fail "N3j setup"; stop; rc=$?
+blocked "$rc" && ok "N3j relative call from a cwd outside the repo: blocked" || fail "N3j call from foreign cwd accepted ($(why $rc))"
+# N11b. Bật origin cục bộ (biến test) nhưng origin là ext:: (chạy lệnh tuỳ ý): vẫn chặn.
+turn_start; H=$(new_pr 43) && land 43 && tool Bash "$(GATE_CMD 43 "$H")" "$(GATE_OUT 43 "$H")" && git -C "$REPO" config remote.origin.url "ext::sh -c true" \
+  || fail "N11b setup"; stop; rc=$?
+git -C "$REPO" config remote.origin.url "$ORIGIN" || { fail "restore after N11b"; exit 1; }
+blocked "$rc" && ok "N11b ext:: origin with local origins allowed: blocked" || fail "N11b ext:: origin accepted ($(why $rc))"
+# N16. Commit squash giả gắn vào đỉnh origin qua refs/replace (agent ghi được): chặn.
+turn_start; H=$(new_pr 44) && git -C "$REPO" fetch -q origin && T=$(git -C "$REPO" rev-parse origin/main) \
+  && S=$(git -C "$REPO" commit-tree -p "$T^" -m "fake squash (#44)" "$H^{tree}") \
+  && F=$(git -C "$REPO" commit-tree -p "$S" -m "fake tip" "$H^{tree}") && git -C "$REPO" replace "$T" "$F" \
+  && tool Bash "$(GATE_CMD 44 "$H")" "$(GATE_OUT 44 "$H")" || fail "N16 setup"; stop; rc=$?
+git -C "$REPO" replace -d "$T" >/dev/null || { fail "restore after N16"; exit 1; }
+blocked "$rc" && ok "N16 fake squash grafted onto origin's tip via refs/replace: blocked" || fail "N16 refs/replace forgery accepted ($(why $rc))"
 
 # (a) Biên nhận --full của worktree (gate chạy trong worktree ở lượt này), cùng cây với main sau squash.
 wt_gate() { CLAUDE_PROJECT_DIR="$WT" python3 "$GATE" --run-tests --full --no-checklist --diff HEAD~1 >"$TMP/gate" 2>&1 \

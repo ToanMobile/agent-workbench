@@ -502,15 +502,21 @@ def merged_evidence():
     if paths and (tree[1] or not untouched_by_session(paths)):   # worktree bẩn = việc của chính phiên, chưa gộp
         return None
     # mỗi lệnh git chỉ được phần còn lại của hạn chót (TimeoutExpired -> except ở chỗ gọi -> chặn như cũ)
-    git = lambda *a, cwd=repo, t=None: subprocess.run(["git", "-C", cwd, *a], capture_output=True, timeout=t or max(0.5, min(10, left())))
+    # refs/replace và info/grafts (agent ghi được, INSTINCT-027) thay được commit mà log / rev-parse / merge-base đọc: tắt cả hai
+    genv = dict(os.environ, GIT_NO_REPLACE_OBJECTS="1", GIT_GRAFT_FILE=os.devnull)
+    git = lambda *a, cwd=repo, t=None: subprocess.run(["git", "-C", cwd, *a], capture_output=True, env=genv,
+                                                      timeout=t or max(0.5, min(10, left())))
     out = lambda r: r.stdout.decode("utf-8", "replace").strip() if r.returncode == 0 else None
     main = session_worktree.main_of(repo) or repo
 
-    def gate_script_ok(cd, path):
-        """Lệnh gọi đúng script merge gate của repo: đường dẫn (tính từ thư mục `cd`, không có thì từ repo xét hay main) trỏ tới
-        .claude/bin/super-board-merge-gate.sh của repo xét hay của main, file đó được track và không đổi so với HEAD của cây đó."""
-        bases = [cd] if cd else [repo, main]
-        for c in ([path] if os.path.isabs(path) else [os.path.join(b, path) for b in bases if os.path.isabs(b)]):
+    def gate_script_ok(cwd, cd, path):
+        """Lệnh gọi đúng script merge gate của repo: đường dẫn (tính từ thư mục `cd`, không có thì từ cwd THẬT của lệnh ghi trong transcript:
+        cwd của shell giữ qua các lệnh, một `cd /tmp/x` ở lệnh trước đổi script được chạy) trỏ tới .claude/bin/super-board-merge-gate.sh
+        của repo xét hay của main, file đó được track và không đổi so với HEAD của cây đó."""
+        base = cd if cd and os.path.isabs(cd) else (os.path.join(cwd, cd) if cd and isinstance(cwd, str) else cwd)
+        if not os.path.isabs(path) and not (isinstance(base, str) and os.path.isabs(base)):
+            return False
+        for c in [path if os.path.isabs(path) else os.path.join(base, path)]:
             for top in {repo, main}:
                 if (os.path.realpath(c) == os.path.realpath(os.path.join(top, GATE_SCRIPT))
                         and git("ls-files", "--error-unmatch", "--", GATE_SCRIPT, cwd=top).returncode == 0
@@ -558,6 +564,9 @@ def merged_evidence():
             for raw in f:
                 if "merge" not in raw and "push" not in raw:   # lệnh merge gate, kết quả của nó, gh … merge, git push … main
                     continue
+                if left() <= 0:
+                    log("merge-gate check: out of time reading the transcript")
+                    return None
                 try:
                     e = json.loads(raw)
                     if datetime.datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")).timestamp() < start:
@@ -574,7 +583,7 @@ def merged_evidence():
                         args = m.group(3).split() if m else []
                         pr = args[args.index("--pr") + 1] if "--pr" in args[:-1] else ""
                         want_head = args[args.index("--expect-head") + 1] if "--expect-head" in args[:-1] else ""
-                        if m and pr.isdigit() and re.fullmatch(r"[0-9a-f]{7,40}", want_head) and gate_script_ok(m.group(1), m.group(2)):
+                        if m and pr.isdigit() and re.fullmatch(r"[0-9a-f]{7,40}", want_head) and gate_script_ok(e.get("cwd"), m.group(1), m.group(2)):
                             calls[c.get("id")] = (pr, want_head)
                         elif re.search(r"\bgh\b[^\n]*\bmerge\b|/pulls/\d+/merge\b", str(cmd)) or any(   # gộp thẳng (gh), không qua merge gate
                                 not SAFE_PUSH.fullmatch(seg) for seg in re.split(r"[;&|\n]+", str(cmd)) if re.search(r"\bpush\b", seg)):
