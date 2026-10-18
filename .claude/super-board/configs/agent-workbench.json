@@ -40,7 +40,7 @@
     "human_steps": []
   },
   "tick_seconds": 30,
-  "no_progress_cycles": 60,
+  "no_progress_cycles": 240,
   "truth_gate": "non-trivial",
   "truth_threshold": 70,
   "verify_commands": [
