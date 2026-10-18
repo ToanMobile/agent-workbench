@@ -1606,8 +1606,8 @@ def matrix_additions(base, current):
     added_rules = new[len(old):]
     if new[:len(old)] != old or not added_rules:
         return None
-    base_ids = {t.get(k) for r in old if isinstance(r, dict)
-                for t in (r.get("mandatory_regression_tests") or []) if isinstance(t, dict) for k in ("id", "covered_by")}
+    base_ids = {t[k] for r in old if isinstance(r, dict) for t in (r.get("mandatory_regression_tests") or [])
+                if isinstance(t, dict) for k in ("id", "covered_by") if isinstance(t.get(k), str)}
     added = []
     for rule in added_rules:
         tests = rule.get("mandatory_regression_tests") if isinstance(rule, dict) else None
