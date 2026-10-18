@@ -2871,11 +2871,47 @@ def _ignored_in_way(main, frm, to):
     return hits
 
 
+def _extras_in_merged_prs(main, head, origin):
+    """True khi MỌI commit main có mà `origin` chưa có (origin..head) nằm trong danh sách commit của một PR MERGED VÀO TRUNK (không từ fork)
+    mà merge commit của nó `origin` đã chứa — commit gốc của một PR đã squash từ head SAU đó (agent-workbench 18/10: main 7897399 = ba
+    commit của #70, origin có squash 81e6c6e dựng từ 99114f1). Hỏi `gh pr list --search <sha>` theo commit mới nhất chưa được phủ: một PR
+    phủ cả loạt commit của nó. Không biết trunk, quá 200 commit / 5 lần hỏi, gh lỗi hay quá 15 s, dữ liệu đọc không được: False.
+    Ngoại lệ có chủ ý: commit giữa chừng mà chính PR đó revert sau này cũng tính là đã phủ — reset bỏ nó khỏi main đúng như người viết PR
+    muốn (nó còn ở refs/pull/<n>/head và reflog), dù nội dung của nó không có trên trunk."""
+    trunk = _trunk_branch(main)
+    r = git(main, "rev-list", f"{origin}..{head}", check=False)
+    left = r.stdout.split() if r.returncode == 0 else []
+    if not trunk or not left or len(left) > 200:
+        return False
+    for _ in range(5):   # tối đa 5 x 15 s, dưới MAIN_LOCK: còn dưới 180 s mà lần finish khác chờ khoá
+        try:
+            p = subprocess.run(["gh", "pr", "list", "--state", "merged", "--base", trunk, "--search", left[0], "--limit", "5",
+                                "--json", "number,baseRefName,isCrossRepository,mergeCommit,commits"], cwd=main, capture_output=True, text=True, timeout=15)
+            rows = json.loads(p.stdout or "[]") if p.returncode == 0 else []
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return False
+        covered = set()
+        for row in rows if isinstance(rows, list) else []:
+            if not (isinstance(row, dict) and row.get("baseRefName") == trunk and row.get("isCrossRepository") is False):
+                continue
+            merged = row.get("mergeCommit", {}).get("oid") if isinstance(row.get("mergeCommit"), dict) else None
+            oids = {c.get("oid") for c in row["commits"] if isinstance(c, dict)} if isinstance(row.get("commits"), list) else set()
+            if isinstance(merged, str) and re.fullmatch(r"[0-9a-f]{40}", merged) and _is_ancestor(main, merged, origin):
+                covered |= oids
+        if left[0] not in covered:
+            return False
+        left = [s for s in left if s not in covered]
+        if not left:
+            return True
+    return False
+
+
 def _sync_main_to(main, origin):
     """Dời nhánh trunk của main checkout về `origin` (sha của origin/<trunk>) khi không mất gì, dưới MAIN_LOCK: fast-forward (git tự từ
     chối khi chạm file đang sửa, --no-overwrite-ignore); không ff được (squash viết lại commit của PR) thì `reset --keep` chỉ khi gộp main
-    vào origin KHÔNG thêm gì (_merges_to), không đang dở merge / rebase…, index bằng HEAD (kể cả mục `add -N`) và không file bị ignore nào
-    nằm đường (_ignored_in_way). None khi đã dời (hoặc main đã chứa origin); ("blocked", lý do, {}) khi để nguyên."""
+    vào origin KHÔNG thêm gì (_merges_to) hoặc mọi commit thừa của main là commit gốc của PR đã merge vào trunk (_extras_in_merged_prs),
+    không đang dở merge / rebase…, index bằng HEAD (kể cả mục `add -N`) và không file bị ignore nào nằm đường (_ignored_in_way). None khi
+    đã dời (hoặc main đã chứa origin); ("blocked", lý do, {}) khi để nguyên."""
     mlock = _lock_file(os.path.join(git_dir(main), MAIN_LOCK), wait=180.0)
     if mlock is None:
         return "blocked", tr("một lần tự gộp khác giữ khoá main quá lâu: chạy lại", "another automatic merge held the main lock too long: run it again"), {"running": True}
@@ -2887,12 +2923,13 @@ def _sync_main_to(main, origin):
         if _is_ancestor(main, head, origin):
             r = git(main, "merge", "--ff-only", "--no-overwrite-ignore", origin, check=False, bounded=False)
             why = "" if r.returncode == 0 else (r.stderr or r.stdout).strip()[-300:]
-        elif not _merges_to(main, origin, head):
-            why = tr("main local có commit origin chưa có (đẩy / PR chúng trước)", "the local main holds commits origin lacks (push / PR them first)")
         elif _in_progress(main):
             why = tr(f"main đang dở một {_in_progress(main)}", f"a {_in_progress(main)} is in progress in main")
         elif git(main, "diff", "--cached", "--quiet", "--ita-visible-in-index", check=False).returncode != 0:
             why = tr("index của main có thay đổi đã stage (của phiên khác): reset sẽ làm rơi chúng", "main's index holds staged changes (another session's): a reset would drop them")
+        elif not _merges_to(main, origin, head) and not _extras_in_merged_prs(main, head, origin):   # gọi gh (mạng) sau các kiểm tra rẻ
+            why = tr("main local có commit origin chưa có và không thuộc PR nào đã merge vào trunk (đẩy / PR chúng trước)",
+                     "the local main holds commits origin lacks that belong to no PR merged into the trunk (push / PR them first)")
         else:
             hits = _ignored_in_way(main, head, origin)
             if hits is None or hits:
