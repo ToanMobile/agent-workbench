@@ -231,11 +231,12 @@ function readUsageStatsFromDb(stateDir) {
         '-cmd',
         'PRAGMA busy_timeout = 2000;',
         dbFile,
-        'SELECT COALESCE(SUM(request_count),0), COALESCE(ROUND(SUM(total_cost_usd),2),0) FROM usage_daily_rollups;',
+        'SELECT COALESCE(SUM(request_count),0), COALESCE(ROUND(SUM(CAST(total_cost_usd AS REAL)),2),0) FROM usage_daily_rollups;',
       ],
       { encoding: 'utf8', timeout: 3000 },
     ).trim();
-    const [reqs, cost] = out.split('|');
+    const lastLine = out.split(/\r?\n/).filter(Boolean).pop() || '';
+    const [reqs, cost] = lastLine.split('|');
     return {
       totalRequests: Number(reqs) || 0,
       totalCostUsd: Number(cost) || 0,

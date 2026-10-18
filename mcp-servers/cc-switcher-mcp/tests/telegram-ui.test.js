@@ -169,3 +169,20 @@ test('Telegram UI 3: processIncomingTelegramUpdates gui kem inline_keyboard va c
     tmp.cleanup();
   }
 });
+
+test('Telegram UI 4: getStatusReport doc chinh xac totalRequests va totalCostUsd tu SQLite ngay ca khi PRAGMA busy_timeout in dong dau', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const tmp = createTempDir();
+  try {
+    const dbFile = path.join(tmp.dir, 'cc-switch.db');
+    execFileSync('sqlite3', [
+      dbFile,
+      'CREATE TABLE usage_daily_rollups (request_count INTEGER, total_cost_usd TEXT); INSERT INTO usage_daily_rollups VALUES (150, "12.50"), (50, "7.25");',
+    ]);
+    const report = getStatusReport({ stateDir: tmp.dir });
+    assert.equal(report.usage.totalRequests, 200);
+    assert.equal(report.usage.totalCostUsd, 19.75);
+  } finally {
+    tmp.cleanup();
+  }
+});
