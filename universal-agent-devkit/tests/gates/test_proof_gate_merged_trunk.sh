@@ -75,7 +75,7 @@ stop() {
   python3 -c 'import json,sys; print(json.dumps({"session_id":"s-m","hook_event_name":"Stop","transcript_path":sys.argv[1],
     "last_assistant_message":sys.argv[2],"stop_hook_active":False}))' "$TR" "XONG
 Đã gộp PR qua merge gate. Gate exit 0, ảnh: không cần — backend
-$REPORT" | PROOF_GATE_ALLOW_LOCAL_ORIGIN="${LOCAL_ORIGIN:-1}" CLAUDE_PROJECT_DIR="${1:-$REPO}" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+$REPORT" | PROOF_GATE_ALLOW_LOCAL_ORIGIN="${LOCAL_ORIGIN:-1}" PROOF_GATE_BUDGET_S="${BUDGET:-9}" CLAUDE_PROJECT_DIR="${1:-$REPO}" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
 blocked() { [ "$1" = 2 ] && grep -q "Cổng:" "$TMP/err"; }
 why() { echo "rc=$1 err=$(head -3 "$TMP/err" | tr '\n' ' ')"; }
 
@@ -163,7 +163,8 @@ blocked "$rc" && ok "N3e --expect-head differs from the merged head: blocked" ||
 turn_start; H=$(new_pr 21) && land 21 && tool Bash "{\"command\": \"cd $REPO && bash .claude/bin/super-board-merge-gate.sh --config c.json --pr 21 --expect-head ${H:0:12} 2>&1 | tail -40\"}" "$(GATE_OUT 21 "$H")" || fail "P3 setup"; stop; rc=$?
 [ "$rc" = 0 ] && ok "P3 cd … && bash …merge-gate.sh … 2>&1 | tail -40: allowed" || fail "P3 real command form blocked ($(why $rc))"
 # N12. PR phiên khác gộp sau S, main đi theo origin: cho qua (lượt này không tự gộp thẳng).
-turn_start; H=$(new_pr 22) && land 22 && tool Bash "$(GATE_CMD 22 "$H")" "$(GATE_OUT 22 "$H")" && new_pr 23 >/dev/null && land 23 || fail "N12 setup"; stop; rc=$?
+turn_start; H=$(new_pr 22) && land 22 && tool Bash '{"command": "git push -u origin fix-pr-22"}' "ok" \
+  && tool Bash "$(GATE_CMD 22 "$H")" "$(GATE_OUT 22 "$H")" && new_pr 23 >/dev/null && land 23 || fail "N12 setup"; stop; rc=$?
 [ "$rc" = 0 ] && ok "N12 another PR landed after S, main follows origin: allowed" || fail "N12 later foreign merge blocked ($(why $rc))"
 # N13. Như N12 nhưng chính lượt này gộp thẳng PR sau (gh pr merge, không qua merge gate): chặn.
 turn_start; H=$(new_pr 24) && land 24 && tool Bash "$(GATE_CMD 24 "$H")" "$(GATE_OUT 24 "$H")" && new_pr 25 >/dev/null && land 25 \
@@ -200,6 +201,27 @@ python3 -c 'import datetime,json
 t=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 print(json.dumps({"type":"user","timestamp":t,"message":{"role":"user","content":"việc khác"}}))' >> "$TR"; sleep 1; stop; rc=$?
 blocked "$rc" && ok "N14 merge-gate record from the previous turn: blocked" || fail "N14 old record accepted ($(why $rc))"
+# N13c/N13d. Như N12 nhưng lượt này có `git push` trần / `git push origin refs/heads/main` (đích không chắc là nhánh PR): chặn.
+turn_start; H=$(new_pr 35) && land 35 && tool Bash "$(GATE_CMD 35 "$H")" "$(GATE_OUT 35 "$H")" && new_pr 36 >/dev/null && land 36 \
+  && tool Bash '{"command": "git push"}' "ok" || fail "N13c setup"; stop; rc=$?
+blocked "$rc" && ok "N13c a bare git push this turn: blocked" || fail "N13c bare push accepted ($(why $rc))"
+turn_start; H=$(new_pr 37) && land 37 && tool Bash "$(GATE_CMD 37 "$H")" "$(GATE_OUT 37 "$H")" && new_pr 38 >/dev/null && land 38 \
+  && tool Bash '{"command": "git push origin refs/heads/main"}' "ok" || fail "N13d setup"; stop; rc=$?
+blocked "$rc" && ok "N13d git push origin refs/heads/main: blocked" || fail "N13d refs/heads/main push accepted ($(why $rc))"
+# N3h. Xuống dòng là dấu tách lệnh của bash: lệnh merge gate + dòng sau in bản ghi giả, chặn.
+turn_start; H=$(new_pr 39) && land 39 && tool Bash "{\"command\": \".claude/bin/super-board-merge-gate.sh --pr 39 --expect-head $H\\ncat /tmp/fake\"}" "$(GATE_OUT 39 "$H")" || fail "N3h setup"; stop; rc=$?
+blocked "$rc" && ok "N3h newline-separated second command: blocked" || fail "N3h newline command accepted ($(why $rc))"
+# N3i. Script merge gate của main bị sửa (chưa commit), cây xét là worktree sạch ở H: chặn.
+turn_start; H=$(new_pr 40) && land 40 && git -C "$WT" checkout -q --detach "$H" && echo 'echo forged' >> "$REPO/.claude/bin/super-board-merge-gate.sh" \
+  && tool Bash "{\"command\": \"cd $REPO && .claude/bin/super-board-merge-gate.sh --pr 40 --expect-head $H\"}" "$(GATE_OUT 40 "$H")" || fail "N3i setup"; stop "$WT"; rc=$?
+git -C "$REPO" checkout -q -- .claude/bin/super-board-merge-gate.sh || { fail "restore after N3i"; exit 1; }
+blocked "$rc" && ok "N3i the repo's merge-gate script edited: blocked" || fail "N3i edited script accepted ($(why $rc))"
+# N3i'. Đối chứng: cùng lệnh, script nguyên vẹn: cho qua (N3i bị chặn đúng vì script bị sửa).
+stop "$WT"; rc=$?
+[ "$rc" = 0 ] && ok "N3i control: same call, script intact: allowed" || fail "N3i control blocked ($(why $rc))"
+# N15. Hết hạn chót (PROOF_GATE_BUDGET_S=0): không kiểm gì tốn thời gian, chặn (hook bị giết = Stop lọt, nên hết giờ là chặn).
+turn_start; H=$(new_pr 41) && land 41 && tool Bash "$(GATE_CMD 41 "$H")" "$(GATE_OUT 41 "$H")" || fail "N15 setup"; BUDGET=0 stop; rc=$?
+blocked "$rc" && ok "N15 no time budget left: blocked" || fail "N15 accepted without budget ($(why $rc))"
 
 # (a) Biên nhận --full của worktree (gate chạy trong worktree ở lượt này), cùng cây với main sau squash.
 wt_gate() { CLAUDE_PROJECT_DIR="$WT" python3 "$GATE" --run-tests --full --no-checklist --diff HEAD~1 >"$TMP/gate" 2>&1 \
