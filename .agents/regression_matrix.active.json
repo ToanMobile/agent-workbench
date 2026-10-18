@@ -215,7 +215,8 @@
     {
       "component": "super-board-runner",
       "watch_files": [
-        ".claude/bin/super-board-*"
+        ".claude/bin/super-board-*",
+        ".claude/super-board/configs/*.json"
       ],
       "mandatory_regression_tests": [
         {
