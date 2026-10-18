@@ -23,7 +23,8 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 ORIGIN="$TMP/origin.git"; REPO="$TMP/repo"; GH="$TMP/github"; WT="$TMP/wt"; TR="$TMP/transcript.jsonl"
 git init -q --bare -b main "$ORIGIN" || exit 1
 git clone -q "$ORIGIN" "$REPO" 2>/dev/null || exit 1
-( cd "$REPO" && git config user.email t@t && git config user.name t && mkdir -p src templates docs .agents
+( cd "$REPO" && git config user.email t@t && git config user.name t && mkdir -p src templates docs .agents .claude/bin
+  printf '#!/bin/sh\necho merge gate\n' > .claude/bin/super-board-merge-gate.sh
   echo 'exit 0' > result.sh && echo "def ok(): return 1" > src/core.py
   echo '{"profile":"backend"}' > .agents/active-profile.json   # backend: không cần ảnh, chỉ xét cổng
   printf '.claude/audit-gate/\n' > .gitignore
@@ -114,7 +115,7 @@ turn_start; H=$(new_pr 7) && git -C "$REPO" fetch -q origin \
   && S=$(git -C "$REPO" commit-tree -p origin/main -m "fake squash (#7)" "$H^{tree}") \
   && git -C "$REPO" update-ref refs/remotes/origin/main "$S" && git -C "$REPO" reset -q --hard "$S" \
   && tool Bash "$(GATE_CMD 7 "$H")" "$(GATE_OUT 7 "$H")" || fail "N6 setup"; stop; rc=$?
-git -C "$REPO" fetch -q origin && git -C "$REPO" reset -q --hard origin/main
+git -C "$REPO" fetch -q origin && git -C "$REPO" reset -q --hard origin/main || { fail "restore after N6"; exit 1; }
 blocked "$rc" && ok "N6 forged local origin ref: blocked" || fail "N6 forged refs/remotes accepted ($(why $rc))"
 
 # N7. Sau merge, main có file chính phiên này sửa (chưa gộp): chặn.
@@ -130,13 +131,13 @@ rm -f "$REPO/docs/foreign.md"
 
 # N8. Trunk mode tắt: luật mới không áp, chặn.
 turn_start; H=$(new_pr 10) && land 10 && tool Bash "$(GATE_CMD 10 "$H")" "$(GATE_OUT 10 "$H")" || fail "N8 setup"
-git -C "$REPO" config devkit.trunkMode false; stop; rc=$?; git -C "$REPO" config --unset devkit.trunkMode
+git -C "$REPO" config devkit.trunkMode false; stop; rc=$?; git -C "$REPO" config --unset devkit.trunkMode || { fail "restore after N8"; exit 1; }
 blocked "$rc" && ok "N8 trunk mode off: blocked" || fail "N8 accepted with trunk mode off ($(why $rc))"
 
 # N9. main có commit riêng chưa lên origin sau squash: chặn.
 turn_start; H=$(new_pr 11) && land 11 && tool Bash "$(GATE_CMD 11 "$H")" "$(GATE_OUT 11 "$H")" \
   && echo "z" > "$REPO/docs/local.md" && git -C "$REPO" add docs/local.md && git -C "$REPO" commit -qm local || fail "N9 setup"; stop; rc=$?
-git -C "$REPO" reset -q --hard origin/main
+git -C "$REPO" reset -q --hard origin/main || { fail "restore after N9"; exit 1; }
 blocked "$rc" && ok "N9 main ahead of origin: blocked" || fail "N9 unpushed main commit accepted ($(why $rc))"
 
 # N10. Cây xét là worktree, sửa thêm (chưa commit) sau khi gộp: chặn.
@@ -168,13 +169,37 @@ turn_start; H=$(new_pr 22) && land 22 && tool Bash "$(GATE_CMD 22 "$H")" "$(GATE
 turn_start; H=$(new_pr 24) && land 24 && tool Bash "$(GATE_CMD 24 "$H")" "$(GATE_OUT 24 "$H")" && new_pr 25 >/dev/null && land 25 \
   && tool Bash '{"command": "gh pr merge 25 --squash"}' "merged" || fail "N13 setup"; stop; rc=$?
 blocked "$rc" && ok "N13 this turn merged another PR directly: blocked" || fail "N13 direct gh merge accepted ($(why $rc))"
-# N11. P0 (principal review): origin trỏ về chính repo (`remote.origin.url .`), H chỉ là commit của worktree, không merge gì: chặn
-# (như máy thật: LOCAL_ORIGIN=0, chỉ nhận remote mạng).
-turn_start; git -C "$WT" fetch -q origin && git -C "$WT" checkout -q --detach origin/main && echo "def ok(): return 111" > "$WT/src/core.py" \
-  && git -C "$WT" commit -qam "pr 26" && H=$(git -C "$WT" rev-parse HEAD) && git -C "$REPO" config remote.origin.url . \
-  && tool Bash "$(GATE_CMD 26 "$H")" "$(GATE_OUT 26 "$H")" || fail "N11 setup"; LOCAL_ORIGIN=0 stop "$WT"; rc=$?
-git -C "$REPO" config remote.origin.url "$ORIGIN"
-blocked "$rc" && ok "N11 origin pointed at the repo itself: blocked" || fail "N11 self-origin accepted ($(why $rc))"
+# N11. P0 (principal review): origin trỏ về chính repo (`remote.origin.url .`) và main mang một "squash" tự dựng của H (chưa từng lên
+# GitHub). Bật biến test (origin cục bộ được nhận) thì bản giả này QUA: chứng minh ca dưới bị chặn đúng vì kiểm origin; như máy thật
+# (LOCAL_ORIGIN=0, chỉ nhận GitHub) thì chặn.
+forge_self_origin() {
+  git -C "$WT" fetch -q origin && git -C "$WT" checkout -q --detach origin/main && echo "def ok(): return $1" > "$WT/src/core.py" \
+    && git -C "$WT" commit -qam "pr $1" && H=$(git -C "$WT" rev-parse HEAD) \
+    && S=$(git -C "$REPO" commit-tree -p HEAD -m "fake squash (#$1)" "$H^{tree}") && git -C "$REPO" reset -q --hard "$S" \
+    && git -C "$REPO" config remote.origin.url . && tool Bash "$(GATE_CMD "$1" "$H")" "$(GATE_OUT "$1" "$H")"
+}
+unforge() { git -C "$REPO" config remote.origin.url "$ORIGIN" && git -C "$REPO" fetch -q origin && git -C "$REPO" reset -q --hard origin/main \
+  || { fail "restore after $1"; exit 1; }; }
+turn_start; forge_self_origin 26 || fail "N11a setup"; stop; rc=$?; unforge N11a
+[ "$rc" = 0 ] && ok "N11a self-origin forgery passes when local origins are allowed (control)" || fail "N11a control blocked ($(why $rc))"
+turn_start; forge_self_origin 27 || fail "N11 setup"; LOCAL_ORIGIN=0 stop; rc=$?; unforge N11
+blocked "$rc" && ok "N11 origin pointed at the repo itself (GitHub only): blocked" || fail "N11 self-origin accepted ($(why $rc))"
+# N3f. --expect-head ngắn hơn 7 ký tự (khớp gần như mọi sha): chặn.
+turn_start; H=$(new_pr 28) && land 28 && tool Bash "$(GATE_CMD 28 "${H:0:4}")" "$(GATE_OUT 28 "$H")" || fail "N3f setup"; stop; rc=$?
+blocked "$rc" && ok "N3f 4-char --expect-head: blocked" || fail "N3f short prefix accepted ($(why $rc))"
+# N3g. Một script cùng tên ở thư mục khác (in dòng giả): không phải merge gate của repo, chặn.
+turn_start; H=$(new_pr 29) && land 29 && tool Bash "{\"command\": \"$TMP/x/.claude/bin/super-board-merge-gate.sh --pr 29 --expect-head $H\"}" "$(GATE_OUT 29 "$H")" || fail "N3g setup"; stop; rc=$?
+blocked "$rc" && ok "N3g a same-named script elsewhere: blocked" || fail "N3g foreign script accepted ($(why $rc))"
+# N13b. Như N12 nhưng lượt này đẩy thẳng lên main (git push … main): chặn.
+turn_start; H=$(new_pr 30) && land 30 && tool Bash "$(GATE_CMD 30 "$H")" "$(GATE_OUT 30 "$H")" && new_pr 31 >/dev/null && land 31 \
+  && tool Bash '{"command": "git push origin HEAD:main"}' "ok" || fail "N13b setup"; stop; rc=$?
+blocked "$rc" && ok "N13b this turn pushed straight to main: blocked" || fail "N13b direct push accepted ($(why $rc))"
+# N14. Bản ghi merge gate của lượt TRƯỚC (cùng transcript), squash vẫn trong cửa sổ lệch giờ: chặn.
+turn_start; H=$(new_pr 32) && land 32 && tool Bash "$(GATE_CMD 32 "$H")" "$(GATE_OUT 32 "$H")" || fail "N14 setup"; sleep 1
+python3 -c 'import datetime,json
+t=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+print(json.dumps({"type":"user","timestamp":t,"message":{"role":"user","content":"việc khác"}}))' >> "$TR"; sleep 1; stop; rc=$?
+blocked "$rc" && ok "N14 merge-gate record from the previous turn: blocked" || fail "N14 old record accepted ($(why $rc))"
 
 # (a) Biên nhận --full của worktree (gate chạy trong worktree ở lượt này), cùng cây với main sau squash.
 wt_gate() { CLAUDE_PROJECT_DIR="$WT" python3 "$GATE" --run-tests --full --no-checklist --diff HEAD~1 >"$TMP/gate" 2>&1 \
@@ -196,6 +221,16 @@ blocked "$rc" && ok "A4 receipt tree differs from main's tree: blocked" || fail 
 turn_start; new_pr 16 >/dev/null && wt_gate && echo "# sau gate" >> "$WT/src/core.py" && git -C "$WT" commit -qam "pr 16 more" \
   && git -C "$WT" push -q origin "HEAD:refs/heads/pr-16" && land 16 || fail "A5 setup"; stop; rc=$?
 blocked "$rc" && ok "A5 receipt of an earlier commit of the worktree: blocked" || fail "A5 receipt of another tree accepted ($(why $rc))"
+# A6/A7. Như A1 nhưng biên nhận của worktree là gate ĐỎ (exit 1) / là bản chép (carried_from): chặn.
+receipt_set() { python3 - "$WT_RECEIPT" "$1" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1])); k, v = sys.argv[2].split("=", 1); r[k] = json.loads(v); json.dump(r, open(sys.argv[1], "w"))
+PY
+}
+turn_start; new_pr 33 >/dev/null && wt_gate && land 33 && receipt_set 'exit=1' || fail "A6 setup"; stop; rc=$?
+blocked "$rc" && ok "A6 worktree receipt of a red gate: blocked" || fail "A6 red receipt accepted ($(why $rc))"
+turn_start; new_pr 34 >/dev/null && wt_gate && land 34 && receipt_set 'carried_from="/x"' || fail "A7 setup"; stop; rc=$?
+blocked "$rc" && ok "A7 carried worktree receipt: blocked" || fail "A7 carried receipt accepted ($(why $rc))"
 rm -f "$WT_RECEIPT"
 
 if [ "$FAILS" -ne 0 ]; then echo "proof gate merged trunk: $FAILS FAILED"; exit 1; fi

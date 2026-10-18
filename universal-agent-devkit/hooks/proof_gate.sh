@@ -463,10 +463,14 @@ def untouched_by_session(paths):
 MERGE_GATE_SKEW_S = 120   # đồng hồ GitHub (giờ commit squash) lệch máy này
 # Lệnh Bash LÀ lệnh gọi merge gate: tuỳ chọn `cd <dir> &&` và `bash`, đường dẫn tới script, các đối số trơn, tuỳ chọn `2>&1` và `| tail -N`
 # (tail chỉ cắt bớt, không viết được dòng nào). Không `;`, `&`, `|` khác, `#`, `$`, backtick, ngoặc, quote: một `echo …; # super-board-…`
-# không còn là lệnh merge gate (OCR + principal review 18/10).
+# không còn là lệnh merge gate (OCR + principal review 18/10). Nhóm: 1 thư mục của `cd`, 2 đường dẫn script, 3 các đối số.
 _W = r"""[^\s;&|<>$`#()'"\\]"""
-MERGE_GATE_CALL = re.compile(r"\s*(?:cd\s+%s+\s*&&\s*)?(?:bash\s+)?%s*/super-board-merge-gate\.sh((?:\s+%s+)*)\s*(?:2>&1\s*)?"
+MERGE_GATE_CALL = re.compile(r"\s*(?:cd\s+(%s+)\s*&&\s*)?(?:bash\s+)?(%s*/super-board-merge-gate\.sh)((?:\s+%s+)*)\s*(?:2>&1\s*)?"
                              r"(?:\|\s*tail(?:\s+-n)?\s+-?\d+\s*)?" % (_W, _W, _W))
+GATE_SCRIPT = ".claude/bin/super-board-merge-gate.sh"
+# origin của super-board là GitHub (merge gate gộp bằng `gh pr merge`): https / ssh / scp tới github.com, không gì khác (một sshd ở localhost
+# hay host lạ phục vụ repo giả cũng là "mạng").
+GITHUB_URL = re.compile(r"(?:https://(?:[^@/\s]+@)?github\.com/|ssh://(?:[^@/\s]+@)?github\.com(?::\d+)?/|[\w.-]+@github\.com:)[\w./-]+")
 
 def merged_evidence():
     """Trunk mode (18/10, 5 phiên: GeelyEx2 #63, OfficeReader #149, Goods #40, NFH #49, kit #67): việc gộp qua super-board-merge-gate.sh
@@ -490,8 +494,25 @@ def merged_evidence():
     head, paths = state
     if paths and (tree[1] or not untouched_by_session(paths)):   # worktree bẩn = việc của chính phiên, chưa gộp
         return None
-    git = lambda *a, cwd=repo, t=10: subprocess.run(["git", "-C", cwd, *a], capture_output=True, timeout=t)
+    if left() <= 0:
+        log("merged-evidence check: no time left")
+        return None
+    # mỗi lệnh git chỉ được phần còn lại của hạn chót (TimeoutExpired -> except ở chỗ gọi -> chặn như cũ)
+    git = lambda *a, cwd=repo, t=None: subprocess.run(["git", "-C", cwd, *a], capture_output=True, timeout=t or max(0.5, min(10, left())))
     out = lambda r: r.stdout.decode("utf-8", "replace").strip() if r.returncode == 0 else None
+    main = session_worktree.main_of(repo) or repo
+
+    def gate_script_ok(cd, path):
+        """Lệnh gọi đúng script merge gate của repo: đường dẫn (tính từ thư mục `cd`, không có thì từ repo xét hay main) trỏ tới
+        .claude/bin/super-board-merge-gate.sh của repo xét hay của main, file đó được track và không đổi so với HEAD của cây đó."""
+        bases = [cd] if cd else [repo, main]
+        for c in ([path] if os.path.isabs(path) else [os.path.join(b, path) for b in bases if os.path.isabs(b)]):
+            for top in {repo, main}:
+                if (os.path.realpath(c) == os.path.realpath(os.path.join(top, GATE_SCRIPT))
+                        and git("ls-files", "--error-unmatch", "--", GATE_SCRIPT, cwd=top).returncode == 0
+                        and git("diff", "--quiet", "HEAD", "--", GATE_SCRIPT, cwd=top).returncode == 0):
+                    return True
+        return False
     want = out(git("rev-parse", head + "^{tree}"))
     if not want:
         return None
@@ -520,15 +541,15 @@ def merged_evidence():
             continue
         return "worktree-receipt %s head=%s" % (proj, wst[0][:12])
     # (b) bản ghi merge gate của lượt: chỉ kết quả (không lỗi) của một lệnh Bash LÀ lệnh gọi super-board-merge-gate.sh (MERGE_GATE_CALL),
-    # `--pr N` / `--expect-head` khớp "#N" / "merged <H>", ghi sau lời nhắc người dùng.
-    # ponytail: bản ghi trong transcript gắn với phiên chỉ qua lệnh của nó, và script là file agent sửa được; một phiên chép dòng "merged
+    # `--pr N` / `--expect-head` khớp "#N" / "merged <H>", script là bản track không đổi của repo (gate_script_ok), ghi sau lời nhắc người dùng.
+    # ponytail: bản ghi trong transcript gắn với phiên chỉ qua lệnh của nó; một phiên chép dòng "merged
     # <H>" của PR phiên KHÁC gộp trong cùng lượt vẫn qua (git chỉ chứng thực H đã gộp qua origin trong lượt, không phải ai gộp, không phải
     # gate đã chạy). Nâng cấp khi merge gate ghi biên nhận theo session id vào git common dir.
     calls, merged, other_merge = {}, [], False
     try:
         with os.fdopen(open_reg(d.get("transcript_path") or ""), encoding="utf-8", errors="replace") as f:
             for raw in f:
-                if "merge" not in raw:
+                if "merge" not in raw and "push" not in raw:   # lệnh merge gate, kết quả của nó, gh … merge, git push … main
                     continue
                 try:
                     e = json.loads(raw)
@@ -543,12 +564,13 @@ def merged_evidence():
                     if e.get("type") == "assistant" and c.get("type") == "tool_use" and c.get("name") == "Bash":
                         cmd = (c.get("input") or {}).get("command", "")
                         m = MERGE_GATE_CALL.fullmatch(cmd) if isinstance(cmd, str) else None
-                        args = m.group(1).split() if m else []
+                        args = m.group(3).split() if m else []
                         pr = args[args.index("--pr") + 1] if "--pr" in args[:-1] else ""
                         want_head = args[args.index("--expect-head") + 1] if "--expect-head" in args[:-1] else ""
-                        if m and pr.isdigit() and re.fullmatch(r"[0-9a-f]{7,40}", want_head):
+                        if m and pr.isdigit() and re.fullmatch(r"[0-9a-f]{7,40}", want_head) and gate_script_ok(m.group(1), m.group(2)):
                             calls[c.get("id")] = (pr, want_head)
-                        elif re.search(r"\bgh\b[^\n]*\bmerge\b|/pulls/\d+/merge\b", str(cmd)):   # gộp thẳng, không qua merge gate
+                        elif re.search(r"\bgh\b[^\n]*\bmerge\b|/pulls/\d+/merge\b"   # gộp thẳng (gh), hay đẩy thẳng lên trunk, không qua merge gate
+                                       r"|\bgit\b[^\n]*\bpush\b[^\n]*[\s:+](?:refs/heads/)?(?:main|master|trunk)\b", str(cmd)):
                             other_merge = True
                     elif c.get("type") == "tool_result" and c.get("tool_use_id") in calls and not c.get("is_error"):
                         pr, want_head = calls[c["tool_use_id"]]
@@ -563,24 +585,28 @@ def merged_evidence():
         return None
     if not merged:
         return None
-    # origin THẬT: URL sau insteadOf (`--get-url`) phải là mạng (https / ssh / scp `user@host:`), không phải đường dẫn hay file: / ext:: /
-    # fd:: (`git config remote.origin.url .` biến ls-remote thành đọc chính repo này, principal review 18/10), và git chỉ được dùng đúng
-    # các giao thức đó. PROOF_GATE_ALLOW_LOCAL_ORIGIN=1 (môi trường của hook, như PROOF_GATE=0; test dùng origin cục bộ) nhận cả đường dẫn.
+    # origin THẬT: URL sau insteadOf (`--get-url`) phải là GitHub (GITHUB_URL), không phải đường dẫn hay file: / ext:: / fd:: (`git config
+    # remote.origin.url .` biến ls-remote thành đọc chính repo này, principal review 18/10). ls-remote chạy NGOÀI repo, không đọc config
+    # nào agent ghi được (repo / global / system: core.sshCommand, http.proxy, sslVerify, insteadOf đều có thể dựng một origin giả, OCR
+    # 18/10), ssh ép BatchMode, git chỉ được dùng https / ssh. PROOF_GATE_ALLOW_LOCAL_ORIGIN=1 (môi trường của hook, như PROOF_GATE=0;
+    # test dùng origin cục bộ) nhận cả đường dẫn.
     local_ok = os.environ.get("PROOF_GATE_ALLOW_LOCAL_ORIGIN") == "1"
     url = out(git("ls-remote", "--get-url", "origin")) or ""
-    if "::" in url or not (re.match(r"(?:https|ssh)://[^/\s]+/\S", url) or re.fullmatch(r"[\w.-]+@[\w.-]+:\S+", url) or (local_ok and url)):
-        log("merge-gate check: origin is no network remote (%r)" % url[:80])
+    if local_ok and url and not GITHUB_URL.fullmatch(url) and "://" not in url and "::" not in url:
+        url = os.path.normpath(os.path.join(repo, url))
+    elif not GITHUB_URL.fullmatch(url):
+        log("merge-gate check: origin is not a GitHub remote (%r)" % url[:80])
         return None
     budget = min(5.0, left() - 1)   # mạng chậm / ssh chờ: quá hạn chót của hook = Claude Code giết hook = Stop lọt
     if budget < 1:
         log("merge-gate check: no time left for ls-remote")
         return None
-    env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
-    if not env.get("GIT_SSH_COMMAND") and git("config", "--get", "core.sshCommand").returncode:
-        env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes -o ConnectTimeout=4"
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(GIT_TERMINAL_PROMPT="0", GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+               GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=4")
     proto = ["-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always"] \
         + (["-c", "protocol.file.allow=always"] if local_ok else [])
-    p = subprocess.Popen(["git", *proto, "-C", repo, "ls-remote", "--symref", "origin", "HEAD"], stdin=subprocess.DEVNULL,
+    p = subprocess.Popen(["git", *proto, "ls-remote", "--symref", url, "HEAD"], cwd="/", stdin=subprocess.DEVNULL,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, start_new_session=True)
     try:
         so, se = p.communicate(timeout=budget)
@@ -599,6 +625,8 @@ def merged_evidence():
               if len(c) == 3 and c[1].isdigit() and int(c[1]) >= start - MERGE_GATE_SKEW_S]   # một cha (squash), ghi trong lượt
     trees = {}
     for pr, h in reversed(merged):
+        if git("cat-file", "-e", h + "^{commit}").returncode:   # head của PR chưa từng fetch về đây: thử bản ghi kế tiếp
+            continue
         for s, parent in landed:
             if left() <= 0:
                 log("merge-gate check: out of time")
