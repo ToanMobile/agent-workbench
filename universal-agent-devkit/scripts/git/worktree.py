@@ -10,6 +10,12 @@ Usage (normally `agent-kit worktree …`, run inside the repo):
   worktree.py finish <path>    merge its work into the main branch AUTOMATICALLY, then remove it (exit 0 done, 3 conflict, 1 blocked)
   worktree.py automerge <path> the same, one JSON line on stdout (what the Stop gate runs)
   worktree.py remove <path>    remove it once nothing of its work would be lost
+  worktree.py discard <path>   remove one `remove` refuses, only when it holds nothing but deleted files / untracked IDE junk, its HEAD is
+                               in the trunk and no live session holds it; a fallback copy goes to refs/devkit/discarded/* (30 days)
+  worktree.py restore <commit> -- <path>…   `git checkout <commit> -- <path>` for paths with no uncommitted change and no ignored file in
+                               the way (not in a trunk-mode main)
+  worktree.py prune-branch [--remote] <branch>   `git branch -D` for a branch the trunk holds (ancestor or squash) or whose PR merged into
+                               the trunk at its tip; --remote: origin's branch too, when that PR merged at its tip
   worktree.py gc [--dry-run]   delete what DevKit worktrees left behind, only when nothing in it is unique (kept ones are named)
   worktree.py list
   worktree.py heal [--devkit=DIR] [--session=ID]   a checkout the host made (Grok): link the DevKit, copy ignored config
@@ -76,6 +82,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEVKIT = os.path.dirname(HERE)
@@ -734,10 +741,30 @@ def kept_lock(main, wt):
 
 
 def _drop_dead_kept_lock(main, wt):
-    """Khoá devkit-kept của một pid đã chết không giữ gì nữa: mở khoá để `worktree remove` gỡ được (luật không-mất-việc của remove vẫn áp dụng)."""
+    """Khoá devkit-kept của một pid đã chết, hoặc của CHÍNH phiên đang gọi (pid là tổ tiên của tiến trình này: phiên GeelyEx2 18/10 rời bằng
+    keep rồi tự gỡ worktree của mình và bị git từ chối), không giữ gì nữa: mở khoá để gỡ được (luật không-mất-việc của người gọi vẫn áp dụng).
+    Trả lý do khoá đã mở (để đặt lại khi việc gỡ hỏng), None khi không mở gì."""
     k = kept_lock(main, wt)
-    if k and not k[2]:
-        git(main, "worktree", "unlock", wt, check=False)
+    if k and (not k[2] or k[1] in _ancestor_pids()) and git(main, "worktree", "unlock", wt, check=False).returncode == 0:
+        return f"devkit-kept session={k[0]} pid={k[1]}"
+    return None
+
+
+def _ancestor_pids():
+    """pid của tiến trình này và các tổ tiên của nó, DỪNG ở tiến trình `claude` gần nhất (tiến trình của phiên, pid mà hook ghi vào khoá
+    devkit-kept): phía trên nó là tiến trình mọi phiên dùng chung (app Claude, terminal, launchd), một khoá mang pid đó không được thành
+    "của mình" với mọi phiên. Hỏi `ps` (macOS không có /proc); `ps` lỗi: chỉ những pid đã biết, không bao giờ thêm pid lạ."""
+    pids, pid = {os.getpid()}, os.getppid()
+    for _ in range(64):
+        if pid <= 1 or pid in pids:
+            break
+        pids.add(pid)
+        r = _run(["ps", "-ww", "-o", "ppid=,comm=", "-p", str(pid)])   # -ww: không cắt cột comm theo bề rộng terminal (audit T0044)
+        ppid, _sp, comm = (r.stdout.strip() if r.returncode == 0 else "").partition(" ")
+        if os.path.basename(comm.strip()) == "claude" or not ppid.isdigit():
+            break
+        pid = int(ppid)
+    return pids
 
 
 def _trunk_mode(path):
@@ -1746,9 +1773,24 @@ def cmd_remove(cwd, args):
         notes = _unsaved_memory(wt, main)   # read BEFORE the folder goes
     except Exception:  # noqa: BLE001 - a warning only: never in the way of the removal
         notes = []
-    _drop_dead_kept_lock(main, wt)   # K11: khoá ExitWorktree keep của phiên đã chết; khoá của phiên còn sống thì git từ chối (cần -f -f)
+    _remove_checked(main, wt, branch)
+    if notes:
+        shown = ", ".join(notes[:5]) + (f" (+{len(notes) - 5})" if len(notes) > 5 else "")
+        print("⚠ " + tr(f"{len(notes)} memory note(s) lưu trong thư mục claude-auto RIÊNG của worktree (không có trong claude-auto của main) đã đi theo worktree: {shown}. "
+                        f"Lần sau: chép chúng vào {os.path.join(main, MEMORY_REL)} TRƯỚC khi gỡ, hoặc tạo worktree với --share-memory.",
+                        f"{len(notes)} memory note(s) saved in the worktree's OWN claude-auto folder (not in the main checkout's) went with it: {shown}. "
+                        f"Next time: copy them into {os.path.join(main, MEMORY_REL)} BEFORE removing, or create the worktree with --share-memory."), file=sys.stderr)
+    return 0
+
+
+def _remove_checked(main, wt, branch, note=""):
+    """Gỡ `wt` mà người gọi ĐÃ chứng minh là không mất gì (remove: _iter_blockers; discard: chỉ file xoá / rác IDE, hoặc đã cất vào
+    refs/devkit/discarded), rồi xoá `branch` khi nó đã nằm trọn trong main. In một dòng ✔; die() khi git từ chối hay thư mục còn sót."""
+    unlocked = _drop_dead_kept_lock(main, wt)   # K11: khoá ExitWorktree keep của phiên đã chết hoặc của CHÍNH phiên gọi; khoá của phiên khác còn sống thì git từ chối
     r = git(main, "worktree", "remove", "--force", wt, check=False, bounded=False)
     if r.returncode != 0 and any(_same_path(e["path"], wt) for e in _worktree_entries(main)):
+        if unlocked:   # git từ chối trước khi xoá gì: trả khoá vừa mở về như cũ (audit T0044), lần chạy lại vẫn mở được nó
+            git(main, "worktree", "lock", "--reason", unlocked, wt, check=False)
         raise SystemExit(f"✖ worktree: git worktree remove: {r.stderr.strip()}")   # refused before it deleted anything: still registered, flags untouched, retry works
     left, stuck = [], []
     if os.path.lexists(wt):   # git (2.55) drops its registration even when it cannot delete the folder (a locked keystore copy): unlock and finish here, or say what is left
@@ -1760,36 +1802,427 @@ def cmd_remove(cwd, args):
                f"{wt} could NOT be deleted completely (git has dropped its registration, so no guard lists it any more): {names}. The user runs `{_by_hand(wt)}`"), 1)
     # Người dùng 17/10: branch cũ phải tự đi cùng worktree. Chỉ khi remote không còn ref của nó (chưa publish, hoặc remote đã xoá
     # sau khi PR gộp: remote là của người dùng) và nội dung của nó đã nằm trọn trong HEAD của main.
-    gone = bool(branch) and branch != _trunk_branch(main) \
-        and not git(main, "for-each-ref", "--format=%(refname)", f"refs/remotes/*/{branch}", check=False).stdout.strip() \
-        and _branch_in_main(main, branch)
+    gone, kept = False, ""
+    if branch and branch != _trunk_branch(main) \
+            and not git(main, "for-each-ref", "--format=%(refname)", f"refs/remotes/*/{branch}", check=False).stdout.strip():
+        gone, kept = _branch_in_main(main, branch)
     print(f"✔ {tr('đã gỡ', 'removed')} {wt}" + (f"; {tr('nhánh', 'branch')} {branch} "
-          + (tr("đã gộp vào main nên đã xoá", "was merged into main and is deleted") if gone
-             else tr("giữ lại (xoá khi đã merge: git branch -d ", "kept (delete once merged: git branch -d ") + branch + ")") if branch else ""))
-    if notes:
-        shown = ", ".join(notes[:5]) + (f" (+{len(notes) - 5})" if len(notes) > 5 else "")
-        print("⚠ " + tr(f"{len(notes)} memory note(s) lưu trong thư mục claude-auto RIÊNG của worktree (không có trong claude-auto của main) đã đi theo worktree: {shown}. "
-                        f"Lần sau: chép chúng vào {os.path.join(main, MEMORY_REL)} TRƯỚC khi gỡ, hoặc tạo worktree với --share-memory.",
-                        f"{len(notes)} memory note(s) saved in the worktree's OWN claude-auto folder (not in the main checkout's) went with it: {shown}. "
-                        f"Next time: copy them into {os.path.join(main, MEMORY_REL)} BEFORE removing, or create the worktree with --share-memory."), file=sys.stderr)
-    return 0
+          + (tr("đã gộp vào main nên đã xoá", "was merged into main and is deleted") + kept if gone
+             else tr("giữ lại (xoá khi đã merge: agent-kit worktree prune-branch ", "kept (delete once merged: agent-kit worktree prune-branch ") + branch + ")")
+          if branch else "") + note)
 
 
 def _branch_in_main(main, branch):
-    """Xoá `branch` khi mọi thứ của nó đã có trong HEAD của main; True khi đã xoá. Gộp thường (tổ tiên): `branch -d`, git tự từ
-    chối nếu sai. Gộp bằng PR squash (commit không phải tổ tiên): chỉ khi gộp thử branch vào main (merge-tree, không đụng cây làm
-    việc) ra đúng cây của main, tức branch không mang thêm gì; xung đột hay khác một byte là giữ."""
-    head = git(main, "rev-parse", "HEAD", check=False).stdout.strip()
-    ref = f"refs/heads/{branch}"
-    if not head:
+    """Xoá `branch` khi mọi thứ của nó đã có trong trunk (local hoặc origin/<trunk>: PR squash trên GitHub khi main local chưa đồng bộ,
+    _content_in_trunk); (True, ghi chú bản cất) khi đã xoá, (False, "") khi giữ. Xung đột hay khác một byte là giữ."""
+    tip = git(main, "rev-parse", "-q", "--verify", f"refs/heads/{branch}^{{commit}}", check=False).stdout.strip()
+    if not tip or not _content_in_trunk(main, f"refs/heads/{branch}"):
+        return False, ""
+    ok, kept = _delete_branch(main, branch, tip)
+    return ok, (tr(f"; commit chỉ nhánh giữ đã cất ở {kept} ({DISCARD_KEEP_DAYS} ngày)", f"; commits only the branch held are kept in {kept} ({DISCARD_KEEP_DAYS} days)")
+                if ok and kept else "")
+
+
+def _devkit_env(**extra):
+    """Môi trường cho commit-tree của DevKit: máy không có danh tính git (INSTINCT-043) vẫn commit được bản cất."""
+    env = {**os.environ, **extra}
+    for k, v in (("GIT_AUTHOR_NAME", "DevKit"), ("GIT_AUTHOR_EMAIL", "devkit@localhost"),
+                 ("GIT_COMMITTER_NAME", "DevKit"), ("GIT_COMMITTER_EMAIL", "devkit@localhost")):
+        env.setdefault(k, v)
+    return env
+
+
+def _keep_ref(main, label, tree, parents, message):
+    """Một ref mới refs/devkit/discarded/<label>-<stamp>-<pid> trỏ vào commit (tree, parents): sống DISCARD_KEEP_DAYS ngày, worktree gc
+    dọn. Không bao giờ đè một bản cất khác (update-ref với cũ = ""). Git lỗi: SystemExit (người gọi không xoá gì)."""
+    sha = git(main, "commit-tree", tree, *[a for p in parents for a in ("-p", p)], "-m", message, env=_devkit_env()).stdout.strip()
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", label)[:80] or "worktree"
+    ref = f"{DISCARD_REF}{name}-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+    git(main, "update-ref", ref, sha, "")
+    return ref
+
+
+def _delete_branch(main, name, tip):
+    """Xoá refs/heads/<name> chỉ khi nó vẫn ở `tip` (update-ref so-và-xoá: không đua với commit mới), cùng cấu hình branch.<name>. Reflog
+    của nhánh đi cùng nó, nên commit mà sau khi xoá không ref nào còn giữ — tip, và commit chỉ reflog đó nêu (commit rồi reset về, amend,
+    dời nhánh qua lại: review 18/10) — được cất trước vào refs/devkit/discarded/branch-<name>-* (_keep_ref). (True, tên bản cất hoặc "")
+    khi đã xoá; (False, lý do) khi giữ (git lỗi, nhánh vừa đổi tip)."""
+    ref = f"refs/heads/{name}"
+    log = git(main, "log", "-g", "--format=%H", ref, check=False)
+    others = git(main, "for-each-ref", "--format=%(objectname) %(refname)", check=False)
+    if log.returncode or others.returncode:
+        return False, tr("git không đọc được reflog / danh sách ref", "git could not read the reflog / the refs")
+    cands = list(dict.fromkeys([tip] + log.stdout.split()))
+    keep = ["^" + line.split(" ", 1)[0] for line in others.stdout.splitlines() if line and line.split(" ", 1)[-1] != ref]
+    lost = git(main, "rev-list", "--stdin", inp="\n".join(cands + keep) + "\n", check=False)
+    if lost.returncode:
+        return False, tr("git không tính được commit sẽ mất", "git could not tell which commits would be lost")
+    gone = set(lost.stdout.split())
+    parents = [c for c in cands if c in gone]
+    try:
+        kept = _keep_ref(main, f"branch-{name}", f"{tip}^{{tree}}", parents, f"devkit prune-branch {name}") if parents else ""
+    except SystemExit as e:
+        return False, str(e.code)
+    if git(main, "update-ref", "-d", ref, tip, check=False).returncode:
+        return False, tr(f"{name} vừa đổi tip: không xoá", f"{name} moved meanwhile: not deleted")
+    git(main, "config", "--remove-section", f"branch.{name}", check=False)
+    return True, kept
+
+
+# K2/K4 (người dùng 18/10 duyệt "làm cả 3"): guard git chặn `git worktree remove --force`, `git branch -D`, `git checkout <sha> -- <path>`
+# theo dạng lệnh, kể cả khi không mất gì. Ba lệnh dưới tự chứng minh "không mất gì" rồi mới làm; dạng git trần vẫn bị guard chặn như cũ.
+DISCARD_REF = "refs/devkit/discarded/"
+DISCARD_KEEP_DAYS = 30
+DISCARD_REF_DATE_RE = re.compile(r".*-([0-9]{8})-[0-9]{6}(?:-[0-9]+)?")
+IDE_JUNK_RE = re.compile(r"(?:[^/]+/)*(?:\.vscode|\.idea)/.+")   # VS Code / Rider / IntelliJ tự sinh, chưa track
+UNITY_JUNK_RE = re.compile(r"(?:[^/]+/)*[^/]+\.(?:slnx|sln|csproj)")   # Unity tự sinh; ở repo khác đó là file dự án thật (review 18/10)
+
+
+def _unity_project(wt):
+    """True khi `wt` là project Unity (ProjectSettings/ProjectVersion.txt ở gốc hoặc một tầng dưới, như copy_unity_library)."""
+    try:
+        cands = [""] + [d for d in os.listdir(wt) if not d.startswith(".") and os.path.isdir(os.path.join(wt, d))]
+    except OSError:
         return False
-    if _is_ancestor(main, ref, head):
-        return git(main, "branch", "-d", "--", branch, check=False).returncode == 0
-    merged = git(main, "merge-tree", "--write-tree", head, ref, check=False)
-    tree = git(main, "rev-parse", f"{head}^{{tree}}", check=False).stdout.strip()
-    if merged.returncode != 0 or not tree or merged.stdout.split("\n", 1)[0].strip() != tree:
+    return any(os.path.isfile(os.path.join(wt, d, "ProjectSettings", "ProjectVersion.txt")) for d in cands)
+
+
+def _ide_junk(wt, p, unity):
+    """`p` là rác IDE chưa từng track: đúng mẫu (*.sln/*.csproj chỉ trong project Unity), là FILE (một thư mục là repo git lồng git không
+    đi vào, review 18/10), index không có mục nào và HEAD không có nó (một file đã `git add` không phải rác, audit T0044). Lỗi git: False."""
+    full = os.path.join(wt, p)
+    if p.endswith("/") or not (IDE_JUNK_RE.fullmatch(p) or (unity and UNITY_JUNK_RE.fullmatch(p))):
         return False
-    return git(main, "branch", "-D", "--", branch, check=False).returncode == 0
+    if os.path.isdir(full) or not (os.path.isfile(full) or os.path.islink(full)):
+        return False
+    idx = git(wt, "--literal-pathspecs", "ls-files", "-s", "-z", "--", p, check=False)
+    head = git(wt, "--literal-pathspecs", "ls-tree", "-z", "HEAD", "--", p, check=False)
+    return idx.returncode == 0 and not idx.stdout.strip("\0") and head.returncode == 0 and not head.stdout.strip("\0")
+PROTECTED_BRANCH_RE = re.compile(r"(?:main|master|trunk|develop|release/.+|hotfix/.+)")
+
+
+def _content_in_trunk(main, ref):
+    """True khi mọi thứ `ref` mang đã có trong trunk (nhánh local hoặc origin/<trunk>): là tổ tiên, hoặc gộp thử (merge-tree, không đụng
+    cây làm việc) ra đúng cây của trunk — PR squash. Không biết trunk, xung đột, lỗi git: False."""
+    trunk = _trunk_branch(main)
+    if not trunk:
+        return False
+    return any(_is_ancestor(main, ref, tip) or _merges_to(main, tip, ref) for tip in (f"refs/heads/{trunk}", f"refs/remotes/origin/{trunk}")
+               if git(main, "rev-parse", "-q", "--verify", f"{tip}^{{commit}}", check=False).returncode == 0)
+
+
+def _merged_pr_at(main, branch, tip):
+    """Số PR MERGED VÀO TRUNK (baseRefName = trunk, không phải PR từ fork) có head là `branch` và headRefOid đúng `tip` (không còn commit mới
+    sau lần gộp), theo `gh`; None khi không có, không biết trunk, gh không chạy được, quá 15 s hay trả gì đọc không được (không nói được =
+    không xoá). Một PR gộp vào nhánh khác (feat/parent) chưa đưa gì vào trunk (review + audit T0044)."""
+    trunk = _trunk_branch(main)
+    if not trunk:
+        return None
+    try:
+        r = subprocess.run(["gh", "pr", "list", "--head", branch, "--base", trunk, "--state", "merged",
+                            "--json", "number,headRefOid,baseRefName,isCrossRepository", "--limit", "20"],
+                           cwd=main, capture_output=True, text=True, timeout=15)
+        rows = json.loads(r.stdout or "[]") if r.returncode == 0 else []
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    for row in rows if isinstance(rows, list) else []:
+        if isinstance(row, dict) and row.get("headRefOid") == tip and row.get("baseRefName") == trunk and row.get("isCrossRepository") is False:
+            return row.get("number") or "?"
+    return None
+
+
+def _discard_leftovers(wt):
+    """Ca (a) của discard: những gì `wt` còn giữ ngoài file đã xoá và rác IDE chưa track — [] khi không mất gì. Danh sách file đổi lấy như
+    `remove` (changes_since: so với setup đã ghi), cộng file git ẩn (skip-worktree / assume-unchanged); không đọc được: coi là còn."""
+    try:
+        state = _read_state(wt)
+    except (OSError, ValueError, SystemExit):
+        state = None
+    if not isinstance(state, dict):
+        state = _adopted_state(wt)
+    try:
+        hidden = _hidden_edits(wt)
+    except Exception:  # noqa: BLE001 - cannot say: refuse
+        hidden = None
+    if hidden is None:
+        return [tr(f"{wt}: không đọc được danh sách file git ẩn (skip-worktree / assume-unchanged)",
+                   f"{wt}: the files git hides (skip-worktree / assume-unchanged) could not be listed")]
+    left, unity = [], _unity_project(wt)
+    for p in dict.fromkeys(changes_since(wt, state) + hidden):
+        if p not in hidden and not os.path.lexists(os.path.join(wt, p)) and _index_is_head(wt, p):
+            continue   # đã xoá và index không giữ bản nào khác HEAD (` D`, `D `): HEAD (hoặc setup) vẫn giữ bản của nó
+        if p not in hidden and _ide_junk(wt, p, unity):
+            continue   # rác IDE chưa từng được track
+        left.append(p)
+    if not left:
+        return []
+    return [tr(f"{wt}: {len(left)} file sửa hoặc mới (không phải file đã xoá hay rác IDE): ", f"{wt}: {len(left)} edited or new file(s) (not deleted, not IDE junk): ")
+            + ", ".join(left[:10]) + (f" (+{len(left) - 10})" if len(left) > 10 else "")]
+
+
+def _index_is_head(wt, p):
+    """True khi index không giữ gì của `p` ngoài bản HEAD: không có mục nào (đã stage xoá), hoặc đúng mode + blob của HEAD. Một file đã stage
+    rồi xoá khỏi đĩa (`AD`, `MD`, OCR 18/10) chỉ còn trong index: False. Lỗi git: False (không nói được = còn)."""
+    idx = git(wt, "--literal-pathspecs", "ls-files", "-s", "-z", "--", p, check=False)
+    head = git(wt, "--literal-pathspecs", "ls-tree", "-z", "HEAD", "--", p, check=False)
+    if idx.returncode or head.returncode:
+        return False
+    entries = [e for e in idx.stdout.split("\0") if e]
+    if not entries:
+        return True
+    if len(entries) != 1:   # (một mục conflict có nhiều stage: còn việc)
+        return False
+    mode, sha, _stage = entries[0].split("\t", 1)[0].split(" ")
+    tree = [e for e in head.stdout.split("\0") if e]
+    return len(tree) == 1 and tree[0].split("\t", 1)[0].split(" ") == [mode, "blob", sha]
+
+
+def _discard_backup(main, wt):
+    """Bản cất phòng hờ của discard (chỉ chạy sau khi đã chứng minh không mất gì), sống DISCARD_KEEP_DAYS ngày (worktree gc dọn): cây làm
+    việc trong một index tạm chép từ index THẬT (file `add -f` dù bị ignore; rồi `add -A`: file chưa track trừ file ignore) với cờ
+    skip-worktree / assume-unchanged đã gỡ (không thì `add -A` bỏ qua bản sửa ẩn, review 18/10), commit với HEAD, cây của index thật khi
+    nó khác HEAD (bản stage, audit T0044) và MỌI commit chỉ reflog của worktree còn giữ làm cha. Git lỗi ở bất kỳ bước nào: SystemExit,
+    không gỡ gì. Trả tên ref."""
+    head = git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip()
+    real_index = git(wt, "rev-parse", "--path-format=absolute", "--git-path", "index").stdout.strip()
+    tmpd = tempfile.mkdtemp(prefix="devkit-discard-")
+    env = _devkit_env(GIT_INDEX_FILE=os.path.join(tmpd, "index"))   # chỉ cho các lệnh dưới: index thật của worktree không bị đụng
+    staged = ""
+    try:
+        if os.path.isfile(real_index):
+            shutil.copyfile(real_index, env["GIT_INDEX_FILE"])   # một bản chép: index thật chỉ được đọc
+            staged = git(wt, "write-tree", env=env).stdout.strip()
+            flagged = [e[2:] for e in git(wt, "ls-files", "-v", "-z", env=env).stdout.split("\0") if len(e) > 2 and (e[0] == "S" or e[0].islower())]
+            if flagged:
+                git(wt, "update-index", "-z", "--no-skip-worktree", "--no-assume-unchanged", "--stdin", env=env, inp="\0".join(flagged) + "\0")
+        elif head:
+            git(wt, "read-tree", head, env=env, bounded=False)
+        git(wt, "add", "-A", "--", ".", env=env, bounded=False)
+        tree = git(wt, "write-tree", env=env).stdout.strip()
+    finally:
+        shutil.rmtree(tmpd, ignore_errors=True)
+    seen = list(dict.fromkeys(git(wt, "log", "-g", "--format=%H", "HEAD").stdout.split()))   # (không có reflog: rỗng, rc 0)
+    lone = set(git(wt, "rev-list", *seen, "--not", "--all").stdout.split()) if seen else set()
+    parents = ([head] if head else []) + [c for c in seen if c in lone and c != head]
+    if staged and head and staged != git(wt, "rev-parse", f"{head}^{{tree}}").stdout.strip():
+        parents.append(git(wt, "commit-tree", staged, "-p", head, "-m", f"devkit discard {wt}: index", env=_devkit_env()).stdout.strip())
+    return _keep_ref(main, os.path.basename(wt.rstrip(os.sep)), tree, parents, f"devkit discard {wt}")
+
+
+def cmd_discard(cwd, args):
+    """Gỡ một worktree mà `remove` từ chối, chỉ khi không mất gì: nó chỉ còn file đã xoá và rác IDE chưa track, HEAD của nó đã nằm trong
+    trunk, và mọi luật khác của remove vẫn áp dụng (commit chỉ worktree giữ, submodule, bí mật chỉ nó có, worktree lồng, …). Không bao giờ
+    gỡ worktree mà một phiên còn sống đang giữ: khoá devkit-kept / khoá của người dùng, phiên chủ trong state, khoá checkout. (Chế độ
+    "worktree của chính phiên" đã bỏ, review 18/10: chứng minh "của mình" qua cây tiến trình không chắc; phiên tự gỡ worktree của mình bằng
+    `remove` / `finish`.) Trước khi gỡ vẫn cất một bản phòng hờ vào refs/devkit/discarded/* (DISCARD_KEEP_DAYS ngày). Exit 0 đã gỡ, 1 từ
+    chối (lý do trên stderr), 2 dùng sai."""
+    if len(args) != 1:
+        die("usage: agent-kit worktree discard <path>")
+    wt = os.path.abspath(os.path.join(cwd, args[0]))
+    main = main_checkout(cwd)
+    if _same_path(wt, main):
+        die(tr("đây là main checkout", "that is the main checkout"))
+    entry = next((e for e in _worktree_entries(main)[1:] if not e["broken"] and _same_path(e["path"], wt)), None)
+    if entry is None:
+        die(tr(f"{wt}: git không liệt kê đường dẫn này là worktree liên kết của repo", f"{wt}: git does not list this path as a linked worktree of the repository"))
+    wt = entry["path"]
+    k = kept_lock(main, wt)
+    if "locked" in entry and not (k and not k[2]):
+        die(tr(f"{wt} đang bị khoá ({entry['locked'] or 'không lý do'}) bởi một phiên còn sống hoặc bởi người dùng: để yên "
+               "(worktree của chính phiên: `agent-kit worktree remove` / `finish`)",
+               f"{wt} is locked ({entry['locked'] or 'no reason'}) by a live session or by the user: left alone "
+               "(the session's own worktree: `agent-kit worktree remove` / `finish`)"), 1)
+    live = _live_holder(main, wt)
+    if live:
+        die(tr(f"{wt}: {live} — để yên", f"{wt}: {live} - left alone"), 1)
+    try:
+        refused = [text for _code, kind, text, _detail in _iter_blockers(cwd, wt, args[0], None) if kind != "uncommitted"]
+        refused += _discard_leftovers(wt)
+    except UnicodeError as e:
+        die(tr(f"không kiểm tra được {wt} (tên file không phải UTF-8: {e}) — không gỡ", f"cannot check {wt} (a file name that is not UTF-8: {e}) - nothing removed"), 1)
+    head = git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip()
+    if not head or not _content_in_trunk(main, head):   # một nhánh có tên giữ commit của nó, nhưng discard chỉ cho HEAD trunk đã có (audit T0044)
+        refused.append(tr(f"{wt}: HEAD ({head[:12] or '?'}) có commit trunk chưa có (không là tổ tiên, gộp thử squash cũng thêm vào): đem về hoặc PR trước",
+                          f"{wt}: HEAD ({head[:12] or '?'}) holds commits the trunk lacks (neither an ancestor nor a squash): bring them back or PR them first"))
+    try:
+        notes = _unsaved_memory(wt, main)
+    except Exception:  # noqa: BLE001 - cannot say: refuse
+        notes = ["(unreadable)"]
+    if notes:   # bị git ignore nên bản cất không mang được: chép sang main trước
+        refused.append(tr(f"{wt}: {len(notes)} memory note chỉ worktree có ({', '.join(notes[:5])}) — chép vào {os.path.join(main, MEMORY_REL)} trước",
+                          f"{wt}: {len(notes)} memory note(s) only the worktree holds ({', '.join(notes[:5])}) - copy them into {os.path.join(main, MEMORY_REL)} first"))
+    if refused:
+        for t in refused:
+            print("✖ worktree discard: " + t, file=sys.stderr)
+        return 1
+    ref = _discard_backup(main, wt)
+    try:
+        branch = _read_state(wt).get("branch")
+    except (OSError, ValueError, SystemExit):
+        branch = None
+    _remove_checked(main, wt, branch or entry.get("branch"),
+                    note=tr(f"; bản phòng hờ {ref} (giữ {DISCARD_KEEP_DAYS} ngày)", f"; a fallback copy is kept in {ref} for {DISCARD_KEEP_DAYS} days"))
+    return 0
+
+
+def _live_holder(main, wt):
+    """Lý do `wt` đang thuộc một phiên CÒN SỐNG (review 18/10), '' khi không có bằng chứng sống: phiên chủ mà state ghi (`add --session`)
+    có pid trả lời — ở bản ghi session_worktree hoặc ở registry (session_lock.owner_gone / info_alive) —, hoặc khoá checkout
+    (devkit-session.lock trong git dir của nó) mang pid trả lời. Không nạp được session_lock: coi là còn sống (không gỡ)."""
+    owner = _owner(wt)
+    for d in (os.path.join(DEVKIT, "bin"), os.path.join(DEVKIT, "hooks")):
+        if d not in sys.path:
+            sys.path.append(d)   # sau stdlib: không gì trong bin/ hooks/ được che nó
+    try:
+        import session_lock  # noqa: PLC0415 - chỉ discard cần
+        import session_worktree  # noqa: PLC0415
+        if owner:
+            dead, why = session_lock.owner_gone(main, owner, session_worktree, main)
+            if (not dead and why == "alive") or session_lock.info_alive(session_lock.read_session(main, owner)):
+                return tr(f"phiên chủ {owner} (state của worktree) còn sống", f"its owner session {owner} (the worktree's state) is alive")
+            # không pid nào nói được (owner_gone "unknown" = coi là SỐNG, review 18/10): chỉ khi state đã quá 24 h, như việc nhận nuôi worktree
+            if not dead and time.time() - os.lstat(os.path.join(git_dir(wt), STATE)).st_mtime < session_lock.RECORD_NO_PID_TAKEOVER_S:
+                return tr(f"phiên chủ {owner} (state của worktree) chưa chứng minh được đã dừng (không pid nào, state chưa quá 24 h)",
+                          f"its owner session {owner} (the worktree's state) is not proven gone (no pid anywhere, the state is under 24 h old)")
+        lock = session_lock.read_checkout_lock(git_dir(wt))
+        pid = (lock or {}).get("pid")
+        if isinstance(pid, int) and pid > 1 and session_lock.is_pid_alive(pid):   # (idle ở prompt vẫn là phiên sống, review 18/10)
+            return tr(f"phiên {lock.get('session_id', '?')} giữ khoá checkout của nó (pid {pid} còn sống)",
+                      f"session {lock.get('session_id', '?')} holds its checkout lock (pid {pid} is alive)")
+    except Exception as e:  # noqa: BLE001 - cannot tell who holds it: never removed
+        return tr(f"không kiểm được phiên nào đang giữ nó ({e!r})", f"cannot tell which session holds it ({e!r})")
+    return ""
+
+
+def cmd_restore(cwd, args):
+    """`git checkout <commit> -- <path>…` khi không có gì để mất: mọi path không có thay đổi chưa commit (so với HEAD, cả index, submodule,
+    cả bản sửa git ẩn bằng skip-worktree / assume-unchanged), không giữ file chưa track, và không có file / thư mục bị ignore va chạm với
+    một file của commit — trùng tên, là cha của nó (file `cfg` ↔ `cfg/a.txt`) hay là con của nó (thư mục `foo/` ↔ file `foo`): git đè hay
+    xoá chúng im lặng (review + audit T0044, 18/10). Path tính từ thư mục đang đứng như git; không chạy ở main checkout của trunk mode."""
+    if len(args) < 3 or args[1] != "--" or args[0].startswith("-") or any(not p for p in args[2:]):
+        die("usage: agent-kit worktree restore <commit> -- <path>…")   # (path rỗng: git hiểu là cả thư mục đang đứng)
+    rev, paths = args[0], args[2:]
+    main = main_checkout(cwd)
+    top = git(cwd, "rev-parse", "--show-toplevel").stdout.strip()
+    if _same_path(top, main) and _trunk_mode(main):
+        die(tr("main checkout của trunk mode chỉ để gộp: restore trong worktree của phiên", "the trunk-mode main checkout is merge-only: restore in the session's worktree"))
+    sha = git(cwd, "rev-parse", "-q", "--verify", f"{rev}^{{commit}}", check=False).stdout.strip()
+    if not sha:
+        die(tr(f"không phải commit: {rev}", f"not a commit: {rev}"))
+    lit, bad = ("--literal-pathspecs",), []
+    for p in paths:
+        for d in (git(cwd, *lit, "diff", "--quiet", "--ignore-submodules=none", "HEAD", "--", p, check=False),               # cây làm việc so với HEAD
+                  git(cwd, *lit, "diff", "--cached", "--quiet", "--ignore-submodules=none", "HEAD", "--", p, check=False)):  # index so với HEAD (OCR 18/10)
+            if d.returncode:
+                bad.append(f"{p}: " + (tr("có thay đổi chưa commit", "has uncommitted changes") if d.returncode == 1 else (d.stderr or "").strip()[-200:]))
+                break
+    # Từ đây mọi đường dẫn tính từ gốc worktree (--full-name): cwd có thể là thư mục con (audit T0044)
+    full = [os.path.normpath(os.path.relpath(os.path.join(cwd, p), top)) for p in paths]
+    others = git(cwd, *lit, "ls-files", "--full-name", "-z", "--others", "--exclude-standard", "--", *paths, check=False)
+    ignored = git(cwd, *lit, "ls-files", "--full-name", "-z", "--others", "--ignored", "--exclude-standard", "--", *paths, check=False)
+    tracked = git(cwd, *lit, "ls-tree", "-r", "-z", "--name-only", "--full-name", sha, "--", *paths, check=False)
+    try:
+        hidden = _hidden_edits(top)
+    except Exception:  # noqa: BLE001 - cannot say: refuse
+        hidden = None
+    if others.returncode or ignored.returncode or tracked.returncode or hidden is None:
+        bad.append(tr("git không liệt kê được file chưa track / file git ẩn", "git could not list the untracked / hidden files"))
+    else:
+        under = lambda q: any(f == "." or q == f or q.startswith(f + "/") for f in full)   # noqa: E731 - q nằm trong một path được nêu
+        new = [f for f in others.stdout.split("\0") if f]
+        want = {t for t in tracked.stdout.split("\0") if t}
+        dirs = {"/".join(t.split("/")[:i]) for t in want for i in range(1, t.count("/") + 1)}   # mọi thư mục cha của file commit mang
+        clash = []
+        for f in (f for f in ignored.stdout.split("\0") if f):   # file ignore trùng, hoặc nằm DƯỚI một file của commit (thư mục foo/ ↔ file foo)
+            parts = f.split("/")
+            if f in want or any("/".join(parts[:i]) in want for i in range(1, len(parts))):
+                clash.append(f)
+        for d in sorted(dirs):   # một file / link không được track đứng đúng chỗ thư mục cha của file commit mang (file cfg ↔ cfg/a.txt)
+            dp = os.path.join(top, d)
+            if (os.path.islink(dp) or (os.path.lexists(dp) and not os.path.isdir(dp))) \
+                    and git(top, *lit, "ls-files", "--error-unmatch", "--", d, check=False).returncode:
+                clash.append(d)
+        shadow = [h for h in hidden if under(h)]
+        if new:
+            bad.append(tr("file chưa track sẽ bị lẫn: ", "untracked files in the way: ") + ", ".join(new[:10]))
+        if clash:
+            bad.append(tr("file / thư mục bị ignore sẽ bị đè hoặc xoá: ", "ignored files or folders it would overwrite or delete: ") + ", ".join(clash[:10]))
+        if shadow:
+            bad.append(tr("file git ẩn (skip-worktree / assume-unchanged) đang có sửa: ", "files git hides (skip-worktree / assume-unchanged) hold edits: ")
+                       + ", ".join(shadow[:10]))
+    if bad:
+        for t in bad:
+            print("✖ worktree restore: " + t, file=sys.stderr)
+        return 1
+    r = git(cwd, *lit, "checkout", sha, "--", *paths, check=False, bounded=False)
+    if r.returncode:
+        die((r.stderr or "").strip()[-400:], 1)
+    print(f"✔ restore: {', '.join(paths[:5])}{' …' if len(paths) > 5 else ''} ← {sha[:12]}")
+    return 0
+
+
+def cmd_prune_branch(cwd, args):
+    """`git branch -D <nhánh>` khi không mất gì: tip của nó đã nằm trong trunk (tổ tiên, hoặc squash: gộp thử ra đúng cây của trunk), hoặc một
+    PR MERGED vào trunk có head đúng tip đó (gh); commit chỉ reflog của nhánh còn giữ được cất trước (_delete_branch). Không bao giờ: trunk
+    và nhánh bảo vệ, nhánh một worktree đang checkout. `--remote` (yêu cầu qua phiên GeelyEx2, 18/10): xoá cả nhánh cùng tên trên origin
+    (`git push --delete` mà guard chặn ở dạng trần), chỉ khi PR MERGED vào trunk có headRefOid đúng tip của nhánh REMOTE (ls-remote) và
+    lệnh xoá kèm --force-with-lease đúng tip đó; kiểm cả hai phía trước, một phía không qua thì không xoá gì."""
+    remote = "--remote" in args
+    rest = [a for a in args if a != "--remote"]
+    if len(rest) != 1:
+        die("usage: agent-kit worktree prune-branch [--remote] <branch>")
+    name = rest[0]
+    if name.startswith("-") or git(cwd, "check-ref-format", "--branch", name, check=False).returncode:
+        die(tr(f"tên nhánh không hợp lệ: {name}", f"not a valid branch name: {name}"))
+    main = main_checkout(cwd)
+    if name == _trunk_branch(main) or PROTECTED_BRANCH_RE.fullmatch(name):
+        die(tr(f"{name} là trunk hoặc nhánh bảo vệ: không xoá", f"{name} is the trunk or a protected branch: not deleted"))
+    ref = f"refs/heads/{name}"
+    tip = git(main, "rev-parse", "-q", "--verify", f"{ref}^{{commit}}", check=False).stdout.strip()
+    if not tip and not remote:
+        die(tr(f"không có nhánh {name}", f"no branch {name}"))
+    holders = [e["path"] for e in _worktree_entries(main) if e.get("branch") == name]
+    if holders:
+        die(tr(f"{name} đang được checkout ở {holders[0]}: gỡ worktree đó trước", f"{name} is checked out in {holders[0]}: remove that worktree first"), 1)
+    pr = None
+    if tip:
+        in_trunk = _content_in_trunk(main, ref)
+        pr = None if in_trunk else _merged_pr_at(main, name, tip)
+        if pr is None and not in_trunk:
+            print("✖ worktree prune-branch: " + tr(f"{name} ({tip[:12]}) còn commit trunk chưa có và không có PR MERGED vào trunk đúng tip đó: giữ",
+                                                   f"{name} ({tip[:12]}) holds commits the trunk lacks and no PR merged into the trunk at that tip: kept"), file=sys.stderr)
+            return 1
+    rtip, rpr = "", None
+    if remote:
+        ls = git(main, "ls-remote", "--heads", "origin", ref, check=False)
+        if ls.returncode:
+            die(tr(f"không đọc được nhánh {name} trên origin: {(ls.stderr or '').strip()[-200:]}", f"cannot read branch {name} on origin: {(ls.stderr or '').strip()[-200:]}"), 1)
+        rtip = next((l.split("\t", 1)[0] for l in ls.stdout.splitlines() if l.endswith("\t" + ref)), "")
+        if rtip:
+            rpr = _merged_pr_at(main, name, rtip)
+            if rpr is None:
+                print("✖ worktree prune-branch: " + tr(f"origin/{name} ({rtip[:12]}) không có PR MERGED vào trunk đúng tip đó (đi tiếp sau lần gộp?): không xoá gì",
+                                                       f"origin/{name} ({rtip[:12]}) has no PR merged into the trunk at that tip (moved on after the merge?): nothing deleted"), file=sys.stderr)
+                return 1
+        elif not tip:
+            die(tr(f"không có nhánh {name}, cả local lẫn trên origin", f"no branch {name}, neither local nor on origin"))
+    done = []
+    if rtip:   # remote TRƯỚC: lệnh push bị từ chối (lease lệch, mạng, quyền) thì nhánh local vẫn còn nguyên (OCR 18/10)
+        r = git(main, "push", f"--force-with-lease={ref}:{rtip}", "origin", "--delete", ref, check=False, bounded=False)
+        if r.returncode:
+            die(tr(f"origin/{name}: git push --delete bị từ chối, không xoá gì: ", f"origin/{name}: git push --delete refused, nothing deleted: ")
+                + (r.stderr or "").strip()[-300:], 1)
+        done.append(f"origin/{name} ({rtip[:12]}) " + tr(f"PR #{rpr} đã MERGED đúng tip này", f"PR #{rpr} merged at this tip"))
+    if tip:
+        ok, kept = _delete_branch(main, name, tip)
+        if not ok:
+            die(f"{name}: {kept}" + (tr(" (nhánh trên origin đã xoá)", " (the origin branch is deleted)") if done else ""), 1)
+        done.append(f"{name} ({tip[:12]}) " + (tr(f"PR #{pr} đã MERGED đúng tip này", f"PR #{pr} merged at this tip") if pr is not None
+                                               else tr("đã nằm trong trunk", "is in the trunk"))
+                    + (tr(f"; commit chỉ nhánh giữ đã cất ở {kept} ({DISCARD_KEEP_DAYS} ngày)",
+                          f"; commits only the branch held are kept in {kept} ({DISCARD_KEEP_DAYS} days)") if kept else ""))
+    print("✔ prune-branch: " + "; ".join(done) + tr(", đã xoá", ", deleted"))
+    return 0
 
 
 AUTOMERGE_LOCK = "devkit-automerge.lock"
@@ -2381,6 +2814,103 @@ def _stage_identical_overlap(main, main_head, w_head):
     return []
 
 
+def _merges_to(main, into, other):
+    """True khi gộp `other` vào `into` ra ĐÚNG cây của `into` (merge-tree, không đụng cây làm việc): `other` không mang thêm gì, kể cả
+    file sổ sách (khác _adds_nothing_to_main). Xung đột, git cũ, lỗi: False."""
+    tree = git(main, "rev-parse", "-q", "--verify", f"{into}^{{tree}}", check=False).stdout.strip()
+    r = git(main, "merge-tree", "--write-tree", into, other, check=False)
+    return bool(tree) and r.returncode == 0 and r.stdout.split("\n", 1)[0].strip() == tree
+
+
+def _squashed_on_origin(main, head):
+    """sha của origin/<trunk> khi mọi thứ `head` mang đã có trên đó mà main local CHƯA có (PR đã gộp trên GitHub — squash, rebase hay merge
+    — trước khi main local đồng bộ); '' khi không (không biết trunk, không có origin/<trunk>, main đã chứa nó, hay origin thiếu gì đó)."""
+    trunk = _trunk_branch(main)
+    origin = git(main, "rev-parse", "-q", "--verify", f"refs/remotes/origin/{trunk}^{{commit}}", check=False).stdout.strip() if trunk else ""
+    main_head = git(main, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip()
+    if not origin or not head or not main_head or _is_ancestor(main, head, main_head):
+        return ""
+    return origin if _is_ancestor(main, head, origin) or _merges_to(main, origin, head) else ""
+
+
+def _published_squashed(main, wt):
+    """Worktree ở nhánh đã publish: PR của nó đã gộp vào origin/<trunk> (_squashed_on_origin) và nó không còn gì chưa commit (ngoài sổ
+    sách) — automerge chỉ đồng bộ main rồi gỡ nó, không commit thêm vào nhánh đã publish. state không đọc được: False (từ chối như cũ)."""
+    try:
+        state = _read_state(wt)
+    except (OSError, ValueError, SystemExit):
+        if _has_state_file(wt):
+            return False
+        state = _adopted_state(wt)
+    # cùng luật với _commit_pending: regression_status.json do NGƯỜI sửa là việc thật (nó sẽ bị commit lên nhánh đã publish, OCR 18/10)
+    if [p for p in changes_since(wt, state) if p not in BOOKKEEPING or (p == STATUS_FILE and _authored_status_changed(wt))]:
+        return False
+    return bool(_squashed_on_origin(main, git(wt, "rev-parse", "HEAD", check=False).stdout.strip()))
+
+
+def _ignored_in_way(main, frm, to):
+    """Một file / thư mục / link bị git IGNORE trùng, là cha, hay là con của một đường dẫn đổi giữa `frm` và `to` (so không phân biệt hoa
+    thường, NFC: ổ macOS) — `reset --keep` (không có --no-overwrite-ignore) sẽ đè nó im lặng; luật của merge gate (audit 18/10). [đường
+    dẫn], hoặc None khi git không nói được."""
+    d = git(main, "diff", "--no-renames", "--name-only", "-z", frm, to, check=False)
+    ign = git(main, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory", check=False)
+    if d.returncode or ign.returncode:
+        return None
+    fold = lambda p: unicodedata.normalize("NFC", p).casefold()   # noqa: E731
+    changed = {fold(p) for p in d.stdout.split("\0") if p}
+    near = set(changed)
+    for p in changed:
+        parts = p.split("/")
+        near.update("/".join(parts[:i]) for i in range(1, len(parts)))
+    hits = []
+    for raw in (x for x in ign.stdout.split("\0") if x):
+        e = fold(raw.rstrip("/"))
+        parts = e.split("/")
+        if e in near or any("/".join(parts[:i]) in changed for i in range(1, len(parts))):
+            hits.append(raw)
+    return hits
+
+
+def _sync_main_to(main, origin):
+    """Dời nhánh trunk của main checkout về `origin` (sha của origin/<trunk>) khi không mất gì, dưới MAIN_LOCK: fast-forward (git tự từ
+    chối khi chạm file đang sửa, --no-overwrite-ignore); không ff được (squash viết lại commit của PR) thì `reset --keep` chỉ khi gộp main
+    vào origin KHÔNG thêm gì (_merges_to), không đang dở merge / rebase…, index bằng HEAD (kể cả mục `add -N`) và không file bị ignore nào
+    nằm đường (_ignored_in_way). None khi đã dời (hoặc main đã chứa origin); ("blocked", lý do, {}) khi để nguyên."""
+    mlock = _lock_file(os.path.join(git_dir(main), MAIN_LOCK), wait=180.0)
+    if mlock is None:
+        return "blocked", tr("một lần tự gộp khác giữ khoá main quá lâu: chạy lại", "another automatic merge held the main lock too long: run it again"), {"running": True}
+    try:
+        head = git(main, "rev-parse", "HEAD").stdout.strip()
+        if _is_ancestor(main, origin, head):
+            return None
+        why = ""
+        if _is_ancestor(main, head, origin):
+            r = git(main, "merge", "--ff-only", "--no-overwrite-ignore", origin, check=False, bounded=False)
+            why = "" if r.returncode == 0 else (r.stderr or r.stdout).strip()[-300:]
+        elif not _merges_to(main, origin, head):
+            why = tr("main local có commit origin chưa có (đẩy / PR chúng trước)", "the local main holds commits origin lacks (push / PR them first)")
+        elif _in_progress(main):
+            why = tr(f"main đang dở một {_in_progress(main)}", f"a {_in_progress(main)} is in progress in main")
+        elif git(main, "diff", "--cached", "--quiet", "--ita-visible-in-index", check=False).returncode != 0:
+            why = tr("index của main có thay đổi đã stage (của phiên khác): reset sẽ làm rơi chúng", "main's index holds staged changes (another session's): a reset would drop them")
+        else:
+            hits = _ignored_in_way(main, head, origin)
+            if hits is None or hits:
+                why = tr(f"file bị git ignore nằm đường của origin ({', '.join((hits or ['?'])[:5])}): reset sẽ đè chúng",
+                         f"git-ignored files are in the way of origin ({', '.join((hits or ['?'])[:5])}): a reset would overwrite them")
+            else:
+                r = git(main, "reset", "-q", "--keep", origin, check=False, bounded=False)
+                why = "" if r.returncode == 0 else (r.stderr or r.stdout).strip()[-300:]
+        if why:
+            return "blocked", tr(f"PR của worktree đã gộp vào origin nhưng main local chưa đồng bộ được về origin ({origin[:12]}): {why}. "
+                                 "Không gộp commit gốc của PR vào main (main sẽ lệch origin mãi)",
+                                 f"the worktree's PR is merged on origin but the local main cannot be synced to it ({origin[:12]}): {why}. "
+                                 "The PR's own commits are not merged into main (it would diverge from origin for good)"), {}
+        return None
+    finally:
+        mlock.close()
+
+
 def automerge(cwd, wt, keep=False):
     """Merge a worktree's work into the main branch and remove it (`keep`: leave it in place, W1 R3). (status, message, extra); status: merged | nothing | conflict | blocked.
     Main's working tree is only ever touched by `git merge --ff-only`, so another session's uncommitted or staged files are safe (its index
@@ -2407,6 +2937,8 @@ def automerge(cwd, wt, keep=False):
                              f"the main checkout is on branch '{branch}', not on the trunk '{trunk}': nothing is merged into another branch (release/hotfix ...). "
                              f"Switch back to '{trunk}' and run it again"), {}
     wt_branch = published_branch(wt)
+    if wt_branch and _published_squashed(main, wt):
+        wt_branch = ""   # PR của nó đã gộp vào origin/<trunk> và worktree không còn gì chưa commit: chỉ đồng bộ main rồi gỡ (GeelyEx2 18/10)
     if wt_branch:
         return "blocked", tr(f"worktree đang ở nhánh '{wt_branch}' đã PUBLISH (có nhánh remote / upstream): không tự commit thêm hay gộp nó vào main — gộp bằng tay (merge/PR)",
                              f"the worktree is on branch '{wt_branch}', which is PUBLISHED (a remote ref / upstream exists): nothing is committed to it or merged from it automatically - merge it by hand (merge / PR)"), {}
@@ -2449,6 +2981,13 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
     refusal = _commit_pending(wt, state)
     if refusal:
         return refusal
+    # GeelyEx2 18/10: PR của worktree đã được SQUASH lên origin/<trunk> (GitHub): gộp chính các commit gốc vào main local làm main lệch origin
+    # mãi (INSTINCT-047). Main đồng bộ về origin thay vào đó (như K13 của merge gate); không đồng bộ an toàn được thì từ chối, main giữ nguyên.
+    squashed = _squashed_on_origin(main, git(wt, "rev-parse", "HEAD").stdout.strip())
+    if squashed:
+        refusal = _sync_main_to(main, squashed)
+        if refusal:
+            return refusal
     # W1 R3: main is merged INTO the worktree and what it brings gated (_merge_gate) under the repo's merge-gate lock only (K8: one gate at a
     # time per repo, MERGE_GATE_LOCK) — a gate takes minutes; then,
     # under MAIN_LOCK, main fast-forwards only if it is still the commit that was merged in. Main moved meanwhile (a person, another merge):
@@ -2458,9 +2997,14 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
     for _ in range(8):   # main may also move (a person committing) between reading it and fast-forwarding it
         main_head = git(main, "rev-parse", "HEAD").stdout.strip()
         w_head = git(wt, "rev-parse", "HEAD").stdout.strip()
-        if _is_ancestor(main, w_head, main_head):
-            status = "nothing"   # everything the worktree has is already in main
+        if _is_ancestor(main, w_head, main_head) or (squashed and _adds_nothing_to_main(main, main_head, w_head)):
+            status = "nothing"   # everything the worktree has is already in main (squashed: as the squash commit, never its own commits)
             break
+        if squashed:   # main đã về origin mà hai phép kiểm (merge-tree tự chọn base / một merge-base) vẫn bất đồng: không bao giờ gộp commit gốc của PR (review 18/10)
+            return "blocked", tr("PR của worktree đã gộp vào origin và main đã đồng bộ về đó, nhưng worktree vẫn còn mang thêm thay đổi: không tự gộp "
+                                 "commit gốc của PR vào main — đem phần còn lại về bằng PR mới",
+                                 "the worktree's PR is merged on origin and main is synced to it, yet the worktree still adds changes: the PR's own "
+                                 "commits are not merged into main automatically - bring the rest back in a new PR"), {}
         w_before, merged_in = w_head, False   # K8: HEAD worktree trước khi gộp main ở vòng này
         if not _is_ancestor(main, main_head, w_head):
             if merges >= MERGE_ROUNDS:
@@ -2969,6 +3513,13 @@ def cmd_gc(cwd, args):
         if log:
             _gc_log(log, (["== " + time.strftime("%Y-%m-%d %H:%M:%S")] if len(deleted) == 1 else [])
                     + ["✔ gc: " + tr("đã xoá ", "deleted ") + top + notes.get(top, "")])
+    oldest = time.strftime("%Y%m%d", time.localtime(time.time() - DISCARD_KEEP_DAYS * 86400))
+    for ref in git(main, "for-each-ref", "--format=%(refname)", DISCARD_REF, check=False).stdout.split():
+        m = DISCARD_REF_DATE_RE.fullmatch(ref)   # bản cất của `worktree discard` quá DISCARD_KEEP_DAYS ngày; tên không có ngày thì để yên
+        if m and m.group(1) < oldest and (dry or git(main, "update-ref", "-d", ref, check=False).returncode == 0):
+            deleted.append(ref)   # (cả bản cất branch-<nhánh>-* của prune-branch / remove: lời báo của chúng nói rõ DISCARD_KEEP_DAYS ngày)
+            if log and not dry:   # vào sổ gc như thư mục đã xoá (OCR 18/10)
+                _gc_log(log, (["== " + time.strftime("%Y-%m-%d %H:%M:%S")] if len(deleted) == 1 else []) + ["✔ gc: " + tr("đã xoá ", "deleted ") + ref])
     for p in deleted:
         print(("• gc (dry-run): " + tr("sẽ xoá ", "would delete ") if dry else "✔ gc: " + tr("đã xoá ", "deleted ")) + p + notes.get(p, ""))
     for p, why in kept:
@@ -3273,6 +3824,12 @@ def main(argv):
         return cmd_automerge(cwd, rest)
     if action in ("remove", "rm"):
         return cmd_remove(cwd, rest)
+    if action == "discard":
+        return cmd_discard(cwd, rest)
+    if action == "restore":
+        return cmd_restore(cwd, rest)
+    if action == "prune-branch":
+        return cmd_prune_branch(cwd, rest)
     if action == "status":
         return cmd_status(cwd, rest)
     if action == "heal":
@@ -3283,7 +3840,7 @@ def main(argv):
         return cmd_trunk(cwd, rest)
     if action == "list":
         return subprocess.run(["git", "-C", cwd, "worktree", "list"]).returncode
-    die(tr(f"lệnh không hợp lệ '{action}'", f"unknown action '{action}'") + " (add | diff | finish | remove | status | gc | trunk | list)")
+    die(tr(f"lệnh không hợp lệ '{action}'", f"unknown action '{action}'") + " (add | diff | finish | remove | discard | restore | prune-branch | status | gc | trunk | list)")
 
 
 if __name__ == "__main__":
