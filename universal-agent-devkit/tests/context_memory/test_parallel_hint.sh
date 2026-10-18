@@ -64,6 +64,8 @@ CASES = [
     ("fix every project's README", True),
     ("sửa hooks/x.sh ở cả 4 repo", True),
     ("dùng nhiều agent: sửa hook A, viết test cho B", True),
+    ("Việc hôm nay ...\n- sửa login\n- thêm test export", True),
+    ("dùng nhiều agent: sửa login / thêm export", True),
     # round 2 (OCR + reviewer 18/10)
     ("làm 3 thẻ đang Ready trên github.com/org/board", True),
     ("fix issues #12, #15 and #18 in github.com/org/repo", True),
@@ -163,6 +165,11 @@ chk(rc == 0 and "- Song song" not in out, "hook: a one-file edit gets no paralle
 # a second split request in the same session still gets it: each big request is a new decision
 rc, out, _ = hook("Làm giúp:\n1. Thêm cờ --json cho lanes slots\n2. Sửa lỗi timeout trong merge gate")
 chk(rc == 0 and "- Song song" in out, "hook: a second split request in the session gets the line again", out)
+
+# the very same split request again (the user had to ask again): the dedupe must not turn the line into "như lượt trước"
+rc, out, _ = hook("sửa bug proof_gate ở 4 repo GeelyEx2, OfficeReader, Goods, Neighbours", "ph-same")
+rc, out, _ = hook("sửa bug proof_gate ở 4 repo GeelyEx2, OfficeReader, Goods, Neighbours", "ph-same")
+chk(rc == 0 and "- Song song" in out, "hook: the same split request twice in a session still gets the line", out)
 
 # hook wall time, with and without the detector's line (median of 5 runs, reported; the budget is the detector's own cost above)
 pos = sorted(hook("làm 3 thẻ đang Ready trên super-board", "lat-%d" % i)[2] for i in range(5))[2]

@@ -1025,6 +1025,7 @@ def parallel_split(prompt):
     if reason:
         return reason
     paths = {p.rstrip(":,.;)") for p in PATHLIKE_RE.findall(text) if "://" not in p and not HOST_RE.match(p)}   # a link is no file
+    paths = {p for p in paths if re.search(r"\w", p)}   # nor a lone "...", "." or "/"
     if len(paths) == 1:   # edits inside one file are one lane
         return ""
     reason = _ask(SPLIT_EXPLICIT_RE, text)
@@ -1177,8 +1178,9 @@ def dedupe_session(text, project_dir, session_id, payload):
     sent = set(st.get("sent") or [])
     lines = text.split("\n")
     if st.get("last") == h(text):
-        # The bug-fix RED→GREEN rule stays on every bug prompt, even an unchanged one.
-        out = "\n".join([SAME_AS_BEFORE] + [l for l in lines if l.startswith("- Bắt buộc: ")])
+        # The bug-fix RED→GREEN rule stays on every bug prompt, even an unchanged one; so does the parallel-split line
+        # (a user who asks again for the same split must get it again).
+        out = "\n".join([SAME_AS_BEFORE] + [l for l in lines if l.startswith(("- Bắt buộc: ", "- Song song "))])
     else:
         out = "\n".join(l for l in lines if not (l.startswith(ONCE_PER_SESSION) and h(l) in sent))
     sent.update(h(l) for l in lines if l.startswith(ONCE_PER_SESSION))
