@@ -441,10 +441,15 @@ elif tool == "Bash":
                          f"  cannot be checked for writes into the MAIN checkout {M}. Reinstall the DevKit (agent-kit init) or work\n"
                          f"  with Edit/Write until then. Off: WORKTREE_GUARD=0.\n")
         sys.exit(2)
-    res = shell_writes.targets(str(inp.get("command", "")), cwd)
-    if res is None:
-        sys.exit(0)                               # untokenisable: fail open
+    # run_bodies=True: a heredoc fed to a shell is scanned too, and one that cannot be read comes back as "unparsed" (fail closed).
+    res = shell_writes.targets(str(inp.get("command", "")), cwd, 0, True)
+    if res is None:                               # untokenisable: no target is known, so none can be ruled out (issue #9: it used to pass)
+        logline("BLOCK Bash line shell_writes cannot tokenise")
+        sys.stderr.write(f"⛔ WORKTREE GUARD: this Bash line cannot be read (unbalanced quote or similar), so a write into the MAIN checkout\n"
+                         f"  {M} cannot be ruled out. Rewrite it simpler (one command per call). Off: WORKTREE_GUARD=0.\n")
+        sys.exit(2)
     for _kind, t, here in res:
+        t = t.replace("${PWD}", here).replace("$PWD", here)   # the shell's $PWD is the directory it runs in
         if "$" in t or "`" in t:
             continue
         if in_main(t, here):

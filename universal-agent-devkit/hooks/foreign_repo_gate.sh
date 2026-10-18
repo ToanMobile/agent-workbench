@@ -65,8 +65,10 @@ try:
                     continue
                 inp = c.get("input") or {}
                 fp = inp.get("file_path") or inp.get("notebook_path") or ""
-                if not isinstance(fp, str) or not os.path.isabs(fp):
+                if not isinstance(fp, str) or not fp:
                     continue
+                if not os.path.isabs(fp):   # a relative path (../other/x.py) is relative to the call's cwd, else the project
+                    fp = os.path.join(e.get("cwd") or repo, fp)
                 real = os.path.realpath(fp)
                 if real == repo or real.startswith(repo + os.sep):
                     continue
