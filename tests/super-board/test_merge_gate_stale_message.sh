@@ -64,6 +64,25 @@ verdict "$TMP/gate1.log" | grep -q "KẾT LUẬN: FAIL — không có test hồi
 verdict "$TMP/gate1.log" | grep -q "exit 3" \
   && ok "the gate's own message names the verify exit code" || fail "no 'exit 3' in the gate message: $(verdict "$TMP/gate1.log" | tail -3)"
 
+# Ca 1b: post-fix-gate in KẾT LUẬN có mã màu ANSI → gate trích dòng đã bỏ màu (không còn byte ESC).
+CFG_C="$TMP/cfg-color.json"
+echo '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["printf \"  \\033[1mKẾT LUẬN:\\033[0m \\033[91mREJECT màu\\033[0m\\n\"; exit 2"]}' > "$CFG_C"
+( cd "$WT" && bash "$GATE" --config "$CFG_C" --pr 5 --expect-head "$H" ) >"$TMP/gate1b.log" 2>&1; rc=$?
+ESC=$(printf '\033')
+V1B=$(verdict "$TMP/gate1b.log" | grep "verify failed (exit 2)")
+case "$V1B" in
+  *"$ESC"*) fail "ANSI codes left in the gate message: $V1B" ;;
+  *"KẾT LUẬN: REJECT màu"*) ok "coloured KẾT LUẬN line is quoted without ANSI codes" ;;
+  *) fail "coloured verdict not quoted (rc $rc): $(verdict "$TMP/gate1b.log" | tail -3)" ;;
+esac
+
+# Ca 1c: log không có dòng KẾT LUẬN/VERDICT → vẫn không nói stale, nói rõ là không có dòng kết luận.
+CFG_N="$TMP/cfg-noverdict.json"
+echo '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo boom; exit 1"]}' > "$CFG_N"
+( cd "$WT" && bash "$GATE" --config "$CFG_N" --pr 5 --expect-head "$H" ) >"$TMP/gate1c.log" 2>&1; rc=$?
+[ "$rc" -eq 2 ] && ! grep -qi "stale" "$TMP/gate1c.log" && verdict "$TMP/gate1c.log" | grep -q "verify failed (exit 1).*no KẾT LUẬN/VERDICT line" \
+  && ok "no verdict line: says so with the exit code, not stale" || fail "no-verdict case (rc $rc): $(verdict "$TMP/gate1c.log" | tail -3)"
+
 # Ca 2: main tiến thêm 1 commit (không xung đột) → nhánh chậm hơn base → vẫn nói stale.
 git -C "$R" checkout -q main; echo c > "$R/c"; git -C "$R" add c; git -C "$R" commit -qm main-moves; git -C "$R" push -q origin main
 ( cd "$WT" && bash "$GATE" --config "$CFG" --pr 5 --expect-head "$H" ) >"$TMP/gate2.log" 2>&1; rc=$?

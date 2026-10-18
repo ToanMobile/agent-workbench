@@ -283,6 +283,9 @@ if ! git -C "$SCRATCH" merge "origin/${BASE}" --no-edit --quiet 2>/dev/null; the
   say "this is a rebase pass for the Builder lane, not a Blocked card"
   exit 5
 fi
+# Commit base thật sự đã merge vào SCRATCH (merge commit: HEAD^2; fast-forward hoặc đã chứa sẵn: HEAD). Dùng để đếm "chậm hơn base"
+# khi verify đỏ: đọc lại origin/<base> sau vài phút verify có thể đã bị phiên khác fetch đi (OCR 18/10).
+BASE_SHA=$(git -C "$SCRATCH" rev-parse -q --verify 'HEAD^2' 2>/dev/null || git -C "$SCRATCH" rev-parse HEAD)
 
 # Populate git-ignored DevKit symlinks so post-fix-gate / REG-WB-CONFIG-01 succeed in SCRATCH
 if [ -f "$REPO_PATH/universal-agent-devkit/bin/install.sh" ]; then
@@ -320,7 +323,7 @@ for cmd in "${VERIFY[@]}"; do
     tail -60 "$VERIFY_LOG" >&2
     # 18/10: chỉ nói "stale" khi nhánh thật sự chậm hơn base. 17/10 câu này in cho MỌI verify đỏ và dẫn ba phiên đi rebase vô ích
     # (lý do thật là post-fix-gate exit 2). Không đếm được (rev-list hỏng) thì coi như không stale và nêu lý do thật.
-    BEHIND=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..origin/${BASE}" 2>/dev/null || echo 0)
+    BEHIND=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
     if [ "${BEHIND:-0}" -gt 0 ] 2>/dev/null; then
       say "the branch is stale against ${BASE} (${BEHIND} commit(s) behind) — send it back to Build for a rebase pass (log saved to ${VLOG})"
     else
