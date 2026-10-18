@@ -203,7 +203,7 @@ say "lock taken; verifying against ${BASE} as it is now"
 # Done in a throwaway worktree so the branch under test is never mutated: the
 # gate proves a merge, it does not perform one locally and it never pushes.
 SCRATCH=$(mktemp -d)
-cleanup() { git -C "$REPO_PATH" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "${META:-}" "${DIFF:-}"; release; }
+cleanup() { git -C "$REPO_PATH" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "${META:-}" "${DIFF:-}" "${VERIFY_LOG:-}"; release; }
 trap cleanup EXIT
 
 # ---- the head guard --------------------------------------------------------
@@ -239,6 +239,9 @@ fi
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Outside $SCRATCH: `git worktree add` below needs that directory empty.
 META=$(mktemp); DIFF=$(mktemp)
+# Log của lệnh verify cũng ngoài $SCRATCH (18/10, GeelyEx2): trong cây, ở repo không ignore *.log, nó là file chưa track trong dấu vân tay
+# cây (bin/tree_fp.py), nên post-fix-gate không mượn được biên nhận --full của worktree đã PASS đúng nội dung đó và chạy lại mọi suite.
+VERIFY_LOG=$(mktemp)
 python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} --json labels,files,additions,deletions,changedFiles,body > "$META"
 python3 "$GITHUB_READ" --kind diff --meta "$META" -- pr diff "$PR" ${REPO:+--repo "$REPO"} > "$DIFF"
 PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$META" --diff "$DIFF") || {
@@ -299,11 +302,11 @@ for cmd in "${VERIFY[@]}"; do
     # Không bao giờ tự thêm --auto-approve-tests ở đây: duyệt test bị sửa là quyết định của từng board (config của nó).
   fi
   say "verify: ${cmd}"
-  if ! ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$cmd" ) >"$SCRATCH/.verify.log" 2>&1; then
+  if ! ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$cmd" ) >"$VERIFY_LOG" 2>&1; then
     say "FAILED: ${cmd}"
     WT_LOG="$(git -C "$SCRATCH" rev-parse --absolute-git-dir 2>/dev/null)/postfix-gate/last_output.log"
     if [ -f "$WT_LOG" ]; then
-      cat "$WT_LOG" >>"$SCRATCH/.verify.log" 2>/dev/null || true
+      cat "$WT_LOG" >>"$VERIFY_LOG" 2>/dev/null || true
     fi
     # 18/10 (GeelyEx2 #48): log nằm trong git common dir, không trong REPO_PATH ("." thường là một worktree: file chưa track ở đó chặn
     # `worktree remove` ở repo không ignore mẫu này).
@@ -311,8 +314,8 @@ for cmd in "${VERIFY[@]}"; do
     # (OCR 18/10: git cũ hơn 2.31 không biết cờ này; universal-agent-devkit/scripts/governance/lane_plan.py cũng chạy lại không có nó).
     VLOG_DIR="$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P || true)"
     VLOG="${VLOG_DIR:+$VLOG_DIR/super-board/last-merge-verify-pr-${PR}.log}"
-    { [ -n "$VLOG" ] && mkdir -p "$VLOG_DIR/super-board" && cp "$SCRATCH/.verify.log" "$VLOG"; } 2>/dev/null || VLOG="(not saved)"
-    tail -60 "$SCRATCH/.verify.log" >&2
+    { [ -n "$VLOG" ] && mkdir -p "$VLOG_DIR/super-board" && cp "$VERIFY_LOG" "$VLOG"; } 2>/dev/null || VLOG="(not saved)"
+    tail -60 "$VERIFY_LOG" >&2
     say "the branch is stale against ${BASE} — send it back to Build for a rebase pass (log saved to ${VLOG})"
     exit 2
   fi
