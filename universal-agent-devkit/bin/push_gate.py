@@ -30,7 +30,12 @@ ungated commit). --all-tags <remote>: every tag must point at a commit the remot
 uploads one. --all-branches <remote>: every local branch has nothing new to send (its tip is in the remote branch of
 the same name) or is covered exactly like `git push <remote> <branch>`.
 
-CLI: push_gate.py <dir> [<rev>] [--tag-remote <name>] | --all-tags <name> | --all-branches <name>
+Push một nhánh PR (người dùng 18/10): `--dst <remote> <nhánh>` (hook truyền đích của từng refspec) với đích KHÔNG phải trunk
+không cần biên nhận: `--full` chạy đúng một lần, ở merge gate (super-board-merge-gate.sh) ngay trước khi gộp vào main; commit đã
+qua pre-commit. Trunk = main/master/trunk/develop/release/*/hotfix/* và nhánh mặc định của remote (refs/remotes/<remote>/HEAD).
+Đích rỗng, thiếu, remote không phải tên đã cấu hình (URL), hay ref ngoài refs/heads/ → luật biên nhận cũ.
+
+CLI: push_gate.py <dir> [<rev>] [--tag-remote <name>] [--dst <remote> <branch>] | --all-tags <name> | --all-branches <name>
 → exit 0 covered · 2 not covered (reason on stdout).
 100% standard library.
 """
@@ -198,6 +203,41 @@ def check_all_branches(cwd, remote):
         if not ok:
             bad.append(f"{ref[len('refs/heads/'):]}: {reason}")
     return (not bad), "; ".join(bad[:3])
+
+
+# như main_like của hooks/session_context.sh; không phân biệt hoa thường: remote là thư mục trên APFS thì refs/heads/MAIN là chính file main
+TRUNK_LIKE = re.compile(r"(main|master|trunk|develop|release/.+|hotfix/.+)", re.IGNORECASE)
+
+
+def pr_branch(cwd, remote, dst):
+    """True khi `dst` (tên nhánh hoặc refs/heads/<tên>) trên `remote` chắc chắn là một nhánh PR, không phải trunk; mọi nghi ngờ → False.
+    ponytail: nhánh mặc định của remote đọc từ refs/remotes/<remote>/HEAD cục bộ (không hỏi mạng); thiếu ref đó thì chỉ danh sách tên
+    trunk ở trên bảo vệ — một repo đặt nhánh mặc định tên lạ mà chưa `git remote set-head` thì push lên nhánh đó không cần biên nhận.
+    Ref đó cũng có thể cũ: server đổi nhánh mặc định mà ref HEAD cục bộ đã có thì git không tự cập nhật. Nâng cấp: `git ls-remote
+    --symref <remote> HEAD` khi gặp repo như vậy; tới lúc đó branch protection phía server là lớp chắn còn lại."""
+    if not isinstance(dst, str) or not isinstance(remote, str) or not remote:
+        return False
+    name = dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst
+    # `HEAD:heads/main` được git DWIM thành refs/heads/main (review 18/10): tên ngắn mang tiền tố của một namespace ref → nghi ngờ
+    if (not name or name.lower().startswith(("refs/", "heads/", "tags/", "remotes/", "-")) or name.upper() == "HEAD"
+            or TRUNK_LIKE.fullmatch(name)):
+        return False
+    top = toplevel(cwd)[0]
+    if not top:
+        return False
+    rc, names = git(top, "remote")
+    if rc != 0 or remote not in names.split():
+        return False   # URL hay remote lạ: không biết nhánh mặc định của nó
+    if git(top, "check-ref-format", "refs/heads/" + name)[0] != 0:
+        return False
+    # nhánh mặc định đọc theo URL fetch; push đi server khác (pushurl, pushInsteadOf) thì không biết nhánh mặc định của server đó
+    rc1, fetch_url = git(top, "remote", "get-url", remote)
+    rc2, push_url = git(top, "remote", "get-url", "--push", remote)
+    if rc1 != 0 or rc2 != 0 or fetch_url.strip() != push_url.strip():
+        return False
+    # tên đầy đủ, không --short: có nhánh local tên "origin/prod" thì --short trả "remotes/origin/prod" và phép so trượt (OCR 18/10)
+    rc, head = git(top, "symbolic-ref", "-q", f"refs/remotes/{remote}/HEAD")
+    return not (rc == 0 and head.strip().lower() == f"refs/remotes/{remote}/{name}".lower())
 
 
 def entries(top, rev, paths):
@@ -632,11 +672,20 @@ def main(argv):
         k = argv.index("--tag-remote")
         tag_remote = argv[k + 1] if k + 1 < len(argv) else None
         del argv[k:k + 2]
+    dst = None
+    if "--dst" in argv:
+        k = argv.index("--dst")
+        dst = argv[k + 1:k + 3] if k + 2 < len(argv) else [None, None]   # thiếu giá trị: đích không rõ → luật cũ
+        del argv[k:k + 3]
+        if "--dst" in argv:
+            dst = [None, None]   # hai --dst: không biết cái nào là đích thật → luật cũ
     cwd = argv[1] if len(argv) > 1 else "."
     rev = argv[2] if len(argv) > 2 else "HEAD"
     try:
         if rev in ("--all-tags", "--all-branches") and len(argv) > 3:
             ok, reason = (check_all_tags if rev == "--all-tags" else check_all_branches)(cwd, argv[3])
+        elif dst and not tag_remote and not rev.startswith("-") and pr_branch(cwd, *dst):   # sweep thiếu đối số, tag: luật cũ
+            ok, reason = True, f"push nhánh PR {dst[1]}: --full chạy một lần ở merge gate trước khi gộp vào trunk"
         else:
             ok, reason = check(cwd, rev, tag_remote)
     except (subprocess.TimeoutExpired, RuntimeError, OSError) as e:
