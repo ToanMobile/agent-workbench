@@ -359,7 +359,7 @@ def danger_in_git(sub, args):
             prev = a
     if sub == "worktree" and pos[:1] == ["remove"] and ("f" in short or "--force" in long_):
         return "worktree remove --force mất thay đổi"
-    if sub == "worktree" and pos[:1] == ["lock"] and any("devkit-kept" in a for a in args):
+    if sub == "worktree" and "lock" in args and any("devkit-kept" in a for a in args):   # (cờ dính liền -r…/-q trước lock: không lệch pos, audit T0044)
         # discard/remove tin khoá này là bằng chứng "worktree của chính phiên" (OCR 18/10): chỉ hook ExitWorktree keep được đặt nó
         return "worktree lock devkit-kept giả khoá của phiên (chỉ hook ExitWorktree keep đặt khoá này)"
     return None
@@ -1450,11 +1450,14 @@ if reason and reason in SOLO_HIT:
     sys.exit(2)
 if reason:
     # K2/K4 (18/10): ba lệnh kit tự chứng minh không mất gì rồi mới làm đúng việc này; dạng git trần vẫn bị chặn ở đây
-    kit = ("agent-kit worktree prune-branch <nhánh> (chỉ xoá khi trunk đã có nó hoặc PR đã MERGED đúng tip)" if reason.startswith("branch -D")
-           else "agent-kit worktree discard <đường dẫn> (chỉ còn file đã xoá / rác IDE, hoặc worktree của chính phiên; cất vào refs/devkit/discarded)"
+    kit = ("agent-kit worktree prune-branch <nhánh> (chỉ xoá khi trunk đã có nó hoặc PR đã MERGED vào trunk đúng tip)" if reason.startswith("branch -D")
+           else "agent-kit worktree prune-branch --remote <nhánh> (chỉ xoá nhánh trên origin khi PR đã MERGED vào trunk đúng tip của nó)"
+           if reason.startswith("push") and re.search(r"(\s--delete\b|\s-[A-Za-z]*d[A-Za-z]*\b|\s:\S)", cmd)
+           else "agent-kit worktree discard <đường dẫn> (chỉ còn file đã xoá / rác IDE, HEAD đã trong trunk, không phiên sống nào giữ)"
            if reason.startswith("worktree remove --force")
-           else "agent-kit worktree restore <commit> -- <path> (chỉ path không có thay đổi chưa commit)"
-           if reason.startswith("checkout") and ("<tree-ish>" in reason or re.search(r"\bcheckout\s+[^-\s]\S*\s+--(\s|$)", cmd))
+           else "agent-kit worktree restore <commit> -- <path> (chỉ path không có thay đổi chưa commit, không file ignore nào nằm đường)"
+           if (reason.startswith("checkout") and ("<tree-ish>" in reason or re.search(r"\bcheckout\s+[^-\s]\S*\s+--\s+\S", cmd)))
+           or (reason.startswith("restore") and re.search(r"\s(?:--source\b|-[A-Za-z]*s)", cmd))
            else None)   # (checkout -- <path> không kèm commit chỉ đáng chặn khi path bẩn: restore luôn từ chối ca đó)
     print(f"BLOCKED: {cmd!r} — {reason}. User đã chặn thao tác git khó revert này. "
           + (f"Không mất gì thì dùng `{kit}`; còn không: " if kit else "")
