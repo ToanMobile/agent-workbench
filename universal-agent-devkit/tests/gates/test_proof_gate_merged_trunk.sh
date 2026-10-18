@@ -40,7 +40,7 @@ WT_RECEIPT="$(git -C "$WT" rev-parse --absolute-git-dir)/postfix-gate/full_pass.
 turn_start() { python3 -c 'import datetime,json
 t=(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 print(json.dumps({"type":"user","timestamp":t,"message":{"role":"user","content":"sửa lỗi X rồi gộp"}}))' > "$TR"; sleep 1; }
-# $1 tên công cụ, $2 input JSON, $3 nội dung tool_result (rỗng: không ghi kết quả). Giờ hiện tại.
+# $1 tên công cụ, $2 input JSON, $3 nội dung tool_result (rỗng: không ghi kết quả), $4 = err: kết quả lỗi. Giờ hiện tại.
 tool() { python3 -c 'import datetime,json,sys
 t=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 n=sum(1 for _ in open(sys.argv[4]))
@@ -48,7 +48,7 @@ print(json.dumps({"type":"assistant","timestamp":t,"message":{"role":"assistant"
   {"type":"tool_use","id":"tu%d" % n,"name":sys.argv[1],"input":json.loads(sys.argv[2])}]}}))
 if sys.argv[3]:
     print(json.dumps({"type":"user","timestamp":t,"message":{"role":"user","content":[
-      {"type":"tool_result","tool_use_id":"tu%d" % n,"content":sys.argv[3]}]}}))' "$1" "$2" "${3:-}" "$TR" >> "$TR.new" && cat "$TR.new" >> "$TR" && rm -f "$TR.new"; }
+      {"type":"tool_result","tool_use_id":"tu%d" % n,"content":sys.argv[3],"is_error":sys.argv[5] == "err"}]}}))' "$1" "$2" "${3:-}" "$TR" "${4:-}" >> "$TR.new" && cat "$TR.new" >> "$TR" && rm -f "$TR.new"; }
 GATE_CMD() { printf '{"command": ".claude/bin/super-board-merge-gate.sh --config .claude/super-board/configs/t.json --pr %s --expect-head %s"}' "$1" "$2"; }
 GATE_OUT() { printf '[merge-gate #%s] lock taken; verifying against main as it is now\n[merge-gate #%s] verify: python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief --diff origin/main --force-full\n[merge-gate #%s] verified green against main (1 command(s))\n✓ Squashed and merged pull request #%s\n[merge-gate #%s] merged %s\n' "$1" "$1" "$1" "$1" "$1" "$2"; }
 
@@ -74,7 +74,7 @@ stop() {
   python3 -c 'import json,sys; print(json.dumps({"session_id":"s-m","hook_event_name":"Stop","transcript_path":sys.argv[1],
     "last_assistant_message":sys.argv[2],"stop_hook_active":False}))' "$TR" "XONG
 Đã gộp PR qua merge gate. Gate exit 0, ảnh: không cần — backend
-$REPORT" | CLAUDE_PROJECT_DIR="${1:-$REPO}" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+$REPORT" | PROOF_GATE_ALLOW_LOCAL_ORIGIN="${LOCAL_ORIGIN:-1}" CLAUDE_PROJECT_DIR="${1:-$REPO}" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
 blocked() { [ "$1" = 2 ] && grep -q "Cổng:" "$TMP/err"; }
 why() { echo "rc=$1 err=$(head -3 "$TMP/err" | tr '\n' ' ')"; }
 
@@ -90,80 +90,111 @@ stop "$WT"; rc=$?
 [ "$rc" = 0 ] && ok "P2 the session's worktree at H, clean: allowed" || fail "P2 worktree at H blocked ($(why $rc))"
 
 # N1. Lượt có sửa code mà không merge gate nào, không biên nhận nào: chặn.
-turn_start; new_pr 2 >/dev/null && land 2; stop; rc=$?
+turn_start; new_pr 2 >/dev/null && land 2 || fail "N1 setup"; stop; rc=$?
 blocked "$rc" && ok "N1 no merge-gate record, no receipt: blocked" || fail "N1 accepted without evidence ($(why $rc))"
 
 # N2. Thiếu dòng "verified green" (merge gate không xác nhận gate xanh): chặn.
-turn_start; H=$(new_pr 3) && land 3 && tool Bash "$(GATE_CMD 3 "$H")" "$(GATE_OUT 3 "$H" | grep -v 'verified green')"; stop; rc=$?
+turn_start; H=$(new_pr 3) && land 3 && tool Bash "$(GATE_CMD 3 "$H")" "$(GATE_OUT 3 "$H" | grep -v 'verified green')" || fail "N2 setup"; stop; rc=$?
 blocked "$rc" && ok "N2 no 'verified green' line: blocked" || fail "N2 accepted without verified green ($(why $rc))"
 
 # N3. Cùng các dòng đó nhưng do một lệnh echo in ra (không phải lệnh merge gate): chặn.
-turn_start; H=$(new_pr 4) && land 4 && tool Bash "{\"command\": \"printf '[merge-gate #4] verified green against main\\\\n[merge-gate #4] merged $H\\\\n'\"}" "$(GATE_OUT 4 "$H")"; stop; rc=$?
+turn_start; H=$(new_pr 4) && land 4 && tool Bash "{\"command\": \"printf '[merge-gate #4] verified green against main\\\\n[merge-gate #4] merged $H\\\\n'\"}" "$(GATE_OUT 4 "$H")" || fail "N3 setup"; stop; rc=$?
 blocked "$rc" && ok "N3 the lines printed by an echo: blocked" || fail "N3 echo accepted ($(why $rc))"
 
 # N4. H chưa từng lên origin main (PR chưa gộp): chặn.
-turn_start; H=$(new_pr 5) && tool Bash "$(GATE_CMD 5 "$H")" "$(GATE_OUT 5 "$H")"; stop; rc=$?
+turn_start; H=$(new_pr 5) && tool Bash "$(GATE_CMD 5 "$H")" "$(GATE_OUT 5 "$H")" || fail "N4 setup"; stop; rc=$?
 blocked "$rc" && ok "N4 H not on origin main: blocked" || fail "N4 unmerged H accepted ($(why $rc))"
 
 # N5. Squash của H có trên origin nhưng từ trước lượt này (bản ghi cũ dán lại): chặn.
-turn_start; H=$(new_pr 6) && land 6 old && tool Bash "$(GATE_CMD 6 "$H")" "$(GATE_OUT 6 "$H")"; stop; rc=$?
+turn_start; H=$(new_pr 6) && land 6 old && tool Bash "$(GATE_CMD 6 "$H")" "$(GATE_OUT 6 "$H")" || fail "N5 setup"; stop; rc=$?
 blocked "$rc" && ok "N5 squash landed before the turn: blocked" || fail "N5 old squash accepted ($(why $rc))"
 
 # N6. "origin/main" giả do agent ghi (update-ref refs/remotes + main local), origin thật không có: chặn (INSTINCT-027: ls-remote).
 turn_start; H=$(new_pr 7) && git -C "$REPO" fetch -q origin \
   && S=$(git -C "$REPO" commit-tree -p origin/main -m "fake squash (#7)" "$H^{tree}") \
   && git -C "$REPO" update-ref refs/remotes/origin/main "$S" && git -C "$REPO" reset -q --hard "$S" \
-  && tool Bash "$(GATE_CMD 7 "$H")" "$(GATE_OUT 7 "$H")"; stop; rc=$?
+  && tool Bash "$(GATE_CMD 7 "$H")" "$(GATE_OUT 7 "$H")" || fail "N6 setup"; stop; rc=$?
 git -C "$REPO" fetch -q origin && git -C "$REPO" reset -q --hard origin/main
 blocked "$rc" && ok "N6 forged local origin ref: blocked" || fail "N6 forged refs/remotes accepted ($(why $rc))"
 
 # N7. Sau merge, main có file chính phiên này sửa (chưa gộp): chặn.
 turn_start; H=$(new_pr 8) && land 8 && tool Bash "$(GATE_CMD 8 "$H")" "$(GATE_OUT 8 "$H")" \
-  && echo "x" > "$REPO/docs/own.md" && tool Write "{\"file_path\": \"$REPO/docs/own.md\", \"content\": \"x\"}"; stop; rc=$?
+  && echo "x" > "$REPO/docs/own.md" && tool Write "{\"file_path\": \"$REPO/docs/own.md\", \"content\": \"x\"}" || fail "N7 setup"; stop; rc=$?
 rm -f "$REPO/docs/own.md"
 blocked "$rc" && ok "N7 main dirty with this session's file: blocked" || fail "N7 own dirty file accepted ($(why $rc))"
 
 # N7b. File bẩn của phiên khác ở main (phiên này không nhắc tới): cho qua như luật foreign-dirty.
-turn_start; H=$(new_pr 9) && land 9 && tool Bash "$(GATE_CMD 9 "$H")" "$(GATE_OUT 9 "$H")" && echo "y" > "$REPO/docs/foreign.md"; stop; rc=$?
+turn_start; H=$(new_pr 9) && land 9 && tool Bash "$(GATE_CMD 9 "$H")" "$(GATE_OUT 9 "$H")" && echo "y" > "$REPO/docs/foreign.md" || fail "N7b setup"; stop; rc=$?
 rm -f "$REPO/docs/foreign.md"
 [ "$rc" = 0 ] && ok "N7b another session's dirty file in main: allowed" || fail "N7b foreign dirty file blocked ($(why $rc))"
 
 # N8. Trunk mode tắt: luật mới không áp, chặn.
-turn_start; H=$(new_pr 10) && land 10 && tool Bash "$(GATE_CMD 10 "$H")" "$(GATE_OUT 10 "$H")"
+turn_start; H=$(new_pr 10) && land 10 && tool Bash "$(GATE_CMD 10 "$H")" "$(GATE_OUT 10 "$H")" || fail "N8 setup"
 git -C "$REPO" config devkit.trunkMode false; stop; rc=$?; git -C "$REPO" config --unset devkit.trunkMode
 blocked "$rc" && ok "N8 trunk mode off: blocked" || fail "N8 accepted with trunk mode off ($(why $rc))"
 
 # N9. main có commit riêng chưa lên origin sau squash: chặn.
 turn_start; H=$(new_pr 11) && land 11 && tool Bash "$(GATE_CMD 11 "$H")" "$(GATE_OUT 11 "$H")" \
-  && echo "z" > "$REPO/docs/local.md" && git -C "$REPO" add docs/local.md && git -C "$REPO" commit -qm local; stop; rc=$?
+  && echo "z" > "$REPO/docs/local.md" && git -C "$REPO" add docs/local.md && git -C "$REPO" commit -qm local || fail "N9 setup"; stop; rc=$?
 git -C "$REPO" reset -q --hard origin/main
 blocked "$rc" && ok "N9 main ahead of origin: blocked" || fail "N9 unpushed main commit accepted ($(why $rc))"
 
 # N10. Cây xét là worktree, sửa thêm (chưa commit) sau khi gộp: chặn.
 turn_start; H=$(new_pr 12) && land 12 && tool Bash "$(GATE_CMD 12 "$H")" "$(GATE_OUT 12 "$H")" \
-  && echo "def ok(): return 99" > "$WT/src/core.py"; stop "$WT"; rc=$?
+  && echo "def ok(): return 99" > "$WT/src/core.py" || fail "N10 setup"; stop "$WT"; rc=$?
 git -C "$WT" checkout -q -- src/core.py
 blocked "$rc" && ok "N10 worktree edited after the merge: blocked" || fail "N10 dirty worktree accepted ($(why $rc))"
+
+# N3b. Tên script chỉ nằm trong comment của một lệnh in dòng giả: không phải lệnh merge gate, chặn.
+turn_start; H=$(new_pr 17) && land 17 && tool Bash "{\"command\": \"printf x # .claude/bin/super-board-merge-gate.sh --pr 17 --expect-head $H\"}" "$(GATE_OUT 17 "$H")" || fail "N3b setup"; stop; rc=$?
+blocked "$rc" && ok "N3b script name only in a comment: blocked" || fail "N3b comment-forged call accepted ($(why $rc))"
+# N3c. Lệnh merge gate trả lỗi (is_error): chặn.
+turn_start; H=$(new_pr 18) && land 18 && tool Bash "$(GATE_CMD 18 "$H")" "$(GATE_OUT 18 "$H")" err || fail "N3c setup"; stop; rc=$?
+blocked "$rc" && ok "N3c merge-gate result is an error: blocked" || fail "N3c error result accepted ($(why $rc))"
+# N3d. --pr của lệnh khác số PR trong kết quả: chặn.
+turn_start; H=$(new_pr 19) && land 19 && tool Bash "$(GATE_CMD 99 "$H")" "$(GATE_OUT 19 "$H")
+[merge-gate #99] verified green against main (1 command(s))" || fail "N3d setup"; stop; rc=$?
+blocked "$rc" && ok "N3d --pr differs from the reported PR: blocked" || fail "N3d --pr mismatch accepted ($(why $rc))"
+# N3e. --expect-head của lệnh khác H trong kết quả: chặn.
+turn_start; H=$(new_pr 20) && land 20 && tool Bash "$(GATE_CMD 20 0123456789abcdef0123456789abcdef01234567)" "$(GATE_OUT 20 "$H")" || fail "N3e setup"; stop; rc=$?
+blocked "$rc" && ok "N3e --expect-head differs from the merged head: blocked" || fail "N3e --expect-head mismatch accepted ($(why $rc))"
+# P3. Dạng lệnh thật hay gặp: cd vào repo, 2>&1 | tail: cho qua.
+turn_start; H=$(new_pr 21) && land 21 && tool Bash "{\"command\": \"cd $REPO && bash .claude/bin/super-board-merge-gate.sh --config c.json --pr 21 --expect-head ${H:0:12} 2>&1 | tail -40\"}" "$(GATE_OUT 21 "$H")" || fail "P3 setup"; stop; rc=$?
+[ "$rc" = 0 ] && ok "P3 cd … && bash …merge-gate.sh … 2>&1 | tail -40: allowed" || fail "P3 real command form blocked ($(why $rc))"
+# N12. PR phiên khác gộp sau S, main đi theo origin: cho qua (lượt này không tự gộp thẳng).
+turn_start; H=$(new_pr 22) && land 22 && tool Bash "$(GATE_CMD 22 "$H")" "$(GATE_OUT 22 "$H")" && new_pr 23 >/dev/null && land 23 || fail "N12 setup"; stop; rc=$?
+[ "$rc" = 0 ] && ok "N12 another PR landed after S, main follows origin: allowed" || fail "N12 later foreign merge blocked ($(why $rc))"
+# N13. Như N12 nhưng chính lượt này gộp thẳng PR sau (gh pr merge, không qua merge gate): chặn.
+turn_start; H=$(new_pr 24) && land 24 && tool Bash "$(GATE_CMD 24 "$H")" "$(GATE_OUT 24 "$H")" && new_pr 25 >/dev/null && land 25 \
+  && tool Bash '{"command": "gh pr merge 25 --squash"}' "merged" || fail "N13 setup"; stop; rc=$?
+blocked "$rc" && ok "N13 this turn merged another PR directly: blocked" || fail "N13 direct gh merge accepted ($(why $rc))"
+# N11. P0 (principal review): origin trỏ về chính repo (`remote.origin.url .`), H chỉ là commit của worktree, không merge gì: chặn
+# (như máy thật: LOCAL_ORIGIN=0, chỉ nhận remote mạng).
+turn_start; git -C "$WT" fetch -q origin && git -C "$WT" checkout -q --detach origin/main && echo "def ok(): return 111" > "$WT/src/core.py" \
+  && git -C "$WT" commit -qam "pr 26" && H=$(git -C "$WT" rev-parse HEAD) && git -C "$REPO" config remote.origin.url . \
+  && tool Bash "$(GATE_CMD 26 "$H")" "$(GATE_OUT 26 "$H")" || fail "N11 setup"; LOCAL_ORIGIN=0 stop "$WT"; rc=$?
+git -C "$REPO" config remote.origin.url "$ORIGIN"
+blocked "$rc" && ok "N11 origin pointed at the repo itself: blocked" || fail "N11 self-origin accepted ($(why $rc))"
 
 # (a) Biên nhận --full của worktree (gate chạy trong worktree ở lượt này), cùng cây với main sau squash.
 wt_gate() { CLAUDE_PROJECT_DIR="$WT" python3 "$GATE" --run-tests --full --no-checklist --diff HEAD~1 >"$TMP/gate" 2>&1 \
   || { fail "setup: gate --full in the worktree exit $? ($(tail -3 "$TMP/gate" | tr '\n' ' '))"; return 1; }; }
 # A1. Không bản ghi merge gate, main = squash của cây worktree đã gate trong lượt: cho qua.
-turn_start; new_pr 13 >/dev/null && wt_gate && land 13; stop; rc=$?
+turn_start; new_pr 13 >/dev/null && wt_gate && land 13 || fail "A1 setup"; stop; rc=$?
 [ "$rc" = 0 ] && ok "A1 worktree --full receipt this turn for main's tree: allowed" || fail "A1 worktree receipt refused ($(why $rc))"
 # A2. Biên nhận đó từ lượt trước: chặn.
-sleep 2; turn_start; stop; rc=$?
+sleep 4; turn_start; stop; rc=$?
 blocked "$rc" && ok "A2 worktree receipt from an earlier turn: blocked" || fail "A2 old worktree receipt accepted ($(why $rc))"
 # A3. Worktree đổi sau biên nhận (dấu vân tay không khớp): chặn.
-turn_start; new_pr 14 >/dev/null && wt_gate && land 14 && echo "# sau gate" >> "$WT/src/core.py"; stop; rc=$?
+turn_start; new_pr 14 >/dev/null && wt_gate && land 14 && echo "# sau gate" >> "$WT/src/core.py" || fail "A3 setup"; stop; rc=$?
 git -C "$WT" checkout -q -- src/core.py
 blocked "$rc" && ok "A3 worktree changed after its receipt: blocked" || fail "A3 stale worktree receipt accepted ($(why $rc))"
 # A4. Cây worktree đã gate khác cây main (main chưa nhận squash): chặn.
-turn_start; new_pr 15 >/dev/null && wt_gate; stop; rc=$?
+turn_start; new_pr 15 >/dev/null && wt_gate || fail "A4 setup"; stop; rc=$?
 blocked "$rc" && ok "A4 receipt tree differs from main's tree: blocked" || fail "A4 other tree accepted ($(why $rc))"
 # A5. Worktree sạch nhưng đã commit thêm sau biên nhận (biên nhận của cây khác), squash của cây mới lên main: chặn.
 turn_start; new_pr 16 >/dev/null && wt_gate && echo "# sau gate" >> "$WT/src/core.py" && git -C "$WT" commit -qam "pr 16 more" \
-  && git -C "$WT" push -q origin "HEAD:refs/heads/pr-16" && land 16; stop; rc=$?
+  && git -C "$WT" push -q origin "HEAD:refs/heads/pr-16" && land 16 || fail "A5 setup"; stop; rc=$?
 blocked "$rc" && ok "A5 receipt of an earlier commit of the worktree: blocked" || fail "A5 receipt of another tree accepted ($(why $rc))"
 rm -f "$WT_RECEIPT"
 
