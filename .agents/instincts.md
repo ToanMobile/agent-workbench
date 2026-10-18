@@ -426,3 +426,11 @@ Mẫu ghi nhận:
 - **Nguyên nhân:** post-fix-gate tin ma trận chỉ-thêm (PR #63) và chạy test thêm theo thứ tự rule: rule chèn đầu chạy trước suite base, ghi đè script base, hoặc đẩy script vào DEVKIT_GATE_DONE / ran_cmds / đích covered_by để runner base bỏ qua (universal-agent-devkit/bin/post-fix-gate.py)
 - **Quy tắc phòng ngừa & Cách fix:** Lệnh do thay đổi đưa vào chỉ chạy SAU mọi suite base và STALE, tuần tự, không ghi vào trạng thái dùng chung (DEVKIT_GATE_DONE, ran_cmds), không lấp id/covered_by của base; chỉ PASS đã thực chạy mới tính
 - **Lệnh kiểm tra:** `bash universal-agent-devkit/tests/gates/test_gate_matrix_additive.sh`
+
+---
+
+### [INSTINCT-051] Khoá dùng lại kết quả test băm cả file mà chính suite ghi lại thì không bao giờ khớp giữa hai checkout
+- **Ngày phát hiện:** 2026-10-18
+- **Hiện tượng lỗi:** Khoá dùng lại kết quả test băm cả file mà chính suite ghi lại thì không bao giờ khớp giữa hai checkout
+- **Nguyên nhân:** local_state_sha của post-fix-gate băm build input do task Test build lại (APK overlay GeelyEx2, byte khác mỗi lượt) và config trong cache build (Unity Library/**/local.properties): scratch của merge gate có cây trùng nhưng local_sha khác, suite nặng chạy lại ở mọi PR (18/10)
+- **Quy tắc phòng ngừa & Cách fix:** Khoá dùng lại chỉ gồm INPUT: bỏ file trong cache build và file suite tự ghi lại trong lượt (đo trước/sau suite, ghi vào biên nhận), nhưng không bao giờ bỏ config/khoá thật (LOCAL_CONFIG, DEFAULT_INPUTS) — tool sửa tại chỗ vẫn là đổi input; có ca đối chứng input thật khác thì không dùng lại

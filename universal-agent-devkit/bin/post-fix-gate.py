@@ -921,26 +921,67 @@ def _ignored_files(project_dir, pathspecs):
     return files
 
 
-def local_state_sha(project_dir):
-    """sha of the git-ignored files a build or test reads that tree_fp leaves out: the local
+def local_state_files(project_dir):
+    """{path: sha} of the git-ignored files a build or test reads that tree_fp leaves out: the local
     config worktree.py copies (.env*, local.properties, google-services.json, …) and the build
-    inputs red_proof furnishes (build_inputs.py). "?" when they cannot be listed."""
+    inputs red_proof furnishes (build_inputs.py). Raises when they cannot be listed.
+    A config inside a build cache (build_inputs.SKIP_WALK: Unity Library/, build/, …) is the build's own output, not an input:
+    Neighbours #48 (18/10) — a worktree's cloned unity/Library holds Bee/**/Gradle/local.properties, a merge-gate scratch has no
+    Library, so the scratch never matched the worktree's receipt."""
     _scripts_on_path()
+    from worktree import LOCAL_CONFIG  # noqa: PLC0415
+    from build_inputs import SKIP_WALK, build_inputs  # noqa: PLC0415
+    pathspecs = []
+    for p in LOCAL_CONFIG:
+        pathspecs.extend([p, f"**/{p}"])
+    files = {r for r in _ignored_files(project_dir, pathspecs)
+             if any(fnmatch.fnmatch(os.path.basename(r), p) for p in LOCAL_CONFIG)
+             and not SKIP_WALK.intersection(r.split("/")[:-1])}
+    files |= set(build_inputs(project_dir))
+    return {rel: _sha_file(Path(project_dir) / rel) for rel in files}
+
+
+def local_state_sha(project_dir, skip=(), files=None):
+    """sha of local_state_files (or of files, taken by the caller) without the paths in skip (those the suites rewrote: receipt
+    "local_regen"). "?" when they cannot be listed."""
     try:
-        from worktree import LOCAL_CONFIG  # noqa: PLC0415
-        from build_inputs import build_inputs  # noqa: PLC0415
-        pathspecs = []
-        for p in LOCAL_CONFIG:
-            pathspecs.extend([p, f"**/{p}"])
-        files = {r for r in _ignored_files(project_dir, pathspecs)
-                 if any(fnmatch.fnmatch(os.path.basename(r), p) for p in LOCAL_CONFIG)}
-        files |= set(build_inputs(project_dir))
+        files = local_state_files(project_dir) if files is None else files
     except Exception:   # any failure only disables the reuse
         return "?"
     h = hashlib.sha256()
-    for rel in sorted(files):
-        h.update(os.fsencode(rel) + b"\0" + _sha_file(Path(project_dir) / rel).encode() + b"\0")
+    for rel in sorted(set(files) - set(skip)):
+        h.update(os.fsencode(rel) + b"\0" + files[rel].encode() + b"\0")
     return h.hexdigest()
+
+
+def local_regen(before, after):
+    """Paths of local state the suites rewrote, created or deleted (local_state_files before vs after them): build OUTPUTS, whose
+    bytes say nothing about what was tested. GeelyEx2 #62 (18/10): the Test task rebuilds the overlay launcher-whitelist.apk that
+    red_proof.json declares a build input, with other bytes each run, so a merge-gate scratch (APK copied from main) never matched
+    the worktree's receipt. No snapshot before (no suite ran in this run): [].
+    ponytail: a file the suites rewrite only on some runs (Gradle up-to-date) stays in local_sha on the others; the scratch then runs
+    the suites as before (never a wrong reuse); keep a per-repo list of generated inputs if that is ever measured to cost minutes."""
+    if before is None:
+        return []
+    return regen_allowed(rel for rel in set(before) | set(after) if before.get(rel) != after.get(rel))
+
+
+def regen_allowed(paths):
+    """The paths of paths that may be left out of local_sha, sorted: never local config or a default build input (LOCAL_CONFIG,
+    build_inputs.DEFAULT_INPUTS): a tool that updates one in place (Flutter keeps sdk.dir in local.properties and rewrites its
+    flutter.* keys; an IDE sync; a person editing it during the run) changed a real input, and dropping it reused a PASS for another
+    sdk.dir (review 18/10, P1). The reader applies it too: a receipt cannot list such a file away. Raises when they cannot be loaded."""
+    _scripts_on_path()
+    from worktree import LOCAL_CONFIG  # noqa: PLC0415
+    from build_inputs import DEFAULT_INPUTS  # noqa: PLC0415
+    pats = [q for p in DEFAULT_INPUTS for q in (p, p[3:] if p.startswith("**/") else p)]
+    return sorted(rel for rel in paths
+                  if not any(fnmatch.fnmatch(os.path.basename(rel), p) for p in LOCAL_CONFIG)
+                  and not any(fnmatch.fnmatch(rel, p) for p in pats))
+
+
+# local_state_files taken right before this run's first suite (None: no suite ran); read by write_full_pass_receipt.
+LOCAL_STATE_BEFORE = None
 
 
 def snapshot_local_configs(project_dir):
@@ -1063,6 +1104,13 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None, path=None):
         return None
     if r.get("local_sha") in (None, "?"):
         return None
+    regen = r.get("local_regen") or []
+    if not (isinstance(regen, list) and all(isinstance(p, str) for p in regen)):
+        return None
+    try:
+        regen = regen_allowed(regen)
+    except Exception:   # as local_state_sha's "?": no reuse
+        return None
     if sibling:
         # Biên nhận của worktree anh em (review 17/10): exit 0, và dòng run-log của chính lượt đã ghi nó phải là full với verdict PASS —
         # suite THẬT SỰ chạy, reused_full_pass False (_sibling_logged_pass). Lượt đã dùng lại (của mình hay của anh em, toàn bộ hay một
@@ -1087,7 +1135,8 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None, path=None):
         return None
     if sibling and not _sibling_logged_pass(path, r):   # sau phép so fingerprint (rẻ): chỉ biên nhận đúng nội dung mới đọc run-log
         return None
-    return r if r.get("local_sha") == local_state_sha(project_dir) else None
+    # local_state_sha(project_dir) alone when nothing was rewritten: the one-argument call is the seam tests stub (test_gate_stop_run_record A10)
+    return r if r.get("local_sha") == (local_state_sha(project_dir, regen) if regen else local_state_sha(project_dir)) else None
 
 
 SIBLING_RECEIPTS_MAX = 32
@@ -1312,11 +1361,18 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     try:
         head, dirty = head_and_dirty(project_dir)
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            now_files = local_state_files(project_dir) if LOCAL_STATE_BEFORE is not None else None
+            regen = local_regen(LOCAL_STATE_BEFORE, now_files)
+        except Exception as e:   # no list of rewritten files: local_sha below covers every file, as before
+            log_warn(f"local_state_files: {e}")
+            now_files, regen = None, []
+        local_sha = local_state_sha(project_dir, regen, now_files) if now_files is not None else local_state_sha(project_dir)
         data = {"time": time.time(), "exit": exit_code, "project": str(Path(project_dir).resolve()),
                 "fingerprint": fingerprint, "tested_at": tested_at or time.time(),
                 "result_format": RESULT_FORMAT,
                 "gate_sha": _sha_file(__file__), "matrix_sha": _sha_file(find_matrix_path(matrix_arg)),
-                "local_sha": local_state_sha(project_dir), "head": head, "dirty": dirty,
+                "local_sha": local_sha, "local_regen": regen, "head": head, "dirty": dirty,
                 "tests": [{"id": t.get("id"), "status": t.get("status"), "log": t.get("log"),
                            "duration": t.get("duration"), "ran_at": SUITE_RAN_AT.get(t.get("id"))}
                           for t in (tests or []) if t.get("command")]}
@@ -5325,6 +5381,9 @@ def main():
             found = reuse_from(cached_full_pass(project_dir, args.matrix, fp, None, path), partial=True)
             if found:
                 print(f"    {DIM}{tr(f'(biên nhận của worktree anh em: {path})', f'(sibling worktree receipt: {path})')}{RESET}")
+                regen = regen_allowed(found.get("local_regen") or [])   # what cached_full_pass left out, filtered the same way
+                if regen:   # what the comparison of local state left out: the files its suites rewrote (local_regen)
+                    print(f"    {DIM}{tr('không so (suite tự ghi lại)', 'not compared (rewritten by its suites)')}: {len(regen)}: {', '.join(regen[:3])}{RESET}")
                 reuse_src[0] = (path, stamp, None, True)
                 return found
         return None
@@ -5410,6 +5469,15 @@ def main():
     # and the test scripts run so far go to DEVKIT_GATE_DONE so run_impacted.sh skips them.
     ran_cmds, done_scripts = {}, []
     _config_snaps = snapshot_local_configs(project_dir)
+    global LOCAL_STATE_BEFORE   # what the suites below rewrite is left out of the receipt's local_sha (local_regen)
+    LOCAL_STATE_BEFORE = None   # never a snapshot of an earlier main() in this process
+    # only a run that can write the full-pass receipt (the `partial` test at its call below): a Stop or impacted run never reads it (1.3-2.9 s, GeelyEx2)
+    if run_tests and lock_held and force_reason and any(t.get("command") for t in to_run) \
+            and not any(t.get("mode") in PARTIAL_MODES for t in regression_tests):
+        try:
+            LOCAL_STATE_BEFORE = local_state_files(project_dir)
+        except Exception as e:   # no snapshot: local_sha covers every file, as before (the scratch runs the suites, never a wrong reuse)
+            log_warn(f"local_state_files: {e}")
     budget_start = time.monotonic()   # budget_s: parsed above, with the fingerprint the budget record is bound to
     # Plan 1c (2026-10-07): suites the base-ref matrix marks "parallel_safe": true, next to each other in matrix order,
     # run side by side as one group: the DevKit's five independent suites took the SUM of their times. A suite without
