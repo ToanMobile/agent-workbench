@@ -227,6 +227,24 @@ if not probe:
         raise
     except Exception as e:
         note("held-by-other check failed: %r" % e)
+    try:
+        # K12 (18/10): trunk mode, phiên dừng ở chính MAIN checkout. session_lock từ chối mọi lần ghi vào main (cả chạy gate ở đó), nên
+        # đòi "chạy post-fix-gate --full" ở main là vòng lặp không lối ra; thứ bẩn ở main không phải của phiên này (runner board, file sổ
+        # sách của phiên khác) và mọi thứ vào main đã qua gate gộp của `worktree finish`; push từ main vẫn cần biên nhận (push_gate),
+        # XONG vẫn cần --full (proof_gate). Chỉ phiên Claude Code có transcript (hook PreToolUse của session_lock chạy ở đó); không có
+        # session_id hay transcript (Grok, agent bắc cầu, lời gọi không rõ): không ai chặn họ ghi vào main, nên vẫn gate như cũ.
+        # Phiên vừa push dải chưa kiểm (pushed): vẫn gate như cũ (review 18/10).
+        # ponytail: session_lock.trunk_write không coi build / interpreter chạy ở main là ghi, nên `python3 fix.py` sửa file ở main lọt
+        # qua bước này (proof_gate vẫn đòi --full trước XONG, push_gate đòi biên nhận); nâng cấp: chỉ bỏ qua khi main không có file bẩn
+        # nào mới hơn lúc phiên bắt đầu, khi thấy một phiên sửa main theo đường đó.
+        _tmain = _sl.trunk_main(_top)[0] if (_top and _lsid and info is not None and not degraded and not pushed) else None
+        if _tmain and _sl._same_dir(_top, _tmain):
+            note("skip: trunk mode, Stop at the merge-only main checkout (nothing of this session to gate there) sid=%s" % sid)
+            sys.exit(0)
+    except SystemExit:
+        raise
+    except Exception as e:   # (session_lock không nạp được ở khối trên: NameError ở đây, vẫn gate như cũ)
+        note("trunk-main check failed: %r" % e)
 
 # A reply that declares itself unfinished (CHƯA XONG / CHỜ DUYỆT …) or carries no status line at all, claims
 # no outcome and pushed nothing (unverified): no test run now — the handover turn runs it, over verified_head..HEAD (T0003,

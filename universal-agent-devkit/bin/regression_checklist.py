@@ -155,16 +155,21 @@ def save(project_dir: Path, data: dict, *, stale: bool = True) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     raw = (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     with _journal_lock(project_dir):   # a reader under the journal lock sees the file and its journal line together
-        try:   # before the replace: a reader in between must already know the removal is legitimate
-            _note_removals(project_dir, path, data)
-        except (OSError, ValueError):
-            pass
-        fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".regression_status.")
-        with os.fdopen(fd, "wb") as f:
-            f.write(raw)
-        os.chmod(tmp, 0o644)
-        os.replace(tmp, path)
-        try:   # after the replace: a reader never sees a journal newer than the file
+        try:
+            same = path.is_file() and not path.is_symlink() and path.read_bytes() == raw
+        except OSError:
+            same = False
+        if not same:   # 18/10: cùng nội dung thì không ghi lại file được track (main bẩn sau mỗi lần gate); nhật ký vẫn chạy bên dưới
+            try:   # before the replace: a reader in between must already know the removal is legitimate
+                _note_removals(project_dir, path, data)
+            except (OSError, ValueError):
+                pass
+            fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".regression_status.")
+            with os.fdopen(fd, "wb") as f:
+                f.write(raw)
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, path)
+        try:   # after the replace: a reader never sees a journal newer than the file (same content: no new line, a stale rollback still resolves)
             _journal_save(project_dir, raw, data)
         except (OSError, ValueError):
             pass   # the journal is a safety net; it never blocks a save
@@ -2787,7 +2792,7 @@ def render(project_dir: Path, data: dict) -> Path:
     project = Path(project_dir)
     path = project / VIEW_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines), encoding="utf-8")
+    _write_view(path, "\n".join(lines))
     old = project / OLD_VIEW_FILE     # one file: the old name links to the new one
     try:
         if not (old.is_symlink() and os.readlink(old) == VIEW_FILE.name):
@@ -2799,14 +2804,30 @@ def render(project_dir: Path, data: dict) -> Path:
     if archived:
         arch = project / ARCHIVE_FILE
         arch.parent.mkdir(parents=True, exist_ok=True)
-        arch.write_text("\n".join(
+        _write_view(arch, "\n".join(
             ["# 🗄️ Bug archive — chỉ để xem", "",
              f"> Sinh tự động lúc {_now()}. Bug PASS (đã chứng minh ĐỎ) ≥ {ARCHIVE_DAYS} ngày và ≥ {ARCHIVE_COMMITS} "
              "commit kể từ khi link. Test vẫn chạy mỗi lần gate chạy; đỏ lại → quay về `CHECKLIST.md`.", ""]
             + _table("| Mã | Mô tả | Component | Test bảo vệ | Link từ |",
                      [(i, items[i].get("title"), items[i].get("component"), _tests_cell(items[i]),
-                       items[i].get("linked_at")) for i in archived]) + [""]), encoding="utf-8")
+                       items[i].get("linked_at")) for i in archived]) + [""]))
     return path
+
+
+_GENERATED_AT = re.compile(r"Sinh tự động lúc [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}")
+
+
+def _write_view(path: Path, text: str) -> None:
+    """18/10 (agent-workbench, GeelyEx2): view được track (CHECKLIST.md, archive) chỉ ghi lại khi nội dung đổi thật — khác nhau mỗi dòng giờ
+    "Sinh tự động lúc …" thì giữ nguyên file (trước đây mỗi lần gate chạy đều làm main bẩn chỉ vì giờ sinh)."""
+    try:
+        if path.is_file() and not path.is_symlink():
+            old = path.read_text(encoding="utf-8")
+            if _GENERATED_AT.sub("", old) == _GENERATED_AT.sub("", text):
+                return
+    except (OSError, UnicodeError):
+        pass   # không đọc được bản cũ: ghi như trước
+    path.write_text(text, encoding="utf-8")
 
 
 def _sync_matrix(data: dict, project: Path) -> None:

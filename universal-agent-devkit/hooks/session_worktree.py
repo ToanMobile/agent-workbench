@@ -24,6 +24,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import time
 
@@ -340,12 +341,72 @@ def on_tool_use(payload, env=None):
         wt = _entered_path(payload)
         t = tree_of(wt) if isinstance(wt, str) and wt else None
         if t and t[1] and write_record(main, sid, t[0], pid=holder_pid()):
+            _kept_lock(main, t[0], sid, None, unlock=True)   # quay lại worktree đã "keep": bản ghi phiên lại giữ nó, bỏ khoá để ExitWorktree remove gỡ được
             return "entered " + t[0]
         return ""
     if tool == "ExitWorktree":
+        wt = read_record(main, sid)
+        inp = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
         clear_record(main, sid)
+        if wt and inp.get("action") == "keep":
+            if _kept_lock(main, wt, sid, holder_pid()):
+                return "left, kept " + wt
+            return "left; KEEP NOT RECORDED (no lock): the Stop may merge and remove " + wt   # nói ra, không im lặng (OCR 18/10)
         return "left"
     return ""
+
+
+KEPT_PREFIX = "devkit-kept session="
+
+
+def _pid_alive(pid):
+    """Như scripts/git/worktree.py kept_lock: pid ≤ 1 không phải pid của phiên (không sống); không đủ quyền = còn sống."""
+    if pid <= 1:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except (OSError, OverflowError):
+        return True
+
+
+def _kept_lock(main, wt, sid, pid, unlock=False):
+    """K11 (18/10): ExitWorktree "keep" = phiên muốn giữ worktree. Khoá nó bằng `git worktree lock --reason "devkit-kept session=<sid> pid=<pid
+    claude>"`: gộp vẫn được, nhưng automerge của Stop (scripts/git/worktree.py kept_lock) và cleanup-wt (bỏ qua worktree bị khoá) không gỡ nó
+    khi pid đó còn sống; pid chết thì `worktree remove` mở khoá. unlock=True: mở khoá devkit-kept của chính phiên `sid` (EnterWorktree lại);
+    không có pid hợp lệ khi khoá thì không làm gì (không bao giờ mở khoá ở nhánh này).
+    Khoá do người khác đặt (không phải devkit-kept) không bao giờ bị đụng. Trả True khi đã khoá; lỗi git: False, không chặn tool."""
+    def g(*args):
+        try:
+            return subprocess.run(["git", "-C", main, *args], capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            return None
+    listed = g("worktree", "list", "--porcelain")
+    if listed is None or listed.returncode:
+        return False
+    cur, reason = None, None
+    for line in listed.stdout.splitlines():
+        if line.startswith("worktree "):
+            cur = line[len("worktree "):]
+        elif (line == "locked" or line.startswith("locked ")) and cur and os.path.realpath(cur) == os.path.realpath(wt):
+            reason = line[len("locked "):]
+    if unlock:
+        if reason is not None and reason.startswith(KEPT_PREFIX + sid + " "):
+            g("worktree", "unlock", wt)
+        return False
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+        return False
+    if reason is not None:
+        if not reason.startswith(KEPT_PREFIX):
+            return False   # khoá của người khác: để yên
+        m = re.fullmatch(r"devkit-kept session=(\S+) pid=([0-9]{1,10})", reason)
+        if m and m.group(1) != sid and _pid_alive(int(m.group(2))):
+            return True   # một phiên KHÁC còn sống đã giữ nó: khoá đó vẫn giữ worktree, không thay (OCR 18/10)
+        g("worktree", "unlock", wt)   # khoá devkit-kept của chính phiên, hay của pid đã chết: thay bằng pid hiện tại
+    r = g("worktree", "lock", "--reason", f"{KEPT_PREFIX}{sid} pid={pid}", wt)
+    return r is not None and r.returncode == 0
 
 
 def _agent_worktree(payload, main):
@@ -435,6 +496,8 @@ def main(argv):
             return 0
         if did:
             print(f"session_worktree: {did}", file=sys.stderr)
+            if "KEEP NOT RECORDED" in did:   # stderr của hook thoát 0 không tới model: nói qua additionalContext (review 18/10)
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "session_worktree: " + did}}))
         return 0
     print("usage: session_worktree.py trunk-mode [path] | project | record   (payload JSON on fd 3 or stdin)", file=sys.stderr)
     return 2

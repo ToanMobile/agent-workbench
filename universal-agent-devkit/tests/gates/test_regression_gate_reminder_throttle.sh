@@ -17,6 +17,7 @@
 # Stop but no longer starts a suite that passed on the same content. The cases below that make a suite fail on unchanged content need the cache off.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
+export WORKTREE_TRUNK_MODE=0   # K12 (18/10): các ca ở đây là phiên sửa thẳng main (không trunk mode); ở trunk mode Stop tại main không gate (test_regression_gate_trunk_main.sh)
 export DEVKIT_GATE_CACHE=0
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

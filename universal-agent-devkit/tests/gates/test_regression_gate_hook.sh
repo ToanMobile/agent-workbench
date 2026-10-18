@@ -4,6 +4,7 @@
 # project that adopted its own matrix — and never traps the session.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
+export WORKTREE_TRUNK_MODE=0   # K12 (18/10): các ca ở đây là phiên sửa thẳng main (không trunk mode); ở trunk mode Stop tại main không gate (test_regression_gate_trunk_main.sh)
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$DEVKIT_DIR/hooks/regression_gate.sh"

@@ -92,7 +92,7 @@ def replace(src, dst, *a, **k):
         seen.append((temps, tree_fp.tree_fingerprint(root)))
     return real_replace(src, dst, *a, **k)
 os.replace = replace
-rc.save(root, data, stale=False)
+rc.save(root, dict(data, meta={"t4": 1}), stale=False)   # nội dung đổi thật: save() cùng byte không ghi lại nữa (18/10)
 os.replace = real_replace
 temps, during = seen[0] if seen else ([], None)
 print("temps=%s" % ",".join(temps))
