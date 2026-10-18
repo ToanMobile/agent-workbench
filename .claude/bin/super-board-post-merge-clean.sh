@@ -23,13 +23,16 @@ HERE_PWD=$(pwd -P)
 # Không có python3: đường git như cũ (OCR 18/10).
 KIT_WT=""
 command -v python3 >/dev/null 2>&1 && for c in "$REPO_PATH/.agents/devkit" "$REPO_PATH/universal-agent-devkit" "$(cd "$(dirname "$0")/../.." && pwd)/universal-agent-devkit"; do
-  if [ -f "$c/scripts/git/worktree.py" ]; then KIT_WT="$c/scripts/git/worktree.py"; break; fi
+  # thử chạy một lần (`list` chỉ đọc): kit có mà không chạy được (cú pháp, python quá cũ) thì đường git như cũ, không giữ mọi thứ lại
+  if [ -f "$c/scripts/git/worktree.py" ] && (cd "$REPO_PATH" && python3 "$c/scripts/git/worktree.py" list >/dev/null 2>&1); then
+    KIT_WT="$c/scripts/git/worktree.py"; break
+  fi
 done
 remove_wt() {
   local out
   if [ -n "$KIT_WT" ]; then
     out=$(cd "$REPO_PATH" && python3 "$KIT_WT" remove "$1" 2>&1) \
-      || echo "kept $1: agent-kit worktree remove refused: $(printf '%s' "$out" | tail -1 | cut -c1-300)" >&2
+      || echo "kept $1: agent-kit worktree remove refused: $( { printf '%s\n' "$out" | grep -m1 '✖' || printf '%s\n' "$out" | head -1; } | cut -c1-300)" >&2
   else
     git -C "$REPO_PATH" worktree remove "$1" 2>/dev/null || echo "kept $1: git worktree remove failed" >&2
   fi
