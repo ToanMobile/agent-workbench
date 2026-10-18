@@ -382,6 +382,84 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
   if ! fetch_err=$(git -C "$MAIN_PATH" fetch origin "$BASE" --quiet 2>&1 >/dev/null); then
     say "warning: fetch origin ${BASE} failed in ${MAIN_PATH}; local base may be stale: $(printf '%s' "$fetch_err" | tr '\n\t' '  ' | cut -c1-300)"
   fi
+  # K13 (OfficeReader PR #143, 18/10): main giữ bản CHƯA commit (file dở, hoặc file chưa track) trùng byte + mode với origin/<base> thì
+  # ff / `reset --keep` từ chối dù không gì mất, và main kẹt sau origin. sync_identical <ff|reset>: dùng đúng luật của DevKit
+  # `worktree finish` (worktree.py _stage_identical_overlap, 1fa169d: index bằng HEAD, file thường, mode + byte giống hệt; một đường dẫn
+  # khác là không stage gì), stage đúng các đường dẫn đó rồi ff / reset lại; hỏng thì trả index các đường dẫn đó về HEAD. 0 = đã dời,
+  # in số đường dẫn đã stage. DevKit không có hàm đó (bản cũ) hay không chạy được: 1, hành vi như trước.
+  # sync_identical <ff|reset> <đầu nhánh đã chốt>: ngay trước lệnh git, nhánh checkout vẫn phải là $BASE và đầu nhánh vẫn là commit đã
+  # chốt (một phiên khác commit trong lúc kiểm thì không dời, trả index về như cũ; `reset --keep` dời nhánh ĐANG checkout).
+  sync_identical() {
+    local c rc
+    # DevKit đi kèm chính gate trước (code đã review cùng nó), bản ở main checkout (có thể đang bị sửa dở) sau.
+    for c in "$HERE/../../universal-agent-devkit" "$HERE/../../.agents/devkit" "$MAIN_PATH/universal-agent-devkit" "$MAIN_PATH/.agents/devkit"; do
+      [ -f "$c/scripts/git/worktree.py" ] || continue
+      python3 - "$c/scripts/git/worktree.py" "$MAIN_PATH" "origin/$BASE" "$1" "$2" "$BASE" <<'PY'
+import importlib.util, os, subprocess, sys, unicodedata
+try:
+    spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    stage = mod._stage_identical_overlap
+except Exception:   # noqa: BLE001 — bản DevKit cũ / nạp hỏng: thử bản DevKit kế tiếp (exit 3), không in traceback vào log gate
+    sys.exit(3)
+main, target, mode, pinned, base = sys.argv[2:7]
+# surrogateescape: một tên file bị ignore không phải UTF-8 (thư mục build/cache) không làm crash bước kiểm (OCR 18/10)
+git = lambda *a: subprocess.run(["git", "-C", main, *a], capture_output=True, text=True, errors="surrogateescape")
+# File / thư mục / link bị git IGNORE va chạm với một đường dẫn target đổi (cấu hình cục bộ, link node_modules…): ff / `reset --keep` sẽ
+# đè nó im lặng. Trước khi stage, bản dở trùng byte làm git từ chối nên vô tình giữ được nó; nay không stage gì, main như cũ (review 18/10,
+# A.4). Va chạm = trùng, là cha, hoặc là con của một đường dẫn đổi, so KHÔNG phân biệt hoa thường (ổ macOS); git lỗi = không làm gì.
+# ponytail: thư mục ignore là CHA của file target thêm cũng chặn (thừa, an toàn); tách theo nội dung thư mục nếu gặp nhiều.
+d = git("diff", "--no-renames", "--name-only", "-z", pinned, target)
+ign = git("ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
+if d.returncode or ign.returncode:
+    sys.exit(1)
+fold = lambda p: unicodedata.normalize("NFC", p).casefold()   # APFS: không phân biệt hoa thường, NFD và NFC là một tên
+changed_raw = [p for p in d.stdout.split("\0") if p]
+changed = {fold(p) for p in changed_raw}
+near = set(changed)
+for p in changed:   # mọi thư mục cha của một đường dẫn đổi
+    parts = p.split("/")
+    near.update("/".join(parts[:i]) for i in range(1, len(parts)))
+for e in (fold(x.rstrip("/")) for x in ign.stdout.split("\0") if x):
+    parts = e.split("/")
+    if e in near or any("/".join(parts[:i]) in changed for i in range(1, len(parts))):
+        sys.exit(1)
+# Đã có trong index mà khác HEAD TRƯỚC lần stage này (phiên khác: stage thường, rename — cả hai phía nhờ --no-renames —, hay
+# `git add -N`, hiện ra nhờ --ita-visible-in-index): không bao giờ bị trả về HEAD (review 18/10).
+staged_now = lambda: git("diff", "--cached", "--no-renames", "--ita-visible-in-index", "--name-only", "-z")
+pre = staged_now()
+if pre.returncode:
+    sys.exit(1)
+keep = set(pre.stdout.split("\0"))
+try:
+    staged = stage(main, pinned, target)
+except Exception:   # noqa: BLE001 — tên không phải UTF-8, git hết giờ, lỗi parse…: trả về HEAD đúng các đường dẫn lần này đã stage
+    now = staged_now()
+    mine = sorted((set(now.stdout.split("\0")) - keep) & set(changed_raw)) if now.returncode == 0 else []
+    if mine:   # bị chặn bởi IDENTICAL_OVERLAP_MAX của stage(): argv không phình theo diff
+        git("reset", "-q", "--", *(":(literal)" + p for p in mine))
+    sys.exit(1)
+if not staged:
+    sys.exit(1)
+if git("symbolic-ref", "--quiet", "--short", "HEAD").stdout.strip() == base and git("rev-parse", "refs/heads/" + base).stdout.strip() == pinned:
+    r = git(*(["merge", "--ff-only", "--no-overwrite-ignore", target] if mode == "ff" else ["reset", "--keep", target]))
+    if r.returncode == 0:
+        print(len(staged))
+        sys.exit(0)
+    why = r.stderr.strip()[-200:]
+else:
+    why = "the checkout changed while it was being checked"
+git("reset", "-q", "--", *(":(literal)" + p for p in staged))
+print(f"staged {len(staged)} identical path(s) but did not move: {why}", file=sys.stderr)
+sys.exit(1)
+PY
+      rc=$?
+      [ "$rc" -eq 3 ] && continue
+      return "$rc"
+    done
+    return 1
+  }
   # Chỉ khi main checkout đang ở $BASE: nếu không, ff-only sẽ đẩy nhánh nào đang được checkout.
   if [ "$(git -C "$MAIN_PATH" symbolic-ref --quiet --short HEAD 2>/dev/null)" = "$BASE" ]; then
     if ! ff_err=$(git -C "$MAIN_PATH" merge --ff-only "origin/$BASE" 2>&1 >/dev/null); then
@@ -402,6 +480,10 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
         say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; its git dir could not be read, left alone: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)"
       elif [ -n "$busy" ]; then
         say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; ${busy} in progress there, left alone: $(printf '%s' "$ff_err" | tr '\n\t' '  ' | cut -c1-200)"
+      elif ident_ff=0 && ff_tip=$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null) \
+           && git -C "$MAIN_PATH" merge-base --is-ancestor "$ff_tip" "origin/$BASE" 2>/dev/null \
+           && ident_ff=1 && n_ident=$(sync_identical ff "$ff_tip"); then   # chỉ khi ff được về nguyên tắc (base local là tổ tiên origin)
+        say "note: ${BASE} in ${MAIN_PATH} fast-forwarded after staging ${n_ident} uncommitted path(s) identical to origin/${BASE} (nothing lost)"
       else
         # Chốt đầu nhánh một lần: mọi so sánh dùng đúng commit này, và chỉ dời nếu ngay trước khi dời đầu nhánh vẫn là nó (một phiên
         # khác commit/ff vào base trước đó thì để nguyên). Còn một khe vài mili-giây giữa kiểm lại và `reset` mà git không có phép
@@ -429,6 +511,8 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
           say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; the checkout changed while it was being checked, left alone: ${ff_why}"
         elif reset_err=$(git -C "$MAIN_PATH" reset --keep "origin/$BASE" 2>&1 >/dev/null); then
           say "note: ${BASE} in ${MAIN_PATH} could not fast-forward (the squash rewrote the PR's commits) but held nothing origin lacks; moved to origin/${BASE}"
+        elif [ "$ident_ff" != 1 ] && n_ident=$(sync_identical reset "$local_tip"); then   # đường ff đã thử đúng các đường dẫn đó
+          say "note: ${BASE} in ${MAIN_PATH} moved to origin/${BASE} after staging ${n_ident} uncommitted path(s) identical to it (nothing lost)"
         else
           say "warning: ${BASE} in ${MAIN_PATH} not fast-forwarded; local base is stale: ${ff_why} | reset to origin/${BASE} refused too: $(printf '%s' "$reset_err" | tr '\n\t' '  ' | cut -c1-200)"
         fi
