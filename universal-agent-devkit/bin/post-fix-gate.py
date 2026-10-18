@@ -5738,7 +5738,12 @@ def main():
     # Documentation and agent state cannot break a test, so they need none (code without a test still does).
     # Sổ trạng thái của gate chỉ vào modified_files khi --diff chỉ có nó (xem trên): không cần test. Không đưa vào needs_no_test: push_gate
     # dùng hàm đó để bỏ qua gate, mà chính gate mới là nơi quét secret cho sổ này.
-    docs_only = bool(modified_files) and all(needs_no_test(f) or f.replace("\\", "/") in GATE_STATE_FILES for f in modified_files)
+    # Config board super-board (.claude/super-board/configs/*.json, 18/10): chỉ script super-board đọc, như .claude/settings.json; đổi luật
+    # gộp ở đó không có test hồi quy nào của dự án bắt được. Rule nào theo dõi nó vẫn chạy test.
+    docs_only = bool(modified_files) and all(
+        needs_no_test(f) or f.replace("\\", "/") in GATE_STATE_FILES
+        or re.fullmatch(r"\.claude/super-board/configs/[^/]+\.json", f.replace("\\", "/")) is not None
+        for f in modified_files)
     no_coverage = (not rules or not impacted_tests) and not args.allow_no_tests and not docs_only
     # Every changed source file must be re-testable later; one no rule watches would
     # silently fall out of the regression checklist.

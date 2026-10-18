@@ -40,4 +40,13 @@ git add -A && git commit -qm "state with a token"
 rc=$(gate c --run-tests --full --brief --diff HEAD~1)
 [ "$rc" = 1 ] && ok "a token in the state file is still rejected (exit 1)" || { fail "token in state: exit $rc, expected 1"; tail -6 "$TMP/c.out"; }
 
+# 18/10 (người dùng bỏ luật 400 dòng): PR chỉ đổi config board super-board không có test nào khớp; config đó chỉ script super-board đọc.
+mk d; mkdir -p .claude/super-board/configs; echo '{"merge_policy":{"auto_max_lines":400}}' > .claude/super-board/configs/t.json
+git add -A && git commit -qm cfg; echo '{"merge_policy":{"auto_max_lines":0}}' > .claude/super-board/configs/t.json; git add -A && git commit -qm "cap 0"
+rc=$(gate d --run-tests --full --brief --diff HEAD~1)
+[ "$rc" = 0 ] && ok "a super-board config-only commit → exit 0" || { fail "super-board config only: exit $rc, expected 0"; tail -6 "$TMP/d.out"; }
+mk e; mkdir -p .claude/other; echo '{"a":1}' > .claude/other/x.json; git add -A && git commit -qm x; echo '{"a":2}' > .claude/other/x.json; git add -A && git commit -qm x2
+rc=$(gate e --run-tests --full --brief --diff HEAD~1)
+[ "$rc" = 2 ] && ok "another .claude json still needs a test (exit 2)" || fail "other .claude json: exit $rc, expected 2"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_diff_state_only: all passed" || { echo "❌ test_gate_diff_state_only: $FAILS failed"; exit 1; }
