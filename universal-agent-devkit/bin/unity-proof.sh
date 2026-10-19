@@ -34,12 +34,67 @@ if [ -f "$project/Temp/UnityLockfile" ] && pgrep -f "projectPath $project( |$)" 
   echo "unity-proof: a Unity is already running on $project" >&2; exit 2
 fi
 
+# Một Editor batchmode trên máy, cùng khóa với unity-batch.sh. macOS không có flock(1).
+UNITY_LOCK_PATH="${UNITY_BATCH_LOCK:-$HOME/.config/universal-agent-devkit/unity-batch.lock}"
+UNITY_LOCK_PY=""
+UNITY_LOCK_SENTINEL=""
+
+release_unity_lock() {
+  if [ -n "${UNITY_LOCK_SENTINEL:-}" ]; then
+    rm -f "$UNITY_LOCK_SENTINEL"
+  fi
+  if [ -n "${UNITY_LOCK_PY:-}" ]; then
+    i=0
+    while kill -0 "$UNITY_LOCK_PY" 2>/dev/null && [ "$i" -lt 80 ]; do
+      sleep 0.05
+      i=$((i + 1))
+    done
+    kill "$UNITY_LOCK_PY" 2>/dev/null || true
+    wait "$UNITY_LOCK_PY" 2>/dev/null || true
+    UNITY_LOCK_PY=""
+  fi
+  if [ -n "${UNITY_LOCK_SENTINEL:-}" ]; then
+    rm -f "${UNITY_LOCK_SENTINEL}.held" "$UNITY_LOCK_SENTINEL"
+    UNITY_LOCK_SENTINEL=""
+  fi
+}
+
+acquire_unity_lock() {
+  mkdir -p "$(dirname "$UNITY_LOCK_PATH")" || { echo "unity-proof: cannot create unity lock dir" >&2; exit 2; }
+  UNITY_LOCK_SENTINEL="$(mktemp "${TMPDIR:-/tmp}/unity-proof-sentinel.XXXXXX")" || {
+    echo "unity-proof: cannot create unity lock sentinel" >&2; exit 2; }
+  python3 - "$UNITY_LOCK_PATH" "$UNITY_LOCK_SENTINEL" <<'PY' &
+import fcntl, os, sys, time
+path, sentinel = sys.argv[1], sys.argv[2]
+os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX)
+open(sentinel + ".held", "w").close()
+while os.path.exists(sentinel):
+    time.sleep(0.05)
+try:
+    fcntl.flock(fd, fcntl.LOCK_UN)
+except OSError:
+    pass
+os.close(fd)
+PY
+  UNITY_LOCK_PY=$!
+  while [ ! -f "${UNITY_LOCK_SENTINEL}.held" ]; do
+    if ! kill -0 "$UNITY_LOCK_PY" 2>/dev/null; then
+      echo "unity-proof: unity machine lock failed" >&2
+      exit 2
+    fi
+    sleep 0.05
+  done
+}
+
 log="$(mktemp -t unity-proof.XXXXXX)"
-trap 'rm -f "$log"' EXIT
+trap 'release_unity_lock; rm -f "$log"' EXIT
+acquire_unity_lock
 case "$shot" in /*) shotpath="$shot";; *) shotpath="$project/$shot";; esac
 rm -f "$shotpath"
 # shellcheck disable=SC2086
-"$unity" -batchmode $quit -projectPath "$project" -executeMethod "$method" -logFile "$log" >/dev/null 2>&1 &
+nice -n 15 "$unity" -batchmode -job-worker-count 4 $quit -projectPath "$project" -executeMethod "$method" -logFile "$log" >/dev/null 2>&1 &
 pid=$!
 waited=0
 while kill -0 "$pid" 2>/dev/null; do

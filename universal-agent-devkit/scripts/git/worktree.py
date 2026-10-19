@@ -548,6 +548,31 @@ def copy_unity_library(main, wt):
     Returns the cloned Library paths, relative."""
     if sys.platform != "darwin":
         return []
+    # Hai worktree không cp -Rc cùng lúc. Khóa này tách khỏi khóa batch của Editor.
+    # Không mở được file khóa thì vẫn copy. st_dev khác volume vẫn không copy.
+    lock_fd = None
+    try:
+        import fcntl
+        lock_path = os.environ.get("UNITY_LIBRARY_COPY_LOCK") or os.path.join(
+            os.path.expanduser("~"), ".config", "universal-agent-devkit", "unity-library-copy.lock")
+        os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
+        lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    except OSError:
+        if lock_fd is not None:
+            try:
+                os.close(lock_fd)
+            except OSError:
+                pass
+        lock_fd = None
+    try:
+        return _copy_unity_library_body(main, wt)
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
+
+
+def _copy_unity_library_body(main, wt):
     cands = [""] + sorted(d for d in os.listdir(main) if not d.startswith(".") and os.path.isdir(os.path.join(main, d)))
     out = []
     for rel in cands:

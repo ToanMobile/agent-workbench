@@ -11,6 +11,9 @@ GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 SESSION_LOCK="$DEVKIT_DIR/bin/session_lock.py"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# --full ở đây chạy `echo`, không phải Gradle/Unity. Slot riêng để không chờ semaphore máy.
+export SB_HEAVY_SLOT_DIR="$TMP/heavy-slots"
+mkdir -p "$SB_HEAVY_SLOT_DIR"
 
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; exit 1; }

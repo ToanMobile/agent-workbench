@@ -51,7 +51,10 @@ turn_start() { sleep 1; python3 -c 'import datetime,json
 t=(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 print(json.dumps({"type":"user","timestamp":t,"message":{"role":"user","content":"sửa lỗi X"}}))' > "$TR"; }
 # `--run-tests --full` on the current code; its exit-0 receipt is what XONG needs.
-gate_full() { CLAUDE_PROJECT_DIR="$REPO" python3 "$GATE" --run-tests --full --no-checklist >"$TMP/gate" 2>&1; }
+gate_full() { # `sh result.sh`, không phải Gradle/Unity. Mỗi group một slot dir: nếu không, các group
+  # song song tranh 2 slot máy và suite chết ở 600s trước khi in kết quả (Stop 20:32, log trống).
+  mkdir -p "$TMP/heavy-slots"
+  CLAUDE_PROJECT_DIR="$REPO" SB_HEAVY_SLOT_DIR="$TMP/heavy-slots" python3 "$GATE" --run-tests --full --no-checklist >"$TMP/gate" 2>&1; }
 png() { python3 - "$1" "$2" <<'PY'
 import sys, zlib, struct, os
 path, size = sys.argv[1], int(sys.argv[2])
