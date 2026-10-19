@@ -170,9 +170,13 @@ printf '# header\n\n\n\ndef add(a, b):\n    return a + b\n' > src/calc.py; git c
 printf 'def mul(a, b):\n    return a * b\n# header\n\n\n\ndef add(a, b):\n    return a + b\n' > src/calc.py; git commit -qam "later edit, away from the fix"
 printf '%s' "$TEST_ADD" > tests/test_calc.py; git add tests && git commit -qm test
 B7="$(bid "$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "add sai (sửa cũ)" --fixed --test tests/test_calc.py 2>&1)")"
+git -C "$P" worktree add -q --detach "$TMP/rp-gone" HEAD && rm -rf "$TMP/rp-gone"   # issue #12 (#38): worktree khác đã mất thư mục
 python3 "$PROOF" "$P" --bug "$B7" --fix-commit "$FIX" --wait >/dev/null 2>&1
 [ "$(proof "$B7")" = PROVEN ] && ok "revert of an old fix merges with later edits (git revert in a worktree) → PROVEN" || fail "3-way: $(proof "$B7") $(python3 -c "import json;print(json.load(open('$P/.agents/regression_status.json'))['items']['$B7'].get('red_proof',{}).get('reason'))")"
 git worktree list | grep -q red-proof && fail "sandbox worktree left behind" || ok "sandbox worktree removed afterwards"
+[ -d "$P/.git/worktrees/rp-gone" ] && ok "red_proof never prunes the whole repo: another folder-gone worktree keeps its admin dir (#38)" \
+  || fail "red_proof pruned the admin dir of another worktree whose folder is gone"
+git -C "$P" worktree prune   # dọn cho các ca sau
 printf 'def mul(a, b):\n    return a * b\n# header\n\n\n\ndef add(a, b):\n    return int(a) + int(b)\n' > src/calc.py; git commit -qam "edit ON the fixed line"
 python3 - "$P" "$B7" <<'PY'
 import json, sys
