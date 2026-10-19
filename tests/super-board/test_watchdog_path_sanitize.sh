@@ -65,6 +65,11 @@ got=$(check_path R "relative/bin:$TMP/outside:/usr/bin")
 [ "$got" = "$TMP/outside:/usr/bin" ] && ok "valid outside entries are kept in order, relative entries dropped" \
   || fail "valid entries: PATH='$got' (want '$TMP/outside:/usr/bin')"
 
+got=$(check_path R "$TMP/outside:/:/usr/bin")
+case ":$got:" in *::*) fail "root entry '/' became an empty PATH entry (= cwd = repo root): PATH='$got'" ;;
+  *) [ "$got" = "$TMP/outside:/:/usr/bin" ] && ok "a root entry '/' stays '/', never an empty entry (cwd = repo root)" \
+       || fail "root entry: PATH='$got' (want '$TMP/outside:/:/usr/bin')" ;; esac
+
 # ── LOG: symlink trong thư mục log của board trỏ ra ngoài repo ───────────────────────────────────────────────────────
 for t in gh jq claude; do printf '#!/bin/sh\nexit 0\n' > "$TMP/tools/$t"; chmod +x "$TMP/tools/$t"; done
 printf 'import sys\nsys.exit(0)\n' > "$R/.claude/bin/super-board-github-read.py"

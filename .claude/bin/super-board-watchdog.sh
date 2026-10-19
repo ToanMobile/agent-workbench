@@ -94,7 +94,8 @@ canon_path() {
   done
   base=$(cd -P "$p" 2>/dev/null && pwd -P) || return 1
   [ "$base" != / ] || base=""
-  printf '%s' "$base$tail"
+  base="$base$tail"
+  printf '%s' "${base:-/}"   # gốc "/" in là "/": chuỗi rỗng trong PATH là thư mục hiện tại (= repo root khi khởi động lại runner)
 }
 
 safe_path() {
@@ -106,6 +107,7 @@ safe_path() {
   while [ -n "$rest" ]; do
     d=${rest%%:*}; rest=${rest#*:}
     d=$(canon_path "$d") || continue
+    [ -n "$d" ] || continue   # mục rỗng trong PATH = thư mục hiện tại (repo root khi khởi động lại runner)
     case "$d/" in "$ROOT_P"/*) continue ;; esac
     out="${out:+$out:}$d"
   done
