@@ -12,7 +12,7 @@ import { TOOLS_BY_NAME } from '../src/tools.js';
 import { AntigravityUnavailable } from '../src/discover.js';
 import { homeStateDir } from '../src/util.js';
 import { DEFAULT_CONFIG } from '../src/config.js';
-import { cleanup, NO_AGY } from './helpers.js';
+import { cleanup, tmpDir, NO_AGY } from './helpers.js';
 
 const FAKE = `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -27,7 +27,7 @@ setTimeout(() => { console.log(JSON.stringify({ event: 'result', result: { conve
 `;
 
 function fakeAgy(t, env = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-agy-'));
+  const dir = tmpDir('agpm-agy-');
   const bin = path.join(dir, 'agy');
   fs.writeFileSync(bin, FAKE, { mode: 0o755 });
   const log = path.join(dir, 'calls.jsonl');
@@ -61,7 +61,7 @@ test('schema pm_task_create nhan Argon (enum lay tu MODELS)', () => {
 
 test('newConversation voi Argon: goi agy --model, cwd = thu muc project, KHONG qua agentapi, ghi so dang ky', async (t) => {
   const fake = fakeAgy(t, { FAKE_AGY_ID: '11111111-2222-3333-4444-555555555555' });
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-agy-proj-'));
+  const project = tmpDir('agpm-agy-proj-');
   t.after(() => cleanup(project));
   const r = await newConversation({ prompt: 'lam viec A', model: ARGON, cwd: project, projectId: 'p1', title: 't' });
   assert.equal(r.conversationId, '11111111-2222-3333-4444-555555555555');
@@ -95,7 +95,7 @@ test('khong co agy: nem AntigravityUnavailable, KHONG roi ve flash', async (t) =
 
 test('hoi thoai agy: metadata lay workspace tu so dang ky (IDE khong biet hoi thoai nay)', async (t) => {
   fakeAgy(t, { FAKE_AGY_ID: '22222222-2222-3333-4444-555555555555' });
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-agy-proj-'));
+  const project = tmpDir('agpm-agy-proj-');
   t.after(() => cleanup(project));
   const { conversationId } = await newConversation({ prompt: 'x', model: ARGON, cwd: project });
   const md = await getConversationMetadata(conversationId);
@@ -105,7 +105,7 @@ test('hoi thoai agy: metadata lay workspace tu so dang ky (IDE khong biet hoi th
 
 test('sendMessage vao hoi thoai agy: agy --conversation ID --model <model da luu>; dang chay luot cu thi tu choi', async (t) => {
   const fake = fakeAgy(t, { FAKE_AGY_ID: '33333333-2222-3333-4444-555555555555', FAKE_AGY_HOLD_MS: '1500' });
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-agy-proj-'));
+  const project = tmpDir('agpm-agy-proj-');
   t.after(() => cleanup(project));
   const { conversationId } = await newConversation({ prompt: 'x', model: ARGON, cwd: project });
   // luot dau con chay (giu 1,5 s): gui tiep se chong luot => bao loi ro rang
@@ -120,7 +120,7 @@ test('sendMessage vao hoi thoai agy: agy --conversation ID --model <model da luu
 });
 
 test('conversationProgress va transcriptErrors doc ca thu muc cua agy (~/.gemini/antigravity-cli)', (t) => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-agy-home-'));
+  const home = tmpDir('agpm-agy-home-');
   const prevHome = process.env.HOME;
   process.env.HOME = home;
   t.after(() => { process.env.HOME = prevHome; cleanup(home); });
@@ -145,14 +145,14 @@ test('model mac dinh cua PM la Argon (khong con flash/pro), va nam trong MODELS'
 
 test('gui tin vao hoi thoai agy dang chay: loi noi ro pid va cach go (agy thoat = luot dung)', async (t) => {
   fakeAgy(t, { FAKE_AGY_ID: '55555555-2222-3333-4444-555555555555', FAKE_AGY_HOLD_MS: '1500' });
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-agy-proj-'));
+  const project = tmpDir('agpm-agy-proj-');
   t.after(() => cleanup(project));
   const { conversationId } = await newConversation({ prompt: 'x', model: ARGON, cwd: project });
   await assert.rejects(sendMessage({ conversationId, content: 'nhac' }), /pid \d+.*kill/s);
 });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const mkProject = (t) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-agy-proj-')); t.after(() => cleanup(d)); return d; };
+const mkProject = (t) => { const d = tmpDir('agpm-agy-proj-'); t.after(() => cleanup(d)); return d; };
 
 test('hai lan gui dong thoi vao cung hoi thoai: chi MOT agy duoc sinh (giu cho truoc moi await)', async (t) => {
   const fake = fakeAgy(t, { FAKE_AGY_ID: '66666666-2222-3333-4444-555555555555' });
@@ -218,7 +218,7 @@ test('so dang ky: qua 500 muc thi bo muc DUNG LAU NHAT (lastSentAt), khong phai 
 test('chot quyen: chi truyen --dangerously-skip-permissions khi IDE da cho tu chay lenh (EAGER/TURBO), khong thi loi to va khong spawn', async (t) => {
   const fake = fakeAgy(t);
   delete process.env.ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-agy-home-'));
+  const home = tmpDir('agpm-agy-home-');
   t.after(() => cleanup(home));
   process.env.HOME = home;
   process.env.ANTIGRAVITY_PM_PROJECTS_DIR = path.join(home, 'projects');   // so dang ky project that cua may khong lot vao
