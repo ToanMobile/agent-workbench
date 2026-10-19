@@ -8,6 +8,7 @@ export const meta = {
     { title: 'Build', detail: 'Builder lifecycle (run.md): worktree, branch, draft PR' },
     { title: 'QA', detail: 'Tester lifecycle (run.md): test plan, evidence, screenshots' },
     { title: 'Review', detail: 'Reviewer lifecycle (run.md): gates, rerun tests, merge' },
+    { title: 'Cleanup', detail: 'post-merge sweep: lane worktrees and branches of merged, closed cards (super-board-post-merge-clean.sh --sweep)' },
   ],
 }
 
@@ -370,4 +371,26 @@ const summary = results.filter(Boolean).map((r) => {
 })
 log(`wave complete: ${summary.length} cards — ` +
     summary.map((s) => `#${s.number}=${s.finalStatus}@${s.column}`).join(', '))
+
+// Dọn worktree lane + nhánh của thẻ đã merge (#96, OCR batch trên #111): một lần ở cuối mỗi wave, kể cả wave không merge gì (còn sót
+// từ trước). Script này không ghi lock inflight/<N> nào (grep "inflight" trong file này chỉ ra comment này), nên sweep dựa vào lớp
+// khác: PR merged quá 15 phút, issue CLOSED, khoá phiên / devkit-kept còn sống. Run halted: bỏ lời gọi này (không đọc GitHub thêm).
+// configPath chỉ được ghép vào lệnh khi đúng dạng đường dẫn (chữ, số, . _ / -).
+const CLEANUP_SCHEMA = { type: 'object', properties: { detail: { type: 'string' } }, required: ['detail'] }
+if (!halted && /^[A-Za-z0-9._\/-]+$/.test(input.configPath)) {
+  // Bước phụ: agent lỗi / hết giờ không được làm mất tóm tắt của các thẻ đã chạy (OCR) — bắt lỗi, ghi log, vẫn trả kết quả wave.
+  let sweep = null
+  try {
+    sweep = await agent(
+      `Run exactly this one command from the repository root, once; change nothing else and do not retry:\n` +
+      `bash .claude/bin/super-board-post-merge-clean.sh --sweep . --base "$(jq -r '.base_branch // "main"' '${input.configPath}')"\n` +
+      `It always exits 0; it removes only lane worktrees and branches of merged, closed cards that nothing live holds. ` +
+      `Return in detail the lines of its output that start with "removed", "salvaged", "kept" or "sweep" (at most 20), or "nothing to do".`,
+      { label: 'cleanup:post-merge-sweep', phase: 'Cleanup', model: 'haiku', schema: CLEANUP_SCHEMA }
+    )
+  } catch (e) {
+    log(`cleanup: sweep agent failed (${e && e.message ? e.message : e}); the wave result stands`)
+  }
+  log(`cleanup: ${(sweep && sweep.detail) || 'no report'}`)
+}
 return { cards: summary, halted }

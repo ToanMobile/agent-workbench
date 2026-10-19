@@ -878,6 +878,10 @@ startup_reconcile() {
   gh_rate_guard
   fetch_project_items
   reclaim_stranded_building; fetch_project_items
+  # Dọn worktree lane + nhánh của thẻ đã merge (#96, OCR batch trên #111): sau reap/adopt nên lock của lane còn sống đã rõ. Chạy NỀN:
+  # một `gh pr list` cho mỗi thẻ còn sót có thể mất vài phút, không được giữ chân lần dispatch đầu (OCR). Sweep tự khoá (sweep.lock),
+  # tự chặn lần gọi dày (--min-interval), không bao giờ ghi file halt và luôn exit 0; không gì ở đây dừng được runner.
+  bash "$(dirname "$SB_GITHUB_READ")/super-board-post-merge-clean.sh" --sweep . --base "$BASE_BRANCH" >>"$RUN_MANIFEST" 2>&1 </dev/null &
 }
 
 sweep_blocked_cards() {

@@ -32,7 +32,7 @@ printf '.claude/\n' > "$R/.gitignore"
 mkdir -p "$R/.agents/local/memory/agents/rev" "$R/unity/Assets" "$R/src"
 echo note > "$R/.agents/local/memory/agents/rev/MEMORY.md"
 echo asset > "$R/unity/Assets/x.asset"; echo code > "$R/src/x.c"; echo cfg > "$R/keep.cfg"
-for i in 1 2 3 7 8 21 22 23 24 25 26 27 28 29 30 31 33 70; do echo "$i" > "$R/f$i"; done
+for i in 1 2 3 7 8 21 22 23 24 25 26 27 28 29 30 31 33 34 70; do echo "$i" > "$R/f$i"; done
 git -C "$R" add -A; git -C "$R" commit -qm init
 printf 'keep.cfg\n.env\n' >> "$R/.git/info/exclude"   # keep.cfg: file đã track mà luật ignore phủ (force-track); .env: bí mật cục bộ
 git -C "$R" remote add origin "$O"
@@ -92,10 +92,19 @@ case " $* " in
   *" pr diff "*) cat "$FAKE_DIR/pr$n.diff" ;;
   *" pr merge "*) bash "$FAKE_DIR/squash.sh" "$n" && echo "merged #$n" ;;
   *" pr list "*"--state merged"*)
-    head=""; prev=""; for a in "$@"; do [ "$prev" = --head ] && head="$a"; prev="$a"; done
-    python3 -c 'import json,sys
-rows=[json.loads(l) for l in open(sys.argv[1]) if l.strip()] if __import__("os").path.exists(sys.argv[1]) else []
-print(json.dumps([r for r in rows if not sys.argv[2] or r["headRefName"]==sys.argv[2]]))' "$FAKE_DIR/merged.jsonl" "$head" ;;
+    # Như GitHub: mới nhất trước, cắt theo --limit (mặc định 30); --head khớp đúng tên nhánh; --search "head:X" khớp LỎNG theo tiền tố
+    # (không có dấu - cuối: head:issue-7- cũng trả issue-70-…), người gọi phải tự lọc chặt.
+    head=""; search=""; limit=30; prev=""
+    for a in "$@"; do
+      case "$prev" in --head) head="$a" ;; --search) search="$a" ;; --limit) limit="$a" ;; esac; prev="$a"
+    done
+    python3 -c 'import json,os,sys
+p, head, search, limit = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+rows = [json.loads(l) for l in open(p) if l.strip()] if os.path.exists(p) else []
+rows.reverse()
+pre = search[5:].rstrip("-") if search.startswith("head:") else ""
+rows = [r for r in rows if (not head or r["headRefName"] == head) and (not pre or r["headRefName"].startswith(pre))]
+print(json.dumps(rows[:limit]))' "$FAKE_DIR/merged.jsonl" "$head" "$search" "$limit" ;;
   *" issue view "*) cat "$FAKE_DIR/issue$n.state" 2>/dev/null || echo OPEN ;;
   *) echo "fake gh: unexpected $*" >&2; exit 1 ;;
 esac
@@ -117,6 +126,10 @@ git -C "$R" worktree add -q --detach "$W/issue-7-review" "$H7"
 echo "learned" >> "$W/issue-7-build/.agents/local/memory/agents/rev/MEMORY.md"     # subagent memory note (tracked), OR 73/80
 echo "new note" > "$W/issue-7-build/.agents/local/memory/agents/rev/new.md"        # và một note mới chưa track
 rm "$W/issue-7-qa/f1" "$W/issue-7-qa/f2"                                            # chỉ còn file đã xoá, OR 72 / Geely 40
+# rác lane có thể dựng lại (ảnh proof, bằng chứng QA, log): bỏ, KHÔNG cất (không vào kho object chung, không vào patch: OCR batch)
+mkdir -p "$W/issue-7-qa/reports" "$W/issue-7-qa/docs/super-board/runs"
+echo "proof-bytes-7" > "$W/issue-7-qa/reports/proof-7.png"; echo "qa-evidence-7" > "$W/issue-7-qa/docs/super-board/runs/ev-7.md"
+JUNK_BLOB=$(git -C "$R" hash-object "$W/issue-7-qa/reports/proof-7.png")
 card 8 18 issue-8-other; git -C "$R" worktree add -q "$W/issue-8-build" issue-8-other
 echo wip > "$W/issue-8-build/f8"                                                     # thẻ khác đang sửa dở
 card 70 170 issue-70-similar; git -C "$R" worktree add -q "$W/issue-70-build" issue-70-similar
@@ -141,6 +154,9 @@ else fail "A5 no salvage patch with both memory notes under $SALV"; ls -R "$SALV
   || { fail "A6 main checkout got dirtier"; git -C "$R" status --porcelain; }
 [ "$(cat "$W/issue-8-build/f8" 2>/dev/null)" = wip ] && [ -d "$W/issue-70-build" ] && ok "A7 other cards' worktrees (8, 70) untouched" \
   || fail "A7 another card's worktree touched"
+if git -C "$R" cat-file -e "$JUNK_BLOB" 2>/dev/null || grep -qs "reports/proof-7.png\|runs/ev-7.md" "$SALV"/issue-7-qa-*.patch; then
+  fail "A8 lane junk (proof PNG, QA evidence) was written to the shared object store / a salvage patch"
+else ok "A8 lane junk is dropped without salvage: no loose object, no patch"; fi
 
 # ── B. --sweep: worktree còn sót của các thẻ đã merge trước đó.
 OLD="2026-01-01T00:00:00Z"; NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -184,6 +200,7 @@ squash 41; merged_row 41 "$OLD"; echo CLOSED > "$TMP/issue31.state"
 card 33 43 issue-33-m; git -C "$R" worktree add -q --detach "$W/issue-33-qa" "$(cat "$TMP/pr43.head")"
 echo n33 >> "$W/issue-33-qa/.agents/local/memory/agents/rev/MEMORY.md"; echo "TOKEN=only-here" > "$W/issue-33-qa/.env"
 rm "$W/issue-33-qa/f1"; git -C "$W/issue-33-qa" rm -q f2   # một xoá chưa stage (` D`) và một xoá đã stage (`D `): phải trả lại đúng như vậy
+mkdir -p "$W/issue-33-qa/reports"; echo "evidence-33" > "$W/issue-33-qa/reports/ev33.png"   # rác lane: worktree được giữ thì nó cũng phải còn (OCR)
 squash 43; merged_row 43 "$OLD"; echo CLOSED > "$TMP/issue33.state"
 # 25 = PR 35: vừa merge (Reviewer còn làm bước sau merge)
 card 25 35 issue-25-e; git -C "$R" worktree add -q --detach "$W/issue-25-qa" "$(cat "$TMP/pr35.head")"
@@ -200,6 +217,15 @@ card 28 38 issue-28-h; git -C "$R" worktree add -q "$W/issue-28-build" issue-28-
 squash 38 later; merged_row 38 "$OLD"; echo CLOSED > "$TMP/issue28.state"
 # 2 = PR 12: chỉ còn nhánh local, không worktree (và issue-2 không được khớp nhầm issue-21 / issue-22 / issue-28)
 card 2 12 issue-2-z; squash 12 later; merged_row 12 "$OLD"; echo CLOSED > "$TMP/issue2.state"
+# 34 = PR 44 (OCR batch): không ref nào giữ head và GitHub không có refs/pull/44/head → giữ, nói lý do; dry-run cũng không hứa gỡ
+card 34 44 issue-34-n; H34=$(cat "$TMP/pr44.head"); git -C "$R" worktree add -q --detach "$W/issue-34-review" "$H34"
+squash 44 later; merged_row 44 "$OLD"; echo CLOSED > "$TMP/issue34.state"
+git -C "$R" branch -D issue-34-n >/dev/null; git -C "$O" update-ref -d refs/pull/44/head
+# 200 PR merged MỚI HƠN mọi PR của thẻ (OCR batch): `gh pr list --limit 200` chỉ thấy chúng, PR của thẻ cũ phải tìm theo số thẻ
+i=0; while [ "$i" -lt 200 ]; do
+  printf '{"number":%s,"headRefName":"feat-filler-%s","headRefOid":"%040x","baseRefName":"main","isCrossRepository":false,"mergedAt":"%s"}\n' \
+    $((1000 + i)) "$i" $((i + 1)) "$OLD" >> "$TMP/merged.jsonl"; i=$((i + 1))
+done
 git -C "$R" fetch -q --prune origin
 MAIN_STATUS_BEFORE=$(git -C "$R" status --porcelain)
 LIST_BEFORE=$(git -C "$R" worktree list --porcelain | grep '^worktree ' | sort)
@@ -212,7 +238,7 @@ bash "$CLEAN" --sweep "$R" --dry-run >"$TMP/dry.log" 2>&1; rc=$?
   && ok "B1 --dry-run changes nothing" || { fail "B1 --dry-run changed something (rc $rc)"; cat "$TMP/dry.log"; }
 miss=""
 for w in issue-7-review issue-21-review issue-21-qa issue-22-qa issue-28-build; do grep -q "would remove .*/$w" "$TMP/dry.log" || miss="$miss $w"; done
-for w in issue-22-build issue-23-review issue-24-qa issue-29-qa issue-30-qa issue-31-qa issue-25-qa issue-26-qa issue-27-qa; do grep -q "would remove .*/$w" "$TMP/dry.log" && miss="$miss !$w"; done
+for w in issue-22-build issue-23-review issue-24-qa issue-29-qa issue-30-qa issue-31-qa issue-34-review issue-25-qa issue-26-qa issue-27-qa; do grep -q "would remove .*/$w" "$TMP/dry.log" && miss="$miss !$w"; done
 [ -f "$R/.git/super-board/sweep.stamp" ] && miss="$miss stamp-written"
 # nhánh của worktree "sẽ gỡ" (issue-28-build) cũng "sẽ xoá", không phải "still checked out"; nhánh của worktree giữ lại thì giữ
 for b in issue-28-h issue-2-z; do grep -q "would delete branch $b " "$TMP/dry.log" || miss="$miss branch:$b"; done
@@ -226,21 +252,39 @@ bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/halt.log" 2>&1
   || { fail "B3 sweep ran while GitHub reads are halted"; cat "$TMP/halt.log"; }
 rm -f "$TMP/halt.json"
 
+# B19 (OCR) runner (startup) và wave (Cleanup) cùng gọi sweep: một sweep khác còn sống giữ khoá thì lần này không đọc, không gỡ gì
+mkdir -p "$R/.git/super-board"; rm -f "$TMP/held"
+python3 -c 'import fcntl, sys, time
+f = open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX); open(sys.argv[2], "w").close(); time.sleep(120)' \
+  "$R/.git/super-board/sweep.lock" "$TMP/held" & HOLDER=$!
+i=0; while [ ! -f "$TMP/held" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+: > "$TMP/gh.calls"
+bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/locked.log" 2>&1
+[ ! -s "$TMP/gh.calls" ] && [ -d "$W/issue-21-review" ] && grep -q "another sweep" "$TMP/locked.log" \
+  && ok "B19 a sweep that a live sweep's lock holds back reads and removes nothing" || { fail "B19 two sweeps ran at once"; cat "$TMP/locked.log"; }
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null   # tiến trình giữ khoá chết: kernel nhả khoá, không còn gì phải dọn
+
 # B4 sweep thật
 bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/sweep.log" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "B4 sweep exit 0" || fail "B4 sweep exit $rc"
 for w in issue-7-review issue-21-review issue-21-qa issue-22-qa issue-28-build; do
   [ ! -d "$W/$w" ] && ok "B5 merged leftover $w removed" || { fail "B5 merged leftover $w kept"; grep -a "$w" "$TMP/sweep.log"; }
 done
-for w in issue-22-build issue-23-review issue-24-qa issue-29-qa issue-30-qa issue-31-qa issue-33-qa issue-25-qa issue-26-qa issue-27-qa issue-70-build issue-8-build; do
+for w in issue-22-build issue-23-review issue-24-qa issue-29-qa issue-30-qa issue-31-qa issue-33-qa issue-34-review issue-25-qa issue-26-qa issue-27-qa issue-70-build issue-8-build; do
   [ -d "$W/$w" ] && ok "B6 $w kept" || fail "B6 $w REMOVED"
 done
 grep -q "issue-22-build: uncommitted edits.*src/x.c" "$TMP/sweep.log" && [ "$(tail -1 "$W/issue-22-build/src/x.c")" = "real fix" ] \
   && ok "B7 real code edits are kept in place and the log says why" || { fail "B7 no reason logged for the kept real edit"; cat "$TMP/sweep.log"; }
 P=$(ls "$SALV"/issue-21-qa-*.patch 2>/dev/null | head -1)
 [ -n "$P" ] && grep -q "unity/Assets/x.asset" "$P" && ok "B8 the Unity re-serialized asset is salvaged ($P)" || fail "B8 no salvage patch for issue-21-qa"
-git -C "$R" rev-parse -q --verify refs/remotes/origin/pull/31/head >/dev/null && fail "B9 temporary refs/pull hold left behind" \
-  || ok "B9 the temporary refs/pull/31/head hold is dropped after the removal"
+if [ -n "$(git -C "$R" for-each-ref --format='%(refname)' 'refs/remotes/*/pull*' 'refs/remotes/*/*/pull*')" ]; then
+  fail "B9 temporary refs/pull hold left behind: $(git -C "$R" for-each-ref --format='%(refname)' 'refs/remotes/*/pull*' 'refs/remotes/*/*/pull*' | tr '\n' ' ')"
+else ok "B9 the temporary refs/pull/31/head hold is dropped after the removal"; fi
+grep -q "would hold .* with refs/remotes/super-board-hold/pull-31 " "$TMP/dry.log" && ! grep -q "with refs/remotes/origin/" "$TMP/dry.log" \
+  && ok "B17 the hold lives outside refs/remotes/origin/ (a fetch --prune of origin cannot drop it mid-removal)" \
+  || { fail "B17 the hold ref is under refs/remotes/origin/ (pruned by fetch --prune)"; grep -a "would hold" "$TMP/dry.log"; }
+[ -d "$W/issue-34-review" ] && grep -q "issue-34-review: HEAD .* (fetch of refs/pull/44/head failed" "$TMP/sweep.log" \
+  && ok "B18 no ref and no refs/pull/44/head on GitHub: kept, with the reason" || { fail "B18 hold failure case"; grep -a "issue-34" "$TMP/sweep.log"; }
 for b in issue-28-h issue-2-z; do
   if git -C "$R" rev-parse -q --verify "refs/heads/$b" >/dev/null; then fail "B10 merged branch $b kept"; grep -a "$b" "$TMP/sweep.log"
   else ok "B10 merged branch $b deleted (PR merged at its tip)"; fi
@@ -256,6 +300,7 @@ done
   || { fail "B15 the lane notes of a worktree locked by a live session were reverted"; grep -a "issue-31-qa" "$TMP/sweep.log"; }
 [ "$(tail -1 "$W/issue-33-qa/.agents/local/memory/agents/rev/MEMORY.md" 2>/dev/null)" = n33 ] && [ -f "$W/issue-33-qa/.env" ] \
   && [ "$(git -C "$W/issue-33-qa" status --porcelain -- f1 f2)" = "$(printf ' D f1\nD  f2')" ] \
+  && [ "$(cat "$W/issue-33-qa/reports/ev33.png" 2>/dev/null)" = evidence-33 ] \
   && ok "B16 when the kit refuses the removal, the salvaged lane edits are put back" \
   || { fail "B16 the kit kept the worktree but its lane edits stayed reverted"; grep -a "issue-33-qa" "$TMP/sweep.log"; }
 
