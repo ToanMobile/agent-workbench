@@ -3320,11 +3320,38 @@ def cmd_heal(cwd, args):
     link = os.path.join(wt, ".agents", "devkit")
     target = os.path.join(src, ".agents", "devkit") if src else None
     target = target if target and os.path.isdir(target) else devkit
-    if target and os.path.isfile(os.path.join(target, "bin", "post-fix-gate.py")) and not os.path.lexists(link) \
-            and git(wt, "check-ignore", "-q", "--no-index", ".agents/devkit", check=False).returncode == 0:
-        os.makedirs(os.path.dirname(link), exist_ok=True)
-        os.symlink(os.path.realpath(target), link)
-        done.append(".agents/devkit")
+    # missing or DANGLING (exists() follows the link): a dangling one used to be skipped, so heal could not repair it (19/10)
+    if target and os.path.isfile(os.path.join(target, "bin", "post-fix-gate.py")) and not os.path.exists(link) \
+            and git(wt, "check-ignore", "-q", "--no-index", ".agents/devkit", check=False).returncode == 0 \
+            and git(wt, "ls-files", "--error-unmatch", "--", ".agents/devkit", check=False).returncode != 0:   # never a tracked path
+        try:
+            if os.path.islink(link):
+                os.unlink(link)
+            os.makedirs(os.path.dirname(link), exist_ok=True)
+            os.symlink(os.path.realpath(target), link)
+            done.append(".agents/devkit")
+        except OSError as e:   # a race with another heal: reported, the rest of heal still runs
+            print(tr(f"không sửa được .agents/devkit: {e}", f".agents/devkit not repaired: {e}"))
+    # .agents/active-profile, the profile link matrix commands call through (bash .agents/active-profile/scripts/unity-batch.sh):
+    # a worktree made with plain `git worktree add` lacks it, or holds main's RELATIVE link copied as-is, which dangles one folder
+    # deeper (Neighbours-From-Hell #18, 19/10: matrix exit 127, gate REJECT, 5 cards waiting on it). Point it where main's link
+    # points, relative like the installer's (P-4); only when it is missing or dangling and git ignores it.
+    plink = os.path.join(wt, ".agents", "active-profile")
+    try:   # heal never fails a session start (docstring): a race with another heal, or no symlinks here, is reported and skipped
+        if src and os.path.islink(os.path.join(src, ".agents", "active-profile")) and not os.path.exists(plink):
+            # a relative link resolves from the PHYSICAL folder it sits in (the installer measures it from agents_dir.resolve())
+            ptarget = os.path.normpath(os.path.join(os.path.realpath(os.path.join(src, ".agents")),
+                                                    os.readlink(os.path.join(src, ".agents", "active-profile"))))
+            if os.path.isfile(os.path.join(ptarget, "profile.json")) \
+                    and git(wt, "check-ignore", "-q", "--no-index", ".agents/active-profile", check=False).returncode == 0 \
+                    and git(wt, "ls-files", "--error-unmatch", "--", ".agents/active-profile", check=False).returncode != 0:   # never a tracked path
+                if os.path.islink(plink):
+                    os.unlink(plink)
+                os.makedirs(os.path.dirname(plink), exist_ok=True)
+                os.symlink(os.path.relpath(ptarget, os.path.realpath(os.path.dirname(plink))), plink)
+                done.append(".agents/active-profile")
+    except (OSError, ValueError) as e:
+        print(tr(f"không sửa được .agents/active-profile: {e}", f".agents/active-profile not repaired: {e}"))
     if src:
         done += copy_local_config(src, wt) + copy_build_inputs(src, wt) + copy_meta_assets(src, wt)
     try:   # trunk mode is the default: wire its hooks once per machine (settings.local.json is untracked, a fresh clone has none)
