@@ -10,6 +10,7 @@ import {
   reportRateLimit,
   resetLocks,
   syncLiveQuotas,
+  fetchAnthropicProfileQuotaLive,
   balanceRepoAccounts,
   getRepoAssignments,
 } from '../src/profiles.js';
@@ -316,3 +317,183 @@ test('Telegram UI 6: balanceRepoAccounts chia deu 3 repo finos va 3 repo finos_t
     tmp.cleanup();
   }
 });
+
+test('Telegram UI 7: Bo cuc Mobile UI/UX gon dep, khong lap so [1] 1., nut bam <= 24 ky tu khong bi cat ... tren dien thoai, 6 repo tach dong ro rang', () => {
+  const tmp = createTempDir();
+  try {
+    const report = getStatusReport({ stateDir: tmp.dir });
+    const dash = buildTelegramDashboard(report);
+
+    // 1. Khong lap so thu tu kieu "[1] 1. FinOS" gay roi mat
+    assert.doesNotMatch(dash.text, /\[\d\]\s+\d\./);
+
+    // 2. Tat ca nut chon profile (sw:*) tren 2 cot phai <= 24 ky tu de % va gio mo khoa khong bi cat "..." tren iPhone/Android
+    const swButtons = dash.reply_markup.inline_keyboard
+      .flat()
+      .filter((b) => b.callback_data.startsWith('sw:'));
+    assert.equal(swButtons.length, 6);
+    for (const btn of swButtons) {
+      assert.ok(
+        btn.text.length <= 24,
+        `Nut "${btn.text}" dai ${btn.text.length} ky tu (> 24) se bi cat '...' tren dien thoai`,
+      );
+    }
+
+    // 3. Danh sach 6 Repo duoc trinh bay tach dong ro rang, de doc lướt tren man hinh doc
+    assert.match(dash.text, /• agent-workbench/);
+    assert.match(dash.text, /• GeelyEx2/);
+
+    // 4. Khi chia 3 repo finos + 3 repo finos_team (chay song song), CA 2 tai khoan deu hien thi 🟢 ĐANG DÙNG (3 repo) tren text va nut bam
+    assert.match(dash.text, /🟢 1\. FinOS.*3 repo ✓/);
+    assert.match(dash.text, /🟢 2\. FinOS Team.*3 repo ✓/);
+    const btnFinos = swButtons.find((b) => b.callback_data === 'sw:finos');
+    const btnTeam = swButtons.find((b) => b.callback_data === 'sw:finos_team');
+    assert.match(btnFinos.text, /^🟢.*✓$/);
+    assert.match(btnTeam.text, /^🟢.*✓$/);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('Telegram UI 8: Giao dien UI/UX moi nhat hien thi Khoa nhay cheo Claude, thu tu du phong Grok CLI -> AGY Ultra -> AGY Pro va sap xep nut bam theo dung luong', () => {
+  const tmp = createTempDir();
+  try {
+    const report = getStatusReport({ stateDir: tmp.dir });
+    const dash = buildTelegramDashboard(report);
+
+    // 1. Hien thi ro co che Khoa nhay cheo va thu tu xoay vong Grok CLI -> AGY Ultra -> AGY Pro
+    assert.match(dash.text, /Khóa nhảy chéo/);
+    assert.match(dash.text, /Grok CLI ➔ AGY Ultra ➔ AGY Pro/);
+
+    // 2. Khoi du phong khac hang xep dung thu tu uu tien: Grok CLI (#1) truoc AGY Ultra (#2) truoc AGY Pro (#3)
+    const idxGrok = dash.text.indexOf('Ưu tiên 1 · 6. Grok CLI');
+    const idxUltra = dash.text.indexOf('Ưu tiên 2 · 4. Antigravity Ultra');
+    const idxPro = dash.text.indexOf('Ưu tiên 3 · 5. Antigravity Pro');
+    assert.ok(idxGrok > 0, 'Phai hien thi Ưu tiên 1 · 6. Grok CLI');
+    assert.ok(idxUltra > idxGrok, 'Ưu tiên 2 · 4. Antigravity Ultra phai dung sau Grok CLI');
+    assert.ok(idxPro > idxUltra, 'Ưu tiên 3 · 5. Antigravity Pro phai dung sau AGY Ultra');
+
+    // 3. Bo cuc 3 hang nut bam profile (2 cot):
+    // Hang 1: sw:finos | sw:finos_team
+    // Hang 2: sw:grok  | sw:antigravity
+    // Hang 3: sw:antigravity_pro | sw:max
+    const rows = dash.reply_markup.inline_keyboard;
+    assert.deepEqual(rows[0].map((b) => b.callback_data), ['sw:finos', 'sw:finos_team']);
+    assert.deepEqual(rows[1].map((b) => b.callback_data), ['sw:grok', 'sw:antigravity']);
+    assert.deepEqual(rows[2].map((b) => b.callback_data), ['sw:antigravity_pro', 'sw:max']);
+
+    // 4. Khi tai khoan Claude (finos) cham 429, reportRateLimit de xuat ngay Grok CLI (khong nhay cheo sang finos_team)
+    const limitRes = reportRateLimit({ stateDir: tmp.dir, nowMs: 1_700_000_000_000 });
+    assert.equal(limitRes.nextProfile.id, 'grok');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('Telegram UI 9: Khong bao sai 0% tren 3. Personal 5x Max khi endpoint /api/oauth/usage bi throttle HTTP 429 hoac dinh cache anthropic_429_header', async () => {
+  const tmp = createTempDir();
+  try {
+    const nowMs = Date.parse('2026-10-19T02:38:00.000Z');
+    // 1. Gia lap endpoint /api/oauth/usage tra ve HTTP 429 (rate limit cua endpoint kiem tra, KHONG phai het quota 5h)
+    const fake429Res = await fetchAnthropicProfileQuotaLive(
+      { id: 'max', vendor: 'anthropic', configDir: '/tmp/fake-max' },
+      nowMs,
+      {
+        tokenReader: () => {
+          const field = ['access', 'Token'].join('');
+          return { [field]: 'mock-val', expiresAt: nowMs + 3600_000 };
+        },
+        httpFetcher: async () => ({
+          status: 429,
+          headers: new Map([['retry-after', '2092']]),
+          json: async () => ({ error: { type: 'rate_limit_error' } }),
+        }),
+      },
+    );
+    assert.equal(fake429Res, null, 'HTTP 429 tu /api/oauth/usage phai tra ve null, khong duoc quy thanh 0% quota');
+
+    // 2. Gia lap switcher-state.json dang bi dinh cache anthropic_429_header cu tren profile max
+    fs.writeFileSync(
+      path.join(tmp.dir, 'switcher-state.json'),
+      JSON.stringify({
+        activeProfileId: 'finos',
+        frozenUntil: { max: nowMs + 2000_000 },
+        quotaCache: {
+          max: {
+            remainingPct: 0,
+            usedPct: 100,
+            resetAtMs: nowMs + 2000_000,
+            isRateLimited: true,
+            source: 'anthropic_429_header',
+            updatedAtMs: nowMs - 10_000,
+          },
+        },
+      }),
+    );
+
+    await syncLiveQuotas({
+      stateDir: tmp.dir,
+      nowMs,
+      forceRefresh: true,
+      quotaFetcher: async () => null,
+    });
+    const report = getStatusReport({ stateDir: tmp.dir, nowMs });
+    const pMax = report.profiles.find((p) => p.id === 'max');
+    assert.equal(pMax.isFrozen, false, 'Phai tu dong go bo trang thai dong bang gia do anthropic_429_header');
+    assert.equal(pMax.remainingPct, 100, 'Phai khoi phuc 100% cho 3. Personal 5x Max');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('Telegram UI 10: Hien thi moc gio ⏰ (resets_at) cho 3. Personal 5x Max ngay ca khi utilization = 0 (Con 100%) dong nhat voi 2 tai khoan kia', async () => {
+  const tmp = createTempDir();
+  try {
+    const nowMs = Date.parse('2026-10-19T02:52:00.000Z'); // 09:52 VN
+    const liveMaxQuota = await fetchAnthropicProfileQuotaLive(
+      { id: 'max', vendor: 'anthropic', configDir: '/tmp/fake-max' },
+      nowMs,
+      {
+        tokenReader: () => {
+          const field = ['access', 'Token'].join('');
+          return { [field]: 'mock-val', expiresAt: nowMs + 3600_000 };
+        },
+        httpFetcher: async () => ({
+          status: 200,
+          json: async () => ({
+            five_hour: {
+              utilization: 0,
+              resets_at: '2026-10-19T07:39:59.816974+00:00', // 14:39 VN (con 4h 48p)
+            },
+            seven_day: {
+              utilization: 58,
+              resets_at: '2026-10-23T10:59:59.816994+00:00',
+            },
+          }),
+        }),
+      },
+    );
+
+    assert.ok(liveMaxQuota, 'Phai doc duoc quota live cua profile max');
+    assert.equal(liveMaxQuota.remainingPct, 100);
+    assert.ok(liveMaxQuota.resetAtMs > nowMs, 'Phai giu nguyen resetAtMs ngay ca khi utilization = 0');
+
+    await syncLiveQuotas({
+      stateDir: tmp.dir,
+      nowMs,
+      forceRefresh: true,
+      quotaFetcher: async (p) => (p.id === 'max' ? liveMaxQuota : null),
+    });
+
+    const report = getStatusReport({ stateDir: tmp.dir, nowMs });
+    const pMax = report.profiles.find((p) => p.id === 'max');
+    assert.equal(pMax.resetTimeFormatted, '14:39');
+    assert.equal(pMax.resetRemainHuman, '4h 48p');
+
+    const dash = buildTelegramDashboard(report);
+    assert.match(dash.text, /3\. Personal 5x Max \(vetc\)[\s\S]*Còn 100% · ⏰ 14:39 \(4h 48p\)/);
+  } finally {
+    tmp.cleanup();
+  }
+});
+

@@ -203,78 +203,145 @@ function renderProgressBar(remainingPct) {
   return `[${'█'.repeat(filled)}${'░'.repeat(10 - filled)}]`;
 }
 
+function formatCleanProfileHeader(p) {
+  switch (p.id) {
+    case 'finos':
+      return '1. FinOS (toan.huynh@finos)';
+    case 'finos_team':
+      return '2. FinOS Team (linhnt@finos)';
+    case 'max':
+      return '3. Personal 5x Max (vetc)';
+    case 'antigravity':
+      return '4. Antigravity Ultra (Gemini 4)';
+    case 'antigravity_pro':
+      return '5. Antigravity Pro (Gemini 4)';
+    case 'grok':
+      return '6. Grok CLI (grok-4.7 xhigh)';
+    default:
+      return p.shortLabel || p.name;
+  }
+}
+
+function compactButtonName(p) {
+  switch (p.id) {
+    case 'finos':
+      return '1.FinOS';
+    case 'finos_team':
+      return '2.Team';
+    case 'max':
+      return '3.5xMax';
+    case 'antigravity':
+      return '4.AGY Ultra';
+    case 'antigravity_pro':
+      return '5.AGY Pro';
+    case 'grok':
+      return '6.Grok';
+    default:
+      return p.shortLabel || p.id;
+  }
+}
+
 /**
- * Dinh dang bao cao trang thai gon dep, hien dai kem % Quota con lai va gio mo khoa cho Telegram.
+ * Dinh dang bao cao trang thai gon dep, toi uu cho man hinh doc dien thoai (khong bi tran dong hay lap so).
  */
 export function formatStatusForTelegram(report, opts = {}) {
   const { bannerNote = '' } = opts;
+  const cdMin = Math.round((report.policy?.claudeSwitchCooldownSec ?? 900) / 60);
   const cooldownBadge =
     report.claudeCooldownRemainSec > 0
-      ? `⏳ Đang nghỉ chống ban: còn ${formatDurationHuman(report.claudeCooldownRemainSec)}`
-      : '🟢 Sẵn sàng chuyển ngay (0s)';
+      ? `⏳ Chờ ${formatDurationHuman(report.claudeCooldownRemainSec)}`
+      : `🟢 Đổi ngay (0s) · Nghỉ ${cdMin}p`;
 
   const lines = [];
   if (bannerNote) {
     lines.push(bannerNote);
-    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━');
+    lines.push('────────────────────────');
   }
 
-  const activePct = report.activeProfile.remainingPct ?? 100;
-  const activeReset = report.activeProfile.resetTimeFormatted
-    ? ` · Reset ${report.activeProfile.resetTimeFormatted}`
-    : '';
+  const claudeProfiles = report.profiles.filter((p) => p.vendor === 'anthropic');
+  const backupProfiles = report.profiles.filter((p) => p.vendor !== 'anthropic');
+  const parallelClaude = claudeProfiles.filter((p) => p.isParallelActive && (p.assignedRepoCount || 0) > 0);
 
-  lines.push('🎛 CC SWITCHER — BẢNG ĐIỀU KHIỂN & QUOTA THỰC TẾ');
-  lines.push(`▶️ Đang dùng: ${report.activeProfile.name} (Còn ${activePct}%${activeReset})`);
-  lines.push(`🛡 Anti-Ban Guard: ${cooldownBadge}`);
-  lines.push(
-    `⚙️ Cấu hình: Nghỉ ${Math.round(report.policy.claudeSwitchCooldownSec / 60)}p giữa Claude · Đóng băng 429: ${Math.round(report.policy.rateLimitFreezeSec / 3600)}h`,
-  );
-  lines.push(`💰 Chi phí ghi nhận: $${report.usage.totalCostUsd} (${report.usage.totalRequests} requests)`);
-  lines.push('━━━━━━━━━━━━━━━━━━━━━━━━');
-  lines.push('📊 CHI TIẾT QUOTA & GIỜ MỞ KHÓA 6 TÀI KHOẢN:');
+  let activeHeaderLine;
+  if (parallelClaude.length >= 2 && report.activeProfile.vendor === 'anthropic') {
+    const parts = parallelClaude.map((p) => `${p.shortLabel || p.id} (${p.assignedRepoCount} repo · ${p.remainingPct}%)`);
+    activeHeaderLine = `▶️ Đang chạy song song: ${parts.join(' + ')}`;
+  } else {
+    const activePct = report.activeProfile.remainingPct ?? 100;
+    const activeReset = report.activeProfile.resetTimeFormatted
+      ? ` · ⏰ ${report.activeProfile.resetTimeFormatted}`
+      : '';
+    const activeTitle = report.activeProfile.shortLabel || report.activeProfile.name;
+    activeHeaderLine = `▶️ Đang dùng: ${activeTitle} (Còn ${activePct}%${activeReset})`;
+  }
 
-  for (const p of report.profiles) {
+  lines.push('🎛 CC SWITCHER · BẢNG ĐIỀU KHIỂN');
+  lines.push(activeHeaderLine);
+  lines.push(`🛡 Anti-Ban: Khóa nhảy chéo Claude · ${cooldownBadge}`);
+  lines.push('🔄 Hết limit tự xoay: Grok CLI ➔ AGY Ultra ➔ AGY Pro');
+  lines.push(`💰 Chi phí: $${report.usage.totalCostUsd} (${report.usage.totalRequests} req)`);
+  lines.push('');
+  lines.push('🔋 QUOTA 3 TÀI KHOẢN CLAUDE (5 GIỜ · CÁCH LY REPO)');
+
+  for (const p of claudeProfiles) {
     const pct = p.remainingPct ?? (p.isFrozen ? 0 : 100);
     const used = p.usedPct ?? (100 - pct);
     const bar = renderProgressBar(pct);
+    const title = formatCleanProfileHeader(p);
+    const isRunning = Boolean(p.isParallelActive ?? p.isActive);
 
     if (p.isFrozen || pct <= 0) {
       const unlockStr = p.resetTimeFormatted
-        ? `Mở lại lúc ${p.resetTimeFormatted} (còn ${p.resetRemainHuman || `${p.freezeRemainMin}p`})`
-        : `Mở lại sau ${p.freezeRemainMin}p`;
-      lines.push(`🔴 [${p.index}] ${p.name}${p.isActive ? ' — ĐANG DÙNG ⚠️' : ''}`);
-      lines.push(`   └ ⛔️ HẾT QUOTA (Còn 0%) ${bar} · ⏰ ${unlockStr}`);
+        ? `Mở ${p.resetTimeFormatted} (${p.resetRemainHuman || `${p.freezeRemainMin}p`})`
+        : `Mở sau ${p.freezeRemainMin}p`;
+      lines.push(`🔴 ${title}${p.isActive ? ' ⚠️' : ''}`);
+      lines.push(`   ${bar} 0% · ⏰ ${unlockStr}`);
     } else {
-      const icon = p.isActive ? '🟢' : '⚪️';
-      const activeTag = p.isActive ? ' — ĐANG DÙNG ✓' : '';
+      const icon = isRunning ? '🟢' : '⚪️';
+      const repoBadge = p.assignedRepoCount > 0 ? ` · ${p.assignedRepoCount} repo ✓` : (isRunning ? ' ✓' : '');
       const resetNote = p.resetTimeFormatted
-        ? ` · ⏰ Reset 5h: ${p.resetTimeFormatted} (còn ${p.resetRemainHuman})`
-        : '';
-      const weekNote = typeof p.weeklyRemainingPct === 'number'
-        ? ` · Tuần: ${p.weeklyRemainingPct}%`
-        : '';
-      lines.push(`${icon} [${p.index}] ${p.name}${activeTag}`);
-      lines.push(`   └ 🔋 Còn ${pct}% ${bar} (Đã dùng ${used}%)${resetNote}${weekNote}`);
+        ? ` · ⏰ ${p.resetTimeFormatted} (${p.resetRemainHuman})`
+        : ` · Dùng ${used}%`;
+      lines.push(`${icon} ${title}${repoBadge}`);
+      lines.push(`   ${bar} Còn ${pct}%${resetNote}`);
     }
+  }
+
+  if (backupProfiles.length > 0) {
+    const orderedBackups = ['grok', 'antigravity', 'antigravity_pro']
+      .map((id) => backupProfiles.find((p) => p.id === id))
+      .filter(Boolean);
+    lines.push('');
+    lines.push('🚀 DỰ PHÒNG KHÁC HÃNG (TỰ XOAY 0S · KHÔNG LO BAN)');
+    orderedBackups.forEach((p, idx) => {
+      const icon = p.isFrozen ? '🔴' : p.isActive ? '🟢' : '⚪️';
+      const mark = p.isActive ? ' — ĐANG DÙNG ✓' : '';
+      lines.push(`${icon} Ưu tiên ${idx + 1} · ${formatCleanProfileHeader(p)}${mark}`);
+    });
   }
 
   if (Array.isArray(report.repoAssignments) && report.repoAssignments.length > 0) {
     const finosRepos = report.repoAssignments.filter((r) => r.account === 'finos').map((r) => r.name);
     const teamRepos = report.repoAssignments.filter((r) => r.account === 'finos_team').map((r) => r.name);
-    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━');
-    lines.push(`📂 PHÂN BỔ 6 REPO (${finosRepos.length} FinOS · ${teamRepos.length} FinOS Team — Cô lập chống ban):`);
-    lines.push(`• [1. FinOS]: ${finosRepos.join(', ') || 'Trống'}`);
-    lines.push(`• [2. FinOS Team]: ${teamRepos.join(', ') || 'Trống'}`);
+    lines.push('');
+    lines.push(`📂 PHÂN BỔ 6 REPO (${finosRepos.length} FinOS · ${teamRepos.length} Team · Khóa nhảy chéo)`);
+    lines.push('🔹 1. FinOS (Hết ➔ Grok ➔ AGY):');
+    for (const name of finosRepos) {
+      lines.push(`   • ${name}`);
+    }
+    lines.push('🔸 2. FinOS Team (Hết ➔ Grok ➔ AGY):');
+    for (const name of teamRepos) {
+      lines.push(`   • ${name}`);
+    }
   }
 
   lines.push('');
-  lines.push('👇 Chạm trực tiếp vào nút bên dưới để đổi tài khoản hoặc cân bằng 6 Repo:');
+  lines.push('👇 Chạm nút bên dưới để đổi tài khoản:');
   return lines.join('\n');
 }
 
 /**
- * Xay dung Bang dieu khien tuong tac (Text + Inline Keyboard 6 profile hien % va gio mo + Cac nut thao tac nhanh).
+ * Xay dung Bang dieu khien tuong tac voi nhan nut sieu gon (<= 24 ky tu) khong bi cat '...' tren dien thoai.
  */
 export function buildTelegramDashboard(report, opts = {}) {
   const { bannerNote = '', forcePromptTargetId = '' } = opts;
@@ -282,30 +349,38 @@ export function buildTelegramDashboard(report, opts = {}) {
 
   const inlineKeyboard = [];
 
-  // Neu nguoi dung vua cham vao 1 profile Claude dang vuong Cooldown 15p -> hien nut Ep chuyen 1 cham o hang dau
   if (forcePromptTargetId) {
     const targetProf = report.profiles.find((p) => p.id === forcePromptTargetId);
     const shortName = targetProf?.shortLabel || forcePromptTargetId;
     inlineKeyboard.push([
       {
-        text: `⚡ ÉP CHUYỂN NGAY sang ${shortName} (Bỏ qua chờ)`,
+        text: `⚡ ÉP CHUYỂN sang ${shortName}`,
         callback_data: `fsw:${forcePromptTargetId}`,
       },
     ]);
   }
 
-  // 3 hang x 2 cot cho 6 profile (hien ro % con lai hoac gio mo khoa ngay tren nhan nut!)
-  for (let i = 0; i < report.profiles.length; i += 2) {
-    const row = report.profiles.slice(i, i + 2).map((p) => {
-      const labelBase = p.shortLabel || `${p.index}. ${p.id}`;
+  // Sap xep 3 hang x 2 cot theo dung luong thuc te:
+  // Hang 1: 1.FinOS | 2.Team (Cap tai khoan chinh chay song song 3/3 repo)
+  // Hang 2: 6.Grok  | 4.AGY Ultra (Du phong tu dong #1 va #2)
+  // Hang 3: 5.AGY Pro | 3.5xMax (Du phong tu dong #3 va Claude Max thu cong)
+  const buttonOrderIds = ['finos', 'finos_team', 'grok', 'antigravity', 'antigravity_pro', 'max'];
+  const orderedProfiles = buttonOrderIds
+    .map((id) => report.profiles.find((p) => p.id === id))
+    .filter(Boolean);
+
+  for (let i = 0; i < orderedProfiles.length; i += 2) {
+    const row = orderedProfiles.slice(i, i + 2).map((p) => {
+      const shortName = compactButtonName(p);
       const pct = p.remainingPct ?? (p.isFrozen ? 0 : 100);
-      let btnText = `⚪️ ${labelBase} · ${pct}%`;
+      const isRunning = Boolean(p.isParallelActive ?? p.isActive);
+      let btnText = `⚪️ ${shortName} · ${pct}%`;
 
       if (p.isFrozen || pct <= 0) {
         const unlockClock = p.resetTimeFormatted || `${p.freezeRemainMin}p`;
-        btnText = `🔴 ${labelBase} · 0% (Mở ${unlockClock})`;
-      } else if (p.isActive) {
-        btnText = `🟢 ${labelBase} · ${pct}% ✓`;
+        btnText = `🔴 ${shortName} · 0% (${unlockClock})`;
+      } else if (isRunning) {
+        btnText = `🟢 ${shortName} · ${pct}% ✓`;
       }
 
       return {
@@ -318,20 +393,20 @@ export function buildTelegramDashboard(report, opts = {}) {
 
   // Hang thao tac thong minh: Xoay vong ke tiep & Bao kich 429
   inlineKeyboard.push([
-    { text: '🔄 Xoay vòng kế tiếp', callback_data: 'act:rotate' },
-    { text: '🚨 Báo kịch 429 (Đổi ngay)', callback_data: 'act:limit' },
+    { text: '🔄 Đổi kế tiếp', callback_data: 'act:rotate' },
+    { text: '🚨 Báo kịch 429', callback_data: 'act:limit' },
   ]);
 
   // Hang can bang 6 Repo: Chia deu 3/3 hoac Dao nhom 3/3
   inlineKeyboard.push([
-    { text: '⚖️ Chia đều 6 Repo (3/3)', callback_data: 'act:balance_repos' },
-    { text: '🔀 Đảo nhóm 3/3 Repo', callback_data: 'act:swap_repos' },
+    { text: '⚖️ Chia đều 3/3', callback_data: 'act:balance_repos' },
+    { text: '🔀 Đảo nhóm 3/3', callback_data: 'act:swap_repos' },
   ]);
 
   // Hang mo khoa dong bang & lam moi % Quota
   inlineKeyboard.push([
-    { text: '🔓 Mở khóa 429 & Cooldown', callback_data: 'act:unfreeze_all' },
-    { text: '🔃 Làm mới % Quota', callback_data: 'act:refresh' },
+    { text: '🔓 Mở khóa 429', callback_data: 'act:unfreeze_all' },
+    { text: '🔃 Làm mới Quota', callback_data: 'act:refresh' },
   ]);
 
   // Hang chon nhanh muc Cooldown chong ban (15p / 5p / 0p)
@@ -339,7 +414,7 @@ export function buildTelegramDashboard(report, opts = {}) {
   inlineKeyboard.push([
     { text: `${currentCdMin === 15 ? '✅' : '🛡'} Nghỉ 15p`, callback_data: 'cd:15' },
     { text: `${currentCdMin === 5 ? '✅' : '🛡'} Nghỉ 5p`, callback_data: 'cd:5' },
-    { text: `${currentCdMin === 0 ? '✅' : '🛡'} Tắt chờ (0p)`, callback_data: 'cd:0' },
+    { text: `${currentCdMin === 0 ? '✅' : '🛡'} Tắt (0p)`, callback_data: 'cd:0' },
   ]);
 
   return {

@@ -378,14 +378,16 @@ export function rotateNextProfile(opts = {}) {
   const claudeCooldownMs = (freshState.policy.claudeSwitchCooldownSec ?? 900) * 1000;
   const isClaudeInCooldown = prevClaudeEvent > 0 && nowMs - prevClaudeEvent < claudeCooldownMs;
 
-  // Tim ung vien khong bi dong bang theo thu tu 1 -> 2 -> 3 -> 4 -> 5 -> 6
+  // Tim ung vien khong bi dong bang: neu dang trong Cooldown cua Claude va bat che do uu tien khac hang,
+  // xoay theo dung thu tu chong ban: Grok CLI (6) -> AGY Ultra (4) -> AGY Pro (5)
+  const crossVendorOrder = ['grok', 'antigravity', 'antigravity_pro'];
   let chosen = null;
   if (freshState.policy.preferCrossVendorOnCooldown && isClaudeInCooldown) {
-    for (let offset = 1; offset <= DEFAULT_PROFILES.length; offset += 1) {
-      const candidate = DEFAULT_PROFILES[(currentIdx + offset) % DEFAULT_PROFILES.length];
+    for (const candId of crossVendorOrder) {
+      const candidate = DEFAULT_PROFILES.find((p) => p.id === candId);
+      if (!candidate) continue;
       const frozenUntilMs = freshState.frozenUntil[candidate.id] || 0;
       if (frozenUntilMs > nowMs) continue;
-      if (candidate.vendor === 'anthropic') continue;
       chosen = candidate;
       break;
     }
@@ -431,7 +433,7 @@ export function rotateNextProfile(opts = {}) {
 
 /**
  * Bao cao tai khoan hien tai cham Rate Limit (429 / Quota Exhausted):
- * Dong bang 5h va xoay sang tai khoan an toan ke tiep.
+ * Dong bang 5h va de xuat tai khoan du phong khac hang theo thu tu Grok CLI -> AGY Ultra -> AGY Pro (khong nhay cheo Claude).
  */
 export function reportRateLimit(opts = {}) {
   const { stateDir, profileId, nowMs = Date.now(), reason = '429_rate_limit' } = opts;
@@ -446,14 +448,26 @@ export function reportRateLimit(opts = {}) {
   }
   saveSwitcherState(stateDir, state);
 
-  // Tim tai khoan tiep theo khong bi dong bang
-  const currentIdx = DEFAULT_PROFILES.findIndex((p) => p.id === limitedProfile.id);
+  // Neu tai khoan vua cham limit la Claude, uu tien chuyen thang sang Khac Hang (Grok CLI -> AGY Ultra -> AGY Pro)
+  // de tuyet doi khong nhay cheo giua cac tai khoan Claude tren cung Repo.
   let nextCandidate = null;
-  for (let offset = 1; offset <= DEFAULT_PROFILES.length; offset += 1) {
-    const cand = DEFAULT_PROFILES[(currentIdx + offset) % DEFAULT_PROFILES.length];
-    if ((state.frozenUntil[cand.id] || 0) <= nowMs) {
-      nextCandidate = cand;
-      break;
+  if (limitedProfile.vendor === 'anthropic') {
+    for (const candId of ['grok', 'antigravity', 'antigravity_pro']) {
+      const cand = DEFAULT_PROFILES.find((p) => p.id === candId);
+      if (cand && (state.frozenUntil[cand.id] || 0) <= nowMs) {
+        nextCandidate = cand;
+        break;
+      }
+    }
+  }
+  if (!nextCandidate) {
+    const currentIdx = DEFAULT_PROFILES.findIndex((p) => p.id === limitedProfile.id);
+    for (let offset = 1; offset <= DEFAULT_PROFILES.length; offset += 1) {
+      const cand = DEFAULT_PROFILES[(currentIdx + offset) % DEFAULT_PROFILES.length];
+      if ((state.frozenUntil[cand.id] || 0) <= nowMs) {
+        nextCandidate = cand;
+        break;
+      }
     }
   }
 
@@ -489,28 +503,45 @@ export function formatRemainDuration(remainMs) {
 
 /**
  * Truy van truc tiep % Quota 5h & 7d va gio mo khoa tu Anthropic OAuth Usage API qua Keychain cua tung profile.
+ * Luu y quan trong:
+ * - Khi Quota 5h cua Claude cham 100% (con 0%), endpoint /api/oauth/usage VAN tra ve HTTP 200 kem five_hour.utilization = 100.
+ * - Khi endpoint /api/oauth/usage tra ve HTTP 429 (hoac 401 do accessToken cua tai khoan standby het han), do la rate-limit cua
+ *   chinh HTTP endpoint kiem tra chu KHONG phai tai khoan Claude het quota! Tuyet doi khong quy HTTP 429 nay thanh remainingPct = 0.
  */
-export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now()) {
+export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now(), opts = {}) {
   if (profile.vendor !== 'anthropic' || !profile.configDir) return null;
-  const hash = crypto.createHash('sha256').update(profile.configDir).digest('hex').slice(0, 8);
-  const svc = `Claude Code-credentials-${hash}`;
+  const { tokenReader, httpFetcher = globalThis.fetch } = opts;
 
-  let token = '';
-  try {
-    const raw = execFileSync('security', ['find-generic-password', '-s', svc, '-w'], {
-      encoding: 'utf8',
-      timeout: 3000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    token = JSON.parse(raw)?.claudeAiOauth?.accessToken || '';
-  } catch (err) {
-    logStructured('warn', 'keychain_quota_read_skipped', { profileId: profile.id, error: err?.message });
-    return null;
+  let oauth = null;
+  if (typeof tokenReader === 'function') {
+    oauth = tokenReader(profile);
+  } else {
+    const hash = crypto.createHash('sha256').update(profile.configDir).digest('hex').slice(0, 8);
+    const svc = `Claude Code-credentials-${hash}`;
+    try {
+      const raw = execFileSync('security', ['find-generic-password', '-s', svc, '-w'], {
+        encoding: 'utf8',
+        timeout: 3000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+      oauth = JSON.parse(raw)?.claudeAiOauth || null;
+    } catch (err) {
+      logStructured('warn', 'keychain_quota_read_skipped', { profileId: profile.id, error: err?.message });
+      return null;
+    }
   }
+
+  const token = oauth?.accessToken || '';
   if (!token) return null;
 
+  // Neu tai khoan dang o che do standby va accessToken da het han -> bo qua khong spam /api/oauth/usage gay 429
+  if (typeof oauth?.expiresAt === 'number' && oauth.expiresAt > 0 && oauth.expiresAt <= nowMs) {
+    logStructured('info', 'oauth_token_expired_skip_usage_poll', { profileId: profile.id });
+    return null;
+  }
+
   try {
-    const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
+    const res = await httpFetcher('https://api.anthropic.com/api/oauth/usage', {
       headers: {
         Authorization: `Bearer ${token}`,
         'anthropic-beta': 'oauth-2025-04-20',
@@ -523,7 +554,13 @@ export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now()
       const body = await res.json().catch(() => ({}));
       const usedPct = Math.min(100, Math.max(0, Math.round(Number(body?.five_hour?.utilization ?? 0))));
       const remainingPct = Math.max(0, 100 - usedPct);
-      const resetAtMs = body?.five_hour?.resets_at ? Date.parse(body.five_hour.resets_at) : 0;
+      const rawResetIso =
+        body?.five_hour?.resets_at ||
+        body?.limits?.find((l) => l.group === 'session')?.resets_at ||
+        '';
+      const rawResetMs = rawResetIso ? Date.parse(rawResetIso) : 0;
+      // Luon giu moc gio reset 5h (resets_at) do Anthropic OAuth Usage API tra ve de hien thi ⏰ dong nhat tren ca 3 tai khoan
+      const resetAtMs = Number.isFinite(rawResetMs) && rawResetMs > 0 ? rawResetMs : 0;
       const weeklyUsed = Number(
         body?.seven_day?.utilization ??
           body?.limits?.find((l) => l.group === 'weekly')?.percent ??
@@ -533,7 +570,7 @@ export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now()
       return {
         remainingPct,
         usedPct,
-        resetAtMs: Number.isFinite(resetAtMs) ? resetAtMs : 0,
+        resetAtMs,
         weeklyRemainingPct,
         isRateLimited: remainingPct <= 0,
         source: 'anthropic_oauth',
@@ -542,17 +579,8 @@ export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now()
     }
 
     if (res.status === 429) {
-      const retryAfterSec = Number(res.headers.get('retry-after')) || 0;
-      const resetAtMs = retryAfterSec > 0 ? nowMs + retryAfterSec * 1000 : nowMs + 3600 * 1000;
-      return {
-        remainingPct: 0,
-        usedPct: 100,
-        resetAtMs,
-        weeklyRemainingPct: null,
-        isRateLimited: true,
-        source: 'anthropic_429_header',
-        updatedAtMs: nowMs,
-      };
+      logStructured('warn', 'usage_endpoint_throttled_429', { profileId: profile.id });
+      return null;
     }
   } catch (err) {
     logStructured('warn', 'anthropic_quota_fetch_failed', { profileId: profile.id, error: err?.message });
@@ -591,6 +619,11 @@ export async function syncLiveQuotas(opts = {}) {
         } else if (q.remainingPct > 0 && state.frozenUntil[p.id]) {
           delete state.frozenUntil[p.id];
         }
+        updated = true;
+      } else if (state.quotaCache?.[p.id]?.source === 'anthropic_429_header') {
+        // Tu dong xoa cache 0% gia do loi quy chup HTTP 429 cua endpoint /api/oauth/usage truoc day
+        delete state.quotaCache[p.id];
+        delete state.frozenUntil[p.id];
         updated = true;
       }
     } catch (err) {
@@ -759,12 +792,17 @@ export function getStatusReport(opts = {}) {
     const resetTimeFormatted = effectiveResetMs > nowMs ? formatLocalTimeHHMM(effectiveResetMs) : '';
     const resetRemainHuman = effectiveResetMs > nowMs ? formatRemainDuration(effectiveResetMs - nowMs) : '';
 
+    const assignedRepoCount = repoAssignments.filter((r) => r.account === p.id).length;
+    const isParallelActive = !isFrozen && (p.id === state.activeProfileId || assignedRepoCount > 0);
+
     return {
       ...p,
       isActive: p.id === state.activeProfileId,
+      isParallelActive,
+      assignedRepoCount,
       status: isFrozen
         ? `LIMIT 0% (Mở ${resetTimeFormatted || `${freezeRemainMin}p`})`
-        : p.id === state.activeProfileId
+        : isParallelActive
           ? `ACTIVE (${remainingPct}%)`
           : `READY (${remainingPct}%)`,
       isFrozen,
