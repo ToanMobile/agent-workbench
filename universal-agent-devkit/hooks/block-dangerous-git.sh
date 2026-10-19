@@ -760,11 +760,15 @@ def do_backups():
 
 STR_LITERAL = re.compile(r"\x22((?:[^\x22\\]|\\.)*)\x22|\x27((?:[^\x27\\]|\\.)*)\x27|`((?:[^`\\]|\\.)*)`")
 
-def git_in_literals(code):
+def git_in_literals(code, allow=None):
     """python -c / node -e source: its string literals, split into words, as git would get them
     ([\x27git\x27,\x27push\x27,\x27--force\x27] or \x27git reset --har HEAD\x27). The word after `git` and its
     global options is the subcommand; the words after it go through danger_in_git (abbreviations
-    included). Only danger_in_git: a literal that merely names a new branch is not blocked."""
+    included). Issue #8: checkout / switch / worktree also go through solo_branch_rule, so a script is no way round the
+    one-branch rule (allow: the DEVKIT_ALLOW_BRANCH of the command, default the exported one). The words of ALL literals are one list, so
+    only the flag-shaped rules run on it: `branch NAME` and the checkout path rule read positional words and would take the next literal for an operand.
+    ponytail: no positional rules on a script, a script that only `git branch NAME`s passes, until the words are split per call."""
+    allow = ALLOW_BRANCH[0] if allow is None else allow
     words = []
     for m in STR_LITERAL.finditer(code):
         words += next((g for g in m.groups() if g is not None), "").split()
@@ -776,9 +780,30 @@ def git_in_literals(code):
             j += 2 if (words[j] in GIT_OPTS_WITH_ARG and "=" not in words[j]) else 1
         if j < len(words):
             reason = danger_in_git(words[j], words[j + 1:])
+            if not reason and words[j] in ("checkout", "switch", "worktree"):
+                first = next((x for x in range(j + 1, len(words)) if not words[x].startswith("-")), len(words) - 1)
+                nxt = next((x for x in range(first + 1, len(words)) if not words[x].startswith("-")), len(words))
+                reason = solo_branch_rule(words[j], words[j + 1:nxt], CUR_DIR[0], allow)   # the flags and the first operand of THIS call, not the later literals of the script
             if reason:
                 return reason
     return None
+
+def inline_codes(rest):
+    """Every word an interpreter may take as a script (issue #8), read fail closed: a flag word whose last letter takes the script (-c -e -E -p -r: the next
+    word), a letter c / e inside a cluster with the script glued behind it (-cCODE, -Ic CODE), --eval=CODE / --print=CODE and --eval / --print CODE.
+    No flag table: a word that is not a script (python -Wonce, perl -Isrc) is only scanned for git, and the scan goes on to the real -c / -e after it."""
+    out = []
+    for j, a in enumerate(rest):
+        nxt = rest[j + 1:j + 2]
+        if a.startswith("--"):
+            if a.split("=", 1)[0] in ("--eval", "--print"):
+                out += [a.split("=", 1)[1]] if "=" in a else nxt
+        elif a.startswith("-") and len(a) > 1:
+            if a[-1] in "ceEpr":
+                out += nxt
+            k = next((k for k in range(1, len(a) - 1) if a[k] in "ce"), 0)   # the first c / e: every later suffix is inside this one (linear, not quadratic)
+            out += [a[k + 1:]] if k else []
+    return out
 
 def analyse_simple(tokens, depth):
     tokens = shell_norm.inline_script(tokens)   # sudo -s STR, env -S STR: the command line a wrapper hides becomes words
@@ -851,16 +876,16 @@ def analyse_simple(tokens, depth):
             PENDING_FEED.append(UNREADABLE_CSUBST)   # bash -c "( $(curl ...) )", "if $(...)", "exec $(...)": the command word is generated text
         return danger_in_git(rest[0], rest[1:]) if rest else None
     if prog in AWKS:
-        reason = git_in_literals(" ".join(rest))
+        reason = git_in_literals(" ".join(rest), allow_branch)
         return f"{reason} (gọi qua {prog})" if reason else None
     if prog in INTERPRETERS:
-        for j, a in enumerate(rest):
-            if a in ("-c", "-e", "--eval", "-E", "-r") and j + 1 < len(rest):
-                m = RAW.search(rest[j + 1])
-                if m:
-                    return f"{m.group(1).split()[0]} (gọi qua {prog} {a})"
-                reason = git_in_literals(rest[j + 1])
-                return f"{reason} (gọi qua {prog} {a})" if reason else None
+        for code in inline_codes(rest):
+            m = RAW.search(code)
+            if m:
+                return f"{m.group(1).split()[0]} (gọi qua {prog})"
+            reason = git_in_literals(code, allow_branch)
+            if reason:
+                return f"{reason} (gọi qua {prog})"
         return None
     if prog == "watch":
         j = 0
@@ -1144,43 +1169,7 @@ def outside_single_quotes(text):
             i += 1
     return "".join(out)
 
-def drop_comments(text):
-    """The text without its shell comments: a # that begins a word, outside quotes, up to the end of its line. A # inside a word
-    (a#b, $#, an escaped space before it, the ) that ends a substitution), inside ${ } or inside backticks is data, as in bash.
-    Quotes, ${ or a backtick still open at the end: from where the first of them opened the text stays whole (fail closed), the comments before it
-    are dropped (15/10 r6: the whole text kept its comments, and the apostrophe of one paired with a later real quote in the scanners after this).
-    2026-10-10: shlex dropped everything after any #,
-    so a command after a comment line or after a#b was never judged; the first fix still read an escaped space, a CR, a ) and a
-    # inside ${ } or backticks as a word start (independent review)."""
-    out, i, n, q, brace, bt, esc = [], 0, len(text), None, 0, False, False
-    base = (0, 0)   # (chunks of out, index in text) where the last stretch with nothing open began
-    while i < n:
-        c = text[i]
-        if q is None and not (brace or bt):
-            base = (len(out), i)
-        prev_esc, esc = esc, False
-        if q is None:
-            if c == "\\" and i + 1 < n:
-                out.append(text[i:i + 2]); i += 2; esc = True; continue
-            if c in "\x27\x22":
-                q = "$\x27" if c == "\x27" and i and text[i - 1] == "$" else c
-            elif c == "`":
-                bt = not bt
-            elif c == "{" and i and text[i - 1] == "$":
-                brace += 1
-            elif c == "}" and brace:
-                brace -= 1
-            elif c == "#" and not (brace or bt) and (i == 0 or (not prev_esc and text[i - 1] in " \t\n;&|(")):
-                while i < n and text[i] != "\n":
-                    i += 1
-                continue
-        else:
-            if c == "\\" and q != "\x27" and i + 1 < n:
-                out.append(text[i:i + 2]); i += 2; continue
-            if c == q[-1]:
-                q = None
-        out.append(c); i += 1
-    return "".join(out[:base[0]]) + text[base[1]:] if (q or brace or bt) else "".join(out)
+drop_comments = shell_norm.drop_comments   # one copy for both guards (issue #7)
 
 # ── Text fed to a shell on stdin (2026-10-09, tests/gates/test_git_guard_shell_feed.sh) ──────────────────────────────
 # `echo STR | bash`, `bash <<< STR`, `… | xargs sh -c`: the shell runs what it reads, so it is analysed like a -c string when
@@ -1512,7 +1501,7 @@ CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd[:_up
 reason = analyse(cmd) or (PENDING_FEED[0] if PENDING_FEED else None)
 if not reason and not do_backups():
     reason = "không sao lưu được file trước khi restore"
-if reason and reason in SOLO_HIT:
+if reason and any(reason.startswith(h) for h in SOLO_HIT):
     print(f"BLOCKED: {cmd!r} — {reason}. Luật \"1 dev, 1 nhánh\" (DevKit): làm thẳng trên nhánh hiện tại. "
           "Đưa code lên remote: merge/ff vào nhánh local bằng một lệnh riêng (kiểm exit code), rồi "
           "`git push origin <nhánh>`; không push `<sha>:<nhánh>` mà local chưa chứa. Nhánh/worktree mới chỉ khi "
