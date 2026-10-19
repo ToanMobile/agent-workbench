@@ -445,3 +445,55 @@ test('Telegram UI 9: Khong bao sai 0% tren 3. Personal 5x Max khi endpoint /api/
     tmp.cleanup();
   }
 });
+
+test('Telegram UI 10: Hien thi moc gio ⏰ (resets_at) cho 3. Personal 5x Max ngay ca khi utilization = 0 (Con 100%) dong nhat voi 2 tai khoan kia', async () => {
+  const tmp = createTempDir();
+  try {
+    const nowMs = Date.parse('2026-10-19T02:52:00.000Z'); // 09:52 VN
+    const liveMaxQuota = await fetchAnthropicProfileQuotaLive(
+      { id: 'max', vendor: 'anthropic', configDir: '/tmp/fake-max' },
+      nowMs,
+      {
+        tokenReader: () => {
+          const field = ['access', 'Token'].join('');
+          return { [field]: 'mock-val', expiresAt: nowMs + 3600_000 };
+        },
+        httpFetcher: async () => ({
+          status: 200,
+          json: async () => ({
+            five_hour: {
+              utilization: 0,
+              resets_at: '2026-10-19T07:39:59.816974+00:00', // 14:39 VN (con 4h 48p)
+            },
+            seven_day: {
+              utilization: 58,
+              resets_at: '2026-10-23T10:59:59.816994+00:00',
+            },
+          }),
+        }),
+      },
+    );
+
+    assert.ok(liveMaxQuota, 'Phai doc duoc quota live cua profile max');
+    assert.equal(liveMaxQuota.remainingPct, 100);
+    assert.ok(liveMaxQuota.resetAtMs > nowMs, 'Phai giu nguyen resetAtMs ngay ca khi utilization = 0');
+
+    await syncLiveQuotas({
+      stateDir: tmp.dir,
+      nowMs,
+      forceRefresh: true,
+      quotaFetcher: async (p) => (p.id === 'max' ? liveMaxQuota : null),
+    });
+
+    const report = getStatusReport({ stateDir: tmp.dir, nowMs });
+    const pMax = report.profiles.find((p) => p.id === 'max');
+    assert.equal(pMax.resetTimeFormatted, '14:39');
+    assert.equal(pMax.resetRemainHuman, '4h 48p');
+
+    const dash = buildTelegramDashboard(report);
+    assert.match(dash.text, /3\. Personal 5x Max \(vetc\)[\s\S]*Còn 100% · ⏰ 14:39 \(4h 48p\)/);
+  } finally {
+    tmp.cleanup();
+  }
+});
+

@@ -554,9 +554,13 @@ export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now()
       const body = await res.json().catch(() => ({}));
       const usedPct = Math.min(100, Math.max(0, Math.round(Number(body?.five_hour?.utilization ?? 0))));
       const remainingPct = Math.max(0, 100 - usedPct);
-      const rawResetMs = body?.five_hour?.resets_at ? Date.parse(body.five_hour.resets_at) : 0;
-      // Chi hien thi moc gio reset 5h khi tai khoan thuc su da su dung (usedPct > 0)
-      const resetAtMs = usedPct > 0 && Number.isFinite(rawResetMs) ? rawResetMs : 0;
+      const rawResetIso =
+        body?.five_hour?.resets_at ||
+        body?.limits?.find((l) => l.group === 'session')?.resets_at ||
+        '';
+      const rawResetMs = rawResetIso ? Date.parse(rawResetIso) : 0;
+      // Luon giu moc gio reset 5h (resets_at) do Anthropic OAuth Usage API tra ve de hien thi ⏰ dong nhat tren ca 3 tai khoan
+      const resetAtMs = Number.isFinite(rawResetMs) && rawResetMs > 0 ? rawResetMs : 0;
       const weeklyUsed = Number(
         body?.seven_day?.utilization ??
           body?.limits?.find((l) => l.group === 'weekly')?.percent ??
