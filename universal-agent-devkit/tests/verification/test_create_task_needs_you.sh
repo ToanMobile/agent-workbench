@@ -74,7 +74,8 @@ HUMAN_AC="- [ ] Mở DOCX 20 MB trên thiết bị thật không crash
 rc=$(run --title "🧪 [test] viewer: DOCX lớn trên máy thật" --problem "Chưa đo." --ac "$HUMAN_AC")
 [ "$rc" = 0 ] && [ "$(q 'helper is not None and "Mở DOCX 20 MB trên thiết bị thật không crash" in helper[helper.index("--action") + 1]')" = True ] \
   && [ "$(q 'body.startswith("## Cần người\n")')" = True ] \
-  && ok "AC that only a person can do is detected and marked" || fail "rc=$rc helper=$(q 'helper') out=$(cat "$TMP/out")"
+  && [ "$(q 'helper[helper.index("--next") + 1]')" = "dán bằng chứng vào issue rồi đóng issue" ] \
+  && ok "AC that only a person can do is detected and marked (next: close the issue)" || fail "rc=$rc helper=$(q 'helper') out=$(cat "$TMP/out")"
 
 # 2b. AC trộn (lane còn phần code + một dòng cần máy thật): KHÔNG đánh dấu (bước kế là của lane), chỉ in gợi ý.
 rc=$(run --title "🐛 [bug] viewer: crash DOCX lớn" --problem "Crash." --ac "$DEVICE_AC")
@@ -116,6 +117,20 @@ rc=$(run --title "🐛 [bug] viewer: crash DOCX lớn" --problem "Crash." --ac "
 rc=$(run --title "🐛 [bug] viewer: crash DOCX lớn" --problem "Crash." --ac "- [ ] Mở DOCX trên thiết bị thật <!-- ghi chú -->")
 [ "$rc" = 0 ] && [ "$(q 'helper')" = None ] && [ "$(q 'bool(create)')" = True ] && grep -q "\-\-needs-you" "$TMP/out" \
   && ok "an auto-detected AC line with a machine marker is skipped with a warning" || fail "auto skip rc=$rc helper=$(q 'helper') out=$(cat "$TMP/out")"
+
+# 11. --needs-you không kèm --needs-you-next: bước sau mặc định "kéo thẻ về Ready" (có thể còn phần của lane).
+rc=$(run --title "🐛 [bug] viewer: crash DOCX lớn" --problem "Crash." --ac "$DEVICE_AC" --needs-you "$ACTION")
+[ "$rc" = 0 ] && [ "$(q 'helper[helper.index("--next") + 1]')" = "gỡ nhãn needs-you rồi kéo thẻ về Ready" ] \
+  && ok "explicit --needs-you defaults next to back-to-Ready" || fail "explicit default next: $(q 'helper')"
+# 12. Thẻ tự đánh dấu mà có --needs-you-next: giá trị người gọi đưa thắng mặc định "đóng issue".
+rc=$(run --title "🧪 [test] viewer: DOCX lớn trên máy thật" --problem "Chưa đo." --ac "$HUMAN_AC" --needs-you-next "comment kết quả đo")
+[ "$rc" = 0 ] && [ "$(q 'helper[helper.index("--next") + 1]')" = "comment kết quả đo" ] \
+  && ok "an explicit --needs-you-next wins on an auto-marked card" || fail "auto next override: $(q 'helper')"
+
+# 13. --needs-you-next rỗng là lỗi của người gọi (64), không lặng lẽ lấy mặc định; calls.jsonl rỗng.
+rc=$(run --title "🐛 [bug] viewer: crash DOCX lớn" --problem "Crash." --ac "$DEVICE_AC" --needs-you "$ACTION" --needs-you-next "")
+[ "$rc" = 64 ] && [ ! -s "$FAKE_LOG" ] && ok "an empty --needs-you-next is refused before anything is created" \
+  || fail "empty next rc=$rc log=$(cat "$FAKE_LOG")"
 
 # 10. Tạo nhanh từ một câu tóm tắt: một dòng không tách được phần code của lane với bước của người, nên không tự đánh dấu.
 rc=$(run "fix lỗi crash trên thiết bị thật")

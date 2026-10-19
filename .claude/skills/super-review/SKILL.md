@@ -367,7 +367,7 @@ two complete builds. In order, no shortcuts:
      Card → **Blocked** with the 🙋 template: `Why blocked` quotes the gate's
      `human-gate:` lines; `To unblock` = review PR #<P> and merge it yourself, OR comment
      `done` to approve (the next wave re-runs the gate, which merges). Mark the card:
-     `super-board-needs-you.py mark --repo <owner/name> --issue <N> --action "Review và merge PR #<P>" --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"`.
+     `super-board-needs-you.py mark --repo <owner/name> --issue <N> --action "Review PR #<P>" --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"`.
    - **Exit 8 — 🙋 needs you.** Migrations for a database outside
      `migrations.allowed_envs`, an allowed migrate command that failed, or a declared
      human-only step. Card → **Blocked** with the 🙋 template

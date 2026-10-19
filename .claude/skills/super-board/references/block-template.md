@@ -98,7 +98,8 @@ python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue <N
   `done` comment resumes it (`super-board-approval.py` `DONE`), so "done rồi" or "xong" do nothing.
 - `--action` is one line of at most 500 characters: shorten long commands, the full ones stay in the Block comment.
 - Never unmark a card a lane may still do. The person who did the step removes the label, or runs
-  `super-board-needs-you.py unmark --repo <owner/name> --issue <N>` (the comment becomes a ✅ note).
+  `super-board-needs-you.py unmark --repo <owner/name> --issue <N>` (the comment, and the `🙋` line of a
+  `## Cần người` body section, become ✅ notes).
 - Exit 1 = a gh call failed: retry once, then name it in the lane report. The Block still stands.
 
 A card dropped on purpose uses the same template with the header `[<role>] [report] 🤷 dropped ·

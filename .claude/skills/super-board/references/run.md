@@ -732,8 +732,9 @@ Before planning any wave, `super-board-wave-plan.sh` reports five lists the orch
   the same once at start (`reclaim_stranded_building`).
 - **`resume`** — 🙋 `Blocked` cards whose newest pinned request has a later `done`
   from a human with verified write, maintain or admin permission, for the current
-  PR head. Move each to **Review**; `needs-you:done` may be kept as a display label
-  only. Do not create or copy approval evidence. The Reviewer re-runs the gate,
+  PR head. Move each to **Review** and run `super-board-needs-you.py unmark --repo <owner/name>
+  --issue <N>` (the person's step is done; the legacy runner's sweep and `/super-build` skip a card
+  that still carries `needs-you`); `needs-you:done` may be kept as a display label only. Do not create or copy approval evidence. The Reviewer re-runs the gate,
   which independently checks the request, current policy/steps and head, verifies
   the build, and runs allowed migrations. New code or a newer request needs fresh
   human approval; a label or old bare comment cannot bypass that hold.

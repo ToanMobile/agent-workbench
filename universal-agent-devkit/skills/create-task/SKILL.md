@@ -53,7 +53,8 @@ Thêm `--needs-you "<ĐÚNG việc người phải làm>"` (và `--needs-you-nex
 `.claude/bin/super-board-needs-you.py mark` của repo: nhãn `needs-you` (hiện ngay trên thẻ) + một comment
 `🙋 Cần bạn: … · xong thì …`. Không truyền cờ mà MỌI dòng AC khớp cụm "chỉ người làm được" (thiết bị thật, playtest,
 Play Console, IARC, đặt secret, chốt thiết kế…) thì tự đánh dấu bằng dòng AC đầu tiên; AC trộn (lane còn phần code)
-chỉ in gợi ý, QA/Review đánh dấu khi thẻ dừng ở bước của người; `--no-needs-you` tắt việc này.
+chỉ in gợi ý, QA/Review đánh dấu khi thẻ dừng ở bước của người; `--no-needs-you` tắt việc này. Thẻ tự đánh
+dấu có bước sau mặc định "dán bằng chứng vào issue rồi đóng issue" (không còn việc cho lane).
 Repo chưa có helper: vẫn gắn nhãn lúc tạo issue và in cảnh báo. Đánh dấu thất bại: issue đã tạo, exit 3.
 ```bash
 python3 universal-agent-devkit/scripts/governance/create_task.py \

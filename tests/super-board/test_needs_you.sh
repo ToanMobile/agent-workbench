@@ -73,7 +73,7 @@ if route == "graphql":
                        "nodes": [{"id": f["id"], "name": f["name"], "dataType": f["dataType"]} for f in proj["fields"]]},
             "views": {"pageInfo": more,
                       "nodes": [{"id": v["id"], "name": v["name"], "layout": v["layout"],
-                                 "fields": {"pageInfo": {"hasNextPage": False},
+                                 "fields": {"pageInfo": {"hasNextPage": bool(state.get("more_view_fields"))},
                                             "nodes": [{"id": i, "name": names[i]} for i in v["visible"]]}}
                                 for v in proj["views"]]}}
     out({"data": {"repositoryOwner": {"projectV2": node}}})
@@ -97,7 +97,11 @@ if m and method == "GET" and state.get("garbage"):
     save(); print("<html>proxy error</html>"); sys.exit(0)
 if m and method == "GET":
     issue = state["issues"][m.group(1)]
-    out({"number": int(m.group(1)), "state": "open", "labels": [{"name": n} for n in issue["labels"]]})
+    out({"number": int(m.group(1)), "state": "open", "body": issue.get("body", ""),
+         "labels": [{"name": n} for n in issue["labels"]]})
+if m and method == "PATCH":
+    state["issues"][m.group(1)]["body"] = field("body")
+    out({"number": int(m.group(1))})
 m = re.fullmatch(r"repos/[^/]+/[^/]+/issues/(\d+)/labels", route)
 if m and method == "POST":
     issue = state["issues"][m.group(1)]
@@ -137,7 +141,7 @@ import json, os, sys
 state = {
     "calls": [], "next_id": 100,
     "labels": {"needs-you": {"name": "needs-you", "color": "ededed", "description": ""}},
-    "issues": {"7": {"labels": json.loads(sys.argv[1]), "comments": json.loads(sys.argv[2])}},
+    "issues": {"7": {"labels": json.loads(sys.argv[1]), "comments": json.loads(sys.argv[2]), "body": ""}},
     "project": {"id": "PVT_1",
                 "fields": [{"id": "F_T", "name": "Title", "dataType": "TITLE"},
                            {"id": "F_S", "name": "Status", "dataType": "SINGLE_SELECT"},
@@ -219,6 +223,56 @@ python3 "$HELPER" mark --repo o/r --issue 7 --action "Chạy playtest với 5 ng
 [ "$rc" -eq 0 ] && [ "$(q "len([c for c in s['issues']['7']['comments'] if c['body'].startswith('<!-- super-board:needs-you -->')])")" = 1 ] \
   && [ "$(q "len([c for c in s['issues']['7']['comments'] if c['body'].startswith('<!-- super-board:needs-you:done -->')])")" = 1 ] \
   && ok "a new mark after unmark posts a fresh comment and keeps the resolved one" || fail "re-mark: rc=$rc $(q "s['issues']['7']['comments']")"
+
+# 6g. unmark đổi dòng 🙋 trong mục `## Cần người` của body sang ✅ (thẻ tạo bằng createTask), giữ nguyên phần còn lại.
+reset_state '["bug"]' '[]'
+python3 - <<'PY'
+import json, os
+p = os.environ["FAKE_GH_STATE"]; s = json.load(open(p))
+s["issues"]["7"]["body"] = "## Cần người\n🙋 Cần bạn: cắm máy thật · xong thì đóng issue\n\n## Problem\nx\n\n## Blocked by\n- None.\n"
+json.dump(s, open(p, "w"))
+PY
+python3 "$HELPER" mark --repo o/r --issue 7 --action "$ACTION" >/dev/null 2>&1
+python3 "$HELPER" unmark --repo o/r --issue 7 >"$TMP/out6g" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ "$(q "s['issues']['7']['body']")" = "$(printf '## Cần người\n✅ Đã xong phần cần người: cắm máy thật · xong thì đóng issue\n\n## Problem\nx\n\n## Blocked by\n- None.')" ] \
+  && ok "unmark turns the body's 🙋 line into ✅ and keeps the rest" || fail "unmark body rc=$rc: $(q "s['issues']['7'].get('body')")"
+# Body không có mục Cần người nhưng mục khác có dòng 🙋: unmark không sửa body (0 PATCH, body giữ nguyên).
+set_body() { python3 - "$1" <<'PY'
+import json, os, sys
+p = os.environ["FAKE_GH_STATE"]; s = json.load(open(p)); s["issues"]["7"]["body"] = json.loads(sys.argv[1]); json.dump(s, open(p, "w"))
+PY
+}
+body_patches() { q "len([c for c in s['calls'] if c[:3] == ['api', '-X', 'PATCH'] and c[3] == 'repos/o/r/issues/7'])"; }
+reset_state '["bug"]' '[]'
+set_body '"## Problem\n🙋 Cần bạn: x\n"'
+python3 "$HELPER" unmark --repo o/r --issue 7 >/dev/null 2>&1
+[ "$(body_patches)" = 0 ] && [ "$(q "s['issues']['7']['body'] == '## Problem\n🙋 Cần bạn: x\n'")" = True ] \
+  && ok "unmark leaves a body without the section alone, even with a 🙋 line elsewhere" || fail "unmark patched a body with no section"
+
+# Body CRLF, mục Cần người đứng SAU một mục khác cũng có dòng 🙋: chỉ dòng trong mục đổi, giữ nguyên \r\n; lần hai 0 PATCH.
+reset_state '["bug"]' '[]'
+set_body '"## Problem\r\n🙋 Cần bạn: khác\r\n\r\n## Cần người\r\n🙋 Cần bạn: cắm máy thật · xong thì đóng issue\r\n\r\n## Blocked by\r\n- None.\r\n"'
+python3 "$HELPER" unmark --repo o/r --issue 7 >/dev/null 2>&1
+[ "$(q "s['issues']['7']['body'] == '## Problem\r\n🙋 Cần bạn: khác\r\n\r\n## Cần người\r\n✅ Đã xong phần cần người: cắm máy thật · xong thì đóng issue\r\n\r\n## Blocked by\r\n- None.\r\n'")" = True ] \
+  && ok "unmark changes only the section line of a CRLF body and keeps CRLF" || fail "CRLF body: $(q "repr(s['issues']['7']['body'])")"
+python3 - <<'PY'
+import json, os
+p = os.environ["FAKE_GH_STATE"]; s = json.load(open(p)); s["calls"] = []; json.dump(s, open(p, "w"))
+PY
+python3 "$HELPER" unmark --repo o/r --issue 7 >/dev/null 2>&1
+[ "$(body_patches)" = 0 ] && ok "a second unmark writes no body" || fail "second unmark patched the body again"
+
+# Mục Cần người CRLF dài 30 dòng, không có dòng 🙋 (sửa tay trên web): unmark phải xong nhanh (regex không backtrack hàm mũ).
+reset_state '["bug"]' '[]'
+set_body "$(python3 -c 'import json; print(json.dumps("## Cần người\r\n" + "".join("- dòng ghi chú %d\r\n" % i for i in range(30))))')"
+python3 - "$HELPER" <<'PY'; rc=$?
+import subprocess, sys
+try:
+    sys.exit(subprocess.run(["python3", sys.argv[1], "unmark", "--repo", "o/r", "--issue", "7"], capture_output=True, timeout=10).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+PY
+[ "$rc" -eq 0 ] && ok "unmark on a long CRLF section without 🙋 finishes in time" || fail "unmark on a long CRLF section rc=$rc (124 = over 10 s)"
 
 # 6b. gh trả exit 0 nhưng không phải JSON (trang HTML của proxy): exit 1 có thông báo, không traceback.
 reset_state '["bug"]' '[]'
@@ -317,6 +371,15 @@ PY
 python3 "$HELPER" board --owner o --project 1 >"$TMP/out9" 2>&1; rc=$?
 [ "$rc" -eq 1 ] && [ "$(q "len([c for c in s['calls'] if 'updateProjectV2View' in ' '.join(c)])")" = 0 ] \
   && ok "board refuses a project with more views than one page" || fail "paged board rc=$rc: $(cat "$TMP/out9")"
+# Một view có hơn một trang trường: gửi visibleFieldIds thiếu sẽ ẩn trường, nên cũng phải dừng.
+reset_state '[]' '[]'
+python3 - <<'PY'
+import json, os
+p = os.environ["FAKE_GH_STATE"]; s = json.load(open(p)); s["more_view_fields"] = True; json.dump(s, open(p, "w"))
+PY
+python3 "$HELPER" board --owner o --project 1 >"$TMP/out10" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && [ "$(q "len([c for c in s['calls'] if 'updateProjectV2View' in ' '.join(c)])")" = 0 ] \
+  && ok "board refuses a view with more fields than one page" || fail "paged view fields rc=$rc: $(cat "$TMP/out10")"
 
 [ "$FAILS" -eq 0 ] || { echo "$FAILS failed"; exit 1; }
 echo "all passed"

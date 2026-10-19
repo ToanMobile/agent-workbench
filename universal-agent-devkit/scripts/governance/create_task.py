@@ -68,13 +68,16 @@ PROJECT_REGISTRY = {
 DEFAULT_REPO = "ToanMobile/agent-workbench"
 
 # Thẻ chỉ người làm được (máy thật, playtest, store, secret, quyết định): nhãn + comment do
-# .claude/bin/super-board-needs-you.py ở thư mục gốc của checkout đang đứng gắn (nó nhận --repo); ba hằng
-# dưới đây chỉ dùng khi chưa có helper đó.
+# .claude/bin/super-board-needs-you.py ở thư mục gốc của checkout đang đứng gắn (nó nhận --repo); nhãn, màu và
+# mô tả dưới đây chỉ dùng khi chưa có helper đó.
 NEEDS_YOU_HELPER = Path(".claude/bin/super-board-needs-you.py")
 NEEDS_YOU_LABEL = "needs-you"
 NEEDS_YOU_COLOR = "D93F0B"
 NEEDS_YOU_DESC = "🙋 Cần người thực hiện bước chỉ con người được làm"
+# Bước sau mặc định: --needs-you (có thể còn phần của lane) về Ready; thẻ tự đánh dấu vì MỌI dòng AC là việc
+# của người thì xong là hết việc, kéo về Ready chỉ khiến lane build một thẻ không có gì để build.
 NEEDS_YOU_NEXT = "gỡ nhãn needs-you rồi kéo thẻ về Ready"
+NEEDS_YOU_DONE_NEXT = "dán bằng chứng vào issue rồi đóng issue"
 # ponytail: danh sách cụm từ chỉ là đường dự phòng khi không truyền --needs-you; trần = các cụm dưới đây,
 # thêm cụm (hoặc bỏ cụm) khi thấy thẻ bị đánh dấu sai/thiếu.
 HUMAN_ONLY = re.compile("|".join([
@@ -349,7 +352,8 @@ def main():
     parser.add_argument("--ticket", type=int, help="Số thứ tự ticket trong file (ví dụ: 1, 2, 3...)")
     parser.add_argument("--dry-run", action="store_true", help="Chạy thử không tạo thật trên GitHub")
     parser.add_argument("--needs-you", help="Thẻ cần người: ĐÚNG việc người phải làm (máy thật, playtest, store, secret, quyết định)")
-    parser.add_argument("--needs-you-next", default=NEEDS_YOU_NEXT, help="Người làm xong thì làm gì tiếp")
+    parser.add_argument("--needs-you-next", help="Người làm xong thì làm gì tiếp (mặc định: --needs-you thì "
+                        f"'{NEEDS_YOU_NEXT}', tự đánh dấu thì '{NEEDS_YOU_DONE_NEXT}')")
     parser.add_argument("--no-needs-you", action="store_true", help="Không tự đánh dấu cần người dù AC khớp cụm từ")
     args = parser.parse_args()
 
@@ -385,7 +389,7 @@ def main():
     try:
         if needs_you is not None:
             needs_you = clean_needs_you(needs_you, "--needs-you")
-        needs_you_next = clean_needs_you(args.needs_you_next, "--needs-you-next")
+        needs_you_next = clean_needs_you(NEEDS_YOU_NEXT if args.needs_you_next is None else args.needs_you_next, "--needs-you-next")
     except ValueError as e:
         print(f"❌ {e}", file=sys.stderr)
         sys.exit(64)
@@ -401,6 +405,8 @@ def main():
         elif hit:
             try:
                 needs_you = clean_needs_you(f"Làm bước chỉ người làm được trong AC: {hit[:300]}", "dòng AC")
+                if args.needs_you_next is None:
+                    needs_you_next = NEEDS_YOU_DONE_NEXT
                 print(f"   🔎 AC cần người: \"{hit}\" — truyền --needs-you \"<việc cụ thể>\" để ghi rõ hơn, "
                       "hoặc --no-needs-you nếu lane tự làm được.")
             except ValueError as e:

@@ -13,7 +13,7 @@ comment, tìm bằng marker ẩn:
     🙋 Cần bạn: <action> · xong thì <next>
 
 Chạy lại với cùng nội dung: không ghi gì. Việc khác: sửa đúng comment đó. `unmark` gỡ
-nhãn và đổi comment thành ghi chú đã xong.
+nhãn, đổi comment (và dòng 🙋 trong mục `## Cần người` của body, nếu có) thành ghi chú ✅.
 
 Vì sao nhãn thôi chưa đủ: ngày 19/10 không view board nào hiện nhãn, nên `board` thêm
 trường Labels vào từng view rồi đọc lại view để xác nhận.
@@ -128,15 +128,22 @@ def remove_label(repo, issue, name):
 
 
 def read_issue(repo, issue):
-    labels = [l["name"] for l in (gh("api", f"repos/{repo}/issues/{issue}") or {}).get("labels", [])]
+    data = gh("api", f"repos/{repo}/issues/{issue}") or {}
+    labels = [l["name"] for l in data.get("labels", [])]
     pages = gh("api", f"repos/{repo}/issues/{issue}/comments", "--paginate", "--slurp") or []
     comments = [c for page in pages for c in (page if isinstance(page, list) else [page])]
-    return labels, comments
+    return labels, comments, data.get("body") or ""
+
+
+# Dòng 🙋 đầu tiên trong mục `## Cần người` của body (createTask viết mục này), trước heading `## ` kế tiếp.
+# `[^\r\n]*` chứ không `.*`: `.` nuốt cả `\r`, nên với body CRLF (GitHub web lưu thế) mỗi dòng có hai cách khớp
+# và regex backtrack theo hàm mũ khi mục không có dòng 🙋 (24 dòng mất 28 s, đo 19/10).
+SECTION_LINE = re.compile(r"(^##[ \t]+Cần người[ \t]*\r?\n(?:(?!##[ \t])[^\r\n]*\r?\n)*?)🙋 Cần bạn:", re.M)
 
 
 def mark(repo, issue, action, nxt, dry):
     done = [f"label {ensure_label(repo, dry)}"]
-    labels, comments = read_issue(repo, issue)
+    labels, comments, _ = read_issue(repo, issue)
     if LABEL not in labels:
         if not dry:
             gh("api", f"repos/{repo}/issues/{issue}/labels", "-f", f"labels[]={LABEL}")
@@ -163,16 +170,23 @@ def mark(repo, issue, action, nxt, dry):
 
 
 def unmark(repo, issue, dry):
-    labels, comments = read_issue(repo, issue)
+    labels, comments, body = read_issue(repo, issue)
     done = []
+    # ponytail: đọc body rồi PATCH cả body, một sửa tay chen giữa hai bước bị ghi đè; đọc lại ngay trước PATCH
+    # nếu thấy mất sửa đổi. mark sau unmark không đặt lại body (body giữ ✅ như lịch sử).
+    resolved = SECTION_LINE.sub(r"\1✅ Đã xong phần cần người:", body, count=1)
+    if resolved != body:
+        if not dry:
+            gh("api", "-X", "PATCH", f"repos/{repo}/issues/{issue}", "-f", f"body={resolved}")
+        done.append("body section resolved")
     if LABEL in labels:
         if not dry:
             remove_label(repo, issue, LABEL)
         done.append("needs-you removed")
     for c in comments:
-        body = c.get("body") or ""
-        if body.startswith(MARKER):
-            note = body[len(MARKER):].strip().replace("🙋 Cần bạn:", "✅ Đã xong phần cần người:", 1)
+        text = c.get("body") or ""
+        if text.startswith(MARKER):
+            note = text[len(MARKER):].strip().replace("🙋 Cần bạn:", "✅ Đã xong phần cần người:", 1)
             if not dry:
                 gh("api", "-X", "PATCH", f"repos/{repo}/issues/comments/{c['id']}", "-f", f"body={DONE_MARKER}\n{note}")
             done.append("comment resolved")
