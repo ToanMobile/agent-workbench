@@ -162,7 +162,7 @@ done
 hint_text="$(lane_worktree_hint build 5) $(lane_worktree_hint review 5)"
 wave_text=$(sed -n '/^const WORKTREE_STEP = /,/^].join/p' "$WAVE" | tr -d '`\\' | sed 's/${n}/5/g; s/${lane}/build/g')
 missing=""
-for clause in "git fetch origin" "never plain git worktree add or EnterWorktree" "agent-kit worktree add .claude/worktrees/issue-5-build issue-5-<slug> --lane=build --base=origin/<config.base_branch>" \
+for clause in "Worktree: after git fetch origin, create it from the repo root ONLY with the DevKit" "never plain git worktree add or EnterWorktree" "agent-kit worktree add .claude/worktrees/issue-5-build issue-5-<slug> --lane=build --base=origin/<config.base_branch>" \
               "agent-kit worktree add .claude/worktrees/issue-5-review --lane=review --base=origin/<PR branch>" "git checkout --detach origin/<PR branch>" \
               "python3 .agents/devkit/scripts/git/worktree.py add" "Exit 4 = under the disk floor" "Exit 1 naming a worktree that holds the branch" \
               "git worktree remove <path>"; do

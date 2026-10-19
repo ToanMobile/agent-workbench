@@ -464,12 +464,11 @@ worktree_disk_room() {
   # Worktree lane đã có (git còn nhận nó: không phải thư mục rỗng sót lại, cũng không phải .git trỏ vào admin dir đã bị prune) thì
   # add --lane dùng lại, không tốn thêm đĩa. Kiểm không được (không DevKit, python lỗi): coi là còn chỗ, nhưng ghi log (OCR 19/10).
   [ -e "$1/.git" ] && git -C "$1" rev-parse --git-dir >/dev/null 2>&1 && return 0
-  # Under the floor a full `worktree gc` runs once, then rests SB_DISK_GC_BACKOFF_S (300 s): a gc that freed nothing frees nothing more
-  # a tick later, and every lane of every tick ran one (OCR batch 19/10). While it rests only the free space is read, so a disk a
-  # person cleans is seen at the next check. DISK_GC_NEXT lives in the runner shell (dispatch_lane is called there, not in a subshell).
-  local rc=0 err now gc=1 rest
-  rest=${SB_DISK_GC_BACKOFF_S:-300}
-  case "$rest" in ''|*[!0-9]*) rest=300 ;; esac   # `5m` / `abc` in the arithmetic below would end the runner
+  # Under the floor a full `worktree gc` runs once, then rests 300 s: a gc that freed nothing frees nothing more a tick later, and every
+  # lane of every tick ran one (OCR batch 19/10). While it rests only the free space is read, so a disk a person cleans is seen at the
+  # next check. DISK_GC_NEXT lives in the runner shell (dispatch_lane is called there, not in a subshell). No knob for the 300 s: an
+  # odd value (5m, 08) in the arithmetic ended the whole run loop (review 19/10).
+  local rc=0 err now gc=1
   now=$(date +%s)
   [ "$now" -lt "${DISK_GC_NEXT:-0}" ] && gc=0
   err=$(python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" "$gc" 2>&1 >/dev/null <<'PY'
@@ -487,7 +486,7 @@ if free is not None and m.DISK_MIN_GIB and free < m.DISK_MIN_GIB:   # gc only wh
 PY
   ) || rc=$?
   case "$rc:$gc" in
-    4:1) DISK_GC_NEXT=$((now + rest)) ;;   # gc ran and the disk is still under the floor: rest
+    4:1) DISK_GC_NEXT=$((now + 300)) ;;   # gc ran and the disk is still under the floor: rest
     0:*) DISK_GC_NEXT=0 ;;                 # back above the floor: a later fall under it gets its gc at once
   esac
   case "$rc" in
