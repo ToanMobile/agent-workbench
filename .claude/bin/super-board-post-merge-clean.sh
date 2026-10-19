@@ -329,7 +329,7 @@ hold_head() {
   [ "$got" = "$3" ] || { HOLD_WHY="GitHub refs/pull/$2/head is ${got:-<missing>}, not the merged $3"; return 1; }
 }
 # untidy <wt>: kit giữ worktree sau khi tidy đã cất và trả phần rác về HEAD: đặt lại đúng các thay đổi đó (patch + file đã xoá), worktree
-# "được giữ" thì như cũ (review 19/10). Bản cất vẫn còn ở $TIDY_NAME.txt.
+# "được giữ" thì như cũ (review 19/10). Trả lại đủ: bỏ bản cất ($TIDY_NAME.*); trả lại hỏng hay dở: bản cất còn ở $TIDY_NAME.txt.
 untidy() {
   local ok=1 p
   # Rác đã dời sang $TIDY_NAME.dropped/ về chỗ cũ trước tiên (đường dẫn riêng, không đụng patch): luôn trả, kể cả khi patch hỏng (OCR).
