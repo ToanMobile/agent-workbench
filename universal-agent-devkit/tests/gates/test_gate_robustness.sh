@@ -177,4 +177,30 @@ JSON
   git checkout -q -- src/core.py
 done
 
+# ── A11: a suite that times out gets SIGTERM first, so its EXIT trap removes its temp dir (2026-10-19: the timeout's bare
+# SIGKILL skipped every trap; ~8 GiB of fixture dirs piled up in TMPDIR, the disk hit 99 %) ─────────────────────────────
+mkdir -p "$TMP/a11"
+cat > "$TMP/a11/suite.sh" <<'EOF'
+#!/usr/bin/env bash
+T="$(mktemp -d "$1/leak.XXXXXX")"
+trap 'rm -rf "$T"' EXIT
+echo started
+sleep 60
+EOF
+res="$("$PY" - "$GATE" "$TMP/a11" <<'EOF' 2>&1
+import importlib.util, os, sys, time
+spec = importlib.util.spec_from_file_location("gate", sys.argv[1])
+g = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(g)
+d = sys.argv[2]
+t0 = time.monotonic()
+rc, out, timed_out = g.run_in_group(f"bash {d}/suite.sh {d}", d, dict(os.environ), 2)
+left = [n for n in os.listdir(d) if n.startswith("leak.")]
+print(f"timed_out={timed_out} left={left} secs={time.monotonic() - t0:.1f} started={'started' in out}")
+EOF
+)"
+printf '%s\n' "$res" | grep -q "timed_out=True left=\[\] .*started=True" \
+  && ok "A11: a timed-out suite ran its EXIT trap (TERM before KILL): no temp dir left" \
+  || bad "A11: a timed-out suite left its temp dir: $(printf '%s' "$res" | tail -2)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_robustness: all tests passed" || { echo "❌ test_gate_robustness: $FAILS failed"; exit 1; }

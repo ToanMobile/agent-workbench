@@ -12,6 +12,7 @@ DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SC="$DEVKIT_DIR/scripts/governance/scratch_cleanup.py"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+export DEVKIT_TEST_TMP_ROOT="$TMP/no-test-tmp"   # --prune also sweeps test temp dirs: never the real TMPDIR here
 FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -155,5 +156,76 @@ rc=$?
 [ "$rc" = 0 ] && [ -f "$TMP/swap2/$A/precious" ] && grep -q "removed from the opened dir: True" "$TMP/out" \
   && ok "TOCTOU: a swap after the open removes from the opened dir, never through the new symlink" \
   || fail "post-open swap (rc=$rc): $(tail -3 "$TMP/out")"
+
+# ── Test temp sweep (2026-10-19: suites killed before their EXIT trap left ~8 GiB of fixture dirs in TMPDIR, disk 99 %).
+# Only a TEST_TMP_PREFIXES name, a real dir, nothing in its tree newer than the TTL, no process holding it; a worktree inside
+# whose admin repo lives elsewhere is pruned there. Never an anonymous mktemp name, a production prefix, a symlink, a file.
+TR="$TMP/troot"
+tmk() { mkdir -p "$TR/$1/sub" && echo x > "$TR/$1/sub/f"; age "$TR/$1" "$2"; }
+sweep() { DEVKIT_SCRATCH_ROOT="$ROOT" DEVKIT_CLAUDE_PROJECTS="$PROJ" DEVKIT_TEST_TMP_ROOT="$TR" python3 -I "$SC" "$@" > "$TMP/out" 2>&1; }
+tsetup() {
+  [ -d "$TR" ] && { chflags -R nouchg "$TR" 2>/dev/null; chmod -R u+rwX "$TR" 2>/dev/null; }
+  rm -rf "$TR" "$TMP/admin" "$TMP/outside2"; mkdir -p "$TR"
+  tmk hookctx.OLD1 10                                                   # stale test dir: removed
+  tmk hookctx.NEW1 0                                                    # fresh: kept
+  tmk hookgr.DEEP 10; echo y > "$TR/hookgr.DEEP/sub/new"                # old top, a file deep inside written now: kept
+  tmk tmp.ANON 10                                                       # anonymous mktemp name: cannot be proven, kept
+  tmk agpm-run-PROD 10                                                  # antigravity-pm production prefix: kept
+  tmk devkit-idem-XXXXXX.RO 10; chflags uchg "$TR/devkit-idem-XXXXXX.RO/sub/f" 2>/dev/null; chmod 555 "$TR/devkit-idem-XXXXXX.RO/sub"
+  mkdir -p "$TMP/outside2" && echo keep > "$TMP/outside2/precious"; ln -s "$TMP/outside2" "$TR/hookte.LINK"
+  echo f > "$TR/hookwg.FILE"; age "$TR/hookwg.FILE" 10                  # a file, not a dir: kept
+  tmk hookrestore.HELD 10                                               # a process has its cwd in it: kept
+  git init -q "$TMP/admin" && git -C "$TMP/admin" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+  git -C "$TMP/admin" worktree add -q --detach "$TR/sb-ghread-test.WT" 2>/dev/null; age "$TR/sb-ghread-test.WT" 10
+  [ -f "$TR/sb-ghread-test.WT/.git" ] || fail "fixture: the worktree was not created (the prune case would pass vacuously)"
+  git -C "$TMP/admin" worktree add -q --detach "$TMP/admin-other-wt" 2>/dev/null
+  rm -rf "$TMP/admin-other-wt"                                          # admin's OTHER worktree, folder missing: not ours
+}
+kept_all() {
+  [ -d "$TR/hookctx.NEW1" ] && [ -d "$TR/hookgr.DEEP" ] && [ -d "$TR/tmp.ANON" ] && [ -d "$TR/agpm-run-PROD" ] \
+    && [ -L "$TR/hookte.LINK" ] && [ -f "$TMP/outside2/precious" ] && [ -f "$TR/hookwg.FILE" ] && [ -d "$TR/hookrestore.HELD" ]
+}
+if ! command -v lsof >/dev/null 2>&1 && [ ! -x /usr/sbin/lsof ]; then
+  ok "sweep: (skipped: no lsof on this host; only the no-lsof case below applies)"
+else
+tsetup
+(cd "$TR/hookrestore.HELD" && exec sleep 60) & HOLD=$!
+LSOF_BIN="$(command -v lsof || echo /usr/sbin/lsof)"
+for _ in $(seq 1 100); do   # wait until lsof itself sees the cwd (a loaded host starts the subshell late)
+  "$LSOF_BIN" -nPw -p "$HOLD" -Fn 2>/dev/null | grep -q 'hookrestore.HELD' && break; python3 -c 'import time; time.sleep(0.1)'
+done
+sweep --sweep-tmp; rc=$?
+kill "$HOLD" 2>/dev/null; wait "$HOLD" 2>/dev/null
+[ "$rc" = 0 ] && [ ! -e "$TR/hookctx.OLD1" ] && ok "sweep: a stale test temp dir (known prefix, older than 6 h, not held) is removed" \
+  || fail "sweep left a stale test dir (rc=$rc): $(tail -3 "$TMP/out")"
+[ ! -e "$TR/devkit-idem-XXXXXX.RO" ] && ok "  … one with a read-only subdir and an immutable file is removed too" || fail "sweep could not remove a read-only / uchg leftover"
+[ ! -e "$TR/sb-ghread-test.WT" ] && ! git -C "$TMP/admin" worktree list --porcelain | grep -q 'sb-ghread-test.WT' \
+  && git -C "$TMP/admin" worktree list --porcelain | grep -q 'admin-other-wt' \
+  && ok "  … a fixture worktree whose admin repo is elsewhere is removed and only ITS registration is dropped there" \
+  || fail "worktree leftover: dir=$([ -e "$TR/sb-ghread-test.WT" ] && echo kept || echo gone) $(git -C "$TMP/admin" worktree list | tr '\n' ';')"
+kept_all && ok "  … fresh, deep-fresh, anonymous, production-prefix, symlink, plain-file and process-held entries are kept" \
+  || fail "sweep removed something it cannot prove: $(ls -a "$TR" | tr '\n' ' ')"
+rm -f "$ROOT/.devkit-test-tmp-sweep"   # a clean hourly slot for the rate-limit pair below
+tsetup; sweep --prune --keep "$F"; [ ! -e "$TR/hookctx.OLD1" ] && ok "prune (SessionStart) runs the sweep too" || fail "prune did not sweep: $(tail -2 "$TMP/out")"
+tsetup; sweep --prune --keep "$F"; [ -d "$TR/hookctx.OLD1" ] && ok "  … at most once an hour (many sessions start: one lsof, not one per session)" || fail "prune swept twice within the hour"
+sweep --sweep-tmp; [ ! -e "$TR/hookctx.OLD1" ] && ok "  … while --sweep-tmp always sweeps" || fail "--sweep-tmp was rate-limited"
+fi
+tsetup; DEVKIT_LSOF=/nonexistent/lsof sweep --sweep-tmp; rc=$?
+[ "$rc" = 0 ] && [ -d "$TR/hookctx.OLD1" ] && ok "sweep: no lsof answer → nothing removed (cannot tell what is held)" || fail "sweep removed without an lsof answer"
+accepted=""
+for bad in nan -1 inf; do sweep --sweep-tmp --tmp-ttl-hours "$bad"; [ "$?" = 2 ] || accepted="$accepted $bad"; done
+[ -z "$accepted" ] && ok "--tmp-ttl-hours nan / negative / inf is refused (exit 2)" || fail "--tmp-ttl-hours accepted:$accepted"
+missing="$(python3 -I - "$DEVKIT_DIR/scripts/governance" "$(git -C "$DEVKIT_DIR" rev-parse --show-toplevel)" <<'PY'
+import subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import scratch_cleanup as sc
+for p in sc.TEST_TMP_PREFIXES:
+    hits = subprocess.run(["git", "-C", sys.argv[2], "grep", "-lF", "--", p], capture_output=True, text=True).stdout.split()
+    if not [h for h in hits if not h.endswith(("scratch_cleanup.py", "test_scratch_cleanup.sh")) and "test" in h]:
+        print(p)
+PY
+)"
+[ -z "$missing" ] && ok "every TEST_TMP_PREFIXES name is a template some test of this repo uses" || fail "prefixes no test uses: $missing"
+[ -d "$TR" ] && { chflags -R nouchg "$TR" 2>/dev/null; chmod -R u+rwX "$TR" 2>/dev/null; }
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_scratch_cleanup: all passed" || { echo "❌ test_scratch_cleanup: $FAILS failed"; exit 1; }

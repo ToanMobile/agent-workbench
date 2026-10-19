@@ -7,7 +7,7 @@
 set -u
 
 SRC_DEVKIT="$(cd "$(dirname "$0")/../.." && pwd -P)"
-TMP="$(mktemp -d)"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/install-cli-test.XXXXXX")"   # a named template: a killed run is swept (scratch_cleanup)
 TMP="$(cd "$TMP" && pwd -P)"
 trap 'rm -rf "$TMP"' EXIT
 FAILS=0

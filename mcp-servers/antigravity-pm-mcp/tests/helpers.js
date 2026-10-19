@@ -26,18 +26,33 @@ process.env.ANTIGRAVITY_PM_GLOBAL_CONFIG = NO_GLOBAL_CONFIG;
 // doi sang Argon, bai-hoc-14-09 #3 da sinh 3 tien trinh agy that voi prompt TRIEN KHAI.
 // Duong dan tu mkdtemp (khong doan truoc duoc, /tmp dung chung khong cho ai dat san file thuc thi o do); so project cua IDE cung la thu muc tam rong,
 // de test khong doc ~/.gemini that (chinh sach EAGER/TURBO, project da dang ky).
-const NO_AGY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-test-no-agy-'));
+// Thu muc tam tao qua tmpDir() duoc xoa khi tien trinh test thoat, ke ca khi test quen goi cleanup(), hong giua chung, hay bi
+// SIGTERM/SIGINT/SIGHUP (post-fix-gate gui TERM truoc KILL khi het gio; Node khong chay 'exit' khi chet vi tin hieu). 19/10/2026:
+// hon 700 thu muc agpm-test-*, agpm-s-/-shot-/-src-* sot lai trong TMPDIR, moi lan npm test them 6.
+const CREATED = new Set();
+const removeCreated = () => { for (const dir of CREATED) cleanup(dir); };
+process.once('exit', removeCreated);
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+  // don xong roi thoat voi ma 128+tin hieu (gui lai tin hieu thi listener khac, vd cua node:test, co the nuot mat)
+  process.once(sig, () => { removeCreated(); process.exit(128 + os.constants.signals[sig]); });
+}
+
+/** Thu muc tam cua mot test, tu xoa khi tien trinh thoat. */
+export function tmpDir(prefix = 'agpm-test-') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  CREATED.add(dir);
+  return dir;
+}
+
+const NO_AGY_DIR = tmpDir('agpm-test-no-agy-');
 process.env.ANTIGRAVITY_PM_AGY = path.join(NO_AGY_DIR, 'agy');
 process.env.ANTIGRAVITY_PM_PROJECTS_DIR = path.join(NO_AGY_DIR, 'ide-projects');
-process.once('exit', () => fs.rmSync(NO_AGY_DIR, { recursive: true, force: true }));
 // Trang thai PM (task.json) nam o HOME: test khong duoc ghi vao ~/.antigravity-pm that.
-process.env.ANTIGRAVITY_PM_STATE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-state-home-'));
-const STATE_HOME = process.env.ANTIGRAVITY_PM_STATE_HOME;
-process.once('exit', () => fs.rmSync(STATE_HOME, { recursive: true, force: true }));
+process.env.ANTIGRAVITY_PM_STATE_HOME = tmpDir('agpm-state-home-');
 
 /** Tao cau hinh chung gia (dong vai ~/.antigravity-pm.json) cho mot test. */
 export function tmpGlobalConfig(config = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-home-'));
+  const dir = tmpDir('agpm-home-');
   const file = path.join(dir, '.antigravity-pm.json');
   fs.writeFileSync(file, JSON.stringify(config, null, 2));
   process.env.ANTIGRAVITY_PM_GLOBAL_CONFIG = file;
@@ -52,7 +67,7 @@ export function tmpGlobalConfig(config = {}) {
 }
 
 export function tmpProject(config = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-test-'));
+  const dir = tmpDir('agpm-test-');
   fs.writeFileSync(path.join(dir, '.antigravity-pm.json'), JSON.stringify(config, null, 2));
   return dir;
 }
@@ -64,7 +79,10 @@ export function writeFile(file, content) {
 }
 
 export function cleanup(dir) {
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* khong sao */ }
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+    CREATED.delete(dir);   // da xoa: ten tro lai cho mkdtemp cua tien trinh khac, luc thoat khong xoa lai
+  } catch { /* xoa hong: van theo doi, luc thoat thu lai */ }
 }
 
 /** Task mau da co du de test cong chan. */
