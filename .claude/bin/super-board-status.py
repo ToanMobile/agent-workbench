@@ -440,16 +440,40 @@ def paginate_items(
 PERSON_LABELS = ("needs-you", "human-gated")
 
 
-def waiting_on_person(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def waiting_on_person(items: list[dict[str, Any]], no_device: bool = False) -> list[dict[str, Any]]:
     """#95: Ready and Blocked cards only a person can move on (needs-you / human-gated, any case), newest first. The runner and the
     planner never take such a card from Ready, so they get their own group instead of hiding among the Block reasons. Not QA or
-    Review: a lane works those (the resume path brings an approved 🙋 card to Review with its label possibly still on)."""
+    Review: a lane works those (the resume path brings an approved 🙋 card to Review with its label possibly still on).
+    With no_device, also the cards held for a real device (held_for_device)."""
     def waits(i: dict[str, Any]) -> bool:
         names = [str(l).lower() for l in i.get("labels") or []]
         back_in_loop = any(n == "loop:rebase" or n.startswith("loop:rebuild-") for n in names)   # super-board-run.sh FOR_A_PERSON_JQ
         return any(n in PERSON_LABELS for n in names) and not (i.get("status") == "Ready" and back_in_loop)
 
-    return sorted((i for i in items if i.get("status") in ("Ready", "Blocked") and waits(i)), key=lambda x: -x["number"])
+    return sorted((i for i in items if (i.get("status") in ("Ready", "Blocked") and waits(i)) or (no_device and held_for_device(i))),
+                  key=lambda x: -x["number"])
+
+
+def held_for_device(i: dict[str, Any]) -> bool:
+    """#95: its QA needs a real device (needs-device, any case) — in QA, or in Ready labelled `qa`. The runner and the planner hold
+    it while none is online (super-board-run.sh DEVICE_JQ). Not Review; a Ready card without `qa` is built first."""
+    names = [str(l).lower() for l in i.get("labels") or []]
+    return "needs-device" in names and (i.get("status") == "QA" or (i.get("status") == "Ready" and "qa" in names))
+
+
+def no_real_device(items: list[dict[str, Any]]) -> bool:
+    """True when a card is held for a device and super-board-device-online.py finds no real one. adb is asked only then."""
+    if not any(held_for_device(i) for i in items):
+        return False
+    helper = Path(__file__).with_name("super-board-device-online.py")
+    try:
+        proc = subprocess.run([sys.executable, str(helper)], capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"warning: could not ask whether a real device is online ({exc}); needs-device cards shown as waiting", file=sys.stderr)
+        return True
+    if proc.returncode != 0 and proc.stderr.strip():
+        print(f"note: {proc.stderr.strip()}", file=sys.stderr)
+    return proc.returncode != 0
 
 
 def render_collapsed(label: str, lane_items: list[dict[str, Any]]) -> str:
@@ -705,12 +729,15 @@ def main() -> int:
 
     # ── waiting on a person (#95): its own group, out of the block reasons ──
     print()
-    print("▎Waiting on you  (needs-you / human-gated — Ready: remove the label to release it · 🙋 Blocked: comment done)")
-    person = waiting_on_person(items)
+    print("▎Waiting on you  (needs-you / human-gated — Ready: remove the label to release it · 🙋 Blocked: comment done"
+          " · 📱 needs-device: plug in a real device)")
+    no_device = no_real_device(items)
+    person = waiting_on_person(items, no_device=no_device)
     if not person:
         print("   (none)")
     for it in person:
-        print(f"   #{it['number']:<5} {it['status']:<9} {it['title']}")
+        device = " · 📱 no real device online" if no_device and held_for_device(it) else ""
+        print(f"   #{it['number']:<5} {it['status']:<9} {it['title']}{device}")
     person_numbers = {it["number"] for it in person}
 
     # ── block reasons ──

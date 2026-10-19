@@ -11,6 +11,7 @@ import {
   sendTelegramNotification,
   handleTelegramCommand,
   handleTelegramCallback,
+  refuseForeignTelegramChat,
   buildTelegramDashboard,
   buildReplyKeyboardMarkup,
   ensureTelegramBotMenu,
@@ -95,15 +96,24 @@ export async function processIncomingTelegramUpdates(updates, opts = {}) {
       const fromChatId = String(cbq.message?.chat?.id || cbq.from?.id || '');
       if (!fromChatId) continue;
 
-      if (!cfg.chatId) {
-        saveTelegramConfig(stateDir, { chatId: fromChatId });
-        cfg = loadTelegramConfig(stateDir);
-        logStructured('info', 'telegram_chat_id_bound', { chatId: fromChatId });
-      } else if (String(cfg.chatId) !== fromChatId) {
+      const cbData = String(cbq.data || '');
+      const boundChat = String(cfg.chatId || '');
+      if ((boundChat && boundChat !== fromChatId) || (!boundChat && cbData.startsWith('sb:'))) {
+        try {
+          await refuseForeignTelegramChat(apiCaller, cfg.botToken, cbq);
+        } catch (err) {
+          logStructured('warn', 'telegram_answer_cbq_failed', { error: err?.message });
+        }
         continue;
       }
 
-      const cbResult = await handleTelegramCallback(cbq, { stateDir });
+      if (!boundChat) {
+        saveTelegramConfig(stateDir, { chatId: fromChatId });
+        cfg = loadTelegramConfig(stateDir);
+        logStructured('info', 'telegram_chat_id_bound', { chatId: fromChatId });
+      }
+
+      const cbResult = await handleTelegramCallback(cbq, { stateDir, ...(opts.callbackOpts || {}) });
       try {
         await apiCaller(cfg.botToken, 'answerCallbackQuery', {
           callback_query_id: cbq.id,

@@ -730,7 +730,9 @@ usual template — and, per §4, a `blocked-by:` line.
 
 Before planning any wave, `super-board-wave-plan.sh` reports the lists below the orchestrator must act on
 **before** launching (`waiting` — Ready cards labelled `needs-you` / `human-gated`, #95 — is only reported: a person
-releases them by removing the label; one back in the lifecycle with `loop:rebase` / `loop:rebuild-N` is work again):
+releases them by removing the label; one back in the lifecycle with `loop:rebase` / `loop:rebuild-N` is work again. So are
+`needs-device` cards whose QA is next, in QA or in Ready with `qa`, while no real device is online: a phone plugged in
+releases them):
 
 - **`sweep`** — `Blocked` cards whose blockers have all closed. Move each to `Ready` and comment
   naming what cleared it (`clearedBy` carries the numbers). They then join this very wave.
@@ -782,7 +784,7 @@ Different hash on the same card resets the counter — the bot recognizes that p
 
 The loop exits cleanly when:
 - All active-pipeline columns are empty; OR
-- Only Blocked/Done cards remain (Backlog is not part of a run); OR
+- Only Blocked/Done cards remain, or cards waiting for a person or a real device (Backlog is not part of a run); OR
 - A halt gate fires.
 
 ## Run manifest

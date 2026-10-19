@@ -238,7 +238,9 @@ def git_gate_wiring(target: Path, score: Score):
                                   "checks (add `bash .agents/devkit/scripts/git/git-pre-commit.sh \"$@\" || exit 1` to it; "
                                   "see `agent-kit githooks status`)"))
     elif state == "absent":
-        info(tr("Chưa có hook pre-commit (agent-kit githooks install) — bỏ qua", "No pre-commit hook (agent-kit githooks install) — skipped"))
+        # --no-githooks is a choice, but a project without the gate must not read 100/100 (issue #21): costs points, never fails the run.
+        score.check(False, "", tr("Chưa có hook pre-commit: commit không qua kiểm tĩnh (agent-kit githooks install)",
+                                  "No pre-commit hook: commits skip the static checks (agent-kit githooks install)"), warn_only=True)
 
 
 def project_wiring(target: Path, score: Score):
@@ -260,6 +262,11 @@ def project_wiring(target: Path, score: Score):
                 tr("Mọi hook trong `.claude/settings.json` đều tồn tại", "Every hook in `.claude/settings.json` exists"),
                 tr(f"Hook đăng ký nhưng không có file (chạy lại agent-kit init): {sorted(set(missing))[:5]}",
                    f"Registered hooks with no file (re-run agent-kit init): {sorted(set(missing))[:5]}"))
+    # `"hooks": {}` registers nothing: every guard and gate is off while the check above passes vacuously (issue #21).
+    score.check(bool((settings or {}).get("hooks")),
+                tr("`.claude/settings.json` đăng ký ít nhất một hook", "`.claude/settings.json` registers at least one hook"),
+                tr("`.claude/settings.json` không đăng ký hook nào (\"hooks\" rỗng) — chạy lại agent-kit init",
+                   "`.claude/settings.json` registers no hook (\"hooks\" is empty) — re-run agent-kit init"))
     # Every DevKit command and skill the profile allows is linked in (an untracked link
     # removed by a merge or checkout leaves /qc, /fixbugs … dead without any error).
     prof, _ = load_json(target / ".agents" / "active-profile" / "profile.json")
