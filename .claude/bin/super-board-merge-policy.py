@@ -106,6 +106,18 @@ def matches(path: str, globs) -> str | None:
     return None
 
 
+def added_text(diff: str) -> str:
+    """Added lines of a unified diff, lower-cased, every whitespace run as one space.
+
+    Every `+` line counts, `+++ b/file` headers included: dropping `+++` lines also dropped an added line `++i; ...`
+    (`+++i; ...` in the diff), and a header can only add matches (a path holding a keyword goes to a human).
+    Collapsing whitespace makes `DROP\\tTABLE`, `DROP  TABLE` or a keyword split over two added lines still match
+    `drop table`.
+    """
+    out = [line[1:] for line in diff.split("\n") if line.startswith("+")]
+    return " ".join(" ".join(out).lower().split())
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
@@ -120,12 +132,15 @@ def main() -> int:
         return 2
     if not isinstance(meta, dict) or "files" not in meta:
         return 2
-    diff = open(a.diff, errors="replace").read()
+    # newline="" and split("\n") keep a lone CR, VT, FF or NEL inside its added line: universal newlines or
+    # splitlines() would cut the text after it into a line without "+", hiding its keywords from always_human.
+    # github-read writes UTF-8; the locale's codec would turn U+2028/NEL into non-space text and split a keyword.
+    with open(a.diff, encoding="utf-8", errors="replace", newline="") as f:
+        diff = f.read()
 
     labels = {(l.get("name") or "").lower() for l in meta.get("labels") or []}
     paths = [f.get("path") or "" for f in meta.get("files") or []]
-    added = "\n".join(l[1:] for l in diff.splitlines()
-                      if l.startswith("+") and not l.startswith("+++")).lower()
+    added = added_text(diff)
     body = meta.get("body") or ""
 
     policy = cfg.get("merge_policy") or {}
@@ -165,7 +180,7 @@ def main() -> int:
                         for g in [matches(p, rule.get("paths"))] if g), None)
         if not hit:
             hit = next((f"keyword \"{k}\" in an added line" for k in rule.get("keywords") or []
-                        if k.lower() in added), None)
+                        if " ".join(k.lower().split()) in added), None)
         if hit:
             human.append({"category": cat, "why": hit})
 
