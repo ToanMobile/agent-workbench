@@ -124,11 +124,10 @@ try:
     spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
-    probe = m.git
-except Exception as e:   # an old or broken DevKit is no network fault: its own exit code and its reason
+    r = m.git(".", "ls-remote", "--exit-code", "--heads", "origin", "refs/heads/" + sys.argv[2], check=False)
+except Exception as e:   # an old or broken DevKit (load or call) is no network fault: its own exit code and its reason
     print(f"DevKit worktree.py unusable: {e!r}", file=sys.stderr)
     sys.exit(3)
-r = probe(".", "ls-remote", "--exit-code", "--heads", "origin", "refs/heads/" + sys.argv[2], check=False)
 print((r.stderr or "").strip(), file=sys.stderr)
 sys.exit(r.returncode)
 PY
@@ -139,8 +138,8 @@ PY
   if [[ "$LS_RC" -eq 0 ]]; then
     echo "error: branch $WORKER_BRANCH already exists on origin — refusing to clobber" >&2
     exit 64
-  elif [[ "$LS_RC" -eq 3 ]]; then
-    echo "error: ${LS_WHY:-DevKit worktree.py unusable} — repair the DevKit install (agent-kit init) in $REPO_DIR" >&2
+  elif [[ "$LS_RC" -eq 3 || "$LS_RC" -eq 127 ]]; then   # 127: no python3 to run the DevKit at all
+    echo "error: ${LS_WHY:-DevKit worktree.py unusable} — repair the DevKit install (agent-kit init) / python3 in $REPO_DIR" >&2
     exit 64
   elif [[ "$LS_RC" -ne 2 ]]; then
     echo "error: cannot reach origin to check $WORKER_BRANCH (git ls-remote exit $LS_RC${LS_WHY:+: $LS_WHY})" >&2
