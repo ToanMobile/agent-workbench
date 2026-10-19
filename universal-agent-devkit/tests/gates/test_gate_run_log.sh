@@ -80,6 +80,92 @@ def chk(cond, good, why):
     return bool(cond)
 
 
+# Dấu vân tay + lý do thoát. Chạy trước mọi gate thật để RUNLOG_FAILFAST dừng tại oracle này.
+import importlib.util
+_spec = importlib.util.spec_from_file_location("pfg_runlog_unit", GATE)
+_gate = importlib.util.module_from_spec(_spec)
+sys.modules["pfg_runlog_unit"] = _gate
+_spec.loader.exec_module(_gate)
+_FP_A, _FP_B = "a" * 24, "b" * 24
+_sib = os.path.join(TMP, "sib-unit")
+_logdir = os.path.join(_sib, "postfix-gate")
+os.makedirs(_logdir)
+_now = int(time.time())
+_receipt_path = os.path.join(_logdir, "full_pass.json")
+
+
+def _sib_line(**kw):
+    rec = {"v": 1, "epoch": _now, "project": "wt-a", "mode": "full", "exit": 0,
+           "verdict": "PASS", "reused_full_pass": False}
+    rec.update(kw)
+    with open(os.path.join(_logdir, "runs.jsonl"), "w") as f:
+        f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+
+
+def _sib_pass(fingerprint):
+    receipt = {"time": float(_now), "project": os.path.join("parent", "wt-a")}
+    if fingerprint is not None:
+        receipt["fingerprint"] = fingerprint
+    return _gate._sibling_logged_pass(_receipt_path, receipt)
+
+
+_sib_line(fp=_FP_B)
+chk(_sib_pass(_FP_A) is False,
+    "sibling voucher: a full PASS line whose fp differs from the receipt fingerprint does not vouch",
+    "got %r" % (_sib_pass(_FP_A),))
+_sib_line(fp=_FP_A)
+chk(_sib_pass(_FP_A) is True,
+    "sibling voucher: the same fp still vouches for that full PASS",
+    "got %r" % (_sib_pass(_FP_A),))
+_sib_line()
+chk(_sib_pass(_FP_A) is True,
+    "sibling voucher: a line with no fp keeps the old vouch",
+    "got %r" % (_sib_pass(_FP_A),))
+_sib_line(fp="")
+chk(_sib_pass(_FP_A) is True,
+    "sibling voucher: an empty fp is not a fingerprint and keeps the old vouch",
+    "got %r" % (_sib_pass(_FP_A),))
+_sib_line(fp=_FP_B)
+chk(_sib_pass(None) is True,
+    "sibling voucher: a receipt with no fingerprint is not failed closed by a line fp",
+    "got %r" % (_sib_pass(None),))
+
+
+class _Args:
+    session = None
+    transcript = None
+    force_full = False
+
+
+def _log_once(git_name, **kw):
+    git_dir = os.path.join(TMP, git_name)
+    os.makedirs(git_dir, exist_ok=True)
+    try:
+        _gate._log_gate_run(_Args(), kw.pop("exit_code", 0), [], [], {}, [], kw.pop("deferred_by", None),
+                            False, True, kw.pop("cache", None), True, True, False, "proj", git_dir,
+                            read_only=False, log_fp=kw.pop("log_fp", ""), exit_reason=kw.pop("exit_reason", ""))
+    except TypeError as e:
+        return None, "TypeError: %s" % e
+    path = os.path.join(git_dir, "postfix-gate", "runs.jsonl")
+    try:
+        lines = [json.loads(l) for l in open(path) if l.strip()]
+    except OSError as e:
+        return None, "no line: %s" % e
+    return (lines[-1] if lines else None), ""
+
+
+_row, _why = _log_once("unit-pass", log_fp=_FP_A, exit_reason="pass")
+chk(_row is not None and _row.get("fp") == _FP_A and _row.get("exit_reason") == "pass" and _row.get("verdict") == "PASS"
+    and "/" not in json.dumps(_row),
+    "run log records the fingerprint and exit_reason it was given", "row=%r %s" % (_row, _why))
+_row, _why = _log_once("unit-dirty", log_fp="not-a-fingerprint", exit_reason="a/b")
+chk(_row is not None and _row.get("fp") == "" and _row.get("exit_reason") == "" and "/" not in json.dumps(_row),
+    "run log drops a fingerprint or exit_reason that is not a token", "row=%r %s" % (_row, _why))
+_row, _why = _log_once("unit-reused", cache={"used": 1}, log_fp=_FP_A, exit_reason="pass")
+chk(_row is not None and _row.get("verdict") == "REUSED" and _row.get("exit_reason") == "reused" and _row.get("fp") == _FP_A,
+    "a reused full pass records exit_reason reused and keeps the fingerprint", "row=%r %s" % (_row, _why))
+
+
 def git(root, *args):
     return subprocess.run(["git", "-C", root] + list(args), check=True, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, timeout=120).stdout.decode("utf-8", "replace").strip()
@@ -265,9 +351,9 @@ def json_of(out):
 
 def check_fields(label, r, j=None):
     """Shape of one line + agreement with the gate's own --json output."""
-    keys = ("v", "ts", "epoch", "project", "mode", "source", "exit", "verdict", "deferred", "busy", "reused_full_pass",
-            "n_changed", "n_docs", "docs_only", "no_test_only", "suites", "suites_wall_s", "total_wall_s",
-            "force_full", "impacted_run")
+    keys = ("v", "ts", "epoch", "project", "mode", "source", "exit", "verdict", "fp", "exit_reason", "deferred", "busy",
+            "reused_full_pass", "n_changed", "n_docs", "docs_only", "no_test_only", "suites", "suites_wall_s",
+            "total_wall_s", "force_full", "impacted_run")
     missing = [k for k in keys if k not in r]
     extra = [k for k in r if k not in keys and k not in ("suites_cut", "steps")]   # steps: seconds per phase, additive (tests/gates/test_gate_run_steps.sh pins its shape)
     chk(not missing and not extra and r.get("v") == 1, "%s: line has every field and no other (n_code is gone: it read the profile), v=1" % label,
@@ -307,6 +393,12 @@ if recs:
         # the sum, not "> 0": an `exit 0` suite takes ~2 ms on Linux and rounds to 0.00 s (it is > 0 only where a spawn is slower)
         and r["suites_wall_s"] == round(sum(s[2] for s in r["suites"]), 2),
         "docs-only: both suites present with PASS and their seconds", repr(r["suites"]))
+    sys.path.insert(0, os.path.join(KIT, "bin"))
+    import tree_fp as _tree_fp
+    _want_fp = _tree_fp.tree_fingerprint(root)
+    chk(re.fullmatch(r"[0-9a-f]{24}", str(r.get("fp") or "")) and r.get("fp") == _want_fp and r.get("exit_reason") == "pass",
+        "docs-only: fp is this tree's fingerprint and exit_reason is pass",
+        "fp=%r want=%r reason=%r" % (r.get("fp"), _want_fp, r.get("exit_reason")))
 
 # docs + LICENSE + agent state: no_test_only true but docs_only false (the gate's own `docs_only` local is the no_test_only one)
 root = make_repo("state")
@@ -467,8 +559,12 @@ root = make_repo("impacted", impacted=True)
 edit(root, "src/Core.kt", "fun b() = 2\n")
 r0, r1, _ = same_as_off("a run without --full", root, ["--run-tests", "--no-cache", "--json"])
 recs = read_log(root)
-chk(len(recs) == 1 and recs[0]["mode"] == "impacted" and recs[0]["force_full"] is False and recs[0]["exit"] == r1[0],
-    "no --full: mode impacted", repr(recs))
+# mode "impacted" ở đây là "không phải --full". Fixture này không chọn được test (Core.kt + {pytest_nodes}),
+# nên suite chạy lệnh đầy đủ, impacted_run false, và nhánh kết luận là pass.
+chk(len(recs) == 1 and recs[0]["mode"] == "impacted" and recs[0]["force_full"] is False and recs[0]["exit"] == r1[0]
+    and recs[0].get("impacted_run") is False and recs[0].get("exit_reason") == "pass"
+    and re.fullmatch(r"[0-9a-f]{24}", str(recs[0].get("fp") or "")),
+    "no --full: log mode impacted, suites ran in full, exit_reason pass, fp is 24 hex", repr(recs))
 if recs:
     check_fields("impacted", recs[0], json_of(r1[1]))
 
@@ -480,8 +576,9 @@ r0, r1, _ = same_as_off("BUSY", root, ["--run-tests", "--full", "--no-cache", "-
 release_lock(holder)
 recs = read_log(root)
 chk(r1[0] == 4 and len(recs) == 1 and recs[0]["verdict"] == "BUSY" and recs[0]["busy"] is True and recs[0]["exit"] == 4
+    and recs[0].get("exit_reason") == "busy"
     and all(s[1] == "UNTESTED" and s[2] is None for s in recs[0]["suites"]) and recs[0]["suites"],
-    "BUSY: exit 4 kept, verdict BUSY, busy true, suites UNTESTED with no seconds", repr(recs))
+    "BUSY: exit 4 kept, verdict BUSY, exit_reason busy, suites UNTESTED with no seconds", repr(recs))
 if recs:
     check_fields("busy", recs[0], json_of(r1[1]))
 
@@ -491,11 +588,14 @@ subprocess.run([PY, SESSION_LOCK, "--register", "--session", "S2", root], check=
 r0, r1, _ = same_as_off("deferred --full", root, ["--run-tests", "--full", "--session", "S1", "--json"])
 recs = read_log(root)
 chk(r1[0] == 5 and len(recs) == 1 and recs[0]["verdict"] == "DEFERRED" and recs[0]["deferred"] is True and recs[0]["exit"] == 5
-    and recs[0]["mode"] == "full" and recs[0]["source"] == "hook", "deferred --full: exit 5 kept, verdict DEFERRED, mode full", repr(recs))
+    and recs[0].get("exit_reason") == "deferred"
+    and recs[0]["mode"] == "full" and recs[0]["source"] == "hook",
+    "deferred --full: exit 5 kept, verdict DEFERRED, exit_reason deferred, mode full", repr(recs))
 r0, r1, _ = same_as_off("deferred by POSTFIX_GATE_FULL=1 (the Stop hook)", root, ["--run-tests", "--session", "S1"], {"POSTFIX_GATE_FULL": "1"})
 recs = read_log(root)
-chk(r1[0] == 0 and len(recs) == 2 and recs[-1]["verdict"] == "DEFERRED" and recs[-1]["exit"] == 0 and recs[-1]["deferred"] is True,
-    "deferred without --full: exit 0 kept, verdict DEFERRED", repr(recs[-1:]))
+chk(r1[0] == 0 and len(recs) == 2 and recs[-1]["verdict"] == "DEFERRED" and recs[-1]["exit"] == 0 and recs[-1]["deferred"] is True
+    and recs[-1].get("exit_reason") == "deferred",
+    "deferred without --full: exit 0 kept, verdict DEFERRED, exit_reason deferred", repr(recs[-1:]))
 
 root = make_repo("reused")
 edit(root, "docs/guide.md")
@@ -503,22 +603,36 @@ rc1, o1, e1 = run_gate(root, ["--run-tests", "--full"])
 rc2, o2, e2 = run_gate(root, ["--run-tests", "--full"])
 recs = read_log(root)
 chk(rc1 == 0 and rc2 == 0 and len(recs) == 2 and recs[0]["verdict"] == "PASS" and recs[1]["verdict"] == "REUSED"
+    and recs[0].get("exit_reason") == "pass" and recs[1].get("exit_reason") == "reused"
+    and recs[0].get("fp") == recs[1].get("fp") and re.fullmatch(r"[0-9a-f]{24}", str(recs[0].get("fp") or ""))
     and recs[1]["reused_full_pass"] is True and all(s[2] is None for s in recs[1]["suites"]) and recs[1]["suites"]
-    and recs[1]["suites_wall_s"] == 0, "second --full of the same content: verdict REUSED, reused_full_pass, no suite seconds", repr(recs))
+    and recs[1]["suites_wall_s"] == 0,
+    "second --full of the same content: verdict REUSED, same fp, exit_reason reused, no suite seconds", repr(recs))
 
 root = make_repo("fail", suite_a="exit 1")
 edit(root, "src/Core.kt", "fun b() = 2\n")
 r0, r1, _ = same_as_off("a failing suite", root, ["--run-tests", "--full", "--no-cache"])
 recs = read_log(root)
-chk(r1[0] == 1 and len(recs) == 1 and recs[0]["verdict"] == "FAIL" and recs[0]["exit"] == 1 and ["REG-A", "FAIL"] == recs[0]["suites"][0][:2],
-    "a failing suite: exit 1 kept, verdict FAIL", repr(recs))
+chk(r1[0] == 1 and len(recs) == 1 and recs[0]["verdict"] == "FAIL" and recs[0]["exit"] == 1 and recs[0].get("exit_reason") == "fail"
+    and ["REG-A", "FAIL"] == recs[0]["suites"][0][:2],
+    "a failing suite: exit 1 kept, verdict FAIL, exit_reason fail", repr(recs))
 
 root = make_repo("unver")
 put(root + "/other/Elsewhere.kt", "fun x() = 1\n")   # code no rule watches: UNVERIFIED (exit 2)
 r0, r1, _ = same_as_off("UNVERIFIED (uncovered code)", root, ["--run-tests", "--full", "--no-cache"])
 recs = read_log(root)
-chk(r1[0] == 2 and len(recs) == 1 and recs[0]["exit"] == 2 and recs[0]["verdict"] == "UNTESTED",
-    "UNVERIFIED exit 2 is recorded as verdict UNTESTED with exit 2", repr(recs))
+# File nằm ngoài mọi watch: không có test nào khớp, nên lý do là no_match (không phải uncovered).
+chk(r1[0] == 2 and len(recs) == 1 and recs[0]["exit"] == 2 and recs[0]["verdict"] == "UNTESTED"
+    and recs[0].get("exit_reason") == "no_match",
+    "UNVERIFIED exit 2 with no matching test is verdict UNTESTED, exit_reason no_match", repr(recs))
+root = make_repo("gap")
+edit(root, "src/Core.kt", "fun b() = 2\n")
+put(root + "/other/Elsewhere.kt", "fun x() = 1\n")
+rc, out, err = run_gate(root, ["--run-tests", "--full", "--no-cache"])
+recs = read_log(root)
+chk(rc == 2 and len(recs) == 1 and recs[0]["exit"] == 2 and recs[0]["verdict"] == "UNTESTED"
+    and recs[0].get("exit_reason") == "uncovered",
+    "a watched edit plus a file no rule watches: exit 2, exit_reason uncovered", repr(recs))
 
 root = make_repo("none")
 edit(root, "docs/guide.md")

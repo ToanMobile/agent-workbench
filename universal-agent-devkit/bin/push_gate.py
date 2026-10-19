@@ -556,9 +556,8 @@ def check(cwd, rev="HEAD", tag_remote=None, linked=False):
     # biên nhận của main (không có, hoặc cũ: bản `worktree finish` chép về lần trước) không phủ code sắp push. Biên nhận của từng
     # linked worktree được xét theo cùng luật như của main, trừ một điểm: file nào "không cần test" do MA TRẬN VÀ CHECKLIST CỦA MAIN
     # quyết (xem `rules_dir` trong _own_check), worktree không tự miễn test cho mình.
-    # ponytail: một lần gate --full FAIL mới hơn ở worktree anh em trên cùng nội dung không thu hồi biên nhận PASS cũ hơn (dòng
-    # runs.jsonl không ghi fingerprint để gắn FAIL với nội dung); nâng cấp: ghi fingerprint vào runs.jsonl và từ chối biên nhận có
-    # dòng full non-PASS mới hơn cùng fingerprint, khi thấy một suite flaky được push qua đường này.
+    # ponytail: runs.jsonl đã ghi `fp` (19/10) nhưng một dòng full non-PASS mới hơn cùng fingerprint vẫn chưa thu hồi biên nhận PASS
+    # cũ hơn. Từ chối khi thấy một suite flaky được push qua đường này; làm sớm có thể chặn UNTESTED hoặc thiếu thiết bị của cùng cây.
     top = toplevel(cwd)[0]
     rc, sha = git(top, "rev-parse", "--verify", "-q", rev + "^{commit}") if top else (1, "")
     skipped = []
