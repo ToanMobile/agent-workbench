@@ -875,7 +875,8 @@ def main(argv=None) -> int:
         print(exc, file=sys.stderr)
         return LOCK_BUSY_EXIT
     finally:
-        if captured:
+        # --no-device-lock must not create a device-lock file, and must not SIGSTOP an emulator this capture did not own.
+        if captured and device_lock_enabled(args.no_device_lock):
             maybe_stop_emulator(stop_serial, stop_avd)
 
 
