@@ -486,8 +486,8 @@ if free is not None and m.DISK_MIN_GIB and free < m.DISK_MIN_GIB:   # gc only wh
 PY
   ) || rc=$?
   case "$rc:$gc" in
-    4:1) DISK_GC_NEXT=$((now + 300)) ;;   # gc ran and the disk is still under the floor: rest
     0:*) DISK_GC_NEXT=0 ;;                 # back above the floor: a later fall under it gets its gc at once
+    *:1) DISK_GC_NEXT=$((now + 300)) ;;   # gc ran: still under the floor, or it failed itself (OCR 19/10) — rest either way
   esac
   case "$rc" in
     0) ;;

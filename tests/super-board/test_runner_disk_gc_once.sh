@@ -23,6 +23,8 @@ def free_gib(path):
 def _make_room(main, wt):
     with open(os.environ["FAKE_GC_LOG"], "a") as f:
         f.write("gc\n")
+    if os.environ.get("FAKE_GC_FAIL"):
+        raise RuntimeError("gc broke")
     if free_gib(wt) < DISK_MIN_GIB:
         raise SystemExit(4)   # NO_ROOM, as the DevKit's _make_room
 PY
@@ -57,6 +59,12 @@ export FAKE_FREE_GIB=1
 DISK_GC_NEXT=$(( $(date +%s) - 1 ))   # the 300 s rest has passed
 worktree_disk_room "$REPO_ROOT/.claude/worktrees/issue-7-build"; rc=$?
 [ "$rc" != 0 ] && [ "$(gcs)" = 3 ] && ok "after the pause, still under the floor: gc runs again (once)" || fail "after the pause: rc $rc, gc $(gcs)"
+
+# ── 3b (OCR 19/10): a gc that itself fails (a traceback, rc 1) starts the rest too — no full gc on every following check
+export FAKE_GC_FAIL=1 FAKE_FREE_GIB=1; DISK_GC_NEXT=0; n0=$(gcs)
+worktree_disk_room "$REPO_ROOT/.claude/worktrees/issue-10-build"; worktree_disk_room "$REPO_ROOT/.claude/worktrees/issue-10-build"
+[ $(( $(gcs) - n0 )) = 1 ] && ok "a gc that fails rests as well: one gc for two checks" || fail "failing gc ran $(( $(gcs) - n0 )) times for two checks"
+unset FAKE_GC_FAIL
 
 # ── 4. under the runner's own `set -euo pipefail`, called as dispatch_lane calls it: the check never ends the run loop, and the rest
 #    is a fixed 300 s — no environment knob (review 19/10: `5m` / `08` in a knob ended the whole loop as "finished")
