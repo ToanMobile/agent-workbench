@@ -292,6 +292,23 @@
           "command": "cd mcp-servers/cc-switcher-mcp && npm test"
         }
       ]
+    },
+    {
+      "component": "super-board-needs-you",
+      "watch_files": [
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-deps.sh",
+        "tests/super-board/test_needs_you.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-NEEDS-YOU-01",
+          "name": "needs-you mark is idempotent, migrates human-gated and carries no machine line",
+          "command": "bash tests/super-board/test_needs_you.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

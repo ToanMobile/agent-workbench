@@ -205,7 +205,7 @@ rung: 3 (blast radius — no schema change, revertable in one commit)
 
 The ladder resolves gray decisions. It is not a licence to guess at decisions
 that were never the worker's to make. Print `HUMAN GATE TRIPPED: <reason>`,
-label the issue `human-gated`, leave the worktree intact, and exit non-zero when:
+mark the issue with `super-board-needs-you.py mark` (label `needs-you`), leave the worktree intact, and exit non-zero when:
 
 - The fix would require a production deploy or a destructive DB change.
 - The change touches auth, secrets, permissions, or moves data across a trust
