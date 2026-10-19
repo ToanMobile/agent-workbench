@@ -93,13 +93,21 @@ SCR="$TMP/scratch"; git -C "$REPO" fetch -q origin && git -C "$REPO" worktree ad
 git -C "$REPO" worktree remove --force "$SCR"; land 22 || fail "C2b setup: land"; stop; rc=$?
 [ "$rc" = 0 ] && ok "C2b base moved: the merge-gate verify receipt of the squash tree: XONG allowed" || fail "C2b blocked ($(why $rc))"
 
-# C3a. Như C2, rồi main giữ file chưa commit của phiên khác (runner của board): cho qua.
-echo "# run log của runner" > "$REPO/docs/foreign.md"; stop; rc=$?
-[ "$rc" = 0 ] && ok "C3a foreign untracked file in main: XONG allowed" || fail "C3a foreign dirty blocked ($(why $rc))"
+# C3a. Như C2b, rồi main giữ file chưa track VÀ một file tracked bị sửa, đều của phiên khác (runner của board): cho qua.
+echo "# run log của runner" > "$REPO/docs/foreign.md"; echo "# runner" >> "$REPO/docs/other.md"; stop; rc=$?
+[ "$rc" = 0 ] && ok "C3a foreign untracked + modified tracked file in main: XONG allowed" || fail "C3a foreign dirty blocked ($(why $rc))"
 # N9. Cùng cảnh đó, nhưng chính phiên này đã ghi file bẩn đó ở main: chặn (luật PR #50).
 tool_use Write "{\"file_path\": \"$REPO/docs/foreign.md\", \"content\": \"x\"}"; stop; rc=$?
 blocked "$rc" && ok "N9 the dirty main file is this session's own: blocked" || fail "N9 own dirty file accepted ($(why $rc))"
-rm -f "$REPO/docs/foreign.md"
+rm -f "$REPO/docs/foreign.md"; git -C "$REPO" checkout -q -- docs/other.md
+
+# N14. Như C2b nhưng không có lần verify của merge gate: biên nhận worktree là của cây khác cây squash. Chặn.
+turn_start; wt_new n14; wt_edit 151; gate "$WT" --diff HEAD~1 || fail "N14 setup: gate exit $?"
+git -C "$WT" push -q origin HEAD:refs/heads/pr-151
+( cd "$GH" && git pull -q origin main && echo "khác 14" > docs/other14.md && git add docs/other14.md && git commit -qm "pr khác 14" && git push -q origin main ) \
+  || fail "N14 setup: other PR"
+land 151 || fail "N14 setup: land"; stop; rc=$?
+blocked "$rc" && ok "N14 base moved, no merge-gate verify receipt of the squash tree: blocked" || fail "N14 accepted ($(why $rc))"
 
 # C3b. Sửa → gate trên cây CHƯA commit → commit → finish; main giữ file chưa track của phiên khác: cho qua (dấu vân tay commit HEAD).
 turn_start; wt_new c3b; echo "def ok(): return 32" > "$WT/src/core.py"; tool_use Write "{\"file_path\": \"$WT/src/core.py\", \"content\": \"x\"}"
@@ -162,6 +170,16 @@ UNTESTED=1 gate "$WT" --diff HEAD~1 --no-cache; g=$?; finish; stop; rc=$?
 [ "$g" = 4 ] || fail "N5b setup: untested gate exit $g, want 4"
 blocked "$rc" && ok "N5b a later UNTESTED --full on the same tree: blocked" || fail "N5b stale exit-0 receipt accepted ($(why $rc))"
 
+# N6b. Biên nhận hợp lệ của cây khác chép sang tên = dấu vân tay cây giao (field fingerprint lệch tên file), rồi sửa cả field nhưng
+# exit là false (bool, == 0 trong python): đều chặn.
+turn_start; wt_new n6b; wt_edit 92; gate "$WT" --diff HEAD~1 || fail "N6b setup: gate exit $?"; wt_edit 93; finish
+FP93="$(python3 "$DEVKIT_DIR/bin/tree_fp.py" "$REPO")"; SRC="$(ls -t "$STORE"/*.json | head -1)"
+cp "$SRC" "$STORE/$FP93.json"; stop; rc=$?
+blocked "$rc" && ok "N6b a receipt copied onto the delivered tree's name: blocked" || fail "N6b renamed receipt accepted ($(why $rc))"
+python3 -c 'import json,sys; p=sys.argv[1]; r=json.load(open(p)); r["fingerprint"]=sys.argv[2]; r["exit"]=False; json.dump(r,open(p,"w"))' "$STORE/$FP93.json" "$FP93"
+stop; rc=$?
+blocked "$rc" && ok "N6b a receipt with exit false: blocked" || fail "N6b exit-false receipt accepted ($(why $rc))"
+
 # N6. Biên nhận trong kho có cây đúng nhưng exit 2: chặn.
 turn_start; wt_new n6; wt_edit 91; gate "$WT" --diff HEAD~1 || fail "N6 setup: gate exit $?"; finish
 ls "$STORE"/*.json >/dev/null 2>&1 || fail "N6 setup: no store receipt"
@@ -170,7 +188,7 @@ stop; rc=$?
 blocked "$rc" && ok "N6 store receipt with exit 2: blocked" || fail "N6 exit-2 receipt accepted ($(why $rc))"
 
 # N7. Gate ở lượt TRƯỚC (biên nhận cũ hơn lời nhắc người dùng), giao ở lượt này: chặn như luật cũ.
-wt_new n7; wt_edit 101; gate "$WT" --diff HEAD~1 || fail "N7 setup: gate exit $?"; sleep 3; turn_start; finish; stop; rc=$?
+wt_new n7; wt_edit 101; gate "$WT" --diff HEAD~1 || fail "N7 setup: gate exit $?"; sleep 5; turn_start; finish; stop; rc=$?
 blocked "$rc" && ok "N7 receipt from before this turn: blocked" || fail "N7 earlier-turn receipt accepted ($(why $rc))"
 
 # N8. Trunk mode tắt: luật mới không áp, chặn như cũ.

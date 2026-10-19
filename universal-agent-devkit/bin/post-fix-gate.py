@@ -1377,8 +1377,12 @@ def _tree_store(tree_fp, project_dir, fp, data=None):
                 os.remove(tmp)
             raise
         now = time.time()
-        kept = sorted(((e.stat(follow_symlinks=False).st_mtime, e.path) for e in os.scandir(store) if e.name.endswith(".json")), reverse=True)
-        for i, (mtime, p) in enumerate(kept):
+        kept = []
+        for e in os.scandir(store):
+            if e.name.endswith(".json"):
+                with contextlib.suppress(FileNotFoundError):   # another run pruned it between scandir and stat
+                    kept.append((e.stat(follow_symlinks=False).st_mtime, e.path))
+        for i, (mtime, p) in enumerate(sorted(kept, reverse=True)):
             if i >= tree_fp.TREE_RECEIPT_MAX or now - mtime > tree_fp.TREE_RECEIPT_MAX_AGE_S:
                 with contextlib.suppress(FileNotFoundError):   # another run pruned it first
                     os.remove(p)
