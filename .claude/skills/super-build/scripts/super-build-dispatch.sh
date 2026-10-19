@@ -111,8 +111,10 @@ fi
 # say it here (no prompt for credentials: headless).
 if git remote get-url origin >/dev/null 2>&1; then
   LS_RC=0
-  # headless: no HTTPS credential prompt, and an SSH remote may not wait for a host key or passphrase either (BatchMode, 10 s connect)
-  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes -o ConnectTimeout=10" \
+  # headless: no HTTPS credential prompt, and an SSH remote may not wait for a host key or passphrase either (BatchMode, 10 s connect);
+  # on top of the ssh command git would use anyway (GIT_SSH_COMMAND, else core.sshCommand: a custom key or proxy stays)
+  SSH_CMD="${GIT_SSH_COMMAND:-$(git config --get core.sshCommand 2>/dev/null || echo ssh)}"
+  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$SSH_CMD -o BatchMode=yes -o ConnectTimeout=10" \
     git ls-remote --exit-code --heads origin "refs/heads/$WORKER_BRANCH" >/dev/null 2>&1 || LS_RC=$?
   if [[ "$LS_RC" -eq 0 ]]; then
     echo "error: branch $WORKER_BRANCH already exists on origin — refusing to clobber" >&2
