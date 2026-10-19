@@ -8,7 +8,7 @@
 #      `super-board run` tường minh mới xoá);
 #   2. bản ghi của chính runner (<slug>.state) nói board đang chạy: STATE=running (bị SIGKILL, không kịp ghi) hoặc
 #      crashed (thoát ngoài ý muốn). Không có bản ghi (board dừng trước khi có watchdog) = không làm gì; finished,
-#      halted (mã 9/10/73/74/75/78/79) hoặc stopped = runner tự dừng có chủ đích, không khởi động lại;
+#      halted (mã 9/10/73/74/75/79) hoặc stopped = runner tự dừng có chủ đích, không khởi động lại;
 #   3. PID trong bản ghi không còn là một super-board-run.sh đang chạy;
 #   4. PATH có đủ công cụ runner cần để đọc board và giao việc (gh, jq, python3, claude, git);
 #   5. GitHub không bị halt (github-halt.json: đối chiếu rồi khởi động tay);
@@ -152,18 +152,10 @@ status() {
 }
 
 launchd_path() {
-  # PATH mặc định của launchd chỉ có /usr/bin:/bin:/usr/sbin:/sbin (thiếu gh, jq, claude, python3 của Homebrew).
-  # Lấy thư mục của các công cụ runner cần theo PATH lúc cài (bỏ thư mục tạm), rồi thêm các thư mục chuẩn.
-  local out="" d t
-  for t in $RUNNER_TOOLS rg agy node; do
-    d=$(command -v "$t" 2>/dev/null) || continue
-    case "$d" in /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*) continue ;; /*) d=${d%/*} ;; *) continue ;; esac
-    case ":$out:" in *":$d:"*) ;; *) out="${out:+$out:}$d" ;; esac
-  done
-  for d in /opt/homebrew/bin /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
-    case ":$out:" in *":$d:"*) ;; *) out="${out:+$out:}$d" ;; esac
-  done
-  printf '%s' "$out"
+  # PATH mặc định của launchd chỉ có /usr/bin:/bin:/usr/sbin:/sbin (thiếu gh, claude, python3 của Homebrew). Danh sách
+  # cố định, không lấy theo PATH của người gọi: hai lần khởi động từ hai shell khác nhau phải sinh cùng một plist,
+  # nếu không `ensure` gỡ rồi nạp lại agent mỗi lần.
+  printf '%s' "$HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 }
 
 xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
@@ -200,7 +192,7 @@ EOF
 }
 
 install_agent() {   # $1 = "quiet": không làm gì khi đúng bản này đã được nạp (ensure)
-  local uid tmp
+  local uid tmp t i missing=""
   if ! command -v launchctl >/dev/null 2>&1; then echo "launchctl not found (not macOS): watchdog not installed"; return 0; fi
   uid=$(id -u)
   mkdir -p "$AGENTS" "$DIR"
@@ -211,9 +203,20 @@ install_agent() {   # $1 = "quiet": không làm gì khi đúng bản này đã �
     rm -f "$tmp"; return 0
   fi
   mv -f "$tmp" "$PLIST"
-  # bootout lỗi khi nhãn chưa được nạp: bình thường, bootstrap ngay sau mới là bước phải thành công.
-  launchctl bootout "gui/$uid/$LABEL" >/dev/null 2>&1 || true
-  if ! launchctl bootstrap "gui/$uid" "$PLIST"; then echo "launchctl bootstrap gui/$uid $PLIST failed: watchdog not loaded" >&2; return 1; fi
+  if launchctl print "gui/$uid/$LABEL" >/dev/null 2>&1; then
+    launchctl bootout "gui/$uid/$LABEL" >/dev/null 2>&1 || echo "launchctl bootout gui/$uid/$LABEL failed" >&2
+    # bootout trả về trước khi launchd gỡ xong job; bootstrap ngay sau đó hay lỗi "5: Input/output error".
+    i=0
+    while launchctl print "gui/$uid/$LABEL" >/dev/null 2>&1 && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+  fi
+  i=0
+  until launchctl bootstrap "gui/$uid" "$PLIST"; do
+    i=$((i + 1))
+    if [ "$i" -ge 3 ]; then echo "launchctl bootstrap gui/$uid $PLIST failed 3 times: watchdog NOT loaded" >&2; return 1; fi
+    sleep 1
+  done
+  for t in $RUNNER_TOOLS; do PATH="$(launchd_path)" command -v "$t" >/dev/null 2>&1 || missing="$missing $t"; done
+  [ -z "$missing" ] || echo "warning: the watchdog's PATH ($(launchd_path)) lacks:$missing — it will not restart the runner" >&2
   echo "installed $LABEL: checks board $SLUG every ${INTERVAL}s ($PLIST)"
 }
 

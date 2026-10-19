@@ -12,6 +12,8 @@
 # (runner trong repo giả và con trực tiếp của nó). Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# Watchdog là launchd (macOS); runner và test dùng ps/lsof/pgrep/plutil của macOS.
+[ "$(uname -s)" = Darwin ] || { echo "• skip test_runner_watchdog: macOS only (launchd)"; exit 0; }
 FAILS=0
 ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -70,8 +72,13 @@ printf '#!/usr/bin/env bash\necho %s\n' "'{}'" > "$BIN/super-board-wave-plan.sh"
 for c in gh claude; do printf '#!/usr/bin/env bash\necho "%s $*" >> "$STUB_CALLS"; exit 1\n' "$c" > "$TMP/stub/$c"; done
 cat > "$TMP/stub/launchctl" <<'SH'
 #!/usr/bin/env bash
+# Có trạng thái như launchd: bootstrap nạp nhãn, bootout gỡ, print thoát 113 khi nhãn chưa được nạp.
 echo "launchctl $*" >> "$STUB_CALLS"
-[ "$1" = print ] && { echo "state = not running"; echo "runs = 0"; }
+case "$1" in
+  print) [ -e "$STUB_CALLS.loaded" ] || exit 113; echo "state = not running" ;;
+  bootstrap) touch "$STUB_CALLS.loaded" ;;
+  bootout) rm -f "$STUB_CALLS.loaded" ;;
+esac
 # RunAtLoad chạy `check` ngay lúc bootstrap: ghi lại bản ghi runner đang có tại thời điểm đó.
 [ "$1" = bootstrap ] && echo "state-at-bootstrap $(sed -n 's/^PID=//p' "$STUB_STATE" 2>/dev/null) $(sed -n 's/^STATE=//p' "$STUB_STATE" 2>/dev/null)" >> "$STUB_CALLS"
 exit 0
@@ -160,8 +167,12 @@ else
 fi
 
 # ── 6. Khởi động tường minh xoá marker; board rỗng không daemon thoát sạch: STATE=finished ──────────────────────────
-start_runner "$TMP/run3.out"
+# PATH khác lần khởi động ở mục 1: plist phải giống hệt, watchdog không bị gỡ rồi nạp lại.
+start_runner "$TMP/run3.out" PATH="$TMP/stub:/usr/local/sbin:$PATH"
 if wait_for 30 '! alive "$RP"'; then
+  [ "$(grep -c '^launchctl bootstrap' "$TMP/calls" 2>/dev/null)" = 1 ] \
+    && ok "a second explicit start from another PATH keeps the loaded watchdog (no re-bootstrap)" \
+    || fail "watchdog re-bootstrapped on a second start: $(grep -c '^launchctl bootstrap' "$TMP/calls") bootstraps"
   [ ! -e "$MARK" ] && ok "explicit start clears the stop marker" || fail "explicit start left the stop marker"
   [ "$(field STATE "$STATE")" = finished ] && [ "$(field RC "$STATE")" = 0 ] \
     && ok "clean finish recorded as STATE=finished rc=0" || fail "state after clean finish: $(tr '\n' ' ' < "$STATE" 2>/dev/null)"
@@ -284,6 +295,9 @@ if [ "$rc" -eq 0 ] && plutil -lint "$PL" >/dev/null 2>&1; then
   case ":$(plutil -extract EnvironmentVariables.PATH raw -o - "$PL" 2>/dev/null):" in
     *:/usr/bin:*) ok "plist sets PATH (launchd default lacks gh/jq/claude)" ;; *) fail "plist PATH missing" ;; esac
   grep -q "bootstrap gui/$(id -u) $PL" "$TMP/calls" && ok "install loads it with launchctl bootstrap" || fail "launchctl calls: $(tr '\n' ';' < "$TMP/calls")"
+  # Đã nạp sẵn (mục 1): gỡ, chờ launchd gỡ xong (print thất bại), rồi mới bootstrap.
+  [ "$(grep -E '^launchctl (bootout|print|bootstrap)' "$TMP/calls" | tail -3 | cut -d' ' -f2 | tr '\n' ' ')" = "bootout print bootstrap " ] \
+    && ok "reinstall: bootout, wait until unloaded, then bootstrap" || fail "reinstall order: $(tr '\n' ';' < "$TMP/calls")"
 else
   fail "install rc=$rc or invalid plist"; tail -5 "$TMP/install.out" | sed 's/^/    /'
 fi
