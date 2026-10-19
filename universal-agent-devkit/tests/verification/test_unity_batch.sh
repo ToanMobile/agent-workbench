@@ -106,6 +106,7 @@ seed() {  # a known Editor domain and a player domain
 run() {  # run <mode> [env…] → sets RC
   local mode="$1"; shift
   env PATH="$BIN:$PATH" FAKE_PREFS="$PREFS" FAKE_DOMAIN="$DOMAIN" UNITY_PATH="$BIN/Unity" \
+      UNITY_BATCH_LOCK="$TMP/unity-machine.lock" \
       UNITY_PROJECT="$PROJ" UNITY_BATCH_OUT="$TMP/out" "$@" bash "$BATCH" "$mode" >"$TMP/run.out" 2>&1
   RC=$?
 }

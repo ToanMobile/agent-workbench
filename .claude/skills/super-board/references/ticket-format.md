@@ -40,6 +40,7 @@ it into the target's `docs/agents/issue-tracker.md` under `## Ticket format` (th
 | Blocked by | `- #N — why` bullets, or a bare `- None.` · NEVER "None — but #N first" |
 | Labels | `money`, `auth`, `schema` route the merge to a human (merge_policy) · `schema` = destructive only (DROP/TRUNCATE/RENAME); additive migrations need no label |
 | Human-only step | a `needs-you: <command>` line in the PR body → 🙋 Blocked until done |
+| Real device | label `needs-device` when the card's QA needs a real phone (OOM, FPS, memory, sensors) · while `adb devices` lists none (emulators and denylisted serials do not count) the board holds it in Ready (with `qa`) or QA and lists it under status "Waiting on you" · a phone plugged in releases it |
 | Ticket only a person can do | `## Cần người` as the first section (`🙋 Cần bạn: <exactly what> · xong thì <next>`) + label `needs-you` + the same comment · createTask `--needs-you "<what>"` does all three |
 | Size | one card = one PR under 400 changed lines (`merge_policy.auto_max_lines`) · bigger → split with `/to-tickets` |
 

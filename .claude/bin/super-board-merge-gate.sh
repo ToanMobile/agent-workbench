@@ -69,11 +69,9 @@
 #
 # Exit codes, all meaningful to the caller:
 #   0  merged
-#   2  verification failed on a branch BEHIND the base (or the gate could not
-#      count it) — needs a rebase pass, NOT a Blocked card
-#   11 verification failed on a branch NOT behind the base — rebasing changes
-#      nothing: back to Build to fix the failing verify (the gate quotes its
-#      last KẾT LUẬN/VERDICT line), NOT a rebase pass, NOT a Blocked card
+#   11 verification failed after merging the base cleanly into the scratch tree —
+#      rebasing changes nothing: back to Build to fix the failing verify (the gate
+#      quotes its last KẾT LUẬN/VERDICT line), NOT a rebase pass, NOT a Blocked card
 #   3  PR is closed without a merge; no merge attempted
 #   4  could not take the lock within the timeout
 #   5  the base could not be merged in (real conflict) — needs a rebase pass
@@ -171,6 +169,16 @@ LOCK_DIR="${REPO_PATH}/.claude/super-board/inflight/merge.lock"
 mkdir -p "$(dirname "$LOCK_DIR")"
 
 say() { echo "[merge-gate #${PR}] $*" >&2; }
+# Notices use the existing bot config. A missing token, or SB_NOTIFY_SKIP=1, does not change the exit.
+board_notify() {
+  if [ "${SB_NOTIFY_SKIP:-0}" = "1" ]; then
+    return 0
+  fi
+  python3 "$HERE/super-board-notify.py" "$@" || true
+}
+needs_you_notify() {
+  board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}"
+}
 # clip <n>: stdin gộp về một dòng, giữ tối đa n KÝ TỰ. INSTINCT-173: dưới locale C `cut -c` cắt theo byte và làm vỡ ký tự tiếng Việt
 # (văn bản không còn UTF-8, github-read từ chối). Byte không phải UTF-8 trong lỗi của git thành U+FFFD, không bao giờ vỡ giữa ký tự.
 clip() { tr '\n\t' '  ' | python3 -I -c 'import sys; sys.stdout.buffer.write(sys.stdin.buffer.read().decode("utf-8", "replace")[:int(sys.argv[1])].encode("utf-8"))' "$1"; }
@@ -205,10 +213,16 @@ trap release EXIT
 say "lock taken; verifying against ${BASE} as it is now"
 
 # ---- the freshness check ---------------------------------------------------
-# Done in a throwaway worktree so the branch under test is never mutated: the
-# gate proves a merge, it does not perform one locally and it never pushes.
-SCRATCH=$(mktemp -d)
-cleanup() { git -C "$REPO_PATH" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "${META:-}" "${DIFF:-}" "${VERIFY_LOG:-}"; release; }
+# Scratch proves the merge. When that merge is clean and the PR branch is behind
+# the base, the gate fast-forwards the merge commit onto the PR branch. It never
+# uses --force. A rejected fast-forward stays exit 11 (not a rebase pass).
+# Scratch đặt trong .claude/worktrees của main checkout để cùng phân vùng đĩa (st_dev) cho cp -Rc Unity Library.
+REPO_ABS=$(cd "$REPO_PATH" && pwd -P)
+MAIN_WT=$(git -C "$REPO_ABS" worktree list --porcelain | sed -n '1s/^worktree //p')
+BASE_WT=${MAIN_WT:-$REPO_ABS}
+mkdir -p "$BASE_WT/.claude/worktrees"
+SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.merge-scratch-XXXXXX")
+cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "${META:-}" "${DIFF:-}" "${VERIFY_LOG:-}"; release; }
 trap cleanup EXIT
 
 # ---- the head guard --------------------------------------------------------
@@ -251,7 +265,9 @@ python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} 
 python3 "$GITHUB_READ" --kind diff --meta "$META" -- pr diff "$PR" ${REPO:+--repo "$REPO"} > "$DIFF"
 PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$META" --diff "$DIFF") || {
   echo "human-gate: policy — could not classify the PR (unreadable metadata)"
-  say "merge policy could not be evaluated — a human merges this one"; exit 7; }
+  say "merge policy could not be evaluated — a human merges this one"
+  needs_you_notify
+  exit 7; }
 
 # The label is display-only. A request posted before `done` pins the exact head
 # and policy/commands. Re-read trusted approval evidence; never mint it here.
@@ -274,7 +290,9 @@ if [ -n "$HUMAN" ] && [ "$APPROVED" != true ]; then
   echo "$HUMAN"
   echo "$PLAN" | jq -r '.needs_you[] | "needs-you: " + .'
   approval_request
-  say "merge policy: waiting for a trusted human to approve this exact head"; exit 7
+  say "merge policy: waiting for a trusted human to approve this exact head"
+  needs_you_notify
+  exit 7
 fi
 
 git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet
@@ -291,6 +309,20 @@ if ! git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>/dev/null; then
   say "the base does not merge in cleanly — conflicts: ${CONFLICTS}"
   say "this is a rebase pass for the Builder lane, not a Blocked card"
   exit 5
+fi
+
+# Nhánh chậm hơn base nhưng merge scratch sạch: đẩy fast-forward lên đúng nhánh PR
+# rồi mới verify. Timeout phía dưới vẫn thử lại một lần. Không --force.
+MERGED_SHA=$(git -C "$SCRATCH" rev-parse HEAD)
+BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
+if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ]; then
+  if git -C "$REPO_PATH" push origin "${MERGED_SHA}:refs/heads/${HEAD_REF}"; then
+    say "updated ${HEAD_REF} in place ${HEAD_SHA} -> ${MERGED_SHA} (clean merge of ${BASE}, no --force)"
+    HEAD_SHA=$MERGED_SHA
+  else
+    say "clean merge of ${BASE} could not fast-forward ${HEAD_REF}; not a rebase pass"
+    exit 11
+  fi
 fi
 
 # Populate git-ignored DevKit symlinks so post-fix-gate / REG-WB-CONFIG-01 succeed in SCRATCH
@@ -332,6 +364,34 @@ for cmd in "${VERIFY[@]}"; do
   done
 done
 
+# Chạy lệnh verify trong scratch: post-fix-gate.py tự giữ heavy slot, các lệnh verify khác được bọc qua super-board-heavy-slot.py.
+run_verify_cmd() {
+  local c="$1"
+  if [[ "$c" == *"post-fix-gate.py"* ]]; then
+    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$c" ) >"$VERIFY_LOG" 2>&1
+  else
+    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && DEVKIT_LANG="${DEVKIT_LANG:-vi}" python3 "$HERE/super-board-heavy-slot.py" -- bash -c "$c" ) >"$VERIFY_LOG" 2>&1
+  fi
+}
+
+# Kiểm tra lỗi verify có phải do timeout (exit 124 hoặc log chứa TIMEOUT / timed out / quá giới hạn) để thử lại đúng 1 lần.
+is_verify_timeout() {
+  local rc="$1" log_file="$2" wt_log
+  # Gate đã in kết luận thì suite bên trong có chữ "timed out" không được chạy lại cả --full.
+  if [ -f "$log_file" ] && grep -aqE "KẾT LUẬN|POST-FIX AUDIT GATE VERDICT" "$log_file" 2>/dev/null; then
+    return 1
+  fi
+  [ "$rc" -eq 124 ] && return 0
+  if [ -f "$log_file" ] && grep -aqE "TIMEOUT after|quá giới hạn" "$log_file" 2>/dev/null; then
+    return 0
+  fi
+  wt_log="$(git -C "$SCRATCH" rev-parse --absolute-git-dir 2>/dev/null)/postfix-gate/last_output.log"
+  [ -f "$wt_log" ] || return 1
+  if grep -aqE "KẾT LUẬN|POST-FIX AUDIT GATE VERDICT" "$wt_log" 2>/dev/null; then
+    return 1
+  fi
+  grep -aqE "TIMEOUT after|quá giới hạn" "$wt_log" 2>/dev/null
+}
 for cmd in "${VERIFY[@]}"; do
   if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
     [[ "$cmd" == *"--diff"* ]] || cmd="$cmd --diff origin/${BASE}"
@@ -340,7 +400,12 @@ for cmd in "${VERIFY[@]}"; do
   fi
   say "verify: ${cmd}"
   VRC=0
-  ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$cmd" ) >"$VERIFY_LOG" 2>&1 || VRC=$?
+  run_verify_cmd "$cmd" || VRC=$?
+  if [ "$VRC" -ne 0 ] && is_verify_timeout "$VRC" "$VERIFY_LOG"; then
+    say "verify timed out (exit ${VRC}); retrying once: ${cmd}"
+    VRC=0
+    run_verify_cmd "$cmd" || VRC=$?
+  fi
   if [ "$VRC" -ne 0 ]; then
     say "FAILED: ${cmd}"
     WT_LOG="$(git -C "$SCRATCH" rev-parse --absolute-git-dir 2>/dev/null)/postfix-gate/last_output.log"
@@ -349,16 +414,13 @@ for cmd in "${VERIFY[@]}"; do
     fi
     # 18/10 (GeelyEx2 #48): log nằm trong git common dir, không trong REPO_PATH ("." thường là một worktree: file chưa track ở đó chặn
     # `worktree remove` ở repo không ignore mẫu này).
-    # `|| true`: dưới set -e, một rev-parse hỏng làm script dừng trước exit 2. Đường dẫn tuyệt đối lấy bằng cd + pwd thay cho --path-format
+    # `|| true`: dưới set -e, một rev-parse hỏng làm script dừng trước exit 11. Đường dẫn tuyệt đối lấy bằng cd + pwd thay cho --path-format
     # (OCR 18/10: git cũ hơn 2.31 không biết cờ này; universal-agent-devkit/scripts/governance/lane_plan.py cũng chạy lại không có nó).
     VLOG_DIR="$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P || true)"
     VLOG="${VLOG_DIR:+$VLOG_DIR/super-board/last-merge-verify-pr-${PR}.log}"
     { [ -n "$VLOG" ] && mkdir -p "$VLOG_DIR/super-board" && cp "$VERIFY_LOG" "$VLOG"; } 2>/dev/null || VLOG="(not saved)"
     tail -60 "$VERIFY_LOG" >&2
-    # 18/10: chỉ nói "stale" khi nhánh thật sự chậm hơn base. 17/10 câu này in cho MỌI verify đỏ và dẫn ba phiên đi rebase vô ích
-    # (lý do thật là post-fix-gate exit 2). Không đếm được (rev-list hỏng) thì nói rõ là không biết, không khẳng định "not behind".
-    # Bỏ mã màu ANSI (byte ESC thật: sed BSD không hiểu \x1b); LC_ALL=C để sed macOS không đòi UTF-8 hợp lệ. Lý do thật luôn được in, kể cả
-    # khi nhánh chậm hơn base: chậm hơn không chứng minh đó là nguyên nhân (OCR 18/10).
+    # Merge vào scratch đã sạch (không conflict): verify đỏ luôn thoát 11 kèm mã thoát và dòng KẾT LUẬN cuối, không đẩy về Build để rebase vô ích.
     VERDICT=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$VERIFY_LOG" | grep -a -E "KẾT LUẬN|VERDICT" | tail -1 \
       | LC_ALL=C sed 's/^[[:space:]]*//' | clip 300 || true)
     WHY="exit ${VRC}: ${VERDICT:-no KẾT LUẬN/VERDICT line, see the log tail above}"
@@ -366,14 +428,11 @@ for cmd in "${VERIFY[@]}"; do
     if [ "$BEHIND" = unknown ]; then
       say "verify failed (${WHY}); could not tell whether the branch is behind ${BASE} (log saved to ${VLOG})"
     elif [ "$BEHIND" -gt 0 ]; then
-      say "the branch is stale against ${BASE} (${BEHIND} commit(s) behind) — send it back to Build for a rebase pass (verify ${WHY}; log saved to ${VLOG})"
+      say "verify failed (${WHY}) after clean scratch merge of ${BASE} (${BEHIND} commit(s) behind; log saved to ${VLOG})"
     else
       say "verify failed (${WHY}) on a branch not behind ${BASE} (log saved to ${VLOG})"
-      # Mã riêng: lane định tuyến theo mã thoát, exit 2 (rebase pass) cho nhánh đã cập nhật là một vòng rebase vô ích.
-      # Không đếm được (unknown) vẫn exit 2 như hợp đồng cũ: rebase thừa rẻ hơn bỏ sót một nhánh thật sự cũ.
-      exit 11
     fi
-    exit 2
+    exit 11
   fi
 done
 say "verified green against ${BASE} (${#VERIFY[@]} command(s))"
@@ -406,6 +465,7 @@ if [ "${#NEEDS[@]}" -gt 0 ]; then
     for n in "${NEEDS[@]}"; do echo "needs-you: $n"; done
     approval_request
     say "🙋 needs you before this merges — card → Blocked with the commands above"
+    needs_you_notify
     exit 8
   fi
 fi
@@ -417,11 +477,14 @@ if [ "$APPROVED" = true ]; then
   # a commit. Reclassify them too instead of reusing the old approval scope.
   python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} --json labels,files,additions,deletions,changedFiles,body > "$META"
   PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$META" --diff "$DIFF") || {
-    say "human approval scope could not be refreshed"; exit 7; }
+    say "human approval scope could not be refreshed"
+    needs_you_notify
+    exit 7; }
   approval_check
   if [ "$APPROVED" != true ]; then
     approval_request
     say "human approval changed during verification; keep the card Blocked"
+    needs_you_notify
     if [ -n "$HUMAN" ]; then exit 7; else exit 8; fi
   fi
 fi
@@ -439,6 +502,7 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
      ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
      --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2; then
   say "merged ${HEAD_SHA}"
+  board_notify send --card "PR #${PR}" --text "merged ${HEAD_SHA}"
   # Dọn sau merge: fast-forward nhánh base local và xoá worktree + nhánh local của CHÍNH thẻ vừa merge
   # (không bao giờ của thẻ khác), để không phải dọn tay. worktree_merge_gate.state là sổ nợ worktree toàn repo
   # của hook DevKit: hook tự dọn sổ đó, gate này không bao giờ xoá.

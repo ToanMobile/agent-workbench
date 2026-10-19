@@ -79,6 +79,24 @@ elif [ -z "$CONFIG_SLUG" ]; then
   fi
 fi
 
+# Cập nhật đường dẫn manifest và thư mục log worker theo ngày hiện tại để qua 00:00 không ghi đè ngày cũ hoặc thiếu thư mục.
+refresh_run_paths() {
+  RUN_DATE="${1:-$(${SB_DATE_CMD:-date} +%Y-%m-%d)}"
+  RUN_MANIFEST="docs/super-board/runs/${RUN_DATE}-${CONFIG_SLUG}.md"
+  # Per-worker logs (issue #13). Workers used to be spawned with >/dev/null, so the run
+  # log could never show what a worker was doing during a 13-minute silence.
+  WORKER_LOG_DIR="docs/super-board/runs/${RUN_DATE}-${CONFIG_SLUG}-workers"
+  mkdir -p "docs/super-board/runs" "$WORKER_LOG_DIR"
+}
+
+# One notice through the existing bot. Missing token and network errors stay exit 0.
+board_notify() {
+  if [ "${SB_NOTIFY_SKIP:-0}" = "1" ]; then
+    return 0
+  fi
+  python3 "$SCRIPT_DIR/super-board-notify.py" "$@" || true
+}
+
 if [ "${SB_LIB_ONLY:-0}" != "1" ]; then
 CONFIG_PATH=".claude/super-board/configs/${CONFIG_SLUG}.json"
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -121,13 +139,9 @@ fi
 
 python3 "$(dirname "$SB_GITHUB_READ")/super-board-verification-ready.py" --config "$CONFIG_PATH"
 
-RUN_DATE=$(date +%Y-%m-%d)
-RUN_MANIFEST="docs/super-board/runs/${RUN_DATE}-${CONFIG_SLUG}.md"
-# Per-worker logs (issue #13). Workers used to be spawned with >/dev/null, so the run
-# log could never show what a worker was doing during a 13-minute silence.
-WORKER_LOG_DIR="docs/super-board/runs/${RUN_DATE}-${CONFIG_SLUG}-workers"
+refresh_run_paths
 INFLIGHT_DIR=".claude/super-board/inflight"
-mkdir -p "docs/super-board/runs" "$WORKER_LOG_DIR" .claude/worktrees "$INFLIGHT_DIR"
+mkdir -p .claude/worktrees "$INFLIGHT_DIR"
 fi  # end non-lib-only setup
 
 # Defaults so the helpers below are safe to source under `set -u` in lib-only mode.
@@ -159,10 +173,51 @@ column_count() {
 FOR_A_PERSON_JQ='def for_a_person: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
   | ((index("needs-you") or index("human-gated")) and (map(. == "loop:rebase" or startswith("loop:rebuild-")) | any | not));'
 
+# #95: a card whose QA needs a real device (label needs-device, any case) — in QA, or in Ready labelled `qa` (the Tester takes it
+# from there) — while none is online ($nodev): a QA lane could only park it in Blocked. Not Review; not a Ready card the Builder
+# takes first (it is built, and held when it reaches QA). Same rule: super-board-wave-plan.sh, super-board-status.py.
+DEVICE_JQ='def held_for_device($col): $nodev and ([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
+  | index("needs-device") != null and ($col == "QA" or ($col == "Ready" and index("qa") != null)));'
+NO_DEVICE=false
+
+refresh_device_state() {
+  # Sets NO_DEVICE for this tick. adb is asked only while an unclaimed card would be held (a board with none never runs it);
+  # a change is logged once, not every tick.
+  local cards was="$NO_DEVICE" note
+  cards=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson nodev true "$DEVICE_JQ"'
+    [.items[] | select(.content.type == "Issue" and ((.content.assignees // []) | length == 0))
+     | select(held_for_device(.status)) | "#\(.content.number)"] | join(" ")') || cards=""
+  NO_DEVICE=false
+  [ -n "$cards" ] || return 0
+  note=$(python3 "$SCRIPT_DIR/super-board-device-online.py" 2>&1) || NO_DEVICE=true   # its repo: this checkout
+  [ "$NO_DEVICE" = "$was" ] && return 0
+  if [ "$NO_DEVICE" = true ]; then
+    log "📱 holding ${cards} (needs-device) until a real device is online: ${note}"
+  else
+    log "📱 real device online — needs-device cards ${cards} can be taken again (${note})"
+  fi
+}
+
+count_board() {
+  # This tick's column counts. Cards no lane takes (person_count) are left out of Ready and QA for dispatch and the exit test,
+  # and counted in WAITING (#95).
+  refresh_device_state   # #95: needs-device cards wait while no real device is online
+  READY=$(column_count "Ready")
+  WAITING=$(person_count "Ready")   # #95: Ready cards only a person can move; left out of Ready for dispatch and the exit test
+  READY=$((READY - WAITING))
+  BUILDING=$(column_count "Building")
+  QA_HELD=$(person_count "QA")   # #95: QA cards waiting for a real device, left out the same way
+  QA=$(( $(column_count "QA") - QA_HELD ))
+  WAITING=$((WAITING + QA_HELD))
+  REVIEW=$(column_count "Review")
+  BLOCKED=$(column_count "Blocked")
+}
+
 person_count() {
-  # Cards of column $1 waiting for a person: no lane takes them from Ready, so they must not keep a run alive that has nothing else
-  # to do (counted in Ready, a non-daemon run never reached its clean "all empty" exit).
-  echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" "$FOR_A_PERSON_JQ"' [.items[] | select(.status == $col) | select(for_a_person)] | length'
+  # Cards of column $1 no lane takes this tick — Ready ones waiting for a person, Ready/QA ones waiting for a real device: they
+  # must not keep a run alive that has nothing else to do (counted, a non-daemon run never reached its clean "all empty" exit).
+  echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ"'
+    [.items[] | select(.status == $col) | select(($col == "Ready" and for_a_person) or held_for_device($col))] | length'
 }
 
 # ── Status-field resolution (issue #10 reconcile path).
@@ -271,7 +326,7 @@ top_card_in_column() {
     TOP_ISSUE="$issue"; TOP_ITEM_ID="$item_id"
     return 0
   done <<EOF
-$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" "$FOR_A_PERSON_JQ"'
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ"'
     .items[]
     | select(.status == $col and .content.type == "Issue")
     | select((.content.assignees // []) | length == 0)
@@ -279,16 +334,17 @@ $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" "$FOR_A_PERSON_JQ"'
     # and parks it again. Not in QA/Review: the resume path moves a 🙋 card a person approved to Review with its label possibly
     # still on (run.md → resume). Removing the label releases the card.
     | select($col != "Ready" or (for_a_person | not))
+    | select(held_for_device($col) | not)   # #95: its QA needs a real device and none is online (refresh_device_state)
     | [(.content.number | tostring), (.id // "")] | @tsv')
 EOF
   return 1
 }
 
 read_lock() {
-  # Reads $INFLIGHT_DIR/$1 (bash-assignment format) into PID/LANE/STARTED.
+  # Reads $INFLIGHT_DIR/$1 (bash-assignment format) into PID/LANE/STARTED/WORKER_LOG.
   # Sets empty strings if the file is missing or legacy single-PID format.
   local lock="$INFLIGHT_DIR/$1"
-  PID=""; LANE=""; STARTED=""
+  PID=""; LANE=""; STARTED=""; WORKER_LOG=""
   [ -f "$lock" ] || return 1
   if grep -q '^PID=' "$lock" 2>/dev/null; then
     # shellcheck disable=SC1090
@@ -309,7 +365,7 @@ issue_locked() {
   if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
     return 0
   fi
-  [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log"
+  [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
   note_early_death "$issue"   # the second place a dead lock goes (a worker that died after this tick's reap): same ledger (#94)
   rm -f "$lock"
   return 1
@@ -541,6 +597,7 @@ dispatch_lane() {
   # trên account đã hết, worker chết sau ~30 s và runner giao lại mãi).
   if ! resolve_worker_account; then
     log "skip dispatch lane=${lane} issue=#${issue} — every worker account is at its limit${POOL_RESETS:+ (earliest reset ${POOL_RESETS})}"
+    board_notify accounts-limited --card "${CONFIG_SLUG:-board}" --accounts "${POOL_RESETS:-all}" --state-dir "${SB_NOTIFY_STATE_DIR:-$HOME/.claude/super-board}"
     return 0
   fi
   if ! try_claim_assignee "$issue"; then
@@ -559,10 +616,13 @@ dispatch_lane() {
   # Worker output goes to a per-worker log, not /dev/null (issue #13). Redirect at the
   # `claude` invocation itself — no wrapping subshell, no `exec` — so the wire to the
   # file survives and `$!` names the worker process rather than a bash stub.
+  mkdir -p "$WORKER_LOG_DIR"
   local worker_log="${WORKER_LOG_DIR}/worker-${lane}-${issue}.log"
+  local worker_log_abs
   # The folder is made at startup only; gone since (19/10: no 2026-10-19-*-workers folder), every `>> $worker_log` below fails and
   # the worker never starts — dying at once, tick after tick (#94). Made again here, before anything is written to it.
   mkdir -p "$WORKER_LOG_DIR" 2>/dev/null || log "⚠ cannot make the worker log folder $WORKER_LOG_DIR"
+  worker_log_abs="$(cd "$WORKER_LOG_DIR" && pwd)/worker-${lane}-${issue}.log"
   {
     printf '=== dispatch lane=%s issue=#%s at %s ===\n' "$lane" "$issue" "$(date -u +%FT%TZ)"
     printf 'prompt: %s\n\n' "$prompt"
@@ -590,7 +650,7 @@ dispatch_lane() {
   # v1.3.0+ lock format: bash-assignment style so `super-board stop` can source it
   # to recover lane + dispatch time. issue_locked()/reap_finished_locks() still work
   # because PID= is the first line.
-  printf 'PID=%s\nLANE=%s\nSTARTED=%s\n' "$pid" "$lane" "$(date -u +%FT%TZ)" > "$INFLIGHT_DIR/$issue"
+  printf 'PID=%s\nLANE=%s\nSTARTED=%s\nWORKER_LOG=%s\n' "$pid" "$lane" "$(date -u +%FT%TZ)" "$worker_log_abs" > "$INFLIGHT_DIR/$issue"
   case "$lane" in
     build) BUILD_PID="$pid"; BUILD_ISSUE="$issue" ;;
     qa) QA_PID="$pid"; QA_ISSUE="$issue" ;;
@@ -713,6 +773,7 @@ runaway_action() {
   if [ "${SB_DAEMON:-0}" = "1" ]; then
     log "⚠ RUNAWAY (daemon): no card reached Done in ${NO_PROGRESS_CYCLES} dispatch cycles — no new dispatch for $((TICK_SECONDS * 10))s"
     runaway_summary
+    board_notify runaway --card "${CONFIG_SLUG:-board}" --text "RUNAWAY daemon: no card reached Done"
     NO_PROGRESS_CYCLE_COUNT=0
     # Hạn chót chứ không sleep: thu hồi lock và quét zombie vẫn chạy mỗi tick, chỉ việc giao mới bị hoãn.
     RUNAWAY_PAUSE_UNTIL=$(( $(date +%s) + TICK_SECONDS * 10 ))
@@ -720,6 +781,7 @@ runaway_action() {
   fi
   log "🛑 halt — RUNAWAY: no card reached Done in ${NO_PROGRESS_CYCLES} dispatch cycles"
   runaway_summary
+  board_notify runaway --card "${CONFIG_SLUG:-board}" --text "RUNAWAY halt: no card reached Done"
   return 1
 }
 
@@ -812,7 +874,7 @@ reap_finished_locks() {
     case "$issue" in *[!0-9]*|'') continue ;; esac
     read_lock "$issue"
     if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
-      [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log"
+      [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
       note_early_death "$issue"
       gh_checkpoint
       if [ -n "$BOT_LOGIN" ]; then
@@ -1290,6 +1352,7 @@ cleanup_stale_worktrees
 startup_reconcile
 
 # ───────────────────────────── main loop ─────────────────────────────
+refresh_device_state
 INITIAL_READY=$(( $(column_count "Ready") - $(person_count "Ready") ))   # as READY each tick: cards for a person left out (#95)
 log "initial Ready count: $INITIAL_READY"
 
@@ -1299,6 +1362,7 @@ INITIAL_DONE_SIG="$PREV_DONE_SIG"
 NO_PROGRESS_CYCLE_COUNT="${NO_PROGRESS_CYCLE_COUNT:-0}"   # watchdog khởi động lại: đếm tiếp từ runner trước
 
 while true; do
+  refresh_run_paths
   # Stop marker xuất hiện giữa chừng (super-board-stop.sh không kill được runner này, hoặc watchdog vừa khởi động nó
   # sau lần quét ps của stop): runner tự thoát, không giao thêm việc.
   if [ -e "$STOP_MARK" ]; then
@@ -1374,14 +1438,7 @@ while true; do
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
   if maybe_sweep_blocked; then fetch_project_items; fi
 
-  READY=$(column_count "Ready")
-  WAITING=$(person_count "Ready")   # #95: Ready cards only a person can move; left out of Ready for dispatch and the exit test
-  READY=$((READY - WAITING))
-  BUILDING=0
-  BUILDING=$(column_count "Building")
-  QA=$(column_count "QA")
-  REVIEW=$(column_count "Review")
-  BLOCKED=$(column_count "Blocked")
+  count_board
 
   log "tick — Ready=$READY Building=$BUILDING QA=$QA Review=$REVIEW Blocked=$BLOCKED lanes: b_idle=$BUILD_IDLE(#${BUILD_ISSUE:-_}) q_idle=$QA_IDLE(#${QA_ISSUE:-_}) r_idle=$REVIEW_IDLE(#${REVIEW_ISSUE:-_}) waiting_on_you=$WAITING"
 
