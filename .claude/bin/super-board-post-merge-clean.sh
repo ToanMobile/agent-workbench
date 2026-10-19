@@ -443,7 +443,9 @@ command -v python3 >/dev/null 2>&1 || { echo "sweep: python3 not found; nothing 
 STAMP="${COMMON_DIR:+$COMMON_DIR/super-board/sweep.stamp}"
 if [ "$DRY" -eq 0 ] && [ "$MIN_INTERVAL" -gt 0 ] && [ -n "$STAMP" ] && [ -f "$STAMP" ]; then
   last=$(cat "$STAMP" 2>/dev/null); case "$last" in ''|*[!0-9]*) last=0 ;; esac
-  [ $(( $(date +%s) - last )) -lt "$MIN_INTERVAL" ] && exit 0
+  # 0 <= now - last: stamp ở tương lai (đồng hồ lệch, khôi phục backup) không chặn sweep tới khi đồng hồ bắt kịp (OCR batch)
+  since=$(( $(date +%s) - last ))
+  [ "$since" -ge 0 ] && [ "$since" -lt "$MIN_INTERVAL" ] && exit 0
 fi
 GH_READ="$(cd "$(dirname "$0")" && pwd)/super-board-github-read.py"
 if [ -f "$GH_READ" ] && ! SB_REPO_PATH="$REPO_PATH" python3 "$GH_READ" --check >/dev/null 2>&1; then

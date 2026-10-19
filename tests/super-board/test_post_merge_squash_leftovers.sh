@@ -340,6 +340,11 @@ git -C "$R" cat-file -e "$EV33_BLOB" 2>/dev/null && fail "B21 untracked lane jun
 bash "$CLEAN" --sweep "$R" >"$TMP/again.log" 2>&1
 [ ! -s "$TMP/gh.calls" ] && ok "B13 a second sweep inside the minimum interval makes no GitHub call" || { fail "B13 the interval stamp is ignored"; cat "$TMP/gh.calls"; }
 
+# B25 (OCR batch): stamp ở TƯƠNG LAI (đồng hồ lệch, khôi phục backup) không được chặn sweep mãi: now - last âm thì coi như đã quá hạn
+echo $(( $(date +%s) + 86400 )) > "$R/.git/super-board/sweep.stamp"; : > "$TMP/gh.calls"
+bash "$CLEAN" --sweep "$R" >"$TMP/future.log" 2>&1
+[ -s "$TMP/gh.calls" ] && ok "B25 a stamp in the future does not block the sweep" || fail "B25 a future stamp silenced the sweep"
+
 # ── C. gh treo và bỏ qua SIGALRM (gh thật là binary Go: runtime Go nuốt SIGALRM, review 19/10): sweep phải dừng theo hạn giờ,
 #    không gỡ gì. gh giả `trap '' ALRM` (tín hiệu bị bỏ qua được kế thừa qua exec, như Go).
 t0=$(date +%s); rm -f "$R/.git/super-board/sweep.stamp"
