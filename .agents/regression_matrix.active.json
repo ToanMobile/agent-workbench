@@ -244,6 +244,23 @@
       ]
     },
     {
+      "component": "super-board-preflight",
+      "watch_files": [
+        ".claude/bin/super-board-preflight.sh",
+        ".claude/bin/super-board-github-read.py",
+        ".claude/bin/super-board-gh-guard.sh",
+        "tests/super-board/test_preflight_too_big.sh",
+        "tests/super-board/fixtures/preflight-too-big/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-PREFLIGHT-TOO-BIG-01",
+          "name": "preflight holds too-big cards before a builder pass, proceeds on normal ones",
+          "command": "bash tests/super-board/test_preflight_too_big.sh"
+        }
+      ]
+    },
+    {
       "component": "super-board-needs-you",
       "watch_files": [
         ".claude/bin/super-board-needs-you.py",
