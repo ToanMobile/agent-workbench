@@ -40,10 +40,10 @@ def fake_read(args, kind="json", meta=None, recovering=False):
     if args[0] == "api" and "--paginate" in args and "graphql" not in args:
         return "", [[COMMENT] if "/issues/40/" in args[-1] else []]
     if "graphql" in args:
-        node = {"headRefOid": pr_head, "state": "OPEN",
+        node = {"headRefOid": pr_head, "state": "OPEN", "baseRefName": "main", "body": "",
                 "closingIssuesReferences": {"pageInfo": {"hasNextPage": False},
                                             "nodes": [{"number": 40, "repository": {"nameWithOwner": "o/r"}}]}}
-        return "", [{"data": {"repository": {"pullRequest": node}}}]
+        return "", [{"data": {"repository": {"defaultBranchRef": {"name": "main"}, "pullRequest": node}}}]
     if args[:2] == ["pr", "view"]:
         return "", META
     if args[:2] == ["pr", "diff"]:
