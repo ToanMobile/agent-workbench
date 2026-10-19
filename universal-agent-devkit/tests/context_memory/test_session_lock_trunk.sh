@@ -55,6 +55,10 @@ cases = [   # (want, label, cwd, (tool, input, command))
     # issue #13 reviewer R1: `M+=/main` appends to the value, so the variable is no longer the one assigned before
     (True, "worktree: M=<parent>; M+=/main appended, redirect to \"$M/f\"", w, B(f'M={m.rsplit("/", 1)[0]}; M+=/{m.rsplit("/", 1)[1]}; echo evil > "$M/README.md"')),
     (True, "worktree: M=<main>; M+=/x appended (value changes), redirect to \"$M/../README.md\"", w, B(f'M={m}; M+=/x; echo evil > "$M/../README.md"')),
+    # issue #13 QA v3 gap (High): sed -i / perl -pi have no target in shell_writes, so a "$VAR/f" target skipped the $VAR rule (the literal path is blocked)
+    (True, "worktree: M=<main>; sed -i on \"$M/f\"", w, B(f'M={m}; sed -i s/r/x/ "$M/README.md"')),
+    (True, "worktree: M=<main>; perl -pi on \"$M/f\"", w, B(f'M={m}; perl -pi -e s/r/x/ "$M/README.md"')),
+    (False, "worktree: O=/tmp/o; sed -i on \"$O/f\"", w, B('O=/tmp/o; sed -i s/r/x/ "$O/f"')),
     (True, "an allowed segment does not excuse the next", m, B(f"agent-kit worktree finish {w} && echo x > a.txt")),
     (True, "cp into main from a worktree", w, B(f"cp /tmp/a {m}/b.txt")),
     (True, "cd to main from a worktree, then rm", w, B(f"cd {m} && rm -f README.md")),

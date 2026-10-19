@@ -192,6 +192,10 @@ def _operands(base, words):
     return ops, tdir
 
 
+# `$M/f`, `${M}/f`: a path the shell expands, which _exists cannot see; the caller resolves or refuses it (sed script `$d` has no `/`)
+_VAR_PATH = re.compile(r"\$\{?\w+\}?/")
+
+
 def _exists(a, here):
     p = os.path.expanduser(a)
     return os.path.exists(p if os.path.isabs(p) else os.path.join(here, p))
@@ -307,9 +311,9 @@ def targets(cmd, here, depth=0, run_bodies=False):
         elif base == "dd":
             hits += [("file", a[3:]) for a in args if a.startswith("of=")]
         elif base == "sed" and any(re.fullmatch(r"-[A-Za-z]*i.*|--in-place.*", a) for a in words[1:]):
-            hits += [("file", a) for a in args if a and _exists(a, wd)]   # BSD `sed -i ''`: the empty suffix is no file
+            hits += [("file", a) for a in args if a and (_exists(a, wd) or _VAR_PATH.match(a))]   # BSD `sed -i ''`: the empty suffix is no file
         elif base == "perl" and any(re.fullmatch(r"-[A-Za-z]*i.*", a) for a in words[1:]):
-            hits += [("file", a) for a in args if a and _exists(a, wd)]
+            hits += [("file", a) for a in args if a and (_exists(a, wd) or _VAR_PATH.match(a))]
         elif base == "git":
             gdir, sub, skip, rest = wd, "", None, []
             for k, a in enumerate(words[1:], 1):
