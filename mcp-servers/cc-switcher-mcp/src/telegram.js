@@ -258,27 +258,36 @@ export function formatStatusForTelegram(report, opts = {}) {
     lines.push('────────────────────────');
   }
 
-  const activePct = report.activeProfile.remainingPct ?? 100;
-  const activeReset = report.activeProfile.resetTimeFormatted
-    ? ` · ⏰ ${report.activeProfile.resetTimeFormatted}`
-    : '';
-  const activeTitle = report.activeProfile.shortLabel || report.activeProfile.name;
+  const claudeProfiles = report.profiles.filter((p) => p.vendor === 'anthropic');
+  const backupProfiles = report.profiles.filter((p) => p.vendor !== 'anthropic');
+  const parallelClaude = claudeProfiles.filter((p) => p.isParallelActive && (p.assignedRepoCount || 0) > 0);
+
+  let activeHeaderLine;
+  if (parallelClaude.length >= 2 && report.activeProfile.vendor === 'anthropic') {
+    const parts = parallelClaude.map((p) => `${p.shortLabel || p.id} (${p.assignedRepoCount} repo · ${p.remainingPct}%)`);
+    activeHeaderLine = `▶️ Đang chạy song song: ${parts.join(' + ')}`;
+  } else {
+    const activePct = report.activeProfile.remainingPct ?? 100;
+    const activeReset = report.activeProfile.resetTimeFormatted
+      ? ` · ⏰ ${report.activeProfile.resetTimeFormatted}`
+      : '';
+    const activeTitle = report.activeProfile.shortLabel || report.activeProfile.name;
+    activeHeaderLine = `▶️ Đang dùng: ${activeTitle} (Còn ${activePct}%${activeReset})`;
+  }
 
   lines.push('🎛 CC SWITCHER · BẢNG ĐIỀU KHIỂN');
-  lines.push(`▶️ Đang dùng: ${activeTitle} (Còn ${activePct}%${activeReset})`);
+  lines.push(activeHeaderLine);
   lines.push(`🛡 Anti-Ban: ${cooldownBadge}`);
   lines.push(`💰 Chi phí: $${report.usage.totalCostUsd} (${report.usage.totalRequests} req)`);
   lines.push('');
   lines.push('🔋 QUOTA 3 TÀI KHOẢN CLAUDE (5 GIỜ)');
-
-  const claudeProfiles = report.profiles.filter((p) => p.vendor === 'anthropic');
-  const backupProfiles = report.profiles.filter((p) => p.vendor !== 'anthropic');
 
   for (const p of claudeProfiles) {
     const pct = p.remainingPct ?? (p.isFrozen ? 0 : 100);
     const used = p.usedPct ?? (100 - pct);
     const bar = renderProgressBar(pct);
     const title = formatCleanProfileHeader(p);
+    const isRunning = Boolean(p.isParallelActive ?? p.isActive);
 
     if (p.isFrozen || pct <= 0) {
       const unlockStr = p.resetTimeFormatted
@@ -287,12 +296,12 @@ export function formatStatusForTelegram(report, opts = {}) {
       lines.push(`🔴 ${title}${p.isActive ? ' ⚠️' : ''}`);
       lines.push(`   ${bar} 0% · ⏰ ${unlockStr}`);
     } else {
-      const icon = p.isActive ? '🟢' : '⚪️';
-      const activeMark = p.isActive ? ' ✓' : '';
+      const icon = isRunning ? '🟢' : '⚪️';
+      const repoBadge = p.assignedRepoCount > 0 ? ` · ${p.assignedRepoCount} repo ✓` : (isRunning ? ' ✓' : '');
       const resetNote = p.resetTimeFormatted
         ? ` · ⏰ ${p.resetTimeFormatted} (${p.resetRemainHuman})`
         : ` · Dùng ${used}%`;
-      lines.push(`${icon} ${title}${activeMark}`);
+      lines.push(`${icon} ${title}${repoBadge}`);
       lines.push(`   ${bar} Còn ${pct}%${resetNote}`);
     }
   }
@@ -352,12 +361,13 @@ export function buildTelegramDashboard(report, opts = {}) {
     const row = report.profiles.slice(i, i + 2).map((p) => {
       const shortName = compactButtonName(p);
       const pct = p.remainingPct ?? (p.isFrozen ? 0 : 100);
+      const isRunning = Boolean(p.isParallelActive ?? p.isActive);
       let btnText = `⚪️ ${shortName} · ${pct}%`;
 
       if (p.isFrozen || pct <= 0) {
         const unlockClock = p.resetTimeFormatted || `${p.freezeRemainMin}p`;
         btnText = `🔴 ${shortName} · 0% (${unlockClock})`;
-      } else if (p.isActive) {
+      } else if (isRunning) {
         btnText = `🟢 ${shortName} · ${pct}% ✓`;
       }
 

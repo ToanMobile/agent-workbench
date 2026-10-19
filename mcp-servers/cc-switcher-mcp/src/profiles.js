@@ -759,12 +759,17 @@ export function getStatusReport(opts = {}) {
     const resetTimeFormatted = effectiveResetMs > nowMs ? formatLocalTimeHHMM(effectiveResetMs) : '';
     const resetRemainHuman = effectiveResetMs > nowMs ? formatRemainDuration(effectiveResetMs - nowMs) : '';
 
+    const assignedRepoCount = repoAssignments.filter((r) => r.account === p.id).length;
+    const isParallelActive = !isFrozen && (p.id === state.activeProfileId || assignedRepoCount > 0);
+
     return {
       ...p,
       isActive: p.id === state.activeProfileId,
+      isParallelActive,
+      assignedRepoCount,
       status: isFrozen
         ? `LIMIT 0% (Mở ${resetTimeFormatted || `${freezeRemainMin}p`})`
-        : p.id === state.activeProfileId
+        : isParallelActive
           ? `ACTIVE (${remainingPct}%)`
           : `READY (${remainingPct}%)`,
       isFrozen,

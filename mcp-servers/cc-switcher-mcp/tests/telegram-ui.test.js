@@ -341,6 +341,14 @@ test('Telegram UI 7: Bo cuc Mobile UI/UX gon dep, khong lap so [1] 1., nut bam <
     // 3. Danh sach 6 Repo duoc trinh bay tach dong ro rang, de doc lướt tren man hinh doc
     assert.match(dash.text, /• agent-workbench/);
     assert.match(dash.text, /• GeelyEx2/);
+
+    // 4. Khi chia 3 repo finos + 3 repo finos_team (chay song song), CA 2 tai khoan deu hien thi 🟢 ĐANG DÙNG (3 repo) tren text va nut bam
+    assert.match(dash.text, /🟢 1\. FinOS.*3 repo ✓/);
+    assert.match(dash.text, /🟢 2\. FinOS Team.*3 repo ✓/);
+    const btnFinos = swButtons.find((b) => b.callback_data === 'sw:finos');
+    const btnTeam = swButtons.find((b) => b.callback_data === 'sw:finos_team');
+    assert.match(btnFinos.text, /^🟢.*✓$/);
+    assert.match(btnTeam.text, /^🟢.*✓$/);
   } finally {
     tmp.cleanup();
   }
