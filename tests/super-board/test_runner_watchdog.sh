@@ -304,7 +304,10 @@ set_state() {   # set_state <pid> <STATE> [RC] [DAEMON]
   mkdir -p "$RUNDIR"
   printf 'PID=%s\nSLUG=t\nSTARTED=1\nDAEMON=%s\nLOG=\nSTATE=%s\nRC=%s\n' "$1" "${4:-1}" "$2" "${3:-}" > "$STATE"
   printf 'DISPATCHES=7\nENV_PATH=%s\nENV_JAVA_HOME=/opt/test-jdk\n' "$TMP/stub:$PATH" >> "$STATE"
+  # Dòng do worker cài vào: watchdog không được đưa BASH_ENV vào runner (bash chạy file đó lúc khởi động).
+  printf 'ENV_BASH_ENV=%s\n' "$TMP/inject.sh" >> "$STATE"
 }
+printf '#!/usr/bin/env bash\n: > "%s"\n' "$TMP/injected" > "$TMP/inject.sh"
 restarts_logged() { local n; n=$(grep -c 'restarted the runner' "$WLOG" 2>/dev/null); echo "${n:-0}"; }
 expect_no_restart() {   # $1 = mô tả; watchdog không ghi lần khởi động lại nào và state PID vẫn là $D
   local before; before=$(restarts_logged)
@@ -344,9 +347,13 @@ grep -q 'restarted' "$WLOG" 2>/dev/null && ok "restart logged to $(basename "$WL
 [ "$(field ENV_JAVA_HOME "$STATE")" = /opt/test-jdk ] && [ "$(field DISPATCHES "$STATE")" = 7 ] \
   && ok "restarted runner gets the recorded JAVA_HOME back and keeps counting dispatches (7)" \
   || fail "restarted runner: ENV_JAVA_HOME='$(field ENV_JAVA_HOME "$STATE")' DISPATCHES='$(field DISPATCHES "$STATE")'"
+[ ! -e "$TMP/injected" ] && ok "an ENV_BASH_ENV line planted in the record is not passed to the restarted runner" \
+  || fail "watchdog passed ENV_BASH_ENV from the record: injected code ran in the restarted runner"
 
 # Runner còn sống: không khởi động thêm runner thứ hai — cả từ watchdog lẫn từ một lần khởi động tường minh.
 D="$RP"; expect_no_restart "runner alive"
+[ -z "$(field SPAWNED "$WD")" ] && ok "a recorded live runner clears SPAWNED (no false spawn-died later)" \
+  || fail "SPAWNED=$(field SPAWNED "$WD") kept while the recorded runner is alive"
 LIVE="$RP"; cp "$STATE" "$TMP/state.live"
 start_runner "$TMP/run6.out"
 if wait_for 15 '! alive "$RP"'; then

@@ -75,17 +75,19 @@ runner_alive() {   # 0 khi $1 là PID của runner board này còn sống (PID t
   return 1
 }
 
+# Đúng danh sách RUNNER_ENV_KEYS mà runner ghi. Không nhận khoá nào khác: bản ghi nằm trong working tree mà worker ghi
+# được, một dòng ENV_BASH_ENV / ENV_DYLD_INSERT_LIBRARIES sẽ chạy code tuỳ ý trong runner launchd khởi động không người.
+RUNNER_ENV_KEYS="PATH JAVA_HOME ANDROID_HOME ANDROID_SDK_ROOT SB_ACCOUNT_POOL SB_STATE_DIR CLAUDE_CONFIG_DIR DEVKIT_LANG"
+
 runner_env() {
-  # Môi trường runner trước đã ghi (ENV_*: toolchain, cấu hình pool/account — danh sách RUNNER_ENV_KEYS trong runner):
-  # launchd chỉ có PATH tối thiểu, runner và worker cần đúng môi trường như lần khởi động tường minh. Chỉ nhận tên biến
-  # dạng ENV_[A-Z0-9_]; thiếu bản ghi (runner cũ) thì dùng môi trường của chính watchdog.
+  # Môi trường runner trước đã ghi (toolchain, cấu hình pool/account): launchd chỉ có PATH tối thiểu, runner và worker
+  # cần đúng môi trường như lần khởi động tường minh. Thiếu bản ghi (runner cũ) thì dùng môi trường của chính watchdog.
   local k v
   ENVV=()
-  while IFS='=' read -r k v; do
-    case "$k" in ENV_*) ;; *) continue ;; esac
-    case "${k#ENV_}" in ''|*[!A-Z0-9_]*) continue ;; esac
-    [ -z "$v" ] || ENVV+=("${k#ENV_}=$v")
-  done < "$STATE"
+  for k in $RUNNER_ENV_KEYS; do
+    v=$(field "ENV_$k" "$STATE")
+    [ -z "$v" ] || ENVV+=("$k=$v")
+  done
 }
 
 restart_runner() {   # $1 = PID cũ, $2 = STATE cũ, $3 = RC cũ
@@ -137,6 +139,9 @@ check() {
       wlog "runner pid $pid up for $(( (NOW - started) / 60 )) min — restart budget reset"
       wd_save
     fi
+    # Runner trong bản ghi đang sống: runner watchdog spawn trước đó đã ghi bản ghi hoặc bị thay. Giữ SPAWNED cũ thì lần
+    # crash sau bị báo nhầm là spawn-died và board không bao giờ được khởi động lại.
+    if [ -n "$SPAWNED" ]; then SPAWNED=""; wd_save; fi
     verdict running "runner pid $pid is running"
     return 0
   fi
