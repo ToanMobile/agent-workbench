@@ -443,6 +443,20 @@
           "command": "bash tests/super-board/test_needs_device_skip.sh"
         }
       ]
+    },
+    {
+      "component": "super-board-run-sweep-wiring",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUN-SWEEP-TICK-01",
+          "name": "runner starts the post-merge sweep at startup and on every tick (before cap-reached), throttled, in the background",
+          "command": "bash tests/super-board/test_post_merge_sweep_wiring.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
