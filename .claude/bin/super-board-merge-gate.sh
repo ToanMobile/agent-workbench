@@ -86,7 +86,8 @@
 #      card → Blocked with the 🙋 template: the human reviews and merges it, or
 #      comments "done" after its pinned request to approve — the next wave re-runs
 #      the gate, which then skips the policy check and merges.
-#   9  verification-readiness: repair config.verify_commands and restart; preserve
+#   9  verification-readiness: repair config.verify_commands (or the DevKit install
+#      the scratch tree lacks: no post-fix-gate.py there) and restart; preserve
 #      card/worktree/approval state. Never bounce to Build or retry a rebase.
 #   79 required GitHub evidence unavailable: local run halt; preserve card and
 #      approval state, stop dispatch, and explicitly restart after diagnosis.
@@ -293,15 +294,35 @@ if ! git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>/dev/null; then
 fi
 
 # Populate git-ignored DevKit symlinks so post-fix-gate / REG-WB-CONFIG-01 succeed in SCRATCH
-if [ -f "$REPO_PATH/universal-agent-devkit/bin/install.sh" ]; then
-  bash "$REPO_PATH/universal-agent-devkit/bin/install.sh" -t "$SCRATCH" -a claude -y >/dev/null 2>&1 || true
+# 19/10: REPO_PATH "." thường là worktree Reviewer, nơi .agents/devkit (bị ignore) không có: chỉ tìm ở đó thì không cài gì và mọi
+# verify đỏ vì thiếu post-fix-gate.py (Goods #48, NFH #61, OfficeReader #74/#159). Tìm như super-board-scratch-config.sh: "." rồi main
+# checkout rồi bản đi kèm gate.
+DK_MAIN=$(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p') || true
+DK_INSTALL=""
+for c in "$REPO_PATH/universal-agent-devkit" "$REPO_PATH/.agents/devkit" "${DK_MAIN:-$REPO_PATH}/universal-agent-devkit" \
+         "${DK_MAIN:-$REPO_PATH}/.agents/devkit" "$HERE/../../universal-agent-devkit" "$HERE/../../.agents/devkit"; do
+  if [ -f "$c/bin/install.sh" ]; then DK_INSTALL="$c/bin/install.sh"; break; fi
+done
+if [ -n "$DK_INSTALL" ]; then
+  DK_RC=0
+  bash "$DK_INSTALL" -t "$SCRATCH" -a claude -y >"$VERIFY_LOG" 2>&1 || DK_RC=$?
+  [ "$DK_RC" -eq 0 ] || say "DevKit install into the scratch tree failed (exit ${DK_RC}): $(tail -3 "$VERIFY_LOG" | clip 300)"
   git -C "$SCRATCH" checkout -q -- . 2>/dev/null || true
-elif [ -f "$REPO_PATH/.agents/devkit/bin/install.sh" ]; then
-  bash "$REPO_PATH/.agents/devkit/bin/install.sh" -t "$SCRATCH" -a claude -y >/dev/null 2>&1 || true
-  git -C "$SCRATCH" checkout -q -- . 2>/dev/null || true
+else
+  say "no DevKit install.sh in ${REPO_PATH}, ${DK_MAIN:-the main checkout} or beside this gate: the scratch tree has no .agents/devkit"
 fi
 # Config cục bộ bị git ignore (google-services.json, local.properties…) để build trong SCRATCH không đỏ vì môi trường.
 bash "$HERE/super-board-scratch-config.sh" "$REPO_PATH" "$SCRATCH" || true
+# Lệnh verify gọi post-fix-gate mà scratch không có nó: lỗi môi trường, không phải lỗi PR. Exit 11 sẽ đẩy thẻ về Build/Blocked dù PR
+# không có gì sai (OCR 19/10): dừng bằng exit 9 (verification-readiness), giữ nguyên thẻ.
+for cmd in "${VERIFY[@]}"; do
+  for p in .agents/devkit/bin/post-fix-gate.py universal-agent-devkit/bin/post-fix-gate.py; do
+    if [[ "$cmd" == *"$p"* ]] && [ ! -f "$SCRATCH/$p" ]; then
+      say "verification-readiness: the scratch tree has no ${p} (the DevKit could not be installed there) — an environment problem, not this PR; the card stays where it is"
+      exit 9
+    fi
+  done
+done
 
 for cmd in "${VERIFY[@]}"; do
   if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
