@@ -17,6 +17,10 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-behindmsg-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
+# Verify ở đây là echo/printf, không phải Gradle/Unity. Slot riêng: hai slot máy đang bận
+# khiến heavy-slot chờ 3600s và Stop ngắt suite ở 600s (20:42, ca 1c).
+export SB_HEAVY_SLOT_DIR="$TMP/heavy-slots"
+mkdir -p "$SB_HEAVY_SLOT_DIR"
 O="$TMP/origin.git"; R="$TMP/repo"; WT="$R/.claude/worktrees/deploy-x"
 git init -q --bare -b main "$O"
 git init -q -b main "$R"

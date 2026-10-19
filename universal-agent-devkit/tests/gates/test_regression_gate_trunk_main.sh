@@ -48,6 +48,29 @@ change; rm -f ran.marker; stop '{"hook_event_name":"Stop"}'; rc=$?
 change; rm -f ran.marker; stop '{"session_id":"s-1","hook_event_name":"Stop","last_assistant_message":"XONG"}'; rc=$?
 [ "$rc" = 2 ] && [ -e ran.marker ] && ok "session id but no Claude transcript (degraded): still gated (rc 2)" || fail "degraded with session id: rc $rc (want 2)"
 
+# 6 Grok giữa chừng (không XONG, không nhận đã xong): không chạy suite. Nếu không, mỗi Stop giữ composer tới 900s.
+change; rm -f ran.marker
+stop '{"session_id":"s-grok","hook_event_name":"Stop","last_assistant_message":"dang xem log"}'
+rc=$?
+[ "$rc" = 0 ] && [ ! -e ran.marker ] && ok "grok mid-work: suite not started (rc 0)" \
+  || fail "grok mid-work ran the suite (rc $rc, marker=$( [ -e ran.marker ] && echo yes || echo no))"
+grep -q "grok mid-work" .claude/audit-gate/regression_gate.log && ok "  … the log says grok mid-work" || fail "no grok mid-work log"
+
+# 7 Grok thật gửi lastAssistantMessage (camelCase), không có last_assistant_message.
+# Ca 6 chỉ có snake_case nên xanh, còn Stop thật vẫn vào suite (log 20/10: gating, không có grok mid-work).
+change; rm -f ran.marker
+stop '{"sessionId":"s-grok-cc","hookEventName":"stop","hook_event_name":"Stop","lastAssistantMessage":"dang xem log"}'
+rc=$?
+[ "$rc" = 0 ] && [ ! -e ran.marker ] && ok "grok camelCase mid-work: suite not started (rc 0)" \
+  || fail "grok camelCase mid-work ran the suite (rc $rc, marker=$( [ -e ran.marker ] && echo yes || echo no))"
+
+# 8 cùng payload camelCase, dòng trạng thái bàn giao: vẫn chạy suite
+change; rm -f ran.marker
+stop '{"sessionId":"s-grok-cc","hookEventName":"stop","hook_event_name":"Stop","lastAssistantMessage":"XONG"}'
+rc=$?
+[ "$rc" = 2 ] && [ -e ran.marker ] && ok "grok camelCase handover still gated (rc 2)" \
+  || fail "grok camelCase handover: rc $rc (want 2), marker=$( [ -e ran.marker ] && echo yes || echo no)"
+
 # 5 trunk mode, phiên Claude ở WORKTREE của chính nó (không phải main): vẫn gate (chỉ main được bỏ qua)
 git checkout -q -- src/Core.kt
 git worktree add -q --detach "$REPO/.claude/worktrees/w5" HEAD
