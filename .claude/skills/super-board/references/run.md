@@ -520,7 +520,8 @@ on the base branch**.
           hit. Card Review → **Blocked** with the 🙋 template: `Why blocked` names the
           category and evidence; `To unblock` = "[ ] review PR #<P> and merge it
           yourself" OR "[ ] comment `done` to approve — the next wave merges it";
-          label `needs-you`, `blocked-by: -`. A human merge moves the card to Done the
+          `blocked-by: -`; mark the card (`super-board-needs-you.py mark`, block-template.md →
+          "A person must act", `--next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"`). A human merge moves the card to Done the
           usual way; a `done` brings it back through `resume`, and the gate clears the
           policy hold only with a verified trusted approval of the current request.
      8 → 🙋 needs you. Stdout carries one `needs-you: <command>` line per human step
@@ -528,7 +529,8 @@ on the base branch**.
           command that failed, a `needs-you:` line in the PR body,
           `migrations.human_steps`). Card Review → **Blocked** with the 🙋 template
           (block-template.md → "🙋 Needs you"), the commands copied verbatim into
-          `To unblock`, label `needs-you` on issue and PR, `blocked-by: -`. When the
+          `To unblock`, `blocked-by: -`; mark the issue (`super-board-needs-you.py mark --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"`)
+          and label the PR `needs-you`. When the
           human comments `done` after the current pinned request, the wave planner
           verifies their permission and the head before resuming Review. For exits
           7 and 8, copy the gate's `approval-request:` line into the canonical issue
@@ -612,7 +614,8 @@ Next: none
 ```
 
 Block exits use the same header (`[<role>] [blocker] 🛑 blocked`) and the fields of
-`block-template.md`. A card dropped on purpose (out of scope, won't do) is closed as not planned
+`block-template.md`. A Block for a person (🙋 🧑 🔐 🔑 💳 🎨 🛡, or ❓ waiting on a person's decision) also marks the card in
+the same step: `super-board-needs-you.py mark` (block-template.md → "A person must act"). A card dropped on purpose (out of scope, won't do) is closed as not planned
 and moved to Done with a `[<role>] [report] 🤷 dropped · <reason>` comment — there is no Skipped
 column.
 
@@ -739,8 +742,9 @@ releases them):
   the same once at start (`reclaim_stranded_building`).
 - **`resume`** — 🙋 `Blocked` cards whose newest pinned request has a later `done`
   from a human with verified write, maintain or admin permission, for the current
-  PR head. Move each to **Review** and remove its `needs-you` label (the person acted; a card
-  sent back to Ready keeping it would wait for nobody); `needs-you:done` may be kept as a display label
+  PR head. Move each to **Review** and run `super-board-needs-you.py unmark --repo <owner/name>
+  --issue <N>` (the person acted; a card still carrying `needs-you` is skipped by the legacy runner's sweep and
+  `/super-build`, so sent back to Ready it would wait for nobody); `needs-you:done` may be kept as a display label
   only. Do not create or copy approval evidence. The Reviewer re-runs the gate,
   which independently checks the request, current policy/steps and head, verifies
   the build, and runs allowed migrations. New code or a newer request needs fresh

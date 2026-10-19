@@ -31,6 +31,7 @@ CMD="${1:-}"; SLUG="${2:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT"
+ROOT_P="$(pwd -P)"   # đường dẫn vật lý của repo: so với giá trị đọc từ bản ghi (safe_path, runner_log)
 case "$CMD" in check|status|install|ensure|uninstall) ;; *) sed -n '2,29p' "$0" >&2; exit 64 ;; esac
 case "$SLUG" in ''|*[!A-Za-z0-9._-]*) echo "usage: $0 $CMD <config-slug>" >&2; exit 64 ;; esac
 
@@ -79,14 +80,35 @@ runner_alive() {   # 0 khi $1 là PID của runner board này còn sống (PID t
 # được, một dòng ENV_BASH_ENV / ENV_DYLD_INSERT_LIBRARIES sẽ chạy code tuỳ ý trong runner launchd khởi động không người.
 RUNNER_ENV_KEYS="PATH JAVA_HOME ANDROID_HOME ANDROID_SDK_ROOT SB_ACCOUNT_POOL SB_STATE_DIR CLAUDE_CONFIG_DIR DEVKIT_LANG"
 
+canon_path() {
+  # In đường dẫn vật lý của $1 (như realpath, bash 3.2, không readlink -f): phần cha đã tồn tại phân giải bằng
+  # cd -P/pwd -P (symlink, ., .., //), phần đuôi chưa tồn tại ghép lại nguyên văn. Fail closed (trả 1): đường dẫn tương
+  # đối, đuôi có . hoặc .., một mục của đuôi là symlink (symlink treo trỏ vào repo, worker tạo đích sau), cd lỗi.
+  local p="$1" tail="" c base
+  case "$p" in /*) ;; *) return 1 ;; esac
+  while [ ! -d "$p" ]; do
+    if [ -L "$p" ]; then return 1; fi
+    c=${p##*/}
+    case "$c" in .|..) return 1 ;; '') ;; *) tail="/$c$tail" ;; esac
+    p=${p%/*}; [ -n "$p" ] || p=/
+  done
+  base=$(cd -P "$p" 2>/dev/null && pwd -P) || return 1
+  [ "$base" != / ] || base=""
+  base="$base$tail"
+  printf '%s' "${base:-/}"   # gốc "/" in là "/": chuỗi rỗng trong PATH là thư mục hiện tại (= repo root khi khởi động lại runner)
+}
+
 safe_path() {
   # $1 = PATH lấy từ bản ghi. Bỏ mục tương đối và mục nằm trong repo (kể cả .claude/worktrees của worker): một thư mục
-  # worker tạo đứng đầu PATH sẽ thay gh/claude/python3 của runner chạy không người giám sát.
+  # worker tạo đứng đầu PATH sẽ thay gh/claude/python3 của runner chạy không người giám sát. So trên đường dẫn vật lý của
+  # cả hai phía: so tiền tố chuỗi để lọt $TMP/./repo, $TMP/x/../repo và bí danh symlink (/tmp ↔ /private/tmp). Trả mục
+  # đã phân giải: symlink trong repo trỏ ra ngoài không bị worker đổi đích sau lượt kiểm.
   local out="" d rest="$1:"
   while [ -n "$rest" ]; do
     d=${rest%%:*}; rest=${rest#*:}
-    case "$d" in /*) ;; *) continue ;; esac
-    case "$d/" in "$ROOT"/*) continue ;; esac
+    d=$(canon_path "$d") || continue
+    [ -n "$d" ] || continue   # mục rỗng trong PATH = thư mục hiện tại (repo root khi khởi động lại runner)
+    case "$d/" in "$ROOT_P"/*) continue ;; esac
     out="${out:+$out:}$d"
   done
   printf '%s' "$out"
@@ -110,11 +132,13 @@ runner_env() {
 }
 
 runner_log() {
-  # LOG trong bản ghi chỉ được nhận khi là file trong thư mục log của board; còn lại dùng log mặc định.
+  # LOG trong bản ghi chỉ được nhận khi là file trong thư mục log của board; còn lại dùng log mặc định. So trên đường dẫn
+  # vật lý (canon_path): LOG là symlink (hay nằm sau thư mục symlink) trỏ ra ngoài repo thì bị từ chối.
   local l
   l=$(field LOG "$STATE")
+  l=$(canon_path "$l") || l=""
   case "$l" in
-    "$ROOT"/docs/super-board/*.log|"$ROOT"/.claude/super-board/*.log) case "$l" in *..*) l="" ;; esac ;;
+    "$ROOT_P"/docs/super-board/*.log|"$ROOT_P"/.claude/super-board/*.log) ;;
     *) l="" ;;
   esac
   printf '%s' "${l:-docs/super-board/runner.log}"
@@ -136,13 +160,23 @@ restart_runner() {   # $1 = PID cũ, $2 = STATE cũ, $3 = RC cũ
   wlog "♻ restarted the runner (attempt $RESTARTS/$MAX_RESTARTS): new pid $new; previous pid ${1:-?} STATE=${2:-?} rc=${3:-?}; log $log"
 }
 
+file_mtime() {
+  # mtime (epoch giây) của $1 trên cả GNU stat (Linux: -c %Y) lẫn BSD stat (macOS: -f %m); chỉ nhận số (GNU `stat -f` in chữ
+  # filesystem mà vẫn thành công). Không đọc được thì trả 1. Cùng hàm với super-board-run.sh.
+  local t
+  for t in "$(stat -c %Y "$1" 2>/dev/null || true)" "$(stat -f %m "$1" 2>/dev/null || true)"; do
+    case "$t" in ''|*[!0-9]*) ;; *) printf '%s\n' "$t"; return 0 ;; esac
+  done
+  return 1
+}
+
 take_check_lock() {
   # Hai `check` cùng lúc (launchd + một lần chạy tay) đều thấy runner chết và cùng khởi động: chỉ một lượt kiểm chạy.
   # Khoá bỏ lại quá 120 s (check bị kill) được lấy lại.
   local lock="$DIR/$SLUG.check.lock" m
   mkdir -p "$DIR"
   if ! mkdir "$lock" 2>/dev/null; then
-    m=$(stat -f %m "$lock" 2>/dev/null || echo "$NOW")
+    m=$(file_mtime "$lock") || m=$NOW
     [ $((NOW - m)) -ge 120 ] || return 1
     rmdir "$lock" 2>/dev/null || true
     mkdir "$lock" 2>/dev/null || return 1

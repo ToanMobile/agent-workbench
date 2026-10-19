@@ -1,11 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/config.js';
 import { captureProof } from '../src/proof.js';
-import { tmpProject, cleanup, writeFile, PNG_1PX } from './helpers.js';
+import { tmpProject, tmpDir, cleanup, writeFile, PNG_1PX } from './helpers.js';
 
 test('nhan anh co san (anh do agent tu chup) vao ho so', async () => {
   const dir = tmpProject({});
@@ -33,7 +32,7 @@ test('provider shell: chay lenh tu khai de sinh anh', async () => {
 });
 
 test('provider shell: {{project}} la dung checkout, ke ca duong dan co dau cach', async () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-space-'));
+  const parent = tmpDir('agpm-space-');
   const dir = path.join(parent, 'my proj');
   fs.mkdirSync(dir);
   const png = writeFile(path.join(parent, 'src.png'), PNG_1PX);
