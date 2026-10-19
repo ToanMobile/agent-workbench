@@ -372,6 +372,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-post-merge-clean",
+      "watch_files": [
+        ".claude/bin/super-board-post-merge-clean.sh",
+        "tests/super-board/test_post_merge_clean.sh",
+        "tests/super-board/test_post_merge_squash_leftovers.sh",
+        "tests/super-board/test_post_merge_sweep_wiring.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-POST-MERGE-CLEAN-01",
+          "name": "post-merge clean and --sweep remove merged lane worktrees, keep work, one sweep at a time, salvage leaves no junk",
+          "command": "bash tests/super-board/test_post_merge_clean.sh && bash tests/super-board/test_post_merge_squash_leftovers.sh && bash tests/super-board/test_post_merge_sweep_wiring.sh"
+        }
+      ]
     }
   ]
 }
