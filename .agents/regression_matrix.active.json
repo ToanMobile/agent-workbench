@@ -231,7 +231,7 @@
         {
           "id": "REG-SB-GITHUB-READ-ESC-01",
           "name": "a PR diff holding terminal escape sequences is read, the board is not halted",
-          "command": "bash tests/super-board/test_github_read_diff_escape.sh"
+          "command": "bash tests/super-board/test_pr_diff_escape_sequences.sh"
         }
       ]
     },
