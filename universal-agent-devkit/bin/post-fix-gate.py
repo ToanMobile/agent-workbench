@@ -1350,8 +1350,7 @@ def head_and_dirty(project_dir):
 def _tree_store(tree_fp, project_dir, fp, data=None):
     """#105 (trunk mode): mirror of the receipt in <git common dir>/postfix-gate/tree_receipts/<fp>.json. A worktree's own receipt goes with
     its git dir when the worktree is removed, so proof_gate finds the full PASS of the tree a session delivered into main (finish, squash
-    PR) here. data: the exit-0 receipt (plus `tree`, the git tree of `head` when only tree_fp.EXCLUDE files differ from it); None: drop
-    the entry, any other verdict on that tree. fp None: the tested tree, fingerprinted only when the store holds something. Only the
+    PR) here. data: the exit-0 receipt; None: drop the entry, any other verdict on that tree. fp None: the tested tree, fingerprinted only when the store holds something. Only the
     entry of that one tree is touched; a write prunes entries older than TREE_RECEIPT_MAX_AGE_S or beyond the TREE_RECEIPT_MAX newest."""
     store = None
     try:
@@ -1366,14 +1365,8 @@ def _tree_store(tree_fp, project_dir, fp, data=None):
             with contextlib.suppress(FileNotFoundError):
                 os.remove(path)
             return
-        excluded = lambda p: any(p == ex or p.startswith(ex + "/") for ex in tree_fp.EXCLUDE)
-        entry = dict(data)
-        if data.get("head") and not any(not excluded(p) for p in data.get("dirty") or {}):
-            t = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--verify", "-q", data["head"] + "^{tree}"], capture_output=True)
-            if t.returncode == 0:
-                entry["tree"] = t.stdout.decode().strip()
         os.makedirs(store, exist_ok=True)
-        text = json.dumps(entry)
+        text = json.dumps(data)
         fd, tmp = tempfile.mkstemp(prefix=".tmp_tree.", dir=store)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -1465,6 +1458,7 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
                 os.remove(path)
             except OSError:
                 pass
+        if exit_code != 0:   # exit 4 too: the tested tree's exit-0 entry does not outlive a verdict that is not a pass
             _tree_store(tree_fp, project_dir, tested_fp)
         return
     if not fingerprint:   # proof_gate never matches an empty one: say why XONG will be refused

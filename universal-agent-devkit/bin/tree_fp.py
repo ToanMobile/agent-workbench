@@ -122,6 +122,33 @@ def tree_fingerprint(project_dir):
     return hashlib.sha256((tree + "".join("\n" + b for b in big_files)).encode(errors="surrogateescape")).hexdigest()[:24]
 
 
+def commit_fingerprint(project_dir, rev="HEAD", timeout=None):
+    """The fingerprint tree_fingerprint gives a clean checkout of commit `rev` (#105: main's HEAD next to other sessions' uncommitted
+    files), built from the commit alone in a throw-away index and object store. "" on a git error. An untracked file of
+    TREE_FP_BIG_MB or more counts by its signature in tree_fingerprint and by content here, so such a tree never matches (fail closed).
+    timeout: seconds for the WHOLE call (one deadline over its six git calls; a hook that runs past its own deadline is killed and its
+    Stop goes through): subprocess.TimeoutExpired once it is spent."""
+    import tempfile
+    import time
+    end = time.monotonic() + timeout if timeout else None
+    rest = lambda: None if end is None else max(0.05, end - time.monotonic())
+    git = lambda *a, env=None: subprocess.run(["git", "-C", str(project_dir), *a], capture_output=True, env=env, timeout=rest())
+    objects = git("rev-parse", "--path-format=absolute", "--git-path", "objects").stdout.decode().strip()
+    prefix = git("rev-parse", "--show-prefix").stdout.decode().strip()
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, "objects", "info"))
+        env = dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "index"), GIT_OBJECT_DIRECTORY=os.path.join(tmp, "objects"),
+                   GIT_ALTERNATE_OBJECT_DIRECTORIES=objects, GIT_NO_REPLACE_OBJECTS="1")
+        run = lambda *a: git(*a, env=env)
+        if not objects or run("read-tree", rev + "^{commit}").returncode:
+            return ""
+        run("rm", "-r", "-f", "--cached", "-q", "--ignore-unmatch", "--", *EXCLUDE)   # -f: the work tree (main's dirty files) is not this index
+        tree = run("write-tree").stdout.decode().strip()
+        if prefix and tree:
+            tree = run("rev-parse", f"{tree}:{prefix.rstrip('/')}").stdout.decode().strip()
+    return hashlib.sha256(tree.encode()).hexdigest()[:24] if tree else ""
+
+
 def _big_untracked(project_dir):
     """Untracked, not ignored files of TREE_FP_BIG_MB MiB or more (default 8, the bound devkit_harness uses): (signatures
     "path<NUL>size<NUL>mtime_ns", sorted; exclude pathspecs for `git add`). GeelyEx2 2026-10-13: `git add -A` hashed 319 MB of

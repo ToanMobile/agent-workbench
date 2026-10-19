@@ -20,12 +20,12 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 ORIGIN="$TMP/origin.git"; REPO="$TMP/repo"; GH="$TMP/github"; TR="$TMP/transcript.jsonl"
 git init -q --bare -b main "$ORIGIN" && git clone -q "$ORIGIN" "$REPO" 2>/dev/null || exit 1
 ( cd "$REPO" && git config user.email t@t && git config user.name t && mkdir -p src templates docs .agents
-  echo '[ -z "$FAIL_SUITE" ]' > result.sh && echo "def ok(): return 1" > src/core.py   # FAIL_SUITE=1: cùng nội dung, suite đỏ
+  printf '[ -n "$UNTESTED" ] && exit 3\n[ -z "$FAIL_SUITE" ]\n' > result.sh && echo "def ok(): return 1" > src/core.py   # cùng nội dung: suite đỏ / UNTESTED
   echo '{"profile":"backend"}' > .agents/active-profile.json   # backend: không cần ảnh, chỉ xét cổng
   printf '.claude/audit-gate/\n' > .gitignore
   cat > templates/regression_matrix.json <<'JSON'
 {"project":"t","rules":[{"component":"Core","watch_files":["src/core.py"],
- "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"sh result.sh"}]}]}
+ "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"sh result.sh","untested_exit":3}]}]}
 JSON
   git add -A && git commit -qm init && git push -q origin main ) || exit 1
 git clone -q "$ORIGIN" "$GH" 2>/dev/null && git -C "$GH" config user.email gh@gh && git -C "$GH" config user.name github || exit 1
@@ -101,10 +101,36 @@ tool_use Write "{\"file_path\": \"$REPO/docs/foreign.md\", \"content\": \"x\"}";
 blocked "$rc" && ok "N9 the dirty main file is this session's own: blocked" || fail "N9 own dirty file accepted ($(why $rc))"
 rm -f "$REPO/docs/foreign.md"
 
-# C3b. Như C1, rồi finish của phiên khác đưa main đi tiếp một commit (file phiên này không đụng): cho qua.
-turn_start; wt_new c3; wt_edit 31; gate "$WT" --diff HEAD~1 || fail "C3b setup: gate exit $?"; finish
+# C3b. Sửa → gate trên cây CHƯA commit → commit → finish; main giữ file chưa track của phiên khác: cho qua (dấu vân tay commit HEAD).
+turn_start; wt_new c3b; echo "def ok(): return 32" > "$WT/src/core.py"; tool_use Write "{\"file_path\": \"$WT/src/core.py\", \"content\": \"x\"}"
+gate "$WT" --diff HEAD || fail "C3b setup: gate exit $?"; git -C "$WT" commit -qam "edit 32"; finish
+echo "# run log của runner" > "$REPO/docs/foreign.md"; stop; rc=$?; rm -f "$REPO/docs/foreign.md"
+[ "$rc" = 0 ] && ok "C3b gated uncommitted, committed, finished; foreign file in main: XONG allowed" || fail "C3b blocked ($(why $rc))"
+
+# N10. Như C1, rồi main đi tiếp một commit sau cây đã gate (dù của phiên khác): cây giao không còn là cây đã gate. Chặn (gate lại).
+turn_start; wt_new n10; wt_edit 33; gate "$WT" --diff HEAD~1 || fail "N10 setup: gate exit $?"; finish
 echo "phiên khác" > "$REPO/docs/other3.md" && git -C "$REPO" add docs/other3.md && git -C "$REPO" commit -qm "phiên khác"; stop; rc=$?
-[ "$rc" = 0 ] && ok "C3b main moved on by another session's commit: XONG allowed" || fail "C3b blocked ($(why $rc))"
+blocked "$rc" && ok "N10 main moved past the gated tree: blocked" || fail "N10 accepted a commit after the gated tree ($(why $rc))"
+
+# N11. Phiên này không gate; phiên khác gate + finish cây của nó trong lượt; phiên này sửa qua Bash không nêu đường dẫn, commit, finish: chặn.
+turn_start; wt_new n11t; echo T > "$WT/docs/t.md"; git -C "$WT" add docs/t.md && git -C "$WT" commit -qm t
+gate "$WT" --diff HEAD~1 || fail "N11 setup: gate exit $?"; finish
+wt_new n11; tool_use Bash '{"command": "python3 tools/bump.py && git commit -qam bump"}'
+echo "def ok(): return 121" > "$WT/src/core.py"; git -C "$WT" commit -qam bump; finish; stop; rc=$?
+blocked "$rc" && ok "N11 no gate of its own, shell-only edit after another session's gated finish: blocked" || fail "N11 accepted ($(why $rc))"
+
+# N12. Gate trên cây CHƯA sửa (= cây đầu lượt), rồi sửa bằng git apply + commit, finish: chặn.
+turn_start; wt_new n12; gate "$WT" --diff HEAD~1 || fail "N12 setup: gate exit $?"
+printf 'def ok(): return 131\n' > "$WT/src/core.py"; git -C "$WT" diff > "$TMP/n12.patch"; git -C "$WT" checkout -q -- src/core.py
+tool_use Bash "{\"command\": \"git apply $TMP/n12.patch && git commit -qam fix\"}"
+git -C "$WT" apply "$TMP/n12.patch" && git -C "$WT" commit -qam fix; finish; stop; rc=$?
+blocked "$rc" && ok "N12 gate first on the untouched tree, shell edit after: blocked" || fail "N12 accepted ($(why $rc))"
+
+# N13. Gate exit 0, rồi `cd src && printf … > helper.py` (đường dẫn không đủ) + commit, finish: chặn.
+turn_start; wt_new n13; wt_edit 141; gate "$WT" --diff HEAD~1 || fail "N13 setup: gate exit $?"
+tool_use Bash '{"command": "cd src && printf x > helper.py && git add helper.py && git commit -qm h"}'
+echo "def broken(:" > "$WT/src/helper.py"; git -C "$WT" add src/helper.py && git -C "$WT" commit -qm h; finish; stop; rc=$?
+blocked "$rc" && ok "N13 a shell edit naming no repo path after the gate: blocked" || fail "N13 accepted ($(why $rc))"
 
 # N1. Không chạy gate nào: chặn.
 turn_start; wt_new n1; wt_edit 41; finish; stop; rc=$?
@@ -130,6 +156,12 @@ FAIL_SUITE=1 gate "$WT" --diff HEAD~1 --no-cache; g=$?; finish; stop; rc=$?
 [ "$g" = 1 ] || fail "N5 setup: failing gate exit $g, want 1"
 blocked "$rc" && ok "N5 a later red --full on the same tree: blocked" || fail "N5 stale exit-0 receipt accepted ($(why $rc))"
 
+# N5b. Như N5 nhưng lần sau ra exit 4 (UNTESTED: suite không chạy được trên máy này): không còn là PASS của cây đó. Chặn.
+turn_start; wt_new n5b; wt_edit 82; gate "$WT" --diff HEAD~1 || fail "N5b setup: gate exit $?"
+UNTESTED=1 gate "$WT" --diff HEAD~1 --no-cache; g=$?; finish; stop; rc=$?
+[ "$g" = 4 ] || fail "N5b setup: untested gate exit $g, want 4"
+blocked "$rc" && ok "N5b a later UNTESTED --full on the same tree: blocked" || fail "N5b stale exit-0 receipt accepted ($(why $rc))"
+
 # N6. Biên nhận trong kho có cây đúng nhưng exit 2: chặn.
 turn_start; wt_new n6; wt_edit 91; gate "$WT" --diff HEAD~1 || fail "N6 setup: gate exit $?"; finish
 ls "$STORE"/*.json >/dev/null 2>&1 || fail "N6 setup: no store receipt"
@@ -146,6 +178,19 @@ git -C "$REPO" config devkit.trunkMode false
 turn_start; main_receipt old; wt_new n8; wt_edit 111; gate "$WT" --diff HEAD~1 || fail "N8 setup: gate exit $?"; finish; stop; rc=$?
 git -C "$REPO" config --unset devkit.trunkMode
 blocked "$rc" && ok "N8 trunk mode off: blocked" || fail "N8 accepted outside trunk mode ($(why $rc))"
+
+# T1. commit_fingerprint giữ MỘT hạn chót cho mọi lệnh git của nó (hook quá hạn bị giết = Stop lọt): git chậm 0,4 s/lệnh, hạn 1 s.
+TFP="${TFP_DIR:-$DEVKIT_DIR/bin}"; mkdir -p "$TMP/slowbin"
+printf '#!/bin/sh\nsleep 0.4\nexec %s "$@"\n' "$(command -v git)" > "$TMP/slowbin/git" && chmod +x "$TMP/slowbin/git"
+out=$(PATH="$TMP/slowbin:$PATH" python3 -c 'import subprocess, sys, time; sys.path.insert(0, sys.argv[1]); import tree_fp
+t = time.monotonic()
+try:
+    tree_fp.commit_fingerprint(sys.argv[2], "HEAD", timeout=1.0); r = "returned"
+except subprocess.TimeoutExpired:
+    r = "timeout"
+print(r, round(time.monotonic() - t, 1))' "$TFP" "$REPO" 2>&1)
+case "$out" in "timeout 0."*|"timeout 1."[0-5]*) ok "T1 commit_fingerprint keeps one deadline ($out)" ;;
+  *) fail "T1 commit_fingerprint ran past its deadline ($out)" ;; esac
 
 [ "$FAILS" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "$FAILS FAILED"; exit 1

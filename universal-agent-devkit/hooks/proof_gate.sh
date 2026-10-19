@@ -17,7 +17,7 @@
 #     attests it: the real origin (ls-remote) holds a squash of H committed this turn and the judged tree stands at H or holds it with
 #     nothing origin lacks (merged_evidence; tests/gates/test_proof_gate_merged_trunk.sh); #105, 19/10: or (c) a --full exit 0 receipt of
 #     this turn that post-fix-gate mirrored by tree into <git common dir>/postfix-gate/tree_receipts (it outlives the worktree), for the
-#     judged tree, or in main for HEAD's tree or a tree main took in this turn with only other sessions' files after it (tree_store_evidence;
+#     judged tree, or in main for HEAD's commit when only other sessions' uncommitted files differ (tree_store_evidence;
 #     tests/gates/test_proof_gate_tree_receipt.sh);
 #   - the reply names at least one reports/proof-<yyyyMMdd-HHmmss>.png that
 #   - exists under the project,
@@ -430,15 +430,12 @@ def dirty_state(root, tree_fp, t=10):
     return now_head.stdout.decode().strip(), sorted({p for p in (changed.stdout + untracked.stdout).decode("utf-8", "surrogateescape").split("\0")
                                                      if p and not excluded(p)})
 
-def untouched_by_session(paths, anywhere=False):
+def untouched_by_session(paths):
     """True khi không tool_use không chỉ đọc nào của phiên (kể cả subagent) nhắc tới một trong `paths` (tương đối với repo đang xét);
-    False khi có, hoặc khi một transcript không đọc được (không chứng minh được gì). anywhere: file cùng đường dẫn tương đối ở BẤT KỲ đâu
-    (worktree riêng của phiên, đã gỡ cũng vậy) cũng tính là đã đụng — cho commit đã vào main, nơi lần sửa trong worktree đổ về (#105)."""
+    False khi có, hoặc khi một transcript không đọc được (không chứng minh được gì)."""
     from session_authorship import read_only_tool   # bin/ (PROOF_BIN, đã vào sys.path): cùng danh sách công cụ chỉ đọc với các hook khác
     root = os.path.realpath(repo)
     targets = {os.path.join(root, p) for p in paths} | {os.path.realpath(os.path.join(root, p)) for p in paths}   # cả hai phía qua realpath: file bẩn là symlink
-    rels = set(paths)
-    tail_hit = lambda x: any("/".join(x.split(os.sep)[i:]) in rels for i in range(1, x.count(os.sep) + 1))   # mọi đuôi a/b/c.py, b/c.py, c.py
     tp = d.get("transcript_path") or ""
     # ponytail: lệnh shell chỉ bị bắt khi nhắc đúng đường dẫn tương đối (glob `docs/*.md` hay `cd docs && …` lọt), không parse shell
     # (INSTINCT-045); lớp chặn chính là session_lock (trunk mode từ chối mọi lần ghi vào main), đây là lớp thứ hai. Nâng cấp khi một
@@ -461,8 +458,7 @@ def untouched_by_session(paths, anywhere=False):
                         args = c.get("input") if isinstance(c.get("input"), dict) else {}
                         files = [args[k] for k in ("file_path", "notebook_path", "TargetFile") if isinstance(args.get(k), str)]
                         if files:   # công cụ sửa file: so đường dẫn thật, file cùng tên trong worktree riêng không tính
-                            real = [os.path.realpath(x if os.path.isabs(x) else os.path.join(root, x)) for x in files]
-                            if any(r in targets or (anywhere and tail_hit(r)) for r in real):
+                            if any(os.path.realpath(x if os.path.isabs(x) else os.path.join(root, x)) in targets for x in files):
                                 return False
                         else:       # lệnh shell và mọi công cụ khác: nhắc tên file là coi như đã đụng (thừa thì chặn, như cũ)
                             text = json.dumps(args, ensure_ascii=False)
@@ -699,19 +695,19 @@ def merged_evidence():
                 return "merge-gate pr=%s head=%s squash=%s" % (pr, h[:12], s[:12])
     return None
 
-TREE_STORE_WALK = 20   # số commit first-parent của main xét lùi từ HEAD (#105)
-
 def tree_store_evidence():
     """#105 (trunk mode, 19/10: NFH, GeelyEx2, kit #104): gate --full exit 0 chạy trong worktree, giao bằng `worktree finish` hay PR squash
     rồi worktree bị gỡ: biên nhận của worktree mất theo git dir của nó, full_pass.json duy nhất của main thì cũ hoặc là của finish phiên
     khác. post-fix-gate ghi thêm biên nhận exit 0 theo cây vào <git common dir>/postfix-gate/tree_receipts (sống qua việc gỡ worktree).
     Mô tả bằng chứng khi một biên nhận ở đó ghi TRONG LƯỢT (exit 0, chưa quá TREE_RECEIPT_MAX_AGE_S) là của đúng cây phiên giao:
       (1) dấu vân tay cây đang xét = biên nhận (finish fast-forward, hay main đồng bộ origin sau squash);
-      (2) chỉ main: cây git của HEAD, hay của một commit first-parent main nhận trong lượt (tới commit HEAD đứng lúc lượt bắt đầu), = `tree`
-          của biên nhận; file main khác HEAD phiên này không đụng (luật PR #50) và file các commit sau commit đó đổi phiên này không đụng ở
-          bất cứ đâu, kể cả worktree đã gỡ của nó (commit sau lần gate của chính phiên là code chưa gate).
+      (2) chỉ main: dấu vân tay của commit HEAD (tree_fp.commit_fingerprint) = biên nhận, và file main khác HEAD phiên này không đụng
+          (luật PR #50: file chưa commit của phiên khác / runner của board).
+    Không nhận commit nào main có SAU cây đã gate, kể cả của phiên khác: "phiên này không đụng file" chỉ đọc được từ tool_use, mà sửa
+    bằng shell / git apply / formatter sau lần gate thì không nêu tên file (principal review #105). ponytail: hai finish nối nhau (main
+    nhận merge của worktree thứ hai) hay main kéo về squash của PR khác trước Stop là bị chặn (fail closed): gate lại trong worktree mới
+    ở HEAD của main; nâng cấp khi đếm được ca này trong proof_gate.log.
     None thì chặn như cũ."""
-    import subprocess
     import session_worktree   # hooks/ (đã vào sys.path cùng devkit_harness); thiếu thì ImportError -> chặn như cũ
     import tree_fp
     tree = session_worktree.tree_of(repo)
@@ -743,31 +739,14 @@ def tree_store_evidence():
     now_fp = FP.get("now") or (tree_fp.tree_fingerprint(repo) if room() > 3 else "")
     if now_fp and any(r["fingerprint"] == now_fp for r in recs):
         return "tree-receipt fp=%s" % now_fp
-    trees = {r["tree"] for r in recs if isinstance(r.get("tree"), str)}
-    if tree[1] or not trees or room() <= 2:
+    if tree[1] or room() <= 2:
         return None
     state = dirty_state(repo, tree_fp, t=max(0.5, min(10, room() / 3)))
-    if state is None or (state[1] and not untouched_by_session(state[1])):
+    if state is None or (state[1] and not untouched_by_session(state[1])) or room() <= 1:
         return None
-    head = state[0]
-    genv = dict(os.environ, GIT_NO_REPLACE_OBJECTS="1", GIT_GRAFT_FILE=os.devnull)   # refs/replace, grafts: agent ghi được (INSTINCT-027)
-    git = lambda *a: subprocess.run(["git", "-C", repo, *a], capture_output=True, env=genv, timeout=max(0.5, min(10, room())))
-    base = git("rev-parse", "-q", "--verify", "HEAD@{@%d}" % int(start))   # commit HEAD đứng lúc lượt bắt đầu (reflog)
-    base = base.stdout.decode().strip() if base.returncode == 0 else ""
-    walk = git("log", "--first-parent", "-n", str(TREE_STORE_WALK), "--format=%H %T", head)
-    for n, line in enumerate(walk.stdout.decode().splitlines() if walk.returncode == 0 else []):
-        c, t = (line.split() + ["", ""])[:2]
-        if t in trees:
-            if n:   # main đã đi tiếp sau commit đó: phần sau không được là việc của phiên này
-                if room() <= 1:
-                    return None
-                later = git("diff", "--name-only", "--no-renames", "-z", c, head)
-                paths = sorted({p for p in later.stdout.decode("utf-8", "surrogateescape").split("\0") if p})
-                if later.returncode or not untouched_by_session(paths, anywhere=True):
-                    return None
-            return "tree-receipt head=%s commit=%s" % (head[:12], c[:12])
-        if not base or c == base or room() <= 1:
-            break
+    head_fp = tree_fp.commit_fingerprint(repo, state[0], timeout=max(0.5, min(10, room())))
+    if head_fp and any(r["fingerprint"] == head_fp for r in recs):
+        return "tree-receipt head=%s fp=%s foreign=%s" % (state[0][:12], head_fp, ",".join(state[1][:8]) or "-")
     return None
 
 gate_problem = full_gate_problem() if xong else None
