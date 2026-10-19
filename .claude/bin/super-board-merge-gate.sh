@@ -462,7 +462,6 @@ is_verify_timeout() {
   fi
   grep -aqE "TIMEOUT after|quá giới hạn" "$wt_log" 2>/dev/null
 }
-
 for cmd in "${VERIFY[@]}"; do
   if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
     [[ "$cmd" == *"--diff"* ]] || cmd="$cmd --diff origin/${BASE}"
