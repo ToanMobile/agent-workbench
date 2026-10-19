@@ -210,7 +210,10 @@ Repeat until a done condition or halt gate fires:
    `Ready` (below). Swept, resumed, approval-refresh and stranded cards are NOT in this pass's
    `cards`; they join the next wave. `waiting` lists Ready cards labelled `needs-you` / `human-gated`
    (#95): only a person can move them, so they are never in `cards`; leave them, name them in the
-   summary, and they return once a person removes the label.
+   summary, and they return once a person removes the label. It also lists, with a `why`, the cards
+   labelled `needs-device` whose QA is next (in QA, or in Ready with `qa`) while no real device is
+   online (`super-board-device-online.py`: emulators and denylisted serials do not count); they
+   return once a phone is plugged in.
 
    **Stranded Building cards.** A card in Building with no assignee between
    waves has no live worker — a stopped or crashed wave left it mid-build. For
@@ -236,8 +239,9 @@ Repeat until a done condition or halt gate fires:
    first (Review → QA → Ready), cut to `max_workers` when it is set (0 or
    absent = no cap). `max_workers` is the GitHub-limit valve: step 5 lowers it
    after a wave that hit the hourly limit. If `cards` is empty and
-   Building/QA/Review counts are 0 → done. If empty but cards sit in Blocked
-   only → report and stop. This is unfinished work, not a completed-run calibration trigger.
+   Building/QA/Review counts are 0 → done. Cards the planner lists in `waiting`
+   (a person, or a real device) are not counted in those columns. If empty but
+   cards sit in Blocked or `waiting` only → report and stop. This is unfinished work, not a completed-run calibration trigger.
 3. **Claim** — for each card, `gh issue edit <n> --add-assignee <bot_identity>`,
    then VERIFY: re-read assignees (`gh issue view <n> --json assignees`) and
    proceed only if the list is exactly `[<bot_identity>]`. Adding an assignee

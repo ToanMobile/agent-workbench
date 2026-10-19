@@ -45,4 +45,5 @@ board **Agent Workbench** (https://github.com/users/ToanMobile/projects/1).
 | Risk | 🟢 Low · 🟡 Medium · 🔴 High + one line |
 | Blocked by | `- #N — why` bullets, or a bare `- None.` |
 | Human-only step | a `needs-you: <command>` line in the PR body → 🙋 Blocked until done |
+| Real device | label `needs-device` when the card's QA needs a real phone · held in Ready (with `qa`) or QA while no real device is online |
 | Size | one card = one PR under 400 changed lines |
