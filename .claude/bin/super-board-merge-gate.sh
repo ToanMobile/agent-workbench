@@ -213,8 +213,9 @@ trap release EXIT
 say "lock taken; verifying against ${BASE} as it is now"
 
 # ---- the freshness check ---------------------------------------------------
-# Done in a throwaway worktree so the branch under test is never mutated: the
-# gate proves a merge, it does not perform one locally and it never pushes.
+# Scratch proves the merge. When that merge is clean and the PR branch is behind
+# the base, the gate fast-forwards the merge commit onto the PR branch. It never
+# uses --force. A rejected fast-forward stays exit 11 (not a rebase pass).
 # Scratch đặt trong .claude/worktrees của main checkout để cùng phân vùng đĩa (st_dev) cho cp -Rc Unity Library.
 REPO_ABS=$(cd "$REPO_PATH" && pwd -P)
 MAIN_WT=$(git -C "$REPO_ABS" worktree list --porcelain | sed -n '1s/^worktree //p')
@@ -308,6 +309,20 @@ if ! git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>/dev/null; then
   say "the base does not merge in cleanly — conflicts: ${CONFLICTS}"
   say "this is a rebase pass for the Builder lane, not a Blocked card"
   exit 5
+fi
+
+# Nhánh chậm hơn base nhưng merge scratch sạch: đẩy fast-forward lên đúng nhánh PR
+# rồi mới verify. Timeout phía dưới vẫn thử lại một lần. Không --force.
+MERGED_SHA=$(git -C "$SCRATCH" rev-parse HEAD)
+BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
+if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ]; then
+  if git -C "$REPO_PATH" push origin "${MERGED_SHA}:refs/heads/${HEAD_REF}"; then
+    say "updated ${HEAD_REF} in place ${HEAD_SHA} -> ${MERGED_SHA} (clean merge of ${BASE}, no --force)"
+    HEAD_SHA=$MERGED_SHA
+  else
+    say "clean merge of ${BASE} could not fast-forward ${HEAD_REF}; not a rebase pass"
+    exit 11
+  fi
 fi
 
 # Populate git-ignored DevKit symlinks so post-fix-gate / REG-WB-CONFIG-01 succeed in SCRATCH

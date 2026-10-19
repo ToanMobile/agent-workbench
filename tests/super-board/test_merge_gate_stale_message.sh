@@ -94,6 +94,15 @@ git -C "$R" checkout -q main; echo c > "$R/c"; git -C "$R" add c; git -C "$R" co
   && verdict "$TMP/gate2.log" | grep -q "exit 3: KẾT LUẬN: FAIL — không có test hồi quy nào khớp" \
   && ok "behind-base branch, clean merge in scratch + red verify: exit 11 (no rebase pass bounce), with verify reason" \
   || fail "behind branch clean merge (rc $rc): $(grep merge-gate "$TMP/gate2.log" | tail -3)"
+NEW5=$(git -C "$R" rev-parse origin/issue-5-x)
+MAIN_NOW=$(git -C "$R" rev-parse origin/main)
+if [ "$NEW5" != "$H" ] && git -C "$R" merge-base --is-ancestor "$H" "$NEW5" && git -C "$R" merge-base --is-ancestor "$MAIN_NOW" "$NEW5"; then
+  ok "behind branch fast-forwarded in place to the clean merge of main"
+else
+  fail "PR branch was not updated in place (old=$H new=$NEW5)"
+fi
+echo "$NEW5" > "$TMP/pr5.head"
+H=$NEW5
 
 # Ca 3: merge trong SCRATCH là fast-forward lên đỉnh base là một merge commit (merge sạch) + verify đỏ → exit 11, không còn câu rebase.
 git -C "$R" branch -q --no-track issue-6-x main

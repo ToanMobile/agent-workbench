@@ -57,6 +57,36 @@ REPOS = [
     },
 ]
 
+SLOT_COUNT = 2
+
+
+def heavy_slot_dir():
+    """Thư mục flock dùng chung cho mọi repo. SB_HEAVY_SLOT_DIR ghi đè đường mặc định."""
+    custom = os.environ.get("SB_HEAVY_SLOT_DIR", "").strip()
+    if custom:
+        return custom
+    return os.path.join(os.path.expanduser("~"), ".claude", "super-board", "locks")
+
+
+def ensure_heavy_slots(directory=None):
+    """Tạo đúng 2 file slot. post-fix-gate --full của mọi runner lấy flock trên các file này."""
+    directory = directory or heavy_slot_dir()
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    for number in range(1, SLOT_COUNT + 1):
+        path = os.path.join(directory, "heavy-gate-%s.lock" % number)
+        fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+        os.close(fd)
+    return directory
+
+
+def runner_launch(rdir, slug, run_script, log_path, slot_dir):
+    """Một runner vẫn là một vòng lặp, nhưng verify nặng dùng đúng thư mục slot của process này."""
+    return (
+        "cd '%s' && SB_DAEMON=1 SB_HEAVY_SLOT_DIR='%s' nohup '%s' %s > '%s' 2>&1 &"
+        % (rdir, slot_dir, run_script, slug, log_path)
+    )
+
+
 def get_running_pids(slug):
     cmd = f"ps aux | grep -i 'super-board-run.sh {slug}' | grep -v grep | awk '{{print $2}}'"
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
@@ -75,8 +105,8 @@ def start_all():
     print("=================================================================")
     print("  🚀 KHỞI ĐỘNG ĐỒNG THỜI 5 SUPER-BOARD RUNNERS (TỰ HÀNH 24/7)")
     print("=================================================================\n")
-    locks_dir = os.environ.get("SB_HEAVY_SLOT_DIR") or os.path.join(os.path.expanduser("~"), ".claude", "super-board", "locks")
-    print(f"🔒 Heavy-gate slots (--full toàn máy, tối đa 2): {locks_dir}/heavy-gate-{{1,2}}.lock\n")
+    locks_dir = ensure_heavy_slots()
+    print(f"🔒 Heavy-gate slots (--full toàn máy, tối đa {SLOT_COUNT}): {locks_dir}/heavy-gate-{{1,2}}.lock\n")
     for repo in REPOS:
         rdir = repo["dir"]
         slug = repo["slug"]
@@ -106,7 +136,7 @@ def start_all():
         if not os.path.isfile(run_script):
             run_script = "/Volumes/Data/Toan/agent-workbench/.claude/bin/super-board-run.sh"
 
-        cmd = f"cd '{rdir}' && SB_DAEMON=1 nohup '{run_script}' {slug} > '{log_path}' 2>&1 &"
+        cmd = runner_launch(rdir, slug, run_script, log_path, locks_dir)
         subprocess.run(cmd, shell=True)
         attach_tuios_log(tuios_win, rdir)
         
