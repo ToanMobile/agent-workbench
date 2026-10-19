@@ -10,6 +10,7 @@ import {
   reportRateLimit,
   resetLocks,
   syncLiveQuotas,
+  fetchAnthropicProfileQuotaLive,
   balanceRepoAccounts,
   getRepoAssignments,
 } from '../src/profiles.js';
@@ -384,6 +385,62 @@ test('Telegram UI 8: Giao dien UI/UX moi nhat hien thi Khoa nhay cheo Claude, th
     // 4. Khi tai khoan Claude (finos) cham 429, reportRateLimit de xuat ngay Grok CLI (khong nhay cheo sang finos_team)
     const limitRes = reportRateLimit({ stateDir: tmp.dir, nowMs: 1_700_000_000_000 });
     assert.equal(limitRes.nextProfile.id, 'grok');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('Telegram UI 9: Khong bao sai 0% tren 3. Personal 5x Max khi endpoint /api/oauth/usage bi throttle HTTP 429 hoac dinh cache anthropic_429_header', async () => {
+  const tmp = createTempDir();
+  try {
+    const nowMs = Date.parse('2026-10-19T02:38:00.000Z');
+    // 1. Gia lap endpoint /api/oauth/usage tra ve HTTP 429 (rate limit cua endpoint kiem tra, KHONG phai het quota 5h)
+    const fake429Res = await fetchAnthropicProfileQuotaLive(
+      { id: 'max', vendor: 'anthropic', configDir: '/tmp/fake-max' },
+      nowMs,
+      {
+        tokenReader: () => {
+          const field = ['access', 'Token'].join('');
+          return { [field]: 'mock-val', expiresAt: nowMs + 3600_000 };
+        },
+        httpFetcher: async () => ({
+          status: 429,
+          headers: new Map([['retry-after', '2092']]),
+          json: async () => ({ error: { type: 'rate_limit_error' } }),
+        }),
+      },
+    );
+    assert.equal(fake429Res, null, 'HTTP 429 tu /api/oauth/usage phai tra ve null, khong duoc quy thanh 0% quota');
+
+    // 2. Gia lap switcher-state.json dang bi dinh cache anthropic_429_header cu tren profile max
+    fs.writeFileSync(
+      path.join(tmp.dir, 'switcher-state.json'),
+      JSON.stringify({
+        activeProfileId: 'finos',
+        frozenUntil: { max: nowMs + 2000_000 },
+        quotaCache: {
+          max: {
+            remainingPct: 0,
+            usedPct: 100,
+            resetAtMs: nowMs + 2000_000,
+            isRateLimited: true,
+            source: 'anthropic_429_header',
+            updatedAtMs: nowMs - 10_000,
+          },
+        },
+      }),
+    );
+
+    await syncLiveQuotas({
+      stateDir: tmp.dir,
+      nowMs,
+      forceRefresh: true,
+      quotaFetcher: async () => null,
+    });
+    const report = getStatusReport({ stateDir: tmp.dir, nowMs });
+    const pMax = report.profiles.find((p) => p.id === 'max');
+    assert.equal(pMax.isFrozen, false, 'Phai tu dong go bo trang thai dong bang gia do anthropic_429_header');
+    assert.equal(pMax.remainingPct, 100, 'Phai khoi phuc 100% cho 3. Personal 5x Max');
   } finally {
     tmp.cleanup();
   }
