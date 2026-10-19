@@ -67,8 +67,9 @@ const pipeline = async (items, s1, s2) => { const out = []; for (const it of ite
 const fn = new (Object.getPrototypeOf(async function () {}).constructor)('args', 'agent', 'pipeline', 'log',
   src.replace(/^export const meta/m, 'const meta') + '\n;')
 const meta = new Function(src.replace(/^export const meta\s*=/m, 'return').split(/\n}\n/)[0] + '\n}')()
-fn(argsJson, agent, pipeline, () => {}).then((r) => {
-  console.log(JSON.stringify({ phases: meta.phases.map((p) => p.title), calls, halted: r.halted }))
+const logs = []
+fn(argsJson, agent, pipeline, (m) => logs.push(String(m))).then((r) => {
+  console.log(JSON.stringify({ phases: meta.phases.map((p) => p.title), calls, halted: r.halted, logs }))
 }).catch((e) => { console.log(JSON.stringify({ error: String(e) })); process.exit(1) })
 JS
   ARGS='{"configPath":".claude/super-board/configs/x.json","cards":[{"number":5,"status":"Ready","title":"t","lane":"build","labels":["bug"]}]}'
@@ -96,6 +97,11 @@ PY
   node "$TMP/harness.js" "$WAVE" "$ARGS" proceed throw > "$TMP/wave3.json" 2>"$TMP/wave3.err"; rc=$?
   [ "$rc" -eq 0 ] && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert "error" not in d and d["halted"] is False' "$TMP/wave3.json" 2>/dev/null \
     && ok "W3 a failing Cleanup agent never costs the wave its result" || fail "W3 Cleanup failure lost the wave result: rc=$rc $(head -c 300 "$TMP/wave3.json")"
+  # W4 (review): kỳ vọng với configPath có dấu nháy đơn — assert dưới kiểm 0 lời gọi phase Cleanup và một dòng log "cleanup: skipped"
+  node "$TMP/harness.js" "$WAVE" "$(printf '%s' "$ARGS" | sed "s#configs/x.json#configs/x'y.json#")" proceed > "$TMP/wave4.json" 2>"$TMP/wave4.err"; rc=$?
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert not [c for c in d["calls"] if c["phase"]=="Cleanup"]; assert any("cleanup: skipped" in l for l in d["logs"]), d["logs"]' \
+    "$TMP/wave4.json" 2>/dev/null && [ "$rc" -eq 0 ] && ok "W4 an odd configPath is never put into the Cleanup shell command (skipped, logged)" \
+    || fail "W4 odd configPath: rc=$rc $(head -c 300 "$TMP/wave4.json")"
 fi
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_post_merge_sweep_wiring: all passed" || { echo "❌ test_post_merge_sweep_wiring: $FAILS failed"; exit 1; }

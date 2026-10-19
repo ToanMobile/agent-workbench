@@ -382,15 +382,19 @@ if (!halted && /^[A-Za-z0-9._\/-]+$/.test(input.configPath)) {
   let sweep = null
   try {
     sweep = await agent(
-      `Run exactly this one command from the repository root, once; change nothing else and do not retry:\n` +
+      `Run exactly this one command from the repository root, once, with the Bash tool timeout set to 600000 (10 minutes: removing a ` +
+      `Unity worktree is slow and a cut-short run leaves work half done); change nothing else and do not retry:\n` +
       `bash .claude/bin/super-board-post-merge-clean.sh --sweep . --base "$(jq -r '.base_branch // "main"' '${input.configPath}')"\n` +
       `It always exits 0; it removes only lane worktrees and branches of merged, closed cards that nothing live holds. ` +
-      `Return in detail the lines of its output that start with "removed", "salvaged", "kept" or "sweep" (at most 20), or "nothing to do".`,
+      `Return in detail the lines of its output that start with "removed", "salvaged", "restored", "kept", "sweep", "✔" or "✖" ` +
+      `(at most 20), or "nothing to do".`,
       { label: 'cleanup:post-merge-sweep', phase: 'Cleanup', model: 'haiku', schema: CLEANUP_SCHEMA }
     )
   } catch (e) {
     log(`cleanup: sweep agent failed (${e && e.message ? e.message : e}); the wave result stands`)
   }
   log(`cleanup: ${(sweep && sweep.detail) || 'no report'}`)
+} else if (!halted) {
+  log(`cleanup: skipped — configPath ${JSON.stringify(input.configPath)} is not a plain path, so it is not put into a shell command`)
 }
 return { cards: summary, halted }

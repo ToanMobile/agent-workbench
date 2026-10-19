@@ -32,7 +32,8 @@ printf '.claude/\n' > "$R/.gitignore"
 mkdir -p "$R/.agents/local/memory/agents/rev" "$R/unity/Assets" "$R/src"
 echo note > "$R/.agents/local/memory/agents/rev/MEMORY.md"
 echo asset > "$R/unity/Assets/x.asset"; echo code > "$R/src/x.c"; echo cfg > "$R/keep.cfg"
-for i in 1 2 3 7 8 21 22 23 24 25 26 27 28 29 30 31 33 34 70; do echo "$i" > "$R/f$i"; done
+mkdir -p "$R/docs/super-board/runs"; echo report > "$R/docs/super-board/runs/REPORT.md"   # bằng chứng QA ĐÃ TRACK (như repo này)
+for i in 1 2 3 7 8 21 22 23 24 25 26 27 28 29 30 31 33 34 35 70; do echo "$i" > "$R/f$i"; done
 git -C "$R" add -A; git -C "$R" commit -qm init
 printf 'keep.cfg\n.env\n' >> "$R/.git/info/exclude"   # keep.cfg: file đã track mà luật ignore phủ (force-track); .env: bí mật cục bộ
 git -C "$R" remote add origin "$O"
@@ -201,6 +202,11 @@ card 33 43 issue-33-m; git -C "$R" worktree add -q --detach "$W/issue-33-qa" "$(
 echo n33 >> "$W/issue-33-qa/.agents/local/memory/agents/rev/MEMORY.md"; echo "TOKEN=only-here" > "$W/issue-33-qa/.env"
 rm "$W/issue-33-qa/f1"; git -C "$W/issue-33-qa" rm -q f2   # một xoá chưa stage (` D`) và một xoá đã stage (`D `): phải trả lại đúng như vậy
 mkdir -p "$W/issue-33-qa/reports"; echo "evidence-33" > "$W/issue-33-qa/reports/ev33.png"   # rác lane: worktree được giữ thì nó cũng phải còn (OCR)
+EV33_BLOB=$(git -C "$R" hash-object "$W/issue-33-qa/reports/ev33.png")
+# 35 = PR 45 (review): sửa trên một file bằng chứng QA ĐÃ TRACK: không phải rác dựng lại được — cất vào patch rồi mới gỡ
+card 35 45 issue-35-p; git -C "$R" worktree add -q --detach "$W/issue-35-qa" "$(cat "$TMP/pr45.head")"
+echo "edited-35" >> "$W/issue-35-qa/docs/super-board/runs/REPORT.md"
+squash 45; merged_row 45 "$OLD"; echo CLOSED > "$TMP/issue35.state"
 squash 43; merged_row 43 "$OLD"; echo CLOSED > "$TMP/issue33.state"
 # 25 = PR 35: vừa merge (Reviewer còn làm bước sau merge)
 card 25 35 issue-25-e; git -C "$R" worktree add -q --detach "$W/issue-25-qa" "$(cat "$TMP/pr35.head")"
@@ -237,13 +243,13 @@ bash "$CLEAN" --sweep "$R" --dry-run >"$TMP/dry.log" 2>&1; rc=$?
   && [ "$(git -C "$R" for-each-ref --format='%(refname) %(objectname)' | sort)" = "$REFS_BEFORE" ] && ! ls "$SALV"/issue-21-qa-* >/dev/null 2>&1 \
   && ok "B1 --dry-run changes nothing" || { fail "B1 --dry-run changed something (rc $rc)"; cat "$TMP/dry.log"; }
 miss=""
-for w in issue-7-review issue-21-review issue-21-qa issue-22-qa issue-28-build; do grep -q "would remove .*/$w" "$TMP/dry.log" || miss="$miss $w"; done
+for w in issue-7-review issue-21-review issue-21-qa issue-22-qa issue-28-build issue-35-qa; do grep -q "would remove .*/$w" "$TMP/dry.log" || miss="$miss $w"; done
 for w in issue-22-build issue-23-review issue-24-qa issue-29-qa issue-30-qa issue-31-qa issue-34-review issue-25-qa issue-26-qa issue-27-qa; do grep -q "would remove .*/$w" "$TMP/dry.log" && miss="$miss !$w"; done
 [ -f "$R/.git/super-board/sweep.stamp" ] && miss="$miss stamp-written"
 # nhánh của worktree "sẽ gỡ" (issue-28-build) cũng "sẽ xoá", không phải "still checked out"; nhánh của worktree giữ lại thì giữ
 for b in issue-28-h issue-2-z; do grep -q "would delete branch $b " "$TMP/dry.log" || miss="$miss branch:$b"; done
 grep -q "kept branch issue-22-b: still checked out" "$TMP/dry.log" || miss="$miss kept-branch:issue-22-b"
-[ -z "$miss" ] && ok "B2 --dry-run names exactly the five removable leftovers" || { fail "B2 dry-run list wrong:$miss"; cat "$TMP/dry.log"; }
+[ -z "$miss" ] && ok "B2 --dry-run names exactly the six removable leftovers" || { fail "B2 dry-run list wrong:$miss"; cat "$TMP/dry.log"; }
 
 # B3 bảng đang halt GitHub: sweep không đọc GitHub, không gỡ gì
 echo '{"reason":"test"}' > "$TMP/halt.json"; : > "$TMP/gh.calls"
@@ -263,11 +269,21 @@ bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/locked.log" 2>&1
 [ ! -s "$TMP/gh.calls" ] && [ -d "$W/issue-21-review" ] && grep -q "another sweep" "$TMP/locked.log" \
   && ok "B19 a sweep that a live sweep's lock holds back reads and removes nothing" || { fail "B19 two sweeps ran at once"; cat "$TMP/locked.log"; }
 kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null   # tiến trình giữ khoá chết: kernel nhả khoá, không còn gì phải dọn
+# B22 (review): file khoá không mở được (ở đây là một thư mục): sweep vẫn exit 0, nói lý do, không traceback, không gỡ gì
+mv "$R/.git/super-board/sweep.lock" "$TMP/lock.bak" 2>/dev/null; mkdir "$R/.git/super-board/sweep.lock"; : > "$TMP/gh.calls"
+bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/badlock.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ! grep -q Traceback "$TMP/badlock.log" && [ ! -s "$TMP/gh.calls" ] && grep -q "sweep skipped" "$TMP/badlock.log" \
+  && ok "B22 an unusable lock file: exit 0 with the reason, nothing read" || { fail "B22 unusable lock file (rc $rc)"; cat "$TMP/badlock.log"; }
+rmdir "$R/.git/super-board/sweep.lock"
+# B23 (review): `--base ""` (jq thiếu / base_branch rỗng trong config) rơi về origin/HEAD, không exit 1
+bash "$CLEAN" --sweep "$R" --dry-run --base "" >"$TMP/nobase.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q "would remove" "$TMP/nobase.log" && ok "B23 an empty --base falls back to origin/HEAD" \
+  || { fail "B23 empty --base (rc $rc)"; tail -3 "$TMP/nobase.log"; }
 
 # B4 sweep thật
 bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/sweep.log" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "B4 sweep exit 0" || fail "B4 sweep exit $rc"
-for w in issue-7-review issue-21-review issue-21-qa issue-22-qa issue-28-build; do
+for w in issue-7-review issue-21-review issue-21-qa issue-22-qa issue-28-build issue-35-qa; do
   [ ! -d "$W/$w" ] && ok "B5 merged leftover $w removed" || { fail "B5 merged leftover $w kept"; grep -a "$w" "$TMP/sweep.log"; }
 done
 for w in issue-22-build issue-23-review issue-24-qa issue-29-qa issue-30-qa issue-31-qa issue-33-qa issue-34-review issue-25-qa issue-26-qa issue-27-qa issue-70-build issue-8-build; do
@@ -303,6 +319,11 @@ done
   && [ "$(cat "$W/issue-33-qa/reports/ev33.png" 2>/dev/null)" = evidence-33 ] \
   && ok "B16 when the kit refuses the removal, the salvaged lane edits are put back" \
   || { fail "B16 the kit kept the worktree but its lane edits stayed reverted"; grep -a "issue-33-qa" "$TMP/sweep.log"; }
+P=$(ls "$SALV"/issue-35-qa-*.patch 2>/dev/null | head -1)
+[ ! -d "$W/issue-35-qa" ] && [ -n "$P" ] && grep -q "edited-35" "$P" \
+  && ok "B20 an edit to a TRACKED QA evidence file is kept in a patch, not dropped" || { fail "B20 the tracked REPORT.md edit was dropped"; grep -a "issue-35-qa" "$TMP/sweep.log"; }
+git -C "$R" cat-file -e "$EV33_BLOB" 2>/dev/null && fail "B21 untracked lane junk of a worktree with kept edits went into the object store" \
+  || ok "B21 only the kept paths are added: untracked junk never becomes a git object"
 
 # B13 chạy lại ngay với khoảng nghỉ mặc định: kỳ vọng bỏ qua — assert dưới kiểm gh.calls của gh giả rỗng
 : > "$TMP/gh.calls"
@@ -311,10 +332,12 @@ bash "$CLEAN" --sweep "$R" >"$TMP/again.log" 2>&1
 
 # ── C. gh treo và bỏ qua SIGALRM (gh thật là binary Go: runtime Go nuốt SIGALRM, review 19/10): sweep phải dừng theo hạn giờ,
 #    không gỡ gì. gh giả `trap '' ALRM` (tín hiệu bị bỏ qua được kế thừa qua exec, như Go).
-t0=$(date +%s)
+t0=$(date +%s); rm -f "$R/.git/super-board/sweep.stamp"
 FAKE_GH_HANG=1 SB_CLEAN_GH_TIMEOUT=2 bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/hang.log" 2>&1
 dt=$(( $(date +%s) - t0 ))
 [ "$dt" -lt 12 ] && grep -q "gh pr list failed" "$TMP/hang.log" && ok "C1 a gh that ignores SIGALRM is stopped at the deadline (${dt}s), nothing removed" \
   || { fail "C1 sweep waited ${dt}s on a hung gh"; cat "$TMP/hang.log"; }
+[ ! -f "$R/.git/super-board/sweep.stamp" ] && ok "C2 a sweep whose GitHub read failed writes no interval stamp (the next tick retries)" \
+  || fail "C2 a failed GitHub read still wrote the interval stamp"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_post_merge_squash_leftovers: all passed" || { echo "❌ test_post_merge_squash_leftovers: $FAILS failed"; exit 1; }

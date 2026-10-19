@@ -34,7 +34,7 @@ if [ "${1:-}" = --sweep ]; then
   while [ $# -gt 0 ]; do
     case "$1" in
       --dry-run) DRY=1; shift ;;
-      --base) BASE="${2:?branch}"; shift 2 ;;
+      --base) BASE="${2-}"; [ $# -ge 2 ] && shift 2 || shift ;;   # rỗng (jq thiếu, base_branch rỗng): dò origin/HEAD như khi không có cờ
       --min-interval) MIN_INTERVAL="${2:?seconds}"; shift 2 ;;
       *) echo "unknown arg: $1" >&2; exit 64 ;;
     esac
@@ -84,8 +84,9 @@ SALVAGE_DIR="${COMMON_DIR:+$COMMON_DIR/super-board/salvage}"
 # Sửa chưa commit không giữ worktree lại, hai loại (OCR batch 19/10):
 #  - CẤT (KEEP_RE): ghi chú / state của agent (.agents/local/) và asset Unity (*.asset: thường là tự serialize lại, nhưng có thể là
 #    việc thật) — cất thành patch vào $SALVAGE_DIR rồi mới bỏ.
-#  - BỎ (DROP_RE): bằng chứng QA (docs/super-board/runs/, reports/), log, rác IDE — dựng lại được, không cất: không ghi vào kho object
-#    chung, không vào patch; chỉ ghi tên vào bản ghi.
+#  - BỎ (DROP_RE, chỉ file CHƯA TRACK): bằng chứng QA (docs/super-board/runs/, reports/), log, rác IDE mới sinh — dựng lại được, không
+#    cất: không vào kho object chung, không vào patch; dời tạm sang <tên>.dropped/ tới khi worktree gỡ xong, tên ghi vào bản ghi. Sửa
+#    trên một file ĐÃ TRACK dưới các đường dẫn đó (REPORT.md của QA đã commit) thì cất như loại CẤT.
 # File đã xoá, kể cả xoá đã stage (` D`, `D `: HEAD vẫn giữ bản của nó), được lấy lại từ HEAD. Đường dẫn khác, hay mọi thay đổi đã stage
 # khác (index có thể giữ bản duy nhất), là việc thật: giữ worktree.
 KEEP_RE='^\.agents/local/|\.asset$'
@@ -205,13 +206,15 @@ tidy() {
           continue
         fi ;;
       " M"|" T"|"??")
-        if [[ "$p" =~ $KEEP_RE ]]; then
+        # BỎ chỉ áp cho file CHƯA TRACK (ảnh proof, log mới sinh). Sửa trên một file ĐÃ TRACK dưới đường dẫn rác (REPORT.md của QA đã
+        # commit) không dựng lại được từ đâu: cất như loại CẤT (review 19/10).
+        if [[ "$p" =~ $KEEP_RE ]] || { [ "$xy" != "??" ] && [[ "$p" =~ $DROP_RE ]]; }; then
           keep=$((keep + 1)); printf '%s\0' "$p" >>"$kp"
           if [ "$xy" = "??" ]; then printf '%s\0' "$p" >>"$untr"; else printf '%s\0' "$p" >>"$trk"; fi
           continue
-        elif [[ "$p" =~ $DROP_RE ]]; then
-          # dời sang $name.dropped/ (không xoá): kit còn từ chối gỡ thì untidy trả lại (OCR); file đã theo dõi lấy lại bản HEAD
-          drop=$((drop + 1)); printf '%s\0' "$p" >>"$drpz"; [ "$xy" = "??" ] || printf '%s\0' "$p" >>"$trk"
+        elif [ "$xy" = "??" ] && [[ "$p" =~ $DROP_RE ]]; then
+          # dời sang $name.dropped/ (không xoá): kit còn từ chối gỡ thì untidy trả lại (OCR)
+          drop=$((drop + 1)); printf '%s\0' "$p" >>"$drpz"
           continue
         fi ;;
     esac
@@ -451,11 +454,14 @@ fi
 # (bản mkdir + pid có khe đua khi lấy lại khoá: OCR). --dry-run chỉ đọc nên không cần khoá.
 if [ "$DRY" -eq 0 ] && [ -n "$COMMON_DIR" ] && [ -z "${SB_SWEEP_LOCKED:-}" ] && mkdir -p "$COMMON_DIR/super-board" 2>/dev/null; then
   exec python3 -I -c 'import fcntl, os, sys
-f = open(sys.argv[1], "a")
 try:
+    f = open(sys.argv[1], "a")
     fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-except OSError:
+except BlockingIOError:
     print("sweep skipped: another sweep is running (it holds " + sys.argv[1] + ")", file=sys.stderr)
+    sys.exit(0)
+except OSError as e:   # khoá không mở được (thư mục, quyền, ổ chỉ đọc): vẫn exit 0 như hợp đồng, nói lý do (review)
+    print("sweep skipped: cannot take the sweep lock " + sys.argv[1] + ": " + str(e), file=sys.stderr)
     sys.exit(0)
 os.set_inheritable(f.fileno(), True)
 os.environ["SB_SWEEP_LOCKED"] = "1"
