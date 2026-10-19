@@ -335,3 +335,4 @@
 3 tests/verification/test_create_task_needs_you.sh
 42 tests/worktree_git/test_worktree_lane.sh
 10 tests/verification/test_unity_machine_lock.sh
+9 tests/installer/test_agent_health_score_inflation.sh
