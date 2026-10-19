@@ -2,6 +2,8 @@
 # super-board-stop.sh — graceful shutdown of an in-flight super-board run.
 #
 # What it does:
+#   0. Write the durable stop marker .claude/super-board/runner/<slug>.stopped — even when nothing is running.
+#      super-board-watchdog.sh never restarts a board that has it; `super-board run <slug>` clears it.
 #   1. Find every in-flight worker (lock files under .claude/super-board/inflight/).
 #      Stop any Codex wave and its lane process groups before comments/releases.
 #   2. For each one, post a "stopped mid-flight" comment on the issue AND its PR
@@ -57,6 +59,13 @@ if [ ! -f "$CONFIG_PATH" ]; then
   echo "config not found: $CONFIG_PATH" >&2
   exit 66
 fi
+
+# Stop marker bền: ghi TRƯỚC mọi bước khác, kể cả khi không còn gì để dừng (runner đã chết vẫn phải được ghi là người
+# dùng dừng). super-board-watchdog.sh không bao giờ khởi động lại board có marker; runner thấy marker thì tự thoát ở
+# tick kế tiếp. Chỉ một lần khởi động tường minh (`super-board run <slug>`) mới xoá nó.
+STOP_MARK=".claude/super-board/runner/${CONFIG_SLUG}.stopped"
+mkdir -p "${STOP_MARK%/*}"
+printf 'STOPPED_AT=%s\nBY=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${USER:-unknown} via super-board-stop.sh (pid $$)" > "$STOP_MARK"
 
 # ───────────────────────────── config read ─────────────────────────────
 BOT_LOGIN=$(jq -r '.notifications.bot_identity // .bot_identity // ""' "$CONFIG_PATH")
@@ -247,6 +256,7 @@ fi
 
 if [ "${#WORKERS[@]}" -eq 0 ] && [ -z "$DISPATCHER_PIDS" ] && [ -z "$ORPHAN_WORKERS" ] && [ -z "$CODEX_WAVE_PID" ]; then
   echo "  ✓ nothing to stop — no dispatcher, no in-flight workers, no orphans"
+  echo "  🛑 stop marker: $STOP_MARK — the watchdog will not restart this board"
   echo "════════════════════════════════════════════════════════"
   exit 0
 fi
@@ -307,5 +317,6 @@ echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  ✅ stopped: ${#WORKERS[@]} worker(s), ${DISP_COUNT} dispatcher(s)"
 echo "  📝 wrap-up comments posted on each in-flight issue + PR"
-echo "  ▶  Resume: super-board run ${CONFIG_SLUG}"
+echo "  🛑 stop marker: $STOP_MARK — the watchdog will not restart this board"
+echo "  ▶  Resume: super-board run ${CONFIG_SLUG}  (clears the marker)"
 echo "════════════════════════════════════════════════════════"

@@ -366,6 +366,15 @@ lane_idle() {
   [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null
 }
 
+tick_sleep() {
+  # $1 = số giây. Một `sleep` bị kill không được kết thúc runner: 17/10 12:17 cả 5 runner chết với
+  # `Terminated: 15 sleep "$TICK_SECONDS"` (sleep rc 143 dưới `set -e`) và nằm chết 2 ngày. Chỉ stop marker của
+  # super-board-stop.sh (kiểm ở đầu mỗi tick) mới dừng vòng lặp.
+  local rc=0
+  sleep "$1" || rc=$?
+  [ "$rc" -eq 0 ] || log "⚠ sleep ${1}s ended early (rc=${rc}) — runner keeps going; stop a board only with super-board-stop.sh"
+}
+
 gh_rate_guard() {
   # Sleep until rate limit resets if GraphQL remaining < 200.
   local payload remaining reset now wait
@@ -379,7 +388,7 @@ gh_rate_guard() {
     wait=$((reset - now + 10))
     [ "$wait" -lt 60 ] && wait=60
     log "⚠ GraphQL rate limit low (${remaining} left) — sleeping ${wait}s until reset"
-    sleep "$wait"
+    tick_sleep "$wait"
   fi
 }
 
@@ -526,7 +535,7 @@ check_lane_zombie() {
     gh_checkpoint
     log "💀 zombie ${lane} worker on #${issue} (pid=${pid}) — card moved to '${cur}'; killing"
     kill "$pid" 2>/dev/null || true
-    sleep 1
+    sleep 1 || true
     kill -9 "$pid" 2>/dev/null || true
     gh_checkpoint
     [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
@@ -905,6 +914,38 @@ maybe_sweep_blocked() {
   return "$rc"
 }
 
+# ── Bản ghi trạng thái runner cho super-board-watchdog.sh: .claude/super-board/runner/<slug>.state
+# (PID/SLUG/STARTED/DAEMON/LOG/STATE, thêm RC/ENDED khi thoát). STATE: running (còn nguyên khi bị SIGKILL) · crashed
+# (thoát ngoài ý muốn) · finished (vòng lặp kết thúc: board rỗng, RUNAWAY, trần dispatch) · halted (mã dừng có chủ
+# đích) · stopped (người dùng dừng: có stop marker <slug>.stopped của super-board-stop.sh). Watchdog chỉ khởi động lại
+# running/crashed khi không có marker.
+RUNNER_HALT_CODES=" 9 10 73 74 75 78 79 "
+runner_state_write() {
+  # $1 = STATE, $2 = RC (khi thoát). Ghi nguyên tử (tmp + mv) để watchdog không đọc nửa file.
+  local tmp="$RUNNER_STATE.$$"
+  {
+    printf 'PID=%s\nSLUG=%s\nSTARTED=%s\nDAEMON=%s\nLOG=%s\nSTATE=%s\n' \
+      "$$" "$CONFIG_SLUG" "$RUNNER_STARTED" "${SB_DAEMON:-0}" "$RUNNER_LOG" "$1"
+    [ -z "${2:-}" ] || printf 'RC=%s\nENDED=%s\n' "$2" "$(date +%s)"
+  } > "$tmp" && mv -f "$tmp" "$RUNNER_STATE"
+}
+
+runner_state_exit() {
+  # Trap EXIT, $1 = mã thoát. Chỉ runner đang giữ bản ghi mới ghi: runner bị từ chối lúc khởi động (board đã dừng,
+  # runner khác còn sống) không đè bản ghi của runner kia. bash 3.2 chạy trap EXIT cả khi chính nó bị SIGTERM, với
+  # $? = 0, nên "finished" chỉ do RUNNER_END ở cuối script đặt, không suy ra từ rc 0.
+  [ -n "${RUNNER_STATE:-}" ] && [ "$(sed -n 's/^PID=//p' "$RUNNER_STATE" 2>/dev/null | head -1)" = "$$" ] || return 0
+  local end="${RUNNER_END:-}"
+  if [ -z "$end" ]; then
+    if [ -e "$STOP_MARK" ]; then
+      end=stopped
+    else
+      case "$RUNNER_HALT_CODES" in *" $1 "*) end=halted ;; *) end=crashed ;; esac
+    fi
+  fi
+  runner_state_write "$end" "$1"
+}
+
 # ───────────────────────── run counters (shared state) ─────────────────────────
 DISPATCH_COUNT=0
 REAP_COUNT=0
@@ -926,12 +967,54 @@ halt_cleanup() {
       kill -TERM "$pid" 2>/dev/null || true
     done
   fi
+  runner_state_exit "$rc"
 }
 trap halt_cleanup EXIT
+
+# ── Stop marker của người dùng + bản ghi cho watchdog, trước mọi lần đọc GitHub.
+RUNNER_DIR=".claude/super-board/runner"
+RUNNER_STATE="$RUNNER_DIR/${CONFIG_SLUG}.state"
+STOP_MARK="$RUNNER_DIR/${CONFIG_SLUG}.stopped"
+RUNNER_END=""
+START_TAG=""
+RUNNER_STARTED=$(date +%s)
+# stdout của runner (log nohup) để watchdog khởi động lại vào đúng file đó; không phải file thường thì để trống.
+RUNNER_LOG=$(lsof -a -p $$ -d 1 -Fn 2>/dev/null | sed -n 's/^n//p' | head -1) || RUNNER_LOG=""
+[ -f "$RUNNER_LOG" ] || RUNNER_LOG=""
+mkdir -p "$RUNNER_DIR"
+if [ "${SB_WATCHDOG_START:-0}" = "1" ]; then
+  START_TAG=" (watchdog restart)"
+  if [ -e "$STOP_MARK" ]; then
+    log "🛑 watchdog restart refused: board ${CONFIG_SLUG} was stopped by the user ($STOP_MARK); only an explicit super-board run starts it"
+    exit 0
+  fi
+fi
+PREV_RUNNER=$(sed -n 's/^PID=//p' "$RUNNER_STATE" 2>/dev/null | head -1) || PREV_RUNNER=""
+if [ -n "$PREV_RUNNER" ] && [ "$PREV_RUNNER" != "$$" ] && kill -0 "$PREV_RUNNER" 2>/dev/null; then
+  case "$(ps -ww -o command= -p "$PREV_RUNNER" 2>/dev/null || true)" in
+    *"super-board-run.sh ${CONFIG_SLUG}"|*super-board-run.sh)
+      log "🛑 refusing to start: runner pid ${PREV_RUNNER} of board ${CONFIG_SLUG} is still running"; exit 73 ;;
+  esac
+fi
+# Ghi bản ghi TRƯỚC khi đặt lại backoff và nạp watchdog (RunAtLoad chạy `check` ngay): một `check` đọc bản ghi cũ
+# (PID chết) trong khoảng đó sẽ khởi động runner thứ hai.
+# ponytail: kiểm-rồi-ghi không nguyên tử, hai lần khởi động trong cùng vài ms vẫn lọt; thêm khoá mkdir nếu thấy 2 runner.
+runner_state_write running
+if [ "${SB_WATCHDOG_START:-0}" != "1" ]; then
+  # Khởi động tường minh (super-board run, start-runner.sh, super_board_all.py start): người dùng muốn board chạy.
+  if [ -e "$STOP_MARK" ]; then
+    log "▶ explicit start: cleared the stop marker ($(tr '\n' ' ' < "$STOP_MARK"))"
+    rm -f "$STOP_MARK"
+  fi
+  rm -f "$RUNNER_DIR/${CONFIG_SLUG}.watchdog"   # backoff của watchdog bắt đầu lại từ 0
+  if [ -x "$SCRIPT_DIR/super-board-watchdog.sh" ]; then
+    "$SCRIPT_DIR/super-board-watchdog.sh" ensure "$CONFIG_SLUG" 2>&1 | while IFS= read -r line; do log "watchdog: $line"; done || true
+  fi
+fi
 gh_checkpoint
 
 # ───────────────────────────── preconditions ─────────────────────────────
-log "super-board run started — config=${CONFIG_SLUG} base=${BASE_BRANCH} tick=${TICK_SECONDS}s max_workers=${MAX_WORKERS} no_progress_cycles=${NO_PROGRESS_CYCLES} max_dispatches=${MAX_DISPATCHES}"
+log "super-board run started${START_TAG} — config=${CONFIG_SLUG} base=${BASE_BRANCH} tick=${TICK_SECONDS}s max_workers=${MAX_WORKERS} no_progress_cycles=${NO_PROGRESS_CYCLES} max_dispatches=${MAX_DISPATCHES}"
 
 # Chặn worker mồ côi: worker của repo này còn sống mà không có lock thì lần chạy này không biết nó đang giữ thẻ nào.
 ORPHAN_PIDS=$(startup_orphan_workers "$PWD" | tr '\n' ' ')
@@ -974,6 +1057,13 @@ INITIAL_DONE_SIG="$PREV_DONE_SIG"
 NO_PROGRESS_CYCLE_COUNT=0
 
 while true; do
+  # Stop marker xuất hiện giữa chừng (super-board-stop.sh không kill được runner này, hoặc watchdog vừa khởi động nó
+  # sau lần quét ps của stop): runner tự thoát, không giao thêm việc.
+  if [ -e "$STOP_MARK" ]; then
+    log "🛑 stop marker ${STOP_MARK} — board stopped by the user; runner exits (super-board run ${CONFIG_SLUG} clears it)"
+    RUNNER_END=stopped
+    break
+  fi
   python3 "$(dirname "$SB_GITHUB_READ")/super-board-verification-ready.py" --config "$CONFIG_PATH"
   gh_checkpoint
   # Workflow-backend mutual exclusion, re-checked every tick: the startup
@@ -1009,7 +1099,7 @@ while true; do
   if dispatch_paused; then
     paused_tick
     log "tick — runaway pause ($(( RUNAWAY_PAUSE_UNTIL - $(date +%s) ))s left) — board read every ${PAUSED_READ_EVERY} ticks, sleeping ${TICK_SECONDS}s"
-    sleep "$TICK_SECONDS"
+    tick_sleep "$TICK_SECONDS"
     continue
   fi
   PAUSED_TICKS=0
@@ -1018,7 +1108,7 @@ while true; do
   #    The board can't change in a way that helps us until a lane frees up.
   if [ "$ACTIVE_WORKERS" -ge "$MAX_WORKERS" ]; then
     log "tick — cap reached (${ACTIVE_WORKERS}/${MAX_WORKERS} busy) — skipping GraphQL fetch, sleeping ${TICK_SECONDS}s"
-    sleep "$TICK_SECONDS"
+    tick_sleep "$TICK_SECONDS"
     continue
   fi
 
@@ -1053,7 +1143,7 @@ while true; do
      && [ "$BUILD_IDLE" -eq 1 ] && [ "$QA_IDLE" -eq 1 ] && [ "$REVIEW_IDLE" -eq 1 ]; then
     if [ "${SB_DAEMON:-0}" = "1" ]; then
       NO_PROGRESS_CYCLE_COUNT=0
-      sleep "$TICK_SECONDS"
+      tick_sleep "$TICK_SECONDS"
       continue
     fi
     log "✅ all active-pipeline columns empty and all lanes idle — exiting cleanly"
@@ -1118,8 +1208,9 @@ while true; do
     break
   fi
 
-  sleep "$TICK_SECONDS"
+  tick_sleep "$TICK_SECONDS"
 done
+RUNNER_END="${RUNNER_END:-finished}"   # kết thúc có chủ đích: watchdog không khởi động lại
 
 log "super-board run finished. manifest: $RUN_MANIFEST"
 if jq -e '.calibration.enabled == true' "$CONFIG_PATH" >/dev/null 2>&1; then

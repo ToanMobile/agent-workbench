@@ -56,6 +56,14 @@ Nothing else. Stop is intentionally tolerant — its job is to bring the system 
 8. **Clear in-flight locks** — `rm -f .claude/super-board/inflight/*`. The PIDs they reference are dead now.
 9. **Print summary** — workers stopped, dispatchers stopped, resume command.
 
+## Stop marker (legacy `claude-p` runner)
+
+Before anything else — also when nothing is running — stop writes `.claude/super-board/runner/<slug>.stopped`
+(git-ignored). The runner exits at its next tick when it sees the marker, and `super-board-watchdog.sh` never
+restarts a board that has it. Only an explicit start (`super-board run <slug>`, `start-runner.sh`,
+`super_board_all.py start`) clears it. A bare `kill` of the runner writes no marker: the watchdog treats that
+as a crash and restarts the runner, so stop a board only with `super-board-stop.sh`.
+
 ## What stop does NOT do (deliberate)
 
 - **Does not wait for workers to finish.** `claude -p` workers have no SIGTERM handler that flushes a partial commit. Worktree files remain, but unsaved in-memory work may be lost. Inspect uncommitted edits before resuming; restart recovery keeps dirty worktrees for inspection.

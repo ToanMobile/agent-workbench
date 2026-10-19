@@ -126,13 +126,19 @@ def stop_all():
         name = repo["name"]
         rdir = repo["dir"]
         pids = get_running_pids(slug)
+        # stop.sh chạy cả khi runner đã chết: nó ghi stop marker, thiếu marker thì watchdog khởi động lại board.
+        stop_sh = os.path.join(rdir, ".claude", "bin", "super-board-stop.sh")
+        marker = os.path.join(rdir, ".claude", "super-board", "runner", f"{slug}.stopped")
+        if os.path.exists(stop_sh):
+            r = subprocess.run(["bash", stop_sh, slug], cwd=rdir, capture_output=True, text=True)
+            if r.returncode != 0:
+                print(f"⚠️  {name:<30} : super-board-stop.sh exit {r.returncode}: {r.stderr.strip()[:200]}")
+        if not os.path.exists(marker):
+            print(f"⚠️  {name:<30} : CHƯA có stop marker {marker} — watchdog có thể khởi động lại board này")
         if not pids:
             print(f"⚪ {name:<30} : Không hoạt động")
             continue
 
-        stop_sh = os.path.join(rdir, ".claude", "bin", "super-board-stop.sh")
-        if os.path.exists(stop_sh):
-            subprocess.run(["bash", stop_sh, slug], cwd=rdir, capture_output=True)
         for p in pids:
             try:
                 os.kill(int(p), 15)  # SIGTERM
