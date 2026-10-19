@@ -231,6 +231,19 @@
       ]
     },
     {
+      "component": "super-board-merge-gate",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-STALE-01",
+          "name": "merge gate says stale only when the branch is behind base",
+          "command": "bash tests/super-board/test_merge_gate_stale_message.sh"
+        }
+      ]
+    },
+    {
       "component": "super-board-preflight",
       "watch_files": [
         ".claude/bin/super-board-preflight.sh",
@@ -241,19 +254,6 @@
           "id": "REG-SB-PREFLIGHT-TOO-BIG-01",
           "name": "preflight holds too-big cards before a builder pass, proceeds on normal ones",
           "command": "bash tests/super-board/test_preflight_too_big.sh"
-        }
-      ]
-    },
-    {
-      "component": "super-board-merge-gate",
-      "watch_files": [
-        ".claude/bin/super-board-merge-gate.sh"
-      ],
-      "mandatory_regression_tests": [
-        {
-          "id": "REG-SB-MERGE-GATE-STALE-01",
-          "name": "merge gate says stale only when the branch is behind base",
-          "command": "bash tests/super-board/test_merge_gate_stale_message.sh"
         }
       ]
     }
