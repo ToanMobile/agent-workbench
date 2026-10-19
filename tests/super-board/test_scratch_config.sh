@@ -66,4 +66,20 @@ bash "$TMP/oldonly/.claude/bin/$(basename "$HELPER")" "$R" "$S3" >/dev/null 2>&1
   && ok "only an old DevKit (no copy_build_inputs): local config still copied" \
   || fail "only an old DevKit: google-services.json/local.properties not copied (regression vs before the fix)"
 
+# agent-workbench #12 / PR #87 (19/10): verify của merge gate đỏ vì cây tạm thiếu các hook bị git ignore mà .claude/settings.json
+# đăng ký (guard-*.py, cleanup-wt.py): `agent-kit health` FAIL "hook đăng ký nhưng thiếu file", thẻ quay về Ready mãi. Cây tạm phải
+# nhận chúng từ main checkout như worktree do agent-kit tạo (worktree.py copy_local_hooks, #93).
+R4="$TMP/repo4"; S4="$TMP/scratch4"
+git init -q -b main "$R4"
+git -C "$R4" config user.email t@example.invalid; git -C "$R4" config user.name t
+printf '.claude/hooks/\n' > "$R4/.gitignore"; echo a > "$R4/a"
+git -C "$R4" add .gitignore a; git -C "$R4" commit -qm init
+mkdir -p "$R4/.claude/hooks"; printf 'import sys\nsys.exit(0)\n' > "$R4/.claude/hooks/guard-secrets.py"
+git -C "$R4" worktree add -q --detach "$S4" main
+bash "$HELPER" "$R4" "$S4" >/dev/null 2>&1
+[ -f "$S4/.claude/hooks/guard-secrets.py" ] && ok "ignored hook registered by settings (.claude/hooks/guard-secrets.py) copied into the scratch tree" \
+  || fail "ignored hook .claude/hooks/guard-secrets.py missing in the scratch tree (health FAIL, merge gate verify red)"
+[ -z "$(git -C "$S4" status --porcelain)" ] && ok "scratch tree with copied hooks stays clean for git" \
+  || fail "scratch4 dirty: $(git -C "$S4" status --porcelain | head -3)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_scratch_config: all passed" || { echo "❌ test_scratch_config: $FAILS failed"; exit 1; }

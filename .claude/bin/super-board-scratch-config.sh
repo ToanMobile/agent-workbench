@@ -25,6 +25,9 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 # Lấy đủ các hàm trước khi chép gì: bản DevKit thiếu một hàm thì hỏng ngay, không chép nửa chừng.
 steps = (mod.copy_local_config, mod.copy_build_inputs) if sys.argv[4] == "full" else (mod.copy_local_config,)
+# Hook bị ignore mà settings đăng ký (guard-*.py, cleanup-wt.py): thiếu thì `agent-kit health` của verify FAIL (agent-workbench #12,
+# PR #87). DevKit cũ chưa có copy_local_hooks (#93) thì bỏ qua, phần còn lại vẫn chép như trước.
+steps += (mod.copy_local_hooks,) if hasattr(mod, "copy_local_hooks") else ()
 copied = [rel for step in steps for rel in step(sys.argv[2], sys.argv[3])]
 what = "local config and build inputs" if sys.argv[4] == "full" else "local config only (old DevKit, no build inputs)"
 print(f"[scratch-config] {what} copied: " + (", ".join(copied) or "none"), file=sys.stderr)
