@@ -2,7 +2,8 @@
 # 19/10 (OCR batch trên PR #111): `super-board-post-merge-clean.sh --sweep` có mà không ai gọi — grep "post-merge-clean" trong
 # .claude/{bin,workflows,skills,hooks} và universal-agent-devkit/{scripts,hooks} lúc đó chỉ ra merge gate (chế độ post) và một comment
 # của scratch-config, nên worktree lane của thẻ đã merge không bao giờ được dọn trên máy thật. Test này kiểm:
-#   R  runner: startup_reconcile gọi sweep (sau reap/adopt lock) với base của config; sweep lỗi không làm runner dừng (set -e)
+#   R  runner: startup_reconcile gọi sweep (sau reap/adopt lock) với base của config; sweep lỗi không làm runner dừng (set -e);
+#      mỗi tick của vòng chính cũng gọi (trước nhánh cap-reached), giãn 600 s phía runner, chạy nền (#118)
 #   W  wave workflow: lời gọi cuối của wave là một agent Cleanup chạy sweep, phase có trong meta; run halted thì không có lời gọi đó
 # Tương thích bash 3.2.
 set -u
@@ -46,6 +47,34 @@ esac
 : > "$TMP/order"; : > "$SWEEP_CALLS"; run_startup 7; rc=$?; wait_sweep
 [ "$rc" -eq 0 ] && grep -q after "$TMP/order" && [ -s "$SWEEP_CALLS" ] \
   && ok "R3 a failing sweep never stops the runner (set -e)" || fail "R3 a failing sweep stopped startup_reconcile (rc $rc)"
+
+# R4–R6 (#118, card #7 / PR #128 ngày 19/10): runner claude-p chạy nhiều ngày chỉ sweep lúc khởi động, nên worktree issue-7-review
+# (detached ở head đã squash) của thẻ merge lúc 19:12 nằm đó tới lần khởi động sau. Vòng chính phải gọi sweep mỗi tick — kể cả tick
+# cap-reached (đủ 3 lane bận: lúc thẻ được merge nhiều nhất), có giãn phía runner (sweep không ghi stamp khi GitHub hỏng).
+loop_head=$(awk '/^while true; do/{on=1} on{print} on && /cap reached/{exit}' "$ROOT/.claude/bin/super-board-run.sh")
+printf '%s\n' "$loop_head" | grep -Eq '^[[:space:]]+sweep_merged_lanes([[:space:]]|$)' \
+  && ok "R4 every main-loop tick, before the cap-reached early exit, calls sweep_merged_lanes" \
+  || fail "R4 the main loop never calls sweep_merged_lanes before the cap-reached branch"
+run_ticks() {  # run_ticks: sweep_merged_lanes 3 lần như 3 tick liền, rồi một tick sau khi hết khoảng nghỉ
+  ( cd "$TMP" && SB_LIB_ONLY=1 . "$TMP/bin/super-board-run.sh" >/dev/null 2>&1 || exit 90
+    BASE_BRANCH=trunk-x RUN_MANIFEST="$TMP/manifest"
+    sweep_merged_lanes && sweep_merged_lanes && sweep_merged_lanes || exit 91
+    SWEEP_NEXT=$(( $(date +%s) - 1 )); sweep_merged_lanes || exit 92 )
+}
+: > "$SWEEP_CALLS"; run_ticks; rc=$?
+i=0; while [ "$i" -lt 100 ] && [ "$(grep -c . "$SWEEP_CALLS")" -lt 2 ]; do sleep 0.1; i=$((i + 1)); done; sleep 0.3
+n=$(grep -c -- "--sweep . --base trunk-x" "$SWEEP_CALLS")
+[ "$rc" -eq 0 ] && [ "$n" -eq 2 ] && ok "R5 back-to-back ticks start one sweep; the next comes only after the runner's interval" \
+  || fail "R5 tick sweeps: rc $rc, $n sweep call(s) for 3 quick ticks + 1 late tick (want 2)"
+cat > "$TMP/bin/super-board-post-merge-clean.sh" <<'SH'
+#!/usr/bin/env bash
+sleep 5; echo "$*" >> "$SWEEP_CALLS"
+SH
+t0=$(date +%s)
+( cd "$TMP" && SB_LIB_ONLY=1 . "$TMP/bin/super-board-run.sh" >/dev/null 2>&1 || exit 90
+  RUN_MANIFEST="$TMP/manifest"; sweep_merged_lanes ); rc=$?
+[ "$rc" -eq 0 ] && [ $(( $(date +%s) - t0 )) -le 2 ] && ok "R6 a hanging sweep never holds the tick (it runs in the background)" \
+  || fail "R6 sweep_merged_lanes held the tick ($(( $(date +%s) - t0 ))s, rc $rc)"
 
 # ── W. wave workflow thật trong node, agent/pipeline/log giả
 WAVE="$ROOT/.claude/workflows/super-board-wave.js"
