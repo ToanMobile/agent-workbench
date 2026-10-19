@@ -17,6 +17,34 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-behindmsg-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
+# Verify ở đây là echo/printf, không phải Gradle/Unity. Slot riêng: hai slot máy đang bận
+# khiến heavy-slot chờ 3600s và Stop ngắt suite ở 600s (20:42, ca 1c).
+export SB_HEAVY_SLOT_DIR="$TMP/heavy-slots"
+mkdir -p "$SB_HEAVY_SLOT_DIR"
+# Oracle tĩnh trên chính file merge-gate: dòng "cannot resolve origin" và "could not create a scratch
+# worktree" chứa exit 1; exit kế sau "does not merge in cleanly" là exit 5; đoạn từ "could not classify
+# the PR" tới "approval_check" không chứa chữ needs_you_notify.
+python3 - "$GATE" <<'PY'
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+bad = []
+for needle in ("cannot resolve origin/${BASE} after fetch", "could not create a scratch worktree"):
+    line = next((ln for ln in text.splitlines() if needle in ln), "")
+    if "exit 1" not in line or "exit 5" in line:
+        bad.append(needle)
+i = text.find("does not merge in cleanly")
+nxt = text.find("exit ", i if i >= 0 else 0)
+if i < 0 or text[nxt:nxt + 6] != "exit 5":
+    bad.append("real conflict")
+chunk = text.split("could not classify the PR", 1)[-1].split("approval_check", 1)[0]
+if "needs_you_notify" in chunk:
+    bad.append("approve button without a request")
+if bad:
+    print("✖ environment failures are not exit 5:", "; ".join(bad))
+    raise SystemExit(1)
+print("✔ cannot resolve origin and scratch-add failure are exit 1; a real conflict stays exit 5")
+PY
+[ "$?" -eq 0 ] || fail "merge-gate exit class"
 O="$TMP/origin.git"; R="$TMP/repo"; WT="$R/.claude/worktrees/deploy-x"
 git init -q --bare -b main "$O"
 git init -q -b main "$R"

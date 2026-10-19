@@ -810,7 +810,7 @@ note_early_death() {
   # each dispatch made reap free the card and the next tick claim it again, every ~40 s, until the board halted. A worker that died
   # within SB_EARLY_DEATH_S (120 s) of its dispatch is recorded here as "<epoch> <lane>", with the last line of its log, so the card
   # can cool down in that lane. Bookkeeping only: under the runner's `set -euo pipefail` no step here may end the runner.
-  local age f last n now wlog="${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log"
+  local age f last n now wlog="${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}"
   # How long the worker lived: up to its log's last write. Reap runs once per tick (tick_seconds, 120 by default), so "now" can be a
   # whole tick after the death (review 19/10: measured at reap time, no worker ever counted). No log: now, with one tick of slack.
   # The log's mtime counts only when later than STARTED: `claude -p` (text mode) writes nothing until it ends, so a long silent
@@ -835,9 +835,9 @@ print(int(lived if lived is not None else since), 1 if early else 0)' "${STARTED
   { awk -v from=$((now - ${SB_EARLY_WINDOW_S:-600})) '$1 >= from' "$f" 2>/dev/null || true; echo "$now ${LANE:-?}"; } > "$f.tmp" 2>/dev/null \
     && mv "$f.tmp" "$f" 2>/dev/null || return 0
   # the log may be gone or empty (the 19/10 shape): grep exits 1/2, which pipefail would turn into the runner's exit
-  last=$( { grep -v '^[[:space:]]*$' "${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log" 2>/dev/null || true; } | tail -1 | cut -c1-200)
+  last=$( { grep -v '^[[:space:]]*$' "$wlog" 2>/dev/null || true; } | tail -1 | cut -c1-200)
   n=$( { awk -v l="${LANE:-?}" '$2 == l' "$f" 2>/dev/null || true; } | wc -l | tr -d ' ')
-  log "⚠ worker of #${1} (lane ${LANE:-?}) ended ${age}s after dispatch (a crash or a very quick exit) — early end ${n} of this lane in ${SB_EARLY_WINDOW_S:-600}s; last log line: ${last:-<no worker log at ${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log>}"
+  log "⚠ worker of #${1} (lane ${LANE:-?}) ended ${age}s after dispatch (a crash or a very quick exit) — early end ${n} of this lane in ${SB_EARLY_WINDOW_S:-600}s; last log line: ${last:-<no worker log at ${wlog}>}"
 }
 
 early_backoff() {

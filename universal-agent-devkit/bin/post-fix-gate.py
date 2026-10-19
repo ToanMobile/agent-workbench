@@ -4487,6 +4487,16 @@ def run_commit_msg_check(msg_path, modified_files) -> int:
 # Heavy suites (a build tool, an engine) are left to the Stop gate and the nightly run; the
 # same split as scripts/stale_rerun.py and scripts/red_proof.py.
 PRECOMMIT_HEAVY = re.compile(r"gradlew|\bgradle\b|unity|-runTests|xcodebuild", re.I)
+# Slot máy (tối đa 2) chỉ khi lệnh là Gradle, Unity batch hoặc xcodebuild.
+# Chữ "unity" trong đường dẫn test (test_unity_*.sh) không phải Editor, không xin slot.
+_HEAVY_SUITE = re.compile(r"\b(?:gradlew|unity-batch(?:\.sh)?|xcodebuild)\b", re.I)
+
+
+def suites_need_heavy_slot(tests) -> bool:
+    for item in tests or ():
+        if _HEAVY_SUITE.search((item or {}).get("command") or ""):
+            return True
+    return False
 
 
 def _env_float(name, default):
@@ -5796,12 +5806,13 @@ def main():
             share_result(t, prev)
         deferred.clear()
 
-    # Giữ heavy slot toàn máy (tối đa 2) khi thực sự có suite cần chạy ở chế độ --full / --force-full.
+    # Giữ heavy slot toàn máy (tối đa 2) khi --full / --force-full, hoặc khi suite chạy Gradle / Unity batch / xcodebuild.
     heavy_slot_mod = None
     heavy_slot_handle = None
     heavy_denied = False
-    if (run_tests and lock_held and not nothing_to_run
-            and (getattr(args, "full", False) or getattr(args, "force_full", False) or bool(force_reason))):
+    need_heavy = (getattr(args, "full", False) or getattr(args, "force_full", False) or bool(force_reason)
+                  or suites_need_heavy_slot(to_run))
+    if run_tests and lock_held and not nothing_to_run and need_heavy:
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             import heavy_slot as _hs  # noqa: PLC0415 - sibling module in bin/
