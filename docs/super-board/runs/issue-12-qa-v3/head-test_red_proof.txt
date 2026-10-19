@@ -1,0 +1,74 @@
+✔ suite PASS but the test never seen RED → UNPROVEN, not PASS
+✔ RED without the fix + GREEN with it → PROVEN → PASS
+✔ proof log keeps both sandbox runs
+✔ working tree untouched (the fix is still there)
+✔ GREEN without the fix too → VACUOUS (🚫 test vô hiệu)
+✔ view shows 🚫 TEST VÔ HIỆU
+✔ Stop: a bug of this session whose test is VACUOUS holds the stop
+✔ Stop after a proven fix starts the RED-proof of this session's bugs (background)
+✔ fix committed with its test → that commit is reverted → PROVEN (a wrong guess is INCONCLUSIVE, below)
+✔ --fix-commit: revert the fix in the sandbox → RED, HEAD → GREEN → PROVEN
+✔ revert mode: red_proof record carries no patch field (the diff text stays local)
+✔ test committed with its fix + an unrelated uncommitted file → the test's commit is reverted → PROVEN
+✔ the test's commit is not the fix → INCONCLUSIVE, never VACUOUS
+✔ sandbox cannot run the suite (GREEN run fails) → INCONCLUSIVE
+✔ ignored build input declared in .agents/local/red_proof.json → copied in → PROVEN
+✔ local.properties (ignored) copied by default
+✔ revert of an old fix merges with later edits (git revert in a worktree) → PROVEN
+✔ sandbox worktree removed afterwards
+✔ red_proof never prunes the whole repo: another folder-gone worktree keeps its admin dir (#38)
+✔ a real conflict (the fixed line itself changed since) → INCONCLUSIVE naming the file
+✔ evidence naming two code commits → INCONCLUSIVE 'mơ hồ', no guess
+✔ revert only the fix's production code (helper + notes kept at HEAD) → PROVEN
+✔ red because the test cannot compile/import without the fix → INCONCLUSIVE, not PROVEN
+✔ files of the fix deleted since / not source code are not reverted → PROVEN
+✔ two linked test files, only one red without the fix → INCONCLUSIVE naming the green one
+✔ impacted_command: only the bug's test file runs
+✔ command ran no test (filter matched nothing) → INCONCLUSIVE, not VACUOUS
+✔ monorepo: module path relative to the Gradle root (:app:…, not :CarConnect:app:…)
+✔ androidTest ref left out of the unit-test task
+✔ two tests in one module → one task, both --tests
+✔ multi-suite bug: each suite gets only the modules it runs
+✔ every top-level test class of a file is in the filter
+✔ NO_TESTS: 20 tests completed is a real run, 0 tests completed is not
+✔ every test class of a multi-class file is run, and a failure in any of them reds that file
+✔ selects(): only files the narrowed command really runs
+✔ a linked file the command never runs does not block PROVEN
+✔ proof slots: 1 by default, red_proof.json jobs=2 → two at once, a third waits; RED_PROOF_JOBS wins
+✔ narrowed Gradle test task carries --rerun
+✔ one named script: its exit 1 is its red (no file name in FAIL lines)
+✔ unknown id → exit 2, said so
+✔ id without the BUG- prefix is found
+✔ untracked DevKit link (.agents/active-profile) recreated in the sandbox → the suite runs → PROVEN
+✔ --pending: past bug with no fix commit → INCONCLUSIVE, never the user's unrelated uncommitted work as its fix
+✔ --patch: HEAD + patch that puts the bug back → RED, HEAD → GREEN → PROVEN
+✔ --patch keeps the patch at .agents/local/red-patches/<ID>.patch (re-provable)
+✔ --patch never touches the working tree
+✔ proof records mode=patch and hashes the patch (editing it → OUTDATED)
+✔ --patch that does not break the behaviour → VACUOUS (test or patch is wrong)
+✔ --patch uses HEAD's version of a tracked test, not the tree's half-edited one
+✔ --patch still brings in a linked test HEAD does not have yet
+✔ --pending picks .agents/local/red-patches/<ID>.patch by itself → PROVEN
+✔ patch that edits a test file → INCONCLUSIVE (a proof may not change the test)
+✔ patch that no longer applies → INCONCLUSIVE naming the file
+✔ --pending retries an INCONCLUSIVE bug once a patch is added for it → PROVEN
+✔ --patch with --fix-commit → exit 2
+✔ --patch with more than one bug → exit 2
+✔ heavy suite (Gradle) → PENDING for the nightly job
+✔ --heavy (nightly) runs it
+✔ RED_PROOF=0 is a no-op
+✔ two bugs sharing test + fix: one RED + one GREEN run, both PROVEN
+✔ production: no declaration, a bug-back patch of a runner under tests/ edits a test → INCONCLUSIVE (as before)
+✔ production: declared, the runner's bug-back patch applies → its test RED, HEAD GREEN → PROVEN
+✔ production: a glob matching the linked test too, the patch that edits that test is refused for the test alone
+✔ production: a linked test spelled ./tests/test_runner.py is still refused under a glob that matches it
+✔ production: a linked test spelled /var/folders/f_/p7gj74t55l5gb31f1gczc3hm0000gn/T/tmp.V7ADVafdFv/p.N8KbYP/tests/test_runner.py is still refused under a glob that matches it
+✔ production: malformed red_proof.json ({"production": "tests/runner.sh"}) is ignored, no crash, the runner stays a test
+✔ production: malformed red_proof.json ({"production": [1, "", null]}) is ignored, no crash, the runner stays a test
+✔ production: malformed red_proof.json (["tests/runner.sh"]) is ignored, no crash, the runner stays a test
+✔ production: malformed red_proof.json ({"production": ) is ignored, no crash, the runner stays a test
+✔ production: no declaration, an uncommitted fix of a runner under tests/ is no fix in session mode (as before)
+✔ production: declared, the uncommitted runner change is the session's fix → PROVEN, the tree untouched
+✔ production: no declaration, a commit that changed only tests/ files is no fix commit (as before)
+✔ production: declared, the evidence's commit is the fix, the .sh runner reverted → PROVEN
+✅ test_red_proof: all passed
