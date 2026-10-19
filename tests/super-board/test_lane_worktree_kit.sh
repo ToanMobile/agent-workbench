@@ -84,11 +84,13 @@ git -C "$TMP/repo" worktree add -q --detach .claude/worktrees/issue-8-build   # 
   || fail "under the floor, a lane with its worktree already there was skipped"
 mkdir -p "$TMP/repo/.claude/worktrees/issue-11-build"   # a .git pointing at an admin dir git pruned: no worktree any more
 echo "gitdir: $TMP/repo/.git/worktrees/gone" > "$TMP/repo/.claude/worktrees/issue-11-build/.git"
+: > "$TMP/log"; rm -f "$TMP/claims"
 ( export WORKTREE_DISK_MIN_GIB=100000 WORKTREE_DISK_WARN_GIB=0; launch build 11 )
-[ ! -s "$TMP/launched" ] && ok "  … but a stale .git git no longer knows does not count either" || fail "a stale .git let a dispatch through under the floor"
+[ ! -s "$TMP/launched" ] && [ ! -e "$TMP/claims" ] && grep -q "disk under the DevKit worktree floor" "$TMP/log" && ok "  … but a stale .git git no longer knows does not count either" || fail "a stale .git let a dispatch through under the floor"
 mkdir -p "$TMP/repo/.claude/worktrees/issue-9-build"   # an empty leftover folder is no worktree: add would still need the disk
+: > "$TMP/log"; rm -f "$TMP/claims"
 ( export WORKTREE_DISK_MIN_GIB=100000 WORKTREE_DISK_WARN_GIB=0; launch build 9 )
-[ ! -s "$TMP/launched" ] && ok "  … but an empty leftover folder does not count as the lane's worktree" || fail "an empty folder let a dispatch through under the floor"
+[ ! -s "$TMP/launched" ] && [ ! -e "$TMP/claims" ] && grep -q "disk under the DevKit worktree floor" "$TMP/log" && ok "  … but an empty leftover folder does not count as the lane's worktree" || fail "an empty folder let a dispatch through under the floor"
 # the check itself failing (no DevKit here): dispatched as before, and said in the log, never silently
 mv "$TMP/repo/.agents/devkit" "$TMP/repo/.agents/devkit.off"; : > "$TMP/log"
 ( export WORKTREE_DISK_MIN_GIB=100000 WORKTREE_DISK_WARN_GIB=0; launch build 10 )

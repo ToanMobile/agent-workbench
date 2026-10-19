@@ -123,6 +123,12 @@ add python3 "$WT" add "$R" --lane=review --base=issue-5-fix --no-init; rc=$?
 [ "$rc" = 0 ] && [ "$(G "$R" rev-parse HEAD)" = "$newtip" ] && [ "$(py board "$R")" = True ] \
   && ok "a reused detached review checkout moves to --base (the new PR head) and stays the board's" \
   || fail "detached reuse: rc $rc head $(G "$R" rev-parse --short HEAD) want ${newtip:0:7}: $(tail -3 "$TMP/out")"
+G "$B" commit -q --amend -m "more, amended"; amended=$(G "$B" rev-parse HEAD)   # the Builder rewrites the PR head (rebase/amend + force-push)
+add python3 "$WT" add "$R" --lane=review --base=issue-5-fix --no-init; rc=$?
+[ "$rc" = 0 ] && [ "$(G "$R" rev-parse HEAD)" = "$amended" ] \
+  && ok "  … also after the PR head was rewritten (the old head, now unreferenced, is no work of the review)" \
+  || fail "reuse after a rewritten PR head: rc $rc: $(tail -2 "$TMP/out")"
+newtip="$amended"
 D2="$P/.claude/worktrees/issue-13-review"
 G "$P" worktree add -q --detach "$D2" main
 add python3 "$WT" add "$D2" --lane=review --base=issue-5-fix --no-init; rc=$?

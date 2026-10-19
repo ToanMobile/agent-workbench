@@ -857,6 +857,9 @@ def _reuse_lane(main, wt, branch, base, lane, no_init=False, profile=None):
     if not branch:
         state = load_state(wt)   # dies on a state file that is there and unreadable; none at all: the adopted reading
         unique = git(wt, "rev-list", "-1", "HEAD", "--not", "--branches", "--remotes", "--tags", check=False)
+        if unique.returncode == 0 and unique.stdout.strip() and state.get("board") \
+                and git(wt, "rev-parse", "HEAD", check=False).stdout.strip() == state.get("base"):
+            unique.stdout = ""   # still at the PR head add/reuse put it on, which a force-push left unreferenced: nothing made here (OCR 19/10)
         held = changes_since(wt, state)
         if held or unique.returncode or unique.stdout.strip():
             die(tr(f"{wt} còn việc (chưa commit: {', '.join(held[:5]) or '-'}; commit không ref nào giữ: {unique.stdout.strip()[:10] or '-'}): "
