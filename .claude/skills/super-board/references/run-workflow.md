@@ -65,8 +65,12 @@ query was corrected or PR metadata changed, supply its current read explicitly:
 `--resume --kind <same-shape> [--meta <fresh-meta.json>] -- <corrected gh read args>`.
 The replacement must pass the same evidence validator; the broken saved query
 is retained in the archived record. This is a read-only recovery check. An uncertain write
-has no automatic recovery probe: inspect the remote outcome first, then archive
-the halt record explicitly; never rerun a migration/write as a health check. Then follow normal
+has no automatic recovery probe (its record has `"operation": null`, and plain `--resume`
+refuses it): inspect the remote outcome first, then archive the halt record with
+`--resume --reconciled "<what was checked on GitHub>"`. It makes a read-only quota probe,
+never replays the write, and moves the record to `github-halt-reconciled-<ns>.json` with that
+reason (the record is moved, never deleted); never rerun a migration/write as a health check. The
+halt files are git-ignored runtime state (`.claude/super-board/github-halt*.json`). Then follow normal
 run preflight/reconcile, inspect preserved worktrees, and start a fresh wave.
 Do not schedule automatic retries of the stopped run.
 
@@ -194,17 +198,20 @@ Repeat until a done condition or halt gate fires:
    classification. Existing docs/ux/tests/refactor rows keep their chain; check
    any proposed new label chain before writing that label.
 
-   The planner returns `cards`, `sweep`, `resume`, `refreshApproval`, `flag` and `stranded`. **Act on
+   The planner returns `cards`, `sweep`, `resume`, `refreshApproval`, `flag`, `stranded` and `waiting`. **Act on
    `sweep`, `resume`, `refreshApproval`, `flag` and `stranded` BEFORE launching** (run.md → "The wave-start
    sweep"): move every swept card to `Ready` with a comment naming what cleared
    it, move every `resume` card (verified human approval of the current pinned
-   request) to `Review`; `needs-you:done` is display-only. Move `refreshApproval`
+   request) to `Review` and run `super-board-needs-you.py unmark --repo <owner/name> --issue <N>` on it
+   (the person's step is done); `needs-you:done` is display-only. Move `refreshApproval`
    cards to `Review` solely to review the changed head and post a fresh human request;
    clear their stale `needs-you:done` display labels. They have no approval to merge.
    Comment on flagged cards asking for their
    `## Blocked by` line to be fixed, and return every stranded Building card to
    `Ready` (below). Swept, resumed, approval-refresh and stranded cards are NOT in this pass's
-   `cards`; they join the next wave.
+   `cards`; they join the next wave. `waiting` lists Ready cards labelled `needs-you` / `human-gated`
+   (#95): only a person can move them, so they are never in `cards`; leave them, name them in the
+   summary, and they return once a person removes the label.
 
    **Stranded Building cards.** A card in Building with no assignee between
    waves has no live worker — a stopped or crashed wave left it mid-build. For
@@ -331,6 +338,9 @@ don't stall on prompts:
     "Bash(mkdir:*)", "Bash(pgrep:*)", "Bash(node --check:*)",
     "Bash(bash .claude/bin/super-board-wave-plan.sh:*)",
     "Bash(bash .claude/bin/super-board-preflight.sh:*)",
+    "Bash(python3 .claude/bin/super-board-github-read.py:*)",
+    "Bash(.claude/bin/super-board-github-read.py:*)",
+    "Bash(python3 .claude/bin/super-board-verification-ready.py:*)",
     "Bash(python3 .claude/bin/super-board-skills-ready.py:*)",
     "Bash(bash .claude/bin/super-board-usage.sh:*)",
     "Bash(bash .claude/bin/super-board-throttle.sh:*)",
@@ -338,7 +348,24 @@ don't stall on prompts:
     "Bash(bash .claude/bin/super-board-codex-wave.sh:*)",
     "Bash(bash .claude/bin/super-board-host.sh:*)",
     "Bash(bash .claude/bin/super-board-pr-body.sh:*)", "Bash(gh pr edit:*)",
+    "Bash(bash .claude/bin/super-board-stop.sh:*)",
     plus your project's test runners (e.g. "Bash(npm test:*)", "Bash(npx playwright:*)").
+
+The read helper is listed in both forms: scripts call
+`python3 .claude/bin/super-board-github-read.py`, lane prompts call it directly.
+
+**Headless runs (`claude -p "/super-board run"`).** Supported only where Claude Code may
+write the project's `.claude/` folder without a prompt. `.claude/` is a protected path:
+the wave lock under `.claude/super-board/` (inflight lock, halt and PID files) is prompted
+in `default` and `acceptEdits`, denied in `dontAsk`, and no `permissions.allow` rule
+(e.g. `Edit(.claude/**)`) pre-approves it. Claude's own git worktrees under
+`.claude/worktrees/` are exempt, so lane worktrees need only `Bash(git worktree:*)`.
+Pick one:
+- Interactive (recommended): start `/super-board run` in a terminal session and answer
+  the first `.claude/` write prompt with "allow Claude to edit files in this project's
+  .claude folder for this session".
+- Headless: `claude -p "/super-board run" --permission-mode bypassPermissions`, only in
+  an isolated container or VM. `--permission-mode acceptEdits` stops at the wave lock.
 
 Merging is NOT in the base list. On a board whose `merge_policy.default` is
 `"auto"`, `super-board onboard` offers the merge lines as a diff to approve

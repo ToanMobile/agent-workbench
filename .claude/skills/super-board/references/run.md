@@ -22,7 +22,10 @@ checkpoint limitations: [run-workflow.md](run-workflow.md#required-github-eviden
 **Super-board is an autonomous trader. The interactive Claude session that invokes `super-board run` is an orchestrator, NOT a worker.** Its only jobs are:
 
 1. Verify preconditions (see table below).
-2. Spawn the headless `nohup ./scripts/super-board-run.sh <slug> &` runner.
+2. Spawn the headless `nohup ./scripts/super-board-run.sh <slug> &` runner. An explicit start clears the stop marker
+   and installs the repo's launchd watchdog (`.claude/bin/super-board-watchdog.sh`): every 60 s it restarts a runner
+   that died without a deliberate end, never one stopped with `super-board stop`, with backoff and a cap of 5
+   restarts in a row. Status: `.claude/bin/super-board-watchdog.sh status <slug>`.
 3. Report runner PID + log path back to the user.
 4. Exit.
 
@@ -260,7 +263,7 @@ in a sub-agent, before touching a worktree.
 [ ] act on the outcome below, then return one verdict per card
 ```
 
-The script asks four questions and the agent adds a fifth; the agent owns the judgement:
+The script asks five questions; the agent owns the judgement:
 
 | # | Question | Mechanical signal (script) | Agent adds |
 |---|---|---|---|
@@ -268,7 +271,7 @@ The script asks four questions and the agent adds a fifth; the agent owns the ju
 | 2 | Already in progress? | open PR on another branch closes `#N` or has the same title; a card in Building/QA/Review (or a lower-numbered Ready peer) with the same title | same feature, different words — not merely the same files |
 | 3 | File overlap? | open PR touches files the card names; a lower-numbered card in the same `--issues` batch names the same files | expected files from reading the issue (`--files`); the same overlap with a Ready peer in another batch |
 | 4 | Unclear? | no `## Acceptance Criteria` bullets | AC that contradicts the current code (cite `file:line`) |
-| 5 | Too big? | — | likely over ~400 changed lines (`merge_policy.auto_max_lines`; lockfiles, generated, snapshots, migration SQL excluded) or spans many areas (UI + API + DB + jobs …) — lint.md criterion 15 |
+| 5 | Too big? | two or more size signals in the issue text (`tag: too-big`, with `evidence` and a suggested `split`): Fix lists ≥5 short deliverables (or the title ≥3) · ≥4 areas · the card calls itself big (phase, vertical slice, "many components") · its scope is a whole spec section · an AC needs people or production data; an AC only a real device can prove (OOM, FPS, memory) on a card that says "real device" counts as two, so it holds on its own | likely over ~400 changed lines (`merge_policy.auto_max_lines`; lockfiles, generated, snapshots, migration SQL excluded) from the code it will touch, or spans many areas (UI + API + DB + jobs …) — lint.md criterion 15 |
 
 **Two Ready cards that overlap each other, neither with an open PR, go one at a time.** The
 lower-numbered card proceeds; only the other is sequenced, with `blocked-by: #<lower>`, and the
@@ -276,7 +279,8 @@ wave-start sweep frees it once the lower one closes. Sequencing each against the
 both with nothing to wait on and neither built — the same deadlock comes back every wave.
 
 The agent may turn a `proceed` into a `hold` on evidence. It may turn a mechanical `hold` into
-`proceed` only by naming why the match is a different feature. Its own branch's PR
+`proceed` only by naming why the match is a different feature — or, for `too-big`, why the signals
+do not make this card big (the listed items are one small change, the device check already has a harness). Its own branch's PR
 (`issue-<N>-*`) is the card coming back, never its own duplicate.
 
 **Outcomes — never drop a card silently:**
@@ -287,7 +291,7 @@ The agent may turn a `proceed` into a `hold` on evidence. It may turn a mechanic
 | `hold` — done | move card to Blocked | `👯` · names the merged PR / closed issue · Owner: Eric (close as duplicate) · `blocked-by: -` |
 | `hold` — in progress | move card to Blocked | `👯` · names the open PR / card · `blocked-by: <the issue that PR or card closes>` — the sweep returns it when that closes, and pre-flight then finds it done |
 | `hold` — unclear | move card to Blocked | `❓` · the missing AC or the contradiction with `file:line` · `blocked-by: -` |
-| `hold` — too big | move card to Blocked | `❓` · "too big — likely over <cap> changed lines / spans <areas>" · suggests splitting with `/to-tickets` into vertical slices, each under the cap · `blocked-by: -` |
+| `hold` — too big | move card to Blocked | `❓` · "too big — likely over <cap> changed lines / spans <areas>" with the script's `evidence` · suggests splitting with `/to-tickets` into vertical slices, each under the cap, starting from its `split` (person / device ACs become `qa` cards) · `blocked-by: -` |
 | `sequence` — `blockedBy` non-empty | move card to Blocked | `⏳` · the overlapping PR and files · `blocked-by: <blockedBy>` — the wave-start sweep frees it |
 | `sequence` — `blockedBy` empty | proceed (card stays Ready, return column `Ready`), comment `⚠️ expected conflict with PR #<P> on <files> — the merge gate will rebase` | — |
 | `halted` | script exit 79: required evidence unavailable; leave the card untouched, stop this run, resume explicitly after recovery | — |
@@ -299,8 +303,10 @@ column), never built unchecked. `qa` cards are not pre-flighted: nothing is buil
 
 0. Legacy backend only: run the Builder pre-flight above in a sub-agent. Anything but `proceed`
    (or a conflict-note `sequence`) → do what its row says, release the claim, exit.
-1. Create worktree `.claude/worktrees/issue-<N>-build/` off `config.base_branch`.
-2. Create branch `issue-<N>-<slug>` from `config.base_branch` — unless one already exists
+1. Create worktree `.claude/worktrees/issue-<N>-build/` off `config.base_branch` with the DevKit only (agent-workbench#93):
+   `git fetch origin`, then `agent-kit worktree add .claude/worktrees/issue-<N>-build issue-<N>-<slug> --lane=build --base=origin/<config.base_branch>`.
+   Never a plain `git worktree add` or EnterWorktree. Exit 4 = under the disk floor: stop, card and claims unchanged.
+2. Create branch `issue-<N>-<slug>` from `config.base_branch` (step 1 does it) — unless one already exists
    (the card came back from Building after a stopped run): then check it out, keep its
    commits and open PR, and continue from where it stopped.
 3. Read issue body + ALL comments + PROJECT.md.
@@ -352,8 +358,9 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
 
 ### Tester (first pass — repo-backed)
 
-1. Pull latest of base; checkout `issue-<N>-<slug>` into worktree `.claude/worktrees/issue-<N>-qa/`.
-   A `qa` card has no branch yet: move it Ready → QA, then create the branch from the base.
+1. `git fetch origin`; checkout `issue-<N>-<slug>` into worktree `.claude/worktrees/issue-<N>-qa/` with the DevKit:
+   `agent-kit worktree add .claude/worktrees/issue-<N>-qa issue-<N>-<slug> --lane=qa --base=origin/<config.base_branch>`.
+   A `qa` card has no branch yet: move it Ready → QA, then the same command creates the branch from the base.
 2. `target.url` set → health-check it first. Unhealthy → Block.
 3. Read issue + PR + Builder's handoff comment.
 4. Build issue-scoped test plan: one observable test per AC.
@@ -400,7 +407,8 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
 
 ### Reviewer
 
-1. Worktree `.claude/worktrees/issue-<N>-review/` from current state of `issue-<N>-<slug>`.
+1. Worktree `.claude/worktrees/issue-<N>-review/` from current state of `issue-<N>-<slug>`, detached, with the DevKit:
+   `git fetch origin`, then `agent-kit worktree add .claude/worktrees/issue-<N>-review --lane=review --base=origin/issue-<N>-<slug>`.
 2. **Gate 1** — scan PR threads and their replies. [PR author notes](pr-author-notes.md)
    alone are explanations, not findings. Human questions or change requests in those
    threads still follow the normal review/blocking flow; the marker exempts no replies.
@@ -423,7 +431,7 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
    - All `fixed` / `no longer applies` → continue to step 4 for a fresh pass. Do not re-raise a prior finding marked `no longer applies`.
 4. Review the code (logic, conventions). Review the tests (right thing tested? testable assertions? meaningful coverage?).
 5. **Reviewer-side test rerun** (always — closes the Tester self-verification gap):
-   - Pull `issue-<N>-<slug>` into the review worktree.
+   - Bring the review worktree to the PR head: `git fetch origin && git checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the test command Tester used (recorded in Tester's PR handoff comment as `Local tests:` line).
    - Tests green → continue to step 6.
    - Tests red → open new `[qa]`-prefixed PR thread quoting the failure output, move card Review → QA with `loop:rebuild-N`, exit. Tester wrote a broken suite; QA owns the fix.
@@ -512,7 +520,8 @@ on the base branch**.
           hit. Card Review → **Blocked** with the 🙋 template: `Why blocked` names the
           category and evidence; `To unblock` = "[ ] review PR #<P> and merge it
           yourself" OR "[ ] comment `done` to approve — the next wave merges it";
-          label `needs-you`, `blocked-by: -`. A human merge moves the card to Done the
+          `blocked-by: -`; mark the card (`super-board-needs-you.py mark`, block-template.md →
+          "A person must act", `--next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"`). A human merge moves the card to Done the
           usual way; a `done` brings it back through `resume`, and the gate clears the
           policy hold only with a verified trusted approval of the current request.
      8 → 🙋 needs you. Stdout carries one `needs-you: <command>` line per human step
@@ -520,7 +529,8 @@ on the base branch**.
           command that failed, a `needs-you:` line in the PR body,
           `migrations.human_steps`). Card Review → **Blocked** with the 🙋 template
           (block-template.md → "🙋 Needs you"), the commands copied verbatim into
-          `To unblock`, label `needs-you` on issue and PR, `blocked-by: -`. When the
+          `To unblock`, `blocked-by: -`; mark the issue (`super-board-needs-you.py mark --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"`)
+          and label the PR `needs-you`. When the
           human comments `done` after the current pinned request, the wave planner
           verifies their permission and the head before resuming Review. For exits
           7 and 8, copy the gate's `approval-request:` line into the canonical issue
@@ -604,7 +614,8 @@ Next: none
 ```
 
 Block exits use the same header (`[<role>] [blocker] 🛑 blocked`) and the fields of
-`block-template.md`. A card dropped on purpose (out of scope, won't do) is closed as not planned
+`block-template.md`. A Block for a person (🙋 🧑 🔐 🔑 💳 🎨 🛡, or ❓ waiting on a person's decision) also marks the card in
+the same step: `super-board-needs-you.py mark` (block-template.md → "A person must act"). A card dropped on purpose (out of scope, won't do) is closed as not planned
 and moved to Done with a `[<role>] [report] 🤷 dropped · <reason>` comment — there is no Skipped
 column.
 
@@ -717,8 +728,9 @@ usual template — and, per §4, a `blocked-by:` line.
 
 ### The wave-start sweep
 
-Before planning any wave, `super-board-wave-plan.sh` reports five lists the orchestrator must act on
-**before** launching:
+Before planning any wave, `super-board-wave-plan.sh` reports the lists below the orchestrator must act on
+**before** launching (`waiting` — Ready cards labelled `needs-you` / `human-gated`, #95 — is only reported: a person
+releases them by removing the label; one back in the lifecycle with `loop:rebase` / `loop:rebuild-N` is work again):
 
 - **`sweep`** — `Blocked` cards whose blockers have all closed. Move each to `Ready` and comment
   naming what cleared it (`clearedBy` carries the numbers). They then join this very wave.
@@ -728,7 +740,9 @@ Before planning any wave, `super-board-wave-plan.sh` reports five lists the orch
   the same once at start (`reclaim_stranded_building`).
 - **`resume`** — 🙋 `Blocked` cards whose newest pinned request has a later `done`
   from a human with verified write, maintain or admin permission, for the current
-  PR head. Move each to **Review**; `needs-you:done` may be kept as a display label
+  PR head. Move each to **Review** and run `super-board-needs-you.py unmark --repo <owner/name>
+  --issue <N>` (the person acted; a card still carrying `needs-you` is skipped by the legacy runner's sweep and
+  `/super-build`, so sent back to Ready it would wait for nobody); `needs-you:done` may be kept as a display label
   only. Do not create or copy approval evidence. The Reviewer re-runs the gate,
   which independently checks the request, current policy/steps and head, verifies
   the build, and runs allowed migrations. New code or a newer request needs fresh

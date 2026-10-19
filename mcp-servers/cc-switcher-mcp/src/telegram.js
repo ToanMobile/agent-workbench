@@ -524,7 +524,6 @@ export async function refuseForeignTelegramChat(apiCaller, botToken, callbackQue
   });
   return { refused: true };
 }
-
 export async function handleTelegramCallback(callbackQuery, opts = {}) {
   const { stateDir, nowMs = Date.now(), repos } = opts;
   const data = String(callbackQuery?.data || '').trim();
@@ -532,7 +531,6 @@ export async function handleTelegramCallback(callbackQuery, opts = {}) {
   if (data.startsWith('sb:ap:')) {
     return approveSuperBoardCallback(data.slice('sb:ap:'.length), opts);
   }
-
   await maybeSyncLiveQuotas(stateDir, nowMs, data === 'act:refresh');
 
   if (data === 'act:balance_repos' || data === 'act:swap_repos') {

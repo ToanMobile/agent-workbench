@@ -71,7 +71,8 @@
 #     "resume": [ {"number":51,"title":"…"} ],
 #     "refreshApproval": [ {"number":52,"title":"…","why":"PR head changed after review"} ],
 #     "flag":  [ {"number":82,"title":"…","why":"…"} ],
-#     "stranded": [ {"number":44,"title":"…"} ] }
+#     "stranded": [ {"number":44,"title":"…"} ],
+#     "waiting": [ {"number":45,"title":"…","labels":["needs-you"]} ] }   # Ready cards held for a person (#95)
 set -euo pipefail
 
 CONFIG=""; ITEMS_FILE=""; DEPS_FILE=""
@@ -145,6 +146,11 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
     else "build" end;
   # Unknown to the graph (closed, or beyond the fetch limit) is not "free".
   def free($n): (dep($n) | if . == null then false else .runnable end);
+  # #95: work only a person can do (playtest, a real device, a store account, a ruling). A Ready card so labelled is
+  # held back and listed in `waiting`; QA/Review cards are not, the resume path brings approved 🙋 cards there.
+  # Not one carrying loop:rebase / loop:rebuild-N: back from QA/Review after the person acted (super-board-run.sh FOR_A_PERSON_JQ).
+  def for_a_person($l): (($l | index("needs-you")) or ($l | index("human-gated")))
+                        and ($l | map(. == "loop:rebase" or startswith("loop:rebuild-")) | any | not);
 
   [ .items[]
     | select(.content.type == "Issue")
@@ -159,7 +165,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
   | [ $cols[] as $c | $all[] | select(.status == $c and $c != "Ready") ] as $flight
 
   # Ready: only the ones the graph says are actually free.
-  | [ $all[] | select(.status == "Ready") | select(free(.number)) ] as $ready
+  | [ $all[] | select(.status == "Ready") | select(free(.number)) | select(for_a_person(.labels) | not) ] as $ready
 
   # Downstream-first, so work already begun finishes before new work starts.
   | ($flight + $ready) as $picked
@@ -194,4 +200,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
                | { number, title, why: (dep(.number) | .why) } ],
 
       # Building with no claim between waves = no live worker. Back to Ready.
-      stranded: [ $all[] | select(.status == "Building") | { number, title } ] }'
+      stranded: [ $all[] | select(.status == "Building") | { number, title } ],
+
+      # Ready cards held back for a person (#95): removing the needs-you / human-gated label releases them.
+      waiting: [ $all[] | select(.status == "Ready") | select(for_a_person(.labels)) | { number, title, labels } ] }'

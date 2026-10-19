@@ -351,9 +351,14 @@ bash "$HERE/super-board-scratch-config.sh" "$REPO_PATH" "$SCRATCH" || true
 # không có gì sai (OCR 19/10): dừng bằng exit 9 (verification-readiness), giữ nguyên thẻ.
 for cmd in "${VERIFY[@]}"; do
   for p in .agents/devkit/bin/post-fix-gate.py universal-agent-devkit/bin/post-fix-gate.py; do
-    # chỉ đường dẫn tương đối gốc scratch ("python3 .agents/…", "./.agents/…"); một đường dẫn tuyệt đối hay ../ vẫn chạy như cũ
-    if { [[ " $cmd" == *" $p"* ]] || [[ " $cmd" == *" ./$p"* ]]; } && [ ! -f "$SCRATCH/$p" ]; then
-      say "verification-readiness: the scratch tree has no ${p} (the DevKit could not be installed there) — an environment problem, not this PR; the card stays where it is.${DK_INSTALL:+ Install log: $(tail -3 "$VERIFY_LOG" 2>/dev/null | clip 300)}"
+    # Chỉ đường dẫn tương đối gốc scratch, ở ranh giới token: đầu lệnh, sau dấu cách, ngoặc kép / đơn, backtick, ( ) { } ; & | = < >,
+    # có hay không "./" (`python3 "./.agents/…"`, `cd x &&./…`, `bash -c ".agents/…"` lọt qua bản so " $p" cũ: OCR #97, issue #98).
+    # Một đường dẫn tuyệt đối hay ../ (trước nó là "/") vẫn chạy như cũ. Dấu chấm thành [.]: không phụ thuộc cách bash bỏ ngoặc (OCR).
+    re="(^|[[:space:]\"'\`(){};&|=<>])(\./)?${p//./[.]}(\$|[[:space:]\"'\`(){};&|<>])"
+    if [[ "$cmd" =~ $re ]] && [ ! -f "$SCRATCH/$p" ]; then
+      # Không tiền tố "[merge-gate #N]": dòng phải bắt đầu đúng "verification-readiness:" như dòng exit 9 ở trên
+      # (super-board-codex-lane.sh: detail của exit 9 bắt đầu đúng chữ đó).
+      echo "verification-readiness: the scratch tree has no ${p} (the DevKit could not be installed there) — an environment problem, not PR #${PR}; the card stays where it is.${DK_INSTALL:+ Install log: $(tail -3 "$VERIFY_LOG" 2>/dev/null | clip 300)}" >&2
       exit 9
     fi
   done
@@ -387,7 +392,6 @@ is_verify_timeout() {
   fi
   grep -aqE "TIMEOUT after|quá giới hạn" "$wt_log" 2>/dev/null
 }
-
 for cmd in "${VERIFY[@]}"; do
   if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
     [[ "$cmd" == *"--diff"* ]] || cmd="$cmd --diff origin/${BASE}"
@@ -667,7 +671,8 @@ PY
   else
     say "note: ${BASE} in ${MAIN_PATH} not fast-forwarded (main checkout is not on ${BASE})"
   fi
-  bash "$HERE/super-board-post-merge-clean.sh" "$REPO_PATH" "$HEAD_REF" "$HEAD_SHA" >&2 || true
+  # Số PR: worktree detached ở head đã squash mà không ref nào còn giữ thì bước dọn giữ tạm head bằng refs/pull/<PR>/head (19/10, #96).
+  bash "$HERE/super-board-post-merge-clean.sh" "$REPO_PATH" "$HEAD_REF" "$HEAD_SHA" "$PR" >&2 || true
   if [ -f "$REPO_PATH/.claude/hooks/cleanup-wt.py" ]; then
     ( cd "$REPO_PATH" && python3 .claude/hooks/cleanup-wt.py --post-merge --base "$BASE" </dev/null ) >&2 || true
   fi

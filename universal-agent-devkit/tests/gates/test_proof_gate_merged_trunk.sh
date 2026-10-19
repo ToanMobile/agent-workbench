@@ -289,7 +289,8 @@ done
 
 # (a) Biên nhận --full của worktree (gate chạy trong worktree ở lượt này), cùng cây với main sau squash.
 wt_gate() { CLAUDE_PROJECT_DIR="$WT" python3 "$GATE" --run-tests --full --no-checklist --diff HEAD~1 >"$TMP/gate" 2>&1 \
-  || { fail "setup: gate --full in the worktree exit $? ($(tail -3 "$TMP/gate" | tr '\n' ' '))"; return 1; }; }
+  || { fail "setup: gate --full in the worktree exit $? ($(tail -3 "$TMP/gate" | tr '\n' ' '))"; return 1; }
+  rm -rf "$(git -C "$REPO" rev-parse --absolute-git-dir)/postfix-gate/tree_receipts"; }   # kho theo cây (#105) có test riêng: ở đây chỉ luật (a)
 # A1. Không bản ghi merge gate, main = squash của cây worktree đã gate trong lượt: cho qua.
 turn_start; new_pr 13 >/dev/null && wt_gate && land 13 || fail "A1 setup"; stop; rc=$?
 [ "$rc" = 0 ] && ok "A1 worktree --full receipt this turn for main's tree: allowed" || fail "A1 worktree receipt refused ($(why $rc))"

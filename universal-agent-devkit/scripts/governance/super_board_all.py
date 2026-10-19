@@ -158,13 +158,19 @@ def stop_all():
         name = repo["name"]
         rdir = repo["dir"]
         pids = get_running_pids(slug)
+        # stop.sh chạy cả khi runner đã chết: nó ghi stop marker, thiếu marker thì watchdog khởi động lại board.
+        stop_sh = os.path.join(rdir, ".claude", "bin", "super-board-stop.sh")
+        marker = os.path.join(rdir, ".claude", "super-board", "runner", f"{slug}.stopped")
+        if os.path.exists(stop_sh):
+            r = subprocess.run(["bash", stop_sh, slug], cwd=rdir, capture_output=True, text=True)
+            if r.returncode != 0:
+                print(f"⚠️  {name:<30} : super-board-stop.sh exit {r.returncode}: {r.stderr.strip()[:200]}")
+        if not os.path.exists(marker):
+            print(f"⚠️  {name:<30} : CHƯA có stop marker {marker} — watchdog có thể khởi động lại board này")
         if not pids:
             print(f"⚪ {name:<30} : Không hoạt động")
             continue
 
-        stop_sh = os.path.join(rdir, ".claude", "bin", "super-board-stop.sh")
-        if os.path.exists(stop_sh):
-            subprocess.run(["bash", stop_sh, slug], cwd=rdir, capture_output=True)
         for p in pids:
             try:
                 os.kill(int(p), 15)  # SIGTERM
@@ -188,6 +194,25 @@ def status_all():
         pid_info = f"(PID: {', '.join(pids)})" if pids else ""
         print(f"{status_icon:<14} {name:<32} {pid_info}")
         print(f"   Board: {url}")
+        print(watchdog_line(rdir, slug))
+
+
+def watchdog_line(rdir, slug):
+    # Board watchdog đã bỏ cuộc (gave-up, spawn-died, missing-tools, github-halt) không được trông giống board người dùng
+    # dừng: in marker, STATE cuối của runner và kết luận gần nhất của watchdog (.claude/super-board/runner/).
+    d = os.path.join(rdir, ".claude", "super-board", "runner")
+
+    def kv(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return dict(line.rstrip("\n").split("=", 1) for line in f if "=" in line)
+        except OSError:
+            return {}
+
+    st, wd = kv(os.path.join(d, f"{slug}.state")), kv(os.path.join(d, f"{slug}.watchdog"))
+    mark = "stop marker" if os.path.exists(os.path.join(d, f"{slug}.stopped")) else "no stop marker"
+    return (f"   Watchdog: {mark} · runner STATE={st.get('STATE', '-')} rc={st.get('RC', '-')}"
+            f" · verdict={wd.get('VERDICT') or '-'} · restarts={wd.get('RESTARTS', '0')}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Quản lý đồng thời cả 5 Super-Board Runners")

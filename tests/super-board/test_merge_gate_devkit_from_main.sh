@@ -19,8 +19,9 @@ O="$TMP/origin.git"; R="$TMP/repo"; WT="$R/.claude/worktrees/issue-5-review"; KI
 mkdir -p "$KIT/bin"
 cat > "$KIT/bin/install.sh" <<'SH'
 #!/usr/bin/env bash
+kit="$(cd "$(dirname "$0")/.." && pwd)"; echo "$*" > "$kit/install-args"
+[ -f "$kit/install-fails" ] && { echo "fake install: boom"; exit 3; }
 t=""; while [ $# -gt 0 ]; do case "$1" in -t) t="$2"; shift 2 ;; *) shift ;; esac; done
-kit="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$t/.agents" && ln -sfn "$kit" "$t/.agents/devkit"
 SH
 printf 'import sys\nprint("FAKE-GATE-R" "AN")\nsys.exit(1)\n' > "$KIT/bin/post-fix-gate.py"
@@ -66,14 +67,22 @@ grep -q "FAKE-GATE-RAN" "$TMP/gate.log" \
   || fail "post-fix-gate.py không chạy trong scratch: $(grep -m1 -E "Errno 2|can't open" "$TMP/gate.log")"
 ! grep -q "can't open file" "$TMP/gate.log" && ok "không còn lỗi 'can't open file … post-fix-gate.py'" || fail "vẫn thiếu post-fix-gate.py trong scratch"
 [ "$rc" -eq 11 ] && ok "verify đỏ do chính gate (nhánh không chậm hơn base): exit 11" || fail "gate exit $rc (want 11): $(tail -5 "$TMP/gate.log")"
+grep -q -- "--no-githooks" "$KIT/install-args" && ok "cài vào scratch với --no-githooks (không ghi hook git dùng chung)" \
+  || fail "install.sh gọi thiếu --no-githooks: $(cat "$KIT/install-args")"
 
-# Không DevKit nào cài được (main không có, cạnh gate không có): lỗi môi trường → exit 9, không phải exit 11 làm thẻ Blocked (OCR 19/10)
+# Installer có nhưng hỏng: lỗi môi trường → exit 9 kèm log cài đặt, không phải exit 11 làm thẻ Blocked (OCR 19/10)
+touch "$KIT/install-fails"
+( cd "$WT" && bash "$GATE" --config "$CFG" --pr 5 --expect-head "$H" ) >"$TMP/gate3.log" 2>&1; rc=$?
+[ "$rc" -eq 9 ] && grep -q "install into the scratch tree failed (exit 3)" "$TMP/gate3.log" && grep -q "fake install: boom" "$TMP/gate3.log" \
+  && ok "installer hỏng: exit 9, báo exit của installer và dòng log của nó" \
+  || fail "installer hỏng: gate exit $rc (want 9 + log): $(tail -3 "$TMP/gate3.log")"
+rm -f "$KIT/install-fails"
+
+# Không DevKit nào để cài (repo lẫn main checkout đều không có): exit 9, không phải exit 11
 rm -f "$R/.agents/devkit"
-mkdir -p "$TMP/gk/.claude" && cp -R "$ROOT/.claude/bin" "$TMP/gk/.claude/bin"
-( cd "$WT" && bash "$TMP/gk/.claude/bin/super-board-merge-gate.sh" --config "$CFG" --pr 5 --expect-head "$H" ) >"$TMP/gate2.log" 2>&1; rc=$?
+( cd "$WT" && bash "$GATE" --config "$CFG" --pr 5 --expect-head "$H" ) >"$TMP/gate2.log" 2>&1; rc=$?
 [ "$rc" -eq 9 ] && grep -q "verification-readiness" "$TMP/gate2.log" \
-  && ok "scratch không có DevKit: exit 9 (verification-readiness), không exit 11" \
-  || fail "scratch không có DevKit: gate exit $rc (want 9): $(tail -3 "$TMP/gate2.log")"
-
+  && ok "không có DevKit nào: exit 9 (verification-readiness), không exit 11" \
+  || fail "không có DevKit nào: gate exit $rc (want 9): $(tail -3 "$TMP/gate2.log")"
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_devkit_from_main: PASS"; exit 0; } || { echo "test_merge_gate_devkit_from_main: FAIL ($FAILS)"; exit 1; }

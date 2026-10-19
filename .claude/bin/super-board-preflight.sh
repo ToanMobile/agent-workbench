@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # super-board-preflight.sh — before a card goes Ready → Building, is it worth building?
 #
-# Four questions, asked of every candidate card before any Builder starts:
+# Five questions, asked of every candidate card before any Builder starts:
 #
 #   1. Already done?        a merged PR closes it, or a merged PR / closed issue carries
 #                           the same fingerprint or (near-)same title.
@@ -17,8 +17,15 @@
 #                           batch peers: the lower number proceeds, the other is sequenced
 #                           `blockedBy: [<lower>]` — never both against each other.
 #   4. Unclear?             no `## Acceptance Criteria` section with at least one bullet.
+#   5. Too big?             (lint.md tiêu chí 15) ≥2 tín hiệu cỡ lớn trong chính nội dung issue:
+#                           Fix liệt kê ≥5 đầu việc ngắn (≈100 dòng mỗi việc, vượt trần 400 dòng)
+#                           hoặc tiêu đề nêu ≥3 việc · trải ≥4 vùng · thẻ tự nhận lớn (giai đoạn,
+#                           vertical slice, "nhiều thành phần") · phạm vi là cả một mục spec · AC
+#                           cần người thật hoặc số liệu vận hành. AC chỉ máy thật chứng minh được
+#                           (OOM, FPS, bộ nhớ) trên thẻ ghi "máy thật" tính 2. Hỏi trước câu 3:
+#                           thẻ phải tách thì chờ tách, không chờ PR.
 #
-# Outcomes: proceed · hold (dup done / dup in progress / unclear) · sequence.
+# Outcomes: proceed · hold (dup done / dup in progress / unclear / too big) · sequence.
 #
 # THIS SCRIPT IS THE MECHANICAL HALF. It catches what string matching can catch and
 # lists near-misses (`candidates`) for the pre-flight sub-agent, which makes the
@@ -38,9 +45,10 @@
 #
 # Stdout, one object keyed by issue number:
 #   { "14": { "number": 14, "title": "…", "verdict": "proceed|hold|sequence",
-#             "tag": "done|in-progress|unclear|overlap|clean", "reason": "…",
+#             "tag": "done|in-progress|unclear|too-big|overlap|clean", "reason": "…",
 #             "evidence": ["#31 merged: Resolves #14"], "blockedBy": [31],
-#             "conflictWith": [52], "candidates": [{"ref":"#40","kind":"open-pr","sim":0.4,"title":"…"}] } }
+#             "conflictWith": [52], "candidates": [{"ref":"#40","kind":"open-pr","sim":0.4,"title":"…"}],
+#             "split": ["…"] } }       # too-big only: suggested slices for /to-tickets
 #
 # Exit 0 ok · 64 usage · 79 required GitHub evidence unavailable (pause the run;
 # a blind pre-flight never says proceed).
@@ -94,16 +102,102 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
   def closed_refs: [ (.body // "") | scan("(?i)\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[ :]+#([0-9]+)")[0] | tonumber ] | unique;
   def fps: [ (.body // "") | scan("(?m)^[ \t]*fingerprint:[ \t]*([^\n]*[^ \t\n])")[0] ];
   def paths: [ (.body // "") | scan("[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\\.[A-Za-z0-9]+") ] | unique;
+  # Dòng tiêu đề mục "## <tên>": sau tên là hết từ (dấu cách, "(", ":", \r hoặc hết dòng). has_acs và sect dùng
+  # chung để cùng nhận "## Acceptance Criteria (…)" và cùng bỏ "## Fixes", "## Fixture".
+  def heading($h): test("^##[ \t]+" + $h + "(?!\\w)");
   # The AC section: lines after the LAST "## Acceptance Criteria" heading, up to the next "## ".
   def has_acs: ((.body // "") / "\n") as $l
-    | [ $l | to_entries[] | select(.value | test("^##[ \t]+Acceptance Criteria")) | .key ] as $h
+    | [ $l | to_entries[] | select(.value | heading("Acceptance Criteria")) | .key ] as $h
     | if ($h | length) == 0 then false
       else [ $l[($h | last) + 1:][] ] as $t
         | ([ $t | to_entries[] | select(.value | test("^##[ \t]")) | .key ] | first) as $e
         | (if $e == null then $t else $t[:$e] end) | any(.[]; test("^[ \t]*[-*][ \t]+\\S")) end;
 
+  # Câu 5 — quá lớn? Regex trên chữ của issue (title + body), tất định. Chỉnh 19/10 trên 245 issue lấy bằng
+  # `gh issue list --state all` ở 6 board: 6 thẻ builder đã chặn vì quá lớn (NFH #4 #13 #14 #54, OfficeReader
+  # #98 #102) đều hold, 0/49 thẻ đóng COMPLETED có AC bị hold. Nghiêng về proceed: mọi tín hiệu tính 1 và cần
+  # ≥2, trừ `device` tính 2 nên tự nó đủ hold — AC chỉ máy thật chứng minh được kéo theo cả bộ test trên thiết
+  # bị (comment builder ở OfficeReader #98: riêng phần chứng minh ~800–1.100 dòng); agent hạ được khi nêu lý do.
+  # Trần 400 là mặc định của merge_policy.auto_max_lines; script không đọc config nên chữ "default" đi kèm.
+  # ponytail: trần cố định trong lời nhắn, thêm tham số --cap (chưa có) khi có board đặt trần khác 400.
+  # Mục "## <tên>" cuối cùng của body (cùng luật tiêu đề với has_acs), tới "## " kế tiếp.
+  def sect($h): ((.body // "") / "\n") as $l
+    | [ $l | to_entries[] | select(.value | heading($h)) | .key ] as $k
+    | if ($k | length) == 0 then ""
+      else [ $l[($k | last) + 1:][] ] as $t
+        | ([ $t | to_entries[] | select(.value | test("^##[ \t]")) | .key ] | first) as $e
+        | (if $e == null then $t else $t[:$e] end) | join("\n") end;
+  # Đầu việc của một danh sách: dấu tách trong `code` thành dấu cách (giữ nguyên chữ để gợi ý tách đọc được),
+  # bỏ (chú thích), rồi tách ở xuống dòng, gạch đầu dòng, ";", ",", cuối câu và " + ".
+  def parts: gsub("`(?<c>[^`\n]*)`"; "`" + (.c | gsub("[,;.+]"; " ")) + "`") | gsub("\\([^()\n]*\\)"; "")
+    | gsub("(?m)^[ \t]*(?:[-*]|[0-9]+[.)]|[a-z][.)])[ \t]+"; "\n")
+    | [ splits("[\n;,]|\\.(?:\\s|$)| \\+ ") | gsub("^\\s+|\\s+$"; "") | select(test("\\w")) ];
+  # Vùng có thể ship và kiểm riêng (lint.md tiêu chí 15: UI, API, database, job…). Chữ viết tắt so đúng
+  # hoa/thường ((?-i:…)) để "ui", "db", "api" trong câu thường không tính; bỏ từ quá chung (server, level, ad).
+  def areas: {
+    ui: "\\b(?:(?-i:UI|HUD)|paywall|giao diện|màn hình|prefab|scene)\\b",
+    art: "\\b(?:art|model 3D|Blender|(?-i:FBX)|render|hoạt ảnh|animation|sprite|chibi)\\b",
+    audio: "\\b(?:audio|âm thanh|sound|music)\\b",
+    data: "\\b(?:save/load|Cloud Save|dữ liệu|database|(?-i:DB)|migration|schema)\\b",
+    money: "\\b(?:(?-i:IAP)|Billing|thanh toán|payment|purchase)\\b",
+    ads: "\\b(?:AdMob|LevelPlay|quảng cáo|ads)\\b",
+    auth: "\\b(?:đăng nhập|login|sign-in|OAuth)\\b",
+    analytics: "\\b(?:analytics|(?-i:GA4)|telemetry)\\b",
+    l10n: "\\b(?:VI/EN|bản dịch|translation|localization|ngôn ngữ)\\b",
+    remote: "\\b(?:Remote Config|(?-i:API)|backend|webhook)\\b",
+    docs: "\\b(?:(?-i:GDD)|tài liệu|docs/)",
+    a11y: "\\b(?:accessibility|trợ năng)\\b",
+    settings: "\\b(?:settings|cài đặt)\\b",
+    native: "\\b(?-i:JNI|NDK)\\b|C\\+\\+",
+    content: "\\b(?:[0-9]+ tập|Tập [0-9]|màn [0-9])\\b" };
+  def too_big:
+    sect("Fix") as $fix | sect("Acceptance Criteria") as $ac | (sect("Risk") + "\n" + $ac) as $risk
+    | [ $fix | parts[] | select(test("^#?[0-9]+$|^[0-9a-f]{7,40}$") | not) ] as $items
+    | [ $items[] | select([ scan("\\S+") ] | length <= 6) ] as $short
+    | [ (.title // "") | sub("^\\S+ \\[\\w+\\] "; "") | gsub("\\([^()]*\\)"; "") | splits("(?<![0-9]),|,(?![0-9])|;")
+        | gsub("^\\s+|\\s+$"; "") | select(length > 0) ] as $named
+    | [ $ac / "\n" | .[] | select(test("^[ \t]*[-*][ \t]+\\S"))
+        | sub("^[ \t]*[-*][ \t]+(?:\\[[ xX]\\][ \t]*)?"; "") ] as $acs
+    | ([ (.title // ""), $fix, $ac ] | join("\n")) as $txt
+    | [ areas | to_entries[] | select(.value as $re | $txt | test($re; "i")) | .key ] as $zones
+    # Tự nhận lớn: tiêu đề là cả một giai đoạn / vertical slice ("Season", "epic" là tên tính năng game,
+    # không tính); cụm "nhiều thành phần"… chỉ đọc ở Fix và Risk, nơi thẻ tự đánh giá phạm vi.
+    | ( [ (.title // "") | scan("(?i)\\b(?:giai đoạn [0-9]+|phase [0-9]+|vertical slice)\\b") ]
+      + [ $fix, sect("Risk") | scan("(?i)nhiều thành phần|phạm vi lớn|nhiều (?:module|hệ thống|mảng)|many (?:components|modules|areas)|large scope") ] ) as $self
+    | [ $fix, $ac | scan("(?i)(?:hoàn thiện|hoàn chỉnh|đủ|toàn bộ|tất cả|complete|all)\\b[^\n]{0,60}\\btheo\\b[^\n]{0,40}§[ \t]*[0-9][0-9.]*") ] as $ref
+    | [ $acs[] | select(test("(?i)\\b[0-9]+[ \t]*(?:người|people|users|testers)\\b|(?:không crash|crash-free)[^\n]*%|retention|giữ chân|số giờ thật|chạy thật|đăng nhập \\S+ thật")) ] as $people
+    | [ $acs[] | select(test("(?i)\\bOOM\\b|\\bFPS\\b|bộ nhớ|\\bRAM\\b|nhiệt độ|thermal|(?:hao|tốn|sụt|mức) pin\\b|battery")) ] as $metric
+    | ($risk | test("(?i)máy thật|thiết bị thật|real device|physical device")) as $realdev
+    # work: tín hiệu "nhiều việc" (gợi ý tách theo việc); còn lại là AC phải tách ra thẻ `qa` riêng.
+    | [ if ($short | length) >= 5 and ($short | length) * 5 >= ($items | length) * 4 then
+          { w: 1, work: true, split: $items,
+            says: "Fix lists \($short | length) separate deliverables: at a rough ~100 changed lines each, ~\($short | length * 100) lines, over the default 400-line merge cap" }
+        elif ($named | length) >= 3 then
+          { w: 1, work: true, split: $named, says: "the title names \($named | length) deliverables" }
+        else empty end,
+        if ($zones | length) >= 4 then
+          { w: 1, work: true, split: [ $zones[] | "the \(.) part" ],
+            says: "spans \($zones | length) areas (\($zones | join(", "))) that can each ship and be checked alone" }
+        else empty end,
+        if ($self | length) > 0 then
+          { w: 1, work: true, split: [], says: "the card calls itself big: \"\($self[0])\"" } else empty end,
+        if ($ref | length) > 0 then
+          { w: 1, work: true, split: [ "one card per part of: \($ref[0])" ],
+            says: "its scope is a whole spec section, not a list of changes: \"\($ref[0])\"" } else empty end,
+        if ($people | length) > 0 then
+          { w: 1, work: false, split: [ $people[] | "a qa card for: \(.)" ],
+            says: "AC needs people or production data: \($people | join(" · "))" } else empty end,
+        if ($metric | length) > 0 and $realdev then
+          { w: 2, work: false, split: [ $metric[] | "a qa card for: \(.)" ],
+            says: "AC only a real device can prove: \($metric | join(" · "))" } else empty end ] as $sig
+    | { hold: (([ $sig[].w ] | add // 0) >= 2), evidence: [ $sig[].says ],
+        split: (([ $sig[] | select(.work) | .split | select(length > 0) ] | first
+                 // [ "vertical slices, each under the merge cap (default 400 lines)" ])
+                + [ $sig[] | select(.work | not) | .split[] ]) };
+
   [ $targets[] | . as $i | $i.number as $n
     | ($i | fps) as $myfp
+    | ($i | too_big) as $big
     | (if $files == "" then ($i | paths) else ($files / ",") end) as $mine
     # Own branch = this card coming back (rebuild, rebase); never its own duplicate.
     | [ $open[] | select((.headRefName // "") | startswith("issue-\($n)-") | not) ] as $others
@@ -144,6 +238,9 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
             { verdict: "hold", tag: "in-progress", reason: "already being built elsewhere", evidence: $busy }
           elif ($i | has_acs | not) then
             { verdict: "hold", tag: "unclear", reason: "no `## Acceptance Criteria` bullets", evidence: ["issue #\($n) body"] }
+          elif $big.hold then
+            { verdict: "hold", tag: "too-big", evidence: $big.evidence, split: $big.split,
+              reason: "too big — split it with /to-tickets into cards under the merge cap (default 400 lines) before building" }
           elif ($overlap | length) > 0 then
             { verdict: "sequence", tag: "overlap",
               reason: "open PRs touch the same files — build after them",

@@ -307,7 +307,13 @@ When invoked by super-board (env `SUPER_BOARD_RUN=1` or invocation contains "sup
 ### Lifecycle (Reviewer)
 See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the sub-steps:
 
-1. Worktree from current state of `issue-<N>-<slug>`.
+1. Worktree from current state of `issue-<N>-<slug>`, made by the DevKit and detached (the Reviewer commits nothing, and a branch
+   another lane's leftover worktree still holds cannot be checked out twice): `git fetch origin`, then
+   `agent-kit worktree add .claude/worktrees/issue-<N>-review --lane=review --base=origin/issue-<N>-<slug>` (no `agent-kit` on PATH:
+   `python3 .agents/devkit/scripts/git/worktree.py add` with the same arguments). It links the DevKit, copies the git-ignored config and
+   hooks, clones a Unity Library copy-on-write, takes no WORKTREE_MAX slot and marks the checkout the board's. Exit 4 = under the disk
+   floor: stop with its message, card and claims unchanged. Never a plain `git worktree add` or EnterWorktree (agent-workbench#93).
+   Clean up with `git worktree remove <path>`.
 2. **Gate 1 — thread scan.** Read threads and replies. [PR author notes](../super-board/references/pr-author-notes.md)
    alone are explanations, not findings or approval. Human questions or change requests
    in those threads still follow the normal review/blocking flow; the marker exempts no
@@ -321,7 +327,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
    **3b. Prior-report check** — load `prior_report` (see "Review remembers"); if present, round 1 checks each prior finding; any `not fixed` → re-open its thread, bounce by prefix, post the report, exit.
 4. Review code + tests.
 5. **Reviewer-side test rerun (always — closes Tester self-verification gap):**
-   - Pull `issue-<N>-<slug>` into review worktree.
+   - Bring the review worktree to the PR head: `git fetch origin && git checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the EXACT command from Tester's PR `Local tests:` line.
    - Green → continue. Red → open new `[qa]`-prefixed thread quoting failure, move card Review → QA with `loop:rebuild-N`, exit.
    - If QA includes `Runtime checks:`, follow
@@ -338,7 +344,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
    - **Over-engineering only** (from `ponytail:ponytail-review`, see super-review step 3) → list it in the report, open no thread, and carry on to the merge decision; it never bounces a card alone. When the card bounces for another finding anyway, open a `[builder]` thread for each Over-engineering finding too, so the rebuild trims it.
    - **Code-side new finding** → new `[builder]`-prefixed thread, move card Review → Ready (`loop:rebuild-N`).
    - **Test-side new finding** → new `[qa]`-prefixed thread, move card Review → QA (`loop:rebuild-N`).
-   - **Blocker finding (destructive schema, contract, money, auth, live-DB migration) or rebuild cap hit** → full §4 Block template, move card Review → Blocked. A *clean* PR that merely touches money, auth or schema is not a finding: run the merge protocol, and the gate's `merge_policy` hands it to a human (exit 7 → 🙋 Blocked).
+   - **Blocker finding (destructive schema, contract, money, auth, live-DB migration) or rebuild cap hit** → full §4 Block template, move card Review → Blocked; a block a person must clear also runs `super-board-needs-you.py mark` (block-template.md → "A person must act"). A *clean* PR that merely touches money, auth or schema is not a finding: run the merge protocol, and the gate's `merge_policy` hands it to a human (exit 7 → 🙋 Blocked).
 8. Write the Reviewer report (marker `<!-- super-review:report -->`, ids on every finding) — edit the existing report comment in place, post a new one only on the first review. It is the next re-review's `prior_report`.
 9. Clean up worktree.
 
@@ -366,12 +372,15 @@ two complete builds. In order, no shortcuts:
      an additive migration follows `migrations.allowed_envs`, and a live DB is always human.
      Card → **Blocked** with the 🙋 template: `Why blocked` quotes the gate's
      `human-gate:` lines; `To unblock` = review PR #<P> and merge it yourself, OR comment
-     `done` to approve (the next wave re-runs the gate, which merges). Label `needs-you`.
+     `done` to approve (the next wave re-runs the gate, which merges). Mark the card:
+     `super-board-needs-you.py mark --repo <owner/name> --issue <N> --action "Review PR #<P>" --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"`.
    - **Exit 8 — 🙋 needs you.** Migrations for a database outside
      `migrations.allowed_envs`, an allowed migrate command that failed, or a declared
      human-only step. Card → **Blocked** with the 🙋 template
      (`block-template.md` → "🙋 Needs you"), the gate's `needs-you:` commands copied
-     verbatim into `To unblock`, label `needs-you`, `blocked-by: -`. After the human
+     verbatim into `To unblock`, `blocked-by: -`, and mark the card with
+     `super-board-needs-you.py mark --repo <owner/name> --issue <N> --action "<the commands, shortened to 500
+     characters: the full ones are in the Block comment>" --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"`. After the human
      comments `done` after the current pinned request, the next wave verifies their
      permission and the head, then moves it to Review. Re-run the gate; labels do not
      authorize it. For exits 7 and 8, copy `approval-request:` into the canonical

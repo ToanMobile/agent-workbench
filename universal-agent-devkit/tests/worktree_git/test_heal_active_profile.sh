@@ -19,12 +19,12 @@ bash "$DEVKIT_DIR/bin/install.sh" -t "$P" -a claude -p backend -y >/dev/null 2>&
 git add -A >/dev/null 2>&1; git commit -qm devkit >/dev/null 2>&1
 WT="$P/.claude/worktrees/issue-18-build"
 git worktree add -q --detach "$WT" HEAD
-heal() { ( cd "$WT" && python3 "$DEVKIT_DIR/scripts/git/worktree.py" heal --devkit="$DEVKIT_DIR" >/dev/null 2>&1 ); }
-
+heal() { ( cd "$WT" && python3 "$DEVKIT_DIR/scripts/git/worktree.py" heal --devkit="$DEVKIT_DIR" >"$TMP/heal.log" 2>&1 ); }
+fail() { echo "✖ $1"; sed 's/^/    heal: /' "$TMP/heal.log" 2>/dev/null | tail -5; FAILS=$((FAILS + 1)); }
 # 1. worktree có link tương đối của main chép y nguyên: gãy
 rm -rf "$WT/.agents/active-profile"; mkdir -p "$WT/.agents"
 ln -s "$(readlink "$P/.agents/active-profile")" "$WT/.agents/active-profile"
-[ ! -e "$WT/.agents/active-profile" ] || { fail "fixture: copied relative link should dangle in the nested worktree"; }
+[ ! -e "$WT/.agents/active-profile" ] || { fail "fixture: copied relative link should dangle in the nested worktree"; exit 1; }
 heal
 [ -f "$WT/.agents/active-profile/profile.json" ] && ok "heal repairs a dangling .agents/active-profile (main's relative link copied as-is)" \
   || fail "heal left .agents/active-profile dangling: $(readlink "$WT/.agents/active-profile")"
