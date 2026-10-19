@@ -152,4 +152,63 @@ else
   fail "post-fix-gate slot wait (rc=$rc_gate marker=$([ -f "$MARKER" ] && echo yes || echo no)): $(grep -E 'KẾT LUẬN|VERDICT' "$TMP/gate_slot.log" | tail -2)"
 fi
 
+# ── 7. ./gradlew và unity-batch.sh xin slot dù không --full. Đường dẫn chỉ chứa chữ unity thì vẫn chạy.
+python3 "$SLOT_BIN" -- bash -c "touch '$TMP/holdE'; sleep 30" >/dev/null 2>&1 &
+PE=$!; PIDS="$PIDS $PE"
+python3 "$SLOT_BIN" -- bash -c "touch '$TMP/holdF'; sleep 30" >/dev/null 2>&1 &
+PF=$!; PIDS="$PIDS $PF"
+for i in $(seq 1 30); do
+  [ -f "$TMP/holdE" ] && [ -f "$TMP/holdF" ] && break
+  sleep 0.1
+done
+export SB_HEAVY_SLOT_WAIT_S=0.4
+slot_repo() { # $1 name  $2 command  $3 log
+  local repo="$TMP/$1" marker_cmd="$2" log="$3"
+  mkdir -p "$repo/src" "$repo/templates"
+  (
+    cd "$repo" && git init -q . && git config user.email t@t && git config user.name t
+    echo "fun ok() = 1" > src/Core.kt
+    python3 - "$repo/templates/regression_matrix.json" "$marker_cmd" <<'PY'
+import json, sys
+path, command = sys.argv[1:]
+doc = {"project": "t", "rules": [{"component": "Core", "watch_files": ["src/Core.kt"],
+  "mandatory_regression_tests": [{"id": "REG-1", "name": "core", "command": command}]}]}
+open(path, "w").write(json.dumps(doc))
+PY
+    git add -A && git commit -qm init
+  )
+  echo "fun ok() = 2" > "$repo/src/Core.kt"
+  ( cd "$repo" && python3 "$GATE_PY" --matrix "$repo/templates/regression_matrix.json" --run-tests --allow-no-tests --allow-orphan-tests --brief ) >"$log" 2>&1
+}
+GRADLE_MARKER="$TMP/gradle_ran"
+UB_MARKER="$TMP/unity_batch_ran"
+LIGHT_MARKER="$TMP/light_unity_ran"
+LIGHT_CMD="$TMP/test_unity_probe.sh"
+printf '#!/usr/bin/env bash\ntouch %q\n' "$LIGHT_MARKER" > "$LIGHT_CMD"
+chmod +x "$LIGHT_CMD"
+slot_repo gradle "bash -c 'touch $GRADLE_MARKER; exec ./gradlew test'" "$TMP/gradle_slot.log"
+rc_gradle=$?
+slot_repo ubatch "bash -c 'touch $UB_MARKER; exec unity-batch.sh editmode'" "$TMP/ubatch_slot.log"
+rc_ubatch=$?
+slot_repo light "bash $LIGHT_CMD" "$TMP/light_slot.log"
+rc_light=$?
+unset SB_HEAVY_SLOT_WAIT_S
+kill "$PE" "$PF" 2>/dev/null || true
+wait "$PE" "$PF" 2>/dev/null || true
+if [ "$rc_gradle" -ne 0 ] && [ ! -f "$GRADLE_MARKER" ] && grep -qE "hết thời gian chờ|stayed busy past the wait" "$TMP/gradle_slot.log"; then
+  ok "gradlew takes a heavy slot without --full and does not run when both slots are held"
+else
+  fail "gradlew without --full (rc=$rc_gradle marker=$([ -f "$GRADLE_MARKER" ] && echo yes || echo no)): $(tail -5 "$TMP/gradle_slot.log")"
+fi
+if [ "$rc_ubatch" -ne 0 ] && [ ! -f "$UB_MARKER" ] && grep -qE "hết thời gian chờ|stayed busy past the wait" "$TMP/ubatch_slot.log"; then
+  ok "unity-batch.sh takes a heavy slot without --full and does not run when both slots are held"
+else
+  fail "unity-batch without --full (rc=$rc_ubatch marker=$([ -f "$UB_MARKER" ] && echo yes || echo no)): $(tail -5 "$TMP/ubatch_slot.log")"
+fi
+if [ -f "$LIGHT_MARKER" ]; then
+  ok "a bash path that only contains the letters unity still runs while the slots are held"
+else
+  fail "light unity-named test waited on the heavy slot (rc=$rc_light): $(tail -5 "$TMP/light_slot.log")"
+fi
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_heavy_slot: all passed" || { echo "❌ test_heavy_slot: $FAILS failed"; exit 1; }

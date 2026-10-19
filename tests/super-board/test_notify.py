@@ -92,6 +92,20 @@ def main() -> int:
         notify.main(["accounts-limited", "--accounts", "finos", "--state-dir", str(state), "--card", "board"])
         check(len(calls) == 3, "the same set sends again after one hour", "sent=%s" % len(calls))
 
+        calls.clear()
+        os.environ["SB_NOTIFY_NOW"] = "20000"
+        state_fail = tmp / "state-fail"
+
+        def down_count(token, method, body):
+            calls.append(("fail", method))
+            raise OSError("network down")
+
+        notify.deliver = down_count
+        notify.main(["accounts-limited", "--accounts", "finos", "--state-dir", str(state_fail), "--card", "board"])
+        notify.main(["accounts-limited", "--accounts", "finos", "--state-dir", str(state_fail), "--card", "board"])
+        check(len(calls) == 2, "a failed limited send is tried again", "sent=%s" % len(calls))
+        check(not (state_fail / "accounts-limited.json").exists(), "a failed limited send does not write the debounce file")
+
     if fails:
         print("test_notify: FAIL (%s)" % fails)
         return 1

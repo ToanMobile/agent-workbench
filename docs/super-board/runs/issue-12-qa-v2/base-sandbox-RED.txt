@@ -1,0 +1,157 @@
+✔ worktree_sandbox.py --help returns exit 0
+✔ Sandbox directory created successfully
+✔ .worktreeinclude files copied via CoW
+✔ .sandbox-env.sh envelope generated
+✔ Sandbox listed in active sandboxes
+✔ Sandbox cleaned up and removed cleanly
+✔ Winner commit merged into main branch
+✔ Winner sandbox automatically deleted after merge
+✔ Winner branch automatically deleted
+✔ merge-winner keeps the other sandboxes by default
+✔ --clean-others removes the losing sandboxes on request
+✔ .worktreeinclude '.' / './' lines are ignored
+✔ cleanup keeps a sandbox that has uncommitted changes
+✔ cleanup keeps the branch that holds unmerged commits
+✖ cleanup deleted the folder of a sandbox with unmerged commits: 🧹 Dọn dẹp sandbox 'ahead_sb'...
+   ⚠ nhánh sandbox/ahead_sb giữ 1 commit chưa merge — giữ nhánh (thêm --force để xoá hẳn).
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ cleanup claimed it was done after refusing a sandbox: 🧹 Dọn dẹp sandbox 'ahead_sb'...
+   ⚠ nhánh sandbox/ahead_sb giữ 1 commit chưa merge — giữ nhánh (thêm --force để xoá hẳn).
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ cleanup deleted a sandbox whose detached HEAD held an unmerged commit: 🧹 Dọn dẹp sandbox 'det_sb'...
+   ✓ Đã gỡ bỏ det_sb và xoá nhánh sandbox/det_sb.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ cleanup lost a reflog-only commit: 🧹 Dọn dẹp sandbox 'f2_sb'...
+   ✓ Đã gỡ bỏ f2_sb và xoá nhánh sandbox/f2_sb.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ cleanup lost a commit named only by the reflogs it deletes: 🧹 Dọn dẹp sandbox 'reset_sb'...
+   ✓ Đã gỡ bỏ reset_sb và xoá nhánh sandbox/reset_sb.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ cleanup deleted a sandbox merged only into a detached main checkout: 🧹 Dọn dẹp sandbox 'sw6_sb'...
+   ✓ Đã gỡ bỏ sw6_sb và xoá nhánh sandbox/sw6_sb.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✔ cleanup from a detached main checkout removes an untouched sandbox
+✖ cleanup from a main checkout detached behind trunk left a half-cleaned sandbox: 🧹 Dọn dẹp sandbox 'r1_old'...
+   ⚠ nhánh sandbox/r1_old giữ 1 commit chưa merge — giữ nhánh (thêm --force để xoá hẳn).
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ merge-winner merged into a detached main checkout (rc=0): 🔄 [1/3] Đang tiến hành merge branch 'sandbox/r1_mwd' vào nhánh chính...
+✅ [2/3] Merge thành công vào nhánh chính.
+🧹 [3/3] Kích hoạt cơ chế tự động dọn dẹp (Auto-Clear) để chống rác Git...
+🧹 Dọn dẹp sandbox 'r1_mwd'...
+   ✓ Đã gỡ bỏ r1_mwd và xoá nhánh sandbox/r1_mwd.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+🎉 Đã merge và dọn sandbox thắng cuộc. Sandbox khác (nếu có) được giữ nguyên.
+✖ cleanup misjudged a trunk with no local branch: 🧹 Dọn dẹp sandbox 'r1_dev'...
+   ✓ Đã gỡ bỏ r1_dev và xoá nhánh sandbox/r1_dev.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ cleanup deleted a branch that gained a commit after the merge check: Traceback (most recent call last):
+  File "<stdin>", line 4, in <module>
+AttributeError: module 'worktree_sandbox' has no attribute 'sandbox_unmerged_commits'
+✖ cleanup deleted a branch another worktree had checked out: 🧹 Dọn dẹp sandbox 'co_sb'...
+   ⚠ đã gỡ co_sb nhưng chưa xoá được nhánh sandbox/co_sb: error: cannot delete branch 'sandbox/co_sb' used by worktree at '/private/var/folders/f_/p7gj74t55l5gb31f1gczc3hm0000gn/T/tmp.YlcHVlYBDv/co-wt'
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ cleanup judged a sandbox against its own branch: 🧹 Dọn dẹp sandbox 'self_sb'...
+   ⚠ đã gỡ self_sb nhưng chưa xoá được nhánh sandbox/self_sb: error: cannot delete branch 'sandbox/self_sb' used by worktree at '/private/var/folders/f_/p7gj74t55l5gb31f1gczc3hm0000gn/T/tmp.YlcHVlYBDv/mock-repo'
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✔ cleanup deletes a symref sandbox branch itself, never the branch it points to
+✖ cleanup listed a sandbox whose branch is already gone as not cleaned: Traceback (most recent call last):
+  File "<stdin>", line 4, in <module>
+AttributeError: module 'worktree_sandbox' has no attribute 'sandbox_unmerged_commits'
+✖ cleanup read a git error as 'branch gone': 🧹 Dọn dẹp sandbox 'err_sb'...
+   ✓ Đã gỡ bỏ err_sb và xoá nhánh sandbox/err_sb.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+kept: None
+✖ cleanup removed a locked sandbox registration's folder/branch: 🧹 Dọn dẹp sandbox 'lock_sb'...
+   ⚠ đã gỡ lock_sb nhưng chưa xoá được nhánh sandbox/lock_sb: error: cannot delete branch 'sandbox/lock_sb' used by worktree at '/private/var/folders/f_/p7gj74t55l5gb31f1gczc3hm0000gn/T/tmp.YlcHVlYBDv/mock-repo/.sandboxes/lock_sb'
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ cleanup removed a locked sandbox whose branch was gone: 🧹 Dọn dẹp sandbox 'lock_nb'...
+   ✓ Đã gỡ bỏ lock_nb và xoá nhánh sandbox/lock_nb.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✔ a prunable registration whose folder is gone does not block cleanup
+✖ merge-winner merged a sandbox into its own branch (rc=0): 🔄 [1/3] Đang tiến hành merge branch 'sandbox/g_sb' vào nhánh chính...
+✅ [2/3] Merge thành công vào nhánh chính.
+🧹 [3/3] Kích hoạt cơ chế tự động dọn dẹp (Auto-Clear) để chống rác Git...
+🧹 Dọn dẹp sandbox 'g_sb'...
+   ⚠ đã gỡ g_sb nhưng chưa xoá được nhánh sandbox/g_sb: error: cannot delete branch 'sandbox/g_sb' used by worktree at '/private/var/folders/f_/p7gj74t55l5gb31f1gczc3hm0000gn/T/tmp.YlcHVlYBDv/mock-repo'
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+🎉 Đã merge và dọn sandbox thắng cuộc. Sandbox khác (nếu có) được giữ nguyên.
+✖ merge-winner claimed a kept winner sandbox was cleaned: 🔄 [1/3] Đang tiến hành merge branch 'sandbox/mw_sb' vào nhánh chính...
+✅ [2/3] Merge thành công vào nhánh chính.
+🧹 [3/3] Kích hoạt cơ chế tự động dọn dẹp (Auto-Clear) để chống rác Git...
+🧹 Dọn dẹp sandbox 'mw_sb'...
+   ✓ Đã gỡ bỏ mw_sb và xoá nhánh sandbox/mw_sb.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+🎉 Đã merge và dọn sandbox thắng cuộc. Sandbox khác (nếu có) được giữ nguyên.
+✔ --force removes the sandbox and the unmerged branch on explicit request
+✖ merge-winner --clean-others lost a losing sandbox's reflog-only commit: 🔄 [1/3] Đang tiến hành merge branch 'sandbox/mwl_win' vào nhánh chính...
+✅ [2/3] Merge thành công vào nhánh chính.
+🧹 [3/3] Kích hoạt cơ chế tự động dọn dẹp (Auto-Clear) để chống rác Git...
+🧹 Dọn dẹp sandbox 'mwl_win'...
+   ✓ Đã gỡ bỏ mwl_win và xoá nhánh sandbox/mwl_win.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+   Đang dọn tiếp 3 sandbox thua cuộc còn lại...
+🧹 Dọn dẹp sandbox 'gone_sb'...
+   ✓ Đã gỡ bỏ gone_sb và xoá nhánh sandbox/gone_sb.
+🧹 Dọn dẹp sandbox 'mwl_lose'...
+   ✓ Đã gỡ bỏ mwl_lose và xoá nhánh sandbox/mwl_lose.
+🧹 Dọn dẹp sandbox 'race_sb'...
+   ✓ Đã gỡ bỏ race_sb và xoá nhánh sandbox/race_sb.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+🎉 Đã merge và dọn sandbox thắng cuộc. Sandbox khác (nếu có) được giữ nguyên.
+✖ cleanup treated an unreadable sandbox reflog as clean: 🧹 Dọn dẹp sandbox 'rlg_sb'...
+   ✓ Đã gỡ bỏ rlg_sb và xoá nhánh sandbox/rlg_sb.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ cleanup treated a sandbox with an unreadable HEAD as clean: 🧹 Dọn dẹp sandbox 'unb_sb'...
+   ✓ Đã gỡ bỏ unb_sb và xoá nhánh sandbox/unb_sb.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✔ cleanup keeps a sandbox holding a new untracked file
+✔ merge-winner refuses a sandbox holding an untracked new file
+✔   … and the file is still there
+✔ cleanup keeps a sandbox whose git status cannot be read
+mv: rename /var/folders/f_/p7gj74t55l5gb31f1gczc3hm0000gn/T/tmp.YlcHVlYBDv/broken_sb_admin to /private/var/folders/f_/p7gj74t55l5gb31f1gczc3hm0000gn/T/tmp.YlcHVlYBDv/mock-repo/.git/worktrees/broken_sb: No such file or directory
+✔ cleanup keeps a new file inside an included directory
+✔ a sandbox holding only unchanged copies of included files is cleaned up
+✔ cleanup from a detached linked worktree removes an untouched sandbox
+✔ merge-winner from a detached linked worktree merges, cleans the winner and says so
+✖ cleanup from a detached linked worktree lost unmerged commits: 🧹 Dọn dẹp sandbox 'r1_ahead'...
+   ⚠ nhánh sandbox/r1_ahead giữ 1 commit chưa merge — giữ nhánh (thêm --force để xoá hẳn).
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✔ a detached linked worktree viewing a sandbox: sandbox cleaned, its commits stay on that worktree's HEAD
+✖ cleanup --name gy pruned other sandboxes' admin dirs: 🧹 Dọn dẹp sandbox 'gy'...
+   ✓ Đã gỡ bỏ gy và xoá nhánh sandbox/gy.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ cleanup lost the admin dir of folder-gone sandbox gx or did not warn: 🧹 Dọn dẹp sandbox 'gx'...
+   ✓ Đã gỡ bỏ gx và xoá nhánh sandbox/gx.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ cleanup lost the admin dir of folder-gone sandbox gd or did not warn: 🧹 Dọn dẹp sandbox 'gd'...
+   ✓ Đã gỡ bỏ gd và xoá nhánh sandbox/gd.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ cleanup deleted sandbox/gx
+✖ cleanup refused ge then pruned its admin dir: 🧹 Dọn dẹp sandbox 'ge'...
+   ⚠ nhánh sandbox/ge giữ 1 commit chưa merge — giữ nhánh (thêm --force để xoá hẳn).
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✔ cleanup of a clean folder-gone sandbox removes its own registration and branch
+✔ cleanup --force removes a folder-gone sandbox's own registration
+✖ cleanup deleted a nested worktree's uncommitted work: 🧹 Dọn dẹp sandbox 'nest_sb'...
+   ✓ Đã gỡ bỏ nest_sb và xoá nhánh sandbox/nest_sb.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ cleanup claimed it deleted a dangling symref it could not delete: 🧹 Dọn dẹp sandbox 'dsym_sb'...
+   ⚠ đã gỡ dsym_sb nhưng chưa xoá được nhánh sandbox/dsym_sb: error: could not delete reference refs/heads/sandbox/dsym_sb: cannot lock ref 'refs/heads/sandbox/dsym_sb': Unable to create '/var/folders/f_/p7gj74t55l5gb31f1gczc3hm0000gn/T/tmp.YlcHVlYBDv/mock-repo/.git/refs/heads/sandbox/dsym_sb.lock': File exists.
+
+Another git process seems to be running in this repository, or the lock file may be stale
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✔ a dangling sandbox symref is deleted itself (its target untouched) and then reported done (#41)
+✖ cleanup deleted an ignored include file that differed from main: 🧹 Dọn dẹp sandbox 'db_sb'...
+   ✓ Đã gỡ bỏ db_sb và xoá nhánh sandbox/db_sb.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✖ cleanup deleted an ignored secret only the sandbox had: 🧹 Dọn dẹp sandbox 'jks_sb'...
+   ✓ Đã gỡ bỏ jks_sb và xoá nhánh sandbox/jks_sb.
+✅ Đã dọn dẹp hoàn tất toàn bộ rác Git worktree.
+✔   … an unchanged ignored include copy is still cleaned
+✖ cleanup deleted a file written during its checks: Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+AttributeError: module 'wsb' has no attribute 'sandbox_unmerged_commits'
+✖ cleanup lost a commit made during its checks: Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+AttributeError: module 'wsb' has no attribute 'sandbox_unmerged_commits'
+FAILED: 33 errors

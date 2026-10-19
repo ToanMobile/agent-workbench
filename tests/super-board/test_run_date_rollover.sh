@@ -122,4 +122,23 @@ else
   fail "read_lock kept stale WORKER_LOG='${WORKER_LOG:-}'"
 fi
 
+# ── 5. Worker sống hơn 120s (log ghi lúc giao, mtime bây giờ) nhưng reap vẫn trong cửa sổ limit+tick.
+# Thư mục WORKER_LOG_DIR của ngày mới trống không được tính là chết sớm.
+STARTED=$(python3 -c 'import time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()-150)))')
+OLD_LOG="$TMP/real-worker.log"
+echo "still working on the dispatched log" > "$OLD_LOG"
+LANE=build
+WORKER_LOG="$OLD_LOG"
+WORKER_LOG_DIR="$TMP/empty-today"
+mkdir -p "$WORKER_LOG_DIR"
+TICK_SECONDS=120
+SB_EARLY_DEATH_S=120
+rm -f "$TMP/log"
+note_early_death 77
+if ! grep -q "early end" "$TMP/log" 2>/dev/null && [ ! -e "$INFLIGHT_DIR/early-deaths/77" ]; then
+  ok "a worker whose dispatched log outlived 120s is not an early death when today's folder is empty"
+else
+  fail "false early death (log='$(cat "$TMP/log" 2>/dev/null)' file=$([ -e "$INFLIGHT_DIR/early-deaths/77" ] && echo yes || echo no))"
+fi
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_run_date_rollover: all passed" || { echo "❌ test_run_date_rollover: $FAILS failed"; exit 1; }
