@@ -98,4 +98,58 @@ else
   fail "missing DevKit fallback failed (rc=$rc_fb file=$([ -f "$TMP/fallback_ok" ] && echo yes || echo no) log='$(cat "$TMP/fallback.log" 2>/dev/null)')"
 fi
 
+# ── 5. Hết thời gian chờ: không chạy lệnh (không nhập hội thành tiến trình --full thứ ba).
+export SB_HEAVY_SLOT_WAIT_S=0.3
+python3 "$SLOT_BIN" -- bash -c "touch '$TMP/holdA'; sleep 30" >/dev/null 2>&1 &
+PA=$!; PIDS="$PIDS $PA"
+python3 "$SLOT_BIN" -- bash -c "touch '$TMP/holdB'; sleep 30" >/dev/null 2>&1 &
+PB=$!; PIDS="$PIDS $PB"
+for i in $(seq 1 30); do
+  [ -f "$TMP/holdA" ] && [ -f "$TMP/holdB" ] && break
+  sleep 0.1
+done
+rm -f "$TMP/should_not_run"
+python3 "$SLOT_BIN" -- touch "$TMP/should_not_run" >"$TMP/waitfail.log" 2>&1
+rc_to=$?
+if [ "$rc_to" -ne 0 ] && [ ! -f "$TMP/should_not_run" ]; then
+  ok "wait expired: command did not run"
+else
+  fail "wait expired but command ran (rc=$rc_to file=$([ -f "$TMP/should_not_run" ] && echo yes || echo no))"
+fi
+kill "$PA" "$PB" 2>/dev/null || true
+wait "$PA" "$PB" 2>/dev/null || true
+unset SB_HEAVY_SLOT_WAIT_S
+
+# ── 6. post-fix-gate --force-full cũng không chạy suite khi hết slot.
+GATE_PY="$ROOT/universal-agent-devkit/bin/post-fix-gate.py"
+REPO="$TMP/gate-repo"
+MARKER="$TMP/suite_ran"
+mkdir -p "$REPO/src" "$REPO/templates"
+(
+  cd "$REPO" && git init -q . && git config user.email t@t && git config user.name t
+  echo "fun ok() = 1" > src/Core.kt
+  printf '%s\n' '{"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],"mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"touch '"$MARKER"'"}]}]}' > templates/regression_matrix.json
+  git add -A && git commit -qm init
+)
+echo "fun ok() = 2" > "$REPO/src/Core.kt"
+python3 "$SLOT_BIN" -- bash -c "touch '$TMP/holdC'; sleep 30" >/dev/null 2>&1 &
+PC=$!; PIDS="$PIDS $PC"
+python3 "$SLOT_BIN" -- bash -c "touch '$TMP/holdD'; sleep 30" >/dev/null 2>&1 &
+PD=$!; PIDS="$PIDS $PD"
+for i in $(seq 1 30); do
+  [ -f "$TMP/holdC" ] && [ -f "$TMP/holdD" ] && break
+  sleep 0.1
+done
+export SB_HEAVY_SLOT_WAIT_S=0.4
+( cd "$REPO" && python3 "$GATE_PY" --matrix "$REPO/templates/regression_matrix.json" --run-tests --force-full --allow-no-tests --allow-orphan-tests --brief ) >"$TMP/gate_slot.log" 2>&1
+rc_gate=$?
+unset SB_HEAVY_SLOT_WAIT_S
+kill "$PC" "$PD" 2>/dev/null || true
+wait "$PC" "$PD" 2>/dev/null || true
+if [ "$rc_gate" -ne 0 ] && [ ! -f "$MARKER" ] && grep -qE "hết thời gian chờ|stayed busy past the wait" "$TMP/gate_slot.log"; then
+  ok "post-fix-gate did not start the suite after the slot wait"
+else
+  fail "post-fix-gate slot wait (rc=$rc_gate marker=$([ -f "$MARKER" ] && echo yes || echo no)): $(grep -E 'KẾT LUẬN|VERDICT' "$TMP/gate_slot.log" | tail -2)"
+fi
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_heavy_slot: all passed" || { echo "❌ test_heavy_slot: $FAILS failed"; exit 1; }

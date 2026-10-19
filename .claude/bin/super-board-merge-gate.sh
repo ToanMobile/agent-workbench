@@ -372,10 +372,20 @@ run_verify_cmd() {
 # Kiểm tra lỗi verify có phải do timeout (exit 124 hoặc log chứa TIMEOUT / timed out / quá giới hạn) để thử lại đúng 1 lần.
 is_verify_timeout() {
   local rc="$1" log_file="$2" wt_log
+  # Gate đã in kết luận thì suite bên trong có chữ "timed out" không được chạy lại cả --full.
+  if [ -f "$log_file" ] && grep -aqE "KẾT LUẬN|POST-FIX AUDIT GATE VERDICT" "$log_file" 2>/dev/null; then
+    return 1
+  fi
   [ "$rc" -eq 124 ] && return 0
-  grep -aqE "TIMEOUT|timed out|quá giới hạn" "$log_file" 2>/dev/null && return 0
+  if [ -f "$log_file" ] && grep -aqE "TIMEOUT after|quá giới hạn" "$log_file" 2>/dev/null; then
+    return 0
+  fi
   wt_log="$(git -C "$SCRATCH" rev-parse --absolute-git-dir 2>/dev/null)/postfix-gate/last_output.log"
-  [ -f "$wt_log" ] && grep -aqE "TIMEOUT|timed out|quá giới hạn" "$wt_log" 2>/dev/null
+  [ -f "$wt_log" ] || return 1
+  if grep -aqE "KẾT LUẬN|POST-FIX AUDIT GATE VERDICT" "$wt_log" 2>/dev/null; then
+    return 1
+  fi
+  grep -aqE "TIMEOUT after|quá giới hạn" "$wt_log" 2>/dev/null
 }
 
 for cmd in "${VERIFY[@]}"; do

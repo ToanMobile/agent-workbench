@@ -5732,6 +5732,7 @@ def main():
     # Giữ heavy slot toàn máy (tối đa 2) khi thực sự có suite cần chạy ở chế độ --full / --force-full.
     heavy_slot_mod = None
     heavy_slot_handle = None
+    heavy_denied = False
     if (run_tests and lock_held and not nothing_to_run
             and (getattr(args, "full", False) or getattr(args, "force_full", False) or bool(force_reason))):
         try:
@@ -5739,10 +5740,20 @@ def main():
             import heavy_slot as _hs  # noqa: PLC0415 - sibling module in bin/
             heavy_slot_mod = _hs
             heavy_slot_handle = heavy_slot_mod.acquire()
+            heavy_denied = not heavy_slot_mod.admitted(heavy_slot_handle)
         except Exception as exc:
             log_warn(f"heavy_slot: {exc}")
+    if heavy_denied:
+        log_warn(tr("heavy-slot SLOT: 2 slot --full đang bận hết thời gian chờ — không chạy suite",
+                    "heavy-slot SLOT: both --full slots stayed busy past the wait — suites not started"))
     try:
         for t in to_run:
+            if heavy_denied:
+                if t.get("command") and t.get("status") != "PASS":
+                    t.update({"status": "UNTESTED", "label": "SLOT", "duration": "0s", "output_tail": tr(
+                        "2 slot --full đang bận hết thời gian chờ — suite không chạy",
+                        "both --full slots stayed busy past the wait — suite not started")})
+                continue
             if group and not may_join(t):
                 drain()
             if run_tests and t["command"] and not lock_held:
@@ -6038,6 +6049,7 @@ def main():
     receipt_untested = None
     lock_busy = False   # exit 4 because the lock was not held: no suite ran, so the receipt is neither written nor deleted
     budget_cut = False  # exit 4 because the time budget stopped a suite from starting: same, do not write or delete
+    slot_busy = False   # exit 4 because the machine-wide --full slots stayed busy: same, do not write or delete
     project_gone = not Path(project_dir).is_dir()   # W1 R5a: `worktree finish`/`remove` took it while the suites ran
     if project_gone:
         verdict_text, verdict_color, exit_code = tr(
@@ -6074,6 +6086,11 @@ def main():
         verdict_text, verdict_color, exit_code = tr("UNTESTED — một lượt chạy test khác đang giữ khoá dự án (TEST_RUN_LOCK_WAIT_S) — chạy lại sau; KHÔNG phải PASS",
                                                     "UNTESTED — another test run holds the project lock (TEST_RUN_LOCK_WAIT_S) — run again later; NOT a PASS"), YELLOW, 4
         lock_busy = True
+    elif run_tests and any(t.get("label") == "SLOT" for t in tests_untested):
+        verdict_text, verdict_color, exit_code = tr(
+            "UNTESTED — 2 slot --full toàn máy đang bận hết thời gian chờ — chạy lại sau; KHÔNG phải PASS",
+            "UNTESTED — both machine-wide --full slots stayed busy past the wait — run again later; NOT a PASS"), YELLOW, 4
+        slot_busy = True
     elif run_tests and any(t.get("label") == "BUDGET" for t in tests_untested):
         left = ", ".join(t["id"] or "?" for t in tests_untested if t.get("label") == "BUDGET")
         verdict_text, verdict_color, exit_code = tr(
@@ -6146,7 +6163,7 @@ def main():
     _lap("verdict")
     partial = not force_reason or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)
     try:
-        if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and (not partial or (exit_code != 0 and not receipt_untested)) \
+        if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy and (not partial or (exit_code != 0 and not receipt_untested)) \
                 and (not read_only or partial or exit_code != 0):
             # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
             # suites all passed (2026-09-29) — leaves the last full one as it is; a BUSY run (lock not held, nothing ran)

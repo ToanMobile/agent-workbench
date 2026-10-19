@@ -169,5 +169,28 @@ case "$spwd" in
   *) fail "scratch worktree not under $R_ABS/.claude/worktrees: '$spwd'" ;;
 esac
 
+# Ca 6: nhánh đã chứa base. Suite đã in KẾT LUẬN dù log có "timed out" — không chạy lại cả verify.
+git -C "$R" checkout -q main
+git -C "$R" branch -q --no-track issue-8-x main
+git -C "$R" checkout -q issue-8-x
+echo f > "$R/f"; git -C "$R" add f; git -C "$R" commit -qm card8; git -C "$R" push -q origin issue-8-x
+H8=$(git -C "$R" rev-parse issue-8-x)
+git -C "$R" diff "$H8~1" "$H8" > "$TMP/pr8.diff"
+printf '{"files":[{"path":"f"}],"labels":[],"body":"","additions":1,"deletions":0,"changedFiles":1}' > "$TMP/pr8.meta"
+echo "$H8" > "$TMP/pr8.head"
+COUNT6="$TMP/false_timeout_runs"
+rm -f "$COUNT6"
+CFG6="$TMP/cfg-false-timeout.json"
+cat > "$CFG6" <<JSON
+{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":[
+  "c=\$(cat '$COUNT6' 2>/dev/null || echo 0); c=\$((c + 1)); echo \$c > '$COUNT6'; if [ \$c -eq 1 ]; then echo 'The read operation timed out'; echo 'KẾT LUẬN: FAIL — suite đỏ'; exit 1; fi; exit 0"
+]}
+JSON
+( cd "$WT" && bash "$GATE" --config "$CFG6" --pr 8 --expect-head "$H8" ) >"$TMP/gate6.log" 2>&1; rc=$?
+runs6=$(cat "$COUNT6" 2>/dev/null || echo 0)
+[ "$rc" -eq 11 ] && [ "$runs6" -eq 1 ] \
+  && ok "finished red gate whose log says timed out was not retried (runs=$runs6, exit 11)" \
+  || fail "false timeout retry (rc=$rc, runs=$runs6, want 11 and 1): $(grep merge-gate "$TMP/gate6.log" | tail -3)"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_stale_message: PASS"; exit 0; } || { echo "test_merge_gate_stale_message: FAIL ($FAILS)"; exit 1; }

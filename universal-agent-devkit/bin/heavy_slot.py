@@ -23,6 +23,14 @@ class SlotHandle:
     fh: Optional[IO[str]]
     slot: Optional[int]
     prev_held: bool
+    timed_out: bool = False
+
+
+def admitted(handle: Optional[SlotHandle]) -> bool:
+    """Được chạy việc nặng. Hết giờ chờ thì không. Thiếu thư mục khoá vẫn được (không chặn gate)."""
+    if handle is None or handle.prev_held or handle.fh is not None:
+        return True
+    return not handle.timed_out
 
 
 def slot_dir() -> str:
@@ -99,7 +107,7 @@ def acquire(wait_s: Optional[float] = None, nonblocking: bool = False) -> SlotHa
 
         now = time.monotonic()
         if nonblocking or now >= deadline:
-            return SlotHandle(fh=None, slot=None, prev_held=False)
+            return SlotHandle(fh=None, slot=None, prev_held=False, timed_out=True)
 
         if not logged_wait:
             print(
@@ -144,7 +152,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     handle = acquire(nonblocking=nonblocking)
     try:
-        if nonblocking and handle.fh is None and not handle.prev_held:
+        if not admitted(handle):
+            if not nonblocking:
+                print("[heavy-slot] hết thời gian chờ 2 slot --full; không chạy lệnh", file=sys.stderr, flush=True)
             return 1
         if not args:
             return 0
