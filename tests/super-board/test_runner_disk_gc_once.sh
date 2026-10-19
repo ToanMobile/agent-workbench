@@ -41,16 +41,33 @@ r=""
 for lane in review qa build review qa build; do worktree_disk_room "$REPO_ROOT/.claude/worktrees/issue-5-$lane"; r="$r $?"; done
 [ "$(gcs)" = 1 ] && ok "under the floor: one worktree gc for six checks (two ticks of three lanes)" || fail "gc ran $(gcs) times for six checks"
 case "$r" in *" 0"*) fail "a check under the floor said there was room:$r" ;; *) ok "  … and every check still refuses to dispatch" ;; esac
+d=$(( ${DISK_GC_NEXT:-0} - $(date +%s) ))
+[ "$d" -ge 295 ] && [ "$d" -le 300 ] && ok "  … and the rest ends ~300 s after that gc (SB_DISK_GC_BACKOFF_S default)" || fail "rest ends in ${d}s, want ~300"
 
 # ── 2. space freed by hand during the pause: room at once, no gc
 export FAKE_FREE_GIB=50
 worktree_disk_room "$REPO_ROOT/.claude/worktrees/issue-6-build"; rc=$?
 [ "$rc" = 0 ] && [ "$(gcs)" = 1 ] && ok "space freed during the pause: room at the next check, without a gc" || fail "freed space: rc $rc, gc $(gcs)"
+export FAKE_FREE_GIB=1   # back under the floor soon after: the old rest is gone, its gc runs at once
+worktree_disk_room "$REPO_ROOT/.claude/worktrees/issue-6-build"; rc=$?
+[ "$rc" != 0 ] && [ "$(gcs)" = 2 ] && ok "  … and a new fall under the floor gets its own gc at once (the rest was cleared)" || fail "fall after room: rc $rc, gc $(gcs)"
 
 # ── 3. the pause is over and the disk is still full: one more gc
 export FAKE_FREE_GIB=1
 DISK_GC_NEXT=$(( $(date +%s) - 1 ))   # the 300 s rest has passed
 worktree_disk_room "$REPO_ROOT/.claude/worktrees/issue-7-build"; rc=$?
-[ "$rc" != 0 ] && [ "$(gcs)" = 2 ] && ok "after the pause, still under the floor: gc runs again (once)" || fail "after the pause: rc $rc, gc $(gcs)"
+[ "$rc" != 0 ] && [ "$(gcs)" = 3 ] && ok "after the pause, still under the floor: gc runs again (once)" || fail "after the pause: rc $rc, gc $(gcs)"
+
+# ── 4. SB_DISK_GC_BACKOFF_S=0: no rest; a value that is no number (5m, abc) falls back to 300 s and never ends the runner
+DISK_GC_NEXT=0; export SB_DISK_GC_BACKOFF_S=0
+worktree_disk_room "$REPO_ROOT/.claude/worktrees/issue-8-build"; worktree_disk_room "$REPO_ROOT/.claude/worktrees/issue-8-build"
+[ "$(gcs)" = 5 ] && ok "SB_DISK_GC_BACKOFF_S=0: every check runs its gc" || fail "backoff 0: gc $(gcs), want 5"
+for v in 5m abc; do
+  ( set -euo pipefail; DISK_GC_NEXT=0; export SB_DISK_GC_BACKOFF_S="$v"; worktree_disk_room "$REPO_ROOT/.claude/worktrees/issue-9-build" || true
+    echo "survived $(( DISK_GC_NEXT - $(date +%s) ))" ) > "$TMP/strict.out" 2>&1
+  grep -Eq "^survived (29[5-9]|300)$" "$TMP/strict.out" && ok "SB_DISK_GC_BACKOFF_S=$v: the runner goes on, with the 300 s default" \
+    || fail "SB_DISK_GC_BACKOFF_S=$v: $(tail -1 "$TMP/strict.out")"
+done
+unset SB_DISK_GC_BACKOFF_S
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_runner_disk_gc_once: all passed" || { echo "❌ test_runner_disk_gc_once: $FAILS failed"; exit 1; }
