@@ -114,7 +114,7 @@ bash .claude/skills/super-build/scripts/super-build-dispatch.sh N
 …via Bash with `run_in_background: true`. Capture each shell ID.
 
 The dispatcher (this skill's `scripts/super-build-dispatch.sh`) handles:
-- `git worktree add -b loop/issue-N .claude/worktrees/issue-N <base-branch>`
+- `agent-kit worktree add .claude/worktrees/issue-N loop/issue-N --lane=build --base=<base-branch>` — the DevKit's worktree (DevKit links, git-ignored config and hooks, a Unity Library cloned copy-on-write), never a plain `git worktree add` (agent-workbench#93); exit 4 = under the disk floor, nothing made
 - `gh issue view N --json title,body,labels` to compose the worker prompt
 - prepend `references/worker-preamble.md` + append working-directory footer
 - `cd` into worktree and exec `claude -p --dangerously-skip-permissions --output-format stream-json --verbose --max-turns 250`
@@ -233,13 +233,16 @@ When invoked by super-board (env `SUPER_BOARD_RUN=1` set by the runner, or invoc
 
 ### State protocol
 - Read context from: issue body + ALL issue comments + linked PR description + PR comments + PR review threads. NEVER from local state files for inter-lane coordination.
-- Respect the worktree path super-board hands you (typically `.claude/worktrees/issue-<N>-build/`). Don't create your own.
+- Work only in the worktree path super-board names (`.claude/worktrees/issue-<N>-build/`), created with the DevKit (Lifecycle step 1). Never a plain `git worktree add` or EnterWorktree.
 - Respect the single branch super-board hands you (`issue-<N>-<slug>`). Don't create alternate branches.
 
 ### Lifecycle (Builder, first pass)
 Follow spec `.claude/skills/super-board/references/run.md` → Builder (first pass). Summary:
-1. Worktree off `config.base_branch`.
-2. Branch `issue-<N>-<slug>` from `config.base_branch`.
+1. Worktree with the DevKit, after `git fetch origin`: `agent-kit worktree add .claude/worktrees/issue-<N>-build issue-<N>-<slug> --lane=build --base=origin/<config.base_branch>`
+   (no `agent-kit` on PATH: `python3 .agents/devkit/scripts/git/worktree.py add` with the same arguments). It links the DevKit, copies the
+   git-ignored config and hooks, clones a Unity Library copy-on-write, takes no WORKTREE_MAX slot and reuses the build worktree a stopped
+   run left at that path. Exit 4 = under the disk floor: stop with its message, card and claims unchanged. Never a plain `git worktree add`.
+2. Branch `issue-<N>-<slug>` from `config.base_branch` (step 1 makes it; an existing one, local or only on origin, is checked out as it is).
 3. Docs check (section below) — if the ticket touches a third-party surface, an upgrade, or auth/billing, read the current official docs first.
 4. Implement smallest safe change covering ACs — under the PR size cap (section below).
 5. Commit + push (always).

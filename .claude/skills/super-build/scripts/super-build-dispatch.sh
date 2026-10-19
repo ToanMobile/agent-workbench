@@ -8,7 +8,7 @@
 #          SKILL_DIR   (optional) — defaults to the dir this script lives in's parent
 #          MAX_TURNS   (optional) — default 250
 #   - Side effects:
-#       * git worktree add -b loop/issue-N .claude/worktrees/issue-N BASE_BRANCH
+#       * agent-kit worktree add .claude/worktrees/issue-N loop/issue-N --lane=build --base=BASE_BRANCH (DevKit links, ignored config + hooks)
 #       * runs `claude -p` inside that worktree with the composed prompt
 #       * captures stdout+stderr to .planning/super-build-logs/issue-N.log
 #   - Exit codes:
@@ -122,9 +122,19 @@ ISSUE_BODY=$(printf '%s' "$ISSUE_JSON" | jq -r '.body')
   printf 'Log file: %s/%s\n' "$REPO_DIR" "$LOG_FILE"
 } > "$PROMPT_FILE"
 
-# Create the worktree on a fresh branch off BASE_BRANCH
-if ! git worktree add -b "$WORKER_BRANCH" "$WORKTREE_DIR" "$BASE_BRANCH" >>"$LOG_FILE" 2>&1; then
-  echo "error: git worktree add failed — see $LOG_FILE" >&2
+# Create the worktree on its branch off BASE_BRANCH with the DevKit, never a plain `git worktree add` (agent-workbench#93): the worker
+# runs IN it, so it needs the DevKit links and the git-ignored hooks the settings run (missing, every python3 hook exits 2 and blocks
+# the tool), and a Unity Library cloned copy-on-write instead of a full re-import. Exit 4 = under the disk floor, nothing made.
+WT_PY="$REPO_DIR/.agents/devkit/scripts/git/worktree.py"
+if [[ ! -f "$WT_PY" ]]; then
+  echo "error: DevKit missing ($WT_PY): run agent-kit init in $REPO_DIR first" >&2
+  exit 64
+fi
+WT_RC=0
+python3 "$WT_PY" add "$WORKTREE_DIR" "$WORKER_BRANCH" --lane=build --base="$BASE_BRANCH" >>"$LOG_FILE" 2>&1 || WT_RC=$?
+if [[ "$WT_RC" -ne 0 ]]; then
+  [[ "$WT_RC" -eq 4 ]] && echo "error: under the DevKit worktree disk floor (WORKTREE_DISK_MIN_GIB) — free space first; see $LOG_FILE" >&2 \
+    || echo "error: agent-kit worktree add failed (exit $WT_RC) — see $LOG_FILE" >&2
   exit 64
 fi
 

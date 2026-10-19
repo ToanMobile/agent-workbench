@@ -144,13 +144,26 @@ const SKILLS_CHECK = (cards, lane) => [
   `Load the exact resolved_path files. Only declared fallback IDs are allowed. Before using a conditional/custom helper repeat this CLI with --require <exact-name>.`,
 ].join('\n')
 
+// Lane worktrees come from the DevKit only (agent-workbench#93): a plain `git worktree add` lacked .agents/devkit, the profile link and
+// the git-ignored hooks the settings run (health FAIL; NFH #18: matrix exit 127, 5 cards Blocked) and re-imported a whole Unity Library
+// per worktree (Goods ~9.9 GB). `--lane` takes no WORKTREE_MAX slot; the disk floor still refuses with exit 4.
+const WORKTREE_STEP = (lane, n) => [
+  `Worktree: after \`git fetch origin\`, create it from the repo root ONLY with the DevKit, never plain \`git worktree add\` or EnterWorktree:`,
+  lane === 'review'
+    ? `\`agent-kit worktree add .claude/worktrees/issue-${n}-review --lane=review --base=origin/<PR branch>\` (detached; refresh with \`git fetch origin && git checkout --detach origin/<PR branch>\`).`
+    : `\`agent-kit worktree add .claude/worktrees/issue-${n}-${lane} issue-${n}-<slug> --lane=${lane} --base=origin/<config.base_branch>\` (an existing issue branch is checked out as it is, one only origin has from origin/<branch>, and the lane's worktree already at that path is reused).`,
+  `It links the DevKit, copies the git-ignored config and hooks and clones a Unity Library copy-on-write. No agent-kit on PATH: \`python3 .agents/devkit/scripts/git/worktree.py add\` with the same arguments.`,
+  `Exit 4 = under the disk floor: status=halted with its message, card and claims unchanged, no retry. Clean up on exit with \`git worktree remove <path>\` (the branch stays).`,
+].join('\n')
+
 const lanePrompt = (lane, card) => [
   SKILLS_CHECK([card], lane),
   READ_FAILURE,
   `Run ${LANE[lane].skill} on issue #${card.number} ("${card.title}") for a super-board workflow wave.`,
   `Read .claude/skills/super-board/references/run.md → "${LANE[lane].section}" lifecycle and follow it EXACTLY:`,
-  `create your own worktree under .claude/worktrees/, work on the issue branch, post the required PR/issue comments,`,
+  `create your own worktree (below), work on the issue branch, post the required PR/issue comments,`,
   `move the project card yourself, clean up the worktree on exit. Config: ${input.configPath}.`,
+  WORKTREE_STEP(lane, card.number),
   BOARD_IO(),
   `Commits, PR title, PR body blocks, comments: .claude/skills/super-board/references/writing-standard.md. Rewrite only your own PR body blocks, with .claude/bin/super-board-pr-body.sh.`,
   ...(lane === 'review' ? REVIEW_MEMORY : []),
