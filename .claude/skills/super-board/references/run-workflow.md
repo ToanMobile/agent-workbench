@@ -65,8 +65,12 @@ query was corrected or PR metadata changed, supply its current read explicitly:
 `--resume --kind <same-shape> [--meta <fresh-meta.json>] -- <corrected gh read args>`.
 The replacement must pass the same evidence validator; the broken saved query
 is retained in the archived record. This is a read-only recovery check. An uncertain write
-has no automatic recovery probe: inspect the remote outcome first, then archive
-the halt record explicitly; never rerun a migration/write as a health check. Then follow normal
+has no automatic recovery probe (its record has `"operation": null`, and plain `--resume`
+refuses it): inspect the remote outcome first, then archive the halt record with
+`--resume --reconciled "<what was checked on GitHub>"`. It makes a read-only quota probe,
+never replays the write, and moves the record to `github-halt-reconciled-<ns>.json` with that
+reason (the record is moved, never deleted); never rerun a migration/write as a health check. The
+halt files are git-ignored runtime state (`.claude/super-board/github-halt*.json`). Then follow normal
 run preflight/reconcile, inspect preserved worktrees, and start a fresh wave.
 Do not schedule automatic retries of the stopped run.
 
