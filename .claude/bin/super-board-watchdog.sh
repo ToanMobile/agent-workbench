@@ -45,11 +45,15 @@ RUNNER_TOOLS="gh jq python3 claude git"
 NOW=$(date +%s)
 
 field() { sed -n "s/^$1=//p" "$2" 2>/dev/null | head -1 || true; }
-wlog() { mkdir -p "$DIR"; printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$WLOG"; }
+# Ghi log/trạng thái hỏng (đĩa đầy) không được làm `check` chết im lặng dưới set -e: in ra stderr (file log launchd).
+wlog() {
+  { mkdir -p "$DIR" && printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$WLOG"; } 2>/dev/null \
+    || echo "watchdog $SLUG: could not write $WLOG: $*" >&2
+}
 wd_save() {
-  mkdir -p "$DIR"
-  printf 'RESTARTS=%s\nLAST_RESTART=%s\nVERDICT=%s\nSPAWNED=%s\n' "$RESTARTS" "$LAST_RESTART" "$VERDICT" "$SPAWNED" > "$WD.$$" \
-    && mv -f "$WD.$$" "$WD"
+  { mkdir -p "$DIR" && printf 'RESTARTS=%s\nLAST_RESTART=%s\nVERDICT=%s\nSPAWNED=%s\n' \
+      "$RESTARTS" "$LAST_RESTART" "$VERDICT" "$SPAWNED" > "$WD.$$" && mv -f "$WD.$$" "$WD"; } 2>/dev/null \
+    || { rm -f "$WD.$$" 2>/dev/null; echo "watchdog $SLUG: could not write $WD" >&2; }
 }
 load_wd() {   # SPAWNED = PID runner do watchdog khởi động gần nhất
   RESTARTS=$(field RESTARTS "$WD"); RESTARTS=${RESTARTS:-0}
@@ -72,14 +76,16 @@ runner_alive() {   # 0 khi $1 là PID của runner board này còn sống (PID t
 }
 
 runner_env() {
-  # Môi trường runner trước đã ghi (PATH, JDK, Android SDK): launchd chỉ có PATH tối thiểu, runner và worker cần
-  # đúng toolchain như lần khởi động tường minh. Thiếu bản ghi (runner cũ) thì dùng môi trường của chính watchdog.
+  # Môi trường runner trước đã ghi (ENV_*: toolchain, cấu hình pool/account — danh sách RUNNER_ENV_KEYS trong runner):
+  # launchd chỉ có PATH tối thiểu, runner và worker cần đúng môi trường như lần khởi động tường minh. Chỉ nhận tên biến
+  # dạng ENV_[A-Z0-9_]; thiếu bản ghi (runner cũ) thì dùng môi trường của chính watchdog.
   local k v
   ENVV=()
-  for k in PATH JAVA_HOME ANDROID_HOME ANDROID_SDK_ROOT; do
-    v=$(field "ENV_$k" "$STATE")
-    [ -z "$v" ] || ENVV+=("$k=$v")
-  done
+  while IFS='=' read -r k v; do
+    case "$k" in ENV_*) ;; *) continue ;; esac
+    case "${k#ENV_}" in ''|*[!A-Z0-9_]*) continue ;; esac
+    [ -z "$v" ] || ENVV+=("${k#ENV_}=$v")
+  done < "$STATE"
 }
 
 restart_runner() {   # $1 = PID cũ, $2 = STATE cũ, $3 = RC cũ
@@ -113,13 +119,15 @@ take_check_lock() {
 }
 
 check() {
+  # Không có bản ghi lẫn marker: board chưa từng chạy với runner này, không có gì để giám sát (không tạo thư mục, khoá).
+  [ -f "$STATE" ] || [ -e "$MARK" ] || return 0
+  take_check_lock || return 0
+  load_wd   # đọc sau khi giữ khoá: lượt kiểm vừa xong có thể đã khởi động runner
   if [ -e "$MARK" ]; then
     verdict stopped "board stopped by the user ($(tr '\n' ' ' < "$MARK")) — never restarted until an explicit super-board run"
     return 0
   fi
-  [ -f "$STATE" ] || return 0   # chưa runner nào ghi bản ghi: không có gì để giám sát
-  take_check_lock || return 0
-  load_wd   # đọc lại sau khi giữ khoá: lượt kiểm vừa xong có thể đã khởi động runner
+  [ -f "$STATE" ] || return 0
   local pid state rc started t missing="" wait env_path
   pid=$(field PID "$STATE"); state=$(field STATE "$STATE"); rc=$(field RC "$STATE"); started=$(field STARTED "$STATE")
   if runner_alive "$pid"; then

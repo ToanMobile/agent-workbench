@@ -209,8 +209,11 @@ fi
 rm -f "$TMP/halt"
 
 # ── 6c. stop chạy trùng lúc một lần khởi động tường minh (marker ghi khi runner đang đọc config): stop thắng ────────
+# FS = một "super-board-stop.sh" giả còn đang chạy (stop.sh thật ghi marker rồi còn đi comment, dừng worker).
+mkdir -p "$TMP/fake"; printf '#!/usr/bin/env bash\nsleep 300\n' > "$TMP/fake/super-board-stop.sh"
+FS=$( (bash "$TMP/fake/super-board-stop.sh" >/dev/null 2>&1 & echo $!) ); PIDS="$PIDS $FS"
 rm -f "$MARK" "$MARK.written"; cp "$STATE" "$TMP/state.before6c"
-start_runner "$TMP/run7.out" STUB_WRITE_MARK="$MARK" STUB_MARK_PID="$$"
+start_runner "$TMP/run7.out" STUB_WRITE_MARK="$MARK" STUB_MARK_PID="$FS"
 if wait_for 20 '! alive "$RP"'; then
   [ -e "$MARK" ] && cmp -s "$STATE" "$TMP/state.before6c" \
     && ok "a stop landing while an explicit start boots wins: marker kept, runner never ran" \
@@ -219,6 +222,20 @@ else
   fail "explicit start kept running after a stop landed during its startup"; kill_tree "$RP"
 fi
 rm -f "$MARK" "$MARK.written"
+
+# Marker cũ hơn lúc runner ra đời nhưng stop.sh ghi nó vẫn đang chạy: stop vẫn thắng.
+printf 'STOPPED_AT=old\nPID=%s\n' "$FS" > "$MARK"
+touch -t "$(date -r "$(( $(date +%s) - 10 ))" +%Y%m%d%H%M.%S)" "$MARK"
+cp "$STATE" "$TMP/state.before6c2"
+start_runner "$TMP/run7b.out"
+if wait_for 20 '! alive "$RP"'; then
+  [ -e "$MARK" ] && grep -q 'start overruled' "$TMP/run7b.out" \
+    && ok "an older marker whose stop.sh is still running also wins over an explicit start" \
+    || fail "explicit start cleared the marker of a stop.sh still running"
+else
+  fail "explicit start ran while stop.sh was still stopping"; kill_tree "$RP"
+fi
+kill_tree "$FS"; rm -f "$MARK"
 
 # ── 6d. Không ghi được marker (đĩa đầy, thư mục hỏng): stop.sh vẫn dừng board và báo rõ ─────────────────────────────
 R2="$TMP/repo2"; mkdir -p "$R2/.claude/bin" "$R2/.claude/super-board/configs"
@@ -255,6 +272,30 @@ if wait_for 30 '! alive "$RP"'; then
 else
   fail "same-second start did not finish"; kill_tree "$RP"
 fi
+
+# ── 6f. Ctrl-C trên một lần chạy foreground là người dùng dừng: STATE=stopped, watchdog không khởi động lại ─────────
+# Runner chạy trong process group riêng với SIGINT mặc định (như foreground ở terminal); SIGINT gửi cho cả group.
+OUT6F="$TMP/run10.out"
+rc6f=$( (cd "$R" && run_env SB_DAEMON=1 python3 - "$BIN/super-board-run.sh" "$OUT6F" <<'PY'
+import os, signal, subprocess, sys, time
+script, out = sys.argv[1], sys.argv[2]
+with open(out, 'w') as f:
+    p = subprocess.Popen(['bash', script, 't'], stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                         start_new_session=True, preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+deadline = time.time() + 30
+while time.time() < deadline and 'tick — Ready=' not in open(out, errors='replace').read():
+    time.sleep(0.2)
+time.sleep(1)
+os.killpg(p.pid, signal.SIGINT)
+try:
+    print(p.wait(timeout=15))
+except subprocess.TimeoutExpired:
+    os.killpg(p.pid, signal.SIGKILL); print('timeout')
+PY
+) 2>&1 )
+[ "$(field STATE "$STATE")" = stopped ] && [ ! -e "$MARK" ] \
+  && ok "Ctrl-C on a foreground run is recorded as STATE=stopped (rc $rc6f)" \
+  || fail "Ctrl-C recorded as STATE=$(field STATE "$STATE") rc=$(field RC "$STATE") ($rc6f)"
 
 # ── 7. Watchdog: chỉ khởi động lại runner chết khi board đang chạy và không có marker ───────────────────────────────
 wd() { ( cd "$R" && run_env bash "$BIN/super-board-watchdog.sh" check t ) >> "$TMP/wd.out" 2>&1; }
