@@ -378,14 +378,16 @@ export function rotateNextProfile(opts = {}) {
   const claudeCooldownMs = (freshState.policy.claudeSwitchCooldownSec ?? 900) * 1000;
   const isClaudeInCooldown = prevClaudeEvent > 0 && nowMs - prevClaudeEvent < claudeCooldownMs;
 
-  // Tim ung vien khong bi dong bang theo thu tu 1 -> 2 -> 3 -> 4 -> 5 -> 6
+  // Tim ung vien khong bi dong bang: neu dang trong Cooldown cua Claude va bat che do uu tien khac hang,
+  // xoay theo dung thu tu chong ban: Grok CLI (6) -> AGY Ultra (4) -> AGY Pro (5)
+  const crossVendorOrder = ['grok', 'antigravity', 'antigravity_pro'];
   let chosen = null;
   if (freshState.policy.preferCrossVendorOnCooldown && isClaudeInCooldown) {
-    for (let offset = 1; offset <= DEFAULT_PROFILES.length; offset += 1) {
-      const candidate = DEFAULT_PROFILES[(currentIdx + offset) % DEFAULT_PROFILES.length];
+    for (const candId of crossVendorOrder) {
+      const candidate = DEFAULT_PROFILES.find((p) => p.id === candId);
+      if (!candidate) continue;
       const frozenUntilMs = freshState.frozenUntil[candidate.id] || 0;
       if (frozenUntilMs > nowMs) continue;
-      if (candidate.vendor === 'anthropic') continue;
       chosen = candidate;
       break;
     }
@@ -431,7 +433,7 @@ export function rotateNextProfile(opts = {}) {
 
 /**
  * Bao cao tai khoan hien tai cham Rate Limit (429 / Quota Exhausted):
- * Dong bang 5h va xoay sang tai khoan an toan ke tiep.
+ * Dong bang 5h va de xuat tai khoan du phong khac hang theo thu tu Grok CLI -> AGY Ultra -> AGY Pro (khong nhay cheo Claude).
  */
 export function reportRateLimit(opts = {}) {
   const { stateDir, profileId, nowMs = Date.now(), reason = '429_rate_limit' } = opts;
@@ -446,14 +448,26 @@ export function reportRateLimit(opts = {}) {
   }
   saveSwitcherState(stateDir, state);
 
-  // Tim tai khoan tiep theo khong bi dong bang
-  const currentIdx = DEFAULT_PROFILES.findIndex((p) => p.id === limitedProfile.id);
+  // Neu tai khoan vua cham limit la Claude, uu tien chuyen thang sang Khac Hang (Grok CLI -> AGY Ultra -> AGY Pro)
+  // de tuyet doi khong nhay cheo giua cac tai khoan Claude tren cung Repo.
   let nextCandidate = null;
-  for (let offset = 1; offset <= DEFAULT_PROFILES.length; offset += 1) {
-    const cand = DEFAULT_PROFILES[(currentIdx + offset) % DEFAULT_PROFILES.length];
-    if ((state.frozenUntil[cand.id] || 0) <= nowMs) {
-      nextCandidate = cand;
-      break;
+  if (limitedProfile.vendor === 'anthropic') {
+    for (const candId of ['grok', 'antigravity', 'antigravity_pro']) {
+      const cand = DEFAULT_PROFILES.find((p) => p.id === candId);
+      if (cand && (state.frozenUntil[cand.id] || 0) <= nowMs) {
+        nextCandidate = cand;
+        break;
+      }
+    }
+  }
+  if (!nextCandidate) {
+    const currentIdx = DEFAULT_PROFILES.findIndex((p) => p.id === limitedProfile.id);
+    for (let offset = 1; offset <= DEFAULT_PROFILES.length; offset += 1) {
+      const cand = DEFAULT_PROFILES[(currentIdx + offset) % DEFAULT_PROFILES.length];
+      if ((state.frozenUntil[cand.id] || 0) <= nowMs) {
+        nextCandidate = cand;
+        break;
+      }
     }
   }
 

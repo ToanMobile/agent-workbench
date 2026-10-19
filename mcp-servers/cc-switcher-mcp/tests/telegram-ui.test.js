@@ -354,3 +354,37 @@ test('Telegram UI 7: Bo cuc Mobile UI/UX gon dep, khong lap so [1] 1., nut bam <
   }
 });
 
+test('Telegram UI 8: Giao dien UI/UX moi nhat hien thi Khoa nhay cheo Claude, thu tu du phong Grok CLI -> AGY Ultra -> AGY Pro va sap xep nut bam theo dung luong', () => {
+  const tmp = createTempDir();
+  try {
+    const report = getStatusReport({ stateDir: tmp.dir });
+    const dash = buildTelegramDashboard(report);
+
+    // 1. Hien thi ro co che Khoa nhay cheo va thu tu xoay vong Grok CLI -> AGY Ultra -> AGY Pro
+    assert.match(dash.text, /Khóa nhảy chéo/);
+    assert.match(dash.text, /Grok CLI ➔ AGY Ultra ➔ AGY Pro/);
+
+    // 2. Khoi du phong khac hang xep dung thu tu uu tien: Grok CLI (#1) truoc AGY Ultra (#2) truoc AGY Pro (#3)
+    const idxGrok = dash.text.indexOf('Ưu tiên 1 · 6. Grok CLI');
+    const idxUltra = dash.text.indexOf('Ưu tiên 2 · 4. Antigravity Ultra');
+    const idxPro = dash.text.indexOf('Ưu tiên 3 · 5. Antigravity Pro');
+    assert.ok(idxGrok > 0, 'Phai hien thi Ưu tiên 1 · 6. Grok CLI');
+    assert.ok(idxUltra > idxGrok, 'Ưu tiên 2 · 4. Antigravity Ultra phai dung sau Grok CLI');
+    assert.ok(idxPro > idxUltra, 'Ưu tiên 3 · 5. Antigravity Pro phai dung sau AGY Ultra');
+
+    // 3. Bo cuc 3 hang nut bam profile (2 cot):
+    // Hang 1: sw:finos | sw:finos_team
+    // Hang 2: sw:grok  | sw:antigravity
+    // Hang 3: sw:antigravity_pro | sw:max
+    const rows = dash.reply_markup.inline_keyboard;
+    assert.deepEqual(rows[0].map((b) => b.callback_data), ['sw:finos', 'sw:finos_team']);
+    assert.deepEqual(rows[1].map((b) => b.callback_data), ['sw:grok', 'sw:antigravity']);
+    assert.deepEqual(rows[2].map((b) => b.callback_data), ['sw:antigravity_pro', 'sw:max']);
+
+    // 4. Khi tai khoan Claude (finos) cham 429, reportRateLimit de xuat ngay Grok CLI (khong nhay cheo sang finos_team)
+    const limitRes = reportRateLimit({ stateDir: tmp.dir, nowMs: 1_700_000_000_000 });
+    assert.equal(limitRes.nextProfile.id, 'grok');
+  } finally {
+    tmp.cleanup();
+  }
+});

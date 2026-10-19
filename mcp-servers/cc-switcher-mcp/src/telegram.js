@@ -277,10 +277,11 @@ export function formatStatusForTelegram(report, opts = {}) {
 
   lines.push('🎛 CC SWITCHER · BẢNG ĐIỀU KHIỂN');
   lines.push(activeHeaderLine);
-  lines.push(`🛡 Anti-Ban: ${cooldownBadge}`);
+  lines.push(`🛡 Anti-Ban: Khóa nhảy chéo Claude · ${cooldownBadge}`);
+  lines.push('🔄 Hết limit tự xoay: Grok CLI ➔ AGY Ultra ➔ AGY Pro');
   lines.push(`💰 Chi phí: $${report.usage.totalCostUsd} (${report.usage.totalRequests} req)`);
   lines.push('');
-  lines.push('🔋 QUOTA 3 TÀI KHOẢN CLAUDE (5 GIỜ)');
+  lines.push('🔋 QUOTA 3 TÀI KHOẢN CLAUDE (5 GIỜ · CÁCH LY REPO)');
 
   for (const p of claudeProfiles) {
     const pct = p.remainingPct ?? (p.isFrozen ? 0 : 100);
@@ -307,25 +308,28 @@ export function formatStatusForTelegram(report, opts = {}) {
   }
 
   if (backupProfiles.length > 0) {
+    const orderedBackups = ['grok', 'antigravity', 'antigravity_pro']
+      .map((id) => backupProfiles.find((p) => p.id === id))
+      .filter(Boolean);
     lines.push('');
-    lines.push('🚀 DỰ PHÒNG ĐA HÃNG (SẴN SÀNG 100%)');
-    for (const p of backupProfiles) {
+    lines.push('🚀 DỰ PHÒNG KHÁC HÃNG (TỰ XOAY 0S · KHÔNG LO BAN)');
+    orderedBackups.forEach((p, idx) => {
       const icon = p.isFrozen ? '🔴' : p.isActive ? '🟢' : '⚪️';
       const mark = p.isActive ? ' — ĐANG DÙNG ✓' : '';
-      lines.push(`${icon} ${formatCleanProfileHeader(p)}${mark}`);
-    }
+      lines.push(`${icon} Ưu tiên ${idx + 1} · ${formatCleanProfileHeader(p)}${mark}`);
+    });
   }
 
   if (Array.isArray(report.repoAssignments) && report.repoAssignments.length > 0) {
     const finosRepos = report.repoAssignments.filter((r) => r.account === 'finos').map((r) => r.name);
     const teamRepos = report.repoAssignments.filter((r) => r.account === 'finos_team').map((r) => r.name);
     lines.push('');
-    lines.push(`📂 PHÂN BỔ 6 REPO (${finosRepos.length} FinOS · ${teamRepos.length} Team)`);
-    lines.push('🔹 1. FinOS:');
+    lines.push(`📂 PHÂN BỔ 6 REPO (${finosRepos.length} FinOS · ${teamRepos.length} Team · Khóa nhảy chéo)`);
+    lines.push('🔹 1. FinOS (Hết ➔ Grok ➔ AGY):');
     for (const name of finosRepos) {
       lines.push(`   • ${name}`);
     }
-    lines.push('🔸 2. FinOS Team:');
+    lines.push('🔸 2. FinOS Team (Hết ➔ Grok ➔ AGY):');
     for (const name of teamRepos) {
       lines.push(`   • ${name}`);
     }
@@ -356,9 +360,17 @@ export function buildTelegramDashboard(report, opts = {}) {
     ]);
   }
 
-  // 3 hang x 2 cot cho 6 profile (nhan nut <= 24 ky tu de % va gio mo khoa hien day du 100% tren mobile)
-  for (let i = 0; i < report.profiles.length; i += 2) {
-    const row = report.profiles.slice(i, i + 2).map((p) => {
+  // Sap xep 3 hang x 2 cot theo dung luong thuc te:
+  // Hang 1: 1.FinOS | 2.Team (Cap tai khoan chinh chay song song 3/3 repo)
+  // Hang 2: 6.Grok  | 4.AGY Ultra (Du phong tu dong #1 va #2)
+  // Hang 3: 5.AGY Pro | 3.5xMax (Du phong tu dong #3 va Claude Max thu cong)
+  const buttonOrderIds = ['finos', 'finos_team', 'grok', 'antigravity', 'antigravity_pro', 'max'];
+  const orderedProfiles = buttonOrderIds
+    .map((id) => report.profiles.find((p) => p.id === id))
+    .filter(Boolean);
+
+  for (let i = 0; i < orderedProfiles.length; i += 2) {
+    const row = orderedProfiles.slice(i, i + 2).map((p) => {
       const shortName = compactButtonName(p);
       const pct = p.remainingPct ?? (p.isFrozen ? 0 : 100);
       const isRunning = Boolean(p.isParallelActive ?? p.isActive);
