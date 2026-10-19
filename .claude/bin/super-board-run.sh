@@ -464,17 +464,31 @@ worktree_disk_room() {
   # Worktree lane đã có (git còn nhận nó: không phải thư mục rỗng sót lại, cũng không phải .git trỏ vào admin dir đã bị prune) thì
   # add --lane dùng lại, không tốn thêm đĩa. Kiểm không được (không DevKit, python lỗi): coi là còn chỗ, nhưng ghi log (OCR 19/10).
   [ -e "$1/.git" ] && git -C "$1" rev-parse --git-dir >/dev/null 2>&1 && return 0
-  local rc=0 err
-  err=$(python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" 2>&1 >/dev/null <<'PY'
+  # Under the floor a full `worktree gc` runs once, then rests 300 s: a gc that freed nothing frees nothing more a tick later, and every
+  # lane of every tick ran one (OCR batch 19/10). While it rests only the free space is read, so a disk a person cleans is seen at the
+  # next check. DISK_GC_NEXT lives in the runner shell (dispatch_lane is called there, not in a subshell). No knob for the 300 s: an
+  # odd value (5m, 08) in the arithmetic ended the whole run loop (review 19/10).
+  local rc=0 err now gc=1
+  now=$(date +%s)
+  [ "$now" -lt "${DISK_GC_NEXT:-0}" ] && gc=0
+  err=$(python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" "$gc" 2>&1 >/dev/null <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 free = m.free_gib(sys.argv[3])
 if free is not None and m.DISK_MIN_GIB and free < m.DISK_MIN_GIB:   # gc only when already under the floor: above it the own add of the lane does it
-    m._make_room(sys.argv[2], sys.argv[3])   # SystemExit(NO_ROOM=4) still under the floor after gc
+    if sys.argv[4] == "1":
+        m._make_room(sys.argv[2], sys.argv[3])   # SystemExit(NO_ROOM=4) still under the floor after gc
+    else:
+        print("only %.1f GiB free on the disk (under %g GiB; worktree gc rests after one that freed too little)" % (free, m.DISK_MIN_GIB), file=sys.stderr)
+        sys.exit(4)
 PY
   ) || rc=$?
+  case "$rc:$gc" in
+    0:*) DISK_GC_NEXT=0 ;;                 # back above the floor: a later fall under it gets its gc at once
+    *:1) DISK_GC_NEXT=$((now + 300)) ;;   # gc ran: still under the floor, or it failed itself (OCR 19/10) — rest either way
+  esac
   case "$rc" in
     0) ;;
     4) log "worktree_disk_room: $(printf '%s' "$err" | tail -1 | cut -c1-200)" ;;   # the DevKit's own line: free GiB and the floor
