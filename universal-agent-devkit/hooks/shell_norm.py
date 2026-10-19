@@ -374,12 +374,43 @@ def _heredoc_word(text, i):
     return i, "".join(out), quoted
 
 
+def ansi_c_to_single(text):
+    """text with every $'...' outside quotes rewritten as a plain '...' (issue #7: shlex has no $'...', so the backslash-quote inside one ended its quote and
+    the lexer paired the quotes of the REST of the line the other way round, which hid a command after it). An escaped quote inside becomes '\\'' (close,
+    literal quote, reopen). The other escapes stay as typed: the text of the word is not what is judged here, its boundaries are.
+    An unterminated $'... is left as it is. A backslash escapes inside "..." too (a \" does not close it), and a $ right after an odd run of $ is no start:
+    $$ is the PID, so in $$'...' the quote is a plain one."""
+    if "$'" not in text:
+        return text
+    out, i, n, q, dr = [], 0, len(text), None, 0   # dr: the run of $ just before i, outside quotes
+    while i < n:
+        c = text[i]
+        if q != "'" and c == "\\" and i + 1 < n:
+            out.append(text[i:i + 2]); i += 2; dr = 0; continue
+        if q is None and c == "$" and text.startswith("'", i + 1) and dr % 2 == 0:
+            j, body = i + 2, []
+            while j < n and text[j] != "'":
+                if text[j] == "\\" and j + 1 < n:
+                    body.append("'\\''" if text[j + 1] == "'" else text[j:j + 2]); j += 2
+                else:
+                    body.append(text[j]); j += 1
+            if j >= n:
+                out.append(text[i:]); break
+            out.append("'" + "".join(body) + "'"); i = j + 1; dr = 0; continue
+        if c in "'\"":
+            q = None if q == c else (q or c)
+        dr = dr + 1 if c == "$" and q is None else 0
+        out.append(c); i += 1
+    return "".join(out)
+
+
 def lex_words(text):
     """The words of a command line as the guards read them, the ONE lexer of both: quotes removed, and ; & | ( ) and a NEWLINE outside quotes words of their
     own (a run of them is one word: &&, ;;, |<nl>), so a newline is a command separator by itself. A newline INSIDE quotes stays in its word exactly as typed.
     ValueError on an unbalanced quote or a trailing backslash. 15/10 r5: both guards used to rewrite every newline of the text to " ;<nl>" before they lexed
     it. That also rewrote the newlines of a quoted script (bash -c '…', eval, ssh host '…'), so a heredoc terminator of that script read "EOF ;" and a later
     line equal to the delimiter swallowed the real command (the verdict of the script differed from the verdict of the same text typed at top level)."""
+    text = ansi_c_to_single(text)
     lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()\n")
     lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""   # real comments are cut by the guards (drop_comments); a # left in a word is data
     return list(lex)
@@ -424,6 +455,54 @@ def join_continuations(text):
     backslashes before the newline (a\\\\<newline> is an escaped backslash and a real newline: bash and zsh agree, and both guards joined
     it, which hid the next line, 15/10 r4 review). One regex pass, linear."""
     return _CONTINUATION.sub(r"\1", text) if "\\\n" in text else text
+
+
+def drop_comments(text):
+    """The text without its shell comments: a # that begins a word, outside quotes, up to the end of its line. A # inside a word
+    (a#b, $#, an escaped space before it, the ) that ends a substitution), inside ${ } or inside backticks is data, as in bash.
+    Quotes, ${ or a backtick still open at the end: from where the first of them opened the text stays whole (fail closed), the comments before it
+    are dropped (15/10 r6: the whole text kept its comments, and the apostrophe of one paired with a later real quote in the scanners after this).
+    2026-10-10: shlex dropped everything after any #,
+    so a command after a comment line or after a#b was never judged; the first fix still read an escaped space, a CR, a ) and a
+    # inside ${ } or backticks as a word start (independent review).
+    Issue #7: a backslash-newline outside quotes is a continuation, not an escaped character: the # after it starts a word when the character
+    BEFORE the backslash would let it (`x \\<nl># '` is a comment, so the next line runs). An escaped $ opens neither ${ } nor $'…'."""
+    out, i, n, q, brace, bt, esc = [], 0, len(text), None, 0, False, False
+    base = (0, 0)   # (chunks of out, index in text) where the last stretch with nothing open began
+    prev = ""   # the last character of the text as the shell reads it: a continuation (backslash-newline) is not one
+    dr = 0      # the run of $ just before i: $$ is the PID, so $$' and $${ open nothing
+    while i < n:
+        c = text[i]
+        if q is None and not (brace or bt):
+            base = (len(out), i)
+        prev_esc, esc = esc, False
+        if q is None:
+            if c == "\\" and i + 1 < n:
+                out.append(text[i:i + 2]); i += 2
+                if text[i - 1] == "\n":
+                    esc = prev_esc   # a continuation joins what is on both sides: the escape state of the character before it carries over
+                else:
+                    esc, prev, dr = True, text[i - 1], 0
+                continue
+            if c in "\x27\x22":
+                q = "$\x27" if c == "\x27" and prev == "$" and dr % 2 == 1 and not prev_esc else c
+            elif c == "`":
+                bt = not bt
+            elif c == "{" and prev == "$" and dr % 2 == 1 and not prev_esc:
+                brace += 1
+            elif c == "}" and brace:
+                brace -= 1
+            elif c == "#" and not (brace or bt) and (not prev or (not prev_esc and prev in " \t\n;&|(")):
+                while i < n and text[i] != "\n":
+                    i += 1
+                continue
+        else:
+            if c == "\\" and q != "\x27" and i + 1 < n:
+                out.append(text[i:i + 2]); i += 2; continue
+            if c == q[-1]:
+                q = None
+        out.append(c); i += 1; prev = c; dr = dr + 1 if c == "$" else 0
+    return "".join(out[:base[0]]) + text[base[1]:] if (q or brace or bt) else "".join(out)
 
 
 def _comment_continuation(text):
