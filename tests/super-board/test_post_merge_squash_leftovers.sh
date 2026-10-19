@@ -33,7 +33,7 @@ mkdir -p "$R/.agents/local/memory/agents/rev" "$R/unity/Assets" "$R/src"
 echo note > "$R/.agents/local/memory/agents/rev/MEMORY.md"
 echo asset > "$R/unity/Assets/x.asset"; echo code > "$R/src/x.c"; echo cfg > "$R/keep.cfg"
 mkdir -p "$R/docs/super-board/runs"; echo report > "$R/docs/super-board/runs/REPORT.md"   # bằng chứng QA ĐÃ TRACK (như repo này)
-for i in 1 2 3 7 8 21 22 23 24 25 26 27 28 29 30 31 33 34 35 70; do echo "$i" > "$R/f$i"; done
+for i in 1 2 3 7 8 21 22 23 24 25 26 27 28 29 30 31 33 34 35 36 70; do echo "$i" > "$R/f$i"; done
 git -C "$R" add -A; git -C "$R" commit -qm init
 printf 'keep.cfg\n.env\n' >> "$R/.git/info/exclude"   # keep.cfg: file đã track mà luật ignore phủ (force-track); .env: bí mật cục bộ
 git -C "$R" remote add origin "$O"
@@ -208,6 +208,12 @@ card 35 45 issue-35-p; git -C "$R" worktree add -q --detach "$W/issue-35-qa" "$(
 echo "edited-35" >> "$W/issue-35-qa/docs/super-board/runs/REPORT.md"
 squash 45; merged_row 45 "$OLD"; echo CLOSED > "$TMP/issue35.state"
 squash 43; merged_row 43 "$OLD"; echo CLOSED > "$TMP/issue33.state"
+# 36 = PR 46 (OCR batch lượt 2): worktree build ĐANG Ở nhánh đã merge nhưng nhánh có commit mới sau head đã merge (việc tiếp sau
+#      merge): khớp tên nhánh chưa đủ — HEAD phải là head đã merge hay tổ tiên của nó, khác thì giữ worktree, giữ nhánh, nói lý do
+card 36 46 issue-36-q; git -C "$R" worktree add -q "$W/issue-36-build" issue-36-q
+squash 46; merged_row 46 "$OLD"; echo CLOSED > "$TMP/issue36.state"
+echo "after merge" > "$W/issue-36-build/f36"; git -C "$W/issue-36-build" commit -qam "work after the merge"
+H36_NEW=$(git -C "$W/issue-36-build" rev-parse HEAD)
 # 25 = PR 35: vừa merge (Reviewer còn làm bước sau merge)
 card 25 35 issue-25-e; git -C "$R" worktree add -q --detach "$W/issue-25-qa" "$(cat "$TMP/pr35.head")"
 squash 35; merged_row 35 "$NOW"; echo CLOSED > "$TMP/issue25.state"
@@ -244,7 +250,7 @@ bash "$CLEAN" --sweep "$R" --dry-run >"$TMP/dry.log" 2>&1; rc=$?
   && ok "B1 --dry-run changes nothing" || { fail "B1 --dry-run changed something (rc $rc)"; cat "$TMP/dry.log"; }
 miss=""
 for w in issue-7-review issue-21-review issue-21-qa issue-22-qa issue-28-build issue-35-qa; do grep -q "would remove .*/$w" "$TMP/dry.log" || miss="$miss $w"; done
-for w in issue-22-build issue-23-review issue-24-qa issue-29-qa issue-30-qa issue-31-qa issue-34-review issue-25-qa issue-26-qa issue-27-qa; do grep -q "would remove .*/$w" "$TMP/dry.log" && miss="$miss !$w"; done
+for w in issue-22-build issue-23-review issue-24-qa issue-29-qa issue-30-qa issue-31-qa issue-34-review issue-36-build issue-25-qa issue-26-qa issue-27-qa; do grep -q "would remove .*/$w" "$TMP/dry.log" && miss="$miss !$w"; done
 [ -f "$R/.git/super-board/sweep.stamp" ] && miss="$miss stamp-written"
 # nhánh của worktree "sẽ gỡ" (issue-28-build) cũng "sẽ xoá", không phải "still checked out"; nhánh của worktree giữ lại thì giữ
 for b in issue-28-h issue-2-z; do grep -q "would delete branch $b " "$TMP/dry.log" || miss="$miss branch:$b"; done
@@ -286,7 +292,7 @@ bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/sweep.log" 2>&1; rc=$?
 for w in issue-7-review issue-21-review issue-21-qa issue-22-qa issue-28-build issue-35-qa; do
   [ ! -d "$W/$w" ] && ok "B5 merged leftover $w removed" || { fail "B5 merged leftover $w kept"; grep -a "$w" "$TMP/sweep.log"; }
 done
-for w in issue-22-build issue-23-review issue-24-qa issue-29-qa issue-30-qa issue-31-qa issue-33-qa issue-34-review issue-25-qa issue-26-qa issue-27-qa issue-70-build issue-8-build; do
+for w in issue-22-build issue-23-review issue-24-qa issue-29-qa issue-30-qa issue-31-qa issue-33-qa issue-34-review issue-36-build issue-25-qa issue-26-qa issue-27-qa issue-70-build issue-8-build; do
   [ -d "$W/$w" ] && ok "B6 $w kept" || fail "B6 $w REMOVED"
 done
 grep -q "issue-22-build: uncommitted edits.*src/x.c" "$TMP/sweep.log" && [ "$(tail -1 "$W/issue-22-build/src/x.c")" = "real fix" ] \
@@ -305,6 +311,10 @@ for b in issue-28-h issue-2-z; do
   if git -C "$R" rev-parse -q --verify "refs/heads/$b" >/dev/null; then fail "B10 merged branch $b kept"; grep -a "$b" "$TMP/sweep.log"
   else ok "B10 merged branch $b deleted (PR merged at its tip)"; fi
 done
+[ -d "$W/issue-36-build" ] && [ "$(git -C "$R" rev-parse -q --verify refs/heads/issue-36-q)" = "$H36_NEW" ] \
+  && grep -q "issue-36-build: on branch issue-36-q, HEAD $H36_NEW is not the head of a merged PR" "$TMP/sweep.log" \
+  && ok "B24 a branch worktree with commits after the merged head is kept, branch untouched, reason logged" \
+  || { fail "B24 worktree on a branch with commits after the merge"; grep -a "issue-36" "$TMP/sweep.log"; }
 for b in issue-22-b scratch-27 issue-23-c issue-26-f; do
   git -C "$R" rev-parse -q --verify "refs/heads/$b" >/dev/null && ok "B11 branch $b kept" || fail "B11 branch $b deleted"
 done

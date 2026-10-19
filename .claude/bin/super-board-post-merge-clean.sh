@@ -191,7 +191,8 @@ tidy() {
   fi
   TIDY_SDEL="$sdel"; TIDY_DL="$delf"; TIDY_DROPZ="$drpz"
   if ! git -C "$wt" status --porcelain=v1 -z --no-renames --untracked-files=all >"$st" 2>/dev/null; then
-    rm -f "$st" "$trk" "$untr" "$kp"; echo "kept $wt: git status failed" >&2; return 1
+    rm -f "$st" "$trk" "$untr" "$kp" "$sdel" "$delf" "$drpz"; TIDY_SDEL=""; TIDY_DL=""; TIDY_DROPZ=""
+    echo "kept $wt: git status failed" >&2; return 1
   fi
   while IFS= read -r -d '' e; do
     xy=${e:0:2}; p=${e:3}
@@ -548,9 +549,11 @@ for n in $NS; do
     h=$(git -C "$wt" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null) || h=""
     pr=""; oid=""
     while IFS=$'\t' read -r _n rpr rref roid _age; do
-      if [ -n "$br" ]; then [ "$br" = "$rref" ] || continue
-      elif [ -z "$h" ] || { [ "$h" != "$roid" ] && ! git -C "$REPO_PATH" merge-base --is-ancestor "$h" "$roid" 2>/dev/null; }; then continue
-      fi
+      # Worktree trên nhánh: đúng nhánh của PR đó. Mọi worktree, có nhánh hay detached: HEAD là head đã merge hay tổ tiên của nó —
+      # nhánh có commit mới sau lần merge (việc tiếp sau merge) thì giữ worktree, không gỡ chỉ vì khớp tên nhánh (OCR batch lượt 2).
+      [ -z "$br" ] || [ "$br" = "$rref" ] || continue
+      [ -n "$h" ] || continue
+      [ "$h" = "$roid" ] || git -C "$REPO_PATH" merge-base --is-ancestor "$h" "$roid" 2>/dev/null || continue
       pr="$rpr"; oid="$roid"; break
     done <<<"$rows"
     if [ -z "$pr" ]; then
