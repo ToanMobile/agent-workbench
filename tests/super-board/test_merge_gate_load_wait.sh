@@ -40,7 +40,7 @@ n=$(printf '%s\n' "$@" | grep -E '^[0-9]+$' | head -1)
 head=$(cat "$FAKE_DIR/pr$n.head")
 case " $* " in
   *" pr view "*"headRefName,headRefOid"*) echo "issue-$n-x $head" ;;
-  *" pr view "*"state,mergeCommit,headRefOid"*) printf '{"state":"OPEN","mergeCommit":null,"headRefOid":"%s"}\n' "$head" ;;
+  *" pr view "*"state,mergeCommit,headRefOid"*) st=$(cat "$FAKE_DIR/pr$n.state" 2>/dev/null || echo OPEN); mc=null; [ "$st" = MERGED ] && mc="{\"oid\":\"$head\"}"; printf '{"state":"%s","mergeCommit":%s,"headRefOid":"%s"}\n' "$st" "$mc" "$head" ;;
   *" pr view "*"labels,files"*) cat "$FAKE_DIR/pr$n.meta" ;;
   *" pr diff "*) cat "$FAKE_DIR/pr$n.diff" ;;
   *" pr merge "*) echo "fake gh: must not merge on a red verify" >&2; exit 1 ;;
@@ -88,7 +88,7 @@ writer=$!
 t0=$(date +%s)
 SB_MERGE_LOAD_WAIT_S=60 SB_MERGE_LOAD_POLL_S=1 gate >"$TMP/gate2.log" 2>&1; rc=$?
 wait "$writer" 2>/dev/null
-d=$(( $(cat "$STARTED" 2>/dev/null || echo 0) - t0 ))
+d=$(( $(cat "$STARTED" 2>/dev/null || echo $((t0 + 9999))) - t0 ))
 grep -q "load 2 after" "$TMP/gate2.log" && ok "the gate waited, then saw the load drop" || fail "no mid-wait drop seen: $(grep merge-gate "$TMP/gate2.log" | head -4)"
 [ "$d" -lt 40 ] && ok "verify started once the load dropped (${d}s, cap 60)" || fail "verify start ${d}s after the gate (want < 40)"
 grep -q "verifying anyway" "$TMP/gate2.log" && fail "load dropped but the gate says it gave up waiting" || ok "no capped-wait message when the load dropped"
@@ -99,7 +99,7 @@ echo 3 > "$LOADF"; rm -f "$STARTED"
 t0=$(date +%s)
 SB_MERGE_LOAD_WAIT_S=60 SB_MERGE_LOAD_POLL_S=30 gate >"$TMP/gate3.log" 2>&1; rc=$?
 grep -q "waiting for load" "$TMP/gate3.log" && fail "low load: the gate still waits" || ok "low load: no wait"
-d=$(( $(cat "$STARTED" 2>/dev/null || echo 99) - t0 ))
+d=$(( $(cat "$STARTED" 2>/dev/null || echo $((t0 + 9999))) - t0 ))
 [ "$d" -lt 25 ] && ok "low load: verify started without a poll (${d}s)" || fail "low load: verify started after ${d}s"
 ran "$rc" && ok "low load: verify ran (exit 11)" || fail "low load: gate exit $rc"
 
@@ -158,6 +158,18 @@ echo 3 > "$LOADF"; rm -f "$STARTED"
 ( cd "$WT" && SB_MERGE_LOAD_WAIT_S=999 bash "$GATE" --config "$CFG" --pr 5 --expect-head "$H" --lock-timeout 60 ) >"$TMP/gate10.log" 2>&1
 grep -q "over half the lock timeout; waiting at most 30s" "$TMP/gate10.log" \
   && ok "wait cap clamped to half the lock timeout" || fail "no clamp message: $(grep merge-gate "$TMP/gate10.log" | head -3)"
+
+# Ca 11–12: PR được merge / bị đóng trên GitHub trong lúc chờ → exit 0 / 3, không verify.
+for pair in "MERGED 0" "CLOSED 3"; do
+  st=${pair% *}; want=${pair#* }
+  echo 99 > "$LOADF"; rm -f "$STARTED" "$TMP/pr5.state"
+  ( when_waiting "$TMP/gate-$st.log"; echo "$st" > "$TMP/pr5.state" ) &
+  writer=$!
+  SB_MERGE_LOAD_WAIT_S=3 SB_MERGE_LOAD_POLL_S=1 gate >"$TMP/gate-$st.log" 2>&1; rc=$?
+  wait "$writer" 2>/dev/null; rm -f "$TMP/pr5.state"
+  [ "$rc" -eq "$want" ] && [ ! -f "$STARTED" ] && ok "PR ${st} during the wait: exit ${want}, no verify" \
+    || fail "PR ${st} during the wait: gate exit $rc (want ${want}), verify ran: $([ -f "$STARTED" ] && echo yes || echo no)"
+done
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_load_wait: PASS"; exit 0; } || { echo "test_merge_gate_load_wait: FAIL ($FAILS)"; exit 1; }
