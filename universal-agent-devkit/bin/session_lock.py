@@ -1580,7 +1580,12 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
         found = None
     if found is None:
         found = [("redirect", t, here) for t in _redirect_targets(cmd) if t and not t.startswith("&")]
+    cd_unsafe = False   # a `cd "$VAR"` that leads into main or cannot be told: relative targets of the line may land there
     for kind, t, wd in found:
+        if kind == "cdvar":
+            d = _expand_static_vars(t, cmd)
+            cd_unsafe = cd_unsafe or d is None or _lands_in_main(os.path.expanduser(d) if os.path.isabs(os.path.expanduser(d)) else os.path.join(wd or here, d), main, sw)
+            continue
         if kind == "unparsed":
             if _lands_in_main(wd or here, main, sw):
                 return True
@@ -1592,6 +1597,8 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
             if t is None:   # a variable the line does not assign, or a substitution: where it lands cannot be told - fail closed (issue #13)
                 return True
         p = os.path.expanduser(t)
+        if not os.path.isabs(p) and cd_unsafe:
+            return True
         if _lands_in_main(p if os.path.isabs(p) else os.path.join(wd or here, p), main, sw):
             return True
     if depth < 3:

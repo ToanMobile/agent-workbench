@@ -192,8 +192,18 @@ def _operands(base, words):
     return ops, tdir
 
 
-# `$M/f`, `${M}/f`: a path the shell expands, which _exists cannot see; the caller resolves or refuses it (sed script `$d` has no `/`)
-_VAR_PATH = re.compile(r"\$\{?\w+\}?/")
+# `$M/f`, `${M}/f`, a bare `$M`: a path the shell expands, which _exists cannot see; the caller resolves or refuses it (a sed script such as
+# `$d` looks the same: _inplace_operands drops it)
+_VAR_PATH = re.compile(r"\$\{?\w+\}?(?:/|$)")
+
+
+def _inplace_operands(base, words, args):
+    """The file operands of `sed -i` / `perl -i`: `args` minus the script (sed: the first operand unless -e/-f/--expression gave one;
+    the value of -e/-f is dropped too), so a script like `$d` is no variable target."""
+    script = [w for i, w in enumerate(words) if i and re.fullmatch(r"-e|-f|--expression|--file", words[i - 1])]
+    ops = [a for a in args if a not in script]
+    scripted = any(re.fullmatch(r"-[A-Za-z]*[ef]|--expression.*|--file.*", w) for w in words)
+    return ops[1:] if base == "sed" and not scripted else ops
 
 
 def _exists(a, here):
@@ -211,7 +221,7 @@ def _nested(code, wd, depth, run_bodies):
 def targets(cmd, here, depth=0, run_bodies=False):
     """[(kind, target, directory it is relative to)] of the shell line `cmd` run in `here`, or None when it cannot be tokenised.
     kind: "redirect" (a > target; an escaped `\\>` reads as one too, so a caller with its own quote-aware redirect rule skips it),
-    "file" (cp / install / rsync / ln / scp destination; mv / rm / touch / truncate / tee / mkdir / rmdir / chmod / unlink operands;
+    "cdvar" (a cd whose directory holds $VAR or a backtick), "file" (cp / install / rsync / ln / scp destination; mv / rm / touch / truncate / tee / mkdir / rmdir / chmod / unlink operands;
     dd of=; sed -i / perl -i operands that exist), "git" (a git write: its -C directory), "build" (a build
     tool or builder module: its working directory), "interp" (an interpreter's operands that exist). A target may hold $VAR or a
     backtick: the caller decides. Heredoc bodies are data, never commands - unless run_bodies and the heredoc feeds a shell (its body is
@@ -291,7 +301,9 @@ def targets(cmd, here, depth=0, run_bodies=False):
         args = [a for a in words[1:] if not a.startswith("-")]
         hits = [("redirect", r) for r in redirs]
         if verb in ("cd", "pushd"):
-            if args and "$" not in args[0]:
+            if args and ("$" in args[0] or "`" in args[0]):
+                found.append(("cdvar", args[0], wd))   # where it leads is the caller's to judge: `here` stays
+            elif args:
                 here = _cd(wd, args[0])
             elif not args:
                 here = os.path.expanduser("~")
@@ -311,9 +323,9 @@ def targets(cmd, here, depth=0, run_bodies=False):
         elif base == "dd":
             hits += [("file", a[3:]) for a in args if a.startswith("of=")]
         elif base == "sed" and any(re.fullmatch(r"-[A-Za-z]*i.*|--in-place.*", a) for a in words[1:]):
-            hits += [("file", a) for a in args if a and (_exists(a, wd) or _VAR_PATH.match(a))]   # BSD `sed -i ''`: the empty suffix is no file
+            hits += [("file", a) for a in _inplace_operands(base, words, args) if a and (_exists(a, wd) or _VAR_PATH.match(a))]   # BSD `sed -i ''`: the empty suffix is no file
         elif base == "perl" and any(re.fullmatch(r"-[A-Za-z]*i.*", a) for a in words[1:]):
-            hits += [("file", a) for a in args if a and (_exists(a, wd) or _VAR_PATH.match(a))]
+            hits += [("file", a) for a in _inplace_operands(base, words, args) if a and (_exists(a, wd) or _VAR_PATH.match(a))]
         elif base == "git":
             gdir, sub, skip, rest = wd, "", None, []
             for k, a in enumerate(words[1:], 1):
