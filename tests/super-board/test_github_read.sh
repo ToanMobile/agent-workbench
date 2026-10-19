@@ -131,4 +131,83 @@ rm -f "$TMP/halt.json"
 rc=$(run --kind issue -- issue view 5 --json number,title,body)
 [ "$rc" = 0 ] && grep -q '"number"' "$TMP/out" && ok "valid read still works" || fail "valid read: rc=$rc"
 
+# 2026-10-19 agent-workbench: một lệnh ghi (`gh issue edit`) hỏng để lại halt có operation null. --resume từ chối (đúng: không có
+# lệnh đọc nào để phát lại) nhưng cũng không có đường khởi động lại nào ngoài sửa tay file halt, mà trunk mode cấm sửa tay ở
+# main. `--resume --reconciled "<lý do>"`: người đã đối chiếu kết quả ghi trên GitHub ghi lý do; helper chỉ đọc quota (không
+# phát lại lệnh ghi), rồi chuyển file halt sang github-halt-reconciled-<stamp>.json kèm lý do, không xoá bản ghi gốc.
+mkdir -p "$TMP/okgh" "$TMP/downgh"
+cat > "$TMP/okgh/gh" <<'SH'
+#!/usr/bin/env bash
+echo "$*" >> "$GH_CALLS"
+case " $* " in
+  *" api rate_limit "*) echo '{"resources":{"graphql":{"remaining":4000,"reset":1},"core":{"remaining":4000,"reset":1}}}' ;;
+  *) echo 'unexpected' >&2; exit 1 ;;
+esac
+SH
+printf '#!/usr/bin/env bash\necho "$*" >> "$GH_CALLS"\necho "HTTP 502" >&2\nexit 1\n' > "$TMP/downgh/gh"
+chmod +x "$TMP/okgh/gh" "$TMP/downgh/gh"
+NULL_HALT='{"reason": "GitHub issue edit response failed; reconcile the write before restarting", "attempts": 1, "at": 1792352832, "operation": null}'
+archives() { ls "$TMP" | grep -c '^github-halt-reconciled-' | tr -d ' '; }
+reset_halt() { rm -f "$TMP"/github-halt-reconciled-*; printf '%s' "$1" > "$TMP/halt.json"; : > "$TMP/calls"; }
+
+reset_halt "$NULL_HALT"
+rc=$(PATH="$TMP/okgh:$PATH" run --resume)
+[ "$rc" = 79 ] && [ "$(cat "$TMP/halt.json")" = "$NULL_HALT" ] && ok "op-null halt: plain --resume still refuses (79), record untouched" \
+  || fail "op-null plain --resume: rc=$rc"
+
+reset_halt "$NULL_HALT"
+rc=$(PATH="$TMP/okgh:$PATH" run --resume --reconciled '   ')
+[ "$rc" = 64 ] && [ "$(cat "$TMP/halt.json")" = "$NULL_HALT" ] && [ "$(archives)" = 0 ] && [ ! -s "$TMP/calls" ] \
+  && ok "--reconciled with a blank reason: refused (64), halt kept, no gh call" || fail "blank --reconciled: rc=$rc archives=$(archives)"
+
+reset_halt "$NULL_HALT"
+rc=$(PATH="$TMP/okgh:$PATH" run --reconciled 'issue #7 checked')
+[ "$rc" = 64 ] && [ -e "$TMP/halt.json" ] && [ "$(archives)" = 0 ] && ok "--reconciled without --resume: refused (64), halt kept" \
+  || fail "--reconciled without --resume: rc=$rc"
+
+reset_halt "$NULL_HALT"
+rc=$(PATH="$TMP/downgh:$PATH" run --resume --reconciled 'issue #7 checked')
+[ "$rc" = 79 ] && [ "$(cat "$TMP/halt.json")" = "$NULL_HALT" ] && [ "$(archives)" = 0 ] \
+  && ok "--resume --reconciled while GitHub is down: still halted (79), record untouched" || fail "reconciled + gh down: rc=$rc archives=$(archives)"
+
+reset_halt "$NULL_HALT"
+rc=$(PATH="$TMP/okgh:$PATH" run --resume --reconciled 'issues #7/#12 checked on GitHub: edit applied')
+arch=$(ls "$TMP"/github-halt-reconciled-*.json 2>/dev/null | head -1)
+[ "$rc" = 0 ] && [ ! -e "$TMP/halt.json" ] && [ "$(archives)" = 1 ] && [ "$(grep -vxc 'api rate_limit' "$TMP/calls" | tr -d ' ')" = 0 ] \
+  && python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["reason"].startswith("GitHub issue edit response failed") and r["operation"] is None; assert r["reconciled"]["reason"]=="issues #7/#12 checked on GitHub: edit applied" and type(r["reconciled"]["at"]) is int' "$arch" \
+  && ok "--resume --reconciled '<why>': only a quota read, halt moved to github-halt-reconciled-*.json with the original record + reason" \
+  || fail "reconciled resume: rc=$rc halt=$([ -e "$TMP/halt.json" ] && echo kept || echo gone) archives=$(archives) calls=$(tr '\n' ';' <"$TMP/calls") ($(tail -1 "$TMP/err"))"
+
+reset_halt '{"reason": "r", "attempts": 3, "at": 1, "operation": {"args": ["issue", "view", "5", "--json", "number,title,body"], "kind": "issue", "meta": null}}'
+rc=$(PATH="$TMP/okgh:$PATH" run --resume --reconciled 'not needed')
+[ "$rc" = 64 ] && [ -e "$TMP/halt.json" ] && [ "$(archives)" = 0 ] && [ ! -s "$TMP/calls" ] \
+  && ok "--reconciled on a halt with a saved read: refused (64), the read replay stays the way out" || fail "reconciled on op-dict halt: rc=$rc"
+rm -f "$TMP/halt.json"
+
+reset_halt "$NULL_HALT"
+rc=$(PATH="$TMP/okgh:$PATH" run --resume --reconciled 'checked' -- issue view 5 --json number,title,body)
+[ "$rc" = 64 ] && [ "$(cat "$TMP/halt.json")" = "$NULL_HALT" ] && [ "$(archives)" = 0 ] && [ ! -s "$TMP/calls" ] \
+  && ok "--reconciled with a read command: refused (64), halt kept, no gh call" || fail "reconciled + command: rc=$rc"
+
+# Ghi bản lưu hỏng (thư mục không ghi được): board vẫn dừng, bản ghi gốc nguyên vẹn, không sót file tạm.
+if [ "$(id -u)" = 0 ]; then ok "archive write fails: skipped (root ignores chmod 555)"; else
+  mkdir -p "$TMP/ro"; printf '%s' "$NULL_HALT" > "$TMP/ro/halt.json"; chmod 555 "$TMP/ro"; : > "$TMP/calls"
+  rc=$(SB_GITHUB_HALT_FILE="$TMP/ro/halt.json" PATH="$TMP/okgh:$PATH" run --resume --reconciled 'checked')
+  chmod 755 "$TMP/ro"
+  [ "$rc" = 64 ] && [ "$(cat "$TMP/ro/halt.json")" = "$NULL_HALT" ] && [ "$(ls "$TMP/ro" | tr '\n' ' ')" = "halt.json " ] \
+    && ok "archive write fails: still halted, original record intact, no temp file left" || fail "archive write failure: rc=$rc files=$(ls "$TMP/ro" | tr '\n' ' ')"
+fi
+rm -f "$TMP/halt.json"
+
+: > "$TMP/calls"
+rc=$(PATH="$TMP/okgh:$PATH" run --resume --reconciled 'nothing halted')
+[ "$rc" = 0 ] && [ "$(archives)" = 0 ] && [ ! -s "$TMP/calls" ] && ok "--resume --reconciled with no halt: nothing to do (0), no gh call" \
+  || fail "reconciled without halt: rc=$rc"
+
+# File halt là trạng thái chạy của board, không phải nội dung main: trunk mode chỉ cho động vào nó khi git bỏ qua nó.
+for f in github-halt.json github-halt-reconciled-1.json github-halt-1792344209094738000.json; do
+  git -C "$ROOT" check-ignore -q ".claude/super-board/$f" && ok "git ignores runtime state .claude/super-board/$f" \
+    || fail ".claude/super-board/$f is not git-ignored (trunk mode treats it as main content)"
+done
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_github_read: all passed" || { echo "❌ test_github_read: $FAILS failed"; exit 1; }
