@@ -85,6 +85,9 @@ spawn; wA=$S;      spawn; wB=$S;      spawn; diag=$S
 } > "$STUB_PS"
 printf '%s %s\n%s %s\n' "$rArel" "$A" "$rBrel" "$B" > "$STUB_CWD"
 
+# inflight/ holding no issue lock but something else (the runner's early-deaths/ ledger, #94): no worker to clear; under bash 3.2
+# `for entry in "${WORKERS[@]}"` on the empty array is "unbound variable" with set -u, and stop exits 1 before its summary
+mkdir -p "$A/.claude/super-board/inflight/early-deaths" && echo "1 build" > "$A/.claude/super-board/inflight/early-deaths/7"
 ( cd "$TMP" && env PATH="$STUB:$PATH" bash "$A/.claude/bin/super-board-stop.sh" repo ) > "$TMP/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "stop exits 0" || { fail "stop exited $rc"; sed 's/^/    /' "$TMP/out"; }
 

@@ -59,6 +59,7 @@ reports/
 .claude/super-board/onboard-staged/
 .claude/super-board/backup/
 .claude/super-board/inflight/
+.claude/super-board/runner/
 .claude/super-board/migrations/
 .claude/super-board/upgrade.json
 .claude/super-board/last-merge-verify-pr-*.log

@@ -22,7 +22,10 @@ checkpoint limitations: [run-workflow.md](run-workflow.md#required-github-eviden
 **Super-board is an autonomous trader. The interactive Claude session that invokes `super-board run` is an orchestrator, NOT a worker.** Its only jobs are:
 
 1. Verify preconditions (see table below).
-2. Spawn the headless `nohup ./scripts/super-board-run.sh <slug> &` runner.
+2. Spawn the headless `nohup ./scripts/super-board-run.sh <slug> &` runner. An explicit start clears the stop marker
+   and installs the repo's launchd watchdog (`.claude/bin/super-board-watchdog.sh`): every 60 s it restarts a runner
+   that died without a deliberate end, never one stopped with `super-board stop`, with backoff and a cap of 5
+   restarts in a row. Status: `.claude/bin/super-board-watchdog.sh status <slug>`.
 3. Report runner PID + log path back to the user.
 4. Exit.
 
@@ -722,8 +725,9 @@ usual template — and, per §4, a `blocked-by:` line.
 
 ### The wave-start sweep
 
-Before planning any wave, `super-board-wave-plan.sh` reports five lists the orchestrator must act on
-**before** launching:
+Before planning any wave, `super-board-wave-plan.sh` reports the lists below the orchestrator must act on
+**before** launching (`waiting` — Ready cards labelled `needs-you` / `human-gated`, #95 — is only reported: a person
+releases them by removing the label; one back in the lifecycle with `loop:rebase` / `loop:rebuild-N` is work again):
 
 - **`sweep`** — `Blocked` cards whose blockers have all closed. Move each to `Ready` and comment
   naming what cleared it (`clearedBy` carries the numbers). They then join this very wave.
@@ -733,7 +737,8 @@ Before planning any wave, `super-board-wave-plan.sh` reports five lists the orch
   the same once at start (`reclaim_stranded_building`).
 - **`resume`** — 🙋 `Blocked` cards whose newest pinned request has a later `done`
   from a human with verified write, maintain or admin permission, for the current
-  PR head. Move each to **Review**; `needs-you:done` may be kept as a display label
+  PR head. Move each to **Review** and remove its `needs-you` label (the person acted; a card
+  sent back to Ready keeping it would wait for nobody); `needs-you:done` may be kept as a display label
   only. Do not create or copy approval evidence. The Reviewer re-runs the gate,
   which independently checks the request, current policy/steps and head, verifies
   the build, and runs allowed migrations. New code or a newer request needs fresh

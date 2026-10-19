@@ -259,6 +259,25 @@
           "command": "bash tests/super-board/test_preflight_too_big.sh"
         }
       ]
+    },
+    {
+      "component": "super-board-runner-watchdog",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-stop.sh",
+        ".claude/bin/super-board-watchdog.sh",
+        ".claude/bin/super-board-setup.py",
+        ".claude/bin/super-board-gh-guard.sh",
+        "universal-agent-devkit/scripts/governance/super_board_all.py",
+        "tests/super-board/test_runner_watchdog.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-WATCHDOG-01",
+          "name": "super-board runner survives a killed sleep; durable stop marker; launchd watchdog never restarts a stopped board",
+          "command": "bash tests/super-board/test_runner_watchdog.sh"
+        }
+      ]
     }
   ]
 }
