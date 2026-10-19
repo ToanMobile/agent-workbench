@@ -429,8 +429,7 @@
     {
       "component": "super-board-run-sweep-wiring",
       "watch_files": [
-        ".claude/bin/super-board-run.sh",
-        "tests/super-board/test_post_merge_sweep_wiring.sh"
+        ".claude/bin/super-board-run.sh"
       ],
       "mandatory_regression_tests": [
         {

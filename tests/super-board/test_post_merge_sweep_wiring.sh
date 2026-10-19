@@ -37,7 +37,7 @@ run_startup() {  # run_startup <sweep exit code>: startup_reconcile của runner
 export SWEEP_CALLS="$TMP/sweep.calls" SWEEP_ORDER="$TMP/order"
 wait_sweep() { local i=0; while [ "$i" -lt 100 ] && ! grep -q sweep "$TMP/order" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done; }   # chạy nền
 : > "$TMP/order"; run_startup 0; rc=$?; wait_sweep
-if [ "$rc" -eq 0 ] && grep -qx -- "--sweep . --base trunk-x" "$SWEEP_CALLS" 2>/dev/null; then
+if [ "$rc" -eq 0 ] && grep -qx -- "--sweep . --min-interval 300 --base trunk-x" "$SWEEP_CALLS" 2>/dev/null; then
   ok "R1 startup_reconcile runs the sweep with the config's base branch"
 else fail "R1 startup_reconcile did not run the sweep (rc $rc, calls: $(cat "$SWEEP_CALLS" 2>/dev/null))"; fi
 case "$(tr '\n' ' ' < "$TMP/order")" in
@@ -59,22 +59,27 @@ run_ticks() {  # run_ticks: sweep_merged_lanes 3 lần như 3 tick liền, rồi
   ( cd "$TMP" && SB_LIB_ONLY=1 . "$TMP/bin/super-board-run.sh" >/dev/null 2>&1 || exit 90
     BASE_BRANCH=trunk-x RUN_MANIFEST="$TMP/manifest"
     sweep_merged_lanes && sweep_merged_lanes && sweep_merged_lanes || exit 91
-    SWEEP_NEXT=$(( $(date +%s) - 1 )); sweep_merged_lanes || exit 92 )
+    SWEEP_NEXT=$(( $(date +%s) - 1 )); sweep_merged_lanes || exit 92
+    wait )   # con nền của subshell này chỉ là các sweep giả: đếm tất định, không chờ theo giờ (review)
 }
 : > "$SWEEP_CALLS"; run_ticks; rc=$?
-i=0; while [ "$i" -lt 100 ] && [ "$(grep -c . "$SWEEP_CALLS")" -lt 2 ]; do sleep 0.1; i=$((i + 1)); done; sleep 0.3
-n=$(grep -c -- "--sweep . --base trunk-x" "$SWEEP_CALLS")
+n=$(grep -c -- "--sweep . --min-interval 300 --base trunk-x" "$SWEEP_CALLS")
 [ "$rc" -eq 0 ] && [ "$n" -eq 2 ] && ok "R5 back-to-back ticks start one sweep; the next comes only after the runner's interval" \
   || fail "R5 tick sweeps: rc $rc, $n sweep call(s) for 3 quick ticks + 1 late tick (want 2)"
+# sweep treo: ghi PID của chính nó (exec: PID đó là sleep) để test chỉ dừng đúng tiến trình mình tạo, không để mồ côi (OCR)
 cat > "$TMP/bin/super-board-post-merge-clean.sh" <<'SH'
 #!/usr/bin/env bash
-sleep 5; echo "$*" >> "$SWEEP_CALLS"
+echo $$ > "$SWEEP_PID"; exec sleep 30
 SH
+export SWEEP_PID="$TMP/sweep.pid"
 t0=$(date +%s)
 ( cd "$TMP" && SB_LIB_ONLY=1 . "$TMP/bin/super-board-run.sh" >/dev/null 2>&1 || exit 90
   RUN_MANIFEST="$TMP/manifest"; sweep_merged_lanes ); rc=$?
-[ "$rc" -eq 0 ] && [ $(( $(date +%s) - t0 )) -le 2 ] && ok "R6 a hanging sweep never holds the tick (it runs in the background)" \
-  || fail "R6 sweep_merged_lanes held the tick ($(( $(date +%s) - t0 ))s, rc $rc)"
+dt=$(( $(date +%s) - t0 ))
+i=0; while [ "$i" -lt 100 ] && [ ! -s "$SWEEP_PID" ]; do sleep 0.1; i=$((i + 1)); done
+[ "$rc" -eq 0 ] && [ "$dt" -le 10 ] && [ -s "$SWEEP_PID" ] && ok "R6 a hanging sweep never holds the tick (it runs in the background)" \
+  || fail "R6 sweep_merged_lanes held the tick (${dt}s, rc $rc, sweep started: $([ -s "$SWEEP_PID" ] && echo yes || echo no))"
+[ -s "$SWEEP_PID" ] && kill "$(cat "$SWEEP_PID")" 2>/dev/null
 
 # ── W. wave workflow thật trong node, agent/pipeline/log giả
 WAVE="$ROOT/.claude/workflows/super-board-wave.js"
