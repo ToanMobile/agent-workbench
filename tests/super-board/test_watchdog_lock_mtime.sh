@@ -36,9 +36,11 @@ case_lock() {
   local name="$1" p="$2" when="$3" want="$4" d="$TMP/case.$RANDOM" rc
   mkdir -p "$d/runner"; mkdir "$d/runner/b.check.lock"
   [ "$when" = now ] || touch -t "$when" "$d/runner/b.check.lock"
-  ( PATH="$p"; DIR="$d/runner"; SLUG=b; NOW=$(date +%s); . "$TMP/fn.sh"; take_check_lock ) >/dev/null 2>&1
-  rc=$?
-  [ "$rc" -eq "$want" ] && ok "$name (rc=$rc)" || fail "$name: rc=$rc want $want"
+  # In TAKEN/BUSY sau khi hàm trả về: hàm chết giữa chừng (lỗi số học trên chữ rác của GNU stat) không in gì, nên không lẫn với
+  # một quyết định đúng; khoá lấy lại thì thư mục khoá phải còn đó (được tạo lại).
+  rc=$( ( PATH="$p"; DIR="$d/runner"; SLUG=b; NOW=$(date +%s); . "$TMP/fn.sh"
+          if take_check_lock; then [ -d "$DIR/b.check.lock" ] && echo TAKEN; else echo BUSY; fi ) 2>/dev/null )
+  case "$want:$rc" in 0:TAKEN|1:BUSY) ok "$name ($rc)" ;; *) fail "$name: got '${rc:-nothing: function died}' want $([ "$want" = 0 ] && echo TAKEN || echo BUSY)" ;; esac
 }
 
 case_lock "GNU stat: stale lock (2020) is taken back"   "$TMP/gnu-bin:$REAL_PATH" 202001010000 0
