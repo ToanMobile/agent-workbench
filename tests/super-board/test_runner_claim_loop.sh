@@ -48,8 +48,8 @@ PROJECT_ITEMS_JSON='{"items":[
  {"id":"PVTI_7","status":"Ready","labels":[],"content":{"type":"Issue","number":7,"assignees":[]}},
  {"id":"PVTI_8","status":"Ready","labels":[],"content":{"type":"Issue","number":8,"assignees":[]}}]}'
 
-claims() { grep -c -- "--add-assignee bot" "$TMP/writes" 2>/dev/null | grep -E . || echo 0; }
-claims_of() { grep -c -- "issue edit $1 --add-assignee bot" "$TMP/writes" 2>/dev/null | grep -E . || echo 0; }
+claims_of() { local n; n=$(grep -c -- "issue edit $1 --add-assignee bot" "$TMP/writes" 2>/dev/null); echo "${n:-0}"; }
+sleep 0 & DEAD=$!; wait "$DEAD"   # a PID known to be dead (a fixed big number may belong to a live process on some hosts)
 cycle() {   # one runner tick for the build lane: reap, pick the top Ready card, dispatch it, let the worker die
   reap_finished_locks
   BUILD_PID=""; BUILD_ISSUE=""
@@ -83,13 +83,13 @@ cycle
 # ── 2. a worker that lived longer than SB_EARLY_DEATH_S does not count
 rm -rf "$INFLIGHT_DIR/early-deaths"; : > "$TMP/writes"
 for i in 1 2 3; do
-  printf 'PID=999999\nLANE=build\nSTARTED=%s\n' "$(date -u -v-10M +%FT%TZ 2>/dev/null || date -u -d '-10 minutes' +%FT%TZ)" > "$INFLIGHT_DIR/9"
+  printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(date -u -v-10M +%FT%TZ 2>/dev/null || date -u -d '-10 minutes' +%FT%TZ)" > "$INFLIGHT_DIR/9"
   reap_finished_locks
 done
 [ ! -s "$INFLIGHT_DIR/early-deaths/9" ] && ok "workers that died after a long run are not early deaths" || fail "a long-lived worker was counted as an early death"
 
 # ── 3. startup: an orphan lock (dead PID) is removed and its assignee swept; the early-death ledger is no lock
-printf 'PID=999998\nLANE=review\nSTARTED=2026-10-18T19:30:00Z\n' > "$INFLIGHT_DIR/12"
+printf 'PID=%s\nLANE=review\nSTARTED=2026-10-18T19:30:00Z\n' "$DEAD" > "$INFLIGHT_DIR/12"
 mkdir -p "$INFLIGHT_DIR/early-deaths"; echo "$(date +%s)" > "$INFLIGHT_DIR/early-deaths/12"
 gh_rate_guard() { :; }; fetch_project_items() { :; }; reclaim_stranded_building() { :; }; adopt_live_locks() { :; }
 : > "$TMP/writes"
@@ -107,5 +107,29 @@ PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_20","status":"Ready","labels":[],"cont
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$TMP/repo/wl/worker-build-20.log" ] && grep -q "session limit" "$TMP/repo/wl/worker-build-20.log" && break; sleep 0.2; done
 grep -q "session limit" "$TMP/repo/wl/worker-build-20.log" 2>/dev/null && ok "a vanished worker log folder is made again: the worker writes its log" \
   || fail "worker log folder not recreated: $(ls "$TMP/repo" 2>&1 | tr '\n' ' ')"
+
+# ── 5. under the runner's own `set -euo pipefail`, an early death whose worker log is gone must not end the runner (OCR 19/10)
+rm -rf "$TMP/repo/wl" "$INFLIGHT_DIR/early-deaths"
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(date -u +%FT%TZ)" > "$INFLIGHT_DIR/40"
+( set -euo pipefail; reap_finished_locks; echo survived ) > "$TMP/strict.out" 2>&1
+grep -qx survived "$TMP/strict.out" && [ -s "$INFLIGHT_DIR/early-deaths/40" ] && [ ! -e "$INFLIGHT_DIR/40" ] \
+  && ok "set -euo pipefail: an early death with no worker log is recorded and the runner goes on" \
+  || fail "strict mode: the reaper ended the runner or recorded nothing: $(tail -2 "$TMP/strict.out" | tr '\n' ' ')"
+mkdir -p "$TMP/repo/wl"
+
+# ── 6. the other place a dead lock is cleared (issue_locked, a worker that died after this tick's reap) records it too
+rm -rf "$INFLIGHT_DIR/early-deaths"
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(date -u +%FT%TZ)" > "$INFLIGHT_DIR/41"
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_41","status":"Ready","labels":[],"content":{"type":"Issue","number":41,"assignees":[]}}]}'
+top_card_in_column "Ready" >/dev/null 2>&1
+[ -s "$INFLIGHT_DIR/early-deaths/41" ] && ok "a dead lock cleared by issue_locked (no reap) is an early death too" || fail "issue_locked dropped a dead lock without recording it"
+
+# ── 7. per lane: two quick build deaths hold the card back from the Builder, not from its Reviewer
+now=$(date +%s); mkdir -p "$INFLIGHT_DIR/early-deaths"; printf '%s build\n%s build\n' "$now" "$now" > "$INFLIGHT_DIR/early-deaths/50"
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_50","status":"Review","labels":[],"content":{"type":"Issue","number":50,"assignees":[]}}]}'
+top_card_in_column "Review"; r="$TOP_ISSUE"
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_50","status":"Ready","labels":[],"content":{"type":"Issue","number":50,"assignees":[]}}]}'
+top_card_in_column "Ready"; b="$TOP_ISSUE"
+[ "$r" = 50 ] && [ -z "$b" ] && ok "backoff is per lane: the Reviewer still takes the card, the Builder does not" || fail "per-lane backoff: review='$r' ready='$b'"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_runner_claim_loop: all passed" || { echo "❌ test_runner_claim_loop: $FAILS failed"; exit 1; }

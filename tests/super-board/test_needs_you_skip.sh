@@ -33,7 +33,10 @@ ITEMS='{"items":[
   PROJECT_ITEMS_JSON="$ITEMS"
   top_card_in_column "Ready"; echo "ready=$TOP_ISSUE"
   top_card_in_column "Review"; echo "review=$TOP_ISSUE"
+  echo "person_ready=$(person_count Ready)"
 ) > "$TMP/runner.out" 2>&1
+grep -qx "person_ready=2" "$TMP/runner.out" && ok "runner: the 2 Ready cards for a person are counted apart (not in Ready for dispatch or the clean exit)" \
+  || fail "runner person_count: $(tr '\n' ' ' < "$TMP/runner.out")"
 grep -qx "ready=32" "$TMP/runner.out" && ok "runner: Ready cards labelled needs-you / human-gated are skipped, the plain one is picked" \
   || fail "runner Ready pick: $(tr '\n' ' ' < "$TMP/runner.out")"
 grep -qx "review=33" "$TMP/runner.out" && ok "runner: a Review card that still carries needs-you is picked (the resume path)" \
@@ -42,7 +45,8 @@ grep -qx "review=33" "$TMP/runner.out" && ok "runner: a Review card that still c
 # ── 2. planner, offline (--items, --deps)
 printf '%s' "$ITEMS" > "$TMP/items.json"
 printf '{"30":{"runnable":true,"parseable":true,"blockers":[]},"31":{"runnable":true,"parseable":true,"blockers":[]},"32":{"runnable":true,"parseable":true,"blockers":[]},"34":{"runnable":false,"parseable":true,"blockers":[],"humanGated":true}}' > "$TMP/deps.json"
-(cd "$ROOT" && SB_GITHUB_HALT_FILE="$TMP/halt.json" bash .claude/bin/super-board-wave-plan.sh --config .claude/super-board/configs/agent-workbench.json \
+printf '{"project":{"owner":"x","number":1},"repo":{"path":".","remote":"https://github.com/x/y"},"verify_commands":["bash tests/check.sh"]}' > "$TMP/cfg.json"
+(cd "$ROOT" && SB_GITHUB_HALT_FILE="$TMP/halt.json" bash .claude/bin/super-board-wave-plan.sh --config "$TMP/cfg.json" \
    --items "$TMP/items.json" --deps "$TMP/deps.json" > "$TMP/plan.json" 2> "$TMP/plan.err"); rc=$?
 if [ "$rc" = 0 ] && [ "$(jq -c '[.cards[].number] | sort' "$TMP/plan.json")" = "[32,33]" ]; then
   ok "planner: needs-you / human-gated Ready cards are not in the wave (Review #33 still is)"
@@ -63,10 +67,11 @@ items = [
     {"number": 35, "title": "design call", "labels": ["Human-Gated"], "status": "Blocked"},
     {"number": 36, "title": "done already", "labels": ["needs-you"], "status": "Done"},
     {"number": 37, "title": "waits on #12", "labels": ["bug"], "status": "Blocked"},
+    {"number": 38, "title": "resumed, a lane reviews it", "labels": ["needs-you"], "status": "Review"},
 ]
 print("waiting=" + ",".join(str(i["number"]) for i in m.waiting_on_person(items)))
 PY
-grep -qx "waiting=35,34,30" "$TMP/status.out" && ok "status: needs-you / human-gated cards (any column but Done) form their own group" \
+grep -qx "waiting=35,34,30" "$TMP/status.out" && ok "status: needs-you / human-gated Ready and Blocked cards form their own group (not Done, not a Review a lane works)" \
   || fail "status waiting group: $(tail -3 "$TMP/status.out" | tr '\n' ' ')"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_needs_you_skip: all passed" || { echo "❌ test_needs_you_skip: $FAILS failed"; exit 1; }

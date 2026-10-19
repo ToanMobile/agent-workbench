@@ -441,11 +441,12 @@ PERSON_LABELS = ("needs-you", "human-gated")
 
 
 def waiting_on_person(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """#95: cards only a person can move on (needs-you / human-gated, any case), every column but Done, newest first. The runner
-    and the planner never take such a card from Ready, so they get their own group instead of hiding among the Block reasons."""
+    """#95: Ready and Blocked cards only a person can move on (needs-you / human-gated, any case), newest first. The runner and the
+    planner never take such a card from Ready, so they get their own group instead of hiding among the Block reasons. Not QA or
+    Review: a lane works those (the resume path brings an approved 🙋 card to Review with its label possibly still on)."""
     return sorted(
         (i for i in items
-         if i.get("status") != "Done" and any(str(l).lower() in PERSON_LABELS for l in i.get("labels") or [])),
+         if i.get("status") in ("Ready", "Blocked") and any(str(l).lower() in PERSON_LABELS for l in i.get("labels") or [])),
         key=lambda x: -x["number"],
     )
 

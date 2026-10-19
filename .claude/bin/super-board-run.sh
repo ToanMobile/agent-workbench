@@ -140,6 +140,14 @@ column_count() {
   echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" '[.items[] | select(.status == $col)] | length'
 }
 
+person_count() {
+  # Cards of column $1 labelled needs-you / human-gated (#95): no lane takes them from Ready, so they must not keep a run alive
+  # that has nothing else to do (counted in Ready, a non-daemon run never reached its clean "all empty" exit).
+  echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" '[.items[] | select(.status == $col)
+    | select([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
+             | (index("needs-you") or index("human-gated")))] | length'
+}
+
 # ── Status-field resolution (issue #10 reconcile path).
 # Option IDs are resolved BY NAME at runtime and cached for the run. Never hard-code
 # them: `updateProjectV2Field` replaces the whole option list and remints every ID,
@@ -222,11 +230,13 @@ top_card_in_column() {
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] || continue
     issue_locked "$issue" && continue
-    if early_backoff "$issue"; then   # #94: its worker died at once twice in the window — no claim/release loop
+    if early_backoff "$issue" "$col"; then   # #94: its worker died at once twice in the window — no claim/release loop
+      local key
+      key="${col}#${issue}@$( { tail -1 "$(early_death_file "$issue")" 2>/dev/null || true; } | cut -d' ' -f1)"   # one line per backoff
       case " ${BACKOFF_LOGGED:-} " in
-        *" ${issue}:$(tail -1 "$(early_death_file "$issue")") "*) ;;
-        *) log "skip #${issue}: its worker died within ${SB_EARLY_DEATH_S:-120}s twice in ${SB_EARLY_WINDOW_S:-600}s — not claimed again until that window passes"
-           BACKOFF_LOGGED="${BACKOFF_LOGGED:-} ${issue}:$(tail -1 "$(early_death_file "$issue")")" ;;
+        *" ${key} "*) ;;
+        *) log "skip #${issue} in ${col}: its worker died within ${SB_EARLY_DEATH_S:-120}s twice in ${SB_EARLY_WINDOW_S:-600}s — not claimed again until that window passes"
+           BACKOFF_LOGGED="${BACKOFF_LOGGED:-} ${key}" ;;
       esac
       continue
     fi
@@ -284,6 +294,7 @@ issue_locked() {
     return 0
   fi
   [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log"
+  note_early_death "$issue"   # the second place a dead lock goes (a worker that died after this tick's reap): same ledger (#94)
   rm -f "$lock"
   return 1
 }
@@ -690,27 +701,39 @@ early_death_file() { printf '%s/early-deaths/%s' "$INFLIGHT_DIR" "$1"; }
 note_early_death() {
   # $1 = issue; the lock just read (LANE, STARTED) is the worker that died. #94 (18/10 19:26–19:47Z): a worker dying ~33 s after
   # each dispatch made reap free the card and the next tick claim it again, every ~40 s, until the board halted. A worker that died
-  # within SB_EARLY_DEATH_S (120 s) of its dispatch is recorded here, with the last line of its log, so the card can cool down.
-  local started now age f last
+  # within SB_EARLY_DEATH_S (120 s) of its dispatch is recorded here as "<epoch> <lane>", with the last line of its log, so the card
+  # can cool down in that lane. Bookkeeping only: under the runner's `set -euo pipefail` no step here may end the runner.
+  local started now age f last n
   started=$(python3 -c 'import calendar, sys, time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "${STARTED:-}" 2>/dev/null) || return 0
   now=$(date +%s); age=$((now - started))
   [ "$age" -lt "${SB_EARLY_DEATH_S:-120}" ] || return 0
   f=$(early_death_file "$1")
-  mkdir -p "$(dirname "$f")"
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
   # keep only the window: the file never grows past a few lines
-  { awk -v from=$((now - ${SB_EARLY_WINDOW_S:-600})) '$1 >= from' "$f" 2>/dev/null; echo "$now"; } > "$f.tmp" && mv "$f.tmp" "$f"
-  last=$(grep -v '^[[:space:]]*$' "${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log" 2>/dev/null | tail -1 | cut -c1-200)
-  log "⚠ worker of #${1} (lane ${LANE:-?}) died ${age}s after dispatch — early death $(wc -l < "$f" | tr -d ' ') in ${SB_EARLY_WINDOW_S:-600}s; last log line: ${last:-<no worker log at ${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log>}"
+  { awk -v from=$((now - ${SB_EARLY_WINDOW_S:-600})) '$1 >= from' "$f" 2>/dev/null || true; echo "$now ${LANE:-?}"; } > "$f.tmp" 2>/dev/null \
+    && mv "$f.tmp" "$f" 2>/dev/null || return 0
+  # the log may be gone or empty (the 19/10 shape): grep exits 1/2, which pipefail would turn into the runner's exit
+  last=$( { grep -v '^[[:space:]]*$' "${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log" 2>/dev/null || true; } | tail -1 | cut -c1-200)
+  n=$( { awk -v l="${LANE:-?}" '$2 == l' "$f" 2>/dev/null || true; } | wc -l | tr -d ' ')
+  log "⚠ worker of #${1} (lane ${LANE:-?}) died ${age}s after dispatch — early death ${n} of this lane in ${SB_EARLY_WINDOW_S:-600}s; last log line: ${last:-<no worker log at ${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log>}"
 }
 
 early_backoff() {
-  # 0 = card $1 had 2 early deaths within SB_EARLY_WINDOW_S: no third claim until the window passes (AC of #94: at most 2
-  # assign/unassign cycles per card in 10 minutes). The card's other columns and every other card are unaffected.
-  local f now n
+  # $1 = issue, $2 = the column a lane takes it from. 0 = 2 early deaths of a lane serving that column within SB_EARLY_WINDOW_S: no
+  # third claim until the window passes (AC of #94: at most 2 assign/unassign cycles per card in 10 minutes). Per lane: a Reviewer
+  # that bounced the card to Ready in seconds says nothing about the Builder taking it next, nor two quick builds about its review.
+  local f now n lanes
+  case "${2:-}" in
+    Ready) lanes="build qa" ;;   # a `qa`-labelled Ready card goes to the Tester
+    QA) lanes="qa" ;;
+    Review) lanes="review" ;;
+    *) return 1 ;;
+  esac
   f=$(early_death_file "$1")
   [ -f "$f" ] || return 1
   now=$(date +%s)
-  n=$(awk -v from=$((now - ${SB_EARLY_WINDOW_S:-600})) '$1 >= from' "$f" 2>/dev/null | wc -l | tr -d ' ')
+  n=$( { awk -v from=$((now - ${SB_EARLY_WINDOW_S:-600})) -v lanes=" $lanes " '$1 >= from && index(lanes, " " $2 " ")' "$f" 2>/dev/null || true; } \
+       | wc -l | tr -d ' ')
   [ "${n:-0}" -ge 2 ]
 }
 
@@ -1130,13 +1153,15 @@ while true; do
   if maybe_sweep_blocked; then fetch_project_items; fi
 
   READY=$(column_count "Ready")
+  WAITING=$(person_count "Ready")   # #95: Ready cards only a person can move; left out of Ready for dispatch and the exit test
+  READY=$((READY - WAITING))
   BUILDING=0
   BUILDING=$(column_count "Building")
   QA=$(column_count "QA")
   REVIEW=$(column_count "Review")
   BLOCKED=$(column_count "Blocked")
 
-  log "tick — Ready=$READY Building=$BUILDING QA=$QA Review=$REVIEW Blocked=$BLOCKED lanes: b_idle=$BUILD_IDLE(#${BUILD_ISSUE:-_}) q_idle=$QA_IDLE(#${QA_ISSUE:-_}) r_idle=$REVIEW_IDLE(#${REVIEW_ISSUE:-_})"
+  log "tick — Ready=$READY Building=$BUILDING QA=$QA Review=$REVIEW Blocked=$BLOCKED lanes: b_idle=$BUILD_IDLE(#${BUILD_ISSUE:-_}) q_idle=$QA_IDLE(#${QA_ISSUE:-_}) r_idle=$REVIEW_IDLE(#${REVIEW_ISSUE:-_}) waiting_on_you=$WAITING"
 
   if [ "$READY" -eq 0 ] && [ "$BUILDING" -eq 0 ] && [ "$QA" -eq 0 ] && [ "$REVIEW" -eq 0 ] \
      && [ "$BUILD_IDLE" -eq 1 ] && [ "$QA_IDLE" -eq 1 ] && [ "$REVIEW_IDLE" -eq 1 ]; then
