@@ -310,10 +310,16 @@ load_now() {
 }
 wait_for_load() {
   local max="${SB_MERGE_LOAD_MAX:-}" cap="${SB_MERGE_LOAD_WAIT_S:-900}" poll="${SB_MERGE_LOAD_POLL_S:-30}" waited=0 load nap
+  LOAD_WAITED=0
   [ "$DRY" -eq 1 ] && return 0
   # Tối đa 6 chữ số (không tràn số); 10# đọc 08 là tám (không có nó bash đọc bát phân và set -e dừng gate).
   [[ "$cap" =~ ^[0-9]{1,6}$ ]] || { say "SB_MERGE_LOAD_WAIT_S='${cap}' is not a number of seconds; not waiting for the load"; return 0; }
   cap=$((10#$cap)); [ "$cap" -gt 0 ] || return 0
+  # Khoá được làm mới lúc chờ nên không bao giờ "bỏ quên": giữ việc chờ dưới nửa LOCK_TIMEOUT để gate xếp hàng còn lượt.
+  if [ "$cap" -gt $(( LOCK_TIMEOUT / 2 )) ]; then
+    say "SB_MERGE_LOAD_WAIT_S=${cap} is over half the lock timeout; waiting at most $(( LOCK_TIMEOUT / 2 ))s"
+    cap=$(( LOCK_TIMEOUT / 2 )); [ "$cap" -gt 0 ] || return 0
+  fi
   if [[ "$poll" =~ ^[0-9]{1,6}$ ]] && [ $((10#$poll)) -gt 0 ]; then poll=$((10#$poll))
   else say "SB_MERGE_LOAD_POLL_S='${poll}' is not a positive number; polling every 30s"; poll=30; fi
   if [[ "$max" =~ ^[0-9]{1,6}$ ]] && [ $((10#$max)) -gt 0 ]; then max=$((10#$max))
@@ -323,7 +329,9 @@ wait_for_load() {
   fi
   while :; do
     # Khoá được giữ cả lúc chờ: làm mới mốc "at" để gate khác không coi nó là khoá bỏ quên. Ghi hỏng không phải lý do bỏ verify.
-    date +%s > "$LOCK_DIR/at" 2>/dev/null || say "could not refresh the merge lock stamp ${LOCK_DIR}/at"
+    # Ghi qua file tạm rồi mv: gate khác đọc `at` giữa lúc `>` cắt file thì nhận chuỗi rỗng và $(( )) lỗi cú pháp.
+    { date +%s > "$LOCK_DIR/at.$$" && mv -f "$LOCK_DIR/at.$$" "$LOCK_DIR/at"; } 2>/dev/null \
+      || say "could not refresh the merge lock stamp ${LOCK_DIR}/at"
     load=$(load_now)
     [[ "$load" =~ ^[0-9]{1,6}$ ]] || { say "cannot read the machine load ('${load}'); verifying without waiting"; return 0; }
     load=$((10#$load))
@@ -334,10 +342,22 @@ wait_for_load() {
     [ "$waited" -ge "$cap" ] && { say "load still ${load} after ${waited}s; verifying anyway"; return 0; }
     [ "$waited" -eq 0 ] && say "waiting for load ${load} to drop below ${max} before verify (at most ${cap}s)"
     nap=$(( cap - waited < poll ? cap - waited : poll ))
-    sleep "$nap"; waited=$(( waited + nap ))
+    sleep "$nap"; waited=$(( waited + nap )); LOAD_WAITED=$waited
   done
 }
 wait_for_load
+# Đã chờ thì PR có thể đã đổi: đọc lại head và trạng thái, không verify code không còn là PR.
+if [ "${LOAD_WAITED:-0}" -gt 0 ]; then
+  NOW_HEAD=$(pr_head) || exit $?
+  STATE=$(pr_state) || exit $?
+  [ "$(echo "$STATE" | jq -r .state)" = MERGED ] && { say "merged on GitHub while waiting for the load; nothing to repeat"; exit 0; }
+  [ "$(echo "$STATE" | jq -r .state)" = OPEN ] || { say "PR closed while waiting for the load; refusing merge"; exit 3; }
+  if [ "$NOW_HEAD" != "$HEAD" ]; then
+    say "head moved while waiting for the load: ${HEAD_SHA} -> ${NOW_HEAD#* }"
+    say "the review evidence is void — send the card back to Review"
+    exit 6
+  fi
+fi
 
 git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet
 # Chốt commit base một lần, merge đúng commit đó: verify đỏ thì đếm "chậm hơn base" theo chính nó. Đọc lại origin/<base> sau vài phút

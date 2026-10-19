@@ -78,15 +78,19 @@ lt=$(grep -n "lock taken" "$TMP/gate1.log" | head -1 | cut -d: -f1); wl=$(grep -
 [ -n "$lt" ] && [ -n "$wl" ] && [ "$lt" -lt "$wl" ] && ok "the wait comes after the lock and the early exits" \
   || fail "wait not after 'lock taken' (lock line ${lt:-none}, wait line ${wl:-none})"
 
-# Ca 2: tải 99 rồi xuống 2 sau ~2 s, poll 1, chờ tối đa 60 s → verify bắt đầu khi tải xuống, xa trước 60 s.
+# Đợi tới khi gate in dòng chờ (tối đa 30 s) rồi mới chạy lệnh: không phụ thuộc gate khởi động nhanh hay chậm.
+when_waiting() { local i=0; while [ "$i" -lt 60 ] && ! grep -q "waiting for load" "$1" 2>/dev/null; do sleep 0.5; i=$((i + 1)); done; }
+
+# Ca 2: tải 99, gate vào chờ, rồi tải xuống 2; poll 1, chờ tối đa 60 s → verify bắt đầu khi tải xuống, xa trước 60 s.
 echo 99 > "$LOADF"; rm -f "$STARTED"
-( sleep 2; echo 2 > "$LOADF" ) &
+( when_waiting "$TMP/gate2.log"; echo 2 > "$LOADF" ) &
 writer=$!
 t0=$(date +%s)
 SB_MERGE_LOAD_WAIT_S=60 SB_MERGE_LOAD_POLL_S=1 gate >"$TMP/gate2.log" 2>&1; rc=$?
 wait "$writer" 2>/dev/null
 d=$(( $(cat "$STARTED" 2>/dev/null || echo 0) - t0 ))
-[ "$d" -ge 2 ] && [ "$d" -lt 40 ] && ok "verify started once the load dropped (${d}s, cap 60)" || fail "verify start ${d}s after the gate (want 2..39)"
+grep -q "load 2 after" "$TMP/gate2.log" && ok "the gate waited, then saw the load drop" || fail "no mid-wait drop seen: $(grep merge-gate "$TMP/gate2.log" | head -4)"
+[ "$d" -lt 40 ] && ok "verify started once the load dropped (${d}s, cap 60)" || fail "verify start ${d}s after the gate (want < 40)"
 grep -q "verifying anyway" "$TMP/gate2.log" && fail "load dropped but the gate says it gave up waiting" || ok "no capped-wait message when the load dropped"
 ran "$rc" && ok "load dropped: verify ran (exit 11)" || fail "load dropped: gate exit $rc"
 
@@ -105,8 +109,9 @@ SB_MERGE_LOAD_WAIT_S=0 SB_MERGE_LOAD_POLL_S=30 gate >"$TMP/gate4.log" 2>&1; rc=$
 grep -q "waiting for load" "$TMP/gate4.log" && fail "SB_MERGE_LOAD_WAIT_S=0 still waits" || ok "SB_MERGE_LOAD_WAIT_S=0: no wait"
 ran "$rc" && ok "SB_MERGE_LOAD_WAIT_S=0: verify ran (exit 11)" || fail "SB_MERGE_LOAD_WAIT_S=0: gate exit $rc"
 rm -f "$STARTED"
-SB_MERGE_LOAD_WAIT_S=60 SB_MERGE_LOAD_POLL_S=30 gate --dry-run >"$TMP/gate5.log" 2>&1
+SB_MERGE_LOAD_WAIT_S=60 SB_MERGE_LOAD_POLL_S=30 gate --dry-run >"$TMP/gate5.log" 2>&1; rc=$?
 grep -q "waiting for load" "$TMP/gate5.log" && fail "--dry-run waits for the load" || ok "--dry-run: no wait"
+ran "$rc" && ok "--dry-run: gate got past the wait point and verified (exit 11)" || fail "--dry-run: gate exit $rc"
 
 # Ca 6: số có 0 đứng đầu (08 = bát phân trong $(( ))) đọc là thập phân: gate không chết, vẫn chờ 2 s rồi verify.
 echo 99 > "$LOADF"; rm -f "$STARTED"
@@ -138,6 +143,21 @@ i=0; while [ "$i" -lt 60 ] && ! grep -q "waiting for load" "$TMP/gate8.log" 2>/d
 a1=$(cat "$AT" 2>/dev/null || echo 0); sleep 3; a2=$(cat "$AT" 2>/dev/null || echo 0)
 wait "$gp"
 [ "$a2" -gt "$a1" ] && ok "lock stamp refreshed while waiting ($a1 -> $a2)" || fail "lock stamp not refreshed while waiting ($a1 -> $a2)"
+
+# Ca 9: head PR đổi trong lúc chờ → exit 6, không verify code cũ.
+echo 99 > "$LOADF"; rm -f "$STARTED"
+( when_waiting "$TMP/gate9.log"; echo 0123456789abcdef0123456789abcdef01234567 > "$TMP/pr5.head" ) &
+writer=$!
+SB_MERGE_LOAD_WAIT_S=3 SB_MERGE_LOAD_POLL_S=1 gate >"$TMP/gate9.log" 2>&1; rc=$?
+wait "$writer" 2>/dev/null; echo "$H" > "$TMP/pr5.head"
+[ "$rc" -eq 6 ] && ok "head moved during the wait: exit 6" || fail "head moved during the wait: gate exit $rc (want 6): $(grep merge-gate "$TMP/gate9.log" | tail -3)"
+[ -f "$STARTED" ] && fail "verify ran on the old head after the PR moved" || ok "no verify on the old head"
+
+# Ca 10: chờ quá nửa LOCK_TIMEOUT bị giới hạn và gate nói ra.
+echo 3 > "$LOADF"; rm -f "$STARTED"
+( cd "$WT" && SB_MERGE_LOAD_WAIT_S=999 bash "$GATE" --config "$CFG" --pr 5 --expect-head "$H" --lock-timeout 60 ) >"$TMP/gate10.log" 2>&1
+grep -q "over half the lock timeout; waiting at most 30s" "$TMP/gate10.log" \
+  && ok "wait cap clamped to half the lock timeout" || fail "no clamp message: $(grep merge-gate "$TMP/gate10.log" | head -3)"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_load_wait: PASS"; exit 0; } || { echo "test_merge_gate_load_wait: FAIL ($FAILS)"; exit 1; }

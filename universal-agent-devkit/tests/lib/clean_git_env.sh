@@ -20,7 +20,7 @@ unset _v
 # fixture siblings, and under 3 GiB refuse. tests/worktree_git/test_worktree_limits.sh sets these itself.
 export WORKTREE_DISK_WARN_GIB=0 WORKTREE_DISK_MIN_GIB=0 WORKTREE_MAX=0
 # Same for the super-board merge gate's wait for a lower machine load (19/10): at load ≥ 2 × cores every test that calls the gate would
-# sit up to 1800 s. tests/super-board/test_merge_gate_load_wait.sh sets it per call itself.
+# sit up to 900 s (SB_MERGE_LOAD_WAIT_S default). tests/super-board/test_merge_gate_load_wait.sh sets it per call itself.
 export SB_MERGE_LOAD_WAIT_S=0
 # The user's own ~/.antigravity-pm.json must not steer a test: `giaoDefault: true` there makes the prompt hook add the standing "GIAO MẶC ĐỊNH BẬT"
 # order to every prompt it sees (2026-10-14). A test that wants a flag sets this variable itself after sourcing. The path can never hold
