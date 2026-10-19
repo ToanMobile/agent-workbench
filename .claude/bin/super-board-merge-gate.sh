@@ -277,6 +277,73 @@ if [ -n "$HUMAN" ] && [ "$APPROVED" != true ]; then
   say "merge policy: waiting for a trusted human to approve this exact head"; exit 7
 fi
 
+# ---- chờ máy bớt tải trước verify ------------------------------------------------
+# 19/10: verify --full chạy lúc tải 1 phút ~60 (5 board cùng build), REG-DK-ALL-01 của PR #87 chọn 127 test và quá 900 s, thẻ #12
+# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX (mặc định 2 × số lõi), tối đa SB_MERGE_LOAD_WAIT_S, không đặt thì
+# `merge_load_wait_s` của config board (thiếu = 0 = không chờ: board tự bật; test dựng config tạm không có khoá nên không chờ, và
+# không phải đặt biến trong thư viện test dùng chung — sửa file đó kéo cả 291 test DevKit vào REG-DK-ALL-01, 19/10).
+# Hết giờ vẫn verify như cũ, không bỏ bước nào. Chờ trong khoá, sau các lối ra nhanh (đã merge, đóng, head đổi,
+# cần người) và TRƯỚC khi fetch/chốt base: verify chạy trên base mới nhất, không phải base của 15 phút trước. Head đổi lúc chờ thì
+# scratch dựng từ head cũ và `gh pr merge --match-head-commit` từ chối. Mốc "at" của khoá được làm mới mỗi lượt poll.
+# ponytail: gate khác xếp hàng ở acquire có thể hết LOCK_TIMEOUT (1800 s) và thoát 4 (giữ ở Review, wave sau thử lại) khi chờ lâu;
+# chấp nhận được vì verify dưới tải cao cũng đỏ, đổi sang hàng đợi có thứ tự khi nhiều PR cùng repo hay kẹt ở exit 4.
+# SB_MERGE_LOAD_FILE: móc test, đọc tải từ file thay cho os.getloadavg().
+load_now() {
+  if [ -n "${SB_MERGE_LOAD_FILE:-}" ]; then tr -d '[:space:]' < "$SB_MERGE_LOAD_FILE" 2>/dev/null || true
+  else python3 -c 'import os; print(int(os.getloadavg()[0]))' 2>/dev/null || true; fi
+}
+wait_for_load() {
+  local max="${SB_MERGE_LOAD_MAX:-}" cap="${SB_MERGE_LOAD_WAIT_S:-}" poll="${SB_MERGE_LOAD_POLL_S:-30}" waited=0 load nap
+  [ -n "$cap" ] || cap=$(printf '%s\n' "$CONFIG_JSON" | jq -r '.merge_load_wait_s // 0' 2>/dev/null || echo 0)
+  LOAD_WAITED=0
+  [ "$DRY" -eq 1 ] && return 0
+  # Tối đa 6 chữ số (không tràn số); 10# đọc 08 là tám (không có nó bash đọc bát phân và set -e dừng gate).
+  [[ "$cap" =~ ^[0-9]{1,6}$ ]] || { say "SB_MERGE_LOAD_WAIT_S='${cap}' is not a number of seconds; not waiting for the load"; return 0; }
+  cap=$((10#$cap)); [ "$cap" -gt 0 ] || return 0
+  # Khoá được làm mới lúc chờ nên không bao giờ "bỏ quên": giữ việc chờ dưới nửa LOCK_TIMEOUT để gate xếp hàng còn lượt.
+  if [ "$cap" -gt $(( LOCK_TIMEOUT / 2 )) ]; then
+    say "SB_MERGE_LOAD_WAIT_S=${cap} is over half the lock timeout; waiting at most $(( LOCK_TIMEOUT / 2 ))s"
+    cap=$(( LOCK_TIMEOUT / 2 )); [ "$cap" -gt 0 ] || return 0
+  fi
+  if [[ "$poll" =~ ^[0-9]{1,6}$ ]] && [ $((10#$poll)) -gt 0 ]; then poll=$((10#$poll))
+  else say "SB_MERGE_LOAD_POLL_S='${poll}' is not a positive number; polling every 30s"; poll=30; fi
+  if [[ "$max" =~ ^[0-9]{1,6}$ ]] && [ $((10#$max)) -gt 0 ]; then max=$((10#$max))
+  else
+    [ -n "$max" ] && say "SB_MERGE_LOAD_MAX='${max}' is not a positive number; using 2 x cores"
+    max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 2 ))
+  fi
+  while :; do
+    # Khoá được giữ cả lúc chờ: làm mới mốc "at" để gate khác không coi nó là khoá bỏ quên. Ghi hỏng không phải lý do bỏ verify.
+    # Ghi qua file tạm rồi mv: gate khác đọc `at` giữa lúc `>` cắt file thì nhận chuỗi rỗng và $(( )) lỗi cú pháp.
+    { date +%s > "$LOCK_DIR/at.$$" && mv -f "$LOCK_DIR/at.$$" "$LOCK_DIR/at"; } 2>/dev/null \
+      || say "could not refresh the merge lock stamp ${LOCK_DIR}/at"
+    load=$(load_now)
+    [[ "$load" =~ ^[0-9]{1,6}$ ]] || { say "cannot read the machine load ('${load}'); verifying without waiting"; return 0; }
+    load=$((10#$load))
+    if [ "$load" -lt "$max" ]; then
+      [ "$waited" -gt 0 ] && say "load ${load} after ${waited}s; verifying"
+      return 0
+    fi
+    [ "$waited" -ge "$cap" ] && { say "load still ${load} after ${waited}s; verifying anyway"; return 0; }
+    [ "$waited" -eq 0 ] && say "waiting for load ${load} to drop below ${max} before verify (at most ${cap}s)"
+    nap=$(( cap - waited < poll ? cap - waited : poll ))
+    sleep "$nap"; waited=$(( waited + nap )); LOAD_WAITED=$waited
+  done
+}
+wait_for_load
+# Đã chờ thì PR có thể đã đổi: đọc lại head và trạng thái, không verify code không còn là PR.
+if [ "${LOAD_WAITED:-0}" -gt 0 ]; then
+  NOW_HEAD=$(pr_head) || exit $?
+  STATE=$(pr_state) || exit $?
+  [ "$(echo "$STATE" | jq -r .state)" = MERGED ] && { say "merged on GitHub while waiting for the load; nothing to repeat"; exit 0; }
+  [ "$(echo "$STATE" | jq -r .state)" = OPEN ] || { say "PR closed while waiting for the load; refusing merge"; exit 3; }
+  if [ "$NOW_HEAD" != "$HEAD" ]; then
+    say "head moved while waiting for the load: ${HEAD_SHA} -> ${NOW_HEAD#* }"
+    say "the review evidence is void — send the card back to Review"
+    exit 6
+  fi
+fi
+
 git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet
 # Chốt commit base một lần, merge đúng commit đó: verify đỏ thì đếm "chậm hơn base" theo chính nó. Đọc lại origin/<base> sau vài phút
 # verify có thể đã bị phiên khác fetch đi; suy từ HEAD^2 thì sai khi merge là fast-forward lên một merge commit (OCR 18/10).
