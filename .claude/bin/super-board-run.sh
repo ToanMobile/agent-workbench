@@ -1070,11 +1070,22 @@ startup_reconcile() {
   gh_rate_guard
   fetch_project_items
   reclaim_stranded_building; fetch_project_items
-  # Dọn worktree lane + nhánh của thẻ đã merge (#96, OCR batch trên #111): sau reap/adopt nên lock của lane còn sống đã rõ. Chạy NỀN:
-  # một `gh pr list` cho mỗi thẻ còn sót có thể mất vài phút, không được giữ chân lần dispatch đầu (OCR). Sweep tự khoá (sweep.lock),
-  # tự chặn lần gọi dày (--min-interval), không bao giờ ghi file halt và luôn exit 0; không gì ở đây dừng được runner.
-  # (${BASE_BRANCH:+…}: ở lib-only BASE_BRANCH chưa đặt; không có thì sweep tự dò origin/HEAD — review)
-  bash "$(dirname "$SB_GITHUB_READ")/super-board-post-merge-clean.sh" --sweep . ${BASE_BRANCH:+--base "$BASE_BRANCH"} \
+  # Sweep sau reap/adopt: lock của lane còn sống đã rõ.
+  sweep_merged_lanes
+}
+# Dọn worktree lane + nhánh của thẻ đã merge (#96, OCR batch trên #111): lúc khởi động và mỗi tick của vòng chính (#118: runner chạy
+# nhiều ngày, worktree issue-7-review của PR #128 nằm tới lần khởi động sau). Chạy NỀN: một `gh pr list` cho mỗi thẻ còn sót có thể mất
+# vài phút, không được giữ chân tick (OCR). Sweep tự khoá (sweep.lock), tự chặn lần gọi dày (--min-interval), không bao giờ ghi file
+# halt và luôn exit 0; không gì ở đây dừng được runner. Runner tự giãn SWEEP_NEXT 600 s vì sweep không ghi stamp khi đọc GitHub hỏng:
+# không có nó thì GitHub hỏng = một lượt gh mỗi tick. --min-interval 300 (< 600): stamp ghi lúc sweep XONG, nên với 600 lượt kế của
+# runner hay rơi vào khoảng nghỉ của chính lượt trước và nhịp thành 10/20 phút xen kẽ (review); 300 vẫn chặn wave gọi chồng.
+# (${BASE_BRANCH:+…}: ở lib-only BASE_BRANCH chưa đặt; không có thì sweep tự dò origin/HEAD — review)
+sweep_merged_lanes() {
+  local now
+  now=$(date +%s)
+  [ "$now" -lt "${SWEEP_NEXT:-0}" ] && return 0
+  SWEEP_NEXT=$((now + 600))
+  bash "$(dirname "$SB_GITHUB_READ")/super-board-post-merge-clean.sh" --sweep . --min-interval 300 ${BASE_BRANCH:+--base "$BASE_BRANCH"} \
     >>"$RUN_MANIFEST" 2>&1 </dev/null &
 }
 
@@ -1372,6 +1383,7 @@ while true; do
   fi
 
   reap_finished_locks  # cheap local sweep; runs every tick
+  sweep_merged_lanes   # trước nhánh cap-reached: worktree của thẻ vừa merge được gỡ cả khi 3 lane đều bận (#118)
 
   # ── Zombie sweep against the LAST cached project state (no extra API).
   #    Catches workers whose card already moved out of the lane's source column
