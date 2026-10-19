@@ -222,6 +222,14 @@ top_card_in_column() {
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] || continue
     issue_locked "$issue" && continue
+    if early_backoff "$issue"; then   # #94: its worker died at once twice in the window — no claim/release loop
+      case " ${BACKOFF_LOGGED:-} " in
+        *" ${issue}:$(tail -1 "$(early_death_file "$issue")") "*) ;;
+        *) log "skip #${issue}: its worker died within ${SB_EARLY_DEATH_S:-120}s twice in ${SB_EARLY_WINDOW_S:-600}s — not claimed again until that window passes"
+           BACKOFF_LOGGED="${BACKOFF_LOGGED:-} ${issue}:$(tail -1 "$(early_death_file "$issue")")" ;;
+      esac
+      continue
+    fi
     local issue_rc=0
     issue_is_open "$issue" || issue_rc=$?
     [ "$issue_rc" -le 1 ] || exit "$issue_rc"
@@ -240,6 +248,11 @@ $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" '
     .items[]
     | select(.status == $col and .content.type == "Issue")
     | select((.content.assignees // []) | length == 0)
+    # #95: a Ready card labelled needs-you / human-gated waits for a person (playtest, real device, store account, a ruling):
+    # dispatching it only spends a lane and parks it again. Not in QA/Review: the resume path moves a 🙋 card a person
+    # approved to Review with its label possibly still on (run.md → resume). Removing the label releases the card.
+    | select($col != "Ready" or ([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)
+                                  | ascii_downcase] | (index("needs-you") or index("human-gated")) | not))
     | [(.content.number | tostring), (.id // "")] | @tsv')
 EOF
   return 1
@@ -491,6 +504,9 @@ dispatch_lane() {
   # `claude` invocation itself — no wrapping subshell, no `exec` — so the wire to the
   # file survives and `$!` names the worker process rather than a bash stub.
   local worker_log="${WORKER_LOG_DIR}/worker-${lane}-${issue}.log"
+  # The folder is made at startup only; gone since (19/10: no 2026-10-19-*-workers folder), every `>> $worker_log` below fails and
+  # the worker never starts — dying at once, tick after tick (#94). Made again here, before anything is written to it.
+  mkdir -p "$WORKER_LOG_DIR" 2>/dev/null || log "⚠ cannot make the worker log folder $WORKER_LOG_DIR"
   {
     printf '=== dispatch lane=%s issue=#%s at %s ===\n' "$lane" "$issue" "$(date -u +%FT%TZ)"
     printf 'prompt: %s\n\n' "$prompt"
@@ -668,6 +684,36 @@ paused_tick() {
   sweep_lane_zombies
 }
 
+# A folder in inflight/ (git-ignored in every board repo); every reader of inflight/ skips folders and non-numeric names, as merge.lock
+early_death_file() { printf '%s/early-deaths/%s' "$INFLIGHT_DIR" "$1"; }
+
+note_early_death() {
+  # $1 = issue; the lock just read (LANE, STARTED) is the worker that died. #94 (18/10 19:26–19:47Z): a worker dying ~33 s after
+  # each dispatch made reap free the card and the next tick claim it again, every ~40 s, until the board halted. A worker that died
+  # within SB_EARLY_DEATH_S (120 s) of its dispatch is recorded here, with the last line of its log, so the card can cool down.
+  local started now age f last
+  started=$(python3 -c 'import calendar, sys, time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "${STARTED:-}" 2>/dev/null) || return 0
+  now=$(date +%s); age=$((now - started))
+  [ "$age" -lt "${SB_EARLY_DEATH_S:-120}" ] || return 0
+  f=$(early_death_file "$1")
+  mkdir -p "$(dirname "$f")"
+  # keep only the window: the file never grows past a few lines
+  { awk -v from=$((now - ${SB_EARLY_WINDOW_S:-600})) '$1 >= from' "$f" 2>/dev/null; echo "$now"; } > "$f.tmp" && mv "$f.tmp" "$f"
+  last=$(grep -v '^[[:space:]]*$' "${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log" 2>/dev/null | tail -1 | cut -c1-200)
+  log "⚠ worker of #${1} (lane ${LANE:-?}) died ${age}s after dispatch — early death $(wc -l < "$f" | tr -d ' ') in ${SB_EARLY_WINDOW_S:-600}s; last log line: ${last:-<no worker log at ${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log>}"
+}
+
+early_backoff() {
+  # 0 = card $1 had 2 early deaths within SB_EARLY_WINDOW_S: no third claim until the window passes (AC of #94: at most 2
+  # assign/unassign cycles per card in 10 minutes). The card's other columns and every other card are unaffected.
+  local f now n
+  f=$(early_death_file "$1")
+  [ -f "$f" ] || return 1
+  now=$(date +%s)
+  n=$(awk -v from=$((now - ${SB_EARLY_WINDOW_S:-600})) '$1 >= from' "$f" 2>/dev/null | wc -l | tr -d ' ')
+  [ "${n:-0}" -ge 2 ]
+}
+
 reap_finished_locks() {
   # Sweep inflight/ for dead PIDs; remove locks AND sweep stale assignees so the
   # next dispatch can re-claim the card if the worker crashed without releasing.
@@ -684,6 +730,7 @@ reap_finished_locks() {
     read_lock "$issue"
     if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
       [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log"
+      note_early_death "$issue"
       gh_checkpoint
       if [ -n "$BOT_LOGIN" ]; then
         gh_checkpoint

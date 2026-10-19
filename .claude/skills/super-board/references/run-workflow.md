@@ -208,7 +208,9 @@ Repeat until a done condition or halt gate fires:
    Comment on flagged cards asking for their
    `## Blocked by` line to be fixed, and return every stranded Building card to
    `Ready` (below). Swept, resumed, approval-refresh and stranded cards are NOT in this pass's
-   `cards`; they join the next wave.
+   `cards`; they join the next wave. `waiting` lists Ready cards labelled `needs-you` / `human-gated`
+   (#95): only a person can move them, so they are never in `cards`; leave them, name them in the
+   summary, and they return once a person removes the label.
 
    **Stranded Building cards.** A card in Building with no assignee between
    waves has no live worker — a stopped or crashed wave left it mid-build. For
