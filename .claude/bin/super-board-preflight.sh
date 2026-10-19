@@ -112,12 +112,14 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
 
   # Câu 5 — quá lớn? Regex trên chữ của issue (title + body), tất định. Chỉnh 19/10 trên 245 issue lấy bằng
   # `gh issue list --state all` ở 6 board: 6 thẻ builder đã chặn vì quá lớn (NFH #4 #13 #14 #54, OfficeReader
-  # #98 #102) đều hold, 0/49 thẻ đóng COMPLETED có AC bị hold. Một tín hiệu không bao giờ đủ (nghiêng về
-  # proceed); `device` tính 2 vì AC chỉ máy thật chứng minh được kéo theo cả bộ test trên thiết bị (comment
-  # builder ở OfficeReader #98: riêng phần chứng minh ~800–1.100 dòng).
-  # Mục "## <tên>" cuối cùng của body, tới mục "## " kế tiếp (cùng cách has_acs đọc mục AC).
+  # #98 #102) đều hold, 0/49 thẻ đóng COMPLETED có AC bị hold. Nghiêng về proceed: mọi tín hiệu tính 1 và cần
+  # ≥2, trừ `device` tính 2 nên tự nó đủ hold — AC chỉ máy thật chứng minh được kéo theo cả bộ test trên thiết
+  # bị (comment builder ở OfficeReader #98: riêng phần chứng minh ~800–1.100 dòng); agent hạ được khi nêu lý do.
+  # Trần 400 là mặc định của merge_policy.auto_max_lines; script không đọc config nên chữ "default" đi kèm.
+  # ponytail: trần cố định trong lời nhắn, thêm tham số --cap (chưa có) khi có board đặt trần khác 400.
+  # Mục "## <tên>" cuối cùng của body (khớp cả dòng tiêu đề, khác has_acs chỉ khớp đầu dòng), tới "## " kế tiếp.
   def sect($h): ((.body // "") / "\n") as $l
-    | [ $l | to_entries[] | select(.value | test("^##[ \t]+" + $h + "[ \t]*$")) | .key ] as $k
+    | [ $l | to_entries[] | select(.value | test("^##[ \t]+" + $h + "[ \t\r]*$")) | .key ] as $k
     | if ($k | length) == 0 then ""
       else [ $l[($k | last) + 1:][] ] as $t
         | ([ $t | to_entries[] | select(.value | test("^##[ \t]")) | .key ] | first) as $e
@@ -166,7 +168,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     # work: tín hiệu "nhiều việc" (gợi ý tách theo việc); còn lại là AC phải tách ra thẻ `qa` riêng.
     | [ if ($short | length) >= 5 and ($short | length) * 5 >= ($items | length) * 4 then
           { w: 1, work: true, split: $items,
-            says: "Fix lists \($short | length) separate deliverables: at a rough ~100 changed lines each, ~\($short | length * 100) lines, over the 400-line merge cap" }
+            says: "Fix lists \($short | length) separate deliverables: at a rough ~100 changed lines each, ~\($short | length * 100) lines, over the default 400-line merge cap" }
         elif ($named | length) >= 3 then
           { w: 1, work: true, split: $named, says: "the title names \($named | length) deliverables" }
         else empty end,
@@ -187,7 +189,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
             says: "AC only a real device can prove: \($metric | join(" · "))" } else empty end ] as $sig
     | { hold: (([ $sig[].w ] | add // 0) >= 2), evidence: [ $sig[].says ],
         split: (([ $sig[] | select(.work) | .split | select(length > 0) ] | first
-                 // [ "vertical slices, each under the 400-line merge cap" ])
+                 // [ "vertical slices, each under the merge cap (default 400 lines)" ])
                 + [ $sig[] | select(.work | not) | .split[] ]) };
 
   [ $targets[] | . as $i | $i.number as $n
@@ -235,7 +237,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
             { verdict: "hold", tag: "unclear", reason: "no `## Acceptance Criteria` bullets", evidence: ["issue #\($n) body"] }
           elif $big.hold then
             { verdict: "hold", tag: "too-big", evidence: $big.evidence, split: $big.split,
-              reason: "too big — split it with /to-tickets into cards under the 400-line merge cap before building" }
+              reason: "too big — split it with /to-tickets into cards under the merge cap (default 400 lines) before building" }
           elif ($overlap | length) > 0 then
             { verdict: "sequence", tag: "overlap",
               reason: "open PRs touch the same files — build after them",

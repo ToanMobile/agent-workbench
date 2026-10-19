@@ -38,7 +38,7 @@ export PATH="$TMP/bin:$PATH" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETR
   SB_GH_GUARD_STATE_FILE="$TMP/budget"
 
 # Một lần gọi cho cả lô của mỗi repo, như wave và lint gọi.
-for spec in Neighbours-From-Hell:4,13,14,16,24,47,54 OfficeReader:94,98,102 GeelyEx2:11 Synthetic:901,902,903; do
+for spec in Neighbours-From-Hell:4,13,14,15,16,24,47,54 OfficeReader:94,98,102 GeelyEx2:11 Synthetic:901,902,903,904,905; do
   repo="${spec%%:*}"
   bash "$PREFLIGHT" --repo "ToanMobile/$repo" --issues "${spec##*:}" >"$TMP/$repo.json" 2>"$TMP/$repo.err" \
     || fail "$repo: preflight exit $? ($(tail -1 "$TMP/$repo.err"))"
@@ -46,12 +46,15 @@ done
 
 verdict() { jq -r --arg n "$2" '.[$n] | "\(.verdict)/\(.tag)"' "$TMP/$1.json" 2>/dev/null; }
 
-# #16 là ca biên: Fix đúng 5 đầu việc ngắn + "Giai đoạn" trong tiêu đề.
-for spec in Neighbours-From-Hell:4 Neighbours-From-Hell:13 Neighbours-From-Hell:14 Neighbours-From-Hell:16 \
-            Neighbours-From-Hell:54 OfficeReader:98 OfficeReader:102; do
+# Ca biên: #16 Fix đúng 5 đầu việc ngắn + "Giai đoạn"; #15 chỉ "Giai đoạn" + AC cần số liệu vận hành; 905 là
+# body #13 xuống dòng CRLF.
+# Gợi ý tách phải có ít nhất một dòng riêng của thẻ, không chỉ câu mặc định.
+for spec in Neighbours-From-Hell:4 Neighbours-From-Hell:13 Neighbours-From-Hell:14 Neighbours-From-Hell:15 \
+            Neighbours-From-Hell:16 Neighbours-From-Hell:54 OfficeReader:98 OfficeReader:102 Synthetic:905; do
   repo="${spec%%:*}"; n="${spec##*:}"; got=$(verdict "$repo" "$n")
   if [ "$got" = hold/too-big ] \
-     && jq -e --arg n "$n" '.[$n] | (.evidence | length) > 0 and (.split | length) > 0 and (.reason | test("too big"))' \
+     && jq -e --arg n "$n" '.[$n] | (.evidence | length) > 0 and (.reason | test("too big"))
+          and any(.split[]; test("^vertical slices") | not)' \
           "$TMP/$repo.json" >/dev/null; then
     ok "$repo #$n: hold/too-big, có bằng chứng và gợi ý tách"
   else
@@ -61,8 +64,10 @@ done
 
 # Thẻ đã build xong, giống thẻ quá lớn nhất: Risk "máy thật" (#94), đo trên xe (Geely #11), "đụng nhiều file" (#24),
 # Fix nhiều gạch đầu dòng + 4 vùng (#47). Ca tổng hợp: AC "OOM" mà thẻ không ghi máy thật (901), đúng một tín hiệu
-# là tiêu đề nêu 3 thứ (902). Không được giữ nhầm.
-for spec in OfficeReader:94 GeelyEx2:11 Neighbours-From-Hell:24 Neighbours-From-Hell:47 Synthetic:901 Synthetic:902; do
+# là tiêu đề nêu 3 thứ (902), đúng một tín hiệu và sát ngưỡng ở mọi tín hiệu khác: Fix 4 việc, 3 vùng, tiêu đề
+# 2 việc (904). Không được giữ nhầm.
+for spec in OfficeReader:94 GeelyEx2:11 Neighbours-From-Hell:24 Neighbours-From-Hell:47 Synthetic:901 Synthetic:902 \
+            Synthetic:904; do
   repo="${spec%%:*}"; n="${spec##*:}"; got=$(verdict "$repo" "$n")
   [ "$got" = proceed/clean ] && ok "$repo #$n: proceed (thẻ bình thường không bị giữ)" \
     || fail "$repo #$n: muốn proceed/clean, được $got"

@@ -247,6 +247,9 @@
       "component": "super-board-preflight",
       "watch_files": [
         ".claude/bin/super-board-preflight.sh",
+        ".claude/bin/super-board-github-read.py",
+        ".claude/bin/super-board-gh-guard.sh",
+        "tests/super-board/test_preflight_too_big.sh",
         "tests/super-board/fixtures/preflight-too-big/*"
       ],
       "mandatory_regression_tests": [
