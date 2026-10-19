@@ -1052,7 +1052,7 @@ fi
 # ponytail: kiểm-rồi-ghi không nguyên tử, hai lần khởi động trong cùng vài ms vẫn lọt; thêm khoá mkdir nếu thấy 2 runner.
 if [ "${SB_WATCHDOG_START:-0}" = "1" ]; then
   DISPATCH_COUNT=$(state_num DISPATCHES)
-  CARRY_NO_PROGRESS=$(state_num NO_PROGRESS)
+  NO_PROGRESS_CYCLE_COUNT=$(state_num NO_PROGRESS)   # gán thẳng: bản ghi đầu tiên đã mang giá trị này
   RUNAWAY_PAUSE_UNTIL=$(state_num PAUSE_UNTIL)
 fi
 runner_state_write running
@@ -1118,7 +1118,7 @@ log "initial Ready count: $INITIAL_READY"
 # Landed-work baseline (issue #8). Progress is a change in this set, not lane state.
 PREV_DONE_SIG=$(done_signature)
 INITIAL_DONE_SIG="$PREV_DONE_SIG"
-NO_PROGRESS_CYCLE_COUNT="${CARRY_NO_PROGRESS:-0}"   # watchdog khởi động lại: đếm tiếp từ runner trước
+NO_PROGRESS_CYCLE_COUNT="${NO_PROGRESS_CYCLE_COUNT:-0}"   # watchdog khởi động lại: đếm tiếp từ runner trước
 
 while true; do
   # Stop marker xuất hiện giữa chừng (super-board-stop.sh không kill được runner này, hoặc watchdog vừa khởi động nó

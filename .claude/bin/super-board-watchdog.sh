@@ -79,6 +79,19 @@ runner_alive() {   # 0 khi $1 là PID của runner board này còn sống (PID t
 # được, một dòng ENV_BASH_ENV / ENV_DYLD_INSERT_LIBRARIES sẽ chạy code tuỳ ý trong runner launchd khởi động không người.
 RUNNER_ENV_KEYS="PATH JAVA_HOME ANDROID_HOME ANDROID_SDK_ROOT SB_ACCOUNT_POOL SB_STATE_DIR CLAUDE_CONFIG_DIR DEVKIT_LANG"
 
+safe_path() {
+  # $1 = PATH lấy từ bản ghi. Bỏ mục tương đối và mục nằm trong repo (kể cả .claude/worktrees của worker): một thư mục
+  # worker tạo đứng đầu PATH sẽ thay gh/claude/python3 của runner chạy không người giám sát.
+  local out="" d rest="$1:"
+  while [ -n "$rest" ]; do
+    d=${rest%%:*}; rest=${rest#*:}
+    case "$d" in /*) ;; *) continue ;; esac
+    case "$d/" in "$ROOT"/*) continue ;; esac
+    out="${out:+$out:}$d"
+  done
+  printf '%s' "$out"
+}
+
 runner_env() {
   # Môi trường runner trước đã ghi (toolchain, cấu hình pool/account): launchd chỉ có PATH tối thiểu, runner và worker
   # cần đúng môi trường như lần khởi động tường minh. Thiếu bản ghi (runner cũ) thì dùng môi trường của chính watchdog.
@@ -86,15 +99,27 @@ runner_env() {
   ENVV=()
   for k in $RUNNER_ENV_KEYS; do
     v=$(field "ENV_$k" "$STATE")
+    [ "$k" != PATH ] || v=$(safe_path "$v")
     [ -z "$v" ] || ENVV+=("$k=$v")
   done
 }
 
+runner_log() {
+  # LOG trong bản ghi chỉ được nhận khi là file trong thư mục log của board; còn lại dùng log mặc định.
+  local l
+  l=$(field LOG "$STATE")
+  case "$l" in
+    "$ROOT"/docs/super-board/*.log|"$ROOT"/.claude/super-board/*.log) case "$l" in *..*) l="" ;; esac ;;
+    *) l="" ;;
+  esac
+  printf '%s' "${l:-docs/super-board/runner.log}"
+}
+
 restart_runner() {   # $1 = PID cũ, $2 = STATE cũ, $3 = RC cũ
   local log daemon new
-  log=$(field LOG "$STATE"); [ -n "$log" ] || log="docs/super-board/runner.log"
+  log=$(runner_log)
   daemon=$(field DAEMON "$STATE"); [ "$daemon" = 1 ] || daemon=0
-  mkdir -p "$(dirname "$log")"
+  mkdir -p "$(dirname "$log")" 2>/dev/null || { wlog "cannot create the log folder of $log: runner not restarted"; return 0; }
   [ ! -e "$MARK" ] || return 0   # stop vừa chạy giữa lúc kiểm và lúc khởi động
   runner_env
   # Đường dẫn tuyệt đối + bash: đúng dạng super-board-stop.sh nhận ra là runner của repo này. Runner tự từ chối nếu
@@ -156,7 +181,7 @@ check() {
     verdict spawn-died "runner pid $SPAWNED started by the watchdog exited before recording itself (config or readiness error, see ${t:-docs/super-board/runner.log}) — not restarted until an explicit super-board run"
     return 0
   fi
-  env_path=$(field ENV_PATH "$STATE"); env_path=${env_path:-$PATH}
+  env_path=$(safe_path "$(field ENV_PATH "$STATE")"); env_path=${env_path:-$PATH}
   for t in $RUNNER_TOOLS; do (PATH="$env_path"; command -v "$t" >/dev/null 2>&1) || missing="$missing $t"; done
   if [ -n "$missing" ]; then
     verdict missing-tools "runner pid $pid is dead but its PATH lacks:$missing (PATH=$env_path) — not restarted"

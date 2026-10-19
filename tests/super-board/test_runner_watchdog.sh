@@ -80,7 +80,8 @@ if m and not os.path.exists(m + '.written'):
     open(m + '.written', 'w').close()
 sys.exit(0)
 PY
-printf '#!/usr/bin/env bash\necho %s\n' "'{\"items\":[]}'" > "$BIN/super-board-card.sh"   # board rỗng
+# Board rỗng; STUB_CARD_FAIL=1: lần đọc board hỏng (runner crash lúc khởi động, trước tick đầu).
+printf '#!/usr/bin/env bash\n[ -z "${STUB_CARD_FAIL:-}" ] || exit 1\necho %s\n' "'{\"items\":[]}'" > "$BIN/super-board-card.sh"
 printf '#!/usr/bin/env bash\necho %s\n' "'{}'" > "$BIN/super-board-wave-plan.sh"
 for c in gh claude; do printf '#!/usr/bin/env bash\necho "%s $*" >> "$STUB_CALLS"; exit 1\n' "$c" > "$TMP/stub/$c"; done
 cat > "$TMP/stub/launchctl" <<'SH'
@@ -96,7 +97,10 @@ esac
 [ "$1" = bootstrap ] && echo "state-at-bootstrap $(sed -n 's/^PID=//p' "$STUB_STATE" 2>/dev/null) $(sed -n 's/^STATE=//p' "$STUB_STATE" 2>/dev/null)" >> "$STUB_CALLS"
 exit 0
 SH
-chmod +x "$BIN"/* "$TMP/stub"/*
+# gh "độc" trong worktree của một worker: chỉ chạy được nếu watchdog đưa thư mục này vào PATH của runner.
+mkdir -p "$R/.claude/worktrees/evil"
+printf '#!/usr/bin/env bash\n: > "%s"\nexit 1\n' "$TMP/pathinjected" > "$R/.claude/worktrees/evil/gh"
+chmod +x "$BIN"/* "$TMP/stub"/* "$R/.claude/worktrees/evil/gh"
 
 # An toàn trước tiên: stub nào không che được lệnh thật thì dừng, không chạy runner.
 for c in gh claude launchctl; do
@@ -105,7 +109,7 @@ for c in gh claude launchctl; do
 done
 
 ENVV=(-u SB_GITHUB_READ_STRICT -u POSTFIX_GATE_FORCE_FULL -u SB_DAEMON -u SB_WATCHDOG_START -u SB_WATCHDOG_AUTOINSTALL
-  -u JAVA_HOME -u ANDROID_HOME -u ANDROID_SDK_ROOT -u STUB_WRITE_MARK
+  -u JAVA_HOME -u ANDROID_HOME -u ANDROID_SDK_ROOT -u STUB_WRITE_MARK -u STUB_CARD_FAIL
   HOME="$TMP/home" PATH="$TMP/stub:$PATH" SB_ACCOUNT_POOL="$TMP/no-pool" SB_STATE_DIR="$TMP/home/sb"
   SB_LAUNCH_AGENTS_DIR="$TMP/LaunchAgents" STUB_HALT="$TMP/halt" STUB_CALLS="$TMP/calls"
   STUB_STATE="$TMP/repo/.claude/super-board/runner/t.state")
@@ -303,7 +307,10 @@ set_state() {   # set_state <pid> <STATE> [RC] [DAEMON]
   # ENV_PATH giữ stub ở đầu: runner do watchdog khởi động lại cũng không chạm gh/claude thật.
   mkdir -p "$RUNDIR"
   printf 'PID=%s\nSLUG=t\nSTARTED=1\nDAEMON=%s\nLOG=\nSTATE=%s\nRC=%s\n' "$1" "${4:-1}" "$2" "${3:-}" > "$STATE"
-  printf 'DISPATCHES=7\nENV_PATH=%s\nENV_JAVA_HOME=/opt/test-jdk\n' "$TMP/stub:$PATH" >> "$STATE"
+  # Đầu ENV_PATH là một thư mục trong worktree của worker (có gh giả): watchdog phải bỏ nó. LOG ngoài thư mục log của
+  # board: watchdog phải ghi vào log mặc định.
+  printf 'DISPATCHES=7\nNO_PROGRESS=4\nENV_PATH=%s\nENV_JAVA_HOME=/opt/test-jdk\n' "$R/.claude/worktrees/evil:$TMP/stub:$PATH" >> "$STATE"
+  sed -i '' "s#^LOG=\$#LOG=$TMP/outside.log#" "$STATE"
   # Dòng do worker cài vào: watchdog không được đưa BASH_ENV vào runner (bash chạy file đó lúc khởi động).
   printf 'ENV_BASH_ENV=%s\n' "$TMP/inject.sh" >> "$STATE"
 }
@@ -347,6 +354,10 @@ grep -q 'restarted' "$WLOG" 2>/dev/null && ok "restart logged to $(basename "$WL
 [ "$(field ENV_JAVA_HOME "$STATE")" = /opt/test-jdk ] && [ "$(field DISPATCHES "$STATE")" = 7 ] \
   && ok "restarted runner gets the recorded JAVA_HOME back and keeps counting dispatches (7)" \
   || fail "restarted runner: ENV_JAVA_HOME='$(field ENV_JAVA_HOME "$STATE")' DISPATCHES='$(field DISPATCHES "$STATE")'"
+[ ! -e "$TMP/pathinjected" ] && ok "a PATH entry inside the repo (a worker's worktree) is dropped from the restarted runner's PATH" \
+  || fail "restarted runner ran a gh planted in the repo's worktrees through the recorded PATH"
+[ ! -e "$TMP/outside.log" ] && ok "a LOG outside the board's log folders is ignored (default runner.log used)" \
+  || fail "restarted runner wrote to the LOG path planted in the record"
 [ ! -e "$TMP/injected" ] && ok "an ENV_BASH_ENV line planted in the record is not passed to the restarted runner" \
   || fail "watchdog passed ENV_BASH_ENV from the record: injected code ran in the restarted runner"
 
@@ -409,6 +420,14 @@ wait_for 30 '! alive "$RP"' || kill_tree "$RP"
 
 [ -f "$BIN/super-board-watchdog.sh" ] && ! sed 's/#.*//' "$BIN/super-board-watchdog.sh" | grep -qE '(^|[^a-z])(pkill|killall)([^a-z]|$)' \
   && ok "watchdog never kills by name" || fail "watchdog missing or uses pkill/killall"
+
+# Runner do watchdog khởi động crash trước tick đầu (đọc board hỏng): bản ghi vẫn mang bộ đếm RUNAWAY đã chuyển sang.
+rm -f "$WD"; dead_pid; set_state "$D" crashed 143
+start_runner "$TMP/run11.out" SB_WATCHDOG_START=1 SB_DAEMON=1 STUB_CARD_FAIL=1
+wait_for 20 '! alive "$RP"' || kill_tree "$RP"
+[ "$(field STATE "$STATE")" = crashed ] && [ "$(field NO_PROGRESS "$STATE")" = 4 ] \
+  && ok "a restarted runner crashing before its first tick keeps the carried no-progress count (4)" \
+  || fail "carried NO_PROGRESS lost: STATE=$(field STATE "$STATE") NO_PROGRESS=$(field NO_PROGRESS "$STATE")"
 
 # ── 8. install / status / uninstall (LaunchAgents và launchctl là stub) ────────────────────────────────────────────
 # Repo trong thư mục tạm, không có SB_LAUNCH_AGENTS_DIR: install từ chối, không ghi plist vào ~/Library/LaunchAgents.
