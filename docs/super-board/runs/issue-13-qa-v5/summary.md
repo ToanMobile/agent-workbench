@@ -1,13 +1,14 @@
-# QA v5 — issue #13, head ba4183e
+# QA v5 — issue #13, head ba4183e — FAIL
 
-Lệnh: bash universal-agent-devkit/tests/context_memory/test_session_lock*.sh + tests/gates/test_worktree_guard_shell_writes.sh
-Kết quả: 10/10 file exit 0; py_compile session_lock.py + shell_writes.py OK.
+Lệnh: bash universal-agent-devkit/tests/context_memory/test_session_lock*.sh + universal-agent-devkit/tests/gates/test_worktree_guard_shell_writes.sh
+Kết quả suite của Builder: 10/10 file exit 0; py_compile OK.
+probe.py: 53 dạng, 52 đúng, 1 dương tính giả Low (`cd "$M"; cd /tmp; echo x > f` bị chặn thừa). Các ca này dùng README.md, có ở cả main lẫn worktree.
 
-Probe đối kháng (trunk_write từ linked worktree, 53 dạng, `python3 -I`): 52 đúng, 0 lọt.
-Đã đóng: `sed -i`/`perl -pi` với `"$M"`/`"${M}"` trần, `cd "$M"`/`pushd`/`cd ${M}`/`cd $(…)`/backtick rồi ghi tương đối,
-`sed -i.bak`, `-i ''`, `--in-place`, `-ni`, `-e` lặp, `-f`, `--`, `tee`/`cp`/`mv`/`rm`/`touch`/`ln`/`install`/`truncate`, `exec 3>`,
-subshell/nhóm `{}`, `for d in main; do cd "$d"`, xuống dòng giữa `cd` và ghi.
-Đối chứng vẫn được phép: `O=/tmp/o` (sed -i, cd + ghi), `sed -i '$d'`, `cd "$M" && git status`, đọc main, `cd /tmp`.
-Dương tính giả duy nhất (chặn thừa, fail-closed, Low): `M=<main>; cd "$M"; cd /tmp; echo x > f` bị chặn
-(`cd_unsafe` không được xoá khi có `cd` literal sau đó).
-Probe: docs/super-board/runs/issue-13-qa-v5/probe.py (chạy `python3 -I probe.py <universal-agent-devkit>`).
+Gap High (bảo mật), do reviewer context sạch tìm ra và đã chạy lại (probe-cd-relative.py): sau `cd "$VAR"`, `sed -i`/`perl -pi` chỉ phát operand khi `_exists(a, wd)` đúng ở worktree (shell_writes.py), nên đích tương đối chỉ có ở main không sinh target; `cd_unsafe` không được xét.
+- `M=<main>; cd "$M" && sed -i s/r/x/ only.txt` (only.txt chỉ có ở main), cwd worktree → ALLOWED
+- `M=<main>; cd "$M" && perl -pi -e s/r/x/ only.txt` → ALLOWED
+- `cd $(echo <main>) && sed -i s/r/x/ only.txt` → ALLOWED
+- `M=<main>; cd "$M" && sed -i s/r/x/ README.md`, cwd = <worktree>/sub → ALLOWED
+- Đối chứng: `cd "$M" && echo x > only.txt` → BLOCKED
+Sửa đúng: khi đã gặp `cdvar`, phát mọi operand không phải script của `sed -i`/`perl -i` làm target, không cần `_exists`; thêm ca test có file chỉ ở main và cwd là thư mục con.
+Lưu ý: kết luận "0 lọt" ở bản nháp trước của summary này là sai.
