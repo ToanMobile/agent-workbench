@@ -836,43 +836,7 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
 FIND_OP = re.compile(r"(?<!\\)((?:\\\\)*)\\([;()])|\x27([;()])\x27|\x22([;()])\x22")
 FIND_OP_WORD = {";": " __ESC_SEMI__ ", "(": " __ESC_LP__ ", ")": " __ESC_RP__ "}
 
-def drop_comments(text):
-    """The text without its shell comments: a # that begins a word, outside quotes, up to the end of its line. A # inside a word
-    (a#b, $#, an escaped space before it, the ) that ends a substitution), inside ${ } or inside backticks is data, as in bash.
-    Quotes, ${ or a backtick still open at the end: from where the first of them opened the text stays whole (fail closed), the comments before it
-    are dropped (15/10 r6: the whole text kept its comments, and the apostrophe of one paired with a later real quote in the scanners after this).
-    2026-10-10: shlex dropped everything after any #,
-    so a command after a comment line or after a#b was never judged; the first fix still read an escaped space, a CR, a ) and a
-    # inside ${ } or backticks as a word start (independent review)."""
-    out, i, n, q, brace, bt, esc = [], 0, len(text), None, 0, False, False
-    base = (0, 0)   # (chunks of out, index in text) where the last stretch with nothing open began
-    while i < n:
-        c = text[i]
-        if q is None and not (brace or bt):
-            base = (len(out), i)
-        prev_esc, esc = esc, False
-        if q is None:
-            if c == "\\" and i + 1 < n:
-                out.append(text[i:i + 2]); i += 2; esc = True; continue
-            if c in "\x27\x22":
-                q = "$\x27" if c == "\x27" and i and text[i - 1] == "$" else c
-            elif c == "`":
-                bt = not bt
-            elif c == "{" and i and text[i - 1] == "$":
-                brace += 1
-            elif c == "}" and brace:
-                brace -= 1
-            elif c == "#" and not (brace or bt) and (i == 0 or (not prev_esc and text[i - 1] in " \t\n;&|(")):
-                while i < n and text[i] != "\n":
-                    i += 1
-                continue
-        else:
-            if c == "\\" and q != "\x27" and i + 1 < n:
-                out.append(text[i:i + 2]); i += 2; continue
-            if c == q[-1]:
-                q = None
-        out.append(c); i += 1
-    return "".join(out[:base[0]]) + text[base[1]:] if (q or brace or bt) else "".join(out)
+drop_comments = shell_norm.drop_comments   # one copy for both guards (issue #7)
 
 def rm_problem(text, cwds, depth=0, remote=""):
     """Walk the command like the shell: `cd` moves the cwd (after `&&` for sure; after
