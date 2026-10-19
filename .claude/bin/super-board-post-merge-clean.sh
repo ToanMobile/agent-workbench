@@ -110,21 +110,90 @@ v = json.load(open(sys.argv[1])).get("pid")
 print(v if type(v) is int else "")' "$gd/devkit-session.lock" 2>/dev/null) || return 0
   [ -n "$pid" ] && [ "$pid" -gt 1 ] && kill -0 "$pid" 2>/dev/null
 }
+# locked_by_other <wt>: 0 (và in lý do khoá) khi `git worktree lock` giữ <wt> mà kit sẽ không mở: khoá devkit-kept của một pid còn
+# sống không phải tổ tiên của lệnh này (phiên khác), hay khoá khác devkit-kept (người dùng). Khi đó không đụng gì vào worktree: tidy
+# sẽ trả phần rác về HEAD trước khi kit từ chối (review 19/10). Khoá của chính phiên gọi hay của pid đã chết: kit mở, 1.
+locked_by_other() {
+  local reason pid a line ppid comm i=0 re='^devkit-kept session=[A-Za-z0-9][A-Za-z0-9._-]{0,127} pid=([0-9]{1,10})$'
+  reason=$(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null \
+    | awk -v w="worktree $1" '$0 == w { f = 1; next } /^worktree / { f = 0 } f && /^locked/ { print "L" substr($0, 7); exit }')
+  [ -n "$reason" ] || return 1
+  reason=${reason#L}; reason=${reason# }
+  # Đúng luật kit (worktree.py KEPT_LOCK_RE.fullmatch, kept_lock, _ancestor_pids — OCR): chỉ khoá devkit-kept đúng dạng mới có thể được mở
+  [[ "$reason" =~ $re ]] || { echo "${reason:-no reason}"; return 0; }
+  pid=${BASH_REMATCH[1]}
+  [ "$pid" -gt 1 ] || return 1   # pid 0/1: khoá vô hiệu, kit gỡ
+  kill -0 "$pid" 2>/dev/null || ps -p "$pid" >/dev/null 2>&1 || return 1   # ps: pid của user khác (EPERM) vẫn là còn sống (OCR)
+  # Tổ tiên của lệnh này, DỪNG ở tiến trình `claude` gần nhất (phía trên là app / terminal / launchd mọi phiên dùng chung)
+  a=$$
+  while [ "$i" -lt 64 ] && [ -n "$a" ] && [ "$a" -gt 1 ] 2>/dev/null; do
+    [ "$a" = "$pid" ] && return 1
+    line=$(ps -ww -o ppid=,comm= -p "$a" 2>/dev/null) || break
+    read -r ppid comm <<<"$line"
+    [ "${comm##*/}" = claude ] && break
+    a=$ppid; i=$((i + 1))
+  done
+  echo "$reason"
+}
+# run_t <giây> <lệnh…>: chạy với hạn giờ thật. Hết giờ: SIGTERM cả nhóm tiến trình (git kịp dọn file .lock), 5 s sau SIGKILL; exit 124.
+# perl alarm không đủ: gh là binary Go và runtime Go bỏ qua SIGALRM (review 19/10 đo: alarm 1 s, binary Go vẫn chạy đủ 4 s).
+run_t() {
+  python3 -I -c 'import os, signal, subprocess, sys
+def stop(signum=None, _frame=None):
+    # Con ở nhóm tiến trình riêng: Ctrl-C / SIGTERM gửi cho lệnh này không tới nó, nên tự dừng cả nhóm rồi mới thoát (OCR).
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(p.pid, sig)
+            p.wait(timeout=5)
+            break
+        except ProcessLookupError:
+            break
+        except subprocess.TimeoutExpired:
+            continue
+    if signum:   # tín hiệu của người dùng / người gọi: chết đúng bằng nó để shell gọi cũng dừng, không báo nhầm "hết giờ"
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+    sys.exit(124)
+try:
+    limit = float(sys.argv[1])   # đọc TRƯỚC khi khởi chạy con: hạn giờ sai dạng không được để lại tiến trình mồ côi (OCR)
+except ValueError:
+    sys.exit(2)
+try:
+    p = subprocess.Popen(sys.argv[2:], start_new_session=True)
+except OSError:
+    sys.exit(127)
+for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+    signal.signal(s, stop)
+try:
+    rc = p.wait(timeout=limit)
+    sys.exit(128 - rc if rc < 0 else rc)   # chết vì tín hiệu N: 128+N như shell, không 256-N (OCR)
+except subprocess.TimeoutExpired:
+    stop()' "$@"
+}
 
 # tidy <wt>: 0 khi worktree sạch — sẵn sạch, hoặc mọi thay đổi chưa commit thuộc danh sách rác và đã được cất vào $SALVAGE_DIR
 # (patch kiểm lại: HEAD + patch + file đã xoá = đúng cây làm việc) rồi trả về HEAD. 1 khi giữ (đã in lý do). --dry-run: chỉ nói.
 tidy() {
-  local wt="$1" st e xy p dels=0 noise=0 nreal=0 real="" trk untr head gd name idx1 idx2 dl t1="" t2="" okk=0
+  local wt="$1" st e xy p dels=0 noise=0 nreal=0 real="" trk untr sdel head gd name idx1 idx2 dl t1="" t2="" okk=0
   st=$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null) || { echo "kept $wt: git status failed" >&2; return 1; }
   [ -n "$st" ] || return 0
-  st=$(mktemp) && trk=$(mktemp) && untr=$(mktemp) || { echo "kept $wt: uncommitted edits (mktemp failed)" >&2; return 1; }
+  st=$(mktemp) && trk=$(mktemp) && untr=$(mktemp) && sdel=$(mktemp) || { echo "kept $wt: uncommitted edits (mktemp failed)" >&2; return 1; }
+  TIDY_SDEL="$sdel"   # clean_wt xoá nó
   if ! git -C "$wt" status --porcelain=v1 -z --no-renames --untracked-files=all >"$st" 2>/dev/null; then
     rm -f "$st" "$trk" "$untr"; echo "kept $wt: git status failed" >&2; return 1
   fi
   while IFS= read -r -d '' e; do
     xy=${e:0:2}; p=${e:3}
     case "$xy" in
-      " D"|"D ") dels=$((dels + 1)); printf '%s\0' "$p" >>"$trk"; continue ;;
+      " D"|"D ")
+        # Chỉ khi file thật sự không còn trên đĩa. Xoá đã stage mà file còn trên đĩa (`git rm --cached`) luôn là việc thật: file bị
+        # ignore thì bản trên đĩa (có thể mới hơn HEAD) không vào patch nào (review 19/10); không bị ignore thì `D ` + `??` cùng đường dẫn
+        # không trả về HEAD sạch được (checkout lấy lại rồi rm lại xoá).
+        if [ ! -e "$wt/$p" ] && [ ! -L "$wt/$p" ]; then
+          dels=$((dels + 1)); printf '%s\0' "$p" >>"$trk"
+          [ "$xy" = " D" ] || printf '%s\0' "$p" >>"$sdel"   # xoá đã stage: untidy stage lại đúng như vậy (OCR)
+          continue
+        fi ;;
       " M"|" T"|"??")
         if [[ "$p" =~ $NOISE_RE ]]; then
           noise=$((noise + 1))
@@ -164,14 +233,17 @@ tidy() {
      && t2=$(GIT_INDEX_FILE="$idx2" git -C "$wt" write-tree) && [ "$t1" = "$t2" ]; then
     okk=1
   fi
-  rm -f "$idx1" "$idx2" "$dl"
+  rm -f "$idx1" "$idx2"
   [ -s "$name.patch" ] || rm -f "$name.patch"
   if [ "$okk" != 1 ]; then
     echo "kept $wt: uncommitted edits (salvage could not be verified: tree ${t1:-?} vs ${t2:-?})" >&2
-    rm -f "$trk" "$untr"; return 1
+    rm -f "$trk" "$untr" "$dl"; return 1
   fi
-  printf 'worktree: %s\nhead: %s\nat: %s\nedited or new (lane noise): %s file(s)%s\ndeleted, restored from HEAD: %s file(s)\n' \
-    "$wt" "$head" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$noise" "$( [ -f "$name.patch" ] && printf ' -> git apply --3way %s (on %s)' "$name.patch" "$head")" "$dels" >"$name.txt"
+  [ ! -s "$dl" ] || tr '\0' '\n' <"$dl" >"$name.deleted.txt"
+  printf 'worktree: %s\nhead: %s\nat: %s\nedited or new (lane noise): %s file(s)%s\ndeleted, restored from HEAD: %s file(s)%s\n' \
+    "$wt" "$head" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$noise" "$( [ -f "$name.patch" ] && printf ' -> git apply --3way %s (on %s)' "$name.patch" "$head")" \
+    "$dels" "$( [ -s "$dl" ] && printf ' (%s)' "$name.deleted.txt")" >"$name.txt"
+  TIDY_NAME="$name"; TIDY_DL="$dl"   # clean_wt trả lại đúng các thay đổi này nếu worktree không bị gỡ (untidy)
   # Trả về HEAD: file đã theo dõi (sửa / xoá) lấy lại bản HEAD, file mới (đã cất) bị xoá. --literal-pathspecs: tên có * ? [ không là mẫu.
   if { [ ! -s "$trk" ] || git -C "$wt" --literal-pathspecs checkout -q HEAD --pathspec-from-file="$trk" --pathspec-file-nul; } \
      && { [ ! -s "$untr" ] || (cd "$wt" && xargs -0 rm -f -- <"$untr"); } \
@@ -197,30 +269,69 @@ hold_head() {
   [ -n "$(git -C "$REPO_PATH" for-each-ref --count=1 --contains "$h" refs/heads refs/remotes refs/tags 2>/dev/null)" ] && return 0
   [ -n "$2" ] && [ -n "$3" ] || return 1
   git -C "$REPO_PATH" merge-base --is-ancestor "$h" "$3" 2>/dev/null || return 1
+  # số PR (vào refspec): `*` sẽ kéo mọi PR head về ref không ai bỏ (review)
+  case "$2" in ''|*[!0-9]*) HOLD_WHY="PR number '$2' is not a number"; return 1 ;; esac
   r="refs/remotes/origin/pull/$2/head"
-  git -C "$REPO_PATH" rev-parse -q --verify "$r" >/dev/null && return 1   # ref cùng tên của ai khác mà không giữ HEAD: không đè
+  if git -C "$REPO_PATH" rev-parse -q --verify "$r" >/dev/null; then   # ref cùng tên của ai khác mà không giữ HEAD: không đè
+    HOLD_WHY="$r already exists and does not hold HEAD $h"; return 1
+  fi
   if [ "$DRY" -eq 1 ]; then echo "would hold ${h} with ${r} (GitHub refs/pull/$2/head)" >&2; return 0; fi
-  GIT_TERMINAL_PROMPT=0 git -C "$REPO_PATH" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=20 \
-    fetch -q --no-tags origin "+refs/pull/$2/head:$r" >/dev/null 2>&1 || return 1
-  got=$(git -C "$REPO_PATH" rev-parse -q --verify "$r" 2>/dev/null) || return 1
-  HOLDS+=("$r $got")
-  [ "$got" = "$3" ]
+  # không có hạn giờ (run_t) thì không fetch: giữ worktree
+  command -v python3 >/dev/null 2>&1 || { HOLD_WHY="no python3 to fetch $r with a deadline"; return 1; }
+  # Hạn giờ thật cho cả remote SSH (http.lowSpeed* chỉ áp cho HTTP): ở chế độ post lệnh này chạy khi merge gate còn giữ mutex.
+  local rc=0
+  GIT_TERMINAL_PROMPT=0 run_t "${SB_CLEAN_FETCH_TIMEOUT:-30}" git -C "$REPO_PATH" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=20 \
+    fetch -q --no-tags origin "+refs/pull/$2/head:$r" >/dev/null 2>&1 || rc=$?
+  got=$(git -C "$REPO_PATH" rev-parse -q --verify "$r" 2>/dev/null) || got=""
+  [ -z "$got" ] || HOLDS+=("$r $got")
+  if [ "$rc" -ne 0 ]; then
+    HOLD_WHY="fetch of refs/pull/$2/head $( [ "$rc" -eq 124 ] && echo "timed out after ${SB_CLEAN_FETCH_TIMEOUT:-30}s" || echo "failed (exit $rc)")"; return 1
+  fi
+  [ "$got" = "$3" ] || { HOLD_WHY="GitHub refs/pull/$2/head is ${got:-<missing>}, not the merged $3"; return 1; }
+}
+# untidy <wt>: kit giữ worktree sau khi tidy đã cất và trả phần rác về HEAD: đặt lại đúng các thay đổi đó (patch + file đã xoá), worktree
+# "được giữ" thì như cũ (review 19/10). Bản cất vẫn còn ở $TIDY_NAME.txt.
+untidy() {
+  local ok=1
+  # Bước trả về HEAD hỏng giữa chừng thì patch không áp lại được: không động gì nữa (không xoá file nào), bản cất còn nguyên (OCR).
+  if [ -f "$TIDY_NAME.patch" ] && ! git -C "$1" apply --check --binary "$TIDY_NAME.patch" 2>/dev/null; then
+    echo "kept $1: it stays, its lane edits could not be put back cleanly (left as is): they are in $TIDY_NAME.txt" >&2; return 0
+  fi
+  [ ! -f "$TIDY_NAME.patch" ] || git -C "$1" apply --binary "$TIDY_NAME.patch" 2>/dev/null || ok=0
+  [ ! -s "$TIDY_DL" ] || (cd "$1" && xargs -0 rm -f -- <"$TIDY_DL") || ok=0
+  [ ! -s "$TIDY_SDEL" ] || git -C "$1" update-index -z --force-remove --stdin <"$TIDY_SDEL" || ok=0
+  if [ "$ok" = 1 ]; then echo "restored $1: it stays, so its lane edits are back as they were (copy in $TIDY_NAME.txt)" >&2
+  else echo "kept $1: it stays, but putting its lane edits back failed: they are in $TIDY_NAME.txt" >&2; fi
 }
 # clean_wt <wt> <pr> <merged-head>: phần chung của hai chế độ cho một worktree đã được chọn: khoá phiên, ref giữ head, rác, gỡ.
 clean_wt() {
-  local wt="$1" head
+  local wt="$1" head why
   if session_held "$wt"; then echo "kept $wt: a live session holds its checkout lock" >&2; return 0; fi
+  if why=$(locked_by_other "$wt"); then echo "kept $wt: locked ($why), not touched" >&2; return 0; fi
+  HOLD_WHY=""
   if ! hold_head "$wt" "$2" "$3"; then
     # Commit trên HEAD detached mà không nhánh/remote nào chứa (vd repro Tester chưa push) sẽ chỉ còn trong reflog.
     head=$(git -C "$wt" rev-parse --verify -q HEAD 2>/dev/null || true)
-    echo "kept $wt: HEAD ${head:-<unknown>} is on no branch or remote" >&2
+    echo "kept $wt: HEAD ${head:-<unknown>} is on no branch or remote${HOLD_WHY:+ ($HOLD_WHY)}" >&2
     return 0
   fi
-  tidy "$wt" || return 0
-  if [ "$DRY" -eq 1 ]; then echo "would remove $wt" >&2; DRY_GONE="$DRY_GONE$wt"$'\n'; return 0; fi
+  TIDY_NAME=""; TIDY_DL=""; TIDY_SDEL=""
+  if ! tidy "$wt"; then
+    [ -z "$TIDY_NAME" ] || untidy "$wt"
+    rm -f "$TIDY_DL" "$TIDY_SDEL"; return 0
+  fi
+  if [ "$DRY" -eq 1 ]; then echo "would remove $wt" >&2; DRY_GONE="$DRY_GONE$wt"$'\n'; rm -f "$TIDY_SDEL"; return 0; fi
   remove_wt "$wt"
+  # kit (hay git) từ chối gỡ — reflog, rebase dở, submodule, bí mật chỉ worktree có…: trả lại phần rác đã cất
+  [ -z "$TIDY_NAME" ] || [ ! -d "$wt" ] || untidy "$wt"
+  rm -f "$TIDY_DL" "$TIDY_SDEL"
 }
 DRY_GONE=""   # --dry-run: worktree "would remove" (nhánh chúng checkout được tính như đã thả)
+# Bản cất quá 30 ngày được bỏ, như refs/devkit/discarded của kit: thư mục salvage không thành chỗ đầy đĩa mới (OCR). Cả hai chế độ.
+prune_salvage() {
+  [ "$DRY" -eq 0 ] && [ -n "$SALVAGE_DIR" ] && [ -d "$SALVAGE_DIR" ] || return 0
+  find "$SALVAGE_DIR" -maxdepth 1 -type f \( -name '*.patch' -o -name '*.txt' \) -mtime +30 -exec rm -f {} + 2>/dev/null || true
+}
 # wt_order: đọc "đường dẫn" trên stdin, in worktree detached trước rồi worktree trên nhánh: gỡ worktree trên nhánh có thể xoá nhánh
 # (luật kit), sau đó head chỉ nhánh đó giữ không còn ref nào.
 wt_order() {
@@ -270,6 +381,7 @@ if [ "$MODE" = post ]; then
   elif [ -n "$tip" ]; then
     echo "kept branch $HEAD_REF: its tip ${tip} is not the merged ${MERGED_SHA:-<unknown>}" >&2
   fi
+  prune_salvage
   exit 0
 fi
 
@@ -290,8 +402,8 @@ if [ -z "$BASE" ]; then
 fi
 [ -n "$BASE" ] || { echo "sweep: base branch unknown (pass --base); nothing done" >&2; exit 0; }
 GRACE="${SB_SWEEP_GRACE_S:-900}"; case "$GRACE" in ''|*[!0-9]*) GRACE=900 ;; esac
-# gh với hạn giờ (macOS không có `timeout`): đọc hỏng / treo thì không gỡ gì
-gh_t() { (cd "$REPO_PATH" && perl -e 'alarm shift; exec @ARGV or exit 127' "${SB_CLEAN_GH_TIMEOUT:-20}" gh "$@"); }
+# gh với hạn giờ thật (run_t): đọc hỏng / treo thì không gỡ gì
+gh_t() { (cd "$REPO_PATH" && run_t "${SB_CLEAN_GH_TIMEOUT:-20}" gh "$@"); }
 
 # worktree của phiên dưới .claude/worktrees/ gắn với một thẻ: theo tên thư mục issue-<N>-…, không thì theo nhánh issue-<N>-…
 WT_P=(); WT_N=(); NS=" "
@@ -334,9 +446,7 @@ for r in json.load(sys.stdin):
 ' "$GRACE" "$BASE") || { echo "sweep: gh pr list output unreadable; nothing removed" >&2; exit 0; }
 # Stamp chỉ sau một lần đọc GitHub thành công: lỗi thoáng qua không chặn lần thử lại trong --min-interval giây (OCR).
 [ "$DRY" -eq 1 ] || [ -z "$STAMP" ] || { mkdir -p "${STAMP%/*}" && date +%s >"$STAMP"; } 2>/dev/null || true
-# Bản cất quá 30 ngày được bỏ, như refs/devkit/discarded của kit: thư mục salvage không thành chỗ đầy đĩa mới (OCR).
-[ "$DRY" -eq 1 ] || [ -z "$SALVAGE_DIR" ] || [ ! -d "$SALVAGE_DIR" ] \
-  || find "$SALVAGE_DIR" -maxdepth 1 -type f \( -name '*.patch' -o -name '*.txt' \) -mtime +30 -exec rm -f {} + 2>/dev/null || true
+prune_salvage
 
 for n in $NS; do
   rows=$(printf '%s\n' "$ROWS" | awk -F'\t' -v n="$n" '$1 == n')
@@ -372,13 +482,14 @@ for n in $NS; do
     if [ -n "$co" ] && ! printf '%s' "$DRY_GONE" | grep -qxF "$co"; then
       echo "kept branch $rref: still checked out at $co" >&2; continue
     fi
-    if [ "$DRY" -eq 1 ]; then
-      [ "$tip" = "$roid" ] && echo "would delete branch $rref (PR #$rpr merged at its tip)" >&2 || echo "kept branch $rref: tip $tip is not the merged $roid" >&2
-    elif [ -n "$KIT_WT" ]; then
+    if [ -z "$KIT_WT" ]; then   # (dry-run nói đúng như lần chạy thật: OCR)
+      echo "kept branch $rref: no DevKit (agent-kit worktree prune-branch) to prove it safe" >&2
+    elif [ "$DRY" -eq 1 ]; then
+      if [ "$tip" = "$roid" ]; then echo "would delete branch $rref (PR #$rpr merged at its tip)" >&2
+      else echo "would ask agent-kit prune-branch for $rref: tip $tip is not the merged $roid, deleted only if the trunk holds its content" >&2; fi
+    else
       out=$(cd "$REPO_PATH" && python3 "$KIT_WT" prune-branch "$rref" 2>&1) || out="kept branch $rref: $(printf '%s\n' "$out" | grep -m1 '✖' | cut -c1-300)"
       printf '%s\n' "$out" >&2
-    else
-      echo "kept branch $rref: no DevKit (agent-kit worktree prune-branch) to prove it safe" >&2
     fi
   done <<<"$rows"
 done

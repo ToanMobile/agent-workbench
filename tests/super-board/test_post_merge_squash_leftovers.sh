@@ -31,9 +31,10 @@ git -C "$R" config user.email t@example.invalid; git -C "$R" config user.name t
 printf '.claude/\n' > "$R/.gitignore"
 mkdir -p "$R/.agents/local/memory/agents/rev" "$R/unity/Assets" "$R/src"
 echo note > "$R/.agents/local/memory/agents/rev/MEMORY.md"
-echo asset > "$R/unity/Assets/x.asset"; echo code > "$R/src/x.c"
-for i in 1 2 3 7 8 21 22 23 24 25 26 27 28 29 70; do echo "$i" > "$R/f$i"; done
+echo asset > "$R/unity/Assets/x.asset"; echo code > "$R/src/x.c"; echo cfg > "$R/keep.cfg"
+for i in 1 2 3 7 8 21 22 23 24 25 26 27 28 29 30 31 33 70; do echo "$i" > "$R/f$i"; done
 git -C "$R" add -A; git -C "$R" commit -qm init
+printf 'keep.cfg\n.env\n' >> "$R/.git/info/exclude"   # keep.cfg: file đã track mà luật ignore phủ (force-track); .env: bí mật cục bộ
 git -C "$R" remote add origin "$O"
 git -C "$R" push -q -u origin main
 git -C "$R" remote set-head origin main
@@ -82,6 +83,7 @@ mkdir -p "$TMP/bin"
 cat > "$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
 echo "$*" >> "$FAKE_DIR/gh.calls"
+[ -z "${FAKE_GH_HANG:-}" ] || { trap '' ALRM; sleep 25; exit 0; }
 n=$(printf '%s\n' "$@" | grep -E '^[0-9]+$' | head -1)
 case " $* " in
   *" pr view "*"headRefName,headRefOid"*) echo "$(cat "$FAKE_DIR/pr$n.ref") $(cat "$FAKE_DIR/pr$n.head")" ;;
@@ -168,6 +170,21 @@ printf 'PID=%s\nLANE=review\nSTARTED=%s\n' "$SL" "$NOW" > "$R/.claude/super-boar
 card 29 39 issue-29-i; git -C "$R" worktree add -q --detach "$W/issue-29-qa" "$(cat "$TMP/pr39.head")"
 squash 39; merged_row 39 "$OLD"; echo CLOSED > "$TMP/issue29.state"
 printf '%s\n' "$SL" > "$R/.claude/super-board/inflight/29"
+# 30 = PR 40 (review): `git rm --cached` một file đã track mà luật ignore phủ, bản trên đĩa mới hơn HEAD: status chỉ hiện `D `,
+#      nội dung đó chỉ worktree có → phải giữ, không coi là "file đã xoá"
+card 30 40 issue-30-j; git -C "$R" worktree add -q --detach "$W/issue-30-qa" "$(cat "$TMP/pr40.head")"
+echo newer > "$W/issue-30-qa/keep.cfg"; git -C "$W/issue-30-qa" rm -q --cached keep.cfg
+squash 40; merged_row 40 "$OLD"; echo CLOSED > "$TMP/issue30.state"
+# 31 = PR 41 (review): sửa rác của lane nhưng worktree bị khoá devkit-kept bởi một phiên KHÁC còn sống: không đụng gì cả
+card 31 41 issue-31-k; git -C "$R" worktree add -q --detach "$W/issue-31-qa" "$(cat "$TMP/pr41.head")"
+echo n31 >> "$W/issue-31-qa/.agents/local/memory/agents/rev/MEMORY.md"
+git -C "$R" worktree lock --reason "devkit-kept session=other pid=$SL" "$W/issue-31-qa"
+squash 41; merged_row 41 "$OLD"; echo CLOSED > "$TMP/issue31.state"
+# 33 = PR 43 (review): sửa rác của lane + một .env bị ignore chỉ worktree có: kit từ chối gỡ → phần rác đã cất phải được trả lại
+card 33 43 issue-33-m; git -C "$R" worktree add -q --detach "$W/issue-33-qa" "$(cat "$TMP/pr43.head")"
+echo n33 >> "$W/issue-33-qa/.agents/local/memory/agents/rev/MEMORY.md"; echo "TOKEN=only-here" > "$W/issue-33-qa/.env"
+rm "$W/issue-33-qa/f1"; git -C "$W/issue-33-qa" rm -q f2   # một xoá chưa stage (` D`) và một xoá đã stage (`D `): phải trả lại đúng như vậy
+squash 43; merged_row 43 "$OLD"; echo CLOSED > "$TMP/issue33.state"
 # 25 = PR 35: vừa merge (Reviewer còn làm bước sau merge)
 card 25 35 issue-25-e; git -C "$R" worktree add -q --detach "$W/issue-25-qa" "$(cat "$TMP/pr35.head")"
 squash 35; merged_row 35 "$NOW"; echo CLOSED > "$TMP/issue25.state"
@@ -195,7 +212,8 @@ bash "$CLEAN" --sweep "$R" --dry-run >"$TMP/dry.log" 2>&1; rc=$?
   && ok "B1 --dry-run changes nothing" || { fail "B1 --dry-run changed something (rc $rc)"; cat "$TMP/dry.log"; }
 miss=""
 for w in issue-7-review issue-21-review issue-21-qa issue-22-qa issue-28-build; do grep -q "would remove .*/$w" "$TMP/dry.log" || miss="$miss $w"; done
-for w in issue-22-build issue-23-review issue-24-qa issue-29-qa issue-25-qa issue-26-qa issue-27-qa; do grep -q "would remove .*/$w" "$TMP/dry.log" && miss="$miss !$w"; done
+for w in issue-22-build issue-23-review issue-24-qa issue-29-qa issue-30-qa issue-31-qa issue-25-qa issue-26-qa issue-27-qa; do grep -q "would remove .*/$w" "$TMP/dry.log" && miss="$miss !$w"; done
+[ -f "$R/.git/super-board/sweep.stamp" ] && miss="$miss stamp-written"
 # nhánh của worktree "sẽ gỡ" (issue-28-build) cũng "sẽ xoá", không phải "still checked out"; nhánh của worktree giữ lại thì giữ
 for b in issue-28-h issue-2-z; do grep -q "would delete branch $b " "$TMP/dry.log" || miss="$miss branch:$b"; done
 grep -q "kept branch issue-22-b: still checked out" "$TMP/dry.log" || miss="$miss kept-branch:issue-22-b"
@@ -214,7 +232,7 @@ bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/sweep.log" 2>&1; rc=$?
 for w in issue-7-review issue-21-review issue-21-qa issue-22-qa issue-28-build; do
   [ ! -d "$W/$w" ] && ok "B5 merged leftover $w removed" || { fail "B5 merged leftover $w kept"; grep -a "$w" "$TMP/sweep.log"; }
 done
-for w in issue-22-build issue-23-review issue-24-qa issue-29-qa issue-25-qa issue-26-qa issue-27-qa issue-70-build issue-8-build; do
+for w in issue-22-build issue-23-review issue-24-qa issue-29-qa issue-30-qa issue-31-qa issue-33-qa issue-25-qa issue-26-qa issue-27-qa issue-70-build issue-8-build; do
   [ -d "$W/$w" ] && ok "B6 $w kept" || fail "B6 $w REMOVED"
 done
 grep -q "issue-22-build: uncommitted edits.*src/x.c" "$TMP/sweep.log" && [ "$(tail -1 "$W/issue-22-build/src/x.c")" = "real fix" ] \
@@ -231,10 +249,27 @@ for b in issue-22-b scratch-27 issue-23-c issue-26-f; do
   git -C "$R" rev-parse -q --verify "refs/heads/$b" >/dev/null && ok "B11 branch $b kept" || fail "B11 branch $b deleted"
 done
 [ "$(git -C "$R" status --porcelain)" = "$MAIN_STATUS_BEFORE" ] && ok "B12 main checkout status unchanged" || fail "B12 main checkout got dirtier"
+[ "$(cat "$W/issue-30-qa/keep.cfg" 2>/dev/null)" = newer ] && ok "B14 a staged delete of an ignored file still on disk is real work: its newer bytes stay" \
+  || { fail "B14 the worktree-only bytes of keep.cfg were lost"; grep -a "issue-30-qa" "$TMP/sweep.log"; }
+[ "$(tail -1 "$W/issue-31-qa/.agents/local/memory/agents/rev/MEMORY.md" 2>/dev/null)" = n31 ] \
+  && ok "B15 a worktree another live session keeps is not touched (its lane notes stay)" \
+  || { fail "B15 the lane notes of a worktree locked by a live session were reverted"; grep -a "issue-31-qa" "$TMP/sweep.log"; }
+[ "$(tail -1 "$W/issue-33-qa/.agents/local/memory/agents/rev/MEMORY.md" 2>/dev/null)" = n33 ] && [ -f "$W/issue-33-qa/.env" ] \
+  && [ "$(git -C "$W/issue-33-qa" status --porcelain -- f1 f2)" = "$(printf ' D f1\nD  f2')" ] \
+  && ok "B16 when the kit refuses the removal, the salvaged lane edits are put back" \
+  || { fail "B16 the kit kept the worktree but its lane edits stayed reverted"; grep -a "issue-33-qa" "$TMP/sweep.log"; }
 
 # B13 chạy lại ngay với khoảng nghỉ mặc định: kỳ vọng bỏ qua — assert dưới kiểm gh.calls của gh giả rỗng
 : > "$TMP/gh.calls"
 bash "$CLEAN" --sweep "$R" >"$TMP/again.log" 2>&1
 [ ! -s "$TMP/gh.calls" ] && ok "B13 a second sweep inside the minimum interval makes no GitHub call" || { fail "B13 the interval stamp is ignored"; cat "$TMP/gh.calls"; }
+
+# ── C. gh treo và bỏ qua SIGALRM (gh thật là binary Go: runtime Go nuốt SIGALRM, review 19/10): sweep phải dừng theo hạn giờ,
+#    không gỡ gì. gh giả `trap '' ALRM` (tín hiệu bị bỏ qua được kế thừa qua exec, như Go).
+t0=$(date +%s)
+FAKE_GH_HANG=1 SB_CLEAN_GH_TIMEOUT=2 bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/hang.log" 2>&1
+dt=$(( $(date +%s) - t0 ))
+[ "$dt" -lt 12 ] && grep -q "gh pr list failed" "$TMP/hang.log" && ok "C1 a gh that ignores SIGALRM is stopped at the deadline (${dt}s), nothing removed" \
+  || { fail "C1 sweep waited ${dt}s on a hung gh"; cat "$TMP/hang.log"; }
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_post_merge_squash_leftovers: all passed" || { echo "❌ test_post_merge_squash_leftovers: $FAILS failed"; exit 1; }
