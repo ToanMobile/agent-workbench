@@ -291,7 +291,8 @@ fi
 
 # 5. Clear in-flight locks (PIDs are dead now).
 if [ -d "$INFLIGHT_DIR" ] && [ -n "$(ls -A "$INFLIGHT_DIR" 2>/dev/null)" ]; then
-  for entry in "${WORKERS[@]}"; do
+  # bash 3.2 + set -u: an empty "${WORKERS[@]}" is "unbound"; inflight/ may hold only the runner's early-deaths/ ledger (#94)
+  for entry in ${WORKERS[@]+"${WORKERS[@]}"}; do
     IFS='|' read -r issue lane pid <<< "$entry"
     rm -f "$INFLIGHT_DIR/$issue"
   done

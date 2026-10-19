@@ -148,7 +148,9 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
   def free($n): (dep($n) | if . == null then false else .runnable end);
   # #95: work only a person can do (playtest, a real device, a store account, a ruling). A Ready card so labelled is
   # held back and listed in `waiting`; QA/Review cards are not, the resume path brings approved 🙋 cards there.
-  def for_a_person($l): ($l | index("needs-you")) or ($l | index("human-gated"));
+  # Not one carrying loop:rebase / loop:rebuild-N: back from QA/Review after the person acted (super-board-run.sh FOR_A_PERSON_JQ).
+  def for_a_person($l): (($l | index("needs-you")) or ($l | index("human-gated")))
+                        and ($l | map(. == "loop:rebase" or startswith("loop:rebuild-")) | any | not);
 
   [ .items[]
     | select(.content.type == "Issue")

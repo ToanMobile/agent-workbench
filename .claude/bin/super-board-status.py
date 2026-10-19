@@ -444,11 +444,12 @@ def waiting_on_person(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """#95: Ready and Blocked cards only a person can move on (needs-you / human-gated, any case), newest first. The runner and the
     planner never take such a card from Ready, so they get their own group instead of hiding among the Block reasons. Not QA or
     Review: a lane works those (the resume path brings an approved 🙋 card to Review with its label possibly still on)."""
-    return sorted(
-        (i for i in items
-         if i.get("status") in ("Ready", "Blocked") and any(str(l).lower() in PERSON_LABELS for l in i.get("labels") or [])),
-        key=lambda x: -x["number"],
-    )
+    def waits(i: dict[str, Any]) -> bool:
+        names = [str(l).lower() for l in i.get("labels") or []]
+        back_in_loop = any(n == "loop:rebase" or n.startswith("loop:rebuild-") for n in names)   # super-board-run.sh FOR_A_PERSON_JQ
+        return any(n in PERSON_LABELS for n in names) and not (i.get("status") == "Ready" and back_in_loop)
+
+    return sorted((i for i in items if i.get("status") in ("Ready", "Blocked") and waits(i)), key=lambda x: -x["number"])
 
 
 def render_collapsed(label: str, lane_items: list[dict[str, Any]]) -> str:
@@ -704,7 +705,7 @@ def main() -> int:
 
     # ── waiting on a person (#95): its own group, out of the block reasons ──
     print()
-    print("▎Waiting on you  (needs-you / human-gated — remove the label to release a Ready card)")
+    print("▎Waiting on you  (needs-you / human-gated — Ready: remove the label to release it · 🙋 Blocked: comment done)")
     person = waiting_on_person(items)
     if not person:
         print("   (none)")

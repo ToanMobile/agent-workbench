@@ -72,10 +72,10 @@ c7=$(claims_of 7)
 [ "$c7" -eq 2 ] && case "$picks" in " 7 7"*) true ;; *) false ;; esac && ok "a card whose worker keeps dying at once is claimed at most twice in the window (claims of #7: $c7; picks:$picks)" \
   || fail "claim/release loop: #7 claimed $c7 times in 5 ticks (picks:$picks)"
 case "$picks" in *" 8"*) ok "  … and the next card is dispatched meanwhile" ;; *) fail "  the other Ready card was never dispatched (picks:$picks)" ;; esac
-grep -q "#7.*died" "$TMP/log" && grep -q "session limit" "$TMP/log" && ok "  … and the log says the worker died early, with its last log line" \
+grep -q "#7.*ended" "$TMP/log" && grep -q "session limit" "$TMP/log" && ok "  … and the log says the worker died early, with its last log line" \
   || fail "no early-death line naming the worker's last log line: $(grep -m1 '#7' "$TMP/log")"
 # the window passes: the card may be tried again
-for f in "$INFLIGHT_DIR"/early-deaths/*; do [ -f "$f" ] && awk '{print $1 - 3600}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"; done
+for f in "$INFLIGHT_DIR"/early-deaths/*; do [ -f "$f" ] && awk '{$1 -= 3600; print}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"; done
 : > "$TMP/writes"; PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_7","status":"Ready","labels":[],"content":{"type":"Issue","number":7,"assignees":[]}}]}'
 cycle
 [ "$(claims_of 7)" = 1 ] && ok "  … and once the window has passed, the card is claimed again" || fail "after the window #7 was not claimed again (claims $(claims_of 7))"
@@ -107,6 +107,27 @@ PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_20","status":"Ready","labels":[],"cont
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$TMP/repo/wl/worker-build-20.log" ] && grep -q "session limit" "$TMP/repo/wl/worker-build-20.log" && break; sleep 0.2; done
 grep -q "session limit" "$TMP/repo/wl/worker-build-20.log" 2>/dev/null && ok "a vanished worker log folder is made again: the worker writes its log" \
   || fail "worker log folder not recreated: $(ls "$TMP/repo" 2>&1 | tr '\n' ' ')"
+
+# ── 4b (review 19/10): reap runs once per tick (default tick_seconds 120), so it sees a worker that died 3 s after dispatch only
+#    ~125 s later: measured at reap time that is never "early". The death time is the worker log's last write; with no log the
+#    window grows by one tick.
+rm -rf "$INFLIGHT_DIR/early-deaths"; mkdir -p "$TMP/repo/wl"
+st=$(( $(date +%s) - 125 ))
+iso() { python3 -c 'import sys, time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(sys.argv[1]))))' "$1"; }
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(iso "$st")" > "$INFLIGHT_DIR/60"
+echo "You've hit your session limit" > "$TMP/repo/wl/worker-build-60.log"
+python3 -c 'import os, sys; os.utime(sys.argv[1], (int(sys.argv[2]), int(sys.argv[2])))' "$TMP/repo/wl/worker-build-60.log" $((st + 3))
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(iso "$st")" > "$INFLIGHT_DIR/61"   # no worker log at all
+( TICK_SECONDS=120; reap_finished_locks )
+[ -s "$INFLIGHT_DIR/early-deaths/60" ] && ok "a worker that died 3 s in, reaped a 120 s tick later, is an early death (log mtime)" \
+  || fail "tick-late reap missed an early death (log mtime 3 s after dispatch)"
+[ -s "$INFLIGHT_DIR/early-deaths/61" ] && ok "  … and with no worker log, one tick of slack still catches it" \
+  || fail "tick-late reap with no log missed an early death"
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(iso $(( $(date +%s) - 600 )))" > "$INFLIGHT_DIR/62"
+echo "worked a while" > "$TMP/repo/wl/worker-build-62.log"
+python3 -c 'import os, sys; os.utime(sys.argv[1], (int(sys.argv[2]), int(sys.argv[2])))' "$TMP/repo/wl/worker-build-62.log" $(( $(date +%s) - 30 ))
+( TICK_SECONDS=120; reap_finished_locks )
+[ ! -s "$INFLIGHT_DIR/early-deaths/62" ] && ok "  … but a worker whose log ran 9 minutes is not" || fail "a long-running worker counted as an early death"
 
 # ── 5. under the runner's own `set -euo pipefail`, an early death whose worker log is gone must not end the runner (OCR 19/10)
 rm -rf "$TMP/repo/wl" "$INFLIGHT_DIR/early-deaths"

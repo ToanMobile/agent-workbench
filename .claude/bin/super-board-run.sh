@@ -140,12 +140,16 @@ column_count() {
   echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" '[.items[] | select(.status == $col)] | length'
 }
 
+# #95: a card that waits for a person — labelled needs-you / human-gated (any case, on the item or its content, as a name or {name}).
+# Not one carrying loop:rebase / loop:rebuild-N: that card came back from QA/Review (a gate exit or a bounce after the person's `done`
+# moved it to Review with its needs-you still on: run.md → resume), so it is work again (review 19/10). One definition for every use.
+FOR_A_PERSON_JQ='def for_a_person: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
+  | ((index("needs-you") or index("human-gated")) and (map(. == "loop:rebase" or startswith("loop:rebuild-")) | any | not));'
+
 person_count() {
-  # Cards of column $1 labelled needs-you / human-gated (#95): no lane takes them from Ready, so they must not keep a run alive
-  # that has nothing else to do (counted in Ready, a non-daemon run never reached its clean "all empty" exit).
-  echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" '[.items[] | select(.status == $col)
-    | select([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
-             | (index("needs-you") or index("human-gated")))] | length'
+  # Cards of column $1 waiting for a person: no lane takes them from Ready, so they must not keep a run alive that has nothing else
+  # to do (counted in Ready, a non-daemon run never reached its clean "all empty" exit).
+  echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" "$FOR_A_PERSON_JQ"' [.items[] | select(.status == $col) | select(for_a_person)] | length'
 }
 
 # ── Status-field resolution (issue #10 reconcile path).
@@ -235,7 +239,7 @@ top_card_in_column() {
       key="${col}#${issue}@$( { tail -1 "$(early_death_file "$issue")" 2>/dev/null || true; } | cut -d' ' -f1)"   # one line per backoff
       case " ${BACKOFF_LOGGED:-} " in
         *" ${key} "*) ;;
-        *) log "skip #${issue} in ${col}: its worker died within ${SB_EARLY_DEATH_S:-120}s twice in ${SB_EARLY_WINDOW_S:-600}s — not claimed again until that window passes"
+        *) log "skip #${issue} in ${col}: its worker ended within ${SB_EARLY_DEATH_S:-120}s twice in ${SB_EARLY_WINDOW_S:-600}s — not claimed again until that window passes"
            BACKOFF_LOGGED="${BACKOFF_LOGGED:-} ${key}" ;;
       esac
       continue
@@ -254,15 +258,14 @@ top_card_in_column() {
     TOP_ISSUE="$issue"; TOP_ITEM_ID="$item_id"
     return 0
   done <<EOF
-$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" '
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" "$FOR_A_PERSON_JQ"'
     .items[]
     | select(.status == $col and .content.type == "Issue")
     | select((.content.assignees // []) | length == 0)
-    # #95: a Ready card labelled needs-you / human-gated waits for a person (playtest, real device, store account, a ruling):
-    # dispatching it only spends a lane and parks it again. Not in QA/Review: the resume path moves a 🙋 card a person
-    # approved to Review with its label possibly still on (run.md → resume). Removing the label releases the card.
-    | select($col != "Ready" or ([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)
-                                  | ascii_downcase] | (index("needs-you") or index("human-gated")) | not))
+    # #95: a Ready card waiting for a person (playtest, real device, store account, a ruling): dispatching it only spends a lane
+    # and parks it again. Not in QA/Review: the resume path moves a 🙋 card a person approved to Review with its label possibly
+    # still on (run.md → resume). Removing the label releases the card.
+    | select($col != "Ready" or (for_a_person | not))
     | [(.content.number | tostring), (.id // "")] | @tsv')
 EOF
   return 1
@@ -703,10 +706,20 @@ note_early_death() {
   # each dispatch made reap free the card and the next tick claim it again, every ~40 s, until the board halted. A worker that died
   # within SB_EARLY_DEATH_S (120 s) of its dispatch is recorded here as "<epoch> <lane>", with the last line of its log, so the card
   # can cool down in that lane. Bookkeeping only: under the runner's `set -euo pipefail` no step here may end the runner.
-  local started now age f last n
-  started=$(python3 -c 'import calendar, sys, time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "${STARTED:-}" 2>/dev/null) || return 0
-  now=$(date +%s); age=$((now - started))
-  [ "$age" -lt "${SB_EARLY_DEATH_S:-120}" ] || return 0
+  local age limit f last n now wlog="${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log"
+  # How long the worker lived: up to its log's last write. Reap runs once per tick (tick_seconds, 120 by default), so "now" can be a
+  # whole tick after the death (review 19/10: measured at reap time, no worker ever counted). No log: now, with one tick of slack.
+  age=$(python3 -c 'import calendar, os, sys, time
+start = calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ"))
+try:
+    end = os.path.getmtime(sys.argv[2]); print(int(end - start), "log")
+except OSError:
+    print(int(time.time() - start), "now")' "${STARTED:-}" "$wlog" 2>/dev/null) || return 0
+  limit=${SB_EARLY_DEATH_S:-120}
+  case "$age" in *" now") limit=$((limit + ${TICK_SECONDS:-0})) ;; esac
+  age=${age% *}
+  [ "$age" -lt "$limit" ] 2>/dev/null || return 0
+  now=$(date +%s)
   f=$(early_death_file "$1")
   mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
   # keep only the window: the file never grows past a few lines
@@ -715,7 +728,7 @@ note_early_death() {
   # the log may be gone or empty (the 19/10 shape): grep exits 1/2, which pipefail would turn into the runner's exit
   last=$( { grep -v '^[[:space:]]*$' "${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log" 2>/dev/null || true; } | tail -1 | cut -c1-200)
   n=$( { awk -v l="${LANE:-?}" '$2 == l' "$f" 2>/dev/null || true; } | wc -l | tr -d ' ')
-  log "⚠ worker of #${1} (lane ${LANE:-?}) died ${age}s after dispatch — early death ${n} of this lane in ${SB_EARLY_WINDOW_S:-600}s; last log line: ${last:-<no worker log at ${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log>}"
+  log "⚠ worker of #${1} (lane ${LANE:-?}) ended ${age}s after dispatch (a crash or a very quick exit) — early end ${n} of this lane in ${SB_EARLY_WINDOW_S:-600}s; last log line: ${last:-<no worker log at ${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log>}"
 }
 
 early_backoff() {
@@ -974,7 +987,8 @@ sweep_blocked_cards() {
     case " ${SWEPT_CARDS:-} " in *" $key "*) log "blocked sweep: #${issue} already swept this run for ${cleared} — left Blocked"; continue ;; esac
     # `needs-you` là quyết định của người, kể cả khi planner thả thẻ (planner chỉ đọc 8 comment cuối).
     if echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$issue" '[.items[] | select(.content.number == $n)
-         | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index("needs-you")' >/dev/null 2>&1; then
+         | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
+         | (index("needs-you") or index("human-gated"))' >/dev/null 2>&1; then   # any case, human-gated too (#95 review 19/10)
       continue
     fi
     item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty')
@@ -1077,7 +1091,7 @@ cleanup_stale_worktrees
 startup_reconcile
 
 # ───────────────────────────── main loop ─────────────────────────────
-INITIAL_READY=$(column_count "Ready")
+INITIAL_READY=$(( $(column_count "Ready") - $(person_count "Ready") ))   # as READY each tick: cards for a person left out (#95)
 log "initial Ready count: $INITIAL_READY"
 
 # Landed-work baseline (issue #8). Progress is a change in this set, not lane state.

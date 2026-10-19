@@ -198,7 +198,7 @@ Repeat until a done condition or halt gate fires:
    classification. Existing docs/ux/tests/refactor rows keep their chain; check
    any proposed new label chain before writing that label.
 
-   The planner returns `cards`, `sweep`, `resume`, `refreshApproval`, `flag` and `stranded`. **Act on
+   The planner returns `cards`, `sweep`, `resume`, `refreshApproval`, `flag`, `stranded` and `waiting`. **Act on
    `sweep`, `resume`, `refreshApproval`, `flag` and `stranded` BEFORE launching** (run.md → "The wave-start
    sweep"): move every swept card to `Ready` with a comment naming what cleared
    it, move every `resume` card (verified human approval of the current pinned
