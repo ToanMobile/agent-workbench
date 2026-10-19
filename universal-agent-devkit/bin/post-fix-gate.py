@@ -1418,10 +1418,11 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     unverified_ok = exit_code == 2 and not any(
         t.get("status") not in ("PASS", "UNTESTED", "BUSY") for t in (tests or []) if t.get("command"))
     if partial and unverified_ok:
-        _tree_store(tree_fp, project_dir, tested_fp)   # exit 2 on the tested tree: its exit-0 entry goes, as this receipt below
+        run_fp = tested_fp or tree_fp.tree_fingerprint(project_dir)   # once: the store drop and the receipt below both need it
+        _tree_store(tree_fp, project_dir, run_fp)   # exit 2 on the tested tree: its exit-0 entry goes, as this receipt below
         try:
             kept = _load_state_json(path)
-            same = isinstance(kept, dict) and kept.get("fingerprint") == (tested_fp or tree_fp.tree_fingerprint(project_dir))
+            same = isinstance(kept, dict) and kept.get("fingerprint") == run_fp
             if same and kept.get("exit") == 0 and not locked:
                 # F1: no load-then-replace without the lock. A forced run that holds it and FAILS a suite deletes this file; between this run's load
                 # and its replace that deletion would be undone, and the receipt would come back as exit 2 with the failing suite's PASS (which

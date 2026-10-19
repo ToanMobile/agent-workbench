@@ -170,14 +170,16 @@ UNTESTED=1 gate "$WT" --diff HEAD~1 --no-cache; g=$?; finish; stop; rc=$?
 [ "$g" = 4 ] || fail "N5b setup: untested gate exit $g, want 4"
 blocked "$rc" && ok "N5b a later UNTESTED --full on the same tree: blocked" || fail "N5b stale exit-0 receipt accepted ($(why $rc))"
 
-# N6b. Biên nhận hợp lệ của cây khác chép sang tên = dấu vân tay cây giao (field fingerprint lệch tên file), rồi sửa cả field nhưng
-# exit là false (bool, == 0 trong python): đều chặn.
+# N6b. Biên nhận hợp lệ của cây khác chép sang tên = dấu vân tay cây giao (field fingerprint vẫn của cây kia): chặn. Đối chứng: sửa
+# field cho khớp thì qua (kho là file agent ghi được, như full_pass.json; không có chữ ký); thêm exit false (bool, == 0 trong python): chặn.
 turn_start; wt_new n6b; wt_edit 92; gate "$WT" --diff HEAD~1 || fail "N6b setup: gate exit $?"; wt_edit 93; finish
 FP93="$(python3 "$DEVKIT_DIR/bin/tree_fp.py" "$REPO")"; SRC="$(ls -t "$STORE"/*.json | head -1)"
 cp "$SRC" "$STORE/$FP93.json"; stop; rc=$?
 blocked "$rc" && ok "N6b a receipt copied onto the delivered tree's name: blocked" || fail "N6b renamed receipt accepted ($(why $rc))"
-python3 -c 'import json,sys; p=sys.argv[1]; r=json.load(open(p)); r["fingerprint"]=sys.argv[2]; r["exit"]=False; json.dump(r,open(p,"w"))' "$STORE/$FP93.json" "$FP93"
-stop; rc=$?
+setf() { python3 -c 'import json,sys; p=sys.argv[1]; r=json.load(open(p)); r.update(json.loads(sys.argv[2])); json.dump(r,open(p,"w"))' "$STORE/$FP93.json" "$1"; }
+setf "{\"fingerprint\": \"$FP93\"}"; stop; rc=$?
+[ "$rc" = 0 ] || fail "N6b control: fingerprint fixed should pass ($(why $rc))"
+setf '{"exit": false}'; stop; rc=$?
 blocked "$rc" && ok "N6b a receipt with exit false: blocked" || fail "N6b exit-false receipt accepted ($(why $rc))"
 
 # N6. Biên nhận trong kho có cây đúng nhưng exit 2: chặn.
@@ -199,7 +201,8 @@ blocked "$rc" && ok "N8 trunk mode off: blocked" || fail "N8 accepted outside tr
 
 # T1. commit_fingerprint giữ MỘT hạn chót cho mọi lệnh git của nó (hook quá hạn bị giết = Stop lọt): git chậm 0,4 s/lệnh, hạn 1 s.
 TFP="${TFP_DIR:-$DEVKIT_DIR/bin}"; mkdir -p "$TMP/slowbin"
-printf '#!/bin/sh\nsleep 0.4\nexec %s "$@"\n' "$(command -v git)" > "$TMP/slowbin/git" && chmod +x "$TMP/slowbin/git"
+printf '#!%s\nimport os, sys, time\ntime.sleep(0.4)\nos.execv("%s", ["%s"] + sys.argv[1:])\n' "$(command -v python3)" "$(command -v git)" "$(command -v git)" \
+  > "$TMP/slowbin/git" && chmod +x "$TMP/slowbin/git"   # ngủ trong chính tiến trình bị giết (sleep con của sh giữ ống thêm 0,4 s)
 out=$(PATH="$TMP/slowbin:$PATH" python3 -c 'import subprocess, sys, time; sys.path.insert(0, sys.argv[1]); import tree_fp
 t = time.monotonic()
 try:
@@ -207,7 +210,7 @@ try:
 except subprocess.TimeoutExpired:
     r = "timeout"
 print(r, round(time.monotonic() - t, 1))' "$TFP" "$REPO" 2>&1)
-case "$out" in "timeout 0."*|"timeout 1."[0-5]*) ok "T1 commit_fingerprint keeps one deadline ($out)" ;;
+case "$out" in "timeout 0.9"|"timeout 1."[0-5]*) ok "T1 commit_fingerprint keeps one deadline ($out)" ;;   # sớm hơn hạn cũng sai: chặn oan
   *) fail "T1 commit_fingerprint ran past its deadline ($out)" ;; esac
 
 [ "$FAILS" -eq 0 ] && { echo "ALL PASS"; exit 0; }
