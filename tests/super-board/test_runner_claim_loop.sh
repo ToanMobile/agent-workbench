@@ -69,7 +69,7 @@ cycle() {   # one runner tick for the build lane: reap, pick the top Ready card,
 picks=""
 for i in 1 2 3 4 5; do cycle; picks="$picks ${PICKED:-_}"; done
 c7=$(claims_of 7)
-[ "$c7" -le 2 ] && ok "a card whose worker keeps dying at once is claimed at most twice in the window (claims of #7: $c7; picks:$picks)" \
+[ "$c7" -eq 2 ] && case "$picks" in " 7 7"*) true ;; *) false ;; esac && ok "a card whose worker keeps dying at once is claimed at most twice in the window (claims of #7: $c7; picks:$picks)" \
   || fail "claim/release loop: #7 claimed $c7 times in 5 ticks (picks:$picks)"
 case "$picks" in *" 8"*) ok "  … and the next card is dispatched meanwhile" ;; *) fail "  the other Ready card was never dispatched (picks:$picks)" ;; esac
 grep -q "#7.*died" "$TMP/log" && grep -q "session limit" "$TMP/log" && ok "  … and the log says the worker died early, with its last log line" \
@@ -131,5 +131,12 @@ top_card_in_column "Review"; r="$TOP_ISSUE"
 PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_50","status":"Ready","labels":[],"content":{"type":"Issue","number":50,"assignees":[]}}]}'
 top_card_in_column "Ready"; b="$TOP_ISSUE"
 [ "$r" = 50 ] && [ -z "$b" ] && ok "backoff is per lane: the Reviewer still takes the card, the Builder does not" || fail "per-lane backoff: review='$r' ready='$b'"
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_50","status":"Ready","labels":["qa"],"content":{"type":"Issue","number":50,"assignees":[]}}]}'
+top_card_in_column "Ready"; q="$TOP_ISSUE"
+printf '%s qa\n%s qa\n' "$now" "$now" > "$INFLIGHT_DIR/early-deaths/51"
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_51","status":"Ready","labels":["bug"],"content":{"type":"Issue","number":51,"assignees":[]}}]}'
+top_card_in_column "Ready"; b2="$TOP_ISSUE"
+[ "$q" = 50 ] && [ "$b2" = 51 ] && ok "  … and in Ready only the lane the card routes to counts (a qa card is not held by build deaths, nor a built card by qa deaths)" \
+  || fail "Ready lane routing in backoff: qa-card='$q' built-card='$b2'"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_runner_claim_loop: all passed" || { echo "❌ test_runner_claim_loop: $FAILS failed"; exit 1; }

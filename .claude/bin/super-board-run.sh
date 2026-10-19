@@ -724,7 +724,7 @@ early_backoff() {
   # that bounced the card to Ready in seconds says nothing about the Builder taking it next, nor two quick builds about its review.
   local f now n lanes
   case "${2:-}" in
-    Ready) lanes="build qa" ;;   # a `qa`-labelled Ready card goes to the Tester
+    Ready) lanes=$(card_lane "$1") ;;   # the lane that takes it from Ready: build, or qa for a `qa`-labelled card
     QA) lanes="qa" ;;
     Review) lanes="review" ;;
     *) return 1 ;;

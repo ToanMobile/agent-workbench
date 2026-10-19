@@ -7,7 +7,7 @@
 #     không được chọn; thẻ Ready khác vẫn được chọn. Thẻ ở Review/QA mang needs-you VẪN được chọn: luồng resume đưa thẻ 🙋 đã
 #     được người duyệt về Review và nhãn có thể còn (run.md → resume).
 #  2. planner (super-board-wave-plan.sh): các thẻ Ready đó không vào `cards`, và được liệt kê trong `waiting`.
-#  3. /super-board status: nhóm "chờ người" riêng (mọi cột trừ Done), tách khỏi Block reasons.
+#  3. /super-board status: nhóm "chờ người" riêng (cột Ready và Blocked; Review/QA do lane làm), tách khỏi Block reasons.
 # Chạy offline. Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
