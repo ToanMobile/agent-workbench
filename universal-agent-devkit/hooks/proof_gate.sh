@@ -736,7 +736,7 @@ def tree_store_evidence():
             recs.append(r)
     if not recs:
         return None
-    now_fp = FP.get("now") or (tree_fp.tree_fingerprint(repo) if room() > 3 else "")
+    now_fp = FP.get("now")   # never a fresh tree_fingerprint here: it has no deadline (main clean = commit_fingerprint below, which has one)
     if now_fp and any(r["fingerprint"] == now_fp for r in recs):
         return "tree-receipt fp=%s" % now_fp
     if tree[1] or room() <= 2:

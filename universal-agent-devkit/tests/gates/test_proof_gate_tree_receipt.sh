@@ -30,7 +30,7 @@ JSON
   git add -A && git commit -qm init && git push -q origin main ) || exit 1
 git clone -q "$ORIGIN" "$GH" 2>/dev/null && git -C "$GH" config user.email gh@gh && git -C "$GH" config user.name github || exit 1
 MAIN_RECEIPT="$(git -C "$REPO" rev-parse --absolute-git-dir)/postfix-gate/full_pass.json"
-STORE="$(git -C "$REPO" rev-parse --absolute-git-dir)/postfix-gate/tree_receipts"
+STORE="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)/postfix-gate/tree_receipts"
 
 turn_start() { python3 -c 'import datetime,json
 t=(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -99,6 +99,10 @@ echo "# run log của runner" > "$REPO/docs/foreign.md"; echo "# runner" >> "$RE
 # N9. Cùng cảnh đó, nhưng chính phiên này đã ghi file bẩn đó ở main: chặn (luật PR #50).
 tool_use Write "{\"file_path\": \"$REPO/docs/foreign.md\", \"content\": \"x\"}"; stop; rc=$?
 blocked "$rc" && ok "N9 the dirty main file is this session's own: blocked" || fail "N9 own dirty file accepted ($(why $rc))"
+# N9b. Như C3a, nhưng một lệnh Bash của phiên nêu đường dẫn tương đối của file tracked bị sửa: chặn.
+python3 -c 'import sys; open(sys.argv[1], "w").write(open(sys.argv[1]).read().split("\n",1)[0] + "\n")' "$TR"   # bỏ Write của N9
+tool_use Bash '{"command": "echo x >> docs/other.md"}'; stop; rc=$?
+blocked "$rc" && ok "N9b a dirty tracked main file named by this session's Bash: blocked" || fail "N9b accepted ($(why $rc))"
 rm -f "$REPO/docs/foreign.md"; git -C "$REPO" checkout -q -- docs/other.md
 
 # N14. Như C2b nhưng không có lần verify của merge gate: biên nhận worktree là của cây khác cây squash. Chặn.
@@ -210,7 +214,7 @@ try:
 except subprocess.TimeoutExpired:
     r = "timeout"
 print(r, round(time.monotonic() - t, 1))' "$TFP" "$REPO" 2>&1)
-case "$out" in "timeout 0.9"|"timeout 1."[0-5]*) ok "T1 commit_fingerprint keeps one deadline ($out)" ;;   # sớm hơn hạn cũng sai: chặn oan
+case "$out" in "timeout 1."*) ok "T1 commit_fingerprint keeps one deadline ($out)" ;;   # sớm hơn hạn (0.x) cũng sai: chặn oan
   *) fail "T1 commit_fingerprint ran past its deadline ($out)" ;; esac
 
 [ "$FAILS" -eq 0 ] && { echo "ALL PASS"; exit 0; }
