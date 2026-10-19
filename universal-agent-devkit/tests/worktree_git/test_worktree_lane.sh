@@ -112,6 +112,9 @@ add python3 "$WT" add "$P/.claude/worktrees/issue-9-qa" issue-9-remote --lane=qa
   || fail "reuse: rc $rc: $(tail -3 "$TMP/out")"
 add python3 "$WT" add "$P/.claude/worktrees/issue-9-qa" other-branch --lane=qa --no-init; rc=$?
 [ "$rc" != 0 ] && ok "  … but not when it holds another branch (rc $rc)" || fail "reused a lane worktree on the wrong branch"
+add python3 "$WT" add "$P/.claude/worktrees/issue-9-qa" --lane=qa --base=main --no-init; rc=$?
+[ "$rc" != 0 ] && [ "$(G "$P/.claude/worktrees/issue-9-qa" symbolic-ref -q --short HEAD)" = issue-9-remote ] \
+  && ok "  … nor moved off its branch when a detached checkout is asked at its path (rc $rc)" || fail "a branch worktree was moved off its branch"
 # 4b: the Reviewer's detached checkout, reused: moved to --base (no stale PR head) and the board's; never when it holds work
 echo more > "$B/more.txt" && G "$B" add more.txt && G "$B" commit -qm more && newtip=$(G "$B" rev-parse HEAD)
 add python3 "$WT" add "$R" --lane=review --base=issue-5-fix --no-init; rc=$?

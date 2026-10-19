@@ -69,7 +69,8 @@ case "$p" in *"--lane=review --base=origin/<PR branch>"*) ok "review lane: a det
 # ── 2. dưới sàn đĩa: không nhận thẻ, không giao
 rm -f "$TMP/claims"
 ( export WORKTREE_DISK_MIN_GIB=100000 WORKTREE_DISK_WARN_GIB=0; launch build 6 )
-if [ ! -s "$TMP/launched" ] && [ ! -e "$TMP/claims" ] && [ ! -e "$INFLIGHT_DIR/6" ] && grep -q "disk under the DevKit worktree floor" "$TMP/log"; then
+if [ ! -s "$TMP/launched" ] && [ ! -e "$TMP/claims" ] && [ ! -e "$INFLIGHT_DIR/6" ] && grep -q "disk under the DevKit worktree floor" "$TMP/log" \
+    && grep -q "worktree_disk_room: .*GiB" "$TMP/log"; then
   ok "disk under the DevKit floor: no claim, no worker, the reason logged"
 else
   fail "disk floor: launched='$(head -c 120 "$TMP/launched")' claims=$([ -e "$TMP/claims" ] && echo yes || echo no) log=$(tail -1 "$TMP/log")"
@@ -113,6 +114,14 @@ git init -q --bare "$D/origin.git" && G "$D/main" remote add origin "$D/origin.g
 (cd "$D/main" && BASE_BRANCH=main bash "$DISPATCH" 5 > "$TMP/disp.out" 2>&1); rc=$?
 [ "$rc" = 64 ] && grep -q "already exists on origin" "$TMP/disp.out" && ok "dispatch with loop/issue-N on origin: refused (always a fresh start)" \
   || fail "dispatch with a remote leftover branch: rc $rc: $(tail -1 "$TMP/disp.out")"
+G "$D/main" remote set-url origin "$D/missing.git"
+(cd "$D/main" && BASE_BRANCH=main bash "$DISPATCH" 5 > "$TMP/disp.out" 2>&1); rc=$?
+[ "$rc" = 64 ] && grep -q "cannot reach origin" "$TMP/disp.out" && ok "dispatch with origin unreachable: refused with the reason" \
+  || fail "dispatch with origin unreachable: rc $rc: $(tail -1 "$TMP/disp.out")"
+mkdir -p "$D/main/sub"
+(cd "$D/main/sub" && BASE_BRANCH=main bash "$DISPATCH" 5 > "$TMP/disp.out" 2>&1); rc=$?
+[ "$rc" = 64 ] && grep -q "run from the repository root" "$TMP/disp.out" && ok "dispatch from a subfolder: refused, the repository root named" \
+  || fail "dispatch from a subfolder: rc $rc: $(tail -1 "$TMP/disp.out")"
 grep -q 'WT_PY="$REPO_DIR/.agents/devkit/scripts/git/worktree.py"' "$DISPATCH" \
   && grep -q 'python3 "$WT_PY" add "$WORKTREE_DIR" "$WORKER_BRANCH" --lane=build' "$DISPATCH" && ok "super-build-dispatch.sh creates the worktree with the kit" \
   || fail "super-build-dispatch.sh does not use the kit"

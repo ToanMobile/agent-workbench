@@ -67,8 +67,12 @@ fi
 # Lane worktrees live in the MAIN checkout's .claude/worktrees (`worktree add --lane` refuses any other folder): run from a session's own
 # worktree, say so now instead of failing later inside add, after the prompt is written.
 MAIN_DIR=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
-if [[ -n "$MAIN_DIR" && "$(cd "$MAIN_DIR" && pwd -P)" != "$(pwd -P)" ]]; then
+TOP_DIR=$(git rev-parse --show-toplevel 2>/dev/null)
+if [[ -n "$MAIN_DIR" && "$(cd "$MAIN_DIR" && pwd -P)" != "$(cd "$TOP_DIR" && pwd -P)" ]]; then
   echo "error: run from the main checkout ($MAIN_DIR), not from a linked worktree: lane worktrees live in its .claude/worktrees" >&2
+  exit 64
+elif [[ "$(pwd -P)" != "$(cd "$TOP_DIR" && pwd -P)" ]]; then
+  echo "error: run from the repository root ($TOP_DIR), not a subfolder: the worktree path .claude/worktrees/issue-$N is relative to it" >&2
   exit 64
 fi
 
@@ -107,7 +111,9 @@ fi
 # say it here (no prompt for credentials: headless).
 if git remote get-url origin >/dev/null 2>&1; then
   LS_RC=0
-  GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code --heads origin "refs/heads/$WORKER_BRANCH" >/dev/null 2>&1 || LS_RC=$?
+  # headless: no HTTPS credential prompt, and an SSH remote may not wait for a host key or passphrase either (BatchMode, 10 s connect)
+  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes -o ConnectTimeout=10" \
+    git ls-remote --exit-code --heads origin "refs/heads/$WORKER_BRANCH" >/dev/null 2>&1 || LS_RC=$?
   if [[ "$LS_RC" -eq 0 ]]; then
     echo "error: branch $WORKER_BRANCH already exists on origin — refusing to clobber" >&2
     exit 64

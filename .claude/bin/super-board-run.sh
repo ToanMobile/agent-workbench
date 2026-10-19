@@ -429,7 +429,8 @@ m._make_room(sys.argv[2], sys.argv[3])   # SystemExit(NO_ROOM=4) under the floor
 PY
   ) || rc=$?
   case "$rc" in
-    0|4) ;;
+    0) ;;
+    4) log "worktree_disk_room: $(printf '%s' "$err" | tail -1 | cut -c1-200)" ;;   # the DevKit's own line: free GiB and the floor
     *) log "⚠ worktree_disk_room: DevKit disk check failed (rc=${rc}: $(printf '%s' "$err" | tail -1 | cut -c1-200)) — assuming room" ;;
   esac
   [ "$rc" -ne 4 ]

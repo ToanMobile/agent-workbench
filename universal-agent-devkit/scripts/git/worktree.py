@@ -850,9 +850,9 @@ def _reuse_lane(main, wt, branch, base, lane, no_init=False, profile=None):
     if entry is None:
         die(tr(f"{wt} đã có, không rỗng và không phải worktree đã đăng ký của repo này: kiểm tra nó, không xoá",
                f"{wt} exists, is not empty and is no registered worktree of this repo: inspect it, never delete it"))
-    if branch and entry["branch"] != branch:
-        die(tr(f"{wt} là worktree của {entry['branch'] or 'một HEAD detached'}, không phải của {branch}",
-               f"{wt} is the worktree of {entry['branch'] or 'a detached HEAD'}, not of {branch}"))
+    if (branch or None) != (entry["branch"] or None):   # both ways: a detached checkout asked of a worktree on a branch would move it off it
+        die(tr(f"{wt} là worktree của {entry['branch'] or 'một HEAD detached'}, không phải của {branch or 'một HEAD detached'}",
+               f"{wt} is the worktree of {entry['branch'] or 'a detached HEAD'}, not of {branch or 'a detached HEAD'}"))
     state = None
     if not branch:
         state = load_state(wt)   # dies on a state file that is there and unreadable; none at all: the adopted reading
