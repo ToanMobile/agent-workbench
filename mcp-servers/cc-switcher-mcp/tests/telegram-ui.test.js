@@ -316,3 +316,33 @@ test('Telegram UI 6: balanceRepoAccounts chia deu 3 repo finos va 3 repo finos_t
     tmp.cleanup();
   }
 });
+
+test('Telegram UI 7: Bo cuc Mobile UI/UX gon dep, khong lap so [1] 1., nut bam <= 24 ky tu khong bi cat ... tren dien thoai, 6 repo tach dong ro rang', () => {
+  const tmp = createTempDir();
+  try {
+    const report = getStatusReport({ stateDir: tmp.dir });
+    const dash = buildTelegramDashboard(report);
+
+    // 1. Khong lap so thu tu kieu "[1] 1. FinOS" gay roi mat
+    assert.doesNotMatch(dash.text, /\[\d\]\s+\d\./);
+
+    // 2. Tat ca nut chon profile (sw:*) tren 2 cot phai <= 24 ky tu de % va gio mo khoa khong bi cat "..." tren iPhone/Android
+    const swButtons = dash.reply_markup.inline_keyboard
+      .flat()
+      .filter((b) => b.callback_data.startsWith('sw:'));
+    assert.equal(swButtons.length, 6);
+    for (const btn of swButtons) {
+      assert.ok(
+        btn.text.length <= 24,
+        `Nut "${btn.text}" dai ${btn.text.length} ky tu (> 24) se bi cat '...' tren dien thoai`,
+      );
+    }
+
+    // 3. Danh sach 6 Repo duoc trinh bay tach dong ro rang, de doc lướt tren man hinh doc
+    assert.match(dash.text, /• agent-workbench/);
+    assert.match(dash.text, /• GeelyEx2/);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
