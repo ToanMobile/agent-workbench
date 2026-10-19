@@ -207,6 +207,33 @@ acquire() {
 }
 release() { rm -rf "$LOCK_DIR"; }
 
+# ---- chờ máy bớt tải (trước khi giữ khoá) ------------------------------------
+# 19/10: verify --full chạy lúc tải 1 phút ~60 (5 board cùng build), REG-DK-ALL-01 của PR #87 chọn 127 test và quá 900 s, thẻ #12
+# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX (mặc định 2 × số lõi), tối đa SB_MERGE_LOAD_WAIT_S (mặc định 1800 s,
+# 0 = không chờ); hết giờ vẫn verify như cũ, không bỏ bước nào. Chờ ngoài khoá: merge của PR khác không phải đợi theo.
+# SB_MERGE_LOAD_FILE: móc test, đọc tải từ file thay cho os.getloadavg().
+load_now() {
+  if [ -n "${SB_MERGE_LOAD_FILE:-}" ]; then cat "$SB_MERGE_LOAD_FILE" 2>/dev/null || echo 0
+  else python3 -c 'import os; print(int(os.getloadavg()[0]))' 2>/dev/null || echo 0; fi
+}
+wait_for_load() {
+  local max="${SB_MERGE_LOAD_MAX:-}" cap="${SB_MERGE_LOAD_WAIT_S:-1800}" poll="${SB_MERGE_LOAD_POLL_S:-30}" waited=0 load
+  [ "$DRY" -eq 1 ] && return 0
+  [[ "$cap" =~ ^[0-9]+$ ]] && [ "$cap" -gt 0 ] || return 0
+  [[ "$poll" =~ ^[0-9]+$ ]] && [ "$poll" -gt 0 ] || poll=30
+  [[ "$max" =~ ^[0-9]+$ ]] || max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 2 ))
+  load=$(load_now); [[ "$load" =~ ^[0-9]+$ ]] || return 0
+  [ "$load" -lt "$max" ] && return 0
+  say "waiting for load ${load} to drop below ${max} before verify (at most ${cap}s)"
+  while [ "$waited" -lt "$cap" ]; do
+    sleep "$poll"; waited=$(( waited + poll ))
+    load=$(load_now); [[ "$load" =~ ^[0-9]+$ ]] || return 0
+    if [ "$load" -lt "$max" ]; then say "load ${load} after ${waited}s; verifying"; return 0; fi
+  done
+  say "load still ${load} after ${waited}s; verifying anyway"
+}
+wait_for_load
+
 acquire || { say "could not take the merge lock within ${LOCK_TIMEOUT}s"; exit 4; }
 trap release EXIT
 
