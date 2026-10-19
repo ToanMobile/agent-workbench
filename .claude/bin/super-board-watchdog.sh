@@ -158,13 +158,23 @@ restart_runner() {   # $1 = PID cũ, $2 = STATE cũ, $3 = RC cũ
   wlog "♻ restarted the runner (attempt $RESTARTS/$MAX_RESTARTS): new pid $new; previous pid ${1:-?} STATE=${2:-?} rc=${3:-?}; log $log"
 }
 
+file_mtime() {
+  # mtime (epoch giây) của $1 trên cả GNU stat (Linux: -c %Y) lẫn BSD stat (macOS: -f %m); chỉ nhận số (GNU `stat -f` in chữ
+  # filesystem mà vẫn thành công). Không đọc được thì trả 1. Cùng hàm với super-board-run.sh.
+  local t
+  for t in "$(stat -c %Y "$1" 2>/dev/null || true)" "$(stat -f %m "$1" 2>/dev/null || true)"; do
+    case "$t" in ''|*[!0-9]*) ;; *) printf '%s\n' "$t"; return 0 ;; esac
+  done
+  return 1
+}
+
 take_check_lock() {
   # Hai `check` cùng lúc (launchd + một lần chạy tay) đều thấy runner chết và cùng khởi động: chỉ một lượt kiểm chạy.
   # Khoá bỏ lại quá 120 s (check bị kill) được lấy lại.
   local lock="$DIR/$SLUG.check.lock" m
   mkdir -p "$DIR"
   if ! mkdir "$lock" 2>/dev/null; then
-    m=$(stat -f %m "$lock" 2>/dev/null || echo "$NOW")
+    m=$(file_mtime "$lock") || m=$NOW
     [ $((NOW - m)) -ge 120 ] || return 1
     rmdir "$lock" 2>/dev/null || true
     mkdir "$lock" 2>/dev/null || return 1
