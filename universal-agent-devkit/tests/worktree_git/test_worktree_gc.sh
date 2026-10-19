@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # `agent-kit worktree gc` (W1 step 1, docs/workflow-improvements.md I.0 R5b; 2026-10-13: 8 orphan GeelyEx2-* folders, 1.25 GB, were
 # left for the user because hardware_safety_gate rightly blocks an agent's `rm -rf` outside the project). gc deletes a folder only when
-# every file in it is provably not unique: a symlink, noise (.DS_Store), DevKit bookkeeping, the same bytes as main's file at that path,
-# a blob the repo already holds (a committed version), or an ignored build output that is not a secret. Candidates: registered
+# every file in it is provably not unique: a symlink main has too (same path, same target) or a DevKit kit link (issue #12 / #40: any
+# other symlink is work), noise (.DS_Store), DevKit bookkeeping, the same bytes as main's file at that path,
+# the blob a kept commit holds AT THAT PATH (a committed version of that file), or an ignored build output that is not a secret
+# (issue #12: a new path holding bytes committed elsewhere is work, not a committed version). Candidates: registered
 # worktrees already integrated, `<repo>-*` siblings whose `.git` pointer dangles into THIS repo, and `<repo>-*` siblings with no `.git`
 # that hold bookkeeping only. A secret that exists only there, a unique file, a live session's worktree, or work not in main: kept,
 # named in one line. --dry-run deletes nothing.
@@ -34,15 +36,23 @@ dangle() {   # dangle <name>: a worktree whose admin dir is gone, so its .git po
 mkdir -p "$TMP/main-merged/build" && echo bin > "$TMP/main-merged/build/out.bin"   # an ignored build output does not keep it
 # 2 a registered worktree with a commit main lacks: kept
 G "$R" worktree add -q --detach "$TMP/main-ahead" && echo x > "$TMP/main-ahead/x.txt" && G "$TMP/main-ahead" add x.txt && G "$TMP/main-ahead" commit -qm x
-# 3 a dangling orphan: only committed content (an old blob), main's identical local config, a build output, noise, a link: deleted
+# 3 a dangling orphan: only committed content (an old blob), main's identical local config, a build output, noise, a DevKit kit
+#   link (into main's universal-agent-devkit/: install state, issue #12 / #40): deleted
 dangle main-orphan-clean
 echo v1 > "$TMP/main-orphan-clean/lib.txt"; cp "$R/local.properties" "$TMP/main-orphan-clean/"
 mkdir -p "$TMP/main-orphan-clean/build/out" && echo bin > "$TMP/main-orphan-clean/build/out/app.bin"
 echo png > "$TMP/main-orphan-clean/build/out/ảnh.png"   # a non-ASCII build output: git quotes such names unless core.quotePath=false
-: > "$TMP/main-orphan-clean/.DS_Store"; ln -s "$R" "$TMP/main-orphan-clean/link-to-main"
+mkdir -p "$R/universal-agent-devkit/skills/x"   # thư mục rỗng: git không thấy, main không bẩn
+: > "$TMP/main-orphan-clean/.DS_Store"; ln -s "$R/universal-agent-devkit/skills/x" "$TMP/main-orphan-clean/kit-skill-x"
 chflags uchg "$TMP/main-orphan-clean/app.txt" 2>/dev/null   # a locked copy (INSTINCT-038) must not strand it
 # 4 a dangling orphan with a file never committed: kept
 dangle main-orphan-unique; echo "work only here" > "$TMP/main-orphan-unique/notes.md"
+# 4b issue #12: a NEW path whose bytes some ref holds at ANOTHER path is uncommitted work too, kept: a copy of app.txt (a current
+#    blob), and lib.txt's old "v1" under a new name (an old blob)
+dangle main-orphan-copy; cp "$R/app.txt" "$TMP/main-orphan-copy/copy.txt"
+dangle main-orphan-oldblob; mkdir -p "$TMP/main-orphan-oldblob/notes" && echo v1 > "$TMP/main-orphan-oldblob/notes/old.txt"
+# 4c issue #12 (QA): an uncommitted edit of a TRACKED path that gives it another file's bytes (lib.txt := app.txt): work, kept
+dangle main-orphan-trackedcopy; cp "$R/app.txt" "$TMP/main-orphan-trackedcopy/lib.txt"
 # 5 no .git at all, bookkeeping only (what a gate wrote after its worktree was removed): deleted
 mkdir -p "$TMP/main-gate-orphan/.claude/audit-gate" "$TMP/main-gate-orphan/.agents/evidence/REG-1" "$TMP/main-gate-orphan/.agents/regression_journal" "$TMP/main-gate-orphan/__pycache__"
 : > "$TMP/main-gate-orphan/.claude/audit-gate/test_run.lock"; echo log > "$TMP/main-gate-orphan/.agents/evidence/REG-1/a.log"
@@ -119,11 +129,15 @@ done
 for d in main-merged main-empty main-links main-ahead main-orphan-unique main-orphan-secret other-thing main-notes main-backup main-orphan-memory \
          main-orphan-detcommit main-orphan-staged main-orphan-trackedignored main-orphan-ignoreddata main-orphan-status \
          main-review main-idle main-memnote main-regignored main-orphan-forcetracked main-orphan-outdir \
-         main-orphan-pm main-np main-orphan-cr main-gate-mixed main-orphan-sakey; do
+         main-orphan-pm main-np main-orphan-cr main-gate-mixed main-orphan-sakey main-orphan-copy main-orphan-oldblob main-orphan-trackedcopy; do
   exists "$d" && ok "kept: $d" || fail "$d was deleted (it holds something unique or is not ours)"
 done
 grep -q "main-orphan-unique.*notes.md" "$TMP/gc.out" && ok "the kept orphan names its unique file" || fail "no reason for main-orphan-unique: $(cat "$TMP/gc.out")"
 grep -q "main-orphan-secret.*local.properties" "$TMP/gc.out" && ok "the kept orphan names its secret" || fail "no reason for main-orphan-secret: $(cat "$TMP/gc.out")"
+grep -q "main-orphan-copy.*copy.txt" "$TMP/gc.out" && grep -q "main-orphan-oldblob.*notes/old.txt" "$TMP/gc.out" \
+  && ok "a new path holding bytes committed elsewhere is named as unique work (issue #12)" || fail "no reason for main-orphan-copy/oldblob: $(cat "$TMP/gc.out")"
+grep -q "main-orphan-trackedcopy.*lib.txt" "$TMP/gc.out" && ok "a tracked path given another file's bytes is named as unique work (issue #12)" \
+  || fail "no reason for main-orphan-trackedcopy: $(cat "$TMP/gc.out")"
 ! exists main-orphan-casesecret && [ "$(cat "$R/Release.JKS" 2>/dev/null)" = key ] && [ -z "$(G "$R" status --porcelain -- Release.JKS)" ] \
   && grep -q "main-orphan-casesecret.*Release.JKS" "$TMP/gc.out" \
   && ok "  … a secret whatever the case of its name (Release.JKS), only the orphan's: copied into main (ignored there), named, then the orphan deleted" \
@@ -145,7 +159,7 @@ python3 "$WT" gc --log="$TMP/gc.log" >/dev/null 2>&1
 mkdir -p "$TMP/main-a-badgit" && printf 'gitdir: \377\376\n' > "$TMP/main-a-badgit/.git"
 blob=$(echo w | G "$R" hash-object -w --stdin); tree=$(printf '100644 blob %s\t\377.txt\n' "$blob" | G "$R" mktree)
 G "$R" update-ref refs/heads/weird "$(G "$R" commit-tree "$tree" -m weird)"
-dangle main-z-after; echo v1 > "$TMP/main-z-after/lib.txt"; echo "v1" > "$TMP/main-z-after/old.txt"
+dangle main-z-after; echo v1 > "$TMP/main-z-after/lib.txt"
 python3 "$WT" gc --log="$TMP/gc6.log" > "$TMP/gc6.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && ! exists main-z-after && exists main-a-badgit && grep -q "main-z-after" "$TMP/gc6.log" 2>/dev/null \
   && ok "an unreadable .git and a non-UTF-8 path in a ref: the sweep goes on, and records what it deleted" \
@@ -161,4 +175,57 @@ kill "$LOCKER" 2>/dev/null; wait "$LOCKER" 2>/dev/null
 [ "$rc" = 0 ] && [ ! -s "$TMP/gc4.out" ] && exists main-orphan-locked && ok "a second gc while one runs: silent no-op" || fail "second gc rc=$rc: $(cat "$TMP/gc4.out")"
 [ -f "$R/local.properties" ] && [ "$(cat "$R/local.properties")" = "sdk.dir=/same" ] && ok "main's own local config is untouched" || fail "main's local.properties changed"
 G "$R" worktree list --porcelain | grep -q "main-merged" && ok "a registered worktree stays registered: not gc's" || fail "gc unregistered main-merged"
+# issue #12 review F1: a clean checkout of an OLD commit after main moved a file (git mv) and an empty file now lives elsewhere: rev-list
+# names each blob once, under its newest path, so the (blob, path) pair is missed there; the history of the orphan's own paths holds
+# both versions, so the leftover is deleted, not stranded
+mkdir -p "$R/pkg" && echo "moved later" > "$R/mv-src.txt" && : > "$R/pkg/__init__.py" && G "$R" add mv-src.txt pkg/__init__.py && G "$R" commit -qm "add"
+dangle main-orphan-moved
+# issue #12 (QA): the same old checkout plus a COPY of the file main later moves: its history is asked in the same call, yet the
+# copy's own path never held those bytes, so the copy is work and the folder is kept
+dangle main-orphan-movedcopy; cp "$TMP/main-orphan-movedcopy/mv-src.txt" "$TMP/main-orphan-movedcopy/mv-copy.txt"
+mkdir -p "$R/other" && : > "$R/other/__init__.py" && G "$R" mv mv-src.txt mv-dst.txt && G "$R" rm -q pkg/__init__.py && G "$R" add other/__init__.py \
+  && G "$R" commit -qm "move, drop, add elsewhere"
+# issue #12 Context a (QA): a NEW empty file (newpkg/__init__.py) while kept commits hold the empty blob at other paths: uncommitted work, kept
+dangle main-orphan-empty; mkdir -p "$TMP/main-orphan-empty/newpkg" && : > "$TMP/main-orphan-empty/newpkg/__init__.py"
+python3 "$WT" gc > "$TMP/gc7.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && ! exists main-orphan-moved && ok "a clean old checkout whose files main later moved or emptied elsewhere is deleted" \
+  || fail "main-orphan-moved stranded (rc=$rc): $(cat "$TMP/gc7.out")"
+exists main-orphan-empty && grep -q "main-orphan-empty.*newpkg/__init__.py" "$TMP/gc7.out" \
+  && ok "a new empty file whose blob kept commits hold only at other paths is kept and named (issue #12)" \
+  || fail "main-orphan-empty deleted or unnamed: $(cat "$TMP/gc7.out")"
+exists main-orphan-movedcopy && grep -q "main-orphan-movedcopy.*mv-copy.txt" "$TMP/gc7.out" \
+  && ok "a copy of a file whose own path history is asked in the same call is kept and named (issue #12)" \
+  || fail "main-orphan-movedcopy deleted or unnamed: $(cat "$TMP/gc7.out")"
+# issue #12 (#40): symlink trong orphan là việc riêng — trừ khi main có symlink cùng đường dẫn + cùng đích, hoặc là link kit DevKit
+# tự cài (trỏ vào universal-agent-devkit/ / .agents/devkit/ của main); không đi theo link
+ln -s /opt/tool "$R/tool-link"   # symlink chưa track của main
+dangle main-orphan-newlink; mkdir -p "$TMP/main-orphan-newlink/src" && ln -s /x "$TMP/main-orphan-newlink/src/newlink"
+mkdir -p "$TMP/elsewhere-dir"; dangle main-orphan-dirlink; ln -s "$TMP/elsewhere-dir" "$TMP/main-orphan-dirlink/dirlink"
+dangle main-orphan-samelink; ln -s /opt/tool "$TMP/main-orphan-samelink/tool-link"
+dangle main-orphan-otherlink; ln -s /opt/other "$TMP/main-orphan-otherlink/tool-link"   # cùng đường dẫn, KHÁC đích
+dangle main-orphan-kitlink; mkdir -p "$TMP/main-orphan-kitlink/.agents/skills" \
+  && ln -s "$R/universal-agent-devkit/skills/x" "$TMP/main-orphan-kitlink/.agents/skills/x" \
+  && ln -s ../../universal-agent-devkit "$TMP/main-orphan-kitlink/.agents/devkit-rel"   # link tương đối, realpath ra ngoài main: việc riêng
+python3 "$WT" gc > "$TMP/gc8.out" 2>&1; rc=$?
+exists main-orphan-newlink && grep -q "main-orphan-newlink.*src/newlink" "$TMP/gc8.out" \
+  && ok "an orphan with a new symlink main lacks is kept and names the link (#40)" || fail "main-orphan-newlink deleted or unnamed: $(cat "$TMP/gc8.out")"
+exists main-orphan-dirlink && grep -q "main-orphan-dirlink.*dirlink" "$TMP/gc8.out" \
+  && ok "an orphan with a new symlink to a directory is kept and names it, the link not followed (#40)" || fail "main-orphan-dirlink: $(cat "$TMP/gc8.out")"
+exists main-orphan-otherlink && grep -q "main-orphan-otherlink.*tool-link" "$TMP/gc8.out" \
+  && ok "a symlink at main's path but with another target is kept (#40)" || fail "main-orphan-otherlink: $(cat "$TMP/gc8.out")"
+[ "$rc" = 0 ] && ! exists main-orphan-samelink && ok "an orphan whose symlink equals main's (same path, same target) is deleted (#40)" \
+  || fail "main-orphan-samelink stranded (rc=$rc): $(cat "$TMP/gc8.out")"
+exists main-orphan-kitlink && grep -q "main-orphan-kitlink.*devkit-rel" "$TMP/gc8.out" && ! grep -q "main-orphan-kitlink.*skills/x" "$TMP/gc8.out" \
+  && ok "a kit link into main's kit is install state, a link resolving outside it is work (#40)" || fail "main-orphan-kitlink: $(cat "$TMP/gc8.out")"
+[ -d "$TMP/elsewhere-dir" ] && [ -L "$R/tool-link" ] && ok "gc never followed a link into what it points to" || fail "a link target was deleted"
+# issue #12 (#40): tuổi xét mọi file/thư mục vòng duyệt đi qua, không chỉ thư mục gốc + .git: file trong thư mục con vừa ghi lại → giữ
+dangle main-orphan-young; dangle main-orphan-old
+find "$TMP/main-orphan-young" "$TMP/main-orphan-old" -exec touch -h -t 202601010000 {} +
+touch "$TMP/main-orphan-young/config/app.json"   # ghi lại (cùng nội dung): mtime mới, thư mục gốc + .git + config/ vẫn cũ
+WORKTREE_GC_MIN_AGE_S=600 python3 "$WT" gc > "$TMP/gc9.out" 2>&1; rc=$?
+exists main-orphan-young && grep -q "main-orphan-young.*config/app.json" "$TMP/gc9.out" \
+  && ok "an orphan with a subfolder file written within WORKTREE_GC_MIN_AGE_S is kept and named, root and .git old (#40)" \
+  || fail "main-orphan-young deleted or unnamed: $(cat "$TMP/gc9.out")"
+[ "$rc" = 0 ] && ! exists main-orphan-old && ok "  … the same orphan with every file old is deleted (the age check keeps only what is new)" \
+  || fail "main-orphan-old stranded (rc=$rc): $(cat "$TMP/gc9.out")"
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_gc: all passed" || { echo "❌ test_worktree_gc: $FAILS failed"; exit 1; }

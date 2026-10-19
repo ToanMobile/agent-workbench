@@ -2,7 +2,7 @@
 """worktree.py — one git worktree per parallel agent, set up like the main checkout.
 
 Usage (normally `agent-kit worktree …`, run inside the repo):
-  worktree.py add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory] [--session=ID]
+  worktree.py add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory] [--session=ID] [--lane=build|qa|review]
   worktree.py trunk [on|off|wire|status]   trunk mode (W1 R1/R2/R7), ON by default: main merge-only, one worktree per session (hook-create /
                                       hook-remove are the WorktreeCreate / WorktreeRemove hooks it wires; payload JSON on stdin). `off` writes
                                       devkit.trunkMode=false into THIS repo's config: a global git config key is not read
@@ -23,11 +23,15 @@ Usage (normally `agent-kit worktree …`, run inside the repo):
 add: refuses (exit 4) under WORKTREE_DISK_MIN_GIB (3) free or when the repo already has WORKTREE_MAX (3) linked worktrees; under
 WORKTREE_DISK_WARN_GIB (10) it runs gc first and warns (0 turns each off). Then `git worktree add` on <branch> when one is named (created from --base or HEAD when it
 does not exist); with none, a DETACHED worktree at --base or HEAD — the project keeps one
-branch, and the work comes back with `diff | git apply --3way`. Copies the main checkout's git-ignored local config
+branch, and the work comes back with `diff | git apply --3way`. `--lane=build|qa|review` (a super-board lane, agent-workbench#93; only
+at .claude/worktrees/issue-<N>[-<lane>]): no WORKTREE_MAX slot is needed or taken (the disk floor still holds), a branch only origin has
+is fetched and checked out from origin/<branch> (never a new branch off --base over the PR), the registered worktree already at the path
+is reused (healed), and a detached one is marked a board worktree in its state (board_worktree). Copies the main checkout's git-ignored
+hooks under .claude/hooks/ (copy_local_hooks: the project's and the user's settings run them) and git-ignored local config
 (.env*, local.properties, keystore.properties, google-services.json, …) and git-ignored
 build inputs (the red_proof.py set: libs/*.aar|jar, *.jks, … plus .agents/local/red_proof.json
 {"copy": [...]} — scripts/build_inputs.py), runs the
-DevKit installer with the main checkout's profile, agents and mode, then records what
+DevKit installer with the main checkout's profile, agents, mode and lang (no tracked file changes), then records what
 that setup left in `git status` — file by file, with a content fingerprint — in the
 worktree's own git dir. Hook state (.claude/audit-gate) and the gate report
 (<git dir>/postfix-gate) are per worktree already; the gate's run log (runs.jsonl) is the one
@@ -329,6 +333,16 @@ def _same_in_main(wt, main, rel):
     return fp == fingerprint(os.path.join(main, rel))
 
 
+def _into_kit(main, path):
+    """True khi `path` (đi theo mọi link) nằm trong thư mục kit của main: universal-agent-devkit/ hoặc .agents/devkit/."""
+    target = os.path.realpath(path)
+    for kit in ("universal-agent-devkit", os.path.join(".agents", "devkit")):
+        root = os.path.realpath(os.path.join(main, kit))
+        if target == root or target.startswith(root + os.sep):
+            return True
+    return False
+
+
 def _kit_link(wt, main, rel):
     """True when `rel` is an UNTRACKED symlink the DevKit installer or `heal` made: it points into the main checkout's own kit folder
     (universal-agent-devkit/ or .agents/devkit/). That is install state, never work. `heal` adds such a link later than the setup
@@ -336,15 +350,7 @@ def _kit_link(wt, main, rel):
     `remove` kept the worktree and `finish` refused "a new symlink" for the user to clean by hand (agent-workbench 2026-10-17). A
     TRACKED path the user replaced by such a link (a type change) is still work: only an untracked one counts as setup."""
     path = os.path.join(wt, rel)
-    if not os.path.islink(path):
-        return False
-    target = os.path.realpath(path)
-    inside = False
-    for kit in ("universal-agent-devkit", os.path.join(".agents", "devkit")):
-        root = os.path.realpath(os.path.join(main, kit))
-        if target == root or target.startswith(root + os.sep):
-            inside = True
-    if not inside:
+    if not os.path.islink(path) or not _into_kit(main, path):
         return False
     # Untracked means in NEITHER the index nor HEAD (`git rm f` then a link at f: gone from the index, still a type change from HEAD).
     # Only rc 1 of ls-files ("did not match any file known to git") and an empty, successful ls-tree prove it: a timeout (124) or a
@@ -458,6 +464,41 @@ def copy_local_config(main, wt):
         if any(fnmatch.fnmatch(os.path.basename(rel), pat) for pat in LOCAL_CONFIG) and _copy(main, wt, rel):
             copied.append(rel)
     return copied
+
+
+HOOKS_DIR = ".claude/hooks"
+
+
+def copy_local_hooks(main, wt):
+    """agent-workbench#93 (19/10): the hooks of main's .claude/hooks/ that git ignores — the DevKit's links, and the user's own guards
+    (guard-*.py, cleanup-wt.py) that the project's AND the user's settings (~/.claude*/settings.json) run under $CLAUDE_PROJECT_DIR. A
+    worktree holds tracked files only, so a session started there runs a missing file for each (python3 on it exits 2: the tool is
+    blocked) and `health` FAILs on "registered hooks missing". Mirror each top-level one the worktree lacks or holds as a dangling link: a
+    file is copied (bytes + mode, never the BSD flags: INSTINCT-038), a link is made again to the file it really reaches (a relative one
+    copied as-is dangles one folder deeper: NFH #18). Only where git ignores it in the worktree too and does not track it there."""
+    out = git(main, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", HOOKS_DIR + "/", check=False).stdout
+    done = []
+    for rel in out.split("\0"):
+        if not rel or os.path.dirname(rel) != HOOKS_DIR:   # top level only: a cache folder (__pycache__/) holds no hook
+            continue
+        src, dst = os.path.join(main, rel), os.path.join(wt, rel)
+        if os.path.exists(dst) or not os.path.isfile(src):   # a working file or link stays; a dangling one in main has nothing to give
+            continue
+        if git(wt, "check-ignore", "-q", "--no-index", "--", rel, check=False).returncode != 0 \
+                or git(wt, "ls-files", "--error-unmatch", "--", rel, check=False).returncode == 0:
+            continue
+        try:
+            if os.path.islink(dst):
+                os.unlink(dst)   # dangling (exists() follows the link)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if os.path.islink(src):
+                os.symlink(os.path.realpath(src), dst)
+            else:
+                shutil.copy(src, dst)   # content + mode, NOT copy2 (flags)
+            done.append(rel)
+        except OSError as e:   # a race with another heal, a read-only folder: named, the other hooks still go
+            print("• " + tr(f"không chép được {rel}: {e}", f"{rel} not copied: {e}"))
+    return done
 
 
 def copy_build_inputs(main, wt):
@@ -602,17 +643,21 @@ def install_args(main, wt, profile):
         return None                                   # copy mode, committed with the project already
     # (.agents/active-profile.json is committed in every mode: it says which profile, not
     #  that the DevKit is in place — a symlink install's links are never in git.)
-    if not profile:
-        try:
-            with open(profile_file(main)) as f:
-                profile = json.load(f).get("profile") or "auto"
-        except (OSError, ValueError):
-            profile = "auto"
+    try:
+        with open(profile_file(main)) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    profile = profile or data.get("profile") or "auto"
+    # main's lang, never the caller's DEVKIT_LANG: the installer writes it into the TRACKED active-profile.json (a lane with
+    # DEVKIT_LANG=en in a vi repo left it modified, and the Builder's commit carried it into the PR; agent-workbench#93)
+    lang = data.get("lang") if data.get("lang") in ("en", "vi") else None
     agents = [a for a, marker in AGENT_MARKERS if os.path.exists(os.path.join(main, marker))] or ["claude"]
     mode = "symlink" if (os.path.islink(os.path.join(main, ".agents", "devkit"))
                          or os.path.islink(os.path.join(main, "AGENTS.md"))) else "copy"   # 1.2: AGENTS.md was the link
     return ["bash", os.path.join(DEVKIT, "bin", "install.sh"), f"--target={wt}", "--domain=auto",
-            f"--mode={mode}", "-y", "--no-githooks", "-p", profile, "-a", ",".join(agents)]
+            f"--mode={mode}", "-y", "--no-githooks", "-p", profile, "-a", ",".join(agents)] + ([f"--lang={lang}"] if lang else [])
 
 
 def _env_limit(name, default):
@@ -683,11 +728,22 @@ def board_worktree(path, branch=None):
     đúng mẫu tên mà super-board-run.sh quét, VÀ đang ở một nhánh có tên (board luôn dùng `issue-<N>-<slug>` / `loop/issue-N`; một
     EnterWorktree(name="issue-42") của phiên thường là detached nên vẫn là nợ, review 18/10). Runner và lane của board quản lý nó và gộp
     qua PR + merge gate: không phải nợ của phiên khác (không tự gộp vào main local, không giữ Stop), không chiếm chỗ WORKTREE_MAX.
+    Worktree detached đúng mẫu tên chỉ là của board khi `add --lane` tạo nó (state ghi "board": checkout review/qa của lane, #93).
     branch None: đọc từ git."""
+    if not _board_path(path):
+        return False
     if branch is None:
         branch = git(path, "symbolic-ref", "-q", "--short", "HEAD", check=False).stdout.strip() if os.path.isdir(path) else ""
-    if not branch:
+    if branch:
+        return True
+    try:
+        return _read_state(path).get("board") is True
+    except (OSError, ValueError, SystemExit):   # không state / không đọc được: như trước, nợ của phiên (K7)
         return False
+
+
+def _board_path(path):
+    """`.claude/worktrees/issue-<N>[-build|-qa|-review]` hoặc `.worktrees/issue-<N>…` kiểu cũ: mẫu tên super-board-run.sh quét."""
     p = os.path.normpath(path)
     parent, grand = os.path.basename(os.path.dirname(p)), os.path.basename(os.path.dirname(os.path.dirname(p)))
     return (parent == ".worktrees" or (parent == "worktrees" and grand == ".claude")) and bool(BOARD_WT_RE.fullmatch(os.path.basename(p)))
@@ -784,8 +840,58 @@ SESSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 PROVISIONAL_TTL_S = 900.0   # a set-up that has not finished in 15 min crashed: its provisional state is ignored (the worktree is adopted)
 
 
+LANES = ("build", "qa", "review")   # super-board lanes (run.md): `add --lane` (agent-workbench#93)
+
+
+def _reuse_lane(main, wt, branch, base, lane, no_init=False, profile=None):
+    """`add --lane` at a path that already is a registered worktree of this repo — the Builder resuming a card super-board-run.sh moved
+    back to Ready keeps its issue-<N>-build worktree: set it up again (heal: DevKit links, local config, hooks) instead of refusing a
+    non-empty folder. Never a folder git does not know, nor one on another branch than the one asked for. A detached one (the Reviewer's
+    checkout) is moved to --base — a stale PR head is no review — and marked the board's, only when it holds no work (OCR 19/10)."""
+    entry = next((e for e in _worktree_entries(main)[1:] if not e["broken"] and _same_path(e["path"], wt)), None)
+    if entry is None:
+        die(tr(f"{wt} đã có, không rỗng và không phải worktree đã đăng ký của repo này: kiểm tra nó, không xoá",
+               f"{wt} exists, is not empty and is no registered worktree of this repo: inspect it, never delete it"))
+    if (branch or None) != (entry["branch"] or None):   # both ways: a detached checkout asked of a worktree on a branch would move it off it
+        die(tr(f"{wt} là worktree của {entry['branch'] or 'một HEAD detached'}, không phải của {branch or 'một HEAD detached'}",
+               f"{wt} is the worktree of {entry['branch'] or 'a detached HEAD'}, not of {branch or 'a detached HEAD'}"))
+    state = None
+    if not branch:
+        state = load_state(wt)   # dies on a state file that is there and unreadable; none at all: the adopted reading
+        unique = git(wt, "rev-list", "-1", "HEAD", "--not", "--branches", "--remotes", "--tags", check=False)
+        if unique.returncode == 0 and unique.stdout.strip() and state.get("board") \
+                and git(wt, "rev-parse", "HEAD", check=False).stdout.strip() == state.get("base"):
+            unique.stdout = ""   # still at the PR head add/reuse put it on, which a force-push left unreferenced: nothing made here (OCR 19/10)
+        held = changes_since(wt, state)
+        if held or unique.returncode or unique.stdout.strip():
+            die(tr(f"{wt} còn việc (chưa commit: {', '.join(held[:5]) or '-'}; commit không ref nào giữ: {unique.stdout.strip()[:10] or '-'}): "
+                   "không dời, không đánh dấu; kiểm tra nó",
+                   f"{wt} holds work (uncommitted: {', '.join(held[:5]) or '-'}; a commit no ref holds: {unique.stdout.strip()[:10] or '-'}): "
+                   "not moved, not marked; inspect it"))
+        if base:
+            git(wt, "checkout", "-q", "--detach", base, bounded=False)
+    # one an old plain `git worktree add` made has no DevKit and no Library at all: set them up as add does (each step leaves what is there)
+    copy_unity_library(main, wt)
+    ran = install_args(main, wt, profile) if not no_init else None
+    if ran:
+        r = subprocess.run(ran, capture_output=True, text=True)
+        if r.returncode != 0:
+            sys.stderr.write(r.stdout[-2000:] + r.stderr[-2000:])
+            die(tr(f"cài DevKit vào worktree lane thất bại (exit {r.returncode}); worktree vẫn ở {wt}",
+                   f"DevKit install in the lane worktree failed (exit {r.returncode}); the worktree stays at {wt}"), 1)
+    cmd_heal(wt, [])
+    if state is not None:
+        if state.get("adopted"):   # never written (_adopted_state): a fresh one as add writes it, over a tree that holds no work
+            state = {"branch": None, "main": main, "baseline": snapshot(wt), "fp": FP_VERSION}
+        state.update(base=git(wt, "rev-parse", "HEAD").stdout.strip(), board=True, lane=lane)
+        _write_state(wt, state)
+    print(f"✔ worktree {wt}  ({tr('dùng lại worktree lane đã có', 'reused the lane worktree already there')}, "
+          f"{tr('nhánh', 'branch') + ' ' + entry['branch'] if entry['branch'] else tr('tách rời (detached)', 'detached')})")
+    return 0
+
+
 def cmd_add(cwd, args):
-    base, profile, no_init, share_memory, session, pos = None, None, False, False, None, []
+    base, profile, no_init, share_memory, session, lane, pos = None, None, False, False, None, None, []
     for a in args:
         if a.startswith("--base="):
             base = a.split("=", 1)[1]
@@ -799,17 +905,55 @@ def cmd_add(cwd, args):
             session = a.split("=", 1)[1]
             if not SESSION_RE.fullmatch(session):
                 die(tr(f"--session không hợp lệ: '{session}'", f"invalid --session: '{session}'"))
+        elif a.startswith("--lane="):   # a super-board lane worktree (LANES)
+            lane = a.split("=", 1)[1]
+            if lane not in LANES:
+                die(tr(f"--lane không hợp lệ: '{lane}' (build, qa, review)", f"invalid --lane: '{lane}' (build, qa, review)"))
         elif a.startswith("-"):
-            die(tr(f"tuỳ chọn không hợp lệ '{a}'", f"unknown option '{a}'") + " (--base=REF, --profile=ID, --no-init, --share-memory, --session=ID)")
+            die(tr(f"tuỳ chọn không hợp lệ '{a}'", f"unknown option '{a}'")
+                + " (--base=REF, --profile=ID, --no-init, --share-memory, --session=ID, --lane=build|qa|review)")
         else:
             pos.append(a)
     if not 1 <= len(pos) <= 2:
-        die("usage: agent-kit worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory] [--session=ID]")
+        die("usage: agent-kit worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory] [--session=ID]"
+            " [--lane=build|qa|review]")
     wt = os.path.abspath(os.path.join(cwd, pos[0]))
     branch = pos[1] if len(pos) == 2 else None   # none named: DETACHED (one developer, one branch; the folder name is no branch name)
+    if lane and not _board_path(wt):   # the exemptions below are for the board's own folders only
+        die(tr(f"--lane chỉ cho worktree của super-board (.claude/worktrees/issue-<N>[-build|-qa|-review]), không cho {wt}",
+               f"--lane is for super-board worktrees only (.claude/worktrees/issue-<N>[-build|-qa|-review]), not {wt}"))
     main = main_checkout(cwd)
+    if lane and os.path.realpath(os.path.dirname(wt)) != os.path.realpath(os.path.join(main, ".claude", "worktrees")):
+        # the folder the runner and the board scan, of the MAIN checkout: a relative path from inside a session's own worktree would nest the
+        # lane there (that worktree could then never be removed) and a legacy .worktrees/ one stops the runner (check_legacy_worktrees)
+        die(tr(f"--lane: worktree phải nằm ngay trong {os.path.join(main, '.claude', 'worktrees')}, không phải {wt}",
+               f"--lane: the worktree must sit right in {os.path.join(main, '.claude', 'worktrees')}, not at {wt}"))
     if os.path.exists(wt) and os.listdir(wt):
+        if lane:
+            return _reuse_lane(main, wt, branch, base, lane, no_init, profile)
         die(tr(f"{wt} đã có và không rỗng", f"{wt} exists and is not empty"))
+    holder = next((e["path"] for e in _worktree_entries(main)[1:] if lane and branch and e["branch"] == branch), None)
+    if holder:   # git's own "already used by worktree" names no way out; the Tester behind a Builder's leftover worktree needs one
+        die(tr(f"nhánh {branch} đang được checkout ở {holder}: gỡ worktree đó trước (`git worktree remove {holder}`; bị từ chối = nó còn việc: "
+               "chặn thẻ, ghi tên nó), rồi chạy lại",
+               f"the branch {branch} is checked out at {holder}: remove that worktree first (`git worktree remove {holder}`; refused = it still "
+               "holds work: block the card naming it), then run this again"), 1)
+    origin_has = None   # does origin hold the issue branch: None = not asked (a local branch, no origin remote)
+    if lane and branch and git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode != 0 \
+            and git(main, "remote", "get-url", "origin", check=False).returncode == 0:
+        # the issue branch an earlier lane pushed and this clone has no local copy of: refresh origin/<branch> (outside the add lock: the
+        # network) so the worktree starts from it below. Only "origin has no such branch" (ls-remote exit 2) makes a new one: offline or a
+        # failed fetch must never start an empty branch off the base that the lane then pushes over the PR (review 19/10)
+        probe = git(main, "ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{branch}", check=False)
+        origin_has = probe.returncode == 0
+        if probe.returncode == 0:
+            fetched = git(main, "fetch", "--quiet", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}", check=False)
+            if fetched.returncode != 0:
+                die(tr(f"origin có nhánh {branch} nhưng fetch hỏng: {fetched.stderr.strip()[-300:]}",
+                       f"origin has the branch {branch} but the fetch failed: {fetched.stderr.strip()[-300:]}"), 1)
+        elif probe.returncode != 2:
+            die(tr(f"không hỏi được origin có nhánh {branch} không (ls-remote exit {probe.returncode}): không tạo nhánh mới khi chưa biết",
+                   f"cannot ask origin whether it has the branch {branch} (ls-remote exit {probe.returncode}): no new branch while that is unknown"), 1)
     _make_room(main, wt)
     common = os.path.realpath(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip())
     try:   # count + add: one at a time per repo
@@ -823,7 +967,9 @@ def cmd_add(cwd, args):
     # W1 R1 v6 item 6: in trunk mode every live session has its worktree (and its subagents theirs, as the harness always made them with
     # no cap), so a session's own worktree takes no slot - the disk floor (_make_room) still applies. A fixed cap of 3 would leave the 4th
     # session nowhere to write: main is merge-only there.
-    capped = WORKTREE_MAX and not (session and _trunk_mode(main))
+    # A super-board lane (--lane) takes no slot either (board_worktree): the runner keeps at most one worker per lane, and a cap filled by
+    # sessions' worktrees refused every lane with exit 4 while the board waited (agent-workbench#93: 7 ordinary worktrees in the workbench).
+    capped = WORKTREE_MAX and not (session and _trunk_mode(main)) and not lane
     try:
         live = _live_worktrees(main) if capped else []
         if len(live) >= WORKTREE_MAX > 0:   # never "finish someone else's": a clean worktree may be a live session's that has not edited yet
@@ -838,12 +984,22 @@ def cmd_add(cwd, args):
         elif git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0:
             git(main, "worktree", "add", wt, branch, bounded=False)
         else:
-            git(main, "worktree", "add", "-b", branch, wt, *([base] if base else []), bounded=False)
+            start, track = base, []
+            if lane and origin_has is not False \
+                    and git(main, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}^{{commit}}", check=False).returncode == 0:
+                # the PR's branch: a new branch off --base would push an empty one over it. Not a remote-tracking ref origin no longer has
+                # (a merged and deleted PR branch picked up again: OCR 19/10) - that one would start the lane on an old merged head
+                start = f"origin/{branch}"
+            elif lane:
+                track = ["--no-track"]   # a new issue branch off origin/<base> must not get origin/<base> as upstream (a bare push/pull hits main)
+            git(main, "worktree", "add", *track, "-b", branch, wt, *([start] if start else []), bounded=False)
         start = git(wt, "rev-parse", "HEAD").stdout.strip()
-        if session:   # W1 v6 item 3: the owner is known from the moment git registers the worktree, not ~10 s later when the set-up is done -
-            # until then another session's Stop could take a stateless new worktree for an orphan and merge or remove it under its owner
-            _write_state(wt, {"branch": branch, "base": start, "main": main, "baseline": {}, "fp": FP_VERSION, "session": session,
-                              "provisional": True, "at": time.time()})
+        if session or lane:   # W1 v6 item 3: the owner is known from the moment git registers the worktree, not ~10 s later when the set-up
+            # is done - until then another session's Stop could take a stateless new worktree for an orphan and merge or remove it under
+            # its owner; a lane's detached checkout is the board's (board_worktree) from that moment too
+            _write_state(wt, {"branch": branch, "base": start, "main": main, "baseline": {}, "fp": FP_VERSION, "provisional": True,
+                              "at": time.time(), **({"session": session} if session else {}),
+                              **({"board": True, "lane": lane} if lane else {})})
     finally:
         if lock:
             lock.close()
@@ -859,6 +1015,7 @@ def cmd_add(cwd, args):
             sys.stderr.write(r.stdout[-2000:] + r.stderr[-2000:])
             die(tr(f"cài DevKit vào worktree thất bại (exit {r.returncode}); worktree vẫn ở {wt}",
                    f"DevKit install in the worktree failed (exit {r.returncode}); the worktree stays at {wt}"), 1)
+    hooks = copy_local_hooks(main, wt) if not no_init else []   # after the installer: only what it does not link (the user's guards)
     shared = share_main_memory(main, wt) if share_memory and not no_init else False   # only when asked; before the snapshot: it is part of the setup
     state = {"branch": branch, "base": start, "main": main, "baseline": snapshot(wt), "fp": FP_VERSION}
     stamps = _copy_stamps(wt, copied + inputs + metas)
@@ -866,6 +1023,8 @@ def cmd_add(cwd, args):
         state["copied_sha"] = stamps
     if session:
         state["session"] = session
+    if lane:
+        state.update(board=True, lane=lane)
     _write_state(wt, state)
 
     print(f"✔ worktree {wt}  ({tr('nhánh', 'branch') + ' ' + branch if branch else tr('tách rời (detached)', 'detached')} @ {start[:10]})")
@@ -887,6 +1046,9 @@ def cmd_add(cwd, args):
     if unity_libs:
         print("  " + tr("đã clone Library của Unity (clonefile, gỡ cờ uchg, bỏ file khoá): ", "Unity Library cloned (clonefile, uchg cleared, locks dropped): ")
               + ", ".join(unity_libs))
+    if hooks:
+        print("  " + tr("đã chép hook cục bộ (bị ignore) của .claude/hooks/: ", "copied local hooks (git-ignored) of .claude/hooks/: ")
+              + ", ".join(os.path.basename(h) for h in hooks))
     print("  " + (tr("đã cài DevKit như main checkout", "DevKit installed like the main checkout") if ran else
                   tr("không cài DevKit (main checkout không có, hoặc worktree đã có sẵn)",
                      "DevKit not installed (none in the main checkout, or the worktree has it already)")))
@@ -2974,8 +3136,15 @@ def automerge(cwd, wt, keep=False):
                              f"the main checkout is on branch '{branch}', not on the trunk '{trunk}': nothing is merged into another branch (release/hotfix ...). "
                              f"Switch back to '{trunk}' and run it again"), {}
     wt_branch = published_branch(wt)
-    if wt_branch and _published_squashed(main, wt):
+    squashed = bool(wt_branch) and _published_squashed(main, wt)
+    if squashed:
         wt_branch = ""   # PR của nó đã gộp vào origin/<trunk> và worktree không còn gì chưa commit: chỉ đồng bộ main rồi gỡ (GeelyEx2 18/10)
+    elif board_worktree(wt):   # lane super-board (detached review/qa, nhánh issue chưa push): chỉ vào main qua PR + merge gate (review 19/10:
+        # `finish` / Stop của phiên tự chạy lane đã gộp một checkout review detached, commit PR chưa review, vào main local)
+        return "blocked", tr("worktree của lane super-board (.claude/worktrees/issue-<N>-…): chỉ vào main qua PR + merge gate, không tự gộp; "
+                             "xong lane thì gỡ nó: `git worktree remove <path>`",
+                             "a super-board lane worktree (.claude/worktrees/issue-<N>-…): it reaches main only through its PR and the merge gate, "
+                             "never merged automatically; remove it when the lane is done: `git worktree remove <path>`"), {}
     if wt_branch:
         return "blocked", tr(f"worktree đang ở nhánh '{wt_branch}' đã PUBLISH (có nhánh remote / upstream): không tự commit thêm hay gộp nó vào main — gộp bằng tay (merge/PR)",
                              f"the worktree is on branch '{wt_branch}', which is PUBLISHED (a remote ref / upstream exists): nothing is committed to it or merged from it automatically - merge it by hand (merge / PR)"), {}
@@ -3320,13 +3489,40 @@ def cmd_heal(cwd, args):
     link = os.path.join(wt, ".agents", "devkit")
     target = os.path.join(src, ".agents", "devkit") if src else None
     target = target if target and os.path.isdir(target) else devkit
-    if target and os.path.isfile(os.path.join(target, "bin", "post-fix-gate.py")) and not os.path.lexists(link) \
-            and git(wt, "check-ignore", "-q", "--no-index", ".agents/devkit", check=False).returncode == 0:
-        os.makedirs(os.path.dirname(link), exist_ok=True)
-        os.symlink(os.path.realpath(target), link)
-        done.append(".agents/devkit")
+    # missing or DANGLING (exists() follows the link): a dangling one used to be skipped, so heal could not repair it (19/10)
+    if target and os.path.isfile(os.path.join(target, "bin", "post-fix-gate.py")) and not os.path.exists(link) \
+            and git(wt, "check-ignore", "-q", "--no-index", ".agents/devkit", check=False).returncode == 0 \
+            and git(wt, "ls-files", "--error-unmatch", "--", ".agents/devkit", check=False).returncode != 0:   # never a tracked path
+        try:
+            if os.path.islink(link):
+                os.unlink(link)
+            os.makedirs(os.path.dirname(link), exist_ok=True)
+            os.symlink(os.path.realpath(target), link)
+            done.append(".agents/devkit")
+        except OSError as e:   # a race with another heal: reported, the rest of heal still runs
+            print(tr(f"không sửa được .agents/devkit: {e}", f".agents/devkit not repaired: {e}"))
+    # .agents/active-profile, the profile link matrix commands call through (bash .agents/active-profile/scripts/unity-batch.sh):
+    # a worktree made with plain `git worktree add` lacks it, or holds main's RELATIVE link copied as-is, which dangles one folder
+    # deeper (Neighbours-From-Hell #18, 19/10: matrix exit 127, gate REJECT, 5 cards waiting on it). Point it where main's link
+    # points, relative like the installer's (P-4); only when it is missing or dangling and git ignores it.
+    plink = os.path.join(wt, ".agents", "active-profile")
+    try:   # heal never fails a session start (docstring): a race with another heal, or no symlinks here, is reported and skipped
+        if src and os.path.islink(os.path.join(src, ".agents", "active-profile")) and not os.path.exists(plink):
+            # a relative link resolves from the PHYSICAL folder it sits in (the installer measures it from agents_dir.resolve())
+            ptarget = os.path.normpath(os.path.join(os.path.realpath(os.path.join(src, ".agents")),
+                                                    os.readlink(os.path.join(src, ".agents", "active-profile"))))
+            if os.path.isfile(os.path.join(ptarget, "profile.json")) \
+                    and git(wt, "check-ignore", "-q", "--no-index", ".agents/active-profile", check=False).returncode == 0 \
+                    and git(wt, "ls-files", "--error-unmatch", "--", ".agents/active-profile", check=False).returncode != 0:   # never a tracked path
+                if os.path.islink(plink):
+                    os.unlink(plink)
+                os.makedirs(os.path.dirname(plink), exist_ok=True)
+                os.symlink(os.path.relpath(ptarget, os.path.realpath(os.path.dirname(plink))), plink)
+                done.append(".agents/active-profile")
+    except (OSError, ValueError) as e:
+        print(tr(f"không sửa được .agents/active-profile: {e}", f".agents/active-profile not repaired: {e}"))
     if src:
-        done += copy_local_config(src, wt) + copy_build_inputs(src, wt) + copy_meta_assets(src, wt)
+        done += copy_local_config(src, wt) + copy_build_inputs(src, wt) + copy_meta_assets(src, wt) + copy_local_hooks(src, wt)
     try:   # trunk mode is the default: wire its hooks once per machine (settings.local.json is untracked, a fresh clone has none)
         main_co = main_checkout(cwd)
         if _trunk_mode(main_co):
@@ -3371,19 +3567,55 @@ _REACHABLE = {}
 
 
 def _reachable_blobs(main):
-    """(blob ids, paths) some ref still holds (`rev-list --objects --all`): a blob merely present in the object DB may belong to a commit no
-    ref names any more (a detached commit, a staged file of a worktree whose admin dir is gone) and `git gc` would drop it; a path a kept
-    tree holds is tracked somewhere (a branch force-adds build/keep.txt), so an edit of it is never a build output. None = cannot say.
-    ponytail: rev-list names a blob once, under the first path it meets; a tracked path whose every version is also stored elsewhere can
-    be missed, so an ignored edit of it under a build folder reads as rebuildable. Upgrade to `ls-tree -r` of each ref if that ever bites."""
+    """((blob id, path) pairs, paths, blob ids) some ref still holds (`rev-list --objects --all`): a blob merely present in the object DB
+    may belong to a commit no ref names any more (a detached commit, a staged file of a worktree whose admin dir is gone) and `git gc`
+    would drop it. A file is a committed version only when a kept tree holds its bytes AT ITS PATH: the same bytes under another path (a
+    copy, an empty __init__.py, old code restored under a new name) are a new file, uncommitted work (issue #12). rev-list names a blob
+    once, under the newest path it meets, so a pair it misses for a blob it does hold is asked of that path's history (_path_versions).
+    A path a kept tree holds is tracked somewhere (a branch force-adds build/keep.txt), so an edit of it is never a build output.
+    None = cannot say. ponytail: for the same reason a tracked path whose every version is also stored elsewhere can be missed, so an
+    ignored edit of it under a build folder reads as rebuildable; upgrade to `ls-tree -r` of each ref tip if that ever bites."""
     if main not in _REACHABLE:
         r = git(main, "rev-list", "--objects", "--all", "--filter=object:type=blob", check=False, inp=b"")   # bytes: a path need not be UTF-8
         if r.returncode != 0:
             _REACHABLE[main] = None
-        else:
-            pairs = [ln.split(" ", 1) for ln in r.stdout.decode("utf-8", "surrogateescape").splitlines() if ln.strip()]
-            _REACHABLE[main] = ({x[0] for x in pairs}, {x[1] for x in pairs if len(x) == 2})
+        else:   # a blob a ref names directly has no path: no file version
+            pairs = [x for x in (ln.split(" ", 1) for ln in r.stdout.decode("utf-8", "surrogateescape").splitlines()) if len(x) == 2]
+            _REACHABLE[main] = ({(x[0], x[1]) for x in pairs}, {x[1] for x in pairs}, {x[0] for x in pairs})
     return _REACHABLE[main]
+
+
+def _path_versions(main, rels):
+    """{(blob id, path)} every version of `rels` some ref's history holds (`log --all --raw`, the paths literal, on stdin: no argv limit),
+    for the files rev-list paired with another path. None = cannot say.
+    ponytail: a version only a merge commit introduced (a conflict resolution) is not listed, so that file reads as unique and is KEPT;
+    add `--diff-merges=separate` if that ever strands a leftover."""
+    r = git(main, "--literal-pathspecs", "log", "--all", "--root", "--no-renames", "--raw", "--no-abbrev", "-z", "--format=", "--stdin",
+            check=False, inp=("--\n" + "\n".join(rels) + "\n").encode("utf-8", "surrogateescape"))
+    if r.returncode != 0:
+        return None
+    toks = r.stdout.decode("utf-8", "surrogateescape").split("\0")
+    out = set()
+    for i in range(0, len(toks) - 1, 2):   # `:<mode> <mode> <old> <new> <status>`, then the path; a trailing "" closes the list
+        meta, path = toks[i].lstrip("\n"), toks[i + 1]
+        f = meta[1:].split()
+        if not meta.startswith(":") or len(f) != 5:
+            return None
+        out.update((sha, path) for sha in f[2:4] if sha.strip("0"))
+    return out
+
+
+def _gc_link_known(main, rel, p):
+    """#40: True khi symlink `p` (đường dẫn `rel` trong orphan) không phải việc riêng: main có symlink cùng đường dẫn + cùng đích
+    (`readlink` bằng nhau), hoặc nó trỏ vào thư mục kit của main (trạng thái cài DevKit mà `worktree add` / heal tạo, như _kit_link).
+    Không đi theo link khi so; đọc lỗi = việc riêng (giữ)."""
+    try:
+        mine = os.path.join(main, rel)
+        if os.path.islink(mine) and os.readlink(mine) == os.readlink(p):
+            return True
+        return _into_kit(main, p)
+    except OSError:
+        return False
 
 
 def _gc_unique(main, top, dangling, carry=None):
@@ -3392,25 +3624,37 @@ def _gc_unique(main, top, dangling, carry=None):
     folder or one of links only too) means it is not a leftover. `carry` (a list): a secret (GC_SECRETS, and _secret_like) that main
     lacks, outside a _carry_skip_dirs() folder, goes there as (rel, path) instead of counting as unique: cmd_gc copies it into main first
     (A.1b #12)."""
-    files = []
+    files, links = [], []
+    # #40: với orphan (`.git` trỏ treo), tuổi xét mọi file / link / thư mục mà vòng duyệt này đi qua (không thêm một lượt duyệt), không
+    # chỉ gốc + .git như _gc_young. Thư mục không `.git` chỉ chứa sổ sách DevKit giữ luật cũ (gốc): gate ghi sổ sách vào đó bất cứ lúc nào
+    young = lambda q: dangling and GC_MIN_AGE_S > 0 and _gc_young(q)  # noqa: E731
     for dirpath, dirs, names in os.walk(top):
-        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(dirpath, d))]   # a link is never followed (.agents/devkit, a link to main)
+        linked = [d for d in dirs if os.path.islink(os.path.join(dirpath, d))]
+        dirs[:] = [d for d in dirs if d not in linked]   # a link is never followed (.agents/devkit, a link to main)
+        drel_here = os.path.relpath(dirpath, top).replace(os.sep, "/") + "/"
+        if drel_here != "./" and "/__pycache__/" not in "/" + drel_here and not drel_here.startswith(GC_BOOKKEEPING_DIRS) and young(dirpath):
+            return [(drel_here, tr("vừa đổi, chưa đủ WORKTREE_GC_MIN_AGE_S", "changed within WORKTREE_GC_MIN_AGE_S"))]
         for d in dirs if not dangling else ():   # a folder outside the bookkeeping (even an empty one) is a person's
             drel = os.path.relpath(os.path.join(dirpath, d), top).replace(os.sep, "/") + "/"
             if d != "__pycache__" and not any(b.startswith(drel) or drel.startswith(b) for b in GC_BOOKKEEPING_DIRS):
                 return [(drel, tr("không phải sổ sách DevKit", "not DevKit bookkeeping"))]
-        for n in names:
+        for n in names + linked:
             p = os.path.join(dirpath, n)
             rel = os.path.relpath(p, top).replace(os.sep, "/")
-            if rel == ".git" or os.path.islink(p) or n in GC_NOISE or "/__pycache__/" in "/" + rel or rel in GC_VIEWS \
-                    or rel.startswith(GC_BOOKKEEPING_DIRS):
+            if rel == ".git" or n in GC_NOISE or "/__pycache__/" in "/" + rel or rel in GC_VIEWS or rel.startswith(GC_BOOKKEEPING_DIRS):
+                continue
+            if young(p):
+                return [(rel, tr("vừa đổi, chưa đủ WORKTREE_GC_MIN_AGE_S", "changed within WORKTREE_GC_MIN_AGE_S"))]
+            if os.path.islink(p):
+                if dangling and not _gc_link_known(main, rel, p):   # #40: một symlink mới là việc riêng, mất im lặng khi xoá
+                    links.append((rel, tr("symlink main không có (cùng đường dẫn + cùng đích)", "a symlink main lacks (same path, same target)")))
                 continue
             if not dangling:
                 return [(rel, tr("không phải sổ sách DevKit", "not DevKit bookkeeping"))]
             files.append((rel, p))
     if not dangling and not any(os.path.isdir(os.path.join(top, d)) for d in GC_BOOKKEEPING_DIRS):
         return [("*", tr("không có sổ sách DevKit", "no DevKit bookkeeping"))]
-    unique, later = [], []
+    unique, later = links, []
     for rel, p in files:
         mine = os.path.join(main, rel)
         try:
@@ -3442,12 +3686,16 @@ def _gc_unique(main, top, dangling, carry=None):
         shas = hashes.stdout.split()
         if reachable is None or hashes.returncode != 0 or len(shas) != len(later) or ignored.returncode not in (0, 1):
             return [("*", tr("git không kiểm được nội dung", "git could not check the content"))]
-        blobs, tracked = reachable
+        versions, tracked, blobs = reachable
         build = set(ignored.stdout.splitlines())
+        missed = sorted({rel for (rel, _p), sha in zip(later, shas) if (sha, rel) not in versions and sha in blobs})
+        more = _path_versions(main, missed) if missed else set()   # rev-list named those blobs under another path: ask these paths' history
+        if more is None:
+            return [("*", tr("git không kiểm được nội dung", "git could not check the content"))]
         for (rel, _p), sha in zip(later, shas):
             rebuildable = rel in build and rel not in tracked and any(part in GC_BUILD_DIRS for part in rel.split("/")[:-1])
-            if sha not in blobs and not rebuildable:
-                unique.append((rel, tr("nội dung không có trong commit nào còn giữ", "content no kept commit holds")))
+            if (sha, rel) not in versions and (sha, rel) not in more and not rebuildable:
+                unique.append((rel, tr("nội dung không có trong commit nào còn giữ ở đường dẫn này", "content no kept commit holds at this path")))
     return unique
 
 

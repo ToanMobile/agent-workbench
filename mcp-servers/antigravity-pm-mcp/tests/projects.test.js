@@ -3,15 +3,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { listProjects, resolveProject, requireProjectId, ProjectNotRegistered } from '../src/projects.js';
 import { loadConfig } from '../src/config.js';
-import { tmpProject, cleanup, writeFile } from './helpers.js';
+import { tmpProject, tmpDir, cleanup, writeFile } from './helpers.js';
 
 /** Dung 1 so dang ky gia giong that roi tro ANTIGRAVITY_PM_PROJECTS_DIR vao do. */
 function fakeRegistry(entries) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-reg-'));
+  const dir = tmpDir('agpm-reg-');
   for (const e of entries) {
     writeFile(path.join(dir, `${e.id}.json`), JSON.stringify({
       id: e.id,

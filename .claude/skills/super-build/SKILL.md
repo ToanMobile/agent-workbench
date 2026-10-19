@@ -60,7 +60,7 @@ SOURCE_COLUMN="${BUILD_LOOP_SOURCE_COLUMN:-Ready}"
 
 For each Ready item:
 - Capture `content.number` (issue #), `content.title` and `labels`; read the body over REST: `gh api repos/{owner}/{repo}/issues/<N> --jq .body`.
-- **Skip** issues with the `loop:in-progress` label (in flight in another orchestrator) or `loop:halted` label (manually paused) or `human-gated` label (requires manual handling).
+- **Skip** issues with the `loop:in-progress` label (in flight in another orchestrator) or `loop:halted` label (manually paused) or `needs-you` label (a step only a person can do), or the legacy `human-gated` label (merged into `needs-you` on 2026-10-19; `mark` migrates it, until then skip it too).
 - Parse `body` for `Depends on: #N1, #N2` lines (case-insensitive). If any dep is still open AND not in the current Ready set, the issue is blocked — leave it for a future run.
 - Parse `body` for an optional `Skills:` line (e.g. `Skills: mattpocock-skills:tdd, verification-before-completion`). If absent, the worker uses defaults from the preamble.
 
@@ -86,7 +86,7 @@ Once per run, before first dispatch:
 ```bash
 gh label create loop:in-progress --color FFA500 --description "Currently being worked on by /super-build" 2>/dev/null || true
 gh label create loop:halted --color B60205 --description "Manually paused — /super-build will skip" 2>/dev/null || true
-gh label create human-gated --color B60205 --description "Requires manual handling — /super-build will not auto-execute" 2>/dev/null || true
+python3 .claude/bin/super-board-needs-you.py label --repo <owner/name>   # needs-you, one colour on every repo
 ```
 
 ### 3. Dispatch wave (worker cap)
@@ -114,7 +114,7 @@ bash .claude/skills/super-build/scripts/super-build-dispatch.sh N
 …via Bash with `run_in_background: true`. Capture each shell ID.
 
 The dispatcher (this skill's `scripts/super-build-dispatch.sh`) handles:
-- `git worktree add -b loop/issue-N .claude/worktrees/issue-N <base-branch>`
+- `agent-kit worktree add .claude/worktrees/issue-N loop/issue-N --lane=build --base=<base-branch>` — the DevKit's worktree (DevKit links, git-ignored config and hooks, a Unity Library cloned copy-on-write), never a plain `git worktree add` (agent-workbench#93); exit 4 = under the disk floor, nothing made
 - `gh issue view N --json title,body,labels` to compose the worker prompt
 - prepend `references/worker-preamble.md` + append working-directory footer
 - `cd` into worktree and exec `claude -p --dangerously-skip-permissions --output-format stream-json --verbose --max-turns 250`
@@ -144,9 +144,9 @@ handoff complete. Add file summaries and critical inline notes on the PR, not in
 **On dispatcher exit 5 (intentional WIP-PARTIAL — open a partial PR, do NOT close):**
 - `git -C .claude/worktrees/issue-N push -u origin loop/issue-N`
 - `gh pr create --draft --base <base-branch> --head loop/issue-N --title "🚧 [wip] <scope>: <slice from worker's final message>"` — the status card says `Refs #N`, never `Closes`, so the merge does not close the issue.
-- `gh issue edit N --remove-label loop:in-progress --add-label human-gated`
-- `gh issue comment N --body "[builder] [report] ⚠️ partial · PR <URL>\nDid: <slice>\n❌ Not done: <worker's reason for stopping>\nNext: Eric"` — the issue stays open with `human-gated` until the rest lands.
-- Report: `🟡 Issue #N partial PR opened — issue stays open (human-gated)`
+- `gh issue edit N --remove-label loop:in-progress`, then `python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue N --action "<what is left that only a person can decide or do>"`
+- `gh issue comment N --body "[builder] [report] ⚠️ partial · PR <URL>\nDid: <slice>\n❌ Not done: <worker's reason for stopping>\nNext: Eric"` — the issue stays open with `needs-you` until the rest lands.
+- Report: `🟡 Issue #N partial PR opened — issue stays open (needs-you)`
 - **Continue dispatching the next issue in the wave.** A WIP-PARTIAL is NOT a halt. The worker did intentional, scoped work and the orchestrator advances.
 
 **On dispatcher exit 2 or 3 (worker failed or no done-commit):**
@@ -157,14 +157,14 @@ handoff complete. Add file summaries and critical inline notes on the PR, not in
 - Halt the loop
 
 **On dispatcher exit 4 (HUMAN GATE TRIPPED):**
-- `gh issue edit N --remove-label loop:in-progress --add-label human-gated`
+- `gh issue edit N --remove-label loop:in-progress`, then `python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue N --action "<the human gate from the log, as a step>"`
 - `gh issue comment N --body "🔴 HUMAN GATE TRIPPED — needs manual handling. See worktree \`.claude/worktrees/issue-N\`."`
 - Report: `🔴 Issue #N tripped HUMAN GATE — needs manual handling`
 - Halt the loop
 
 ### 5. Final report
 
-When the selected GitHub Project `Ready` queue is empty, or only blocked cards remain: report a summary listing PRs opened this run (cards in `QA`), issues not built (`human-gated` / `loop:halted` / blocked dependencies), and any halts. Suggest: "Run `super-board run` to test, review and merge them."
+When the selected GitHub Project `Ready` queue is empty, or only blocked cards remain: report a summary listing PRs opened this run (cards in `QA`), issues not built (`needs-you` / `loop:halted` / blocked dependencies), and any halts. Suggest: "Run `super-board run` to test, review and merge them."
 
 ## Issue contract
 
@@ -184,12 +184,12 @@ Every Ready issue should be executable without live clarification. Preferred iss
 - Human gates: <deploy, destructive DB action, product decision, etc.>
 ```
 
-Super Build treats acceptance criteria as the completion contract. Workers must not edit checkboxes to make the issue look complete. If the issue is too vague to execute, label/comment it as human-gated instead of guessing.
+Super Build treats acceptance criteria as the completion contract. Workers must not edit checkboxes to make the issue look complete. If the issue is too vague to execute, mark it with `super-board-needs-you.py mark` (the question as the action) instead of guessing.
 
 ## Constraints
 
 - **Worker cap:** `max_workers` from the config when set, otherwise 3 on this legacy path (resource throttle). The workflow backend has no cap unless `max_workers` is set.
-- **Never auto-touch issues with `human-gated` label** (production cutover, secrets, irreversible ops).
+- **Never auto-touch issues with the `needs-you` (or legacy `human-gated`) label** (production cutover, secrets, irreversible ops, real devices, store accounts, decisions).
 - **Never modify code in the main worktree** while workers are running. Only run `gh` commands and push/PR operations.
 - **Conflicts** between concurrent workers' branches are not resolved here — they surface at the merge gate, and the card comes back to the Builder for a rebuild. Don't auto-resolve.
 - **Report cadence** (to the user, in the session): 1 message at start, 1 per dispatch wave, 1 per completion (success/fail), 1 final summary. Don't spam.
@@ -209,13 +209,13 @@ If the user invokes `/super-build` after a partial run:
 
 ## Stop conditions
 
-- Selected GitHub Project `Ready` queue is empty, or all remaining Ready cards are blocked / `human-gated` / `loop:halted`.
+- Selected GitHub Project `Ready` queue is empty, or all remaining Ready cards are blocked / `needs-you` / `loop:halted`.
 - Any worker fails (dispatcher exit 2 or 3).
 - HUMAN GATE TRIPPED (dispatcher exit 4).
 - Push or PR creation fails.
 - User interrupts.
 
-**Not a stop condition:** WIP-PARTIAL (dispatcher exit 5). The orchestrator opens a partial PR, leaves the issue open with `human-gated`, and continues dispatching the next issue in the wave. WIP-PARTIAL is intentional, bounded work.
+**Not a stop condition:** WIP-PARTIAL (dispatcher exit 5). The orchestrator opens a partial PR, leaves the issue open with `needs-you`, and continues dispatching the next issue in the wave. WIP-PARTIAL is intentional, bounded work.
 
 ## Invocation patterns
 
@@ -233,13 +233,16 @@ When invoked by super-board (env `SUPER_BOARD_RUN=1` set by the runner, or invoc
 
 ### State protocol
 - Read context from: issue body + ALL issue comments + linked PR description + PR comments + PR review threads. NEVER from local state files for inter-lane coordination.
-- Respect the worktree path super-board hands you (typically `.claude/worktrees/issue-<N>-build/`). Don't create your own.
+- Work only in the worktree path super-board names (`.claude/worktrees/issue-<N>-build/`), created with the DevKit (Lifecycle step 1). Never a plain `git worktree add` or EnterWorktree.
 - Respect the single branch super-board hands you (`issue-<N>-<slug>`). Don't create alternate branches.
 
 ### Lifecycle (Builder, first pass)
 Follow spec `.claude/skills/super-board/references/run.md` → Builder (first pass). Summary:
-1. Worktree off `config.base_branch`.
-2. Branch `issue-<N>-<slug>` from `config.base_branch`.
+1. Worktree with the DevKit, after `git fetch origin`: `agent-kit worktree add .claude/worktrees/issue-<N>-build issue-<N>-<slug> --lane=build --base=origin/<config.base_branch>`
+   (no `agent-kit` on PATH: `python3 .agents/devkit/scripts/git/worktree.py add` with the same arguments). It links the DevKit, copies the
+   git-ignored config and hooks, clones a Unity Library copy-on-write, takes no WORKTREE_MAX slot and reuses the build worktree a stopped
+   run left at that path. Exit 4 = under the disk floor: stop with its message, card and claims unchanged. Never a plain `git worktree add`.
+2. Branch `issue-<N>-<slug>` from `config.base_branch` (step 1 makes it; an existing one, local or only on origin, is checked out as it is).
 3. Docs check (section below) — if the ticket touches a third-party surface, an upgrade, or auth/billing, read the current official docs first.
 4. Implement smallest safe change covering ACs — under the PR size cap (section below).
 5. Commit + push (always).
@@ -300,4 +303,4 @@ Hash inputs (joined with `|`): lane (`build`) | error class | first 3 unique nor
 Builder NEVER squash-merges. Reviewer owns merge.
 
 ### Block exits use the §4 mandatory template
-When moving a card to Blocked (or dropping it: closed as not planned, Done, 🤷), populate the full template from `.claude/skills/super-board/references/block-template.md`. A 1-line "needs creds" comment is a contract violation.
+When moving a card to Blocked (or dropping it: closed as not planned, Done, 🤷), populate the full template from `.claude/skills/super-board/references/block-template.md`. A 1-line "needs creds" comment is a contract violation. When a person must act (🙋 🧑 🔐 🔑 💳 🎨 🛡, or ❓ waiting on a person's decision), also run `super-board-needs-you.py mark` in the same step (block-template.md → "A person must act").

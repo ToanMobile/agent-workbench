@@ -15,6 +15,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 
 _reader_spec = importlib.util.spec_from_file_location("github_read", Path(__file__).with_name("super-board-github-read.py"))
 github_read = importlib.util.module_from_spec(_reader_spec)
@@ -25,6 +26,13 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 SCOPE = re.compile(r"[0-9a-f]{64}\Z")
 BLOCK = re.compile(r"Reason tag:[^\n]*🙋|^approval-request:", re.M)
 DONE = re.compile(r"\s*done[.!]?\s*\Z", re.I)
+# GitHub's closing keywords: KEYWORD[:] #N or KEYWORD[:] owner/repo#N.
+CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+([\w.-]+/[\w.-]+)?#(\d+)\b", re.I)
+
+
+def body_links(body, repo):
+    """Same-repo issues a PR body closes; other-repo references are ignored."""
+    return {int(n) for other, n in CLOSES.findall(body) if not other or other.lower() == repo}
 
 
 def scope_for(plan):
@@ -159,34 +167,64 @@ class GitHub:
     def pr(self, number):
         # Paginate linked issues too: an omitted newer request must never make
         # an older approval authoritative. Remote-repository links are ignored.
+        # GitHub fills closingIssuesReferences only for PRs into the default
+        # branch, so a PR into another base takes its body's closing keywords,
+        # read in this same head-pinned snapshot.
         query = '''query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
-          repository(owner:$owner,name:$repo){pullRequest(number:$pr){headRefOid state
+          repository(owner:$owner,name:$repo){defaultBranchRef{name}
+            pullRequest(number:$pr){headRefOid state baseRefName body
             closingIssuesReferences(first:100,after:$endCursor){
               pageInfo{hasNextPage endCursor} nodes{number repository{nameWithOwner}}
             }}}}'''
         owner, name = self.repo.split("/")
         pages = self.read("api", "graphql", "--paginate", "--slurp", "-f", f"query={query}",
                           "-F", f"owner={owner}", "-F", f"repo={name}", "-F", f"pr={number}")
-        heads, issues = set(), set()
+        snapshots, issues = set(), set()
         if not isinstance(pages, list) or not pages:
             raise ValueError("unreadable PR")
         for page in pages:
             if page.get("errors"):
                 raise ValueError("incomplete PR response")
-            pr = page["data"]["repository"]["pullRequest"]
+            repository = page["data"]["repository"]
+            pr = repository["pullRequest"]
             if pr["state"] != "OPEN":
                 raise ValueError("PR is not open")
-            heads.add(pr["headRefOid"])
+            snapshots.add((pr["headRefOid"], pr["baseRefName"], pr["body"],
+                           (repository["defaultBranchRef"] or {}).get("name")))
             links = pr["closingIssuesReferences"]
             for issue in links["nodes"]:
                 if issue["repository"]["nameWithOwner"].lower() == self.repo:
                     issues.add(issue["number"])
-        if links["pageInfo"]["hasNextPage"] or len(heads) != 1:
+        if links["pageInfo"]["hasNextPage"] or len(snapshots) != 1:
             raise ValueError("PR changed or issue links are incomplete")
-        head = heads.pop()
-        if not SHA.fullmatch(head):
-            raise ValueError("unreadable PR head")
+        head, base, body, default = snapshots.pop()
+        if not all(isinstance(v, str) for v in (head, base, body, default)) or not SHA.fullmatch(head):
+            raise ValueError("unreadable PR head, base or body")
+        if base != default:
+            issues |= body_links(body, self.repo)
         return head, issues
+
+    def policy_cleared(self, number, config):
+        """True when the CURRENT merge policy no longer asks a human about PR `number`.
+
+        A card parked by an old `human-gate:` stays Blocked until someone types `done`; when the policy changed
+        since (cap removed, category dropped), nobody should have to. Same reads and same classifier as the merge
+        gate; only an empty `human` and `needs_you` counts. Anything unreadable stays "needs a human".
+        """
+        meta = github_read.read(["pr", "view", str(number), "--repo", self.repo, "--json",
+                                 "labels,files,additions,deletions,changedFiles,body"], "metadata")[1]
+        diff = github_read.read(["pr", "diff", str(number), "--repo", self.repo], "diff", meta)[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = {"meta": Path(tmp) / "meta.json", "diff": Path(tmp) / "pr.diff"}
+            paths["meta"].write_text(json.dumps(meta))
+            paths["diff"].write_text(diff)
+            run = subprocess.run([sys.executable, str(Path(__file__).with_name("super-board-merge-policy.py")),
+                                  "--config", config, "--meta", str(paths["meta"]), "--diff", str(paths["diff"])],
+                                 capture_output=True, text=True, timeout=60)
+        if run.returncode != 0:
+            return False
+        plan = json.loads(run.stdout)
+        return not plan.get("human") and not plan.get("needs_you")
 
     def check(self, number, head=None, scope=None, issue=None):
         current_head, issues = self.pr(number)
@@ -211,6 +249,7 @@ def main():
     ap.add_argument("--plan", help="JSON plan from merge-policy")
     ap.add_argument("--request", action="store_true", help="print a pinned request; no network or writes")
     ap.add_argument("--deps", action="store_true", help="enrich the dependency graph on stdin")
+    ap.add_argument("--config", help="with --deps: re-run the merge policy; a card whose policy no longer asks a human is cleared")
     args = ap.parse_args()
     if args.request:
         if not args.pr or not args.head or not SHA.fullmatch(args.head) or not args.plan:
@@ -236,6 +275,10 @@ def main():
                 entry["needsYouDone"] = result["approved"]
                 entry["approvalRefresh"] = result.get("headChanged", False)
                 entry["approvalWhy"] = result["why"]
+                if (args.config and not result["approved"] and not entry["approvalRefresh"]
+                        and github.policy_cleared(request["pr"], args.config)):
+                    entry["needsYouDone"] = True
+                    entry["approvalWhy"] = "policy cleared: the current merge policy no longer asks for a human"
             except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
                 entry["approvalWhy"] = "approval evidence could not be verified"
         print(json.dumps(graph))

@@ -63,12 +63,13 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Lệnh đọc ở đây (kể cả của super-board-approval.py ở cuối pipeline) đều cố định, do board chạy trong sweep Blocked:
 # gh đổi flag hay GitHub trả thiếu dữ liệu là lỗi của script/sự cố, nên STRICT để vẫn halt kèm lý do (như card.sh).
 export SB_GITHUB_READ_STRICT=1
-REPO=""; LIMIT="200"; ONLY=""; FROM=""
+REPO=""; LIMIT="200"; ONLY=""; FROM=""; CONFIG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo)   REPO="$2"; shift 2 ;;
     --limit)  LIMIT="$2"; shift 2 ;;
     --issues) ONLY="$2"; shift 2 ;;
+    --config) CONFIG="$2"; shift 2 ;;   # re-run the merge policy for Blocked cards parked by an old human-gate
     --from)   FROM="$2"; shift 2 ;;   # a saved `gh issue list --json …` payload; tests use this
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
@@ -195,4 +196,4 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
           needsYouDone: false }
     ]
   | ( if $filter == null then . else map(select(.number as $n | $filter | index($n))) end )
-  | INDEX(.number | tostring)' | python3 "$(dirname "${BASH_SOURCE[0]}")/super-board-approval.py" --deps --repo "$APPROVAL_REPO"
+  | INDEX(.number | tostring)' | python3 "$(dirname "${BASH_SOURCE[0]}")/super-board-approval.py" --deps --repo "$APPROVAL_REPO" ${CONFIG:+--config "$CONFIG"}

@@ -9,7 +9,7 @@ import { createTask, contractPaths } from '../src/tasks.js';
 import {
   buildPlanCritiquePrompt, buildImplementMessage, buildReworkMessage, buildAuditPrompt,
 } from '../src/prompt.js';
-import { tmpProject, tmpGlobalConfig, cleanup, writeFile, sampleTaskArgs } from './helpers.js';
+import { tmpProject, tmpGlobalConfig, tmpDir, cleanup, writeFile, sampleTaskArgs } from './helpers.js';
 
 test('gradle testDebugUnitTest duoc mo rong bang dung mot lenh ma tran co them task module', () => {
   const dir = tmpProject({ testCommand: './gradlew testDebugUnitTest' });
@@ -68,7 +68,7 @@ test('helpers.js: "khong co cau hinh chung" tro vao cho KHONG the co file, khong
   // Truoc day: os.tmpdir()/agpm-test-khong-co-cau-hinh-chung/.antigravity-pm.json. Nguoi khac (hoac lan chay cu) tao san file do
   // (vd testCommand la) thi lai duoc moi test. Thu dat file trong TMPDIR RIENG (tien trinh con nap lai helpers.js), khong bao gio
   // dat vao /tmp dung chung ma cac lan chay khac dang dung.
-  const priv = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-tmpdir-rieng-'));
+  const priv = tmpDir('agpm-tmpdir-rieng-');
   t.after(() => cleanup(priv));
   const helpers = new URL('./helpers.js', import.meta.url).href;
   const p = execFileSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(helpers)}); console.log(process.env.ANTIGRAVITY_PM_GLOBAL_CONFIG);`],

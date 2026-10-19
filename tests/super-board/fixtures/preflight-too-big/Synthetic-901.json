@@ -1,0 +1,1 @@
+{"number":901,"title":"🐛 [bug] reader: mở tệp 50 MB bị văng","body":"## Problem\nMở tệp 50 MB thì app văng.\n\n## Fix\nĐọc tệp theo luồng thay vì nạp cả tệp.\n\n## Acceptance Criteria\n- [ ] Không OOM khi mở tệp 50 MB\n- [ ] Test hồi quy ĐỎ rồi XANH\n\n## Risk\n🟢 **Low** · cục bộ.\n"}

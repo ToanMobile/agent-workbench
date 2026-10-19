@@ -1347,6 +1347,49 @@ def head_and_dirty(project_dir):
     return head.stdout.decode().strip(), dirty
 
 
+def _tree_store(tree_fp, project_dir, fp, data=None):
+    """#105 (trunk mode): mirror of the receipt in <git common dir>/postfix-gate/tree_receipts/<fp>.json. A worktree's own receipt goes with
+    its git dir when the worktree is removed, so proof_gate finds the full PASS of the tree a session delivered into main (finish, squash
+    PR) here. data: the exit-0 receipt; None: drop the entry, any other verdict on that tree. fp None: the tested tree, fingerprinted only when the store holds something. Only the
+    entry of that one tree is touched; a write prunes entries older than TREE_RECEIPT_MAX_AGE_S or beyond the TREE_RECEIPT_MAX newest."""
+    store = None
+    try:
+        store = tree_fp.tree_receipt_dir(project_dir)
+        if not store or (data is None and not fp and not (os.path.isdir(store) and any(n.endswith(".json") for n in os.listdir(store)))):
+            return
+        fp = fp or tree_fp.tree_fingerprint(project_dir)
+        if not re.fullmatch(r"[0-9a-f]{24}", fp or ""):
+            return
+        path = os.path.join(store, fp + ".json")
+        if data is None:
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(path)
+            return
+        os.makedirs(store, exist_ok=True)
+        text = json.dumps(data)
+        fd, tmp = tempfile.mkstemp(prefix=".tmp_tree.", dir=store)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+            os.replace(tmp, path)
+        except OSError:   # full disk…: the prune below only sees *.json, so a temp left here would stay in the shared store
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+            raise
+        now = time.time()
+        kept = []
+        for e in os.scandir(store):
+            if e.name.endswith(".json"):
+                with contextlib.suppress(FileNotFoundError):   # another run pruned it between scandir and stat
+                    kept.append((e.stat(follow_symlinks=False).st_mtime, e.path))
+        for i, (mtime, p) in enumerate(sorted(kept, reverse=True)):
+            if i >= tree_fp.TREE_RECEIPT_MAX or now - mtime > tree_fp.TREE_RECEIPT_MAX_AGE_S:
+                with contextlib.suppress(FileNotFoundError):   # another run pruned it first
+                    os.remove(p)
+    except (OSError, ValueError) as e:   # never the gate's verdict: proof_gate then falls back to the worktree's own receipt
+        log_warn(f"tree receipt store ({store}): {e}")
+
+
 def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None, tested_fp=None,
                             untested=None, partial=False, locked=True):
     """After a full regression run: drop the previous receipt, and on exit 0 record
@@ -1375,9 +1418,11 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     unverified_ok = exit_code == 2 and not any(
         t.get("status") not in ("PASS", "UNTESTED", "BUSY") for t in (tests or []) if t.get("command"))
     if partial and unverified_ok:
+        run_fp = tested_fp or tree_fp.tree_fingerprint(project_dir)   # once: the store drop and the receipt below both need it
+        _tree_store(tree_fp, project_dir, run_fp)   # exit 2 on the tested tree: its exit-0 entry goes, as this receipt below
         try:
             kept = _load_state_json(path)
-            same = isinstance(kept, dict) and kept.get("fingerprint") == (tested_fp or tree_fp.tree_fingerprint(project_dir))
+            same = isinstance(kept, dict) and kept.get("fingerprint") == run_fp
             if same and kept.get("exit") == 0 and not locked:
                 # F1: no load-then-replace without the lock. A forced run that holds it and FAILS a suite deletes this file; between this run's load
                 # and its replace that deletion would be undone, and the receipt would come back as exit 2 with the failing suite's PASS (which
@@ -1407,6 +1452,7 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
             os.remove(path)
         except OSError:
             pass
+        _tree_store(tree_fp, project_dir, tested_fp)
         return
     fingerprint = tree_fp.tree_fingerprint(project_dir)
     if tested_fp is not None and fingerprint != tested_fp:
@@ -1417,10 +1463,14 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
                 os.remove(path)
             except OSError:
                 pass
+        if exit_code != 0:   # exit 4 too: the tested tree's exit-0 entry does not outlive a verdict that is not a pass
+            _tree_store(tree_fp, project_dir, tested_fp)
         return
     if not fingerprint:   # proof_gate never matches an empty one: say why XONG will be refused
         log_warn(tr(f"Không tính được dấu vân tay code — XONG sẽ bị proof_gate chặn: {getattr(tree_fp.tree_fingerprint, 'error', '') or 'git add thất bại'}",
                     f"Code fingerprint unavailable — proof_gate will refuse XONG: {getattr(tree_fp.tree_fingerprint, 'error', '') or 'git add failed'}"))
+    if exit_code != 0:   # exit 4 / 2: dropped BEFORE the write below, which may fail and must not leave this tree's exit-0 entry behind
+        _tree_store(tree_fp, project_dir, fingerprint)
     try:
         head, dirty = head_and_dirty(project_dir)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1456,6 +1506,8 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
         os.replace(tmp, path)
+        if exit_code == 0:
+            _tree_store(tree_fp, project_dir, fingerprint, data)
     except OSError as e:
         log_err(f"full-pass receipt not written: {e}")
 
@@ -3675,6 +3727,8 @@ def _scripts_on_path():
 _VACUITY_LIVE: dict = {}
 _VACUITY_PGIDS: set = set()
 _VACUITY_LOCK = threading.RLock()
+# Seconds a timed-out suite group gets between SIGTERM and SIGKILL to run its cleanup traps.
+_SUITE_TERM_GRACE_S = 10
 
 
 def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
@@ -3690,9 +3744,19 @@ def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
             out, _ = proc.communicate(timeout=timeout)
             return proc.returncode, out, False
         except subprocess.TimeoutExpired:
+            # TERM first: the suite's EXIT traps remove their temp dirs and fixture worktrees (2026-10-19: a bare SIGKILL
+            # skipped them and ~8 GiB of test dirs piled up in TMPDIR). KILL whatever is left after the grace.
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGTERM)
+            try:
+                out, _ = proc.communicate(timeout=_SUITE_TERM_GRACE_S)
+            except subprocess.TimeoutExpired:
+                out = None
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGKILL)
-            return proc.returncode, proc.communicate()[0], True
+            if out is None:
+                out = proc.communicate()[0]   # reaps the shell first, so returncode below is set
+            return proc.returncode, out, True
     finally:
         with _VACUITY_LOCK:
             _VACUITY_PGIDS.discard(proc.pid)
@@ -3718,6 +3782,9 @@ def _vacuity_on_signal(signum, _frame):
         items, pgids = list(_VACUITY_LIVE.items()), list(_VACUITY_PGIDS)
         _VACUITY_LIVE.clear()
         _VACUITY_PGIDS.clear()
+    # Still a bare SIGKILL: a grace here races the suite worker threads (flaky re-run, vacuity re-run) that keep running
+    # while the handler waits (review 2026-10-19). A suite killed here leaves its temp dir: scratch_cleanup sweeps the
+    # named ones.
     for pgid in pgids:
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(pgid, signal.SIGKILL)

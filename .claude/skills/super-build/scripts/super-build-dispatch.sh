@@ -8,7 +8,7 @@
 #          SKILL_DIR   (optional) — defaults to the dir this script lives in's parent
 #          MAX_TURNS   (optional) — default 250
 #   - Side effects:
-#       * git worktree add -b loop/issue-N .claude/worktrees/issue-N BASE_BRANCH
+#       * agent-kit worktree add .claude/worktrees/issue-N loop/issue-N --lane=build --base=BASE_BRANCH (DevKit links, ignored config + hooks)
 #       * runs `claude -p` inside that worktree with the composed prompt
 #       * captures stdout+stderr to .planning/super-build-logs/issue-N.log
 #   - Exit codes:
@@ -64,6 +64,24 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
   exit 64
 fi
 
+# Lane worktrees live in the MAIN checkout's .claude/worktrees (`worktree add --lane` refuses any other folder): run from a session's own
+# worktree, say so now instead of failing later inside add, after the prompt is written.
+MAIN_DIR=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
+TOP_DIR=$(git rev-parse --show-toplevel 2>/dev/null)
+if [[ -n "$MAIN_DIR" && "$(cd "$MAIN_DIR" && pwd -P)" != "$(cd "$TOP_DIR" && pwd -P)" ]]; then
+  echo "error: run from the main checkout ($MAIN_DIR), not from a linked worktree: lane worktrees live in its .claude/worktrees" >&2
+  exit 64
+elif [[ "$(pwd -P)" != "$(cd "$TOP_DIR" && pwd -P)" ]]; then
+  echo "error: run from the repository root ($TOP_DIR), not a subfolder: the worktree path .claude/worktrees/issue-$N is relative to it" >&2
+  exit 64
+fi
+# The DevKit makes the worktree (below): checked here, before any network call or file is written
+WT_PY="$REPO_DIR/.agents/devkit/scripts/git/worktree.py"
+if [[ ! -f "$WT_PY" ]]; then
+  echo "error: DevKit missing ($WT_PY): run agent-kit init in $REPO_DIR first" >&2
+  exit 64
+fi
+
 # Verify base branch exists locally or on origin
 if ! git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
   if ! git rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
@@ -94,6 +112,40 @@ if git rev-parse --verify "$WORKER_BRANCH" >/dev/null 2>&1; then
   echo "error: branch $WORKER_BRANCH already exists — refusing to clobber" >&2
   exit 64
 fi
+# `worktree add --lane` (below) resumes a branch only origin has; this dispatcher always starts fresh off BASE_BRANCH (BASE_SHA and the
+# done-commit check rely on it): refuse a remote leftover like the local one above. Origin unreachable: add --lane would refuse too, so
+# say it here. The probe is the DevKit's own bounded git call (the user's own ssh/credential setup, killed after its timeout: headless)
+# — the very check add --lane makes, so the two never disagree.
+if git remote get-url origin >/dev/null 2>&1; then
+  LS_RC=0
+  LS_ERR=$(GIT_TERMINAL_PROMPT=0 python3 - "$WT_PY" "$WORKER_BRANCH" 2>&1 >/dev/null <<'PY'
+import importlib.util, sys
+try:
+    spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    r = m.git(".", "ls-remote", "--exit-code", "--heads", "origin", "refs/heads/" + sys.argv[2], check=False)
+except Exception as e:   # an old or broken DevKit (load or call) is no network fault: its own exit code and its reason
+    print(f"DevKit worktree.py unusable: {e!r}", file=sys.stderr)
+    sys.exit(3)
+print((r.stderr or "").strip(), file=sys.stderr)
+sys.exit(r.returncode)
+PY
+  ) || LS_RC=$?
+  # git's first fatal/error line carries the reason (its hint lines follow it); otherwise the last line said
+  LS_WHY=$( { printf '%s\n' "$LS_ERR" | grep -m1 -E '^(fatal|error|DevKit)'; } || printf '%s\n' "$LS_ERR" | grep -v '^[[:space:]]*$' | tail -1)
+  LS_WHY=$(printf '%s' "$LS_WHY" | cut -c1-200)
+  if [[ "$LS_RC" -eq 0 ]]; then
+    echo "error: branch $WORKER_BRANCH already exists on origin — refusing to clobber" >&2
+    exit 64
+  elif [[ "$LS_RC" -eq 3 || "$LS_RC" -eq 127 ]]; then   # 127: no python3 to run the DevKit at all
+    echo "error: ${LS_WHY:-DevKit worktree.py unusable} — repair the DevKit install (agent-kit init) / python3 in $REPO_DIR" >&2
+    exit 64
+  elif [[ "$LS_RC" -ne 2 ]]; then
+    echo "error: cannot reach origin to check $WORKER_BRANCH (git ls-remote exit $LS_RC${LS_WHY:+: $LS_WHY})" >&2
+    exit 64
+  fi
+fi
 
 # Compose the worker prompt: preamble + issue body + working-dir footer
 SB_BIN="$REPO_DIR/.claude/bin"
@@ -122,9 +174,16 @@ ISSUE_BODY=$(printf '%s' "$ISSUE_JSON" | jq -r '.body')
   printf 'Log file: %s/%s\n' "$REPO_DIR" "$LOG_FILE"
 } > "$PROMPT_FILE"
 
-# Create the worktree on a fresh branch off BASE_BRANCH
-if ! git worktree add -b "$WORKER_BRANCH" "$WORKTREE_DIR" "$BASE_BRANCH" >>"$LOG_FILE" 2>&1; then
-  echo "error: git worktree add failed — see $LOG_FILE" >&2
+# Create the worktree on its branch off BASE_BRANCH with the DevKit, never a plain `git worktree add` (agent-workbench#93): the worker
+# runs IN it, so it needs the DevKit links and the git-ignored hooks the settings run (missing, every python3 hook exits 2 and blocks
+# the tool), and a Unity Library cloned copy-on-write instead of a full re-import. Exit 4 = under the disk floor, nothing made.
+WT_RC=0
+python3 "$WT_PY" add "$WORKTREE_DIR" "$WORKER_BRANCH" --lane=build --base="$BASE_BRANCH" >>"$LOG_FILE" 2>&1 || WT_RC=$?
+if [[ "$WT_RC" -eq 4 ]]; then   # 4 is this dispatcher's HUMAN GATE code: a missing precondition stays 64, the message says which
+  echo "error: under the DevKit worktree disk floor (WORKTREE_DISK_MIN_GIB) — free space first; see $LOG_FILE" >&2
+  exit 64
+elif [[ "$WT_RC" -ne 0 ]]; then
+  echo "error: agent-kit worktree add failed (exit $WT_RC) — see $LOG_FILE" >&2
   exit 64
 fi
 
