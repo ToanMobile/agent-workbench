@@ -214,6 +214,7 @@ under Risk.
 | `## Acceptance Criteria` | 2–5 `- [ ]` items, each checkable by a test | yes |
 | `## Risk` | 🟢/🟡/🔴 level + one line | yes |
 | `## Blocked by` | `- #N — why` bullets, or exactly `- None.` | yes |
+| `## Cần người` | FIRST section, one line: `🙋 Cần bạn: <exactly what the person must do> · xong thì <what next>` | when a step needs a person |
 
 When an unsettled design triggers [design preflight](design-preflight.md), retain the
 approved choice and short rationale in the existing Context, or link its applicable
@@ -334,6 +335,8 @@ Header regex: `^\[(builder|qa|reviewer|collect|orchestrator)\] \[(blocker|issue|
   last and do not count toward the 8.
 - Screenshots (QA) go below, as an embedded table. They do not count either.
 - The Block template (`block-template.md`) uses the same header and keeps its fields.
+- The needs-you note is the one comment with no header: a hidden `<!-- super-board:needs-you -->`
+  marker, then `🙋 Cần bạn: <exactly what> · xong thì <next>`. Only `super-board-needs-you.py` writes it.
 
 Example:
 
