@@ -42,6 +42,7 @@ print(json.dumps({"type":"assistant","timestamp":t,"message":{"role":"assistant"
 gate_carried() {
   rm -f "$REPO/docs/foreign.md"
   CLAUDE_PROJECT_DIR="$REPO" python3 "$GATE" --run-tests --full --no-checklist --diff HEAD~1 >"$TMP/gate" 2>&1 || { fail "setup: gate --full exit $? ($(tail -3 "$TMP/gate" | tr '\n' ' '))"; return 1; }
+  rm -rf "$(git -C "$REPO" rev-parse --absolute-git-dir)/postfix-gate/tree_receipts"   # kho theo cây (#105) là bằng chứng khác, có test riêng: ở đây chỉ luật này
   python3 - "$RECEIPT" "$@" <<'PY'
 import json, sys
 p = sys.argv[1]; r = json.load(open(p))
