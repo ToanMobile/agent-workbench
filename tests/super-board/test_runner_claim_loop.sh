@@ -128,6 +128,15 @@ echo "worked a while" > "$TMP/repo/wl/worker-build-62.log"
 python3 -c 'import os, sys; os.utime(sys.argv[1], (int(sys.argv[2]), int(sys.argv[2])))' "$TMP/repo/wl/worker-build-62.log" $(( $(date +%s) - 30 ))
 ( TICK_SECONDS=120; reap_finished_locks )
 [ ! -s "$INFLIGHT_DIR/early-deaths/62" ] && ok "  … but a worker whose log ran 9 minutes is not" || fail "a long-running worker counted as an early death"
+# claude -p (text mode) writes nothing until it ends: a long silent run that was killed leaves only the dispatch header, written
+# just BEFORE STARTED — its log mtime says nothing about when it died (OCR 19/10)
+st63=$(( $(date +%s) - 1800 ))
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(iso "$st63")" > "$INFLIGHT_DIR/63"
+echo "=== dispatch lane=build issue=#63 ===" > "$TMP/repo/wl/worker-build-63.log"
+python3 -c 'import os, sys; os.utime(sys.argv[1], (int(sys.argv[2]), int(sys.argv[2])))' "$TMP/repo/wl/worker-build-63.log" $((st63 - 1))
+( TICK_SECONDS=120; reap_finished_locks )
+[ ! -s "$INFLIGHT_DIR/early-deaths/63" ] && ok "  … nor a 30-minute silent run whose log holds only the dispatch header" \
+  || fail "a long silent run (log mtime before STARTED) was counted as an early death"
 
 # ── 5. under the runner's own `set -euo pipefail`, an early death whose worker log is gone must not end the runner (OCR 19/10)
 rm -rf "$TMP/repo/wl" "$INFLIGHT_DIR/early-deaths"

@@ -706,19 +706,24 @@ note_early_death() {
   # each dispatch made reap free the card and the next tick claim it again, every ~40 s, until the board halted. A worker that died
   # within SB_EARLY_DEATH_S (120 s) of its dispatch is recorded here as "<epoch> <lane>", with the last line of its log, so the card
   # can cool down in that lane. Bookkeeping only: under the runner's `set -euo pipefail` no step here may end the runner.
-  local age limit f last n now wlog="${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log"
+  local age f last n now wlog="${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log"
   # How long the worker lived: up to its log's last write. Reap runs once per tick (tick_seconds, 120 by default), so "now" can be a
   # whole tick after the death (review 19/10: measured at reap time, no worker ever counted). No log: now, with one tick of slack.
+  # The log's mtime counts only when later than STARTED: `claude -p` (text mode) writes nothing until it ends, so a long silent
+  # run that was killed leaves just the dispatch header, written before STARTED (OCR 19/10). Either way the worker must have been
+  # dispatched less than the limit plus one tick ago.
   age=$(python3 -c 'import calendar, os, sys, time
 start = calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ"))
+limit, tick = int(sys.argv[3]), int(sys.argv[4])
+since = time.time() - start
 try:
-    end = os.path.getmtime(sys.argv[2]); print(int(end - start), "log")
+    end = os.path.getmtime(sys.argv[2])
 except OSError:
-    print(int(time.time() - start), "now")' "${STARTED:-}" "$wlog" 2>/dev/null) || return 0
-  limit=${SB_EARLY_DEATH_S:-120}
-  case "$age" in *" now") limit=$((limit + ${TICK_SECONDS:-0})) ;; esac
-  age=${age% *}
-  [ "$age" -lt "$limit" ] 2>/dev/null || return 0
+    end = None
+lived = end - start if end is not None and end > start else None
+early = since < limit + tick and (lived is None or lived < limit)
+print(int(lived if lived is not None else since), 1 if early else 0)' "${STARTED:-}" "$wlog" "${SB_EARLY_DEATH_S:-120}" "${TICK_SECONDS:-0}" 2>/dev/null) || return 0
+  case "$age" in *" 1") age=${age% *} ;; *) return 0 ;; esac
   now=$(date +%s)
   f=$(early_death_file "$1")
   mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
