@@ -65,6 +65,14 @@ elif kind == "prompt":
     out = {"prompt": d.get("prompt") or "", "session_id": d.get("session_id") or d.get("conversation_id") or ""}
 elif kind == "stop":
     out = {"session_id": d.get("session_id") or d.get("conversation_id") or "", "hook_event_name": "Stop"}
+    # Gemini AfterAgent gửi prompt_response. Không chuyển thì Stop không thấy lời giữa chừng và vẫn mở suite.
+    reply = d.get("prompt_response")
+    if not isinstance(reply, str) or not reply.strip():
+        reply = d.get("last_assistant_message")
+    if not isinstance(reply, str) or not reply.strip():
+        reply = d.get("lastAssistantMessage")
+    if isinstance(reply, str) and reply.strip():
+        out["last_assistant_message"] = reply
 else:
     out = {"session_id": d.get("session_id") or "", "hook_event_name": "SessionStart"}
 print(json.dumps(out))' 2>/dev/null)"
