@@ -44,9 +44,12 @@ mkdir -p "${SANDBOX}/.claude/audit-gate"
 PASS=0; FAIL=0; FAILED_CASES=""
 
 # run_case <name> <hook.sh> <expected_exit> <stdin-json> [ENV=VAL ...]
+# Bỏ marker Grok của phiên cha trước. Ca nào cần thì truyền GROK_HOOK_EVENT=...
+# phía sau các cờ -u, nên gán đó vẫn thắng. Không đổi exit mong đợi của ca.
 run_case() {
   name="$1"; hook="$2"; want="$3"; payload="$4"; shift 4
-  out="$(printf '%s' "${payload}" | env CLAUDE_PROJECT_DIR="${SANDBOX}" "$@" \
+  out="$(printf '%s' "${payload}" | env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT \
+        CLAUDE_PROJECT_DIR="${SANDBOX}" "$@" \
         bash "${HOOKS}/${hook}" 2>&1)"
   got=$?
   if [ "${got}" -eq "${want}" ]; then
