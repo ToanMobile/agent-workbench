@@ -454,7 +454,7 @@
       "mandatory_regression_tests": [
         {
           "id": "REG-SB-MERGE-LOAD-WAIT-01",
-          "name": "merge gate waits (bounded, inside the lock right before verify, lock stamp refreshed) for the machine load to drop, then verifies anyway",
+          "name": "merge gate waits (bounded, inside the lock before the base is pinned, lock stamp refreshed) for the machine load to drop, then verifies anyway",
           "command": "bash tests/super-board/test_merge_gate_load_wait.sh"
         }
       ]

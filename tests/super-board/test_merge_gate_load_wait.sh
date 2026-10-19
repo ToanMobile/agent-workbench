@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 19/10: verify của merge gate (post-fix-gate --full) chạy ngay cả khi máy tải ~60 (5 board cùng build): REG-DK-ALL-01 của PR #87
-# (thẻ #12) chọn 127 test và quá 900 s, thẻ quay về Ready mãi. Luật: ngay trước verify, gate chờ tải 1 phút xuống dưới
+# (thẻ #12) chọn 127 test và quá 900 s, thẻ quay về Ready mãi. Luật: trong khoá, trước khi chốt base, gate chờ tải 1 phút xuống dưới
 # SB_MERGE_LOAD_MAX, có giới hạn SB_MERGE_LOAD_WAIT_S; hết giờ vẫn verify như cũ (không bỏ bước nào); --dry-run không chờ.
 # SB_MERGE_LOAD_FILE là móc test: đọc tải từ file thay cho os.getloadavg(). Ngưỡng thời gian tính theo poll, không theo giây
 # tuyệt đối: dưới tải cao riêng phần khởi động gate đã mất 4–5 s (review 19/10).
@@ -16,7 +16,7 @@ ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-loadwait-test.XXXXXX")"
-trap 'rm -rf "$TMP"' EXIT
+trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$TMP"' EXIT
 O="$TMP/origin.git"; R="$TMP/repo"; WT="$R/.claude/worktrees/review-x"
 git init -q --bare -b main "$O"
 git init -q -b main "$R"
@@ -120,6 +120,14 @@ SB_MERGE_LOAD_WAIT_S=30m gate >"$TMP/gate7.log" 2>&1; rc=$?
 grep -q "SB_MERGE_LOAD_WAIT_S='30m' is not a number" "$TMP/gate7.log" \
   && ok "invalid wait setting is reported" || fail "invalid wait setting dropped silently: $(grep merge-gate "$TMP/gate7.log" | head -3)"
 ran "$rc" && ok "invalid wait setting: verify ran (exit 11)" || fail "invalid wait setting: gate exit $rc"
+# Ca 7b: tải không đọc được (12.5) → nói ra, không chờ, vẫn verify; poll sai → nói ra, dùng 30 s.
+echo 12.5 > "$LOADF"; rm -f "$STARTED"
+SB_MERGE_LOAD_WAIT_S=60 SB_MERGE_LOAD_POLL_S=x gate >"$TMP/gate7b.log" 2>&1; rc=$?
+grep -q "cannot read the machine load ('12.5')" "$TMP/gate7b.log" \
+  && ok "unreadable load is reported, no wait" || fail "unreadable load not reported: $(grep merge-gate "$TMP/gate7b.log" | head -3)"
+grep -q "SB_MERGE_LOAD_POLL_S='x' is not a positive number" "$TMP/gate7b.log" \
+  && ok "invalid poll setting is reported" || fail "invalid poll setting dropped silently"
+ran "$rc" && ok "unreadable load: verify ran (exit 11)" || fail "unreadable load: gate exit $rc"
 
 # Ca 8: lúc chờ, mốc "at" của khoá được làm mới (không thì gate khác gỡ khoá "bỏ quên" và hai merge chạy cùng lúc).
 AT="$WT/.claude/super-board/inflight/merge.lock/at"
