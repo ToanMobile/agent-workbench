@@ -24,9 +24,9 @@ spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 # Lấy đủ các hàm trước khi chép gì: bản DevKit thiếu một hàm thì hỏng ngay, không chép nửa chừng.
-steps = (mod.copy_local_config, mod.copy_build_inputs) if sys.argv[4] == "full" else (mod.copy_local_config,)
+steps = (mod.copy_local_config, mod.copy_build_inputs, mod.copy_unity_library) if sys.argv[4] == "full" else (mod.copy_local_config,)
 copied = [rel for step in steps for rel in step(sys.argv[2], sys.argv[3])]
-what = "local config and build inputs" if sys.argv[4] == "full" else "local config only (old DevKit, no build inputs)"
+what = "local config, build inputs and Unity Library" if sys.argv[4] == "full" else "local config only (old DevKit, no build inputs)"
 print(f"[scratch-config] {what} copied: " + (", ".join(copied) or "none"), file=sys.stderr)
 PY
     echo "[scratch-config] $c/scripts/git/worktree.py failed ($mode); trying the next DevKit" >&2

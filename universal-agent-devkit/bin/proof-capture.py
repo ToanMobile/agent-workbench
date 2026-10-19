@@ -41,6 +41,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import stat
 import subprocess
 import sys
@@ -465,6 +466,8 @@ def resolve(project: Path, adb: str, emulator: str | None, connect_timeout: floa
         plan = plan_target(configured, devices, denied, avd, True, declared_avd)
     plan["devices"] = devices
     plan["denied"] = sorted(denied)
+    if avd and not plan.get("avd"):
+        plan["avd"] = avd
     return plan
 
 
@@ -679,6 +682,106 @@ def locked_device(locks, args, plan: dict, emulator, use_lock: bool) -> str:
     return serial
 
 
+def qemu_process_text() -> str:
+    """Process list used to find the AVD's qemu. PROOF_QEMU_PS (a file) replaces `ps` so tests never see a live emulator."""
+    override = os.environ.get("PROOF_QEMU_PS")
+    if override is not None:
+        try:
+            return Path(override).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+    try:
+        res = subprocess.run(["ps", "-ax", "-o", "pid=,command="], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return res.stdout or ""
+
+
+def qemu_pids(avd: str) -> list:
+    """PIDs whose command line contains both qemu and the AVD name."""
+    if not avd:
+        return []
+    found = []
+    for raw in qemu_process_text().splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if "\t" in line:
+            pid_s, cmd = line.split("\t", 1)
+        else:
+            parts = line.split(None, 1)
+            if len(parts) != 2:
+                continue
+            pid_s, cmd = parts
+        if avd not in cmd or re.search(r"(^|[/\s])qemu", cmd) is None:
+            continue
+        try:
+            found.append(int(pid_s.strip()))
+        except ValueError:
+            continue
+    return found
+
+
+def signal_qemu(sig: int, avd: str) -> None:
+    """Continue or stop the matching emulator. PROOF_QEMU_SIGNAL_SINK records the call and skips os.kill.
+    PROOF_KEEP_EMULATOR=1 skips SIGSTOP. Tests set both env vars and never signal a live qemu."""
+    if sig == signal.SIGSTOP and os.environ.get("PROOF_KEEP_EMULATOR", "").strip().lower() in ("1", "true", "yes", "on"):
+        return
+    name = "STOP" if sig == signal.SIGSTOP else "CONT" if sig == signal.SIGCONT else str(sig)
+    sink = os.environ.get("PROOF_QEMU_SIGNAL_SINK")
+    for pid in qemu_pids(avd):
+        if sink:
+            try:
+                with open(sink, "a", encoding="utf-8") as fh:
+                    fh.write("%s %s %s\n" % (name, pid, avd))
+            except OSError as exc:
+                print("Canh bao: khong ghi tin hieu qemu: %s" % exc, file=sys.stderr)
+            continue
+        try:
+            os.kill(pid, sig)
+        except OSError as exc:
+            print("Canh bao: khong gui tin hieu %s toi qemu %s: %s" % (name, pid, exc), file=sys.stderr)
+
+
+def maybe_stop_emulator(serial: str, avd: str) -> None:
+    """After our lock is dropped: SIGSTOP only when no other holder has the serial lock."""
+    if not avd or not serial:
+        return
+    if os.environ.get("PROOF_KEEP_EMULATOR", "").strip().lower() in ("1", "true", "yes", "on"):
+        return
+    if fcntl is None:
+        return
+    try:
+        directory = device_lock_dir()
+        fd = _open_lock(directory, lock_path(directory, "serial", serial))
+    except (OSError, RuntimeError, ValueError):
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return
+    else:
+        signal_qemu(signal.SIGSTOP, avd)
+    finally:
+        os.close(fd)
+
+
+def run_before_command(command: str) -> int:
+    """Run install-and-navigate with no shell. Non-zero means the capture must not write a PNG."""
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        print("lenh --run-before khong tach duoc: %s" % exc, file=sys.stderr)
+        return 1
+    if not argv:
+        return 0
+    try:
+        return subprocess.run(argv).returncode
+    except OSError as exc:
+        print("lenh --run-before khong chay: %s" % exc, file=sys.stderr)
+        return 1
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Chup anh nghiem thu, mo may ao neu khong co device.",
@@ -697,6 +800,7 @@ def main(argv=None) -> int:
     parser.add_argument("--boot-timeout", type=float, default=180)
     parser.add_argument("--port", type=int, default=5554)
     parser.add_argument("--no-device-lock", action="store_true", help="do not serialise captures of the same device")
+    parser.add_argument("--run-before", default="", help="install-and-navigate command (no shell) held under the device lock until the PNG")
     args = parser.parse_args(argv)
     project = Path(args.project).resolve()
     emulator = args.emulator or find_emulator()
@@ -741,9 +845,20 @@ def main(argv=None) -> int:
         return 1
     # The device is chosen and the denylist applied (resolve): only now is a lock taken. A boot plan has no
     # serial yet, so it locks the AVD first and the serial it ends up with after.
+    captured = False
+    stop_serial = ""
+    stop_avd = plan.get("avd") or ""
     try:
         with contextlib.ExitStack() as locks:
             serial = locked_device(locks, args, plan, emulator, device_lock_enabled(args.no_device_lock))
+            stop_serial = serial or ""
+            stop_avd = plan.get("avd") or stop_avd
+            signal_qemu(signal.SIGCONT, stop_avd)
+            if args.run_before:
+                before_rc = run_before_command(args.run_before)
+                if before_rc != 0:
+                    print("lenh --run-before thoat %s — khong chup." % before_rc, file=sys.stderr)
+                    return 1
             wake = wakefulness(args.adb, serial)
             if wake and wake != "Awake":
                 print("Man hinh serial %s dang %s (dumpsys power: mWakefulness) — khong chup. "
@@ -754,10 +869,14 @@ def main(argv=None) -> int:
             screencap(args.adb, serial, dest, 60)
             print("serial: %s" % serial)
             print("file: %s" % dest)
+            captured = True
             return 0
     except DeviceLockBusy as exc:
         print(exc, file=sys.stderr)
         return LOCK_BUSY_EXIT
+    finally:
+        if captured:
+            maybe_stop_emulator(stop_serial, stop_avd)
 
 
 if __name__ == "__main__":

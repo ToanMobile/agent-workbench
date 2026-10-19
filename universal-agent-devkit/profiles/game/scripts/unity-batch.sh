@@ -138,6 +138,60 @@ LIMIT="${UNITY_TIMEOUT:-900}"
 # A domain that did not exist before the run is deleted again. If the snapshot fails, nothing
 # is deleted afterwards. UNITY_KEEP_PREFS=1 keeps whatever the run wrote.
 PREFS_DOMAIN="" PREFS_SNAP="" PREFS_ABSENT=0 UNITY_PID=""
+# One batchmode Editor on the machine. Separate from the heavy-verify slot.
+# ponytail: macOS has no flock(1), so a Python fcntl process holds the lock; upgrade if flock(1) is required.
+UNITY_LOCK_PATH="${UNITY_BATCH_LOCK:-$HOME/.config/universal-agent-devkit/unity-batch.lock}"
+UNITY_LOCK_PY=""
+UNITY_LOCK_SENTINEL=""
+
+release_unity_lock() {
+  if [ -n "${UNITY_LOCK_SENTINEL:-}" ]; then
+    rm -f "$UNITY_LOCK_SENTINEL"
+  fi
+  if [ -n "${UNITY_LOCK_PY:-}" ]; then
+    i=0
+    while kill -0 "$UNITY_LOCK_PY" 2>/dev/null && [ "$i" -lt 80 ]; do
+      sleep 0.05
+      i=$((i + 1))
+    done
+    kill "$UNITY_LOCK_PY" 2>/dev/null || true
+    wait "$UNITY_LOCK_PY" 2>/dev/null || true
+    UNITY_LOCK_PY=""
+  fi
+  if [ -n "${UNITY_LOCK_SENTINEL:-}" ]; then
+    rm -f "${UNITY_LOCK_SENTINEL}.held" "$UNITY_LOCK_SENTINEL"
+    UNITY_LOCK_SENTINEL=""
+  fi
+}
+
+acquire_unity_lock() {
+  mkdir -p "$(dirname "$UNITY_LOCK_PATH")" || { echo "UNTESTED: cannot create unity lock dir" >&2; exit 2; }
+  UNITY_LOCK_SENTINEL="$(mktemp "${TMPDIR:-/tmp}/unity-batch-sentinel.XXXXXX")" || {
+    echo "UNTESTED: cannot create unity lock sentinel" >&2; exit 2; }
+  python3 - "$UNITY_LOCK_PATH" "$UNITY_LOCK_SENTINEL" <<'PY' &
+import fcntl, os, sys, time
+path, sentinel = sys.argv[1], sys.argv[2]
+os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX)
+open(sentinel + ".held", "w").close()
+while os.path.exists(sentinel):
+    time.sleep(0.05)
+try:
+    fcntl.flock(fd, fcntl.LOCK_UN)
+except OSError:
+    pass
+os.close(fd)
+PY
+  UNITY_LOCK_PY=$!
+  while [ ! -f "${UNITY_LOCK_SENTINEL}.held" ]; do
+    if ! kill -0 "$UNITY_LOCK_PY" 2>/dev/null; then
+      echo "UNTESTED: unity machine lock failed" >&2
+      exit 2
+    fi
+    sleep 0.05
+  done
+}
 if [ "${UNITY_KEEP_PREFS:-0}" != "1" ] && [ "$(uname -s)" = "Darwin" ] && command -v defaults >/dev/null 2>&1; then
   company="$(sed -n 's/^  companyName: //p' "$ROOT/ProjectSettings/ProjectSettings.asset" 2>/dev/null | head -n 1 | tr -d '\r')"
   product="$(sed -n 's/^  productName: //p' "$ROOT/ProjectSettings/ProjectSettings.asset" 2>/dev/null | head -n 1 | tr -d '\r')"
@@ -155,6 +209,7 @@ if [ "${UNITY_KEEP_PREFS:-0}" != "1" ] && [ "$(uname -s)" = "Darwin" ] && comman
   fi
 fi
 restore_editor_prefs() {
+  release_unity_lock
   if [ -n "$UNITY_PID" ] && kill -0 "$UNITY_PID" 2>/dev/null; then  # interrupted: stop the Editor first
     kill "$UNITY_PID" 2>/dev/null; sleep 1; kill -9 "$UNITY_PID" 2>/dev/null
   fi
@@ -176,21 +231,26 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 run_editor() {  # $1 = log file, rest = Editor args. Returns Editor exit code, 124 on timeout.
-  local log="$1" pid waited=0; shift
+  local log="$1" pid waited=0 rc=0; shift
   : > "$log"
+  acquire_unity_lock
   # shellcheck disable=SC2086
-  "$UNITY" "$@" ${UNITY_EXTRA_ARGS:-} -logFile "$log" &
+  nice -n 15 "$UNITY" -job-worker-count 4 "$@" ${UNITY_EXTRA_ARGS:-} -logFile "$log" &
   pid=$!
   UNITY_PID=$pid
   while kill -0 "$pid" 2>/dev/null; do
     if [ "$waited" -ge "$LIMIT" ]; then
       echo "TIMEOUT after ${LIMIT}s — killing Unity (pid $pid); Temp/UnityLockfile may be left behind" >&2
       kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+      release_unity_lock
       return 124
     fi
     sleep 5; waited=$((waited + 5))
   done
   wait "$pid"
+  rc=$?
+  release_unity_lock
+  return "$rc"
 }
 
 compile_errors() {  # $1 = log file → prints the compiler errors, returns 0 when there are some

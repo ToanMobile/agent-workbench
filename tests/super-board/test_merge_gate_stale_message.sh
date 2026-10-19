@@ -7,6 +7,7 @@
 # Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
+export SB_NOTIFY_SKIP=1
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$ROOT/.claude/bin/super-board-merge-gate.sh"
 . "$ROOT/universal-agent-devkit/tests/lib/clean_git_env.sh"
@@ -86,14 +87,15 @@ echo '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["
 [ "$rc" -eq 11 ] && ! grep -qi "stale" "$TMP/gate1c.log" && verdict "$TMP/gate1c.log" | grep -q "verify failed (exit 1: no KẾT LUẬN/VERDICT line" \
   && ok "no verdict line: says so with the exit code, not stale" || fail "no-verdict case (rc $rc): $(verdict "$TMP/gate1c.log" | tail -3)"
 
-# Ca 2: main tiến thêm 1 commit (không xung đột) → nhánh chậm hơn base → vẫn nói stale.
+# Ca 2: main tiến thêm 1 commit (không xung đột, merge scratch sạch) + verify đỏ → exit 11 (không còn exit 2 / câu rebase ping-pong).
 git -C "$R" checkout -q main; echo c > "$R/c"; git -C "$R" add c; git -C "$R" commit -qm main-moves; git -C "$R" push -q origin main
 ( cd "$WT" && bash "$GATE" --config "$CFG" --pr 5 --expect-head "$H" ) >"$TMP/gate2.log" 2>&1; rc=$?
-[ "$rc" -eq 2 ] && grep "stale against main" "$TMP/gate2.log" | grep -q "verify exit 3: KẾT LUẬN: FAIL — không có test hồi quy nào khớp" \
-  && ok "behind-base branch, red verify: still says stale (exit 2), with the real verify reason" || fail "behind branch (rc $rc): $(grep merge-gate "$TMP/gate2.log" | tail -3)"
+[ "$rc" -eq 11 ] && ! grep -qi "send it back to Build for a rebase pass" "$TMP/gate2.log" \
+  && verdict "$TMP/gate2.log" | grep -q "exit 3: KẾT LUẬN: FAIL — không có test hồi quy nào khớp" \
+  && ok "behind-base branch, clean merge in scratch + red verify: exit 11 (no rebase pass bounce), with verify reason" \
+  || fail "behind branch clean merge (rc $rc): $(grep merge-gate "$TMP/gate2.log" | tail -3)"
 
-# Ca 3 (OCR 18/10): merge trong SCRATCH là fast-forward lên đỉnh base là một merge commit có cha thứ hai chính là head của PR. Nhánh vẫn
-# chậm hơn base 2 commit → phải nói stale (suy base từ HEAD^2 sau merge sẽ ra chính head → đếm 0 → sai).
+# Ca 3: merge trong SCRATCH là fast-forward lên đỉnh base là một merge commit (merge sạch) + verify đỏ → exit 11, không còn câu rebase.
 git -C "$R" branch -q --no-track issue-6-x main
 git -C "$R" checkout -q issue-6-x; echo d > "$R/d"; git -C "$R" add d; git -C "$R" commit -qm card6; git -C "$R" push -q origin issue-6-x
 H6=$(git -C "$R" rev-parse issue-6-x)
@@ -103,8 +105,60 @@ git -C "$R" diff "$H6~1" "$H6" > "$TMP/pr6.diff"
 printf '{"files":[{"path":"d"}],"labels":[],"body":"","additions":1,"deletions":0,"changedFiles":1}' > "$TMP/pr6.meta"
 echo "$H6" > "$TMP/pr6.head"
 ( cd "$WT" && bash "$GATE" --config "$CFG" --pr 6 --expect-head "$H6" ) >"$TMP/gate3.log" 2>&1; rc=$?
-[ "$rc" -eq 2 ] && grep -q "stale against main (2 commit(s) behind)" "$TMP/gate3.log" \
-  && ok "fast-forward onto a merge-commit base tip: still says stale, 2 behind" || fail "ff onto merge tip (rc $rc): $(grep merge-gate "$TMP/gate3.log" | tail -3)"
+[ "$rc" -eq 11 ] && ! grep -qi "send it back to Build for a rebase pass" "$TMP/gate3.log" \
+  && verdict "$TMP/gate3.log" | grep -q "exit 3: KẾT LUẬN: FAIL — không có test hồi quy nào khớp" \
+  && ok "fast-forward onto a merge-commit base tip + red verify: exit 11 (no rebase pass bounce)" \
+  || fail "ff onto merge tip (rc $rc): $(grep merge-gate "$TMP/gate3.log" | tail -3)"
+
+# Ca 4: xung đột thật khi merge BASE_SHA vào scratch → giữ nguyên exit 5.
+git -C "$R" checkout -q main
+git -C "$R" branch -q --no-track issue-7-x main
+git -C "$R" checkout -q issue-7-x; echo "branch-side" > "$R/a"; git -C "$R" add a; git -C "$R" commit -qm card7; git -C "$R" push -q origin issue-7-x
+H7=$(git -C "$R" rev-parse issue-7-x)
+git -C "$R" checkout -q main; echo "main-side" > "$R/a"; git -C "$R" add a; git -C "$R" commit -qm main-conflict; git -C "$R" push -q origin main
+git -C "$R" diff "$H7~1" "$H7" > "$TMP/pr7.diff"
+printf '{"files":[{"path":"a"}],"labels":[],"body":"","additions":1,"deletions":1,"changedFiles":1}' > "$TMP/pr7.meta"
+echo "$H7" > "$TMP/pr7.head"
+( cd "$WT" && bash "$GATE" --config "$CFG" --pr 7 --expect-head "$H7" ) >"$TMP/gate4.log" 2>&1; rc=$?
+[ "$rc" -eq 5 ] && grep -q "does not merge in cleanly" "$TMP/gate4.log" \
+  && ok "real merge conflict in scratch: exit 5" \
+  || fail "real merge conflict (rc $rc, want 5): $(grep merge-gate "$TMP/gate4.log" | tail -3)"
+
+# Ca 5: timeout (lần 1 exit 124 / TIMEOUT, lần 2 exit 0) → chạy lại đúng 1 lần và đi tiếp, đồng thời kiểm tra scratch nằm dưới main .claude/worktrees.
+cat > "$TMP/bin/gh" <<'SH'
+#!/usr/bin/env bash
+n=$(printf '%s\n' "$@" | grep -E '^[0-9]+$' | head -1)
+head=$(cat "$FAKE_DIR/pr$n.head")
+case " $* " in
+  *" pr view "*"headRefName,headRefOid"*) echo "issue-$n-x $head" ;;
+  *" pr view "*"state,mergeCommit,headRefOid"*) printf '{"state":"OPEN","mergeCommit":null,"headRefOid":"%s"}\n' "$head" ;;
+  *" pr view "*"labels,files"*) cat "$FAKE_DIR/pr$n.meta" ;;
+  *" pr diff "*) cat "$FAKE_DIR/pr$n.diff" ;;
+  *" pr merge "*) echo "merged #$n" ;;
+  *) echo "fake gh: unexpected $*" >&2; exit 1 ;;
+esac
+SH
+chmod +x "$TMP/bin/gh"
+COUNT_FILE="$TMP/timeout_runs"
+SCRATCH_PWD_FILE="$TMP/scratch_pwd"
+rm -f "$COUNT_FILE" "$SCRATCH_PWD_FILE"
+CFG_T="$TMP/cfg-timeout.json"
+cat > "$CFG_T" <<JSON
+{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":[
+  "c=\$(cat '$COUNT_FILE' 2>/dev/null || echo 0); c=\$((c + 1)); echo \$c > '$COUNT_FILE'; pwd -P > '$SCRATCH_PWD_FILE'; if [ \$c -eq 1 ]; then echo 'TIMEOUT after 900s'; exit 124; fi; exit 0"
+]}
+JSON
+( cd "$WT" && bash "$GATE" --config "$CFG_T" --pr 5 --expect-head "$H" ) >"$TMP/gate5.log" 2>&1; rc=$?
+runs=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
+spwd=$(cat "$SCRATCH_PWD_FILE" 2>/dev/null || echo "")
+R_ABS=$(cd "$R" && pwd -P)
+[ "$rc" -eq 0 ] && [ "$runs" -eq 2 ] \
+  && ok "timeout (exit 124) retried once and passed on second attempt (runs=$runs, exit 0)" \
+  || fail "timeout retry failed (rc=$rc, runs=$runs): $(tail -5 "$TMP/gate5.log")"
+case "$spwd" in
+  "$R_ABS/.claude/worktrees/.merge-scratch-"*) ok "scratch worktree created under main checkout .claude/worktrees ($spwd)" ;;
+  *) fail "scratch worktree not under $R_ABS/.claude/worktrees: '$spwd'" ;;
+esac
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_stale_message: PASS"; exit 0; } || { echo "test_merge_gate_stale_message: FAIL ($FAILS)"; exit 1; }

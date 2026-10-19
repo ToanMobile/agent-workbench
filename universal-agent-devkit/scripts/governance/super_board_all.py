@@ -75,6 +75,8 @@ def start_all():
     print("=================================================================")
     print("  🚀 KHỞI ĐỘNG ĐỒNG THỜI 5 SUPER-BOARD RUNNERS (TỰ HÀNH 24/7)")
     print("=================================================================\n")
+    locks_dir = os.environ.get("SB_HEAVY_SLOT_DIR") or os.path.join(os.path.expanduser("~"), ".claude", "super-board", "locks")
+    print(f"🔒 Heavy-gate slots (--full toàn máy, tối đa 2): {locks_dir}/heavy-gate-{{1,2}}.lock\n")
     for repo in REPOS:
         rdir = repo["dir"]
         slug = repo["slug"]

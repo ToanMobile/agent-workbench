@@ -17,18 +17,19 @@ trap 'rm -rf "$TMP"' EXIT
 R="$TMP/repo"; S="$TMP/scratch"
 git init -q -b main "$R"
 git -C "$R" config user.email t@example.invalid; git -C "$R" config user.name t
-mkdir -p "$R/app/libs"
-printf 'google-services.json\nlocal.properties\n*.aar\n*.jks\n' > "$R/.gitignore"
-echo a > "$R/a"; git -C "$R" add .gitignore a; git -C "$R" commit -qm init
+mkdir -p "$R/app/libs" "$R/ProjectSettings" "$R/Library"
+printf 'google-services.json\nlocal.properties\n*.aar\n*.jks\nLibrary/\n' > "$R/.gitignore"
+echo "m_EditorVersion: 6000.0.1f1" > "$R/ProjectSettings/ProjectVersion.txt"
+echo a > "$R/a"; git -C "$R" add .gitignore a ProjectSettings/ProjectVersion.txt; git -C "$R" commit -qm init
 echo '{"project_info":{}}' > "$R/app/google-services.json"
 echo 'sdk.dir=/x' > "$R/local.properties"
 echo 'TOKEN=x' > "$R/.env"                      # không bị ignore: không được chép
-# Build input bị ignore (aar trong libs/, keystore): thiếu chúng build trong worktree sạch cũng đỏ.
-echo aar > "$R/app/libs/sdk.aar"; echo jks > "$R/app/release.jks"
-# DevKit cũ đứng đầu danh sách ứng viên: có copy_local_config nhưng chưa có copy_build_inputs. Phải bỏ qua nó
+# Build input bị ignore (aar trong libs/, keystore) và Unity Library: thiếu chúng build trong worktree sạch cũng đỏ/import lại.
+echo aar > "$R/app/libs/sdk.aar"; echo jks > "$R/app/release.jks"; echo lib > "$R/Library/artifact.bin"
+# DevKit cũ đứng đầu danh sách ứng viên: có copy_local_config nhưng chưa có copy_build_inputs/copy_unity_library. Phải bỏ qua nó
 # và dùng ứng viên kế tiếp, không dừng ở bản đầu tiên tìm thấy.
 mkdir -p "$R/universal-agent-devkit/scripts/git"
-# Bản cũ mượn copy_local_config thật (DevKit cũ thật vẫn chép được config), chỉ thiếu copy_build_inputs.
+# Bản cũ mượn copy_local_config thật (DevKit cũ thật vẫn chép được config), chỉ thiếu copy_build_inputs/copy_unity_library.
 cat > "$R/universal-agent-devkit/scripts/git/worktree.py" <<PYF
 import importlib.util
 _spec = importlib.util.spec_from_file_location("real_wt", "$ROOT/universal-agent-devkit/scripts/git/worktree.py")
@@ -45,6 +46,7 @@ bash "$HELPER" "$R" "$S" >/dev/null 2>&1; rc=$?
 [ ! -e "$S/.env" ] && ok "config file git does not ignore is not copied (cannot be committed by mistake)" || fail ".env copied although not ignored"
 [ -f "$S/app/libs/sdk.aar" ] && ok "ignored build input libs/*.aar copied (copy_build_inputs)" || fail "app/libs/sdk.aar missing in the scratch worktree"
 [ -f "$S/app/release.jks" ] && ok "ignored keystore *.jks copied" || fail "app/release.jks missing in the scratch worktree"
+[ -f "$S/Library/artifact.bin" ] && ok "ignored Unity Library cloned into scratch worktree (copy_unity_library)" || fail "Library/artifact.bin missing in scratch worktree"
 [ -z "$(git -C "$S" status --porcelain)" ] && ok "scratch worktree stays clean for git" || fail "scratch worktree dirty: $(git -C "$S" status --porcelain | head -3)"
 
 # Merge gate truyền repo.path "." và có thể chạy từ worktree của Reviewer: nguồn chép vẫn phải là main checkout.
