@@ -122,9 +122,9 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
       else [ $l[($k | last) + 1:][] ] as $t
         | ([ $t | to_entries[] | select(.value | test("^##[ \t]")) | .key ] | first) as $e
         | (if $e == null then $t else $t[:$e] end) | join("\n") end;
-  # Đầu việc của một danh sách: bỏ `code` và (chú thích) để dấu phẩy bên trong không tính, rồi tách ở
-  # xuống dòng, gạch đầu dòng, ";", ",", cuối câu và " + ".
-  def parts: gsub("`[^`\n]*`"; "X") | gsub("\\([^()\n]*\\)"; "")
+  # Đầu việc của một danh sách: dấu tách trong `code` thành dấu cách (giữ nguyên chữ để gợi ý tách đọc được),
+  # bỏ (chú thích), rồi tách ở xuống dòng, gạch đầu dòng, ";", ",", cuối câu và " + ".
+  def parts: gsub("`(?<c>[^`\n]*)`"; "`" + (.c | gsub("[,;.+]"; " ")) + "`") | gsub("\\([^()\n]*\\)"; "")
     | gsub("(?m)^[ \t]*(?:[-*]|[0-9]+[.)]|[a-z][.)])[ \t]+"; "\n")
     | [ splits("[\n;,]|\\.(?:\\s|$)| \\+ ") | gsub("^\\s+|\\s+$"; "") | select(test("\\w")) ];
   # Vùng có thể ship và kiểm riêng (lint.md tiêu chí 15: UI, API, database, job…). Chữ viết tắt so đúng
@@ -177,7 +177,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
         if ($self | length) > 0 then
           { w: 1, work: true, split: [], says: "the card calls itself big: \"\($self[0])\"" } else empty end,
         if ($ref | length) > 0 then
-          { w: 1, work: true, split: [ "one card per part of that section" ],
+          { w: 1, work: true, split: [ "one card per part of: \($ref[0])" ],
             says: "its scope is a whole spec section, not a list of changes: \"\($ref[0])\"" } else empty end,
         if ($people | length) > 0 then
           { w: 1, work: false, split: [ $people[] | "a qa card for: \(.)" ],
