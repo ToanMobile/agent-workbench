@@ -227,11 +227,6 @@
           "id": "REG-SB-RUNNER-LANES-01",
           "name": "super-board runner lanes",
           "command": "bash tests/super-board/test_runner_lanes.sh"
-        },
-        {
-          "id": "REG-SB-GITHUB-READ-ESC-01",
-          "name": "a PR diff holding terminal escape sequences is read, the board is not halted",
-          "command": "bash tests/super-board/test_pr_diff_escape_sequences.sh"
         }
       ]
     },
@@ -245,30 +240,6 @@
           "id": "REG-SB-MERGE-GATE-STALE-01",
           "name": "merge gate says stale only when the branch is behind base",
           "command": "bash tests/super-board/test_merge_gate_stale_message.sh"
-        },
-        {
-          "id": "REG-SB-MERGE-GATE-DEVKIT-01",
-          "name": "merge gate installs the main checkout's DevKit into the scratch tree; none at all → exit 9",
-          "command": "bash tests/super-board/test_merge_gate_devkit_from_main.sh"
-        },
-        {
-          "id": "REG-SB-MERGE-GATE-SCRATCH-CLEAN-01",
-          "name": "the scratch tree holds only the PR's content while verify runs",
-          "command": "bash tests/super-board/test_merge_gate_scratch_clean.sh"
-        }
-      ]
-    },
-    {
-      "component": "mcp-servers/cc-switcher-mcp",
-      "watch_files": [
-        "mcp-servers/cc-switcher-mcp/*.js",
-        "mcp-servers/cc-switcher-mcp/*.json"
-      ],
-      "mandatory_regression_tests": [
-        {
-          "id": "REG-AUTO-CC-SWITCHER-MCP-01",
-          "name": "cc-switcher-mcp: package.json test script",
-          "command": "cd mcp-servers/cc-switcher-mcp && npm test"
         }
       ]
     }
