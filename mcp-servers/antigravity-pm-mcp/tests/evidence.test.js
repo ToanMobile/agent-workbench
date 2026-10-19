@@ -9,7 +9,7 @@ import path from 'node:path';
 import {
   parseJunitXml, detectNoop, findFiles, collectTestEvidence, globSegmentsState,
 } from '../src/evidence.js';
-import { cleanup } from './helpers.js';
+import { cleanup, tmpDir } from './helpers.js';
 
 const XML_OK = `<?xml version="1.0"?>
 <testsuite name="a.BTest" tests="2" skipped="1" failures="0" errors="0">
@@ -58,7 +58,7 @@ test('detectNoop: "No tests found", "No tests ran", node --test "tests 0", pytes
 });
 
 test('globSegmentsState + findFiles: khop **/build/test-results/**/TEST-*.xml, khong lan vao .git/node_modules', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-ev-'));
+  const dir = tmpDir('agpm-ev-');
   const w = (p, c = 'x') => { fs.mkdirSync(path.dirname(path.join(dir, p)), { recursive: true }); fs.writeFileSync(path.join(dir, p), c); };
   w('app/build/test-results/testDebugUnitTest/TEST-a.xml');
   w('libs/x/build/test-results/TEST-b.xml');
@@ -74,7 +74,7 @@ test('globSegmentsState + findFiles: khop **/build/test-results/**/TEST-*.xml, k
 });
 
 test('collectTestEvidence voi XML: file cu hon luc bat dau chay KHONG duoc dem; moi va xanh thi ok', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-ev-'));
+  const dir = tmpDir('agpm-ev-');
   const xml = path.join(dir, 'build/test-results/TEST-a.xml');
   fs.mkdirSync(path.dirname(xml), { recursive: true });
   fs.writeFileSync(xml, XML_OK);
@@ -99,7 +99,7 @@ test('collectTestEvidence voi XML: file cu hon luc bat dau chay KHONG duoc dem; 
 });
 
 test('collectTestEvidence voi XML: co test do => ok=false kem ten; toan up-to-date => noop du XML moi (FROM-CACHE)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-ev-'));
+  const dir = tmpDir('agpm-ev-');
   const xml = path.join(dir, 'build/test-results/TEST-c.xml');
   fs.mkdirSync(path.dirname(xml), { recursive: true });
   fs.writeFileSync(xml, XML_FAIL);

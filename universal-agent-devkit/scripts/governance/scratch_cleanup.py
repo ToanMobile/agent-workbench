@@ -29,6 +29,7 @@ and idle for over the TTL (7 days, audit T0023: 24 h could hit a session left op
 already removes every normally closed session, so the prune only catches crashed ones; raise --ttl-hours if that ever bites.
 """
 import contextlib
+import fcntl
 import json
 import os
 import re
@@ -266,31 +267,55 @@ def make_removable(path):
             unlock(os.path.join(dp, n), n in dns)
 
 
+def claim_hour(stamp):
+    """True when this process takes the hourly sweep slot. The stamp holds the time of the last claimed sweep and is read
+    and rewritten under flock BEFORE lsof runs, so a burst of SessionStarts (super-board workers) runs one lsof, not one
+    each. A stamp that cannot be opened or written (full disk, read-only root) loses the throttle, never the sweep: True.
+    ponytail: a sweep whose lsof then fails still used its hour, fine while SessionStart is the only trigger."""
+    try:
+        fd = os.open(stamp, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as e:
+        print("scratch_cleanup: sweep stamp unusable (%s), sweeping without the hourly limit" % e, file=sys.stderr)
+        return True
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)   # held for a read and a write only: never long
+        try:
+            last = float(os.read(fd, 64).decode("ascii", "replace").strip())
+        except ValueError:
+            last = 0.0   # the empty stamp of the first version, or junk: no claim on record
+        now = time.time()
+        if 0 <= now - last < 3600:
+            return False
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.ftruncate(fd, 0)
+        os.write(fd, ("%f" % now).encode("ascii"))
+        return True
+    except OSError as e:
+        print("scratch_cleanup: sweep stamp unusable (%s), sweeping without the hourly limit" % e, file=sys.stderr)
+        return True
+    finally:
+        os.close(fd)
+
+
 def sweep_test_tmp(ttl_h, scratch, rate_limited=False):
     """Remove the stale temp dirs this repo's tests leave in $TMPDIR when they are killed before their EXIT trap."""
     root = test_tmp_root()
     if root is None:
         return
     log_root = scratch or root
-    stamp = os.path.join(log_root, ".devkit-test-tmp-sweep")
-    if rate_limited:   # SessionStart: many sessions start (super-board workers), one sweep (one lsof) an hour is enough
-        with contextlib.suppress(OSError):
-            if time.time() - os.stat(stamp).st_mtime < 3600:
-                return
     try:
         names = [n for n in os.listdir(root) if n.startswith(TEST_TMP_PREFIXES)]
     except OSError:
         return
     if not names:
         return
+    # SessionStart: many sessions start (super-board workers), one sweep (one lsof) an hour is enough
+    if rate_limited and not claim_hour(os.path.join(log_root, ".devkit-test-tmp-sweep")):
+        return
     held = held_names(root)
     if held is None:
         print("scratch_cleanup: lsof gave no answer, test temp sweep skipped", file=sys.stderr)
         return
-    if rate_limited:   # the hour starts with a sweep that could run (a failed lsof does not cost an hour)
-        with contextlib.suppress(OSError):
-            with open(stamp, "w", encoding="utf-8"):
-                pass
     cutoff, swept, freed = time.time() - ttl_h * 3600, 0, 0
     for name in names:
         path = os.path.join(root, name)

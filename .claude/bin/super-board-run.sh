@@ -45,6 +45,16 @@ gh_write_once() {
     exit 79
   }
 }
+# mtime (giây epoch) của một file, chạy đúng trên cả GNU stat (Linux: -c %Y) lẫn BSD stat (macOS: -f %m). Thử -c trước vì BSD stat từ chối
+# -c, còn GNU stat nhận `-f` như "filesystem status" và có thể thành công mà in chữ rác. Chỉ nhận kết quả là số nguyên; không lấy được thì
+# trả 1 để chỗ gọi giữ hành vi an toàn của nó.
+file_mtime() {
+  local t
+  for t in "$(stat -c %Y "$1" 2>/dev/null || true)" "$(stat -f %m "$1" 2>/dev/null || true)"; do
+    case "$t" in ''|*[!0-9]*) ;; *) printf '%s\n' "$t"; return 0 ;; esac
+  done
+  return 1
+}
 
 # Auto-resolve repository root if called from outside
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -998,6 +1008,12 @@ startup_reconcile() {
   gh_rate_guard
   fetch_project_items
   reclaim_stranded_building; fetch_project_items
+  # Dọn worktree lane + nhánh của thẻ đã merge (#96, OCR batch trên #111): sau reap/adopt nên lock của lane còn sống đã rõ. Chạy NỀN:
+  # một `gh pr list` cho mỗi thẻ còn sót có thể mất vài phút, không được giữ chân lần dispatch đầu (OCR). Sweep tự khoá (sweep.lock),
+  # tự chặn lần gọi dày (--min-interval), không bao giờ ghi file halt và luôn exit 0; không gì ở đây dừng được runner.
+  # (${BASE_BRANCH:+…}: ở lib-only BASE_BRANCH chưa đặt; không có thì sweep tự dò origin/HEAD — review)
+  bash "$(dirname "$SB_GITHUB_READ")/super-board-post-merge-clean.sh" --sweep . ${BASE_BRANCH:+--base "$BASE_BRANCH"} \
+    >>"$RUN_MANIFEST" 2>&1 </dev/null &
 }
 
 sweep_blocked_cards() {
@@ -1172,7 +1188,7 @@ stop_in_flight() {
   # marker) vẫn đang chạy (nó còn comment, dừng worker, rồi ghi lại marker). Marker của một stop.sh đã thoát, không mới
   # hơn runner, là `stop` rồi `run` tuần tự: lần khởi động này mới hơn. Không đọc được mtime thì stop thắng.
   local t p
-  t=$(stat -f %m "$STOP_MARK" 2>/dev/null) || return 0
+  t=$(file_mtime "$STOP_MARK") || return 0
   [ "$t" -le "$RUNNER_BORN" ] || return 0
   p=$(sed -n 's/^PID=//p' "$STOP_MARK" 2>/dev/null | head -1) || p=""
   [ -n "$p" ] && kill -0 "$p" 2>/dev/null || return 1

@@ -14,7 +14,7 @@ import { updateTask, loadTask } from '../src/tasks.js';
 import { TOOLS_BY_NAME } from '../src/tools.js';
 import { homeStateDir } from '../src/util.js';
 import * as util from '../src/util.js';
-import { tmpProject, tmpGlobalConfig, cleanup, writeFile, NO_AGY } from './helpers.js';
+import { tmpProject, tmpGlobalConfig, tmpDir, cleanup, writeFile, NO_AGY } from './helpers.js';
 
 const ARGON = 'gemini-4-argon-high';
 const FAKE = `#!/usr/bin/env node
@@ -34,7 +34,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SRC = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../src/agentapi.js');
 
 function fakeAgy(t, env = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-r2-'));
+  const dir = tmpDir('agpm-r2-');
   const bin = path.join(dir, 'agy');
   fs.writeFileSync(bin, FAKE, { mode: 0o755 });
   const log = path.join(dir, 'calls.jsonl');
@@ -158,7 +158,7 @@ test('newConversation voi cwd khong ton tai: loi noi dung nguyen nhan, khong pha
 test('chot quyen khop CHINH XAC: ten policy chi chua EAGER/TURBO o giua khong tinh', async (t) => {
   const fake = fakeAgy(t);
   delete process.env.ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-r2-home-'));
+  const home = tmpDir('agpm-r2-home-');
   t.after(() => cleanup(home));
   process.env.HOME = home;
   process.env.ANTIGRAVITY_PM_PROJECTS_DIR = path.join(home, 'projects');
@@ -170,9 +170,9 @@ test('chot quyen khop CHINH XAC: ten policy chi chua EAGER/TURBO o giua khong ti
 });
 
 test('project long nhau: chinh sach cua project GAN NHAT quyet dinh, khong phu thuoc thu tu readdir', (t) => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-r2-home-'));
+  const home = tmpDir('agpm-r2-home-');
   t.after(() => cleanup(home));
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-r2-mono-'));
+  const root = tmpDir('agpm-r2-mono-');
   t.after(() => cleanup(root));
   const inner = path.join(root, 'apps');
   fs.mkdirSync(path.join(inner, 'web'), { recursive: true });
@@ -231,7 +231,7 @@ test('pm_status khi PM dang MO luot (starting) va hoi thoai im lau: khong khuyen
   setConversation(dir, taskId, conversationId);
   await sleep(900);
   // hoi thoai im 30 phut: db cua agy trong HOME gia co mtime cu => pm_status vao nhanh "stalled"
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-r2-home-'));
+  const home = tmpDir('agpm-r2-home-');
   t.after(() => cleanup(home));
   fs.mkdirSync(path.join(home, '.gemini/antigravity-cli/conversations'), { recursive: true });
   const dbFile = path.join(home, `.gemini/antigravity-cli/conversations/${conversationId}.db`);
@@ -331,7 +331,7 @@ test('khong co agy: loi la AntigravityUnavailable BAT KE chinh sach quyen that c
   fakeAgy(t);
   process.env.ANTIGRAVITY_PM_AGY = NO_AGY;
   delete process.env.ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-r2-home-'));
+  const home = tmpDir('agpm-r2-home-');
   t.after(() => cleanup(home));
   process.env.HOME = home;   // khong co ~/.gemini/config => chinh sach "chua dat": chot quyen se tu choi neu no chay truoc
   await assert.rejects(newConversation({ prompt: 'x', model: ARGON, cwd: mkProject(t) }), (e) => e instanceof AntigravityUnavailable);
@@ -369,7 +369,7 @@ test('gui tin khi agy bien mat va chinh sach quyen khong dat: van la Antigravity
   await sleep(900);
   process.env.ANTIGRAVITY_PM_AGY = NO_AGY;
   delete process.env.ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-r2-home-'));
+  const home = tmpDir('agpm-r2-home-');
   t.after(() => cleanup(home));
   process.env.HOME = home;
   await assert.rejects(sendMessage({ conversationId, content: 'x' }), (e) => e instanceof AntigravityUnavailable);
@@ -453,7 +453,7 @@ test('pm_status nudge khi ps hong (khong biet luot agy): in "KHONG biet", bo qua
 test('pm_doctor noi dung agy co duoc --dangerously-skip-permissions hay khong (chinh sach that, khong phai regex long)', async (t) => {
   fakeAgy(t, { ANTIGRAVITY_LS_ADDRESS: '127.0.0.1:9', ANTIGRAVITY_CSRF_TOKEN: 'x' });
   delete process.env.ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-r2-home-'));
+  const home = tmpDir('agpm-r2-home-');
   t.after(() => cleanup(home));
   process.env.HOME = home;
   fs.mkdirSync(path.join(home, '.gemini/config'), { recursive: true });
@@ -558,7 +558,7 @@ test('ping: loi giua chung sau khi mo luot (ps hong o vong cho) van DUNG agy cua
 
 test('don so dang ky: so lan hoi ps bi chan tren (khong giu khoa vai chuc giay khi nhieu muc ps cham)', async (t) => {
   fakeAgy(t, { FAKE_AGY_ID: 'b9b9b9b9-2222-3333-4444-555555555555' });
-  const dirW = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-r2-ps-'));
+  const dirW = tmpDir('agpm-r2-ps-');
   t.after(() => cleanup(dirW));
   const counter = path.join(dirW, 'count');
   const wrapper = path.join(dirW, 'ps-count.sh');
