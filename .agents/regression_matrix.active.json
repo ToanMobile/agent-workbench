@@ -309,6 +309,69 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-needs-you-skip",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/bin/super-board-status.py",
+        ".claude/bin/super-board-needs-you.py",
+        "tests/super-board/test_needs_you_skip.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-NEEDS-YOU-SKIP-01",
+          "name": "runner, planner and status leave Ready cards that wait for a person (needs-you / human-gated) to the person",
+          "command": "bash tests/super-board/test_needs_you_skip.sh"
+        }
+      ]
+    },
+    {
+      "component": "super-board-watchdog-path-sanitize",
+      "watch_files": [
+        ".claude/bin/super-board-watchdog.sh",
+        "tests/super-board/test_watchdog_path_sanitize.sh",
+        "tests/super-board/test_watchdog_lock_mtime.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WATCHDOG-PATHS-01",
+          "name": "watchdog compares .state paths on physical paths and takes back a stale check lock on GNU and BSD stat",
+          "command": "bash tests/super-board/test_watchdog_path_sanitize.sh && bash tests/super-board/test_watchdog_lock_mtime.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-run-stop-mark-mtime",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_run_stop_mark_mtime.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUN-STOP-MTIME-01",
+          "name": "runner reads the stop marker mtime on GNU and BSD stat",
+          "command": "bash tests/super-board/test_run_stop_mark_mtime.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-setup-bin-list",
+      "watch_files": [
+        ".claude/bin/super-board-setup.py",
+        "tests/super-board/test_setup_bin_list.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SETUP-BIN-01",
+          "name": "setup BIN lists every super-board script the runner, merge gate and skills call",
+          "command": "bash tests/super-board/test_setup_bin_list.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
