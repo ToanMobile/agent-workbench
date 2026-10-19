@@ -1,0 +1,65 @@
+✔ worktree_sandbox.py --help returns exit 0
+✔ Sandbox directory created successfully
+✔ .worktreeinclude files copied via CoW
+✔ .sandbox-env.sh envelope generated
+✔ Sandbox listed in active sandboxes
+✔ Sandbox cleaned up and removed cleanly
+✔ Winner commit merged into main branch
+✔ Winner sandbox automatically deleted after merge
+✔ Winner branch automatically deleted
+✔ merge-winner keeps the other sandboxes by default
+✔ --clean-others removes the losing sandboxes on request
+✔ .worktreeinclude '.' / './' lines are ignored
+✔ cleanup keeps a sandbox that has uncommitted changes
+✔ cleanup keeps the branch that holds unmerged commits
+✔ cleanup refuses a sandbox with unmerged commits: folder kept, warning printed
+✔ cleanup that refused a sandbox names it as not cleaned, never 'done'
+✔ cleanup refuses a sandbox whose detached HEAD holds an unmerged commit
+✔ cleanup keeps a sandbox whose reflog-only commit is unmerged
+✔ cleanup keeps a sandbox whose reset-away commit only reflogs name
+✔ cleanup judges 'merged' by the main branch, not a detached main checkout
+✔ cleanup from a detached main checkout removes an untouched sandbox
+✔ cleanup from a main checkout detached behind trunk removes folder and branch together
+✔ merge-winner refuses to merge into a detached main checkout
+✔ cleanup keeps a sandbox when origin/HEAD names a trunk with no local branch, and says why
+✔ cleanup keeps the branch when a commit lands on it after the merge check
+✔ cleanup keeps a sandbox branch another worktree has checked out
+✔ cleanup refuses when the checkout running it stands on the sandbox branch itself
+✔ cleanup deletes a symref sandbox branch itself, never the branch it points to
+✔ cleanup counts a sandbox whose branch vanished meanwhile as cleaned
+✔ cleanup keeps a sandbox in the not-cleaned list when git cannot say whether its branch survived
+✔ cleanup refuses a sandbox whose worktree registration is locked
+✔ cleanup refuses a locked sandbox registration even when its branch is gone
+✔ a prunable registration whose folder is gone does not block cleanup
+✔ merge-winner refuses when the checkout stands on the sandbox branch itself
+✔ merge-winner says the winner was merged but kept, never 'cleaned'
+✔ --force removes the sandbox and the unmerged branch on explicit request
+✔ merge-winner --clean-others keeps a losing sandbox whose reflog-only commit is unmerged
+✔ cleanup keeps a sandbox whose HEAD reflog cannot be read
+✔ cleanup keeps a sandbox whose HEAD cannot be read
+✔ cleanup keeps a sandbox holding a new untracked file
+✔ merge-winner refuses a sandbox holding an untracked new file
+✔   … and the file is still there
+✔ cleanup keeps a sandbox whose git status cannot be read
+✔ cleanup keeps a new file inside an included directory
+✔ a sandbox holding only unchanged copies of included files is cleaned up
+✔ cleanup from a detached linked worktree removes an untouched sandbox
+✔ merge-winner from a detached linked worktree merges, cleans the winner and says so
+✔ cleanup from a detached linked worktree still keeps a sandbox with unmerged commits
+✔ a detached linked worktree viewing a sandbox: sandbox cleaned, its commits stay on that worktree's HEAD
+✔ cleanup of another sandbox keeps the admin dirs of sandboxes whose folder is gone (#38)
+✔ cleanup keeps a folder-gone sandbox whose admin reflog/HEAD holds an unmerged commit, and says so (gx, #38)
+✔ cleanup keeps a folder-gone sandbox whose admin reflog/HEAD holds an unmerged commit, and says so (gd, #38)
+✔   … and keeps its branch
+✔ a refused sandbox is never pruned afterwards: its admin reflog survives (#38)
+✔ cleanup of a clean folder-gone sandbox removes its own registration and branch
+✔ cleanup --force removes a folder-gone sandbox's own registration
+✔ cleanup keeps a sandbox holding a registered nested worktree (under an ignored path) and names it (#41)
+✔ a dangling sandbox symref that cannot be deleted is listed as not cleaned, never '✓ … xoá nhánh' (#41)
+✔ a dangling sandbox symref is deleted itself (its target untouched) and then reported done (#41)
+✔ cleanup keeps a sandbox whose ignored .worktreeinclude file differs from main's, and names it
+✔ cleanup keeps a sandbox holding an ignored secret only it has, and names it
+✔   … an unchanged ignored include copy is still cleaned
+✔ a file written in the sandbox while cleanup checks is kept (re-checked right before rmtree)
+✔ a detached commit made in the sandbox while cleanup checks is kept (HEAD reflog re-checked)
+ALL TESTS PASSED

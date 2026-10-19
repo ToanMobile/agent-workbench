@@ -1,0 +1,17 @@
+# QA v1 — issue #13 (PR #88, head 3d8fd44)
+
+## Builder suite (ca có sẵn): PASS
+✖ trunk_write cases
+✖ worktree: B=$M chained from MAIN, redirect to "$B/f": want True, got False
+✖ worktree: B="$M" chained and quoted, redirect to "$B/f": want True, got False
+✖ worktree: B=$M/x chained with a suffix, redirect to "$B/../f": want True, got False
+test_session_lock_trunk: FAIL (1)
+
+## Probe chuỗi biến (trước khi thêm test): ALLOWED = lọt
+chained B=$M ALLOWED
+chained quoted B="$M" ALLOWED
+chained B=$M/x ALLOWED
+rel var .. BLOCKED
+abs var main BLOCKED
+default expansion BLOCKED
+HOME benign BLOCKED

@@ -333,6 +333,16 @@ def _same_in_main(wt, main, rel):
     return fp == fingerprint(os.path.join(main, rel))
 
 
+def _into_kit(main, path):
+    """True khi `path` (đi theo mọi link) nằm trong thư mục kit của main: universal-agent-devkit/ hoặc .agents/devkit/."""
+    target = os.path.realpath(path)
+    for kit in ("universal-agent-devkit", os.path.join(".agents", "devkit")):
+        root = os.path.realpath(os.path.join(main, kit))
+        if target == root or target.startswith(root + os.sep):
+            return True
+    return False
+
+
 def _kit_link(wt, main, rel):
     """True when `rel` is an UNTRACKED symlink the DevKit installer or `heal` made: it points into the main checkout's own kit folder
     (universal-agent-devkit/ or .agents/devkit/). That is install state, never work. `heal` adds such a link later than the setup
@@ -340,15 +350,7 @@ def _kit_link(wt, main, rel):
     `remove` kept the worktree and `finish` refused "a new symlink" for the user to clean by hand (agent-workbench 2026-10-17). A
     TRACKED path the user replaced by such a link (a type change) is still work: only an untracked one counts as setup."""
     path = os.path.join(wt, rel)
-    if not os.path.islink(path):
-        return False
-    target = os.path.realpath(path)
-    inside = False
-    for kit in ("universal-agent-devkit", os.path.join(".agents", "devkit")):
-        root = os.path.realpath(os.path.join(main, kit))
-        if target == root or target.startswith(root + os.sep):
-            inside = True
-    if not inside:
+    if not os.path.islink(path) or not _into_kit(main, path):
         return False
     # Untracked means in NEITHER the index nor HEAD (`git rm f` then a link at f: gone from the index, still a type change from HEAD).
     # Only rc 1 of ls-files ("did not match any file known to git") and an empty, successful ls-tree prove it: a timeout (124) or a
@@ -3565,19 +3567,55 @@ _REACHABLE = {}
 
 
 def _reachable_blobs(main):
-    """(blob ids, paths) some ref still holds (`rev-list --objects --all`): a blob merely present in the object DB may belong to a commit no
-    ref names any more (a detached commit, a staged file of a worktree whose admin dir is gone) and `git gc` would drop it; a path a kept
-    tree holds is tracked somewhere (a branch force-adds build/keep.txt), so an edit of it is never a build output. None = cannot say.
-    ponytail: rev-list names a blob once, under the first path it meets; a tracked path whose every version is also stored elsewhere can
-    be missed, so an ignored edit of it under a build folder reads as rebuildable. Upgrade to `ls-tree -r` of each ref if that ever bites."""
+    """((blob id, path) pairs, paths, blob ids) some ref still holds (`rev-list --objects --all`): a blob merely present in the object DB
+    may belong to a commit no ref names any more (a detached commit, a staged file of a worktree whose admin dir is gone) and `git gc`
+    would drop it. A file is a committed version only when a kept tree holds its bytes AT ITS PATH: the same bytes under another path (a
+    copy, an empty __init__.py, old code restored under a new name) are a new file, uncommitted work (issue #12). rev-list names a blob
+    once, under the newest path it meets, so a pair it misses for a blob it does hold is asked of that path's history (_path_versions).
+    A path a kept tree holds is tracked somewhere (a branch force-adds build/keep.txt), so an edit of it is never a build output.
+    None = cannot say. ponytail: for the same reason a tracked path whose every version is also stored elsewhere can be missed, so an
+    ignored edit of it under a build folder reads as rebuildable; upgrade to `ls-tree -r` of each ref tip if that ever bites."""
     if main not in _REACHABLE:
         r = git(main, "rev-list", "--objects", "--all", "--filter=object:type=blob", check=False, inp=b"")   # bytes: a path need not be UTF-8
         if r.returncode != 0:
             _REACHABLE[main] = None
-        else:
-            pairs = [ln.split(" ", 1) for ln in r.stdout.decode("utf-8", "surrogateescape").splitlines() if ln.strip()]
-            _REACHABLE[main] = ({x[0] for x in pairs}, {x[1] for x in pairs if len(x) == 2})
+        else:   # a blob a ref names directly has no path: no file version
+            pairs = [x for x in (ln.split(" ", 1) for ln in r.stdout.decode("utf-8", "surrogateescape").splitlines()) if len(x) == 2]
+            _REACHABLE[main] = ({(x[0], x[1]) for x in pairs}, {x[1] for x in pairs}, {x[0] for x in pairs})
     return _REACHABLE[main]
+
+
+def _path_versions(main, rels):
+    """{(blob id, path)} every version of `rels` some ref's history holds (`log --all --raw`, the paths literal, on stdin: no argv limit),
+    for the files rev-list paired with another path. None = cannot say.
+    ponytail: a version only a merge commit introduced (a conflict resolution) is not listed, so that file reads as unique and is KEPT;
+    add `--diff-merges=separate` if that ever strands a leftover."""
+    r = git(main, "--literal-pathspecs", "log", "--all", "--root", "--no-renames", "--raw", "--no-abbrev", "-z", "--format=", "--stdin",
+            check=False, inp=("--\n" + "\n".join(rels) + "\n").encode("utf-8", "surrogateescape"))
+    if r.returncode != 0:
+        return None
+    toks = r.stdout.decode("utf-8", "surrogateescape").split("\0")
+    out = set()
+    for i in range(0, len(toks) - 1, 2):   # `:<mode> <mode> <old> <new> <status>`, then the path; a trailing "" closes the list
+        meta, path = toks[i].lstrip("\n"), toks[i + 1]
+        f = meta[1:].split()
+        if not meta.startswith(":") or len(f) != 5:
+            return None
+        out.update((sha, path) for sha in f[2:4] if sha.strip("0"))
+    return out
+
+
+def _gc_link_known(main, rel, p):
+    """#40: True khi symlink `p` (đường dẫn `rel` trong orphan) không phải việc riêng: main có symlink cùng đường dẫn + cùng đích
+    (`readlink` bằng nhau), hoặc nó trỏ vào thư mục kit của main (trạng thái cài DevKit mà `worktree add` / heal tạo, như _kit_link).
+    Không đi theo link khi so; đọc lỗi = việc riêng (giữ)."""
+    try:
+        mine = os.path.join(main, rel)
+        if os.path.islink(mine) and os.readlink(mine) == os.readlink(p):
+            return True
+        return _into_kit(main, p)
+    except OSError:
+        return False
 
 
 def _gc_unique(main, top, dangling, carry=None):
@@ -3586,25 +3624,37 @@ def _gc_unique(main, top, dangling, carry=None):
     folder or one of links only too) means it is not a leftover. `carry` (a list): a secret (GC_SECRETS, and _secret_like) that main
     lacks, outside a _carry_skip_dirs() folder, goes there as (rel, path) instead of counting as unique: cmd_gc copies it into main first
     (A.1b #12)."""
-    files = []
+    files, links = [], []
+    # #40: với orphan (`.git` trỏ treo), tuổi xét mọi file / link / thư mục mà vòng duyệt này đi qua (không thêm một lượt duyệt), không
+    # chỉ gốc + .git như _gc_young. Thư mục không `.git` chỉ chứa sổ sách DevKit giữ luật cũ (gốc): gate ghi sổ sách vào đó bất cứ lúc nào
+    young = lambda q: dangling and GC_MIN_AGE_S > 0 and _gc_young(q)  # noqa: E731
     for dirpath, dirs, names in os.walk(top):
-        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(dirpath, d))]   # a link is never followed (.agents/devkit, a link to main)
+        linked = [d for d in dirs if os.path.islink(os.path.join(dirpath, d))]
+        dirs[:] = [d for d in dirs if d not in linked]   # a link is never followed (.agents/devkit, a link to main)
+        drel_here = os.path.relpath(dirpath, top).replace(os.sep, "/") + "/"
+        if drel_here != "./" and "/__pycache__/" not in "/" + drel_here and not drel_here.startswith(GC_BOOKKEEPING_DIRS) and young(dirpath):
+            return [(drel_here, tr("vừa đổi, chưa đủ WORKTREE_GC_MIN_AGE_S", "changed within WORKTREE_GC_MIN_AGE_S"))]
         for d in dirs if not dangling else ():   # a folder outside the bookkeeping (even an empty one) is a person's
             drel = os.path.relpath(os.path.join(dirpath, d), top).replace(os.sep, "/") + "/"
             if d != "__pycache__" and not any(b.startswith(drel) or drel.startswith(b) for b in GC_BOOKKEEPING_DIRS):
                 return [(drel, tr("không phải sổ sách DevKit", "not DevKit bookkeeping"))]
-        for n in names:
+        for n in names + linked:
             p = os.path.join(dirpath, n)
             rel = os.path.relpath(p, top).replace(os.sep, "/")
-            if rel == ".git" or os.path.islink(p) or n in GC_NOISE or "/__pycache__/" in "/" + rel or rel in GC_VIEWS \
-                    or rel.startswith(GC_BOOKKEEPING_DIRS):
+            if rel == ".git" or n in GC_NOISE or "/__pycache__/" in "/" + rel or rel in GC_VIEWS or rel.startswith(GC_BOOKKEEPING_DIRS):
+                continue
+            if young(p):
+                return [(rel, tr("vừa đổi, chưa đủ WORKTREE_GC_MIN_AGE_S", "changed within WORKTREE_GC_MIN_AGE_S"))]
+            if os.path.islink(p):
+                if dangling and not _gc_link_known(main, rel, p):   # #40: một symlink mới là việc riêng, mất im lặng khi xoá
+                    links.append((rel, tr("symlink main không có (cùng đường dẫn + cùng đích)", "a symlink main lacks (same path, same target)")))
                 continue
             if not dangling:
                 return [(rel, tr("không phải sổ sách DevKit", "not DevKit bookkeeping"))]
             files.append((rel, p))
     if not dangling and not any(os.path.isdir(os.path.join(top, d)) for d in GC_BOOKKEEPING_DIRS):
         return [("*", tr("không có sổ sách DevKit", "no DevKit bookkeeping"))]
-    unique, later = [], []
+    unique, later = links, []
     for rel, p in files:
         mine = os.path.join(main, rel)
         try:
@@ -3636,12 +3686,16 @@ def _gc_unique(main, top, dangling, carry=None):
         shas = hashes.stdout.split()
         if reachable is None or hashes.returncode != 0 or len(shas) != len(later) or ignored.returncode not in (0, 1):
             return [("*", tr("git không kiểm được nội dung", "git could not check the content"))]
-        blobs, tracked = reachable
+        versions, tracked, blobs = reachable
         build = set(ignored.stdout.splitlines())
+        missed = sorted({rel for (rel, _p), sha in zip(later, shas) if (sha, rel) not in versions and sha in blobs})
+        more = _path_versions(main, missed) if missed else set()   # rev-list named those blobs under another path: ask these paths' history
+        if more is None:
+            return [("*", tr("git không kiểm được nội dung", "git could not check the content"))]
         for (rel, _p), sha in zip(later, shas):
             rebuildable = rel in build and rel not in tracked and any(part in GC_BUILD_DIRS for part in rel.split("/")[:-1])
-            if sha not in blobs and not rebuildable:
-                unique.append((rel, tr("nội dung không có trong commit nào còn giữ", "content no kept commit holds")))
+            if (sha, rel) not in versions and (sha, rel) not in more and not rebuildable:
+                unique.append((rel, tr("nội dung không có trong commit nào còn giữ ở đường dẫn này", "content no kept commit holds at this path")))
     return unique
 
 
