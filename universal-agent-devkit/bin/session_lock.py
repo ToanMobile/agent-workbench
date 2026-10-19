@@ -1531,6 +1531,34 @@ def trunk_write(tool, tool_input, cmd, cwd, main, sw, sid=""):
     return _bash_trunk_write(cmd, cwd, main, sw, sid, 0)
 
 
+_VAR_ASSIGN = re.compile(r"""(?:^|[;&|\n(]|\bexport\s+)\s*([A-Za-z_][A-Za-z0-9_]*)(\+?)=("[^"$`]*"|'[^']*'|[^\s;&|$`"'()]*)""")
+_VAR_USE = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})")
+
+
+def _expand_static_vars(target, cmd):
+    """`target` with every $VAR / ${VAR} replaced by the literal value `cmd` itself assigns (`VAR=/path`, `export VAR=/path`); None when it
+    still holds a variable the line does not assign, a $( ) or a backtick - where such a path lands cannot be told. The last assignment wins."""
+    values = {}
+    for m in _VAR_ASSIGN.finditer(cmd):
+        # `B=$M`, `B="$M"`, `B=$M/x`: the value pattern stops at the `$` and matches "" - the variable is unknown, not empty
+        # `M+=/x` appends to the old value: also unknown, never the old value (reviewer R1)
+        if m.group(2) or (m.end() < len(cmd) and cmd[m.end()] not in " \t\r\n;&|()"):
+            values.pop(m.group(1), None)
+        else:
+            values[m.group(1)] = m.group(3).strip("\"'")
+    unknown = False
+
+    def sub(m):
+        nonlocal unknown
+        name = m.group(1) or m.group(2)
+        if name not in values:
+            unknown = True
+        return values.get(name, "")
+
+    out = _VAR_USE.sub(sub, target)
+    return None if unknown or "$" in out or "`" in out else out
+
+
 def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
     """trunk_write for one Bash script: what its segments write, then - three levels deep - the scripts it hides from them (_nested_scripts:
     substitutions, echo / printf / cat-heredoc piped to a shell or interpreter, a here-string). A script that cannot be tokenised counts as a
@@ -1552,18 +1580,25 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
         found = None
     if found is None:
         found = [("redirect", t, here) for t in _redirect_targets(cmd) if t and not t.startswith("&")]
+    cd_unsafe = False   # a `cd "$VAR"` that leads into main or cannot be told: relative targets of the line may land there
     for kind, t, wd in found:
+        if kind == "cdvar":
+            d = _expand_static_vars(t, cmd)
+            cd_unsafe = cd_unsafe or d is None or _lands_in_main(os.path.expanduser(d) if os.path.isabs(os.path.expanduser(d)) else os.path.join(wd or here, d), main, sw)
+            continue
         if kind == "unparsed":
             if _lands_in_main(wd or here, main, sw):
                 return True
             continue
         if kind not in ("redirect", "file"):
             continue
-        if "$" in t or "`" in t:   # where it lands cannot be told: where the command runs
-            if _lands_in_main(wd or here, main, sw):
+        if "$" in t or "`" in t:
+            t = _expand_static_vars(t, cmd)
+            if t is None:   # a variable the line does not assign, or a substitution: where it lands cannot be told - fail closed (issue #13)
                 return True
-            continue
         p = os.path.expanduser(t)
+        if not os.path.isabs(p) and cd_unsafe:
+            return True
         if _lands_in_main(p if os.path.isabs(p) else os.path.join(wd or here, p), main, sw):
             return True
     if depth < 3:
