@@ -1,0 +1,1 @@
+{"number":904,"title":"✨ [feature] shop: giỏ hàng, mã giảm giá","body":"## Problem\nChưa có giỏ hàng.\n\n## Fix\nThêm giỏ hàng, mã giảm giá, trang xác nhận, email biên nhận.\n\n## Acceptance Criteria\n- [ ] UI giỏ hàng hiện đúng tổng tiền\n- [ ] Đơn lưu vào database\n- [ ] Chỉ người đã đăng nhập mới đặt được\n\n## Risk\n🟡 **Medium** · nhiều thành phần.\n"}
