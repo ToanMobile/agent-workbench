@@ -73,6 +73,11 @@
 3 tests/gates/test_gate_diff_state_only.sh
 31 tests/gates/test_proof_gate_foreign_dirty.sh
 30 tests/gates/test_proof_gate_merged_trunk.sh
+60 tests/gates/test_proof_gate_tree_receipt.sh
+150 tests/gates/test_unity_proof.sh
+27 tests/worktree_git/test_heal_active_profile.sh
+1 tests/gates/test_precode_relative_path.sh
+1 tests/gates/test_proof_capture_headless.sh
 3 hooks/tests/test_prompt_dedupe.sh
 3 tests/context_memory/test_budgets.sh
 4 tests/context_memory/test_giao_default.sh

@@ -478,6 +478,7 @@ python3 -c 'import sys; n = 2000000; sys.stdout.write("[" * n + "]" * n)' > "$TM
 GD="$(git -C "$REPO" rev-parse --absolute-git-dir)"; AG="$REPO/.claude/audit-gate"; mkdir -p "$AG"
 reset; turn_start; gate_full; g=$?
 cp "$TMP/nested.json" "$GD/postfix-gate/full_pass.json"
+for f in "$GD/postfix-gate/tree_receipts/"*.json; do cp "$TMP/nested.json" "$f"; done   # bản theo cây (#105) cũng lồng sâu
 P="reports/proof-$(date +%Y%m%d-%H%M%S).png"; png "$REPO/$P" 20000
 stop "XONG
 Đã sửa lỗi X.

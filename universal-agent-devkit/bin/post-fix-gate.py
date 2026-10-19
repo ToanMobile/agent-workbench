@@ -1347,6 +1347,52 @@ def head_and_dirty(project_dir):
     return head.stdout.decode().strip(), dirty
 
 
+def _tree_store(tree_fp, project_dir, fp, data=None):
+    """#105 (trunk mode): mirror of the receipt in <git common dir>/postfix-gate/tree_receipts/<fp>.json. A worktree's own receipt goes with
+    its git dir when the worktree is removed, so proof_gate finds the full PASS of the tree a session delivered into main (finish, squash
+    PR) here. data: the exit-0 receipt (plus `tree`, the git tree of `head` when only tree_fp.EXCLUDE files differ from it); None: drop
+    the entry, any other verdict on that tree. fp None: the tested tree, fingerprinted only when the store holds something. Only the
+    entry of that one tree is touched; a write prunes entries older than TREE_RECEIPT_MAX_AGE_S or beyond the TREE_RECEIPT_MAX newest."""
+    store = None
+    try:
+        store = tree_fp.tree_receipt_dir(project_dir)
+        if not store or (data is None and not fp and not (os.path.isdir(store) and any(n.endswith(".json") for n in os.listdir(store)))):
+            return
+        fp = fp or tree_fp.tree_fingerprint(project_dir)
+        if not re.fullmatch(r"[0-9a-f]{24}", fp or ""):
+            return
+        path = os.path.join(store, fp + ".json")
+        if data is None:
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(path)
+            return
+        excluded = lambda p: any(p == ex or p.startswith(ex + "/") for ex in tree_fp.EXCLUDE)
+        entry = dict(data)
+        if data.get("head") and not any(not excluded(p) for p in data.get("dirty") or {}):
+            t = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--verify", "-q", data["head"] + "^{tree}"], capture_output=True)
+            if t.returncode == 0:
+                entry["tree"] = t.stdout.decode().strip()
+        os.makedirs(store, exist_ok=True)
+        text = json.dumps(entry)
+        fd, tmp = tempfile.mkstemp(prefix=".tmp_tree.", dir=store)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+            os.replace(tmp, path)
+        except OSError:   # full disk…: the prune below only sees *.json, so a temp left here would stay in the shared store
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+            raise
+        now = time.time()
+        kept = sorted(((e.stat(follow_symlinks=False).st_mtime, e.path) for e in os.scandir(store) if e.name.endswith(".json")), reverse=True)
+        for i, (mtime, p) in enumerate(kept):
+            if i >= tree_fp.TREE_RECEIPT_MAX or now - mtime > tree_fp.TREE_RECEIPT_MAX_AGE_S:
+                with contextlib.suppress(FileNotFoundError):   # another run pruned it first
+                    os.remove(p)
+    except (OSError, ValueError) as e:   # never the gate's verdict: proof_gate then falls back to the worktree's own receipt
+        log_warn(f"tree receipt store ({store}): {e}")
+
+
 def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None, tested_fp=None,
                             untested=None, partial=False, locked=True):
     """After a full regression run: drop the previous receipt, and on exit 0 record
@@ -1375,6 +1421,7 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     unverified_ok = exit_code == 2 and not any(
         t.get("status") not in ("PASS", "UNTESTED", "BUSY") for t in (tests or []) if t.get("command"))
     if partial and unverified_ok:
+        _tree_store(tree_fp, project_dir, tested_fp)   # exit 2 on the tested tree: its exit-0 entry goes, as this receipt below
         try:
             kept = _load_state_json(path)
             same = isinstance(kept, dict) and kept.get("fingerprint") == (tested_fp or tree_fp.tree_fingerprint(project_dir))
@@ -1407,6 +1454,7 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
             os.remove(path)
         except OSError:
             pass
+        _tree_store(tree_fp, project_dir, tested_fp)
         return
     fingerprint = tree_fp.tree_fingerprint(project_dir)
     if tested_fp is not None and fingerprint != tested_fp:
@@ -1417,10 +1465,13 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
                 os.remove(path)
             except OSError:
                 pass
+            _tree_store(tree_fp, project_dir, tested_fp)
         return
     if not fingerprint:   # proof_gate never matches an empty one: say why XONG will be refused
         log_warn(tr(f"Không tính được dấu vân tay code — XONG sẽ bị proof_gate chặn: {getattr(tree_fp.tree_fingerprint, 'error', '') or 'git add thất bại'}",
                     f"Code fingerprint unavailable — proof_gate will refuse XONG: {getattr(tree_fp.tree_fingerprint, 'error', '') or 'git add failed'}"))
+    if exit_code != 0:   # exit 4 / 2: dropped BEFORE the write below, which may fail and must not leave this tree's exit-0 entry behind
+        _tree_store(tree_fp, project_dir, fingerprint)
     try:
         head, dirty = head_and_dirty(project_dir)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1456,6 +1507,8 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
         os.replace(tmp, path)
+        if exit_code == 0:
+            _tree_store(tree_fp, project_dir, fingerprint, data)
     except OSError as e:
         log_err(f"full-pass receipt not written: {e}")
 

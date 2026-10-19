@@ -27,6 +27,9 @@ EXCLUDE = (".claude/audit-gate", ".agents/regression_status.json", ".agents/regr
            # is "*") and ".worktree_checklist." inside the git dir.
            ".agents/.regression_status." + "[a-z0-9_]" * 8)
 RECEIPT = "full_pass.json"
+# #105: the --full exit-0 receipts again, one per tree fingerprint, in the git COMMON dir: they outlive the worktree that wrote them.
+TREE_RECEIPT_MAX_AGE_S = 24 * 3600
+TREE_RECEIPT_MAX = 64
 
 
 def _git(project_dir, *args):
@@ -39,6 +42,14 @@ def receipt_path(project_dir):
     if res.returncode != 0:
         return os.path.join(str(project_dir), ".agents", "audit-gate", RECEIPT)
     return os.path.join(res.stdout.decode(errors="surrogateescape").strip(), "postfix-gate", RECEIPT)   # a non-UTF-8 folder name (2026-10-09)
+
+
+def tree_receipt_dir(project_dir):
+    """<git common dir>/postfix-gate/tree_receipts (<fingerprint>.json each), shared by every worktree of the repo; None outside git."""
+    res = _git(project_dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if res.returncode != 0:
+        return None
+    return os.path.join(res.stdout.decode(errors="surrogateescape").strip(), "postfix-gate", "tree_receipts")
 
 
 def _non_git_fingerprint(project_dir):

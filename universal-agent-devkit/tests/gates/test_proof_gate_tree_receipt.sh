@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# Test hồi quy #105 (19/10): phiên làm trong worktree, gate --full exit 0 ở đó, giao bằng `worktree finish` hoặc PR squash, worktree bị
+# gỡ. proof_gate xét main (trunk mode cấm chạy gate ở main) mà biên nhận của worktree nằm trong git dir riêng của nó, mất theo worktree;
+# full_pass.json duy nhất của main thì cũ ("lần exit 0 là từ trước lượt này") hoặc bị finish của phiên khác ghi đè ("code đã đổi").
+# Sửa: post-fix-gate ghi thêm biên nhận --full exit 0 theo cây vào git COMMON dir (tree_receipts/), proof_gate nhận biên nhận của lượt
+# có cây = cây phiên đã giao. Mỗi ca chặn chỉ khác ca cho qua đúng một biến.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
+set -u
+unset WORKTREE_TRUNK_MODE   # trunk mode mặc định bật; ca N8 tự tắt nó bằng git config
+
+DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+HOOK="$DEVKIT_DIR/hooks/proof_gate.sh"
+GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
+TMP="$(mktemp -d)" || exit 1
+trap 'rm -rf "$TMP"' EXIT
+FAILS=0
+ok()   { echo "✔ $1"; }
+fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+
+ORIGIN="$TMP/origin.git"; REPO="$TMP/repo"; GH="$TMP/github"; TR="$TMP/transcript.jsonl"
+git init -q --bare -b main "$ORIGIN" && git clone -q "$ORIGIN" "$REPO" 2>/dev/null || exit 1
+( cd "$REPO" && git config user.email t@t && git config user.name t && mkdir -p src templates docs .agents
+  echo '[ -z "$FAIL_SUITE" ]' > result.sh && echo "def ok(): return 1" > src/core.py   # FAIL_SUITE=1: cùng nội dung, suite đỏ
+  echo '{"profile":"backend"}' > .agents/active-profile.json   # backend: không cần ảnh, chỉ xét cổng
+  printf '.claude/audit-gate/\n' > .gitignore
+  cat > templates/regression_matrix.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/core.py"],
+ "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"sh result.sh"}]}]}
+JSON
+  git add -A && git commit -qm init && git push -q origin main ) || exit 1
+git clone -q "$ORIGIN" "$GH" 2>/dev/null && git -C "$GH" config user.email gh@gh && git -C "$GH" config user.name github || exit 1
+MAIN_RECEIPT="$(git -C "$REPO" rev-parse --absolute-git-dir)/postfix-gate/full_pass.json"
+STORE="$(git -C "$REPO" rev-parse --absolute-git-dir)/postfix-gate/tree_receipts"
+
+turn_start() { python3 -c 'import datetime,json
+t=(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+print(json.dumps({"type":"user","timestamp":t,"message":{"role":"user","content":"sửa lỗi X rồi giao"}}))' > "$TR"; sleep 1; }
+tool_use() { python3 -c 'import datetime,json,sys
+t=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+print(json.dumps({"type":"assistant","timestamp":t,"message":{"role":"assistant","content":[
+  {"type":"tool_use","id":"tu1","name":sys.argv[1],"input":json.loads(sys.argv[2])}]}}))' "$1" "$2" >> "$TR"; }
+# main_receipt old|foreign: full_pass.json của main như 19/10 — từ lượt trước (NFH, GeelyEx2), hoặc biên nhận một finish của phiên KHÁC
+# vừa chép sang main cho cây khác (#104, "code đã đổi").
+main_receipt() { mkdir -p "$(dirname "$MAIN_RECEIPT")"; python3 - "$MAIN_RECEIPT" "$1" "$REPO" <<'PY'
+import json, sys, time
+p, kind, repo = sys.argv[1:]
+json.dump({"exit": 0, "time": time.time() - (7200 if kind == "old" else 0), "fingerprint": "0123456789abcdef01234567",
+           "project": repo, "head": "0" * 40, "dirty": {}, "carried_from": "/other/.claude/worktrees/x"}, open(p, "w"))
+PY
+}
+wt_new() { WT="$TMP/wt-$1"; git -C "$REPO" worktree add -q --detach "$WT" HEAD; }
+# wt_edit N: phiên sửa src/core.py TRONG worktree của nó (Write ghi vào transcript) rồi commit
+wt_edit() { echo "def ok(): return $1" > "$WT/src/core.py"; tool_use Write "{\"file_path\": \"$WT/src/core.py\", \"content\": \"x\"}"
+            git -C "$WT" commit -qam "edit $1"; }
+# gate DIR [args]: gate --run-tests --full trong cây đó như một phiên làm (CLAUDE_PROJECT_DIR = cây đó)
+gate() { local d="$1"; shift; CLAUDE_PROJECT_DIR="$d" python3 "$GATE" --run-tests --full --no-checklist "$@" >"$TMP/gate" 2>&1; }
+# finish: phần cuối của `agent-kit worktree finish`: main fast-forward tới worktree, worktree bị gỡ
+finish() { git -C "$REPO" merge -q --ff-only "$(git -C "$WT" rev-parse HEAD)" && git -C "$REPO" worktree remove --force "$WT"; }
+# land N: GitHub squash nhánh pr-N vào main, main local đồng bộ như merge gate (pull --ff-only), worktree bị gỡ
+land() { ( cd "$GH" && git fetch -q origin && git checkout -q main && git reset -q --hard origin/main \
+           && git merge -q --squash "origin/pr-$1" >/dev/null 2>&1 && git commit -qm "squash pr $1 (#$1)" && git push -q origin main ) \
+         && git -C "$REPO" pull -q --ff-only origin main && git -C "$REPO" worktree remove --force "$WT"; }
+REPORT="1. Đã fix: lỗi X, RED→GREEN.
+2. Chặn bug cũ: REG-1 PASS.
+3. Nguy cơ bug mới: đã rà caller.
+4. An toàn mã nguồn: secret 0."
+stop() {
+  rm -f "$REPO/.claude/audit-gate/proof_gate.state"
+  python3 -c 'import json,sys; print(json.dumps({"session_id":"s-t","hook_event_name":"Stop","transcript_path":sys.argv[1],
+    "last_assistant_message":sys.argv[2],"stop_hook_active":False}))' "$TR" "XONG
+Đã giao. Gate exit 0, ảnh: không cần — backend
+$REPORT" | CLAUDE_PROJECT_DIR="$REPO" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+blocked() { [ "$1" = 2 ] && grep -q "Cổng:" "$TMP/err"; }
+why() { echo "rc=$1 err=$(grep -m1 'Cổng:' "$TMP/err" || head -2 "$TMP/err" | tr '\n' ' ')"; }
+
+# C1. finish: gate --full exit 0 trong worktree, main fast-forward, worktree gỡ; main chỉ có biên nhận cũ: cho qua.
+turn_start; main_receipt old; wt_new c1; wt_edit 11; gate "$WT" --diff HEAD~1 || fail "C1 setup: gate exit $?"; finish; stop; rc=$?
+[ "$rc" = 0 ] && ok "C1 worktree gated then finished and removed: XONG allowed" || fail "C1 finish blocked ($(why $rc))"
+git -C "$REPO" push -q origin main   # main = origin cho các ca PR dưới đây
+
+# C2. PR squash: nhánh pr-21 đẩy lên, GitHub squash, main đồng bộ origin, worktree gỡ; main giữ biên nhận phiên khác: cho qua.
+turn_start; main_receipt foreign; wt_new c2; wt_edit 21; gate "$WT" --diff HEAD~1 || fail "C2 setup: gate exit $?"
+git -C "$WT" push -q origin HEAD:refs/heads/pr-21 && land 21 || fail "C2 setup: land"; stop; rc=$?
+[ "$rc" = 0 ] && ok "C2 squash-merged PR, main synced, worktree removed: XONG allowed" || fail "C2 squash blocked ($(why $rc))"
+
+# C2b. Base đi tiếp trước squash: cây squash khác cây worktree; chỉ biên nhận lần verify của merge gate (scratch: PR merge base) khớp.
+turn_start; wt_new c2b; wt_edit 22; gate "$WT" --diff HEAD~1 || fail "C2b setup: gate exit $?"
+git -C "$WT" push -q origin HEAD:refs/heads/pr-22
+( cd "$GH" && git pull -q origin main && mkdir -p docs && echo "khác" > docs/other.md && git add docs/other.md && git commit -qm "pr khác" && git push -q origin main ) \
+  || fail "C2b setup: other PR"
+SCR="$TMP/scratch"; git -C "$REPO" fetch -q origin && git -C "$REPO" worktree add -q --detach "$SCR" "$(git -C "$WT" rev-parse HEAD)" \
+  && git -C "$SCR" merge -q --no-edit origin/main && { gate "$SCR" --brief --diff origin/main --force-full || fail "C2b setup: verify exit $?"; }
+git -C "$REPO" worktree remove --force "$SCR"; land 22 || fail "C2b setup: land"; stop; rc=$?
+[ "$rc" = 0 ] && ok "C2b base moved: the merge-gate verify receipt of the squash tree: XONG allowed" || fail "C2b blocked ($(why $rc))"
+
+# C3a. Như C2, rồi main giữ file chưa commit của phiên khác (runner của board): cho qua.
+echo "# run log của runner" > "$REPO/docs/foreign.md"; stop; rc=$?
+[ "$rc" = 0 ] && ok "C3a foreign untracked file in main: XONG allowed" || fail "C3a foreign dirty blocked ($(why $rc))"
+# N9. Cùng cảnh đó, nhưng chính phiên này đã ghi file bẩn đó ở main: chặn (luật PR #50).
+tool_use Write "{\"file_path\": \"$REPO/docs/foreign.md\", \"content\": \"x\"}"; stop; rc=$?
+blocked "$rc" && ok "N9 the dirty main file is this session's own: blocked" || fail "N9 own dirty file accepted ($(why $rc))"
+rm -f "$REPO/docs/foreign.md"
+
+# C3b. Như C1, rồi finish của phiên khác đưa main đi tiếp một commit (file phiên này không đụng): cho qua.
+turn_start; wt_new c3; wt_edit 31; gate "$WT" --diff HEAD~1 || fail "C3b setup: gate exit $?"; finish
+echo "phiên khác" > "$REPO/docs/other3.md" && git -C "$REPO" add docs/other3.md && git -C "$REPO" commit -qm "phiên khác"; stop; rc=$?
+[ "$rc" = 0 ] && ok "C3b main moved on by another session's commit: XONG allowed" || fail "C3b blocked ($(why $rc))"
+
+# N1. Không chạy gate nào: chặn.
+turn_start; wt_new n1; wt_edit 41; finish; stop; rc=$?
+blocked "$rc" && ok "N1 no gate at all: blocked" || fail "N1 accepted without a gate ($(why $rc))"
+
+# N2. Gate exit 0, rồi phiên sửa tiếp trong worktree, commit, finish: cây giao không phải cây đã gate. Chặn.
+turn_start; wt_new n2; wt_edit 51; gate "$WT" --diff HEAD~1 || fail "N2 setup: gate exit $?"; wt_edit 52; finish; stop; rc=$?
+blocked "$rc" && ok "N2 edited and committed after the gate: blocked" || fail "N2 ungated commit accepted ($(why $rc))"
+
+# N3. Gate không --full (lượt từng phần): không biên nhận, chặn.
+turn_start; wt_new n3; wt_edit 61
+CLAUDE_PROJECT_DIR="$WT" python3 "$GATE" --run-tests --no-checklist --diff HEAD~1 >"$TMP/gate" 2>&1; finish; stop; rc=$?
+blocked "$rc" && ok "N3 gate without --full: blocked" || fail "N3 partial gate accepted ($(why $rc))"
+
+# N4. Gate exit 3 (không có gì để audit: cây sạch, không --diff): chặn.
+turn_start; wt_new n4; wt_edit 71; gate "$WT"; g=$?; finish; stop; rc=$?
+[ "$g" = 3 ] || fail "N4 setup: gate exit $g, want 3"
+blocked "$rc" && ok "N4 gate exit 3: blocked" || fail "N4 exit-3 gate accepted ($(why $rc))"
+
+# N5. Gate exit 0, rồi một lần gate --full TRÊN CÙNG CÂY đỏ (exit 1): phán quyết mới nhất bỏ biên nhận cây đó. Chặn.
+turn_start; wt_new n5; wt_edit 81; gate "$WT" --diff HEAD~1 || fail "N5 setup: gate exit $?"
+FAIL_SUITE=1 gate "$WT" --diff HEAD~1 --no-cache; g=$?; finish; stop; rc=$?
+[ "$g" = 1 ] || fail "N5 setup: failing gate exit $g, want 1"
+blocked "$rc" && ok "N5 a later red --full on the same tree: blocked" || fail "N5 stale exit-0 receipt accepted ($(why $rc))"
+
+# N6. Biên nhận trong kho có cây đúng nhưng exit 2: chặn.
+turn_start; wt_new n6; wt_edit 91; gate "$WT" --diff HEAD~1 || fail "N6 setup: gate exit $?"; finish
+ls "$STORE"/*.json >/dev/null 2>&1 || fail "N6 setup: no store receipt"
+for f in "$STORE"/*.json; do [ -f "$f" ] && python3 -c 'import json,sys; p=sys.argv[1]; r=json.load(open(p)); r["exit"]=2; json.dump(r,open(p,"w"))' "$f"; done
+stop; rc=$?
+blocked "$rc" && ok "N6 store receipt with exit 2: blocked" || fail "N6 exit-2 receipt accepted ($(why $rc))"
+
+# N7. Gate ở lượt TRƯỚC (biên nhận cũ hơn lời nhắc người dùng), giao ở lượt này: chặn như luật cũ.
+wt_new n7; wt_edit 101; gate "$WT" --diff HEAD~1 || fail "N7 setup: gate exit $?"; sleep 3; turn_start; finish; stop; rc=$?
+blocked "$rc" && ok "N7 receipt from before this turn: blocked" || fail "N7 earlier-turn receipt accepted ($(why $rc))"
+
+# N8. Trunk mode tắt: luật mới không áp, chặn như cũ.
+git -C "$REPO" config devkit.trunkMode false
+turn_start; main_receipt old; wt_new n8; wt_edit 111; gate "$WT" --diff HEAD~1 || fail "N8 setup: gate exit $?"; finish; stop; rc=$?
+git -C "$REPO" config --unset devkit.trunkMode
+blocked "$rc" && ok "N8 trunk mode off: blocked" || fail "N8 accepted outside trunk mode ($(why $rc))"
+
+[ "$FAILS" -eq 0 ] && { echo "ALL PASS"; exit 0; }
+echo "$FAILS FAILED"; exit 1
