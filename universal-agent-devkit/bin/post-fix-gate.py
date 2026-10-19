@@ -3675,6 +3675,8 @@ def _scripts_on_path():
 _VACUITY_LIVE: dict = {}
 _VACUITY_PGIDS: set = set()
 _VACUITY_LOCK = threading.RLock()
+# Seconds a timed-out suite group gets between SIGTERM and SIGKILL to run its cleanup traps.
+_SUITE_TERM_GRACE_S = 10
 
 
 def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
@@ -3690,9 +3692,19 @@ def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
             out, _ = proc.communicate(timeout=timeout)
             return proc.returncode, out, False
         except subprocess.TimeoutExpired:
+            # TERM first: the suite's EXIT traps remove their temp dirs and fixture worktrees (2026-10-19: a bare SIGKILL
+            # skipped them and ~8 GiB of test dirs piled up in TMPDIR). KILL whatever is left after the grace.
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGTERM)
+            try:
+                out, _ = proc.communicate(timeout=_SUITE_TERM_GRACE_S)
+            except subprocess.TimeoutExpired:
+                out = None
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGKILL)
-            return proc.returncode, proc.communicate()[0], True
+            if out is None:
+                out = proc.communicate()[0]   # reaps the shell first, so returncode below is set
+            return proc.returncode, out, True
     finally:
         with _VACUITY_LOCK:
             _VACUITY_PGIDS.discard(proc.pid)
@@ -3718,6 +3730,9 @@ def _vacuity_on_signal(signum, _frame):
         items, pgids = list(_VACUITY_LIVE.items()), list(_VACUITY_PGIDS)
         _VACUITY_LIVE.clear()
         _VACUITY_PGIDS.clear()
+    # Still a bare SIGKILL: a grace here races the suite worker threads (flaky re-run, vacuity re-run) that keep running
+    # while the handler waits (review 2026-10-19). A suite killed here leaves its temp dir: scratch_cleanup sweeps the
+    # named ones.
     for pgid in pgids:
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(pgid, signal.SIGKILL)
