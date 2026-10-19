@@ -207,33 +207,6 @@ acquire() {
 }
 release() { rm -rf "$LOCK_DIR"; }
 
-# ---- chờ máy bớt tải (trước khi giữ khoá) ------------------------------------
-# 19/10: verify --full chạy lúc tải 1 phút ~60 (5 board cùng build), REG-DK-ALL-01 của PR #87 chọn 127 test và quá 900 s, thẻ #12
-# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX (mặc định 2 × số lõi), tối đa SB_MERGE_LOAD_WAIT_S (mặc định 1800 s,
-# 0 = không chờ); hết giờ vẫn verify như cũ, không bỏ bước nào. Chờ ngoài khoá: merge của PR khác không phải đợi theo.
-# SB_MERGE_LOAD_FILE: móc test, đọc tải từ file thay cho os.getloadavg().
-load_now() {
-  if [ -n "${SB_MERGE_LOAD_FILE:-}" ]; then cat "$SB_MERGE_LOAD_FILE" 2>/dev/null || echo 0
-  else python3 -c 'import os; print(int(os.getloadavg()[0]))' 2>/dev/null || echo 0; fi
-}
-wait_for_load() {
-  local max="${SB_MERGE_LOAD_MAX:-}" cap="${SB_MERGE_LOAD_WAIT_S:-1800}" poll="${SB_MERGE_LOAD_POLL_S:-30}" waited=0 load
-  [ "$DRY" -eq 1 ] && return 0
-  [[ "$cap" =~ ^[0-9]+$ ]] && [ "$cap" -gt 0 ] || return 0
-  [[ "$poll" =~ ^[0-9]+$ ]] && [ "$poll" -gt 0 ] || poll=30
-  [[ "$max" =~ ^[0-9]+$ ]] || max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 2 ))
-  load=$(load_now); [[ "$load" =~ ^[0-9]+$ ]] || return 0
-  [ "$load" -lt "$max" ] && return 0
-  say "waiting for load ${load} to drop below ${max} before verify (at most ${cap}s)"
-  while [ "$waited" -lt "$cap" ]; do
-    sleep "$poll"; waited=$(( waited + poll ))
-    load=$(load_now); [[ "$load" =~ ^[0-9]+$ ]] || return 0
-    if [ "$load" -lt "$max" ]; then say "load ${load} after ${waited}s; verifying"; return 0; fi
-  done
-  say "load still ${load} after ${waited}s; verifying anyway"
-}
-wait_for_load
-
 acquire || { say "could not take the merge lock within ${LOCK_TIMEOUT}s"; exit 4; }
 trap release EXIT
 
@@ -419,6 +392,40 @@ is_verify_timeout() {
   fi
   grep -aqE "TIMEOUT after|quá giới hạn" "$wt_log" 2>/dev/null
 }
+
+# ---- chờ máy bớt tải trước verify ------------------------------------------------
+# 19/10: verify --full chạy lúc tải 1 phút ~60 (5 board cùng build), REG-DK-ALL-01 của PR #87 chọn 127 test và quá 900 s, thẻ #12
+# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX (mặc định 2 × số lõi), tối đa SB_MERGE_LOAD_WAIT_S (mặc định 1800 s,
+# 0 = không chờ); hết giờ vẫn verify như cũ, không bỏ bước nào. Chờ trong khoá, ngay trước verify: các lối ra nhanh phía trên
+# (đã merge, đóng, head đổi, cần người) không phải chờ; tuổi khoá ≤ 1800 + 2 × 900 s, dưới STALE_AFTER mặc định 5400 s.
+# SB_MERGE_LOAD_FILE: móc test, đọc tải từ file thay cho os.getloadavg().
+load_now() {
+  if [ -n "${SB_MERGE_LOAD_FILE:-}" ]; then tr -d '[:space:]' < "$SB_MERGE_LOAD_FILE" 2>/dev/null || true
+  else python3 -c 'import os; print(int(os.getloadavg()[0]))' 2>/dev/null || true; fi
+}
+wait_for_load() {
+  local max="${SB_MERGE_LOAD_MAX:-}" cap="${SB_MERGE_LOAD_WAIT_S:-1800}" poll="${SB_MERGE_LOAD_POLL_S:-30}" waited=0 load nap
+  [ "$DRY" -eq 1 ] && return 0
+  # ^[1-9][0-9]{0,5}$: không có số 0 đứng đầu (bash đọc 08 là bát phân và set -e dừng gate) và không tràn số.
+  [[ "$cap" =~ ^[1-9][0-9]{0,5}$ ]] || return 0
+  [[ "$poll" =~ ^[1-9][0-9]{0,5}$ ]] || poll=30
+  [[ "$max" =~ ^[1-9][0-9]{0,5}$ ]] || max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 2 ))
+  while :; do
+    load=$(load_now)
+    [[ "$load" =~ ^[0-9]{1,6}$ ]] || { say "cannot read the machine load ('${load}'); verifying without waiting"; return 0; }
+    load=$((10#$load))
+    if [ "$load" -lt "$max" ]; then
+      [ "$waited" -gt 0 ] && say "load ${load} after ${waited}s; verifying"
+      return 0
+    fi
+    [ "$waited" -ge "$cap" ] && { say "load still ${load} after ${waited}s; verifying anyway"; return 0; }
+    [ "$waited" -eq 0 ] && say "waiting for load ${load} to drop below ${max} before verify (at most ${cap}s)"
+    nap=$(( cap - waited < poll ? cap - waited : poll ))
+    sleep "$nap"; waited=$(( waited + nap ))
+  done
+}
+wait_for_load
+
 for cmd in "${VERIFY[@]}"; do
   if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
     [[ "$cmd" == *"--diff"* ]] || cmd="$cmd --diff origin/${BASE}"

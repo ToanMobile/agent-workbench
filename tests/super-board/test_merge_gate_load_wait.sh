@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # 19/10: verify của merge gate (post-fix-gate --full) chạy ngay cả khi máy tải ~60 (5 board cùng build): REG-DK-ALL-01 của PR #87
-# (thẻ #12) chọn 127 test và quá 900 s, thẻ quay về Ready mãi. Luật: trước khi giữ khoá merge, gate chờ tải 1 phút xuống dưới
-# SB_MERGE_LOAD_MAX, có giới hạn SB_MERGE_LOAD_WAIT_S; hết giờ vẫn verify như cũ (không bỏ bước nào). Không giữ khoá lúc chờ.
-# SB_MERGE_LOAD_FILE là móc test: đọc tải từ file thay cho os.getloadavg().
+# (thẻ #12) chọn 127 test và quá 900 s, thẻ quay về Ready mãi. Luật: ngay trước verify, gate chờ tải 1 phút xuống dưới
+# SB_MERGE_LOAD_MAX, có giới hạn SB_MERGE_LOAD_WAIT_S; hết giờ vẫn verify như cũ (không bỏ bước nào); --dry-run không chờ.
+# SB_MERGE_LOAD_FILE là móc test: đọc tải từ file thay cho os.getloadavg(). Ngưỡng thời gian tính theo poll, không theo giây
+# tuyệt đối: dưới tải cao riêng phần khởi động gate đã mất 4–5 s (review 19/10).
 # Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -55,48 +56,60 @@ export SB_HEAVY_SLOT_DIR="$TMP/slots"
 STARTED="$TMP/verify.started"
 CFG="$TMP/cfg.json"
 printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["date +%%s > %s; echo \\"KẾT LUẬN: FAIL\\"; exit 3"]}' "$STARTED" > "$CFG"
-LOCK="$WT/.claude/super-board/inflight/merge.lock"
 LOADF="$TMP/load"
-export SB_MERGE_LOAD_FILE="$LOADF" SB_MERGE_LOAD_MAX=10 SB_MERGE_LOAD_POLL_S=1
-gate() { ( cd "$WT" && bash "$GATE" --config "$CFG" --pr 5 --expect-head "$H" ); }
+export SB_MERGE_LOAD_FILE="$LOADF" SB_MERGE_LOAD_MAX=10
+gate() { ( cd "$WT" && bash "$GATE" --config "$CFG" --pr 5 --expect-head "$H" "$@" ); }
+# Gate chạy xong và verify thật sự đã chạy: không thì một ca "không chờ" qua được chỉ vì gate chết sớm.
+ran() { [ "$1" -eq 11 ] && [ -f "$STARTED" ]; }
 
-# Ca 1: tải 99 suốt, chờ tối đa 3 s → có dòng chờ, không giữ khoá lúc chờ, hết giờ vẫn verify (exit 11), verify bắt đầu sau ≥ 3 s.
+# Ca 1: tải 99 suốt, poll 1, chờ tối đa 3 s → có dòng chờ, hết giờ vẫn verify (exit 11), verify sau ≥ 3 s, trong khoá.
 echo 99 > "$LOADF"; rm -f "$STARTED"
 t0=$(date +%s)
-SB_MERGE_LOAD_WAIT_S=3 gate >"$TMP/gate1.log" 2>&1 &
-gp=$!
-sleep 1.5
-[ -d "$LOCK" ] && fail "merge lock is held while waiting for the load to drop" || ok "no merge lock held while waiting"
-wait "$gp"; rc=$?
+SB_MERGE_LOAD_WAIT_S=3 SB_MERGE_LOAD_POLL_S=1 gate >"$TMP/gate1.log" 2>&1; rc=$?
 grep -q "waiting for load" "$TMP/gate1.log" \
   && ok "high load: the gate says it waits" || fail "no wait message at load 99: $(grep merge-gate "$TMP/gate1.log" | head -3)"
 grep -q "verifying anyway" "$TMP/gate1.log" \
   && ok "wait capped: the gate verifies anyway" || fail "no capped-wait message: $(grep merge-gate "$TMP/gate1.log" | head -4)"
 if [ -f "$STARTED" ] && [ $(( $(cat "$STARTED") - t0 )) -ge 3 ]; then ok "verify started after the 3 s wait"
 else fail "verify did not wait (started=$(cat "$STARTED" 2>/dev/null || echo none), t0=$t0)"; fi
-[ "$rc" -eq 11 ] && ok "verify still ran and decided (exit 11)" || fail "gate exit $rc (want 11)"
+ran "$rc" && ok "verify still ran and decided (exit 11)" || fail "gate exit $rc (want 11 with a verify run)"
+# Chờ trong khoá: dòng "lock taken" đứng trước dòng chờ (lối ra nhanh trước khoá không phải chờ).
+lt=$(grep -n "lock taken" "$TMP/gate1.log" | head -1 | cut -d: -f1); wl=$(grep -n "waiting for load" "$TMP/gate1.log" | head -1 | cut -d: -f1)
+[ -n "$lt" ] && [ -n "$wl" ] && [ "$lt" -lt "$wl" ] && ok "the wait comes after the lock and the early exits" \
+  || fail "wait not after 'lock taken' (lock line ${lt:-none}, wait line ${wl:-none})"
 
-# Ca 2: tải 99 rồi xuống 2 sau ~2 s, chờ tối đa 30 s → verify bắt đầu khi tải xuống, không phải hết 30 s.
+# Ca 2: tải 99 rồi xuống 2 sau ~2 s, poll 1, chờ tối đa 60 s → verify bắt đầu khi tải xuống, xa trước 60 s.
 echo 99 > "$LOADF"; rm -f "$STARTED"
 ( sleep 2; echo 2 > "$LOADF" ) &
 t0=$(date +%s)
-SB_MERGE_LOAD_WAIT_S=30 gate >"$TMP/gate2.log" 2>&1; rc=$?
+SB_MERGE_LOAD_WAIT_S=60 SB_MERGE_LOAD_POLL_S=1 gate >"$TMP/gate2.log" 2>&1; rc=$?
 d=$(( $(cat "$STARTED" 2>/dev/null || echo 0) - t0 ))
-[ "$d" -ge 2 ] && [ "$d" -le 10 ] && ok "verify started once the load dropped (${d}s)" || fail "verify start ${d}s after the gate (want 2..10)"
+[ "$d" -ge 2 ] && [ "$d" -lt 40 ] && ok "verify started once the load dropped (${d}s, cap 60)" || fail "verify start ${d}s after the gate (want 2..39)"
 grep -q "verifying anyway" "$TMP/gate2.log" && fail "load dropped but the gate says it gave up waiting" || ok "no capped-wait message when the load dropped"
+ran "$rc" && ok "load dropped: verify ran (exit 11)" || fail "load dropped: gate exit $rc"
 
-# Ca 3: tải thấp → không chờ.
+# Ca 3: tải thấp, poll 30 → không chờ: một lần chờ nhầm tốn ≥ 30 s, xa hơn mọi độ trễ khởi động.
 echo 3 > "$LOADF"; rm -f "$STARTED"
 t0=$(date +%s)
-SB_MERGE_LOAD_WAIT_S=30 gate >"$TMP/gate3.log" 2>&1
+SB_MERGE_LOAD_WAIT_S=60 SB_MERGE_LOAD_POLL_S=30 gate >"$TMP/gate3.log" 2>&1; rc=$?
 grep -q "waiting for load" "$TMP/gate3.log" && fail "low load: the gate still waits" || ok "low load: no wait"
 d=$(( $(cat "$STARTED" 2>/dev/null || echo 99) - t0 ))
-[ "$d" -le 2 ] && ok "low load: verify started at once (${d}s)" || fail "low load: verify started after ${d}s"
+[ "$d" -lt 25 ] && ok "low load: verify started without a poll (${d}s)" || fail "low load: verify started after ${d}s"
+ran "$rc" && ok "low load: verify ran (exit 11)" || fail "low load: gate exit $rc"
 
-# Ca 4: SB_MERGE_LOAD_WAIT_S=0 tắt việc chờ.
-echo 99 > "$LOADF"
-SB_MERGE_LOAD_WAIT_S=0 gate >"$TMP/gate4.log" 2>&1
+# Ca 4: SB_MERGE_LOAD_WAIT_S=0 tắt việc chờ; ca 5: --dry-run không chờ.
+echo 99 > "$LOADF"; rm -f "$STARTED"
+SB_MERGE_LOAD_WAIT_S=0 SB_MERGE_LOAD_POLL_S=30 gate >"$TMP/gate4.log" 2>&1; rc=$?
 grep -q "waiting for load" "$TMP/gate4.log" && fail "SB_MERGE_LOAD_WAIT_S=0 still waits" || ok "SB_MERGE_LOAD_WAIT_S=0: no wait"
+ran "$rc" && ok "SB_MERGE_LOAD_WAIT_S=0: verify ran (exit 11)" || fail "SB_MERGE_LOAD_WAIT_S=0: gate exit $rc"
+rm -f "$STARTED"
+SB_MERGE_LOAD_WAIT_S=60 SB_MERGE_LOAD_POLL_S=30 gate --dry-run >"$TMP/gate5.log" 2>&1
+grep -q "waiting for load" "$TMP/gate5.log" && fail "--dry-run waits for the load" || ok "--dry-run: no wait"
+
+# Ca 6: số có 0 đứng đầu (08 = bát phân trong $(( ))) không làm gate chết: vẫn chờ rồi verify.
+echo 99 > "$LOADF"; rm -f "$STARTED"
+SB_MERGE_LOAD_WAIT_S=02 SB_MERGE_LOAD_POLL_S=08 SB_MERGE_LOAD_MAX=08 gate >"$TMP/gate6.log" 2>&1; rc=$?
+ran "$rc" && ok "leading-zero settings: gate survives and verifies (exit 11)" || fail "leading-zero settings: gate exit $rc: $(tail -3 "$TMP/gate6.log")"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_load_wait: PASS"; exit 0; } || { echo "test_merge_gate_load_wait: FAIL ($FAILS)"; exit 1; }
