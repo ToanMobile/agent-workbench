@@ -27,6 +27,9 @@ EXCLUDE = (".claude/audit-gate", ".agents/regression_status.json", ".agents/regr
            # is "*") and ".worktree_checklist." inside the git dir.
            ".agents/.regression_status." + "[a-z0-9_]" * 8)
 RECEIPT = "full_pass.json"
+# #105: the --full exit-0 receipts again, one per tree fingerprint, in the git COMMON dir: they outlive the worktree that wrote them.
+TREE_RECEIPT_MAX_AGE_S = 24 * 3600
+TREE_RECEIPT_MAX = 64
 
 
 def _git(project_dir, *args):
@@ -39,6 +42,14 @@ def receipt_path(project_dir):
     if res.returncode != 0:
         return os.path.join(str(project_dir), ".agents", "audit-gate", RECEIPT)
     return os.path.join(res.stdout.decode(errors="surrogateescape").strip(), "postfix-gate", RECEIPT)   # a non-UTF-8 folder name (2026-10-09)
+
+
+def tree_receipt_dir(project_dir):
+    """<git common dir>/postfix-gate/tree_receipts (<fingerprint>.json each), shared by every worktree of the repo; None outside git."""
+    res = _git(project_dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if res.returncode != 0:
+        return None
+    return os.path.join(res.stdout.decode(errors="surrogateescape").strip(), "postfix-gate", "tree_receipts")
 
 
 def _non_git_fingerprint(project_dir):
@@ -109,6 +120,33 @@ def tree_fingerprint(project_dir):
         return ""
     # without big untracked files the value is the one it always was (receipts taken before stay valid)
     return hashlib.sha256((tree + "".join("\n" + b for b in big_files)).encode(errors="surrogateescape")).hexdigest()[:24]
+
+
+def commit_fingerprint(project_dir, rev="HEAD", timeout=None):
+    """The fingerprint tree_fingerprint gives a clean checkout of commit `rev` (#105: main's HEAD next to other sessions' uncommitted
+    files), built from the commit alone in a throw-away index and object store. "" on a git error. An untracked file of
+    TREE_FP_BIG_MB or more counts by its signature in tree_fingerprint and by content here, so such a tree never matches (fail closed).
+    timeout: seconds for the WHOLE call (one deadline over its six git calls; a hook that runs past its own deadline is killed and its
+    Stop goes through): subprocess.TimeoutExpired once it is spent."""
+    import tempfile
+    import time
+    end = time.monotonic() + timeout if timeout else None
+    rest = lambda: None if end is None else max(0.05, end - time.monotonic())
+    git = lambda *a, env=None: subprocess.run(["git", "-C", str(project_dir), *a], capture_output=True, env=env, timeout=rest())
+    objects = git("rev-parse", "--path-format=absolute", "--git-path", "objects").stdout.decode().strip()
+    prefix = git("rev-parse", "--show-prefix").stdout.decode().strip()
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, "objects", "info"))
+        env = dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "index"), GIT_OBJECT_DIRECTORY=os.path.join(tmp, "objects"),
+                   GIT_ALTERNATE_OBJECT_DIRECTORIES=objects, GIT_NO_REPLACE_OBJECTS="1")
+        run = lambda *a: git(*a, env=env)
+        if not objects or run("read-tree", rev + "^{commit}").returncode:
+            return ""
+        run("rm", "-r", "-f", "--cached", "-q", "--ignore-unmatch", "--", *EXCLUDE)   # -f: the work tree (main's dirty files) is not this index
+        tree = run("write-tree").stdout.decode().strip()
+        if prefix and tree:
+            tree = run("rev-parse", f"{tree}:{prefix.rstrip('/')}").stdout.decode().strip()
+    return hashlib.sha256(tree.encode()).hexdigest()[:24] if tree else ""
 
 
 def _big_untracked(project_dir):

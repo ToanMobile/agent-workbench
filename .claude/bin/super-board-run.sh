@@ -31,6 +31,9 @@
 # (no subshell, no `exec` of a native PE), so `$!` names the worker itself rather than a bash stub.
 
 set -euo pipefail
+# Mốc ra đời của runner, đặt trước mọi bước đọc config: stop marker ghi từ giây này trở đi là super-board-stop.sh chạy
+# trùng lúc runner đang khởi động, và stop thắng (khởi động tường minh không xoá marker đó).
+RUNNER_BORN=$(date +%s)
 SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
 # Lệnh đọc cố định của runner (fields, project, state, quota) đặt SB_GITHUB_READ_STRICT=1 cho TỪNG lệnh: gõ sai ở đây là lỗi
 # của script nên vẫn halt board. Không export: worker thừa hưởng nó thì một lệnh gõ sai của agent lại halt cả board.
@@ -41,6 +44,16 @@ gh_write_once() {
     python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" >&2 || true
     exit 79
   }
+}
+# mtime (giây epoch) của một file, chạy đúng trên cả GNU stat (Linux: -c %Y) lẫn BSD stat (macOS: -f %m). Thử -c trước vì BSD stat từ chối
+# -c, còn GNU stat nhận `-f` như "filesystem status" và có thể thành công mà in chữ rác. Chỉ nhận kết quả là số nguyên; không lấy được thì
+# trả 1 để chỗ gọi giữ hành vi an toàn của nó.
+file_mtime() {
+  local t
+  for t in "$(stat -c %Y "$1" 2>/dev/null || true)" "$(stat -f %m "$1" 2>/dev/null || true)"; do
+    case "$t" in ''|*[!0-9]*) ;; *) printf '%s\n' "$t"; return 0 ;; esac
+  done
+  return 1
 }
 
 # Auto-resolve repository root if called from outside
@@ -140,6 +153,18 @@ column_count() {
   echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" '[.items[] | select(.status == $col)] | length'
 }
 
+# #95: a card that waits for a person — labelled needs-you / human-gated (any case, on the item or its content, as a name or {name}).
+# Not one carrying loop:rebase / loop:rebuild-N: that card came back from QA/Review (a gate exit or a bounce after the person's `done`
+# moved it to Review with its needs-you still on: run.md → resume), so it is work again (review 19/10). One definition for every use.
+FOR_A_PERSON_JQ='def for_a_person: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
+  | ((index("needs-you") or index("human-gated")) and (map(. == "loop:rebase" or startswith("loop:rebuild-")) | any | not));'
+
+person_count() {
+  # Cards of column $1 waiting for a person: no lane takes them from Ready, so they must not keep a run alive that has nothing else
+  # to do (counted in Ready, a non-daemon run never reached its clean "all empty" exit).
+  echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" "$FOR_A_PERSON_JQ"' [.items[] | select(.status == $col) | select(for_a_person)] | length'
+}
+
 # ── Status-field resolution (issue #10 reconcile path).
 # Option IDs are resolved BY NAME at runtime and cached for the run. Never hard-code
 # them: `updateProjectV2Field` replaces the whole option list and remints every ID,
@@ -222,6 +247,16 @@ top_card_in_column() {
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] || continue
     issue_locked "$issue" && continue
+    if early_backoff "$issue" "$col"; then   # #94: its worker died at once twice in the window — no claim/release loop
+      local key
+      key="${col}#${issue}@$( { tail -1 "$(early_death_file "$issue")" 2>/dev/null || true; } | cut -d' ' -f1)"   # one line per backoff
+      case " ${BACKOFF_LOGGED:-} " in
+        *" ${key} "*) ;;
+        *) log "skip #${issue} in ${col}: its worker ended within ${SB_EARLY_DEATH_S:-120}s twice in ${SB_EARLY_WINDOW_S:-600}s — not claimed again until that window passes"
+           BACKOFF_LOGGED="${BACKOFF_LOGGED:-} ${key}" ;;
+      esac
+      continue
+    fi
     local issue_rc=0
     issue_is_open "$issue" || issue_rc=$?
     [ "$issue_rc" -le 1 ] || exit "$issue_rc"
@@ -236,10 +271,14 @@ top_card_in_column() {
     TOP_ISSUE="$issue"; TOP_ITEM_ID="$item_id"
     return 0
   done <<EOF
-$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" '
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" "$FOR_A_PERSON_JQ"'
     .items[]
     | select(.status == $col and .content.type == "Issue")
     | select((.content.assignees // []) | length == 0)
+    # #95: a Ready card waiting for a person (playtest, real device, store account, a ruling): dispatching it only spends a lane
+    # and parks it again. Not in QA/Review: the resume path moves a 🙋 card a person approved to Review with its label possibly
+    # still on (run.md → resume). Removing the label releases the card.
+    | select($col != "Ready" or (for_a_person | not))
     | [(.content.number | tostring), (.id // "")] | @tsv')
 EOF
   return 1
@@ -271,6 +310,7 @@ issue_locked() {
     return 0
   fi
   [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log"
+  note_early_death "$issue"   # the second place a dead lock goes (a worker that died after this tick's reap): same ledger (#94)
   rm -f "$lock"
   return 1
 }
@@ -366,6 +406,21 @@ lane_idle() {
   [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null
 }
 
+tick_sleep() {
+  # $1 = số giây. Một `sleep` bị kill không được kết thúc runner: 17/10 12:17 cả 5 runner chết với
+  # `Terminated: 15 sleep "$TICK_SECONDS"` (sleep rc 143 dưới `set -e`) và nằm chết 2 ngày. Chỉ stop marker của
+  # super-board-stop.sh (kiểm ở đầu mỗi tick) mới dừng vòng lặp.
+  local rc=0
+  sleep "$1" || rc=$?
+  if [ "$rc" -gt 128 ]; then
+    log "⚠ sleep ${1}s killed by signal $((rc - 128)) — runner keeps going; stop a board only with super-board-stop.sh"
+  elif [ "$rc" -ne 0 ]; then
+    # sleep tự lỗi (tick_seconds không hợp lệ): không được quay vòng không nghỉ, đọc GitHub liên tục.
+    log "⚠ sleep '${1}' failed (rc=${rc}): check tick_seconds in the config; sleeping 60s instead"
+    sleep 60 || true
+  fi
+}
+
 gh_rate_guard() {
   # Sleep until rate limit resets if GraphQL remaining < 200.
   local payload remaining reset now wait
@@ -379,7 +434,7 @@ gh_rate_guard() {
     wait=$((reset - now + 10))
     [ "$wait" -lt 60 ] && wait=60
     log "⚠ GraphQL rate limit low (${remaining} left) — sleeping ${wait}s until reset"
-    sleep "$wait"
+    tick_sleep "$wait"
   fi
 }
 
@@ -419,17 +474,31 @@ worktree_disk_room() {
   # Worktree lane đã có (git còn nhận nó: không phải thư mục rỗng sót lại, cũng không phải .git trỏ vào admin dir đã bị prune) thì
   # add --lane dùng lại, không tốn thêm đĩa. Kiểm không được (không DevKit, python lỗi): coi là còn chỗ, nhưng ghi log (OCR 19/10).
   [ -e "$1/.git" ] && git -C "$1" rev-parse --git-dir >/dev/null 2>&1 && return 0
-  local rc=0 err
-  err=$(python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" 2>&1 >/dev/null <<'PY'
+  # Under the floor a full `worktree gc` runs once, then rests 300 s: a gc that freed nothing frees nothing more a tick later, and every
+  # lane of every tick ran one (OCR batch 19/10). While it rests only the free space is read, so a disk a person cleans is seen at the
+  # next check. DISK_GC_NEXT lives in the runner shell (dispatch_lane is called there, not in a subshell). No knob for the 300 s: an
+  # odd value (5m, 08) in the arithmetic ended the whole run loop (review 19/10).
+  local rc=0 err now gc=1
+  now=$(date +%s)
+  [ "$now" -lt "${DISK_GC_NEXT:-0}" ] && gc=0
+  err=$(python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" "$gc" 2>&1 >/dev/null <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 free = m.free_gib(sys.argv[3])
 if free is not None and m.DISK_MIN_GIB and free < m.DISK_MIN_GIB:   # gc only when already under the floor: above it the own add of the lane does it
-    m._make_room(sys.argv[2], sys.argv[3])   # SystemExit(NO_ROOM=4) still under the floor after gc
+    if sys.argv[4] == "1":
+        m._make_room(sys.argv[2], sys.argv[3])   # SystemExit(NO_ROOM=4) still under the floor after gc
+    else:
+        print("only %.1f GiB free on the disk (under %g GiB; worktree gc rests after one that freed too little)" % (free, m.DISK_MIN_GIB), file=sys.stderr)
+        sys.exit(4)
 PY
   ) || rc=$?
+  case "$rc:$gc" in
+    0:*) DISK_GC_NEXT=0 ;;                 # back above the floor: a later fall under it gets its gc at once
+    *:1) DISK_GC_NEXT=$((now + 300)) ;;   # gc ran: still under the floor, or it failed itself (OCR 19/10) — rest either way
+  esac
   case "$rc" in
     0) ;;
     4) log "worktree_disk_room: $(printf '%s' "$err" | tail -1 | cut -c1-200)" ;;   # the DevKit's own line: free GiB and the floor
@@ -491,6 +560,9 @@ dispatch_lane() {
   # `claude` invocation itself — no wrapping subshell, no `exec` — so the wire to the
   # file survives and `$!` names the worker process rather than a bash stub.
   local worker_log="${WORKER_LOG_DIR}/worker-${lane}-${issue}.log"
+  # The folder is made at startup only; gone since (19/10: no 2026-10-19-*-workers folder), every `>> $worker_log` below fails and
+  # the worker never starts — dying at once, tick after tick (#94). Made again here, before anything is written to it.
+  mkdir -p "$WORKER_LOG_DIR" 2>/dev/null || log "⚠ cannot make the worker log folder $WORKER_LOG_DIR"
   {
     printf '=== dispatch lane=%s issue=#%s at %s ===\n' "$lane" "$issue" "$(date -u +%FT%TZ)"
     printf 'prompt: %s\n\n' "$prompt"
@@ -568,7 +640,7 @@ check_lane_zombie() {
     gh_checkpoint
     log "💀 zombie ${lane} worker on #${issue} (pid=${pid}) — card moved to '${cur}'; killing"
     kill "$pid" 2>/dev/null || true
-    sleep 1
+    sleep 1 || true
     kill -9 "$pid" 2>/dev/null || true
     gh_checkpoint
     [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
@@ -668,6 +740,63 @@ paused_tick() {
   sweep_lane_zombies
 }
 
+# A folder in inflight/ (git-ignored in every board repo); every reader of inflight/ skips folders and non-numeric names, as merge.lock
+early_death_file() { printf '%s/early-deaths/%s' "$INFLIGHT_DIR" "$1"; }
+
+note_early_death() {
+  # $1 = issue; the lock just read (LANE, STARTED) is the worker that died. #94 (18/10 19:26–19:47Z): a worker dying ~33 s after
+  # each dispatch made reap free the card and the next tick claim it again, every ~40 s, until the board halted. A worker that died
+  # within SB_EARLY_DEATH_S (120 s) of its dispatch is recorded here as "<epoch> <lane>", with the last line of its log, so the card
+  # can cool down in that lane. Bookkeeping only: under the runner's `set -euo pipefail` no step here may end the runner.
+  local age f last n now wlog="${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log"
+  # How long the worker lived: up to its log's last write. Reap runs once per tick (tick_seconds, 120 by default), so "now" can be a
+  # whole tick after the death (review 19/10: measured at reap time, no worker ever counted). No log: now, with one tick of slack.
+  # The log's mtime counts only when later than STARTED: `claude -p` (text mode) writes nothing until it ends, so a long silent
+  # run that was killed leaves just the dispatch header, written before STARTED (OCR 19/10). Either way the worker must have been
+  # dispatched less than the limit plus one tick ago.
+  age=$(python3 -c 'import calendar, os, sys, time
+start = calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ"))
+limit, tick = int(sys.argv[3]), int(sys.argv[4])
+since = time.time() - start
+try:
+    end = os.path.getmtime(sys.argv[2])
+except OSError:
+    end = None
+lived = end - start if end is not None and end > start else None
+early = since < limit + tick and (lived is None or lived < limit)
+print(int(lived if lived is not None else since), 1 if early else 0)' "${STARTED:-}" "$wlog" "${SB_EARLY_DEATH_S:-120}" "${TICK_SECONDS:-0}" 2>/dev/null) || return 0
+  case "$age" in *" 1") age=${age% *} ;; *) return 0 ;; esac
+  now=$(date +%s)
+  f=$(early_death_file "$1")
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
+  # keep only the window: the file never grows past a few lines
+  { awk -v from=$((now - ${SB_EARLY_WINDOW_S:-600})) '$1 >= from' "$f" 2>/dev/null || true; echo "$now ${LANE:-?}"; } > "$f.tmp" 2>/dev/null \
+    && mv "$f.tmp" "$f" 2>/dev/null || return 0
+  # the log may be gone or empty (the 19/10 shape): grep exits 1/2, which pipefail would turn into the runner's exit
+  last=$( { grep -v '^[[:space:]]*$' "${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log" 2>/dev/null || true; } | tail -1 | cut -c1-200)
+  n=$( { awk -v l="${LANE:-?}" '$2 == l' "$f" 2>/dev/null || true; } | wc -l | tr -d ' ')
+  log "⚠ worker of #${1} (lane ${LANE:-?}) ended ${age}s after dispatch (a crash or a very quick exit) — early end ${n} of this lane in ${SB_EARLY_WINDOW_S:-600}s; last log line: ${last:-<no worker log at ${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log>}"
+}
+
+early_backoff() {
+  # $1 = issue, $2 = the column a lane takes it from. 0 = 2 early deaths of a lane serving that column within SB_EARLY_WINDOW_S: no
+  # third claim until the window passes (AC of #94: at most 2 assign/unassign cycles per card in 10 minutes). Per lane: a Reviewer
+  # that bounced the card to Ready in seconds says nothing about the Builder taking it next, nor two quick builds about its review.
+  local f now n lanes
+  case "${2:-}" in
+    Ready) lanes=$(card_lane "$1") ;;   # the lane that takes it from Ready: build, or qa for a `qa`-labelled card
+    QA) lanes="qa" ;;
+    Review) lanes="review" ;;
+    *) return 1 ;;
+  esac
+  f=$(early_death_file "$1")
+  [ -f "$f" ] || return 1
+  now=$(date +%s)
+  n=$( { awk -v from=$((now - ${SB_EARLY_WINDOW_S:-600})) -v lanes=" $lanes " '$1 >= from && index(lanes, " " $2 " ")' "$f" 2>/dev/null || true; } \
+       | wc -l | tr -d ' ')
+  [ "${n:-0}" -ge 2 ]
+}
+
 reap_finished_locks() {
   # Sweep inflight/ for dead PIDs; remove locks AND sweep stale assignees so the
   # next dispatch can re-claim the card if the worker crashed without releasing.
@@ -684,6 +813,7 @@ reap_finished_locks() {
     read_lock "$issue"
     if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
       [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log"
+      note_early_death "$issue"
       gh_checkpoint
       if [ -n "$BOT_LOGIN" ]; then
         gh_checkpoint
@@ -878,6 +1008,12 @@ startup_reconcile() {
   gh_rate_guard
   fetch_project_items
   reclaim_stranded_building; fetch_project_items
+  # Dọn worktree lane + nhánh của thẻ đã merge (#96, OCR batch trên #111): sau reap/adopt nên lock của lane còn sống đã rõ. Chạy NỀN:
+  # một `gh pr list` cho mỗi thẻ còn sót có thể mất vài phút, không được giữ chân lần dispatch đầu (OCR). Sweep tự khoá (sweep.lock),
+  # tự chặn lần gọi dày (--min-interval), không bao giờ ghi file halt và luôn exit 0; không gì ở đây dừng được runner.
+  # (${BASE_BRANCH:+…}: ở lib-only BASE_BRANCH chưa đặt; không có thì sweep tự dò origin/HEAD — review)
+  bash "$(dirname "$SB_GITHUB_READ")/super-board-post-merge-clean.sh" --sweep . ${BASE_BRANCH:+--base "$BASE_BRANCH"} \
+    >>"$RUN_MANIFEST" 2>&1 </dev/null &
 }
 
 sweep_blocked_cards() {
@@ -904,7 +1040,8 @@ sweep_blocked_cards() {
     case " ${SWEPT_CARDS:-} " in *" $key "*) log "blocked sweep: #${issue} already swept this run for ${cleared} — left Blocked"; continue ;; esac
     # `needs-you` là quyết định của người, kể cả khi planner thả thẻ (planner chỉ đọc 8 comment cuối).
     if echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$issue" '[.items[] | select(.content.number == $n)
-         | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index("needs-you")' >/dev/null 2>&1; then
+         | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
+         | (index("needs-you") or index("human-gated"))' >/dev/null 2>&1; then   # any case, human-gated too (#95 review 19/10)
       continue
     fi
     item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty')
@@ -947,6 +1084,66 @@ maybe_sweep_blocked() {
   return "$rc"
 }
 
+# ── Bản ghi trạng thái runner cho super-board-watchdog.sh: .claude/super-board/runner/<slug>.state
+# (PID/SLUG/STARTED/DAEMON/LOG/STATE, thêm RC/ENDED khi thoát). STATE: running (còn nguyên khi bị SIGKILL) · crashed
+# (thoát ngoài ý muốn) · finished (vòng lặp kết thúc: board rỗng, RUNAWAY, trần dispatch) · halted (mã dừng có chủ
+# đích) · stopped (người dùng dừng: có stop marker <slug>.stopped của super-board-stop.sh). Watchdog chỉ khởi động lại
+# running/crashed khi không có marker.
+# Mã dừng có chủ đích sau khi trap EXIT được đặt: 9 verification-ready (mỗi tick) · 10 skills-readiness · 73 worker mồ
+# côi / worktree cũ / runner khác còn sống · 74 wave lock · 75 guard production-merge · 79 GitHub halt. 64 không có ở đây:
+# nó cũng là lỗi đọc của github-read (payload sai dạng 3 lần), thường tạm thời, nên watchdog thử lại có backoff và trần.
+RUNNER_HALT_CODES=" 9 10 73 74 75 79 "
+# Môi trường runner trả lại khi watchdog khởi động lại (toolchain + cấu hình pool/account). Token và secret cố ý không
+# ghi xuống đĩa: gh và claude đọc chúng từ keychain, mà launchd agent trong phiên GUI của người dùng vẫn đọc được.
+RUNNER_ENV_KEYS="PATH JAVA_HOME ANDROID_HOME ANDROID_SDK_ROOT SB_ACCOUNT_POOL SB_STATE_DIR CLAUDE_CONFIG_DIR DEVKIT_LANG"
+runner_state_write() {
+  # $1 = STATE, $2 = RC (khi thoát). Ghi nguyên tử (tmp + mv) để watchdog không đọc nửa file. Ghi lại mỗi tick:
+  # bộ đếm chi tiêu (DISPATCHES, NO_PROGRESS, PAUSE_UNTIL) theo runner qua lần watchdog khởi động lại, để trần
+  # max_dispatches và cổng RUNAWAY không bị một lần crash đặt lại về 0. ENV_* là môi trường của lần khởi động tường
+  # minh (PATH, JDK, Android SDK): launchd chỉ có PATH tối thiểu, watchdog trả lại các biến này cho runner nó khởi động.
+  # Ghi hỏng (đĩa đầy, thư mục không ghi được) không được giết runner dưới `set -e`: chính kiểu chết im lặng mà bản ghi
+  # này sinh ra để phát hiện. Cảnh báo một lần, bỏ file tạm, đi tiếp (không có bản ghi thì watchdog không khởi động lại).
+  local tmp="$RUNNER_STATE.$$" k
+  if { {
+    printf 'PID=%s\nSLUG=%s\nSTARTED=%s\nDAEMON=%s\nLOG=%s\nSTATE=%s\n' \
+      "$$" "$CONFIG_SLUG" "$RUNNER_STARTED" "${SB_DAEMON:-0}" "$RUNNER_LOG" "$1"
+    printf 'DISPATCHES=%s\nNO_PROGRESS=%s\nPAUSE_UNTIL=%s\n' \
+      "${DISPATCH_COUNT:-0}" "${NO_PROGRESS_CYCLE_COUNT:-0}" "${RUNAWAY_PAUSE_UNTIL:-0}"
+    for k in $RUNNER_ENV_KEYS; do printf 'ENV_%s=%s\n' "$k" "${!k:-}"; done
+    [ -z "${2:-}" ] || printf 'RC=%s\nENDED=%s\n' "$2" "$(date +%s)"
+  } > "$tmp" && mv -f "$tmp" "$RUNNER_STATE"; } 2>/dev/null; then
+    STATE_WRITE_WARNED=""
+    return 0
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+  [ -n "${STATE_WRITE_WARNED:-}" ] || log "⚠ could not write $RUNNER_STATE (disk full? unwritable?): the watchdog cannot see this runner"
+  STATE_WRITE_WARNED=1
+}
+
+state_num() {
+  # $1 = khoá số trong bản ghi runner hiện có; 0 khi thiếu hoặc không phải số.
+  local v
+  v=$(sed -n "s/^$1=//p" "$RUNNER_STATE" 2>/dev/null | head -1) || v=""
+  case "$v" in ''|*[!0-9]*) v=0 ;; esac
+  echo "$v"
+}
+
+runner_state_exit() {
+  # Trap EXIT, $1 = mã thoát. Chỉ runner đang giữ bản ghi mới ghi: runner bị từ chối lúc khởi động (board đã dừng,
+  # runner khác còn sống) không đè bản ghi của runner kia. bash 3.2 chạy trap EXIT cả khi chính nó bị SIGTERM, với
+  # $? = 0, nên "finished" chỉ do RUNNER_END ở cuối script đặt, không suy ra từ rc 0.
+  [ -n "${RUNNER_STATE:-}" ] && [ "$(sed -n 's/^PID=//p' "$RUNNER_STATE" 2>/dev/null | head -1)" = "$$" ] || return 0
+  local end="${RUNNER_END:-}"
+  if [ -z "$end" ]; then
+    if [ -e "$STOP_MARK" ]; then
+      end=stopped
+    else
+      case "$RUNNER_HALT_CODES" in *" $1 "*) end=halted ;; *) end=crashed ;; esac
+    fi
+  fi
+  runner_state_write "$end" "$1"
+}
+
 # ───────────────────────── run counters (shared state) ─────────────────────────
 DISPATCH_COUNT=0
 REAP_COUNT=0
@@ -968,12 +1165,87 @@ halt_cleanup() {
       kill -TERM "$pid" 2>/dev/null || true
     done
   fi
+  runner_state_exit "$rc"
 }
 trap halt_cleanup EXIT
+# Ctrl-C trên một lần chạy foreground là người dùng dừng (STATE=stopped, watchdog không khởi động lại). Runner nohup chạy
+# nền bỏ qua SIGINT nên trap này không đổi gì ở đó. SIGTERM trần (không qua stop.sh) vẫn tính là crash.
+trap 'RUNNER_END=stopped; exit 130' INT
+
+# ── Stop marker của người dùng + bản ghi cho watchdog, trước mọi lần đọc GitHub.
+RUNNER_DIR=".claude/super-board/runner"
+RUNNER_STATE="$RUNNER_DIR/${CONFIG_SLUG}.state"
+STOP_MARK="$RUNNER_DIR/${CONFIG_SLUG}.stopped"
+RUNNER_END=""
+START_TAG=""
+RUNNER_STARTED=$(date +%s)
+# stdout của runner (log nohup) để watchdog khởi động lại vào đúng file đó; không phải file thường thì để trống.
+RUNNER_LOG=$(lsof -a -p $$ -d 1 -Fn 2>/dev/null | sed -n 's/^n//p' | head -1) || RUNNER_LOG=""
+[ -f "$RUNNER_LOG" ] || RUNNER_LOG=""
+mkdir -p "$RUNNER_DIR" 2>/dev/null || log "⚠ cannot create $RUNNER_DIR: no runner record, the watchdog cannot see this runner"
+stop_in_flight() {
+  # 0 khi stop thắng lần khởi động này: marker ghi sau giây runner ra đời, hoặc super-board-stop.sh ghi nó (PID= trong
+  # marker) vẫn đang chạy (nó còn comment, dừng worker, rồi ghi lại marker). Marker của một stop.sh đã thoát, không mới
+  # hơn runner, là `stop` rồi `run` tuần tự: lần khởi động này mới hơn. Không đọc được mtime thì stop thắng.
+  local t p
+  t=$(file_mtime "$STOP_MARK") || return 0
+  [ "$t" -le "$RUNNER_BORN" ] || return 0
+  p=$(sed -n 's/^PID=//p' "$STOP_MARK" 2>/dev/null | head -1) || p=""
+  [ -n "$p" ] && kill -0 "$p" 2>/dev/null || return 1
+  case "$(ps -ww -o command= -p "$p" 2>/dev/null || true)" in *super-board-stop.sh*) return 0 ;; esac
+  return 1
+}
+if [ "${SB_WATCHDOG_START:-0}" = "1" ]; then
+  START_TAG=" (watchdog restart)"
+  if [ -e "$STOP_MARK" ]; then
+    log "🛑 watchdog restart refused: board ${CONFIG_SLUG} was stopped by the user ($STOP_MARK); only an explicit super-board run starts it"
+    exit 0
+  fi
+elif [ -e "$STOP_MARK" ] && stop_in_flight; then
+  # Stop chạy trùng lúc khởi động tường minh: stop thắng. Xoá marker ở đây thì trap EXIT ghi crashed và watchdog khởi
+  # động lại board vừa bị dừng.
+  log "🛑 start overruled: super-board-stop.sh wrote $STOP_MARK while this runner was starting — board ${CONFIG_SLUG} stays stopped"
+  exit 0
+fi
+PREV_RUNNER=$(sed -n 's/^PID=//p' "$RUNNER_STATE" 2>/dev/null | head -1) || PREV_RUNNER=""
+if [ -n "$PREV_RUNNER" ] && [ "$PREV_RUNNER" != "$$" ] && kill -0 "$PREV_RUNNER" 2>/dev/null; then
+  case "$(ps -ww -o command= -p "$PREV_RUNNER" 2>/dev/null || true)" in
+    *"super-board-run.sh ${CONFIG_SLUG}"|*super-board-run.sh)
+      log "🛑 refusing to start: runner pid ${PREV_RUNNER} of board ${CONFIG_SLUG} is still running"; exit 73 ;;
+  esac
+fi
+# Ghi bản ghi TRƯỚC khi đặt lại backoff và nạp watchdog (RunAtLoad chạy `check` ngay): một `check` đọc bản ghi cũ
+# (PID chết) trong khoảng đó sẽ khởi động runner thứ hai.
+# ponytail: kiểm-rồi-ghi không nguyên tử, hai lần khởi động trong cùng vài ms vẫn lọt; thêm khoá mkdir nếu thấy 2 runner.
+if [ "${SB_WATCHDOG_START:-0}" = "1" ]; then
+  DISPATCH_COUNT=$(state_num DISPATCHES)
+  NO_PROGRESS_CYCLE_COUNT=$(state_num NO_PROGRESS)   # gán thẳng: bản ghi đầu tiên đã mang giá trị này
+  RUNAWAY_PAUSE_UNTIL=$(state_num PAUSE_UNTIL)
+fi
+runner_state_write running
+if [ "${SB_WATCHDOG_START:-0}" != "1" ]; then
+  # Khởi động tường minh (super-board run, start-runner.sh, super_board_all.py start): người dùng muốn board chạy.
+  if [ -e "$STOP_MARK" ]; then
+    # Kiểm lại ngay trước khi xoá: stop.sh có thể vừa ghi lại marker kể từ lần kiểm ở trên.
+    if stop_in_flight; then
+      log "🛑 start overruled: super-board-stop.sh is still stopping board ${CONFIG_SLUG} — it stays stopped"
+      exit 0
+    fi
+    log "▶ explicit start: cleared the stop marker ($(tr '\n' ' ' < "$STOP_MARK"))"
+    rm -f "$STOP_MARK" 2>/dev/null || log "⚠ could not remove $STOP_MARK: this runner exits at its first tick"
+  fi
+  # Backoff của watchdog bắt đầu lại từ 0. Thư mục bản ghi hỏng (đã cảnh báo ở trên) không được giết runner.
+  rm -f "$RUNNER_DIR/${CONFIG_SLUG}.watchdog" 2>/dev/null || true
+  if [ -x "$SCRIPT_DIR/super-board-watchdog.sh" ]; then
+    "$SCRIPT_DIR/super-board-watchdog.sh" ensure "$CONFIG_SLUG" 2>&1 | while IFS= read -r line; do log "watchdog: $line"; done || true
+  else
+    log "⚠ $SCRIPT_DIR/super-board-watchdog.sh is missing: nothing restarts this runner if it dies (copy it from agent-workbench)"
+  fi
+fi
 gh_checkpoint
 
 # ───────────────────────────── preconditions ─────────────────────────────
-log "super-board run started — config=${CONFIG_SLUG} base=${BASE_BRANCH} tick=${TICK_SECONDS}s max_workers=${MAX_WORKERS} no_progress_cycles=${NO_PROGRESS_CYCLES} max_dispatches=${MAX_DISPATCHES}"
+log "super-board run started${START_TAG} — config=${CONFIG_SLUG} base=${BASE_BRANCH} tick=${TICK_SECONDS}s max_workers=${MAX_WORKERS} no_progress_cycles=${NO_PROGRESS_CYCLES} max_dispatches=${MAX_DISPATCHES}"
 
 # Chặn worker mồ côi: worker của repo này còn sống mà không có lock thì lần chạy này không biết nó đang giữ thẻ nào.
 ORPHAN_PIDS=$(startup_orphan_workers "$PWD" | tr '\n' ' ')
@@ -1007,15 +1279,23 @@ cleanup_stale_worktrees
 startup_reconcile
 
 # ───────────────────────────── main loop ─────────────────────────────
-INITIAL_READY=$(column_count "Ready")
+INITIAL_READY=$(( $(column_count "Ready") - $(person_count "Ready") ))   # as READY each tick: cards for a person left out (#95)
 log "initial Ready count: $INITIAL_READY"
 
 # Landed-work baseline (issue #8). Progress is a change in this set, not lane state.
 PREV_DONE_SIG=$(done_signature)
 INITIAL_DONE_SIG="$PREV_DONE_SIG"
-NO_PROGRESS_CYCLE_COUNT=0
+NO_PROGRESS_CYCLE_COUNT="${NO_PROGRESS_CYCLE_COUNT:-0}"   # watchdog khởi động lại: đếm tiếp từ runner trước
 
 while true; do
+  # Stop marker xuất hiện giữa chừng (super-board-stop.sh không kill được runner này, hoặc watchdog vừa khởi động nó
+  # sau lần quét ps của stop): runner tự thoát, không giao thêm việc.
+  if [ -e "$STOP_MARK" ]; then
+    log "🛑 stop marker ${STOP_MARK} — board stopped by the user; runner exits (super-board run ${CONFIG_SLUG} clears it)"
+    RUNNER_END=stopped
+    break
+  fi
+  runner_state_write running   # bộ đếm chi tiêu mới nhất, cho lần watchdog khởi động lại sau một SIGKILL
   python3 "$(dirname "$SB_GITHUB_READ")/super-board-verification-ready.py" --config "$CONFIG_PATH"
   gh_checkpoint
   # Workflow-backend mutual exclusion, re-checked every tick: the startup
@@ -1051,7 +1331,7 @@ while true; do
   if dispatch_paused; then
     paused_tick
     log "tick — runaway pause ($(( RUNAWAY_PAUSE_UNTIL - $(date +%s) ))s left) — board read every ${PAUSED_READ_EVERY} ticks, sleeping ${TICK_SECONDS}s"
-    sleep "$TICK_SECONDS"
+    tick_sleep "$TICK_SECONDS"
     continue
   fi
   PAUSED_TICKS=0
@@ -1060,7 +1340,7 @@ while true; do
   #    The board can't change in a way that helps us until a lane frees up.
   if [ "$ACTIVE_WORKERS" -ge "$MAX_WORKERS" ]; then
     log "tick — cap reached (${ACTIVE_WORKERS}/${MAX_WORKERS} busy) — skipping GraphQL fetch, sleeping ${TICK_SECONDS}s"
-    sleep "$TICK_SECONDS"
+    tick_sleep "$TICK_SECONDS"
     continue
   fi
 
@@ -1083,19 +1363,21 @@ while true; do
   if maybe_sweep_blocked; then fetch_project_items; fi
 
   READY=$(column_count "Ready")
+  WAITING=$(person_count "Ready")   # #95: Ready cards only a person can move; left out of Ready for dispatch and the exit test
+  READY=$((READY - WAITING))
   BUILDING=0
   BUILDING=$(column_count "Building")
   QA=$(column_count "QA")
   REVIEW=$(column_count "Review")
   BLOCKED=$(column_count "Blocked")
 
-  log "tick — Ready=$READY Building=$BUILDING QA=$QA Review=$REVIEW Blocked=$BLOCKED lanes: b_idle=$BUILD_IDLE(#${BUILD_ISSUE:-_}) q_idle=$QA_IDLE(#${QA_ISSUE:-_}) r_idle=$REVIEW_IDLE(#${REVIEW_ISSUE:-_})"
+  log "tick — Ready=$READY Building=$BUILDING QA=$QA Review=$REVIEW Blocked=$BLOCKED lanes: b_idle=$BUILD_IDLE(#${BUILD_ISSUE:-_}) q_idle=$QA_IDLE(#${QA_ISSUE:-_}) r_idle=$REVIEW_IDLE(#${REVIEW_ISSUE:-_}) waiting_on_you=$WAITING"
 
   if [ "$READY" -eq 0 ] && [ "$BUILDING" -eq 0 ] && [ "$QA" -eq 0 ] && [ "$REVIEW" -eq 0 ] \
      && [ "$BUILD_IDLE" -eq 1 ] && [ "$QA_IDLE" -eq 1 ] && [ "$REVIEW_IDLE" -eq 1 ]; then
     if [ "${SB_DAEMON:-0}" = "1" ]; then
       NO_PROGRESS_CYCLE_COUNT=0
-      sleep "$TICK_SECONDS"
+      tick_sleep "$TICK_SECONDS"
       continue
     fi
     log "✅ all active-pipeline columns empty and all lanes idle — exiting cleanly"
@@ -1160,8 +1442,9 @@ while true; do
     break
   fi
 
-  sleep "$TICK_SECONDS"
+  tick_sleep "$TICK_SECONDS"
 done
+RUNNER_END="${RUNNER_END:-finished}"   # kết thúc có chủ đích: watchdog không khởi động lại
 
 log "super-board run finished. manifest: $RUN_MANIFEST"
 if jq -e '.calibration.enabled == true' "$CONFIG_PATH" >/dev/null 2>&1; then

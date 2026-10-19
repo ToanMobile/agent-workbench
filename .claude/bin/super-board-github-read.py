@@ -166,7 +166,9 @@ def validate(text, kind, meta=None):
         if not files:
             require(not text.strip() and meta['additions'] == meta['deletions'] == 0, 'diff and file list disagree')
             return text
-        lines = text.splitlines()
+        # Split on \n only: splitlines() also breaks on VT, FF, U+2028 and friends,
+        # which can sit inside a changed line and look like missing hunk data.
+        lines = text.split('\n')
         require(sum(line.startswith('diff --git ') for line in lines) == len(files), 'diff file list incomplete')
         added = removed = 0
         old_left = new_left = 0
@@ -315,6 +317,14 @@ def validate(text, kind, meta=None):
     return value
 
 
+def run_gh(args):
+    result = subprocess.run(['gh', *args], capture_output=True, timeout=30)
+    # Decode by hand: text=True turns a lone \r inside a diff line into \n.
+    result.stdout = result.stdout.decode('utf-8', 'replace')
+    result.stderr = result.stderr.decode('utf-8', 'replace')
+    return result
+
+
 def read(args, kind='json', meta=None, recovering=False):
     if not read_only(args):
         raise ValueError('retry helper accepts read-only GitHub commands only')
@@ -336,12 +346,12 @@ def read(args, kind='json', meta=None, recovering=False):
         if not recovering:
             check_halt()
         try:
-            result = subprocess.run(['gh', *args], capture_output=True, text=True, timeout=30)
+            result = run_gh(args)
             # gh refuses to print a diff holding terminal escape sequences (ANSI colour in a committed QA log). That is data in
             # the PR, not a failed read: ask again with the flag it names. Any other failure keeps the retry/halt path.
             if (result.returncode and args[:2] == ['pr', 'diff'] and '--allow-escape-sequences' not in args
                     and 'terminal escape sequences' in result.stderr):
-                result = subprocess.run(['gh', *args, '--allow-escape-sequences'], capture_output=True, text=True, timeout=30)
+                result = run_gh([*args, '--allow-escape-sequences'])
             diagnostic = result.stderr
             if result.returncode:
                 diagnostic += result.stdout

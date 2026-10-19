@@ -3,7 +3,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadConfig } from '../src/config.js';
@@ -111,7 +110,7 @@ test('U2 plan.md qua tran promptPlanMaxBytes thi cat + chi duong dan; mac dinh 1
 
 test('U2 transcriptErrors: doc duoi transcript, chi lay type/created_at, buoc cuoi la ERROR_MESSAGE => bao', async () => {
   const { transcriptErrors } = await import('../src/agentapi.js');
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-home-'));
+  const home = tmpDir('agpm-home-');
   const oldHome = process.env.HOME;
   process.env.HOME = home;
   try {
