@@ -416,16 +416,22 @@ worktree_disk_room() {
   # $1 = đường dẫn worktree của lane. Đúng bước giữ chỗ của `agent-kit worktree add` (worktree.py _make_room: dưới mức cảnh báo thì
   # worktree gc trước, còn dưới sàn WORKTREE_DISK_MIN_GIB thì exit 4): một luật, không chép số, và gc vẫn chạy nên board không đứng
   # chờ người dọn tay. Dưới sàn lane nào cũng dừng ở bước tạo worktree, nên không nhận thẻ và không mở một phiên claude mỗi tick.
-  # Worktree lane đã có thì add --lane dùng lại, không tốn thêm đĩa. Không đọc được (không DevKit, python lỗi): coi là còn chỗ.
-  [ -d "$1" ] && return 0
-  local rc=0
-  python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" >/dev/null 2>&1 <<'PY' || rc=$?
+  # Worktree lane đã có (có .git: một worktree, không phải thư mục rỗng sót lại) thì add --lane dùng lại, không tốn thêm đĩa.
+  # Kiểm không được (không DevKit, python lỗi): coi là còn chỗ như trước, nhưng ghi log, không im lặng (OCR 19/10).
+  [ -e "$1/.git" ] && return 0
+  local rc=0 err
+  err=$(python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" 2>&1 >/dev/null <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 m._make_room(sys.argv[2], sys.argv[3])   # SystemExit(NO_ROOM=4) under the floor after gc
 PY
+  ) || rc=$?
+  case "$rc" in
+    0|4) ;;
+    *) log "⚠ worktree_disk_room: DevKit disk check failed (rc=${rc}: $(printf '%s' "$err" | tail -1 | cut -c1-200)) — assuming room" ;;
+  esac
   [ "$rc" -ne 4 ]
 }
 

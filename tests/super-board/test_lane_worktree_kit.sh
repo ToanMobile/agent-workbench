@@ -77,9 +77,19 @@ fi
 ( export WORKTREE_DISK_MIN_GIB=0; launch build 7 )
 [ -s "$TMP/launched" ] && ok "  … and the floor off (0): dispatched as before" || fail "floor 0 still skipped the dispatch"
 mkdir -p "$TMP/repo/.claude/worktrees/issue-8-build"   # the lane's worktree is there already: add --lane reuses it, no new disk
+echo "gitdir: $TMP/repo/.git/worktrees/issue-8-build" > "$TMP/repo/.claude/worktrees/issue-8-build/.git"
 ( export WORKTREE_DISK_MIN_GIB=100000 WORKTREE_DISK_WARN_GIB=0; launch build 8 )
 [ -s "$TMP/launched" ] && ok "  … and under the floor a lane whose worktree exists is still dispatched (reuse needs no disk)" \
   || fail "under the floor, a lane with its worktree already there was skipped"
+mkdir -p "$TMP/repo/.claude/worktrees/issue-9-build"   # an empty leftover folder is no worktree: add would still need the disk
+( export WORKTREE_DISK_MIN_GIB=100000 WORKTREE_DISK_WARN_GIB=0; launch build 9 )
+[ ! -s "$TMP/launched" ] && ok "  … but an empty leftover folder does not count as the lane's worktree" || fail "an empty folder let a dispatch through under the floor"
+# the check itself failing (no DevKit here): dispatched as before, and said in the log, never silently
+mv "$TMP/repo/.agents/devkit" "$TMP/repo/.agents/devkit.off"; : > "$TMP/log"
+( export WORKTREE_DISK_MIN_GIB=100000 WORKTREE_DISK_WARN_GIB=0; launch build 10 )
+[ -s "$TMP/launched" ] && grep -q "DevKit disk check failed" "$TMP/log" && ok "a failing disk check is logged, the dispatch goes on" \
+  || fail "failing disk check: launched=$([ -s "$TMP/launched" ] && echo yes || echo no) log=$(tail -1 "$TMP/log")"
+mv "$TMP/repo/.agents/devkit.off" "$TMP/repo/.agents/devkit"
 
 # ── 3. wave workflow, dispatch của super-build, SKILL của 3 lane
 WAVE="$ROOT/.claude/workflows/super-board-wave.js"
@@ -92,8 +102,17 @@ grep -q 'WORKTREE_STEP(lane, card.number)' "$WAVE" && grep -q 'agent-kit worktre
   && ! grep -q 'create your own worktree under .claude/worktrees/' "$WAVE" \
   && ok "wave lane prompt: the kit command for every lane" || fail "wave lane prompt does not route worktree creation through the kit"
 DISPATCH="$ROOT/.claude/skills/super-build/scripts/super-build-dispatch.sh"
-grep -q 'ls-remote --exit-code --heads origin "$WORKER_BRANCH"' "$DISPATCH" && ok "super-build-dispatch.sh refuses a loop/issue-N origin already has (always a fresh start)" \
-  || fail "super-build-dispatch.sh would resume a remote leftover branch through --lane"
+# super-build-dispatch.sh, run for real up to its early refusals (no gh, no claude reached)
+D="$TMP/disp"; G() { git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false "${@:2}"; }
+mkdir -p "$D/main" && G "$D/main" init -q -b main && echo x > "$D/main/a" && G "$D/main" add a && G "$D/main" commit -qm init
+G "$D/main" worktree add -q --detach "$D/side" main
+(cd "$D/side" && BASE_BRANCH=main bash "$DISPATCH" 5 > "$TMP/disp.out" 2>&1); rc=$?
+[ "$rc" = 64 ] && grep -q "run from the main checkout" "$TMP/disp.out" && ok "dispatch from a linked worktree: refused early, the main checkout named" \
+  || fail "dispatch from a linked worktree: rc $rc: $(tail -1 "$TMP/disp.out")"
+git init -q --bare "$D/origin.git" && G "$D/main" remote add origin "$D/origin.git" && G "$D/main" push -q origin main:refs/heads/loop/issue-5
+(cd "$D/main" && BASE_BRANCH=main bash "$DISPATCH" 5 > "$TMP/disp.out" 2>&1); rc=$?
+[ "$rc" = 64 ] && grep -q "already exists on origin" "$TMP/disp.out" && ok "dispatch with loop/issue-N on origin: refused (always a fresh start)" \
+  || fail "dispatch with a remote leftover branch: rc $rc: $(tail -1 "$TMP/disp.out")"
 grep -q 'WT_PY="$REPO_DIR/.agents/devkit/scripts/git/worktree.py"' "$DISPATCH" \
   && grep -q 'python3 "$WT_PY" add "$WORKTREE_DIR" "$WORKER_BRANCH" --lane=build' "$DISPATCH" && ok "super-build-dispatch.sh creates the worktree with the kit" \
   || fail "super-build-dispatch.sh does not use the kit"

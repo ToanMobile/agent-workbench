@@ -64,6 +64,14 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
   exit 64
 fi
 
+# Lane worktrees live in the MAIN checkout's .claude/worktrees (`worktree add --lane` refuses any other folder): run from a session's own
+# worktree, say so now instead of failing later inside add, after the prompt is written.
+MAIN_DIR=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
+if [[ -n "$MAIN_DIR" && "$(cd "$MAIN_DIR" && pwd -P)" != "$(pwd -P)" ]]; then
+  echo "error: run from the main checkout ($MAIN_DIR), not from a linked worktree: lane worktrees live in its .claude/worktrees" >&2
+  exit 64
+fi
+
 # Verify base branch exists locally or on origin
 if ! git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
   if ! git rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
@@ -95,10 +103,18 @@ if git rev-parse --verify "$WORKER_BRANCH" >/dev/null 2>&1; then
   exit 64
 fi
 # `worktree add --lane` (below) resumes a branch only origin has; this dispatcher always starts fresh off BASE_BRANCH (BASE_SHA and the
-# done-commit check rely on it): refuse a remote leftover like the local one above. ls-remote failing (offline) proves nothing: go on.
-if git ls-remote --exit-code --heads origin "$WORKER_BRANCH" >/dev/null 2>&1; then
-  echo "error: branch $WORKER_BRANCH already exists on origin — refusing to clobber" >&2
-  exit 64
+# done-commit check rely on it): refuse a remote leftover like the local one above. Origin unreachable: add --lane would refuse too, so
+# say it here (no prompt for credentials: headless).
+if git remote get-url origin >/dev/null 2>&1; then
+  LS_RC=0
+  GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code --heads origin "refs/heads/$WORKER_BRANCH" >/dev/null 2>&1 || LS_RC=$?
+  if [[ "$LS_RC" -eq 0 ]]; then
+    echo "error: branch $WORKER_BRANCH already exists on origin — refusing to clobber" >&2
+    exit 64
+  elif [[ "$LS_RC" -ne 2 ]]; then
+    echo "error: cannot reach origin to check $WORKER_BRANCH (git ls-remote exit $LS_RC)" >&2
+    exit 64
+  fi
 fi
 
 # Compose the worker prompt: preamble + issue body + working-dir footer

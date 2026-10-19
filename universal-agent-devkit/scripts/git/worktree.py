@@ -841,7 +841,7 @@ PROVISIONAL_TTL_S = 900.0   # a set-up that has not finished in 15 min crashed: 
 LANES = ("build", "qa", "review")   # super-board lanes (run.md): `add --lane` (agent-workbench#93)
 
 
-def _reuse_lane(main, wt, branch, base, lane, no_init=False):
+def _reuse_lane(main, wt, branch, base, lane, no_init=False, profile=None):
     """`add --lane` at a path that already is a registered worktree of this repo — the Builder resuming a card super-board-run.sh moved
     back to Ready keeps its issue-<N>-build worktree: set it up again (heal: DevKit links, local config, hooks) instead of refusing a
     non-empty folder. Never a folder git does not know, nor one on another branch than the one asked for. A detached one (the Reviewer's
@@ -867,7 +867,7 @@ def _reuse_lane(main, wt, branch, base, lane, no_init=False):
             git(wt, "checkout", "-q", "--detach", base, bounded=False)
     # one an old plain `git worktree add` made has no DevKit and no Library at all: set them up as add does (each step leaves what is there)
     copy_unity_library(main, wt)
-    ran = install_args(main, wt, None) if not no_init else None
+    ran = install_args(main, wt, profile) if not no_init else None
     if ran:
         r = subprocess.run(ran, capture_output=True, text=True)
         if r.returncode != 0:
@@ -925,7 +925,7 @@ def cmd_add(cwd, args):
                f"--lane: the worktree must sit right in {os.path.join(main, '.claude', 'worktrees')}, not at {wt}"))
     if os.path.exists(wt) and os.listdir(wt):
         if lane:
-            return _reuse_lane(main, wt, branch, base, lane, no_init)
+            return _reuse_lane(main, wt, branch, base, lane, no_init, profile)
         die(tr(f"{wt} đã có và không rỗng", f"{wt} exists and is not empty"))
     holder = next((e["path"] for e in _worktree_entries(main)[1:] if lane and branch and e["branch"] == branch), None)
     if holder:   # git's own "already used by worktree" names no way out; the Tester behind a Builder's leftover worktree needs one
@@ -933,12 +933,14 @@ def cmd_add(cwd, args):
                "chặn thẻ, ghi tên nó), rồi chạy lại",
                f"the branch {branch} is checked out at {holder}: remove that worktree first (`git worktree remove {holder}`; refused = it still "
                "holds work: block the card naming it), then run this again"), 1)
+    origin_has = None   # does origin hold the issue branch: None = not asked (a local branch, no origin remote)
     if lane and branch and git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode != 0 \
             and git(main, "remote", "get-url", "origin", check=False).returncode == 0:
         # the issue branch an earlier lane pushed and this clone has no local copy of: refresh origin/<branch> (outside the add lock: the
         # network) so the worktree starts from it below. Only "origin has no such branch" (ls-remote exit 2) makes a new one: offline or a
         # failed fetch must never start an empty branch off the base that the lane then pushes over the PR (review 19/10)
         probe = git(main, "ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{branch}", check=False)
+        origin_has = probe.returncode == 0
         if probe.returncode == 0:
             fetched = git(main, "fetch", "--quiet", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}", check=False)
             if fetched.returncode != 0:
@@ -978,8 +980,11 @@ def cmd_add(cwd, args):
             git(main, "worktree", "add", wt, branch, bounded=False)
         else:
             start, track = base, []
-            if lane and git(main, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}^{{commit}}", check=False).returncode == 0:
-                start = f"origin/{branch}"   # the PR's branch: a new branch off --base would push an empty one over it
+            if lane and origin_has is not False \
+                    and git(main, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}^{{commit}}", check=False).returncode == 0:
+                # the PR's branch: a new branch off --base would push an empty one over it. Not a remote-tracking ref origin no longer has
+                # (a merged and deleted PR branch picked up again: OCR 19/10) - that one would start the lane on an old merged head
+                start = f"origin/{branch}"
             elif lane:
                 track = ["--no-track"]   # a new issue branch off origin/<base> must not get origin/<base> as upstream (a bare push/pull hits main)
             git(main, "worktree", "add", *track, "-b", branch, wt, *([start] if start else []), bounded=False)

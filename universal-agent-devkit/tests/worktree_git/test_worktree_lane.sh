@@ -151,6 +151,12 @@ up=$(G "$P/.claude/worktrees/issue-14-build" rev-parse --abbrev-ref '@{u}' 2>/de
 [ "$rc" = 0 ] && [ -z "$up" ] && ok "a new issue branch off origin/main has no upstream" || fail "new lane branch: rc $rc upstream '$up'"
 up=$(G "$P/.claude/worktrees/issue-9-qa" rev-parse --abbrev-ref '@{u}' 2>/dev/null)
 [ "$up" = origin/issue-9-remote ] && ok "  … and the branch taken from origin/<branch> tracks it" || fail "origin branch upstream: '$up'"
+# 4d2: a remote-tracking ref origin no longer has (PR branch merged and deleted, issue picked up again): the lane starts off --base
+G "$P" update-ref refs/remotes/origin/issue-19-old "$tip"
+add python3 "$WT" add "$P/.claude/worktrees/issue-19-build" issue-19-old --lane=build --base=origin/main --no-init; rc=$?
+[ "$rc" = 0 ] && [ "$(G "$P/.claude/worktrees/issue-19-build" rev-parse HEAD)" = "$(G "$P" rev-parse origin/main)" ] \
+  && ok "a stale origin/<branch> origin no longer holds is not used: the lane starts off --base" \
+  || fail "stale remote-tracking ref: rc $rc head $(G "$P/.claude/worktrees/issue-19-build" rev-parse --short HEAD 2>/dev/null)"
 # 4e: offline (origin unreachable): no new branch is started off the base while it is unknown whether origin has the PR branch
 G "$P" remote set-url origin "$TMP/nowhere.git"
 n1=$(linked)
