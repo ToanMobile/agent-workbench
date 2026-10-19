@@ -258,8 +258,9 @@ tidy() {
   fi
   rm -f "$kp"
   if [ "$okk" != 1 ]; then
+    # worktree chưa bị đụng: patch (có thể dở dang) không có bản ghi nào trỏ tới, bỏ luôn, không để mỗi lượt sweep thêm một file mồ côi
     echo "kept $wt: uncommitted edits (salvage could not be verified: tree ${t1:-?} vs ${t2:-?})" >&2
-    rm -f "$trk" "$untr"; return 1
+    rm -f "$trk" "$untr" "$name.patch"; return 1
   fi
   [ ! -s "$delf" ] || tr '\0' '\n' <"$delf" >"$name.deleted.txt"
   [ ! -s "$drpz" ] || tr '\0' '\n' <"$drpz" >"$name.dropped.txt"
@@ -328,7 +329,7 @@ hold_head() {
   [ "$got" = "$3" ] || { HOLD_WHY="GitHub refs/pull/$2/head is ${got:-<missing>}, not the merged $3"; return 1; }
 }
 # untidy <wt>: kit giữ worktree sau khi tidy đã cất và trả phần rác về HEAD: đặt lại đúng các thay đổi đó (patch + file đã xoá), worktree
-# "được giữ" thì như cũ (review 19/10). Bản cất vẫn còn ở $TIDY_NAME.txt.
+# "được giữ" thì như cũ (review 19/10). Trả lại đủ: bỏ bản cất ($TIDY_NAME.*); trả lại hỏng hay dở: bản cất còn ở $TIDY_NAME.txt.
 untidy() {
   local ok=1 p
   # Rác đã dời sang $TIDY_NAME.dropped/ về chỗ cũ trước tiên (đường dẫn riêng, không đụng patch): luôn trả, kể cả khi patch hỏng (OCR).
@@ -346,7 +347,11 @@ untidy() {
   [ ! -f "$TIDY_NAME.patch" ] || git -C "$1" apply --binary "$TIDY_NAME.patch" 2>/dev/null || ok=0
   [ ! -s "$TIDY_DL" ] || (cd "$1" && xargs -0 rm -f -- <"$TIDY_DL") || ok=0
   [ ! -s "$TIDY_SDEL" ] || git -C "$1" update-index -z --force-remove --stdin <"$TIDY_SDEL" || ok=0
-  if [ "$ok" = 1 ]; then echo "restored $1: it stays, so its lane edits, junk and deletions are back as they were (record in $TIDY_NAME.txt)" >&2
+  if [ "$ok" = 1 ]; then
+    # Mọi thứ đã về lại worktree: bản cất trùng với chính worktree, bỏ nó — không thì worktree được giữ lại thêm một bộ .patch + .txt
+    # vào salvage/ ở mỗi lượt sweep (OCR batch). Trả lại hỏng: giữ bản cất, nó là bản duy nhất.
+    rm -f "$TIDY_NAME.patch" "$TIDY_NAME.txt" "$TIDY_NAME.deleted.txt" "$TIDY_NAME.dropped.txt"
+    echo "restored $1: it stays, so its lane edits, junk and deletions are back as they were (no salvage record kept)" >&2
   else echo "kept $1: it stays, but putting its lane edits back failed: they are in $TIDY_NAME.txt / .dropped/" >&2; fi
 }
 # clean_wt <wt> <pr> <merged-head>: phần chung của hai chế độ cho một worktree đã được chọn: khoá phiên, ref giữ head, rác, gỡ.
@@ -443,7 +448,9 @@ command -v python3 >/dev/null 2>&1 || { echo "sweep: python3 not found; nothing 
 STAMP="${COMMON_DIR:+$COMMON_DIR/super-board/sweep.stamp}"
 if [ "$DRY" -eq 0 ] && [ "$MIN_INTERVAL" -gt 0 ] && [ -n "$STAMP" ] && [ -f "$STAMP" ]; then
   last=$(cat "$STAMP" 2>/dev/null); case "$last" in ''|*[!0-9]*) last=0 ;; esac
-  [ $(( $(date +%s) - last )) -lt "$MIN_INTERVAL" ] && exit 0
+  # 0 <= now - last: stamp ở tương lai (đồng hồ lệch, khôi phục backup) không chặn sweep tới khi đồng hồ bắt kịp (OCR batch)
+  since=$(( $(date +%s) - last ))
+  [ "$since" -ge 0 ] && [ "$since" -lt "$MIN_INTERVAL" ] && exit 0
 fi
 GH_READ="$(cd "$(dirname "$0")" && pwd)/super-board-github-read.py"
 if [ -f "$GH_READ" ] && ! SB_REPO_PATH="$REPO_PATH" python3 "$GH_READ" --check >/dev/null 2>&1; then

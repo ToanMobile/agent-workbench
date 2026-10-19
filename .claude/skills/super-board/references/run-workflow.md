@@ -202,7 +202,8 @@ Repeat until a done condition or halt gate fires:
    `sweep`, `resume`, `refreshApproval`, `flag` and `stranded` BEFORE launching** (run.md → "The wave-start
    sweep"): move every swept card to `Ready` with a comment naming what cleared
    it, move every `resume` card (verified human approval of the current pinned
-   request) to `Review`; `needs-you:done` is display-only. Move `refreshApproval`
+   request) to `Review` and run `super-board-needs-you.py unmark --repo <owner/name> --issue <N>` on it
+   (the person's step is done); `needs-you:done` is display-only. Move `refreshApproval`
    cards to `Review` solely to review the changed head and post a fresh human request;
    clear their stale `needs-you:done` display labels. They have no approval to merge.
    Comment on flagged cards asking for their

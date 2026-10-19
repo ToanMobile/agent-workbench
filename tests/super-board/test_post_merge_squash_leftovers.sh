@@ -158,6 +158,9 @@ else fail "A5 no salvage patch with both memory notes under $SALV"; ls -R "$SALV
 if git -C "$R" cat-file -e "$JUNK_BLOB" 2>/dev/null || grep -qs "reports/proof-7.png\|runs/ev-7.md" "$SALV"/issue-7-qa-*.patch; then
   fail "A8 lane junk (proof PNG, QA evidence) was written to the shared object store / a salvage patch"
 else ok "A8 lane junk is dropped without salvage: no loose object, no patch"; fi
+# A9 (OCR batch): phần không có gì để ghi (build không có file xoá, qa không có file cất) không thành file rỗng / patch rỗng
+empty=$(find "$SALV" -type f -empty 2>/dev/null)
+[ -z "$empty" ] && ok "A9 no empty file (empty patch, empty list) in salvage/" || { fail "A9 empty files in salvage/"; printf '%s\n' "$empty"; }
 
 # ── B. --sweep: worktree còn sót của các thẻ đã merge trước đó.
 OLD="2026-01-01T00:00:00Z"; NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -275,6 +278,22 @@ bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/locked.log" 2>&1
 [ ! -s "$TMP/gh.calls" ] && [ -d "$W/issue-21-review" ] && grep -q "another sweep" "$TMP/locked.log" \
   && ok "B19 a sweep that a live sweep's lock holds back reads and removes nothing" || { fail "B19 two sweeps ran at once"; cat "$TMP/locked.log"; }
 kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null   # tiến trình giữ khoá chết: kernel nhả khoá, không còn gì phải dọn
+# B19b (OCR batch): chính sweep phải giữ khoá SUỐT lượt (fd kế thừa qua exec sang bash), và khoá của tiến trình vừa chết ở trên đã nhả
+#      trên cùng file. Kịch bản: sweep A vào được và treo trong gh; kỳ vọng sweep B chồng lên bỏ qua, gh.calls vẫn đúng 1 dòng (assert
+#      dưới). gh treo + hạn giờ ngắn để A dừng ở hạn giờ; B nếu lọt khoá cũng dừng sau lần gọi gh đầu (assert đếm được, B4 còn việc).
+: > "$TMP/gh.calls"
+FAKE_GH_HANG=1 SB_CLEAN_GH_TIMEOUT=8 bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/sweepA.log" 2>&1 & SWA=$!
+i=0; while [ ! -s "$TMP/gh.calls" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done   # máy tải cao: chờ tới 30 s
+if [ ! -s "$TMP/gh.calls" ]; then
+  wait "$SWA" 2>/dev/null; fail "B19b sweep A never reached its gh call within 30 s (setup, not a lock verdict)"; cat "$TMP/sweepA.log"
+else
+  FAKE_GH_HANG=1 SB_CLEAN_GH_TIMEOUT=1 bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/sweepB.log" 2>&1
+  nB=$(wc -l <"$TMP/gh.calls" | tr -d ' ')
+  wait "$SWA" 2>/dev/null
+  [ "$nB" = 1 ] && grep -q "another sweep" "$TMP/sweepB.log" && [ -d "$W/issue-21-review" ] \
+    && ok "B19b a running sweep holds its own lock for the whole run: an overlapping sweep makes no GitHub call" \
+    || { fail "B19b two sweeps ran at once ($nB gh call(s) while sweep A held the lock)"; cat "$TMP/sweepB.log"; }
+fi
 # B22 (review): file khoá không mở được (ở đây là một thư mục): sweep vẫn exit 0, nói lý do, không traceback, không gỡ gì
 mv "$R/.git/super-board/sweep.lock" "$TMP/lock.bak" 2>/dev/null; mkdir "$R/.git/super-board/sweep.lock"; : > "$TMP/gh.calls"
 bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/badlock.log" 2>&1; rc=$?
@@ -334,11 +353,25 @@ P=$(ls "$SALV"/issue-35-qa-*.patch 2>/dev/null | head -1)
   && ok "B20 an edit to a TRACKED QA evidence file is kept in a patch, not dropped" || { fail "B20 the tracked REPORT.md edit was dropped"; grep -a "issue-35-qa" "$TMP/sweep.log"; }
 git -C "$R" cat-file -e "$EV33_BLOB" 2>/dev/null && fail "B21 untracked lane junk of a worktree with kept edits went into the object store" \
   || ok "B21 only the kept paths are added: untracked junk never becomes a git object"
+empty=$(find "$SALV" -type f -empty 2>/dev/null)
+[ -z "$empty" ] && ok "B27 after the sweep, still no empty file in salvage/" || { fail "B27 empty files in salvage/ after the sweep"; printf '%s\n' "$empty"; }
 
 # B13 chạy lại ngay với khoảng nghỉ mặc định: kỳ vọng bỏ qua — assert dưới kiểm gh.calls của gh giả rỗng
 : > "$TMP/gh.calls"
 bash "$CLEAN" --sweep "$R" >"$TMP/again.log" 2>&1
 [ ! -s "$TMP/gh.calls" ] && ok "B13 a second sweep inside the minimum interval makes no GitHub call" || { fail "B13 the interval stamp is ignored"; cat "$TMP/gh.calls"; }
+
+# B25 (OCR batch): stamp ở TƯƠNG LAI (đồng hồ lệch, khôi phục backup) không được chặn sweep mãi: now - last âm thì coi như đã quá hạn
+echo $(( $(date +%s) + 86400 )) > "$R/.git/super-board/sweep.stamp"; : > "$TMP/gh.calls"
+bash "$CLEAN" --sweep "$R" >"$TMP/future.log" 2>&1
+[ -s "$TMP/gh.calls" ] && ok "B25 a stamp in the future does not block the sweep" || fail "B25 a future stamp silenced the sweep"
+# B26 (OCR batch, salvage không ghi rác): issue-33-qa đã qua hai sweep thật (B4, B25), lần nào kit cũng từ chối gỡ và untidy trả lại
+#      đủ phần đã cất vào worktree. Bản cất khi đó trùng với chính worktree: kỳ vọng không còn file nào của nó trong salvage/ (không
+#      thì mỗi lượt runner / wave thêm một bộ .patch + .txt, 30 ngày mới bị dọn), còn sửa của lane vẫn ở nguyên trong worktree.
+left=$(ls -d "$SALV"/issue-33-qa-* 2>/dev/null)
+[ -z "$left" ] && [ "$(tail -1 "$W/issue-33-qa/.agents/local/memory/agents/rev/MEMORY.md" 2>/dev/null)" = n33 ] \
+  && ok "B26 a worktree the kit keeps (edits put back) leaves no salvage record behind, sweep after sweep" \
+  || { fail "B26 salvage records pile up for a worktree that stays: $(printf '%s\n' "$left" | grep -c .) file(s)"; printf '%s\n' "$left"; }
 
 # ── C. gh treo và bỏ qua SIGALRM (gh thật là binary Go: runtime Go nuốt SIGALRM, review 19/10): sweep phải dừng theo hạn giờ,
 #    không gỡ gì. gh giả `trap '' ALRM` (tín hiệu bị bỏ qua được kế thừa qua exec, như Go).
@@ -349,5 +382,28 @@ dt=$(( $(date +%s) - t0 ))
   || { fail "C1 sweep waited ${dt}s on a hung gh"; cat "$TMP/hang.log"; }
 [ ! -f "$R/.git/super-board/sweep.stamp" ] && ok "C2 a sweep whose GitHub read failed writes no interval stamp (the next tick retries)" \
   || fail "C2 a failed GitHub read still wrote the interval stamp"
+
+# ── D. (OCR batch) salvage hỏng giữa chừng không để file rác: bước kiểm patch (`git apply --cached` lên HEAD) của đúng worktree
+#    issue-3-qa thất bại (git giả chỉ cho lệnh đó, mọi lệnh khác chạy git thật) → worktree giữ nguyên, kỳ vọng salvage/ không có file
+#    nào của nó (patch mồ côi không .txt, mỗi lượt sweep thêm một cái).
+card 3 13 issue-3-s; git -C "$R" worktree add -q --detach "$W/issue-3-qa" "$(cat "$TMP/pr13.head")"
+echo n3 >> "$W/issue-3-qa/.agents/local/memory/agents/rev/MEMORY.md"
+squash 13; merged_row 13 "$OLD"; echo CLOSED > "$TMP/issue3.state"
+REAL_GIT=$(command -v git); mkdir -p "$TMP/gitshim"
+cat > "$TMP/gitshim/git" <<SH
+#!/usr/bin/env bash
+case " \$* " in *"/.claude/worktrees/issue-3-qa "*) [ -z "\${GIT_INDEX_FILE:-}" ] || echo "\$GIT_INDEX_FILE" >> "$TMP/idxfiles" ;; esac
+case " \$* " in *"/.claude/worktrees/issue-3-qa apply --cached "*) echo "fake git: apply --cached refused" >&2; exit 1 ;; esac
+exec "$REAL_GIT" "\$@"
+SH
+chmod +x "$TMP/gitshim/git"
+PATH="$TMP/gitshim:$PATH" bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/badverify.log" 2>&1
+# index tạm (mktemp) tidy dùng, git giả ghi lại đường dẫn: phải bị xoá (mktemp của macOS bỏ qua TMPDIR nên không dò theo thư mục được)
+left=$(ls -d "$SALV"/issue-3-qa-* 2>/dev/null; sort -u "$TMP/idxfiles" 2>/dev/null | while IFS= read -r f; do [ ! -e "$f" ] || echo "$f"; done)
+[ -s "$TMP/idxfiles" ] || left="$left no-temp-index-seen"
+[ -d "$W/issue-3-qa" ] && [ "$(tail -1 "$W/issue-3-qa/.agents/local/memory/agents/rev/MEMORY.md" 2>/dev/null)" = n3 ] \
+  && grep -q "issue-3-qa: uncommitted edits (salvage could not be verified" "$TMP/badverify.log" && [ -z "$left" ] \
+  && ok "D1 a salvage that fails its check keeps the worktree as is, leaves no file in salvage/ and no temp file" \
+  || { fail "D1 failed salvage left junk or touched the worktree"; printf '%s\n' "$left"; grep -a "issue-3-qa" "$TMP/badverify.log"; }
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_post_merge_squash_leftovers: all passed" || { echo "❌ test_post_merge_squash_leftovers: $FAILS failed"; exit 1; }

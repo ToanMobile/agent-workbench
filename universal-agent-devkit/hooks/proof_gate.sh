@@ -15,7 +15,10 @@
 #     still passes on (a) a --full exit 0 receipt a worktree of the repo wrote this turn, still matching that worktree, for the same tree
 #     as the judged HEAD, or (b) the output of a super-board-merge-gate.sh call this turn ("verified green" + "merged <H>") when git
 #     attests it: the real origin (ls-remote) holds a squash of H committed this turn and the judged tree stands at H or holds it with
-#     nothing origin lacks (merged_evidence; tests/gates/test_proof_gate_merged_trunk.sh);
+#     nothing origin lacks (merged_evidence; tests/gates/test_proof_gate_merged_trunk.sh); #105, 19/10: or (c) a --full exit 0 receipt of
+#     this turn that post-fix-gate mirrored by tree into <git common dir>/postfix-gate/tree_receipts (it outlives the worktree), for the
+#     judged tree, or in main for HEAD's commit when only other sessions' uncommitted files differ (tree_store_evidence;
+#     tests/gates/test_proof_gate_tree_receipt.sh);
 #   - the reply names at least one reports/proof-<yyyyMMdd-HHmmss>.png that
 #   - exists under the project,
 #   - starts with the PNG signature,
@@ -328,6 +331,8 @@ for rel in cited:
         problems.append("%s: trùng byte với %s (ảnh cũ chép sang tên mới)" % (rel, os.path.relpath(twin, repo))); continue
     good.append(rel)
 
+FP = {}   # "now": dấu vân tay cây đang xét, full_gate_problem tính một lần
+
 def full_gate_problem():
     """None when this turn has a full-gate exit 0 on the current code, else the reason."""
     _pb = os.environ.get("PROOF_BIN") or ""
@@ -371,7 +376,7 @@ def full_gate_problem():
         turn_start_time = time.time() - 3600
     if rtime < turn_start_time:
         return "lần exit 0 là từ trước lượt này"
-    now_fp = tree_fp.tree_fingerprint(repo)
+    now_fp = FP["now"] = tree_fp.tree_fingerprint(repo)   # tree_store_evidence dùng lại: không tính dấu vân tay hai lần trong hạn chót
     if not now_fp or not rec.get("fingerprint"):
         why = getattr(tree_fp.tree_fingerprint, "error", "") or "?"
         return "không tính được dấu vân tay code hiện tại (%s)" % str(why)[:60]
@@ -690,10 +695,69 @@ def merged_evidence():
                 return "merge-gate pr=%s head=%s squash=%s" % (pr, h[:12], s[:12])
     return None
 
+def tree_store_evidence():
+    """#105 (trunk mode, 19/10: NFH, GeelyEx2, kit #104): gate --full exit 0 chạy trong worktree, giao bằng `worktree finish` hay PR squash
+    rồi worktree bị gỡ: biên nhận của worktree mất theo git dir của nó, full_pass.json duy nhất của main thì cũ hoặc là của finish phiên
+    khác. post-fix-gate ghi thêm biên nhận exit 0 theo cây vào <git common dir>/postfix-gate/tree_receipts (sống qua việc gỡ worktree).
+    Mô tả bằng chứng khi một biên nhận ở đó ghi TRONG LƯỢT (exit 0, chưa quá TREE_RECEIPT_MAX_AGE_S) là của đúng cây phiên giao:
+      (1) dấu vân tay cây đang xét = biên nhận (finish fast-forward, hay main đồng bộ origin sau squash);
+      (2) chỉ main: dấu vân tay của commit HEAD (tree_fp.commit_fingerprint) = biên nhận, và file main khác HEAD phiên này không đụng
+          (luật PR #50: file chưa commit của phiên khác / runner của board).
+    Không nhận commit nào main có SAU cây đã gate, kể cả của phiên khác: "phiên này không đụng file" chỉ đọc được từ tool_use, mà sửa
+    bằng shell / git apply / formatter sau lần gate thì không nêu tên file (principal review #105). ponytail: hai finish nối nhau (main
+    nhận merge của worktree thứ hai) hay main kéo về squash của PR khác trước Stop là bị chặn (fail closed): gate lại trong worktree mới
+    ở HEAD của main; nâng cấp khi đếm được ca này trong proof_gate.log.
+    None thì chặn như cũ."""
+    import session_worktree   # hooks/ (đã vào sys.path cùng devkit_harness); thiếu thì ImportError -> chặn như cũ
+    import tree_fp
+    tree = session_worktree.tree_of(repo)
+    if start is None or not tree or not session_worktree.trunk_mode(repo) or left() <= 2:
+        return None
+    reserve = left() / 2   # nửa hạn chót còn lại để dành cho merged_evidence (chạy sau, cần ls-remote): không để ca merge gate hết giờ
+    room = lambda: left() - reserve
+    store, now, recs = os.path.join(tree[2], "postfix-gate", "tree_receipts"), time.time(), []   # = tree_fp.tree_receipt_dir, không chạy git
+    try:
+        names = sorted(os.listdir(store))
+    except OSError:
+        return None
+    for n in names:
+        m = re.fullmatch(r"([0-9a-f]{24})\.json", n)
+        if not m or room() <= 1:
+            continue
+        try:
+            with os.fdopen(open_reg(os.path.join(store, n)), encoding="utf-8") as fh:
+                r = json.loads(fh.read(1 << 20))
+        except (OSError, ValueError, RecursionError):
+            continue
+        t = r.get("time") if isinstance(r, dict) else None
+        # khoảng trước hiệu: một time 400 chữ số trừ float là OverflowError; nan / inf rơi ở so sánh
+        if (isinstance(r, dict) and r.get("exit") == 0 and not isinstance(r.get("exit"), bool) and r.get("fingerprint") == m.group(1)
+                and isinstance(t, (int, float)) and not isinstance(t, bool) and start <= t <= now + 60 and now - t <= tree_fp.TREE_RECEIPT_MAX_AGE_S):
+            recs.append(r)
+    if not recs:
+        return None
+    now_fp = FP.get("now")   # never a fresh tree_fingerprint here: it has no deadline (main clean = commit_fingerprint below, which has one)
+    if now_fp and any(r["fingerprint"] == now_fp for r in recs):
+        return "tree-receipt fp=%s" % now_fp
+    if tree[1] or room() <= 2:
+        return None
+    state = dirty_state(repo, tree_fp, t=max(0.5, min(10, room() / 3)))
+    if state is None or (state[1] and not untouched_by_session(state[1])) or room() <= 1:
+        return None
+    head_fp = tree_fp.commit_fingerprint(repo, state[0], timeout=max(0.5, min(10, room())))
+    if head_fp and any(r["fingerprint"] == head_fp for r in recs):
+        return "tree-receipt head=%s fp=%s foreign=%s" % (state[0][:12], head_fp, ",".join(state[1][:8]) or "-")
+    return None
+
 gate_problem = full_gate_problem() if xong else None
 if gate_problem:
     try:
-        alt = merged_evidence()
+        alt = tree_store_evidence()
+    except Exception as e:   # TimeoutExpired, OSError…: python chết = wrapper exit 0 = XONG lọt; lỗi ở đây = sang bằng chứng kế tiếp
+        log("tree-store check crashed: %r" % e)
+        alt = None
+    try:
+        alt = alt or merged_evidence()
     except Exception as e:   # python chết = wrapper exit 0 = XONG lọt; lỗi ở đây = chặn như cũ
         log("merged-evidence check crashed: %r" % e)
         alt = None

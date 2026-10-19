@@ -4,13 +4,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { hopNhatFileThayDoi, headCommitOf, createTask } from '../src/tasks.js';
 import { checkTestChange } from '../src/policy.js';
 import { loadConfig } from '../src/config.js';
-import './helpers.js'; // co lap ANTIGRAVITY_PM_STATE_HOME (task.json khong ghi vao HOME that)
+import { tmpDir } from './helpers.js'; // co lap ANTIGRAVITY_PM_STATE_HOME (task.json khong ghi vao HOME that)
 
 const CFG = { mustHave: { testChange: true, proofFrom: [] } };
 
@@ -32,7 +31,7 @@ test('ca T0008: cay lam viec SACH nhung test da commit => cong "kem file test" p
 });
 
 test('headCommitOf: repo git tra SHA, thu muc thuong tra null', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-base-'));
+  const dir = tmpDir('pm-base-');
   assert.equal(headCommitOf(dir), null);
   execFileSync('git', ['init', '-q'], { cwd: dir });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a');

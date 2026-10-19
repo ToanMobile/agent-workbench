@@ -102,9 +102,12 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
   def closed_refs: [ (.body // "") | scan("(?i)\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[ :]+#([0-9]+)")[0] | tonumber ] | unique;
   def fps: [ (.body // "") | scan("(?m)^[ \t]*fingerprint:[ \t]*([^\n]*[^ \t\n])")[0] ];
   def paths: [ (.body // "") | scan("[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\\.[A-Za-z0-9]+") ] | unique;
+  # Dòng tiêu đề mục "## <tên>": sau tên là hết từ (dấu cách, "(", ":", \r hoặc hết dòng). has_acs và sect dùng
+  # chung để cùng nhận "## Acceptance Criteria (…)" và cùng bỏ "## Fixes", "## Fixture".
+  def heading($h): test("^##[ \t]+" + $h + "(?!\\w)");
   # The AC section: lines after the LAST "## Acceptance Criteria" heading, up to the next "## ".
   def has_acs: ((.body // "") / "\n") as $l
-    | [ $l | to_entries[] | select(.value | test("^##[ \t]+Acceptance Criteria")) | .key ] as $h
+    | [ $l | to_entries[] | select(.value | heading("Acceptance Criteria")) | .key ] as $h
     | if ($h | length) == 0 then false
       else [ $l[($h | last) + 1:][] ] as $t
         | ([ $t | to_entries[] | select(.value | test("^##[ \t]")) | .key ] | first) as $e
@@ -117,9 +120,9 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
   # bị (comment builder ở OfficeReader #98: riêng phần chứng minh ~800–1.100 dòng); agent hạ được khi nêu lý do.
   # Trần 400 là mặc định của merge_policy.auto_max_lines; script không đọc config nên chữ "default" đi kèm.
   # ponytail: trần cố định trong lời nhắn, thêm tham số --cap (chưa có) khi có board đặt trần khác 400.
-  # Mục "## <tên>" cuối cùng của body (khớp cả dòng tiêu đề, khác has_acs chỉ khớp đầu dòng), tới "## " kế tiếp.
+  # Mục "## <tên>" cuối cùng của body (cùng luật tiêu đề với has_acs), tới "## " kế tiếp.
   def sect($h): ((.body // "") / "\n") as $l
-    | [ $l | to_entries[] | select(.value | test("^##[ \t]+" + $h + "[ \t\r]*$")) | .key ] as $k
+    | [ $l | to_entries[] | select(.value | heading($h)) | .key ] as $k
     | if ($k | length) == 0 then ""
       else [ $l[($k | last) + 1:][] ] as $t
         | ([ $t | to_entries[] | select(.value | test("^##[ \t]")) | .key ] | first) as $e

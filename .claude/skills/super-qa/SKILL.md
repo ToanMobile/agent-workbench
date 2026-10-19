@@ -709,4 +709,5 @@ The Tester's issue comment is the user's primary visibility into "is this actual
 Hash lane = `qa`. Same input definition as super-build.
 
 ### Block/Skip exits use the §4 mandatory template
-Same rule as super-build.
+Same rule as super-build, including `super-board-needs-you.py mark` when a person must act
+(a real device, a human judgement the AC asks for, a credential).

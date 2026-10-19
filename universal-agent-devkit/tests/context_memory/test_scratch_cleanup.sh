@@ -209,6 +209,20 @@ rm -f "$ROOT/.devkit-test-tmp-sweep"   # a clean hourly slot for the rate-limit 
 tsetup; sweep --prune --keep "$F"; [ ! -e "$TR/hookctx.OLD1" ] && ok "prune (SessionStart) runs the sweep too" || fail "prune did not sweep: $(tail -2 "$TMP/out")"
 tsetup; sweep --prune --keep "$F"; [ -d "$TR/hookctx.OLD1" ] && ok "  … at most once an hour (many sessions start: one lsof, not one per session)" || fail "prune swept twice within the hour"
 sweep --sweep-tmp; [ ! -e "$TR/hookctx.OLD1" ] && ok "  … while --sweep-tmp always sweeps" || fail "--sweep-tmp was rate-limited"
+# A burst of SessionStarts (super-board workers) while lsof is slow: the hour is claimed BEFORE lsof, so one lsof runs.
+tsetup; rm -f "$ROOT/.devkit-test-tmp-sweep" "$TMP/lsof.calls"
+printf '#!/bin/sh\necho call >> "%s"\nsleep 2\nexec "%s" "$@"\n' "$TMP/lsof.calls" "$(command -v lsof || echo /usr/sbin/lsof)" > "$TMP/slowlsof"
+chmod +x "$TMP/slowlsof"
+for i in 1 2 3; do DEVKIT_LSOF="$TMP/slowlsof" sweep --prune --keep "$F" & done; wait
+calls=$(wc -l < "$TMP/lsof.calls" 2>/dev/null | tr -d ' ')
+[ "$calls" = 1 ] && [ ! -e "$TR/hookctx.OLD1" ] && ok "  … three concurrent prunes with a slow lsof: one lsof run, one sweep" \
+  || fail "concurrent prunes ran lsof ${calls:-0} times (want 1)"
+# A stamp that cannot be written (full disk, read-only scratch root) loses the throttle, never the sweep.
+if [ "$(id -u)" != 0 ]; then
+  tsetup; rm -f "$ROOT/.devkit-test-tmp-sweep"; chmod 500 "$ROOT"
+  sweep --prune --keep "$F"; chmod 700 "$ROOT"
+  [ ! -e "$TR/hookctx.OLD1" ] && ok "  … a stamp it cannot write still lets the prune sweep" || fail "an unwritable stamp skipped the sweep"
+fi
 fi
 tsetup; DEVKIT_LSOF=/nonexistent/lsof sweep --sweep-tmp; rc=$?
 [ "$rc" = 0 ] && [ -d "$TR/hookctx.OLD1" ] && ok "sweep: no lsof answer → nothing removed (cannot tell what is held)" || fail "sweep removed without an lsof answer"
