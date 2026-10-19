@@ -22,7 +22,10 @@ checkpoint limitations: [run-workflow.md](run-workflow.md#required-github-eviden
 **Super-board is an autonomous trader. The interactive Claude session that invokes `super-board run` is an orchestrator, NOT a worker.** Its only jobs are:
 
 1. Verify preconditions (see table below).
-2. Spawn the headless `nohup ./scripts/super-board-run.sh <slug> &` runner.
+2. Spawn the headless `nohup ./scripts/super-board-run.sh <slug> &` runner. An explicit start clears the stop marker
+   and installs the repo's launchd watchdog (`.claude/bin/super-board-watchdog.sh`): every 60 s it restarts a runner
+   that died without a deliberate end, never one stopped with `super-board stop`, with backoff and a cap of 5
+   restarts in a row. Status: `.claude/bin/super-board-watchdog.sh status <slug>`.
 3. Report runner PID + log path back to the user.
 4. Exit.
 

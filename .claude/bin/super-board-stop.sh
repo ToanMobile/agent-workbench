@@ -2,6 +2,8 @@
 # super-board-stop.sh — graceful shutdown of an in-flight super-board run.
 #
 # What it does:
+#   0. Write the durable stop marker .claude/super-board/runner/<slug>.stopped — even when nothing is running.
+#      super-board-watchdog.sh never restarts a board that has it; `super-board run <slug>` clears it.
 #   1. Find every in-flight worker (lock files under .claude/super-board/inflight/).
 #      Stop any Codex wave and its lane process groups before comments/releases.
 #   2. For each one, post a "stopped mid-flight" comment on the issue AND its PR
@@ -56,6 +58,22 @@ CONFIG_PATH=".claude/super-board/configs/${CONFIG_SLUG}.json"
 if [ ! -f "$CONFIG_PATH" ]; then
   echo "config not found: $CONFIG_PATH" >&2
   exit 66
+fi
+
+# Stop marker bền: ghi TRƯỚC mọi bước khác, kể cả khi không còn gì để dừng (runner đã chết vẫn phải được ghi là người
+# dùng dừng). super-board-watchdog.sh không bao giờ khởi động lại board có marker; runner thấy marker thì tự thoát ở
+# tick kế tiếp. Chỉ một lần khởi động tường minh (`super-board run <slug>`) mới xoá nó.
+STOP_MARK=".claude/super-board/runner/${CONFIG_SLUG}.stopped"
+MARK_WARN=""
+write_stop_mark() {
+  # PID: runner đang khởi động cùng giây biết stop này còn chạy (trùng lúc) hay đã xong (`stop && run` tuần tự).
+  { mkdir -p "${STOP_MARK%/*}" && printf 'STOPPED_AT=%s\nBY=%s\nPID=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      "${USER:-unknown} via super-board-stop.sh" "$$" > "$STOP_MARK"; } 2>/dev/null
+}
+# Ghi marker hỏng (đĩa đầy, thư mục không ghi được) không được làm stop bỏ dở việc dừng worker: báo rồi đi tiếp.
+if ! write_stop_mark; then
+  MARK_WARN="⚠ could not write the stop marker $STOP_MARK (disk full? unwritable?): the watchdog may restart this board"
+  echo "$MARK_WARN" >&2
 fi
 
 # ───────────────────────────── config read ─────────────────────────────
@@ -247,6 +265,7 @@ fi
 
 if [ "${#WORKERS[@]}" -eq 0 ] && [ -z "$DISPATCHER_PIDS" ] && [ -z "$ORPHAN_WORKERS" ] && [ -z "$CODEX_WAVE_PID" ]; then
   echo "  ✓ nothing to stop — no dispatcher, no in-flight workers, no orphans"
+  echo "  ${MARK_WARN:-🛑 stop marker: $STOP_MARK — the watchdog will not restart this board}"
   echo "════════════════════════════════════════════════════════"
   exit 0
 fi
@@ -288,6 +307,9 @@ if [ -n "$DISPATCHER_PIDS" ]; then
     kill_pid "$pid" "dispatcher"
   done
 fi
+# Ghi lại marker sau khi đã dừng dispatcher: mtime mới hơn lúc ra đời của bất kỳ runner nào đang khởi động song song,
+# nên runner đó tôn trọng marker thay vì coi là cũ và xoá. Lần ghi đầu hỏng đã được báo ở trên.
+write_stop_mark || true
 
 # 5. Clear in-flight locks (PIDs are dead now).
 if [ -d "$INFLIGHT_DIR" ] && [ -n "$(ls -A "$INFLIGHT_DIR" 2>/dev/null)" ]; then
@@ -308,5 +330,6 @@ echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  ✅ stopped: ${#WORKERS[@]} worker(s), ${DISP_COUNT} dispatcher(s)"
 echo "  📝 wrap-up comments posted on each in-flight issue + PR"
-echo "  ▶  Resume: super-board run ${CONFIG_SLUG}"
+echo "  ${MARK_WARN:-🛑 stop marker: $STOP_MARK — the watchdog will not restart this board}"
+echo "  ▶  Resume: super-board run ${CONFIG_SLUG}  (clears the marker)"
 echo "════════════════════════════════════════════════════════"
