@@ -268,23 +268,30 @@ if info is not None and not probe and not pushed:
     except Exception as e:
         note("work_in_progress failed: %r" % e)
 
-# Transcript Grok là "foreign" nên work_in_progress() ở trên luôn false. Mỗi Stop Grok mở suite 900s
-# và giữ ô nhập tới khi bấm Send now (20/10), kể cả khi commit cũ đã nằm trên remote (`pushed`).
-# Cùng luật bàn giao: không có dòng trạng thái / CHƯA XONG và không nhận đã xong → bỏ qua.
+# Claude, Gemini, Grok: lời giữa chừng không mở suite. work_in_progress() phía trên bỏ qua Claude
+# khi commit đã nằm trên remote (`pushed`), và luôn false với Gemini/Grok (transcript không phải Claude).
 # XONG hoặc câu nhận đã xong vẫn chạy suite. Commit đã đẩy mà chưa kiểm vẫn nợ tới lượt bàn giao.
-if degraded and not probe and os.environ.get("DEVKIT_GATE_EVERY_STOP") != "1":
+# Claude: một `git push` ngay trong lượt này vẫn là bàn giao, dù lời không nhận đã xong.
+if info is not None and not probe and os.environ.get("DEVKIT_GATE_EVERY_STOP") != "1":
     try:
         reply = data.get("last_assistant_message")
         if isinstance(reply, str) and reply.strip():
             st = devkit_harness.reply_status(reply)
             body = devkit_harness.MIDWORK_WORDS.sub("", reply)
             if st in ("NOT_DONE", "NONE") and not devkit_harness.OUTCOME_WIDE.search(body):
-                note("skip: grok mid-work (no handover) sid=%s" % sid)
-                sys.exit(0)
+                turn_pushed = False
+                if info.get("agent") == "claude" and info.get("transcript") == "claude":
+                    tp = data.get("transcript_path") or data.get("transcriptPath")
+                    start = devkit_harness.turn_start(tp) if isinstance(tp, str) else None
+                    if start is not None and "push" in devkit_harness.git_writes_in_turn(tp, start):
+                        turn_pushed = True
+                if not turn_pushed:
+                    note("skip: mid-work (no handover) agent=%s sid=%s" % (info.get("agent") or "?", sid))
+                    sys.exit(0)
     except SystemExit:
         raise
     except Exception as e:
-        note("grok mid-work check failed: %r" % e)
+        note("mid-work check failed: %r" % e)
 
 def emit(obj):
     print(json.dumps(obj, ensure_ascii=False))
