@@ -5,7 +5,7 @@
 #  1. githooks.sh state: one word for tools — installed | chained | project-unchained | absent
 #     (the SAME detection `status` uses, not a second regex).
 #  2. agent-health's git_gate_wiring: an unchained project hook is a failed check; installed / chained pass;
-#     no hook at all (e.g. --no-githooks) is information only and does not move the score.
+#     no hook at all (e.g. --no-githooks) is a warning that costs points (issue #21: it used to leave the score at 100).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -56,7 +56,7 @@ chk "ours 1 1"  "health: the DevKit hook passes"
 chk "chain 1 1" "health: a project hook that chains the gate passes"
 chk "loose 0 1" "health: an unchained project hook FAILS the check"
 chk "hp 0 1"    "health: the OfficeReader shape (.githooks without the gate) FAILS the check"
-chk "none 0 0"  "health: no hook at all is information only (score unchanged)"
+chk "none 0 1"  "health: no hook at all is a counted warning (score drops)"
 chk "noexec 0 1" "health: a stub git ignores FAILS the check"
 chk "cmt 0 1"    "health: a commented-out chain FAILS the check"
 
