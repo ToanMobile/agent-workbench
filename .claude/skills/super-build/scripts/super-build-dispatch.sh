@@ -118,18 +118,32 @@ fi
 # — the very check add --lane makes, so the two never disagree.
 if git remote get-url origin >/dev/null 2>&1; then
   LS_RC=0
-  GIT_TERMINAL_PROMPT=0 python3 - "$WT_PY" "$WORKER_BRANCH" >/dev/null 2>&1 <<'PY' || LS_RC=$?
+  LS_ERR=$(GIT_TERMINAL_PROMPT=0 python3 - "$WT_PY" "$WORKER_BRANCH" 2>&1 >/dev/null <<'PY'
 import importlib.util, sys
-spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
-m = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(m)
-sys.exit(m.git(".", "ls-remote", "--exit-code", "--heads", "origin", "refs/heads/" + sys.argv[2], check=False).returncode)
+try:
+    spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    probe = m.git
+except Exception as e:   # an old or broken DevKit is no network fault: its own exit code and its reason
+    print(f"DevKit worktree.py unusable: {e!r}", file=sys.stderr)
+    sys.exit(3)
+r = probe(".", "ls-remote", "--exit-code", "--heads", "origin", "refs/heads/" + sys.argv[2], check=False)
+print((r.stderr or "").strip(), file=sys.stderr)
+sys.exit(r.returncode)
 PY
+  ) || LS_RC=$?
+  # git's first fatal/error line carries the reason (its hint lines follow it); otherwise the last line said
+  LS_WHY=$( { printf '%s\n' "$LS_ERR" | grep -m1 -E '^(fatal|error|DevKit)'; } || printf '%s\n' "$LS_ERR" | grep -v '^[[:space:]]*$' | tail -1)
+  LS_WHY=$(printf '%s' "$LS_WHY" | cut -c1-200)
   if [[ "$LS_RC" -eq 0 ]]; then
     echo "error: branch $WORKER_BRANCH already exists on origin — refusing to clobber" >&2
     exit 64
+  elif [[ "$LS_RC" -eq 3 ]]; then
+    echo "error: ${LS_WHY:-DevKit worktree.py unusable} — repair the DevKit install (agent-kit init) in $REPO_DIR" >&2
+    exit 64
   elif [[ "$LS_RC" -ne 2 ]]; then
-    echo "error: cannot reach origin to check $WORKER_BRANCH (git ls-remote exit $LS_RC)" >&2
+    echo "error: cannot reach origin to check $WORKER_BRANCH (git ls-remote exit $LS_RC${LS_WHY:+: $LS_WHY})" >&2
     exit 64
   fi
 fi

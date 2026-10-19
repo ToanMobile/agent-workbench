@@ -416,9 +416,9 @@ worktree_disk_room() {
   # $1 = đường dẫn worktree của lane. Đúng bước giữ chỗ của `agent-kit worktree add` (worktree.py _make_room: dưới mức cảnh báo thì
   # worktree gc trước, còn dưới sàn WORKTREE_DISK_MIN_GIB thì exit 4): một luật, không chép số, và gc vẫn chạy nên board không đứng
   # chờ người dọn tay. Dưới sàn lane nào cũng dừng ở bước tạo worktree, nên không nhận thẻ và không mở một phiên claude mỗi tick.
-  # Worktree lane đã có (có .git: một worktree, không phải thư mục rỗng sót lại) thì add --lane dùng lại, không tốn thêm đĩa.
-  # Kiểm không được (không DevKit, python lỗi): coi là còn chỗ như trước, nhưng ghi log, không im lặng (OCR 19/10).
-  [ -e "$1/.git" ] && return 0
+  # Worktree lane đã có (git còn nhận nó: không phải thư mục rỗng sót lại, cũng không phải .git trỏ vào admin dir đã bị prune) thì
+  # add --lane dùng lại, không tốn thêm đĩa. Kiểm không được (không DevKit, python lỗi): coi là còn chỗ, nhưng ghi log (OCR 19/10).
+  [ -e "$1/.git" ] && git -C "$1" rev-parse --git-dir >/dev/null 2>&1 && return 0
   local rc=0 err
   err=$(python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" 2>&1 >/dev/null <<'PY'
 import importlib.util, sys

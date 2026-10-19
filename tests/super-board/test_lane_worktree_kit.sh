@@ -77,11 +77,15 @@ else
 fi
 ( export WORKTREE_DISK_MIN_GIB=0; launch build 7 )
 [ -s "$TMP/launched" ] && ok "  … and the floor off (0): dispatched as before" || fail "floor 0 still skipped the dispatch"
-mkdir -p "$TMP/repo/.claude/worktrees/issue-8-build"   # the lane's worktree is there already: add --lane reuses it, no new disk
-echo "gitdir: $TMP/repo/.git/worktrees/issue-8-build" > "$TMP/repo/.claude/worktrees/issue-8-build/.git"
+git -C "$TMP/repo" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q --allow-empty -m init
+git -C "$TMP/repo" worktree add -q --detach .claude/worktrees/issue-8-build   # the lane's worktree is there: add --lane reuses it
 ( export WORKTREE_DISK_MIN_GIB=100000 WORKTREE_DISK_WARN_GIB=0; launch build 8 )
 [ -s "$TMP/launched" ] && ok "  … and under the floor a lane whose worktree exists is still dispatched (reuse needs no disk)" \
   || fail "under the floor, a lane with its worktree already there was skipped"
+mkdir -p "$TMP/repo/.claude/worktrees/issue-11-build"   # a .git pointing at an admin dir git pruned: no worktree any more
+echo "gitdir: $TMP/repo/.git/worktrees/gone" > "$TMP/repo/.claude/worktrees/issue-11-build/.git"
+( export WORKTREE_DISK_MIN_GIB=100000 WORKTREE_DISK_WARN_GIB=0; launch build 11 )
+[ ! -s "$TMP/launched" ] && ok "  … but a stale .git git no longer knows does not count either" || fail "a stale .git let a dispatch through under the floor"
 mkdir -p "$TMP/repo/.claude/worktrees/issue-9-build"   # an empty leftover folder is no worktree: add would still need the disk
 ( export WORKTREE_DISK_MIN_GIB=100000 WORKTREE_DISK_WARN_GIB=0; launch build 9 )
 [ ! -s "$TMP/launched" ] && ok "  … but an empty leftover folder does not count as the lane's worktree" || fail "an empty folder let a dispatch through under the floor"
@@ -109,18 +113,24 @@ mkdir -p "$D/main" && G "$D/main" init -q -b main && echo x > "$D/main/a" && G "
 (cd "$D/main" && BASE_BRANCH=main bash "$DISPATCH" 5 > "$TMP/disp.out" 2>&1); rc=$?
 [ "$rc" = 64 ] && grep -q "DevKit missing" "$TMP/disp.out" && ok "dispatch without the DevKit: refused before any network call" \
   || fail "dispatch without the DevKit: rc $rc: $(tail -1 "$TMP/disp.out")"
-mkdir -p "$D/main/.agents" && ln -s "$ROOT/universal-agent-devkit" "$D/main/.agents/devkit"
+mkdir -p "$D/broken/scripts/git" "$D/main/.agents" && echo 'raise ImportError("half-installed")' > "$D/broken/scripts/git/worktree.py"
+ln -s "$D/broken" "$D/main/.agents/devkit"
+git init -q --bare "$D/origin.git" && G "$D/main" remote add origin "$D/origin.git"
+(cd "$D/main" && BASE_BRANCH=main bash "$DISPATCH" 5 > "$TMP/disp.out" 2>&1); rc=$?
+[ "$rc" = 64 ] && grep -q "repair the DevKit" "$TMP/disp.out" && grep -q "half-installed" "$TMP/disp.out" \
+  && ok "dispatch with a broken DevKit: refused with its reason, not as an origin fault" || fail "dispatch with a broken DevKit: rc $rc: $(tail -1 "$TMP/disp.out")"
+rm "$D/main/.agents/devkit" && ln -s "$ROOT/universal-agent-devkit" "$D/main/.agents/devkit"
 G "$D/main" worktree add -q --detach "$D/side" main
 (cd "$D/side" && BASE_BRANCH=main bash "$DISPATCH" 5 > "$TMP/disp.out" 2>&1); rc=$?
 [ "$rc" = 64 ] && grep -q "run from the main checkout" "$TMP/disp.out" && ok "dispatch from a linked worktree: refused early, the main checkout named" \
   || fail "dispatch from a linked worktree: rc $rc: $(tail -1 "$TMP/disp.out")"
-git init -q --bare "$D/origin.git" && G "$D/main" remote add origin "$D/origin.git" && G "$D/main" push -q origin main:refs/heads/loop/issue-5
+G "$D/main" push -q origin main:refs/heads/loop/issue-5
 (cd "$D/main" && BASE_BRANCH=main bash "$DISPATCH" 5 > "$TMP/disp.out" 2>&1); rc=$?
 [ "$rc" = 64 ] && grep -q "already exists on origin" "$TMP/disp.out" && ok "dispatch with loop/issue-N on origin: refused (always a fresh start)" \
   || fail "dispatch with a remote leftover branch: rc $rc: $(tail -1 "$TMP/disp.out")"
 G "$D/main" remote set-url origin "$D/missing.git"
 (cd "$D/main" && BASE_BRANCH=main bash "$DISPATCH" 5 > "$TMP/disp.out" 2>&1); rc=$?
-[ "$rc" = 64 ] && grep -q "cannot reach origin" "$TMP/disp.out" && ok "dispatch with origin unreachable: refused with the reason" \
+[ "$rc" = 64 ] && grep -q "cannot reach origin.*missing.git" "$TMP/disp.out" && ok "dispatch with origin unreachable: refused with git's own reason" \
   || fail "dispatch with origin unreachable: rc $rc: $(tail -1 "$TMP/disp.out")"
 mkdir -p "$D/main/sub"
 (cd "$D/main/sub" && BASE_BRANCH=main bash "$DISPATCH" 5 > "$TMP/disp.out" 2>&1); rc=$?
