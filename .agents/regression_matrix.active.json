@@ -410,6 +410,21 @@
           "command": "bash tests/super-board/test_post_merge_clean.sh && bash tests/super-board/test_post_merge_squash_leftovers.sh && bash tests/super-board/test_post_merge_sweep_wiring.sh"
         }
       ]
+    },
+    {
+      "component": "super-board-scratch-config",
+      "watch_files": [
+        ".claude/bin/super-board-scratch-config.sh",
+        "tests/super-board/test_scratch_config.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SCRATCH-CONFIG-01",
+          "name": "merge gate scratch tree gets ignored local config, build inputs and the ignored hooks settings registers",
+          "command": "bash tests/super-board/test_scratch_config.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
