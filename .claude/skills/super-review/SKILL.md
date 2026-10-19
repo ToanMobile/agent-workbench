@@ -307,7 +307,13 @@ When invoked by super-board (env `SUPER_BOARD_RUN=1` or invocation contains "sup
 ### Lifecycle (Reviewer)
 See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the sub-steps:
 
-1. Worktree from current state of `issue-<N>-<slug>`.
+1. Worktree from current state of `issue-<N>-<slug>`, made by the DevKit and detached (the Reviewer commits nothing, and a branch
+   another lane's leftover worktree still holds cannot be checked out twice): `git fetch origin`, then
+   `agent-kit worktree add .claude/worktrees/issue-<N>-review --lane=review --base=origin/issue-<N>-<slug>` (no `agent-kit` on PATH:
+   `python3 .agents/devkit/scripts/git/worktree.py add` with the same arguments). It links the DevKit, copies the git-ignored config and
+   hooks, clones a Unity Library copy-on-write, takes no WORKTREE_MAX slot and marks the checkout the board's. Exit 4 = under the disk
+   floor: stop with its message, card and claims unchanged. Never a plain `git worktree add` or EnterWorktree (agent-workbench#93).
+   Clean up with `git worktree remove <path>`.
 2. **Gate 1 — thread scan.** Read threads and replies. [PR author notes](../super-board/references/pr-author-notes.md)
    alone are explanations, not findings or approval. Human questions or change requests
    in those threads still follow the normal review/blocking flow; the marker exempts no
@@ -321,7 +327,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
    **3b. Prior-report check** — load `prior_report` (see "Review remembers"); if present, round 1 checks each prior finding; any `not fixed` → re-open its thread, bounce by prefix, post the report, exit.
 4. Review code + tests.
 5. **Reviewer-side test rerun (always — closes Tester self-verification gap):**
-   - Pull `issue-<N>-<slug>` into review worktree.
+   - Bring the review worktree to the PR head: `git fetch origin && git checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the EXACT command from Tester's PR `Local tests:` line.
    - Green → continue. Red → open new `[qa]`-prefixed thread quoting failure, move card Review → QA with `loop:rebuild-N`, exit.
    - If QA includes `Runtime checks:`, follow
