@@ -280,6 +280,28 @@
       ]
     },
     {
+      "component": "super-board-diff-policy",
+      "watch_files": [
+        ".claude/bin/super-board-merge-policy.py",
+        ".claude/bin/super-board-github-read.py",
+        ".claude/bin/super-board-approval.py",
+        "tests/super-board/test_merge_policy_odd_newlines.sh",
+        "tests/super-board/test_upstream_66_67.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-POLICY-NL-01",
+          "name": "merge-policy sees always_human keywords after VT/FF/CR/NEL/U+2028, in ++ lines and across odd whitespace",
+          "command": "bash tests/super-board/test_merge_policy_odd_newlines.sh"
+        },
+        {
+          "id": "REG-SB-UPSTREAM-66-67-01",
+          "name": "github-read keeps odd-newline diffs byte-exact without halting; approval links body issues off the default base",
+          "command": "bash tests/super-board/test_upstream_66_67.sh"
+        }
+      ]
+    },
+    {
       "component": "mcp-servers/cc-switcher-mcp",
       "watch_files": [
         "mcp-servers/cc-switcher-mcp/*.js",
