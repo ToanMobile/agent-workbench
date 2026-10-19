@@ -279,8 +279,10 @@ fi
 
 # ---- chờ máy bớt tải trước verify ------------------------------------------------
 # 19/10: verify --full chạy lúc tải 1 phút ~60 (5 board cùng build), REG-DK-ALL-01 của PR #87 chọn 127 test và quá 900 s, thẻ #12
-# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX (mặc định 2 × số lõi), tối đa SB_MERGE_LOAD_WAIT_S (mặc định 900 s,
-# 0 = không chờ); hết giờ vẫn verify như cũ, không bỏ bước nào. Chờ trong khoá, sau các lối ra nhanh (đã merge, đóng, head đổi,
+# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX (mặc định 2 × số lõi), tối đa SB_MERGE_LOAD_WAIT_S, không đặt thì
+# `merge_load_wait_s` của config board (thiếu = 0 = không chờ: board tự bật; test dựng config tạm không có khoá nên không chờ, và
+# không phải đặt biến trong thư viện test dùng chung — sửa file đó kéo cả 291 test DevKit vào REG-DK-ALL-01, 19/10).
+# Hết giờ vẫn verify như cũ, không bỏ bước nào. Chờ trong khoá, sau các lối ra nhanh (đã merge, đóng, head đổi,
 # cần người) và TRƯỚC khi fetch/chốt base: verify chạy trên base mới nhất, không phải base của 15 phút trước. Head đổi lúc chờ thì
 # scratch dựng từ head cũ và `gh pr merge --match-head-commit` từ chối. Mốc "at" của khoá được làm mới mỗi lượt poll.
 # ponytail: gate khác xếp hàng ở acquire có thể hết LOCK_TIMEOUT (1800 s) và thoát 4 (giữ ở Review, wave sau thử lại) khi chờ lâu;
@@ -291,7 +293,8 @@ load_now() {
   else python3 -c 'import os; print(int(os.getloadavg()[0]))' 2>/dev/null || true; fi
 }
 wait_for_load() {
-  local max="${SB_MERGE_LOAD_MAX:-}" cap="${SB_MERGE_LOAD_WAIT_S:-900}" poll="${SB_MERGE_LOAD_POLL_S:-30}" waited=0 load nap
+  local max="${SB_MERGE_LOAD_MAX:-}" cap="${SB_MERGE_LOAD_WAIT_S:-}" poll="${SB_MERGE_LOAD_POLL_S:-30}" waited=0 load nap
+  [ -n "$cap" ] || cap=$(printf '%s\n' "$CONFIG_JSON" | jq -r '.merge_load_wait_s // 0' 2>/dev/null || echo 0)
   LOAD_WAITED=0
   [ "$DRY" -eq 1 ] && return 0
   # Tối đa 6 chữ số (không tràn số); 10# đọc 08 là tám (không có nó bash đọc bát phân và set -e dừng gate).

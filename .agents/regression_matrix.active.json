@@ -462,7 +462,6 @@
       "component": "super-board-merge-gate-load-wait",
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
-        "universal-agent-devkit/tests/lib/clean_git_env.sh",
         "tests/super-board/test_merge_gate_load_wait.sh"
       ],
       "mandatory_regression_tests": [

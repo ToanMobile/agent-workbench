@@ -39,6 +39,7 @@
     "checks": {},
     "human_steps": []
   },
+  "merge_load_wait_s": 900,
   "tick_seconds": 30,
   "no_progress_cycles": 240,
   "truth_gate": "non-trivial",
