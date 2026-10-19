@@ -79,7 +79,7 @@ export function phanTichDiff(diffText) {
   let newLine = 0;
   for (const raw of String(diffText || '').split('\n')) {
     if (raw.startsWith('diff --git')) {
-      const m = /b\/(.+)$/.exec(raw);
+      const m = /^diff --git a\/.* b\/(.+)$/.exec(raw);
       cur = { file: m ? m[1] : raw, removed: [], added: [] };
       files.push(cur);
     } else if (cur && raw.startsWith('@@')) {

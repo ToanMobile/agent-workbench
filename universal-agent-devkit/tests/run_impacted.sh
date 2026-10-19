@@ -108,7 +108,14 @@ trap 'rm -rf "$out"' EXIT
 run_one() { # <test> <out dir>
   local o
   o="$2/$(printf '%s' "$1" | tr '/' '_')"
-  if bash "$1" >"$o.log" 2>&1; then echo 0 >"$o.rc"; else echo 1 >"$o.rc"; fi
+  # Stop của Grok export GROK_HOOK_*; detect() coi mọi hook con là Grok và nhả phiên sau 3 lần chặn (exit 0).
+  # Bài thử nào cần Grok thì tự gán các biến đó. Không gỡ DEVKIT_GATE_DONE: gate truyền danh sách suite đã chạy.
+  # Slot riêng từng bài: --full của `sh`/`echo` không được chờ 2 slot Gradle/Unity của máy (Stop ngắt ở 600s).
+  # Bài nào tự export SB_HEAVY_SLOT_DIR thì dùng dir của nó (test_heavy_slot.sh).
+  mkdir -p "$o.slots"
+  if env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT -u HOOK_PPID \
+       SB_HEAVY_SLOT_DIR="$o.slots" \
+       bash "$1" >"$o.log" 2>&1; then echo 0 >"$o.rc"; else echo 1 >"$o.rc"; fi
 }
 export -f run_one
 parallel="" alone=""

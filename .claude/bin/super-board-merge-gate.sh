@@ -75,6 +75,9 @@
 #   3  PR is closed without a merge; no merge attempted
 #   4  could not take the lock within the timeout
 #   5  the base could not be merged in (real conflict) — needs a rebase pass
+#   1  could not read the PR head, resolve origin/<base>, or create the scratch
+#      worktree. Not a conflict and not a rebase pass (the lane treats only 2 and 5
+#      as a rebase pass).
 #   6  the PR head is not the commit that was reviewed — review evidence is void,
 #      the card goes back to Review (not Blocked, not a rebase pass)
 #   7  merge policy says a human merges this one (money / auth / destructive
@@ -266,7 +269,7 @@ python3 "$GITHUB_READ" --kind diff --meta "$META" -- pr diff "$PR" ${REPO:+--rep
 PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$META" --diff "$DIFF") || {
   echo "human-gate: policy — could not classify the PR (unreadable metadata)"
   say "merge policy could not be evaluated — a human merges this one"
-  needs_you_notify
+  # Không gửi nút Approve: chưa có approval-request (policy không đọc được thì không tạo được request).
   exit 7; }
 
 # The label is display-only. A request posted before `done` pins the exact head
@@ -297,8 +300,10 @@ fi
 
 # ---- chờ máy bớt tải trước verify ------------------------------------------------
 # 19/10: verify --full chạy lúc tải 1 phút ~60 (5 board cùng build), REG-DK-ALL-01 của PR #87 chọn 127 test và quá 900 s, thẻ #12
-# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX (mặc định 2 × số lõi), tối đa SB_MERGE_LOAD_WAIT_S (mặc định 900 s,
-# 0 = không chờ); hết giờ vẫn verify như cũ, không bỏ bước nào. Chờ trong khoá, sau các lối ra nhanh (đã merge, đóng, head đổi,
+# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX (mặc định 2 × số lõi), tối đa SB_MERGE_LOAD_WAIT_S, không đặt thì
+# `merge_load_wait_s` của config board (thiếu = 0 = không chờ: board tự bật; test dựng config tạm không có khoá nên không chờ, và
+# không phải đặt biến trong thư viện test dùng chung — sửa file đó kéo cả 291 test DevKit vào REG-DK-ALL-01, 19/10).
+# Hết giờ vẫn verify như cũ, không bỏ bước nào. Chờ trong khoá, sau các lối ra nhanh (đã merge, đóng, head đổi,
 # cần người) và TRƯỚC khi fetch/chốt base: verify chạy trên base mới nhất, không phải base của 15 phút trước. Head đổi lúc chờ thì
 # scratch dựng từ head cũ và `gh pr merge --match-head-commit` từ chối. Mốc "at" của khoá được làm mới mỗi lượt poll.
 # ponytail: gate khác xếp hàng ở acquire có thể hết LOCK_TIMEOUT (1800 s) và thoát 4 (giữ ở Review, wave sau thử lại) khi chờ lâu;
@@ -309,7 +314,8 @@ load_now() {
   else python3 -c 'import os; print(int(os.getloadavg()[0]))' 2>/dev/null || true; fi
 }
 wait_for_load() {
-  local max="${SB_MERGE_LOAD_MAX:-}" cap="${SB_MERGE_LOAD_WAIT_S:-900}" poll="${SB_MERGE_LOAD_POLL_S:-30}" waited=0 load nap
+  local max="${SB_MERGE_LOAD_MAX:-}" cap="${SB_MERGE_LOAD_WAIT_S:-}" poll="${SB_MERGE_LOAD_POLL_S:-30}" waited=0 load nap
+  [ -n "$cap" ] || cap=$(printf '%s\n' "$CONFIG_JSON" | jq -r '.merge_load_wait_s // 0' 2>/dev/null || echo 0)
   LOAD_WAITED=0
   [ "$DRY" -eq 1 ] && return 0
   # Tối đa 6 chữ số (không tràn số); 10# đọc 08 là tám (không có nó bash đọc bát phân và set -e dừng gate).
@@ -363,10 +369,10 @@ git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet
 # Chốt commit base một lần, merge đúng commit đó: verify đỏ thì đếm "chậm hơn base" theo chính nó. Đọc lại origin/<base> sau vài phút
 # verify có thể đã bị phiên khác fetch đi; suy từ HEAD^2 thì sai khi merge là fast-forward lên một merge commit (OCR 18/10).
 BASE_SHA=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || {
-  say "cannot resolve origin/${BASE} after fetch"; exit 5; }
+  say "cannot resolve origin/${BASE} after fetch"; exit 1; }
 
 git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {
-  say "could not create a scratch worktree for ${HEAD_REF}@${HEAD_SHA}"; exit 5; }
+  say "could not create a scratch worktree for ${HEAD_REF}@${HEAD_SHA}"; exit 1; }
 
 if ! git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>/dev/null; then
   CONFLICTS=$(git -C "$SCRATCH" diff --name-only --diff-filter=U | tr '\n' ' ')

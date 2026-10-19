@@ -320,7 +320,10 @@ def worktree(project: Path):
     finally:
         git(project, "worktree", "remove", "--force", str(box))
         shutil.rmtree(box, ignore_errors=True)
-        git(project, "worktree", "prune")
+        # Lệnh trên lỗi thì đăng ký của box còn: thư mục đã mất nên `worktree remove` gỡ đúng đăng ký đó (đã gỡ thì chỉ báo lỗi).
+        # Không `git worktree prune` toàn repo: nó xoá cả admin dir (reflog HEAD) của worktree KHÁC đã mất thư mục, commit chỉ
+        # reflog đó giữ thành unreachable rồi bị gc (issue #12 / #38)
+        git(project, "worktree", "remove", str(box))
 
 
 def devkit_links(project: Path) -> list:

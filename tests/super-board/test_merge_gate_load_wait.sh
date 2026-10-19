@@ -4,6 +4,7 @@
 # SB_MERGE_LOAD_MAX, có giới hạn SB_MERGE_LOAD_WAIT_S; hết giờ vẫn verify như cũ (không bỏ bước nào); --dry-run không chờ.
 # SB_MERGE_LOAD_FILE là móc test: đọc tải từ file thay cho os.getloadavg(). Ngưỡng thời gian tính theo poll, không theo giây
 # tuyệt đối: dưới tải cao riêng phần khởi động gate đã mất 4–5 s (review 19/10).
+# Mặc định tắt: board bật bằng merge_load_wait_s trong config; biến môi trường SB_MERGE_LOAD_WAIT_S ghi đè.
 # Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -102,6 +103,19 @@ grep -q "waiting for load" "$TMP/gate3.log" && fail "low load: the gate still wa
 d=$(( $(cat "$STARTED" 2>/dev/null || echo $((t0 + 9999))) - t0 ))
 [ "$d" -lt 25 ] && ok "low load: verify started without a poll (${d}s)" || fail "low load: verify started after ${d}s"
 ran "$rc" && ok "low load: verify ran (exit 11)" || fail "low load: gate exit $rc"
+
+# Ca 3b: không biến môi trường, config không có merge_load_wait_s → mặc định không chờ (test khác của gate không bị chậm).
+echo 99 > "$LOADF"; rm -f "$STARTED"
+( unset SB_MERGE_LOAD_WAIT_S; SB_MERGE_LOAD_POLL_S=1 gate ) >"$TMP/gate3b.log" 2>&1; rc=$?
+grep -q "waiting for load" "$TMP/gate3b.log" && fail "no merge_load_wait_s in the config, yet the gate waits" || ok "config without merge_load_wait_s: no wait"
+ran "$rc" && ok "config without merge_load_wait_s: verify ran (exit 11)" || fail "config without merge_load_wait_s: gate exit $rc"
+# Ca 3c: config bật merge_load_wait_s=3 (không biến môi trường) → chờ rồi verify.
+CFG_ON="$TMP/cfg-on.json"; jq '.merge_load_wait_s = 3' "$CFG" > "$CFG_ON"
+echo 99 > "$LOADF"; rm -f "$STARTED"
+( unset SB_MERGE_LOAD_WAIT_S; cd "$WT" && SB_MERGE_LOAD_POLL_S=1 bash "$GATE" --config "$CFG_ON" --pr 5 --expect-head "$H" ) >"$TMP/gate3c.log" 2>&1; rc=$?
+grep -q "waiting for load 99 to drop below 10 before verify (at most 3s)" "$TMP/gate3c.log" \
+  && ok "config merge_load_wait_s=3: the gate waits" || fail "config merge_load_wait_s=3 ignored: $(grep merge-gate "$TMP/gate3c.log" | head -3)"
+ran "$rc" && ok "config merge_load_wait_s=3: verify ran after the wait (exit 11)" || fail "config merge_load_wait_s=3: gate exit $rc"
 
 # Ca 4: SB_MERGE_LOAD_WAIT_S=0 tắt việc chờ; ca 5: --dry-run không chờ.
 echo 99 > "$LOADF"; rm -f "$STARTED"

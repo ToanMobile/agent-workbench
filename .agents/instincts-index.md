@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (436 dòng, 51.6 KB) · 54 mục
+> **Tệp gốc:** `.agents/instincts.md` (444 dòng, 53.0 KB) · 55 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -55,5 +55,6 @@
 - [INSTINCT-048] Hook Stop của phiên cha tự gộp worktree của agent con đang chạy — `sed -n '407,414p' .agents/instincts.md`
 - [INSTINCT-049] Gỡ một lần git từ chối có thể lộ ra việc ghi đè file bị ignore — `sed -n '415,422p' .agents/instincts.md`
 - [INSTINCT-050] Gate tin lệnh do chính thay đổi thêm vào: lệnh đó chạy trước suite base thì vô hiệu được suite base — `sed -n '423,431p' .agents/instincts.md`
-- [INSTINCT-051] Khoá dùng lại kết quả test băm cả file mà chính suite ghi lại thì không bao giờ khớp giữa hai checkout — `sed -n '432,436p' .agents/instincts.md`
+- [INSTINCT-051] Khoá dùng lại kết quả test băm cả file mà chính suite ghi lại thì không bao giờ khớp giữa hai checkout — `sed -n '432,439p' .agents/instincts.md`
+- [INSTINCT-052] Worktree do công cụ tự tạo thiếu phần cài DevKit bị ignore, và bài thử pass trên đường khác đường chạy… — `sed -n '440,444p' .agents/instincts.md`
 

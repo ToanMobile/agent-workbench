@@ -109,5 +109,46 @@ assert not os.path.lexists(os.path.join(wt, "Library")), "the half-cloned Librar
   && ok "cp -Rc fails after cloning: the copy's flags are cleared and the half Library is gone (the worktree stays removable)" \
   || fail "failed copy left a half Library: $(tail -3 "$TMP/out" | tr '\n' ' ') $(ls "$TMP/e-w" 2>&1 | tr '\n' ' ')"
 
+# 6. Hai lần clone không được cp -Rc cùng lúc. Khóa riêng UNITY_LIBRARY_COPY_LOCK, không phải khóa batch của Editor.
+unity f ""
+mkdir -p "$TMP/f-w"
+COPY_LOCK="$TMP/unity-library-copy.lock"
+python3 - "$COPY_LOCK" "$TMP/copy-held" "$TMP/copy-release" <<'PY' &
+import fcntl, os, sys, time
+path, held, release = sys.argv[1:]
+fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX)
+open(held, "w").close()
+while not os.path.exists(release):
+    time.sleep(0.05)
+os.close(fd)
+PY
+HPID=$!
+i=0
+while [ ! -f "$TMP/copy-held" ] && [ "$i" -lt 50 ]; do sleep 0.05; i=$((i + 1)); done
+if [ -f "$TMP/copy-held" ]; then
+  UNITY_LIBRARY_COPY_LOCK="$COPY_LOCK" python3 -I -c 'import sys
+sys.path.insert(0, sys.argv[1] + "/scripts/git")
+import worktree
+raise SystemExit(0 if worktree.copy_unity_library(sys.argv[2], sys.argv[3]) == ["Library"] else 1)' \
+    "$DEVKIT_DIR" "$TMP/f" "$TMP/f-w" >"$TMP/copy-wait.out" 2>&1 &
+  CPID=$!
+  sleep 0.4
+  if [ -d "$TMP/f-w/Library" ]; then
+    fail "Library cloned while UNITY_LIBRARY_COPY_LOCK was held"
+  else
+    ok "second Library clone waits while the copy lock is held"
+  fi
+  touch "$TMP/copy-release"
+  wait "$CPID"; rc=$?
+  [ "$rc" = 0 ] && [ -f "$TMP/f-w/Library/ArtifactDB" ] \
+    && ok "Library clone finishes after the copy lock is released" \
+    || fail "clone after release rc=$rc $(tail -3 "$TMP/copy-wait.out" | tr '\n' ' ')"
+else
+  fail "could not take the copy lock for the test"
+fi
+touch "$TMP/copy-release"
+wait "$HPID" 2>/dev/null || true
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_worktree_unity_library: PASS"; exit 0; } || { echo "test_worktree_unity_library: FAIL ($FAILS)"; exit 1; }

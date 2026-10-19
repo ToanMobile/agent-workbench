@@ -1104,7 +1104,9 @@ def config_sandbox(project_dir):
         restore_local_configs(snaps)
 
 
-_SCRIPT = r"((?:[\w.-]+/)*(?:tests|hooks/tests)/[\w.-]+\.sh)\b"
+# Một hoặc nhiều cấp dưới tests/ và hooks/tests/: tests/gates/*.sh từng không khớp (chỉ tests/*.sh),
+# nên DEVKIT_GATE_DONE bỏ sót và run_impacted chạy lại đúng script ma trận vừa chạy.
+_SCRIPT = r"((?:[\w.-]+/)*(?:tests|hooks/tests)/(?:[\w.-]+/)*[\w.-]+\.sh)\b"
 RAN_SCRIPT = re.compile(r"(?:^|[;&|(]\s*|\s)(?:ba|z)?sh\s+(?:-\w+\s+)*" + _SCRIPT
                         + r"|(?:^|[;&|(]\s*)\./" + _SCRIPT.replace("(", "(?:", 1).replace("(?:(?:", "((?:", 1))
 
@@ -1270,19 +1272,29 @@ def _ever_gated(project_dir):
     return recs is None or any(rec.get("project") == name for rec in recs)
 
 
+def _run_log_fp(value):
+    """24 hex, hoặc rỗng. Hai dấu chỉ so khi cả hai đúng dạng này: dòng cũ không có `fp` không bị coi là lệch."""
+    return value if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{24}", value) else ""
+
+
 def _sibling_logged_pass(path, r):
     """True khi dòng run-log ĐẦU TIÊN của project biên nhận r ghi sau thời điểm ghi biên nhận (trong 900 s) là chính lượt đã ghi nó
     (_log_gate_run chạy ngay sau write_full_pass_receipt) và là full / exit 0 / verdict PASS: suite thật sự chạy. Không chỉ "có một dòng
     PASS gần đó" (OCR 17/10: một PASS thật trên nội dung khác ít phút trước sẽ bảo lãnh cho biên nhận của một lượt REUSED). Lỗi đọc = False.
-    ponytail: hai worktree cùng basename ở hai thư mục cha ghi chung tên project trong run-log; thêm fingerprint vào dòng log nếu gặp."""
+    Hai worktree cùng basename ghi chung tên project: dòng và biên nhận đều có fingerprint mà khác nhau thì không mượn. Dòng cũ không
+    có `fp`, hoặc biên nhận không có fingerprint, giữ luật cũ."""
     try:
         t, name = float(r["time"]), os.path.basename(str(r["project"]))[:64]
     except (KeyError, TypeError, ValueError, OverflowError):
         return False
+    receipt_fp = _run_log_fp(r.get("fingerprint"))
     for rec in _run_log_records(_run_log_dir(os.path.dirname(os.path.dirname(path)))) or ():   # path = <git dir>/postfix-gate/full_pass.json
         epoch = rec.get("epoch")   # theo thứ tự ghi: dòng đầu tiên của project này từ lúc ghi biên nhận
         if rec.get("project") != name or epoch < int(t):
             continue
+        line_fp = _run_log_fp(rec.get("fp"))
+        if line_fp and receipt_fp and line_fp != receipt_fp:
+            return False   # cùng tên project, khác cây: không bảo lãnh
         return (epoch <= t + 900 and rec.get("mode") == "full" and rec.get("exit") == 0 and not isinstance(rec.get("exit"), bool)
                 and rec.get("verdict") == "PASS" and rec.get("reused_full_pass") is False)   # lượt dùng lại một phần cũng log PASS
                 # (một suite chạy thật) nhưng mang PASS mượn: không cho mượn tiếp (review + OCR 17/10). Dòng không có field: không mượn.
@@ -4487,6 +4499,16 @@ def run_commit_msg_check(msg_path, modified_files) -> int:
 # Heavy suites (a build tool, an engine) are left to the Stop gate and the nightly run; the
 # same split as scripts/stale_rerun.py and scripts/red_proof.py.
 PRECOMMIT_HEAVY = re.compile(r"gradlew|\bgradle\b|unity|-runTests|xcodebuild", re.I)
+# Slot máy (tối đa 2) chỉ khi lệnh là Gradle, Unity batch hoặc xcodebuild.
+# Chữ "unity" trong đường dẫn test (test_unity_*.sh) không phải Editor, không xin slot.
+_HEAVY_SUITE = re.compile(r"\b(?:gradlew|unity-batch(?:\.sh)?|xcodebuild)\b", re.I)
+
+
+def suites_need_heavy_slot(tests) -> bool:
+    for item in tests or ():
+        if _HEAVY_SUITE.search((item or {}).get("command") or ""):
+            return True
+    return False
 
 
 def _env_float(name, default):
@@ -4729,7 +4751,9 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
 # prints nothing, and drops every error (`except Exception` only, so Ctrl-C and SystemExit still pass). Its one write is < 3 KB to a file
 # opened without following a link and without blocking (the directory is agent-writable: a FIFO, a link, a directory or a hard-linked
 # file at the path is skipped); a short write is finished, a torn line is ended with a newline.
-# No file name, absolute path, commit message or session id is recorded. Rotation: above RUN_LOG_MAX_BYTES the newest lines are kept.
+# No file name, absolute path, commit message or session id is recorded. Additive (19/10), readers of the old fields ignore them:
+# `fp` is the tree fingerprint main() already took (24 hex, or "") and `exit_reason` is a short token (pass, fail, uncovered, …).
+# Neither carries a path. push_gate still matches the old fields only. Rotation: above RUN_LOG_MAX_BYTES the newest lines are kept.
 # `steps` (_lap, below): a fixed set of 12 phase names with seconds rounded to 0.1, ~200 bytes; the size cap below cuts `suites`, never them.
 # Retention (measured line sizes: 2 suites ~400 B, 12 suites ~760 B, 40 suites ~1.8 KB (cut to 3 KB)): RUN_LOG_KEEP_BYTES 1 MiB holds
 # ~2600 / ~1380 / ~580 runs, and a rotation (a rewrite of ~1 MiB) happens about every 650 / 350 / 150 runs.
@@ -4908,13 +4932,16 @@ def _gate_busy(run_tests, lock_held, read_only, regression_tests):
 
 
 def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
-                  cache, run_tests, force_reason, no_test_only, project_dir, git_dir, read_only=False):
+                  cache, run_tests, force_reason, no_test_only, project_dir, git_dir, read_only=False, log_fp="", exit_reason=""):
     """Append the run log line (see above). Takes only values the gate already has and reads nothing; `no_test_only` is main()'s own
     `docs_only` (every changed file passes needs_no_test()), while the logged `docs_only` is stricter: every changed file, rename source
-    included, is documentation by DOC_EXT / DOC_NAMES. Any error is dropped: the verdict and exit code are decided before this runs."""
+    included, is documentation by DOC_EXT / DOC_NAMES. `log_fp` and `exit_reason` are values main() already holds: this function does not
+    fingerprint the tree and does not decide the gate. Any error is dropped: the verdict and exit code are decided before this runs."""
     try:
         if not (run_tests and git_dir):
             return
+        fp = _run_log_fp(log_fp)   # 24 hex hoặc rỗng: không bao giờ là đường dẫn
+        reason = exit_reason if isinstance(exit_reason, str) and re.fullmatch(r"[a-z_]{1,32}", exit_reason) else ""
         files = [str(f) for f in modified_files]
         # a rename's SOURCE is a changed file too (modified_files holds only the destination; a deleted file is already in it)
         sources = sorted({str(RENAME_SOURCES[f]) for f in files if f in RENAME_SOURCES} - set(files))
@@ -4930,6 +4957,7 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             verdict = "DEFERRED"
         elif exit_code == 0 and cache and not any(s[2] is not None for s in suites):
             verdict = "REUSED"
+            reason = "reused"   # nhánh này quyết trong logger: lý do main đưa vào không còn mô tả đúng lượt
         elif exit_code == 0:
             verdict = "PASS"
         else:
@@ -4944,6 +4972,8 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             "source": "hook" if (args.session or args.transcript) else "cli",
             "exit": int(exit_code),
             "verdict": verdict,
+            "fp": fp,
+            "exit_reason": reason,
             "deferred": bool(deferred_by),
             "busy": _gate_busy(run_tests, lock_held, read_only, regression_tests),
             "reused_full_pass": bool(cache),
@@ -5643,6 +5673,7 @@ def main():
     # suite. DEVKIT_GATE_PARALLEL=0 turns it off; a number caps the group (default 6).
     # ponytail: a flaky re-run of a grouped suite sees os.environ's DEVKIT_GATE_DONE, the scripts of the suites run alone
     # before it, not its group mates' (it re-runs them: slower, never less checked); upgrade if grouped suites retry often.
+    # run_impacted.sh không vào nhóm này (may_join): 10 job của nó cộng GATE/HOOK đẩy suite quá 900 s.
     # ponytail: a grouped suite's recorded duration is wall time under contention (GATE-02 20 s alone, 26 s in the group), so
     # pre-commit's "skip a suite that took > DEVKIT_PRECOMMIT_MAX_S" can fire earlier; the Stop and push gates still run it.
     try:
@@ -5663,6 +5694,11 @@ def main():
     def may_join(t):
         # flagged, and not a suite that must run alone: Gradle/Unity/device runs share build state (build/test-results)
         c = t.get("command") or ""
+        # run_impacted.sh tự mở tới 10 job. Nhét nó vào nhóm parallel_safe (cùng GATE/HOOK) đo được
+        # ~330 s một mình thành TIMEOUT đúng 900 s (runs.jsonl 19/10, wall 15–20 phút).
+        # ponytail: chỉ script này; suite fan-out khác vẫn phải bỏ cờ. Nâng cấp khi có script thứ hai.
+        if re.search(r"(?:^|[\s;|&])(?:\S*/)?run_impacted\.sh(?:$|[\s;|&])", c):
+            return False
         return bool(parallel_cap > 1 and t.get("parallel_safe") and not (PRECOMMIT_HEAVY.search(c) or DEVICE_SUITE.search(c)))
 
     def share_result(t, prev):
@@ -5796,12 +5832,13 @@ def main():
             share_result(t, prev)
         deferred.clear()
 
-    # Giữ heavy slot toàn máy (tối đa 2) khi thực sự có suite cần chạy ở chế độ --full / --force-full.
+    # Giữ heavy slot toàn máy (tối đa 2) khi --full / --force-full, hoặc khi suite chạy Gradle / Unity batch / xcodebuild.
     heavy_slot_mod = None
     heavy_slot_handle = None
     heavy_denied = False
-    if (run_tests and lock_held and not nothing_to_run
-            and (getattr(args, "full", False) or getattr(args, "force_full", False) or bool(force_reason))):
+    need_heavy = (getattr(args, "full", False) or getattr(args, "force_full", False) or bool(force_reason)
+                  or suites_need_heavy_slot(to_run))
+    if run_tests and lock_held and not nothing_to_run and need_heavy:
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             import heavy_slot as _hs  # noqa: PLC0415 - sibling module in bin/
@@ -6118,16 +6155,21 @@ def main():
     budget_cut = False  # exit 4 because the time budget stopped a suite from starting: same, do not write or delete
     slot_busy = False   # exit 4 because the machine-wide --full slots stayed busy: same, do not write or delete
     project_gone = not Path(project_dir).is_dir()   # W1 R5a: `worktree finish`/`remove` took it while the suites ran
+    exit_reason = "pass"
     if project_gone:
+        exit_reason = "project_gone"
         verdict_text, verdict_color, exit_code = tr(
             "CHƯA XÁC MINH — thư mục project đã bị gỡ trong lúc gate chạy (worktree finish/remove): không ghi kết quả nào vào đó",
             "UNVERIFIED — the project folder was removed while the gate ran (worktree finish/remove): no result is recorded there"), YELLOW, 1
     elif not static_ok or (run_tests and not tests_ok):
+        exit_reason = "fail"
         verdict_text, verdict_color, exit_code = tr("REJECT — CẦN KHẮC PHỤC CÁC ĐIỂM CHƯA ĐẠT", "REJECT — FIX THE FAILED CHECKS"), RED, 1
     elif matrix_problem:
+        exit_reason = "matrix"
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — regression matrix không tin được (xem mục 4): người review rồi commit file ma trận — gate chỉ tin ma trận đã commit, hoặc giống từng byte bản `agent-kit matrix`",
                                                     "UNVERIFIED — regression matrix is not trusted (see section 4): have a human review and commit the matrix file — the gate trusts only a committed matrix, or one byte-identical to `agent-kit matrix`"), YELLOW, 2
     elif tests_touched:
+        exit_reason = "edited_test"
         # Kept UNVERIFIED (an edited test can weaken the very assertion the run relies on);
         # the verdict names the one cure: a person reads that diff, or it gets committed.
         in_range = bool(set(tests_touched) & set(since_touched))
@@ -6138,27 +6180,35 @@ def main():
         verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần người review diff test (`{touched_diff}`): Agent tự auto-duyệt nếu thấy tốt hơn/hợp lý (dùng --auto-approve-tests; hook Stop đọc một dòng riêng `AUTO-APPROVE: <đường dẫn>` trong câu trả lời của chính phiên; KHÔNG hỏi phiền người dùng) — {cure_vi} — rồi chạy lại gate",
                                                     f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: have a human review the test diff (`{touched_diff}`): agent auto-approves if evaluated better/safe (use --auto-approve-tests; the Stop hook reads a line of its own `AUTO-APPROVE: <path>` in this session's reply) — {cure_en} — then re-run the gate"), YELLOW, 2
     elif unverified:
+        exit_reason = "dry_run"
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — test hồi quy chưa chạy (dry-run)", "UNVERIFIED — regression tests not run (dry-run)"), YELLOW, 2
     elif unreadable:
+        exit_reason = "unreadable"
         verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(unreadable)} file không đọc được để quét", f"UNVERIFIED — {len(unreadable)} files could not be read for scanning"), YELLOW, 2
     elif orphan_block:
+        exit_reason = "orphan"
         shown = ", ".join(orphans_new[:5]) + (" …" if len(orphans_new) > 5 else "")
         verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(orphans_new)} file test MỚI mà không suite nào của ma trận chạy ({shown}: không rule nào watch, không suite nào nhắc tên): gate sẽ không bao giờ chạy lại nó — {orphan_fix} (cố ý: --allow-orphan-tests)",
                                                     f"UNVERIFIED — {len(orphans_new)} NEW test files that no matrix suite runs ({shown}: no rule watches them, no suite names them): the gate would never run them again — {orphan_fix} (on purpose: --allow-orphan-tests)"), YELLOW, 2
     elif uncovered and not no_coverage:
+        exit_reason = "uncovered"
         verdict_text, verdict_color, exit_code = f"CHƯA XÁC MINH — {len(uncovered)} file code thay đổi chưa có test hồi quy (thêm vào regression_matrix.json, hoặc --allow-no-tests)", YELLOW, 2
     elif no_coverage:
+        exit_reason = "no_match"
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — không có test hồi quy nào khớp thay đổi (--allow-no-tests để chấp nhận)", "UNVERIFIED — no regression test matches the change (--allow-no-tests to accept)"), YELLOW, 2
     elif run_tests and tests_untested and all(t.get("label") == "BUSY" for t in tests_untested):
+        exit_reason = "busy"
         verdict_text, verdict_color, exit_code = tr("UNTESTED — một lượt chạy test khác đang giữ khoá dự án (TEST_RUN_LOCK_WAIT_S) — chạy lại sau; KHÔNG phải PASS",
                                                     "UNTESTED — another test run holds the project lock (TEST_RUN_LOCK_WAIT_S) — run again later; NOT a PASS"), YELLOW, 4
         lock_busy = True
     elif run_tests and any(t.get("label") == "SLOT" for t in tests_untested):
+        exit_reason = "slot"
         verdict_text, verdict_color, exit_code = tr(
             "UNTESTED — 2 slot --full toàn máy đang bận hết thời gian chờ — chạy lại sau; KHÔNG phải PASS",
             "UNTESTED — both machine-wide --full slots stayed busy past the wait — run again later; NOT a PASS"), YELLOW, 4
         slot_busy = True
     elif run_tests and any(t.get("label") == "BUDGET" for t in tests_untested):
+        exit_reason = "budget"
         left = ", ".join(t["id"] or "?" for t in tests_untested if t.get("label") == "BUDGET")
         verdict_text, verdict_color, exit_code = tr(
             f"UNTESTED — hết ngân sách thời gian ({budget_s:.0f}s, GATE_TOTAL_BUDGET_S): {left} chưa chạy — chạy `postfix-gate --run-tests --full`; KHÔNG phải PASS",
@@ -6176,7 +6226,9 @@ def main():
             if stale_names else
             tr(f"UNTESTED — {names} không chạy được trên máy này (thiếu công cụ/thiết bị); KHÔNG phải PASS",
                f"UNTESTED — {names} cannot run on this machine (missing tool/device); NOT a PASS")), YELLOW, 4
+        exit_reason = "stale" if stale_names else "missing_tool"
     elif impacted_run:
+        exit_reason = "impacted"
         # Exit 0 like any PASS (the Stop hook lets the turn end), but never worded as the
         # handover verdict: tests outside the selection did not run.
         verdict_text, verdict_color, exit_code = tr(
@@ -6186,6 +6238,7 @@ def main():
         verdict_text, verdict_color, exit_code = tr("PASS — ĐỦ ĐIỀU KIỆN NGHIỆM THU & BÀN GIAO", "PASS — READY FOR ACCEPTANCE & HANDOVER"), GREEN, 0
 
     if deferred_by and exit_code == 0:
+        exit_reason = "deferred"
         # --full was deferred for sibling sessions: a partial PASS, never the handover verdict.
         verdict_text = tr(
             f"PASS (hoãn --full: phiên {', '.join(deferred_by)} còn hoạt động) — CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU: không ghi receipt; chạy lại ở phiên cuối hoặc thêm --force-full",
@@ -6198,6 +6251,7 @@ def main():
                 f"CHƯA NGHIỆM THU (exit 5) — --full bị hoãn: phiên {', '.join(deferred_by)} còn hoạt động; CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU, không ghi receipt: chạy lại ở phiên cuối hoặc thêm --force-full",
                 f"NOT ACCEPTED (exit 5) — --full deferred: session {', '.join(deferred_by)} still active; NOT READY FOR ACCEPTANCE, no receipt written: re-run in the last session or add --force-full")
     if read_only and exit_code == 0 and force_reason and not impacted_run and not deferred_by:
+        exit_reason = "read_only"
         # a forced run that only read what it re-used wrote no receipt: the checks passed, the acceptance asked for did not happen (as --full deferred,
         # but exit 0 as before: K6 pins it; the Stop hook never passes --full). XONG needs a receipt of this turn.
         verdict_text, verdict_color = tr(
@@ -6376,9 +6430,14 @@ def main():
             log_warn(tr("Không ghi bài học vào instincts.md vì gate chưa PASS.", "Lesson not recorded in instincts.md: the gate did not PASS."))
 
     # Last: the run log (data only, see _log_gate_run). Plain names only: nothing here can fail before the function's own guard.
+    # Fingerprint đã lấy trước suite thì dùng lại. Chỉ khi chưa có (Stop không --full, không ngân sách) mới lấy một lần ở đây.
     _lap("report")
+    log_fp = tested_fp or budget_fp or ""
+    if run_tests and not _run_log_fp(log_fp):
+        log_fp = tree_fp_of(project_dir)
     _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
-                  cache, run_tests, force_reason, docs_only, project_dir, git_dir, read_only=read_only)
+                  cache, run_tests, force_reason, docs_only, project_dir, git_dir, read_only=read_only,
+                  log_fp=log_fp, exit_reason=exit_reason)
     return exit_code
 
 
