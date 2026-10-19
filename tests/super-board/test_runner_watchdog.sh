@@ -26,6 +26,11 @@ kill_tree() {   # kill_tree <pid>: PID đã ghi lại và các con trực tiếp
   kill "$1" $kids 2>/dev/null || true
 }
 cleanup() {
+  # Mọi runner watchdog đã spawn (dòng "new pid N" trong log), kể cả khi assert fail giữa chừng: chỉ PID còn là runner
+  # của repo giả này.
+  for p in $(sed -n 's/.*new pid \([0-9][0-9]*\).*/\1/p' "${WLOG:-/nonexistent}" 2>/dev/null); do
+    case "$(ps -ww -o command= -p "$p" 2>/dev/null)" in *"$TMP/"*super-board-run.sh*) PIDS="$PIDS $p" ;; esac
+  done
   for p in $PIDS; do kill_tree "$p"; done
   [ -n "${KEEP:-}" ] && echo "kept $TMP" || rm -rf "$TMP"
 }
@@ -102,6 +107,8 @@ mkdir -p "$R/.claude/worktrees/evil"
 printf '#!/usr/bin/env bash\n: > "%s"\nexit 1\n' "$TMP/pathinjected" > "$R/.claude/worktrees/evil/gh"
 chmod +x "$BIN"/* "$TMP/stub"/* "$R/.claude/worktrees/evil/gh"
 
+# Runner và watchdog cần jq, git, python3 thật (gh/claude/launchctl là stub).
+for c in jq git python3; do command -v "$c" >/dev/null 2>&1 || { echo "• skip test_runner_watchdog: $c not installed"; exit 0; }; done
 # An toàn trước tiên: stub nào không che được lệnh thật thì dừng, không chạy runner.
 for c in gh claude launchctl; do
   got=$(env PATH="$TMP/stub:$PATH" bash -c "type -P $c")
@@ -109,7 +116,7 @@ for c in gh claude launchctl; do
 done
 
 ENVV=(-u SB_GITHUB_READ_STRICT -u POSTFIX_GATE_FORCE_FULL -u SB_DAEMON -u SB_WATCHDOG_START -u SB_WATCHDOG_AUTOINSTALL
-  -u JAVA_HOME -u ANDROID_HOME -u ANDROID_SDK_ROOT -u STUB_WRITE_MARK -u STUB_CARD_FAIL
+  -u JAVA_HOME -u ANDROID_HOME -u ANDROID_SDK_ROOT -u STUB_WRITE_MARK -u STUB_CARD_FAIL -u CLAUDE_CONFIG_DIR -u DEVKIT_LANG
   HOME="$TMP/home" PATH="$TMP/stub:$PATH" SB_ACCOUNT_POOL="$TMP/no-pool" SB_STATE_DIR="$TMP/home/sb"
   SB_LAUNCH_AGENTS_DIR="$TMP/LaunchAgents" STUB_HALT="$TMP/halt" STUB_CALLS="$TMP/calls"
   STUB_STATE="$TMP/repo/.claude/super-board/runner/t.state")
@@ -277,6 +284,19 @@ else
   fail "same-second start did not finish"; kill_tree "$RP"
 fi
 
+# ── 6g. tick_seconds không hợp lệ: sleep tự lỗi (không phải bị kill) thì không được quay vòng đọc GitHub liên tục ────
+R3="$TMP/repo3"; mkdir -p "$R3/.claude/bin" "$R3/.claude/super-board/configs"
+cp "$BIN"/super-board-* "$R3/.claude/bin/"
+sed 's/"tick_seconds": 30/"tick_seconds": "abc"/' "$R/.claude/super-board/configs/t.json" > "$R3/.claude/super-board/configs/t.json"
+( ( cd "$R3" && exec env "${ENVV[@]}" SB_DAEMON=1 bash "$R3/.claude/bin/super-board-run.sh" t ) > "$TMP/run12.out" 2>&1 & echo $! > "$TMP/rp" )
+RP=$(cat "$TMP/rp"); PIDS="$PIDS $RP"
+wait_for 20 '[ "$(ticks "$TMP/run12.out")" -ge 1 ]'
+sleep 4
+n=$(ticks "$TMP/run12.out")
+kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+[ "$n" -le 2 ] && ok "an invalid tick_seconds does not spin the loop ($n ticks in ~4 s)" \
+  || fail "invalid tick_seconds: $n ticks in ~4 s (busy loop reading GitHub)"
+
 # ── 6f. Ctrl-C trên một lần chạy foreground là người dùng dừng: STATE=stopped, watchdog không khởi động lại ─────────
 # Runner chạy trong process group riêng với SIGINT mặc định (như foreground ở terminal); SIGINT gửi cho cả group.
 OUT6F="$TMP/run10.out"
@@ -310,6 +330,7 @@ set_state() {   # set_state <pid> <STATE> [RC] [DAEMON]
   # Đầu ENV_PATH là một thư mục trong worktree của worker (có gh giả): watchdog phải bỏ nó. LOG ngoài thư mục log của
   # board: watchdog phải ghi vào log mặc định.
   printf 'DISPATCHES=7\nNO_PROGRESS=4\nENV_PATH=%s\nENV_JAVA_HOME=/opt/test-jdk\n' "$R/.claude/worktrees/evil:$TMP/stub:$PATH" >> "$STATE"
+  printf 'ENV_CLAUDE_CONFIG_DIR=%s\n' "$R/.claude/worktrees/evil/cfg" >> "$STATE"   # thư mục cấu hình (hooks) của worker
   sed -i '' "s#^LOG=\$#LOG=$TMP/outside.log#" "$STATE"
   # Dòng do worker cài vào: watchdog không được đưa BASH_ENV vào runner (bash chạy file đó lúc khởi động).
   printf 'ENV_BASH_ENV=%s\n' "$TMP/inject.sh" >> "$STATE"
@@ -358,6 +379,8 @@ grep -q 'restarted' "$WLOG" 2>/dev/null && ok "restart logged to $(basename "$WL
   || fail "restarted runner ran a gh planted in the repo's worktrees through the recorded PATH"
 [ ! -e "$TMP/outside.log" ] && ok "a LOG outside the board's log folders is ignored (default runner.log used)" \
   || fail "restarted runner wrote to the LOG path planted in the record"
+[ -z "$(field ENV_CLAUDE_CONFIG_DIR "$STATE")" ] && ok "a CLAUDE_CONFIG_DIR inside the repo is not passed to the restarted runner" \
+  || fail "restarted runner got CLAUDE_CONFIG_DIR=$(field ENV_CLAUDE_CONFIG_DIR "$STATE") from the record"
 [ ! -e "$TMP/injected" ] && ok "an ENV_BASH_ENV line planted in the record is not passed to the restarted runner" \
   || fail "watchdog passed ENV_BASH_ENV from the record: injected code ran in the restarted runner"
 
@@ -399,6 +422,14 @@ printf 'RESTARTS=1\nLAST_RESTART=1\nVERDICT=\nSPAWNED=%s\n' "$E" > "$WD"
 expect_no_restart "the runner it started died before recording itself"
 grep -q 'exited before recording itself' "$WLOG" 2>/dev/null && ok "spawn-died logged" || fail "spawn-died not logged"
 
+# Runner watchdog vừa spawn còn sống nhưng chưa ghi bản ghi (đang khởi động): không spawn runner thứ hai.
+mkdir -p "$TMP/fake2"; printf '#!/usr/bin/env bash\nsleep 300\n' > "$TMP/fake2/super-board-run.sh"
+FR=$( (bash "$TMP/fake2/super-board-run.sh" >/dev/null 2>&1 & echo $!) ); PIDS="$PIDS $FR"
+dead_pid; set_state "$D" crashed 143
+printf 'RESTARTS=1\nLAST_RESTART=1\nVERDICT=\nSPAWNED=%s\n' "$FR" > "$WD"
+expect_no_restart "the runner it spawned is alive but has not recorded itself yet"
+kill_tree "$FR"
+
 # Hai `check` cùng lúc (launchd + chạy tay): đúng một lần khởi động lại.
 rm -f "$WD"; dead_pid; set_state "$D" crashed 143
 n0=$(restarts_logged); wd & wd & wait
@@ -431,9 +462,13 @@ wait_for 20 '! alive "$RP"' || kill_tree "$RP"
 
 # ── 8. install / status / uninstall (LaunchAgents và launchctl là stub) ────────────────────────────────────────────
 # Repo trong thư mục tạm, không có SB_LAUNCH_AGENTS_DIR: install từ chối, không ghi plist vào ~/Library/LaunchAgents.
-out=$( (cd "$R" && run_env SB_LAUNCH_AGENTS_DIR= bash "$BIN/super-board-watchdog.sh" install t) 2>&1 ); rc=$?
-[ "$rc" -ne 0 ] && [ ! -e "$TMP/home/Library/LaunchAgents/$WLABEL.plist" ] && printf '%s' "$out" | grep -q 'refusing to install' \
-  && ok "install refuses a temporary checkout (no real LaunchAgent pointing at it)" || fail "install from a temp dir: rc=$rc out=$out"
+case "$TMP/" in
+  /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*)
+    out=$( (cd "$R" && run_env SB_LAUNCH_AGENTS_DIR= bash "$BIN/super-board-watchdog.sh" install t) 2>&1 ); rc=$?
+    [ "$rc" -ne 0 ] && [ ! -e "$TMP/home/Library/LaunchAgents/$WLABEL.plist" ] && printf '%s' "$out" | grep -q 'refusing to install' \
+      && ok "install refuses a temporary checkout (no real LaunchAgent pointing at it)" || fail "install from a temp dir: rc=$rc out=$out" ;;
+  *) echo "• skip install-refusal case: TMPDIR ($TMP) is not a known temporary prefix" ;;
+esac
 
 PL="$TMP/LaunchAgents/$WLABEL.plist"
 rm -f "$PL"; : > "$TMP/calls"

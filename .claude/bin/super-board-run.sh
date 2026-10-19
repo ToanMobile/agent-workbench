@@ -375,7 +375,13 @@ tick_sleep() {
   # super-board-stop.sh (kiểm ở đầu mỗi tick) mới dừng vòng lặp.
   local rc=0
   sleep "$1" || rc=$?
-  [ "$rc" -eq 0 ] || log "⚠ sleep ${1}s ended early (rc=${rc}) — runner keeps going; stop a board only with super-board-stop.sh"
+  if [ "$rc" -gt 128 ]; then
+    log "⚠ sleep ${1}s killed by signal $((rc - 128)) — runner keeps going; stop a board only with super-board-stop.sh"
+  elif [ "$rc" -ne 0 ]; then
+    # sleep tự lỗi (tick_seconds không hợp lệ): không được quay vòng không nghỉ, đọc GitHub liên tục.
+    log "⚠ sleep '${1}' failed (rc=${rc}): check tick_seconds in the config; sleeping 60s instead"
+    sleep 60 || true
+  fi
 }
 
 gh_rate_guard() {

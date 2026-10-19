@@ -267,6 +267,7 @@
         ".claude/bin/super-board-stop.sh",
         ".claude/bin/super-board-watchdog.sh",
         ".claude/bin/super-board-setup.py",
+        ".claude/bin/super-board-gh-guard.sh",
         "universal-agent-devkit/scripts/governance/super_board_all.py",
         "tests/super-board/test_runner_watchdog.sh"
       ],

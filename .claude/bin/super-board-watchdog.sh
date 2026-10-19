@@ -99,7 +99,12 @@ runner_env() {
   ENVV=()
   for k in $RUNNER_ENV_KEYS; do
     v=$(field "ENV_$k" "$STATE")
-    [ "$k" != PATH ] || v=$(safe_path "$v")
+    case "$k" in
+      DEVKIT_LANG) ;;
+      PATH) v=$(safe_path "$v") ;;
+      # Biến đường dẫn (JDK, SDK, thư mục cấu hình claude có hooks, script pool account): cùng luật với PATH.
+      *) v=$(safe_path "$v"); case "$v" in *:*) v="" ;; esac ;;
+    esac
     [ -z "$v" ] || ENVV+=("$k=$v")
   done
 }
@@ -176,6 +181,11 @@ check() {
   esac
   # Runner watchdog vừa khởi động đã chết trước khi ghi bản ghi của nó (lỗi config, verification-readiness, trước trap
   # EXIT): khởi động lại chỉ lặp lại lỗi đó.
+  # Runner watchdog vừa spawn còn sống mà chưa ghi bản ghi: đang khởi động, không spawn thêm runner thứ hai.
+  if [ -n "$SPAWNED" ] && [ "$pid" != "$SPAWNED" ] && runner_alive "$SPAWNED"; then
+    verdict starting "runner pid $SPAWNED started by the watchdog is still starting (no record yet)"
+    return 0
+  fi
   if [ -n "$SPAWNED" ] && [ "$pid" != "$SPAWNED" ] && ! kill -0 "$SPAWNED" 2>/dev/null; then
     t=$(field LOG "$STATE")
     verdict spawn-died "runner pid $SPAWNED started by the watchdog exited before recording itself (config or readiness error, see ${t:-docs/super-board/runner.log}) — not restarted until an explicit super-board run"
