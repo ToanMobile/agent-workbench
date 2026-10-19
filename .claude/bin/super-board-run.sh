@@ -931,8 +931,10 @@ runner_state_write() {
   # bộ đếm chi tiêu (DISPATCHES, NO_PROGRESS, PAUSE_UNTIL) theo runner qua lần watchdog khởi động lại, để trần
   # max_dispatches và cổng RUNAWAY không bị một lần crash đặt lại về 0. ENV_* là môi trường của lần khởi động tường
   # minh (PATH, JDK, Android SDK): launchd chỉ có PATH tối thiểu, watchdog trả lại các biến này cho runner nó khởi động.
+  # Ghi hỏng (đĩa đầy, thư mục không ghi được) không được giết runner dưới `set -e`: chính kiểu chết im lặng mà bản ghi
+  # này sinh ra để phát hiện. Cảnh báo một lần, bỏ file tạm, đi tiếp (không có bản ghi thì watchdog không khởi động lại).
   local tmp="$RUNNER_STATE.$$"
-  {
+  if { {
     printf 'PID=%s\nSLUG=%s\nSTARTED=%s\nDAEMON=%s\nLOG=%s\nSTATE=%s\n' \
       "$$" "$CONFIG_SLUG" "$RUNNER_STARTED" "${SB_DAEMON:-0}" "$RUNNER_LOG" "$1"
     printf 'DISPATCHES=%s\nNO_PROGRESS=%s\nPAUSE_UNTIL=%s\n' \
@@ -940,7 +942,13 @@ runner_state_write() {
     printf 'ENV_PATH=%s\nENV_JAVA_HOME=%s\nENV_ANDROID_HOME=%s\nENV_ANDROID_SDK_ROOT=%s\n' \
       "$PATH" "${JAVA_HOME:-}" "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}"
     [ -z "${2:-}" ] || printf 'RC=%s\nENDED=%s\n' "$2" "$(date +%s)"
-  } > "$tmp" && mv -f "$tmp" "$RUNNER_STATE"
+  } > "$tmp" && mv -f "$tmp" "$RUNNER_STATE"; } 2>/dev/null; then
+    STATE_WRITE_WARNED=""
+    return 0
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+  [ -n "${STATE_WRITE_WARNED:-}" ] || log "⚠ could not write $RUNNER_STATE (disk full? unwritable?): the watchdog cannot see this runner"
+  STATE_WRITE_WARNED=1
 }
 
 state_num() {
@@ -1002,16 +1010,27 @@ RUNNER_STARTED=$(date +%s)
 # stdout của runner (log nohup) để watchdog khởi động lại vào đúng file đó; không phải file thường thì để trống.
 RUNNER_LOG=$(lsof -a -p $$ -d 1 -Fn 2>/dev/null | sed -n 's/^n//p' | head -1) || RUNNER_LOG=""
 [ -f "$RUNNER_LOG" ] || RUNNER_LOG=""
-mkdir -p "$RUNNER_DIR"
+mkdir -p "$RUNNER_DIR" 2>/dev/null || log "⚠ cannot create $RUNNER_DIR: no runner record, the watchdog cannot see this runner"
+stop_in_flight() {
+  # 0 khi stop marker là của một super-board-stop.sh chạy trùng lúc runner này khởi động: ghi sau giây ra đời, hoặc cùng
+  # giây mà tiến trình stop.sh đó (PID= trong marker) còn sống. Cùng giây và stop.sh đã xong là `stop && run` tuần tự:
+  # lần khởi động này mới hơn. Không đọc được mtime thì coi như chạy trùng (không xoá marker).
+  local t p
+  t=$(stat -f %m "$STOP_MARK" 2>/dev/null) || return 0
+  [ "$t" -le "$RUNNER_BORN" ] || return 0
+  [ "$t" -eq "$RUNNER_BORN" ] || return 1
+  p=$(sed -n 's/^PID=//p' "$STOP_MARK" 2>/dev/null | head -1) || p=""
+  [ -n "$p" ] && kill -0 "$p" 2>/dev/null
+}
 if [ "${SB_WATCHDOG_START:-0}" = "1" ]; then
   START_TAG=" (watchdog restart)"
   if [ -e "$STOP_MARK" ]; then
     log "🛑 watchdog restart refused: board ${CONFIG_SLUG} was stopped by the user ($STOP_MARK); only an explicit super-board run starts it"
     exit 0
   fi
-elif [ -e "$STOP_MARK" ] && [ "$(stat -f %m "$STOP_MARK" 2>/dev/null || echo "$RUNNER_BORN")" -ge "$RUNNER_BORN" ]; then
-  # Marker ghi từ lúc runner này ra đời trở đi (không đọc được mtime cũng tính vậy): stop chạy trùng lúc khởi động
-  # tường minh, stop thắng. Xoá nó ở đây thì trap EXIT ghi crashed và watchdog khởi động lại board vừa bị dừng.
+elif [ -e "$STOP_MARK" ] && stop_in_flight; then
+  # Stop chạy trùng lúc khởi động tường minh: stop thắng. Xoá marker ở đây thì trap EXIT ghi crashed và watchdog khởi
+  # động lại board vừa bị dừng.
   log "🛑 start overruled: super-board-stop.sh wrote $STOP_MARK while this runner was starting — board ${CONFIG_SLUG} stays stopped"
   exit 0
 fi
@@ -1037,7 +1056,8 @@ if [ "${SB_WATCHDOG_START:-0}" != "1" ]; then
     log "▶ explicit start: cleared the stop marker ($(tr '\n' ' ' < "$STOP_MARK"))"
     rm -f "$STOP_MARK"
   fi
-  rm -f "$RUNNER_DIR/${CONFIG_SLUG}.watchdog"   # backoff của watchdog bắt đầu lại từ 0
+  # Backoff của watchdog bắt đầu lại từ 0. Thư mục bản ghi hỏng (đã cảnh báo ở trên) không được giết runner.
+  rm -f "$RUNNER_DIR/${CONFIG_SLUG}.watchdog" 2>/dev/null || true
   if [ -x "$SCRIPT_DIR/super-board-watchdog.sh" ]; then
     "$SCRIPT_DIR/super-board-watchdog.sh" ensure "$CONFIG_SLUG" 2>&1 | while IFS= read -r line; do log "watchdog: $line"; done || true
   else

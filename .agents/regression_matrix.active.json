@@ -215,8 +215,7 @@
     {
       "component": "super-board-runner",
       "watch_files": [
-        ".claude/bin/super-board-*",
-        "universal-agent-devkit/scripts/governance/super_board_all.py"
+        ".claude/bin/super-board-*"
       ],
       "mandatory_regression_tests": [
         {
@@ -228,11 +227,6 @@
           "id": "REG-SB-RUNNER-LANES-01",
           "name": "super-board runner lanes",
           "command": "bash tests/super-board/test_runner_lanes.sh"
-        },
-        {
-          "id": "REG-SB-RUNNER-WATCHDOG-01",
-          "name": "super-board runner survives a killed sleep; stop marker; launchd watchdog",
-          "command": "bash tests/super-board/test_runner_watchdog.sh"
         }
       ]
     },
@@ -263,6 +257,24 @@
           "id": "REG-SB-PREFLIGHT-TOO-BIG-01",
           "name": "preflight holds too-big cards before a builder pass, proceeds on normal ones",
           "command": "bash tests/super-board/test_preflight_too_big.sh"
+        }
+      ]
+    },
+    {
+      "component": "super-board-runner-watchdog",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-stop.sh",
+        ".claude/bin/super-board-watchdog.sh",
+        ".claude/bin/super-board-setup.py",
+        "universal-agent-devkit/scripts/governance/super_board_all.py",
+        "tests/super-board/test_runner_watchdog.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-WATCHDOG-01",
+          "name": "super-board runner survives a killed sleep; durable stop marker; launchd watchdog never restarts a stopped board",
+          "command": "bash tests/super-board/test_runner_watchdog.sh"
         }
       ]
     }

@@ -20,7 +20,7 @@
 # Usage:
 #   super-board-watchdog.sh check <slug>      một lượt kiểm (lệnh launchd chạy)
 #   super-board-watchdog.sh status <slug>     launchd, runner, marker, halt, backoff, 5 dòng log cuối
-#   super-board-watchdog.sh install <slug>    ghi + nạp ~/Library/LaunchAgents/com.superboard.watchdog.<slug>.plist
+#   super-board-watchdog.sh install <slug>    ghi + nạp ~/Library/LaunchAgents/com.superboard.watchdog.<slug>.<sha1 repo 8>.plist
 #   super-board-watchdog.sh ensure <slug>     install khi chưa có hoặc đã đổi (runner gọi khi khởi động tường minh)
 #   super-board-watchdog.sh uninstall <slug>
 # Env: SB_LAUNCH_AGENTS_DIR (thư mục plist, cho test), SB_WATCHDOG_AUTOINSTALL=0 (ensure không làm gì).
@@ -36,7 +36,8 @@ case "$SLUG" in ''|*[!A-Za-z0-9._-]*) echo "usage: $0 $CMD <config-slug>" >&2; e
 
 DIR=".claude/super-board/runner"
 STATE="$DIR/$SLUG.state"; MARK="$DIR/$SLUG.stopped"; WD="$DIR/$SLUG.watchdog"; WLOG="$DIR/$SLUG.watchdog.log"
-LABEL="com.superboard.watchdog.$SLUG"
+# Nhãn theo slug + 8 ký tự sha1 của đường dẫn repo: hai checkout dùng cùng slug không đè watchdog của nhau.
+LABEL="com.superboard.watchdog.$SLUG.$(printf '%s' "$ROOT" | shasum | cut -c1-8)"
 AGENTS="${SB_LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}"
 PLIST="$AGENTS/$LABEL.plist"
 INTERVAL=60; MAX_RESTARTS=5; BACKOFF_BASE=60; HEALTHY_SECONDS=600

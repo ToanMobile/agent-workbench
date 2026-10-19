@@ -66,8 +66,9 @@ fi
 STOP_MARK=".claude/super-board/runner/${CONFIG_SLUG}.stopped"
 MARK_WARN=""
 write_stop_mark() {
-  { mkdir -p "${STOP_MARK%/*}" && printf 'STOPPED_AT=%s\nBY=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      "${USER:-unknown} via super-board-stop.sh (pid $$)" > "$STOP_MARK"; } 2>/dev/null
+  # PID: runner đang khởi động cùng giây biết stop này còn chạy (trùng lúc) hay đã xong (`stop && run` tuần tự).
+  { mkdir -p "${STOP_MARK%/*}" && printf 'STOPPED_AT=%s\nBY=%s\nPID=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      "${USER:-unknown} via super-board-stop.sh" "$$" > "$STOP_MARK"; } 2>/dev/null
 }
 # Ghi marker hỏng (đĩa đầy, thư mục không ghi được) không được làm stop bỏ dở việc dừng worker: báo rồi đi tiếp.
 if ! write_stop_mark; then

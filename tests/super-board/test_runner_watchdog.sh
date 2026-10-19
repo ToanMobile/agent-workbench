@@ -75,7 +75,8 @@ import os, sys
 m = os.environ.get('STUB_WRITE_MARK')
 if m and not os.path.exists(m + '.written'):
     os.makedirs(os.path.dirname(m), exist_ok=True)
-    open(m, 'w').write('STOPPED_AT=race\n')
+    # PID của một "stop.sh" còn sống (shell test): stop đang chạy, như stop.sh thật ghi marker rồi đi dừng worker.
+    open(m, 'w').write('STOPPED_AT=race\nPID=%s\n' % os.environ.get('STUB_MARK_PID', ''))
     open(m + '.written', 'w').close()
 sys.exit(0)
 PY
@@ -120,6 +121,7 @@ ticks() { local n; n=$(grep -c 'tick — Ready=' "$1" 2>/dev/null); echo "${n:-0
 tick_sleep_pid() { pgrep -P "$RP" sleep 2>/dev/null | head -1; }
 
 RUNDIR="$R/.claude/super-board/runner"
+WLABEL="com.superboard.watchdog.t.$(printf '%s' "$R" | shasum | cut -c1-8)"   # nhãn theo slug + sha1 đường dẫn repo
 STATE="$RUNDIR/t.state"; MARK="$RUNDIR/t.stopped"; WD="$RUNDIR/t.watchdog"; WLOG="$RUNDIR/t.watchdog.log"
 field() { sed -n "s/^$1=//p" "$2" 2>/dev/null | head -1; }
 
@@ -189,7 +191,7 @@ if wait_for 30 '! alive "$RP"'; then
   [ ! -e "$MARK" ] && ok "explicit start clears the stop marker" || fail "explicit start left the stop marker"
   [ "$(field STATE "$STATE")" = finished ] && [ "$(field RC "$STATE")" = 0 ] \
     && ok "clean finish recorded as STATE=finished rc=0" || fail "state after clean finish: $(tr '\n' ' ' < "$STATE" 2>/dev/null)"
-  [ -f "$TMP/LaunchAgents/com.superboard.watchdog.t.plist" ] && grep -q "bootstrap gui/$(id -u)" "$TMP/calls" 2>/dev/null \
+  [ -f "$TMP/LaunchAgents/$WLABEL.plist" ] && grep -q "bootstrap gui/$(id -u)" "$TMP/calls" 2>/dev/null \
     && ok "explicit start installs the repo's launchd watchdog" || fail "explicit start did not install the watchdog"
 else
   fail "explicit non-daemon start on an empty board did not exit"; kill_tree "$RP"
@@ -208,7 +210,7 @@ rm -f "$TMP/halt"
 
 # ── 6c. stop chạy trùng lúc một lần khởi động tường minh (marker ghi khi runner đang đọc config): stop thắng ────────
 rm -f "$MARK" "$MARK.written"; cp "$STATE" "$TMP/state.before6c"
-start_runner "$TMP/run7.out" STUB_WRITE_MARK="$MARK"
+start_runner "$TMP/run7.out" STUB_WRITE_MARK="$MARK" STUB_MARK_PID="$$"
 if wait_for 20 '! alive "$RP"'; then
   [ -e "$MARK" ] && cmp -s "$STATE" "$TMP/state.before6c" \
     && ok "a stop landing while an explicit start boots wins: marker kept, runner never ran" \
@@ -227,6 +229,32 @@ cp "$R/.claude/super-board/configs/t.json" "$R2/.claude/super-board/configs/"
 [ "$rc" -eq 0 ] && grep -q 'could not write the stop marker' "$TMP/stop2.out" \
   && ok "stop.sh keeps stopping (rc 0) and warns when the marker cannot be written" \
   || { fail "stop.sh with an unwritable marker: rc=$rc"; tail -3 "$TMP/stop2.out" | sed 's/^/    /'; }
+# Cùng repo hỏng đó: runner không ghi được bản ghi vẫn chạy hết (board rỗng, không daemon), không chết dưới set -e.
+cp "$BIN"/super-board-* "$R2/.claude/bin/"
+( ( cd "$R2" && exec env "${ENVV[@]}" bash "$R2/.claude/bin/super-board-run.sh" t ) > "$TMP/run8.out" 2>&1 & echo $! > "$TMP/rp" )
+RP=$(cat "$TMP/rp"); PIDS="$PIDS $RP"
+if wait_for 30 '! alive "$RP"'; then
+  grep -q 'exiting cleanly' "$TMP/run8.out" && grep -q 'could not write' "$TMP/run8.out" \
+    && ok "a runner that cannot write its record warns and keeps running" \
+    || { fail "runner died when its record could not be written"; tail -3 "$TMP/run8.out" | sed 's/^/    /'; }
+else
+  fail "runner without a writable record did not finish"; kill_tree "$RP"
+fi
+
+# ── 6e. `stop && run` tuần tự trong cùng một giây: lần khởi động sau mới hơn, phải chạy (stop.sh đã xong) ───────────
+dead_pid
+T=$(( $(date +%s) + 2 ))
+printf 'STOPPED_AT=seq\nPID=%s\n' "$D" > "$MARK"
+touch -t "$(date -r "$T" +%Y%m%d%H%M.%S)" "$MARK"   # mtime = giây T; runner ra đời ngay đầu giây T
+wait_for 5 '[ "$(date +%s)" -ge '"$T"' ]'
+start_runner "$TMP/run9.out"
+if wait_for 30 '! alive "$RP"'; then
+  [ ! -e "$MARK" ] && [ "$(field STATE "$STATE")" = finished ] \
+    && ok "stop then run in the same second: the later start runs (stop.sh already exited)" \
+    || fail "same-second stop && run left the board stopped (marker $( [ -e "$MARK" ] && echo kept || echo gone), STATE=$(field STATE "$STATE"))"
+else
+  fail "same-second start did not finish"; kill_tree "$RP"
+fi
 
 # ── 7. Watchdog: chỉ khởi động lại runner chết khi board đang chạy và không có marker ───────────────────────────────
 wd() { ( cd "$R" && run_env bash "$BIN/super-board-watchdog.sh" check t ) >> "$TMP/wd.out" 2>&1; }
@@ -337,10 +365,10 @@ wait_for 30 '! alive "$RP"' || kill_tree "$RP"
 # ── 8. install / status / uninstall (LaunchAgents và launchctl là stub) ────────────────────────────────────────────
 # Repo trong thư mục tạm, không có SB_LAUNCH_AGENTS_DIR: install từ chối, không ghi plist vào ~/Library/LaunchAgents.
 out=$( (cd "$R" && run_env SB_LAUNCH_AGENTS_DIR= bash "$BIN/super-board-watchdog.sh" install t) 2>&1 ); rc=$?
-[ "$rc" -ne 0 ] && [ ! -e "$TMP/home/Library/LaunchAgents/com.superboard.watchdog.t.plist" ] && printf '%s' "$out" | grep -q 'refusing to install' \
+[ "$rc" -ne 0 ] && [ ! -e "$TMP/home/Library/LaunchAgents/$WLABEL.plist" ] && printf '%s' "$out" | grep -q 'refusing to install' \
   && ok "install refuses a temporary checkout (no real LaunchAgent pointing at it)" || fail "install from a temp dir: rc=$rc out=$out"
 
-PL="$TMP/LaunchAgents/com.superboard.watchdog.t.plist"
+PL="$TMP/LaunchAgents/$WLABEL.plist"
 rm -f "$PL"; : > "$TMP/calls"
 ( cd "$R" && run_env bash "$BIN/super-board-watchdog.sh" install t ) > "$TMP/install.out" 2>&1; rc=$?
 if [ "$rc" -eq 0 ] && plutil -lint "$PL" >/dev/null 2>&1; then
@@ -364,7 +392,7 @@ printf 'STOPPED_AT=test\n' > "$MARK"
 st=$( ( cd "$R" && run_env bash "$BIN/super-board-watchdog.sh" status t ) 2>&1 ); rc=$?
 [ "$rc" -eq 0 ] && printf '%s' "$st" | grep -q 'stop marker: set' && ok "status shows the stop marker" || fail "status rc=$rc: $st"
 ( cd "$R" && run_env bash "$BIN/super-board-watchdog.sh" uninstall t ) > /dev/null 2>&1
-[ ! -e "$PL" ] && grep -q "bootout gui/$(id -u)/com.superboard.watchdog.t" "$TMP/calls" \
+[ ! -e "$PL" ] && grep -q "bootout gui/$(id -u)/$WLABEL" "$TMP/calls" \
   && ok "uninstall unloads and removes the plist" || fail "uninstall left $PL or did not bootout"
 
 # ── 9. super_board_all.py stop gọi stop.sh cả khi runner đã chết (để marker luôn được ghi) ──────────────────────────
