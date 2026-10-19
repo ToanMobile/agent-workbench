@@ -86,6 +86,16 @@ bridge codex stop regression_gate.sh "{\"session_id\":\"sb1\",\"cwd\":\"$P\"}"
 [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -q "REG-B" && ok "codex: Stop blocked by the failing regression test" || fail "codex stop (rc=$RC)"
 bridge cursor stop regression_gate.sh "{\"conversation_id\":\"sb2\",\"status\":\"completed\"}"
 [ "$RC" = 0 ] && printf '%s' "$OUT" | grep -q "followup_message" && ok "cursor: stop → followup_message (agent continues)" || fail "cursor stop (rc=$RC out=$OUT)"
+# Gemini AfterAgent gửi prompt_response. Bridge cũ bỏ trường này, Stop không thấy lời giữa chừng và vẫn chạy suite.
+# Đổi file trước mỗi lần: hai Stop phía trên đã chặn cùng một cây, lần thứ ba bị loop-guard thả (rc 0) dù suite không chạy vì skip.
+echo "fun ok() = 3" > "$P/src/Core.kt"
+bridge gemini stop regression_gate.sh "{\"session_id\":\"sg-mid\",\"cwd\":\"$P\",\"hook_event_name\":\"AfterAgent\",\"prompt_response\":\"dang xem log\"}"
+[ "$RC" = 0 ] && ! printf '%s' "$ERR" | grep -q "REG-B" && ok "gemini: mid-work prompt_response does not run the suite" \
+  || fail "gemini mid-work ran the suite (rc=$RC err=$(head -c 240 "$TMP/err"))"
+echo "fun ok() = 4" > "$P/src/Core.kt"
+bridge gemini stop regression_gate.sh "{\"session_id\":\"sg-hand\",\"cwd\":\"$P\",\"hook_event_name\":\"AfterAgent\",\"prompt_response\":\"XONG\"}"
+[ "$RC" = 2 ] && printf '%s' "$ERR" | grep -q "REG-B" && ok "gemini: handover prompt_response still gated" \
+  || fail "gemini handover not gated (rc=$RC err=$(head -c 240 "$TMP/err"))"
 (cd "$P" && git checkout -q -- src)
 
 # --- agent_hooks.py: the project's own hooks and settings are kept ----------------

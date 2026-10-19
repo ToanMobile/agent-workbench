@@ -12,6 +12,8 @@
 #   7. DEVKIT_GATE_PARALLEL=0 turns it off (the kill switch)
 #   8. a flagged suite is told (DEVKIT_GATE_DONE) which test scripts the flagged suites before it run, per job, so
 #      run_impacted.sh still skips them
+#   8b. a script nested under tests/<dir>/ is recorded too (tests/gates/*.sh was invisible)
+#  15. a flagged run_impacted.sh does not join the group: it fans out to 10 jobs and was the 900 s timeout
 #   9. GATE_TOTAL_BUDGET_S still counts the time of the group before a suite that cannot join it
 #  10. a Gradle/Unity/device command is never grouped, whatever the flag says
 #  11. a suite that waited for a group slot past the budget is not started
@@ -34,7 +36,7 @@ R="$TMP/repo"
 export MARK="$TMP/mark"
 OUT=""; RC=0
 
-# make_repo '<json list of suites>' ; scripts live under tests/ (the gate only tracks scripts named like tests/x.sh)
+# make_repo '<json list of suites>' ; scripts live under tests/ (the gate tracks tests/**/*.sh and hooks/tests/**/*.sh)
 make_repo() {
   rm -rf "$R" "$MARK" && mkdir -p "$R/src" "$R/tests" "$MARK" && cd "$R" || exit 1
   git init -q . && git config user.email t@t && git config user.name t
@@ -124,6 +126,19 @@ case "$seen" in
   *) bad "8: DEVKIT_GATE_DONE of the second flagged suite lacks tests/first.sh (saw: '$seen')" ;;
 esac
 
+# 8b. Script nằm dưới tests/<dir>/ cũng phải vào DEVKIT_GATE_DONE. Regex cũ chỉ khớp tests/*.sh một cấp,
+# nên tests/gates/test_postfix_gate.sh không bao giờ bị run_impacted bỏ qua và bị chạy lần hai trong cùng gate.
+make_repo "$(suite REG-A 'sh tests/gates/nested.sh' p),$(suite REG-B 'sh tests/see_done.sh' p)"
+mkdir -p "$R/tests/gates"
+printf 'exit 0\n' > "$R/tests/gates/nested.sh"
+run_gate
+seen="$(cat "$MARK/done_seen" 2>/dev/null)"
+case "$seen" in
+  *"/tests/gates/nested.sh"*) [ "$RC" = 0 ] && ok "8b: a nested tests/<dir>/*.sh is listed in DEVKIT_GATE_DONE" \
+                               || bad "8b: gate exit $RC" ;;
+  *) bad "8b: DEVKIT_GATE_DONE lacks tests/gates/nested.sh (saw: '$seen')" ;;
+esac
+
 # 9. GATE_TOTAL_BUDGET_S counts the time the group before a suite took: the suite after a slow group is BUDGET, as it was sequentially
 make_repo "$(suite REG-A 'sh tests/slow2.sh' p),$(suite REG-B 'sh tests/fine.sh')"
 OUT="$(GATE_TOTAL_BUDGET_S=1 CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --lang en --run-tests 2>&1)"; RC=$?
@@ -203,5 +218,12 @@ PY
 )"
 if [ "$res" = "skip skip skip skip skip" ]; then ok "14: vacuity_revert skips a mode \"full\" suite for every VACUITY_REVERT setting (a group never holds a reverting suite)"
 else bad "14: vacuity_revert acted on a mode \"full\" suite: '$res'"; fi
+
+# 15. run_impacted.sh tự mở tới 10 job. Cờ parallel_safe không được nhét nó vào nhóm đang chạy GATE/HOOK:
+# need_a chỉ xanh khi slow_a đã xong, nên chạy chồng là đỏ.
+make_repo "$(suite REG-A 'sh tests/slow_a.sh' p),$(suite REG-B 'sh tests/need_a.sh run_impacted.sh' p)"
+run_gate
+if [ "$RC" = 0 ] && passed REG-A && passed REG-B; then ok "15: a flagged run_impacted.sh waits for the suite before it (it does not join the group)"
+else bad "15: run_impacted.sh joined the group (exit $RC)"; printf '%s\n' "$OUT" | tail -15; fi
 
 [ "$FAILS" = 0 ] && echo "ALL OK" || { echo "$FAILS FAILED"; exit 1; }

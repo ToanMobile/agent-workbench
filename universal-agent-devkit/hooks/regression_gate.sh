@@ -159,6 +159,13 @@ except Exception:
     data = {}
 if not isinstance(data, dict):
     data = {}
+# Grok gửi lastAssistantMessage (camelCase). Hook viết cho Claude chỉ đọc last_assistant_message,
+# nên nhánh bỏ qua giữa chừng không thấy lời trả lời và vẫn mở suite (log 20/10: gating, không grok mid-work).
+_reply_snake = data.get("last_assistant_message")
+if not isinstance(_reply_snake, str) or not _reply_snake.strip():
+    _reply_camel = data.get("lastAssistantMessage")
+    if isinstance(_reply_camel, str):
+        data["last_assistant_message"] = _reply_camel
 # Which agent runs this Stop (hooks/devkit_harness.py). Degraded = not Claude Code, or no
 # Claude transcript: Grok, a bridged agent, an unknown caller. Without the helper (a hook
 # copied alone) the gate keeps its per-fingerprint guard only.
@@ -260,6 +267,31 @@ if info is not None and not probe and not pushed:
         raise
     except Exception as e:
         note("work_in_progress failed: %r" % e)
+
+# Claude, Gemini, Grok: lời giữa chừng không mở suite. work_in_progress() phía trên bỏ qua Claude
+# khi commit đã nằm trên remote (`pushed`), và luôn false với Gemini/Grok (transcript không phải Claude).
+# XONG hoặc câu nhận đã xong vẫn chạy suite. Commit đã đẩy mà chưa kiểm vẫn nợ tới lượt bàn giao.
+# Claude: một `git push` ngay trong lượt này vẫn là bàn giao, dù lời không nhận đã xong.
+if info is not None and not probe and os.environ.get("DEVKIT_GATE_EVERY_STOP") != "1":
+    try:
+        reply = data.get("last_assistant_message")
+        if isinstance(reply, str) and reply.strip():
+            st = devkit_harness.reply_status(reply)
+            body = devkit_harness.MIDWORK_WORDS.sub("", reply)
+            if st in ("NOT_DONE", "NONE") and not devkit_harness.OUTCOME_WIDE.search(body):
+                turn_pushed = False
+                if info.get("agent") == "claude" and info.get("transcript") == "claude":
+                    tp = data.get("transcript_path") or data.get("transcriptPath")
+                    start = devkit_harness.turn_start(tp) if isinstance(tp, str) else None
+                    if start is not None and "push" in devkit_harness.git_writes_in_turn(tp, start):
+                        turn_pushed = True
+                if not turn_pushed:
+                    note("skip: mid-work (no handover) agent=%s sid=%s" % (info.get("agent") or "?", sid))
+                    sys.exit(0)
+    except SystemExit:
+        raise
+    except Exception as e:
+        note("mid-work check failed: %r" % e)
 
 def emit(obj):
     print(json.dumps(obj, ensure_ascii=False))
