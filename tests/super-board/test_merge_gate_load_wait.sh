@@ -81,8 +81,10 @@ lt=$(grep -n "lock taken" "$TMP/gate1.log" | head -1 | cut -d: -f1); wl=$(grep -
 # Ca 2: tải 99 rồi xuống 2 sau ~2 s, poll 1, chờ tối đa 60 s → verify bắt đầu khi tải xuống, xa trước 60 s.
 echo 99 > "$LOADF"; rm -f "$STARTED"
 ( sleep 2; echo 2 > "$LOADF" ) &
+writer=$!
 t0=$(date +%s)
 SB_MERGE_LOAD_WAIT_S=60 SB_MERGE_LOAD_POLL_S=1 gate >"$TMP/gate2.log" 2>&1; rc=$?
+wait "$writer" 2>/dev/null
 d=$(( $(cat "$STARTED" 2>/dev/null || echo 0) - t0 ))
 [ "$d" -ge 2 ] && [ "$d" -lt 40 ] && ok "verify started once the load dropped (${d}s, cap 60)" || fail "verify start ${d}s after the gate (want 2..39)"
 grep -q "verifying anyway" "$TMP/gate2.log" && fail "load dropped but the gate says it gave up waiting" || ok "no capped-wait message when the load dropped"
@@ -106,10 +108,28 @@ rm -f "$STARTED"
 SB_MERGE_LOAD_WAIT_S=60 SB_MERGE_LOAD_POLL_S=30 gate --dry-run >"$TMP/gate5.log" 2>&1
 grep -q "waiting for load" "$TMP/gate5.log" && fail "--dry-run waits for the load" || ok "--dry-run: no wait"
 
-# Ca 6: số có 0 đứng đầu (08 = bát phân trong $(( ))) không làm gate chết: vẫn chờ rồi verify.
+# Ca 6: số có 0 đứng đầu (08 = bát phân trong $(( ))) đọc là thập phân: gate không chết, vẫn chờ 2 s rồi verify.
 echo 99 > "$LOADF"; rm -f "$STARTED"
 SB_MERGE_LOAD_WAIT_S=02 SB_MERGE_LOAD_POLL_S=08 SB_MERGE_LOAD_MAX=08 gate >"$TMP/gate6.log" 2>&1; rc=$?
 ran "$rc" && ok "leading-zero settings: gate survives and verifies (exit 11)" || fail "leading-zero settings: gate exit $rc: $(tail -3 "$TMP/gate6.log")"
+grep -q "waiting for load 99 to drop below 8 before verify (at most 2s)" "$TMP/gate6.log" \
+  && ok "leading-zero settings read as decimal (max 8, cap 2 s)" || fail "leading-zero settings not honoured: $(grep merge-gate "$TMP/gate6.log" | head -3)"
+# Ca 7: giá trị sai không tắt việc chờ trong im lặng: gate nói ra.
+echo 3 > "$LOADF"; rm -f "$STARTED"
+SB_MERGE_LOAD_WAIT_S=30m gate >"$TMP/gate7.log" 2>&1; rc=$?
+grep -q "SB_MERGE_LOAD_WAIT_S='30m' is not a number" "$TMP/gate7.log" \
+  && ok "invalid wait setting is reported" || fail "invalid wait setting dropped silently: $(grep merge-gate "$TMP/gate7.log" | head -3)"
+ran "$rc" && ok "invalid wait setting: verify ran (exit 11)" || fail "invalid wait setting: gate exit $rc"
+
+# Ca 8: lúc chờ, mốc "at" của khoá được làm mới (không thì gate khác gỡ khoá "bỏ quên" và hai merge chạy cùng lúc).
+AT="$WT/.claude/super-board/inflight/merge.lock/at"
+echo 99 > "$LOADF"; rm -f "$STARTED"
+SB_MERGE_LOAD_WAIT_S=8 SB_MERGE_LOAD_POLL_S=1 gate >"$TMP/gate8.log" 2>&1 &
+gp=$!
+i=0; while [ "$i" -lt 60 ] && ! grep -q "waiting for load" "$TMP/gate8.log" 2>/dev/null; do sleep 0.5; i=$((i + 1)); done
+a1=$(cat "$AT" 2>/dev/null || echo 0); sleep 3; a2=$(cat "$AT" 2>/dev/null || echo 0)
+wait "$gp"
+[ "$a2" -gt "$a1" ] && ok "lock stamp refreshed while waiting ($a1 -> $a2)" || fail "lock stamp not refreshed while waiting ($a1 -> $a2)"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_load_wait: PASS"; exit 0; } || { echo "test_merge_gate_load_wait: FAIL ($FAILS)"; exit 1; }

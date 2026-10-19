@@ -397,7 +397,9 @@ is_verify_timeout() {
 # 19/10: verify --full chạy lúc tải 1 phút ~60 (5 board cùng build), REG-DK-ALL-01 của PR #87 chọn 127 test và quá 900 s, thẻ #12
 # quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX (mặc định 2 × số lõi), tối đa SB_MERGE_LOAD_WAIT_S (mặc định 1800 s,
 # 0 = không chờ); hết giờ vẫn verify như cũ, không bỏ bước nào. Chờ trong khoá, ngay trước verify: các lối ra nhanh phía trên
-# (đã merge, đóng, head đổi, cần người) không phải chờ; tuổi khoá ≤ 1800 + 2 × 900 s, dưới STALE_AFTER mặc định 5400 s.
+# (đã merge, đóng, head đổi, cần người) không phải chờ. Mốc "at" của khoá được làm mới mỗi lượt poll nên tuổi khoá chỉ tính từ verify.
+# ponytail: gate khác xếp hàng ở acquire có thể hết LOCK_TIMEOUT và thoát 4 (giữ ở Review, wave sau thử lại) khi chờ lâu; chấp nhận
+# được vì verify dưới tải cao cũng đỏ, đổi sang hàng đợi có thứ tự khi nhiều PR cùng repo hay kẹt ở exit 4.
 # SB_MERGE_LOAD_FILE: móc test, đọc tải từ file thay cho os.getloadavg().
 load_now() {
   if [ -n "${SB_MERGE_LOAD_FILE:-}" ]; then tr -d '[:space:]' < "$SB_MERGE_LOAD_FILE" 2>/dev/null || true
@@ -406,11 +408,19 @@ load_now() {
 wait_for_load() {
   local max="${SB_MERGE_LOAD_MAX:-}" cap="${SB_MERGE_LOAD_WAIT_S:-1800}" poll="${SB_MERGE_LOAD_POLL_S:-30}" waited=0 load nap
   [ "$DRY" -eq 1 ] && return 0
-  # ^[1-9][0-9]{0,5}$: không có số 0 đứng đầu (bash đọc 08 là bát phân và set -e dừng gate) và không tràn số.
-  [[ "$cap" =~ ^[1-9][0-9]{0,5}$ ]] || return 0
-  [[ "$poll" =~ ^[1-9][0-9]{0,5}$ ]] || poll=30
-  [[ "$max" =~ ^[1-9][0-9]{0,5}$ ]] || max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 2 ))
+  # Tối đa 6 chữ số (không tràn số); 10# đọc 08 là tám (không có nó bash đọc bát phân và set -e dừng gate).
+  [[ "$cap" =~ ^[0-9]{1,6}$ ]] || { say "SB_MERGE_LOAD_WAIT_S='${cap}' is not a number of seconds; not waiting for the load"; return 0; }
+  cap=$((10#$cap)); [ "$cap" -gt 0 ] || return 0
+  if [[ "$poll" =~ ^[0-9]{1,6}$ ]] && [ $((10#$poll)) -gt 0 ]; then poll=$((10#$poll))
+  else say "SB_MERGE_LOAD_POLL_S='${poll}' is not a positive number; polling every 30s"; poll=30; fi
+  if [[ "$max" =~ ^[0-9]{1,6}$ ]] && [ $((10#$max)) -gt 0 ]; then max=$((10#$max))
+  else
+    [ -n "$max" ] && say "SB_MERGE_LOAD_MAX='${max}' is not a positive number; using 2 x cores"
+    max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 2 ))
+  fi
   while :; do
+    # Khoá được giữ cả lúc chờ: làm mới mốc "at" để gate khác không coi nó là khoá bỏ quên (STALE_AFTER có thể chỉ 1800 s).
+    date +%s > "$LOCK_DIR/at"
     load=$(load_now)
     [[ "$load" =~ ^[0-9]{1,6}$ ]] || { say "cannot read the machine load ('${load}'); verifying without waiting"; return 0; }
     load=$((10#$load))
