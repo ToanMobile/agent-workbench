@@ -1531,7 +1531,7 @@ def trunk_write(tool, tool_input, cmd, cwd, main, sw, sid=""):
     return _bash_trunk_write(cmd, cwd, main, sw, sid, 0)
 
 
-_VAR_ASSIGN = re.compile(r"""(?:^|[;&|\n(]|\bexport\s+)\s*([A-Za-z_][A-Za-z0-9_]*)=("[^"$`]*"|'[^']*'|[^\s;&|$`"'()]*)""")
+_VAR_ASSIGN = re.compile(r"""(?:^|[;&|\n(]|\bexport\s+)\s*([A-Za-z_][A-Za-z0-9_]*)(\+?)=("[^"$`]*"|'[^']*'|[^\s;&|$`"'()]*)""")
 _VAR_USE = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})")
 
 
@@ -1541,10 +1541,11 @@ def _expand_static_vars(target, cmd):
     values = {}
     for m in _VAR_ASSIGN.finditer(cmd):
         # `B=$M`, `B="$M"`, `B=$M/x`: the value pattern stops at the `$` and matches "" - the variable is unknown, not empty
-        if m.end() < len(cmd) and cmd[m.end()] not in " \t\r\n;&|()":
+        # `M+=/x` appends to the old value: also unknown, never the old value (reviewer R1)
+        if m.group(2) or (m.end() < len(cmd) and cmd[m.end()] not in " \t\r\n;&|()"):
             values.pop(m.group(1), None)
         else:
-            values[m.group(1)] = m.group(2).strip("\"'")
+            values[m.group(1)] = m.group(3).strip("\"'")
     unknown = False
 
     def sub(m):

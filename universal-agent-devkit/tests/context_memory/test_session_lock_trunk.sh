@@ -52,6 +52,9 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (True, "worktree: B=$M chained from MAIN, redirect to \"$B/f\"", w, B(f'M={m}; B=$M; echo evil > "$B/README.md"')),
     (True, "worktree: B=\"$M\" chained and quoted, redirect to \"$B/f\"", w, B(f'M={m}; B="$M"; echo evil > "$B/README.md"')),
     (True, "worktree: B=$M/x chained with a suffix, redirect to \"$B/../f\"", w, B(f'M={m}; B=$M/x; echo evil > "$B/../README.md"')),
+    # issue #13 reviewer R1: `M+=/main` appends to the value, so the variable is no longer the one assigned before
+    (True, "worktree: M=<parent>; M+=/main appended, redirect to \"$M/f\"", w, B(f'M={m.rsplit("/", 1)[0]}; M+=/{m.rsplit("/", 1)[1]}; echo evil > "$M/README.md"')),
+    (True, "worktree: M=<main>; M+=/x appended (value changes), redirect to \"$M/../README.md\"", w, B(f'M={m}; M+=/x; echo evil > "$M/../README.md"')),
     (True, "an allowed segment does not excuse the next", m, B(f"agent-kit worktree finish {w} && echo x > a.txt")),
     (True, "cp into main from a worktree", w, B(f"cp /tmp/a {m}/b.txt")),
     (True, "cd to main from a worktree, then rm", w, B(f"cd {m} && rm -f README.md")),
