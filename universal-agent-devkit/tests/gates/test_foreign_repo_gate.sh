@@ -19,6 +19,8 @@ mkdir -p "$TMP/goods/.agents/devkit"
 TR="$TMP/tr.jsonl"
 edit() { python3 -c 'import json,sys
 print(json.dumps({"type":"assistant","message":{"id":"m","content":[{"type":"tool_use","id":"t","name":sys.argv[1],"input":{"file_path":sys.argv[2],"old_string":"a","new_string":"b"}}]}}))' "$1" "$2" >> "$TR"; }
+edit_rel() { python3 -c 'import json,sys
+print(json.dumps({"type":"assistant","cwd":sys.argv[2],"message":{"id":"m","content":[{"type":"tool_use","id":"t","name":"Edit","input":{"file_path":sys.argv[1],"old_string":"a","new_string":"b"}}]}}))' "$1" "$2" >> "$TR"; }
 stop() { printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "$1" "$TR" \
   | CLAUDE_PROJECT_DIR="$TMP/proj" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
 
@@ -35,5 +37,12 @@ stop s2; [ $? = 2 ] && ok "  … a new session is told again" || fail "state lea
 FOREIGN_REPO_GATE=0 stop s3; [ $? = 0 ] && ok "FOREIGN_REPO_GATE=0 turns it off" || fail "escape hatch ignored"
 printf '{"session_id":"s4","hook_event_name":"Stop","transcript_path":"/nope"}' \
   | CLAUDE_PROJECT_DIR="$TMP/proj" bash "$HOOK" >/dev/null 2>&1; [ $? = 0 ] && ok "no transcript: fail-open" || fail "missing transcript blocked"
+
+# Issue #9 (merged #10): a relative path out of the project (../goods/src/A.kt) was skipped by isabs(); resolve it against the call's cwd.
+: > "$TR"; edit_rel "../goods/src/A.kt" "$TMP/proj"
+stop s5; rc=$?
+[ "$rc" = 2 ] && grep -q "goods" "$TMP/err" && ok "a relative path into another DevKit repo stops too" || fail "relative foreign path missed (rc=$rc)"
+: > "$TR"; edit_rel "src/A.kt" "$TMP/proj"
+stop s6; [ $? = 0 ] && ok "a relative path inside the project: not its business" || fail "relative own path blocked"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_foreign_repo_gate: all passed" || { echo "❌ test_foreign_repo_gate: $FAILS failed"; exit 1; }

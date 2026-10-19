@@ -127,5 +127,16 @@ guard "$TMP/partial/worktree_guard.sh" "$M" "cp /tmp/x src/b.kt"; rc=$?
 [ "$rc" = 2 ] && grep -q "shell_writes.py could not be loaded" "$TMP/err" && ok "shell_writes.py missing: the Bash call is blocked with the reason" \
   || fail "missing module: rc $rc $(cat "$TMP/err")"
 
+# Issue #9: a line shell_writes cannot tokenise (an open quote) came back None and the guard let it through (fail open), and a target
+# spelled with $PWD was skipped. Now: unreadable -> blocked, $PWD / ${PWD} -> the directory the command runs in.
+guard "$H" "$W" "echo 'x > $M/src/a.kt"; rc=$?
+[ "$rc" = 2 ] && ok "a line that cannot be tokenised (open quote) is blocked, not waved through" || fail "untokenisable line: rc $rc"
+guard "$H" "$M" "cp /tmp/x \$PWD/src/b.kt"; rc=$?
+[ "$rc" = 2 ] && ok "cp to \$PWD/... from the main checkout: blocked" || fail "\$PWD target in main: rc $rc"
+guard "$H" "$M" "cp /tmp/x \${PWD}/src/b.kt"; rc=$?
+[ "$rc" = 2 ] && ok "cp to \${PWD}/... from the main checkout: blocked" || fail "\${PWD} target in main: rc $rc"
+guard "$H" "$W" "cp /tmp/x \$PWD/src/b.kt"; rc=$?
+[ "$rc" = 0 ] && ok "cp to \$PWD/... inside its own worktree: allowed" || fail "\$PWD target in the worktree: rc $rc $(cat "$TMP/err")"
+
 if [ "$FAILS" -ne 0 ]; then echo "worktree_guard shell_writes: $FAILS FAILED"; exit 1; fi
 echo "worktree_guard shell_writes: all checks passed"
