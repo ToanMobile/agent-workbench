@@ -1,0 +1,14 @@
+# QA v2 — issue #13 (PR #88, head f3baea2)
+
+Local tests: bash universal-agent-devkit/tests/context_memory/test_session_lock_trunk.sh
+
+## Bộ test: PASS
+test_session_lock_trunk: PASS (gồm 3 ca "chained" của QA v1: B=$M, B="$M", B=$M/x — nay GREEN)
+Toàn bộ test_session_lock*.sh (9 file): exit 0; py_compile session_lock.py: OK
+
+## Probe đối kháng (15 dạng, gọi sl.trunk_write từ linked worktree): 0 lỗ hổng
+chặn đúng: gán qua $(...), B=$M"/x", gán lại sang main sau khi gán an toàn, env-prefix inline,
+declare / readonly / local, tee -a, cp, ${UNSET:-<main>}, B=${A}, dùng biến trước khi gán.
+cho qua đúng: gán lại sang /tmp sau main (last wins), O=/tmp/o, H=~ (home không phải main).
+
+Không cần ảnh — logic hook backend, không có giao diện.

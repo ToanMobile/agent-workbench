@@ -484,7 +484,8 @@ def emulator_cmd(emulator: str, avd: str, port: int) -> list:
     return cmd
 
 
-def boot_avd(adb: str, emulator: str, avd: str, devices: list, port: int, boot_timeout: float, denied=()) -> str:
+def boot_avd(adb: str, emulator: str, avd: str, devices: list, port: int, boot_timeout: float, denied=()) -> tuple:
+    """(serial, started). started is True only when this call launched the emulator."""
     for dev in devices:
         if dev["state"] != "device" or not dev["serial"].startswith("emulator-"):
             continue
@@ -492,7 +493,7 @@ def boot_avd(adb: str, emulator: str, avd: str, devices: list, port: int, boot_t
             continue
         if avd_name(adb, dev["serial"]) == avd:
             print("AVD %s da mo tai %s" % (avd, dev["serial"]), file=sys.stderr)
-            return dev["serial"]
+            return dev["serial"], False
     serial = "emulator-%d" % port
     cmd = emulator_cmd(emulator, avd, port)
     subprocess.Popen(
@@ -502,7 +503,7 @@ def boot_avd(adb: str, emulator: str, avd: str, devices: list, port: int, boot_t
     if not wait_boot(adb, serial, boot_timeout):
         raise SystemExit("Mo AVD %s tai %s nhung khong boot xong trong %ss." % (avd, serial, int(boot_timeout)))
     print("Da mo AVD %s tai %s" % (avd, serial), file=sys.stderr)
-    return serial
+    return serial, True
 
 
 # ---- device lock -------------------------------------------------------------------------------------
@@ -673,8 +674,21 @@ def locked_device(locks, args, plan: dict, emulator, use_lock: bool) -> str:
         if use_lock:
             budget -= locks.enter_context(device_lock("avd", plan["avd"], budget))
             plan["devices"] = adb_devices(args.adb)  # whoever held the AVD before us may have booted it
-        serial = boot_avd(args.adb, emulator, plan["avd"], plan["devices"], next_port(plan["devices"], args.port, denied),
-                          args.boot_timeout, denied)
+        port = next_port(plan["devices"], args.port, denied)
+        try:
+            booted = boot_avd(args.adb, emulator, plan["avd"], plan["devices"], port, args.boot_timeout, denied)
+        except SystemExit:
+            # wait_boot thất bại sau Popen: qemu đã được mở. finally phải STOP được nó.
+            plan["started_emulator"] = True
+            plan["booted_serial"] = "emulator-%d" % port
+            raise
+        # A test may still stub boot_avd with a bare serial string.
+        if isinstance(booted, tuple):
+            serial, started = booted[0], bool(booted[1])
+        else:
+            serial, started = booted, False
+        plan["started_emulator"] = started
+        plan["booted_serial"] = serial
         if serial in denied:  # the denylist outranks the AVD fallback: refuse before any lock or capture on it
             raise SystemExit("Serial %s nam trong denylist — khong chup." % serial)
     if use_lock:
@@ -691,14 +705,21 @@ def qemu_process_text() -> str:
         except OSError:
             return ""
     try:
-        res = subprocess.run(["ps", "-ax", "-o", "pid=,command="], capture_output=True, text=True, timeout=5)
+        res = subprocess.run(["ps", "-axww", "-o", "pid=,command="], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return ""
     return res.stdout or ""
 
 
+def avd_on_command_line(avd: str, cmd: str) -> bool:
+    """True when -avd NAME or -avd=NAME is one whole argument. Pixel_6 does not match Pixel_6_Pro."""
+    if not avd:
+        return False
+    return re.search(r"(?:^|\s)-avd(?:=|\s+)%s(?:\s|$)" % re.escape(avd), cmd) is not None
+
+
 def qemu_pids(avd: str) -> list:
-    """PIDs whose command line contains both qemu and the AVD name."""
+    """PIDs whose command line is qemu and names this AVD as the -avd argument."""
     if not avd:
         return []
     found = []
@@ -713,7 +734,7 @@ def qemu_pids(avd: str) -> list:
             if len(parts) != 2:
                 continue
             pid_s, cmd = parts
-        if avd not in cmd or re.search(r"(^|[/\s])qemu", cmd) is None:
+        if not avd_on_command_line(avd, cmd) or re.search(r"(^|[/\s])qemu", cmd) is None:
             continue
         try:
             found.append(int(pid_s.strip()))
@@ -846,6 +867,7 @@ def main(argv=None) -> int:
     # The device is chosen and the denylist applied (resolve): only now is a lock taken. A boot plan has no
     # serial yet, so it locks the AVD first and the serial it ends up with after.
     captured = False
+    woke = False
     stop_serial = ""
     stop_avd = plan.get("avd") or ""
     try:
@@ -854,6 +876,7 @@ def main(argv=None) -> int:
             stop_serial = serial or ""
             stop_avd = plan.get("avd") or stop_avd
             signal_qemu(signal.SIGCONT, stop_avd)
+            woke = True
             if args.run_before:
                 before_rc = run_before_command(args.run_before)
                 if before_rc != 0:
@@ -875,8 +898,18 @@ def main(argv=None) -> int:
         print(exc, file=sys.stderr)
         return LOCK_BUSY_EXIT
     finally:
-        # --no-device-lock must not create a device-lock file, and must not SIGSTOP an emulator this capture did not own.
-        if captured and device_lock_enabled(args.no_device_lock):
+        # --no-device-lock không tạo file khóa và không SIGSTOP qemu lần chụp này không mở cũng không CONT.
+        # Qemu do lần này boot, hoặc đã CONT khi giữ khóa, thì STOP cả khi chụp thất bại. Người khác đang giữ khóa thì bỏ qua.
+        if not stop_serial:
+            stop_serial = str(plan.get("booted_serial") or "")
+        keep = os.environ.get("PROOF_KEEP_EMULATOR", "").strip().lower() in ("1", "true", "yes", "on")
+        owned_start = bool(plan.get("started_emulator"))
+        if keep:
+            pass
+        elif not device_lock_enabled(args.no_device_lock):
+            if owned_start and stop_avd:
+                signal_qemu(signal.SIGSTOP, stop_avd)
+        elif (woke or owned_start) and stop_serial and stop_avd:
             maybe_stop_emulator(stop_serial, stop_avd)
 
 

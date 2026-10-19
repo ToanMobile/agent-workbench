@@ -737,3 +737,456 @@
 [02:46:48] reaped stale lock + swept assignee on #7 (pid=32021)
 [02:46:50] tick — Ready=22 Building=0 QA=0 Review=2 Blocked=0 lanes: b_idle=1(#7) q_idle=1(#_) r_idle=1(#12)
 [02:46:57] dispatch lane=review issue=#12 pid=36699 claim=ToanMobile
+[17:19:38] watchdog: installed com.superboard.watchdog.agent-workbench.4783853b: checks board agent-workbench every 60s (/Users/alex/Library/LaunchAgents/com.superboard.watchdog.agent-workbench.4783853b.plist)
+[17:19:38] super-board run started — config=agent-workbench base=main tick=30s max_workers=3 no_progress_cycles=240 max_dispatches=0
+[17:19:42] reaped stale lock + swept assignee on #12 (pid=35254)
+[17:19:45] reaped stale lock + swept assignee on #7 (pid=3844)
+[17:19:49] initial Ready count: 21
+[17:19:54] tick — Ready=21 Building=0 QA=0 Review=2 Blocked=0 lanes: b_idle=1(#_) q_idle=1(#_) r_idle=1(#_) waiting_on_you=1
+[17:20:01] dispatch lane=review issue=#12 pid=8569 claim=ToanMobile
+[17:20:06] dispatch lane=build issue=#7 pid=9047 claim=ToanMobile
+[17:20:39] tick — Ready=21 Building=0 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:21:13] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:21:47] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:22:22] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:22:57] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:23:33] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:24:33] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:25:09] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:25:45] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:26:19] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:26:54] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:27:30] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:28:05] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:28:38] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:29:13] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:29:47] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:30:23] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:30:59] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:31:35] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:32:08] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:32:42] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:33:17] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:33:50] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:34:24] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:34:58] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:35:32] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:36:05] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:36:39] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:37:14] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:37:47] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:38:21] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:38:55] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:43:13] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:43:47] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:44:22] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:44:57] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:45:32] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:46:06] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:46:47] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:47:24] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:47:59] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:48:33] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:49:08] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:49:43] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:50:21] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:50:58] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:51:37] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:52:17] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:52:57] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:53:36] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:54:14] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:54:52] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:55:30] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:56:09] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:56:47] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:57:26] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:58:04] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:58:41] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[17:59:22] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:00:03] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:00:41] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:01:20] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:01:58] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:02:35] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:03:10] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:03:45] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:04:19] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:04:53] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:05:28] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:06:02] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:06:38] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:07:12] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:07:49] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:08:24] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:08:58] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:09:32] tick — Ready=20 Building=1 QA=0 Review=2 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[18:10:07] 💀 zombie review worker on #12 (pid=8569) — card moved to 'Ready'; killing
+[18:10:11] tick — Ready=21 Building=1 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=1(#_) waiting_on_you=1
+[18:10:19] dispatch lane=review issue=#13 pid=33020 claim=ToanMobile
+[18:10:54] tick — Ready=21 Building=1 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#13) waiting_on_you=1
+[18:11:30] tick — Ready=21 Building=1 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#13) waiting_on_you=1
+[18:12:05] tick — Ready=21 Building=1 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#13) waiting_on_you=1
+[18:12:39] tick — Ready=21 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#7) q_idle=1(#_) r_idle=0(#13) waiting_on_you=1
+[18:13:15] reaped stale lock + swept assignee on #13 (pid=33020)
+[18:13:21] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=1(#7) q_idle=1(#_) r_idle=1(#13) waiting_on_you=1
+[18:13:30] dispatch lane=qa issue=#7 pid=6973 claim=ToanMobile
+[18:13:38] dispatch lane=build issue=#12 pid=14735 claim=ToanMobile
+[18:14:13] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:14:47] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:15:21] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:15:55] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:16:29] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:17:03] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:17:37] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:18:13] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:18:52] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:19:27] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:20:02] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:20:38] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:21:13] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:21:49] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:22:25] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:23:02] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:23:39] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:24:17] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:24:53] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:25:30] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:26:06] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:26:42] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:27:18] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:27:53] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:28:28] tick — Ready=22 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=0(#7) r_idle=1(#13) waiting_on_you=1
+[18:29:02] 💀 zombie qa worker on #7 (pid=6973) — card moved to 'Review'; killing
+[18:29:06] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=1(#13) waiting_on_you=1
+[18:29:14] dispatch lane=review issue=#7 pid=12093 claim=ToanMobile
+[18:29:51] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:30:29] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:31:05] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:31:41] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:32:15] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:32:49] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:33:23] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:33:58] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:34:32] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:35:07] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:35:44] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:36:21] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:37:00] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:37:39] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:38:19] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:38:58] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:39:35] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:40:12] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:40:49] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:41:26] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:42:03] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:42:41] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:43:21] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:43:59] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:44:37] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:45:13] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:45:50] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:46:25] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:47:00] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:47:37] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:48:15] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:57:04] reaped stale lock + swept assignee on #12 (pid=14735)
+[18:57:07] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=1(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:57:14] dispatch lane=build issue=#12 pid=85533 claim=ToanMobile
+[18:57:46] tick — Ready=22 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:58:21] tick — Ready=21 Building=1 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[18:58:55] reaped stale lock + swept assignee on #7 (pid=12093)
+[18:58:58] tick — Ready=21 Building=1 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=1(#7) waiting_on_you=1
+[18:59:04] dispatch lane=review issue=#7 pid=40601 claim=ToanMobile
+[18:59:38] tick — Ready=21 Building=1 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[19:09:39] tick — Ready=21 Building=1 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[19:10:13] tick — Ready=21 Building=1 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=0(#7) waiting_on_you=1
+[19:15:39] reaped stale lock + swept assignee on #7 (pid=40601)
+[19:15:45] tick — Ready=21 Building=1 QA=0 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=1(#7) waiting_on_you=1
+[19:24:20] tick — Ready=21 Building=1 QA=0 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=1(#7) waiting_on_you=1
+[19:24:53] tick — Ready=21 Building=1 QA=0 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=1(#7) waiting_on_you=1
+[19:25:27] tick — Ready=21 Building=1 QA=0 Review=0 Blocked=0 lanes: b_idle=0(#12) q_idle=1(#_) r_idle=1(#7) waiting_on_you=1
+[19:26:00] reaped stale lock + swept assignee on #12 (pid=85533)
+[19:26:03] tick — Ready=21 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=1(#12) q_idle=1(#_) r_idle=1(#7) waiting_on_you=1
+[19:26:10] dispatch lane=qa issue=#12 pid=56687 claim=ToanMobile
+[19:26:17] dispatch lane=build issue=#13 pid=62661 claim=ToanMobile
+[19:26:50] tick — Ready=21 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#12) r_idle=1(#7) waiting_on_you=1
+[19:27:23] tick — Ready=21 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#12) r_idle=1(#7) waiting_on_you=1
+[19:27:57] tick — Ready=21 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#12) r_idle=1(#7) waiting_on_you=1
+[19:28:31] tick — Ready=21 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#12) r_idle=1(#7) waiting_on_you=1
+[19:29:05] tick — Ready=21 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#12) r_idle=1(#7) waiting_on_you=1
+[19:29:38] tick — Ready=21 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#12) r_idle=1(#7) waiting_on_you=1
+[19:30:12] tick — Ready=21 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#12) r_idle=1(#7) waiting_on_you=1
+[19:30:47] tick — Ready=21 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#12) r_idle=1(#7) waiting_on_you=1
+[19:31:20] tick — Ready=21 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#12) r_idle=1(#7) waiting_on_you=1
+[19:31:53] reaped stale lock + swept assignee on #13 (pid=62661)
+[19:31:56] tick — Ready=20 Building=0 QA=2 Review=0 Blocked=0 lanes: b_idle=1(#13) q_idle=0(#12) r_idle=1(#7) waiting_on_you=1
+[19:32:01] dispatch lane=build issue=#21 pid=83230 claim=ToanMobile
+[19:32:34] tick — Ready=20 Building=0 QA=2 Review=0 Blocked=0 lanes: b_idle=0(#21) q_idle=0(#12) r_idle=1(#7) waiting_on_you=1
+[19:33:07] tick — Ready=20 Building=0 QA=2 Review=0 Blocked=0 lanes: b_idle=0(#21) q_idle=0(#12) r_idle=1(#7) waiting_on_you=1
+[19:33:40] reaped stale lock + swept assignee on #12 (pid=56687)
+[19:33:43] tick — Ready=20 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#12) r_idle=1(#7) waiting_on_you=1
+[19:33:49] dispatch lane=review issue=#12 pid=35040 claim=ToanMobile
+[19:33:55] dispatch lane=qa issue=#13 pid=54042 claim=ToanMobile
+[19:34:25] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:34:56] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:35:27] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:35:57] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:36:28] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:36:58] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:37:31] reaped stale lock + swept assignee on #13 (pid=54042)
+[19:37:33] tick — Ready=21 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#12) waiting_on_you=1
+[19:38:07] tick — Ready=21 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#12) waiting_on_you=1
+[19:38:43] tick — Ready=21 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#12) waiting_on_you=1
+[19:39:17] tick — Ready=21 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#12) waiting_on_you=1
+[19:39:52] tick — Ready=21 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#12) waiting_on_you=1
+[19:40:28] tick — Ready=21 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#12) waiting_on_you=1
+[19:41:04] tick — Ready=21 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#12) waiting_on_you=1
+[19:41:40] tick — Ready=21 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#12) waiting_on_you=1
+[19:42:16] tick — Ready=20 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#12) waiting_on_you=1
+[19:42:52] reaped stale lock + swept assignee on #21 (pid=83230)
+[19:42:55] tick — Ready=20 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=1(#21) q_idle=1(#13) r_idle=0(#12) waiting_on_you=1
+[19:43:03] dispatch lane=qa issue=#21 pid=30333 claim=ToanMobile
+[19:43:11] dispatch lane=build issue=#13 pid=35922 claim=ToanMobile
+[19:43:42] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:44:12] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:44:43] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:45:14] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:45:45] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:46:16] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:46:46] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:47:17] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:47:48] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:48:19] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:48:50] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:49:20] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:49:51] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:50:22] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:50:52] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:51:23] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:51:53] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:52:24] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:52:54] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:53:25] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[19:53:58] reaped stale lock + swept assignee on #12 (pid=35040)
+[19:54:01] 💀 zombie qa worker on #21 (pid=30333) — card moved to 'Review'; killing
+[19:54:05] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=1(#12) waiting_on_you=1
+[19:54:10] dispatch lane=review issue=#12 pid=94191 claim=ToanMobile
+[19:54:44] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[19:55:19] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[19:55:53] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[19:56:26] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[19:57:00] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[19:57:33] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[19:58:07] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[19:58:41] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[19:59:15] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[19:59:51] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[20:00:27] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[20:01:07] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[20:01:44] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[20:02:27] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[20:03:04] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[20:03:40] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[20:04:19] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[20:04:58] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[20:05:36] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[20:06:12] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[20:06:47] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[20:07:22] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[20:07:57] reaped stale lock + swept assignee on #13 (pid=35922)
+[20:08:03] tick — Ready=19 Building=0 QA=1 Review=2 Blocked=0 lanes: b_idle=1(#13) q_idle=1(#_) r_idle=0(#12) waiting_on_you=1
+[20:08:10] dispatch lane=qa issue=#13 pid=84239 claim=ToanMobile
+[20:08:19] dispatch lane=build issue=#24 pid=97344 claim=ToanMobile
+[20:08:51] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:09:22] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:09:53] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:10:23] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:10:54] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:11:24] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:11:55] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:12:25] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:12:55] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:13:26] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:13:56] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:14:30] reaped stale lock + swept assignee on #12 (pid=94191)
+[20:14:35] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#24) q_idle=0(#13) r_idle=1(#12) waiting_on_you=1
+[20:14:41] dispatch lane=review issue=#21 pid=93481 claim=ToanMobile
+[20:15:12] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:15:42] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:16:12] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:16:43] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:17:13] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:17:46] reaped stale lock + swept assignee on #13 (pid=84239)
+[20:17:49] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#24) q_idle=1(#13) r_idle=0(#21) waiting_on_you=1
+[20:18:23] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#24) q_idle=1(#13) r_idle=0(#21) waiting_on_you=1
+[20:18:58] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#24) q_idle=1(#13) r_idle=0(#21) waiting_on_you=1
+[20:19:33] reaped stale lock + swept assignee on #24 (pid=97344)
+[20:19:37] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=1(#24) q_idle=1(#13) r_idle=0(#21) waiting_on_you=1
+[20:19:44] dispatch lane=qa issue=#24 pid=19115 claim=ToanMobile
+[20:19:52] dispatch lane=build issue=#13 pid=25647 claim=ToanMobile
+[20:20:23] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:20:54] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:21:25] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:21:56] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:22:27] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:23:00] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:23:33] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:24:06] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:24:39] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:25:11] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:25:44] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:26:16] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:26:48] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:27:20] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:27:51] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:28:23] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:28:55] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:29:27] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:29:59] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:30:31] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:31:03] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:31:34] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:32:06] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:32:37] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:33:08] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:33:39] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:34:10] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:34:41] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:35:12] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:35:42] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:36:13] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:36:43] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:37:13] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:37:46] reaped stale lock + swept assignee on #21 (pid=93481)
+[20:37:49] tick — Ready=20 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#24) r_idle=1(#21) waiting_on_you=1
+[20:38:23] tick — Ready=20 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#24) r_idle=1(#21) waiting_on_you=1
+[20:38:56] tick — Ready=20 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#24) r_idle=1(#21) waiting_on_you=1
+[20:39:30] tick — Ready=20 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#24) r_idle=1(#21) waiting_on_you=1
+[20:40:03] tick — Ready=20 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#24) r_idle=1(#21) waiting_on_you=1
+[20:40:36] tick — Ready=20 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#24) r_idle=1(#21) waiting_on_you=1
+[20:41:10] tick — Ready=20 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#24) r_idle=1(#21) waiting_on_you=1
+[20:41:43] tick — Ready=20 Building=0 QA=1 Review=0 Blocked=0 lanes: b_idle=0(#13) q_idle=0(#24) r_idle=1(#21) waiting_on_you=1
+[20:42:18] 💀 zombie qa worker on #24 (pid=19115) — card moved to 'Review'; killing
+[20:42:22] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=1(#21) waiting_on_you=1
+[20:42:28] dispatch lane=review issue=#24 pid=58282 claim=ToanMobile
+[20:43:04] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:43:39] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:44:13] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:44:47] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:45:21] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:45:55] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:46:29] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:47:03] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:47:38] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:48:17] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:48:55] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:49:33] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:50:09] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:50:45] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:51:20] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:51:59] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:52:37] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:53:13] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:53:50] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:54:30] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:55:12] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:55:53] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:56:35] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:57:14] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:57:53] reaped stale lock + swept assignee on #13 (pid=25647)
+[20:57:59] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=1(#13) q_idle=1(#_) r_idle=0(#24) waiting_on_you=1
+[20:58:10] dispatch lane=qa issue=#13 pid=21460 claim=ToanMobile
+[20:58:23] dispatch lane=build issue=#21 pid=38947 claim=ToanMobile
+[20:58:56] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:59:28] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[20:59:59] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:00:31] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:01:03] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:01:35] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:02:06] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:02:37] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:03:08] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:03:40] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:04:10] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:04:41] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:05:12] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:05:43] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:06:13] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:06:44] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:07:14] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:07:44] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:08:15] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:08:45] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:09:15] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:09:46] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:10:16] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:10:48] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:11:18] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:11:51] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:12:21] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:12:53] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:13:24] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:13:57] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:14:34] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:15:11] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:15:46] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:16:23] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:16:57] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:17:31] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:18:04] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:18:40] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:19:12] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:19:44] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:20:19] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:20:51] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:21:23] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:21:55] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:22:26] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:22:58] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:23:31] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:24:04] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:24:36] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:25:08] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:25:41] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:26:12] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:26:45] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:27:17] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:27:49] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:28:21] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:28:58] reaped stale lock + swept assignee on #24 (pid=58282)
+[21:29:05] tick — Ready=19 Building=0 QA=1 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=0(#13) r_idle=1(#24) waiting_on_you=1
+[21:29:22] dispatch lane=review issue=#24 pid=8822 claim=ToanMobile
+[21:29:56] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:30:30] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:31:03] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:31:36] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:32:09] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:32:41] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:33:14] tick — cap reached (3/3 busy) — skipping GraphQL fetch, sleeping 30s
+[21:33:52] reaped stale lock + swept assignee on #13 (pid=21460)
+[21:34:03] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#24) waiting_on_you=1
+[21:34:46] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#24) waiting_on_you=1
+[21:35:30] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#24) waiting_on_you=1
+[21:36:15] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#24) waiting_on_you=1
+[21:36:59] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#24) waiting_on_you=1
+[21:37:42] tick — Ready=20 Building=0 QA=0 Review=1 Blocked=0 lanes: b_idle=0(#21) q_idle=1(#13) r_idle=0(#24) waiting_on_you=1
+[21:37:45] STOP 📋 2 in-flight worker(s) to wrap up
+[21:37:45] STOP 
+[21:37:45] STOP ─── #21 (lane=build, pid=38947) ───
+[21:37:49] STOP   💬 issue comment posted on #21
+[21:37:51] STOP   💬 PR comment posted on #130
+[21:38:00] STOP   🔓 released assignee + lane labels on #21
+[21:38:01] STOP   ☠ worker(build/#21) pid=38947 SIGKILLed (didn't respond to SIGTERM)
+[21:38:01] STOP 
+[21:38:01] STOP ─── #24 (lane=review, pid=8822) ───
+[21:38:04] STOP   💬 issue comment posted on #24
+[21:38:07] STOP   💬 PR comment posted on #131
+[21:38:15] STOP   🔓 released assignee + lane labels on #24
+[21:38:16] STOP   ☠ worker(review/#24) pid=8822 SIGKILLed (didn't respond to SIGTERM)
+[21:38:16] STOP 
+[21:38:17] STOP 🛑 stopping dispatcher loop
+[21:38:18] STOP   ☠ dispatcher pid=6440 SIGTERMed
+[21:38:18] STOP 
+[21:38:18] STOP 🧽 cleared .claude/super-board/inflight

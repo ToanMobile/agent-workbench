@@ -80,15 +80,16 @@ def deliver(token: str, method: str, body: dict) -> None:
         resp.read()
 
 
-def safe_deliver(token: str, method: str, body: dict) -> None:
+def safe_deliver(token: str, method: str, body: dict) -> bool:
     try:
         deliver(token, method, body)
     except (OSError, urllib.error.URLError, TimeoutError, ValueError):
-        return
+        return False
+    return True
 
 
-def send_text(token: str, chat: str, text: str) -> None:
-    safe_deliver(token, "sendMessage", {"chat_id": chat, "text": text})
+def send_text(token: str, chat: str, text: str) -> bool:
+    return safe_deliver(token, "sendMessage", {"chat_id": chat, "text": text})
 
 
 def accounts_key(raw: str) -> str:
@@ -115,8 +116,14 @@ def limited_should_send(state_dir: Path, accounts: str, now: float, interval: fl
         last = 0.0
     if not changed and now - last < interval:
         return False
-    path.write_text(json.dumps({"accounts": key, "at": now}), encoding="utf-8")
     return True
+
+
+def mark_limited_sent(state_dir: Path, accounts: str, now: float) -> None:
+    """Ghi mốc chỉ sau khi gửi thành công. Gửi lỗi thì lần sau vẫn được gửi."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    path = state_dir / "accounts-limited.json"
+    path.write_text(json.dumps({"accounts": accounts_key(accounts), "at": now}), encoding="utf-8")
 
 
 def write_approval(repo: str, pr: int, head: str, source: int) -> str:
@@ -150,7 +157,8 @@ def run(args: argparse.Namespace) -> int:
         state = Path(args.state_dir) if args.state_dir else Path.home() / ".claude" / "super-board"
         if not limited_should_send(state, args.accounts or "all", now_s()):
             return 0
-        send_text(token, chat, "%s\nevery worker account is at its limit: %s" % (card or "super-board", accounts_key(args.accounts or "all")))
+        if send_text(token, chat, "%s\nevery worker account is at its limit: %s" % (card or "super-board", accounts_key(args.accounts or "all"))):
+            mark_limited_sent(state, args.accounts or "all", now_s())
         return 0
     if args.cmd == "approve-button":
         if not args.repo or not REPO.fullmatch(args.repo) or not SHA.fullmatch(args.head or "") or args.pr < 1 or args.source < 1:

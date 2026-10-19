@@ -11,6 +11,10 @@ DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# --full trong file này chạy `true` / shell, không phải Gradle hay Unity. Slot riêng để
+# không chờ semaphore toàn máy (Stop 20:32: ca thứ ba đứng đến khi bị ngắt ở 600s).
+export SB_HEAVY_SLOT_DIR="$TMP/heavy-slots"
+mkdir -p "$SB_HEAVY_SLOT_DIR"
 
 FAILS=0
 check() { # name expected actual [output] [forbidden-substring]

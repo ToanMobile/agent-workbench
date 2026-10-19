@@ -1639,7 +1639,9 @@ python3 -c 'import datetime,json
 t=(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 print(json.dumps({"type":"user","timestamp":t,"message":{"role":"user","content":"sửa lỗi X"}}))' > "${PG_TR}"
 sleep 1
-CLAUDE_PROJECT_DIR="${PG}" python3 "${HOOKS}/../bin/post-fix-gate.py" --run-tests --full --no-checklist >/dev/null 2>&1
+# `sh result.sh`, không phải Gradle/Unity. Slot riêng: lệnh này đứng đến khi Stop ngắt ở 600s (20:32).
+mkdir -p "${SANDBOX}/heavy-slots"
+CLAUDE_PROJECT_DIR="${PG}" SB_HEAVY_SLOT_DIR="${SANDBOX}/heavy-slots" python3 "${HOOKS}/../bin/post-fix-gate.py" --run-tests --full --no-checklist >/dev/null 2>&1
 PG_PNG="reports/proof-$(date +%Y%m%d-%H%M%S).png"   # named for this turn: the gate reads the time in the name
 python3 - "${PG}/${PG_PNG}" <<'PY'
 import os, struct, sys, zlib
