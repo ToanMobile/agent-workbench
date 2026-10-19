@@ -72,7 +72,8 @@
 #     "refreshApproval": [ {"number":52,"title":"…","why":"PR head changed after review"} ],
 #     "flag":  [ {"number":82,"title":"…","why":"…"} ],
 #     "stranded": [ {"number":44,"title":"…"} ],
-#     "waiting": [ {"number":45,"title":"…","labels":["needs-you"]} ] }   # Ready cards held for a person (#95)
+#     "waiting": [ {"number":45,"title":"…","labels":["needs-you"]},       # Ready cards held for a person (#95)
+#                  {"number":46,"title":"…","labels":["qa","needs-device"],"why":"…"} ] }   # held for a real device (#95)
 set -euo pipefail
 
 CONFIG=""; ITEMS_FILE=""; DEPS_FILE=""
@@ -129,11 +130,22 @@ else
     rc=$?; echo "could not derive the dependency graph for ${REPO}" >&2; exit "$rc"; }
 fi
 
+# #95: a card whose QA needs a real device (label needs-device) — in QA, or in Ready labelled `qa` — waits while none is
+# online (super-board-run.sh DEVICE_JQ). adb is asked only when such an unclaimed card exists; the helper's verdict goes to
+# stderr so stdout stays the plan.
+NODEV=false
+if echo "$ITEMS" | jq -e '[.items[] | select(.content.type == "Issue" and ((.content.assignees // []) | length == 0))
+     | [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase] as $l
+     | select(($l | index("needs-device")) != null and (.status == "QA" or (.status == "Ready" and ($l | index("qa")) != null)))]
+     | length > 0' >/dev/null; then
+  python3 "$HERE/super-board-device-online.py" >&2 || NODEV=true   # its repo: this checkout, as the runner and status
+fi
+
 # Review extras used to be gated behind human_approves_merge, because concurrent
 # auto-merges into one base branch race. That guard now lives where the race
 # actually is — the merge step takes a lock inside the wave workflow and the
 # freshness gate re-verifies under it — so reviews may run in parallel here.
-echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argjson deps "$DEPS" '
+echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argjson deps "$DEPS" --argjson nodev "$NODEV" '
   def dep($n): $deps[($n | tostring)];
   # gh project item-list puts label names on the item (`labels`); some shapes put
   # them on the content, as strings or {name}. Lower-cased, names only.
@@ -151,6 +163,9 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
   # Not one carrying loop:rebase / loop:rebuild-N: back from QA/Review after the person acted (super-board-run.sh FOR_A_PERSON_JQ).
   def for_a_person($l): (($l | index("needs-you")) or ($l | index("human-gated")))
                         and ($l | map(. == "loop:rebase" or startswith("loop:rebuild-")) | any | not);
+  # #95: its QA needs a real device and none is online ($nodev, above). Not Review; a Ready card without `qa` is built first.
+  def held_for_device($s; $l): $nodev and ($l | index("needs-device")) != null
+                               and ($s == "QA" or ($s == "Ready" and ($l | index("qa")) != null));
 
   [ .items[]
     | select(.content.type == "Issue")
@@ -162,10 +177,11 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
   # In flight: already past preflight, so the graph does not gate them. Iterated
   # in $cols order (Review, then QA) rather than board order, so a throttled wave
   # spends its slots on the work closest to Done.
-  | [ $cols[] as $c | $all[] | select(.status == $c and $c != "Ready") ] as $flight
+  | [ $cols[] as $c | $all[] | select(.status == $c and $c != "Ready") | select(held_for_device(.status; .labels) | not) ] as $flight
 
   # Ready: only the ones the graph says are actually free.
-  | [ $all[] | select(.status == "Ready") | select(free(.number)) | select(for_a_person(.labels) | not) ] as $ready
+  | [ $all[] | select(.status == "Ready") | select(free(.number)) | select(for_a_person(.labels) | not)
+      | select(held_for_device(.status; .labels) | not) ] as $ready
 
   # Downstream-first, so work already begun finishes before new work starts.
   | ($flight + $ready) as $picked
@@ -202,5 +218,9 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
       # Building with no claim between waves = no live worker. Back to Ready.
       stranded: [ $all[] | select(.status == "Building") | { number, title } ],
 
-      # Ready cards held back for a person (#95): removing the needs-you / human-gated label releases them.
-      waiting: [ $all[] | select(.status == "Ready") | select(for_a_person(.labels)) | { number, title, labels } ] }'
+      # Ready cards held back for a person (#95): removing the needs-you / human-gated label releases them. Then Ready/QA
+      # cards held for a real device: plugging one in (or removing needs-device) releases them.
+      waiting: ([ $all[] | select(.status == "Ready") | select(for_a_person(.labels)) | { number, title, labels } ]
+                + [ $all[] | select(held_for_device(.status; .labels))
+                    | select((.status == "Ready" and for_a_person(.labels)) | not)
+                    | { number, title, labels, why: "its QA needs a real device (needs-device) and none is online" } ]) }'

@@ -425,6 +425,24 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-needs-device",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/bin/super-board-status.py",
+        ".claude/bin/super-board-device-online.py",
+        "universal-agent-devkit/bin/proof-capture.py",
+        "tests/super-board/test_needs_device_skip.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-NEEDS-DEVICE-01",
+          "name": "runner, planner and status hold needs-device QA cards while no real device is online (emulator, denylist, no adb)",
+          "command": "bash tests/super-board/test_needs_device_skip.sh"
+        }
+      ]
     }
   ]
 }

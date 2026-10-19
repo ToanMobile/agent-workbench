@@ -159,10 +159,51 @@ column_count() {
 FOR_A_PERSON_JQ='def for_a_person: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
   | ((index("needs-you") or index("human-gated")) and (map(. == "loop:rebase" or startswith("loop:rebuild-")) | any | not));'
 
+# #95: a card whose QA needs a real device (label needs-device, any case) — in QA, or in Ready labelled `qa` (the Tester takes it
+# from there) — while none is online ($nodev): a QA lane could only park it in Blocked. Not Review; not a Ready card the Builder
+# takes first (it is built, and held when it reaches QA). Same rule: super-board-wave-plan.sh, super-board-status.py.
+DEVICE_JQ='def held_for_device($col): $nodev and ([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
+  | index("needs-device") != null and ($col == "QA" or ($col == "Ready" and index("qa") != null)));'
+NO_DEVICE=false
+
+refresh_device_state() {
+  # Sets NO_DEVICE for this tick. adb is asked only while an unclaimed card would be held (a board with none never runs it);
+  # a change is logged once, not every tick.
+  local cards was="$NO_DEVICE" note
+  cards=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson nodev true "$DEVICE_JQ"'
+    [.items[] | select(.content.type == "Issue" and ((.content.assignees // []) | length == 0))
+     | select(held_for_device(.status)) | "#\(.content.number)"] | join(" ")') || cards=""
+  NO_DEVICE=false
+  [ -n "$cards" ] || return 0
+  note=$(python3 "$SCRIPT_DIR/super-board-device-online.py" 2>&1) || NO_DEVICE=true   # its repo: this checkout
+  [ "$NO_DEVICE" = "$was" ] && return 0
+  if [ "$NO_DEVICE" = true ]; then
+    log "📱 holding ${cards} (needs-device) until a real device is online: ${note}"
+  else
+    log "📱 real device online — needs-device cards ${cards} can be taken again (${note})"
+  fi
+}
+
+count_board() {
+  # This tick's column counts. Cards no lane takes (person_count) are left out of Ready and QA for dispatch and the exit test,
+  # and counted in WAITING (#95).
+  refresh_device_state   # #95: needs-device cards wait while no real device is online
+  READY=$(column_count "Ready")
+  WAITING=$(person_count "Ready")   # #95: Ready cards only a person can move; left out of Ready for dispatch and the exit test
+  READY=$((READY - WAITING))
+  BUILDING=$(column_count "Building")
+  QA_HELD=$(person_count "QA")   # #95: QA cards waiting for a real device, left out the same way
+  QA=$(( $(column_count "QA") - QA_HELD ))
+  WAITING=$((WAITING + QA_HELD))
+  REVIEW=$(column_count "Review")
+  BLOCKED=$(column_count "Blocked")
+}
+
 person_count() {
-  # Cards of column $1 waiting for a person: no lane takes them from Ready, so they must not keep a run alive that has nothing else
-  # to do (counted in Ready, a non-daemon run never reached its clean "all empty" exit).
-  echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" "$FOR_A_PERSON_JQ"' [.items[] | select(.status == $col) | select(for_a_person)] | length'
+  # Cards of column $1 no lane takes this tick — Ready ones waiting for a person, Ready/QA ones waiting for a real device: they
+  # must not keep a run alive that has nothing else to do (counted, a non-daemon run never reached its clean "all empty" exit).
+  echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ"'
+    [.items[] | select(.status == $col) | select(($col == "Ready" and for_a_person) or held_for_device($col))] | length'
 }
 
 # ── Status-field resolution (issue #10 reconcile path).
@@ -271,7 +312,7 @@ top_card_in_column() {
     TOP_ISSUE="$issue"; TOP_ITEM_ID="$item_id"
     return 0
   done <<EOF
-$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" "$FOR_A_PERSON_JQ"'
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ"'
     .items[]
     | select(.status == $col and .content.type == "Issue")
     | select((.content.assignees // []) | length == 0)
@@ -279,6 +320,7 @@ $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" "$FOR_A_PERSON_JQ"'
     # and parks it again. Not in QA/Review: the resume path moves a 🙋 card a person approved to Review with its label possibly
     # still on (run.md → resume). Removing the label releases the card.
     | select($col != "Ready" or (for_a_person | not))
+    | select(held_for_device($col) | not)   # #95: its QA needs a real device and none is online (refresh_device_state)
     | [(.content.number | tostring), (.id // "")] | @tsv')
 EOF
   return 1
@@ -1279,6 +1321,7 @@ cleanup_stale_worktrees
 startup_reconcile
 
 # ───────────────────────────── main loop ─────────────────────────────
+refresh_device_state
 INITIAL_READY=$(( $(column_count "Ready") - $(person_count "Ready") ))   # as READY each tick: cards for a person left out (#95)
 log "initial Ready count: $INITIAL_READY"
 
@@ -1362,14 +1405,7 @@ while true; do
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
   if maybe_sweep_blocked; then fetch_project_items; fi
 
-  READY=$(column_count "Ready")
-  WAITING=$(person_count "Ready")   # #95: Ready cards only a person can move; left out of Ready for dispatch and the exit test
-  READY=$((READY - WAITING))
-  BUILDING=0
-  BUILDING=$(column_count "Building")
-  QA=$(column_count "QA")
-  REVIEW=$(column_count "Review")
-  BLOCKED=$(column_count "Blocked")
+  count_board
 
   log "tick — Ready=$READY Building=$BUILDING QA=$QA Review=$REVIEW Blocked=$BLOCKED lanes: b_idle=$BUILD_IDLE(#${BUILD_ISSUE:-_}) q_idle=$QA_IDLE(#${QA_ISSUE:-_}) r_idle=$REVIEW_IDLE(#${REVIEW_ISSUE:-_}) waiting_on_you=$WAITING"
 
