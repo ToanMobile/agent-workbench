@@ -67,10 +67,14 @@ if route == "graphql":
             view["visible"] = var["ids"]
         out({"data": {"updateProjectV2View": {"projectV2View": {"id": view["id"]}}}})
     names = {f["id"]: f["name"] for f in proj["fields"]}
+    more = {"hasNextPage": bool(state.get("more_views"))}
     node = {"id": proj["id"],
-            "fields": {"nodes": [{"id": f["id"], "name": f["name"], "dataType": f["dataType"]} for f in proj["fields"]]},
-            "views": {"nodes": [{"id": v["id"], "name": v["name"], "layout": v["layout"],
-                                 "fields": {"nodes": [{"id": i, "name": names[i]} for i in v["visible"]]}}
+            "fields": {"pageInfo": {"hasNextPage": False},
+                       "nodes": [{"id": f["id"], "name": f["name"], "dataType": f["dataType"]} for f in proj["fields"]]},
+            "views": {"pageInfo": more,
+                      "nodes": [{"id": v["id"], "name": v["name"], "layout": v["layout"],
+                                 "fields": {"pageInfo": {"hasNextPage": False},
+                                            "nodes": [{"id": i, "name": names[i]} for i in v["visible"]]}}
                                 for v in proj["views"]]}}
     out({"data": {"repositoryOwner": {"projectV2": node}}})
 
@@ -304,6 +308,15 @@ p = os.environ["FAKE_GH_STATE"]; s = json.load(open(p)); s["ignore_view_update"]
 PY
 python3 "$HELPER" board --owner o --project 1 >"$TMP/out8" 2>&1; rc=$?
 [ "$rc" -ne 0 ] && ok "board fails loudly when GitHub ignores the view update (re-read)" || fail "board claimed success: $(cat "$TMP/out8")"
+# Board có nhiều view hơn một trang: test đòi exit 1 và 0 lần gọi updateProjectV2View.
+reset_state '[]' '[]'
+python3 - <<'PY'
+import json, os
+p = os.environ["FAKE_GH_STATE"]; s = json.load(open(p)); s["more_views"] = True; json.dump(s, open(p, "w"))
+PY
+python3 "$HELPER" board --owner o --project 1 >"$TMP/out9" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && [ "$(q "len([c for c in s['calls'] if 'updateProjectV2View' in ' '.join(c)])")" = 0 ] \
+  && ok "board refuses a project with more views than one page" || fail "paged board rc=$rc: $(cat "$TMP/out9")"
 
 [ "$FAILS" -eq 0 ] || { echo "$FAILS failed"; exit 1; }
 echo "all passed"

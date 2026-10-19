@@ -53,8 +53,9 @@ PROJECT_QUERY = """query($owner:String!,$number:Int!){
 }
 fragment p on ProjectV2 {
   id
-  fields(first:50){ nodes{ ... on ProjectV2FieldCommon { id name dataType } } }
-  views(first:20){ nodes{ id name layout fields(first:50){ nodes{ ... on ProjectV2FieldCommon { id name } } } } }
+  fields(first:50){ pageInfo{ hasNextPage } nodes{ ... on ProjectV2FieldCommon { id name dataType } } }
+  views(first:20){ pageInfo{ hasNextPage } nodes{ id name layout
+    fields(first:50){ pageInfo{ hasNextPage } nodes{ ... on ProjectV2FieldCommon { id name } } } } }
 }"""
 VIEW_MUTATION = """mutation($view:ID!,$ids:[ID!]!){
   updateProjectV2View(input:{viewId:$view, configuration:{visibleFieldIds:$ids}}){ projectV2View{ id } }
@@ -187,6 +188,11 @@ def board(owner, number, dry):
             raise GhError(f"project {owner}#{number} not found")
         return proj
     proj = views()
+    # Một trang là đủ cho board hiện có (2 view, ~13 trường); nhiều hơn thì dừng: gửi visibleFieldIds thiếu sẽ ẩn
+    # trường của view đó, còn bỏ qua view sau trang đầu thì báo xong sai.
+    pages = [proj["fields"], proj["views"]] + [v["fields"] for v in proj["views"]["nodes"]]
+    if any((c.get("pageInfo") or {}).get("hasNextPage") for c in pages):
+        raise GhError(f"project {owner}#{number} has more than 20 views or 50 fields: not handled, nothing changed")
     labels_id = next((f["id"] for f in proj["fields"]["nodes"] if f.get("dataType") == "LABELS"), None)
     if not labels_id:
         raise GhError(f"project {owner}#{number} has no Labels field")
