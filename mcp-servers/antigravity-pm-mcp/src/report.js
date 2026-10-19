@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import { contractPaths, gate, freshness, isGreenRun } from './tasks.js';
 import { writeFileAtomic, nowIso } from './util.js';
 
-export function renderReport(cfg, task, { summary = '' } = {}) {
+export function renderReport(cfg, task, { summary = '', gateCtx } = {}) {
   const paths = contractPaths(cfg, task);
-  const g = gate(cfg, task);
+  const g = gate(cfg, task, gateCtx);
   const fresh = freshness(cfg, task);
   const res = fresh.result || {};
   const round = task.round || 0;
