@@ -1,0 +1,27 @@
+{
+  "name": "cc-switcher-mcp",
+  "version": "0.1.0",
+  "description": "MCP server va Auto-Switcher Daemon chong ban cho 6 profile CC Switch kem dieu khien 2 chieu qua Telegram.",
+  "type": "module",
+  "bin": {
+    "cc-switcher-mcp": "bin/cc-switcher-mcp.js"
+  },
+  "exports": {
+    ".": "./src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node bin/cc-switcher-mcp.js",
+    "daemon": "node bin/cc-switcher-mcp.js --daemon",
+    "doctor": "node bin/cc-switcher-mcp.js --doctor",
+    "test": "node --test tests/",
+    "lint": "node --check bin/cc-switcher-mcp.js && for f in src/*.js tests/*.js; do node --check $f || exit 1; done"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  },
+  "license": "MIT",
+  "private": true
+}

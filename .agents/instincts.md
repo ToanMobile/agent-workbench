@@ -434,3 +434,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Khoá dùng lại kết quả test băm cả file mà chính suite ghi lại thì không bao giờ khớp giữa hai checkout
 - **Nguyên nhân:** local_state_sha của post-fix-gate băm build input do task Test build lại (APK overlay GeelyEx2, byte khác mỗi lượt) và config trong cache build (Unity Library/**/local.properties): scratch của merge gate có cây trùng nhưng local_sha khác, suite nặng chạy lại ở mọi PR (18/10)
 - **Quy tắc phòng ngừa & Cách fix:** Khoá dùng lại chỉ gồm INPUT: bỏ file trong cache build và file suite tự ghi lại trong lượt (đo trước/sau suite, ghi vào biên nhận), nhưng không bao giờ bỏ config/khoá thật (LOCAL_CONFIG, DEFAULT_INPUTS) — tool sửa tại chỗ vẫn là đổi input; có ca đối chứng input thật khác thì không dùng lại
+
+---
+
+### [INSTINCT-052] Worktree do công cụ tự tạo thiếu phần cài DevKit bị ignore, và bài thử pass trên đường khác đường chạy thật
+- **Ngày phát hiện:** 2026-10-19
+- **Hiện tượng lỗi:** Worktree do công cụ tự tạo thiếu phần cài DevKit bị ignore, và bài thử pass trên đường khác đường chạy thật
+- **Nguyên nhân:** Merge gate chỉ tìm install.sh ở '.', tức worktree Reviewer do lane tạo bằng worktree add trần, nơi .agents/devkit (bị ignore) không có: scratch thiếu post-fix-gate.py, mọi PR đã review đỏ ở verify, 47 thẻ Blocked ở 5 board (19/10). Lane còn chép link tương đối .agents/active-profile của main y nguyên vào worktree sâu hơn nên link gãy (exit 127). Bài thử 20 phiên ngày 17/10 pass vì đi EnterWorktree (hook cài DevKit) và chạy merge gate từ main checkout, không đi qua lane + PR + merge gate từ worktree Reviewer.
+- **Quy tắc phòng ngừa & Cách fix:** Mọi script tìm DevKit hay state bị ignore phải tìm cả ở main checkout (dòng đầu danh sách worktree), không chỉ ở '.'; thiếu thì dừng với lỗi môi trường (exit 9), không quy cho PR. Bài thử nghiệm thu phải đi đúng đường production (lane tạo worktree, PR, merge gate chạy từ worktree Reviewer). Test: tests/super-board/test_merge_gate_devkit_from_main.sh, universal-agent-devkit/tests/worktree_git/test_heal_active_profile.sh.

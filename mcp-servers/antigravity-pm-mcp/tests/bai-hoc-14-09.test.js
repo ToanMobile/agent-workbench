@@ -18,7 +18,7 @@ import {
   buildImplementMessage, buildReworkMessage, buildNudgeMessage, planTemplate, kiemTraKeHoach,
 } from '../src/prompt.js';
 import { TOOLS_BY_NAME } from '../src/tools.js';
-import { tmpProject, cleanup, writeFile, sampleTaskArgs, PNG_1PX } from './helpers.js';
+import { tmpProject, tmpDir, cleanup, writeFile, sampleTaskArgs, PNG_1PX } from './helpers.js';
 
 const KHAI_DU = ['src/Kinh.kt', 'src/test/java/KinhTest.kt'];
 const CTX_DU = { changedFiles: KHAI_DU };
@@ -260,7 +260,7 @@ exit 1
     proof: { defaultProvider: 'xe', providers: { xe: { type: 'adb', serial: 'khong-ton-tai:5555', adb, connectTimeoutMs: 1000 } } },
   }));
   const cfg = loadConfig(dir);
-  const src = writeFile(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-src-')), 'a.png'), PNG_1PX);
+  const src = writeFile(path.join(tmpDir('agpm-src-'), 'a.png'), PNG_1PX);
   const shot = await captureProof(cfg, { proofDir: path.join(dir, 'proof'), label: 'anh', sourceFile: src });
   assert.equal(shot.provider, 'file');
   // Truyen ro provider thi provider do van thang (khong doi hanh vi cu).

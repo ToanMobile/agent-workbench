@@ -8,6 +8,7 @@ export const meta = {
     { title: 'Build', detail: 'Builder lifecycle (run.md): worktree, branch, draft PR' },
     { title: 'QA', detail: 'Tester lifecycle (run.md): test plan, evidence, screenshots' },
     { title: 'Review', detail: 'Reviewer lifecycle (run.md): gates, rerun tests, merge' },
+    { title: 'Cleanup', detail: 'post-merge sweep: lane worktrees and branches of merged, closed cards (super-board-post-merge-clean.sh --sweep)' },
   ],
 }
 
@@ -144,13 +145,26 @@ const SKILLS_CHECK = (cards, lane) => [
   `Load the exact resolved_path files. Only declared fallback IDs are allowed. Before using a conditional/custom helper repeat this CLI with --require <exact-name>.`,
 ].join('\n')
 
+// Lane worktrees come from the DevKit only (agent-workbench#93): a plain `git worktree add` lacked .agents/devkit, the profile link and
+// the git-ignored hooks the settings run (health FAIL; NFH #18: matrix exit 127, 5 cards Blocked) and re-imported a whole Unity Library
+// per worktree (Goods ~9.9 GB). `--lane` takes no WORKTREE_MAX slot; the disk floor still refuses with exit 4.
+const WORKTREE_STEP = (lane, n) => [
+  `Worktree: after \`git fetch origin\`, create it from the repo root ONLY with the DevKit, never plain \`git worktree add\` or EnterWorktree:`,
+  lane === 'review'
+    ? `\`agent-kit worktree add .claude/worktrees/issue-${n}-review --lane=review --base=origin/<PR branch>\` (detached; refresh with \`git fetch origin && git checkout --detach origin/<PR branch>\`).`
+    : `\`agent-kit worktree add .claude/worktrees/issue-${n}-${lane} issue-${n}-<slug> --lane=${lane} --base=origin/<config.base_branch>\` (an existing issue branch is checked out as it is, one only origin has from origin/<branch>, and the lane's worktree already at that path is reused).`,
+  `It links the DevKit, copies the git-ignored config and hooks and clones a Unity Library copy-on-write. No agent-kit on PATH: \`python3 .agents/devkit/scripts/git/worktree.py add\` with the same arguments.`,
+  `Exit 4 = under the disk floor: status=halted with its message, card and claims unchanged, no retry. Exit 1 naming a worktree that holds the branch: \`git worktree remove\` that path (refused = it holds work: status=blocked naming it), then add again. Clean up on exit with \`git worktree remove <path>\` (the branch stays).`,
+].join('\n')
+
 const lanePrompt = (lane, card) => [
   SKILLS_CHECK([card], lane),
   READ_FAILURE,
   `Run ${LANE[lane].skill} on issue #${card.number} ("${card.title}") for a super-board workflow wave.`,
   `Read .claude/skills/super-board/references/run.md → "${LANE[lane].section}" lifecycle and follow it EXACTLY:`,
-  `create your own worktree under .claude/worktrees/, work on the issue branch, post the required PR/issue comments,`,
+  `create your own worktree (below), work on the issue branch, post the required PR/issue comments,`,
   `move the project card yourself, clean up the worktree on exit. Config: ${input.configPath}.`,
+  WORKTREE_STEP(lane, card.number),
   BOARD_IO(),
   `Commits, PR title, PR body blocks, comments: .claude/skills/super-board/references/writing-standard.md. Rewrite only your own PR body blocks, with .claude/bin/super-board-pr-body.sh.`,
   ...(lane === 'review' ? REVIEW_MEMORY : []),
@@ -357,4 +371,30 @@ const summary = results.filter(Boolean).map((r) => {
 })
 log(`wave complete: ${summary.length} cards — ` +
     summary.map((s) => `#${s.number}=${s.finalStatus}@${s.column}`).join(', '))
+
+// Dọn worktree lane + nhánh của thẻ đã merge (#96, OCR batch trên #111): một lần ở cuối mỗi wave, kể cả wave không merge gì (còn sót
+// từ trước). Script này không ghi lock inflight/<N> nào (grep "inflight" trong file này chỉ ra comment này), nên sweep dựa vào lớp
+// khác: PR merged quá 15 phút, issue CLOSED, khoá phiên / devkit-kept còn sống. Run halted: bỏ lời gọi này (không đọc GitHub thêm).
+// configPath chỉ được ghép vào lệnh khi đúng dạng đường dẫn (chữ, số, . _ / -).
+const CLEANUP_SCHEMA = { type: 'object', properties: { detail: { type: 'string' } }, required: ['detail'] }
+if (!halted && /^[A-Za-z0-9._\/-]+$/.test(input.configPath)) {
+  // Bước phụ: agent lỗi / hết giờ không được làm mất tóm tắt của các thẻ đã chạy (OCR) — bắt lỗi, ghi log, vẫn trả kết quả wave.
+  let sweep = null
+  try {
+    sweep = await agent(
+      `Run exactly this one command from the repository root, once, with the Bash tool timeout set to 600000 (10 minutes: removing a ` +
+      `Unity worktree is slow and a cut-short run leaves work half done); change nothing else and do not retry:\n` +
+      `bash .claude/bin/super-board-post-merge-clean.sh --sweep . --base "$(jq -r '.base_branch // "main"' '${input.configPath}')"\n` +
+      `It always exits 0; it removes only lane worktrees and branches of merged, closed cards that nothing live holds. ` +
+      `Return in detail the lines of its output that start with "removed", "salvaged", "restored", "kept", "sweep", "✔" or "✖" ` +
+      `(at most 20), or "nothing to do".`,
+      { label: 'cleanup:post-merge-sweep', phase: 'Cleanup', model: 'haiku', schema: CLEANUP_SCHEMA }
+    )
+  } catch (e) {
+    log(`cleanup: sweep agent failed (${e && e.message ? e.message : e}); the wave result stands`)
+  }
+  log(`cleanup: ${(sweep && sweep.detail) || 'no report'}`)
+} else if (!halted) {
+  log(`cleanup: skipped — configPath ${JSON.stringify(input.configPath)} is not a plain path, so it is not put into a shell command`)
+}
 return { cards: summary, halted }

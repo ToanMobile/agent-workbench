@@ -86,7 +86,8 @@
 #      card → Blocked with the 🙋 template: the human reviews and merges it, or
 #      comments "done" after its pinned request to approve — the next wave re-runs
 #      the gate, which then skips the policy check and merges.
-#   9  verification-readiness: repair config.verify_commands and restart; preserve
+#   9  verification-readiness: repair config.verify_commands (or the DevKit install
+#      the scratch tree lacks: no post-fix-gate.py there) and restart; preserve
 #      card/worktree/approval state. Never bounce to Build or retry a rebase.
 #   79 required GitHub evidence unavailable: local run halt; preserve card and
 #      approval state, stop dispatch, and explicitly restart after diagnosis.
@@ -293,15 +294,43 @@ if ! git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>/dev/null; then
 fi
 
 # Populate git-ignored DevKit symlinks so post-fix-gate / REG-WB-CONFIG-01 succeed in SCRATCH
-if [ -f "$REPO_PATH/universal-agent-devkit/bin/install.sh" ]; then
-  bash "$REPO_PATH/universal-agent-devkit/bin/install.sh" -t "$SCRATCH" -a claude -y >/dev/null 2>&1 || true
+# 19/10: REPO_PATH "." thường là worktree Reviewer, nơi .agents/devkit (bị ignore) không có: chỉ tìm ở đó thì không cài gì và mọi
+# verify đỏ vì thiếu post-fix-gate.py (Goods #48, NFH #61, OfficeReader #74/#159). Tìm ở "." rồi ở main checkout. Không lấy bản đi kèm
+# gate: thử 19/10, nó cài DevKit vào scratch của repo không có DevKit và test_merge_gate_scratch_clean.sh đỏ (11 file chưa track).
+# --no-githooks: cài vào scratch không ghi đè hook git dùng chung của repo.
+DK_MAIN=$(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p') || true
+DK_INSTALL=""
+for c in "$REPO_PATH/universal-agent-devkit" "$REPO_PATH/.agents/devkit" "${DK_MAIN:-$REPO_PATH}/universal-agent-devkit" \
+         "${DK_MAIN:-$REPO_PATH}/.agents/devkit"; do
+  if [ -f "$c/bin/install.sh" ]; then DK_INSTALL="$c/bin/install.sh"; break; fi
+done
+if [ -n "$DK_INSTALL" ]; then
+  DK_RC=0
+  bash "$DK_INSTALL" -t "$SCRATCH" -a claude -y --no-githooks >"$VERIFY_LOG" 2>&1 || DK_RC=$?
+  [ "$DK_RC" -eq 0 ] || say "DevKit install into the scratch tree failed (exit ${DK_RC}): $(tail -3 "$VERIFY_LOG" | clip 300)"
   git -C "$SCRATCH" checkout -q -- . 2>/dev/null || true
-elif [ -f "$REPO_PATH/.agents/devkit/bin/install.sh" ]; then
-  bash "$REPO_PATH/.agents/devkit/bin/install.sh" -t "$SCRATCH" -a claude -y >/dev/null 2>&1 || true
-  git -C "$SCRATCH" checkout -q -- . 2>/dev/null || true
+else
+  : >"$VERIFY_LOG"
+  say "no DevKit install.sh in ${REPO_PATH} or ${DK_MAIN:-the main checkout}: the scratch tree has no .agents/devkit"
 fi
 # Config cục bộ bị git ignore (google-services.json, local.properties…) để build trong SCRATCH không đỏ vì môi trường.
 bash "$HERE/super-board-scratch-config.sh" "$REPO_PATH" "$SCRATCH" || true
+# Lệnh verify gọi post-fix-gate mà scratch không có nó: lỗi môi trường, không phải lỗi PR. Exit 11 sẽ đẩy thẻ về Build/Blocked dù PR
+# không có gì sai (OCR 19/10): dừng bằng exit 9 (verification-readiness), giữ nguyên thẻ.
+for cmd in "${VERIFY[@]}"; do
+  for p in .agents/devkit/bin/post-fix-gate.py universal-agent-devkit/bin/post-fix-gate.py; do
+    # Chỉ đường dẫn tương đối gốc scratch, ở ranh giới token: đầu lệnh, sau dấu cách, ngoặc kép / đơn, backtick, ( ) { } ; & | = < >,
+    # có hay không "./" (`python3 "./.agents/…"`, `cd x &&./…`, `bash -c ".agents/…"` lọt qua bản so " $p" cũ: OCR #97, issue #98).
+    # Một đường dẫn tuyệt đối hay ../ (trước nó là "/") vẫn chạy như cũ. Dấu chấm thành [.]: không phụ thuộc cách bash bỏ ngoặc (OCR).
+    re="(^|[[:space:]\"'\`(){};&|=<>])(\./)?${p//./[.]}(\$|[[:space:]\"'\`(){};&|<>])"
+    if [[ "$cmd" =~ $re ]] && [ ! -f "$SCRATCH/$p" ]; then
+      # Không tiền tố "[merge-gate #N]": dòng phải bắt đầu đúng "verification-readiness:" như dòng exit 9 ở trên
+      # (super-board-codex-lane.sh: detail của exit 9 bắt đầu đúng chữ đó).
+      echo "verification-readiness: the scratch tree has no ${p} (the DevKit could not be installed there) — an environment problem, not PR #${PR}; the card stays where it is.${DK_INSTALL:+ Install log: $(tail -3 "$VERIFY_LOG" 2>/dev/null | clip 300)}" >&2
+      exit 9
+    fi
+  done
+done
 
 for cmd in "${VERIFY[@]}"; do
   if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
@@ -578,7 +607,8 @@ PY
   else
     say "note: ${BASE} in ${MAIN_PATH} not fast-forwarded (main checkout is not on ${BASE})"
   fi
-  bash "$HERE/super-board-post-merge-clean.sh" "$REPO_PATH" "$HEAD_REF" "$HEAD_SHA" >&2 || true
+  # Số PR: worktree detached ở head đã squash mà không ref nào còn giữ thì bước dọn giữ tạm head bằng refs/pull/<PR>/head (19/10, #96).
+  bash "$HERE/super-board-post-merge-clean.sh" "$REPO_PATH" "$HEAD_REF" "$HEAD_SHA" "$PR" >&2 || true
   if [ -f "$REPO_PATH/.claude/hooks/cleanup-wt.py" ]; then
     ( cd "$REPO_PATH" && python3 .claude/hooks/cleanup-wt.py --post-merge --base "$BASE" </dev/null ) >&2 || true
   fi

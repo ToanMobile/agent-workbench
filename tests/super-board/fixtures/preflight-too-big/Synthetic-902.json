@@ -1,0 +1,1 @@
+{"number":902,"title":"🐛 [bug] reader: crash khi mở PDF, DOCX, XLSX","body":"## Problem\nMở ba loại tệp đều văng.\n\n## Fix\nKiểm null trước khi đọc metadata.\n\n## Acceptance Criteria\n- [ ] Mở được cả ba loại tệp\n\n## Risk\n🟢 **Low** · một hàm.\n"}

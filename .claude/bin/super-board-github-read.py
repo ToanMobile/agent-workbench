@@ -5,6 +5,9 @@ A logical read gets three total attempts. Success resets its own sequence; other
 reads cannot reset it. Permanent query/auth errors stop on the first attempt.
 The halt file is shared through the main checkout, including linked worktrees.
 Only an explicit new run clears it with --resume after preserving the old reason.
+A halt with no saved read (an uncertain write) restarts only after its GitHub outcome was checked by hand:
+--resume --reconciled "<what was checked>" makes a read-only quota probe, never replays the write, and moves the
+record to github-halt-reconciled-<ns>.json with that reason.
 Mutations never enter this retry helper. A gh CLI syntax error (wrong flag or
 argument count) is the caller's mistake for every kind: that call exits 64 and the
 run keeps going. A payload that fails its shape on every attempt is also the
@@ -64,6 +67,23 @@ def halt_path():
 def check_halt():
     if halt_path().exists():
         raise ReadHalted('GitHub reads are halted; inspect the saved reason and explicitly restart the run')
+
+
+def archive_reconciled(path, text, why):
+    """Move an op-null halt aside once its write was checked by hand: the complete archive (original record + reason) is
+    written to a temp file and renamed into place before the active file goes, so a failed write leaves the board halted
+    and nothing is lost. The temp name still matches the ignored github-halt*.json."""
+    archive = path.with_name(f'github-halt-reconciled-{time.time_ns()}.json')
+    tmp = archive.with_name(archive.stem + '.tmp.json')
+    try:
+        tmp.write_text(json.dumps({**json.loads(text), 'reconciled': {'reason': why, 'at': int(time.time())}}))
+        if path.read_text() != text:
+            raise ReadHalted('the halt record changed while it was being reconciled; inspect it again')
+        os.replace(tmp, archive)
+    finally:
+        tmp.unlink(missing_ok=True)
+    path.unlink()
+    print(f'[github-read] halt reconciled ({why}); record kept at {archive}', file=sys.stderr)
 
 
 def halt(reason, attempts, operation=None):
@@ -146,7 +166,9 @@ def validate(text, kind, meta=None):
         if not files:
             require(not text.strip() and meta['additions'] == meta['deletions'] == 0, 'diff and file list disagree')
             return text
-        lines = text.splitlines()
+        # Split on \n only: splitlines() also breaks on VT, FF, U+2028 and friends,
+        # which can sit inside a changed line and look like missing hunk data.
+        lines = text.split('\n')
         require(sum(line.startswith('diff --git ') for line in lines) == len(files), 'diff file list incomplete')
         added = removed = 0
         old_left = new_left = 0
@@ -295,6 +317,14 @@ def validate(text, kind, meta=None):
     return value
 
 
+def run_gh(args):
+    result = subprocess.run(['gh', *args], capture_output=True, timeout=30)
+    # Decode by hand: text=True turns a lone \r inside a diff line into \n.
+    result.stdout = result.stdout.decode('utf-8', 'replace')
+    result.stderr = result.stderr.decode('utf-8', 'replace')
+    return result
+
+
 def read(args, kind='json', meta=None, recovering=False):
     if not read_only(args):
         raise ValueError('retry helper accepts read-only GitHub commands only')
@@ -316,7 +346,12 @@ def read(args, kind='json', meta=None, recovering=False):
         if not recovering:
             check_halt()
         try:
-            result = subprocess.run(['gh', *args], capture_output=True, text=True, timeout=30)
+            result = run_gh(args)
+            # gh refuses to print a diff holding terminal escape sequences (ANSI colour in a committed QA log). That is data in
+            # the PR, not a failed read: ask again with the flag it names. Any other failure keeps the retry/halt path.
+            if (result.returncode and args[:2] == ['pr', 'diff'] and '--allow-escape-sequences' not in args
+                    and 'terminal escape sequences' in result.stderr):
+                result = run_gh([*args, '--allow-escape-sequences'])
             diagnostic = result.stderr
             if result.returncode:
                 diagnostic += result.stdout
@@ -368,19 +403,30 @@ def main():
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--halt', help='record an unresolved mutation outcome and stop; never retry it')
     parser.add_argument('--resume', action='store_true')
+    parser.add_argument('--reconciled', metavar='WHY', help='with --resume: restart after a halt with no saved read (an uncertain write) once its GitHub outcome was checked; WHY is kept in the archived record')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
     try:
+        if args.reconciled is not None and (not args.resume or command or not args.reconciled.strip()):
+            raise ValueError('--reconciled needs --resume, no read command, and a non-blank reason: what was checked on GitHub')
         if args.halt:
             halt(args.halt, 1)
         if args.resume:
             path = halt_path()
             if path.exists():
-                record = json.loads(path.read_text())
+                text = path.read_text()
+                record = json.loads(text)
                 operation = record.get('operation')
+                if args.reconciled is not None:
+                    if isinstance(operation, dict):
+                        raise ValueError('this halt saved a read to replay: restart it with --resume alone, not --reconciled')
+                    read(['api', 'rate_limit'], 'quota', recovering=True)
+                    archive_reconciled(path, text, args.reconciled.strip())
+                    return 0
                 if not isinstance(operation, dict):
-                    raise ReadHalted('saved failure needs manual outcome reconciliation before restart')
+                    raise ReadHalted('saved failure needs manual outcome reconciliation before restart: check the write on '
+                                     'GitHub, then run --resume --reconciled "<what was checked>"')
                 if command:
                     if args.kind != operation['kind']:
                         raise ValueError('replacement recovery read must validate the same evidence kind')

@@ -17,6 +17,12 @@
         "@agentmemory/agentmemory@0.9.29",
         "mcp"
       ]
+    },
+    "cc-switcher-mcp": {
+      "command": "node",
+      "args": [
+        "mcp-servers/cc-switcher-mcp/bin/cc-switcher-mcp.js"
+      ]
     }
   }
 }

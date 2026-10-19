@@ -640,14 +640,20 @@ When invoked by super-board (env `SUPER_BOARD_RUN=1` or invocation contains "sup
 
 ### Lifecycle (Tester, first pass)
 See `.claude/skills/super-board/references/run.md` → Tester (first pass — repo-backed). Summary:
-1. Pull latest of base; checkout `issue-<N>-<slug>` into worktree (a `qa` card: create it from the base).
+1. `git fetch origin`, then the worktree with the DevKit: `agent-kit worktree add .claude/worktrees/issue-<N>-qa issue-<N>-<slug> --lane=qa --base=origin/<config.base_branch>`
+   (no `agent-kit` on PATH: `python3 .agents/devkit/scripts/git/worktree.py add` with the same arguments). It checks out the Builder's branch as
+   it is (one only origin has from origin/<branch>; a `qa` card's new branch from the base), links the DevKit, copies the git-ignored config and
+   hooks, clones a Unity Library copy-on-write and takes no WORKTREE_MAX slot. Exit 4 = under the disk floor: stop with its message, card and
+   claims unchanged. Exit 1 naming a worktree that holds the branch (the Builder's leftover): `git worktree remove` that path (refused =
+   it holds work: Block the card naming it), then add again. Never a plain `git worktree add` or EnterWorktree (agent-workbench#93).
+   Clean up with `git worktree remove <path>`.
 2. Read issue + PR + Builder's handoff.
 3. Build issue-scoped test plan: ONE observable test per AC.
 3a. Existing project verifier → follow [project-verifier.md](references/project-verifier.md)
 for affected selection, host readiness, real assertions and fresh proof.
 3b. Run the **Test-gap check** (above) against the Builder's diff; its High gaps join the plan.
 4. Run tests. Capture evidence to `docs/super-board/runs/issue-<N>-qa-v<N>/`. **For any UI-affecting issue, capture at least one screenshot per AC** (Playwright `page.screenshot` or `browse --screenshot`). Save with descriptive names: `ac1-<short-desc>.png`, not `screenshot1.png`.
-5. **Commit the evidence directory** to the issue branch alongside test files (`git add docs/super-board/runs/issue-<N>-qa-v<N>/ && git commit && git push`). This is non-optional — without it, the inline image markdown in the issue comment won't render on GitHub.
+5. **Commit the evidence directory** to the issue branch alongside test files (`git add docs/super-board/runs/issue-<N>-qa-v<N>/ && git commit && git push`). This is non-optional — without it, the inline image markdown in the issue comment won't render on GitHub. Keep it small: screenshots plus a `summary.md` of at most 40 lines, never raw runner output over 200 lines and never ANSI colour codes (run.md → Tester step 5, "Evidence stays small").
 6. **Pass** → tick the PR's `ac` block with proof lines, write `visual` for UI, append a `history` row, rewrite `status` (`super-board-pr-body.sh`) → `[qa] [report] ✅` PR comment with results + evidence path → **issue comment with screenshot evidence** (see "Issue-comment evidence format" below) → move QA → Review. Clean up worktree.
 7. **Fail** → leave failing ACs unchecked with the reason, append a `history` row, rewrite `status` → `[qa] [report] ❌` PR comment with per-AC expected/actual + repro file:line + evidence path + "what fixed should look like" → issue comment with the failure screenshots → increment rebuild counter → move QA → Ready (label `loop:rebuild-N`). Clean up worktree.
 
@@ -703,4 +709,5 @@ The Tester's issue comment is the user's primary visibility into "is this actual
 Hash lane = `qa`. Same input definition as super-build.
 
 ### Block/Skip exits use the §4 mandatory template
-Same rule as super-build.
+Same rule as super-build, including `super-board-needs-you.py mark` when a person must act
+(a real device, a human judgement the AC asks for, a credential).

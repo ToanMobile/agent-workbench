@@ -242,6 +242,174 @@
           "command": "bash tests/super-board/test_merge_gate_stale_message.sh"
         }
       ]
+    },
+    {
+      "component": "super-board-preflight",
+      "watch_files": [
+        ".claude/bin/super-board-preflight.sh",
+        ".claude/bin/super-board-github-read.py",
+        ".claude/bin/super-board-gh-guard.sh",
+        "tests/super-board/test_preflight_too_big.sh",
+        "tests/super-board/fixtures/preflight-too-big/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-PREFLIGHT-TOO-BIG-01",
+          "name": "preflight holds too-big cards before a builder pass, proceeds on normal ones",
+          "command": "bash tests/super-board/test_preflight_too_big.sh"
+        }
+      ]
+    },
+    {
+      "component": "super-board-runner-watchdog",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-stop.sh",
+        ".claude/bin/super-board-watchdog.sh",
+        ".claude/bin/super-board-setup.py",
+        ".claude/bin/super-board-gh-guard.sh",
+        "universal-agent-devkit/scripts/governance/super_board_all.py",
+        "tests/super-board/test_runner_watchdog.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-WATCHDOG-01",
+          "name": "super-board runner survives a killed sleep; durable stop marker; launchd watchdog never restarts a stopped board",
+          "command": "bash tests/super-board/test_runner_watchdog.sh"
+        }
+      ]
+    },
+    {
+      "component": "super-board-diff-policy",
+      "watch_files": [
+        ".claude/bin/super-board-merge-policy.py",
+        ".claude/bin/super-board-github-read.py",
+        ".claude/bin/super-board-approval.py",
+        "tests/super-board/test_merge_policy_odd_newlines.sh",
+        "tests/super-board/test_upstream_66_67.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-POLICY-NL-01",
+          "name": "merge-policy sees always_human keywords after VT/FF/CR/NEL/U+2028, in ++ lines and across odd whitespace",
+          "command": "bash tests/super-board/test_merge_policy_odd_newlines.sh"
+        },
+        {
+          "id": "REG-SB-UPSTREAM-66-67-01",
+          "name": "github-read keeps odd-newline diffs byte-exact without halting; approval links body issues off the default base",
+          "command": "bash tests/super-board/test_upstream_66_67.sh"
+        }
+      ]
+    },
+    {
+      "component": "mcp-servers/cc-switcher-mcp",
+      "watch_files": [
+        "mcp-servers/cc-switcher-mcp/*.js",
+        "mcp-servers/cc-switcher-mcp/*.json"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-AUTO-CC-SWITCHER-MCP-01",
+          "name": "cc-switcher-mcp: package.json test script",
+          "command": "cd mcp-servers/cc-switcher-mcp && npm test"
+        }
+      ]
+    },
+    {
+      "component": "super-board-needs-you",
+      "watch_files": [
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-deps.sh",
+        "tests/super-board/test_needs_you.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-NEEDS-YOU-01",
+          "name": "needs-you mark is idempotent, migrates human-gated and carries no machine line",
+          "command": "bash tests/super-board/test_needs_you.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-needs-you-skip",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/bin/super-board-status.py",
+        ".claude/bin/super-board-needs-you.py",
+        "tests/super-board/test_needs_you_skip.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-NEEDS-YOU-SKIP-01",
+          "name": "runner, planner and status leave Ready cards that wait for a person (needs-you / human-gated) to the person",
+          "command": "bash tests/super-board/test_needs_you_skip.sh"
+        }
+      ]
+    },
+    {
+      "component": "super-board-watchdog-path-sanitize",
+      "watch_files": [
+        ".claude/bin/super-board-watchdog.sh",
+        "tests/super-board/test_watchdog_path_sanitize.sh",
+        "tests/super-board/test_watchdog_lock_mtime.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WATCHDOG-PATHS-01",
+          "name": "watchdog compares .state paths on physical paths and takes back a stale check lock on GNU and BSD stat",
+          "command": "bash tests/super-board/test_watchdog_path_sanitize.sh && bash tests/super-board/test_watchdog_lock_mtime.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-run-stop-mark-mtime",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_run_stop_mark_mtime.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUN-STOP-MTIME-01",
+          "name": "runner reads the stop marker mtime on GNU and BSD stat",
+          "command": "bash tests/super-board/test_run_stop_mark_mtime.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-setup-bin-list",
+      "watch_files": [
+        ".claude/bin/super-board-setup.py",
+        "tests/super-board/test_setup_bin_list.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SETUP-BIN-01",
+          "name": "setup BIN lists every super-board script the runner, merge gate and skills call",
+          "command": "bash tests/super-board/test_setup_bin_list.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-post-merge-clean",
+      "watch_files": [
+        ".claude/bin/super-board-post-merge-clean.sh",
+        "tests/super-board/test_post_merge_clean.sh",
+        "tests/super-board/test_post_merge_squash_leftovers.sh",
+        "tests/super-board/test_post_merge_sweep_wiring.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-POST-MERGE-CLEAN-01",
+          "name": "post-merge clean and --sweep remove merged lane worktrees, keep work, one sweep at a time, salvage leaves no junk",
+          "command": "bash tests/super-board/test_post_merge_clean.sh && bash tests/super-board/test_post_merge_squash_leftovers.sh && bash tests/super-board/test_post_merge_sweep_wiring.sh"
+        }
+      ]
     }
   ]
 }
