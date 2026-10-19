@@ -113,6 +113,24 @@ BOLD = "\033[1m"
 DIM = "\033[2m"
 RESET = "\033[0m"
 
+
+def unity_suite_compiles(command: str) -> bool:
+    """EditMode/PlayMode already compiles the scripts, so a separate compile step is redundant."""
+    low = (command or "").lower()
+    return "editmode" in low or "playmode" in low
+
+
+def skip_separate_unity_compile(command: str, unity_will_test: bool) -> bool:
+    """Skip a compile-only suite when this same run already has an edit/play suite.
+
+    The command is compile-only when it contains "compile" and the tail after that
+    word does not contain "test" (a test filter is not a separate compile).
+    """
+    cmd = (command or "").lower()
+    if not unity_will_test or "compile" not in cmd:
+        return False
+    return "test" not in cmd.split("compile", 1)[-1]
+
 # Key names whose assigned value is treated as a credential. A prefix is allowed
 # (DB_PASSWORD, ghToken), a suffix is not (passwordHint, tokenType).
 _SECRET_KEY = r"[\w.\-]*?(?:api[_\-]?key|apikey|access[_\-]?token|auth[_\-]?token|refresh[_\-]?token|token|client[_\-]?secret|secret|password|passwd|pwd|private[_\-]?key|keystore[_\-]?password|key[_\-]?password|signing[_\-]?key[_\-]?password|keystore[_\-]?base64)"
@@ -5413,9 +5431,7 @@ def main():
 
     _lap("select")
     selection_cache = {}
-    unity_will_test = any(
-        any(tok in (t.get("command") or "").lower() for tok in ("editmode", "playmode"))
-        for t in regression_tests)
+    unity_will_test = any(unity_suite_compiles(t.get("command") or "") for t in regression_tests)
     # Held for every suite run, re-run and vacuity revert (which rewrites production files in
     # the tree) of this gate, and NOT closed after the suite loop: a run waiting for this lock
     # polls every 0.5 s and, if it won the lock before the full-pass receipt below was written
@@ -5604,6 +5620,7 @@ def main():
     if use_cache and cache is None and lock_held and receipt_stamp() not in (None, stamp_before):
         cache = reuse_full_pass()
         to_run = [t for t in regression_tests if t.get("mode") != "cached"]
+        nothing_to_run = not any(t.get("command") for t in to_run)
     _lap("lock")
     # One run per distinct command (O2, 2026-09-28): two rules naming one command share its result,
     # and the test scripts run so far go to DEVKIT_GATE_DONE so run_impacted.sh skips them.
@@ -5779,102 +5796,129 @@ def main():
             share_result(t, prev)
         deferred.clear()
 
-    for t in to_run:
-        if group and not may_join(t):
-            drain()
-        if run_tests and t["command"] and not lock_held:
-            t.update({"status": "UNTESTED", "label": "BUSY", "duration": "0s", "output_tail": tr(
-                "Một lượt chạy test khác giữ khoá dự án quá TEST_RUN_LOCK_WAIT_S — không chạy song song (Gradle ghi đè build/test-results)",
-                "Another test run held the project lock past TEST_RUN_LOCK_WAIT_S — not run side by side (Gradle corrupts build/test-results)")})
-            continue
-        if run_tests and t["command"] and budget_spent():
-            mark_budget(t)
-            continue
-        if (run_tests and t["command"] and t.get("covered_by") and t["covered_by"] != t.get("id")
-                and (force_reason or not t.get("impacted_command"))):
-            # "covered_by": the matrix says another suite already runs this suite's tests (GeelyEx2: REG-CAR-VOICE is a
-            # --tests subset of REG-CAR-01's task, 30 of 30 runs repeated it, median 90 s). Skipped only when that suite ran its
-            # FULL command earlier in this run and passed; any other state (it failed, is UNTESTED, ran impacted, comes later,
-            # is unknown, is itself covered) runs this suite as before. The matrix that says so is the base-ref one. A suite
-            # that would run IMPACTED here (an impacted_command and no --full) is not covered: that run is also where the
-            # vacuity revert checks its tests.
-            drain()   # the cover may still be running in the group
-            cov = next((c for c in regression_tests if c.get("id") == t["covered_by"]), None)
-            if cov is not None and cov.get("mode") == "full" and cov.get("status") == "PASS":   # "full" = its own full command
-                t.update({"status": "PASS", "label": "COVERED", "duration": "0s", "mode": "covered",
-                          "exit_code": cov.get("exit_code"), "log": cov.get("log"),
-                          "mode_reason": tr(f"{cov['id']} đã chạy lệnh đầy đủ và PASS trong lượt này",
-                                            f"{cov['id']} ran its full command and passed in this run")})
-                print(f"    {CYAN}▶ {t['id']}: {tr('ĐÃ ĐƯỢC PHỦ', 'COVERED')} — {t['mode_reason']}{RESET}")
+    # Giữ heavy slot toàn máy (tối đa 2) khi thực sự có suite cần chạy ở chế độ --full / --force-full.
+    heavy_slot_mod = None
+    heavy_slot_handle = None
+    heavy_denied = False
+    if (run_tests and lock_held and not nothing_to_run
+            and (getattr(args, "full", False) or getattr(args, "force_full", False) or bool(force_reason))):
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import heavy_slot as _hs  # noqa: PLC0415 - sibling module in bin/
+            heavy_slot_mod = _hs
+            heavy_slot_handle = heavy_slot_mod.acquire()
+            heavy_denied = not heavy_slot_mod.admitted(heavy_slot_handle)
+        except Exception as exc:
+            log_warn(f"heavy_slot: {exc}")
+    if heavy_denied:
+        log_warn(tr("heavy-slot SLOT: 2 slot --full đang bận hết thời gian chờ — không chạy suite",
+                    "heavy-slot SLOT: both --full slots stayed busy past the wait — suites not started"))
+    try:
+        for t in to_run:
+            if heavy_denied:
+                if t.get("command") and t.get("status") != "PASS":
+                    t.update({"status": "UNTESTED", "label": "SLOT", "duration": "0s", "output_tail": tr(
+                        "2 slot --full đang bận hết thời gian chờ — suite không chạy",
+                        "both --full slots stayed busy past the wait — suite not started")})
                 continue
-        if run_tests and t["command"] and unity_will_test and "compile" in (t["command"] or "").lower() and "test" not in (t["command"] or "").lower().split("compile", 1)[-1]:
-            t["status"] = "PASS"
-            t["label"] = "SKIP compile"
-            t["duration"] = "0s"
-            t["mode"] = "skip-compile"
-            t["mode_reason"] = tr("EditMode/PlayMode biên dịch cùng script", "EditMode/PlayMode compiles the same scripts")
-            print(f"    {CYAN}▶ {t['id']}: {tr('bỏ bước compile riêng', 'skipped separate compile')} — {t['mode_reason']}{RESET}")
-            continue
-        if run_tests and t["command"]:
-            # Impacted selection (see select_impacted_tests): the full command unless the
-            # base-ref matrix declares an impacted_command AND the map can vouch for every
-            # changed file of the rule. The chosen mode and its reason are always printed.
-            cmd, mode, reason, sel = plan_test_run(project_dir, t, force_reason, selection_cache)
-            t["mode"] = mode
-            t["full_command"] = t["command"]
-            t["command"] = cmd
-            if mode == "impacted":
-                t["impacted_count"] = sel["count"]
-                t["selected"] = [n for f in sorted(sel["tests"]) for n in sel["tests"][f]][:100]
-                why = {}
-                for f, w in sel["why"].items():
-                    why[w] = why.get(w, 0) + 1
-                t["mode_reason"] = ", ".join(f"{k}: {v}" for k, v in sorted(why.items()))
-                print(f"    {CYAN}▶ {t['id']}: {tr('chế độ IMPACTED', 'mode IMPACTED')}{RESET} — "
-                      + tr(f"{sel['count']} test chọn theo ({t['mode_reason']}); lệnh đầy đủ vẫn bắt buộc trước bàn giao (--full)",
-                           f"{sel['count']} tests selected by ({t['mode_reason']}); the full run is still required before handover (--full)"))
-            elif mode == "resource":
+            if group and not may_join(t):
+                drain()
+            if run_tests and t["command"] and not lock_held:
+                t.update({"status": "UNTESTED", "label": "BUSY", "duration": "0s", "output_tail": tr(
+                    "Một lượt chạy test khác giữ khoá dự án quá TEST_RUN_LOCK_WAIT_S — không chạy song song (Gradle ghi đè build/test-results)",
+                    "Another test run held the project lock past TEST_RUN_LOCK_WAIT_S — not run side by side (Gradle corrupts build/test-results)")})
+                continue
+            if run_tests and t["command"] and budget_spent():
+                mark_budget(t)
+                continue
+            if (run_tests and t["command"] and t.get("covered_by") and t["covered_by"] != t.get("id")
+                    and (force_reason or not t.get("impacted_command"))):
+                # "covered_by": the matrix says another suite already runs this suite's tests (GeelyEx2: REG-CAR-VOICE is a
+                # --tests subset of REG-CAR-01's task, 30 of 30 runs repeated it, median 90 s). Skipped only when that suite ran its
+                # FULL command earlier in this run and passed; any other state (it failed, is UNTESTED, ran impacted, comes later,
+                # is unknown, is itself covered) runs this suite as before. The matrix that says so is the base-ref one. A suite
+                # that would run IMPACTED here (an impacted_command and no --full) is not covered: that run is also where the
+                # vacuity revert checks its tests.
+                drain()   # the cover may still be running in the group
+                cov = next((c for c in regression_tests if c.get("id") == t["covered_by"]), None)
+                if cov is not None and cov.get("mode") == "full" and cov.get("status") == "PASS":   # "full" = its own full command
+                    t.update({"status": "PASS", "label": "COVERED", "duration": "0s", "mode": "covered",
+                              "exit_code": cov.get("exit_code"), "log": cov.get("log"),
+                              "mode_reason": tr(f"{cov['id']} đã chạy lệnh đầy đủ và PASS trong lượt này",
+                                                f"{cov['id']} ran its full command and passed in this run")})
+                    print(f"    {CYAN}▶ {t['id']}: {tr('ĐÃ ĐƯỢC PHỦ', 'COVERED')} — {t['mode_reason']}{RESET}")
+                    continue
+            if run_tests and t["command"] and skip_separate_unity_compile(t["command"], unity_will_test):
                 t["status"] = "PASS"
-                t["label"] = "RESOURCE"
+                t["label"] = "SKIP compile"
                 t["duration"] = "0s"
-                t["mode_reason"] = reason
-                print(f"    {CYAN}▶ {t['id']}: {tr('chế độ RESOURCE', 'mode RESOURCE')} — {reason}{RESET}")
+                t["mode"] = "skip-compile"
+                t["mode_reason"] = tr("EditMode/PlayMode biên dịch cùng script", "EditMode/PlayMode compiles the same scripts")
+                print(f"    {CYAN}▶ {t['id']}: {tr('bỏ bước compile riêng', 'skipped separate compile')} — {t['mode_reason']}{RESET}")
                 continue
-            elif mode in ("package", "module"):
-                t["mode_reason"] = reason
-                print(f"    {CYAN}▶ {t['id']}: {tr('chế độ PACKAGE', 'mode PACKAGE')} — {reason}{RESET}")
-            else:
-                t["mode_reason"] = reason
-                if t.get("impacted_command") or force_reason:
-                    print(f"    {DIM}▶ {t['id']}: {tr('chế độ FULL', 'mode FULL')} — {reason}{RESET}")
-            key = " ".join(cmd.split())
-            prev = ran_cmds.get(key)
-            if prev is not None:
-                if id(prev) in group_ts:   # still running in the group: it takes the result when the group is drained
-                    deferred.append((t, prev))
+            if run_tests and t["command"]:
+                # Impacted selection (see select_impacted_tests): the full command unless the
+                # base-ref matrix declares an impacted_command AND the map can vouch for every
+                # changed file of the rule. The chosen mode and its reason are always printed.
+                cmd, mode, reason, sel = plan_test_run(project_dir, t, force_reason, selection_cache)
+                t["mode"] = mode
+                t["full_command"] = t["command"]
+                t["command"] = cmd
+                if mode == "impacted":
+                    t["impacted_count"] = sel["count"]
+                    t["selected"] = [n for f in sorted(sel["tests"]) for n in sel["tests"][f]][:100]
+                    why = {}
+                    for f, w in sel["why"].items():
+                        why[w] = why.get(w, 0) + 1
+                    t["mode_reason"] = ", ".join(f"{k}: {v}" for k, v in sorted(why.items()))
+                    print(f"    {CYAN}▶ {t['id']}: {tr('chế độ IMPACTED', 'mode IMPACTED')}{RESET} — "
+                          + tr(f"{sel['count']} test chọn theo ({t['mode_reason']}); lệnh đầy đủ vẫn bắt buộc trước bàn giao (--full)",
+                               f"{sel['count']} tests selected by ({t['mode_reason']}); the full run is still required before handover (--full)"))
+                elif mode == "resource":
+                    t["status"] = "PASS"
+                    t["label"] = "RESOURCE"
+                    t["duration"] = "0s"
+                    t["mode_reason"] = reason
+                    print(f"    {CYAN}▶ {t['id']}: {tr('chế độ RESOURCE', 'mode RESOURCE')} — {reason}{RESET}")
+                    continue
+                elif mode in ("package", "module"):
+                    t["mode_reason"] = reason
+                    print(f"    {CYAN}▶ {t['id']}: {tr('chế độ PACKAGE', 'mode PACKAGE')} — {reason}{RESET}")
                 else:
-                    share_result(t, prev)
-                continue
-            if may_join(t) and mode == "full":
-                # joins the group; its own DEVKIT_GATE_DONE (the scripts of the suites before it), never os.environ
-                env = suite_env()
+                    t["mode_reason"] = reason
+                    if t.get("impacted_command") or force_reason:
+                        print(f"    {DIM}▶ {t['id']}: {tr('chế độ FULL', 'mode FULL')} — {reason}{RESET}")
+                key = " ".join(cmd.split())
+                prev = ran_cmds.get(key)
+                if prev is not None:
+                    if id(prev) in group_ts:   # still running in the group: it takes the result when the group is drained
+                        deferred.append((t, prev))
+                    else:
+                        share_result(t, prev)
+                    continue
+                if may_join(t) and mode == "full":
+                    # joins the group; its own DEVKIT_GATE_DONE (the scripts of the suites before it), never os.environ
+                    env = suite_env()
+                    if done_scripts:
+                        env["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
+                    start_job(t, cmd, mode, env)
+                    ran_cmds[key] = t
+                    note_ran(cmd)
+                    continue
+                drain()
                 if done_scripts:
-                    env["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
-                start_job(t, cmd, mode, env)
+                    os.environ["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
+                run_suite(t, cmd, mode, suite_env())
                 ran_cmds[key] = t
-                note_ran(cmd)
-                continue
-            drain()
-            if done_scripts:
-                os.environ["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
-            run_suite(t, cmd, mode, suite_env())
-            ran_cmds[key] = t
-            if not t.get("matrix_added"):   # lệnh của ma trận chỉ-thêm không được bảo runner bỏ qua script nào
-                note_ran(cmd)
-        elif run_tests:
-            t["status"] = "FAIL"
-            t["output_tail"] = tr("Matrix không khai báo command cho test này", "The matrix declares no command for this test")
-    drain()
+                if not t.get("matrix_added"):   # lệnh của ma trận chỉ-thêm không được bảo runner bỏ qua script nào
+                    note_ran(cmd)
+            elif run_tests:
+                t["status"] = "FAIL"
+                t["output_tail"] = tr("Matrix không khai báo command cho test này", "The matrix declares no command for this test")
+        drain()
+    finally:
+        if heavy_slot_mod is not None:
+            heavy_slot_mod.release(heavy_slot_handle)
     restore_local_configs(_config_snaps)
     _lap("suites")
     # What this run RE-USED is judged here, under the lock and before anything is printed or decided from it. The file it read (BEFORE the lock) may
@@ -6072,6 +6116,7 @@ def main():
     receipt_untested = None
     lock_busy = False   # exit 4 because the lock was not held: no suite ran, so the receipt is neither written nor deleted
     budget_cut = False  # exit 4 because the time budget stopped a suite from starting: same, do not write or delete
+    slot_busy = False   # exit 4 because the machine-wide --full slots stayed busy: same, do not write or delete
     project_gone = not Path(project_dir).is_dir()   # W1 R5a: `worktree finish`/`remove` took it while the suites ran
     if project_gone:
         verdict_text, verdict_color, exit_code = tr(
@@ -6108,6 +6153,11 @@ def main():
         verdict_text, verdict_color, exit_code = tr("UNTESTED — một lượt chạy test khác đang giữ khoá dự án (TEST_RUN_LOCK_WAIT_S) — chạy lại sau; KHÔNG phải PASS",
                                                     "UNTESTED — another test run holds the project lock (TEST_RUN_LOCK_WAIT_S) — run again later; NOT a PASS"), YELLOW, 4
         lock_busy = True
+    elif run_tests and any(t.get("label") == "SLOT" for t in tests_untested):
+        verdict_text, verdict_color, exit_code = tr(
+            "UNTESTED — 2 slot --full toàn máy đang bận hết thời gian chờ — chạy lại sau; KHÔNG phải PASS",
+            "UNTESTED — both machine-wide --full slots stayed busy past the wait — run again later; NOT a PASS"), YELLOW, 4
+        slot_busy = True
     elif run_tests and any(t.get("label") == "BUDGET" for t in tests_untested):
         left = ", ".join(t["id"] or "?" for t in tests_untested if t.get("label") == "BUDGET")
         verdict_text, verdict_color, exit_code = tr(
@@ -6180,7 +6230,7 @@ def main():
     _lap("verdict")
     partial = not force_reason or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)
     try:
-        if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and (not partial or (exit_code != 0 and not receipt_untested)) \
+        if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy and (not partial or (exit_code != 0 and not receipt_untested)) \
                 and (not read_only or partial or exit_code != 0):
             # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
             # suites all passed (2026-09-29) — leaves the last full one as it is; a BUSY run (lock not held, nothing ran)

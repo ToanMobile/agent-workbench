@@ -1,5 +1,6 @@
 // Tich hop Telegram Bot 2 chieu: gui canh bao khi het quota/chuyen profile va nhan lenh dieu khien tu dien thoai.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   AppError,
@@ -434,10 +435,102 @@ async function maybeSyncLiveQuotas(stateDir, nowMs, forceRefresh = false) {
 /**
  * Xu ly su kien khi nguoi dung cham vao nut tren Inline Keyboard (callback_query).
  */
+export function superBoardApprovalsDir(override) {
+  if (override) return override;
+  return path.join(os.homedir(), '.claude', 'super-board', 'approvals');
+}
+
+function approvalRequestSource(comments, head) {
+  if (!/^[0-9a-f]{40}$/.test(String(head || ''))) return null;
+  for (const comment of comments || []) {
+    const body = String(comment?.body || '');
+    if (!body.includes('approval-request:')) continue;
+    if (!body.includes(head)) continue;
+    const source = Number(comment.source);
+    if (!Number.isInteger(source) || source < 1) continue;
+    return source;
+  }
+  return null;
+}
+
+async function defaultApprovalComments(record) {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const exec = promisify(execFile);
+  const sources = [...new Set([record.source, record.pr].filter((n) => Number(n) > 0))];
+  const all = [];
+  for (const source of sources) {
+    const { stdout } = await exec('gh', ['api', '--paginate', `repos/${record.repo}/issues/${source}/comments`], { timeout: 15000 });
+    const page = JSON.parse(stdout || '[]');
+    const list = Array.isArray(page) ? page : [];
+    for (const comment of list) all.push({ ...comment, source: Number(source) });
+  }
+  return all;
+}
+
+async function defaultGh(args) {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  await promisify(execFile)('gh', args, { timeout: 15000 });
+}
+
+/**
+ * Nut sb:ap:<16 hex> khong phai uy quyen. Chi comment dung `done` tren dung source
+ * dang giu approval-request cua head do. Khong merge.
+ */
+export async function approveSuperBoardCallback(token, opts = {}) {
+  const id = String(token || '').trim();
+  if (!/^[0-9a-f]{16}$/.test(id)) {
+    return { toastText: 'Nút duyệt không hợp lệ.', showAlert: true };
+  }
+  const file = path.join(superBoardApprovalsDir(opts.approvalsDir), `${id}.json`);
+  let record;
+  try {
+    record = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return { toastText: 'Không thấy phiếu duyệt.', showAlert: true };
+  }
+  const head = String(record.head || '');
+  const repo = String(record.repo || '');
+  if (!/^[0-9a-f]{40}$/.test(head) || !/^[^/\s]+\/[^/\s]+$/.test(repo)) {
+    return { toastText: 'Phiếu duyệt thiếu head hoặc repo.', showAlert: true };
+  }
+  const readComments = opts.readComments || defaultApprovalComments;
+  const gh = opts.gh || defaultGh;
+  let comments;
+  try {
+    comments = await readComments(record);
+  } catch {
+    return { toastText: 'Không đọc được approval-request.', showAlert: true };
+  }
+  const source = approvalRequestSource(comments, head);
+  if (!source) {
+    return { toastText: 'Chưa có approval-request cho đúng head.', showAlert: true };
+  }
+  try {
+    await gh(['api', '--method', 'POST', `repos/${repo}/issues/${source}/comments`, '-f', 'body=done']);
+  } catch {
+    return { toastText: 'Không ghi được comment done.', showAlert: true };
+  }
+  return { toastText: 'Đã ghi done trên đúng nguồn duyệt.', showAlert: false };
+}
+
+/** Chat lạ: trả lời từ chối, không comment, không gán chatId. */
+export async function refuseForeignTelegramChat(apiCaller, botToken, callbackQuery) {
+  await apiCaller(botToken, 'answerCallbackQuery', {
+    callback_query_id: callbackQuery?.id,
+    text: 'Chat này không được phép duyệt.',
+    show_alert: true,
+  });
+  return { refused: true };
+}
 export async function handleTelegramCallback(callbackQuery, opts = {}) {
   const { stateDir, nowMs = Date.now(), repos } = opts;
   const data = String(callbackQuery?.data || '').trim();
 
+  if (data.startsWith('sb:ap:')) {
+    return approveSuperBoardCallback(data.slice('sb:ap:'.length), opts);
+  }
   await maybeSyncLiveQuotas(stateDir, nowMs, data === 'act:refresh');
 
   if (data === 'act:balance_repos' || data === 'act:swap_repos') {
