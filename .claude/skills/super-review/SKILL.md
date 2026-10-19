@@ -338,7 +338,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
    - **Over-engineering only** (from `ponytail:ponytail-review`, see super-review step 3) → list it in the report, open no thread, and carry on to the merge decision; it never bounces a card alone. When the card bounces for another finding anyway, open a `[builder]` thread for each Over-engineering finding too, so the rebuild trims it.
    - **Code-side new finding** → new `[builder]`-prefixed thread, move card Review → Ready (`loop:rebuild-N`).
    - **Test-side new finding** → new `[qa]`-prefixed thread, move card Review → QA (`loop:rebuild-N`).
-   - **Blocker finding (destructive schema, contract, money, auth, live-DB migration) or rebuild cap hit** → full §4 Block template, move card Review → Blocked. A *clean* PR that merely touches money, auth or schema is not a finding: run the merge protocol, and the gate's `merge_policy` hands it to a human (exit 7 → 🙋 Blocked).
+   - **Blocker finding (destructive schema, contract, money, auth, live-DB migration) or rebuild cap hit** → full §4 Block template, move card Review → Blocked; a block a person must clear also runs `super-board-needs-you.py mark` (block-template.md → "A person must act"). A *clean* PR that merely touches money, auth or schema is not a finding: run the merge protocol, and the gate's `merge_policy` hands it to a human (exit 7 → 🙋 Blocked).
 8. Write the Reviewer report (marker `<!-- super-review:report -->`, ids on every finding) — edit the existing report comment in place, post a new one only on the first review. It is the next re-review's `prior_report`.
 9. Clean up worktree.
 
@@ -366,12 +366,15 @@ two complete builds. In order, no shortcuts:
      an additive migration follows `migrations.allowed_envs`, and a live DB is always human.
      Card → **Blocked** with the 🙋 template: `Why blocked` quotes the gate's
      `human-gate:` lines; `To unblock` = review PR #<P> and merge it yourself, OR comment
-     `done` to approve (the next wave re-runs the gate, which merges). Label `needs-you`.
+     `done` to approve (the next wave re-runs the gate, which merges). Mark the card:
+     `super-board-needs-you.py mark --repo <owner/name> --issue <N> --action "Review và merge PR #<P>" --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"`.
    - **Exit 8 — 🙋 needs you.** Migrations for a database outside
      `migrations.allowed_envs`, an allowed migrate command that failed, or a declared
      human-only step. Card → **Blocked** with the 🙋 template
      (`block-template.md` → "🙋 Needs you"), the gate's `needs-you:` commands copied
-     verbatim into `To unblock`, label `needs-you`, `blocked-by: -`. After the human
+     verbatim into `To unblock`, `blocked-by: -`, and mark the card with
+     `super-board-needs-you.py mark --repo <owner/name> --issue <N> --action "<the commands, shortened to 500
+     characters: the full ones are in the Block comment>" --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"`. After the human
      comments `done` after the current pinned request, the next wave verifies their
      permission and the head, then moves it to Review. Re-run the gate; labels do not
      authorize it. For exits 7 and 8, copy `approval-request:` into the canonical

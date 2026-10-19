@@ -67,6 +67,26 @@ PROJECT_REGISTRY = {
 
 DEFAULT_REPO = "ToanMobile/agent-workbench"
 
+# Thẻ chỉ người làm được (máy thật, playtest, store, secret, quyết định): nhãn + comment do
+# .claude/bin/super-board-needs-you.py ở thư mục gốc của checkout đang đứng gắn (nó nhận --repo); ba hằng
+# dưới đây chỉ dùng khi chưa có helper đó.
+NEEDS_YOU_HELPER = Path(".claude/bin/super-board-needs-you.py")
+NEEDS_YOU_LABEL = "needs-you"
+NEEDS_YOU_COLOR = "D93F0B"
+NEEDS_YOU_DESC = "🙋 Cần người thực hiện bước chỉ con người được làm"
+NEEDS_YOU_NEXT = "gỡ nhãn needs-you rồi kéo thẻ về Ready"
+# ponytail: danh sách cụm từ chỉ là đường dự phòng khi không truyền --needs-you; trần = các cụm dưới đây,
+# thêm cụm (hoặc bỏ cụm) khi thấy thẻ bị đánh dấu sai/thiếu.
+HUMAN_ONLY = re.compile("|".join([
+    r"thiết bị thật", r"máy thật", r"điện thoại thật", r"\breal device", r"\bphysical device",
+    r"xe thật", r"head ?unit thật", r"\bin[- ]car\b",
+    r"playtest", r"người chơi thật", r"\breal players?\b",
+    r"play console", r"app store connect", r"testflight", r"apple team id", r"\biarc\b",
+    r"(đặt|thêm|nhập|tạo|cấp|set|add|provide) (secret|api key|khoá api|khóa api)",
+    r"chốt (thiết kế|phương án|vị trí|scope)", r"(design|product|scope) decision",
+    r"cần người (quyết|duyệt|chọn|làm|thử)", r"chủ (repo|sản phẩm|dự án) (quyết|chọn|duyệt|đặt)",
+]), re.I)
+
 def run_cmd(cmd, check=True):
     r = subprocess.run(cmd, capture_output=True, text=True)
     if check and r.returncode != 0:
@@ -121,6 +141,61 @@ def build_body(problem, context=None, fix=None, ac=None, risk=None, blocked_by=N
     lines.append("")
     return "\n".join(lines)
 
+def ac_lines(body):
+    """Các dòng sau heading `## Acceptance Criteria` cuối cùng, tới heading `## ` kế tiếp."""
+    lines = (body or "").splitlines()
+    heads = [i for i, line in enumerate(lines) if re.match(r"^##\s+Acceptance Criteria\s*$", line)]
+    if not heads:
+        return []
+    tail = lines[heads[-1] + 1:]
+    end = next((i for i, line in enumerate(tail) if line.startswith("## ")), len(tail))
+    return tail[:end]
+
+
+def detect_needs_you(text):
+    """(dòng đầu tiên chỉ người làm được, mọi dòng đều chỉ người làm được?) — (None, False) khi không dòng nào khớp.
+    AC trộn (lane còn phần code) không được đánh dấu lúc tạo: bước kế tiếp là của lane, không phải của người."""
+    lines = [re.sub(r"^\s*[-*]\s*(\[[ xX]\]\s*)?", "", line).strip() for line in (text or "").splitlines()]
+    lines = [line for line in lines if line]
+    hits = [line for line in lines if HUMAN_ONLY.search(line)]
+    return (hits[0] if hits else None), bool(hits) and len(hits) == len(lines)
+
+
+# Cùng luật với one_line() của super-board-needs-you.py: comment và mục Cần người không mang dòng máy đọc
+# (super-board-approval.py, super-board-deps.sh đọc chúng). Kiểm TRƯỚC khi tạo issue để lỗi không để lại issue thừa.
+NEEDS_YOU_FORBIDDEN = re.compile(r"reason tag:|blocked-by:|approval-request:|<!--", re.I)
+
+
+def clean_needs_you(text, what):
+    text = " ".join((text or "").split())
+    if not text:
+        raise ValueError(f"{what} rỗng")
+    if NEEDS_YOU_FORBIDDEN.search(text):
+        raise ValueError(f"{what} không được chứa `Reason tag:`, `blocked-by:`, `approval-request:` hay `<!--`")
+    if len(text) > 500:
+        raise ValueError(f"{what} dài quá 500 ký tự")
+    return text
+
+
+def needs_you_line(action, nxt):
+    return f"🙋 Cần bạn: {action} · xong thì {nxt}"
+
+
+def with_needs_you_section(body, action, nxt):
+    """Mục `## Cần người` đứng đầu body; body đã có mục đó thì giữ nguyên."""
+    if re.search(r"^##\s+Cần người\s*$", body or "", re.M):
+        return body
+    return f"## Cần người\n{needs_you_line(action, nxt)}\n\n{body}"
+
+
+def find_needs_you_helper():
+    """Helper của repo đang đứng (git root), hoặc None khi repo chưa có super-board-needs-you.py."""
+    r = run_cmd(["git", "rev-parse", "--show-toplevel"], check=False)
+    root = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else Path(".")
+    helper = root / NEEDS_YOU_HELPER
+    return helper if helper.is_file() else None
+
+
 def parse_ticket_from_file(file_path: Path, ticket_num: int):
     content = file_path.read_text(encoding="utf-8")
     pattern = rf"###\s+TICKET-0*{ticket_num}:\s*([^\n]+)\n(.*?)(?=(?:###\s+TICKET-|\Z))"
@@ -162,10 +237,12 @@ def resolve_project_config(repo: str):
     # Fallback mặc định về Agent Workbench (Project #1)
     return PROJECT_REGISTRY[DEFAULT_REPO]
 
-def create_and_push(title, body, labels=None, repo=None, dry_run=False):
+def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_you=None, needs_you_next=NEEDS_YOU_NEXT):
     repo = repo or detect_repo()
     labels = labels or []
-    
+    if needs_you:
+        body = with_needs_you_section(body, needs_you, needs_you_next)
+
     cfg = resolve_project_config(repo)
     project_number = cfg["number"]
     project_name = cfg["name"]
@@ -189,6 +266,8 @@ def create_and_push(title, body, labels=None, repo=None, dry_run=False):
     print(f"   🏷️  Labels  : {', '.join(labels)}")
     print(f"   📦 Repo    : {repo}")
     print(f"   📋 Board   : #{project_number} {project_name} ➔ Cột Backlog ({project_url})")
+    if needs_you:
+        print(f"   🙋 Cần người: {needs_you}")
 
     if dry_run:
         print("\n--- BODY PREVIEW ---")
@@ -196,9 +275,19 @@ def create_and_push(title, body, labels=None, repo=None, dry_run=False):
         print("--------------------")
         return {"url": "https://github.com/.../dry-run", "item_id": "dry-run"}
 
+    helper = find_needs_you_helper() if needs_you else None
+    create_labels = list(labels)
+    if needs_you and helper is None:
+        # Repo chưa có helper: nhãn phải có trước, `gh issue create --label` với nhãn lạ thì thất bại.
+        run_cmd(["gh", "label", "create", NEEDS_YOU_LABEL, "--repo", repo, "--color", NEEDS_YOU_COLOR,
+                 "--description", NEEDS_YOU_DESC, "--force"])
+        create_labels.append(NEEDS_YOU_LABEL)
+        print(f"   ⚠️  Repo chưa có {NEEDS_YOU_HELPER}: chỉ gắn nhãn + mục ## Cần người, chưa có comment 🙋. "
+              "Chép helper từ agent-workbench để có comment.")
+
     # 1. Tạo issue qua gh CLI
     cmd_issue = ["gh", "issue", "create", "--repo", repo, "--title", title, "--body", body]
-    for lbl in labels:
+    for lbl in create_labels:
         cmd_issue.extend(["--label", lbl])
     
     print("   ⏳ Đang tạo GitHub Issue...")
@@ -231,7 +320,19 @@ def create_and_push(title, body, labels=None, repo=None, dry_run=False):
         run_cmd(cmd_edit, check=False)
         print(f"   🎉 THÀNH CÔNG! Task đã nằm trên Backlog Board: {project_url}")
 
-    return {"url": issue_url, "item_id": item_id, "project_url": project_url}
+    marked = True
+    if needs_you and helper is not None:
+        # 4. Nhãn needs-you + comment "🙋 Cần bạn" (idempotent) qua helper của repo.
+        number = issue_url.rstrip("/").rsplit("/", 1)[-1]
+        res_mark = run_cmd(["python3", str(helper), "mark", "--repo", repo, "--issue", number,
+                            "--action", needs_you, "--next", needs_you_next], check=False)
+        print("   " + (res_mark.stdout.strip() or res_mark.stderr.strip()))
+        if res_mark.returncode != 0:
+            marked = False
+            print(f"   ❌ Chưa đánh dấu được thẻ cần người (exit {res_mark.returncode}): {res_mark.stderr.strip()}",
+                  file=sys.stderr)
+
+    return {"url": issue_url, "item_id": item_id, "project_url": project_url, "needs_you_marked": marked}
 
 def main():
     parser = argparse.ArgumentParser(description="Tạo Task chuẩn Super-Board và đẩy lên Backlog GitHub Project Board")
@@ -247,6 +348,9 @@ def main():
     parser.add_argument("--from-file", type=Path, help="Đọc ticket từ file markdown")
     parser.add_argument("--ticket", type=int, help="Số thứ tự ticket trong file (ví dụ: 1, 2, 3...)")
     parser.add_argument("--dry-run", action="store_true", help="Chạy thử không tạo thật trên GitHub")
+    parser.add_argument("--needs-you", help="Thẻ cần người: ĐÚNG việc người phải làm (máy thật, playtest, store, secret, quyết định)")
+    parser.add_argument("--needs-you-next", default=NEEDS_YOU_NEXT, help="Người làm xong thì làm gì tiếp")
+    parser.add_argument("--no-needs-you", action="store_true", help="Không tự đánh dấu cần người dù AC khớp cụm từ")
     args = parser.parse_args()
 
     title = None
@@ -275,7 +379,37 @@ def main():
         print('      python3 create_task.py --from-file docs/super-board/backlog-tickets.md --ticket 1')
         sys.exit(0)
 
-    create_and_push(title, body, labels=args.labels, repo=args.repo, dry_run=args.dry_run)
+    # Cờ --needs-you là đường chính (nó nói đúng việc người phải làm); không có cờ thì chỉ tự đánh dấu khi MỌI
+    # dòng AC là việc của người; AC trộn và câu tóm tắt khi tạo nhanh chỉ in gợi ý.
+    needs_you = None if args.no_needs_you else args.needs_you
+    try:
+        if needs_you is not None:
+            needs_you = clean_needs_you(needs_you, "--needs-you")
+        needs_you_next = clean_needs_you(args.needs_you_next, "--needs-you-next")
+    except ValueError as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(64)
+    if needs_you is None and not args.no_needs_you:
+        summary_mode = bool(args.summary and not args.title and not args.from_file)
+        hit, only_people = detect_needs_you(args.summary if summary_mode else "\n".join(ac_lines(body)))
+        if summary_mode:
+            only_people = False  # một câu tóm tắt không tách được phần code của lane với bước của người
+        if hit and not only_people:
+            print(f"   💡 \"{hit}\" cần người sau khi lane làm phần code: không đánh dấu lúc tạo; "
+                  "QA/Review đánh dấu (super-board-needs-you.py mark) khi thẻ dừng ở bước đó. "
+                  "Cả thẻ là việc của người thì truyền --needs-you \"<việc cụ thể>\".")
+        elif hit:
+            try:
+                needs_you = clean_needs_you(f"Làm bước chỉ người làm được trong AC: {hit[:300]}", "dòng AC")
+                print(f"   🔎 AC cần người: \"{hit}\" — truyền --needs-you \"<việc cụ thể>\" để ghi rõ hơn, "
+                      "hoặc --no-needs-you nếu lane tự làm được.")
+            except ValueError as e:
+                print(f"   ⚠️  AC có vẻ cần người nhưng {e}: chưa đánh dấu; truyền --needs-you \"<việc cụ thể>\".")
+
+    result = create_and_push(title, body, labels=args.labels, repo=args.repo, dry_run=args.dry_run,
+                             needs_you=needs_you, needs_you_next=needs_you_next)
+    if not result.get("needs_you_marked", True):
+        sys.exit(3)
 
 if __name__ == "__main__":
     main()

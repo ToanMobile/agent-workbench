@@ -47,6 +47,21 @@ python3 universal-agent-devkit/scripts/governance/create_task.py \
   --risk "🟢 **Low** · <mô tả>"
 ```
 
+### 1b. Thẻ chỉ người làm được (máy thật, playtest, store, secret, quyết định)
+Thêm `--needs-you "<ĐÚNG việc người phải làm>"` (và `--needs-you-next "<xong thì làm gì>"`, mặc định
+"gỡ nhãn needs-you rồi kéo thẻ về Ready"). Script thêm mục `## Cần người` lên đầu body, rồi gọi
+`.claude/bin/super-board-needs-you.py mark` của repo: nhãn `needs-you` (hiện ngay trên thẻ) + một comment
+`🙋 Cần bạn: … · xong thì …`. Không truyền cờ mà MỌI dòng AC khớp cụm "chỉ người làm được" (thiết bị thật, playtest,
+Play Console, IARC, đặt secret, chốt thiết kế…) thì tự đánh dấu bằng dòng AC đầu tiên; AC trộn (lane còn phần code)
+chỉ in gợi ý, QA/Review đánh dấu khi thẻ dừng ở bước của người; `--no-needs-you` tắt việc này.
+Repo chưa có helper: vẫn gắn nhãn lúc tạo issue và in cảnh báo. Đánh dấu thất bại: issue đã tạo, exit 3.
+```bash
+python3 universal-agent-devkit/scripts/governance/create_task.py \
+  --title "🧪 [test] viewer: kiểm DOCX 20 MB trên máy thật" --problem "..." \
+  --ac "- [ ] Mở DOCX 20 MB trên thiết bị thật không crash" \
+  --needs-you "Cắm Pixel 7 thật, mở file DOCX 20 MB, chụp màn hình kết quả vào issue"
+```
+
 ### 2. Đẩy một ticket có sẵn từ file backlog
 Khi người dùng muốn đẩy ticket số N từ file [`docs/super-board/backlog-tickets.md`](file:///Volumes/Data/Toan/agent-workbench/docs/super-board/backlog-tickets.md):
 ```bash

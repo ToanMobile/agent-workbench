@@ -28,7 +28,7 @@ on missing requirements and recheck each conditional helper before use.
    - **STOP. Do NOT auto-confirm.**
    - Print exactly: `HUMAN GATE TRIPPED: <one-line reason>`
    - Exit non-zero.
-   - The orchestrator will detect this in the log, add the `human-gated` label to the issue, and notify the user.
+   - The orchestrator will detect this in the log, mark the card with `super-board-needs-you.py mark` (label `needs-you` + a 🙋 comment naming the step), and notify the user.
 
 4. **Skill selection.** Resolve in this order, and stop at the first that applies.
 

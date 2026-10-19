@@ -70,6 +70,37 @@ The same rule governs the issue body's `## Blocked by` section, which is where t
 a card has no block comment yet. Bullets of the form `- #N — why`, or a single `- None.` — nothing
 else parses.
 
+### A person must act → mark the card (`needs-you`)
+
+A board view shows no comments. A card that waits for a person carries the mark ON the card: the
+`needs-you` label (the Labels field is shown on every board view since 2026-10-19) and one pinned-style
+`🙋 Cần bạn: <exactly what the person must do> · xong thì <what next>` comment. On 2026-10-19 about 25
+person-only cards were dragged to Ready by mistake because nothing on the card said so.
+
+Every Block whose `blocked-by:` is `-` because a person must act — reason tags 🙋 🧑 🔐 🔑 💳 🎨 🛡, and ❓
+when the answer is a person's decision — runs this right after posting the Block comment:
+
+```
+python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue <N> \
+  --action "<the To unblock steps in one line: exactly what the person does>" \
+  --next "<then what: gỡ nhãn needs-you rồi kéo thẻ về Ready | comment done …>"
+```
+
+- One call, idempotent: the same text writes nothing, a new action edits the same comment, the
+  label is created with one colour (`D93F0B`) when the repo lacks it, and the old `human-gated`
+  label is migrated into `needs-you`.
+- The comment carries no `Reason tag:`, `blocked-by:`, `approval-request:` or `<!--` line (the
+  helper refuses them, exit 64): the Block comment and a 🙋 merge request stay the only lines
+  `super-board-deps.sh` and `super-board-approval.py` read.
+- A card that waits only on other cards (`blocked-by: 32, 91`) is never marked: the sweep skips
+  `needs-you` cards, so it would stay Blocked after #32 closes.
+- A 🙋 merge hold (merge gate exit 7 or 8): `--next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"` — never "drag to Ready": only an exact
+  `done` comment resumes it (`super-board-approval.py` `DONE`), so "done rồi" or "xong" do nothing.
+- `--action` is one line of at most 500 characters: shorten long commands, the full ones stay in the Block comment.
+- Never unmark a card a lane may still do. The person who did the step removes the label, or runs
+  `super-board-needs-you.py unmark --repo <owner/name> --issue <N>` (the comment becomes a ✅ note).
+- Exit 1 = a gh call failed: retry once, then name it in the lane report. The Block still stands.
+
 A card dropped on purpose uses the same template with the header `[<role>] [report] 🤷 dropped ·
 <reason>`, replaces `Why blocked` with `Why dropped` and `What blocks` with `Why out of scope`, is
 closed as not planned (`gh issue close <N> --reason "not planned"`) and moves to Done.
@@ -132,7 +163,8 @@ Example (what the person sees on GitHub):
 > ▸ Why, and what I checked
 
 The `Reason tag:` and `blocked-by: -` lines stay (inside the fold): the planner reads them
-(`super-board-deps.sh` → `needsYou`, `humanGated`). The issue and the PR get the `needs-you` label.
+(`super-board-deps.sh` → `needsYou`, `humanGated`). Mark the issue with `super-board-needs-you.py mark`
+("A person must act" above) and give the PR the label (`gh pr edit <P> --add-label needs-you`).
 
 **The checklist commands are exact.** Copy them from the gate's `needs-you: <command>` lines;
 never paraphrase ("run the migration on prod"). A placeholder such as `<your live migrate command>`
