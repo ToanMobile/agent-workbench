@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { TOOLS_BY_NAME } from '../src/tools.js';
 import { loadConfig } from '../src/config.js';
 import { loadTask, contractPaths, recordDispatch } from '../src/tasks.js';
-import { tmpProject, cleanup, writeFile, PNG_1PX, tick } from './helpers.js';
+import { tmpProject, tmpDir, cleanup, writeFile, PNG_1PX, tick } from './helpers.js';
 
 const call = async (name, args) => {
   const out = await TOOLS_BY_NAME.get(name).handler(args);
@@ -97,7 +97,7 @@ test('ca luong: tao task -> duyet plan -> audit/review -> test -> anh -> nghiem 
 
   // Nhan anh do "agent" chup.
   // Anh nguon nam NGOAI cay lam viec: ghi file vao repo SAU khi test xanh la "sua file sau test" => gate bat lai (dung).
-  const shot = writeFile(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-shot-')), 'shot.png'), PNG_1PX);
+  const shot = writeFile(path.join(tmpDir('agpm-shot-'), 'shot.png'), PNG_1PX);
   const proof = await call('pm_capture_proof', { project: dir, taskId, label: 'hop xac nhan hien tren xe', sourceFile: shot });
   assert.equal(proof.images.length, 1, 'phai tra ANH ve cho PM xem tan mat');
   assert.equal(proof.images[0].mime, 'image/png');

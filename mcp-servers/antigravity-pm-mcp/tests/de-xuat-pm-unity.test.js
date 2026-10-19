@@ -13,7 +13,7 @@ import { tachTrichDan, kiemTrichDan, kiemBaoCao } from '../src/cite-check.js';
 import { phanTichDiff, soiLamMem, soiThayDoi } from '../src/lint-diff.js';
 import { buildPlanCritiquePrompt, buildImplementMessage } from '../src/prompt.js';
 import { TOOLS_BY_NAME } from '../src/tools.js';
-import { tmpProject, cleanup, writeFile, sampleTaskArgs, PNG_1PX, tick } from './helpers.js';
+import { tmpProject, tmpDir, cleanup, writeFile, sampleTaskArgs, PNG_1PX, tick } from './helpers.js';
 
 const call = async (name, args) => {
   const out = await TOOLS_BY_NAME.get(name).handler(args);
@@ -146,7 +146,7 @@ test('U3 anh trung byte voi task khac => canh bao (sha256 luu trong ho so)', asy
   const t2 = createTask(cfg, sampleTaskArgs({ title: 'hai' }));
   assert.deepEqual(anhTrung(cfg, t2, hashFile(img1)), [`${t1.id} vong 0 "man hinh"`]);
   assert.deepEqual(anhTrung(cfg, t1, hashFile(img1)), [], 'cung task cung vong thi khong tinh');
-  const src = writeFile(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-s-')), 'b.png'), PNG_1PX);
+  const src = writeFile(path.join(tmpDir('agpm-s-'), 'b.png'), PNG_1PX);
   const out = await call('pm_capture_proof', { project: dir, taskId: t2.id, label: 'anh 2', sourceFile: src });
   assert.ok(out.text.includes('TRUNG BYTE') && out.text.includes(t1.id), out.text);
   cleanup(dir);

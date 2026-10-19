@@ -300,8 +300,10 @@ column), never built unchecked. `qa` cards are not pre-flighted: nothing is buil
 
 0. Legacy backend only: run the Builder pre-flight above in a sub-agent. Anything but `proceed`
    (or a conflict-note `sequence`) → do what its row says, release the claim, exit.
-1. Create worktree `.claude/worktrees/issue-<N>-build/` off `config.base_branch`.
-2. Create branch `issue-<N>-<slug>` from `config.base_branch` — unless one already exists
+1. Create worktree `.claude/worktrees/issue-<N>-build/` off `config.base_branch` with the DevKit only (agent-workbench#93):
+   `git fetch origin`, then `agent-kit worktree add .claude/worktrees/issue-<N>-build issue-<N>-<slug> --lane=build --base=origin/<config.base_branch>`.
+   Never a plain `git worktree add` or EnterWorktree. Exit 4 = under the disk floor: stop, card and claims unchanged.
+2. Create branch `issue-<N>-<slug>` from `config.base_branch` (step 1 does it) — unless one already exists
    (the card came back from Building after a stopped run): then check it out, keep its
    commits and open PR, and continue from where it stopped.
 3. Read issue body + ALL comments + PROJECT.md.
@@ -353,8 +355,9 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
 
 ### Tester (first pass — repo-backed)
 
-1. Pull latest of base; checkout `issue-<N>-<slug>` into worktree `.claude/worktrees/issue-<N>-qa/`.
-   A `qa` card has no branch yet: move it Ready → QA, then create the branch from the base.
+1. `git fetch origin`; checkout `issue-<N>-<slug>` into worktree `.claude/worktrees/issue-<N>-qa/` with the DevKit:
+   `agent-kit worktree add .claude/worktrees/issue-<N>-qa issue-<N>-<slug> --lane=qa --base=origin/<config.base_branch>`.
+   A `qa` card has no branch yet: move it Ready → QA, then the same command creates the branch from the base.
 2. `target.url` set → health-check it first. Unhealthy → Block.
 3. Read issue + PR + Builder's handoff comment.
 4. Build issue-scoped test plan: one observable test per AC.
@@ -401,7 +404,8 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
 
 ### Reviewer
 
-1. Worktree `.claude/worktrees/issue-<N>-review/` from current state of `issue-<N>-<slug>`.
+1. Worktree `.claude/worktrees/issue-<N>-review/` from current state of `issue-<N>-<slug>`, detached, with the DevKit:
+   `git fetch origin`, then `agent-kit worktree add .claude/worktrees/issue-<N>-review --lane=review --base=origin/issue-<N>-<slug>`.
 2. **Gate 1** — scan PR threads and their replies. [PR author notes](pr-author-notes.md)
    alone are explanations, not findings. Human questions or change requests in those
    threads still follow the normal review/blocking flow; the marker exempts no replies.
@@ -424,7 +428,7 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
    - All `fixed` / `no longer applies` → continue to step 4 for a fresh pass. Do not re-raise a prior finding marked `no longer applies`.
 4. Review the code (logic, conventions). Review the tests (right thing tested? testable assertions? meaningful coverage?).
 5. **Reviewer-side test rerun** (always — closes the Tester self-verification gap):
-   - Pull `issue-<N>-<slug>` into the review worktree.
+   - Bring the review worktree to the PR head: `git fetch origin && git checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the test command Tester used (recorded in Tester's PR handoff comment as `Local tests:` line).
    - Tests green → continue to step 6.
    - Tests red → open new `[qa]`-prefixed PR thread quoting the failure output, move card Review → QA with `loop:rebuild-N`, exit. Tester wrote a broken suite; QA owns the fix.
