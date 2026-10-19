@@ -412,6 +412,44 @@ try_claim_assignee() {
   return 0
 }
 
+lane_worktree_hint() {
+  # $1 = lane, $2 = issue. Worktree của lane chỉ do DevKit tạo (agent-workbench#93): `git worktree add` trần thiếu .agents/devkit,
+  # link profile và các hook bị ignore mà settings gọi (health FAIL; NFH #18: lệnh ma trận exit 127, 5 thẻ Blocked) và import lại cả
+  # Library Unity mỗi worktree (Goods ~9,9 GB). --lane không chiếm chỗ WORKTREE_MAX; sàn đĩa vẫn từ chối bằng exit 4.
+  local cmd
+  case "$1" in
+    review) cmd="agent-kit worktree add .claude/worktrees/issue-$2-review --lane=review --base=origin/<PR branch> (detached; refresh with git fetch origin then git checkout --detach origin/<PR branch>)" ;;
+    *) cmd="agent-kit worktree add .claude/worktrees/issue-$2-$1 issue-$2-<slug> --lane=$1 --base=origin/<config.base_branch> (an existing issue branch is checked out as it is, one only origin has from origin/<branch>, and the lane's worktree already at that path is reused)" ;;
+  esac
+  printf '%s' "Worktree: after git fetch origin, create it from the repo root ONLY with the DevKit, never plain git worktree add or EnterWorktree: $cmd. It links the DevKit, copies the git-ignored config and hooks and clones a Unity Library copy-on-write; no agent-kit on PATH: python3 .agents/devkit/scripts/git/worktree.py add with the same arguments. Exit 4 = under the disk floor: stop with its message, card and claims unchanged. Exit 1 naming a worktree that holds the branch: git worktree remove that path (refused = it holds work: Block the card naming it), then add again. Clean up on exit with git worktree remove <path> (the branch stays)."
+}
+
+worktree_disk_room() {
+  # $1 = đường dẫn worktree của lane. Đúng bước giữ chỗ của `agent-kit worktree add` (worktree.py _make_room: dưới mức cảnh báo thì
+  # worktree gc trước, còn dưới sàn WORKTREE_DISK_MIN_GIB thì exit 4): một luật, không chép số, và gc vẫn chạy nên board không đứng
+  # chờ người dọn tay. Dưới sàn lane nào cũng dừng ở bước tạo worktree, nên không nhận thẻ và không mở một phiên claude mỗi tick.
+  # Worktree lane đã có (git còn nhận nó: không phải thư mục rỗng sót lại, cũng không phải .git trỏ vào admin dir đã bị prune) thì
+  # add --lane dùng lại, không tốn thêm đĩa. Kiểm không được (không DevKit, python lỗi): coi là còn chỗ, nhưng ghi log (OCR 19/10).
+  [ -e "$1/.git" ] && git -C "$1" rev-parse --git-dir >/dev/null 2>&1 && return 0
+  local rc=0 err
+  err=$(python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" 2>&1 >/dev/null <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+free = m.free_gib(sys.argv[3])
+if free is not None and m.DISK_MIN_GIB and free < m.DISK_MIN_GIB:   # gc only when already under the floor: above it the own add of the lane does it
+    m._make_room(sys.argv[2], sys.argv[3])   # SystemExit(NO_ROOM=4) still under the floor after gc
+PY
+  ) || rc=$?
+  case "$rc" in
+    0) ;;
+    4) log "worktree_disk_room: $(printf '%s' "$err" | tail -1 | cut -c1-200)" ;;   # the DevKit's own line: free GiB and the floor
+    *) log "⚠ worktree_disk_room: DevKit disk check failed (rc=${rc}: $(printf '%s' "$err" | tail -1 | cut -c1-200)) — assuming room" ;;
+  esac
+  [ "$rc" -ne 4 ]
+}
+
 dispatch_lane() {
   # $1 = lane (build|qa|review); $2 = issue number
   local lane="$1" issue="$2" prompt pid
@@ -438,6 +476,10 @@ dispatch_lane() {
     log "skills-readiness: halt before claim lane=${lane} issue=#${issue}; ${skills_report}"
     exit "$skills_rc"
   fi
+  if ! worktree_disk_room "$REPO_ROOT/.claude/worktrees/issue-${issue}-${lane}"; then
+    log "skip dispatch lane=${lane} issue=#${issue} — disk under the DevKit worktree floor (WORKTREE_DISK_MIN_GIB): free space first"
+    return 0
+  fi
   # Chọn account TRƯỚC khi nhận thẻ: hết cả 6 account thì không nhận, không giao (trước đây rơi về `claude` mặc định
   # trên account đã hết, worker chết sau ~30 s và runner giao lại mãi).
   if ! resolve_worker_account; then
@@ -453,7 +495,7 @@ dispatch_lane() {
     review) prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done." ;;
     *) log "unknown lane: $lane"; return 1 ;;
   esac
-  prompt="First operation: run .claude/bin/super-board-skills-ready.py --root '$PWD' --host claude --cards - --lane '$lane' --hydrate with $card as stdin. Halt on exit 10 before worktree creation or lifecycle writes; preserve claims and approval evidence. Load resolved paths and only declared fallbacks; recheck conditionals with --require before activation. $prompt"
+  prompt="First operation: run .claude/bin/super-board-skills-ready.py --root '$PWD' --host claude --cards - --lane '$lane' --hydrate with $card as stdin. Halt on exit 10 before worktree creation or lifecycle writes; preserve claims and approval evidence. Load resolved paths and only declared fallbacks; recheck conditionals with --require before activation. $prompt $(lane_worktree_hint "$lane" "$issue")"
   if [ -f "$REPO_ROOT/.agents/active-profile.json" ] && grep -q '"lang": "vi"' "$REPO_ROOT/.agents/active-profile.json" 2>/dev/null; then
     prompt="$prompt Language policy: This repository uses Vietnamese ('lang': 'vi'). Write all PR descriptions, problem/solution/AC explanations, status comments, and review notes in Vietnamese (Tiếng Việt); identifiers/symbols remain English."
   fi
