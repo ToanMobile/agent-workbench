@@ -67,6 +67,18 @@ if 'quota' in args:
     sys.exit(0)
 print('{}')
 PY
+cat > "$BIN/super-board-verification-ready.py" <<'PY'
+#!/usr/bin/env python3
+# Stub: config luôn sẵn sàng. STUB_WRITE_MARK=<path>: ghi stop marker MỘT lần, đúng lúc runner đọc config — mô phỏng
+# super-board-stop.sh chạy trùng lúc một lần khởi động tường minh.
+import os, sys
+m = os.environ.get('STUB_WRITE_MARK')
+if m and not os.path.exists(m + '.written'):
+    os.makedirs(os.path.dirname(m), exist_ok=True)
+    open(m, 'w').write('STOPPED_AT=race\n')
+    open(m + '.written', 'w').close()
+sys.exit(0)
+PY
 printf '#!/usr/bin/env bash\necho %s\n' "'{\"items\":[]}'" > "$BIN/super-board-card.sh"   # board rỗng
 printf '#!/usr/bin/env bash\necho %s\n' "'{}'" > "$BIN/super-board-wave-plan.sh"
 for c in gh claude; do printf '#!/usr/bin/env bash\necho "%s $*" >> "$STUB_CALLS"; exit 1\n' "$c" > "$TMP/stub/$c"; done
@@ -92,6 +104,7 @@ for c in gh claude launchctl; do
 done
 
 ENVV=(-u SB_GITHUB_READ_STRICT -u POSTFIX_GATE_FORCE_FULL -u SB_DAEMON -u SB_WATCHDOG_START -u SB_WATCHDOG_AUTOINSTALL
+  -u JAVA_HOME -u ANDROID_HOME -u ANDROID_SDK_ROOT -u STUB_WRITE_MARK
   HOME="$TMP/home" PATH="$TMP/stub:$PATH" SB_ACCOUNT_POOL="$TMP/no-pool" SB_STATE_DIR="$TMP/home/sb"
   SB_LAUNCH_AGENTS_DIR="$TMP/LaunchAgents" STUB_HALT="$TMP/halt" STUB_CALLS="$TMP/calls"
   STUB_STATE="$TMP/repo/.claude/super-board/runner/t.state")
@@ -193,11 +206,35 @@ else
 fi
 rm -f "$TMP/halt"
 
+# ── 6c. stop chạy trùng lúc một lần khởi động tường minh (marker ghi khi runner đang đọc config): stop thắng ────────
+rm -f "$MARK" "$MARK.written"; cp "$STATE" "$TMP/state.before6c"
+start_runner "$TMP/run7.out" STUB_WRITE_MARK="$MARK"
+if wait_for 20 '! alive "$RP"'; then
+  [ -e "$MARK" ] && cmp -s "$STATE" "$TMP/state.before6c" \
+    && ok "a stop landing while an explicit start boots wins: marker kept, runner never ran" \
+    || fail "explicit start cleared a marker written during its own startup (marker $( [ -e "$MARK" ] && echo kept || echo GONE), state: $(field STATE "$STATE"))"
+else
+  fail "explicit start kept running after a stop landed during its startup"; kill_tree "$RP"
+fi
+rm -f "$MARK" "$MARK.written"
+
+# ── 6d. Không ghi được marker (đĩa đầy, thư mục hỏng): stop.sh vẫn dừng board và báo rõ ─────────────────────────────
+R2="$TMP/repo2"; mkdir -p "$R2/.claude/bin" "$R2/.claude/super-board/configs"
+cp "$BIN/super-board-stop.sh" "$BIN/super-board-run.sh" "$R2/.claude/bin/"
+cp "$R/.claude/super-board/configs/t.json" "$R2/.claude/super-board/configs/"
+: > "$R2/.claude/super-board/runner"   # một FILE ở chỗ thư mục marker
+( cd "$R2" && run_env bash "$R2/.claude/bin/super-board-stop.sh" t ) > "$TMP/stop2.out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'could not write the stop marker' "$TMP/stop2.out" \
+  && ok "stop.sh keeps stopping (rc 0) and warns when the marker cannot be written" \
+  || { fail "stop.sh with an unwritable marker: rc=$rc"; tail -3 "$TMP/stop2.out" | sed 's/^/    /'; }
+
 # ── 7. Watchdog: chỉ khởi động lại runner chết khi board đang chạy và không có marker ───────────────────────────────
 wd() { ( cd "$R" && run_env bash "$BIN/super-board-watchdog.sh" check t ) >> "$TMP/wd.out" 2>&1; }
 set_state() {   # set_state <pid> <STATE> [RC] [DAEMON]
+  # ENV_PATH giữ stub ở đầu: runner do watchdog khởi động lại cũng không chạm gh/claude thật.
   mkdir -p "$RUNDIR"
   printf 'PID=%s\nSLUG=t\nSTARTED=1\nDAEMON=%s\nLOG=\nSTATE=%s\nRC=%s\n' "$1" "${4:-1}" "$2" "${3:-}" > "$STATE"
+  printf 'DISPATCHES=7\nENV_PATH=%s\nENV_JAVA_HOME=/opt/test-jdk\n' "$TMP/stub:$PATH" >> "$STATE"
 }
 restarts_logged() { local n; n=$(grep -c 'restarted the runner' "$WLOG" 2>/dev/null); echo "${n:-0}"; }
 expect_no_restart() {   # $1 = mô tả; watchdog không ghi lần khởi động lại nào và state PID vẫn là $D
@@ -235,6 +272,9 @@ expect_restart "crashed runner (rc 143), no marker"
 grep -q 'watchdog restart' "$R/docs/super-board/runner.log" 2>/dev/null && ok "restarted runner logs that the watchdog started it" \
   || fail "restarted runner log does not say it was a watchdog restart"
 grep -q 'restarted' "$WLOG" 2>/dev/null && ok "restart logged to $(basename "$WLOG")" || fail "restart not logged"
+[ "$(field ENV_JAVA_HOME "$STATE")" = /opt/test-jdk ] && [ "$(field DISPATCHES "$STATE")" = 7 ] \
+  && ok "restarted runner gets the recorded JAVA_HOME back and keeps counting dispatches (7)" \
+  || fail "restarted runner: ENV_JAVA_HOME='$(field ENV_JAVA_HOME "$STATE")' DISPATCHES='$(field DISPATCHES "$STATE")'"
 
 # Runner còn sống: không khởi động thêm runner thứ hai — cả từ watchdog lẫn từ một lần khởi động tường minh.
 D="$RP"; expect_no_restart "runner alive"
@@ -266,6 +306,20 @@ expect_no_restart "5 consecutive restarts already (crash loop)"
 wd
 [ "$(grep -c 'gave up' "$WLOG" 2>/dev/null)" = 1 ] && ok "give-up logged exactly once" || fail "give-up lines: $(grep -c 'gave up' "$WLOG" 2>/dev/null)"
 
+# Runner watchdog vừa khởi động chết trước khi ghi bản ghi (lỗi config, trước trap): không khởi động lại lặp lại.
+dead_pid; E="$D"; dead_pid; set_state "$D" crashed 143
+printf 'RESTARTS=1\nLAST_RESTART=1\nVERDICT=\nSPAWNED=%s\n' "$E" > "$WD"
+expect_no_restart "the runner it started died before recording itself"
+grep -q 'exited before recording itself' "$WLOG" 2>/dev/null && ok "spawn-died logged" || fail "spawn-died not logged"
+
+# Hai `check` cùng lúc (launchd + chạy tay): đúng một lần khởi động lại.
+rm -f "$WD"; dead_pid; set_state "$D" crashed 143
+n0=$(restarts_logged); wd & wd & wait
+n1=$(restarts_logged)
+wait_for 15 '[ "$(field PID "$STATE")" != "$D" ]'
+P=$(field PID "$STATE"); [ "$P" = "$D" ] || { PIDS="$PIDS $P"; kill_tree "$P"; wait_for 10 '! alive "$P"'; }
+[ $((n1 - n0)) -eq 1 ] && ok "two concurrent checks restart the runner once" || fail "two concurrent checks restarted $((n1 - n0)) times"
+
 # PID tái dùng: PID trong record còn sống nhưng không phải runner → coi như runner đã chết.
 rm -f "$WD"; S=$( (sleep 300 >/dev/null 2>&1 & echo $!) ); PIDS="$PIDS $S"; D="$S"; set_state "$S" running
 expect_restart "record pid reused by another process"
@@ -281,6 +335,11 @@ wait_for 30 '! alive "$RP"' || kill_tree "$RP"
   && ok "watchdog never kills by name" || fail "watchdog missing or uses pkill/killall"
 
 # ── 8. install / status / uninstall (LaunchAgents và launchctl là stub) ────────────────────────────────────────────
+# Repo trong thư mục tạm, không có SB_LAUNCH_AGENTS_DIR: install từ chối, không ghi plist vào ~/Library/LaunchAgents.
+out=$( (cd "$R" && run_env SB_LAUNCH_AGENTS_DIR= bash "$BIN/super-board-watchdog.sh" install t) 2>&1 ); rc=$?
+[ "$rc" -ne 0 ] && [ ! -e "$TMP/home/Library/LaunchAgents/com.superboard.watchdog.t.plist" ] && printf '%s' "$out" | grep -q 'refusing to install' \
+  && ok "install refuses a temporary checkout (no real LaunchAgent pointing at it)" || fail "install from a temp dir: rc=$rc out=$out"
+
 PL="$TMP/LaunchAgents/com.superboard.watchdog.t.plist"
 rm -f "$PL"; : > "$TMP/calls"
 ( cd "$R" && run_env bash "$BIN/super-board-watchdog.sh" install t ) > "$TMP/install.out" 2>&1; rc=$?
@@ -324,6 +383,17 @@ PY
     || fail "super_board_all.py stop skipped stop.sh (no marker would be written)"
   grep -q 'CHƯA có stop marker' "$TMP/all.out" && ok "super_board_all.py stop warns when no marker was written" \
     || fail "super_board_all.py stop claimed success without a marker: $(tr '\n' ' ' < "$TMP/all.out")"
+  mkdir -p "$TMP/all/.claude/super-board/runner"
+  printf 'RESTARTS=5\nLAST_RESTART=1\nVERDICT=gave-up\n' > "$TMP/all/.claude/super-board/runner/zz-none.watchdog"
+  python3 - "$SBA" "$TMP/all" > "$TMP/all.status" 2>&1 <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("sba", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+m.REPOS = [{"slug": "zz-none", "name": "test", "dir": sys.argv[2], "tuios_window": "x", "url": "x"}]
+m.get_running_pids = lambda slug: []
+m.status_all()
+PY
+  grep -q 'verdict=gave-up' "$TMP/all.status" && ok "super_board_all.py status shows a watchdog that gave up" \
+    || fail "status hides the watchdog verdict: $(tr '\n' ' ' < "$TMP/all.status")"
 else
   echo "• skip: $SBA exists only in agent-workbench"
 fi

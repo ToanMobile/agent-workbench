@@ -31,6 +31,9 @@
 # (no subshell, no `exec` of a native PE), so `$!` names the worker itself rather than a bash stub.
 
 set -euo pipefail
+# Mốc ra đời của runner, đặt trước mọi bước đọc config: stop marker ghi từ giây này trở đi là super-board-stop.sh chạy
+# trùng lúc runner đang khởi động, và stop thắng (khởi động tường minh không xoá marker đó).
+RUNNER_BORN=$(date +%s)
 SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
 # Lệnh đọc cố định của runner (fields, project, state, quota) đặt SB_GITHUB_READ_STRICT=1 cho TỪNG lệnh: gõ sai ở đây là lỗi
 # của script nên vẫn halt board. Không export: worker thừa hưởng nó thì một lệnh gõ sai của agent lại halt cả board.
@@ -924,13 +927,28 @@ maybe_sweep_blocked() {
 # nó cũng là lỗi đọc của github-read (payload sai dạng 3 lần), thường tạm thời, nên watchdog thử lại có backoff và trần.
 RUNNER_HALT_CODES=" 9 10 73 74 75 79 "
 runner_state_write() {
-  # $1 = STATE, $2 = RC (khi thoát). Ghi nguyên tử (tmp + mv) để watchdog không đọc nửa file.
+  # $1 = STATE, $2 = RC (khi thoát). Ghi nguyên tử (tmp + mv) để watchdog không đọc nửa file. Ghi lại mỗi tick:
+  # bộ đếm chi tiêu (DISPATCHES, NO_PROGRESS, PAUSE_UNTIL) theo runner qua lần watchdog khởi động lại, để trần
+  # max_dispatches và cổng RUNAWAY không bị một lần crash đặt lại về 0. ENV_* là môi trường của lần khởi động tường
+  # minh (PATH, JDK, Android SDK): launchd chỉ có PATH tối thiểu, watchdog trả lại các biến này cho runner nó khởi động.
   local tmp="$RUNNER_STATE.$$"
   {
     printf 'PID=%s\nSLUG=%s\nSTARTED=%s\nDAEMON=%s\nLOG=%s\nSTATE=%s\n' \
       "$$" "$CONFIG_SLUG" "$RUNNER_STARTED" "${SB_DAEMON:-0}" "$RUNNER_LOG" "$1"
+    printf 'DISPATCHES=%s\nNO_PROGRESS=%s\nPAUSE_UNTIL=%s\n' \
+      "${DISPATCH_COUNT:-0}" "${NO_PROGRESS_CYCLE_COUNT:-0}" "${RUNAWAY_PAUSE_UNTIL:-0}"
+    printf 'ENV_PATH=%s\nENV_JAVA_HOME=%s\nENV_ANDROID_HOME=%s\nENV_ANDROID_SDK_ROOT=%s\n' \
+      "$PATH" "${JAVA_HOME:-}" "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}"
     [ -z "${2:-}" ] || printf 'RC=%s\nENDED=%s\n' "$2" "$(date +%s)"
   } > "$tmp" && mv -f "$tmp" "$RUNNER_STATE"
+}
+
+state_num() {
+  # $1 = khoá số trong bản ghi runner hiện có; 0 khi thiếu hoặc không phải số.
+  local v
+  v=$(sed -n "s/^$1=//p" "$RUNNER_STATE" 2>/dev/null | head -1) || v=""
+  case "$v" in ''|*[!0-9]*) v=0 ;; esac
+  echo "$v"
 }
 
 runner_state_exit() {
@@ -991,6 +1009,11 @@ if [ "${SB_WATCHDOG_START:-0}" = "1" ]; then
     log "🛑 watchdog restart refused: board ${CONFIG_SLUG} was stopped by the user ($STOP_MARK); only an explicit super-board run starts it"
     exit 0
   fi
+elif [ -e "$STOP_MARK" ] && [ "$(stat -f %m "$STOP_MARK" 2>/dev/null || echo "$RUNNER_BORN")" -ge "$RUNNER_BORN" ]; then
+  # Marker ghi từ lúc runner này ra đời trở đi (không đọc được mtime cũng tính vậy): stop chạy trùng lúc khởi động
+  # tường minh, stop thắng. Xoá nó ở đây thì trap EXIT ghi crashed và watchdog khởi động lại board vừa bị dừng.
+  log "🛑 start overruled: super-board-stop.sh wrote $STOP_MARK while this runner was starting — board ${CONFIG_SLUG} stays stopped"
+  exit 0
 fi
 PREV_RUNNER=$(sed -n 's/^PID=//p' "$RUNNER_STATE" 2>/dev/null | head -1) || PREV_RUNNER=""
 if [ -n "$PREV_RUNNER" ] && [ "$PREV_RUNNER" != "$$" ] && kill -0 "$PREV_RUNNER" 2>/dev/null; then
@@ -1002,6 +1025,11 @@ fi
 # Ghi bản ghi TRƯỚC khi đặt lại backoff và nạp watchdog (RunAtLoad chạy `check` ngay): một `check` đọc bản ghi cũ
 # (PID chết) trong khoảng đó sẽ khởi động runner thứ hai.
 # ponytail: kiểm-rồi-ghi không nguyên tử, hai lần khởi động trong cùng vài ms vẫn lọt; thêm khoá mkdir nếu thấy 2 runner.
+if [ "${SB_WATCHDOG_START:-0}" = "1" ]; then
+  DISPATCH_COUNT=$(state_num DISPATCHES)
+  CARRY_NO_PROGRESS=$(state_num NO_PROGRESS)
+  RUNAWAY_PAUSE_UNTIL=$(state_num PAUSE_UNTIL)
+fi
 runner_state_write running
 if [ "${SB_WATCHDOG_START:-0}" != "1" ]; then
   # Khởi động tường minh (super-board run, start-runner.sh, super_board_all.py start): người dùng muốn board chạy.
@@ -1012,6 +1040,8 @@ if [ "${SB_WATCHDOG_START:-0}" != "1" ]; then
   rm -f "$RUNNER_DIR/${CONFIG_SLUG}.watchdog"   # backoff của watchdog bắt đầu lại từ 0
   if [ -x "$SCRIPT_DIR/super-board-watchdog.sh" ]; then
     "$SCRIPT_DIR/super-board-watchdog.sh" ensure "$CONFIG_SLUG" 2>&1 | while IFS= read -r line; do log "watchdog: $line"; done || true
+  else
+    log "⚠ $SCRIPT_DIR/super-board-watchdog.sh is missing: nothing restarts this runner if it dies (copy it from agent-workbench)"
   fi
 fi
 gh_checkpoint
@@ -1057,7 +1087,7 @@ log "initial Ready count: $INITIAL_READY"
 # Landed-work baseline (issue #8). Progress is a change in this set, not lane state.
 PREV_DONE_SIG=$(done_signature)
 INITIAL_DONE_SIG="$PREV_DONE_SIG"
-NO_PROGRESS_CYCLE_COUNT=0
+NO_PROGRESS_CYCLE_COUNT="${CARRY_NO_PROGRESS:-0}"   # watchdog khởi động lại: đếm tiếp từ runner trước
 
 while true; do
   # Stop marker xuất hiện giữa chừng (super-board-stop.sh không kill được runner này, hoặc watchdog vừa khởi động nó
@@ -1067,6 +1097,7 @@ while true; do
     RUNNER_END=stopped
     break
   fi
+  runner_state_write running   # bộ đếm chi tiêu mới nhất, cho lần watchdog khởi động lại sau một SIGKILL
   python3 "$(dirname "$SB_GITHUB_READ")/super-board-verification-ready.py" --config "$CONFIG_PATH"
   gh_checkpoint
   # Workflow-backend mutual exclusion, re-checked every tick: the startup

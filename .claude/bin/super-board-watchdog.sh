@@ -45,12 +45,18 @@ NOW=$(date +%s)
 
 field() { sed -n "s/^$1=//p" "$2" 2>/dev/null | head -1 || true; }
 wlog() { mkdir -p "$DIR"; printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$WLOG"; }
-wd_save() { mkdir -p "$DIR"; printf 'RESTARTS=%s\nLAST_RESTART=%s\nVERDICT=%s\n' "$RESTARTS" "$LAST_RESTART" "$VERDICT" > "$WD.$$" && mv -f "$WD.$$" "$WD"; }
-
-RESTARTS=$(field RESTARTS "$WD"); RESTARTS=${RESTARTS:-0}
-LAST_RESTART=$(field LAST_RESTART "$WD"); LAST_RESTART=${LAST_RESTART:-0}
-VERDICT=$(field VERDICT "$WD")
-case "$RESTARTS:$LAST_RESTART" in *[!0-9:]*) RESTARTS=$MAX_RESTARTS; LAST_RESTART=0 ;; esac   # hỏng: coi như đã bỏ cuộc
+wd_save() {
+  mkdir -p "$DIR"
+  printf 'RESTARTS=%s\nLAST_RESTART=%s\nVERDICT=%s\nSPAWNED=%s\n' "$RESTARTS" "$LAST_RESTART" "$VERDICT" "$SPAWNED" > "$WD.$$" \
+    && mv -f "$WD.$$" "$WD"
+}
+load_wd() {   # SPAWNED = PID runner do watchdog khởi động gần nhất
+  RESTARTS=$(field RESTARTS "$WD"); RESTARTS=${RESTARTS:-0}
+  LAST_RESTART=$(field LAST_RESTART "$WD"); LAST_RESTART=${LAST_RESTART:-0}
+  VERDICT=$(field VERDICT "$WD"); SPAWNED=$(field SPAWNED "$WD")
+  case "$RESTARTS:$LAST_RESTART:$SPAWNED" in *[!0-9:]*) RESTARTS=$MAX_RESTARTS; LAST_RESTART=0; SPAWNED="" ;; esac   # hỏng: coi như đã bỏ cuộc
+}
+load_wd
 
 verdict() {   # $1 = khoá kết luận, $2 = thông điệp. Chỉ ghi log khi kết luận đổi (check chạy mỗi 60 s).
   [ "$VERDICT" = "$1" ] && return 0
@@ -64,19 +70,45 @@ runner_alive() {   # 0 khi $1 là PID của runner board này còn sống (PID t
   return 1
 }
 
+runner_env() {
+  # Môi trường runner trước đã ghi (PATH, JDK, Android SDK): launchd chỉ có PATH tối thiểu, runner và worker cần
+  # đúng toolchain như lần khởi động tường minh. Thiếu bản ghi (runner cũ) thì dùng môi trường của chính watchdog.
+  local k v
+  ENVV=()
+  for k in PATH JAVA_HOME ANDROID_HOME ANDROID_SDK_ROOT; do
+    v=$(field "ENV_$k" "$STATE")
+    [ -z "$v" ] || ENVV+=("$k=$v")
+  done
+}
+
 restart_runner() {   # $1 = PID cũ, $2 = STATE cũ, $3 = RC cũ
   local log daemon new
   log=$(field LOG "$STATE"); [ -n "$log" ] || log="docs/super-board/runner.log"
   daemon=$(field DAEMON "$STATE"); [ "$daemon" = 1 ] || daemon=0
   mkdir -p "$(dirname "$log")"
   [ ! -e "$MARK" ] || return 0   # stop vừa chạy giữa lúc kiểm và lúc khởi động
+  runner_env
   # Đường dẫn tuyệt đối + bash: đúng dạng super-board-stop.sh nhận ra là runner của repo này. Runner tự từ chối nếu
   # marker xuất hiện trước khi nó chạy tới bước kiểm (SB_WATCHDOG_START=1 không bao giờ xoá marker).
-  new=$( (env -u POSTFIX_GATE_FORCE_FULL -u DEVKIT_ALLOW_BRANCH SB_DAEMON="$daemon" SB_WATCHDOG_START=1 \
+  new=$( (env -u POSTFIX_GATE_FORCE_FULL -u DEVKIT_ALLOW_BRANCH ${ENVV[@]+"${ENVV[@]}"} SB_DAEMON="$daemon" SB_WATCHDOG_START=1 \
             nohup /bin/bash "$ROOT/.claude/bin/super-board-run.sh" "$SLUG" >> "$log" 2>&1 < /dev/null & echo $!) )
-  RESTARTS=$((RESTARTS + 1)); LAST_RESTART=$NOW; VERDICT=restarted
+  RESTARTS=$((RESTARTS + 1)); LAST_RESTART=$NOW; VERDICT=restarted; SPAWNED=$new
   wd_save
   wlog "♻ restarted the runner (attempt $RESTARTS/$MAX_RESTARTS): new pid $new; previous pid ${1:-?} STATE=${2:-?} rc=${3:-?}; log $log"
+}
+
+take_check_lock() {
+  # Hai `check` cùng lúc (launchd + một lần chạy tay) đều thấy runner chết và cùng khởi động: chỉ một lượt kiểm chạy.
+  # Khoá bỏ lại quá 120 s (check bị kill) được lấy lại.
+  local lock="$DIR/$SLUG.check.lock" m
+  mkdir -p "$DIR"
+  if ! mkdir "$lock" 2>/dev/null; then
+    m=$(stat -f %m "$lock" 2>/dev/null || echo "$NOW")
+    [ $((NOW - m)) -ge 120 ] || return 1
+    rmdir "$lock" 2>/dev/null || true
+    mkdir "$lock" 2>/dev/null || return 1
+  fi
+  trap 'rmdir "'"$lock"'" 2>/dev/null || true' EXIT
 }
 
 check() {
@@ -85,7 +117,9 @@ check() {
     return 0
   fi
   [ -f "$STATE" ] || return 0   # chưa runner nào ghi bản ghi: không có gì để giám sát
-  local pid state rc started t missing="" wait
+  take_check_lock || return 0
+  load_wd   # đọc lại sau khi giữ khoá: lượt kiểm vừa xong có thể đã khởi động runner
+  local pid state rc started t missing="" wait env_path
   pid=$(field PID "$STATE"); state=$(field STATE "$STATE"); rc=$(field RC "$STATE"); started=$(field STARTED "$STATE")
   if runner_alive "$pid"; then
     case "$started" in ''|*[!0-9]*) started=$NOW ;; esac
@@ -101,12 +135,20 @@ check() {
     running|crashed) ;;
     *) verdict "ended-$state" "runner ended on purpose (STATE=${state:-?} rc=${rc:-?}) — not restarted"; return 0 ;;
   esac
-  for t in $RUNNER_TOOLS; do command -v "$t" >/dev/null 2>&1 || missing="$missing $t"; done
-  if [ -n "$missing" ]; then
-    verdict missing-tools "runner pid $pid is dead but PATH lacks:$missing (PATH=$PATH) — not restarted; reinstall: $0 install $SLUG"
+  # Runner watchdog vừa khởi động đã chết trước khi ghi bản ghi của nó (lỗi config, verification-readiness, trước trap
+  # EXIT): khởi động lại chỉ lặp lại lỗi đó.
+  if [ -n "$SPAWNED" ] && [ "$pid" != "$SPAWNED" ] && ! kill -0 "$SPAWNED" 2>/dev/null; then
+    t=$(field LOG "$STATE")
+    verdict spawn-died "runner pid $SPAWNED started by the watchdog exited before recording itself (config or readiness error, see ${t:-docs/super-board/runner.log}) — not restarted until an explicit super-board run"
     return 0
   fi
-  if ! python3 "$SCRIPT_DIR/super-board-github-read.py" --check >/dev/null 2>&1; then
+  env_path=$(field ENV_PATH "$STATE"); env_path=${env_path:-$PATH}
+  for t in $RUNNER_TOOLS; do (PATH="$env_path"; command -v "$t" >/dev/null 2>&1) || missing="$missing $t"; done
+  if [ -n "$missing" ]; then
+    verdict missing-tools "runner pid $pid is dead but its PATH lacks:$missing (PATH=$env_path) — not restarted"
+    return 0
+  fi
+  if ! (PATH="$env_path"; python3 "$SCRIPT_DIR/super-board-github-read.py" --check >/dev/null 2>&1); then
     verdict github-halt "runner pid $pid is dead and GitHub reads are halted (github-halt.json) — reconcile, then start the board explicitly"
     return 0
   fi
@@ -162,6 +204,8 @@ xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/
 
 plist_text() {
   # AbandonProcessGroup: không có nó launchd giết cả nhóm tiến trình khi `check` thoát, kể cả runner vừa khởi động.
+  # ProcessType Interactive: không đặt thì launchd áp "light resource limits" (man launchd.plist), runner do watchdog
+  # khởi động lại và các bản build của worker sẽ chạy chậm hơn lần khởi động tay.
   cat <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -179,9 +223,11 @@ plist_text() {
   <key>StartInterval</key><integer>$INTERVAL</integer>
   <key>RunAtLoad</key><true/>
   <key>AbandonProcessGroup</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>$(xml "$(launchd_path)")</string>
+    <key>HOME</key><string>$(xml "$HOME")</string>
     <key>LANG</key><string>en_US.UTF-8</string>
   </dict>
   <key>StandardOutPath</key><string>$(xml "$ROOT/$DIR/$SLUG.watchdog.launchd.log")</string>
@@ -191,9 +237,28 @@ plist_text() {
 EOF
 }
 
+root_installable() {
+  # Không cài launchd agent thật trỏ vào một thư mục tạm (test, bản sao scratch) hay một worktree: nhãn theo slug sẽ đè
+  # watchdog của checkout chính. SB_LAUNCH_AGENTS_DIR (test) bỏ qua kiểm này.
+  [ -z "${SB_LAUNCH_AGENTS_DIR:-}" ] || return 0
+  case "$ROOT/" in
+    /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*) echo "refusing to install: $ROOT is a temporary directory"; return 1 ;;
+  esac
+  local gd gc
+  gd=$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null || true)
+  gc=$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir 2>/dev/null || echo .)" && pwd -P)
+  if [ -n "$gd" ] && [ "$(cd "$gd" && pwd -P)" != "$gc" ]; then
+    echo "refusing to install: $ROOT is a linked worktree — install from the main checkout"; return 1
+  fi
+}
+
 install_agent() {   # $1 = "quiet": không làm gì khi đúng bản này đã được nạp (ensure)
-  local uid tmp t i missing=""
+  local uid tmp t i missing="" why
   if ! command -v launchctl >/dev/null 2>&1; then echo "launchctl not found (not macOS): watchdog not installed"; return 0; fi
+  if ! why=$(root_installable); then
+    [ "${1:-}" = quiet ] && return 0
+    echo "$why" >&2; return 1
+  fi
   uid=$(id -u)
   mkdir -p "$AGENTS" "$DIR"
   tmp="$PLIST.tmp.$$"
@@ -215,7 +280,7 @@ install_agent() {   # $1 = "quiet": không làm gì khi đúng bản này đã �
     if [ "$i" -ge 3 ]; then echo "launchctl bootstrap gui/$uid $PLIST failed 3 times: watchdog NOT loaded" >&2; return 1; fi
     sleep 1
   done
-  for t in $RUNNER_TOOLS; do PATH="$(launchd_path)" command -v "$t" >/dev/null 2>&1 || missing="$missing $t"; done
+  for t in $RUNNER_TOOLS; do (PATH="$(launchd_path)"; command -v "$t" >/dev/null 2>&1) || missing="$missing $t"; done
   [ -z "$missing" ] || echo "warning: the watchdog's PATH ($(launchd_path)) lacks:$missing — it will not restart the runner" >&2
   echo "installed $LABEL: checks board $SLUG every ${INTERVAL}s ($PLIST)"
 }
@@ -223,15 +288,6 @@ install_agent() {   # $1 = "quiet": không làm gì khi đúng bản này đã �
 ensure_agent() {
   [ "${SB_WATCHDOG_AUTOINSTALL:-1}" != 0 ] || return 0
   command -v launchctl >/dev/null 2>&1 || return 0
-  if [ -z "${SB_LAUNCH_AGENTS_DIR:-}" ]; then
-    # Không cài launchd agent thật trỏ vào một thư mục tạm (test, bản sao scratch) hay một worktree: nhãn theo slug
-    # sẽ đè watchdog của checkout chính.
-    case "$ROOT/" in /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*) return 0 ;; esac
-    local gd gc
-    gd=$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null || true)
-    gc=$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir 2>/dev/null || echo .)" && pwd -P)
-    if [ -n "$gd" ] && [ "$(cd "$gd" && pwd -P)" != "$gc" ]; then return 0; fi
-  fi
   install_agent quiet
 }
 
