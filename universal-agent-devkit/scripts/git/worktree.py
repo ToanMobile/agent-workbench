@@ -841,10 +841,11 @@ PROVISIONAL_TTL_S = 900.0   # a set-up that has not finished in 15 min crashed: 
 LANES = ("build", "qa", "review")   # super-board lanes (run.md): `add --lane` (agent-workbench#93)
 
 
-def _reuse_lane(main, wt, branch):
+def _reuse_lane(main, wt, branch, base, lane):
     """`add --lane` at a path that already is a registered worktree of this repo — the Builder resuming a card super-board-run.sh moved
     back to Ready keeps its issue-<N>-build worktree: set it up again (heal: DevKit links, local config, hooks) instead of refusing a
-    non-empty folder. Never a folder git does not know, nor one on another branch than the one asked for."""
+    non-empty folder. Never a folder git does not know, nor one on another branch than the one asked for. A detached one (the Reviewer's
+    checkout) is moved to --base — a stale PR head is no review — and marked the board's, only when it holds no work (OCR 19/10)."""
     entry = next((e for e in _worktree_entries(main)[1:] if not e["broken"] and _same_path(e["path"], wt)), None)
     if entry is None:
         die(tr(f"{wt} đã có, không rỗng và không phải worktree đã đăng ký của repo này: kiểm tra nó, không xoá",
@@ -852,7 +853,24 @@ def _reuse_lane(main, wt, branch):
     if branch and entry["branch"] != branch:
         die(tr(f"{wt} là worktree của {entry['branch'] or 'một HEAD detached'}, không phải của {branch}",
                f"{wt} is the worktree of {entry['branch'] or 'a detached HEAD'}, not of {branch}"))
+    state = None
+    if not branch:
+        state = load_state(wt)   # dies on a state file that is there and unreadable; none at all: the adopted reading
+        unique = git(wt, "rev-list", "-1", "HEAD", "--not", "--branches", "--remotes", "--tags", check=False)
+        held = changes_since(wt, state)
+        if held or unique.returncode or unique.stdout.strip():
+            die(tr(f"{wt} còn việc (chưa commit: {', '.join(held[:5]) or '-'}; commit không ref nào giữ: {unique.stdout.strip()[:10] or '-'}): "
+                   "không dời, không đánh dấu; kiểm tra nó",
+                   f"{wt} holds work (uncommitted: {', '.join(held[:5]) or '-'}; a commit no ref holds: {unique.stdout.strip()[:10] or '-'}): "
+                   "not moved, not marked; inspect it"))
+        if base:
+            git(wt, "checkout", "-q", "--detach", base, bounded=False)
     cmd_heal(wt, [])
+    if state is not None:
+        if state.get("adopted"):   # never written (_adopted_state): a fresh one as add writes it, over a tree that holds no work
+            state = {"branch": None, "main": main, "baseline": snapshot(wt), "fp": FP_VERSION}
+        state.update(base=git(wt, "rev-parse", "HEAD").stdout.strip(), board=True, lane=lane)
+        _write_state(wt, state)
     print(f"✔ worktree {wt}  ({tr('dùng lại worktree lane đã có', 'reused the lane worktree already there')}, "
           f"{tr('nhánh', 'branch') + ' ' + entry['branch'] if entry['branch'] else tr('tách rời (detached)', 'detached')})")
     return 0
@@ -893,7 +911,7 @@ def cmd_add(cwd, args):
     main = main_checkout(cwd)
     if os.path.exists(wt) and os.listdir(wt):
         if lane:
-            return _reuse_lane(main, wt, branch)
+            return _reuse_lane(main, wt, branch, base, lane)
         die(tr(f"{wt} đã có và không rỗng", f"{wt} exists and is not empty"))
     if lane and branch and git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode != 0:
         # the issue branch an earlier lane pushed and this clone has no local copy of: refresh origin/<branch> (outside the add lock: the

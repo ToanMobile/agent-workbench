@@ -94,6 +94,12 @@ if git rev-parse --verify "$WORKER_BRANCH" >/dev/null 2>&1; then
   echo "error: branch $WORKER_BRANCH already exists — refusing to clobber" >&2
   exit 64
 fi
+# `worktree add --lane` (below) resumes a branch only origin has; this dispatcher always starts fresh off BASE_BRANCH (BASE_SHA and the
+# done-commit check rely on it): refuse a remote leftover like the local one above. ls-remote failing (offline) proves nothing: go on.
+if git ls-remote --exit-code --heads origin "$WORKER_BRANCH" >/dev/null 2>&1; then
+  echo "error: branch $WORKER_BRANCH already exists on origin — refusing to clobber" >&2
+  exit 64
+fi
 
 # Compose the worker prompt: preamble + issue body + working-dir footer
 SB_BIN="$REPO_DIR/.claude/bin"
@@ -132,9 +138,11 @@ if [[ ! -f "$WT_PY" ]]; then
 fi
 WT_RC=0
 python3 "$WT_PY" add "$WORKTREE_DIR" "$WORKER_BRANCH" --lane=build --base="$BASE_BRANCH" >>"$LOG_FILE" 2>&1 || WT_RC=$?
-if [[ "$WT_RC" -ne 0 ]]; then
-  [[ "$WT_RC" -eq 4 ]] && echo "error: under the DevKit worktree disk floor (WORKTREE_DISK_MIN_GIB) — free space first; see $LOG_FILE" >&2 \
-    || echo "error: agent-kit worktree add failed (exit $WT_RC) — see $LOG_FILE" >&2
+if [[ "$WT_RC" -eq 4 ]]; then   # 4 is this dispatcher's HUMAN GATE code: a missing precondition stays 64, the message says which
+  echo "error: under the DevKit worktree disk floor (WORKTREE_DISK_MIN_GIB) — free space first; see $LOG_FILE" >&2
+  exit 64
+elif [[ "$WT_RC" -ne 0 ]]; then
+  echo "error: agent-kit worktree add failed (exit $WT_RC) — see $LOG_FILE" >&2
   exit 64
 fi
 

@@ -67,6 +67,7 @@ fi
 { ! grep -qE "Score|Điểm" "$TMP/health" || grep -q "Registered hooks with no file\|hook đăng ký nhưng thiếu file" "$TMP/health"; } \
   && fail "health in the kit worktree still lists missing hooks: $(grep -m1 'Registered hooks' "$TMP/health")" \
   || ok "health in the kit worktree: no registered hook missing"
+grep -q "Score: 100/100" "$TMP/health" && ok "  … and health scores 100/100 (#93 AC)" || fail "health in the kit worktree: $(grep -m1 'Result' "$TMP/health")"
 [ "$(G "$B" symbolic-ref --short HEAD)" = issue-5-fix ] && ok "the lane worktree is on its named branch" || fail "lane worktree not on issue-5-fix"
 
 # 1b: a plain `git worktree add` then `heal` gets the DevKit hook links and the local hook too
@@ -111,6 +112,23 @@ add python3 "$WT" add "$P/.claude/worktrees/issue-9-qa" issue-9-remote --lane=qa
   || fail "reuse: rc $rc: $(tail -3 "$TMP/out")"
 add python3 "$WT" add "$P/.claude/worktrees/issue-9-qa" other-branch --lane=qa --no-init; rc=$?
 [ "$rc" != 0 ] && ok "  … but not when it holds another branch (rc $rc)" || fail "reused a lane worktree on the wrong branch"
+# 4b: the Reviewer's detached checkout, reused: moved to --base (no stale PR head) and the board's; never when it holds work
+echo more > "$B/more.txt" && G "$B" add more.txt && G "$B" commit -qm more && newtip=$(G "$B" rev-parse HEAD)
+add python3 "$WT" add "$R" --lane=review --base=issue-5-fix --no-init; rc=$?
+[ "$rc" = 0 ] && [ "$(G "$R" rev-parse HEAD)" = "$newtip" ] && [ "$(py board "$R")" = True ] \
+  && ok "a reused detached review checkout moves to --base (the new PR head) and stays the board's" \
+  || fail "detached reuse: rc $rc head $(G "$R" rev-parse --short HEAD) want ${newtip:0:7}: $(tail -3 "$TMP/out")"
+D2="$P/.claude/worktrees/issue-13-review"
+G "$P" worktree add -q --detach "$D2" main
+add python3 "$WT" add "$D2" --lane=review --base=issue-5-fix --no-init; rc=$?
+[ "$rc" = 0 ] && [ "$(py board "$D2")" = True ] && [ "$(G "$D2" rev-parse HEAD)" = "$newtip" ] \
+  && ok "a plain detached checkout at a lane path, reused with --lane: moved and marked the board's" \
+  || fail "plain detached reuse: rc $rc board $(py board "$D2"): $(tail -3 "$TMP/out")"
+echo work > "$D2/notes.txt"
+add python3 "$WT" add "$D2" --lane=review --base=main --no-init; rc=$?
+[ "$rc" != 0 ] && [ -f "$D2/notes.txt" ] && [ "$(G "$D2" rev-parse HEAD)" = "$newtip" ] \
+  && ok "  … but a detached checkout holding uncommitted work is neither moved nor marked (rc $rc)" \
+  || fail "detached reuse with work: rc $rc, HEAD $(G "$D2" rev-parse --short HEAD)"
 
 # 5: --lane only for board paths; the disk floor still refuses with nothing half-made
 n0=$(linked)

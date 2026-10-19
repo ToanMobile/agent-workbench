@@ -19,6 +19,7 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-lane-wt.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bin" "$TMP/path" "$TMP/repo/docs/super-board" "$TMP/repo/wl" "$TMP/repo/.agents"
+git -C "$TMP/repo" init -q -b main   # worktree_disk_room runs the DevKit's worktree gc there under the warning line
 ln -s "$ROOT/universal-agent-devkit" "$TMP/repo/.agents/devkit"   # worktree_disk_room đọc sàn đĩa từ chính DevKit
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/super-board-github-read.py"
 printf 'print("ok")\n' > "$TMP/bin/super-board-skills-ready.py"
@@ -40,7 +41,6 @@ BOT_LOGIN=""
 gh_checkpoint() { :; }
 gh_write_once() { echo "gh $*" >> "$TMP/writes"; }
 log() { echo "$*" >> "$TMP/log"; }
-claim_calls=0
 try_claim_assignee() { echo claim >> "$TMP/claims"; return 0; }
 issue_is_open() { return 0; }
 resolve_worker_account() { POOL_ENGINE=""; POOL_ACCT=""; POOL_CFG=""; return 0; }
@@ -53,7 +53,8 @@ launch() {   # launch <lane> <issue>: dispatch one lane, wait for the stub worke
   for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$TMP/launched" ] && break; sleep 0.3; done
 }
 
-# ── 1. prompt của runner
+# ── 1. prompt của runner (sàn đĩa tắt: kết quả không phụ thuộc dung lượng trống của máy chạy test)
+export WORKTREE_DISK_MIN_GIB=0 WORKTREE_DISK_WARN_GIB=0
 for lane in build qa review; do
   launch "$lane" 5
   p="$(cat "$TMP/launched")"
@@ -75,6 +76,10 @@ else
 fi
 ( export WORKTREE_DISK_MIN_GIB=0; launch build 7 )
 [ -s "$TMP/launched" ] && ok "  … and the floor off (0): dispatched as before" || fail "floor 0 still skipped the dispatch"
+mkdir -p "$TMP/repo/.claude/worktrees/issue-8-build"   # the lane's worktree is there already: add --lane reuses it, no new disk
+( export WORKTREE_DISK_MIN_GIB=100000 WORKTREE_DISK_WARN_GIB=0; launch build 8 )
+[ -s "$TMP/launched" ] && ok "  … and under the floor a lane whose worktree exists is still dispatched (reuse needs no disk)" \
+  || fail "under the floor, a lane with its worktree already there was skipped"
 
 # ── 3. wave workflow, dispatch của super-build, SKILL của 3 lane
 WAVE="$ROOT/.claude/workflows/super-board-wave.js"
@@ -87,6 +92,8 @@ grep -q 'WORKTREE_STEP(lane, card.number)' "$WAVE" && grep -q 'agent-kit worktre
   && ! grep -q 'create your own worktree under .claude/worktrees/' "$WAVE" \
   && ok "wave lane prompt: the kit command for every lane" || fail "wave lane prompt does not route worktree creation through the kit"
 DISPATCH="$ROOT/.claude/skills/super-build/scripts/super-build-dispatch.sh"
+grep -q 'ls-remote --exit-code --heads origin "$WORKER_BRANCH"' "$DISPATCH" && ok "super-build-dispatch.sh refuses a loop/issue-N origin already has (always a fresh start)" \
+  || fail "super-build-dispatch.sh would resume a remote leftover branch through --lane"
 grep -q 'WT_PY="$REPO_DIR/.agents/devkit/scripts/git/worktree.py"' "$DISPATCH" \
   && grep -q 'python3 "$WT_PY" add "$WORKTREE_DIR" "$WORKER_BRANCH" --lane=build' "$DISPATCH" && ok "super-build-dispatch.sh creates the worktree with the kit" \
   || fail "super-build-dispatch.sh does not use the kit"

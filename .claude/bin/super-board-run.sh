@@ -413,19 +413,20 @@ lane_worktree_hint() {
 }
 
 worktree_disk_room() {
-  # Sàn đĩa của `agent-kit worktree add` (worktree.py free_gib / DISK_MIN_GIB, WORKTREE_DISK_MIN_GIB): đọc từ chính DevKit, không chép số.
-  # Dưới sàn lane nào cũng dừng ở bước tạo worktree (exit 4), nên không nhận thẻ và không mở một phiên claude mỗi tick.
-  # Không đọc được (không có DevKit, python lỗi): coi là còn chỗ, như trước khi có kiểm tra này.
+  # $1 = đường dẫn worktree của lane. Đúng bước giữ chỗ của `agent-kit worktree add` (worktree.py _make_room: dưới mức cảnh báo thì
+  # worktree gc trước, còn dưới sàn WORKTREE_DISK_MIN_GIB thì exit 4): một luật, không chép số, và gc vẫn chạy nên board không đứng
+  # chờ người dọn tay. Dưới sàn lane nào cũng dừng ở bước tạo worktree, nên không nhận thẻ và không mở một phiên claude mỗi tick.
+  # Worktree lane đã có thì add --lane dùng lại, không tốn thêm đĩa. Không đọc được (không DevKit, python lỗi): coi là còn chỗ.
+  [ -d "$1" ] && return 0
   local rc=0
-  python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT/.claude/worktrees" >/dev/null 2>&1 <<'PY' || rc=$?
+  python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" >/dev/null 2>&1 <<'PY' || rc=$?
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
-free = m.free_gib(sys.argv[2])
-sys.exit(3 if free is not None and m.DISK_MIN_GIB and free < m.DISK_MIN_GIB else 0)
+m._make_room(sys.argv[2], sys.argv[3])   # SystemExit(NO_ROOM=4) under the floor after gc
 PY
-  [ "$rc" -ne 3 ]
+  [ "$rc" -ne 4 ]
 }
 
 dispatch_lane() {
@@ -454,7 +455,7 @@ dispatch_lane() {
     log "skills-readiness: halt before claim lane=${lane} issue=#${issue}; ${skills_report}"
     exit "$skills_rc"
   fi
-  if ! worktree_disk_room; then
+  if ! worktree_disk_room "$REPO_ROOT/.claude/worktrees/issue-${issue}-${lane}"; then
     log "skip dispatch lane=${lane} issue=#${issue} — disk under the DevKit worktree floor (WORKTREE_DISK_MIN_GIB): free space first"
     return 0
   fi
