@@ -107,8 +107,10 @@ add python3 "$WT" add "$P/.claude/worktrees/issue-9-qa" issue-9-remote --lane=qa
 [ "$rc" = 0 ] && [ "$(G "$P/.claude/worktrees/issue-9-qa" rev-parse HEAD)" = "$tip" ] \
   && ok "--lane on a branch only origin has: the worktree starts at origin/<branch>, not --base / HEAD" \
   || fail "origin-only branch: rc $rc head $(G "$P/.claude/worktrees/issue-9-qa" rev-parse HEAD 2>/dev/null) want $tip: $(tail -3 "$TMP/out")"
+n9=$(linked)
 add python3 "$WT" add "$P/.claude/worktrees/issue-9-qa" issue-9-remote --lane=qa --no-init; rc=$?
-[ "$rc" = 0 ] && [ "$(linked)" -ge 1 ] && grep -qiE "reus|dùng lại" "$TMP/out" && ok "a registered lane worktree at the path is reused (exit 0)" \
+[ "$rc" = 0 ] && [ "$(linked)" = "$n9" ] && [ "$(G "$P/.claude/worktrees/issue-9-qa" rev-parse HEAD)" = "$tip" ] && grep -qiE "reus|dùng lại" "$TMP/out" \
+  && ok "a registered lane worktree at the path is reused (exit 0, nothing added, nothing moved)" \
   || fail "reuse: rc $rc: $(tail -3 "$TMP/out")"
 add python3 "$WT" add "$P/.claude/worktrees/issue-9-qa" other-branch --lane=qa --no-init; rc=$?
 [ "$rc" != 0 ] && ok "  … but not when it holds another branch (rc $rc)" || fail "reused a lane worktree on the wrong branch"

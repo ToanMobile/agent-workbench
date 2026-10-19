@@ -106,6 +106,10 @@ DISPATCH="$ROOT/.claude/skills/super-build/scripts/super-build-dispatch.sh"
 # super-build-dispatch.sh, run for real up to its early refusals (no gh, no claude reached)
 D="$TMP/disp"; G() { git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false "${@:2}"; }
 mkdir -p "$D/main" && G "$D/main" init -q -b main && echo x > "$D/main/a" && G "$D/main" add a && G "$D/main" commit -qm init
+(cd "$D/main" && BASE_BRANCH=main bash "$DISPATCH" 5 > "$TMP/disp.out" 2>&1); rc=$?
+[ "$rc" = 64 ] && grep -q "DevKit missing" "$TMP/disp.out" && ok "dispatch without the DevKit: refused before any network call" \
+  || fail "dispatch without the DevKit: rc $rc: $(tail -1 "$TMP/disp.out")"
+mkdir -p "$D/main/.agents" && ln -s "$ROOT/universal-agent-devkit" "$D/main/.agents/devkit"
 G "$D/main" worktree add -q --detach "$D/side" main
 (cd "$D/side" && BASE_BRANCH=main bash "$DISPATCH" 5 > "$TMP/disp.out" 2>&1); rc=$?
 [ "$rc" = 64 ] && grep -q "run from the main checkout" "$TMP/disp.out" && ok "dispatch from a linked worktree: refused early, the main checkout named" \

@@ -75,6 +75,12 @@ elif [[ "$(pwd -P)" != "$(cd "$TOP_DIR" && pwd -P)" ]]; then
   echo "error: run from the repository root ($TOP_DIR), not a subfolder: the worktree path .claude/worktrees/issue-$N is relative to it" >&2
   exit 64
 fi
+# The DevKit makes the worktree (below): checked here, before any network call or file is written
+WT_PY="$REPO_DIR/.agents/devkit/scripts/git/worktree.py"
+if [[ ! -f "$WT_PY" ]]; then
+  echo "error: DevKit missing ($WT_PY): run agent-kit init in $REPO_DIR first" >&2
+  exit 64
+fi
 
 # Verify base branch exists locally or on origin
 if ! git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
@@ -108,14 +114,17 @@ if git rev-parse --verify "$WORKER_BRANCH" >/dev/null 2>&1; then
 fi
 # `worktree add --lane` (below) resumes a branch only origin has; this dispatcher always starts fresh off BASE_BRANCH (BASE_SHA and the
 # done-commit check rely on it): refuse a remote leftover like the local one above. Origin unreachable: add --lane would refuse too, so
-# say it here (no prompt for credentials: headless).
+# say it here. The probe is the DevKit's own bounded git call (the user's own ssh/credential setup, killed after its timeout: headless)
+# — the very check add --lane makes, so the two never disagree.
 if git remote get-url origin >/dev/null 2>&1; then
   LS_RC=0
-  # headless: no HTTPS credential prompt, and an SSH remote may not wait for a host key or passphrase either (BatchMode, 10 s connect);
-  # on top of the ssh command git would use anyway (GIT_SSH_COMMAND, else core.sshCommand: a custom key or proxy stays)
-  SSH_CMD="${GIT_SSH_COMMAND:-$(git config --get core.sshCommand 2>/dev/null || echo ssh)}"
-  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$SSH_CMD -o BatchMode=yes -o ConnectTimeout=10" \
-    git ls-remote --exit-code --heads origin "refs/heads/$WORKER_BRANCH" >/dev/null 2>&1 || LS_RC=$?
+  GIT_TERMINAL_PROMPT=0 python3 - "$WT_PY" "$WORKER_BRANCH" >/dev/null 2>&1 <<'PY' || LS_RC=$?
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+sys.exit(m.git(".", "ls-remote", "--exit-code", "--heads", "origin", "refs/heads/" + sys.argv[2], check=False).returncode)
+PY
   if [[ "$LS_RC" -eq 0 ]]; then
     echo "error: branch $WORKER_BRANCH already exists on origin — refusing to clobber" >&2
     exit 64
@@ -155,11 +164,6 @@ ISSUE_BODY=$(printf '%s' "$ISSUE_JSON" | jq -r '.body')
 # Create the worktree on its branch off BASE_BRANCH with the DevKit, never a plain `git worktree add` (agent-workbench#93): the worker
 # runs IN it, so it needs the DevKit links and the git-ignored hooks the settings run (missing, every python3 hook exits 2 and blocks
 # the tool), and a Unity Library cloned copy-on-write instead of a full re-import. Exit 4 = under the disk floor, nothing made.
-WT_PY="$REPO_DIR/.agents/devkit/scripts/git/worktree.py"
-if [[ ! -f "$WT_PY" ]]; then
-  echo "error: DevKit missing ($WT_PY): run agent-kit init in $REPO_DIR first" >&2
-  exit 64
-fi
 WT_RC=0
 python3 "$WT_PY" add "$WORKTREE_DIR" "$WORKER_BRANCH" --lane=build --base="$BASE_BRANCH" >>"$LOG_FILE" 2>&1 || WT_RC=$?
 if [[ "$WT_RC" -eq 4 ]]; then   # 4 is this dispatcher's HUMAN GATE code: a missing precondition stays 64, the message says which
