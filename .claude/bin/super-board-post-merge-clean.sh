@@ -258,8 +258,9 @@ tidy() {
   fi
   rm -f "$kp"
   if [ "$okk" != 1 ]; then
+    # worktree chưa bị đụng: patch (có thể dở dang) không có bản ghi nào trỏ tới, bỏ luôn, không để mỗi lượt sweep thêm một file mồ côi
     echo "kept $wt: uncommitted edits (salvage could not be verified: tree ${t1:-?} vs ${t2:-?})" >&2
-    rm -f "$trk" "$untr"; return 1
+    rm -f "$trk" "$untr" "$name.patch"; return 1
   fi
   [ ! -s "$delf" ] || tr '\0' '\n' <"$delf" >"$name.deleted.txt"
   [ ! -s "$drpz" ] || tr '\0' '\n' <"$drpz" >"$name.dropped.txt"
@@ -346,7 +347,11 @@ untidy() {
   [ ! -f "$TIDY_NAME.patch" ] || git -C "$1" apply --binary "$TIDY_NAME.patch" 2>/dev/null || ok=0
   [ ! -s "$TIDY_DL" ] || (cd "$1" && xargs -0 rm -f -- <"$TIDY_DL") || ok=0
   [ ! -s "$TIDY_SDEL" ] || git -C "$1" update-index -z --force-remove --stdin <"$TIDY_SDEL" || ok=0
-  if [ "$ok" = 1 ]; then echo "restored $1: it stays, so its lane edits, junk and deletions are back as they were (record in $TIDY_NAME.txt)" >&2
+  if [ "$ok" = 1 ]; then
+    # Mọi thứ đã về lại worktree: bản cất trùng với chính worktree, bỏ nó — không thì worktree được giữ lại thêm một bộ .patch + .txt
+    # vào salvage/ ở mỗi lượt sweep (OCR batch). Trả lại hỏng: giữ bản cất, nó là bản duy nhất.
+    rm -f "$TIDY_NAME.patch" "$TIDY_NAME.txt" "$TIDY_NAME.deleted.txt" "$TIDY_NAME.dropped.txt"
+    echo "restored $1: it stays, so its lane edits, junk and deletions are back as they were (no salvage record kept)" >&2
   else echo "kept $1: it stays, but putting its lane edits back failed: they are in $TIDY_NAME.txt / .dropped/" >&2; fi
 }
 # clean_wt <wt> <pr> <merged-head>: phần chung của hai chế độ cho một worktree đã được chọn: khoá phiên, ref giữ head, rác, gỡ.
