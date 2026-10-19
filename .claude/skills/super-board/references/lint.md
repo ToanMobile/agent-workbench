@@ -51,6 +51,10 @@ PHASE 2 — Read the project, then ask "do I understand it?"
   └─ Ask the user: "Anything I'm missing or got wrong?"
 
 PHASE 3 — Scan summary (flag only what needs work)
+  ├─ Too-big check, one call for the whole board (criterion 15):
+  │    .claude/bin/super-board-preflight.sh --repo <owner/name> --issues <every non-`qa` card, comma-separated>
+  │    Cards with `tag: too-big` are listed FIRST, each with its `evidence` and `split`:
+  │    "✂️ 2 cards are too big to build — split them first: #4 (…), #13 (…)"
   ├─ Score each issue (silent pass): clear / vague / missing
   ├─ Show one-line goal: "🎯 What this board is collectively trying to do: ..."
   └─ Show flagged count + IDs: "4 issues need your attention: #12, #19, #23, #31"
@@ -156,6 +160,16 @@ Flag a ticket as **too big** when either holds:
   endpoints, a new module plus its UI plus its tests, or "and" chaining unrelated deliverables.
 - **Spans many areas** — touches three or more separate areas (say UI, API, database, background
   job, email) where each could ship and be checked alone.
+
+**Mechanical signals** — `super-board-preflight.sh` answers this from the issue text alone (no
+code read, no model call) and returns `hold` / `tag: too-big` when two or more fire: Fix lists ≥5
+short deliverables (or the title ≥3) · ≥4 areas · the card calls itself big (phase, vertical slice,
+"many components") · its scope is a whole spec section · an AC needs people or production data
+(playtest with N people, crash-free %, a real purchase or sign-in). An AC only a real device can
+prove (OOM, FPS, memory) on a card that says "real device" counts as two. Tuned on 245 issues of
+six boards (2026-10-19): the six cards builders had blocked as too big all hold, none of the 49
+completed ones does. One signal alone never holds — a short card can still be too big from the
+code it touches; that call stays with lint's sub-agent and the pre-flight agent.
 
 What lint does: hold the ticket with ❓ (Blocked, `block-template.md`, reason "too big — split
 first") and offer to split it with `/to-tickets` into vertical slices — each slice thin end to end,
