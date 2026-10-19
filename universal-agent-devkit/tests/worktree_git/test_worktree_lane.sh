@@ -130,6 +130,48 @@ add python3 "$WT" add "$D2" --lane=review --base=main --no-init; rc=$?
   && ok "  … but a detached checkout holding uncommitted work is neither moved nor marked (rc $rc)" \
   || fail "detached reuse with work: rc $rc, HEAD $(G "$D2" rev-parse --short HEAD)"
 
+# 4b2: the Tester behind a Builder's leftover worktree: refused with the way out named, nothing made
+add python3 "$WT" add "$P/.claude/worktrees/issue-5-qa" issue-5-fix --lane=qa --no-init; rc=$?
+[ "$rc" = 1 ] && [ ! -e "$P/.claude/worktrees/issue-5-qa" ] && grep -q "git worktree remove [^\`]*/issue-5-build\`" "$TMP/out" \
+  && ok "a branch another lane worktree holds: exit 1 naming the worktree to remove" || fail "held branch: rc $rc: $(tail -2 "$TMP/out")"
+# 4c (review 19/10): a board lane worktree never reaches main by itself — not detached, not on an issue branch not yet pushed
+mainhead=$(G "$P" rev-parse main)
+for w in "$R" "$B"; do
+  out=$(cd "$P" && python3 "$WT" automerge "$w" 2>&1)
+  if printf '%s' "$out" | grep -q '"status": *"blocked"' && [ "$(G "$P" rev-parse main)" = "$mainhead" ]; then
+    ok "automerge refuses the lane worktree ${w##*/} (main untouched)"
+  else
+    fail "automerge on ${w##*/}: $(printf '%s' "$out" | tail -c 300) / main $(G "$P" rev-parse --short main)"
+  fi
+done
+# 4d: a NEW issue branch off origin/<base> gets no upstream (a bare push/pull would hit main); one from origin/<branch> tracks it
+G "$P" push -q origin main
+add python3 "$WT" add "$P/.claude/worktrees/issue-14-build" issue-14-new --lane=build --base=origin/main --no-init; rc=$?
+up=$(G "$P/.claude/worktrees/issue-14-build" rev-parse --abbrev-ref '@{u}' 2>/dev/null)
+[ "$rc" = 0 ] && [ -z "$up" ] && ok "a new issue branch off origin/main has no upstream" || fail "new lane branch: rc $rc upstream '$up'"
+up=$(G "$P/.claude/worktrees/issue-9-qa" rev-parse --abbrev-ref '@{u}' 2>/dev/null)
+[ "$up" = origin/issue-9-remote ] && ok "  … and the branch taken from origin/<branch> tracks it" || fail "origin branch upstream: '$up'"
+# 4e: offline (origin unreachable): no new branch is started off the base while it is unknown whether origin has the PR branch
+G "$P" remote set-url origin "$TMP/nowhere.git"
+n1=$(linked)
+add python3 "$WT" add "$P/.claude/worktrees/issue-15-qa" issue-15-x --lane=qa --base=main --no-init; rc=$?
+[ "$rc" = 1 ] && [ "$(linked)" = "$n1" ] && ! G "$P" rev-parse -q --verify refs/heads/issue-15-x >/dev/null \
+  && ok "origin unreachable: refused (exit 1), no worktree, no branch" || fail "offline add: rc $rc: $(tail -2 "$TMP/out")"
+G "$P" remote set-url origin "$O"
+# 4f: --lane only right in the MAIN checkout's .claude/worktrees (not nested in another worktree, not the legacy .worktrees/)
+(cd "$B" && env WORKTREE_DISK_WARN_GIB=0 WORKTREE_DISK_MIN_GIB=0 python3 "$WT" add .claude/worktrees/issue-16-build issue-16-x --lane=build --no-init > "$TMP/out" 2>&1); rc=$?
+[ "$rc" = 2 ] && [ ! -e "$B/.claude/worktrees/issue-16-build" ] && ok "--lane from inside another worktree (relative path) is refused, nothing nested" \
+  || fail "nested lane add: rc $rc"
+add python3 "$WT" add "$P/.worktrees/issue-17" issue-17-x --lane=build --no-init; rc=$?
+[ "$rc" = 2 ] && [ ! -e "$P/.worktrees/issue-17" ] && ok "--lane in the legacy .worktrees/ is refused" || fail "legacy .worktrees lane add: rc $rc"
+# 4g: reusing a checkout an old plain `git worktree add` made installs the DevKit too: health 100/100 there
+D3="$P/.claude/worktrees/issue-18-review"
+G "$P" worktree add -q --detach "$D3" main
+add python3 "$WT" add "$D3" --lane=review --base=main; rc=$?
+(cd "$D3" && python3 "$DEVKIT_DIR/bin/agent-health.py" > "$TMP/health3" 2>&1)
+[ "$rc" = 0 ] && grep -q "Score: 100/100" "$TMP/health3" && ok "a reused plain checkout gets the DevKit installed: health 100/100" \
+  || fail "reused plain checkout: rc $rc, $(grep -m1 'Result' "$TMP/health3")"
+
 # 5: --lane only for board paths; the disk floor still refuses with nothing half-made
 n0=$(linked)
 add python3 "$WT" add "$TMP/not-a-lane" issue-10-x --lane=build --no-init; rc=$?

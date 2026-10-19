@@ -97,12 +97,18 @@ grep -q 'ls-remote --exit-code --heads origin "$WORKER_BRANCH"' "$DISPATCH" && o
 grep -q 'WT_PY="$REPO_DIR/.agents/devkit/scripts/git/worktree.py"' "$DISPATCH" \
   && grep -q 'python3 "$WT_PY" add "$WORKTREE_DIR" "$WORKER_BRANCH" --lane=build' "$DISPATCH" && ok "super-build-dispatch.sh creates the worktree with the kit" \
   || fail "super-build-dispatch.sh does not use the kit"
-for f in .claude/skills/super-build/SKILL.md .claude/skills/super-qa/SKILL.md .claude/skills/super-review/SKILL.md; do
+RUNMD=.claude/skills/super-board/references/run.md   # the lifecycle every lane prompt says to follow EXACTLY
+for f in .claude/skills/super-build/SKILL.md .claude/skills/super-qa/SKILL.md .claude/skills/super-review/SKILL.md "$RUNMD"; do
   grep -q -- "--lane=" "$ROOT/$f" && ok "$f names the kit command" || fail "$f has no kit worktree command"
 done
+for l in build qa review; do
+  grep -q -- "--lane=$l" "$ROOT/$RUNMD" || fail "run.md: no kit command for the $l lane"
+done
+grep -q 'Pull `issue-<N>-<slug>` into the review worktree' "$ROOT/$RUNMD" "$ROOT/.claude/skills/super-review/SKILL.md" \
+  && fail "a detached review worktree is still told to git pull the branch" || ok "the detached review worktree is refreshed by checkout --detach, not pull"
 # a plain `git worktree add` may still be NAMED, only as what not to do
 bad=""
-for f in "$WAVE" "$RUNNER" "$DISPATCH" "$ROOT/.claude/skills/super-build/SKILL.md" "$ROOT/.claude/skills/super-qa/SKILL.md" "$ROOT/.claude/skills/super-review/SKILL.md"; do
+for f in "$WAVE" "$RUNNER" "$DISPATCH" "$ROOT/.claude/skills/super-build/SKILL.md" "$ROOT/.claude/skills/super-qa/SKILL.md" "$ROOT/.claude/skills/super-review/SKILL.md" "$ROOT/$RUNMD"; do
   hits=$(grep -n 'git worktree add' "$f" | grep -viE 'never|not |instead of|lacked|thiếu|trần|plain' || true)
   [ -z "$hits" ] || bad="$bad ${f#$ROOT/}:$hits"
 done

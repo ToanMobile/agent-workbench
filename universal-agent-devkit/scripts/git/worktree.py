@@ -841,7 +841,7 @@ PROVISIONAL_TTL_S = 900.0   # a set-up that has not finished in 15 min crashed: 
 LANES = ("build", "qa", "review")   # super-board lanes (run.md): `add --lane` (agent-workbench#93)
 
 
-def _reuse_lane(main, wt, branch, base, lane):
+def _reuse_lane(main, wt, branch, base, lane, no_init=False):
     """`add --lane` at a path that already is a registered worktree of this repo — the Builder resuming a card super-board-run.sh moved
     back to Ready keeps its issue-<N>-build worktree: set it up again (heal: DevKit links, local config, hooks) instead of refusing a
     non-empty folder. Never a folder git does not know, nor one on another branch than the one asked for. A detached one (the Reviewer's
@@ -865,6 +865,15 @@ def _reuse_lane(main, wt, branch, base, lane):
                    "not moved, not marked; inspect it"))
         if base:
             git(wt, "checkout", "-q", "--detach", base, bounded=False)
+    # one an old plain `git worktree add` made has no DevKit and no Library at all: set them up as add does (each step leaves what is there)
+    copy_unity_library(main, wt)
+    ran = install_args(main, wt, None) if not no_init else None
+    if ran:
+        r = subprocess.run(ran, capture_output=True, text=True)
+        if r.returncode != 0:
+            sys.stderr.write(r.stdout[-2000:] + r.stderr[-2000:])
+            die(tr(f"cài DevKit vào worktree lane thất bại (exit {r.returncode}); worktree vẫn ở {wt}",
+                   f"DevKit install in the lane worktree failed (exit {r.returncode}); the worktree stays at {wt}"), 1)
     cmd_heal(wt, [])
     if state is not None:
         if state.get("adopted"):   # never written (_adopted_state): a fresh one as add writes it, over a tree that holds no work
@@ -909,14 +918,35 @@ def cmd_add(cwd, args):
         die(tr(f"--lane chỉ cho worktree của super-board (.claude/worktrees/issue-<N>[-build|-qa|-review]), không cho {wt}",
                f"--lane is for super-board worktrees only (.claude/worktrees/issue-<N>[-build|-qa|-review]), not {wt}"))
     main = main_checkout(cwd)
+    if lane and os.path.realpath(os.path.dirname(wt)) != os.path.realpath(os.path.join(main, ".claude", "worktrees")):
+        # the folder the runner and the board scan, of the MAIN checkout: a relative path from inside a session's own worktree would nest the
+        # lane there (that worktree could then never be removed) and a legacy .worktrees/ one stops the runner (check_legacy_worktrees)
+        die(tr(f"--lane: worktree phải nằm ngay trong {os.path.join(main, '.claude', 'worktrees')}, không phải {wt}",
+               f"--lane: the worktree must sit right in {os.path.join(main, '.claude', 'worktrees')}, not at {wt}"))
     if os.path.exists(wt) and os.listdir(wt):
         if lane:
-            return _reuse_lane(main, wt, branch, base, lane)
+            return _reuse_lane(main, wt, branch, base, lane, no_init)
         die(tr(f"{wt} đã có và không rỗng", f"{wt} exists and is not empty"))
-    if lane and branch and git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode != 0:
+    holder = next((e["path"] for e in _worktree_entries(main)[1:] if lane and branch and e["branch"] == branch), None)
+    if holder:   # git's own "already used by worktree" names no way out; the Tester behind a Builder's leftover worktree needs one
+        die(tr(f"nhánh {branch} đang được checkout ở {holder}: gỡ worktree đó trước (`git worktree remove {holder}`; bị từ chối = nó còn việc: "
+               "chặn thẻ, ghi tên nó), rồi chạy lại",
+               f"the branch {branch} is checked out at {holder}: remove that worktree first (`git worktree remove {holder}`; refused = it still "
+               "holds work: block the card naming it), then run this again"), 1)
+    if lane and branch and git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode != 0 \
+            and git(main, "remote", "get-url", "origin", check=False).returncode == 0:
         # the issue branch an earlier lane pushed and this clone has no local copy of: refresh origin/<branch> (outside the add lock: the
-        # network) so the worktree starts from it below. Fails quietly (no origin, no such branch, offline): the branch is then new.
-        git(main, "fetch", "--quiet", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}", check=False)
+        # network) so the worktree starts from it below. Only "origin has no such branch" (ls-remote exit 2) makes a new one: offline or a
+        # failed fetch must never start an empty branch off the base that the lane then pushes over the PR (review 19/10)
+        probe = git(main, "ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{branch}", check=False)
+        if probe.returncode == 0:
+            fetched = git(main, "fetch", "--quiet", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}", check=False)
+            if fetched.returncode != 0:
+                die(tr(f"origin có nhánh {branch} nhưng fetch hỏng: {fetched.stderr.strip()[-300:]}",
+                       f"origin has the branch {branch} but the fetch failed: {fetched.stderr.strip()[-300:]}"), 1)
+        elif probe.returncode != 2:
+            die(tr(f"không hỏi được origin có nhánh {branch} không (ls-remote exit {probe.returncode}): không tạo nhánh mới khi chưa biết",
+                   f"cannot ask origin whether it has the branch {branch} (ls-remote exit {probe.returncode}): no new branch while that is unknown"), 1)
     _make_room(main, wt)
     common = os.path.realpath(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip())
     try:   # count + add: one at a time per repo
@@ -947,10 +977,12 @@ def cmd_add(cwd, args):
         elif git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0:
             git(main, "worktree", "add", wt, branch, bounded=False)
         else:
-            start = base
+            start, track = base, []
             if lane and git(main, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}^{{commit}}", check=False).returncode == 0:
                 start = f"origin/{branch}"   # the PR's branch: a new branch off --base would push an empty one over it
-            git(main, "worktree", "add", "-b", branch, wt, *([start] if start else []), bounded=False)
+            elif lane:
+                track = ["--no-track"]   # a new issue branch off origin/<base> must not get origin/<base> as upstream (a bare push/pull hits main)
+            git(main, "worktree", "add", *track, "-b", branch, wt, *([start] if start else []), bounded=False)
         start = git(wt, "rev-parse", "HEAD").stdout.strip()
         if session or lane:   # W1 v6 item 3: the owner is known from the moment git registers the worktree, not ~10 s later when the set-up
             # is done - until then another session's Stop could take a stateless new worktree for an orphan and merge or remove it under
@@ -3094,8 +3126,15 @@ def automerge(cwd, wt, keep=False):
                              f"the main checkout is on branch '{branch}', not on the trunk '{trunk}': nothing is merged into another branch (release/hotfix ...). "
                              f"Switch back to '{trunk}' and run it again"), {}
     wt_branch = published_branch(wt)
-    if wt_branch and _published_squashed(main, wt):
+    squashed = bool(wt_branch) and _published_squashed(main, wt)
+    if squashed:
         wt_branch = ""   # PR của nó đã gộp vào origin/<trunk> và worktree không còn gì chưa commit: chỉ đồng bộ main rồi gỡ (GeelyEx2 18/10)
+    elif board_worktree(wt):   # lane super-board (detached review/qa, nhánh issue chưa push): chỉ vào main qua PR + merge gate (review 19/10:
+        # `finish` / Stop của phiên tự chạy lane đã gộp một checkout review detached, commit PR chưa review, vào main local)
+        return "blocked", tr("worktree của lane super-board (.claude/worktrees/issue-<N>-…): chỉ vào main qua PR + merge gate, không tự gộp; "
+                             "xong lane thì gỡ nó: `git worktree remove <path>`",
+                             "a super-board lane worktree (.claude/worktrees/issue-<N>-…): it reaches main only through its PR and the merge gate, "
+                             "never merged automatically; remove it when the lane is done: `git worktree remove <path>`"), {}
     if wt_branch:
         return "blocked", tr(f"worktree đang ở nhánh '{wt_branch}' đã PUBLISH (có nhánh remote / upstream): không tự commit thêm hay gộp nó vào main — gộp bằng tay (merge/PR)",
                              f"the worktree is on branch '{wt_branch}', which is PUBLISHED (a remote ref / upstream exists): nothing is committed to it or merged from it automatically - merge it by hand (merge / PR)"), {}
