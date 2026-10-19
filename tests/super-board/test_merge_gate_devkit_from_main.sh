@@ -84,6 +84,5 @@ rm -f "$R/.agents/devkit"
 [ "$rc" -eq 9 ] && grep -q "verification-readiness" "$TMP/gate2.log" \
   && ok "không có DevKit nào: exit 9 (verification-readiness), không exit 11" \
   || fail "không có DevKit nào: gate exit $rc (want 9): $(tail -3 "$TMP/gate2.log")"
-
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_devkit_from_main: PASS"; exit 0; } || { echo "test_merge_gate_devkit_from_main: FAIL ($FAILS)"; exit 1; }

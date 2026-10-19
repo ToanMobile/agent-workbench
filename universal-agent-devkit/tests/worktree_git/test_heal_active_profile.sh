@@ -21,7 +21,6 @@ WT="$P/.claude/worktrees/issue-18-build"
 git worktree add -q --detach "$WT" HEAD
 heal() { ( cd "$WT" && python3 "$DEVKIT_DIR/scripts/git/worktree.py" heal --devkit="$DEVKIT_DIR" >"$TMP/heal.log" 2>&1 ); }
 fail() { echo "✖ $1"; sed 's/^/    heal: /' "$TMP/heal.log" 2>/dev/null | tail -5; FAILS=$((FAILS + 1)); }
-
 # 1. worktree có link tương đối của main chép y nguyên: gãy
 rm -rf "$WT/.agents/active-profile"; mkdir -p "$WT/.agents"
 ln -s "$(readlink "$P/.agents/active-profile")" "$WT/.agents/active-profile"
