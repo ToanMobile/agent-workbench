@@ -4,6 +4,7 @@
 # ĐỎ trên bản hook cũ (mọi direct push đều Blocked).
 set -u
 DK="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$DK/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh (ratchet test_git_env_isolation.sh)
 HOOK="$DK/hooks/guard-protected-push.py"
 FAILS=0
 
