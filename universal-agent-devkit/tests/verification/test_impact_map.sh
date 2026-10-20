@@ -47,6 +47,11 @@ done
 # leaves test_githooks green and turns test_commit_hygiene red), and it names the hook, not the script.
 out="$(sel scripts/git/git-commit-msg.sh)"
 printf '%s\n' "$out" | grep -qx "tests/worktree_git/test_commit_hygiene.sh" && ok "git-commit-msg.sh change selects test_commit_hygiene.sh" || fail "git-commit-msg.sh change does not select test_commit_hygiene.sh"
+# 20/10 (#31): fold_agent_file.py is run by backup_conflict.sh and devkit_i18n.py is imported by the CLIs; no test names a change to them.
+for pair in "scripts/governance/fold_agent_file.py tests/installer/test_platform_rules.sh" "scripts/governance/fold_agent_file.py tests/installer/test_uninstall_no_leftovers.sh" "scripts/governance/devkit_i18n.py tests/installer/test_i18n_profiles.sh"; do
+  set -- $pair
+  printf '%s\n' "$(sel "$1")" | grep -qx "$2" && ok "$1 change selects $2" || fail "$1 change does not select $2"
+done
 out="$(sel LICENSE)"
 printf '%s\n' "$out" | grep -qx "hooks/tests/test_prompt_dedupe.sh" && fail "an unrelated change selects a mapped test" || ok "an unrelated change selects nothing from the map"
 

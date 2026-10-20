@@ -27,3 +27,6 @@ bin/session_lock.py   tests/context_memory/test_session_lock_trunk_wrappers.sh
 hooks/worktree_merge_gate.sh   tests/gates/test_worktree_merge_gate_conflict_advice.sh tests/gates/test_worktree_merge_gate_subagent_live.sh
 # 17/10 (K7): khối .gitignore mà bin/install.sh viết lại ở mỗi lần cài / mỗi worktree mới (phải giữ `.agents/hooks/`).
 bin/install.sh   tests/installer/test_gitignore_keeps_agents_hooks.sh
+# 20/10 (#31): backup_conflict.sh runs fold_agent_file.py and the uninstall tests fold it back; devkit_i18n.py is imported by the CLIs, test_i18n_profiles reads its language switch. No test names either file.
+scripts/governance/fold_agent_file.py   tests/installer/test_platform_rules.sh tests/installer/test_uninstall_no_leftovers.sh
+scripts/governance/devkit_i18n.py   tests/installer/test_i18n_profiles.sh
