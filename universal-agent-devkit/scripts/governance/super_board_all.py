@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-super_board_all.py — Quản lý đồng thời toàn bộ 5 Super-Board Runners cho 5 Repositories:
+super_board_all.py — Quản lý đồng thời toàn bộ 6 Super-Board Runners cho 6 Repositories:
   1. agent-workbench             ➔ Project #1
   2. officereader                ➔ Project #2
   3. goods-triple-shelf-match-3d ➔ Project #3
   4. geelyex2                    ➔ Project #4
   5. neighbours-from-hell        ➔ Project #5
+  6. humans-vs-ufos              ➔ Project #6
 
 Cách dùng:
-  python3 super_board_all.py start   # Khởi động cả 5 runners chạy ngầm cùng lúc
-  python3 super_board_all.py status  # Xem trạng thái cả 5 bảng và runners
-  python3 super_board_all.py stop    # Dừng an toàn cả 5 runners
+  python3 super_board_all.py start   # Khởi động cả 6 runners chạy ngầm cùng lúc
+  python3 super_board_all.py status  # Xem trạng thái cả 6 bảng và runners
+  python3 super_board_all.py stop    # Dừng an toàn cả 6 runners
 """
 
 import os
@@ -54,6 +55,13 @@ REPOS = [
         "dir": "/Volumes/Data/Toan/Game/Neighbours-From-Hell",
         "tuios_window": "Neighbours",
         "url": "https://github.com/users/ToanMobile/projects/5/views/2"
+    },
+    {
+        "slug": "humans-vs-ufos",
+        "name": "Humans vs. UFOs (#6)",
+        "dir": "/Volumes/Data/Toan/Game/Humans-vs.-UFOs",
+        "tuios_window": "Humans-vs-UFOs",
+        "url": "https://github.com/users/ToanMobile/projects/6/views/2"
     },
 ]
 

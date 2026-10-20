@@ -865,6 +865,10 @@ def main(argv=None) -> int:
     record = not rc.skip_bookkeeping(project)   # a LINKED worktree keeps the proof in its own state, not in the tracked checklist
     if not record:
         print("red_proof: linked worktree - the proof is kept in the worktree's own state, not in the tracked checklist (DEVKIT_WORKTREE_CHECKLIST=1 writes it)", file=sys.stderr)
+    # Chuyển SIGTERM/SIGHUP thành SystemExit để khối finally của worktree() kịp gỡ worktree tạm red-proof-*.
+    for _sig in (signal.SIGTERM, getattr(signal, "SIGHUP", None)):
+        if _sig is not None:
+            signal.signal(_sig, lambda s, _f: sys.exit(128 + s))
     with proof_slot(state, jobs_of(project)):
         data = rc.load_view(project)
         mf = project / ".agents" / "regression_matrix.active.json"

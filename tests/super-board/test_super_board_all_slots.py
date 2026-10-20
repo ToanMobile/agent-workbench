@@ -10,10 +10,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "universal-agent-devkit" / "scripts" / "governance" / "super_board_all.py"
+MONITOR_SCRIPT = ROOT / "universal-agent-devkit" / "scripts" / "governance" / "super_board_monitor.py"
 
 
 def load():
     spec = importlib.util.spec_from_file_location("super_board_all_under_test", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_monitor():
+    spec = importlib.util.spec_from_file_location("super_board_monitor_under_test", MONITOR_SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -31,6 +39,8 @@ def main() -> int:
             fails += 1
 
     board = load()
+    slugs = [r["slug"] for r in board.REPOS]
+    check(len(slugs) == 6 and "humans-vs-ufos" in slugs, "REPOS includes all 6 boards including humans-vs-ufos", str(slugs))
     with tempfile.TemporaryDirectory() as raw:
         slot_dir = board.ensure_heavy_slots(raw)
         names = sorted(p.name for p in Path(slot_dir).glob("heavy-gate-*.lock"))
@@ -39,6 +49,32 @@ def main() -> int:
         check("SB_HEAVY_SLOT_DIR='%s'" % slot_dir in cmd, "runner command pins the shared slot directory")
         check(cmd.startswith("cd '/repo' && SB_DAEMON=1 "), "runner command keeps the per-repo daemon")
         check("nohup '/bin/run.sh' agent-workbench > '/repo/runner.log'" in cmd, "the launch line names the repo slug and its log")
+
+        mon = load_monitor()
+        fake_home = Path(raw) / "home"
+        root_proj = fake_home / ".claude" / "projects" / "-Volumes-X-Repo"
+        wt_proj = fake_home / ".claude-finos" / "projects" / "-Volumes-X-Repo--claude-worktrees-issue-19-build"
+        other_proj = fake_home / ".claude" / "projects" / "-Volumes-X-Repo-other"
+        root_proj.mkdir(parents=True)
+        wt_proj.mkdir(parents=True)
+        other_proj.mkdir(parents=True)
+        f_root = root_proj / "old.jsonl"
+        f_wt = wt_proj / "live-wt.jsonl"
+        f_other = other_proj / "other.jsonl"
+        f_root.write_text("{}\n")
+        f_wt.write_text("{}\n")
+        f_other.write_text("{}\n")
+        os.utime(f_root, (1000, 1000))
+        os.utime(f_wt, (2000, 2000))
+        os.utime(f_other, (3000, 3000))
+        old_home = os.environ.get("HOME")
+        try:
+            os.environ["HOME"] = str(fake_home)
+            found = mon.find_latest_jsonl("/Volumes/X/Repo")
+        finally:
+            if old_home is not None:
+                os.environ["HOME"] = old_home
+        check(found == str(f_wt), "monitor finds newer worktree transcript and ignores prefix-sibling repo", str(found))
     if fails:
         print("test_super_board_all_slots: FAIL (%s)" % fails)
         return 1
