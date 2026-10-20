@@ -68,6 +68,11 @@ def graphql(token, query, variables):
     return payload['data']
 
 
+def read_project(token, owner, number):
+    return graphql(token, 'query($o:String!,$n:Int!){user(login:$o){projectV2(number:$n){id shortDescription}}}',
+                   {'o': owner, 'n': number})['user']['projectV2']
+
+
 def main():
     token = os.environ.get('BOARD_PAT', '').strip()
     if not token:
@@ -80,12 +85,15 @@ def main():
     failed = 0
     for number in numbers:
         try:
-            project = graphql(token, 'query($o:String!,$n:Int!){user(login:$o){projectV2(number:$n){id shortDescription}}}',
-                              {'o': owner, 'n': number})['user']['projectV2']
+            project = read_project(token, owner, number)
             new = decide(project.get('shortDescription') or '', now, stale_min)
             if new is None:
                 # Repo public: log Actions ai cũng đọc được — không in tiêu đề/mô tả của Project private.
                 print(f'project {number}: ok')
+                continue
+            # Watchdog có thể vừa ghi trạng thái mới giữa lúc đọc và lúc ghi: đọc lại, đổi rồi thì không đè ⚫.
+            if (read_project(token, owner, number).get('shortDescription') or '') != project.get('shortDescription'):
+                print(f'project {number}: ok (refreshed meanwhile)')
                 continue
             graphql(token, 'mutation($p:ID!,$d:String!){updateProjectV2(input:{projectId:$p,shortDescription:$d}){projectV2{id}}}',
                     {'p': project['id'], 'd': new})

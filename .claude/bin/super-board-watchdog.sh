@@ -225,7 +225,9 @@ board_status_text() {   # đặt BS_KEY (không chứa giờ: biết trạng th�
   case "$VERDICT" in
     running|restarted|starting)
       BS_KEY="🟢 đang chạy"
-      started=$(field STARTED "$STATE"); case "$started" in ''|*[!0-9]*) ;; *) detail=" từ $(hhmm "$started")" ;; esac
+      # restarted/starting: bản ghi còn là của runner cũ đã chết, giờ của nó sai.
+      started=""; [ "$VERDICT" != running ] || started=$(field STARTED "$STATE")
+      case "$started" in ''|*[!0-9]*) ;; *) detail=" từ $(hhmm "$started")" ;; esac
       for f in .claude/super-board/inflight/*; do
         n=${f##*/}; case "$n" in ''|*[!0-9]*) continue ;; esac
         [ -f "$f" ] || continue
@@ -245,7 +247,7 @@ board_status_text() {   # đặt BS_KEY (không chứa giờ: biết trạng th�
       [ "$BS_KEY" != "🟢 đang chạy" ] || detail="$detail · không có worker"
       BS_TEXT="🟢 đang chạy$detail"
       return 0 ;;
-    stopped) BS_KEY="⏸️ đã dừng (người dùng stop)" ;;
+    stopped|ended-stopped) BS_KEY="⏸️ đã dừng (người dùng stop)" ;;
     halt-wait) BS_KEY="🟠 halt GitHub — watchdog tự thử lại mỗi phút" ;;
     github-halt) BS_KEY="🔴 halt GitHub — cần đối chiếu tay (--resume --reconciled)" ;;
     backoff-*) BS_KEY="🟠 runner vừa chết — chờ khởi động lại" ;;
@@ -255,8 +257,23 @@ board_status_text() {   # đặt BS_KEY (không chứa giờ: biết trạng th�
   BS_TEXT="$BS_KEY"
 }
 
-gh20() { perl -e 'alarm 20; exec @ARGV' gh "$@"; }   # macOS không có `timeout`: gh treo (mạng chưa lên) không giữ lượt check
-card20() { perl -e 'alarm 20; exec @ARGV' bash "$SCRIPT_DIR/super-board-card.sh" "$@"; }
+run_capped() {   # run_capped <giây> <lệnh…>: hết giờ thì TERM rồi KILL cả nhóm tiến trình, exit 124
+  # macOS không có `timeout`. `perl -e 'alarm N; exec gh'` KHÔNG cắt được gh: gh là binary Go, bỏ qua SIGALRM (đo 20/10:
+  # alarm 2 mà gh vẫn chạy đủ 8 s), và con của python (--resume → gh) cũng sống tiếp. Fork, con lập nhóm riêng, hết giờ
+  # giết cả nhóm.
+  perl -e '$t = shift; $p = fork; die "fork: $!" unless defined $p;
+    if (!$p) { setpgrp(0, 0); exec @ARGV; exit 127 }
+    $SIG{ALRM} = sub { kill "TERM", -$p; sleep 1; kill "KILL", -$p; exit 124 };
+    alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@"
+}
+GH_CAP="${SB_BOARD_GH_TIMEOUT:-20}"
+gh20() { run_capped "$GH_CAP" gh "$@"; }   # gh treo (mạng nửa vời sau khi máy thức) không được giữ lượt check
+# P1: card.sh (SB_GITHUB_READ_STRICT) ghi file halt DÙNG CHUNG khi đọc lỗi → runner và mọi worker dừng. Publish chỉ để hiển
+# thị: cho nó file halt riêng, xoá sau mỗi lần publish.
+card20() { SB_GITHUB_HALT_FILE="$ROOT/$DIR/$SLUG.publish-halt.json" run_capped "$GH_CAP" bash "$SCRIPT_DIR/super-board-card.sh" "$@"; }
+# Ngân sách một lần publish: mỗi lệnh ≤ 20 s nhưng nhiều card cộng lại có thể quá hạn khoá publish (300 s) → hai lần publish
+# chồng nhau. Hết 200 s thì dừng; card chưa xoá vẫn nằm trong CARDS, lượt sau làm tiếp.
+budget_ok() { [ $(( $(date +%s) - NOW )) -lt "${BOARD_STATUS_BUDGET:-200}" ]; }
 
 publish_card_fields() {
   # Field chữ "Đang chạy" trên từng card: lane + giờ bắt đầu + thời lượng khi worker còn sống, xoá khi worker dừng (card
@@ -279,18 +296,23 @@ publish_card_fields() {
   while IFS='	' read -r n text; do
     [ -n "$n" ] || continue
     live="$live $n"; keep="$keep $n"
+    budget_ok || continue
     item=$(card20 --config "$3" item-id "$n" 2>/dev/null) || continue
     # Ghi hỏng (mạng, hay field đã bị xoá trên GitHub): lượt sau đọc lại id field.
     gh20 project item-edit --id "$item" --project-id "$pid" --field-id "$CF_FIELD" --text "$text" >/dev/null 2>&1 || FIELD_STALE=1
   done <<EOF
 $BS_CARDS
 EOF
+  set -f   # CARDS nằm trong file worker ghi được: không glob, chỉ nhận số
   for n in $CF_CARDS; do
+    case "$n" in ''|*[!0-9]*) continue ;; esac
     case " $live " in *" $n "*) continue ;; esac
+    budget_ok || { keep="$keep $n"; continue; }
     item=$(card20 --config "$3" item-id "$n" 2>/dev/null) \
       && gh20 project item-edit --id "$item" --project-id "$pid" --field-id "$CF_FIELD" --clear >/dev/null 2>&1 \
-      || keep="$keep $n"   # xoá hỏng: giữ lại để lượt sau thử
+      || { keep="$keep $n"; FIELD_STALE=1; }   # xoá hỏng (mạng, field bị xoá trên GitHub): giữ card, đọc lại id field
   done
+  set +f
   CF_CARDS=${keep# }
   [ -z "${FIELD_STALE:-}" ] || CF_FIELD=""
 }
@@ -314,8 +336,10 @@ publish_board_status() {
   last_key=$(field KEY "$BOARD_STATUS"); last_at=$(field AT "$BOARD_STATUS")
   case "$last_at" in ''|*[!0-9]*) last_at=0 ;; esac
   [ "$BS_KEY" != "$last_key" ] || [ $((NOW - last_at)) -ge "$BOARD_STATUS_HEARTBEAT" ] || return 0
+  [ "${#BS_TEXT}" -le 200 ] || BS_TEXT="${BS_TEXT:0:197}…"   # nhiều worker: giữ "cập nhật …" ở cuối cho cron đọc
   gh20 project edit "$number" --owner "$owner" --description "$BS_TEXT · cập nhật $(TZ="$BOARD_TZ" date -r "$NOW" "+%H:%M %d/%m")" >/dev/null 2>&1 || return 0
   publish_card_fields "$owner" "$number" "$cfg" || true
+  rm -f "$ROOT/$DIR/$SLUG.publish-halt.json" 2>/dev/null || true
   { printf 'KEY=%s\nAT=%s\nFIELD=%s\nCARDS=%s\n' "$BS_KEY" "$NOW" "${CF_FIELD:-}" "${CF_CARDS:-}" > "$BOARD_STATUS.$$" \
       && mv -f "$BOARD_STATUS.$$" "$BOARD_STATUS"; } 2>/dev/null || rm -f "$BOARD_STATUS.$$" 2>/dev/null || true
   return 0
@@ -399,7 +423,7 @@ check() {
     # 90 s (--resume tối đa ~186 s: 2 lần đọc × 3 lần × gh 30 s) để lượt check xong trước khi khoá bị coi là bỏ lại (120 s).
     # Bị cắt giữa chừng vẫn an toàn: --resume chỉ đọc, lưu trữ halt bằng rename.
     local why
-    if ! why=$( (PATH="$env_path"; perl -e 'alarm 90; exec @ARGV' python3 "$SCRIPT_DIR/super-board-github-read.py" --resume 2>&1 >/dev/null) ); then
+    if ! why=$( (PATH="$env_path"; run_capped 90 python3 "$SCRIPT_DIR/super-board-github-read.py" --resume 2>&1 >/dev/null) ); then
       case "$why" in
         *reconcil*) verdict github-halt "runner halted (rc=79) on an uncertain GitHub write — check it on GitHub, then --resume --reconciled \"<what was checked>\" and start the board explicitly" ;;
         *) verdict halt-wait "runner halted (rc=79): its saved GitHub read still fails — retried every check" ;;

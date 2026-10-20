@@ -72,4 +72,25 @@ PY2
 printf '%s' "$leak" | grep -q 'SECRET' && fail "project data printed to the public Actions log: $leak" \
   || { [ "$rc" -eq 0 ] && printf '%s' "$leak" | grep -q 'project 1: marked ⚫' && ok "public log names only the project number and the ⚫ verdict" || fail "main rc=$rc out='$leak'"; }
 
+# Watchdog ghi 🟢 mới giữa lúc cron đọc và lúc cron ghi: cron đọc lại ngay trước khi ghi, chuỗi đổi thì không đè ⚫.
+race=$(BOARD_PAT=x BOARD_PROJECTS="1" python3 - "$SCRIPT" <<'PY2'
+import importlib.util, sys
+from datetime import datetime, timedelta, timezone
+spec = importlib.util.spec_from_file_location('hb', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+old = (datetime.now(timezone(timedelta(hours=7))) - timedelta(days=2)).strftime('%H:%M %d/%m')
+fresh = datetime.now(timezone(timedelta(hours=7))).strftime('%H:%M %d/%m')
+reads = []
+def fake(token, query, variables):
+    if 'mutation' in query:
+        print('MUTATION'); return {}
+    reads.append(1)
+    d = '🟢 đang chạy · cập nhật ' + (old if len(reads) == 1 else fresh)
+    return {'user': {'projectV2': {'id': 'P1', 'shortDescription': d}}}
+m.graphql = fake
+sys.exit(m.main())
+PY2
+)
+printf '%s' "$race" | grep -q MUTATION && fail "cron overwrote a status the watchdog had just refreshed: $race" \
+  || ok "status refreshed between read and write → cron does not overwrite it with ⚫"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_board_heartbeat: all passed" || { echo "❌ test_board_heartbeat: $FAILS failed"; exit 1; }
