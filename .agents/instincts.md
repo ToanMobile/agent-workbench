@@ -450,3 +450,12 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Halt vì lỗi đọc tạm thời không ai tự gỡ: máy ngủ dậy làm chết mọi board hàng giờ
 - **Nguyên nhân:** super-board-github-read.py halt sau 3 lần đọc lỗi trong vài giây (mạng chưa lên sau khi máy thức), watchdog coi halt rc=79 là dừng có chủ đích nên không bao giờ khởi động lại
 - **Quy tắc phòng ngừa & Cách fix:** Mọi trạng thái dừng do lỗi tạm thời (mạng, quota, đọc) phải có đường tự phục hồi có giới hạn thời gian (replay chỉ đọc rồi restart); chỉ thao tác ghi chưa rõ kết quả mới chờ người. Trạng thái sống/chết phải hiện ra ngoài (mô tả Project, field card) kèm giờ cập nhật
+
+---
+
+### [INSTINCT-054] Guard đường dẫn chạy SAU bước phá huỷ, hoặc leo tổ tiên theo chuỗi để lọt '..'
+- **Ngày phát hiện:** 2026-10-20
+- **Hiện tượng lỗi:** Guard đường dẫn chạy SAU bước phá huỷ, hoặc leo tổ tiên theo chuỗi để lọt '..'
+- **Nguyên nhân:** restore-old kiểm cha-symlink sau rm/mkdir (đã xoá file DevKit trước khi SKIP), bước leo tổ tiên theo chuỗi coi 'nope/../..' là trong dự án, phía backup của ledger chỉ kiểm tiền tố
+- **Quy tắc phòng ngừa & Cách fix:** Kiểm tra chỉ-đọc trước mọi rm/mkdir/mv và ở cả dry-run; từ chối đoạn '.'/'..' trên CẢ đường dẫn (cả đoạn cuối); áp cùng kiểm tra cho nguồn lẫn đích của mv
+- **Lệnh kiểm tra:** `bash universal-agent-devkit/tests/worktree_git/test_restore_old.sh`

@@ -936,9 +936,17 @@ list_local_tier() {
 # _backup_assert_safe_dir <dir> <project_root_physical> — 0 only when <dir> physically lives
 # inside the project. A parent that is a symlink out of it (into $DEVKIT_ROOT, say) would let
 # a restore write through to the DevKit's own files.
+# Chỉ đọc: <dir> chưa tồn tại thì xét tổ tiên gần nhất đang có (dừng cả ở link treo), nên gọi được
+# TRƯỚC mọi rm/mkdir. Mã trả về: 0 = trong dự án, 1 = dẫn ra ngoài (symlink), 2 = một phần đường dẫn là file, 3 = có đoạn `.`/`..`.
 _backup_assert_safe_dir() {
-  local real
-  real="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
+  local d="$1" real
+  # Bước leo tổ tiên dưới đây xử lý chuỗi: `nope/../..` (nope chưa có) sẽ leo qua `..` mà không ra ngoài, rồi mkdir/mv đi theo `..`
+  # ra khỏi dự án. Đường dẫn có đoạn `.`/`..` bị từ chối (SKIP, bản sao lưu giữ nguyên) thay vì cố chuẩn hoá nó.
+  case "/$d/" in */../*|*/./*) return 3 ;; esac
+  while [ ! -e "$d" ] && [ ! -L "$d" ]; do d="$(dirname "$d")"; done
+  [ -e "$d" ] || return 1
+  [ -d "$d" ] || return 2
+  real="$(cd "$d" 2>/dev/null && pwd -P)" || return 1
   case "$real" in "$2"|"$2"/*) return 0 ;; esac
   return 1
 }
@@ -987,22 +995,50 @@ restore_old_backups() {
         skipped=$((skipped + 1))
         continue
       fi
+      # Kiểm tra cha-symlink (chỉ đọc) TRƯỚC rm/mkdir, và ở cả dry-run để bản xem trước khớp --apply:
+      # cha là symlink vào DevKit thì rm/mkdir/mv sẽ xoá hoặc ghi xuyên vào file của DevKit.
+      local safe=0   # đoạn `.`/`..` xét trên cả target (dirname bỏ mất đoạn cuối: `sub/..`), phần còn lại trên thư mục cha
+      case "/$target/" in
+        */../*|*/./*) safe=3 ;;
+        *) _backup_assert_safe_dir "$(dirname "$target")" "$root_p" || safe=$? ;;
+      esac
+      # Phía backup cũng vậy: ledger nằm trong cây dự án (có thể đến từ repo clone về), chỉ kiểm tiền tố thì `..` hoặc cha-symlink
+      # khiến devkit_mv kéo một file NGOÀI dự án vào trong rồi xoá bản gốc.
+      if [ "$safe" -eq 0 ]; then
+        case "/$backup/" in
+          */../*|*/./*) safe=4 ;;
+          *) _backup_assert_safe_dir "$(dirname "$backup")" "$root_p" || safe=4 ;;
+        esac
+      fi
+      if [ "$safe" -ne 0 ]; then
+        if [ "$safe" -eq 2 ]; then
+          echo "  SKIP     ${target#$root_p/} — part of its parent path is a file, not a folder; ${backup#$root_p/} kept"
+        elif [ "$safe" -eq 3 ]; then
+          echo "  SKIP     ${target#$root_p/} — the recorded path has a '.' or '..' segment; ${backup#$root_p/} kept"
+        elif [ "$safe" -eq 4 ]; then
+          echo "  SKIP     ${target#$root_p/} — its backup ${backup#$root_p/} is not inside the project ('.', '..' or a symlinked folder); left where it is"
+        else
+          echo "  SKIP     ${target#$root_p/} — its parent folder leads outside the project (symlink); ${backup#$root_p/} kept"
+        fi
+        skipped=$((skipped + 1))
+        continue
+      fi
       if [ "$apply" -ne 1 ]; then
         echo "  would    ${backup#$root_p/} -> ${target#$root_p/}"
         would=$((would + 1))
+        continue
+      fi
+      # `agent-kit uninstall` removes install dirs left empty (.claude/commands, ...):
+      # recreate the parent so the backup can go back — trước khi xoá gì, nên mkdir lỗi thì không mất gì.
+      if ! mkdir -p "$(dirname "$target")"; then
+        echo "  SKIP     ${target#$root_p/} — could not create its parent folder; ${backup#$root_p/} kept"
+        skipped=$((skipped + 1))
         continue
       fi
       if [ -L "$target" ] || [ -f "$target" ]; then
         rm -f "$target" && forget_devkit_file "$target"
       elif [ -d "$target" ]; then
         rm -rf "$target"
-      fi
-      # `agent-kit uninstall` removes install dirs left empty (.claude/commands, ...):
-      # recreate the parent so the backup can go back.
-      if ! mkdir -p "$(dirname "$target")" || ! _backup_assert_safe_dir "$(dirname "$target")" "$root_p"; then
-        echo "  SKIP     ${target#$root_p/} — its parent folder leads outside the project (symlink); ${backup#$root_p/} kept" >&2
-        skipped=$((skipped + 1))
-        continue
       fi
       if devkit_mv "$backup" "$target"; then
         echo "  restored ${backup#$root_p/} -> ${target#$root_p/}"

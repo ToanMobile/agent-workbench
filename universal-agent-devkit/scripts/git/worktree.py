@@ -2826,10 +2826,18 @@ def _staged_merge_refusal(wt):
                               f".gitignore hoặc chuyển ra ngoài; chưa có gì bị commit hay gộp", f"{len(secret)} secret-looking file(s) staged in the open merge are never "
                               f"committed automatically: {', '.join(secret[:6])}. `git rm --cached` them and ignore or move them out; nothing was committed or merged"),
                 {"files": secret[:20]})
-    links = [p for p in own if os.path.islink(os.path.join(wt, p))]
+    if not own:
+        return None
+    lit = dict(os.environ, GIT_LITERAL_PATHSPECS="1")
+    # Merge được kết thúc bằng `git commit --no-edit`, thứ ghi nội dung INDEX: xét mode đã stage (120000 = symlink) thay vì islink trên đĩa.
+    # Ca 5 của tests/worktree_git/test_worktree_automerge_staged_secret.sh: stage một link rồi đặt file thường (chưa stage) đè lên,
+    # islink trả False và link vẫn vào merge commit.
+    r = git(wt, "ls-files", "-s", "-z", "--", *own, check=False, env=lit)
+    if r.returncode != 0:
+        return "blocked", tr("không đọc được mode đã stage của merge đang mở: không kết thúc nó", "cannot read the staged modes of the open merge: not concluding it"), {}
+    links = sorted({rec.partition("\t")[2] for rec in r.stdout.split("\0") if rec.partition("\t")[0].split()[:1] == ["120000"]})
     if links:
-        held = {rec.partition("\t")[2] for rec in git(wt, "ls-tree", "-r", "-z", "HEAD", "--", *links, check=False,
-                                                       env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).stdout.split("\0")
+        held = {rec.partition("\t")[2] for rec in git(wt, "ls-tree", "-r", "-z", "HEAD", "--", *links, check=False, env=lit).stdout.split("\0")
                 if rec.partition("\t")[0].split()[:1] == ["120000"]}
         new = [p for p in links if p not in held]
         if new:
