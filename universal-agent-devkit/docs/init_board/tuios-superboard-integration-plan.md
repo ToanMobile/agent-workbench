@@ -1,44 +1,45 @@
 # 🏭 Kế Hoạch Tích Hợp Toàn Diện: Agent-Workbench × Super-Board × TUIOS
 
-> **Kiến trúc Nhà máy Phần mềm Tự hành 24/7 cho 5 Repositories:** Kết hợp bộ não kỷ luật của **Agent-Workbench (Universal Agent DevKit)**, dây chuyền tự động hóa **Super-Board**, và hệ thống chạy ngầm bền bỉ **TUIOS Daemon** trên Visual Studio Code.
+> **Kiến trúc Nhà máy Phần mềm Tự hành 24/7 cho 6 Repositories:** Kết hợp bộ não kỷ luật của **Agent-Workbench (Universal Agent DevKit)**, dây chuyền tự động hóa **Super-Board**, và hệ thống chạy ngầm bền bỉ **TUIOS Daemon** trên Visual Studio Code.
 
 ## ⚡ Các Câu Lệnh Khởi Chạy & Khôi Phục Nhanh (Quick Start)
 
-1. **Khởi động Super-Board Runner chạy ngầm tự động 24/7 (Agent Workbench & 5 Repos):**
+1. **Khởi động Super-Board Runner chạy ngầm tự động 24/7 (Đồng thời cả 6 Repositories):**
    ```bash
-   /Volumes/Data/Toan/agent-workbench/start-runner.sh
-   # Hoặc khởi động đồng thời cả 5 repositories:
+   python3 /Volumes/Data/Toan/agent-workbench/universal-agent-devkit/scripts/governance/super_board_all.py start
+   # Hoặc dùng wrapper script:
    /Volumes/Data/Toan/agent-workbench/start-all-runners.sh start
-   # (Hoặc lệnh toàn cục: super-board-all start)
+   # (Hoặc khởi động lẻ repo hiện tại: /Volumes/Data/Toan/agent-workbench/start-runner.sh)
    ```
-   *(Tự động quét cột Ready trên GitHub Projects, tự giao việc cho Agent code, chạy test gate và merge vào main sang Done mà không cần gõ lệnh).*
+   *(Tự động cấp phát 2 slot khóa tải nặng `~/.claude/super-board/locks/heavy-gate-{1,2}.lock`, quét cột `Ready` trên cả 6 GitHub Projects `#1`–`#6`, tự giao việc cho Agent code trong worktree cô lập, chạy `post-fix-gate.py --run-tests --full --brief` và squash-merge vào nhánh chính sang `Done`).*
 
-2. **Dừng an toàn & kiểm tra trạng thái Super-Board Runner (Stop & Status):**
+2. **Dừng an toàn, kiểm tra trạng thái & khôi phục sau tạm dừng GitHub API (`Stop`, `Status` & `Resume`):**
    ```bash
-   # Dừng an toàn repo hiện tại (agent-workbench):
-   /Volumes/Data/Toan/agent-workbench/stop-runner.sh
+   # Kiểm tra trạng thái hoạt động & Watchdog của cả 6 repositories:
+   python3 /Volumes/Data/Toan/agent-workbench/universal-agent-devkit/scripts/governance/super_board_all.py status
 
-   # Hoặc dừng đồng thời cả 5 repositories:
-   /Volumes/Data/Toan/agent-workbench/stop-all-runners.sh
-   # (Hoặc lệnh toàn cục: super-board-all stop)
+   # Dừng an toàn đồng thời cả 6 repositories (ghi stop marker để launchd watchdog không tự bật lại):
+   python3 /Volumes/Data/Toan/agent-workbench/universal-agent-devkit/scripts/governance/super_board_all.py stop
 
-   # Kiểm tra trạng thái hoạt động cả 5 repositories:
-   /Volumes/Data/Toan/agent-workbench/start-all-runners.sh status
-   # (Hoặc lệnh toàn cục: super-board-all status)
+   # Giải phóng cờ github-halt (rc=79) trên cả 6 repo khi mạng/GitHub API vừa khôi phục rồi chạy lại:
+   for r in /Volumes/Data/Toan/agent-workbench /Volumes/Data/Toan/OfficeReader/OfficeReader /Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D /Volumes/Data/Toan/GeelyEx2 /Volumes/Data/Toan/Game/Neighbours-From-Hell /Volumes/Data/Toan/Game/Humans-vs.-UFOs; do
+     (cd "$r" && python3 .claude/bin/super-board-github-read.py --resume 2>/dev/null || true)
+   done
+   python3 /Volumes/Data/Toan/agent-workbench/universal-agent-devkit/scripts/governance/super_board_all.py start
    ```
-   *(Dừng an toàn: giải phóng worker, gỡ nhãn in-flight trên GitHub Project board và dọn dẹp lock files sạch sẽ).*
+   *(Dừng an toàn: giải phóng worker, gỡ nhãn in-flight trên GitHub Project board, ghi `.stopped` marker và dọn dẹp lock files sạch sẽ).*
 
-3. **Mở giao diện TUIOS trực tiếp trên máy tính xem 5 Repo:**
+3. **Mở giao diện TUIOS trực tiếp trên máy tính xem 6 Repo (`super_board_monitor.py`):**
    ```bash
    tuios attach factory
    # Hoặc chỉ đơn giản:
    tuios attach
    ```
    - **Thoát ra ẩn đi (Detach)** mà không tắt tiến trình ngầm: Bấm tổ hợp `Ctrl + B` rồi bấm `d`.
-   - **Chuyển qua lại giữa 5 cửa sổ repo:** Bấm `Ctrl + B` rồi bấm số từ `1` đến `5`.
+   - **Chuyển qua lại giữa 6 cửa sổ repo:** Bấm `Ctrl + B` rồi bấm số từ `1` đến `6`.
    - **Kiểm tra danh sách session đang chạy:** `tuios ls`.
 
-4. **Mở Web Terminal xem 5 Repo từ xa trên điện thoại (`10 giây — Zero-Config — Cloudflare Quick Tunnel`):**
+4. **Mở Web Terminal xem 6 Repo từ xa trên điện thoại (`10 giây — Zero-Config — Cloudflare Quick Tunnel`):**
    ```bash
    tuios-web
    ```
@@ -53,7 +54,7 @@
      && ~/.claude/bin/setup-autonomous-factory.sh
    ```
 
-6. **Kiểm tra sức khỏe 9 tầng bất kỳ lúc nào trên máy hiện tại (`9/9 PASS`):**
+6. **Kiểm tra sức khỏe 9 tầng bất kỳ lúc nào trên máy hiện tại (`9/9 PASS` trên cả 6 Repo):**
    ```bash
    ~/.claude/bin/setup-autonomous-factory.sh --verify
    ```
@@ -64,16 +65,16 @@
 
 ### 1.1. TUIOS hoạt động theo mô hình Client – Server (Daemon)
 Khác với terminal thông thường của VS Code (tắt cửa sổ là chết tiến trình), **TUIOS** tách làm 2 phần độc lập:
-1. **`tuios daemon` (Background Server):** Chạy ngầm ở tầng hệ điều hành macOS. Toàn bộ 5 phiên terminal của 5 repo và các tiến trình `super-board` / `claude -p` nằm bên trong Daemon này.
+1. **`tuios daemon` (Background Server):** Chạy ngầm ở tầng hệ điều hành macOS. Toàn bộ 6 phiên terminal của 6 repo (`super_board_monitor.py`) và các tiến trình `super-board-run.sh` / `claude -p` nằm bên trong Daemon này.
 2. **`tuios` UI (Client Viewer):** Chỉ là "màn hình hiển thị" kết nối vào Daemon.
 
 ### 1.2. Các tình huống sử dụng thực tế
 
-| Thao tác của bạn | Chuyện gì xảy ra với 5 Repo đang chạy? | Cách mở lại để xem |
+| Thao tác của bạn | Chuyện gì xảy ra với 6 Repo đang chạy? | Cách mở lại để xem |
 | :--- | :--- | :--- |
 | **Đang mở TUIOS mà bấm tắt hẳn cửa sổ VS Code (`Cmd + Q`)** | **VẪN CHẠY 100% NGẦM.** Chỉ có màn hình hiển thị bị đóng, Daemon và các Agent vẫn tiếp tục code, test, merge bình thường. | Mở lại VS Code → Mở Terminal → Gõ `tuios attach` |
 | **Đang xem TUIOS, muốn thoát ra ẩn đi (Detach)** | **VẪN CHẠY 100% NGẦM.** Bạn chủ động cất màn hình TUIOS đi để làm việc khác. | Bấm phím tắt `Ctrl+B` rồi bấm `d` (Detach). Khi cần xem lại gõ `tuios attach` |
-| **Lâu lâu (vài tiếng / hôm sau) mới mở lên xem 1 lần** | **HOÀN TOÀN ĐƯỢC.** TUIOS tiêu thụ ~0% CPU khi không hiển thị (Event-driven rendering). | Gõ `tuios attach` → Bấm `Ctrl+B i` để mở **Inbox** xem tổng hợp kết quả cả 5 repo, xem xong lại tắt đi. |
+| **Lâu lâu (vài tiếng / hôm sau) mới mở lên xem 1 lần** | **HOÀN TOÀN ĐƯỢC.** TUIOS tiêu thụ ~0% CPU khi không hiển thị (Event-driven rendering). | Gõ `tuios attach` → Bấm `Ctrl+B i` để mở **Inbox** xem tổng hợp kết quả cả 6 repo, xem xong lại tắt đi. |
 | **Đóng nắp máy Mac / Đi ngủ** | Cần giữ máy Mac không vào chế độ Sleep phần cứng. | Chạy kèm `caffeinate -d -s -u` để khóa màn hình/tắt đèn màn hình mà Daemon vẫn chạy xuyên đêm. |
 
 ---
@@ -82,23 +83,23 @@ Khác với terminal thông thường của VS Code (tắt cửa sổ là chết
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ TẦNG 1: TUIOS DAEMON (Quản lý Phiên chạy ngầm 24/7 & Giám sát Tập trung)  │
+│ TẦNG 1: TUIOS DAEMON & MONITOR (Giám sát Tập trung 6 Repo 24/7)            │
 │  • Chạy ngầm độc lập với VS Code (tắt VS Code không chết phiên)           │
-│  • Chia 5 Panes/Workspaces cho 5 Repo + Gom thông báo về 1 Inbox (Ctrl+b i)│
+│  • 6 Windows chạy `super_board_monitor.py` (quét cả transcript worktree)  │
 └────────────────────────────────────┬───────────────────────────────────────┘
                                      │ Giữ tiến trình sống liên tục nhiều ngày
                                      ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ TẦNG 2: SUPER-BOARD (Băng chuyền Điều phối Tự động từ GitHub Projects)     │
-│  • Tự động quét cột Ready → Chia Wave theo Dependency Graph                │
+│ TẦNG 2: SUPER-BOARD (Băng chuyền Điều phối Tự động từ 6 GitHub Projects)   │
+│  • `super_board_all.py`: Điều phối 6 Runners + 2 Heavy-Gate Slots toàn máy │
 │  • Điều phối 3 Làn: Builder (Code) → Tester (QA) → Reviewer (Audit)       │
 │  • Tự động Xoay vòng 6 Tài khoản khi chạm 95% quota, tự Resume khi reset   │
 └────────────────────────────────────┬───────────────────────────────────────┘
-                                     │ Gọi `claude -p` / `agy` / `grok`
+                                     │ Gọi `claude -p` (BG_WAIT_CEILING_MS=0)
                                      ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
 │ TẦNG 3: AGENT-WORKBENCH / UNIVERSAL AGENT DEVKIT (Bộ não & Cổng Kiểm định)│
-│  • Nạp nguyên vẹn 100% AGENTS.md + .agents/instincts.md (50KB bẫy lỗi)     │
+│  • Nạp nguyên vẹn 100% AGENTS.md + .agents/instincts.md (bẫy lỗi lịch sử)  │
 │  • Cung cấp 27 Skills (.agents/skills/: codebase-memory, fixbugs, tdd...)  │
 │  • Chốt chặn Merge Gate bằng: post-fix-gate.py --run-tests --full --brief  │
 └────────────────────────────────────────────────────────────────────────────┘
@@ -115,6 +116,16 @@ Sau khi kiểm toán chéo toàn bộ `super-qa` và `super-review`, các phần
 2. **Blind-First Hypothesis, Review Remembers (`R1, R2...`) & Taste Never Blocks** $\rightarrow$ tích hợp vào [`skills/open-code-review/SKILL.md`](file:///Volumes/Data/Toan/agent-workbench/universal-agent-devkit/skills/open-code-review/SKILL.md) & [`skills/giao/SKILL.md`](file:///Volumes/Data/Toan/agent-workbench/universal-agent-devkit/skills/giao/SKILL.md): Đọc Acceptance Criteria + `git diff` thô và lập 2–4 giả thuyết lỗi *trước khi* đọc `result.json` của Builder; ở vòng rework phải chấm trạng thái từng finding cũ (`fixed` kèm `file:line` | `not fixed` | `no longer applies`) trước khi tìm lỗi mới; góp ý cấu trúc/gu (`Over-engineering` / `Deepening opportunity`) chỉ xếp mức `Should fix`, không bao giờ dùng làm lý do duy nhất để BLOCK diff đã đúng và PASS test.
 3. **Non-Blank UI Guard & Terminal-State Async Verification** $\rightarrow$ tích hợp vào [`skills/verification-before-completion/SKILL.md`](file:///Volumes/Data/Toan/agent-workbench/universal-agent-devkit/skills/verification-before-completion/SKILL.md): Mở màn hình không crash hoặc HTTP 200 chưa phải là GREEN — bắt buộc render phần tử dữ liệu/empty-state thật + `0` `console.error`/`pageerror`/uncaught exception + `0` request nền `5xx`/`401`/`403`; với luồng Async/Queue/Upload/eSign phải đợi job về `terminal state` và xác nhận bản ghi đích đã lưu bền vững (không tính riêng UI Toast).
 4. **Alternating A/B Benchmark Protocol (`AB, BA` $\ge 5$ cặp)** $\rightarrow$ tích hợp vào [`skills/verification-before-completion/SKILL.md`](file:///Volumes/Data/Toan/agent-workbench/universal-agent-devkit/skills/verification-before-completion/SKILL.md): Mọi tuyên bố tối ưu hiệu năng/bộ nhớ phải đo xen kẽ `AB, BA` $\ge 5$ cặp sau warmup trên cùng dữ liệu, so sánh median và range (`range > 20% median` hoặc hai dải chồng lấp $\rightarrow$ `inconclusive`, cấm kết luận từ 1 lần chạy đơn lẻ).
+
+### 2.8. Tám Chốt Chặn Tự Hành Thế Hệ Mới (Cập Nhật 20/10 — Đạt 100/100 Trên Cả 6 Repositories)
+1. **Điều phối 6 Repo & Khóa Tải Nặng Toàn Máy (`super_board_all.py` + `super-board-heavy-slot.py`):** Quản lý đồng thời cả 6 Project Boards (`#1 Agent Workbench`, `#2 OfficeReader`, `#3 Goods 3D`, `#4 GeelyEx2`, `#5 Neighbours From Hell`, `#6 Humans vs. UFOs`) và giới hạn tối đa **2 tiến trình kiểm thử nặng (`--full` gate / Unity / Gradle)** chạy song song toàn máy qua khóa `flock` tại `~/.claude/super-board/locks/heavy-gate-{1,2}.lock`.
+2. **Chống Cắt Ngang Tác Vụ Nền `red_proof.py --pending` (`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`):** Hàm `dispatch_lane` trong `super-board-run.sh` xuất `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` khi gọi `claude -p`, ngăn CLI tự cắt tiến trình nền sau 10 phút khi chạy suite kiểm thử lớn.
+3. **Cầu Chì Tổng Chống Lặp Vô Tận Thẻ Chết Sớm (`SB_EARLY_MAX_TOTAL=3`):** `note_early_death` / `early_backoff` lưu lịch sử 20 lần chết sớm (`< 90s`) gần nhất của mỗi thẻ tại `docs/super-board/inflight/<issue>-<lane>.early-deaths`. Khi tổng số lần chết sớm đạt $\ge 3$ (kể cả khi rải qua nhiều cửa sổ 10 phút), runner dừng hẳn việc tự động re-dispatch thẻ lỗi đó và giữ nguyên cột `Ready` trên GitHub (không gây ping-pong trạng thái).
+4. **Dọn Sạch Worktree Tạm `red-proof-*` & Worktree Đã Merge (`super-board-post-merge-clean.sh --sweep`):** `red_proof.py` bắt tín hiệu `SIGTERM`/`SIGHUP` để luôn chạy khối `finally` gỡ `/tmp/red-proof-*`; `cleanup_stale_worktrees` quét dọn các worktree `red-proof-*` mồ côi ngay khi khởi động runner (khi không có `red_proof.py` nào đang chạy); đồng thời `sweep_merged_lanes` chạy nền lúc startup và mỗi tick (giãn cách 600s, kể cả trước nhánh `cap reached 3/3`) để xóa sạch worktree của các thẻ đã squash-merge.
+5. **Merge Gate Fast-Forward Tại Chỗ & Phân Loại Lỗi Thông Minh (`super-board-merge-gate.sh`):** Chờ tải máy hạ xuống trong giới hạn trước khi pin base, tự động fast-forward tại chỗ các nhánh chậm hơn `main` nếu gộp sạch trong scratch worktree; phân biệt chính xác xung đột thật (`exit 5`), lỗi môi trường (`exit 1`) và lỗi verify đỏ trên nhánh đã cập nhật (`exit 11` kèm trích xuất dòng `KẾT LUẬN` cuối cùng — không đẩy thẻ đi rebase vô ích); tự động retry 1 lần khi lệnh verify bị timeout (`exit 124`).
+6. **Tự Động Hoãn Thẻ Cần Thiết Bị (`needs-device`) & Thẻ Chờ Người (`needs-you` / `human-gated`):** `super-board-device-online.py` và `super-board-needs-you.py` giúp runner, planner và status tự động giữ các thẻ QA có nhãn `needs-device` ở `QA` khi chưa có thiết bị thật kết nối (`adb`), và bỏ qua các thẻ `Ready` có dấu `needs-you` / `human-gated` để chờ người dùng xử lý.
+7. **Chặn Tuyệt Đối Spam Telegram (`super-board-notify.py`):** Đã gỡ bỏ hoàn toàn các lệnh bắn thông báo `RUNAWAY daemon` / `RUNAWAY halt` khỏi `super-board-run.sh`; đồng thời `super-board-notify.py` chặn cứng mọi thông báo khi `SB_NOTIFY_SKIP=1`, `SB_LIB_ONLY=1`, `card == "lib"`, `cmd == "runaway"` hoặc khi chạy từ thư mục test tạm (`/tmp`, `/var/folders`).
+8. **Giám Sát Transcript Đa Worktree (`super_board_monitor.py`) & Đầy Đủ 36 Script `BIN` (`super-board-setup.py`):** `super_board_monitor.py` quét cả thư mục transcript của worktree (`~/.claude/projects/<slug>--claude-worktrees-*`) để hiển thị trực tiếp thao tác của từng worker trên màn hình TUIOS; `super-board-setup.py` kiểm tra đủ 36/36 script trong `.claude/bin/`.
 
 ---
 
@@ -135,14 +146,15 @@ Sau khi kiểm toán chéo toàn bộ `super-qa` và `super-review`, các phần
 
 ---
 
-### Giai đoạn 2: Cài đặt Super-Board vào 5 Repositories (30 phút)
+### Giai đoạn 2: Cài đặt Super-Board vào 6 Repositories (30 phút)
 
-Danh sách 5 repo mục tiêu trên máy:
-1. `/Volumes/Data/Toan/agent-workbench`
-2. `/Volumes/Data/Toan/GeelyEx2`
-3. `/Volumes/Data/Toan/OfficeReader/OfficeReader`
-4. `/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D`
-5. `/Volumes/Data/Toan/Game/Neighbours-From-Hell`
+Danh sách 6 repo mục tiêu trên máy (tương ứng với GitHub Projects `#1` đến `#6`):
+1. `/Volumes/Data/Toan/agent-workbench` *(Project #1 — `agent-workbench`)*
+2. `/Volumes/Data/Toan/OfficeReader/OfficeReader` *(Project #2 — `officereader`)*
+3. `/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D` *(Project #3 — `goods-triple-shelf-match-3d`)*
+4. `/Volumes/Data/Toan/GeelyEx2` *(Project #4 — `geelyex2`)*
+5. `/Volumes/Data/Toan/Game/Neighbours-From-Hell` *(Project #5 — `neighbours-from-hell`)*
+6. `/Volumes/Data/Toan/Game/Humans-vs.-UFOs` *(Project #6 — `humans-vs-ufos`)*
 
 **Thực hiện tại từng repo:**
 ```bash
@@ -156,7 +168,7 @@ Sau đó mở Claude Code trong từng repo và chạy lệnh thiết lập:
 /super-board onboard
 ```
 * Trong bước `onboard`:
-  * Chọn GitHub Project v2 tương ứng của repo.
+  * Chọn GitHub Project v2 tương ứng của repo (`#1`–`#6`).
   * Giữ nguyên `AGENTS.md` hiện có của `agent-workbench` (không cho ghi đè mất phần `universal-agent-devkit`).
   * Bật bảo vệ nhánh chính (`protect-main`).
 
@@ -166,14 +178,16 @@ Sau đó mở Claude Code trong từng repo và chạy lệnh thiết lập:
 
 Đây là bước quan trọng nhất để biến `super-board` thành công cụ tuân thủ kỷ luật thép của `agent-workbench`.
 
-Trong file cấu hình `.claude/super-board/<slug>.json` của mỗi repo (và bản mẫu toàn cục `~/.claude/super-board/template-devkit-config.json`), cấu hình `verify_commands` trỏ trực tiếp vào cổng kiểm định của DevKit:
+Trong file cấu hình `.claude/super-board/configs/<slug>.json` của mỗi repo (và bản mẫu toàn cục `~/.claude/super-board/template-devkit-config.json`), cấu hình `verify_commands` trỏ trực tiếp vào cổng kiểm định của DevKit:
 
 ```json
 {
   "base_branch": "main",
   "usage_pause_pct": 95,
   "max_workers": 3,
-  "tick_seconds": 120,
+  "tick_seconds": 30,
+  "no_progress_cycles": 240,
+  "max_dispatches": 0,
   "verify_commands": [
     "python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief"
   ]
@@ -181,51 +195,51 @@ Trong file cấu hình `.claude/super-board/<slug>.json` của mỗi repo (và b
 ```
 
 **Ý nghĩa kỹ thuật:**
-* Mọi PR do làn Builder viết code và làn QA kiểm thử, trước khi được phép squash-merge vào `main`, bắt buộc phải vượt qua `post-fix-gate.py --run-tests --full --brief` với mã thoát `0`.
-* Nếu vi phạm bất kỳ quy tắc nào của `agent-workbench` (lộ secret, để lại placeholder, làm hỏng test cũ, thiếu bằng chứng), cổng merge sẽ từ chối và trả thẻ về cho Agent sửa lại.
+* Mọi PR do làn Builder viết code và làn QA kiểm thử, trước khi được phép squash-merge vào nhánh chính (`main`/`master`), bắt buộc phải vượt qua `post-fix-gate.py --run-tests --full --brief` với mã thoát `0` (điều phối qua `super-board-heavy-slot.py` tối đa 2 lượt `--full` đồng thời toàn máy).
+* Nếu vi phạm bất kỳ quy tắc nào của `agent-workbench` (lộ secret, để lại placeholder, làm hỏng test cũ, thiếu bằng chứng), cổng merge sẽ từ chối (`exit 11`) kèm dòng `KẾT LUẬN` cuối và trả thẻ về `Building` để Agent sửa lại.
 
 ---
 
-### Giai đoạn 4: Tối ưu hóa cho Gói Claude 5x (Chống cạn Quota khi chạy 5 Repo)
+### Giai đoạn 4: Tối ưu hóa cho Gói Claude 5x (Chống cạn Quota khi chạy 6 Repo)
 
-Khi chạy 5 repo song song trên gói **Claude 5x**, cần cấu hình điều tiết thông minh để không bị nghẽn:
+Khi chạy 6 repo song song trên gói **Claude 5x**, cần cấu hình điều tiết thông minh để không bị nghẽn:
 
 1. **Kích hoạt bộ theo dõi hạn mức (`super-board-usage.sh` + `super-board-account-pool.sh`):**
    Đảm bảo status-line của Claude Code ghi nhận `% used` vào `~/.claude/super-board/usage-<account>.json`. Khi đạt **95%** hạn mức cửa sổ 5 giờ, hệ thống tự động xoay sang tài khoản tiếp theo trong bể 6 tài khoản.
-2. **Sử dụng cờ `--low` cho các repo thông thường:**
+2. **Sử dụng `super_board_all.py start` cho chế độ Daemon 24/7 (`SB_DAEMON=1`):**
    ```bash
-   /super-board run <slug> --low
+   python3 /Volumes/Data/Toan/agent-workbench/universal-agent-devkit/scripts/governance/super_board_all.py start
    ```
-   * Card dễ (Easy): Dùng **Haiku 4.5** (cực nhẹ, tiết kiệm 80% quota).
-   * Card trung bình (Medium): Dùng **Sonnet**.
-   * Card khó (Hard): Mới dùng đến **Opus**.
+   * Tự động phân tầng model theo độ phức tạp của thẻ: Card dễ dùng **Haiku 4.5**, Card trung bình dùng **Sonnet**, Card khó dùng **Opus**.
 
 ---
 
 ### Giai đoạn 5: Quy trình Vận hành Hàng ngày (SOP "Bật Ngầm - Lâu Lâu Xem")
 
-#### Bước 1: Khởi động nhà máy (Chỉ làm 1 lần)
-Mở Terminal trong VS Code, kết nối vào TUIOS và bật chống sleep:
+#### Bước 1: Khởi động nhà máy 6 Repo chỉ với 1 lệnh
+Mở Terminal trong VS Code, bật chống sleep và kích hoạt cả 6 runners:
 ```bash
-# Giữ máy Mac thức khi khóa màn hình và gắn vào phiên TUIOS
+# Giữ máy Mac thức khi khóa màn hình và khởi động đồng thời cả 6 runners + TUIOS monitors:
 caffeinate -d -s -u &
+python3 /Volumes/Data/Toan/agent-workbench/universal-agent-devkit/scripts/governance/super_board_all.py start
 tuios attach factory
 ```
-Trong 5 ô (Panes) của TUIOS tương ứng với 5 repo, kích hoạt vòng lặp:
-* **Pane 1 (`agent-workbench`):** `/super-board run workbench --low`
-* **Pane 2 (`GeelyEx2`):** `/super-board run geely --low`
-* **Pane 3 (`OfficeReader`):** `/super-board run officereader --low`
-* **Pane 4 (`Goods-Triple`):** `/super-board run goods-triple --low`
-* **Pane 5 (`Neighbours`):** `/super-board run neighbours --low`
+Trong 6 cửa sổ (Windows `1`–`6`) của TUIOS tương ứng với 6 repo, `super_board_monitor.py` tự động hiển thị bảng trạng thái trực tiếp:
+* **Window 1 (`agent-workbench`):** Project #1 (`Agent Workbench`)
+* **Window 2 (`OfficeReader`):** Project #2 (`OfficeReader`)
+* **Window 3 (`Goods-Triple`):** Project #3 (`Goods 3D`)
+* **Window 4 (`GeelyEx2`):** Project #4 (`GeelyEx2`)
+* **Window 5 (`Neighbours`):** Project #5 (`Neighbours From Hell`)
+* **Window 6 (`Humans-vs-UFOs`):** Project #6 (`Humans vs. UFOs`)
 
 #### Bước 2: Thoát giao diện / Tắt VS Code đi làm việc khác
 * Bấm `Ctrl+B` rồi nhấn `d` (hoặc đơn giản là đóng hẳn cửa sổ VS Code).
-* Toàn bộ 5 dây chuyền vẫn âm thầm chạy ngầm.
+* Toàn bộ 6 dây chuyền vẫn âm thầm chạy ngầm 24/7.
 
 #### Bước 3: Giao việc từ bất kỳ đâu (Điện thoại / Web)
-* Mở GitHub Projects của bất kỳ repo nào trên trình duyệt.
-* Tạo Issue mới với Acceptance Criteria rõ ràng → Kéo thẻ vào cột **`Ready`**.
-* Trong vòng 120 giây (1 tick), `super-board` đang chạy ngầm ở nhà sẽ tự động nhận thẻ và bắt đầu chu trình `Build → QA → Review → Merge`.
+* Mở GitHub Projects (`#1`–`#6`) của bất kỳ repo nào trên trình duyệt hoặc GitHub Mobile.
+* Tạo Issue mới với Acceptance Criteria rõ ràng (hoặc dùng `/createTask`) → Kéo thẻ vào cột **`Ready`**.
+* Trong vòng 30 giây (1 tick), `super-board` đang chạy ngầm ở nhà sẽ tự động nhận thẻ và bắt đầu chu trình `Build → QA → Review → Merge`.
 
 #### Bước 4: Lâu lâu mở lên kiểm tra (5 phút/lần)
 Khi muốn xem tiến độ:
@@ -233,7 +247,7 @@ Khi muốn xem tiến độ:
    ```bash
    tuios attach factory
    ```
-2. Nhìn lướt qua 5 ô để thấy trạng thái trực quan (`● working`, `○ idle`, `⏸ paused`, `✓ done`).
+2. Nhìn lướt qua 6 cửa sổ để thấy trạng thái trực quan của từng lane (`Build`, `QA`, `Review`) và log thực thi trực tiếp từ worktree.
 3. Bấm `Ctrl+B` rồi nhấn `i` để mở **Hộp thư tập trung (Inbox)** nếu có bất kỳ câu hỏi nào từ Agent cần bạn duyệt.
 4. Xem xong, bấm `Ctrl+B d` (hoặc đóng cửa sổ) — hệ thống tiếp tục chạy ngầm.
 
@@ -243,13 +257,16 @@ Khi muốn xem tiến độ:
 
 | Nhu cầu của bạn | Lệnh / Phím tắt thực hiện |
 | :--- | :--- |
-| **Mở Web Terminal xem 5 repo từ xa trên điện thoại (Cloudflare Quick Tunnel)** | `tuios-web` |
-| **Mở lại màn hình theo dõi 5 repo sau khi đã tắt VS Code** | `tuios attach factory` |
+| **Khởi động đồng thời cả 6 Super-Board Runners chạy ngầm** | `python3 universal-agent-devkit/scripts/governance/super_board_all.py start` |
+| **Kiểm tra trạng thái cả 6 Runners, PID & Watchdog** | `python3 universal-agent-devkit/scripts/governance/super_board_all.py status` |
+| **Dừng an toàn cả 6 Runners (ghi `.stopped` marker)** | `python3 universal-agent-devkit/scripts/governance/super_board_all.py stop` |
+| **Mở Web Terminal xem 6 repo từ xa trên điện thoại (Cloudflare Quick Tunnel)** | `tuios-web` |
+| **Mở lại màn hình theo dõi 6 repo sau khi đã tắt VS Code** | `tuios attach factory` |
 | **Liệt kê các phiên chạy ngầm đang sống** | `tuios ls` |
 | **Ẩn màn hình TUIOS đi (để chạy ngầm tiếp)** | `Ctrl+B` sau đó bấm `d` *(hoặc đóng luôn cửa sổ Terminal)* |
-| **Xem hộp thư thông báo tổng hợp của cả 5 repo** | `Ctrl+B` sau đó bấm `i` |
+| **Xem hộp thư thông báo tổng hợp của cả 6 repo** | `Ctrl+B` sau đó bấm `i` |
 | **Nhảy tới thông báo cũ nhất đang chờ duyệt** | `Ctrl+B` sau đó bấm `o` |
-| **Kiểm tra nhanh trạng thái Board mà không cần mở TUIOS** | `/super-board status` |
+| **Kiểm tra nhanh trạng thái Board của 1 repo** | `/super-board status` |
 | **Dừng toàn bộ worker của 1 repo an toàn** | `/super-board stop` |
 | **Kiểm tra hạn ngạch GitHub API hiện tại** | `gh api rate_limit \| jq '.resources.core, .resources.graphql'` |
 
@@ -262,10 +279,10 @@ Khi bạn đi ra ngoài (dùng 4G/5G) và máy Mac đang treo ở nhà, hệ th�
 ### 5.1. Tầng 1: GitHub Mobile (Khuyên dùng — Đáp ứng 95% nhu cầu hàng ngày, Zero-Config)
 Vì `super-board` lấy GitHub Projects v2 làm nguồn trạng thái duy nhất (Single Source of Truth), ứng dụng **GitHub Mobile** chính chủ trở thành bộ điều khiển từ xa mà **không cần mở port mạng, không cần VPN hay cài đặt mạng phức tạp**:
 1. **Giao việc từ điện thoại trong 10 giây:**
-   * Mở app **GitHub** → Chọn 1 trong 5 Repo → Bấm **`+` (New Issue)**.
+   * Mở app **GitHub** → Chọn 1 trong 6 Repo → Bấm **`+` (New Issue)**.
    * Dùng tính năng đọc giọng nói (Voice-to-Text) trên bàn phím điện thoại để đọc yêu cầu tính năng/sửa lỗi và tiêu chí nghiệm thu (`Acceptance Criteria`).
    * Gắn Issue vào **Project Board** và chọn cột **`Ready`**.
-   * Máy Mac ở nhà trong vòng $\le 120\text{s}$ sẽ tự động nhận việc và bắt đầu chu trình `Build → QA → Review → Merge`.
+   * Máy Mac ở nhà trong vòng $\le 30\text{s}$ sẽ tự động nhận việc và bắt đầu chu trình `Build → QA → Review → Merge`.
 2. **Nhận thông báo đẩy (Push Notifications) & Nghiệm thu bằng hình ảnh:**
    * Khi làn **Builder** mở PR, làn **QA** đăng báo cáo kiểm thử kèm ảnh chụp màn hình (Visual Proof), hoặc làn **Reviewer** tự động squash-merge vào `main`, điện thoại của bạn sẽ nhận thông báo tức thì.
    * Bạn bấm vào thông báo trên điện thoại để xem trực tiếp kết quả mà không cần mở máy tính.
@@ -313,7 +330,7 @@ Vì `super-board` lấy GitHub Projects v2 làm nguồn trạng thái duy nhất
        👉 https://xxxx-xxxx-xxxx.trycloudflare.com
      ========================================================================
      ```
-   * Bạn mở Safari/Chrome trên iPhone/Android, dán link vào là **thấy ngay toàn bộ 5 ô TUIOS của 5 repo**!
+   * Bạn mở Safari/Chrome trên iPhone/Android, dán link vào là **thấy ngay toàn bộ 6 cửa sổ TUIOS của 6 repo**!
 
 4. **Khi về nhà hoặc muốn tắt đường hầm:**
    * Chỉ cần bấm `Ctrl+C` tại cửa sổ chạy script, hoặc chạy lệnh:
@@ -333,7 +350,7 @@ Nếu bạn đã quen với giao diện SSH client chuyên dụng (như Termius)
 
 ## 6. Cấu Hình Treo Máy Mac 24/7 Xuyên Nhiều Ngày (Unattended Hardening)
 
-Để treo máy Mac liên tục nhiều ngày chạy 5 repo mà **không bị tắt mạng, không bị sleep, không tràn RAM và không đầy ổ cứng**, áp dụng 4 chốt chặn kỹ thuật sau:
+Để treo máy Mac liên tục nhiều ngày chạy 6 repo mà **không bị tắt mạng, không bị sleep, không tràn RAM và không đầy ổ cứng**, áp dụng các chốt chặn kỹ thuật sau:
 
 ### 6.1. Tắt màn hình nhưng giữ CPU & Mạng chạy 100% khi cắm sạc (`pmset`)
 Chạy lệnh sau 1 lần trên Terminal của máy Mac:
@@ -352,10 +369,11 @@ sudo pmset -c sleep 0 disksleep 0 displaysleep 5 tcpkeepalive 1
 | Rủi ro khi treo máy dài ngày | Cơ chế tự động xử lý trong kiến trúc này |
 | :--- | :--- |
 | **1. Chạm trần hạn mức Claude 5x giữa đêm** | `super-board-account-pool.sh` kết hợp `super-board-usage.sh` tự động phát hiện tài khoản hiện tại đạt $\ge 95\%$ hạn mức và **xoay vòng tức thì (Auto-Rotate)** qua bể 6 tầng: `finos` $\rightarrow$ `finos_team` $\rightarrow$ `max` (Gói cá nhân 5x Max) $\rightarrow$ `antigravity` (Google AI Ultra `phathuy.vetgo@gmail.com` • `gemini-4-argon-high`) $\rightarrow$ `antigravity_pro` (Google AI Pro `alex.1993.dev@gmail.com` • `gemini-4-argon-high`) $\rightarrow$ `grok` (`grok-4.7` • `xhigh`) mà **giữ nguyên 100% lịch sử session (`claude --resume`)**. |
-| **2. Tiến trình Agent bị treo ngâm RAM (Zombie)** | `super-board-run.sh` có sẵn `sweep_lane_zombies` chạy mỗi 120s: Tự động thu hồi (kill) các tiến trình `claude -p` đã hoàn thành phần việc trên cột Kanban nhưng chưa thoát. |
-| **3. Tràn ổ cứng do sinh nhiều nhánh Worktree** | Hook `cleanup-wt.py` (của Super-Board) và `scratch_cleanup.py` (của Agent-Workbench) tự động xóa sạch worktree tạm ngay sau khi merge PR vào `main`. |
-| **4. Rò rỉ RAM giao diện đồ họa (Electron/GUI Leak)** | Trước khi rời máy dài ngày, bạn **đóng hẳn ứng dụng VS Code (`Cmd + Q`)**. Chỉ có `tuios daemon` (~20MB RAM) và các worker chạy ngầm, giải phóng hàng chục GB RAM cho trình biên dịch (Gradle/Xcode/Unity/Node). |
-| **5. Hỏi mật khẩu SSH Key giữa đêm** | Thêm khóa SSH vào Apple Keychain vĩnh viễn bằng lệnh: `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` và kiểm tra `gh auth status` dùng keyring. |
+| **2. Tiến trình Agent bị treo ngâm RAM (Zombie) hoặc Thẻ Chết Sớm Lặp Vô Tận** | `super-board-run.sh` có sẵn `sweep_lane_zombies` thu hồi các tiến trình `claude -p` đã hoàn thành phần việc trên cột Kanban nhưng chưa thoát, kết hợp cầu chì `SB_EARLY_MAX_TOTAL=3` ngắt hẳn các thẻ chết sớm (`< 90s`) lặp quá 3 lần và đặt `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` để không cắt ngang tiến trình nền `red_proof.py --pending`. |
+| **3. Tràn ổ cứng do sinh nhiều nhánh Worktree (`red-proof-*` & Lane Worktrees)** | `red_proof.py` bắt `SIGTERM`/`SIGHUP` để luôn gỡ `/tmp/red-proof-*`, `cleanup_stale_worktrees` dọn worktree mồ côi lúc khởi động, và `sweep_merged_lanes` (`super-board-post-merge-clean.sh --sweep`) chạy nền mỗi 600s để xóa sạch worktree của các thẻ đã squash-merge. |
+| **4. Quá tải CPU/RAM khi nhiều Repo cùng chạy `--full` Gate** | `super-board-heavy-slot.py` (`~/.claude/super-board/locks/heavy-gate-{1,2}.lock`) giới hạn tối đa **2 tiến trình kiểm thử nặng** chạy song song toàn máy, kết hợp `super-board-merge-gate.sh` chờ tải máy hạ trước khi verify. |
+| **5. Rò rỉ RAM giao diện đồ họa (Electron/GUI Leak)** | Trước khi rời máy dài ngày, bạn **đóng hẳn ứng dụng VS Code (`Cmd + Q`)**. Chỉ có `tuios daemon` (~20MB RAM) và các worker chạy ngầm, giải phóng hàng chục GB RAM cho trình biên dịch (Gradle/Xcode/Unity/Node). |
+| **6. Hỏi mật khẩu SSH Key giữa đêm** | Thêm khóa SSH vào Apple Keychain vĩnh viễn bằng lệnh: `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` và kiểm tra `gh auth status` dùng keyring. |
 
 ---
 
@@ -381,15 +399,16 @@ Hệ thống đã tích hợp trọn vẹn **3 tài khoản Claude Code 5x chín
 * **Chia sẻ 100% Session (`~/.claude-{finos,finos_team,max}` $\rightarrow$ `~/.claude/`):**
   * Các thư mục `projects`, `sessions`, `session-env`, `file-history`, `paste-cache`, `history.jsonl`, `skills`, `hooks`, `bin`, `workflows`, `settings.json` được nối Symlink đồng nhất về `~/.claude/`. Đổi qua lại giữa `finos`, `finos_team`, `max` giữ nguyên 100% lịch sử `claude --resume`.
 
-### 7.3. Phân Bổ Tài Khoản Mặc Định Theo 5 Repo & Tự Động Xoay Vòng Khi Đầy Hạn Mức
+### 7.3. Phân Bổ Tài Khoản Mặc Định Theo 6 Repo & Tự Động Xoay Vòng Khi Đầy Hạn Mức
 
-| Repo | Tài khoản ưu tiên (`.claude/settings.local.json`) | Chuỗi tự động Failover khi đạt $\ge 95\%$ Quota |
-| :--- | :--- | :--- |
-| `agent-workbench` | `finos` (`~/.claude-finos`) | `finos` $\rightarrow$ `finos_team` $\rightarrow$ `max` $\rightarrow$ `antigravity` $\rightarrow$ `antigravity_pro` $\rightarrow$ `grok` / `pause` |
-| `GeelyEx2` | `finos_team` (`~/.claude-finos_team`) | `finos_team` $\rightarrow$ `finos` $\rightarrow$ `max` $\rightarrow$ `antigravity` $\rightarrow$ `antigravity_pro` $\rightarrow$ `grok` / `pause` |
-| `OfficeReader` | `finos_team` (`~/.claude-finos_team`) | `finos_team` $\rightarrow$ `finos` $\rightarrow$ `max` $\rightarrow$ `antigravity` $\rightarrow$ `antigravity_pro` $\rightarrow$ `grok` / `pause` |
-| `Goods-Triple-Shelf-Match-3D` | `finos` (`~/.claude-finos`) | `finos` $\rightarrow$ `finos_team` $\rightarrow$ `max` $\rightarrow$ `antigravity` $\rightarrow$ `antigravity_pro` $\rightarrow$ `grok` / `pause` |
-| `Neighbours-From-Hell` | `finos` (`~/.claude-finos`) | `finos` $\rightarrow$ `finos_team` $\rightarrow$ `max` $\rightarrow$ `antigravity` $\rightarrow$ `antigravity_pro` $\rightarrow$ `grok` / `pause` |
+| Repo | Project Board | Tài khoản ưu tiên (`.claude/settings.local.json`) | Chuỗi tự động Failover khi đạt $\ge 95\%$ Quota |
+| :--- | :---: | :--- | :--- |
+| `agent-workbench` | **#1** | `finos` (`~/.claude-finos`) | `finos` $\rightarrow$ `finos_team` $\rightarrow$ `max` $\rightarrow$ `antigravity` $\rightarrow$ `antigravity_pro` $\rightarrow$ `grok` / `pause` |
+| `OfficeReader` | **#2** | `finos_team` (`~/.claude-finos_team`) | `finos_team` $\rightarrow$ `finos` $\rightarrow$ `max` $\rightarrow$ `antigravity` $\rightarrow$ `antigravity_pro` $\rightarrow$ `grok` / `pause` |
+| `Goods-Triple-Shelf-Match-3D` | **#3** | `finos` (`~/.claude-finos`) | `finos` $\rightarrow$ `finos_team` $\rightarrow$ `max` $\rightarrow$ `antigravity` $\rightarrow$ `antigravity_pro` $\rightarrow$ `grok` / `pause` |
+| `GeelyEx2` | **#4** | `finos_team` (`~/.claude-finos_team`) | `finos_team` $\rightarrow$ `finos` $\rightarrow$ `max` $\rightarrow$ `antigravity` $\rightarrow$ `antigravity_pro` $\rightarrow$ `grok` / `pause` |
+| `Neighbours-From-Hell` | **#5** | `finos` (`~/.claude-finos`) | `finos` $\rightarrow$ `finos_team` $\rightarrow$ `max` $\rightarrow$ `antigravity` $\rightarrow$ `antigravity_pro` $\rightarrow$ `grok` / `pause` |
+| `Humans-vs.-UFOs` | **#6** | `finos` (`~/.claude-finos`) | `finos` $\rightarrow$ `finos_team` $\rightarrow$ `max` $\rightarrow$ `antigravity` $\rightarrow$ `antigravity_pro` $\rightarrow$ `grok` / `pause` |
 
 ### 7.4. Bảng Lệnh Điều Khiển Đa Tài Khoản & Đổi Model (`ccswitch` & `super-board-account-pool.sh`)
 
@@ -430,9 +449,9 @@ Hệ thống kết hợp **trọn vẹn giao diện 7 cột trực quan trên Gi
 
 | # | Thành phần được vá tự động | Tác dụng |
 | :-: | :--- | :--- |
-| **1** | **`super-board-wave.js` & `super-board-run.sh`** | Cho phép 1 Worker `DevKit` duy nhất dịch chuyển thẻ xuyên suốt `Ready → Building → QA → Review → Done` trên UI (`at = b.column \|\| 'QA'` và `check_lane_zombie build "Ready Building QA Review"`), tự động bỏ qua việc đẻ lại Worker `QA`/`Review` trùng lặp khi thẻ đã tới `Done`, và chỉ gọi Reviewer độc lập khi thẻ dừng ở `Review` (task lớn $\ge 3$ files / $>200$ LOC). |
-| **2** | **`super-board-skills-ready.py`** | Tự động quét **`.agents/skills/`** và ánh xạ 100% sang 25 skill của DevKit (`fixbugs`, `tdd-workflow`, `incremental-implementation`, `deep-module-design`, `open-code-review`, `merge-conflict-resolver`, `qc`). Kết quả `check`: **`missing: []` (PASS 5/5 repo)**. |
-| **3** | **`super-board-setup.py`** | Nhận diện đồng thời **`~/.claude/` toàn cục** lẫn `<repo>/.claude/` (giữ `git status` sạch 100%) và tự động khóa cứng `verify_commands: ["python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief"]`. |
+| **1** | **`super-board-wave.js` & `super-board-run.sh`** | Cho phép 1 Worker `DevKit` duy nhất dịch chuyển thẻ xuyên suốt `Ready → Building → QA → Review → Done` trên UI (`at = b.column \|\| 'QA'` và `check_lane_zombie build "Ready Building QA Review"`), đặt `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, cầu chì `SB_EARLY_MAX_TOTAL=3`, tự động bỏ qua việc đẻ lại Worker `QA`/`Review` trùng lặp khi thẻ đã tới `Done`, và chỉ gọi Reviewer độc lập khi thẻ dừng ở `Review` (task lớn $\ge 3$ files / $>200$ LOC). |
+| **2** | **`super-board-skills-ready.py`** | Tự động quét **`.agents/skills/`** và ánh xạ 100% sang 27 skill của DevKit (`fixbugs`, `tdd-workflow`, `incremental-implementation`, `deep-module-design`, `open-code-review`, `merge-conflict-resolver`, `qc`). Kết quả `check`: **`missing: []` (PASS 6/6 repo)**. |
+| **3** | **`super-board-setup.py`** | Nhận diện đồng thời **`~/.claude/` toàn cục** lẫn `<repo>/.claude/` (đủ 36/36 script trong `BIN`: bao gồm `super-board-device-online.py`, `super-board-heavy-slot.py`, `super-board-notify.py`) và tự động khóa cứng `verify_commands: ["python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief"]`. |
 | **4** | **`super-board-agents-md.py`** | Nâng ngưỡng mặc định lên **`600` dòng** (`ok: 240 lines`) và tự động nhận diện `<!-- universal-agent-devkit:start -->` để bảo vệ nguyên vẹn `AGENTS.md` & `CLAUDE.md`. |
 | **5** | **`worker-preamble.md` & `agents-md-block.md`** | Nhúng trực tiếp **Chu trình 6 Bước của Universal Agent DevKit + Lệnh dịch chuyển cột UI thời gian thực (`Building → QA → Review → Done`)** vào mọi Worker. |
 
@@ -463,7 +482,7 @@ awk '/^# === BOOTSTRAP_START ===$/,/^# === BOOTSTRAP_END ===$/' \
   && ~/.claude/bin/setup-autonomous-factory.sh
 ```
 
-Hoặc bất kỳ lúc nào muốn kiểm tra sức khỏe 9 tầng (`9/9 PASS`):
+Hoặc bất kỳ lúc nào muốn kiểm tra sức khỏe 9 tầng (`9/9 PASS` trên 6/6 repo):
 ```bash
 ~/.claude/bin/setup-autonomous-factory.sh --verify
 ```
@@ -494,7 +513,7 @@ Nếu máy Mac mới chưa đăng nhập OAuth lần đầu:
 # Source of Truth: universal-agent-devkit/docs/init_board/tuios-superboard-integration-plan.md
 #
 # Automatically applies 100% of configuration without manual re-setup:
-#   1. TUIOS v0.9.3 + sidebar config + 5 agent hooks + persistent `factory` session (5 repos)
+#   1. TUIOS v0.9.3 + sidebar config + 5 agent hooks + persistent `factory` session (6 repos)
 #   2. Super-Board v3.1.2 global config + DevKit post-fix-gate lock (`template-devkit-config.json`)
 #   3. 6-Tier Multi-Account Pool (`super-board-account-pool.sh` + `ccswitch` CLI):
 #      - 1. finos            : toan.huynh@finos.asia [FinOS 5x Team]       (sonnet / advisor opus • xhigh)
@@ -508,7 +527,7 @@ Nếu máy Mac mới chưa đăng nhập OAuth lần đầu:
 #
 # Usage:
 #   bash ~/.claude/bin/setup-autonomous-factory.sh            # Full auto-apply + verify
-#   bash ~/.claude/bin/setup-autonomous-factory.sh --verify   # Non-destructive 8-point health check
+#   bash ~/.claude/bin/setup-autonomous-factory.sh --verify   # Non-destructive 9-point health check
 
 set -euo pipefail
 
@@ -517,10 +536,11 @@ VERIFY_ONLY=0
 
 REPOS=(
   "/Volumes/Data/Toan/agent-workbench:agent-workbench:finos"
-  "/Volumes/Data/Toan/GeelyEx2:GeelyEx2:finos_team"
   "/Volumes/Data/Toan/OfficeReader/OfficeReader:OfficeReader:finos_team"
   "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D:Goods-Triple:finos"
+  "/Volumes/Data/Toan/GeelyEx2:GeelyEx2:finos_team"
   "/Volumes/Data/Toan/Game/Neighbours-From-Hell:Neighbours:finos"
+  "/Volumes/Data/Toan/Game/Humans-vs.-UFOs:Humans-vs-UFOs:finos"
 )
 
 install_account_pool_script() {
@@ -1361,7 +1381,7 @@ run_verify() {
   fi
 
   if "$HOME/.local/bin/tuios" ls 2>/dev/null | grep -q "factory"; then
-    echo "  [2/9] PASS: TUIOS background daemon session 'factory' is active (5 repo windows)"
+    echo "  [2/9] PASS: TUIOS background daemon session 'factory' is active (6 repo windows)"
     pass=$((pass + 1))
   else
     echo "  [2/9] FAIL: TUIOS session 'factory' not running"
@@ -1413,11 +1433,11 @@ run_verify() {
     IFS=":" read -r rpath rname racct <<< "$entry"
     [ -f "$rpath/.claude/settings.local.json" ] && repo_ok=$((repo_ok + 1))
   done
-  if [ "$repo_ok" -eq 5 ]; then
-    echo "  [8/9] PASS: All 5 repositories mapped with preferred account in .claude/settings.local.json"
+  if [ "$repo_ok" -eq 6 ]; then
+    echo "  [8/9] PASS: All 6 repositories mapped with preferred account in .claude/settings.local.json"
     pass=$((pass + 1))
   else
-    echo "  [8/9] FAIL: Only $repo_ok/5 repositories have .claude/settings.local.json"
+    echo "  [8/9] FAIL: Only $repo_ok/6 repositories have .claude/settings.local.json"
   fi
 
   local onboard_ok=0
@@ -1427,11 +1447,11 @@ run_verify() {
       onboard_ok=$((onboard_ok + 1))
     fi
   done
-  if [ "$onboard_ok" -eq 5 ]; then
-    echo "  [9/9] PASS: '/super-board onboard' DevKit Workflow & Skill Readiness green across all 5/5 repos"
+  if [ "$onboard_ok" -eq 6 ]; then
+    echo "  [9/9] PASS: '/super-board onboard' DevKit Workflow & Skill Readiness green across all 6/6 repos"
     pass=$((pass + 1))
   else
-    echo "  [9/9] FAIL: '/super-board onboard' check passed on only $onboard_ok/5 repos"
+    echo "  [9/9] FAIL: '/super-board onboard' check passed on only $onboard_ok/6 repos"
   fi
 
   echo "──────────────────────────────────────────────────────────────────────────────"
