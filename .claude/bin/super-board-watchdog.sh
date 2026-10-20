@@ -186,10 +186,83 @@ take_check_lock() {
   trap 'rmdir "'"$lock"'" 2>/dev/null || true' EXIT
 }
 
+# ── Trạng thái board trên GitHub ─────────────────────────────────────────────────────────────────────────────────
+# 20/10 board halt 09:08 → 12:33 mà nhìn board trên GitHub không biết (người dùng: "thể hiện lên board 1 icon … để biết
+# task đang chạy hay bị ngừng", "thêm thời gian để biết task chạy được bao lâu, bắt đầu từ khi nào"). Mỗi check ghi vào
+# mô tả ngắn của Project: icon trạng thái, runner chạy từ lúc nào, worker đang sống kèm giờ bắt đầu + thời lượng, giờ cập
+# nhật. Chỉ ghi khi trạng thái đổi hoặc nhịp BOARD_STATUS_HEARTBEAT giây: giờ cập nhật cũ hơn nhịp nhiều = máy ngủ hay
+# watchdog chết (khi đó không gì ghi được). Không đổi tiêu đề Project (super-qa-file-bug.sh tìm Project theo tiêu đề).
+# Lỗi gh/mạng không bao giờ làm check hỏng: lượt sau thử lại. SB_BOARD_STATUS=0 tắt.
+BOARD_STATUS="$DIR/$SLUG.board-status"; BOARD_STATUS_HEARTBEAT=300
+CHECKED=0
+
+hhmm() {   # $1 = epoch → "HH:MM" (hôm nay) hoặc "dd/MM HH:MM"
+  if [ "$(date -r "$1" +%Y%m%d 2>/dev/null)" = "$(date +%Y%m%d)" ]; then date -r "$1" +%H:%M 2>/dev/null
+  else date -r "$1" '+%d/%m %H:%M' 2>/dev/null; fi
+}
+span() {   # $1 = số giây → "45p" / "1g15p"
+  local m=$(( $1 / 60 ))
+  if [ "$m" -lt 60 ]; then printf '%sp' "$m"; else printf '%sg%02dp' $((m / 60)) $((m % 60)); fi
+}
+iso_epoch() {   # "2026-10-20T06:16:29Z" (UTC) → epoch; BSD date rồi GNU date
+  date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null || date -u -d "$1" +%s 2>/dev/null
+}
+
+board_status_text() {   # in "KEY<TAB>mô tả": KEY không chứa giờ (để biết trạng thái có đổi không)
+  local key detail="" f n pid lane st t glyph started
+  case "$VERDICT" in
+    running|restarted|starting)
+      key="🟢 đang chạy"
+      started=$(field STARTED "$STATE"); case "$started" in ''|*[!0-9]*) ;; *) detail=" từ $(hhmm "$started")" ;; esac
+      for f in .claude/super-board/inflight/*; do
+        n=${f##*/}; case "$n" in ''|*[!0-9]*) continue ;; esac
+        [ -f "$f" ] || continue
+        pid=$(field PID "$f"); lane=$(field LANE "$f")
+        { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; } || continue
+        case "$lane" in build) glyph="🔨" ;; qa) glyph="🔍" ;; review) glyph="✏️" ;; *) glyph="•" ;; esac
+        key="$key $glyph#$n"
+        st=$(field STARTED "$f"); t=$(iso_epoch "$st") || t=""
+        case "$t" in ''|*[!0-9]*) detail="$detail · $glyph#$n" ;; *) detail="$detail · $glyph#$n từ $(hhmm "$t") ($(span $((NOW - t))))" ;; esac
+      done
+      [ "$key" != "🟢 đang chạy" ] || detail="$detail · không có worker"
+      printf '%s\t%s\n' "$key" "🟢 đang chạy$detail"
+      return 0 ;;
+    stopped) key="⏸️ đã dừng (người dùng stop)" ;;
+    halt-wait) key="🟠 halt GitHub — watchdog tự thử lại mỗi phút" ;;
+    github-halt) key="🔴 halt GitHub — cần đối chiếu tay (--resume --reconciled)" ;;
+    backoff-*) key="🟠 runner vừa chết — chờ khởi động lại" ;;
+    ended-finished) key="⚪ hết việc — runner đã thoát" ;;
+    *) key="🔴 runner ngừng (${VERDICT:-?}) — xem $SLUG.watchdog.log" ;;
+  esac
+  printf '%s\t%s\n' "$key" "$key"
+}
+
+publish_board_status() {
+  [ "${SB_BOARD_STATUS:-1}" != 0 ] && [ "$CHECKED" = 1 ] || return 0
+  local cfg=".claude/super-board/configs/$SLUG.json" owner number line key text last_key last_at
+  owner=$(jq -r '.project.owner // empty' "$cfg" 2>/dev/null) || return 0
+  number=$(jq -r '.project.number // empty' "$cfg" 2>/dev/null) || return 0
+  [ -n "$owner" ] || return 0
+  case "$number" in ''|*[!0-9]*) return 0 ;; esac
+  line=$(board_status_text) || return 0
+  key=${line%%	*}; text=${line#*	}
+  last_key=$(field KEY "$BOARD_STATUS"); last_at=$(field AT "$BOARD_STATUS")
+  case "$last_at" in ''|*[!0-9]*) last_at=0 ;; esac
+  [ "$key" != "$last_key" ] || [ $((NOW - last_at)) -ge "$BOARD_STATUS_HEARTBEAT" ] || return 0
+  # perl alarm: macOS không có `timeout`; gh treo (mạng chưa lên sau khi máy thức) không được giữ lượt check.
+  if perl -e 'alarm 20; exec @ARGV' gh project edit "$number" --owner "$owner" \
+       --description "$text · cập nhật $(hhmm "$NOW")" >/dev/null 2>&1; then
+    { printf 'KEY=%s\nAT=%s\n' "$key" "$NOW" > "$BOARD_STATUS.$$" && mv -f "$BOARD_STATUS.$$" "$BOARD_STATUS"; } 2>/dev/null \
+      || rm -f "$BOARD_STATUS.$$" 2>/dev/null || true
+  fi
+  return 0
+}
+
 check() {
   # Không có bản ghi lẫn marker: board chưa từng chạy với runner này, không có gì để giám sát (không tạo thư mục, khoá).
   [ -f "$STATE" ] || [ -e "$MARK" ] || return 0
   take_check_lock || return 0
+  CHECKED=1
   load_wd   # đọc sau khi giữ khoá: lượt kiểm vừa xong có thể đã khởi động runner
   if [ -e "$MARK" ]; then
     verdict stopped "board stopped by the user ($(tr '\n' ' ' < "$MARK")) — never restarted until an explicit super-board run"
@@ -402,7 +475,7 @@ uninstall_agent() {
 }
 
 case "$CMD" in
-  check) check ;;
+  check) check; publish_board_status ;;
   status) status ;;
   install) install_agent ;;
   ensure) ensure_agent ;;

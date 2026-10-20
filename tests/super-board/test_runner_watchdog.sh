@@ -99,6 +99,8 @@ PY
 printf '#!/usr/bin/env bash\n[ -z "${STUB_CARD_FAIL:-}" ] || exit 1\necho %s\n' "'{\"items\":[]}'" > "$BIN/super-board-card.sh"
 printf '#!/usr/bin/env bash\necho %s\n' "'{}'" > "$BIN/super-board-wave-plan.sh"
 for c in gh claude; do printf '#!/usr/bin/env bash\necho "%s $*" >> "$STUB_CALLS"; exit 1\n' "$c" > "$TMP/stub/$c"; done
+# `gh project edit` (watchdog ghi trạng thái board lên mô tả Project) thành công, trừ khi STUB_EDIT_FAIL=1.
+printf '#!/usr/bin/env bash\necho "gh $*" >> "$STUB_CALLS"\n[ "$1 $2" = "project edit" ] && [ -z "${STUB_EDIT_FAIL:-}" ] && exit 0\nexit 1\n' > "$TMP/stub/gh"
 cat > "$TMP/stub/launchctl" <<'SH'
 #!/usr/bin/env bash
 # Có trạng thái như launchd: bootstrap nạp nhãn, bootout gỡ, print thoát 113 khi nhãn chưa được nạp.
@@ -472,6 +474,44 @@ printf 'read\n' > "$TMP/halt"; expect_restart "halt whose saved read now replays
   || fail "auto-resume not logged or halt kept: $(tail -2 "$WLOG" 2>/dev/null | tr '\n' ' ')"
 kill_tree "$RP"; wait_for 10 '! alive "$RP"'
 rm -f "$WD" "$TMP/halt"
+
+# Trạng thái board hiện trên GitHub (người dùng 20/10: "thể hiện lên board 1 icon … chứ để mấy giờ sau mới phát hiện được"
+# và "thêm thời gian để biết task chạy được bao lâu, bắt đầu từ khi nào"): mỗi check ghi icon, worker đang chạy kèm giờ
+# bắt đầu + thời lượng, và giờ cập nhật vào mô tả ngắn của Project khi trạng thái đổi, nhịp 5 phút khi không đổi (giờ cập
+# nhật cũ = máy ngủ / watchdog chết). Lỗi gh không làm check hỏng.
+BST="$RUNDIR/t.board-status"
+edits() { local n; n=$(grep -c '^gh project edit 1 --owner o --description' "$TMP/calls" 2>/dev/null); echo "${n:-0}"; }
+last_edit() { grep '^gh project edit 1 --owner o --description' "$TMP/calls" 2>/dev/null | tail -1; }
+rm -f "$WD" "$BST"; : > "$TMP/calls"
+printf 'STOPPED_AT=test\n' > "$MARK"; wd
+case "$(last_edit)" in *"⏸️"*"cập nhật "*) ok "stopped board → ⏸️ with update time on the Project description" ;; *) fail "stopped board status: '$(last_edit)'" ;; esac
+e0=$(edits); wd
+[ "$(edits)" = "$e0" ] && ok "same status inside 5 min → no second GitHub write" || fail "status rewritten every check ($(edits) writes)"
+rm -f "$MARK"; dead_pid; set_state "$D" halted 79; printf 'read-fail\n' > "$TMP/halt"; wd
+case "$(last_edit)" in *"🟠"*) ok "halted board waiting on GitHub → 🟠" ;; *) fail "halt-wait status: '$(last_edit)'" ;; esac
+sed -i '' 's/^AT=.*/AT=1/' "$BST"
+e0=$(edits); wd
+[ "$(edits)" -gt "$e0" ] && ok "same status after 5 min → heartbeat rewrite (fresh time)" || fail "no heartbeat after 5 min"
+rm -f "$TMP/halt"; set_state "$D" finished 0; e0=$(edits); STUB_EDIT_FAIL=1 wd; rc=$?
+[ "$rc" -eq 0 ] && [ "$(edits)" -gt "$e0" ] && ok "a failing gh project edit does not fail the check" || fail "check rc=$rc with failing gh"
+e0=$(edits); wd
+[ "$(edits)" -gt "$e0" ] && ok "a failed write is retried on the next check" || fail "failed write not retried"
+# Board đang chạy: runner sống (tiến trình tên super-board-run.sh), một worker build #15 sống bắt đầu 75 phút trước, một
+# lock của worker đã chết (#16) không được liệt kê.
+mkdir -p "$TMP/fake3" "$R/.claude/super-board/inflight"; printf '#!/usr/bin/env bash\nsleep 300\n' > "$TMP/fake3/super-board-run.sh"
+FR3=$( (bash "$TMP/fake3/super-board-run.sh" >/dev/null 2>&1 & echo $!) ); PIDS="$PIDS $FR3"
+set_state "$FR3" running; sed -i '' "s/^STARTED=.*/STARTED=$(( $(date +%s) - 7200 ))/" "$STATE"
+W15=$(date -u -r $(( $(date +%s) - 4500 )) '+%Y-%m-%dT%H:%M:%SZ')
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$FR3" "$W15" > "$R/.claude/super-board/inflight/15"
+dead_pid; printf 'PID=%s\nLANE=qa\nSTARTED=%s\n' "$D" "$W15" > "$R/.claude/super-board/inflight/16"
+wd; L=$(last_edit)
+case "$L" in *"🟢"*"🔨#15"*"từ $(date -r $(( $(date +%s) - 4500 )) '+%H:%M')"*"1g15p"*) ok "running board → 🟢, live worker #15 with its start time and 1g15p elapsed" ;;
+  *) fail "running status lacks worker start/elapsed: '$L'" ;; esac
+case "$L" in *"#16"*) fail "a dead worker's lock (#16) is listed as running" ;; *) ok "a dead worker's lock is not listed" ;; esac
+case "$L" in *"chạy từ $(date -r $(( $(date +%s) - 7200 )) '+%H:%M')"*) ok "running board shows since when the runner runs" ;; *) fail "runner start missing: '$L'" ;; esac
+e0=$(edits); SB_BOARD_STATUS=0 wd
+[ "$(edits)" = "$e0" ] && ok "SB_BOARD_STATUS=0 turns the GitHub status off" || fail "SB_BOARD_STATUS=0 still wrote"
+kill_tree "$FR3"; rm -f "$WD" "$BST" "$STATE" "$R/.claude/super-board/inflight/15" "$R/.claude/super-board/inflight/16"
 
 [ -f "$BIN/super-board-watchdog.sh" ] && ! sed 's/#.*//' "$BIN/super-board-watchdog.sh" | grep -qE '(^|[^a-z])(pkill|killall)([^a-z]|$)' \
   && ok "watchdog never kills by name" || fail "watchdog missing or uses pkill/killall"
