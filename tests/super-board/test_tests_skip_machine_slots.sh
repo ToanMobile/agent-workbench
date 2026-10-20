@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Test hồi quy (20/10): một test đã source tests/lib/clean_git_env.sh không được chờ 2 heavy slot THẬT của máy.
+# Test hồi quy (20/10): một test đã source tests/lib/clean_git_env.sh không được chờ máy (tải máy / khoá heavy slot THẬT).
 # Merge gate thật của 5 repo giữ slot ở ~/.claude/super-board/locks; verify giả (echo) của test_merge_gate_ff.sh chờ tới 3600 s
 # khi chạy ngoài một gate đang giữ slot (chạy tay, gate impacted không có suite nặng, worktree finish) → suite TIMEOUT.
 set -u
@@ -25,20 +25,14 @@ mkdir -p "$HOME"
 unset SB_HEAVY_SLOT_DIR SB_HEAVY_SLOT_HELD SB_HEAVY_SLOT_WAIT_S
 export SB_HEAVY_SLOT_POLL_S="0.1"
 
-# Hai merge gate "thật" giữ cả 2 slot của máy. Marker = holder đã vào slot; exec để sleep là chính tiến trình con của wrapper
-# (pkill -P giết được), output bỏ đi để sleep sót lại không giữ pipe stdout của gate.
-for n in 1 2; do
-  python3 "$SLOT_BIN" -- bash -c "touch '$TMP/held$n'; exec sleep 60" >/dev/null 2>&1 &
-  PIDS="$PIDS $!"
-done
-for _ in $(seq 1 300); do
-  [ -f "$TMP/held1" ] && [ -f "$TMP/held2" ] && break
-  sleep 0.1
-done
-if [ -f "$TMP/held1" ] && [ -f "$TMP/held2" ] && ! python3 "$SLOT_BIN" --nonblock -- true 2>/dev/null; then
-  ok "both machine slots are held"
+# Máy bận theo luật hiện tại (P1 20/10: không còn 2 slot — suite chạy theo tải máy, dưới 100 là chạy): tải 1 phút đọc từ file = 150.
+# Lệnh bọc heavy slot mà không được cho chạy sẵn thì --nonblock từ chối (đối chứng: máy bận thật sự chặn).
+unset DEVKIT_SLOT_ADVISORY_HELD DEVKIT_SLOT_LOAD_MAX DEVKIT_SLOT_LOAD_WAIT_S
+export DEVKIT_SLOT_LOAD_FILE="$TMP/load"; echo 150 > "$DEVKIT_SLOT_LOAD_FILE"
+if ! python3 "$SLOT_BIN" --nonblock -- true 2>/dev/null; then
+  ok "the machine is busy (load 150 >= 100): --nonblock refuses"
 else
-  fail "could not occupy both machine slots"
+  fail "could not make the machine busy (--nonblock ran at load 150)"
 fi
 
 # Một test source helper rồi chạy verify bọc heavy slot: phải chạy ngay, không đợi slot của máy.

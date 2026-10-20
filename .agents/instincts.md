@@ -477,3 +477,12 @@ Mẫu ghi nhận:
 - **Nguyên nhân:** macOS từ chối signal cho process group còn zombie; run_in_group chỉ bắt ProcessLookupError nên PermissionError làm gate crash giữa chừng, write_full_pass_receipt(exit 1) không chạy, lượt --full sau dùng lại PASS trước lúc treo
 - **Quy tắc phòng ngừa & Cách fix:** Mọi killpg trong DevKit bắt cả PermissionError và lùi về proc.send_signal; lần communicate cuối có trần (cháu có thể giữ ống output). Test: tests/gates/test_gate_robustness.sh A12/A12b/A13
 - **Lệnh kiểm tra:** `grep -n 'os.killpg' universal-agent-devkit/bin/*.py universal-agent-devkit/scripts/*/*.py`
+
+---
+
+### [INSTINCT-057] Test super-board chạy trong worktree dùng heavy_slot của main checkout, không phải bản đang sửa
+- **Ngày phát hiện:** 2026-10-21
+- **Hiện tượng lỗi:** Test super-board chạy trong worktree dùng heavy_slot của main checkout, không phải bản đang sửa
+- **Nguyên nhân:** .claude/bin/super-board-heavy-slot.py tìm bin/heavy_slot.py ở main worktree TRƯỚC (main_wt/universal-agent-devkit), nên test gọi wrapper (test_tests_skip_machine_slots.sh, test_heavy_slot.sh) trong worktree chạy code CŨ của main: P1 bỏ 2 slot mà REG-SB-TEST-SLOT-ISO-01 vẫn XANH ở worktree, ĐỎ ngay khi main được fast-forward (21/10)
+- **Quy tắc phòng ngừa & Cách fix:** Sửa universal-agent-devkit/bin/heavy_slot.py thì chạy lại các test gọi .claude/bin/super-board-heavy-slot.py SAU khi main có code mới (sau worktree finish), trước khi push
+- **Lệnh kiểm tra:** `grep -rlE 'super-board-heavy-slot.py|SLOT_BIN' tests/`
