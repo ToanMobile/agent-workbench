@@ -6,6 +6,7 @@
 # máy tải nặng) chạm hạn 7 s và hook chặn một lệnh vô hại (fail-closed). Lệnh không có chữ emulator/qemu-system/-avd
 # (sau khi bỏ dấu nháy và \) phải đi qua ngay; hành vi chặn giữ nguyên. Tương thích bash 3.2.
 set -u
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HW="${HW_HOOK:-$DEVKIT_DIR/hooks/hardware_safety_gate.sh}"
 FAILS=0
