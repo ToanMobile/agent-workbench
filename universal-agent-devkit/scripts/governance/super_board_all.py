@@ -79,7 +79,8 @@ def heavy_slot_dir():
 
 
 def ensure_heavy_slots(directory=None):
-    """Tạo đúng 2 file slot. post-fix-gate --full của mọi runner lấy flock trên các file này."""
+    """Tạo đúng 2 file slot cho các bản DevKit cũ còn khoá chúng. DevKit hiện tại không khoá: suite chạy theo tải máy
+    (bin/heavy_slot.py, DEVKIT_SLOT_LOAD_MAX = 100; người dùng 20/10: bỏ giới hạn 2 slot)."""
     directory = directory or heavy_slot_dir()
     os.makedirs(directory, mode=0o700, exist_ok=True)
     for number in range(1, SLOT_COUNT + 1):
@@ -165,7 +166,7 @@ def start_all():
     print("=================================================================\n")
     locks_dir = ensure_heavy_slots()
     ensure_claude_workspace_trust()
-    print(f"🔒 Heavy-gate slots (--full toàn máy, tối đa {SLOT_COUNT}): {locks_dir}/heavy-gate-{{1,2}}.lock\n")
+    print(f"🔒 Suite nặng chạy theo tải máy (dưới 100 thì chạy; khoá riêng chỉ cho Unity): {locks_dir}\n")
     for repo in REPOS:
         rdir = repo["dir"]
         slug = repo["slug"]

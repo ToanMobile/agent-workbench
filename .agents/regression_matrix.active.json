@@ -555,6 +555,37 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-slot-classes",
+      "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/scripts/testing/stale_rerun.py",
+        "universal-agent-devkit/tests/gates/test_gate_slot_classes.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SLOT-CLASSES-01",
+          "name": "quyền chạy theo tải máy của từng suite (P1b): bỏ 2 slot engine; tải cao thì chờ rồi vẫn chạy, không UNTESTED; chờ tải không ăn vào thời gian chờ khoá; khoá Unity (độc quyền) vẫn chặn, không còn khoá thiết bị; bash -lc nhận ra Unity; hàng đợi ưu tiên + SJF; suite STALE bị SLOT không lọt PASS",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_classes.sh"
+        }
+      ]
+    },
+    {
+      "component": "super-board-heavy-slot",
+      "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        ".claude/bin/super-board-heavy-slot.py",
+        "tests/super-board/test_heavy_slot.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-HEAVY-SLOT-01",
+          "name": "heavy slot theo tải máy (P1b): CLI/wrapper super-board chạy ngay khi tải < DEVKIT_SLOT_LOAD_MAX, chờ rồi vẫn chạy khi tải cao, --nonblock không chạy khi tải cao, DEVKIT_SLOT_LOAD_WAIT_S=0 không chờ, suite Unity lồng trong CLI vẫn xin khoá Unity; --force-full với suite nhẹ không chờ",
+          "command": "bash tests/super-board/test_heavy_slot.sh"
+        }
+      ]
     }
   ]
 }

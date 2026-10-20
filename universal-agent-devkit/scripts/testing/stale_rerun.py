@@ -129,6 +129,37 @@ def test_run_lock(project: Path, deadline: float):
         yield True
 
 
+@contextlib.contextmanager
+def suite_slots(project: Path, tid: str, cmd: str, held: bool, max_wait=None):
+    """P1 (20/10): quyền chạy của suite (bin/heavy_slot.py), như post-fix-gate: nightly và lượt chạy lại STALE từng chạy
+    Gradle/Unity mà không xin gì. P1b: theo tải máy, chỉ Unity còn khoá độc quyền. Yields False khi khoá Unity hết giờ chờ: không
+    chạy. Trong lúc giữ: SB_HEAVY_SLOT_HELD=1 (khoá độc quyền) hoặc DEVKIT_SLOT_ADVISORY_HELD=1 (chỉ được cho chạy theo
+    tải) cho tiến trình suite.
+    held False: không lấy gì. max_wait: trần chờ — run_one đang giữ test_run.lock, Stop hook của người dùng chờ khoá đó 45 s."""
+    if not held:
+        yield True
+        return
+    try:
+        import heavy_slot as hs  # noqa: PLC0415 - bin/ đã ở sys.path
+    except ImportError as exc:
+        print(f"[stale-rerun] heavy_slot: {exc} — chạy không khoá", file=sys.stderr)
+        yield True
+        return
+    slots = hs.acquire_for_suite(hs.classify(cmd, str(project)), label=f"{project.name}:{tid}", max_wait=max_wait)
+    var = "SB_HEAVY_SLOT_HELD" if slots.held else ("DEVKIT_SLOT_ADVISORY_HELD" if slots.advisory else None)
+    prev = os.environ.get(var) if var else None
+    try:
+        if slots.admitted and var:
+            os.environ[var] = "1"
+        yield slots.admitted
+    finally:
+        if var and prev is None:
+            os.environ.pop(var, None)
+        elif var:
+            os.environ[var] = prev
+        hs.release_suite(slots)
+
+
 def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mode: str = "stale-rerun",
             retry: bool = False) -> str:
     """Run one suite for real and record it (result + evidence), unless a watched file
@@ -137,9 +168,11 @@ def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mo
     The wait for the project's test-run lock is bounded by `timeout` (held past it → BUSY,
     nothing run or recorded); once held, the suite gets its whole `timeout`, so a TIMEOUT is
     always the suite's own (a job may take up to twice `timeout`)."""
-    with test_run_lock(project, time.monotonic() + timeout) as held:
+    with test_run_lock(project, time.monotonic() + timeout) as held, suite_slots(project, tid, cmd, held, timeout) as admitted:
         if not held:
             return f"{tid}: BUSY — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau"
+        if not admitted:
+            return f"{tid}: SLOT — khoá độc quyền (Unity) bận hết thời gian chờ — chạy lại sau"
         deadline = time.monotonic() + timeout
         before = watched_mtimes(project, pats)
         started = time.perf_counter()
@@ -177,6 +210,11 @@ def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     wait = "--wait" in args
     args = [a for a in args if a != "--wait"]
+    os.environ.setdefault("DEVKIT_SLOT_PRIORITY", "stop")   # P1: chạy nền lúc mở phiên — sau merge/push/interactive ở hàng đợi slot
+    # Không chờ tải máy (review 20/10): run_one chờ trong lúc giữ test_run.lock của dự án, Stop gate của người dùng chỉ chờ khoá đó
+    # TEST_RUN_LOCK_WAIT_S (45 s) rồi ra BUSY. Lượt chạy lại STALE là việc nền, tải cao thì cứ chạy. nightly.py gọi run_one trực tiếp
+    # và vẫn chờ tải (ban đêm không ai chờ khoá).
+    os.environ.setdefault("DEVKIT_SLOT_LOAD_WAIT_S", "0")
     project = Path(args[0] if args else os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
     if os.environ.get("STALE_RERUN", "1") == "0" or not (project / rc.STATUS_FILE).is_file():
         return 0

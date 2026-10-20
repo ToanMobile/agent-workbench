@@ -302,7 +302,9 @@ fi
 
 # ---- chờ máy bớt tải trước verify ------------------------------------------------
 # 19/10: verify --full chạy lúc tải 1 phút ~60 (5 board cùng build), REG-DK-ALL-01 của PR #87 chọn 127 test và quá 900 s, thẻ #12
-# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX (mặc định 2 × số lõi), tối đa SB_MERGE_LOAD_WAIT_S, không đặt thì
+# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX, không đặt thì `merge_load_max` của config board, thiếu nữa thì 2 × số lõi
+# (20/10, người dùng: "dưới 100 thì cho chạy" — máy tải 45–86 cả ngày, 24 không bao giờ đạt nên PR nào cũng chờ hết giờ chờ); tối
+# đa SB_MERGE_LOAD_WAIT_S, không đặt thì
 # `merge_load_wait_s` của config board (thiếu = 0 = không chờ: board tự bật; test dựng config tạm không có khoá nên không chờ, và
 # không phải đặt biến trong thư viện test dùng chung — sửa file đó kéo cả 291 test DevKit vào REG-DK-ALL-01, 19/10).
 # Hết giờ vẫn verify như cũ, không bỏ bước nào. Chờ trong khoá, sau các lối ra nhanh (đã merge, đóng, head đổi,
@@ -318,6 +320,8 @@ load_now() {
 wait_for_load() {
   local max="${SB_MERGE_LOAD_MAX:-}" cap="${SB_MERGE_LOAD_WAIT_S:-}" poll="${SB_MERGE_LOAD_POLL_S:-30}" waited=0 load nap
   [ -n "$cap" ] || cap=$(printf '%s\n' "$CONFIG_JSON" | jq -r '.merge_load_wait_s // 0' 2>/dev/null || echo 0)
+  local max_src="SB_MERGE_LOAD_MAX"
+  [ -n "$max" ] || { max=$(printf '%s\n' "$CONFIG_JSON" | jq -r '.merge_load_max // empty' 2>/dev/null || true); max_src="config merge_load_max"; }
   LOAD_WAITED=0
   [ "$DRY" -eq 1 ] && return 0
   # Tối đa 6 chữ số (không tràn số); 10# đọc 08 là tám (không có nó bash đọc bát phân và set -e dừng gate).
@@ -332,7 +336,7 @@ wait_for_load() {
   else say "SB_MERGE_LOAD_POLL_S='${poll}' is not a positive number; polling every 30s"; poll=30; fi
   if [[ "$max" =~ ^[0-9]{1,6}$ ]] && [ $((10#$max)) -gt 0 ]; then max=$((10#$max))
   else
-    [ -n "$max" ] && say "SB_MERGE_LOAD_MAX='${max}' is not a positive number; using 2 x cores"
+    [ -n "$max" ] && say "${max_src}='${max}' is not a positive number; using 2 x cores"
     max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 2 ))
   fi
   while :; do
@@ -436,7 +440,10 @@ for cmd in "${VERIFY[@]}"; do
   done
 done
 
-# Chạy lệnh verify trong scratch: post-fix-gate.py tự giữ heavy slot, các lệnh verify khác được bọc qua super-board-heavy-slot.py.
+# Chạy lệnh verify trong scratch: post-fix-gate.py tự xin quyền chạy cho từng suite, các lệnh verify khác được bọc qua
+# super-board-heavy-slot.py. DEVKIT_SLOT_LOAD_WAIT_S=0: tải đã được chờ theo merge_load_max / merge_load_wait_s ở trên, bên trong
+# không chờ lần nữa (merge chặn người khác). DEVKIT_SLOT_PRIORITY=merge: đứng đầu hàng đợi khoá Unity (bin/heavy_slot.py),
+# và post-fix-gate không chạy lần chạy thật hằng ngày (sentinel) trong merge gate.
 # Khoá còn của gate này thì làm mới mốc "at" (như wait_for_load) để mỗi bước dài sau đó được trọn STALE_AFTER — nếu không, gate
 # khác coi khoá của một verify + retry dài là bỏ quên, chiếm khoá và merge song song trên base cũ. Khoá đã bị gate khác chiếm (pid
 # của nó) thì dừng: không merge, không làm mới mốc khoá của gate kia (release cũng không xoá nó). Exit 4 như lúc không lấy được
@@ -460,9 +467,12 @@ run_verify_cmd() {
   local c="$1"
   own_lock_or_stop
   if [[ "$c" == *"post-fix-gate.py"* ]]; then
-    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$c" ) >"$VERIFY_LOG" 2>&1
+    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+        DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}" && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$c" ) >"$VERIFY_LOG" 2>&1
   else
-    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && DEVKIT_LANG="${DEVKIT_LANG:-vi}" python3 "$HERE/super-board-heavy-slot.py" -- bash -c "$c" ) >"$VERIFY_LOG" 2>&1
+    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+        DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}" \
+        && DEVKIT_LANG="${DEVKIT_LANG:-vi}" python3 "$HERE/super-board-heavy-slot.py" -- bash -c "$c" ) >"$VERIFY_LOG" 2>&1
   fi
 }
 

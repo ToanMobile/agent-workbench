@@ -2539,7 +2539,10 @@ def _merge_gate(wt, base, matrix):
     try:
         p = subprocess.Popen([sys.executable, gate, "--run-tests", "--brief", "--json", "--diff", base, "--matrix", matrix], cwd=wt,
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                             env=dict(os.environ, CLAUDE_PROJECT_DIR=wt, VACUITY_REVERT="0"))
+                             env=dict(os.environ, CLAUDE_PROJECT_DIR=wt, VACUITY_REVERT="0",
+                                      # P1 (20/10): gộp vào main chặn người khác — đứng đầu hàng đợi khoá Unity;
+                                      # đặt hẳn merge (giá trị của phiên gọi, vd interactive, không được thay — OCR 20/10)
+                                      DEVKIT_SLOT_PRIORITY="merge"))
     except OSError as e:
         return tr(f"gate không chạy được ({e})", f"the gate did not start ({e})"), False
     try:

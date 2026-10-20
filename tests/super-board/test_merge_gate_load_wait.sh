@@ -185,5 +185,34 @@ for pair in "MERGED 0" "CLOSED 3"; do
     || fail "PR ${st} during the wait: gate exit $rc (want ${want}), verify ran: $([ -f "$STARTED" ] && echo yes || echo no)"
 done
 
+# Ca 13–15: ngưỡng tải đọc được từ config board `merge_load_max` (người dùng 20/10: "dưới 100 thì cho chạy" — máy này tải 45–86 cả
+# ngày, ngưỡng mặc định 2 × số core = 24 không bao giờ đạt nên PR nào cũng chờ hết merge_load_wait_s). Biến SB_MERGE_LOAD_MAX vẫn thắng.
+CFG_MAX="$TMP/cfg-max.json"; jq '.merge_load_wait_s = 3 | .merge_load_max = 100' "$CFG" > "$CFG_MAX"
+gate_max() { ( unset SB_MERGE_LOAD_WAIT_S SB_MERGE_LOAD_MAX; cd "$WT" && SB_MERGE_LOAD_POLL_S=1 "$@" bash "$GATE" --config "$CFG_MAX" \
+  --pr 5 --expect-head "$H" ); }
+echo 60 > "$LOADF"; rm -f "$STARTED"
+gate_max env >"$TMP/gate13.log" 2>&1; rc=$?
+grep -q "waiting for load" "$TMP/gate13.log" && fail "config merge_load_max=100, load 60: the gate still waits" \
+  || ok "config merge_load_max=100, load 60: no wait"
+ran "$rc" && ok "config merge_load_max=100, load 60: verify ran (exit 11)" || fail "config merge_load_max=100, load 60: gate exit $rc"
+echo 120 > "$LOADF"; rm -f "$STARTED"
+gate_max env >"$TMP/gate14.log" 2>&1; rc=$?
+grep -q "waiting for load 120 to drop below 100 before verify (at most 3s)" "$TMP/gate14.log" \
+  && ok "config merge_load_max=100, load 120: the gate waits" || fail "config merge_load_max=100, load 120: $(grep merge-gate "$TMP/gate14.log" | head -3)"
+echo 60 > "$LOADF"; rm -f "$STARTED"
+gate_max env SB_MERGE_LOAD_MAX=50 >"$TMP/gate15.log" 2>&1; rc=$?
+grep -q "waiting for load 60 to drop below 50 before verify" "$TMP/gate15.log" \
+  && ok "SB_MERGE_LOAD_MAX=50 overrides config merge_load_max=100" || fail "env did not override the config: $(grep merge-gate "$TMP/gate15.log" | head -3)"
+
+# Ca 16: lệnh verify chạy với DEVKIT_SLOT_PRIORITY=merge (bin/heavy_slot.py: merge đứng đầu hàng đợi khoá Unity;
+# post-fix-gate không chạy sentinel hằng ngày trong merge gate) và DEVKIT_SLOT_LOAD_WAIT_S=0 (tải đã được chờ ở trên, bên trong không
+# chờ lần nữa). Biến đã đặt sẵn thì giữ nguyên.
+PRIOF="$TMP/prio"; CFG_PRIO="$TMP/cfg-prio.json"
+jq --arg f "$PRIOF" '.verify_commands = ["printf \"%s %s\" \"${DEVKIT_SLOT_PRIORITY:-}\" \"${DEVKIT_SLOT_LOAD_WAIT_S:-}\" > \($f); exit 3"]' "$CFG" > "$CFG_PRIO"
+echo 3 > "$LOADF"; rm -f "$PRIOF"
+( unset DEVKIT_SLOT_PRIORITY DEVKIT_SLOT_LOAD_WAIT_S; cd "$WT" && SB_MERGE_LOAD_WAIT_S=0 bash "$GATE" --config "$CFG_PRIO" --pr 5 --expect-head "$H" ) >"$TMP/gate16.log" 2>&1
+[ "$(cat "$PRIOF" 2>/dev/null)" = "merge 0" ] && ok "verify runs with DEVKIT_SLOT_PRIORITY=merge and DEVKIT_SLOT_LOAD_WAIT_S=0" \
+  || fail "verify env: '$(cat "$PRIOF" 2>/dev/null)' (want 'merge 0')"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_load_wait: PASS"; exit 0; } || { echo "test_merge_gate_load_wait: FAIL ($FAILS)"; exit 1; }
