@@ -6,7 +6,6 @@
 unset SB_ALLOW_PROTECTED_PUSH   # công tắc tắt guard từ shell gọi test sẽ làm mọi kiểm tra chạy trên guard đã tắt
 set -u
 DK="$(cd "$(dirname "$0")/../.." && pwd)"
-. "$DK/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh (ratchet test_git_env_isolation.sh)
 HOOK="$DK/hooks/guard-protected-push.py"
 FAILS=0
 
