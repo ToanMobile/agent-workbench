@@ -43,6 +43,48 @@ MARKER = "<!-- super-board:needs-you -->"
 DONE_MARKER = "<!-- super-board:needs-you:done -->"
 DEFAULT_NEXT = "gỡ nhãn needs-you rồi kéo thẻ về Ready"
 MACHINE_LINE = re.compile(r"reason tag:|blocked-by:|approval-request:|<!--", re.I)
+# Rào chắn tự chủ: từ chối đánh dấu needs-you cho các việc agent tự làm được (test PR trên máy/máy ảo,
+# chạy lại gate/chờ tải CPU, dọn worktree, tách thẻ <400 dòng, tự duyệt ma trận test, tự chốt UI/kỹ thuật).
+AGENT_DOABLE_RULES = (
+    (
+        re.compile(
+            r"thử\s+pr\s+#\d+|chạy\s+lại\s+gate|gate\s+--full|cổng\s+perf|chờ\s+load|dừng\s+gradle|"
+            r"kiểm\s+không\s+hồi\s+quy|chạy\s+d2\b|bật\s+lại\s+máy\s+ảo|máy\s+ảo\s+phoneconnect|"
+            r"roborazzi\s+baseline\s+record|run\s+workflow\s+trên\s+main|\bchmod\b",
+            re.I,
+        ),
+        "test/verify PR trên máy hoặc máy ảo, chạy gate/perf hoặc workflow CI là việc của agent (Builder/QA/Reviewer)",
+    ),
+    (
+        re.compile(r"gỡ\s+(?:hoặc\s+giữ\s+)?worktree|\.claude/worktrees/|worktree\s+(?:discard|remove)", re.I),
+        "dọn dẹp worktree là việc của agent (chép agent-memory nếu có, hoàn tác file runtime DevKit rồi chạy worktree remove)",
+    ),
+    (
+        re.compile(
+            r"/to-tickets|tách\s+thẻ|tách\s+phần\s+giao\s+diện|thu\s+body\s+#?\d+|"
+            r"(?:dưới|<\s*)400\s+dòng|tách\s+#\d+\s+thành",
+            re.I,
+        ),
+        "tách thẻ lớn (<400 dòng) hoặc thu gọn phạm vi lát cắt là việc agent phải tự thực hiện",
+    ),
+    (
+        re.compile(
+            r"approve\s+matrix\s+fix|ma\s+trận\s+hồi\s+quy|chốt\s+phạm\s+vi\s+ac|chốt\s+vị\s+trí\s+nút|"
+            r"chốt\s+ưu\s+tiên\s+máy\s+tính\s+bảng|quyết\s+định\s+cách\s+ghi\s+0x|duyệt\s+hướng\s+sửa|"
+            r"chốt\s+bủm\s+là\s+loài|chốt\s+bộ\s+mới\s+thay|duyệt\s+hoặc\s+chỉnh\s+thiết\s+kế|"
+            r"chọn\s+phạm\s+vi\s+chống\s+cộng\s+trùng|chọn\s+a\s+cho\s+pr\s+#\d+|gen_voice_packs\.py",
+            re.I,
+        ),
+        "quyết định kỹ thuật/UI/phạm vi AC hoặc duyệt ma trận test thuộc thẩm quyền tự chủ của agent (Decide, don't ask / AUTO-APPROVE)",
+    ),
+)
+GENUINE_HUMAN_RE = re.compile(
+    r"api[ _-]?key|supabase\s+(?:login|secrets)|play\s+console|apple\s+(?:developer|team\s+id)|"
+    r"nđ\s*147|botfather|keystore|admob|firebase|\b[3-9]\s+người\s+chơi\s+thật|"
+    r"iarc|pháp\s+nhân|elm327|trên\s+xe\s+thật|ngồi\s+xe|lái\s+một\s+buổi|bật\s+xe|"
+    r"cho\s+xe\s+online|đăng\s+nhập\s+vietmap",
+    re.I,
+)
 TIMEOUT = 60
 
 PROJECT_QUERY = """query($owner:String!,$number:Int!){
@@ -96,6 +138,13 @@ def one_line(text, what):
         raise ValueError(f"{what} must not contain `Reason tag:`, `blocked-by:`, `approval-request:` or `<!--`")
     if len(text) > 500:
         raise ValueError(f"{what} is longer than 500 characters")
+    if what == "--action" and not GENUINE_HUMAN_RE.search(text):
+        for pat, why in AGENT_DOABLE_RULES:
+            if pat.search(text):
+                raise ValueError(
+                    f"--action mô tả việc agent phải tự xử lý ({why}); "
+                    "hãy tự thực thi, tự chốt (Decide, don't ask / AUTO-APPROVE) hoặc trả thẻ về Ready/QA thay vì gắn needs-you"
+                )
     return text
 
 

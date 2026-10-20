@@ -441,7 +441,10 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
    - **Budget cap (added 2026-05-22): each sub-agent ≤50 gh calls.** Prefer local `git blame` / `git log` over `gh api graphql`. If a sub-agent needs >50 calls to reach confidence, it returns `confidence: "insufficient_data"` and the Reviewer flags the card as 🛡 truth-check inconclusive instead of burning the shared quota. See `rate-limit-etiquette.md`.
    - **Brief:** use the fixed sub-agent brief in super-review → "Adversarial mode" verbatim. Never write your own. It states that Over-engineering is Should fix, never Blocker on its own, and never lowers confidence.
    - Aggregate into a confidence score (0-100). Compare against `config.truth_threshold` (default 70).
-   - **Below threshold** — Reviewer MUST NOT approve. Open a `[reviewer]`-prefixed PR thread quoting the lowest-confidence sub-agent finding, write the full Block template comment (see §4 Block/Skip), move card Review → Blocked with reason tag 🛡 truth-check failed (confidence X/100). The card stays Blocked until human review; the bot's "Why I cannot decide" line names the specific sub-agent finding it could not confirm.
+   - **Below threshold** — Reviewer MUST NOT approve. Inspect the lowest-confidence sub-agent finding:
+     - Code bug, logic hazard, or missing unit test (`Bug`, `Gap`, `Scope drift`) → open a `[builder]`-prefixed PR thread quoting the finding, write the Reviewer report (`bounced`), and move card **Review → Ready** with `loop:rebuild-N` (NEVER `Blocked` or `needs-you`).
+     - Test/runtime verification gap (`Verification miss`) that an agent can execute on an emulator/simulator/local machine → verify it directly, or open a `[qa]`-prefixed PR thread and move card **Review → QA** with `loop:rebuild-N` (NEVER `Blocked` or `needs-you`).
+     - Only move card **Review → Blocked** (`🛡`) when the finding involves an irreversible destructive live operation (dropping a live DB table, rotating live production secrets) or after `config.rebuild_cap` bounces are exhausted.
    - **Above threshold** — continue to step 7.
    - **No Reproducer needed** — Tester's tests were re-run in step 5.
 7. Decide per finding. First re-apply the Over-engineering rule to every collected finding, whatever a sub-agent wrote: Should fix, never Blocker, never on its own a bounce or block. Then:
