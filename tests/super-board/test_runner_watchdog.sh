@@ -107,6 +107,7 @@ if [ -n "${STUB_CARD_HALT:-}" ]; then echo halted > "${SB_GITHUB_HALT_FILE:-$STU
 case "$*" in *"item-id "*) [ -z "${STUB_ITEMID_FAIL:-}" ] || exit 1 ;; esac
 case "$*" in
   *" ids"|ids) echo '{"projectId":"P1","fieldId":"F_STATUS","options":{}}' ;;
+  *" items"|items) if [ -n "${STUB_ITEMS:-}" ]; then printf '%s\n' "$STUB_ITEMS"; else echo '{"items":[]}'; fi ;;
   *"item-id "*) echo "I_${@: -1}" ;;
   *) echo '{"items":[]}' ;;
 esac
@@ -525,11 +526,11 @@ last_edit() { grep '^gh project edit 1 --owner o --description' "$TMP/calls" 2>/
 rm -f "$WD" "$BST"; : > "$TMP/calls"
 printf 'STOPPED_AT=test\n' > "$MARK"; wd
 # "cập nhật HH:MM dd/MM" là hợp đồng với .github/scripts/board_heartbeat.py (cron đánh ⚫ khi giờ này cũ).
-case "$(last_edit)" in *"⏸️"*"cập nhật "[0-2][0-9]:[0-5][0-9]" "[0-3][0-9]/[01][0-9]) ok "stopped board → ⏸️ with 'cập nhật HH:MM dd/MM' on the Project description" ;; *) fail "stopped board status: '$(last_edit)'" ;; esac
+case "$(last_edit)" in *"🔴"*"đã dừng"*"cập nhật "[0-2][0-9]:[0-5][0-9]" "[0-3][0-9]/[01][0-9]) ok "stopped board → 🔴 đã dừng with 'cập nhật HH:MM dd/MM' on the Project description" ;; *) fail "stopped board status: '$(last_edit)'" ;; esac
 e0=$(edits); wd
 [ "$(edits)" = "$e0" ] && ok "same status inside 5 min → no second GitHub write" || fail "status rewritten every check ($(edits) writes)"
 rm -f "$MARK"; dead_pid; set_state "$D" halted 79; printf 'read-fail\n' > "$TMP/halt"; wd
-case "$(last_edit)" in *"🟠"*) ok "halted board waiting on GitHub → 🟠" ;; *) fail "halt-wait status: '$(last_edit)'" ;; esac
+case "$(last_edit)" in "gh project edit 1 --owner o --description 🔴"*) ok "halted board waiting on GitHub → 🔴 (not running)" ;; *) fail "halt-wait status: '$(last_edit)'" ;; esac
 sed -i '' 's/^AT=.*/AT=1/' "$BST"
 e0=$(edits); wd
 [ "$(edits)" -gt "$e0" ] && ok "same status after 5 min → heartbeat rewrite (fresh time)" || fail "no heartbeat after 5 min"
@@ -547,17 +548,25 @@ W15=$(date -u -r "$WS" '+%Y-%m-%dT%H:%M:%SZ')
 printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$FR3" "$W15" > "$R/.claude/super-board/inflight/15"
 dead_pid; printf 'PID=%s\nLANE=qa\nSTARTED=%s\n' "$D" "$W15" > "$R/.claude/super-board/inflight/16"
 wd; L=$(last_edit)
-case "$L" in *"🟢"*"🔨#15"*"từ $(TZ=Asia/Ho_Chi_Minh date -r "$WS" '+%H:%M')"*"1g15p"*) ok "running board → 🟢, live worker #15 with its start time and 1g15p elapsed" ;;
+case "$L" in *"🟢"*"#15 code từ $(TZ=Asia/Ho_Chi_Minh date -r "$WS" '+%H:%M')"*"1g15p"*) ok "running board → 🟢, live worker #15 (code) with its start time and 1g15p elapsed" ;;
   *) fail "running status lacks worker start/elapsed: '$L'" ;; esac
 case "$L" in *"#16"*) fail "a dead worker's lock (#16) is listed as running" ;; *) ok "a dead worker's lock is not listed" ;; esac
+case "$L" in *"🔨"*|*"🔍"*|*"✏️"*|*"⏸️"*|*"🟠"*|*"⚪"*) fail "status uses a glyph other than 🟢/🔴: $L" ;; *) ok "status uses only 🟢/🔴 and words" ;; esac
+# Card đang ở Building/QA/Review mà không có worker sống: 🔴 không chạy. Card ở cột khác: không ghi.
+printf 'KEY=x\nAT=1\nFIELD=F_RUN\n' > "$BST"
+STUB_ITEMS='{"items":[{"id":"I_77","status":"QA","content":{"number":77}},{"id":"I_15","status":"Building","content":{"number":15}},{"id":"I_5","status":"Ready","content":{"number":5}}]}' wd
+grep -q -- '--id I_77 --project-id P1 --field-id F_RUN --text 🔴 không chạy' "$TMP/calls" && ok "QA card without a live worker → 🔴 không chạy" \
+  || fail "idle QA card not marked red: $(grep item-edit "$TMP/calls" | tail -3 | tr '\n' ' ')"
+grep -q -- '--id I_5 ' "$TMP/calls" && fail "Ready card got a running field" || ok "Ready card untouched"
+case " $(field CARDS "$BST") " in *" 77 "*) ok "red card kept in CARDS (cleared once it leaves the active columns)" ;; *) fail "CARDS='$(field CARDS "$BST")'" ;; esac
 # Từng card: field chữ "Đang chạy" của Project ghi lane + giờ bắt đầu + thời lượng khi worker sống, xoá khi worker dừng.
-grep -q "^gh project item-edit --id I_15 --project-id P1 --field-id F_RUN --text 🔨 build · từ $(TZ=Asia/Ho_Chi_Minh date -r "$WS" '+%H:%M') · 1g15p" "$TMP/calls" \
+grep -q "^gh project item-edit --id I_15 --project-id P1 --field-id F_RUN --text 🟢 đang code · từ $(TZ=Asia/Ho_Chi_Minh date -r "$WS" '+%H:%M') · 1g15p" "$TMP/calls" \
   && ok "card #15 gets its 'Đang chạy' field: lane, start time, elapsed" || fail "card field not written: $(grep 'item-edit' "$TMP/calls" | tail -2 | tr '\n' ' ')"
 grep -q -- '--id I_16 .*--text' "$TMP/calls" && fail "card of a dead worker (#16) got a running field" || ok "card of a dead worker gets no running field"
 printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$D" "$W15" > "$R/.claude/super-board/inflight/15"; wd
 grep -q '^gh project item-edit --id I_15 --project-id P1 --field-id F_RUN --clear' "$TMP/calls" \
   && ok "worker of #15 gone → its card field is cleared" || fail "card field not cleared: $(grep 'item-edit' "$TMP/calls" | tail -2 | tr '\n' ' ')"
-case "$(last_edit)" in *"không có worker"*) ok "board without live workers says so" ;; *) fail "board text: '$(last_edit)'" ;; esac
+case "$(last_edit)" in *"không có task nào đang làm"*) ok "board without live workers says so" ;; *) fail "board text: '$(last_edit)'" ;; esac
 # gh (Go) bỏ qua SIGALRM: `perl alarm; exec gh` không cắt được một gh treo (mạng nửa vời sau khi máy thức) và lượt check
 # của launchd không bao giờ thoát. Mỗi lệnh gh phải bị giết khi hết giờ.
 printf 'KEY=x\nAT=1\n' > "$BST"; t0=$(date +%s)
@@ -576,9 +585,9 @@ grep -qE -- '--id I_[^0-9]' "$TMP/calls" && fail "non-numeric CARDS entry used a
 printf 'KEY=x\nAT=1\nFIELD=F_GONE\nCARDS=15\n' > "$BST"; STUB_ITEM_EDIT_FAIL=1 wd
 [ -z "$(field FIELD "$BST")" ] && [ "$(field CARDS "$BST")" = 15 ] && ok "failed clear → field id re-read next time, card kept" \
   || fail "after a failed clear: FIELD='$(field FIELD "$BST")' CARDS='$(field CARDS "$BST")'"
-# Runner dừng có chủ đích ở foreground (Ctrl-C, STATE=stopped): ⏸️, không phải 🔴.
+# Runner dừng có chủ đích ở foreground (Ctrl-C, STATE=stopped): 🔴 đã dừng (không phải "runner ngừng").
 dead_pid; set_state "$D" stopped 130; wd
-case "$(last_edit)" in *"⏸️"*) ok "foreground stop (STATE=stopped) → ⏸️" ;; *) fail "stopped state status: '$(last_edit)'" ;; esac
+case "$(last_edit)" in *"🔴"*"đã dừng"*) ok "foreground stop (STATE=stopped) → 🔴 đã dừng" ;; *) fail "stopped state status: '$(last_edit)'" ;; esac
 set_state "$FR3" running; sed -i '' "s/^STARTED=.*/STARTED=$RS/" "$STATE"
 # File halt riêng của publish còn sót (lượt trước bị giết): lượt publish mới vẫn chạy được ngay.
 printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15\n' > "$BST"; printf '{}' > "$RUNDIR/t.publish-halt.json"
