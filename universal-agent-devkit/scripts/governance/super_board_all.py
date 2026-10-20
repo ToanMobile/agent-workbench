@@ -16,6 +16,8 @@ Cách dùng:
 
 import os
 import sys
+import glob
+import json
 import subprocess
 import argparse
 from pathlib import Path
@@ -87,6 +89,54 @@ def ensure_heavy_slots(directory=None):
     return directory
 
 
+def ensure_claude_workspace_trust(home_dir=None, repo_dirs=None):
+    """Đảm bảo mọi thư mục repo (và worktree hiện có) đã có hasTrustDialogAccepted=True trong các file .claude.json."""
+    home = home_dir or os.path.expanduser("~")
+    dirs = list(repo_dirs) if repo_dirs is not None else [r["dir"] for r in REPOS]
+    for rdir in list(dirs):
+        wt_root = os.path.join(rdir, ".claude", "worktrees")
+        if os.path.isdir(wt_root):
+            for name in os.listdir(wt_root):
+                wt_path = os.path.join(wt_root, name)
+                if os.path.isdir(wt_path):
+                    dirs.append(wt_path)
+    cfg_files = [os.path.join(home, ".claude.json")] + glob.glob(os.path.join(home, ".claude*", ".claude.json"))
+    for cfg in cfg_files:
+        if not os.path.isfile(cfg):
+            continue
+        try:
+            with open(cfg, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            projects = data.setdefault("projects", {})
+            changed = False
+            for d in dirs:
+                entry = projects.setdefault(d, {})
+                if entry.get("hasTrustDialogAccepted") is not True:
+                    entry["hasTrustDialogAccepted"] = True
+                    changed = True
+            if changed:
+                tmp = f"{cfg}.{os.getpid()}"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp, cfg)
+        except (OSError, ValueError) as e:
+            print(f"⚠️  Không thể cập nhật workspace trust trong {cfg}: {e}", file=sys.stderr)
+
+
+def clear_early_deaths(rdir):
+    """Xoá các file early-deaths cũ khi khởi động lại bảng để các thẻ vừa gỡ lỗi môi trường được chạy lại."""
+    ed_dir = os.path.join(rdir, ".claude", "super-board", "inflight", "early-deaths")
+    if not os.path.isdir(ed_dir):
+        return
+    for name in os.listdir(ed_dir):
+        fpath = os.path.join(ed_dir, name)
+        if os.path.isfile(fpath):
+            try:
+                os.remove(fpath)
+            except OSError as e:
+                print(f"⚠️  Không thể xoá {fpath}: {e}", file=sys.stderr)
+
+
 def runner_launch(rdir, slug, run_script, log_path, slot_dir):
     """Một runner vẫn là một vòng lặp, nhưng verify nặng dùng đúng thư mục slot của process này."""
     return (
@@ -114,6 +164,7 @@ def start_all():
     print("  🚀 KHỞI ĐỘNG ĐỒNG THỜI 5 SUPER-BOARD RUNNERS (TỰ HÀNH 24/7)")
     print("=================================================================\n")
     locks_dir = ensure_heavy_slots()
+    ensure_claude_workspace_trust()
     print(f"🔒 Heavy-gate slots (--full toàn máy, tối đa {SLOT_COUNT}): {locks_dir}/heavy-gate-{{1,2}}.lock\n")
     for repo in REPOS:
         rdir = repo["dir"]
@@ -124,6 +175,8 @@ def start_all():
         if not os.path.isdir(rdir):
             print(f"⚠️  Bỏ qua {name}: không tìm thấy thư mục {rdir}")
             continue
+
+        clear_early_deaths(rdir)
 
         # Đảm bảo thư mục log tồn tại
         os.makedirs(os.path.join(rdir, "docs", "super-board", "runs"), exist_ok=True)

@@ -326,10 +326,11 @@ top_card_in_column() {
     TOP_ISSUE="$issue"; TOP_ITEM_ID="$item_id"
     return 0
   done <<EOF
-$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ"'
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ"'
     .items[]
     | select(.status == $col and .content.type == "Issue")
-    | select((.content.assignees // []) | length == 0)
+    # Chỉ bỏ qua thẻ đang giao cho người khác; thẻ chỉ mang assignee của chính BOT_LOGIN nhưng không có lock sống sẽ được lọc ở issue_locked phía trên để không bị kẹt.
+    | select(((.content.assignees // []) - (if $bot == "" then [] else [$bot] end)) | length == 0)
     # #95: a Ready card waiting for a person (playtest, real device, store account, a ruling): dispatching it only spends a lane
     # and parks it again. Not in QA/Review: the resume path moves a 🙋 card a person approved to Review with its label possibly
     # still on (run.md → resume). Removing the label releases the card.
@@ -603,13 +604,19 @@ dispatch_lane() {
   if ! try_claim_assignee "$issue"; then
     return 0
   fi
+  # Chuyển ngay thẻ Ready sang cột Building trên GitHub Project Board khi giao cho Builder để bảng hiển thị tức thì.
+  if [ "$lane" = "build" ] && [ -n "$PROJECT_OWNER" ] && [ "${PROJECT_NUMBER:-0}" -gt 0 ]; then
+    local build_item_id
+    build_item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n and .status == "Ready") | .id][0] // empty' 2>/dev/null || true)
+    [ -z "$build_item_id" ] || set_card_status "$build_item_id" "Building" || true
+  fi
   case "$lane" in
     build)  prompt="Run super-build on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Builder lifecycle. Config: ${CONFIG_PATH}." ;;
     qa)     prompt="Run super-qa on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Tester lifecycle. Config: ${CONFIG_PATH}." ;;
     review) prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done." ;;
     *) log "unknown lane: $lane"; return 1 ;;
   esac
-  prompt="First operation: run .claude/bin/super-board-skills-ready.py --root '$PWD' --host claude --cards - --lane '$lane' --hydrate with $card as stdin. Halt on exit 10 before worktree creation or lifecycle writes; preserve claims and approval evidence. Load resolved paths and only declared fallbacks; recheck conditionals with --require before activation. $prompt $(lane_worktree_hint "$lane" "$issue")"
+  prompt="First operation: run .claude/bin/super-board-skills-ready.py --root '$PWD' --host claude --cards - --lane '$lane' --hydrate with $card as stdin. Halt on exit 10 before worktree creation or lifecycle writes; preserve claims and approval evidence. Load resolved paths and only declared fallbacks; recheck conditionals with --require before activation. $prompt $(lane_worktree_hint "$lane" "$issue") Emulator policy: NEVER launch an Android emulator without -no-window (always run headless in background with -no-window -no-audio -no-boot-anim, or via python3 .agents/devkit/bin/proof-capture.py)."
   if [ -f "$REPO_ROOT/.agents/active-profile.json" ] && grep -q '"lang": "vi"' "$REPO_ROOT/.agents/active-profile.json" 2>/dev/null; then
     prompt="$prompt Language policy: This repository uses Vietnamese ('lang': 'vi'). Write all PR descriptions, problem/solution/AC explanations, status comments, and review notes in Vietnamese (Tiếng Việt); identifiers/symbols remain English."
   fi

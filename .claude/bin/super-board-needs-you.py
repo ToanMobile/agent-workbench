@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -239,6 +240,15 @@ def unmark(repo, issue, dry):
             if not dry:
                 gh("api", "-X", "PATCH", f"repos/{repo}/issues/comments/{c['id']}", "-f", f"body={DONE_MARKER}\n{note}")
             done.append("comment resolved")
+    # Xoá sổ early-deaths cục bộ của thẻ khi gỡ needs-you để thẻ không bị cầu chì SB_EARLY_MAX_TOTAL giữ kẹt.
+    ed_file = os.path.join(".claude", "super-board", "inflight", "early-deaths", str(issue))
+    if os.path.isfile(ed_file):
+        if not dry:
+            try:
+                os.remove(ed_file)
+            except OSError as e:
+                print(f"needs-you: warning: could not remove {ed_file}: {e}", file=sys.stderr)
+        done.append("early-deaths reset")
     return done or ["nothing to unmark"]
 
 

@@ -11,7 +11,8 @@ import time
 
 
 def find_latest_jsonl(repo_dir: str):
-    slug_path = repo_dir.replace("/", "-")
+    # Claude Code thay cả dấu '/' lẫn dấu '.' trong đường dẫn bằng '-' (vd Humans-vs.-UFOs -> -Volumes-...-Humans-vs--UFOs).
+    slug_path = repo_dir.replace("/", "-").replace(".", "-")
     candidates = []
     # Quét cả thư mục gốc của repo lẫn các worktree con (<slug>--claude-worktrees-*) để bắt được transcript của worker lane.
     for base in glob.glob(os.path.expanduser("~/.claude*")):

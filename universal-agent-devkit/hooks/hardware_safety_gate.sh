@@ -115,7 +115,7 @@ fast_allow() { # $1 = trigger ERE
 # delete: `find . -delete` removes a tree with no rm in it (2026-10-09, tests/gates/test_hardware_rm_containment.sh).
 # rimraf / rsync: rm -rf and rsync --del(ete) spelled without rm or delete (2026-10-13, tests/gates/test_guard_shell_norm.sh).
 # <( : a shell that runs a process substitution (bash <(…)) is refused by the parser whatever it says, like the git guard does (15/10)
-fast_allow 'adb|fastboot|dd|mount|rm|delete|rimraf|rsync|fastlane|security|xcrun|simctl|eval|flash|publish|vercel|netlify|firebase|prisma|db:|drop|truncate|flush|kubectl|terraform|tofu|pulumi|helm|docker|s3|<[(]' && exit 0
+fast_allow 'adb|emulator|-avd|fastboot|dd|mount|rm|delete|rimraf|rsync|fastlane|security|xcrun|simctl|eval|flash|publish|vercel|netlify|firebase|prisma|db:|drop|truncate|flush|kubectl|terraform|tofu|pulumi|helm|docker|s3|<[(]' && exit 0
 
 # The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
 # none); outside a git tree the rm guard measures from the process cwd as before, and nothing is logged
@@ -1171,6 +1171,71 @@ if label:
     sys.stderr.write(f"  • Lệnh: {shown}\n\n")
     sys.stderr.write("Nếu chắc chắn đang ở môi trường giả lập an toàn, đặt HARDWARE_OVERRIDE=1 để bỏ qua.\n")
     sys.exit(2)
+
+def emulator_window_violation(text):
+    """Chặn lệnh mở Android Emulator khởi động AVD mà thiếu cờ -no-window (trừ khi PROOF_WINDOW=1)."""
+    lits = literal_vars(text)
+    if os.environ.get("PROOF_WINDOW", lits.get("PROOF_WINDOW", "")).strip().lower() in ("1", "true", "yes", "on"):
+        return None
+    for seg in re.split(r"[;&|\n]+|\$\(|`", text):
+        try:
+            toks = shlex.split(seg)
+        except ValueError:
+            toks = seg.split()
+        toks = shell_norm.inline_script(toks)
+        seg_win = False
+        i = 0
+        while i < len(toks):
+            w0 = toks[i].lstrip("(")
+            if not (re.match(r"^\w+=", w0) or w0 in ADB_WRAPPERS or w0 in SHELL_LEAD or toks[i] in SHELL_LEAD
+                    or (i > 0 and toks[i - 1].lstrip("(") in ADB_WRAPPERS and re.match(r"^(-\S*|\d+\w?)$", w0))):
+                break
+            if w0.startswith("PROOF_WINDOW=") and w0.split("=", 1)[1].strip().lower() in ("1", "true", "yes", "on"):
+                seg_win = True
+            i += 1
+        if seg_win:
+            continue
+        i = max(i, prefix_end(toks, True))
+        if i < len(toks) and os.path.basename(toks[i]) in ("bash", "sh", "zsh") and "-c" in toks[i:]:
+            k = toks.index("-c", i)
+            if k + 1 < len(toks):
+                hit = emulator_window_violation(toks[k + 1])
+                if hit:
+                    return hit
+            continue
+        prog0 = os.path.basename(toks[i].lstrip("(")) if i < len(toks) else ""
+        ran = (shell_norm.su_command(toks[i + 1:]) if prog0 == "su"
+               else ("script", shell_norm.shell_script(toks[i + 1:])) if prog0 in shell_norm.SHELLS else None)
+        if ran and ran[1]:
+            hit = emulator_window_violation(ran[1] if ran[0] == "script" else " ".join(shlex.quote(w) for w in ran[1]))
+            if hit:
+                return hit
+            continue
+        if i >= len(toks):
+            continue
+        exe = toks[i].lstrip("(")
+        base = os.path.basename(exe)
+        args = [a.rstrip(")") for a in toks[i + 1:]]
+        has_avd = "-avd" in args or any(a.startswith(("-avd=", "@")) and len(a) > 1 for a in args)
+        is_emu = base in ("emulator", "emulator.exe") or base.startswith("qemu-system-") or (base.startswith("$") and ("-avd" in args or any(a.startswith("-avd=") for a in args)))
+        if not is_emu or not has_avd:
+            continue
+        if any(a in ("-list-avds", "-version", "-help", "-help-all", "--help") for a in args):
+            continue
+        if "-no-window" not in args:
+            return " ".join([exe] + args)
+    return None
+
+if not MCP:
+    emu_win = next(filter(None, (emulator_window_violation(t) for t in TEXTS)), None)
+    if emu_win:
+        sys.stderr.write("\n🛑 [HARDWARE SAFETY GATE REJECTED]\n")
+        sys.stderr.write("Lệnh khởi chạy Android Emulator thiếu cờ `-no-window` bị chặn (mở cửa sổ GUI làm phiền người dùng):\n")
+        sys.stderr.write(f"  • {emu_win}\n")
+        sys.stderr.write(f"  • Lệnh: {shown}\n\n")
+        sys.stderr.write("Bắt buộc chạy máy ảo ngầm (headless) dưới background bằng cách thêm `-no-window -no-audio -no-boot-anim`\n"
+                         "hoặc gọi `python3 .agents/devkit/bin/proof-capture.py` (mặc định chạy `-no-window`). Nếu cần hiện cửa sổ, đặt `PROOF_WINDOW=1`.\n")
+        sys.exit(2)
 
 if not MCP and active_profile() == "automotive":
     lc = next(filter(None, (logcat_violation(t) for t in TEXTS)), None)
