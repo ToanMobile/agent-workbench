@@ -572,14 +572,22 @@ STUB_ITEMS_FAIL=1 wd
   && ok "failed card-list read keeps red markers (no clear, REDS kept)" \
   || fail "items read failure cleared reds: REDS='$(field REDS "$BST")'"
 # Card rời Building/QA/Review: gỡ field.
-sed -i '' 's/^KEY=.*/KEY=x/; s/^AT=.*/AT=1/' "$BST"
+sed -i '' 's/^KEY=.*/KEY=x/; s/^AT=.*/AT=1/' "$BST"; c0=$(grep -c -- '--id I_77 --project-id P1 --field-id F_RUN --clear' "$TMP/calls")
 STUB_ITEMS='{"items":[{"id":"I_77","status":"Done","content":{"number":77}},{"id":"I_15","status":"Building","content":{"number":15}}]}' wd
-grep -q -- '--id I_77 --project-id P1 --field-id F_RUN --clear' "$TMP/calls" && case " $(field REDS "$BST") " in *" 77 "*) false ;; *) true ;; esac \
+[ "$(grep -c -- '--id I_77 --project-id P1 --field-id F_RUN --clear' "$TMP/calls")" -gt "$c0" ] && case " $(field REDS "$BST") " in *" 77 "*) false ;; *) true ;; esac \
   && ok "red card that left the active columns is cleared and dropped from REDS" || fail "card leaving QA not cleared: REDS='$(field REDS "$BST")'"
 # Field tạo lại (id mới): REDS cũ không còn giá trị, ghi đỏ lại.
 printf 'KEY=x\nAT=1\nFIELD=\nCARDS=77\nREDS=77\n' > "$BST"; r0=$(grep -c -- '--id I_77 .*--text 🔴' "$TMP/calls")
 STUB_ITEMS="$IT77" wd
 [ "$(grep -c -- '--id I_77 .*--text 🔴' "$TMP/calls")" -gt "$r0" ] && ok "field id re-resolved → red markers rewritten" || fail "red not rewritten after field re-resolve" 
+# Đọc danh sách lỗi đúng lúc id field vừa đọc lại: vẫn không xoá dấu đỏ.
+printf 'KEY=x\nAT=1\nFIELD=\nCARDS=77\nREDS=77\n' > "$BST"; c0=$(grep -c -- '--id I_77 .*--clear' "$TMP/calls")
+STUB_ITEMS_FAIL=1 wd
+[ "$(grep -c -- '--id I_77 .*--clear' "$TMP/calls")" = "$c0" ] && case " $(field REDS "$BST") " in *" 77 "*) true ;; *) false ;; esac \
+  && ok "items read failure right after a field re-resolve keeps red markers" || fail "reds lost: REDS='$(field REDS "$BST")'"
+# Đọc danh sách lỗi khi card đỏ cũ nay có worker sống (#15): bỏ nó khỏi REDS (nó đang 🟢).
+printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15 77\nREDS=15 77\n' > "$BST"; STUB_ITEMS_FAIL=1 wd
+case " $(field REDS "$BST") " in *" 15 "*) fail "a now-live card stays in REDS: '$(field REDS "$BST")'" ;; *" 77 "*) ok "items read failure drops now-live cards from REDS, keeps the rest" ;; *) fail "REDS='$(field REDS "$BST")'" ;; esac
 # Từng card: field chữ "Đang chạy" của Project ghi lane + giờ bắt đầu + thời lượng khi worker sống, xoá khi worker dừng.
 grep -q "^gh project item-edit --id I_15 --project-id P1 --field-id F_RUN --text 🟢 đang code · từ $(TZ=Asia/Ho_Chi_Minh date -r "$WS" '+%H:%M') · 1g15p" "$TMP/calls" \
   && ok "card #15 gets its 'Đang chạy' field: lane, start time, elapsed" || fail "card field not written: $(grep 'item-edit' "$TMP/calls" | tail -2 | tr '\n' ' ')"

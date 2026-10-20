@@ -313,13 +313,21 @@ $BS_CARDS
 EOF
   # Card ở Building/QA/Review mà không có worker sống: 🔴 không chạy (người dùng 20/10: nhìn card biết task có đang chạy
   # không). Chỉ ghi lần đầu thấy đỏ (REDS); card rời cột hoạt động thì vòng xoá bên dưới gỡ field.
-  local items red="" prev_red
-  prev_red=$(field REDS "$BOARD_STATUS"); CF_REDS=""
+  local items red="" prev_red orig_red
+  orig_red=$(field REDS "$BOARD_STATUS"); prev_red=$orig_red; CF_REDS=""
   # Field vừa đọc lại id (tạo lại, hay ghi hỏng lượt trước): dấu đỏ cũ có thể không còn trên GitHub → ghi lại hết.
   [ -n "$field_known" ] || prev_red=""
   if ! items=$(card20 --config "$3" items 2>/dev/null); then
-    # Đọc danh sách card lỗi (mạng, đọc thiếu trang): giữ nguyên trạng thái đỏ, không xoá, không ghi lại.
-    red=$prev_red; CF_REDS=$prev_red; keep="$keep $prev_red"; items=""
+    # Đọc danh sách card lỗi (mạng, đọc thiếu trang): giữ dấu đỏ đã có (bản gốc, kể cả khi id field vừa đọc lại), không
+    # xoá, không ghi lại; card nay có worker sống (vừa ghi 🟢 ở trên) thì bỏ khỏi danh sách đỏ.
+    set -f
+    for n in $orig_red; do
+      case "$n" in ''|*[!0-9]*) continue ;; esac
+      case " $live " in *" $n "*) continue ;; esac
+      red="$red $n"; CF_REDS="$CF_REDS $n"; keep="$keep $n"
+    done
+    set +f
+    items=""
   fi
   while IFS='	' read -r n item; do
     case "$n" in ''|*[!0-9]*) continue ;; esac
