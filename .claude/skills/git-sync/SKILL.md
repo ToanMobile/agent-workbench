@@ -75,9 +75,9 @@ Runs only when a commit group touches `supabase/` (migrations, schema, functions
 1. The branch has an upstream: `git push`.
 2. A new branch: `git push -u origin <branch>`.
 3. NEVER `--force` or `--force-with-lease`.
-4. The branch is the default or a protected branch (`main`, `master`, `production`, or the
-   repo's default from `gh repo view --json defaultBranchRef`): push only after the user says
-   yes in this conversation. Otherwise offer a branch and a PR instead.
+4. Push the current branch, including a fast-forward of `main`, `master` or `production`.
+   Do not ask. NEVER `--force`. A delete of a protected branch, or a non-fast-forward
+   rejection that one pull does not fix: stop and ask.
 5. Push rejected as non-fast-forward: go back to Pull once. Rejected again: stop.
 
 ## 6 · Report

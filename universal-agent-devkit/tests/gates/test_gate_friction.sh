@@ -440,12 +440,13 @@ r_alias="$(rg15 "CHƯA XONG — còn làm")"; r_later="$(rg15 "XONG")"
 [ "$r_base" = 0 ] && [ "$r_alias" = 0 ] && [ "$r_later" = 2 ] \
   && ok "a local commit mid-work is not gated; the handover turn still tests it (made outside the transcript)" \
   || fail "unverified commit: base=$r_base wip=$r_alias later=$r_later"
-# …but once unverified commits are on the upstream (pushed by any path), a progress reply is gated.
+# Commit đã lên upstream vẫn nợ tới lượt bàn giao (XONG), không phải mỗi lời giữa chừng.
+# test_regression_gate_trunk_main.sh ca 9–10 giữ đúng cặp: CHƯA XONG không chạy suite, XONG thì chạy.
 git init -q --bare "$TMP/up15.git"; git -C "$M15" remote add origin "$TMP/up15.git"
 git -C "$M15" push -q -u origin HEAD 2>/dev/null
 r_pushed="$(rg15 "CHƯA XONG — còn làm")"
-[ "$r_pushed" = 2 ] && ok "unverified commits already on the upstream: gated even on a progress reply" \
-  || fail "pushed unverified commit passed a progress reply (rc=$r_pushed)"
+[ "$r_pushed" = 0 ] && ok "unverified commits on the upstream: a progress reply stays mid-work" \
+  || fail "pushed unverified commit gated a progress reply (rc=$r_pushed)"
 # An amend/reset with no upstream must not re-baseline to HEAD (Antigravity review v4): the
 # rewritten commit is tested from the last point both histories share.
 M17="$TMP/m17"; mkdir -p "$M17/src" "$M17/.agents"; git -C "$M17" init -q; git -C "$M17" config user.email t@t; git -C "$M17" config user.name t

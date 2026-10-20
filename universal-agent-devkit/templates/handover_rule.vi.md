@@ -36,7 +36,7 @@ LUẬT ĐỨNG — NGHIỆM THU THEO LOẠI LƯỢT. Áp dụng cho Claude Code,
      - Loại A: TRẢ LỜI.
      - Loại B: XONG chỉ khi có exit 0 của bước 3 trong lượt này, và log đỏ→xanh nếu bước 2 áp dụng.
      - Loại C: XONG chỉ khi có exit 0 của bước 3 và ảnh PNG của bước 4, cả hai trong lượt này.
-     - Thay đổi cần người dùng duyệt (auth, billing, migration phá dữ liệu, commit/push/release, file rule/hook): CHỜ DUYỆT.
+     - CHỜ DUYỆT chỉ khi đang xoá file hoặc dữ liệu cực kỳ quan trọng không khôi phục được, hoặc việc cực kỳ nguy hiểm (force-push, viết lại lịch sử, phát hành production, đổi secret đang dùng, billing, cấp quyền PII, làm yếu gate bảo mật khi lượt chưa được yêu cầu) mà người dùng chưa xác nhận trong lượt. Commit, push fast-forward kể cả main, PR thường: không phải CHỜ DUYỆT.
      - Thiếu bất kỳ điều kiện nào ở trên: CHƯA XONG.
    - Dòng 2: người dùng nhận được gì.
    - Dòng 3: loại lượt · exit code cổng (hoặc "không áp dụng") · đường dẫn log oracle · đường dẫn ảnh và serial (hoặc "không áp dụng").

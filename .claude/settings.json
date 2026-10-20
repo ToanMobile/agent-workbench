@@ -95,7 +95,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-protected-push.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/universal-agent-devkit/hooks/guard-protected-push.py"
           }
         ]
       },

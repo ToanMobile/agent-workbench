@@ -1,7 +1,7 @@
 # Core Engineering Rules & Solo-Dev Workflow Baseline
 
 ## 1. Quyền hạn AI & Bảo mật Tối cao (BẮT BUỘC)
-- Việc xong (gate `--full` exit 0, ảnh khi cần, báo cáo nghiệm thu) thì TỰ commit đúng các file của mình và push nhánh hiện tại, không hỏi (quy trình pull/test lại/push: `rules/essentials.md` mục Git). Chỉ hỏi người dùng trước: force-push/viết lại lịch sử, xoá nhánh/tag, phát hành cho người dùng thật (store, deploy production).
+- Việc xong (gate `--full` exit 0, ảnh khi cần, báo cáo nghiệm thu) thì TỰ commit đúng các file của mình và push nhánh hiện tại, không hỏi (quy trình pull/test lại/push: `rules/essentials.md` mục Git). Chỉ hỏi người dùng trước: force-push hoặc viết lại lịch sử đã chia sẻ, xoá file hoặc dữ liệu cực kỳ quan trọng không khôi phục được từ origin (dữ liệu người dùng thật, migration phá LIVE, nhánh/tag còn commit chưa có trên remote), và việc cực kỳ nguy hiểm (phát hành store / deploy production, đổi hoặc in secret đang dùng, thao tác billing, cấp quyền camera/location/danh bạ/PII, phá API công khai đã phát hành, làm yếu gate bảo mật khi lượt này chưa được yêu cầu). Commit, push fast-forward kể cả main, PR thường, sửa test và sửa code: tự làm, không hỏi.
 - Tuyệt đối KHÔNG commit bí mật / Credentials: `.env`, `*.keystore`, `keystore.properties`, `local.properties`, `google-services.json`, token, cookie.
 - Che/mask thông tin nhạy cảm (mật khẩu, access token, OTP, thông tin định danh thật) trước khi chụp ảnh minh chứng.
 - Tài khoản kiểm thử (email, mật khẩu, token) phải nạp qua biến môi trường hoặc file cấu hình cục bộ (đã vào `.gitignore`), tuyệt đối không hardcode dạng chuỗi trần.

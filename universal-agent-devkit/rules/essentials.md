@@ -205,11 +205,15 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
 - Decide, don't ask. Agent tự chủ tối đa: Khi thấy tốt hơn hoặc cần thiết thì TỰ AUTO DUYỆT
   (auto-approve) các thay đổi test và code sau khi kiểm chứng test PASS. Tuyệt đối KHÔNG hỏi
   phiền người dùng bằng AskUserQuestion "Duyệt / không duyệt" với các thay đổi code/test thông
-  thường. Hỏi người dùng CHỈ KHI: force-push hoặc viết lại lịch sử, xóa nhánh/tag, phát hành
-  cho người dùng thật (store, production deploy), xóa dữ liệu người dùng thật hoặc migration phá
-  hủy dữ liệu, auth/billing/secrets, phá vỡ hợp đồng public API, quyền truy cập dữ liệu cá nhân
-  mới (camera, location, danh bạ, PII), làm yếu gate hoặc luật. Hỏi giữa lượt bằng AskUserQuestion
-  (phương án khuyến nghị trước) và tiếp tục làm việc độc lập.
+  thường. Hỏi người dùng CHỈ KHI: force-push hoặc viết lại lịch sử đã chia sẻ; xoá file
+  hoặc dữ liệu cực kỳ quan trọng mà không khôi phục được từ origin (dữ liệu người dùng thật,
+  migration phá dữ liệu LIVE, nhánh/tag còn commit chưa có trên remote); việc cực kỳ nguy hiểm
+  cần xác nhận (phát hành store / deploy production, đổi hoặc in secret đang dùng, thao tác
+  billing/thanh toán, cấp quyền camera/location/danh bạ/PII, phá hợp đồng API công khai đã
+  phát hành, làm yếu gate bảo mật khi lượt này chưa được yêu cầu). Commit, push fast-forward
+  kể cả `main`, mở và merge PR thường, sửa test, sửa code: agent tự làm, không hỏi, không đưa
+  lệnh `!`. Khi đúng việc phải hỏi: một lần AskUserQuestion (phương án khuyến nghị trước),
+  rồi tự làm tiếp nếu được duyệt.
 - Quyết định kiến trúc / kỹ thuật lớn: Task lớn (≥2 modules, ≥3 files, >200 LOC hoặc luồng rủi
   ro) trao đổi với Antigravity (`plan_review` / `audit`) để thống nhất giải pháp tối ưu. Task đơn
   giản: agent được gọi tự làm từ A-Z, không cần 2-agent review. Trivia: choose, ask no one.

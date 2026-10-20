@@ -5,7 +5,7 @@ description: Dùng khi chạy /devkit-audit hoặc khi người dùng muốn aud
 
 # DevKit Audit hằng ngày (đo → audit → review → tối ưu → bàn giao)
 
-Mục tiêu: đưa chính DevKit tới **100/100** theo `skills/devkit-audit/references/rubric.md`. **Ưu tiên số một: hook Stop** (số lần chặn thật, thời gian chạy lặp). Mỗi ngày đo lại, chỉ sửa cái đo được, mỗi sửa có test ĐỎ→XANH. **Mặc định dùng thêm `/giao`**: Antigravity phản biện kế hoạch và audit diff. Chạy tự động từ đầu đến cuối; chỉ hỏi người dùng việc chỉ họ quyết: xoá dữ liệu, force-push, sửa file luật, quyền dữ liệu mới.
+Mục tiêu: đưa chính DevKit tới **100/100** theo `skills/devkit-audit/references/rubric.md`. **Ưu tiên số một: hook Stop** (số lần chặn thật, thời gian chạy lặp). Mỗi ngày đo lại, chỉ sửa cái đo được, mỗi sửa có test ĐỎ→XANH. **Mặc định dùng thêm `/giao`**: Antigravity phản biện kế hoạch và audit diff. Chạy tự động từ đầu đến cuối; chỉ hỏi người dùng khi xoá file hoặc dữ liệu cực kỳ quan trọng không khôi phục được, hoặc việc cực kỳ nguy hiểm (force-push, phát hành production, đổi secret đang dùng, billing, cấp quyền PII). Sửa luật khi người dùng yêu cầu trong lượt thì làm, không hỏi lại.
 
 ## 7 pha (lệnh và bẫy: `skills/devkit-audit/references/procedure.md`; bài học: `references/lessons.md`; ứng viên sẵn: `references/backlog.md`)
 
