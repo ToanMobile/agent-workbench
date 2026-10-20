@@ -111,9 +111,11 @@ def format_entry(inst_id, title, cause=None, rule=None, symptom=None, check=None
 
 
 def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=None,
-                  force=False, dry_run=False, source=None, found_on=None):
+                  force=False, dry_run=False, source=None, found_on=None, seed=None):
     """Returns (status, inst_id, entry): status is "added", "dry-run" or "duplicate"
-    (inst_id is then the existing entry). Raises OSError / ValueError."""
+    (inst_id is then the existing entry). Raises OSError / ValueError.
+    `seed`: a template file written first when the file is still empty once the lock is held (a copy made before the lock truncated a
+    concurrent writer's lesson)."""
     if not md_escape(title):
         raise ValueError(tr("tiêu đề bài học rỗng", "the lesson title is empty"))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -122,6 +124,9 @@ def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=
             fcntl.flock(f, fcntl.LOCK_EX)  # id read + append are one step for concurrent writers
         f.seek(0)
         text = f.read()
+        if seed is not None and not text and not dry_run:
+            text = Path(seed).read_text(encoding="utf-8")
+            f.write(text)
         dup = find_duplicate(text, title)
         if dup and not force:
             return "duplicate", dup, None
@@ -161,21 +166,15 @@ def cmd_add(args) -> int:
     except ValueError as e:
         print(f"✖ {e}", file=sys.stderr)
         return 2
-    created = False
+    seed = None
     if not target.exists() and not args.dry_run:
         template = DEVKIT_ROOT / "templates" / "instincts.template.md"
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if template.is_file():
-                shutil.copyfile(template, target)
-                created = True
-        except OSError as e:
-            print(f"✖ {tr('Không tạo được', 'Cannot create')} {target}: {e}", file=sys.stderr)
-            return 2
+        seed = template if template.is_file() else None
+    created = seed is not None
     try:
         status, inst_id, entry = append_lesson(
             target, args.title, cause=args.cause, rule=args.rule, symptom=args.symptom,
-            check=args.check, force=args.force, dry_run=args.dry_run)
+            check=args.check, force=args.force, dry_run=args.dry_run, seed=seed)
     except (OSError, ValueError) as e:
         print(f"✖ {e}", file=sys.stderr)
         return 2

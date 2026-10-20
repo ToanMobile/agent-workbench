@@ -33,4 +33,7 @@ fi
 # AGENTS.md: shared logic (devkit link/copy vs the project's own file) — see backup_conflict.sh
 devkit_install_agents_md "$TARGET_DIR" "$MODE"
 
+# Skills in .agents/skills (AGENTS.md names that folder for every agent) — shared with setup_claude.sh.
+devkit_place_skills "$TARGET_DIR" "$MODE"
+
 echo "✓ OpenAI Codex / ChatGPT (AGENTS.md SSOT) ready."

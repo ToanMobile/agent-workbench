@@ -933,6 +933,16 @@ list_local_tier() {
   echo "================================================================="
 }
 
+# _backup_assert_safe_dir <dir> <project_root_physical> — 0 only when <dir> physically lives
+# inside the project. A parent that is a symlink out of it (into $DEVKIT_ROOT, say) would let
+# a restore write through to the DevKit's own files.
+_backup_assert_safe_dir() {
+  local real
+  real="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
+  case "$real" in "$2"|"$2"/*) return 0 ;; esac
+  return 1
+}
+
 # restore_old_backups <project_dir> [--apply]
 # Puts *_old backups recorded in .devkit_backups.log ledgers back in place. Dry-run by
 # default. A backup is restored only when its original location is now empty, a symlink
@@ -989,7 +999,12 @@ restore_old_backups() {
       fi
       # `agent-kit uninstall` removes install dirs left empty (.claude/commands, ...):
       # recreate the parent so the backup can go back.
-      if mkdir -p "$(dirname "$target")" && devkit_mv "$backup" "$target"; then
+      if ! mkdir -p "$(dirname "$target")" || ! _backup_assert_safe_dir "$(dirname "$target")" "$root_p"; then
+        echo "  SKIP     ${target#$root_p/} — its parent folder leads outside the project (symlink); ${backup#$root_p/} kept" >&2
+        skipped=$((skipped + 1))
+        continue
+      fi
+      if devkit_mv "$backup" "$target"; then
         echo "  restored ${backup#$root_p/} -> ${target#$root_p/}"
         restored=$((restored + 1))
       else

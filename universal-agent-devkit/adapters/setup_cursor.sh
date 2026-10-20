@@ -33,6 +33,9 @@ fi
 # AGENTS.md: shared logic (devkit link/copy vs the project's own file) — see backup_conflict.sh
 devkit_install_agents_md "$TARGET_DIR" "$MODE"
 
+# Skills in .agents/skills (AGENTS.md names that folder for every agent) — shared with setup_claude.sh.
+devkit_place_skills "$TARGET_DIR" "$MODE"
+
 # 2. An always-applied project rule, .cursor/rules/universal-agent-devkit.mdc: Cursor
 #    includes files named `@path` in a rule (docs: "Use @filename to include files in
 #    your rule's context"), so core, profile and project-tier rules reach every request.
