@@ -77,8 +77,11 @@ A board view shows no comments. A card that waits for a person carries the mark 
 `🙋 Cần bạn: <exactly what the person must do> · xong thì <what next>` comment. On 2026-10-19 about 25
 person-only cards were dragged to Ready by mistake because nothing on the card said so.
 
-Every Block whose `blocked-by:` is `-` because a person must act — reason tags 🙋 🧑 🔐 🔑 💳 🎨 🛡, and ❓
-when the answer is a person's decision — runs this right after posting the Block comment:
+Every Block whose `blocked-by:` is `-` because a person must act — reason tags 🙋 🧑 🔐 🔑 💳, and 🛡/❓ **only** when a human credential, external console login, legal identity, real-human playtest cohort, or physical hardware not replaceable by an emulator is genuinely required — runs this right after posting the Block comment:
+
+> **Iron Law of Autonomous Execution (`NEVER` mark `needs-you` for agent-doable work):**
+> `needs-you` is strictly reserved for steps an agent **cannot** perform without a human (missing passwords/API keys/secrets, Play Console / App Store / Supabase / `@BotFather` login, legal/company filings, live DB migrations outside `allowed_envs`, ≥5 real human playtesters, or physical car/hardware driving).
+> Agents MUST **NEVER** mark `needs-you` or move to `Blocked` for work agents can do themselves: testing a PR on a machine or Android/iOS emulator (`PhoneConnect`, Xcode Simulator), rerunning `post-fix-gate --full` or waiting for CPU load, cleaning up dirty worktrees, auto-approving test/regression matrices (`AUTO-APPROVE`), making technical/UI/architecture/scope decisions ("Decide, don't ask"), splitting oversized tickets (`< 400` lines), or running local CLI / GitHub Actions workflows (`gh workflow run`, `kokoro_vi.py`, `chmod +x`). `super-board-needs-you.py mark` mechanically rejects these actions with exit `64`.
 
 ```
 python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue <N> \

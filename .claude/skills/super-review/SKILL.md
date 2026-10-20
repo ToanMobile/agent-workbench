@@ -459,7 +459,10 @@ sub-agents'.
 **Aggregation rule: take the MINIMUM of the two scores.** Rationale: one strong skeptic should be enough to block.
 
 Compare aggregate to `config.truth_threshold` (default `70`):
-- **Below threshold** → Reviewer MUST NOT approve. Open `[reviewer]`-prefixed PR thread quoting the lowest-confidence sub-agent finding. Write the full §4 Block template comment. Move card Review → Blocked with reason 🛡 truth-check failed (confidence X/100). The bot's "Why I cannot decide" line names the specific sub-agent finding it could not confirm.
+- **Below threshold** → Reviewer MUST NOT approve. Inspect the lowest-confidence sub-agent finding:
+  - If the finding is a code defect, logic hazard, or missing unit test (`Bug`, `Gap`, `Scope drift`) → open a `[builder]`-prefixed PR thread quoting the finding, write the Reviewer report (`bounced`), and move card **Review → Ready** with `loop:rebuild-N` (**NEVER** `Blocked` or `needs-you`).
+  - If the finding is a test/runtime verification gap (`Verification miss`) that an agent can run on an emulator/simulator/local test runner → verify it directly in the Reviewer lane, or open a `[qa]`-prefixed PR thread and move card **Review → QA** with `loop:rebuild-N` (**NEVER** `Blocked` or `needs-you`).
+  - Move to `Blocked` (`🛡`) **ONLY** when the finding requires an irreversible destructive live operation (dropping a live DB table, rotating live production secrets) or after `config.rebuild_cap` bounces have been exhausted.
 - **Above threshold** → continue to approval decision.
 
 ### Block/Skip exits use the §4 mandatory template
