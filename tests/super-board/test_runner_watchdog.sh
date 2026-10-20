@@ -501,7 +501,8 @@ edits() { local n; n=$(grep -c '^gh project edit 1 --owner o --description' "$TM
 last_edit() { grep '^gh project edit 1 --owner o --description' "$TMP/calls" 2>/dev/null | tail -1; }
 rm -f "$WD" "$BST"; : > "$TMP/calls"
 printf 'STOPPED_AT=test\n' > "$MARK"; wd
-case "$(last_edit)" in *"⏸️"*"cập nhật "*) ok "stopped board → ⏸️ with update time on the Project description" ;; *) fail "stopped board status: '$(last_edit)'" ;; esac
+# "cập nhật HH:MM dd/MM" là hợp đồng với .github/scripts/board_heartbeat.py (cron đánh ⚫ khi giờ này cũ).
+case "$(last_edit)" in *"⏸️"*"cập nhật "[0-2][0-9]:[0-5][0-9]" "[0-3][0-9]/[01][0-9]) ok "stopped board → ⏸️ with 'cập nhật HH:MM dd/MM' on the Project description" ;; *) fail "stopped board status: '$(last_edit)'" ;; esac
 e0=$(edits); wd
 [ "$(edits)" = "$e0" ] && ok "same status inside 5 min → no second GitHub write" || fail "status rewritten every check ($(edits) writes)"
 rm -f "$MARK"; dead_pid; set_state "$D" halted 79; printf 'read-fail\n' > "$TMP/halt"; wd

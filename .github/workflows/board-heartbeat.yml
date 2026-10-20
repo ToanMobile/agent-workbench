@@ -1,0 +1,33 @@
+# Đánh ⚫ cho board super-board khi watchdog trên máy Mac ngừng cập nhật (máy ngủ/tắt/mất mạng).
+# Chạy trên runner của GitHub (repo public: không tính phút Actions). Script: .github/scripts/board_heartbeat.py
+name: board-heartbeat
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: board-heartbeat
+  cancel-in-progress: false
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+      - name: Mark boards whose watchdog went silent
+        run: python3 .github/scripts/board_heartbeat.py
+        env:
+          BOARD_PAT: ${{ secrets.BOARD_PAT }}
+          BOARD_OWNER: ToanMobile
+          BOARD_PROJECTS: '1 2 3 4 5 6'
+          BOARD_STALE_MIN: '20'
+          BOARD_TZ_HOURS: '7'

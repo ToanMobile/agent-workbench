@@ -192,7 +192,8 @@ take_check_lock() {
 # mô tả ngắn của Project: icon trạng thái, runner chạy từ lúc nào, worker đang sống kèm giờ bắt đầu + thời lượng, giờ cập
 # nhật. Chỉ ghi khi trạng thái đổi hoặc nhịp BOARD_STATUS_HEARTBEAT giây: giờ cập nhật cũ hơn nhịp nhiều = máy ngủ hay
 # watchdog chết (khi đó không gì ghi được). Không đổi tiêu đề Project (super-qa-file-bug.sh tìm Project theo tiêu đề).
-# Lỗi gh/mạng không bao giờ làm check hỏng: lượt sau thử lại. SB_BOARD_STATUS=0 tắt.
+# Lỗi gh/mạng không bao giờ làm check hỏng: lượt sau thử lại. SB_BOARD_STATUS=0 tắt. "cập nhật HH:MM dd/MM" là hợp đồng
+# với cron .github/scripts/board_heartbeat.py (agent-workbench): board 🟢/🟠 có giờ đó cũ quá 20 phút bị đánh ⚫.
 BOARD_STATUS="$DIR/$SLUG.board-status"; BOARD_STATUS_HEARTBEAT=300
 CHECKED=0
 
@@ -289,7 +290,7 @@ publish_board_status() {
   last_key=$(field KEY "$BOARD_STATUS"); last_at=$(field AT "$BOARD_STATUS")
   case "$last_at" in ''|*[!0-9]*) last_at=0 ;; esac
   [ "$BS_KEY" != "$last_key" ] || [ $((NOW - last_at)) -ge "$BOARD_STATUS_HEARTBEAT" ] || return 0
-  gh20 project edit "$number" --owner "$owner" --description "$BS_TEXT · cập nhật $(hhmm "$NOW")" >/dev/null 2>&1 || return 0
+  gh20 project edit "$number" --owner "$owner" --description "$BS_TEXT · cập nhật $(date -r "$NOW" "+%H:%M %d/%m")" >/dev/null 2>&1 || return 0
   publish_card_fields "$owner" "$number" "$cfg" || true
   { printf 'KEY=%s\nAT=%s\nFIELD=%s\nCARDS=%s\n' "$BS_KEY" "$NOW" "${CF_FIELD:-}" "${CF_CARDS:-}" > "$BOARD_STATUS.$$" \
       && mv -f "$BOARD_STATUS.$$" "$BOARD_STATUS"; } 2>/dev/null || rm -f "$BOARD_STATUS.$$" 2>/dev/null || true
