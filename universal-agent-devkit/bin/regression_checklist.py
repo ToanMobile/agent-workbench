@@ -2217,8 +2217,18 @@ def _count(data: dict, key: str) -> None:
     stats[key] = int(stats.get(key, 0)) + 1
 
 
-def _crit_hash(texts: list) -> str:
+def _crit_hash_legacy(texts: list) -> str:
+    """Hash before issue #18: norm_title() dropped "<", ">", "=", so opposite criteria collided."""
     return hashlib.sha1("\n".join(norm_title(t) for t in texts).encode()).hexdigest()[:12]
+
+
+def _crit_hash(texts: list) -> str:
+    """Criteria lock: like norm_title() but comparison operators count ("< 300ms" is not "> 300ms")."""
+    def norm(t: str) -> str:
+        t = unicodedata.normalize("NFKD", (t or "").lower().replace("đ", "d"))
+        t = "".join(ch for ch in t if not unicodedata.combining(ch))
+        return " ".join(re.findall(r"\w+|[<>=!]+", t))
+    return hashlib.sha1("\n".join(norm(t) for t in texts).encode()).hexdigest()[:12]
 
 
 def _union_links(item: dict) -> None:
@@ -2261,6 +2271,10 @@ def register_req(data: dict, title: str, criteria: list, *, component: str = "-"
         item = data["items"][rid]
         if item.get("kind") != "req":
             raise ValueError(f"{rid} không phải REQ")
+        if item.get("criteria_hash") == _crit_hash_legacy(criteria) and _crit_hash_legacy(criteria) != h:
+            # locked before issue #18 under the operator-blind hash; same text => same lock, upgrade it
+            if [c["text"] for c in item.get("criteria", [])] == criteria:
+                item["criteria_hash"] = h
         if item.get("criteria_hash") != h:
             if not reason:
                 raise ValueError(f"tiêu chí của {rid} đã khoá (hash {item.get('criteria_hash')}) — đổi phải có "
