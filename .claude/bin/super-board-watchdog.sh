@@ -8,10 +8,12 @@
 #      `super-board run` tường minh mới xoá);
 #   2. bản ghi của chính runner (<slug>.state) nói board đang chạy: STATE=running (bị SIGKILL, không kịp ghi) hoặc
 #      crashed (thoát ngoài ý muốn). Không có bản ghi (board dừng trước khi có watchdog) = không làm gì; finished,
-#      halted (mã 9/10/73/74/75/79) hoặc stopped = runner tự dừng có chủ đích, không khởi động lại;
+#      halted (mã 9/10/73/74/75/79) hoặc stopped = runner tự dừng có chủ đích, không khởi động lại — trừ halt 79 có
+#      github-halt.json lưu một lần ĐỌC: mỗi lượt thử `super-board-github-read.py --resume` (chỉ đọc), phát lại được
+#      thì khởi động lại (lỗi mạng tạm, vd. máy ngủ dậy);
 #   3. PID trong bản ghi không còn là một super-board-run.sh đang chạy;
 #   4. PATH có đủ công cụ runner cần để đọc board và giao việc (gh, jq, python3, claude, git);
-#   5. GitHub không bị halt (github-halt.json: đối chiếu rồi khởi động tay);
+#   5. GitHub không bị halt (github-halt.json lưu một lần ghi chưa rõ kết quả: đối chiếu rồi khởi động tay);
 #   6. backoff cho phép: lần thứ n chờ 60·2^(n-1) s sau lần trước; 5 lần liên tiếp thì bỏ cuộc tới khi người dùng
 #      khởi động tường minh hoặc runner sống được 10 phút.
 # Watchdog không bao giờ kill gì (không pkill theo tên) và không bao giờ xoá marker. Mỗi lần khởi động lại và mỗi lần
@@ -32,7 +34,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT"
 ROOT_P="$(pwd -P)"   # đường dẫn vật lý của repo: so với giá trị đọc từ bản ghi (safe_path, runner_log)
-case "$CMD" in check|status|install|ensure|uninstall) ;; *) sed -n '2,29p' "$0" >&2; exit 64 ;; esac
+case "$CMD" in check|status|install|ensure|uninstall) ;; *) sed -n '2,31p' "$0" >&2; exit 64 ;; esac
 case "$SLUG" in ''|*[!A-Za-z0-9._-]*) echo "usage: $0 $CMD <config-slug>" >&2; exit 64 ;; esac
 
 DIR=".claude/super-board/runner"
@@ -209,8 +211,18 @@ check() {
     verdict running "runner pid $pid is running"
     return 0
   fi
+  env_path=$(safe_path "$(field ENV_PATH "$STATE")"); env_path=${env_path:-$PATH}
+  local halt_resume=0
   case "$state" in
     running|crashed) ;;
+    # Halt GitHub (rc 79, còn github-halt.json): 20/10 09:00 máy gập nắp ngủ, 09:07 thức khi mạng chưa lên, `gh api
+    # rate_limit` hỏng 3 lần → cả 5 board halt và nằm im 3,5 giờ. Halt có lần ĐỌC đã lưu thì `--resume` phát lại được an
+    # toàn (chỉ đọc); halt do một lần ghi chưa rõ kết quả thì --resume tự từ chối (cần người đối chiếu).
+    halted)
+      if [ "$rc" != 79 ] || (PATH="$env_path"; python3 "$SCRIPT_DIR/super-board-github-read.py" --check >/dev/null 2>&1); then
+        verdict "ended-$state" "runner ended on purpose (STATE=${state:-?} rc=${rc:-?}) — not restarted"; return 0
+      fi
+      halt_resume=1 ;;
     *) verdict "ended-$state" "runner ended on purpose (STATE=${state:-?} rc=${rc:-?}) — not restarted"; return 0 ;;
   esac
   # Runner watchdog vừa khởi động đã chết trước khi ghi bản ghi của nó (lỗi config, verification-readiness, trước trap
@@ -225,11 +237,18 @@ check() {
     verdict spawn-died "runner pid $SPAWNED started by the watchdog exited before recording itself (config or readiness error, see ${t:-docs/super-board/runner.log}) — not restarted until an explicit super-board run"
     return 0
   fi
-  env_path=$(safe_path "$(field ENV_PATH "$STATE")"); env_path=${env_path:-$PATH}
   for t in $RUNNER_TOOLS; do (PATH="$env_path"; command -v "$t" >/dev/null 2>&1) || missing="$missing $t"; done
   if [ -n "$missing" ]; then
     verdict missing-tools "runner pid $pid is dead but its PATH lacks:$missing (PATH=$env_path) — not restarted"
     return 0
+  fi
+  if [ "$halt_resume" = 1 ]; then
+    # Mỗi lượt check (60 s) thử lại; chỉ ghi log khi kết luận đổi.
+    if ! (PATH="$env_path"; python3 "$SCRIPT_DIR/super-board-github-read.py" --resume >/dev/null 2>&1); then
+      verdict halt-wait "runner halted (rc=79): its saved GitHub read still fails, or the halt saved an uncertain write — retried every check; a write needs --resume --reconciled by hand"
+      return 0
+    fi
+    wlog "auto-resumed the GitHub halt of runner pid $pid: its saved read replayed OK (transient failure, e.g. network down after sleep)"
   fi
   if ! (PATH="$env_path"; python3 "$SCRIPT_DIR/super-board-github-read.py" --check >/dev/null 2>&1); then
     verdict github-halt "runner pid $pid is dead and GitHub reads are halted (github-halt.json) — reconcile, then start the board explicitly"

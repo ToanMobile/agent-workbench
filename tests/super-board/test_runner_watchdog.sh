@@ -67,6 +67,16 @@ import os, sys
 args = sys.argv[1:]
 if '--check' in args:
     sys.exit(79 if os.path.exists(os.environ['STUB_HALT']) else 0)
+# --resume: nội dung file halt giả = loại halt. read = lần đọc đã lưu phát lại được (halt được lưu trữ, exit 0);
+# read-fail = phát lại vẫn lỗi; write (hay khác) = ghi chưa rõ kết quả, cần người đối chiếu. Hai loại sau: exit 79.
+if '--resume' in args:
+    h = os.environ['STUB_HALT']
+    if not os.path.exists(h):
+        sys.exit(0)
+    if open(h).read().strip() == 'read':
+        os.remove(h)
+        sys.exit(0)
+    sys.exit(79)
 if 'quota' in args:
     print('{"resources":{"graphql":{"remaining":5000,"reset":0},"core":{"remaining":5000}}}')
     sys.exit(0)
@@ -448,6 +458,20 @@ printf 'RESTARTS=3\nLAST_RESTART=1\nVERDICT=\n' > "$WD"
 start_runner "$TMP/run4.out"
 wait_for 30 '! alive "$RP"' || kill_tree "$RP"
 [ ! -e "$WD" ] && ok "explicit start resets the watchdog backoff" || fail "explicit start kept RESTARTS=$(field RESTARTS "$WD")"
+
+# Halt vì một lần ĐỌC GitHub lỗi tạm (20/10 09:00: máy gập nắp ngủ, 09:07 thức dậy khi mạng chưa lên, `gh api
+# rate_limit` hỏng 3 lần → 5 board halt rc=79, nằm im 3,5 giờ tới khi có người khởi động tay). Lần đọc đã lưu phát lại
+# được an toàn (--resume chỉ đọc): watchdog tự resume rồi khởi động lại. Ghi chưa rõ kết quả hoặc phát lại vẫn lỗi:
+# giữ halt, không khởi động lại.
+rm -f "$WD"; dead_pid; set_state "$D" halted 79
+printf 'write\n' > "$TMP/halt"; expect_no_restart "halt with an uncertain write (a person reconciles it)"
+printf 'read-fail\n' > "$TMP/halt"; expect_no_restart "halt whose saved read still fails (GitHub/network still down)"
+[ -e "$TMP/halt" ] && ok "a halt whose replay failed is kept" || fail "halt file removed although its replay failed"
+printf 'read\n' > "$TMP/halt"; expect_restart "halt whose saved read now replays OK (transient read failure)"
+[ ! -e "$TMP/halt" ] && grep -q 'auto-resumed' "$WLOG" 2>/dev/null && ok "auto-resume of a transient read halt is logged" \
+  || fail "auto-resume not logged or halt kept: $(tail -2 "$WLOG" 2>/dev/null | tr '\n' ' ')"
+kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+rm -f "$WD" "$TMP/halt"
 
 [ -f "$BIN/super-board-watchdog.sh" ] && ! sed 's/#.*//' "$BIN/super-board-watchdog.sh" | grep -qE '(^|[^a-z])(pkill|killall)([^a-z]|$)' \
   && ok "watchdog never kills by name" || fail "watchdog missing or uses pkill/killall"
