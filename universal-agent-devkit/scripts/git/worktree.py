@@ -2808,6 +2808,37 @@ def _carry_secrets(main, items):
     return copied, refused
 
 
+def _staged_merge_refusal(wt):
+    """Issue #14: `git commit --no-edit` on an open merge commits everything staged and never reaches _commit_pending's scan. A staged
+    path that differs from BOTH parents (HEAD and MERGE_HEAD: what main brought is not the worktree's to answer for) gets the same two
+    checks: a secret-looking file, or a symlink HEAD does not hold as a link, stops the merge before anything is committed.
+    None when clean, else a (status, message, extra) refusal."""
+    def staged(against):
+        r = git(wt, "diff", "--cached", "--name-only", "-z", against, check=False)
+        return set(filter(None, r.stdout.split("\0"))) if r.returncode == 0 else None
+    mine, theirs = staged("HEAD"), staged("MERGE_HEAD")
+    if mine is None or theirs is None:
+        return "blocked", tr("không đọc được phần đã stage của merge đang mở: không kết thúc nó", "cannot read the staged part of the open merge: not concluding it"), {}
+    own = sorted(mine & theirs)
+    secret = [p for p in own if _secret_like(p)]
+    if secret:
+        return ("blocked", tr(f"{len(secret)} file giống bí mật đã stage trong merge đang mở sẽ không được tự commit: {', '.join(secret[:6])}. `git rm --cached` rồi thêm vào "
+                              f".gitignore hoặc chuyển ra ngoài; chưa có gì bị commit hay gộp", f"{len(secret)} secret-looking file(s) staged in the open merge are never "
+                              f"committed automatically: {', '.join(secret[:6])}. `git rm --cached` them and ignore or move them out; nothing was committed or merged"),
+                {"files": secret[:20]})
+    links = [p for p in own if os.path.islink(os.path.join(wt, p))]
+    if links:
+        held = {rec.partition("\t")[2] for rec in git(wt, "ls-tree", "-r", "-z", "HEAD", "--", *links, check=False,
+                                                       env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).stdout.split("\0")
+                if rec.partition("\t")[0].split()[:1] == ["120000"]}
+        new = [p for p in links if p not in held]
+        if new:
+            return ("blocked", tr(f"{len(new)} symlink mới đã stage trong merge đang mở sẽ không được tự commit: {', '.join(new[:6])}. `git rm --cached` nó; chưa có gì bị commit hay gộp",
+                                  f"{len(new)} new symlink(s) staged in the open merge are never committed automatically: {', '.join(new[:6])}. `git rm --cached` them; "
+                                  "nothing was committed or merged"), {"files": new[:20]})
+    return None
+
+
 def _commit_pending(wt, state):
     """Commit the worktree's uncommitted work IN the worktree (an isolated folder: nobody else's index). Bookkeeping the gate and the
     hooks regenerate is put back to HEAD (a file HEAD does not have is deleted), except the rows a person made. A local-config or
@@ -3204,6 +3235,9 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
         unmerged = git(wt, "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
         if unmerged:
             return _conflict(wt, unmerged)
+        refusal = _staged_merge_refusal(wt)
+        if refusal:
+            return refusal
         r = git(wt, "commit", "--no-edit", "-q", check=False, bounded=False)
         if r.returncode != 0:
             return "blocked", tr("không kết thúc được merge đang mở trong worktree: ", "cannot conclude the merge open in the worktree: ") + (r.stdout + r.stderr).strip()[-400:], {}
