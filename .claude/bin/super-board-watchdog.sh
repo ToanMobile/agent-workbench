@@ -201,7 +201,8 @@ release_check_lock() {
 # nhật. Chỉ ghi khi trạng thái đổi hoặc nhịp BOARD_STATUS_HEARTBEAT giây: giờ cập nhật cũ hơn nhịp nhiều = máy ngủ hay
 # watchdog chết (khi đó không gì ghi được). Không đổi tiêu đề Project (super-qa-file-bug.sh tìm Project theo tiêu đề).
 # Lỗi gh/mạng không bao giờ làm check hỏng: lượt sau thử lại. SB_BOARD_STATUS=0 tắt. "cập nhật HH:MM dd/MM" là hợp đồng
-# với cron .github/scripts/board_heartbeat.py (agent-workbench): board 🟢/🟠 có giờ đó cũ quá 20 phút bị đánh ⚫.
+# với cron .github/scripts/board_heartbeat.py (agent-workbench): board 🟢 có giờ đó cũ quá 20 phút bị đổi thành 🔴 mất tín
+# hiệu. Người dùng 20/10: chỉ 🟢 = đang chạy, 🔴 = không chạy; lane viết bằng chữ (code/test/review), không dùng biểu tượng.
 BOARD_STATUS="$DIR/$SLUG.board-status"; BOARD_STATUS_HEARTBEAT=300
 BOARD_TZ="${SB_BOARD_TZ:-Asia/Ho_Chi_Minh}"   # giờ hiện trên GitHub luôn +07, máy có đổi múi giờ cũng vậy
 CHECKED=0; CHECK_LOCK=""
@@ -220,7 +221,7 @@ iso_epoch() {   # "2026-10-20T06:16:29Z" (UTC) → epoch; BSD date rồi GNU dat
 }
 
 board_status_text() {   # đặt BS_KEY (không chứa giờ: biết trạng thái có đổi không), BS_TEXT (mô tả), BS_CARDS ("<số>\t<chữ>" mỗi dòng)
-  local f n pid lane st t glyph started detail="" ctext
+  local f n pid lane st t word started detail="" ctext
   BS_CARDS=""
   case "$VERDICT" in
     running|restarted|starting)
@@ -233,25 +234,25 @@ board_status_text() {   # đặt BS_KEY (không chứa giờ: biết trạng th�
         [ -f "$f" ] || continue
         pid=$(field PID "$f"); lane=$(field LANE "$f")
         { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; } || continue
-        case "$lane" in build) glyph="🔨" ;; qa) glyph="🔍" ;; review) glyph="✏️" ;; *) glyph="•" ;; esac
-        BS_KEY="$BS_KEY $glyph#$n"
+        case "$lane" in build) word=code ;; qa) word=test ;; review) word=review ;; *) word=${lane:-task} ;; esac
+        BS_KEY="$BS_KEY #$n:$word"
         st=$(field STARTED "$f"); t=$(iso_epoch "$st") || t=""
         case "$t" in
-          ''|*[!0-9]*) ctext="$glyph $lane"; detail="$detail · $glyph#$n" ;;
-          *) ctext="$glyph $lane · từ $(hhmm "$t") · $(span $((NOW - t)))"
-             detail="$detail · $glyph#$n từ $(hhmm "$t") ($(span $((NOW - t))))" ;;
+          ''|*[!0-9]*) ctext="🟢 đang $word"; detail="$detail · #$n $word" ;;
+          *) ctext="🟢 đang $word · từ $(hhmm "$t") · $(span $((NOW - t)))"
+             detail="$detail · #$n $word từ $(hhmm "$t") ($(span $((NOW - t))))" ;;
         esac
         BS_CARDS="$BS_CARDS$n	$ctext
 "
       done
-      [ "$BS_KEY" != "🟢 đang chạy" ] || detail="$detail · không có worker"
+      [ "$BS_KEY" != "🟢 đang chạy" ] || detail="$detail · không có task nào đang làm"
       BS_TEXT="🟢 đang chạy$detail"
       return 0 ;;
-    stopped|ended-stopped) BS_KEY="⏸️ đã dừng (người dùng stop)" ;;
-    halt-wait) BS_KEY="🟠 halt GitHub — watchdog tự thử lại mỗi phút" ;;
-    github-halt) BS_KEY="🔴 halt GitHub — cần đối chiếu tay (--resume --reconciled)" ;;
-    backoff-*) BS_KEY="🟠 runner vừa chết — chờ khởi động lại" ;;
-    ended-finished) BS_KEY="⚪ hết việc — runner đã thoát" ;;
+    stopped|ended-stopped) BS_KEY="🔴 đã dừng (bạn stop)" ;;
+    halt-wait) BS_KEY="🔴 dừng: lỗi đọc GitHub — watchdog tự thử lại mỗi phút" ;;
+    github-halt) BS_KEY="🔴 dừng: lỗi ghi GitHub — cần người đối chiếu (--resume --reconciled)" ;;
+    backoff-*) BS_KEY="🔴 runner vừa chết — sắp tự khởi động lại" ;;
+    ended-finished) BS_KEY="🔴 dừng: hết việc" ;;
     *) BS_KEY="🔴 runner ngừng (${VERDICT:-?}) — xem $SLUG.watchdog.log" ;;
   esac
   BS_TEXT="$BS_KEY"
@@ -286,9 +287,9 @@ publish_card_fields() {
   # Field chữ "Đang chạy" trên từng card: lane + giờ bắt đầu + thời lượng khi worker còn sống, xoá khi worker dừng (card
   # ở Building/QA/Review mà trống field = không ai đang làm). Đặt CF_FIELD và CF_CARDS (card đang/có thể còn mang field,
   # để lượt sau xoá). $1 owner, $2 number, $3 config.
-  local pid n text item fields live="" keep=""
+  local pid n text item fields live="" keep="" field_known
   FIELD_STALE=""
-  CF_FIELD=$(field FIELD "$BOARD_STATUS"); CF_CARDS=$(field CARDS "$BOARD_STATUS")
+  CF_FIELD=$(field FIELD "$BOARD_STATUS"); CF_CARDS=$(field CARDS "$BOARD_STATUS"); field_known=$CF_FIELD
   pid=$(card20 --config "$3" ids 2>/dev/null | jq -r '.projectId // empty' 2>/dev/null) || pid=""
   [ -n "$pid" ] || return 0
   if [ -z "$CF_FIELD" ]; then
@@ -310,10 +311,44 @@ publish_card_fields() {
   done <<EOF
 $BS_CARDS
 EOF
+  # Card ở Building/QA/Review mà không có worker sống: 🔴 không chạy (người dùng 20/10: nhìn card biết task có đang chạy
+  # không). Chỉ ghi lần đầu thấy đỏ (REDS); card rời cột hoạt động thì vòng xoá bên dưới gỡ field.
+  local items red="" prev_red orig_red
+  orig_red=$(field REDS "$BOARD_STATUS"); prev_red=$orig_red; CF_REDS=""
+  # Field vừa đọc lại id (tạo lại, hay ghi hỏng lượt trước): dấu đỏ cũ có thể không còn trên GitHub → ghi lại hết.
+  [ -n "$field_known" ] || prev_red=""
+  if ! items=$(card20 --config "$3" items 2>/dev/null); then
+    # Đọc danh sách card lỗi (mạng, đọc thiếu trang): không xoá card đỏ nào (bản gốc, kể cả khi id field vừa đọc lại) và
+    # không ghi lại. REDS ("đã ghi đỏ trên field này") theo prev_red: id field vừa đổi thì rỗng, để lượt đọc tốt sau ghi
+    # 🔴 lên field mới. Card nay có worker sống (vừa ghi 🟢 ở trên) thì bỏ khỏi cả hai.
+    set -f
+    for n in $orig_red; do
+      case "$n" in ''|*[!0-9]*) continue ;; esac
+      case " $live " in *" $n "*) continue ;; esac
+      red="$red $n"; keep="$keep $n"
+      case " $prev_red " in *" $n "*) CF_REDS="$CF_REDS $n" ;; esac
+    done
+    set +f
+    items=""
+  fi
+  while IFS='	' read -r n item; do
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    case " $live " in *" $n "*) continue ;; esac
+    red="$red $n"; keep="$keep $n"
+    case " $prev_red " in *" $n "*) CF_REDS="$CF_REDS $n"; continue ;; esac
+    budget_ok || continue
+    if gh20 project item-edit --id "$item" --project-id "$pid" --field-id "$CF_FIELD" --text "🔴 không chạy" >/dev/null 2>&1; then
+      CF_REDS="$CF_REDS $n"
+    else FIELD_STALE=1; fi
+  done <<EOF
+$(printf '%s' "$items" | jq -r '.items[]? | select(.status == "Building" or .status == "QA" or .status == "Review")
+  | "\(.content.number)\t\(.id)"' 2>/dev/null)
+EOF
+  CF_REDS=${CF_REDS# }
   set -f   # CARDS nằm trong file worker ghi được: không glob, chỉ nhận số
   for n in $CF_CARDS; do
     case "$n" in ''|*[!0-9]*) continue ;; esac
-    case " $live " in *" $n "*) continue ;; esac
+    case " $live $red " in *" $n "*) continue ;; esac
     budget_ok || { keep="$keep $n"; continue; }
     item=$(card20 --config "$3" item-id "$n" 2>/dev/null) || { keep="$keep $n"; continue; }   # đọc lỗi: lượt sau thử
     # Xoá hỏng (mạng, hay field đã bị xoá trên GitHub): giữ card và đọc lại id field lượt sau.
@@ -353,7 +388,7 @@ publish_board_status() {
   rm -f "$ROOT/$DIR/$SLUG.publish-halt.json" 2>/dev/null || true   # sót từ lượt bị giết: đừng để nó chặn lượt này
   publish_card_fields "$owner" "$number" "$cfg" || true
   rm -f "$ROOT/$DIR/$SLUG.publish-halt.json" 2>/dev/null || true
-  { printf 'KEY=%s\nAT=%s\nFIELD=%s\nCARDS=%s\n' "$BS_KEY" "$NOW" "${CF_FIELD:-}" "${CF_CARDS:-}" > "$BOARD_STATUS.$$" \
+  { printf 'KEY=%s\nAT=%s\nFIELD=%s\nCARDS=%s\nREDS=%s\n' "$BS_KEY" "$NOW" "${CF_FIELD:-}" "${CF_CARDS:-}" "${CF_REDS:-}" > "$BOARD_STATUS.$$" \
       && mv -f "$BOARD_STATUS.$$" "$BOARD_STATUS"; } 2>/dev/null || rm -f "$BOARD_STATUS.$$" 2>/dev/null || true
   return 0
 }
