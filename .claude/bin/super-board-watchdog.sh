@@ -318,13 +318,15 @@ EOF
   # Field vừa đọc lại id (tạo lại, hay ghi hỏng lượt trước): dấu đỏ cũ có thể không còn trên GitHub → ghi lại hết.
   [ -n "$field_known" ] || prev_red=""
   if ! items=$(card20 --config "$3" items 2>/dev/null); then
-    # Đọc danh sách card lỗi (mạng, đọc thiếu trang): giữ dấu đỏ đã có (bản gốc, kể cả khi id field vừa đọc lại), không
-    # xoá, không ghi lại; card nay có worker sống (vừa ghi 🟢 ở trên) thì bỏ khỏi danh sách đỏ.
+    # Đọc danh sách card lỗi (mạng, đọc thiếu trang): không xoá card đỏ nào (bản gốc, kể cả khi id field vừa đọc lại) và
+    # không ghi lại. REDS ("đã ghi đỏ trên field này") theo prev_red: id field vừa đổi thì rỗng, để lượt đọc tốt sau ghi
+    # 🔴 lên field mới. Card nay có worker sống (vừa ghi 🟢 ở trên) thì bỏ khỏi cả hai.
     set -f
     for n in $orig_red; do
       case "$n" in ''|*[!0-9]*) continue ;; esac
       case " $live " in *" $n "*) continue ;; esac
-      red="$red $n"; CF_REDS="$CF_REDS $n"; keep="$keep $n"
+      red="$red $n"; keep="$keep $n"
+      case " $prev_red " in *" $n "*) CF_REDS="$CF_REDS $n" ;; esac
     done
     set +f
     items=""

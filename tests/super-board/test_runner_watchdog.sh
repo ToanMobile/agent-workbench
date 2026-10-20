@@ -583,8 +583,11 @@ STUB_ITEMS="$IT77" wd
 # Đọc danh sách lỗi đúng lúc id field vừa đọc lại: vẫn không xoá dấu đỏ.
 printf 'KEY=x\nAT=1\nFIELD=\nCARDS=77\nREDS=77\n' > "$BST"; c0=$(grep -c -- '--id I_77 .*--clear' "$TMP/calls")
 STUB_ITEMS_FAIL=1 wd
-[ "$(grep -c -- '--id I_77 .*--clear' "$TMP/calls")" = "$c0" ] && case " $(field REDS "$BST") " in *" 77 "*) true ;; *) false ;; esac \
-  && ok "items read failure right after a field re-resolve keeps red markers" || fail "reds lost: REDS='$(field REDS "$BST")'"
+[ "$(grep -c -- '--id I_77 .*--clear' "$TMP/calls")" = "$c0" ] && case " $(field REDS "$BST") " in *" 77 "*) false ;; *) true ;; esac \
+  && ok "items read failure right after a field re-resolve: card not cleared, not marked as already red" || fail "re-resolve+failure: REDS='$(field REDS "$BST")'"
+sed -i '' 's/^KEY=.*/KEY=x/; s/^AT=.*/AT=1/' "$BST"; r0=$(grep -c -- '--id I_77 .*--text 🔴' "$TMP/calls")
+STUB_ITEMS="$IT77" wd
+[ "$(grep -c -- '--id I_77 .*--text 🔴' "$TMP/calls")" -gt "$r0" ] && ok "next good read writes 🔴 on the re-resolved field" || fail "red not rewritten on the new field"
 # Đọc danh sách lỗi khi card đỏ cũ nay có worker sống (#15): bỏ nó khỏi REDS (nó đang 🟢).
 printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15 77\nREDS=15 77\n' > "$BST"; STUB_ITEMS_FAIL=1 wd
 case " $(field REDS "$BST") " in *" 15 "*) fail "a now-live card stays in REDS: '$(field REDS "$BST")'" ;; *" 77 "*) ok "items read failure drops now-live cards from REDS, keeps the rest" ;; *) fail "REDS='$(field REDS "$BST")'" ;; esac
