@@ -471,6 +471,43 @@
           "command": "bash tests/super-board/test_merge_gate_load_wait.sh"
         }
       ]
+    },
+    {
+      "component": "super-board-notify-and-slots",
+      "watch_files": [
+        ".claude/bin/super-board-notify.py",
+        ".claude/bin/super-board-run.sh",
+        "universal-agent-devkit/scripts/governance/super_board_all.py",
+        "universal-agent-devkit/scripts/governance/super_board_monitor.py",
+        "tests/super-board/test_notify.py",
+        "tests/super-board/test_super_board_all_slots.py",
+        "tests/super-board/test_runner_claim_loop.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-NOTIFY-SLOTS-01",
+          "name": "notify blocks test/lib/runaway Telegram spam; super_board_all covers all 6 repos; monitor scans worktree transcripts; claim loop caps total early deaths",
+          "command": "python3 tests/super-board/test_notify.py && python3 tests/super-board/test_super_board_all_slots.py && bash tests/super-board/test_runner_claim_loop.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-verification-py",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/proof-capture.py",
+        "universal-agent-devkit/tests/verification/test_proof_run_before.py",
+        "universal-agent-devkit/tests/verification/test_unity_compile_skip.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-VERIFY-PY-01",
+          "name": "unity compile skip when editmode/playmode runs + proof-capture run-before under device lock",
+          "command": "python3 universal-agent-devkit/tests/verification/test_unity_compile_skip.py && python3 universal-agent-devkit/tests/verification/test_proof_run_before.py",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
