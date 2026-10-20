@@ -85,6 +85,58 @@ DEVKIT_ROOT="$FK" bash -c 'source "$1" >/dev/null; restore_old_backups "$2" --ap
 [ ! -e "$FK/commands/zz.md" ] && [ -f "$Q/zz_old.md" ] && ok "restore never writes through a symlinked parent into the DevKit" \
   || bad "restore wrote through a symlinked parent into the DevKit"
 
+# Kiểm tra cha-symlink phải chạy TRƯỚC rm/mkdir (chỉ đọc), và cả ở dry-run để bản xem trước khớp --apply
+FK3="$TMP/fakekit3"; mkdir -p "$FK3/commands"; echo kit > "$FK3/AGENTS.md"
+ln -s "$FK3/AGENTS.md" "$FK3/commands/zz.md"   # link của DevKit sau cha-symlink: restore coi chỗ này là "trống"
+Q3="$TMP/proj3"; mkdir -p "$Q3"; ln -s "$FK3/commands" "$Q3/cmds"; echo plain > "$Q3/afile"
+echo a > "$Q3/zz_old.md"; echo b > "$Q3/nn_old.md"; echo c > "$Q3/ff_old.md"
+{ echo "2026-01-01 00:00:00 | $Q3/cmds/zz.md -> $Q3/zz_old.md"
+  echo "2026-01-01 00:00:00 | $Q3/cmds/newdir/nn.md -> $Q3/nn_old.md"
+  echo "2026-01-01 00:00:00 | $Q3/afile/ff.md -> $Q3/ff_old.md"; } > "$Q3/.devkit_backups.log"
+rs3() { DEVKIT_ROOT="$FK3" bash -c 'source "$1" >/dev/null; restore_old_backups "$2" $3' _ "$_bc" "$Q3" "${1:-}" 2>/dev/null; }
+out="$(rs3)"
+! echo "$out" | grep -q "^  would" && [ "$(echo "$out" | grep -c "^  SKIP")" = 3 ] \
+  && ok "dry-run reports SKIP (on stdout), never 'would', for targets --apply will skip" || bad "dry-run preview differs from --apply: $out"
+out="$(rs3 --apply)"
+[ -L "$FK3/commands/zz.md" ] && ok "apply: a DevKit file behind a symlinked parent is not deleted" || bad "apply deleted the DevKit file through a symlinked parent"
+[ ! -e "$FK3/commands/newdir" ] && ok "apply: no folder is created through a symlinked parent" || bad "apply created a folder inside the DevKit"
+[ -f "$Q3/zz_old.md" ] && [ -f "$Q3/nn_old.md" ] && [ -f "$Q3/ff_old.md" ] && ok "apply: skipped backups are kept" || bad "apply lost a skipped backup"
+[ "$(echo "$out" | grep -c "^  SKIP")" = 3 ] && ok "apply: every SKIP goes to stdout" || bad "apply: SKIP not on stdout: $out"
+echo "$out" | grep "afile/ff.md" | grep -q "symlink" && bad "apply: a file in the parent path is reported as a symlink: $out" \
+  || { echo "$out" | grep -q "SKIP     afile/ff.md" && ok "apply: a file in the parent path gets its own message" || bad "apply: afile/ff.md not skipped: $out"; }
+# _backup_assert_safe_dir: 0 = trong dự án (kể cả thư mục chưa tạo), 1 = ra ngoài, 2 = một phần đường dẫn là file
+_backup_assert_safe_dir "$Q3/sub/deeper" "$Q3"; r1=$?
+_backup_assert_safe_dir "$Q3/cmds/x" "$Q3"; r2=$?
+_backup_assert_safe_dir "$Q3/cmds" "$Q3"; r3=$?
+_backup_assert_safe_dir "$Q3/afile/x" "$Q3"; r4=$?
+# `..` trong ledger: bước leo tổ tiên theo chuỗi không được để `nope/../..` (nope chưa có) dẫn mkdir/mv ra ngoài dự án;
+# cha thiếu nhưng nằm trong dự án thì được tạo lại và bản sao lưu về chỗ cũ
+Q4="$TMP/proj4"; mkdir -p "$Q4"; echo d > "$Q4/dd_old.md"; echo e > "$Q4/ee_old.md"
+{ echo "2026-01-01 00:00:00 | $Q4/nope/../../outside4/dd.md -> $Q4/dd_old.md"
+  echo "2026-01-01 00:00:00 | $Q4/newsub/deep/ee.md -> $Q4/ee_old.md"; } > "$Q4/.devkit_backups.log"
+out="$(DEVKIT_ROOT="$FK3" bash -c 'source "$1" >/dev/null; restore_old_backups "$2" --apply' _ "$_bc" "$Q4" 2>/dev/null)"
+[ ! -e "$TMP/outside4" ] && [ ! -e "$Q4/nope" ] && [ -f "$Q4/dd_old.md" ] && echo "$out" | grep "SKIP     nope/../../outside4/dd.md" | grep -q "segment" \
+  && ok "apply: a '..' ledger target never reaches outside the project" || bad "apply followed '..' out of the project: $out"
+[ "$(cat "$Q4/newsub/deep/ee.md" 2>/dev/null)" = e ] && ok "apply: a missing parent inside the project is recreated and the backup restored" \
+  || bad "apply: missing parent not recreated: $out"
+Q5="$TMP/proj5"; mkdir -p "$Q5"; echo g > "$Q5/gg_old.md"
+echo "2026-01-01 00:00:00 | $Q5/gone/.. -> $Q5/gg_old.md" > "$Q5/.devkit_backups.log"
+out="$(DEVKIT_ROOT="$FK3" bash -c 'source "$1" >/dev/null; restore_old_backups "$2" --apply' _ "$_bc" "$Q5" 2>/dev/null)"
+[ ! -e "$Q5/gone" ] && [ -f "$Q5/gg_old.md" ] && echo "$out" | grep "SKIP     gone/.." | grep -q "segment" \
+  && ok "apply: a '..' as the LAST segment of the target is refused too" || bad "apply: last-segment '..' not refused: $out"
+# phía BACKUP cũng vậy: ledger (có thể đến từ repo clone về) không được kéo một file ngoài dự án vào trong rồi xoá bản gốc
+mkdir -p "$TMP/outside5"; echo secret > "$TMP/outside5/hh_old.md"; echo secret2 > "$TMP/outside5/ii_old.md"
+Q6="$TMP/proj6"; mkdir -p "$Q6"; ln -s "$TMP/outside5" "$Q6/lnk"
+{ echo "2026-01-01 00:00:00 | $Q6/hh.md -> $Q6/../outside5/hh_old.md"
+  echo "2026-01-01 00:00:00 | $Q6/ii.md -> $Q6/lnk/ii_old.md"; } > "$Q6/.devkit_backups.log"
+out="$(DEVKIT_ROOT="$FK3" bash -c 'source "$1" >/dev/null; restore_old_backups "$2" --apply' _ "$_bc" "$Q6" 2>/dev/null)"
+[ -f "$TMP/outside5/hh_old.md" ] && [ -f "$TMP/outside5/ii_old.md" ] && [ ! -e "$Q6/hh.md" ] && [ ! -e "$Q6/ii.md" ] \
+  && [ "$(echo "$out" | grep -c "^  SKIP")" = 2 ] \
+  && ok "apply: a backup path outside the project ('..' or a symlinked parent) is never moved in" || bad "apply moved a file from outside the project: $out"
+_backup_assert_safe_dir "$Q3/nope/../.." "$Q3"; r5=$?
+[ "$r1$r2$r3$r4$r5" = 01123 ] && ok "_backup_assert_safe_dir: missing dir inside=0, under a symlink out=1, symlink=1, under a file=2, a .. segment=3" \
+  || bad "_backup_assert_safe_dir codes: got $r1$r2$r3$r4$r5, want 01123"
+
 # Codex and Cursor adapters place the skills in .agents/skills like the other adapters
 for ad in codex cursor; do
   R="$TMP/proj-$ad"; mkdir -p "$R"

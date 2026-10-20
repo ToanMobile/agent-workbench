@@ -219,7 +219,7 @@ cat > "$TMP/bigpr/gh" <<'SH'
 echo "$*" >> "$GH_CALLS"
 case " $* " in
   *" pr view 170 "*) python3 -c 'import json; print(json.dumps({"labels": [], "body": "b", "additions": 206, "deletions": 0, "changedFiles": 103, "files": [{"path": "f%d" % i, "additions": 2, "deletions": 0} for i in range(100)]}))' ;;
-  *"pulls/170/files"*) python3 -c 'import json, os; n = 101 if os.environ.get("BIGPR_SHORT") else 103; files = [{"filename": "f%d" % i, "additions": 2, "deletions": 0} for i in range(n)]; print(json.dumps([files[:100], files[100:]]))' ;;
+  *" api repos/o/r/pulls/170/files "*) python3 -c 'import json, os; n = 101 if os.environ.get("BIGPR_SHORT") else 103; files = [{"filename": "f%d" % i, "additions": 2, "deletions": 0} for i in range(n)]; print(json.dumps([files[:100], files[100:]]))' ;;
   *" api rate_limit "*) echo '{"resources":{}}' ;;
   *) echo 'unexpected' >&2; exit 1 ;;
 esac
@@ -231,7 +231,7 @@ n=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["files"]
   || fail "big PR: rc=$rc files=$n halt=$( [ -e "$TMP/halt.json" ] && echo yes || echo no) err=$(head -c 200 "$TMP/err")"
 rm -f "$TMP/halt.json"
 rc=$(BIGPR_SHORT=1 SB_GITHUB_READ_STRICT=1 PATH="$TMP/bigpr:$PATH" run --kind metadata -- pr view 170 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
-[ "$rc" = 79 ] && ok "REST list still short of changedFiles → still incomplete evidence (halt in strict mode)" || fail "short REST list accepted: rc=$rc"
+[ "$rc" = 79 ] && [ -e "$TMP/halt.json" ] && ok "REST list still short of changedFiles → still incomplete evidence (halt in strict mode)" || fail "short REST list accepted: rc=$rc"
 rm -f "$TMP/halt.json"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_github_read: all passed" || { echo "❌ test_github_read: $FAILS failed"; exit 1; }

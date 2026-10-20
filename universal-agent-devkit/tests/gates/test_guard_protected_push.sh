@@ -2,6 +2,8 @@
 # Push thẳng main/master không còn bị chặn khi không force và không xoá nhánh.
 # Force, mirror và delete vẫn bị chặn: đó là việc cực kỳ nguy hiểm, agent phải hỏi.
 # ĐỎ trên bản hook cũ (mọi direct push đều Blocked).
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
+unset SB_ALLOW_PROTECTED_PUSH   # công tắc tắt guard từ shell gọi test sẽ làm mọi kiểm tra chạy trên guard đã tắt
 set -u
 DK="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$DK/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh (ratchet test_git_env_isolation.sh)
