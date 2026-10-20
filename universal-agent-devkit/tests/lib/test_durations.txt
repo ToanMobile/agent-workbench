@@ -341,3 +341,4 @@
 1 tests/verification/test_instincts_add_concurrent.sh
 3 tests/verification/test_red_proof_hardening.sh
 7 tests/worktree_git/test_worktree_automerge_staged_secret.sh
+1 tests/gates/test_hw_emulator_window.sh
