@@ -7,6 +7,9 @@
 #       none of them matched a runner pattern, and the kit's own suites count as green only with a summary line.
 # Accepted now: a command that names a script under tests/ through a $VAR, an interpreter held in a $VAR, and post-fix-gate.py with
 # --run-tests/--full/--force-full whose OWN verdict line is PASS with N/N suites (N ≥ 1).
+# Issue #74: `bash`/`sh` chạy thẳng file tests/**/test_*.sh hoặc hooks/tests/*.sh của kit, tool exit 0,
+# là một lần chạy xanh dù output chỉ có ✔/✖ và không có dòng "all passed". Vòng for vẫn cần dòng tóm tắt.
+# Vẫn chặn: exit 1, lần chạy trước lần sửa cuối, `bash -c 'echo ✔'`, `cat test_y.sh`.
 # Still blocked: a gate run that says CHƯA XÁC MINH / REJECT / 0 suites, any non-PASS verdict among several, is_error, a run before the
 # last source edit, a script outside tests/, a loop with no summary or with a FAILED line, a Gradle repo (its evidence is the XML),
 # and CHECK 7 (an outcome claim needs a RED→GREEN pair: a gate PASS is not one).
@@ -139,6 +142,42 @@ case('for f in tests/gates/test_*.sh; do bash "$f"; done with a pass summary',
 
 # ── unchanged behaviour ─────────────────────────────────────────────────────
 case("control: a literal kit suite path still counts", [E, ["bash", "bash tests/gates/test_x.sh", "x: all checks passed"]], 0)
+
+# ── issue #74: bash thẳng file kit, exit 0 của tool, không cần dòng "all passed" ──
+MARKS = "✔ parallel hint\n✔ lane plan\n"
+KIT_BASH = "bash universal-agent-devkit/tests/context_memory/test_parallel_hint.sh"
+case("direct bash of tests/**/test_*.sh exit 0 with check marks is a pass",
+     [E, ["bash", KIT_BASH, MARKS]], 0, msg="test PASS")
+case("direct bash of a deeper tests/a/b/test_*.sh exit 0 is a pass",
+     [E, ["bash", "bash tests/a/b/test_deep.sh", MARKS]], 0, msg="test PASS")
+case("direct bash of hooks/tests/*.sh exit 0 is a pass",
+     [E, ["bash", "bash hooks/tests/hook_contract_test.sh", "✔ contract\n"]], 0, msg="test PASS")
+case("direct bash of hooks/tests/*.sh whose name is not test_* or contract_test",
+     [E, ["bash", "sh hooks/tests/plain_helper.sh", "✔ helper\n"]], 0, msg="test PASS")
+case("same bash kit test with tool exit 1 is blocked",
+     [E, ["bash", KIT_BASH, MARKS, True]], 2, NO, msg="test PASS")
+case("bash kit test before the last edit is blocked",
+     [["bash", KIT_BASH, MARKS], E], 2, NO, msg="test PASS")
+case("bash -c echo checkmark is not a test run",
+     [E, ["bash", "bash -c 'echo ✔'", "✔"]], 2, NO, msg="test PASS")
+case("cat test_y.sh is not a test run",
+     [E, ["bash", "cat test_y.sh", "✔"]], 2, NO, msg="test PASS")
+case("cat of a suite path is not a test run",
+     [E, ["bash", "cat tests/context_memory/test_y.sh", "✔\nall checks passed"]], 2, NO, msg="test PASS")
+case("bash kit test exit 0 that prints a failure summary is still red",
+     [E, ["bash", KIT_BASH, "✔ one\n1 failed\n"]], 2, NO, msg="test PASS")
+case("deeper bash test that prints FAIL stays red",
+     [E, ["bash", "bash tests/a/b/test_deep.sh", "FAIL tests/a/b/test_deep.sh"]], 2, NO, msg="test PASS")
+case("hooks/tests exit 0 whose check name contains FAIL is still a pass",
+     [E, ["bash", "sh hooks/tests/plain_helper.sh", "✔ FAIL on secrets\n"]], 0, msg="test PASS")
+case("bash kit test chained with ; true is not a pass",
+     [E, ["bash", KIT_BASH + "; true", MARKS]], 2, NO, msg="test PASS")
+case("bash kit test or-true is not a pass",
+     [E, ["bash", KIT_BASH + " || true", MARKS]], 2, NO, msg="test PASS")
+case("bash kit test piped to cat is not a pass",
+     [E, ["bash", KIT_BASH + " | cat", MARKS]], 2, NO, msg="test PASS")
+case("bash kit test backgrounded is not a pass",
+     [E, ["bash", KIT_BASH + " &", MARKS]], 2, NO, msg="test PASS")
 case("CHECK 7 is untouched: a gate PASS is no RED→GREEN pair for an outcome claim",
      [E, ["bash", GATE_CMD, G_PASS]], 2, "CHECK 7", msg="Đã fix lỗi X. 14/14 test pass.")
 

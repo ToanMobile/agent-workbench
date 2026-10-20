@@ -28,3 +28,5 @@ export ANTIGRAVITY_PM_GLOBAL_CONFIG=/dev/null/agpm-test-no-global-config/.antigr
 # DEVKIT_LANG=en (user shell, a super-board runner or merge-gate verify) turned test_multi_session_gate.sh red (2026-10-16).
 # A test that wants en sets it itself after sourcing (none sets it before).
 export DEVKIT_LANG=vi
+# CI=true của worker super-board cũng ép --full (force_full_reason). Gate lồng trong test phải thấy chế độ thường.
+unset CI
