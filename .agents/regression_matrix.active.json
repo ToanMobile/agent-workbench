@@ -510,18 +510,17 @@
       ]
     },
     {
-      "component": "test-heavy-slot-isolation",
+      "component": "super-board-board-heartbeat",
       "watch_files": [
-        "universal-agent-devkit/tests/lib/clean_git_env.sh",
-        "universal-agent-devkit/bin/heavy_slot.py",
-        ".claude/bin/super-board-heavy-slot.py",
-        "tests/super-board/test_tests_skip_machine_slots.sh"
+        ".github/scripts/board_heartbeat.py",
+        ".github/workflows/board-heartbeat.yml",
+        "tests/super-board/test_board_heartbeat.sh"
       ],
       "mandatory_regression_tests": [
         {
-          "id": "REG-SB-TEST-SLOT-ISO-01",
-          "name": "tests never queue behind the machine's real heavy-verify slots",
-          "command": "bash tests/super-board/test_tests_skip_machine_slots.sh",
+          "id": "REG-SB-BOARD-HEARTBEAT-01",
+          "name": "GitHub Actions cron marks a 🟢/🟠 board ⚫ when the watchdog's 'cập nhật HH:MM dd/MM' is stale; leaves ⏸️/⚪/⚫ and foreign descriptions alone",
+          "command": "bash tests/super-board/test_board_heartbeat.sh",
           "parallel_safe": true
         }
       ]
@@ -536,7 +535,23 @@
         {
           "id": "REG-SB-MERGE-TIMEOUT-RETRY-01",
           "name": "merge gate retries a post-fix-gate verify once only when every red suite is TIMEOUT (REJECT exit 1, static checks passed); a real FAIL, UNTESTED or static finding is not retried; verify exit 124 still retried once",
-          "command": "bash tests/super-board/test_merge_gate_timeout_retry.sh",
+          "command": "bash tests/super-board/test_merge_gate_timeout_retry.sh"
+        }
+      ]
+    },
+    {
+      "component": "test-heavy-slot-isolation",
+      "watch_files": [
+        "universal-agent-devkit/tests/lib/clean_git_env.sh",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        ".claude/bin/super-board-heavy-slot.py",
+        "tests/super-board/test_tests_skip_machine_slots.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-TEST-SLOT-ISO-01",
+          "name": "tests never queue behind the machine's real heavy-verify slots",
+          "command": "bash tests/super-board/test_tests_skip_machine_slots.sh",
           "parallel_safe": true
         }
       ]

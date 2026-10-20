@@ -442,3 +442,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Worktree do công cụ tự tạo thiếu phần cài DevKit bị ignore, và bài thử pass trên đường khác đường chạy thật
 - **Nguyên nhân:** Merge gate chỉ tìm install.sh ở '.', tức worktree Reviewer do lane tạo bằng worktree add trần, nơi .agents/devkit (bị ignore) không có: scratch thiếu post-fix-gate.py, mọi PR đã review đỏ ở verify, 47 thẻ Blocked ở 5 board (19/10). Lane còn chép link tương đối .agents/active-profile của main y nguyên vào worktree sâu hơn nên link gãy (exit 127). Bài thử 20 phiên ngày 17/10 pass vì đi EnterWorktree (hook cài DevKit) và chạy merge gate từ main checkout, không đi qua lane + PR + merge gate từ worktree Reviewer.
 - **Quy tắc phòng ngừa & Cách fix:** Mọi script tìm DevKit hay state bị ignore phải tìm cả ở main checkout (dòng đầu danh sách worktree), không chỉ ở '.'; thiếu thì dừng với lỗi môi trường (exit 9), không quy cho PR. Bài thử nghiệm thu phải đi đúng đường production (lane tạo worktree, PR, merge gate chạy từ worktree Reviewer). Test: tests/super-board/test_merge_gate_devkit_from_main.sh, universal-agent-devkit/tests/worktree_git/test_heal_active_profile.sh.
+
+---
+
+### [INSTINCT-053] Halt vì lỗi đọc tạm thời không ai tự gỡ: máy ngủ dậy làm chết mọi board hàng giờ
+- **Ngày phát hiện:** 2026-10-20
+- **Hiện tượng lỗi:** Halt vì lỗi đọc tạm thời không ai tự gỡ: máy ngủ dậy làm chết mọi board hàng giờ
+- **Nguyên nhân:** super-board-github-read.py halt sau 3 lần đọc lỗi trong vài giây (mạng chưa lên sau khi máy thức), watchdog coi halt rc=79 là dừng có chủ đích nên không bao giờ khởi động lại
+- **Quy tắc phòng ngừa & Cách fix:** Mọi trạng thái dừng do lỗi tạm thời (mạng, quota, đọc) phải có đường tự phục hồi có giới hạn thời gian (replay chỉ đọc rồi restart); chỉ thao tác ghi chưa rõ kết quả mới chờ người. Trạng thái sống/chết phải hiện ra ngoài (mô tả Project, field card) kèm giờ cập nhật
