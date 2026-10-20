@@ -7,10 +7,9 @@
 # warning; unavailable required evidence or an unknown write outcome pauses the
 # run (79) while preserving any issue already created. No mutation is retried.
 #
-# Cards land in Backlog, not Ready. A refactor the reviewer noticed has had no human
-# eyes on it and no acceptance criteria; auto-promoting it to Ready would feed the
-# build lane work nobody asked for. It waits for `super-board lint` like any other
-# unrefined ticket.
+# Thẻ có đủ acceptance criteria sẽ vào Ready; thẻ chưa có sẽ vào Backlog.
+# Ghi chú trần chưa qua mắt người đọc; tự đẩy lên Ready sẽ mớm việc chưa ai duyệt
+# cho lane build. Thẻ đó chờ `super-board lint` như mọi ticket chưa làm mịn khác.
 #
 # Usage:
 #   super-review-file-refactor.sh --config <config.json> \
@@ -181,6 +180,10 @@ LABEL_ARGS=()
 for l in "${LABELS[@]}"; do LABEL_ARGS+=(--label "$l"); done
 
 # Title: `♻️ [refactor] <scope>: <title>`; scope = --area, else the fingerprint's module.
+# --title là mô tả vấn đề trần. Nếu caller truyền theo mẫu `<emoji> [<kind>] <scope>: <subject>`
+# thì cắt bỏ tiền tố đó để không bị nhân đôi; chỉ khớp khi từ đầu là ký tự ngoài ASCII (emoji)
+# nên các tiêu đề như `Map [x] fields: keep order` vẫn giữ nguyên.
+TITLE=$(printf '%s' "$TITLE" | LC_ALL=C sed -E 's/^[^ -~]{1,16} \[[a-z-]+\] [^:]{1,40}: //')
 SCOPE="${AREA:-${FINGERPRINT%%|*}}"
 SCOPE=$(echo "${SCOPE:-code}" | tr '[:upper:]' '[:lower:]' | sed -E 's#[^a-z0-9._/-]+#-#g; s#^-+|-+$##g')
 python3 "$GITHUB_READ" --check || exit $?
