@@ -138,7 +138,8 @@ def patch_of(project: Path, bid: str) -> Path | None:
 
 def patch_files(patch: Path) -> list:
     """Paths a patch touches (both sides), via `git apply --numstat` (no repo needed)."""
-    r = subprocess.run(["git", "apply", "--numstat", str(patch)], capture_output=True, text=True)
+    # cwd="/": inside a repo subdirectory git apply skips paths outside it and reports an empty patch
+    r = subprocess.run(["git", "apply", "--numstat", str(patch)], capture_output=True, text=True, cwd=os.sep)
     if r.returncode != 0:
         return []
     return [line.split("\t", 2)[2] for line in r.stdout.splitlines() if line.count("\t") >= 2]
@@ -550,8 +551,9 @@ def narrowed(project: Path, template: str | None, tests: list, scope: str | None
         out = out.replace("{unity_filter}", "--filter '" + ";".join(_cs_name(project, t) for t in cs) + "'")
     for ph in ("{pytest_nodes}", "{jest_paths}"):
         if ph in out:
-            out = out.replace(ph, " ".join(tests))
-    return None if "{" in out and "}" in out else out
+            out = out.replace(ph, " ".join(shlex.quote(t) for t in tests))
+    # An unfilled {placeholder} means "run it all"; a literal ${ENV_VAR} is the shell's, not ours.
+    return None if re.search(r"(?<!\$)\{[A-Za-z_][A-Za-z0-9_]*(?::[A-Za-z0-9_]+)?\}", out) else out
 
 
 def run(cmd: str, cwd: Path, timeout: float) -> tuple:
@@ -566,6 +568,10 @@ def run(cmd: str, cwd: Path, timeout: float) -> tuple:
         except ProcessLookupError:
             pass
         return None, (proc.communicate()[0] or "") + "\n(TIMEOUT)"
+    except BaseException:   # SIGTERM/SIGINT (see main): leave no orphan test process group, then let the cleanup run
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        raise
 
 
 def prove(project: Path, data: dict, bid: str, *, fix_commit: str | None, heavy: bool,
@@ -851,6 +857,8 @@ def main(argv=None) -> int:
         subprocess.Popen([sys.executable, __file__, *args, "--wait"], cwd=str(project),
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         return 0
+    # SIGTERM → SystemExit: unwinds through worktree()'s finally and run()'s group kill (SIGINT already raises).
+    signal.signal(signal.SIGTERM, lambda signum, _frame: sys.exit(128 + signum))
     state = project / ".claude" / "audit-gate"
     state.mkdir(parents=True, exist_ok=True)
     # jobs_of() proofs at a time per project (default 1: each is two full builds)
