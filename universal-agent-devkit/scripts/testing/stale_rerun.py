@@ -182,12 +182,13 @@ def _gate_module():
     return _GATE[0]
 
 
-def _tree_unchanged(sc, project: Path) -> bool:
-    """Nội dung cả cây vẫn là nội dung lúc tính khoá (khoá cả cây chỉ ghi PASS khi đúng như vậy)."""
+def _tree_unchanged(sc, project: Path):
+    """(nội dung cả cây vẫn là nội dung lúc tính khoá?, content_map vừa dựng) — khoá cả cây chỉ ghi PASS khi đúng như vậy; người gọi
+    dùng lại content_map đó cho phép kiểm input của suite (một lần dựng mỗi lượt, OCR 21/10)."""
     gate = _gate_module()
     mod = gate.suite_cache_mod()
     cm = mod.content_map(project) if mod is not None else None
-    return cm is not None and mod.tree_digest(cm) == sc.tree_digest
+    return cm is not None and mod.tree_digest(cm) == sc.tree_digest, cm
 
 
 def keyed_context(project: Path, tid: str, cmd: str, matrix=None):
@@ -228,8 +229,8 @@ def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mo
             return f"{tid}: BUSY — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau"
         if not admitted:
             return f"{tid}: SLOT — khoá độc quyền (Unity) bận hết thời gian chờ — chạy lại sau"
-        deadline = time.monotonic() + timeout
         keyed = keyed_context(project, tid, cmd, matrix)   # khoá TRƯỚC khi chạy (P2): ghi theo khoá chỉ khi sau khi chạy vẫn đúng khoá này
+        deadline = time.monotonic() + timeout   # sau khi dựng khoá: suite được trọn timeout của nó (OCR 20/10)
         before = watched_mtimes(project, pats)
         started = time.perf_counter()
         status, code, out = _execute(project, cmd, deadline - time.monotonic())
@@ -244,6 +245,7 @@ def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mo
                 status, code, infra = "PASS", 0, True   # build broke, the re-run ran green: a real PASS
             elif not broke:
                 flaky = st2 == "PASS"
+        ended = time.time()   # giờ suite chạy xong: một void sau lúc này (nơi khác) chặn PASS này dù nó được ghi muộn hơn
         after = watched_mtimes(project, pats)
     duration = f"{time.perf_counter() - started:.2f}s"
     if after != before:
@@ -260,9 +262,12 @@ def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mo
             if status != "PASS":
                 sc.void(tid)   # mọi không-PASS của lần chạy thật: PASS cũ của suite này hết dùng lại (như gate)
             if status in ("PASS", "FAIL") and not infra:
-                # PASS: khoá cả cây chỉ khi cây không đổi trong lúc chạy (như gate); FAIL: mọi khoá
-                tree_ok = status == "FAIL" or _tree_unchanged(sc, project)
-                msg = sc.record_run(list(keys) if tree_ok else [keys[0]] if keys[0] != keys[1] else [], suite, status, flaky, meta)
+                # PASS: khoá cả cây chỉ khi cây không đổi trong lúc chạy (như gate). FAIL: chỉ khoá chính xác (vẫn chặn HIT) — FAIL dưới khoá
+                # cả cây là bằng chứng lỗi có sẵn của KNOWN-RED, mà lượt chạy lại nền không lọc FAIL chập chờn / hạ tầng / cây đổi như gate
+                # (audit #4 + OCR 21/10): bằng chứng chỉ từ lượt gate thật
+                tree_ok, cm = (False, None) if status == "FAIL" else _tree_unchanged(sc, project)
+                msg = sc.record_run(list(keys) if tree_ok else [keys[0]] if keys[0] != keys[1] else [], suite, status, flaky, meta,
+                                    at=ended, cmap=cm)
                 if msg:
                     print(f"[stale-rerun] suite cache: {msg}", file=sys.stderr)
         except Exception as exc:  # noqa: BLE001
@@ -286,6 +291,8 @@ def main(argv=None) -> int:
     # TEST_RUN_LOCK_WAIT_S (45 s) rồi ra BUSY. Lượt chạy lại STALE là việc nền, tải cao thì cứ chạy. nightly.py gọi run_one trực tiếp
     # và vẫn chờ tải (ban đêm không ai chờ khoá).
     os.environ.setdefault("DEVKIT_SLOT_LOAD_WAIT_S", "0")
+    # Cũng không chờ khoá Unity lúc đang giữ test_run.lock (OCR 20/10): khoá bận thì suite đó ra SLOT, không ghi gì, lượt sau chạy lại.
+    os.environ.setdefault("SB_HEAVY_SLOT_WAIT_S", "0")
     project = Path(args[0] if args else os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
     if os.environ.get("STALE_RERUN", "1") == "0" or not (project / rc.STATUS_FILE).is_file():
         return 0

@@ -112,16 +112,9 @@ def content_map(project_dir) -> dict:
     """{đường dẫn tương đối project_dir: "mode sha"} của nội dung đang có: file của HEAD (blob sha của git) cộng file sửa / chưa track
     (blob sha tính lại từ bytes đang có, cùng công thức của git: cùng nội dung ⇒ cùng giá trị dù đã commit hay chưa). File bị
     ignore và EXCLUDE của tree_fp (sổ của gate, evidence, reports/) không có. None khi git không trả lời."""
-    tree = _git(project_dir, "ls-tree", "-r", "-z", "HEAD")
-    if tree.returncode != 0:
+    out = _ls_tree(project_dir, "HEAD")
+    if out is None:
         return None
-    out = {}
-    for rec in tree.stdout.decode("utf-8", "surrogateescape").split("\0"):
-        if "\t" not in rec:
-            continue
-        meta, rel = rec.split("\t", 1)
-        mode, _typ, sha = meta.split()
-        out[rel] = f"{mode} {sha}"
     changed = _git(project_dir, "diff", "--name-only", "-z", "--relative", "--no-renames", "HEAD")
     others = _git(project_dir, "ls-files", "-z", "--others", "--exclude-standard")
     if changed.returncode != 0 or others.returncode != 0:
@@ -147,6 +140,28 @@ def content_map(project_dir) -> dict:
             except OSError:
                 out[rel] = "unreadable ?"
     return {p: v for p, v in out.items() if not _excluded(p)}
+
+
+def _ls_tree(project_dir, ref):
+    """{đường dẫn: "mode sha"} của nội dung đã commit ở ref; None khi git không trả lời."""
+    tree = _git(project_dir, "ls-tree", "-r", "-z", ref)
+    if tree.returncode != 0:
+        return None
+    out = {}
+    for rec in tree.stdout.decode("utf-8", "surrogateescape").split("\0"):
+        if "\t" not in rec:
+            continue
+        meta, rel = rec.split("\t", 1)
+        mode, _typ, sha = meta.split()
+        out[rel] = f"{mode} {sha}"
+    return out
+
+
+def content_map_at(project_dir, ref):
+    """content_map của nội dung ĐÃ COMMIT ở ref (không có file sửa / chưa track), cùng định dạng và cùng bỏ EXCLUDE: khoá cả cây tính
+    trên nó trùng khoá cả cây của một lượt chạy trên checkout sạch ở ref. None khi git không trả lời."""
+    out = _ls_tree(project_dir, ref)
+    return None if out is None else {p: v for p, v in out.items() if not _excluded(p)}
 
 
 def tree_digest(cmap) -> str:
@@ -250,27 +265,6 @@ def _external(project_dir, tok, here):
         except (OSError, ValueError):
             continue
     return None
-
-
-def _disk_value(full, expect):
-    """Giá trị "mode sha" của file trên đĩa theo đúng cách content_map tính (để so với giá trị lúc tính khoá)."""
-    try:
-        st = os.lstat(full)
-    except OSError:
-        return None
-    if os.path.islink(full):
-        return "120000 " + _blob_sha(os.fsencode(os.readlink(full)))
-    if not os.path.isfile(full):
-        return "dir ?"
-    if st.st_size >= BIG_FILE_BYTES:
-        return f"big {st.st_size}:{st.st_mtime_ns}"
-    try:
-        with open(full, "rb") as f:
-            sha = _blob_sha(f.read())
-    except OSError:
-        return "unreadable ?"
-    mode = (expect or "").split(" ")[0] if (expect or "").startswith(("100644", "100755")) else ("100755" if st.st_mode & 0o111 else "100644")
-    return f"{mode} {sha}"
 
 
 def _file_digest(path):
@@ -475,6 +469,7 @@ class SuiteCache:
         self.tree_digest = tree_digest(self.cmap or {})
         self.inputs = {}   # id → số input của khoá gần nhất (cho log)
         self.input_values = {}   # (id, lệnh) → ({file: "mode sha"}, {token ngoài cây: digest}) lúc tính khoá
+        self.key_parts = {}   # (id, lệnh) → (phần đầu, đích ngoài cây) của khoá: tính khoá cả cây trên nội dung khác (tree_key_at)
 
     # ── khoá ──
     def key(self, test):
@@ -525,9 +520,19 @@ class SuiteCache:
         t = hashlib.sha256(b"tree\0" + head + b"\0" + self.tree_digest.encode() + b"\0" + tail)
         self.inputs[sid] = len(files) + len(ext)
         self.input_values[(sid, cmd)] = ({p: self.cmap.get(p) for p in files}, dict(ext))
+        self.key_parts[(sid, cmd)] = (head, tail)
         if cut:   # danh sách input bị cắt: không có khoá chính xác — chỉ dùng lại khi CẢ CÂY trùng (review 20/10)
             return t.hexdigest(), t.hexdigest()
         return h.hexdigest(), t.hexdigest()
+
+    def tree_key_at(self, sid, cmd, digest):
+        """Khoá cả cây của suite (sid, cmd) trên một nội dung khác — digest = tree_digest(content_map_at(project_dir, ref)) — cùng phần đầu
+        và đích ngoài cây đã tính ở keys(); None khi keys() chưa chạy cho suite này hay không có digest."""
+        parts = self.key_parts.get((sid, cmd))
+        if not parts or not digest:
+            return None
+        head, tail = parts
+        return hashlib.sha256(b"tree\0" + head + b"\0" + digest.encode() + b"\0" + tail).hexdigest()
 
     # ── kho ──
     def _path(self, key, ext=".json"):
@@ -636,15 +641,20 @@ class SuiteCache:
                 with contextlib.suppress(OSError):
                     os.remove(p)
 
-    def inputs_unchanged(self, test):
+    def inputs_unchanged(self, test, cmap=None):
         """True khi mọi input của khoá gần nhất của suite (file, đích ngoài cây, danger list, ma trận) vẫn đúng nội dung lúc tính khoá.
-        File mới sinh ra trong lúc chạy không tính: nội dung được kiểm vẫn là nội dung trước khi chạy."""
+        File mới sinh ra trong lúc chạy không tính: nội dung được kiểm vẫn là nội dung trước khi chạy. So theo content_map dựng LẠI (cmap:
+        người gọi đã có thì đưa vào): cùng cách biểu diễn với lúc tính khoá — đọc đĩa từng file thì file ≥ 8 MiB, LFS / eol, submodule
+        không bao giờ khớp và PASS không bao giờ được ghi (OCR 20/10)."""
         snap = self.input_values.get((test.get("id"), test.get("command") or ""))
         if snap is None:
             return False
         files, ext = snap
+        cmap = cmap if cmap is not None else content_map(self.project_dir)
+        if cmap is None:
+            return False
         for p, v in list(files.items()) + [(p, self.cmap.get(p)) for p in self.danger_files]:
-            if _disk_value(os.path.join(self.project_dir, p), v) != v:
+            if cmap.get(p) != v:
                 return False
         for tok, dig in ext.items():
             hit = _external(self.project_dir, tok, "")
@@ -652,11 +662,11 @@ class SuiteCache:
                 return False
         return (_file_digest(self.matrix_path) if self.matrix_path and os.path.isfile(self.matrix_path) else "none") == self.matrix_digest
 
-    def record_run(self, keys, test, status, flaky=False, meta=None, at=None):
+    def record_run(self, keys, test, status, flaky=False, meta=None, at=None, cmap=None):
         """Ghi một lượt chạy THẬT (gate và stale_rerun.run_one cùng dùng) dưới mọi khoá trong keys (chính xác, cả cây). PASS chỉ khi
         input của khoá vẫn y nguyên SAU khi chạy (suite tự sửa input của nó thì không ghi PASS); FAIL luôn ghi (chỉ làm khoá hẹp đi).
         FAIL trên khoá sổ đang nói PASS ⇒ contradiction (P3). Trả câu báo mâu thuẫn đầu tiên, None khi không có."""
-        if status == "PASS" and not self.inputs_unchanged(test):
+        if status == "PASS" and not self.inputs_unchanged(test, cmap):
             return None
         msg = None
         for k in dict.fromkeys(k for k in keys if k):   # khoá chính xác lùi về khoá cả cây: một lần ghi, không hai

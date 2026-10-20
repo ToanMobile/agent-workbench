@@ -331,6 +331,40 @@ for cmd in ("timeout 600 true", "xvfb-run -a true", "nice -n 10 python3 -c 'prin
     good = cls == "light"
     ok = ok and good
     print(("✔ 12. " if good else "✖ 12. ") + f"{cmd!r} → {cls} (mong light)")
+# Không phân lớp được thì coi là unity, không phải cpu (OCR 20/10: cpu không còn khoá nào, nên một suite Unity thật đọc lỗi từng chạy
+# không khoá Unity — hai Editor cùng lúc). (a) quét lệnh ném lỗi; (b) script ở dòng lệnh không đọc được (chmod 000: isfile/getsize
+# vẫn được, open ném PermissionError).
+import os
+real_rc = hs._rc
+def broken_rc():
+    raise RuntimeError("regression_checklist hỏng")
+hs._rc = broken_rc
+try:
+    cls = hs.classify("unity-batch.sh editmode", sys.argv[2])["cls"]
+finally:
+    hs._rc = real_rc
+good = cls == "unity"
+ok = ok and good
+print(("✔ 12. " if good else "✖ 12. ") + f"quét lệnh ném lỗi → {cls} (mong unity)")
+locked = os.path.join(sys.argv[2], "locked_suite.sh")
+with open(locked, "w") as f:
+    f.write("unity-batch.sh editmode\n")
+os.chmod(locked, 0)
+try:
+    try:
+        open(locked).close()
+        readable = True   # root đọc được cả file 000: không dựng được ca này
+    except OSError:
+        readable = False
+    if readable:
+        print("✔ 12. (bỏ qua: file chmod 000 vẫn đọc được — đang chạy bằng root)")
+    else:
+        cls = hs.classify("bash locked_suite.sh", sys.argv[2])["cls"]
+        good = cls == "unity"
+        ok = ok and good
+        print(("✔ 12. " if good else "✖ 12. ") + f"script không đọc được → {cls} (mong unity)")
+finally:
+    os.chmod(locked, 0o600)
 sys.exit(0 if ok else 1)
 PY
 
@@ -438,5 +472,58 @@ else
   fail "18b. ngân sách gate không chặn tổng thời gian chờ (${WALL}s, exit $RC, chạy: $([ -f "$TMP/lockwait18b_ran" ] && echo có || echo không))"
 fi
 release_all; echo 1 > "$TMP/load"
+
+# ── 19. Ngân sách chờ tải trên đường song song (đơn vị; OCR 20/10 và OCR 21/10): ngân sách là thời gian ĐỒNG HỒ tiến trình chờ tải —
+#       các lần chờ chồng nhau chỉ tính một lần, và suite nào vào lúc tải cao cũng chờ (không suite nào chạy ngay vì suite khác đã giữ
+#       hết ngân sách). Ngân sách 2 s, tải 150 mãi, 3 luồng vào lệch nhau 0 / 0.5 / 1 s: luồng nào cũng chờ (≥ 0.7 s) và cả lượt xong
+#       trong ≈ 2 s tính từ lúc luồng đầu vào. Bản cộng phần chi sau khi chờ: luồng thứ ba chờ tới giây 3. Bản giữ chỗ trước: luồng 2–3
+#       không chờ. Đo bằng đồng hồ quanh acquire_for_suite, không đọc sổ nội bộ.
+echo 150 > "$TMP/load19"
+DEVKIT_SLOT_LOAD_FILE="$TMP/load19" DEVKIT_SLOT_LOAD_WAIT_S=2 DEVKIT_SLOT_ADVISORY_BUDGET_S=2 SB_HEAVY_SLOT_POLL_S=0.2 \
+  python3 - "$DEVKIT_DIR/bin" <<'PY' || FAILS=$((FAILS + 1))
+import sys, threading, time
+sys.path.insert(0, sys.argv[1])
+import heavy_slot as hs
+waits, ends, lock = {}, [], threading.Lock()
+t_first = time.monotonic()
+def run(i):
+    time.sleep(0.5 * i)
+    t0 = time.monotonic()
+    hs.acquire_for_suite({"engine": None}, label=f"t19-{i}")
+    t1 = time.monotonic()
+    with lock:
+        waits[i] = t1 - t0
+        ends.append(t1)
+threads = [threading.Thread(target=run, args=(i,)) for i in range(3)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+wall = max(ends) - t_first if ends else 99.0
+shortest = min(waits.values()) if len(waits) == 3 else 0.0
+last = waits.get(2, 99.0)
+# luồng vào sau cùng (giây 1) chỉ còn 1 s ngân sách: chờ ≈ 1 (≤ 1.3). Bản đặt lại mốc bắt đầu khi có suite mới vào (đếm thiếu): ≈ 1.5.
+good = len(waits) == 3 and shortest >= 0.7 and last <= 1.3 and wall < 2.4
+print(("✔ 19. " if good else "✖ 19. ") + f"3 suite song song vào lệch 0.5 s, ngân sách 2 s: chờ ngắn nhất {shortest:.1f}s (mong ≥ 0.7), "
+      f"luồng cuối {last:.1f}s (mong ≤ 1.3), cả lượt {wall:.1f}s (mong < 2.4; bản cộng sau ≈ 3, bản giữ chỗ: luồng sau chờ 0)")
+sys.exit(0 if good else 1)
+PY
+# 19b. Mong đợi: phần giữ chỗ chưa dùng được trả lại — suite đầu chạy lúc tải thấp (chờ 0 s), rồi suite sau lúc tải cao chờ ~2 s.
+#      Bản giữ chỗ mà quên trả lại sẽ cho suite sau ngân sách 0 (chờ ~0 s) và ca này đỏ.
+echo 1 > "$TMP/load19"
+DEVKIT_SLOT_LOAD_FILE="$TMP/load19" DEVKIT_SLOT_LOAD_WAIT_S=2 DEVKIT_SLOT_ADVISORY_BUDGET_S=2 \
+  python3 - "$DEVKIT_DIR/bin" "$TMP/load19" <<'PY' || FAILS=$((FAILS + 1))
+import sys, time
+sys.path.insert(0, sys.argv[1])
+import heavy_slot as hs
+hs.acquire_for_suite({"engine": None}, label="t19b-low")
+open(sys.argv[2], "w").write("150\n")
+t0 = time.monotonic()
+hs.acquire_for_suite({"engine": None}, label="t19b-high")
+waited = time.monotonic() - t0
+good = waited >= 1.5
+print(("✔ 19b. " if good else "✖ 19b. ") + f"lần chờ 0 s trả lại chỗ giữ: suite sau chờ {waited:.1f}s (mong ≈ 2)")
+sys.exit(0 if good else 1)
+PY
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_slot_classes: all passed" || { echo "❌ test_gate_slot_classes: $FAILS failed"; exit 1; }

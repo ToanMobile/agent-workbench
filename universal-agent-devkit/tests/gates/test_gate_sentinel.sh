@@ -80,9 +80,14 @@ wt w2b; snap; DEVKIT_SENTINEL_MAX_S=1 gate "$TMP/w2b"
 grep -q '"REG-L": \[[^]]*"src/data.txt"' "$STORE/learned_inputs.json" 2>/dev/null \
   && printf '%s\n' "$OUT" | grep -q "thiếu input" && ok "2b. sentinel: REG-L FAIL trên khoá từng PASS ⇒ học src/data.txt, có báo" \
   || { fail "2b. không học được input (learned: $(cat "$STORE/learned_inputs.json" 2>/dev/null))"; printf '%s\n' "$OUT" | grep -E "REG-L|suite cache|KẾT LUẬN" | tail -5; }
+# 2b'. FAIL đó vào kết luận (audit 21/10): base (HEAD~1) từng PASS — không phải lỗi có sẵn — dù bao đóng tĩnh không thấy data.txt.
+[ "$RC" = 1 ] && ok "2b'. FAIL trên khoá từng PASS vào kết luận (exit 1, không xếp KNOWN-RED)" \
+  || { fail "2b'. FAIL trên khoá từng PASS bị xếp ngoài kết luận (exit $RC, mong 1)"; printf '%s\n' "$OUT" | grep -E "REG-L|KNOWN|KẾT LUẬN" | tail -4; }
 echo 'good' > "$R/src/data.txt"; git -C "$R" commit -qam good
 wt w2c; snap; DEVKIT_SENTINEL_MAX_S=$NEVER gate "$TMP/w2c"
-wt w2d; echo 'bad' > "$TMP/w2d/src/data.txt"; snap; DEVKIT_SENTINEL_MAX_S=$NEVER gate "$TMP/w2d"
+# --diff HEAD: base là commit good (REG-L PASS ở w2c). Với --diff HEAD~1 base là commit bad, nơi REG-L đã FAIL thật (2b) — nội dung
+# w2d trùng hệt commit đó nên FAIL là lỗi có sẵn của base (KNOWN-RED), không phải điều ca này kiểm.
+wt w2d; echo 'bad' > "$TMP/w2d/src/data.txt"; snap; DEVKIT_SENTINEL_MAX_S=$NEVER gate "$TMP/w2d" --diff HEAD
 [ "$(d L)" -ge 1 ] && [ "$RC" = 1 ] && ok "2c. sau khi học: data.txt đổi ⇒ REG-L chạy lại và FAIL (không còn HIT sai)" \
   || fail "2c. REG-L chạy $(d L) lần, exit $RC (mong ≥1 lần — FAIL được chạy lại một lần —, exit 1)"
 
@@ -135,5 +140,85 @@ at6=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('last_
 [ "$at6" = 1 ] && [ "$rc6" = 1 ] && grep -q "REG-T6" "$TMP/out6" && ! grep -q Traceback "$TMP/out6" \
   && ok "6. lượt sentinel có suite quá giờ (exit 1): không đóng mốc lần chạy thật" \
   || fail "6. mốc $at6 (mong 1), exit $rc6 (mong 1), REG-T6 trong output: $(grep -c REG-T6 "$TMP/out6"), traceback: $(grep -c Traceback "$TMP/out6")"
+
+# 7–9. stale_rerun.run_one / main (OCR 20/10). Repo riêng một suite REG-A7.
+R7="$TMP/r7"; mkdir -p "$R7/src"
+git -C "$R7" init -q -b main . && git -C "$R7" config user.email t@t && git -C "$R7" config user.name t
+echo 'a = 1' > "$R7/src/a.py"
+printf '{"project":"t","rules":[{"component":"A","watch_files":["src/a.py"],"mandatory_regression_tests":[{"id":"REG-A7","name":"a","command":"sleep 1.5"}]}]}\n' > "$R7/matrix.json"
+git -C "$R7" add -A && git -C "$R7" commit -qm init
+res7="$( cd "$R7" && CLAUDE_PROJECT_DIR="$R7" python3 - "$DEVKIT_DIR" "$R7" <<'PY'
+import importlib.util, json, os, sys, time
+from pathlib import Path
+kit, repo = sys.argv[1:]
+sys.path.insert(0, os.path.join(kit, "scripts", "testing"))
+import stale_rerun as sr
+mp = os.path.join(repo, "matrix.json")
+cmd = "sleep 1.5"
+# 7. một void (không-PASS của lần chạy thật ở nơi khác) rơi vào khoảng giữa lúc suite xong và lúc ghi: PASS đó không được dùng lại
+real_tree = sr._tree_unchanged
+def tree_then_void(sc, project):
+    sc.void("REG-A7")
+    return real_tree(sc, project)
+sr._tree_unchanged = tree_then_void
+print("7.", sr.run_one(Path(repo), "REG-A7", cmd, [], 60, matrix=mp))
+sr._tree_unchanged = real_tree
+gate = sr._gate_module()
+rules = json.load(open(mp))["rules"]
+sc = gate.suite_cache_for(repo, rules, mp, {})
+t = {"id": "REG-A7", "command": cmd}
+# đối chứng dương: kho dựng được và có khoá thật (không thì hit7=False không kiểm gì)
+print("keys7=%s" % bool(sc is not None and sc.ok and all(sc.keys(t))))
+print("hit7=%s" % any(sc.hit(k, t) for k in sc.keys(t)))
+# 8. dựng khoá (keyed_context: nạp gate, content map, closure, dò phiên bản công cụ) không ăn vào timeout của suite
+real_kc = sr.keyed_context
+def slow_kc(*a, **k):
+    time.sleep(2.5)
+    return real_kc(*a, **k)
+sr.keyed_context = slow_kc
+print("8.", sr.run_one(Path(repo), "REG-A7", cmd, [], 3, matrix=mp))
+sr.keyed_context = real_kc
+# 9. main() (lượt chạy lại STALE lúc mở phiên, đang giữ test_run.lock) không chờ khoá Unity: SB_HEAVY_SLOT_WAIT_S mặc định 0
+os.environ.pop("SB_HEAVY_SLOT_WAIT_S", None)
+sr.main([os.path.join(repo, "no-such-project")])
+print("sbwait9=%s" % os.environ.get("SB_HEAVY_SLOT_WAIT_S"))
+PY
+)"
+printf '%s\n' "$res7" | grep -q "keys7=True" && printf '%s\n' "$res7" | grep -q "hit7=False" \
+  && ok "7. run_one: void giữa lúc suite xong và lúc ghi chặn PASS đó (ghi kèm at=)" \
+  || fail "7. PASS của run_one được dùng lại dù có void sau lúc nó xong: $(printf '%s' "$res7" | grep -E '^7\.|hit7')"
+printf '%s\n' "$res7" | grep -q "^8\. REG-A7: PASS" && ok "8. run_one: thời gian dựng khoá không ăn vào timeout của suite" \
+  || fail "8. run_one: $(printf '%s' "$res7" | grep -E '^8\.') (mong PASS: khoá dựng 2,5 s, suite 1,5 s, timeout 3 s)"
+printf '%s\n' "$res7" | grep -q "sbwait9=0" && ok "9. main(): lượt chạy lại STALE không chờ khoá Unity (SB_HEAVY_SLOT_WAIT_S=0)" \
+  || fail "9. main() không đặt SB_HEAVY_SLOT_WAIT_S=0 ($(printf '%s' "$res7" | grep sbwait9))"
+
+# 10. FAIL của stale_rerun.run_one không vào khoá cả cây (OCR 21/10): FAIL dưới khoá cả cây là bằng chứng lỗi có sẵn của KNOWN-RED, mà
+#     lượt chạy lại nền không lọc FAIL hạ tầng như gate (mất results store, INFRA_RETRY=0) — chỉ khoá chính xác (vẫn chặn HIT).
+R10="$TMP/r10"; mkdir -p "$R10/src"
+git -C "$R10" init -q -b main . && git -C "$R10" config user.email t@t && git -C "$R10" config user.name t
+echo 'a = 1' > "$R10/src/a.py"
+printf '{"project":"t","rules":[{"component":"A","watch_files":["src/a.py"],"mandatory_regression_tests":[{"id":"REG-F10","name":"f","command":"false"}]}]}\n' > "$R10/matrix.json"
+git -C "$R10" add -A && git -C "$R10" commit -qm init
+res10="$( cd "$R10" && CLAUDE_PROJECT_DIR="$R10" python3 - "$DEVKIT_DIR" "$R10" <<'PY'
+import json, os, sys
+from pathlib import Path
+kit, repo = sys.argv[1:]
+sys.path.insert(0, os.path.join(kit, "scripts", "testing"))
+import stale_rerun as sr
+mp = os.path.join(repo, "matrix.json")
+print("run10", sr.run_one(Path(repo), "REG-F10", "false", [], 60, matrix=mp))
+gate = sr._gate_module()
+sc = gate.suite_cache_for(repo, json.load(open(mp))["rules"], mp, {})
+ks = sc.keys({"id": "REG-F10", "command": "false"})
+precise, tree = (sc.read(k) or {} for k in ks)
+print("distinct10=%s" % (ks[0] != ks[1]))
+print("precise10=%s" % precise.get("fail_n"))
+print("tree10=%s" % tree.get("fail_n"))
+PY
+)"
+printf '%s\n' "$res10" | grep -q "distinct10=True" && printf '%s\n' "$res10" | grep -q "precise10=1" \
+  && printf '%s\n' "$res10" | grep -q "tree10=None" \
+  && ok "10. FAIL của run_one chỉ vào khoá chính xác, không thành bằng chứng dưới khoá cả cây" \
+  || fail "10. FAIL của run_one: $(printf '%s' "$res10" | tr '\n' ' ') (mong distinct10=True precise10=1 tree10=None)"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_sentinel: all passed" || { echo "❌ test_gate_sentinel: $FAILS failed"; exit 1; }

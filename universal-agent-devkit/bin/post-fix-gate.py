@@ -5955,12 +5955,6 @@ def main():
             record_keyed(t)   # ngay, vẫn giữ marker: lượt đang chờ cùng khoá tra lại là thấy kết quả này
             return None
 
-    def tree_unchanged():
-        """Nội dung cả cây vẫn là nội dung lúc tính khoá (sc.tree_digest): điều kiện ghi PASS theo khoá CẢ CÂY, kiểm ngay sau suite
-        (đo 20/10: 0,04 s cho 1677 file) — PASS ghi ngay, marker nhả ngay, không giữ tới cuối lượt (review principal vòng 2)."""
-        mod = suite_cache_mod()
-        cm = mod.content_map(project_dir) if mod is not None else None
-        return cm is not None and mod.tree_digest(cm) == sc.tree_digest
 
     def record_keyed(t):
         """Ghi kết quả một lượt chạy THẬT lệnh đầy đủ vào sổ khoá — chỉ khi input không đổi trong lúc chạy (khoá đọc lại bằng nhau)."""
@@ -5982,7 +5976,21 @@ def main():
                 "head": _head_sha(project_dir), "inputs_n": sc.inputs.get(t.get("id"))}
         rt = dict(t, command=t.get("full_command") or t.get("command"))   # bản ghi mang lệnh của ma trận (khoá tính từ lệnh đó)
         keys_now = list(ks)
-        if st == "PASS" and not tree_unchanged():
+        if st == "FAIL":
+            # FAIL dưới khoá cả cây là bằng chứng lỗi có sẵn cho KNOWN-RED: chỉ khi FAIL là của lệnh đầy đủ, thật (không phải VACUOUS — lệnh
+            # PASS mà không phát hiện thay đổi —, không chập chờn — chạy lại PASS, OCR 21/10), trên cây không đổi trong lúc chạy (audit #4
+            # 21/10); còn lại chỉ khoá chính xác (hẹp lại),
+            # bao đóng bị cắt (khoá chính xác LÀ khoá cả cây) thì không ghi — void ở trên đã chặn PASS cũ
+            mod = suite_cache_mod()
+            cmf = mod.content_map(project_dir) if mod is not None else None
+            if (t.get("mode") != "full" or t.get("label") == "VACUOUS" or t.get("flaky")
+                    or not (cmf is not None and mod.tree_digest(cmf) == sc.tree_digest)):
+                keys_now = [ks[0]] if ks[0] != ks[1] else []
+        cm = None
+        if st == "PASS":   # một content_map cho cả hai phép kiểm (cây không đổi, input của suite không đổi)
+            mod = suite_cache_mod()
+            cm = mod.content_map(project_dir) if mod is not None else None
+        if st == "PASS" and not (cm is not None and suite_cache_mod().tree_digest(cm) == sc.tree_digest):
             # cây đổi trong lúc chạy: PASS chỉ theo khoá chính xác (input riêng của suite được kiểm lại trong record_run)
             keys_now = [ks[0]] if ks[0] != ks[1] else []
             if not tree_warned:
@@ -5991,7 +5999,8 @@ def main():
                             "The tree changed while the suites ran — this run's PASS results go under precise keys only, whole-tree keys skipped"))
         try:
             # at = giờ suite chạy xong: một void (không-PASS ở nơi khác) giữa lúc đó và lúc ghi chặn PASS này
-            msg = sc.record_run(keys_now, rt, st, bool(t.get("flaky")), meta, at=SUITE_RAN_AT.get(t.get("id"))) if keys_now else None
+            msg = (sc.record_run(keys_now, rt, st, bool(t.get("flaky")), meta, at=SUITE_RAN_AT.get(t.get("id")), cmap=cm)
+                   if keys_now else None)
             if msg:   # P3: cache từng nói PASS cho đúng khoá này mà chạy thật FAIL
                 log_err(f"suite cache: {msg}")
         except Exception as e:   # noqa: BLE001 - sổ cache chỉ là dữ liệu: không bao giờ đổi kết luận của lượt này
@@ -6421,6 +6430,36 @@ def main():
     if stale_to_untested("STALE", stale_reused()):   # the last look before the verdict: a writer that holds no lock (the check above found the file as read)
         log_warn(tr("File kết quả dùng lại đã đổi/biến mất trước kết luận — PASS dùng lại thành UNTESTED",
                     "The file the re-used results came from changed or went away before the verdict — the re-used PASS turns UNTESTED"))
+    # P2: suite cached-full thêm vào (keyed_full) FAIL là lỗi có sẵn (KNOWN-RED: nêu tên, ngoài kết luận; FAIL vẫn ở sổ khoá) CHỈ khi có bằng
+    # chứng: sổ khoá có FAIL thật — và chưa từng PASS — của chính suite đó dưới khoá cả cây của nội dung BASE_REF (một lượt chạy trên checkout
+    # sạch ở base). Audit 21/10 (Antigravity + principal): suy "thay đổi không chạm input" từ bao đóng tĩnh không bao giờ đủ (đường dẫn dựng
+    # lúc chạy, import động), nên FAIL do chính thay đổi từng bị xếp KNOWN-RED. Không có bằng chứng (base chưa ai chạy, base từng PASS,
+    # --since nhiều base) ⇒ FAIL vào kết luận. GeelyEx2 20/10: 2 suite FAIL sẵn — một lượt --full trên main sạch ghi bằng chứng cho mọi
+    # thay đổi sau. tests/gates/test_gate_suite_cache.sh ca 28, 30; test_gate_sentinel.sh ca 2b'.
+    known_red = [t for t in regression_tests if t.get("keyed_full") and t.get("status") == "FAIL" and not precise_hit(t)]
+    if sc is not None and known_red and not getattr(args, "since", None) and not _BASE_REF_FOR:
+        mod = suite_cache_mod()
+        base_map = mod.content_map_at(project_dir, BASE_REF) if mod is not None else None
+        digest = mod.tree_digest(base_map) if base_map is not None else None
+        if digest == sc.tree_digest:
+            # base trùng cây hiện tại (thay đổi chỉ chạm file EXCLUDE, hay chỉ index): khoá cả cây của base LÀ khoá của lượt này — FAIL
+            # vừa ghi sẽ tự làm bằng chứng của chính nó (audit #4 21/10) ⇒ không có bằng chứng
+            digest = None
+        for t in known_red:
+            bk = sc.tree_key_at(t.get("id"), t.get("full_command") or t.get("command") or "", digest)
+            rec = sc.read(bk) if bk else None
+            fail_n, pass_n = (rec or {}).get("fail_n"), (rec or {}).get("pass_n", 0)
+            if isinstance(fail_n, int) and fail_n >= 1 and pass_n in (0, None):
+                t.update({"status": "UNTESTED", "label": "KNOWN-RED"})
+                log_warn(tr(f"{t.get('id')}: suite cached-full FAIL, và cũng FAIL trên nội dung {BASE_REF} (sổ khoá) — lỗi có sẵn (KNOWN-RED), "
+                            "ngoài kết luận; sửa riêng",
+                            f"{t.get('id')}: cached-full suite FAILED, and it also FAILED on the {BASE_REF} content (key store) — a "
+                            "pre-existing failure (KNOWN-RED), not part of the verdict; fix it separately"))
+            else:
+                log_warn(tr(f"{t.get('id')}: suite cached-full FAIL, chưa có bằng chứng nó cũng FAIL trên {BASE_REF} — vào kết luận. Lỗi có sẵn thì "
+                            f"ghi bằng chứng: chạy post-fix-gate.py --run-tests --full --diff HEAD~1 trên checkout sạch ở {BASE_REF}",
+                            f"{t.get('id')}: cached-full suite FAILED, no evidence it also FAILS on {BASE_REF} — part of the verdict. If it is "
+                            f"pre-existing, record the evidence: run post-fix-gate.py --run-tests --full --diff HEAD~1 on a clean checkout at {BASE_REF}"))
     # P2: suite cached-full thêm vào (keyed_full) mà QUÁ GIỜ: --full trước P2 không chạy nó, và quá giờ dưới tải không chứng minh lỗi của thay
     # đổi (REG-DK-ALL-01 quá 900 s ở merge gate dưới tải, 19/10) — UNTESTED ngoài kết luận, được nêu tên, chạy lại lượt sau; FAIL thật của nó
     # vẫn vào kết luận. Không ghi vào sổ khoá (record_keyed chỉ ghi PASS/FAIL). tests/gates/test_gate_suite_cache.sh ca 15.

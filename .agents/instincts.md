@@ -459,3 +459,21 @@ Mẫu ghi nhận:
 - **Nguyên nhân:** restore-old kiểm cha-symlink sau rm/mkdir (đã xoá file DevKit trước khi SKIP), bước leo tổ tiên theo chuỗi coi 'nope/../..' là trong dự án, phía backup của ledger chỉ kiểm tiền tố
 - **Quy tắc phòng ngừa & Cách fix:** Kiểm tra chỉ-đọc trước mọi rm/mkdir/mv và ở cả dry-run; từ chối đoạn '.'/'..' trên CẢ đường dẫn (cả đoạn cuối); áp cùng kiểm tra cho nguồn lẫn đích của mv
 - **Lệnh kiểm tra:** `bash universal-agent-devkit/tests/worktree_git/test_restore_old.sh`
+
+---
+
+### [INSTINCT-055] Chạy gate dưới nohup làm test SIGHUP đỏ giả
+- **Ngày phát hiện:** 2026-10-20
+- **Hiện tượng lỗi:** Chạy gate dưới nohup làm test SIGHUP đỏ giả
+- **Nguyên nhân:** nohup đặt SIGHUP = SIG_IGN cho mọi tiến trình con; gate lồng trong test_gate_robustness.sh A9 không nhận SIGHUP nên sống quá 10 s (đo 20/10: HEAD và P1 đỏ y hệt dưới nohup, xanh khi không nohup)
+- **Quy tắc phòng ngừa & Cách fix:** Không bọc gate/test bằng nohup; chạy nền bằng run_in_background của harness. Thấy A9 SIGHUP đỏ mà TERM/INT xanh: kiểm SIGHUP có bị ignore từ tiến trình cha không trước khi nghi code
+- **Lệnh kiểm tra:** `python3 -c 'import signal; print(signal.getsignal(signal.SIGHUP))'`
+
+---
+
+### [INSTINCT-056] killpg bị macOS từ chối (EPERM) làm gate chết khi suite quá giờ, biên nhận cũ ở lại thành xanh giả
+- **Ngày phát hiện:** 2026-10-20
+- **Hiện tượng lỗi:** killpg bị macOS từ chối (EPERM) làm gate chết khi suite quá giờ, biên nhận cũ ở lại thành xanh giả
+- **Nguyên nhân:** macOS từ chối signal cho process group còn zombie; run_in_group chỉ bắt ProcessLookupError nên PermissionError làm gate crash giữa chừng, write_full_pass_receipt(exit 1) không chạy, lượt --full sau dùng lại PASS trước lúc treo
+- **Quy tắc phòng ngừa & Cách fix:** Mọi killpg trong DevKit bắt cả PermissionError và lùi về proc.send_signal; lần communicate cuối có trần (cháu có thể giữ ống output). Test: tests/gates/test_gate_robustness.sh A12/A12b/A13
+- **Lệnh kiểm tra:** `grep -n 'os.killpg' universal-agent-devkit/bin/*.py universal-agent-devkit/scripts/*/*.py`

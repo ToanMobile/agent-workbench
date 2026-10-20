@@ -93,7 +93,22 @@ else
   fail "DEVKIT_SLOT_LOAD_WAIT_S=0 at high load (rc=$rc_merge ran=$([ -f "$TMP/merge_ran" ] && echo yes || echo no) ${w5}s)"
 fi
 
-# ── 6. Lồng nhau (SB_HEAVY_SLOT_HELD=1 do tiến trình ngoài đặt): lệnh trong không chờ tải lại, kể cả --nonblock khi tải đã lên cao.
+# ── 5b. DEVKIT_SLOT_LOAD_WAIT_S đặt rõ thắng SB_HEAVY_SLOT_WAIT_S (OCR 20/10: merge gate đặt DEVKIT_SLOT_LOAD_WAIT_S=0 sau lần chờ của
+#       nó, nhưng SB_HEAVY_SLOT_WAIT_S của người gọi từng ghi đè và lệnh verify chờ tải lần nữa). SB_HEAVY_SLOT_WAIT_S chỉ là dự phòng
+#       (ca 3–4: không có DEVKIT_SLOT_LOAD_WAIT_S thì vẫn dùng nó).
+echo 150 > "$TMP/load"
+t0=$(now)
+DEVKIT_SLOT_LOAD_WAIT_S=0 SB_HEAVY_SLOT_WAIT_S=30 python3 "$DK_BIN" -- touch "$TMP/explicit_ran" >"$TMP/explicit.log" 2>&1; rc_ex=$?
+w5b=$(python3 -c "import time; print(round(time.time() - $t0, 1))")
+echo 1 > "$TMP/load"
+if [ "$rc_ex" -eq 0 ] && [ -f "$TMP/explicit_ran" ] && lt "$w5b" 20 && ! grep -q "chờ tải xuống" "$TMP/explicit.log"; then
+  ok "explicit DEVKIT_SLOT_LOAD_WAIT_S=0 beats SB_HEAVY_SLOT_WAIT_S=30: no load wait (${w5b}s)"
+else
+  fail "DEVKIT_SLOT_LOAD_WAIT_S=0 with SB_HEAVY_SLOT_WAIT_S=30 at high load (rc=$rc_ex ran=$([ -f "$TMP/explicit_ran" ] && echo yes || echo no) ${w5b}s)"
+fi
+
+# ── 6. Lồng nhau (CLI ngoài đã được cho chạy theo tải nên đặt DEVKIT_SLOT_ADVISORY_HELD=1 cho cả cây tiến trình): lệnh trong không chờ
+#      tải lại, kể cả --nonblock khi tải đã lên cao.
 rm -f "$TMP/nested_ok"
 python3 "$DK_BIN" -- bash -c "
   echo 150 > '$TMP/load'
@@ -101,9 +116,9 @@ python3 "$DK_BIN" -- bash -c "
 " >/dev/null 2>&1
 echo 1 > "$TMP/load"
 if [ -f "$TMP/nested_ok" ]; then
-  ok "nested call under SB_HEAVY_SLOT_HELD=1 does not wait or refuse again"
+  ok "nested call under DEVKIT_SLOT_ADVISORY_HELD=1 does not wait or refuse again"
 else
-  fail "nested call was refused although the outer process was already admitted"
+  fail "nested call under DEVKIT_SLOT_ADVISORY_HELD=1 was refused although the outer process was already admitted"
 fi
 
 # ── 6b. Lệnh chạy dưới CLI (chỉ được cho chạy theo tải, không giữ khoá nào) mà bên trong có suite Unity: suite đó VẪN phải chờ khoá
@@ -119,11 +134,13 @@ R6B="$TMP/nested-unity"; mkdir -p "$R6B/src"
   && printf '{"project":"t","rules":[{"component":"A","watch_files":["src/a.py"],"mandatory_regression_tests":[{"id":"REG-U","name":"u","command":"touch %s; unity-batch.sh editmode"}]}]}\n' "$TMP/u6b_ran" > matrix.json \
   && git add -A && git commit -qm init && echo 'x = 2' > src/a.py )
 SB_HEAVY_SLOT_WAIT_S=0.5 python3 "$DK_BIN" -- bash -c "cd '$R6B' && python3 '$ROOT/universal-agent-devkit/bin/post-fix-gate.py' --matrix '$R6B/matrix.json' --run-tests --no-checklist" >"$TMP/u6b.log" 2>&1
+rc_u6b=$?
 kill "$U6B" 2>/dev/null; wait "$U6B" 2>/dev/null
-if [ ! -f "$TMP/u6b_ran" ]; then
-  ok "a Unity suite nested under the CLI still waits for the Unity lock"
+# Không chỉ "không có marker" (gate lồng chết sớm cũng không có): gate lồng phải nói khoá độc quyền bận và CLI trả exit 4 (SLOT) của nó.
+if [ ! -f "$TMP/u6b_ran" ] && [ "$rc_u6b" -eq 4 ] && grep -qE "khoá độc quyền|exclusive lock" "$TMP/u6b.log"; then
+  ok "a Unity suite nested under the CLI still waits for the Unity lock (exclusive-lock SLOT, exit 4)"
 else
-  fail "a Unity suite nested under the CLI ran while the Unity lock was held: $(grep -E 'KẾT LUẬN|VERDICT' "$TMP/u6b.log" | tail -1)"
+  fail "Unity suite nested under the CLI (ran=$([ -f "$TMP/u6b_ran" ] && echo yes || echo no) rc=$rc_u6b, want no run + exit 4 + exclusive-lock line): $(grep -E 'KẾT LUẬN|VERDICT|SLOT' "$TMP/u6b.log" | tail -2)"
 fi
 
 # ── 7. Không tìm thấy heavy_slot.py của DevKit: log một dòng và chạy tiếp lệnh, thoát 0.

@@ -323,6 +323,9 @@ wait_for_load() {
   local max_src="SB_MERGE_LOAD_MAX"
   [ -n "$max" ] || { max=$(printf '%s\n' "$CONFIG_JSON" | jq -r '.merge_load_max // empty' 2>/dev/null || true); max_src="config merge_load_max"; }
   LOAD_WAITED=0
+  # LOAD_WAIT_ON=1: gate này đã bật chờ tải (cap > 0 sau kiểm tra) và đọc được tải — chỉ khi đó run_verify_cmd mới đặt
+  # DEVKIT_SLOT_LOAD_WAIT_S=0 (OCR 21/10: tải không đọc được thì gate không chờ, bên trong tự chờ tải).
+  LOAD_WAIT_ON=0
   [ "$DRY" -eq 1 ] && return 0
   # Tối đa 6 chữ số (không tràn số); 10# đọc 08 là tám (không có nó bash đọc bát phân và set -e dừng gate).
   [[ "$cap" =~ ^[0-9]{1,6}$ ]] || { say "SB_MERGE_LOAD_WAIT_S='${cap}' is not a number of seconds; not waiting for the load"; return 0; }
@@ -346,7 +349,7 @@ wait_for_load() {
       || say "could not refresh the merge lock stamp ${LOCK_DIR}/at"
     load=$(load_now)
     [[ "$load" =~ ^[0-9]{1,6}$ ]] || { say "cannot read the machine load ('${load}'); verifying without waiting"; return 0; }
-    load=$((10#$load))
+    load=$((10#$load)); LOAD_WAIT_ON=1
     if [ "$load" -lt "$max" ]; then
       [ "$waited" -gt 0 ] && say "load ${load} after ${waited}s; verifying"
       return 0
@@ -441,8 +444,11 @@ for cmd in "${VERIFY[@]}"; do
 done
 
 # Chạy lệnh verify trong scratch: post-fix-gate.py tự xin quyền chạy cho từng suite, các lệnh verify khác được bọc qua
-# super-board-heavy-slot.py. DEVKIT_SLOT_LOAD_WAIT_S=0: tải đã được chờ theo merge_load_max / merge_load_wait_s ở trên, bên trong
-# không chờ lần nữa (merge chặn người khác). DEVKIT_SLOT_PRIORITY=merge: đứng đầu hàng đợi khoá Unity (bin/heavy_slot.py),
+# super-board-heavy-slot.py. DEVKIT_SLOT_LOAD_WAIT_S=0 CHỈ khi wait_for_load ở trên đã bật chờ tải (LOAD_WAIT_ON=1: cap > 0 theo
+# merge_load_max / merge_load_wait_s): tải đã được chờ, bên trong không chờ lần nữa (merge chặn người khác). cap = 0 (config thiếu
+# merge_load_wait_s — mặc định của hầu hết board — hay SB_MERGE_LOAD_WAIT_S=0): không đặt gì, bên trong tự chờ tải như mọi lượt (OCR
+# 20/10: ép 0 ở đây thì verify của các board đó chạy không xét tải lần nào). Giá trị người gọi đã đặt thì giữ nguyên.
+# DEVKIT_SLOT_PRIORITY=merge: đứng đầu hàng đợi khoá Unity (bin/heavy_slot.py),
 # và post-fix-gate không chạy lần chạy thật hằng ngày (sentinel) trong merge gate.
 # Khoá còn của gate này thì làm mới mốc "at" (như wait_for_load) để mỗi bước dài sau đó được trọn STALE_AFTER — nếu không, gate
 # khác coi khoá của một verify + retry dài là bỏ quên, chiếm khoá và merge song song trên base cũ. Khoá đã bị gate khác chiếm (pid
@@ -468,10 +474,11 @@ run_verify_cmd() {
   own_lock_or_stop
   if [[ "$c" == *"post-fix-gate.py"* ]]; then
     ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
-        DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}" && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$c" ) >"$VERIFY_LOG" 2>&1
+        && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
+        && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$c" ) >"$VERIFY_LOG" 2>&1
   else
     ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
-        DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}" \
+        && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
         && DEVKIT_LANG="${DEVKIT_LANG:-vi}" python3 "$HERE/super-board-heavy-slot.py" -- bash -c "$c" ) >"$VERIFY_LOG" 2>&1
   fi
 }

@@ -139,7 +139,7 @@ import json, sys
 path, tmp = sys.argv[1:]
 m = json.load(open(path))
 m["rules"].append({"component": "S", "watch_files": ["src/s.py"], "mandatory_regression_tests": [
-    {"id": "REG-S", "name": "slow", "command": f"echo run >> '{tmp}/count.S'; sleep 3"}]})
+    {"id": "REG-S", "name": "slow", "command": f"echo run >> '{tmp}/count.S'; sleep 10"}]})
 json.dump(m, open(path, "w"))
 PY
 echo 's = 1' > src/s.py && git add -A && git commit -qm slow
@@ -500,5 +500,110 @@ finally:
 check("27. ghi FAIL / void thất bại (ENOSPC): PASS cũ của REG-27 không còn dùng lại được", c.hit(k27, t27) is None)
 sys.exit(0 if ok else 1)
 PY
+
+# 28. KNOWN-RED theo BẰNG CHỨNG (audit 21/10: bao đóng tĩnh không bao giờ đủ để chứng minh "không chạm input"): suite cached-full FAIL
+#     chỉ được xếp lỗi có sẵn (ngoài kết luận) khi sổ khoá có FAIL thật của chính suite đó trên nội dung BASE_REF (khoá cả cây của base),
+#     và chưa từng PASS ở đó. Bằng chứng có từ một lượt gate mà cây lúc đó đúng bằng nội dung base sau này (thay đổi được gate rồi commit
+#     nguyên vẹn, merge gate, hay --diff HEAD~1 trên checkout sạch). (a) thay đổi 1 (src/a.py) gate: chưa có bằng chứng ⇒ exit 1, ghi FAIL
+#     dưới khoá cả cây của cây đó; commit; thay đổi 2 (src/a.py) ⇒ base có FAIL ⇒ KNOWN-RED, exit 0. (b) đối chứng: base từng PASS
+#     (dep.txt good lúc gate thay đổi 1), thay đổi 2 làm REG-X FAIL ⇒ FAIL vào kết luận, exit 1.
+mk28() { # <thư mục> <nội dung src/dep.txt>
+  local r="$1"; mkdir -p "$r/src" "$r/tests"
+  git -C "$r" init -q -b main . && git -C "$r" config user.email t@t && git -C "$r" config user.name t
+  echo 'a = 1' > "$r/src/a.py"; echo 'x = 1' > "$r/src/x.py"; echo "$2" > "$r/src/dep.txt"
+  printf 'grep -qx good src/dep.txt\n' > "$r/tests/x.sh"
+  printf '{"project":"t","rules":[{"component":"A","watch_files":["src/a.py"],"mandatory_regression_tests":[{"id":"REG-A","name":"a","command":"true"}]},{"component":"X","watch_files":["src/x.py"],"mandatory_regression_tests":[{"id":"REG-X","name":"x","command":"bash tests/x.sh"}]}]}\n' > "$r/matrix.json"
+  git -C "$r" add -A && git -C "$r" commit -qm init
+}
+R28="$TMP/r28"; mk28 "$R28" bad
+echo 'a = 2' > "$R28/src/a.py"
+gq "$R28"; r0=$?
+[ "$r0" = 1 ] && ok "28a. FAIL chưa có bằng chứng base (lượt đầu) ⇒ vào kết luận (exit 1)" \
+  || { fail "28a. lượt đầu không có bằng chứng: exit $r0 (mong 1)"; grep -E "REG-X|KNOWN|KẾT LUẬN" "$TMP/outq" | tail -3; }
+git -C "$R28" commit -qam "thay đổi 1"
+echo 'a = 3' > "$R28/src/a.py"
+gq "$R28"; r1=$?
+if [ "$r1" = 0 ] && grep -q "KNOWN-RED" "$TMP/outq"; then ok "28a. FAIL có sẵn (sổ khoá có FAIL trên nội dung base): KNOWN-RED, ngoài kết luận (exit 0)"
+else fail "28a. FAIL có sẵn có bằng chứng: exit $r1 (mong 0, có dòng KNOWN-RED)"; grep -E "REG-X|KNOWN|KẾT LUẬN" "$TMP/outq" | tail -3; fi
+R28="$TMP/r28b"; mk28 "$R28" good
+echo 'a = 2' > "$R28/src/a.py"
+gq "$R28"; git -C "$R28" commit -qam "thay đổi 1"   # base PASS được ghi dưới khoá cả cây của cây này
+echo 'a = 3' > "$R28/src/a.py"; echo bad > "$R28/src/dep.txt"
+gq "$R28"; r2=$?
+[ "$r2" = 1 ] && ok "28b. đối chứng: base từng PASS, thay đổi làm suite cached-full FAIL ⇒ FAIL vào kết luận (exit 1)" \
+  || { fail "28b. base PASS mà FAIL sau thay đổi bị xếp ngoài kết luận (exit $r2, mong 1)"; grep -E "REG-X|KNOWN|KẾT LUẬN" "$TMP/outq" | tail -3; }
+
+# 30. Không có bằng chứng thì FAIL vào kết luận, kể cả khi bao đóng tĩnh không thấy thay đổi chạm input (kịch bản A của audit 21/10):
+#     tests/x.sh đọc src/dep.txt qua đường dẫn dựng lúc chạy; thay đổi đặt dep.txt=bad (và src/a.py) ⇒ REG-X FAIL do chính thay đổi ⇒ exit 1.
+R30="$TMP/r30"; mkdir -p "$R30/src" "$R30/tests"
+git -C "$R30" init -q -b main . && git -C "$R30" config user.email t@t && git -C "$R30" config user.name t
+echo 'a = 1' > "$R30/src/a.py"; echo 'x = 1' > "$R30/src/x.py"; echo good > "$R30/src/dep.txt"
+printf 'd=src; f=de; f="${f}p.txt"; grep -qx good "$d/$f"\n' > "$R30/tests/x.sh"
+printf '{"project":"t","rules":[{"component":"A","watch_files":["src/a.py"],"mandatory_regression_tests":[{"id":"REG-A","name":"a","command":"true"}]},{"component":"X","watch_files":["src/x.py"],"mandatory_regression_tests":[{"id":"REG-X","name":"x","command":"bash tests/x.sh"}]}]}\n' > "$R30/matrix.json"
+git -C "$R30" add -A && git -C "$R30" commit -qm init
+echo 'a = 2' > "$R30/src/a.py"; echo bad > "$R30/src/dep.txt"
+gq "$R30"; r30=$?
+[ "$r30" = 1 ] && ok "30. không có bằng chứng base, input bị sót đổi làm suite FAIL ⇒ FAIL vào kết luận (exit 1)" \
+  || { fail "30. FAIL do chính thay đổi (input bao đóng tĩnh không thấy) bị xếp KNOWN-RED (exit $r30, mong 1)"; grep -E "REG-X|KNOWN" "$TMP/outq" | tail -3; }
+grep -q -- "--diff HEAD~1" "$TMP/outq" && grep -Eq "REG-X.*(chưa có bằng chứng|no evidence)" "$TMP/outq" \
+  && ok "30. FAIL chưa có bằng chứng: gate nói cách ghi bằng chứng lỗi có sẵn (--diff HEAD~1 trên checkout sạch)" \
+  || fail "30. thiếu hướng dẫn ghi bằng chứng cho FAIL cached-full: $(grep -E 'REG-X' "$TMP/outq" | tail -2)"
+
+# 31. FAIL của chính lượt này không bao giờ là bằng chứng của nó (audit #4 21/10): thay đổi chỉ chạm file EXCLUDE (.agents/instincts.md —
+#     không có trong content map) ⇒ khoá cả cây của base trùng khoá cả cây của cây hiện tại; REG-X (đọc instincts.md) FAIL do chính thay
+#     đổi ⇒ FAIL vào kết luận (exit 1), cả khi chưa commit lẫn khi kiểm commit bằng --diff HEAD~1.
+R31="$TMP/r31"; mkdir -p "$R31/src" "$R31/.agents"
+git -C "$R31" init -q -b main . && git -C "$R31" config user.email t@t && git -C "$R31" config user.name t
+echo 'x = 1' > "$R31/src/x.py"; echo good > "$R31/.agents/instincts.md"
+printf '{"project":"t","rules":[{"component":"A","watch_files":[".agents/instincts.md"],"mandatory_regression_tests":[{"id":"REG-A","name":"a","command":"true"}]},{"component":"X","watch_files":["src/x.py"],"mandatory_regression_tests":[{"id":"REG-X","name":"x","command":"grep -qx good .agents/instincts.md"}]}]}\n' > "$R31/matrix.json"
+git -C "$R31" add -A && git -C "$R31" commit -qm init
+echo bad > "$R31/.agents/instincts.md"
+gq "$R31"; r31a=$?
+git -C "$R31" commit -qam "instincts"
+gq "$R31" --diff HEAD~1; r31b=$?
+[ "$r31a$r31b" = 11 ] && ok "31. thay đổi chỉ chạm file EXCLUDE: FAIL của lượt này không tự làm bằng chứng KNOWN-RED (exit 1 cả hai lượt)" \
+  || { fail "31. FAIL tự làm bằng chứng của chính nó: exit chưa commit $r31a, --diff HEAD~1 $r31b (mong 1, 1)"; grep -E "REG-X|KNOWN" "$TMP/outq" | tail -3; }
+
+# 32. FAIL chập chờn (lần đầu FAIL, chạy lại PASS — FLAKY) không phải bằng chứng base đỏ (OCR 21/10): thay đổi 1 gate với FLAKY_RETRY,
+#     REG-X flake; commit đúng nội dung đó; thay đổi 2 làm REG-X FAIL thật (dep.txt=bad) ⇒ base không có bằng chứng ⇒ exit 1.
+R32="$TMP/r32"; mkdir -p "$R32/src" "$R32/tests"
+git -C "$R32" init -q -b main . && git -C "$R32" config user.email t@t && git -C "$R32" config user.name t
+echo 'a = 1' > "$R32/src/a.py"; echo 'x = 1' > "$R32/src/x.py"; echo good > "$R32/src/dep.txt"
+printf 'c=$(cat "%s/cnt32" 2>/dev/null || echo 0); echo $((c+1)) > "%s/cnt32"\n[ "$c" -ge 1 ] || { echo "AssertionError: flaky"; exit 1; }\ngrep -qx good src/dep.txt\n' "$TMP" "$TMP" > "$R32/tests/x.sh"
+printf '{"project":"t","rules":[{"component":"A","watch_files":["src/a.py"],"mandatory_regression_tests":[{"id":"REG-A","name":"a","command":"true"}]},{"component":"X","watch_files":["src/x.py"],"mandatory_regression_tests":[{"id":"REG-X","name":"x","command":"bash tests/x.sh"}]}]}\n' > "$R32/matrix.json"
+git -C "$R32" add -A && git -C "$R32" commit -qm init
+echo 'a = 2' > "$R32/src/a.py"
+( cd "$R32" && FLAKY_RETRY=1 VACUITY_REVERT=0 CLAUDE_PROJECT_DIR="$R32" python3 "$GATE" --matrix "$R32/matrix.json" --run-tests --full \
+  --no-checklist >"$TMP/outq32" 2>&1 )
+grep -q "FLAKY" "$TMP/outq32" || fail "32. tiền đề: lượt 1 không có REG-X FLAKY ($(grep -E 'REG-X' "$TMP/outq32" | tail -1))"
+git -C "$R32" commit -qam "thay đổi 1"
+echo 'a = 3' > "$R32/src/a.py"; echo bad > "$R32/src/dep.txt"
+gq "$R32"; r32=$?
+[ "$r32" = 1 ] && ok "32. FAIL chập chờn trên base không là bằng chứng lỗi có sẵn: FAIL thật sau thay đổi vào kết luận (exit 1)" \
+  || { fail "32. FAIL chập chờn thành bằng chứng KNOWN-RED (exit $r32, mong 1)"; grep -E "REG-X|KNOWN" "$TMP/outq" | tail -3; }
+
+# 29. File input đã commit mà content_map ghi khác cách đọc đĩa (≥ 8 MiB: content_map ghi "<mode> <blob>", đọc đĩa ra "big size:mtime"):
+#     inputs_unchanged phải nói KHÔNG đổi khi không có gì đổi — không thì PASS không bao giờ được ghi (cache tắt ngầm; LFS / eol cũng vậy).
+R29="$TMP/r29"; mkdir -p "$R29/src"
+git -C "$R29" init -q -b main . && git -C "$R29" config user.email t@t && git -C "$R29" config user.name t
+python3 -c "import sys; open(sys.argv[1], 'wb').write(b'x' * (9 << 20))" "$R29/src/big.bin"
+printf '{"project":"t","rules":[{"component":"B","watch_files":["src/big.bin"],"mandatory_regression_tests":[{"id":"REG-B","name":"b","command":"true"}]}]}\n' > "$R29/matrix.json"
+git -C "$R29" add -A && git -C "$R29" commit -qm init
+res29="$( cd "$R29" && CLAUDE_PROJECT_DIR="$R29" python3 - "$GATE" "$R29" <<'PY'
+import importlib.util, json, os, sys
+gate, repo = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("pfg29", gate)
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+mp = os.path.join(repo, "matrix.json")
+rules = json.load(open(mp))["rules"]
+sc = m.suite_cache_for(repo, rules, mp, {})
+t = dict(rules[0]["mandatory_regression_tests"][0])
+sc.keys(t)
+print("unchanged=%s" % sc.inputs_unchanged(t))
+PY
+)"
+[ "$res29" = "unchanged=True" ] && ok "29. file input ≥ 8 MiB đã commit, không đổi: inputs_unchanged đúng (PASS ghi được)" \
+  || fail "29. inputs_unchanged sai với file lớn đã commit ($res29): cache tắt ngầm cho suite đó"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_suite_cache: all passed" || { echo "❌ test_gate_suite_cache: $FAILS failed"; exit 1; }

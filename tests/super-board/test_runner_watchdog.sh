@@ -152,10 +152,15 @@ for c in gh claude launchctl; do
   [ "$got" = "$TMP/stub/$c" ] || { echo "✖ stub $c not first on PATH (got '$got'): refusing to run"; exit 1; }
 done
 
+# Múi giờ của board trong test (#150): ca board đang chạy đặt runner bắt đầu 2 giờ trước và mong "HH:MM" (cùng ngày); watchdog in
+# "dd/MM HH:MM" cho mốc hôm qua nên từ 00:00 tới 02:00 +07 (và lúc test chạy qua nửa đêm) ca đó đỏ. Giờ +07 từ 03:00 tới 22:59 thì
+# dùng +07 như thật, ngoài khung đó dùng UTC (lúc ấy là 16:00–19:59, mốc 2 giờ trước vẫn cùng ngày).
+BTZ=Asia/Ho_Chi_Minh
+BH=$(TZ="$BTZ" date +%H); [ $((10#$BH)) -ge 3 ] && [ $((10#$BH)) -le 22 ] || BTZ=UTC
 ENVV=(-u SB_GITHUB_READ_STRICT -u POSTFIX_GATE_FORCE_FULL -u SB_DAEMON -u SB_WATCHDOG_START -u SB_WATCHDOG_AUTOINSTALL
   -u JAVA_HOME -u ANDROID_HOME -u ANDROID_SDK_ROOT -u STUB_WRITE_MARK -u STUB_CARD_FAIL -u CLAUDE_CONFIG_DIR -u DEVKIT_LANG
   HOME="$TMP/home" PATH="$TMP/stub:$PATH" SB_ACCOUNT_POOL="$TMP/no-pool" SB_STATE_DIR="$TMP/home/sb"
-  SB_LAUNCH_AGENTS_DIR="$TMP/LaunchAgents" STUB_HALT="$TMP/halt" STUB_CALLS="$TMP/calls" SB_BOARD_TZ=Asia/Ho_Chi_Minh
+  SB_LAUNCH_AGENTS_DIR="$TMP/LaunchAgents" STUB_HALT="$TMP/halt" STUB_CALLS="$TMP/calls" SB_BOARD_TZ="$BTZ"
   STUB_STATE="$TMP/repo/.claude/super-board/runner/t.state")
 run_env() { env "${ENVV[@]}" "$@"; }
 start_runner() {   # start_runner <out> [VAR=val…]: runner nền trong repo giả, đặt RP = PID của chính bash runner
@@ -548,7 +553,7 @@ W15=$(date -u -r "$WS" '+%Y-%m-%dT%H:%M:%SZ')
 printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$FR3" "$W15" > "$R/.claude/super-board/inflight/15"
 dead_pid; printf 'PID=%s\nLANE=qa\nSTARTED=%s\n' "$D" "$W15" > "$R/.claude/super-board/inflight/16"
 wd; L=$(last_edit)
-case "$L" in *"🟢"*"#15 code từ $(TZ=Asia/Ho_Chi_Minh date -r "$WS" '+%H:%M')"*"1g15p"*) ok "running board → 🟢, live worker #15 (code) with its start time and 1g15p elapsed" ;;
+case "$L" in *"🟢"*"#15 code từ $(TZ="$BTZ" date -r "$WS" '+%H:%M')"*"1g15p"*) ok "running board → 🟢, live worker #15 (code) with its start time and 1g15p elapsed" ;;
   *) fail "running status lacks worker start/elapsed: '$L'" ;; esac
 case "$L" in *"#16"*) fail "a dead worker's lock (#16) is listed as running" ;; *) ok "a dead worker's lock is not listed" ;; esac
 case "$L" in *"🔨"*|*"🔍"*|*"✏️"*|*"⏸️"*|*"🟠"*|*"⚪"*) fail "status uses a glyph other than 🟢/🔴: $L" ;; *) ok "status uses only 🟢/🔴 and words" ;; esac
@@ -592,7 +597,7 @@ STUB_ITEMS="$IT77" wd
 printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15 77\nREDS=15 77\n' > "$BST"; STUB_ITEMS_FAIL=1 wd
 case " $(field REDS "$BST") " in *" 15 "*) fail "a now-live card stays in REDS: '$(field REDS "$BST")'" ;; *" 77 "*) ok "items read failure drops now-live cards from REDS, keeps the rest" ;; *) fail "REDS='$(field REDS "$BST")'" ;; esac
 # Từng card: field chữ "Đang chạy" của Project ghi lane + giờ bắt đầu + thời lượng khi worker sống, xoá khi worker dừng.
-grep -q "^gh project item-edit --id I_15 --project-id P1 --field-id F_RUN --text 🟢 đang code · từ $(TZ=Asia/Ho_Chi_Minh date -r "$WS" '+%H:%M') · 1g15p" "$TMP/calls" \
+grep -q "^gh project item-edit --id I_15 --project-id P1 --field-id F_RUN --text 🟢 đang code · từ $(TZ="$BTZ" date -r "$WS" '+%H:%M') · 1g15p" "$TMP/calls" \
   && ok "card #15 gets its 'Đang chạy' field: lane, start time, elapsed" || fail "card field not written: $(grep 'item-edit' "$TMP/calls" | tail -2 | tr '\n' ' ')"
 grep -q -- '--id I_16 .*--text' "$TMP/calls" && fail "card of a dead worker (#16) got a running field" || ok "card of a dead worker gets no running field"
 printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$D" "$W15" > "$R/.claude/super-board/inflight/15"; wd
@@ -652,7 +657,7 @@ BOARD_STATUS_BUDGET=0 wd
 [ "$(grep -c -- '--clear' "$TMP/calls")" = "$c0" ] && [ "$(field CARDS "$BST")" = 15 ] \
   && ok "publish budget spent → no more gh calls, card #15 kept for the next check" \
   || fail "budget ignored: clears $(grep -c -- '--clear' "$TMP/calls") (was $c0), CARDS='$(field CARDS "$BST")'"
-case "$L" in *"chạy từ $(TZ=Asia/Ho_Chi_Minh date -r "$RS" '+%H:%M')"*) ok "running board shows since when the runner runs" ;; *) fail "runner start missing: '$L'" ;; esac
+case "$L" in *"chạy từ $(TZ="$BTZ" date -r "$RS" '+%H:%M')"*) ok "running board shows since when the runner runs" ;; *) fail "runner start missing: '$L'" ;; esac
 e0=$(edits); SB_BOARD_STATUS=0 wd
 [ "$(edits)" = "$e0" ] && ok "SB_BOARD_STATUS=0 turns the GitHub status off" || fail "SB_BOARD_STATUS=0 still wrote"
 kill_tree "$FR3"; rm -f "$WD" "$BST" "$STATE" "$R/.claude/super-board/inflight/15" "$R/.claude/super-board/inflight/16"

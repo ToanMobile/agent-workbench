@@ -27,9 +27,16 @@ DEFAULT_EST_S = 600.0     # suite chưa có thời lượng ghi nhận
 CPU_HEAVY_S = 300.0       # thời lượng ghi nhận dài nhất vượt mức này: suite nặng CPU (DEVKIT_SLOT_CPU_S)
 LOAD_MAX = 100.0          # DEVKIT_SLOT_LOAD_MAX: tải 1 phút (os.getloadavg) dưới mức này thì chạy ngay (người dùng 20/10)
 LOAD_WAIT_S = 600.0       # DEVKIT_SLOT_LOAD_WAIT_S: tải cao thì chờ tối đa chừng này rồi vẫn chạy; 0 = không chờ
-ADVISORY_BUDGET_S = 600.0  # DEVKIT_SLOT_ADVISORY_BUDGET_S: tổng giây một tiến trình được chờ tải (mọi suite cộng lại)
-_ADVISORY_SPENT = [0.0, False]   # [giây đã chờ, đã báo hết ngân sách]
+ADVISORY_BUDGET_S = 600.0  # DEVKIT_SLOT_ADVISORY_BUDGET_S: tổng giây ĐỒNG HỒ một tiến trình được chờ tải (chờ chồng nhau tính một lần)
+# Sổ chờ tải của tiến trình: giây đồng hồ đã chờ (các khoảng có ít nhất một suite đang chờ, hợp lại), số suite đang chờ, lúc khoảng
+# hiện tại bắt đầu, đã báo hết ngân sách chưa.
+_LOAD_WAIT = {"spent": 0.0, "active": 0, "since": 0.0, "noted": False}
 _ADVISORY_LOCK = threading.Lock()
+
+
+def _load_wait_spent(now: float) -> float:
+    """Giây đồng hồ tiến trình đã chờ tải tới `now` (gọi trong _ADVISORY_LOCK)."""
+    return _LOAD_WAIT["spent"] + (now - _LOAD_WAIT["since"] if _LOAD_WAIT["active"] else 0.0)
 
 
 @dataclass
@@ -337,7 +344,8 @@ def release_pool(handle: Optional[PoolHandle]) -> None:
 
 def acquire(wait_s: Optional[float] = None, nonblocking: bool = False) -> SlotHandle:
     """Đường cũ của CLI và wrapper super-board, theo TẢI MÁY (không còn 2 slot, người dùng 20/10): tải dưới load_max() thì chạy ngay,
-    cao hơn thì chờ tải xuống tối đa wait_s (SB_HEAVY_SLOT_WAIT_S, không đặt thì DEVKIT_SLOT_LOAD_WAIT_S) rồi vẫn chạy. --nonblock:
+    cao hơn thì chờ tải xuống tối đa wait_s (DEVKIT_SLOT_LOAD_WAIT_S đặt rõ thì thắng — merge gate đặt 0 sau lần chờ của chính nó, OCR
+    20/10; không đặt thì SB_HEAVY_SLOT_WAIT_S, giữ cho tương thích ngược; không cả hai thì 600 s) rồi vẫn chạy. --nonblock:
     tải cao thì không chạy. Trả ngay nếu tiến trình cha đã giữ khoá độc quyền (SB_HEAVY_SLOT_HELD=1) hoặc đã được cho chạy theo tải
     (DEVKIT_SLOT_ADVISORY_HELD=1). Được chạy thì đặt DEVKIT_SLOT_ADVISORY_HELD=1 cho cả cây tiến trình: gate lồng không chờ tải lại
     nhưng VẪN xin khoá Unity (không giữ khoá nào thì không được đặt SB_HEAVY_SLOT_HELD — OCR 20/10)."""
@@ -349,7 +357,7 @@ def acquire(wait_s: Optional[float] = None, nonblocking: bool = False) -> SlotHa
             return SlotHandle(fh=None, slot=None, prev_held=False, timed_out=True)
     else:
         if wait_s is None:
-            wait_s = _env_float("SB_HEAVY_SLOT_WAIT_S", _env_float("DEVKIT_SLOT_LOAD_WAIT_S", LOAD_WAIT_S))
+            wait_s = _env_float("DEVKIT_SLOT_LOAD_WAIT_S", _env_float("SB_HEAVY_SLOT_WAIT_S", LOAD_WAIT_S))
         _, note = wait_load(wait_s)
         if note:
             print(f"[heavy-slot] {note}", file=sys.stderr, flush=True)
@@ -488,7 +496,10 @@ def _scan_programs(text: str, project_dir: str, top: bool, cwd0: str, found: dic
                 with open(path, encoding="utf-8", errors="replace") as f:
                     body = f.read()
             except OSError:
-                found["cpu"] = True   # script không đọc được: bảo vệ máy (không bao giờ xếp sau engine)
+                # script không đọc được: không biết bên trong có Unity không — coi là unity (khoá Unity), không phải cpu (cpu không
+                # còn khoá nào: suite Unity thật đọc lỗi từng chạy không khoá, OCR 20/10)
+                found["engine"].add("unity")
+                found["cpu"] = True
                 continue
             if "\0" not in body[:4096]:
                 _scan_programs(body, project_dir, False, "", found)
@@ -508,8 +519,10 @@ def classify(command: str, project_dir: str = ".", recorded_s: Optional[float] =
     found = {"engine": set(), "cpu": False}
     try:
         _scan_programs(command or "", project_dir, True, "", found)
-    except Exception as exc:   # noqa: BLE001 - không đọc được lệnh: coi như nặng CPU, không bao giờ nhẹ hơn thực tế
-        print(f"[heavy-slot] không phân lớp được lệnh ({exc}); coi là cpu", file=sys.stderr, flush=True)
+    except Exception as exc:   # noqa: BLE001 - không đọc được lệnh: coi là unity (khoá độc quyền), không bao giờ nhẹ hơn thực tế
+        # cpu không còn khoá nào (P1b), nên "cpu" ở đây cho một suite Unity thật chạy không khoá Unity (OCR 20/10)
+        print(f"[heavy-slot] không phân lớp được lệnh ({exc}); coi là unity", file=sys.stderr, flush=True)
+        found["engine"].add("unity")
         found["cpu"] = True
     engine = next((e for e in ("unity", "gradle", "xcode") if e in found["engine"]), None)
     serial = None
@@ -552,23 +565,36 @@ def acquire_for_suite(info: dict, *, est_s: Optional[float] = None, label: str =
     engine = info.get("engine")
     lock_wait = _env_float("SB_HEAVY_SLOT_WAIT_S", DEFAULT_WAIT_S)
     notes = []
-    # tiến trình cha đã được cho chạy theo tải (gate lồng trong suite, wrapper CLI): không chờ lại. Merge gate super-board chờ tải một
-    # lần trước verify rồi đặt DEVKIT_SLOT_LOAD_WAIT_S=0; worktree finish không tự chờ trước nên chờ ở đây như mọi lượt.
+    # tiến trình cha đã được cho chạy theo tải (gate lồng trong suite, wrapper CLI): không chờ lại. Merge gate super-board đã bật chờ tải
+    # (merge_load_wait_s > 0) thì chờ một lần trước verify rồi đặt DEVKIT_SLOT_LOAD_WAIT_S=0; không bật (mặc định của hầu hết board) hay
+    # worktree finish (không tự chờ trước) thì chờ ở đây như mọi lượt.
     if os.environ.get("DEVKIT_SLOT_ADVISORY_HELD") != "1":
         wait_s = _env_float("DEVKIT_SLOT_LOAD_WAIT_S", LOAD_WAIT_S)
+        # Ngân sách là giây ĐỒNG HỒ tiến trình chờ tải (OCR 20/10 + 21/10): suite vào lúc khác đang chờ thì chờ tới cùng mốc hết ngân sách
+        # (chờ chồng nhau tính một lần, suite nào cũng chờ), không phải mỗi suite một ngân sách trọn, cũng không phải suite đầu giữ hết.
         with _ADVISORY_LOCK:
-            left = _env_float("DEVKIT_SLOT_ADVISORY_BUDGET_S", ADVISORY_BUDGET_S) - _ADVISORY_SPENT[0]
-            if left <= 0 < wait_s and not _ADVISORY_SPENT[1]:
-                _ADVISORY_SPENT[1] = True
+            now = time.monotonic()
+            left = _env_float("DEVKIT_SLOT_ADVISORY_BUDGET_S", ADVISORY_BUDGET_S) - _load_wait_spent(now)
+            if left <= 0 < wait_s and not _LOAD_WAIT["noted"]:
+                _LOAD_WAIT["noted"] = True
                 notes.append("ngân sách chờ tải máy của lượt này đã hết — các suite sau chạy không chờ")
-        wait_s = min(wait_s, max(0.0, left))
-        if max_wait is not None:
-            wait_s = min(wait_s, max(0.0, max_wait))
-        waited, note = wait_load(wait_s, label)
-        with _ADVISORY_LOCK:
-            _ADVISORY_SPENT[0] += waited
-        if note:
-            notes.append(note)
+            wait_s = min(wait_s, max(0.0, left))
+            if max_wait is not None:
+                wait_s = min(wait_s, max(0.0, max_wait))
+            if wait_s > 0:
+                if not _LOAD_WAIT["active"]:
+                    _LOAD_WAIT["since"] = now
+                _LOAD_WAIT["active"] += 1
+        if wait_s > 0:
+            try:
+                _, note = wait_load(wait_s, label)
+            finally:
+                with _ADVISORY_LOCK:
+                    _LOAD_WAIT["active"] -= 1
+                    if not _LOAD_WAIT["active"]:
+                        _LOAD_WAIT["spent"] += time.monotonic() - _LOAD_WAIT["since"]
+            if note:
+                notes.append(note)
     got = []
     if engine == "unity":
         # Hạn chờ khoá tính SAU lần chờ tải (Antigravity audit 20/10: t_start + min(SB_HEAVY_SLOT_WAIT_S, max_wait) để lần chờ tải ăn
