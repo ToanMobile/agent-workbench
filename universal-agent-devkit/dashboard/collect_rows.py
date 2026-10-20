@@ -25,7 +25,7 @@ REPOS = {
     "Neighbours-From-Hell": "/Volumes/Data/Toan/Game/Neighbours-From-Hell",
 }
 # user requirement 2026-10-13, per repo: MCP servers that must run there (anything else is optional)
-BASE_MCPS = ["codebase-memory-mcp", "context7", "agentmemory"]
+BASE_MCPS = ["codebase-memory-mcp", "context7"]
 ALL_MCPS = BASE_MCPS + ["play-store", "replicant-mcp"]
 REQUIRED_MCPS = {
     "agent-workbench": BASE_MCPS,                    # no replicant-mcp, no play-store: it has no app or device
@@ -164,7 +164,7 @@ SKILL_VI = {
 FLOW = {
     "p1": [("hook", "session_context.sh"), ("hook", "session_lock.sh"), ("file", "AGENTS.md", "AGENTS.md (luật chung)"),
            ("file", ".agents/context/profile-rules.md", "Luật theo profile"), ("file", ".agents/context/rules-index.md", "Mục lục luật riêng"),
-           ("rules", ""), ("instincts", ""), ("mcp", "codebase-memory-mcp"), ("mcp", "agentmemory")],
+           ("rules", ""), ("instincts", ""), ("mcp", "codebase-memory-mcp")],
     "p2": [("hook", "prompt_context.sh"), ("skill", "context-enricher"), ("skill", "spec-driven-development"), ("skill", "grill-plan")],
     "p3": [("hook", "precode_gate.sh"), ("hook", "read_ledger.sh"), ("hook", "worktree_guard.sh"), ("skill", "codebase-memory")],
     "p4": [("hook", "block-dangerous-git.sh"), ("hook", "bash_write_ledger.sh"), ("hook", "churn_guard.sh"),

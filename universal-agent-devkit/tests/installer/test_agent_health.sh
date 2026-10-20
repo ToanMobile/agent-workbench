@@ -74,10 +74,10 @@ rm -f "$W/.claude/commands/qc.md"
 python3 "$HEALTH" -t "$W" > "$TMP/w4.out" 2>&1; rc=$?
 [ "$rc" = 1 ] && strip < "$TMP/w4.out" | grep -q ".claude/commands/qc.md" && ok "project wiring: a DevKit command link that vanished (/qc) FAILs health" || fail "missing /qc not caught (rc=$rc)"
 
-# L-2: only the active profile's essential_mcps are required (universal: codebase-memory-mcp, context7, agentmemory).
+# L-2: only the active profile's essential_mcps are required (universal: codebase-memory-mcp, context7).
 mkdir -p "$TMP/uni"
 printf '{"profile":"universal"}' > "$TMP/uni/.active-profile.json"
-printf '{"mcpServers":{"codebase-memory-mcp":{},"context7":{},"agentmemory":{}}}' > "$TMP/uni/.mcp.json"
+printf '{"mcpServers":{"codebase-memory-mcp":{},"context7":{}}}' > "$TMP/uni/.mcp.json"
 out="$(python3 "$HEALTH" -t "$TMP/uni" 2>&1 | strip)"
 echo "$out" | grep -q "Đủ MCP của profile \`universal\`" && ok "L-2: universal profile satisfied without unity/blender" || fail "L-2: universal profile still demands other MCPs"
 # the output prints paths (DevKit, project, configured MCP files): one that happens to contain "unity" or "blender" is no demand for those MCPs

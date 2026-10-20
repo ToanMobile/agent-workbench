@@ -210,16 +210,12 @@ check("review" in deprecated and not bad_dep,
 mcp_names = set()
 for f in ("mcp/.mcp.json", "mcp/mcp_config.json"):
     mcp_names |= set(json.load(open(os.path.join(ROOT, f)))["mcpServers"])
-# agentmemory (lean): bare `npx @agentmemory/agentmemory` is the setup wizard + a server on :3111
-# that prints a banner on stdout; only its `mcp` subcommand is a stdio MCP server (7 local tools).
+# agentmemory: removed (dead InMemoryKV fallback with 0 tool_use calls across 8900+ sessions).
 am_bad = []
 for f in ("mcp_config.json", "mcp/.mcp.json", "mcp/mcp_config.json"):
-    am = json.load(open(os.path.join(ROOT, f)))["mcpServers"].get("agentmemory") or {}
-    am_args = am.get("args") or []
-    if not (am.get("command") == "npx" and am_args[-1:] == ["mcp"]
-            and any(re.fullmatch(r"@agentmemory/agentmemory@\d+\.\d+\.\d+", a) for a in am_args)):
-        am_bad.append(f"{f}: {json.dumps(am)}")
-check(not am_bad, "R6 agentmemory runs the pinned stdio `mcp` subcommand (DevKit + install sources)", "; ".join(am_bad))
+    if "agentmemory" in (json.load(open(os.path.join(ROOT, f))).get("mcpServers") or {}):
+        am_bad.append(f)
+check(not am_bad, "R6 dead agentmemory MCP is absent from DevKit + install sources", "; ".join(am_bad))
 prof_problems = []
 profiles = sorted(d for d in os.listdir(os.path.join(ROOT, "profiles"))
                   if os.path.isfile(os.path.join(ROOT, "profiles", d, "profile.json")))
