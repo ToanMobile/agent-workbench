@@ -80,18 +80,19 @@ def main():
     failed = 0
     for number in numbers:
         try:
-            project = graphql(token, 'query($o:String!,$n:Int!){user(login:$o){projectV2(number:$n){id title shortDescription}}}',
+            project = graphql(token, 'query($o:String!,$n:Int!){user(login:$o){projectV2(number:$n){id shortDescription}}}',
                               {'o': owner, 'n': number})['user']['projectV2']
             new = decide(project.get('shortDescription') or '', now, stale_min)
             if new is None:
-                print(f'project {number} ({project["title"]}): ok — {project.get("shortDescription") or "(no description)"}')
+                # Repo public: log Actions ai cũng đọc được — không in tiêu đề/mô tả của Project private.
+                print(f'project {number}: ok')
                 continue
             graphql(token, 'mutation($p:ID!,$d:String!){updateProjectV2(input:{projectId:$p,shortDescription:$d}){projectV2{id}}}',
                     {'p': project['id'], 'd': new})
-            print(f'::warning::project {number} ({project["title"]}): {new}')
+            print(f'::warning::project {number}: marked ⚫ (watchdog silent since {stamp_time(project["shortDescription"], now):%H:%M %d/%m})')
         except Exception as error:   # mạng, quyền PAT, Project không tồn tại: báo rồi làm tiếp Project kế
             failed += 1
-            print(f'::error::project {number}: {error}')
+            print(f'::error::project {number}: {type(error).__name__}: {str(error)[:200]}')
     return 1 if failed else 0
 
 

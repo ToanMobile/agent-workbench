@@ -54,4 +54,20 @@ out=$(decide "⏸️ đã dừng (người dùng stop) · cập nhật 13:02 20/
 msg=$(env -u BOARD_PAT python3 "$SCRIPT" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && printf '%s' "$msg" | grep -q 'BOARD_PAT' && ok "no BOARD_PAT secret → exit 0 with a notice" || fail "no secret: rc=$rc '$msg'"
 
+# Repo public: log Actions ai cũng đọc — main() không được in mô tả/tiêu đề Project private (số card, lane).
+leak=$(BOARD_PAT=x BOARD_PROJECTS="1 2" python3 - "$SCRIPT" <<'PY2'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('hb', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+desc = {1: '🟢 đang chạy · SECRET-CARD 🔨#95 · cập nhật 09:00 01/01', 2: '⏸️ đã dừng SECRET-OTHER · cập nhật 09:00 01/01'}
+def fake(token, query, variables):
+    if 'mutation' in query:
+        return {}
+    return {'user': {'projectV2': {'id': 'P%d' % variables['n'], 'title': 'SECRET-TITLE', 'shortDescription': desc[variables['n']]}}}
+m.graphql = fake
+sys.exit(m.main())
+PY2
+); rc=$?
+printf '%s' "$leak" | grep -q 'SECRET' && fail "project data printed to the public Actions log: $leak" \
+  || { [ "$rc" -eq 0 ] && printf '%s' "$leak" | grep -q 'project 1: marked ⚫' && ok "public log names only the project number and the ⚫ verdict" || fail "main rc=$rc out='$leak'"; }
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_board_heartbeat: all passed" || { echo "❌ test_board_heartbeat: $FAILS failed"; exit 1; }
