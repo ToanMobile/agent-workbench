@@ -4,7 +4,10 @@ set -euo pipefail
 
 TARGET_DIR="${1:-$PWD}"
 TARGET_DIR="$(cd "$TARGET_DIR" 2>/dev/null && pwd -P || echo "$TARGET_DIR")"
-DEVKIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+DEVKIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ ! -L "$DEVKIT_ROOT" ] || [ "$(cd "$DEVKIT_ROOT" && pwd -P)" = "$TARGET_DIR" ]; then
+  DEVKIT_ROOT="$(cd "$DEVKIT_ROOT" && pwd -P)"
+fi
 MODE="${2:-symlink}" # symlink or copy
 LANGUAGE="${3:-en}"
 DOMAIN="${4:-general}"
