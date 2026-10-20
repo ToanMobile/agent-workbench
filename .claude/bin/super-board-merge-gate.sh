@@ -444,21 +444,41 @@ run_verify_cmd() {
   fi
 }
 
-# Kiểm tra lỗi verify có phải do timeout (exit 124 hoặc log chứa TIMEOUT / timed out / quá giới hạn) để thử lại đúng 1 lần.
+# Gate post-fix-gate đỏ CHỈ vì suite quá giờ (#142, 18/10: REG-DK-ALL-01 TIMEOUT 900 s khi máy tải cao): exit 1 (REJECT), dòng
+# "Lớp tĩnh … : đạt" / "Static checks … : passed", có ít nhất một dòng suite `[ ] TIMEOUT |` và không dòng suite đỏ nào khác
+# (FAIL, UNTESTED, NOT RUN…). Dòng suite = đầu dòng (sau khoảng trắng) là `[ ] <TRẠNG THÁI> |` sau khi bỏ mã màu; dòng đuôi output
+# của suite in sau "|" nên không bị đếm. Thiếu dòng lớp tĩnh hay không có dòng suite nào: không phân loại được → không chạy lại.
+gate_red_only_by_timeout() {
+  local rc="$1" log_file="$2"
+  [ "$rc" -eq 1 ] || return 1
+  LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$log_file" 2>/dev/null | LC_ALL=C awk '
+    /^[[:space:]]*• (Lớp tĩnh|Static checks) \(.*\): / {
+      if (static != 2) static = ($0 ~ /: (đạt|passed)[[:space:]]*$/) ? 1 : 2
+    }
+    /^[[:space:]]*\[ \] [A-Z][A-Z ]*[A-Z][[:space:]]*\|/ {
+      if ($0 ~ /^[[:space:]]*\[ \] TIMEOUT[[:space:]]*\|/) t++; else other++
+    }
+    END { exit !(static == 1 && t > 0 && other == 0) }'
+}
+
+# Kiểm tra lỗi verify có phải do timeout để thử lại đúng 1 lần: exit 124 của chính lệnh verify; gate đã in kết luận thì chỉ khi
+# mọi suite đỏ là TIMEOUT (gate_red_only_by_timeout — chữ "timed out" trong output một suite FAIL không tính); lệnh verify khác
+# (không có dòng kết luận) thì log chứa TIMEOUT after / quá giới hạn. Lần chạy lại quyết định kết quả.
 is_verify_timeout() {
   local rc="$1" log_file="$2" wt_log
-  # Gate đã in kết luận thì suite bên trong có chữ "timed out" không được chạy lại cả --full.
-  if [ -f "$log_file" ] && grep -aqE "KẾT LUẬN|POST-FIX AUDIT GATE VERDICT" "$log_file" 2>/dev/null; then
-    return 1
-  fi
   [ "$rc" -eq 124 ] && return 0
+  if [ -f "$log_file" ] && grep -aqE "KẾT LUẬN|POST-FIX AUDIT GATE VERDICT" "$log_file" 2>/dev/null; then
+    gate_red_only_by_timeout "$rc" "$log_file"
+    return
+  fi
   if [ -f "$log_file" ] && grep -aqE "TIMEOUT after|quá giới hạn" "$log_file" 2>/dev/null; then
     return 0
   fi
   wt_log="$(git -C "$SCRATCH" rev-parse --absolute-git-dir 2>/dev/null)/postfix-gate/last_output.log"
   [ -f "$wt_log" ] || return 1
   if grep -aqE "KẾT LUẬN|POST-FIX AUDIT GATE VERDICT" "$wt_log" 2>/dev/null; then
-    return 1
+    gate_red_only_by_timeout "$rc" "$wt_log"
+    return
   fi
   grep -aqE "TIMEOUT after|quá giới hạn" "$wt_log" 2>/dev/null
 }
