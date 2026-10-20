@@ -31,12 +31,47 @@ judge "bare git push while on main" "git push" main ALLOW
 judge "push a feature branch" "git push -u origin feature/x" main ALLOW
 judge "non-force refspec onto main" "git push origin feature/x:main" main ALLOW
 judge "force push to main" "git push --force origin main" main BLOCK
+judge "short -f is force" "git push -f origin main" main BLOCK
+judge "force-if-includes to main" "git push --force-if-includes origin main" main BLOCK
 judge "force-with-lease to main" "git push --force-with-lease origin main" main BLOCK
 judge "plus refspec is force" "git push origin +HEAD:main" main BLOCK
 judge "delete protected branch" "git push origin --delete main" main BLOCK
 judge "empty refspec deletes main" "git push origin :main" main BLOCK
 judge "mirror is dangerous" "git push --mirror origin" main BLOCK
 judge "feature checkout is not protected" "git push origin feature/x" feature ALLOW
+# Viết tắt và cụm cờ: git nhận tiền tố duy nhất và chữ trong cụm một gạch.
+judge "clustered -uf is force" "git push -uf origin main" main BLOCK
+judge "clustered -fu is force" "git push -fu origin main" main BLOCK
+judge "abbreviated --forc is force" "git push --forc origin main" main BLOCK
+judge "abbreviated --for is force" "git push --for origin main" main BLOCK
+judge "abbreviated --forc=main is force" "git push --forc=main origin main" main BLOCK
+judge "abbreviated --force-with-leas is force" "git push --force-with-leas origin main" main BLOCK
+judge "prune deletes remote refs" "git push --prune origin" main BLOCK
+judge "prune after the remote" "git push origin --prune" main BLOCK
+judge "prune from a feature checkout" "git push --prune origin" feature BLOCK
+judge "abbreviated --prun is prune" "git push --prun origin" main BLOCK
+judge "clustered -ud deletes" "git push -ud origin main" main BLOCK
+judge "no-verify on a protected dest" "git push --no-verify origin main" main BLOCK
+judge "abbreviated --no-veri is no-verify" "git push --no-veri origin main" main BLOCK
+judge "abbreviated --mirro is mirror" "git push --mirro origin" main BLOCK
+judge "dry-run stays allowed" "git push --dry-run origin main" main ALLOW
+judge "follow-tags stays allowed" "git push --follow-tags origin main" main ALLOW
+judge "progress stays allowed" "git push --progress origin main" main ALLOW
+judge "porcelain stays allowed" "git push --porcelain origin main" main ALLOW
+judge "ambiguous --fo is not force" "git push --fo origin main" main ALLOW
+judge "ambiguous --d is not delete" "git push --d origin main" main ALLOW
+judge "ambiguous --pr is not prune" "git push --pr origin main" main ALLOW
+judge "negation --no-force stays allowed" "git push --no-force origin main" main ALLOW
+judge "ambiguous --no-v stays allowed" "git push --no-v origin main" main ALLOW
+judge "glued push-option is not force" "git push -ofoo origin main" main ALLOW
+judge "set-upstream alone stays allowed" "git push -u origin main" main ALLOW
+judge "tags alone stay allowed" "git push --tags" main ALLOW
+judge "all without force stays allowed" "git push --all" main ALLOW
+judge "all with force from a feature checkout" "git push --all --force" feature BLOCK
+judge "abbreviated --branche with force" "git push --branche --force" feature BLOCK
+judge "abbreviated --branche without force stays allowed" "git push --branche" feature ALLOW
+judge "force to a feature branch stays allowed" "git push -uf origin feature/x" feature ALLOW
+judge "no-verify of a feature branch stays allowed" "git push --no-verify origin feature/x" feature ALLOW
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -61,6 +96,16 @@ case "$out" in
   *ask\ the\ user\ to\ run\ it*|*SB_ALLOW_PROTECTED_PUSH=1*)
     echo "✖ deny text still hands the user a command"; FAILS=$((FAILS + 1)) ;;
   *) echo "✔ deny text does not hand the user a shell command" ;;
+esac
+out="$(feed "git push -uf origin main")"
+case "$out" in
+  *Force\ push*) echo "✔ hook denies a clustered force push" ;;
+  *) echo "✖ clustered force was not denied: $out"; FAILS=$((FAILS + 1)) ;;
+esac
+case "$out" in
+  *ask\ the\ user\ to\ run\ it*|*SB_ALLOW_PROTECTED_PUSH=1*)
+    echo "✖ clustered deny text hands the user a command"; FAILS=$((FAILS + 1)) ;;
+  *) echo "✔ clustered deny text does not hand the user a shell command" ;;
 esac
 
 [ "$FAILS" = 0 ] && exit 0
