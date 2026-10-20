@@ -37,6 +37,9 @@
 set -u
 unset DEVKIT_GATE_CACHE DEVKIT_GATE_CACHE_MAX_S DEVKIT_UNITY_REUSE_MAX_S GATE_TOTAL_BUDGET_S TEST_RUN_LOCK_WAIT_S DEVKIT_IMPACTED_SINCE
 export VACUITY_REVERT=0 FLAKY_RETRY=0
+# The races here are on the receipt and the Stop/budget records; the per-suite content-key cache (bin/suite_cache.py, P2 20/10) would
+# re-use the same PASS by key and the race under test would never be reached. DEVKIT_SUITE_CACHE=0 keeps the test about those files.
+export DEVKIT_SUITE_CACHE=0
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="${REUSERACE_KIT:-$DEVKIT_DIR}"
 GATE="$KIT/bin/post-fix-gate.py"

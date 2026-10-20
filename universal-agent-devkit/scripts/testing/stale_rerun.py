@@ -89,7 +89,15 @@ def _execute(project: Path, cmd: str, timeout: float) -> tuple:
             os.killpg(proc.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        return "TIMEOUT", None, proc.communicate()[0] or ""
+        except PermissionError:   # macOS: nhóm còn zombie — gửi cho chính shell (như post-fix-gate _signal_group, review 20/10)
+            with contextlib.suppress(OSError):
+                proc.kill()
+        try:
+            return "TIMEOUT", None, proc.communicate(timeout=10)[0] or ""
+        except subprocess.TimeoutExpired:   # một tiến trình cháu còn giữ ống output
+            with contextlib.suppress(OSError):
+                proc.kill()
+            return "TIMEOUT", None, "(output cut: a child process still held the output pipe after SIGKILL)"
 
 
 # Twins of bin/post-fix-gate.py INFRA_FAILURE_RE / TEST_RUN_LOCK (keep them in step): a run
@@ -160,8 +168,55 @@ def suite_slots(project: Path, tid: str, cmd: str, held: bool, max_wait=None):
         hs.release_suite(slots)
 
 
+_GATE = []
+
+
+def _gate_module():
+    """bin/post-fix-gate.py nạp như module (như red_proof.py): dùng chung suite_cache_for / suite_cacheable để khoá trùng khoá gate."""
+    if not _GATE:
+        import importlib.util  # noqa: PLC0415
+        spec = importlib.util.spec_from_file_location("post_fix_gate_for_cache", DEVKIT / "bin" / "post-fix-gate.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _GATE.append(mod)
+    return _GATE[0]
+
+
+def _tree_unchanged(sc, project: Path) -> bool:
+    """Nội dung cả cây vẫn là nội dung lúc tính khoá (khoá cả cây chỉ ghi PASS khi đúng như vậy)."""
+    gate = _gate_module()
+    mod = gate.suite_cache_mod()
+    cm = mod.content_map(project) if mod is not None else None
+    return cm is not None and mod.tree_digest(cm) == sc.tree_digest
+
+
+def keyed_context(project: Path, tid: str, cmd: str, matrix=None):
+    """(SuiteCache, (khoá chính xác, khoá cả cây), mục suite) để ghi kết quả chạy thật vào sổ khoá dùng chung với gate (P2/P3); None khi
+    suite không cache được
+    hoặc không dựng được (khi đó run_one chạy và ghi checklist như trước)."""
+    try:
+        mpath = str(matrix or project / ".agents" / "regression_matrix.active.json")
+        with open(mpath, encoding="utf-8") as f:
+            rules = json.load(f).get("rules") or []
+        test = next((t for r in rules for t in r.get("mandatory_regression_tests") or []
+                     if t.get("id") == tid and t.get("command") == cmd), None)
+        gate = _gate_module()
+        if test is None or not gate.suite_cacheable(test)[0]:
+            return None
+        items = (rc.load(project).get("items") or {})
+        covers = {k: list(v.get("covers") or []) for k, v in items.items()   # như post-fix-gate checklist_covers: chỉ hàng test
+                  if isinstance(v, dict) and v.get("kind") == "test" and v.get("covers")}
+        sc = gate.suite_cache_for(project, rules, mpath, covers)
+        suite = {"id": tid, "command": cmd, "untested_exit": test.get("untested_exit")}
+        keys = sc.keys(suite) if sc is not None else (None, None)   # (chính xác, cả cây): run_one chạy lệnh đầy đủ, ghi cả hai
+        return (sc, keys, suite) if all(keys) else None
+    except Exception as exc:  # noqa: BLE001 - sổ khoá chỉ là phần thêm: run_one vẫn chạy và ghi checklist như cũ
+        print(f"[stale-rerun] suite cache {tid}: {exc!r}", file=sys.stderr)
+        return None
+
+
 def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mode: str = "stale-rerun",
-            retry: bool = False) -> str:
+            retry: bool = False, matrix=None) -> str:
     """Run one suite for real and record it (result + evidence), unless a watched file
     changed while it ran. retry: a FAIL is re-run once; green then = flaky (stays FAIL).
     A run that lost its results store (INFRA_FAILURE_RE) is re-run whatever `retry` says.
@@ -174,6 +229,7 @@ def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mo
         if not admitted:
             return f"{tid}: SLOT — khoá độc quyền (Unity) bận hết thời gian chờ — chạy lại sau"
         deadline = time.monotonic() + timeout
+        keyed = keyed_context(project, tid, cmd, matrix)   # khoá TRƯỚC khi chạy (P2): ghi theo khoá chỉ khi sau khi chạy vẫn đúng khoá này
         before = watched_mtimes(project, pats)
         started = time.perf_counter()
         status, code, out = _execute(project, cmd, deadline - time.monotonic())
@@ -196,6 +252,21 @@ def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mo
          "infra_retry": infra}
     t["log"] = rc.write_evidence(project, tid, out, {"command": cmd, "mode": mode, "status": status,
                                                      "exit": code, "duration": duration})
+    if keyed:
+        sc, keys, suite = keyed
+        meta = {"duration": duration, "log": t["log"], "project": project.name[:64],
+                "head": (rc._git_lines(project, "rev-parse", "HEAD") or [""])[0] or None, "by": mode}
+        try:
+            if status != "PASS":
+                sc.void(tid)   # mọi không-PASS của lần chạy thật: PASS cũ của suite này hết dùng lại (như gate)
+            if status in ("PASS", "FAIL") and not infra:
+                # PASS: khoá cả cây chỉ khi cây không đổi trong lúc chạy (như gate); FAIL: mọi khoá
+                tree_ok = status == "FAIL" or _tree_unchanged(sc, project)
+                msg = sc.record_run(list(keys) if tree_ok else [keys[0]] if keys[0] != keys[1] else [], suite, status, flaky, meta)
+                if msg:
+                    print(f"[stale-rerun] suite cache: {msg}", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[stale-rerun] suite cache {tid}: {exc!r}", file=sys.stderr)
     head = (rc._git_lines(project, "rev-parse", "--short", "HEAD") or [""])[0] or None
     dirty = bool(rc._git_lines(project, "status", "--porcelain"))
     with rc.locked(project):

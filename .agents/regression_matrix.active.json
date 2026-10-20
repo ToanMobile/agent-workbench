@@ -586,6 +586,39 @@
           "command": "bash tests/super-board/test_heavy_slot.sh"
         }
       ]
+    },
+    {
+      "component": "devkit-suite-cache",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_suite_cache.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SUITE-CACHE-01",
+          "name": "cache PASS theo khoá nội dung từng suite (cached-full): chỉ suite có input đổi chạy lại; khoá chính xác chỉ cho suite thêm vào, suite được chọn theo khoá cả cây; FAIL dính khoá, không-PASS vô hiệu PASS cũ; PASS theo khoá chính xác không vào biên nhận / DEVKIT_GATE_DONE; gộp lượt trùng khoá; suite tự sửa input không được ghi",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_suite_cache.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-suite-cache-sentinel",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/scripts/testing/stale_rerun.py",
+        "universal-agent-devkit/tests/gates/test_gate_sentinel.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SENTINEL-01",
+          "name": "sentinel: lần chạy thật > 24 h thì --full không dùng khoá (không ở merge gate), suite quá giờ không đóng mốc; cache sai thì học input thiếu hoặc cách ly flaky; run_one/nightly ghi cùng sổ khoá",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_sentinel.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

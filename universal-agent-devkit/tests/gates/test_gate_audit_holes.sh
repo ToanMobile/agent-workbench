@@ -12,6 +12,9 @@
 #  A11 `git diff --name-only` without -z quoted a non-ASCII path (src/cfg_é.py): --since never audited it.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
+# The fixtures' matrices hold suites the old selection never ran (A2: REG-CI on a script that is not executable): --full's cached-full
+# expansion (bin/suite_cache.py, P2 20/10) would run and FAIL them. DEVKIT_SUITE_CACHE=0 keeps each case about the hole it tests.
+export DEVKIT_SUITE_CACHE=0
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT

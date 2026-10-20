@@ -344,3 +344,5 @@
 1 tests/gates/test_hw_emulator_window.sh
 # 2026-10-20 (P1/P2 cache + bộ lập lịch): test mới, đo một mình trên máy này (tải ~60).
 55 tests/gates/test_gate_slot_classes.sh
+60 tests/gates/test_gate_suite_cache.sh
+24 tests/gates/test_gate_sentinel.sh
