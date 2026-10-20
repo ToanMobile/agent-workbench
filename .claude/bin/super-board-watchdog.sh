@@ -208,11 +208,12 @@ iso_epoch() {   # "2026-10-20T06:16:29Z" (UTC) → epoch; BSD date rồi GNU dat
   date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null || date -u -d "$1" +%s 2>/dev/null
 }
 
-board_status_text() {   # in "KEY<TAB>mô tả": KEY không chứa giờ (để biết trạng thái có đổi không)
-  local key detail="" f n pid lane st t glyph started
+board_status_text() {   # đặt BS_KEY (không chứa giờ: biết trạng thái có đổi không), BS_TEXT (mô tả), BS_CARDS ("<số>\t<chữ>" mỗi dòng)
+  local f n pid lane st t glyph started detail="" ctext
+  BS_CARDS=""
   case "$VERDICT" in
     running|restarted|starting)
-      key="🟢 đang chạy"
+      BS_KEY="🟢 đang chạy"
       started=$(field STARTED "$STATE"); case "$started" in ''|*[!0-9]*) ;; *) detail=" từ $(hhmm "$started")" ;; esac
       for f in .claude/super-board/inflight/*; do
         n=${f##*/}; case "$n" in ''|*[!0-9]*) continue ;; esac
@@ -220,41 +221,78 @@ board_status_text() {   # in "KEY<TAB>mô tả": KEY không chứa giờ (để 
         pid=$(field PID "$f"); lane=$(field LANE "$f")
         { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; } || continue
         case "$lane" in build) glyph="🔨" ;; qa) glyph="🔍" ;; review) glyph="✏️" ;; *) glyph="•" ;; esac
-        key="$key $glyph#$n"
+        BS_KEY="$BS_KEY $glyph#$n"
         st=$(field STARTED "$f"); t=$(iso_epoch "$st") || t=""
-        case "$t" in ''|*[!0-9]*) detail="$detail · $glyph#$n" ;; *) detail="$detail · $glyph#$n từ $(hhmm "$t") ($(span $((NOW - t))))" ;; esac
+        case "$t" in
+          ''|*[!0-9]*) ctext="$glyph $lane"; detail="$detail · $glyph#$n" ;;
+          *) ctext="$glyph $lane · từ $(hhmm "$t") · $(span $((NOW - t)))"
+             detail="$detail · $glyph#$n từ $(hhmm "$t") ($(span $((NOW - t))))" ;;
+        esac
+        BS_CARDS="$BS_CARDS$n	$ctext
+"
       done
-      [ "$key" != "🟢 đang chạy" ] || detail="$detail · không có worker"
-      printf '%s\t%s\n' "$key" "🟢 đang chạy$detail"
+      [ "$BS_KEY" != "🟢 đang chạy" ] || detail="$detail · không có worker"
+      BS_TEXT="🟢 đang chạy$detail"
       return 0 ;;
-    stopped) key="⏸️ đã dừng (người dùng stop)" ;;
-    halt-wait) key="🟠 halt GitHub — watchdog tự thử lại mỗi phút" ;;
-    github-halt) key="🔴 halt GitHub — cần đối chiếu tay (--resume --reconciled)" ;;
-    backoff-*) key="🟠 runner vừa chết — chờ khởi động lại" ;;
-    ended-finished) key="⚪ hết việc — runner đã thoát" ;;
-    *) key="🔴 runner ngừng (${VERDICT:-?}) — xem $SLUG.watchdog.log" ;;
+    stopped) BS_KEY="⏸️ đã dừng (người dùng stop)" ;;
+    halt-wait) BS_KEY="🟠 halt GitHub — watchdog tự thử lại mỗi phút" ;;
+    github-halt) BS_KEY="🔴 halt GitHub — cần đối chiếu tay (--resume --reconciled)" ;;
+    backoff-*) BS_KEY="🟠 runner vừa chết — chờ khởi động lại" ;;
+    ended-finished) BS_KEY="⚪ hết việc — runner đã thoát" ;;
+    *) BS_KEY="🔴 runner ngừng (${VERDICT:-?}) — xem $SLUG.watchdog.log" ;;
   esac
-  printf '%s\t%s\n' "$key" "$key"
+  BS_TEXT="$BS_KEY"
+}
+
+gh20() { perl -e 'alarm 20; exec @ARGV' gh "$@"; }   # macOS không có `timeout`: gh treo (mạng chưa lên) không giữ lượt check
+
+publish_card_fields() {
+  # Field chữ "Đang chạy" trên từng card: lane + giờ bắt đầu + thời lượng khi worker còn sống, xoá khi worker dừng (card
+  # ở Building/QA/Review mà trống field = không ai đang làm). Đặt CF_FIELD và CF_CARDS (card đang/có thể còn mang field,
+  # để lượt sau xoá). $1 owner, $2 number, $3 config.
+  local pid n text item live="" keep=""
+  CF_FIELD=$(field FIELD "$BOARD_STATUS"); CF_CARDS=$(field CARDS "$BOARD_STATUS")
+  pid=$(bash "$SCRIPT_DIR/super-board-card.sh" --config "$3" ids 2>/dev/null | jq -r '.projectId // empty' 2>/dev/null) || pid=""
+  [ -n "$pid" ] || return 0
+  if [ -z "$CF_FIELD" ]; then
+    CF_FIELD=$(gh20 project field-list "$2" --owner "$1" --format json 2>/dev/null \
+      | jq -r '[.fields[]? | select(.name == "Đang chạy") | .id][0] // empty' 2>/dev/null) || CF_FIELD=""
+    [ -n "$CF_FIELD" ] || CF_FIELD=$(gh20 project field-create "$2" --owner "$1" --name "Đang chạy" --data-type TEXT \
+      --format json 2>/dev/null | jq -r '.id // empty' 2>/dev/null) || CF_FIELD=""
+    [ -n "$CF_FIELD" ] || return 0
+  fi
+  while IFS='	' read -r n text; do
+    [ -n "$n" ] || continue
+    live="$live $n"; keep="$keep $n"
+    item=$(bash "$SCRIPT_DIR/super-board-card.sh" --config "$3" item-id "$n" 2>/dev/null) || continue
+    gh20 project item-edit --id "$item" --project-id "$pid" --field-id "$CF_FIELD" --text "$text" >/dev/null 2>&1 || true
+  done <<EOF
+$BS_CARDS
+EOF
+  for n in $CF_CARDS; do
+    case " $live " in *" $n "*) continue ;; esac
+    item=$(bash "$SCRIPT_DIR/super-board-card.sh" --config "$3" item-id "$n" 2>/dev/null) \
+      && gh20 project item-edit --id "$item" --project-id "$pid" --field-id "$CF_FIELD" --clear >/dev/null 2>&1 \
+      || keep="$keep $n"   # xoá hỏng: giữ lại để lượt sau thử
+  done
+  CF_CARDS=${keep# }
 }
 
 publish_board_status() {
   [ "${SB_BOARD_STATUS:-1}" != 0 ] && [ "$CHECKED" = 1 ] || return 0
-  local cfg=".claude/super-board/configs/$SLUG.json" owner number line key text last_key last_at
+  local cfg=".claude/super-board/configs/$SLUG.json" owner number last_key last_at
   owner=$(jq -r '.project.owner // empty' "$cfg" 2>/dev/null) || return 0
   number=$(jq -r '.project.number // empty' "$cfg" 2>/dev/null) || return 0
   [ -n "$owner" ] || return 0
   case "$number" in ''|*[!0-9]*) return 0 ;; esac
-  line=$(board_status_text) || return 0
-  key=${line%%	*}; text=${line#*	}
+  board_status_text
   last_key=$(field KEY "$BOARD_STATUS"); last_at=$(field AT "$BOARD_STATUS")
   case "$last_at" in ''|*[!0-9]*) last_at=0 ;; esac
-  [ "$key" != "$last_key" ] || [ $((NOW - last_at)) -ge "$BOARD_STATUS_HEARTBEAT" ] || return 0
-  # perl alarm: macOS không có `timeout`; gh treo (mạng chưa lên sau khi máy thức) không được giữ lượt check.
-  if perl -e 'alarm 20; exec @ARGV' gh project edit "$number" --owner "$owner" \
-       --description "$text · cập nhật $(hhmm "$NOW")" >/dev/null 2>&1; then
-    { printf 'KEY=%s\nAT=%s\n' "$key" "$NOW" > "$BOARD_STATUS.$$" && mv -f "$BOARD_STATUS.$$" "$BOARD_STATUS"; } 2>/dev/null \
-      || rm -f "$BOARD_STATUS.$$" 2>/dev/null || true
-  fi
+  [ "$BS_KEY" != "$last_key" ] || [ $((NOW - last_at)) -ge "$BOARD_STATUS_HEARTBEAT" ] || return 0
+  gh20 project edit "$number" --owner "$owner" --description "$BS_TEXT · cập nhật $(hhmm "$NOW")" >/dev/null 2>&1 || return 0
+  publish_card_fields "$owner" "$number" "$cfg" || true
+  { printf 'KEY=%s\nAT=%s\nFIELD=%s\nCARDS=%s\n' "$BS_KEY" "$NOW" "${CF_FIELD:-}" "${CF_CARDS:-}" > "$BOARD_STATUS.$$" \
+      && mv -f "$BOARD_STATUS.$$" "$BOARD_STATUS"; } 2>/dev/null || rm -f "$BOARD_STATUS.$$" 2>/dev/null || true
   return 0
 }
 
@@ -316,8 +354,10 @@ check() {
     return 0
   fi
   if [ "$halt_resume" = 1 ]; then
-    # Mỗi lượt check (60 s) thử lại; chỉ ghi log khi kết luận đổi.
-    if ! (PATH="$env_path"; python3 "$SCRIPT_DIR/super-board-github-read.py" --resume >/dev/null 2>&1); then
+    # Mỗi lượt check (60 s) thử lại; chỉ ghi log khi kết luận đổi. --resume tối đa ~186 s (2 lần đọc × 3 lần × gh 30 s):
+    # cắt ở 90 s để lượt check này xong trước khi khoá check bị coi là bỏ lại (120 s) — nếu không, hai check cùng
+    # resume và cùng khởi động runner. Bị cắt giữa chừng vẫn an toàn: --resume chỉ đọc, lưu trữ halt bằng rename.
+    if ! (PATH="$env_path"; perl -e 'alarm 90; exec @ARGV' python3 "$SCRIPT_DIR/super-board-github-read.py" --resume >/dev/null 2>&1); then
       verdict halt-wait "runner halted (rc=79): its saved GitHub read still fails, or the halt saved an uncertain write — retried every check; a write needs --resume --reconciled by hand"
       return 0
     fi

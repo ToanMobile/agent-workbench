@@ -96,11 +96,28 @@ if m and not os.path.exists(m + '.written'):
 sys.exit(0)
 PY
 # Board rỗng; STUB_CARD_FAIL=1: lần đọc board hỏng (runner crash lúc khởi động, trước tick đầu).
-printf '#!/usr/bin/env bash\n[ -z "${STUB_CARD_FAIL:-}" ] || exit 1\necho %s\n' "'{\"items\":[]}'" > "$BIN/super-board-card.sh"
+cat > "$BIN/super-board-card.sh" <<'SH'
+#!/usr/bin/env bash
+[ -z "${STUB_CARD_FAIL:-}" ] || exit 1
+case "$*" in
+  *" ids"|ids) echo '{"projectId":"P1","fieldId":"F_STATUS","options":{}}' ;;
+  *"item-id "*) echo "I_${@: -1}" ;;
+  *) echo '{"items":[]}' ;;
+esac
+SH
 printf '#!/usr/bin/env bash\necho %s\n' "'{}'" > "$BIN/super-board-wave-plan.sh"
 for c in gh claude; do printf '#!/usr/bin/env bash\necho "%s $*" >> "$STUB_CALLS"; exit 1\n' "$c" > "$TMP/stub/$c"; done
 # `gh project edit` (watchdog ghi trạng thái board lên mô tả Project) thành công, trừ khi STUB_EDIT_FAIL=1.
-printf '#!/usr/bin/env bash\necho "gh $*" >> "$STUB_CALLS"\n[ "$1 $2" = "project edit" ] && [ -z "${STUB_EDIT_FAIL:-}" ] && exit 0\nexit 1\n' > "$TMP/stub/gh"
+cat > "$TMP/stub/gh" <<'SH'
+#!/usr/bin/env bash
+# gh project edit / item-edit thành công (trừ STUB_EDIT_FAIL=1); field-list trả field "Đang chạy"; mọi lệnh khác lỗi.
+echo "gh $*" >> "$STUB_CALLS"
+case "$1 $2" in
+  "project edit"|"project item-edit") [ -z "${STUB_EDIT_FAIL:-}" ] && exit 0 ;;
+  "project field-list") echo '{"fields":[{"id":"F_STATUS","name":"Status"},{"id":"F_RUN","name":"Đang chạy"}]}'; exit 0 ;;
+esac
+exit 1
+SH
 cat > "$TMP/stub/launchctl" <<'SH'
 #!/usr/bin/env bash
 # Có trạng thái như launchd: bootstrap nạp nhãn, bootout gỡ, print thoát 113 khi nhãn chưa được nạp.
@@ -508,6 +525,14 @@ wd; L=$(last_edit)
 case "$L" in *"🟢"*"🔨#15"*"từ $(date -r $(( $(date +%s) - 4500 )) '+%H:%M')"*"1g15p"*) ok "running board → 🟢, live worker #15 with its start time and 1g15p elapsed" ;;
   *) fail "running status lacks worker start/elapsed: '$L'" ;; esac
 case "$L" in *"#16"*) fail "a dead worker's lock (#16) is listed as running" ;; *) ok "a dead worker's lock is not listed" ;; esac
+# Từng card: field chữ "Đang chạy" của Project ghi lane + giờ bắt đầu + thời lượng khi worker sống, xoá khi worker dừng.
+grep -q "^gh project item-edit --id I_15 --project-id P1 --field-id F_RUN --text 🔨 build · từ $(date -r $(( $(date +%s) - 4500 )) '+%H:%M') · 1g15p" "$TMP/calls" \
+  && ok "card #15 gets its 'Đang chạy' field: lane, start time, elapsed" || fail "card field not written: $(grep 'item-edit' "$TMP/calls" | tail -2 | tr '\n' ' ')"
+grep -q -- '--id I_16 .*--text' "$TMP/calls" && fail "card of a dead worker (#16) got a running field" || ok "card of a dead worker gets no running field"
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$D" "$W15" > "$R/.claude/super-board/inflight/15"; wd
+grep -q '^gh project item-edit --id I_15 --project-id P1 --field-id F_RUN --clear' "$TMP/calls" \
+  && ok "worker of #15 gone → its card field is cleared" || fail "card field not cleared: $(grep 'item-edit' "$TMP/calls" | tail -2 | tr '\n' ' ')"
+case "$(last_edit)" in *"không có worker"*) ok "board without live workers says so" ;; *) fail "board text: '$(last_edit)'" ;; esac
 case "$L" in *"chạy từ $(date -r $(( $(date +%s) - 7200 )) '+%H:%M')"*) ok "running board shows since when the runner runs" ;; *) fail "runner start missing: '$L'" ;; esac
 e0=$(edits); SB_BOARD_STATUS=0 wd
 [ "$(edits)" = "$e0" ] && ok "SB_BOARD_STATUS=0 turns the GitHub status off" || fail "SB_BOARD_STATUS=0 still wrote"
