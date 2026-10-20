@@ -508,6 +508,36 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-board-heartbeat",
+      "watch_files": [
+        ".github/scripts/board_heartbeat.py",
+        ".github/workflows/board-heartbeat.yml",
+        "tests/super-board/test_board_heartbeat.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-BOARD-HEARTBEAT-01",
+          "name": "GitHub Actions cron marks a 🟢/🟠 board ⚫ when the watchdog's 'cập nhật HH:MM dd/MM' is stale; leaves ⏸️/⚪/⚫ and foreign descriptions alone",
+          "command": "bash tests/super-board/test_board_heartbeat.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-gate-timeout-retry",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_timeout_retry.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-TIMEOUT-RETRY-01",
+          "name": "merge gate retries a post-fix-gate verify once only when every red suite is TIMEOUT (REJECT exit 1, static checks passed); a real FAIL, UNTESTED or static finding is not retried; verify exit 124 still retried once",
+          "command": "bash tests/super-board/test_merge_gate_timeout_retry.sh"
+        }
+      ]
     }
   ]
 }
