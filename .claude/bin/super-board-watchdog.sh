@@ -264,6 +264,8 @@ run_capped() {   # run_capped <giây> <lệnh…>: hết giờ thì TERM rồi K
   perl -e '$t = shift; $p = fork; die "fork: $!" unless defined $p;
     if (!$p) { setpgrp(0, 0); exec @ARGV; exit 127 }
     $SIG{ALRM} = sub { kill "TERM", -$p; sleep 1; kill "KILL", -$p; exit 124 };
+    # Con ở nhóm riêng nên tín hiệu gửi nhóm của watchdog (launchd dừng job, Ctrl-C) không tới nó: chuyển tiếp.
+    for my $sig (qw(TERM INT HUP)) { $SIG{$sig} = sub { kill "TERM", -$p; sleep 1; kill "KILL", -$p; exit 143 } }
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@"
 }
 GH_CAP="${SB_BOARD_GH_TIMEOUT:-20}"
@@ -308,9 +310,10 @@ EOF
     case "$n" in ''|*[!0-9]*) continue ;; esac
     case " $live " in *" $n "*) continue ;; esac
     budget_ok || { keep="$keep $n"; continue; }
-    item=$(card20 --config "$3" item-id "$n" 2>/dev/null) \
-      && gh20 project item-edit --id "$item" --project-id "$pid" --field-id "$CF_FIELD" --clear >/dev/null 2>&1 \
-      || { keep="$keep $n"; FIELD_STALE=1; }   # xoá hỏng (mạng, field bị xoá trên GitHub): giữ card, đọc lại id field
+    item=$(card20 --config "$3" item-id "$n" 2>/dev/null) || { keep="$keep $n"; continue; }   # đọc lỗi: lượt sau thử
+    # Xoá hỏng (mạng, hay field đã bị xoá trên GitHub): giữ card và đọc lại id field lượt sau.
+    gh20 project item-edit --id "$item" --project-id "$pid" --field-id "$CF_FIELD" --clear >/dev/null 2>&1 \
+      || { keep="$keep $n"; FIELD_STALE=1; }
   done
   set +f
   CF_CARDS=${keep# }
@@ -336,8 +339,11 @@ publish_board_status() {
   last_key=$(field KEY "$BOARD_STATUS"); last_at=$(field AT "$BOARD_STATUS")
   case "$last_at" in ''|*[!0-9]*) last_at=0 ;; esac
   [ "$BS_KEY" != "$last_key" ] || [ $((NOW - last_at)) -ge "$BOARD_STATUS_HEARTBEAT" ] || return 0
-  [ "${#BS_TEXT}" -le 200 ] || BS_TEXT="${BS_TEXT:0:197}…"   # nhiều worker: giữ "cập nhật …" ở cuối cho cron đọc
+  # Nhiều worker: cắt còn 200 ký tự để "cập nhật …" ở cuối cho cron đọc. Cắt bằng perl theo ký tự UTF-8: launchd chạy
+  # bash với locale C, ${#…}/${…:0:n} của bash sẽ đếm và cắt theo byte, giữa một chữ có dấu hay emoji.
+  BS_TEXT=$(printf '%s' "$BS_TEXT" | perl -CS -Mutf8 -e 'local $/; my $t = <STDIN>; print length($t) > 200 ? substr($t, 0, 197) . "…" : $t') || true
   gh20 project edit "$number" --owner "$owner" --description "$BS_TEXT · cập nhật $(TZ="$BOARD_TZ" date -r "$NOW" "+%H:%M %d/%m")" >/dev/null 2>&1 || return 0
+  rm -f "$ROOT/$DIR/$SLUG.publish-halt.json" 2>/dev/null || true   # sót từ lượt bị giết: đừng để nó chặn lượt này
   publish_card_fields "$owner" "$number" "$cfg" || true
   rm -f "$ROOT/$DIR/$SLUG.publish-halt.json" 2>/dev/null || true
   { printf 'KEY=%s\nAT=%s\nFIELD=%s\nCARDS=%s\n' "$BS_KEY" "$NOW" "${CF_FIELD:-}" "${CF_CARDS:-}" > "$BOARD_STATUS.$$" \

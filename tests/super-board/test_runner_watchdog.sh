@@ -103,6 +103,8 @@ cat > "$BIN/super-board-card.sh" <<'SH'
 #!/usr/bin/env bash
 [ -z "${STUB_CARD_FAIL:-}" ] || exit 1
 if [ -n "${STUB_CARD_HALT:-}" ]; then echo halted > "${SB_GITHUB_HALT_FILE:-$STUB_HALT}"; exit 79; fi
+[ -z "${SB_GITHUB_HALT_FILE:-}" ] || [ ! -e "$SB_GITHUB_HALT_FILE" ] || exit 79
+case "$*" in *"item-id "*) [ -z "${STUB_ITEMID_FAIL:-}" ] || exit 1 ;; esac
 case "$*" in
   *" ids"|ids) echo '{"projectId":"P1","fieldId":"F_STATUS","options":{}}' ;;
   *"item-id "*) echo "I_${@: -1}" ;;
@@ -507,6 +509,9 @@ dead_pid; set_state "$D" halted 79; rm -f "$WD"
 printf 'read\n' > "$TMP/halt"; expect_restart "halt whose saved read now replays OK (transient read failure)"
 [ ! -e "$TMP/halt" ] && grep -q 'auto-resumed' "$WLOG" 2>/dev/null && ok "auto-resume of a transient read halt is logged" \
   || fail "auto-resume not logged or halt kept: $(tail -2 "$WLOG" 2>/dev/null | tr '\n' ' ')"
+L=$(grep '^gh project edit 1 --owner o --description' "$TMP/calls" | tail -1)
+case "$L" in *"🟢 đang chạy từ"*) fail "restarted board shows the dead runner's start time: $L" ;;
+  *"🟢 đang chạy"*) ok "restarted board does not show the dead runner's start time" ;; *) fail "restart status: '$L'" ;; esac
 kill_tree "$RP"; wait_for 10 '! alive "$RP"'
 rm -f "$WD" "$TMP/halt"
 
@@ -536,16 +541,17 @@ e0=$(edits); wd
 # lock của worker đã chết (#16) không được liệt kê.
 mkdir -p "$TMP/fake3" "$R/.claude/super-board/inflight"; printf '#!/usr/bin/env bash\nsleep 300\n' > "$TMP/fake3/super-board-run.sh"
 FR3=$( (bash "$TMP/fake3/super-board-run.sh" >/dev/null 2>&1 & echo $!) ); PIDS="$PIDS $FR3"
-set_state "$FR3" running; sed -i '' "s/^STARTED=.*/STARTED=$(( $(date +%s) - 7200 ))/" "$STATE"
-W15=$(date -u -r $(( $(date +%s) - 4500 )) '+%Y-%m-%dT%H:%M:%SZ')
+RS=$(( $(date +%s) - 7200 )); WS=$(( $(date +%s) - 4500 ))   # mốc cố định: test chậm qua phút mới không đổi kỳ vọng
+set_state "$FR3" running; sed -i '' "s/^STARTED=.*/STARTED=$RS/" "$STATE"
+W15=$(date -u -r "$WS" '+%Y-%m-%dT%H:%M:%SZ')
 printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$FR3" "$W15" > "$R/.claude/super-board/inflight/15"
 dead_pid; printf 'PID=%s\nLANE=qa\nSTARTED=%s\n' "$D" "$W15" > "$R/.claude/super-board/inflight/16"
 wd; L=$(last_edit)
-case "$L" in *"🟢"*"🔨#15"*"từ $(TZ=Asia/Ho_Chi_Minh date -r $(( $(date +%s) - 4500 )) '+%H:%M')"*"1g15p"*) ok "running board → 🟢, live worker #15 with its start time and 1g15p elapsed" ;;
+case "$L" in *"🟢"*"🔨#15"*"từ $(TZ=Asia/Ho_Chi_Minh date -r "$WS" '+%H:%M')"*"1g15p"*) ok "running board → 🟢, live worker #15 with its start time and 1g15p elapsed" ;;
   *) fail "running status lacks worker start/elapsed: '$L'" ;; esac
 case "$L" in *"#16"*) fail "a dead worker's lock (#16) is listed as running" ;; *) ok "a dead worker's lock is not listed" ;; esac
 # Từng card: field chữ "Đang chạy" của Project ghi lane + giờ bắt đầu + thời lượng khi worker sống, xoá khi worker dừng.
-grep -q "^gh project item-edit --id I_15 --project-id P1 --field-id F_RUN --text 🔨 build · từ $(TZ=Asia/Ho_Chi_Minh date -r $(( $(date +%s) - 4500 )) '+%H:%M') · 1g15p" "$TMP/calls" \
+grep -q "^gh project item-edit --id I_15 --project-id P1 --field-id F_RUN --text 🔨 build · từ $(TZ=Asia/Ho_Chi_Minh date -r "$WS" '+%H:%M') · 1g15p" "$TMP/calls" \
   && ok "card #15 gets its 'Đang chạy' field: lane, start time, elapsed" || fail "card field not written: $(grep 'item-edit' "$TMP/calls" | tail -2 | tr '\n' ' ')"
 grep -q -- '--id I_16 .*--text' "$TMP/calls" && fail "card of a dead worker (#16) got a running field" || ok "card of a dead worker gets no running field"
 printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$D" "$W15" > "$R/.claude/super-board/inflight/15"; wd
@@ -570,13 +576,42 @@ grep -qE -- '--id I_[^0-9]' "$TMP/calls" && fail "non-numeric CARDS entry used a
 printf 'KEY=x\nAT=1\nFIELD=F_GONE\nCARDS=15\n' > "$BST"; STUB_ITEM_EDIT_FAIL=1 wd
 [ -z "$(field FIELD "$BST")" ] && [ "$(field CARDS "$BST")" = 15 ] && ok "failed clear → field id re-read next time, card kept" \
   || fail "after a failed clear: FIELD='$(field FIELD "$BST")' CARDS='$(field CARDS "$BST")'"
+# Runner dừng có chủ đích ở foreground (Ctrl-C, STATE=stopped): ⏸️, không phải 🔴.
+dead_pid; set_state "$D" stopped 130; wd
+case "$(last_edit)" in *"⏸️"*) ok "foreground stop (STATE=stopped) → ⏸️" ;; *) fail "stopped state status: '$(last_edit)'" ;; esac
+set_state "$FR3" running; sed -i '' "s/^STARTED=.*/STARTED=$RS/" "$STATE"
+# File halt riêng của publish còn sót (lượt trước bị giết): lượt publish mới vẫn chạy được ngay.
+printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15\n' > "$BST"; printf '{}' > "$RUNDIR/t.publish-halt.json"
+c0=$(grep -c -- '--clear' "$TMP/calls"); wd
+[ "$(grep -c -- '--clear' "$TMP/calls")" -gt "$c0" ] && ok "a leftover publish-halt file does not block the next publish" \
+  || fail "leftover publish-halt blocked the clear"
+# Đọc item-id lỗi (mạng) không phải field hỏng: giữ id field.
+printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15\n' > "$BST"; STUB_ITEMID_FAIL=1 wd
+[ "$(field FIELD "$BST")" = F_RUN ] && [ "$(field CARDS "$BST")" = 15 ] && ok "item-id read failure keeps the field id and the card" \
+  || fail "item-id failure: FIELD='$(field FIELD "$BST")' CARDS='$(field CARDS "$BST")'"
+# Mô tả dài (nhiều worker) dưới locale C của launchd: cắt theo ký tự, không cắt giữa UTF-8, "cập nhật" vẫn ở cuối.
+for i in 31 32 33 34 35 36 37 38 39 40 41 42; do printf 'PID=%s\nLANE=review\nSTARTED=%s\n' "$FR3" "$W15" > "$R/.claude/super-board/inflight/$i"; done
+printf 'KEY=x\nAT=1\n' > "$BST"; LC_ALL=C LANG=C wd
+last_edit | sed 's/^gh project edit 1 --owner o --description //' > "$TMP/long.txt"
+python3 -c "import sys; t=open(sys.argv[1],'rb').read().decode('utf-8'); assert 'cập nhật' in t.split('·')[-1], t; assert len(t.strip()) <= 230, len(t)" "$TMP/long.txt" 2>/dev/null \
+  && ok "long status cut on characters under the C locale, stamp kept at the end" || fail "long status broken: $(cat "$TMP/long.txt")"
+for i in 31 32 33 34 35 36 37 38 39 40 41 42; do rm -f "$R/.claude/super-board/inflight/$i"; done
+# Watchdog bị dừng (launchd stop, Ctrl-C) khi đang chờ một gh treo: gh không được sống tiếp mồ côi.
+printf 'KEY=x\nAT=1\n' > "$BST"
+( STUB_GH_HANG=1 SB_BOARD_GH_TIMEOUT=60 wd ) & WDP=$!
+wait_for 10 'pgrep -f "sleep 25" >/dev/null' || true
+HANG=$(pgrep -f "sleep 25" | head -1); PERLP=$(pgrep -f 'setpgrp' | head -1)
+[ -n "$PERLP" ] && kill -TERM "$PERLP" 2>/dev/null
+if [ -n "$HANG" ] && wait_for 5 '! kill -0 "$HANG" 2>/dev/null'; then ok "TERM to the timeout wrapper also stops the hung gh"
+else fail "hung gh left running after the wrapper got TERM (hang=$HANG perl=$PERLP)"; [ -n "$HANG" ] && kill "$HANG" 2>/dev/null; fi
+wait "$WDP" 2>/dev/null
 # Hết ngân sách publish (nhiều card × 20 s): không gọi thêm gh, card chưa xoá giữ trong CARDS cho lượt sau.
 printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15\n' > "$BST"; c0=$(grep -c -- '--clear' "$TMP/calls")
 BOARD_STATUS_BUDGET=0 wd
 [ "$(grep -c -- '--clear' "$TMP/calls")" = "$c0" ] && [ "$(field CARDS "$BST")" = 15 ] \
   && ok "publish budget spent → no more gh calls, card #15 kept for the next check" \
   || fail "budget ignored: clears $(grep -c -- '--clear' "$TMP/calls") (was $c0), CARDS='$(field CARDS "$BST")'"
-case "$L" in *"chạy từ $(TZ=Asia/Ho_Chi_Minh date -r $(( $(date +%s) - 7200 )) '+%H:%M')"*) ok "running board shows since when the runner runs" ;; *) fail "runner start missing: '$L'" ;; esac
+case "$L" in *"chạy từ $(TZ=Asia/Ho_Chi_Minh date -r "$RS" '+%H:%M')"*) ok "running board shows since when the runner runs" ;; *) fail "runner start missing: '$L'" ;; esac
 e0=$(edits); SB_BOARD_STATUS=0 wd
 [ "$(edits)" = "$e0" ] && ok "SB_BOARD_STATUS=0 turns the GitHub status off" || fail "SB_BOARD_STATUS=0 still wrote"
 kill_tree "$FR3"; rm -f "$WD" "$BST" "$STATE" "$R/.claude/super-board/inflight/15" "$R/.claude/super-board/inflight/16"

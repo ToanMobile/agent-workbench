@@ -87,10 +87,14 @@ def fake(token, query, variables):
     d = '🟢 đang chạy · cập nhật ' + (old if len(reads) == 1 else fresh)
     return {'user': {'projectV2': {'id': 'P1', 'shortDescription': d}}}
 m.graphql = fake
-sys.exit(m.main())
+rc = m.main()
+print('READS=%d' % len(reads))
+sys.exit(rc)
 PY2
-)
-printf '%s' "$race" | grep -q MUTATION && fail "cron overwrote a status the watchdog had just refreshed: $race" \
-  || ok "status refreshed between read and write → cron does not overwrite it with ⚫"
+); rc=$?
+if printf '%s' "$race" | grep -q MUTATION; then fail "cron overwrote a status the watchdog had just refreshed: $race"
+elif [ "$rc" -eq 0 ] && printf '%s' "$race" | grep -q 'project 1: ok (refreshed meanwhile)' && printf '%s' "$race" | grep -q 'READS=2'; then
+  ok "status refreshed between read and write → cron re-reads and does not overwrite it with ⚫"
+else fail "re-read path not taken: rc=$rc '$race'"; fi
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_board_heartbeat: all passed" || { echo "❌ test_board_heartbeat: $FAILS failed"; exit 1; }

@@ -91,7 +91,9 @@ def main():
                 # Repo public: log Actions ai cũng đọc được — không in tiêu đề/mô tả của Project private.
                 print(f'project {number}: ok')
                 continue
-            # Watchdog có thể vừa ghi trạng thái mới giữa lúc đọc và lúc ghi: đọc lại, đổi rồi thì không đè ⚫.
+            # Watchdog có thể vừa ghi trạng thái mới giữa lúc đọc và lúc ghi: đọc lại, đổi rồi thì không đè ⚫. Chỉ thu hẹp
+            # khe hở (GraphQL không có compare-and-swap): watchdog ghi đúng giữa lần đọc lại và mutation thì ⚫ vẫn đè, và
+            # nhịp 5 phút kế tiếp của watchdog sửa lại.
             if (read_project(token, owner, number).get('shortDescription') or '') != project.get('shortDescription'):
                 print(f'project {number}: ok (refreshed meanwhile)')
                 continue
