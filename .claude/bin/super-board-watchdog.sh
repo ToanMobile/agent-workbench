@@ -287,9 +287,9 @@ publish_card_fields() {
   # Field chữ "Đang chạy" trên từng card: lane + giờ bắt đầu + thời lượng khi worker còn sống, xoá khi worker dừng (card
   # ở Building/QA/Review mà trống field = không ai đang làm). Đặt CF_FIELD và CF_CARDS (card đang/có thể còn mang field,
   # để lượt sau xoá). $1 owner, $2 number, $3 config.
-  local pid n text item fields live="" keep=""
+  local pid n text item fields live="" keep="" field_known
   FIELD_STALE=""
-  CF_FIELD=$(field FIELD "$BOARD_STATUS"); CF_CARDS=$(field CARDS "$BOARD_STATUS")
+  CF_FIELD=$(field FIELD "$BOARD_STATUS"); CF_CARDS=$(field CARDS "$BOARD_STATUS"); field_known=$CF_FIELD
   pid=$(card20 --config "$3" ids 2>/dev/null | jq -r '.projectId // empty' 2>/dev/null) || pid=""
   [ -n "$pid" ] || return 0
   if [ -z "$CF_FIELD" ]; then
@@ -315,7 +315,12 @@ EOF
   # không). Chỉ ghi lần đầu thấy đỏ (REDS); card rời cột hoạt động thì vòng xoá bên dưới gỡ field.
   local items red="" prev_red
   prev_red=$(field REDS "$BOARD_STATUS"); CF_REDS=""
-  items=$(card20 --config "$3" items 2>/dev/null) || items=""
+  # Field vừa đọc lại id (tạo lại, hay ghi hỏng lượt trước): dấu đỏ cũ có thể không còn trên GitHub → ghi lại hết.
+  [ -n "$field_known" ] || prev_red=""
+  if ! items=$(card20 --config "$3" items 2>/dev/null); then
+    # Đọc danh sách card lỗi (mạng, đọc thiếu trang): giữ nguyên trạng thái đỏ, không xoá, không ghi lại.
+    red=$prev_red; CF_REDS=$prev_red; keep="$keep $prev_red"; items=""
+  fi
   while IFS='	' read -r n item; do
     case "$n" in ''|*[!0-9]*) continue ;; esac
     case " $live " in *" $n "*) continue ;; esac

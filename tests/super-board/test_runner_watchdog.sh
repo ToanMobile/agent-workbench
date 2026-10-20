@@ -107,7 +107,7 @@ if [ -n "${STUB_CARD_HALT:-}" ]; then echo halted > "${SB_GITHUB_HALT_FILE:-$STU
 case "$*" in *"item-id "*) [ -z "${STUB_ITEMID_FAIL:-}" ] || exit 1 ;; esac
 case "$*" in
   *" ids"|ids) echo '{"projectId":"P1","fieldId":"F_STATUS","options":{}}' ;;
-  *" items"|items) if [ -n "${STUB_ITEMS:-}" ]; then printf '%s\n' "$STUB_ITEMS"; else echo '{"items":[]}'; fi ;;
+  *" items"|items) [ -z "${STUB_ITEMS_FAIL:-}" ] || exit 69; if [ -n "${STUB_ITEMS:-}" ]; then printf '%s\n' "$STUB_ITEMS"; else echo '{"items":[]}'; fi ;;
   *"item-id "*) echo "I_${@: -1}" ;;
   *) echo '{"items":[]}' ;;
 esac
@@ -559,6 +559,27 @@ grep -q -- '--id I_77 --project-id P1 --field-id F_RUN --text 🔴 không chạy
   || fail "idle QA card not marked red: $(grep item-edit "$TMP/calls" | tail -3 | tr '\n' ' ')"
 grep -q -- '--id I_5 ' "$TMP/calls" && fail "Ready card got a running field" || ok "Ready card untouched"
 case " $(field CARDS "$BST") " in *" 77 "*) ok "red card kept in CARDS (cleared once it leaves the active columns)" ;; *) fail "CARDS='$(field CARDS "$BST")'" ;; esac
+IT77='{"items":[{"id":"I_77","status":"QA","content":{"number":77}},{"id":"I_15","status":"Building","content":{"number":15}}]}'
+# Đã đỏ (REDS) thì lượt sau không ghi lại.
+sed -i '' 's/^KEY=.*/KEY=x/; s/^AT=.*/AT=1/' "$BST"; r0=$(grep -c -- '--id I_77 .*--text' "$TMP/calls")
+STUB_ITEMS="$IT77" wd
+[ "$(grep -c -- '--id I_77 .*--text' "$TMP/calls")" = "$r0" ] && ok "an already-red card is not rewritten every publish" \
+  || fail "red card rewritten ($(grep -c -- '--id I_77 .*--text' "$TMP/calls") vs $r0)"
+# Đọc danh sách card lỗi (mạng): giữ nguyên trạng thái đỏ, không xoá.
+sed -i '' 's/^KEY=.*/KEY=x/; s/^AT=.*/AT=1/' "$BST"; c0=$(grep -c -- '--id I_77 .*--clear' "$TMP/calls")
+STUB_ITEMS_FAIL=1 wd
+[ "$(grep -c -- '--id I_77 .*--clear' "$TMP/calls")" = "$c0" ] && case " $(field REDS "$BST") " in *" 77 "*) true ;; *) false ;; esac \
+  && ok "failed card-list read keeps red markers (no clear, REDS kept)" \
+  || fail "items read failure cleared reds: REDS='$(field REDS "$BST")'"
+# Card rời Building/QA/Review: gỡ field.
+sed -i '' 's/^KEY=.*/KEY=x/; s/^AT=.*/AT=1/' "$BST"
+STUB_ITEMS='{"items":[{"id":"I_77","status":"Done","content":{"number":77}},{"id":"I_15","status":"Building","content":{"number":15}}]}' wd
+grep -q -- '--id I_77 --project-id P1 --field-id F_RUN --clear' "$TMP/calls" && case " $(field REDS "$BST") " in *" 77 "*) false ;; *) true ;; esac \
+  && ok "red card that left the active columns is cleared and dropped from REDS" || fail "card leaving QA not cleared: REDS='$(field REDS "$BST")'"
+# Field tạo lại (id mới): REDS cũ không còn giá trị, ghi đỏ lại.
+printf 'KEY=x\nAT=1\nFIELD=\nCARDS=77\nREDS=77\n' > "$BST"; r0=$(grep -c -- '--id I_77 .*--text 🔴' "$TMP/calls")
+STUB_ITEMS="$IT77" wd
+[ "$(grep -c -- '--id I_77 .*--text 🔴' "$TMP/calls")" -gt "$r0" ] && ok "field id re-resolved → red markers rewritten" || fail "red not rewritten after field re-resolve" 
 # Từng card: field chữ "Đang chạy" của Project ghi lane + giờ bắt đầu + thời lượng khi worker sống, xoá khi worker dừng.
 grep -q "^gh project item-edit --id I_15 --project-id P1 --field-id F_RUN --text 🟢 đang code · từ $(TZ=Asia/Ho_Chi_Minh date -r "$WS" '+%H:%M') · 1g15p" "$TMP/calls" \
   && ok "card #15 gets its 'Đang chạy' field: lane, start time, elapsed" || fail "card field not written: $(grep 'item-edit' "$TMP/calls" | tail -2 | tr '\n' ' ')"
