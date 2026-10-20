@@ -508,6 +508,38 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "test-heavy-slot-isolation",
+      "watch_files": [
+        "universal-agent-devkit/tests/lib/clean_git_env.sh",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        ".claude/bin/super-board-heavy-slot.py",
+        "tests/super-board/test_tests_skip_machine_slots.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-TEST-SLOT-ISO-01",
+          "name": "tests never queue behind the machine's real heavy-verify slots",
+          "command": "bash tests/super-board/test_tests_skip_machine_slots.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-gate-timeout-retry",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_timeout_retry.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-TIMEOUT-RETRY-01",
+          "name": "merge gate retries a post-fix-gate verify once only when every red suite is TIMEOUT (REJECT exit 1, static checks passed); a real FAIL, UNTESTED or static finding is not retried; verify exit 124 still retried once",
+          "command": "bash tests/super-board/test_merge_gate_timeout_retry.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
