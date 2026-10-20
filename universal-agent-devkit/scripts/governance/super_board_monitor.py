@@ -13,9 +13,14 @@ import time
 def find_latest_jsonl(repo_dir: str):
     slug_path = repo_dir.replace("/", "-")
     candidates = []
+    # Quét cả thư mục gốc của repo lẫn các worktree con (<slug>--claude-worktrees-*) để bắt được transcript của worker lane.
     for base in glob.glob(os.path.expanduser("~/.claude*")):
-        proj_dir = os.path.join(base, "projects", slug_path)
-        if os.path.isdir(proj_dir):
+        for proj_dir in glob.glob(os.path.join(base, "projects", slug_path + "*")):
+            if not os.path.isdir(proj_dir):
+                continue
+            suffix = os.path.basename(proj_dir)[len(slug_path):]
+            if suffix and not suffix.startswith("--claude-worktrees-"):
+                continue
             for f in glob.glob(os.path.join(proj_dir, "*.jsonl")):
                 try:
                     candidates.append((os.path.getmtime(f), f))

@@ -89,9 +89,9 @@ refresh_run_paths() {
   mkdir -p "docs/super-board/runs" "$WORKER_LOG_DIR"
 }
 
-# One notice through the existing bot. Missing token and network errors stay exit 0.
+# One notice through the existing bot. Missing token, lib-only test mode, and network errors stay exit 0.
 board_notify() {
-  if [ "${SB_NOTIFY_SKIP:-0}" = "1" ]; then
+  if [ "${SB_NOTIFY_SKIP:-0}" = "1" ] || [ "${SB_LIB_ONLY:-0}" = "1" ] || [ "${CONFIG_SLUG:-}" = "lib" ]; then
     return 0
   fi
   python3 "$SCRIPT_DIR/super-board-notify.py" "$@" || true
@@ -632,7 +632,8 @@ dispatch_lane() {
   local pool_engine="$POOL_ENGINE" pool_acct="$POOL_ACCT" pool_cfg="$POOL_CFG"
   # note_worker_limit đọc dòng này để biết account nào hết limit.
   [ -n "$pool_acct" ] && printf 'account_pool: engine=%s account=%s config_dir=%s\n' "$pool_engine" "$pool_acct" "$pool_cfg" >> "$worker_log"
-  export DEVKIT_ALLOW_BRANCH=1 WORKTREE_MERGE_GATE=0 DEVKIT_LANG="${DEVKIT_LANG:-vi}"
+  # CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0: ngăn `claude -p` tự huỷ tác vụ nền (như red_proof.py --pending) sau 10 phút.
+  export DEVKIT_ALLOW_BRANCH=1 WORKTREE_MERGE_GATE=0 DEVKIT_LANG="${DEVKIT_LANG:-vi}" CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-0}"
   unset POSTFIX_GATE_FORCE_FULL
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
     nohup "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
@@ -773,7 +774,6 @@ runaway_action() {
   if [ "${SB_DAEMON:-0}" = "1" ]; then
     log "⚠ RUNAWAY (daemon): no card reached Done in ${NO_PROGRESS_CYCLES} dispatch cycles — no new dispatch for $((TICK_SECONDS * 10))s"
     runaway_summary
-    board_notify runaway --card "${CONFIG_SLUG:-board}" --text "RUNAWAY daemon: no card reached Done"
     NO_PROGRESS_CYCLE_COUNT=0
     # Hạn chót chứ không sleep: thu hồi lock và quét zombie vẫn chạy mỗi tick, chỉ việc giao mới bị hoãn.
     RUNAWAY_PAUSE_UNTIL=$(( $(date +%s) + TICK_SECONDS * 10 ))
@@ -781,7 +781,6 @@ runaway_action() {
   fi
   log "🛑 halt — RUNAWAY: no card reached Done in ${NO_PROGRESS_CYCLES} dispatch cycles"
   runaway_summary
-  board_notify runaway --card "${CONFIG_SLUG:-board}" --text "RUNAWAY halt: no card reached Done"
   return 1
 }
 
@@ -831,12 +830,12 @@ print(int(lived if lived is not None else since), 1 if early else 0)' "${STARTED
   now=$(date +%s)
   f=$(early_death_file "$1")
   mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
-  # keep only the window: the file never grows past a few lines
-  { awk -v from=$((now - ${SB_EARLY_WINDOW_S:-600})) '$1 >= from' "$f" 2>/dev/null || true; echo "$now ${LANE:-?}"; } > "$f.tmp" 2>/dev/null \
+  # Giữ tối đa 20 dòng gần nhất của thẻ để vừa xét cửa sổ 10 phút vừa áp trần tổng SB_EARLY_MAX_TOTAL (mặc định 3) qua nhiều cửa sổ.
+  { tail -n 19 "$f" 2>/dev/null || true; echo "$now ${LANE:-?}"; } > "$f.tmp" 2>/dev/null \
     && mv "$f.tmp" "$f" 2>/dev/null || return 0
   # the log may be gone or empty (the 19/10 shape): grep exits 1/2, which pipefail would turn into the runner's exit
   last=$( { grep -v '^[[:space:]]*$' "$wlog" 2>/dev/null || true; } | tail -1 | cut -c1-200)
-  n=$( { awk -v l="${LANE:-?}" '$2 == l' "$f" 2>/dev/null || true; } | wc -l | tr -d ' ')
+  n=$( { awk -v from=$((now - ${SB_EARLY_WINDOW_S:-600})) -v l="${LANE:-?}" '$1 >= from && $2 == l' "$f" 2>/dev/null || true; } | wc -l | tr -d ' ')
   log "⚠ worker of #${1} (lane ${LANE:-?}) ended ${age}s after dispatch (a crash or a very quick exit) — early end ${n} of this lane in ${SB_EARLY_WINDOW_S:-600}s; last log line: ${last:-<no worker log at ${wlog}>}"
 }
 
@@ -844,7 +843,7 @@ early_backoff() {
   # $1 = issue, $2 = the column a lane takes it from. 0 = 2 early deaths of a lane serving that column within SB_EARLY_WINDOW_S: no
   # third claim until the window passes (AC of #94: at most 2 assign/unassign cycles per card in 10 minutes). Per lane: a Reviewer
   # that bounced the card to Ready in seconds says nothing about the Builder taking it next, nor two quick builds about its review.
-  local f now n lanes
+  local f now n total lanes
   case "${2:-}" in
     Ready) lanes=$(card_lane "$1") ;;   # the lane that takes it from Ready: build, or qa for a `qa`-labelled card
     QA) lanes="qa" ;;
@@ -856,7 +855,10 @@ early_backoff() {
   now=$(date +%s)
   n=$( { awk -v from=$((now - ${SB_EARLY_WINDOW_S:-600})) -v lanes=" $lanes " '$1 >= from && index(lanes, " " $2 " ")' "$f" 2>/dev/null || true; } \
        | wc -l | tr -d ' ')
-  [ "${n:-0}" -ge 2 ]
+  # Cầu chì tổng (circuit breaker): quá SB_EARLY_MAX_TOTAL (mặc định 3) lần chết sớm ở cùng lane thì ngắt hẳn, không lặp mỗi 10 phút.
+  total=$( { awk -v lanes=" $lanes " 'index(lanes, " " $2 " ")' "$f" 2>/dev/null || true; } \
+       | wc -l | tr -d ' ')
+  [ "${n:-0}" -ge 2 ] || [ "${total:-0}" -ge "${SB_EARLY_MAX_TOTAL:-3}" ]
 }
 
 reap_finished_locks() {
@@ -1011,6 +1013,17 @@ cleanup_stale_worktrees() {
       fi
     fi
   done
+  # Dọn các worktree tạm red-proof-* bị bỏ rơi trong TMPDIR khi không có tiến trình red_proof.py nào đang chạy.
+  if ! ps -ww -A -o command= 2>/dev/null | grep -qE '(^|[[:space:]/])python[0-9.]*[[:space:]].*red_proof\.py'; then
+    while IFS= read -r wt; do
+      case "$wt" in
+        */red-proof-*)
+          if git worktree remove --force "$wt" 2>/dev/null || git worktree remove "$wt" 2>/dev/null; then
+            log "stale red-proof worktree: $wt — removed"
+          fi ;;
+      esac
+    done < <(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' || true)
+  fi
   return 0
 }
 

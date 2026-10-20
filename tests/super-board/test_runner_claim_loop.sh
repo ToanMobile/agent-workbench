@@ -79,6 +79,13 @@ for f in "$INFLIGHT_DIR"/early-deaths/*; do [ -f "$f" ] && awk '{$1 -= 3600; pri
 : > "$TMP/writes"; PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_7","status":"Ready","labels":[],"content":{"type":"Issue","number":7,"assignees":[]}}]}'
 cycle
 [ "$(claims_of 7)" = 1 ] && ok "  … and once the window has passed, the card is claimed again" || fail "after the window #7 was not claimed again (claims $(claims_of 7))"
+# 3rd early death recorded on reap; even after another window passes, circuit breaker (SB_EARLY_MAX_TOTAL=3) holds the card
+reap_finished_locks
+for f in "$INFLIGHT_DIR"/early-deaths/*; do [ -f "$f" ] && awk '{$1 -= 3600; print}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"; done
+: > "$TMP/writes"
+cycle
+[ "$(claims_of 7)" = 0 ] && ok "  … but after 3 total early deaths across windows (SB_EARLY_MAX_TOTAL), the circuit breaker holds the card" \
+  || fail "circuit breaker failed: #7 was claimed a 4th time after 3 early deaths across windows"
 
 # ── 2. a worker that lived longer than SB_EARLY_DEATH_S does not count
 rm -rf "$INFLIGHT_DIR/early-deaths"; : > "$TMP/writes"
@@ -168,5 +175,33 @@ PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_51","status":"Ready","labels":["bug"],
 top_card_in_column "Ready"; b2="$TOP_ISSUE"
 [ "$q" = 50 ] && [ "$b2" = 51 ] && ok "  … and in Ready only the lane the card routes to counts (a qa card is not held by build deaths, nor a built card by qa deaths)" \
   || fail "Ready lane routing in backoff: qa-card='$q' built-card='$b2'"
+
+# ── 8. dispatch_lane sets CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS so claude -p does not kill red_proof.py after 10m
+cat > "$TMP/path/claude" <<'SH'
+#!/usr/bin/env bash
+echo "BG_WAIT=${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-unset}"
+SH
+chmod +x "$TMP/path/claude"
+rm -rf "$INFLIGHT_DIR/early-deaths"
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_70","status":"Ready","labels":[],"content":{"type":"Issue","number":70,"assignees":[]}}]}'
+( dispatch_lane build 70 ) >/dev/null 2>&1
+for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q "^BG_WAIT=" "$TMP/repo/wl/worker-build-70.log" 2>/dev/null && break; sleep 0.2; done
+grep -qx "BG_WAIT=0" "$TMP/repo/wl/worker-build-70.log" 2>/dev/null \
+  && ok "dispatch_lane exports CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 for long background proofs" \
+  || fail "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS not set in worker env: $(cat "$TMP/repo/wl/worker-build-70.log" 2>/dev/null)"
+
+# ── 9. cleanup_stale_worktrees prunes orphaned red-proof-* worktrees when no red_proof.py is running
+git -C "$TMP/repo" init -q
+git -C "$TMP/repo" config user.email "t@e.st"
+git -C "$TMP/repo" config user.name "t"
+git -C "$TMP/repo" commit --allow-empty -q -m "init"
+RP_WT="$TMP/red-proof-orphan123"
+git -C "$TMP/repo" worktree add --detach -q "$RP_WT" HEAD
+ps() { echo "100 /bin/bash"; }
+cleanup_stale_worktrees
+unset -f ps
+! git -C "$TMP/repo" worktree list --porcelain | grep -q "red-proof-orphan123" \
+  && ok "cleanup_stale_worktrees removes orphaned red-proof-* worktrees when no red_proof.py is alive" \
+  || fail "orphaned red-proof-* worktree still registered after cleanup_stale_worktrees"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_runner_claim_loop: all passed" || { echo "❌ test_runner_claim_loop: $FAILS failed"; exit 1; }

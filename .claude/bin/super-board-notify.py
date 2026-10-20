@@ -136,22 +136,24 @@ def write_approval(repo: str, pr: int, head: str, source: int) -> str:
 
 
 def run(args: argparse.Namespace) -> int:
-    if os.environ.get("SB_NOTIFY_SKIP") == "1":
+    if os.environ.get("SB_NOTIFY_SKIP") == "1" or os.environ.get("SB_LIB_ONLY") == "1":
         return 0
+    card = (args.card or "").strip()
+    if card == "lib" or args.cmd == "runaway":
+        return 0
+    # Chặn bắn Telegram thật khi chạy từ thư mục tạm của test (/tmp, /var/folders) trừ khi test truyền SB_TELEGRAM_ENV tường minh.
+    if not os.environ.get("SB_TELEGRAM_ENV"):
+        cwd = os.path.realpath(os.getcwd())
+        if cwd.startswith(("/tmp/", "/var/folders/", "/private/tmp/", "/private/var/folders/")):
+            return 0
     token, chat = load_telegram()
     if not token or not chat:
         return 0
-    card = args.card or ""
     if args.cmd == "send":
         text = args.text or ""
         body = ("%s\n%s" % (card, text)).strip()
         if body:
             send_text(token, chat, body)
-        return 0
-    if args.cmd == "runaway":
-        text = args.text or "RUNAWAY"
-        body = ("%s\n%s" % (card, text)).strip()
-        send_text(token, chat, body)
         return 0
     if args.cmd == "accounts-limited":
         state = Path(args.state_dir) if args.state_dir else Path.home() / ".claude" / "super-board"

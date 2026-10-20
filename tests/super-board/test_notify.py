@@ -106,6 +106,18 @@ def main() -> int:
         check(len(calls) == 2, "a failed limited send is tried again", "sent=%s" % len(calls))
         check(not (state_fail / "accounts-limited.json").exists(), "a failed limited send does not write the debounce file")
 
+        calls.clear()
+        notify.deliver = record
+        notify.main(["runaway", "--card", "lib", "--text", "RUNAWAY daemon: no card reached Done"])
+        notify.main(["runaway", "--card", "board", "--text", "RUNAWAY halt: no card reached Done"])
+        notify.main(["send", "--card", "lib", "--text", "test spam"])
+        os.environ["SB_LIB_ONLY"] = "1"
+        try:
+            notify.main(["send", "--card", "board", "--text", "lib mode spam"])
+        finally:
+            os.environ.pop("SB_LIB_ONLY", None)
+        check(len(calls) == 0, "runaway, card=lib and SB_LIB_ONLY=1 never spam Telegram", "sent=%s" % len(calls))
+
     if fails:
         print("test_notify: FAIL (%s)" % fails)
         return 1
