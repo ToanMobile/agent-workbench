@@ -75,6 +75,23 @@ bash "$DEVKIT/bin/agent-kit" restore-old "$P" --apply >/dev/null 2>&1
 [ -f "$TMP/outside/a_old.md" ] && [ ! -e "$TMP/outside/a.md" ] && ok "ledger entries outside the project are ignored" \
   || bad "ledger entries outside the project are ignored"
 
+# a symlinked parent folder that points into the DevKit: the restore must not write through it
+FK="$TMP/fakekit"; mkdir -p "$FK/commands"
+Q="$TMP/proj2"; mkdir -p "$Q"
+ln -s "$FK/commands" "$Q/cmds"
+echo "mine" > "$Q/zz_old.md"
+echo "2026-01-01 00:00:00 | $Q/cmds/zz.md -> $Q/zz_old.md" > "$Q/.devkit_backups.log"
+DEVKIT_ROOT="$FK" bash -c 'source "$1" >/dev/null; restore_old_backups "$2" --apply' _ "$_bc" "$Q" >/dev/null 2>&1
+[ ! -e "$FK/commands/zz.md" ] && [ -f "$Q/zz_old.md" ] && ok "restore never writes through a symlinked parent into the DevKit" \
+  || bad "restore wrote through a symlinked parent into the DevKit"
+
+# Codex and Cursor adapters place the skills in .agents/skills like the other adapters
+for ad in codex cursor; do
+  R="$TMP/proj-$ad"; mkdir -p "$R"
+  bash "$DEVKIT/adapters/setup_$ad.sh" "$R" symlink >/dev/null 2>&1
+  [ -n "$(ls -A "$R/.agents/skills" 2>/dev/null)" ] && ok "setup_$ad.sh places .agents/skills" || bad "setup_$ad.sh places .agents/skills"
+done
+
 echo
 echo "restore-old: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ] && echo "restore-old: all checks passed"
