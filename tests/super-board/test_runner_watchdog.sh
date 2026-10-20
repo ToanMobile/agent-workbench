@@ -597,9 +597,9 @@ python3 -c "import sys; t=open(sys.argv[1],'rb').read().decode('utf-8'); assert 
   && ok "long status cut on characters under the C locale, stamp kept at the end" || fail "long status broken: $(cat "$TMP/long.txt")"
 for i in 31 32 33 34 35 36 37 38 39 40 41 42; do rm -f "$R/.claude/super-board/inflight/$i"; done
 # Watchdog bị dừng (launchd stop, Ctrl-C) khi đang chờ một gh treo: gh không được sống tiếp mồ côi.
-printf 'KEY=x\nAT=1\n' > "$BST"
+printf 'KEY=x\nAT=1\n' > "$BST"; rm -f "$TMP/calls.hang"   # PID cũ của ca gh treo trước: xoá TRƯỚC khi chạy
 ( STUB_GH_HANG=1 SB_BOARD_GH_TIMEOUT=60 wd ) & WDP=$!
-rm -f "$TMP/calls.hang"; wait_for 10 '[ -s "$TMP/calls.hang" ]' || true
+wait_for 10 '[ -s "$TMP/calls.hang" ]' || true
 HANG=$(cat "$TMP/calls.hang" 2>/dev/null); PERLP=$(ps -o ppid= -p "${HANG:-0}" 2>/dev/null | tr -d ' ')   # wrapper = cha của gh giả
 [ -n "$PERLP" ] && kill -TERM "$PERLP" 2>/dev/null
 if [ -n "$HANG" ] && wait_for 5 '! kill -0 "$HANG" 2>/dev/null'; then ok "TERM to the timeout wrapper also stops the hung gh"

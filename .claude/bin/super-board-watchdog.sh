@@ -261,14 +261,16 @@ run_capped() {   # run_capped <giây> <lệnh…>: hết giờ thì TERM rồi K
   # macOS không có `timeout`. `perl -e 'alarm N; exec gh'` KHÔNG cắt được gh: gh là binary Go, bỏ qua SIGALRM (đo 20/10:
   # alarm 2 mà gh vẫn chạy đủ 8 s), và con của python (--resume → gh) cũng sống tiếp. Fork, con lập nhóm riêng, hết giờ
   # giết cả nhóm.
-  perl -e '$t = shift; my $p = 0;
-    # Handler đặt TRƯỚC fork, nhóm lập ở cả cha lẫn con: tín hiệu tới ngay sau fork vẫn giết được cả nhóm, không có khe
-    # mà con còn sống mồ côi.
-    sub stop { my ($rc) = @_; if ($p > 0) { kill "TERM", -$p; sleep 1; kill "KILL", -$p } exit $rc }
+  perl -MPOSIX -e '$t = shift; my $p = 0;
+    # Chặn tín hiệu từ trước fork tới khi nhóm đã lập ở cả cha lẫn con: handler không bao giờ chạy khi $p chưa có hay
+    # nhóm chưa tồn tại. stop giết cả nhóm lẫn chính PID con.
+    sub stop { my ($rc) = @_; if ($p > 0) { kill "TERM", -$p, $p; sleep 1; kill "KILL", -$p, $p } exit $rc }
     $SIG{ALRM} = sub { stop(124) }; $SIG{TERM} = sub { stop(143) }; $SIG{INT} = sub { stop(130) }; $SIG{HUP} = sub { stop(129) };
+    my $block = POSIX::SigSet->new(SIGTERM, SIGINT, SIGHUP, SIGALRM); my $old = POSIX::SigSet->new;
+    sigprocmask(SIG_BLOCK, $block, $old);
     $p = fork; die "fork: $!" unless defined $p;
-    if (!$p) { setpgrp(0, 0); exec @ARGV; exit 127 }
-    setpgrp($p, 0);
+    if (!$p) { setpgrp(0, 0); sigprocmask(SIG_SETMASK, $old); exec @ARGV; exit 127 }
+    setpgrp($p, 0); sigprocmask(SIG_SETMASK, $old);
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@"
 }
 GH_CAP="${SB_BOARD_GH_TIMEOUT:-20}"
