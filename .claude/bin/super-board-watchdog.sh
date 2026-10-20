@@ -183,7 +183,15 @@ take_check_lock() {
     rmdir "$lock" 2>/dev/null || true
     mkdir "$lock" 2>/dev/null || return 1
   fi
+  CHECK_LOCK="$lock"
   trap 'rmdir "'"$lock"'" 2>/dev/null || true' EXIT
+}
+release_check_lock() {
+  # Publish lên GitHub chạy SAU khi nhả khoá check: nó có thể mất vài lần gh 20 s, không được đẩy lượt check quá 120 s
+  # (khi đó lượt check sau lấy lại khoá và trap EXIT của lượt này xoá khoá của lượt kia).
+  [ -n "${CHECK_LOCK:-}" ] || return 0
+  rmdir "$CHECK_LOCK" 2>/dev/null || true
+  CHECK_LOCK=""; trap - EXIT
 }
 
 # ── Trạng thái board trên GitHub ─────────────────────────────────────────────────────────────────────────────────
@@ -195,11 +203,13 @@ take_check_lock() {
 # Lỗi gh/mạng không bao giờ làm check hỏng: lượt sau thử lại. SB_BOARD_STATUS=0 tắt. "cập nhật HH:MM dd/MM" là hợp đồng
 # với cron .github/scripts/board_heartbeat.py (agent-workbench): board 🟢/🟠 có giờ đó cũ quá 20 phút bị đánh ⚫.
 BOARD_STATUS="$DIR/$SLUG.board-status"; BOARD_STATUS_HEARTBEAT=300
-CHECKED=0
+BOARD_TZ="${SB_BOARD_TZ:-Asia/Ho_Chi_Minh}"   # giờ hiện trên GitHub luôn +07, máy có đổi múi giờ cũng vậy
+CHECKED=0; CHECK_LOCK=""
 
 hhmm() {   # $1 = epoch → "HH:MM" (hôm nay) hoặc "dd/MM HH:MM"
-  if [ "$(date -r "$1" +%Y%m%d 2>/dev/null)" = "$(date +%Y%m%d)" ]; then date -r "$1" +%H:%M 2>/dev/null
-  else date -r "$1" '+%d/%m %H:%M' 2>/dev/null; fi
+  if [ "$(TZ="$BOARD_TZ" date -r "$1" +%Y%m%d 2>/dev/null)" = "$(TZ="$BOARD_TZ" date +%Y%m%d)" ]; then
+    TZ="$BOARD_TZ" date -r "$1" +%H:%M 2>/dev/null
+  else TZ="$BOARD_TZ" date -r "$1" '+%d/%m %H:%M' 2>/dev/null; fi
 }
 span() {   # $1 = số giây → "45p" / "1g15p"
   local m=$(( $1 / 60 ))
@@ -246,18 +256,22 @@ board_status_text() {   # đặt BS_KEY (không chứa giờ: biết trạng th�
 }
 
 gh20() { perl -e 'alarm 20; exec @ARGV' gh "$@"; }   # macOS không có `timeout`: gh treo (mạng chưa lên) không giữ lượt check
+card20() { perl -e 'alarm 20; exec @ARGV' bash "$SCRIPT_DIR/super-board-card.sh" "$@"; }
 
 publish_card_fields() {
   # Field chữ "Đang chạy" trên từng card: lane + giờ bắt đầu + thời lượng khi worker còn sống, xoá khi worker dừng (card
   # ở Building/QA/Review mà trống field = không ai đang làm). Đặt CF_FIELD và CF_CARDS (card đang/có thể còn mang field,
   # để lượt sau xoá). $1 owner, $2 number, $3 config.
-  local pid n text item live="" keep=""
+  local pid n text item fields live="" keep=""
+  FIELD_STALE=""
   CF_FIELD=$(field FIELD "$BOARD_STATUS"); CF_CARDS=$(field CARDS "$BOARD_STATUS")
-  pid=$(bash "$SCRIPT_DIR/super-board-card.sh" --config "$3" ids 2>/dev/null | jq -r '.projectId // empty' 2>/dev/null) || pid=""
+  pid=$(card20 --config "$3" ids 2>/dev/null | jq -r '.projectId // empty' 2>/dev/null) || pid=""
   [ -n "$pid" ] || return 0
   if [ -z "$CF_FIELD" ]; then
-    CF_FIELD=$(gh20 project field-list "$2" --owner "$1" --format json 2>/dev/null \
-      | jq -r '[.fields[]? | select(.name == "Đang chạy") | .id][0] // empty' 2>/dev/null) || CF_FIELD=""
+    # Đọc danh sách hỏng (mạng, quyền) KHÁC với field chưa có: chỉ tạo khi đọc được và thật sự thiếu, không thì lần mạng
+    # chập chờn sau sẽ tạo field trùng tên.
+    fields=$(gh20 project field-list "$2" --owner "$1" --limit 100 --format json 2>/dev/null) || return 0
+    CF_FIELD=$(printf '%s' "$fields" | jq -r '[.fields[]? | select(.name == "Đang chạy") | .id][0] // empty' 2>/dev/null) || return 0
     [ -n "$CF_FIELD" ] || CF_FIELD=$(gh20 project field-create "$2" --owner "$1" --name "Đang chạy" --data-type TEXT \
       --format json 2>/dev/null | jq -r '.id // empty' 2>/dev/null) || CF_FIELD=""
     [ -n "$CF_FIELD" ] || return 0
@@ -265,18 +279,20 @@ publish_card_fields() {
   while IFS='	' read -r n text; do
     [ -n "$n" ] || continue
     live="$live $n"; keep="$keep $n"
-    item=$(bash "$SCRIPT_DIR/super-board-card.sh" --config "$3" item-id "$n" 2>/dev/null) || continue
-    gh20 project item-edit --id "$item" --project-id "$pid" --field-id "$CF_FIELD" --text "$text" >/dev/null 2>&1 || true
+    item=$(card20 --config "$3" item-id "$n" 2>/dev/null) || continue
+    # Ghi hỏng (mạng, hay field đã bị xoá trên GitHub): lượt sau đọc lại id field.
+    gh20 project item-edit --id "$item" --project-id "$pid" --field-id "$CF_FIELD" --text "$text" >/dev/null 2>&1 || FIELD_STALE=1
   done <<EOF
 $BS_CARDS
 EOF
   for n in $CF_CARDS; do
     case " $live " in *" $n "*) continue ;; esac
-    item=$(bash "$SCRIPT_DIR/super-board-card.sh" --config "$3" item-id "$n" 2>/dev/null) \
+    item=$(card20 --config "$3" item-id "$n" 2>/dev/null) \
       && gh20 project item-edit --id "$item" --project-id "$pid" --field-id "$CF_FIELD" --clear >/dev/null 2>&1 \
       || keep="$keep $n"   # xoá hỏng: giữ lại để lượt sau thử
   done
   CF_CARDS=${keep# }
+  [ -z "${FIELD_STALE:-}" ] || CF_FIELD=""
 }
 
 publish_board_status() {
@@ -286,11 +302,19 @@ publish_board_status() {
   number=$(jq -r '.project.number // empty' "$cfg" 2>/dev/null) || return 0
   [ -n "$owner" ] || return 0
   case "$number" in ''|*[!0-9]*) return 0 ;; esac
+  local plock="$DIR/$SLUG.publish.lock" m
+  if ! mkdir "$plock" 2>/dev/null; then
+    m=$(file_mtime "$plock") || m=$NOW
+    [ $((NOW - m)) -ge 300 ] || return 0
+    rmdir "$plock" 2>/dev/null || true
+    mkdir "$plock" 2>/dev/null || return 0
+  fi
+  trap 'rmdir "'"$plock"'" 2>/dev/null || true' EXIT
   board_status_text
   last_key=$(field KEY "$BOARD_STATUS"); last_at=$(field AT "$BOARD_STATUS")
   case "$last_at" in ''|*[!0-9]*) last_at=0 ;; esac
   [ "$BS_KEY" != "$last_key" ] || [ $((NOW - last_at)) -ge "$BOARD_STATUS_HEARTBEAT" ] || return 0
-  gh20 project edit "$number" --owner "$owner" --description "$BS_TEXT · cập nhật $(date -r "$NOW" "+%H:%M %d/%m")" >/dev/null 2>&1 || return 0
+  gh20 project edit "$number" --owner "$owner" --description "$BS_TEXT · cập nhật $(TZ="$BOARD_TZ" date -r "$NOW" "+%H:%M %d/%m")" >/dev/null 2>&1 || return 0
   publish_card_fields "$owner" "$number" "$cfg" || true
   { printf 'KEY=%s\nAT=%s\nFIELD=%s\nCARDS=%s\n' "$BS_KEY" "$NOW" "${CF_FIELD:-}" "${CF_CARDS:-}" > "$BOARD_STATUS.$$" \
       && mv -f "$BOARD_STATUS.$$" "$BOARD_STATUS"; } 2>/dev/null || rm -f "$BOARD_STATUS.$$" 2>/dev/null || true
@@ -354,17 +378,7 @@ check() {
     verdict missing-tools "runner pid $pid is dead but its PATH lacks:$missing (PATH=$env_path) — not restarted"
     return 0
   fi
-  if [ "$halt_resume" = 1 ]; then
-    # Mỗi lượt check (60 s) thử lại; chỉ ghi log khi kết luận đổi. --resume tối đa ~186 s (2 lần đọc × 3 lần × gh 30 s):
-    # cắt ở 90 s để lượt check này xong trước khi khoá check bị coi là bỏ lại (120 s) — nếu không, hai check cùng
-    # resume và cùng khởi động runner. Bị cắt giữa chừng vẫn an toàn: --resume chỉ đọc, lưu trữ halt bằng rename.
-    if ! (PATH="$env_path"; perl -e 'alarm 90; exec @ARGV' python3 "$SCRIPT_DIR/super-board-github-read.py" --resume >/dev/null 2>&1); then
-      verdict halt-wait "runner halted (rc=79): its saved GitHub read still fails, or the halt saved an uncertain write — retried every check; a write needs --resume --reconciled by hand"
-      return 0
-    fi
-    wlog "auto-resumed the GitHub halt of runner pid $pid: its saved read replayed OK (transient failure, e.g. network down after sleep)"
-  fi
-  if ! (PATH="$env_path"; python3 "$SCRIPT_DIR/super-board-github-read.py" --check >/dev/null 2>&1); then
+  if [ "$halt_resume" = 0 ] && ! (PATH="$env_path"; python3 "$SCRIPT_DIR/super-board-github-read.py" --check >/dev/null 2>&1); then
     verdict github-halt "runner pid $pid is dead and GitHub reads are halted (github-halt.json) — reconcile, then start the board explicitly"
     return 0
   fi
@@ -378,6 +392,21 @@ check() {
       verdict "backoff-$RESTARTS" "runner pid $pid dead again (STATE=$state rc=${rc:-?}) — backoff: next restart ${wait}s after the last one"
       return 0
     fi
+  fi
+  if [ "$halt_resume" = 1 ]; then
+    # Chỉ resume khi ngay sau đó khởi động lại (sau gave-up và backoff): --resume lưu trữ file halt, resume rồi dừng ở
+    # backoff thì lượt sau thấy halted mà hết halt → ended-halted, board nằm im mãi. Mỗi lượt check (60 s) thử lại; cắt ở
+    # 90 s (--resume tối đa ~186 s: 2 lần đọc × 3 lần × gh 30 s) để lượt check xong trước khi khoá bị coi là bỏ lại (120 s).
+    # Bị cắt giữa chừng vẫn an toàn: --resume chỉ đọc, lưu trữ halt bằng rename.
+    local why
+    if ! why=$( (PATH="$env_path"; perl -e 'alarm 90; exec @ARGV' python3 "$SCRIPT_DIR/super-board-github-read.py" --resume 2>&1 >/dev/null) ); then
+      case "$why" in
+        *reconcil*) verdict github-halt "runner halted (rc=79) on an uncertain GitHub write — check it on GitHub, then --resume --reconciled \"<what was checked>\" and start the board explicitly" ;;
+        *) verdict halt-wait "runner halted (rc=79): its saved GitHub read still fails — retried every check" ;;
+      esac
+      return 0
+    fi
+    wlog "auto-resumed the GitHub halt of runner pid $pid: its saved read replayed OK (transient failure, e.g. network down after sleep)"
   fi
   restart_runner "$pid" "$state" "$rc"
 }
@@ -516,7 +545,7 @@ uninstall_agent() {
 }
 
 case "$CMD" in
-  check) check; publish_board_status ;;
+  check) check; release_check_lock; publish_board_status ;;
   status) status ;;
   install) install_agent ;;
   ensure) ensure_agent ;;

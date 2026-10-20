@@ -58,7 +58,9 @@ msg=$(env -u BOARD_PAT python3 "$SCRIPT" 2>&1); rc=$?
 leak=$(BOARD_PAT=x BOARD_PROJECTS="1 2" python3 - "$SCRIPT" <<'PY2'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location('hb', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-desc = {1: '🟢 đang chạy · SECRET-CARD 🔨#95 · cập nhật 09:00 01/01', 2: '⏸️ đã dừng SECRET-OTHER · cập nhật 09:00 01/01'}
+from datetime import datetime, timedelta, timezone
+old = (datetime.now(timezone(timedelta(hours=7))) - timedelta(days=2)).strftime('%H:%M %d/%m')   # luôn cũ, không phụ thuộc giờ chạy test
+desc = {1: '🟢 đang chạy · SECRET-CARD 🔨#95 · cập nhật ' + old, 2: '⏸️ đã dừng SECRET-OTHER · cập nhật ' + old}
 def fake(token, query, variables):
     if 'mutation' in query:
         return {}

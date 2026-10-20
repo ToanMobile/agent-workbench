@@ -73,9 +73,12 @@ if '--resume' in args:
     h = os.environ['STUB_HALT']
     if not os.path.exists(h):
         sys.exit(0)
-    if open(h).read().strip() == 'read':
+    kind = open(h).read().strip()
+    if kind == 'read':
         os.remove(h)
         sys.exit(0)
+    if kind == 'write':   # câu của super-board-github-read.py thật cho halt không có lần đọc đã lưu
+        print('[github-read] HALT: saved failure needs manual outcome reconciliation before restart', file=sys.stderr)
     sys.exit(79)
 if 'quota' in args:
     print('{"resources":{"graphql":{"remaining":5000,"reset":0},"core":{"remaining":5000}}}')
@@ -484,8 +487,21 @@ wait_for 30 '! alive "$RP"' || kill_tree "$RP"
 # giữ halt, không khởi động lại.
 rm -f "$WD"; dead_pid; set_state "$D" halted 79
 printf 'write\n' > "$TMP/halt"; expect_no_restart "halt with an uncertain write (a person reconciles it)"
+[ "$(field VERDICT "$WD")" = github-halt ] && ok "uncertain-write halt → verdict github-halt (🔴 needs a person), not halt-wait" \
+  || fail "uncertain-write halt verdict: $(field VERDICT "$WD")"
 printf 'read-fail\n' > "$TMP/halt"; expect_no_restart "halt whose saved read still fails (GitHub/network still down)"
+[ "$(field VERDICT "$WD")" = halt-wait ] && ok "read halt that still fails → verdict halt-wait (🟠 retrying)" \
+  || fail "read-fail halt verdict: $(field VERDICT "$WD")"
 [ -e "$TMP/halt" ] && ok "a halt whose replay failed is kept" || fail "halt file removed although its replay failed"
+# Halt khi watchdog đang backoff (runner vừa được khởi động lại rồi halt ngay): không được tiêu file halt rồi dừng ở
+# backoff — lượt sau sẽ thấy halted mà hết halt và bỏ board mãi.
+printf 'RESTARTS=1\nLAST_RESTART=%s\nVERDICT=\n' "$(date +%s)" > "$WD"; printf 'read\n' > "$TMP/halt"
+expect_no_restart "read halt inside the backoff window"
+[ -e "$TMP/halt" ] && ok "halt kept while in backoff (resumed only when a restart follows)" || fail "halt consumed during backoff"
+printf 'RESTARTS=1\nLAST_RESTART=1\nVERDICT=\n' > "$WD"
+expect_restart "read halt once the backoff elapsed"
+kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+dead_pid; set_state "$D" halted 79; rm -f "$WD"
 printf 'read\n' > "$TMP/halt"; expect_restart "halt whose saved read now replays OK (transient read failure)"
 [ ! -e "$TMP/halt" ] && grep -q 'auto-resumed' "$WLOG" 2>/dev/null && ok "auto-resume of a transient read halt is logged" \
   || fail "auto-resume not logged or halt kept: $(tail -2 "$WLOG" 2>/dev/null | tr '\n' ' ')"
