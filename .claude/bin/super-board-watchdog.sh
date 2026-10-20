@@ -261,11 +261,14 @@ run_capped() {   # run_capped <giây> <lệnh…>: hết giờ thì TERM rồi K
   # macOS không có `timeout`. `perl -e 'alarm N; exec gh'` KHÔNG cắt được gh: gh là binary Go, bỏ qua SIGALRM (đo 20/10:
   # alarm 2 mà gh vẫn chạy đủ 8 s), và con của python (--resume → gh) cũng sống tiếp. Fork, con lập nhóm riêng, hết giờ
   # giết cả nhóm.
-  perl -e '$t = shift; $p = fork; die "fork: $!" unless defined $p;
+  perl -e '$t = shift; my $p = 0;
+    # Handler đặt TRƯỚC fork, nhóm lập ở cả cha lẫn con: tín hiệu tới ngay sau fork vẫn giết được cả nhóm, không có khe
+    # mà con còn sống mồ côi.
+    sub stop { my ($rc) = @_; if ($p > 0) { kill "TERM", -$p; sleep 1; kill "KILL", -$p } exit $rc }
+    $SIG{ALRM} = sub { stop(124) }; $SIG{TERM} = sub { stop(143) }; $SIG{INT} = sub { stop(130) }; $SIG{HUP} = sub { stop(129) };
+    $p = fork; die "fork: $!" unless defined $p;
     if (!$p) { setpgrp(0, 0); exec @ARGV; exit 127 }
-    $SIG{ALRM} = sub { kill "TERM", -$p; sleep 1; kill "KILL", -$p; exit 124 };
-    # Con ở nhóm riêng nên tín hiệu gửi nhóm của watchdog (launchd dừng job, Ctrl-C) không tới nó: chuyển tiếp.
-    for my $sig (qw(TERM INT HUP)) { $SIG{$sig} = sub { kill "TERM", -$p; sleep 1; kill "KILL", -$p; exit 143 } }
+    setpgrp($p, 0);
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@"
 }
 GH_CAP="${SB_BOARD_GH_TIMEOUT:-20}"
@@ -341,7 +344,9 @@ publish_board_status() {
   [ "$BS_KEY" != "$last_key" ] || [ $((NOW - last_at)) -ge "$BOARD_STATUS_HEARTBEAT" ] || return 0
   # Nhiều worker: cắt còn 200 ký tự để "cập nhật …" ở cuối cho cron đọc. Cắt bằng perl theo ký tự UTF-8: launchd chạy
   # bash với locale C, ${#…}/${…:0:n} của bash sẽ đếm và cắt theo byte, giữa một chữ có dấu hay emoji.
-  BS_TEXT=$(printf '%s' "$BS_TEXT" | perl -CS -Mutf8 -e 'local $/; my $t = <STDIN>; print length($t) > 200 ? substr($t, 0, 197) . "…" : $t') || true
+  local cut
+  cut=$(printf '%s' "$BS_TEXT" | perl -CS -Mutf8 -e 'local $/; my $t = <STDIN>; print length($t) > 200 ? substr($t, 0, 197) . "…" : $t') \
+    && [ -n "$cut" ] && BS_TEXT=$cut   # perl hỏng: giữ nguyên chuỗi, không ghi mô tả rỗng
   gh20 project edit "$number" --owner "$owner" --description "$BS_TEXT · cập nhật $(TZ="$BOARD_TZ" date -r "$NOW" "+%H:%M %d/%m")" >/dev/null 2>&1 || return 0
   rm -f "$ROOT/$DIR/$SLUG.publish-halt.json" 2>/dev/null || true   # sót từ lượt bị giết: đừng để nó chặn lượt này
   publish_card_fields "$owner" "$number" "$cfg" || true

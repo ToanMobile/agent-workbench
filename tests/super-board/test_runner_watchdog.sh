@@ -119,7 +119,7 @@ cat > "$TMP/stub/gh" <<'SH'
 # gh project edit / item-edit thành công (trừ STUB_EDIT_FAIL=1); field-list trả field "Đang chạy"; mọi lệnh khác lỗi.
 echo "gh $*" >> "$STUB_CALLS"
 case "$1 $2" in
-  "project edit") if [ -n "${STUB_GH_HANG:-}" ]; then trap '' ALRM; sleep 25; fi; [ -z "${STUB_EDIT_FAIL:-}" ] && exit 0 ;;
+  "project edit") if [ -n "${STUB_GH_HANG:-}" ]; then trap '' ALRM; echo $$ > "$STUB_CALLS.hang"; sleep 25; fi; [ -z "${STUB_EDIT_FAIL:-}" ] && exit 0 ;;
   "project item-edit") [ -z "${STUB_EDIT_FAIL:-}${STUB_ITEM_EDIT_FAIL:-}" ] && exit 0 ;;
   "project field-list") echo '{"fields":[{"id":"F_STATUS","name":"Status"},{"id":"F_RUN","name":"Đang chạy"}]}'; exit 0 ;;
 esac
@@ -593,14 +593,14 @@ printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15\n' > "$BST"; STUB_ITEMID_FAIL=1 wd
 for i in 31 32 33 34 35 36 37 38 39 40 41 42; do printf 'PID=%s\nLANE=review\nSTARTED=%s\n' "$FR3" "$W15" > "$R/.claude/super-board/inflight/$i"; done
 printf 'KEY=x\nAT=1\n' > "$BST"; LC_ALL=C LANG=C wd
 last_edit | sed 's/^gh project edit 1 --owner o --description //' > "$TMP/long.txt"
-python3 -c "import sys; t=open(sys.argv[1],'rb').read().decode('utf-8'); assert 'cập nhật' in t.split('·')[-1], t; assert len(t.strip()) <= 230, len(t)" "$TMP/long.txt" 2>/dev/null \
+python3 -c "import sys; t=open(sys.argv[1],'rb').read().decode('utf-8'); assert 'cập nhật' in t.split('·')[-1], t; assert '…' in t, t; assert len(t.strip()) <= 230, len(t)" "$TMP/long.txt" 2>/dev/null \
   && ok "long status cut on characters under the C locale, stamp kept at the end" || fail "long status broken: $(cat "$TMP/long.txt")"
 for i in 31 32 33 34 35 36 37 38 39 40 41 42; do rm -f "$R/.claude/super-board/inflight/$i"; done
 # Watchdog bị dừng (launchd stop, Ctrl-C) khi đang chờ một gh treo: gh không được sống tiếp mồ côi.
 printf 'KEY=x\nAT=1\n' > "$BST"
 ( STUB_GH_HANG=1 SB_BOARD_GH_TIMEOUT=60 wd ) & WDP=$!
-wait_for 10 'pgrep -f "sleep 25" >/dev/null' || true
-HANG=$(pgrep -f "sleep 25" | head -1); PERLP=$(pgrep -f 'setpgrp' | head -1)
+rm -f "$TMP/calls.hang"; wait_for 10 '[ -s "$TMP/calls.hang" ]' || true
+HANG=$(cat "$TMP/calls.hang" 2>/dev/null); PERLP=$(ps -o ppid= -p "${HANG:-0}" 2>/dev/null | tr -d ' ')   # wrapper = cha của gh giả
 [ -n "$PERLP" ] && kill -TERM "$PERLP" 2>/dev/null
 if [ -n "$HANG" ] && wait_for 5 '! kill -0 "$HANG" 2>/dev/null'; then ok "TERM to the timeout wrapper also stops the hung gh"
 else fail "hung gh left running after the wrapper got TERM (hang=$HANG perl=$PERLP)"; [ -n "$HANG" ] && kill "$HANG" 2>/dev/null; fi
