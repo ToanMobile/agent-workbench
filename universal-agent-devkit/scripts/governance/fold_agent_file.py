@@ -38,9 +38,14 @@ def main(src, agents):
         print("nothing to move")
         return 0
     stamp = datetime.date.today().isoformat()
-    piece = f"<!-- moved from {os.path.basename(src)} on {stamp} (AGENTS.md is the only instruction file) -->\n{own}\n\n"
+    name = os.path.basename(src)
+    s_mark, e_mark = f"<!-- folded-from:{name}:start -->", f"<!-- folded-from:{name}:end -->"
+    piece = (f"{s_mark}\n<!-- moved from {name} on {stamp} (AGENTS.md is the only instruction file) -->\n{own}\n{e_mark}\n\n")
+    a, b = target.find(s_mark), target.find(e_mark)
     at = target.find(START)
-    if at < 0:
+    if 0 <= a < b and (at < 0 or b < at):   # this file was folded before: replace its section, never add a second copy
+        new = target[:a] + piece.rstrip("\n") + target[b + len(e_mark):]
+    elif at < 0:
         new = (target.rstrip("\n") + "\n\n" if target.strip() else "") + piece
     else:
         new = target[:at] + piece + target[at:]
