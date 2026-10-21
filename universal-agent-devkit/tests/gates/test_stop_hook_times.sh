@@ -24,7 +24,7 @@ TMP="$(mktemp -d)"
 case "$TMP" in /?*) [ -d "$TMP" ] || TMP="" ;; *) TMP="" ;; esac
 if [ -z "$TMP" ]; then echo "✖ no temp dir (mktemp failed): nothing was run" >&2; exit 1; fi
 trap 'rm -rf "$TMP"' EXIT
-"$PYBIN" -I - "$SCRIPT" "$TMP" <<'PY'
+"$PYBIN" -I - "$SCRIPT" "$TMP" <<'PYEND'
 import hashlib, json, os, re, subprocess, sys, time
 
 SCRIPT, TMP = sys.argv[1], sys.argv[2]
@@ -276,4 +276,4 @@ chk(snapshot() == before, "no file read was written (transcripts and runs.jsonl 
 
 print(("❌ test_stop_hook_times: %d failed" % fails) if fails else "✅ test_stop_hook_times: all checks passed")
 sys.exit(1 if fails else 0)
-PY
+PYEND
