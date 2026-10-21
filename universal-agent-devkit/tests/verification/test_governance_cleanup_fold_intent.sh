@@ -20,7 +20,6 @@ echo '{}' > "$A/approved_x.json"; touch -t 202001010000 "$A/approved_x.json"
 python3 "$NIGHTLY" run "$P" >/dev/null 2>&1
 [ ! -e "$A/regression_gate.log" ] && [ -f "$A/review_gate.log" ] && ok "nightly run removes old audit-gate files, keeps fresh ones" || fail "audit-gate: $(ls "$A")"
 [ -f "$A/approved_x.json" ] && ok "nightly age pass keeps old state *.json (gate memory)" || fail "state json removed by the age pass"
-:  || fail "audit-gate: $(ls "$A")"
 
 # (d) size cap: FRESH logs (no age to clean) totalling ~8 MB end up under 5 MB after the nightly run; .gitignore and state json stay
 P2="$TMP/p2"; A2="$P2/.claude/audit-gate"; mkdir -p "$A2" "$P2/.agents"
@@ -67,6 +66,28 @@ for i in range(1500):
 PY
 python3 "$DEVKIT_DIR/scripts/governance/devkit_clean.py" "$P4" --days=7 | grep -q "would trim" \
   && fail "cap plans a no-op trim for a log under 1000 lines" || ok "cap plans no trim for logs under 1000 lines"
+
+# (f) state files that are not *.json (R6): the nightly age pass (10 days old) AND the cap pass (idle 2 days, cap unreachable) keep
+# worktree_merge_gate.state (holds `owed`), proof_gate.state, .testsourceset_attempts*; an idle per-session marker still goes
+P5="$TMP/p5"; A5="$P5/.claude/audit-gate"; mkdir -p "$A5" "$P5/.agents"
+( cd "$P5" && git init -q . && git config devkit.trunkMode false )
+python3 -B -I - "$A5" <<'PY'
+import os, sys, time
+a = sys.argv[1]
+def put(name, text, age_days):
+    p = os.path.join(a, name); open(p, "w").write(text)
+    t = time.time() - age_days * 86400; os.utime(p, (t, t))
+for n in ("worktree_merge_gate.state", "proof_gate.state", ".testsourceset_attempts_s1"):
+    put(n, "owed\n", 10)            # age pass
+    put("idle_" + n, "owed\n", 2)   # cap pass
+put("prompt_seen_s1", "", 2)
+put("surfaced.jsonl", ("x" * 99 + "\n") * (3 * 10486), 0)
+put("pinned.bin", "z" * (4 * 1024 * 1024), 0)   # not removable: the cap stays over 3 MB after every log tail is cut
+PY
+python3 "$NIGHTLY" run "$P5" >/dev/null 2>&1
+MISS=""; for n in worktree_merge_gate.state proof_gate.state .testsourceset_attempts_s1 idle_worktree_merge_gate.state idle_proof_gate.state idle_.testsourceset_attempts_s1; do
+  [ -f "$A5/$n" ] || MISS="$MISS $n"; done
+[ -z "$MISS" ] && [ ! -e "$A5/prompt_seen_s1" ] && ok "age and cap passes keep non-json state files, still drop idle session markers" || fail "state files removed:$MISS (prompt_seen_s1 left: $([ -e "$A5/prompt_seen_s1" ] && echo yes || echo no))"
 
 # (b) fold: same source run twice = no change; edited source = one section, not two
 F="$TMP/f"; mkdir -p "$F"

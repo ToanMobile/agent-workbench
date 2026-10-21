@@ -13,8 +13,8 @@ Dry-run unless --apply. Only the hooks' working area is touched:
     * size cap: if what is left is still over 3 MB, the biggest .log/.jsonl/.tsv files over
       1000 lines are trimmed to their last 1000 lines, then per-session marker files idle for 6 hours are
       removed oldest first (plus idle wg_scan/ cache files), until it fits (backups, locks, state
-      *.json, session dirs are never touched)
-    * --keep-state: top-level *.json (gate state, approvals) is exempt from the age pass
+      files, session dirs are never touched)
+    * --keep-state: top-level *.json, *.state and .testsourceset_attempts* (gate state, approvals, `owed`) are exempt from the age pass
     * .gitignore is always kept
   --old-installs: also ~/.universal-agent-devkit.old-* (copies quick-install moved
   aside) older than --days.
@@ -22,6 +22,7 @@ Never touched: source code, .agents/ (project tier, instincts, regression checkl
 .claude/settings.json, hooks, commands, git data.
 """
 
+import fnmatch
 import os
 import shutil
 import sys
@@ -34,6 +35,20 @@ MAX_LOG = 5 * 1024 * 1024
 AUDIT_CAP = 3 * 1024 * 1024   # file blocks only, after the age pass: `du` also counts directory blocks, so 2 MB of headroom under the 5 MB acceptance line
 LOG_EXTS = (".log", ".jsonl", ".tsv")
 KEEP_LINES = 1000
+# Per-session markers the hooks drop (<prefix><session id>): safe to remove once idle. Matched by NAME, never "everything
+# that is not .json/.lock": worktree_merge_gate.state (holds `owed`), proof_gate.state and .testsourceset_attempts* are gate memory.
+MARKER_PATTERNS = ("prompt_seen_*", "untracked_edit.*", "*_stopchain_*", "*_shown_*", "context_note_*",
+                   "lesson_reminded_*", "buglink_reminded_*", "review_attempts_*", "security_gate_attempts_*")
+
+
+def is_marker(path):
+    return any(fnmatch.fnmatch(os.path.basename(path), pat) for pat in MARKER_PATTERNS)
+
+
+def is_state(path):
+    """Gate memory exempt from --keep-state: *.json, *.state, .testsourceset_attempts*."""
+    name = os.path.basename(path)
+    return os.path.isfile(path) and (name.endswith((".json", ".state")) or name.startswith(".testsourceset_attempts"))
 
 
 def size_of(path):
@@ -97,7 +112,7 @@ def cap_plan(audit, planned):
 
     Log tails are cut first, then per-session marker files idle for 6 hours, oldest first (every size is
     allocated bytes, as `du` counts). Backups, flock files, session dirs and state *.json are live data:
-    never removed here, so a folder they fill alone stays over the cap.
+    never removed here, so a folder they fill alone stays over the cap. Markers are matched by name (MARKER_PATTERNS).
     """
     gone = {p: a for a, p, _ in planned}
     entries = [os.path.join(audit, n) for n in sorted(os.listdir(audit)) if n != ".gitignore"]
@@ -119,7 +134,7 @@ def cap_plan(audit, planned):
             break
         out.append(("trim", path, logs[path][0])); total -= logs[path][0] - logs[path][1]
     stale = time.time() - 6 * 3600   # per-session markers (prompt_seen_<sid>, untracked_edit.<sid>): 6 h idle = the session is over
-    markers = [p for p in entries if os.path.isfile(p) and not os.path.islink(p) and not p.endswith(LOG_EXTS + (".json", ".lock"))
+    markers = [p for p in entries if os.path.isfile(p) and not os.path.islink(p) and is_marker(p) and not p.endswith(LOG_EXTS)
                and os.lstat(p).st_mtime < stale and gone.get(p) != "trim"]
     wg = os.path.join(audit, "wg_scan")   # worktree_guard's incremental scan cache: a miss only rescans
     if os.path.isdir(wg) and not os.path.islink(wg):
@@ -149,7 +164,7 @@ def plan(project, days, old_installs, keep_state=False):
             else:
                 candidates.append(path)
         if keep_state:   # the gates' own memory (verified_head, approvals) is not a log: no age limit
-            candidates = [p for p in candidates if not (p.endswith(".json") and os.path.isfile(p))]
+            candidates = [p for p in candidates if not is_state(p)]
         for path in candidates:
             if newest_mtime(path) < cutoff:
                 out.append(("remove", path, size_of(path)))
