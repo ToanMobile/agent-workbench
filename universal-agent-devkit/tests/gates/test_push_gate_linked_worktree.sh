@@ -266,6 +266,13 @@ CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief --auto-approv
   || bad "L21 setup: gate --full --auto-approve-tests in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
 git -C "$W" commit -qam "task work with an edited test" || bad "L21 setup: commit failed"
 (cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) || bad "L21 setup: worktree finish failed: $(tail -3 "$TMP/finish.out")"
+# the scenario itself (OCR 21/10): finish's merge gate really ended exit 2 for the edited test — else L21 would pass testing nothing
+python3 - "$(git -C "$R" rev-parse --path-format=absolute --git-common-dir)/postfix-gate/runs.jsonl" <<'PY' \
+  || bad "L21 setup: no merge-gate run with exit 2 / edited_test in runs.jsonl (the merge gate did not exercise the branch)"
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
+sys.exit(0 if any(r.get("mode") != "full" and r.get("exit") == 2 and r.get("exit_reason") == "edited_test" for r in rows) else 1)
+PY
 expect "L21: an edited test approved by the worktree's own --full, then worktree finish: the push from main is still covered" 0 "covered"
 
 [ "$FAILS" = 0 ] && echo "ALL OK" && exit 0

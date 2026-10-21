@@ -105,11 +105,12 @@ if [[ -e ".worktrees/issue-$N" ]]; then
 fi
 if [[ -e "$WORKTREE_DIR" ]]; then
   echo "error: worktree path $WORKTREE_DIR already exists — refusing to clobber" >&2
-  echo "       (remove with: agent-kit worktree remove $WORKTREE_DIR — it refuses only when work would be lost; the branch goes once merged: agent-kit worktree prune-branch $WORKER_BRANCH)" >&2
+  echo "       (remove with: python3 \"$WT_PY\" remove $WORKTREE_DIR — agent-kit worktree remove; it refuses only when work would be lost)" >&2
   exit 64
 fi
 if git rev-parse --verify "$WORKER_BRANCH" >/dev/null 2>&1; then
   echo "error: branch $WORKER_BRANCH already exists — refusing to clobber" >&2
+  echo "       merged: python3 \"$WT_PY\" prune-branch $WORKER_BRANCH; not merged: it holds work — resume it by hand or ask the user to delete it" >&2
   exit 64
 fi
 # `worktree add --lane` (below) resumes a branch only origin has; this dispatcher always starts fresh off BASE_BRANCH (BASE_SHA and the
