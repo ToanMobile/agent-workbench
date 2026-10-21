@@ -67,6 +67,19 @@ import os, sys
 args = sys.argv[1:]
 if '--check' in args:
     sys.exit(79 if os.path.exists(os.environ['STUB_HALT']) else 0)
+# --resume: nội dung file halt giả = loại halt. read = lần đọc đã lưu phát lại được (halt được lưu trữ, exit 0);
+# read-fail = phát lại vẫn lỗi; write (hay khác) = ghi chưa rõ kết quả, cần người đối chiếu. Hai loại sau: exit 79.
+if '--resume' in args:
+    h = os.environ['STUB_HALT']
+    if not os.path.exists(h):
+        sys.exit(0)
+    kind = open(h).read().strip()
+    if kind == 'read':
+        os.remove(h)
+        sys.exit(0)
+    if kind == 'write':   # câu của super-board-github-read.py thật cho halt không có lần đọc đã lưu
+        print('[github-read] HALT: saved failure needs manual outcome reconciliation before restart', file=sys.stderr)
+    sys.exit(79)
 if 'quota' in args:
     print('{"resources":{"graphql":{"remaining":5000,"reset":0},"core":{"remaining":5000}}}')
     sys.exit(0)
@@ -86,9 +99,33 @@ if m and not os.path.exists(m + '.written'):
 sys.exit(0)
 PY
 # Board rỗng; STUB_CARD_FAIL=1: lần đọc board hỏng (runner crash lúc khởi động, trước tick đầu).
-printf '#!/usr/bin/env bash\n[ -z "${STUB_CARD_FAIL:-}" ] || exit 1\necho %s\n' "'{\"items\":[]}'" > "$BIN/super-board-card.sh"
+cat > "$BIN/super-board-card.sh" <<'SH'
+#!/usr/bin/env bash
+[ -z "${STUB_CARD_FAIL:-}" ] || exit 1
+if [ -n "${STUB_CARD_HALT:-}" ]; then echo halted > "${SB_GITHUB_HALT_FILE:-$STUB_HALT}"; exit 79; fi
+[ -z "${SB_GITHUB_HALT_FILE:-}" ] || [ ! -e "$SB_GITHUB_HALT_FILE" ] || exit 79
+case "$*" in *"item-id "*) [ -z "${STUB_ITEMID_FAIL:-}" ] || exit 1 ;; esac
+case "$*" in
+  *" ids"|ids) echo '{"projectId":"P1","fieldId":"F_STATUS","options":{}}' ;;
+  *" items"|items) [ -z "${STUB_ITEMS_FAIL:-}" ] || exit 69; if [ -n "${STUB_ITEMS:-}" ]; then printf '%s\n' "$STUB_ITEMS"; else echo '{"items":[]}'; fi ;;
+  *"item-id "*) echo "I_${@: -1}" ;;
+  *) echo '{"items":[]}' ;;
+esac
+SH
 printf '#!/usr/bin/env bash\necho %s\n' "'{}'" > "$BIN/super-board-wave-plan.sh"
 for c in gh claude; do printf '#!/usr/bin/env bash\necho "%s $*" >> "$STUB_CALLS"; exit 1\n' "$c" > "$TMP/stub/$c"; done
+# `gh project edit` (watchdog ghi trạng thái board lên mô tả Project) thành công, trừ khi STUB_EDIT_FAIL=1.
+cat > "$TMP/stub/gh" <<'SH'
+#!/usr/bin/env bash
+# gh project edit / item-edit thành công (trừ STUB_EDIT_FAIL=1); field-list trả field "Đang chạy"; mọi lệnh khác lỗi.
+echo "gh $*" >> "$STUB_CALLS"
+case "$1 $2" in
+  "project edit") if [ -n "${STUB_GH_HANG:-}" ]; then trap '' ALRM; echo $$ > "$STUB_CALLS.hang"; sleep 25; fi; [ -z "${STUB_EDIT_FAIL:-}" ] && exit 0 ;;
+  "project item-edit") [ -z "${STUB_EDIT_FAIL:-}${STUB_ITEM_EDIT_FAIL:-}" ] && exit 0 ;;
+  "project field-list") echo '{"fields":[{"id":"F_STATUS","name":"Status"},{"id":"F_RUN","name":"Đang chạy"}]}'; exit 0 ;;
+esac
+exit 1
+SH
 cat > "$TMP/stub/launchctl" <<'SH'
 #!/usr/bin/env bash
 # Có trạng thái như launchd: bootstrap nạp nhãn, bootout gỡ, print thoát 113 khi nhãn chưa được nạp.
@@ -115,10 +152,15 @@ for c in gh claude launchctl; do
   [ "$got" = "$TMP/stub/$c" ] || { echo "✖ stub $c not first on PATH (got '$got'): refusing to run"; exit 1; }
 done
 
+# Múi giờ của board trong test (#150): ca board đang chạy đặt runner bắt đầu 2 giờ trước và mong "HH:MM" (cùng ngày); watchdog in
+# "dd/MM HH:MM" cho mốc hôm qua nên từ 00:00 tới 02:00 +07 (và lúc test chạy qua nửa đêm) ca đó đỏ. Giờ +07 từ 03:00 tới 22:59 thì
+# dùng +07 như thật, ngoài khung đó dùng UTC (lúc ấy là 16:00–19:59, mốc 2 giờ trước vẫn cùng ngày).
+BTZ=Asia/Ho_Chi_Minh
+BH=$(TZ="$BTZ" date +%H); [ $((10#$BH)) -ge 3 ] && [ $((10#$BH)) -le 22 ] || BTZ=UTC
 ENVV=(-u SB_GITHUB_READ_STRICT -u POSTFIX_GATE_FORCE_FULL -u SB_DAEMON -u SB_WATCHDOG_START -u SB_WATCHDOG_AUTOINSTALL
   -u JAVA_HOME -u ANDROID_HOME -u ANDROID_SDK_ROOT -u STUB_WRITE_MARK -u STUB_CARD_FAIL -u CLAUDE_CONFIG_DIR -u DEVKIT_LANG
   HOME="$TMP/home" PATH="$TMP/stub:$PATH" SB_ACCOUNT_POOL="$TMP/no-pool" SB_STATE_DIR="$TMP/home/sb"
-  SB_LAUNCH_AGENTS_DIR="$TMP/LaunchAgents" STUB_HALT="$TMP/halt" STUB_CALLS="$TMP/calls"
+  SB_LAUNCH_AGENTS_DIR="$TMP/LaunchAgents" STUB_HALT="$TMP/halt" STUB_CALLS="$TMP/calls" SB_BOARD_TZ="$BTZ"
   STUB_STATE="$TMP/repo/.claude/super-board/runner/t.state")
 run_env() { env "${ENVV[@]}" "$@"; }
 start_runner() {   # start_runner <out> [VAR=val…]: runner nền trong repo giả, đặt RP = PID của chính bash runner
@@ -449,6 +491,177 @@ start_runner "$TMP/run4.out"
 wait_for 30 '! alive "$RP"' || kill_tree "$RP"
 [ ! -e "$WD" ] && ok "explicit start resets the watchdog backoff" || fail "explicit start kept RESTARTS=$(field RESTARTS "$WD")"
 
+# Halt vì một lần ĐỌC GitHub lỗi tạm (20/10 09:00: máy gập nắp ngủ, 09:07 thức dậy khi mạng chưa lên, `gh api
+# rate_limit` hỏng 3 lần → 5 board halt rc=79, nằm im 3,5 giờ tới khi có người khởi động tay). Lần đọc đã lưu phát lại
+# được an toàn (--resume chỉ đọc): watchdog tự resume rồi khởi động lại. Ghi chưa rõ kết quả hoặc phát lại vẫn lỗi:
+# giữ halt, không khởi động lại.
+rm -f "$WD"; dead_pid; set_state "$D" halted 79
+printf 'write\n' > "$TMP/halt"; expect_no_restart "halt with an uncertain write (a person reconciles it)"
+[ "$(field VERDICT "$WD")" = github-halt ] && ok "uncertain-write halt → verdict github-halt (🔴 needs a person), not halt-wait" \
+  || fail "uncertain-write halt verdict: $(field VERDICT "$WD")"
+printf 'read-fail\n' > "$TMP/halt"; expect_no_restart "halt whose saved read still fails (GitHub/network still down)"
+[ "$(field VERDICT "$WD")" = halt-wait ] && ok "read halt that still fails → verdict halt-wait (🟠 retrying)" \
+  || fail "read-fail halt verdict: $(field VERDICT "$WD")"
+[ -e "$TMP/halt" ] && ok "a halt whose replay failed is kept" || fail "halt file removed although its replay failed"
+# Halt khi watchdog đang backoff (runner vừa được khởi động lại rồi halt ngay): không được tiêu file halt rồi dừng ở
+# backoff — lượt sau sẽ thấy halted mà hết halt và bỏ board mãi.
+printf 'RESTARTS=1\nLAST_RESTART=%s\nVERDICT=\n' "$(date +%s)" > "$WD"; printf 'read\n' > "$TMP/halt"
+expect_no_restart "read halt inside the backoff window"
+[ -e "$TMP/halt" ] && ok "halt kept while in backoff (resumed only when a restart follows)" || fail "halt consumed during backoff"
+printf 'RESTARTS=1\nLAST_RESTART=1\nVERDICT=\n' > "$WD"
+expect_restart "read halt once the backoff elapsed"
+kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+dead_pid; set_state "$D" halted 79; rm -f "$WD"
+printf 'read\n' > "$TMP/halt"; expect_restart "halt whose saved read now replays OK (transient read failure)"
+[ ! -e "$TMP/halt" ] && grep -q 'auto-resumed' "$WLOG" 2>/dev/null && ok "auto-resume of a transient read halt is logged" \
+  || fail "auto-resume not logged or halt kept: $(tail -2 "$WLOG" 2>/dev/null | tr '\n' ' ')"
+L=$(grep '^gh project edit 1 --owner o --description' "$TMP/calls" | tail -1)
+case "$L" in *"🟢 đang chạy từ"*) fail "restarted board shows the dead runner's start time: $L" ;;
+  *"🟢 đang chạy"*) ok "restarted board does not show the dead runner's start time" ;; *) fail "restart status: '$L'" ;; esac
+kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+rm -f "$WD" "$TMP/halt"
+
+# Trạng thái board hiện trên GitHub (người dùng 20/10: "thể hiện lên board 1 icon … chứ để mấy giờ sau mới phát hiện được"
+# và "thêm thời gian để biết task chạy được bao lâu, bắt đầu từ khi nào"): mỗi check ghi icon, worker đang chạy kèm giờ
+# bắt đầu + thời lượng, và giờ cập nhật vào mô tả ngắn của Project khi trạng thái đổi, nhịp 5 phút khi không đổi (giờ cập
+# nhật cũ = máy ngủ / watchdog chết). Lỗi gh không làm check hỏng.
+BST="$RUNDIR/t.board-status"
+edits() { local n; n=$(grep -c '^gh project edit 1 --owner o --description' "$TMP/calls" 2>/dev/null); echo "${n:-0}"; }
+last_edit() { grep '^gh project edit 1 --owner o --description' "$TMP/calls" 2>/dev/null | tail -1; }
+rm -f "$WD" "$BST"; : > "$TMP/calls"
+printf 'STOPPED_AT=test\n' > "$MARK"; wd
+# "cập nhật HH:MM dd/MM" là hợp đồng với .github/scripts/board_heartbeat.py (cron đánh ⚫ khi giờ này cũ).
+case "$(last_edit)" in *"🔴"*"đã dừng"*"cập nhật "[0-2][0-9]:[0-5][0-9]" "[0-3][0-9]/[01][0-9]) ok "stopped board → 🔴 đã dừng with 'cập nhật HH:MM dd/MM' on the Project description" ;; *) fail "stopped board status: '$(last_edit)'" ;; esac
+e0=$(edits); wd
+[ "$(edits)" = "$e0" ] && ok "same status inside 5 min → no second GitHub write" || fail "status rewritten every check ($(edits) writes)"
+rm -f "$MARK"; dead_pid; set_state "$D" halted 79; printf 'read-fail\n' > "$TMP/halt"; wd
+case "$(last_edit)" in "gh project edit 1 --owner o --description 🔴"*) ok "halted board waiting on GitHub → 🔴 (not running)" ;; *) fail "halt-wait status: '$(last_edit)'" ;; esac
+sed -i '' 's/^AT=.*/AT=1/' "$BST"
+e0=$(edits); wd
+[ "$(edits)" -gt "$e0" ] && ok "same status after 5 min → heartbeat rewrite (fresh time)" || fail "no heartbeat after 5 min"
+rm -f "$TMP/halt"; set_state "$D" finished 0; e0=$(edits); STUB_EDIT_FAIL=1 wd; rc=$?
+[ "$rc" -eq 0 ] && [ "$(edits)" -gt "$e0" ] && ok "a failing gh project edit does not fail the check" || fail "check rc=$rc with failing gh"
+e0=$(edits); wd
+[ "$(edits)" -gt "$e0" ] && ok "a failed write is retried on the next check" || fail "failed write not retried"
+# Board đang chạy: runner sống (tiến trình tên super-board-run.sh), một worker build #15 sống bắt đầu 75 phút trước, một
+# lock của worker đã chết (#16) không được liệt kê.
+mkdir -p "$TMP/fake3" "$R/.claude/super-board/inflight"; printf '#!/usr/bin/env bash\nsleep 300\n' > "$TMP/fake3/super-board-run.sh"
+FR3=$( (bash "$TMP/fake3/super-board-run.sh" >/dev/null 2>&1 & echo $!) ); PIDS="$PIDS $FR3"
+RS=$(( $(date +%s) - 7200 )); WS=$(( $(date +%s) - 4500 ))   # mốc cố định: test chậm qua phút mới không đổi kỳ vọng
+set_state "$FR3" running; sed -i '' "s/^STARTED=.*/STARTED=$RS/" "$STATE"
+W15=$(date -u -r "$WS" '+%Y-%m-%dT%H:%M:%SZ')
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$FR3" "$W15" > "$R/.claude/super-board/inflight/15"
+dead_pid; printf 'PID=%s\nLANE=qa\nSTARTED=%s\n' "$D" "$W15" > "$R/.claude/super-board/inflight/16"
+wd; L=$(last_edit)
+case "$L" in *"🟢"*"#15 code từ $(TZ="$BTZ" date -r "$WS" '+%H:%M')"*"1g15p"*) ok "running board → 🟢, live worker #15 (code) with its start time and 1g15p elapsed" ;;
+  *) fail "running status lacks worker start/elapsed: '$L'" ;; esac
+case "$L" in *"#16"*) fail "a dead worker's lock (#16) is listed as running" ;; *) ok "a dead worker's lock is not listed" ;; esac
+case "$L" in *"🔨"*|*"🔍"*|*"✏️"*|*"⏸️"*|*"🟠"*|*"⚪"*) fail "status uses a glyph other than 🟢/🔴: $L" ;; *) ok "status uses only 🟢/🔴 and words" ;; esac
+# Card đang ở Building/QA/Review mà không có worker sống: 🔴 không chạy. Card ở cột khác: không ghi.
+printf 'KEY=x\nAT=1\nFIELD=F_RUN\n' > "$BST"
+STUB_ITEMS='{"items":[{"id":"I_77","status":"QA","content":{"number":77}},{"id":"I_15","status":"Building","content":{"number":15}},{"id":"I_5","status":"Ready","content":{"number":5}}]}' wd
+grep -q -- '--id I_77 --project-id P1 --field-id F_RUN --text 🔴 không chạy' "$TMP/calls" && ok "QA card without a live worker → 🔴 không chạy" \
+  || fail "idle QA card not marked red: $(grep item-edit "$TMP/calls" | tail -3 | tr '\n' ' ')"
+grep -q -- '--id I_5 ' "$TMP/calls" && fail "Ready card got a running field" || ok "Ready card untouched"
+case " $(field CARDS "$BST") " in *" 77 "*) ok "red card kept in CARDS (cleared once it leaves the active columns)" ;; *) fail "CARDS='$(field CARDS "$BST")'" ;; esac
+IT77='{"items":[{"id":"I_77","status":"QA","content":{"number":77}},{"id":"I_15","status":"Building","content":{"number":15}}]}'
+# Đã đỏ (REDS) thì lượt sau không ghi lại.
+sed -i '' 's/^KEY=.*/KEY=x/; s/^AT=.*/AT=1/' "$BST"; r0=$(grep -c -- '--id I_77 .*--text' "$TMP/calls")
+STUB_ITEMS="$IT77" wd
+[ "$(grep -c -- '--id I_77 .*--text' "$TMP/calls")" = "$r0" ] && ok "an already-red card is not rewritten every publish" \
+  || fail "red card rewritten ($(grep -c -- '--id I_77 .*--text' "$TMP/calls") vs $r0)"
+# Đọc danh sách card lỗi (mạng): giữ nguyên trạng thái đỏ, không xoá.
+sed -i '' 's/^KEY=.*/KEY=x/; s/^AT=.*/AT=1/' "$BST"; c0=$(grep -c -- '--id I_77 .*--clear' "$TMP/calls")
+STUB_ITEMS_FAIL=1 wd
+[ "$(grep -c -- '--id I_77 .*--clear' "$TMP/calls")" = "$c0" ] && case " $(field REDS "$BST") " in *" 77 "*) true ;; *) false ;; esac \
+  && ok "failed card-list read keeps red markers (no clear, REDS kept)" \
+  || fail "items read failure cleared reds: REDS='$(field REDS "$BST")'"
+# Card rời Building/QA/Review: gỡ field.
+sed -i '' 's/^KEY=.*/KEY=x/; s/^AT=.*/AT=1/' "$BST"; c0=$(grep -c -- '--id I_77 --project-id P1 --field-id F_RUN --clear' "$TMP/calls")
+STUB_ITEMS='{"items":[{"id":"I_77","status":"Done","content":{"number":77}},{"id":"I_15","status":"Building","content":{"number":15}}]}' wd
+[ "$(grep -c -- '--id I_77 --project-id P1 --field-id F_RUN --clear' "$TMP/calls")" -gt "$c0" ] && case " $(field REDS "$BST") " in *" 77 "*) false ;; *) true ;; esac \
+  && ok "red card that left the active columns is cleared and dropped from REDS" || fail "card leaving QA not cleared: REDS='$(field REDS "$BST")'"
+# Field tạo lại (id mới): REDS cũ không còn giá trị, ghi đỏ lại.
+printf 'KEY=x\nAT=1\nFIELD=\nCARDS=77\nREDS=77\n' > "$BST"; r0=$(grep -c -- '--id I_77 .*--text 🔴' "$TMP/calls")
+STUB_ITEMS="$IT77" wd
+[ "$(grep -c -- '--id I_77 .*--text 🔴' "$TMP/calls")" -gt "$r0" ] && ok "field id re-resolved → red markers rewritten" || fail "red not rewritten after field re-resolve" 
+# Đọc danh sách lỗi đúng lúc id field vừa đọc lại: vẫn không xoá dấu đỏ.
+printf 'KEY=x\nAT=1\nFIELD=\nCARDS=77\nREDS=77\n' > "$BST"; c0=$(grep -c -- '--id I_77 .*--clear' "$TMP/calls")
+STUB_ITEMS_FAIL=1 wd
+[ "$(grep -c -- '--id I_77 .*--clear' "$TMP/calls")" = "$c0" ] && case " $(field REDS "$BST") " in *" 77 "*) false ;; *) true ;; esac \
+  && ok "items read failure right after a field re-resolve: card not cleared, not marked as already red" || fail "re-resolve+failure: REDS='$(field REDS "$BST")'"
+sed -i '' 's/^KEY=.*/KEY=x/; s/^AT=.*/AT=1/' "$BST"; r0=$(grep -c -- '--id I_77 .*--text 🔴' "$TMP/calls")
+STUB_ITEMS="$IT77" wd
+[ "$(grep -c -- '--id I_77 .*--text 🔴' "$TMP/calls")" -gt "$r0" ] && ok "next good read writes 🔴 on the re-resolved field" || fail "red not rewritten on the new field"
+# Đọc danh sách lỗi khi card đỏ cũ nay có worker sống (#15): bỏ nó khỏi REDS (nó đang 🟢).
+printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15 77\nREDS=15 77\n' > "$BST"; STUB_ITEMS_FAIL=1 wd
+case " $(field REDS "$BST") " in *" 15 "*) fail "a now-live card stays in REDS: '$(field REDS "$BST")'" ;; *" 77 "*) ok "items read failure drops now-live cards from REDS, keeps the rest" ;; *) fail "REDS='$(field REDS "$BST")'" ;; esac
+# Từng card: field chữ "Đang chạy" của Project ghi lane + giờ bắt đầu + thời lượng khi worker sống, xoá khi worker dừng.
+grep -q "^gh project item-edit --id I_15 --project-id P1 --field-id F_RUN --text 🟢 đang code · từ $(TZ="$BTZ" date -r "$WS" '+%H:%M') · 1g15p" "$TMP/calls" \
+  && ok "card #15 gets its 'Đang chạy' field: lane, start time, elapsed" || fail "card field not written: $(grep 'item-edit' "$TMP/calls" | tail -2 | tr '\n' ' ')"
+grep -q -- '--id I_16 .*--text' "$TMP/calls" && fail "card of a dead worker (#16) got a running field" || ok "card of a dead worker gets no running field"
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$D" "$W15" > "$R/.claude/super-board/inflight/15"; wd
+grep -q '^gh project item-edit --id I_15 --project-id P1 --field-id F_RUN --clear' "$TMP/calls" \
+  && ok "worker of #15 gone → its card field is cleared" || fail "card field not cleared: $(grep 'item-edit' "$TMP/calls" | tail -2 | tr '\n' ' ')"
+case "$(last_edit)" in *"không có task nào đang làm"*) ok "board without live workers says so" ;; *) fail "board text: '$(last_edit)'" ;; esac
+# gh (Go) bỏ qua SIGALRM: `perl alarm; exec gh` không cắt được một gh treo (mạng nửa vời sau khi máy thức) và lượt check
+# của launchd không bao giờ thoát. Mỗi lệnh gh phải bị giết khi hết giờ.
+printf 'KEY=x\nAT=1\n' > "$BST"; t0=$(date +%s)
+STUB_GH_HANG=1 SB_BOARD_GH_TIMEOUT=2 wd
+[ $(( $(date +%s) - t0 )) -lt 15 ] && ok "a hung gh (ignores SIGALRM) is killed at its timeout" \
+  || fail "check waited $(( $(date +%s) - t0 ))s for a hung gh"
+# Publish chỉ để hiển thị: đọc card lỗi không được ghi file halt dùng chung (sẽ làm runner và mọi worker dừng).
+rm -f "$TMP/halt"; printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15\n' > "$BST"
+STUB_CARD_HALT=1 wd
+[ ! -e "$TMP/halt" ] && ok "a failed card read during publish does not halt the board" || fail "publish wrote the board's GitHub halt file"
+rm -f "$TMP/halt"
+# CARDS lấy từ file worker ghi được: chỉ nhận số.
+printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15 * ../x\n' > "$BST"; wd
+grep -qE -- '--id I_[^0-9]' "$TMP/calls" && fail "non-numeric CARDS entry used as an issue" || ok "non-numeric CARDS entries ignored"
+# Xoá field hỏng (field bị xoá trên GitHub): lượt sau đọc lại id field thay vì thử mãi id cũ.
+printf 'KEY=x\nAT=1\nFIELD=F_GONE\nCARDS=15\n' > "$BST"; STUB_ITEM_EDIT_FAIL=1 wd
+[ -z "$(field FIELD "$BST")" ] && [ "$(field CARDS "$BST")" = 15 ] && ok "failed clear → field id re-read next time, card kept" \
+  || fail "after a failed clear: FIELD='$(field FIELD "$BST")' CARDS='$(field CARDS "$BST")'"
+# Runner dừng có chủ đích ở foreground (Ctrl-C, STATE=stopped): 🔴 đã dừng (không phải "runner ngừng").
+dead_pid; set_state "$D" stopped 130; wd
+case "$(last_edit)" in *"🔴"*"đã dừng"*) ok "foreground stop (STATE=stopped) → 🔴 đã dừng" ;; *) fail "stopped state status: '$(last_edit)'" ;; esac
+set_state "$FR3" running; sed -i '' "s/^STARTED=.*/STARTED=$RS/" "$STATE"
+# File halt riêng của publish còn sót (lượt trước bị giết): lượt publish mới vẫn chạy được ngay.
+printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15\n' > "$BST"; printf '{}' > "$RUNDIR/t.publish-halt.json"
+c0=$(grep -c -- '--clear' "$TMP/calls"); wd
+[ "$(grep -c -- '--clear' "$TMP/calls")" -gt "$c0" ] && ok "a leftover publish-halt file does not block the next publish" \
+  || fail "leftover publish-halt blocked the clear"
+# Đọc item-id lỗi (mạng) không phải field hỏng: giữ id field.
+printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15\n' > "$BST"; STUB_ITEMID_FAIL=1 wd
+[ "$(field FIELD "$BST")" = F_RUN ] && [ "$(field CARDS "$BST")" = 15 ] && ok "item-id read failure keeps the field id and the card" \
+  || fail "item-id failure: FIELD='$(field FIELD "$BST")' CARDS='$(field CARDS "$BST")'"
+# Mô tả dài (nhiều worker) dưới locale C của launchd: cắt theo ký tự, không cắt giữa UTF-8, "cập nhật" vẫn ở cuối.
+for i in 31 32 33 34 35 36 37 38 39 40 41 42; do printf 'PID=%s\nLANE=review\nSTARTED=%s\n' "$FR3" "$W15" > "$R/.claude/super-board/inflight/$i"; done
+printf 'KEY=x\nAT=1\n' > "$BST"; LC_ALL=C LANG=C wd
+last_edit | sed 's/^gh project edit 1 --owner o --description //' > "$TMP/long.txt"
+python3 -c "import sys; t=open(sys.argv[1],'rb').read().decode('utf-8'); assert 'cập nhật' in t.split('·')[-1], t; assert '…' in t, t; assert len(t.strip()) <= 230, len(t)" "$TMP/long.txt" 2>/dev/null \
+  && ok "long status cut on characters under the C locale, stamp kept at the end" || fail "long status broken: $(cat "$TMP/long.txt")"
+for i in 31 32 33 34 35 36 37 38 39 40 41 42; do rm -f "$R/.claude/super-board/inflight/$i"; done
+# Watchdog bị dừng (launchd stop, Ctrl-C) khi đang chờ một gh treo: gh không được sống tiếp mồ côi.
+printf 'KEY=x\nAT=1\n' > "$BST"; rm -f "$TMP/calls.hang"   # PID cũ của ca gh treo trước: xoá TRƯỚC khi chạy
+( STUB_GH_HANG=1 SB_BOARD_GH_TIMEOUT=60 wd ) & WDP=$!
+wait_for 10 '[ -s "$TMP/calls.hang" ]' || true
+HANG=$(cat "$TMP/calls.hang" 2>/dev/null); PERLP=$(ps -o ppid= -p "${HANG:-0}" 2>/dev/null | tr -d ' ')   # wrapper = cha của gh giả
+[ -n "$PERLP" ] && kill -TERM "$PERLP" 2>/dev/null
+if [ -n "$HANG" ] && wait_for 5 '! kill -0 "$HANG" 2>/dev/null'; then ok "TERM to the timeout wrapper also stops the hung gh"
+else fail "hung gh left running after the wrapper got TERM (hang=$HANG perl=$PERLP)"; [ -n "$HANG" ] && kill "$HANG" 2>/dev/null; fi
+wait "$WDP" 2>/dev/null
+# Hết ngân sách publish (nhiều card × 20 s): không gọi thêm gh, card chưa xoá giữ trong CARDS cho lượt sau.
+printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15\n' > "$BST"; c0=$(grep -c -- '--clear' "$TMP/calls")
+BOARD_STATUS_BUDGET=0 wd
+[ "$(grep -c -- '--clear' "$TMP/calls")" = "$c0" ] && [ "$(field CARDS "$BST")" = 15 ] \
+  && ok "publish budget spent → no more gh calls, card #15 kept for the next check" \
+  || fail "budget ignored: clears $(grep -c -- '--clear' "$TMP/calls") (was $c0), CARDS='$(field CARDS "$BST")'"
+case "$L" in *"chạy từ $(TZ="$BTZ" date -r "$RS" '+%H:%M')"*) ok "running board shows since when the runner runs" ;; *) fail "runner start missing: '$L'" ;; esac
+e0=$(edits); SB_BOARD_STATUS=0 wd
+[ "$(edits)" = "$e0" ] && ok "SB_BOARD_STATUS=0 turns the GitHub status off" || fail "SB_BOARD_STATUS=0 still wrote"
+kill_tree "$FR3"; rm -f "$WD" "$BST" "$STATE" "$R/.claude/super-board/inflight/15" "$R/.claude/super-board/inflight/16"
+
 [ -f "$BIN/super-board-watchdog.sh" ] && ! sed 's/#.*//' "$BIN/super-board-watchdog.sh" | grep -qE '(^|[^a-z])(pkill|killall)([^a-z]|$)' \
   && ok "watchdog never kills by name" || fail "watchdog missing or uses pkill/killall"
 
@@ -524,8 +737,67 @@ m.status_all()
 PY
   grep -q 'verdict=gave-up' "$TMP/all.status" && ok "super_board_all.py status shows a watchdog that gave up" \
     || fail "status hides the watchdog verdict: $(tr '\n' ' ' < "$TMP/all.status")"
+  # Repo không có super-board-stop.sh riêng (như start_all, nó không được bỏ qua): stop vẫn phải ghi marker.
+  mkdir -p "$TMP/all2"
+  python3 - "$SBA" "$TMP/all2" > "$TMP/all2.out" 2>&1 <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("sba", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+m.REPOS = [{"slug": "zz-nostop", "name": "test", "dir": sys.argv[2], "tuios_window": "x", "url": "x"}]
+m.get_running_pids = lambda slug: []
+m.stop_all()
+PY
+  grep -q 'STOPPED_AT=' "$TMP/all2/.claude/super-board/runner/zz-nostop.stopped" 2>/dev/null \
+    && ok "super_board_all.py stop writes the stop marker for a repo without its own stop.sh" \
+    || fail "super_board_all.py stop left no marker for a repo without stop.sh: $(tr '\n' ' ' < "$TMP/all2.out")"
 else
   echo "• skip: $SBA exists only in agent-workbench"
 fi
+
+# ── 10. NO_PROGRESS_CYCLE_COUNT của môi trường người gọi không vào runner khởi động tường minh (#115 điểm 3) ───────────
+rm -f "$MARK"
+start_runner "$TMP/run13.out" SB_DAEMON=1 NO_PROGRESS_CYCLE_COUNT=abc
+if wait_for 30 '[ "$(ticks "$TMP/run13.out")" -ge 1 ]'; then
+  [ "$(field NO_PROGRESS "$STATE")" = 0 ] && alive "$RP" \
+    && ok "an inherited NO_PROGRESS_CYCLE_COUNT=abc is ignored: the explicit start counts from 0" \
+    || fail "inherited NO_PROGRESS_CYCLE_COUNT leaked: NO_PROGRESS='$(field NO_PROGRESS "$STATE")'"
+else
+  fail "runner with NO_PROGRESS_CYCLE_COUNT=abc never ticked"; tail -5 "$TMP/run13.out" | sed 's/^/    /'
+fi
+kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+
+# ── 11. Guard production-merge không phụ thuộc rg: không có rg dùng được thì vẫn từ chối (#115 điểm 5) ───────────────
+mkdir -p "$TMP/norg" "$TMP/repo4/.claude/bin" "$TMP/repo4/.claude/super-board/configs" "$TMP/repo4/.github/workflows"
+printf '#!/bin/sh\nexit 127\n' > "$TMP/norg/rg"; chmod +x "$TMP/norg/rg"   # rg có trên PATH nhưng không chạy được
+cp "$BIN"/super-board-* "$TMP/repo4/.claude/bin/"
+sed 's/"human_approves_merge": true/"human_approves_merge": false/' "$R/.claude/super-board/configs/t.json" > "$TMP/repo4/.claude/super-board/configs/t.json"
+printf 'name: deploy\non:\n  push:\n    branches: [ main ]\njobs: {}\n' > "$TMP/repo4/.github/workflows/deploy.yml"
+( ( cd "$TMP/repo4" && exec env "${ENVV[@]}" PATH="$TMP/norg:$TMP/stub:$PATH" bash "$TMP/repo4/.claude/bin/super-board-run.sh" t ) > "$TMP/run14.out" 2>&1 & echo $! > "$TMP/rp" )
+RP=$(cat "$TMP/rp"); PIDS="$PIDS $RP"
+if wait_for 30 '! alive "$RP"'; then
+  grep -q 'refusing to start: would auto-merge to production' "$TMP/run14.out" \
+    && ok "production guard refuses a push-to-main workflow even when rg is unusable" \
+    || { fail "runner exited without the production refusal"; tail -3 "$TMP/run14.out" | sed 's/^/    /'; }
+else
+  fail "runner did not refuse to start with a push-to-main workflow and no rg"; kill_tree "$RP"
+fi
+# Đối chứng: workflow chỉ chạy khi push lên nhánh khác thì không chặn.
+printf 'name: ci\non:\n  push:\n    branches: [ develop ]\njobs: {}\n' > "$TMP/repo4/.github/workflows/deploy.yml"
+( ( cd "$TMP/repo4" && exec env "${ENVV[@]}" PATH="$TMP/norg:$TMP/stub:$PATH" bash "$TMP/repo4/.claude/bin/super-board-run.sh" t ) > "$TMP/run15.out" 2>&1 & echo $! > "$TMP/rp" )
+RP=$(cat "$TMP/rp"); PIDS="$PIDS $RP"
+wait_for 30 '! alive "$RP" || [ "$(ticks "$TMP/run15.out")" -ge 1 ]'
+grep -q 'refusing to start: would auto-merge' "$TMP/run15.out" \
+  && fail "guard over-blocks a workflow that pushes only to develop" \
+  || ok "guard lets a push-to-develop workflow through"
+kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+
+# ── 12. safe_path bỏ mục '..' và symlink trỏ vào repo, giữ mục ngoài repo (#115 điểm 2) ─────────────────────────────
+mkdir -p "$TMP/sp/repo/.claude/worktrees/evil" "$TMP/sp/ok"
+ln -s "$TMP/sp/repo/.claude/worktrees/evil" "$TMP/sp/link"
+awk '/^(canon_path|safe_path)\(\) \{/{p=1} p{print} p&&/^}/{p=0}' "$BIN/super-board-watchdog.sh" > "$TMP/sp/fn.sh"
+sp_out=$( ROOT_P="$(cd -P "$TMP/sp/repo" && pwd -P)"; . "$TMP/sp/fn.sh"
+  safe_path "$TMP/sp/ok/../repo/.claude/worktrees/evil:$TMP/sp/link:$TMP/sp/repo/./.claude:$TMP/sp/ok" )
+[ "$sp_out" = "$(cd -P "$TMP/sp/ok" && pwd -P)" ] \
+  && ok "safe_path drops '..' and symlink entries that land in the repo, keeps the outside one" \
+  || fail "safe_path let a repo path through: '$sp_out'"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_runner_watchdog: all passed" || { echo "❌ test_runner_watchdog: $FAILS failed"; exit 1; }

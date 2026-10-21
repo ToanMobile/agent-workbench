@@ -208,7 +208,9 @@ acquire() {
   date +%s > "$LOCK_DIR/at"; echo "$$" > "$LOCK_DIR/pid"; echo "$PR" > "$LOCK_DIR/pr"
   return 0
 }
-release() { rm -rf "$LOCK_DIR"; }
+# Chỉ xoá khoá còn mang pid của gate này: gate khác đã chiếm nó (coi là bỏ quên) thì đó là khoá đang sống của gate kia.
+# Chạy trong trap EXIT dưới set -e: rm hỏng không được đè mã thoát của gate.
+release() { if [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$$" ]; then rm -rf "$LOCK_DIR" 2>/dev/null || true; fi; }
 
 acquire || { say "could not take the merge lock within ${LOCK_TIMEOUT}s"; exit 4; }
 trap release EXIT
@@ -300,7 +302,9 @@ fi
 
 # ---- chờ máy bớt tải trước verify ------------------------------------------------
 # 19/10: verify --full chạy lúc tải 1 phút ~60 (5 board cùng build), REG-DK-ALL-01 của PR #87 chọn 127 test và quá 900 s, thẻ #12
-# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX (mặc định 2 × số lõi), tối đa SB_MERGE_LOAD_WAIT_S, không đặt thì
+# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX, không đặt thì `merge_load_max` của config board, thiếu nữa thì 2 × số lõi
+# (20/10, người dùng: "dưới 100 thì cho chạy" — máy tải 45–86 cả ngày, 24 không bao giờ đạt nên PR nào cũng chờ hết giờ chờ); tối
+# đa SB_MERGE_LOAD_WAIT_S, không đặt thì
 # `merge_load_wait_s` của config board (thiếu = 0 = không chờ: board tự bật; test dựng config tạm không có khoá nên không chờ, và
 # không phải đặt biến trong thư viện test dùng chung — sửa file đó kéo cả 291 test DevKit vào REG-DK-ALL-01, 19/10).
 # Hết giờ vẫn verify như cũ, không bỏ bước nào. Chờ trong khoá, sau các lối ra nhanh (đã merge, đóng, head đổi,
@@ -316,7 +320,12 @@ load_now() {
 wait_for_load() {
   local max="${SB_MERGE_LOAD_MAX:-}" cap="${SB_MERGE_LOAD_WAIT_S:-}" poll="${SB_MERGE_LOAD_POLL_S:-30}" waited=0 load nap
   [ -n "$cap" ] || cap=$(printf '%s\n' "$CONFIG_JSON" | jq -r '.merge_load_wait_s // 0' 2>/dev/null || echo 0)
+  local max_src="SB_MERGE_LOAD_MAX"
+  [ -n "$max" ] || { max=$(printf '%s\n' "$CONFIG_JSON" | jq -r '.merge_load_max // empty' 2>/dev/null || true); max_src="config merge_load_max"; }
   LOAD_WAITED=0
+  # LOAD_WAIT_ON=1: gate này đã bật chờ tải (cap > 0 sau kiểm tra) và đọc được tải — chỉ khi đó run_verify_cmd mới đặt
+  # DEVKIT_SLOT_LOAD_WAIT_S=0 (OCR 21/10: tải không đọc được thì gate không chờ, bên trong tự chờ tải).
+  LOAD_WAIT_ON=0
   [ "$DRY" -eq 1 ] && return 0
   # Tối đa 6 chữ số (không tràn số); 10# đọc 08 là tám (không có nó bash đọc bát phân và set -e dừng gate).
   [[ "$cap" =~ ^[0-9]{1,6}$ ]] || { say "SB_MERGE_LOAD_WAIT_S='${cap}' is not a number of seconds; not waiting for the load"; return 0; }
@@ -330,7 +339,7 @@ wait_for_load() {
   else say "SB_MERGE_LOAD_POLL_S='${poll}' is not a positive number; polling every 30s"; poll=30; fi
   if [[ "$max" =~ ^[0-9]{1,6}$ ]] && [ $((10#$max)) -gt 0 ]; then max=$((10#$max))
   else
-    [ -n "$max" ] && say "SB_MERGE_LOAD_MAX='${max}' is not a positive number; using 2 x cores"
+    [ -n "$max" ] && say "${max_src}='${max}' is not a positive number; using 2 x cores"
     max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 2 ))
   fi
   while :; do
@@ -340,7 +349,7 @@ wait_for_load() {
       || say "could not refresh the merge lock stamp ${LOCK_DIR}/at"
     load=$(load_now)
     [[ "$load" =~ ^[0-9]{1,6}$ ]] || { say "cannot read the machine load ('${load}'); verifying without waiting"; return 0; }
-    load=$((10#$load))
+    load=$((10#$load)); LOAD_WAIT_ON=1
     if [ "$load" -lt "$max" ]; then
       [ "$waited" -gt 0 ] && say "load ${load} after ${waited}s; verifying"
       return 0
@@ -434,31 +443,83 @@ for cmd in "${VERIFY[@]}"; do
   done
 done
 
-# Chạy lệnh verify trong scratch: post-fix-gate.py tự giữ heavy slot, các lệnh verify khác được bọc qua super-board-heavy-slot.py.
-run_verify_cmd() {
-  local c="$1"
-  if [[ "$c" == *"post-fix-gate.py"* ]]; then
-    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$c" ) >"$VERIFY_LOG" 2>&1
-  else
-    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && DEVKIT_LANG="${DEVKIT_LANG:-vi}" python3 "$HERE/super-board-heavy-slot.py" -- bash -c "$c" ) >"$VERIFY_LOG" 2>&1
+# Chạy lệnh verify trong scratch: post-fix-gate.py tự xin quyền chạy cho từng suite, các lệnh verify khác được bọc qua
+# super-board-heavy-slot.py. DEVKIT_SLOT_LOAD_WAIT_S=0 CHỈ khi wait_for_load ở trên đã bật chờ tải (LOAD_WAIT_ON=1: cap > 0 theo
+# merge_load_max / merge_load_wait_s): tải đã được chờ, bên trong không chờ lần nữa (merge chặn người khác). cap = 0 (config thiếu
+# merge_load_wait_s — mặc định của hầu hết board — hay SB_MERGE_LOAD_WAIT_S=0): không đặt gì, bên trong tự chờ tải như mọi lượt (OCR
+# 20/10: ép 0 ở đây thì verify của các board đó chạy không xét tải lần nào). Giá trị người gọi đã đặt thì giữ nguyên.
+# DEVKIT_SLOT_PRIORITY=merge: đứng đầu hàng đợi khoá Unity (bin/heavy_slot.py),
+# và post-fix-gate không chạy lần chạy thật hằng ngày (sentinel) trong merge gate.
+# Khoá còn của gate này thì làm mới mốc "at" (như wait_for_load) để mỗi bước dài sau đó được trọn STALE_AFTER — nếu không, gate
+# khác coi khoá của một verify + retry dài là bỏ quên, chiếm khoá và merge song song trên base cũ. Khoá đã bị gate khác chiếm (pid
+# của nó) thì dừng: không merge, không làm mới mốc khoá của gate kia (release cũng không xoá nó). Exit 4 như lúc không lấy được
+# khoá: thẻ ở yên, lượt sau thử lại.
+own_lock_or_stop() {
+  local holder
+  holder=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+  if [ "$holder" != "$$" ]; then
+    say "the merge lock now belongs to pid ${holder:-?} (another gate reaped it); stopping without merging"
+    exit 4
+  fi
+  # Ghi mốc hỏng (gate khác vừa rm -rf khoá sau lúc kiểm pid, hay thư mục khoá không ghi được): coi như mất khoá — đi tiếp thì
+  # khoá có thể bị coi là bỏ quên giữa chừng. Fail-closed.
+  if ! { date +%s > "$LOCK_DIR/at.$$" && mv -f "$LOCK_DIR/at.$$" "$LOCK_DIR/at"; } 2>/dev/null; then
+    say "could not refresh the merge lock stamp ${LOCK_DIR}/at; stopping without merging"
+    exit 4
   fi
 }
 
-# Kiểm tra lỗi verify có phải do timeout (exit 124 hoặc log chứa TIMEOUT / timed out / quá giới hạn) để thử lại đúng 1 lần.
+run_verify_cmd() {
+  local c="$1"
+  own_lock_or_stop
+  if [[ "$c" == *"post-fix-gate.py"* ]]; then
+    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+        && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
+        && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$c" ) >"$VERIFY_LOG" 2>&1
+  else
+    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+        && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
+        && DEVKIT_LANG="${DEVKIT_LANG:-vi}" python3 "$HERE/super-board-heavy-slot.py" -- bash -c "$c" ) >"$VERIFY_LOG" 2>&1
+  fi
+}
+
+# Gate post-fix-gate đỏ CHỈ vì suite quá giờ (#142, 18/10: REG-DK-ALL-01 TIMEOUT 900 s khi máy tải cao): exit 1 với kết luận REJECT
+# (exit 1 còn là CHƯA XÁC MINH khi project bị gỡ), dòng "Lớp tĩnh … : đạt" / "Static checks … : passed", có ít nhất một dòng suite
+# `[ ] TIMEOUT |` và không dòng suite đỏ nào khác. Dòng suite = đầu dòng (sau khoảng trắng) là `[ ] <bất kỳ> |` sau khi bỏ mã màu:
+# trạng thái lạ (FAIL_INFRA…) vẫn bị đếm là đỏ khác (fail-closed); dòng đuôi output của suite bắt đầu bằng "|" nên không bị đếm.
+# Thiếu dòng lớp tĩnh, kết luận không REJECT hay không có dòng suite nào: không phân loại được → không chạy lại.
+gate_red_only_by_timeout() {
+  local rc="$1" log_file="$2"
+  [ "$rc" -eq 1 ] || return 1
+  LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$log_file" 2>/dev/null | LC_ALL=C awk '
+    /(KẾT LUẬN CỔNG POST-FIX AUDIT|POST-FIX AUDIT GATE VERDICT):.*REJECT/ { rej = 1 }
+    /^[[:space:]]*• (Lớp tĩnh|Static checks) \(.*\): / {
+      if (static != 2) static = ($0 ~ /: (đạt|passed)[[:space:]]*$/) ? 1 : 2
+    }
+    /^[[:space:]]*\[ \] [^|]*\|/ {
+      if ($0 ~ /^[[:space:]]*\[ \] TIMEOUT[[:space:]]*\|/) t++; else other++
+    }
+    END { exit !(rej && static == 1 && t > 0 && other == 0) }'
+}
+
+# Kiểm tra lỗi verify có phải do timeout để thử lại đúng 1 lần: exit 124 của chính lệnh verify; gate đã in kết luận thì chỉ khi
+# mọi suite đỏ là TIMEOUT (gate_red_only_by_timeout — chữ "timed out" trong output một suite FAIL không tính); lệnh verify khác
+# (không có dòng kết luận) thì log chứa TIMEOUT after / quá giới hạn. Lần chạy lại quyết định kết quả.
 is_verify_timeout() {
   local rc="$1" log_file="$2" wt_log
-  # Gate đã in kết luận thì suite bên trong có chữ "timed out" không được chạy lại cả --full.
-  if [ -f "$log_file" ] && grep -aqE "KẾT LUẬN|POST-FIX AUDIT GATE VERDICT" "$log_file" 2>/dev/null; then
-    return 1
-  fi
   [ "$rc" -eq 124 ] && return 0
+  if [ -f "$log_file" ] && grep -aqE "KẾT LUẬN|POST-FIX AUDIT GATE VERDICT" "$log_file" 2>/dev/null; then
+    gate_red_only_by_timeout "$rc" "$log_file"
+    return
+  fi
   if [ -f "$log_file" ] && grep -aqE "TIMEOUT after|quá giới hạn" "$log_file" 2>/dev/null; then
     return 0
   fi
   wt_log="$(git -C "$SCRATCH" rev-parse --absolute-git-dir 2>/dev/null)/postfix-gate/last_output.log"
   [ -f "$wt_log" ] || return 1
   if grep -aqE "KẾT LUẬN|POST-FIX AUDIT GATE VERDICT" "$wt_log" 2>/dev/null; then
-    return 1
+    gate_red_only_by_timeout "$rc" "$wt_log"
+    return
   fi
   grep -aqE "TIMEOUT after|quá giới hạn" "$wt_log" 2>/dev/null
 }
@@ -472,9 +533,16 @@ for cmd in "${VERIFY[@]}"; do
   VRC=0
   run_verify_cmd "$cmd" || VRC=$?
   if [ "$VRC" -ne 0 ] && is_verify_timeout "$VRC" "$VERIFY_LOG"; then
-    say "verify timed out (exit ${VRC}); retrying once: ${cmd}"
-    VRC=0
-    run_verify_cmd "$cmd" || VRC=$?
+    # Suite bị giết giữa chừng có thể để lại file đã track bị sửa, `git add` hay cả commit trong scratch: trả cây và index về đúng
+    # commit đã merge (file bị ignore như DevKit, config cục bộ giữ nguyên). Không trả được thì giữ kết quả đỏ của lần 1 (chạy lại
+    # trên cây không còn là MERGED_SHA có thể xanh sai).
+    if git -C "$SCRATCH" reset -q --hard "$MERGED_SHA" 2>/dev/null; then
+      say "verify timed out (exit ${VRC}); retrying once: ${cmd}"
+      VRC=0
+      run_verify_cmd "$cmd" || VRC=$?
+    else
+      say "verify timed out (exit ${VRC}) but the scratch tree could not be reset; not retrying"
+    fi
   fi
   if [ "$VRC" -ne 0 ]; then
     say "FAILED: ${cmd}"
@@ -506,6 +574,7 @@ for cmd in "${VERIFY[@]}"; do
   fi
 done
 say "verified green against ${BASE} (${#VERIFY[@]} command(s))"
+own_lock_or_stop   # verify dài có thể đã để gate khác chiếm khoá: không merge song song với nó
 
 python3 "$GITHUB_READ" --check
 
@@ -568,6 +637,7 @@ fi
 # --match-head-commit makes GitHub refuse if anything was pushed after HEAD_SHA,
 # including during the verification run above.
 python3 "$GITHUB_READ" --check
+own_lock_or_stop   # migration / làm mới approval có thể dài: vẫn đúng chủ khoá ngay trước khi merge
 if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
      ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
      --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2; then

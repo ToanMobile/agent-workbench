@@ -301,6 +301,7 @@ def cmd_run(paths: list | None = None) -> int:
     checkout is free). A named run leaves the project list alone and sends no weekly report: its 7-day slot would go to
     whichever repo came first, with a one-repo line."""
     projects = unique_projects(paths) if paths else load_projects()   # one repo, one run
+    os.environ.setdefault("DEVKIT_SLOT_PRIORITY", "nightly")   # P1: hàng đợi slot máy — nightly đứng sau mọi việc có người chờ
     reds = []
     for p in projects:
         try:

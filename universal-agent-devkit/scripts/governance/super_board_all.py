@@ -19,6 +19,7 @@ import sys
 import glob
 import json
 import subprocess
+import time
 import argparse
 from pathlib import Path
 
@@ -79,7 +80,8 @@ def heavy_slot_dir():
 
 
 def ensure_heavy_slots(directory=None):
-    """Tạo đúng 2 file slot. post-fix-gate --full của mọi runner lấy flock trên các file này."""
+    """Tạo đúng 2 file slot cho các bản DevKit cũ còn khoá chúng. DevKit hiện tại không khoá: suite chạy theo tải máy
+    (bin/heavy_slot.py, DEVKIT_SLOT_LOAD_MAX = 100; người dùng 20/10: bỏ giới hạn 2 slot)."""
     directory = directory or heavy_slot_dir()
     os.makedirs(directory, mode=0o700, exist_ok=True)
     for number in range(1, SLOT_COUNT + 1):
@@ -165,7 +167,7 @@ def start_all():
     print("=================================================================\n")
     locks_dir = ensure_heavy_slots()
     ensure_claude_workspace_trust()
-    print(f"🔒 Heavy-gate slots (--full toàn máy, tối đa {SLOT_COUNT}): {locks_dir}/heavy-gate-{{1,2}}.lock\n")
+    print(f"🔒 Suite nặng chạy theo tải máy (dưới 100 thì chạy; khoá riêng chỉ cho Unity): {locks_dir}\n")
     for repo in REPOS:
         rdir = repo["dir"]
         slug = repo["slug"]
@@ -210,6 +212,17 @@ def start_all():
     print("\n🎉 Toàn bộ 5 Runners đã được kích hoạt & hiển thị trên TUIOS (tuios attach factory)!")
     print("💡 Bây giờ bạn vào BẤT KỲ Project Board nào kéo thẻ sang Ready là máy tự động làm!")
 
+def write_stop_marker(marker):
+    """Cùng định dạng super-board-stop.sh: watchdog không khởi động lại board có marker."""
+    try:
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        with open(marker, "w") as f:
+            f.write("STOPPED_AT=%s\nBY=%s via super_board_all.py\nPID=%d\n" % (
+                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), os.environ.get("USER", "unknown"), os.getpid()))
+    except OSError as e:
+        print(f"⚠️  không ghi được stop marker {marker}: {e}")
+
+
 def stop_all():
     print("=================================================================")
     print("  🛑 DỪNG TOÀN BỘ 5 SUPER-BOARD RUNNERS")
@@ -226,6 +239,9 @@ def stop_all():
             r = subprocess.run(["bash", stop_sh, slug], cwd=rdir, capture_output=True, text=True)
             if r.returncode != 0:
                 print(f"⚠️  {name:<30} : super-board-stop.sh exit {r.returncode}: {r.stderr.strip()[:200]}")
+        if not os.path.exists(stop_sh):
+            # Repo không có stop.sh riêng: stop.sh của agent-workbench tự chuyển về repo của nó nên không ghi marker ở đây.
+            write_stop_marker(marker)
         if not os.path.exists(marker):
             print(f"⚠️  {name:<30} : CHƯA có stop marker {marker} — watchdog có thể khởi động lại board này")
         if not pids:

@@ -80,7 +80,8 @@ else
   FAILS=$((FAILS + 1))
 fi
 
-# 3. A receipt in the old format (gate_sha, no result_format) is never reused.
+# 3. A receipt in the old format (gate_sha, no result_format) is never reused. The per-suite content-key cache (bin/suite_cache.py,
+#    20/10) holds this suite's PASS under the current format: DEVKIT_SUITE_CACHE=0 keeps this case about the receipt.
 python3 - <<'PY'
 import json, subprocess
 gd = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], capture_output=True, text=True).stdout.strip()
@@ -90,7 +91,7 @@ r.pop("result_format", None)
 json.dump(r, open(p, "w"))
 PY
 before="$(runs)"
-out="$(run_gate)"; rc=$?
+out="$(DEVKIT_SUITE_CACHE=0 run_gate)"; rc=$?
 if [ "$rc" = 0 ] && [ "$(runs)" = $((before + 1)) ]; then
   echo "✔ an old-format receipt (no result_format) is not reused"
 else

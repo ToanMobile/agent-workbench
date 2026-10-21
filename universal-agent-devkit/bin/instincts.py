@@ -30,7 +30,6 @@ import json
 import os
 import tempfile
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -111,11 +110,12 @@ def format_entry(inst_id, title, cause=None, rule=None, symptom=None, check=None
 
 
 def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=None,
-                  force=False, dry_run=False, source=None, found_on=None, seed=None):
+                  force=False, dry_run=False, source=None, found_on=None, seed=None, seeded=None):
     """Returns (status, inst_id, entry): status is "added", "dry-run" or "duplicate"
     (inst_id is then the existing entry). Raises OSError / ValueError.
     `seed`: a template file written first when the file is still empty once the lock is held (a copy made before the lock truncated a
-    concurrent writer's lesson)."""
+    concurrent writer's lesson). `seeded`: a list that gets the path appended when THIS call wrote the seed (giữ nguyên 3 giá trị trả về
+    cho post-fix-gate; người thua cuộc đua thấy file đã có nội dung nên không seed và không báo "Created")."""
     if not md_escape(title):
         raise ValueError(tr("tiêu đề bài học rỗng", "the lesson title is empty"))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,6 +127,8 @@ def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=
         if seed is not None and not text and not dry_run:
             text = Path(seed).read_text(encoding="utf-8")
             f.write(text)
+            if seeded is not None:
+                seeded.append(path)
         dup = find_duplicate(text, title)
         if dup and not force:
             return "duplicate", dup, None
@@ -170,11 +172,11 @@ def cmd_add(args) -> int:
     if not target.exists() and not args.dry_run:
         template = DEVKIT_ROOT / "templates" / "instincts.template.md"
         seed = template if template.is_file() else None
-    created = seed is not None
+    created = []   # append_lesson báo đúng lần gọi đã seed (dưới khoá), không đoán từ exists() trước khoá
     try:
         status, inst_id, entry = append_lesson(
             target, args.title, cause=args.cause, rule=args.rule, symptom=args.symptom,
-            check=args.check, force=args.force, dry_run=args.dry_run, seed=seed)
+            check=args.check, force=args.force, dry_run=args.dry_run, seed=seed, seeded=created)
     except (OSError, ValueError) as e:
         print(f"✖ {e}", file=sys.stderr)
         return 2
@@ -310,11 +312,10 @@ def cmd_import(args) -> int:
     except (OSError, ValueError) as e:
         print(f"✖ {e}", file=sys.stderr)
         return 2
+    seed = None   # như cmd_add: template chỉ được ghi trong flock của append_lesson khi file còn rỗng (issue #14)
     if not target.exists() and not args.dry_run:
         template = DEVKIT_ROOT / "templates" / "instincts.template.md"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if template.is_file():
-            shutil.copyfile(template, target)
+        seed = template if template.is_file() else None
     counts = {"added": 0, "dry-run": 0, "duplicate": 0, "skipped": 0}
     for item in items:
         if not isinstance(item, dict) or item.get("verdict", "INSTINCT") != "INSTINCT" or not item.get("title"):
@@ -331,7 +332,7 @@ def cmd_import(args) -> int:
             status, inst_id, entry = append_lesson(
                 target, item["title"], cause=item.get("cause") or None, rule=item.get("rule") or None,
                 symptom=item.get("symptom") or None, check=item.get("check") or None,
-                force=args.force, dry_run=args.dry_run, source=item.get("source") or None, found_on=found_on)
+                force=args.force, dry_run=args.dry_run, source=item.get("source") or None, found_on=found_on, seed=seed)
         except (OSError, ValueError) as e:
             print(f"✖ {item.get('title')}: {e}", file=sys.stderr)
             counts["skipped"] += 1

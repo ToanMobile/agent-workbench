@@ -61,13 +61,14 @@ done
 
 # D1: a write that cannot get the guard in time is blocked (fail closed); a read still passes
 reset_lock
-python3 - "$GDIR" "$TMP/held" <<'PY' &
+( exec python3 - "$GDIR" "$TMP/held" <<'PY'
 import fcntl, os, sys, time
 fd = os.open(os.path.join(sys.argv[1], "devkit-session.guard"), os.O_RDWR | os.O_CREAT, 0o600)
 fcntl.flock(fd, fcntl.LOCK_EX)
 open(sys.argv[2], "w").write("1")
 time.sleep(8)
 PY
+) &
 HOLD_PID=$!
 for _ in $(seq 1 100); do [ -s "$TMP/held" ] && break; sleep 0.05; done
 payload "$TMP/w.json" W Edit; payload "$TMP/r.json" R Bash "ls src"

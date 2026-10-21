@@ -442,3 +442,47 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Worktree do công cụ tự tạo thiếu phần cài DevKit bị ignore, và bài thử pass trên đường khác đường chạy thật
 - **Nguyên nhân:** Merge gate chỉ tìm install.sh ở '.', tức worktree Reviewer do lane tạo bằng worktree add trần, nơi .agents/devkit (bị ignore) không có: scratch thiếu post-fix-gate.py, mọi PR đã review đỏ ở verify, 47 thẻ Blocked ở 5 board (19/10). Lane còn chép link tương đối .agents/active-profile của main y nguyên vào worktree sâu hơn nên link gãy (exit 127). Bài thử 20 phiên ngày 17/10 pass vì đi EnterWorktree (hook cài DevKit) và chạy merge gate từ main checkout, không đi qua lane + PR + merge gate từ worktree Reviewer.
 - **Quy tắc phòng ngừa & Cách fix:** Mọi script tìm DevKit hay state bị ignore phải tìm cả ở main checkout (dòng đầu danh sách worktree), không chỉ ở '.'; thiếu thì dừng với lỗi môi trường (exit 9), không quy cho PR. Bài thử nghiệm thu phải đi đúng đường production (lane tạo worktree, PR, merge gate chạy từ worktree Reviewer). Test: tests/super-board/test_merge_gate_devkit_from_main.sh, universal-agent-devkit/tests/worktree_git/test_heal_active_profile.sh.
+
+---
+
+### [INSTINCT-053] Halt vì lỗi đọc tạm thời không ai tự gỡ: máy ngủ dậy làm chết mọi board hàng giờ
+- **Ngày phát hiện:** 2026-10-20
+- **Hiện tượng lỗi:** Halt vì lỗi đọc tạm thời không ai tự gỡ: máy ngủ dậy làm chết mọi board hàng giờ
+- **Nguyên nhân:** super-board-github-read.py halt sau 3 lần đọc lỗi trong vài giây (mạng chưa lên sau khi máy thức), watchdog coi halt rc=79 là dừng có chủ đích nên không bao giờ khởi động lại
+- **Quy tắc phòng ngừa & Cách fix:** Mọi trạng thái dừng do lỗi tạm thời (mạng, quota, đọc) phải có đường tự phục hồi có giới hạn thời gian (replay chỉ đọc rồi restart); chỉ thao tác ghi chưa rõ kết quả mới chờ người. Trạng thái sống/chết phải hiện ra ngoài (mô tả Project, field card) kèm giờ cập nhật
+
+---
+
+### [INSTINCT-054] Guard đường dẫn chạy SAU bước phá huỷ, hoặc leo tổ tiên theo chuỗi để lọt '..'
+- **Ngày phát hiện:** 2026-10-20
+- **Hiện tượng lỗi:** Guard đường dẫn chạy SAU bước phá huỷ, hoặc leo tổ tiên theo chuỗi để lọt '..'
+- **Nguyên nhân:** restore-old kiểm cha-symlink sau rm/mkdir (đã xoá file DevKit trước khi SKIP), bước leo tổ tiên theo chuỗi coi 'nope/../..' là trong dự án, phía backup của ledger chỉ kiểm tiền tố
+- **Quy tắc phòng ngừa & Cách fix:** Kiểm tra chỉ-đọc trước mọi rm/mkdir/mv và ở cả dry-run; từ chối đoạn '.'/'..' trên CẢ đường dẫn (cả đoạn cuối); áp cùng kiểm tra cho nguồn lẫn đích của mv
+- **Lệnh kiểm tra:** `bash universal-agent-devkit/tests/worktree_git/test_restore_old.sh`
+
+---
+
+### [INSTINCT-055] Chạy gate dưới nohup làm test SIGHUP đỏ giả
+- **Ngày phát hiện:** 2026-10-20
+- **Hiện tượng lỗi:** Chạy gate dưới nohup làm test SIGHUP đỏ giả
+- **Nguyên nhân:** nohup đặt SIGHUP = SIG_IGN cho mọi tiến trình con; gate lồng trong test_gate_robustness.sh A9 không nhận SIGHUP nên sống quá 10 s (đo 20/10: HEAD và P1 đỏ y hệt dưới nohup, xanh khi không nohup)
+- **Quy tắc phòng ngừa & Cách fix:** Không bọc gate/test bằng nohup; chạy nền bằng run_in_background của harness. Thấy A9 SIGHUP đỏ mà TERM/INT xanh: kiểm SIGHUP có bị ignore từ tiến trình cha không trước khi nghi code
+- **Lệnh kiểm tra:** `python3 -c 'import signal; print(signal.getsignal(signal.SIGHUP))'`
+
+---
+
+### [INSTINCT-056] killpg bị macOS từ chối (EPERM) làm gate chết khi suite quá giờ, biên nhận cũ ở lại thành xanh giả
+- **Ngày phát hiện:** 2026-10-20
+- **Hiện tượng lỗi:** killpg bị macOS từ chối (EPERM) làm gate chết khi suite quá giờ, biên nhận cũ ở lại thành xanh giả
+- **Nguyên nhân:** macOS từ chối signal cho process group còn zombie; run_in_group chỉ bắt ProcessLookupError nên PermissionError làm gate crash giữa chừng, write_full_pass_receipt(exit 1) không chạy, lượt --full sau dùng lại PASS trước lúc treo
+- **Quy tắc phòng ngừa & Cách fix:** Mọi killpg trong DevKit bắt cả PermissionError và lùi về proc.send_signal; lần communicate cuối có trần (cháu có thể giữ ống output). Test: tests/gates/test_gate_robustness.sh A12/A12b/A13
+- **Lệnh kiểm tra:** `grep -n 'os.killpg' universal-agent-devkit/bin/*.py universal-agent-devkit/scripts/*/*.py`
+
+---
+
+### [INSTINCT-057] Test super-board chạy trong worktree dùng heavy_slot của main checkout, không phải bản đang sửa
+- **Ngày phát hiện:** 2026-10-21
+- **Hiện tượng lỗi:** Test super-board chạy trong worktree dùng heavy_slot của main checkout, không phải bản đang sửa
+- **Nguyên nhân:** .claude/bin/super-board-heavy-slot.py tìm bin/heavy_slot.py ở main worktree TRƯỚC (main_wt/universal-agent-devkit), nên test gọi wrapper (test_tests_skip_machine_slots.sh, test_heavy_slot.sh) trong worktree chạy code CŨ của main: P1 bỏ 2 slot mà REG-SB-TEST-SLOT-ISO-01 vẫn XANH ở worktree, ĐỎ ngay khi main được fast-forward (21/10)
+- **Quy tắc phòng ngừa & Cách fix:** Sửa universal-agent-devkit/bin/heavy_slot.py thì chạy lại các test gọi .claude/bin/super-board-heavy-slot.py SAU khi main có code mới (sau worktree finish), trước khi push
+- **Lệnh kiểm tra:** `grep -rlE 'super-board-heavy-slot.py|SLOT_BIN' tests/`

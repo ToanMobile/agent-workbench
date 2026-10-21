@@ -27,3 +27,6 @@ bin/session_lock.py   tests/context_memory/test_session_lock_trunk_wrappers.sh
 hooks/worktree_merge_gate.sh   tests/gates/test_worktree_merge_gate_conflict_advice.sh tests/gates/test_worktree_merge_gate_subagent_live.sh
 # 17/10 (K7): khối .gitignore mà bin/install.sh viết lại ở mỗi lần cài / mỗi worktree mới (phải giữ `.agents/hooks/`).
 bin/install.sh   tests/installer/test_gitignore_keeps_agents_hooks.sh
+# 21/10 (#31): fold_agent_file.py gộp CLAUDE.md vào AGENTS.md lúc cài, devkit_i18n.py dịch file đã cài; không test nào gọi tên chúng.
+scripts/governance/fold_agent_file.py   tests/installer/test_uninstall.sh tests/installer/test_platform_rules.sh
+scripts/governance/devkit_i18n.py   tests/installer/test_i18n_profiles.sh

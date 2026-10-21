@@ -65,7 +65,7 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
 - **Protect working code**: touch it only for a real error, a real necessity, or an explicit
   instruction. Surgical diffs; no drive-by refactors, formatting sweeps or placeholder code
   (`// ... existing code ...`); keep public signatures backward compatible.
-- **Git — commit and push yourself**: a finished task (gate `--full` exit 0, proof when
+- **Git — commit and push yourself** (unless a project rule in `.agents/local/rules/` or a user rule forbids it — that rule wins, then stop and wait for the order): a finished task (gate `--full` exit 0, proof when
   required, the acceptance report) is committed and pushed without asking: commit your own
   paths, `git fetch`; origin moved → `git pull --no-rebase --no-edit` (check its exit code;
   a conflict → skill conflict, ask only for a business decision) and, after any pull, merge
@@ -125,6 +125,14 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    chỉ chạy test ca đang làm (impacted mode) khi còn các phiên khác đang chạy, và chỉ chạy toàn diện
    `--full` khi đây là phiên cuối cùng duy nhất hoàn tất công việc. Một lượt hoãn/impacted in "CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU", không ghi receipt và KHÔNG phải bằng chứng cho bước 5: phiên cuối chạy `--full`, hoặc thêm `--force-full` khi phải nghiệm thu ngay. Any other exit: paste the last
    30 log lines, fix, and repeat this step. A dry-run, `--help`, or a single Gradle test does not replace this command.
+   `--full` is cached-full: every cacheable light/cpu matrix suite is considered too; one whose content key (its inputs +
+   environment, `bin/suite_cache.py`, shared by every worktree) already PASSed is reused, the rest run (an added suite that
+   times out is named, outside the verdict). Gradle/Unity/device suites, `run_impacted.sh`, network commands and
+   `"cache": false` keep the old selection; `--no-cache` runs them all. When the repo's last real full run is over 24 h old,
+   a `--full` (not a merge gate) uses no content key (sentinel). A push needs the receipt of the pushed content (usually
+   zero suites to run). Suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 100
+   (`DEVKIT_SLOT_LOAD_MAX`) they start at once, above it they wait up to 600 s and run anyway; only Unity and device
+   suites hold an exclusive lock.
 4. A proof image is blocking, same rank as exit 0, unless the change surely cannot show on a
    screen: the profile was backend when the turn started (committed, or an uncommitted profile
    file written before the turn), or every file changed since HEAD at

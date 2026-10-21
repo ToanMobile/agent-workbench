@@ -203,4 +203,74 @@ printf '%s\n' "$res" | grep -q "timed_out=True left=\[\] .*started=True" \
   && ok "A11: a timed-out suite ran its EXIT trap (TERM before KILL): no temp dir left" \
   || bad "A11: a timed-out suite left its temp dir: $(printf '%s' "$res" | tail -2)"
 
+# ── A12: killpg refused (EPERM — macOS refuses a signal to a process group that holds a zombie) while a suite times out: run_in_group
+# must not raise. 20/10: the gate died with a PermissionError traceback, so the receipt of the same content was never dropped and the
+# next --full re-used the PASS of before the hang (a false green). The suite's own shell still gets the signal. ─────────────────────
+mkdir -p "$TMP/a12"
+res="$("$PY" - "$GATE" "$TMP/a12" <<'EOF' 2>&1
+import importlib.util, os, signal, sys, time
+spec = importlib.util.spec_from_file_location("gate", sys.argv[1])
+g = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(g)
+d = sys.argv[2]
+real_killpg, refused = os.killpg, []
+def killpg(pgid, sig):
+    refused.append(sig)
+    raise PermissionError(1, "Operation not permitted")
+os.killpg = killpg
+t0 = time.monotonic()
+try:
+    rc, out, timed_out = g.run_in_group("echo started; exec sleep 30", d, dict(os.environ), 1)
+    print(f"raised=no timed_out={timed_out} refused={len(refused)} secs={time.monotonic() - t0:.1f}")
+except Exception as e:
+    print(f"raised={type(e).__name__}")
+EOF
+)"
+printf '%s\n' "$res" | grep -qE "raised=no timed_out=True refused=[1-9]" \
+  && ok "A12: killpg refused (EPERM) on a timed-out suite: run_in_group returns TIMEOUT, no crash ($(printf '%s' "$res" | tail -1))" \
+  || bad "A12: killpg refused (EPERM) on a timed-out suite crashed the gate: $(printf '%s' "$res" | tail -2)"
+# under the 10 s TERM grace: the TERM fallback itself ended the suite (a broken TERM path still ends ~11 s later through KILL)
+printf '%s\n' "$res" | grep -qE "secs=[0-4]\." \
+  || bad "A12: the TERM fallback did not end the timed-out suite before the KILL grace: $(printf '%s' "$res" | tail -1)"
+
+# ── A12b: killpg refused AND a grandchild keeps the output pipe open (it was not in the signalled process): run_in_group must still
+# return soon after the KILL grace, not wait on the pipe for the grandchild's whole life (review 20/10).
+res="$("$PY" - "$GATE" "$TMP/a12" <<'EOF' 2>&1
+import importlib.util, os, signal, sys, time
+spec = importlib.util.spec_from_file_location("gate", sys.argv[1])
+g = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(g)
+g._SUITE_TERM_GRACE_S = 1
+def killpg(pgid, sig):
+    raise PermissionError(1, "Operation not permitted")
+os.killpg = killpg
+t0 = time.monotonic()
+rc, out, timed_out = g.run_in_group("(sleep 25; echo late) & exec sleep 25", sys.argv[2], dict(os.environ), 1)
+print(f"timed_out={timed_out} secs={time.monotonic() - t0:.1f}")
+EOF
+)"
+printf '%s\n' "$res" | grep -qE "timed_out=True secs=([0-9]|1[0-4])\." \
+  && ok "A12b: a grandchild holding the pipe does not hold run_in_group past the grace ($(printf '%s' "$res" | tail -1))" \
+  || bad "A12b: run_in_group waited on the grandchild's pipe: $(printf '%s' "$res" | tail -2)"
+
+# ── A13: stale_rerun._execute (nightly, STALE re-run) has the same killpg; EPERM there must not raise either (review 20/10)
+res="$("$PY" - "$DEVKIT_DIR/scripts/testing" "$TMP/a12" <<'EOF' 2>&1
+import os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import stale_rerun as sr
+def killpg(pgid, sig):
+    raise PermissionError(1, "Operation not permitted")
+os.killpg = killpg
+try:
+    st, code, out = sr._execute(Path(sys.argv[2]), "exec sleep 20", 1)
+    print(f"raised=no status={st}")
+except Exception as e:
+    print(f"raised={type(e).__name__}")
+EOF
+)"
+printf '%s\n' "$res" | grep -q "raised=no status=TIMEOUT" \
+  && ok "A13: stale_rerun._execute with killpg refused (EPERM): TIMEOUT, no crash" \
+  || bad "A13: stale_rerun._execute crashed on EPERM: $(printf '%s' "$res" | tail -1)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_robustness: all tests passed" || { echo "❌ test_gate_robustness: $FAILS failed"; exit 1; }
