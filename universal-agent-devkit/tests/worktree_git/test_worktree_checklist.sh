@@ -239,6 +239,24 @@ bash "$KIT" worktree remove ../wt-h >"$TMP/rm-h.out" 2>&1; rc=$?
   && ok "remove: a bug row a person made, only in the worktree, still holds it; the hint names --with-checklist" \
   || { fail "remove of a worktree with an authored row (rc=$rc)"; cat "$TMP/rm-h.out"; }
 git -C "$TMP/m" worktree remove --force "$TMP/wt-h" >/dev/null 2>&1
+# a row a person DROPPED in the worktree (`agent-kit bugs drop`; OCR 21/10): the worktree's own HEAD has it, main still does:
+# that decision lives nowhere else, still refused. A row main gained after the worktree branched off is no drop (#41 had those)
+bash "$KIT" worktree add ../wt-d >/dev/null 2>&1 || fail "add wt-d"
+status_edit "$TMP/wt-d" 'del items["BUG-MOVE"]'
+status_edit "$TMP/m" 'items["BUG-LATER"] = {"id": "BUG-LATER", "kind": "bug", "title": "main moved on", "fixed": False, "state": "reported", "tests": [], "created_at": "2026-10-21 10:00:00"}'
+git -C "$TMP/m" add .agents/regression_status.json && git -C "$TMP/m" commit -qm "main gains a row after wt-d branched" || fail "seed BUG-LATER"
+bash "$KIT" worktree remove ../wt-d >"$TMP/rm-d.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-d" ] && grep -q "regression_status.json" "$TMP/rm-d.out" \
+  && ok "remove: a row a person dropped in the worktree (main still holds it) still holds the worktree" \
+  || { fail "remove of a worktree that dropped an authored row (rc=$rc)"; cat "$TMP/rm-d.out"; }
+git -C "$TMP/m" worktree remove --force "$TMP/wt-d" >/dev/null 2>&1
+bash "$KIT" worktree add ../wt-o >/dev/null 2>&1 || fail "add wt-o"
+git -C "$TMP/wt-o" checkout -q --detach HEAD~1 2>/dev/null || fail "wt-o: back to before BUG-LATER"
+echo "<!-- o -->" >> "$TMP/wt-o/.agents/CHECKLIST.md"
+bash "$KIT" worktree remove ../wt-o >"$TMP/rm-o.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$TMP/wt-o" ] \
+  && ok "remove: a worktree based before main gained a row is not read as having dropped it" \
+  || { fail "remove of a worktree older than main's newest row (rc=$rc)"; cat "$TMP/rm-o.out"; }
 
 # the checklist NOT tracked (git-ignored or not): a worktree that wrote it on request still does not ship it
 make_repo "$TMP/u" 0 untracked

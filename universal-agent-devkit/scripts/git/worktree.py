@@ -1664,7 +1664,9 @@ def _authored_cmp(item):
 def _bookkeeping_regenerated(wt, main):
     """True when the worktree's UNCOMMITTED bookkeeping (BOOKKEEPING) is nothing but what the gate and the checklist sync regenerate:
     its regression_status.json on disk holds no row a person made (_authored_cmp) that main's HEAD does not hold the same way, as
-    _ignorable rules for a commit. Fail closed: a status file that cannot be read or parsed, on disk or in main's HEAD, is work."""
+    _ignorable rules for a commit, and drops no such row that the worktree's own HEAD holds and main still does (`agent-kit bugs
+    drop`: OCR 21/10; a row main gained after the worktree branched off is no drop). Fail closed: a status file that cannot be read
+    or parsed, on disk, in the worktree's HEAD or in main's HEAD, is work."""
     path = os.path.join(wt, STATUS_FILE)
     try:
         if not os.path.lexists(path):
@@ -1673,13 +1675,24 @@ def _bookkeeping_regenerated(wt, main):
             return False
         with open(path, encoding="utf-8") as f:
             mine_raw = json.load(f)
+        own = git(wt, "ls-tree", "-z", "HEAD", "--", STATUS_FILE, check=False)   # rc 0 and nothing printed: HEAD has no status file
+        if own.returncode != 0:
+            return False
+        base_raw = {"items": {}}
+        if own.stdout.strip("\0"):
+            got = git(wt, "show", f"HEAD:{STATUS_FILE}", check=False)
+            if got.returncode != 0:
+                return False
+            base_raw = json.loads(got.stdout)
         cur = git(main, "show", f"HEAD:{STATUS_FILE}", check=False)
         theirs_raw = json.loads(cur.stdout) if cur.returncode == 0 else {"items": {}}
         mine = {rid: a for rid, it in mine_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
         theirs = {rid: a for rid, it in theirs_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
+        dropped = [rid for rid, it in base_raw["items"].items()
+                   if _authored_cmp(it) is not None and rid not in mine_raw["items"] and rid in theirs]
     except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
         return False
-    return all(theirs.get(rid) == a for rid, a in mine.items())
+    return not dropped and all(theirs.get(rid) == a for rid, a in mine.items())
 
 
 def _carry_authored_rows(wt, base, env):
