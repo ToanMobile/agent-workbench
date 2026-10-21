@@ -16,7 +16,7 @@
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="${EG_KIT:-$DEVKIT_DIR}"
-python3 -I - "$KIT" <<'PY'
+python3 -I - "$KIT" <<'PYEND'
 import json, os, shutil, subprocess, sys, tempfile
 
 KIT = sys.argv[1]
@@ -146,4 +146,4 @@ shutil.rmtree(TMP, ignore_errors=True)
 print("")
 print("test_evidence_runners: %s" % ("all checks passed" if not fails else "%d FAILED" % fails))
 sys.exit(1 if fails else 0)
-PY
+PYEND
