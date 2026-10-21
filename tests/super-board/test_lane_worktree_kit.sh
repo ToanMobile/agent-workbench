@@ -8,6 +8,9 @@
 #     (review: detached), cấm `git worktree add` trần; dạng prompt mà startup_orphan_workers dò vẫn giữ.
 #  2. runner: đĩa dưới sàn của DevKit (WORKTREE_DISK_MIN_GIB) thì không nhận thẻ, không mở worker (lane nào cũng sẽ dừng ở exit 4).
 #  3. wave workflow, super-build-dispatch.sh và SKILL của 3 lane: cùng lệnh kit; không còn chỗ nào hướng dẫn `git worktree add` trần.
+#  4. (21/10) gỡ worktree cũ của lane cũng bằng kit (`agent-kit worktree remove`): `git worktree remove` trần từ chối mọi worktree có dấu
+#     vết cài DevKit (AGENTS.md sinh lại, hook đổi thành link vào kit) dù không mất gì — 11 thẻ Blocked ngày 20/10 (GeelyEx2 #17 #33,
+#     OfficeReader #86 #91 #173 #174, Goods #17 #21, NFH #18 #4, HvU #34); kit gỡ được và chỉ từ chối (✖) khi có việc sẽ mất.
 # Chạy offline: runner source ở lib mode, gh/claude là stub. Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -165,10 +168,21 @@ missing=""
 for clause in "Worktree: after git fetch origin, create it from the repo root ONLY with the DevKit" "never plain git worktree add or EnterWorktree" "agent-kit worktree add .claude/worktrees/issue-5-build issue-5-<slug> --lane=build --base=origin/<config.base_branch>" \
               "agent-kit worktree add .claude/worktrees/issue-5-review --lane=review --base=origin/<PR branch>" "git checkout --detach origin/<PR branch>" \
               "python3 .agents/devkit/scripts/git/worktree.py add" "Exit 4 = under the disk floor" "Exit 1 naming a worktree that holds the branch" \
-              "git worktree remove <path>"; do
+              "agent-kit worktree remove <path>" "python3 .agents/devkit/scripts/git/worktree.py remove"; do
   case "$hint_text" in *"$clause"*) ;; *) missing="$missing runner:'$clause'" ;; esac
   case "$wave_text" in *"$clause"*) ;; *) missing="$missing wave:'$clause'" ;; esac
 done
 [ -z "$missing" ] && ok "runner and wave worktree briefs carry the same clauses" || fail "worktree briefs drifted:$missing"
+# ── 4. gỡ worktree của lane bằng kit: brief, SKILL của 3 lane, run.md, run-workflow.md không bảo chạy `git worktree remove` trần
+bad=""
+RUNWF="$ROOT/.claude/skills/super-board/references/run-workflow.md"
+for f in "$ROOT/.claude/skills/super-build/SKILL.md" "$ROOT/.claude/skills/super-qa/SKILL.md" "$ROOT/.claude/skills/super-review/SKILL.md" \
+         "$ROOT/$RUNMD" "$RUNWF"; do
+  hits=$(grep -n 'git worktree remove' "$f" | grep -viE 'never|not |instead of|trần|plain' || true)
+  [ -z "$hits" ] || bad="$bad ${f#$ROOT/}:$hits"
+done
+case "$hint_text $wave_text" in *"git worktree remove"*) bad="$bad brief:git worktree remove" ;; esac
+[ -z "$bad" ] && ok "4. no lane brief or lane file removes a worktree with a plain git worktree remove" \
+  || fail "4. plain git worktree remove instructions left:$bad"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_lane_worktree_kit: all passed" || { echo "❌ test_lane_worktree_kit: $FAILS failed"; exit 1; }
