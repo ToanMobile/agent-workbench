@@ -78,7 +78,7 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
 - **Protect working code**: touch it only for a real error, a real necessity, or an explicit
   instruction. Surgical diffs; no drive-by refactors, formatting sweeps or placeholder code
   (`// ... existing code ...`); keep public signatures backward compatible.
-- **Git — commit and push yourself**: a finished task (gate `--full` exit 0, proof when
+- **Git — commit and push yourself** (unless a project rule in `.agents/local/rules/` or a user rule forbids it — that rule wins, then stop and wait for the order): a finished task (gate `--full` exit 0, proof when
   required, the acceptance report) is committed and pushed without asking: commit your own
   paths, `git fetch`; origin moved → `git pull --no-rebase --no-edit` (check its exit code;
   a conflict → skill conflict, ask only for a business decision) and, after any pull, merge

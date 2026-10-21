@@ -101,7 +101,9 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
   def closes($n): (.body // "") | test("(?i)\\b(close[sd]?|fix(e[sd])?|resolve[sd]?)[ :]+#" + ($n | tostring) + "\\b");
   def closed_refs: [ (.body // "") | scan("(?i)\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[ :]+#([0-9]+)")[0] | tonumber ] | unique;
   def fps: [ (.body // "") | scan("(?m)^[ \t]*fingerprint:[ \t]*([^\n]*[^ \t\n])")[0] ];
-  def paths: [ (.body // "") | scan("[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\\.[A-Za-z0-9]+") ] | unique;
+  # Không tính dòng "Nguồn:"/"Source:" và tài liệu docs/plans/ (chỉ đọc, được trích làm nguồn) là file thẻ sẽ sửa.
+  def paths: [ ((.body // "") | split("\n") | map(select(test("^[ \t]*[-*]?[ \t]*\\**(Nguồn|Source)\\**[ \t]*:"; "i") | not)) | join("\n"))
+      | scan("[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\\.[A-Za-z0-9]+") | select(test("^docs/plans/") | not) ] | unique;
   # Dòng tiêu đề mục "## <tên>": sau tên là hết từ (dấu cách, "(", ":", \r hoặc hết dòng). has_acs và sect dùng
   # chung để cùng nhận "## Acceptance Criteria (…)" và cùng bỏ "## Fixes", "## Fixture".
   def heading($h): test("^##[ \t]+" + $h + "(?!\\w)");
@@ -151,7 +153,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     native: "\\b(?-i:JNI|NDK)\\b|C\\+\\+",
     content: "\\b(?:[0-9]+ tập|Tập [0-9]|màn [0-9])\\b" };
   def too_big:
-    sect("Fix") as $fix | sect("Acceptance Criteria") as $ac | (sect("Risk") + "\n" + $ac) as $risk
+    sect("Fix") as $fix | sect("Acceptance Criteria") as $ac
     | [ $fix | parts[] | select(test("^#?[0-9]+$|^[0-9a-f]{7,40}$") | not) ] as $items
     | [ $items[] | select([ scan("\\S+") ] | length <= 6) ] as $short
     | [ (.title // "") | sub("^\\S+ \\[\\w+\\] "; "") | gsub("\\([^()]*\\)"; "") | splits("(?<![0-9]),|,(?![0-9])|;")
@@ -167,7 +169,11 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     | [ $fix, $ac | scan("(?i)(?:hoàn thiện|hoàn chỉnh|đủ|toàn bộ|tất cả|complete|all)\\b[^\n]{0,60}\\btheo\\b[^\n]{0,40}§[ \t]*[0-9][0-9.]*") ] as $ref
     | [ $acs[] | select(test("(?i)\\b[0-9]+[ \t]*(?:người|people|users|testers)\\b|(?:không crash|crash-free)[^\n]*%|retention|giữ chân|số giờ thật|chạy thật|đăng nhập \\S+ thật")) ] as $people
     | [ $acs[] | select(test("(?i)\\bOOM\\b|\\bFPS\\b|bộ nhớ|\\bRAM\\b|nhiệt độ|thermal|(?:hao|tốn|sụt|mức) pin\\b|battery")) ] as $metric
-    | ($risk | test("(?i)máy thật|thiết bị thật|real device|physical device")) as $realdev
+    # Máy thật: AC luôn là tín hiệu (kể cả "Không OOM trên máy thật"). Ở Risk chỉ bỏ cụm phủ định sát ("không cần
+    # máy thật", "no real device": từ phủ định + tối đa 2 từ không dấu câu + cụm); phần còn lại của dòng vẫn được đọc.
+    | "máy thật|thiết bị thật|real device|physical device" as $dev
+    | (($ac + "\n" + (sect("Risk") | gsub("(?i)\\b(?:không|no|not|without)(?:[ \t]+[^\\s,;.]+){0,2}[ \t]+(?:" + $dev + ")"; "")))
+       | test("(?i)" + $dev)) as $realdev
     # work: tín hiệu "nhiều việc" (gợi ý tách theo việc); còn lại là AC phải tách ra thẻ `qa` riêng.
     | [ if ($short | length) >= 5 and ($short | length) * 5 >= ($items | length) * 4 then
           { w: 1, work: true, split: $items,

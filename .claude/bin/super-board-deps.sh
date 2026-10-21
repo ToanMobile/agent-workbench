@@ -146,6 +146,13 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
 
   def bodies: [ (.comments.nodes // .comments // [])[] | (.body // "") ];
   def label_names: [ (.labels.nodes // .labels // [])[] | (.name // "") ];
+  # #112: a person finished the step (super-board-needs-you.py unmark rewrites its comment to the ✅ done marker). A ✅ newer
+  # than the comment holding the last `blocked-by:` line, with no needs-you label left, means that line is history, not a gate.
+  def person_done:
+    (label_names | index("needs-you") == null)
+    and ( bodies | to_entries
+          | ( [ .[] | select(.value | test("(^|\n)[ \t]*blocked-by:"; "i")) | .key ] | last ) as $blk
+          | $blk != null and any(.[]; .key > $blk and (.value | startswith("<!-- super-board:needs-you:done -->"))) );
   # Index of the newest 🙋 Block comment, or null.
   def needs_at: ( bodies | to_entries
                   | map(select(.value | test("Reason tag:[^\n]*🙋"))) | last | .key ) // null;
@@ -161,7 +168,7 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
       | ( if $cl != null then
             ( $cl | capture("blocked-by:[ \t]*(?<v>.*)$"; "i").v | gsub("[ \t]"; "") ) as $v
             | if $v == "-" or $v == "" then
-                { parseable: true, blockers: [], human_gated: true, why: "" }
+                { parseable: true, blockers: [], human_gated: ($i | person_done | not), why: "" }
               elif ($v | test("^[0-9]+(,[0-9]+)*$")) then
                 { parseable: true, blockers: ($v / "," | map(tonumber)), human_gated: false, why: "" }
               else
