@@ -644,9 +644,10 @@ See `.claude/skills/super-board/references/run.md` → Tester (first pass — re
    (no `agent-kit` on PATH: `python3 .agents/devkit/scripts/git/worktree.py add` with the same arguments). It checks out the Builder's branch as
    it is (one only origin has from origin/<branch>; a `qa` card's new branch from the base), links the DevKit, copies the git-ignored config and
    hooks, clones a Unity Library copy-on-write and takes no WORKTREE_MAX slot. Exit 4 = under the disk floor: stop with its message, card and
-   claims unchanged. Exit 1 naming a worktree that holds the branch (the Builder's leftover): `git worktree remove` that path (refused =
-   it holds work: Block the card naming it), then add again. Never a plain `git worktree add` or EnterWorktree (agent-workbench#93).
-   Clean up with `git worktree remove <path>`.
+   claims unchanged. Exit 1 naming a worktree that holds the branch (the Builder's leftover): `agent-kit worktree remove` that path
+   (no agent-kit on PATH: `python3 .agents/devkit/scripts/git/worktree.py remove`; a plain `git worktree remove` refuses the DevKit set-up
+   every lane worktree carries — 11 cards Blocked on 20/10 for it; refused with ✖ = it holds work: Block the card naming it), then add
+   again. Never a plain `git worktree add` or EnterWorktree (agent-workbench#93). Clean up with `agent-kit worktree remove <path>`.
 2. Read issue + PR + Builder's handoff.
 3. Build issue-scoped test plan: ONE observable test per AC.
 3a. Existing project verifier → follow [project-verifier.md](references/project-verifier.md)

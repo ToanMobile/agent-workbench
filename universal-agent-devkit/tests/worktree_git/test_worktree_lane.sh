@@ -141,9 +141,11 @@ add python3 "$WT" add "$D2" --lane=review --base=main --no-init; rc=$?
   && ok "  … but a detached checkout holding uncommitted work is neither moved nor marked (rc $rc)" \
   || fail "detached reuse with work: rc $rc, HEAD $(G "$D2" rev-parse --short HEAD)"
 
-# 4b2: the Tester behind a Builder's leftover worktree: refused with the way out named, nothing made
+# 4b2: the Tester behind a Builder's leftover worktree: refused with the way out named, nothing made. The way out is the KIT's remove
+#      (21/10: a plain `git worktree remove` refuses the DevKit set-up every lane worktree carries — 11 cards Blocked on 20/10)
 add python3 "$WT" add "$P/.claude/worktrees/issue-5-qa" issue-5-fix --lane=qa --no-init; rc=$?
-[ "$rc" = 1 ] && [ ! -e "$P/.claude/worktrees/issue-5-qa" ] && grep -q "git worktree remove [^\`]*/issue-5-build\`" "$TMP/out" \
+[ "$rc" = 1 ] && [ ! -e "$P/.claude/worktrees/issue-5-qa" ] && grep -q "agent-kit worktree remove [^\`]*/issue-5-build\`" "$TMP/out" \
+  && ! grep -qE "(^|[^-])git worktree remove" "$TMP/out" \
   && ok "a branch another lane worktree holds: exit 1 naming the worktree to remove" || fail "held branch: rc $rc: $(tail -2 "$TMP/out")"
 # 4c (review 19/10): a board lane worktree never reaches main by itself — not detached, not on an issue branch not yet pushed
 mainhead=$(G "$P" rev-parse main)
