@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """devkit_clean.py — remove the DevKit's own runtime leftovers from a project.
 
-Usage: devkit_clean.py [project_dir] [--days=N] [--apply] [--old-installs]
+Usage: devkit_clean.py [project_dir] [--days=N] [--apply] [--old-installs] [--keep-state]
        (normally `agent-kit clean [path] [--days=N] [--apply] [--old-installs]`)
 
 Dry-run unless --apply. Only the hooks' working area is touched:
   <project>/.claude/audit-gate/
     * files and folders older than --days (default 14): hook logs and per-session
-      state, restore-backup/<time>/ copies, adb-safe-exec/ evidence (logs, tombstones)
-    * a log newer than that but over 5 MB is trimmed to its last 2000 lines
-    * size cap: if what is left is still over 4 MB, the biggest .log/.jsonl/.tsv files are
-      trimmed to their last 2000 lines (then the oldest other entries removed) until it fits
+      state, restore-backup/<time>/ copies, adb-safe-exec/ evidence (logs, tombstones),
+      wg_scan/ cache files
+    * a log newer than that but over 5 MB is trimmed to its last 1000 lines
+    * size cap: if what is left is still over 3 MB, the biggest .log/.jsonl/.tsv files over
+      1000 lines are trimmed to their last 1000 lines, then per-session marker files idle for 6 hours are
+      removed oldest first (plus idle wg_scan/ cache files), until it fits (backups, locks, state
+      *.json, session dirs are never touched)
+    * --keep-state: top-level *.json (gate state, approvals) is exempt from the age pass
     * .gitignore is always kept
   --old-installs: also ~/.universal-agent-devkit.old-* (copies quick-install moved
   aside) older than --days.
@@ -27,9 +31,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from devkit_i18n import resolve_lang, set_lang, tr  # noqa: E402
 
 MAX_LOG = 5 * 1024 * 1024
-AUDIT_CAP = 4 * 1024 * 1024   # whole audit-gate folder, after the age pass (the 5 MB acceptance line minus headroom)
+AUDIT_CAP = 3 * 1024 * 1024   # file blocks only, after the age pass: `du` also counts directory blocks, so 2 MB of headroom under the 5 MB acceptance line
 LOG_EXTS = (".log", ".jsonl", ".tsv")
-KEEP_LINES = 2000
+KEEP_LINES = 1000
 
 
 def size_of(path):
@@ -67,10 +71,11 @@ def human(n):
         n /= 1024
 
 
-def tail_size(path):
-    """Bytes left after trim(path)."""
+def tail_bytes(path):
+    """(lines, bytes of the last KEEP_LINES lines) of a log."""
     with open(path, "rb") as f:
-        return sum(len(x) for x in f.read().splitlines(keepends=True)[-KEEP_LINES:])
+        lines = f.read().splitlines(keepends=True)
+    return len(lines), sum(len(x) for x in lines[-KEEP_LINES:])
 
 
 def disk_size(path):
@@ -88,29 +93,47 @@ def disk_size(path):
 
 
 def cap_plan(audit, planned):
-    """Extra actions that bring audit-gate under AUDIT_CAP after `planned` ran: fresh logs have no age to clean by."""
+    """Extra trims that bring audit-gate under AUDIT_CAP after `planned` ran: fresh logs have no age to clean by.
+
+    Log tails are cut first, then per-session marker files idle for 6 hours, oldest first (every size is
+    allocated bytes, as `du` counts). Backups, flock files, session dirs and state *.json are live data:
+    never removed here, so a folder they fill alone stays over the cap.
+    """
     gone = {p: a for a, p, _ in planned}
     entries = [os.path.join(audit, n) for n in sorted(os.listdir(audit)) if n != ".gitignore"]
     entries = [p for p in entries if gone.get(p) != "remove"]
-    sizes = {p: (tail_size(p) if gone.get(p) == "trim" else disk_size(p)) for p in entries}
-    total = sum(sizes.values())
+    logs = {}   # path -> (allocated bytes now, allocated bytes after a trim)
+    total = 0
+    for p in entries:
+        size = disk_size(p)
+        if p.endswith(LOG_EXTS) and os.path.isfile(p) and not os.path.islink(p):
+            lines, tail = tail_bytes(p)
+            if gone.get(p) == "trim":
+                size = -(-tail // 4096) * 4096   # the age pass trims it first
+            elif lines > KEEP_LINES:
+                logs[p] = (size, -(-tail // 4096) * 4096)
+        total += size
     out = []
-    logs = [p for p in entries if p.endswith(LOG_EXTS) and os.path.isfile(p) and not os.path.islink(p) and gone.get(p) != "trim"]
-    for path in sorted(logs, key=lambda p: -sizes[p]):
-        if total <= AUDIT_CAP:
-            return out
-        after = tail_size(path)
-        if after < sizes[path]:
-            out.append(("trim", path, sizes[path])); total -= sizes[path] - after
-    others = [p for p in entries if not (p in logs or p.endswith(".json") or gone.get(p) == "trim")]
-    for path in sorted(others, key=newest_mtime):   # still over: oldest non-log entries (state *.json stays)
+    for path in sorted(logs, key=lambda p: -logs[p][0]):
         if total <= AUDIT_CAP:
             break
-        out.append(("remove", path, sizes[path])); total -= sizes[path]
+        out.append(("trim", path, logs[path][0])); total -= logs[path][0] - logs[path][1]
+    stale = time.time() - 6 * 3600   # per-session markers (prompt_seen_<sid>, untracked_edit.<sid>): 6 h idle = the session is over
+    markers = [p for p in entries if os.path.isfile(p) and not os.path.islink(p) and not p.endswith(LOG_EXTS + (".json", ".lock"))
+               and os.lstat(p).st_mtime < stale and gone.get(p) != "trim"]
+    wg = os.path.join(audit, "wg_scan")   # worktree_guard's incremental scan cache: a miss only rescans
+    if os.path.isdir(wg) and not os.path.islink(wg):
+        markers += [q for q in (os.path.join(wg, n) for n in os.listdir(wg))
+                    if os.path.isfile(q) and not os.path.islink(q) and os.lstat(q).st_mtime < stale and gone.get(q) != "remove"]
+    for path in sorted(markers, key=lambda p: os.lstat(p).st_mtime):
+        if total <= AUDIT_CAP:
+            break
+        size = disk_size(path)
+        out.append(("remove", path, size)); total -= size
     return out
 
 
-def plan(project, days, old_installs):
+def plan(project, days, old_installs, keep_state=False):
     """[(action, path, bytes)] with action "remove" or "trim"."""
     cutoff = time.time() - days * 86400
     out = []
@@ -121,10 +144,12 @@ def plan(project, days, old_installs):
             if name == ".gitignore":
                 continue
             path = os.path.join(audit, name)
-            if name in ("restore-backup", "adb-safe-exec") and os.path.isdir(path) and not os.path.islink(path):
+            if name in ("restore-backup", "adb-safe-exec", "wg_scan") and os.path.isdir(path) and not os.path.islink(path):
                 candidates += [os.path.join(path, n) for n in sorted(os.listdir(path))]
             else:
                 candidates.append(path)
+        if keep_state:   # the gates' own memory (verified_head, approvals) is not a log: no age limit
+            candidates = [p for p in candidates if not (p.endswith(".json") and os.path.isfile(p))]
         for path in candidates:
             if newest_mtime(path) < cutoff:
                 out.append(("remove", path, size_of(path)))
@@ -150,6 +175,7 @@ def trim(path):
 def main(argv):
     apply = "--apply" in argv
     old_installs = "--old-installs" in argv
+    keep_state = "--keep-state" in argv
     days = 14
     rest = []
     for a in argv[1:]:
@@ -159,16 +185,16 @@ def main(argv):
             except ValueError:
                 sys.stderr.write("clean: --days needs a whole number\n")
                 return 2
-        elif a in ("--apply", "--old-installs"):
+        elif a in ("--apply", "--old-installs", "--keep-state"):
             continue
         elif a.startswith("-"):
-            sys.stderr.write(f"clean: unknown option '{a}' (--days=N, --apply, --old-installs)\n")
+            sys.stderr.write(f"clean: unknown option '{a}' (--days=N, --apply, --old-installs, --keep-state)\n")
             return 2
         else:
             rest.append(a)
     project = os.path.abspath(rest[0] if rest else os.getcwd())
     set_lang(resolve_lang(None, project))
-    items = plan(project, days, old_installs)
+    items = plan(project, days, old_installs, keep_state)
     mode = tr("xoá thật", "apply") if apply else tr("chạy thử — thêm --apply để xoá", "dry-run — add --apply to delete")
     print(f"clean: {project} ({tr('cũ hơn', 'older than')} {days} {tr('ngày', 'days')}, {mode})")
     freed = 0

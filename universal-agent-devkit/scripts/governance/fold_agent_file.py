@@ -8,6 +8,9 @@ kept verbatim and placed in AGENTS.md above the DevKit block, under a one-line m
 naming where it came from. Text already present in AGENTS.md is not added twice.
 The caller backs the original up (<name>_old.md) and removes it.
 
+A section written before the markers existed (only a `moved from` comment) is not recognised: an
+EDITED source is then added as a second section once, and replaced from then on.
+
 Prints "moved N lines" or "nothing to move"; exit 1 only on an I/O error.
 """
 import datetime
@@ -34,7 +37,7 @@ def main(src, agents):
     except (OSError, UnicodeDecodeError) as e:
         print(f"cannot read: {e}", file=sys.stderr)
         return 1
-    if not norm(own) or norm(own) in norm(strip_block(target)):
+    if not norm(own):
         print("nothing to move")
         return 0
     stamp = datetime.date.today().isoformat()
@@ -44,7 +47,14 @@ def main(src, agents):
     a, b = target.find(s_mark), target.find(e_mark)
     at = target.find(START)
     if 0 <= a < b and (at < 0 or b < at):   # this file was folded before: replace its section, never add a second copy
+        old = re.sub(r"<!-- moved from .*? -->", "", target[a + len(s_mark):b])
+        if norm(old) == norm(own):
+            print("nothing to move")
+            return 0
         new = target[:a] + piece.rstrip("\n") + target[b + len(e_mark):]
+    elif norm(own) in norm(strip_block(target)):   # no marker section: the text may already be there (hand-copied)
+        print("nothing to move")
+        return 0
     elif at < 0:
         new = (target.rstrip("\n") + "\n\n" if target.strip() else "") + piece
     else:

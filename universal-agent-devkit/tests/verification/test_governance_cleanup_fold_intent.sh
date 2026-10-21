@@ -16,8 +16,11 @@ P="$TMP/p"; A="$P/.claude/audit-gate"; mkdir -p "$A" "$P/.agents"
 ( cd "$P" && git init -q . && git config devkit.trunkMode false )
 echo old > "$A/regression_gate.log"; touch -t 202001010000 "$A/regression_gate.log"
 echo new > "$A/review_gate.log"
+echo '{}' > "$A/approved_x.json"; touch -t 202001010000 "$A/approved_x.json"
 python3 "$NIGHTLY" run "$P" >/dev/null 2>&1
 [ ! -e "$A/regression_gate.log" ] && [ -f "$A/review_gate.log" ] && ok "nightly run removes old audit-gate files, keeps fresh ones" || fail "audit-gate: $(ls "$A")"
+[ -f "$A/approved_x.json" ] && ok "nightly age pass keeps old state *.json (gate memory)" || fail "state json removed by the age pass"
+:  || fail "audit-gate: $(ls "$A")"
 
 # (d) size cap: FRESH logs (no age to clean) totalling ~8 MB end up under 5 MB after the nightly run; .gitignore and state json stay
 P2="$TMP/p2"; A2="$P2/.claude/audit-gate"; mkdir -p "$A2" "$P2/.agents"
@@ -38,6 +41,33 @@ KB=$(du -sk "$A2" | cut -f1)
 [ "$KB" -lt 5120 ] && [ -f "$A2/.gitignore" ] && [ -f "$A2/regression_gate.state.json" ] && [ -f "$A2/review_gate.log" ] \
   && ok "nightly caps fresh audit-gate under 5 MB ($KB KB), keeps .gitignore/state/log tails" || fail "audit-gate size cap: $KB KB"
 
+# (e) the cap only trims log tails: fresh restore-backup, flock files and session dirs survive; small logs are never planned for a trim
+P3="$TMP/p3"; A3="$P3/.claude/audit-gate"; mkdir -p "$A3/restore-backup/t1" "$A3/session_worktree" "$P3/.agents"
+( cd "$P3" && git init -q . && git config devkit.trunkMode false )
+python3 -B -I - "$A3" <<'PY'
+import os, sys
+a = sys.argv[1]
+line = "x" * 99 + "\n"
+for name, mb in (("surfaced.jsonl", 3), ("review_gate.log", 3), ("read_ledger.tsv", 2)):
+    open(os.path.join(a, name), "w").write(line * (mb * 10486))
+open(os.path.join(a, "restore-backup", "t1", "saved.txt"), "w").write("precious")
+open(os.path.join(a, "restore-backup", "t1", "big.bin"), "w").write("z" * (5 * 1024 * 1024))   # keeps the folder over the cap with every log trimmed
+open(os.path.join(a, "test_run.lock"), "w").write("")
+open(os.path.join(a, "session_worktree", "s.json"), "w").write("{}")
+PY
+python3 "$NIGHTLY" run "$P3" >/dev/null 2>&1
+KB3=$(du -sk "$A3" | cut -f1)
+[ -f "$A3/restore-backup/t1/saved.txt" ] && [ -f "$A3/test_run.lock" ] && [ -f "$A3/session_worktree/s.json" ] && [ "$(wc -l < "$A3/review_gate.log")" -le 1000 ] \
+  && ok "cap trims log tails only: fresh backup, lock and session dir survive ($KB3 KB)" || fail "cap removed live data or missed the cap ($KB3 KB): $(ls "$A3")"
+P4="$TMP/p4"; A4="$P4/.claude/audit-gate"; mkdir -p "$A4"
+python3 -B -I - "$A4" <<'PY'
+import os, sys
+for i in range(1500):
+    open(os.path.join(sys.argv[1], f"s{i}.log"), "w").write("x\n" * 100)
+PY
+python3 "$DEVKIT_DIR/scripts/governance/devkit_clean.py" "$P4" --days=7 | grep -q "would trim" \
+  && fail "cap plans a no-op trim for a log under 1000 lines" || ok "cap plans no trim for logs under 1000 lines"
+
 # (b) fold: same source run twice = no change; edited source = one section, not two
 F="$TMP/f"; mkdir -p "$F"
 printf 'proj line A\nline B\n' > "$F/CLAUDE.md"
@@ -47,6 +77,10 @@ printf 'proj line A\nline B edited\n' > "$F/CLAUDE.md"
 python3 "$FOLD" "$F/CLAUDE.md" "$F/AGENTS.md" >/dev/null
 [ "$(grep -c 'proj line A' "$F/AGENTS.md")" = 1 ] && grep -q 'line B edited' "$F/AGENTS.md" && ! grep -q '^line B$' "$F/AGENTS.md" \
   && ok "fold: edited source replaces its section (no duplicate)" || fail "fold edited: $(cat "$F/AGENTS.md")"
+printf 'proj line A\n' > "$F/CLAUDE.md"
+python3 "$FOLD" "$F/CLAUDE.md" "$F/AGENTS.md" >/dev/null
+! grep -q 'line B' "$F/AGENTS.md" && grep -c 'proj line A' "$F/AGENTS.md" | grep -qx 1 \
+  && ok "fold: a line removed from the source leaves AGENTS.md" || fail "fold removed line: $(cat "$F/AGENTS.md")"
 SZ=$(wc -c < "$F/AGENTS.md"); python3 "$FOLD" "$F/CLAUDE.md" "$F/AGENTS.md" >/dev/null
 [ "$(wc -c < "$F/AGENTS.md")" = "$SZ" ] && ok "fold: re-run does not grow AGENTS.md" || fail "fold grew"
 

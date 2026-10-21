@@ -177,7 +177,7 @@ def clean_audit_gate(project: Path) -> None:
     """The hooks' working area (.claude/audit-gate) grew to 15-30 MB: drop what is older than 7 days, trim an oversized log."""
     try:
         with contextlib.redirect_stdout(io.StringIO()):   # its report would land in the run's own output lines
-            devkit_clean.main(["devkit_clean.py", str(project), "--days=7", "--apply"])
+            devkit_clean.main(["devkit_clean.py", str(project), "--days=7", "--apply", "--keep-state"])
     except OSError as e:   # a file a hook removed or locked mid-clean: the night's suites still run
         print(f"{project.name}: clean audit-gate: {e}", file=sys.stderr)
 
