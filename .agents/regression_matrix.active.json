@@ -649,6 +649,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-watchdog-lock-atomic",
+      "watch_files": [
+        ".claude/bin/super-board-watchdog.sh",
+        "tests/super-board/test_watchdog_lock_atomic.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WATCHDOG-LOCK-ATOMIC-01",
+          "name": "8 check cùng gặp khoá check cũ quá 120 s thì đúng một check giữ được khoá (không khởi động 2 runner)",
+          "command": "bash tests/super-board/test_watchdog_lock_atomic.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
