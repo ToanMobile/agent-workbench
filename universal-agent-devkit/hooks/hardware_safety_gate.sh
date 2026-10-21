@@ -1174,6 +1174,12 @@ if label:
 
 def emulator_window_violation(text):
     """Chặn lệnh mở Android Emulator khởi động AVD mà thiếu cờ -no-window (trừ khi PROOF_WINDOW=1)."""
+    # Lệnh không nhắc tới emulator/qemu-system/-avd (sau khi bỏ dấu nháy và \, như shlex ghép e"m"ulator) thì không có gì
+    # để chặn: thoát ngay. 20/10: tách theo từng dòng một lệnh eval vô hại 12000 dòng mất 3,7–5,8 s, chạm hạn 7 s của hook
+    # khi máy tải nặng và bị chặn fail-closed (test_hw_emulator_window.sh). Đoạn python này nằm trong chuỗi bash nháy đơn:
+    # không viết dấu nháy đơn, dùng \x27.
+    if not re.search(r"emulator|qemu-system|-avd", re.sub(r"[\"\x27\\]", "", text)):
+        return None
     lits = literal_vars(text)
     if os.environ.get("PROOF_WINDOW", lits.get("PROOF_WINDOW", "")).strip().lower() in ("1", "true", "yes", "on"):
         return None

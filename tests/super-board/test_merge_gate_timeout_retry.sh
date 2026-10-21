@@ -98,7 +98,11 @@ run_case() {
   { echo '#!/usr/bin/env bash'
     echo "c=\$(cat '$cnt' 2>/dev/null || echo 0); c=\$((c + 1)); echo \$c > '$cnt'"
     while [ "$#" -ge 2 ]; do
-      echo "if [ \$c -eq $k ]; then cat '$1'; exit $2; fi"
+      # File .sh = lượt gọi chạy script đó (nó tự in log) thay cho cat một log cố định.
+      case "$1" in
+        *.sh) echo "if [ \$c -eq $k ]; then bash '$1' || exit \$?; exit $2; fi" ;;
+        *)    echo "if [ \$c -eq $k ]; then cat '$1'; exit $2; fi" ;;
+      esac
       k=$((k + 1)); shift 2
     done
     echo "echo 'unexpected extra verify call'; exit 99"; } > "$script"
@@ -158,6 +162,142 @@ run_case 17 "$TMP/plain124.log" 124 "$TMP/green.log" 0
 [ "$CASE_RC" -eq 0 ] && [ "$CASE_RUNS" -eq 2 ] \
   && ok "verify command exit 124: retried once, green on retry (exit 0, runs=2)" \
   || fail "plain exit 124 (rc=$CASE_RC runs=$CASE_RUNS, want 0 and 2): $(why 17)"
+
+# ---- review 20/10 (OCR + principal-code-reviewer) ----
+reject_en() {
+  printf '  %s[1mPOST-FIX AUDIT GATE VERDICT:%s[0m %s[91m%s[1mREJECT — FIX THE FAILED CHECKS%s[0m\n' "$E" "$E" "$E" "$E" "$E"
+  printf '  • Regression tests passed: 11/12\n'
+  printf '  • Static checks (secrets, laziness, dependencies, performance, swallowed errors, logging): passed\n'
+}
+{ row TIMEOUT REG-DK-ALL-01 "DevKit full suite"; reject_en; } > "$TMP/red-timeout-en.log"
+{ row TIMEOUT REG-DK-ALL-01 "DevKit full suite"
+  printf '  KẾT LUẬN CỔNG POST-FIX AUDIT: REJECT — CẦN KHẮC PHỤC CÁC ĐIỂM CHƯA ĐẠT\n'; } > "$TMP/red-nostatic.log"
+{ row TIMEOUT REG-DK-ALL-01 "DevKit full suite"; row "NOT RUN" REG-SB-01 "super-board suite"; reject "đạt"; } > "$TMP/red-notrun.log"
+{ row TIMEOUT REG-DK-ALL-01 "DevKit full suite"
+  printf '  KẾT LUẬN CỔNG POST-FIX AUDIT: CHƯA XÁC MINH — thư mục project đã bị gỡ trong lúc gate chạy (worktree finish/remove)\n'
+  printf '  • Lớp tĩnh (bí mật, lười biếng, dependency, hiệu năng, nuốt lỗi, log): đạt\n'; } > "$TMP/red-gone.log"
+{ row TIMEOUT REG-DK-ALL-01 "DevKit full suite"; row FAIL_INFRA REG-SB-01 "super-board suite"; reject "đạt"; } > "$TMP/red-odd.log"
+{ row TIMEOUT REG-DK-ALL-01 "DevKit full suite"; reject "đạt"; } > "$TMP/red-timeout-124.log"
+
+# Ca 8: log tiếng Anh (DEVKIT_LANG=en), chỉ TIMEOUT → chạy lại 1 lần, xanh → merge.
+mkpr 18
+run_case 18 "$TMP/red-timeout-en.log" 1 "$TMP/green.log" 0
+[ "$CASE_RC" -eq 0 ] && [ "$CASE_RUNS" -eq 2 ] \
+  && ok "English timeout-only red: retried once (exit 0, runs=2)" \
+  || fail "English timeout-only red (rc=$CASE_RC runs=$CASE_RUNS, want 0 and 2): $(why 18)"
+
+# Ca 9: có dòng kết luận nhưng thiếu dòng lớp tĩnh → không phân loại được → không chạy lại.
+mkpr 19
+run_case 19 "$TMP/red-nostatic.log" 1 "$TMP/green.log" 0
+[ "$CASE_RC" -eq 11 ] && [ "$CASE_RUNS" -eq 1 ] \
+  && ok "verdict without a static-checks line: not retried (exit 11, runs=1)" \
+  || fail "verdict without static line (rc=$CASE_RC runs=$CASE_RUNS, want 11 and 1): $(why 19)"
+
+# Ca 10: NOT RUN kèm TIMEOUT → không chạy lại.
+mkpr 20
+run_case 20 "$TMP/red-notrun.log" 1 "$TMP/green.log" 0
+[ "$CASE_RC" -eq 11 ] && [ "$CASE_RUNS" -eq 1 ] \
+  && ok "NOT RUN + TIMEOUT: not retried (exit 11, runs=1)" \
+  || fail "NOT RUN + TIMEOUT (rc=$CASE_RC runs=$CASE_RUNS, want 11 and 1): $(why 20)"
+
+# Ca 11: exit 124 dù log đã có dòng kết luận → vẫn chạy lại 1 lần (124 kiểm trước kết luận).
+mkpr 21
+run_case 21 "$TMP/red-timeout-124.log" 124 "$TMP/green.log" 0
+[ "$CASE_RC" -eq 0 ] && [ "$CASE_RUNS" -eq 2 ] \
+  && ok "exit 124 with a verdict line: retried once (exit 0, runs=2)" \
+  || fail "exit 124 with verdict (rc=$CASE_RC runs=$CASE_RUNS, want 0 and 2): $(why 21)"
+
+# Ca 12: exit 1 nhưng kết luận là CHƯA XÁC MINH (project_gone), không phải REJECT → không chạy lại.
+mkpr 22
+run_case 22 "$TMP/red-gone.log" 1 "$TMP/green.log" 0
+[ "$CASE_RC" -eq 11 ] && [ "$CASE_RUNS" -eq 1 ] \
+  && ok "exit 1 with a non-REJECT verdict: not retried (exit 11, runs=1)" \
+  || fail "exit 1 non-REJECT verdict (rc=$CASE_RC runs=$CASE_RUNS, want 11 and 1): $(why 22)"
+
+# Ca 13: dòng suite đỏ có trạng thái lạ (FAIL_INFRA) kèm TIMEOUT → đếm là đỏ khác (fail-closed), không chạy lại.
+mkpr 23
+run_case 23 "$TMP/red-odd.log" 1 "$TMP/green.log" 0
+[ "$CASE_RC" -eq 11 ] && [ "$CASE_RUNS" -eq 1 ] \
+  && ok "unknown red status shape + TIMEOUT: not retried (exit 11, runs=1)" \
+  || fail "unknown red status + TIMEOUT (rc=$CASE_RC runs=$CASE_RUNS, want 11 and 1): $(why 23)"
+
+
+# Ca 14: trước lần chạy lại mốc `at` của merge lock phải được làm mới, để gate khác không coi khoá của verify + retry dài là bỏ
+# quên (STALE_AFTER) và chiếm khoá giữa lúc retry. Lần 1 ghi mốc 0 (không phụ thuộc đồng hồ); lần 2 phải thấy mốc khác 0.
+LOCK_AT="$WT/.claude/super-board/inflight/merge.lock/at"
+LOCK_PID="$WT/.claude/super-board/inflight/merge.lock/pid"
+cat > "$TMP/zero-stamp-red.sh" <<SH
+echo 0 > '$LOCK_AT'; cat '$TMP/red-timeout.log'
+SH
+cat > "$TMP/stamp-green.sh" <<SH
+cat '$LOCK_AT' > '$TMP/stamp-seen'; cat '$TMP/green.log'
+SH
+mkpr 24
+run_case 24 "$TMP/zero-stamp-red.sh" 1 "$TMP/stamp-green.sh" 0
+SEEN=$(cat "$TMP/stamp-seen" 2>/dev/null || echo none)
+[ "$CASE_RC" -eq 0 ] && [ "$CASE_RUNS" -eq 2 ] && [ "$SEEN" != 0 ] && [ "$SEEN" != none ] \
+  && ok "merge lock stamp refreshed before the retry (stamp ${SEEN})" \
+  || fail "merge lock stamp not refreshed before the retry (stamp ${SEEN}, rc=$CASE_RC runs=$CASE_RUNS): $(why 24)"
+
+# Ca 15: lần 1 bị giết giữa chừng để lại file đã track bị sửa VÀ đã `git add` trong scratch; lần chạy lại phải thấy cây và index
+# đúng commit đã merge (`checkout -- .` chép index ra cây nên không gỡ được phần đã add).
+cat > "$TMP/dirty-red.sh" <<SH
+echo dirty > a; git add a; cat '$TMP/red-timeout.log'
+SH
+cat > "$TMP/clean-green.sh" <<SH
+if git diff --quiet HEAD; then cat '$TMP/green.log'; else echo "scratch still dirty"; exit 7; fi
+SH
+mkpr 25
+run_case 25 "$TMP/dirty-red.sh" 1 "$TMP/clean-green.sh" 0
+[ "$CASE_RC" -eq 0 ] && [ "$CASE_RUNS" -eq 2 ] \
+  && ok "scratch tree and index reset to the merged commit before the retry (exit 0, runs=2)" \
+  || fail "scratch tree not reset before the retry (rc=$CASE_RC runs=$CASE_RUNS, want 0 and 2): $(why 25)"
+
+# Ca 16: lần 1 sửa file đã track rồi để lại index.lock → không trả scratch về commit đã merge được → giữ kết quả đỏ, không chạy
+# lại trên một cây không còn là MERGED_SHA (fail-closed).
+cat > "$TMP/locked-red.sh" <<SH
+echo dirty > a; touch "\$(git rev-parse --git-dir)/index.lock"; cat '$TMP/red-timeout.log'
+SH
+mkpr 26
+run_case 26 "$TMP/locked-red.sh" 1 "$TMP/green.log" 0
+[ "$CASE_RC" -eq 11 ] && [ "$CASE_RUNS" -eq 1 ] \
+  && ok "scratch reset failed: first red result kept, no retry (exit 11, runs=1)" \
+  || fail "scratch reset failed (rc=$CASE_RC runs=$CASE_RUNS, want 11 and 1): $(why 26)"
+
+# Ca 17-19: trong lúc verify, gate khác coi khoá là bỏ quên và chiếm nó (ghi pid của nó). Gate này không được chạy lại, không
+# merge (exit 4: chưa giữ được khoá, thẻ ở yên) và — ở mọi đường thoát — không xoá khoá đang sống của gate kia.
+stolen_case() {   # $1 = số PR, $2 = pid lạ, $3 = log lần 1, $4 = exit lần 1, $5 = exit muốn, $6 = mô tả
+  cat > "$TMP/stolen$1.sh" <<SH
+echo $2 > '$LOCK_PID'; cat '$3'
+SH
+  mkpr "$1"
+  run_case "$1" "$TMP/stolen$1.sh" "$4" "$TMP/green.log" 0
+  LEFT=$(cat "$LOCK_PID" 2>/dev/null || echo gone)
+  [ "$CASE_RC" -eq "$5" ] && [ "$CASE_RUNS" -eq 1 ] && [ "$LEFT" = "$2" ] \
+    && ok "lock taken over during $6: no retry, no merge, other gate's lock kept (exit $5, runs=1)" \
+    || fail "lock taken over during $6 (rc=$CASE_RC runs=$CASE_RUNS lock pid=$LEFT, want $5, 1, $2): $(why "$1")"
+  rm -rf "$WT/.claude/super-board/inflight/merge.lock"
+}
+stolen_case 27 999999 "$TMP/red-timeout.log" 1 4 "a timeout-only red verify"
+stolen_case 28 999998 "$TMP/green.log" 0 4 "a green verify"
+stolen_case 29 999997 "$TMP/red-mixed.log" 1 11 "a real FAIL verify"
+
+# Ca 20: không làm mới được mốc khoá (thư mục khoá chỉ đọc — như khi gate khác vừa rm -rf khoá sau lúc kiểm pid) → coi như mất
+# khoá: không chạy lại, không merge (exit 4).
+LOCK_D="$WT/.claude/super-board/inflight/merge.lock"
+if [ "$(id -u)" -eq 0 ]; then
+  echo "- skip: lock stamp refresh failure (root writes into a chmod 555 directory)"
+else
+  cat > "$TMP/ro-lock-red.sh" <<SH
+chmod 555 '$LOCK_D'; cat '$TMP/red-timeout.log'
+SH
+  mkpr 30
+  run_case 30 "$TMP/ro-lock-red.sh" 1 "$TMP/green.log" 0
+  chmod 755 "$LOCK_D" 2>/dev/null; rm -rf "$LOCK_D"
+  [ "$CASE_RC" -eq 4 ] && [ "$CASE_RUNS" -eq 1 ] \
+    && ok "lock stamp cannot be refreshed: treated as a lost lock, no retry, no merge (exit 4, runs=1)" \
+    || fail "lock stamp refresh failure (rc=$CASE_RC runs=$CASE_RUNS, want 4 and 1): $(why 30)"
+fi
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_timeout_retry: PASS"; exit 0; } || { echo "test_merge_gate_timeout_retry: FAIL ($FAILS)"; exit 1; }

@@ -49,14 +49,6 @@
       "args": [
         "../mcp-servers/antigravity-pm-mcp/bin/antigravity-pm-mcp.js"
       ]
-    },
-    "agentmemory": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@agentmemory/agentmemory@0.9.29",
-        "mcp"
-      ]
     }
   }
 }

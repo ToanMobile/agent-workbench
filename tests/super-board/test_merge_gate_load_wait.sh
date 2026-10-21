@@ -53,6 +53,8 @@ export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP"
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0
 # Slot nặng riêng của test: slot toàn máy có thể đang bị merge gate thật giữ (chờ tới 3600 s).
 export SB_HEAVY_SLOT_DIR="$TMP/slots"
+# Tải mà heavy_slot.py (bọc lệnh verify) đọc: file riêng, tải thấp — không bao giờ tải thật của máy.
+export DEVKIT_SLOT_LOAD_FILE="$TMP/slot-load"; echo 1 > "$DEVKIT_SLOT_LOAD_FILE"
 # Verify đỏ (exit 3) để gate không merge; dòng đầu ghi giây bắt đầu verify.
 STARTED="$TMP/verify.started"
 CFG="$TMP/cfg.json"
@@ -184,6 +186,60 @@ for pair in "MERGED 0" "CLOSED 3"; do
   [ "$rc" -eq "$want" ] && [ ! -f "$STARTED" ] && ok "PR ${st} during the wait: exit ${want}, no verify" \
     || fail "PR ${st} during the wait: gate exit $rc (want ${want}), verify ran: $([ -f "$STARTED" ] && echo yes || echo no)"
 done
+
+# Ca 13–15: ngưỡng tải đọc được từ config board `merge_load_max` (người dùng 20/10: "dưới 100 thì cho chạy" — máy này tải 45–86 cả
+# ngày, ngưỡng mặc định 2 × số core = 24 không bao giờ đạt nên PR nào cũng chờ hết merge_load_wait_s). Biến SB_MERGE_LOAD_MAX vẫn thắng.
+CFG_MAX="$TMP/cfg-max.json"; jq '.merge_load_wait_s = 3 | .merge_load_max = 100' "$CFG" > "$CFG_MAX"
+gate_max() { ( unset SB_MERGE_LOAD_WAIT_S SB_MERGE_LOAD_MAX; cd "$WT" && SB_MERGE_LOAD_POLL_S=1 "$@" bash "$GATE" --config "$CFG_MAX" \
+  --pr 5 --expect-head "$H" ); }
+echo 60 > "$LOADF"; rm -f "$STARTED"
+gate_max env >"$TMP/gate13.log" 2>&1; rc=$?
+grep -q "waiting for load" "$TMP/gate13.log" && fail "config merge_load_max=100, load 60: the gate still waits" \
+  || ok "config merge_load_max=100, load 60: no wait"
+ran "$rc" && ok "config merge_load_max=100, load 60: verify ran (exit 11)" || fail "config merge_load_max=100, load 60: gate exit $rc"
+echo 120 > "$LOADF"; rm -f "$STARTED"
+gate_max env >"$TMP/gate14.log" 2>&1; rc=$?
+grep -q "waiting for load 120 to drop below 100 before verify (at most 3s)" "$TMP/gate14.log" \
+  && ok "config merge_load_max=100, load 120: the gate waits" || fail "config merge_load_max=100, load 120: $(grep merge-gate "$TMP/gate14.log" | head -3)"
+echo 60 > "$LOADF"; rm -f "$STARTED"
+gate_max env SB_MERGE_LOAD_MAX=50 >"$TMP/gate15.log" 2>&1; rc=$?
+grep -q "waiting for load 60 to drop below 50 before verify" "$TMP/gate15.log" \
+  && ok "SB_MERGE_LOAD_MAX=50 overrides config merge_load_max=100" || fail "env did not override the config: $(grep merge-gate "$TMP/gate15.log" | head -3)"
+
+# Ca 16: lệnh verify chạy với DEVKIT_SLOT_PRIORITY=merge (bin/heavy_slot.py: merge đứng đầu hàng đợi khoá Unity;
+# post-fix-gate không chạy sentinel hằng ngày trong merge gate). DEVKIT_SLOT_LOAD_WAIT_S=0 CHỈ khi chính gate đã bật chờ tải ở trên
+# (cap > 0): OCR 20/10 — cap = 0 (config thiếu merge_load_wait_s, mặc định của hầu hết board, hay SB_MERGE_LOAD_WAIT_S=0) từng vẫn ép 0,
+# nên verify của các board đó chạy không xét tải lần nào. Biến người gọi đã đặt thì giữ nguyên. Cả hai nhánh của run_verify_cmd: lệnh bọc
+# qua heavy-slot, và lệnh có chữ post-fix-gate.py (gate nối thêm "--diff … --force-full": `false` nuốt chúng; tên trần không có
+# .agents/devkit/bin/ đứng trước nên không vướng kiểm tra exit 9). `-unset` (không `:-`): phân biệt chưa đặt với rỗng.
+PRIOF="$TMP/prio"; CFG_PRIO="$TMP/cfg-prio.json"; CFG_PRIO_PFG="$TMP/cfg-prio-pfg.json"
+probe="printf '%s %s' \"\${DEVKIT_SLOT_PRIORITY-unset}\" \"\${DEVKIT_SLOT_LOAD_WAIT_S-unset}\" > '$PRIOF'"
+jq --arg c "$probe; exit 3" '.verify_commands = [$c]' "$CFG" > "$CFG_PRIO"
+jq --arg c ": post-fix-gate.py; $probe; false" '.verify_commands = [$c]' "$CFG" > "$CFG_PRIO_PFG"
+# verify_env <config> <tên> <mong> [BIẾN=giá trị…]: tải thấp (3 < 10, không chờ thật), so môi trường mà lệnh verify thấy.
+# VE_LOAD: tải ghi vào file (mặc định 3).
+verify_env() {
+  local cfg="$1" name="$2" want="$3"; shift 3
+  echo "${VE_LOAD:-3}" > "$LOADF"; rm -f "$PRIOF"
+  ( unset DEVKIT_SLOT_PRIORITY DEVKIT_SLOT_LOAD_WAIT_S SB_MERGE_LOAD_WAIT_S; cd "$WT" \
+      && env "$@" bash "$GATE" --config "$cfg" --pr 5 --expect-head "$H" ) >"$TMP/gate16-$name.log" 2>&1
+  [ "$(cat "$PRIOF" 2>/dev/null)" = "$want" ] && ok "16 $name: verify sees '$want'" \
+    || fail "16 $name: verify env '$(cat "$PRIOF" 2>/dev/null)' (want '$want'): $(grep merge-gate "$TMP/gate16-$name.log" | tail -2)"
+}
+verify_env "$CFG_PRIO" wrap-cap3 "merge 0" SB_MERGE_LOAD_WAIT_S=3
+verify_env "$CFG_PRIO" wrap-cap0 "merge unset" SB_MERGE_LOAD_WAIT_S=0
+verify_env "$CFG_PRIO" wrap-nocfg "merge unset"
+verify_env "$CFG_PRIO" wrap-push "push 0" SB_MERGE_LOAD_WAIT_S=3 DEVKIT_SLOT_PRIORITY=push
+verify_env "$CFG_PRIO" wrap-preset "merge 7" SB_MERGE_LOAD_WAIT_S=3 DEVKIT_SLOT_LOAD_WAIT_S=7
+verify_env "$CFG_PRIO_PFG" pfg-cap3 "merge 0" SB_MERGE_LOAD_WAIT_S=3
+verify_env "$CFG_PRIO_PFG" pfg-cap0 "merge unset" SB_MERGE_LOAD_WAIT_S=0
+verify_env "$CFG_PRIO_PFG" pfg-push "push unset" DEVKIT_SLOT_PRIORITY=push
+# OCR 21/10: cap > 0 nhưng tải không đọc được ⇒ gate không chờ tải ⇒ không ép 0 (bên trong tự chờ tải như mọi lượt).
+VE_LOAD=12.5 verify_env "$CFG_PRIO" wrap-noload "merge unset" SB_MERGE_LOAD_WAIT_S=3
+VE_LOAD=12.5 verify_env "$CFG_PRIO_PFG" pfg-noload "merge unset" SB_MERGE_LOAD_WAIT_S=3
+grep -q "verify: : post-fix-gate.py; .* --force-full" "$TMP/gate16-pfg-cap3.log" \
+  && ok "16 pfg: the verify command took the post-fix-gate.py branch" \
+  || fail "16 pfg: post-fix-gate.py branch not taken: $(grep 'verify:' "$TMP/gate16-pfg-cap3.log" | head -1)"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_load_wait: PASS"; exit 0; } || { echo "test_merge_gate_load_wait: FAIL ($FAILS)"; exit 1; }

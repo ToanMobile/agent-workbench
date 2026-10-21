@@ -9,6 +9,10 @@
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 unset DEVKIT_GATE_CACHE_MAX_S DEVKIT_GATE_CACHE   # môi trường của người chạy không được đổi kết quả (OCR 17/10)
+# Cache theo khoá nội dung (bin/suite_cache.py, P2 20/10) nằm ở git common dir, dùng chung mọi worktree: nó cho worktree này PASS mà
+# anh em vừa chạy thật trên cùng cây, nên các ca "không mượn biên nhận anh em" không còn chạy suite. DEVKIT_SUITE_CACHE=0 giữ test
+# này về biên nhận anh em; việc dùng chung theo khoá là tests/gates/test_gate_suite_cache.sh ca 1b.
+export DEVKIT_SUITE_CACHE=0
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"

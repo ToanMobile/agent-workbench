@@ -325,6 +325,39 @@ def run_gh(args):
     return result
 
 
+def complete_pr_files(args, stdout):
+    """`gh pr view --json files` trả tối đa 100 file (OfficeReader #170, 103 file, 20/10): kiểm changedFiles == len(files)
+    hỏng ở mọi lần và merge gate halt cả board vĩnh viễn. Khi danh sách ngắn hơn changedFiles, lấy đủ qua REST có phân trang
+    (`gh api …/pulls/N/files`, chỉ đọc) theo dạng của gh pr view ({path, additions, deletions}). Lỗi thì trả nguyên văn:
+    kiểm tra bên dưới vẫn báo thiếu như cũ."""
+    try:
+        value = json.loads(stdout)
+    except ValueError:
+        return stdout
+    if not (isinstance(value, dict) and isinstance(value.get('files'), list) and type(value.get('changedFiles')) is int
+            and value['changedFiles'] > len(value['files'])):
+        return stdout
+    number = args[2] if len(args) > 2 else ''
+    if not number.isdigit():
+        return stdout
+    repo = None
+    for i, arg in enumerate(args):
+        if arg in ('--repo', '-R') and i + 1 < len(args):
+            repo = args[i + 1]
+        elif arg.startswith('--repo='):
+            repo = arg.split('=', 1)[1]
+    path = f'repos/{repo}/pulls/{number}/files' if repo else f'repos/{{owner}}/{{repo}}/pulls/{number}/files'
+    try:
+        full = run_gh(['api', path, '--paginate', '--slurp'])
+        if full.returncode:
+            return stdout
+        value['files'] = [{'path': f['filename'], 'additions': f['additions'], 'deletions': f['deletions']}
+                          for page in json.loads(full.stdout) for f in page]
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+        return stdout
+    return json.dumps(value)
+
+
 def read(args, kind='json', meta=None, recovering=False):
     if not read_only(args):
         raise ValueError('retry helper accepts read-only GitHub commands only')
@@ -352,6 +385,8 @@ def read(args, kind='json', meta=None, recovering=False):
             if (result.returncode and args[:2] == ['pr', 'diff'] and '--allow-escape-sequences' not in args
                     and 'terminal escape sequences' in result.stderr):
                 result = run_gh([*args, '--allow-escape-sequences'])
+            if not result.returncode and kind == 'metadata' and args[:2] == ['pr', 'view']:
+                result.stdout = complete_pr_files(args, result.stdout)
             diagnostic = result.stderr
             if result.returncode:
                 diagnostic += result.stdout

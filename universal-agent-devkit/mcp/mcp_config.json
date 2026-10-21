@@ -43,14 +43,6 @@
       "env": {
         "GOOGLE_APPLICATION_CREDENTIALS": "${GOOGLE_APPLICATION_CREDENTIALS:-}"
       }
-    },
-    "agentmemory": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@agentmemory/agentmemory@0.9.29",
-        "mcp"
-      ]
     }
   }
 }

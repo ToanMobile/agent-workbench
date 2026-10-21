@@ -817,7 +817,13 @@ res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "
                      cwd=repo, capture_output=True, text=True, errors="replace",
                      env={**os.environ, "CLAUDE_PROJECT_DIR": repo, "DEVKIT_LEDGER_ROOT": ledger_root,
                           "TEST_RUN_LOCK_WAIT_S": os.environ.get("TEST_RUN_LOCK_WAIT_S", "45"),
-                          "GATE_TOTAL_BUDGET_S": budget_s})
+                          "GATE_TOTAL_BUDGET_S": budget_s,
+                          # P1 (20/10): lượt Stop xếp sau merge/push/interactive ở hàng đợi khoá Unity; P1b: tải máy
+                          # cao thì chỉ chờ ngắn rồi vẫn chạy (hook có hạn 1800 s, ngân sách suite 900 s). Tổng giây chờ tải của
+                          # cả lượt 120 s: tải ≥ 100 kéo dài từng ăn tới 600 s của 900 s ngân sách, suite sau thành BUDGET (exit 4)
+                          "DEVKIT_SLOT_PRIORITY": os.environ.get("DEVKIT_SLOT_PRIORITY", "stop"),
+                          "DEVKIT_SLOT_LOAD_WAIT_S": os.environ.get("DEVKIT_SLOT_LOAD_WAIT_S", "60"),
+                          "DEVKIT_SLOT_ADVISORY_BUDGET_S": os.environ.get("DEVKIT_SLOT_ADVISORY_BUDGET_S", "120")})
 if not os.path.isdir(repo):   # W1 R5a: the project (a worktree) went away while its suites ran — nothing to hold or record here
     sys.exit(0)
 if isinstance(state.get("touched"), dict) and state["touched"].pop(sid, None) is not None:
