@@ -160,6 +160,8 @@ case("bash kit test before the last edit is blocked",
      [["bash", KIT_BASH, MARKS], E], 2, NO, msg="test PASS")
 case("bash -c echo checkmark is not a test run",
      [E, ["bash", "bash -c 'echo ✔'", "✔"]], 2, NO, msg="test PASS")
+case("bash -c <kit path> is a command string, not a direct file run",
+     [E, ["bash", "bash -c tests/a/test_x.sh", "✔"]], 2, NO, msg="test PASS")
 case("cat test_y.sh is not a test run",
      [E, ["bash", "cat test_y.sh", "✔"]], 2, NO, msg="test PASS")
 case("cat of a suite path is not a test run",
