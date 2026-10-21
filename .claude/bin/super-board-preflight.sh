@@ -167,7 +167,9 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     | [ $fix, $ac | scan("(?i)(?:hoàn thiện|hoàn chỉnh|đủ|toàn bộ|tất cả|complete|all)\\b[^\n]{0,60}\\btheo\\b[^\n]{0,40}§[ \t]*[0-9][0-9.]*") ] as $ref
     | [ $acs[] | select(test("(?i)\\b[0-9]+[ \t]*(?:người|people|users|testers)\\b|(?:không crash|crash-free)[^\n]*%|retention|giữ chân|số giờ thật|chạy thật|đăng nhập \\S+ thật")) ] as $people
     | [ $acs[] | select(test("(?i)\\bOOM\\b|\\bFPS\\b|bộ nhớ|\\bRAM\\b|nhiệt độ|thermal|(?:hao|tốn|sụt|mức) pin\\b|battery")) ] as $metric
-    | ($risk | test("(?i)máy thật|thiết bị thật|real device|physical device")) as $realdev
+    # Dòng phủ định ("không cần máy thật", "no real device") không phải tín hiệu máy thật: bỏ cả dòng có phủ định đứng trước cụm.
+    | ([ $risk | split("\n")[] | select(test("(?i)\\b(?:không|no|not|without)\\b[^\n]*(?:máy thật|thiết bị thật|real device|physical device)") | not)
+         | select(test("(?i)máy thật|thiết bị thật|real device|physical device")) ] | length > 0) as $realdev
     # work: tín hiệu "nhiều việc" (gợi ý tách theo việc); còn lại là AC phải tách ra thẻ `qa` riêng.
     | [ if ($short | length) >= 5 and ($short | length) * 5 >= ($items | length) * 4 then
           { w: 1, work: true, split: $items,

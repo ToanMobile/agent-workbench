@@ -38,7 +38,7 @@ export PATH="$TMP/bin:$PATH" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETR
   SB_GH_GUARD_STATE_FILE="$TMP/budget"
 
 # Một lần gọi cho cả lô của mỗi repo, như wave và lint gọi.
-for spec in Neighbours-From-Hell:4,13,14,15,16,24,47,54 OfficeReader:94,98,102 GeelyEx2:11 Synthetic:901,902,903,904,905,906,907; do
+for spec in Neighbours-From-Hell:4,13,14,15,16,24,47,54 OfficeReader:94,98,102 GeelyEx2:11 Synthetic:901,902,903,904,905,906,907,908; do
   repo="${spec%%:*}"
   bash "$PREFLIGHT" --repo "ToanMobile/$repo" --issues "${spec##*:}" >"$TMP/$repo.json" 2>"$TMP/$repo.err" \
     || fail "$repo: preflight exit $? ($(tail -1 "$TMP/$repo.err"))"
@@ -46,6 +46,7 @@ done
 
 verdict() { jq -r --arg n "$2" '.[$n] | "\(.verdict)/\(.tag)"' "$TMP/$1.json" 2>/dev/null; }
 
+# 908 là AC "OOM" mà Risk ghi "không cần máy thật" (phủ định không tính là tín hiệu máy thật).
 # Ca biên: #16 Fix đúng 5 đầu việc ngắn + "Giai đoạn"; #15 chỉ "Giai đoạn" + AC cần số liệu vận hành; 905 là
 # body #13 xuống dòng CRLF; 906 là #98 với tiêu đề "## Acceptance Criteria (…)" (has_acs và sect phải cùng nhận);
 # 907 là #16 thêm mục "## Fixtures" cuối body (không được thay mục Fix).
@@ -69,7 +70,7 @@ done
 # là tiêu đề nêu 3 thứ (902), đúng một tín hiệu và sát ngưỡng ở mọi tín hiệu khác: Fix 4 việc, 3 vùng, tiêu đề
 # 2 việc (904). Không được giữ nhầm.
 for spec in OfficeReader:94 GeelyEx2:11 Neighbours-From-Hell:24 Neighbours-From-Hell:47 Synthetic:901 Synthetic:902 \
-            Synthetic:904; do
+            Synthetic:904 Synthetic:908; do
   repo="${spec%%:*}"; n="${spec##*:}"; got=$(verdict "$repo" "$n")
   [ "$got" = proceed/clean ] && ok "$repo #$n: proceed (thẻ bình thường không bị giữ)" \
     || fail "$repo #$n: muốn proceed/clean, được $got"
