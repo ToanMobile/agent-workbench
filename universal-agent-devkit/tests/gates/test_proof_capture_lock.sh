@@ -15,7 +15,7 @@ CMD="${PROOF_CAPTURE_CMD:-$DEVKIT_DIR/bin/proof-capture.py}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-"${LOCK_TEST_PY:-python3}" - "$TMP" "$CMD" <<'PY'
+"${LOCK_TEST_PY:-python3}" - "$TMP" "$CMD" <<'PYEND'
 import contextlib, hashlib, importlib.util, os, re, signal, stat, struct, subprocess, sys, time, zlib
 
 TMP, CMD = sys.argv[1], sys.argv[2]
@@ -987,6 +987,6 @@ finally:
     reap_all()
 print(("%d failed" % len(FAILS)) if FAILS else "ok")
 sys.exit(1 if FAILS else 0)
-PY
+PYEND
 rc=$?
 [ "$rc" = 0 ] && echo "✅ test_proof_capture_lock: all passed" || { echo "❌ test_proof_capture_lock: failed"; exit 1; }
