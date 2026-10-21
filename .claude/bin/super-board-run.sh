@@ -97,6 +97,23 @@ board_notify() {
   python3 "$SCRIPT_DIR/super-board-notify.py" "$@" || true
 }
 
+resolve_build_workers() {
+  # $1 = đường dẫn config. Khoá build_workers (số nguyên >= 1); thiếu hoặc sai thì 10 (người dùng 21/10); đặt 1 để về một worker.
+  local v
+  v=$(jq -r '.build_workers // empty' "$1" 2>/dev/null || true)
+  case "$v" in ''|*[!0-9]*|0) v=10 ;; esac
+  printf '%s\n' "$((10#$v))"
+}
+
+resolve_build_load_max() {
+  # $1 = đường dẫn config. Thứ tự: env SB_BUILD_LOAD_MAX, khoá build_load_max, env DEVKIT_SLOT_LOAD_MAX, 100. Số sai thì 100.
+  local v="${SB_BUILD_LOAD_MAX:-}"
+  [ -n "$v" ] || v=$(jq -r '.build_load_max // empty' "$1" 2>/dev/null || true)
+  [ -n "$v" ] || v="${DEVKIT_SLOT_LOAD_MAX:-}"
+  case "$v" in ''|*[!0-9.]*|*.*.*|.) v=100 ;; esac
+  printf '%s\n' "$v"
+}
+
 if [ "${SB_LIB_ONLY:-0}" != "1" ]; then
 CONFIG_PATH=".claude/super-board/configs/${CONFIG_SLUG}.json"
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -121,12 +138,11 @@ REBUILD_CAP=$(jq -r '.rebuild_cap // 2' "$CONFIG_PATH")
 BLOCK_ALERT_PCT=$(jq -r '.block_rate_alert_pct // 30' "$CONFIG_PATH")
 TICK_SECONDS=$(jq -r '.tick_seconds // 120' "$CONFIG_PATH")
 MAX_WORKERS=$(jq -r '.max_workers // 3' "$CONFIG_PATH")
-# Lane build chạy nhiều worker theo tải máy (21/10). build_workers = trần trên, mặc định 1 = như trước. build_load_max (hoặc env
-# SB_BUILD_LOAD_MAX): chỉ khởi THÊM worker khi tải 1 phút dưới mức này, mặc định 8. Giá trị sai thì dùng mặc định.
-BUILD_WORKERS=$(jq -r '.build_workers // 1' "$CONFIG_PATH")
-case "$BUILD_WORKERS" in ''|*[!0-9]*|0) BUILD_WORKERS=1 ;; esac
-BUILD_LOAD_MAX="${SB_BUILD_LOAD_MAX:-$(jq -r '.build_load_max // 8' "$CONFIG_PATH")}"
-case "$BUILD_LOAD_MAX" in ''|*[!0-9.]*|*.*.*|.) BUILD_LOAD_MAX=8 ;; esac
+# Lane build chạy nhiều worker theo tải máy (21/10). build_workers = trần trên, mặc định 10 (đặt 1 để về một worker). build_load_max (hoặc env
+# SB_BUILD_LOAD_MAX): chỉ khởi THÊM worker khi tải 1 phút dưới mức này; mặc định DEVKIT_SLOT_LOAD_MAX, thiếu nữa thì 100
+# (người dùng 21/10: "tải máy dưới 100 thì cho chạy"). Giá trị sai thì dùng mặc định.
+BUILD_WORKERS=$(resolve_build_workers "$CONFIG_PATH")
+BUILD_LOAD_MAX=$(resolve_build_load_max "$CONFIG_PATH")
 BOT_LOGIN=$(jq -r '.notifications.bot_identity // .bot_identity // ""' "$CONFIG_PATH")
 WORKER_BACKEND=$(jq -r '.worker_backend // "workflow"' "$CONFIG_PATH")
 # Runaway controls (issue #8). NO_PROGRESS_CYCLES counts dispatch cycles with no
