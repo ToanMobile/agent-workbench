@@ -34,6 +34,11 @@ ADVISORY_BUDGET_S = 600.0  # DEVKIT_SLOT_ADVISORY_BUDGET_S: tổng giây ĐỒNG
 # hiện tại bắt đầu, đã báo hết ngân sách chưa.
 _LOAD_WAIT = {"spent": 0.0, "active": 0, "since": 0.0, "noted": False}
 _ADVISORY_LOCK = threading.Lock()
+HEAVY_WAIT_S = 600.0       # DEVKIT_SLOT_HEAVY_WAIT_S: một suite nặng xếp hàng chờ slot tối đa chừng này rồi vẫn chạy
+HEAVY_BUDGET_S = 600.0     # DEVKIT_SLOT_HEAVY_BUDGET_S: tổng giây một TIẾN TRÌNH được chờ slot nặng (k suite nối nhau không chờ k × giới hạn)
+# ponytail: cộng giây chờ của từng suite (các suite chờ chồng nhau tính nhiều lần, chặt hơn _LOAD_WAIT); đổi sang hợp khoảng đồng hồ nếu
+# thấy suite chạy sớm quá khi nhiều luồng cùng xếp hàng.
+_HEAVY_WAIT = {"spent": 0.0}
 
 
 def _load_wait_spent(now: float) -> float:
@@ -609,13 +614,21 @@ def acquire_for_suite(info: dict, *, est_s: Optional[float] = None, label: str =
     # đã được cho chạy (DEVKIT_SLOT_ADVISORY_HELD=1) không xin: cha giữ slot mà con chờ slot là bế tắc. Slot này không làm `held`
     # (gate lồng vẫn phải xin khoá Unity).
     if info.get("cls") in HEAVY_CLASSES and os.environ.get("DEVKIT_SLOT_ADVISORY_HELD") != "1":
-        hv_deadline = time.monotonic() + lock_wait
+        # Chờ hàng đợi tối đa như chờ tải (600 s), không phải 3600 s của khoá Unity: hết giờ suite vẫn chạy, nên chờ cả giờ chỉ làm merge
+        # gate (SIGTERM sau 3600 s) và khoá merge (5400 s) quá hạn. Ngân sách chờ là của cả tiến trình (DEVKIT_SLOT_HEAVY_BUDGET_S): k suite
+        # nối nhau không chờ k × giới hạn. Không thừa hưởng DEVKIT_SLOT_LOAD_WAIT_S=0: đó chỉ là "đã chờ TẢI", chưa chờ slot.
+        hv_wait = _env_float("DEVKIT_SLOT_HEAVY_WAIT_S", min(HEAVY_WAIT_S, _env_float("SB_HEAVY_SLOT_WAIT_S", HEAVY_WAIT_S)))   # SB_… rút ngắn được như cũ
+        with _ADVISORY_LOCK:
+            hv_wait = min(hv_wait, max(0.0, _env_float("DEVKIT_SLOT_HEAVY_BUDGET_S", HEAVY_BUDGET_S) - _HEAVY_WAIT["spent"]))
+        hv_deadline = time.monotonic() + hv_wait
         if max_wait is not None:
             hv_deadline = min(hv_deadline, t_start + max(0.0, max_wait))
         hv = acquire_pool("heavy", pool_paths("heavy", heavy_max()), wait_s=max(0.0, hv_deadline - time.monotonic()), prio=prio,
                           est_s=est_s, label=label)
+        with _ADVISORY_LOCK:
+            _HEAVY_WAIT["spent"] += hv.waited_s
         if hv.timed_out:
-            notes.append(f"{heavy_max()} suite nặng đang chạy: đã xếp hàng {hv.waited_s:.0f}s, hết ngân sách chờ — vẫn chạy")
+            notes.append(f"{heavy_max()} suite nặng đang chạy: đã xếp hàng {hv.waited_s:.1f}s, hết ngân sách chờ — vẫn chạy")
         else:
             got.append(hv)
     if engine == "unity":

@@ -41,7 +41,7 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="${SLR_KIT:-$DEVKIT_DIR}"
 export PYTHONDONTWRITEBYTECODE=1
-python3 -I - "$KIT" <<'PY'
+python3 -I - "$KIT" <<'PYEND'
 import concurrent.futures, glob, json, os, re, shutil, signal, subprocess, sys, tempfile, threading, time
 
 KIT = os.path.realpath(sys.argv[1])
@@ -779,4 +779,4 @@ if fails:
     print("test_session_lock_resolve: %d failure(s)" % len(fails))
     sys.exit(1)
 print("test_session_lock_resolve: all passed")
-PY
+PYEND
