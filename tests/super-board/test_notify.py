@@ -71,6 +71,17 @@ def main() -> int:
         )
         check(callback.startswith("sb:ap:") and len(callback) == 22 and callback[6:] == files[0].stem, "callback_data is sb:ap: plus 16 hex", callback)
 
+        # #148: tin phải nói việc gì, của project nào, không chỉ mã PR + sha.
+        calls.clear()
+        notify.main(["send", "--card", "PR #9", "--repo", "owner/my-app", "--title", "🐛 [fix] login: sửa lỗi đăng nhập", "--text", "đã merge " + HEAD])
+        sent = calls[-1][1]["text"] if calls else ""
+        check("sửa lỗi đăng nhập" in sent and "my-app" in sent, "send nêu tiêu đề và tên project", sent)
+        check(HEAD not in sent, "send không in sha 40 ký tự", sent)
+        calls.clear()
+        notify.main(["approve-button", "--repo", "owner/my-app", "--pr", "9", "--head", HEAD, "--source", "9", "--card", "PR #9", "--title", "✨ [feat] export csv"])
+        sent = calls[-1][1]["text"] if calls else ""
+        check("export csv" in sent and "my-app" in sent, "approve-button nêu tiêu đề và tên project", sent)
+
         def down(token, method, body):
             raise OSError("network down")
 
