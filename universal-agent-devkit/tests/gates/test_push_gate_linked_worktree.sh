@@ -275,5 +275,50 @@ sys.exit(0 if any(r.get("mode") != "full" and r.get("exit") == 2 and r.get("exit
 PY
 expect "L21: an edited test approved by the worktree's own --full, then worktree finish: the push from main is still covered" 0 "covered"
 
+# L22 (principal review 21/10): the merge gate's exit 1 (a FAIL on the SAME content — here a rule only main's matrix has) still drops the
+#     worktree's exit-0 receipt: finish refuses, and that receipt must not vouch for the push any more.
+newrepo
+gated_worktree_commit 22
+python3 - "$R/.agents/regression_matrix.active.json" <<'PY' || bad "L22 setup: adding a failing rule to main's matrix failed"
+import json, sys
+m = json.load(open(sys.argv[1]))
+m["rules"].append({"component": "Main-only", "watch_files": ["src/*"],
+                   "mandatory_regression_tests": [{"id": "REG-MAIN", "name": "main only", "command": "false"}]})
+json.dump(m, open(sys.argv[1], "w"))
+PY
+(cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) && bad "L22 setup: worktree finish merged although main's rule fails"
+cov22="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate; print(push_gate.check(sys.argv[2], linked=True)[0])' "$DEVKIT_DIR/bin" "$W" 2>&1 | tail -1)"
+[ "$cov22" = False ] && ok "L22: the merge gate's FAIL on the same content drops the worktree's receipt (it covers nothing any more)" \
+  || bad "L22: after the merge gate's FAIL the worktree receipt still covers its HEAD ($cov22)"
+
+# L23 (principal review 21/10): the merge-check exemption is for the SAME content only — the worktree passed its --full on A, then
+#     committed B (an existing test edited again, never gated): the merge gate's exit 2 on B drops A's receipt as before, so the push
+#     from main is refused instead of riding A's receipt.
+newrepo
+mkdir -p "$R/tests" && printf 'exit 0\n' > "$R/tests/test_core.sh" && git -C "$R" add tests/test_core.sh && git -C "$R" commit -qm "a test" \
+  && git -C "$W" merge -q --ff-only main || bad "L23 setup: test on main failed"
+echo "fun ok() = 23" > "$W/src/Core.kt"; printf 'exit 0 # v2\n' > "$W/tests/test_core.sh"
+CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief --auto-approve-tests > "$TMP/gate.out" 2>&1 \
+  || bad "L23 setup: gate --full --auto-approve-tests in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
+git -C "$W" commit -qam "gated work" || bad "L23 setup: commit A failed"
+printf 'exit 0 # v3 never gated\n' > "$W/tests/test_core.sh"; git -C "$W" commit -qam "test edited again, not gated" || bad "L23 setup: commit B failed"
+(cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) || bad "L23 setup: worktree finish failed: $(tail -3 "$TMP/finish.out")"
+expect "L23: content changed after the worktree's --full, merge gate exit 2: the old receipt does not cover the push from main" 2
+
+# L24 (principal review 21/10, P2-1): as L23 but B only edits a golden fixture tests/fixtures/expected.md — a file push_gate's
+#     "needs no test" rule lets through on its own: only dropping A's receipt (different content) stops the push. The exemption keeps a
+#     receipt of the SAME content only; one that skipped the whole receipt write carried A's receipt into main and the push went through.
+newrepo
+mkdir -p "$R/tests/fixtures" && printf 'exit 0\n' > "$R/tests/test_core.sh" && echo "expected v1" > "$R/tests/fixtures/expected.md" \
+  && git -C "$R" add tests && git -C "$R" commit -qm "a test and its golden file" && git -C "$W" merge -q --ff-only main \
+  || bad "L24 setup: test on main failed"
+echo "fun ok() = 24" > "$W/src/Core.kt"; printf 'exit 0 # v2\n' > "$W/tests/test_core.sh"
+CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief --auto-approve-tests > "$TMP/gate.out" 2>&1 \
+  || bad "L24 setup: gate --full --auto-approve-tests in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
+git -C "$W" commit -qam "gated work" || bad "L24 setup: commit A failed"
+echo "expected v2, never gated" > "$W/tests/fixtures/expected.md"; git -C "$W" commit -qam "golden file changed, not gated" || bad "L24 setup: commit B failed"
+(cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) || bad "L24 setup: worktree finish failed: $(tail -3 "$TMP/finish.out")"
+expect "L24: a golden file changed after the worktree's --full, merge gate exit 2: the receipt of A does not cover B's push" 2
+
 [ "$FAILS" = 0 ] && echo "ALL OK" && exit 0
 echo "$FAILS FAILED"; exit 1

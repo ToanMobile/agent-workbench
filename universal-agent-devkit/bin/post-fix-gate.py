@@ -1456,7 +1456,7 @@ def _tree_store(tree_fp, project_dir, fp, data=None):
 
 
 def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None, tested_fp=None,
-                            untested=None, partial=False, locked=True):
+                            untested=None, partial=False, locked=True, keep_same=False):
     """After a full regression run: drop the previous receipt, and on exit 0 record
     {time, fingerprint} of the audited code in .git/postfix-gate/full_pass.json (outside the
     tree). hooks/proof_gate.sh accepts an XONG only with a receipt from this turn whose
@@ -1471,7 +1471,9 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     (the Stop hook: only a subset ran) turns the receipt of the same code from exit 0 to 2, so XONG and push are refused
     as before while its suites stay reusable; a receipt of other code is dropped.
     locked: the run holds test_run.lock (False: it waited and did not get it, or it never asked: it re-used and ran nothing). A run without the lock
-    may only DROP a receipt, never replace it (F1, see the partial branch)."""
+    may only DROP a receipt, never replace it (F1, see the partial branch).
+    keep_same (#154): the run is the merge gate of `worktree finish` — its UNVERIFIED exit 2 leaves an exit-0 receipt of the SAME
+    content as it is (what the session owes is its own gate's business); a receipt of other content is still dropped."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
@@ -1484,6 +1486,13 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
         t.get("status") not in ("PASS", "UNTESTED", "BUSY") for t in (tests or []) if t.get("command"))
     if partial and unverified_ok:
         run_fp = tested_fp or tree_fp.tree_fingerprint(project_dir)   # once: the store drop and the receipt below both need it
+        if keep_same:
+            try:
+                kept = _load_state_json(path)
+            except (OSError, ValueError, RecursionError, OverflowError):
+                kept = None   # unreadable: handled below as before (dropped)
+            if run_fp and isinstance(kept, dict) and kept.get("fingerprint") == run_fp and kept.get("exit") == 0:
+                return   # #154: the session's --full of this very content stands, and its tree store entry with it
         _tree_store(tree_fp, project_dir, run_fp)   # exit 2 on the tested tree: its exit-0 entry goes, as this receipt below
         try:
             kept = _load_state_json(path)
@@ -6667,11 +6676,13 @@ def main():
     # #154 (21/10): the merge gate of `worktree finish` (scripts/git/worktree.py _merge_gate sets DEVKIT_GATE_MERGE_CHECK=1) checks for
     # regressions only; its exit 2 (an edited test awaiting the session's approval, a suite that could not run) is the session's own
     # business and never refuses the merge — and used to turn the session's exit-0 receipt of the SAME content down to exit 2, so the push
-    # from main was refused until the gate ran again. That exit 2 leaves the receipt alone; its exit 1 (a FAIL) still drops it, as before.
-    merge_check_unverified = exit_code == 2 and os.environ.get("DEVKIT_GATE_MERGE_CHECK") == "1"
+    # from main was refused until the gate ran again. That exit 2 leaves an exit-0 receipt of the SAME content alone (keep_same); a
+    # receipt of other content is still dropped (principal review 21/10: content gated, then changed, must not ride along), and its exit 1
+    # (a FAIL) still drops it, as before.
+    merge_check = os.environ.get("DEVKIT_GATE_MERGE_CHECK") == "1"
     try:
         if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy and (not partial or (exit_code != 0 and not receipt_untested)) \
-                and (not read_only or partial or exit_code != 0) and not merge_check_unverified:
+                and (not read_only or partial or exit_code != 0):
             # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
             # suites all passed (2026-09-29) — leaves the last full one as it is; a BUSY run (lock not held, nothing ran)
             # and a BUDGET run (a suite never started) leave it alone too: either used to delete even a valid one,
@@ -6686,7 +6697,8 @@ def main():
             write_full_pass_receipt(project_dir, exit_code, args.matrix, receipt_tests,
                                     tested_at=reused_tested_at(),
                                     tested_fp=tested_fp, untested=receipt_untested, partial=partial or read_only,
-                                    locked=lock_fh is not None)   # the handle itself: (None, True) is also "nothing to re-use or run, no lock asked for"
+                                    locked=lock_fh is not None,   # the handle itself: (None, True) is also "nothing to re-use or run, no lock asked for"
+                                    keep_same=merge_check)
         # The budget record (BUDGET_RECORD) is a file of its own, so the receipt above stays byte for byte whatever happens here:
         # a suite that FAILED or TIMED OUT drops it (never a FAIL item), a budget cut writes what finished (never on another tree).
         if run_tests and any(t.get("status") in ("FAIL", "TIMEOUT") for t in regression_tests):

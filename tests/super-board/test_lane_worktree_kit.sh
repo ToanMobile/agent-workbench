@@ -187,7 +187,9 @@ done
 case "$hint_text $wave_text" in *"git worktree remove"*) bad="$bad brief:git worktree remove" ;; esac
 WTPY_SRC="$ROOT/universal-agent-devkit/scripts/git/worktree.py"
 if [ -f "$WTPY_SRC" ]; then
-  hits=$(grep -nE 'git worktree remove (\{holder\}|<path>)' "$WTPY_SRC" || true)
+  # mọi `git worktree remove <đích>` trừ --force (lời cho NGƯỜI DÙNG khi có việc sẽ mất), "git worktree remove:" (tiền tố lỗi) và
+  # "`git worktree remove` trần" trong comment (review 21/10: chỉ bắt {holder}/<path> thì đổi tên biến là lọt)
+  hits=$(grep -nE 'git worktree remove [^-:`]' "$WTPY_SRC" || true)
   [ -z "$hits" ] || bad="$bad worktree.py lane messages:$hits"
 else
   bad="$bad missing:worktree.py"
