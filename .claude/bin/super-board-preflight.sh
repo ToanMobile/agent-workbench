@@ -101,7 +101,9 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
   def closes($n): (.body // "") | test("(?i)\\b(close[sd]?|fix(e[sd])?|resolve[sd]?)[ :]+#" + ($n | tostring) + "\\b");
   def closed_refs: [ (.body // "") | scan("(?i)\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[ :]+#([0-9]+)")[0] | tonumber ] | unique;
   def fps: [ (.body // "") | scan("(?m)^[ \t]*fingerprint:[ \t]*([^\n]*[^ \t\n])")[0] ];
-  def paths: [ (.body // "") | scan("[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\\.[A-Za-z0-9]+") ] | unique;
+  # Không tính dòng "Nguồn:"/"Source:" và tài liệu docs/plans/ (chỉ đọc, được trích làm nguồn) là file thẻ sẽ sửa.
+  def paths: [ ((.body // "") | split("\n") | map(select(test("^[ \t]*[-*]?[ \t]*\\**(Nguồn|Source)\\**[ \t]*:"; "i") | not)) | join("\n"))
+      | scan("[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\\.[A-Za-z0-9]+") | select(test("^docs/plans/") | not) ] | unique;
   # Dòng tiêu đề mục "## <tên>": sau tên là hết từ (dấu cách, "(", ":", \r hoặc hết dòng). has_acs và sect dùng
   # chung để cùng nhận "## Acceptance Criteria (…)" và cùng bỏ "## Fixes", "## Fixture".
   def heading($h): test("^##[ \t]+" + $h + "(?!\\w)");
