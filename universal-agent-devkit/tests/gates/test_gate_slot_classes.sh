@@ -107,7 +107,7 @@ else
 fi
 
 # ── 2c. Tải cao rồi xuống giữa chừng: suite chạy ngay khi tải xuống (không đợi hết 60 s chờ).
-rm -f "$TMP/gradle_ran"; ( sleep 1.5; echo 5 > "$TMP/load" ) & PIDS="$PIDS $!"
+rm -f "$TMP/gradle_ran"; ( sleep 8; echo 5 > "$TMP/load" ) & PIDS="$PIDS $!"   # 8 s: gate khởi động chậm hơn 1,5 s khi máy tải cao thì không còn gì để chờ (flake 21/10)
 DEVKIT_SLOT_LOAD_WAIT_S=60 run_gate "$TMP/gradle" --full --no-cache
 if [ "$RC" = 0 ] && [ -f "$TMP/gradle_ran" ] && lt "$WALL" 45 && printf '%s\n' "$OUT" | grep -q "chờ tải máy xuống"; then
   ok "2c. tải xuống giữa chừng: suite chạy sau ${WALL}s (trần chờ 60 s)"

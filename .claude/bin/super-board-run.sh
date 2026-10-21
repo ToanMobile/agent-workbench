@@ -97,6 +97,28 @@ board_notify() {
   python3 "$SCRIPT_DIR/super-board-notify.py" "$@" || true
 }
 
+resolve_build_workers() {
+  # $1 = đường dẫn config. Khoá build_workers (số nguyên >= 1); thiếu hoặc sai thì 10 (người dùng 21/10); đặt 1 để về một worker.
+  local v
+  v=$(jq -r '.build_workers // empty' "$1" 2>/dev/null || true)
+  case "$v" in ''|*[!0-9]*) v=10 ;; esac
+  [ "${#v}" -le 6 ] || v=10   # số quá dài tràn phép tính bash (OCR 21/10)
+  v=$((10#$v))
+  [ "$v" -ge 1 ] || v=10      # 0, 00, 000
+  printf '%s\n' "$v"
+}
+
+resolve_build_load_max() {
+  # $1 = đường dẫn config. Thứ tự: env SB_BUILD_LOAD_MAX, khoá build_load_max, env DEVKIT_SLOT_LOAD_MAX, rồi 100. Mỗi nguồn phải là số
+  # DƯƠNG (như heavy_slot.load_max: 0 không phải ngưỡng); nguồn sai thì xét nguồn kế, không nhảy thẳng về 100 (OCR 21/10).
+  local v="" cand
+  for cand in "${SB_BUILD_LOAD_MAX:-}" "$(jq -r '.build_load_max // empty' "$1" 2>/dev/null || true)" "${DEVKIT_SLOT_LOAD_MAX:-}"; do
+    case "$cand" in ''|*[!0-9.]*|*.*.*|.) continue ;; esac
+    if awk -v m="$cand" 'BEGIN { exit !(m > 0) }'; then v="$cand"; break; fi
+  done
+  printf '%s\n' "${v:-100}"
+}
+
 if [ "${SB_LIB_ONLY:-0}" != "1" ]; then
 CONFIG_PATH=".claude/super-board/configs/${CONFIG_SLUG}.json"
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -121,12 +143,11 @@ REBUILD_CAP=$(jq -r '.rebuild_cap // 2' "$CONFIG_PATH")
 BLOCK_ALERT_PCT=$(jq -r '.block_rate_alert_pct // 30' "$CONFIG_PATH")
 TICK_SECONDS=$(jq -r '.tick_seconds // 120' "$CONFIG_PATH")
 MAX_WORKERS=$(jq -r '.max_workers // 3' "$CONFIG_PATH")
-# Lane build chạy nhiều worker theo tải máy (21/10). build_workers = trần trên, mặc định 1 = như trước. build_load_max (hoặc env
-# SB_BUILD_LOAD_MAX): chỉ khởi THÊM worker khi tải 1 phút dưới mức này, mặc định 8. Giá trị sai thì dùng mặc định.
-BUILD_WORKERS=$(jq -r '.build_workers // 1' "$CONFIG_PATH")
-case "$BUILD_WORKERS" in ''|*[!0-9]*|0) BUILD_WORKERS=1 ;; esac
-BUILD_LOAD_MAX="${SB_BUILD_LOAD_MAX:-$(jq -r '.build_load_max // 8' "$CONFIG_PATH")}"
-case "$BUILD_LOAD_MAX" in ''|*[!0-9.]*|*.*.*|.) BUILD_LOAD_MAX=8 ;; esac
+# Lane build chạy nhiều worker theo tải máy (21/10). build_workers = trần trên, mặc định 10 (đặt 1 để về một worker). build_load_max (hoặc env
+# SB_BUILD_LOAD_MAX): chỉ khởi THÊM worker khi tải 1 phút dưới mức này; mặc định DEVKIT_SLOT_LOAD_MAX, thiếu nữa thì 100
+# (người dùng 21/10: "tải máy dưới 100 thì cho chạy"). Giá trị sai thì dùng mặc định.
+BUILD_WORKERS=$(resolve_build_workers "$CONFIG_PATH")
+BUILD_LOAD_MAX=$(resolve_build_load_max "$CONFIG_PATH")
 BOT_LOGIN=$(jq -r '.notifications.bot_identity // .bot_identity // ""' "$CONFIG_PATH")
 WORKER_BACKEND=$(jq -r '.worker_backend // "workflow"' "$CONFIG_PATH")
 # Runaway controls (issue #8). NO_PROGRESS_CYCLES counts dispatch cycles with no
@@ -1422,8 +1443,16 @@ fi
 
 # Production-merge guard.
 if [ "$BASE_BRANCH" = "main" ] && [ "$HUMAN_APPROVES" = "false" ]; then
-  if rg -qU 'on:\s*\n?\s*push:\s*\n?\s*branches:[^a-z]*main' .github/workflows 2>/dev/null \
-     || [ -f vercel.json ] || [ -f netlify.toml ]; then
+  # grep -E trên workflow đã nối dòng: rg không phải binary trên mọi máy, thiếu nó guard này cho qua (fail-open).
+  workflow_push_main() {
+    local f
+    for f in .github/workflows/*; do
+      [ -f "$f" ] || continue
+      tr '\n' ' ' < "$f" | grep -Eq 'on:[[:space:]]*push:[[:space:]]*branches:[^a-z]*main' && return 0
+    done
+    return 1
+  }
+  if workflow_push_main || [ -f vercel.json ] || [ -f netlify.toml ]; then
     log "🛡 refusing to start: would auto-merge to production main."
     exit 75
   fi
@@ -1443,7 +1472,7 @@ log "initial Ready count: $INITIAL_READY"
 # Landed-work baseline (issue #8). Progress is a change in this set, not lane state.
 PREV_DONE_SIG=$(done_signature)
 INITIAL_DONE_SIG="$PREV_DONE_SIG"
-NO_PROGRESS_CYCLE_COUNT="${NO_PROGRESS_CYCLE_COUNT:-0}"   # watchdog khởi động lại: đếm tiếp từ runner trước
+[ "${SB_WATCHDOG_START:-0}" = "1" ] || NO_PROGRESS_CYCLE_COUNT=0   # watchdog khởi động lại: đã nạp từ bản ghi ở trên; khởi động tường minh đếm từ 0, không thừa hưởng môi trường người gọi
 
 while true; do
   refresh_run_paths

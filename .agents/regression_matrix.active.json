@@ -634,6 +634,36 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-heavy-slot-cap",
+      "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_heavy_slot_cap.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-HEAVY-CAP-01",
+          "name": "trần 3 suite nặng (cpu/gradle/xcode) cùng lúc: hết slot thì xếp hàng chờ không lỗi, hết ngân sách vẫn chạy kèm ghi chú, suite nhẹ/lồng không bị đếm, slot nặng không làm held",
+          "command": "bash universal-agent-devkit/tests/gates/test_heavy_slot_cap.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-watchdog-lock-atomic",
+      "watch_files": [
+        ".claude/bin/super-board-watchdog.sh",
+        "tests/super-board/test_watchdog_lock_atomic.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WATCHDOG-LOCK-ATOMIC-01",
+          "name": "8 check cùng gặp khoá check cũ quá 120 s thì đúng một check giữ được khoá (không khởi động 2 runner)",
+          "command": "bash tests/super-board/test_watchdog_lock_atomic.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
