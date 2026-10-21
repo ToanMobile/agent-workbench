@@ -27,8 +27,58 @@ args = types.SimpleNamespace(file=target, title="Seed under lock", cause=None, r
                              force=False, dry_run=False, generic=False)
 rc = instincts.cmd_add(args)
 text = open(target).read()
-ok = rc == 0 and sizes == [0] and "Seed under lock" in text and text.index("# ") < text.index("Seed under lock")
+ok = rc == 0 and sizes == [0] and "Seed under lock" in text and text.startswith(open(os.path.join(sys.argv[1], "templates", "instincts.template.md")).readline())
 print(("✔" if ok else "✖") + f" seeded inside the flock (rc={rc}, target size at lock time={sizes})")
+sys.exit(0 if ok else 1)
+PY
+
+# `add --from-json` (cmd_import) cũng phải seed trong flock: lúc lấy khoá file đích vẫn rỗng, template đứng trước bài học
+mkdir -p "$D/p3"
+printf '[{"verdict": "INSTINCT", "title": "Imported under lock", "rule": "r"}]' > "$D/p3/items.json"
+CLAUDE_PROJECT_DIR="$D/p3" python3 - "$DEVKIT_ROOT" "$D/p3/.agents/instincts.md" "$D/p3/items.json" <<'PY' || FAIL=1
+import fcntl, os, sys, types
+sys.path.insert(0, os.path.join(sys.argv[1], "bin"))
+import instincts
+target = sys.argv[2]
+sizes = []
+real = fcntl.flock
+def spy(f, op):
+    if op == fcntl.LOCK_EX and not sizes:
+        sizes.append(os.path.getsize(target) if os.path.exists(target) else 0)
+    return real(f, op)
+instincts.fcntl = types.SimpleNamespace(flock=spy, LOCK_EX=fcntl.LOCK_EX)
+args = types.SimpleNamespace(file=target, from_json=sys.argv[3], force=False, dry_run=False)
+rc = instincts.cmd_import(args)
+text = open(target).read()
+ok = rc == 0 and sizes == [0] and "Imported under lock" in text and text.startswith(open(os.path.join(sys.argv[1], "templates", "instincts.template.md")).readline())
+print(("✔" if ok else "✖") + f" import seeded inside the flock (rc={rc}, target size at lock time={sizes})")
+sys.exit(0 if ok else 1)
+PY
+
+# Người thua cuộc đua (file đã được người khác seed + ghi trước khi nó lấy được khoá) không được in "Created … from the template"
+mkdir -p "$D/p4"
+CLAUDE_PROJECT_DIR="$D/p4" python3 - "$DEVKIT_ROOT" "$D/p4/.agents/instincts.md" <<'PY' || FAIL=1
+import contextlib, fcntl, io, os, sys, types
+sys.path.insert(0, os.path.join(sys.argv[1], "bin"))
+import instincts
+target = sys.argv[2]
+real = fcntl.flock
+won = []
+def spy(f, op):
+    if op == fcntl.LOCK_EX and not won:   # người thắng ghi xong ngay trước khi ta lấy khoá
+        won.append(1)
+        with open(target, "a", encoding="utf-8") as w:
+            w.write("# Winner header\n\n### [INSTINCT-001] Winner lesson\n")
+    return real(f, op)
+instincts.fcntl = types.SimpleNamespace(flock=spy, LOCK_EX=fcntl.LOCK_EX)
+args = types.SimpleNamespace(file=target, title="Loser lesson", cause=None, rule="r", symptom=None, check=None,
+                             force=False, dry_run=False, generic=False)
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    rc = instincts.cmd_add(args)
+text = open(target).read()
+ok = rc == 0 and "Created" not in buf.getvalue() and "Winner lesson" in text and "Loser lesson" in text
+print(("✔" if ok else "✖") + f" no 'Created' when another writer seeded first (rc={rc}, out={buf.getvalue().strip()!r})")
 sys.exit(0 if ok else 1)
 PY
 

@@ -538,6 +538,87 @@
           "command": "bash tests/super-board/test_merge_gate_timeout_retry.sh"
         }
       ]
+    },
+    {
+      "component": "test-heavy-slot-isolation",
+      "watch_files": [
+        "universal-agent-devkit/tests/lib/clean_git_env.sh",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        ".claude/bin/super-board-heavy-slot.py",
+        "tests/super-board/test_tests_skip_machine_slots.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-TEST-SLOT-ISO-01",
+          "name": "tests never queue behind the machine's real heavy-verify slots",
+          "command": "bash tests/super-board/test_tests_skip_machine_slots.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-slot-classes",
+      "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/scripts/testing/stale_rerun.py",
+        "universal-agent-devkit/tests/gates/test_gate_slot_classes.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SLOT-CLASSES-01",
+          "name": "quyền chạy theo tải máy của từng suite (P1b): bỏ 2 slot engine; tải cao thì chờ rồi vẫn chạy, không UNTESTED; chờ tải không ăn vào thời gian chờ khoá; khoá Unity (độc quyền) vẫn chặn, không còn khoá thiết bị; bash -lc nhận ra Unity; hàng đợi ưu tiên + SJF; suite STALE bị SLOT không lọt PASS",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_classes.sh"
+        }
+      ]
+    },
+    {
+      "component": "super-board-heavy-slot",
+      "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        ".claude/bin/super-board-heavy-slot.py",
+        "tests/super-board/test_heavy_slot.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-HEAVY-SLOT-01",
+          "name": "heavy slot theo tải máy (P1b): CLI/wrapper super-board chạy ngay khi tải < DEVKIT_SLOT_LOAD_MAX, chờ rồi vẫn chạy khi tải cao, --nonblock không chạy khi tải cao, DEVKIT_SLOT_LOAD_WAIT_S=0 không chờ, suite Unity lồng trong CLI vẫn xin khoá Unity; --force-full với suite nhẹ không chờ",
+          "command": "bash tests/super-board/test_heavy_slot.sh"
+        }
+      ]
+    },
+    {
+      "component": "devkit-suite-cache",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_suite_cache.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SUITE-CACHE-01",
+          "name": "cache PASS theo khoá nội dung từng suite (cached-full): chỉ suite có input đổi chạy lại; khoá chính xác chỉ cho suite thêm vào, suite được chọn theo khoá cả cây; FAIL dính khoá, không-PASS vô hiệu PASS cũ; PASS theo khoá chính xác không vào biên nhận / DEVKIT_GATE_DONE; gộp lượt trùng khoá; suite tự sửa input không được ghi",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_suite_cache.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-suite-cache-sentinel",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/scripts/testing/stale_rerun.py",
+        "universal-agent-devkit/tests/gates/test_gate_sentinel.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SENTINEL-01",
+          "name": "sentinel: lần chạy thật > 24 h thì --full không dùng khoá (không ở merge gate), suite quá giờ không đóng mốc; cache sai thì học input thiếu hoặc cách ly flaky; run_one/nightly ghi cùng sổ khoá",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_sentinel.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
