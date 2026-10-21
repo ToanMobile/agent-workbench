@@ -92,6 +92,7 @@ ICON = {
     "FLAKY": "🔁 FLAKY (đỏ rồi xanh cùng code)",
     "STALE": "🟡 CẦN CHẠY LẠI (code đã đổi)",
     "UNPROVEN": "⏳ chưa chứng minh ĐỎ",
+    "RETIRED": "💤 đã nghỉ (suite không còn trong ma trận)",
     "AUTO_CLOSED": "💤 tự đóng (REPORTED 14 ngày không ai đụng)",
     "VACUOUS": "🚫 TEST VÔ HIỆU (xanh cả khi bỏ bản sửa)",
     "NEEDS_CAR": "🚗 chờ chạy lặp trên xe",
@@ -793,6 +794,16 @@ def sync_from_matrix(data: dict, matrix: dict) -> None:
             for k in idle:
                 if k not in others:
                     del data["items"][k]
+    # Issue #18: a row that holds results but whose suite left the matrix (its test module was deleted) stayed STALE for ever.
+    # It is marked retired instead (status RETIRED, outside the safety %); a suite that comes back loses the mark.
+    # Same guard as above: with no matrix at all nothing is retired. tests/verification/test_checklist_retired_status.sh
+    if ids:
+        for k, it in data["items"].items():
+            if isinstance(it, dict) and it.get("kind") == "test":
+                if k in ids:
+                    it.pop("retired", None)
+                elif it.get("last") or it.get("history"):
+                    it["retired"] = True
 
 
 # ── Which suite of the matrix EXECUTES a test file (orphan tests, guard links) ────────────────
@@ -2554,7 +2565,9 @@ def effective_status(data: dict, item: dict) -> str:
         return "ORPHAN_TEST"
     if kind == "req":
         crit = item.get("criteria") or []
-        if not crit or any(not c.get("tests") for c in crit):
+        def _live(c):   # a criterion whose only suites are retired has no test (issue #18)
+            return [t for t in c.get("tests") or [] if not (data["items"].get(t) or {}).get("retired")]
+        if not crit or any(not _live(c) for c in crit):
             return "NOT_IN_MATRIX" if crit and all(c.get("tests") or c.get("test_refs") for c in crit) else "NEEDS_TEST"
         return _linked_status(data, item)
     if kind == "bug":
@@ -2571,7 +2584,8 @@ def effective_status(data: dict, item: dict) -> str:
 def _linked_status(data: dict, item: dict) -> str:
     """A bug's or REQ's status from the suites it is linked to and its RED-proof."""
     tests = [data["items"].get(t) for t in item.get("tests", [])]
-    tests = [t for t in tests if t]
+    # A retired suite proves nothing (issue #18), but retiring one never hides its red result: a failed one still counts.
+    tests = [t for t in tests if t and not (t.get("retired") and (t.get("last") or {}).get("status") not in ("FAIL", "TIMEOUT"))]
     if not tests:
         return "NOT_IN_MATRIX" if item.get("test_refs") else "NEEDS_TEST"
     proof = (item.get("red_proof") or {}).get("status")
@@ -2586,6 +2600,8 @@ def _linked_status(data: dict, item: dict) -> str:
     states = []
     for t in tests:
         st = effective_status(data, t)
+        if st == "RETIRED":
+            st = (t.get("last") or {}).get("status")   # only a red retired suite is still here (filter above)
         named = ((t.get("last") or {}).get("failed_tests") or []) if st == "FAIL" else []
         states.append("PASS" if own and named and not _names_own_test(named, own) else st)
     for bad in ("FAIL", "TIMEOUT", "FLAKY", "STALE", "NOT_RUN"):
@@ -2628,6 +2644,8 @@ def repeat_proof(path: Path, scenario: str | None = None) -> dict:
 
 
 def _test_status(item: dict) -> str:
+    if item.get("retired"):
+        return "RETIRED"   # the suite left the matrix: its result no longer says anything about the code
     last = item.get("last") or {}
     if last.get("status") == "FAIL" and last.get("flaky"):
         return "FLAKY"
@@ -2716,7 +2734,7 @@ def render(project_dir: Path, data: dict) -> Path:
     status = {i: effective_status(data, it) for i, it in items.items()}
     c = summary(data)
     confirmed = [i for i, it in items.items() if it.get("kind") in ("test", "req", "bug")
-                 and status[i] not in ("REPORTED", "AUTO_CLOSED")]
+                 and status[i] not in ("REPORTED", "AUTO_CLOSED", "RETIRED")]
     passed = sum(1 for i in confirmed if status[i] == "PASS")
     pct = round(100 * passed / len(confirmed)) if confirmed else 0
     pending = (data.get("meta") or {}).get("matrix_pending")
@@ -2773,8 +2791,9 @@ def render(project_dir: Path, data: dict) -> Path:
                         _signature(items[i]) if items[i].get("kind") == "test" else "-",
                         items[i].get("command") if items[i].get("kind") == "test" else _tests_cell(items[i]))
                        for i in ids])
-        head = f"{'Khác' if comp == '-' else comp} — {ok_}/{len(ids)} PASS"
-        if ok_ == len(ids):
+        live = sum(1 for i in ids if status[i] != "RETIRED")   # a retired row stays listed but no longer keeps the module open
+        head = f"{'Khác' if comp == '-' else comp} — {ok_}/{live} PASS"
+        if live and ok_ == live:
             lines += [f"<details><summary>✅ {head}</summary>", ""] + body + ["", "</details>", ""]
         else:
             lines += [f"### {head}", ""] + body + [""]
