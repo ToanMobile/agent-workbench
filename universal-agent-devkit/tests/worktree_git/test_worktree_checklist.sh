@@ -257,6 +257,41 @@ bash "$KIT" worktree remove ../wt-o >"$TMP/rm-o.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && [ ! -e "$TMP/wt-o" ] \
   && ok "remove: a worktree based before main gained a row is not read as having dropped it" \
   || { fail "remove of a worktree older than main's newest row (rc=$rc)"; cat "$TMP/rm-o.out"; }
+# (principal review 21/10, P1-1) a person's link on a guards.json row main ALREADY holds: the sync never rebuilds that link, still refused
+status_edit "$TMP/m" 'items["STORE-2"] = {"id": "STORE-2", "kind": "bug", "title": "guard in main", "fixed": True, "state": "confirmed", "source": "guards.json", "tests": ["REG-OK"], "created_at": "2026-10-20 08:00:00"}'
+git -C "$TMP/m" add .agents/regression_status.json && git -C "$TMP/m" commit -qm "a guards.json row in main" || fail "seed STORE-2"
+bash "$KIT" worktree add ../wt-g >/dev/null 2>&1 || fail "add wt-g"
+status_edit "$TMP/wt-g" 'items["STORE-2"]["tests"].append("REG-U"); items["STORE-2"]["linked_at"] = "2026-10-21 11:00:00"'
+bash "$KIT" worktree remove ../wt-g >"$TMP/rm-g.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-g" ] && grep -q "regression_status.json" "$TMP/rm-g.out" \
+  && ok "remove: a link a person added to a guards.json row main already holds still holds the worktree" \
+  || { fail "remove of a worktree with a hand link on a guards.json row (rc=$rc)"; cat "$TMP/rm-g.out"; }
+git -C "$TMP/m" worktree remove --force "$TMP/wt-g" >/dev/null 2>&1
+# (P2-2) main edited a row a person made AFTER the worktree branched; the worktree only re-rendered its view: no work, removable
+bash "$KIT" worktree add ../wt-p >/dev/null 2>&1 || fail "add wt-p"
+status_edit "$TMP/m" 'items["BUG-LATER"]["title"] = "renamed in main"'
+git -C "$TMP/m" add .agents/regression_status.json && git -C "$TMP/m" commit -qm "main edits BUG-LATER after wt-p branched" || fail "edit BUG-LATER"
+echo "<!-- p -->" >> "$TMP/wt-p/.agents/CHECKLIST.md"
+bash "$KIT" worktree remove ../wt-p >"$TMP/rm-p.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$TMP/wt-p" ] \
+  && ok "remove: a row main edited after the worktree branched is not the worktree's work (its own HEAD holds that row as it is)" \
+  || { fail "remove of a worktree whose base row main edited later (rc=$rc)"; cat "$TMP/rm-p.out"; }
+# (P2-3) fail closed: a status file that does not parse, and an edit git hides (skip-worktree), still hold the worktree
+bash "$KIT" worktree add ../wt-j >/dev/null 2>&1 || fail "add wt-j"
+printf '{"items": {' > "$TMP/wt-j/.agents/regression_status.json"; echo "<!-- j -->" >> "$TMP/wt-j/.agents/CHECKLIST.md"
+bash "$KIT" worktree remove ../wt-j >"$TMP/rm-j.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-j" ] && ok "remove: a status file that does not parse is work (fail closed)" \
+  || { fail "remove of a worktree with an unparsable status file (rc=$rc)"; cat "$TMP/rm-j.out"; }
+git -C "$TMP/m" worktree remove --force "$TMP/wt-j" >/dev/null 2>&1
+bash "$KIT" worktree add ../wt-x2 >/dev/null 2>&1 || fail "add wt-x2"
+git -C "$TMP/wt-x2" update-index --skip-worktree .agents/CHECKLIST.md && echo "<!-- hidden -->" >> "$TMP/wt-x2/.agents/CHECKLIST.md"
+status_edit "$TMP/wt-x2" 'items["STORE-9"] = {"id": "STORE-9", "kind": "bug", "title": "fresh import", "fixed": True, "state": "confirmed", "source": "guards.json", "tests": ["REG-OK"], "created_at": "2026-10-21 12:00:00"}'   # a visible regenerated change too: the bookkeeping filter runs
+bash "$KIT" worktree remove ../wt-x2 >"$TMP/rm-x2.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-x2" ] && grep -q "skip-worktree" "$TMP/rm-x2.out" \
+  && ok "remove: an edit git hides (skip-worktree) on a bookkeeping file still holds the worktree" \
+  || { fail "remove of a worktree with a hidden bookkeeping edit (rc=$rc)"; cat "$TMP/rm-x2.out"; }
+git -C "$TMP/wt-x2" update-index --no-skip-worktree .agents/CHECKLIST.md >/dev/null 2>&1
+git -C "$TMP/m" worktree remove --force "$TMP/wt-x2" >/dev/null 2>&1
 
 # the checklist NOT tracked (git-ignored or not): a worktree that wrote it on request still does not ship it
 make_repo "$TMP/u" 0 untracked

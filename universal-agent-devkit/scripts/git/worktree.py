@@ -1644,11 +1644,10 @@ _LINK_KEYS = ("tests", "runs_in_suite", "test_refs")   # regression_checklist.LI
 
 
 def _authored_cmp(item):
-    """_authored as two copies of one row are COMPARED: a row the checklist sync rebuilds from the tracked .agents/local/guards.json
-    (source "guards.json", regression_checklist.sync_guards) is nobody's, and a bug / REQ row's three link keys count as one set (the
-    sync moves a fixed bug's test_refs to runs_in_suite once they resolve). GeelyEx2 #41, 21/10: those two alone held a lane worktree."""
+    """_authored as two copies of one row are COMPARED: a bug / REQ row's three link keys count as one set (the checklist sync moves a
+    fixed bug's test_refs to runs_in_suite once they resolve: GeelyEx2 #41, 21/10)."""
     a = _authored(item)
-    if a is None or item.get("source") == "guards.json":
+    if a is None:
         return None
     if "covers" in a and len(a) == 1:   # a test row: its `covers` links are what a person made
         return a
@@ -1663,10 +1662,12 @@ def _authored_cmp(item):
 
 def _bookkeeping_regenerated(wt, main):
     """True when the worktree's UNCOMMITTED bookkeeping (BOOKKEEPING) is nothing but what the gate and the checklist sync regenerate:
-    its regression_status.json on disk holds no row a person made (_authored_cmp) that main's HEAD does not hold the same way, as
-    _ignorable rules for a commit, and drops no such row that the worktree's own HEAD holds and main still does (`agent-kit bugs
-    drop`: OCR 21/10; a row main gained after the worktree branched off is no drop). Fail closed: a status file that cannot be read
-    or parsed, on disk, in the worktree's HEAD or in main's HEAD, is work."""
+    every row a person made (_authored_cmp) in its regression_status.json on disk is held the same way by the worktree's own HEAD
+    (committed: the commit checks guard it; main may have edited that row since, principal review P2-2) or by main's HEAD, or is a
+    row the sync just imported from .agents/local/guards.json that neither HEAD holds yet (#41); a person's link on a guards.json
+    row a HEAD already holds is compared as any row (P1-1). It drops no such row that its own HEAD holds and main still does
+    (`agent-kit bugs drop`: OCR 21/10; a row main gained after the worktree branched off is no drop). Fail closed: a status file
+    that cannot be read or parsed, on disk, in the worktree's HEAD or in main's HEAD, is work."""
     path = os.path.join(wt, STATUS_FILE)
     try:
         if not os.path.lexists(path):
@@ -1687,12 +1688,14 @@ def _bookkeeping_regenerated(wt, main):
         cur = git(main, "show", f"HEAD:{STATUS_FILE}", check=False)
         theirs_raw = json.loads(cur.stdout) if cur.returncode == 0 else {"items": {}}
         mine = {rid: a for rid, it in mine_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
+        base = {rid: a for rid, it in base_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
         theirs = {rid: a for rid, it in theirs_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
-        dropped = [rid for rid, it in base_raw["items"].items()
-                   if _authored_cmp(it) is not None and rid not in mine_raw["items"] and rid in theirs]
+        fresh = {rid for rid, it in mine_raw["items"].items() if isinstance(it, dict) and it.get("source") == "guards.json"
+                 and rid not in base_raw["items"] and rid not in theirs_raw["items"]}
+        dropped = [rid for rid in base if rid not in mine_raw["items"] and rid in theirs]
     except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
         return False
-    return not dropped and all(theirs.get(rid) == a for rid, a in mine.items())
+    return not dropped and all(rid in fresh or base.get(rid) == a or theirs.get(rid) == a for rid, a in mine.items())
 
 
 def _carry_authored_rows(wt, base, env):
