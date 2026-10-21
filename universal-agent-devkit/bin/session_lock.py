@@ -553,8 +553,10 @@ def unregister_session(cwd, sid):
 
 def _ps(pid, fields):
     """`ps -o <fields>= -p pid` output, stripped; None when the process is gone or ps fails (macOS has no /proc)."""
+    # `lstart` is printed in local time: pin TZ/locale so a start recorded under one TZ equals the one read under another
+    env = dict(os.environ, TZ="UTC", LC_ALL="C")
     try:
-        r = subprocess.run(["ps", "-o", "=,".join(fields.split(",")) + "=", "-p", str(pid)], capture_output=True, text=True, timeout=5)
+        r = subprocess.run(["ps", "-o", "=,".join(fields.split(",")) + "=", "-p", str(pid)], capture_output=True, text=True, timeout=5, env=env)
     except (OSError, subprocess.SubprocessError):
         return None
     out = r.stdout.strip()

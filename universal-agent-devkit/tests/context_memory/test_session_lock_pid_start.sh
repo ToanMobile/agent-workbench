@@ -65,4 +65,26 @@ print("ok")
 PY
 ); [ "$out" = ok ] && ok "holder_pid skips a forked sh parent without /proc" || fail "holder_pid: $out"
 
+# 5. pid_start must not depend on the reader's TZ: `ps -o lstart=` prints local time, so a start written under one TZ and
+# read under another read as a "recycled" pid and a live session looked dead (QA v4, AC2).
+out=$(python3 - "$DEVKIT_DIR/bin" <<'PY' 2>&1
+import os, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+probe = "import sys; sys.path.insert(0, %r); import session_lock as sl; print(sl.pid_start(int(sys.argv[1])) or '')" % sys.argv[1]
+target = subprocess.Popen(["sleep", "30"])
+try:
+    def read(tz):
+        r = subprocess.run([sys.executable, "-c", probe, str(target.pid)], env=dict(os.environ, TZ=tz), capture_output=True, text=True)
+        return r.stdout.strip()
+    a, b = read("UTC"), read("Asia/Tokyo")
+    assert a and a == b, (a, b)
+    alive = subprocess.run([sys.executable, "-c", "import sys; sys.path.insert(0, %r); import session_lock as sl; print(sl.is_pid_alive(int(sys.argv[1]), sys.argv[2]))" % sys.argv[1], str(target.pid), a],
+                           env=dict(os.environ, TZ="Asia/Tokyo"), capture_output=True, text=True).stdout.strip()
+    assert alive == "True", alive
+finally:
+    target.kill(); target.wait()
+print("ok")
+PY
+); [ "$out" = ok ] && ok "pid_start is the same under any TZ; a live pid is not read as recycled" || fail "pid_start TZ: $out"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_session_lock_pid_start: all passed" || { echo "❌ test_session_lock_pid_start: $FAILS failed"; exit 1; }
