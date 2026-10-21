@@ -347,3 +347,4 @@
 60 tests/gates/test_gate_suite_cache.sh
 24 tests/gates/test_gate_sentinel.sh
 2 tests/context_memory/test_session_lock_pid_start.sh
+12 tests/gates/test_heavy_slot_cap.sh
