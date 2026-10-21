@@ -1412,6 +1412,27 @@ def head_and_dirty(project_dir):
     return head.stdout.decode().strip(), dirty
 
 
+def dirty_links(project_dir, dirty):
+    """#156: {đường dẫn: blob của CHUỖI link} cho mỗi đường dẫn của `dirty` (từ gốc repo, như trong biên nhận) đang là symlink tới một
+    file, đúng cái `git add` của bin/tree_fp.py ghi cho nó (mode 120000). `dirty` giữ blob NỘI DUNG file đích (hash-object đi theo link)
+    để push_gate so với file sắp push; push_gate dựng lại dấu vân tay bằng mục này thay vì đoán theo đĩa của checkout nó đang chạy (main
+    sau `worktree finish`: file thường đã track, chỗ gate thấy link của DevKit). Link tới thư mục hoặc link treo (`dirty` null: không có
+    nội dung để so) không bao giờ vào đây: push_gate dựng nó như file đã xoá và từ chối như trước #156 (review principal, L25c).
+    OSError (link đổi giữa chừng): caller không ghi biên nhận."""
+    run = lambda *a: subprocess.run(["git", "-C", str(project_dir), *a], capture_output=True)
+    top = run("rev-parse", "--show-toplevel") if dirty else None
+    if top is None or top.returncode:
+        return {}
+    top = os.fsdecode(top.stdout.strip())
+    texts = {p: os.readlink(os.fsencode(os.path.join(top, p))) for p, sha in dirty.items()
+             if sha is not None and os.path.islink(os.path.join(top, p))}
+    if not texts:
+        return {}
+    algo = run("rev-parse", "--show-object-format").stdout.decode().strip()   # repo object-format=sha256 thì blob id là sha256
+    algo = algo if algo in ("sha1", "sha256") else "sha1"
+    return {p: hashlib.new(algo, b"blob %d\0" % len(t) + t).hexdigest() for p, t in texts.items()}
+
+
 def _tree_store(tree_fp, project_dir, fp, data=None):
     """#105 (trunk mode): mirror of the receipt in <git common dir>/postfix-gate/tree_receipts/<fp>.json. A worktree's own receipt goes with
     its git dir when the worktree is removed, so proof_gate finds the full PASS of the tree a session delivered into main (finish, squash
@@ -1566,7 +1587,7 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
                 "fingerprint": fingerprint, "tested_at": tested_at or time.time(),
                 "result_format": RESULT_FORMAT,
                 "gate_sha": _sha_file(__file__), "matrix_sha": _sha_file(find_matrix_path(matrix_arg)),
-                "local_sha": local_sha, "local_regen": regen, "head": head, "dirty": dirty,
+                "local_sha": local_sha, "local_regen": regen, "head": head, "dirty": dirty, "links": dirty_links(project_dir, dirty),
                 "tests": [{"id": t.get("id"), "status": t.get("status"), "log": t.get("log"),
                            "duration": t.get("duration"), "ran_at": SUITE_RAN_AT.get(t.get("id"))}
                           for t in (tests or []) if t.get("command")]}
