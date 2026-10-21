@@ -193,18 +193,52 @@ printf '%s\n' "$patch" | grep -qF "diff --git a/src/a.py " && ! printf '%s\n' "$
   && ok "a worktree path with a space: added, and its diff leaves the bookkeeping out" || fail "space path: $(printf '%s\n' "$patch" | grep '^diff --git')"
 git -C "$TMP/m" worktree remove --force "$TMP/wt sp" >/dev/null 2>&1
 
-# a worktree whose ONLY dirt is bookkeeping (a hook rewrote it): remove still refuses (not weakened) and names the way out,
-# which must not be a command the git guard blocks (`git checkout -- <file>`, `switch -c`)
+# a worktree whose ONLY dirt is bookkeeping the gate and the checklist sync regenerate (21/10, GeelyEx2 #41: the QA lane's
+# `agent-kit worktree remove` was refused for it and the card went to Blocked): remove goes through, after a fallback copy of
+# the working tree in refs/devkit/discarded/* (worktree gc drops it after DISCARD_KEEP_DAYS). A row a person made still holds
+# the worktree. Nothing remove prints names a command the git guard blocks (`git checkout -- <file>`, `switch -c`)
 cd "$TMP/m" || exit 1
+fallback_has() {   # fallback_has <text> <path>: some refs/devkit/discarded/* copy holds <text> in <path>
+  local r
+  for r in $(git -C "$TMP/m" for-each-ref --format='%(refname)' refs/devkit/discarded/); do
+    git -C "$TMP/m" show "$r:$2" 2>/dev/null | grep -qF "$1" && { echo yes; return; }
+  done
+}
+status_edit() {   # status_edit <checkout> <python expression on d["items"]>: edit that checkout's regression_status.json in place
+  python3 - "$1/.agents/regression_status.json" "$2" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p, encoding="utf-8")); items = d["items"]
+exec(sys.argv[2])
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+}
 bash "$KIT" worktree add ../wt-k >/dev/null 2>&1 || fail "add wt-k"
 echo "<!-- k -->" >> "$TMP/wt-k/.agents/CHECKLIST.md"
 bash "$KIT" worktree remove ../wt-k >"$TMP/rm-k.out" 2>&1; rc=$?
-[ "$rc" = 1 ] && grep -q "with-checklist" "$TMP/rm-k.out" && ! grep -qE "checkout --|switch -c" "$TMP/rm-k.out" \
-  && ok "remove: bookkeeping-only dirt is still refused; the hint names --with-checklist, no command the git guard blocks" \
-  || { fail "remove of a bookkeeping-only worktree (rc=$rc)"; cat "$TMP/rm-k.out"; }
-bash "$KIT" worktree diff ../wt-k --with-checklist 2>/dev/null | git apply --3way >/dev/null 2>&1
-bash "$KIT" worktree remove ../wt-k >/dev/null 2>&1; rc=$?
-[ "$rc" = 0 ] && ok "remove: allowed once --with-checklist brought the bookkeeping into main" || fail "remove after --with-checklist (rc=$rc)"
+[ "$rc" = 0 ] && [ ! -e "$TMP/wt-k" ] && [ "$(fallback_has '<!-- k -->' .agents/CHECKLIST.md)" = yes ] \
+  && grep -q "refs/devkit/discarded/" "$TMP/rm-k.out" && ! grep -qE "checkout --|switch -c" "$TMP/rm-k.out" \
+  && ok "remove: a rewritten CHECKLIST.md view alone no longer holds a worktree; a fallback copy keeps the edit, the output names it" \
+  || { fail "remove of a worktree with only a rewritten view (rc=$rc)"; cat "$TMP/rm-k.out"; }
+# the #41 shape: the sync imported a guards.json row (source "guards.json": rebuilt from the tracked .agents/local/guards.json)
+# and moved a fixed bug's test_refs to runs_in_suite once they resolved
+status_edit "$TMP/m" 'items["BUG-MOVE"] = {"id": "BUG-MOVE", "kind": "bug", "title": "moved ref", "fixed": True, "state": "confirmed", "tests": [], "test_refs": ["ok.sh"], "created_at": "2026-10-16 10:00:00"}'
+git -C "$TMP/m" add .agents/regression_status.json && git -C "$TMP/m" commit -qm "a fixed bug whose test is a test_ref" || fail "seed BUG-MOVE"
+bash "$KIT" worktree add ../wt-s >/dev/null 2>&1 || fail "add wt-s"
+status_edit "$TMP/wt-s" 'items["BUG-MOVE"]["runs_in_suite"] = items["BUG-MOVE"].pop("test_refs"); items["BUG-MOVE"]["test_refs"] = []
+items["STORE-1"] = {"id": "STORE-1", "kind": "bug", "title": "imported guard", "fixed": True, "state": "confirmed", "source": "guards.json", "tests": ["REG-OK"], "created_at": "2026-10-21 08:24:02"}'
+echo "<!-- s -->" >> "$TMP/wt-s/.agents/CHECKLIST.md"
+bash "$KIT" worktree remove ../wt-s >"$TMP/rm-s.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$TMP/wt-s" ] && [ "$(fallback_has STORE-1 .agents/regression_status.json)" = yes ] \
+  && ok "remove: rows the checklist sync rebuilt (a guards.json import, a test_ref moved to runs_in_suite) do not hold a worktree; the fallback copy keeps them" \
+  || { fail "remove of a worktree with only sync-regenerated rows (rc=$rc)"; cat "$TMP/rm-s.out"; }
+# a row a person made (`agent-kit bugs add`), only in the worktree: still refused, the worktree stays
+bash "$KIT" worktree add ../wt-h >/dev/null 2>&1 || fail "add wt-h"
+status_edit "$TMP/wt-h" 'items["BUG-HAND"] = {"id": "BUG-HAND", "kind": "bug", "title": "made by a person", "fixed": False, "state": "reported", "tests": [], "created_at": "2026-10-21 09:00:00"}'
+bash "$KIT" worktree remove ../wt-h >"$TMP/rm-h.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-h" ] && grep -q "regression_status.json" "$TMP/rm-h.out" && grep -q "with-checklist" "$TMP/rm-h.out" \
+  && ok "remove: a bug row a person made, only in the worktree, still holds it; the hint names --with-checklist" \
+  || { fail "remove of a worktree with an authored row (rc=$rc)"; cat "$TMP/rm-h.out"; }
+git -C "$TMP/m" worktree remove --force "$TMP/wt-h" >/dev/null 2>&1
 
 # the checklist NOT tracked (git-ignored or not): a worktree that wrote it on request still does not ship it
 make_repo "$TMP/u" 0 untracked
