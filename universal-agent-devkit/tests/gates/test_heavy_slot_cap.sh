@@ -8,7 +8,8 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/heavy-cap.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 echo 1 > "$TMP/load"
 export SB_HEAVY_SLOT_DIR="$TMP/locks" DEVKIT_SLOT_LOAD_FILE="$TMP/load" SB_HEAVY_SLOT_POLL_S=0.1
-unset SB_HEAVY_SLOT_HELD DEVKIT_SLOT_ADVISORY_HELD DEVKIT_SLOT_HEAVY_MAX
+unset SB_HEAVY_SLOT_HELD DEVKIT_SLOT_ADVISORY_HELD DEVKIT_SLOT_HEAVY_MAX DEVKIT_SLOT_HEAVY_WAIT_S DEVKIT_SLOT_HEAVY_BUDGET_S \
+  DEVKIT_SLOT_LOAD_WAIT_S SB_HEAVY_SLOT_WAIT_S DEVKIT_SLOT_ADVISORY_BUDGET_S   # merge gate / stale_rerun đặt vài biến này: test không được lệ thuộc môi trường gọi
 python3 - "$DEVKIT_DIR/bin" <<'PY'
 import os, sys, threading, time
 sys.path.insert(0, sys.argv[1])
@@ -89,6 +90,37 @@ y, wy = take(label="y", max_wait=0.4)
 check("8b. giá trị rác thì dùng mặc định 3", wy >= 0.3 and all(x.admitted for x in xs), f"{wy:.2f}s")
 for x in xs + [y]:
     hs.release_suite(x)
+
+# 9. Không có max_wait (CLI --full, merge gate): chờ hàng đợi bị chặn bởi DEVKIT_SLOT_HEAVY_WAIT_S, KHÔNG phải 3600 s của khoá Unity
+#    (review 21/10: merge gate bị SIGTERM sau 3600 s nếu một suite xếp hàng cả giờ); LOAD_WAIT_S=0 (merge gate đã chờ rồi) thì không chờ.
+full = [take(label=f"f{i}")[0] for i in range(3)]
+os.environ["DEVKIT_SLOT_HEAVY_WAIT_S"] = "0.6"
+s, w = take(label="nomax")
+check("9a. không max_wait: chờ theo DEVKIT_SLOT_HEAVY_WAIT_S rồi vẫn chạy", s.admitted and 0.5 <= w < 3.0 and s.notes, f"{w:.2f}s")
+hs.release_suite(s)
+del os.environ["DEVKIT_SLOT_HEAVY_WAIT_S"]
+os.environ["DEVKIT_SLOT_LOAD_WAIT_S"] = "0"; os.environ["DEVKIT_SLOT_HEAVY_WAIT_S"] = "0.6"
+s, w = take(label="nowait")
+check("9b. DEVKIT_SLOT_LOAD_WAIT_S=0 chỉ nói đã chờ TẢI: suite nặng vẫn xếp hàng chờ slot (không bỏ qua trần đúng lúc pool đầy)",
+      s.admitted and w >= 0.5, f"{w:.2f}s")
+hs.release_suite(s)
+del os.environ["DEVKIT_SLOT_LOAD_WAIT_S"]; del os.environ["DEVKIT_SLOT_HEAVY_WAIT_S"]
+# 9c. ngân sách chờ hàng đợi là của CẢ TIẾN TRÌNH (như chờ tải): k suite nối nhau không chờ k × giới hạn (review 21/10: 7 × 600 s > SIGTERM 3600 s)
+hs._HEAVY_WAIT["spent"] = 0.0
+os.environ["DEVKIT_SLOT_HEAVY_WAIT_S"] = "0.8"; os.environ["DEVKIT_SLOT_HEAVY_BUDGET_S"] = "1.0"
+t0 = time.monotonic()
+ws = [take(label=f"b{i}")[1] for i in range(3)]
+total = time.monotonic() - t0
+check("9c. 3 suite xếp hàng nối nhau, ngân sách 1 s: tổng chờ ≈ ngân sách, suite sau không chờ nữa", total < 1.6 and ws[0] >= 0.7 and ws[2] < 0.3,
+      f"chờ {[round(x, 2) for x in ws]} tổng {total:.2f}s")
+# 9d. ngân sách đã cạn nhưng pool còn slot trống: vẫn LẤY slot (hết ngân sách chỉ nghĩa là không chờ, không phải bỏ qua trần)
+hs.release_suite(full[0])
+s, w = take(label="free-after-budget")
+check("9d. ngân sách cạn, pool còn slot: suite lấy slot, không ghi chú, không chờ", s.admitted and w < 0.3 and not s.notes and s.handles, f"{w:.2f}s")
+full[0] = s
+del os.environ["DEVKIT_SLOT_HEAVY_WAIT_S"]; del os.environ["DEVKIT_SLOT_HEAVY_BUDGET_S"]
+for s in full:
+    hs.release_suite(s)
 
 sys.exit(1 if fails else 0)
 PY
