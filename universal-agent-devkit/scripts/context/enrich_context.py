@@ -1026,8 +1026,10 @@ def parallel_split(prompt):
         return reason
     paths = {p.rstrip(":,.;)") for p in PATHLIKE_RE.findall(text) if "://" not in p and not HOST_RE.match(p)}   # a link is no file
     paths = {p for p in paths if re.search(r"\w", p)}   # nor a lone "...", "." or "/"
-    if len(paths) == 1:   # edits inside one file are one lane
-        return ""
+    if len(paths) == 1:   # edits inside one file are one lane…
+        if not re.search(r"\.(?:md|txt)\Z", next(iter(paths)), re.I):
+            return ""
+        return _ask(SPLIT_COUNT_RE, text)   # …unless it is a Markdown / txt LIST of work ("fix hết 5 bug trong docs/issues-bugs.md"): the count splits
     reason = _ask(SPLIT_EXPLICIT_RE, text)
     if reason:
         return reason
