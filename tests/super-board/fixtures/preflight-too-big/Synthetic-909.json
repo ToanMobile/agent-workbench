@@ -1,0 +1,5 @@
+{
+  "number": 909,
+  "title": "🐛 [bug] pdf: ảnh lớn làm app văng",
+  "body": "## Problem\nẢnh lớn làm app văng.\n\n## Fix\nĐọc ảnh theo khối.\n\n## Acceptance Criteria\n- [ ] Không OOM trên máy thật.\n\n## Risk\n🟢 **Low** · cục bộ.\n"
+}

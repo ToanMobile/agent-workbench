@@ -38,7 +38,7 @@ export PATH="$TMP/bin:$PATH" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETR
   SB_GH_GUARD_STATE_FILE="$TMP/budget"
 
 # Một lần gọi cho cả lô của mỗi repo, như wave và lint gọi.
-for spec in Neighbours-From-Hell:4,13,14,15,16,24,47,54 OfficeReader:94,98,102 GeelyEx2:11 Synthetic:901,902,903,904,905,906,907,908; do
+for spec in Neighbours-From-Hell:4,13,14,15,16,24,47,54 OfficeReader:94,98,102 GeelyEx2:11 Synthetic:901,902,903,904,905,906,907,908,909,910,911,912; do
   repo="${spec%%:*}"
   bash "$PREFLIGHT" --repo "ToanMobile/$repo" --issues "${spec##*:}" >"$TMP/$repo.json" 2>"$TMP/$repo.err" \
     || fail "$repo: preflight exit $? ($(tail -1 "$TMP/$repo.err"))"
@@ -49,11 +49,14 @@ verdict() { jq -r --arg n "$2" '.[$n] | "\(.verdict)/\(.tag)"' "$TMP/$1.json" 2>
 # 908 là AC "OOM" mà Risk ghi "không cần máy thật" (phủ định không tính là tín hiệu máy thật).
 # Ca biên: #16 Fix đúng 5 đầu việc ngắn + "Giai đoạn"; #15 chỉ "Giai đoạn" + AC cần số liệu vận hành; 905 là
 # body #13 xuống dòng CRLF; 906 là #98 với tiêu đề "## Acceptance Criteria (…)" (has_acs và sect phải cùng nhận);
+# 909 là AC "Không OOM trên máy thật" (AC luôn là tín hiệu, phủ định chỉ lọc ở Risk); 910 là Risk có một dòng phủ định
+# và một dòng cần máy thật; 911 là phủ định cách cụm máy thật bởi dấu phẩy ("Không tái hiện được …, cần máy thật");
+# 912 là một dòng vừa phủ định vừa cần máy thật. Cả bốn phải bị giữ.
 # 907 là #16 thêm mục "## Fixtures" cuối body (không được thay mục Fix).
 # Gợi ý tách phải có ít nhất một dòng riêng của thẻ, không chỉ câu mặc định.
 for spec in Neighbours-From-Hell:4 Neighbours-From-Hell:13 Neighbours-From-Hell:14 Neighbours-From-Hell:15 \
             Neighbours-From-Hell:16 Neighbours-From-Hell:54 OfficeReader:98 OfficeReader:102 Synthetic:905 \
-            Synthetic:906 Synthetic:907; do
+            Synthetic:906 Synthetic:907 Synthetic:909 Synthetic:910 Synthetic:911 Synthetic:912; do
   repo="${spec%%:*}"; n="${spec##*:}"; got=$(verdict "$repo" "$n")
   if [ "$got" = hold/too-big ] \
      && jq -e --arg n "$n" '.[$n] | (.evidence | length) > 0 and (.reason | test("too big"))
