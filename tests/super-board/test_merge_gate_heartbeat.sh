@@ -83,4 +83,17 @@ gate "$CFG" --stale-after 5 >"$TMP/c.log" 2>&1
 [ "$(cat "$TMP/at.after" 2>/dev/null)" = "1" ] && ok "a lock taken by another pid is not refreshed by the heartbeat" \
   || fail "heartbeat wrote into a lock it no longer owns (at=$(cat "$TMP/at.after" 2>/dev/null || echo none))"
 
+# Ca 4: gate bị SIGKILL (trap EXIT không chạy) thì heartbeat mồ côi KHÔNG được tiếp tục làm mới khoá của gate đã chết,
+# nếu không khoá không bao giờ bị reap (reap chỉ theo tuổi mốc "at") và mọi gate sau kẹt tới hết --lock-timeout.
+# Lệnh verify tự SIGKILL gate (pid trong khoá), rồi ghi mốc "at" trước/sau 4 s (heartbeat 1 s sẽ làm mốc nhảy nếu còn sống).
+rm -f "$TMP/at.k1" "$TMP/at.k2"
+printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["kill -9 $(cat %s/pid); sleep 1.5; cp %s/at %s/at.k1; sleep 4; cp %s/at %s/at.k2; exit 3"]}' "$LOCK" "$LOCK" "$TMP" "$LOCK" "$TMP" > "$CFG"
+gate "$CFG" --stale-after 5 >"$TMP/d.log" 2>&1
+i=0; while [ "$i" -lt 40 ] && [ ! -s "$TMP/at.k2" ]; do sleep 0.5; i=$((i + 1)); done
+if [ -s "$TMP/at.k1" ] && [ -s "$TMP/at.k2" ]; then
+  [ "$(cat "$TMP/at.k1")" = "$(cat "$TMP/at.k2")" ] && ok "a SIGKILLed gate leaves no heartbeat refreshing its dead lock" \
+    || fail "orphan heartbeat kept refreshing the lock of a dead gate (at $(cat "$TMP/at.k1") -> $(cat "$TMP/at.k2"))"
+else fail "case 4 did not run: $(tail -3 "$TMP/d.log")"; fi
+pkill -f "sleep 4$" 2>/dev/null
+
 [ "$FAILS" -eq 0 ]
