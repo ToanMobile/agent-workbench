@@ -21,7 +21,7 @@ TMP="$(mktemp -d)"
 case "$TMP" in /?*) [ -d "$TMP" ] || TMP="" ;; *) TMP="" ;; esac
 if [ -z "$TMP" ]; then echo "✖ no temp dir (mktemp failed): nothing was run" >&2; exit 1; fi
 trap 'rm -rf "$TMP"' EXIT
-python3 -I - "$KIT" "$TMP" <<'PY'
+python3 -I - "$KIT" "$TMP" <<'PYEND'
 import datetime, json, os, signal, stat, struct, subprocess, sys, time, zlib
 
 KIT, TMP = sys.argv[1], sys.argv[2]
@@ -288,4 +288,4 @@ if a is not None and b is not None:
 
 print("\nstate FIFO no hang: %s" % ("PASSED" if fails == 0 else "FAILED (%d)" % fails))
 sys.exit(1 if fails else 0)
-PY
+PYEND
