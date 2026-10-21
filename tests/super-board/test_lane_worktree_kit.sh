@@ -187,10 +187,10 @@ done
 case "$hint_text $wave_text" in *"git worktree remove"*) bad="$bad brief:git worktree remove" ;; esac
 WTPY_SRC="$ROOT/universal-agent-devkit/scripts/git/worktree.py"
 if [ -f "$WTPY_SRC" ]; then
-  # mọi `git worktree remove <đích>` trừ --force (lời cho NGƯỜI DÙNG khi có việc sẽ mất), "git worktree remove:" (tiền tố lỗi) và
-  # "`git worktree remove` trần" trong comment (review 21/10: chỉ bắt {holder}/<path> thì đổi tên biến là lọt). `-f` cũng bị bắt; dòng
-  # dừng ngay sau "remove" (f-string xuống dòng) cũng bị bắt (OCR 21/10)
-  hits=$(grep -nE 'git worktree remove( [^:`]| ?"?$)' "$WTPY_SRC" | grep -vE 'git worktree remove --force( \{|`)' || true)
+  # mọi `git worktree remove` theo sau bởi bất kỳ ký tự nào (hay hết dòng) trừ ":" (tiền tố lỗi "git worktree remove: …") và backtick
+  # ("`git worktree remove` trần" trong comment). Chỉ XOÁ đúng 2 chuỗi được phép trước khi tìm — `--force {…}` (lời cho NGƯỜI DÙNG khi
+  # có việc sẽ mất) và `--force` trong backtick — nên dạng sai cùng dòng với dạng được phép vẫn bị bắt (review + OCR 21/10)
+  hits=$(grep -n '' "$WTPY_SRC" | sed -E 's/git worktree remove --force( \{|`)//g' | grep -E 'git worktree remove([^:`]|$)' || true)
   [ -z "$hits" ] || bad="$bad worktree.py lane messages:$hits"
 else
   bad="$bad missing:worktree.py"
