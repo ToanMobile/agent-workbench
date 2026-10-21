@@ -2998,6 +2998,9 @@ def needs_no_test(rel_file: str) -> bool:
             or Path(clean).name == ".gitignore"
             # Bản chép script super-board của agent-workbench (test ở đó, tests/super-board/); 17/10: PR đưa merge gate vào 4 repo kẹt như trên.
             or clean.startswith(".claude/bin/super-board-")
+            # 21/10 (#78): skill, schema and wave workflow chép từ agent-workbench cũng vậy; chỉ đúng các đường dẫn này, không theo tiền tố .claude/ rộng.
+            or clean.startswith((".claude/skills/super-board/", ".claude/skills/super-review/"))
+            or clean == ".claude/workflows/super-board-wave.js"
             or clean in AGENT_STATE_FILES or clean.startswith((".agents/local/memory/", ".agents/local/red-patches/"))   # red_proof's bug-back patches: data of the proof tool
             or re.fullmatch(r"reports/proof-[^/]+\.png", clean) is not None
             # What the project's tooling writes under reports/ (Goods: its PlayMode screen tour saves
