@@ -1685,10 +1685,17 @@ def _bookkeeping_regenerated(wt, main):
             if got.returncode != 0:
                 return False
             base_raw = json.loads(got.stdout)
-        cur = git(main, "show", f"HEAD:{STATUS_FILE}", check=False)
-        theirs_raw = json.loads(cur.stdout) if cur.returncode == 0 else {"items": {}}
+        held = git(main, "ls-tree", "-z", "HEAD", "--", STATUS_FILE, check=False)   # as the worktree's HEAD: a git error is not "none" (OCR)
+        if held.returncode != 0:
+            return False
+        theirs_raw = {"items": {}}
+        if held.stdout.strip("\0"):
+            cur = git(main, "show", f"HEAD:{STATUS_FILE}", check=False)
+            if cur.returncode != 0:
+                return False
+            theirs_raw = json.loads(cur.stdout)
         mine = {rid: a for rid, it in mine_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
-        base = {rid: a for rid, it in base_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
+        base ={rid: a for rid, it in base_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
         theirs = {rid: a for rid, it in theirs_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
         fresh = {rid for rid, it in mine_raw["items"].items() if isinstance(it, dict) and it.get("source") == "guards.json"
                  and rid not in base_raw["items"] and rid not in theirs_raw["items"]}

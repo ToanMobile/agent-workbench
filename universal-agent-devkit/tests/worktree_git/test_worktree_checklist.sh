@@ -292,6 +292,24 @@ bash "$KIT" worktree remove ../wt-x2 >"$TMP/rm-x2.out" 2>&1; rc=$?
   || { fail "remove of a worktree with a hidden bookkeeping edit (rc=$rc)"; cat "$TMP/rm-x2.out"; }
 git -C "$TMP/wt-x2" update-index --no-skip-worktree .agents/CHECKLIST.md >/dev/null 2>&1
 git -C "$TMP/m" worktree remove --force "$TMP/wt-x2" >/dev/null 2>&1
+# (OCR 21/10) git cannot read main's status file (a timeout, rc 124): not "main has none" — the check fails closed
+bash "$KIT" worktree add ../wt-t >/dev/null 2>&1 || fail "add wt-t"
+status_edit "$TMP/wt-t" 'del items["BUG-LATER"]'
+got="$(python3 - "$DEVKIT_DIR/scripts/git/worktree.py" "$TMP/wt-t" "$TMP/m" <<'PY'
+import importlib.util, subprocess, sys
+spec = importlib.util.spec_from_file_location("wtmod", sys.argv[1]); w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+real = w.git
+def git(cwd, *args, **kw):   # reads of the main checkout objects time out, every other call is real
+    if cwd == sys.argv[3] and args[:1] in (("show",), ("ls-tree",)):
+        return subprocess.CompletedProcess(args, 124, "", "timeout")
+    return real(cwd, *args, **kw)
+w.git = git
+print(w._bookkeeping_regenerated(sys.argv[2], sys.argv[3]))
+PY
+)"
+[ "$got" = "False" ] && ok "remove: main's status file git cannot read (timeout) is not read as 'main has none' (fail closed)" \
+  || fail "unreadable main status file read as regenerated: $got"
+git -C "$TMP/m" worktree remove --force "$TMP/wt-t" >/dev/null 2>&1
 
 # the checklist NOT tracked (git-ignored or not): a worktree that wrote it on request still does not ship it
 make_repo "$TMP/u" 0 untracked
