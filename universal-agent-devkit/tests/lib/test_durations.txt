@@ -337,6 +337,7 @@
 # 2026-10-20: two tests that were missing (an unlisted test starts first). Each alone on this machine.
 9 tests/installer/test_agent_health_score_inflation.sh
 10 tests/verification/test_unity_machine_lock.sh
+3 tests/verification/test_game_script_args.sh
 2 tests/gates/test_guard_protected_push.sh
 1 tests/verification/test_instincts_add_concurrent.sh
 3 tests/verification/test_red_proof_hardening.sh

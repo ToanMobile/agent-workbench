@@ -180,8 +180,23 @@ take_check_lock() {
   if ! mkdir "$lock" 2>/dev/null; then
     m=$(file_mtime "$lock") || m=$NOW
     [ $((NOW - m)) -ge 120 ] || return 1
-    rmdir "$lock" 2>/dev/null || true
-    mkdir "$lock" 2>/dev/null || return 1
+    # Lấy lại tuần tự: một cổng mkdir cho mọi bên muốn lấy lại, rồi kiểm lại tuổi BÊN TRONG cổng. rmdir + mkdir trần để hai
+    # check cùng thấy khoá cũ, check sau rmdir đúng khoá mới của check trước và cả hai cùng giữ khoá. Cổng bỏ lại quá 120 s
+    # (check bị kill giữa chừng) bị gỡ, lượt check sau lấy lại khoá.
+    if ! mkdir "$lock.reclaim" 2>/dev/null; then
+      m=$(file_mtime "$lock.reclaim") || m=$NOW
+      [ $((NOW - m)) -lt 120 ] || rmdir "$lock.reclaim" 2>/dev/null || true
+      return 1
+    fi
+    m=$(file_mtime "$lock") || m=$NOW
+    if [ $((NOW - m)) -ge 120 ]; then
+      rmdir "$lock" 2>/dev/null || true
+      mkdir "$lock" 2>/dev/null || { rmdir "$lock.reclaim" 2>/dev/null || true; return 1; }
+    else
+      rmdir "$lock.reclaim" 2>/dev/null || true
+      return 1
+    fi
+    rmdir "$lock.reclaim" 2>/dev/null || true
   fi
   CHECK_LOCK="$lock"
   trap 'rmdir "'"$lock"'" 2>/dev/null || true' EXIT
