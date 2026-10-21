@@ -959,10 +959,12 @@ def cmd_add(cwd, args):
         die(tr(f"{wt} đã có và không rỗng", f"{wt} exists and is not empty"))
     holder = next((e["path"] for e in _worktree_entries(main)[1:] if lane and branch and e["branch"] == branch), None)
     if holder:   # git's own "already used by worktree" names no way out; the Tester behind a Builder's leftover worktree needs one
-        die(tr(f"nhánh {branch} đang được checkout ở {holder}: gỡ worktree đó trước (`git worktree remove {holder}`; bị từ chối = nó còn việc: "
-               "chặn thẻ, ghi tên nó), rồi chạy lại",
-               f"the branch {branch} is checked out at {holder}: remove that worktree first (`git worktree remove {holder}`; refused = it still "
-               "holds work: block the card naming it), then run this again"), 1)
+        # agent-kit (kit) chứ không `git worktree remove` trần: git trần từ chối dấu vết cài DevKit mà worktree lane nào cũng có (AGENTS.md
+        # sinh lại, hook link vào kit) dù không mất gì — 11 thẻ Blocked 20/10; kit chỉ từ chối (✖) khi có việc sẽ mất
+        die(tr(f"nhánh {branch} đang được checkout ở {holder}: gỡ worktree đó trước (`agent-kit worktree remove {holder}`; bị từ chối (✖) = nó "
+               "còn việc: chặn thẻ, ghi tên nó), rồi chạy lại",
+               f"the branch {branch} is checked out at {holder}: remove that worktree first (`agent-kit worktree remove {holder}`; refused (✖) = it "
+               "still holds work: block the card naming it), then run this again"), 1)
     origin_has = None   # does origin hold the issue branch: None = not asked (a local branch, no origin remote)
     if lane and branch and git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode != 0 \
             and git(main, "remote", "get-url", "origin", check=False).returncode == 0:
@@ -2540,6 +2542,8 @@ def _merge_gate(wt, base, matrix):
         p = subprocess.Popen([sys.executable, gate, "--run-tests", "--brief", "--json", "--diff", base, "--matrix", matrix], cwd=wt,
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                              env=dict(os.environ, CLAUDE_PROJECT_DIR=wt, VACUITY_REVERT="0",
+                                      # #154: its exit 2 (what the session owes) leaves the session's gate receipt as it is
+                                      DEVKIT_GATE_MERGE_CHECK="1",
                                       # P1 (20/10): gộp vào main chặn người khác — đứng đầu hàng đợi khoá Unity;
                                       # đặt hẳn merge (giá trị của phiên gọi, vd interactive, không được thay — OCR 20/10)
                                       DEVKIT_SLOT_PRIORITY="merge"))
@@ -3209,9 +3213,9 @@ def automerge(cwd, wt, keep=False):
     elif board_worktree(wt):   # lane super-board (detached review/qa, nhánh issue chưa push): chỉ vào main qua PR + merge gate (review 19/10:
         # `finish` / Stop của phiên tự chạy lane đã gộp một checkout review detached, commit PR chưa review, vào main local)
         return "blocked", tr("worktree của lane super-board (.claude/worktrees/issue-<N>-…): chỉ vào main qua PR + merge gate, không tự gộp; "
-                             "xong lane thì gỡ nó: `git worktree remove <path>`",
+                             "xong lane thì gỡ nó: `agent-kit worktree remove <path>`",
                              "a super-board lane worktree (.claude/worktrees/issue-<N>-…): it reaches main only through its PR and the merge gate, "
-                             "never merged automatically; remove it when the lane is done: `git worktree remove <path>`"), {}
+                             "never merged automatically; remove it when the lane is done: `agent-kit worktree remove <path>`"), {}
     if wt_branch:
         return "blocked", tr(f"worktree đang ở nhánh '{wt_branch}' đã PUBLISH (có nhánh remote / upstream): không tự commit thêm hay gộp nó vào main — gộp bằng tay (merge/PR)",
                              f"the worktree is on branch '{wt_branch}', which is PUBLISHED (a remote ref / upstream exists): nothing is committed to it or merged from it automatically - merge it by hand (merge / PR)"), {}
