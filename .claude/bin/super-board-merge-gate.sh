@@ -480,6 +480,7 @@ start_heartbeat() {
   [ "$every" -ge 1 ] || every=1
   (
     while sleep "$every"; do
+      kill -0 "$owner" 2>/dev/null || exit 0   # gate bị SIGKILL (trap EXIT không chạy): không làm mới khoá của gate đã chết
       [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$owner" ] || exit 0
       { date +%s > "$LOCK_DIR/at.hb$owner" && mv -f "$LOCK_DIR/at.hb$owner" "$LOCK_DIR/at"; } 2>/dev/null || exit 0
     done
