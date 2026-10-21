@@ -193,18 +193,177 @@ printf '%s\n' "$patch" | grep -qF "diff --git a/src/a.py " && ! printf '%s\n' "$
   && ok "a worktree path with a space: added, and its diff leaves the bookkeeping out" || fail "space path: $(printf '%s\n' "$patch" | grep '^diff --git')"
 git -C "$TMP/m" worktree remove --force "$TMP/wt sp" >/dev/null 2>&1
 
-# a worktree whose ONLY dirt is bookkeeping (a hook rewrote it): remove still refuses (not weakened) and names the way out,
-# which must not be a command the git guard blocks (`git checkout -- <file>`, `switch -c`)
+# a worktree whose ONLY dirt is bookkeeping the gate and the checklist sync regenerate (21/10, GeelyEx2 #41: the QA lane's
+# `agent-kit worktree remove` was refused for it and the card went to Blocked): remove goes through, after a fallback copy of
+# the working tree in refs/devkit/discarded/* (worktree gc drops it after DISCARD_KEEP_DAYS). A row a person made still holds
+# the worktree. Nothing remove prints names a command the git guard blocks (`git checkout -- <file>`, `switch -c`)
 cd "$TMP/m" || exit 1
+fallback_has() {   # fallback_has <text> <path>: some refs/devkit/discarded/* copy holds <text> in <path>
+  local r
+  for r in $(git -C "$TMP/m" for-each-ref --format='%(refname)' refs/devkit/discarded/); do
+    git -C "$TMP/m" show "$r:$2" 2>/dev/null | grep -qF "$1" && { echo yes; return; }
+  done
+}
+status_edit() {   # status_edit <checkout> <python expression on d["items"]>: edit that checkout's regression_status.json in place
+  python3 - "$1/.agents/regression_status.json" "$2" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p, encoding="utf-8")); items = d["items"]
+exec(sys.argv[2])
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+}
 bash "$KIT" worktree add ../wt-k >/dev/null 2>&1 || fail "add wt-k"
 echo "<!-- k -->" >> "$TMP/wt-k/.agents/CHECKLIST.md"
 bash "$KIT" worktree remove ../wt-k >"$TMP/rm-k.out" 2>&1; rc=$?
-[ "$rc" = 1 ] && grep -q "with-checklist" "$TMP/rm-k.out" && ! grep -qE "checkout --|switch -c" "$TMP/rm-k.out" \
-  && ok "remove: bookkeeping-only dirt is still refused; the hint names --with-checklist, no command the git guard blocks" \
-  || { fail "remove of a bookkeeping-only worktree (rc=$rc)"; cat "$TMP/rm-k.out"; }
-bash "$KIT" worktree diff ../wt-k --with-checklist 2>/dev/null | git apply --3way >/dev/null 2>&1
-bash "$KIT" worktree remove ../wt-k >/dev/null 2>&1; rc=$?
-[ "$rc" = 0 ] && ok "remove: allowed once --with-checklist brought the bookkeeping into main" || fail "remove after --with-checklist (rc=$rc)"
+[ "$rc" = 0 ] && [ ! -e "$TMP/wt-k" ] && [ "$(fallback_has '<!-- k -->' .agents/CHECKLIST.md)" = yes ] \
+  && grep -q "refs/devkit/discarded/" "$TMP/rm-k.out" && ! grep -qE "checkout --|switch -c" "$TMP/rm-k.out" \
+  && ok "remove: a rewritten CHECKLIST.md view alone no longer holds a worktree; a fallback copy keeps the edit, the output names it" \
+  || { fail "remove of a worktree with only a rewritten view (rc=$rc)"; cat "$TMP/rm-k.out"; }
+# the #41 shape: the sync imported a guards.json row (source "guards.json": rebuilt from the tracked .agents/local/guards.json)
+# and moved a fixed bug's test_refs to runs_in_suite once they resolved
+status_edit "$TMP/m" 'items["BUG-MOVE"] = {"id": "BUG-MOVE", "kind": "bug", "title": "moved ref", "fixed": True, "state": "confirmed", "tests": [], "test_refs": ["ok.sh"], "created_at": "2026-10-16 10:00:00"}'
+mkdir -p "$TMP/m/.agents/local"   # STORE-1: the sync imports it as a new row; STORE-C: it claims it on BUG-MOVE (same test)
+printf '{"guards": [{"id": "STORE-1", "title": "imported guard", "tests": ["store.sh"]}, {"id": "STORE-C", "title": "claimed guard", "tests": ["ok.sh"]}]}\n' > "$TMP/m/.agents/local/guards.json"
+git -C "$TMP/m" add .agents/regression_status.json .agents/local/guards.json && git -C "$TMP/m" commit -qm "a fixed bug whose test is a test_ref; a guard main's status has not imported yet" || fail "seed BUG-MOVE"
+sync_render() { ( cd "$1" && CLAUDE_PROJECT_DIR="$1" python3 "$DEVKIT_DIR/bin/regression_checklist.py" render >/dev/null 2>&1 ); }   # the real sync, as every `bugs` command runs it
+bash "$KIT" worktree add ../wt-s >/dev/null 2>&1 || fail "add wt-s"
+sync_render "$TMP/wt-s"; sleep 1   # remove's own sync runs a second later: its time stamps differ and must not count
+python3 - "$TMP/wt-s/.agents/regression_status.json" <<'PY' || fail "wt-s: the real sync did not import STORE-1 and claim STORE-C on BUG-MOVE (the fixture proves nothing)"
+import json, sys
+items = json.load(open(sys.argv[1], encoding="utf-8"))["items"]
+sys.exit(0 if items.get("STORE-1", {}).get("source") == "guards.json" and "STORE-C" in (items["BUG-MOVE"].get("guards") or []) else 1)
+PY
+status_edit "$TMP/wt-s" 'items["BUG-MOVE"]["runs_in_suite"] = items["BUG-MOVE"].pop("test_refs"); items["BUG-MOVE"]["test_refs"] = []'
+echo "<!-- s -->" >> "$TMP/wt-s/.agents/CHECKLIST.md"
+bash "$KIT" worktree remove ../wt-s >"$TMP/rm-s.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$TMP/wt-s" ] && [ "$(fallback_has STORE-1 .agents/regression_status.json)" = yes ] \
+  && ok "remove: rows the checklist sync rebuilt (a guards.json import, a test_ref moved to runs_in_suite) do not hold a worktree; the fallback copy keeps them" \
+  || { fail "remove of a worktree with only sync-regenerated rows (rc=$rc)"; cat "$TMP/rm-s.out"; }
+# a row a person made (`agent-kit bugs add`), only in the worktree: still refused, the worktree stays
+bash "$KIT" worktree add ../wt-h >/dev/null 2>&1 || fail "add wt-h"
+status_edit "$TMP/wt-h" 'items["BUG-HAND"] = {"id": "BUG-HAND", "kind": "bug", "title": "made by a person", "fixed": False, "state": "reported", "tests": [], "created_at": "2026-10-21 09:00:00"}'
+bash "$KIT" worktree remove ../wt-h >"$TMP/rm-h.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-h" ] && grep -q "regression_status.json" "$TMP/rm-h.out" && grep -q "with-checklist" "$TMP/rm-h.out" \
+  && ok "remove: a bug row a person made, only in the worktree, still holds it; the hint names --with-checklist" \
+  || { fail "remove of a worktree with an authored row (rc=$rc)"; cat "$TMP/rm-h.out"; }
+git -C "$TMP/m" worktree remove --force "$TMP/wt-h" >/dev/null 2>&1
+# a row a person DROPPED in the worktree (`agent-kit bugs drop`; OCR 21/10): the worktree's own HEAD has it, main still does:
+# that decision lives nowhere else, still refused. A row main gained after the worktree branched off is no drop (#41 had those)
+bash "$KIT" worktree add ../wt-d >/dev/null 2>&1 || fail "add wt-d"
+status_edit "$TMP/wt-d" 'del items["BUG-MOVE"]'
+status_edit "$TMP/m" 'items["BUG-LATER"] = {"id": "BUG-LATER", "kind": "bug", "title": "main moved on", "fixed": False, "state": "reported", "tests": [], "created_at": "2026-10-21 10:00:00"}'
+git -C "$TMP/m" add .agents/regression_status.json && git -C "$TMP/m" commit -qm "main gains a row after wt-d branched" || fail "seed BUG-LATER"
+bash "$KIT" worktree remove ../wt-d >"$TMP/rm-d.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-d" ] && grep -q "regression_status.json" "$TMP/rm-d.out" \
+  && ok "remove: a row a person dropped in the worktree (main still holds it) still holds the worktree" \
+  || { fail "remove of a worktree that dropped an authored row (rc=$rc)"; cat "$TMP/rm-d.out"; }
+git -C "$TMP/m" worktree remove --force "$TMP/wt-d" >/dev/null 2>&1
+bash "$KIT" worktree add ../wt-o >/dev/null 2>&1 || fail "add wt-o"
+git -C "$TMP/wt-o" checkout -q --detach HEAD~1 2>/dev/null || fail "wt-o: back to before BUG-LATER"
+echo "<!-- o -->" >> "$TMP/wt-o/.agents/CHECKLIST.md"
+bash "$KIT" worktree remove ../wt-o >"$TMP/rm-o.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$TMP/wt-o" ] \
+  && ok "remove: a worktree based before main gained a row is not read as having dropped it" \
+  || { fail "remove of a worktree older than main's newest row (rc=$rc)"; cat "$TMP/rm-o.out"; }
+# (principal review 21/10, P1-1) a person's link on a guards.json row main ALREADY holds: the sync never rebuilds that link, still refused
+status_edit "$TMP/m" 'items["STORE-2"] = {"id": "STORE-2", "kind": "bug", "title": "guard in main", "fixed": True, "state": "confirmed", "source": "guards.json", "tests": ["REG-OK"], "created_at": "2026-10-20 08:00:00"}'
+git -C "$TMP/m" add .agents/regression_status.json && git -C "$TMP/m" commit -qm "a guards.json row in main" || fail "seed STORE-2"
+bash "$KIT" worktree add ../wt-g >/dev/null 2>&1 || fail "add wt-g"
+status_edit "$TMP/wt-g" 'items["STORE-2"]["tests"].append("REG-U"); items["STORE-2"]["linked_at"] = "2026-10-21 11:00:00"'
+bash "$KIT" worktree remove ../wt-g >"$TMP/rm-g.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-g" ] && grep -q "regression_status.json" "$TMP/rm-g.out" \
+  && ok "remove: a link a person added to a guards.json row main already holds still holds the worktree" \
+  || { fail "remove of a worktree with a hand link on a guards.json row (rc=$rc)"; cat "$TMP/rm-g.out"; }
+git -C "$TMP/m" worktree remove --force "$TMP/wt-g" >/dev/null 2>&1
+# (P2-2) main edited a row a person made AFTER the worktree branched; the worktree only re-rendered its view: no work, removable
+bash "$KIT" worktree add ../wt-p >/dev/null 2>&1 || fail "add wt-p"
+status_edit "$TMP/m" 'items["BUG-LATER"]["title"] = "renamed in main"'
+git -C "$TMP/m" add .agents/regression_status.json && git -C "$TMP/m" commit -qm "main edits BUG-LATER after wt-p branched" || fail "edit BUG-LATER"
+echo "<!-- p -->" >> "$TMP/wt-p/.agents/CHECKLIST.md"
+bash "$KIT" worktree remove ../wt-p >"$TMP/rm-p.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$TMP/wt-p" ] \
+  && ok "remove: a row main edited after the worktree branched is not the worktree's work (its own HEAD holds that row as it is)" \
+  || { fail "remove of a worktree whose base row main edited later (rc=$rc)"; cat "$TMP/rm-p.out"; }
+# (P2-3) fail closed: a status file that does not parse, and an edit git hides (skip-worktree), still hold the worktree
+bash "$KIT" worktree add ../wt-j >/dev/null 2>&1 || fail "add wt-j"
+printf '{"items": {' > "$TMP/wt-j/.agents/regression_status.json"; echo "<!-- j -->" >> "$TMP/wt-j/.agents/CHECKLIST.md"
+bash "$KIT" worktree remove ../wt-j >"$TMP/rm-j.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-j" ] && ok "remove: a status file that does not parse is work (fail closed)" \
+  || { fail "remove of a worktree with an unparsable status file (rc=$rc)"; cat "$TMP/rm-j.out"; }
+git -C "$TMP/m" worktree remove --force "$TMP/wt-j" >/dev/null 2>&1
+bash "$KIT" worktree add ../wt-x2 >/dev/null 2>&1 || fail "add wt-x2"
+git -C "$TMP/wt-x2" update-index --skip-worktree .agents/CHECKLIST.md && echo "<!-- hidden -->" >> "$TMP/wt-x2/.agents/CHECKLIST.md"
+sync_render "$TMP/wt-x2"   # a visible regenerated change too (the STORE-1 import): the bookkeeping filter runs
+grep -q '"STORE-1"' "$TMP/wt-x2/.agents/regression_status.json" || fail "wt-x2: the real sync did not import STORE-1"
+bash "$KIT" worktree remove ../wt-x2 >"$TMP/rm-x2.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-x2" ] && grep -q "skip-worktree" "$TMP/rm-x2.out" \
+  && ok "remove: an edit git hides (skip-worktree) on a bookkeeping file still holds the worktree" \
+  || { fail "remove of a worktree with a hidden bookkeeping edit (rc=$rc)"; cat "$TMP/rm-x2.out"; }
+git -C "$TMP/wt-x2" update-index --no-skip-worktree .agents/CHECKLIST.md >/dev/null 2>&1
+git -C "$TMP/m" worktree remove --force "$TMP/wt-x2" >/dev/null 2>&1
+# main syncs (STORE-1 imported, STORE-C claimed on BUG-MOVE) and gains one more guard, STORE-N: in the worktrees below the sync's only
+# change is the STORE-N import, so each case turns on its own rule, not on a claim the sync also makes
+sync_render "$TMP/m"
+printf '{"guards": [{"id": "STORE-1", "title": "imported guard", "tests": ["store.sh"]}, {"id": "STORE-C", "title": "claimed guard", "tests": ["ok.sh"]}, {"id": "STORE-N", "title": "new guard", "tests": ["new.sh"]}]}\n' > "$TMP/m/.agents/local/guards.json"
+git -C "$TMP/m" add .agents && git -C "$TMP/m" commit -qm "main synced; a new guard" || fail "main sync + STORE-N"
+# (Antigravity T0047 #1) the sync imported a guard and a person linked a test to that fresh row in the same worktree: the sync never
+# builds that link, still refused
+bash "$KIT" worktree add ../wt-fg >"$TMP/add-fg.out" 2>&1 || fail "add wt-fg: $(tail -2 "$TMP/add-fg.out")"
+sync_render "$TMP/wt-fg"
+grep -q '"STORE-N"' "$TMP/wt-fg/.agents/regression_status.json" || fail "wt-fg: the real sync did not import STORE-N"
+status_edit "$TMP/wt-fg" 'items["STORE-N"].setdefault("tests", []).append("REG-HAND"); items["STORE-N"]["linked_at"] = "2026-10-21 12:30:00"'
+bash "$KIT" worktree remove ../wt-fg >"$TMP/rm-f.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-fg" ] \
+  && ok "remove: a person's link on a row the sync just imported (neither HEAD holds it) still holds the worktree" \
+  || { fail "remove of a worktree with a hand link on a fresh guards.json row (rc=$rc)"; cat "$TMP/rm-f.out"; }
+git -C "$TMP/m" worktree remove --force "$TMP/wt-fg" >/dev/null 2>&1
+# (T0047 #2) a branch worktree committed a row, then dropped it uncommitted: the branch keeps the row, the drop lives only on disk
+bash "$KIT" worktree add ../wt-b2 feat/b2 >/dev/null 2>&1 || fail "add wt-b2 on a branch"
+status_edit "$TMP/wt-b2" 'items["BUG-BR"] = {"id": "BUG-BR", "kind": "bug", "title": "on the branch", "fixed": False, "state": "reported", "tests": [], "created_at": "2026-10-21 12:40:00"}'
+git -C "$TMP/wt-b2" add .agents/regression_status.json && git -C "$TMP/wt-b2" commit -qm "a row on the branch" || fail "wt-b2: commit the row"
+status_edit "$TMP/wt-b2" 'del items["BUG-BR"]'
+sync_render "$TMP/wt-b2"   # the status file then differs from main's (the STORE-1 import): the bookkeeping rule decides, not "main holds these bytes"
+bash "$KIT" worktree remove ../wt-b2 >"$TMP/rm-b2.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-b2" ] \
+  && ok "remove: an uncommitted drop of a row the branch committed (main never had it) still holds the worktree" \
+  || { fail "remove of a branch worktree with an uncommitted drop (rc=$rc)"; cat "$TMP/rm-b2.out"; }
+git -C "$TMP/m" worktree remove --force "$TMP/wt-b2" >/dev/null 2>&1; git -C "$TMP/m" branch -D feat/b2 >/dev/null 2>&1
+# (T0047 #3) the branch changed a row main holds, then the disk put it back to main's version, uncommitted: still the worktree's work
+bash "$KIT" worktree add ../wt-b3 feat/b3 >/dev/null 2>&1 || fail "add wt-b3 on a branch"
+status_edit "$TMP/wt-b3" 'items["BUG-LATER"]["title"] = "changed on the branch"'
+git -C "$TMP/wt-b3" add .agents/regression_status.json && git -C "$TMP/wt-b3" commit -qm "the branch renames BUG-LATER" || fail "wt-b3: commit the rename"
+python3 - "$TMP/wt-b3/.agents/regression_status.json" "$TMP/m" <<'PY' || fail "wt-b3: could not put BUG-LATER back to main's version (the fixture proves nothing)"
+import json, subprocess, sys
+p = sys.argv[1]; d = json.load(open(p, encoding="utf-8"))
+main = json.loads(subprocess.run(["git", "-C", sys.argv[2], "show", "HEAD:.agents/regression_status.json"], capture_output=True, text=True).stdout)
+assert d["items"]["BUG-LATER"] != main["items"]["BUG-LATER"], "the branch did not change BUG-LATER"
+d["items"]["BUG-LATER"] = main["items"]["BUG-LATER"]
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+sync_render "$TMP/wt-b3"
+bash "$KIT" worktree remove ../wt-b3 >"$TMP/rm-b3.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-b3" ] \
+  && ok "remove: an uncommitted change back to main's version of a row the branch changed still holds the worktree" \
+  || { fail "remove of a branch worktree whose row went back to main's version (rc=$rc)"; cat "$TMP/rm-b3.out"; }
+git -C "$TMP/m" worktree remove --force "$TMP/wt-b3" >/dev/null 2>&1; git -C "$TMP/m" branch -D feat/b3 >/dev/null 2>&1
+# (OCR 21/10) git cannot read main's status file (a timeout, rc 124): not "main has none" — the check fails closed
+bash "$KIT" worktree add ../wt-t >/dev/null 2>&1 || fail "add wt-t"
+status_edit "$TMP/wt-t" 'del items["BUG-LATER"]'
+got="$(python3 - "$DEVKIT_DIR/scripts/git/worktree.py" "$TMP/wt-t" "$TMP/m" <<'PY'
+import importlib.util, subprocess, sys
+spec = importlib.util.spec_from_file_location("wtmod", sys.argv[1]); w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+real = w.git
+def git(cwd, *args, **kw):   # reads of the main checkout objects time out, every other call is real
+    if cwd == sys.argv[3] and args[:1] in (("show",), ("ls-tree",)):
+        return subprocess.CompletedProcess(args, 124, "", "timeout")
+    return real(cwd, *args, **kw)
+w.git = git
+print(w._bookkeeping_regenerated(sys.argv[2], sys.argv[3]))
+PY
+)"
+[ "$got" = "False" ] && ok "remove: main's status file git cannot read (timeout) is not read as 'main has none' (fail closed)" \
+  || fail "unreadable main status file read as regenerated: $got"
+git -C "$TMP/m" worktree remove --force "$TMP/wt-t" >/dev/null 2>&1
 
 # the checklist NOT tracked (git-ignored or not): a worktree that wrote it on request still does not ship it
 make_repo "$TMP/u" 0 untracked
