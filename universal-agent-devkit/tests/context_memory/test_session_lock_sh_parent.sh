@@ -21,7 +21,7 @@ git -C "$REPO" -c user.email=t@t -c user.name=t add -A >/dev/null && git -C "$RE
 
 # The way Claude Code runs a hook: a long-lived parent (here python, standing in for claude) -> /bin/sh -c 'bash "<hook>"'.
 # Session A runs one Edit hook, writes its exit code, then stays alive like a session at work.
-python3 - "$HOOK" "$REPO" "$TMP/a.rc" <<'PY' &
+( exec python3 - "$HOOK" "$REPO" "$TMP/a.rc" <<'PY'
 import json, os, subprocess, sys, time
 hook, repo, rcf = sys.argv[1:4]
 d = {"session_id": "A", "hook_event_name": "PreToolUse", "cwd": repo, "tool_name": "Edit",
@@ -33,6 +33,7 @@ with open(rcf + ".tmp", "w") as f:
 os.replace(rcf + ".tmp", rcf)
 time.sleep(120)
 PY
+) &
 A_PID=$!
 for _ in $(seq 1 200); do [ -s "$TMP/a.rc" ] && break; sleep 0.05; done
 [ "$(cat "$TMP/a.rc" 2>/dev/null)" = 0 ] && ok "session A (hook under /bin/sh -c) takes the checkout" || fail "session A's Edit: rc=$(cat "$TMP/a.rc" 2>/dev/null)"

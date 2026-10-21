@@ -55,11 +55,11 @@ if [ "$MODE" = "execute" ]; then
 fi
 while [ $# -gt 0 ]; do
   case "$1" in
-    --filter) FILTER="${2:-}"; shift 2 ;;
+    --filter) [ $# -ge 2 ] || { echo "unity-batch: --filter needs a value" >&2; exit 2; }; FILTER="$2"; shift 2 ;;
     --filter=*) FILTER="${1#*=}"; shift ;;
-    --category) CATEGORY="${2:-}"; shift 2 ;;
+    --category) [ $# -ge 2 ] || { echo "unity-batch: --category needs a value" >&2; exit 2; }; CATEGORY="$2"; shift 2 ;;
     --category=*) CATEGORY="${1#*=}"; shift ;;
-    --assembly) ASSEMBLY="${2:-}"; shift 2 ;;
+    --assembly) [ $# -ge 2 ] || { echo "unity-batch: --assembly needs a value" >&2; exit 2; }; ASSEMBLY="$2"; shift 2 ;;
     --assembly=*) ASSEMBLY="${1#*=}"; shift ;;
     *) echo "unity-batch: unknown option '$1'" >&2; exit 2 ;;
   esac
