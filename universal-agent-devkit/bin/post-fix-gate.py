@@ -4631,7 +4631,8 @@ def suite_env():
             "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
             "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",  # `git -c k=v commit` reaches the hook as GIT_CONFIG_PARAMETERS
             "DEVKIT_LEDGER_ROOT",  # regression_gate's hint for THIS run: a gate a suite starts on a scratch repo reads that repo's own ledger
-            "POSTFIX_GATE_FORCE_FULL", "POSTFIX_GATE_FULL", "WORKTREE_MERGE_GATE", "DEVKIT_ALLOW_BRANCH"}
+            "POSTFIX_GATE_FORCE_FULL", "POSTFIX_GATE_FULL", "WORKTREE_MERGE_GATE", "DEVKIT_ALLOW_BRANCH",
+            "DEVKIT_GATE_MERGE_CHECK"}   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
     return {k: v for k, v in os.environ.items()
             if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
 
@@ -6663,9 +6664,14 @@ def main():
 
     _lap("verdict")
     partial = not force_reason or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)
+    # #154 (21/10): the merge gate of `worktree finish` (scripts/git/worktree.py _merge_gate sets DEVKIT_GATE_MERGE_CHECK=1) checks for
+    # regressions only; its exit 2 (an edited test awaiting the session's approval, a suite that could not run) is the session's own
+    # business and never refuses the merge — and used to turn the session's exit-0 receipt of the SAME content down to exit 2, so the push
+    # from main was refused until the gate ran again. That exit 2 leaves the receipt alone; its exit 1 (a FAIL) still drops it, as before.
+    merge_check_unverified = exit_code == 2 and os.environ.get("DEVKIT_GATE_MERGE_CHECK") == "1"
     try:
         if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy and (not partial or (exit_code != 0 and not receipt_untested)) \
-                and (not read_only or partial or exit_code != 0):
+                and (not read_only or partial or exit_code != 0) and not merge_check_unverified:
             # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
             # suites all passed (2026-09-29) — leaves the last full one as it is; a BUSY run (lock not held, nothing ran)
             # and a BUDGET run (a suite never started) leave it alone too: either used to delete even a valid one,

@@ -2540,6 +2540,8 @@ def _merge_gate(wt, base, matrix):
         p = subprocess.Popen([sys.executable, gate, "--run-tests", "--brief", "--json", "--diff", base, "--matrix", matrix], cwd=wt,
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                              env=dict(os.environ, CLAUDE_PROJECT_DIR=wt, VACUITY_REVERT="0",
+                                      # #154: its exit 2 (what the session owes) leaves the session's gate receipt as it is
+                                      DEVKIT_GATE_MERGE_CHECK="1",
                                       # P1 (20/10): gộp vào main chặn người khác — đứng đầu hàng đợi khoá Unity;
                                       # đặt hẳn merge (giá trị của phiên gọi, vd interactive, không được thay — OCR 20/10)
                                       DEVKIT_SLOT_PRIORITY="merge"))

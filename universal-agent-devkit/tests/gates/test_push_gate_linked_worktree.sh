@@ -255,5 +255,18 @@ WHY="$(printf '%s' "$WHY" | tail -1)"   # the line before is the warning untesta
 case "$WHY" in "False "*) ok "L20: the work tree of main not found: fail closed, the receipt exempts nothing" ;;
   *) bad "L20: expected a refusal when main cannot be located, got: $(printf '%s' "$WHY" | tail -2)" ;; esac
 
+# L21 (#154, 21/10): the worktree edits an EXISTING test and passes its --full with --auto-approve-tests (exit 0); `worktree finish`'s
+#     merge gate (--diff <main>, partial, no approval flag) ends exit 2 "edited_test" — the session's own business, never a reason to refuse
+#     the merge — and used to turn that exit-0 receipt down to exit 2, so the push from main was refused and the gate had to run again.
+newrepo
+mkdir -p "$R/tests" && printf 'exit 0\n' > "$R/tests/test_core.sh" && git -C "$R" add tests/test_core.sh && git -C "$R" commit -qm "a test" \
+  && git -C "$W" merge -q --ff-only main || bad "L21 setup: test on main failed"
+echo "fun ok() = 21" > "$W/src/Core.kt"; printf 'exit 0 # v2\n' > "$W/tests/test_core.sh"
+CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief --auto-approve-tests > "$TMP/gate.out" 2>&1 \
+  || bad "L21 setup: gate --full --auto-approve-tests in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
+git -C "$W" commit -qam "task work with an edited test" || bad "L21 setup: commit failed"
+(cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) || bad "L21 setup: worktree finish failed: $(tail -3 "$TMP/finish.out")"
+expect "L21: an edited test approved by the worktree's own --full, then worktree finish: the push from main is still covered" 0 "covered"
+
 [ "$FAILS" = 0 ] && echo "ALL OK" && exit 0
 echo "$FAILS FAILED"; exit 1
