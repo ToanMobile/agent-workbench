@@ -100,17 +100,38 @@ canon_path() {
   printf '%s' "${base:-/}"   # gốc "/" in là "/": chuỗi rỗng trong PATH là thư mục hiện tại (= repo root khi khởi động lại runner)
 }
 
+raw_entry_ok() {
+  # 0 khi $1 (tuyệt đối) viết sạch (không ., .., //) và không đi qua symlink NẰM TRONG repo: khi đó giữ nguyên văn
+  # (JAVA_HOME=/opt/homebrew/opt/openjdk@17 không bị ghim vào Cellar/17.0.x, brew upgrade xoá thư mục cũ).
+  local p="$1" cur="" rest c par
+  case "$p" in */./*|*/../*|*//*|*/.|*/..) return 1 ;; esac
+  rest=${p#/}
+  while [ -n "$rest" ]; do
+    c=${rest%%/*}
+    case "$rest" in */*) rest=${rest#*/} ;; *) rest="" ;; esac
+    [ -n "$c" ] || continue
+    par=${cur:-/}; cur="$cur/$c"
+    if [ -L "$cur" ]; then
+      par=$(cd -P "$par" 2>/dev/null && pwd -P) || return 1
+      case "$par/" in "$ROOT_P"/*) return 1 ;; esac
+    fi
+  done
+  return 0
+}
+
 safe_path() {
   # $1 = PATH lấy từ bản ghi. Bỏ mục tương đối và mục nằm trong repo (kể cả .claude/worktrees của worker): một thư mục
   # worker tạo đứng đầu PATH sẽ thay gh/claude/python3 của runner chạy không người giám sát. So trên đường dẫn vật lý của
   # cả hai phía: so tiền tố chuỗi để lọt $TMP/./repo, $TMP/x/../repo và bí danh symlink (/tmp ↔ /private/tmp). Trả mục
-  # đã phân giải: symlink trong repo trỏ ra ngoài không bị worker đổi đích sau lượt kiểm.
-  local out="" d rest="$1:"
+  # đã phân giải khi nó đi qua symlink trong repo trỏ ra ngoài (worker không đổi đích được sau lượt kiểm); mục không đi
+  # qua symlink trong repo giữ nguyên văn.
+  local out="" d raw rest="$1:"
   while [ -n "$rest" ]; do
-    d=${rest%%:*}; rest=${rest#*:}
-    d=$(canon_path "$d") || continue
+    raw=${rest%%:*}; rest=${rest#*:}
+    d=$(canon_path "$raw") || continue
     [ -n "$d" ] || continue   # mục rỗng trong PATH = thư mục hiện tại (repo root khi khởi động lại runner)
     case "$d/" in "$ROOT_P"/*) continue ;; esac
+    if raw_entry_ok "$raw"; then d=$raw; fi
     out="${out:+$out:}$d"
   done
   printf '%s' "$out"

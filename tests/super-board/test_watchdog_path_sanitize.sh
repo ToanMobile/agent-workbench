@@ -27,6 +27,7 @@ cp "$ROOT/.claude/bin/super-board-watchdog.sh" "$R/.claude/bin/"
 ln -s "$R" "$LINK"
 ln -s "$R/.claude/worktrees/notyet" "$TMP/dangling"            # symlink treo trỏ vào repo (worker tạo đích sau)
 ln -s "$TMP/outside" "$R/.claude/worktrees/evil/out"            # symlink trong repo trỏ ra ngoài (worker đổi đích sau)
+ln -s "$TMP/outside" "$TMP/jlink"                               # symlink NGOÀI repo (kiểu /opt/homebrew/opt/openjdk@17 → Cellar)
 
 RUNDIR="$R/.claude/super-board/runner"
 STATE="$RUNDIR/t.state"; WD="$RUNDIR/t.watchdog"; WLOG="$RUNDIR/t.watchdog.log"
@@ -61,6 +62,12 @@ expect_dropped "a dangling symlink that points into the repo" R "$TMP/dangling/b
 got=$(check_path R "$R/.claude/worktrees/evil/out")
 [ "$got" = "$TMP/outside" ] && ok "an in-repo symlink to an outside dir is passed resolved (worker cannot retarget it later)" \
   || fail "in-repo symlink to outside: PATH='$got' (want '$TMP/outside')"
+got=$(check_path R "$TMP/jlink")
+[ "$got" = "$TMP/jlink" ] && ok "an outside symlink entry (brew opt/ alias) is passed verbatim, not pinned to its Cellar target" \
+  || fail "outside symlink entry pinned: PATH='$got' (want '$TMP/jlink')"
+got=$(check_path R "$TMP/jlink/../jlink")
+[ "$got" = "$TMP/outside" ] && ok "an outside symlink entry with a .. component is still resolved" \
+  || fail "outside symlink with ..: PATH='$got' (want '$TMP/outside')"
 got=$(check_path R "relative/bin:$TMP/outside:/usr/bin")
 [ "$got" = "$TMP/outside:/usr/bin" ] && ok "valid outside entries are kept in order, relative entries dropped" \
   || fail "valid entries: PATH='$got' (want '$TMP/outside:/usr/bin')"
