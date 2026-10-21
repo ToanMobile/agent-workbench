@@ -1119,10 +1119,45 @@ RAN_SCRIPT = re.compile(r"(?:^|[;&|(]\s*|\s)(?:ba|z)?sh\s+(?:-\w+\s+)*" + _SCRIP
 # (GeelyEx2, 2026-09-28), so the reuse almost never hit. The receipt still records gate_sha.
 # ponytail: a forgotten bump reuses a PASS read by old parsing rules; upgrade (hash the parsing
 # functions' source) when parsing changes are frequent.
-RESULT_FORMAT = 2   # 2 (2026-10-07): a Unity test suite may be re-used (DEVKIT_UNITY_REUSE_MAX_S), receipt tests[].ran_at
+RESULT_FORMAT = 3   # 2 (2026-10-07): a Unity test suite may be re-used (DEVKIT_UNITY_REUSE_MAX_S), receipt tests[].ran_at
+# 3 (2026-10-20): cache PASS theo khoá nội dung từng suite (bin/suite_cache.py) và CACHED-FULL
 # suite id -> when it really ran (a re-used suite keeps its first stamp). Not a key of the suite dict: that dict is printed by
 # --json, whose stdout must stay byte-stable between runs (tests/gates/test_gate_run_log.sh).
 SUITE_RAN_AT = {}
+
+
+_SUITE_CACHE = []
+
+
+def suite_cache_mod():
+    """bin/suite_cache.py (P2), None khi không nạp được: khi đó mọi suite chạy như trước."""
+    if not _SUITE_CACHE:
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import suite_cache as _sc  # noqa: PLC0415 - sibling module in bin/
+            _SUITE_CACHE.append(_sc)
+        except Exception as e:   # noqa: BLE001
+            log_warn(f"suite_cache: {e!r}")
+            _SUITE_CACHE.append(None)
+    return _SUITE_CACHE[0]
+
+
+def suite_cacheable(test):
+    """(cache được theo khoá?, lý do) của một mục ma trận — cùng luật cho gate và stale_rerun.run_one."""
+    mod = suite_cache_mod()
+    if mod is None:
+        return False, "không có bin/suite_cache.py"
+    return mod.cacheable(test, bool(DEVICE_SUITE.search((test or {}).get("command") or "")))
+
+
+def suite_cache_for(project_dir, rules, matrix_path, covers):
+    """SuiteCache của project_dir dựng y như lượt gate (cùng local_state_sha, RESULT_FORMAT, biến môi trường chọn test): khoá của
+    stale_rerun.run_one (nightly) trùng khoá của gate. None khi tắt (DEVKIT_SUITE_CACHE=0) hoặc không dựng được."""
+    mod = suite_cache_mod()
+    if mod is None or os.environ.get("DEVKIT_SUITE_CACHE", "1") == "0":
+        return None
+    sc = mod.SuiteCache(project_dir, rules, matrix_path, covers, local_state_sha(project_dir), RESULT_FORMAT, _selection_env())
+    return sc if sc.ok else None
 
 
 def _head_sha(project_dir):
@@ -3761,6 +3796,18 @@ _VACUITY_LOCK = threading.RLock()
 _SUITE_TERM_GRACE_S = 10
 
 
+def _signal_group(proc, sig) -> None:
+    """killpg của nhóm tiến trình suite. macOS từ chối (EPERM) khi nhóm còn một zombie: gửi cho chính shell của suite. 20/10: lỗi đó
+    từng làm gate chết giữa chừng (traceback) nên biên nhận cũ của cùng nội dung không bị xoá — lượt --full sau dùng lại PASS cũ."""
+    try:
+        os.killpg(proc.pid, sig)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        with contextlib.suppress(OSError):
+            proc.send_signal(sig)
+
+
 def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
     """(exit code, output, timed out) of a shell command in its own session/process group, so a timeout kills the
     whole tree (gradle daemons, test workers), not just the shell. The group is in _VACUITY_PGIDS while it runs: a
@@ -3776,16 +3823,24 @@ def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
         except subprocess.TimeoutExpired:
             # TERM first: the suite's EXIT traps remove their temp dirs and fixture worktrees (2026-10-19: a bare SIGKILL
             # skipped them and ~8 GiB of test dirs piled up in TMPDIR). KILL whatever is left after the grace.
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGTERM)
+            _signal_group(proc, signal.SIGTERM)
             try:
                 out, _ = proc.communicate(timeout=_SUITE_TERM_GRACE_S)
             except subprocess.TimeoutExpired:
                 out = None
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGKILL)
+            _signal_group(proc, signal.SIGKILL)
             if out is None:
-                out = proc.communicate()[0]   # reaps the shell first, so returncode below is set
+                try:
+                    out = proc.communicate(timeout=_SUITE_TERM_GRACE_S)[0]   # reaps the shell first, so returncode below is set
+                except subprocess.TimeoutExpired:   # a grandchild the signal never reached still holds the pipe (review 20/10)
+                    with contextlib.suppress(OSError):
+                        proc.kill()
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        proc.wait(timeout=1)
+                    for pipe in (proc.stdout, proc.stderr):
+                        with contextlib.suppress(OSError, AttributeError):
+                            pipe.close()
+                    out = "(output cut: a child process still held the output pipe after SIGKILL)"
             return proc.returncode, out, True
     finally:
         with _VACUITY_LOCK:
@@ -3823,7 +3878,7 @@ def _vacuity_on_signal(signum, _frame):
     os.kill(os.getpid(), signum)
 
 
-def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
+def vacuity_revert(project_dir, test: dict, timeout: int, env=None) -> str:
     """Re-run an impacted PASS with the production diff put back.
 
     'ok' — the test went RED (it can see the bug). 'vacuous' — it stayed green.
@@ -3836,6 +3891,7 @@ def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
     VACUITY_REVERT=0 skips. The re-run puts production files back to VACUITY_BASE (HEAD, the
     --diff base, or the --since base for committed work) in this tree and restores them
     afterwards. red_proof.py remains the sandbox path.
+    env: môi trường của chính suite (run_suite: có SB_HEAVY_SLOT_HELD / DEVKIT_SLOT_ADVISORY_HELD); None thì suite_env().
     """
     flag = os.environ.get("VACUITY_REVERT", "narrow")
     cmd = test.get("command") or ""
@@ -3868,7 +3924,7 @@ def vacuity_revert(project_dir, test: dict, timeout: int) -> str:
                 elif get_project_dir().is_dir():   # a project removed meanwhile is not re-created (W1 R5a)
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(res.stdout)
-        code, out, timed_out = run_in_group(test["command"], str(project_dir), suite_env(), timeout)
+        code, out, timed_out = run_in_group(test["command"], str(project_dir), suite_env() if env is None else env, timeout)
         if timed_out:
             return "weak"
         if code == 0:
@@ -4169,11 +4225,13 @@ def acquire_test_run_lock(project_dir, cap=None):
             time.sleep(0.5)
 
 
-def flaky_retry(cmd, project_dir, timeout, elapsed, infra=False):
+def flaky_retry(cmd, project_dir, timeout, elapsed, infra=False, env=None):
     """Re-run a failed suite once: (exit code, output) or None. Green on the second run is a
     flaky test — the run stays FAIL. Off with FLAKY_RETRY=0; only for a suite that ran under
     FLAKY_RETRY_MAX_S seconds (default 120), so a real failure of a long suite is not paid twice.
-    infra (the run lost its results store): always re-run, whatever its length; off with INFRA_RETRY=0."""
+    infra (the run lost its results store): always re-run, whatever its length; off with INFRA_RETRY=0.
+    env: môi trường của chính suite (run_suite: có SB_HEAVY_SLOT_HELD / DEVKIT_SLOT_ADVISORY_HELD — thiếu chúng thì gate lồng
+    trong lần chạy lại chờ chính khoá Unity của gate cha rồi ra SLOT); None thì suite_env()."""
     if infra:
         if os.environ.get("INFRA_RETRY", "1") == "0":
             return None
@@ -4185,7 +4243,7 @@ def flaky_retry(cmd, project_dir, timeout, elapsed, infra=False):
         cap = 120.0
     if elapsed > cap and not infra:
         return None
-    code, out, timed_out = run_in_group(cmd, str(project_dir), suite_env(), timeout)
+    code, out, timed_out = run_in_group(cmd, str(project_dir), suite_env() if env is None else env, timeout)
     if timed_out:
         return None
     label = "INFRA_RETRY" if infra else "FLAKY_RETRY"
@@ -4334,7 +4392,7 @@ def _update_regression_checklist(args, matrix, rules, modified_files, regression
     bug_id = None
     if args.record_lesson and exit_code == 0:
         passed = [t["id"] for t in regression_tests
-                  if t.get("status") == "PASS" and t.get("id") and not t.get("stale_rerun")]
+                  if t.get("status") == "PASS" and t.get("id") and not t.get("stale_rerun") and not t.get("keyed_full")]
         bug_id = rc.add_bug(data, args.record_lesson, cause=args.cause, task=args.task, test_ids=passed)
     try:
         rc.save(project_dir, data)
@@ -4499,16 +4557,7 @@ def run_commit_msg_check(msg_path, modified_files) -> int:
 # Heavy suites (a build tool, an engine) are left to the Stop gate and the nightly run; the
 # same split as scripts/stale_rerun.py and scripts/red_proof.py.
 PRECOMMIT_HEAVY = re.compile(r"gradlew|\bgradle\b|unity|-runTests|xcodebuild", re.I)
-# Slot máy (tối đa 2) chỉ khi lệnh là Gradle, Unity batch hoặc xcodebuild.
-# Chữ "unity" trong đường dẫn test (test_unity_*.sh) không phải Editor, không xin slot.
-_HEAVY_SUITE = re.compile(r"\b(?:gradlew|unity-batch(?:\.sh)?|xcodebuild)\b", re.I)
-
-
-def suites_need_heavy_slot(tests) -> bool:
-    for item in tests or ():
-        if _HEAVY_SUITE.search((item or {}).get("command") or ""):
-            return True
-    return False
+# Slot máy: mỗi suite lấy slot theo lớp tài nguyên của chính nó lúc chạy (bin/heavy_slot.py classify / acquire_for_suite).
 
 
 def _env_float(name, default):
@@ -5353,6 +5402,25 @@ def main():
     immutable_guards_protected = []
 
     covers = checklist_covers()
+    KEYS, KEYED_IDS = {}, set()   # P2: id(suite) → (khoá chính xác, khoá cả cây); suite PASS theo khoá
+
+    def lookup_key(t):
+        """Khoá được phép DÙNG LẠI cho suite này: suite mà luật chọn cũ vẫn chạy (theo file đổi, STALE) chỉ theo khoá CẢ CÂY — khoá
+        chính xác có thể thiếu input build ngầm (Gradle includeBuild, project(":feature")) mà --full cũ vẫn chạy và FAIL (review 20/10,
+        P0-2); suite cached-full thêm vào (keyed_full) theo khoá chính xác."""
+        ks = KEYS.get(id(t))
+        return (ks[0] if t.get("keyed_full") else ks[1]) if ks else None
+    keyed_hits, really_ran, recorded, voided, tree_warned = [], set(), set(), set(), []
+
+    def precise_hit(t):
+        """PASS dùng lại theo khoá CHÍNH XÁC (suite cached-full thêm vào): không chứng minh gì về nội dung cả cây — không vào biên nhận
+        như PASS thật, không vào DEVKIT_GATE_DONE (review 20/10, P0-A/P0-B)."""
+        return bool(t.get("keyed_full")) and id(t) in KEYED_IDS
+    MATRIX_TESTS = {}             # id → các mục ma trận (cờ "cache" không vào dict suite)
+    for rule in rules:
+        for test in rule.get("mandatory_regression_tests", []):
+            if test.get("id"):
+                MATRIX_TESTS.setdefault(test["id"], []).append(test)
     for rule in rules:
         comp_name = rule.get("component", "UnknownComponent")
         watch_files = rule_watch(rule, covers)
@@ -5409,6 +5477,17 @@ def main():
         except Exception:
             pass
 
+    # P2 (20/10): khoá nội dung của từng suite cache được (bin/suite_cache.py). Dựng cả khi --no-cache: lượt chạy thật vẫn ghi kết quả.
+    # Dựng TRƯỚC khối STALE: cached-full chỉ mở rộng khi cache dùng được (DEVKIT_SUITE_CACHE=0 hay sc hỏng ⇒ luật chọn cũ).
+    # Chỉ lượt cưỡng bức (--full, --force-full, CI…): Stop hook và worktree finish giữ nguyên hành vi cũ (biên nhận cả cây, budget record).
+    sc = None
+    expanded = [False]   # cached-full đã mở rộng trong lượt này
+    if run_tests and force_reason:
+        try:
+            sc = suite_cache_for(project_dir, rules, find_matrix_path(args.matrix), covers)
+        except Exception as e:   # noqa: BLE001 - không dựng được: mọi suite chạy như chưa có cache, không bao giờ thành PASS
+            log_warn(f"suite_cache: {e!r}")
+            sc = None
     if run_tests and force_reason:
         stale = stale_suite_ids(args.matrix) - {t["id"] for t in regression_tests}
         for rule in rules:
@@ -5426,6 +5505,46 @@ def main():
         if reran:
             print(f"  • {tr('Chạy lại suite STALE của checklist (--full)', 'Re-running the checklist STALE suites (--full)')}: "
                   f"{', '.join(reran[:10])}{' …' if len(reran) > 10 else ''}")
+        # --no-cache / DEVKIT_GATE_CACHE=0: luật chọn cũ, không dùng lại gì — không mở rộng cached-full (test_worktree_writers.sh:
+        # --full --no-cache chạy đúng suite được chọn và suite STALE). Lần chạy thật MỌI suite cache được là việc của sentinel.
+        expand_ok = not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0"
+        if sc is not None and expand_ok:
+            expanded[0] = True   # lượt này xét mọi suite cache được của ma trận (điều kiện đóng mốc sentinel)
+            # P2 (20/10) CACHED-FULL: mọi suite cache được theo khoá của ma trận đều được xét; suite nào đã có PASS cho đúng khoá nội
+            # dung hiện tại thì dùng lại, còn lại chạy. Bịt điểm mù của watch_files viết tay (input đổi mà không file nào khớp). Suite
+            # không cache được (thiết bị/Unity, run_impacted.sh, đọc mạng, "cache": false) giữ luật chọn cũ. Chỉ thêm suite lớp nhẹ/cpu
+            # (không dựng lại cái chờ slot engine). Cờ keyed_full: FAIL của chúng vào kết luận; UNTESTED (slot, khoá, ngân sách, không
+            # chạy được ở máy này) thì không — luật chọn cũ không chạy chúng (review 20/10, P1-6).
+            have = {t["id"] for t in regression_tests}
+            added_ids = set(matrix_added or ())
+            extra = []
+            try:
+                sys.path.insert(0, str(Path(__file__).resolve().parent))
+                import heavy_slot as _hs_x  # noqa: PLC0415 - sibling module in bin/
+            except Exception as e:   # noqa: BLE001 - không phân lớp được: không thêm gì (luật chọn cũ)
+                log_warn(f"heavy_slot: {e!r}")
+                _hs_x = None
+            rec_x = _recorded_seconds() if _hs_x is not None else {}
+            for rule in rules:
+                for test in rule.get("mandatory_regression_tests", []):
+                    tid = test.get("id")
+                    if not tid or tid in have or tid in added_ids or not test.get("command") or not suite_cacheable(test)[0]:
+                        continue
+                    if _hs_x is None or _hs_x.classify(test["command"], str(project_dir), rec_x.get(tid),
+                                                       device=bool(HARD_DEVICE_SUITE.search(test["command"])))["cls"] not in ("light", "cpu"):
+                        continue
+                    have.add(tid)
+                    extra.append(tid)
+                    regression_tests.append({
+                        "component": rule.get("component", "UnknownComponent"), "id": tid,
+                        "name": test.get("name"), "command": test.get("command"),
+                        "impacted_command": test.get("impacted_command"), "files": [],
+                        "untested_exit": test.get("untested_exit"), "status": "NOT_RUN", "duration": "-",
+                        "parallel_safe": test.get("parallel_safe") is True, "keyed_full": True,
+                        "covered_by": test.get("covered_by") if isinstance(test.get("covered_by"), str) else None})
+            if extra:
+                print(f"  • {tr('Cached-full: xét thêm suite không bị chọn (chạy khi chưa có PASS cho khoá nội dung hiện tại)', 'Cached-full: also considering unselected suites (run unless their content key already passed)')}: "
+                      f"{len(extra)}")
 
     if run_tests and matrix_added:
         # Ma trận chỉ-thêm được tin với điều kiện test thêm chạy XANH ở đây: chạy cả khi không file nào khớp watch_files của rule mới, và
@@ -5461,6 +5580,15 @@ def main():
 
     _lap("select")
     selection_cache = {}
+    if sc is not None:
+        for t in regression_tests:
+            src = next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == t.get("command")), t)   # "cache": false
+            if t.get("command") and not t.get("matrix_added") and suite_cacheable(src)[0]:
+                try:
+                    KEYS[id(t)] = sc.keys(t)
+                except Exception as e:   # noqa: BLE001 - khoá không tính được: suite này chạy
+                    log_warn(f"suite_cache key {t.get('id')}: {e!r}")
+        _lap("keys")
     unity_will_test = any(unity_suite_compiles(t.get("command") or "") for t in regression_tests)
     # Held for every suite run, re-run and vacuity revert (which rewrites production files in
     # the tree) of this gate, and NOT closed after the suite loop: a run waiting for this lock
@@ -5471,6 +5599,16 @@ def main():
     tested_fp = tree_fp_of(project_dir) if run_tests and force_reason else None
     use_cache = run_tests and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0" \
         and any(t.get("command") for t in regression_tests)
+    # P3 (20/10) sentinel: lượt cưỡng bức khi lần chạy THẬT đủ suite gần nhất của repo đã quá DEVKIT_SENTINEL_MAX_S (24 h) không dùng
+    # lại gì (cả biên nhận lẫn khoá): nó kiểm chính cache. Suite FAIL trên khoá mà sổ nói PASS ⇒ học input thiếu hoặc cách ly (record_keyed).
+    # merge gate / worktree finish (DEVKIT_SLOT_PRIORITY=merge) không gánh lần chạy thật hằng ngày: chúng có hạn giờ và chặn người khác
+    sentinel_run = bool(force_reason and use_cache and sc is not None and sc.sentinel_due()
+                        and (os.environ.get("DEVKIT_SLOT_PRIORITY") or "").strip().lower() != "merge")
+    # sentinel chỉ tắt khoá nội dung (keyed_ok); biên nhận cả cây (đúng nội dung này, như --full trước P2) vẫn dùng lại được. Lượt dùng lại
+    # biên nhận không đóng mốc sentinel (stamp_sentinel cần mọi suite cache được chạy thật), nên lượt cưỡng bức sau vẫn là sentinel.
+    keyed_ok = use_cache and not sentinel_run
+    if sentinel_run:
+        print(f"    {CYAN}▶ {tr('sentinel: lần chạy thật đủ suite gần nhất của repo đã quá hạn — lượt này không dùng khoá nội dung, chạy thật mọi suite cache được để kiểm cache', 'sentinel: the repo’s last real full run is too old — this run uses no content key and runs every cacheable suite for real to check the cache')}{RESET}")
     overlay_pre = capture_overlay_pre(args, matrix, project_dir, regression_tests) if run_tests else None   # BEFORE any suite runs
     # GATE_TOTAL_BUDGET_S: seconds after which no NEW suite starts (a Stop hook has a hard timeout; 2026-10-02: a run of
     # ~10 suites at 600 s each, no total cap, was cut silently at 27 min). Suites left are UNTESTED/BUDGET, never PASS.
@@ -5508,13 +5646,17 @@ def main():
 
         def reusable_suite(t):
             cmd = t["command"]
+            if sc is not None and any(sc.blocked(k, t.get("id")) for k in (KEYS.get(id(t)) or (None,))):
+                return False   # P2: khoá hiện tại từng FAIL hoặc suite bị cách ly (flaky): không có PASS nào được dùng lại cho nó
             if not DEVICE_SUITE.search(cmd):
                 return True
             return bool(UNITY_SUITE.search(cmd) and not HARD_DEVICE_SUITE.search(cmd) and 0 < unity_max_s
                         and 0 <= time.time() - ran_at(t) <= unity_max_s)
 
+        # suite cached-full thêm vào (keyed_full) mà biên nhận không có: --full trước P2 không chạy nó, nên nó không huỷ lần dùng lại;
+        # nó được tra theo khoá của nó hoặc chạy thật
         reusable = [t for t in regression_tests if t.get("command") and reusable_suite(t)
-                    and t.get("id") not in untested and (not partial or t.get("id") in prev)]
+                    and t.get("id") not in untested and (t.get("id") in prev or not (partial or t.get("keyed_full")))]
         # a suite is matched by id AND, for the record, by the matrix command it passed under (a byte-equal matrix file under another --diff or
         # --matrix can name another command for the same id); a record that names none is not read
         if not (found and reusable and all(prev.get(t["id"], {}).get("status") == "PASS"
@@ -5574,8 +5716,40 @@ def main():
                 return found
         return None
 
+    def recheck_keyed():
+        """PASS dùng lại theo khoá phải còn đứng vững (sổ khoá có flock riêng; một FAIL vừa ghi ở lượt/worktree khác lật nó thành UNTESTED).
+        Gọi sau các suite và một lần nữa ngay trước kết luận, có hay không có khoá dự án (review 20/10, P1-5)."""
+        if sc is None:
+            return
+        gone_keyed = [t for t in keyed_hits if t.get("status") == "PASS" and not sc.hit(lookup_key(t), t)]
+        for t in gone_keyed:
+            KEYED_IDS.discard(id(t))
+            t.update({"status": "UNTESTED", "label": "STALE", "output_tail": tr(
+                "PASS theo khoá nội dung không còn đứng vững (khoá vừa FAIL ở lượt khác, bị cách ly hoặc hết tuổi) — chạy lại gate",
+                "The content-key PASS no longer stands (the key just FAILED elsewhere, was quarantined or expired) — run the gate again")})
+        if gone_keyed:
+            log_warn(tr(f"{len(gone_keyed)} PASS theo khoá không còn đứng vững — thành UNTESTED",
+                        f"{len(gone_keyed)} content-key PASS no longer stand — UNTESTED"))
+
+    def reused_tested_at():
+        """Lúc chạy cũ nhất của các suite PASS dùng lại (biên nhận cả cây hoặc khoá); None khi lượt này không dùng lại gì."""
+        ts = [float(t.get("tested_at") or 0) for t in regression_tests if t.get("mode") == "cached" and t.get("status") == "PASS"]
+        if cache:
+            ts.append(float(cache.get("tested_at") or 0))
+        return min(ts) if ts else None
+
     def reused_pass():
-        return [t for t in regression_tests if t.get("mode") == "cached" and t.get("status") == "PASS"]
+        return [t for t in regression_tests if t.get("mode") == "cached" and t.get("status") == "PASS" and id(t) not in KEYED_IDS]
+
+    def mark_keyed(t, rec):
+        """Suite dùng lại PASS theo khoá nội dung (P2)."""
+        at = float(rec.get("last_pass_at") or 0)
+        SUITE_RAN_AT[t.get("id")] = at
+        t.update({"status": "PASS", "duration": rec.get("duration") or "0s", "mode": "cached", "log": rec.get("log"), "exit_code": 0,
+                  "tested_at": at, "label": tr(f"PASS (khoá nội dung, lúc {time.strftime('%H:%M', time.localtime(at))})",
+                                               f"PASS (content key, {time.strftime('%H:%M', time.localtime(at))})")})
+        KEYED_IDS.add(id(t))
+        keyed_hits.append(t)
 
     def stale_reused():
         """The re-used suites that no longer stand. The file that vouched for them is gone, or is another file than the one this run read (a forced
@@ -5622,6 +5796,15 @@ def main():
         # budget_fp (= tested_fp for a forced run) was taken just above and nothing has run since: the same tree (A13). The
         # re-check after the lock wait below takes a fresh one: the tree may have changed while this run waited.
         cache = reuse_full_pass(budget_fp)
+    if sc is not None and keyed_ok:
+        for t in regression_tests:
+            k = lookup_key(t)
+            if k and t.get("mode") != "cached":
+                rec = sc.hit(k, t)
+                if rec:
+                    mark_keyed(t, rec)
+        if keyed_hits:
+            print(f"    {CYAN}▶ {tr(f'dùng lại {len(keyed_hits)} suite theo khoá nội dung (cùng input, cùng môi trường; --no-cache để chạy lại)', f'reusing {len(keyed_hits)} suite(s) by content key (same inputs and environment; --no-cache to re-run)')}{RESET}")
     _lap("cache")
     to_run = [t for t in regression_tests if t.get("mode") != "cached"]
     # A run that re-used a suite takes the lock even when it has nothing left to run: the check that what it re-used still stands and the writes
@@ -5631,7 +5814,7 @@ def main():
     nothing_to_run = not any(t.get("command") for t in to_run)
     reuse_wait_s = _env_seconds("DEVKIT_REUSE_LOCK_WAIT_S", 3.0)
     lock_fh, lock_held = (acquire_test_run_lock(project_dir, cap=reuse_wait_s if nothing_to_run else None)
-                          if run_tests and (reuse_src[0] or not nothing_to_run) else (None, True))
+                          if run_tests and (reuse_src[0] or keyed_hits or not nothing_to_run) else (None, True))
     # Read-only: every suite was re-used and the lock was not obtained within the short wait. The verdict is the stamp check alone (the file that vouched
     # for the PASS still stands, or still says PASS: exit as before; moved and no longer vouching: UNTESTED, exit 4) and nothing is written: no receipt,
     # no Stop record, no PASS row in the checklist, and a receipt that this run's non-zero verdict contradicts is only DROPPED, never loaded and written
@@ -5702,12 +5885,26 @@ def main():
         return bool(parallel_cap > 1 and t.get("parallel_safe") and not (PRECOMMIT_HEAVY.search(c) or DEVICE_SUITE.search(c)))
 
     def share_result(t, prev):
+        if id(prev) in KEYED_IDS and prev.get("keyed_full"):
+            # prev được dùng lại theo khoá CỦA NÓ; khoá của suite này có thể khác (rule, watch_files khác): tra khoá của chính nó,
+            # không có PASS thì chạy thật (review 20/10, P0-1)
+            k = lookup_key(t) if sc is not None else None
+            rec = sc.hit(k, t) if k else None
+            if rec:
+                mark_keyed(t, rec)
+            else:
+                run_suite(t, t["command"], t.get("mode") or "full", suite_env())
+            return
         for k in ("status", "exit_code", "output_tail", "log", "flaky", "infra", "infra_retry",
                   "env_blocked", "vacuity", "fail_lines"):
             if k in prev:
                 t[k] = prev[k]
         t["duration"] = prev.get("duration") or "0s"   # its real cost, for pre-commit's light-suite pick
         t["label"] = f"{prev.get('label') or prev['status']} ({tr('cùng lệnh với', 'same command as')} {prev['id']})"
+        if id(prev) in really_ran:
+            really_ran.add(id(t))
+        elif id(prev) in KEYED_IDS:   # prev dùng lại theo khoá cả cây: cùng lệnh, cùng nội dung — cũng là PASS dùng lại (không vào checklist)
+            KEYED_IDS.add(id(t))
 
     def note_ran(cmd):
         # Only a script the command RUNS (`bash|sh|zsh <path>`, `./<path>` opening a segment):
@@ -5715,7 +5912,121 @@ def main():
         for m in RAN_SCRIPT.finditer(cmd):
             done_scripts.append(os.path.realpath(os.path.join(str(project_dir), m.group(1) or m.group(2))))
 
+    slot_rec = _recorded_seconds() if run_tests and lock_held else {}
+    slot_mod = []
+
+    def take_slots(t, cmd):
+        """P1 (20/10): quyền chạy của CHÍNH suite này (heavy_slot.classify), giữ trong lúc nó chạy — kể cả lần chạy lại flaky và
+        vacuity revert. --full không còn giữ slot cả lượt (đo 20/10: một lượt --full chỉ suite bash/python chờ 30+ phút mà không chạy
+        suite nào); P1b (người dùng 20/10): không còn 2 slot — tải máy dưới DEVKIT_SLOT_LOAD_MAX (100) thì chạy, chỉ Unity còn khoá
+        độc quyền. None: không có heavy_slot."""
+        if not slot_mod:
+            try:
+                sys.path.insert(0, str(Path(__file__).resolve().parent))
+                import heavy_slot as _hs  # noqa: PLC0415 - sibling module in bin/
+                slot_mod.append(_hs)
+            except Exception as exc:   # không có module: chạy không khoá, như khi thiếu thư mục khoá
+                log_warn(f"heavy_slot: {exc}")
+                slot_mod.append(None)
+        hs = slot_mod[0]
+        if hs is None:
+            return None
+        rec = slot_rec.get(t.get("id"))
+        info = hs.classify(cmd, str(project_dir), rec, device=bool(HARD_DEVICE_SUITE.search(cmd or "")))
+        # GATE_TOTAL_BUDGET_S (Stop hook: 900 s, hạn cứng 1800 s): lần chờ slot không được vượt ngân sách còn lại (review 20/10)
+        left = budget_s - (time.monotonic() - budget_start) if budget_s > 0 else None
+        slots = hs.acquire_for_suite(info, est_s=rec or estimated_suite_seconds(cmd), max_wait=left,
+                                     label=f"{os.path.basename(str(project_dir))}:{t.get('id')} ({info['cls']})")
+        for note in slots.notes:
+            log_warn(f"{t.get('id')}: {note}")
+        return slots
+
     def run_suite(t, cmd, mode, env):
+        k = lookup_key(t) if (sc is not None and keyed_ok and mode == "full") else None
+        if not k:
+            return run_suite_slotted(t, cmd, mode, env)
+        with sc.inflight(k, slot_rec.get(t.get("id"))) as state:
+            if state == "recheck":
+                rec = sc.hit(k, t)
+                if rec:   # một gate khác vừa chạy đúng khoá này và PASS
+                    mark_keyed(t, rec)
+                    return None
+            run_suite_slotted(t, cmd, mode, env)
+            record_keyed(t)   # ngay, vẫn giữ marker: lượt đang chờ cùng khoá tra lại là thấy kết quả này
+            return None
+
+
+    def record_keyed(t):
+        """Ghi kết quả một lượt chạy THẬT lệnh đầy đủ vào sổ khoá — chỉ khi input không đổi trong lúc chạy (khoá đọc lại bằng nhau)."""
+        ks = KEYS.get(id(t))
+        st = t.get("status")
+        if sc is not None and id(t) in really_ran and st != "PASS" and id(t) not in voided:
+            voided.add(id(t))   # mọi không-PASS của lần chạy thật (FAIL, TIMEOUT, hạ tầng, env): PASS cũ của suite này hết dùng lại
+            try:
+                sc.void(t.get("id"))
+            except Exception as e:   # noqa: BLE001 - sổ cache chỉ là dữ liệu
+                log_warn(f"suite_cache void {t.get('id')}: {e!r}")
+        if (sc is None or not ks or id(t) in recorded or id(t) not in really_ran or st not in ("PASS", "FAIL")
+                or (st == "PASS" and t.get("mode") != "full")
+                or (st == "FAIL" and t.get("mode") not in ("full", "impacted", "package", "module"))
+                or t.get("infra_retry") or t.get("env_blocked") or t.get("infra")):
+            return
+        recorded.add(id(t))
+        meta = {"duration": t.get("duration"), "log": t.get("log"), "project": os.path.basename(str(project_dir))[:64],
+                "head": _head_sha(project_dir), "inputs_n": sc.inputs.get(t.get("id"))}
+        rt = dict(t, command=t.get("full_command") or t.get("command"))   # bản ghi mang lệnh của ma trận (khoá tính từ lệnh đó)
+        keys_now = list(ks)
+        if st == "FAIL":
+            # FAIL dưới khoá cả cây là bằng chứng lỗi có sẵn cho KNOWN-RED: chỉ khi FAIL là của lệnh đầy đủ, thật (không phải VACUOUS — lệnh
+            # PASS mà không phát hiện thay đổi —, không chập chờn — chạy lại PASS, OCR 21/10), trên cây không đổi trong lúc chạy (audit #4
+            # 21/10); còn lại chỉ khoá chính xác (hẹp lại),
+            # bao đóng bị cắt (khoá chính xác LÀ khoá cả cây) thì không ghi — void ở trên đã chặn PASS cũ
+            mod = suite_cache_mod()
+            cmf = mod.content_map(project_dir) if mod is not None else None
+            if (t.get("mode") != "full" or t.get("label") == "VACUOUS" or t.get("flaky")
+                    or not (cmf is not None and mod.tree_digest(cmf) == sc.tree_digest)):
+                keys_now = [ks[0]] if ks[0] != ks[1] else []
+        cm = None
+        if st == "PASS":   # một content_map cho cả hai phép kiểm (cây không đổi, input của suite không đổi)
+            mod = suite_cache_mod()
+            cm = mod.content_map(project_dir) if mod is not None else None
+        if st == "PASS" and not (cm is not None and suite_cache_mod().tree_digest(cm) == sc.tree_digest):
+            # cây đổi trong lúc chạy: PASS chỉ theo khoá chính xác (input riêng của suite được kiểm lại trong record_run)
+            keys_now = [ks[0]] if ks[0] != ks[1] else []
+            if not tree_warned:
+                tree_warned.append(1)
+                log_warn(tr("Cây đổi trong lúc chạy suite — PASS của lượt này chỉ ghi theo khoá chính xác, bỏ khoá cả cây",
+                            "The tree changed while the suites ran — this run's PASS results go under precise keys only, whole-tree keys skipped"))
+        try:
+            # at = giờ suite chạy xong: một void (không-PASS ở nơi khác) giữa lúc đó và lúc ghi chặn PASS này
+            msg = (sc.record_run(keys_now, rt, st, bool(t.get("flaky")), meta, at=SUITE_RAN_AT.get(t.get("id")), cmap=cm)
+                   if keys_now else None)
+            if msg:   # P3: cache từng nói PASS cho đúng khoá này mà chạy thật FAIL
+                log_err(f"suite cache: {msg}")
+        except Exception as e:   # noqa: BLE001 - sổ cache chỉ là dữ liệu: không bao giờ đổi kết luận của lượt này
+            log_warn(f"suite_cache record {t.get('id')}: {e!r}")
+
+    def run_suite_slotted(t, cmd, mode, env):
+        slots = take_slots(t, cmd)
+        if slots is not None and not slots.admitted:
+            log_warn(tr(f"heavy-slot SLOT: {t.get('id')}: khoá độc quyền (Unity) bận hết thời gian chờ — không chạy suite",
+                        f"heavy-slot SLOT: {t.get('id')}: its exclusive lock (Unity) stayed busy past the wait — suite not started"))
+            t.update({"status": "UNTESTED", "label": "SLOT", "duration": "0s", "output_tail": tr(
+                "khoá độc quyền (Unity) bận hết thời gian chờ — suite không chạy",
+                "the exclusive lock (Unity) stayed busy past the wait — suite not started")})
+            return
+        if slots is not None and slots.held:   # giữ khoá Unity (hoặc cha giữ hộ): gate lồng trong suite không xin thêm khoá nào
+            env = dict(env, SB_HEAVY_SLOT_HELD="1")
+        elif slots is not None and slots.advisory:   # chỉ được chạy theo tải: gate lồng không chờ tải lại, vẫn xin khoá Unity
+            env = dict(env, DEVKIT_SLOT_ADVISORY_HELD="1")
+        try:
+            really_ran.add(id(t))
+            _run_suite(t, cmd, mode, env)
+        finally:
+            if slots is not None:
+                slot_mod[0].release_suite(slots)
+
+    def _run_suite(t, cmd, mode, env):
         started = time.perf_counter()
         # Own session/process group (run_in_group) so a timeout or a signal to the gate kills the whole tree
         # (gradle daemons, test workers), not just the shell. Commands come from the matrix at the base
@@ -5747,7 +6058,7 @@ def main():
             if t["status"] == "FAIL":
                 first = out or ""
                 infra = infra_failure(first)
-                retry = flaky_retry(cmd, project_dir, args.timeout, time.perf_counter() - started, infra=infra)
+                retry = flaky_retry(cmd, project_dir, args.timeout, time.perf_counter() - started, infra=infra, env=env)
                 if retry:
                     last_code = retry[0]
                     # a compile error followed by a re-run that is killed is still a code problem: the first run must be
@@ -5782,7 +6093,7 @@ def main():
         else:
             t["label"] = t["status"]
         _v0 = time.monotonic()
-        proved = vacuity_revert(project_dir, t, args.timeout)
+        proved = vacuity_revert(project_dir, t, args.timeout, env=env)
         if proved != "skip":
             _add_step("vacuity", time.monotonic() - _v0)   # a re-run that happened: its seconds are outside the suite's duration
         if proved == "vacuous":
@@ -5832,132 +6143,151 @@ def main():
             share_result(t, prev)
         deferred.clear()
 
-    # Giữ heavy slot toàn máy (tối đa 2) khi --full / --force-full, hoặc khi suite chạy Gradle / Unity batch / xcodebuild.
-    heavy_slot_mod = None
-    heavy_slot_handle = None
-    heavy_denied = False
-    need_heavy = (getattr(args, "full", False) or getattr(args, "force_full", False) or bool(force_reason)
-                  or suites_need_heavy_slot(to_run))
-    if run_tests and lock_held and not nothing_to_run and need_heavy:
-        try:
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
-            import heavy_slot as _hs  # noqa: PLC0415 - sibling module in bin/
-            heavy_slot_mod = _hs
-            heavy_slot_handle = heavy_slot_mod.acquire()
-            heavy_denied = not heavy_slot_mod.admitted(heavy_slot_handle)
-        except Exception as exc:
-            log_warn(f"heavy_slot: {exc}")
-    if heavy_denied:
-        log_warn(tr("heavy-slot SLOT: 2 slot --full đang bận hết thời gian chờ — không chạy suite",
-                    "heavy-slot SLOT: both --full slots stayed busy past the wait — suites not started"))
-    try:
-        for t in to_run:
-            if heavy_denied:
-                if t.get("command") and t.get("status") != "PASS":
-                    t.update({"status": "UNTESTED", "label": "SLOT", "duration": "0s", "output_tail": tr(
-                        "2 slot --full đang bận hết thời gian chờ — suite không chạy",
-                        "both --full slots stayed busy past the wait — suite not started")})
+    for t in regression_tests:
+        if t.get("mode") == "cached" and t.get("status") == "PASS" and t.get("command") and not t.get("matrix_added") \
+                and not precise_hit(t):
+            note_ran(t["command"])
+    for t in to_run:
+        if group and not may_join(t):
+            drain()
+        if run_tests and t["command"] and not lock_held:
+            t.update({"status": "UNTESTED", "label": "BUSY", "duration": "0s", "output_tail": tr(
+                "Một lượt chạy test khác giữ khoá dự án quá TEST_RUN_LOCK_WAIT_S — không chạy song song (Gradle ghi đè build/test-results)",
+                "Another test run held the project lock past TEST_RUN_LOCK_WAIT_S — not run side by side (Gradle corrupts build/test-results)")})
+            continue
+        if run_tests and t["command"] and budget_spent():
+            mark_budget(t)
+            continue
+        if (run_tests and t["command"] and t.get("covered_by") and t["covered_by"] != t.get("id")
+                and (force_reason or not t.get("impacted_command"))):
+            # "covered_by": the matrix says another suite already runs this suite's tests (GeelyEx2: REG-CAR-VOICE is a
+            # --tests subset of REG-CAR-01's task, 30 of 30 runs repeated it, median 90 s). Skipped only when that suite ran its
+            # FULL command earlier in this run and passed; any other state (it failed, is UNTESTED, ran impacted, comes later,
+            # is unknown, is itself covered) runs this suite as before. The matrix that says so is the base-ref one. A suite
+            # that would run IMPACTED here (an impacted_command and no --full) is not covered: that run is also where the
+            # vacuity revert checks its tests.
+            drain()   # the cover may still be running in the group
+            cov = next((c for c in regression_tests if c.get("id") == t["covered_by"]), None)
+            # lệnh đầy đủ của cover PASS trên ĐÚNG nội dung này: chạy thật, hoặc dùng lại theo biên nhận / khoá CẢ CÂY. Cover dùng lại theo
+            # khoá CHÍNH XÁC (phần cached-full thêm) thì không: khoá đó không thấy input của suite được phủ (review 20/10, P0-1)
+            if cov is not None and cov.get("status") == "PASS" and (
+                    cov.get("mode") == "full" or (cov.get("mode") == "cached" and not cov.get("keyed_full"))):
+                t.update({"status": "PASS", "label": "COVERED", "duration": "0s", "mode": "covered",
+                          "exit_code": cov.get("exit_code"), "log": cov.get("log"),
+                          "mode_reason": tr(f"{cov['id']} đã chạy lệnh đầy đủ và PASS trong lượt này",
+                                            f"{cov['id']} ran its full command and passed in this run")})
+                print(f"    {CYAN}▶ {t['id']}: {tr('ĐÃ ĐƯỢC PHỦ', 'COVERED')} — {t['mode_reason']}{RESET}")
                 continue
-            if group and not may_join(t):
-                drain()
-            if run_tests and t["command"] and not lock_held:
-                t.update({"status": "UNTESTED", "label": "BUSY", "duration": "0s", "output_tail": tr(
-                    "Một lượt chạy test khác giữ khoá dự án quá TEST_RUN_LOCK_WAIT_S — không chạy song song (Gradle ghi đè build/test-results)",
-                    "Another test run held the project lock past TEST_RUN_LOCK_WAIT_S — not run side by side (Gradle corrupts build/test-results)")})
-                continue
-            if run_tests and t["command"] and budget_spent():
-                mark_budget(t)
-                continue
-            if (run_tests and t["command"] and t.get("covered_by") and t["covered_by"] != t.get("id")
-                    and (force_reason or not t.get("impacted_command"))):
-                # "covered_by": the matrix says another suite already runs this suite's tests (GeelyEx2: REG-CAR-VOICE is a
-                # --tests subset of REG-CAR-01's task, 30 of 30 runs repeated it, median 90 s). Skipped only when that suite ran its
-                # FULL command earlier in this run and passed; any other state (it failed, is UNTESTED, ran impacted, comes later,
-                # is unknown, is itself covered) runs this suite as before. The matrix that says so is the base-ref one. A suite
-                # that would run IMPACTED here (an impacted_command and no --full) is not covered: that run is also where the
-                # vacuity revert checks its tests.
-                drain()   # the cover may still be running in the group
-                cov = next((c for c in regression_tests if c.get("id") == t["covered_by"]), None)
-                if cov is not None and cov.get("mode") == "full" and cov.get("status") == "PASS":   # "full" = its own full command
-                    t.update({"status": "PASS", "label": "COVERED", "duration": "0s", "mode": "covered",
-                              "exit_code": cov.get("exit_code"), "log": cov.get("log"),
-                              "mode_reason": tr(f"{cov['id']} đã chạy lệnh đầy đủ và PASS trong lượt này",
-                                                f"{cov['id']} ran its full command and passed in this run")})
-                    print(f"    {CYAN}▶ {t['id']}: {tr('ĐÃ ĐƯỢC PHỦ', 'COVERED')} — {t['mode_reason']}{RESET}")
-                    continue
-            if run_tests and t["command"] and skip_separate_unity_compile(t["command"], unity_will_test):
+        if run_tests and t["command"] and skip_separate_unity_compile(t["command"], unity_will_test):
+            t["status"] = "PASS"
+            t["label"] = "SKIP compile"
+            t["duration"] = "0s"
+            t["mode"] = "skip-compile"
+            t["mode_reason"] = tr("EditMode/PlayMode biên dịch cùng script", "EditMode/PlayMode compiles the same scripts")
+            print(f"    {CYAN}▶ {t['id']}: {tr('bỏ bước compile riêng', 'skipped separate compile')} — {t['mode_reason']}{RESET}")
+            continue
+        if run_tests and t["command"]:
+            # Impacted selection (see select_impacted_tests): the full command unless the
+            # base-ref matrix declares an impacted_command AND the map can vouch for every
+            # changed file of the rule. The chosen mode and its reason are always printed.
+            cmd, mode, reason, sel = plan_test_run(project_dir, t, force_reason, selection_cache)
+            t["mode"] = mode
+            t["full_command"] = t["command"]
+            t["command"] = cmd
+            if mode == "impacted":
+                t["impacted_count"] = sel["count"]
+                t["selected"] = [n for f in sorted(sel["tests"]) for n in sel["tests"][f]][:100]
+                why = {}
+                for f, w in sel["why"].items():
+                    why[w] = why.get(w, 0) + 1
+                t["mode_reason"] = ", ".join(f"{k}: {v}" for k, v in sorted(why.items()))
+                print(f"    {CYAN}▶ {t['id']}: {tr('chế độ IMPACTED', 'mode IMPACTED')}{RESET} — "
+                      + tr(f"{sel['count']} test chọn theo ({t['mode_reason']}); lệnh đầy đủ vẫn bắt buộc trước bàn giao (--full)",
+                           f"{sel['count']} tests selected by ({t['mode_reason']}); the full run is still required before handover (--full)"))
+            elif mode == "resource":
                 t["status"] = "PASS"
-                t["label"] = "SKIP compile"
+                t["label"] = "RESOURCE"
                 t["duration"] = "0s"
-                t["mode"] = "skip-compile"
-                t["mode_reason"] = tr("EditMode/PlayMode biên dịch cùng script", "EditMode/PlayMode compiles the same scripts")
-                print(f"    {CYAN}▶ {t['id']}: {tr('bỏ bước compile riêng', 'skipped separate compile')} — {t['mode_reason']}{RESET}")
+                t["mode_reason"] = reason
+                print(f"    {CYAN}▶ {t['id']}: {tr('chế độ RESOURCE', 'mode RESOURCE')} — {reason}{RESET}")
                 continue
-            if run_tests and t["command"]:
-                # Impacted selection (see select_impacted_tests): the full command unless the
-                # base-ref matrix declares an impacted_command AND the map can vouch for every
-                # changed file of the rule. The chosen mode and its reason are always printed.
-                cmd, mode, reason, sel = plan_test_run(project_dir, t, force_reason, selection_cache)
-                t["mode"] = mode
-                t["full_command"] = t["command"]
-                t["command"] = cmd
-                if mode == "impacted":
-                    t["impacted_count"] = sel["count"]
-                    t["selected"] = [n for f in sorted(sel["tests"]) for n in sel["tests"][f]][:100]
-                    why = {}
-                    for f, w in sel["why"].items():
-                        why[w] = why.get(w, 0) + 1
-                    t["mode_reason"] = ", ".join(f"{k}: {v}" for k, v in sorted(why.items()))
-                    print(f"    {CYAN}▶ {t['id']}: {tr('chế độ IMPACTED', 'mode IMPACTED')}{RESET} — "
-                          + tr(f"{sel['count']} test chọn theo ({t['mode_reason']}); lệnh đầy đủ vẫn bắt buộc trước bàn giao (--full)",
-                               f"{sel['count']} tests selected by ({t['mode_reason']}); the full run is still required before handover (--full)"))
-                elif mode == "resource":
-                    t["status"] = "PASS"
-                    t["label"] = "RESOURCE"
-                    t["duration"] = "0s"
-                    t["mode_reason"] = reason
-                    print(f"    {CYAN}▶ {t['id']}: {tr('chế độ RESOURCE', 'mode RESOURCE')} — {reason}{RESET}")
-                    continue
-                elif mode in ("package", "module"):
-                    t["mode_reason"] = reason
-                    print(f"    {CYAN}▶ {t['id']}: {tr('chế độ PACKAGE', 'mode PACKAGE')} — {reason}{RESET}")
+            elif mode in ("package", "module"):
+                t["mode_reason"] = reason
+                print(f"    {CYAN}▶ {t['id']}: {tr('chế độ PACKAGE', 'mode PACKAGE')} — {reason}{RESET}")
+            else:
+                t["mode_reason"] = reason
+                if t.get("impacted_command") or force_reason:
+                    print(f"    {DIM}▶ {t['id']}: {tr('chế độ FULL', 'mode FULL')} — {reason}{RESET}")
+            key = " ".join(cmd.split())
+            prev = ran_cmds.get(key)
+            if prev is not None:
+                if id(prev) in group_ts:   # still running in the group: it takes the result when the group is drained
+                    deferred.append((t, prev))
                 else:
-                    t["mode_reason"] = reason
-                    if t.get("impacted_command") or force_reason:
-                        print(f"    {DIM}▶ {t['id']}: {tr('chế độ FULL', 'mode FULL')} — {reason}{RESET}")
-                key = " ".join(cmd.split())
-                prev = ran_cmds.get(key)
-                if prev is not None:
-                    if id(prev) in group_ts:   # still running in the group: it takes the result when the group is drained
-                        deferred.append((t, prev))
-                    else:
-                        share_result(t, prev)
-                    continue
-                if may_join(t) and mode == "full":
-                    # joins the group; its own DEVKIT_GATE_DONE (the scripts of the suites before it), never os.environ
-                    env = suite_env()
-                    if done_scripts:
-                        env["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
-                    start_job(t, cmd, mode, env)
-                    ran_cmds[key] = t
-                    note_ran(cmd)
-                    continue
-                drain()
+                    share_result(t, prev)
+                continue
+            if may_join(t) and mode == "full":
+                # joins the group; its own DEVKIT_GATE_DONE (the scripts of the suites before it), never os.environ
+                env = suite_env()
                 if done_scripts:
-                    os.environ["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
-                run_suite(t, cmd, mode, suite_env())
+                    env["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
+                start_job(t, cmd, mode, env)
                 ran_cmds[key] = t
-                if not t.get("matrix_added"):   # lệnh của ma trận chỉ-thêm không được bảo runner bỏ qua script nào
+                if not t.get("keyed_full"):   # suite cached-full có thể thành PASS theo khoá chính xác: không bảo runner bỏ script
                     note_ran(cmd)
-            elif run_tests:
-                t["status"] = "FAIL"
-                t["output_tail"] = tr("Matrix không khai báo command cho test này", "The matrix declares no command for this test")
-        drain()
-    finally:
-        if heavy_slot_mod is not None:
-            heavy_slot_mod.release(heavy_slot_handle)
+                continue
+            drain()
+            if done_scripts:
+                os.environ["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
+            run_suite(t, cmd, mode, suite_env())
+            ran_cmds[key] = t
+            if not t.get("matrix_added") and not precise_hit(t):   # chỉ-thêm / PASS theo khoá chính xác: không bảo runner bỏ script
+                note_ran(cmd)
+        elif run_tests:
+            t["status"] = "FAIL"
+            t["output_tail"] = tr("Matrix không khai báo command cho test này", "The matrix declares no command for this test")
+    drain()
     restore_local_configs(_config_snaps)
     _lap("suites")
+    # Lượt không cưỡng bức (Stop hook) không tra khoá, nhưng FAIL thật của nó phải vào sổ khoá: không thì --full sau đó dùng lại PASS cũ
+    # theo khoá, trong khi --full trước P2 chạy lại suite đó và FAIL (F1; review 20/10). Khoá tính lúc này và chỉ cho suite FAIL: Stop không
+    # tốn thêm gì khi mọi suite PASS; cây đã đổi trong lúc chạy thì FAIL rơi vào khoá khác, chỉ làm thừa một lần chạy lại (an toàn).
+    if sc is None and run_tests and not force_reason and os.environ.get("DEVKIT_SUITE_CACHE", "1") != "0":
+        bad = [t for t in regression_tests if t.get("status") != "PASS" and id(t) in really_ran and t.get("command")
+               and not t.get("matrix_added")]
+        failed = [t for t in bad if t.get("status") == "FAIL"]
+        if bad:
+            try:
+                sc = suite_cache_for(project_dir, rules, find_matrix_path(args.matrix), covers)
+            except Exception as e:   # noqa: BLE001 - không dựng được: FAIL chỉ không vào sổ khoá, kết luận lượt này không đổi
+                log_warn(f"suite_cache: {e!r}")
+                sc = None
+            for t in failed if sc is not None else ():
+                full_t = dict(t, command=t.get("full_command") or t.get("command"))   # lệnh của ma trận, không phải lệnh thu hẹp
+                src = next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == full_t["command"]), full_t)
+                if suite_cacheable(src)[0]:
+                    try:
+                        KEYS[id(t)] = sc.keys(full_t)
+                    except Exception as e:   # noqa: BLE001 - khoá không tính được: FAIL này không vào sổ
+                        log_warn(f"suite_cache key {t.get('id')}: {e!r}")
+    # Kiểm lại cả khi không có khoá dự án (read-only): sổ khoá có flock riêng, một FAIL lượt khác vừa ghi phải lật PASS dùng lại
+    # của lượt này thành UNTESTED trước kết luận. Chỉ suite chạy thật (cần khoá dự án) mới được ghi.
+    if sc is not None and run_tests:
+        try:
+            recheck_keyed()
+            for t in regression_tests:   # suite cùng lệnh với một suite chạy thật (share_result): ghi khoá của chính nó
+                record_keyed(t)
+            keyed_all = [t for t in regression_tests if KEYS.get(id(t))]
+            # suite đã "được làm" trong lượt này: chạy thật, dùng chung lượt chạy (share_result), được suite chạy thật phủ (covered_by),
+            # hay không cần chạy cho thay đổi này (resource / skip-compile) — như cách --full hôm nay tính
+            done = lambda t: ((id(t) in really_ran and t.get("status") in ("PASS", "FAIL")
+                               and not (t.get("infra") or t.get("infra_retry") or t.get("env_blocked")))
+                              or t.get("mode") in ("covered", "resource", "skip-compile"))   # quá giờ không kiểm được gì (Antigravity 20/10)
+            # mốc sentinel chỉ khi lượt này XÉT mọi suite cache được (cached-full mở rộng) và chạy thật hết, không dùng lại gì
+            if force_reason and expanded[0] and not cache and not keyed_hits and keyed_all and all(done(t) for t in keyed_all):
+                sc.stamp_sentinel()   # một lượt chạy THẬT mọi suite cache được (sentinel hay --no-cache): mốc mới cho sentinel
+        except Exception as e:   # noqa: BLE001 - sổ cache chỉ là dữ liệu: không bao giờ đổi kết luận của lượt này
+            log_warn(f"suite_cache record: {e!r}")
     # What this run RE-USED is judged here, under the lock and before anything is printed or decided from it. The file it read (BEFORE the lock) may
     # have been replaced or dropped while it waited, e.g. by a forced run that FAILED the suite (F1): its PASS is UNTESTED then, not a PASS. Without
     # the lock (BUSY: the wait ran out) there is no way to check it: UNTESTED the same.
@@ -6090,17 +6420,67 @@ def main():
         log_warn(tr("OpenCodeReview CLI (`ocr`) chưa cài — lớp này bỏ qua", "OpenCodeReview CLI (`ocr`) not installed — skipped"))
 
     _lap("static")
+    try:
+        recheck_keyed()   # P2: lần nhìn cuối trước kết luận, cả cho PASS theo khoá
+    except Exception as e:   # noqa: BLE001 - không đọc được sổ: PASS theo khoá không còn được tin
+        for t in keyed_hits:
+            if t.get("status") == "PASS":
+                t.update({"status": "UNTESTED", "label": "STALE"})
+        log_warn(f"suite_cache recheck: {e!r}")
     if stale_to_untested("STALE", stale_reused()):   # the last look before the verdict: a writer that holds no lock (the check above found the file as read)
         log_warn(tr("File kết quả dùng lại đã đổi/biến mất trước kết luận — PASS dùng lại thành UNTESTED",
                     "The file the re-used results came from changed or went away before the verdict — the re-used PASS turns UNTESTED"))
+    # P2: suite cached-full thêm vào (keyed_full) FAIL là lỗi có sẵn (KNOWN-RED: nêu tên, ngoài kết luận; FAIL vẫn ở sổ khoá) CHỈ khi có bằng
+    # chứng: sổ khoá có FAIL thật — và chưa từng PASS — của chính suite đó dưới khoá cả cây của nội dung BASE_REF (một lượt chạy trên checkout
+    # sạch ở base). Audit 21/10 (Antigravity + principal): suy "thay đổi không chạm input" từ bao đóng tĩnh không bao giờ đủ (đường dẫn dựng
+    # lúc chạy, import động), nên FAIL do chính thay đổi từng bị xếp KNOWN-RED. Không có bằng chứng (base chưa ai chạy, base từng PASS,
+    # --since nhiều base) ⇒ FAIL vào kết luận. GeelyEx2 20/10: 2 suite FAIL sẵn — một lượt --full trên main sạch ghi bằng chứng cho mọi
+    # thay đổi sau. tests/gates/test_gate_suite_cache.sh ca 28, 30; test_gate_sentinel.sh ca 2b'.
+    known_red = [t for t in regression_tests if t.get("keyed_full") and t.get("status") == "FAIL" and not precise_hit(t)]
+    if sc is not None and known_red and not getattr(args, "since", None) and not _BASE_REF_FOR:
+        mod = suite_cache_mod()
+        base_map = mod.content_map_at(project_dir, BASE_REF) if mod is not None else None
+        digest = mod.tree_digest(base_map) if base_map is not None else None
+        if digest == sc.tree_digest:
+            # base trùng cây hiện tại (thay đổi chỉ chạm file EXCLUDE, hay chỉ index): khoá cả cây của base LÀ khoá của lượt này — FAIL
+            # vừa ghi sẽ tự làm bằng chứng của chính nó (audit #4 21/10) ⇒ không có bằng chứng
+            digest = None
+        for t in known_red:
+            bk = sc.tree_key_at(t.get("id"), t.get("full_command") or t.get("command") or "", digest)
+            rec = sc.read(bk) if bk else None
+            fail_n, pass_n = (rec or {}).get("fail_n"), (rec or {}).get("pass_n", 0)
+            if isinstance(fail_n, int) and fail_n >= 1 and pass_n in (0, None):
+                t.update({"status": "UNTESTED", "label": "KNOWN-RED"})
+                log_warn(tr(f"{t.get('id')}: suite cached-full FAIL, và cũng FAIL trên nội dung {BASE_REF} (sổ khoá) — lỗi có sẵn (KNOWN-RED), "
+                            "ngoài kết luận; sửa riêng",
+                            f"{t.get('id')}: cached-full suite FAILED, and it also FAILED on the {BASE_REF} content (key store) — a "
+                            "pre-existing failure (KNOWN-RED), not part of the verdict; fix it separately"))
+            else:
+                log_warn(tr(f"{t.get('id')}: suite cached-full FAIL, chưa có bằng chứng nó cũng FAIL trên {BASE_REF} — vào kết luận. Lỗi có sẵn thì "
+                            f"ghi bằng chứng: chạy post-fix-gate.py --run-tests --full --diff HEAD~1 trên checkout sạch ở {BASE_REF}",
+                            f"{t.get('id')}: cached-full suite FAILED, no evidence it also FAILS on {BASE_REF} — part of the verdict. If it is "
+                            f"pre-existing, record the evidence: run post-fix-gate.py --run-tests --full --diff HEAD~1 on a clean checkout at {BASE_REF}"))
+    # P2: suite cached-full thêm vào (keyed_full) mà QUÁ GIỜ: --full trước P2 không chạy nó, và quá giờ dưới tải không chứng minh lỗi của thay
+    # đổi (REG-DK-ALL-01 quá 900 s ở merge gate dưới tải, 19/10) — UNTESTED ngoài kết luận, được nêu tên, chạy lại lượt sau; FAIL thật của nó
+    # vẫn vào kết luận. Không ghi vào sổ khoá (record_keyed chỉ ghi PASS/FAIL). tests/gates/test_gate_suite_cache.sh ca 15.
+    for t in regression_tests:
+        if t.get("keyed_full") and t.get("status") == "TIMEOUT":
+            t.update({"status": "UNTESTED", "label": "TIMEOUT"})
+            log_warn(tr(f"{t.get('id')}: suite cached-full quá giờ — UNTESTED, không tính vào kết luận (luật chọn cũ không chạy nó); chạy lại lượt sau",
+                        f"{t.get('id')}: cached-full suite timed out — UNTESTED, not part of the verdict (the old selection does not run it); it runs again next time"))
     # Final Summary Verdict
     static_ok = (hygiene_ok and anti_laziness_ok and deps_ok and perf_ok and resilience_ok
                  and logging_ok and hw_ok and assert_ok and proof_ok)
     tests_passed = sum(1 for t in regression_tests if t["status"] == "PASS")
     # A STALE suite of another component that cannot run on this machine stays STALE and is
-    # named; it is not the verdict of this change (only a failure of it is).
-    stale_skipped = [t for t in regression_tests if t["status"] == "UNTESTED" and t.get("stale_rerun")]
-    tests_untested = [t for t in regression_tests if t["status"] == "UNTESTED" and not t.get("stale_rerun")]
+    # named; it is not the verdict of this change (only a failure of it is). Chỉ UNTESTED do chính suite báo "không chạy được ở
+    # máy này" (untested_exit) mới đứng ngoài kết luận; nhãn SLOT / BUSY / BUDGET / STALE vào tests_untested (exit 4). P1 20/10: slot
+    # theo từng suite khiến một suite STALE có thể bị SLOT trong khi suite khác PASS (tests/gates/test_gate_slot_classes.sh ca 8).
+    _not_here = ("SLOT", "BUSY", "BUDGET", "STALE")
+    # suite cached-full (keyed_full) cùng luật: STALE (recheck thấy FAIL mới trên khoá của nó) phải vào kết luận (Antigravity 20/10)
+    stale_skipped = [t for t in regression_tests if t["status"] == "UNTESTED"
+                     and (t.get("stale_rerun") or t.get("keyed_full")) and t.get("label") not in _not_here]
+    tests_untested = [t for t in regression_tests if t["status"] == "UNTESTED" and t not in stale_skipped]
     if stale_skipped:
         log_warn(tr("Suite STALE không chạy được trên máy này (vẫn STALE, không tính vào kết luận): ",
                     "STALE suites that cannot run on this machine (still STALE, not part of the verdict): ")
@@ -6153,7 +6533,7 @@ def main():
     receipt_untested = None
     lock_busy = False   # exit 4 because the lock was not held: no suite ran, so the receipt is neither written nor deleted
     budget_cut = False  # exit 4 because the time budget stopped a suite from starting: same, do not write or delete
-    slot_busy = False   # exit 4 because the machine-wide --full slots stayed busy: same, do not write or delete
+    slot_busy = False   # exit 4 because the exclusive lock (Unity) stayed busy: same, do not write or delete
     project_gone = not Path(project_dir).is_dir()   # W1 R5a: `worktree finish`/`remove` took it while the suites ran
     exit_reason = "pass"
     if project_gone:
@@ -6204,8 +6584,8 @@ def main():
     elif run_tests and any(t.get("label") == "SLOT" for t in tests_untested):
         exit_reason = "slot"
         verdict_text, verdict_color, exit_code = tr(
-            "UNTESTED — 2 slot --full toàn máy đang bận hết thời gian chờ — chạy lại sau; KHÔNG phải PASS",
-            "UNTESTED — both machine-wide --full slots stayed busy past the wait — run again later; NOT a PASS"), YELLOW, 4
+            "UNTESTED — khoá độc quyền (Unity) bận hết thời gian chờ — chạy lại sau; KHÔNG phải PASS",
+            "UNTESTED — the exclusive lock (Unity) stayed busy past the wait — run again later; NOT a PASS"), YELLOW, 4
         slot_busy = True
     elif run_tests and any(t.get("label") == "BUDGET" for t in tests_untested):
         exit_reason = "budget"
@@ -6294,8 +6674,11 @@ def main():
             # with another exit code it is handed to the writer as PARTIAL and unlocked, which only ever DROPS an exit-0 receipt (never replaces
             # it: a lock-less replace that carries a re-used PASS could put back a PASS a FAIL took away), so a verdict that contradicts the
             # receipt never leaves it standing for XONG and push, whether the run was a Stop or --full.
-            write_full_pass_receipt(project_dir, exit_code, args.matrix, regression_tests,
-                                    tested_at=float(cache.get("tested_at") or 0) if cache else None,
+            # PASS theo khoá CHÍNH XÁC (cached-full) vào biên nhận như UNTESTED: biên nhận nói về nội dung cả cây, và reuse_from chạy
+            # lại mọi suite UNTESTED của biên nhận (review 20/10, P0-A; tests/gates/test_gate_suite_cache.sh ca 16)
+            receipt_tests = [dict(t, status="UNTESTED", label="KEYED") if precise_hit(t) else t for t in regression_tests]
+            write_full_pass_receipt(project_dir, exit_code, args.matrix, receipt_tests,
+                                    tested_at=reused_tested_at(),
                                     tested_fp=tested_fp, untested=receipt_untested, partial=partial or read_only,
                                     locked=lock_fh is not None)   # the handle itself: (None, True) is also "nothing to re-use or run, no lock asked for"
         # The budget record (BUDGET_RECORD) is a file of its own, so the receipt above stays byte for byte whatever happens here:
@@ -6319,6 +6702,7 @@ def main():
 
     # a read-only run holds no lock: a re-used PASS is not written into the checklist (it would overwrite the FAIL of a run that finished meanwhile)
     checklist_tests = [dict(t, status="UNTESTED") if t.get("mode") == "cached" else t for t in regression_tests] if read_only else regression_tests
+    checklist_tests = [t for t in checklist_tests if id(t) not in KEYED_IDS]   # P2: PASS theo khoá không đóng dấu lại commit
     cl_matrix, cl_rules = matrix, rules
     if matrix_added and exit_code != 0:
         # ma trận chỉ-thêm chưa đứng vững trong lượt này: sổ checklist theo ma trận base, không đồng bộ rule chưa được tin
@@ -6436,7 +6820,7 @@ def main():
     if run_tests and not _run_log_fp(log_fp):
         log_fp = tree_fp_of(project_dir)
     _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
-                  cache, run_tests, force_reason, docs_only, project_dir, git_dir, read_only=read_only,
+                  cache or (keyed_hits or None), run_tests, force_reason, docs_only, project_dir, git_dir, read_only=read_only,
                   log_fp=log_fp, exit_reason=exit_reason)
     return exit_code
 

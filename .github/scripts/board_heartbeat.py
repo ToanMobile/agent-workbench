@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Đánh ⚫ cho board super-board khi watchdog trên máy Mac ngừng cập nhật (GitHub Actions cron, chạy ngoài máy).
+"""Đổi board super-board thành 🔴 mất tín hiệu khi watchdog trên máy Mac ngừng cập nhật (GitHub Actions cron, ngoài máy).
 
 Watchdog (.claude/bin/super-board-watchdog.sh) ghi trạng thái board vào mô tả ngắn của Project kèm
 "cập nhật HH:MM dd/MM" (giờ +07), nhịp 5 phút. Máy ngủ/tắt/mất mạng thì không gì ghi được và board vẫn hiện
-🟢 (20/10 09:00 → 12:33). Cron này đọc giờ đó; board đang 🟢/🟠 mà cũ hơn BOARD_STALE_MIN phút thì đổi mô tả thành
-"⚫ mất tín hiệu từ …". Board ⏸️/⚪/🔴 giữ nguyên (không có gì đang chạy để mất). Máy thức dậy, watchdog ghi đè lại.
+🟢 (20/10 09:00 → 12:33). Cron này đọc giờ đó; board đang 🟢 mà cũ hơn BOARD_STALE_MIN phút thì đổi mô tả thành
+"🔴 mất tín hiệu từ …". Board đã 🔴 giữ nguyên (không có gì đang chạy để mất). Máy thức dậy, watchdog ghi đè lại.
+Người dùng 20/10: chỉ 🟢 = đang chạy, 🔴 = không chạy.
 
 Env: BOARD_PAT (classic PAT, scope `project`; thiếu thì thoát 0 kèm thông báo), BOARD_OWNER, BOARD_PROJECTS
 ("1 2 3"), BOARD_STALE_MIN (mặc định 20), BOARD_TZ_HOURS (mặc định 7).
@@ -20,8 +21,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 STAMP = re.compile(r'\s*·?\s*cập nhật (\d{2}):(\d{2})(?: (\d{2})/(\d{2}))?')
-ACTIVE = ('🟢', '🟠')
-DARK = '⚫'
+ACTIVE = ('🟢',)
+DARK = '🔴'
 MAX_LEN = 300
 
 
@@ -46,7 +47,7 @@ def stamp_time(desc, now):
 
 
 def decide(desc, now, stale_min):
-    """Mô tả ⚫ mới khi board đang 🟢/🟠 mà giờ cập nhật cũ hơn stale_min phút; None khi giữ nguyên."""
+    """Mô tả 🔴 mất tín hiệu khi board đang 🟢 mà giờ cập nhật cũ hơn stale_min phút; None khi giữ nguyên."""
     if not desc or not desc.startswith(ACTIVE):
         return None
     t = stamp_time(desc, now)
@@ -91,15 +92,15 @@ def main():
                 # Repo public: log Actions ai cũng đọc được — không in tiêu đề/mô tả của Project private.
                 print(f'project {number}: ok')
                 continue
-            # Watchdog có thể vừa ghi trạng thái mới giữa lúc đọc và lúc ghi: đọc lại, đổi rồi thì không đè ⚫. Chỉ thu hẹp
-            # khe hở (GraphQL không có compare-and-swap): watchdog ghi đúng giữa lần đọc lại và mutation thì ⚫ vẫn đè, và
+            # Watchdog có thể vừa ghi trạng thái mới giữa lúc đọc và lúc ghi: đọc lại, đổi rồi thì không đè 🔴. Chỉ thu hẹp
+            # khe hở (GraphQL không có compare-and-swap): watchdog ghi đúng giữa lần đọc lại và mutation thì 🔴 vẫn đè, và
             # nhịp 5 phút kế tiếp của watchdog sửa lại.
             if (read_project(token, owner, number).get('shortDescription') or '') != project.get('shortDescription'):
                 print(f'project {number}: ok (refreshed meanwhile)')
                 continue
             graphql(token, 'mutation($p:ID!,$d:String!){updateProjectV2(input:{projectId:$p,shortDescription:$d}){projectV2{id}}}',
                     {'p': project['id'], 'd': new})
-            print(f'::warning::project {number}: marked ⚫ (watchdog silent since {stamp_time(project["shortDescription"], now):%H:%M %d/%m})')
+            print(f'::warning::project {number}: marked 🔴 (watchdog silent since {stamp_time(project["shortDescription"], now):%H:%M %d/%m})')
         except Exception as error:   # mạng, quyền PAT, Project không tồn tại: báo rồi làm tiếp Project kế
             failed += 1
             print(f'::error::project {number}: {type(error).__name__}: {str(error)[:200]}')

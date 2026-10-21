@@ -210,4 +210,28 @@ for f in github-halt.json github-halt-reconciled-1.json github-halt-179234420909
     || fail ".claude/super-board/$f is not git-ignored (trunk mode treats it as main content)"
 done
 
+# PR hơn 100 file (OfficeReader #170: 103 file, 20/10): `gh pr view --json files` chỉ trả 100 file nên kiểm
+# changedFiles == len(files) hỏng ở cả 3 lần, merge gate (STRICT) halt cả board vĩnh viễn (phát lại vẫn hỏng). Danh sách
+# đủ lấy qua REST có phân trang; REST vẫn thiếu thì vẫn là bằng chứng thiếu.
+mkdir -p "$TMP/bigpr"
+cat > "$TMP/bigpr/gh" <<'SH'
+#!/usr/bin/env bash
+echo "$*" >> "$GH_CALLS"
+case " $* " in
+  *" pr view 170 "*) python3 -c 'import json; print(json.dumps({"labels": [], "body": "b", "additions": 206, "deletions": 0, "changedFiles": 103, "files": [{"path": "f%d" % i, "additions": 2, "deletions": 0} for i in range(100)]}))' ;;
+  *" api repos/o/r/pulls/170/files "*) python3 -c 'import json, os; n = 101 if os.environ.get("BIGPR_SHORT") else 103; files = [{"filename": "f%d" % i, "additions": 2, "deletions": 0} for i in range(n)]; print(json.dumps([files[:100], files[100:]]))' ;;
+  *" api rate_limit "*) echo '{"resources":{}}' ;;
+  *) echo 'unexpected' >&2; exit 1 ;;
+esac
+SH
+chmod +x "$TMP/bigpr/gh"; rm -f "$TMP/halt.json"
+rc=$(SB_GITHUB_READ_STRICT=1 PATH="$TMP/bigpr:$PATH" run --kind metadata -- pr view 170 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
+n=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["files"]))' "$TMP/out" 2>/dev/null)
+[ "$rc" = 0 ] && [ "$n" = 103 ] && [ ! -e "$TMP/halt.json" ] && ok "PR with 103 files: full list fetched via paginated REST, no halt" \
+  || fail "big PR: rc=$rc files=$n halt=$( [ -e "$TMP/halt.json" ] && echo yes || echo no) err=$(head -c 200 "$TMP/err")"
+rm -f "$TMP/halt.json"
+rc=$(BIGPR_SHORT=1 SB_GITHUB_READ_STRICT=1 PATH="$TMP/bigpr:$PATH" run --kind metadata -- pr view 170 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
+[ "$rc" = 79 ] && [ -e "$TMP/halt.json" ] && ok "REST list still short of changedFiles → still incomplete evidence (halt in strict mode)" || fail "short REST list accepted: rc=$rc"
+rm -f "$TMP/halt.json"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_github_read: all passed" || { echo "❌ test_github_read: $FAILS failed"; exit 1; }

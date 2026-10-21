@@ -33,6 +33,10 @@
 set -u
 unset DEVKIT_GATE_CACHE DEVKIT_GATE_CACHE_MAX_S DEVKIT_UNITY_REUSE_MAX_S GATE_TOTAL_BUDGET_S TEST_RUN_LOCK_WAIT_S DEVKIT_IMPACTED_SINCE DEVKIT_REUSE_LOCK_WAIT_S
 export VACUITY_REVERT=0 FLAKY_RETRY=0
+# The forced run B here is simulated (it only deletes the receipt): a real B also records its FAIL in the per-suite content-key cache
+# (bin/suite_cache.py, P2 20/10), which this simulation cannot. DEVKIT_SUITE_CACHE=0 keeps the test about the receipt; the key cache's own
+# F1 case is tests/gates/test_gate_suite_cache.sh case 13.
+export DEVKIT_SUITE_CACHE=0
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="${ROREC_KIT:-$DEVKIT_DIR}"
 GATE="$KIT/bin/post-fix-gate.py"

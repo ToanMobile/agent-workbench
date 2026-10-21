@@ -212,6 +212,8 @@ stop_xong; rc=$?
 [ "$rc" = 0 ] && ok "real control: XONG on the gated code is let through (proof_gate rc 0)" || bad "real control: proof_gate rc $rc: $(head -c 200 "$TMP/pg.err")"
 # The gate would simply re-use this PASS for the same code (nothing to run, so never BUSY). A receipt it cannot re-use but
 # proof_gate still accepts (its local-state hash differs, e.g. after a config change) is the case where BUSY can happen.
+# The per-suite content-key cache (bin/suite_cache.py, 20/10) would re-use the suite itself (its key has the real local state):
+# DEVKIT_SUITE_CACHE=0 keeps this case about the receipt and BUSY.
 python3 - "$(RRCPT)" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
@@ -220,7 +222,7 @@ json.dump(r, open(sys.argv[1], "w"))
 PY
 before="$(cat "$(RRCPT)")"
 for flag in "" "--full"; do
-  hold_rr; out="$(TEST_RUN_LOCK_WAIT_S=1 gate_rr --run-tests $flag)"; rc=$?; release_lock
+  hold_rr; out="$(TEST_RUN_LOCK_WAIT_S=1 DEVKIT_SUITE_CACHE=0 gate_rr --run-tests $flag)"; rc=$?; release_lock
   [ "$rc" = 4 ] && [ "$(cat "$(RRCPT)" 2>/dev/null)" = "$before" ] \
     && ok "real, same code, BUSY ${flag:-partial}: exit 4, the receipt is untouched" || bad "real, same code, BUSY ${flag:-partial}: exit $rc, receipt $([ -f "$(RRCPT)" ] && echo kept || echo deleted)"
   stop_xong; rc=$?
