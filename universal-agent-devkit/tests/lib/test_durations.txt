@@ -350,3 +350,4 @@
 24 tests/gates/test_gate_sentinel.sh
 2 tests/context_memory/test_session_lock_pid_start.sh
 12 tests/gates/test_heavy_slot_cap.sh
+1 tests/verification/test_governance_cleanup_fold_intent.sh
