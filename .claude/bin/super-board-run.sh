@@ -1422,8 +1422,16 @@ fi
 
 # Production-merge guard.
 if [ "$BASE_BRANCH" = "main" ] && [ "$HUMAN_APPROVES" = "false" ]; then
-  if rg -qU 'on:\s*\n?\s*push:\s*\n?\s*branches:[^a-z]*main' .github/workflows 2>/dev/null \
-     || [ -f vercel.json ] || [ -f netlify.toml ]; then
+  # grep -E trên workflow đã nối dòng: rg không phải binary trên mọi máy, thiếu nó guard này cho qua (fail-open).
+  workflow_push_main() {
+    local f
+    for f in .github/workflows/*; do
+      [ -f "$f" ] || continue
+      tr '\n' ' ' < "$f" | grep -Eq 'on:[[:space:]]*push:[[:space:]]*branches:[^a-z]*main' && return 0
+    done
+    return 1
+  }
+  if workflow_push_main || [ -f vercel.json ] || [ -f netlify.toml ]; then
     log "🛡 refusing to start: would auto-merge to production main."
     exit 75
   fi
@@ -1443,7 +1451,7 @@ log "initial Ready count: $INITIAL_READY"
 # Landed-work baseline (issue #8). Progress is a change in this set, not lane state.
 PREV_DONE_SIG=$(done_signature)
 INITIAL_DONE_SIG="$PREV_DONE_SIG"
-NO_PROGRESS_CYCLE_COUNT="${NO_PROGRESS_CYCLE_COUNT:-0}"   # watchdog khởi động lại: đếm tiếp từ runner trước
+[ "${SB_WATCHDOG_START:-0}" = "1" ] || NO_PROGRESS_CYCLE_COUNT=0   # watchdog khởi động lại: đã nạp từ bản ghi ở trên; khởi động tường minh đếm từ 0, không thừa hưởng môi trường người gọi
 
 while true; do
   refresh_run_paths
