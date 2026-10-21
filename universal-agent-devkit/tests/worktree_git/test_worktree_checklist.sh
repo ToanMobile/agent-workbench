@@ -332,10 +332,11 @@ git -C "$TMP/m" worktree remove --force "$TMP/wt-b2" >/dev/null 2>&1; git -C "$T
 bash "$KIT" worktree add ../wt-b3 feat/b3 >/dev/null 2>&1 || fail "add wt-b3 on a branch"
 status_edit "$TMP/wt-b3" 'items["BUG-LATER"]["title"] = "changed on the branch"'
 git -C "$TMP/wt-b3" add .agents/regression_status.json && git -C "$TMP/wt-b3" commit -qm "the branch renames BUG-LATER" || fail "wt-b3: commit the rename"
-python3 - "$TMP/wt-b3/.agents/regression_status.json" "$TMP/m" <<'PY'
+python3 - "$TMP/wt-b3/.agents/regression_status.json" "$TMP/m" <<'PY' || fail "wt-b3: could not put BUG-LATER back to main's version (the fixture proves nothing)"
 import json, subprocess, sys
 p = sys.argv[1]; d = json.load(open(p, encoding="utf-8"))
 main = json.loads(subprocess.run(["git", "-C", sys.argv[2], "show", "HEAD:.agents/regression_status.json"], capture_output=True, text=True).stdout)
+assert d["items"]["BUG-LATER"] != main["items"]["BUG-LATER"], "the branch did not change BUG-LATER"
 d["items"]["BUG-LATER"] = main["items"]["BUG-LATER"]
 open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
 PY
