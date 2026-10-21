@@ -173,15 +173,25 @@ for clause in "Worktree: after git fetch origin, create it from the repo root ON
   case "$wave_text" in *"$clause"*) ;; *) missing="$missing wave:'$clause'" ;; esac
 done
 [ -z "$missing" ] && ok "runner and wave worktree briefs carry the same clauses" || fail "worktree briefs drifted:$missing"
-# ── 4. gỡ worktree của lane bằng kit: brief, SKILL của 3 lane, run.md, run-workflow.md không bảo chạy `git worktree remove` trần
+# ── 4. gỡ worktree của lane bằng kit: brief, SKILL của 3 lane, run.md, run-workflow.md, super-build-dispatch.sh và lời của chính
+#       worktree.py (lane đọc nó đúng lúc vấp: Exit 1 "nhánh đang checkout ở …", "xong lane thì gỡ nó") không bảo chạy `git worktree remove`
+#       trần. Chỉ cho phép đúng câu cảnh báo "a plain `git worktree remove` refuses …" (OCR 21/10: lọc theo chữ never/not quá lỏng).
 bad=""
 RUNWF="$ROOT/.claude/skills/super-board/references/run-workflow.md"
 for f in "$ROOT/.claude/skills/super-build/SKILL.md" "$ROOT/.claude/skills/super-qa/SKILL.md" "$ROOT/.claude/skills/super-review/SKILL.md" \
-         "$ROOT/$RUNMD" "$RUNWF"; do
-  hits=$(grep -n 'git worktree remove' "$f" | grep -viE 'never|not |instead of|trần|plain' || true)
+         "$ROOT/$RUNMD" "$RUNWF" "$DISPATCH"; do
+  [ -f "$f" ] || { bad="$bad missing:${f#$ROOT/}"; continue; }
+  hits=$(grep -n 'git worktree remove' "$f" | grep -vE 'plain `?git worktree remove`? refuses' || true)
   [ -z "$hits" ] || bad="$bad ${f#$ROOT/}:$hits"
 done
 case "$hint_text $wave_text" in *"git worktree remove"*) bad="$bad brief:git worktree remove" ;; esac
+WTPY_SRC="$ROOT/universal-agent-devkit/scripts/git/worktree.py"
+if [ -f "$WTPY_SRC" ]; then
+  hits=$(grep -nE 'git worktree remove (\{holder\}|<path>)' "$WTPY_SRC" || true)
+  [ -z "$hits" ] || bad="$bad worktree.py lane messages:$hits"
+else
+  bad="$bad missing:worktree.py"
+fi
 [ -z "$bad" ] && ok "4. no lane brief or lane file removes a worktree with a plain git worktree remove" \
   || fail "4. plain git worktree remove instructions left:$bad"
 

@@ -105,7 +105,7 @@ if [[ -e ".worktrees/issue-$N" ]]; then
 fi
 if [[ -e "$WORKTREE_DIR" ]]; then
   echo "error: worktree path $WORKTREE_DIR already exists — refusing to clobber" >&2
-  echo "       (remove with: git worktree remove $WORKTREE_DIR && git branch -D $WORKER_BRANCH)" >&2
+  echo "       (remove with: agent-kit worktree remove $WORKTREE_DIR — it refuses only when work would be lost; the branch goes once merged: agent-kit worktree prune-branch $WORKER_BRANCH)" >&2
   exit 64
 fi
 if git rev-parse --verify "$WORKER_BRANCH" >/dev/null 2>&1; then
