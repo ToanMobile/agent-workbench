@@ -649,6 +649,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-wave-needs-you-mark",
+      "watch_files": [
+        ".claude/workflows/super-board-wave.js",
+        "tests/super-board/test_wave_needs_you_mark.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WAVE-NEEDSYOU-01",
+          "name": "wave.js: prompt exit 7 và exit 8 của merge gate gọi super-board-needs-you.py mark với --next comment done (#106)",
+          "command": "bash tests/super-board/test_wave_needs_you_mark.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
