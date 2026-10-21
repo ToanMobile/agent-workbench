@@ -504,7 +504,7 @@ Các file được import là bản sao thật, không phải link: một `@` im
 - **Pre-Code Gate (Mục 5):** 5 tiêu chí bắt buộc (Target + authority, đọc file thật, danh sách consumer, failure mechanism, residual) trước khi chạm vào mã nguồn.
 - **Zero-Defect Protocol & Paired Executable Oracle:** Bắt buộc có kiểm thử RED → GREEN thật trên failure boundary, không có ngoại lệ (zero waivers).
 - **No-Fabrication Engine (Bảng C1–C9):** Triệt tiêu ảo giác, cấm bịa đặt metric, dòng code hoặc kết quả kiểm thử.
-- **Solo Dev & Quy Ước Git:** Chuẩn Conventional Commits (`feat`, `fix`, `chore`), cấm commit secrets, sửa mã nguồn phẫu thuật (surgical diffs). Tuân thủ nghiêm ngặt Solo Dev Rule 0 (không tự ý commit hoặc push khi chưa có yêu cầu tường minh từ người dùng).
+- **Solo Dev & Quy Ước Git:** Chuẩn Conventional Commits (`feat`, `fix`, `chore`), cấm commit secrets, sửa mã nguồn phẫu thuật (surgical diffs). Thứ bậc: luật riêng của dự án (`.agents/local/rules/`, user rules) luôn thắng — dự án cấm commit/push thì dừng chờ lệnh; dự án ủy quyền (mặc định của DevKit, xem `rules/essentials.md` mục Git) thì agent tự commit và push khi gate `--full` exit 0.
 - **Tương thích Đa Nền Tảng:** Cùng một `AGENTS.md` được cả 5 nền tảng agent hỗ trợ đọc.
 
 ---

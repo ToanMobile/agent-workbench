@@ -179,8 +179,13 @@ board_notify() {
   fi
   python3 "$HERE/super-board-notify.py" "$@" || true
 }
+# Tiêu đề PR cho tin Telegram (người đọc cần biết việc gì, project nào). Lỗi mạng: rỗng, tin về dạng cũ.
+pr_title() {
+  if [ -n "$SUBJECT" ]; then printf '%s' "$SUBJECT"; return 0; fi
+  gh pr view "$PR" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true
+}
 needs_you_notify() {
-  board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}"
+  board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}" --title "$(pr_title)"
 }
 # clip <n>: stdin gộp về một dòng, giữ tối đa n KÝ TỰ. INSTINCT-173: dưới locale C `cut -c` cắt theo byte và làm vỡ ký tự tiếng Việt
 # (văn bản không còn UTF-8, github-read từ chối). Byte không phải UTF-8 trong lỗi của git thành U+FFFD, không bao giờ vỡ giữa ký tự.
@@ -227,7 +232,7 @@ MAIN_WT=$(git -C "$REPO_ABS" worktree list --porcelain | sed -n '1s/^worktree //
 BASE_WT=${MAIN_WT:-$REPO_ABS}
 mkdir -p "$BASE_WT/.claude/worktrees"
 SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.merge-scratch-XXXXXX")
-cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "${META:-}" "${DIFF:-}" "${VERIFY_LOG:-}"; release; }
+cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "${META:-}" "${DIFF:-}" "${VERIFY_LOG:-}"; release; }
 trap cleanup EXIT
 
 # ---- the head guard --------------------------------------------------------
@@ -469,9 +474,42 @@ own_lock_or_stop() {
   fi
 }
 
+# #146: một lần verify dài (chờ heavy slot + suite 900 s) vượt STALE_AFTER thì gate khác reap khoá và merge song song. Trong lúc verify
+# chạy, tiến trình nền làm mới mốc "at" mỗi STALE_AFTER/3 giây (tối đa 60 s), CHỈ khi khoá còn mang pid của gate này: khoá đã bị
+# gate khác chiếm thì không ghi vào nó. Dừng ngay khi verify xong (stop_heartbeat, cả trong trap EXIT).
+# ponytail: giữa lúc đọc pid và mv vẫn có cửa sổ mili giây nếu gate khác reap + mkdir đúng lúc đó; own_lock_or_stop trước merge bắt được.
+HB_PID=""
+start_heartbeat() {
+  local every=$(( STALE_AFTER / 3 )) owner="$$"
+  [ "$every" -gt 60 ] && every=60
+  [ "$every" -ge 1 ] || every=1
+  (
+    while sleep "$every"; do
+      kill -0 "$owner" 2>/dev/null || exit 0   # gate bị SIGKILL (trap EXIT không chạy): không làm mới khoá của gate đã chết
+      [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$owner" ] || exit 0
+      { date +%s > "$LOCK_DIR/at.hb$owner" && mv -f "$LOCK_DIR/at.hb$owner" "$LOCK_DIR/at"; } 2>/dev/null || exit 0
+    done
+  ) >/dev/null 2>&1 &
+  HB_PID=$!
+  say "heartbeat pid ${HB_PID} refreshes the lock every ${every}s while verify runs"
+}
+stop_heartbeat() {
+  [ -n "$HB_PID" ] || return 0
+  kill "$HB_PID" 2>/dev/null || true
+  wait "$HB_PID" 2>/dev/null || true
+  HB_PID=""
+}
+
 run_verify_cmd() {
-  local c="$1"
+  local c="$1" rc=0
   own_lock_or_stop
+  start_heartbeat
+  run_verify_cmd_inner "$c" || rc=$?
+  stop_heartbeat
+  return "$rc"
+}
+run_verify_cmd_inner() {
+  local c="$1"
   if [[ "$c" == *"post-fix-gate.py"* ]]; then
     ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
         && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
@@ -642,7 +680,7 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
      ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
      --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2; then
   say "merged ${HEAD_SHA}"
-  board_notify send --card "PR #${PR}" --text "merged ${HEAD_SHA}"
+  board_notify send --card "PR #${PR}" --repo "$REPO" --title "$(pr_title)" --text "✅ đã merge ${HEAD_SHA}"
   # Dọn sau merge: fast-forward nhánh base local và xoá worktree + nhánh local của CHÍNH thẻ vừa merge
   # (không bao giờ của thẻ khác), để không phải dọn tay. worktree_merge_gate.state là sổ nợ worktree toàn repo
   # của hook DevKit: hook tự dọn sổ đó, gate này không bao giờ xoá.

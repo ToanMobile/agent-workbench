@@ -959,7 +959,7 @@ def antigravity_collab_hint(prompt, dossier, project_root):
     norm = normalize(prompt)
     is_large = bool(LARGE_TASK_RE.search(norm))
     intents = dossier.get("detected_intents", [])
-    if not is_large and not any(i in ("ARCHITECTURE_CHANGE", "SECURITY_AUDIT", "MIGRATION") for i in intents):
+    if not is_large and not any(i in ("ARCHITECTURE_REFACTOR", "SECURITY", "DEPRECATION_MIGRATION") for i in intents):
         return ""
     return ("- Bắt buộc [Claude ↔ Antigravity - Task lớn]: Khi bắt đầu task lớn/kiến trúc (≥2 module, ≥3 files, "
             ">200 LOC hoặc rủi ro cao), gọi Antigravity (MCP antigravity-pm plan_review) để bàn luận chốt phương án "
