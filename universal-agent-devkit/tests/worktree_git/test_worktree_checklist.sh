@@ -222,10 +222,18 @@ bash "$KIT" worktree remove ../wt-k >"$TMP/rm-k.out" 2>&1; rc=$?
 # the #41 shape: the sync imported a guards.json row (source "guards.json": rebuilt from the tracked .agents/local/guards.json)
 # and moved a fixed bug's test_refs to runs_in_suite once they resolved
 status_edit "$TMP/m" 'items["BUG-MOVE"] = {"id": "BUG-MOVE", "kind": "bug", "title": "moved ref", "fixed": True, "state": "confirmed", "tests": [], "test_refs": ["ok.sh"], "created_at": "2026-10-16 10:00:00"}'
-git -C "$TMP/m" add .agents/regression_status.json && git -C "$TMP/m" commit -qm "a fixed bug whose test is a test_ref" || fail "seed BUG-MOVE"
+mkdir -p "$TMP/m/.agents/local"   # STORE-1: the sync imports it as a new row; STORE-C: it claims it on BUG-MOVE (same test)
+printf '{"guards": [{"id": "STORE-1", "title": "imported guard", "tests": ["store.sh"]}, {"id": "STORE-C", "title": "claimed guard", "tests": ["ok.sh"]}]}\n' > "$TMP/m/.agents/local/guards.json"
+git -C "$TMP/m" add .agents/regression_status.json .agents/local/guards.json && git -C "$TMP/m" commit -qm "a fixed bug whose test is a test_ref; a guard main's status has not imported yet" || fail "seed BUG-MOVE"
+sync_render() { ( cd "$1" && CLAUDE_PROJECT_DIR="$1" python3 "$DEVKIT_DIR/bin/regression_checklist.py" render >/dev/null 2>&1 ); }   # the real sync, as every `bugs` command runs it
 bash "$KIT" worktree add ../wt-s >/dev/null 2>&1 || fail "add wt-s"
-status_edit "$TMP/wt-s" 'items["BUG-MOVE"]["runs_in_suite"] = items["BUG-MOVE"].pop("test_refs"); items["BUG-MOVE"]["test_refs"] = []
-items["STORE-1"] = {"id": "STORE-1", "kind": "bug", "title": "imported guard", "fixed": True, "state": "confirmed", "source": "guards.json", "tests": ["REG-OK"], "created_at": "2026-10-21 08:24:02"}'
+sync_render "$TMP/wt-s"; sleep 1   # remove's own sync runs a second later: its time stamps differ and must not count
+python3 - "$TMP/wt-s/.agents/regression_status.json" <<'PY' || fail "wt-s: the real sync did not import STORE-1 and claim STORE-C on BUG-MOVE (the fixture proves nothing)"
+import json, sys
+items = json.load(open(sys.argv[1], encoding="utf-8"))["items"]
+sys.exit(0 if items.get("STORE-1", {}).get("source") == "guards.json" and "STORE-C" in (items["BUG-MOVE"].get("guards") or []) else 1)
+PY
+status_edit "$TMP/wt-s" 'items["BUG-MOVE"]["runs_in_suite"] = items["BUG-MOVE"].pop("test_refs"); items["BUG-MOVE"]["test_refs"] = []'
 echo "<!-- s -->" >> "$TMP/wt-s/.agents/CHECKLIST.md"
 bash "$KIT" worktree remove ../wt-s >"$TMP/rm-s.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && [ ! -e "$TMP/wt-s" ] && [ "$(fallback_has STORE-1 .agents/regression_status.json)" = yes ] \
@@ -285,13 +293,58 @@ bash "$KIT" worktree remove ../wt-j >"$TMP/rm-j.out" 2>&1; rc=$?
 git -C "$TMP/m" worktree remove --force "$TMP/wt-j" >/dev/null 2>&1
 bash "$KIT" worktree add ../wt-x2 >/dev/null 2>&1 || fail "add wt-x2"
 git -C "$TMP/wt-x2" update-index --skip-worktree .agents/CHECKLIST.md && echo "<!-- hidden -->" >> "$TMP/wt-x2/.agents/CHECKLIST.md"
-status_edit "$TMP/wt-x2" 'items["STORE-9"] = {"id": "STORE-9", "kind": "bug", "title": "fresh import", "fixed": True, "state": "confirmed", "source": "guards.json", "tests": ["REG-OK"], "created_at": "2026-10-21 12:00:00"}'   # a visible regenerated change too: the bookkeeping filter runs
+sync_render "$TMP/wt-x2"   # a visible regenerated change too (the STORE-1 import): the bookkeeping filter runs
+grep -q '"STORE-1"' "$TMP/wt-x2/.agents/regression_status.json" || fail "wt-x2: the real sync did not import STORE-1"
 bash "$KIT" worktree remove ../wt-x2 >"$TMP/rm-x2.out" 2>&1; rc=$?
 [ "$rc" = 1 ] && [ -d "$TMP/wt-x2" ] && grep -q "skip-worktree" "$TMP/rm-x2.out" \
   && ok "remove: an edit git hides (skip-worktree) on a bookkeeping file still holds the worktree" \
   || { fail "remove of a worktree with a hidden bookkeeping edit (rc=$rc)"; cat "$TMP/rm-x2.out"; }
 git -C "$TMP/wt-x2" update-index --no-skip-worktree .agents/CHECKLIST.md >/dev/null 2>&1
 git -C "$TMP/m" worktree remove --force "$TMP/wt-x2" >/dev/null 2>&1
+# main syncs (STORE-1 imported, STORE-C claimed on BUG-MOVE) and gains one more guard, STORE-N: in the worktrees below the sync's only
+# change is the STORE-N import, so each case turns on its own rule, not on a claim the sync also makes
+sync_render "$TMP/m"
+printf '{"guards": [{"id": "STORE-1", "title": "imported guard", "tests": ["store.sh"]}, {"id": "STORE-C", "title": "claimed guard", "tests": ["ok.sh"]}, {"id": "STORE-N", "title": "new guard", "tests": ["new.sh"]}]}\n' > "$TMP/m/.agents/local/guards.json"
+git -C "$TMP/m" add .agents && git -C "$TMP/m" commit -qm "main synced; a new guard" || fail "main sync + STORE-N"
+# (Antigravity T0047 #1) the sync imported a guard and a person linked a test to that fresh row in the same worktree: the sync never
+# builds that link, still refused
+bash "$KIT" worktree add ../wt-fg >"$TMP/add-fg.out" 2>&1 || fail "add wt-fg: $(tail -2 "$TMP/add-fg.out")"
+sync_render "$TMP/wt-fg"
+grep -q '"STORE-N"' "$TMP/wt-fg/.agents/regression_status.json" || fail "wt-fg: the real sync did not import STORE-N"
+status_edit "$TMP/wt-fg" 'items["STORE-N"].setdefault("tests", []).append("REG-HAND"); items["STORE-N"]["linked_at"] = "2026-10-21 12:30:00"'
+bash "$KIT" worktree remove ../wt-fg >"$TMP/rm-f.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-fg" ] \
+  && ok "remove: a person's link on a row the sync just imported (neither HEAD holds it) still holds the worktree" \
+  || { fail "remove of a worktree with a hand link on a fresh guards.json row (rc=$rc)"; cat "$TMP/rm-f.out"; }
+git -C "$TMP/m" worktree remove --force "$TMP/wt-fg" >/dev/null 2>&1
+# (T0047 #2) a branch worktree committed a row, then dropped it uncommitted: the branch keeps the row, the drop lives only on disk
+bash "$KIT" worktree add ../wt-b2 feat/b2 >/dev/null 2>&1 || fail "add wt-b2 on a branch"
+status_edit "$TMP/wt-b2" 'items["BUG-BR"] = {"id": "BUG-BR", "kind": "bug", "title": "on the branch", "fixed": False, "state": "reported", "tests": [], "created_at": "2026-10-21 12:40:00"}'
+git -C "$TMP/wt-b2" add .agents/regression_status.json && git -C "$TMP/wt-b2" commit -qm "a row on the branch" || fail "wt-b2: commit the row"
+status_edit "$TMP/wt-b2" 'del items["BUG-BR"]'
+sync_render "$TMP/wt-b2"   # the status file then differs from main's (the STORE-1 import): the bookkeeping rule decides, not "main holds these bytes"
+bash "$KIT" worktree remove ../wt-b2 >"$TMP/rm-b2.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-b2" ] \
+  && ok "remove: an uncommitted drop of a row the branch committed (main never had it) still holds the worktree" \
+  || { fail "remove of a branch worktree with an uncommitted drop (rc=$rc)"; cat "$TMP/rm-b2.out"; }
+git -C "$TMP/m" worktree remove --force "$TMP/wt-b2" >/dev/null 2>&1; git -C "$TMP/m" branch -D feat/b2 >/dev/null 2>&1
+# (T0047 #3) the branch changed a row main holds, then the disk put it back to main's version, uncommitted: still the worktree's work
+bash "$KIT" worktree add ../wt-b3 feat/b3 >/dev/null 2>&1 || fail "add wt-b3 on a branch"
+status_edit "$TMP/wt-b3" 'items["BUG-LATER"]["title"] = "changed on the branch"'
+git -C "$TMP/wt-b3" add .agents/regression_status.json && git -C "$TMP/wt-b3" commit -qm "the branch renames BUG-LATER" || fail "wt-b3: commit the rename"
+python3 - "$TMP/wt-b3/.agents/regression_status.json" "$TMP/m" <<'PY'
+import json, subprocess, sys
+p = sys.argv[1]; d = json.load(open(p, encoding="utf-8"))
+main = json.loads(subprocess.run(["git", "-C", sys.argv[2], "show", "HEAD:.agents/regression_status.json"], capture_output=True, text=True).stdout)
+d["items"]["BUG-LATER"] = main["items"]["BUG-LATER"]
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+sync_render "$TMP/wt-b3"
+bash "$KIT" worktree remove ../wt-b3 >"$TMP/rm-b3.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && [ -d "$TMP/wt-b3" ] \
+  && ok "remove: an uncommitted change back to main's version of a row the branch changed still holds the worktree" \
+  || { fail "remove of a branch worktree whose row went back to main's version (rc=$rc)"; cat "$TMP/rm-b3.out"; }
+git -C "$TMP/m" worktree remove --force "$TMP/wt-b3" >/dev/null 2>&1; git -C "$TMP/m" branch -D feat/b3 >/dev/null 2>&1
 # (OCR 21/10) git cannot read main's status file (a timeout, rc 124): not "main has none" — the check fails closed
 bash "$KIT" worktree add ../wt-t >/dev/null 2>&1 || fail "add wt-t"
 status_edit "$TMP/wt-t" 'del items["BUG-LATER"]'

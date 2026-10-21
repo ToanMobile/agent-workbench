@@ -1661,13 +1661,16 @@ def _authored_cmp(item):
 
 
 def _bookkeeping_regenerated(wt, main):
-    """True when the worktree's UNCOMMITTED bookkeeping (BOOKKEEPING) is nothing but what the gate and the checklist sync regenerate:
-    every row a person made (_authored_cmp) in its regression_status.json on disk is held the same way by the worktree's own HEAD
-    (committed: the commit checks guard it; main may have edited that row since, principal review P2-2) or by main's HEAD, or is a
-    row the sync just imported from .agents/local/guards.json that neither HEAD holds yet (#41); a person's link on a guards.json
-    row a HEAD already holds is compared as any row (P1-1). It drops no such row that its own HEAD holds and main still does
-    (`agent-kit bugs drop`: OCR 21/10; a row main gained after the worktree branched off is no drop). Fail closed: a status file
-    that cannot be read or parsed, on disk, in the worktree's HEAD or in main's HEAD, is work."""
+    """True when the worktree's UNCOMMITTED bookkeeping (BOOKKEEPING) is nothing but what the gate and the checklist sync regenerate.
+    Every row a person made (_authored_cmp) in its regression_status.json on disk is either:
+      - the worktree's own HEAD row as it is (committed: the commit checks guard it; main may have edited it since, principal P2-2),
+        or a row its own HEAD does not hold that main's HEAD holds as it is; a row its own HEAD holds that the disk changed back to
+        main's version is work (Antigravity T0047 #3);
+      - or the row the checklist's own sync (_synced_rows: the sync every `bugs` command runs) builds on the worktree's own HEAD from
+        its guards.json and matrix, time stamps aside — a guards.json import, a guard claimed on a row, a moved ref (#41), never a
+        person's link on it (P1-1, T0047 #1).
+    And no such row of its own HEAD is gone from the disk (`agent-kit bugs drop`, a test row's `covers` removed: OCR, T0047 #2).
+    Fail closed: a status file that cannot be read or parsed, on disk, in the worktree's HEAD or in main's HEAD, is work."""
     path = os.path.join(wt, STATUS_FILE)
     try:
         if not os.path.lexists(path):
@@ -1697,12 +1700,50 @@ def _bookkeeping_regenerated(wt, main):
         mine = {rid: a for rid, it in mine_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
         base = {rid: a for rid, it in base_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
         theirs = {rid: a for rid, it in theirs_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
-        fresh = {rid for rid, it in mine_raw["items"].items() if isinstance(it, dict) and it.get("source") == "guards.json"
-                 and rid not in base_raw["items"] and rid not in theirs_raw["items"]}
-        dropped = [rid for rid in base if rid not in mine_raw["items"] and rid in theirs]
+        if any(rid not in mine for rid in base):
+            return False   # a row of its own HEAD gone from the disk
+        synced = None
+        for rid, a in mine.items():
+            if base.get(rid) == a or (rid not in base and theirs.get(rid) == a):
+                continue
+            if synced is None:
+                synced = _synced_rows(wt, base_raw)
+            want = _authored_cmp(synced.get(rid))
+            if want is None or _unstamped(want) != _unstamped(a):
+                return False
     except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
         return False
-    return not dropped and all(rid in fresh or base.get(rid) == a or theirs.get(rid) == a for rid, a in mine.items())
+    return True
+
+
+_SYNC_STAMPS = ("created_at", "linked_at", "linked_ts")   # what the checklist sync stamps with the time it ran
+
+
+def _unstamped(a):
+    return {k: v for k, v in a.items() if k not in _SYNC_STAMPS}
+
+
+def _synced_rows(wt, head_raw):
+    """The rows the checklist's own sync (regression_checklist.sync_project: matrix suites, guards.json guards, orphan tests, refs
+    that resolve now — what every `bugs` command and the render run first) builds on top of the worktree's HEAD status from its
+    own .agents/local/guards.json and matrix: {id: row}. GeelyEx2 #41 / the test: it imports a guard as a new row, or claims it on a
+    row that already covers the guard's tests. {} when it cannot run (fail closed: then nothing counts as regenerated)."""
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "bin", "regression_checklist.py")
+        spec = importlib.util.spec_from_file_location("devkit_regression_checklist_sync", path)
+        rc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rc)
+        data = json.loads(json.dumps(head_raw))   # a deep copy: the HEAD rows stay as read
+        matrix = {}
+        mf = os.path.join(wt, ".agents", "regression_matrix.active.json")
+        if os.path.isfile(mf):
+            with open(mf, encoding="utf-8") as f:
+                matrix = json.load(f)
+        rc.sync_project(data, rc.Path(wt), matrix)
+        items = data.get("items")
+        return items if isinstance(items, dict) else {}
+    except Exception:  # noqa: BLE001 - the sync cannot run here: nothing counts as regenerated by it (fail closed)
+        return {}
 
 
 def _carry_authored_rows(wt, base, env):
