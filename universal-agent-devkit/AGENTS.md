@@ -81,7 +81,7 @@ Required order: plan → reviewer approves the *plan* → gaps found → revise 
 - **Gate 2 (Strict Narrow Scope):** Applies ONLY when touching:
   (a) Approval boundary (auth policy, billing, destructive migrations, global architecture);
   (b) Attack surface narrowly defined by security gates;
-  (c) Irreversible external action (commit/push/PR, release/publish, deleting shared device/server state);
+  (c) Irreversible external action (release/publish, deleting shared device/server state; commit/push/PR only when a project rule forbids them — otherwise `rules/essentials.md` "Git" lets the agent do them after the gate passes);
   (d) Meta-tooling or rule files (`AGENTS.md`, `rules/`, `hooks/`, the project's own QA scripts).
   Inside this scope, Gate 2 is a full STOP. Outside this scope, issue the verdict and carry on.
 
