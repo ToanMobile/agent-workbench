@@ -141,6 +141,15 @@ d=$(SB_BUILD_LOAD_MAX=12.5 resolve_build_load_max "$TMP/c.json")
 [ "$d" = 12.5 ] && ok "  … SB_BUILD_LOAD_MAX beats the config key" || fail "SB_BUILD_LOAD_MAX lost: '$d'"
 cfg_with '{"build_load_max": "abc"}'; d=$(resolve_build_load_max "$TMP/c.json")
 [ "$d" = 100 ] && ok "  … an invalid value falls back to 100" || fail "invalid value gave '$d'"
+# OCR 21/10: mỗi nguồn phải là số DƯƠNG (như heavy_slot.load_max) và nguồn sai thì xét nguồn kế, không nhảy thẳng về 100
+cfg_with '{}'; d=$(DEVKIT_SLOT_LOAD_MAX=0 resolve_build_load_max "$TMP/c.json")
+[ "$d" = 100 ] && ok "  … DEVKIT_SLOT_LOAD_MAX=0 is not a threshold (100, as heavy_slot)" || fail "DEVKIT_SLOT_LOAD_MAX=0 gave '$d'"
+cfg_with '{"build_load_max": 0}'; d=$(DEVKIT_SLOT_LOAD_MAX=64 resolve_build_load_max "$TMP/c.json")
+[ "$d" = 64 ] && ok "  … build_load_max=0 is skipped, the next source (64) counts" || fail "build_load_max=0 gave '$d'"
+cfg_with '{"build_load_max": 30}'; d=$(SB_BUILD_LOAD_MAX=abc resolve_build_load_max "$TMP/c.json")
+[ "$d" = 30 ] && ok "  … an invalid SB_BUILD_LOAD_MAX falls through to the config key (30)" || fail "invalid SB_BUILD_LOAD_MAX gave '$d'"
+d=$(SB_BUILD_LOAD_MAX=0.0 DEVKIT_SLOT_LOAD_MAX=7 resolve_build_load_max "$TMP/c.json")
+[ "$d" = 30 ] && ok "  … 0.0 is not positive: skipped" || fail "SB_BUILD_LOAD_MAX=0.0 gave '$d'"
 
 # ── 9. build_workers mặc định = 10 (người dùng 21/10); khoá config vẫn đặt lại được, build_workers=1 quay về một worker
 cfg_with '{}'; w=$(resolve_build_workers "$TMP/c.json")
@@ -149,7 +158,7 @@ cfg_with '{"build_workers": 1}'; w=$(resolve_build_workers "$TMP/c.json")
 [ "$w" = 1 ] && ok "  … build_workers=1 in the config still gives one worker" || fail "build_workers=1 gave '$w'"
 cfg_with '{"build_workers": 4}'; w=$(resolve_build_workers "$TMP/c.json")
 [ "$w" = 4 ] && ok "  … any other value is honoured" || fail "build_workers=4 gave '$w'"
-for bad in '"x"' 0 -3 2.5; do cfg_with "{\"build_workers\": $bad}"; w=$(resolve_build_workers "$TMP/c.json")
+for bad in '"x"' 0 -3 2.5 '"000"' 99999999999999999999; do cfg_with "{\"build_workers\": $bad}"; w=$(resolve_build_workers "$TMP/c.json")
   [ "$w" = 10 ] && ok "  … an invalid build_workers ($bad) falls back to 10" || fail "build_workers=$bad gave '$w'"; done
 # with the defaults, low load climbs past one worker; load at the default limit holds; unreadable load stays at one
 cfg_with '{}'; reset; BUILD_WORKERS=$(resolve_build_workers "$TMP/c.json"); BUILD_LOAD_MAX=$(resolve_build_load_max "$TMP/c.json")

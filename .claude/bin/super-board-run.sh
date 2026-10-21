@@ -101,17 +101,22 @@ resolve_build_workers() {
   # $1 = đường dẫn config. Khoá build_workers (số nguyên >= 1); thiếu hoặc sai thì 10 (người dùng 21/10); đặt 1 để về một worker.
   local v
   v=$(jq -r '.build_workers // empty' "$1" 2>/dev/null || true)
-  case "$v" in ''|*[!0-9]*|0) v=10 ;; esac
-  printf '%s\n' "$((10#$v))"
+  case "$v" in ''|*[!0-9]*) v=10 ;; esac
+  [ "${#v}" -le 6 ] || v=10   # số quá dài tràn phép tính bash (OCR 21/10)
+  v=$((10#$v))
+  [ "$v" -ge 1 ] || v=10      # 0, 00, 000
+  printf '%s\n' "$v"
 }
 
 resolve_build_load_max() {
-  # $1 = đường dẫn config. Thứ tự: env SB_BUILD_LOAD_MAX, khoá build_load_max, env DEVKIT_SLOT_LOAD_MAX, 100. Số sai thì 100.
-  local v="${SB_BUILD_LOAD_MAX:-}"
-  [ -n "$v" ] || v=$(jq -r '.build_load_max // empty' "$1" 2>/dev/null || true)
-  [ -n "$v" ] || v="${DEVKIT_SLOT_LOAD_MAX:-}"
-  case "$v" in ''|*[!0-9.]*|*.*.*|.) v=100 ;; esac
-  printf '%s\n' "$v"
+  # $1 = đường dẫn config. Thứ tự: env SB_BUILD_LOAD_MAX, khoá build_load_max, env DEVKIT_SLOT_LOAD_MAX, rồi 100. Mỗi nguồn phải là số
+  # DƯƠNG (như heavy_slot.load_max: 0 không phải ngưỡng); nguồn sai thì xét nguồn kế, không nhảy thẳng về 100 (OCR 21/10).
+  local v="" cand
+  for cand in "${SB_BUILD_LOAD_MAX:-}" "$(jq -r '.build_load_max // empty' "$1" 2>/dev/null || true)" "${DEVKIT_SLOT_LOAD_MAX:-}"; do
+    case "$cand" in ''|*[!0-9.]*|*.*.*|.) continue ;; esac
+    if awk -v m="$cand" 'BEGIN { exit !(m > 0) }'; then v="$cand"; break; fi
+  done
+  printf '%s\n' "${v:-100}"
 }
 
 if [ "${SB_LIB_ONLY:-0}" != "1" ]; then
