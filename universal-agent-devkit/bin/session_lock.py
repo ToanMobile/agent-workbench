@@ -44,7 +44,6 @@ import json
 import os
 import re
 import stat
-import subprocess
 import sys
 import time
 # subprocess is imported where git really has to run (2026-10-09: it cost ~7 ms of every PreToolUse call; see _find_git)
@@ -555,20 +554,38 @@ def _ps(pid, fields):
     """`ps -o <fields>= -p pid` output, stripped; None when the process is gone or ps fails (macOS has no /proc)."""
     # `lstart` is printed in local time: pin TZ/locale so a start recorded under one TZ equals the one read under another
     env = dict(os.environ, TZ="UTC", LC_ALL="C")
+    import subprocess  # noqa: PLC0415 - only a platform without /proc forks ps
     try:
-        r = subprocess.run(["ps", "-o", "=,".join(fields.split(",")) + "=", "-p", str(pid)], capture_output=True, text=True, timeout=5, env=env)
+        r = subprocess.run(["ps", "-o", "=,".join(fields.split(",")) + "=", "-p", str(pid)], capture_output=True, text=True, timeout=1, env=env)
     except (OSError, subprocess.SubprocessError):
         return None
     out = r.stdout.strip()
     return out if r.returncode == 0 and out else None
 
 
+def _parse_starttime(stat):
+    """`proc:<starttime>` (field 22 of /proc/<pid>/stat), None when unparsable. comm may hold spaces or ')': count after the last ')'."""
+    try:
+        return "proc:" + str(int(stat[stat.rfind(b")") + 2:].split()[19]))   # fields after ") " start at 3 (state): 22 is index 19
+    except (IndexError, ValueError):
+        return None
+
+
+def _proc_start(pid):
+    """`proc:<starttime>` read from /proc without a fork (Linux); None when there is no /proc entry."""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as f:
+            return _parse_starttime(f.read())
+    except OSError:
+        return None
+
+
 def pid_start(pid):
-    """Start time of `pid` (`ps -o lstart=`), None when unknown. Recorded with the pid: the OS may hand the same pid to another
-    process later, and only a different start time tells that apart from the session itself."""
+    """Start time of `pid`: `proc:<starttime>` from /proc on Linux (no fork), else `ps -o lstart=`; None when unknown. Recorded with
+    the pid: the OS may hand the same pid to another process later, and only a different start time tells that apart from the session."""
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
         return None
-    return _ps(pid, "lstart")
+    return _proc_start(pid) or _ps(pid, "lstart")
 
 
 def _parent_and_comm(pid):
@@ -622,7 +639,8 @@ def is_pid_alive(pid, start=None):
     except (OSError, OverflowError):   # (a pid past the OS range: unknown, like a pid that is not a number)
         return True
     if start:
-        now = pid_start(pid)
+        # a `proc:` record is compared with /proc, a ps record (written on macOS or before this format) with ps
+        now = _proc_start(pid) if str(start).startswith("proc:") else _ps(pid, "lstart")
         if now is not None and now != start:
             return False
     return True
