@@ -398,21 +398,27 @@ def approved(top, rng):
     return False, "; ".join(dict.fromkeys(whys[:3])) or None
 
 
-def tested_fingerprint(top, project, head, dirty, rev):
+def tested_fingerprint(top, project, head, dirty, rev, links=None):
     """The tree fingerprint (bin/tree_fp.py) of what the gate tested - commit `head` with the receipt's `dirty` applied,
     tree_fp.EXCLUDE left out - rebuilt from git objects in a throw-away index and object store (the real ones never change).
-    None when it cannot be rebuilt exactly - a submodule or a symlink among the dirty paths (the gate's `hash-object --stdin-paths`
-    hashes a symlink's TARGET, `git add` its text), or a file whose mode the gate saw cannot be told (the receipt has no modes: the
-    pushed commit's mode when it holds that blob, the file's on disk, else HEAD's, else 100644; two of them disagreeing is a
-    chmod or core.fileMode doubt) - and the caller then skips the comparison."""
+    links (#156, the receipt's `links`): the dirty paths the gate saw as a symlink, each with the blob of its link text - rebuilt
+    exactly as `git add` staged them (120000), whatever sits at that path on this disk.
+    None when it cannot be rebuilt exactly - a submodule, or a symlink not in `links` among the dirty paths (the gate's `hash-object
+    --stdin-paths` hashes a symlink's TARGET, `git add` its text: a receipt older than `links`), or a file whose mode the gate saw
+    cannot be told (the receipt has no modes: the pushed commit's mode when it holds that blob, the file's on disk, else HEAD's, else
+    100644; two of them disagreeing is a chmod or core.fileMode doubt) - and the caller then skips the comparison."""
     import hashlib  # noqa: PLC0415
     import tempfile  # noqa: PLC0415
+    links = links or {}
     paths = list(dirty)
     at_head, at_rev = entries(top, head, paths), entries(top, rev, paths)
     if any(m in ("160000", "120000") for m, _ in list(at_head.values()) + list(at_rev.values())):
         return None
     lines = []
     for p, sha in dirty.items():
+        if p in links:   # #156: gate thấy link ở đây; main sau `worktree finish` có file thường đã track, đoán theo đĩa này là sai
+            lines.append(f"120000 {links[p]}\t{p}")
+            continue
         if sha is None:
             lines.append(f"0 {'0' * len(head)}\t{p}")
             continue
@@ -521,6 +527,11 @@ def receipt_problem(top, rp, receipt, rev="HEAD"):
     if not isinstance(dirty, dict) or not all(isinstance(p, str) and p and (v is None or (isinstance(v, str) and HEX_SHA.fullmatch(v)))
                                               for p, v in dirty.items()):
         return "dirty không đúng dạng {đường dẫn: blob sha | null}"
+    links = receipt.get("links", {})   # #156; biên nhận ghi trước đó không có: dựng lại như cũ
+    # dirty null (link tới thư mục / link treo) thì không: phép so nội dung đọc null == null là "giống", mục link sẽ làm khớp dấu vân tay
+    if not isinstance(links, dict) or not all(dirty.get(p) is not None and isinstance(v, str) and HEX_SHA.fullmatch(v)
+                                              for p, v in links.items()):
+        return "links không đúng dạng {đường dẫn có blob trong dirty: blob sha}"
     tests = receipt["tests"]
     if not isinstance(tests, list) or not all(isinstance(t, dict) and isinstance(t.get("id"), str) and isinstance(t.get("status"), str)
                                               for t in tests):
@@ -531,7 +542,7 @@ def receipt_problem(top, rp, receipt, rev="HEAD"):
     fp = receipt["fingerprint"]
     if not isinstance(fp, str) or not re.fullmatch(r"[0-9a-f]{24}", fp):
         return "fingerprint (dấu vân tay code) thiếu hoặc sai dạng"
-    want = tested_fingerprint(top, project, head, dirty, rev)
+    want = tested_fingerprint(top, project, head, dirty, rev, links)
     if want is not None and want != fp:
         return "fingerprint không khớp code head+dirty mà biên nhận ghi"
     if not run_log_has(rp, receipt):
