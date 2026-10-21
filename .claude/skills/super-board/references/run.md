@@ -499,6 +499,10 @@ on the base branch**.
      bash .claude/bin/super-board-merge-gate.sh --config <config> --pr <N> --expect-head "$HEAD" \
        --subject "<PR title>" --body-file <msg.md>
    <msg.md> = the PR's commit bullets, deduplicated, plus `Closes #<issue>` (writing-standard.md § 1).
+   Several PRs ready in the same wave: `bash .claude/bin/super-board-merge-train.sh --config <config> --prs <N,M,…>`
+   verifies their combined tree once (bisecting to the red PR when it fails), then runs this same gate for each good PR
+   with `--train-receipt`, which skips only the verify the train already proved. Exit 11 + `train-red: <N>` lines = those PRs go back to Build;
+   one PR in `--prs` is exactly the plain gate.
    The gate takes the merge mutex, checks the PR head is still $HEAD, merges the CURRENT
    base into a scratch worktree at $HEAD, runs `config.verify_commands`, and only then
    squash-merges with `--match-head-commit $HEAD`. After a merge it runs `cleanup-wt --post-merge`
