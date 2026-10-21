@@ -123,9 +123,9 @@ const REVIEW_MEMORY = [
   // Truth-check brief is fixed (super-review → Adversarial mode); a hand-written one once made over-building blocking.
   `Truth-check sub-agents get the fixed brief from super-review → "Adversarial mode", verbatim. After collecting, reclass any Over-engineering Blocker to Should fix; it never decides merge or bounce.`,
   // Merge policy + migrations live in the gate (run.md → Merge protocol step 5).
-  `Merge only via super-board-merge-gate.sh. Exit 7 = merge_policy says a human merges (money/auth/schema/size): Blocked with the 🙋 template quoting its human-gate lines; To unblock = merge it yourself, or comment done to approve.`,
+  `Merge only via super-board-merge-gate.sh. Exit 7 = merge_policy says a human merges (money/auth/schema/size): Blocked with the 🙋 template quoting its human-gate lines, then \`python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue <N> --action "<what the person must do>" --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"\` so the card carries the 🙋 Cần bạn comment.`,
   `Exit 2/5 = stale branch or real conflict: rebase pass (loop:rebase). Exit 11 = verify red on a branch NOT behind the base: [builder] thread quoting the gate's verify line, Review → Ready with loop:rebuild-N, never a rebase pass.`,
-  `Exit 8 = 🙋 needs you (migration for a DB the robot may not touch, failed migrate, declared human step): Blocked with the 🙋 template, exact commands from its needs-you lines, label needs-you.`,
+  `Exit 8 = 🙋 needs you (migration for a DB the robot may not touch, failed migrate, declared human step): Blocked with the 🙋 template, exact commands from its needs-you lines, then \`python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue <N> --action "<the gate's needs-you commands>" --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"\` (label + 🙋 Cần bạn comment).`,
 ]
 
 // GitHub budget (rate-limit-etiquette.md → "Price list"). Measured 2026-10-04: a

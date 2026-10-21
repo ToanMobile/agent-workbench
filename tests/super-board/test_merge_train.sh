@@ -91,4 +91,12 @@ reset_run
 [ "$(runs)" = 1 ] && ok "1 PR: gate verified once" || fail "1 PR: verify ran $(runs) times"
 if grep -qE "\[merge-train\]|train-result" "$TMP/t3.log"; then fail "1 PR: train path taken"; else ok "1 PR: no train output"; fi
 
+# ── 4. Biên nhận sai cây (QA #110): gate phải verify như thường, biên nhận không bao giờ nới tiêu chuẩn.
+card_branch 8 k8
+printf '%s %s\n' "$(cat "$TMP/pr8.head")" "0000000000000000000000000000000000000000" > "$TMP/bad.receipt"
+reset_run
+( cd "$W/review" && bash "$ROOT/.claude/bin/super-board-merge-gate.sh" --config "$CFG" --pr 8 --expect-head "$(cat "$TMP/pr8.head")" --train-receipt "$TMP/bad.receipt" ) >"$TMP/t4.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ "$(merged_list)" = "8 " ] && ok "wrong-tree receipt: PR still merged" || fail "wrong-tree receipt: exit $rc merged=$(merged_list): $(tail -6 "$TMP/t4.log")"
+[ "$(runs)" = 1 ] && ok "wrong-tree receipt: gate verified (receipt did not skip)" || fail "wrong-tree receipt: verify ran $(runs) times"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_train: all passed" || { echo "❌ test_merge_train: $FAILS failed"; exit 1; }
