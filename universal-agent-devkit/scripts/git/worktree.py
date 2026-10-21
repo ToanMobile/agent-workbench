@@ -1640,6 +1640,112 @@ def _authored(item):
     return None
 
 
+_LINK_KEYS = ("tests", "runs_in_suite", "test_refs")   # regression_checklist.LINK_KEYS
+
+
+def _authored_cmp(item):
+    """_authored as two copies of one row are COMPARED: a bug / REQ row's three link keys count as one set (the checklist sync moves a
+    fixed bug's test_refs to runs_in_suite once they resolve: GeelyEx2 #41, 21/10)."""
+    a = _authored(item)
+    if a is None:
+        return None
+    if "covers" in a and len(a) == 1:   # a test row: its `covers` links are what a person made
+        return a
+    links = set()
+    for k in _LINK_KEYS:
+        v = a.pop(k, None)
+        links.update(str(t) for t in (v if isinstance(v, list) else [] if v is None else [v]))
+    if links:
+        a["links"] = sorted(links)
+    return a
+
+
+def _bookkeeping_regenerated(wt, main):
+    """True when the worktree's UNCOMMITTED bookkeeping (BOOKKEEPING) is nothing but what the gate and the checklist sync regenerate.
+    Every row a person made (_authored_cmp) in its regression_status.json on disk is either:
+      - the worktree's own HEAD row as it is (committed: the commit checks guard it; main may have edited it since, principal P2-2),
+        or a row its own HEAD does not hold that main's HEAD holds as it is; a row its own HEAD holds that the disk changed back to
+        main's version is work (Antigravity T0047 #3);
+      - or the row the checklist's own sync (_synced_rows: the sync every `bugs` command runs) builds on the worktree's own HEAD from
+        its guards.json and matrix, time stamps aside — a guards.json import, a guard claimed on a row, a moved ref (#41), never a
+        person's link on it (P1-1, T0047 #1).
+    And no such row of its own HEAD is gone from the disk (`agent-kit bugs drop`, a test row's `covers` removed: OCR, T0047 #2).
+    Fail closed: a status file that cannot be read or parsed, on disk, in the worktree's HEAD or in main's HEAD, is work."""
+    path = os.path.join(wt, STATUS_FILE)
+    try:
+        if not os.path.lexists(path):
+            return True   # deleted in the worktree: main keeps its own copy
+        if os.path.islink(path) or not os.path.isfile(path):
+            return False
+        with open(path, encoding="utf-8") as f:
+            mine_raw = json.load(f)
+        own = git(wt, "ls-tree", "-z", "HEAD", "--", STATUS_FILE, check=False)   # rc 0 and nothing printed: HEAD has no status file
+        if own.returncode != 0:
+            return False
+        base_raw = {"items": {}}
+        if own.stdout.strip("\0"):
+            got = git(wt, "show", f"HEAD:{STATUS_FILE}", check=False)
+            if got.returncode != 0:
+                return False
+            base_raw = json.loads(got.stdout)
+        held = git(main, "ls-tree", "-z", "HEAD", "--", STATUS_FILE, check=False)   # as the worktree's HEAD: a git error is not "none" (OCR)
+        if held.returncode != 0:
+            return False
+        theirs_raw = {"items": {}}
+        if held.stdout.strip("\0"):
+            cur = git(main, "show", f"HEAD:{STATUS_FILE}", check=False)
+            if cur.returncode != 0:
+                return False
+            theirs_raw = json.loads(cur.stdout)
+        mine = {rid: a for rid, it in mine_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
+        base = {rid: a for rid, it in base_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
+        theirs = {rid: a for rid, it in theirs_raw["items"].items() for a in [_authored_cmp(it)] if a is not None}
+        if any(rid not in mine for rid in base):
+            return False   # a row of its own HEAD gone from the disk
+        synced = None
+        for rid, a in mine.items():
+            if base.get(rid) == a or (rid not in base and theirs.get(rid) == a):
+                continue
+            if synced is None:
+                synced = _synced_rows(wt, base_raw)
+            want = _authored_cmp(synced.get(rid))
+            if want is None or _unstamped(want) != _unstamped(a):
+                return False
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
+        return False
+    return True
+
+
+_SYNC_STAMPS = ("created_at", "linked_at", "linked_ts")   # what the checklist sync stamps with the time it ran
+
+
+def _unstamped(a):
+    return {k: v for k, v in a.items() if k not in _SYNC_STAMPS}
+
+
+def _synced_rows(wt, head_raw):
+    """The rows the checklist's own sync (regression_checklist.sync_project: matrix suites, guards.json guards, orphan tests, refs
+    that resolve now — what every `bugs` command and the render run first) builds on top of the worktree's HEAD status from its
+    own .agents/local/guards.json and matrix: {id: row}. GeelyEx2 #41 / the test: it imports a guard as a new row, or claims it on a
+    row that already covers the guard's tests. {} when it cannot run (fail closed: then nothing counts as regenerated)."""
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "bin", "regression_checklist.py")
+        spec = importlib.util.spec_from_file_location("devkit_regression_checklist_sync", path)
+        rc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rc)
+        data = json.loads(json.dumps(head_raw))   # a deep copy: the HEAD rows stay as read
+        matrix = {}
+        mf = os.path.join(wt, ".agents", "regression_matrix.active.json")
+        if os.path.isfile(mf):
+            with open(mf, encoding="utf-8") as f:
+                matrix = json.load(f)
+        rc.sync_project(data, rc.Path(wt), matrix)
+        items = data.get("items")
+        return items if isinstance(items, dict) else {}
+    except Exception:  # noqa: BLE001 - the sync cannot run here: nothing counts as regenerated by it (fail closed)
+        return {}
+
+
 def _carry_authored_rows(wt, base, env):
     """When the worktree's regression_status.json (as in the temp index `env` names) differs from the base's in an AUTHORED row,
     put base-plus-those-rows into that index and return True: the patch then carries just what nothing can regenerate."""
@@ -1837,6 +1943,10 @@ def _iter_blockers(cwd, wt, shown, budget):
     # Commits stay on the branch. Uncommitted work is safe once the main checkout
     # holds the same bytes (and executable bit) at the same path (a deleted file: missing in both).
     lost = [p for p in dict.fromkeys(changed + (hidden or [])) if not _same_in_main(wt, main, p)]
+    # Bookkeeping the gate and the checklist sync regenerate is no work (GeelyEx2 #41, 21/10: it alone held a lane worktree and the
+    # card went to Blocked); cmd_remove keeps a fallback copy first. A row a person made, or an edit git hides, still counts.
+    if any(p in BOOKKEEPING and p not in (hidden or ()) for p in lost) and _bookkeeping_regenerated(wt, main):
+        lost = [p for p in lost if p not in BOOKKEEPING or p in (hidden or ())]
     if lost or hidden is None:
         detail = [f"    {p}" + ("   (git hides it: skip-worktree / assume-unchanged)" if p in (hidden or ()) else "") for p in lost[:20]]
         if hidden is None:
@@ -1962,6 +2072,13 @@ def cmd_remove(cwd, args):
         notes = _unsaved_memory(wt, main)   # read BEFORE the folder goes
     except Exception:  # noqa: BLE001 - a warning only: never in the way of the removal
         notes = []
+    # Regenerated bookkeeping _iter_blockers let through: a fallback copy first (a git error there: SystemExit, nothing removed).
+    dropped = [p for p in changes_since(wt, state) if p in BOOKKEEPING and not _same_in_main(wt, main, p)]
+    if dropped:
+        kept = _discard_backup(main, wt)
+        print("ℹ " + tr(f"sổ sách checklist do gate / sync sinh lại ({', '.join(dropped)}) không đem về; bản cất: {kept} ({DISCARD_KEEP_DAYS} ngày)",
+                        f"checklist bookkeeping the gate / sync regenerate ({', '.join(dropped)}) is not brought back; fallback copy: {kept} "
+                        f"({DISCARD_KEEP_DAYS} days)"), file=sys.stderr)
     _remove_checked(main, wt, branch)
     if notes:
         shown = ", ".join(notes[:5]) + (f" (+{len(notes) - 5})" if len(notes) > 5 else "")
