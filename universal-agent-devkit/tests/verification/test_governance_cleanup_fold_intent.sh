@@ -105,6 +105,32 @@ python3 "$FOLD" "$F/CLAUDE.md" "$F/AGENTS.md" >/dev/null
 SZ=$(wc -c < "$F/AGENTS.md"); python3 "$FOLD" "$F/CLAUDE.md" "$F/AGENTS.md" >/dev/null
 [ "$(wc -c < "$F/AGENTS.md")" = "$SZ" ] && ok "fold: re-run does not grow AGENTS.md" || fail "fold grew"
 
+# (g) uninstall understands the folded-from marker pair (R9): the section leaves AGENTS.md whole and CLAUDE.md comes back
+# without a marker line; a section written before the markers (only `moved from`) still restores
+python3 -B -I - "$DEVKIT_DIR" "$TMP" <<'PY' && ok "uninstall: folded-from marker pair removed from AGENTS.md and not copied into the restored file" || fail "uninstall left a folded-from marker (R9)"
+import os, subprocess, sys
+dk, tmp = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(dk, "scripts", "governance"))
+import devkit_uninstall as u
+fold = os.path.join(dk, "scripts", "governance", "fold_agent_file.py")
+block = "<!-- universal-agent-devkit:start -->\nkit\n<!-- universal-agent-devkit:end -->\n"
+for tag, legacy in (("new", False), ("legacy", True)):
+    p = os.path.join(tmp, "u_" + tag); os.makedirs(p)
+    open(os.path.join(p, "CLAUDE.md"), "w").write("proj line A\nline B\n")
+    open(os.path.join(p, "AGENTS.md"), "w").write("# own\n\n" + block)
+    subprocess.run([sys.executable, fold, os.path.join(p, "CLAUDE.md"), os.path.join(p, "AGENTS.md")], check=True, capture_output=True)
+    if legacy:   # the format before the markers existed
+        t = open(os.path.join(p, "AGENTS.md")).read()
+        t = "\n".join(l for l in t.split("\n") if not l.startswith("<!-- folded-from:"))
+        open(os.path.join(p, "AGENTS.md"), "w").write(t)
+    os.remove(os.path.join(p, "CLAUDE.md"))
+    u.unfold_agent_files(u.Plan(p, True), p)
+    agents = open(os.path.join(p, "AGENTS.md")).read()
+    restored = open(os.path.join(p, "CLAUDE.md")).read()
+    assert "folded-from" not in agents and "moved from" not in agents and "line B" not in agents, (tag, agents)
+    assert restored == "proj line A\nline B\n", (tag, restored)
+PY
+
 # (c) intent names
 python3 -B -I - "$DEVKIT_DIR/scripts/context" <<'PY' && ok "collab hint fires for ARCHITECTURE_REFACTOR / SECURITY / DEPRECATION_MIGRATION" || fail "collab hint silent for a real intent name"
 import sys
