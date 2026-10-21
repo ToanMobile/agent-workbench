@@ -179,8 +179,13 @@ board_notify() {
   fi
   python3 "$HERE/super-board-notify.py" "$@" || true
 }
+# Tiêu đề PR cho tin Telegram (người đọc cần biết việc gì, project nào). Lỗi mạng: rỗng, tin về dạng cũ.
+pr_title() {
+  if [ -n "$SUBJECT" ]; then printf '%s' "$SUBJECT"; return 0; fi
+  gh pr view "$PR" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true
+}
 needs_you_notify() {
-  board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}"
+  board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}" --title "$(pr_title)"
 }
 # clip <n>: stdin gộp về một dòng, giữ tối đa n KÝ TỰ. INSTINCT-173: dưới locale C `cut -c` cắt theo byte và làm vỡ ký tự tiếng Việt
 # (văn bản không còn UTF-8, github-read từ chối). Byte không phải UTF-8 trong lỗi của git thành U+FFFD, không bao giờ vỡ giữa ký tự.
@@ -675,7 +680,7 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
      ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
      --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2; then
   say "merged ${HEAD_SHA}"
-  board_notify send --card "PR #${PR}" --text "merged ${HEAD_SHA}"
+  board_notify send --card "PR #${PR}" --repo "$REPO" --title "$(pr_title)" --text "✅ đã merge ${HEAD_SHA}"
   # Dọn sau merge: fast-forward nhánh base local và xoá worktree + nhánh local của CHÍNH thẻ vừa merge
   # (không bao giờ của thẻ khác), để không phải dọn tay. worktree_merge_gate.state là sổ nợ worktree toàn repo
   # của hook DevKit: hook tự dọn sổ đó, gate này không bao giờ xoá.
