@@ -19,6 +19,25 @@ echo new > "$A/review_gate.log"
 python3 "$NIGHTLY" run "$P" >/dev/null 2>&1
 [ ! -e "$A/regression_gate.log" ] && [ -f "$A/review_gate.log" ] && ok "nightly run removes old audit-gate files, keeps fresh ones" || fail "audit-gate: $(ls "$A")"
 
+# (d) size cap: FRESH logs (no age to clean) totalling ~8 MB end up under 5 MB after the nightly run; .gitignore and state json stay
+P2="$TMP/p2"; A2="$P2/.claude/audit-gate"; mkdir -p "$A2" "$P2/.agents"
+( cd "$P2" && git init -q . && git config devkit.trunkMode false )
+python3 -B -I - "$A2" <<'PY'
+import os, sys
+a = sys.argv[1]
+line = "x" * 99 + "\n"
+for name, mb in (("surfaced.jsonl", 3), ("review_gate.log", 2), ("read_ledger.tsv", 2), ("churn_guard.log", 1)):
+    open(os.path.join(a, name), "w").write(line * (mb * 10486))
+os.makedirs(os.path.join(a, "wg_scan"))
+open(os.path.join(a, "wg_scan", "scan.json"), "w").write("y" * 1024)
+open(os.path.join(a, ".gitignore"), "w").write("*\n")
+open(os.path.join(a, "regression_gate.state.json"), "w").write("{}")
+PY
+python3 "$NIGHTLY" run "$P2" >/dev/null 2>&1
+KB=$(du -sk "$A2" | cut -f1)
+[ "$KB" -lt 5120 ] && [ -f "$A2/.gitignore" ] && [ -f "$A2/regression_gate.state.json" ] && [ -f "$A2/review_gate.log" ] \
+  && ok "nightly caps fresh audit-gate under 5 MB ($KB KB), keeps .gitignore/state/log tails" || fail "audit-gate size cap: $KB KB"
+
 # (b) fold: same source run twice = no change; edited source = one section, not two
 F="$TMP/f"; mkdir -p "$F"
 printf 'proj line A\nline B\n' > "$F/CLAUDE.md"

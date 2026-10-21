@@ -9,6 +9,8 @@ Dry-run unless --apply. Only the hooks' working area is touched:
     * files and folders older than --days (default 14): hook logs and per-session
       state, restore-backup/<time>/ copies, adb-safe-exec/ evidence (logs, tombstones)
     * a log newer than that but over 5 MB is trimmed to its last 2000 lines
+    * size cap: if what is left is still over 4 MB, the biggest .log/.jsonl/.tsv files are
+      trimmed to their last 2000 lines (then the oldest other entries removed) until it fits
     * .gitignore is always kept
   --old-installs: also ~/.universal-agent-devkit.old-* (copies quick-install moved
   aside) older than --days.
@@ -25,6 +27,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from devkit_i18n import resolve_lang, set_lang, tr  # noqa: E402
 
 MAX_LOG = 5 * 1024 * 1024
+AUDIT_CAP = 4 * 1024 * 1024   # whole audit-gate folder, after the age pass (the 5 MB acceptance line minus headroom)
+LOG_EXTS = (".log", ".jsonl", ".tsv")
 KEEP_LINES = 2000
 
 
@@ -63,6 +67,49 @@ def human(n):
         n /= 1024
 
 
+def tail_size(path):
+    """Bytes left after trim(path)."""
+    with open(path, "rb") as f:
+        return sum(len(x) for x in f.read().splitlines(keepends=True)[-KEEP_LINES:])
+
+
+def disk_size(path):
+    """Allocated bytes (what `du` reports): 1400 small state files count 4 KB each, not their few bytes."""
+    if not os.path.isdir(path) or os.path.islink(path):
+        return os.lstat(path).st_blocks * 512
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.lstat(os.path.join(root, f)).st_blocks * 512
+            except OSError:
+                pass
+    return total
+
+
+def cap_plan(audit, planned):
+    """Extra actions that bring audit-gate under AUDIT_CAP after `planned` ran: fresh logs have no age to clean by."""
+    gone = {p: a for a, p, _ in planned}
+    entries = [os.path.join(audit, n) for n in sorted(os.listdir(audit)) if n != ".gitignore"]
+    entries = [p for p in entries if gone.get(p) != "remove"]
+    sizes = {p: (tail_size(p) if gone.get(p) == "trim" else disk_size(p)) for p in entries}
+    total = sum(sizes.values())
+    out = []
+    logs = [p for p in entries if p.endswith(LOG_EXTS) and os.path.isfile(p) and not os.path.islink(p) and gone.get(p) != "trim"]
+    for path in sorted(logs, key=lambda p: -sizes[p]):
+        if total <= AUDIT_CAP:
+            return out
+        after = tail_size(path)
+        if after < sizes[path]:
+            out.append(("trim", path, sizes[path])); total -= sizes[path] - after
+    others = [p for p in entries if not (p in logs or p.endswith(".json") or gone.get(p) == "trim")]
+    for path in sorted(others, key=newest_mtime):   # still over: oldest non-log entries (state *.json stays)
+        if total <= AUDIT_CAP:
+            break
+        out.append(("remove", path, sizes[path])); total -= sizes[path]
+    return out
+
+
 def plan(project, days, old_installs):
     """[(action, path, bytes)] with action "remove" or "trim"."""
     cutoff = time.time() - days * 86400
@@ -83,6 +130,7 @@ def plan(project, days, old_installs):
                 out.append(("remove", path, size_of(path)))
             elif path.endswith(".log") and os.path.isfile(path) and os.path.getsize(path) > MAX_LOG:
                 out.append(("trim", path, os.path.getsize(path)))
+        out += cap_plan(audit, out)
     if old_installs:
         home = os.path.expanduser("~")
         for name in sorted(os.listdir(home)):
