@@ -93,7 +93,7 @@ Run the same preconditions as `run.md` §Preconditions, minus PID checks:
    false` when deploy markers exist (same rule as super-board-run.sh).
 3. Worktree check: if legacy `.worktrees/issue-*` exists, halt for inspection/move
    as described in run.md. Scan only board worktrees under `.claude/worktrees/`;
-   when their named branch is gone use `git worktree remove` without force. Preserve
+   when their named branch is gone use `agent-kit worktree remove` (never `--force`). Preserve
    detached, dirty, locked, unregistered, and unrelated folders.
 4. For Claude waves, `node --check` passes on a wrapped copy of
    `.claude/workflows/super-board-wave.js` (catches a broken script before
@@ -220,8 +220,8 @@ Repeat until a done condition or halt gate fires:
    waves has no live worker — a stopped or crashed wave left it mid-build. For
    each: find its branch (`git ls-remote --heads origin 'issue-<N>-*'`) and any
    leftover `.claude/worktrees/issue-<N>-build/`. If its HEAD is detached, keep it:
-   its commits may have no other ref. Otherwise remove it with `git worktree remove`
-   without force. On detached HEAD or removal failure (dirty, locked, or unregistered),
+   its commits may have no other ref. Otherwise remove it with `agent-kit worktree remove`
+   (never `--force`). On detached HEAD or removal failure (dirty, locked, or unregistered),
    keep the folder and Building status, report the recovery path, and do not
    redispatch that card until its work is preserved. Otherwise keep the branch and PR,
    move the card to `Ready`, and comment:

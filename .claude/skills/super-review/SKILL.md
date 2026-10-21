@@ -314,7 +314,8 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
    `python3 .agents/devkit/scripts/git/worktree.py add` with the same arguments). It links the DevKit, copies the git-ignored config and
    hooks, clones a Unity Library copy-on-write, takes no WORKTREE_MAX slot and marks the checkout the board's. Exit 4 = under the disk
    floor: stop with its message, card and claims unchanged. Never a plain `git worktree add` or EnterWorktree (agent-workbench#93).
-   Clean up with `git worktree remove <path>`.
+   Clean up with `agent-kit worktree remove <path>` (no agent-kit on PATH: `python3 .agents/devkit/scripts/git/worktree.py remove`; a
+   plain `git worktree remove` refuses the DevKit set-up every lane worktree carries).
 2. **Gate 1 — thread scan.** Read threads and replies. [PR author notes](../super-board/references/pr-author-notes.md)
    alone are explanations, not findings or approval. Human questions or change requests
    in those threads still follow the normal review/blocking flow; the marker exempts no
