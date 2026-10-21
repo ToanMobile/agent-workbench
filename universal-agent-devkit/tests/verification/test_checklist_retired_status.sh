@@ -3,6 +3,7 @@
 # stayed STALE for ever (its watched file is gone: "deleted since a clean run" is a stale hit). sync_from_matrix must mark such
 # a row retired: status RETIRED, never STALE, out of the safety %; a bug linked only to it falls back to NEEDS_TEST.
 set -u
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 python3 - "$DEVKIT_DIR/bin" <<'PY'
 import sys

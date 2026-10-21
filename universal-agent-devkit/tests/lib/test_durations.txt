@@ -337,18 +337,12 @@
 # 2026-10-20: two tests that were missing (an unlisted test starts first). Each alone on this machine.
 9 tests/installer/test_agent_health_score_inflation.sh
 10 tests/verification/test_unity_machine_lock.sh
-<<<<<<< HEAD
 1 tests/verification/test_checklist_crit_hash_operators.sh
 5 tests/gates/test_guard_protected_push.sh
 5 tests/verification/test_instincts_add_concurrent.sh
 5 tests/verification/test_red_proof_hardening.sh
 5 tests/worktree_git/test_worktree_automerge_staged_secret.sh
-=======
 3 tests/verification/test_game_script_args.sh
-2 tests/gates/test_guard_protected_push.sh
-1 tests/verification/test_instincts_add_concurrent.sh
-3 tests/verification/test_red_proof_hardening.sh
-7 tests/worktree_git/test_worktree_automerge_staged_secret.sh
 1 tests/gates/test_hw_emulator_window.sh
 # 2026-10-20 (P1/P2 cache + bộ lập lịch): test mới, đo một mình trên máy này (tải ~60).
 55 tests/gates/test_gate_slot_classes.sh
@@ -356,4 +350,4 @@
 24 tests/gates/test_gate_sentinel.sh
 2 tests/context_memory/test_session_lock_pid_start.sh
 12 tests/gates/test_heavy_slot_cap.sh
->>>>>>> origin/main
+1 tests/verification/test_checklist_retired_status.sh
