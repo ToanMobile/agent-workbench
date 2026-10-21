@@ -737,8 +737,67 @@ m.status_all()
 PY
   grep -q 'verdict=gave-up' "$TMP/all.status" && ok "super_board_all.py status shows a watchdog that gave up" \
     || fail "status hides the watchdog verdict: $(tr '\n' ' ' < "$TMP/all.status")"
+  # Repo không có super-board-stop.sh riêng (như start_all, nó không được bỏ qua): stop vẫn phải ghi marker.
+  mkdir -p "$TMP/all2"
+  python3 - "$SBA" "$TMP/all2" > "$TMP/all2.out" 2>&1 <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("sba", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+m.REPOS = [{"slug": "zz-nostop", "name": "test", "dir": sys.argv[2], "tuios_window": "x", "url": "x"}]
+m.get_running_pids = lambda slug: []
+m.stop_all()
+PY
+  grep -q 'STOPPED_AT=' "$TMP/all2/.claude/super-board/runner/zz-nostop.stopped" 2>/dev/null \
+    && ok "super_board_all.py stop writes the stop marker for a repo without its own stop.sh" \
+    || fail "super_board_all.py stop left no marker for a repo without stop.sh: $(tr '\n' ' ' < "$TMP/all2.out")"
 else
   echo "• skip: $SBA exists only in agent-workbench"
 fi
+
+# ── 10. NO_PROGRESS_CYCLE_COUNT của môi trường người gọi không vào runner khởi động tường minh (#115 điểm 3) ───────────
+rm -f "$MARK"
+start_runner "$TMP/run13.out" SB_DAEMON=1 NO_PROGRESS_CYCLE_COUNT=abc
+if wait_for 30 '[ "$(ticks "$TMP/run13.out")" -ge 1 ]'; then
+  [ "$(field NO_PROGRESS "$STATE")" = 0 ] && alive "$RP" \
+    && ok "an inherited NO_PROGRESS_CYCLE_COUNT=abc is ignored: the explicit start counts from 0" \
+    || fail "inherited NO_PROGRESS_CYCLE_COUNT leaked: NO_PROGRESS='$(field NO_PROGRESS "$STATE")'"
+else
+  fail "runner with NO_PROGRESS_CYCLE_COUNT=abc never ticked"; tail -5 "$TMP/run13.out" | sed 's/^/    /'
+fi
+kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+
+# ── 11. Guard production-merge không phụ thuộc rg: không có rg dùng được thì vẫn từ chối (#115 điểm 5) ───────────────
+mkdir -p "$TMP/norg" "$TMP/repo4/.claude/bin" "$TMP/repo4/.claude/super-board/configs" "$TMP/repo4/.github/workflows"
+printf '#!/bin/sh\nexit 127\n' > "$TMP/norg/rg"; chmod +x "$TMP/norg/rg"   # rg có trên PATH nhưng không chạy được
+cp "$BIN"/super-board-* "$TMP/repo4/.claude/bin/"
+sed 's/"human_approves_merge": true/"human_approves_merge": false/' "$R/.claude/super-board/configs/t.json" > "$TMP/repo4/.claude/super-board/configs/t.json"
+printf 'name: deploy\non:\n  push:\n    branches: [ main ]\njobs: {}\n' > "$TMP/repo4/.github/workflows/deploy.yml"
+( ( cd "$TMP/repo4" && exec env "${ENVV[@]}" PATH="$TMP/norg:$TMP/stub:$PATH" bash "$TMP/repo4/.claude/bin/super-board-run.sh" t ) > "$TMP/run14.out" 2>&1 & echo $! > "$TMP/rp" )
+RP=$(cat "$TMP/rp"); PIDS="$PIDS $RP"
+if wait_for 30 '! alive "$RP"'; then
+  grep -q 'refusing to start: would auto-merge to production' "$TMP/run14.out" \
+    && ok "production guard refuses a push-to-main workflow even when rg is unusable" \
+    || { fail "runner exited without the production refusal"; tail -3 "$TMP/run14.out" | sed 's/^/    /'; }
+else
+  fail "runner did not refuse to start with a push-to-main workflow and no rg"; kill_tree "$RP"
+fi
+# Đối chứng: workflow chỉ chạy khi push lên nhánh khác thì không chặn.
+printf 'name: ci\non:\n  push:\n    branches: [ develop ]\njobs: {}\n' > "$TMP/repo4/.github/workflows/deploy.yml"
+( ( cd "$TMP/repo4" && exec env "${ENVV[@]}" PATH="$TMP/norg:$TMP/stub:$PATH" bash "$TMP/repo4/.claude/bin/super-board-run.sh" t ) > "$TMP/run15.out" 2>&1 & echo $! > "$TMP/rp" )
+RP=$(cat "$TMP/rp"); PIDS="$PIDS $RP"
+wait_for 30 '! alive "$RP" || [ "$(ticks "$TMP/run15.out")" -ge 1 ]'
+grep -q 'refusing to start: would auto-merge' "$TMP/run15.out" \
+  && fail "guard over-blocks a workflow that pushes only to develop" \
+  || ok "guard lets a push-to-develop workflow through"
+kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+
+# ── 12. safe_path bỏ mục '..' và symlink trỏ vào repo, giữ mục ngoài repo (#115 điểm 2) ─────────────────────────────
+mkdir -p "$TMP/sp/repo/.claude/worktrees/evil" "$TMP/sp/ok"
+ln -s "$TMP/sp/repo/.claude/worktrees/evil" "$TMP/sp/link"
+awk '/^(canon_path|safe_path)\(\) \{/{p=1} p{print} p&&/^}/{p=0}' "$BIN/super-board-watchdog.sh" > "$TMP/sp/fn.sh"
+sp_out=$( ROOT_P="$(cd -P "$TMP/sp/repo" && pwd -P)"; . "$TMP/sp/fn.sh"
+  safe_path "$TMP/sp/ok/../repo/.claude/worktrees/evil:$TMP/sp/link:$TMP/sp/repo/./.claude:$TMP/sp/ok" )
+[ "$sp_out" = "$(cd -P "$TMP/sp/ok" && pwd -P)" ] \
+  && ok "safe_path drops '..' and symlink entries that land in the repo, keeps the outside one" \
+  || fail "safe_path let a repo path through: '$sp_out'"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_runner_watchdog: all passed" || { echo "❌ test_runner_watchdog: $FAILS failed"; exit 1; }
