@@ -27,6 +27,8 @@ DEFAULT_EST_S = 600.0     # suite chưa có thời lượng ghi nhận
 CPU_HEAVY_S = 300.0       # thời lượng ghi nhận dài nhất vượt mức này: suite nặng CPU (DEVKIT_SLOT_CPU_S)
 LOAD_MAX = 100.0          # DEVKIT_SLOT_LOAD_MAX: tải 1 phút (os.getloadavg) dưới mức này thì chạy ngay (người dùng 20/10)
 LOAD_WAIT_S = 600.0       # DEVKIT_SLOT_LOAD_WAIT_S: tải cao thì chờ tối đa chừng này rồi vẫn chạy; 0 = không chờ
+HEAVY_MAX = 3             # DEVKIT_SLOT_HEAVY_MAX: số suite nặng (cpu/gradle/xcode) chạy cùng lúc trên cả máy; hết slot thì xếp hàng (người dùng 21/10)
+HEAVY_CLASSES = ("cpu", "gradle", "xcode")   # Unity có khoá riêng (1 Editor); suite nhẹ và thiết bị không đếm
 ADVISORY_BUDGET_S = 600.0  # DEVKIT_SLOT_ADVISORY_BUDGET_S: tổng giây ĐỒNG HỒ một tiến trình được chờ tải (chờ chồng nhau tính một lần)
 # Sổ chờ tải của tiến trình: giây đồng hồ đã chờ (các khoảng có ít nhất một suite đang chờ, hợp lại), số suite đang chờ, lúc khoảng
 # hiện tại bắt đầu, đã báo hết ngân sách chưa.
@@ -96,6 +98,12 @@ def load_max() -> float:
     """Ngưỡng tải (DEVKIT_SLOT_LOAD_MAX); rỗng, rác hay không dương thì 100."""
     value = _env_float("DEVKIT_SLOT_LOAD_MAX", LOAD_MAX)
     return value if value > 0 else LOAD_MAX
+
+
+def heavy_max() -> int:
+    """Trần suite nặng cùng lúc (DEVKIT_SLOT_HEAVY_MAX); rỗng, rác, không dương hay không nguyên thì 3."""
+    value = _env_float("DEVKIT_SLOT_HEAVY_MAX", HEAVY_MAX)
+    return int(value) if value >= 1 and value == int(value) else HEAVY_MAX
 
 
 def wait_load(wait_s: float, label: str = "") -> tuple:
@@ -596,6 +604,20 @@ def acquire_for_suite(info: dict, *, est_s: Optional[float] = None, label: str =
             if note:
                 notes.append(note)
     got = []
+    # Trần suite nặng (người dùng 21/10: 10 worker build, 3 suite nặng cùng lúc): xếp hàng ở pool "heavy" theo hàng đợi vé như Unity.
+    # Hết ngân sách chờ thì VẪN chạy kèm ghi chú (như chờ tải: trần không bao giờ làm suite thành UNTESTED). Suite lồng trong suite
+    # đã được cho chạy (DEVKIT_SLOT_ADVISORY_HELD=1) không xin: cha giữ slot mà con chờ slot là bế tắc. Slot này không làm `held`
+    # (gate lồng vẫn phải xin khoá Unity).
+    if info.get("cls") in HEAVY_CLASSES and os.environ.get("DEVKIT_SLOT_ADVISORY_HELD") != "1":
+        hv_deadline = time.monotonic() + lock_wait
+        if max_wait is not None:
+            hv_deadline = min(hv_deadline, t_start + max(0.0, max_wait))
+        hv = acquire_pool("heavy", pool_paths("heavy", heavy_max()), wait_s=max(0.0, hv_deadline - time.monotonic()), prio=prio,
+                          est_s=est_s, label=label)
+        if hv.timed_out:
+            notes.append(f"{heavy_max()} suite nặng đang chạy: đã xếp hàng {hv.waited_s:.0f}s, hết ngân sách chờ — vẫn chạy")
+        else:
+            got.append(hv)
     if engine == "unity":
         # Hạn chờ khoá tính SAU lần chờ tải (Antigravity audit 20/10: t_start + min(SB_HEAVY_SLOT_WAIT_S, max_wait) để lần chờ tải ăn
         # mất SB_HEAVY_SLOT_WAIT_S); max_wait vẫn là trần TỔNG tính từ lúc vào.
@@ -606,10 +628,12 @@ def acquire_for_suite(info: dict, *, est_s: Optional[float] = None, label: str =
         h = acquire_pool("unity", pool_paths("unity", 1), wait_s=max(0.0, deadline - lock_start), prio=prio, est_s=est_s,
                          label=label)
         if h.timed_out:
+            for g in got:
+                release_pool(g)
             return SuiteSlots([], admitted=False, held=False,
                               notes=tuple(notes) + (f"khoá unity bận hết {h.waited_s:.1f}s — suite không chạy",))
         got.append(h)
-    held = any(h.fh is not None for h in got)
+    held = any(h.fh is not None and h.pool != "heavy" for h in got)
     return SuiteSlots(got, admitted=True, held=held, advisory=not held, notes=tuple(notes))
 
 
