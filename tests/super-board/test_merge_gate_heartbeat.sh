@@ -94,6 +94,5 @@ if [ -s "$TMP/at.k1" ] && [ -s "$TMP/at.k2" ]; then
   [ "$(cat "$TMP/at.k1")" = "$(cat "$TMP/at.k2")" ] && ok "a SIGKILLed gate leaves no heartbeat refreshing its dead lock" \
     || fail "orphan heartbeat kept refreshing the lock of a dead gate (at $(cat "$TMP/at.k1") -> $(cat "$TMP/at.k2"))"
 else fail "case 4 did not run: $(tail -3 "$TMP/d.log")"; fi
-pkill -f "sleep 4$" 2>/dev/null
 
 [ "$FAILS" -eq 0 ]
