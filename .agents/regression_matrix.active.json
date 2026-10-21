@@ -619,6 +619,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-build-workers",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_build_workers.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-BUILD-WORKERS-01",
+          "name": "lane build chạy nhiều worker theo tải máy: trần build_workers, tối đa một worker mới mỗi tick, tải >= build_load_max hoặc không đọc được thì giữ, quét mồ côi/zombie/dừng khẩn nhận ra N worker",
+          "command": "bash tests/super-board/test_runner_build_workers.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
