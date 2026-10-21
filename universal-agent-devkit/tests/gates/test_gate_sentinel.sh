@@ -8,6 +8,8 @@
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 unset DEVKIT_GATE_CACHE DEVKIT_GATE_CACHE_MAX_S DEVKIT_SUITE_CACHE_MAX_S DEVKIT_FLAKY_QUARANTINE_S CI
+# the merge gate exports these around its verify; leaked in, they turn the sentinel off (test 5 sets its own)
+unset DEVKIT_SLOT_PRIORITY DEVKIT_SLOT_LOAD_WAIT_S
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
