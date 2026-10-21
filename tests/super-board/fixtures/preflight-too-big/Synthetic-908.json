@@ -1,0 +1,5 @@
+{
+  "number": 908,
+  "title": "✨ [feature] pdf: chèn ảnh nhỏ vào trang PDF",
+  "body": "## Problem\nChỉ nhập được ảnh chữ ký.\n\n## Context\n- **Nguồn:** ghi chú vận hành.\n\n## Fix\nTái dùng đường nhập ảnh chữ ký.\n\n## Acceptance Criteria\n- [ ] Ảnh 12 MP không OOM.\n\n## Risk\n🟢 **Low** · không cần máy thật, kiểm bằng test đơn vị.\n"
+}

@@ -412,8 +412,12 @@ def strip_block(plan, path, style="html"):
     plan.removed += 1
 
 
-FOLD_RE = re.compile(r"<!-- moved from (CLAUDE\.md|GEMINI\.md|Agent\.md) on [0-9-]+ \(AGENTS\.md is the only instruction file\) -->\n"
-                     r"(.*?)\n\n(?=<!-- moved from |<!-- " + re.escape(MARKER) + r":start -->|\Z)", re.S)
+# A section is optionally wrapped in `<!-- folded-from:<name>:start|end -->` (fold_agent_file.py); one folded before those
+# markers existed has only the `moved from` line.
+FOLD_RE = re.compile(r"(?:<!-- folded-from:[^\n]*?:start -->\n)?"
+                     r"<!-- moved from (CLAUDE\.md|GEMINI\.md|Agent\.md) on [0-9-]+ \(AGENTS\.md is the only instruction file\) -->\n"
+                     r"(.*?)\n(?:<!-- folded-from:[^\n]*?:end -->\n)?\n"
+                     r"(?=<!-- moved from |<!-- folded-from:|<!-- " + re.escape(MARKER) + r":start -->|\Z)", re.S)
 
 
 def unfold_agent_files(plan, project):

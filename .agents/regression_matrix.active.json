@@ -666,6 +666,23 @@
       ]
     },
     {
+      "component": "devkit-sentinel-merge-env",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/tests/gates/test_gate_sentinel.sh",
+        "universal-agent-devkit/tests/gates/test_gate_sentinel_merge_env.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SENTINEL-MERGE-ENV-01",
+          "name": "test_gate_sentinel.sh xanh khi DEVKIT_SLOT_PRIORITY=merge / DEVKIT_SLOT_LOAD_WAIT_S=0 rò từ merge gate vào verify (#167)",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_sentinel_merge_env.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-wave-needs-you-mark",
       "watch_files": [
         ".claude/workflows/super-board-wave.js",
@@ -682,3 +699,4 @@
     }
   ]
 }
+
