@@ -954,6 +954,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "mcp-servers/agent-office/blender",
+      "watch_files": [
+        "mcp-servers/agent-office/blender/*",
+        "mcp-servers/agent-office/web/models/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-AGENT-OFFICE-02",
+          "name": "agent-office: bộ nội thất office.glb dựng bằng Blender còn đủ khối có tên (Desk, Chair, Monitor/Screen có UV, Shelf...) và đủ nhỏ",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_office_glb",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
