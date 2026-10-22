@@ -355,3 +355,4 @@
 1 tests/verification/test_checklist_retired_status.sh
 1 tests/verification/test_governance_cleanup_fold_intent.sh
 2 tests/gates/test_gate_sentinel_merge_env.sh
+5 tests/gates/test_multi_session_gate_session_env.sh
