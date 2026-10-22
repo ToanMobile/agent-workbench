@@ -1317,6 +1317,71 @@ EOF
   return "$moved"
 }
 
+# Ba lần đọc GitHub của requeue_gate_red_blocked, tách ra để test thay thế.
+gate_red_comments() { SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind comments -- api "repos/{owner}/{repo}/issues/$1/comments" --paginate --slurp; }
+base_head_info() {   # "<sha> <ngày commit ISO>" của đầu nhánh base trên GitHub
+  SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind json -- api "repos/{owner}/{repo}/commits/${BASE_BRANCH}" \
+    | jq -r '.sha + " " + .commit.committer.date'
+}
+pr_open() { [ "$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind json -- pr view "$1" --json state | jq -r .state)" = OPEN ]; }
+
+requeue_gate_red_blocked() {
+  # #188: thẻ Blocked vì "merge gate đỏ, không phải diff của PR" (comment [reviewer] [blocker], dòng đầu có "merge gate đỏ",
+  # `PR: #N`, dòng cuối `blocked-by: -`; blocker CUỐI của mọi vai phải là comment này) không có issue blocker nên sweep_blocked_cards không thả. Khi main có commit MỚI HƠN comment
+  # đó (lỗi kit có thể đã sửa), thẻ về Review để reviewer chạy lại merge gate với đủ luật merge (policy, subject, Done); runner không
+  # tự merge. Mỗi (thẻ, SHA main) một lần và cách nhau SB_GATE_RETRY_COOLDOWN_S (mặc định 3600 s). Bỏ qua needs-you/human-gated.
+  # Trả 0 khi có thẻ được chuyển (caller đọc lại board), 1 khi không.
+  local moved=1 issue item_id body pr main sha mdate at f last ep now cd
+  now=$(date +%s); cd=${SB_GATE_RETRY_COOLDOWN_S:-3600}
+  while IFS=$'\t' read -r issue item_id; do
+    [ -n "$issue" ] && [ -n "$item_id" ] || continue
+    body=$(gate_red_comments "$issue" 2>/dev/null | jq -r '[.[][] | select(.body | test("^\\[[a-z-]+\\] \\[blocker\\]"))] | last // empty
+      | [.created_at, .body] | @json') || { gh_checkpoint; continue; }
+    [ -n "$body" ] || continue
+    at=$(printf '%s' "$body" | jq -r '.[0]'); body=$(printf '%s' "$body" | jq -r '.[1]')
+    printf '%s\n' "$body" | head -1 | grep -E '^\[reviewer\] \[blocker\]' | grep -qi 'merge gate đỏ' || continue
+    printf '%s\n' "$body" | grep -v '^[[:space:]]*$' | tail -n 1 | grep -E '^blocked-by:[[:space:]]*-[[:space:]]*$' >/dev/null || continue
+    pr=$(printf '%s\n' "$body" | sed -n 's/^PR:[[:space:]]*#\([0-9][0-9]*\).*/\1/p' | head -1)
+    [ -n "$pr" ] || continue
+    main=$(base_head_info 2>/dev/null) || { gh_checkpoint; continue; }
+    sha=${main%% *}; mdate=${main#* }
+    [ -n "$sha" ] && [[ "$mdate" > "$at" ]] || continue
+    f="$INFLIGHT_DIR/gate-retry/$issue"
+    last=$(cat "$f" 2>/dev/null || true)
+    [ "${last%% *}" != "$sha" ] || continue
+    ep=${last##* }; [[ "$ep" =~ ^[0-9]+$ ]] || ep=0   # file rỗng/hỏng: epoch không phải số = 0, không làm runner dừng
+    [ -z "$last" ] || [ $((now - ep)) -ge "$cd" ] || continue
+    pr_open "$pr" 2>/dev/null || { gh_checkpoint; continue; }
+    set_card_status "$item_id" "Review" || { gh_checkpoint; log "⚠ gate-red requeue: could not move #${issue} to Review"; continue; }
+    mkdir -p "$INFLIGHT_DIR/gate-retry" 2>/dev/null || true
+    echo "$sha $now" > "$f" 2>/dev/null || true
+    gh_checkpoint
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Review · main moved after the red merge gate
+Did: main is at ${sha:0:12} (newer than the gate-red blocker); PR #${pr} is still open
+✅ Done: card moved Blocked → Review
+Next: reviewer (reruns the merge gate on main ${sha:0:12}; red again stays Blocked until main moves once more)" >/dev/null 2>&1 || true
+    log "↩ requeued #${issue}: Blocked → Review (merge gate was red, main now ${sha:0:12})"
+    moved=0
+  done <<EOF
+$(echo "$PROJECT_ITEMS_JSON" | jq -r "$FOR_A_PERSON_JQ"'.items[]
+    | select(.status == "Blocked" and .content.type == "Issue")
+    | select(for_a_person | not)
+    | [(.content.number | tostring), (.id // "")] | @tsv')
+EOF
+  return "$moved"
+}
+
+GATE_RED_NEXT=0
+maybe_requeue_gate_red() {
+  # Mỗi SB_GATE_RED_INTERVAL_S (900 s) một lượt: đọc comment mỗi thẻ Blocked là REST, không làm mỗi tick.
+  local now rc=0
+  now=$(date +%s)
+  [ "$now" -ge "$GATE_RED_NEXT" ] || return 1
+  GATE_RED_NEXT=$((now + ${SB_GATE_RED_INTERVAL_S:-900}))
+  requeue_gate_red_blocked || rc=$?
+  return "$rc"
+}
+
 SWEEP_RETRY_SECONDS=300
 maybe_sweep_blocked() {
   # Blocker chỉ được gỡ khi có thẻ về Done, nên planner (một lần đọc GraphQL các issue mở để dựng đồ thị phụ
@@ -1732,6 +1797,7 @@ while true; do
 
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
   if maybe_sweep_blocked; then fetch_project_items; fi
+  if maybe_requeue_gate_red; then fetch_project_items; fi
 
   count_board
 

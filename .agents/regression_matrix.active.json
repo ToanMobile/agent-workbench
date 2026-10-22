@@ -757,6 +757,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-runner-gate-red-requeue",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_gate_red_requeue.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-GATE-RED-REQUEUE-01",
+          "name": "runner đưa thẻ Blocked vì merge gate đỏ không do PR về Review khi main có commit mới hơn, mỗi (thẻ, SHA main) một lần; không động tới needs-you, blocker khác lý do, blocked-by issue, PR đã đóng",
+          "command": "bash tests/super-board/test_runner_gate_red_requeue.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
