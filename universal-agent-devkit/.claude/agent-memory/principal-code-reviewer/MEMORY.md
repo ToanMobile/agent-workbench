@@ -1,0 +1,1 @@
+- [Worktree-isolated Bash limits](worktree-isolated-bash-limits.md) — guard refuses cd&&/git -C/".git" in inline text; use plain git + scratchpad .py probes
